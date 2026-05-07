@@ -1,0 +1,7 @@
+node_modules/
+data/auction.db
+data/backups/
+data/uploads/
+data/logo.*
+data/SOURCE.xlsx
+.env
