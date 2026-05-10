@@ -3465,6 +3465,42 @@ app.put('/api/bills/:id', requireInvoiceWrite, (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // DEBIT NOTES (for discounts/adjustments)
 // ══════════════════════════════════════════════════════════════
+//
+// Derive the dealer's effective sale type for a DN:
+//   - Most-frequent `lots.sale` value across this dealer's lots in the
+//     trade. 'I'/'E' → inter-state; 'L' or empty → local.
+//   - Falls back to a GSTIN state-code vs company state-code comparison
+//     when no lots in the trade carry a sale-type tag (e.g. legacy data
+//     that pre-dates invoice generation).
+// Returns one of 'I', 'E', 'L', or '' (no fallback was possible — caller
+// should treat empty as local-by-default).
+function deriveDealerSaleType(db, auctionId, dealerName, dealerCr, cfg) {
+  if (auctionId && dealerName) {
+    const rows = db.all(
+      `SELECT UPPER(TRIM(COALESCE(sale,''))) AS s, COUNT(*) AS n
+         FROM lots
+        WHERE auction_id = ? AND name = ? AND amount > 0
+        GROUP BY s
+        ORDER BY n DESC, s
+        LIMIT 1`,
+      [auctionId, dealerName]
+    );
+    const dominant = rows.length ? String(rows[0].s || '').toUpperCase() : '';
+    if (dominant === 'I' || dominant === 'E' || dominant === 'L') return dominant;
+  }
+  // Fallback: GSTIN state-code comparison.
+  let dealerStateCode = '';
+  let cr = String(dealerCr || '').trim().toUpperCase();
+  if (cr.startsWith('GSTIN.')) cr = cr.slice(6);
+  else if (cr.startsWith('GSTIN')) cr = cr.slice(5);
+  if (/^\d{2}/.test(cr)) dealerStateCode = cr.slice(0, 2);
+  const companyStateCode = String((cfg && cfg.tally_state_code)
+      || (String((cfg && cfg.business_state) || '').toUpperCase() === 'KERALA' ? '32' : '33'));
+  if (dealerStateCode && dealerStateCode !== companyStateCode) return 'I';
+  if (dealerStateCode) return 'L';
+  return '';
+}
+
 app.get('/api/debit-notes', requireView, (req, res) => {
   const { auction_id, ano, from, to } = req.query;
   let q = 'SELECT * FROM debit_notes WHERE 1=1'; const p = [];
@@ -3586,20 +3622,12 @@ app.post('/api/debit-notes/generate', requireInvoiceWrite, (req, res) => {
     return res.status(400).json({ error: 'Computed DN amount is zero — check Commission % / Handling % in settings' });
   }
 
-  // GST split — intra/inter classification by the DEALER's GSTIN
-  // state code (NOT by purchase.igst, which can be stale or
-  // misclassified). See the equivalent block in /generate-bulk for
-  // detailed rationale.
-  let dealerStateCode = '';
-  {
-    let cr = String(purchase.cr || '').trim().toUpperCase();
-    if (cr.startsWith('GSTIN.')) cr = cr.slice(6);
-    else if (cr.startsWith('GSTIN')) cr = cr.slice(5);
-    if (/^\d{2}/.test(cr)) dealerStateCode = cr.slice(0, 2);
-  }
-  const companyStateCode = String(cfg.tally_state_code
-      || (String(cfg.business_state || '').toUpperCase() === 'KERALA' ? '32' : '33'));
-  const isInter = !!dealerStateCode && dealerStateCode !== companyStateCode;
+  // GST split — driven by the dealer's lot SALE TYPE in this trade.
+  //   'I' / 'E' (Inter-state / Export) → IGST
+  //   'L' or empty (Local)             → CGST + SGST (50/50 split)
+  // Falls back to GSTIN state-code comparison if no lots are tagged.
+  const dealerSaleType = deriveDealerSaleType(db, purchase.auction_id, dealerName, purchase.cr, cfg);
+  const isInter = dealerSaleType === 'I' || dealerSaleType === 'E';
 
   const dnGstRate = Number(cfg.discount_gst) || Number(cfg.gst_service) || 18;
   let cgst = 0, sgst = 0, igst = 0;
@@ -3868,29 +3896,14 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, (req, res) => {
       continue;
     }
 
-    // Intra/inter classification — determined by the DEALER's GSTIN
-    // state code, not by `purchases.igst > 0`. The earlier heuristic
-    // failed for two real cases:
-    //   1. The source purchase was booked as intra-state (igst=0) but
-    //      we're issuing the DN to a registered dealer whose GSTIN
-    //      starts with a different state code → DN must use IGST.
-    //   2. Settings were updated after the purchase was created — the
-    //      stale igst value lingers and misleads classification.
-    //
-    // Resolution: pull the dealer's `cr` (GSTIN field on purchases),
-    // strip any "GSTIN."/"gstin." prefix, take the first two digits as
-    // the state code, compare to the company's state code (intra).
-    // Any non-match → inter-state → IGST applies.
-    let dealerStateCode = '';
-    {
-      let cr = String(p.cr || '').trim().toUpperCase();
-      if (cr.startsWith('GSTIN.')) cr = cr.slice(6);
-      else if (cr.startsWith('GSTIN')) cr = cr.slice(5);
-      if (/^\d{2}/.test(cr)) dealerStateCode = cr.slice(0, 2);
-    }
-    const companyStateCode = String(cfg.tally_state_code
-        || (String(cfg.business_state || '').toUpperCase() === 'KERALA' ? '32' : '33'));
-    const isInter = !!dealerStateCode && dealerStateCode !== companyStateCode;
+    // Intra/inter classification — driven by the dealer's lot SALE TYPE
+    // in this trade.
+    //   'I' / 'E' (Inter-state / Export) → IGST
+    //   'L' or empty (Local)             → CGST + SGST
+    // Falls back to GSTIN state-code comparison if no lots carry a sale
+    // type (legacy data without invoice generation).
+    const dealerSaleType = deriveDealerSaleType(db, p.auction_id, dealerName, p.cr, cfg);
+    const isInter = dealerSaleType === 'I' || dealerSaleType === 'E';
 
     // GST is only emitted when the source purchase carried GST
     // (registered dealer); URD/agri purchases produce exempt DNs.
@@ -4024,14 +4037,10 @@ app.put('/api/debit-notes/:id', requireInvoiceWrite, (req, res) => {
 // the visual style consistent with the sales invoice (same header band,
 // same value-table conventions) without pulling in the full multi-page
 // invoice-pdf machinery.
-app.get('/api/debit-notes/:id/pdf', requireView, (req, res) => {
-  try {
-    const PDFDocument = require('pdfkit');
-    const db = getDb();
-    const cfg = getSettingsFlat(db);
-    const dn = db.get('SELECT * FROM debit_notes WHERE id = ?', [req.params.id]);
-    if (!dn) return res.status(404).json({ error: 'Debit note not found' });
-
+// Render one debit note onto an existing PDFDocument page. Extracted from
+// the single-DN endpoint so the bulk endpoint can render N debit notes
+// into one merged document (page-break per DN).
+function _renderDebitNote(doc, dn, db, cfg) {
     // The DN layout (per the reference PDF) is BUYER-LETTERHEAD style:
     // the BUYER (the party benefiting from the discount, who issues the
     // credit/debit note in their books) prints on top with their address
@@ -4131,11 +4140,6 @@ app.get('/api/debit-notes/:id/pdf', requireView, (req, res) => {
     };
 
     // ── Render ────────────────────────────────────────────────
-    const doc = new PDFDocument({ size: 'A4', margin: 30 });
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="DebitNote_${dn.note_no || dn.id}.pdf"`);
-    doc.pipe(res);
-
     const PAGE_L = 30, PAGE_R = 565, PAGE_W = PAGE_R - PAGE_L; // ≈535pt usable
 
     // Top-right ORIGINAL/DUPLICATE/TRIPLICATE strip
@@ -4338,14 +4342,19 @@ app.get('/api/debit-notes/:id/pdf', requireView, (req, res) => {
     y += TOT_H;
     doc.moveTo(PAGE_L, y).lineTo(PAGE_R, y).stroke();
 
-    // GRAND TOTAL row
+    // GRAND TOTAL row — label area spans cols[5..taxIdx-1], amount sits
+    // in the taxable column. Indexing via taxIdx keeps this correct
+    // whether or not the GST column is shown (cols length differs by 1).
     const GT_H = 18;
+    const labelStartX = xs[5];
+    const valueX      = xs[taxIdx];
+    const valueW      = cols[taxIdx].w;
     doc.moveTo(PAGE_L, y).lineTo(PAGE_L, y + GT_H).stroke();
-    doc.moveTo(xs[5], y).lineTo(xs[5], y + GT_H).stroke();
-    doc.moveTo(xs[7], y).lineTo(xs[7], y + GT_H).stroke();
+    doc.moveTo(labelStartX, y).lineTo(labelStartX, y + GT_H).stroke();
+    doc.moveTo(valueX, y).lineTo(valueX, y + GT_H).stroke();
     doc.moveTo(PAGE_R, y).lineTo(PAGE_R, y + GT_H).stroke();
-    doc.font('Helvetica-Bold').fontSize(10).text('GRAND TOTAL', xs[5] + 3, y + 5, { width: cols[5].w + cols[6].w - 6, align: 'right' });
-    doc.text(fmtAmt(dn.total || totalTaxable), xs[7] + 3, y + 5, { width: cols[7].w - 6, align: 'right' });
+    doc.font('Helvetica-Bold').fontSize(10).text('GRAND TOTAL', labelStartX + 3, y + 5, { width: valueX - labelStartX - 6, align: 'right' });
+    doc.text(fmtAmt(dn.total || totalTaxable), valueX + 3, y + 5, { width: valueW - 6, align: 'right' });
     y += GT_H;
     doc.moveTo(PAGE_L, y).lineTo(PAGE_R, y).stroke();
     y += 14;
@@ -4371,11 +4380,72 @@ app.get('/api/debit-notes/:id/pdf', requireView, (req, res) => {
     // Left + right outer frame from FRAME_TOP to here
     doc.moveTo(PAGE_L, FRAME_TOP).lineTo(PAGE_L, y).stroke();
     doc.moveTo(PAGE_R, FRAME_TOP).lineTo(PAGE_R, y).stroke();
+}
 
+app.get('/api/debit-notes/:id/pdf', requireView, (req, res) => {
+  try {
+    const PDFDocument = require('pdfkit');
+    const db  = getDb();
+    const cfg = getSettingsFlat(db);
+    const dn  = db.get('SELECT * FROM debit_notes WHERE id = ?', [req.params.id]);
+    if (!dn) return res.status(404).json({ error: 'Debit note not found' });
+
+    const doc = new PDFDocument({ size: 'A4', margin: 30 });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="DebitNote_${dn.note_no || dn.id}.pdf"`);
+    doc.pipe(res);
+    _renderDebitNote(doc, dn, db, cfg);
     doc.end();
   } catch (e) {
     console.error('[dn-pdf] failed:', e);
     if (!res.headersSent) res.status(500).json({ error: e.message });
+  }
+});
+
+// Bulk: Body { ids: [...] } → one merged PDF, page-break per debit note.
+// Used by the "Print Selected" button in the Debit Notes tab. Mirrors the
+// payments pdf-bulk endpoint so the UX is consistent (single-click yields
+// one downloadable PDF, no popup-blocker tab spam).
+app.post('/api/debit-notes/pdf-bulk', requireView, (req, res) => {
+  let doc, piped = false;
+  try {
+    const PDFDocument = require('pdfkit');
+    const db  = getDb();
+    const cfg = getSettingsFlat(db);
+    const ids = Array.isArray(req.body.ids)
+      ? req.body.ids.map(n => parseInt(n, 10)).filter(Number.isFinite)
+      : [];
+    if (!ids.length) return res.status(400).json({ error: 'ids[] required' });
+
+    // Fetch all DNs in the order the client sent them so the merged PDF
+    // mirrors the user's selection order.
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = db.all(
+      `SELECT * FROM debit_notes WHERE id IN (${placeholders})`,
+      ids
+    );
+    if (!rows.length) return res.status(404).json({ error: 'No debit notes found' });
+    const byId = new Map(rows.map(r => [r.id, r]));
+    const dns  = ids.map(id => byId.get(id)).filter(Boolean);
+
+    doc = new PDFDocument({ size: 'A4', margin: 30 });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="DebitNotes_Batch_${dns.length}.pdf"`);
+    doc.pipe(res); piped = true;
+    res.on('close', () => { try { doc.destroy(); } catch (_) {} });
+
+    dns.forEach((dn, i) => {
+      if (i > 0) doc.addPage();
+      try { _renderDebitNote(doc, dn, db, cfg); }
+      catch (e) {
+        try { doc.font('Helvetica').fontSize(10).text(`Error rendering DN ${dn.note_no || dn.id}: ${e.message}`); } catch (_) {}
+      }
+    });
+    doc.end();
+  } catch (e) {
+    console.error('[dn-pdf-bulk] failed:', e);
+    if (piped && doc) { try { doc.end(); } catch (_) {} }
+    else if (!res.headersSent) res.status(500).json({ error: e.message || 'PDF failed' });
   }
 });
 
@@ -4544,8 +4614,14 @@ app.get('/api/payments/bank/:auctionId', requireView, (req, res) => {
 // "Print" and "WhatsApp" actions on the Payments tab.
 function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg) {
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [auctionId]) || { ano:'', date:'' };
+  // The lots table stores the per-kg price in `price` (not `rate`). The
+  // query previously selected `rate`, which doesn't exist — sql.js
+  // throws "no such column: rate" and the outer try/catch closes the
+  // already-piped PDF stream early, producing a near-empty file. Aliasing
+  // `price AS rate` keeps the existing rendering code (which reads
+  // `row.rate`) working without further changes.
   const lots = db.all(
-    `SELECT lot_no, qty, rate, amount, puramt, refund, balance, cgst, sgst, igst
+    `SELECT lot_no, qty, price AS rate, amount, puramt, refund, balance, cgst, sgst, igst
        FROM lots WHERE auction_id = ? AND name = ? AND amount > 0
        ORDER BY lot_no`,
     [auctionId, sellerName]

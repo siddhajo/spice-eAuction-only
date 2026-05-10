@@ -792,9 +792,30 @@ function buildDebitNote(db, invoiceNo, saleType, discount, cfg) {
   // Earlier code used gst_goods, producing wrong tax on every DN.
   const gstRate = Number(cfg.discount_gst) || Number(cfg.gst_service) || 18;
 
-  // Intra/inter mirrors the source purchase: if the purchase was inter-
-  // state (igst > 0), the DN inherits IGST; otherwise CGST + SGST.
-  const isInter = (Number(inv.igst) || 0) > 0;
+  // Sale-type-driven GST split.
+  //   Caller can pass an explicit saleType ('L'/'I'/'E') — that wins.
+  //   Otherwise, look up the dealer's lots in this trade: if any are
+  //   tagged 'I'/'E' → inter-state; else local.
+  //   Final fallback: the source purchase's igst (legacy behaviour).
+  let resolvedSale = String(saleType || '').trim().toUpperCase();
+  if (resolvedSale !== 'L' && resolvedSale !== 'I' && resolvedSale !== 'E') {
+    try {
+      const r = db.get(
+        `SELECT UPPER(TRIM(COALESCE(sale,''))) AS s, COUNT(*) AS n
+           FROM lots
+          WHERE auction_id = (SELECT id FROM auctions WHERE ano = ? LIMIT 1)
+            AND name = ? AND amount > 0
+          GROUP BY s
+          ORDER BY n DESC, s
+          LIMIT 1`,
+        [String(inv.ano || ''), inv.name || '']
+      );
+      resolvedSale = (r && r.s) ? String(r.s).toUpperCase() : '';
+    } catch (_) { /* fall through to igst-based check */ }
+  }
+  const isInter = resolvedSale
+    ? (resolvedSale === 'I' || resolvedSale === 'E')
+    : (Number(inv.igst) || 0) > 0;
 
   const amount = Math.round(discount * 100) / 100;
   let cgst = 0, sgst = 0, igst = 0;

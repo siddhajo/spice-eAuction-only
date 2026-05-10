@@ -11925,22 +11925,15 @@ async function printSelectedDebitNotes(){
   if(!body)return;
   const ids=Array.from(body.querySelectorAll('.dn-select-cb:checked')).map(cb=>Number(cb.value)).filter(Boolean);
   if(!ids.length){toast('Tick one or more debit notes first');return}
-  if (ids.length > 20 && !confirm(`Open ${ids.length} debit note PDFs in new tabs?`)) return;
-  for (const id of ids) {
-    try {
-      const r = await fetch(B + `/api/debit-notes/${id}/pdf`, {
-        headers: { 'Authorization': 'Bearer ' + T }
-      });
-      if (!r.ok) continue;
-      const blob = await r.blob();
-      const url = URL.createObjectURL(blob);
-      window.open(url, '_blank');
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
-    } catch (e) {
-      console.error('Print failed for DN', id, e);
-    }
-  }
-  toast(`Opened ${ids.length} debit note PDF${ids.length === 1 ? '' : 's'}`);
+  // One merged PDF (page-break per DN). The previous per-id loop opened
+  // N tabs via window.open() — browsers' popup blockers killed all but
+  // the first, so the user only ever saw one DN.
+  await fetchPdfWithOverlay(
+    `Building merged debit-note PDF for ${ids.length} note${ids.length===1?'':'s'}…`,
+    '/api/debit-notes/pdf-bulk',
+    `DebitNotes_Batch_${ids.length}.pdf`,
+    { ids }
+  );
 }
 
 // Delete Selected — confirms count, then DELETE each in parallel.
