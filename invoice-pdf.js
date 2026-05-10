@@ -5,6 +5,11 @@
 
 const PDFDocument = require('pdfkit');
 const { amountToWords } = require('./amount-words');
+// Defensive resolution — uses the real getCompanyIdentity from
+// report-formatters.js when available, falls through to a shared inline
+// fallback otherwise. Fixes "getCompanyIdentity is not a function" when
+// a partial deploy ships an older report-formatters.js without the export.
+const getCompanyIdentity = require('./_company-identity-fallback').resolve();
 
 // Shared flag-reader: cfg flags can be `true|false` (booleans), `'true'|'false'`
 // (strings, from JSON storage), or `undefined`/empty (treat as defaultOn).
@@ -50,19 +55,32 @@ function formatINR(n, decimals = 2) {
   return sign + formatted + (dec ? '.' + dec : '');
 }
 
-// ── Effective company details (ISP only) ────────────────────────
-// Sister/ASP company support has been removed. The company identity is
-// always ISP from company_settings; address picks TN for state=TAMIL NADU
-// or KERALA, else falls back to TN.
+// ── Effective company details based on business_state ────────────
+// e-Auction-only build: there is a single company identity (ISP). The
+// state toggle (TAMIL NADU / KERALA) just picks which address block
+// (and GSTIN/phone/email) to print — company name, PAN, CIN, etc. are
+// always the same.
 function effectiveCompany(cfg) {
   const state = (cfg.business_state || '').toUpperCase();
   const isStateKL = (state === 'KERALA');
+  // Partnership toggle: when enabled, the CIN line on the letterhead
+  // is replaced by "Partnership: <partnership_name>". Resolved here so
+  // every header-renderer that pulls from `co` gets the right pair
+  // without each having to re-check the flag.
+  const isPartnership = String(cfg.is_partnership || '').toLowerCase() === 'true';
+  const idLabel = isPartnership ? 'Partnership' : 'CIN';
+  const idValue = isPartnership
+    ? (cfg.partnership_name || '')
+    : (cfg.cin || '');
   return {
-    logo:    cfg.logo        || 'ISP',
+    logo:    cfg.logo        || '',
     name:    cfg.short_name  || cfg.trade_name || '',
     short:   cfg.short_name  || cfg.trade_name || '',
     pan:     cfg.pan         || '',
     cin:     cfg.cin         || '',
+    isPartnership,
+    idLabel,
+    idValue,
     fssai:   cfg.fssai       || '',
     sbl:     cfg.sbl         || '',
     address1: isStateKL ? (cfg.kl_address1 || cfg.tn_address1 || '') : (cfg.tn_address1 || ''),
@@ -157,12 +175,12 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
     ['TRANSPORT', invoiceData.transport || 'BY ROAD'],
     ['VEHICLE NO', invoiceData.vehicleNo || ''],
     ['STATION', invoiceData.station || (seller.place || '').toUpperCase()],
-    ['e-TRADE No', invoiceData.eTradeNo || ''],
+    ['e-AUCTION No', invoiceData.eTradeNo || ''],
   ];
   const rightPairs = [
     ['INVOICE NO', ''], // value blank per reference
     ['DATE', invoiceData.invoiceDate || new Date().toLocaleDateString('en-GB')],
-    ['PLACE OF SUPPLY', (cfg.tn_place || cfg.kl_place || '').toUpperCase()],
+    ['PLACE OF SUPPLY', (cfg.s_place || '').toUpperCase() + (cfg.s_state ? '  [' + (cfg.s_state || '').toUpperCase() + ']' : '')],
     ['REVERSE CHARGE', ''],
   ];
   for (let i = 0; i < gridRows; i++) {
@@ -196,15 +214,20 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
 
   // Body
   const buyerLines = [];
+  // Defensive fallback when invoiceData.buyer wasn't supplied — uses the
+  // configured company identity rather than a hardcoded sister-company
+  // name. In practice the buyer is always passed in; this branch only
+  // fires for malformed callers.
+  const _ident = getCompanyIdentity(cfg);
   const buyer = invoiceData.buyer || {
-    name: cfg.short_name || cfg.trade_name || 'IDEAL SPICES PRIVATE LIMITED',
-    address: cfg.tn_address1 || '',
-    place: cfg.tn_place || '',
-    pin: cfg.tn_pin || '',
-    state: cfg.tn_state || '',
-    st_code: cfg.tn_st_code || '33',
-    gstin: cfg.tn_gstin || '',
-    pan: cfg.pan || '',
+    name: _ident.name,
+    address: _ident.address1,
+    place: '',
+    pin: '',
+    state: _ident.state,
+    st_code: _ident.stateCode,
+    gstin: _ident.gstin,
+    pan: _ident.pan,
   };
   buyerLines.push((buyer.name || '').toUpperCase());
   const buyerAddr = [buyer.address, buyer.place ? 'DOOR No.650, ' + buyer.place : ''].filter(Boolean).join(', ').toUpperCase();
@@ -416,6 +439,9 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
     ['Total State Tax', totalSgst],
     ['Round UP/DOWN', s.roundDiff || 0],
   ];
+  if (s.addlCharge && s.addlCharge !== 0) {
+    sumRowsData.push([(s.addlChargeName || cfg.addl_charge_name || 'Additional Charge').toString(), s.addlCharge]);
+  }
   // Capture the y-start so we can later draw a vertical separator
   // between the label column and the value column (spans from the first
   // row down through the Total Value row).
@@ -496,14 +522,19 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
 
 
 /**
- * Generate a crop receipt PDF (CROASP.PRG equivalent)
+ * Generate a crop receipt PDF (CROASP.PRG equivalent).
+ *
+ * Logo + company identity (name, address block, GSTIN, PAN, CIN/Partnership,
+ * FSSAI, SBL, phone, email) all come from `cfg` via effectiveCompany() — no
+ * hardcoded values. Logo file is the same one the sales invoice picks up
+ * (public/logo-ispl.png; falls back to logo-asp.png if only that exists).
  */
 function generateCropReceiptPDF(lot, cfg) {
   const co = effectiveCompany(cfg);
   const doc = new PDFDocument({ size: [595, 420], margin: 25 }); // half-page
   const buffers = [];
   doc.on('data', b => buffers.push(b));
-  
+
   const w = 545; const x = 25; let y = 25;
 
   doc.rect(x, y, w, 370).stroke();
@@ -511,15 +542,47 @@ function generateCropReceiptPDF(lot, cfg) {
   doc.fontSize(16).font('Helvetica-Bold').text('RECEIPT', x, y, { align: 'center', width: w });
   y += 20;
   doc.fontSize(8).font('Helvetica').text(`Sl.No: ${lot.crop || ''}`, x + w - 100, y - 10, { width: 90, align: 'right' });
-  
-  const companyName = co.name;
-  doc.fontSize(11).font('Helvetica-Bold').text(companyName, x, y, { align: 'center', width: w });
+
+  // ── Logo (settings-driven; same file the sales invoice uses) ──
+  const fsMod = require('fs');
+  const pathMod = require('path');
+  const candidates = ['logo-ispl.png', 'logo-asp.png'];
+  let logoDrawn = false;
+  for (const f of candidates) {
+    const p = pathMod.join(__dirname, 'public', f);
+    if (fsMod.existsSync(p)) {
+      try { doc.image(p, x + 6, y - 2, { fit: [44, 44] }); logoDrawn = true; break; }
+      catch (_) { /* fall through */ }
+    }
+  }
+
+  // ── Company block (centered, all fields from settings) ──
+  const headerX = x + (logoDrawn ? 54 : 0);
+  const headerW = w - (logoDrawn ? 54 : 0);
+  doc.fontSize(11).font('Helvetica-Bold').text((co.name || '').toUpperCase(), headerX, y, { align: 'center', width: headerW });
   y += 14;
   doc.fontSize(7).font('Helvetica');
-  doc.text(co.address1, x, y, { align: 'center', width: w }); y += 10;
-  doc.text(`GST No. ${co.gstin}`, x, y, { align: 'center', width: w }); y += 16;
+  const addrLine = [co.address1, co.address2, co.place, co.stateName, co.pin].filter(Boolean).join(', ');
+  if (addrLine) { doc.text(addrLine, headerX, y, { align: 'center', width: headerW }); y += 10; }
+  const contactLine = [co.phone && `Ph: ${co.phone}`, co.email && `Email: ${co.email}`].filter(Boolean).join('  |  ');
+  if (contactLine) { doc.text(contactLine, headerX, y, { align: 'center', width: headerW }); y += 10; }
+  const idBits = [
+    co.gstin && `GSTIN: ${co.gstin}`,
+    co.pan   && `PAN: ${co.pan}`,
+    co.idValue && `${co.idLabel}: ${co.idValue}`,
+    co.fssai && `FSSAI: ${co.fssai}`,
+    co.sbl   && `SBL: ${co.sbl}`,
+  ].filter(Boolean).join('  |  ');
+  if (idBits) { doc.text(idBits, headerX, y, { align: 'center', width: headerW }); y += 10; }
+  y += 6;
+  // Horizontal rule separating header from the details grid.
+  doc.lineWidth(0.5).moveTo(x + 10, y).lineTo(x + w - 10, y).stroke();
+  y += 6;
 
-  // Details grid
+  // Details grid — drawn as a 3×2 ruled table so each cell has its own
+  // box. Vertical lines between columns + a horizontal line between rows
+  // make the slip readable from a distance and match the look of the
+  // sales/purchase invoices.
   const details = [
     ['Trade No', lot.ano || ''],
     ['Lot No', lot.lot_no || ''],
@@ -528,30 +591,60 @@ function generateCropReceiptPDF(lot, cfg) {
     ['Nett Weight', String(lot.qty || '')],
     ['Depot', lot.branch || ''],
   ];
-
+  const gridX = x + 10;
+  const gridW = w - 20;
+  const gridCols = 3;
+  const gridRows = Math.ceil(details.length / gridCols);
+  const cellW = gridW / gridCols;
+  const cellH = 20;
+  const gridTop = y;
+  const gridBot = gridTop + gridRows * cellH;
   doc.fontSize(8);
-  let col = 0;
-  for (const [label, val] of details) {
-    const cx = x + 10 + (col % 3) * 180;
-    const cy = y + Math.floor(col / 3) * 16;
-    doc.font('Helvetica').text(`${label}: `, cx, cy, { continued: true });
-    doc.font('Helvetica-Bold').text(val);
-    col++;
+  for (let i = 0; i < details.length; i++) {
+    const c = i % gridCols, r = Math.floor(i / gridCols);
+    const cx = gridX + c * cellW + 4;
+    const cy = gridTop + r * cellH + 4;
+    doc.font('Helvetica').fillColor('#555').fontSize(7).text(details[i][0], cx, cy, { width: cellW - 8 });
+    doc.font('Helvetica-Bold').fillColor('#000').fontSize(9).text(details[i][1], cx, cy + 8, { width: cellW - 8 });
   }
-  y += 40;
+  // Outer + inner grid lines.
+  doc.fontSize(8).fillColor('#000').lineWidth(0.5);
+  doc.rect(gridX, gridTop, gridW, gridBot - gridTop).stroke();
+  for (let r = 1; r < gridRows; r++) {
+    const ly = gridTop + r * cellH;
+    doc.moveTo(gridX, ly).lineTo(gridX + gridW, ly).stroke();
+  }
+  for (let c = 1; c < gridCols; c++) {
+    const lx = gridX + c * cellW;
+    doc.moveTo(lx, gridTop).lineTo(lx, gridBot).stroke();
+  }
+  y = gridBot + 8;
 
-  // Declaration text
+  // Declaration text — light horizontal rules above + below for emphasis.
+  doc.lineWidth(0.5).moveTo(x + 10, y).lineTo(x + w - 10, y).stroke();
+  y += 6;
   doc.font('Helvetica').fontSize(7);
   doc.text(`We acknowledge the receipt of Cardamom as per the description above, from`, x + 10, y, { width: w - 20 });
   y += 11;
   doc.text(`M/s. ${lot.name || ''}`, x + 10, y, { width: w - 20 }); y += 11;
-  doc.text(`GSTIN/CR No. ${lot.cr || ''}`, x + 10, y, { width: w - 20 }); y += 18;
+  doc.text(`GSTIN/CR No. ${lot.cr || ''}`, x + 10, y, { width: w - 20 }); y += 14;
+  doc.lineWidth(0.5).moveTo(x + 10, y).lineTo(x + w - 10, y).stroke();
+  y += 18;
 
-  // Signatures
-  y += 30;
-  doc.text('Pooler Signature', x + 10, y);
-  doc.text('[ Contact Number ]', x + w/2 - 50, y, { width: 100, align: 'center' });
-  doc.text('Depot in Charge', x + w - 120, y);
+  // Signatures — small underline below each label so the slip has a
+  // signing line rather than free-floating text.
+  y += 24;
+  const sigY = y + 12;
+  const sigW = 130;
+  const slots = [
+    { label: 'Pooler Signature',   cx: x + 10 },
+    { label: '[ Contact Number ]', cx: x + w/2 - sigW/2 },
+    { label: 'Depot in Charge',    cx: x + w - 10 - sigW },
+  ];
+  for (const s of slots) {
+    doc.lineWidth(0.5).moveTo(s.cx, sigY).lineTo(s.cx + sigW, sigY).stroke();
+    doc.text(s.label, s.cx, sigY + 3, { width: sigW, align: 'center' });
+  }
 
   return new Promise((resolve) => {
     doc.on('end', () => resolve(Buffer.concat(buffers)));
@@ -590,8 +683,14 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   // All line-item math stays identical (same P_Rate, PurAmt, totals, HSN).
   // Only valid for ASP invoices; caller must ensure that.
   const isPurchaseView = (variant === 'purchase');
-  // ASP/sister context has been removed; effective company is always ISP.
-  const co = effectiveCompany(cfg);
+  // For the purchase view, we FLIP the top-of-page issuer to ISPL by pretending
+  // the effective company is the primary (not sister). Easiest way: compute
+  // effectiveCompany with a forced-TN cfg clone. The rest of the function still
+  // uses the original cfg so ASP business rules (P_Rate formula, etc.) stay in
+  // effect — only the display swaps.
+  const co = isPurchaseView
+    ? effectiveCompany({ ...cfg, business_state: 'TAMIL NADU' })
+    : effectiveCompany(cfg);
   let doc, buffers;
   if (isBatch) {
     doc = externalDoc;
@@ -608,23 +707,36 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
 
   const { buyer, lineItems, summary } = invoiceData;
 
-  // Sister/ASP company support has been removed; this invoice is always
-  // issued by the primary company (ISP).
-  const isASP = false;
-  // ISP inter-state invoices should not bill Transport/Insurance separately
-  // (item 5: those costs are absorbed in the buyer's freight, not invoiced).
-  const hideTransportInsurance = (String(saleType || '').toUpperCase() === 'I');
+  // ── Invoice provenance flags ────────────────────────────────
+  // isASP = this invoice is issued by ASP (sister company) instead of ISPL.
+  // Triggered when business mode = e-Auction AND state = KERALA.
+  // Drives: invoice-prefix swap, Transport/Insurance hidden, bank details
+  //         picked from KL bank settings, "Dispatch From" hidden (ASP
+  //         invoices don't reference a separate dispatch), logo swap.
+  const isASP = false; // e-Auction-only build: no ASP context
+  // Hide Transport/Insurance rows in the PDF for Export sales only.
+  // Sale-type rules (matched in calculations.js):
+  //   L → bill from local_transport / local_insurance config keys
+  //   I → bill from transport / insurance config keys
+  //   E → buyer covers freight; values are zero, so we hide the rows
+  // (ASP-context hide kept inert via the false isASP above.)
+  const hideTransportInsurance = isASP || (String(saleType || '').toUpperCase() === 'E');
   // Read a boolean-ish flag cfg value, respecting undefined→default semantics.
+  // Used for user-facing toggle flags like flag_ship, flag_dispatch.
   function readFlagSafe(val, defaultOn) {
     if (val === undefined || val === null || val === '') return defaultOn;
     if (typeof val === 'boolean') return val;
     return String(val).toLowerCase() === 'true';
   }
-  // Ship-To visibility: ISP invoices always show ship-to + dispatch
-  // addresses per business rule. Flags are kept for back-compat but
-  // overridden here.
-  const showShipTo   = true;
-  const showDispatch = true;
+  // Ship-To visibility:
+  //   ASP invoices → ALWAYS hidden (Consignee block doesn't apply to the
+  //     ASP→ISP internal transfer, per user spec)
+  //   ISP invoices → ALWAYS shown (per business rule: TN invoices need
+  //     buyer ship-to and dispatch addresses on the PDF). The cfg flags
+  //     flag_ship / flag_dispatch are kept for backward compat but
+  //     overridden in the TN/ISP path.
+  const showShipTo   = isASP ? false : true;
+  const showDispatch = isASP ? readFlagSafe(cfg.flag_dispatch, true) : true;
 
   // ── Page geometry ───────────────────────────────────────────
   const pageW = doc.page.width;
@@ -729,8 +841,11 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
 
   // ── LEFT BLOCK: Logo + company details ──────────────────────
   box(leftX, topY, leftW, topHeaderH);
-  // Sister/ASP logo branch removed; always show the primary (ISPL) logo.
-  const logoFile = 'logo-ispl.png';
+  // Logo file pick. For ASP sales invoice → ASP logo. For ASP purchase view
+  // (issuer is ISPL, not ASP) → ISPL logo.
+  const useASPLogo = !isPurchaseView
+                  && false; // e-Auction-only build: no ASP context
+  const logoFile = useASPLogo ? 'logo-asp.png' : 'logo-ispl.png';
   const logoPath = require('path').join(__dirname, 'public', logoFile);
   const fs = require('fs');
   let logoDrawn = false;
@@ -751,7 +866,7 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   ty += doc.heightOfString(addrLine, { width: textW });
   if (co.gstin) { doc.text(`GSTIN/UIN: ${co.gstin}`, textX, ty, { width: textW }); ty += 10; }
   if (co.stateName) { doc.text(`State Name : ${co.stateName}, Code : ${co.stateCode}`, textX, ty, { width: textW }); ty += 10; }
-  if (co.cin) { doc.text(`CIN: ${co.cin}`, textX, ty, { width: textW }); ty += 10; }
+  if (co.idValue) { doc.text(`${co.idLabel}: ${co.idValue}`, textX, ty, { width: textW }); ty += 10; }
   if (co.fssai) { doc.text(`FSSAI No.: ${co.fssai}`, textX, ty, { width: textW }); ty += 10; }
   if (co.sbl)   { doc.text(`SBL No.: ${co.sbl}`,     textX, ty, { width: textW }); ty += 10; }
 
@@ -762,11 +877,24 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   const r1W = rightW / 3;
   let ry = topY;
 
-  // Row 1
-  // Invoice No always uses the primary inv_prefix (sister was removed).
-  const primaryCfg    = { ...cfg, inv_prefix: cfg.inv_prefix || 'ISP' };
-  const displaySaleType = saleType;
-  const row1H = rRow;
+  // Invoice prefix derives from the live Logo Code (cfg.logo) so the
+  // Invoice prefix priority — Invoice Settings (`inv_prefix`) wins, since
+  // that's the field labeled "Invoice Prefix" in the Invoice settings tab
+  // and is the value the user explicitly maintains for this purpose.
+  // Falls back to Logo Code (`logo`) only when `inv_prefix` is unset, then
+  // to the user's short_name / trade_name first word. NO hardcoded 'ISP'
+  // literal — a fresh install with no Invoice Prefix configured renders
+  // a prefix-less identifier rather than leaking the legacy ISP code.
+  const _idShort = (cfg.short_name || String(cfg.trade_name || '').split(/\s+/)[0] || '').toUpperCase();
+  const primaryPrefix = String(cfg.inv_prefix || cfg.logo || _idShort || '').trim();
+  const otherPrefix   = primaryPrefix; // dead — kept for the few downstream sites that still read it
+  const primaryCfg    = { ...cfg, inv_prefix: primaryPrefix };
+  // ASP invoices always use the "I" segment irrespective of local/interstate
+  // sale type (format: ASP/I-{invno}/{season_short}).
+  const displaySaleType = isASP ? 'I' : saleType;
+  // Row-1 height: expand to fill both rows' worth of space for ASP (since
+  // Row 2 — Reference No. + Other References — is hidden for ASP).
+  const row1H = isASP ? (rRow * 2) : rRow;
   labeledCell(rightX,             ry, r1W, row1H, 'Invoice No.', formatInvoiceNo(primaryCfg, displaySaleType, invoiceNo));
   labeledCell(rightX + r1W,       ry, r1W, row1H, 'e-Way Bill No.', '');
   labeledCell(rightX + r1W * 2,   ry, rightW - r1W * 2, row1H, 'Dated', (() => {
@@ -778,10 +906,16 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   })());
   ry += row1H;
 
-  // Row 2 — Reference No. / Other References (sister cross-reference removed,
-  // so Other References is always blank now).
-  {
-    labeledCell(rightX,         ry, rCell, rRow, 'Reference No. & Date.', '');
+  // Row 2 — ONLY for ISP invoices (ASP omits Reference No. / Other References)
+  if (!isASP) {
+    // Reference No. & Date — populated with the formatted invoice number
+    // so the field carries the document's own self-reference. Older
+    // builds left this blank; per the new spec the buyer's accounts team
+    // expects this to mirror Invoice No. as the canonical reference key.
+    // Other References stays blank — historically the cross-ASP number,
+    // but the single-company e-Auction build has no cross-reference.
+    const refNoText = formatInvoiceNo(primaryCfg, displaySaleType, invoiceNo);
+    labeledCell(rightX,         ry, rCell, rRow, 'Reference No. & Date.', refNoText);
     labeledCell(rightX + rCell, ry, rCell, rRow, 'Other References', '');
   }
 
@@ -849,21 +983,52 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   // Draw Buyer (Bill to) / Seller (Bill from) cell
   box(leftX, buyerY, leftW, leftCellH);
   let by = buyerY + 3;
-  // Label is always "Buyer (Bill to)" — purchase-view variant no longer
-  // applies (sister company removed).
-  const blockLabel = 'Buyer (Bill to)';
+  // Label flips for purchase view: "Seller (Bill from)" since ISPL is the buyer
+  // here, and ASP is the seller we're buying from.
+  const blockLabel = isPurchaseView ? 'Seller (Bill from)' : 'Buyer (Bill to)';
   doc.font('Helvetica').fontSize(7).text(blockLabel, leftX + 3, by); by += 9;
 
-  // billTo is always the external customer.
-  const billTo = {
-    name:  buyer.buyer1 || buyer.buyer || '',
-    add1:  buyer.add1 || '',
-    add2:  buyer.add2 || '',
-    pla:   buyer.pla || '',
-    gstin: buyer.gstin || '',
-    state: buyer.state || '',
-    stCode: buyer.st_code || '',
-  };
+  // Entity displayed in this block. In single-company e-Auction the
+  // isPurchaseView / isASP branches are dead code (no sister company),
+  // so both fall through to the configured company identity. We keep
+  // the structure so a future multi-company restoration is easier.
+  //
+  // Priority is identity-first, legacy s_*/tn_* fields fallback. This
+  // ensures stale ASP/ISP values left over from migrations don't leak
+  // into BILLED TO / SHIPPED TO blocks on PDFs.
+  const _identBT = getCompanyIdentity(cfg);
+  let billTo;
+  if (isPurchaseView) {
+    billTo = {
+      name:   _identBT.name      || cfg.s_company   || '',
+      add1:   _identBT.address1  || cfg.s_address1  || '',
+      add2:   _identBT.address2  || cfg.s_address2  || '',
+      pla:    cfg.s_place || '',
+      gstin:  _identBT.gstin     || cfg.s_gstin     || '',
+      state:  _identBT.state     || cfg.s_state     || 'KERALA',
+      stCode: _identBT.stateCode || cfg.s_st_code   || '32',
+    };
+  } else if (isASP) {
+    billTo = {
+      name:   _identBT.name      || cfg.short_name  || cfg.trade_name || '',
+      add1:   _identBT.address1  || cfg.tn_address1 || '',
+      add2:   _identBT.address2  || cfg.tn_address2 || '',
+      pla:    cfg.tn_place || '',
+      gstin:  _identBT.gstin     || cfg.tn_gstin    || '',
+      state:  _identBT.state     || cfg.tn_state    || 'TAMIL NADU',
+      stCode: _identBT.stateCode || cfg.tn_st_code  || '33',
+    };
+  } else {
+    billTo = {
+      name:  buyer.buyer1 || buyer.buyer || '',
+      add1:  buyer.add1 || '',
+      add2:  buyer.add2 || '',
+      pla:   buyer.pla || '',
+      gstin: buyer.gstin || '',
+      state: buyer.state || '',
+      stCode: buyer.st_code || '',
+    };
+  }
 
   doc.font('Helvetica-Bold').fontSize(9).text(billTo.name, leftX + 3, by, { width: leftW - 6 });
   // Advance by ACTUAL rendered height — long company names wrap to 2+ lines.
@@ -882,43 +1047,37 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   let ry2 = midY;
 
   // Dispatched through: prefer a per-call override (passed in invoiceData
-  // from the print modal) over the stored default.
+  // from the print modal) over the stored default. Falls back to ISP/ASP
+  // variants in cfg, then the global default.
   const dispThrough = (invoiceData && invoiceData.dispatchedThrough)
-    || cfg.dispatched_through || '';
+    || (isASP
+      ? (cfg.dispatched_through_asp || cfg.dispatched_through || '')
+      : (cfg.dispatched_through_isp || cfg.dispatched_through || ''));
   labeledCell(rightX,         ry2, rCell, rSmall, 'Dispatched through', dispThrough);
-  // Destination uses the buyer's CONSIGNEE place (cpla) since deliveries
-  // go TO the consignee/ship-to address. Falls back to buyer's main place,
-  // then to configured dispatch_destination as a last resort.
-  const destination = (buyer.cpla || buyer.pla || cfg.dispatch_destination || '');
+  // Destination for ISP invoices uses the buyer's CONSIGNEE place (cpla)
+  // since ISP delivers TO the consignee/ship-to address. Falls back to
+  // buyer's main place (pla) if no separate consignee is set, then to
+  // configured dispatch_destination as a last resort.
+  // ASP invoices use the configured dispatch_destination directly because
+  // ASP→ISPL is internal and the destination is always ISPL's location.
+  const destination = isASP
+    ? (cfg.dispatch_destination || '')
+    : (buyer.cpla || buyer.pla || cfg.dispatch_destination || '');
   labeledCell(rightX + rCell, ry2, rCell, rSmall, 'Destination', destination);
   ry2 += rSmall;
 
-  // Dispatch From block — fills remaining middle height. Sister/ASP company
-  // was the dispatch origin; that concept has been removed, so we now show
-  // the active company's address (Kerala office for cardamom shipments,
-  // falling back to the TN office).
+  // Dispatch From block — kept BLANK per spec. The cell still renders
+  // so the right-column frame visually matches the left column's height,
+  // but no company/address text is populated. (Previously this read
+  // sister-company fields like cfg.s_company / cfg.s_address1, which
+  // are absent in single-company e-Auction installs and produced stale
+  // or default-filled placeholders.)
   const dispatchFromH = midH - rSmall;
+  box(rightX, ry2, rightW, dispatchFromH);
   if (showDispatch) {
-    box(rightX, ry2, rightW, dispatchFromH);
-    const dispatchY = ry2;
-    doc.font('Helvetica-Bold').fontSize(8).text('Dispatch From:', rightX + 3, dispatchY + 4, { width: rightW - 6 });
-    doc.font('Helvetica-Bold').fontSize(9).text(co.short || co.name || '', rightX + 3, dispatchY + 14, { width: rightW - 6 });
-    doc.font('Helvetica').fontSize(8);
-    let dy = dispatchY + 26;
-    const dispW = rightW - 6;
-    const writeLine = (txt) => {
-      if (!txt) return;
-      doc.text(txt, rightX + 3, dy, { width: dispW });
-      dy += doc.heightOfString(txt, { width: dispW }) + 1;
-    };
-    // Prefer the Kerala address (cardamom belt) for dispatch since the
-    // physical lots ship from there even when the invoice is TN-stamped.
-    writeLine(cfg.kl_address1 || co.address1);
-    writeLine(cfg.kl_address2 || co.address2);
-    if (cfg.kl_gstin) writeLine(`GSTIN.${cfg.kl_gstin}`);
-    else if (co.gstin) writeLine(`GSTIN.${co.gstin}`);
-  } else {
-    box(rightX, ry2, rightW, dispatchFromH);
+    // Render only the "Dispatch From:" label so the cell is identifiable;
+    // body intentionally left empty.
+    doc.font('Helvetica-Bold').fontSize(8).text('Dispatch From:', rightX + 3, ry2 + 4, { width: rightW - 6 });
   }
 
   y = midY + midH;
@@ -1046,9 +1205,10 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
     if (showHsn) doc.text(hsnCardamom, colX('hsn') + 2, y + 3, { width: colW.hsn - 4, align: 'center' });
     doc.text(`${li.qty.toFixed(3)} Kgs.`, colX('shipped') + 2, y + 3, { width: colW.shipped - 4, align: 'right' , lineBreak: false});
     doc.font('Helvetica-Bold').text(`${li.qty.toFixed(3)} Kgs.`, colX('billed') + 2, y + 3, { width: colW.billed - 4, align: 'right' , lineBreak: false});
-    // External customer price — sister/ASP transfer pricing removed.
-    const lineRate = li.price;
-    const lineAmount = li.amount;
+    // ASP invoices: bill at P_Rate and show PurAmt (ASP→ISP internal transfer price)
+    // ISP invoices: bill at Price and show Amount (external customer price)
+    const lineRate = isASP ? (li.prate != null ? li.prate : li.price) : li.price;
+    const lineAmount = isASP ? (li.puramt != null ? li.puramt : li.amount) : li.amount;
     doc.font('Helvetica-Bold').text(formatINR(lineRate), colX('rate') + 2, y + 3, { width: colW.rate - 4, align: 'right' });
     doc.font('Helvetica').text('Kgs.', colX('per') + 2, y + 3, { width: colW.per - 4, align: 'center' });
     doc.font('Helvetica-Bold').text(formatINR(lineAmount), colX('amount') + 2, y + 3, { width: colW.amount - 4, align: 'right' });
@@ -1067,11 +1227,14 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   const transportH_pre = (summary.transportCost > 0 && !hideTransportInsurance) ? rowH : 0;
   const insuranceH_pre = (summary.insuranceCost > 0 && !hideTransportInsurance) ? rowH : 0;
   const gstRowCount_pre = summary.isInterState ? 1 : 2;
+  const addlH_pre      = (summary.addlCharge && summary.addlCharge !== 0) ? rowH : 0;
   // Required height for the summary + bottom blocks (matches the existing
-  // ensureRoomFor estimate below)
+  // ensureRoomFor estimate below). Must include the optional Additional
+  // Charge row, otherwise the padder overshoots by one row and the summary
+  // block overflows onto a new page.
   const requiredBottomH =
       gunnyH_pre + transportH_pre + insuranceH_pre
-    + rowH + (rowH * gstRowCount_pre) + rowH + (rowH + 2)
+    + rowH + (rowH * gstRowCount_pre) + rowH + addlH_pre + (rowH + 2)
     + 24 + 90 + 16 + 90 + 10;
   // Only pad if we're still on the first page and have room for it.
   // pageBottom is the y at which content should stop on this page.
@@ -1106,8 +1269,9 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   const transportH = (summary.transportCost > 0 && !hideTransportInsurance) ? rowH : 0;
   const insuranceH = (summary.insuranceCost > 0 && !hideTransportInsurance) ? rowH : 0;
   const gstRowCount = summary.isInterState ? 1 : 2;
+  const addlH = (summary.addlCharge && summary.addlCharge !== 0) ? rowH : 0;
   const summaryBlockH = gunnyH + transportH + insuranceH
-                      + rowH + (rowH * gstRowCount) + rowH + (rowH + 2)
+                      + rowH + (rowH * gstRowCount) + rowH + addlH + (rowH + 2)
                       + 24 + 90 + 16 + 90 + 10; // +10 buffer
   ensureRoomFor(summaryBlockH);
 
@@ -1144,8 +1308,8 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   const transportRate = isLocalSale
     ? pickRate(cfg.local_transport, cfg.transport, 2.5)
     : pickRate(cfg.transport, 2.5);
-  // Inter-state ('I') sales don't bill Transport/Insurance separately (the
-  // buyer covers freight). hideTransportInsurance is set above accordingly.
+  // ASP invoices never bill Transport/Insurance separately (item 5).
+  // Wrap both rows + their HSN summary entries in an isASP guard.
   const sacTransport = cfg.sac_transport || '996791';
   if (summary.transportCost > 0 && !hideTransportInsurance) {
     stripeFill(y, rowH, sl - 1);
@@ -1191,6 +1355,11 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   doc.lineWidth(0.5).moveTo(colX('amount'), y).lineTo(colX('amount') + colW.amount, y).stroke();
 
   // Subtotal row = taxable value (cardamom + gunny + transport + insurance)
+  // Capture the y at which the summary band starts so we can drop a single
+  // vertical separator down its full height between the description column
+  // and the amount column. Same trick used for the right-side totals
+  // block in the purchase invoice.
+  const summaryBandTopY = y;
   const subtotal = summary.taxableValue;
   rowVerticals(y, rowH);
   doc.font('Helvetica-Bold').text(formatINR(subtotal), colX('amount') + 2, y + 3, { width: colW.amount - 4, align: 'right' });
@@ -1224,6 +1393,25 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   doc.font('Helvetica-Bold').text(formatINR(summary.roundDiff), colX('amount') + 2, y + 3, { width: colW.amount - 4, align: 'right' });
   doc.font('Helvetica');
   y += rowH;
+
+  // Additional Charge row — name + value from Settings → Rates & Charges.
+  // Computed = sum(cardamom) × cfg.addl_charge_value. Hidden when zero so
+  // existing invoices (no charge configured) render unchanged.
+  if (summary.addlCharge && summary.addlCharge !== 0) {
+    rowVerticals(y, rowH);
+    const addlLabel = (summary.addlChargeName || cfg.addl_charge_name || 'Additional Charge').toString();
+    doc.font('Helvetica-BoldOblique').text(addlLabel, colX('desc') + 4, y + 3, { width: colW.desc + colW.hsn - 8 });
+    doc.font('Helvetica-Bold').text(formatINR(summary.addlCharge), colX('amount') + 2, y + 3, { width: colW.amount - 4, align: 'right' });
+    doc.font('Helvetica');
+    y += rowH;
+  }
+
+  // Vertical rule down the description-column edge of the summary band —
+  // gives every footer row (subtotal, GST, round-off, addl charge) a
+  // clean break between the label and the amount. Drawn from the start
+  // of the band down to here.
+  const _amountColX = colX('amount');
+  doc.lineWidth(0.5).moveTo(_amountColX, summaryBandTopY).lineTo(_amountColX, y).stroke();
 
   // Total row (bold) — shipped|billed divider skipped so total qty spans both
   // Draw a horizontal line above Total to visually separate it from the summary rows.
@@ -1454,11 +1642,21 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   const showBank = readFlag(cfg.flag_bank, true);
   if (showBank) {
     doc.font('Helvetica').fontSize(8).text("Company's Bank Details", bkX, bky); bky += 11;
-    // Use TN bank by default; KL bank when business_state is KERALA.
-    const useKLBank = String(cfg.business_state || '').toUpperCase() === 'KERALA';
-    const bankName = useKLBank ? (cfg.bank_kl_name || '') : (cfg.bank_tn_name || '');
-    const bankAcct = useKLBank ? (cfg.bank_kl_acct || '') : (cfg.bank_tn_acct || '');
-    const bankIfsc = useKLBank ? (cfg.bank_kl_ifsc || '') : (cfg.bank_tn_ifsc || '');
+    // Bank pick: driven by business_state (KERALA → KL bank, otherwise TN bank).
+    // The previous logic gated on `isASP`, which is permanently false in
+    // single-company e-Auction — so EVERY invoice fell back to TN bank
+    // regardless of which state the user was actually billing from. When
+    // the user's state was Kerala, the TN bank fields were often blank
+    // (KL-state install never populated them), producing the empty bank
+    // block reported in the bug.
+    const bizState = String(cfg.business_state || '').toUpperCase().trim();
+    const useKLBank = bizState === 'KERALA' || bizState === 'KL' || isASP;
+    const bankName = useKLBank ? (cfg.bank_kl_name || cfg.bank_tn_name || '')
+                                : (cfg.bank_tn_name || cfg.bank_kl_name || '');
+    const bankAcct = useKLBank ? (cfg.bank_kl_acct || cfg.bank_tn_acct || '')
+                                : (cfg.bank_tn_acct || cfg.bank_kl_acct || '');
+    const bankIfsc = useKLBank ? (cfg.bank_kl_ifsc || cfg.bank_tn_ifsc || '')
+                                : (cfg.bank_tn_ifsc || cfg.bank_kl_ifsc || '');
     // Align values at a fixed x so all three rows start at the same column
     const labelW = 90;
     const valX = bkX + labelW;
@@ -1476,11 +1674,20 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
     const branchLbl = (bankName.split('-')[1] || bankName).trim();
     doc.font('Helvetica-Bold').text(`${branchLbl} & ${bankIfsc}`, valX, bky, { width: valW });
     bky += 14;
+    // Horizontal line above "for COMPANY NAME" — separates bank details from signatory section.
+    // Drawn only in the right cell (bank details column), not across the Declaration block.
     doc.lineWidth(0.5).moveTo(rightX, bky - 2).lineTo(x0 + W, bky - 2).stroke();
     bky += 2;
   } // end if (showBank)
-  // "for COMPANY NAME" — always the primary company (sister removed).
-  const forCompanyName = co.name || '';
+  // "for COMPANY NAME" right-aligned
+  // In purchase view, the issuer header is ISPL but the signatory block
+  // represents the SELLING company (ASP) — whose bank received the payment
+  // and whose authorised signatory certifies the sale. In single-company
+  // e-Auction, isPurchaseView is always false; we use the configured
+  // identity as the sole source rather than a hardcoded sister name.
+  const forCompanyName = isPurchaseView
+    ? (cfg.s_company || getCompanyIdentity(cfg).name)
+    : (co.name || '');
   doc.font('Helvetica-Bold').fontSize(8).text(`for ${forCompanyName}`, bkX, bky, { width: bkInnerW, align: 'right' });
   // Authorised Signatory at bottom-right of footer
   doc.font('Helvetica').fontSize(8).text('Authorised Signatory', bkX, y + footerH - 12, { width: bkInnerW, align: 'right' });
@@ -1553,43 +1760,49 @@ function generateAgriBillPDF(billData, cfg, billNo, externalDoc) {
   // Capture y BEFORE writing the company text, so we can position the logo
   // alongside the text block (vertically centered against it).
   const headerStartY = y;
-  // Logo: primary company (sister/ASP logo path removed). Optional — falls
-  // through silently if the file isn't present.
-  const _logoPath = require('path').join(__dirname, 'public', 'logo-ispl.png');
+  // Logo: Bill of Supply is always issued by ASP, so always use the ASP
+  // logo. Optional — falls through silently if the file isn't present.
+  const _logoPath = require('path').join(__dirname, 'public', 'logo-asp.png');
   const _fs = require('fs');
   let logoOffsetX = 0;
   if (_fs.existsSync(_logoPath)) {
     try {
       doc.image(_logoPath, x0 + 6, headerStartY, { fit: [60, 60] });
-      logoOffsetX = 0;
+      logoOffsetX = 0; // logo lives in left gutter — text still centered
     } catch (_) { /* fall through silently */ }
   }
   doc.font('Helvetica-Bold').fontSize(11);
-  const _companyName = cfg.short_name || cfg.trade_name || 'IDEAL SPICES PRIVATE LIMITED';
-  doc.text(_companyName, x0, y, { width: W, align: 'center' });
+  // Header letterhead — single-company build always uses the configured
+  // identity. The legacy `cfg.s_*` (sister-company) fields aren't
+  // populated in fresh e-Auction installs; we keep them as primary lookups
+  // for backwards-compat with imported legacy data, but fall back to the
+  // central identity rather than hardcoded "AMAZING SPICE PARK".
+  const _idLetterhead = getCompanyIdentity(cfg);
+  doc.text(cfg.s_company || _idLetterhead.name, x0, y, { width: W, align: 'center' });
   y += 13;
 
   doc.font('Helvetica').fontSize(8);
-  // Cardamom procurement happens in Kerala — prefer KL address for the
-  // agriculturist bill header. Fall back to TN if KL fields are blank.
-  const addr1 = (cfg.kl_address1 || cfg.tn_address1 || '').toUpperCase();
-  const _statePlace = cfg.kl_branch || cfg.tn_branch || '';
-  const _stateName = cfg.kl_address1 ? 'KERALA' : 'TAMIL NADU';
-  const _stateCode = cfg.kl_address1 ? '32' : '33';
+  const addr1 = (cfg.s_address1 || _idLetterhead.address1 || '').toUpperCase();
   const addr2Bits = [
-    _statePlace.toUpperCase(),
-    (_stateName + ' CODE:' + _stateCode)
+    (cfg.s_place || '').toUpperCase(),
+    (cfg.s_pin ? '-' + cfg.s_pin : ''),
+    (cfg.s_state
+      ? (cfg.s_state.toUpperCase() + ' CODE:' + (cfg.s_st_code || ''))
+      : (_idLetterhead.state ? (_idLetterhead.state + ' CODE:' + _idLetterhead.stateCode) : ''))
   ].filter(Boolean).join(' ').trim();
-  const mobile = cfg.kl_phone || cfg.tn_phone || '';
+  const mobile = cfg.s_mobile || cfg.mobile || cfg.tn_phone || '';
   const addr2Full = addr2Bits + (mobile ? ' MOBILE:' + mobile : '');
   doc.text(addr1, x0, y, { width: W, align: 'center' }); y += 10;
   doc.text(addr2Full, x0, y, { width: W, align: 'center' }); y += 10;
-  doc.text(`CIN:${cfg.cin || ''}  PAN:${cfg.pan || ''}`, x0, y, { width: W, align: 'center' }); y += 10;
-  const _gstin = cfg.kl_gstin || cfg.tn_gstin || '';
-  doc.text(`GSTIN:${_gstin}  SBL:${cfg.sbl || ''}`, x0, y, { width: W, align: 'center' }); y += 10;
-  const _email = cfg.kl_email || cfg.tn_email || '';
-  if (_email) {
-    doc.text('e-Mail ID:' + _email, x0, y, { width: W, align: 'center' });
+  // Identity line: Partnership or CIN, driven by the cfg.is_partnership
+  // toggle. Falls back gracefully when the toggle isn't set or the
+  // active value is blank — uses the central identity resolver so the
+  // rule is consistent with sales invoice + every other PDF.
+  const _idP = getCompanyIdentity(cfg).idLine || { label: 'CIN', value: cfg.cin || '' };
+  doc.text(`${_idP.label}:${_idP.value}  PAN:${cfg.s_pan || cfg.pan || ''}`, x0, y, { width: W, align: 'center' }); y += 10;
+  doc.text(`GSTIN:${cfg.s_gstin || ''}  SBL:${cfg.s_sbl || cfg.sbl || ''}`, x0, y, { width: W, align: 'center' }); y += 10;
+  if (cfg.s_email || cfg.email) {
+    doc.text('e-Mail ID:' + (cfg.s_email || cfg.email), x0, y, { width: W, align: 'center' });
     y += 10;
   }
   y += 4;
@@ -1611,7 +1824,7 @@ function generateAgriBillPDF(billData, cfg, billNo, externalDoc) {
   const eTradeNo = (billData && billData.eTradeNo) || cfg.e_trade_no || '';
   doc.font('Helvetica').fontSize(8.5);
   doc.text(`Invoice No: ${billNo || ''}`, x0 + 6, infoY + 4);
-  doc.text(`e-TRADE No: ${eTradeNo}`, x0, infoY + 4, { width: W, align: 'center' });
+  doc.text(`e-AUCTION No: ${eTradeNo}`, x0, infoY + 4, { width: W, align: 'center' });
   doc.text(`Date: ${invDate}`, x0, infoY + 4, { width: W - 6, align: 'right' });
   y = infoY + infoH;
 
@@ -1887,7 +2100,7 @@ function generateAgriBillPDF(billData, cfg, billNo, externalDoc) {
 
   // ── "for COMPANY" right-aligned ──
   doc.fontSize(9).font('Helvetica-Bold');
-  doc.text('for ' + (cfg.short_name || cfg.trade_name || 'IDEAL SPICES PRIVATE LIMITED'), x0, y, { width: W - 6, align: 'right' });
+  doc.text('for ' + (cfg.s_company || getCompanyIdentity(cfg).name || 'Company'), x0, y, { width: W - 6, align: 'right' });
   y += 30;
 
   // ── Signatures ──

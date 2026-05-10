@@ -61,37 +61,132 @@ function fmtPrice(n) { return fmtIndian(n, 2); }
 // hard-coded ISP defaults if the settings table doesn't exist or returns
 // nothing — useful for export tools that run before the DB is initialized.
 function getCompanyHeader(db) {
-  // Defensive defaults so the header still renders if anything is missing
-  let name = 'IDEAL SPICES PRIVATE LIMITED';
-  let logoFile = 'logo-ispl.png';
+  // Defensive defaults so the header still renders if anything is missing.
+  // Single-company e-Auction build: we read from `company_settings` only.
+  // The legacy ISP/ASP preset switch + `s_*` sister-company fields were
+  // dropped in v3, so this function reads the canonical keys directly.
+  let name = '';
+  let logoFile = '';
   let address1 = '';
   let branch = '';
 
   if (db && typeof db.get === 'function') {
     try {
-      // Sister/preset switching has been removed — always use ISP
-      // primary fields.
-      const nameRow = db.get('SELECT value FROM company_settings WHERE key = ?', ['short_name']);
-      if (nameRow && nameRow.value) name = nameRow.value;
+      const get = (k) => {
+        try {
+          const r = db.get('SELECT value FROM company_settings WHERE key = ?', [k]);
+          return r && r.value ? String(r.value) : '';
+        } catch (_) { return ''; }
+      };
+      // Name resolution priority — first non-empty wins. Earlier the
+      // first read was `company_name` which doesn't exist in the seed
+      // data; the canonical name field in this build is `trade_name`,
+      // edited under Settings → Company → Trade Name. Reading
+      // `company_name` first meant the header silently fell through to
+      // `tally_company_name` (or worse, the literal 'Company' default)
+      // even when the user had filled in Trade Name.
+      //   1. trade_name          — canonical, user-edited
+      //   2. company_name        — legacy/alias (kept for backward compat)
+      //   3. tally_company_name  — Tally-export name
+      //   4. short_name          — short label (e.g. "VST")
+      //   5. hardcoded default   — only if everything's blank
+      name = get('trade_name') || get('company_name') || get('tally_company_name') || get('short_name') || '';
 
-      // logo-ispl.png is the actual filename in /public
-      logoFile = 'logo-ispl.png';
+      // Logo file: derived from `logo` setting (the user's short logo code,
+      // e.g. "VST", "ISPL"). Convention: lowercased + `.png` extension,
+      // located in /public. Falls back to `logo-ispl.png` only if the
+      // user's logo file is missing on disk (handled below).
+      const logoCode = get('logo').toLowerCase();
+      if (logoCode) logoFile = `logo-${logoCode}.png`;
 
-      // Brand block: company name + Tamil Nadu address1 + TN branch.
-      const a1Row = db.get('SELECT value FROM company_settings WHERE key = ?', ['tn_address1']);
-      if (a1Row && a1Row.value) address1 = a1Row.value;
-      const bRow = db.get('SELECT value FROM company_settings WHERE key = ?', ['tn_branch']);
-      if (bRow && bRow.value) branch = bRow.value;
+      // Address: TN-prefixed in the e-Auction schema (single-state default).
+      // We also accept the bare `address1` key — some installs migrated
+      // values there during cleanup.
+      address1 = get('tn_address1') || get('address1') || '';
+      branch   = get('tn_branch')   || get('branch')   || '';
     } catch (_) {
       // Ignore — fall through to defaults
     }
   }
 
   // Resolve the logo to an absolute path on disk; null if missing.
-  const logoPath = path.join(__dirname, 'public', logoFile);
-  const logoOnDisk = fs.existsSync(logoPath) ? logoPath : null;
+  // Try the user's configured logo first, then a generic logo.png that
+  // some deployments ship. NO hardcoded 'logo-ispl.png' fallback — a
+  // fresh install with no Logo Code configured renders without a logo
+  // rather than the legacy ISP image.
+  const tryPaths = [logoFile, 'logo.png'].filter(Boolean);
+  let logoOnDisk = null;
+  for (const f of tryPaths) {
+    const abs = path.join(__dirname, 'public', f);
+    if (fs.existsSync(abs)) { logoOnDisk = abs; break; }
+  }
 
+  // The header object exposes `address1` and `address2` for backward
+  // compatibility with PDF/XLSX renderers — `address2` carries the
+  // office branch (single line in the brand band).
   return { name, logoPath: logoOnDisk, address1, address2: branch, branch };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// getCompanyIdentity — central resolver for company name + identity fields.
+//
+// Single source of truth for every export (PDF / XLSX / XML / CSV). Reads
+// from the runtime cfg object (already-flattened company_settings) and
+// returns ALL the fields any downstream renderer needs, with NO hardcoded
+// fallback names — empty strings if a field isn't configured. This way a
+// fresh install renders blank fields rather than stale "IDEAL SPICES" or
+// "AMAZING SPICE PARK" text from the legacy dual-company scaffolding.
+//
+// Field resolution priority (first non-empty wins):
+//   name      : company_name → tally_company_name → short_name
+//   shortName : short_name → logo (uppercased) → first word of name
+//   address1  : tn_address1 → address1 → address
+//   address2  : tn_address2 → address2 → tn_branch → branch
+//   gstin     : gstin → tn_gstin → business_gstin
+//   pan       : pan → tn_pan → business_pan → derived from gstin (positions 3-12)
+//   state     : tn_state → business_state → state (uppercased)
+//   stateCode : tally_state_code → derived from gstin first 2 chars → ''
+//
+// Called at the top of every export. Cheap — pure object lookups, no DB.
+function getCompanyIdentity(cfg) {
+  cfg = cfg || {};
+  const pick = (...keys) => {
+    for (const k of keys) {
+      const v = cfg[k];
+      if (v != null && String(v).trim() !== '') return String(v).trim();
+    }
+    return '';
+  };
+  // Name resolution — `trade_name` is the canonical user-edited field
+  // in this build (Settings → Company → Trade Name). Reading
+  // `company_name` first means the header silently falls through to
+  // `tally_company_name` or `short_name` even when Trade Name is set.
+  const name      = pick('trade_name', 'company_name', 'tally_company_name', 'short_name');
+  const logoCode  = pick('logo');
+  const shortName = pick('short_name') || logoCode.toUpperCase() || name.split(/\s+/)[0] || '';
+  const address1  = pick('tn_address1', 'address1', 'address');
+  const address2  = pick('tn_address2', 'address2', 'tn_branch', 'branch');
+  const gstin     = pick('gstin', 'tn_gstin', 'business_gstin');
+  const pan       = pick('pan', 'tn_pan', 'business_pan')
+                  || (gstin && gstin.length >= 12 ? gstin.slice(2, 12) : '');
+  const state     = pick('tn_state', 'business_state', 'state').toUpperCase();
+  const stateCode = pick('tally_state_code')
+                  || (gstin && gstin.length >= 2 ? gstin.slice(0, 2) : '');
+  // Partnership / CIN identity line.
+  // Toggle in Settings → Company → "Partnership Firm". When ON, the
+  // PDFs that previously printed "CIN: <value>" switch to
+  // "Partnership: <partnership_name>". When OFF, the existing CIN
+  // field renders as before.
+  // Surface as `idLine` so PDF code doesn't need to know about the
+  // toggle — just renders `${idLine.label}: ${idLine.value}` when value
+  // is non-empty.
+  const isPartnership = String(cfg.is_partnership || '').toLowerCase() === 'true';
+  const partnershipName = pick('partnership_name');
+  const cin             = pick('cin');
+  const idLine = isPartnership
+    ? { label: 'Partnership', value: partnershipName, isPartnership: true }
+    : { label: 'CIN',         value: cin,             isPartnership: false };
+  return { name, shortName, logoCode, address1, address2, gstin, pan, state, stateCode, cin, idLine };
 }
 
 // Truncate `text` so doc.widthOfString(out) <= maxWidth, appending an ellipsis
@@ -277,9 +372,15 @@ function xlsxNumFmtForHeader(header) {
   if (h === 'QTY' || h === 'PQTY' || h === 'LITRE' || h === 'KILOS' || h === 'QUANTITY') {
     return '#,##0.000';   // Excel will format Indian-style with the right locale; pattern is the standard 3-decimal lakh format
   }
-  if (h === 'BAG' || h === 'BAGS' || h === 'LOTS' || h === 'LOT' || h === 'SL.NO' || h === 'S.NO') {
+  if (h === 'BAG' || h === 'BAGS' || h === 'LOTS' || h === 'SL.NO' || h === 'S.NO') {
     return '#,##0';        // integer
   }
+  // 'LOT' is intentionally NOT here — lot numbers can be alphanumeric
+  // ('001A', '12B') and even purely numeric lot strings ('001') must
+  // preserve their leading zeros. Forcing #,##0 would coerce '001'→1
+  // and right-align it like a number. Returning null leaves it as text,
+  // and the column-level alignment policy in createExcelBuffer aligns
+  // text columns to the left.
   // Treat all other numerics as rupees (price/amount/total/etc.)
   if (
     h === 'PRICE'   || h === 'AMOUNT' || h === 'PURAMT' ||
@@ -287,7 +388,13 @@ function xlsxNumFmtForHeader(header) {
     h === 'BALANCE' || h === 'ADVANCE'|| h === 'VALUE' ||
     h === 'INV.AMOUNT' || h === 'TOTAL' || h === 'COMMISSION' ||
     h === 'CGST'    || h === 'SGST'   || h === 'IGST' ||
-    h === 'REFUND'
+    h === 'REFUND'  ||
+    // Sales-journal column headers — were previously unformatted, now
+    // grouped Indian-style for readability across the wide journal.
+    h === 'CARDAMOM' || h === 'GUNNY'  || h === 'TRANSPORT' ||
+    h === 'INSURANCE'|| h === 'TCS'    || h === 'ROUND' ||
+    // Purchase-journal extras
+    h === 'COST'     || h === 'NET'    || h === 'TDS'
   ) {
     return '#,##,##0.00';  // Indian-style 2-decimal with lakh grouping
   }
@@ -313,8 +420,13 @@ function xlsxNumFmtForHeader(header) {
 // each get their own column groups regardless of the underlying data column
 // widths. We split the available columns: ~30% left, ~40% middle, ~30% right.
 function writeXlsxCompanyHeader(wb, ws, header, opts) {
+  // ── Style: matches the sample collection_6.xlsx exactly ──
+  // Row 1: company name, merged A..lastCol, bold 14pt, centered
+  // Row 2: meta lines joined by 4 spaces, merged, bold 11pt, centered
+  // Row 3: blank spacer
+  // Row 4: returned to caller for column headers
+  // No logo, no 3-zone split, no separate report title — strict match.
   const colCount = Math.max(opts.colCount || 1, 1);
-  const title = opts.title || '';
   const metaLines = Array.isArray(opts.metaLines) ? opts.metaLines : [];
 
   function colLetter(n) {
@@ -326,238 +438,41 @@ function writeXlsxCompanyHeader(wb, ws, header, opts) {
     }
     return s;
   }
-  function range(c1, r1, c2, r2) {
-    return `${colLetter(c1)}${r1}:${colLetter(c2)}${r2}`;
-  }
+  const lastCol = colLetter(colCount);
 
-  // Build a list of cumulative character-widths across the data columns so
-  // we can pick split points that approximate the PDF's 30/40/30 split.
-  const colWidths = [];
+  // Row 1 — company name. Set alignment on EVERY cell in the merge range
+  // so a downstream `column.alignment` assignment can't overwrite the
+  // master cell's alignment via cascade.
+  ws.mergeCells(`A1:${lastCol}1`);
+  const name = header && header.name ? String(header.name) : '';
   for (let i = 1; i <= colCount; i++) {
-    const w = (ws.getColumn(i) && ws.getColumn(i).width) || 12;
-    colWidths.push(w);
+    const c = ws.getCell(`${colLetter(i)}1`);
+    if (i === 1) c.value = name;
+    c.font = { bold: true, size: 14 };
+    c.alignment = { horizontal: 'center', vertical: 'middle' };
   }
-  const totalW = colWidths.reduce((a, b) => a + b, 0);
+  ws.getRow(1).height = 22;
 
-  // Find the column index whose cumulative width crosses a given fraction of
-  // totalW. Returns a 1-based column index.
-  function colAtFraction(frac) {
-    const target = totalW * frac;
-    let acc = 0;
-    for (let i = 0; i < colCount; i++) {
-      acc += colWidths[i];
-      if (acc >= target) return i + 1;
-    }
-    return colCount;
+  // Row 2 — meta lines joined by 4 spaces (matches sample
+  // "e-TRADE No: 6    Date: 02/05/2026")
+  ws.mergeCells(`A2:${lastCol}2`);
+  const metaText = metaLines.filter(Boolean).map(String).join('    ');
+  for (let i = 1; i <= colCount; i++) {
+    const c = ws.getCell(`${colLetter(i)}2`);
+    if (i === 1) c.value = metaText;
+    c.font = { bold: true, size: 11 };
+    c.alignment = { horizontal: 'center', vertical: 'middle' };
   }
+  ws.getRow(2).height = 18;
 
-  // ── Layout zones ──
-  // Logo: column 1 only (we widen col 1 below if needed so the logo has room).
-  // Left text: cols 2 .. ~40% of total width (room for company name).
-  // Middle title: cols (left end + 1) .. ~75% of total width (lots of room for the title).
-  // Right meta: cols (mid end + 1) .. last column (~25% for meta lines).
-  const logoCol = 1;
-  const leftStart = 2;
-  // Ensure first column is wide enough for a 60×60-px logo (approx 9 char-units)
-  if ((ws.getColumn(1).width || 0) < 9) ws.getColumn(1).width = 9;
+  // Row 3 — spacer
+  ws.getRow(3).height = 6;
 
-  let leftEnd, midEnd;
-  if (colCount <= 3) {
-    // Too few columns to do a real 3-way split. Stack vertically: brand on
-    // row 1-3 spanning all columns, title on row 1 right side if room.
-    leftEnd = colCount;
-    midEnd = colCount;
-  } else {
-    leftEnd = Math.max(leftStart, colAtFraction(0.40));
-    midEnd = Math.max(leftEnd + 1, colAtFraction(0.75));
-    if (midEnd >= colCount) midEnd = colCount - 1;
-
-    function leftZoneWidth() {
-      let w = 0;
-      for (let i = leftStart; i <= leftEnd; i++) w += colWidths[i - 1];
-      return w;
-    }
-    function midZoneWidth() {
-      let w = 0;
-      for (let i = leftEnd + 1; i <= midEnd; i++) w += colWidths[i - 1];
-      return w;
-    }
-
-    // Make sure middle zone has room for the title (~18 units).
-    let guard = 0;
-    while (midZoneWidth() < 18 && guard++ < colCount) {
-      if (leftEnd > leftStart && midZoneWidth() < 18 && leftZoneWidth() > 20) {
-        leftEnd--;
-        continue;
-      }
-      if (midEnd < colCount - 1) {
-        midEnd++;
-        continue;
-      }
-      break;
-    }
-
-    // Left zone needs enough width to fit the company name on a single line.
-    // Address lines may wrap, but row heights below are tall enough to show
-    // those wrapped lines without clipping.
-    const nameLen = (header.name || '').length;          // chars at 11pt bold
-    const LOGO_INDENT = 9;
-    // 11pt bold needs ~1.1 char-unit per character + padding for indent and margin.
-    const nameNeed = LOGO_INDENT + Math.ceil(nameLen * 1.1) + 2;
-    // leftZoneWidth() doesn't include the logo column (col 1), so subtract
-    // the logo column width from the budget. Cap at ~40 char-units so we
-    // don't push other columns off the printable page.
-    const NEEDED_LEFT = Math.max(0, Math.min(40, nameNeed - colWidths[0]));
-    const shortfall = NEEDED_LEFT - leftZoneWidth();
-    if (shortfall > 0) {
-      const widenCol = ws.getColumn(leftEnd);
-      widenCol.width = (widenCol.width || 12) + shortfall;
-      colWidths[leftEnd - 1] += shortfall;  // keep our local copy in sync
-    }
-
-    // If meta lines are present, ensure the right zone is wide enough to fit
-    // the longest meta line (~16 units for "Date: 15/04/2026" at 10pt bold).
-    if (metaLines.length) {
-      let rightZoneW = 0;
-      for (let i = midEnd + 1; i <= colCount; i++) rightZoneW += colWidths[i - 1];
-      const longestMeta = metaLines.reduce((m, s) => Math.max(m, String(s).length), 0);
-      const NEEDED_RIGHT = Math.max(16, longestMeta + 2);
-      const rShortfall = NEEDED_RIGHT - rightZoneW;
-      if (rShortfall > 0) {
-        const widenRightCol = ws.getColumn(colCount);
-        widenRightCol.width = (widenRightCol.width || 12) + rShortfall;
-        colWidths[colCount - 1] += rShortfall;
-      }
-    }
-
-    // Note: we don't try to perfectly balance the visual width of the left
-    // and right sides — that would push columns off the printable page when
-    // the data has many columns. Instead we rely on align:center within the
-    // merged title cell, which puts the title at the middle of the middle
-    // data columns — close enough to page-center for the brand band to look
-    // balanced.
-  }
-  const midStart = leftEnd + 1;
-  const rightStart = midEnd + 1;
-  const lastCol = colCount;
-
-  // Brand band: 3 rows of content + 1 spacer = 4 rows total.
-  // Tall rows (~78pt total) so the merged left cell can fit the company name
-  // plus 2 address lines, with each address wrapping to up to 2 lines.
-  ws.getRow(1).height = 26;
-  ws.getRow(2).height = 26;
-  ws.getRow(3).height = 26;
-  ws.getRow(4).height = 6;
-
-  // ── Brand block: ONE merged cell spanning cols 1..leftEnd × rows 1-3 ──
-  // The logo image is anchored in the leftmost portion of the merged cell;
-  // the company name + addresses (richText with line breaks) sit alongside
-  // it, indented past the logo. Logo + text live as one visual unit.
-  const brandLeftCol = logoCol;     // col 1
-  const brandRightCol = leftEnd;    // last column of the left zone
-  ws.mergeCells(range(brandLeftCol, 1, brandRightCol, 3));
-
-  if (header.logoPath) {
-    try {
-      // Detect actual image format from the file's magic bytes — the logo
-      // files are sometimes JPEGs masquerading as .png, and Excel's strict
-      // parser rejects mismatched extensions (LibreOffice is more lenient).
-      const fs = require('fs');
-      const path = require('path');
-      const buf = fs.readFileSync(header.logoPath);
-      let extension = 'png';
-      if (buf.length >= 3 && buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) {
-        extension = 'jpeg';
-      } else if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) {
-        extension = 'png';
-      } else if (buf.length >= 6 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) {
-        extension = 'gif';
-      } else {
-        // Fallback: use the file extension if magic bytes don't match.
-        const ext = path.extname(header.logoPath).toLowerCase();
-        if (ext === '.jpg' || ext === '.jpeg') extension = 'jpeg';
-      }
-      const imgId = wb.addImage({ buffer: buf, extension });
-      // Anchor the logo within the leftmost portion of the merged cell:
-      // 0-based column 0 → 1, rows 0 → 3. The image overlays the merged cell
-      // but the richText below renders to the right of it (indent compensates).
-      ws.addImage(imgId, {
-        tl: { col: 0.05, row: 0.05 },
-        br: { col: 0.95, row: 2.95 },
-        editAs: 'oneCell',
-      });
-    } catch (_) { /* swallow — render without logo if image lookup fails */ }
-  }
-
-  // Place name + address as multi-line richText inside the same merged cell.
-  // Indent so the text doesn't overlap the logo (~9 chars of indent ≈ 1 col).
-  const cell = ws.getCell(colLetter(brandLeftCol) + '1');
-  const runs = [];
-  runs.push({
-    text: header.name || '',
-    font: { bold: true, size: 11, color: { argb: 'FF000000' } },
-  });
-  if (header.address1) {
-    runs.push({
-      text: '\n' + header.address1,
-      font: { size: 8, color: { argb: 'FF555555' } },
-    });
-  }
-  if (header.address2) {
-    runs.push({
-      text: '\n' + header.address2,
-      font: { size: 8, color: { argb: 'FF555555' } },
-    });
-  }
-  cell.value = { richText: runs };
-  // wrapText must be enabled for richText \n line breaks to render in
-  // Excel/Calc. Indent the text 9 char-units so it sits to the RIGHT of
-  // the logo (which occupies col 1 ≈ 9 char-units wide).
-  cell.alignment = {
-    horizontal: 'left',
-    vertical: 'middle',
-    wrapText: true,
-    indent: 9,
-  };
-
-  // ── Middle: report title spanning rows 1-3 of the middle column band ──
-  if (title && midStart <= midEnd) {
-    ws.mergeCells(range(midStart, 1, midEnd, 3));
-    const titleCell = ws.getCell(colLetter(midStart) + '1');
-    titleCell.value = title;
-    // Pick a title font size that fits the available column width.
-    // ExcelJS char-units roughly correspond to "1 unit ≈ 1 character at the
-    // sheet's default font". 16pt bold characters are ~1.5x wider, so to fit
-    // a title of N characters we need roughly N * 1.5 units. Scale font size
-    // down if the available zone is too narrow.
-    let midZoneW = 0;
-    for (let i = midStart; i <= midEnd; i++) midZoneW += colWidths[i - 1];
-    const titleLen = String(title).length;
-    const charsPerUnit = midZoneW / Math.max(1, titleLen);
-    let titleSize = 16;
-    if (charsPerUnit < 1.6) titleSize = 14;
-    if (charsPerUnit < 1.4) titleSize = 12;
-    if (charsPerUnit < 1.2) titleSize = 11;
-    titleCell.font = { bold: true, size: titleSize };
-    titleCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false };
-  }
-
-  // ── Right: meta lines, one per row, right-aligned ──
-  if (metaLines.length && rightStart <= lastCol) {
-    metaLines.slice(0, 3).forEach((line, i) => {
-      ws.mergeCells(range(rightStart, i + 1, lastCol, i + 1));
-      const cell = ws.getCell(colLetter(rightStart) + (i + 1));
-      cell.value = line;
-      cell.font = { bold: true, size: 10 };
-      cell.alignment = { horizontal: 'right', vertical: 'middle' };
-    });
-  }
-
-  return 5;  // first row available for callers (row 4 is the spacer)
+  return 4;  // first row available for callers (column-header row)
 }
 
 module.exports = {
   fmtMoney, fmtQty, fmtPrice, fmtIndian,
-  getCompanyHeader, drawCompanyHeader,
+  getCompanyHeader, getCompanyIdentity, drawCompanyHeader,
   xlsxNumFmtForHeader, writeXlsxCompanyHeader,
 };

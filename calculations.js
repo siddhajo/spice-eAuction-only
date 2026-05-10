@@ -39,134 +39,79 @@ function gstinStateCode(cr) {
 }
 
 /**
- * Calculate purchase amounts for a lot (after trade)
- * This is what GENERATE.PRG does — fills pqty, prate, puramt, com, gst, etc.
+ * Calculate purchase amounts for a lot (after trade).
+ *
+ * e-Auction only build:
+ *   refund     = round( sb_refund (kg) × price )
+ *   commission = round( PurAmt × commission% / 100 )
+ *   sertax     = round( commission × hpc%        / 100 )
+ *   pqty       = qty                  (no sample-add-back)
+ *   prate      = round(price)
+ *   puramt     = pqty × prate
+ *   balance    = puramt + refund − commission − sertax − GST-on-services
+ *   GST        = on (commission + sertax) using gst_service rate
  */
 function calculateLot(lot, cfg) {
   const result = { ...lot };
-  const gstGoods = cfg.gst_goods || 5;
-  const cgstRate = gstGoods / 2;
-  const sgstRate = gstGoods / 2;
-  const igstRate = gstGoods;
-  
-  // Purchase qty = qty + Sample Refund (from Rates & Charges settings, global)
-  // Falls back to per-lot `refud` column for back-compat with older data.
-  const sampleRefundKg = (cfg.refund != null && cfg.refund !== '') ? Number(cfg.refund) : (lot.refud || 0);
-  result.pqty = (lot.qty || 0) + (Number(sampleRefundKg) || 0);
 
-  // ── Compute planter-side numbers (single ISP view) ────────────────
-  // Returns { pqty, prate, puramt }. Sister/ASP context was removed,
-  // so the calculation is no longer state-aware. The `isp_*` and
-  // `asp_*` legacy columns are still populated (with identical values)
-  // for backwards-compatibility with reports that read those columns.
-  function planterCalc() {
-    const pqty = (lot.qty || 0) + (Number(sampleRefundKg) || 0);
-    const gradeStr = String(lot.grade || '').trim();
-    let prate, puramt;
-    if (cfg.business_mode === 'e-Auction') {
-      // e-Auction: rate = lot.price; puramt = lot.amount - commission - handling.
-      const sbRefund  = Number(cfg.sb_refund) || 0;
-      const commPct   = Number(cfg.commission) || 0;
-      const handlingPct = Number(cfg.hpc) || 0;
-      const refundAmt = Math.round((lot.price || 0) * sbRefund * 100) / 100;
-      const commAmt   = Math.round((((lot.amount || 0) + refundAmt) * commPct / 100) * 100) / 100;
-      const handling  = Math.round(commAmt * handlingPct / 100 * 100) / 100;
-      prate = lot.price || 0;
-      puramt = (lot.amount || 0) - commAmt - handling;
-    } else {
-      // Legacy e-Trade fallback (config may still hold the old value): ISP
-      // deduction-based formula. e-Trade mode is no longer user-selectable.
-      const deduction = (gradeStr === '2')
-        ? Number(cfg.deduction2 || 0)
-        : Number(cfg.deduction1 || 0);
-      const rawRate = (lot.price || 0) * (1 - deduction / 100);
-      prate = Math.round(rawRate);
-      puramt = Math.round(pqty * prate * 100) / 100;
-    }
-    return { pqty, prate, puramt };
-  }
+  // Base purchase amount
+  result.pqty   = lot.qty || 0;
+  result.prate  = Math.round(lot.price || 0);
+  result.puramt = Math.round(result.pqty * result.prate * 100) / 100;
 
-  // Single-view calculation; mirror into legacy isp_*/asp_* columns
-  // for backwards-compatibility with consumers that still read those.
-  const view = planterCalc();
-  result.isp_pqty = view.pqty;
-  result.isp_prate = view.prate;
-  result.isp_puramt = view.puramt;
-  result.asp_pqty = view.pqty;
-  result.asp_prate = view.prate;
-  result.asp_puramt = view.puramt;
+  // ── Sample-bag refund: SB Sample Refund (kg) × price ──────
+  const sbRefundKg = Number(cfg.sb_refund) || 0;
+  result.refund    = Math.round(sbRefundKg * (lot.price || 0));
 
-  if (cfg.business_mode === 'e-Auction') {
-    const sbRefund  = Number(cfg.sb_refund) || 0;
-    const commPct   = Number(cfg.commission) || 0;
-    const handlingPct = Number(cfg.hpc) || 0;
-    const refundAmt = Math.round((lot.price || 0) * sbRefund * 100) / 100;
-    const commAmt   = Math.round((((lot.amount || 0) + refundAmt) * commPct / 100) * 100) / 100;
-    const handling  = Math.round(commAmt * handlingPct / 100 * 100) / 100;
-    result.refund = refundAmt;
-    result.com    = commAmt;
-    result.sertax = handling;
-    result.prate  = view.prate;
-    result.puramt = view.puramt;
-  } else {
-    // Legacy e-Trade fallback path — no commission/handling, discount only.
-    result.prate = view.prate;
-    result.puramt = view.puramt;
-    result.com = 0;
-    result.sertax = 0;
-  }
+  // ── Commission + Handling ─────────────────────────────────
+  const commissionPct = Number(cfg.commission) || 0;
+  const hpcPct        = Number(cfg.hpc)        || 0;
+  result.com    = Math.round(result.puramt * commissionPct / 100);
+  result.sertax = Math.round(result.com    * hpcPct        / 100);
 
-  // Intra/inter-state detection (shared between both modes):
-  //   Seller's GSTIN state code (first 2 digits) vs company's state code.
-  //   Uses gstinStateCode() to handle both "GSTIN.<gstin>" and bare "<gstin>".
-  const sellerGstState = gstinStateCode(lot.cr);
-  const companyGstState = cfg.business_state === 'KERALA' ? '32' : '33';
+  // Mirror dual-storage columns for legacy SELECTs that still read isp_*/asp_*.
+  result.isp_pqty   = result.pqty;
+  result.isp_prate  = result.prate;
+  result.isp_puramt = result.puramt;
+  result.asp_pqty   = result.pqty;
+  result.asp_prate  = result.prate;
+  result.asp_puramt = result.puramt;
+
+  // ── GST on services (commission + handling) ──────────────
+  // Intra-state if seller's GSTIN state matches company's; else inter.
+  const sellerGstState  = gstinStateCode(lot.cr);
+  // business_state is locked to BOTH in this build, so default to '33'
+  // (Tamil Nadu) — caller can override via tally_state_code if needed.
+  const companyGstState = cfg.business_state === 'KERALA' ? '32'
+                        : cfg.business_state === 'TAMIL NADU' ? '33'
+                        : (String(cfg.tally_state_code || '33'));
   const isIntra = (sellerGstState === companyGstState);
 
-  // GST rate: both modes tax a SERVICE component (commission/handling for e-Auction,
-  // trade-credit discount for e-Trade), so both use gst_service rate.
-  const gstServiceRate = Number(cfg.gst_service) || 18;
-  const halfRate = gstServiceRate / 2;
+  const svcRate = Number(cfg.gst_service) || 0;
+  const half    = svcRate / 2;
+  const taxBase = result.com + result.sertax;
 
-  // Default CGST/SGST/IGST to 0; mode-specific branches fill them in below.
-  result.cgst = 0;
-  result.sgst = 0;
-  result.igst = 0;
-
-  if (cfg.business_mode === 'e-Auction') {
-    // e-Auction: GST on (Commission + Handling) using Service Rate
-    const gstBase = result.com + result.sertax;
+  result.cgst = 0; result.sgst = 0; result.igst = 0;
+  if (taxBase > 0 && svcRate > 0) {
     if (isIntra) {
-      result.cgst = Math.round(gstBase * halfRate / 100 * 100) / 100;
-      result.sgst = Math.round(gstBase * halfRate / 100 * 100) / 100;
+      result.cgst = Math.round(taxBase * half    / 100 * 100) / 100;
+      result.sgst = Math.round(taxBase * half    / 100 * 100) / 100;
     } else {
-      result.igst = Math.round(gstBase * gstServiceRate / 100 * 100) / 100;
+      result.igst = Math.round(taxBase * svcRate / 100 * 100) / 100;
     }
-
-    // Advance (sum of deductions) — kept for downstream compatibility (PDFs, exports)
-    result.advance = result.com + result.sertax + result.cgst + result.sgst + result.igst;
-
-    // Payable = (Amount + Refund) − (Commission + Handling + CGST + SGST + IGST)
-    result.balance = Math.round(((lot.amount || 0) + result.refund - result.advance) * 100) / 100;
-
-  } else {
-    // Legacy e-Trade fallback: compute Discount; no GST on discount
-    // (flag_disc_gst was removed as an obsolete configurable).
-    //
-    //   Discount = round(PurAmt / 1000 * days * discount%)
-    //   Payable  = PurAmt − Discount
-    //
-    // result.refund is reused as the Discount amount.
-    const days    = Number(cfg.discount_days) || 0;
-    const discPct = Number(cfg.discount_pct)  || 0;
-    result.refund = Math.round((result.puramt / 1000) * days * discPct);
-
-    // No GST on Discount.
-    result.advance = result.cgst + result.sgst + result.igst;
-
-    // Payable = PurAmt − Discount
-    result.balance = Math.round((result.puramt - result.refund) * 100) / 100;
   }
+
+  // advance = total tax on services (informational column)
+  result.advance = result.cgst + result.sgst + result.igst;
+
+  // Payable to seller:
+  //   what they sold      → +puramt
+  //   sample bag refund   → +refund
+  //   commission          → −com
+  //   handling            → −sertax
+  //   GST on the above    → −(cgst + sgst + igst)
+  const totalDeductions = result.com + result.sertax + result.cgst + result.sgst + result.igst;
+  result.balance = Math.round((result.puramt + result.refund - totalDeductions) * 100) / 100;
 
   // Bill amount (for agriculturist bills) — always equals PurAmt
   result.bilamt = result.puramt;
@@ -258,8 +203,6 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg) {
 
   for (const lot of lots) {
     totalBags += lot.bags;
-    // Run calculateLot to derive prate/puramt — used by purchase-side mirror
-    // PDF (kept on the line item even if the sales total ignores it).
     const calc = calculateLot(lot, cfg);
     const prate = calc.prate;
     const puramt = calc.puramt;
@@ -279,12 +222,8 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg) {
 
   // Transport & Insurance rates depend on sale type:
   //   L (Local)        → local_transport / local_insurance
-  //   I (Inter-state)  → transport / insurance
+  //   I (Inter-state)  → buyer covers freight; T/I hidden from invoice
   //   E (Export)       → use inter-state rates (same interstate logistics)
-  // All rates are in ₹/kg (transport) or paise-per-thousand-units (insurance).
-  // IMPORTANT: Use `??` not `||` so that an explicit 0 from settings is
-  // respected (e.g. user wants no transport charge). `||` would treat 0 as
-  // falsy and fall back to the default, silently adding unwanted charges.
   const pickRate = (...vals) => {
     for (const v of vals) {
       if (v === undefined || v === null || v === '') continue;
@@ -293,22 +232,27 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg) {
     }
     return 0;
   };
-  const isLocal = (saleType === 'L');
-  // ISP inter-state invoices ('I') don't bill transport/insurance separately
-  // (the buyer covers freight). Match the rendering rule that hides these
-  // rows from the PDF — see invoice-pdf.js hideTransportInsurance.
-  const hideTI = (String(saleType || '').toUpperCase() === 'I');
-  const transportRate = hideTI ? 0 : (isLocal
-    ? pickRate(cfg.local_transport, cfg.transport, 2.5)
-    : pickRate(cfg.transport, 2.5));
-  const insuranceRate = hideTI ? 0 : (isLocal
-    ? pickRate(cfg.local_insurance, cfg.insurance, 0.75)
-    : pickRate(cfg.insurance, 0.75));
+  // Sale-type-driven rate selection:
+  //   L (Local)       → local_transport / local_insurance config keys
+  //   I (Inter-state) → transport / insurance config keys
+  //   E (Export)      → zero (buyer covers freight; matches the
+  //                      hideTransportInsurance render rule in invoice-pdf.js)
+  // Anything else (legacy / blank) is treated as 'L' for safety.
+  const st = String(saleType || '').toUpperCase();
+  const isExport = (st === 'E');
+  const isInter  = (st === 'I');
+  const transportRate = isExport ? 0 : (isInter
+    ? pickRate(cfg.transport, 2.5)
+    : pickRate(cfg.local_transport, cfg.transport, 2.5));
+  const insuranceRate = isExport ? 0 : (isInter
+    ? pickRate(cfg.insurance, 0.75)
+    : pickRate(cfg.local_insurance, cfg.insurance, 0.75));
 
+  // Transport: ₹/kg (qty × rate)
   const transportCost = Math.round(totalQty * transportRate * 100) / 100;
 
-  // Insurance formula (per spec):
-  //   insurance = ((cardamom_amount + gunny_cost) + GST on cardamom+gunny) / 1000 × insurance_rate
+  // Insurance: per ₹1000 of (cardamom + gunny + GST on those)
+  //   insurance = ((cardamom_amount + gunny_cost) × (1 + gstGoods/100)) / 1000 × rate
   const subtotalGoods = totalAmount + gunnyCost;
   const gstOnGoods = subtotalGoods * gstGoods / 100;
   const insuranceCost = Math.round((subtotalGoods + gstOnGoods) / 1000 * insuranceRate * 100) / 100;
@@ -327,7 +271,21 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg) {
 
   const totalBeforeRound = taxableValue + cgst + sgst + igst;
   const roundDiff = Math.round(totalBeforeRound) - totalBeforeRound;
-  const grandTotal = Math.round(totalBeforeRound);
+  const subtotalRounded = Math.round(totalBeforeRound);
+
+  // Additional Charge — sum(cardamom) × cfg.addl_charge_value % .
+  // The configured value is a PERCENTAGE (e.g. 2 means 2%). Sits BELOW the
+  // Round on/off line and adds straight onto the grand total — does not
+  // feed into GST or round-off math. When the percentage is 0 the charge
+  // is fully skipped (no row, no XML ledger, no effect on grand total).
+  const addlChargePct = Number(cfg.addl_charge_value) || 0;
+  const addlCharge = addlChargePct > 0
+    ? Math.round(totalAmount * addlChargePct) / 100
+    : 0;
+  const addlChargeName = addlCharge > 0 ? String(cfg.addl_charge_name || '').trim() : '';
+  const grandTotal = addlCharge > 0
+    ? Math.round((subtotalRounded + addlCharge) * 100) / 100
+    : subtotalRounded;
 
   return {
     buyer: buyer || {},
@@ -337,7 +295,9 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg) {
       totalQty, totalBags, totalAmount,
       gunnyCost, transportCost, insuranceCost,
       taxableValue, cgst, sgst, igst,
-      roundDiff, grandTotal,
+      roundDiff, subtotalRounded,
+      addlCharge, addlChargeName,
+      grandTotal,
       isInterState
     }
   };
@@ -445,7 +405,7 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg) {
  */
 function getPaymentSummary(db, auctionId, state, cfg) {
   // The "discount" column is the sum of two parts per seller per auction:
-  //   1. Per-lot computed discount (lots.refund in e-Trade, lots.advance in
+  //   1. Per-lot computed discount (lots.refund in e-Auction, lots.advance in
   //      auction mode) — based on discount_pct × days × puramt
   //   2. Per-seller debit notes for this auction — manual adjustments
   //      (e.g., quality complaints, settlement deductions). Joined by
@@ -453,14 +413,17 @@ function getPaymentSummary(db, auctionId, state, cfg) {
   // Total payable already accounts for these via balance recalc, but the
   // displayed "Discount" column needs the COMBINED figure so the user
   // sees both the policy discount and any manual adjustments.
-  const mode = (cfg && cfg.business_mode || 'e-Trade').toLowerCase();
-  const discountCol = (mode === 'auction') ? 'advance' : 'refund';
-  // First fetch the per-lot summary
+  // First fetch the per-lot summary (e-Auction only — discount column is
+  // always lots.refund). Also pulls per-seller GST sums so the Payments
+  // tab can show a "GST 5% (CGST+SGST+IGST)" column next to the discount.
   let query = `SELECT l.name, l.cr,
     SUM(l.qty) as total_qty, SUM(l.amount) as total_amount,
     SUM(l.pqty) as total_pqty, SUM(l.prate) as avg_prate,
     SUM(l.puramt) as total_puramt,
-    SUM(l.${discountCol}) as lot_discount,
+    SUM(l.refund) as lot_discount,
+    SUM(COALESCE(l.cgst,0)) as total_cgst,
+    SUM(COALESCE(l.sgst,0)) as total_sgst,
+    SUM(COALESCE(l.igst,0)) as total_igst,
     SUM(l.balance) as total_payable,
     COUNT(*) as lot_count
     FROM lots l WHERE l.auction_id = ? AND l.amount > 0`;
@@ -483,58 +446,130 @@ function getPaymentSummary(db, auctionId, state, cfg) {
     );
     for (const d of debits) debitMap[d.name] = Number(d.total) || 0;
   }
-  // Merge: total_discount = lot-policy discount + any manual debit notes
+  // Merge: total_discount per seller = ONE of two sources (never both):
+  //
+  //   - When debit notes exist for this seller in this trade → DN total
+  //     IS the authoritative discount. The DN was generated using the
+  //     same `discount_pct × days × puramt` formula as `lots.refund`,
+  //     so summing both was double-counting the same money. Furthermore,
+  //     the user may have manually edited the DN amount after generation
+  //     (via the Edit Debit Note flow), in which case the DN value is
+  //     the current source of truth — `lots.refund` is stale.
+  //
+  //   - When no DN exists yet → fall back to the per-lot computed
+  //     `lots.refund` so the Payments tab shows what the seller WILL
+  //     be discounted once DNs are generated.
+  //
+  // Earlier code did `lotDisc + manualDisc` unconditionally — every
+  // trade with DNs generated showed double the actual discount, and
+  // payable was off by that amount.
   return sellers.map(s => {
     const lotDisc = Number(s.lot_discount) || 0;
     const manualDisc = Number(debitMap[s.name]) || 0;
+    const cgst = Number(s.total_cgst) || 0;
+    const sgst = Number(s.total_sgst) || 0;
+    const igst = Number(s.total_igst) || 0;
+    // Authoritative discount: DN total when present, otherwise lot total.
+    const totalDiscount = manualDisc > 0 ? manualDisc : lotDisc;
     return {
       ...s,
-      total_discount: lotDisc + manualDisc,
-      // Subtract the manual debit_notes from payable since balance was
-      // computed before debit_notes were added. Lot-policy discount is
-      // already factored into balance via puramt - cgst - sgst - igst.
-      total_payable: (Number(s.total_payable) || 0) - manualDisc,
+      total_discount: totalDiscount,
+      total_tax: cgst + sgst + igst,
+      // Payable: lots.balance was computed BEFORE DNs existed, using
+      // lots.refund as the discount. So:
+      //   - When DNs exist and equal lot refunds → balance is correct
+      //   - When DNs exist and DIFFER from lot refunds (user edited) →
+      //     adjust by the delta so payable reflects the current DN
+      //   - When no DNs → balance is already correct
+      total_payable: manualDisc > 0
+        ? (Number(s.total_payable) || 0) - (manualDisc - lotDisc)
+        : (Number(s.total_payable) || 0),
     };
   });
 }
 
 /**
- * Generate bank payment data (BANKPAY.PRG — RTGS/NEFT format)
+ * Generate bank payment data (BANKPAY.PRG — RTGS/NEFT format).
+ * Used by both the "after discount" Bank Payment export (default) and
+ * the "Bank Payment (Before)" export when `opts.before === true`.
  */
-function getBankPaymentData(db, auctionId, cfg) {
-  // Mode-aware: see getPaymentSummary above for column rationale.
-  const mode = (cfg && cfg.business_mode || 'e-Trade').toLowerCase();
-  const discountCol = (mode === 'auction') ? 'advance' : 'refund';
+function getBankPaymentData(db, auctionId, cfg, opts) {
+  opts = opts || {};
+  const useBefore = !!opts.before;
+  // Bank Payment lists every seller in the trade with a non-zero
+  // payable (or non-zero pre-discount amount in 'before' mode) — both
+  // registered dealers AND unregistered (URD/agriculturist) farmers.
+  // The earlier WHERE clause filtered to URD-only by excluding rows
+  // whose `cr` looked like a GSTIN. That came from the legacy FoxPro
+  // BANKPAY.PRG which only handled farmers — but the e-Auction flow pays
+  // every seller via RTGS/NEFT, so all sellers must be included.
+  // Result was: registered dealers had IFSC + acctnum on file, but the
+  // SQL excluded them and returned empty rows, so the export was blank.
+  //
+  // Bank details come from `traders` (single-bank legacy) or
+  // `trader_banks` (multi-bank). The LEFT JOIN to traders pulls
+  // address/IFSC; we then COALESCE with trader_banks default for
+  // sellers who maintain multiple bank accounts.
   const payments = db.all(
-    `SELECT l.state, l.name, l.cr, 
-      SUM(l.puramt) as puramt, SUM(l.${discountCol}) as advance, SUM(l.balance) as payable,
-      t.ifsc, t.acctnum, t.padd, t.ppla, t.pin, t.holder_name
+    `SELECT l.state, l.name, l.cr,
+      SUM(l.puramt) as puramt, SUM(l.refund) as advance, SUM(l.balance) as payable,
+      t.id AS trader_id,
+      t.ifsc AS t_ifsc, t.acctnum AS t_acctnum, t.holder_name AS t_holder,
+      t.padd, t.ppla, t.pin
     FROM lots l
-    LEFT JOIN traders t ON t.name = l.name AND t.cr = l.cr
-    WHERE l.auction_id = ? AND l.amount > 0 
-      AND UPPER(COALESCE(l.cr,'')) NOT LIKE 'GSTIN%'
-      AND l.cr NOT GLOB '[0-9][0-9]*'
+    LEFT JOIN traders t ON UPPER(TRIM(t.name)) = UPPER(TRIM(l.name))
+    WHERE l.auction_id = ? AND l.amount > 0
       AND (l.paid IS NULL OR l.paid = '')
     GROUP BY l.name, l.cr
     ORDER BY l.state, l.name`,
     [auctionId]
   );
 
+  // Per-seller bank-details fallback chain:
+  //   1. trader_banks default (is_default=1) — picks the explicitly
+  //      flagged primary account when the seller has multiple banks
+  //   2. trader_banks first row — when no default flagged
+  //   3. traders.ifsc/acctnum — legacy single-bank
+  // Pre-fetch all default banks once (cheaper than per-seller query).
+  const bankByTraderId = {};
+  try {
+    const banks = db.all(`
+      SELECT trader_id, ifsc, acctnum, holder_name, is_default, id
+        FROM trader_banks
+       ORDER BY trader_id, is_default DESC, id ASC
+    `);
+    for (const b of banks) {
+      // First row per trader_id wins (already sorted by is_default DESC).
+      if (bankByTraderId[b.trader_id] == null) bankByTraderId[b.trader_id] = b;
+    }
+  } catch (_) { /* trader_banks may not exist on partial migrations */ }
+
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [auctionId]);
   const roundAmounts = cfg.flag_round;
 
-  return payments.map(p => ({
-    transactionType: (p.payable || 0) >= 200000 ? 'RTGS' : 'NEFT',
-    ifsc: p.ifsc || '',
-    accountNo: p.acctnum || '',
-    beneficiaryName: p.name,
-    address1: p.padd || '',
-    address2: p.ppla || '',
-    pin: p.pin || '',
-    amount: roundAmounts ? Math.round(p.payable || 0) : p.payable || 0,
-    remarks: `${auction ? auction.ano : ''} ${p.name} PAYMENT ${(p.payable || 0).toFixed(2)} Credited`,
-    holderName: p.holder_name || p.name
-  }));
+  return payments.map(p => {
+    // 'before' uses puramt — pre-discount, useful when paying suppliers
+    // before the deduction policy is applied. 'after' (default) uses
+    // payable = puramt − discount − GST.
+    const rawAmount = useBefore ? (p.puramt || 0) : (p.payable || 0);
+    const amount = roundAmounts ? Math.round(rawAmount) : rawAmount;
+    const tb = p.trader_id != null ? bankByTraderId[p.trader_id] : null;
+    const ifsc      = (tb && tb.ifsc)        || p.t_ifsc    || '';
+    const acctnum   = (tb && tb.acctnum)     || p.t_acctnum || '';
+    const holderNm  = (tb && tb.holder_name) || p.t_holder  || p.name;
+    return {
+      transactionType: rawAmount >= 200000 ? 'RTGS' : 'NEFT',
+      ifsc,
+      accountNo: acctnum,
+      beneficiaryName: holderNm,
+      address1: p.padd || '',
+      address2: p.ppla || '',
+      pin: p.pin || '',
+      amount,
+      remarks: `${auction ? auction.ano : ''} ${p.name} PAYMENT ${rawAmount.toFixed(2)} Credited`,
+      holderName: holderNm,
+    };
+  });
 }
 
 /**
@@ -665,67 +700,137 @@ function listAgriSellers(db, auctionId) {
   );
 }
 
+// Convert YYYY-MM-DD (SQLite date) → dd/mm/yyyy for display in
+// journal exports. Falls through unchanged if the input doesn't match.
+function _ddmmyyyy(d) {
+  if (!d) return '';
+  const s = String(d);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  return s;
+}
+
 /**
  * Sales Journal (JOUR.PRG)
- * Date-wise sales invoice register
+ * Trade-wise sales invoice register. Filters invoices by auction id
+ * (resolved via auctions.ano so old invoices with a NULL auction_id
+ * still match by ano). Dates rendered dd/mm/yyyy.
  */
-function getSalesJournal(db, fromDate, toDate, saleType) {
+function getSalesJournal(db, auctionId, saleType) {
+  const auction = db.get('SELECT id, ano FROM auctions WHERE id = ?', [auctionId]);
+  if (!auction) return [];
   let query = `SELECT date, sale, invo, buyer, buyer1, gstin, place,
       bag, qty, amount as cardamom, gunny, pava_hc as transport, ins as insurance,
       cgst, sgst, igst, tcs, rund, tot as total
-    FROM invoices WHERE date BETWEEN ? AND ?`;
-  const params = [fromDate, toDate];
+    FROM invoices WHERE (auction_id = ? OR ano = ?)`;
+  const params = [auction.id, auction.ano];
   if (saleType) { query += ' AND sale = ?'; params.push(saleType); }
   query += ' ORDER BY date, sale, invo';
-  return db.all(query, params);
+  const rows = db.all(query, params);
+  return rows.map(r => ({ ...r, date: _ddmmyyyy(r.date) }));
 }
 
 /**
  * Purchase Journal (PUJOUR.PRG / PPUJOUR.PRG)
- * Date-wise purchase invoice register
+ * Trade-wise purchase invoice register. Dates rendered dd/mm/yyyy.
  * type: 'dealer' (registered) or 'agri' (agriculturist bills)
  */
-function getPurchaseJournal(db, fromDate, toDate, type) {
+function getPurchaseJournal(db, auctionId, type) {
+  const auction = db.get('SELECT id, ano FROM auctions WHERE id = ?', [auctionId]);
+  if (!auction) return [];
   if (type === 'agri') {
-    return db.all(
+    // bills table only has `ano`, not auction_id, so match by ano alone.
+    const rows = db.all(
       `SELECT date, bil as bill_no, name, add_line as address, pla as place, pstate as state,
         crr as cr, pan, qty, cost, igst, net
-      FROM bills WHERE date BETWEEN ? AND ? ORDER BY date, bil`,
-      [fromDate, toDate]
+      FROM bills WHERE ano = ? ORDER BY date, bil`,
+      [auction.ano]
     );
+    return rows.map(r => ({ ...r, date: _ddmmyyyy(r.date) }));
   }
-  // Dealer purchases
-  return db.all(
+  // Dealer purchases — match either by auction_id (newer rows) or ano (legacy).
+  const rows = db.all(
     `SELECT date, invo as invoice_no, name, add_line as address, place, state,
       gstin, qty, amount, cgst, sgst, igst, rund, total, tds
-    FROM purchases WHERE date BETWEEN ? AND ? ORDER BY date, invo`,
-    [fromDate, toDate]
+    FROM purchases WHERE (auction_id = ? OR ano = ?) ORDER BY date, invo`,
+    [auction.id, auction.ano]
   );
+  return rows.map(r => ({ ...r, date: _ddmmyyyy(r.date) }));
 }
 
 /**
  * Debit Note calculation
- * For discounts or adjustments against invoices
+ *
+ * IMPORTANT: Debit notes are issued AGAINST PURCHASES — they record a
+ * discount/adjustment we've negotiated with a registered dealer (the
+ * supplier). The instrument is buyer-side: the buyer (us) issues it to
+ * the seller. So the source row is always a `purchases` record, NOT a
+ * sales invoice. An earlier version queried the `invoices` table by
+ * mistake, allowing DNs to be created against sales transactions —
+ * that's wrong and is fixed here.
+ *
+ * Lookup is by purchase invoice number (`purchases.invo`). When a
+ * `saleType` arg is passed it's ignored — purchases don't carry sale
+ * type the way sales invoices do — but we accept it positionally so
+ * legacy callers (e.g. older /api/debit-notes/generate) don't break.
  */
 function buildDebitNote(db, invoiceNo, saleType, discount, cfg) {
-  const inv = db.get('SELECT * FROM invoices WHERE invo = ? AND sale = ?', [String(invoiceNo), saleType]);
+  // Resolve by purchno (`purchases.invo`). Most-recent wins if duplicates
+  // exist (legacy / re-used numbers across years) — matches /generate-bulk.
+  const inv = db.get(
+    `SELECT * FROM purchases
+      WHERE invo = ?
+      ORDER BY date DESC, id DESC
+      LIMIT 1`,
+    [String(invoiceNo)]
+  );
   if (!inv) return null;
 
-  const gstGoods = cfg.gst_goods || 5;
-  const isInter = inv.igst > 0;
+  // GST rate for the discount itself. The DN is a service charge
+  // (discount-as-credit-note), which uses the discount_gst setting
+  // (typically 18%) — NOT the goods rate (gst_goods, 5% for cardamom).
+  // Earlier code used gst_goods, producing wrong tax on every DN.
+  const gstRate = Number(cfg.discount_gst) || Number(cfg.gst_service) || 18;
+
+  // Intra/inter mirrors the source purchase: if the purchase was inter-
+  // state (igst > 0), the DN inherits IGST; otherwise CGST + SGST.
+  const isInter = (Number(inv.igst) || 0) > 0;
 
   const amount = Math.round(discount * 100) / 100;
   let cgst = 0, sgst = 0, igst = 0;
 
-  // Discount is pre-tax — always add GST on top. (flag_disc_gst was removed.)
-  if (isInter) igst = Math.round(amount * gstGoods / 100 * 100) / 100;
+  // flag_disc_gst removed — discount is always treated as pre-tax;
+  // GST is added on top.
+  if (isInter) igst = Math.round(amount * gstRate / 100 * 100) / 100;
   else {
-    cgst = Math.round(amount * (gstGoods / 2) / 100 * 100) / 100;
-    sgst = Math.round(amount * (gstGoods / 2) / 100 * 100) / 100;
+    cgst = Math.round(amount * (gstRate / 2) / 100 * 100) / 100;
+    sgst = Math.round(amount * (gstRate / 2) / 100 * 100) / 100;
   }
-  
-  const total = amount + cgst + sgst + igst;
-  return { invoice: inv, amount, cgst, sgst, igst, total };
+
+  const total = Math.round((amount + cgst + sgst + igst) * 100) / 100;
+
+  // Return shape mirrors the original (callers read `invoice.ano`,
+  // `invoice.buyer`, etc.). Re-aliases so a purchase row works as the
+  // `invoice` field without callers needing to change.
+  // Map purchase fields → invoice-like fields:
+  //   purchases.name  → buyer / buyer1 (party = the dealer we're crediting)
+  //   purchases.state → state
+  //   purchases.ano   → ano (trade number, used for DN date lookup)
+  return {
+    invoice: {
+      ano:    inv.ano,
+      state:  inv.state,
+      buyer:  inv.name,
+      buyer1: inv.name,
+      invo:   inv.invo,
+      // Carry intra/inter state of source so downstream code that reads
+      // inv.igst > 0 still works.
+      igst:   inv.igst,
+      cgst:   inv.cgst,
+      sgst:   inv.sgst,
+    },
+    amount, cgst, sgst, igst, total,
+  };
 }
 
 module.exports = {

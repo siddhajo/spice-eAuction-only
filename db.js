@@ -195,8 +195,8 @@ async function initDb() {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ano TEXT NOT NULL,
     date TEXT NOT NULL,
-    crop_type TEXT DEFAULT 'ASP',
-    state TEXT DEFAULT 'TAMIL NADU',
+    crop_type TEXT DEFAULT '',
+    state TEXT DEFAULT '',
     start_time TEXT,
     end_time TEXT,
     created_at TEXT DEFAULT (datetime('now','localtime'))
@@ -286,6 +286,8 @@ async function initDb() {
     tcs REAL DEFAULT 0,
     rund REAL DEFAULT 0,
     tot REAL DEFAULT 0,
+    addl_chg REAL DEFAULT 0,
+    addl_name TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
@@ -352,6 +354,38 @@ async function initDb() {
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
+  // ── ROUTE DISTANCES (e-way bill <DISTANCE> field) ──────────
+  // Saved per (from_pin, to_pin) pair, normalised so the smaller PIN
+  // is always stored first — that way A↔B and B↔A share one row. Used
+  // by the To Tally → 🗺️ E-way Bill Distance UI: user looks up the
+  // distance once on the NIC portal, types it in, and every invoice
+  // between the same two PINs (this auction and all future ones) picks
+  // it up automatically.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS route_distances (
+    from_pin TEXT NOT NULL,
+    to_pin TEXT NOT NULL,
+    km INTEGER NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now','localtime')),
+    PRIMARY KEY (from_pin, to_pin)
+  )`);
+
+  // ── LOT ALLOCATIONS (per-trade per-branch lot-number ranges) ──
+  // Each row reserves a contiguous range of lot numbers (e.g. 001-080)
+  // for one branch within one trade. The Lot Entry workflow validates
+  // every saved lot's lot_no against these ranges so two field-staff
+  // users in different branches can't collide on the same lot number.
+  // Ranges are inclusive on both ends and may have an optional alpha
+  // prefix (e.g. A001-A080) — see parseLotNo() in server.js.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS lot_allocations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    auction_id INTEGER NOT NULL,
+    branch TEXT NOT NULL,
+    start_lot TEXT NOT NULL,
+    end_lot TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (auction_id) REFERENCES auctions(id)
+  )`);
+
   // ── AUDIT LOG ──────────────────────────────────────────────
   wrapped.exec(`CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -361,22 +395,6 @@ async function initDb() {
     entity_id INTEGER,
     details TEXT,
     created_at TEXT DEFAULT (datetime('now','localtime'))
-  )`);
-
-  // ── ROUTE DISTANCES ───────────────────────────────────────
-  // Maps (dispatch PIN, consignee PIN) → road km, populated manually by
-  // the user via the To Tally → E-way Bill Distance UI. The user looks
-  // up a route once on NIC's portal, saves it here, and every future
-  // invoice between the same two PINs gets the value automatically.
-  //
-  // Keys are normalised: we always store the lexicographically smaller
-  // PIN as `from_pin` so A→B and B→A share a single row.
-  wrapped.exec(`CREATE TABLE IF NOT EXISTS route_distances (
-    from_pin TEXT NOT NULL,
-    to_pin   TEXT NOT NULL,
-    km       INTEGER NOT NULL,
-    updated_at TEXT DEFAULT (datetime('now','localtime')),
-    PRIMARY KEY (from_pin, to_pin)
   )`);
 
   // ── INDEXES ────────────────────────────────────────────────
@@ -395,6 +413,7 @@ async function initDb() {
     'CREATE INDEX IF NOT EXISTS idx_bills_name ON bills(name)',
     'CREATE INDEX IF NOT EXISTS idx_buyers_buyer ON buyers(buyer)',
     'CREATE INDEX IF NOT EXISTS idx_buyers_buyer1 ON buyers(buyer1)',
+    'CREATE INDEX IF NOT EXISTS idx_lot_alloc_auction ON lot_allocations(auction_id)',
   ];
   for (const idx of indexes) { try { wrapped.exec(idx); } catch (e) {} }
 
@@ -443,6 +462,16 @@ async function initDb() {
     // Search page (or Google Maps), pastes it here, clicks Save. Value
     // is then emitted verbatim on the next voucher regen.
     'ALTER TABLE invoices ADD COLUMN distance_km INTEGER',
+    // Additional Charge — sum(cardamom) × cfg.addl_charge_value, sits
+    // below the Round on/off line. addl_name carries the user-defined
+    // ledger label (also used as the Tally ledger name in XML).
+    "ALTER TABLE invoices ADD COLUMN addl_chg REAL DEFAULT 0",
+    "ALTER TABLE invoices ADD COLUMN addl_name TEXT DEFAULT ''",
+    // Per-invoice lorry / truck number. Set from the Invoices tab via a
+    // bulk-action button; emitted into the e-way bill <VEHICLENUMBER>
+    // (and BASICSHIPVESSELNO) fields when generating sales vouchers
+    // so dad doesn't have to type it into Tally manually.
+    'ALTER TABLE invoices ADD COLUMN lorry_no TEXT',
     // Drop legacy pincodes/pin_distances tables that supported the old
     // haversine auto-compute path. We replaced that with the manual-
     // override workflow (above), so these tables are now dead weight.
@@ -673,4 +702,50 @@ function closeDb() {
   }
 }
 
-module.exports = { initDb, getDb, closeDb };
+/**
+ * Replace the entire database from a buffer (used by /api/system/restore).
+ * Validates that the buffer is a SQLite file (header magic), opens it as a
+ * fresh sql.js Database, persists to disk, then swaps it in. Throws on any
+ * error so the caller can surface a clean message — the existing DB is left
+ * untouched on failure.
+ */
+async function replaceFromBuffer(buf) {
+  if (!Buffer.isBuffer(buf)) buf = Buffer.from(buf);
+  // SQLite files start with "SQLite format 3\0" (16 bytes).
+  const magic = buf.slice(0, 16).toString('utf8').replace(/\0+$/, '');
+  if (magic !== 'SQLite format 3') {
+    throw new Error('Uploaded file is not a valid SQLite database');
+  }
+  if (!SQL) SQL = await initSqlJs();
+  // Sanity-check: must open without throwing.
+  let test;
+  try { test = new SQL.Database(buf); } catch (e) {
+    throw new Error('SQLite file is corrupt or unreadable: ' + e.message);
+  }
+  // Quick integrity check
+  try {
+    const r = test.exec('PRAGMA integrity_check');
+    const ok = r && r[0] && r[0].values && r[0].values[0] && r[0].values[0][0] === 'ok';
+    if (!ok) throw new Error('integrity_check did not return "ok"');
+  } catch (e) {
+    test.close();
+    throw new Error('Integrity check failed: ' + e.message);
+  }
+  // Flush any pending writes from the current DB before replacing it.
+  flushSave();
+  // Close the live DB and swap.
+  if (rawDb) { try { rawDb.close(); } catch(_){} }
+  rawDb = test;
+  // Persist immediately so a crash right after restore doesn't lose it.
+  try {
+    const out = Buffer.from(rawDb.export());
+    const tmp = DB_PATH + '.tmp';
+    fs.writeFileSync(tmp, out);
+    fs.renameSync(tmp, DB_PATH);
+  } catch (e) {
+    throw new Error('Failed to persist restored DB: ' + e.message);
+  }
+  return { ok: true, size: buf.length };
+}
+
+module.exports = { initDb, getDb, closeDb, flushSave, replaceFromBuffer, DB_PATH };

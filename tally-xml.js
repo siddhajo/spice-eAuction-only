@@ -21,6 +21,12 @@
  */
 
 // ── Indian state code → name (matches FindState in VBA) ──────────
+// Defensive resolver — see _company-identity-fallback.js. Returns a
+// working getCompanyIdentity even if report-formatters.js is missing
+// or older. Avoids "getCompanyIdentity is not a function" on partial
+// deploys when the Tally XML generators run.
+const _getCompanyIdentity = require('./_company-identity-fallback').resolve();
+
 const STATES = {
   '01': 'Jammu & Kashmir', '02': 'Himachal Pradesh', '03': 'Punjab',
   '04': 'Chandigarh', '05': 'Uttarakhand', '06': 'Haryana',
@@ -215,8 +221,29 @@ function generSalesIspXML(rows, cfg, opts = {}) {
   const company       = opts.companyName || cfgGet(cfg, 'tally_company_name', cfgGet(cfg, 'short_name', 'Ideal Spices Private Limited'));
   const season        = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
   const separator     = opts.separator || cfgGet(cfg, 'tally_separator', '/');
-  const invPrefix     = cfgGet(cfg, 'tally_inv_prefix', 'ISP/');
+  // Voucher prefix priority for <VOUCHERNUMBER>:
+  //   1. tally_inv_prefix setting (e.g. 'VSTK') — explicit, season-stable
+  //   2. cfg.logo (live Logo Code) — back-compat for installs that
+  //      historically used the Logo Code as the prefix
+  //   3. 'ISP' literal — final safety net so we never emit blank prefixes
+  // Trailing '/' appended only if the code doesn't already end with one
+  // or '-'. The slash is necessary because <VOUCHERNUMBER> is rendered
+  // as `${invPrefix}${separator}${seasonNum}` and a missing slash
+  // produces invalid voucher numbers in Tally.
+  const _tallyPrefix = String(cfgGet(cfg, 'tally_inv_prefix', '')).trim();
+  const _logoCode    = String(cfgGet(cfg, 'logo', '')).trim();
+  // Voucher prefix priority: tally_inv_prefix (Tally settings) → logo
+  // (Settings → Company) → identity.shortName (derived) → 'INV' as a
+  // generic last-resort label. Avoids leaking the legacy 'ISP' code
+  // into voucher numbers on installs where logo isn't configured.
+  const _activePrefix = _tallyPrefix || _logoCode || _getCompanyIdentity(cfg).shortName || 'INV';
+  const invPrefix = /[/\-]$/.test(_activePrefix) ? _activePrefix : (_activePrefix + '/');
+  const ainvPrefix    = cfgGet(cfg, 'tally_ainv_prefix', '');  // legacy ASP-prefix (sister company); empty means "no aux prefix"
   const detailed      = cfgBool(cfg, 'tally_detailed', true);
+  const dispatchEnabled = cfgBool(cfg, 'tally_dispatch_from', false);
+  // E-way bill emission gate — user-controlled, defaults ON, independent
+  // of the dispatch-from-address toggle so they can be flipped separately.
+  const ewayEnabled    = cfgBool(cfg, 'tally_eway_enabled', false);
   const tcs           = cfgBool(cfg, 'tally_tcs_enabled', false);
   const shipToOverride = cfgBool(cfg, 'tally_ship_to', false);
   const intra         = cfgGet(cfg, 'tally_state_code', '33');
@@ -239,27 +266,29 @@ function generSalesIspXML(rows, cfg, opts = {}) {
   const HSN_Card     = cfgGet(cfg, 'tally_hsn_cardamom',  '09083120');
   const HSN_Gunny    = cfgGet(cfg, 'tally_hsn_gunny',     '63051040');
   const GunnyRate    = cfgNum(cfg, 'tally_gunny_rate',     165);
+  // Service ledgers (intra-state ISP only — reference uses fully-spelled
+  // names with the rate baked in; user can override in Settings)
   const LDR_Transport  = cfgGet(cfg, 'tally_transport', 'Transport Rs.2.50/per Kg');
   const LDR_Insurance  = cfgGet(cfg, 'tally_insurance', 'Insurance Rs.0.75/per Thousand');
   const SAC_Transport  = cfgGet(cfg, 'tally_hsn_transport', '996791');
   const SAC_Insurance  = cfgGet(cfg, 'tally_hsn_insurance', '997136');
 
-  // Dispatch-from — sister/dispatch_* configs were removed. Use the
-  // primary company's Kerala office (where cardamom physically ships from).
+  // Dispatch-from defaults: in the original Spice Config app this used
+  // sister-company (ASP / Kerala) address. In this e-Auction-only build,
+  // there's a single company identity — pull dispatch info from the
+  // configured Kerala address block (since dispatch typically goes via
+  // the Kerala warehouse). User can override per-export via opts.
   const d_company    = cfgGet(cfg, 'short_name', cfgGet(cfg, 'trade_name', ''));
   const d_add        = cfgGet(cfg, 'kl_address1', '');
   const d_add2       = cfgGet(cfg, 'kl_address2', '');
-  const d_place      = cfgGet(cfg, 'kl_branch', 'NEDUMKANDAM');
+  const d_place      = cfgGet(cfg, 'kl_place', cfgGet(cfg, 'kl_branch', 'NEDUMKANDAM'));
   const d_pin        = cfgGet(cfg, 'kl_pin', '685553');
-  const d_state      = 'Kerala';
+  const d_state      = cfgGet(cfg, 'kl_state', 'Kerala');
   const d_state_code = '32';
   const d_gstin      = cfgGet(cfg, 'kl_gstin', '');
 
-  // E-way bill consignor type — fixed default; option to override via cfg.
+  // E-way bill consignor type — kept for reference compatibility
   const consignorType = cfgGet(cfg, 'tally_consignor_type', 'Self');
-
-  // Always emit the dispatch-from block (the sister-toggle was removed).
-  const dispatchEnabled = true;
 
   let xml = '\n' + startEnvelope(company, 'Vouchers');
 
@@ -278,8 +307,11 @@ function generSalesIspXML(rows, cfg, opts = {}) {
     const invoNo      = String(row.invo || '').trim();
     const taxNm       = `${sale}${separator}${invoNo}`;
     const voucherNum  = `${invPrefix}${taxNm}/${season}`;
-    // Sister/ASP cross-reference removed — no aspVoucherRef any more.
-    const aspVoucherRef = '';
+    // Single-company build: <BASICORDERREF> mirrors <VOUCHERNUMBER>.
+    // The original dual-company app pointed this at the matching ASP
+    // voucher; in this build the invoice references itself so Tally
+    // gets a populated tag without phantom ASP/* numbers.
+    const aspVoucherRef = voucherNum;
 
     const rates       = rateDetails(cfgNum(cfg, 'tally_gst_rate', 5));
 
@@ -337,7 +369,7 @@ ${dispatchLines.map(l => `<DISPATCHFROMADDRESS>${xe(l)}</DISPATCHFROMADDRESS>`).
 <COUNTRYOFRESIDENCE>India</COUNTRYOFRESIDENCE>
 <PLACEOFSUPPLY>${partyState}</PLACEOFSUPPLY>
 <VOUCHERNUMBER>${xe(voucherNum)}</VOUCHERNUMBER>
-<REFERENCE></REFERENCE>
+<REFERENCE>${xe(voucherNum)}</REFERENCE>
 <BILLTOPLACE>${partyPlace}</BILLTOPLACE>`;
 
     if (dispatchEnabled) {
@@ -378,7 +410,6 @@ ${dispatchLines.map(l => `<DISPATCHFROMADDRESS>${xe(l)}</DISPATCHFROMADDRESS>`).
 <BASICDATETIMEOFREMOVAL>${dateval}</BASICDATETIMEOFREMOVAL>
 <BASICFINALDESTINATION>${finalDest}</BASICFINALDESTINATION>
 <BASICSHIPPEDBY>${shippedBy}</BASICSHIPPEDBY>
-<BASICORDERREF>${xe(aspVoucherRef)}</BASICORDERREF>
 <BASICSHIPVESSELNO>${vehicleNo}</BASICSHIPVESSELNO>
 <VCHENTRYMODE>Item Invoice</VCHENTRYMODE>
 <DIFFACTUALQTY>Yes</DIFFACTUALQTY>
@@ -392,8 +423,12 @@ ${dispatchLines.map(l => `<DISPATCHFROMADDRESS>${xe(l)}</DISPATCHFROMADDRESS>`).
 <ISINVOICE>Yes</ISINVOICE>
 <ISVATDUTYPAID>Yes</ISVATDUTYPAID>`;
 
-    // E-way bill block — only when dispatch is enabled (matches reference)
-    if (dispatchEnabled) {
+    // E-way bill block — controlled by its own `tally_eway_enabled`
+    // setting (defaults ON). Decoupled from `tally_dispatch_from`,
+    // sale type, and any other gate so the user can flip it directly
+    // from Settings → To Tally without affecting the dispatch-from
+    // address block or other unrelated voucher fields.
+    if (ewayEnabled) {
       const consignorAddrFlat = `${d_company} ${d_add} GSTIN:${d_gstin}`.replace(/\s+/g, ' ').trim();
       xml += `
 <EWAYBILLDETAILS.LIST>
@@ -423,29 +458,36 @@ ${dispatchLines.map(l => `<DISPATCHFROMADDRESS>${xe(l)}</DISPATCHFROMADDRESS>`).
 </EWAYBILLDETAILS.LIST>`;
     }
 
-    // Party (debtor) ledger — negative amount (party owes us)
-    const totalRound = r0(row.totalRounded || row.total);
-    const totalAmt   = r2(row.total);
-    const rnd        = r2(totalRound - totalAmt);
+    // Party (debtor) ledger — negative amount (party owes us).
+    // Additional Charge (sum(cardamom) × cfg.addl_charge_value) is emitted
+    // as its own ledger entry below; it must be added on top of the rounded
+    // GST-inclusive subtotal so the party AMOUNT matches the invoice grand
+    // total the buyer sees on the PDF.
+    const totalRound   = r0(row.totalRounded || row.total);
+    const totalAmt     = r2(row.total);
+    const rnd          = r2(totalRound - totalAmt);
+    const addlChargeXml = r2(row.addlCharge || 0);
+    const addlLedger    = (row.addlChargeName || cfgGet(cfg, 'addl_charge_name', '') || 'Additional Charge').toString();
+    const partyTotal    = r2(totalRound + addlChargeXml);
 
     xml += `
 <LEDGERENTRIES.LIST>
 <LEDGERNAME>${partyName}</LEDGERNAME>
 <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
 ${TAGS.DEEMYES}
-<AMOUNT>${-totalRound}</AMOUNT>
+<AMOUNT>${-partyTotal}</AMOUNT>
 <BILLALLOCATIONS.LIST>
 <NAME>${xe(voucherNum)}</NAME>
 <BILLTYPE>New Ref</BILLTYPE>
-<AMOUNT>${-totalRound}</AMOUNT>
+<AMOUNT>${-partyTotal}</AMOUNT>
 </BILLALLOCATIONS.LIST>
 </LEDGERENTRIES.LIST>`;
 
-    // Transport + Insurance — only in intra-state ISP vouchers (reference
-    // omits both for inter-state and export, matching calculations.js
-    // hideTI flag). Emitted before the tax ledgers; each carries its own
-    // RATEDETAILS.LIST (CGST/SGST/Cess) since they're separately taxable.
-    const wantTI = isIntra && !isExport;
+    // Transport + Insurance ledgers — emitted for Local AND Inter-state
+    // sales; only Export hides them. Matches the calculations.js rule
+    // (hide only when saleType === 'E') and the invoice-pdf.js
+    // hideTransportInsurance flag.
+    const wantTI = !isExport;
     const transportAmt = r2(row.transportAmt || 0);
     const insuranceAmt = r2(row.insuranceAmt || 0);
     if (wantTI && transportAmt > 0) {
@@ -464,8 +506,7 @@ ${TAGS.DEEMYES}
 ${TAGS.DEEMNO}
 <AMOUNT>${transportAmt}</AMOUNT>
 <VATEXPAMOUNT>${transportAmt}</VATEXPAMOUNT>
-${rates.cgst}
-${rates.sgst}
+${isIntra ? `${rates.cgst}\n${rates.sgst}` : rates.igst}
 ${rates.cess}
 </LEDGERENTRIES.LIST>`;
     }
@@ -485,8 +526,7 @@ ${rates.cess}
 ${TAGS.DEEMNO}
 <AMOUNT>${insuranceAmt}</AMOUNT>
 <VATEXPAMOUNT>${insuranceAmt}</VATEXPAMOUNT>
-${rates.cgst}
-${rates.sgst}
+${isIntra ? `${rates.cgst}\n${rates.sgst}` : rates.igst}
 ${rates.cess}
 </LEDGERENTRIES.LIST>`;
     }
@@ -542,6 +582,18 @@ ${TAGS.DEEMNO}
 </LEDGERENTRIES.LIST>`;
     }
 
+    // Additional Charge — separate ledger after round-off, named per the
+    // Settings → Rates & Charges entry (or 'Additional Charge' fallback).
+    if (Math.abs(addlChargeXml) > 0.001) {
+      xml += `
+<LEDGERENTRIES.LIST>
+<LEDGERNAME>${xe(addlLedger)}</LEDGERNAME>
+${TAGS.DEEMNO}
+<AMOUNT>${addlChargeXml}</AMOUNT>
+<VATEXPAMOUNT>${addlChargeXml}</VATEXPAMOUNT>
+</LEDGERENTRIES.LIST>`;
+    }
+
     // Inventory — one entry per lot (Cardamom) when detailed; else one aggregate
     xml += '\n';
     if (detailed && Array.isArray(row.lots)) {
@@ -575,6 +627,52 @@ ${TAGS.DEEMNO}
 <LEDGERNAME>${xe(cardLedger)}</LEDGERNAME>
 ${TAGS.DEEMNO}
 <AMOUNT>${r2(lot.amount)}</AMOUNT>
+</ACCOUNTINGALLOCATIONS.LIST>
+${isIntra && !isExport ? `${rates.cgst}\n${rates.sgst}` : (isExport ? '' : rates.igst)}
+${rates.cess}
+</ALLINVENTORYENTRIES.LIST>`;
+      }
+    } else {
+      // Aggregate-mode cardamom inventory — single entry covering all lots.
+      // Without this, the cardamom sales ledger never reaches the voucher
+      // (the per-lot loop above is skipped) and Tally rejects the import
+      // with "missing ledger" because the goods amount has nowhere to
+      // post. Quantity/amount summed from lots; if lots weren't passed,
+      // fall back to row-level totals (row.qty, row.amounttot).
+      const lots = Array.isArray(row.lots) ? row.lots : [];
+      const aggQty   = lots.length ? lots.reduce((s, l) => s + (Number(l.qty) || 0), 0)    : Number(row.qty || 0);
+      const aggAmt   = lots.length ? lots.reduce((s, l) => s + (Number(l.amount) || 0), 0) : Number(row.amounttot || row.amount || 0);
+      const aggBags  = lots.length ? lots.reduce((s, l) => s + (Number(l.bag) || 0), 0)    : Number(row.bag || 0);
+      const aggRate  = aggQty > 0 ? (aggAmt / aggQty) : 0;
+      if (aggAmt > 0) {
+        xml += `
+<ALLINVENTORYENTRIES.LIST>
+<STOCKITEMNAME>${xe(Item_Card)}</STOCKITEMNAME>
+<GSTOVRDNTAXABILITY>Taxable</GSTOVRDNTAXABILITY>
+<HSNSOURCETYPE>Stock Item</HSNSOURCETYPE>
+<HSNITEMSOURCE>${xe(Item_Card)}</HSNITEMSOURCE>
+<GSTOVRDNSTOREDNATURE>${cardNature}</GSTOVRDNSTOREDNATURE>
+<GSTOVRDNTYPEOFSUPPLY>Goods</GSTOVRDNTYPEOFSUPPLY>
+<GSTHSNNAME>${xe(HSN_Card)}</GSTHSNNAME>
+<GSTHSNDESCRIPTION>${xe(Item_Card)}</GSTHSNDESCRIPTION>
+<BASICNUMPACKAGES>${r0(aggBags)}</BASICNUMPACKAGES>
+${TAGS.DEEMNO}
+<RATE>${r2(aggRate)}/Kgs.</RATE>
+<AMOUNT>${r2(aggAmt)}</AMOUNT>
+<ACTUALQTY>${r2(aggQty)}Kgs.</ACTUALQTY>
+<BILLEDQTY>${r2(aggQty)}Kgs.</BILLEDQTY>
+<BATCHALLOCATIONS.LIST>
+<GODOWNNAME>Main Location</GODOWNNAME>
+<BATCHNAME>Primary Batch</BATCHNAME>
+<DESTINATIONGODOWNNAME>Main Location</DESTINATIONGODOWNNAME>
+<AMOUNT>${r2(aggAmt)}</AMOUNT>
+<ACTUALQTY>${r2(aggQty)}Kgs.</ACTUALQTY>
+<BILLEDQTY>${r2(aggQty)}Kgs.</BILLEDQTY>
+</BATCHALLOCATIONS.LIST>
+<ACCOUNTINGALLOCATIONS.LIST>
+<LEDGERNAME>${xe(cardLedger)}</LEDGERNAME>
+${TAGS.DEEMNO}
+<AMOUNT>${r2(aggAmt)}</AMOUNT>
 </ACCOUNTINGALLOCATIONS.LIST>
 ${isIntra && !isExport ? `${rates.cgst}\n${rates.sgst}` : (isExport ? '' : rates.igst)}
 ${rates.cess}
@@ -645,11 +743,11 @@ function generSalesAspXML(rows, cfg, opts = {}) {
   const company       = opts.companyName || cfgGet(cfg, 'tally_asp_company_name', 'Amazing Spice Park Private Limited');
   const season        = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
   const separator     = opts.separator || cfgGet(cfg, 'tally_separator', '/');
-  const ainvPrefix    = cfgGet(cfg, 'tally_inv_prefix', 'ISP/');
+  const ainvPrefix    = cfgGet(cfg, 'tally_ainv_prefix', '');  // legacy ASP-prefix (sister company); empty means "no aux prefix"
   const detailed      = cfgBool(cfg, 'tally_detailed', true);
 
   // ASP's home-state code (for intra/inter detection w.r.t. the buyer)
-  const intra         = '32';
+  const intra         = cfgGet(cfg, 'tally_state_code', '');
 
   // Ledgers — ASP's books use the same names by convention; if user
   // wants ASP-specific ledger names, add tally_asp_* keys later.
@@ -674,11 +772,16 @@ function generSalesAspXML(rows, cfg, opts = {}) {
   // address fields for this.
   const own_addr1    = cfgGet(cfg, 's_dispatch_address1', '650,Ward 6, Ellikkanam, Nedumkandam');
   const own_addr2    = cfgGet(cfg, 's_dispatch_address2', 'Idukki, Kerala, 685553');
-  const own_sbl      = cfgGet(cfg, 'sbl', '');
-  const own_place    = cfgGet(cfg, 'kl_branch', 'NEDUMKANDAM');
-  const own_pin      = cfgGet(cfg, 'kl_pin', '685553');
-  const own_state    = 'Kerala';
-  const own_company  = cfgGet(cfg, 'short_name', cfgGet(cfg, 'trade_name', ''));
+  const own_sbl      = cfgGet(cfg, 's_sbl', '');
+  const own_place    = cfgGet(cfg, 'tally_dispatch_place', 'NEDUMKANDAM');
+  const own_pin      = cfgGet(cfg, 'tally_dispatch_pin', '685553');
+  const own_state    = cfgGet(cfg, 'tally_dispatch_state', 'Kerala');
+  // Own company name: legacy s_* fields take priority for installs that
+  // imported from the ASP build, but fall back to the central identity
+  // resolver instead of a hardcoded "AMAZING SPICE PARK" string.
+  const own_company  = cfgGet(cfg, 's_company',
+                       cfgGet(cfg, 's_short_name',
+                       _getCompanyIdentity(cfg).name || 'Company'));
 
   let xml = '\n' + startEnvelope(company, 'Vouchers');
 
@@ -734,7 +837,7 @@ ${ispAddrLines.map(l => `<ADDRESS>${xe(l)}</ADDRESS>`).join('\n')}
 <COUNTRYOFRESIDENCE>India</COUNTRYOFRESIDENCE>
 <PLACEOFSUPPLY>${ispState}</PLACEOFSUPPLY>
 <VOUCHERNUMBER>${xe(voucherNum)}</VOUCHERNUMBER>
-<REFERENCE></REFERENCE>
+<REFERENCE>${xe(voucherNum)}</REFERENCE>
 <BILLTOPLACE>${ispPlace}</BILLTOPLACE>
 <DISPATCHFROMNAME>${xe(own_company)}</DISPATCHFROMNAME>
 <DISPATCHFROMSTATENAME>${xe(own_state)}</DISPATCHFROMSTATENAME>
@@ -933,14 +1036,18 @@ function generIspPurchaseXML(rows, cfg, opts = {}) {
   const HSN_Card     = cfgGet(cfg, 'tally_hsn_cardamom',        '09083120');
   const HSN_Gunny    = cfgGet(cfg, 'tally_hsn_gunny',           '63051040');
 
-  // Sister/ASP party identity — fetched from sister-company cfg.
-  const aspName    = cfgGet(cfg, 'short_name', cfgGet(cfg, 'trade_name', ''));
-  const aspAddr1   = cfgGet(cfg, 'kl_address1', '');
-  const aspAddr2   = cfgGet(cfg, 'kl_address2', '');
-  const aspPlace   = cfgGet(cfg, 'kl_branch', 'NEDUMKANDAM');
-  const aspPin     = cfgGet(cfg, 'kl_pin', '685553');
-  const aspState   = 'Kerala';
-  const aspGstin   = cfgGet(cfg, 'kl_gstin', '');
+  // Sister/ASP party identity — fetched from sister-company cfg if
+  // present (legacy ASP installs), else falls back to the central
+  // identity resolver. No hardcoded "AMAZING SPICE PARK" literal.
+  const aspName    = cfgGet(cfg, 's_company',
+                       cfgGet(cfg, 's_short_name',
+                       _getCompanyIdentity(cfg).name || 'Company'));
+  const aspAddr1   = cfgGet(cfg, 's_address1', cfgGet(cfg, 's_dispatch_address1', ''));
+  const aspAddr2   = cfgGet(cfg, 's_address2', cfgGet(cfg, 's_dispatch_address2', ''));
+  const aspPlace   = cfgGet(cfg, 's_place',    cfgGet(cfg, 'tally_dispatch_place', 'NEDUMKANDAM'));
+  const aspPin     = cfgGet(cfg, 's_pin',      cfgGet(cfg, 'tally_dispatch_pin', '685553'));
+  const aspState   = cfgGet(cfg, 's_state',    cfgGet(cfg, 'tally_dispatch_state', 'Kerala'));
+  const aspGstin   = cfgGet(cfg, 's_gstin',    '');
 
   // Address lines for the ASP party. Reference shows two lines:
   //   line 1 = full street address
@@ -965,7 +1072,7 @@ function generIspPurchaseXML(rows, cfg, opts = {}) {
     // cross-reference. The builder already produced the per-row data
     // including invo and sale='I' implicit; we re-derive the number here
     // exactly like generSalesAspXML does, so the two stay in lockstep.
-    const ainvPrefix  = cfgGet(cfg, 'tally_inv_prefix', 'ISP/');
+    const ainvPrefix  = cfgGet(cfg, 'tally_ainv_prefix', '');
     const separator   = opts.separator || cfgGet(cfg, 'tally_separator', '/');
     const season      = opts.season    || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
     const sale        = 'I';  // always inter-state for ASP→ISP
@@ -1015,7 +1122,7 @@ ${aspAddrLines.map(l => `<BASICBUYERADDRESS>${xe(l)}</BASICBUYERADDRESS>`).join(
 <COUNTRYOFRESIDENCE>India</COUNTRYOFRESIDENCE>
 <PLACEOFSUPPLY>${xe(ispPlaceOfSupply)}</PLACEOFSUPPLY>
 <VOUCHERNUMBER>${xe(voucherNum)}</VOUCHERNUMBER>
-<REFERENCE></REFERENCE>
+<REFERENCE>${xe(voucherNum)}</REFERENCE>
 <CONSIGNEEGSTIN>${xe(aspGstin)}</CONSIGNEEGSTIN>
 <CONSIGNEEMAILINGNAME>${xe(aspName)}</CONSIGNEEMAILINGNAME>
 <CONSIGNEEPINCODE>${xe(aspPin)}</CONSIGNEEPINCODE>
@@ -1219,13 +1326,22 @@ function generSalesXML(rows, cfg, opts = {}) {
   const company       = opts.companyName || cfgGet(cfg, 'tally_company_name', cfgGet(cfg, 'short_name', 'Ideal Spices Private Limited'));
   const season        = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
   const separator     = opts.separator || cfgGet(cfg, 'tally_separator', '/');
-  const invPrefix     = cfgGet(cfg, 'tally_inv_prefix', 'ISP/');
-  const ainvPrefix    = cfgGet(cfg, 'tally_inv_prefix', 'ISP/');
+  // Voucher prefix from Logo Code (single source of truth — see the
+  // ISP generator above for rationale). Falls through to the central
+  // identity resolver's shortName instead of leaking the legacy 'ISP'
+  // literal into voucher numbers.
+  const _logoCode2 = String(cfgGet(cfg, 'logo', '')).trim()
+                  || _getCompanyIdentity(cfg).shortName || 'INV';
+  const invPrefix     = /[/\-]$/.test(_logoCode2) ? _logoCode2 : (_logoCode2 + '/');
+  // ainvPrefix and amazing are kept as locals so the dead ASP branches
+  // below still parse, but `amazing` is force-disabled in this e-Auction-only
+  // build — there is no sister-company Tally export here.
+  const ainvPrefix    = cfgGet(cfg, 'tally_ainv_prefix', '');  // legacy ASP-prefix (sister company); empty means "no aux prefix"
   const amazing       = false;
   const detailed      = cfgBool(cfg, 'tally_detailed', true);
-  const dispatchEnabled = true;
+  const dispatchEnabled = false; // dispatch-from override removed in e-Auction-only build
   const tcs           = cfgBool(cfg, 'tally_tcs_enabled', false);
-  const intra         = cfgGet(cfg, 'tally_state_code', '33'); // ISP=33, ASP=32 (set in cfg)
+  const intra         = cfgGet(cfg, 'tally_state_code', '33');
 
   // Ledgers
   const SalesInter   = cfgGet(cfg, 'tally_sales_inter',  'Cardamom Sales 5%');
@@ -1244,12 +1360,12 @@ function generSalesXML(rows, cfg, opts = {}) {
   const HSN_Gunny    = cfgGet(cfg, 'tally_hsn_gunny',     '63053200');
 
   // Dispatch-from address (sister-company despatch, ASP source)
-  const d_company    = cfgGet(cfg, 'short_name', cfgGet(cfg, 'trade_name', ''));
-  const d_add        = cfgGet(cfg, 'kl_address1', '');
-  const d_place      = cfgGet(cfg, 'kl_branch', 'NEDUMKANDAM');
-  const d_pin        = cfgGet(cfg, 'kl_pin', '685553');
-  const d_state      = 'Kerala';
-  const d_gstin      = cfgGet(cfg, 'kl_gstin', '');
+  const d_company    = cfgGet(cfg, 'tally_dispatch_company', cfgGet(cfg, 's_short_name', ''));
+  const d_add        = cfgGet(cfg, 'tally_dispatch_address', cfgGet(cfg, 's_address1', ''));
+  const d_place      = cfgGet(cfg, 'tally_dispatch_place',   cfgGet(cfg, 's_place', ''));
+  const d_pin        = cfgGet(cfg, 'tally_dispatch_pin',     cfgGet(cfg, 's_pin', ''));
+  const d_state      = cfgGet(cfg, 'tally_dispatch_state',   cfgGet(cfg, 's_state', 'Kerala'));
+  const d_gstin      = cfgGet(cfg, 'tally_dispatch_gstin',   cfgGet(cfg, 's_gstin', ''));
 
   let xml = '\n' + startEnvelope(company, 'Vouchers');
 
@@ -1354,7 +1470,7 @@ ${rates.cess}
 <COUNTRYOFRESIDENCE>India</COUNTRYOFRESIDENCE>
 <PLACEOFSUPPLY>${state}</PLACEOFSUPPLY>
 <VOUCHERNUMBER>${xe(voucherNum)}</VOUCHERNUMBER>
-<REFERENCE></REFERENCE>
+<REFERENCE>${xe(voucherNum)}</REFERENCE>
 <CONSIGNEEGSTIN>${partyGstin}</CONSIGNEEGSTIN>
 <CONSIGNEEMAILINGNAME>${partyName}</CONSIGNEEMAILINGNAME>
 <CONSIGNEEPINCODE>${pin}</CONSIGNEEPINCODE>
@@ -1449,17 +1565,20 @@ ${rnd < 0 ? TAGS.DEEMYES : TAGS.DEEMNO}
 // }, ...]
 //
 function generRDPurchaseXML(rows, cfg, opts = {}) {
-  const company    = opts.companyName || cfgGet(cfg, 'tally_asp_company_name', cfgGet(cfg, 'tally_company_name', 'Amazing Spice Park Private Limited'));
+  const company    = opts.companyName || cfgGet(cfg, 'tally_company_name', 'Ideal Spices Private Limited');
   const season     = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
   const detailed   = cfgBool(cfg, 'tally_detailed', true);
   const tlyrnd     = cfgBool(cfg, 'tally_round_enabled', true);
-  const opt        = false;
-  // RD vouchers go to the ASP company. The intra/inter test must therefore
-  // compare the seller's GSTIN state against ASP's home state code (32 by
-  // default for Kerala), not the ISP one. Falls back to ISP if ASP not set.
-  const intra      = cfgGet(cfg, 'tally_state_code', '32');
-  const ainvPrefix = cfgGet(cfg, 'tally_inv_prefix', 'ISP/');
-  const sStateName = cfgGet(cfg, 'tally_home_state', 'Kerala');
+  const opt        = cfgBool(cfg, 'tally_optional', false);
+  // Single-company build: intra/inter test uses the configured home state
+  // code (cfg.tally_state_code, default 33 = Tamil Nadu).
+  const intra      = cfgGet(cfg, 'tally_state_code', '33');
+  // Voucher prefix from Logo Code (single source of truth) — falls
+  // through to identity.shortName so we don't leak 'ISP' literal.
+  const _rdLogoCode = String(cfgGet(cfg, 'logo', '')).trim()
+                   || _getCompanyIdentity(cfg).shortName || 'INV';
+  const ainvPrefix = /[/\-]$/.test(_rdLogoCode) ? _rdLogoCode : (_rdLogoCode + '/');
+  const sStateName = cfgGet(cfg, 'tally_home_state', 'Tamil Nadu');
 
   const Purchase_LDR    = cfgGet(cfg, 'tally_purchase_dealer', 'Trade Purchase From Dealer');
   const Tax_CGST_IN     = cfgGet(cfg, 'tally_cgst_input', 'INPUT CGST 2.5%');
@@ -1482,7 +1601,17 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
     const place      = xe(row.place);
     const pin        = xe(row.pin);
     const fullGstin  = String(row.gstin || '');
-    const partyGstin = fullGstin.toUpperCase().startsWith('GST') ? fullGstin.slice(6, 21) : fullGstin;
+    // GSTIN extraction supporting all storage formats:
+    //   - "GSTIN.32AAAAA0000A1Z5" (legacy UI format)
+    //   - "gstin.32AAAAA0000A1Z5" (lowercase variant)
+    //   - "32AAAAA0000A1Z5"       (Excel import bare 15-char)
+    // Earlier code only matched "GST" uppercase prefix and silently
+    // produced empty partyGstin for the lowercase variant. Empty
+    // partyGstin → state code blank → isIntra always-false fallback
+    // collapsed inter-state vouchers into local mode (the reported bug).
+    const _g = fullGstin.trim();
+    const _hasGstinPrefix = /^gstin\./i.test(_g);
+    const partyGstin = _hasGstinPrefix ? _g.slice(6, 21).toUpperCase() : _g.slice(0, 15).toUpperCase();
     const state      = xe(findState(partyGstin));
     const isIntra    = String(partyGstin).slice(0, 2) === String(intra);
     const rates      = rateDetails(cfgNum(cfg, 'gst_goods', 5));
@@ -1759,10 +1888,16 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
   const season    = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
   const detailed  = cfgBool(cfg, 'tally_detailed', true);
   const tlyrnd    = cfgBool(cfg, 'tally_round_enabled', true);
-  const opt       = false;
+  const opt       = cfgBool(cfg, 'tally_optional', false);
+  // amazing/ainvPrefix kept as locals so dead ASP branches below still
+  // parse; `amazing` is force-disabled in this e-Auction-only build.
   const amazing   = false;
-  const invPrefix = cfgGet(cfg, 'tally_inv_prefix', 'ISP/');
-  const ainvPrefix= cfgGet(cfg, 'tally_inv_prefix', 'ISP/');
+  // Voucher prefix from Logo Code (single source of truth) — falls
+  // through to identity.shortName so we don't leak 'ISP' literal.
+  const _urdLogoCode = String(cfgGet(cfg, 'logo', '')).trim()
+                    || _getCompanyIdentity(cfg).shortName || 'INV';
+  const invPrefix = /[/\-]$/.test(_urdLogoCode) ? _urdLogoCode : (_urdLogoCode + '/');
+  const ainvPrefix= cfgGet(cfg, 'tally_ainv_prefix', '');
   const sStateName= cfgGet(cfg, 'tally_urd_state', 'Kerala');
 
   const Auction_LDR    = cfgGet(cfg, 'tally_purchase_auction', 'Auction Purchase Account');
@@ -1788,9 +1923,8 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
     const amounttot  = r2(row.amounttot);
     const qtytot     = r2(row.qtytot);
     const rt         = r2(qtytot > 0 ? amounttot / qtytot : 0);
-    // URD purchase vouchers always go to the ASP Tally company, so the
-    // voucher number always uses the ASP prefix regardless of amazing mode.
-    const voucherRef = `${ainvPrefix}P-${taxNm}/${season}`;
+    // Single-company build: URD voucher number uses the ISP prefix.
+    const voucherRef = `${invPrefix}P-${taxNm}/${season}`;
 
     const startVoucher = `<VOUCHER VCHTYPE="Purchase" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
 
@@ -1895,7 +2029,7 @@ ${rates.scess}
 <COUNTRYOFRESIDENCE>India</COUNTRYOFRESIDENCE>
 <PLACEOFSUPPLY>${xe(sStateName)}</PLACEOFSUPPLY>
 <PARTYNAME>${name}</PARTYNAME>
-<REFERENCE></REFERENCE>
+<REFERENCE>${xe(voucherRef)}</REFERENCE>
 <PARTYLEDGERNAME>${name}</PARTYLEDGERNAME>
 <VOUCHERNUMBER>${xe(voucherRef)}</VOUCHERNUMBER>
 <PARTYMAILINGNAME>${name}</PARTYMAILINGNAME>
@@ -1961,17 +2095,24 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
   const season     = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
   const tlyrnd     = cfgBool(cfg, 'tally_round_enabled', true);
   const exempt     = cfgBool(cfg, 'tally_dn_exempt', false);
-  const opt        = false;
+  const opt        = cfgBool(cfg, 'tally_optional', false);
   const intra      = cfgGet(cfg, 'tally_state_code', '33');
   const sStateName = cfgGet(cfg, 'tally_home_state', 'Tamil Nadu');
 
   const Discount_LDR  = cfgGet(cfg, 'tally_dn_discount', 'Discount Received');
-  const Tax_CGST      = cfgGet(cfg, 'tally_dn_cgst', 'OUTPUT CGST 9%');
-  const Tax_SGST      = cfgGet(cfg, 'tally_dn_sgst', 'OUTPUT SGST 9%');
-  const Tax_IGST      = cfgGet(cfg, 'tally_dn_igst', 'OUTPUT IGST 18%');
+  // Resolve the DN GST rate FIRST so the default ledger names below can
+  // be composed from it (no hardcoded 18 literal anywhere). Default rate
+  // is 5% — matches the cardamom-export business profile. Legacy
+  // installs that explicitly set 18 will still work via cfgNum().
+  const dnGstRate     = cfgNum(cfg, 'tally_dn_gst_rate', 5);
+  const halfRate      = dnGstRate / 2;
+  // Format helper — drops trailing ".0" so 2.5 stays 2.5 but 9 stays 9.
+  const fmtRate = (r) => (Number.isInteger(r) ? String(r) : String(r));
+  const Tax_CGST      = cfgGet(cfg, 'tally_dn_cgst', `OUTPUT CGST ${fmtRate(halfRate)}%`);
+  const Tax_SGST      = cfgGet(cfg, 'tally_dn_sgst', `OUTPUT SGST ${fmtRate(halfRate)}%`);
+  const Tax_IGST      = cfgGet(cfg, 'tally_dn_igst', `OUTPUT IGST ${fmtRate(dnGstRate)}%`);
   const Round_LDR     = cfgGet(cfg, 'tally_round', 'Round Off');
   const HSN_Service   = cfgGet(cfg, 'tally_hsn_service', '996111');
-  const dnGstRate     = cfgNum(cfg, 'tally_dn_gst_rate', 18);
 
   const rates = rateDetails(dnGstRate);
 
@@ -2028,7 +2169,7 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
 
 <LEDGERENTRIES.LIST>
 <LEDGERNAME>${name}</LEDGERNAME>
-${TAGS.DEEMNO}
+${TAGS.DEEMYES}
 <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
 <AMOUNT>${-totalRound}</AMOUNT>
 <BILLALLOCATIONS.LIST>
@@ -2110,7 +2251,17 @@ ${TAGS.DEEMNO}
 // rows that pre-date the state stamping, we fall back to a heuristic:
 // if the invoice's `invo` matches `lots.asp_invo` for any lot of that
 // buyer/auction → ASP, else ISP.
-const ISP_STATE_SQL = `(UPPER(COALESCE(i.state,'')) = 'TAMIL NADU' OR UPPER(COALESCE(i.state,'')) = '')`;
+// e-Auction-only build: there is exactly one company (ISP). Every invoice
+// in the table is an ISP invoice regardless of what's stamped in the
+// `state` column. The original Spice Config app used the state column
+// to split invoices between ISP and ASP companies — that distinction
+// no longer exists here. We accept anything (including legacy KERALA
+// rows from the old build) so users don't see a phantom "no data" when
+// their stored state value doesn't exactly match 'TAMIL NADU'.
+//
+// `1=1` keeps the AND-chain syntactically correct; the filter is a
+// no-op on purpose.
+const ISP_STATE_SQL = `1=1`;
 const ASP_STATE_SQL = `UPPER(COALESCE(i.state,'')) = 'KERALA'`;
 
 /**
@@ -2124,12 +2275,24 @@ const ASP_STATE_SQL = `UPPER(COALESCE(i.state,'')) = 'KERALA'`;
  * `aspInvo` is the matching ASP invoice number (for BASICORDERREF).
  */
 function buildSalesIspRows(db, auctionId, cfg) {
+  // `buyer_pin` is the SOURCE PINCODE for distance/route lookup.
+  // Resolution: ship-to (cpin) wins, bill-to (pin) is the fallback.
+  // Ship-to is where the goods are physically delivered — the correct
+  // origin for e-way bill distance calculation when a buyer maintains
+  // a separate consignee address. The address columns (add1/add2/pla)
+  // remain bill-to since `<BUYERPINCODE>` and `<BASICBUYERADDRESS>`
+  // in Tally are always the bill-to (buyer) block.
+  // Sort vouchers by sale type FIRST so the generated XML groups all
+  // 'L' (Local), 'I' (Inter-state), and 'E' (Export) vouchers together;
+  // within each sale-type group, sort by numeric invoice number ascending.
+  // `i.id` is a final tiebreaker for safety against duplicate invo values.
   const stmt = db.prepare(`
-    SELECT i.*, b.add1, b.add2, b.pla AS buyer_pla, b.pin AS buyer_pin
+    SELECT i.*, b.add1, b.add2, b.pla AS buyer_pla,
+           COALESCE(NULLIF(TRIM(b.cpin), ''), TRIM(b.pin)) AS buyer_pin
     FROM invoices i
     LEFT JOIN buyers b ON b.buyer = i.buyer
     WHERE i.auction_id = ? AND ${ISP_STATE_SQL}
-    ORDER BY i.buyer, i.sale, CAST(i.invo AS INTEGER), i.id
+    ORDER BY i.sale, CAST(i.invo AS INTEGER), i.id
   `);
   const raw = stmt.all(auctionId);
 
@@ -2150,24 +2313,48 @@ function buildSalesIspRows(db, auctionId, cfg) {
     ORDER BY CAST(lot_no AS INTEGER), lot_no
   `);
 
-  // E-way bill DISTANCE resolution. Priority order:
-  //   1. invoices.distance_km — manual per-invoice override
-  //   2. route_distances[(dispatch, buyer)] — saved route value
+  // E-way bill DISTANCE — dispatch PIN → consignee PIN (buyer).
+  // Resolution order:
+  //   1. invoices.distance_km — per-invoice override, wins if set
+  //   2. route_distances[(dispatch_pin, buyer_pin)] — saved route value
   //   3. blank (Tally accepts empty <DISTANCE>)
-  // The dispatch PIN comes from cfg with the same fallback chain the
-  // header generator uses, so the route lookup keys match what the user
-  // sees on the screen. Route table keys are normalised — we always
-  // store the lexicographically smaller PIN as `from_pin`, so we have
-  // to do the same when looking up.
-  const dispatchPin = String(cfgGet(cfg, 'kl_pin', '685553')).trim();
-  const routeStmt = db.prepare(
-    'SELECT km FROM route_distances WHERE from_pin = ? AND to_pin = ?'
-  );
+  //
+  // The previous haversine auto-compute was retired — the estimate was
+  // too rough for Western Ghats routes and a wrong DISTANCE on the e-way
+  // bill is worse than a blank one. The user populates route_distances
+  // by hand from the NIC portal (one lookup per route, applied to every
+  // invoice on that route forever).
+  const dispatchPin = String(
+    cfgGet(cfg, 'tally_dispatch_pin', '') ||
+    cfgGet(cfg, 's_pin', '') ||
+    cfgGet(cfg, 'kl_pin', '') ||
+    cfgGet(cfg, 'tn_pin', '') ||
+    '685553'
+  ).trim();
+
+  // Pre-fetch every saved route for this dispatch PIN — one query, then
+  // an in-memory map keyed by the OTHER PIN. Same approach the
+  // /api/invoices/distances endpoint uses.
+  const routeMap = {};
+  try {
+    const routes = db.prepare(
+      `SELECT from_pin, to_pin, km FROM route_distances
+       WHERE from_pin = ? OR to_pin = ?`
+    ).all(dispatchPin, dispatchPin);
+    for (const r of routes) {
+      const other = r.from_pin === dispatchPin ? r.to_pin : r.from_pin;
+      routeMap[String(other).trim()] = r.km;
+    }
+  } catch (e) { /* table may not exist on a not-yet-migrated DB */ }
 
   const out = [];
   for (const r of raw) {
     const lotRows = lotsStmt.all(auctionId, r.buyer);
-    // Sister/ASP cross-reference removed — no aspInvo lookup any more.
+    // Single-company e-Auction build: there is no ASP cross-reference.
+    // Legacy lots may still carry `asp_invo` values from the old dual-
+    // company app, but emitting them as <BASICORDERREF> would just put
+    // a phantom ASP voucher number on every Tally voucher. Force blank
+    // so the order-ref tag stays empty for new and legacy data alike.
     const aspInvo = '';
 
     // Total bags/qty for the gunny inventory line. Use lot sums when
@@ -2176,27 +2363,22 @@ function buildSalesIspRows(db, auctionId, cfg) {
       ? lotRows.reduce((s, l) => s + Number(l.bag || 0), 0)
       : Number(r.bag || 0);
 
-    // total = the PRE-round grand total (= rounded total minus the
-    // stored round-off adjustment). This is what the generator needs
-    // so the round-off ledger amount comes out to the right delta.
-    const totalRounded = r0(r.tot || 0);
-    const total = r2((r.tot || 0) - (r.rund || 0));
+    // total = the PRE-round, pre-addl-charge grand total.
+    // totalRounded = rounded GST-inclusive subtotal (no addl charge).
+    // The Additional Charge is emitted as its own ledger entry, so the
+    // round-off math here must NOT include it.
+    const addlChg = r2(r.addl_chg || 0);
+    const totalRounded = r0((r.tot || 0) - addlChg);
+    const total = r2((r.tot || 0) - addlChg - (r.rund || 0));
 
-    // Resolve <DISTANCE> per the priority above.
+    // Resolve the e-way bill distance: per-invoice override, then
+    // route table lookup, then blank.
     let distance = '';
+    const buyerPin = String(r.buyer_pin || '').trim();
     if (r.distance_km != null && r.distance_km !== '') {
       distance = String(r.distance_km);
-    } else {
-      const buyerPin = String(r.buyer_pin || '').trim();
-      if (buyerPin && dispatchPin) {
-        const [k1, k2] = dispatchPin < buyerPin
-          ? [dispatchPin, buyerPin]
-          : [buyerPin, dispatchPin];
-        try {
-          const hit = routeStmt.get(k1, k2);
-          if (hit && hit.km != null) distance = String(hit.km);
-        } catch (e) { /* table may not exist on very old DBs */ }
-      }
+    } else if (buyerPin && routeMap[buyerPin] != null) {
+      distance = String(routeMap[buyerPin]);
     }
 
     out.push({
@@ -2211,6 +2393,11 @@ function buildSalesIspRows(db, auctionId, cfg) {
       place: r.place || r.buyer_pla || '',
       pin: r.buyer_pin || '',
       partyGstin: r.gstin || '',
+      // E-way bill vehicle number — pulled from invoices.lorry_no, set
+      // via the Invoices tab "Set Lorry No" bulk action. The generator
+      // emits this into both <VEHICLENUMBER> and <BASICSHIPVESSELNO>;
+      // empty string (generator default) is fine when no lorry yet.
+      vehicleNo: String(r.lorry_no || '').trim(),
       lots: lotRows.map(l => ({
         lot: l.lot,
         bag: Number(l.bag || 0),
@@ -2230,6 +2417,11 @@ function buildSalesIspRows(db, auctionId, cfg) {
       sgst: r2(r.sgst || 0),
       igst: r2(r.igst || 0),
       tcsamt: r2(r.tcs || 0),
+      // Additional Charge — sum(cardamom) × cfg.addl_charge_value, stored
+      // on the invoice row. addlChargeName carries the user-defined ledger
+      // label so the XML can name the ledger correctly.
+      addlCharge: r2(r.addl_chg || 0),
+      addlChargeName: String(r.addl_name || '').trim(),
       total,
       totalRounded,
     });
@@ -2279,7 +2471,11 @@ function buildSalesAspRows(db, auctionId, cfg) {
   `);
 
   // ISP party identity — the ASP voucher's customer is always ISP.
-  const ispPartyName = cfgGet(cfg, 'tally_company_name', cfgGet(cfg, 'short_name', 'IDEAL SPICES PRIVATE LIMITED'));
+  // In single-company e-Auction, this defaults to the central identity
+  // (no hardcoded "IDEAL SPICES" fallback).
+  const ispPartyName = cfgGet(cfg, 'tally_company_name',
+                       cfgGet(cfg, 'short_name',
+                       _getCompanyIdentity(cfg).name || 'Company'));
   const ispAddr1     = cfgGet(cfg, 'tn_address1', '');
   const ispAddr2     = cfgGet(cfg, 'tn_address2', '');
   const ispBranch    = cfgGet(cfg, 'tn_branch', cfgGet(cfg, 'br1', ''));
@@ -2289,7 +2485,7 @@ function buildSalesAspRows(db, auctionId, cfg) {
 
   const gstRate = cfgNum(cfg, 'tally_gst_rate', 5);
   const gunnyRate = cfgNum(cfg, 'tally_gunny_rate', 165);
-  const aspIntraCode = String('32');
+  const aspIntraCode = String(cfgGet(cfg, 'tally_state_code', ''));
 
   const out = [];
   for (const r of raw) {
@@ -2351,8 +2547,11 @@ function buildSalesAspRows(db, auctionId, cfg) {
  * Used by Sales export.
  */
 function buildSalesRows(db, auctionId, cfg) {
+  // Ship-to first, bill-to fallback for distance/route lookup. See
+  // buildSalesIspRows for full rationale.
   const stmt = db.prepare(`
-    SELECT i.*, b.add1, b.add2, b.pla AS buyer_pla, b.pin AS buyer_pin
+    SELECT i.*, b.add1, b.add2, b.pla AS buyer_pla,
+           COALESCE(NULLIF(TRIM(b.cpin), ''), TRIM(b.pin)) AS buyer_pin
     FROM invoices i
     LEFT JOIN buyers b ON b.buyer = i.buyer
     WHERE i.auction_id = ?
@@ -2383,6 +2582,9 @@ function buildSalesRows(db, auctionId, cfg) {
         place: r.place || r.buyer_pla || '',
         pin: r.buyer_pin || '',
         partyGstin: r.gstin || '',
+        // First lorry_no encountered for this party — if multiple invoices
+        // are merged into one voucher (rare) we pick the first non-empty one.
+        vehicleNo: String(r.lorry_no || '').trim(),
         lots: [],
         amounttot: 0,
         gunnyAmt: 0,
@@ -2391,6 +2593,8 @@ function buildSalesRows(db, auctionId, cfg) {
       };
     }
     const g = grouped[partyKey];
+    // Fill in the lorry no from a later invoice if the first one was blank.
+    if (!g.vehicleNo && r.lorry_no) g.vehicleNo = String(r.lorry_no).trim();
     g.lots.push({
       lot: r.lot,
       bag: r.bag,
@@ -2546,28 +2750,55 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
  * Pull debit notes for an auction.
  */
 function buildDebitNoteRows(db, auctionId, cfg) {
-  // Match debit_notes by `ano` (auction number) — the same column the
-  // auction itself uses. Legacy debit notes have `date` set to creation
-  // timestamp, not auction date, so date-based lookups miss them.
+  // The `debit_notes` table has no auction_id FK — it stores `ano`
+  // (the trade number) directly. Earlier this builder filtered DNs by
+  // `date = auction.date`, but DN dates are now set to trade.date + 1
+  // (per the new "DN date = trade date + 1" rule), so date-equality
+  // filtering returned ZERO rows and the user got "no data found".
+  // Fix: filter by `ano` instead — that's the stable join key.
   const a = db.prepare('SELECT ano FROM auctions WHERE id = ?').get(auctionId);
   if (!a) return [];
   const stmt = db.prepare(`
     SELECT * FROM debit_notes WHERE ano = ? ORDER BY id
   `);
   const raw = stmt.all(a.ano);
-  return raw.map((d) => ({
-    ano: d.ano,
-    date: d.date,
-    name: d.name,
-    address: '',
-    place: '',
-    pin: '',
-    gstin: '',
-    refundtot: d.amount,
-    cgsttot: d.cgst, sgsttot: d.sgst, igsttot: d.igst,
-    total: d.total,
-    voucherNum: d.note_no || String(d.id),
-  }));
+
+  // Pull dealer details (GSTIN + address) for every distinct dealer
+  // appearing in this DN batch. Without these the Tally voucher emits
+  // an empty <PARTYGSTIN> and the IGST output ledger sits at zero in
+  // the intra/inter classification check at line ~2099 (isIntra falls
+  // back to false for empty GSTINs, but PARTYGSTIN itself reaches
+  // Tally blank — Tally then can't compute its own GST ledger linkage
+  // and shows the OUTPUT IGST ledger as 0).
+  const dealerNames = [...new Set(raw.map(d => String(d.name || '').trim()).filter(Boolean))];
+  const dealers = {};
+  for (const name of dealerNames) {
+    const t = db.prepare(
+      `SELECT name, cr, padd, ppla, pin, pstate FROM traders WHERE UPPER(name) = UPPER(?) LIMIT 1`
+    ).get(name);
+    if (t) dealers[name] = t;
+  }
+
+  return raw.map((d) => {
+    const dealer = dealers[String(d.name || '').trim()] || {};
+    // Strip 'GSTIN.' / 'gstin.' prefix from `cr` — Tally expects the
+    // bare 15-char GSTIN.
+    let gstin = String(dealer.cr || '').trim();
+    if (/^GSTIN\.?/i.test(gstin)) gstin = gstin.replace(/^GSTIN\.?/i, '');
+    return {
+      ano: d.ano,
+      date: d.date,
+      name: d.name,
+      address: dealer.padd || '',
+      place:   dealer.ppla || '',
+      pin:     dealer.pin  || '',
+      gstin,
+      refundtot: d.amount,
+      cgsttot: d.cgst, sgsttot: d.sgst, igsttot: d.igst,
+      total: d.total,
+      voucherNum: d.note_no || String(d.id),
+    };
+  });
 }
 
 // =====================================================================
@@ -2846,11 +3077,8 @@ function buildSalesPartyLedgerRows(db, auctionId, cfg, opts = {}) {
  */
 function buildRDPartyLedgerRows(db, auctionId, cfg, opts = {}) {
   const todayDate = toTallyDate(new Date());
-  // RD party ledgers belong in the ASP Tally company. The intra/local
-  // determination must therefore use the ASP company's home GSTIN state
-  // code (defaults to 32 = Kerala), not the ISP code (33 = Tamil Nadu).
-  // Falls back to the ISP code if the ASP one isn't configured, so existing
-  // setups without a separate ASP code keep working.
+  // Single-company build: intra/local detection uses the configured home
+  // state code (default 33 = Tamil Nadu).
   const intra = cfgGet(cfg, 'tally_state_code', '33');
   const interDealPur = cfgGet(cfg, 'tally_purchase_dealer_inter', 'Interstate Dealer');
   const localDealPur = cfgGet(cfg, 'tally_purchase_dealer_intra', 'Local Dealer');
@@ -2963,7 +3191,11 @@ function buildLedgerRows(db, auctionId, cfg) {
 
   // ── Master ledgers from cfg (sales / purchase / tax / service) ─
   const gstRate = cfgNum(cfg, 'tally_gst_rate', 5);
-  const dnRate  = cfgNum(cfg, 'tally_dn_gst_rate', 18);
+  // Debit Note GST rate default mirrors the goods rate (5%) — the DN
+  // service-charge rate matches the underlying goods rate for cardamom
+  // exports. Was hardcoded to 18 in earlier builds; the migration in
+  // company-config.js auto-corrects existing installs.
+  const dnRate  = cfgNum(cfg, 'tally_dn_gst_rate', 5);
   const hsnCard = cfgGet(cfg, 'tally_hsn_cardamom', '09083120');
   const hsnService = cfgGet(cfg, 'tally_hsn_service', '996111');
 
@@ -3005,10 +3237,6 @@ function buildLedgerRows(db, auctionId, cfg) {
 
   const services = [
     ['tally_dn_discount',          'Indirect Incomes',   hsnService],
-    ['tally_commission',           'Indirect Expenses',  hsnService],
-    ['tally_cash_handling',        'Indirect Expenses',  hsnService],
-    ['tally_cash_handling_planter','Indirect Expenses',  hsnService],
-    ['tally_chc_planter',          'Indirect Expenses',  hsnService],
     ['tally_sample_planter',       'Indirect Expenses',  hsnService],
     ['tally_sample_dealer',        'Indirect Expenses',  hsnService],
     ['tally_transport',            'Indirect Expenses',  cfgGet(cfg, 'tally_hsn_transport', '996791')],
@@ -3027,15 +3255,12 @@ function buildLedgerRows(db, auctionId, cfg) {
 module.exports = {
   generSalesXML,
   generSalesIspXML,
-  generSalesAspXML,
-  generIspPurchaseXML,
   generRDPurchaseXML,
   generURDPurchaseXML,
   generDebitNoteXML,
   generLedgerXML,
   buildSalesRows,
   buildSalesIspRows,
-  buildSalesAspRows,
   buildRDPurchaseRows,
   buildURDPurchaseRows,
   buildDebitNoteRows,
