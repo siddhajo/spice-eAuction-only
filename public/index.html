@@ -7696,6 +7696,27 @@ function isFieldHiddenByMode(fieldKey){
   return (_MODE_HIDE_KEYS[m] || []).includes(fieldKey);
 }
 
+// Flag-gated field visibility. When the named flag in Settings → Flags is
+// OFF (false), the listed field keys are hidden from the Rates & Charges
+// panel (and any other panel they appear in). The flag values themselves
+// live in `_sdata.flags` and are updated live as the user toggles them.
+const _FLAG_HIDDEN_FIELDS = {
+  // Toggle off → hide both Local Transport and Local Insurance rate inputs
+  flag_local_ti:     ['local_transport', 'local_insurance'],
+  // Toggle off → hide both Additional Charge — Name and the percentage
+  flag_addl_charges: ['addl_charge_name', 'addl_charge_value'],
+};
+function isFieldHiddenByFlag(fieldKey){
+  const flags = _sdata.flags || [];
+  for (const [flagKey, hiddenKeys] of Object.entries(_FLAG_HIDDEN_FIELDS)) {
+    if (!hiddenKeys.includes(fieldKey)) continue;
+    const f = flags.find(x => x.key === flagKey);
+    const isOn = f && String(f.value).toLowerCase() === 'true';
+    if (!isOn) return true;
+  }
+  return false;
+}
+
 // ── Business state → Logo/Company auto-switch ─────────────
 // TN  → ISP (primary company.*  + address_tn.*)
 // KL  → ASP (sister.* values copied to company.* fields, address_kl becomes active)
@@ -7804,8 +7825,9 @@ function renderSettingsPanel(){
   document.getElementById('set-panel-title').textContent=`${cat.icon||''} ${cat.title}`;
   document.getElementById('set-panel-desc').textContent=cat.description||'';
   let fields=_sdata[ck]||[];
-  // Filter out individual fields hidden by current business mode
-  fields = fields.filter(f => !isFieldHiddenByMode(f.key));
+  // Filter out individual fields hidden by current business mode or by an
+  // OFF feature flag (e.g. Local Transport / Insurance, Additional Charges).
+  fields = fields.filter(f => !isFieldHiddenByMode(f.key) && !isFieldHiddenByFlag(f.key));
   // Single-company build — fields render straight from _sdata, no
   // preset overlay. Company values are edited and saved through the
   // standard saveSettings() path like every other category.

@@ -121,6 +121,11 @@ const DEFAULTS = [
   // Sister concern active (flag_sister) intentionally REMOVED.
   { key: 'flag_pooling',         value: 'false', category: 'flags', label: 'Pooling (Single State)',          type: 'boolean' },
   { key: 'flag_sample',          value: 'false', category: 'flags', label: 'Discount in Invoice',             type: 'boolean' },
+  // Toggles visibility of Local Transport / Local Insurance rate fields under
+  // Settings → Rates & Charges. Off = the rate fields are hidden in the UI.
+  { key: 'flag_local_ti',        value: 'false', category: 'flags', label: 'Local Transport / Insurance',     type: 'boolean' },
+  // Toggles visibility of Additional Charge — Name / % fields under Rates & Charges.
+  { key: 'flag_addl_charges',    value: 'false', category: 'flags', label: 'Additional Charges',              type: 'boolean' },
   { key: 'flag_dispatch',        value: 'false', category: 'flags', label: 'Show Dispatch Address',           type: 'boolean' },
   { key: 'flag_ship',            value: 'false', category: 'flags', label: 'Show Ship To Address',            type: 'boolean' },
   { key: 'flag_hsn',             value: 'false', category: 'flags', label: 'Show HSN Codes',                  type: 'boolean' },
@@ -342,6 +347,27 @@ function initCompanySettings(db) {
   db.prepare(
     "UPDATE company_settings SET value = 'TAMIL NADU' WHERE key = 'business_state' AND value NOT IN ('TAMIL NADU','KERALA')"
   ).run();
+
+  // One-time migration for the new flag-gated fields. The flag defaults to
+  // 'false' for fresh installs, but existing installs may already have
+  // non-zero values configured for these fields — auto-flip the flag ON in
+  // that case so the UI doesn't suddenly hide a value the user is using.
+  // Only runs when the flag is still at its 'false' default.
+  function autoEnableFlagIfAnyValue(flagKey, valueKeys) {
+    const flag = db.prepare('SELECT value FROM company_settings WHERE key = ?').get(flagKey);
+    if (!flag || String(flag.value).toLowerCase() === 'true') return;
+    const hasValue = valueKeys.some(k => {
+      const r = db.prepare('SELECT value FROM company_settings WHERE key = ?').get(k);
+      if (!r) return false;
+      const v = String(r.value || '').trim();
+      return v && v !== '0' && v !== '0.0' && v !== '0.00';
+    });
+    if (hasValue) {
+      db.prepare("UPDATE company_settings SET value = 'true' WHERE key = ?").run(flagKey);
+    }
+  }
+  autoEnableFlagIfAnyValue('flag_local_ti',     ['local_transport', 'local_insurance']);
+  autoEnableFlagIfAnyValue('flag_addl_charges', ['addl_charge_name', 'addl_charge_value']);
 
   console.log('Company settings ready (%d defaults)', DEFAULTS.length);
 }
