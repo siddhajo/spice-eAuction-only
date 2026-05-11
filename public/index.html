@@ -406,6 +406,26 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 .err{color:#B91C1C;background:#FEE2E2;border:1px solid #FECACA;padding:10px 12px;border-radius:8px;font-size:13px;margin-top:12px;display:none}
 .err.active{display:block}
 
+/* ── Branch Comparison — chart-first card body ─────────────── */
+.bc-chart-wrap{
+  position:relative;height:280px;
+  background:#fff;border:1px solid var(--spice-line);border-radius:10px;
+  padding:14px 16px 10px;margin-bottom:12px;
+}
+.bc-toggle-data{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:6px 12px;font-size:12px;font-weight:600;
+  background:#fff;color:var(--spice-text-mute);
+  border:1px solid var(--spice-line);border-radius:6px;cursor:pointer;
+  transition:background .12s,color .12s,border-color .12s;
+}
+.bc-toggle-data:hover{background:#F8FAFC;color:var(--spice-text-main);border-color:#CBD5E1}
+.bc-toggle-data::before{content:'📋';font-size:13px}
+.bc-data-table{margin-top:10px;border:1px solid var(--spice-line);border-radius:8px;overflow:auto;max-height:380px}
+.bc-data-table table{margin:0;width:100%}
+.bc-data-table thead{position:sticky;top:0;background:#F8FAFC;z-index:1}
+.bc-data-table thead th{background:#F8FAFC;border-bottom:1px solid var(--spice-line)}
+
 /* ── Reports — collapsible sections inside Trade Summary ────── */
 .rep-section{
   border:1px solid var(--spice-line);border-radius:10px;
@@ -6148,13 +6168,34 @@ async function loadTradeSummary(){
       gradeTable+='</tbody></table>';
       html += section('By Grade', gw.length+' grade'+(gw.length===1?'':'s'), gradeTable, { open: false });
     }
-    // ── Top sellers (cap at 25 in UI; PDF gets 30) ──
+    // ── Top sellers — limit selectable by the user, persisted in
+    //    localStorage so it survives reloads. 'all' shows every
+    //    seller; numeric values cap the table. The selector lives
+    //    inside the section header (right side, doesn't toggle the
+    //    card when clicked).
     const sw=d.sellerWise||[];
     if(sw.length){
-      let sellerTable='<table><thead><tr><th>Seller</th><th>Branch</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th></tr></thead><tbody>';
-      sw.slice(0,25).forEach(s=>{sellerTable+=`<tr><td><strong>${esc(s.seller_name)}</strong></td><td>${esc(s.branch||'')}</td><td style="text-align:right">${s.lot_count}</td><td style="text-align:right">${s.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(s.total_qty||0).toFixed(3)}</td></tr>`;});
+      const savedLimit = (function(){
+        try { return localStorage.getItem('rep_top_sellers_limit') || '25'; }
+        catch(_) { return '25'; }
+      })();
+      const lim = savedLimit === 'all' ? sw.length : Math.min(parseInt(savedLimit,10) || 25, sw.length);
+      const visible = savedLimit === 'all' ? sw : sw.slice(0, lim);
+      let sellerTable='<table><thead><tr><th style="width:32px;text-align:right">#</th><th>Seller</th><th>Branch</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th></tr></thead><tbody>';
+      visible.forEach((s,i)=>{sellerTable+=`<tr><td style="text-align:right;color:var(--text3);font-size:11px">${i+1}</td><td><strong>${esc(s.seller_name)}</strong></td><td>${esc(s.branch||'')}</td><td style="text-align:right">${s.lot_count}</td><td style="text-align:right">${s.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(s.total_qty||0).toFixed(3)}</td></tr>`;});
       sellerTable+='</tbody></table>';
-      html += section('Top Sellers', 'showing '+Math.min(25,sw.length)+' of '+sw.length, sellerTable, { open: false });
+      // Limit selector: rendered as the header "meta" slot. Click + change
+      // events are stopped so picking a value doesn't also fold the card.
+      const opts = ['5','10','25','50','100','all'].map(v=>{
+        const lbl = v==='all' ? 'All' : 'Top '+v;
+        const sel = v===savedLimit ? ' selected' : '';
+        return `<option value="${v}"${sel}>${lbl}</option>`;
+      }).join('');
+      const limitCtrl =
+        `Showing ${visible.length} of ${sw.length}` +
+        ` &nbsp;<select onchange="event.stopPropagation();repSetTopSellersLimit(this.value)" onclick="event.stopPropagation()"` +
+        ` style="height:24px;padding:0 6px;border:1px solid var(--border);border-radius:6px;background:#fff;font-size:11.5px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--text);margin-left:6px">${opts}</select>`;
+      html += section('Top Sellers', limitCtrl, sellerTable, { open: false });
     }
     // ── Hourly pace ──
     const hr=d.hourly||[];
@@ -6179,6 +6220,148 @@ async function loadTradeSummary(){
     body.innerHTML=html;
   }catch(e){
     body.innerHTML=`<div style="text-align:center;padding:30px;color:#b91c1c">${esc(e.message||'Failed to load')}</div>`;
+  }
+}
+
+// Persist the user's Top-Sellers row-cap and re-render the Trade
+// Summary so the new limit takes effect immediately.
+function repSetTopSellersLimit(v){
+  try { localStorage.setItem('rep_top_sellers_limit', String(v)); } catch(_) {}
+  if (typeof loadTradeSummary === 'function') loadTradeSummary();
+}
+
+// ── Branch Comparison — chart-first rendering ─────────────────────
+// Professional muted palette — single hue with shade variants so
+// branches read as different bars without the rainbow look. The
+// stacked-by-trade chart uses the same shades cycled per branch.
+const BC_PALETTE = [
+  '#0F766E', // teal-700
+  '#0E7490', // cyan-700
+  '#1E40AF', // blue-800
+  '#4338CA', // indigo-700
+  '#6D28D9', // violet-700
+  '#9D174D', // pink-800
+  '#9F1239', // rose-800
+  '#7C2D12', // orange-900
+  '#854D0E', // amber-800
+  '#3F6212', // lime-800
+  '#166534', // green-800
+  '#365314', // lime-900
+];
+function bcBranchColor(name, fallbackIdx){
+  // Deterministic colour per branch — same branch keeps the same shade
+  // across both charts. Hash the name → index into the muted palette.
+  const s = String(name || '-');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return BC_PALETTE[(h + (fallbackIdx || 0)) % BC_PALETTE.length];
+}
+
+// Toggle the data-table panel under a chart. Button label flips
+// between "Show data table" and "Hide data table".
+function bcToggleData(btn, panelId){
+  const el = document.getElementById(panelId);
+  if (!el) return;
+  const open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : 'block';
+  btn.textContent = open ? 'Show data table' : 'Hide data table';
+}
+
+// Build the bar charts AFTER innerHTML has been written into
+// rep-branch-body. Pulls data from the window._bc* cache that
+// loadBranchComparison() stashed.
+function bcRenderCharts(){
+  if (typeof Chart === 'undefined') return;
+  const overall = window._bcOverall || [];
+  const trades  = window._bcTrades  || [];
+
+  // ── 1) Lifetime Totals — vertical bar chart, one bar per branch. ──
+  const cv1 = document.getElementById('bc-lifetime-chart');
+  if (cv1) {
+    if (cv1._chart) { cv1._chart.destroy(); cv1._chart = null; }
+    const ordered = overall.slice().sort((a,b) => (Number(b.total_qty)||0) - (Number(a.total_qty)||0));
+    const labels  = ordered.map(b => b.branch || '-');
+    const qtys    = ordered.map(b => Number(b.total_qty) || 0);
+    const colors  = labels.map((b,i) => bcBranchColor(b, i));
+    cv1._chart = new Chart(cv1.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Quantity (kg)',
+          data: qtys,
+          backgroundColor: colors,
+          borderRadius: 4,
+          maxBarThickness: 48,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#0F172A',
+            padding: 10,
+            callbacks: {
+              label: (c) => Number(c.parsed.y).toLocaleString('en-IN', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' kg',
+            }
+          }
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { size: 11, weight: '600' }, color: '#475569' } },
+          y: { grid: { color: '#F1F5F9' }, ticks: { font: { size: 11 }, color: '#64748B', callback: (v) => Number(v).toLocaleString('en-IN') } }
+        }
+      }
+    });
+  }
+
+  // ── 2) By Trade — stacked vertical bars, one stack per trade, ─────
+  //    segments coloured by branch. Newest trades on the right.
+  const cv2 = document.getElementById('bc-by-trade-chart');
+  if (cv2 && trades.length) {
+    if (cv2._chart) { cv2._chart.destroy(); cv2._chart = null; }
+    const branches = Array.from(new Set(
+      trades.flatMap(t => Object.keys(t.byBranch))
+    )).sort();
+    const labels = trades.map(t => '#' + (t.ano || ''));
+    const datasets = branches.map((b, i) => ({
+      label: b || '-',
+      data: trades.map(t => Number(t.byBranch[b] || 0)),
+      backgroundColor: bcBranchColor(b, i),
+      borderRadius: 3,
+      maxBarThickness: 36,
+    }));
+    cv2._chart = new Chart(cv2.getContext('2d'), {
+      type: 'bar',
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { font: { size: 11, weight: '600' }, color: '#475569', boxWidth: 12, boxHeight: 12, padding: 12, usePointStyle: true, pointStyle: 'rectRounded' }
+          },
+          tooltip: {
+            backgroundColor: '#0F172A',
+            padding: 10,
+            callbacks: {
+              title: (items) => {
+                const t = trades[items[0].dataIndex];
+                const d = String(t.date || '').split('T')[0];
+                return 'Trade ' + items[0].label + (d ? ' · ' + d : '');
+              },
+              label: (c) => c.dataset.label + ': ' + Number(c.parsed.y).toLocaleString('en-IN', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' kg',
+            }
+          }
+        },
+        scales: {
+          x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10, weight: '600' }, color: '#475569', maxRotation: 0, autoSkip: true } },
+          y: { stacked: true, grid: { color: '#F1F5F9' }, ticks: { font: { size: 11 }, color: '#64748B', callback: (v) => Number(v).toLocaleString('en-IN') } }
+        }
+      }
+    });
   }
 }
 
@@ -6234,18 +6417,56 @@ async function loadBranchComparison(){
       );
     };
     let html='';
-    let lifetime='<table><thead><tr><th>Branch</th><th style="text-align:right">Trades</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th><th style="text-align:right">Unique Sellers</th></tr></thead><tbody>';
-    overall.forEach(b=>{lifetime+=`<tr><td><strong>${esc(b.branch||'-')}</strong></td><td style="text-align:right">${b.trade_count||0}</td><td style="text-align:right">${b.lot_count}</td><td style="text-align:right">${b.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(b.total_qty||0).toFixed(3)}</td><td style="text-align:right">${b.seller_count||0}</td></tr>`;});
-    lifetime+='</tbody></table>';
-    html += bcSection('Lifetime Totals', overall.length+' branch'+(overall.length===1?'':'es'), lifetime, { open: true });
+    // Cache the data on window so the canvas-ready hook can pull it
+    // back when Chart.js inits (it has to run AFTER innerHTML lands).
+    window._bcOverall = overall;
+    window._bcData    = data;
+
+    // ── Lifetime Totals: bar chart up top, data table hidden behind
+    //    a "Show table" toggle. Cleaner first impression — numbers
+    //    are one click away. -----------------------------------------
+    let lifetimePayload =
+      '<div class="bc-chart-wrap"><canvas id="bc-lifetime-chart"></canvas></div>' +
+      '<button class="bc-toggle-data" type="button" onclick="bcToggleData(this,\'bc-lifetime-data\')">'
+      + 'Show data table</button>' +
+      '<div id="bc-lifetime-data" class="bc-data-table" style="display:none">' +
+        '<table><thead><tr><th>Branch</th><th style="text-align:right">Trades</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th><th style="text-align:right">Unique Sellers</th></tr></thead><tbody>' +
+        overall.map(b => `<tr><td><strong>${esc(b.branch||'-')}</strong></td><td style="text-align:right">${b.trade_count||0}</td><td style="text-align:right">${b.lot_count}</td><td style="text-align:right">${b.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(b.total_qty||0).toFixed(3)}</td><td style="text-align:right">${b.seller_count||0}</td></tr>`).join('') +
+        '</tbody></table>' +
+      '</div>';
+    html += bcSection('Lifetime Totals', overall.length+' branch'+(overall.length===1?'':'es'), lifetimePayload, { open: true });
 
     if(data.length){
-      let perTrade='<table><thead><tr><th>Date</th><th>Trade</th><th>Crop</th><th>Branch</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th></tr></thead><tbody>';
-      data.slice(0,50).forEach(r=>{perTrade+=`<tr><td style="font-family:monospace;font-size:12px">${esc((r.date||'').split('T')[0])}</td><td>#${esc(r.ano||'')}</td><td><span style="font-size:11px;padding:1px 6px;background:var(--bg2);border-radius:4px">${esc(r.crop_type||'-')}</span></td><td><strong>${esc(r.branch||'-')}</strong></td><td style="text-align:right">${r.lot_count}</td><td style="text-align:right">${r.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(r.total_qty||0).toFixed(3)}</td></tr>`;});
-      perTrade+='</tbody></table>';
-      html += bcSection('By Trade', Math.min(50,data.length)+' most recent of '+data.length, perTrade, { open: false });
+      // Per-trade aggregated for the stacked chart.
+      const recent = data.slice(0, 50);
+      const tradeMap = new Map();
+      for (const r of recent) {
+        const key = r.ano + '|' + (r.date || '');
+        if (!tradeMap.has(key)) tradeMap.set(key, { ano: r.ano, date: r.date, crop: r.crop_type, total: 0, byBranch: {} });
+        const t = tradeMap.get(key);
+        const q = Number(r.total_qty) || 0;
+        t.total += q;
+        t.byBranch[r.branch || '-'] = (t.byBranch[r.branch || '-'] || 0) + q;
+      }
+      const trades = Array.from(tradeMap.values()).sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
+      window._bcTrades = trades;
+
+      let byTradePayload =
+        '<div class="bc-chart-wrap" style="height:340px"><canvas id="bc-by-trade-chart"></canvas></div>' +
+        '<button class="bc-toggle-data" type="button" onclick="bcToggleData(this,\'bc-trade-data\')">'
+        + 'Show data table</button>' +
+        '<div id="bc-trade-data" class="bc-data-table" style="display:none">' +
+          '<table><thead><tr><th>Date</th><th>Trade</th><th>Crop</th><th>Branch</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th></tr></thead><tbody>' +
+          recent.map(r => `<tr><td style="font-family:monospace;font-size:12px">${esc((r.date||'').split('T')[0])}</td><td>#${esc(r.ano||'')}</td><td><span style="font-size:11px;padding:1px 6px;background:var(--bg2);border-radius:4px">${esc(r.crop_type||'-')}</span></td><td><strong>${esc(r.branch||'-')}</strong></td><td style="text-align:right">${r.lot_count}</td><td style="text-align:right">${r.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(r.total_qty||0).toFixed(3)}</td></tr>`).join('') +
+          '</tbody></table>' +
+        '</div>';
+      html += bcSection('By Trade', Math.min(50,data.length)+' most recent of '+data.length, byTradePayload, { open: true });
     }
     body.innerHTML=html;
+
+    // Charts must init AFTER innerHTML is in the DOM. requestAnimationFrame
+    // gives the browser one frame to lay out the canvas elements.
+    requestAnimationFrame(() => bcRenderCharts());
   }catch(e){
     body.innerHTML=`<div style="text-align:center;padding:30px;color:#b91c1c">${esc(e.message||'Failed to load')}</div>`;
   }
