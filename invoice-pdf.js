@@ -72,20 +72,23 @@ function effectiveCompany(cfg) {
   const idValue = isPartnership
     ? (cfg.partnership_name || '')
     : (cfg.cin || '');
-  // IMCPC rule: when the company's short name is IMCPC, the FULL company
-  // name (trade_name) must be shown in the first/primary company block on
-  // every invoice — short name is only acceptable for follow-up references
-  // (e.g. footer signatory). For all other short names, both fields use the
-  // short label as before.
+  // Sales Invoice naming convention:
+  //   - co.name  → FULL trade name. Used in the primary company block
+  //                (header, billed-by, dispatch from). Falls back to
+  //                short_name only when trade_name is blank.
+  //   - co.short → short label. Used ONLY in the footer "for <name>"
+  //                signatory line. Falls back to the first word of
+  //                trade_name when short_name isn't configured.
+  // Previous build hard-coded an IMCPC-only override; this generalises
+  // the rule for every company.
   const _shortRaw = String(cfg.short_name || '').trim();
-  const _isImcpc = _shortRaw.toUpperCase() === 'IMCPC';
-  const _primaryName = _isImcpc
-    ? (cfg.trade_name || _shortRaw || '')
-    : (_shortRaw || cfg.trade_name || '');
+  const _tradeRaw = String(cfg.trade_name || '').trim();
+  const _primaryName = _tradeRaw || _shortRaw || '';
+  const _shortName   = _shortRaw || (_tradeRaw.split(/\s+/)[0] || '');
   return {
     logo:    cfg.logo        || '',
     name:    _primaryName,
-    short:   _shortRaw || cfg.trade_name || '',
+    short:   _shortName,
     pan:     cfg.pan         || '',
     cin:     cfg.cin         || '',
     isPartnership,
@@ -966,12 +969,17 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
     gstin: buyer.gstin || '',
   };
 
-  // Shared helper for left-column writing, advancing the anchor by actual height
+  // Shared helper for left-column writing, advancing the anchor by the
+  // actual rendered height. PDFKit updates `doc.y` to the bottom of the
+  // last rendered line after every text() call — this is more reliable
+  // than `heightOfString`, which can under-report by a partial line and
+  // produce visible overlap on multi-line wraps (e.g. long company
+  // names spilling to 2+ lines collided with the next address line).
   const lW = leftW - 6;
   const writeLeft = (txt, anchor) => {
     if (!txt) return;
     doc.text(txt, leftX + 3, anchor.v, { width: lW });
-    anchor.v += doc.heightOfString(txt, { width: lW }) + 1;
+    anchor.v = doc.y + 1;
   };
 
   // Draw Consignee cell (skip when flag_ship is OFF — item 1)
@@ -980,8 +988,9 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
     let cy = consigneeY + 3;
     doc.font('Helvetica').fontSize(7).text('Consignee (Ship to)', leftX + 3, cy); cy += 9;
     doc.font('Helvetica-Bold').fontSize(9).text(ship.name, leftX + 3, cy, { width: leftW - 6 });
-    // Advance by actual rendered height (prevents overlap for long company names)
-    cy += doc.heightOfString(ship.name, { width: leftW - 6 }) + 2;
+    // Advance via doc.y (post-text cursor) — heightOfString can under-
+    // report for wrapped strings and let subsequent lines overlap.
+    cy = doc.y + 2;
     doc.font('Helvetica').fontSize(8);
     const cAnchor = { v: cy };
     writeLeft(ship.addr, cAnchor);
@@ -1041,9 +1050,12 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   }
 
   doc.font('Helvetica-Bold').fontSize(9).text(billTo.name, leftX + 3, by, { width: leftW - 6 });
-  // Advance by ACTUAL rendered height — long company names wrap to 2+ lines.
-  // Using a fixed advance caused subsequent address lines to overlap the name.
-  by += doc.heightOfString(billTo.name, { width: leftW - 6 }) + 2;
+  // Advance via doc.y — PDFKit sets it to the bottom of the last
+  // rendered line. heightOfString sometimes under-reported the wrapped
+  // height by a partial line, causing the next address line to overlap
+  // the second line of long buyer names (e.g. "IDUKKI MAHILA CARDAMOM
+  // PRODUCER COMPANY LIMITED").
+  by = doc.y + 2;
   doc.font('Helvetica').fontSize(8);
   const bAddr = [billTo.add1, billTo.add2].filter(Boolean).join(',');
   const bAnchor = { v: by };
@@ -1697,15 +1709,13 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
     doc.lineWidth(0.5).moveTo(rightX, bky - 2).lineTo(x0 + W, bky - 2).stroke();
     bky += 2;
   } // end if (showBank)
-  // "for COMPANY NAME" right-aligned
-  // In purchase view, the issuer header is ISPL but the signatory block
-  // represents the SELLING company (ASP) — whose bank received the payment
-  // and whose authorised signatory certifies the sale. In single-company
-  // e-Auction, isPurchaseView is always false; we use the configured
-  // identity as the sole source rather than a hardcoded sister name.
+  // "for COMPANY NAME" right-aligned — uses the SHORT name (Settings →
+  // Company → Short Name). The header block above already carries the
+  // full trade name; the footer signatory deliberately uses the short
+  // label so authorised-signatory stamps line up neatly underneath.
   const forCompanyName = isPurchaseView
-    ? (cfg.s_company || getCompanyIdentity(cfg).name)
-    : (co.name || '');
+    ? (cfg.s_company || getCompanyIdentity(cfg).shortName || getCompanyIdentity(cfg).name)
+    : (co.short || co.name || '');
   doc.font('Helvetica-Bold').fontSize(8).text(`for ${forCompanyName}`, bkX, bky, { width: bkInnerW, align: 'right' });
   // Authorised Signatory at bottom-right of footer
   doc.font('Helvetica').fontSize(8).text('Authorised Signatory', bkX, y + footerH - 12, { width: bkInnerW, align: 'right' });
@@ -2116,9 +2126,12 @@ function generateAgriBillPDF(billData, cfg, billNo, externalDoc) {
   doc.text(amountToWords(netForWords) + ' Only', x0 + 6, y, { width: W - 12 });
   y += 16;
 
-  // ── "for COMPANY" right-aligned ──
+  // ── "for COMPANY" right-aligned — uses short name (matches sales
+  //    invoice convention; trade name belongs in the issuer header).
   doc.fontSize(9).font('Helvetica-Bold');
-  doc.text('for ' + (cfg.s_company || getCompanyIdentity(cfg).name || 'Company'), x0, y, { width: W - 6, align: 'right' });
+  const _agriIdent = getCompanyIdentity(cfg);
+  doc.text('for ' + (cfg.s_company || _agriIdent.shortName || _agriIdent.name || 'Company'),
+    x0, y, { width: W - 6, align: 'right' });
   y += 30;
 
   // ── Signatures ──

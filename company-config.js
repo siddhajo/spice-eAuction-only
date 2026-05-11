@@ -102,10 +102,10 @@ const DEFAULTS = [
   { key: 'bank_tn_ifsc', value: '', category: 'bank', label: 'TN IFSC Code',       type: 'text' },
 
   // ── SEASON ─────────────────────────────────────────────────
-  { key: 'season',       value: '', category: 'season', label: 'Season Name',   type: 'text' },
-  { key: 'season_short', value: '', category: 'season', label: 'Season Short',  type: 'text' },
-  { key: 'season_start', value: '', category: 'season', label: 'FY Start Date', type: 'date' },
-  { key: 'season_end',   value: '', category: 'season', label: 'FY End Date',   type: 'date' },
+  { key: 'season',            value: '', category: 'season', label: 'Season Name',           type: 'text' },
+  { key: 'season_short',      value: '', category: 'season', label: 'Season Short',          type: 'text' },
+  { key: 'season_start',      value: '', category: 'season', label: 'FY Start Date',         type: 'date' },
+  { key: 'season_end',        value: '', category: 'season', label: 'FY End Date',           type: 'date' },
 
   // ── INVOICE SETTINGS ───────────────────────────────────────
   // Sister Invoice Prefix (Other Ref.) and Dispatched Through (ASP) intentionally REMOVED.
@@ -317,6 +317,13 @@ function initCompanySettings(db) {
     'tally_ship_to', 'tally_amazing_mode',
     'tally_state_code_amazing', 'tally_ainv_prefix',
     'inv_prefix_sister', 'flag_sister',
+    // Spice Board licence + place — dropped; Form C / D / Buyers
+    // Statement now use the company's SBL No. and the active state's
+    // Office Branch for the licence / place fields respectively. The
+    // season_start_year / season_end_year keys were briefly seeded
+    // alongside; reverted too.
+    'eauction_licence', 'spice_board_licence', 'auction_place', 'business_place',
+    'season_start_year', 'season_end_year',
     // Inherited from earlier cleanups
     'asp_profit', 'isp_profit',
     'asp_profit_pooler', 'asp_profit_dealer',

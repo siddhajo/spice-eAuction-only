@@ -375,7 +375,13 @@ async function buyersStatementPdf(db, opts) {
   const ctx = getReportContext(db, opts);
   const data = buildBuyersStatement(ctx);
   const company = readSetting(db, 'trade_name', readSetting(db, 'company_name', ''));
-  const place   = readSetting(db, 'auction_place', readSetting(db, 'business_place', ''));
+  // Place — configured Office Branch for the active business state.
+  const _bsBS = String(readSetting(db, 'business_state', '')).toUpperCase();
+  const _isKL = _bsBS === 'KERALA' || _bsBS === 'KL';
+  const place  = readSetting(db, _isKL ? 'kl_branch' : 'tn_branch',
+                  readSetting(db, 'tn_branch',
+                    readSetting(db, 'kl_branch',
+                      readSetting(db, 'business_place', ''))));
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 24 });
   const buffers = []; doc.on('data', b => buffers.push(b));
@@ -624,14 +630,21 @@ function buildFormD(ctx, db) {
   const seasonStart = readSetting(db, 'season_start_year', '');
   const seasonEnd   = readSetting(db, 'season_end_year', '');
   const season = (seasonStart && seasonEnd) ? `${seasonStart} - ${seasonEnd}` : readSetting(db, 'season', '');
-  // e-Auction Licence + SBL: configured under Settings → Company. Values
-  // are shown concatenated on the same labelled row (no "SBL No.:" label —
-  // the row itself is already titled "E-Auction Licence No.").
-  const licenceRaw = readSetting(db, 'eauction_licence', readSetting(db, 'spice_board_licence', ''));
-  const sbl        = readSetting(db, 'sbl', '');
-  const licence    = [licenceRaw, sbl].filter(Boolean).join('    ');
+  // e-Auction Licence — sourced from the company's SBL No. (Settings →
+  // Company → SBL No.). The Spice Board treats the trader's SBL number
+  // as the e-Auction licence identifier; we don't carry a separate
+  // licence field in this build.
+  const licence = readSetting(db, 'sbl', '');
 
-  const place   = readSetting(db, 'auction_place', readSetting(db, 'business_place', ''));
+  // Place of auction — pulled from the configured branch (Address →
+  // Office Branch) for the active business state. Falls back to the
+  // legacy `business_place` key.
+  const placeBizState = String(readSetting(db, 'business_state', '')).toUpperCase();
+  const placeKL = placeBizState === 'KERALA' || placeBizState === 'KL';
+  const place   = readSetting(db, placeKL ? 'kl_branch' : 'tn_branch',
+                    readSetting(db, 'tn_branch',
+                      readSetting(db, 'kl_branch',
+                        readSetting(db, 'business_place', ''))));
   const company = readSetting(db, 'trade_name', readSetting(db, 'company_name', ''));
   // Address resolution: pick KL block when business_state = KERALA, otherwise
   // TN block. Falls back to the bare `address1` key for legacy installs.
@@ -1005,7 +1018,7 @@ function buildFormC(ctx) {
 function formCJson(db, opts) {
   const ctx = getReportContext(db, opts);
   const d = buildFormC(ctx);
-  const licence = readSetting(db, 'eauction_licence', readSetting(db, 'spice_board_licence', ''));
+  const licence = readSetting(db, 'sbl', '');
   const seasonStart = readSetting(db, 'season_start_year', '');
   const seasonEnd   = readSetting(db, 'season_end_year', '');
   const season = (seasonStart && seasonEnd) ? `${seasonStart} - ${seasonEnd}` : readSetting(db, 'season', '');
@@ -1040,7 +1053,7 @@ function formCJson(db, opts) {
 async function formCXlsx(db, opts) {
   const ctx = getReportContext(db, opts);
   const d   = buildFormC(ctx);
-  const licence = readSetting(db, 'eauction_licence', readSetting(db, 'spice_board_licence', ''));
+  const licence = readSetting(db, 'sbl', '');
   const seasonStart = readSetting(db, 'season_start_year', '');
   const seasonEnd   = readSetting(db, 'season_end_year', '');
   const season = (seasonStart && seasonEnd) ? `${seasonStart} - ${seasonEnd}` : readSetting(db, 'season', '');
@@ -1111,11 +1124,17 @@ async function formCXlsx(db, opts) {
 async function formCPdf(db, opts) {
   const ctx = getReportContext(db, opts);
   const d   = buildFormC(ctx);
-  const licence = readSetting(db, 'eauction_licence', readSetting(db, 'spice_board_licence', ''));
+  const licence = readSetting(db, 'sbl', '');
   const seasonStart = readSetting(db, 'season_start_year', '');
   const seasonEnd   = readSetting(db, 'season_end_year', '');
   const season = (seasonStart && seasonEnd) ? `${seasonStart} - ${seasonEnd}` : readSetting(db, 'season', '');
-  const place = readSetting(db, 'auction_place', readSetting(db, 'business_place', ''));
+  // Place — configured Office Branch for the active business state.
+  const _fcBS = String(readSetting(db, 'business_state', '')).toUpperCase();
+  const _fcKL = _fcBS === 'KERALA' || _fcBS === 'KL';
+  const place = readSetting(db, _fcKL ? 'kl_branch' : 'tn_branch',
+                  readSetting(db, 'tn_branch',
+                    readSetting(db, 'kl_branch',
+                      readSetting(db, 'business_place', ''))));
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 18 });
   const buffers = []; doc.on('data', b => buffers.push(b));
@@ -1376,24 +1395,33 @@ async function formCPdf(db, opts) {
   function totalsRow(label, totals, opts) {
     opts = opts || {};
     const isGrand = !!opts.grand;
-    const fontH  = isGrand ? 7.5 : 7;
-    const lineH  = fontH + 2;
-    doc.font('Helvetica-Bold').fontSize(fontH).fillColor('#000');
+    const baseFont = isGrand ? 7.5 : 7;
+    const MIN_FONT = 5.0;
+    doc.font('Helvetica-Bold').fillColor('#000');
     const labelW = cw[0] + cw[1] + cw[2] - PADX * 2;
-    // Pre-wrap so a very large value (and the label itself) can break to
-    // a second line rather than overflowing into adjacent columns.
     const cells = [
       { x: cx[0] + PADX, w: labelW,                  text: label,                   align: 'center' },
       { x: cx[3] + PADX, w: cw[3] - PADX * 2,        text: fmtQty(totals.qtyPut),   align: 'right' },
       { x: cx[4] + PADX, w: cw[4] - PADX * 2,        text: fmtQty(totals.qtySold),  align: 'right' },
       { x: cx[6] + PADX, w: cw[6] - PADX * 2,        text: fmtMoney(totals.value),  align: 'right' },
     ];
-    const wrapped = cells.map(c => wrapText(doc, c.text, c.w));
+    // Auto-shrink each cell so the big totals numbers (e.g.
+    // "13,62,049.000") render on a single line. Only wrap to a second
+    // line if even MIN_FONT can't fit — previously 7pt + word-wrap split
+    // numbers across two lines, often with two digits dangling on the
+    // second line.
+    const cellFontSizes = cells.map(c => fitFontSize(c.text, c.w, baseFont, MIN_FONT) || MIN_FONT);
+    const wrapped = cells.map((c, i) => {
+      doc.fontSize(cellFontSizes[i]);
+      return wrapText(doc, c.text, c.w);
+    });
+    const lineH = baseFont + 2;
     const maxLines = Math.max(...wrapped.map(l => l.length));
     const H = Math.max(isGrand ? 18 : 16, maxLines * lineH + 4);
     const top = y;
     cells.forEach((c, i) => {
       const lines = wrapped[i];
+      doc.fontSize(cellFontSizes[i]);
       let ty = top + (H - lines.length * lineH) / 2;
       lines.forEach(line => {
         doc.text(line, c.x, ty, { width: c.w, align: c.align, lineBreak: false });

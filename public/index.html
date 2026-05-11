@@ -406,6 +406,164 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 .err{color:#B91C1C;background:#FEE2E2;border:1px solid #FECACA;padding:10px 12px;border-radius:8px;font-size:13px;margin-top:12px;display:none}
 .err.active{display:block}
 
+/* ── Reports — collapsible sections inside Trade Summary ────── */
+.rep-section{
+  border:1px solid var(--spice-line);border-radius:10px;
+  margin-bottom:14px;overflow:hidden;background:#fff;
+}
+.rep-section-head{
+  display:flex;align-items:center;gap:10px;cursor:pointer;
+  padding:12px 16px;user-select:none;
+  background:linear-gradient(180deg,#F8FAFC 0%,#F1F5F9 100%);
+  border-bottom:1px solid transparent;transition:background .12s;
+}
+.rep-section[data-open="1"] .rep-section-head{
+  border-bottom-color:var(--spice-line);
+  background:linear-gradient(180deg,#F0FDF4 0%,#ECFCCB 100%);
+}
+.rep-section-head:hover{background:linear-gradient(180deg,#F0FDF4 0%,#ECFDF5 100%)}
+.rep-section-head h3{
+  margin:0;font-size:14px;font-weight:700;color:var(--spice-text-main);
+  letter-spacing:-.2px;flex:0 0 auto;
+}
+.rep-section-meta{
+  flex:1;font-size:11.5px;color:var(--spice-text-mute);font-weight:500;
+  text-transform:uppercase;letter-spacing:.5px;
+}
+.rep-section-chev{
+  font-size:14px;color:var(--spice-text-mute);font-weight:700;
+  width:20px;text-align:center;flex-shrink:0;
+}
+.rep-section-body{padding:0}
+.rep-section-scroll{
+  max-height:380px;overflow:auto;padding:14px 16px;
+}
+.rep-section-scroll table{margin:0;width:100%}
+.rep-section-scroll thead{position:sticky;top:0;background:#fff;z-index:1}
+.rep-section-scroll thead th{background:var(--bg)}
+
+/* ── To Tally — grouped classic settings panel ─────────────── */
+.tally-group{
+  margin-bottom:22px;border:1px solid var(--spice-line);
+  border-radius:12px;overflow:hidden;background:#fff;
+}
+.tally-group-head{
+  padding:12px 16px;background:linear-gradient(180deg,#F8FAFC 0%,#F1F5F9 100%);
+  border-bottom:1px solid var(--spice-line);
+}
+.tally-group-head h3{
+  margin:0;font-size:14px;font-weight:700;color:var(--spice-text-main);
+  letter-spacing:-.2px;
+}
+.tally-group-hint{
+  display:block;margin-top:3px;font-size:12px;color:var(--spice-text-mute);
+  line-height:1.4;
+}
+.tally-group .sgrid{padding:16px}
+
+/* ── Reports tab — quick-access tile grid ─────────────────── */
+.reports-hub{
+  background:linear-gradient(135deg,#F0FDF4 0%,#FFFBEB 100%);
+  border:1px solid #BBF7D0;border-radius:16px;
+  padding:24px 26px;margin-bottom:20px;
+}
+.reports-hub-head{margin-bottom:18px}
+.reports-tile-grid{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;
+}
+.report-tile{
+  display:block;text-decoration:none;color:inherit;
+  background:#fff;border:1px solid var(--spice-line);border-radius:12px;
+  padding:18px 18px 16px;cursor:pointer;
+  transition:transform .15s,box-shadow .15s,border-color .15s;
+  position:relative;overflow:hidden;
+}
+.report-tile::before{
+  content:'';position:absolute;left:0;top:0;bottom:0;width:4px;
+  background:var(--spice-cardamom);border-radius:12px 0 0 12px;
+  transition:width .15s;
+}
+.report-tile[data-accent="cardamom"]::before{background:var(--spice-cardamom)}
+.report-tile[data-accent="turmeric"]::before{background:var(--spice-turmeric,#F59E0B)}
+.report-tile[data-accent="saffron"]::before{background:var(--spice-saffron,#F97316)}
+.report-tile[data-accent="chili"]::before{background:var(--spice-chili,#DC2626)}
+.report-tile:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(31,25,21,.08);border-color:#A7F3D0}
+.report-tile:hover::before{width:6px}
+.report-tile-icon{
+  width:42px;height:42px;border-radius:10px;background:#F0FDF4;
+  display:inline-flex;align-items:center;justify-content:center;font-size:22px;
+  margin-bottom:10px;
+}
+.report-tile-title{
+  font-size:15px;font-weight:700;color:var(--text);
+  margin-bottom:4px;letter-spacing:-.2px;
+}
+.report-tile-desc{font-size:12.5px;line-height:1.45;color:var(--text3)}
+
+/* ── Users tab — vibrant collapsible cards ───────────────── */
+/* Each card has a coloured top stripe (sets the mood) + an emoji
+   chip in the header so the page reads more like Reports than a
+   plain admin form. */
+.user-collapsible{
+  padding:0;overflow:hidden;position:relative;
+  border-top:4px solid var(--spice-cardamom);
+  transition:transform .12s,box-shadow .15s;
+}
+.user-collapsible:nth-child(1){border-top-color:#16A34A}      /* Users & Access — green */
+.user-collapsible:nth-child(2){border-top-color:#F59E0B}      /* Active Sessions — amber */
+.user-collapsible:nth-child(3){border-top-color:#0EA5E9}      /* Change Password — sky */
+.user-collapsible:nth-child(4){border-top-color:#8B5CF6}      /* Login History — violet */
+.user-collapsible:nth-child(5){border-top-color:#DC2626}      /* Audit Log — red */
+.user-collapsible:hover{box-shadow:0 8px 24px rgba(31,25,21,.08)}
+
+.user-card-head{
+  display:flex;align-items:center;gap:12px;cursor:pointer;
+  padding:18px 22px;user-select:none;
+  border-bottom:1px solid transparent;
+  transition:background .12s,border-color .12s;
+}
+.user-card-head:hover{background:linear-gradient(90deg,rgba(22,101,52,.04) 0%,rgba(22,101,52,0) 100%)}
+.user-collapsible[data-open="1"] .user-card-head{
+  border-bottom-color:var(--spice-line);
+  background:linear-gradient(90deg,#F0FDF4 0%,#FFFBEB 100%);
+}
+.user-collapsible:nth-child(2)[data-open="1"] .user-card-head{background:linear-gradient(90deg,#FEF3C7 0%,#FFFBEB 100%)}
+.user-collapsible:nth-child(3)[data-open="1"] .user-card-head{background:linear-gradient(90deg,#E0F2FE 0%,#F0F9FF 100%)}
+.user-collapsible:nth-child(4)[data-open="1"] .user-card-head{background:linear-gradient(90deg,#EDE9FE 0%,#F5F3FF 100%)}
+.user-collapsible:nth-child(5)[data-open="1"] .user-card-head{background:linear-gradient(90deg,#FEE2E2 0%,#FEF2F2 100%)}
+
+/* Round icon chip prepended via CSS — colour matches the card stripe. */
+.user-card-head::before{
+  content:attr(data-icon);
+  width:36px;height:36px;border-radius:10px;
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:18px;flex-shrink:0;
+  background:#F0FDF4;color:#16A34A;border:1px solid rgba(22,163,74,.2);
+}
+.user-collapsible:nth-child(1) .user-card-head::before{background:#F0FDF4;color:#16A34A;border-color:rgba(22,163,74,.2)}
+.user-collapsible:nth-child(2) .user-card-head::before{background:#FEF3C7;color:#B45309;border-color:rgba(245,158,11,.25)}
+.user-collapsible:nth-child(3) .user-card-head::before{background:#E0F2FE;color:#0369A1;border-color:rgba(14,165,233,.25)}
+.user-collapsible:nth-child(4) .user-card-head::before{background:#EDE9FE;color:#6D28D9;border-color:rgba(139,92,246,.25)}
+.user-collapsible:nth-child(5) .user-card-head::before{background:#FEE2E2;color:#B91C1C;border-color:rgba(220,38,38,.25)}
+
+.user-card-head h2{font-size:16px;font-weight:700;letter-spacing:-.2px}
+.user-card-chev{
+  font-size:14px;color:var(--spice-text-mute);font-weight:700;
+  margin-left:auto;flex-shrink:0;width:20px;text-align:center;
+  transition:transform .15s
+}
+.user-card-body{padding:18px 22px 22px}
+/* Long tables scroll within their card body so the page doesn't
+   grow unbounded. Sticky header so column titles stay visible. */
+.user-table-scroll{
+  max-height:420px;overflow:auto;
+  border:1px solid var(--spice-line);border-radius:10px;
+  background:#fff;
+}
+.user-table-scroll table{margin:0;width:100%}
+.user-table-scroll thead{position:sticky;top:0;background:#F8FAFC;z-index:1}
+.user-table-scroll thead th{background:#F8FAFC;border-bottom:1px solid var(--spice-line)}
+
 /* Responsive — stack the two panels under 880px so phones / narrow
    tablets still see the form. Brand panel becomes a compact banner. */
 @media (max-width: 880px){
@@ -1764,14 +1922,6 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Backup
         </button>
-        <!-- Reports — trade summary + branch comparison views.
-             Available to anyone with view permission; gated as
-             needs-user-manage would over-restrict for non-admin
-             field managers who want to see today's numbers. -->
-        <button class="side-item" data-tab="reports" onclick="go('reports')">
-          <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
-          Reports
-        </button>
       </div>
       <div class="side-group">
         <div class="side-group-lbl">Master Data</div>
@@ -1826,6 +1976,13 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       </div>
       <div class="side-group">
         <div class="side-group-lbl">Reports</div>
+        <!-- Reports hub — trade summary, branch comparison, links to
+             every report generator. Sits at the top of the Reports
+             section so it's the first thing the user sees. -->
+        <button class="side-item" data-tab="reports" onclick="go('reports')">
+          <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+          Reports Hub
+        </button>
         <button class="side-item" data-tab="exports" onclick="go('exports')">
           <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
           Exports
@@ -1968,6 +2125,44 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
         </div>
 
+        <!-- ── Auto Backup Schedule ─────────────────────────────
+             Runs the same backup endpoint on a recurring interval
+             from THIS browser tab. The browser must be open for the
+             scheduled run to fire; closing the tab pauses the job.
+             Persisted in localStorage so the schedule survives
+             reloads. -->
+        <div style="padding:16px 18px;border:1px solid var(--border);border-radius:10px;background:#fff;margin-bottom:14px">
+          <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap">
+            <div style="flex:1;min-width:260px">
+              <div style="font-weight:700;color:var(--text);font-size:14px;margin-bottom:4px;display:flex;align-items:center;gap:6px">
+                <span>🕒</span><span>Auto Backup Schedule</span>
+              </div>
+              <div style="font-size:12px;color:var(--text3);line-height:1.5">
+                Automatically download a fresh backup at a fixed interval. Keep this browser tab open during business hours so the schedule can fire. Last run timestamp is shown below.
+              </div>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;margin-top:14px">
+            <label class="sw" title="Enable / disable scheduled auto backup" style="display:inline-flex;align-items:center">
+              <input type="checkbox" id="autobackup-enabled" data-type="boolean" onchange="autoBackupSave()">
+              <span class="sl"></span>
+            </label>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+              <label style="font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.4px">Run every</label>
+              <select id="autobackup-interval" onchange="autoBackupSave()" style="height:36px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500">
+                <option value="3600000">1 hour</option>
+                <option value="21600000">6 hours</option>
+                <option value="43200000">12 hours</option>
+                <option value="86400000" selected>1 day</option>
+                <option value="259200000">3 days</option>
+                <option value="604800000">7 days</option>
+              </select>
+              <button class="btn btn-o" onclick="autoBackupRunNow()" style="height:36px;padding:0 12px;font-weight:600">Run now</button>
+            </div>
+            <div id="autobackup-status" style="font-size:12px;color:var(--text3);text-align:right">Not scheduled</div>
+          </div>
+        </div>
+
         <!-- ── Restore ────────────────────────────────────────── -->
         <div style="padding:16px 18px;border:1.5px solid #FCA5A5;border-radius:10px;background:#FEF2F2">
           <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap">
@@ -1990,39 +2185,58 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
     <!-- USERS -->
     <div class="tc" id="tc-users">
-      <div class="card">
-        <h2 style="margin-bottom:4px">Users &amp; Access</h2>
-        <p style="color:var(--spice-text-mute);font-size:13px;margin:0 0 16px">Create separate logins for each person. Each user can stay signed in on their own phone/computer without logging the others out.</p>
-        <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
-          <button class="btn btn-g" onclick="openAddUserModal()">+ Add User</button>
+      <!-- Sections in this tab are collapsible. Header is a button-like
+           row with a chevron; click to toggle the body. Tables inside
+           get max-height + overflow-y so long lists scroll within their
+           card instead of pushing the page down. -->
+      <div class="card user-collapsible" data-open="1">
+        <div class="user-card-head" data-icon="👥" onclick="toggleUserCard(this)">
+          <h2 style="margin:0;flex:1">Users &amp; Access</h2>
+          <span class="user-card-chev">▾</span>
         </div>
-        <div style="overflow-x:auto">
-          <table>
-            <thead><tr><th>Username</th><th>Role</th><th>Active Sessions</th><th>Last Active</th><th>Created</th><th>Actions</th></tr></thead>
-            <tbody id="users-list"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2 style="margin-bottom:4px">My Active Sessions</h2>
-        <p style="color:var(--spice-text-mute);font-size:13px;margin:0 0 16px">Every place you're signed in as <strong id="my-uname-label"></strong>. Revoke any old/unused session to secure your account.</p>
-        <div style="overflow-x:auto">
-          <table>
-            <thead><tr><th>Device</th><th>Signed In</th><th>Last Used</th><th>Token Tail</th><th>Actions</th></tr></thead>
-            <tbody id="sessions-list"></tbody>
-          </table>
+        <div class="user-card-body">
+          <p style="color:var(--spice-text-mute);font-size:13px;margin:0 0 16px">Create separate logins for each person. Each user can stay signed in on their own phone/computer without logging the others out.</p>
+          <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+            <button class="btn btn-g" onclick="openAddUserModal()">+ Add User</button>
+          </div>
+          <div class="user-table-scroll">
+            <table>
+              <thead><tr><th>Username</th><th>Role</th><th>Active Sessions</th><th>Last Active</th><th>Created</th><th>Actions</th></tr></thead>
+              <tbody id="users-list"></tbody>
+            </table>
+          </div>
         </div>
       </div>
 
-      <div class="card">
-        <h2 style="margin-bottom:4px">Change My Password</h2>
-        <p style="color:var(--spice-text-mute);font-size:13px;margin:0 0 16px">Changing your password signs you out from all other devices (this one stays signed in).</p>
-        <div style="max-width:420px">
-          <div class="fg"><label>Current password</label><input type="password" id="pw-cur"></div>
-          <div class="fg"><label>New password</label><input type="password" id="pw-new" placeholder="At least 4 characters"></div>
-          <div class="fg"><label>Confirm new password</label><input type="password" id="pw-conf"></div>
-          <button class="btn btn-g" onclick="changeMyPassword()">Update Password</button>
+      <div class="card user-collapsible" data-open="0">
+        <div class="user-card-head" data-icon="🔐" onclick="toggleUserCard(this)">
+          <h2 style="margin:0;flex:1">My Active Sessions</h2>
+          <span class="user-card-chev">▸</span>
+        </div>
+        <div class="user-card-body" style="display:none">
+          <p style="color:var(--spice-text-mute);font-size:13px;margin:0 0 16px">Every place you're signed in as <strong id="my-uname-label"></strong>. Revoke any old/unused session to secure your account.</p>
+          <div class="user-table-scroll">
+            <table>
+              <thead><tr><th>Device</th><th>Signed In</th><th>Last Used</th><th>Token Tail</th><th>Actions</th></tr></thead>
+              <tbody id="sessions-list"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card user-collapsible" data-open="0">
+        <div class="user-card-head" data-icon="🔑" onclick="toggleUserCard(this)">
+          <h2 style="margin:0;flex:1">Change My Password</h2>
+          <span class="user-card-chev">▸</span>
+        </div>
+        <div class="user-card-body" style="display:none">
+          <p style="color:var(--spice-text-mute);font-size:13px;margin:0 0 16px">Changing your password signs you out from all other devices (this one stays signed in).</p>
+          <div style="max-width:420px">
+            <div class="fg"><label>Current password</label><input type="password" id="pw-cur"></div>
+            <div class="fg"><label>New password</label><input type="password" id="pw-new" placeholder="At least 4 characters"></div>
+            <div class="fg"><label>Confirm new password</label><input type="password" id="pw-conf"></div>
+            <button class="btn btn-g" onclick="changeMyPassword()">Update Password</button>
+          </div>
         </div>
       </div>
 
@@ -2031,28 +2245,31 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
            time someone logs in from /mobile (mobile-bridge writes
            the row; spice-config's native /api/auth/login also
            writes here via the bridge's middleware). -->
-      <div class="card">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <div class="card user-collapsible" data-open="0">
+        <div class="user-card-head" data-icon="🕒" onclick="toggleUserCard(this)">
           <h2 style="margin:0;flex:1">Login History</h2>
-          <button class="btn btn-sm" onclick="loadLoginHistory()" title="Refresh">↻ Refresh</button>
-          <button class="btn btn-sm" onclick="clearLoginHistory()" style="background:#fee;color:#b91c1c;border-color:#fcc" title="Delete all login history">Clear All</button>
+          <button class="btn btn-sm" onclick="event.stopPropagation();loadLoginHistory()" title="Refresh">↻ Refresh</button>
+          <button class="btn btn-sm" onclick="event.stopPropagation();clearLoginHistory()" style="background:#fee;color:#b91c1c;border-color:#fcc" title="Delete all login history">Clear All</button>
+          <span class="user-card-chev">▸</span>
         </div>
-        <p style="color:var(--spice-text-mute);font-size:13px;margin:0 0 16px">Most recent 100 logins. Useful for verifying who signed in from which phone.</p>
-        <div style="overflow-x:auto">
-          <table>
-            <thead><tr><th>When</th><th>User</th><th>Device</th><th>IP</th></tr></thead>
-            <tbody id="login-history-list"><tr><td colspan="4" style="text-align:center;padding:18px;color:var(--spice-text-hint)">Click ↻ Refresh to load</td></tr></tbody>
-          </table>
+        <div class="user-card-body" style="display:none">
+          <p style="color:var(--spice-text-mute);font-size:13px;margin:0 0 16px">Most recent 100 logins. Useful for verifying who signed in from which phone.</p>
+          <div class="user-table-scroll">
+            <table>
+              <thead><tr><th>When</th><th>User</th><th>Device</th><th>IP</th></tr></thead>
+              <tbody id="login-history-list"><tr><td colspan="4" style="text-align:center;padding:18px;color:var(--spice-text-hint)">Click ↻ Refresh to load</td></tr></tbody>
+            </table>
+          </div>
         </div>
       </div>
 
       <!-- ── Audit Log — every consequential action across the app
            (creates, edits, deletes, exports, restore). Each row
            is written by the code path that performed the action. -->
-      <div class="card">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <div class="card user-collapsible" data-open="0">
+        <div class="user-card-head" data-icon="📜" onclick="toggleUserCard(this)">
           <h2 style="margin:0;flex:1">Audit Log</h2>
-          <select id="audit-filter-action" onchange="loadAuditLog()" style="height:30px;padding:0 8px;border-radius:6px;border:1px solid var(--border)">
+          <select id="audit-filter-action" onchange="event.stopPropagation();loadAuditLog()" onclick="event.stopPropagation()" style="height:30px;padding:0 8px;border-radius:6px;border:1px solid var(--border)">
             <option value="">All actions</option>
             <option value="create">Create</option>
             <option value="update">Update</option>
@@ -2061,21 +2278,24 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <option value="restore">Restore</option>
             <option value="clear">Clear</option>
           </select>
-          <button class="btn btn-sm" onclick="loadAuditLog()">↻ Refresh</button>
-          <button class="btn btn-sm" onclick="clearAuditLog()" style="background:#fee;color:#b91c1c;border-color:#fcc">Clear All</button>
+          <button class="btn btn-sm" onclick="event.stopPropagation();loadAuditLog()">↻ Refresh</button>
+          <button class="btn btn-sm" onclick="event.stopPropagation();clearAuditLog()" style="background:#fee;color:#b91c1c;border-color:#fcc">Clear All</button>
+          <span class="user-card-chev">▸</span>
         </div>
-        <p style="color:var(--spice-text-mute);font-size:13px;margin:0 0 16px">Recent activity. Click ↻ Refresh to load — paged 50 per fetch.</p>
-        <div style="overflow-x:auto">
-          <table>
-            <thead><tr><th>When</th><th>User</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead>
-            <tbody id="audit-log-list"><tr><td colspan="5" style="text-align:center;padding:18px;color:var(--spice-text-hint)">Click ↻ Refresh to load</td></tr></tbody>
-          </table>
-        </div>
-        <div id="audit-log-pager" style="display:none;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-          <span style="font-size:12px;color:var(--spice-text-mute)" id="audit-log-meta"></span>
-          <div style="display:flex;gap:6px">
-            <button class="btn btn-sm" onclick="auditPrev()" id="audit-prev">← Prev</button>
-            <button class="btn btn-sm" onclick="auditNext()" id="audit-next">Next →</button>
+        <div class="user-card-body" style="display:none">
+          <p style="color:var(--spice-text-mute);font-size:13px;margin:0 0 16px">Recent activity. Click ↻ Refresh to load — paged 50 per fetch.</p>
+          <div class="user-table-scroll">
+            <table>
+              <thead><tr><th>When</th><th>User</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead>
+              <tbody id="audit-log-list"><tr><td colspan="5" style="text-align:center;padding:18px;color:var(--spice-text-hint)">Click ↻ Refresh to load</td></tr></tbody>
+            </table>
+          </div>
+          <div id="audit-log-pager" style="display:none;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+            <span style="font-size:12px;color:var(--spice-text-mute)" id="audit-log-meta"></span>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-sm" onclick="auditPrev()" id="audit-prev">← Prev</button>
+              <button class="btn btn-sm" onclick="auditNext()" id="audit-next">Next →</button>
+            </div>
           </div>
         </div>
       </div>
@@ -2086,7 +2306,51 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
          /api/reports/trade-summary and /api/reports/branch-comparison.
          The summary-pdf button opens a printable A4 in a new tab. -->
     <div class="tc" id="tc-reports">
-      <div class="card">
+      <!-- ── Reports hub — quick-access tiles for every report
+           generator. Each tile launches a workflow (open PDF /
+           XLSX / scroll to dashboard). The tiles cluster reports
+           by purpose so the user doesn't have to hunt across
+           several tabs. -->
+      <div class="reports-hub">
+        <div class="reports-hub-head">
+          <h2 style="margin:0;font-size:22px;font-weight:800">Reports &amp; Insights</h2>
+          <p style="color:var(--text3);margin:6px 0 0;font-size:13px">All trade analytics in one place — pick a report below to drill in.</p>
+        </div>
+        <div class="reports-tile-grid">
+          <a class="report-tile" href="#" onclick="event.preventDefault();document.getElementById('rep-trade-summary').scrollIntoView({behavior:'smooth'})" data-accent="cardamom">
+            <div class="report-tile-icon">📊</div>
+            <div class="report-tile-title">Trade Summary</div>
+            <div class="report-tile-desc">Per-branch &amp; per-seller breakdown for any single trade.</div>
+          </a>
+          <a class="report-tile" href="#" onclick="event.preventDefault();document.getElementById('rep-branch-card').scrollIntoView({behavior:'smooth'});loadBranchComparison()" data-accent="turmeric">
+            <div class="report-tile-icon">🏪</div>
+            <div class="report-tile-title">Branch Comparison</div>
+            <div class="report-tile-desc">Lifetime performance side-by-side across every branch.</div>
+          </a>
+          <a class="report-tile" href="#" onclick="event.preventDefault();go('spicesboard')" data-accent="saffron">
+            <div class="report-tile-icon">🌶</div>
+            <div class="report-tile-title">Spice Board Reports</div>
+            <div class="report-tile-desc">Form C, Form D &amp; Buyers Statement — board-ready PDF / XLSX.</div>
+          </a>
+          <a class="report-tile" href="#" onclick="event.preventDefault();go('journals')" data-accent="chili">
+            <div class="report-tile-icon">📒</div>
+            <div class="report-tile-title">Sales / Purchase Journals</div>
+            <div class="report-tile-desc">Invoice-by-invoice registers for filing &amp; audit.</div>
+          </a>
+          <a class="report-tile" href="#" onclick="event.preventDefault();go('tally')" data-accent="cardamom">
+            <div class="report-tile-icon">📤</div>
+            <div class="report-tile-title">Tally XML Export</div>
+            <div class="report-tile-desc">Sales, purchases, debit notes — ready to import into Tally.</div>
+          </a>
+          <a class="report-tile" href="#" onclick="event.preventDefault();go('exports')" data-accent="turmeric">
+            <div class="report-tile-icon">⬇</div>
+            <div class="report-tile-title">Other Exports</div>
+            <div class="report-tile-desc">Bank payments, lot slips, collection, pooler register…</div>
+          </a>
+        </div>
+      </div>
+
+      <div class="card" id="rep-trade-summary">
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <h2 style="margin:0;flex:1">Trade Summary</h2>
           <select id="rep-auction" onchange="loadTradeSummary()" style="height:34px;padding:0 10px;border-radius:6px;border:1px solid var(--border);min-width:220px"></select>
@@ -2102,7 +2366,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </div>
       </div>
 
-      <div class="card">
+      <div class="card" id="rep-branch-card">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
           <h2 style="margin:0;flex:1">Branch Comparison (Lifetime)</h2>
           <button class="btn btn-sm" onclick="loadBranchComparison()">↻ Refresh</button>
@@ -2183,9 +2447,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <div class="fg" style="margin:0;flex:1;min-width:180px"><input type="search" placeholder="Search by name, phone, GSTIN, PAN, place..." oninput="searchTraders(this.value)"></div>
           <button class="btn btn-a" onclick="document.getElementById('imp-traders').click()">Import XLS/XLSX</button>
           <button class="btn btn-o" onclick="downloadTemplate('traders')">Download Template</button>
-          <button id="seller-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('seller')">🗑 Delete Selected <span id="seller-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
-          <button class="needs-delete-all btn" style="background:#c0392b;color:#fff" onclick="deleteAll('traders','Sellers')">Delete All</button>
-          <input type="file" id="imp-traders" accept=".xlsx,.xls" style="display:none" onchange="importTraders(event)">
+          <button id="seller-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('seller')">🗑 Delete Selected <span id="seller-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>          <input type="file" id="imp-traders" accept=".xlsx,.xls" style="display:none" onchange="importTraders(event)">
         </div>
         <div id="trader-import-status" style="display:none;padding:8px 14px;border-radius:6px;font-size:12px;margin-bottom:10px"></div>
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Name</th><th>CR/GSTIN</th><th>PAN</th><th>Phone</th><th>Place · State</th><th>Bank</th><th>Actions</th></tr></thead><tbody id="traders-list"></tbody></table></div>
@@ -2200,9 +2462,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <div class="fg" style="margin:0;flex:1;min-width:180px"><input type="search" placeholder="Search by name, phone, GSTIN, PAN, TI..." oninput="searchBuyers(this.value)"></div>
           <button class="btn btn-a" onclick="document.getElementById('imp-buyers').click()">Import XLS/XLSX</button>
           <button class="btn btn-o" onclick="downloadTemplate('buyers')">Download Template</button>
-          <button id="buyer-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('buyer')">🗑 Delete Selected <span id="buyer-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
-          <button class="needs-delete-all btn" style="background:#c0392b;color:#fff" onclick="deleteAll('buyers','Buyers')">Delete All</button>
-          <input type="file" id="imp-buyers" accept=".xlsx,.xls" style="display:none" onchange="importBuyers(event)">
+          <button id="buyer-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('buyer')">🗑 Delete Selected <span id="buyer-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>          <input type="file" id="imp-buyers" accept=".xlsx,.xls" style="display:none" onchange="importBuyers(event)">
         </div>
         <div id="buyer-import-status" style="display:none;padding:8px 14px;border-radius:6px;font-size:12px;margin-bottom:10px"></div>
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>BUYER</th><th>Code</th><th>Trade Name</th><th>GSTIN</th><th>PAN</th><th>Phone</th><th>TI</th><th>Place · State</th><th>Sale</th><th>Actions</th></tr></thead><tbody id="buyers-list"></tbody></table></div>
@@ -2294,7 +2554,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
         </div>
 
-        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Lot</th><th>Name</th><th>Branch</th><th>Bags</th><th>Qty</th><th>Price</th><th>Amount</th><th>Buyer</th><th>Payable</th><th>Actions</th></tr></thead><tbody id="lots-list"></tbody></table></div>
+        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Lot</th><th>Name</th><th>Branch</th><th>Bags</th><th>Qty</th><th>Price</th><th>Amount</th><th>Buyer</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Payable</th><th>Actions</th></tr></thead><tbody id="lots-list"></tbody></table></div>
       </div>
     </div>
 
@@ -2722,9 +2982,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
           <!-- Destructive group — pushed right -->
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:auto">
-            <button class="needs-invoice-revert btn" style="height:38px;padding:0 14px;background:var(--spice-turmeric);color:#fff;font-weight:600" onclick="revertAllInvoices()" title="Revert all invoices — deletes them and re-enables lots for re-invoicing">⟲ Revert All</button>
-            <button class="needs-delete-all btn" style="height:38px;padding:0 14px;background:var(--spice-chili);color:#fff;font-weight:600" onclick="deleteAll('invoices','Invoices')" title="Permanently delete all invoices">🗑 Delete All</button>
-          </div>
+            <button class="needs-invoice-revert btn" style="height:38px;padding:0 14px;background:var(--spice-turmeric);color:#fff;font-weight:600" onclick="revertAllInvoices()" title="Revert all invoices — deletes them and re-enables lots for re-invoicing">⟲ Revert All</button>          </div>
         </div>
 
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Sale</th><th>Inv#</th><th>Lorry</th><th>Distance (km)</th><th>Code</th><th>Trade Name</th><th>Qty</th><th>Amount</th><th>Insurance</th><th>Transport</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th>Actions</th></tr></thead><tbody id="invoices-list"></tbody></table></div>
@@ -2795,9 +3053,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <button id="pur-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedPurchases()" title="Delete all ticked purchase invoices">🗑 Delete Selected <span id="pur-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           </div>
 
-          <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:auto">
-            <button class="needs-delete-all btn" style="height:38px;padding:0 14px;background:var(--spice-chili);color:#fff;font-weight:600" onclick="deleteAll('purchases','Purchase Invoices')">🗑 Delete All</button>
-          </div>
+          <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:auto">          </div>
         </div>
 
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Inv#</th><th>Name</th><th>Qty</th><th>Amount</th><th>CGST</th><th>SGST</th><th>IGST</th><th>TDS</th><th>Total</th><th>Actions</th></tr></thead><tbody id="purchases-list"></tbody></table></div>
@@ -3072,9 +3328,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <button id="bill-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedBills()" title="Delete all ticked bills">🗑 Delete Selected <span id="bill-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           </div>
 
-          <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:auto">
-            <button class="needs-delete-all btn" style="height:38px;padding:0 14px;background:var(--spice-chili);color:#fff;font-weight:600" onclick="deleteAll('bills','Bills of Supply')">🗑 Delete All</button>
-          </div>
+          <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:auto">          </div>
         </div>
 
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Bill#</th><th>Date</th><th>Name</th><th>Place</th><th>Qty</th><th>Cost</th><th>Net</th><th>Actions</th></tr></thead><tbody id="bills-list"></tbody></table></div>
@@ -3105,9 +3359,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <!-- Bulk actions on ticked rows. Hidden until at least one row
                is selected; the count badge updates live as boxes toggle. -->
           <button id="dn-bulk-print" class="btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedDebitNotes()" title="Print all ticked debit notes as one combined PDF">🖨 Print Selected <span id="dn-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
-          <button id="dn-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotes()" title="Delete all ticked debit notes">🗑 Delete Selected</button>
-          <button class="needs-delete-all btn" style="background:#c0392b;color:#fff;margin-left:auto" onclick="deleteAllDebitNotesForTrade()">Delete All (this trade)</button>
-        </div>
+          <button id="dn-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotes()" title="Delete all ticked debit notes">🗑 Delete Selected</button>        </div>
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Note#</th><th>Date</th><th>Trade</th><th>Name</th><th>Amount</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th>Actions</th></tr></thead><tbody id="debit-list"></tbody></table></div>
       </div>
     </div>
@@ -4880,6 +5132,13 @@ function go(tab){
   document.querySelectorAll('.side-item').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
   document.querySelectorAll('.tc').forEach(t=>t.classList.remove('active'));
   const el=document.getElementById('tc-'+tab);if(el)el.classList.add('active');
+  // Auto-refresh polling — start on the relevant tab, stop on others
+  // so we don't waste cycles polling for tabs the user isn't looking at.
+  if (typeof leStartAutoRefresh === 'function' && typeof lotsStartAutoRefresh === 'function') {
+    if (tab === 'lotentry') { leStartAutoRefresh(); lotsStopAutoRefresh(); }
+    else if (tab === 'lots') { lotsStartAutoRefresh(); leStopAutoRefresh(); }
+    else { leStopAutoRefresh(); lotsStopAutoRefresh(); }
+  }
   // Refresh the topbar badge on every tab change. This is belt-and-
   // suspenders defense against race conditions where the badge didn't
   // get its display flipped during the initial load — if `_sdata` is
@@ -5494,6 +5753,20 @@ async function loadStats(auctionId){
 }
 
 // ── Users & Sessions ─────────────────────────────────────
+// Toggle a collapsible card under the Users tab. Reads/writes
+// data-open on the card and flips the chevron between ▾ / ▸.
+function toggleUserCard(headerEl){
+  const card = headerEl.closest('.user-collapsible');
+  if (!card) return;
+  const body = card.querySelector('.user-card-body');
+  const chev = card.querySelector('.user-card-chev');
+  const open = card.getAttribute('data-open') === '1';
+  const next = !open;
+  card.setAttribute('data-open', next ? '1' : '0');
+  if (body) body.style.display = next ? '' : 'none';
+  if (chev) chev.textContent = next ? '▾' : '▸';
+}
+
 async function loadUsers(){
   const uname = document.getElementById('user-lbl')?.textContent || '';
   const lbl = document.getElementById('my-uname-label'); if(lbl) lbl.textContent = uname;
@@ -5828,59 +6101,98 @@ async function loadTradeSummary(){
       `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px">`+
       aggCells.map(i=>`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center"><div style="font-size:20px;font-weight:700;color:var(--green)">${i.v}</div><div style="font-size:11px;color:var(--spice-text-mute);text-transform:uppercase;letter-spacing:.5px;margin-top:4px">${i.l}</div></div>`).join('')+
       `</div>`;
+    // Collapsible section helper. Wraps a table-or-chart payload in a
+    // card with a click-to-toggle header. The table itself sits inside
+    // a max-height scroll container so long lists don't push the page
+    // down. `open` defaults to true for the first/most-important
+    // section (Per-Branch) and false for the rest.
+    let _secId = 0;
+    const section = (title, meta, payload, opts={}) => {
+      _secId++;
+      const id = 'rep-sec-' + _secId;
+      const open = opts.open !== false;
+      const chev = open ? '▾' : '▸';
+      const display = open ? '' : 'display:none';
+      return (
+        '<div class="rep-section" data-open="'+(open?1:0)+'">'+
+        '<div class="rep-section-head" onclick="toggleRepSection(this)">'+
+          '<h3>'+title+'</h3>'+
+          (meta ? '<span class="rep-section-meta">'+meta+'</span>' : '')+
+          '<span class="rep-section-chev">'+chev+'</span>'+
+        '</div>'+
+        '<div class="rep-section-body" style="'+display+'">'+
+          '<div class="rep-section-scroll">'+payload+'</div>'+
+        '</div></div>'
+      );
+    };
+
     // ── Per-branch table ──
     const bw=d.branchWise||[];
     let html=aggHtml;
-    html+='<h3 style="margin:18px 0 8px">Per-Branch</h3>';
-    html+='<div style="overflow-x:auto"><table><thead><tr><th>Branch</th><th style="text-align:right">Lots</th><th style="text-align:right">Sold (kg)</th><th style="text-align:right">Withdrawn (kg)</th><th style="text-align:right">Min</th><th style="text-align:right">Max</th><th style="text-align:right">Avg</th><th style="text-align:right">Sellers</th></tr></thead><tbody>';
-    if(!bw.length){html+='<tr><td colspan="8" style="text-align:center;padding:14px;color:var(--spice-text-hint)">No lots yet</td></tr>';}
+    let branchTable = '<table><thead><tr><th>Branch</th><th style="text-align:right">Lots</th><th style="text-align:right">Sold (kg)</th><th style="text-align:right">Withdrawn (kg)</th><th style="text-align:right">Min</th><th style="text-align:right">Max</th><th style="text-align:right">Avg</th><th style="text-align:right">Sellers</th></tr></thead><tbody>';
+    if(!bw.length){branchTable+='<tr><td colspan="8" style="text-align:center;padding:14px;color:var(--spice-text-hint)">No lots yet</td></tr>';}
     bw.forEach(b=>{
       const minP=Number(b.min_price||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
       const maxP=Number(b.max_price||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
       const avgP=Number(b.avg_price||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
-      html+=`<tr><td><strong>${esc(b.branch||'-')}</strong></td><td style="text-align:right">${b.lot_count}</td><td style="text-align:right;font-weight:600">${Number(b.sold_qty||0).toFixed(3)}</td><td style="text-align:right">${Number(b.withdrawn_qty||0).toFixed(3)}</td><td style="text-align:right">${minP}</td><td style="text-align:right">${maxP}</td><td style="text-align:right">${avgP}</td><td style="text-align:right">${b.seller_count||0}</td></tr>`;
+      branchTable+=`<tr><td><strong>${esc(b.branch||'-')}</strong></td><td style="text-align:right">${b.lot_count}</td><td style="text-align:right;font-weight:600">${Number(b.sold_qty||0).toFixed(3)}</td><td style="text-align:right">${Number(b.withdrawn_qty||0).toFixed(3)}</td><td style="text-align:right">${minP}</td><td style="text-align:right">${maxP}</td><td style="text-align:right">${avgP}</td><td style="text-align:right">${b.seller_count||0}</td></tr>`;
     });
-    html+='</tbody></table></div>';
+    branchTable += '</tbody></table>';
+    html += section('Per-Branch', bw.length+' branch'+(bw.length===1?'':'es'), branchTable, { open: true });
+
     // ── Per-grade ──
     const gw=d.gradeWise||[];
     if(gw.length){
-      html+='<h3 style="margin:18px 0 8px">By Grade</h3>';
-      html+='<div style="overflow-x:auto"><table><thead><tr><th>Grade</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th><th style="text-align:right">Sellers</th></tr></thead><tbody>';
-      gw.forEach(g=>{html+=`<tr><td>${esc(g.grade||'-')}</td><td style="text-align:right">${g.lot_count}</td><td style="text-align:right">${g.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(g.total_qty||0).toFixed(3)}</td><td style="text-align:right">${g.seller_count||0}</td></tr>`;});
-      html+='</tbody></table></div>';
+      let gradeTable='<table><thead><tr><th>Grade</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th><th style="text-align:right">Sellers</th></tr></thead><tbody>';
+      gw.forEach(g=>{gradeTable+=`<tr><td>${esc(g.grade||'-')}</td><td style="text-align:right">${g.lot_count}</td><td style="text-align:right">${g.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(g.total_qty||0).toFixed(3)}</td><td style="text-align:right">${g.seller_count||0}</td></tr>`;});
+      gradeTable+='</tbody></table>';
+      html += section('By Grade', gw.length+' grade'+(gw.length===1?'':'s'), gradeTable, { open: false });
     }
     // ── Top sellers (cap at 25 in UI; PDF gets 30) ──
     const sw=d.sellerWise||[];
     if(sw.length){
-      html+=`<h3 style="margin:18px 0 8px">Top Sellers <span style="font-weight:normal;font-size:12px;color:var(--spice-text-mute)">(showing ${Math.min(25,sw.length)} of ${sw.length})</span></h3>`;
-      html+='<div style="overflow-x:auto"><table><thead><tr><th>Seller</th><th>Branch</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th></tr></thead><tbody>';
-      sw.slice(0,25).forEach(s=>{html+=`<tr><td><strong>${esc(s.seller_name)}</strong></td><td>${esc(s.branch||'')}</td><td style="text-align:right">${s.lot_count}</td><td style="text-align:right">${s.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(s.total_qty||0).toFixed(3)}</td></tr>`;});
-      html+='</tbody></table></div>';
+      let sellerTable='<table><thead><tr><th>Seller</th><th>Branch</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th></tr></thead><tbody>';
+      sw.slice(0,25).forEach(s=>{sellerTable+=`<tr><td><strong>${esc(s.seller_name)}</strong></td><td>${esc(s.branch||'')}</td><td style="text-align:right">${s.lot_count}</td><td style="text-align:right">${s.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(s.total_qty||0).toFixed(3)}</td></tr>`;});
+      sellerTable+='</tbody></table>';
+      html += section('Top Sellers', 'showing '+Math.min(25,sw.length)+' of '+sw.length, sellerTable, { open: false });
     }
     // ── Hourly pace ──
     const hr=d.hourly||[];
     if(hr.length){
-      html+='<h3 style="margin:18px 0 8px">Hourly Pace</h3>';
       const maxQty=Math.max(...hr.map(h=>Number(h.total_qty)||0),1);
-      html+='<div style="display:flex;gap:4px;align-items:flex-end;height:120px;padding:6px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;overflow-x:auto">';
+      let hourlyBars='<div style="display:flex;gap:4px;align-items:flex-end;height:120px;padding:6px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;overflow-x:auto">';
       hr.forEach(h=>{
         const pct=(Number(h.total_qty)||0)/maxQty*100;
-        html+=`<div style="flex:1;min-width:36px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end"><div title="${h.lot_count} lots · ${Number(h.total_qty||0).toFixed(1)} kg" style="width:100%;height:${pct}%;background:var(--green);border-radius:3px 3px 0 0;min-height:2px"></div><div style="font-size:10px;color:var(--spice-text-mute);margin-top:4px">${esc(h.hour)}h</div></div>`;
+        hourlyBars+=`<div style="flex:1;min-width:36px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end"><div title="${h.lot_count} lots · ${Number(h.total_qty||0).toFixed(1)} kg" style="width:100%;height:${pct}%;background:var(--green);border-radius:3px 3px 0 0;min-height:2px"></div><div style="font-size:10px;color:var(--spice-text-mute);margin-top:4px">${esc(h.hour)}h</div></div>`;
       });
-      html+='</div>';
+      hourlyBars+='</div>';
+      html += section('Hourly Pace', hr.length+' hour'+(hr.length===1?'':'s'), hourlyBars, { open: false });
     }
     // ── Per-user (only if show_username) ──
     const uw=d.userWise||[];
     if(d.showUsername && uw.length){
-      html+='<h3 style="margin:18px 0 8px">By Operator</h3>';
-      html+='<div style="overflow-x:auto"><table><thead><tr><th>User</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th></tr></thead><tbody>';
-      uw.forEach(u=>{html+=`<tr><td><strong>${esc(u.user_id||'')}</strong></td><td style="text-align:right">${u.lot_count}</td><td style="text-align:right">${u.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(u.total_qty||0).toFixed(3)}</td></tr>`;});
-      html+='</tbody></table></div>';
+      let userTable='<table><thead><tr><th>User</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th></tr></thead><tbody>';
+      uw.forEach(u=>{userTable+=`<tr><td><strong>${esc(u.user_id||'')}</strong></td><td style="text-align:right">${u.lot_count}</td><td style="text-align:right">${u.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(u.total_qty||0).toFixed(3)}</td></tr>`;});
+      userTable+='</tbody></table>';
+      html += section('By Operator', uw.length+' operator'+(uw.length===1?'':'s'), userTable, { open: false });
     }
     body.innerHTML=html;
   }catch(e){
     body.innerHTML=`<div style="text-align:center;padding:30px;color:#b91c1c">${esc(e.message||'Failed to load')}</div>`;
   }
+}
+
+// Toggle a collapsible Trade Summary / Branch Comparison section.
+function toggleRepSection(head){
+  const sec  = head.closest('.rep-section');
+  if (!sec) return;
+  const body = sec.querySelector('.rep-section-body');
+  const chev = sec.querySelector('.rep-section-chev');
+  const open = sec.getAttribute('data-open') === '1';
+  const next = !open;
+  sec.setAttribute('data-open', next ? '1' : '0');
+  if (body) body.style.display = next ? '' : 'none';
+  if (chev) chev.textContent  = next ? '▾' : '▸';
 }
 
 function openTradeSummaryPdf(){
@@ -5903,16 +6215,35 @@ async function loadBranchComparison(){
       body.innerHTML='<div style="text-align:center;padding:30px;color:var(--spice-text-hint)">No lot data yet.</div>';
       return;
     }
-    let html='<h3 style="margin:0 0 8px">Lifetime Totals</h3>';
-    html+='<div style="overflow-x:auto"><table><thead><tr><th>Branch</th><th style="text-align:right">Trades</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th><th style="text-align:right">Unique Sellers</th></tr></thead><tbody>';
-    overall.forEach(b=>{html+=`<tr><td><strong>${esc(b.branch||'-')}</strong></td><td style="text-align:right">${b.trade_count||0}</td><td style="text-align:right">${b.lot_count}</td><td style="text-align:right">${b.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(b.total_qty||0).toFixed(3)}</td><td style="text-align:right">${b.seller_count||0}</td></tr>`;});
-    html+='</tbody></table></div>';
-    // Per-trade grid (limited to most recent 30 rows to keep manageable)
+    // Collapsible sections so long lists stay tidy. Same helper shape
+    // as Trade Summary (rep-section / rep-section-head / scroll).
+    let _bcSec = 0;
+    const bcSection = (title, meta, payload, opts={}) => {
+      _bcSec++;
+      const open = opts.open !== false;
+      return (
+        '<div class="rep-section" data-open="'+(open?1:0)+'">'+
+        '<div class="rep-section-head" onclick="toggleRepSection(this)">'+
+          '<h3>'+title+'</h3>'+
+          (meta ? '<span class="rep-section-meta">'+meta+'</span>' : '')+
+          '<span class="rep-section-chev">'+(open?'▾':'▸')+'</span>'+
+        '</div>'+
+        '<div class="rep-section-body" style="'+(open?'':'display:none')+'">'+
+          '<div class="rep-section-scroll">'+payload+'</div>'+
+        '</div></div>'
+      );
+    };
+    let html='';
+    let lifetime='<table><thead><tr><th>Branch</th><th style="text-align:right">Trades</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th><th style="text-align:right">Unique Sellers</th></tr></thead><tbody>';
+    overall.forEach(b=>{lifetime+=`<tr><td><strong>${esc(b.branch||'-')}</strong></td><td style="text-align:right">${b.trade_count||0}</td><td style="text-align:right">${b.lot_count}</td><td style="text-align:right">${b.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(b.total_qty||0).toFixed(3)}</td><td style="text-align:right">${b.seller_count||0}</td></tr>`;});
+    lifetime+='</tbody></table>';
+    html += bcSection('Lifetime Totals', overall.length+' branch'+(overall.length===1?'':'es'), lifetime, { open: true });
+
     if(data.length){
-      html+=`<h3 style="margin:20px 0 8px">By Trade <span style="font-weight:normal;font-size:12px;color:var(--spice-text-mute)">(${Math.min(50,data.length)} most recent)</span></h3>`;
-      html+='<div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Trade</th><th>Crop</th><th>Branch</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th></tr></thead><tbody>';
-      data.slice(0,50).forEach(r=>{html+=`<tr><td style="font-family:monospace;font-size:12px">${esc((r.date||'').split('T')[0])}</td><td>#${esc(r.ano||'')}</td><td><span style="font-size:11px;padding:1px 6px;background:var(--bg2);border-radius:4px">${esc(r.crop_type||'-')}</span></td><td><strong>${esc(r.branch||'-')}</strong></td><td style="text-align:right">${r.lot_count}</td><td style="text-align:right">${r.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(r.total_qty||0).toFixed(3)}</td></tr>`;});
-      html+='</tbody></table></div>';
+      let perTrade='<table><thead><tr><th>Date</th><th>Trade</th><th>Crop</th><th>Branch</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th></tr></thead><tbody>';
+      data.slice(0,50).forEach(r=>{perTrade+=`<tr><td style="font-family:monospace;font-size:12px">${esc((r.date||'').split('T')[0])}</td><td>#${esc(r.ano||'')}</td><td><span style="font-size:11px;padding:1px 6px;background:var(--bg2);border-radius:4px">${esc(r.crop_type||'-')}</span></td><td><strong>${esc(r.branch||'-')}</strong></td><td style="text-align:right">${r.lot_count}</td><td style="text-align:right">${r.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(r.total_qty||0).toFixed(3)}</td></tr>`;});
+      perTrade+='</tbody></table>';
+      html += bcSection('By Trade', Math.min(50,data.length)+' most recent of '+data.length, perTrade, { open: false });
     }
     body.innerHTML=html;
   }catch(e){
@@ -6380,13 +6711,19 @@ async function loadLotEntry(){
     // because lot save requires a branch.
     const branchSel = document.getElementById('le-branch');
     if (branches.length) {
-      branchSel.innerHTML = '<option value="">— select —</option>' +
+      // First option is the "ALL BRANCHES" sentinel — useful when the
+      // operator wants to view the recent-entries list across every
+      // branch rather than a single one. The recent-entries query
+      // honours this by skipping the branch filter when value === 'ALL'.
+      branchSel.innerHTML = '<option value="ALL">— ALL BRANCHES —</option>' +
         branches.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
       // Restore last-used branch from localStorage if it's still in the
-      // list (admin may have removed it).
+      // list (admin may have removed it). Defaults to ALL on first run.
       const savedBranch = (typeof localStorage !== 'undefined') ? (localStorage.getItem('le_branch') || '') : '';
-      if (savedBranch && branches.includes(savedBranch.toUpperCase())) {
-        branchSel.value = savedBranch.toUpperCase();
+      if (savedBranch === 'ALL' || (savedBranch && branches.includes(savedBranch.toUpperCase()))) {
+        branchSel.value = savedBranch === 'ALL' ? 'ALL' : savedBranch.toUpperCase();
+      } else {
+        branchSel.value = 'ALL';
       }
     } else {
       branchSel.innerHTML = '<option value="">⚠ Configure branches in Settings first</option>';
@@ -6405,6 +6742,7 @@ function leOnAuctionChange(){
     if (_le.selectedForPrint) _le.selectedForPrint.clear();
     renderLeRecent();
     const card = document.getElementById('le-alloc-card'); if (card) card.style.display = 'none';
+    leStopAutoRefresh();
     return;
   }
   // Reset fields (which applies sample + litre defaults from settings),
@@ -6420,6 +6758,99 @@ function leOnAuctionChange(){
   setTimeout(() => document.getElementById('le-seller-search').focus(), 50);
   loadLeRecent();
   leLoadAllocBar();
+  // Start polling so lots entered from the mobile PWA appear here
+  // without the operator hitting refresh.
+  leStartAutoRefresh();
+}
+
+// ── Auto-refresh (Lot Entry + Lots tabs) ───────────────────────────
+// Polls /api/lots/:aid?summary=1 every ~6 s; only re-renders the
+// recent-entries window when the underlying count changes. This way
+// lots entered on the field-staff mobile PWA show up on the desk app
+// without anyone clicking refresh. The poll is paused when:
+//   - the browser tab is hidden (saves battery + bandwidth)
+//   - the user has focused an input (so the typed value isn't blown
+//     away by a re-render mid-edit)
+//   - the lot-entry tab isn't the visible tab
+window._leAutoTimer = null;
+window._leLastCount = null;
+function leAutoRefreshTick(){
+  // Skip when not on Lot Entry tab.
+  const onTab = document.getElementById('tc-lotentry')?.classList.contains('active');
+  if (!onTab) return;
+  // Skip when document is hidden (Chrome throttles anyway but this is explicit).
+  if (typeof document.hidden === 'boolean' && document.hidden) return;
+  const aid = document.getElementById('le-auction')?.value;
+  if (!aid) return;
+  // Skip while user is typing in an input on the entry form.
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && ae.closest('#tc-lotentry')) return;
+  // Cheap summary endpoint — count only. Re-render the recent window
+  // only when count changes vs the last tick.
+  fetch(`${B}/api/lots/${aid}?summary=1`, { headers: { Authorization: 'Bearer ' + T } })
+    .then(r => r.ok ? r.json() : null)
+    .then(s => {
+      if (!s) return;
+      const n = Number(s.n) || 0;
+      if (window._leLastCount == null) { window._leLastCount = n; return; }
+      if (n !== window._leLastCount) {
+        window._leLastCount = n;
+        // Reload the recent panel from the top — new mobile-entered lots
+        // arrive at the head of the list (lot_no DESC).
+        loadLeRecent();
+        leLoadAllocBar();
+      }
+    })
+    .catch(() => { /* network blip — try again next tick */ });
+}
+function leStartAutoRefresh(){
+  leStopAutoRefresh();
+  window._leLastCount = null;
+  window._leAutoTimer = setInterval(leAutoRefreshTick, 6000);
+}
+function leStopAutoRefresh(){
+  if (window._leAutoTimer) { clearInterval(window._leAutoTimer); window._leAutoTimer = null; }
+}
+// Pause / resume on visibility change so a hidden tab doesn't keep
+// polling forever.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  // When tab becomes visible again, do an immediate tick so any mobile
+  // entries that happened while we were away are picked up promptly.
+  if (window._leAutoTimer) leAutoRefreshTick();
+});
+
+// ── Auto-refresh for the Lots tab (lots-list table) ───────────────
+// Same poll/diff strategy — when count changes, reload the table.
+window._lotsAutoTimer = null;
+window._lotsLastCount = null;
+function lotsAutoRefreshTick(){
+  const onTab = document.getElementById('tc-lots')?.classList.contains('active');
+  if (!onTab) return;
+  if (typeof document.hidden === 'boolean' && document.hidden) return;
+  const aid = document.getElementById('lot-auction')?.value;
+  if (!aid) return;
+  fetch(`${B}/api/lots/${aid}?summary=1`, { headers: { Authorization: 'Bearer ' + T } })
+    .then(r => r.ok ? r.json() : null)
+    .then(s => {
+      if (!s) return;
+      const n = Number(s.n) || 0;
+      if (window._lotsLastCount == null) { window._lotsLastCount = n; return; }
+      if (n !== window._lotsLastCount) {
+        window._lotsLastCount = n;
+        if (typeof loadLots === 'function') loadLots();
+        if (typeof loadLotsSummary === 'function') loadLotsSummary();
+      }
+    })
+    .catch(() => {});
+}
+function lotsStartAutoRefresh(){
+  lotsStopAutoRefresh();
+  window._lotsLastCount = null;
+  window._lotsAutoTimer = setInterval(lotsAutoRefreshTick, 6000);
+}
+function lotsStopAutoRefresh(){
+  if (window._lotsAutoTimer) { clearInterval(window._lotsAutoTimer); window._lotsAutoTimer = null; }
 }
 
 // Wire branch dropdown change handler. Persists the branch value to
@@ -6652,6 +7083,10 @@ async function leSaveLot(){
   if (!_le.selectedSeller) { leShowError('Search and pick a seller'); return; }
   const branch = (document.getElementById('le-branch').value || '').trim().toUpperCase();
   if (!branch) { leShowError('Enter a branch code'); return; }
+  // 'ALL' is a UI-only sentinel for viewing every branch's lots in the
+  // recent-entries list; lot rows themselves must be tied to a specific
+  // branch. Block save and prompt the user to pick one.
+  if (branch === 'ALL') { leShowError('Pick a specific branch to save a lot — ALL is a view-only filter'); return; }
   const lotNo = (document.getElementById('le-lotno').value || '').trim();
   if (!lotNo) { leShowError('Enter the lot number'); return; }
   const grade = document.getElementById('le-grade').value || '1';
@@ -8823,251 +9258,90 @@ function fld(f){
 }
 
 // ── To Tally settings panel ───────────────────────────────
-// Two views: macro-form layout (default) and a classic flat field list
-// (toggled by the dad if he wants to see every key in one column).
-// The classic view uses the standard `fld()` renderer so booleans show
-// as toggle switches like Flags. Both views share the same data-key
-// inputs, so captureCurrentPanel() picks edits up identically.
-let _tallyClassic = false;
-function setTallyView(classic){
-  captureCurrentPanel();
-  _tallyClassic = !!classic;
-  renderSettingsPanel();
-}
-
+// Single grouped view (classic-style). Fields are partitioned into
+// logical sections — Identity, Sales/Purchase Ledgers, Tax Ledgers,
+// Tax Rates, Services, Bank, Numbering, and Toggles — so the user
+// doesn't scroll through a flat 60-field column hunting for a key.
+// Booleans render with the same `flag-row + sw/sl` markup as Feature
+// Flags so the toggles look and behave identically.
 function renderTallyPanel(fields){
-  // Toggle bar — appears at the top of either view
-  const toggleBar = `
-    <div class="tally-viewbar">
-      <button class="btn btn-sm ${_tallyClassic?'':'is-active'}" onclick="setTallyView(false)">📋 Form Layout</button>
-      <button class="btn btn-sm ${_tallyClassic?'is-active':''}" onclick="setTallyView(true)">🗂 Classic List</button>
-      <span class="tally-viewbar-hint">Form Layout matches the macro's Configration window. Classic List shows every field individually.</span>
-    </div>`;
+  // Filter helpers — pick fields matching a predicate, mark consumed
+  // so we can flush "everything else" into a trailing group.
+  const consumed = new Set();
+  const pick = (predicate) => fields.filter(f => {
+    if (consumed.has(f.key)) return false;
+    if (!predicate(f.key, f)) return false;
+    consumed.add(f.key);
+    return true;
+  });
 
-  if (_tallyClassic) {
-    // Classic flat list: use the standard fld() renderer; booleans get toggle switches
-    let body = '<div class="sgrid">';
-    for (const f of fields) {
-      if (f.field_type === 'boolean') {
-        const ck2 = (f.value === 'true') ? 'checked' : '';
-        body += `<div class="flag-row" style="border:1px solid var(--border);border-radius:6px;padding:8px 12px"><label>${esc(f.label)}</label><label class="sw"><input type="checkbox" data-key="${f.key}" data-type="boolean" ${ck2}><span class="sl"></span></label></div>`;
-      } else {
-        body += fld(f);
-      }
-    }
-    body += '</div>';
-    return toggleBar + body;
+  // Each group is { title, hint, fields[] }. Booleans get the flag-row
+  // toggle layout; everything else falls back to the standard fld()
+  // renderer (which respects field_type for date / number / text).
+  const groups = [];
+
+  groups.push({ title: 'Company &amp; Identity',
+    hint: 'Tally company name, state, and season prefixes used in voucher numbers.',
+    fields: pick(k => /^tally_(company_name|state_code|home_state|season|prefix|consignor_type|tally_state_code)$/.test(k)) });
+
+  groups.push({ title: 'Sales / Purchase Ledgers',
+    hint: 'Cardamom + gunny ledger names for inter, intra, and export sales.',
+    fields: pick(k => /^tally_(sales|gunny|item|hsn|stock|purchase|prim_unit|sec_unit|sample|unit_rate)/.test(k)) });
+
+  groups.push({ title: 'Tax Ledgers',
+    hint: 'CGST / SGST / IGST / TCS / TDS output ledger names. Debit-note variants for the discount-as-DN flow.',
+    fields: pick(k => /^tally_(cgst|sgst|igst|tcs|tds|dn_cgst|dn_sgst|dn_igst|dn_discount)/.test(k)) });
+
+  groups.push({ title: 'Tax Rates',
+    hint: 'Rates used when generating ledger names + the actual GST percentage stamped into the XML.',
+    fields: pick(k => /^tally_(gst_rate|service_rate|tcs_rate|dn_gst_rate)$/.test(k)) });
+
+  groups.push({ title: 'Services (Transport / Insurance / Handling)',
+    hint: 'Service ledger names + SAC codes for the freight + insurance line items.',
+    fields: pick(k => /^tally_(transport|insurance|local_transport|local_insurance|hsn_transport|hsn_insurance|hsn_service|service)/.test(k)) });
+
+  groups.push({ title: 'Round Off &amp; Misc',
+    hint: 'Round-off ledger, detailed-invoice flag, sample weight, and other voucher tweaks.',
+    fields: pick(k => /^tally_(round|detailed|optional|sample|amazing|ainv)/.test(k)) });
+
+  groups.push({ title: 'Numbering &amp; Prefixes',
+    hint: 'Voucher number prefixes and separator characters.',
+    fields: pick(k => /^tally_(inv_prefix|separator|note_prefix)/.test(k) || k === 'tally_prefix') });
+
+  groups.push({ title: 'Toggles',
+    hint: 'Per-voucher feature flags — emit e-way bill block, dispatch-from address, TCS line, etc.',
+    fields: pick(k => /^tally_/.test(k) && fields.find(f => f.key === k && f.field_type === 'boolean')) });
+
+  // Anything else (legacy / new keys that don't fit a bucket) ends up
+  // in a trailing "Other Tally Keys" group so nothing is hidden.
+  const rest = fields.filter(f => !consumed.has(f.key));
+  if (rest.length) groups.push({ title: 'Other Tally Keys', hint: '', fields: rest });
+
+  // Render. Boolean fields use the same .flag-row markup as Feature
+  // Flags; non-boolean uses the standard fld() (which respects
+  // field_type for date / number / text inputs).
+  // Booleans use the EXACT same bordered-card row that fld() produces
+  // under the Flags / Lot Entry Defaults panels so the toggle pill
+  // sizes match across the app. Non-booleans fall back to fld() (text
+  // / number / date) directly.
+  function renderField(f){
+    return fld(f);
   }
 
-  // Index fields by key for direct lookup
-  const map = {};
-  for (const f of fields) map[f.key] = f;
-  const v  = (k) => map[k] ? (map[k].value || '') : '';
-  const lab= (k) => map[k] ? (map[k].label || k) : k;
-
-  // Text input — placeholder doubles as label (macro form has no labels, only placeholders)
-  const ti = (k, ph, opts={}) => {
-    if (!map[k]) return '';
-    const placeholder = ph || lab(k);
-    const style = opts.style || '';
-    return `<input type="text" data-key="${k}" value="${esc(v(k))}" placeholder="${esc(placeholder)}" title="${esc(lab(k))}" class="tally-in" style="${style}">`;
-  };
-
-  // Number input
-  const ni = (k, ph, opts={}) => {
-    if (!map[k]) return '';
-    const placeholder = ph || lab(k);
-    const style = opts.style || '';
-    return `<input type="number" step="any" data-key="${k}" value="${esc(v(k))}" placeholder="${esc(placeholder)}" title="${esc(lab(k))}" class="tally-in" style="${style}">`;
-  };
-
-  // Boolean — uses the EXACT same markup as Feature Flags so dimensions
-  // match: outer <div class="tally-chk"> wraps a plain text label and a
-  // proper <label class="sw"> slider. (We use a <div> outside, not a
-  // <label>, because <label> can't legally nest another <label>; nesting
-  // breaks the slider sizing in some browsers.)
-  const bi = (k, lblOverride) => {
-    if (!map[k]) return '';
-    const checked = (v(k) === 'true') ? 'checked' : '';
-    const lbl = lblOverride || lab(k).replace(/\s*\(.*?\)\s*/g, '').trim();
-    return `<div class="tally-chk"><span>${esc(lbl)}</span><label class="sw"><input type="checkbox" data-key="${k}" data-type="boolean" ${checked}><span class="sl"></span></label></div>`;
-  };
-
-  // Group/section wrapper
-  const box = (title, body) => `
-    <fieldset class="tally-box">
-      <legend>${esc(title)}</legend>
-      ${body}
-    </fieldset>`;
-
-  // Row of inline fields
-  const row = (...cells) => `<div class="tally-row">${cells.join('')}</div>`;
-
-  // ── COMPANY PROFILE ────────────────────────────────────────
-  const cp = readGlobalSettings();
-  const ce = (k, ph, opts={}) => `<input type="text" value="${esc(cp[k]||'')}" placeholder="${esc(ph)}" disabled class="tally-in tally-ro" title="From Settings → ${opts.from||'Company'} (read-only here)" style="${opts.style||''}">`;
-
-  const companyProfile = box('Company Profile',
-    row(`<input type="text" data-key="tally_company_name" value="${esc(v('tally_company_name'))}" placeholder="Tally Company Name" title="${esc(lab('tally_company_name'))}" class="tally-in" style="flex:1">`) +
-    row(
-      ce('short_name','Trade Name',{from:'Company'})
-    ) +
-    row(
-      ce('tn_address1','TN — Address Line 1',{from:'Address (Tamil Nadu)'})
-    ) +
-    row(
-      ce('tn_address2','TN — Address Line 2',{from:'Address (Tamil Nadu)'})
-    ) +
-    row(
-      ce('tn_branch','TN — Branch',{from:'Address (Tamil Nadu)'}),
-      ce('kl_branch','KL — Branch',{from:'Address (Kerala)'})
-    ) +
-    row(
-      `<input type="text" value="Tamil Nadu" disabled class="tally-in tally-ro">`,
-      `<input type="text" data-key="tally_state_code" value="${esc(v('tally_state_code'))}" placeholder="Code (e.g. 33)" title="${esc(lab('tally_state_code'))}" class="tally-in">`
-    ) +
-    row(
-      ce('tn_gstin','TN GSTIN',{from:'Address (Tamil Nadu)'})
-    ) +
-    row(
-      ce('tn_phone','TN — Phone',{from:'Address (Tamil Nadu)'})
-    ) +
-    row(
-      ce('tn_email','TN — Email',{from:'Address (Tamil Nadu)'})
-    )
-  );
-
-  // ── ACCOUNT LEDGER NAMES ────────────────────────────────────
-  // Each row in the macro form pairs ledger + HSN + checkbox where
-  // applicable. We mirror that 1:1.
-  const ledgerBox = box('Account Ledger Names',
-    row(ti('tally_sales_inter','Cardamom Inter-State Sales',{style:'flex:2'})) +
-    row(
-      ti('tally_sales_intra','Cardamom Local Sales'),
-      ti('tally_sales_export','Cardamom Export Sales (Deemed)')
-    ) +
-    row(
-      ti('tally_gunny_inter','Gunny Interstate Sales'),
-      ti('tally_dealer_sale_inter','Interstate Dealer-Purch'),
-      ti('tally_dealer_sale_intra','Local Dealer-Purcha')
-    ) +
-    row(
-      ti('tally_gunny_intra','Gunny Local Sales'),
-      ti('tally_gunny_export','Gunny Export Sales')
-    ) +
-    row(
-      ti('tally_purchase_auction','Purchase From Agriculturist'),
-      ti('tally_tds_paid_sales','TDS Paid on Sales')
-    ) +
-    row(
-      ti('tally_purchase_dealer','Trade Purchase From Dealer'),
-      ti('tally_purchase_dealer_inter','Interstate Dealer'),
-      ti('tally_purchase_dealer_intra','Local Dealer')
-    ) +
-    row(
-      ti('tally_dn_discount','Discount on Purch'),
-      ti('tally_commission','Commission-Planter'),
-      ti('tally_hsn_service','SAC (e.g. 996111)',{style:'max-width:120px'}),
-      bi('tally_dn_exempt','Exempted')
-    ) +
-    row(
-      ti('tally_cash_handling','Cash Handling Charges'),
-      ti('tally_cash_handling_planter','Cash Handling Charges-Planter')
-    ) +
-    row(
-      ti('tally_sample_planter','Sample Refund to Planter'),
-      bi('tally_sample_stock','Stock'),
-      ti('tally_sample_dealer','Sample Refund to Dealer')
-    ) +
-    row(
-      ti('tally_round','Round On/Off'),
-      bi('tally_round_enabled','Round'),
-      ti('tally_chc_planter','CHC From Planter')
-    ) +
-    // ── Transport row: ledger + rate + HSN + Local toggle ──
-    row(
-      ti('tally_transport','Transport (e.g. Transport Rs.2.50/per Kg)',{style:'flex:2'}),
-      ni('tally_transport_rate','Rate ₹/Kg',{style:'max-width:90px'}),
-      ti('tally_hsn_transport','HSN/SAC (e.g. 996791)',{style:'max-width:140px'}),
-      bi('tally_local_transport','Local Transport')
-    ) +
-    // ── Insurance row: ledger + rate + HSN + Local toggle ──
-    row(
-      ti('tally_insurance','Insurance (e.g. Insurance Rs.0.75/per Thousand)',{style:'flex:2'}),
-      ni('tally_insurance_rate','Rate ₹/₹1000',{style:'max-width:90px'}),
-      ti('tally_hsn_insurance','HSN/SAC (e.g. 997136)',{style:'max-width:140px'}),
-      bi('tally_local_insurance','Local Insurance')
-    )
-  );
-
-  // ── TAX LEDGER NAMES ────────────────────────────────────────
-  const taxLedgerBox = box('Tax Ledger Names',
-    row(ti('tally_cgst','CGST 2.5%'), ti('tally_dn_cgst','CGST 9%')) +
-    row(ti('tally_sgst','SGST 2.5%'), ti('tally_dn_sgst','SGST 9%')) +
-    row(ti('tally_igst','IGST 5%'),   ti('tally_dn_igst','IGST 18%')) +
-    row(ti('tally_tds_ledger','TDS on Purchase of Goods')) +
-    row(ti('tally_tcs','TCS on Sale of Goods'))
-  );
-
-  // ── TAX RATE ────────────────────────────────────────────────
-  const taxRateBox = box('Tax Rate',
-    row(ni('tally_gst_rate','5')) +
-    row(ni('tally_service_rate','18')) +
-    row(ni('tally_tcs_rate','0.1'),     bi('tally_detailed','Detailed Inv')) +
-    row(ni('tally_sample_kgs','1.900'), `<span class="tally-sep">—</span>`, ni('tally_unit_rate','0.1'))
-  );
-
-  // ── BANK ACCOUNT DETAILS ──────────────────────────────────
-  const bankBox = box('Bank Account Details',
-    row(
-      ce('bank_tn_name','Bank Name',{from:'Bank Details'}),
-      ce('tn_branch','Branch',{from:'Address (Tamil Nadu)'}),
-      ce('bank_tn_acct','Account No.',{from:'Bank Details'}),
-      ce('bank_tn_ifsc','IFSC Code',{from:'Bank Details'})
-    )
-  );
-
-  // ── STOCK ITEM NAMES + HSN ───────────────────────────────
-  const stockBox = box('Stock Item Names',
-    row(ti('tally_item_cardamom','Cardamom'), ti('tally_hsn_cardamom','HSN (e.g. 09083120)')) +
-    row(ti('tally_item_gunny','Gunny Bag'),    ti('tally_hsn_gunny','HSN (e.g. 63051040)')) +
-    row(
-      bi('tally_tcs_enabled','TCS'),
-      bi('tally_tds_enabled','TDS')
-    )
-  );
-
-  // ── ITEM RATES (gunny + local rates that aren't shown elsewhere) ──
-  const itemRatesBox = box('Item Rates',
-    row(ni('tally_gunny_rate','Gunny ₹/bag (e.g. 165)')) +
-    row(ni('tally_local_trans_rate','Local Transport ₹/Kg')) +
-    row(ni('tally_local_ins_rate','Local Insurance ₹/₹1000'))
-  );
-
-  // ── HEADER NOTE ──────────────────────────────────────────
-  const note = `
-    <div class="tally-banner">
-      <strong>Layout matches the macro's Configration form.</strong>
-      Greyed-out fields are pulled live from other Settings categories (Company, Sister, Address, Bank). To change them, go to that category. Editable fields here are Tally-specific: ledger names, HSN/SAC codes, rates, and toggles.
-    </div>`;
-
-  // ── TWO-COLUMN GRID ──────────────────────────────────────
-  return toggleBar + note + `
-    <div class="tally-grid">
-      <div class="tally-col">
-        ${companyProfile}
-        ${taxLedgerBox}
-        ${bankBox}
-      </div>
-      <div class="tally-col">
-        ${ledgerBox}
-        <div class="tally-row" style="gap:12px">
-          <div style="flex:1">${taxRateBox}</div>
-          <div style="flex:1">${stockBox}</div>
-          <div style="flex:1">${itemRatesBox}</div>
-        </div>
-      </div>
-    </div>`;
+  let html = '';
+  for (const g of groups) {
+    if (!g.fields.length) continue;
+    html += '<div class="tally-group">'
+      + '<div class="tally-group-head">'
+      + '<h3>' + g.title + '</h3>'
+      + (g.hint ? '<span class="tally-group-hint">' + g.hint + '</span>' : '')
+      + '</div>'
+      + '<div class="sgrid">'
+      + g.fields.map(renderField).join('')
+      + '</div>'
+      + '</div>';
+  }
+  return html;
 }
 
 // Read the global settings flat map so the Tally panel can echo company,
@@ -9169,6 +9443,79 @@ async function importSettings(e){const f=e.target.files[0];if(!f)return;const t=
 // downloadDbBackup hits a streaming GET endpoint — we open it via a
 // temporary <a> with the auth header injected through a fetch+blob
 // because plain anchor downloads don't carry the bearer token.
+// ── Auto Backup Scheduler ────────────────────────────────────────
+// Browser-resident scheduler that re-downloads the DB at a fixed
+// interval. State (enabled, interval, last-run timestamp) persists in
+// localStorage so the schedule survives page reloads. The scheduler
+// only fires while the tab is open — closing the browser pauses it.
+window._autoBackupTimer = null;
+function autoBackupLoad(){
+  try {
+    const cfg = JSON.parse(localStorage.getItem('autobackup') || '{}');
+    const en = document.getElementById('autobackup-enabled');
+    const iv = document.getElementById('autobackup-interval');
+    if (en) en.checked = !!cfg.enabled;
+    if (iv && cfg.interval) iv.value = String(cfg.interval);
+    autoBackupApply();
+  } catch (_) {}
+}
+function autoBackupSave(){
+  const en = document.getElementById('autobackup-enabled');
+  const iv = document.getElementById('autobackup-interval');
+  const cur = JSON.parse(localStorage.getItem('autobackup') || '{}');
+  const cfg = {
+    enabled: !!(en && en.checked),
+    interval: parseInt(iv && iv.value, 10) || 86400000,
+    lastRun: cur.lastRun || null,
+  };
+  localStorage.setItem('autobackup', JSON.stringify(cfg));
+  autoBackupApply();
+}
+function autoBackupApply(){
+  const cfg = JSON.parse(localStorage.getItem('autobackup') || '{}');
+  if (window._autoBackupTimer) { clearInterval(window._autoBackupTimer); window._autoBackupTimer = null; }
+  autoBackupRenderStatus();
+  if (!cfg.enabled) return;
+  const interval = parseInt(cfg.interval, 10) || 86400000;
+  // First-fire heuristic: if lastRun is older than `interval`, fire
+  // immediately (catches the case where the user closed the browser
+  // past a scheduled run). Otherwise wait for the next slot.
+  const last = cfg.lastRun ? Date.parse(cfg.lastRun) : 0;
+  const due = Date.now() - last >= interval;
+  if (due) {
+    // Defer a few seconds so the user sees the toast after the UI loads.
+    setTimeout(autoBackupRun, 3000);
+  }
+  window._autoBackupTimer = setInterval(autoBackupRun, interval);
+}
+async function autoBackupRun(){
+  // Skip when offline or no token (logged out).
+  if (!T) return;
+  try {
+    await downloadDbBackup();
+    const cfg = JSON.parse(localStorage.getItem('autobackup') || '{}');
+    cfg.lastRun = new Date().toISOString();
+    localStorage.setItem('autobackup', JSON.stringify(cfg));
+    autoBackupRenderStatus();
+  } catch (_) { /* downloadDbBackup already toasts errors */ }
+}
+function autoBackupRunNow(){
+  autoBackupRun();
+}
+function autoBackupRenderStatus(){
+  const el = document.getElementById('autobackup-status');
+  if (!el) return;
+  const cfg = JSON.parse(localStorage.getItem('autobackup') || '{}');
+  if (!cfg.enabled) { el.textContent = 'Not scheduled'; return; }
+  const last = cfg.lastRun ? new Date(cfg.lastRun) : null;
+  const parts = ['Scheduled'];
+  if (last && !isNaN(last)) parts.push('· last run ' + last.toLocaleString());
+  else parts.push('· never run yet');
+  el.textContent = parts.join(' ');
+}
+// Initialise on first user load (after login).
+window.addEventListener('load', () => { setTimeout(autoBackupLoad, 1500); });
+
 async function downloadDbBackup(){
   try{
     const r = await fetch(B+'/api/system/backup', {headers:{'Authorization':'Bearer '+T}});
@@ -10565,11 +10912,11 @@ async function loadLots(){const aid=document.getElementById('lot-auction').value
         iconBtn('edit','Edit lot',`openLotEdit(${JSON.stringify(l).replace(/"/g,'&quot;')})`)
         + iconBtn('del','Delete lot',`delLot(${l.id})`) }
   ];
-  // Tax columns (CGST/SGST/IGST) — flag_disc_gst was removed in this
-  // build, so they're suppressed here. (Underlying lot rows still hold
-  // the values; only the column display is hidden.)
+  // CGST / SGST / IGST now always shown in the lots table — they're
+  // useful for reconciling GST on services per lot. Payable + Actions
+  // stay at the right edge.
   const filteredTradeCols = tradeCols;
-  const filteredTaxCols   = taxCols.filter(c => !['cgst','sgst','igst'].includes(c.key));
+  const filteredTaxCols   = taxCols;
   const columns = [
     BulkActions.column('lot'),
     ...baseCols,
