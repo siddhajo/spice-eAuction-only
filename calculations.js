@@ -60,14 +60,16 @@ function calculateLot(lot, cfg) {
   result.puramt = Math.round(result.pqty * result.prate * 100) / 100;
 
   // ── Sample-bag refund: SB Sample Refund (kg) × price ──────
+  // 2-decimal precision: 2664 × 2.85 = 7,592.40 (not 7,592.00).
   const sbRefundKg = Number(cfg.sb_refund) || 0;
-  result.refund    = Math.round(sbRefundKg * (lot.price || 0));
+  result.refund    = Math.round(sbRefundKg * (lot.price || 0) * 100) / 100;
 
   // ── Commission + Handling ─────────────────────────────────
+  // Commission base = Amount + Refund (per updated formula); 2-decimal precision.
   const commissionPct = Number(cfg.commission) || 0;
   const hpcPct        = Number(cfg.hpc)        || 0;
-  result.com    = Math.round(result.puramt * commissionPct / 100);
-  result.sertax = Math.round(result.com    * hpcPct        / 100);
+  result.com    = Math.round((result.puramt + result.refund) * commissionPct / 100 * 100) / 100;
+  result.sertax = Math.round(result.com * hpcPct / 100 * 100) / 100;
 
   // Mirror dual-storage columns for legacy SELECTs that still read isp_*/asp_*.
   result.isp_pqty   = result.pqty;
@@ -415,7 +417,7 @@ function getPaymentSummary(db, auctionId, state, cfg) {
   // sees both the policy discount and any manual adjustments.
   // First fetch the per-lot summary (e-Auction only — discount column is
   // always lots.refund). Also pulls per-seller GST sums so the Payments
-  // tab can show a "GST 5% (CGST+SGST+IGST)" column next to the discount.
+  // tab can show a "GST 18% (CGST+SGST+IGST)" column next to the discount.
   let query = `SELECT l.name, l.cr,
     SUM(l.qty) as total_qty, SUM(l.amount) as total_amount,
     SUM(l.pqty) as total_pqty, SUM(l.prate) as avg_prate,
@@ -811,11 +813,15 @@ function buildDebitNote(db, invoiceNo, saleType, discount, cfg) {
         [String(inv.ano || ''), inv.name || '']
       );
       resolvedSale = (r && r.s) ? String(r.s).toUpperCase() : '';
-    } catch (_) { /* fall through to igst-based check */ }
+    } catch (_) { /* fall through to GST-column check */ }
   }
-  const isInter = resolvedSale
-    ? (resolvedSale === 'I' || resolvedSale === 'E')
-    : (Number(inv.igst) || 0) > 0;
+  // When lot sale type is still unresolved, fall back to the GST already
+  // recorded on the source purchase: igst>0 → inter (I), cgst/sgst>0 → L.
+  if (resolvedSale !== 'L' && resolvedSale !== 'I' && resolvedSale !== 'E') {
+    if ((Number(inv.igst) || 0) > 0) resolvedSale = 'I';
+    else if ((Number(inv.cgst) || 0) > 0 || (Number(inv.sgst) || 0) > 0) resolvedSale = 'L';
+  }
+  const isInter = (resolvedSale === 'I' || resolvedSale === 'E');
 
   const amount = Math.round(discount * 100) / 100;
   let cgst = 0, sgst = 0, igst = 0;

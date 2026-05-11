@@ -113,6 +113,11 @@ const DEFAULTS = [
   { key: 'separator',              value: '', category: 'invoice', label: 'Separator Symbol',       type: 'text' },
   { key: 'dispatched_through_isp', value: '', category: 'invoice', label: 'Dispatched Through',     type: 'text' },
   { key: 'dispatch_destination',   value: '', category: 'invoice', label: 'Dispatch Destination',   type: 'text' },
+  // Dispatch From — the warehouse / godown address printed in the
+  // "Dispatch From" cell on Sales Invoice PDFs and the Tally
+  // DISPATCHFROMADDRESS block. Blank → invoice falls back to the
+  // company's primary address (kl_address1 / tn_address1).
+  { key: 'dispatch_from',          value: '', category: 'invoice', label: 'Dispatch From (Address)', type: 'text' },
   { key: 'duplicate_text',         value: '', category: 'invoice', label: 'Dummy Invoice Text',     type: 'text' },
   { key: 'signature_text',         value: '', category: 'invoice', label: 'Signature Label',        type: 'text' },
 

@@ -144,6 +144,8 @@ async function initDb() {
     ifsc TEXT DEFAULT '',
     acctnum TEXT DEFAULT '',
     holder_name TEXT DEFAULT '',
+    whatsapp TEXT DEFAULT '',
+    email TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
@@ -254,6 +256,7 @@ async function initDb() {
     bilamt REAL DEFAULT 0,
     paid TEXT DEFAULT '',
     user_id TEXT DEFAULT '',
+    bank_id INTEGER,
     created_at TEXT DEFAULT (datetime('now','localtime')),
     FOREIGN KEY (auction_id) REFERENCES auctions(id),
     FOREIGN KEY (trader_id) REFERENCES traders(id)
@@ -397,6 +400,21 @@ async function initDb() {
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
+  // ── LOGIN HISTORY ──────────────────────────────────────────
+  // Per-login tracking: IP, device type, username. Used by:
+  //   - the desktop admin Users → Login History panel
+  //   - the mobile bridge's /api/auth/login (writes a row each login)
+  // Capped to last ~100 entries per user by the login handler.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS login_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    username TEXT NOT NULL,
+    ip TEXT DEFAULT '',
+    user_agent TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  )`);
+
   // ── INDEXES ────────────────────────────────────────────────
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_traders_name ON traders(name)',
@@ -414,6 +432,13 @@ async function initDb() {
     'CREATE INDEX IF NOT EXISTS idx_buyers_buyer ON buyers(buyer)',
     'CREATE INDEX IF NOT EXISTS idx_buyers_buyer1 ON buyers(buyer1)',
     'CREATE INDEX IF NOT EXISTS idx_lot_alloc_auction ON lot_allocations(auction_id)',
+    'CREATE INDEX IF NOT EXISTS idx_login_history_user ON login_history(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_login_history_created ON login_history(created_at DESC)',
+    // Fast lookup for seller uniqueness checks (cr / tel / pan are the
+    // de-dup keys used by the unified create-seller path).
+    'CREATE INDEX IF NOT EXISTS idx_traders_cr  ON traders(cr)',
+    'CREATE INDEX IF NOT EXISTS idx_traders_tel ON traders(tel)',
+    'CREATE INDEX IF NOT EXISTS idx_traders_pan ON traders(pan)',
   ];
   for (const idx of indexes) { try { wrapped.exec(idx); } catch (e) {} }
 
@@ -456,6 +481,15 @@ async function initDb() {
     'ALTER TABLE lots ADD COLUMN asp_pqty REAL DEFAULT 0',
     'ALTER TABLE lots ADD COLUMN asp_prate REAL DEFAULT 0',
     'ALTER TABLE lots ADD COLUMN asp_puramt REAL DEFAULT 0',
+    // Per-lot bank pin — used by the mobile PWA workflow so a seller with
+    // multiple bank accounts can have a specific one stamped on each lot.
+    // Falls back to the trader's default bank (trader_banks.is_default=1)
+    // for lots that don't pin one explicitly.
+    'ALTER TABLE lots ADD COLUMN bank_id INTEGER',
+    // Trader contact channels added in the mobile PWA workflow. Both
+    // optional; whatsapp falls back to tel in the UI when blank.
+    "ALTER TABLE traders ADD COLUMN whatsapp TEXT DEFAULT ''",
+    "ALTER TABLE traders ADD COLUMN email TEXT DEFAULT ''",
     // Distance for e-way bill <DISTANCE> field on ISP sales vouchers.
     // Populated manually per-invoice from the To Tally → 🗺️ E-way Bill
     // Distance UI: user looks up the value on NIC's Pin-to-Pin Distance
@@ -479,6 +513,32 @@ async function initDb() {
     // upgraded DBs shed the orphan tables on next restart.
     'DROP TABLE IF EXISTS pin_distances',
     'DROP TABLE IF EXISTS pincodes',
+    // One-time data fix: backfill the denormalised seller columns on
+    // lots that were entered via the mobile PWA before the POST /api/lots
+    // handler started copying from `traders`. UPDATE..FROM isn't supported
+    // by older SQLite builds bundled with sql.js, so we use correlated
+    // subqueries. Idempotent — the WHERE clause only touches lots whose
+    // denormalised column is empty (or NULL) AND a trader row exists.
+    `UPDATE lots SET name = (SELECT name FROM traders WHERE traders.id = lots.trader_id)
+       WHERE (name IS NULL OR name = '') AND trader_id IS NOT NULL`,
+    `UPDATE lots SET cr = (SELECT cr FROM traders WHERE traders.id = lots.trader_id)
+       WHERE (cr IS NULL OR cr = '') AND trader_id IS NOT NULL`,
+    `UPDATE lots SET pan = (SELECT pan FROM traders WHERE traders.id = lots.trader_id)
+       WHERE (pan IS NULL OR pan = '') AND trader_id IS NOT NULL`,
+    `UPDATE lots SET tel = (SELECT tel FROM traders WHERE traders.id = lots.trader_id)
+       WHERE (tel IS NULL OR tel = '') AND trader_id IS NOT NULL`,
+    `UPDATE lots SET padd = (SELECT padd FROM traders WHERE traders.id = lots.trader_id)
+       WHERE (padd IS NULL OR padd = '') AND trader_id IS NOT NULL`,
+    `UPDATE lots SET ppla = (SELECT ppla FROM traders WHERE traders.id = lots.trader_id)
+       WHERE (ppla IS NULL OR ppla = '') AND trader_id IS NOT NULL`,
+    `UPDATE lots SET ppin = (SELECT pin FROM traders WHERE traders.id = lots.trader_id)
+       WHERE (ppin IS NULL OR ppin = '') AND trader_id IS NOT NULL`,
+    `UPDATE lots SET pstate = (SELECT pstate FROM traders WHERE traders.id = lots.trader_id)
+       WHERE (pstate IS NULL OR pstate = '') AND trader_id IS NOT NULL`,
+    `UPDATE lots SET pst_code = (SELECT pst_code FROM traders WHERE traders.id = lots.trader_id)
+       WHERE (pst_code IS NULL OR pst_code = '') AND trader_id IS NOT NULL`,
+    `UPDATE lots SET aadhar = (SELECT aadhar FROM traders WHERE traders.id = lots.trader_id)
+       WHERE (aadhar IS NULL OR aadhar = '') AND trader_id IS NOT NULL`,
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }

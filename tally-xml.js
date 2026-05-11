@@ -276,10 +276,15 @@ function generSalesIspXML(rows, cfg, opts = {}) {
   // Dispatch-from defaults: in the original Spice Config app this used
   // sister-company (ASP / Kerala) address. In this e-Auction-only build,
   // there's a single company identity — pull dispatch info from the
-  // configured Kerala address block (since dispatch typically goes via
-  // the Kerala warehouse). User can override per-export via opts.
-  const d_company    = cfgGet(cfg, 'short_name', cfgGet(cfg, 'trade_name', ''));
-  const d_add        = cfgGet(cfg, 'kl_address1', '');
+  // dedicated `dispatch_from` config (Settings → Company → Dispatch From)
+  // when set, otherwise fall back to the Kerala address block.
+  // IMCPC rule: when short_name is IMCPC, the dispatch-from must carry the
+  // FULL trade name; everywhere else the short_name continues to win.
+  const _imcpcDisp = String(cfgGet(cfg, 'short_name', '') || '').trim().toUpperCase() === 'IMCPC';
+  const d_company    = _imcpcDisp
+    ? cfgGet(cfg, 'trade_name', cfgGet(cfg, 'short_name', ''))
+    : cfgGet(cfg, 'short_name', cfgGet(cfg, 'trade_name', ''));
+  const d_add        = cfgGet(cfg, 'dispatch_from', cfgGet(cfg, 'kl_address1', ''));
   const d_add2       = cfgGet(cfg, 'kl_address2', '');
   const d_place      = cfgGet(cfg, 'kl_place', cfgGet(cfg, 'kl_branch', 'NEDUMKANDAM'));
   const d_pin        = cfgGet(cfg, 'kl_pin', '685553');
@@ -2101,10 +2106,13 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
 
   const Discount_LDR  = cfgGet(cfg, 'tally_dn_discount', 'Discount Received');
   // Resolve the DN GST rate FIRST so the default ledger names below can
-  // be composed from it (no hardcoded 18 literal anywhere). Default rate
-  // is 5% — matches the cardamom-export business profile. Legacy
-  // installs that explicitly set 18 will still work via cfgNum().
-  const dnGstRate     = cfgNum(cfg, 'tally_dn_gst_rate', 5);
+  // be composed from it (no hardcoded 18 literal anywhere). DN is a service
+  // (commission/handling discount) so it defaults to the service GST rate
+  // (18%). Falls back to the explicit tally_dn_gst_rate / discount_gst /
+  // gst_service settings when the user has configured them.
+  const dnGstRate     = cfgNum(cfg, 'tally_dn_gst_rate',
+                          cfgNum(cfg, 'discount_gst',
+                            cfgNum(cfg, 'gst_service', 18)));
   const halfRate      = dnGstRate / 2;
   // Format helper — drops trailing ".0" so 2.5 stays 2.5 but 9 stays 9.
   const fmtRate = (r) => (Number.isInteger(r) ? String(r) : String(r));

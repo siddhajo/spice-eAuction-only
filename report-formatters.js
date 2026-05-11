@@ -110,11 +110,15 @@ function getCompanyHeader(db) {
   }
 
   // Resolve the logo to an absolute path on disk; null if missing.
-  // Try the user's configured logo first, then a generic logo.png that
-  // some deployments ship. NO hardcoded 'logo-ispl.png' fallback — a
-  // fresh install with no Logo Code configured renders without a logo
-  // rather than the legacy ISP image.
-  const tryPaths = [logoFile, 'logo.png'].filter(Boolean);
+  // Fallback chain:
+  //   1. logo-<logo_code>.png   — user's configured Logo Code
+  //   2. logo-ispl.png          — what the upload endpoint actually
+  //                                writes to disk (single-company build)
+  //   3. logo.png               — generic deployment-shipped logo
+  // Earlier code skipped step 2, so users whose Logo Code didn't match
+  // 'ispl' (e.g. "VST", "IMCPC") got no logo in spice-board PDFs even
+  // though they had uploaded one.
+  const tryPaths = [logoFile, 'logo-ispl.png', 'logo.png'].filter(Boolean);
   let logoOnDisk = null;
   for (const f of tryPaths) {
     const abs = path.join(__dirname, 'public', f);
@@ -439,6 +443,21 @@ function writeXlsxCompanyHeader(wb, ws, header, opts) {
     return s;
   }
   const lastCol = colLetter(colCount);
+
+  // Optional logo — embedded in the top-left when the company has one
+  // configured. Logo sits as a floating image over rows 1–2; the merged
+  // name row continues to span the full width centered so the title still
+  // visually centers on the page.
+  if (header && header.logoPath) {
+    try {
+      const imgId = wb.addImage({ filename: header.logoPath, extension: 'png' });
+      ws.addImage(imgId, {
+        tl: { col: 0, row: 0 },
+        ext: { width: 70, height: 40 },
+        editAs: 'oneCell',
+      });
+    } catch (_) { /* ignore — logo is decorative */ }
+  }
 
   // Row 1 — company name. Set alignment on EVERY cell in the merge range
   // so a downstream `column.alignment` assignment can't overwrite the

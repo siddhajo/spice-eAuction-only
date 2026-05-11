@@ -756,8 +756,8 @@ async function exportPramanCSV(db, auctionId, cfg, state) {
 }
 
 // ── Export Type 12: Trade Report (BUYERS LIST FOR VERIFICATION) ──
-async function exportTradeReport(db, auctionId) {
-  return tradeReportXlsx(db, auctionId);
+async function exportTradeReport(db, auctionId, _state, extra) {
+  return tradeReportXlsx(db, auctionId, extra || {});
 }
 
 // ── Export router ────────────────────────────────────────────

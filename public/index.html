@@ -523,6 +523,9 @@ html.sidebar-collapsed .sidebar .sb-collapse-btn svg{transform:rotate(180deg)}
    declarative gate driven by applyFeatureFlags() at boot/save. */
 body:not([data-feat-whatsapp="1"]) .i-whatsapp,
 body:not([data-feat-whatsapp="1"]) .feat-whatsapp{display:none !important}
+/* Debit Note — gated by flag_debit_note. When OFF, hide every UI surface
+   tagged .feat-debit-note (nav item, tab content, modal buttons, etc.). */
+body:not([data-feat-debit-note="1"]) .feat-debit-note{display:none !important}
 .icon-btn.i-print{color:var(--spice-saffron);border-color:var(--spice-saffron)}
 .icon-btn.i-print:hover{background:var(--spice-saffron);color:#fff}
 
@@ -1532,7 +1535,6 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <span id="sync-indicator" class="sync-pill sync-ok" title="Last successful sync"></span>
       <span id="logo-badge" style="font-size:18px;font-weight:800;color:var(--green);background:var(--green-bg);padding:9px 20px;border-radius:18px;border:2px solid var(--green-border);display:none;letter-spacing:1px;box-shadow:0 1px 3px rgba(22,101,52,.12)" title="Active company for invoices & calculations"></span>
       <span id="user-lbl" class="topbar-user"></span>
-      <span id="user-role-badge" style="display:none;font-size:10.5px;font-weight:700;letter-spacing:.4px;padding:3px 8px;border-radius:8px;text-transform:uppercase" title="Your role"></span>
       <button class="btn btn-o" id="refresh-btn" onclick="refreshCurrentTab()" title="Refresh this page (reloads data without losing your login)" style="padding:6px 10px;display:flex;align-items:center;gap:6px;font-weight:700">
         <svg id="refresh-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.5-6.36L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.36L3 16"/><path d="M3 21v-5h5"/></svg>
         <span>Refresh</span>
@@ -1583,6 +1585,14 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Backup
         </button>
+        <!-- Reports — trade summary + branch comparison views.
+             Available to anyone with view permission; gated as
+             needs-user-manage would over-restrict for non-admin
+             field managers who want to see today's numbers. -->
+        <button class="side-item" data-tab="reports" onclick="go('reports')">
+          <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+          Reports
+        </button>
       </div>
       <div class="side-group">
         <div class="side-group-lbl">Master Data</div>
@@ -1626,7 +1636,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <svg viewBox="0 0 24 24"><path d="M20 14v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8z"/><path d="M14 2v6h6M9 15h4M9 18h6M9 12h2"/></svg>
           Bills of Supply
         </button>
-        <button class="side-item" data-tab="debit" onclick="go('debit')">
+        <button class="side-item feat-debit-note" data-tab="debit" onclick="go('debit')">
           <svg viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 15h2M12 15h2"/></svg>
           Debit Notes
         </button>
@@ -1836,6 +1846,93 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <button class="btn btn-g" onclick="changeMyPassword()">Update Password</button>
         </div>
       </div>
+
+      <!-- ── Login History — chronological list of who signed in,
+           when, from what device. Populated automatically every
+           time someone logs in from /mobile (mobile-bridge writes
+           the row; spice-config's native /api/auth/login also
+           writes here via the bridge's middleware). -->
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+          <h2 style="margin:0;flex:1">Login History</h2>
+          <button class="btn btn-sm" onclick="loadLoginHistory()" title="Refresh">↻ Refresh</button>
+          <button class="btn btn-sm" onclick="clearLoginHistory()" style="background:#fee;color:#b91c1c;border-color:#fcc" title="Delete all login history">Clear All</button>
+        </div>
+        <p style="color:var(--spice-text-mute);font-size:13px;margin:0 0 16px">Most recent 100 logins. Useful for verifying who signed in from which phone.</p>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>When</th><th>User</th><th>Device</th><th>IP</th></tr></thead>
+            <tbody id="login-history-list"><tr><td colspan="4" style="text-align:center;padding:18px;color:var(--spice-text-hint)">Click ↻ Refresh to load</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── Audit Log — every consequential action across the app
+           (creates, edits, deletes, exports, restore). Each row
+           is written by the code path that performed the action. -->
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+          <h2 style="margin:0;flex:1">Audit Log</h2>
+          <select id="audit-filter-action" onchange="loadAuditLog()" style="height:30px;padding:0 8px;border-radius:6px;border:1px solid var(--border)">
+            <option value="">All actions</option>
+            <option value="create">Create</option>
+            <option value="update">Update</option>
+            <option value="delete">Delete</option>
+            <option value="export">Export</option>
+            <option value="restore">Restore</option>
+            <option value="clear">Clear</option>
+          </select>
+          <button class="btn btn-sm" onclick="loadAuditLog()">↻ Refresh</button>
+          <button class="btn btn-sm" onclick="clearAuditLog()" style="background:#fee;color:#b91c1c;border-color:#fcc">Clear All</button>
+        </div>
+        <p style="color:var(--spice-text-mute);font-size:13px;margin:0 0 16px">Recent activity. Click ↻ Refresh to load — paged 50 per fetch.</p>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>When</th><th>User</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead>
+            <tbody id="audit-log-list"><tr><td colspan="5" style="text-align:center;padding:18px;color:var(--spice-text-hint)">Click ↻ Refresh to load</td></tr></tbody>
+          </table>
+        </div>
+        <div id="audit-log-pager" style="display:none;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+          <span style="font-size:12px;color:var(--spice-text-mute)" id="audit-log-meta"></span>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-sm" onclick="auditPrev()" id="audit-prev">← Prev</button>
+            <button class="btn btn-sm" onclick="auditNext()" id="audit-next">Next →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── REPORTS — trade summary (single-auction snapshot) and
+         branch comparison (cross-auction). Loaded on demand from
+         /api/reports/trade-summary and /api/reports/branch-comparison.
+         The summary-pdf button opens a printable A4 in a new tab. -->
+    <div class="tc" id="tc-reports">
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h2 style="margin:0;flex:1">Trade Summary</h2>
+          <select id="rep-auction" onchange="loadTradeSummary()" style="height:34px;padding:0 10px;border-radius:6px;border:1px solid var(--border);min-width:220px"></select>
+          <select id="rep-branch" onchange="loadTradeSummary()" title="Filter Sold/Withdrawn/Min/Max/Avg by branch" style="height:34px;padding:0 10px;border-radius:6px;border:1px solid var(--border);min-width:160px">
+            <option value="">All Branches</option>
+          </select>
+          <button class="btn btn-g btn-sm" onclick="openTradeSummaryPdf()" id="rep-pdf-btn" disabled>📄 Open PDF</button>
+        </div>
+        <p style="color:var(--spice-text-mute);font-size:13px;margin:6px 0 16px">Per-branch and per-seller breakdown for the selected trade.</p>
+        <div id="rep-summary-totals" style="display:none;display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px"></div>
+        <div id="rep-summary-body">
+          <div style="text-align:center;padding:30px;color:var(--spice-text-hint)">Pick a trade above to see its breakdown.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+          <h2 style="margin:0;flex:1">Branch Comparison (Lifetime)</h2>
+          <button class="btn btn-sm" onclick="loadBranchComparison()">↻ Refresh</button>
+        </div>
+        <p style="color:var(--spice-text-mute);font-size:13px;margin:0 0 16px">How each branch has performed across every trade in the database. Click ↻ to compute (can be slow on large DBs).</p>
+        <div id="rep-branch-body">
+          <div style="text-align:center;padding:30px;color:var(--spice-text-hint)">Click ↻ Refresh to load</div>
+        </div>
+      </div>
     </div>
 
     <!-- Add User Modal -->
@@ -1992,8 +2089,19 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
         </div>
 
+        <!-- Lots Summary — Sold / Withdrawn / Min / Max / Avg for the
+             selected trade, branch-filtered. Sits directly under the
+             KPI strip so all summary tiles cluster together. The branch
+             selector lives in the toolbar below. -->
+        <div id="lots-summary-scope" style="font-size:12px;color:var(--text3);margin:0 0 8px;display:none"></div>
+        <div id="lots-summary-strip" style="display:none;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px"></div>
+
         <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
-          <select id="lot-auction" onchange="loadLots()" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
+          <select id="lot-auction" onchange="loadLots();loadLotsSummary()" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
+          <select id="lot-branch-filter" onchange="loadLotsSummary()" title="Filter Sold/Withdrawn/Min/Max/Avg by branch"
+                  style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:160px">
+            <option value="">All Branches</option>
+          </select>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
             <button class="btn btn-o" style="height:38px;padding:0 16px;font-weight:600" onclick="refreshLots(this)" title="Reload the lots table from the server">🔄 Refresh</button>
@@ -2227,6 +2335,17 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           Recent entries — this auction
           <span id="le-recent-count" style="font-weight:400;color:var(--text3);font-size:12px;margin-left:8px"></span>
           <span style="flex:1"></span>
+          <!-- Sort By — controls how the recent-entries list is ordered.
+               Persisted in localStorage so the user's preference survives
+               reloads / auction switches. -->
+          <select id="le-recent-sort" onchange="leOnSortChange()" title="Sort recent entries"
+                  style="height:30px;font-size:12px;padding:0 10px;border:1px solid var(--border);border-radius:6px;background:#fff;margin-right:8px">
+            <option value="recent">Sort: Recently Added</option>
+            <option value="lot_no">Sort: Lot No</option>
+            <option value="date">Sort: Date</option>
+            <option value="name">Sort: Seller</option>
+            <option value="branch">Sort: Branch</option>
+          </select>
           <!-- Print Selected, Print by Seller, Clear — shown only when ≥1 lot
                is checked. The N badges update live. Styling is unified into a
                .le-toolbar-btn pill set so all three sit on the same baseline,
@@ -2396,6 +2515,12 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <!-- ── Action toolbar — grouped: Auction selector / Create / Print / Manage ── -->
         <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
           <select id="inv-auction" onchange="loadInvoices();loadInvEligibleBuyers()" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
+          <select id="inv-sale-filter" onchange="loadInvoices()" title="Filter invoices by sale type" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:150px">
+            <option value="">All Sale Types</option>
+            <option value="L">Local (L)</option>
+            <option value="I">Inter-state (I)</option>
+            <option value="E">Export (E)</option>
+          </select>
 
           <!-- Create group -->
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
@@ -2473,6 +2598,12 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
         <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
           <select id="pur-auction" onchange="loadPurchases();loadPurEligibleSellers()" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
+          <select id="pur-sale-filter" onchange="loadPurchases()" title="Filter purchase invoices by dealer sale type" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:150px">
+            <option value="">All Sale Types</option>
+            <option value="L">Local (L)</option>
+            <option value="I">Inter-state (I)</option>
+            <option value="E">Export (E)</option>
+          </select>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
             <button class="needs-invoice-write btn btn-g" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenPurModal()">+ Generate Purchase</button>
@@ -2574,7 +2705,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <div style="height:280px;position:relative"><canvas id="pay-top-sellers-chart"></canvas></div>
         </div>
 
-        <div style="overflow-x:auto"><table><thead><tr><th>Seller</th><th>Lots</th><th>Qty</th><th>Amount</th><th>Purchase</th><th>Discount</th><th>GST 5%</th><th>Payable</th><th>Actions</th></tr></thead><tbody id="payments-list"></tbody></table></div>
+        <div style="overflow-x:auto"><table><thead><tr><th>Seller</th><th>Lots</th><th>Qty</th><th>Amount</th><th>Purchase</th><th>Discount</th><th>GST 18%</th><th>Payable</th><th>Actions</th></tr></thead><tbody id="payments-list"></tbody></table></div>
       </div>
     </div>
 
@@ -2747,10 +2878,14 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
         <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
           <select id="bill-auction" onchange="loadBills();loadEligibleSellers()" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
+          <select id="bill-branch-filter" onchange="loadBills()" title="Filter bills of supply by branch" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:160px">
+            <option value="">All Branches</option>
+          </select>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
             <button class="btn btn-g" style="height:38px;padding:0 16px;font-weight:600" onclick="showModal('gen-bill-modal')">+ Generate Bill</button>
             <button class="needs-invoice-write btn btn-a" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenAllModal('bills')">⚡ Generate for All Agri Sellers</button>
+            <button class="btn btn-o" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenCommissionBillModal()" title="Generate Commission Bill (Format 2) for the selected auction">+ Commission Bill (F2)</button>
           </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
@@ -2768,7 +2903,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     </div>
 
     <!-- DEBIT NOTES -->
-    <div class="tc" id="tc-debit">
+    <div class="tc feat-debit-note" id="tc-debit">
       <div class="card">
         <h2>Debit Notes <span style="font-weight:400;font-size:12px;color:var(--text3)">For discounts/adjustments on purchases</span></h2>
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
@@ -3426,6 +3561,25 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <button class="btn btn-o" onclick="hideModal('gen-all-modal')">Cancel</button>
     <button class="btn" id="ga-diag-btn" onclick="diagnoseEligibility()" style="background:var(--spice-turmeric);color:#fff">Diagnose</button>
     <button class="btn btn-g" id="ga-submit" onclick="doGenerateAll()">Generate All</button>
+  </div>
+</div></div>
+
+<!-- Commission Bill (Format 2) — agriculturist-style bill that itemises
+     commission + handling per dealer/seller. Generated as a PDF and as
+     an Excel sheet for the selected auction. -->
+<div class="modal-bg" id="gen-commission-bill-modal"><div class="modal">
+  <h2>Commission Bill (Format 2)</h2>
+  <p style="font-size:12px;color:var(--text2);margin-bottom:14px">Generates a consolidated Commission Bill (Format 2) for the selected trade — one row per seller listing PurAmt, Refund, Commission, Handling, GST and net dues.</p>
+  <div class="fg"><label>Optional branch filter</label>
+    <select id="cb2-branch">
+      <option value="">All Branches</option>
+    </select>
+  </div>
+  <div class="actions">
+    <button class="btn btn-o" onclick="hideModal('gen-commission-bill-modal')">Cancel</button>
+    <button class="btn btn-a" onclick="downloadCommissionBillF2('xlsx')">📊 Excel</button>
+    <button class="btn btn-g" onclick="downloadCommissionBillF2('pdf')">📄 PDF</button>
+    <button class="btn" onclick="downloadCommissionBillF2('print')" style="background:var(--spice-saffron);color:#fff">🖨 Print</button>
   </div>
 </div></div>
 
@@ -4429,24 +4583,8 @@ function applyPermissionAttributes(){
   // Set role attribute for role-based UI gating (lot_entry hides
   // everything except Lot Entry sidebar item, etc.)
   if (window._userRole) body.setAttribute('data-role', window._userRole);
-  // Update the role badge in the topbar with role-themed colors
-  const badge = document.getElementById('user-role-badge');
-  if (badge && window._userRole) {
-    const role = window._userRole;
-    const themes = {
-      admin:    { bg:'var(--spice-chili-lt)',    fg:'var(--spice-chili-dk)' },
-      manager:  { bg:'var(--spice-cardamom-lt)', fg:'var(--spice-cardamom-dk)' },
-      operator: { bg:'var(--spice-saffron-lt)',  fg:'var(--spice-saffron-dk)' },
-      lot_entry:{ bg:'#DBEAFE',                  fg:'#1E40AF' }, // blue — field staff
-      viewer:   { bg:'#f1f5f9',                  fg:'#64748b' },
-      user:     { bg:'#f1f5f9',                  fg:'#64748b' }, // legacy
-    };
-    const t = themes[role] || themes.viewer;
-    badge.style.background = t.bg;
-    badge.style.color = t.fg;
-    badge.textContent = role === 'user' ? 'viewer' : role.replace('_',' ');
-    badge.style.display = 'inline-block';
-  }
+  // Topbar role badge removed — role info is conveyed via the sidebar and
+  // role-gated CSS attributes, no need for an extra pill in the header.
 }
 
 async function login(){
@@ -4471,7 +4609,6 @@ async function login(){
 function logout(){h('/api/logout',{method:'POST'});T='';localStorage.removeItem('t');
   window._userRole=null;window._userPerms=new Set();
   // Hide role badge + clear perm attributes (or stale hides persist on next login)
-  const badge=document.getElementById('user-role-badge');if(badge)badge.style.display='none';
   for (const attr of Array.from(document.body.attributes)) {
     if (attr.name.startsWith('data-perm-')) document.body.removeAttribute(attr.name);
   }
@@ -4490,6 +4627,8 @@ async function applyFeatureFlags() {
   // Default OFF when settings haven't loaded yet — safer than showing
   // dead controls. Re-runs after login + after save to reconcile.
   document.body.setAttribute('data-feat-whatsapp', cfg && on(cfg.flag_whatsapp) ? '1' : '0');
+  // Debit Note gated by flag_debit_note (Settings → Flags).
+  document.body.setAttribute('data-feat-debit-note', cfg && on(cfg.flag_debit_note) ? '1' : '0');
 }
 
 // Public branding (no auth) — drives the login + topbar from settings.
@@ -4555,7 +4694,7 @@ function go(tab){
   if (typeof applyLogoBadge === 'function') {
     try { applyLogoBadge(); } catch(_) {}
   }
-  const loaders={dash:loadStats,settings:loadSettings,formulas:loadFormulas,lotentry:loadLotEntry,users:loadUsers,traders:()=>searchTraders(''),buyers:()=>searchBuyers(''),
+  const loaders={dash:loadStats,settings:loadSettings,formulas:loadFormulas,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>searchTraders(''),buyers:()=>searchBuyers(''),
     auctions:loadAuctions,lots:loadLotAuctions,invoices:loadInvAuctions,purchases:loadPurAuctions,
     payments:loadPayAuctions,exports:loadExpAuctions,tds:()=>{},lorry:loadLorryAuctions,
     bills:loadBillAuctions,debit:loadDnAuctions,journals:loadJournalDefault,tally:loadTallyAuctions,
@@ -4980,7 +5119,7 @@ async function loadStats(auctionId){
     <div class="greeting">
       <div>
         <h1>${greet}, ${esc(uname)} <span class="wave">👋</span></h1>
-        <p>Here's what's happening at Ideal Spices today, ${today}</p>
+        <p>Here's what's happening today, ${today}</p>
       </div>
       <div style="display:flex;gap:10px">
         <button class="btn btn-o" onclick="go('lots')">Import Data</button>
@@ -5352,6 +5491,241 @@ async function changeMyPassword(){
   }catch(e){showError(e)}
 }
 
+// ══════════════════════════════════════════════════════════════
+// Login History — admin panel (Users tab)
+// ══════════════════════════════════════════════════════════════
+async function loadLoginHistory(){
+  const body=document.getElementById('login-history-list');
+  body.innerHTML='<tr><td colspan="4" style="text-align:center;padding:14px;color:var(--spice-text-hint)">Loading…</td></tr>';
+  try{
+    const d=await j('/api/login-history?limit=100');
+    const rows=d.logs||[];
+    if(!rows.length){
+      body.innerHTML='<tr><td colspan="4" style="text-align:center;padding:14px;color:var(--spice-text-hint)">No login activity yet.</td></tr>';
+      return;
+    }
+    body.innerHTML=rows.map(r=>{
+      const ua=String(r.user_agent||'').toLowerCase();
+      // Quick device classifier — purely cosmetic so dad can tell "phone"
+      // from "computer" without parsing the full UA string.
+      let device='Desktop';
+      if(/iphone|android.*mobile|mobile/i.test(ua)) device='Phone';
+      else if(/ipad|tablet/i.test(ua)) device='Tablet';
+      const uname=esc(r.current_username||r.username||'');
+      return `<tr><td style="font-family:monospace;font-size:12px;white-space:nowrap">${esc(r.created_at||'')}</td><td><strong>${uname}</strong></td><td><span style="font-size:11px;padding:2px 7px;background:var(--bg2);border-radius:4px">${device}</span></td><td style="font-family:monospace;font-size:11px;color:var(--spice-text-mute)">${esc(r.ip||'')}</td></tr>`;
+    }).join('');
+  }catch(e){
+    body.innerHTML=`<tr><td colspan="4" style="text-align:center;padding:14px;color:#b91c1c">${esc(e.message||'Failed to load')}</td></tr>`;
+  }
+}
+async function clearLoginHistory(){
+  if(!confirm('Clear ALL login history? This cannot be undone.'))return;
+  try{
+    const d=await j('/api/login-history',{method:'DELETE'});
+    toast(`Cleared ${d.removed||0} login records`);
+    loadLoginHistory();
+  }catch(e){showError(e)}
+}
+
+// ══════════════════════════════════════════════════════════════
+// Audit Log — paged viewer (Users tab)
+// ══════════════════════════════════════════════════════════════
+var _auditPage=1, _auditTotalPages=1;
+async function loadAuditLog(){
+  const body=document.getElementById('audit-log-list');
+  body.innerHTML='<tr><td colspan="5" style="text-align:center;padding:14px;color:var(--spice-text-hint)">Loading…</td></tr>';
+  try{
+    const action=document.getElementById('audit-filter-action').value||'';
+    const params=new URLSearchParams({page:String(_auditPage),limit:'50'});
+    if(action) params.set('action',action);
+    const d=await j('/api/audit-log?'+params.toString());
+    const rows=d.logs||[];
+    _auditTotalPages=d.totalPages||1;
+    if(!rows.length){
+      body.innerHTML='<tr><td colspan="5" style="text-align:center;padding:14px;color:var(--spice-text-hint)">No audit entries'+(action?` for action "${action}"`:'')+'.</td></tr>';
+    }else{
+      body.innerHTML=rows.map(r=>{
+        // Details column: pretty-print JSON if it parses, otherwise raw
+        let dt=r.details||'';
+        try{const parsed=JSON.parse(dt);dt=Object.keys(parsed).slice(0,5).map(k=>`${k}=${parsed[k]}`).join(' · ');}catch(_){}
+        const eid=r.entity_id!=null?'#'+r.entity_id:'';
+        return `<tr><td style="font-family:monospace;font-size:12px;white-space:nowrap">${esc(r.created_at||'')}</td><td><strong>${esc(r.user_id||'')}</strong></td><td><span style="font-size:11px;padding:2px 7px;background:var(--bg2);border-radius:4px">${esc(r.action||'')}</span></td><td>${esc(r.entity||'')} <span style="color:var(--spice-text-mute);font-size:11px">${eid}</span></td><td style="font-size:11px;color:var(--spice-text-mute);max-width:340px">${esc(dt).slice(0,200)}</td></tr>`;
+      }).join('');
+    }
+    const pager=document.getElementById('audit-log-pager');
+    pager.style.display=(d.total>50)?'flex':'none';
+    document.getElementById('audit-log-meta').textContent=`Page ${_auditPage} of ${_auditTotalPages} · ${d.total||0} total`;
+    document.getElementById('audit-prev').disabled=_auditPage<=1;
+    document.getElementById('audit-next').disabled=_auditPage>=_auditTotalPages;
+  }catch(e){
+    body.innerHTML=`<tr><td colspan="5" style="text-align:center;padding:14px;color:#b91c1c">${esc(e.message||'Failed to load')}</td></tr>`;
+  }
+}
+function auditPrev(){if(_auditPage>1){_auditPage--;loadAuditLog()}}
+function auditNext(){if(_auditPage<_auditTotalPages){_auditPage++;loadAuditLog()}}
+async function clearAuditLog(){
+  if(!confirm('Clear the ENTIRE audit log? This cannot be undone.'))return;
+  if(!confirm('Are you absolutely sure? Last chance to cancel.'))return;
+  try{
+    const d=await j('/api/audit-log',{method:'DELETE'});
+    toast(`Cleared ${d.removed||0} audit entries`);
+    _auditPage=1;
+    loadAuditLog();
+  }catch(e){showError(e)}
+}
+
+// ══════════════════════════════════════════════════════════════
+// Reports tab — Trade Summary + Branch Comparison
+// ══════════════════════════════════════════════════════════════
+var _repAuctions=[];
+async function loadReports(){
+  // Populate trade dropdown once per tab visit; backend returns the
+  // canonical /api/auctions array (newest first).
+  try{
+    _repAuctions=await j('/api/auctions');
+    const sel=document.getElementById('rep-auction');
+    sel.innerHTML='<option value="">-- Select a trade --</option>'+
+      _repAuctions.map(a=>`<option value="${a.id}">Trade #${esc(a.ano)} · ${esc((a.date||'').split('T')[0])}${a.crop_type?' · '+esc(a.crop_type):''}</option>`).join('');
+  }catch(e){showError(e)}
+}
+
+async function loadTradeSummary(){
+  // Branch dropdown is sourced from Settings → Branches so every
+  // configured branch shows up, even when it has no lots in the
+  // currently-selected trade.
+  await populateBranchSelect('rep-branch');
+  const aid=document.getElementById('rep-auction').value;
+  const branchSel=document.getElementById('rep-branch');
+  const branch=branchSel?branchSel.value:'';
+  const totalsBox=document.getElementById('rep-summary-totals');
+  const body=document.getElementById('rep-summary-body');
+  document.getElementById('rep-pdf-btn').disabled=!aid;
+  if(!aid){
+    totalsBox.style.display='none';
+    body.innerHTML='<div style="text-align:center;padding:30px;color:var(--spice-text-hint)">Pick a trade above to see its breakdown.</div>';
+    return;
+  }
+  body.innerHTML='<div style="text-align:center;padding:30px;color:var(--spice-text-hint)">Loading…</div>';
+  try{
+    const qs=branch?`?branch=${encodeURIComponent(branch)}`:'';
+    const d=await j('/api/reports/trade-summary/'+aid+qs);
+    // ── Totals strip ──
+    const t=d.totals||{};
+    const items=[
+      {l:'Lots',v:t.lot_count||0},
+      {l:'Bags',v:t.total_bags||0},
+      {l:'Qty (kg)',v:Number(t.total_qty||0).toFixed(3)},
+      {l:'Sellers',v:t.seller_count||0},
+      {l:'Branches',v:t.branch_count||0},
+    ];
+    totalsBox.style.display='grid';
+    totalsBox.innerHTML=items.map(i=>`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center"><div style="font-size:22px;font-weight:700;color:var(--green)">${i.v}</div><div style="font-size:11px;color:var(--spice-text-mute);text-transform:uppercase;letter-spacing:.5px;margin-top:4px">${i.l}</div></div>`).join('');
+    // ── Sold / Withdrawn / Min / Max / Avg (branch-filtered when set) ──
+    const ba=d.branchAggregates||{};
+    const baScope=ba.branch?`Branch: ${esc(ba.branch)}`:'All Branches';
+    const aggCells=[
+      {l:'Sold (kg)',     v:Number((ba.sold&&ba.sold.qty)||0).toFixed(3)},
+      {l:'Withdrawn (kg)',v:Number((ba.withdrawn&&ba.withdrawn.qty)||0).toFixed(3)},
+      {l:'Min Price',     v:Number(ba.min||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})},
+      {l:'Max Price',     v:Number(ba.max||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})},
+      {l:'Avg Price',     v:Number(ba.avg||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})},
+    ];
+    const aggHtml=`<div style="margin:14px 0 4px;font-size:12px;color:var(--spice-text-mute);text-transform:uppercase;letter-spacing:.5px">${baScope}</div>`+
+      `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px">`+
+      aggCells.map(i=>`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center"><div style="font-size:20px;font-weight:700;color:var(--green)">${i.v}</div><div style="font-size:11px;color:var(--spice-text-mute);text-transform:uppercase;letter-spacing:.5px;margin-top:4px">${i.l}</div></div>`).join('')+
+      `</div>`;
+    // ── Per-branch table ──
+    const bw=d.branchWise||[];
+    let html=aggHtml;
+    html+='<h3 style="margin:18px 0 8px">Per-Branch</h3>';
+    html+='<div style="overflow-x:auto"><table><thead><tr><th>Branch</th><th style="text-align:right">Lots</th><th style="text-align:right">Sold (kg)</th><th style="text-align:right">Withdrawn (kg)</th><th style="text-align:right">Min</th><th style="text-align:right">Max</th><th style="text-align:right">Avg</th><th style="text-align:right">Sellers</th></tr></thead><tbody>';
+    if(!bw.length){html+='<tr><td colspan="8" style="text-align:center;padding:14px;color:var(--spice-text-hint)">No lots yet</td></tr>';}
+    bw.forEach(b=>{
+      const minP=Number(b.min_price||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+      const maxP=Number(b.max_price||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+      const avgP=Number(b.avg_price||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+      html+=`<tr><td><strong>${esc(b.branch||'-')}</strong></td><td style="text-align:right">${b.lot_count}</td><td style="text-align:right;font-weight:600">${Number(b.sold_qty||0).toFixed(3)}</td><td style="text-align:right">${Number(b.withdrawn_qty||0).toFixed(3)}</td><td style="text-align:right">${minP}</td><td style="text-align:right">${maxP}</td><td style="text-align:right">${avgP}</td><td style="text-align:right">${b.seller_count||0}</td></tr>`;
+    });
+    html+='</tbody></table></div>';
+    // ── Per-grade ──
+    const gw=d.gradeWise||[];
+    if(gw.length){
+      html+='<h3 style="margin:18px 0 8px">By Grade</h3>';
+      html+='<div style="overflow-x:auto"><table><thead><tr><th>Grade</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th><th style="text-align:right">Sellers</th></tr></thead><tbody>';
+      gw.forEach(g=>{html+=`<tr><td>${esc(g.grade||'-')}</td><td style="text-align:right">${g.lot_count}</td><td style="text-align:right">${g.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(g.total_qty||0).toFixed(3)}</td><td style="text-align:right">${g.seller_count||0}</td></tr>`;});
+      html+='</tbody></table></div>';
+    }
+    // ── Top sellers (cap at 25 in UI; PDF gets 30) ──
+    const sw=d.sellerWise||[];
+    if(sw.length){
+      html+=`<h3 style="margin:18px 0 8px">Top Sellers <span style="font-weight:normal;font-size:12px;color:var(--spice-text-mute)">(showing ${Math.min(25,sw.length)} of ${sw.length})</span></h3>`;
+      html+='<div style="overflow-x:auto"><table><thead><tr><th>Seller</th><th>Branch</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th></tr></thead><tbody>';
+      sw.slice(0,25).forEach(s=>{html+=`<tr><td><strong>${esc(s.seller_name)}</strong></td><td>${esc(s.branch||'')}</td><td style="text-align:right">${s.lot_count}</td><td style="text-align:right">${s.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(s.total_qty||0).toFixed(3)}</td></tr>`;});
+      html+='</tbody></table></div>';
+    }
+    // ── Hourly pace ──
+    const hr=d.hourly||[];
+    if(hr.length){
+      html+='<h3 style="margin:18px 0 8px">Hourly Pace</h3>';
+      const maxQty=Math.max(...hr.map(h=>Number(h.total_qty)||0),1);
+      html+='<div style="display:flex;gap:4px;align-items:flex-end;height:120px;padding:6px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;overflow-x:auto">';
+      hr.forEach(h=>{
+        const pct=(Number(h.total_qty)||0)/maxQty*100;
+        html+=`<div style="flex:1;min-width:36px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end"><div title="${h.lot_count} lots · ${Number(h.total_qty||0).toFixed(1)} kg" style="width:100%;height:${pct}%;background:var(--green);border-radius:3px 3px 0 0;min-height:2px"></div><div style="font-size:10px;color:var(--spice-text-mute);margin-top:4px">${esc(h.hour)}h</div></div>`;
+      });
+      html+='</div>';
+    }
+    // ── Per-user (only if show_username) ──
+    const uw=d.userWise||[];
+    if(d.showUsername && uw.length){
+      html+='<h3 style="margin:18px 0 8px">By Operator</h3>';
+      html+='<div style="overflow-x:auto"><table><thead><tr><th>User</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th></tr></thead><tbody>';
+      uw.forEach(u=>{html+=`<tr><td><strong>${esc(u.user_id||'')}</strong></td><td style="text-align:right">${u.lot_count}</td><td style="text-align:right">${u.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(u.total_qty||0).toFixed(3)}</td></tr>`;});
+      html+='</tbody></table></div>';
+    }
+    body.innerHTML=html;
+  }catch(e){
+    body.innerHTML=`<div style="text-align:center;padding:30px;color:#b91c1c">${esc(e.message||'Failed to load')}</div>`;
+  }
+}
+
+function openTradeSummaryPdf(){
+  const aid=document.getElementById('rep-auction').value;
+  if(!aid)return;
+  const br=document.getElementById('rep-branch')?.value||'';
+  const branchQs=br?`&branch=${encodeURIComponent(br)}`:'';
+  // Token-in-querystring because window.open() can't set Authorization.
+  window.open(`${B}/api/reports/summary-pdf/${aid}?token=${T}${branchQs}`,'_blank');
+}
+
+async function loadBranchComparison(){
+  const body=document.getElementById('rep-branch-body');
+  body.innerHTML='<div style="text-align:center;padding:30px;color:var(--spice-text-hint)">Loading…</div>';
+  try{
+    const d=await j('/api/reports/branch-comparison');
+    const overall=d.overall||[];
+    const data=d.data||[];
+    if(!overall.length){
+      body.innerHTML='<div style="text-align:center;padding:30px;color:var(--spice-text-hint)">No lot data yet.</div>';
+      return;
+    }
+    let html='<h3 style="margin:0 0 8px">Lifetime Totals</h3>';
+    html+='<div style="overflow-x:auto"><table><thead><tr><th>Branch</th><th style="text-align:right">Trades</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th><th style="text-align:right">Unique Sellers</th></tr></thead><tbody>';
+    overall.forEach(b=>{html+=`<tr><td><strong>${esc(b.branch||'-')}</strong></td><td style="text-align:right">${b.trade_count||0}</td><td style="text-align:right">${b.lot_count}</td><td style="text-align:right">${b.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(b.total_qty||0).toFixed(3)}</td><td style="text-align:right">${b.seller_count||0}</td></tr>`;});
+    html+='</tbody></table></div>';
+    // Per-trade grid (limited to most recent 30 rows to keep manageable)
+    if(data.length){
+      html+=`<h3 style="margin:20px 0 8px">By Trade <span style="font-weight:normal;font-size:12px;color:var(--spice-text-mute)">(${Math.min(50,data.length)} most recent)</span></h3>`;
+      html+='<div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Trade</th><th>Crop</th><th>Branch</th><th style="text-align:right">Lots</th><th style="text-align:right">Bags</th><th style="text-align:right">Qty (kg)</th></tr></thead><tbody>';
+      data.slice(0,50).forEach(r=>{html+=`<tr><td style="font-family:monospace;font-size:12px">${esc((r.date||'').split('T')[0])}</td><td>#${esc(r.ano||'')}</td><td><span style="font-size:11px;padding:1px 6px;background:var(--bg2);border-radius:4px">${esc(r.crop_type||'-')}</span></td><td><strong>${esc(r.branch||'-')}</strong></td><td style="text-align:right">${r.lot_count}</td><td style="text-align:right">${r.total_bags||0}</td><td style="text-align:right;font-weight:600">${Number(r.total_qty||0).toFixed(3)}</td></tr>`;});
+      html+='</tbody></table></div>';
+    }
+    body.innerHTML=html;
+  }catch(e){
+    body.innerHTML=`<div style="text-align:center;padding:30px;color:#b91c1c">${esc(e.message||'Failed to load')}</div>`;
+  }
+}
+
 // ── Settings ──────────────────────────────────────────────
 let _cats={},_sdata={},_activeCat='',_setFilter='';
 
@@ -5507,15 +5881,15 @@ async function loadFormulas(){
     {
       label: 'Sample Bag Refund (₹)',
       note: 'SB sample-bag refund credited back to the seller.',
-      formula: `Refund = round( ${pill('SB Refund (kg)', num('sb_refund', '0'))} × Lot Price )`,
+      formula: `Refund = ${pill('SB Refund (kg)', num('sb_refund', '0'))} × Lot Price  &nbsp; <span style="color:var(--text3)">(2 decimals)</span>`,
     },
     {
       label: 'Commission (₹)',
-      formula: `Commission = round( PurAmt × ${pill('Commission %', num('commission', '0'))} / 100 )`,
+      formula: `Commission = ( PurAmt + Refund ) × ${pill('Commission %', num('commission', '0'))} / 100  &nbsp; <span style="color:var(--text3)">(2 decimals)</span>`,
     },
     {
       label: 'Handling (₹)',
-      formula: `Handling = round( Commission × ${pill('Handling %', num('hpc', '0'))} / 100 )`,
+      formula: `Handling = Commission × ${pill('Handling %', num('hpc', '0'))} / 100  &nbsp; <span style="color:var(--text3)">(2 decimals)</span>`,
     },
     {
       label: 'GST on services (commission + handling)',
@@ -5539,7 +5913,7 @@ async function loadFormulas(){
     {
       label: 'Debit Note Amount',
       note: 'In this build, the DN Amount column shows commission + handling instead of the discount above.',
-      formula: `DN Amount = round( PurAmt × ${pill('Commission %', num('commission', '0'))} / 100 ) + round( Commission × ${pill('Handling %', num('hpc', '0'))} / 100 )`,
+      formula: `DN Amount = ( ( PurAmt + Refund ) × ${pill('Commission %', num('commission', '0'))} / 100 ) + ( Commission × ${pill('Handling %', num('hpc', '0'))} / 100 )  &nbsp; <span style="color:var(--text3)">(2 decimals)</span>`,
     },
   ]);
 
@@ -5626,13 +6000,13 @@ async function loadFormulas(){
                 Total Discount = Σ ( Discount )`,
     },
     {
-      label: 'GST 5% (column on Payments tab)',
+      label: 'GST 18% (column on Payments tab)',
       note: 'Sum of CGST + SGST + IGST stamped on each lot.',
-      formula: `GST 5% = Σ ( CGST + SGST + IGST )`,
+      formula: `GST 18% = Σ ( CGST + SGST + IGST )`,
     },
     {
       label: 'Payable',
-      formula: `Payable = Total PurAmt − Total Discount − GST 5%`,
+      formula: `Payable = Total PurAmt − Total Discount − GST 18%`,
     },
   ]);
 
@@ -6425,6 +6799,80 @@ async function leLoadMoreRecent(){
   }
 }
 
+// Read the Sort By selection (persisted in localStorage so it survives
+// auction switches and reloads). Defaults to 'recent' (Recently Added).
+function leGetSortMode(){
+  try {
+    const sel = document.getElementById('le-recent-sort');
+    if (sel) {
+      const saved = localStorage.getItem('le_recent_sort');
+      if (saved && Array.from(sel.options).some(o => o.value === saved)) sel.value = saved;
+      return sel.value || 'recent';
+    }
+  } catch (_) {}
+  return 'recent';
+}
+function leGetSortDir(){
+  try { return localStorage.getItem('le_recent_sort_dir') || 'asc'; } catch(_) { return 'asc'; }
+}
+function leSetSort(mode, dir){
+  try {
+    localStorage.setItem('le_recent_sort', mode);
+    if (dir) localStorage.setItem('le_recent_sort_dir', dir);
+  } catch(_) {}
+  const sel = document.getElementById('le-recent-sort');
+  if (sel && Array.from(sel.options).some(o => o.value === mode)) sel.value = mode;
+  renderLeRecent();
+}
+function leOnSortChange(){
+  const sel = document.getElementById('le-recent-sort');
+  if (sel) {
+    try { localStorage.setItem('le_recent_sort', sel.value); } catch(_) {}
+  }
+  renderLeRecent();
+}
+// Click a column header to sort by that column. Clicking the same column
+// again flips direction (asc ↔ desc).
+function leSortByColumn(mode){
+  const curMode = leGetSortMode();
+  const curDir  = leGetSortDir();
+  // Same column → toggle direction. Different column → reset to asc
+  // (except 'recent' which is always desc / server order).
+  const dir = (curMode === mode) ? (curDir === 'asc' ? 'desc' : 'asc') : 'asc';
+  leSetSort(mode, dir);
+}
+// Sort a copy of the currently-loaded recent lots. Lot_no is compared
+// numerically when both rows parse as integers, lexicographically
+// otherwise. Direction = asc | desc.
+function leSortRecent(rows, mode, dir){
+  const arr = rows.slice();
+  const sign = (dir === 'desc') ? -1 : 1;
+  const cmpStr = (a, b) => String(a||'').localeCompare(String(b||''));
+  const cmpNum = (a, b) => (Number(a)||0) - (Number(b)||0);
+  const cmpLot = (a, b) => {
+    const ai = parseInt(a.lot_no, 10), bi = parseInt(b.lot_no, 10);
+    if (Number.isFinite(ai) && Number.isFinite(bi) && String(ai) === String(a.lot_no) && String(bi) === String(b.lot_no)) {
+      return ai - bi;
+    }
+    return cmpStr(a.lot_no, b.lot_no);
+  };
+  switch (mode) {
+    case 'lot_no': arr.sort((a,b) => sign * cmpLot(a,b)); break;
+    case 'date':   arr.sort((a,b) => sign * cmpStr(a.created_at || a.date, b.created_at || b.date)); break;
+    case 'name':   arr.sort((a,b) => sign * cmpStr(a.name, b.name)); break;
+    case 'branch': arr.sort((a,b) => sign * (cmpStr(a.branch, b.branch) || cmpLot(a,b))); break;
+    case 'bags':   arr.sort((a,b) => sign * cmpNum(a.bags, b.bags)); break;
+    case 'litre':  arr.sort((a,b) => sign * cmpStr(a.litre || a.lit, b.litre || b.lit)); break;
+    case 'qty':    arr.sort((a,b) => sign * cmpNum(a.qty, b.qty)); break;
+    case 'recent':
+    default:
+      // Server returns lot_no DESC ≈ "recently added". When the user
+      // explicitly picks Recently Added, leave the server's order alone.
+      break;
+  }
+  return arr;
+}
+
 function renderLeRecent(){
   const host = document.getElementById('le-recent-list');
   const count = document.getElementById('le-recent-count');
@@ -6437,8 +6885,15 @@ function renderLeRecent(){
   // Server-side pagination: rows arrive in lot_no DESC order already, and
   // the server tells us the true total (`_le.recentTotal`). Render every
   // currently-loaded row; the "Load more" button appears whenever there
-  // are more rows on the server than locally cached.
-  const visible   = _le.recentLots;
+  // are more rows on the server than locally cached. The selected sort
+  // mode (`Sort By` toolbar control or column header click) re-orders the
+  // visible window.
+  const sortMode = leGetSortMode();
+  const sortDir  = leGetSortDir();
+  const visible  = leSortRecent(_le.recentLots, sortMode, sortDir);
+  const arrow = (col) => sortMode === col ? (sortDir === 'desc' ? ' ▼' : ' ▲') : '';
+  const hdrStyle = (col, extra) => 'cursor:pointer;user-select:none;' + (extra||'') +
+        (sortMode === col ? 'color:var(--green);' : '');
   const total     = _le.recentTotal != null ? _le.recentTotal : visible.length;
   const remaining = Math.max(0, total - visible.length);
   if (count) count.textContent = `Showing ${visible.length} of ${total}`;
@@ -6458,7 +6913,13 @@ function renderLeRecent(){
   host.innerHTML = `
     <div style="display:grid;${COLS};gap:0;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;padding:6px 12px;border-bottom:1px solid var(--border);background:var(--bg);position:sticky;top:0;z-index:1">
       <div style="text-align:center"><input type="checkbox" id="le-recent-select-all" onchange="leToggleSelectAll(this.checked)" title="Select all visible" style="cursor:pointer"></div>
-      <div>Lot</div><div>Seller</div><div>Branch</div><div style="text-align:right">Bags</div><div style="text-align:right">Litre</div><div style="text-align:right">Qty (kg)</div><div></div>
+      <div onclick="leSortByColumn('lot_no')" title="Sort by Lot No" style="${hdrStyle('lot_no')}">Lot${arrow('lot_no')}</div>
+      <div onclick="leSortByColumn('name')"   title="Sort by Seller" style="${hdrStyle('name')}">Seller${arrow('name')}</div>
+      <div onclick="leSortByColumn('branch')" title="Sort by Branch" style="${hdrStyle('branch')}">Branch${arrow('branch')}</div>
+      <div onclick="leSortByColumn('bags')"   title="Sort by Bags"   style="${hdrStyle('bags','text-align:right;')}">Bags${arrow('bags')}</div>
+      <div onclick="leSortByColumn('litre')"  title="Sort by Litre"  style="${hdrStyle('litre','text-align:right;')}">Litre${arrow('litre')}</div>
+      <div onclick="leSortByColumn('qty')"    title="Sort by Qty"    style="${hdrStyle('qty','text-align:right;')}">Qty (kg)${arrow('qty')}</div>
+      <div></div>
     </div>
     <div id="le-recent-scroll" style="max-height:360px;overflow-y:auto">
       ${visible.map(l => {
@@ -6565,6 +7026,68 @@ async function getAllocBranches() {
 // Reset the cache when the user re-loads settings or branches change.
 // We hook into Lot Entry's loadLotEntry() implicitly by clearing here.
 function invalidateAllocBranches() { _allocBranchesCache = null; }
+
+// Generic helper — fill any <select id="..."> with branches read from
+// Settings → Branches (br1..br9). Keeps the user's current selection if
+// it still appears in the list. Adds a leading "All Branches" option.
+async function populateBranchSelect(selectId, opts){
+  opts = opts || {};
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  const branches = await getAllocBranches();
+  const cur = sel.value || '';
+  const allLabel = opts.allLabel || 'All Branches';
+  sel.innerHTML = ['<option value="">' + allLabel + '</option>']
+    .concat(branches.map(b => `<option value="${esc(b)}">${esc(b)}</option>`))
+    .join('');
+  if (cur && branches.includes(cur)) sel.value = cur;
+}
+
+// ── Lots Summary (Lots tab) ─────────────────────────────────────────
+// Hits /api/reports/trade-summary?auctionId=...&branch=... and renders a
+// 5-card strip: Sold (kg) · Withdrawn (kg) · Min · Max · Avg. Refreshes
+// whenever the auction or branch dropdown changes.
+async function loadLotsSummary(){
+  const aid = document.getElementById('lot-auction')?.value;
+  const branchSel = document.getElementById('lot-branch-filter');
+  const strip = document.getElementById('lots-summary-strip');
+  const scope = document.getElementById('lots-summary-scope');
+  if (!strip || !scope) return;
+  // Always (re)populate the branch dropdown from settings so the user has
+  // every configured branch available, not just ones found in lots rows.
+  await populateBranchSelect('lot-branch-filter');
+  const branch = branchSel ? branchSel.value : '';
+  if (!aid) {
+    strip.style.display = 'none';
+    scope.style.display = 'none';
+    return;
+  }
+  try {
+    const qs = branch ? `?branch=${encodeURIComponent(branch)}` : '';
+    const d = await j('/api/reports/trade-summary/' + aid + qs);
+    const ba = d.branchAggregates || {};
+    const inr = n => Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const kg  = n => Number(n||0).toFixed(3);
+    const items = [
+      { l: 'Sold (kg)',      v: kg((ba.sold && ba.sold.qty) || 0) },
+      { l: 'Withdrawn (kg)', v: kg((ba.withdrawn && ba.withdrawn.qty) || 0) },
+      { l: 'Min Price',      v: inr(ba.min || 0) },
+      { l: 'Max Price',      v: inr(ba.max || 0) },
+      { l: 'Avg Price',      v: inr(ba.avg || 0) },
+    ];
+    strip.style.display = 'grid';
+    strip.innerHTML = items.map(i =>
+      `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center">
+         <div style="font-size:20px;font-weight:700;color:var(--green)">${i.v}</div>
+         <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-top:4px">${i.l}</div>
+       </div>`).join('');
+    scope.style.display = '';
+    scope.textContent = branch ? `Lots Summary — Branch: ${branch}` : 'Lots Summary — All Branches';
+  } catch (e) {
+    strip.style.display = 'none';
+    scope.style.display = 'none';
+  }
+}
 
 // Add a single branch/start/end row to either the alloc-edit list
 // (admin modal) or any other prefixed list. The remove-row button
@@ -9238,7 +9761,7 @@ async function doPriceImport(){
 // ── Auction dropdowns ─────────────────────────────────────
 async function fillAucSelect(selId){const d=await j('/api/auctions');const sel=document.getElementById(selId);
   sel.innerHTML=d.map(a=>`<option value="${a.id}">${a.ano} — ${fmtD(a.date)} (${a.lot_count} lots)</option>`).join('');return d}
-function loadLotAuctions(){fillAucSelect('lot-auction').then(()=>loadLots())}
+function loadLotAuctions(){fillAucSelect('lot-auction').then(()=>{loadLots();loadLotsSummary()})}
 function loadInvAuctions(){fillAucSelect('inv-auction').then(()=>{loadInvoices();loadInvEligibleBuyers()})}
 function loadPurAuctions(){fillAucSelect('pur-auction').then(()=>{loadPurchases();loadPurEligibleSellers()})}
 
@@ -10039,7 +10562,11 @@ async function generateInvoice(){
 
 async function loadInvoices(){
   const aid=document.getElementById('inv-auction')?.value;
-  const url=aid?`/api/invoices?auction_id=${aid}`:'/api/invoices';
+  const sale=(document.getElementById('inv-sale-filter')?.value||'').trim();
+  const params=[];
+  if(aid)params.push('auction_id='+encodeURIComponent(aid));
+  if(sale)params.push('sale='+encodeURIComponent(sale));
+  const url='/api/invoices'+(params.length?('?'+params.join('&')):'');
   const d=await j(url);
   // Invoice count badge
   const badge=document.getElementById('inv-count-badge');
@@ -10742,7 +11269,11 @@ async function generatePurchase(){
 
 async function loadPurchases(){
   const aid=document.getElementById('pur-auction')?.value;
-  const url=aid?`/api/purchases?auction_id=${aid}`:'/api/purchases';
+  const sale=(document.getElementById('pur-sale-filter')?.value||'').trim();
+  const params=[];
+  if(aid)params.push('auction_id='+encodeURIComponent(aid));
+  if(sale)params.push('sale='+encodeURIComponent(sale));
+  const url='/api/purchases'+(params.length?('?'+params.join('&')):'');
   const d=await j(url);
   const arr = Array.isArray(d) ? d : [];
 
@@ -11300,7 +11831,7 @@ async function loadPayments(){
         // calculations.getPaymentSummary which now includes total_tax.
         // Only meaningful when the "Discount includes GST" flag is ON;
         // otherwise lots have no GST stamped and this column reads 0.00.
-        { key:'total_tax', label:'GST 5%', sort:'number', numeric:true,
+        { key:'total_tax', label:'GST 18%', sort:'number', numeric:true,
           fmt:(n)=>fmtI(n,2),
           render:(p)=>{
             const v = Number(p.total_tax)||0;
@@ -11494,9 +12025,48 @@ async function loadEligibleSellers(){
       `<option value="${esc(s.name)}">${esc(s.name)} — ${s.lot_count} lot(s), ₹${(s.total_amount||0).toFixed(2)}</option>`).join('');
     document.getElementById('gb-hint').textContent=`${sellers.length} eligible seller(s) available`;
   }catch(e){console.warn(e)}}
-async function loadBills(){
+// Commission Bill (Format 2) — opens the modal; branch dropdown is
+// populated from Settings → Branches.
+async function openGenCommissionBillModal(){
   const aid=document.getElementById('bill-auction')?.value;
-  const url=aid?`/api/bills?auction_id=${aid}`:'/api/bills';
+  if(!aid){toast('Select an auction first');return}
+  await populateBranchSelect('cb2-branch');
+  // Pre-select the branch already chosen on the Bills toolbar (if any).
+  const cur=(document.getElementById('bill-branch-filter')?.value||'').trim();
+  const dst=document.getElementById('cb2-branch');
+  if(dst && cur && Array.from(dst.options).some(o=>o.value===cur)) dst.value=cur;
+  showModal('gen-commission-bill-modal');
+}
+
+function downloadCommissionBillF2(format){
+  const aid=document.getElementById('bill-auction')?.value;
+  if(!aid){toast('Select an auction first');return}
+  const br=(document.getElementById('cb2-branch')?.value||'').trim();
+  const qs=new URLSearchParams({format, token:T});
+  if(br) qs.set('branch', br);
+  const url=`${B}/api/bills/commission-bill-f2/${aid}?${qs.toString()}`;
+  hideModal('gen-commission-bill-modal');
+  if(format==='print'){
+    // Open the PDF view; user can use the browser's Print command.
+    qs.set('format','pdf');
+    window.open(`${B}/api/bills/commission-bill-f2/${aid}?${qs.toString()}`,'_blank');
+    return;
+  }
+  window.open(url,'_blank');
+}
+
+async function loadBills(){
+  // Branch dropdown is populated from Settings → Branches (br1..br9) so
+  // the user can filter by ANY configured branch — even ones with no
+  // bills yet. Earlier code populated only from the result set, which
+  // hid valid branches when there was no data in them.
+  await populateBranchSelect('bill-branch-filter');
+  const aid=document.getElementById('bill-auction')?.value;
+  const br=(document.getElementById('bill-branch-filter')?.value||'').trim();
+  const params=[];
+  if(aid)params.push('auction_id='+encodeURIComponent(aid));
+  if(br) params.push('branch='+encodeURIComponent(br));
+  const url='/api/bills'+(params.length?('?'+params.join('&')):'');
   const d=await j(url);
   const arr = Array.isArray(d) ? d : [];
 

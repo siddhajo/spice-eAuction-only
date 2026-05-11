@@ -645,7 +645,11 @@ async function collectionPdf(db, auctionId) {
 // Plus a footer block with TOTAL ARRIVALS / WITHDRAWN / SOLD / NOT eTRADED
 // counts and MAX/MIN/AVERAGE prices and COST OF CARDAMOM.
 
-function getTradeReportData(db, auctionId) {
+function getTradeReportData(db, auctionId, opts) {
+  opts = opts || {};
+  // Optional branch filter — when set, every per-buyer aggregate and the
+  // stats footer restrict to lots from that branch.
+  const branchFilter = String(opts.branch || '').trim();
   const auction = getAuctionHeader(db, auctionId);
 
   // One row per buyer code, summed across all lots.
@@ -678,9 +682,10 @@ function getTradeReportData(db, auctionId) {
       OR UPPER(TRIM(b.buyer)) = UPPER(TRIM(l.buyer))
     WHERE l.auction_id = ?
       AND l.amount > 0
+      ${branchFilter ? 'AND UPPER(TRIM(l.branch)) = UPPER(TRIM(?))' : ''}
     GROUP BY l.code, b.buyer1, b.sbl, b.code, b.state, b.gstin, l.sale
     ORDER BY UPPER(COALESCE(b.buyer1, l.buyer1, l.code)), l.code
-  `, [auctionId]);
+  `, branchFilter ? [auctionId, branchFilter] : [auctionId]);
 
   // INV.AMOUNT per code from invoices table
   const invRows = db.all(`
@@ -723,9 +728,11 @@ function getTradeReportData(db, auctionId) {
     return a.localeCompare(b);
   });
 
-  // Statistics for the footer
+  // Statistics for the footer — same branch filter applies.
   const allLots = db.all(
-    `SELECT bags, qty, price, amount FROM lots WHERE auction_id = ?`, [auctionId]
+    `SELECT bags, qty, price, amount FROM lots WHERE auction_id = ?` +
+      (branchFilter ? ' AND UPPER(TRIM(branch)) = UPPER(TRIM(?))' : ''),
+    branchFilter ? [auctionId, branchFilter] : [auctionId]
   );
   const sold = allLots.filter(l => Number(l.amount) > 0);
   const notSold = allLots.filter(l => !(Number(l.amount) > 0));
@@ -751,8 +758,8 @@ function getTradeReportData(db, auctionId) {
   return { auction, sortedStates, stats };
 }
 
-async function tradeReportXlsx(db, auctionId) {
-  const { auction, sortedStates, stats } = getTradeReportData(db, auctionId);
+async function tradeReportXlsx(db, auctionId, opts) {
+  const { auction, sortedStates, stats } = getTradeReportData(db, auctionId, opts);
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('TradeReport');
@@ -943,8 +950,8 @@ async function tradeReportXlsx(db, auctionId) {
   return wb.xlsx.writeBuffer();
 }
 
-async function tradeReportPdf(db, auctionId) {
-  const { auction, sortedStates, stats } = getTradeReportData(db, auctionId);
+async function tradeReportPdf(db, auctionId, opts) {
+  const { auction, sortedStates, stats } = getTradeReportData(db, auctionId, opts);
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 18 });
   const buffers = [];

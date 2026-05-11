@@ -46,12 +46,31 @@ function wrapText(doc, text, maxWidth) {
   let cur = '';
   function pushChunked(tok) {
     // Token wider than the column on its own — break by characters.
+    // Avoid leaving a single trailing character on its own line:
+    // when only one char would remain, steal one from the previous
+    // chunk so the tail line carries at least two characters.
     let chunk = '';
+    const chunks = [];
     for (const ch of tok) {
       if (doc.widthOfString(chunk + ch) <= maxWidth) chunk += ch;
-      else { if (chunk) out.push(chunk); chunk = ch; }
+      else {
+        if (chunk) chunks.push(chunk);
+        chunk = ch;
+      }
     }
-    if (chunk) cur = chunk; else cur = '';
+    if (chunk) chunks.push(chunk);
+    // Anti-orphan: if the last chunk is a single character, borrow one
+    // from the previous chunk so both lines have ≥ 2 chars. Skipped when
+    // the previous chunk is itself only 2 chars (would create another
+    // 1-char orphan).
+    if (chunks.length >= 2 && chunks[chunks.length - 1].length === 1 && chunks[chunks.length - 2].length > 2) {
+      const prev = chunks[chunks.length - 2];
+      const tail = chunks[chunks.length - 1];
+      chunks[chunks.length - 2] = prev.slice(0, -1);
+      chunks[chunks.length - 1] = prev.slice(-1) + tail;
+    }
+    for (let i = 0; i < chunks.length - 1; i++) out.push(chunks[i]);
+    cur = chunks.length ? chunks[chunks.length - 1] : '';
   }
   for (const tok of tokens) {
     const probe = cur ? cur + ' ' + tok : tok;
@@ -61,6 +80,26 @@ function wrapText(doc, text, maxWidth) {
     else { cur = tok; }
   }
   if (cur) out.push(cur);
+  // Final anti-orphan pass at the word/space level: if the LAST line is
+  // a single short token (1-2 chars) AND the preceding line has more
+  // than one word, pull the last word of that preceding line down so
+  // the final line isn't a stub.
+  if (out.length >= 2) {
+    const last = out[out.length - 1];
+    const prev = out[out.length - 2];
+    if (last.length <= 2 && /\s/.test(prev)) {
+      const words = prev.split(/\s+/);
+      if (words.length >= 2) {
+        const moved = words.pop();
+        const newPrev = words.join(' ');
+        const newLast = moved + ' ' + last;
+        if (doc.widthOfString(newPrev) <= maxWidth && doc.widthOfString(newLast) <= maxWidth) {
+          out[out.length - 2] = newPrev;
+          out[out.length - 1] = newLast;
+        }
+      }
+    }
+  }
   return out.length ? out : [''];
 }
 
@@ -193,7 +232,7 @@ function buildBuyersStatement(ctx) {
         gstin:   r.buyer_gstin || '',
         sbl:     r.buyer_sbl || '',
         state:   r.buyer_state || '',
-        sale:    r.buyer_sale || 'L',
+        sale:    String(r.buyer_sale || r.lot_sale || 'L').toUpperCase(),
         kilos:   0,
         amount:  0,
       });
@@ -203,26 +242,50 @@ function buildBuyersStatement(ctx) {
     g.amount += Number(r.amount) || 0;
   }
 
-  const inter = [], intra = [];
+  // Bucket by sale type. Export ('E') is its own section; everything else
+  // splits on state (intra = same as auction state, inter = different).
+  // Tag every group with its resolved sale label so PDF/XLSX can show
+  // sale-type-wise totals at the foot of the report.
+  const inter = [], intra = [], exportS = [];
   for (const g of groups.values()) {
+    const sale = String(g.sale || '').trim().toUpperCase();
+    if (sale === 'E') {
+      g.saleLabel = 'EXPORT';
+      exportS.push(g);
+      continue;
+    }
     const bs = String(g.state || '').trim().toUpperCase();
     const isIntra = !bs || bs === auctionState;
-    (isIntra ? intra : inter).push(g);
+    if (isIntra) { g.saleLabel = 'INTRA'; intra.push(g); }
+    else         { g.saleLabel = 'INTER'; inter.push(g); }
   }
   const sortFn = (a, b) => (a.name || '').localeCompare(b.name || '');
-  inter.sort(sortFn); intra.sort(sortFn);
+  inter.sort(sortFn); intra.sort(sortFn); exportS.sort(sortFn);
 
-  // Sequential invoice numbers within each section (I 1.., L 1..)
-  let iSeq = 0, lSeq = 0;
-  inter.forEach(g => { iSeq++; g.invoice = `I ${iSeq}`; });
-  intra.forEach(g => { lSeq++; g.invoice = `L ${lSeq}`; });
+  // Sequential invoice numbers per section (I 1.., L 1.., E 1..)
+  let iSeq = 0, lSeq = 0, eSeq = 0;
+  inter.forEach(g   => { iSeq++; g.invoice = `I ${iSeq}`; });
+  intra.forEach(g   => { lSeq++; g.invoice = `L ${lSeq}`; });
+  exportS.forEach(g => { eSeq++; g.invoice = `E ${eSeq}`; });
 
   const sum = arr => arr.reduce((a, g) => ({ kilos: a.kilos + g.kilos, amount: a.amount + g.amount }),
                                 { kilos: 0, amount: 0 });
-  const interTotals = sum(inter);
-  const intraTotals = sum(intra);
-  const grand = { kilos: interTotals.kilos + intraTotals.kilos, amount: interTotals.amount + intraTotals.amount };
-  return { auction, inter, intra, interTotals, intraTotals, grand };
+  const interTotals  = sum(inter);
+  const intraTotals  = sum(intra);
+  const exportTotals = sum(exportS);
+  const grand = {
+    kilos:  interTotals.kilos  + intraTotals.kilos  + exportTotals.kilos,
+    amount: interTotals.amount + intraTotals.amount + exportTotals.amount,
+  };
+  // Per-sale-type breakdown for the Grand Total row (Task 7B).
+  const saleTypeTotals = [
+    { label: 'INTRA STATE (L)', kilos: intraTotals.kilos,  amount: intraTotals.amount },
+    { label: 'INTER-STATE (I)', kilos: interTotals.kilos,  amount: interTotals.amount },
+    { label: 'EXPORT (E)',      kilos: exportTotals.kilos, amount: exportTotals.amount },
+  ];
+  return { auction, inter, intra, export: exportS,
+           interTotals, intraTotals, exportTotals,
+           saleTypeTotals, grand };
 }
 
 function buyersStatementJson(db, opts) {
@@ -286,6 +349,19 @@ async function buyersStatementXlsx(db, opts) {
   }
   emitSection('INTER-STATE SALES', data.inter, { label: 'INTER-STATE SALES TOTAL', kilos: data.interTotals.kilos, amount: data.interTotals.amount });
   emitSection('INTRA STATE SALES', data.intra, { label: 'INTRA STATE SALES TOTAL', kilos: data.intraTotals.kilos, amount: data.intraTotals.amount });
+  emitSection('EXPORT SALES',      data.export, { label: 'EXPORT SALES TOTAL',     kilos: data.exportTotals.kilos, amount: data.exportTotals.amount });
+  // Sale-type-wise totals row (Task 7B)
+  ws.addRow([]);
+  const sth = ws.addRow(['', 'SALE TYPE TOTALS', '', '', '', '', '']);
+  sth.font = { bold: true, size: 10 };
+  sth.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E4DD' } };
+                       c.border = { top: { style: 'thin' }, bottom: { style: 'thin' } }; });
+  data.saleTypeTotals.forEach(t => {
+    const r = ws.addRow(['', t.label, '', t.kilos, t.amount, '', '']);
+    r.font = { bold: true };
+    r.getCell(4).numFmt = '#,##0.000';
+    r.getCell(5).numFmt = '#,##,##0.00';
+  });
   const g = ws.addRow(['', 'GRAND TOTAL', '', data.grand.kilos, data.grand.amount, '', '']);
   g.font = { bold: true, size: 11 };
   g.getCell(4).numFmt = '#,##0.000';
@@ -364,6 +440,13 @@ async function buyersStatementPdf(db, opts) {
 
   function topHeader() {
     y = m;
+    // Logo (Task 7C) — pulled from the configured company logo file when
+    // present. Sits in the top-left; company name + place stay centered.
+    const _hdr = getCompanyHeader(db);
+    const LOGO_H = 40;
+    if (_hdr && _hdr.logoPath) {
+      try { doc.image(_hdr.logoPath, m, y, { fit: [LOGO_H, LOGO_H] }); } catch (_) { /* ignore */ }
+    }
     doc.fillColor('#000').font('Helvetica-Bold').fontSize(12);
     doc.text(company || '', m, y, { width: usableW, align: 'center' });
     y = doc.y + 2;
@@ -372,6 +455,8 @@ async function buyersStatementPdf(db, opts) {
       doc.text(place, m, y, { width: usableW, align: 'center' });
       y = doc.y + 2;
     }
+    // Make sure we sit below the logo band before drawing the title.
+    if (y < m + LOGO_H + 2) y = m + LOGO_H + 2;
     y += 4;
     doc.font('Helvetica-Bold').fontSize(11)
        .text('BUYERS STATEMENT', m, y, { width: usableW, align: 'center', lineBreak: false });
@@ -469,6 +554,14 @@ async function buyersStatementPdf(db, opts) {
   }
   emitSection('INTER-STATE SALES', data.inter, { label: 'INTER-STATE SALES TOTAL', kilos: data.interTotals.kilos, amount: data.interTotals.amount });
   emitSection('INTRA STATE SALES', data.intra, { label: 'INTRA STATE SALES TOTAL', kilos: data.intraTotals.kilos, amount: data.intraTotals.amount });
+  emitSection('EXPORT SALES',      data.export, { label: 'EXPORT SALES TOTAL',     kilos: data.exportTotals.kilos, amount: data.exportTotals.amount });
+
+  // Sale-type-wise totals (Task 7B) — shown above the grand total so the
+  // user can verify the per-sale-type kilos/amount before the consolidated
+  // figure. Rendered with the same column layout as subtotal rows.
+  ensureRoom(18 * (data.saleTypeTotals.length + 1));
+  sectionLabel('SALE TYPE TOTALS');
+  data.saleTypeTotals.forEach(t => subtotalRow(t.label, t.kilos, t.amount));
 
   // Grand total — uses a font size close to the data rows so large values
   // (e.g. "13,62,05,969.60") stay inside their column instead of overflowing
@@ -651,6 +744,16 @@ async function formDPdf(db, opts) {
   const innerL = m + innerPad;
   const innerW = usableW - innerPad * 2;
 
+  // Logo (Task 8) — anchored top-left inside the box so the FORM-D heading
+  // still centres on the page. Drawn before the title so the title row's Y
+  // can advance past it if needed.
+  const _hdrFD = getCompanyHeader(db);
+  const LOGO_H_FD = 44;
+  if (_hdrFD && _hdrFD.logoPath) {
+    try { doc.image(_hdrFD.logoPath, innerL, innerY, { fit: [LOGO_H_FD, LOGO_H_FD] }); }
+    catch (_) { /* ignore */ }
+  }
+
   // Centered header lines
   doc.fillColor('#000').font('Helvetica-Bold').fontSize(13)
      .text('FORM - D', innerL, innerY, { width: innerW, align: 'center', lineBreak: false });
@@ -661,6 +764,10 @@ async function formDPdf(db, opts) {
   doc.font('Helvetica').fontSize(11)
      .text('(Advance Auction Report)', innerL, innerY, { width: innerW, align: 'center', lineBreak: false });
   innerY += 24;
+  // Make sure body sits below the logo band.
+  if (_hdrFD && _hdrFD.logoPath && innerY < (boxTop + innerPad + LOGO_H_FD + 4)) {
+    innerY = boxTop + innerPad + LOGO_H_FD + 4;
+  }
 
   // ── Two-column layout: fixed label width + fixed value column.
   //    Every value starts at the same X so colons line up vertically.
@@ -839,6 +946,17 @@ async function formDPdf(db, opts) {
 // ════════════════════════════════════════════════════════════
 // REPORT 3 — FORM-C (Auction Report)
 // ════════════════════════════════════════════════════════════
+// A seller is a "GSTIN dealer" when their registration string is a GSTIN
+// (with or without the "GSTIN." prefix). Spices Board CS-prefixed dealers
+// without a real GSTIN are still classified as DEALER by classifySeller
+// but excluded from the GSTIN-dealer subtotal.
+function isGstinDealer(cr) {
+  let s = String(cr || '').trim().toUpperCase();
+  if (s.startsWith('GSTIN.')) s = s.slice(6);
+  else if (s.startsWith('GSTIN')) s = s.slice(5);
+  return /^\d{2}[A-Z0-9]{13}$/.test(s);
+}
+
 function buildFormC(ctx) {
   const { auction, rows } = ctx;
   const planters = [], dealers = [];
@@ -860,6 +978,7 @@ function buildFormC(ctx) {
       commission: Number(r.commission) || 0,
       buyer:  r.buyer1 || r.buyer_full || '',
       sbl:    r.buyer_sbl || '',
+      hasGstin: isGstinDealer(cr),
     };
     (classifySeller(cr) === 'DEALER' ? dealers : planters).push(item);
     if (item.rate > maxRate) maxRate = item.rate;
@@ -869,9 +988,15 @@ function buildFormC(ctx) {
   if (!isFinite(minRate)) minRate = 0;
   const avg = totalKilos > 0 ? totalValue / totalKilos : 0;
   const sum = arr => arr.reduce((a, x) => ({ kilos: a.kilos + x.qtySold, value: a.value + x.value }), { kilos: 0, value: 0 });
+  // GSTIN dealer subtotal (Task 9) — sum over every row across BOTH
+  // planters and dealers whose `cr` parses as a GSTIN. The existing
+  // PLANTER/DEALER buckets stay unchanged.
+  const gstinRows = [...planters, ...dealers].filter(x => x.hasGstin);
   return {
     auction, planters, dealers,
     plantersTotals: sum(planters), dealersTotals: sum(dealers),
+    gstinDealers: gstinRows,
+    gstinDealerTotals: sum(gstinRows),
     grand: { kilos: totalKilos, value: totalValue },
     maxRate, minRate, avgRate: avg,
   };
@@ -907,6 +1032,7 @@ function formCJson(db, opts) {
       { title: 'PLANTERS', rows: numberRows(d.planters), totals: { label: 'PLANTERS TOTAL', qtyPut: d.plantersTotals.kilos, qtySold: d.plantersTotals.kilos, value: d.plantersTotals.value } },
       { title: 'DEALERS',  rows: numberRows(d.dealers),  totals: { label: 'DEALERS TOTAL',  qtyPut: d.dealersTotals.kilos,  qtySold: d.dealersTotals.kilos,  value: d.dealersTotals.value } },
     ],
+    gstinDealerTotals: { label: 'GSTIN DEALER TOTAL', qtyPut: d.gstinDealerTotals.kilos, qtySold: d.gstinDealerTotals.kilos, value: d.gstinDealerTotals.value },
     grand: { label: 'GRAND TOTAL', qtyPut: d.grand.kilos, qtySold: d.grand.kilos, value: d.grand.value },
   };
 }
@@ -947,8 +1073,14 @@ async function formCXlsx(db, opts) {
     ws.mergeCells(`A${sec.number}:K${sec.number}`);
     sec.font = { bold: true, size: 10 };
     sec.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } };
+    // Strip the season-year hyphen in registration IDs (e.g.
+    // "CS/55450/520/23-24" → "CS/55450/520/2324") so Excel renders the
+    // ID on a single line and Spice Board's import doesn't choke on
+    // the cosmetic dash.
+    const stripYearHyphen = (s) =>
+      String(s == null ? '' : s).trim().replace(/(\d{2})-(\d{2})\b/g, '$1$2');
     rows.forEach((r, i) => {
-      const dr = ws.addRow([i + 1, r.seller, r.regId, r.qtyPut, r.qtySold, r.rate, r.value, r.sample, r.commission, r.buyer, r.sbl]);
+      const dr = ws.addRow([i + 1, r.seller, stripYearHyphen(r.regId), r.qtyPut, r.qtySold, r.rate, r.value, r.sample, r.commission, r.buyer, stripYearHyphen(r.sbl)]);
       dr.getCell(4).numFmt = '#,##0.000'; dr.getCell(5).numFmt = '#,##0.000';
       dr.getCell(6).numFmt = '#,##0.00';  dr.getCell(7).numFmt = '#,##,##0.00';
       dr.getCell(8).numFmt = '#,##0.00';  dr.getCell(9).numFmt = '#,##0.00';
@@ -962,6 +1094,12 @@ async function formCXlsx(db, opts) {
   }
   emitSection('PLANTERS', d.planters, { label: 'PLANTERS TOTAL', qtyPut: d.plantersTotals.kilos, qtySold: d.plantersTotals.kilos, value: d.plantersTotals.value });
   emitSection('DEALERS',  d.dealers,  { label: 'DEALERS TOTAL',  qtyPut: d.dealersTotals.kilos,  qtySold: d.dealersTotals.kilos,  value: d.dealersTotals.value });
+  // GSTIN-dealer subtotal (Task 9) — sum across both sections.
+  const gd = ws.addRow(['', 'GSTIN DEALER TOTAL', '', d.gstinDealerTotals.kilos, d.gstinDealerTotals.kilos, '', d.gstinDealerTotals.value, '', '', '', '']);
+  gd.font = { bold: true };
+  gd.getCell(4).numFmt = '#,##0.000'; gd.getCell(5).numFmt = '#,##0.000'; gd.getCell(7).numFmt = '#,##,##0.00';
+  gd.eachCell(c => { c.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
+                     c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E4DD' } }; });
   const g = ws.addRow(['', 'GRAND TOTAL', '', d.grand.kilos, d.grand.kilos, '', d.grand.value, '', '', '', '']);
   g.font = { bold: true, size: 11 };
   g.getCell(4).numFmt = '#,##0.000'; g.getCell(5).numFmt = '#,##0.000'; g.getCell(7).numFmt = '#,##,##0.00';
@@ -1004,18 +1142,24 @@ async function formCPdf(db, opts) {
   // Reference alignment: Sl.No center, names + bidder + licence left, all
   // numeric columns right.  Headers always centered above their column.
   const aligns = ['center', 'left', 'left', 'right', 'right', 'right', 'right', 'right', 'right', 'left', 'left'];
-  const headLines = [
-    ['Sl.', 'No.'],
-    ['Name and full', 'address of the', 'planter/dealer'],
-    ['Estate Regis', 'tration #/Bo', 'ard licence#'],
-    ['Qty put', 'for', 'auction'],
-    ['Qty', 'sold', '(kgs)'],
-    ['Rate', 'Rs./kg'],
-    ['Value', '(Rs.)'],
-    ['Sample', 'Refund', '(Rs.)'],
-    ['Comm', 'ission', '(Rs.)'],
-    ['Name and full', 'address of bidder'],
-    ['Spices', 'Board licence', 'number'],
+  // Single-string column headers — wrapText handles line breaks at word
+  // boundaries so words never split mid-character. Previous version
+  // pre-split into chunks like "Estate Regis / tration #/Bo / ard
+  // licence#" which produced ugly wrappings (single letters on new
+  // lines, broken words). Hyphenated-style breaks are introduced as
+  // explicit slashes / spaces so the wrapper has natural break points.
+  const headTitles = [
+    'Sl. No.',
+    'Name and full address of the planter / dealer',
+    'Estate Registration # / Board licence #',
+    'Qty put for auction',
+    'Qty sold (kgs)',
+    'Rate Rs./kg',
+    'Value (Rs.)',
+    'Sample Refund (Rs.)',
+    'Commission (Rs.)',
+    'Name and full address of bidder',
+    'Spices Board licence number',
   ];
   const PADX = 2;          // tight padding for portrait
   let y;
@@ -1036,6 +1180,14 @@ async function formCPdf(db, opts) {
 
   function topHeader() {
     y = m;
+    // Logo (Task 9) — anchored top-left so the centered title remains
+    // visually balanced. We then advance Y to clear the logo height.
+    const _hdrFC = getCompanyHeader(db);
+    const LOGO_H_FC = 40;
+    if (_hdrFC && _hdrFC.logoPath) {
+      try { doc.image(_hdrFC.logoPath, m, y, { fit: [LOGO_H_FC, LOGO_H_FC] }); }
+      catch (_) { /* ignore */ }
+    }
     doc.fillColor('#000').font('Helvetica-Bold').fontSize(12)
        .text('FORM C', m, y, { width: usableW, align: 'center', lineBreak: false });
     y += 16;
@@ -1089,20 +1241,37 @@ async function formCPdf(db, opts) {
   }
 
   function drawHeadRow() {
-    // Header height grows to accommodate the wrapped column titles
+    // Header height grows to accommodate the wrapped column titles.
+    // Auto-shrink the header font so titles fit each column on a single
+    // line when possible; only wrap onto a second line when the column is
+    // truly too narrow even at the minimum font size. This prevents the
+    // "single letter on a new line" artefact that the previous fixed
+    // 6.5pt + word-wrap chain produced for awkward column widths.
     const lineH = 8;
-    doc.fillColor('#000').font('Helvetica').fontSize(6.5);
-    const wrapped = headLines.map((src, i) => {
+    doc.fillColor('#000').font('Helvetica');
+    // Per-column font size: start at 7pt, shrink down to 5.5pt only if
+    // needed to keep the title on one line.
+    const colFontSizes = headTitles.map((title, i) => {
       const w = cw[i] - PADX * 2;
-      const lines = [];
-      src.forEach(piece => wrapText(doc, piece, w).forEach(l => lines.push(l)));
-      return lines;
+      let size = 7;
+      while (size > 5.5) {
+        doc.fontSize(size);
+        if (doc.widthOfString(title) <= w) return size;
+        size -= 0.25;
+      }
+      return 5.5;
+    });
+    const wrapped = headTitles.map((title, i) => {
+      const w = cw[i] - PADX * 2;
+      doc.fontSize(colFontSizes[i]);
+      return wrapText(doc, title, w);
     });
     const HEAD_H = Math.max(32, Math.max(...wrapped.map(l => l.length)) * lineH + 6);
     const top = y;
     doc.rect(m, y, usableW, HEAD_H).lineWidth(0.7).strokeColor('#000').stroke();
     wrapped.forEach((lines, i) => {
       const w = cw[i] - PADX * 2;
+      doc.fontSize(colFontSizes[i]);
       let ty = y + (HEAD_H - lines.length * lineH) / 2;
       lines.forEach(line => {
         doc.text(line, cx[i] + PADX, ty, { width: w, align: 'center', lineBreak: false });
@@ -1125,24 +1294,68 @@ async function formCPdf(db, opts) {
 
   function ensureRoom(n) { if (y + n > doc.page.height - m - 10) { doc.addPage(); topHeader(); } }
 
+  // Normalise an ID-like value (CR/Estate Registration #) so it doesn't
+  // wrap at incidental hyphens. The Spice Board pattern uses a trailing
+  // year range like "CS/55450/520/23-24"; the season-year hyphen is
+  // purely cosmetic and breaks the value across two lines when the
+  // column is narrow. We collapse just THAT trailing "NN-NN" segment
+  // into "NNNN" (e.g. "23-24" → "2324") — other internal hyphens (rare,
+  // but possible in dealer codes) are left alone.
+  function normaliseRegId(s) {
+    if (!s) return '';
+    return String(s).trim().replace(/(\d{2})-(\d{2})\b/g, '$1$2');
+  }
+  // Find the largest font size in [minSize..baseSize] (0.25pt steps) at
+  // which `text` renders on a single line within `maxWidth`. Returns
+  // null when even at minSize it still wraps — caller should fall back
+  // to multi-line wrap.
+  function fitFontSize(text, maxWidth, baseSize, minSize) {
+    if (!text) return baseSize;
+    const prevSize = doc._fontSize;
+    let size = baseSize;
+    while (size >= minSize) {
+      doc.fontSize(size);
+      if (doc.widthOfString(text) <= maxWidth) {
+        doc.fontSize(prevSize);
+        return size;
+      }
+      size -= 0.25;
+    }
+    doc.fontSize(prevSize);
+    return null;
+  }
+
   function row(r, idx, sectionStartIdx) {
     const slNo = String(sectionStartIdx + idx + 1).padStart(3, '0');
-    doc.fillColor('#000').font('Helvetica').fontSize(6.5);
+    const BASE_FONT = 6.5;
+    const MIN_FONT  = 5.0;
+    doc.fillColor('#000').font('Helvetica').fontSize(BASE_FONT);
     const cells = [
-      slNo, r.seller, r.regId,
+      slNo, r.seller, normaliseRegId(r.regId),
       fmtQty(r.qtyPut), fmtQty(r.qtySold), fmtPrice(r.rate),
       fmtMoney(r.value), fmtMoney(r.sample), fmtMoney(r.commission),
-      r.buyer, r.sbl,
+      r.buyer, normaliseRegId(r.sbl),
     ];
     const lineH = 8;
-    // Pre-wrap every cell — text columns may produce multiple lines, the
-    // numeric/short ones stay single-line. Row height = tallest cell.
-    const cellLines = cells.map((v, ci) => wrapText(doc, String(v || ''), cw[ci] - PADX * 2));
+    // For each cell: try to fit on ONE line by shrinking the font down
+    // to MIN_FONT. Only if it still doesn't fit at MIN_FONT do we wrap
+    // to multiple lines (at MIN_FONT) — so ID-like values such as
+    // "CS/55450/520/2324" always render on a single line.
+    const cellFontSizes = cells.map((v, ci) => {
+      const w = cw[ci] - PADX * 2;
+      const text = String(v || '');
+      return fitFontSize(text, w, BASE_FONT, MIN_FONT) || MIN_FONT;
+    });
+    const cellLines = cells.map((v, ci) => {
+      doc.fontSize(cellFontSizes[ci]);
+      return wrapText(doc, String(v || ''), cw[ci] - PADX * 2);
+    });
     const rowH = Math.max(11, Math.max(...cellLines.map(l => l.length)) * lineH + 4);
     ensureRoom(rowH);
     const top = y;
     cellLines.forEach((lines, ci) => {
       const w = cw[ci] - PADX * 2;
+      doc.fontSize(cellFontSizes[ci]);
       let ty = top + (rowH - lines.length * lineH) / 2;
       lines.forEach(line => {
         doc.text(line, cx[ci] + PADX, ty, { width: w, align: aligns[ci], lineBreak: false });
@@ -1204,6 +1417,16 @@ async function formCPdf(db, opts) {
   }
   emitSection('PLANTERS TOTAL', d.planters, { qtyPut: d.plantersTotals.kilos, qtySold: d.plantersTotals.kilos, value: d.plantersTotals.value });
   emitSection('DEALERS TOTAL',  d.dealers,  { qtyPut: d.dealersTotals.kilos,  qtySold: d.dealersTotals.kilos,  value: d.dealersTotals.value });
+
+  // GSTIN-dealer subtotal (Task 9) — sum of every seller whose CR parses
+  // as a GSTIN. Sits above the GRAND TOTAL so the regulator/auditor can
+  // verify the GSTIN-registered fraction at a glance.
+  ensureRoom(18);
+  totalsRow('GSTIN DEALER TOTAL', {
+    qtyPut:  d.gstinDealerTotals.kilos,
+    qtySold: d.gstinDealerTotals.kilos,
+    value:   d.gstinDealerTotals.value,
+  });
 
   ensureRoom(20);
   totalsRow('GRAND TOTAL', { qtyPut: d.grand.kilos, qtySold: d.grand.kilos, value: d.grand.value }, { grand: true });

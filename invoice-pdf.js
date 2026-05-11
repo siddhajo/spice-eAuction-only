@@ -72,10 +72,20 @@ function effectiveCompany(cfg) {
   const idValue = isPartnership
     ? (cfg.partnership_name || '')
     : (cfg.cin || '');
+  // IMCPC rule: when the company's short name is IMCPC, the FULL company
+  // name (trade_name) must be shown in the first/primary company block on
+  // every invoice — short name is only acceptable for follow-up references
+  // (e.g. footer signatory). For all other short names, both fields use the
+  // short label as before.
+  const _shortRaw = String(cfg.short_name || '').trim();
+  const _isImcpc = _shortRaw.toUpperCase() === 'IMCPC';
+  const _primaryName = _isImcpc
+    ? (cfg.trade_name || _shortRaw || '')
+    : (_shortRaw || cfg.trade_name || '');
   return {
     logo:    cfg.logo        || '',
-    name:    cfg.short_name  || cfg.trade_name || '',
-    short:   cfg.short_name  || cfg.trade_name || '',
+    name:    _primaryName,
+    short:   _shortRaw || cfg.trade_name || '',
     pan:     cfg.pan         || '',
     cin:     cfg.cin         || '',
     isPartnership,
@@ -1066,18 +1076,26 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   labeledCell(rightX + rCell, ry2, rCell, rSmall, 'Destination', destination);
   ry2 += rSmall;
 
-  // Dispatch From block — kept BLANK per spec. The cell still renders
-  // so the right-column frame visually matches the left column's height,
-  // but no company/address text is populated. (Previously this read
-  // sister-company fields like cfg.s_company / cfg.s_address1, which
-  // are absent in single-company e-Auction installs and produced stale
-  // or default-filled placeholders.)
+  // Dispatch From block — populated from cfg.dispatch_from (Settings →
+  // Company → Dispatch From). Single user-editable address line. Falls
+  // back to the company's primary address when the dedicated field is
+  // blank, so existing installs that haven't set it yet still show
+  // something useful instead of an empty cell.
   const dispatchFromH = midH - rSmall;
   box(rightX, ry2, rightW, dispatchFromH);
   if (showDispatch) {
-    // Render only the "Dispatch From:" label so the cell is identifiable;
-    // body intentionally left empty.
-    doc.font('Helvetica-Bold').fontSize(8).text('Dispatch From:', rightX + 3, ry2 + 4, { width: rightW - 6 });
+    const dispatchFromText = String(
+      (invoiceData && invoiceData.dispatchFrom) ||
+      cfg.dispatch_from ||
+      cfg.tn_address1 || cfg.address1 || ''
+    ).trim();
+    doc.font('Helvetica-Bold').fontSize(7).fillColor('#000')
+       .text('Dispatch From:', rightX + 3, ry2 + 4, { width: rightW - 6 });
+    if (dispatchFromText) {
+      doc.font('Helvetica').fontSize(8)
+         .text(dispatchFromText, rightX + 3, ry2 + 14,
+               { width: rightW - 6, height: dispatchFromH - 16 });
+    }
   }
 
   y = midY + midH;

@@ -784,7 +784,7 @@ async function exportPdf(db, type, auctionId, cfg, extra = {}) {
     return auctionReports.collectionPdf(db, auctionId);
   }
   if (type === 'trade_report') {
-    return auctionReports.tradeReportPdf(db, auctionId);
+    return auctionReports.tradeReportPdf(db, auctionId, extra || {});
   }
   if (type === 'full_file') {
     throw new Error('Full File is XLSX-only — PDF version is not supported (too many columns to fit on a page).');

@@ -15,6 +15,7 @@ const { exportPdf: exportAnyPdf } = require('./exports-pdf');
 const { DBF_EXPORTS } = require('./dbf-exports');
 const { REPORTS: LORRY_REPORTS } = require('./lorry-reports');
 const { REPORTS: SPICE_BOARD_REPORTS, getReportFilters: getSpiceBoardFilters } = require('./spice-board-reports');
+const { mountMobile } = require('./mobile-bridge');
 // Defensive resolution — see _company-identity-fallback.js. Uses the
 // real getCompanyIdentity from report-formatters.js when available,
 // falls through to an inline fallback otherwise. Fixes
@@ -323,6 +324,23 @@ const requireDelete        = requirePermission('delete');
 const requireDeleteAll     = requirePermission('delete_all');
 const requireUserManage    = requirePermission('user_manage');
 const requireExport        = requirePermission('export');
+
+// ══════════════════════════════════════════════════════════════
+// MOBILE PWA BRIDGE — must mount BEFORE any /api routes below.
+// ══════════════════════════════════════════════════════════════
+// All PWA-compat routes (/api/auth/*, /api/config, /api/status, /api/logo,
+// /api/lots query-string form, trader-bank CRUD, print stubs) live in
+// mobile-bridge.js. They register first so they win any path-pattern
+// collisions with native spice-config routes — notably /api/lots/print-batch
+// would otherwise match /api/lots/:auctionId. Centralising the delta in
+// one file makes it easy to audit and remove later if we ever rewrite the
+// mobile UI on spice-config's native API.
+mountMobile(app, {
+  getDb,
+  requireAuth,
+  hash,
+  ROLE_PERMISSIONS,
+});
 
 // ══════════════════════════════════════════════════════════════
 // AUTH
@@ -755,7 +773,9 @@ app.get('/api/gst-lookup/:gstin', requireView, async (req, res) => {
 // TRADERS (NAM.DBF — sellers/poolers)
 // ══════════════════════════════════════════════════════════════
 app.get('/api/traders', requireViewOrLotEntry, (req, res) => {
-  const { search, limit } = req.query;
+  // Accept `?q=` (mobile PWA) as an alias for `?search=` (desktop UI).
+  const { q, limit } = req.query;
+  const search = req.query.search || q;
   const db = getDb();
   // Helper: attach the `banks` array to each trader row (from trader_banks
   // table). Kept as a post-query hydration step so we don't bloat the main
@@ -918,8 +938,27 @@ app.post('/api/traders', requireTraderWrite, (req, res) => {
 app.put('/api/traders/:id', requireTraderWrite, (req, res) => {
   const t = req.body;
   const db = getDb();
-  db.run(`UPDATE traders SET name=?,cr=?,pan=?,tel=?,aadhar=?,padd=?,ppla=?,pin=?,pstate=?,pst_code=?,ifsc=?,acctnum=?,holder_name=? WHERE id=?`,
-    [t.name,t.cr||'',t.pan||'',t.tel||'',t.aadhar||'',t.padd||'',t.ppla||'',t.pin||'',t.pstate||'',t.pst_code||'',t.ifsc||'',t.acctnum||'',t.holder_name||'',req.params.id]);
+  // Unified seller schema — preserve whatsapp + email alongside the core
+  // fields. Either app can edit either field; the other app sees the
+  // change on the next fetch. (The mobile bridge also serves PUT on
+  // this path and runs FIRST when mounted; this native handler is the
+  // fallback for direct desktop callers that bypass the bridge.)
+  db.run(
+    `UPDATE traders
+       SET name=?, cr=?, pan=?, tel=?, aadhar=?, padd=?, ppla=?, pin=?,
+           pstate=?, pst_code=?, ifsc=?, acctnum=?, holder_name=?,
+           whatsapp=COALESCE(?, whatsapp),
+           email=COALESCE(?, email)
+     WHERE id=?`,
+    [
+      t.name, t.cr||'', t.pan||'', t.tel||'', t.aadhar||'',
+      t.padd||'', t.ppla||'', t.pin||'', t.pstate||'', t.pst_code||'',
+      t.ifsc||'', t.acctnum||'', t.holder_name||'',
+      t.whatsapp != null ? String(t.whatsapp).trim() : null,
+      t.email    != null ? String(t.email).trim()    : null,
+      req.params.id,
+    ]
+  );
   if (Array.isArray(t.banks)) {
     syncTraderBanks(db, parseInt(req.params.id), t.banks);
   }
@@ -945,39 +984,44 @@ app.post('/api/traders/quick', requireAnyPermission('trader_write', 'lot_write')
     return res.status(400).json({ error: 'Name is required' });
   }
   const db = getDb();
-  // De-dupe: if a seller with the same name AND (CR or phone) already
-  // exists, return that one instead of creating a duplicate. Helps when
-  // multiple field users create the same seller around the same time.
+  // Strict uniqueness — match the bridge's POST /api/traders so both
+  // create paths apply the same rules: GSTIN > PAN > (name,phone).
+  const nameTrim = String(t.name).trim().toUpperCase();
+  const crTrim   = String(t.cr  || '').trim();
+  const panTrim  = String(t.pan || '').trim().toUpperCase();
+  const telTrim  = String(t.tel || '').trim();
   let existing = null;
-  if (t.cr && String(t.cr).trim()) {
-    existing = db.get('SELECT * FROM traders WHERE name = ? AND cr = ? LIMIT 1',
-      [String(t.name).trim(), String(t.cr).trim()]);
+  if (crTrim) {
+    existing = db.get('SELECT * FROM traders WHERE cr = ? COLLATE NOCASE LIMIT 1', [crTrim]);
   }
-  if (!existing && t.tel && String(t.tel).trim()) {
-    existing = db.get('SELECT * FROM traders WHERE name = ? AND tel = ? LIMIT 1',
-      [String(t.name).trim(), String(t.tel).trim()]);
+  if (!existing && panTrim) {
+    existing = db.get('SELECT * FROM traders WHERE pan = ? COLLATE NOCASE LIMIT 1', [panTrim]);
+  }
+  if (!existing && telTrim) {
+    existing = db.get('SELECT * FROM traders WHERE name = ? AND tel = ? LIMIT 1', [nameTrim, telTrim]);
   }
   if (existing) {
+    existing.banks = db.all(
+      'SELECT * FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id', [existing.id]
+    );
     return res.json({ success: true, id: existing.id, deduped: true, trader: existing });
   }
-  const info = db.run(`INSERT INTO traders (name,cr,pan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  const info = db.run(
+    `INSERT INTO traders (name,cr,pan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name,whatsapp,email)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
-      String(t.name).trim().toUpperCase(),
-      (t.cr || '').toString().trim(),
-      (t.pan || '').toString().trim().toUpperCase(),
-      (t.tel || '').toString().trim(),
+      nameTrim, crTrim, panTrim, telTrim,
       (t.aadhar || '').toString().trim(),
       (t.padd || '').toString().trim(),
       (t.ppla || '').toString().trim().toUpperCase(),
       (t.pin || '').toString().trim(),
       (t.pstate || 'TAMIL NADU').toString().trim().toUpperCase(),
       (t.pst_code || '33').toString().trim(),
-      '', '', ''
-    ]);
-  // Read back the row to return the full trader shape (matches what the
-  // search endpoint returns so the client can drop it straight into the
-  // selectedSeller state).
+      '', '', '',
+      (t.whatsapp || '').toString().trim(),
+      (t.email    || '').toString().trim(),
+    ]
+  );
   const created = db.get('SELECT * FROM traders WHERE id = ?', [info.lastInsertRowid]);
   if (created) created.banks = [];
   res.json({ success: true, id: info.lastInsertRowid, trader: created });
@@ -1943,6 +1987,12 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
 
 app.post('/api/lots', requireLotWrite, (req, res) => {
   const l = req.body;
+  // Field-name aliasing for the mobile PWA, which uses gross_weight /
+  // sample_weight. Spice-config's columns are gross_wt / sample_wt. We
+  // accept either spelling on input; everything downstream reads l.gross_wt
+  // and l.sample_wt.
+  if (l.gross_weight  != null && l.gross_wt  == null) l.gross_wt  = l.gross_weight;
+  if (l.sample_weight != null && l.sample_wt == null) l.sample_wt = l.sample_weight;
   const db = getDb();
   const auctionId = parseInt(l.auction_id, 10);
   const lotNoStr  = String(l.lot_no || '').trim();
@@ -1980,14 +2030,50 @@ app.post('/api/lots', requireLotWrite, (req, res) => {
     }
   }
 
-  db.run(`INSERT INTO lots (auction_id,lot_no,crop,grade,crpt,branch,state,trader_id,name,padd,ppla,ppin,pstate,pst_code,cr,pan,tel,aadhar,bags,litre,qty,gross_wt,sample_wt,moisture,user_id)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,l.state||'TAMIL NADU',l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',l.user_id||'']);
-  res.json({ success: true });
+  // Backfill the denormalised seller columns from the trader master
+  // record when only `trader_id` is supplied. Mobile lot-entry passes
+  // just the trader_id (the seller search picks an existing trader and
+  // attaches its id); without this backfill, lots.name/cr/ppla/etc. stay
+  // empty and the desktop config app — plus invoices, Tally XML, FoxPro
+  // exports, all the reports — show blank seller info.
+  //
+  // The desktop UI continues to send full payloads with name/cr/etc.
+  // already populated, so this only kicks in for the mobile path. Each
+  // field is only filled if the client didn't supply it, which means a
+  // caller that intentionally sends a different name (e.g. a corrected
+  // spelling) wins over the master record.
+  if (l.trader_id) {
+    const t = db.get('SELECT * FROM traders WHERE id = ?', [parseInt(l.trader_id, 10)]);
+    if (t) {
+      if (!l.name)     l.name     = t.name;
+      if (!l.cr)       l.cr       = t.cr;
+      if (!l.pan)      l.pan      = t.pan;
+      if (!l.tel)      l.tel      = t.tel;
+      if (!l.aadhar)   l.aadhar   = t.aadhar;
+      if (!l.padd)     l.padd     = t.padd;
+      if (!l.ppla)     l.ppla     = t.ppla;
+      if (!l.ppin)     l.ppin     = t.pin;        // column rename: traders.pin → lots.ppin
+      if (!l.pstate)   l.pstate   = t.pstate;
+      if (!l.pst_code) l.pst_code = t.pst_code;
+    }
+  }
+
+  const info = db.run(
+    `INSERT INTO lots (auction_id,lot_no,crop,grade,crpt,branch,state,trader_id,name,padd,ppla,ppin,pstate,pst_code,cr,pan,tel,aadhar,bags,litre,qty,gross_wt,sample_wt,moisture,user_id,bank_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,l.state||'TAMIL NADU',l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',l.user_id||'',l.bank_id||null]);
+  // Return the inserted lot so the mobile UI can refresh from the response
+  // without an extra round-trip. Desktop UI ignores the body and re-fetches.
+  const lot = db.get('SELECT * FROM lots WHERE id = ?', [info.lastInsertRowid]);
+  res.json({ success: true, lot });
 });
 
 app.put('/api/lots/:id', requireLotWrite, (req, res) => {
   const l = req.body; const sets = []; const vals = [];
+  // Field-name aliasing for the mobile PWA (gross_weight/sample_weight) →
+  // spice-config columns (gross_wt/sample_wt).
+  if (l.gross_weight  != null && l.gross_wt  == null) l.gross_wt  = l.gross_weight;
+  if (l.sample_weight != null && l.sample_wt == null) l.sample_wt = l.sample_weight;
   const db = getDb();
   const lotId = parseInt(req.params.id, 10);
 
@@ -1995,7 +2081,7 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
   // duplicate validation that POST /api/lots applies. Skipping these
   // on edit was a previous gap that let users move a lot outside its
   // branch's range or collide with another lot's number.
-  const current = db.get('SELECT auction_id, lot_no, branch FROM lots WHERE id = ?', [lotId]);
+  const current = db.get('SELECT auction_id, lot_no, branch, trader_id FROM lots WHERE id = ?', [lotId]);
   if (current) {
     const newLotNo = (l.lot_no != null) ? String(l.lot_no).trim() : current.lot_no;
     const newBranch = (l.branch != null) ? String(l.branch).trim() : current.branch;
@@ -2018,6 +2104,25 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
           return res.status(400).json({ error: `Lot #${newLotNo} is outside ${newBranch} allocation (${ranges})` });
         }
       }
+    }
+  }
+
+  // If the seller has been swapped (trader_id changed), refresh the
+  // denormalised columns from the new trader. Same one-way contract as
+  // POST: client-supplied values always win; only blanks get backfilled.
+  if (l.trader_id != null && (!current || current.trader_id != l.trader_id)) {
+    const t = db.get('SELECT * FROM traders WHERE id = ?', [parseInt(l.trader_id, 10)]);
+    if (t) {
+      if (!l.name)     l.name     = t.name;
+      if (!l.cr)       l.cr       = t.cr;
+      if (!l.pan)      l.pan      = t.pan;
+      if (!l.tel)      l.tel      = t.tel;
+      if (!l.aadhar)   l.aadhar   = t.aadhar;
+      if (!l.padd)     l.padd     = t.padd;
+      if (!l.ppla)     l.ppla     = t.ppla;
+      if (!l.ppin)     l.ppin     = t.pin;
+      if (!l.pstate)   l.pstate   = t.pstate;
+      if (!l.pst_code) l.pst_code = t.pst_code;
     }
   }
 
@@ -2079,7 +2184,7 @@ app.get('/api/lots/validate/:auctionId', requireViewOrLotEntry, (req, res) => {
 // INVOICES — Sales (GSTIN.PRG / KGSTIN.PRG)
 // ══════════════════════════════════════════════════════════════
 app.get('/api/invoices', requireView, (req, res) => {
-  const { ano, auction_id, from, to } = req.query;
+  const { ano, auction_id, from, to, sale } = req.query;
   const db = getDb();
   const cfg = getSettingsFlat(db);
   // Filter list by active business context: when state=KERALA show only
@@ -2091,6 +2196,12 @@ app.get('/api/invoices', requireView, (req, res) => {
   if (auction_id) { q += ' AND auction_id = ?'; p.push(parseInt(auction_id)); }
   if (ano) { q += ' AND ano = ?'; p.push(ano); }
   if (from && to) { q += ' AND date BETWEEN ? AND ?'; p.push(from, to); }
+  // Sale-type filter (L / I / E) — added to the Sales Invoice list toolbar.
+  const saleNorm = String(sale || '').trim().toUpperCase();
+  if (saleNorm === 'L' || saleNorm === 'I' || saleNorm === 'E') {
+    q += ' AND UPPER(TRIM(COALESCE(sale,""))) = ?';
+    p.push(saleNorm);
+  }
   // e-Auction-only build: every invoice belongs to the single company
   // (ISP), regardless of what's stamped in the `state` column. The
   // original Spice Config app used `state` to split rows between ISP
@@ -2943,11 +3054,44 @@ app.post('/api/invoices/purchase-pdf-bulk', requireView, async (req, res) => {
 // PURCHASES (GSTKBILT.PRG — registered dealer invoices)
 // ══════════════════════════════════════════════════════════════
 app.get('/api/purchases', requireView, (req, res) => {
-  const { auction_id, ano, from, to } = req.query;
+  const { auction_id, ano, from, to, sale } = req.query;
   let q = 'SELECT * FROM purchases WHERE 1=1'; const p = [];
   if (auction_id) { q += ' AND auction_id = ?'; p.push(parseInt(auction_id)); }
   if (ano) { q += ' AND ano = ?'; p.push(ano); }
   if (from && to) { q += ' AND date BETWEEN ? AND ?'; p.push(from, to); }
+  // Sale-type filter (L / I / E). Purchases don't carry sale type, but
+  // the GST split on each row is deterministic:
+  //   • L (Local / intra-state)  → CGST + SGST > 0, IGST = 0
+  //   • I (Inter-state)          → IGST > 0, CGST = SGST = 0
+  //   • E (Export)               → IGST > 0 too; we disambiguate against
+  //                                the dealer's lots (sale='E') when any
+  //                                are tagged, else fall back to I.
+  // Earlier attempt inferred sale from lots.sale (which is blank for
+  // most installs) → L matched everything and I matched nothing.
+  const saleNorm = String(sale || '').trim().toUpperCase();
+  if (saleNorm === 'L') {
+    // Intra-state purchase — CGST+SGST applied, IGST = 0.
+    q += ' AND COALESCE(igst,0) = 0 AND (COALESCE(cgst,0) > 0 OR COALESCE(sgst,0) > 0)';
+  } else if (saleNorm === 'I') {
+    // Inter-state purchase — IGST applied. Excludes Export rows (which
+    // also use IGST) when any of the dealer's lots is explicitly E.
+    q += ' AND COALESCE(igst,0) > 0';
+    q += ` AND NOT EXISTS (
+            SELECT 1 FROM lots l
+             WHERE l.auction_id = purchases.auction_id
+               AND UPPER(TRIM(COALESCE(l.name,''))) = UPPER(TRIM(COALESCE(purchases.name,'')))
+               AND UPPER(TRIM(COALESCE(l.sale,''))) = 'E'
+          )`;
+  } else if (saleNorm === 'E') {
+    // Export — IGST applied AND dealer has at least one E-tagged lot.
+    q += ' AND COALESCE(igst,0) > 0';
+    q += ` AND EXISTS (
+            SELECT 1 FROM lots l
+             WHERE l.auction_id = purchases.auction_id
+               AND UPPER(TRIM(COALESCE(l.name,''))) = UPPER(TRIM(COALESCE(purchases.name,'')))
+               AND UPPER(TRIM(COALESCE(l.sale,''))) = 'E'
+          )`;
+  }
   q += ' ORDER BY date DESC LIMIT 500';
   res.json(getDb().all(q, p));
 });
@@ -3251,11 +3395,32 @@ app.post('/api/purchases/pdf-bulk', requireView, async (req, res) => {
 // BILLS — Agriculturist Bills of Supply (GSTKBILP/GSTBILP)
 // ══════════════════════════════════════════════════════════════
 app.get('/api/bills', requireView, (req, res) => {
-  const { auction_id, ano, from, to } = req.query;
+  const { auction_id, ano, from, to, branch } = req.query;
   let q = 'SELECT * FROM bills WHERE 1=1'; const p = [];
   if (auction_id) { q += ' AND auction_id = ?'; p.push(parseInt(auction_id)); }
   if (ano) { q += ' AND ano = ?'; p.push(ano); }
   if (from && to) { q += ' AND date BETWEEN ? AND ?'; p.push(from, to); }
+  // Branch filter — bills.br column may not be set for legacy rows, so
+  // we also infer via the underlying lot's branch. lots has no `ano`
+  // column; we join through bills.auction_id (or look up the auction id
+  // from bills.ano) and match on seller name. Falls back to bills.br
+  // when auction_id isn't populated either.
+  const branchFilter = String(branch || '').trim();
+  if (branchFilter) {
+    q += ` AND (
+            UPPER(TRIM(COALESCE(br,''))) = UPPER(TRIM(?))
+            OR EXISTS (
+              SELECT 1 FROM lots l
+               WHERE l.auction_id = COALESCE(
+                       bills.auction_id,
+                       (SELECT a.id FROM auctions a WHERE a.ano = bills.ano LIMIT 1)
+                     )
+                 AND UPPER(TRIM(COALESCE(l.name,''))) = UPPER(TRIM(COALESCE(bills.name,'')))
+                 AND UPPER(TRIM(COALESCE(l.branch,''))) = UPPER(TRIM(?))
+            )
+          )`;
+    p.push(branchFilter, branchFilter);
+  }
   q += ' ORDER BY date DESC, bil DESC LIMIT 500';
   res.json(withFmtDate(getDb().all(q, p)));
 });
@@ -3382,6 +3547,196 @@ app.get('/api/bills/pdf/:auctionId/:sellerName', requireView, async (req, res) =
   }
 });
 
+// Commission Bill (Format 2) — auction-wide commission/handling summary.
+// Renders as PDF or XLSX. One row per seller; totals row at the bottom.
+// Optional ?branch=<NAME> restricts to lots in that branch.
+//
+// PDF/XLSX is opened in a new tab via window.open(), so we accept the
+// token as a query string (mirrors other windowed routes).
+app.get('/api/bills/commission-bill-f2/:auctionId', (req, res, next) => {
+  const hdr = (req.headers.authorization || '').replace('Bearer ', '');
+  const tok = hdr || String(req.query.token || '');
+  if (!tok) return res.status(401).json({ error: 'No token' });
+  const db = getDb();
+  const session = db.get('SELECT * FROM sessions WHERE token = ?', [tok]);
+  if (!session) return res.status(403).json({ error: 'Session expired' });
+  const user = db.get('SELECT * FROM users WHERE id = ?', [session.user_id]);
+  if (!user) return res.status(403).json({ error: 'Unauthorized' });
+  req.user = user;
+  next();
+}, async (req, res) => {
+  try {
+    const db = getDb();
+    const cfg = getSettingsFlat(db);
+    const auctionId = parseInt(req.params.auctionId, 10);
+    const auction = db.get('SELECT * FROM auctions WHERE id = ?', [auctionId]);
+    if (!auction) return res.status(404).json({ error: 'Trade not found' });
+
+    const branchFilter = String(req.query.branch || '').trim();
+    const where = branchFilter ? ' AND l.branch = ?' : '';
+    const params = branchFilter ? [auctionId, branchFilter] : [auctionId];
+
+    // One row per seller — sum the per-lot commission/handling/refund/GST.
+    const rows = db.all(
+      `SELECT l.name, l.branch, l.cr,
+              COUNT(*) AS lots,
+              COALESCE(SUM(l.qty),0)     AS qty,
+              COALESCE(SUM(l.amount),0)  AS puramt,
+              COALESCE(SUM(l.refund),0)  AS refund,
+              COALESCE(SUM(l.com),0)     AS commission,
+              COALESCE(SUM(l.sertax),0)  AS handling,
+              COALESCE(SUM(l.cgst),0)    AS cgst,
+              COALESCE(SUM(l.sgst),0)    AS sgst,
+              COALESCE(SUM(l.igst),0)    AS igst
+         FROM lots l
+        WHERE l.auction_id = ? AND l.amount > 0` + where +
+       ` GROUP BY l.name
+         ORDER BY l.name`,
+      params
+    );
+
+    const totals = rows.reduce((acc, r) => {
+      acc.lots       += Number(r.lots) || 0;
+      acc.qty        += Number(r.qty) || 0;
+      acc.puramt     += Number(r.puramt) || 0;
+      acc.refund     += Number(r.refund) || 0;
+      acc.commission += Number(r.commission) || 0;
+      acc.handling   += Number(r.handling) || 0;
+      acc.cgst       += Number(r.cgst) || 0;
+      acc.sgst       += Number(r.sgst) || 0;
+      acc.igst       += Number(r.igst) || 0;
+      return acc;
+    }, { lots:0, qty:0, puramt:0, refund:0, commission:0, handling:0, cgst:0, sgst:0, igst:0 });
+    totals.gst = totals.cgst + totals.sgst + totals.igst;
+    totals.netDue = totals.commission + totals.handling + totals.gst;
+
+    const fmtAmt = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fmtQty = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+    const dateFmt = auction.date ? String(auction.date).split('-').reverse().join('/') : '';
+    const format = String(req.query.format || 'pdf').toLowerCase();
+
+    if (format === 'xlsx') {
+      const ExcelJS = require('exceljs');
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('CommissionBillF2');
+      ws.columns = [
+        { width: 5 }, { width: 28 }, { width: 14 }, { width: 8 }, { width: 12 },
+        { width: 14 }, { width: 12 }, { width: 14 }, { width: 12 }, { width: 12 }, { width: 14 },
+      ];
+      const headerStartRow = writeXlsxCompanyHeader(wb, ws, getCompanyHeader(db), {
+        colCount: 11,
+        title: 'COMMISSION BILL (FORMAT 2)',
+        metaLines: [
+          `e-TRADE No: ${auction.ano}`,
+          `DATE: ${dateFmt}`,
+          branchFilter ? `BRANCH: ${branchFilter}` : 'BRANCH: ALL',
+        ],
+      });
+      const head = ws.getRow(headerStartRow);
+      ['SL', 'SELLER', 'BRANCH', 'LOTS', 'QTY (kg)', 'PUR AMOUNT', 'REFUND',
+       'COMMISSION', 'HANDLING', 'GST', 'NET DUE'].forEach((h, i) => head.getCell(i + 1).value = h);
+      head.font = { bold: true };
+      head.eachCell(c => {
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E4DD' } };
+        c.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
+        c.alignment = { horizontal: 'center', vertical: 'middle' };
+      });
+      rows.forEach((r, idx) => {
+        const gst = (Number(r.cgst)||0)+(Number(r.sgst)||0)+(Number(r.igst)||0);
+        const netDue = (Number(r.commission)||0)+(Number(r.handling)||0)+gst;
+        const row = ws.addRow([
+          idx + 1, r.name || '', r.branch || '', Number(r.lots) || 0,
+          Number(r.qty) || 0, Number(r.puramt) || 0, Number(r.refund) || 0,
+          Number(r.commission) || 0, Number(r.handling) || 0, gst, netDue,
+        ]);
+        row.getCell(5).numFmt = '#,##0.000';
+        for (const c of [6, 7, 8, 9, 10, 11]) row.getCell(c).numFmt = '#,##,##0.00';
+      });
+      const totalsRow = ws.addRow([
+        '', 'TOTAL', '', totals.lots, totals.qty, totals.puramt, totals.refund,
+        totals.commission, totals.handling, totals.gst, totals.netDue,
+      ]);
+      totalsRow.font = { bold: true };
+      totalsRow.getCell(5).numFmt = '#,##0.000';
+      for (const c of [6, 7, 8, 9, 10, 11]) totalsRow.getCell(c).numFmt = '#,##,##0.00';
+      totalsRow.eachCell(c => {
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } };
+        c.border = { top: { style: 'thin' }, bottom: { style: 'double' } };
+      });
+      const buf = await wb.xlsx.writeBuffer();
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition',
+        `attachment; filename="CommissionBillF2_${auction.ano}${branchFilter ? '_' + branchFilter : ''}.xlsx"`);
+      return res.send(Buffer.from(buf));
+    }
+
+    // PDF path (default).
+    const PDFDocument = require('pdfkit');
+    const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 24 });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition',
+      `inline; filename="CommissionBillF2_${auction.ano}${branchFilter ? '_' + branchFilter : ''}.pdf"`);
+    doc.pipe(res);
+
+    const m = 24, w = doc.page.width - m * 2;
+    doc.font('Helvetica-Bold').fontSize(14).text('COMMISSION BILL (FORMAT 2)', m, m, { width: w, align: 'center' });
+    doc.font('Helvetica').fontSize(10).text(
+      `Trade #${auction.ano}   |   ${dateFmt}   |   Branch: ${branchFilter || 'All'}`,
+      m, m + 18, { width: w, align: 'center' }
+    );
+
+    // Column layout
+    const colDefs = [
+      { k: 'sl',    label: '#',           w: 24, align: 'right' },
+      { k: 'name',  label: 'Seller',      w: 160, align: 'left'  },
+      { k: 'branch',label: 'Branch',      w: 70, align: 'left'  },
+      { k: 'lots',  label: 'Lots',        w: 36, align: 'right' },
+      { k: 'qty',   label: 'Qty (kg)',    w: 70, align: 'right' },
+      { k: 'puramt',label: 'Pur Amt',     w: 80, align: 'right' },
+      { k: 'refund',label: 'Refund',      w: 70, align: 'right' },
+      { k: 'commission', label: 'Commission', w: 85, align: 'right' },
+      { k: 'handling',   label: 'Handling',   w: 70, align: 'right' },
+      { k: 'gst',   label: 'GST',         w: 70, align: 'right' },
+      { k: 'netDue',label: 'Net Due',     w: 85, align: 'right' },
+    ];
+    let cx = m;
+    const colX = colDefs.map(c => { const x = cx; cx += c.w; return x; });
+    let y = m + 50;
+    doc.font('Helvetica-Bold').fontSize(9);
+    colDefs.forEach((c, i) => doc.text(c.label, colX[i] + 2, y, { width: c.w - 4, align: c.align }));
+    y += 14;
+    doc.moveTo(m, y - 2).lineTo(m + w, y - 2).stroke();
+
+    doc.font('Helvetica').fontSize(9);
+    rows.forEach((r, idx) => {
+      if (y > doc.page.height - 60) { doc.addPage(); y = m + 20; }
+      const gst = (Number(r.cgst)||0)+(Number(r.sgst)||0)+(Number(r.igst)||0);
+      const netDue = (Number(r.commission)||0)+(Number(r.handling)||0)+gst;
+      const cells = [
+        String(idx + 1), r.name || '', r.branch || '', String(r.lots || 0),
+        fmtQty(r.qty), fmtAmt(r.puramt), fmtAmt(r.refund),
+        fmtAmt(r.commission), fmtAmt(r.handling), fmtAmt(gst), fmtAmt(netDue),
+      ];
+      colDefs.forEach((c, i) => doc.text(cells[i], colX[i] + 2, y, { width: c.w - 4, align: c.align }));
+      y += 13;
+    });
+
+    doc.moveTo(m, y).lineTo(m + w, y).stroke();
+    y += 4;
+    doc.font('Helvetica-Bold').fontSize(9);
+    const totCells = [
+      '', 'TOTAL', '', String(totals.lots),
+      fmtQty(totals.qty), fmtAmt(totals.puramt), fmtAmt(totals.refund),
+      fmtAmt(totals.commission), fmtAmt(totals.handling), fmtAmt(totals.gst), fmtAmt(totals.netDue),
+    ];
+    colDefs.forEach((c, i) => doc.text(totCells[i], colX[i] + 2, y, { width: c.w - 4, align: c.align }));
+
+    doc.end();
+  } catch (e) {
+    if (!res.headersSent) res.status(500).json({ error: 'Commission Bill F2 failed: ' + e.message });
+  }
+});
+
 // Bulk Agri Bill PDF — merges N bills into a single PDF.
 // Body: { ids: [1, 2, 3, ...] } — DB row IDs from the `bills` table.
 app.post('/api/bills/pdf-bulk', requireView, async (req, res) => {
@@ -3474,7 +3829,7 @@ app.put('/api/bills/:id', requireInvoiceWrite, (req, res) => {
 //     that pre-dates invoice generation).
 // Returns one of 'I', 'E', 'L', or '' (no fallback was possible — caller
 // should treat empty as local-by-default).
-function deriveDealerSaleType(db, auctionId, dealerName, dealerCr, cfg) {
+function deriveDealerSaleType(db, auctionId, dealerName, dealerCr, cfg, purchase) {
   if (auctionId && dealerName) {
     const rows = db.all(
       `SELECT UPPER(TRIM(COALESCE(sale,''))) AS s, COUNT(*) AS n
@@ -3488,7 +3843,16 @@ function deriveDealerSaleType(db, auctionId, dealerName, dealerCr, cfg) {
     const dominant = rows.length ? String(rows[0].s || '').toUpperCase() : '';
     if (dominant === 'I' || dominant === 'E' || dominant === 'L') return dominant;
   }
-  // Fallback: GSTIN state-code comparison.
+  // Primary fallback: read the dealer's own purchase row. The GST split
+  // recorded there (cgst/sgst vs igst) is the authoritative inter/intra
+  // signal — it was computed at purchase time from the dealer's GSTIN
+  // state. Use this BEFORE the GSTIN-string heuristic, since it always
+  // reflects the actual GST already paid.
+  if (purchase) {
+    if (Number(purchase.igst) > 0) return 'I';
+    if (Number(purchase.cgst) > 0 || Number(purchase.sgst) > 0) return 'L';
+  }
+  // Secondary fallback: GSTIN state-code comparison.
   let dealerStateCode = '';
   let cr = String(dealerCr || '').trim().toUpperCase();
   if (cr.startsWith('GSTIN.')) cr = cr.slice(6);
@@ -3538,7 +3902,17 @@ app.get('/api/debit-notes', requireView, (req, res) => {
 // Legacy callers still passing `{ discount, noteNo }` are accepted —
 // explicit values override the derivation. `saleType` is accepted and
 // ignored (kept for back-compat with very old API consumers).
-app.post('/api/debit-notes/generate', requireInvoiceWrite, (req, res) => {
+//
+// Feature flag: DN generation is gated by `flag_debit_note`. When OFF,
+// every write path returns 403 (read paths stay open so existing rows
+// remain visible if the flag is later toggled off).
+function requireDebitNoteEnabled(req, res, next) {
+  const cfg = getSettingsFlat(getDb());
+  const on = String(cfg.flag_debit_note || '').toLowerCase() === 'true';
+  if (!on) return res.status(403).json({ error: 'Debit Note feature is disabled — enable "flag_debit_note" in Settings → Flags' });
+  next();
+}
+app.post('/api/debit-notes/generate', requireInvoiceWrite, requireDebitNoteEnabled, (req, res) => {
   const db = getDb();
   const cfg = getSettingsFlat(db);
   const purchno = String(req.body.purchno || req.body.invoiceNo || '').trim();
@@ -3614,30 +3988,42 @@ app.post('/api/debit-notes/generate', requireInvoiceWrite, (req, res) => {
     if (commissionPct <= 0) {
       return res.status(400).json({ error: 'Commission % not configured in settings' });
     }
-    const commissionAmt = Math.round(baseAmt * commissionPct / 100);
-    const handlingAmt   = Math.round(commissionAmt * hpcPct / 100);
-    discountAmt = commissionAmt + handlingAmt;
+    // 2-decimal precision throughout (Refund × CommissionPct may have paise).
+    const refundAmt     = Number(purchase.refund || 0);
+    const commissionAmt = Math.round((baseAmt + refundAmt) * commissionPct / 100 * 100) / 100;
+    const handlingAmt   = Math.round(commissionAmt * hpcPct / 100 * 100) / 100;
+    discountAmt = Math.round((commissionAmt + handlingAmt) * 100) / 100;
   }
   if (discountAmt <= 0) {
     return res.status(400).json({ error: 'Computed DN amount is zero — check Commission % / Handling % in settings' });
   }
 
-  // GST split — driven by the dealer's lot SALE TYPE in this trade.
+  // GST split — driven by the dealer's SALE TYPE for this trade.
   //   'I' / 'E' (Inter-state / Export) → IGST
   //   'L' or empty (Local)             → CGST + SGST (50/50 split)
-  // Falls back to GSTIN state-code comparison if no lots are tagged.
-  const dealerSaleType = deriveDealerSaleType(db, purchase.auction_id, dealerName, purchase.cr, cfg);
+  // Resolution order:
+  //   1. dealer's lot.sale (when tagged after invoice generation)
+  //   2. purchase's GST split (igst > 0 ⇒ inter)
+  //   3. dealer GSTIN state-code vs company state-code
+  const dealerSaleType = deriveDealerSaleType(
+    db, purchase.auction_id, dealerName, purchase.cr, cfg, purchase
+  );
   const isInter = dealerSaleType === 'I' || dealerSaleType === 'E';
 
   const dnGstRate = Number(cfg.discount_gst) || Number(cfg.gst_service) || 18;
+  // GST is always emitted on a registered DN — the DN is a service-type
+  // credit and uses the configured discount GST rate regardless of the
+  // source purchase's own split. Earlier code skipped GST when the
+  // source purchase had no GST, which left DNs against URD purchases
+  // with zero tax — but URDs don't get DNs in this build (they get
+  // bills of supply), so the guard was a no-op that occasionally masked
+  // GST on legitimate registered-dealer DNs.
   let cgst = 0, sgst = 0, igst = 0;
-  if (Number(purchase.cgst) || Number(purchase.sgst) || Number(purchase.igst)) {
-    if (isInter) {
-      igst = Math.round(discountAmt * dnGstRate / 100 * 100) / 100;
-    } else {
-      const half = Math.round(discountAmt * (dnGstRate / 2) / 100 * 100) / 100;
-      cgst = half; sgst = half;
-    }
+  if (isInter) {
+    igst = Math.round(discountAmt * dnGstRate / 100 * 100) / 100;
+  } else {
+    const half = Math.round(discountAmt * (dnGstRate / 2) / 100 * 100) / 100;
+    cgst = half; sgst = half;
   }
   const total = Math.round((discountAmt + cgst + sgst + igst) * 100) / 100;
 
@@ -3745,7 +4131,7 @@ app.post('/api/debit-notes/generate', requireInvoiceWrite, (req, res) => {
 //
 // Idempotency: skip per (ano, dealer name) pair already DN'd. Returns
 // { created, skipped, skippedDetails[], generated[] }.
-app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, (req, res) => {
+app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNoteEnabled, (req, res) => {
   const db = getDb();
   const cfg = getSettingsFlat(db);
 
@@ -3888,33 +4274,35 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, (req, res) => {
       skipped.push({ invo: p.invo, ano, buyer: dealerName, reason: 'zero amount' });
       continue;
     }
-    const commissionAmt = Math.round(baseAmt * commissionPct / 100);
-    const handlingAmt   = Math.round(commissionAmt * hpcPct / 100);
-    const discountAmt   = commissionAmt + handlingAmt;
+    // 2-decimal precision: (Amount + Refund) × Commission %, then × Handling %.
+    const refundAmt     = Number(p.refund || 0);
+    const commissionAmt = Math.round((baseAmt + refundAmt) * commissionPct / 100 * 100) / 100;
+    const handlingAmt   = Math.round(commissionAmt * hpcPct / 100 * 100) / 100;
+    const discountAmt   = Math.round((commissionAmt + handlingAmt) * 100) / 100;
     if (discountAmt <= 0) {
       skipped.push({ invo: p.invo, ano, buyer: dealerName, reason: 'computed DN amount is zero' });
       continue;
     }
 
-    // Intra/inter classification — driven by the dealer's lot SALE TYPE
-    // in this trade.
+    // Intra/inter classification — sale-type driven:
     //   'I' / 'E' (Inter-state / Export) → IGST
     //   'L' or empty (Local)             → CGST + SGST
-    // Falls back to GSTIN state-code comparison if no lots carry a sale
-    // type (legacy data without invoice generation).
-    const dealerSaleType = deriveDealerSaleType(db, p.auction_id, dealerName, p.cr, cfg);
+    // Resolution order:
+    //   1. dealer's lot.sale (when tagged after invoice generation)
+    //   2. purchase's GST split (igst > 0 ⇒ inter)
+    //   3. dealer GSTIN state-code vs company state-code
+    const dealerSaleType = deriveDealerSaleType(db, p.auction_id, dealerName, p.cr, cfg, p);
     const isInter = dealerSaleType === 'I' || dealerSaleType === 'E';
 
-    // GST is only emitted when the source purchase carried GST
-    // (registered dealer); URD/agri purchases produce exempt DNs.
+    // GST is always emitted on a registered DN at the configured discount
+    // rate (typically 18%); URD/agri sellers don't get DNs in this build,
+    // they get Bills of Supply instead.
     let cgst = 0, sgst = 0, igst = 0;
-    if (Number(p.cgst) || Number(p.sgst) || Number(p.igst)) {
-      if (isInter) {
-        igst = Math.round(discountAmt * dnGstRate / 100 * 100) / 100;
-      } else {
-        const half = Math.round(discountAmt * (dnGstRate / 2) / 100 * 100) / 100;
-        cgst = half; sgst = half;
-      }
+    if (isInter) {
+      igst = Math.round(discountAmt * dnGstRate / 100 * 100) / 100;
+    } else {
+      const half = Math.round(discountAmt * (dnGstRate / 2) / 100 * 100) / 100;
+      cgst = half; sgst = half;
     }
     const total = Math.round((discountAmt + cgst + sgst + igst) * 100) / 100;
 
@@ -4007,7 +4395,7 @@ app.get('/api/debit-notes/next-note-no', requireView, (req, res) => {
 // Hard-disabled with 410 Gone so any orphan client (older browser tab,
 // scripted consumer) gets a clear migration message instead of silently
 // creating cross-trade data.
-app.post('/api/debit-notes/generate-all', requireInvoiceWrite, (req, res) => {
+app.post('/api/debit-notes/generate-all', requireInvoiceWrite, requireDebitNoteEnabled, (req, res) => {
   res.status(410).json({
     error: 'Cross-trade DN generation is no longer supported. Use POST /api/debit-notes/generate-bulk with { ano } to generate DNs for a specific trade.',
   });
@@ -4779,14 +5167,21 @@ app.get('/api/exports/:type/:auctionId', requireExport, async (req, res) => {
   try {
     const db = getDb();
     let buffer;
+    // Extra filters (branch, sale type, etc.) — passed through to the
+    // export function so it can restrict aggregates. Backward-compatible:
+    // existing exports that ignore the trailing arg are unaffected.
+    const extra = {
+      branch:   req.query.branch   || '',
+      saleType: req.query.saleType || req.query.sale_type || '',
+    };
     if (exportDef.needsCfg) {
       const cfg = getSettingsFlat(db);
       // Pass state too so exports that need both (e.g. Praman) can filter
       // by state without losing cfg context. Backward-compatible: existing
       // needsCfg exports that ignore the 4th arg are unaffected.
-      buffer = await exportDef.fn(db, auctionId, cfg, req.query.state);
+      buffer = await exportDef.fn(db, auctionId, cfg, req.query.state, extra);
     } else {
-      buffer = await exportDef.fn(db, auctionId, req.query.state);
+      buffer = await exportDef.fn(db, auctionId, req.query.state, extra);
     }
     // Per-export-type content-type/extension override (defaults to xlsx).
     // CSV exports like Praman use ext:'csv', mime:'text/csv'.
@@ -5733,6 +6128,485 @@ function repairBadDates(db) {
   }
   if (totalFixed > 0) console.log(`  Date repair: ${totalFixed} total row(s) normalized to yyyy-mm-dd`);
 }
+
+// ══════════════════════════════════════════════════════════════
+// AUDIT LOG — admin viewer (table is already populated by various
+// writers across the codebase; this just exposes it). Read with
+// paging so the UI doesn't blow up on a year of activity; cleared
+// in one shot by the explicit DELETE.
+// ══════════════════════════════════════════════════════════════
+app.get('/api/audit-log', requireUserManage, (req, res) => {
+  const db = getDb();
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(200, Math.max(10, parseInt(req.query.limit, 10) || 50));
+  const offset = (page - 1) * limit;
+  // Optional filters — admin can drill into one user's or entity's actions
+  const where = [];
+  const params = [];
+  if (req.query.user_id) { where.push('user_id = ?'); params.push(req.query.user_id); }
+  if (req.query.entity)  { where.push('entity = ?');  params.push(req.query.entity);  }
+  if (req.query.action)  { where.push('action = ?');  params.push(req.query.action);  }
+  const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  const totalRow = db.get(`SELECT COUNT(*) AS cnt FROM audit_log ${whereSql}`, params);
+  const total = (totalRow && totalRow.cnt) || 0;
+  const logs = db.all(
+    `SELECT * FROM audit_log ${whereSql} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
+  );
+  res.json({ logs, total, page, totalPages: Math.max(1, Math.ceil(total / limit)) });
+});
+
+// Clear the audit log entirely. No partial-delete UI on the admin
+// side; the use case is "season is over, start fresh". Logged into
+// the audit log itself via the deletion record.
+app.delete('/api/audit-log', requireUserManage, (req, res) => {
+  const db = getDb();
+  const before = db.get('SELECT COUNT(*) AS cnt FROM audit_log');
+  db.run('DELETE FROM audit_log');
+  // Self-log the wipe so there's a trail of who cleared it.
+  try {
+    db.run(
+      `INSERT INTO audit_log (user_id, action, entity, entity_id, details)
+       VALUES (?, ?, ?, NULL, ?)`,
+      [req.user && req.user.username || 'admin', 'clear', 'audit_log',
+       JSON.stringify({ removed: (before && before.cnt) || 0 })]
+    );
+  } catch (_) {}
+  res.json({ cleared: true, removed: (before && before.cnt) || 0 });
+});
+
+// ══════════════════════════════════════════════════════════════
+// LOGIN HISTORY — admin viewer
+// ══════════════════════════════════════════════════════════════
+// Populated by the mobile-bridge on every /api/auth/login call.
+// This endpoint surfaces the table so admins can see who's been
+// logging in from where.
+app.get('/api/login-history', requireUserManage, (req, res) => {
+  const db = getDb();
+  const limit = Math.min(500, Math.max(10, parseInt(req.query.limit, 10) || 100));
+  const userId = req.query.user_id ? parseInt(req.query.user_id, 10) : null;
+  // JOIN users to get the latest username (in case it changed since
+  // the row was logged). Falls back to the snapshot on the row.
+  const params = [];
+  let where = '';
+  if (userId) { where = 'WHERE lh.user_id = ?'; params.push(userId); }
+  const logs = db.all(
+    `SELECT lh.*, COALESCE(u.username, lh.username) AS current_username
+       FROM login_history lh
+       LEFT JOIN users u ON u.id = lh.user_id
+       ${where}
+       ORDER BY lh.created_at DESC, lh.id DESC
+       LIMIT ?`,
+    [...params, limit]
+  );
+  res.json({ logs });
+});
+
+app.delete('/api/login-history', requireUserManage, (req, res) => {
+  const db = getDb();
+  const before = db.get('SELECT COUNT(*) AS cnt FROM login_history');
+  db.run('DELETE FROM login_history');
+  res.json({ cleared: true, removed: (before && before.cnt) || 0 });
+});
+
+// ══════════════════════════════════════════════════════════════
+// TRADE REPORTS — JSON + PDF summaries for an auction
+// ══════════════════════════════════════════════════════════════
+
+// GET /api/reports/trade-summary/:auctionId
+// JSON snapshot of one auction's activity: per-branch, per-seller,
+// per-grade breakdowns, plus hourly entry rate. Drives the desktop
+// "Reports → Trade Summary" view.
+app.get('/api/reports/trade-summary/:auctionId', requireViewOrLotEntry, (req, res) => {
+  const db = getDb();
+  const auctionId = parseInt(req.params.auctionId, 10);
+  const auction = db.get('SELECT * FROM auctions WHERE id = ?', [auctionId]);
+  if (!auction) return res.status(404).json({ error: 'Trade not found' });
+
+  // Optional branch filter — when set, every aggregate restricts to lots
+  // from that branch. Drives the "Branch" dropdown on Lots Summary cards.
+  const branchFilter = String(req.query.branch || '').trim();
+  const bWhere = branchFilter ? ' AND branch = ?' : '';
+  const bParams = branchFilter ? [branchFilter] : [];
+
+  // Per-branch — primary view dad uses to compare today's branches.
+  // Even when a branch filter is applied we still return every branch row
+  // (so the UI can offer easy switching) — only the *aggregates* below
+  // honour the filter.
+  const branchWise = db.all(
+    `SELECT branch,
+            COUNT(*)             AS lot_count,
+            SUM(bags)            AS total_bags,
+            SUM(qty)             AS total_qty,
+            COUNT(DISTINCT trader_id) AS seller_count,
+            SUM(CASE WHEN amount > 0 THEN 1 ELSE 0 END) AS sold_lots,
+            SUM(CASE WHEN amount > 0 THEN qty ELSE 0 END) AS sold_qty,
+            SUM(CASE WHEN COALESCE(amount,0) <= 0 THEN 1 ELSE 0 END) AS withdrawn_lots,
+            SUM(CASE WHEN COALESCE(amount,0) <= 0 THEN qty ELSE 0 END) AS withdrawn_qty,
+            MAX(CASE WHEN amount > 0 THEN price END) AS max_price,
+            MIN(CASE WHEN amount > 0 THEN price END) AS min_price,
+            CASE WHEN SUM(CASE WHEN amount > 0 THEN qty ELSE 0 END) > 0
+                 THEN SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) * 1.0
+                      / SUM(CASE WHEN amount > 0 THEN qty ELSE 0 END)
+                 ELSE 0 END AS avg_price
+       FROM lots WHERE auction_id = ?
+      GROUP BY branch ORDER BY total_qty DESC`,
+    [auctionId]
+  );
+
+  // Sold/Withdrawn/Min/Max/Avg aggregates — restricted to the selected
+  // branch when one is passed; otherwise across all branches in the trade.
+  const aggSold = db.get(
+    `SELECT COUNT(*) AS lots, COALESCE(SUM(qty),0) AS qty,
+            COALESCE(SUM(bags),0) AS bags, COALESCE(SUM(amount),0) AS cost
+       FROM lots WHERE auction_id = ? AND amount > 0` + bWhere,
+    [auctionId, ...bParams]
+  ) || { lots:0, qty:0, bags:0, cost:0 };
+  const aggWithdrawn = db.get(
+    `SELECT COUNT(*) AS lots, COALESCE(SUM(qty),0) AS qty,
+            COALESCE(SUM(bags),0) AS bags
+       FROM lots WHERE auction_id = ? AND COALESCE(amount,0) <= 0` + bWhere,
+    [auctionId, ...bParams]
+  ) || { lots:0, qty:0, bags:0 };
+  const aggPrice = db.get(
+    `SELECT MIN(price) AS min_price, MAX(price) AS max_price
+       FROM lots WHERE auction_id = ? AND amount > 0` + bWhere,
+    [auctionId, ...bParams]
+  ) || { min_price: 0, max_price: 0 };
+  const avgPrice = aggSold.qty > 0 ? (Number(aggSold.cost) / Number(aggSold.qty)) : 0;
+  const branchAggregates = {
+    branch: branchFilter || null,
+    sold:      { lots: aggSold.lots, bags: aggSold.bags, qty: aggSold.qty, cost: aggSold.cost },
+    withdrawn: { lots: aggWithdrawn.lots, bags: aggWithdrawn.bags, qty: aggWithdrawn.qty },
+    min: Number(aggPrice.min_price) || 0,
+    max: Number(aggPrice.max_price) || 0,
+    avg: avgPrice,
+  };
+
+  // Per-seller — sourced from traders master (fresh names if edited)
+  // with denormalised fallback. Useful for "who brought the most".
+  const sellerWise = db.all(
+    `SELECT COALESCE(t.name, l.name, 'Unknown') AS seller_name,
+            l.trader_id,
+            l.branch,
+            COUNT(*)        AS lot_count,
+            SUM(l.bags)     AS total_bags,
+            SUM(l.qty)      AS total_qty
+       FROM lots l
+       LEFT JOIN traders t ON t.id = l.trader_id
+      WHERE l.auction_id = ?
+      GROUP BY COALESCE(l.trader_id, l.name)
+      ORDER BY total_qty DESC`,
+    [auctionId]
+  );
+
+  // Per-user — which staff entered how many lots. Gated behind the
+  // show_username setting so it's optional (some shops don't want
+  // this surfaced).
+  const userWise = db.all(
+    `SELECT user_id,
+            COUNT(*)    AS lot_count,
+            SUM(bags)   AS total_bags,
+            SUM(qty)    AS total_qty
+       FROM lots WHERE auction_id = ? AND user_id != ''
+      GROUP BY user_id ORDER BY lot_count DESC`,
+    [auctionId]
+  );
+
+  // Hourly bucket — shows the rhythm of the auction day. SUBSTR
+  // grabs HH from "YYYY-MM-DD HH:MM:SS".
+  const hourly = db.all(
+    `SELECT substr(created_at, 12, 2) AS hour,
+            COUNT(*)  AS lot_count,
+            SUM(qty)  AS total_qty
+       FROM lots WHERE auction_id = ?
+      GROUP BY hour ORDER BY hour ASC`,
+    [auctionId]
+  );
+
+  // Grade breakdown (1, 2, GRD, ungraded etc.)
+  const gradeWise = db.all(
+    `SELECT grade,
+            COUNT(*)    AS lot_count,
+            SUM(bags)   AS total_bags,
+            SUM(qty)    AS total_qty,
+            COUNT(DISTINCT trader_id) AS seller_count
+       FROM lots WHERE auction_id = ?
+      GROUP BY grade ORDER BY grade ASC`,
+    [auctionId]
+  );
+
+  const totals = db.get(
+    `SELECT COUNT(*)               AS lot_count,
+            SUM(bags)              AS total_bags,
+            SUM(qty)               AS total_qty,
+            COUNT(DISTINCT trader_id) AS seller_count,
+            COUNT(DISTINCT branch) AS branch_count
+       FROM lots WHERE auction_id = ?`,
+    [auctionId]
+  ) || { lot_count: 0, total_bags: 0, total_qty: 0, seller_count: 0, branch_count: 0 };
+
+  // Reads the show_username toggle from company_settings.
+  const showUserRow = db.get(`SELECT value FROM company_settings WHERE key = 'show_username'`);
+  const showUsername = !!(showUserRow && showUserRow.value === 'true');
+
+  res.json({
+    auction, totals, branchWise, sellerWise,
+    userWise: showUsername ? userWise : [],
+    hourly, gradeWise, showUsername,
+    branchAggregates,
+  });
+});
+
+// GET /api/reports/branch-comparison
+// Cross-trade comparison: how each branch has performed across all
+// auctions in the DB. Heavy query — only run on demand.
+app.get('/api/reports/branch-comparison', requireViewOrLotEntry, (req, res) => {
+  const db = getDb();
+  // Per-trade per-branch grid (one row per auction × branch)
+  const data = db.all(
+    `SELECT l.branch, a.id AS auction_id, a.ano, a.date, a.crop_type,
+            COUNT(*)    AS lot_count,
+            SUM(l.bags) AS total_bags,
+            SUM(l.qty)  AS total_qty
+       FROM lots l JOIN auctions a ON a.id = l.auction_id
+      GROUP BY l.branch, l.auction_id
+      ORDER BY a.date DESC, l.branch ASC`
+  );
+  // Lifetime per-branch totals
+  const overall = db.all(
+    `SELECT branch,
+            COUNT(*)              AS lot_count,
+            SUM(bags)             AS total_bags,
+            SUM(qty)              AS total_qty,
+            COUNT(DISTINCT auction_id) AS trade_count,
+            COUNT(DISTINCT trader_id)  AS seller_count
+       FROM lots
+      GROUP BY branch ORDER BY total_qty DESC`
+  );
+  res.json({ data, overall });
+});
+
+// GET /api/reports/summary-pdf/:auctionId
+// One-page A4 PDF: headline totals, branch breakdown, top sellers.
+// Window-opened via window.open() so we accept token via querystring
+// (no Authorization header from window.open). Re-uses the lot-receipt
+// logo helper from mobile-bridge if available, falls back to local.
+app.get('/api/reports/summary-pdf/:auctionId', (req, res, next) => {
+  // Permissive auth: accept Bearer header OR ?token= (matches the
+  // mobile-bridge's print routes). Required because the desktop UI
+  // opens this in a new tab via window.open().
+  const hdr = (req.headers.authorization || '').replace('Bearer ', '');
+  const tok = hdr || String(req.query.token || '');
+  if (!tok) return res.status(401).json({ error: 'No token' });
+  const db = getDb();
+  const session = db.get('SELECT * FROM sessions WHERE token = ?', [tok]);
+  if (!session) return res.status(403).json({ error: 'Session expired' });
+  const user = db.get('SELECT * FROM users WHERE id = ?', [session.user_id]);
+  if (!user) return res.status(403).json({ error: 'Unauthorized' });
+  req.user = user;
+  next();
+}, (req, res) => {
+  const db = getDb();
+  const auctionId = parseInt(req.params.auctionId, 10);
+  const auction = db.get('SELECT * FROM auctions WHERE id = ?', [auctionId]);
+  if (!auction) return res.status(404).json({ error: 'Trade not found' });
+
+  // Pull every block the JSON endpoint returns — we lay them out on
+  // the page in three sections (totals strip, branch table, sellers).
+  const titleRow = db.get(`SELECT value FROM company_settings WHERE key = 'trade_name'`);
+  const appTitle = (titleRow && titleRow.value) || 'Spice Auction';
+  const dateFmt  = auction.date ? String(auction.date).split('-').reverse().join('/') : '';
+
+  // Optional branch filter — applied to totals & seller list when set.
+  const branchFilterPdf = String(req.query.branch || '').trim();
+  const bWherePdf = branchFilterPdf ? ' AND branch = ?' : '';
+  const bWherePdfL = branchFilterPdf ? ' AND l.branch = ?' : '';
+  const bParamsPdf = branchFilterPdf ? [branchFilterPdf] : [];
+  const totals = db.get(
+    `SELECT COUNT(*) AS lots, SUM(bags) AS bags, SUM(qty) AS qty,
+            COUNT(DISTINCT trader_id) AS sellers, COUNT(DISTINCT branch) AS branches
+       FROM lots WHERE auction_id = ?` + bWherePdf,
+    [auctionId, ...bParamsPdf]
+  ) || { lots: 0, bags: 0, qty: 0, sellers: 0, branches: 0 };
+  const branchWise = db.all(
+    `SELECT branch, COUNT(*) AS lots, SUM(bags) AS bags, SUM(qty) AS qty,
+            SUM(CASE WHEN amount > 0 THEN qty ELSE 0 END) AS sold_qty,
+            SUM(CASE WHEN COALESCE(amount,0) <= 0 THEN qty ELSE 0 END) AS withdrawn_qty,
+            MAX(CASE WHEN amount > 0 THEN price END) AS max_price,
+            MIN(CASE WHEN amount > 0 THEN price END) AS min_price,
+            CASE WHEN SUM(CASE WHEN amount > 0 THEN qty ELSE 0 END) > 0
+                 THEN SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) * 1.0
+                      / SUM(CASE WHEN amount > 0 THEN qty ELSE 0 END)
+                 ELSE 0 END AS avg_price
+       FROM lots WHERE auction_id = ? GROUP BY branch ORDER BY qty DESC`,
+    [auctionId]
+  );
+  const sellerWise = db.all(
+    `SELECT COALESCE(t.name, l.name, 'Unknown') AS name,
+            l.branch,
+            COUNT(*) AS lots, SUM(l.bags) AS bags, SUM(l.qty) AS qty
+       FROM lots l LEFT JOIN traders t ON t.id = l.trader_id
+      WHERE l.auction_id = ?` + bWherePdfL +
+     ` GROUP BY COALESCE(l.trader_id, l.name) ORDER BY qty DESC`,
+    [auctionId, ...bParamsPdf]
+  );
+  // Headline aggregates honour the branch filter as well.
+  const aggSoldPdf = db.get(
+    `SELECT COUNT(*) AS lots, COALESCE(SUM(qty),0) AS qty,
+            COALESCE(SUM(amount),0) AS cost
+       FROM lots WHERE auction_id = ? AND amount > 0` + bWherePdf,
+    [auctionId, ...bParamsPdf]
+  ) || { lots:0, qty:0, cost:0 };
+  const aggWdrPdf = db.get(
+    `SELECT COUNT(*) AS lots, COALESCE(SUM(qty),0) AS qty
+       FROM lots WHERE auction_id = ? AND COALESCE(amount,0) <= 0` + bWherePdf,
+    [auctionId, ...bParamsPdf]
+  ) || { lots:0, qty:0 };
+  const aggPricePdf = db.get(
+    `SELECT MIN(price) AS min_price, MAX(price) AS max_price
+       FROM lots WHERE auction_id = ? AND amount > 0` + bWherePdf,
+    [auctionId, ...bParamsPdf]
+  ) || { min_price:0, max_price:0 };
+  const aggAvgPdf = aggSoldPdf.qty > 0 ? (Number(aggSoldPdf.cost) / Number(aggSoldPdf.qty)) : 0;
+
+  // Logo for the header — spice-config single-company convention.
+  const logoPath = (function () {
+    const p = path.join(__dirname, 'public', 'logo-ispl.png');
+    return fs.existsSync(p) ? p : null;
+  })();
+
+  const PDFDocument = require('pdfkit');
+  const doc = new PDFDocument({ size: 'A4', margin: 40 });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition',
+    `inline; filename="Trade_${auction.ano}_Summary_${auction.date}.pdf"`);
+  doc.pipe(res);
+
+  const m = 40, w = 515;
+
+  // Helper for column rows so the table code stays readable
+  function drawRow(y, cols, font, size) {
+    doc.font(font || 'Helvetica').fontSize(size || 9);
+    cols.forEach(c => {
+      doc.text(String(c.val == null ? '' : c.val), c.x, y,
+        { width: c.w, align: c.align || 'left' });
+    });
+    return y + (size || 9) + 5;
+  }
+
+  // ── Header ───────────────────────────────────────────────────
+  if (logoPath) {
+    try { doc.image(logoPath, (595 - 45) / 2, doc.y, { width: 45, height: 45 }); doc.y += 50; } catch (_) {}
+  }
+  doc.font('Helvetica-Bold').fontSize(16).text(appTitle, m, doc.y, { width: w, align: 'center' });
+  doc.moveDown(0.2);
+  doc.font('Helvetica').fontSize(11).text(
+    'Trade #' + auction.ano + '  |  ' + dateFmt + '  |  ' + (auction.crop_type || '') +
+      (branchFilterPdf ? '  |  Branch: ' + branchFilterPdf : ''),
+    m, doc.y, { width: w, align: 'center' }
+  );
+  doc.moveDown(0.5);
+  doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(1).strokeColor('#166534').stroke();
+  doc.strokeColor('#000');
+  doc.moveDown(0.6);
+
+  // ── Five-up totals strip ─────────────────────────────────────
+  const sY = doc.y;
+  const sItems = [
+    { label: 'Lots',     val: totals.lots || 0 },
+    { label: 'Bags',     val: totals.bags || 0 },
+    { label: 'Qty (kg)', val: Number(totals.qty || 0).toFixed(3) },
+    { label: 'Sellers',  val: totals.sellers || 0 },
+    { label: 'Branches', val: totals.branches || 0 },
+  ];
+  const sW = w / sItems.length;
+  sItems.forEach((s, i) => {
+    const sx = m + i * sW;
+    doc.font('Helvetica-Bold').fontSize(14).text(String(s.val), sx, sY, { width: sW, align: 'center' });
+    doc.font('Helvetica').fontSize(8).fillColor('#666').text(s.label, sx, sY + 18, { width: sW, align: 'center' });
+  });
+  doc.fillColor('#000');
+  doc.y = sY + 40;
+  doc.moveDown(0.6);
+
+  // ── Sold / Withdrawn / Min / Max / Avg (branch-aware) ────────
+  const fmtRs = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const aggsY = doc.y;
+  const aggsItems = [
+    { label: 'Sold (kg)',      val: Number(aggSoldPdf.qty || 0).toFixed(3) },
+    { label: 'Withdrawn (kg)', val: Number(aggWdrPdf.qty || 0).toFixed(3) },
+    { label: 'Min Price',      val: fmtRs(aggPricePdf.min_price) },
+    { label: 'Max Price',      val: fmtRs(aggPricePdf.max_price) },
+    { label: 'Avg Price',      val: fmtRs(aggAvgPdf) },
+  ];
+  const aggsW = w / aggsItems.length;
+  aggsItems.forEach((s, i) => {
+    const sx = m + i * aggsW;
+    doc.font('Helvetica-Bold').fontSize(12).text(String(s.val), sx, aggsY, { width: aggsW, align: 'center' });
+    doc.font('Helvetica').fontSize(8).fillColor('#666').text(s.label, sx, aggsY + 16, { width: aggsW, align: 'center' });
+  });
+  doc.fillColor('#000');
+  doc.y = aggsY + 36;
+  doc.moveDown(0.6);
+
+  // ── Branch-wise table ────────────────────────────────────────
+  doc.font('Helvetica-Bold').fontSize(11).text('Branch-wise Breakdown', m);
+  doc.moveDown(0.4);
+  let y = doc.y;
+  y = drawRow(y, [
+    { x: m,       w: 200, val: 'Branch' },
+    { x: m + 200, w: 70,  val: 'Lots', align: 'right' },
+    { x: m + 270, w: 70,  val: 'Bags', align: 'right' },
+    { x: m + 340, w: 100, val: 'Qty (kg)', align: 'right' },
+  ], 'Helvetica-Bold', 9);
+  doc.moveTo(m, y - 2).lineTo(m + 440, y - 2).lineWidth(0.5).stroke();
+  branchWise.forEach(b => {
+    if (y > 770) { doc.addPage(); y = 40; }
+    y = drawRow(y, [
+      { x: m,       w: 200, val: b.branch || '' },
+      { x: m + 200, w: 70,  val: b.lots, align: 'right' },
+      { x: m + 270, w: 70,  val: b.bags, align: 'right' },
+      { x: m + 340, w: 100, val: Number(b.qty || 0).toFixed(3), align: 'right' },
+    ]);
+  });
+  doc.y = y;
+  doc.moveDown(0.8);
+
+  // ── Top sellers table (cap at 30) ────────────────────────────
+  if (sellerWise.length) {
+    doc.font('Helvetica-Bold').fontSize(11).text('Top Sellers (up to 30)', m);
+    doc.moveDown(0.4);
+    y = doc.y;
+    y = drawRow(y, [
+      { x: m,       w: 170, val: 'Seller' },
+      { x: m + 170, w: 110, val: 'Branch' },
+      { x: m + 280, w: 50,  val: 'Lots', align: 'right' },
+      { x: m + 330, w: 60,  val: 'Bags', align: 'right' },
+      { x: m + 390, w: 80,  val: 'Qty (kg)', align: 'right' },
+    ], 'Helvetica-Bold', 9);
+    doc.moveTo(m, y - 2).lineTo(m + 470, y - 2).lineWidth(0.5).stroke();
+    sellerWise.slice(0, 30).forEach(s => {
+      if (y > 770) { doc.addPage(); y = 40; }
+      y = drawRow(y, [
+        { x: m,       w: 170, val: s.name || 'Unknown' },
+        { x: m + 170, w: 110, val: s.branch || '' },
+        { x: m + 280, w: 50,  val: s.lots, align: 'right' },
+        { x: m + 330, w: 60,  val: s.bags, align: 'right' },
+        { x: m + 390, w: 80,  val: Number(s.qty || 0).toFixed(3), align: 'right' },
+      ]);
+    });
+    doc.y = y + 10;
+  }
+
+  // ── Footer ───────────────────────────────────────────────────
+  doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.5).stroke();
+  doc.moveDown(0.4);
+  doc.font('Helvetica').fontSize(8).fillColor('#888')
+     .text('Generated ' + new Date().toLocaleString('en-IN'), m, doc.y, { width: w, align: 'center' });
+
+  doc.end();
+});
 
 // ══════════════════════════════════════════════════════════════
 // SYSTEM: DB backup & restore (admin-only)
