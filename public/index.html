@@ -690,26 +690,38 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 
 /* ── Layout: Sidebar + Content ──────────────────────────── */
 .layout{display:flex;min-height:calc(100vh - 64px)}
+/* ── Sidebar — brand-matched deep cardamom green ─────────────────
+   Background mirrors the login hero panel (#0F3D2E → #0A2F22) so
+   the visual identity is consistent from sign-in through every
+   screen. Active item gets a subtle emerald glow + a left accent
+   bar, and the rail uses a soft radial highlight at the top so the
+   surface doesn't look flat. */
 .sidebar{
-  width:244px;background:var(--spice-pepper);color:var(--spice-line-strong);
+  width:244px;
+  background:
+    radial-gradient(circle at 30% 0%, rgba(132,204,22,.10) 0%, transparent 55%),
+    radial-gradient(circle at 80% 100%, rgba(16,185,129,.08) 0%, transparent 60%),
+    linear-gradient(180deg,#0F3D2E 0%,#0A2F22 60%,#082619 100%);
+  color:#D1FAE5;
   border-right:none;
   padding:20px 12px;flex-shrink:0;position:sticky;top:64px;
   height:calc(100vh - 64px);overflow-y:auto
 }
 .sidebar::-webkit-scrollbar{width:6px}
-.sidebar::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:3px}
+.sidebar::-webkit-scrollbar-thumb{background:rgba(132,204,22,.2);border-radius:3px}
+.sidebar::-webkit-scrollbar-thumb:hover{background:rgba(132,204,22,.35)}
 .side-group{margin-bottom:18px}
 .side-group-lbl{
-  font-size:10.5px;font-weight:700;color:#7A6B58;text-transform:uppercase;
+  font-size:10.5px;font-weight:700;color:#6EE7B7;text-transform:uppercase;
   letter-spacing:1.2px;padding:0 12px 8px;margin-top:4px;
   cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;
-  transition:color .15s
+  transition:color .15s;opacity:.7
 }
-.side-group-lbl:hover{color:var(--spice-saffron)}
+.side-group-lbl:hover{color:#84CC16;opacity:1}
 /* Chevron flips when group is collapsed via .side-group.section-collapsed */
 .side-group-lbl::before{
   content:'▼';font-size:8px;display:inline-block;transition:transform .2s;
-  color:var(--spice-text-hint)
+  color:#86EFAC;opacity:.6
 }
 .side-group.section-collapsed .side-group-lbl::before{transform:rotate(-90deg)}
 /* Hide the items when section is collapsed — pure CSS, no JS height calc.
@@ -717,17 +729,31 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 .side-group.section-collapsed .side-item{display:none}
 .side-item{
   display:flex;align-items:center;gap:12px;
-  padding:12px 14px;border-radius:10px;cursor:pointer;
-  font-size:14px;font-weight:500;color:var(--spice-line-strong);
-  margin-bottom:2px;transition:all .15s;
-  border:none;background:none;font-family:inherit;width:100%;text-align:left
+  padding:11px 14px;border-radius:10px;cursor:pointer;
+  font-size:14px;font-weight:500;color:rgba(220,252,231,.78);
+  margin-bottom:2px;transition:background .15s,color .15s,box-shadow .15s;
+  border:none;background:none;font-family:inherit;width:100%;text-align:left;
+  position:relative
 }
-.side-item:hover{background:rgba(255,255,255,.05);color:#fff}
+.side-item:hover{background:rgba(132,204,22,.10);color:#F0FDF4}
 .side-item.active{
-  background:rgba(16,185,129,.15);color:var(--spice-saffron);font-weight:600
+  background:linear-gradient(90deg,rgba(132,204,22,.18) 0%,rgba(16,185,129,.10) 100%);
+  color:#FACC15;font-weight:600;
+  box-shadow:inset 0 0 0 1px rgba(132,204,22,.18);
 }
-.side-item.active svg{color:var(--spice-saffron)}
-.side-item svg{width:18px;height:18px;flex-shrink:0;stroke-width:2;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round;color:var(--spice-text-hint)}
+/* Left accent bar on the active item so the selection reads at a glance */
+.side-item.active::before{
+  content:'';position:absolute;left:0;top:8px;bottom:8px;width:3px;
+  background:linear-gradient(180deg,#FACC15 0%,#84CC16 50%,#22C55E 100%);
+  border-radius:0 3px 3px 0
+}
+.side-item.active svg{color:#FACC15}
+.side-item svg{
+  width:18px;height:18px;flex-shrink:0;stroke-width:2;fill:none;stroke:currentColor;
+  stroke-linecap:round;stroke-linejoin:round;color:#86EFAC;opacity:.85;
+  transition:color .15s,opacity .15s
+}
+.side-item:hover svg{color:#BBF7D0;opacity:1}
 
 /* ─────── Collapsed sidebar (icons-only) ───────
    Toggled by the chevron button at the top of the sidebar; persisted
@@ -777,7 +803,8 @@ html.sidebar-collapsed .sidebar .side-item > *:not(svg){
 html.sidebar-collapsed .sidebar .side-item:hover::after{
   content:attr(data-tab);
   position:absolute;left:64px;top:50%;transform:translateY(-50%);
-  background:var(--spice-pepper);color:#fff;padding:6px 12px;
+  background:#0A2F22;color:#F0FDF4;padding:6px 12px;
+  border:1px solid rgba(132,204,22,.25);
   border-radius:6px;font-size:13px;line-height:1.2;font-weight:500;white-space:nowrap;
   box-shadow:0 4px 14px rgba(0,0,0,.3);z-index:30;
   text-transform:capitalize;letter-spacing:.2px;pointer-events:none
@@ -786,10 +813,10 @@ html.sidebar-collapsed .sidebar .side-item:hover::after{
 .sb-collapse-btn{
   display:flex;align-items:center;justify-content:center;
   width:100%;padding:8px;margin:0 0 12px;
-  background:rgba(255,255,255,.04);border:none;border-radius:8px;
-  color:var(--spice-text-hint);cursor:pointer;transition:all .15s
+  background:rgba(132,204,22,.08);border:1px solid rgba(132,204,22,.12);
+  border-radius:8px;color:#86EFAC;cursor:pointer;transition:all .15s
 }
-.sb-collapse-btn:hover{background:rgba(255,255,255,.1);color:#fff}
+.sb-collapse-btn:hover{background:rgba(132,204,22,.18);color:#F0FDF4;border-color:rgba(132,204,22,.3)}
 .sb-collapse-btn svg{width:18px;height:18px;transition:transform .2s}
 .sidebar.collapsed .sb-collapse-btn svg,
 html.sidebar-collapsed .sidebar .sb-collapse-btn svg{transform:rotate(180deg)}
