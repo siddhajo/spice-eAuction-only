@@ -998,6 +998,18 @@ function buildFormC(ctx) {
     if (item.rate < minRate && item.rate > 0) minRate = item.rate;
     totalKilos += item.qtySold; totalValue += item.value;
   }
+  // Sort each bucket by Estate Registration # / Board Licence # so the
+  // PDF, Excel, and JSON outputs are deterministic and grouped by SBL.
+  // Empty/non-numeric IDs sink to the bottom of their bucket.
+  const _sblSort = (a, b) => {
+    const aw = String(a.regId || '').trim();
+    const bw = String(b.regId || '').trim();
+    if (!aw && bw) return 1;
+    if (aw && !bw) return -1;
+    return aw.localeCompare(bw, 'en', { numeric: true, sensitivity: 'base' });
+  };
+  planters.sort(_sblSort);
+  dealers.sort(_sblSort);
   if (!isFinite(minRate)) minRate = 0;
   const avg = totalKilos > 0 ? totalValue / totalKilos : 0;
   const sum = arr => arr.reduce((a, x) => ({ kilos: a.kilos + x.qtySold, value: a.value + x.value }), { kilos: 0, value: 0 });
@@ -1220,14 +1232,13 @@ async function formCPdf(db, opts) {
        .text('(Separate report should be furnished for auctioning of cardamom received from (1) Planter (2) Dealer)',
              m, y, { width: usableW, align: 'center', lineBreak: false });
     y += 14;
-    // Three-column meta layout matching the reference FORM-C:
-    //
-    //   Row 1: E-Auction Licence No: ...   |   SEASON: ...   |   Maximum Price: ...
-    //   Row 2: eAuction No: ...            |                 |   Minimum Price: ...
-    //   Row 3: Date of auction: ...        |                 |   Average Price: ...
-    //
-    // SEASON sits in the middle column (centered) and only on row 1 — the
-    // middle cell of rows 2 & 3 stays blank so the left/right values line up.
+    // Meta layout:
+    //   Row 0 (full width): E-Auction Licence No  — own line so a long
+    //                       licence string never wraps inside a narrow
+    //                       1/3 column.
+    //   Row 1: eAuction No    | SEASON       | Maximum Price
+    //   Row 2: Date of auction|              | Minimum Price
+    //   Row 3:                |              | Average Price
     const colW3   = usableW / 3;
     const lLeft   = m;
     const lMid    = m + colW3;
@@ -1239,20 +1250,22 @@ async function formCPdf(db, opts) {
       lines.forEach((ln, i) => doc.text(ln, x, y + i * lineH, { width: w, align, lineBreak: false }));
       return lines.length;
     }
-    // Row 1 — height grows if any column wraps
+    // Row 0 — Licence on its own full-width line, left aligned.
+    const h0 = metaCell(`E-Auction Licence No: ${licence}`, lLeft, usableW, 'left');
+    y += h0 * lineH;
+    // Row 1
     let h1 = 1;
-    h1 = Math.max(h1, metaCell(`E-Auction Licence No: ${licence}`, lLeft,  colW3, 'left'));
-    h1 = Math.max(h1, metaCell(`SEASON: ${season}`,                lMid,   colW3, 'center'));
-    h1 = Math.max(h1, metaCell(`Maximum Price:Rs. ${fmtPrice(d.maxRate)}`, lRight, colW3, 'right'));
+    h1 = Math.max(h1, metaCell(`eAuction No: ${ctx.auction.ano}`,                  lLeft,  colW3, 'left'));
+    h1 = Math.max(h1, metaCell(`SEASON: ${season}`,                                lMid,   colW3, 'center'));
+    h1 = Math.max(h1, metaCell(`Maximum Price:Rs. ${fmtPrice(d.maxRate)}`,         lRight, colW3, 'right'));
     y += h1 * lineH;
     // Row 2
     let h2 = 1;
-    h2 = Math.max(h2, metaCell(`eAuction No: ${ctx.auction.ano}`,                  lLeft,  colW3, 'left'));
+    h2 = Math.max(h2, metaCell(`Date of auction: ${fmtDateDMY(ctx.auction.date)}`, lLeft,  colW3, 'left'));
     h2 = Math.max(h2, metaCell(`Minimum Price:Rs. ${fmtPrice(d.minRate)}`,         lRight, colW3, 'right'));
     y += h2 * lineH;
-    // Row 3
+    // Row 3 — Average price only
     let h3 = 1;
-    h3 = Math.max(h3, metaCell(`Date of auction: ${fmtDateDMY(ctx.auction.date)}`, lLeft,  colW3, 'left'));
     h3 = Math.max(h3, metaCell(`Average Price:Rs. ${fmtPrice(d.avgRate)}`,         lRight, colW3, 'right'));
     y += h3 * lineH;
     y += 6;

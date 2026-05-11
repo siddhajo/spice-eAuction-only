@@ -665,7 +665,7 @@ function generateCropReceiptPDF(lot, cfg) {
   });
 }
 
-module.exports = { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF };
+module.exports = { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSPDF, generateCommissionBoSBatchPDF };
 
 /**
  * Sales Invoice PDF (Tax Invoice)
@@ -2231,6 +2231,490 @@ function generateAgriBillsBatchPDF(bills, cfg) {
 
   for (const bill of bills) {
     generateAgriBillPDF(bill.billData, cfg, bill.billNo, doc);
+  }
+
+  return new Promise((resolve) => {
+    doc.on('end', () => resolve(Buffer.concat(buffers)));
+    doc.end();
+  });
+}
+
+/**
+ * Commission Bill — layout matches IMCPC "COMMISSION BILL" reference
+ * (memorandum of cardamom sold). One A4 page per bill.
+ *
+ * Layout, top to bottom:
+ *   - "DUMMY INVOICE" marker (top-right, above outer border)
+ *   - Outer border
+ *   - Company letterhead (name, regd office, CIN/PAN, GSTIN/SBL, email)
+ *   - Cropt Receipt No (left) | Bill No (right)
+ *   - "COMMISSION BILL" title + "[ MEMORANDAM OF CARDAMOM SOLD … ]" subtitle
+ *   - eAuction No (left) | Date (right) strip
+ *   - Two-column SELLER [BILLED FOR] | PURCHASER [SOLD TO] block
+ *   - 13-cell line-item table:
+ *       LOT NO | DESCRIPTION OF GOODS | HSN SAC | QTY (Kg.gr.) |
+ *       UNIT (BAGS) | RATE Rs.P. | CARDAMOM COST |
+ *       CGST (RATE|AMOUNT) | SGST (RATE|AMOUNT) | IGST (RATE|AMOUNT)
+ *     Per lot: cardamom row + optional [+] SAMPLE REFUND sub-row
+ *     After all lots: one [-] COMMISSION row (HSN 996111) with the
+ *     commission amount in CARDAMOM COST and CGST/SGST (intra-state) or
+ *     IGST (inter-state) values in the respective sub-cells.
+ *   - Summary band:
+ *       TAX AMOUNT row → taxable value, CGST amount, SGST amount, IGST amount
+ *   - NETT AMOUNT full-width strip with the value right-aligned
+ *   - Amount in words
+ *   - "for COMPANY" right-aligned + signature lines
+ *
+ * billData shape:
+ *   {
+ *     seller: { name, address, place, state, st_code, cr, pan },
+ *     purchaser: { name, invo, address, place, pin, state, st_code,
+ *                  sbl, gstin, pan },
+ *     auction: { ano, date },     // eAuction No, dd/mm/yyyy
+ *     crpt: string,                // crop receipt no.
+ *     lineItems: [{
+ *       lot, qty, bags, rate, cardamomCost,
+ *       refundQty, refundRate, refundAmount,
+ *     }],
+ *     commission: number,          // bill-level commission (rupees)
+ *     gstRate: 9.0,                // % per side (CGST==SGST), default 9.0
+ *     cgst: number, sgst: number, igst: number, // optional — auto-derived
+ *     interState: boolean,         // true → fills IGST instead of CGST/SGST
+ *     nett: number,                // optional — computed if absent
+ *     hsnCardamom: '09083120',     // optional override
+ *     hsnCommission: '996111',     // optional override
+ *   }
+ */
+function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
+  const isBatch = !!externalDoc;
+  let doc, buffers;
+  if (isBatch) {
+    doc = externalDoc;
+    if (doc._commBoSCount && doc._commBoSCount > 0) doc.addPage({ size: 'A4', margin: 20 });
+    doc._commBoSCount = (doc._commBoSCount || 0) + 1;
+  } else {
+    doc = new PDFDocument({ size: 'A4', margin: 20 });
+    buffers = [];
+    doc.on('data', b => buffers.push(b));
+  }
+
+  const PAGE_W = doc.page.width;
+  const MX = 20;
+  const x0 = MX;
+  const x1 = PAGE_W - MX;
+  const W = x1 - x0;
+  let y = MX;
+
+  doc.lineWidth(0.5).strokeColor('#000');
+
+  const fmtQty = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  const fmtRup = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // Resolve company identity using the same state-aware helper the rest
+  // of this file uses (effectiveCompany picks KL/TN block based on
+  // cfg.business_state) — guarantees the address actually renders.
+  const co = effectiveCompany(cfg);
+  const hsnCardamom = billData.hsnCardamom || cfg.hsn_cardamom || '09083120';
+  const hsnCommission = billData.hsnCommission || '996111';
+
+  // ── "DUMMY INVOICE" tag (top-right, above outer border) ──
+  doc.font('Helvetica').fontSize(7.5).fillColor('#000');
+  doc.text('DUMMY INVOICE', x0, y, { width: W - 4, align: 'right' });
+  y += 9;
+
+  const boxTopY = y;
+
+  // ── Company header block ──
+  y += 4;
+  doc.font('Helvetica-Bold').fontSize(11);
+  doc.text((co.name || '').toUpperCase(), x0, y, { width: W, align: 'center', lineBreak: false });
+  y += 13;
+
+  // REGD OFFICE line: assemble from whichever address fields the company
+  // has configured. Some users embed the literal text "REGD OFFICE:" in
+  // their address1 field, and others bake the state name + code into
+  // address2 — we detect and skip those so the prefix and " STATE CODE:"
+  // don't get printed twice.
+  doc.font('Helvetica').fontSize(8);
+  const addrJoined = [co.address1 || '', co.address2 || '']
+    .filter(p => p && String(p).trim()).join(' ');
+  const stateCodeAlreadyInAddr = co.stateName
+    && new RegExp(co.stateName + '\\s*CODE\\s*:', 'i').test(addrJoined);
+  const stateTail = (co.stateName && !stateCodeAlreadyInAddr)
+    ? (co.stateName + ' CODE:' + (co.stateCode || '')) : '';
+  const phoneTail = co.phone ? 'Ph:' + co.phone : '';
+  const regdBody = [addrJoined, stateTail, phoneTail].filter(Boolean).join(' ');
+  if (regdBody) {
+    // Only add the "REGD OFFICE:" prefix when the user didn't already
+    // bake one into their address line.
+    const alreadyHasPrefix = /^\s*REGD\s+OFFICE\s*:/i.test(addrJoined);
+    const regdLine = alreadyHasPrefix ? regdBody : ('REGD OFFICE:' + regdBody);
+    doc.text(regdLine, x0, y, { width: W, align: 'center', lineBreak: false });
+    y += 10;
+  }
+  const idLine = co.idLabel
+    ? { label: co.idLabel, value: co.idValue || '' }
+    : { label: 'CIN', value: cfg.cin || '' };
+  doc.text(`${idLine.label}:${idLine.value}   PAN:${co.pan || cfg.pan || ''}`,
+    x0, y, { width: W, align: 'center', lineBreak: false });
+  y += 10;
+  doc.text(`GSTIN:${co.gstin || ''}   SBL:${co.sbl || cfg.sbl || ''}`,
+    x0, y, { width: W, align: 'center', lineBreak: false });
+  y += 10;
+  if (co.email) {
+    doc.text('e-Mail ID:' + co.email, x0, y, { width: W, align: 'center', lineBreak: false });
+    y += 10;
+  }
+  y += 4;
+
+  // ── Crop Receipt No (left) | Bill No (right) ──
+  doc.font('Helvetica').fontSize(9);
+  doc.text(`Cropt Receipt No.:${billData.crpt || ''}`, x0 + 6, y);
+  doc.text(`Bill No: ${billNo || ''}`, x0, y, { width: W - 6, align: 'right' });
+  y += 14;
+
+  // ── Title + subtitle ──
+  doc.font('Helvetica-Bold').fontSize(12);
+  doc.text('COMMISSION BILL', x0, y, { width: W, align: 'center' });
+  y += 14;
+  doc.font('Helvetica').fontSize(8);
+  doc.text('[ MEMORANDAM OF CARDAMOM SOLD THROUGH ' + (cfg.short_name || ident.shortName || ident.name || 'COMPANY') + ' ]',
+    x0, y, { width: W, align: 'center' });
+  y += 14;
+
+  // ── eAuction No + Date strip ──
+  const stripH = 16;
+  doc.moveTo(x0, y).lineTo(x1, y).stroke();
+  doc.moveTo(x0, y + stripH).lineTo(x1, y + stripH).stroke();
+  doc.font('Helvetica').fontSize(8.5);
+  const auc = billData.auction || {};
+  doc.text(`eAuction No: ${auc.ano || ''}`, x0 + 6, y + 4);
+  doc.text(`Date :${auc.date || ''}`, x0, y + 4, { width: W - 6, align: 'right' });
+  y += stripH;
+
+  // ── Two-column seller / purchaser header band ──
+  const headColW = Math.floor(W / 2);
+  const splitX = x0 + headColW;
+  const bandH = 14;
+  doc.rect(x0, y, headColW, bandH).fill('#e8e8e8').stroke();
+  doc.rect(splitX, y, W - headColW, bandH).fill('#e8e8e8').stroke();
+  doc.fillColor('#000').font('Helvetica-Bold').fontSize(9);
+  doc.text('DETAILS OF SELLER [BILLED FOR]', x0, y + 3, { width: headColW, align: 'center' });
+  doc.text('DETAILS OF PURCHASER [SOLD TO]', splitX, y + 3, { width: W - headColW, align: 'center' });
+  doc.moveTo(splitX, y).lineTo(splitX, y + bandH).stroke();
+  doc.moveTo(x0, y + bandH).lineTo(x1, y + bandH).stroke();
+  y += bandH;
+
+  // ── Two-column seller / purchaser body ──
+  const partyLineH = 10;
+  const seller = billData.seller || {};
+  const pur = billData.purchaser || {};
+  const sellerLines = [];
+  if (seller.name) sellerLines.push('Sri/M/s.' + seller.name);
+  if (seller.address) sellerLines.push(seller.address);
+  if (seller.place) sellerLines.push(String(seller.place || '').toUpperCase());
+  if (seller.state) sellerLines.push(String(seller.state || '').toUpperCase() + '   CODE:' + (seller.st_code || ''));
+  sellerLines.push('CR.' + (seller.cr || '') + (seller.pan ? '   PAN:' + seller.pan : ''));
+
+  const purLines = [];
+  if (pur.name) purLines.push('M/s.' + pur.name + (pur.invo ? '   INV:' + pur.invo : ''));
+  if (pur.address) purLines.push(pur.address);
+  if (pur.place) purLines.push(String(pur.place || '').toUpperCase() + (pur.pin ? '   PIN:' + pur.pin : ''));
+  if (pur.state) purLines.push(String(pur.state || '').toUpperCase() + '   CODE:' + (pur.st_code || '') + (pur.sbl ? '   SBL:' + pur.sbl : ''));
+  if (pur.gstin) purLines.push('GSTIN:' + pur.gstin + (pur.pan ? '   PAN:' + pur.pan : ''));
+
+  // Height: tall enough for the longest side (purchaser block has up to
+  // 5 long lines: name, two address lines, state+SBL, GSTIN+PAN), plus
+  // a one-line margin at the bottom. Bumped from the previous "min 6
+  // lines" because purchaser address rows pushed past the reserved
+  // space and overlapped the line-item table header on dense bills.
+  const partyMaxLines = Math.max(sellerLines.length, purLines.length);
+  const partyH = (Math.max(6, partyMaxLines) + 1) * partyLineH;
+  doc.moveTo(x0, y).lineTo(x0, y + partyH).stroke();
+  doc.moveTo(splitX, y).lineTo(splitX, y + partyH).stroke();
+  doc.moveTo(x1, y).lineTo(x1, y + partyH).stroke();
+  doc.moveTo(x0, y + partyH).lineTo(x1, y + partyH).stroke();
+  doc.font('Helvetica').fontSize(8);
+  // lineBreak:false is critical — without it, a long address line wraps
+  // back to x=0 and overprints the next y-positioned line, producing
+  // the "stacked text" / "overlapping" effect in the seller and
+  // purchaser blocks.
+  let sy = y + 3;
+  for (const line of sellerLines) {
+    doc.text(line, x0 + 6, sy, { width: headColW - 12, lineBreak: false, ellipsis: true });
+    sy += partyLineH;
+  }
+  let py = y + 3;
+  for (const line of purLines) {
+    doc.text(line, splitX + 6, py, { width: W - headColW - 12, lineBreak: false, ellipsis: true });
+    py += partyLineH;
+  }
+  y += partyH;
+
+  // ── Line-item table column geometry ──
+  // 13 leaf columns. CGST/SGST/IGST each split RATE | AMOUNT.
+  const cols = [
+    { key: 'lot',   w: 26 },   // 0
+    { key: 'desc',  w: 72 },   // 1
+    { key: 'hsn',   w: 50 },   // 2
+    { key: 'qty',   w: 50 },   // 3
+    { key: 'bags',  w: 32 },   // 4
+    { key: 'rate',  w: 44 },   // 5
+    { key: 'cost',  w: 75 },   // 6  CARDAMOM COST / TAXABLE VALUE
+    { key: 'cgstR', w: 28 },   // 7
+    { key: 'cgstA', w: 50 },   // 8
+    { key: 'sgstR', w: 28 },   // 9
+    { key: 'sgstA', w: 50 },   // 10
+    { key: 'igstR', w: 28 },   // 11
+    { key: 'igstA', w: 50 },   // 12
+  ];
+  const colsTot = cols.reduce((s, c) => s + c.w, 0);
+  const colScale = W / colsTot;
+  for (const c of cols) c.w = c.w * colScale;
+  let cx = x0;
+  for (const c of cols) { c.x = cx; cx += c.w; }
+  const colEndX = c => c.x + c.w;
+
+  // ── Table header (two-band): top band has merged "CGST" / "SGST" /
+  // "IGST" labels; bottom band has per-leaf sub-labels. ──
+  const hdrTopH = 11;
+  const hdrBotH = 14;
+  const hdrTotalH = hdrTopH + hdrBotH;
+  doc.rect(x0, y, W, hdrTotalH).fill('#e8e8e8').stroke();
+  doc.fillColor('#000').font('Helvetica-Bold').fontSize(7.5);
+
+  // Top band: single-row labels for the first 7 columns; merged group
+  // labels CGST / SGST / IGST for the last 6.
+  // First 7 columns: leaf headers occupy the full hdrTotalH (no merge).
+  const topLeafLabels = [
+    'LOT', 'DESCRIPTION', 'HSN', 'QTY', 'UNIT', 'RATE', 'CARDAMOM',
+  ];
+  const botLeafLabelsLeft = [
+    'NO', 'OF GOODS', 'SAC', 'Kg. gr.', 'BAGS', 'Rs. P.', 'COST',
+  ];
+  for (let i = 0; i < 7; i++) {
+    doc.text(topLeafLabels[i], cols[i].x + 1, y + 2, { width: cols[i].w - 2, align: 'center' });
+    doc.text(botLeafLabelsLeft[i], cols[i].x + 1, y + 2 + hdrTopH, { width: cols[i].w - 2, align: 'center' });
+  }
+  // Merged group labels
+  const grpDefs = [
+    { label: 'CGST', from: 7,  to: 8  },
+    { label: 'SGST', from: 9,  to: 10 },
+    { label: 'IGST', from: 11, to: 12 },
+  ];
+  for (const g of grpDefs) {
+    const gx = cols[g.from].x;
+    const gw = colEndX(cols[g.to]) - gx;
+    doc.text(g.label, gx, y + 2, { width: gw, align: 'center' });
+    doc.text('RATE', cols[g.from].x, y + 2 + hdrTopH, { width: cols[g.from].w, align: 'center' });
+    doc.text('AMOUNT', cols[g.to].x, y + 2 + hdrTopH, { width: cols[g.to].w, align: 'center' });
+  }
+
+  // Header dividers
+  // Horizontal line between top and bottom of the header band — drawn
+  // only across the GST groups (cols 7..12), so the first 7 leaf headers
+  // visually span the full hdrTotalH (no internal split line).
+  doc.moveTo(cols[7].x, y + hdrTopH).lineTo(x1, y + hdrTopH).stroke();
+  // Vertical dividers (all leaf columns) for full header height
+  for (const c of cols) doc.moveTo(c.x, y).lineTo(c.x, y + hdrTotalH).stroke();
+  doc.moveTo(x1, y).lineTo(x1, y + hdrTotalH).stroke();
+  doc.moveTo(x0, y + hdrTotalH).lineTo(x1, y + hdrTotalH).stroke();
+  y += hdrTotalH;
+
+  // ── Body rows ──
+  const items = billData.lineItems || [];
+  const rowH = 14;
+  const bodyStartY = y;
+  // 7.5pt keeps "SAMPLE REFUND" / "COMMISSION" on a single line within
+  // the DESCRIPTION column (was wrapping at 8.5pt and bleeding into the
+  // row below).
+  doc.font('Helvetica').fontSize(7.5).fillColor('#000');
+
+  let totalCost = 0, totalRefund = 0;
+  for (const li of items) {
+    const cost = Number(li.cardamomCost || 0);
+    const refAmt = Number(li.refundAmount || 0);
+    totalCost += cost;
+    totalRefund += refAmt;
+
+    // Main cardamom row — every cell uses lineBreak:false so wide
+    // values (e.g. 9-digit cardamom cost) overflow horizontally rather
+    // than wrap into the next row and overlap the [+] SAMPLE REFUND.
+    const cellOpts = (col, align = 'center') => ({
+      width: col.w - (align === 'right' ? 3 : 0),
+      align, lineBreak: false, ellipsis: true,
+    });
+    doc.text(String(li.lot || '').padStart(3, '0'), cols[0].x, y + 3, cellOpts(cols[0]));
+    doc.text('CARDAMOM',                           cols[1].x, y + 3, cellOpts(cols[1]));
+    doc.text(hsnCardamom,                          cols[2].x, y + 3, cellOpts(cols[2]));
+    doc.text(fmtQty(li.qty),                       cols[3].x, y + 3, cellOpts(cols[3], 'right'));
+    doc.text(String(li.bags || ''),                cols[4].x, y + 3, cellOpts(cols[4]));
+    doc.text(fmtRup(li.rate),                      cols[5].x, y + 3, cellOpts(cols[5], 'right'));
+    doc.text(fmtRup(cost),                         cols[6].x, y + 3, cellOpts(cols[6], 'right'));
+    y += rowH;
+
+    // [+] SAMPLE REFUND row (only if refund > 0)
+    if (refAmt > 0 || Number(li.refundQty || 0) > 0) {
+      doc.text('[+]',                          cols[0].x, y + 3, cellOpts(cols[0]));
+      doc.text('SAMPLE REFUND',                cols[1].x, y + 3, cellOpts(cols[1]));
+      doc.text(fmtQty(li.refundQty),           cols[3].x, y + 3, cellOpts(cols[3], 'right'));
+      doc.text(fmtRup(li.refundRate||li.rate), cols[5].x, y + 3, cellOpts(cols[5], 'right'));
+      doc.text(fmtRup(refAmt),                 cols[6].x, y + 3, cellOpts(cols[6], 'right'));
+      y += rowH;
+    }
+  }
+
+  // Resolve GST amounts. If not supplied, derive from gstRate (intra-state
+  // → CGST + SGST each = commission × gstRate%; inter-state → IGST = commission × 2*gstRate%).
+  const commission = Number(billData.commission || 0);
+  const gstRate = Number(billData.gstRate != null ? billData.gstRate : 9.0);
+  const interState = !!billData.interState;
+  let cgstAmt = Number(billData.cgst != null ? billData.cgst : 0);
+  let sgstAmt = Number(billData.sgst != null ? billData.sgst : 0);
+  let igstAmt = Number(billData.igst != null ? billData.igst : 0);
+  if (!cgstAmt && !sgstAmt && !igstAmt && commission > 0 && gstRate > 0) {
+    if (interState) {
+      igstAmt = Math.round(commission * (2 * gstRate)) / 100;
+    } else {
+      cgstAmt = Math.round(commission * gstRate) / 100;
+      sgstAmt = cgstAmt;
+    }
+  }
+
+  // [-] COMMISSION row — separator above so it visually parts from lot rows
+  doc.moveTo(x0, y).lineTo(x1, y).stroke();
+  const cellOptsCom = (col, align = 'center') => ({
+    width: col.w - (align === 'right' ? 3 : 0),
+    align, lineBreak: false, ellipsis: true,
+  });
+  doc.text('[-]',                 cols[0].x, y + 3, cellOptsCom(cols[0]));
+  doc.text('COMMISSION',          cols[1].x, y + 3, cellOptsCom(cols[1]));
+  doc.text(hsnCommission,         cols[2].x, y + 3, cellOptsCom(cols[2]));
+  doc.text(fmtRup(commission),    cols[6].x, y + 3, cellOptsCom(cols[6], 'right'));
+  if (cgstAmt) {
+    doc.text(gstRate.toFixed(1) + '%', cols[7].x, y + 3, cellOptsCom(cols[7]));
+    doc.text(fmtRup(cgstAmt),          cols[8].x, y + 3, cellOptsCom(cols[8], 'right'));
+  }
+  if (sgstAmt) {
+    doc.text(gstRate.toFixed(1) + '%', cols[9].x,  y + 3, cellOptsCom(cols[9]));
+    doc.text(fmtRup(sgstAmt),          cols[10].x, y + 3, cellOptsCom(cols[10], 'right'));
+  }
+  if (igstAmt) {
+    doc.text((2 * gstRate).toFixed(1) + '%', cols[11].x, y + 3, cellOptsCom(cols[11]));
+    doc.text(fmtRup(igstAmt),                cols[12].x, y + 3, cellOptsCom(cols[12], 'right'));
+  }
+  y += rowH;
+
+  const tableEndY = y;
+  // Verticals for the body
+  for (const c of cols) doc.moveTo(c.x, bodyStartY).lineTo(c.x, tableEndY).stroke();
+  doc.moveTo(x1, bodyStartY).lineTo(x1, tableEndY).stroke();
+  doc.moveTo(x0, tableEndY).lineTo(x1, tableEndY).stroke();
+
+  // ── Summary band: TAXABLE VALUE | CGST | SGST | IGST headers ──
+  // Left area (cols 0..5) is empty, cell 6 holds "TAXABLE VALUE", and
+  // the three GST groups span their RATE+AMOUNT sub-columns.
+  const sumHdrH = 14;
+  // Left empty cell (cols 0..5)
+  const leftEndX = colEndX(cols[5]);
+  doc.rect(x0, y, leftEndX - x0, sumHdrH).stroke();
+  // TAXABLE VALUE cell (col 6)
+  doc.rect(cols[6].x, y, cols[6].w, sumHdrH).fill('#e8e8e8').stroke();
+  doc.fillColor('#000').font('Helvetica-Bold').fontSize(8);
+  doc.text('TAXABLE VALUE', cols[6].x, y + 3, { width: cols[6].w, align: 'center' });
+  // Three GST group cells (merged RATE+AMOUNT)
+  for (const g of grpDefs) {
+    const gx = cols[g.from].x;
+    const gw = colEndX(cols[g.to]) - gx;
+    doc.rect(gx, y, gw, sumHdrH).fill('#e8e8e8').stroke();
+    doc.fillColor('#000').text(g.label, gx, y + 3, { width: gw, align: 'center' });
+  }
+  y += sumHdrH;
+
+  // TAX AMOUNT row: "TAX AMOUNT" spans cols 0..5; then per-group AMOUNTs.
+  const taxRowH = 16;
+  doc.rect(x0, y, leftEndX - x0, taxRowH).stroke();
+  doc.font('Helvetica-Bold').fontSize(9);
+  doc.text('TAX AMOUNT', x0, y + 4, { width: leftEndX - x0, align: 'center' });
+  // Taxable value = commission amount (the GST is charged on commission).
+  doc.font('Helvetica').fontSize(8.5);
+  doc.rect(cols[6].x, y, cols[6].w, taxRowH).stroke();
+  doc.text(fmtRup(commission), cols[6].x, y + 4, { width: cols[6].w - 3, align: 'right' });
+  // Each GST group: RATE cell empty, AMOUNT cell carries the value
+  for (const g of grpDefs) {
+    doc.rect(cols[g.from].x, y, cols[g.from].w, taxRowH).stroke();
+    doc.rect(cols[g.to].x,   y, cols[g.to].w,   taxRowH).stroke();
+  }
+  if (cgstAmt) doc.text(fmtRup(cgstAmt), cols[8].x,  y + 4, { width: cols[8].w - 3,  align: 'right' });
+  if (sgstAmt) doc.text(fmtRup(sgstAmt), cols[10].x, y + 4, { width: cols[10].w - 3, align: 'right' });
+  if (igstAmt) doc.text(fmtRup(igstAmt), cols[12].x, y + 4, { width: cols[12].w - 3, align: 'right' });
+  y += taxRowH;
+
+  // ── NETT AMOUNT strip ──
+  // Label spans most of the row; the value sits in a 3-cell-wide area
+  // on the right (cols 10..12 combined) so amounts like "5,02,579.00"
+  // don't wrap to a second line at 10pt bold.
+  const nett = Number(
+    billData.nett != null
+      ? billData.nett
+      : (totalCost + totalRefund - commission - cgstAmt - sgstAmt - igstAmt)
+  );
+  const nettH = 18;
+  const nettValueX = cols[10].x;
+  doc.rect(x0, y, nettValueX - x0, nettH).stroke();
+  doc.rect(nettValueX, y, x1 - nettValueX, nettH).stroke();
+  doc.font('Helvetica-Bold').fontSize(10);
+  doc.text('NETT AMOUNT', x0, y + 4, {
+    width: nettValueX - x0 - 6, align: 'right', lineBreak: false,
+  });
+  doc.text(fmtRup(nett), nettValueX, y + 4, {
+    width: x1 - nettValueX - 3, align: 'right', lineBreak: false,
+  });
+  y += nettH;
+
+  // ── Amount in words ──
+  // amountToWords already prefixes "Rupees " — do not add it again.
+  y += 10;
+  doc.font('Helvetica').fontSize(9);
+  doc.text(amountToWords(Math.round(nett)) + ' Only', x0 + 6, y, {
+    width: W - 12, lineBreak: false, ellipsis: true,
+  });
+  y += 24;
+
+  // ── "for COMPANY" + signatures ──
+  doc.font('Helvetica-Bold').fontSize(9);
+  doc.text('for ' + (cfg.short_name || ident.shortName || ident.name || 'COMPANY'), x0, y, { width: W - 6, align: 'right' });
+  y += 30;
+  doc.font('Helvetica').fontSize(8);
+  doc.text('Signature of Seller', x0 + 6, y);
+  doc.text('Authorized Signatory', x0, y, { width: W - 6, align: 'right' });
+  y += 14;
+
+  // ── Outer rectangle border ──
+  doc.rect(x0, boxTopY, W, y - boxTopY).lineWidth(1).stroke();
+
+  if (isBatch) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    doc.on('end', () => resolve(Buffer.concat(buffers)));
+    doc.end();
+  });
+}
+
+/**
+ * Merge N Commission Bills into a single PDF (one per page).
+ * Each item: { billData, billNo }.
+ */
+function generateCommissionBoSBatchPDF(bills, cfg) {
+  if (!Array.isArray(bills) || bills.length === 0) {
+    return Promise.reject(new Error('No bills to print'));
+  }
+  const doc = new PDFDocument({ size: 'A4', margin: 20 });
+  const buffers = [];
+  doc.on('data', b => buffers.push(b));
+  doc._commBoSCount = 0;
+
+  for (const bill of bills) {
+    generateCommissionBoSPDF(bill.billData, cfg, bill.billNo, doc);
   }
 
   return new Promise((resolve) => {

@@ -3404,6 +3404,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <button class="btn" style="height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(16,185,129,.28)" onclick="printSelectedBills()" title="Print all ticked bills">🖨 Print Selected</button>
+            <button class="btn btn-o" style="height:38px;padding:0 16px;font-weight:600" onclick="printSelectedCommissionBoS()" title="Print Commission Bill (Memorandum) for all ticked bills — one A4 page per bill, matches IMCPC reference format">🧾 Commission Bill Selected</button>
             <button id="bill-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedBills()" title="Delete all ticked bills">🗑 Delete Selected <span id="bill-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           </div>
 
@@ -3750,7 +3751,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
         <!-- Filters: Trade, Date range, Branch, Seller, Buyer -->
         <div class="sgrid" style="margin-bottom:14px">
-          <div class="fg"><label>Trade (Auction) *</label>
+          <div class="fg"><label>Auction</label>
             <select id="sb-auction" onchange="onSbAuctionChange()"></select>
           </div>
           <div class="fg"><label>Branch</label>
@@ -5417,10 +5418,10 @@ async function loadStats(auctionId){
   const isAllMode = !_dashSelectedAuctionId;
   const allSel = isAllMode ? ' selected' : '';
   const pickerOptions =
-    `<option value="all"${allSel}>All Trades (Cumulative)</option>` +
+    `<option value="all"${allSel}>All Auctions (Cumulative)</option>` +
     AA.map(a=>{
       const sel = (!isAllMode && a.id === _dashSelectedAuctionId) ? ' selected' : '';
-      return `<option value="${a.id}"${sel}>Trade #${esc(a.ano)} — ${fmtD(a.date)}</option>`;
+      return `<option value="${a.id}"${sel}>Auction #${esc(a.ano)} — ${fmtD(a.date)}</option>`;
     }).join('');
   const picker = `<select onchange="loadStats(this.value === 'all' ? null : parseInt(this.value))" style="background:rgba(255,255,255,.85);border:1px solid rgba(22,101,52,.25);border-radius:8px;padding:6px 10px;font-size:13px;font-weight:600;color:var(--spice-cardamom-dk);cursor:pointer;font-family:inherit">${pickerOptions}</select>`;
 
@@ -5429,16 +5430,16 @@ async function loadStats(auctionId){
   const aHTML = isAllMode ? `
     <div class="auction-hero" style="background:var(--spice-cardamom-lt);color:var(--spice-text-main)">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:6px">
-        <div class="auction-hero-label" style="color:var(--spice-cardamom-dk);opacity:.85">All Trades · Cumulative</div>
+        <div class="auction-hero-label" style="color:var(--spice-cardamom-dk);opacity:.85">All Auctions · Cumulative</div>
         ${picker}
       </div>
-      <div class="auction-hero-number" style="color:var(--spice-cardamom-dk)">${CUM.auctions||0} Trade${CUM.auctions===1?'':'s'}</div>
+      <div class="auction-hero-number" style="color:var(--spice-cardamom-dk)">${CUM.auctions||0} Auction${CUM.auctions===1?'':'s'}</div>
       <div class="auction-hero-date" style="color:var(--spice-text-mute);opacity:1">Lifetime totals across every auction</div>
       <div class="auction-hero-stats">
         <div class="hero-stat" style="color:var(--spice-text-mute);opacity:1"><strong style="color:var(--spice-text-main)">${CUM.lots||0}</strong>Total Lots</div>
         <div class="hero-stat" style="color:var(--spice-text-mute);opacity:1"><strong style="color:var(--spice-text-main)">${kgK(CUM.qty)}</strong>Total Qty</div>
         <div class="hero-stat" style="color:var(--spice-text-mute);opacity:1"><strong style="color:var(--spice-text-main)">${inrL(CUM.amount)}</strong>Total Volume</div>
-        <div class="hero-stat" style="color:var(--spice-text-mute);opacity:1"><strong style="color:var(--spice-text-main)">${CUM.auctions?inrL((CUM.amount||0)/CUM.auctions).replace('₹','₹'):'—'}</strong>Avg / Trade</div>
+        <div class="hero-stat" style="color:var(--spice-text-mute);opacity:1"><strong style="color:var(--spice-text-main)">${CUM.auctions?inrL((CUM.amount||0)/CUM.auctions).replace('₹','₹'):'—'}</strong>Avg / Auction</div>
       </div>
       <div style="font-size:12px;color:var(--spice-text-mute);opacity:.9;border-top:1px solid rgba(22,101,52,.15);padding-top:10px;margin-top:4px">
         💡 Select a specific trade above to drill into its details
@@ -5482,7 +5483,7 @@ async function loadStats(auctionId){
   const chartHTML = isAllMode && PT.length ? `
     <div class="card" style="padding:0;margin-bottom:20px">
       <div style="padding:18px 22px 12px;border-bottom:1px solid var(--spice-line);display:flex;justify-content:space-between;align-items:center">
-        <h2 style="font-size:17px;font-weight:700;margin:0;color:var(--spice-text-main)">Revenue by Trade</h2>
+        <h2 style="font-size:17px;font-weight:700;margin:0;color:var(--spice-text-main)">Revenue by Auction</h2>
         <span style="font-size:12px;color:var(--spice-text-hint)">Hover bars for exact amount</span>
       </div>
       <div style="padding:18px 22px;height:280px;position:relative">
@@ -5569,14 +5570,14 @@ async function loadStats(auctionId){
   const ptHTML = isAllMode && PT.length ? `
     <div class="card" style="padding:0;margin-bottom:20px">
       <div style="padding:18px 22px 12px;border-bottom:1px solid var(--spice-line);display:flex;justify-content:space-between;align-items:center">
-        <h2 style="font-size:17px;font-weight:700;margin:0;color:var(--spice-text-main)">Per-Trade Breakdown</h2>
-        <span style="font-size:12px;color:var(--spice-text-hint)">${PT.length} trade${PT.length===1?'':'s'} · click a row to drill in</span>
+        <h2 style="font-size:17px;font-weight:700;margin:0;color:var(--spice-text-main)">Per-Auction Breakdown</h2>
+        <span style="font-size:12px;color:var(--spice-text-hint)">${PT.length} auction${PT.length===1?'':'s'} · click a row to drill in</span>
       </div>
       <div style="padding:0 4px;overflow-x:auto">
         <table style="width:100%">
           <thead>
             <tr>
-              <th>Trade</th>
+              <th>Auction</th>
               <th>Date</th>
               <th>Crop</th>
               <th class="num">Lots</th>
@@ -5692,7 +5693,7 @@ async function loadStats(auctionId){
         <div class="kpi-label">${isAllMode ? 'Total Lots' : 'Active Lots'}</div>
         <div class="kpi-value">${isAllMode ? (CUM.lots||0) : (K.activeLots||0)}</div>
         <span class="kpi-delta neutral">${isAllMode
-          ? `across all trades`
+          ? `across all auctions`
           : `${C.lots||0} total lots`}</span>
       </div>
       <div class="kpi turmeric">
@@ -5700,7 +5701,7 @@ async function loadStats(auctionId){
         <div class="kpi-label">Pending Invoices</div>
         <div class="kpi-value">${K.pendingInvoices||0}</div>
         <span class="kpi-delta ${K.pendingInvoices>0?'down':'neutral'}">${K.pendingInvoices>0
-          ? (isAllMode ? 'Across all trades' : 'Buyers awaiting')
+          ? (isAllMode ? 'Across all auctions' : 'Buyers awaiting')
           : 'All clear'}</span>
       </div>
       <div class="kpi chili">
@@ -12099,6 +12100,24 @@ async function printSelectedBills(){
     `Building merged PDF for ${ids.length} bills…`,
     '/api/bills/pdf-bulk',
     `Bills_Batch_${ids.length}.pdf`,
+    { ids }
+  );
+}
+// Commission Bill (Bill of Supply variant) for the ticked bills. One
+// A4 page per bill, modeled on the IMCPC commission-bill layout: seller
+// + purchaser header, per-lot cardamom cost + sample refund rows, final
+// [-] COMMISSION row, NETT AMOUNT and amount in words. No CGST/SGST
+// columns — purely a Bill of Supply.
+async function printSelectedCommissionBoS(){
+  const body=document.getElementById('bills-list');
+  if(!body){alert('No bills list found');return}
+  const checked=Array.from(body.querySelectorAll('.bill-select-cb:checked'));
+  if(!checked.length){alert('Tick one or more bills first');return}
+  const ids=checked.map(cb=>Number(cb.value)).filter(Boolean);
+  await fetchPdfWithOverlay(
+    `Building Commission Bill (BoS) for ${ids.length} bill${ids.length===1?'':'s'}…`,
+    '/api/bills/commission-bos-bulk',
+    `CommissionBoS_Batch_${ids.length}.pdf`,
     { ids }
   );
 }

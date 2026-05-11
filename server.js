@@ -8,7 +8,7 @@ const XLSX = require('xlsx');
 const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
 const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSettings, getSettingsFlat, getGSTRates } = require('./company-config');
 const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getPurchaseJournal } = require('./calculations');
-const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF } = require('./invoice-pdf');
+const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF } = require('./invoice-pdf');
 const { EXPORT_TYPES, createExcelBuffer } = require('./exports');
 const { getCompanyHeader, writeXlsxCompanyHeader } = require('./report-formatters');
 const { exportPdf: exportAnyPdf } = require('./exports-pdf');
@@ -3815,6 +3815,174 @@ app.post('/api/bills/pdf-bulk', requireView, async (req, res) => {
   } catch (e) {
     console.error('Bulk bill PDF error:', e);
     res.status(500).json({ error: 'Bulk PDF generation failed: ' + e.message });
+  }
+});
+
+// Bulk Commission Bill (Bill of Supply variant) for selected bills.
+// One A4 page per bill: layout modeled on the IMCPC commission-bill
+// reference — seller + purchaser block, per-lot cardamom cost + sample
+// refund rows, a final [-] COMMISSION row, NETT AMOUNT, amount in words.
+// No CGST/SGST columns (Bill of Supply).
+//
+// Per-lot purchaser/refund/commission info is reconstructed from the
+// `lots` table (same source `buildAgriBill` uses for per-lot detail).
+app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
+  try {
+    const db = getDb();
+    const cfg = getSettingsFlat(db);
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(Boolean) : [];
+    if (!ids.length) return res.status(400).json({ error: 'No bill IDs provided' });
+
+    const placeholders = ids.map(() => '?').join(',');
+    const stored = db.all(`SELECT * FROM bills WHERE id IN (${placeholders})`, ids);
+    if (!stored.length) return res.status(404).json({ error: 'No matching bills found' });
+
+    const byId = new Map(stored.map(r => [r.id, r]));
+    const ordered = ids.map(id => byId.get(Number(id))).filter(Boolean);
+
+    const payloads = [];
+    for (const b of ordered) {
+      // Resolve the auction record (id + ano + date) so we can pull the
+      // matching lots and format the eAuction strip.
+      let auction = null;
+      if (b.auction_id) {
+        auction = db.get('SELECT id, ano, date FROM auctions WHERE id = ?', [b.auction_id]);
+      } else if (b.ano) {
+        auction = db.get('SELECT id, ano, date FROM auctions WHERE ano = ?', [b.ano]);
+      }
+
+      // Pull every lot for this seller in this auction. The cr-field
+      // filter mirrors buildAgriBill: skip GSTIN-registered sellers.
+      const lots = auction ? db.all(
+        `SELECT * FROM lots
+           WHERE auction_id = ?
+             AND UPPER(TRIM(name)) = UPPER(TRIM(?))
+             AND (amount > 0 OR puramt > 0)
+         ORDER BY lot_no`,
+        [auction.id, b.name]
+      ) : [];
+
+      // First lot supplies seller details (consistent with buildAgriBill).
+      const first = lots[0] || {};
+      const seller = {
+        name: b.name || first.name || '',
+        address: b.add_line || first.padd || '',
+        place:   b.pla     || first.ppla || '',
+        state:   b.pstate  || first.pstate || '',
+        st_code: b.st_code || first.pst_code || '',
+        cr:      b.crr     || first.cr || '',
+        pan:     b.pan     || first.pan || '',
+      };
+
+      // Purchaser block: derived from the first lot that has a buyer set.
+      // The `buyers` master table carries the full address (add1/add2,
+      // place, pin, state, GSTIN, PAN, SBL) — we join on the buyer
+      // CODE first, then fall back to buyer1/buyer name. Without this
+      // join the purchaser block on the commission bill was missing
+      // every address line.
+      const buyerLot = lots.find(l => l.buyer || l.buyer1 || l.code) || first;
+      let buyerRow = null;
+      if (buyerLot.code) {
+        buyerRow = db.get('SELECT * FROM buyers WHERE code = ? LIMIT 1', [buyerLot.code]);
+      }
+      if (!buyerRow && (buyerLot.buyer1 || buyerLot.buyer)) {
+        buyerRow = db.get(
+          'SELECT * FROM buyers WHERE UPPER(TRIM(buyer1)) = UPPER(TRIM(?)) OR UPPER(TRIM(buyer)) = UPPER(TRIM(?)) LIMIT 1',
+          [buyerLot.buyer1 || buyerLot.buyer, buyerLot.buyer1 || buyerLot.buyer]
+        );
+      }
+      const purchaser = {
+        name:    (buyerRow && (buyerRow.buyer1 || buyerRow.buyer)) || buyerLot.buyer1 || buyerLot.buyer || '',
+        invo:    buyerLot.invo || '',
+        // Address: combine add1 + add2 onto one wrap-able line. If the
+        // buyer master row is missing (older imports), the purchaser
+        // block still shows the name + INV: line by itself.
+        address: buyerRow ? [buyerRow.add1, buyerRow.add2].filter(Boolean).join(', ') : '',
+        place:   buyerRow ? (buyerRow.pla || '') : '',
+        pin:     buyerRow ? (buyerRow.pin || '') : '',
+        state:   buyerRow ? (buyerRow.state || '') : (buyerLot.sale === 'L' ? (cfg.state || '') : ''),
+        st_code: buyerRow ? (buyerRow.st_code || '') : '',
+        sbl:     buyerRow ? (buyerRow.sbl || '') : '',
+        gstin:   buyerRow ? (buyerRow.gstin || '') : '',
+        pan:     buyerRow ? (buyerRow.pan || '') : '',
+      };
+
+      // Build per-lot line items.
+      // Sample refund quantity is the company-wide "SB Sample Refund (Kgs)"
+      // setting (Settings → Rates & Charges → `sb_refund`). The rupee
+      // value stored on the lot (`refund`) was already calculated as
+      // sb_refund × rate during lot entry — so the bill shows the
+      // constant kg on every line and the rupee figure matches.
+      const sbRefundKg = Number(cfg.sb_refund) || 0;
+      const lineItems = lots.map(l => {
+        const qty = Number(l.pqty || l.qty || 0);
+        const rate = Number(l.prate || l.price || 0);
+        const cardamomCost = Number(l.puramt || l.amount || (qty * rate));
+        const refundAmount = Number(l.refund || 0);
+        return {
+          lot: l.lot_no,
+          qty, bags: l.bags || 0, rate, cardamomCost,
+          refundQty: sbRefundKg, refundRate: rate, refundAmount,
+        };
+      });
+
+      // Bill-level commission + GST: sum per-lot. CGST/SGST are charged
+      // intra-state (lot.sale == 'L'); IGST inter-state. We rely on the
+      // values that are already stored on each lot row (calculated when
+      // the bill was generated), so this PDF always agrees with the
+      // database.
+      const commission = lots.reduce((s, l) => s + Number(l.com || 0), 0);
+      const cgst       = lots.reduce((s, l) => s + Number(l.cgst || 0), 0);
+      const sgst       = lots.reduce((s, l) => s + Number(l.sgst || 0), 0);
+      const igst       = lots.reduce((s, l) => s + Number(l.igst || 0), 0);
+      // Inter-state if every lot is non-local (sale != 'L'). Mixed bills
+      // are rare in this flow; we fall back to "intra-state" so CGST+SGST
+      // display correctly when both columns carry values.
+      const interState = lots.length > 0 && lots.every(l => l.sale && l.sale !== 'L');
+
+      // Format the auction date dd/mm/yyyy.
+      let billDate = '';
+      if (auction && auction.date) {
+        const d = new Date(auction.date);
+        if (!isNaN(d)) billDate = d.toLocaleDateString('en-GB');
+      }
+      if (!billDate && b.date) billDate = b.date;
+
+      const totalCost   = lineItems.reduce((s, li) => s + li.cardamomCost, 0);
+      const totalRefund = lineItems.reduce((s, li) => s + li.refundAmount, 0);
+      const nett = Number(
+        b.net != null
+          ? b.net
+          : (totalCost + totalRefund - commission - cgst - sgst - igst)
+      );
+
+      payloads.push({
+        billNo: b.bil,
+        billData: {
+          crpt: b.crpt || (first.crpt || ''),
+          auction: { ano: auction ? auction.ano : (b.ano || ''), date: billDate },
+          seller,
+          purchaser,
+          lineItems: lineItems.length ? lineItems : [{
+            lot: '—', qty: b.qty, bags: 0, rate: 0,
+            cardamomCost: b.cost, refundQty: 0, refundRate: 0, refundAmount: 0,
+          }],
+          commission,
+          cgst, sgst, igst,
+          interState,
+          gstRate: Number(cfg.commission_gst_rate) || 9.0,
+          nett,
+        },
+      });
+    }
+
+    const pdf = await generateCommissionBoSBatchPDF(payloads, cfg);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="CommissionBoS_Batch_${payloads.length}.pdf"`);
+    res.send(pdf);
+  } catch (e) {
+    console.error('Commission BoS bulk PDF error:', e);
+    res.status(500).json({ error: 'Commission BoS PDF generation failed: ' + e.message });
   }
 });
 
