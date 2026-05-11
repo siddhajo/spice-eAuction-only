@@ -161,7 +161,6 @@ const DEFAULTS = [
 
   // ── INTEGRATIONS ───────────────────────────────────────────
   { key: 'gst_api_key',    value: '', category: 'integrations', label: 'GST Lookup API Key (gstincheck.co.in)',   type: 'text' },
-  { key: 'praman_company', value: '', category: 'tally',        label: 'Praman Lot Code (fallback: Short Name)',  type: 'text' },
 
   // ── TALLY EXPORT ──────────────────────────────────────────
   // REMOVED tally toggles per spec: tally_optional, tally_dispatch_from,
@@ -324,6 +323,11 @@ function initCompanySettings(db) {
     // alongside; reverted too.
     'eauction_licence', 'spice_board_licence', 'auction_place', 'business_place',
     'season_start_year', 'season_end_year',
+    // Praman Lot Code — removed in this revision. The fallback chain
+    // (short_name → first word of trade_name) was always good enough,
+    // and the user-facing field added clutter to the Tally panel
+    // without any operational benefit.
+    'praman_company',
     // Inherited from earlier cleanups
     'asp_profit', 'isp_profit',
     'asp_profit_pooler', 'asp_profit_dealer',

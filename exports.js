@@ -711,8 +711,12 @@ async function exportPramanCSV(db, auctionId, cfg, state) {
   // register a different short code with Praman than what they use
   // elsewhere (e.g. invoice prefixes, logo derivation) without
   // touching every other code path.
+  // Lot company code on the Praman CSV — derived from the company
+  // identity resolver. The dedicated `praman_company` setting was
+  // dropped; the resolver already picks short_name → logo code →
+  // first word of trade_name, which covers every install we've seen.
   const identity = getCompanyIdentity(cfg);
-  const lotCompany = String(cfg.praman_company || '').trim() || identity.shortName || '';
+  const lotCompany = identity.shortName || '';
 
   // Praman classifies sellers as 1=Planter (URD/agriculturist) or
   // 2=Dealer (registered, with GSTIN). Per-lot decision based on

@@ -3830,6 +3830,61 @@ app.put('/api/bills/:id', requireInvoiceWrite, (req, res) => {
 // Returns one of 'I', 'E', 'L', or '' (no fallback was possible — caller
 // should treat empty as local-by-default).
 function deriveDealerSaleType(db, auctionId, dealerName, dealerCr, cfg, purchase) {
+  // For Debit Notes, inter/intra is determined by the DEALER'S state vs
+  // the COMPANY'S state — NOT the buyer-facing sale type on lots
+  // (lots.sale reflects the buyer's relationship to the company, which
+  // is irrelevant when the company is issuing a credit back to the
+  // dealer). Earlier code prioritised lots.sale and the company's
+  // configured business_state, which gave the wrong answer when:
+  //   - lots.sale was 'L' because the buyer happened to be in the
+  //     company state, even though the seller (dealer) was elsewhere
+  //   - tally_state_code was left at the default '33' for a company
+  //     whose real GSTIN starts with '32' (Kerala)
+  //
+  // Resolution order — strictly GSTIN-based now:
+  //   1. dealer GSTIN state code vs company GSTIN state code
+  //   2. purchase row's own GST split (igst > 0 ⇒ inter), as a backup
+  //      for legacy purchases whose dealer GSTIN was lost
+  //   3. lots.sale dominant ('I'/'E'/'L'), last-resort
+  function stateCodeFromCr(s) {
+    let c = String(s || '').trim().toUpperCase();
+    if (c.startsWith('GSTIN.')) c = c.slice(6);
+    else if (c.startsWith('GSTIN')) c = c.slice(5);
+    return /^\d{2}/.test(c) ? c.slice(0, 2) : '';
+  }
+  // Company state code — read from the actual configured GSTIN first
+  // (canonical source), then fall back to tally_state_code, then to
+  // business_state. Reading the GSTIN avoids the wrong-default problem
+  // (tally_state_code defaults to 33 even on Kerala installs).
+  const cfgObj = cfg || {};
+  const bizState = String(cfgObj.business_state || '').toUpperCase();
+  const companyGstinCandidates = bizState === 'KERALA'
+    ? [cfgObj.kl_gstin, cfgObj.tn_gstin, cfgObj.gstin]
+    : [cfgObj.tn_gstin, cfgObj.kl_gstin, cfgObj.gstin];
+  let companyStateCode = '';
+  for (const g of companyGstinCandidates) {
+    const code = stateCodeFromCr(g);
+    if (code) { companyStateCode = code; break; }
+  }
+  if (!companyStateCode) {
+    companyStateCode = String(cfgObj.tally_state_code
+      || (bizState === 'KERALA' ? '32' : '33'));
+  }
+
+  // 1) Dealer GSTIN vs company GSTIN — authoritative for DN.
+  const dealerStateCode = stateCodeFromCr(dealerCr);
+  if (dealerStateCode) {
+    return dealerStateCode === companyStateCode ? 'L' : 'I';
+  }
+
+  // 2) Purchase row's GST split (covers the case where dealerCr is
+  //    blank but the original purchase invoice was generated correctly).
+  if (purchase) {
+    if (Number(purchase.igst) > 0) return 'I';
+    if (Number(purchase.cgst) > 0 || Number(purchase.sgst) > 0) return 'L';
+  }
+
+  // 3) Last resort — lots.sale dominant tag.
   if (auctionId && dealerName) {
     const rows = db.all(
       `SELECT UPPER(TRIM(COALESCE(sale,''))) AS s, COUNT(*) AS n
@@ -3843,25 +3898,6 @@ function deriveDealerSaleType(db, auctionId, dealerName, dealerCr, cfg, purchase
     const dominant = rows.length ? String(rows[0].s || '').toUpperCase() : '';
     if (dominant === 'I' || dominant === 'E' || dominant === 'L') return dominant;
   }
-  // Primary fallback: read the dealer's own purchase row. The GST split
-  // recorded there (cgst/sgst vs igst) is the authoritative inter/intra
-  // signal — it was computed at purchase time from the dealer's GSTIN
-  // state. Use this BEFORE the GSTIN-string heuristic, since it always
-  // reflects the actual GST already paid.
-  if (purchase) {
-    if (Number(purchase.igst) > 0) return 'I';
-    if (Number(purchase.cgst) > 0 || Number(purchase.sgst) > 0) return 'L';
-  }
-  // Secondary fallback: GSTIN state-code comparison.
-  let dealerStateCode = '';
-  let cr = String(dealerCr || '').trim().toUpperCase();
-  if (cr.startsWith('GSTIN.')) cr = cr.slice(6);
-  else if (cr.startsWith('GSTIN')) cr = cr.slice(5);
-  if (/^\d{2}/.test(cr)) dealerStateCode = cr.slice(0, 2);
-  const companyStateCode = String((cfg && cfg.tally_state_code)
-      || (String((cfg && cfg.business_state) || '').toUpperCase() === 'KERALA' ? '32' : '33'));
-  if (dealerStateCode && dealerStateCode !== companyStateCode) return 'I';
-  if (dealerStateCode) return 'L';
   return '';
 }
 

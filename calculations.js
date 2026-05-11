@@ -794,12 +794,48 @@ function buildDebitNote(db, invoiceNo, saleType, discount, cfg) {
   // Earlier code used gst_goods, producing wrong tax on every DN.
   const gstRate = Number(cfg.discount_gst) || Number(cfg.gst_service) || 18;
 
-  // Sale-type-driven GST split.
-  //   Caller can pass an explicit saleType ('L'/'I'/'E') — that wins.
-  //   Otherwise, look up the dealer's lots in this trade: if any are
-  //   tagged 'I'/'E' → inter-state; else local.
-  //   Final fallback: the source purchase's igst (legacy behaviour).
+  // Sale-type-driven GST split. For DNs (which credit the DEALER), the
+  // inter/intra classification depends on the dealer's GSTIN state vs
+  // the company's GSTIN state — NOT on the buyer-facing lots.sale tag.
+  //   1. Caller-supplied saleType wins ('L'/'I'/'E').
+  //   2. Dealer GSTIN vs company GSTIN — authoritative.
+  //   3. Source purchase's own GST split (igst > 0 ⇒ inter).
+  //   4. Last resort: dominant lots.sale tag.
+  function _stateCodeFromCr(s) {
+    let c = String(s || '').trim().toUpperCase();
+    if (c.startsWith('GSTIN.')) c = c.slice(6);
+    else if (c.startsWith('GSTIN')) c = c.slice(5);
+    return /^\d{2}/.test(c) ? c.slice(0, 2) : '';
+  }
   let resolvedSale = String(saleType || '').trim().toUpperCase();
+  if (resolvedSale !== 'L' && resolvedSale !== 'I' && resolvedSale !== 'E') {
+    // Compare dealer GSTIN vs company GSTIN. Pull company state from
+    // the actual configured GSTIN — tally_state_code defaults to '33'
+    // even on Kerala installs so it isn't safe by itself.
+    const bizState = String(cfg.business_state || '').toUpperCase();
+    const companyGstinCandidates = bizState === 'KERALA'
+      ? [cfg.kl_gstin, cfg.tn_gstin, cfg.gstin]
+      : [cfg.tn_gstin, cfg.kl_gstin, cfg.gstin];
+    let companyStateCode = '';
+    for (const g of companyGstinCandidates) {
+      const code = _stateCodeFromCr(g);
+      if (code) { companyStateCode = code; break; }
+    }
+    if (!companyStateCode) {
+      companyStateCode = String(cfg.tally_state_code
+        || (bizState === 'KERALA' ? '32' : '33'));
+    }
+    const dealerStateCode = _stateCodeFromCr(inv.cr || inv.gstin);
+    if (dealerStateCode) {
+      resolvedSale = (dealerStateCode === companyStateCode) ? 'L' : 'I';
+    }
+  }
+  // Backup: source purchase's own GST split.
+  if (resolvedSale !== 'L' && resolvedSale !== 'I' && resolvedSale !== 'E') {
+    if ((Number(inv.igst) || 0) > 0) resolvedSale = 'I';
+    else if ((Number(inv.cgst) || 0) > 0 || (Number(inv.sgst) || 0) > 0) resolvedSale = 'L';
+  }
+  // Last resort — lots.sale dominant tag.
   if (resolvedSale !== 'L' && resolvedSale !== 'I' && resolvedSale !== 'E') {
     try {
       const r = db.get(
@@ -813,13 +849,7 @@ function buildDebitNote(db, invoiceNo, saleType, discount, cfg) {
         [String(inv.ano || ''), inv.name || '']
       );
       resolvedSale = (r && r.s) ? String(r.s).toUpperCase() : '';
-    } catch (_) { /* fall through to GST-column check */ }
-  }
-  // When lot sale type is still unresolved, fall back to the GST already
-  // recorded on the source purchase: igst>0 → inter (I), cgst/sgst>0 → L.
-  if (resolvedSale !== 'L' && resolvedSale !== 'I' && resolvedSale !== 'E') {
-    if ((Number(inv.igst) || 0) > 0) resolvedSale = 'I';
-    else if ((Number(inv.cgst) || 0) > 0 || (Number(inv.sgst) || 0) > 0) resolvedSale = 'L';
+    } catch (_) { /* fall through */ }
   }
   const isInter = (resolvedSale === 'I' || resolvedSale === 'E');
 
