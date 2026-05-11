@@ -1088,18 +1088,19 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   labeledCell(rightX + rCell, ry2, rCell, rSmall, 'Destination', destination);
   ry2 += rSmall;
 
-  // Dispatch From block — populated from cfg.dispatch_from (Settings →
-  // Company → Dispatch From). Single user-editable address line. Falls
-  // back to the company's primary address when the dedicated field is
-  // blank, so existing installs that haven't set it yet still show
-  // something useful instead of an empty cell.
+  // Dispatch From block — driven exclusively by the dedicated
+  // `dispatch_from` setting (Settings → Company → Dispatch From). No
+  // fallback to the company's primary address: if the field is blank,
+  // the cell stays empty so the user notices that the dispatch address
+  // hasn't been configured yet (prevents the silent "wrong address on
+  // the invoice" bug that the hardcoded fallback was producing).
   const dispatchFromH = midH - rSmall;
   box(rightX, ry2, rightW, dispatchFromH);
   if (showDispatch) {
     const dispatchFromText = String(
       (invoiceData && invoiceData.dispatchFrom) ||
       cfg.dispatch_from ||
-      cfg.tn_address1 || cfg.address1 || ''
+      ''
     ).trim();
     doc.font('Helvetica-Bold').fontSize(7).fillColor('#000')
        .text('Dispatch From:', rightX + 3, ry2 + 4, { width: rightW - 6 });
@@ -1432,6 +1433,22 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
     const addlLabel = (summary.addlChargeName || cfg.addl_charge_name || 'Additional Charge').toString();
     doc.font('Helvetica-BoldOblique').text(addlLabel, colX('desc') + 4, y + 3, { width: colW.desc + colW.hsn - 8 });
     doc.font('Helvetica-Bold').text(formatINR(summary.addlCharge), colX('amount') + 2, y + 3, { width: colW.amount - 4, align: 'right' });
+    doc.font('Helvetica');
+    y += rowH;
+  }
+
+  // TDS / TCS on Sales (Task 6) — driven by flag_tds_sales (taxable
+  // mode) or flag_wgst (full-amount mode). Both modes already feed
+  // summary.tdsAmount in calculations.js, so the renderer just needs to
+  // emit the row when it's non-zero.
+  if (summary.tdsAmount && summary.tdsAmount > 0) {
+    rowVerticals(y, rowH);
+    const tdsRate  = Number(summary.tdsRate || 0).toFixed(2).replace(/\.?0+$/, '');
+    const tdsLabel = summary.tdsMode === 'full'
+      ? `TDS on Full Invoice Amount @ ${tdsRate}%`
+      : `TDS on Taxable Amount @ ${tdsRate}%`;
+    doc.font('Helvetica-BoldOblique').text(tdsLabel, colX('desc') + 4, y + 3, { width: colW.desc + colW.hsn - 8 });
+    doc.font('Helvetica-Bold').text(formatINR(summary.tdsAmount), colX('amount') + 2, y + 3, { width: colW.amount - 4, align: 'right' });
     doc.font('Helvetica');
     y += rowH;
   }

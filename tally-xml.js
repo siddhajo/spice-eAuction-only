@@ -284,10 +284,13 @@ function generSalesIspXML(rows, cfg, opts = {}) {
   const d_company    = _imcpcDisp
     ? cfgGet(cfg, 'trade_name', cfgGet(cfg, 'short_name', ''))
     : cfgGet(cfg, 'short_name', cfgGet(cfg, 'trade_name', ''));
-  const d_add        = cfgGet(cfg, 'dispatch_from', cfgGet(cfg, 'kl_address1', ''));
+  // Dispatch From — strictly the configured `dispatch_from`. No
+  // hardcoded city/PIN fallbacks: when the setting is blank, downstream
+  // XML emits an empty cell so the user notices and configures it.
+  const d_add        = cfgGet(cfg, 'dispatch_from', '');
   const d_add2       = cfgGet(cfg, 'kl_address2', '');
-  const d_place      = cfgGet(cfg, 'kl_place', cfgGet(cfg, 'kl_branch', 'NEDUMKANDAM'));
-  const d_pin        = cfgGet(cfg, 'kl_pin', '685553');
+  const d_place      = cfgGet(cfg, 'kl_place', cfgGet(cfg, 'kl_branch', ''));
+  const d_pin        = cfgGet(cfg, 'kl_pin', '');
   const d_state      = cfgGet(cfg, 'kl_state', 'Kerala');
   const d_state_code = '32';
   const d_gstin      = cfgGet(cfg, 'kl_gstin', '');
@@ -563,7 +566,7 @@ ${TAGS.DEEMNO}
 </LEDGERENTRIES.LIST>`;
     }
 
-    // TCS
+    // TCS — legacy ledger entry, kept for back-compat.
     if (tcs && row.tcsamt && row.tcsamt > 0) {
       xml += `
 <LEDGERENTRIES.LIST>
@@ -571,6 +574,22 @@ ${TAGS.DEEMNO}
 ${TAGS.DEEMNO}
 <AMOUNT>${r2(row.tcsamt)}</AMOUNT>
 <VATEXPAMOUNT>${r2(row.tcsamt)}</VATEXPAMOUNT>
+</LEDGERENTRIES.LIST>`;
+    }
+    // TDS / TCS on Sales (Task 6) — flag-driven, emitted when the
+    // sales-invoice flag (flag_tds_sales) OR the full-amount flag
+    // (flag_wgst) is on AND the per-row tds_amount is non-zero.
+    const _tdsRow = Number(row.tds_amount || row.tdsAmount || 0);
+    const _tdsFlag = cfgBool(cfg, 'flag_tds_sales', false) || cfgBool(cfg, 'flag_wgst', false);
+    if (_tdsFlag && _tdsRow > 0) {
+      const Tax_TDS_Sales = cfgGet(cfg, 'tally_tds_paid_sales',
+        cfgGet(cfg, 'tally_tds_ledger', 'TDS on Sale of Goods'));
+      xml += `
+<LEDGERENTRIES.LIST>
+<LEDGERNAME>${xe(Tax_TDS_Sales)}</LEDGERNAME>
+${TAGS.DEEMNO}
+<AMOUNT>${r2(_tdsRow)}</AMOUNT>
+<VATEXPAMOUNT>${r2(_tdsRow)}</VATEXPAMOUNT>
 </LEDGERENTRIES.LIST>`;
     }
 

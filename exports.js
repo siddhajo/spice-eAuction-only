@@ -287,9 +287,10 @@ async function exportPriceListBefore(db, auctionId) {
 }
 
 // ── Export Type 4: Bank Payment (RTGS/NEFT format) ───────────
-async function exportBankPayment(db, auctionId, cfg) {
+async function exportBankPayment(db, auctionId, cfg, _state, extra) {
   const { getBankPaymentData } = require('./calculations');
-  const payments = getBankPaymentData(db, auctionId, cfg);
+  const sellers = (extra && extra.sellers) || null;
+  const payments = getBankPaymentData(db, auctionId, cfg, { sellers });
   const cols = [
     { header: 'TransactionType', key: 'transactionType', width: 16 },
     { header: 'BeneIFSCode', key: 'ifsc', width: 14 },
@@ -310,9 +311,10 @@ async function exportBankPayment(db, auctionId, cfg) {
 // Same data shape as bank_payment except `amount` is the pre-discount
 // puramt (raw purchase amount before refund/GST). Per the e-Auction spec
 // the Amount + SendertoRcvrInfo columns are omitted from this variant.
-async function exportBankPaymentBefore(db, auctionId, cfg) {
+async function exportBankPaymentBefore(db, auctionId, cfg, _state, extra) {
   const { getBankPaymentData } = require('./calculations');
-  const payments = getBankPaymentData(db, auctionId, cfg, { before: true });
+  const sellers = (extra && extra.sellers) || null;
+  const payments = getBankPaymentData(db, auctionId, cfg, { before: true, sellers });
   const cols = [
     { header: 'TransactionType', key: 'transactionType', width: 16 },
     { header: 'BeneIFSCode',     key: 'ifsc',            width: 14 },
@@ -453,7 +455,10 @@ async function exportSalesTaxes(db, auctionId) {
 }
 
 // ── Export: Payment Summary ──────────────────────────────────
-async function exportPaymentSummary(db, auctionId, cfg) {
+async function exportPaymentSummary(db, auctionId, cfg, _state, extra) {
+  const sellersFilter = (extra && Array.isArray(extra.sellers) && extra.sellers.length)
+    ? new Set(extra.sellers.map(s => String(s).trim().toUpperCase()))
+    : null;
   // Match getPaymentSummary semantics: discount includes BOTH the per-lot
   // policy discount AND any manual debit_notes for this auction's sellers.
   // We compute it per-row by adding debit_notes (joined by ano + name).
@@ -471,12 +476,15 @@ async function exportPaymentSummary(db, auctionId, cfg) {
     );
     for (const d of debits) debitMap[d.name] = Number(d.total) || 0;
   }
-  const rows = db.all(
+  let rows = db.all(
     `SELECT name as poolername, lot_no as lot, bags as bag, qty, price, amount,
       pqty, prate, puramt, ${discountCol} as lot_discount, balance as payable
      FROM lots WHERE auction_id = ? AND amount > 0
      ORDER BY state, name`, [auctionId]
   );
+  if (sellersFilter) {
+    rows = rows.filter(r => sellersFilter.has(String(r.poolername || '').trim().toUpperCase()));
+  }
   // Spread debit_notes amount across the seller's lots proportionally so
   // every row totals to the same SUM as the payments view. Simpler approach:
   // attribute the FULL manual debit on the FIRST row for each seller; later

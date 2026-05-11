@@ -2054,6 +2054,10 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <svg viewBox="0 0 24 24"><path d="M3 3h18v18H3zM3 9h18M9 21V9"/></svg>
           Spice Board
         </button>
+        <button class="side-item needs-user-manage" data-tab="importold" onclick="go('importold')">
+          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 14l-5 5-5-5M12 19V3"/></svg>
+          Import Old Data
+        </button>
       </div>
     </aside>
 
@@ -3202,8 +3206,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
-            <button class="btn btn-a" style="height:38px;padding:0 16px;font-weight:600" onclick="exportType('bank_payment')" title="Export bulk RTGS/NEFT file for bank portal upload">📤 Export Bank Payment</button>
-            <button class="btn btn-a" style="height:38px;padding:0 16px;font-weight:600" onclick="exportType('payment')" title="Per-lot detailed payment breakdown">📊 Export Payment XLSX</button>
+            <button class="btn btn-a" style="height:38px;padding:0 16px;font-weight:600" onclick="exportType('bank_payment')" title="Export RTGS/NEFT file (ticked rows only when sellers are selected)">📤 Export Bank Payment</button>
+            <button class="btn btn-a" style="height:38px;padding:0 16px;font-weight:600" onclick="exportType('payment')" title="Per-lot detailed payment breakdown (ticked rows only when sellers are selected)">📊 Export Payment XLSX</button>
           </div>
         </div>
 
@@ -3745,6 +3749,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
               <option value="buyers_statement">Report 1 — Buyers Statement</option>
               <option value="form_d">Report 2 — FORM-D (Advance Auction Report)</option>
               <option value="form_c">Report 3 — FORM-C (Auction Report)</option>
+              <option value="eauction_csv">Report 4 — e-Auction (Spices Board) CSV</option>
             </select>
           </div>
         </div>
@@ -3769,11 +3774,48 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <button class="btn btn-g" onclick="sbLoadPreview()">Preview</button>
           <button class="btn btn-a" onclick="sbDownload('xlsx')">Excel</button>
           <button class="btn btn-a" onclick="sbDownload('pdf')">PDF</button>
+          <button class="btn btn-a" onclick="sbDownload('csv')">CSV</button>
           <button class="btn btn-o" onclick="sbPrint()">Print</button>
         </div>
 
         <div id="sb-meta" style="font-size:12px;color:var(--text2);margin-bottom:8px"></div>
         <div id="sb-preview" style="overflow-x:auto;max-height:600px;border:1px solid var(--spice-line);border-radius:8px;padding:8px;background:#fff"></div>
+      </div>
+    </div>
+
+    <!-- IMPORT OLD DATA (Task 8) -->
+    <div class="tc" id="tc-importold">
+      <div class="card">
+        <h2>Import Old Data <span style="font-weight:400;font-size:12px;color:var(--text3)">Upload legacy XLS/XLSX exports back into the system</span></h2>
+        <div class="sgrid" style="margin-bottom:14px">
+          <div class="fg"><label>Module</label>
+            <select id="imp-module">
+              <option value="sales_invoice">Sales Invoices</option>
+              <option value="purchase">Purchase Invoices</option>
+              <option value="bills">Bills of Supply</option>
+              <option value="debit_notes">Debit Notes</option>
+              <option value="payments">Payments</option>
+              <option value="sellers">Sellers</option>
+              <option value="buyers">Buyers</option>
+            </select>
+          </div>
+          <div class="fg"><label>File (.xlsx / .xls)</label>
+            <input type="file" id="imp-file" accept=".xls,.xlsx">
+          </div>
+          <div class="fg" style="display:flex;align-items:end">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px">
+              <input type="checkbox" id="imp-dryrun" checked> Dry-run (validate only, do not write)
+            </label>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:14px">
+          <button class="btn btn-g" onclick="impPreview()">Preview & Detect Mapping</button>
+          <button class="btn btn-a" onclick="impRun()">Run Import</button>
+          <button class="btn btn-o" onclick="impLoadHistory()">View History</button>
+        </div>
+        <div id="imp-result" style="margin-bottom:14px;font-size:12.5px;color:var(--text2)"></div>
+        <div id="imp-preview" style="overflow-x:auto;max-height:300px;border:1px solid var(--spice-line);border-radius:8px;padding:8px;background:#fff;margin-bottom:14px"></div>
+        <div id="imp-history" style="overflow-x:auto;max-height:300px;border:1px solid var(--spice-line);border-radius:8px;padding:8px;background:#fff"></div>
       </div>
     </div>
   </div>
@@ -3893,7 +3935,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
          another (splits the source allocation around the moved range)
      Opened from the Auctions tab "🗂️" action button per row.
      ════════════════════════════════════════════════════════════ -->
-<div class="modal-bg" id="alloc-modal"><div class="modal" style="max-width:560px">
+<div class="modal-bg" id="alloc-modal"><div class="modal" style="max-width:720px">
   <h2 style="margin-bottom:6px">Lot Allocations — Trade #<span id="alloc-modal-ano"></span></h2>
 
   <div style="display:flex;gap:0;margin-bottom:14px;border-bottom:2px solid var(--border)">
@@ -3915,8 +3957,20 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
   <!-- Reassign panel -->
   <div id="alloc-panel-reassign" style="display:none">
-    <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Move unused lot numbers from one branch to another. Only empty (not yet entered) lots can be reassigned.</p>
+    <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Move unused lot numbers from one branch to another. Click tiles to select. Booked lots (with sellers) cannot be reassigned.</p>
     <div id="alloc-reassign-status" style="margin-bottom:14px"></div>
+
+    <!-- Tile legend -->
+    <div style="display:flex;flex-wrap:wrap;gap:10px;font-size:11px;margin-bottom:10px;padding:8px 10px;background:#fafafa;border:1px solid #eee;border-radius:6px">
+      <span><span style="display:inline-block;width:12px;height:12px;background:#E5E7EB;border:1px solid #cbd5e1;border-radius:3px;vertical-align:middle"></span> Free</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#DBEAFE;border:1px solid #93c5fd;border-radius:3px;vertical-align:middle"></span> Allocated</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#FCA5A5;border:1px solid #ef4444;border-radius:3px;vertical-align:middle"></span> Booked</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#FDE68A;border:1px solid #f59e0b;border-radius:3px;vertical-align:middle"></span> Reassigned</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#10B981;border:1px solid #047857;border-radius:3px;vertical-align:middle"></span> Selected</span>
+    </div>
+
+    <!-- Tile grid — grouped by branch with sticky branch headers -->
+    <div id="ra-tile-grid" style="max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px;background:#fff;margin-bottom:12px"></div>
 
     <div style="background:#fff8f0;border:1px solid #f0d8c0;border-radius:10px;padding:14px">
       <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:end;margin-bottom:10px">
@@ -3933,15 +3987,15 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
         <div>
           <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">START LOT</div>
-          <input type="text" id="ra-start" placeholder="e.g. 051" style="width:100%;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px">
+          <input type="text" id="ra-start" placeholder="e.g. 051" oninput="raSyncSelectionFromInputs()" style="width:100%;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px">
         </div>
         <div>
           <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">END LOT</div>
-          <input type="text" id="ra-end" placeholder="e.g. 100" style="width:100%;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px">
+          <input type="text" id="ra-end" placeholder="e.g. 100" oninput="raSyncSelectionFromInputs()" style="width:100%;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px">
         </div>
       </div>
       <div id="ra-preview" style="font-size:11px;color:var(--text3);margin-bottom:10px;min-height:14px"></div>
-      <button type="button" style="background:#E67E22;color:#fff;border:none;border-radius:8px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;width:100%" onclick="executeReassign()">↔ Reassign Lots</button>
+      <button type="button" style="background:#E67E22;color:#fff;border:none;border-radius:8px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;width:100%" onclick="executeReassign()">↔ Reassign Selected</button>
       <div id="ra-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:12px;margin-top:8px"></div>
     </div>
 
@@ -8128,6 +8182,101 @@ async function populateAllocRows(prefix, allocs) {
 }
 
 let _allocEditAuctionId = null;
+// Reassign tile state — populated by openAllocModal/refreshReassignTiles.
+//   _raAllocStats: array of { branch, ranges:[{ lots:[{ lot, state, seller, branch, booked }] }] }
+//   _raSelected:   Set of lot_no currently selected for reassignment
+let _raAllocStats = [];
+const _raSelected = new Set();
+
+function renderReassignTiles() {
+  const grid = document.getElementById('ra-tile-grid');
+  if (!grid) return;
+  if (!_raAllocStats || !_raAllocStats.length) {
+    grid.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:14px;text-align:center">No allocations yet</div>';
+    return;
+  }
+  const stateStyle = (st, selected) => {
+    if (selected) return 'background:#10B981;color:#fff;border:1px solid #047857';
+    switch (st) {
+      case 'booked':     return 'background:#FCA5A5;color:#7f1d1d;border:1px solid #ef4444;cursor:not-allowed';
+      case 'allocated': return 'background:#DBEAFE;color:#1e3a8a;border:1px solid #93c5fd';
+      case 'reassigned':return 'background:#FDE68A;color:#78350f;border:1px solid #f59e0b';
+      default:          return 'background:#E5E7EB;color:#1f2937;border:1px solid #cbd5e1';
+    }
+  };
+  let html = '';
+  for (const s of _raAllocStats) {
+    const branch = s.branch;
+    html += `<div style="margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
+        <span>📍 ${esc(branch)}</span>
+        <span style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0">${s.used}/${s.total} used</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px">`;
+    for (const r of (s.ranges || [])) {
+      for (const t of (r.lots || [])) {
+        const selected = _raSelected.has(t.lot);
+        const dis = (t.state === 'booked');
+        const tip = t.booked
+          ? `Booked: ${t.seller || '—'}`
+          : (t.state === 'reassigned' ? `Reassigned from another branch` : `Free for reassign`);
+        html += `<div title="${esc(tip)}" data-lot="${esc(t.lot)}" data-branch="${esc(branch)}" data-state="${esc(t.state)}" ${dis?'':`onclick="raToggleTile(this)"`} style="${stateStyle(t.state, selected)};padding:4px 6px;border-radius:4px;font-size:11px;font-family:monospace;min-width:42px;text-align:center;${dis?'opacity:.85':'cursor:pointer'};user-select:none">${esc(t.lot)}</div>`;
+      }
+    }
+    html += `</div></div>`;
+  }
+  grid.innerHTML = html;
+  updateRangeInputsFromSelection();
+}
+function raToggleTile(el) {
+  const lot = el.getAttribute('data-lot');
+  const branch = el.getAttribute('data-branch');
+  if (!lot) return;
+  // If the user clicks a tile from a different branch, treat that as
+  // switching the FROM branch — clear prior selection.
+  const fromSel = document.getElementById('ra-from');
+  if (fromSel.value && fromSel.value !== branch) _raSelected.clear();
+  if (fromSel.value !== branch) {
+    fromSel.value = branch;
+    loadReassignPreview();
+  }
+  if (_raSelected.has(lot)) _raSelected.delete(lot);
+  else _raSelected.add(lot);
+  renderReassignTiles();
+}
+function updateRangeInputsFromSelection() {
+  const startEl = document.getElementById('ra-start');
+  const endEl   = document.getElementById('ra-end');
+  if (!startEl || !endEl) return;
+  const sel = Array.from(_raSelected);
+  if (!sel.length) { startEl.value = ''; endEl.value = ''; return; }
+  // Sort by numeric tail, keep prefix from first.
+  const parsed = sel.map(l => {
+    const m = l.match(/^(\D*)(\d+)$/);
+    return m ? { lot: l, prefix: m[1] || '', num: parseInt(m[2], 10), padLen: m[2].length } : null;
+  }).filter(Boolean).sort((a, b) => a.num - b.num);
+  if (!parsed.length) return;
+  startEl.value = parsed[0].lot;
+  endEl.value   = parsed[parsed.length - 1].lot;
+}
+function raSyncSelectionFromInputs() {
+  const startEl = document.getElementById('ra-start');
+  const endEl   = document.getElementById('ra-end');
+  const start = (startEl && startEl.value || '').trim();
+  const end   = (endEl   && endEl.value   || '').trim();
+  if (!start || !end) return;
+  const sm = start.match(/^(\D*)(\d+)$/);
+  const em = end.match(/^(\D*)(\d+)$/);
+  if (!sm || !em || sm[1] !== em[1]) return;
+  const pad = sm[2].length;
+  const a = parseInt(sm[2], 10), b = parseInt(em[2], 10);
+  if (a > b) return;
+  _raSelected.clear();
+  for (let n = a; n <= b; n++) {
+    _raSelected.add(sm[1] + String(n).padStart(pad, '0'));
+  }
+  renderReassignTiles();
+}
 
 function switchAllocTab(tab) {
   document.getElementById('alloc-panel-edit').style.display     = tab === 'edit'     ? 'block' : 'none';
@@ -8195,6 +8344,9 @@ async function openAllocModal(auctionId, ano) {
     } else {
       statusEl.innerHTML = '<div style="font-size:11px;color:var(--text3)">No allocations yet</div>';
     }
+    _raAllocStats = stats;
+    _raSelected.clear();
+    renderReassignTiles();
     showModal('alloc-modal');
   } catch (e) {
     toast(e.message || 'Failed to load allocations');
@@ -8224,10 +8376,37 @@ async function executeReassign() {
   const showErr = (m) => { errEl.textContent = m; errEl.style.display = 'block'; errEl.style.background = '#FEE2E2'; errEl.style.color = '#991B1B'; };
   errEl.style.display = 'none';
 
-  if (!from)  return showErr('Select FROM branch');
+  if (!from)  return showErr('Select FROM branch (or click a tile)');
   if (!to)    return showErr('Select TO branch');
   if (from === to) return showErr('FROM and TO must be different');
-  if (!start || !end) return showErr('Enter start and end lot numbers');
+  if (!start || !end) return showErr('Pick at least one tile or enter a range');
+
+  // Client-side guard: any booked lot inside the chosen range will be
+  // rejected by the server, so flag it here for a quicker, friendlier
+  // error message. Pulls from the tile grid we just rendered.
+  const sm = start.match(/^(\D*)(\d+)$/);
+  const em = end.match(/^(\D*)(\d+)$/);
+  if (sm && em && sm[1] === em[1]) {
+    const pad = sm[2].length;
+    const a = parseInt(sm[2], 10), b = parseInt(em[2], 10);
+    const bookedSeen = [];
+    for (const s of (_raAllocStats || [])) {
+      if (s.branch !== from) continue;
+      for (const r of (s.ranges || [])) {
+        for (const t of (r.lots || [])) {
+          const tm = t.lot.match(/^(\D*)(\d+)$/);
+          if (!tm || tm[1] !== sm[1]) continue;
+          const n = parseInt(tm[2], 10);
+          if (n >= a && n <= b && t.booked) bookedSeen.push(t.lot);
+        }
+      }
+    }
+    if (bookedSeen.length) {
+      return showErr('Booked lots in range cannot be reassigned: ' +
+        bookedSeen.slice(0, 5).join(', ') + (bookedSeen.length > 5 ? '…' : ''));
+    }
+  }
+
   if (!confirm(`Reassign lots ${start}-${end} from ${from} to ${to}?`)) return;
 
   try {
@@ -8242,6 +8421,15 @@ async function executeReassign() {
     // Reload edit panel rows to reflect the split
     const reloaded = await j(`/api/auctions/${_allocEditAuctionId}/allocations`);
     await populateAllocRows('alloc-edit', reloaded.allocations || []);
+    // Refresh tile grid + branch usage bars after the reassign lands
+    // so the freshly-moved range immediately appears under the new
+    // branch (real-time refresh, no modal close required).
+    try {
+      const fresh = await j(`/api/auctions/${_allocEditAuctionId}/allocation-stats`);
+      _raAllocStats = fresh.stats || [];
+      _raSelected.clear();
+      renderReassignTiles();
+    } catch (_) { /* non-fatal */ }
     loadReassignPreview();
     document.getElementById('ra-start').value = '';
     document.getElementById('ra-end').value = '';
@@ -11011,14 +11199,23 @@ function sbRenderPreview(type, data){
     }
     return esc(String(v));
   };
-  let html = '<table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr>';
-  cols.forEach(c => { html += `<th style="text-align:${c.align||'left'};padding:6px;border-bottom:2px solid var(--spice-line);background:var(--spice-cream)">${esc(c.header)}</th>`; });
+  // Every cell sticks to a single line: white-space:nowrap stops wrap,
+  // overflow:hidden + text-overflow:ellipsis truncates long values
+  // gracefully instead of letting them push the table off-axis.
+  // `table-layout:fixed` makes column widths deterministic across rows
+  // so the body cells line up under their header cells.
+  const cellNoWrap = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+  let html = '<table style="width:100%;font-size:12px;border-collapse:collapse;table-layout:fixed"><thead><tr>';
+  cols.forEach(c => { html += `<th style="text-align:${c.align||'left'};padding:6px;border-bottom:2px solid var(--spice-line);background:var(--spice-cream);${cellNoWrap}" title="${esc(c.header)}">${esc(c.header)}</th>`; });
   html += '</tr></thead><tbody>';
   (data.sections || []).forEach(sec => {
-    html += `<tr><td colspan="${cols.length}" style="padding:8px;background:#FFF3CD;font-weight:700">${esc(sec.title)}</td></tr>`;
+    html += `<tr><td colspan="${cols.length}" style="padding:8px;background:#FFF3CD;font-weight:700;${cellNoWrap}">${esc(sec.title)}</td></tr>`;
     (sec.rows || []).forEach(r => {
       html += '<tr>';
-      cols.forEach(c => { html += `<td style="text-align:${c.align||'left'};padding:5px 6px;border-bottom:1px solid #eee">${fmtCell(r[c.key], c)}</td>`; });
+      cols.forEach(c => {
+        const v = fmtCell(r[c.key], c);
+        html += `<td style="text-align:${c.align||'left'};padding:5px 6px;border-bottom:1px solid #eee;${cellNoWrap}" title="${v}">${v}</td>`;
+      });
       html += '</tr>';
     });
     if (sec.totals) {
@@ -11027,7 +11224,8 @@ function sbRenderPreview(type, data){
         let v = '';
         if (i === 1 && sec.totals.label) v = sec.totals.label;
         else if (sec.totals[c.key] != null) v = sec.totals[c.key];
-        html += `<td style="text-align:${c.align||'left'};padding:6px;border-top:1px solid #ddd;border-bottom:2px solid #ddd">${fmtCell(v, c)}</td>`;
+        const out = fmtCell(v, c);
+        html += `<td style="text-align:${c.align||'left'};padding:6px;border-top:1px solid #ddd;border-bottom:2px solid #ddd;${cellNoWrap}" title="${out}">${out}</td>`;
       });
       html += '</tr>';
     }
@@ -11038,7 +11236,8 @@ function sbRenderPreview(type, data){
       let v = '';
       if (i === 1 && data.grand.label) v = data.grand.label;
       else if (data.grand[c.key] != null) v = data.grand[c.key];
-      html += `<td style="text-align:${c.align||'left'};padding:8px;border-top:2px double #9A6700;border-bottom:2px double #9A6700">${fmtCell(v, c)}</td>`;
+      const out = fmtCell(v, c);
+      html += `<td style="text-align:${c.align||'left'};padding:8px;border-top:2px double #9A6700;border-bottom:2px double #9A6700;${cellNoWrap}" title="${out}">${out}</td>`;
     });
     html += '</tr>';
   }
@@ -12876,10 +13075,25 @@ async function exportType(type,format){format=format||'xlsx';
   const aid=document.getElementById('exp-auction')?.value||document.getElementById('pay-auction')?.value;
   if(!aid){alert('Select an auction first');return}
   const label = (EXP_LABELS[type]||type);
+  // Multi-select filter: when at least one row on the Payments tab is
+  // ticked AND the export is one of the seller-scoped ones, restrict the
+  // download to just those sellers. Empty selection → full-trade export
+  // (the historical behaviour).
+  let sellersQs = '';
+  if (type === 'bank_payment' || type === 'bank_payment_before' || type === 'payment') {
+    const body = document.getElementById('payments-list');
+    if (body) {
+      const checked = Array.from(body.querySelectorAll('.pay-select-cb:checked'))
+        .map(cb => cb.value).filter(Boolean);
+      if (checked.length) {
+        sellersQs = '&sellers=' + encodeURIComponent(checked.join(','));
+      }
+    }
+  }
   await withOverlay(`Exporting ${label} (${format.toUpperCase()})…`, async () => {
     // CSV exports ignore format query param — server picks ext from EXPORT_TYPES.
     // Keep format in URL for consistency but download filename uses actual ext.
-    const r=await fetch(B+`/api/exports/${type}/${aid}?format=${format}`,{headers:{'Authorization':'Bearer '+T}});
+    const r=await fetch(B+`/api/exports/${type}/${aid}?format=${format}${sellersQs}`,{headers:{'Authorization':'Bearer '+T}});
     if(!r.ok){
       const errBody = await r.json().catch(() => ({}));
       const msg = errBody.error || `HTTP ${r.status}`;
@@ -14429,6 +14643,162 @@ if (document.readyState === 'loading') {
     });
   }
 })();
+
+/* ─── IMPORT OLD DATA (Task 8) ─────────────────────────────────────── */
+let _impLastMapping = null;
+let _impLastHeaders = [];
+
+async function impPreview(){
+  const fileEl = document.getElementById('imp-file');
+  const moduleKey = document.getElementById('imp-module').value;
+  const result = document.getElementById('imp-result');
+  const preview = document.getElementById('imp-preview');
+  if (!fileEl.files || !fileEl.files[0]) {
+    result.innerHTML = '<span style="color:#c00">Select a file first.</span>';
+    return;
+  }
+  result.innerHTML = 'Reading file…';
+  preview.innerHTML = '';
+  const fd = new FormData();
+  fd.append('file', fileEl.files[0]);
+  fd.append('module', moduleKey);
+  try {
+    const r = await fetch('/api/import-old-data/preview', { method:'POST', body:fd });
+    const data = await r.json();
+    if (!r.ok) {
+      result.innerHTML = '<span style="color:#c00">Error: '+escAttr(data.error||'preview failed')+'</span>';
+      return;
+    }
+    _impLastMapping = data.detectedMapping || {};
+    _impLastHeaders = data.headers || [];
+    const missing = data.missingFields || [];
+    let html = '<div><b>'+escAttr(data.label||moduleKey)+'</b> — '+data.total+' rows · '+(data.headers||[]).length+' columns</div>';
+    if (missing.length) html += '<div style="color:#c80;margin-top:4px">⚠ Missing required field mapping for: '+missing.map(escAttr).join(', ')+'</div>';
+    result.innerHTML = html;
+
+    // Mapping editor
+    let mapHtml = '<div style="margin:8px 0"><b>Detected Mapping</b> <span style="color:#999;font-size:11px">(edit if needed before Run)</span></div>';
+    mapHtml += '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#f4f4f4">'+
+      '<th style="text-align:left;padding:4px 6px;border:1px solid #ddd">DB Field</th>'+
+      '<th style="text-align:left;padding:4px 6px;border:1px solid #ddd">Source Column</th></tr></thead><tbody>';
+    const fields = Object.keys(_impLastMapping).concat(missing.filter(f => !(f in _impLastMapping)));
+    const allFields = Array.from(new Set([...fields, ...missing]));
+    allFields.forEach(f => {
+      const cur = _impLastMapping[f] || '';
+      let opts = '<option value="">— skip —</option>';
+      _impLastHeaders.forEach(h => {
+        opts += '<option value="'+escAttr(h)+'"'+(h===cur?' selected':'')+'>'+escAttr(h)+'</option>';
+      });
+      mapHtml += '<tr><td style="padding:3px 6px;border:1px solid #ddd"><code>'+escAttr(f)+'</code></td>'+
+        '<td style="padding:3px 6px;border:1px solid #ddd"><select data-impfield="'+escAttr(f)+'" onchange="_impMapChange(this)">'+opts+'</select></td></tr>';
+    });
+    mapHtml += '</tbody></table>';
+
+    // Preview rows
+    const rows = data.preview || [];
+    if (rows.length) {
+      mapHtml += '<div style="margin-top:10px"><b>First '+rows.length+' rows</b></div>';
+      mapHtml += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-top:4px"><thead><tr style="background:#fafafa">';
+      _impLastHeaders.forEach(h => { mapHtml += '<th style="text-align:left;padding:3px 6px;border:1px solid #eee;white-space:nowrap">'+escAttr(h)+'</th>'; });
+      mapHtml += '</tr></thead><tbody>';
+      rows.forEach(row => {
+        mapHtml += '<tr>';
+        _impLastHeaders.forEach(h => {
+          const v = row[h]; const t = (v==null?'':String(v));
+          mapHtml += '<td style="padding:2px 6px;border:1px solid #f0f0f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px">'+escAttr(t)+'</td>';
+        });
+        mapHtml += '</tr>';
+      });
+      mapHtml += '</tbody></table>';
+    }
+    preview.innerHTML = mapHtml;
+  } catch (e) {
+    result.innerHTML = '<span style="color:#c00">Error: '+escAttr(e.message||String(e))+'</span>';
+  }
+}
+function _impMapChange(sel){
+  const field = sel.getAttribute('data-impfield');
+  const v = sel.value;
+  _impLastMapping = _impLastMapping || {};
+  if (v) _impLastMapping[field] = v;
+  else delete _impLastMapping[field];
+}
+async function impRun(){
+  const fileEl = document.getElementById('imp-file');
+  const moduleKey = document.getElementById('imp-module').value;
+  const dryRun = document.getElementById('imp-dryrun').checked;
+  const result = document.getElementById('imp-result');
+  if (!fileEl.files || !fileEl.files[0]) {
+    result.innerHTML = '<span style="color:#c00">Select a file first.</span>';
+    return;
+  }
+  if (!dryRun && !confirm('This will INSERT rows into the database. Continue?')) return;
+  result.innerHTML = (dryRun?'Validating…':'Importing…');
+  const fd = new FormData();
+  fd.append('file', fileEl.files[0]);
+  fd.append('module', moduleKey);
+  fd.append('dryRun', dryRun ? 'true' : 'false');
+  if (_impLastMapping) fd.append('mapping', JSON.stringify(_impLastMapping));
+  try {
+    const r = await fetch('/api/import-old-data/run', { method:'POST', body:fd });
+    const data = await r.json();
+    if (!r.ok) {
+      result.innerHTML = '<span style="color:#c00">Error: '+escAttr(data.error||'import failed')+'</span>';
+      return;
+    }
+    let h = '<div style="padding:8px;background:'+(dryRun?'#fff8e1':'#e8f5e9')+';border-radius:6px">';
+    h += '<b>'+(dryRun?'Dry-run complete':'Import complete')+'</b> · ';
+    h += 'total='+data.total+' · imported='+data.imported+' · skipped(dup)='+data.skipped+' · failed='+data.failed;
+    h += '</div>';
+    if (data.errors && data.errors.length) {
+      h += '<div style="margin-top:8px"><b>Errors (first '+data.errors.length+'):</b><ul style="margin:4px 0 0 18px;font-size:12px">';
+      data.errors.forEach(e => { h += '<li>Row '+e.row+': '+escAttr(e.error)+'</li>'; });
+      h += '</ul></div>';
+    }
+    result.innerHTML = h;
+    if (!dryRun) impLoadHistory();
+  } catch (e) {
+    result.innerHTML = '<span style="color:#c00">Error: '+escAttr(e.message||String(e))+'</span>';
+  }
+}
+async function impLoadHistory(){
+  const box = document.getElementById('imp-history');
+  box.innerHTML = 'Loading…';
+  try {
+    const r = await fetch('/api/import-old-data/history');
+    const rows = await r.json();
+    if (!Array.isArray(rows) || !rows.length) { box.innerHTML = '<i>No imports yet.</i>'; return; }
+    let h = '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#f4f4f4">'+
+      '<th style="text-align:left;padding:4px 6px;border:1px solid #ddd">When</th>'+
+      '<th style="text-align:left;padding:4px 6px;border:1px solid #ddd">User</th>'+
+      '<th style="text-align:left;padding:4px 6px;border:1px solid #ddd">Module</th>'+
+      '<th style="text-align:left;padding:4px 6px;border:1px solid #ddd">File</th>'+
+      '<th style="text-align:right;padding:4px 6px;border:1px solid #ddd">Total</th>'+
+      '<th style="text-align:right;padding:4px 6px;border:1px solid #ddd">Imported</th>'+
+      '<th style="text-align:right;padding:4px 6px;border:1px solid #ddd">Skipped</th>'+
+      '<th style="text-align:right;padding:4px 6px;border:1px solid #ddd">Failed</th>'+
+      '<th style="text-align:center;padding:4px 6px;border:1px solid #ddd">Dry?</th>'+
+      '</tr></thead><tbody>';
+    rows.forEach(r => {
+      h += '<tr>'+
+        '<td style="padding:3px 6px;border:1px solid #eee;white-space:nowrap">'+escAttr(r.created_at||'')+'</td>'+
+        '<td style="padding:3px 6px;border:1px solid #eee">'+escAttr(r.username||'')+'</td>'+
+        '<td style="padding:3px 6px;border:1px solid #eee">'+escAttr(r.module||'')+'</td>'+
+        '<td style="padding:3px 6px;border:1px solid #eee">'+escAttr(r.filename||'')+'</td>'+
+        '<td style="padding:3px 6px;border:1px solid #eee;text-align:right">'+(r.total||0)+'</td>'+
+        '<td style="padding:3px 6px;border:1px solid #eee;text-align:right;color:#080">'+(r.imported||0)+'</td>'+
+        '<td style="padding:3px 6px;border:1px solid #eee;text-align:right;color:#888">'+(r.skipped||0)+'</td>'+
+        '<td style="padding:3px 6px;border:1px solid #eee;text-align:right;color:'+(r.failed?'#c00':'#888')+'">'+(r.failed||0)+'</td>'+
+        '<td style="padding:3px 6px;border:1px solid #eee;text-align:center">'+(r.dry_run?'✓':'')+'</td>'+
+        '</tr>';
+    });
+    h += '</tbody></table>';
+    box.innerHTML = h;
+  } catch (e) {
+    box.innerHTML = '<span style="color:#c00">Error: '+escAttr(e.message||String(e))+'</span>';
+  }
+}
+function escAttr(s){ return String(s==null?'':s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
 </script>
 </body>

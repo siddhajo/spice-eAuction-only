@@ -415,6 +415,39 @@ async function initDb() {
     FOREIGN KEY (user_id) REFERENCES users(id)
   )`);
 
+  // ── IMPORT LOG (Task 8 — "Import Old Data") ───────────────
+  // One row per import run (preview, dry-run, or actual import). Used
+  // by the Import Old Data → History panel so the admin can audit
+  // what was imported, when, by whom, and how many rows landed.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS import_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    module TEXT NOT NULL,
+    filename TEXT DEFAULT '',
+    dry_run INTEGER DEFAULT 0,
+    total INTEGER DEFAULT 0,
+    imported INTEGER DEFAULT 0,
+    skipped INTEGER DEFAULT 0,
+    failed INTEGER DEFAULT 0,
+    errors TEXT DEFAULT '',
+    user_id INTEGER,
+    username TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  )`);
+
+  // Records each lot-range reassignment so the tile UI can flag
+  // recently-moved lots and admins can audit branch transfers.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS reassign_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    auction_id INTEGER NOT NULL,
+    from_branch TEXT NOT NULL,
+    to_branch TEXT NOT NULL,
+    start_lot TEXT NOT NULL,
+    end_lot TEXT NOT NULL,
+    user_id INTEGER,
+    username TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  )`);
+
   // ── INDEXES ────────────────────────────────────────────────
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_traders_name ON traders(name)',

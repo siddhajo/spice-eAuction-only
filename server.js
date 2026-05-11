@@ -1495,8 +1495,39 @@ app.get('/api/auctions/:id/allocation-stats', requireViewOrLotEntry, (req, res) 
     'SELECT * FROM lot_allocations WHERE auction_id = ? ORDER BY branch, start_lot',
     [auctionId]
   );
-  const lots = db.all('SELECT lot_no, branch FROM lots WHERE auction_id = ?', [auctionId]);
-  const usedSet = new Set(lots.map(l => l.lot_no));
+  const lots = db.all(
+    'SELECT lot_no, branch, name, amount FROM lots WHERE auction_id = ?',
+    [auctionId]
+  );
+  // lot_no → { branch, seller, booked }
+  const lotInfo = {};
+  for (const l of lots) {
+    lotInfo[l.lot_no] = {
+      branch: l.branch || '',
+      seller: l.name   || '',
+      booked: Number(l.amount) > 0,
+    };
+  }
+
+  // Reassign history (most-recent first) so tiles can flag lots that
+  // have been moved between branches in the current trade. Falls back
+  // silently if the table doesn't exist yet on partial migrations.
+  const reassignedSet = new Set();
+  try {
+    const hist = db.all(
+      `SELECT start_lot, end_lot FROM reassign_log
+        WHERE auction_id = ? ORDER BY id DESC LIMIT 200`, [auctionId]
+    );
+    for (const h of hist) {
+      const s = parseLotNo(h.start_lot);
+      const e = parseLotNo(h.end_lot);
+      if (s && e) {
+        for (let n = s.num; n <= e.num; n++) {
+          reassignedSet.add(buildLotNo(s.prefix, n, s.padLen));
+        }
+      }
+    }
+  } catch (_) { /* reassign_log optional */ }
 
   const stats = {};
   for (const a of allocations) {
@@ -1512,7 +1543,20 @@ app.get('/api/auctions/:id/allocation-stats', requireViewOrLotEntry, (req, res) 
     if (s && e) {
       for (let n = s.num; n <= e.num; n++) {
         const lotNo = buildLotNo(s.prefix, n, s.padLen);
-        lotGrid.push({ lot: lotNo, used: usedSet.has(lotNo) });
+        const info = lotInfo[lotNo];
+        const reassigned = reassignedSet.has(lotNo);
+        let state = 'free';
+        if (info && info.booked) state = 'booked';
+        else if (info)           state = 'allocated';     // present in lots table but amount=0
+        if (reassigned && state === 'free') state = 'reassigned';
+        lotGrid.push({
+          lot: lotNo,
+          used: !!info,
+          booked: !!(info && info.booked),
+          seller: info ? info.seller : '',
+          branch: a.branch,
+          state,
+        });
       }
     }
     stats[a.branch].ranges.push({
@@ -1597,6 +1641,19 @@ app.post('/api/auctions/:id/reassign-lots', requireAuctionWrite, (req, res) => {
 
   db.run('INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?, ?, ?, ?)',
     [auctionId, to_branch, String(start_lot).trim(), String(end_lot).trim()]);
+
+  // Audit log — surfaces in the tile UI as "reassigned" state badges.
+  try {
+    db.run(
+      `INSERT INTO reassign_log
+         (auction_id, from_branch, to_branch, start_lot, end_lot, user_id, username)
+       VALUES (?,?,?,?,?,?,?)`,
+      [auctionId, from_branch, to_branch,
+       String(start_lot).trim(), String(end_lot).trim(),
+       (req.user && req.user.id) || null,
+       (req.user && req.user.username) || '']
+    );
+  } catch (_) { /* best-effort */ }
 
   const allocs = db.all('SELECT * FROM lot_allocations WHERE auction_id = ? ORDER BY branch, start_lot', [auctionId]);
   res.json({ success: true, allocations: allocs, message: `Lots ${start_lot}-${end_lot} reassigned from ${from_branch} to ${to_branch}` });
@@ -4194,32 +4251,23 @@ app.post('/api/debit-notes/generate', requireInvoiceWrite, requireDebitNoteEnabl
     });
   }
 
-  // DN amount = sum(commission + handling) for the underlying purchase.
-  //   commission = round( purchase.amount × commission% )
-  //   handling   = round( commission       × hpc%        )
-  //   amount     = commission + handling
-  // (commission_pct and hpc_pct come from Rates & Charges in Settings.)
-  // Caller may still override via `req.body.discount` for back-compat —
-  // any explicit positive number takes precedence over the formula.
+  // ── DN amount (Formula 5D) ───────────────────────────────
+  //   DN Amount = ( (Amount + Refund) × 1/100 ) + ( Commission × 0/100 )
+  // The second term contributes 0 per spec — DN amount equals 1% of
+  // (Amount + Refund). 2-decimal precision throughout. Caller may
+  // override via `req.body.discount` for back-compat.
   const baseAmt = Number(purchase.amount || 0);
   if (baseAmt <= 0) {
     return res.status(400).json({ error: 'Purchase amount is zero — cannot compute DN amount' });
   }
   let discountAmt = req.body.discount != null ? parseFloat(req.body.discount) : NaN;
   if (!Number.isFinite(discountAmt) || discountAmt <= 0) {
-    const commissionPct = Number(cfg.commission) || 0;
-    const hpcPct        = Number(cfg.hpc)        || 0;
-    if (commissionPct <= 0) {
-      return res.status(400).json({ error: 'Commission % not configured in settings' });
-    }
-    // 2-decimal precision throughout (Refund × CommissionPct may have paise).
     const refundAmt     = Number(purchase.refund || 0);
-    const commissionAmt = Math.round((baseAmt + refundAmt) * commissionPct / 100 * 100) / 100;
-    const handlingAmt   = Math.round(commissionAmt * hpcPct / 100 * 100) / 100;
-    discountAmt = Math.round((commissionAmt + handlingAmt) * 100) / 100;
+    const commissionAmt = Math.round((baseAmt + refundAmt) * 1 / 100 * 100) / 100;
+    discountAmt         = Math.round((commissionAmt + commissionAmt * 0 / 100) * 100) / 100;
   }
   if (discountAmt <= 0) {
-    return res.status(400).json({ error: 'Computed DN amount is zero — check Commission % / Handling % in settings' });
+    return res.status(400).json({ error: 'Computed DN amount is zero — check purchase amount/refund' });
   }
 
   // GST split — driven by the dealer's SALE TYPE for this trade.
@@ -4404,14 +4452,12 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNote
     ? addDays(trade.date, 1)
     : new Date().toISOString().slice(0, 10);
 
-  // DN math constants — read once, applied per-purchase.
-  // amount = round(purchase.amount × commission%) + round(commission × hpc%)
-  const commissionPct = Number(cfg.commission) || 0;
-  const hpcPct        = Number(cfg.hpc)        || 0;
+  // DN math constants — Formula 5D:
+  //   DN Amount = ( (Amount + Refund) × 1/100 ) + ( Commission × 0/100 )
+  // Read once and applied per-purchase below. The 1% factor is locked
+  // (the spec doesn't make it configurable); the only knob is the GST
+  // rate applied to the DN (cfg.discount_gst, typically 18%).
   const dnGstRate     = Number(cfg.discount_gst) || Number(cfg.gst_service) || 0;
-  if (commissionPct <= 0) {
-    return res.status(400).json({ error: 'Commission % not configured in settings' });
-  }
 
   // Resolve next note number. The user can supply `startNoteNo` to
   // explicitly anchor the sequence (each generated DN gets startNoteNo,
@@ -4498,11 +4544,12 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNote
       skipped.push({ invo: p.invo, ano, buyer: dealerName, reason: 'zero amount' });
       continue;
     }
-    // 2-decimal precision: (Amount + Refund) × Commission %, then × Handling %.
+    // Formula 5D — DN = (Amount + Refund) × 1/100 + Commission × 0/100.
+    // Second term contributes 0 by design; we still compute it
+    // explicitly so the comment matches the formula 1:1.
     const refundAmt     = Number(p.refund || 0);
-    const commissionAmt = Math.round((baseAmt + refundAmt) * commissionPct / 100 * 100) / 100;
-    const handlingAmt   = Math.round(commissionAmt * hpcPct / 100 * 100) / 100;
-    const discountAmt   = Math.round((commissionAmt + handlingAmt) * 100) / 100;
+    const commissionAmt = Math.round((baseAmt + refundAmt) * 1 / 100 * 100) / 100;
+    const discountAmt   = Math.round((commissionAmt + commissionAmt * 0 / 100) * 100) / 100;
     if (discountAmt <= 0) {
       skipped.push({ invo: p.invo, ano, buyer: dealerName, reason: 'computed DN amount is zero' });
       continue;
@@ -5397,6 +5444,11 @@ app.get('/api/exports/:type/:auctionId', requireExport, async (req, res) => {
     const extra = {
       branch:   req.query.branch   || '',
       saleType: req.query.saleType || req.query.sale_type || '',
+      // Optional bulk-action filter: comma-separated seller names from the
+      // Payments tab. Empty → no filter (full trade export).
+      sellers:  req.query.sellers
+        ? String(req.query.sellers).split(',').map(s => s.trim()).filter(Boolean)
+        : [],
     };
     if (exportDef.needsCfg) {
       const cfg = getSettingsFlat(db);
@@ -5522,11 +5574,20 @@ app.get('/api/spice-board-reports/:type/export', requireExport, async (req, res)
       dateTo:    req.query.dateTo || '',
     };
     if (format === 'pdf') {
+      if (!def.pdf) return res.status(400).json({ error: 'PDF not supported for this report' });
       const buf = await def.pdf(db, opts);
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `${req.query.inline === '1' ? 'inline' : 'attachment'}; filename="${def.name}_${opts.auctionId}.pdf"`);
       return res.send(buf);
     }
+    if (format === 'csv') {
+      if (!def.csv) return res.status(400).json({ error: 'CSV not supported for this report' });
+      const buf = await def.csv(db, opts);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${def.name}_${opts.auctionId}.csv"`);
+      return res.send(buf);
+    }
+    if (!def.xlsx) return res.status(400).json({ error: 'XLSX not supported for this report' });
     const buf = await def.xlsx(db, opts);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${def.name}_${opts.auctionId}.xlsx"`);
@@ -6878,6 +6939,242 @@ app.post('/api/system/restore', requireAdmin, restoreUpload.single('file'), asyn
   }
 });
 
+// ══════════════════════════════════════════════════════════════
+// IMPORT OLD DATA (Task 8) — unified upload + preview + run flow
+// ══════════════════════════════════════════════════════════════
+// Supports SalesInvoice / Purchase / Bills / DebitNotes / Payments /
+// Sellers / Buyers. Two endpoints:
+//   POST /api/import-old-data/preview   → header detection + first 50 rows
+//   POST /api/import-old-data/run       → validation + (optional dryRun) insert
+// Each run is recorded in `import_log` for the History panel.
+// Position: registered BEFORE the /api 404 catch-all below — otherwise
+// the catch-all wins and every request returns "Not Found".
+const IMPORT_MODULES = {
+  sales_invoice: {
+    label: 'Sales Invoices',
+    table: 'invoices',
+    keyCols: ['invo', 'sale'],
+    fields: ['ano','date','state','sale','invo','buyer','buyer1','gstin','place',
+             'bag','qty','amount','gunny','pava_hc','ins','cgst','sgst','igst','tcs','rund','tot'],
+    aliases: {
+      ano: ['ano','auction_no','trade'],
+      date: ['date','invoice_date','inv_date'],
+      sale: ['sale','sale_type','type'],
+      invo: ['invo','invoice','invoice_no','invno'],
+      buyer: ['buyer','buyer_code','code'],
+      buyer1: ['buyer1','buyer_name','name'],
+      gstin: ['gstin','gst','gst_no'],
+      place: ['place','city','pla'],
+      bag: ['bag','bags','no_of_bags'],
+      qty: ['qty','kilos','weight','kgs'],
+      amount: ['amount','cardamom','value'],
+      tot: ['tot','total','grand_total','invoice_amount'],
+    },
+  },
+  purchase: {
+    label: 'Purchase Invoices',
+    table: 'purchases',
+    keyCols: ['invo'],
+    fields: ['ano','date','state','invo','name','cr','place','bag','qty','amount',
+             'cgst','sgst','igst','total','refund'],
+    aliases: {
+      invo: ['invo','invoice','invoice_no'],
+      name: ['name','seller','dealer'],
+      cr: ['cr','gstin','registration'],
+      qty: ['qty','kilos','weight','kgs'],
+      amount: ['amount','cardamom','value'],
+      total: ['total','grand_total','invoice_amount'],
+    },
+  },
+  bills: {
+    label: 'Bills of Supply',
+    table: 'bills',
+    keyCols: ['bil'],
+    fields: ['ano','date','state','br','crpt','bil','name','add_line','pla',
+             'pstate','st_code','crr','pan','qty','cost','igst','net'],
+    aliases: {
+      bil: ['bil','bill','bill_no'],
+      name: ['name','seller','planter'],
+      qty: ['qty','kilos','weight','kgs'],
+      cost: ['cost','amount','cardamom'],
+      net: ['net','nett','net_amount'],
+    },
+  },
+  debit_notes: {
+    label: 'Debit Notes',
+    table: 'debit_notes',
+    keyCols: ['note_no','ano'],
+    fields: ['ano','date','state','name','note_no','amount','cgst','sgst','igst','total'],
+    aliases: {
+      note_no: ['note_no','note','dn_no'],
+      name: ['name','dealer','buyer'],
+    },
+  },
+  payments: {
+    label: 'Payments',
+    table: 'bills',                // payments share the bills schema in this build
+    keyCols: ['bil'],
+    fields: ['ano','date','name','qty','cost','net'],
+    aliases: {
+      name: ['name','seller','planter','beneficiary'],
+      net: ['net','nett','payment_amount','amount'],
+    },
+  },
+  sellers: {
+    label: 'Sellers',
+    table: 'traders',
+    keyCols: ['name','cr'],
+    fields: ['name','cr','pan','tel','aadhar','padd','ppla','pin','pstate','pst_code',
+             'ifsc','acctnum','holder_name'],
+    aliases: {
+      name: ['name','seller','planter','trader'],
+      cr: ['cr','gstin'],
+      padd: ['padd','address','add','add1','address1'],
+      ppla: ['ppla','place','pla','city'],
+      pin: ['pin','pincode','zip'],
+    },
+  },
+  buyers: {
+    label: 'Buyers',
+    table: 'buyers',
+    keyCols: ['buyer','code'],
+    fields: ['buyer','buyer1','code','sbl','add1','add2','pla','pin','state',
+             'st_code','gstin','pan','tel','ti','sale','email'],
+    aliases: {
+      buyer: ['buyer','buyer_code','code'],
+      buyer1: ['buyer1','buyer_name','name'],
+      pla: ['pla','place','city'],
+      pin: ['pin','pincode','zip'],
+    },
+  },
+};
+function _importMapHeaders(headers, moduleDef) {
+  const norm = s => String(s || '').trim().toLowerCase().replace(/[\s\-/]+/g, '_');
+  const out = {};
+  for (const field of moduleDef.fields) {
+    const aliases = (moduleDef.aliases && moduleDef.aliases[field]) || [field];
+    for (const h of headers) {
+      if (aliases.includes(norm(h))) { out[field] = h; break; }
+    }
+  }
+  return out;
+}
+app.post('/api/import-old-data/preview', requireAdmin, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const moduleKey = req.body.module;
+  const def = IMPORT_MODULES[moduleKey];
+  if (!def) {
+    if (req.file) fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: 'Unknown module', available: Object.keys(IMPORT_MODULES) });
+  }
+  try {
+    const wb = XLSX.readFile(req.file.path);
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    if (!ws) throw new Error('No worksheet found');
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    const headers = rows.length ? Object.keys(rows[0]) : [];
+    const mapping = _importMapHeaders(headers, def);
+    res.json({
+      module: moduleKey,
+      label: def.label,
+      total: rows.length,
+      headers,
+      detectedMapping: mapping,
+      missingFields: def.fields.filter(f => !mapping[f] && def.keyCols.includes(f)),
+      preview: rows.slice(0, 50),
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  } finally {
+    if (req.file) fs.unlink(req.file.path, () => {});
+  }
+});
+app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const moduleKey = req.body.module;
+  const def = IMPORT_MODULES[moduleKey];
+  if (!def) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: 'Unknown module' });
+  }
+  const dryRun  = String(req.body.dryRun || '').toLowerCase() === 'true';
+  // Allow the client to override the auto-detected mapping. Shape:
+  //   { mapping: { field: 'Source Column Name' } }   (JSON-encoded string)
+  let userMapping = {};
+  if (req.body.mapping) {
+    try { userMapping = JSON.parse(req.body.mapping) || {}; } catch (_) {}
+  }
+
+  const db = getDb();
+  let imported = 0, skipped = 0, failed = 0;
+  const errors = [];
+  let total = 0;
+  try {
+    const wb = XLSX.readFile(req.file.path);
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    if (!ws) throw new Error('No worksheet found');
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    total = rows.length;
+    if (!total) throw new Error('File is empty');
+
+    const headers  = Object.keys(rows[0]);
+    const mapping  = Object.assign(_importMapHeaders(headers, def), userMapping);
+
+    // Field-list with backing source column (or null if no mapping).
+    const fieldSources = def.fields.map(f => [f, mapping[f] || null]);
+    const valuePlaceholders = def.fields.map(() => '?').join(',');
+    const insertSql = `INSERT INTO ${def.table} (${def.fields.join(',')}) VALUES (${valuePlaceholders})`;
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      try {
+        // Duplicate detection — skip if any keyCol value already exists.
+        const keyChecks = def.keyCols.map(k => mapping[k] ? r[mapping[k]] : null).filter(v => v != null && v !== '');
+        if (keyChecks.length === def.keyCols.length) {
+          const whereSql = def.keyCols.map(k => `${k} = ?`).join(' AND ');
+          const dup = db.get(`SELECT 1 FROM ${def.table} WHERE ${whereSql} LIMIT 1`, keyChecks);
+          if (dup) { skipped++; continue; }
+        }
+        if (!dryRun) {
+          const values = fieldSources.map(([_, src]) => src ? r[src] : '');
+          db.run(insertSql, values);
+        }
+        imported++;
+      } catch (e) {
+        failed++;
+        if (errors.length < 50) errors.push({ row: i + 2, error: e.message });
+      }
+    }
+  } catch (e) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: e.message });
+  }
+
+  // Log this run regardless of outcome.
+  try {
+    db.run(`INSERT INTO import_log
+      (module, filename, dry_run, total, imported, skipped, failed, errors, user_id, username)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [moduleKey, req.file.originalname || '', dryRun ? 1 : 0,
+       total, imported, skipped, failed, JSON.stringify(errors).slice(0, 4000),
+       (req.user && req.user.id) || null, (req.user && req.user.username) || '']);
+  } catch (_) { /* best-effort */ }
+
+  fs.unlink(req.file.path, () => {});
+  res.json({ success: true, module: moduleKey, dryRun, total, imported, skipped, failed, errors });
+});
+app.get('/api/import-old-data/history', requireAdmin, (req, res) => {
+  const rows = getDb().all(
+    `SELECT id, module, filename, dry_run, total, imported, skipped, failed,
+            errors, username, created_at
+       FROM import_log ORDER BY id DESC LIMIT 200`
+  );
+  res.json(rows.map(r => ({
+    ...r, dry_run: !!r.dry_run, errors: r.errors ? safeJSON(r.errors) : [],
+  })));
+});
+function safeJSON(s){ try { return JSON.parse(s); } catch(_) { return []; } }
+
 // ── /api JSON-safety middleware ─────────────────────────────────
 // Every /api/* request must return JSON, never an HTML error page.
 // Without these handlers, Express's default 404 + 500 produce HTML
@@ -6908,6 +7205,240 @@ app.use((err, req, res, next) => {
     code: err.code || 'internal_error'
   });
 });
+
+// ══════════════════════════════════════════════════════════════
+// IMPORT OLD DATA (Task 8) — unified upload + preview + run flow
+// ══════════════════════════════════════════════════════════════
+// Supports SalesInvoice / Purchase / Bills / DebitNotes / Payments /
+// Sellers / Buyers. Two endpoints:
+//   POST /api/import-old-data/preview   → header detection + first 50 rows
+//   POST /api/import-old-data/run       → validation + (optional dryRun) insert
+// Each run is recorded in `import_log` for the History panel.
+const IMPORT_MODULES = {
+  sales_invoice: {
+    label: 'Sales Invoices',
+    table: 'invoices',
+    keyCols: ['invo', 'sale'],
+    fields: ['ano','date','state','sale','invo','buyer','buyer1','gstin','place',
+             'bag','qty','amount','gunny','pava_hc','ins','cgst','sgst','igst','tcs','rund','tot'],
+    aliases: {
+      ano: ['ano','auction_no','trade'],
+      date: ['date','invoice_date','inv_date'],
+      sale: ['sale','sale_type','type'],
+      invo: ['invo','invoice','invoice_no','invno'],
+      buyer: ['buyer','buyer_code','code'],
+      buyer1: ['buyer1','buyer_name','name'],
+      gstin: ['gstin','gst','gst_no'],
+      place: ['place','city','pla'],
+      bag: ['bag','bags','no_of_bags'],
+      qty: ['qty','kilos','weight','kgs'],
+      amount: ['amount','cardamom','value'],
+      tot: ['tot','total','grand_total','invoice_amount'],
+    },
+  },
+  purchase: {
+    label: 'Purchase Invoices',
+    table: 'purchases',
+    keyCols: ['invo'],
+    fields: ['ano','date','state','invo','name','cr','place','bag','qty','amount',
+             'cgst','sgst','igst','total','refund'],
+    aliases: {
+      invo: ['invo','invoice','invoice_no'],
+      name: ['name','seller','dealer'],
+      cr: ['cr','gstin','registration'],
+      qty: ['qty','kilos','weight','kgs'],
+      amount: ['amount','cardamom','value'],
+      total: ['total','grand_total','invoice_amount'],
+    },
+  },
+  bills: {
+    label: 'Bills of Supply',
+    table: 'bills',
+    keyCols: ['bil'],
+    fields: ['ano','date','state','br','crpt','bil','name','add_line','pla',
+             'pstate','st_code','crr','pan','qty','cost','igst','net'],
+    aliases: {
+      bil: ['bil','bill','bill_no'],
+      name: ['name','seller','planter'],
+      qty: ['qty','kilos','weight','kgs'],
+      cost: ['cost','amount','cardamom'],
+      net: ['net','nett','net_amount'],
+    },
+  },
+  debit_notes: {
+    label: 'Debit Notes',
+    table: 'debit_notes',
+    keyCols: ['note_no','ano'],
+    fields: ['ano','date','state','name','note_no','amount','cgst','sgst','igst','total'],
+    aliases: {
+      note_no: ['note_no','note','dn_no'],
+      name: ['name','dealer','buyer'],
+    },
+  },
+  payments: {
+    label: 'Payments',
+    table: 'bills',                // payments share the bills schema in this build
+    keyCols: ['bil'],
+    fields: ['ano','date','name','qty','cost','net'],
+    aliases: {
+      name: ['name','seller','planter','beneficiary'],
+      net: ['net','nett','payment_amount','amount'],
+    },
+  },
+  sellers: {
+    label: 'Sellers',
+    table: 'traders',
+    keyCols: ['name','cr'],
+    fields: ['name','cr','pan','tel','aadhar','padd','ppla','pin','pstate','pst_code',
+             'ifsc','acctnum','holder_name'],
+    aliases: {
+      name: ['name','seller','planter','trader'],
+      cr: ['cr','gstin'],
+      padd: ['padd','address','add','add1','address1'],
+      ppla: ['ppla','place','pla','city'],
+      pin: ['pin','pincode','zip'],
+    },
+  },
+  buyers: {
+    label: 'Buyers',
+    table: 'buyers',
+    keyCols: ['buyer','code'],
+    fields: ['buyer','buyer1','code','sbl','add1','add2','pla','pin','state',
+             'st_code','gstin','pan','tel','ti','sale','email'],
+    aliases: {
+      buyer: ['buyer','buyer_code','code'],
+      buyer1: ['buyer1','buyer_name','name'],
+      pla: ['pla','place','city'],
+      pin: ['pin','pincode','zip'],
+    },
+  },
+};
+function _importMapHeaders(headers, moduleDef) {
+  const norm = s => String(s || '').trim().toLowerCase().replace(/[\s\-/]+/g, '_');
+  const out = {};
+  for (const field of moduleDef.fields) {
+    const aliases = (moduleDef.aliases && moduleDef.aliases[field]) || [field];
+    for (const h of headers) {
+      if (aliases.includes(norm(h))) { out[field] = h; break; }
+    }
+  }
+  return out;
+}
+app.post('/api/import-old-data/preview', requireAdmin, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const moduleKey = req.body.module;
+  const def = IMPORT_MODULES[moduleKey];
+  if (!def) {
+    if (req.file) fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: 'Unknown module', available: Object.keys(IMPORT_MODULES) });
+  }
+  try {
+    const wb = XLSX.readFile(req.file.path);
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    if (!ws) throw new Error('No worksheet found');
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    const headers = rows.length ? Object.keys(rows[0]) : [];
+    const mapping = _importMapHeaders(headers, def);
+    res.json({
+      module: moduleKey,
+      label: def.label,
+      total: rows.length,
+      headers,
+      detectedMapping: mapping,
+      missingFields: def.fields.filter(f => !mapping[f] && def.keyCols.includes(f)),
+      preview: rows.slice(0, 50),
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  } finally {
+    if (req.file) fs.unlink(req.file.path, () => {});
+  }
+});
+app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const moduleKey = req.body.module;
+  const def = IMPORT_MODULES[moduleKey];
+  if (!def) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: 'Unknown module' });
+  }
+  const dryRun  = String(req.body.dryRun || '').toLowerCase() === 'true';
+  // Allow the client to override the auto-detected mapping. Shape:
+  //   { mapping: { field: 'Source Column Name' } }   (JSON-encoded string)
+  let userMapping = {};
+  if (req.body.mapping) {
+    try { userMapping = JSON.parse(req.body.mapping) || {}; } catch (_) {}
+  }
+
+  const db = getDb();
+  let imported = 0, skipped = 0, failed = 0;
+  const errors = [];
+  let total = 0;
+  try {
+    const wb = XLSX.readFile(req.file.path);
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    if (!ws) throw new Error('No worksheet found');
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    total = rows.length;
+    if (!total) throw new Error('File is empty');
+
+    const headers  = Object.keys(rows[0]);
+    const mapping  = Object.assign(_importMapHeaders(headers, def), userMapping);
+
+    // Field-list with backing source column (or null if no mapping).
+    const fieldSources = def.fields.map(f => [f, mapping[f] || null]);
+    const valuePlaceholders = def.fields.map(() => '?').join(',');
+    const insertSql = `INSERT INTO ${def.table} (${def.fields.join(',')}) VALUES (${valuePlaceholders})`;
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      try {
+        // Duplicate detection — skip if any keyCol value already exists.
+        const keyChecks = def.keyCols.map(k => mapping[k] ? r[mapping[k]] : null).filter(v => v != null && v !== '');
+        if (keyChecks.length === def.keyCols.length) {
+          const whereSql = def.keyCols.map(k => `${k} = ?`).join(' AND ');
+          const dup = db.get(`SELECT 1 FROM ${def.table} WHERE ${whereSql} LIMIT 1`, keyChecks);
+          if (dup) { skipped++; continue; }
+        }
+        if (!dryRun) {
+          const values = fieldSources.map(([_, src]) => src ? r[src] : '');
+          db.run(insertSql, values);
+        }
+        imported++;
+      } catch (e) {
+        failed++;
+        if (errors.length < 50) errors.push({ row: i + 2, error: e.message });
+      }
+    }
+  } catch (e) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: e.message });
+  }
+
+  // Log this run regardless of outcome.
+  try {
+    db.run(`INSERT INTO import_log
+      (module, filename, dry_run, total, imported, skipped, failed, errors, user_id, username)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [moduleKey, req.file.originalname || '', dryRun ? 1 : 0,
+       total, imported, skipped, failed, JSON.stringify(errors).slice(0, 4000),
+       (req.user && req.user.id) || null, (req.user && req.user.username) || '']);
+  } catch (_) { /* best-effort */ }
+
+  fs.unlink(req.file.path, () => {});
+  res.json({ success: true, module: moduleKey, dryRun, total, imported, skipped, failed, errors });
+});
+app.get('/api/import-old-data/history', requireAdmin, (req, res) => {
+  const rows = getDb().all(
+    `SELECT id, module, filename, dry_run, total, imported, skipped, failed,
+            errors, username, created_at
+       FROM import_log ORDER BY id DESC LIMIT 200`
+  );
+  res.json(rows.map(r => ({
+    ...r, dry_run: !!r.dry_run, errors: r.errors ? safeJSON(r.errors) : [],
+  })));
+});
+function safeJSON(s){ try { return JSON.parse(s); } catch(_) { return []; } }
 
 // Schema sanity check — runs once at startup. Catches the "no such
 // column" class of bug early (loud server-log warning) instead of at

@@ -65,8 +65,11 @@ function calculateLot(lot, cfg) {
   result.refund    = Math.round(sbRefundKg * (lot.price || 0) * 100) / 100;
 
   // ── Commission + Handling ─────────────────────────────────
-  // Commission base = Amount + Refund (per updated formula); 2-decimal precision.
-  const commissionPct = Number(cfg.commission) || 0;
+  // Formula 5A:  Commission = ( Amount + Refund ) × 1/100
+  //   Commission rate defaults to 1% — `cfg.commission` is honoured as
+  //   an override so existing installs can run a different rate, but
+  //   the canonical formula is 1%. 2-decimal precision throughout.
+  const commissionPct = Number(cfg.commission) > 0 ? Number(cfg.commission) : 1;
   const hpcPct        = Number(cfg.hpc)        || 0;
   result.com    = Math.round((result.puramt + result.refund) * commissionPct / 100 * 100) / 100;
   result.sertax = Math.round(result.com * hpcPct / 100 * 100) / 100;
@@ -106,14 +109,26 @@ function calculateLot(lot, cfg) {
   // advance = total tax on services (informational column)
   result.advance = result.cgst + result.sgst + result.igst;
 
-  // Payable to seller:
-  //   what they sold      → +puramt
-  //   sample bag refund   → +refund
-  //   commission          → −com
-  //   handling            → −sertax
-  //   GST on the above    → −(cgst + sgst + igst)
+  // ── Payable (Formula 5B) ───────────────────────────────────
+  //   Payable = Amount + Refund − Commission − Handling − (CGST+SGST+IGST)
+  // `balance` is kept as the legacy alias so existing queries don't
+  // break, and `payable` is exposed as the canonical key for new code.
   const totalDeductions = result.com + result.sertax + result.cgst + result.sgst + result.igst;
-  result.balance = Math.round((result.puramt + result.refund - totalDeductions) * 100) / 100;
+  result.payable = Math.round((result.puramt + result.refund - totalDeductions) * 100) / 100;
+  result.balance = result.payable;
+
+  // ── Discount (Formula 5C) ──────────────────────────────────
+  //   Discount = round( Payable / 1000 × 14 × 0.65 )
+  // Used by Spice Board export / reports as a derived field.
+  result.discount = Math.round((result.payable / 1000) * 14 * 0.65);
+
+  // ── DN Amount (Formula 5D) ─────────────────────────────────
+  //   DN Amount = ( (Amount + Refund) × 1/100 ) + ( Commission × 0/100 )
+  // Per spec, the second term contributes 0 — DN amount equals 1% of
+  // (Amount + Refund). Stored as `dn_amount` so the Debit Note flow
+  // can pick it up without recomputing.
+  result.dn_amount = Math.round(((result.puramt + result.refund) * 1 / 100
+                                + result.com * 0 / 100) * 100) / 100;
 
   // Bill amount (for agriculturist bills) — always equals PurAmt
   result.bilamt = result.puramt;
@@ -285,9 +300,40 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg) {
     ? Math.round(totalAmount * addlChargePct) / 100
     : 0;
   const addlChargeName = addlCharge > 0 ? String(cfg.addl_charge_name || '').trim() : '';
-  const grandTotal = addlCharge > 0
+  const grandTotalBeforeTds = addlCharge > 0
     ? Math.round((subtotalRounded + addlCharge) * 100) / 100
     : subtotalRounded;
+
+  // ── TDS / TCS on Sales (Task 6) ──────────────────────────────
+  // Two feature flags drive the column on the printed invoice and
+  // the corresponding ledger in the Tally XML:
+  //   - flag_tds_sales : show TDS column (mode = Taxable Amount × rate)
+  //   - flag_wgst      : show TDS column (mode = Total Amount  × rate)
+  // When BOTH flags are off → no TDS column, no XML ledger, no math.
+  // Rate comes from `tcs_tds` (canonical) with `tds_purchase_rate`
+  // as a back-compat fallback. Result is rounded to the nearest paisa
+  // so it matches the rest of the invoice's 2-decimal precision.
+  const tdsSalesFlag = String(cfg.flag_tds_sales).toLowerCase() === 'true';
+  const tdsFullFlag  = String(cfg.flag_wgst).toLowerCase() === 'true';
+  const tdsRate      = Number(cfg.tcs_tds) || Number(cfg.tds_purchase_rate) || 0;
+  let tdsAmount = 0;
+  let tdsMode   = '';
+  if (tdsRate > 0 && (tdsSalesFlag || tdsFullFlag)) {
+    if (tdsFullFlag) {
+      // Mode B — applied on the full invoice value (incl. GST + round +
+      // additional charge).
+      tdsAmount = Math.round(grandTotalBeforeTds * tdsRate / 100 * 100) / 100;
+      tdsMode   = 'full';
+    } else {
+      // Mode A — applied on the taxable amount only (cardamom + gunny +
+      // transport + insurance, no GST).
+      tdsAmount = Math.round(taxableValue * tdsRate / 100 * 100) / 100;
+      tdsMode   = 'taxable';
+    }
+  }
+  const grandTotal = tdsAmount > 0
+    ? Math.round((grandTotalBeforeTds + tdsAmount) * 100) / 100
+    : grandTotalBeforeTds;
 
   return {
     buyer: buyer || {},
@@ -299,6 +345,8 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg) {
       taxableValue, cgst, sgst, igst,
       roundDiff, subtotalRounded,
       addlCharge, addlChargeName,
+      // TDS/TCS surface (zero when both flags are off)
+      tdsRate, tdsAmount, tdsMode,
       grandTotal,
       isInterState
     }
@@ -498,6 +546,9 @@ function getPaymentSummary(db, auctionId, state, cfg) {
 function getBankPaymentData(db, auctionId, cfg, opts) {
   opts = opts || {};
   const useBefore = !!opts.before;
+  const sellersFilter = (Array.isArray(opts.sellers) && opts.sellers.length)
+    ? new Set(opts.sellers.map(s => String(s).trim().toUpperCase()))
+    : null;
   // Bank Payment lists every seller in the trade with a non-zero
   // payable (or non-zero pre-discount amount in 'before' mode) — both
   // registered dealers AND unregistered (URD/agriculturist) farmers.
@@ -512,7 +563,7 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
   // `trader_banks` (multi-bank). The LEFT JOIN to traders pulls
   // address/IFSC; we then COALESCE with trader_banks default for
   // sellers who maintain multiple bank accounts.
-  const payments = db.all(
+  let payments = db.all(
     `SELECT l.state, l.name, l.cr,
       SUM(l.puramt) as puramt, SUM(l.refund) as advance, SUM(l.balance) as payable,
       t.id AS trader_id,
@@ -526,6 +577,9 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
     ORDER BY l.state, l.name`,
     [auctionId]
   );
+  if (sellersFilter) {
+    payments = payments.filter(p => sellersFilter.has(String(p.name || '').trim().toUpperCase()));
+  }
 
   // Per-seller bank-details fallback chain:
   //   1. trader_banks default (is_default=1) — picks the explicitly

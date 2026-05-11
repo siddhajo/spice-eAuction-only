@@ -321,30 +321,50 @@ async function buyersStatementXlsx(db, opts) {
     colCount: 7, title: 'BUYERS STATEMENT',
     metaLines: [`AUCTION NO: ${ctx.auction.ano}`, `DATE: ${fmtDateDMY(ctx.auction.date)}`].filter(Boolean),
   });
+  // Column widths re-sized so every cell fits its content on one line
+  // (Excel auto-truncates only when wrapText is enabled — we keep it
+  // OFF so the row stays visually flat in print preview and PDF export).
+  ws.columns = [
+    { width: 12 },   // INVOICE
+    { width: 38 },   // TRADERS NAME
+    { width: 26 },   // ADDRESS
+    { width: 14 },   // KILOS
+    { width: 18 },   // AMOUNT
+    { width: 22 },   // GST NO
+    { width: 22 },   // SBL NO
+  ];
+  const bodyAligns = ['left', 'left', 'left', 'right', 'right', 'left', 'left'];
   const head = ws.addRow(['INVOICE', 'TRADERS NAME', 'ADDRESS', 'KILOS', 'AMOUNT', 'GST NO', 'SBL NO']);
   head.font = { bold: true, size: 10 };
   head.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E4DD' } };
-  head.eachCell(c => { c.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
-                       c.alignment = { horizontal: 'center', vertical: 'middle' }; });
+  head.eachCell((c, i) => {
+    c.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
+    c.alignment = { horizontal: bodyAligns[i - 1] || 'center', vertical: 'middle', wrapText: false };
+  });
   function emitSection(title, rows, totals) {
     if (!rows.length) return;
     const sec = ws.addRow([title]);
     ws.mergeCells(`A${sec.number}:G${sec.number}`);
     sec.font = { bold: true, size: 10 };
     sec.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } };
+    sec.alignment = { horizontal: 'left', vertical: 'middle', wrapText: false };
     rows.forEach(g => {
       const r = ws.addRow([g.invoice, g.name, g.place, g.kilos, g.amount, g.gstin, g.sbl]);
       r.getCell(4).numFmt = '#,##0.000';
       r.getCell(5).numFmt = '#,##,##0.00';
-      r.getCell(4).alignment = { horizontal: 'right' };
-      r.getCell(5).alignment = { horizontal: 'right' };
+      r.eachCell((c, i) => {
+        c.alignment = { horizontal: bodyAligns[i - 1] || 'left', vertical: 'middle', wrapText: false };
+      });
     });
     const sub = ws.addRow(['', totals.label, '', totals.kilos, totals.amount, '', '']);
     sub.font = { bold: true };
     sub.getCell(4).numFmt = '#,##0.000';
     sub.getCell(5).numFmt = '#,##,##0.00';
-    sub.eachCell(c => { c.border = { top: { style: 'thin' }, bottom: { style: 'double' } };
-                        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF7F5F2' } }; });
+    sub.eachCell((c, i) => {
+      c.border = { top: { style: 'thin' }, bottom: { style: 'double' } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF7F5F2' } };
+      c.alignment = { horizontal: bodyAligns[i - 1] || 'left', vertical: 'middle', wrapText: false };
+    });
     ws.addRow([]);
   }
   emitSection('INTER-STATE SALES', data.inter, { label: 'INTER-STATE SALES TOTAL', kilos: data.interTotals.kilos, amount: data.interTotals.amount });
@@ -473,49 +493,51 @@ async function buyersStatementPdf(db, opts) {
     y += 18;
   }
   function drawHeadRow() {
+    // Single-line header — fits every label by shrinking the font size
+    // down to a 6pt floor (with ellipsis as a last resort). No wrap, so
+    // every column header occupies the same row height as the body.
     const top = y;
-    doc.fillColor('#000').font('Helvetica-Bold').fontSize(7.5);
-    // Header may itself wrap (e.g. "TRADERS NAME" on a narrow column)
-    const headLineH = 9;
-    const cellPairs = heads.map((h, i) => [h, colW[i] - PADX * 2]);
-    const headH = Math.max(HEAD_H, maxWrappedH(cellPairs, headLineH) + 6);
+    const headH = HEAD_H;
+    doc.fillColor('#000').font('Helvetica-Bold');
     doc.rect(m, y, usableW, headH).lineWidth(0.7).strokeColor('#000').stroke();
     heads.forEach((h, i) => {
       const w = colW[i] - PADX * 2;
-      const lines = wrapText(doc, h, w);
-      let ty = top + (headH - lines.length * headLineH) / 2;
-      lines.forEach(line => {
-        doc.text(line, colX[i] + PADX, ty, { width: w, align: 'center', lineBreak: false });
-        ty += headLineH;
+      let size = 8;
+      while (size > 6) {
+        doc.fontSize(size);
+        if (doc.widthOfString(h) <= w) break;
+        size -= 0.25;
+      }
+      doc.fontSize(size);
+      doc.text(h, colX[i] + PADX, top + (headH - size) / 2 - 1, {
+        width: w, align: 'center', lineBreak: false, ellipsis: true,
       });
     });
     drawColSeparators(top, top + headH);
     y += headH;
   }
   function ensureRoom(n) { if (y + n > doc.page.height - m - 14) { doc.addPage(); topHeader(); drawHeadRow(); } }
-  // Render one data row. Text columns wrap to multiple lines so the FULL
-  // value is always shown — row height grows to accommodate the tallest cell.
+  // Single-line data row. Every value is shrink-fitted to its column
+  // (down to a 5pt font floor) and then ellipsised — guarantees the row
+  // stays on one line so the table never goes ragged.
   function row(g) {
-    doc.fillColor('#000').font('Helvetica').fontSize(7.5);
     const cells = [g.invoice, g.name, g.place, fmtQty(g.kilos), fmtMoney(g.amount), g.gstin, g.sbl];
-    const lineH = 9;
-    // Pre-compute the row height as max wrapped lines × lineH, with a 4pt
-    // top+bottom padding allowance.
-    const lineCounts = cells.map((v, i) => wrapText(doc, String(v || ''), colW[i] - PADX * 2).length);
-    const rowH = Math.max(ROW_H, Math.max(...lineCounts) * lineH + 4);
-    // Capture `top` AFTER ensureRoom so a page break correctly resets the
-    // anchor — otherwise borders + text get drawn at the old (off-page) y
-    // while the new page is empty, producing visible blank gaps and stray
-    // pages.
+    const rowH = ROW_H;
     ensureRoom(rowH);
     const top = y;
+    doc.fillColor('#000').font('Helvetica');
     cells.forEach((v, i) => {
       const w = colW[i] - PADX * 2;
-      const lines = wrapText(doc, String(v || ''), w);
-      let ty = top + (rowH - lines.length * lineH) / 2;
-      lines.forEach(line => {
-        doc.text(line, colX[i] + PADX, ty, { width: w, align: aligns[i], lineBreak: false });
-        ty += lineH;
+      const text = String(v || '');
+      let size = 7.5;
+      while (size > 5) {
+        doc.fontSize(size);
+        if (doc.widthOfString(text) <= w) break;
+        size -= 0.25;
+      }
+      doc.fontSize(size);
+      doc.text(text, colX[i] + PADX, top + (rowH - size) / 2 - 1, {
+        width: w, align: aligns[i], lineBreak: false, ellipsis: true,
       });
     });
     y = top + rowH;
@@ -694,8 +716,9 @@ async function formDXlsx(db, opts) {
   function meta(label, value) {
     const r = ws.addRow(['', label, '', value]);
     r.getCell(2).font = { bold: false, size: 10 };
-    r.getCell(4).font = { bold: true, size: 10 };
-    r.getCell(4).alignment = { horizontal: 'left' };
+    r.getCell(2).alignment = { horizontal: 'left',  vertical: 'middle' };
+    r.getCell(4).font = { bold: true,  size: 10 };
+    r.getCell(4).alignment = { horizontal: 'left',  vertical: 'middle' };
   }
   meta('Name and Address of the auctioneer:', d.company);
   if (d.address) meta('', d.address);
@@ -722,17 +745,28 @@ async function formDXlsx(db, opts) {
   ws.mergeCells(`B${tHead.number}:D${tHead.number}`);
   tHead.font = { bold: true, size: 11 }; tHead.alignment = { horizontal: 'center' };
 
+  // Headers align with body cells: Sl.No center, Buyer left, Kilos/Value right.
+  const buyerAligns = ['center', 'left', 'right', 'right'];
   const ch = ws.addRow(['Sl.No', 'Buyer Name', 'Kilos', 'Value']);
   ch.font = { bold: true }; ch.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E4DD' } };
-  ch.eachCell(c => { c.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
-                     c.alignment = { horizontal: 'center', vertical: 'middle' }; });
+  ch.eachCell((c, i) => {
+    c.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
+    c.alignment = { horizontal: buyerAligns[i - 1] || 'center', vertical: 'middle' };
+  });
   d.top5.forEach((b, i) => {
     const r = ws.addRow([i + 1, b.name, b.kilos, b.value]);
+    r.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+    r.getCell(2).alignment = { horizontal: 'left',   vertical: 'middle' };
+    r.getCell(3).alignment = { horizontal: 'right',  vertical: 'middle' };
+    r.getCell(4).alignment = { horizontal: 'right',  vertical: 'middle' };
     r.getCell(3).numFmt = '#,##0.000';
     r.getCell(4).numFmt = '#,##,##0.00';
   });
   const t = ws.addRow(['', 'TOTAL', d.top5Totals.kilos, d.top5Totals.value]);
   t.font = { bold: true };
+  t.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
+  t.getCell(3).alignment = { horizontal: 'right',  vertical: 'middle' };
+  t.getCell(4).alignment = { horizontal: 'right',  vertical: 'middle' };
   t.getCell(3).numFmt = '#,##0.000';
   t.getCell(4).numFmt = '#,##,##0.00';
   t.eachCell(c => { c.border = { top: { style: 'thin' }, bottom: { style: 'double' } };
@@ -834,26 +868,30 @@ async function formDPdf(db, opts) {
     innerY += lines.length * lineH + 2;
   }
 
+  // Every label/value row left-aligns its value so the column of figures
+  // lines up vertically. Previously some rows were { align: 'right' }
+  // (mostly the numeric ones) and others left-aligned — this produced
+  // the "random right alignment" inconsistency the user flagged.
   row('E-Auction Licence No.', d.licence);
   innerY += 4;
   row('(s) Season',            d.season);
   row('(t) Auction Number',    ctx.auction.ano);
   row('(u) Date of auction',   fmtDateDMY(ctx.auction.date));
   row('(v) Place of auction',  d.place);
-  row('(w) Quantity carried over from',   'NIL', { align: 'right' });
+  row('(w) Quantity carried over from',   'NIL');
   cont('     previous auction (kgs)');
-  row('(x) Fresh arrivals (kgs)',         fmtQty(d.totalKilos),       { align: 'right' });
-  row('(y) Total quantity put for auction (kgs)', fmtQty(d.totalKilos), { align: 'right' });
+  row('(x) Fresh arrivals (kgs)',         fmtQty(d.totalKilos));
+  row('(y) Total quantity put for auction (kgs)', fmtQty(d.totalKilos));
   cont('     [Total of Sl.No. 5 and 6]');
-  row('(z) Total quantity sold (kgs)',    fmtQty(d.totalKilos),       { align: 'right' });
-  row('(zz) Quantity Not Auctioned (Kgs.)', 'NIL',                    { align: 'right' });
-  row('(aa) Quantity withdrawn (kgs)',    '0.000',                    { align: 'right' });
-  row('(bb) Quantity returned to planter (kgs)',  '0.000',            { align: 'right' });
-  row('(cc) Balance with the auctioneer (kgs)',   'NIL',              { align: 'right' });
-  row('(dd) Total value of the sales (Rs)',       fmtMoney(d.totalValue), { align: 'right' });
-  row('(ee) Maximum price (Rs/kg)',  `${fmtPrice(d.maxRate)}  /kgs ${fmtQty(d.maxKg)}`, { align: 'right' });
-  row('(ff) Minimum price (Rs/kg)',  `${fmtPrice(d.minRate)}  /kgs ${fmtQty(d.minKg)}`, { align: 'right' });
-  row('(gg) Average price (Rs/kg)',  fmtPrice(d.avgRate),                              { align: 'right' });
+  row('(z) Total quantity sold (kgs)',    fmtQty(d.totalKilos));
+  row('(zz) Quantity Not Auctioned (Kgs.)', 'NIL');
+  row('(aa) Quantity withdrawn (kgs)',    '0.000');
+  row('(bb) Quantity returned to planter (kgs)',  '0.000');
+  row('(cc) Balance with the auctioneer (kgs)',   'NIL');
+  row('(dd) Total value of the sales (Rs)',       fmtMoney(d.totalValue));
+  row('(ee) Maximum price (Rs/kg)',  `${fmtPrice(d.maxRate)}  /kgs ${fmtQty(d.maxKg)}`);
+  row('(ff) Minimum price (Rs/kg)',  `${fmtPrice(d.minRate)}  /kgs ${fmtQty(d.minKg)}`);
+  row('(gg) Average price (Rs/kg)',  fmtPrice(d.avgRate));
   innerY += 8;
 
   // Draw the outer box now that we know the content height
@@ -886,13 +924,16 @@ async function formDPdf(db, opts) {
   }
   const aligns2 = ['center', 'left', 'right', 'right'];
 
-  // Header row
+  // Header row — each header cell uses the SAME alignment as the body
+  // cells below it, so Kilos/Value headers right-align over their
+  // right-aligned numbers and "Buyer Name" left-aligns over the names.
+  // (Centered headers over right-aligned numbers looked off-axis.)
   const headH = 22;
   doc.rect(m, y2, usableW, headH).lineWidth(0.7).strokeColor('#000').stroke();
   doc.font('Helvetica-Bold').fontSize(10).fillColor('#000');
   ['Sl.No', 'Buyer Name', 'Kilos', 'Value'].forEach((h, i) =>
     doc.text(h, cx[i] + PADX, vy2(y2, headH, 11), {
-      width: cw[i] - PADX * 2, align: 'center', lineBreak: false,
+      width: cw[i] - PADX * 2, align: aligns2[i], lineBreak: false,
     }));
   buyerCols(y2, y2 + headH);
   y2 += headH;
@@ -1492,6 +1533,78 @@ async function formCPdf(db, opts) {
 }
 
 // ════════════════════════════════════════════════════════════
+// REPORT 4 — e-Auction (Spices Board) CSV export (Task 7)
+// ════════════════════════════════════════════════════════════
+// One row per lot. Columns intentionally match the Spices Board portal
+// upload schema so users can hand it straight off to the regulator
+// without massaging. All company-facing values are sourced from
+// `cfg`/settings (no hardcoded fallbacks beyond a defensive "" empty).
+// Decimal precision: kg → 3dp, price → 2dp, value/refund/commission → 2dp.
+function csvEscape(v) {
+  if (v == null) return '';
+  const s = String(v);
+  if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+async function eauctionCsv(db, opts) {
+  const ctx = getReportContext(db, opts);
+  const cfg = (() => {
+    const out = {};
+    db.all('SELECT key, value FROM company_settings').forEach(r => { out[r.key] = r.value; });
+    return out;
+  })();
+  const licence    = readSetting(db, 'sbl', '');
+  const seasonRaw  = (() => {
+    const s = readSetting(db, 'season_start_year', '');
+    const e = readSetting(db, 'season_end_year', '');
+    return (s && e) ? `${s}-${e}` : readSetting(db, 'season', '');
+  })();
+  const auctioneer = readSetting(db, 'trade_name', readSetting(db, 'company_name', ''));
+
+  const headers = [
+    'Auctioneer', 'E-Auction Licence', 'Season',
+    'Auction No', 'Auction Date', 'Lot No',
+    'Planter/Dealer Name', 'Estate Reg / SBL #',
+    'Qty (kgs)', 'Rate (Rs./kg)', 'Value (Rs.)',
+    'Sample Refund (Rs.)', 'Commission (Rs.)',
+    'Buyer', 'Buyer SBL', 'GSTIN',
+  ];
+  const lines = [headers.map(csvEscape).join(',')];
+
+  const fmt3 = n => Number(n || 0).toFixed(3);
+  const fmt2 = n => Number(n || 0).toFixed(2);
+
+  // ctx.rows already merges in seller + buyer metadata; reuse it so the
+  // CSV agrees with FORM-C row-for-row.
+  for (const r of (ctx.rows || [])) {
+    const seller = r.trader_name || r.seller_name || '';
+    const sellerReg = r.trader_cr || r.seller_cr || '';
+    lines.push([
+      auctioneer,
+      licence,
+      seasonRaw,
+      ctx.auction.ano || '',
+      fmtDateDMY(ctx.auction.date),
+      r.lot || '',
+      seller,
+      sellerReg,
+      fmt3(r.qty),
+      fmt2(r.price),
+      fmt2(r.amount),
+      fmt2(r.sample_refund || r.sample_refud || 0),
+      fmt2(r.commission || 0),
+      r.buyer1 || r.buyer_full || r.buyer || '',
+      r.buyer_sbl || '',
+      r.buyer_gstin || r.gstin || '',
+    ].map(csvEscape).join(','));
+  }
+
+  // Returning a Buffer keeps the dispatcher contract uniform with the
+  // xlsx/pdf siblings (which already return Buffer / Promise<Buffer>).
+  return Buffer.from(lines.join('\r\n') + '\r\n', 'utf8');
+}
+
+// ════════════════════════════════════════════════════════════
 // Dispatcher
 // ════════════════════════════════════════════════════════════
 const REPORTS = {
@@ -1501,6 +1614,8 @@ const REPORTS = {
                       json: formDJson, xlsx: formDXlsx, pdf: formDPdf },
   form_c:           { label: 'FORM-C (Auction Report)', name: 'FormC',
                       json: formCJson, xlsx: formCXlsx, pdf: formCPdf },
+  eauction_csv:     { label: 'e-Auction (Spices Board) CSV', name: 'EAuctionCSV',
+                      csv: eauctionCsv },
 };
 
 module.exports = { REPORTS, getReportFilters };
