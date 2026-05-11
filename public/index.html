@@ -3749,7 +3749,6 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
               <option value="buyers_statement">Report 1 — Buyers Statement</option>
               <option value="form_d">Report 2 — FORM-D (Advance Auction Report)</option>
               <option value="form_c">Report 3 — FORM-C (Auction Report)</option>
-              <option value="eauction_csv">Report 4 — e-Auction (Spices Board) CSV</option>
             </select>
           </div>
         </div>
@@ -3945,6 +3944,14 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
   <!-- Edit panel — list of branch/start/end rows + summary -->
   <div id="alloc-panel-edit">
+    <!-- Per-branch usage bars + lot chip grid — mirrors the Lot Entry
+         alloc card so admins editing allocations see the same at-a-
+         glance picture field staff see. Read-only; the row editor
+         below is where actual edits happen. -->
+    <div id="alloc-edit-bars" style="margin-bottom:12px"></div>
+    <div id="alloc-edit-grid" style="margin-bottom:14px"></div>
+
+    <div style="font-size:11.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Edit Ranges</div>
     <div id="alloc-edit-list" style="margin-bottom:10px"></div>
     <button type="button" class="btn btn-g" style="height:30px;padding:0 14px;font-size:12px;font-weight:600;margin-bottom:12px" onclick="addAllocRow('alloc-edit')">+ Add Branch</button>
     <div id="alloc-edit-summary" style="font-size:11px;color:var(--text3);margin-bottom:10px"></div>
@@ -6255,6 +6262,10 @@ async function loadReports(){
     const sel=document.getElementById('rep-auction');
     sel.innerHTML='<option value="">-- Select a trade --</option>'+
       _repAuctions.map(a=>`<option value="${a.id}">Trade #${esc(a.ano)} · ${esc((a.date||'').split('T')[0])}${a.crop_type?' · '+esc(a.crop_type):''}</option>`).join('');
+    _wireAuctionSync(sel);
+    // If the shared selection just landed, fire the summary load now so
+    // the report renders without waiting for a manual user pick.
+    if (sel.value) loadTradeSummary();
   }catch(e){showError(e)}
 }
 
@@ -7074,6 +7085,11 @@ async function loadLotEntry(){
         const label = `Trade #${a.ano} · ${dateFmt}${status === 'closed' ? ' (closed)' : ''}`;
         return `<option value="${a.id}" ${status==='closed'?'disabled':''}>${esc(label)}</option>`;
       }).join('');
+    // Apply shared auction selection (carries over from other tabs). If
+    // the shared id matches an option, fire the dependent UI now so the
+    // operator doesn't have to re-pick.
+    _wireAuctionSync(sel);
+    if (sel.value) leOnAuctionChange();
     // Read Lot Entry defaults from settings. Keys match the PWA app.html
     // 1:1 so behavior is consistent: sample_weight pre-fills each new
     // lot, default_litre pre-fills litre wt, show_moisture toggles the
@@ -8289,6 +8305,65 @@ function switchAllocTab(tab) {
   raBtn.style.borderBottomColor = tab === 'reassign' ? '#E67E22' : 'transparent';
 }
 
+// Renders the per-branch usage bars + lot chip grid inside the Edit
+// Allocations panel. Mirrors the visual format that Lot Entry uses in
+// its `le-alloc-card` so admins editing allocations see exactly what
+// field staff see when picking lots. Read-only — the row editor below
+// is where actual edits land.
+function renderAllocEditOverview(stats) {
+  const barsHost = document.getElementById('alloc-edit-bars');
+  const gridHost = document.getElementById('alloc-edit-grid');
+  if (!barsHost || !gridHost) return;
+  if (!Array.isArray(stats) || !stats.length) {
+    barsHost.innerHTML = '<div style="padding:10px 4px;font-size:12px;color:var(--text3)">No allocations configured yet. Add a branch range below to get started.</div>';
+    gridHost.innerHTML = '';
+    return;
+  }
+  // Bars (same shape as leLoadAllocBar): branch | range | progress | counts.
+  let grandUsed = 0, grandTotal = 0;
+  const sorted = stats.slice().sort((a, b) => String(a.branch).localeCompare(String(b.branch)));
+  barsHost.innerHTML = '<div style="font-size:11.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Current Usage</div>' +
+    sorted.map(s => {
+      grandUsed += s.used; grandTotal += s.total;
+      const pct = s.total > 0 ? Math.round((s.used / s.total) * 100) : 0;
+      const barColor = pct >= 90 ? '#C62828' : pct >= 70 ? '#E67E22' : 'var(--green)';
+      const rangeStr = s.ranges.map(r => `${r.start}-${r.end}`).join(', ');
+      const free = s.total - s.used;
+      return `<div style="display:flex;align-items:center;gap:8px;font-size:11px;padding:4px 8px;margin-bottom:4px;background:#fafafa;border-radius:6px">
+        <span style="width:90px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text2)">${esc(s.branch)}</span>
+        <span style="font-family:monospace;color:var(--text3);width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(rangeStr)}">${esc(rangeStr)}</span>
+        <div style="flex:1;height:6px;background:#e8e8e8;border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${barColor};border-radius:3px"></div></div>
+        <span style="color:var(--text3);white-space:nowrap;width:54px;text-align:right">${s.used}/${s.total}</span>
+        <span style="color:${free > 0 ? 'var(--green)' : '#C62828'};font-weight:600;white-space:nowrap;width:48px;text-align:right">${free} free</span>
+      </div>`;
+    }).join('') +
+    `<div style="font-size:11px;color:var(--text3);margin-top:4px">${grandUsed}/${grandTotal} lots used overall</div>`;
+
+  // Chip grid — same visual language as Lot Entry's chip grid. Used lots
+  // get the "used" dimmer treatment so admins can see which ranges are
+  // safe to retract / reshape and which would conflict with saved lots.
+  // Grouped by branch so wide auctions stay readable.
+  const sections = sorted.map(s => {
+    const chips = [];
+    for (const rng of (s.ranges || [])) {
+      for (const l of (rng.lots || [])) {
+        const cls = l.used ? 'le-lot-chip used' : 'le-lot-chip';
+        const title = l.used ? `${l.lot} — booked${l.seller ? ' (' + l.seller + ')' : ''}` : `${l.lot} — free`;
+        chips.push(`<span class="${cls}" title="${esc(title)}">${esc(l.lot)}</span>`);
+      }
+    }
+    return `<div style="margin-bottom:10px">
+      <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">${esc(s.branch)}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;max-height:140px;overflow:auto;padding:6px;border:1px solid var(--border);border-radius:6px;background:#fff">
+        ${chips.length ? chips.join('') : '<span style="color:var(--text3);font-size:11px">No lots in this range</span>'}
+      </div>
+    </div>`;
+  }).join('');
+  gridHost.innerHTML = sections
+    ? '<div style="font-size:11.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Lot Status</div>' + sections
+    : '';
+}
+
 // Open the allocation modal for a given trade. Loads existing
 // allocations (or seeds one empty row) plus stats for the reassign
 // preview pane, then surfaces the modal.
@@ -8347,6 +8422,7 @@ async function openAllocModal(auctionId, ano) {
     _raAllocStats = stats;
     _raSelected.clear();
     renderReassignTiles();
+    renderAllocEditOverview(stats);
     showModal('alloc-modal');
   } catch (e) {
     toast(e.message || 'Failed to load allocations');
@@ -8429,6 +8505,7 @@ async function executeReassign() {
       _raAllocStats = fresh.stats || [];
       _raSelected.clear();
       renderReassignTiles();
+      renderAllocEditOverview(_raAllocStats);
     } catch (_) { /* non-fatal */ }
     loadReassignPreview();
     document.getElementById('ra-start').value = '';
@@ -10837,8 +10914,37 @@ async function doPriceImport(){
 }
 
 // ── Auction dropdowns ─────────────────────────────────────
+// Shared auction selection — when the user picks an auction in any tab,
+// the same auction is pre-selected on every other tab they visit. State
+// lives in sessionStorage so it resets each browser session (avoids
+// haunting the user with last-week's pick after a fresh login).
+function getSharedAucId() {
+  try { return sessionStorage.getItem('spice.sharedAucId') || ''; } catch(_) { return ''; }
+}
+function setSharedAucId(id) {
+  try { sessionStorage.setItem('spice.sharedAucId', String(id || '')); } catch(_) {}
+}
+// Apply the shared selection to a freshly-populated <select> and wire
+// it to mirror user picks back to the shared store. Idempotent — safe
+// to call repeatedly; only the first call attaches the change listener.
+function _wireAuctionSync(selId) {
+  const sel = (typeof selId === 'string') ? document.getElementById(selId) : selId;
+  if (!sel) return;
+  const shared = getSharedAucId();
+  if (shared && Array.from(sel.options).some(o => o.value === String(shared))) {
+    if (sel.value !== shared) sel.value = shared;
+  } else if (sel.value) {
+    setSharedAucId(sel.value);
+  }
+  if (!sel._aucSyncWired) {
+    sel.addEventListener('change', () => setSharedAucId(sel.value));
+    sel._aucSyncWired = true;
+  }
+}
 async function fillAucSelect(selId){const d=await j('/api/auctions');const sel=document.getElementById(selId);
-  sel.innerHTML=d.map(a=>`<option value="${a.id}">${a.ano} — ${fmtD(a.date)} (${a.lot_count} lots)</option>`).join('');return d}
+  sel.innerHTML=d.map(a=>`<option value="${a.id}">${a.ano} — ${fmtD(a.date)} (${a.lot_count} lots)</option>`).join('');
+  _wireAuctionSync(sel);
+  return d}
 function loadLotAuctions(){fillAucSelect('lot-auction').then(()=>{loadLots();loadLotsSummary()})}
 function loadInvAuctions(){fillAucSelect('inv-auction').then(()=>{loadInvoices();loadInvEligibleBuyers()})}
 function loadPurAuctions(){fillAucSelect('pur-auction').then(()=>{loadPurchases();loadPurEligibleSellers()})}
@@ -11657,6 +11763,13 @@ async function loadInvoices(){
   if(sale)params.push('sale='+encodeURIComponent(sale));
   const url='/api/invoices'+(params.length?('?'+params.join('&')):'');
   const d=await j(url);
+  // TDS column visibility — driven by flag_tds_sales / flag_wgst. When
+  // either is on, the invoice carries a stamped tcs/tds value from
+  // buildSalesInvoice() and we surface it as its own column. When both
+  // are off we hide the column so the row stays compact.
+  if (!_CCFG) { try { _CCFG = await j('/api/company-settings/flat') || {}; } catch (_) { _CCFG = {}; } }
+  const showTds = ['true','1','yes','on'].includes(String((_CCFG||{}).flag_tds_sales||'').toLowerCase())
+               || ['true','1','yes','on'].includes(String((_CCFG||{}).flag_wgst     ||'').toLowerCase());
   // Invoice count badge
   const badge=document.getElementById('inv-count-badge');
   const arr = Array.isArray(d) ? d : [];
@@ -11772,6 +11885,17 @@ async function loadInvoices(){
       { key:'cgst', label:'CGST', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
       { key:'sgst', label:'SGST', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
       { key:'igst', label:'IGST', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
+      ...(showTds ? [{ key:'tcs', label:'TDS', sort:'number', numeric:true,
+        fmt:(n)=>fmtI(n,2),
+        // Colored amber so TDS visibly differs from the GST columns; the
+        // header label is "TDS" regardless of which flag enabled it (the
+        // flag merely selects taxable-vs-full base inside buildSalesInvoice).
+        render:(i)=>{
+          const v = Number(i.tcs)||0;
+          return v>0
+            ? `<span style="color:#B45309;font-weight:600">${fmtI(v,2)}</span>`
+            : `<span style="color:var(--text3)">0.00</span>`;
+        } }] : []),
       { key:'tot', label:'Total', sort:'number', numeric:true,
         fmt:(n)=>fmtI(n,2),
         // Bigger + darker total to make it the "answer" column at a glance
@@ -13041,9 +13165,11 @@ async function loadPayments(){
 // ── Exports ───────────────────────────────────────────────
 const EXP_LABELS={lot_slip:'Lot Slip',lot_slip_after:'Lot Slip (After)',price_list_before:'Price List (Before)',price_list:'Price List',bank_payment_before:'Bank Payment (Before)',bank_payment:'Bank Payment (RTGS/NEFT)',
   pooler_register:'Pooler Register',full_file:'Full File',collection:'Collection',trade_report:'Trade Report',dealer_list:'Dealer List',
-  payment:'Payment Summary'};
+  payment:'Payment Summary',
+  eauction_csv:'e-Auction (Spices Board) CSV'};
 // Export types that only support a specific format (no XLSX/PDF choice).
-const EXP_CSV_ONLY = new Set();
+// eauction_csv → fixed Spices Board portal schema, CSV only.
+const EXP_CSV_ONLY = new Set(['eauction_csv']);
 // Full File has too many columns to fit any printable PDF page — only XLSX.
 const EXP_XLSX_ONLY = new Set(['full_file']);
 function renderExportBtns(){document.getElementById('export-btns').innerHTML=Object.entries(EXP_LABELS).map(([k,v])=>{
@@ -13075,6 +13201,26 @@ async function exportType(type,format){format=format||'xlsx';
   const aid=document.getElementById('exp-auction')?.value||document.getElementById('pay-auction')?.value;
   if(!aid){alert('Select an auction first');return}
   const label = (EXP_LABELS[type]||type);
+  // e-Auction CSV lives in the Spice Board reports dispatcher (different
+  // schema + per-lot row format), not the EXPORT_TYPES registry. Route
+  // it to the right endpoint so users can launch it from Export Center.
+  if (type === 'eauction_csv') {
+    await withOverlay(`Exporting ${label} (CSV)…`, async () => {
+      const r = await fetch(B + `/api/spice-board-reports/eauction_csv/export?format=csv&auctionId=${encodeURIComponent(aid)}`,
+        { headers: { 'Authorization': 'Bearer ' + T } });
+      if (!r.ok) {
+        const errBody = await r.json().catch(() => ({}));
+        alert(`Export failed: ${errBody.error || 'HTTP ' + r.status}`);
+        return;
+      }
+      const blob = await r.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `EAuction_${aid}.csv`;
+      a.click();
+    });
+    return;
+  }
   // Multi-select filter: when at least one row on the Payments tab is
   // ticked AND the export is one of the seller-scoped ones, restrict the
   // download to just those sellers. Empty selection → full-trade export
@@ -13780,6 +13926,7 @@ async function loadJournalDefault(){
       console.warn('Failed to load trade list for journal:', e);
     }
   }
+  if (sel) _wireAuctionSync(sel);
   updateJournalSaleVisibility();
 }
 
@@ -14164,6 +14311,7 @@ async function loadInvoiceDistances(){
     const want=Array.from(main.options).map(o=>`<option value="${esc(o.value)}">${esc(o.textContent)}</option>`).join('');
     if(sel.innerHTML!==want)sel.innerHTML=want;
     if(main.value&&!sel.value)sel.value=main.value;
+    _wireAuctionSync(sel);
   }
   const aid=sel?.value;
   if(!aid){
