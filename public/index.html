@@ -258,32 +258,165 @@ body[data-theme="custom"]{
 body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 
 /* ── Login ───────────────────────────────────────────────── */
-#login{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;background:linear-gradient(135deg,var(--spice-cream) 0%,#F1F5F9 100%)}
-.login-box{background:var(--spice-paper);border:1px solid var(--spice-line);border-radius:20px;padding:40px;width:400px;box-shadow:0 10px 40px rgba(31,25,21,.08)}
-.login-box h1{font-size:22px;font-weight:700;color:var(--spice-text-main);text-align:center;margin-bottom:8px;display:flex;align-items:center;justify-content:center;gap:10px;letter-spacing:-.3px;flex-wrap:wrap}
-.login-box h1 .dot{
-  /* Constrained logo container — never overflows the row, never crowds
-     the brand name. The img inside is sized via object-fit so PNGs of
-     any aspect ratio render proportionally. */
-  flex:0 0 auto;
-  width:40px;height:40px;border-radius:10px;
-  background:#fff;border:1px solid var(--spice-line);
+/* ─────────────────────────────────────────────────────────────
+   Split-screen login: left = brand panel (dark green gradient),
+   right = sign-in card (white). Stacks vertically below 880px so
+   the form remains usable on phones/tablets. */
+#login{
+  display:grid;grid-template-columns:1fr 1fr;
+  min-height:100vh;background:#fff;font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+}
+.login-hero{
+  position:relative;display:flex;flex-direction:column;justify-content:space-between;
+  padding:48px 56px;color:#fff;overflow:hidden;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(132,204,22,.18) 0%, transparent 50%),
+    radial-gradient(circle at 80% 100%, rgba(34,197,94,.18) 0%, transparent 55%),
+    linear-gradient(140deg,#0F3D2E 0%,#0A2F22 60%,#0A2F22 100%);
+}
+.login-hero::before{
+  /* subtle noise/texture overlay so the gradient doesn't look flat */
+  content:'';position:absolute;inset:0;pointer-events:none;
+  background-image:radial-gradient(rgba(255,255,255,.04) 1px,transparent 1px);
+  background-size:24px 24px;opacity:.5;
+}
+.login-hero > *{position:relative;z-index:1}
+.login-hero-brand{display:flex;align-items:center;gap:14px}
+.login-hero-brand .badge{
+  width:56px;height:56px;border-radius:14px;background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.18);display:inline-flex;align-items:center;justify-content:center;
+  overflow:hidden;flex-shrink:0;
+}
+.login-hero-brand .badge img{max-width:78%;max-height:78%;object-fit:contain;display:block}
+.login-hero-brand .badge::before{
+  content:'';display:none;width:16px;height:16px;background:#84CC16;
+  border-radius:50%;
+}
+.login-hero-brand .badge:not(:has(img))::before{display:block}
+.login-hero-brand .name{
+  font-size:14px;font-weight:700;color:#fff;letter-spacing:1px;text-transform:uppercase;
+  line-height:1.3;
+}
+.login-hero-brand .sub{
+  font-size:11.5px;color:rgba(255,255,255,.55);letter-spacing:.6px;margin-top:4px;
+  text-transform:uppercase;font-weight:500;
+}
+.login-hero-headline{
+  font-size:46px;font-weight:800;line-height:1.08;letter-spacing:-.5px;color:#fff;
+  margin:0 0 18px;max-width:560px;
+}
+.login-hero-headline em{font-style:normal;background:linear-gradient(90deg,#FACC15 0%,#84CC16 50%,#22C55E 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.login-hero-tagline{
+  font-size:15px;line-height:1.55;color:rgba(255,255,255,.72);margin:0 0 32px;
+  max-width:480px;
+}
+.login-feat-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:14px}
+.login-feat-list li{
+  display:flex;align-items:center;gap:14px;
+  font-size:14.5px;color:rgba(255,255,255,.92);font-weight:500;
+}
+.login-feat-check{
+  width:24px;height:24px;border-radius:50%;flex-shrink:0;
+  background:rgba(132,204,22,.18);border:1px solid rgba(132,204,22,.5);
   display:inline-flex;align-items:center;justify-content:center;
-  overflow:hidden;
-  box-shadow:0 2px 6px rgba(31,25,21,.06);
+  color:#84CC16;
 }
-.login-box h1 .dot:not(:has(img)){
-  background:linear-gradient(135deg,var(--spice-saffron) 0%,#84CC16 100%);
-  color:#fff;font-size:14px;font-weight:800
+.login-hero-footer{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  font-size:12px;color:rgba(255,255,255,.4);font-weight:500;
 }
-.login-box h1 .dot:not(:has(img))::before{content:'·'}
-.login-box h1 .dot img{
-  display:block;max-width:100%;max-height:100%;width:auto;height:auto;
-  object-fit:contain
+.login-hero-pill{
+  display:inline-flex;align-items:center;gap:6px;
+  background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);
+  color:#86EFAC;padding:5px 12px;border-radius:999px;font-size:11.5px;font-weight:600;
 }
-#login-brand-name{display:inline-block;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.login-box p{font-size:14px;color:var(--spice-text-mute);text-align:center;margin-bottom:28px}
+.login-hero-pill::before{
+  content:'';width:7px;height:7px;border-radius:50%;background:#22C55E;
+  box-shadow:0 0 8px rgba(34,197,94,.8);
+  animation:loginPulse 2s ease-in-out infinite;
+}
+@keyframes loginPulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* ── Right panel: sign-in form card ─────────────────────── */
+.login-panel{
+  display:flex;align-items:center;justify-content:center;
+  padding:48px 56px;background:#fff;
+}
+.login-box{
+  width:100%;max-width:420px;
+}
+.login-welcome{
+  font-size:12.5px;font-weight:700;color:#16A34A;letter-spacing:1.6px;
+  text-transform:uppercase;margin:0 0 14px;
+}
+.login-box h1{
+  font-size:26px;font-weight:800;color:#0F172A;
+  margin:0 0 8px;display:flex;align-items:center;gap:12px;letter-spacing:-.4px;line-height:1.2;
+}
+.login-box h1 .dot{
+  flex:0 0 auto;width:42px;height:42px;border-radius:12px;
+  background:#F0FDF4;border:1px solid #BBF7D0;
+  display:inline-flex;align-items:center;justify-content:center;overflow:hidden;
+}
+.login-box h1 .dot img{display:block;max-width:78%;max-height:78%;width:auto;height:auto;object-fit:contain}
+.login-box h1 .dot:not(:has(img))::before{
+  content:'';width:14px;height:14px;border-radius:50%;background:#84CC16;display:block;
+}
+#login-brand-name{display:inline-block;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.login-box p{font-size:14px;color:#64748B;margin:0 0 28px}
+.login-box .fg{margin-bottom:16px}
+.login-box .fg label{
+  display:block;font-size:11px;font-weight:700;color:#475569;
+  text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;
+}
+.login-box .fg input{
+  width:100%;height:48px;padding:0 14px;border:1.5px solid #E2E8F0;border-radius:10px;
+  font-size:15px;font-family:inherit;background:#fff;outline:none;transition:all .15s;
+  color:#0F172A;
+}
+.login-box .fg input:focus{
+  border-color:#16A34A;box-shadow:0 0 0 4px rgba(22,163,74,.1);
+}
+/* Password field — wrap so the eye toggle button sits inside the input */
+.login-pw-wrap{position:relative}
+.login-pw-wrap input{padding-right:44px}
+.login-pw-toggle{
+  position:absolute;right:10px;top:50%;transform:translateY(-50%);
+  width:30px;height:30px;border:none;background:transparent;cursor:pointer;color:#64748B;
+  display:inline-flex;align-items:center;justify-content:center;border-radius:6px;
+}
+.login-pw-toggle:hover{color:#16A34A;background:#F0FDF4}
+.login-pw-toggle svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.btn-signin{
+  width:100%;height:52px;border:none;border-radius:10px;cursor:pointer;
+  font-size:15px;font-weight:700;color:#fff;letter-spacing:.2px;
+  background:linear-gradient(135deg,#15803D 0%,#16A34A 50%,#22C55E 100%);
+  box-shadow:0 6px 16px rgba(22,163,74,.28);
+  transition:transform .1s,box-shadow .15s;
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+}
+.btn-signin:hover{transform:translateY(-1px);box-shadow:0 10px 24px rgba(22,163,74,.32)}
+.btn-signin:active{transform:translateY(0)}
+.login-help{
+  margin-top:20px;padding:14px 16px;border-radius:10px;
+  background:#F0FDF4;border:1px dashed #BBF7D0;color:#166534;
+  font-size:13px;line-height:1.5;
+}
+.login-help strong{color:#15803D;font-weight:700}
+.err{color:#B91C1C;background:#FEE2E2;border:1px solid #FECACA;padding:10px 12px;border-radius:8px;font-size:13px;margin-top:12px;display:none}
+.err.active{display:block}
+
+/* Responsive — stack the two panels under 880px so phones / narrow
+   tablets still see the form. Brand panel becomes a compact banner. */
+@media (max-width: 880px){
+  #login{grid-template-columns:1fr}
+  .login-hero{padding:32px 28px;min-height:auto}
+  .login-hero-headline{font-size:32px;margin-bottom:12px}
+  .login-hero-tagline{margin-bottom:20px}
+  .login-feat-list{display:none}
+  .login-hero-footer{margin-top:18px}
+  .login-panel{padding:32px 24px}
+}
 .fg{margin-bottom:14px}
 .fg label{display:block;font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px}
 .fg input:not([type="checkbox"]):not([type="radio"]),.fg select,.fg textarea{
@@ -1513,14 +1646,60 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 </head>
 <body>
 <div id="login">
-  <div class="login-box">
-    <h1><span class="dot" id="login-logo-dot"><img id="login-logo-img" alt="" onerror="this.remove()"></span> <span id="login-brand-name">Admin Console</span></h1>
-    <p id="login-brand-sub">Company Configuration &amp; Reports</p>
-    <div class="fg"><label>Username</label><input id="inp-u" value="admin"></div>
-    <div class="fg"><label>Password</label><input type="password" id="inp-p" onkeydown="if(event.key==='Enter')login()"></div>
-    <button class="btn btn-g btn-full" onclick="login()">Sign In</button>
-    <div class="err" id="login-err"></div>
-  </div>
+  <!-- LEFT: brand / value-prop panel -->
+  <aside class="login-hero">
+    <div class="login-hero-brand">
+      <span class="badge" id="login-hero-logo-dot"><img id="login-hero-logo-img" alt="" onerror="this.remove()"></span>
+      <div>
+        <div class="name" id="login-hero-name">Admin Console</div>
+        <div class="sub" id="login-hero-sub">&nbsp;</div>
+      </div>
+    </div>
+
+    <div>
+      <h2 class="login-hero-headline">From lot to ledger.Run every <em>e-Auction</em> day<br>with confidence.</h2>
+      <p class="login-hero-tagline">The spice auction floor in one workspace — lot entry, invoices, payments, Tally.</p>
+      <ul class="login-feat-list">
+        <li><span class="login-feat-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>Lot entry with branch allocation &amp; live validation</li>
+        <li><span class="login-feat-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>One-click GST invoices, debit notes &amp; PDFs</li>
+        <li><span class="login-feat-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>RTGS bank payment files &amp; receipts</li>
+        <li><span class="login-feat-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>Trade reports, journals &amp; Tally XML export — no re-keying</li>
+      </ul>
+    </div>
+
+    <div class="login-hero-footer">
+      <span>&copy; <span id="login-hero-year"></span> &middot; <span id="login-hero-credit">Powered by KJ &amp; Co</span></span>
+      <span class="login-hero-pill">Server live</span>
+    </div>
+  </aside>
+
+  <!-- RIGHT: sign-in card -->
+  <section class="login-panel">
+    <div class="login-box">
+      <div class="login-welcome">Welcome back</div>
+      <h1>
+        <span class="dot" id="login-logo-dot"><img id="login-logo-img" alt="" onerror="this.remove()"></span>
+        <span id="login-brand-name">Sign in to your account</span>
+      </h1>
+      <p id="login-brand-sub">Enter your credentials to continue.</p>
+      <div class="fg"><label for="inp-u">Username</label><input id="inp-u" value="admin" autocomplete="username"></div>
+      <div class="fg">
+        <label for="inp-p">Password</label>
+        <div class="login-pw-wrap">
+          <input type="password" id="inp-p" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
+          <button type="button" class="login-pw-toggle" onclick="(function(b){var i=document.getElementById('inp-p');var hidden=i.type==='password';i.type=hidden?'text':'password';b.setAttribute('aria-label',hidden?'Hide password':'Show password');})(this)" aria-label="Show password" title="Show / hide password">
+            <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <button class="btn-signin" onclick="login()">Sign In <span aria-hidden="true">→</span></button>
+      <div class="err" id="login-err"></div>
+      <div class="login-help">
+        Default credentials: <strong>admin</strong> / <strong>admin123</strong><br>
+        Please change your password after first login.
+      </div>
+    </div>
+  </section>
 </div>
 
 <div id="app">
@@ -4588,7 +4767,8 @@ function applyPermissionAttributes(){
 }
 
 async function login(){
-  const e=document.getElementById('login-err');e.style.display='none';
+  const e=document.getElementById('login-err');
+  if (e) { e.style.display='none'; e.classList.remove('active'); }
   try{const d=await j('/api/login',{method:'POST',body:JSON.stringify({username:document.getElementById('inp-u').value,password:document.getElementById('inp-p').value})});
   T=d.token;localStorage.setItem('t',T);document.getElementById('user-lbl').textContent=d.username;
   // Cache role + permissions for client-side button visibility
@@ -4605,7 +4785,7 @@ async function login(){
   // lot_entry users land directly on the Lot Entry tab — they can't see
   // dash/anything else anyway, so this saves a click.
   go(window._userRole === 'lot_entry' ? 'lotentry' : 'dash');}
-  catch(x){e.textContent='Invalid credentials';e.style.display='block'}}
+  catch(x){if(e){e.textContent='Invalid credentials';e.style.display='block';e.classList.add('active');}}}
 function logout(){h('/api/logout',{method:'POST'});T='';localStorage.removeItem('t');
   window._userRole=null;window._userPerms=new Set();
   // Hide role badge + clear perm attributes (or stale hides persist on next login)
@@ -4642,19 +4822,33 @@ async function applyBranding(){
   const sub  = [b.branch, b.gstin && ('GSTIN: ' + b.gstin)].filter(Boolean).join(' · ');
   const setText = (id, val) => { const el = document.getElementById(id); if (el && val) el.textContent = val; };
   if (name) {
-    setText('login-brand-name', name);
+    // Topbar + page title use the trade name; the login card keeps its
+    // own static "Sign in to your account" headline, so we deliberately
+    // do NOT overwrite #login-brand-name with the trade name (it makes
+    // the form heading look like a generic banner).
     setText('topbar-brand-name', name);
+    setText('login-hero-name', name);
     document.title = `${name} — Admin`;
   }
-  if (sub) setText('login-brand-sub', sub);
-  // Logo on both screens — same uploaded file. Cache-bust so a fresh
-  // upload appears without a hard reload.
+  // Sub-line under the hero brand: branch + GSTIN. The sign-in card keeps
+  // the static "Enter your credentials to continue." copy.
+  if (sub) setText('login-hero-sub', sub);
+
+  // Copyright year — current FY so the footer stays accurate without a
+  // manual edit each April.
+  const yEl = document.getElementById('login-hero-year');
+  if (yEl) yEl.textContent = String(new Date().getFullYear());
+
+  // Logos — same uploaded file in the topbar, hero badge, and card icon.
+  // Cache-bust so a fresh upload appears without a hard reload.
   if (b.logoUrl) {
     const stamp = Date.now();
     const li = document.getElementById('login-logo-img');
     if (li) { li.src = `${b.logoUrl}?t=${stamp}`; }
     const ti = document.getElementById('topbar-logo-img');
     if (ti) { ti.src = `${b.logoUrl}?t=${stamp}`; }
+    const hi = document.getElementById('login-hero-logo-img');
+    if (hi) { hi.src = `${b.logoUrl}?t=${stamp}`; }
   }
 }
 applyBranding();
