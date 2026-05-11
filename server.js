@@ -368,6 +368,21 @@ app.get('/api/branding', (req, res) => {
   }
 });
 
+// Default-credential detection — used to force a password-change prompt
+// on first login. We match on a small set of well-known seeded passwords:
+//   - 'admin123' for the default admin user
+//   - 'password' / 'changeme' / username==password for sloppy installs
+// Anything else (even a custom-but-still-weak password) passes through;
+// the user can always change it later via the Users tab.
+const DEFAULT_PASSWORDS = ['admin123', 'password', 'changeme', '12345678'];
+function isDefaultPassword(username, plaintext) {
+  if (!plaintext) return false;
+  const p = String(plaintext);
+  if (DEFAULT_PASSWORDS.includes(p)) return true;
+  if (p.toLowerCase() === String(username || '').toLowerCase()) return true;
+  return false;
+}
+
 app.post('/api/login', (req, res) => {
   const { username, password, device_label } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
@@ -383,7 +398,12 @@ app.post('/api/login', (req, res) => {
   // Return the user's capabilities array so the client can hide buttons
   // they're not allowed to use. Server still validates every request.
   const permissions = Array.from(ROLE_PERMISSIONS[user.role] || ROLE_PERMISSIONS.viewer);
-  res.json({ token, role: user.role, username: user.username, permissions });
+  // Flag a default-password login so the client can pop a "Change your
+  // password" modal. We send the plaintext check result (not the hash)
+  // so future password-strength rules can extend this without a
+  // schema change.
+  const mustChangePassword = isDefaultPassword(username, password);
+  res.json({ token, role: user.role, username: user.username, permissions, mustChangePassword });
 });
 app.post('/api/logout', (req, res) => {
   const t = (req.headers.authorization||'').replace('Bearer ','');

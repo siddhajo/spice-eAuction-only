@@ -2454,6 +2454,38 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       </div>
     </div></div>
 
+    <!-- ── Force Change Password Modal ──────────────────────
+         Shown automatically after a login with a default / well-known
+         password (admin/admin123 etc.). Server flags this via
+         `mustChangePassword` on /api/login. We don't ask for the
+         current password — it was just submitted in the login form and
+         we stash it on window._forcePwCurrent. The user can't dismiss
+         the modal; they have to either change the password or log out. -->
+    <div class="modal-bg" id="force-pw-modal" style="z-index:2000">
+      <div class="modal" style="max-width:460px">
+        <h2 style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <span style="width:38px;height:38px;border-radius:10px;background:#FEF3C7;display:inline-flex;align-items:center;justify-content:center;font-size:20px">🔑</span>
+          <span>Change your password</span>
+        </h2>
+        <p style="font-size:13px;color:var(--spice-text-mute);margin:0 0 16px;line-height:1.5">
+          You're signed in with a default password. Pick a new one before continuing — it'll be needed on your next sign-in from any device.
+        </p>
+        <div class="fg">
+          <label>New password</label>
+          <input type="password" id="force-pw-new" placeholder="At least 4 characters" autocomplete="new-password">
+        </div>
+        <div class="fg">
+          <label>Confirm new password</label>
+          <input type="password" id="force-pw-conf" placeholder="Re-type the same password" autocomplete="new-password" onkeydown="if(event.key==='Enter')submitForceChangePw()">
+        </div>
+        <div id="force-pw-err" style="display:none;margin-top:-4px;margin-bottom:12px;padding:8px 10px;font-size:12.5px;border-radius:6px;background:#FEE2E2;color:#991B1B;border:1px solid #FECACA"></div>
+        <div class="actions" style="display:flex;gap:8px;justify-content:space-between;align-items:center">
+          <button class="btn btn-o" onclick="forcePwLogout()" style="background:#fff;border:1px solid var(--spice-line);color:var(--spice-text-mute)">Sign out</button>
+          <button class="btn btn-g" onclick="submitForceChangePw()">Update Password</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Reset Password Modal -->
     <div class="modal-bg" id="reset-pw-modal"><div class="modal">
       <h2>Reset User Password</h2>
@@ -5068,7 +5100,10 @@ function applyPermissionAttributes(){
 async function login(){
   const e=document.getElementById('login-err');
   if (e) { e.style.display='none'; e.classList.remove('active'); }
-  try{const d=await j('/api/login',{method:'POST',body:JSON.stringify({username:document.getElementById('inp-u').value,password:document.getElementById('inp-p').value})});
+  try{
+  const submittedPw = document.getElementById('inp-p').value;
+  const submittedUn = document.getElementById('inp-u').value;
+  const d=await j('/api/login',{method:'POST',body:JSON.stringify({username:submittedUn,password:submittedPw})});
   T=d.token;localStorage.setItem('t',T);document.getElementById('user-lbl').textContent=d.username;
   // Cache role + permissions for client-side button visibility
   window._userRole  = d.role || 'viewer';
@@ -5083,10 +5118,22 @@ async function login(){
   try { await applyFeatureFlags(); } catch(_) {}
   // lot_entry users land directly on the Lot Entry tab — they can't see
   // dash/anything else anyway, so this saves a click.
-  go(window._userRole === 'lot_entry' ? 'lotentry' : 'dash');}
+  go(window._userRole === 'lot_entry' ? 'lotentry' : 'dash');
+  // Force-prompt a password change when the user just logged in with
+  // a default / well-known password. The server flags this via
+  // `mustChangePassword` so the client doesn't have to repeat the
+  // weak-password list. Stash the current password so the modal can
+  // submit it as `current_password` without re-asking the user.
+  if (d.mustChangePassword) {
+    window._forcePwCurrent = submittedPw;
+    openForceChangePwModal();
+  }
+  }
   catch(x){if(e){e.textContent='Invalid credentials';e.style.display='block';e.classList.add('active');}}}
 function logout(){h('/api/logout',{method:'POST'});T='';localStorage.removeItem('t');
   window._userRole=null;window._userPerms=new Set();
+  window._forcePwCurrent = null;
+  const fpw = document.getElementById('force-pw-modal'); if (fpw) fpw.style.display = 'none';
   // Hide role badge + clear perm attributes (or stale hides persist on next login)
   for (const attr of Array.from(document.body.attributes)) {
     if (attr.name.startsWith('data-perm-')) document.body.removeAttribute(attr.name);
@@ -5988,6 +6035,59 @@ async function revokeSession(tokenSuffix){
     loadUsers();
   }catch(e){showError(e)}
 }
+// ── Forced password change after default-credential login ────────
+// Triggered from login() when the server returns mustChangePassword:1.
+// The modal can't be dismissed casually — the user must either pick a
+// new password or hit "Sign out". This protects against the operator
+// walking away after a default-password admin login on a shared
+// workstation.
+function openForceChangePwModal(){
+  const m = document.getElementById('force-pw-modal');
+  if (!m) return;
+  // Clear any stale values from a previous open
+  const n = document.getElementById('force-pw-new');   if (n) n.value = '';
+  const c = document.getElementById('force-pw-conf');  if (c) c.value = '';
+  const e = document.getElementById('force-pw-err');   if (e) e.style.display = 'none';
+  m.style.display = 'flex';
+  setTimeout(() => { if (n) n.focus(); }, 80);
+}
+function forcePwShowErr(msg){
+  const e = document.getElementById('force-pw-err');
+  if (!e) return;
+  e.textContent = msg;
+  e.style.display = 'block';
+}
+async function submitForceChangePw(){
+  const pw   = (document.getElementById('force-pw-new')?.value  || '');
+  const conf = (document.getElementById('force-pw-conf')?.value || '');
+  if (pw.length < 4)          return forcePwShowErr('Password must be at least 4 characters.');
+  if (pw !== conf)            return forcePwShowErr('Passwords don\'t match.');
+  // Block re-use of the default password the server just flagged.
+  if (pw === window._forcePwCurrent) return forcePwShowErr('Pick a different password — that\'s the default one you signed in with.');
+  try {
+    await j('/api/me/password', {
+      method: 'PUT',
+      body: JSON.stringify({
+        current_password: window._forcePwCurrent || '',
+        new_password: pw,
+      }),
+    });
+    window._forcePwCurrent = null;
+    const m = document.getElementById('force-pw-modal');
+    if (m) m.style.display = 'none';
+    toast('Password updated. Use the new password next time you sign in.');
+  } catch (e) {
+    forcePwShowErr((e && e.message) || 'Couldn\'t update password — try again.');
+  }
+}
+function forcePwLogout(){
+  // Hide the modal first so logout() doesn't have to compete with it.
+  const m = document.getElementById('force-pw-modal');
+  if (m) m.style.display = 'none';
+  window._forcePwCurrent = null;
+  if (typeof logout === 'function') logout();
+}
+
 async function changeMyPassword(){
   const cur=document.getElementById('pw-cur').value;
   const nu=document.getElementById('pw-new').value;
