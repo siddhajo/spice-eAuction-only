@@ -242,18 +242,20 @@ function buildBuyersStatement(ctx) {
     g.amount += Number(r.amount) || 0;
   }
 
-  // Bucket by sale type. Export ('E') is its own section; everything else
-  // splits on state (intra = same as auction state, inter = different).
-  // Tag every group with its resolved sale label so PDF/XLSX can show
-  // sale-type-wise totals at the foot of the report.
+  // Bucket by sale type. The Sales Invoice flow already stamps every
+  // lot/invoice with sale = 'L' (intra/local), 'I' (inter-state), or 'E'
+  // (export), so prefer that as the source of truth. The earlier
+  // buyer-state-vs-auction-state comparison was a fallback that
+  // mis-classified L sales whenever a buyer's `state` field was missing
+  // or didn't exactly match the auction state — the INTRA bucket then
+  // showed up empty even though L invoices clearly existed.
   const inter = [], intra = [], exportS = [];
   for (const g of groups.values()) {
     const sale = String(g.sale || '').trim().toUpperCase();
-    if (sale === 'E') {
-      g.saleLabel = 'EXPORT';
-      exportS.push(g);
-      continue;
-    }
+    if (sale === 'E') { g.saleLabel = 'EXPORT'; exportS.push(g); continue; }
+    if (sale === 'L') { g.saleLabel = 'INTRA';  intra  .push(g); continue; }
+    if (sale === 'I') { g.saleLabel = 'INTER';  inter  .push(g); continue; }
+    // Unknown / legacy sale type — fall back to the state heuristic.
     const bs = String(g.state || '').trim().toUpperCase();
     const isIntra = !bs || bs === auctionState;
     if (isIntra) { g.saleLabel = 'INTRA'; intra.push(g); }
