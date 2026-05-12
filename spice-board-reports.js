@@ -1034,7 +1034,12 @@ function buildFormC(ctx) {
       sbl:    r.buyer_sbl || '',
       hasGstin: isGstinDealer(cr),
     };
-    (classifySeller(cr) === 'DEALER' ? dealers : planters).push(item);
+    // Form C bucketing rule (user spec): rows whose registration parses
+    // as a GSTIN go under DEALERS; everything else (CR codes, blank,
+    // Board CS-codes without a GSTIN) goes under PLANTERS. The legacy
+    // classifySeller() CS-prefix rule is no longer used here — it
+    // mis-classified Spices Board CS dealers without a GSTIN as dealers.
+    (item.hasGstin ? dealers : planters).push(item);
     if (item.rate > maxRate) maxRate = item.rate;
     if (item.rate < minRate && item.rate > 0) minRate = item.rate;
     totalKilos += item.qtySold; totalValue += item.value;
@@ -1054,15 +1059,14 @@ function buildFormC(ctx) {
   if (!isFinite(minRate)) minRate = 0;
   const avg = totalKilos > 0 ? totalValue / totalKilos : 0;
   const sum = arr => arr.reduce((a, x) => ({ kilos: a.kilos + x.qtySold, value: a.value + x.value }), { kilos: 0, value: 0 });
-  // GSTIN dealer subtotal (Task 9) — sum over every row across BOTH
-  // planters and dealers whose `cr` parses as a GSTIN. The existing
-  // PLANTER/DEALER buckets stay unchanged.
-  const gstinRows = [...planters, ...dealers].filter(x => x.hasGstin);
+  // Dealers ARE the GSTIN dealers now (the planter/dealer split is keyed
+  // on isGstinDealer). Keep `gstinDealers`/`gstinDealerTotals` for API
+  // back-compat but they're identical to `dealers`/`dealersTotals`.
   return {
     auction, planters, dealers,
     plantersTotals: sum(planters), dealersTotals: sum(dealers),
-    gstinDealers: gstinRows,
-    gstinDealerTotals: sum(gstinRows),
+    gstinDealers: dealers,
+    gstinDealerTotals: sum(dealers),
     grand: { kilos: totalKilos, value: totalValue },
     maxRate, minRate, avgRate: avg,
   };
@@ -1098,7 +1102,6 @@ function formCJson(db, opts) {
       { title: 'PLANTERS', rows: numberRows(d.planters), totals: { label: 'PLANTERS TOTAL', qtyPut: d.plantersTotals.kilos, qtySold: d.plantersTotals.kilos, value: d.plantersTotals.value } },
       { title: 'DEALERS',  rows: numberRows(d.dealers),  totals: { label: 'DEALERS TOTAL',  qtyPut: d.dealersTotals.kilos,  qtySold: d.dealersTotals.kilos,  value: d.dealersTotals.value } },
     ],
-    gstinDealerTotals: { label: 'GSTIN DEALER TOTAL', qtyPut: d.gstinDealerTotals.kilos, qtySold: d.gstinDealerTotals.kilos, value: d.gstinDealerTotals.value },
     grand: { label: 'GRAND TOTAL', qtyPut: d.grand.kilos, qtySold: d.grand.kilos, value: d.grand.value },
   };
 }
@@ -1160,12 +1163,8 @@ async function formCXlsx(db, opts) {
   }
   emitSection('PLANTERS', d.planters, { label: 'PLANTERS TOTAL', qtyPut: d.plantersTotals.kilos, qtySold: d.plantersTotals.kilos, value: d.plantersTotals.value });
   emitSection('DEALERS',  d.dealers,  { label: 'DEALERS TOTAL',  qtyPut: d.dealersTotals.kilos,  qtySold: d.dealersTotals.kilos,  value: d.dealersTotals.value });
-  // GSTIN-dealer subtotal (Task 9) — sum across both sections.
-  const gd = ws.addRow(['', 'GSTIN DEALER TOTAL', '', d.gstinDealerTotals.kilos, d.gstinDealerTotals.kilos, '', d.gstinDealerTotals.value, '', '', '', '']);
-  gd.font = { bold: true };
-  gd.getCell(4).numFmt = '#,##0.000'; gd.getCell(5).numFmt = '#,##0.000'; gd.getCell(7).numFmt = '#,##,##0.00';
-  gd.eachCell(c => { c.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
-                     c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E4DD' } }; });
+  // GRAND TOTAL = planters + dealers. (DEALERS == GSTIN dealers now —
+  // see classification rule in buildFormC — so no separate GSTIN row.)
   const g = ws.addRow(['', 'GRAND TOTAL', '', d.grand.kilos, d.grand.kilos, '', d.grand.value, '', '', '', '']);
   g.font = { bold: true, size: 11 };
   g.getCell(4).numFmt = '#,##0.000'; g.getCell(5).numFmt = '#,##0.000'; g.getCell(7).numFmt = '#,##,##0.00';
@@ -1500,16 +1499,8 @@ async function formCPdf(db, opts) {
   emitSection('PLANTERS TOTAL', d.planters, { qtyPut: d.plantersTotals.kilos, qtySold: d.plantersTotals.kilos, value: d.plantersTotals.value });
   emitSection('DEALERS TOTAL',  d.dealers,  { qtyPut: d.dealersTotals.kilos,  qtySold: d.dealersTotals.kilos,  value: d.dealersTotals.value });
 
-  // GSTIN-dealer subtotal (Task 9) — sum of every seller whose CR parses
-  // as a GSTIN. Sits above the GRAND TOTAL so the regulator/auditor can
-  // verify the GSTIN-registered fraction at a glance.
-  ensureRoom(18);
-  totalsRow('GSTIN DEALER TOTAL', {
-    qtyPut:  d.gstinDealerTotals.kilos,
-    qtySold: d.gstinDealerTotals.kilos,
-    value:   d.gstinDealerTotals.value,
-  });
-
+  // GRAND TOTAL = planters + dealers. (DEALERS == GSTIN dealers now —
+  // see classification rule in buildFormC — so no separate GSTIN row.)
   ensureRoom(20);
   totalsRow('GRAND TOTAL', { qtyPut: d.grand.kilos, qtySold: d.grand.kilos, value: d.grand.value }, { grand: true });
 

@@ -6954,7 +6954,11 @@ const IMPORT_MODULES = {
     label: 'Sales Invoices',
     table: 'invoices',
     keyCols: ['invo', 'sale'],
-    fields: ['ano','date','state','sale','invo','buyer','buyer1','gstin','place',
+    // auction_id is auto-derived from `ano` at import time so the
+    // imported rows show up under the matching trade in the Sales tab
+    // (the list filters by auction_id, not ano).
+    autoFillAuctionId: true,
+    fields: ['auction_id','ano','date','state','sale','invo','buyer','buyer1','gstin','place',
              'bag','qty','amount','gunny','pava_hc','ins','cgst','sgst','igst','tcs','rund','tot'],
     aliases: {
       ano: ['ano','auction_no','trade'],
@@ -6975,15 +6979,24 @@ const IMPORT_MODULES = {
     label: 'Purchase Invoices',
     table: 'purchases',
     keyCols: ['invo'],
-    fields: ['ano','date','state','invo','name','cr','place','bag','qty','amount',
-             'cgst','sgst','igst','total','refund'],
+    autoFillAuctionId: true,
+    // Match the actual `purchases` schema. The legacy export's "cr"
+    // column maps to `gstin` here; "bag"/"refund" don't exist on the
+    // purchases table at all so they're absent from this list.
+    fields: ['auction_id','ano','date','state','br','name','add_line','place','gstin','invo',
+             'qty','amount','cgst','sgst','igst','rund','total','tds'],
     aliases: {
-      invo: ['invo','invoice','invoice_no'],
-      name: ['name','seller','dealer'],
-      cr: ['cr','gstin','registration'],
-      qty: ['qty','kilos','weight','kgs'],
-      amount: ['amount','cardamom','value'],
-      total: ['total','grand_total','invoice_amount'],
+      invo:    ['invo','invoice','invoice_no'],
+      name:    ['name','seller','dealer'],
+      gstin:   ['gstin','gst','gst_no','cr','registration'],
+      place:   ['place','city','pla'],
+      add_line:['add_line','address','add','add1','address1'],
+      br:      ['br','branch'],
+      qty:     ['qty','kilos','weight','kgs'],
+      amount:  ['amount','cardamom','value'],
+      total:   ['total','grand_total','invoice_amount'],
+      rund:    ['rund','round','round_off'],
+      tds:     ['tds','tds_amount'],
     },
   },
   bills: {
@@ -7125,6 +7138,21 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
     const valuePlaceholders = def.fields.map(() => '?').join(',');
     const insertSql = `INSERT INTO ${def.table} (${def.fields.join(',')}) VALUES (${valuePlaceholders})`;
 
+    // Cache `ano → auction_id` lookups for autoFillAuctionId modules.
+    // Without this every row of a large import would hit the DB once
+    // for the same trade number.
+    const auctionIdCache = new Map();
+    const resolveAuctionId = (ano) => {
+      const key = String(ano || '').trim();
+      if (!key) return null;
+      if (auctionIdCache.has(key)) return auctionIdCache.get(key);
+      const row = db.get('SELECT id FROM auctions WHERE ano = ? LIMIT 1', [key]);
+      const id  = row ? row.id : null;
+      auctionIdCache.set(key, id);
+      return id;
+    };
+    const auctionIdSlot = def.fields.indexOf('auction_id');
+
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
       try {
@@ -7135,10 +7163,27 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
           const dup = db.get(`SELECT 1 FROM ${def.table} WHERE ${whereSql} LIMIT 1`, keyChecks);
           if (dup) { skipped++; continue; }
         }
-        if (!dryRun) {
-          const values = fieldSources.map(([_, src]) => src ? r[src] : '');
-          db.run(insertSql, values);
+        // Build positional values from the source mapping. For
+        // autoFillAuctionId modules we derive auction_id from `ano` after
+        // the row is mapped — the auctions table is the source of truth
+        // for ano→id, and without this the imported invoices show up
+        // nowhere because the Sales tab filters by auction_id.
+        const values = fieldSources.map(([_, src]) => src ? r[src] : '');
+        if (def.autoFillAuctionId && auctionIdSlot >= 0) {
+          const anoSrc = mapping.ano;
+          const anoVal = anoSrc ? r[anoSrc] : '';
+          const aid    = resolveAuctionId(anoVal);
+          if (aid == null) {
+            failed++;
+            if (errors.length < 50) errors.push({
+              row: i + 2,
+              error: `No trade found for ano="${String(anoVal || '').trim()}" — create the auction first or fix the column.`
+            });
+            continue;
+          }
+          values[auctionIdSlot] = aid;
         }
+        if (!dryRun) db.run(insertSql, values);
         imported++;
       } catch (e) {
         failed++;
@@ -7148,6 +7193,22 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
   } catch (e) {
     fs.unlink(req.file.path, () => {});
     return res.status(400).json({ error: e.message });
+  }
+
+  // Back-fill auction_id on any pre-existing rows the user imported
+  // *before* this fix landed. Idempotent — touches only NULL slots with
+  // a matching auctions.ano. Runs even on dryRun so the user gets the
+  // immediate fix without a second pass.
+  if (def.autoFillAuctionId) {
+    try {
+      getDb().run(
+        `UPDATE ${def.table}
+            SET auction_id = (SELECT id FROM auctions WHERE auctions.ano = ${def.table}.ano)
+          WHERE auction_id IS NULL
+            AND ano IS NOT NULL AND ano != ''
+            AND EXISTS (SELECT 1 FROM auctions WHERE auctions.ano = ${def.table}.ano)`
+      );
+    } catch (_) { /* non-fatal */ }
   }
 
   // Log this run regardless of outcome.

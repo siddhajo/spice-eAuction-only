@@ -386,9 +386,15 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
 
     const li = lineItems[i];
     stripeRow(y, lineH, i);
+    // TOTAL QTY = sold qty + sample-refund qty (kg per lot from cfg.sb_refund).
+    // Legacy line items without `totalQty` fall back to base + refundQty so
+    // historical purchase invoices still render the column correctly.
+    const lineTotalQtyP = (li.totalQty != null)
+      ? li.totalQty
+      : ((li.pqty || li.qty || 0) + (li.refundQty || 0));
     doc.text(String(li.lot || '').padStart(3, '0'), colSpec[0].x, y + 2, { width: colSpec[0].w, align: 'center' });
     doc.text(fmtQty(li.qty), colSpec[1].x, y + 2, { width: colSpec[1].w - 3, align: 'right' });
-    doc.text(fmtQty(li.pqty || li.qty), colSpec[3].x, y + 2, { width: colSpec[3].w - 3, align: 'right' });
+    doc.text(fmtQty(lineTotalQtyP), colSpec[3].x, y + 2, { width: colSpec[3].w - 3, align: 'right' });
     doc.text(fmtRup(li.prate || li.price), colSpec[4].x, y + 2, { width: colSpec[4].w - 3, align: 'right' });
     const value = (li.prate || li.price) * (li.pqty || li.qty);
     doc.text(fmtRup(value), colSpec[5].x, y + 2, { width: colSpec[5].w - 3, align: 'right' });
@@ -412,9 +418,13 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
   // TOTAL row
   const totalRowY = y;
   doc.font('Helvetica-Bold').fontSize(9);
+  // TOTAL QTY footer = sum of (qty + sample refund) per line. Legacy
+  // line items without totalQty fall back to (pqty || qty) + refundQty.
+  const totalQtySumP = lineItems.reduce((s, li) =>
+    s + (li.totalQty != null ? li.totalQty : ((li.pqty || li.qty || 0) + (li.refundQty || 0))), 0);
   doc.text('TOTAL', colSpec[0].x, totalRowY + 2, { width: colSpec[0].w, align: 'center' });
   doc.text(fmtQty(sumKey(lineItems, 'qty')), colSpec[1].x, totalRowY + 2, { width: colSpec[1].w - 3, align: 'right' });
-  doc.text(fmtQty(sumKey(lineItems, 'pqty', 'qty')), colSpec[3].x, totalRowY + 2, { width: colSpec[3].w - 3, align: 'right' });
+  doc.text(fmtQty(totalQtySumP), colSpec[3].x, totalRowY + 2, { width: colSpec[3].w - 3, align: 'right' });
   const valueSum = lineItems.reduce((s, li) => s + (li.prate || li.price) * (li.pqty || li.qty), 0);
   doc.text(fmtRup(valueSum), colSpec[5].x, totalRowY + 2, { width: colSpec[5].w - 3, align: 'right' });
   const taxableSum = sumKey(lineItems, 'puramt', 'amount');
@@ -2054,9 +2064,15 @@ function generateAgriBillPDF(billData, cfg, billNo, externalDoc) {
 
     const li = rows[i];
     stripeRow(y, lineH, i);
+    // TOTAL QTY = sold qty + sample-refund qty (kg per lot from cfg.sb_refund).
+    // Falls back to (pqty || qty) for legacy line items that pre-date the
+    // refundQty field so older saved invoices still render correctly.
+    const lineTotalQty = (li.totalQty != null)
+      ? li.totalQty
+      : ((li.pqty || li.qty || 0) + (li.refundQty || 0));
     doc.text(String(li.lot || '').padStart(3, '0'), colSpec[0].x, y + 2, { width: colSpec[0].w, align: 'center' });
     doc.text(fmtQty(li.qty), colSpec[1].x, y + 2, { width: colSpec[1].w - 3, align: 'right' });
-    doc.text(fmtQty(li.pqty || li.qty), colSpec[3].x, y + 2, { width: colSpec[3].w - 3, align: 'right' });
+    doc.text(fmtQty(lineTotalQty), colSpec[3].x, y + 2, { width: colSpec[3].w - 3, align: 'right' });
     doc.text(fmtRup(li.prate || li.price), colSpec[4].x, y + 2, { width: colSpec[4].w - 3, align: 'right' });
     doc.text(fmtRup((li.prate || li.price) * (li.pqty || li.qty)), colSpec[5].x, y + 2, { width: colSpec[5].w - 3, align: 'right' });
     doc.text(fmtRup(li.puramt || li.amount), colSpec[7].x, y + 2, { width: colSpec[7].w - 3, align: 'right' });
@@ -2079,9 +2095,14 @@ function generateAgriBillPDF(billData, cfg, billNo, externalDoc) {
   // ── TOTAL row ──
   const totalRowY = y;
   doc.font('Helvetica-Bold').fontSize(9);
+  // TOTAL QTY footer = sum of (qty + sample refund) per line. Uses the
+  // pre-computed totalQty stamped per line by buildAgriBill/Purchase;
+  // legacy rows without it fall back to (pqty || qty) + (refundQty || 0).
+  const totalQtySum = rows.reduce((s, li) =>
+    s + (li.totalQty != null ? li.totalQty : ((li.pqty || li.qty || 0) + (li.refundQty || 0))), 0);
   doc.text('TOTAL', colSpec[0].x, totalRowY + 2, { width: colSpec[0].w, align: 'center' });
   doc.text(fmtQty(sumKey(rows, 'qty')), colSpec[1].x, totalRowY + 2, { width: colSpec[1].w - 3, align: 'right' });
-  doc.text(fmtQty(sumKey(rows, 'pqty', 'qty')), colSpec[3].x, totalRowY + 2, { width: colSpec[3].w - 3, align: 'right' });
+  doc.text(fmtQty(totalQtySum), colSpec[3].x, totalRowY + 2, { width: colSpec[3].w - 3, align: 'right' });
   const valueSum = rows.reduce((s, li) => s + (li.prate || li.price) * (li.pqty || li.qty), 0);
   doc.text(fmtRup(valueSum), colSpec[5].x, totalRowY + 2, { width: colSpec[5].w - 3, align: 'right' });
   doc.text(fmtRup(sumKey(rows, 'puramt', 'amount')), colSpec[7].x, totalRowY + 2, { width: colSpec[7].w - 3, align: 'right' });

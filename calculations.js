@@ -374,7 +374,11 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg) {
   const gstGoods = cfg.gst_goods || 5;
   const companyState = cfg.business_state === 'KERALA' ? '32' : '33';
 
-  let totalQty = 0, totalPuramt = 0, totalBags = 0;
+  // Purchase invoice: TOTAL QTY column = sold qty + sample-refund qty.
+  // Matches the same convention used by Bills of Supply so the column
+  // means the same thing on both PDFs.
+  const sbRefundKgPurchase = Number(cfg.sb_refund) || 0;
+  let totalQty = 0, totalPuramt = 0, totalBags = 0, totalRefundQty = 0;
   const lineItems = [];
 
   for (const lot of lots) {
@@ -386,15 +390,20 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg) {
     const rsgst = isInter ? 0 : Math.round(puramt * (gstGoods / 2) / 100 * 100) / 100;
     const rigst = isInter ? Math.round(puramt * gstGoods / 100 * 100) / 100 : 0;
 
-    totalQty += lot.pqty || lot.qty;
-    totalPuramt += puramt;
-    totalBags += lot.bags || 0;
+    const baseQty   = (lot.pqty || lot.qty) || 0;
+    const lineTotal = baseQty + sbRefundKgPurchase;
+    totalQty       += lineTotal;
+    totalRefundQty += sbRefundKgPurchase;
+    totalPuramt    += puramt;
+    totalBags      += lot.bags || 0;
 
     lineItems.push({
       lot: lot.lot_no, bags: lot.bags, grade: lot.grade,
       qty: lot.qty, pqty: lot.pqty,
+      refundQty: sbRefundKgPurchase,
+      totalQty:  lineTotal,
       price: lot.price, prate: lot.prate,
-      amount: lot.amount, puramt, 
+      amount: lot.amount, puramt,
       com: lot.com, sertax: lot.sertax,
       cgst: rcgst, sgst: rsgst, igst: rigst
     });
@@ -444,7 +453,7 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg) {
               cr: firstLot.cr, pan: firstLot.pan, state: firstLot.pstate },
     lineItems,
     summary: {
-      totalQty, totalBags, totalPuramt, totalCgst, totalSgst, totalIgst,
+      totalQty, totalRefundQty, totalBags, totalPuramt, totalCgst, totalSgst, totalIgst,
       roundDiff, grandTotal, tdsAmount, invoiceAmount, isInter
     }
   };
@@ -694,14 +703,24 @@ function buildAgriBill(db, auctionId, sellerName, cfg) {
     return { error: `No eligible lots for "${trimmedName}"` };
   }
 
-  let totalQty = 0, totalPuramt = 0;
+  // Bills of Supply: TOTAL QTY column = sold qty + sample-refund qty
+  // (the kgs retained by the company as sample bags). sb_refund is the
+  // config-driven kg-per-lot value used by every other report. Stamped
+  // on each line so the PDF can render "Qty" and "Total Qty" distinctly.
+  const sbRefundKg = Number(cfg.sb_refund) || 0;
+  let totalQty = 0, totalPuramt = 0, totalRefundQty = 0;
   const lineItems = [];
 
   for (const lot of lots) {
-    totalQty += lot.pqty || lot.qty;
-    totalPuramt += lot.puramt || 0;
+    const baseQty   = (lot.pqty || lot.qty) || 0;
+    const lineTotal = baseQty + sbRefundKg;
+    totalQty       += lineTotal;
+    totalRefundQty += sbRefundKg;
+    totalPuramt    += lot.puramt || 0;
     lineItems.push({
       lot: lot.lot_no, qty: lot.qty, pqty: lot.pqty,
+      refundQty: sbRefundKg,
+      totalQty: lineTotal,
       price: lot.price, prate: lot.prate,
       amount: lot.amount, puramt: lot.puramt,
       com: lot.com, sertax: lot.sertax
@@ -727,7 +746,7 @@ function buildAgriBill(db, auctionId, sellerName, cfg) {
     },
     lineItems,
     summary: {
-      totalQty, totalPuramt, 
+      totalQty, totalRefundQty, totalPuramt,
       roundDiff, netAmount,
       cgst: 0, sgst: 0, igst: 0,
       tax: 0
