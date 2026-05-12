@@ -3942,18 +3942,27 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <button id="alloc-tab-reassign" type="button" onclick="switchAllocTab('reassign')" style="flex:1;padding:8px 0;font-size:13px;font-weight:600;border:none;background:none;cursor:pointer;color:var(--text3);border-bottom:2px solid transparent;margin-bottom:-2px">↔ Reassign Lots</button>
   </div>
 
-  <!-- Edit panel — list of branch/start/end rows + summary -->
+  <!-- Edit panel — chip-based mark-for-delete UX, one card per range. -->
   <div id="alloc-panel-edit">
-    <!-- Per-branch usage bars + lot chip grid — mirrors the Lot Entry
-         alloc card so admins editing allocations see the same at-a-
-         glance picture field staff see. Read-only; the row editor
-         below is where actual edits happen. -->
-    <div id="alloc-edit-bars" style="margin-bottom:12px"></div>
-    <div id="alloc-edit-grid" style="margin-bottom:14px"></div>
+    <p style="font-size:12px;color:var(--text3);margin:0 0 12px;line-height:1.4">
+      Click any <b>free</b> chip to mark it for deletion. <b>Used</b> (entered) chips are locked.
+      To add a new range, use <b style="color:var(--green)">+ Add Branch</b>.
+    </p>
 
-    <div style="font-size:11.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Edit Ranges</div>
-    <div id="alloc-edit-list" style="margin-bottom:10px"></div>
-    <button type="button" class="btn btn-g" style="height:30px;padding:0 14px;font-size:12px;font-weight:600;margin-bottom:12px" onclick="addAllocRow('alloc-edit')">+ Add Branch</button>
+    <!-- Per-range cards (rendered by renderAllocEditCards) -->
+    <div id="alloc-edit-cards"></div>
+
+    <!-- Hidden alloc-edit-list kept for backward compat with helpers
+         (addAllocRow / getAllocRows / populateAllocRows) that other call
+         sites still use. The new UX doesn't surface it. -->
+    <div id="alloc-edit-list" style="display:none"></div>
+
+    <div style="display:flex;gap:8px;margin:12px 0;flex-wrap:wrap">
+      <button type="button" class="btn btn-g" style="height:30px;padding:0 14px;font-size:12px;font-weight:600" onclick="openAllocAddBranch()" title="Add a brand-new branch range">+ Add Branch</button>
+      <button type="button" class="btn btn-o" style="height:30px;padding:0 14px;font-size:12px;font-weight:600" onclick="openAllocAddLots()" title="Quick-append a range to an existing branch">+ Add Extra Lots</button>
+      <span id="alloc-edit-marked-count" style="margin-left:auto;font-size:11px;color:var(--text3);align-self:center"></span>
+    </div>
+
     <div id="alloc-edit-summary" style="font-size:11px;color:var(--text3);margin-bottom:10px"></div>
     <div id="alloc-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:12px;margin-bottom:10px"></div>
     <div class="actions">
@@ -8139,7 +8148,9 @@ async function loadLotsSummary(){
 
 // Add a single branch/start/end row to either the alloc-edit list
 // (admin modal) or any other prefixed list. The remove-row button
-// updates the summary line so totals stay accurate.
+// updates the summary line so totals stay accurate. The leading
+// checkbox feeds bulk actions (Select All / Delete Selected /
+// Duplicate Selected) on the panel's toolbar.
 async function addAllocRow(prefix) {
   const list = document.getElementById(prefix + '-list');
   if (!list) return;
@@ -8148,14 +8159,78 @@ async function addAllocRow(prefix) {
     ? branches.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('')
     : '<option value="">— configure branches in Settings —</option>';
   const row = document.createElement('div');
-  row.style.cssText = 'display:grid;grid-template-columns:1fr 90px 90px 30px;gap:6px;align-items:center;margin-bottom:6px';
-  row.innerHTML = `<select class="alloc-branch" style="height:32px;padding:0 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff">${opts}</select>
+  row.style.cssText = 'display:grid;grid-template-columns:24px 1fr 90px 90px 30px;gap:6px;align-items:center;margin-bottom:6px';
+  row.innerHTML = `<input type="checkbox" class="alloc-select-cb" style="width:16px;height:16px;cursor:pointer;accent-color:var(--green);justify-self:center" onchange="_allocUpdateBulkUI('${esc(prefix)}')">
+    <select class="alloc-branch" style="height:32px;padding:0 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff">${opts}</select>
     <input type="text" class="alloc-start" placeholder="Start" style="height:32px;padding:0 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace">
     <input type="text" class="alloc-end" placeholder="End" style="height:32px;padding:0 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace">
     <button type="button" style="background:none;border:none;color:#C62828;cursor:pointer;font-size:16px" title="Remove">✕</button>`;
-  row.querySelector('button').onclick = () => { row.remove(); updateAllocSummary(prefix); };
+  row.querySelector('button').onclick = () => { row.remove(); updateAllocSummary(prefix); _allocUpdateBulkUI(prefix); };
   row.querySelectorAll('.alloc-start,.alloc-end').forEach(inp => inp.addEventListener('input', () => updateAllocSummary(prefix)));
   list.appendChild(row);
+  _allocUpdateBulkUI(prefix);
+}
+
+// ── Bulk selection helpers for the alloc-edit row list ──────────
+// Mirrors the pattern used by Payments / Invoices bulk-action UIs.
+function _allocUpdateBulkUI(prefix) {
+  const list = document.getElementById(prefix + '-list');
+  if (!list) return;
+  const cbs   = list.querySelectorAll('.alloc-select-cb');
+  const total = cbs.length;
+  const sel   = list.querySelectorAll('.alloc-select-cb:checked').length;
+  const cnt = document.getElementById(prefix + '-sel-count');
+  if (cnt) cnt.textContent = sel ? String(sel) : '';
+  const delBtn = document.getElementById(prefix + '-bulk-del');
+  const dupBtn = document.getElementById(prefix + '-bulk-dup');
+  if (delBtn) delBtn.style.display = sel > 0 ? '' : 'none';
+  if (dupBtn) dupBtn.style.display = sel > 0 ? '' : 'none';
+  const master = document.getElementById(prefix + '-select-all');
+  if (master) {
+    master.checked       = sel > 0 && sel === total;
+    master.indeterminate = sel > 0 && sel < total;
+  }
+}
+function _allocToggleAll(prefix, state) {
+  const list = document.getElementById(prefix + '-list');
+  if (!list) return;
+  list.querySelectorAll('.alloc-select-cb').forEach(cb => { cb.checked = !!state; });
+  _allocUpdateBulkUI(prefix);
+}
+function _allocDeleteSelected(prefix) {
+  const list = document.getElementById(prefix + '-list');
+  if (!list) return;
+  const ticked = Array.from(list.querySelectorAll('.alloc-select-cb:checked'));
+  if (!ticked.length) return;
+  if (!confirm(`Remove ${ticked.length} selected allocation row${ticked.length === 1 ? '' : 's'}?\n\nNothing is saved until you click Save Allocations.`)) return;
+  for (const cb of ticked) cb.closest('div').remove();
+  updateAllocSummary(prefix);
+  _allocUpdateBulkUI(prefix);
+}
+async function _allocDuplicateSelected(prefix) {
+  const list = document.getElementById(prefix + '-list');
+  if (!list) return;
+  const ticked = Array.from(list.querySelectorAll('.alloc-select-cb:checked'));
+  if (!ticked.length) return;
+  // Capture values BEFORE adding new rows (otherwise the new rows would
+  // be picked up by querySelectorAll on the next iteration).
+  const snapshots = ticked.map(cb => {
+    const row = cb.closest('div');
+    return {
+      branch: row.querySelector('.alloc-branch')?.value || '',
+      start:  row.querySelector('.alloc-start')?.value  || '',
+      end:    row.querySelector('.alloc-end')?.value    || '',
+    };
+  });
+  for (const s of snapshots) {
+    await addAllocRow(prefix);
+    const newRow = list.lastChild;
+    if (s.branch) newRow.querySelector('.alloc-branch').value = s.branch;
+    if (s.start)  newRow.querySelector('.alloc-start').value  = s.start;
+    if (s.end)    newRow.querySelector('.alloc-end').value    = s.end;
+  }
+  updateAllocSummary(prefix);
+  _allocUpdateBulkUI(prefix);
 }
 
 function getAllocRows(prefix) {
@@ -8195,6 +8270,12 @@ async function populateAllocRows(prefix, allocs) {
     row.querySelector('.alloc-end').value    = a.end_lot   || a.end   || '';
   }
   updateAllocSummary(prefix);
+  // Reset the master checkbox + bulk-action buttons after the rebuild
+  // so they reflect "nothing selected" instead of stale state from a
+  // previous open.
+  const master = document.getElementById(prefix + '-select-all');
+  if (master) { master.checked = false; master.indeterminate = false; }
+  _allocUpdateBulkUI(prefix);
 }
 
 let _allocEditAuctionId = null;
@@ -8203,6 +8284,129 @@ let _allocEditAuctionId = null;
 //   _raSelected:   Set of lot_no currently selected for reassignment
 let _raAllocStats = [];
 const _raSelected = new Set();
+
+// Edit Allocations — chip-based "mark for delete" state. Keys are
+// `${branch}|${lot}` so the same lot number in two different branches
+// stays distinct. Cleared each time the modal opens or saves.
+const _allocMarked = new Set();
+// Per-range "Hide" toggle — keyed by `${branch}|${start}-${end}`.
+const _allocHidden = new Set();
+const _allocCardKey = (branch, range) => `${branch}|${range.start}-${range.end}`;
+const _allocMarkKey = (branch, lot)   => `${branch}|${lot}`;
+
+function renderAllocEditCards(stats) {
+  const host = document.getElementById('alloc-edit-cards');
+  if (!host) return;
+  if (!Array.isArray(stats) || !stats.length) {
+    host.innerHTML = '<div style="padding:18px;text-align:center;font-size:12px;color:var(--text3);background:#fafafa;border:1px dashed var(--border);border-radius:8px">No allocations yet. Click <b>+ Add Branch</b> below to create the first range.</div>';
+    _updateAllocMarkedCount();
+    return;
+  }
+  // Flatten into per-range cards so we render one card per allocation
+  // (matches the reference UX — each range is its own card with its
+  // own Mark-all-free / Clear / Hide actions).
+  const cards = [];
+  for (const s of stats) {
+    for (const r of (s.ranges || [])) {
+      cards.push({ branch: s.branch, range: r });
+    }
+  }
+  // Stable sort: by branch, then by numeric start lot.
+  cards.sort((a, b) => {
+    const bn = String(a.branch).localeCompare(String(b.branch));
+    if (bn) return bn;
+    const am = String(a.range.start).match(/(\d+)$/);
+    const bm = String(b.range.start).match(/(\d+)$/);
+    return (am ? +am[1] : 0) - (bm ? +bm[1] : 0);
+  });
+
+  host.innerHTML = cards.map(({ branch, range }) => {
+    const cardKey = _allocCardKey(branch, range);
+    const hidden = _allocHidden.has(cardKey);
+    const lots   = range.lots || [];
+    const usedCt = lots.filter(l => l.used).length;
+    const free   = lots.filter(l => !l.used);
+    const marked = free.filter(l => _allocMarked.has(_allocMarkKey(branch, l.lot))).length;
+    const keeping = lots.length - usedCt - marked;
+    const chips = lots.map(l => {
+      const isUsed = !!l.used;
+      const mkKey  = _allocMarkKey(branch, l.lot);
+      const isMark = _allocMarked.has(mkKey);
+      let style;
+      if (isUsed) {
+        style = 'background:#f3f4f6;color:#9ca3af;border:1px solid #e5e7eb;text-decoration:line-through;cursor:not-allowed';
+      } else if (isMark) {
+        style = 'background:#dcfce7;color:#15803d;border:1.5px solid #16a34a;font-weight:700;cursor:pointer';
+      } else {
+        style = 'background:#fff;color:#374151;border:1px solid #d1d5db;cursor:pointer';
+      }
+      const click = isUsed ? '' : ` onclick="_allocChipClick('${esc(branch)}','${esc(l.lot)}')"`;
+      const title = isUsed
+        ? `Lot ${l.lot} — already entered${l.seller ? ' by ' + l.seller : ''} (locked)`
+        : (isMark ? `Lot ${l.lot} — marked for delete (click to unmark)` : `Lot ${l.lot} — free (click to mark for delete)`);
+      return `<span data-lot="${esc(l.lot)}" title="${esc(title)}" style="${style};display:inline-flex;align-items:center;justify-content:center;min-width:46px;height:28px;padding:0 8px;border-radius:6px;font-size:12px;font-family:monospace;user-select:none"${click}>${esc(l.lot)}</span>`;
+    }).join('');
+
+    return `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${hidden ? '0' : '10px'};flex-wrap:wrap;gap:8px">
+        <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+          <span style="font-size:13px;font-weight:700;color:var(--green);letter-spacing:.3px">${esc(branch)}</span>
+          <span style="font-family:monospace;font-size:13px;color:var(--text2);font-weight:600">${esc(range.start)}–${esc(range.end)}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;font-size:11px;color:var(--text3)">
+          <span>${usedCt} used · ${free.length - marked} free${marked ? ` · <b style="color:#16a34a">${marked} marked</b>` : ''} · keeping ${keeping}</span>
+          <button type="button" class="btn btn-o" style="height:24px;padding:0 10px;font-size:11px;font-weight:600" onclick="_allocToggleHide('${esc(cardKey)}')">${hidden ? 'Show' : 'Hide'}</button>
+        </div>
+      </div>
+      ${hidden ? '' : `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">${chips || '<span style="font-size:11px;color:var(--text3)">empty range</span>'}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="btn btn-o" style="height:26px;padding:0 12px;font-size:11px;font-weight:600" onclick="_allocMarkAllFree('${esc(branch)}','${esc(range.start)}','${esc(range.end)}')">Mark all free for delete</button>
+        <button type="button" class="btn btn-o" style="height:26px;padding:0 12px;font-size:11px;font-weight:600" onclick="_allocClearMarks('${esc(branch)}','${esc(range.start)}','${esc(range.end)}')">Clear marks</button>
+      </div>`}
+    </div>`;
+  }).join('');
+  _updateAllocMarkedCount();
+}
+function _updateAllocMarkedCount() {
+  const el = document.getElementById('alloc-edit-marked-count');
+  if (!el) return;
+  el.textContent = _allocMarked.size
+    ? `${_allocMarked.size} lot${_allocMarked.size === 1 ? '' : 's'} marked for delete — click Save Allocations to apply`
+    : '';
+}
+function _allocChipClick(branch, lot) {
+  const k = _allocMarkKey(branch, lot);
+  if (_allocMarked.has(k)) _allocMarked.delete(k);
+  else _allocMarked.add(k);
+  renderAllocEditCards(_raAllocStats);
+}
+function _allocToggleHide(cardKey) {
+  if (_allocHidden.has(cardKey)) _allocHidden.delete(cardKey);
+  else _allocHidden.add(cardKey);
+  renderAllocEditCards(_raAllocStats);
+}
+function _allocMarkAllFree(branch, rStart, rEnd) {
+  const s = (_raAllocStats || []).find(x => x.branch === branch);
+  if (!s) return;
+  const r = (s.ranges || []).find(x => x.start === rStart && x.end === rEnd);
+  if (!r) return;
+  for (const l of (r.lots || [])) if (!l.used) _allocMarked.add(_allocMarkKey(branch, l.lot));
+  renderAllocEditCards(_raAllocStats);
+}
+function _allocClearMarks(branch, rStart, rEnd) {
+  const s = (_raAllocStats || []).find(x => x.branch === branch);
+  if (!s) return;
+  const r = (s.ranges || []).find(x => x.start === rStart && x.end === rEnd);
+  if (!r) return;
+  for (const l of (r.lots || [])) _allocMarked.delete(_allocMarkKey(branch, l.lot));
+  renderAllocEditCards(_raAllocStats);
+}
+// Opens the same "+ Add Extra Lots" modal but in "add a fresh branch"
+// mode — the branch dropdown starts empty so the user explicitly picks
+// a branch, matching the prior + Add Branch row-editor behavior.
+async function openAllocAddBranch() {
+  return openAllocAddLots();
+}
 
 function renderReassignTiles() {
   const grid = document.getElementById('ra-tile-grid');
@@ -8421,8 +8625,13 @@ async function openAllocModal(auctionId, ano) {
     }
     _raAllocStats = stats;
     _raSelected.clear();
+    // Reset edit-state on every open so leftover marks from the previous
+    // trade don't bleed across.
+    _allocMarked.clear();
+    _allocHidden.clear();
     renderReassignTiles();
     renderAllocEditOverview(stats);
+    renderAllocEditCards(stats);
     showModal('alloc-modal');
   } catch (e) {
     toast(e.message || 'Failed to load allocations');
@@ -8504,8 +8713,10 @@ async function executeReassign() {
       const fresh = await j(`/api/auctions/${_allocEditAuctionId}/allocation-stats`);
       _raAllocStats = fresh.stats || [];
       _raSelected.clear();
+      _allocMarked.clear();
       renderReassignTiles();
       renderAllocEditOverview(_raAllocStats);
+      renderAllocEditCards(_raAllocStats);
     } catch (_) { /* non-fatal */ }
     loadReassignPreview();
     document.getElementById('ra-start').value = '';
@@ -8518,22 +8729,64 @@ async function executeReassign() {
   }
 }
 
+// Splits each existing range around any chips the user marked for
+// deletion and posts the rebuilt allocation set. The server is a
+// bulk-replace endpoint, so we always send the full list. Used-chip
+// guard: the UI doesn't let the user mark a used lot, but we re-check
+// here so a stale render can't silently drop a saved lot.
 async function saveAllocations() {
-  const rows = getAllocRows('alloc-edit');
   const errEl = document.getElementById('alloc-err');
   errEl.style.display = 'none';
-  if (!rows.length) {
-    errEl.textContent = 'Add at least one allocation';
+  if (!_raAllocStats || !_raAllocStats.length) {
+    errEl.textContent = 'No allocations to save. Add a branch first.';
     errEl.style.display = 'block';
     return;
   }
+  // Walk each (branch, range) and emit the surviving contiguous chunks.
+  // A "kept" lot is one that is either used (locked) OR not in the mark
+  // set. The chunker walks the lot list once and starts a new chunk on
+  // every gap.
+  const next = [];
+  for (const s of _raAllocStats) {
+    for (const r of (s.ranges || [])) {
+      const keep = [];
+      for (const l of (r.lots || [])) {
+        const marked = !l.used && _allocMarked.has(_allocMarkKey(s.branch, l.lot));
+        if (!marked) keep.push(l.lot);
+      }
+      if (!keep.length) continue;
+      // Group consecutive lot numbers (same prefix + sequential num).
+      let chunk = [keep[0]];
+      const flush = () => {
+        next.push({ branch: s.branch, start_lot: chunk[0], end_lot: chunk[chunk.length - 1] });
+      };
+      for (let i = 1; i < keep.length; i++) {
+        const prev = chunk[chunk.length - 1];
+        const pm = String(prev   ).match(/^(\D*)(\d+)$/);
+        const cm = String(keep[i]).match(/^(\D*)(\d+)$/);
+        const seq = pm && cm && pm[1] === cm[1] && (parseInt(cm[2], 10) === parseInt(pm[2], 10) + 1);
+        if (seq) chunk.push(keep[i]);
+        else { flush(); chunk = [keep[i]]; }
+      }
+      flush();
+    }
+  }
+  if (!next.length) {
+    errEl.textContent = 'Saving this would leave the trade with no allocations. Unmark at least one lot.';
+    errEl.style.display = 'block';
+    return;
+  }
+  const droppedCt = _allocMarked.size;
+  if (droppedCt && !confirm(`Delete ${droppedCt} marked lot${droppedCt === 1 ? '' : 's'} from the allocations?`)) return;
   try {
     await j(`/api/auctions/${_allocEditAuctionId}/allocations`, {
       method: 'POST',
-      body: JSON.stringify({ allocations: rows })
+      body: JSON.stringify({ allocations: next })
     });
     hideModal('alloc-modal');
-    toast('Allocations saved ✓');
+    toast(droppedCt
+      ? `Deleted ${droppedCt} lot${droppedCt === 1 ? '' : 's'} · allocations saved ✓`
+      : 'Allocations saved ✓');
     if (typeof loadAuctions === 'function') loadAuctions();
     leLoadAllocBar();
   } catch (e) {
@@ -8543,17 +8796,23 @@ async function saveAllocations() {
 }
 
 // ── + Add Extra Lots — quick-append range to current trade ──────
-async function leOpenAddLots() {
-  const aid = document.getElementById('le-auction').value;
+// The same flow is reachable from two places: the Lot Entry status bar
+// (leOpenAddLots) and the Edit Allocations modal (openAllocAddLots).
+// Both share the add-lots-modal and saveQuickAddLots; only the source
+// auction ID and post-save refresh differ. _addLotsCtx tracks which
+// caller opened the modal so we know what to refresh on success.
+let _addLotsCtx = null;  // { aid, source: 'le' | 'alloc' }
+
+async function _openAddLotsModal(aid, source, preselectBranch) {
   if (!aid) { toast('Select a trade first'); return; }
+  _addLotsCtx = { aid, source };
   const branches = await getAllocBranches();
   const sel = document.getElementById('add-lots-branch');
   sel.innerHTML = branches.length
     ? branches.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('')
     : '<option value="">— configure branches in Settings —</option>';
-  // Pre-select the user's current Lot Entry branch if any
-  const cur = (document.getElementById('le-branch').value || '').trim().toUpperCase();
-  if (cur && branches.includes(cur)) sel.value = cur;
+  const pre = String(preselectBranch || '').trim().toUpperCase();
+  if (pre && branches.includes(pre)) sel.value = pre;
   document.getElementById('add-lots-start').value = '';
   document.getElementById('add-lots-end').value = '';
   const err = document.getElementById('add-lots-err');
@@ -8561,8 +8820,24 @@ async function leOpenAddLots() {
   showModal('add-lots-modal');
 }
 
+async function leOpenAddLots() {
+  const aid = document.getElementById('le-auction').value;
+  const cur = (document.getElementById('le-branch').value || '').trim().toUpperCase();
+  return _openAddLotsModal(aid, 'le', cur);
+}
+
+// Triggered from the Edit Allocations modal — passes the alloc-modal's
+// own auction id and pre-selects the FROM-branch dropdown if the
+// reassign panel has one picked.
+async function openAllocAddLots() {
+  const aid = _allocEditAuctionId;
+  const preBranch = (document.getElementById('ra-from')?.value || '').trim();
+  return _openAddLotsModal(aid, 'alloc', preBranch);
+}
+
 async function saveQuickAddLots() {
-  const aid    = document.getElementById('le-auction').value;
+  const ctx = _addLotsCtx || { aid: document.getElementById('le-auction')?.value, source: 'le' };
+  const aid    = ctx.aid;
   const branch = document.getElementById('add-lots-branch').value;
   const start  = document.getElementById('add-lots-start').value.trim();
   const end    = document.getElementById('add-lots-end').value.trim();
@@ -8586,10 +8861,33 @@ async function saveQuickAddLots() {
     });
     hideModal('add-lots-modal');
     toast(`Added ${branch} ${start}-${end} ✓`);
-    leLoadAllocBar();
+    // Refresh the surface the user just acted from. Both surfaces stay
+    // consistent because they read the same /api/auctions/:id/allocations
+    // and /allocation-stats endpoints under the hood.
+    if (ctx.source === 'alloc') {
+      try {
+        const [reloaded, statsData] = await Promise.all([
+          j(`/api/auctions/${aid}/allocations`),
+          j(`/api/auctions/${aid}/allocation-stats`),
+        ]);
+        await populateAllocRows('alloc-edit', reloaded.allocations || []);
+        const stats = statsData.stats || [];
+        _raAllocStats = stats;
+        _raSelected.clear();
+        renderReassignTiles();
+        renderAllocEditOverview(stats);
+        renderAllocEditCards(stats);
+      } catch (_) { /* non-fatal */ }
+      // Also keep the Lot Entry bar fresh in case it's open underneath.
+      if (typeof leLoadAllocBar === 'function') leLoadAllocBar();
+    } else {
+      leLoadAllocBar();
+    }
     if (typeof loadAuctions === 'function') loadAuctions();
   } catch (e) {
     showErr(e.message || 'Failed to add');
+  } finally {
+    _addLotsCtx = null;
   }
 }
 
@@ -14811,7 +15109,10 @@ async function impPreview(){
   fd.append('file', fileEl.files[0]);
   fd.append('module', moduleKey);
   try {
-    const r = await fetch('/api/import-old-data/preview', { method:'POST', body:fd });
+    const r = await fetch(B + '/api/import-old-data/preview', {
+      method: 'POST', body: fd,
+      headers: { 'Authorization': 'Bearer ' + T }
+    });
     const data = await r.json();
     if (!r.ok) {
       result.innerHTML = '<span style="color:#c00">Error: '+escAttr(data.error||'preview failed')+'</span>';
@@ -14888,7 +15189,10 @@ async function impRun(){
   fd.append('dryRun', dryRun ? 'true' : 'false');
   if (_impLastMapping) fd.append('mapping', JSON.stringify(_impLastMapping));
   try {
-    const r = await fetch('/api/import-old-data/run', { method:'POST', body:fd });
+    const r = await fetch(B + '/api/import-old-data/run', {
+      method: 'POST', body: fd,
+      headers: { 'Authorization': 'Bearer ' + T }
+    });
     const data = await r.json();
     if (!r.ok) {
       result.innerHTML = '<span style="color:#c00">Error: '+escAttr(data.error||'import failed')+'</span>';
@@ -14913,7 +15217,9 @@ async function impLoadHistory(){
   const box = document.getElementById('imp-history');
   box.innerHTML = 'Loading…';
   try {
-    const r = await fetch('/api/import-old-data/history');
+    const r = await fetch(B + '/api/import-old-data/history', {
+      headers: { 'Authorization': 'Bearer ' + T }
+    });
     const rows = await r.json();
     if (!Array.isArray(rows) || !rows.length) { box.innerHTML = '<i>No imports yet.</i>'; return; }
     let h = '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#f4f4f4">'+
