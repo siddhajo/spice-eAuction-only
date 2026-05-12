@@ -486,9 +486,13 @@ const COLS = {
     { header: 'BIDDER', key: 'bidder', width: 20 },
   ],
   price_list_before: [
-    { header: 'LOT', key: 'lot', width: 10 },
-    { header: 'BAG', key: 'bag', width: 8 },
-    { header: 'QTY', key: 'qty', width: 14 },
+    { header: 'AUCTION NO', key: 'ano',        width: 12 },
+    { header: 'DATE',       key: 'date',       width: 12 },
+    { header: 'LOT',        key: 'lot',        width: 10 },
+    { header: 'BAG',        key: 'bag',        width: 8  },
+    { header: 'QTY',        key: 'qty',        width: 14 },
+    { header: 'CODE',       key: 'code',       width: 10 },
+    { header: 'TRADE NAME', key: 'trade_name', width: 22 },
   ],
   bank_payment: [
     // PDF-only display columns — restructured for portrait so all data fits
@@ -696,10 +700,25 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
         `SELECT lot_no as lot, bags as bag, qty, price, code, buyer as bidder
          FROM lots WHERE auction_id = ? ORDER BY lot_no`, [auctionId]);
 
-    case 'price_list_before':
-      return db.all(
-        `SELECT lot_no as lot, bags as bag, qty
-         FROM lots WHERE auction_id = ? ORDER BY lot_no`, [auctionId]);
+    case 'price_list_before': {
+      // Denormalise ano + date onto each row so the printed sheet stays
+      // intelligible without the meta header. CODE and TRADE NAME are
+      // left blank for buyers to fill in by hand during the pre-trade walk.
+      const lots = db.all(
+        `SELECT a.ano AS ano, a.date AS date,
+                l.lot_no AS lot, l.bags AS bag, l.qty AS qty
+           FROM lots l
+           JOIN auctions a ON a.id = l.auction_id
+          WHERE l.auction_id = ?
+          ORDER BY l.lot_no`, [auctionId]);
+      const fmtDate = s => String(s || '').slice(0, 10).split('-').reverse().join('/');
+      return lots.map(r => ({
+        ...r,
+        date: fmtDate(r.date),
+        code: '',
+        trade_name: '',
+      }));
+    }
 
     case 'bank_payment': {
       const { getBankPaymentData } = require('./calculations');

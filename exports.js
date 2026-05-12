@@ -265,14 +265,34 @@ async function exportPriceList(db, auctionId) {
 // BIDDER) are dropped — meaningful only AFTER buyers bid on lots.
 // Useful pre-trade for handing buyers a printable lot inventory.
 async function exportPriceListBefore(db, auctionId) {
+  // Join the parent auction so every row carries its ANO + date — the
+  // sheet is handed out per-trade, so denormalising onto each line keeps
+  // a printout intelligible even when columns are reordered/cropped.
   const rows = db.all(
-    `SELECT lot_no as lot, bags as bag, qty
-     FROM lots WHERE auction_id = ? ORDER BY lot_no`, [auctionId]
+    `SELECT a.ano AS ano, a.date AS date,
+            l.lot_no AS lot, l.bags AS bag, l.qty AS qty
+       FROM lots l
+       JOIN auctions a ON a.id = l.auction_id
+      WHERE l.auction_id = ?
+      ORDER BY l.lot_no`, [auctionId]
   );
+  // Normalise date to DD/MM/YYYY for display, matching auctionMeta.
+  const fmtDate = s => String(s || '').slice(0, 10).split('-').reverse().join('/');
+  rows.forEach(r => {
+    r.date = fmtDate(r.date);
+    // CODE and TRADE NAME are intentionally left blank — buyers fill
+    // them in by hand on the printed sheet during the pre-trade walk.
+    r.code = '';
+    r.trade_name = '';
+  });
   const cols = [
-    { header: 'LOT', key: 'lot', width: 10 },
-    { header: 'BAG', key: 'bag', width: 8 },
-    { header: 'QTY', key: 'qty', width: 14 },
+    { header: 'AUCTION NO',  key: 'ano',        width: 12 },
+    { header: 'DATE',        key: 'date',       width: 12 },
+    { header: 'LOT',         key: 'lot',        width: 10 },
+    { header: 'BAG',         key: 'bag',        width: 8  },
+    { header: 'QTY',         key: 'qty',        width: 14 },
+    { header: 'CODE',        key: 'code',       width: 10 },
+    { header: 'TRADE NAME',  key: 'trade_name', width: 22 },
   ];
   return createExcelBuffer('PriceListBefore', cols, rows, {
     db, title: 'Price List (Before)', metaLines: auctionMeta(db, auctionId),

@@ -1339,6 +1339,203 @@ app.get('/api/buyers/template', requireExport, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// BUYERS — lookup helpers used by the Lot edit modal so the operator
+// can pick from every buyer code that shares a trade name. The
+// `buyer1` column is the canonical "trade name"; multiple buyer rows
+// can share one — different GSTINs, different consignees, different
+// sale-type defaults — and after a Price List mapping the operator
+// needs to pick the right one per lot.
+// ══════════════════════════════════════════════════════════════
+app.get('/api/buyers/by-tradename', requireView, (req, res) => {
+  const name = String(req.query.name || '').trim();
+  if (!name) return res.json([]);
+  // Case-insensitive exact match on buyer1 (primary) OR buyer (the
+  // full buyer-code string can also be passed as a trade name from
+  // free-text fields). Sort by code so the picker is stable.
+  const rows = getDb().all(
+    `SELECT id, buyer, buyer1, code, ti, sale, gstin, pla
+       FROM buyers
+      WHERE UPPER(TRIM(buyer1)) = UPPER(TRIM(?))
+         OR UPPER(TRIM(buyer))  = UPPER(TRIM(?))
+      ORDER BY code, buyer`,
+    [name, name]
+  );
+  res.json(rows);
+});
+
+// ══════════════════════════════════════════════════════════════
+// PRICE LIST (BEFORE) — code mapping tool
+// ══════════════════════════════════════════════════════════════
+// Operator workflow:
+//   1. Export an empty Price List (Before) sheet (Exports tab)
+//   2. Print → buyers write their TRADE NAME (and prices) by hand
+//   3. Type the trade names back into the file
+//   4. Upload here → server resolves CODE from the buyers master
+//   5. Preview the matches; download the updated file
+//   6. Feed the downloaded file into Lots → Price Import
+//
+// Two endpoints share the same parsing/matching code:
+//   POST /api/price-list/map-preview  → JSON summary only
+//   POST /api/price-list/map-download → updated XLSX (Buffer)
+//
+// `ExcelJS` is used end-to-end so the brand header / total row /
+// column widths from the original export survive the round-trip.
+function _plLocateColumns(ws) {
+  // Find the header row containing both "TRADE NAME" and "CODE".
+  // Match is case-insensitive + whitespace-tolerant so renamed headers
+  // (e.g. "Trade Name", "trade_name") still resolve.
+  const normalize = s => String(s == null ? '' : s).trim().toUpperCase().replace(/[\s_\-]+/g, ' ');
+  let headerRow = 0, tradeCol = 0, codeCol = 0, anoCol = 0, dateCol = 0, lotCol = 0;
+  const maxRow = ws.rowCount || 0;
+  for (let r = 1; r <= maxRow; r++) {
+    const row = ws.getRow(r);
+    const cells = {};
+    row.eachCell({ includeEmpty: false }, (cell, col) => {
+      cells[normalize(cell.value)] = col;
+    });
+    if (cells['TRADE NAME'] && cells['CODE']) {
+      headerRow = r;
+      tradeCol = cells['TRADE NAME'];
+      codeCol = cells['CODE'];
+      anoCol = cells['AUCTION NO'] || cells['ANO'] || cells['TNO'] || 0;
+      dateCol = cells['DATE'] || 0;
+      lotCol = cells['LOT'] || cells['LOT NO'] || cells['LOTNO'] || 0;
+      break;
+    }
+  }
+  return { headerRow, tradeCol, codeCol, anoCol, dateCol, lotCol };
+}
+function _plBuildTradeIndex(db) {
+  // Pre-index every buyer by their trade name so a 1000-row file is one
+  // DB query, not 1000. We index BOTH buyer1 and buyer because operators
+  // sometimes write the full buyer-code string in the TRADE NAME column.
+  const buyers = db.all('SELECT id, buyer, buyer1, code, ti, sale, gstin FROM buyers');
+  const idx = new Map();
+  const push = (key, row) => {
+    if (!key) return;
+    const k = key.trim().toUpperCase();
+    if (!k) return;
+    if (!idx.has(k)) idx.set(k, []);
+    // Avoid duplicate entries when buyer === buyer1.
+    const arr = idx.get(k);
+    if (!arr.some(b => b.id === row.id)) arr.push(row);
+  };
+  for (const b of buyers) {
+    push(b.buyer1, b);
+    push(b.buyer, b);
+  }
+  return idx;
+}
+async function _plProcessFile(filePath) {
+  // Returns { wb, ws, cols, perRow: [{row, tradeName, status, pickedCode, candidates}], summary }
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.readFile(filePath);
+  const ws = wb.worksheets[0];
+  if (!ws) throw new Error('No worksheet found');
+  const cols = _plLocateColumns(ws);
+  if (!cols.headerRow) throw new Error('Could not find a row with both "TRADE NAME" and "CODE" columns — is this a Price List (Before) file?');
+
+  const idx = _plBuildTradeIndex(getDb());
+  const perRow = [];
+  let matched = 0, ambiguous = 0, unmatched = 0, blank = 0;
+  const maxRow = ws.rowCount || 0;
+  for (let r = cols.headerRow + 1; r <= maxRow; r++) {
+    const row = ws.getRow(r);
+    const tradeCell = row.getCell(cols.tradeCol);
+    // Skip a TOTAL footer row — the export marks it by leaving TRADE NAME
+    // blank and putting the literal "TOTAL" in the first text column. We
+    // only fill rows that look like data: must have some non-empty
+    // identifier in the row (lot/ano/trade name).
+    const tradeRaw = tradeCell.value;
+    const tradeName = String(tradeRaw == null ? '' : tradeRaw).trim();
+    const lotVal = cols.lotCol ? String(row.getCell(cols.lotCol).value || '').trim() : '';
+    if (!tradeName && !lotVal) continue;
+    const entry = {
+      row: r,
+      lot: lotVal,
+      ano: cols.anoCol ? String(row.getCell(cols.anoCol).value || '').trim() : '',
+      date: cols.dateCol ? String(row.getCell(cols.dateCol).value || '').trim() : '',
+      tradeName,
+      candidates: [],
+      pickedCode: '',
+      status: 'blank',
+    };
+    if (!tradeName) {
+      entry.status = 'blank';
+      blank++;
+      perRow.push(entry);
+      continue;
+    }
+    const key = tradeName.toUpperCase();
+    const cands = idx.get(key) || [];
+    entry.candidates = cands.map(b => ({
+      id: b.id, code: b.code, buyer: b.buyer, buyer1: b.buyer1, sale: b.sale, gstin: b.gstin,
+    }));
+    if (cands.length === 0) {
+      entry.status = 'unmatched';
+      unmatched++;
+    } else if (cands.length === 1) {
+      entry.status = 'matched';
+      entry.pickedCode = cands[0].code || '';
+      matched++;
+    } else {
+      // Ambiguous — multiple buyers share this trade name. Pick the
+      // first by code-sort order (same order as /api/buyers/by-tradename
+      // so the UI and the file agree). Operator resolves per-lot later
+      // using the multi-code picker in the Lot edit modal.
+      entry.status = 'ambiguous';
+      // Prefer a candidate with a non-blank code; fall back to first.
+      const withCode = cands.find(c => c.code && String(c.code).trim());
+      entry.pickedCode = (withCode || cands[0]).code || '';
+      ambiguous++;
+    }
+    perRow.push(entry);
+  }
+  const summary = {
+    total: perRow.length,
+    matched, ambiguous, unmatched, blank,
+    uniqueTradeNames: Array.from(new Set(perRow.filter(p => p.tradeName).map(p => p.tradeName))).length,
+  };
+  return { wb, ws, cols, perRow, summary };
+}
+app.post('/api/price-list/map-preview', requireView, upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try {
+    const { perRow, summary } = await _plProcessFile(req.file.path);
+    res.json({ ...summary, rows: perRow });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  } finally {
+    if (req.file) fs.unlink(req.file.path, () => {});
+  }
+});
+app.post('/api/price-list/map-download', requireView, upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try {
+    const { wb, ws, cols, perRow } = await _plProcessFile(req.file.path);
+    // Write the resolved code back into each row's CODE cell. We
+    // explicitly set the cell value so the existing column-level numFmt
+    // (which Excel uses to right-pad short codes like "RSH") still
+    // applies — modifying `.value` keeps the format intact.
+    for (const entry of perRow) {
+      if (!entry.pickedCode) continue;
+      ws.getRow(entry.row).getCell(cols.codeCol).value = entry.pickedCode;
+    }
+    const buf = await wb.xlsx.writeBuffer();
+    const baseName = (req.file.originalname || 'price-list-before.xlsx')
+      .replace(/\.xlsx?$/i, '')
+      .replace(/[^A-Za-z0-9._-]+/g, '-');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${baseName}-mapped.xlsx"`);
+    res.send(Buffer.from(buf));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  } finally {
+    if (req.file) fs.unlink(req.file.path, () => {});
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
 // AUCTIONS
 // ══════════════════════════════════════════════════════════════
 app.get('/api/auctions', requireViewOrLotEntry, (req, res) => {
@@ -1716,18 +1913,53 @@ app.post('/api/auctions/import', requireAuctionWrite, upload.single('file'), asy
     const workbook = XLSX.readFile(req.file.path);
     const ws = workbook.Sheets[workbook.SheetNames[0]];
     if (!ws) throw new Error('No worksheet found');
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+    // Files exported from this app carry a 3-row brand band (company
+    // name, e-TRADE meta, blank spacer) before the real column header.
+    // Detect the header row by scanning array-of-arrays for a row that
+    // contains at least two recognizable data-column tokens — that way
+    // both branded exports and plain user-typed files work without a
+    // mode flag.
+    const HEADER_TOKENS = new Set([
+      'LOT', 'LOT NO', 'LOTNO',
+      'QTY', 'QUANTITY', 'WEIGHT', 'WT',
+      'BAG', 'BAGS',
+      'PRICE', 'RATE',
+      'AMOUNT', 'AMT',
+      'CODE', 'BUYER CODE',
+      'BUYER', 'BIDDER',
+      'TRADE NAME', 'TRADENAME', 'BUYER1',
+      'ANO', 'AUCTION NO', 'AUCTIONNO', 'TNO', 'TRADE', 'TRADE NO',
+      'STATE', 'CRPT', 'CROP', 'CROP TYPE', 'GRADE', 'NAME',
+      'BR', 'BRANCH', 'DEPOT', 'DATE',
+    ]);
+    const normHeader = s => String(s == null ? '' : s).trim().toUpperCase().replace(/[\s_\-]+/g, ' ');
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    let headerRowIdx = 0;
+    for (let i = 0; i < Math.min(aoa.length, 15); i++) {
+      const cells = (aoa[i] || []).map(normHeader);
+      const hits = cells.filter(c => HEADER_TOKENS.has(c)).length;
+      if (hits >= 2) { headerRowIdx = i; break; }
+    }
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '', range: headerRowIdx });
     if (!rows.length) throw new Error('File is empty');
 
     const db = getDb();
     const mode = req.body.mode || 'full'; // 'full' = new lots, 'price' = update price/buyer only
 
+    // Column matcher with whitespace + underscore tolerance, so headers
+    // like "AUCTION NO" / "AUCTION_NO" / "auctionno" all resolve to the
+    // canonical aliases below. Without this, a column with a space
+    // ("TRADE NAME") never matches a JS identifier-style alias
+    // ("TRADE_NAME"), and the import silently treats it as missing.
     const mapCol = (row, ...names) => {
       for (const n of names) { if (row[n] !== undefined) return String(row[n]).trim(); }
       const keys = Object.keys(row);
+      const normToOrig = new Map();
+      for (const k of keys) normToOrig.set(normHeader(k), k);
       for (const n of names) {
-        const found = keys.find(k => k.toUpperCase() === n.toUpperCase());
-        if (found && row[found] !== undefined) return String(row[found]).trim();
+        const orig = normToOrig.get(normHeader(n));
+        if (orig && row[orig] !== undefined) return String(row[orig]).trim();
       }
       return '';
     };
@@ -1757,7 +1989,7 @@ app.post('/api/auctions/import', requireAuctionWrite, upload.single('file'), asy
 
     // Pre-validate: if no form override AND no ANO column anywhere, bail early with a clear message
     if (!overrideAno) {
-      const firstAno = rows.length ? mapCol(rows[0], 'ANO', 'TNO', 'TRADE', 'TRADE_NO', 'TRADENO') : '';
+      const firstAno = rows.length ? mapCol(rows[0], 'ANO', 'AUCTION_NO', 'TNO', 'TRADE', 'TRADE_NO', 'TRADENO') : '';
       if (!firstAno) throw new Error('No ANO column found in file. Add ANO/TRADE/TRADE_NO column, or specify Trade No in the form to override.');
     }
 
@@ -1770,16 +2002,27 @@ app.post('/api/auctions/import', requireAuctionWrite, upload.single('file'), asy
       const vals = Object.values(row);
       return !vals.length || vals.every(v => v === '' || v === null || v === undefined);
     };
+    // Detect the grand-total footer row our exports emit (label "TOTAL"
+    // in the first text column + summed bag/qty). Without this it shows
+    // up as a "Missing LOT" warning every time the operator imports a
+    // file straight from Price List (Before) → Price List Mapping.
+    const isTotalFooter = (row) => {
+      const vals = Object.values(row);
+      return vals.some(v => {
+        const s = String(v == null ? '' : v).trim().toUpperCase();
+        return s === 'TOTAL' || s === 'GRAND TOTAL';
+      });
+    };
 
     if (mode === 'price') {
       // Price update mode — only update price, amount, code, buyer fields on existing lots
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
         const rowNum = i + 2; // +2 because: 1-based + header row
-        if (isBlankRow(row)) continue; // truly empty rows — don't count as skipped
+        if (isBlankRow(row) || isTotalFooter(row)) continue; // truly empty rows + TOTAL footer — don't count as skipped
         
         // Resolve this row's auction (form override OR read from row's ANO/DATE columns)
-        const rowAno = overrideAno || mapCol(row, 'ANO', 'TNO', 'TRADE', 'TRADE_NO', 'TRADENO');
+        const rowAno = overrideAno || mapCol(row, 'ANO', 'AUCTION_NO', 'TNO', 'TRADE', 'TRADE_NO', 'TRADENO');
         // Read raw (un-stringified) DATE cell so Excel Date objects / serial numbers normalize correctly
         const rawDate = row.DATE !== undefined ? row.DATE
                       : row.date !== undefined ? row.date
@@ -1870,7 +2113,7 @@ app.post('/api/auctions/import', requireAuctionWrite, upload.single('file'), asy
         if (isBlankRow(row)) continue;
         
         // Resolve this row's auction (form override OR read from row's ANO/DATE columns)
-        const rowAno = overrideAno || mapCol(row, 'ANO', 'TNO', 'TRADE', 'TRADE_NO', 'TRADENO');
+        const rowAno = overrideAno || mapCol(row, 'ANO', 'AUCTION_NO', 'TNO', 'TRADE', 'TRADE_NO', 'TRADENO');
         // Read raw DATE cell (may be Date object or Excel serial number) and normalize
         const rawDate = row.DATE !== undefined ? row.DATE
                       : row.date !== undefined ? row.date
@@ -3328,16 +3571,45 @@ app.get('/api/purchases/pdf/:auctionId/:sellerName', requireView, async (req, re
           error: `No purchase data found for seller "${sellerName}" with invoice ${invoiceNo}. Lots may have been deleted.` 
         });
       }
-      // Reconstruct minimal invoice object from stored data
+      // Reconstruct minimal invoice object from stored data. Imported
+      // rows often arrive WITHOUT cgst/sgst/igst (the source XLSX rarely
+      // breaks GST out as separate columns), so we recompute the tax
+      // when stored GST is all-zero but a taxable amount is present.
+      // The seller's GSTIN state-code vs cfg.business_state decides the
+      // intra/inter split — same rule buildPurchaseInvoice applies.
+      let scgst = Number(stored.cgst) || 0;
+      let ssgst = Number(stored.sgst) || 0;
+      let sigst = Number(stored.igst) || 0;
+      const amtBase = Number(stored.amount) || 0;
+      if (amtBase > 0 && scgst + ssgst + sigst === 0) {
+        const gstGoods = Number(cfg.gst_goods) || 5;
+        const companyState = String(cfg.business_state || '').toUpperCase() === 'KERALA' ? '32' : '33';
+        const sellerState = (() => {
+          let s = String(stored.gstin || '').trim().toUpperCase();
+          if (s.startsWith('GSTIN.')) s = s.substring(6);
+          else if (s.startsWith('GSTIN')) s = s.substring(5);
+          return /^\d{2}/.test(s) ? s.substring(0, 2) : '';
+        })();
+        const isInter = sellerState && sellerState !== companyState;
+        if (isInter) {
+          sigst = Math.round(amtBase * gstGoods / 100 * 100) / 100;
+        } else {
+          scgst = Math.round(amtBase * (gstGoods / 2) / 100 * 100) / 100;
+          ssgst = Math.round(amtBase * (gstGoods / 2) / 100 * 100) / 100;
+        }
+      }
       invoice = {
         seller: { name: stored.name, address: stored.add_line, place: stored.place, cr: stored.gstin, pan: '', state: stored.state },
-        lineItems: [{ lot: '—', qty: stored.qty, pqty: stored.qty, price: 0, prate: 0, amount: stored.amount, puramt: stored.amount, com: 0, sertax: 0, cgst: stored.cgst, sgst: stored.sgst, igst: stored.igst }],
+        lineItems: [{ lot: '—', qty: stored.qty, pqty: stored.qty, price: 0, prate: 0, amount: amtBase, puramt: amtBase, com: 0, sertax: 0, cgst: scgst, sgst: ssgst, igst: sigst }],
         summary: {
-          totalQty: stored.qty, totalPuramt: stored.amount,
-          totalCgst: stored.cgst, totalSgst: stored.sgst, totalIgst: stored.igst,
-          roundDiff: stored.rund, grandTotal: stored.total,
-          tdsAmount: stored.tds, invoiceAmount: stored.total - stored.tds,
-          isInter: stored.igst > 0
+          totalQty: stored.qty, totalPuramt: amtBase,
+          totalCgst: scgst, totalSgst: ssgst, totalIgst: sigst,
+          // If `total` is also blank in the import, recompute from base + GST.
+          roundDiff: Number(stored.rund) || 0,
+          grandTotal: (Number(stored.total) || (amtBase + scgst + ssgst + sigst)),
+          tdsAmount: Number(stored.tds) || 0,
+          invoiceAmount: ((Number(stored.total) || (amtBase + scgst + ssgst + sigst)) - (Number(stored.tds) || 0)),
+          isInter: sigst > 0
         }
       };
     }
@@ -7003,7 +7275,10 @@ const IMPORT_MODULES = {
     label: 'Bills of Supply',
     table: 'bills',
     keyCols: ['bil'],
-    fields: ['ano','date','state','br','crpt','bil','name','add_line','pla',
+    // bills.auction_id is the field the Bills tab filters by — without
+    // it the imported rows are orphaned and don't show up under any trade.
+    autoFillAuctionId: true,
+    fields: ['auction_id','ano','date','state','br','crpt','bil','name','add_line','pla',
              'pstate','st_code','crr','pan','qty','cost','igst','net'],
     aliases: {
       bil: ['bil','bill','bill_no'],
@@ -7017,22 +7292,19 @@ const IMPORT_MODULES = {
     label: 'Debit Notes',
     table: 'debit_notes',
     keyCols: ['note_no','ano'],
-    fields: ['ano','date','state','name','note_no','amount','cgst','sgst','igst','total'],
+    autoFillAuctionId: true,
+    fields: ['auction_id','ano','date','state','name','note_no','amount','cgst','sgst','igst','total'],
     aliases: {
       note_no: ['note_no','note','dn_no'],
       name: ['name','dealer','buyer'],
     },
   },
-  payments: {
-    label: 'Payments',
-    table: 'bills',                // payments share the bills schema in this build
-    keyCols: ['bil'],
-    fields: ['ano','date','name','qty','cost','net'],
-    aliases: {
-      name: ['name','seller','planter','beneficiary'],
-      net: ['net','nett','payment_amount','amount'],
-    },
-  },
+  // NOTE: a 'payments' module previously lived here but it pointed at
+  // the bills table while the Payments tab aggregates from lots — so
+  // imports never surfaced under Payments. It also had keyCols=['bil']
+  // with `bil` missing from fields, breaking dup-detection. Removed in
+  // favor of the dedicated `bills` module above (writes to the same
+  // table, with auction_id auto-fill).
   sellers: {
     label: 'Sellers',
     table: 'traders',
@@ -7092,6 +7364,15 @@ app.post('/api/import-old-data/preview', requireAdmin, upload.single('file'), (r
       label: def.label,
       total: rows.length,
       headers,
+      // Full list of DB fields the client should expose in the mapping
+      // editor — without this the UI only shows auto-detected fields and
+      // the user can't add a mapping for any column that didn't auto-match.
+      fields:  def.fields,
+      // Required-for-dup-detection fields the client should highlight.
+      keyCols: def.keyCols,
+      // Whether auction_id is derived from ano at insert time (so the
+      // client can render "(from ano)" instead of a blank cell).
+      autoFillAuctionId: !!def.autoFillAuctionId,
       detectedMapping: mapping,
       missingFields: def.fields.filter(f => !mapping[f] && def.keyCols.includes(f)),
       preview: rows.slice(0, 50),
@@ -7100,6 +7381,208 @@ app.post('/api/import-old-data/preview', requireAdmin, upload.single('file'), (r
     res.status(400).json({ error: e.message });
   } finally {
     if (req.file) fs.unlink(req.file.path, () => {});
+  }
+});
+// Verify the file against the live database BEFORE writing anything.
+// Returns per-row status (new / duplicate / invalid), reasons for invalids,
+// the field-by-field diff vs. any existing row, and accurate summary counts
+// over the WHOLE file (not just the previewed slice). The detailed row
+// list is capped at `sampleLimit` to keep payloads bounded — counts are
+// always over the full file.
+//
+// Differs from /preview (which only does header mapping detection) and
+// /run (which actually writes): this endpoint does the same validation
+// /run does, against the same mapping the user chose, but without
+// touching the DB. Lets the operator catch wrong mappings, missing
+// trades, or accidental overwrites before they hit production data.
+app.post('/api/import-old-data/verify', requireAdmin, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const moduleKey = req.body.module;
+  const def = IMPORT_MODULES[moduleKey];
+  if (!def) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: 'Unknown module' });
+  }
+  let userMapping = {};
+  if (req.body.mapping) {
+    try { userMapping = JSON.parse(req.body.mapping) || {}; } catch (_) {}
+  }
+  // Per-bucket sample cap. Each status (new / invalid / dupChanges) is
+  // collected up to this limit independently — that way a file whose
+  // first 100 rows happen to all be duplicates still surfaces concrete
+  // NEW rows in the UI sample. Counts are always over the WHOLE file.
+  const PER_BUCKET_LIMIT = 50;
+  const db = getDb();
+  try {
+    const wb = XLSX.readFile(req.file.path);
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    if (!ws) throw new Error('No worksheet found');
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    const total = rows.length;
+    if (!total) {
+      fs.unlink(req.file.path, () => {});
+      return res.json({
+        module: moduleKey, label: def.label, total: 0,
+        fields: def.fields, keyCols: def.keyCols,
+        autoFillAuctionId: !!def.autoFillAuctionId,
+        sampleLimit: PER_BUCKET_LIMIT,
+        counts: { new: 0, duplicate: 0, duplicateChanged: 0, invalidAno: 0, invalidRequired: 0 },
+        samples: { new: [], invalid: [], dupChanges: [] },
+      });
+    }
+
+    const headers = Object.keys(rows[0]);
+    // Merge user overrides on top of auto-detected mapping, honouring
+    // explicit '' as a skip signal — identical to /run so verify counts
+    // reflect what /run would actually do.
+    const autoDetected = _importMapHeaders(headers, def);
+    const mapping = Object.assign({}, autoDetected, userMapping);
+    for (const k of Object.keys(userMapping || {})) {
+      const v = userMapping[k];
+      if (v === '' || v === null) delete mapping[k];
+    }
+    const fieldSources = def.fields.map(f => [f, mapping[f] || null]);
+    const auctionIdSlot = def.fields.indexOf('auction_id');
+
+    const auctionIdCache = new Map();
+    const resolveAuctionId = (ano) => {
+      const key = String(ano || '').trim();
+      if (!key) return null;
+      if (auctionIdCache.has(key)) return auctionIdCache.get(key);
+      const row = db.get('SELECT id FROM auctions WHERE ano = ? LIMIT 1', [key]);
+      const id  = row ? row.id : null;
+      auctionIdCache.set(key, id);
+      return id;
+    };
+
+    let cntNew = 0, cntDup = 0, cntDupChanged = 0, cntInvAno = 0, cntInvReq = 0;
+    // Three independent sample buckets so the client always has concrete
+    // rows from each non-empty status, regardless of where they sit in
+    // the file. Each bucket is capped at PER_BUCKET_LIMIT.
+    const sampleNew = [];
+    const sampleInvalid = [];
+    const sampleDupChanges = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const values = {};
+      for (const [f, src] of fieldSources) {
+        values[f] = src ? r[src] : '';
+      }
+
+      const reasons = [];
+
+      let anoResolutionFailed = false;
+      if (def.autoFillAuctionId && auctionIdSlot >= 0) {
+        const anoSrc = mapping.ano;
+        const anoVal = anoSrc ? r[anoSrc] : '';
+        const aid = resolveAuctionId(anoVal);
+        if (aid == null) {
+          anoResolutionFailed = true;
+          reasons.push('No trade found for ano="' + String(anoVal || '').trim() + '" — create the auction first or fix the mapping.');
+        } else {
+          values.auction_id = aid;
+        }
+      }
+
+      // Required-field check uses the same keyCols /run uses for dup
+      // detection. A row missing any of them can't be inserted (and
+      // can't be checked for duplicates).
+      const missingKeys = [];
+      for (const k of def.keyCols) {
+        const src = mapping[k];
+        const v = src ? r[src] : null;
+        if (v == null || String(v).trim() === '') missingKeys.push(k);
+      }
+      const requiredMissing = missingKeys.length > 0;
+      if (requiredMissing) {
+        reasons.push('Missing required value(s): ' + missingKeys.join(', '));
+      }
+
+      // Duplicate detection — only meaningful when all keyCols resolve
+      // to a non-blank value, matching /run's gate.
+      let existing = null;
+      let diff = null;
+      if (!requiredMissing) {
+        const keyVals = def.keyCols.map(k => r[mapping[k]]);
+        const whereSql = def.keyCols.map(k => `${k} = ?`).join(' AND ');
+        existing = db.get(`SELECT * FROM ${def.table} WHERE ${whereSql} LIMIT 1`, keyVals);
+        if (existing) {
+          diff = {};
+          for (const f of def.fields) {
+            const newVal = values[f];
+            const oldVal = existing[f];
+            const a = oldVal == null ? '' : String(oldVal);
+            const b = newVal == null ? '' : String(newVal);
+            if (a !== b) {
+              diff[f] = {
+                old: oldVal == null ? '' : oldVal,
+                new: newVal == null ? '' : newVal,
+              };
+            }
+          }
+          if (Object.keys(diff).length === 0) diff = null;
+        }
+      }
+
+      let status;
+      if (requiredMissing) {
+        status = 'invalid';
+        cntInvReq++;
+      } else if (anoResolutionFailed) {
+        status = 'invalid';
+        cntInvAno++;
+      } else if (existing) {
+        status = 'duplicate';
+        cntDup++;
+        if (diff) cntDupChanged++;
+      } else {
+        status = 'new';
+        cntNew++;
+      }
+
+      const entry = {
+        row: i + 2,
+        status,
+        reasons,
+        values,
+        existing: existing || null,
+        diff,
+      };
+      if (status === 'new' && sampleNew.length < PER_BUCKET_LIMIT) {
+        sampleNew.push(entry);
+      } else if (status === 'invalid' && sampleInvalid.length < PER_BUCKET_LIMIT) {
+        sampleInvalid.push(entry);
+      } else if (status === 'duplicate' && diff && sampleDupChanges.length < PER_BUCKET_LIMIT) {
+        sampleDupChanges.push(entry);
+      }
+    }
+
+    fs.unlink(req.file.path, () => {});
+    res.json({
+      module: moduleKey,
+      label: def.label,
+      total,
+      fields: def.fields,
+      keyCols: def.keyCols,
+      autoFillAuctionId: !!def.autoFillAuctionId,
+      sampleLimit: PER_BUCKET_LIMIT,
+      counts: {
+        new: cntNew,
+        duplicate: cntDup,
+        duplicateChanged: cntDupChanged,
+        invalidAno: cntInvAno,
+        invalidRequired: cntInvReq,
+      },
+      samples: {
+        new: sampleNew,
+        invalid: sampleInvalid,
+        dupChanges: sampleDupChanges,
+      },
+    });
+  } catch (e) {
+    if (req.file) fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: e.message });
   }
 });
 app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, res) => {
@@ -7131,7 +7614,18 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
     if (!total) throw new Error('File is empty');
 
     const headers  = Object.keys(rows[0]);
-    const mapping  = Object.assign(_importMapHeaders(headers, def), userMapping);
+    // User mapping overrides auto-detected. Two distinct user signals:
+    //   • field absent       → keep auto-detected (no opinion)
+    //   • field explicit ''  → SKIP this field (user picked "— skip —")
+    // The merge below honours the explicit-skip signal by deleting the
+    // entry after merging in user values. Without this, picking "— skip —"
+    // on an auto-detected field has no effect.
+    const autoDetected = _importMapHeaders(headers, def);
+    const mapping = Object.assign({}, autoDetected, userMapping);
+    for (const k of Object.keys(userMapping || {})) {
+      const v = userMapping[k];
+      if (v === '' || v === null) delete mapping[k];
+    }
 
     // Field-list with backing source column (or null if no mapping).
     const fieldSources = def.fields.map(f => [f, mapping[f] || null]);
@@ -7294,12 +7788,41 @@ function assertSchemaSanity(db) {
   }
 }
 
+// Heals rows imported before autoFillAuctionId existed: any
+// invoices/purchases/bills/debit_notes whose auction_id is NULL but
+// whose ano matches an existing auctions.ano gets its auction_id
+// populated. Runs once at startup, idempotent, non-fatal.
+function backfillAuctionIds(db) {
+  const tables = ['invoices', 'purchases', 'bills', 'debit_notes'];
+  for (const t of tables) {
+    try {
+      const cols = db.all(`PRAGMA table_info(${t})`).map(r => r.name);
+      if (!cols.includes('auction_id') || !cols.includes('ano')) continue;
+      const before = db.get(`SELECT COUNT(*) as n FROM ${t} WHERE auction_id IS NULL AND ano IS NOT NULL AND ano != ''`);
+      if (!before || !before.n) continue;
+      db.run(
+        `UPDATE ${t}
+            SET auction_id = (SELECT id FROM auctions WHERE auctions.ano = ${t}.ano)
+          WHERE auction_id IS NULL
+            AND ano IS NOT NULL AND ano != ''
+            AND EXISTS (SELECT 1 FROM auctions WHERE auctions.ano = ${t}.ano)`
+      );
+      const after = db.get(`SELECT COUNT(*) as n FROM ${t} WHERE auction_id IS NULL AND ano IS NOT NULL AND ano != ''`);
+      const healed = (before.n || 0) - (after ? after.n : 0);
+      if (healed > 0) console.log(`[backfill] ${t}: linked ${healed} row(s) to their auction via ano`);
+    } catch (e) {
+      console.warn(`[backfill] ${t}: ${e.message}`);
+    }
+  }
+}
+
 const PORT = process.env.PORT || 3001;
 (async () => {
   const db = await initDb();
   initCompanySettings(db);
   repairBadDates(db);
   assertSchemaSanity(db);
+  backfillAuctionIds(db);
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n  Admin Console running at http://localhost:${PORT}\n`);
   });

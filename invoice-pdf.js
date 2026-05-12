@@ -429,9 +429,12 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
   doc.text(fmtRup(valueSum), colSpec[5].x, totalRowY + 2, { width: colSpec[5].w - 3, align: 'right' });
   const taxableSum = sumKey(lineItems, 'puramt', 'amount');
   doc.text(fmtRup(taxableSum), colSpec[7].x, totalRowY + 2, { width: colSpec[7].w - 3, align: 'right' });
-  const totalCgst = sumKey(lineItems, 'cgst') || s.cgst || 0;
-  const totalSgst = sumKey(lineItems, 'sgst') || s.sgst || 0;
-  const totalIgst = sumKey(lineItems, 'igst') || s.igst || 0;
+  // `summary` uses totalCgst/totalSgst/totalIgst (buildPurchaseInvoice
+  // and the fallback in server.js both follow that convention); fall
+  // back to the short-key form for older callers that may still emit it.
+  const totalCgst = sumKey(lineItems, 'cgst') || s.totalCgst || s.cgst || 0;
+  const totalSgst = sumKey(lineItems, 'sgst') || s.totalSgst || s.sgst || 0;
+  const totalIgst = sumKey(lineItems, 'igst') || s.totalIgst || s.igst || 0;
   if (totalCgst) doc.text(fmtRup(totalCgst), colSpec[8].x, totalRowY + 2, { width: colSpec[8].w - 3, align: 'right' });
   if (totalSgst) doc.text(fmtRup(totalSgst), colSpec[9].x, totalRowY + 2, { width: colSpec[9].w - 3, align: 'right' });
   if (totalIgst) doc.text(fmtRup(totalIgst), colSpec[10].x, totalRowY + 2, { width: colSpec[10].w - 3, align: 'right' });
