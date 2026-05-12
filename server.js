@@ -7520,12 +7520,21 @@ app.post('/api/import-old-data/verify', requireAdmin, upload.single('file'), (re
     };
 
     let cntNew = 0, cntDup = 0, cntDupChanged = 0, cntInvAno = 0, cntInvReq = 0;
-    // Three independent sample buckets so the client always has concrete
+    // Four independent sample buckets so the client always has concrete
     // rows from each non-empty status, regardless of where they sit in
     // the file. Each bucket is capped at PER_BUCKET_LIMIT.
+    //   • new                — would be inserted
+    //   • invalid            — won't be inserted (missing required / no trade)
+    //   • dupChanges         — duplicate where the file row differs from DB
+    //   • dupIdentical       — duplicate where the file row matches DB exactly
+    // Identical dups are surfaced separately because they're the most
+    // confusing case for operators: the verify panel says "duplicates: N"
+    // but nothing is highlighted, so they can't tell WHICH existing rows
+    // are blocking. With this bucket we can show each one's primary key.
     const sampleNew = [];
     const sampleInvalid = [];
     const sampleDupChanges = [];
+    const sampleDupIdentical = [];
 
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
@@ -7565,6 +7574,9 @@ app.post('/api/import-old-data/verify', requireAdmin, upload.single('file'), (re
 
       // Duplicate detection — only meaningful when all keyCols resolve
       // to a non-blank value, matching /run's gate.
+      // SQLite's loose typing means a string "123" and an integer 123 both
+      // match `WHERE invo = ?` even though strict-equality would say no.
+      // That's actually what /run does too, so verify mirrors it.
       let existing = null;
       let diff = null;
       if (!requiredMissing) {
@@ -7619,8 +7631,22 @@ app.post('/api/import-old-data/verify', requireAdmin, upload.single('file'), (re
         sampleInvalid.push(entry);
       } else if (status === 'duplicate' && diff && sampleDupChanges.length < PER_BUCKET_LIMIT) {
         sampleDupChanges.push(entry);
+      } else if (status === 'duplicate' && !diff && sampleDupIdentical.length < PER_BUCKET_LIMIT) {
+        sampleDupIdentical.push(entry);
       }
     }
+
+    // Total row count + a quick "did the operator actually clear this
+    // table?" signal. Without this, when the user deletes invoices under
+    // a Sales-tab filter and then re-runs verify, "duplicates: N" is
+    // baffling — the UI shows 0 rows but the table still has N rows
+    // for other auctions/dates. Surfacing the actual count makes the
+    // discrepancy obvious.
+    let targetRowCount = 0;
+    try {
+      const r = db.get(`SELECT COUNT(*) as c FROM ${def.table}`);
+      targetRowCount = r ? Number(r.c || 0) : 0;
+    } catch (_) { /* table missing — leave at 0 */ }
 
     fs.unlink(req.file.path, () => {});
     res.json({
@@ -7631,6 +7657,10 @@ app.post('/api/import-old-data/verify', requireAdmin, upload.single('file'), (re
       keyCols: def.keyCols,
       autoFillAuctionId: !!def.autoFillAuctionId,
       sampleLimit: PER_BUCKET_LIMIT,
+      // Pre-import state of the target table — surfaced so the operator
+      // can confirm the table really is empty before re-importing.
+      targetTable: def.table,
+      targetRowCount,
       counts: {
         new: cntNew,
         duplicate: cntDup,
@@ -7642,6 +7672,7 @@ app.post('/api/import-old-data/verify', requireAdmin, upload.single('file'), (re
         new: sampleNew,
         invalid: sampleInvalid,
         dupChanges: sampleDupChanges,
+        dupIdentical: sampleDupIdentical,
       },
     });
   } catch (e) {

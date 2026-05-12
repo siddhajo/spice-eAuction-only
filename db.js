@@ -472,6 +472,11 @@ async function initDb() {
     'CREATE INDEX IF NOT EXISTS idx_traders_cr  ON traders(cr)',
     'CREATE INDEX IF NOT EXISTS idx_traders_tel ON traders(tel)',
     'CREATE INDEX IF NOT EXISTS idx_traders_pan ON traders(pan)',
+    // FK child-side index. SQLite auto-indexes the parent side of a FK
+    // (traders.id is PK) but not the child column, so every DELETE FROM
+    // traders triggers a full scan of trader_banks to check for orphans.
+    // Without this, bulk seller deletion is O(N·M) — quadratic.
+    'CREATE INDEX IF NOT EXISTS idx_trader_banks_trader ON trader_banks(trader_id)',
   ];
   for (const idx of indexes) { try { wrapped.exec(idx); } catch (e) {} }
 

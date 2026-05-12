@@ -15538,7 +15538,8 @@ function _impRenderVerify(data){
   const legacyRows = Array.isArray(data.rows) ? data.rows : [];
   const newRows     = samples && Array.isArray(samples.new)        ? samples.new        : legacyRows.filter(rw => rw.status === 'new');
   const invalidRows = samples && Array.isArray(samples.invalid)    ? samples.invalid    : legacyRows.filter(rw => rw.status === 'invalid');
-  const dupChanges  = samples && Array.isArray(samples.dupChanges) ? samples.dupChanges : legacyRows.filter(rw => rw.status === 'duplicate' && rw.diff && Object.keys(rw.diff).length);
+  const dupChanges   = samples && Array.isArray(samples.dupChanges)   ? samples.dupChanges   : legacyRows.filter(rw => rw.status === 'duplicate' && rw.diff && Object.keys(rw.diff).length);
+  const dupIdentical = samples && Array.isArray(samples.dupIdentical) ? samples.dupIdentical : legacyRows.filter(rw => rw.status === 'duplicate' && (!rw.diff || !Object.keys(rw.diff || {}).length));
   const fields = Array.isArray(data.fields) ? data.fields : [];
   const keyCols = new Set(Array.isArray(data.keyCols) ? data.keyCols : []);
   const card = (label, value, color) =>
@@ -15547,7 +15548,27 @@ function _impRenderVerify(data){
       '<div style="font-size:22px;font-weight:700;color:'+color+'">'+value+'</div>'+
     '</div>';
 
-  let html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'+
+  // Pre-flight diagnostic: how many rows actually live in the target
+  // table right now? This is the answer to "I deleted everything, why
+  // is it still finding duplicates?" — Sales / Purchases tabs are
+  // filtered (by auction, branch, date) and zero visible rows ≠ zero
+  // rows in the table.
+  let html = '';
+  if (data.targetTable && typeof data.targetRowCount === 'number') {
+    const expected = (c.duplicate || 0);
+    const stale = data.targetRowCount > 0 && expected > 0;
+    html += '<div style="margin:0 0 10px 0;font-size:12px;background:'+(stale?'#fff7ed':'#f5f5f5')+
+      ';border:1px solid '+(stale?'#fed7aa':'#e5e7eb')+';border-radius:6px;padding:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
+      '<span style="font-weight:700">'+(stale?'⚠ ':'')+'Target table:</span> '+
+      '<code>'+escAttr(data.targetTable)+'</code> currently holds '+
+      '<b>'+data.targetRowCount+'</b> row(s) in the database.';
+    if (stale) {
+      html += ' <span style="color:#9a3412">If you expected zero, check that the Sales / Purchases tab isn\'t hiding rows behind a filter (auction / branch / date) — delete only removes what\'s visible. Use the "Delete All" action under that tab\'s admin menu to clear the whole table.</span>';
+    }
+    html += '</div>';
+  }
+
+  html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'+
     card('Total rows', data.total, '#374151')+
     card('Will insert', c.new||0, '#15803d')+
     card('Duplicates (skip)', c.duplicate||0, '#a16207')+
@@ -15658,6 +15679,38 @@ function _impRenderVerify(data){
           '<td style="padding:3px 8px;border:1px solid #fff;background:#fef2f2;color:#7f1d1d;text-decoration:line-through">'+escAttr(d.new==null?'':String(d.new))+'</td>'+
           '</tr>';
       });
+    });
+    html += '</tbody></table></div></details>';
+  }
+
+  // Identical duplicates — same key, same data. These are the most
+  // confusing case ("I deleted everything, why is it still duplicate?")
+  // so we list each row with the existing DB row's primary key so the
+  // operator can confirm the matching row really exists.
+  if (dupIdentical.length) {
+    const totalDupIdentical = (c.duplicate || 0) - (c.duplicateChanged || 0);
+    const idNote = totalDupIdentical > dupIdentical.length
+      ? ' <span style="font-size:11px;color:#666">(showing first '+dupIdentical.length+' of '+totalDupIdentical+')</span>'
+      : '';
+    html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-weight:600;color:#a16207">Identical duplicates — already in the database ('+totalDupIdentical+')'+idNote+'</summary>';
+    html += '<div style="overflow:auto;max-height:280px;border:1px solid #fed7aa;border-radius:6px;margin-top:6px">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px"><thead><tr style="background:#fff7ed;position:sticky;top:0">'+
+      '<th style="text-align:left;padding:4px 8px;border:1px solid #fed7aa;white-space:nowrap">File row</th>'+
+      '<th style="text-align:left;padding:4px 8px;border:1px solid #fed7aa;white-space:nowrap">DB id</th>'+
+      '<th style="text-align:left;padding:4px 8px;border:1px solid #fed7aa">Matching key values</th>'+
+      '</tr></thead><tbody>';
+    dupIdentical.forEach(rw => {
+      const keyParts = [];
+      (Array.isArray(data.keyCols) ? data.keyCols : []).forEach(k => {
+        const v = rw.existing && rw.existing[k];
+        keyParts.push('<code>'+escAttr(k)+'</code>=<b>'+escAttr(v==null?'':String(v))+'</b>');
+      });
+      const dbId = rw.existing && rw.existing.id != null ? rw.existing.id : '—';
+      html += '<tr>'+
+        '<td style="padding:3px 8px;border:1px solid #fff;font-family:monospace;background:#fffbeb">'+rw.row+'</td>'+
+        '<td style="padding:3px 8px;border:1px solid #fff;font-family:monospace;background:#fffbeb">'+escAttr(String(dbId))+'</td>'+
+        '<td style="padding:3px 8px;border:1px solid #fff;background:#fffbeb">'+(keyParts.join(' · ') || '<i>(no key cols)</i>')+'</td>'+
+        '</tr>';
     });
     html += '</tbody></table></div></details>';
   }
