@@ -235,7 +235,7 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
     if (firstPage) {
       // Three-column brand band: company on left, report title centered,
       // subtitle pieces (trade no, date, etc.) right-aligned. The subtitle
-      // string for these reports is e.g. "e-TRADE No: 3 — Date: 15/04/2026",
+      // string for these reports is e.g. "e-AUCTION No: 3 — Date: 15/04/2026",
       // so split it on " — " into separate meta lines.
       const metaLines = [];
       if (subtitle) {
@@ -513,6 +513,8 @@ const COLS = {
   pooler_register: [
     // STATE column dropped per user request; serial number shown per-name
     // (resets within each name group), with a subtotal row for each name.
+    // PQTY / PRATE / PURAMT also dropped — those are post-purchase columns
+    // that don't belong on the pooler ledger.
     { header: 'SL.NO',  key: '_sn',         width: 6  },
     { header: 'NAME',   key: 'poolername',  width: 28 },
     { header: 'BRANCH', key: 'br',          width: 12 },
@@ -520,9 +522,6 @@ const COLS = {
     { header: 'QTY',    key: 'qty',         width: 12 },
     { header: 'PRICE',  key: 'price',       width: 9  },
     { header: 'AMOUNT', key: 'amount',      width: 16 },
-    { header: 'PQTY',   key: 'pqty',        width: 12 },
-    { header: 'PRATE',  key: 'prate',       width: 9  },
-    { header: 'PURAMT', key: 'puramt',      width: 16 },
   ],
   full_file: [
     { header: 'STATE', key: 'state', width: 10 }, { header: 'LOT', key: 'lot_no', width: 8 },
@@ -534,8 +533,7 @@ const COLS = {
     { header: 'PRICE', key: 'price', width: 10 }, { header: 'AMOUNT', key: 'amount', width: 12 },
     { header: 'CODE', key: 'code', width: 8 }, { header: 'BUYER', key: 'buyer', width: 12 },
     { header: 'BUYER1', key: 'buyer1', width: 16 }, { header: 'SALE', key: 'sale', width: 6 },
-    { header: 'INVO', key: 'invo', width: 8 }, { header: 'PQTY', key: 'pqty', width: 10 },
-    { header: 'PRATE', key: 'prate', width: 10 }, { header: 'PURAMT', key: 'puramt', width: 12 },
+    { header: 'INVO', key: 'invo', width: 8 },
     { header: 'COM', key: 'com', width: 8 }, { header: 'CGST', key: 'cgst', width: 8 },
     { header: 'SGST', key: 'sgst', width: 8 }, { header: 'IGST', key: 'igst', width: 8 },
     { header: 'ADVANCE', key: 'advance', width: 10 }, { header: 'BALANCE', key: 'balance', width: 10 },
@@ -572,8 +570,9 @@ const COLS = {
   ],
   payment: [
     // Serial number resets per pooler; each pooler gets a subtotal row.
-    // Money columns sized for Indian-format 7-digit values like
-    // "1,73,31,966.50" without wrapping.
+    // PQTY / PRATE / PURAMT removed — they belong on bills, not the
+    // payment summary. Money columns sized for Indian-format 7-digit
+    // values like "1,73,31,966.50" without wrapping.
     { header: 'SL.NO',      key: '_sn',         width: 5  },
     { header: 'POOLERNAME', key: 'poolername',  width: 22 },
     { header: 'LOT',        key: 'lot',         width: 7  },
@@ -581,9 +580,6 @@ const COLS = {
     { header: 'QTY',        key: 'qty',         width: 10 },
     { header: 'PRICE',      key: 'price',       width: 9  },
     { header: 'AMOUNT',     key: 'amount',      width: 14 },
-    { header: 'PQTY',       key: 'pqty',        width: 10 },
-    { header: 'PRATE',      key: 'prate',       width: 9  },
-    { header: 'PURAMT',     key: 'puramt',      width: 14 },
     { header: 'DISCOUNT',   key: 'discount',    width: 10 },
     { header: 'PAYABLE',    key: 'payable',     width: 14 },
   ],
@@ -613,12 +609,12 @@ const TOTAL_KEYS = {
   price_list:      ['bag', 'qty'],
   price_list_before: ['bag', 'qty'],
   bank_payment:    ['amount'],
-  pooler_register: ['qty', 'amount', 'pqty', 'puramt'],
-  full_file:       ['bags', 'qty', 'amount', 'pqty', 'puramt', 'cgst', 'sgst', 'igst', 'advance', 'balance'],
+  pooler_register: ['qty', 'amount'],
+  full_file:       ['bags', 'qty', 'amount', 'cgst', 'sgst', 'igst', 'advance', 'balance'],
   collection:      ['bag', 'qty'],
   dealer_list:     ['lots', 'bags', 'qty'],
   sales_taxes:     ['bag', 'qty', 'cardamom_cost', 'gunny_cost', 'cgst', 'sgst', 'igst', 'tcs', 'transport', 'insurance', 'total'],
-  payment:         ['bag', 'qty', 'amount', 'pqty', 'puramt', 'discount', 'payable'],
+  payment:         ['bag', 'qty', 'amount', 'discount', 'payable'],
   tally_purchase:  ['bag', 'qty', 'amount', 'cgst', 'sgst', 'igst', 'discount', 'bilamt'],
   tds_return:      ['assess_value', 'tds'],
 };
@@ -735,7 +731,7 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
 
     case 'pooler_register':
       return db.all(
-        `SELECT state, lot_no as lot, name as poolername, branch as br, qty, price, amount, pqty, prate, puramt
+        `SELECT state, lot_no as lot, name as poolername, branch as br, qty, price, amount
          FROM lots WHERE auction_id = ? AND amount > 0 ORDER BY name`, [auctionId]);
 
     case 'full_file':
@@ -767,7 +763,7 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
       const discountCol = (mode === 'auction') ? 'advance' : 'refund';
       return db.all(
         `SELECT name as poolername, lot_no as lot, bags as bag, qty, price, amount,
-          pqty, prate, puramt, ${discountCol} as discount, balance as payable
+          ${discountCol} as discount, balance as payable
          FROM lots WHERE auction_id = ? AND amount > 0
          ORDER BY state, name`, [auctionId]);
     }
@@ -841,7 +837,7 @@ async function exportPdf(db, type, auctionId, cfg, extra = {}) {
       // them back into separate right-side rows. The crop type (ISP/ASP) is
       // omitted — the active preset is already obvious from the logo and
       // company name in the brand block.
-      subtitle = `e-TRADE No: ${auction.ano} — Date: ${d}`;
+      subtitle = `e-AUCTION No: ${auction.ano} — Date: ${d}`;
       if (extra.state) subtitle += ` — State: ${extra.state}`;
     }
   }

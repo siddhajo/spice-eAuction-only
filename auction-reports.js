@@ -176,7 +176,7 @@ async function lotSlipPdf(db, auctionId, _cfg, extra) {
     doc.font('Helvetica').fontSize(8)
        .text(`Page: ${page}`, xOrigin, afterY, { width: halfW, align: 'right' });
     doc.font('Helvetica-Bold').fontSize(9)
-       .text(`e-TRADE No:${auction.ano}`, xOrigin, afterY + 12, { width: halfW / 2, align: 'left' });
+       .text(`e-AUCTION No:${auction.ano}`, xOrigin, afterY + 12, { width: halfW / 2, align: 'left' });
     doc.text(`Date:${fmtDateDMY(auction.date)}`, xOrigin + halfW / 2, afterY + 12, { width: halfW / 2, align: 'right' });
 
     const hy = BODY_TOP;
@@ -396,7 +396,7 @@ async function collectionXlsx(db, auctionId) {
     colCount: 5,
     title: 'COLLECTION',
     metaLines: [
-      `e-TRADE No: ${auction.ano}`,
+      `e-AUCTION No: ${auction.ano}`,
       `Date: ${fmtDateDMY(auction.date)}`,
     ],
   });
@@ -510,7 +510,7 @@ async function collectionPdf(db, auctionId) {
       x: m, y: m, width: usableW,
       title: 'COLLECTION',
       metaLines: [
-        `e-TRADE No: ${auction.ano}`,
+        `e-AUCTION No: ${auction.ano}`,
         `Date: ${fmtDateDMY(auction.date)}`,
         `Page: ${doc.bufferedPageRange().count}`,
       ],
@@ -642,7 +642,7 @@ async function collectionPdf(db, auctionId) {
 //   - INTRA STATE SALES (within state)
 //   - <state> STATE TOTAL
 //   - GRAND TOTAL
-// Plus a footer block with TOTAL ARRIVALS / WITHDRAWN / SOLD / NOT eTRADED
+// Plus a footer block with TOTAL ARRIVALS / WITHDRAWN / SOLD / NOT e-AUCTIONED
 // counts and MAX/MIN/AVERAGE prices and COST OF CARDAMOM.
 
 function getTradeReportData(db, auctionId, opts) {
@@ -762,7 +762,7 @@ async function tradeReportXlsx(db, auctionId, opts) {
   const { auction, sortedStates, stats } = getTradeReportData(db, auctionId, opts);
 
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('TradeReport');
+  const ws = wb.addWorksheet('AuctionReport');
   ws.columns = [
     { width: 6 },   // SALE
     { width: 22 },  // BIDDER
@@ -783,7 +783,7 @@ async function tradeReportXlsx(db, auctionId, opts) {
     colCount: 8,
     title: 'BUYERS LIST FOR VERIFICATION',
     metaLines: [
-      `e-TRADE No: ${auction.ano}`,
+      `e-AUCTION No: ${auction.ano}`,
       `DATE: ${fmtDateDMY(auction.date)}`,
     ],
   });
@@ -925,7 +925,7 @@ async function tradeReportXlsx(db, auctionId, opts) {
     ['TOTAL ARRIVALS', stats.arrivals_qty,  stats.arrivals_bags,  stats.arrivals_lots],
     ['WITHDRAWN',      stats.withdrawn_qty, stats.withdrawn_bags, stats.withdrawn_lots],
     ['SOLD',           stats.sold_qty,      stats.sold_bags,      stats.sold_lots],
-    ['NOT eTRADED',    stats.not_qty,       stats.not_bags,       stats.not_lots],
+    ['NOT e-AUCTIONED',    stats.not_qty,       stats.not_bags,       stats.not_lots],
   ];
   const priceStats = [
     ['MAXIMUM',          stats.max_price],
@@ -1015,7 +1015,7 @@ async function tradeReportPdf(db, auctionId, opts) {
       x: m, y: m, width: usableW,
       title: 'BUYERS LIST FOR VERIFICATION',
       metaLines: [
-        `e-TRADE No: ${auction.ano}`,
+        `e-AUCTION No: ${auction.ano}`,
         `Date: ${fmtDateDMY(auction.date)}`,
         `Page: ${pageNum}`,
       ],
@@ -1239,7 +1239,7 @@ async function tradeReportPdf(db, auctionId, opts) {
   leftRow('TOTAL ARRIVALS',  fmtQty(stats.arrivals_qty),  String(stats.arrivals_bags), String(stats.arrivals_lots), 0);
   leftRow('WITHDRAWN',       fmtQty(stats.withdrawn_qty), String(stats.withdrawn_bags), String(stats.withdrawn_lots), 1);
   leftRow('SOLD',            fmtQty(stats.sold_qty),      String(stats.sold_bags),     String(stats.sold_lots), 2);
-  leftRow('NOT eTRADED',     fmtQty(stats.not_qty),       String(stats.not_bags),      String(stats.not_lots), 3);
+  leftRow('NOT e-AUCTIONED',     fmtQty(stats.not_qty),       String(stats.not_bags),      String(stats.not_lots), 3);
 
   // Vertical column separators inside the left table
   for (let ci = 0; ci < lcW.length - 1; ci++) {

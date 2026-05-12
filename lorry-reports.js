@@ -181,7 +181,7 @@ async function lotSlipCodeXlsx(db, auctionId) {
       db,
       title: 'LOT SLIP CODE',
       metaLines: [
-        `e-TRADE No: ${auction.ano}`,
+        `e-AUCTION No: ${auction.ano}`,
         `Date: ${fmtDateDMY(auction.date)}`,
       ],
       grandTotal: {
@@ -248,7 +248,7 @@ async function lotSlipCodePdf(db, auctionId) {
     doc.font('Helvetica').fontSize(8).fillColor('#000')
        .text(`Page: ${page}`, xOrigin, afterY, { width: halfW, align: 'right' });
     doc.font('Helvetica-Bold').fontSize(9)
-       .text(`e-TRADE No: ${auction.ano}`, xOrigin, afterY + 12, { width: halfW / 2, align: 'left' });
+       .text(`e-AUCTION No: ${auction.ano}`, xOrigin, afterY + 12, { width: halfW / 2, align: 'left' });
     doc.text(`Date: ${fmtDateDMY(auction.date)}`, xOrigin + halfW / 2, afterY + 12, { width: halfW / 2, align: 'right' });
 
     // Column header row
@@ -412,7 +412,7 @@ async function truckListXlsx(db, auctionId) {
       db,
       title: 'TRUCK LIST',
       metaLines: [
-        `e-TRADE No: ${auction.ano}`,
+        `e-AUCTION No: ${auction.ano}`,
         `Date: ${fmtDateDMY(auction.date)}`,
       ],
       grandTotal: {
@@ -461,7 +461,7 @@ async function truckListPdf(db, auctionId) {
       x: m, y: m, width: usableW,
       title: 'TRUCK LIST',
       metaLines: [
-        `e-TRADE No: ${auction.ano}`,
+        `e-AUCTION No: ${auction.ano}`,
         `Date: ${fmtDateDMY(auction.date)}`,
       ],
     });
@@ -640,7 +640,7 @@ async function buyerLotLorryXlsx(db, auctionId) {
     colCount: 6,
     title: 'BUYER LOT LORRY',
     metaLines: [
-      `e-TRADE No: ${auction.ano}`,
+      `e-AUCTION No: ${auction.ano}`,
       `Date: ${fmtDateDMY(auction.date)}`,
       auction.state || '',
     ].filter(Boolean),
@@ -825,7 +825,7 @@ async function buyerLotLorryPdf(db, auctionId) {
       x: m, y: m, width: usableW,
       title: 'BUYER LOT LORRY',
       metaLines: [
-        `e-TRADE No: ${auction.ano}`,
+        `e-AUCTION No: ${auction.ano}`,
         `Date: ${fmtDateDMY(auction.date)}`,
       ],
     });

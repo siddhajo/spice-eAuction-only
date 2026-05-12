@@ -264,16 +264,24 @@ function drawCompanyHeader(doc, header, opts) {
   const hasMeta = metaLines.length > 0;
   let leftW, midW, rightW;
   if (hasTitle) {
-    // Reserve equal-width side columns so the middle title column is
-    // page-centered. Side width is sized to fit the company name (measured
-    // at NAME_FONT) plus the logo + gap, with a percentage cap so the title
-    // always has reasonable room.
+    // Side widths are symmetric (so the title appears centered) but sized
+    // to fit the WIDER of the two contents:
+    //   left  = logo + gap + company name
+    //   right = longest meta line ("e-AUCTION No: 123", "Date: 12/05/2025")
+    // Without measuring both, a long Indian company name like
+    // "IDUKKI MAHILA CARDAOM PRODUCER COMPANY LIMITED" gets aggressively
+    // truncated by fitText below. Cap raised to 48% so legitimately long
+    // names fit; title still auto-shrinks to whatever middle space is left.
     doc.font('Helvetica-Bold').fontSize(NAME_FONT);
     const nameW = doc.widthOfString(header.name || '');
     const desiredLeftContent = logoW + GAP_LOGO_TEXT + nameW + 8;
-    // Clamp side width between 28% (so title gets >=44%) and 38% (so name
-    // doesn't overshoot if it's very long).
-    const sideW = Math.max(width * 0.28, Math.min(width * 0.38, desiredLeftContent));
+    doc.font('Helvetica-Bold').fontSize(META_FONT);
+    const desiredRightContent = metaLines.reduce(
+      (max, line) => Math.max(max, doc.widthOfString(String(line || ''))),
+      0,
+    ) + 8;
+    const desiredSide = Math.max(desiredLeftContent, desiredRightContent);
+    const sideW = Math.max(width * 0.22, Math.min(width * 0.48, desiredSide));
     leftW = sideW;
     rightW = sideW;
     midW = width - leftW - rightW;
@@ -302,10 +310,21 @@ function drawCompanyHeader(doc, header, opts) {
   const textX = logoDrawn ? x + logoW + GAP_LOGO_TEXT : x;
   const textW = leftW - (logoDrawn ? logoW + GAP_LOGO_TEXT : 0);
 
-  // Company name (top of left text block). Use fitText so a long name doesn't
-  // overrun and overlap into the middle column.
-  doc.fillColor('#000').font('Helvetica-Bold').fontSize(NAME_FONT)
-     .text(fitText(doc, header.name || '', textW - 2), textX, startY, {
+  // Company name (top of left text block). Auto-shrink the font down to a
+  // floor before falling back to fitText's ellipsis — long Indian company
+  // names with no naturally short breakpoint were getting "...COMPANY LIM…"
+  // truncation at NAME_FONT, which hides the legal entity type. Shrinking
+  // to ~8pt before ellipsizing lets the full name render in almost every
+  // realistic case.
+  const nameText = header.name || '';
+  let nameSize = NAME_FONT;
+  doc.font('Helvetica-Bold').fontSize(nameSize);
+  while (nameSize > 8 && doc.widthOfString(nameText) > textW - 2) {
+    nameSize -= 0.5;
+    doc.fontSize(nameSize);
+  }
+  doc.fillColor('#000')
+     .text(fitText(doc, nameText, textW - 2), textX, startY, {
        width: textW, align: 'left', lineBreak: false,
      });
 
@@ -347,10 +366,16 @@ function drawCompanyHeader(doc, header, opts) {
   }
 
   // ── RIGHT: meta lines (Trade #, date, page, etc.) ──
-  // Vertically center the meta block against the brand band.
+  // Vertically center the meta block when it fits the band; top-align
+  // when it overflows. Previously the centering math produced a negative
+  // offset for 3-line meta blocks (totalMetaH=39 vs bandH=31), which
+  // pushed the first line above the page margin and made the page
+  // number look "half covered" by the page edge.
+  const totalMetaH = metaLines.length ? metaLines.length * (META_FONT + 4) : 0;
+  const innerBandH = Math.max(logoH, textBlockH);
   if (metaLines.length) {
-    const totalMetaH = metaLines.length * (META_FONT + 4);
-    let mY = startY + (Math.max(logoH, textBlockH) - totalMetaH) / 2;
+    const slack = innerBandH - totalMetaH;
+    let mY = startY + (slack > 0 ? slack / 2 : 0);
     doc.fillColor('#000').font('Helvetica-Bold').fontSize(META_FONT);
     metaLines.forEach((line) => {
       doc.text(fitText(doc, line, rightW - 2), rightX, mY, {
@@ -360,8 +385,10 @@ function drawCompanyHeader(doc, header, opts) {
     });
   }
 
-  // Total band height + small gap before report body begins
-  const bandH = Math.max(logoH, textBlockH);
+  // Total band height + small gap before report body begins. The band
+  // grows to fit a meta block taller than the logo/text so the next
+  // section (column-header strip) doesn't draw over the last meta line.
+  const bandH = Math.max(innerBandH, totalMetaH);
   doc.fillColor('#000');
   return startY + bandH + 6;
 }

@@ -192,7 +192,7 @@ function auctionMeta(db, auctionId) {
     if (!a) return [];
     const dt = String(a.date || '').slice(0, 10).split('-').reverse().join('/');
     const meta = [];
-    if (a.ano) meta.push(`e-TRADE No: ${a.ano}`);
+    if (a.ano) meta.push(`e-AUCTION No: ${a.ano}`);
     if (dt) meta.push(`Date: ${dt}`);
     return meta;
   } catch (_) { return []; }
@@ -351,8 +351,11 @@ async function exportBankPaymentBefore(db, auctionId, cfg, _state, extra) {
 
 // ── Export Type 5: Pooler-wise Register ───────────────────────
 async function exportPoolerRegister(db, auctionId) {
+  // PQTY / PRATE / PURAMT dropped: those are post-purchase columns the
+  // Pooler Register doesn't need — they belong on bills, not the
+  // per-lot pooler ledger.
   const rows = db.all(
-    `SELECT state, lot_no as lot, name as poolername, branch as br, qty, price, amount, pqty, prate, puramt
+    `SELECT state, lot_no as lot, name as poolername, branch as br, qty, price, amount
      FROM lots WHERE auction_id = ? AND amount > 0
      ORDER BY name`, [auctionId]
   );
@@ -364,9 +367,6 @@ async function exportPoolerRegister(db, auctionId) {
     { header: 'QTY', key: 'qty', width: 12 },
     { header: 'PRICE', key: 'price', width: 10 },
     { header: 'AMOUNT', key: 'amount', width: 14 },
-    { header: 'PQTY', key: 'pqty', width: 12 },
-    { header: 'PRATE', key: 'prate', width: 10 },
-    { header: 'PURAMT', key: 'puramt', width: 14 },
   ];
   return createExcelBuffer('PoolerRegister', cols, rows, {
     db, title: 'Pooler Register', metaLines: auctionMeta(db, auctionId),
@@ -386,8 +386,7 @@ async function exportFullFile(db, auctionId) {
     { header: 'PRICE', key: 'price', width: 10 }, { header: 'AMOUNT', key: 'amount', width: 14 },
     { header: 'CODE', key: 'code' }, { header: 'BUYER', key: 'buyer', width: 15 },
     { header: 'BUYER1', key: 'buyer1', width: 20 }, { header: 'SALE', key: 'sale' },
-    { header: 'INVO', key: 'invo' }, { header: 'PQTY', key: 'pqty', width: 12 },
-    { header: 'PRATE', key: 'prate', width: 10 }, { header: 'PURAMT', key: 'puramt', width: 14 },
+    { header: 'INVO', key: 'invo' },
     { header: 'COM', key: 'com' }, { header: 'CGST', key: 'cgst' },
     { header: 'SGST', key: 'sgst' }, { header: 'IGST', key: 'igst' },
     { header: 'ADVANCE', key: 'advance', width: 14 }, { header: 'BALANCE', key: 'balance', width: 14 },
@@ -498,7 +497,7 @@ async function exportPaymentSummary(db, auctionId, cfg, _state, extra) {
   }
   let rows = db.all(
     `SELECT name as poolername, lot_no as lot, bags as bag, qty, price, amount,
-      pqty, prate, puramt, ${discountCol} as lot_discount, balance as payable
+      ${discountCol} as lot_discount, balance as payable
      FROM lots WHERE auction_id = ? AND amount > 0
      ORDER BY state, name`, [auctionId]
   );
@@ -527,8 +526,7 @@ async function exportPaymentSummary(db, auctionId, cfg, _state, extra) {
     { header: 'POOLERNAME', key: 'poolername', width: 30 },
     { header: 'LOT', key: 'lot', width: 8 }, { header: 'BAG', key: 'bag', width: 6 },
     { header: 'QTY', key: 'qty', width: 12 }, { header: 'PRICE', key: 'price', width: 10 },
-    { header: 'AMOUNT', key: 'amount', width: 14 }, { header: 'PQTY', key: 'pqty', width: 12 },
-    { header: 'PRATE', key: 'prate', width: 10 }, { header: 'PURAMT', key: 'puramt', width: 14 },
+    { header: 'AMOUNT', key: 'amount', width: 14 },
     { header: 'DISCOUNT', key: 'discount', width: 14 },
     { header: 'PAYABLE', key: 'payable', width: 14 },
   ];
@@ -544,8 +542,6 @@ async function exportPaymentSummary(db, auctionId, cfg, _state, extra) {
       bag:     sum('bag'),
       qty:     sum('qty'),
       amount:  sum('amount'),
-      pqty:    sum('pqty'),
-      puramt:  sum('puramt'),
       discount:sum('discount'),
       payable: sum('payable'),
     },
@@ -804,7 +800,7 @@ const EXPORT_TYPES = {
   pooler_register:    { fn: exportPoolerRegister,    name: 'PoolerRegister' },
   full_file:          { fn: exportFullFile,          name: 'FullFile' },
   collection:         { fn: exportCollection,        name: 'Collection' },
-  trade_report:       { fn: exportTradeReport,       name: 'TradeReport' },
+  trade_report:       { fn: exportTradeReport,       name: 'AuctionReport' },
   dealer_list:        { fn: exportDealerList,        name: 'DealerList' },
   sales_taxes:        { fn: exportSalesTaxes,        name: 'SalesTaxes' },
   payment:            { fn: exportPaymentSummary,    name: 'Payment',           needsCfg: true },

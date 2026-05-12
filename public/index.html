@@ -10874,16 +10874,18 @@ const BulkActions = (function(){
       const ids = getTickedIds(id);
       if (!ids.length) { toast(`Tick one or more ${opts.label}s first`); return; }
       if (!confirm(`Delete ${ids.length} ${opts.label}${ids.length === 1 ? '' : 's'}? This cannot be undone.`)) return;
-      let ok = 0, fail = 0;
-      for (const recId of ids) {
-        try {
-          await j(`/api/${opts.resource}/${recId}`, { method: 'DELETE' });
-          ok++;
-        } catch (e) {
-          fail++;
-        }
+      // One bulk POST instead of N sequential DELETEs — keeps "Delete
+      // Selected" responsive even on hundreds of rows. Server chunks +
+      // transacts internally, so a mid-batch failure rolls back cleanly.
+      try {
+        const r = await j(`/api/${opts.resource}/bulk-delete`, {
+          method: 'POST',
+          body: JSON.stringify({ ids: ids.map(Number) })
+        });
+        toast(`${r.deleted ?? ids.length} deleted`);
+      } catch (e) {
+        toast(`Delete failed: ${e.message || e}`);
       }
-      toast(`${ok} deleted${fail ? ` · ${fail} failed` : ''}`);
       if (opts.onChanged) opts.onChanged();
     },
   };

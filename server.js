@@ -992,6 +992,43 @@ app.delete('/api/traders/:id', requireDelete, (req, res) => {
   res.json({ success: true });
 });
 
+// Bulk-delete by id list — powers the "Delete Selected" UI. Chunks at 500
+// to stay under SQLite's 999-parameter limit, wraps everything in one
+// transaction so a mid-batch failure rolls back instead of leaving half
+// the rows gone, and clears `cascade` child tables first to keep FK
+// constraints happy. Returns the count of parent rows removed.
+function bulkDeleteByIds(db, table, ids, cascade = []) {
+  const CHUNK = 500;
+  const clean = (Array.isArray(ids) ? ids : [])
+    .map(n => parseInt(n, 10))
+    .filter(n => Number.isFinite(n) && n > 0);
+  if (!clean.length) return 0;
+  let deleted = 0;
+  db.transaction(() => {
+    for (let i = 0; i < clean.length; i += CHUNK) {
+      const batch = clean.slice(i, i + CHUNK);
+      const ph = batch.map(() => '?').join(',');
+      for (const child of cascade) {
+        db.run(`DELETE FROM ${child.table} WHERE ${child.col} IN (${ph})`, batch);
+      }
+      deleted += db.get(`SELECT COUNT(*) AS c FROM ${table} WHERE id IN (${ph})`, batch).c;
+      db.run(`DELETE FROM ${table} WHERE id IN (${ph})`, batch);
+    }
+  })();
+  return deleted;
+}
+
+app.post('/api/traders/bulk-delete', requireDelete, (req, res) => {
+  try {
+    const deleted = bulkDeleteByIds(getDb(), 'traders', req.body.ids, [
+      { table: 'trader_banks', col: 'trader_id' },
+    ]);
+    res.json({ success: true, deleted });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── LOT-ENTRY QUICK-ADD SELLER ─────────────────────────────────
 // Field-staff endpoint for adding a seller on the fly during the auction
 // hall workflow. Same shape as POST /api/traders but reachable by the
@@ -1220,6 +1257,14 @@ app.put('/api/buyers/:id', requireBuyerWrite, (req, res) => {
 });
 app.delete('/api/buyers/:id', requireDelete, (req, res) => {
   getDb().run('DELETE FROM buyers WHERE id = ?', [req.params.id]); res.json({ success: true });
+});
+app.post('/api/buyers/bulk-delete', requireDelete, (req, res) => {
+  try {
+    const deleted = bulkDeleteByIds(getDb(), 'buyers', req.body.ids);
+    res.json({ success: true, deleted });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── Import Buyers from XLS/XLSX ───────────────────────────────
@@ -1567,6 +1612,17 @@ app.delete('/api/auctions/:id', requireDelete, (req, res) => {
   db.run('DELETE FROM lots WHERE auction_id = ?', [req.params.id]);
   db.run('DELETE FROM auctions WHERE id = ?', [req.params.id]);
   res.json({ success: true });
+});
+app.post('/api/auctions/bulk-delete', requireDelete, (req, res) => {
+  try {
+    const deleted = bulkDeleteByIds(getDb(), 'auctions', req.body.ids, [
+      { table: 'lot_allocations', col: 'auction_id' },
+      { table: 'lots',            col: 'auction_id' },
+    ]);
+    res.json({ success: true, deleted });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -2456,6 +2512,14 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
 
 app.delete('/api/lots/:id', requireDelete, (req, res) => {
   getDb().run('DELETE FROM lots WHERE id = ?', [req.params.id]); res.json({ success: true });
+});
+app.post('/api/lots/bulk-delete', requireDelete, (req, res) => {
+  try {
+    const deleted = bulkDeleteByIds(getDb(), 'lots', req.body.ids);
+    res.json({ success: true, deleted });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── Calculate all lots for an auction (GENERATE.PRG) ─────────
@@ -3976,7 +4040,7 @@ app.get('/api/bills/commission-bill-f2/:auctionId', (req, res, next) => {
         colCount: 11,
         title: 'COMMISSION BILL (FORMAT 2)',
         metaLines: [
-          `e-TRADE No: ${auction.ano}`,
+          `e-AUCTION No: ${auction.ano}`,
           `DATE: ${dateFmt}`,
           branchFilter ? `BRANCH: ${branchFilter}` : 'BRANCH: ALL',
         ],
