@@ -1,2 +1,8 @@
 node_modules/
 data/
+# Runtime data — never commit
+data/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
