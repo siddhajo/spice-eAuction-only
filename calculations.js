@@ -84,20 +84,32 @@ function calculateLot(lot, cfg) {
 
   // ── GST on services (commission + handling) ──────────────
   // Intra-state if seller's GSTIN state matches company's; else inter.
+  // The company state is derived from the actual company GSTIN (the
+  // authoritative source) — falling back to the business_state dropdown
+  // only when no GSTIN is configured. Previously this read business_state
+  // alone, so a Kerala company left at the default 'TAMIL NADU' setting
+  // would wrongly tag every Kerala seller as inter-state and apply IGST
+  // even when the seller's GSTIN matched the company's own state.
   const sellerGstState  = gstinStateCode(lot.cr);
-  // business_state is locked to BOTH in this build, so default to '33'
-  // (Tamil Nadu) — caller can override via tally_state_code if needed.
-  const companyGstState = cfg.business_state === 'KERALA' ? '32'
-                        : cfg.business_state === 'TAMIL NADU' ? '33'
-                        : (String(cfg.tally_state_code || '33'));
-  const isIntra = (sellerGstState === companyGstState);
+  const companyGstin    = cfg.business_state === 'KERALA'     ? (cfg.kl_gstin || '')
+                        : cfg.business_state === 'TAMIL NADU' ? (cfg.tn_gstin || '')
+                        : (cfg.kl_gstin || cfg.tn_gstin || '');
+  const companyGstState = gstinStateCode(companyGstin)
+                       || (cfg.business_state === 'KERALA'     ? '32'
+                         : cfg.business_state === 'TAMIL NADU' ? '33'
+                         : String(cfg.tally_state_code || '33'));
+  // Unregistered sellers (no GSTIN) attract no GST — they go on
+  // Bills of Supply, not tax invoices. Only registered sellers (with a
+  // valid CR / GSTIN) get the intra/inter split.
+  const isRegistered = !!sellerGstState;
+  const isIntra      = isRegistered && (sellerGstState === companyGstState);
 
   const svcRate = Number(cfg.gst_service) || 0;
   const half    = svcRate / 2;
   const taxBase = result.com + result.sertax;
 
   result.cgst = 0; result.sgst = 0; result.igst = 0;
-  if (taxBase > 0 && svcRate > 0) {
+  if (isRegistered && taxBase > 0 && svcRate > 0) {
     if (isIntra) {
       result.cgst = Math.round(taxBase * half    / 100 * 100) / 100;
       result.sgst = Math.round(taxBase * half    / 100 * 100) / 100;

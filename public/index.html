@@ -4115,17 +4115,18 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <label>Code
         <span id="l-code-hint" style="margin-left:6px;font-weight:400;font-size:11px;color:var(--text3)"></span>
       </label>
-      <input id="l-code">
-      <!-- Populated by openLotEdit() when the lot's trade name maps to
-           multiple buyers in the Buyers master — picking from this
-           select copies the chosen code into l-code (firing the same
-           buyer/buyer1/sale auto-fill that typing the code triggers).
-           Styling inherits from `.fg select` so it matches the rest of
-           the modal — display starts hidden because the free-text
-           input is the default; the picker is revealed only when 2+
-           candidates exist. -->
-      <select id="l-code-picker" style="display:none" onchange="lotCodePickerChanged(this)">
-      </select>
+      <!-- Type-ahead autocomplete: the operator can type a prefix
+           ("JP" → JP, JP0, JP1, JP2…) and the browser filters the
+           datalist client-side. The datalist is repopulated on every
+           modal open from the Buyers master, so newly-added codes
+           appear without a full page refresh. Picking a suggestion
+           fires the input's `change` event, which the existing
+           openLotEdit handler uses to auto-fill buyer/buyer1/sale. -->
+      <!-- color-scheme:light forces Chrome to render the datalist popup
+           in light mode regardless of the OS theme. Without it, macOS
+           dark mode users see a black dropdown over the white form. -->
+      <input id="l-code" list="l-code-suggestions" autocomplete="off" style="color-scheme:light">
+      <datalist id="l-code-suggestions"></datalist>
     </div>
     <div class="fg"><label>Sale Type</label>
       <select id="l-sale"><option value=""></option><option value="L">Local (L)</option><option value="I">Inter-state (I)</option><option value="E">Export (E)</option></select>
@@ -12023,102 +12024,61 @@ function openLotEdit(l){
   showModal('lot-modal');
 }
 
-// Fetch every buyer with the given trade name and decide which Code
-// control to surface. Only ONE of `l-code` (free-text) or `l-code-picker`
-// (select) is visible at a time — having both was confusing because the
-// fields look like they capture different values when in fact they're
-// the same field.
-//
-//   0 or 1 candidate → free-text input (operator types or accepts auto-fill)
-//   2+ candidates    → select with every candidate code (operator picks)
-//                      plus a final "Other (type custom)…" option so an
-//                      unlisted code is still reachable without leaving
-//                      the modal.
+// Populate the Code datalist + show a hint when the current trade
+// name maps to multiple codes. The datalist drives native typeahead:
+// the operator types "JP" and the browser surfaces JP, JP0, JP1, JP2…
+// as inline suggestions, picking one fires the input's `change` event
+// which auto-fills buyer/buyer1/sale via the handler in openLotEdit.
 async function lotRefreshCodePicker(tradeName, currentCode){
-  const sel    = document.getElementById('l-code-picker');
-  const codeEl = document.getElementById('l-code');
-  const hint   = document.getElementById('l-code-hint');
-  if (!sel || !codeEl) return;
-  // Default state = free-text only; the multi-candidate branch flips it.
-  sel.innerHTML = '';
-  sel.style.display = 'none';
-  codeEl.style.display = '';
+  const dl   = document.getElementById('l-code-suggestions');
+  const hint = document.getElementById('l-code-hint');
   if (hint) hint.textContent = '';
+
+  // 1) Populate the datalist with every buyer code from the master.
+  //    `/api/buyers` caps at 500 rows; for shops with more buyers,
+  //    typing past the autocomplete prefix still works against the
+  //    full master via the existing change-handler lookup.
+  if (dl) {
+    try {
+      const buyers = await j('/api/buyers');
+      const seen = new Set();
+      const opts = [];
+      for (const b of (Array.isArray(buyers) ? buyers : [])) {
+        const code = String(b.code || '').trim();
+        if (!code) continue;
+        const key = code.toUpperCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        // Context (buyer string + sale + place) is rendered as the
+        // option's label/text — Chrome shows it next to the value,
+        // Safari shows the value only. Either way the typed prefix
+        // still matches against the value.
+        const ctx = [b.buyer, b.sale ? '['+b.sale+']' : '', b.pla].filter(Boolean).join(' · ');
+        opts.push('<option value="'+escAttr(code)+'">'+escAttr(ctx)+'</option>');
+      }
+      dl.innerHTML = opts.join('');
+    } catch (_) { /* non-fatal — leaves datalist as-is */ }
+  }
+
+  // 2) Hint when the current trade name maps to >1 code, so the
+  //    operator knows there's a disambiguation choice to make.
   const name = String(tradeName || '').trim();
-  if (!name) return;
+  if (!name || !hint) return;
   try {
     const r = await fetch(B + '/api/buyers/by-tradename?name=' + encodeURIComponent(name), {
       headers: { 'Authorization': 'Bearer ' + T }
     });
     if (!r.ok) return;
     const buyers = await r.json();
-    if (!Array.isArray(buyers) || buyers.length <= 1) {
-      // 0 or 1 match — keep the free-text input. (0 case: surface a
-      // hint so the operator knows the master is missing this name.)
-      if (hint && buyers.length === 0) hint.textContent = '(no buyer matches this trade name)';
+    if (!Array.isArray(buyers) || buyers.length === 0) {
+      hint.textContent = '(no buyer matches this trade name)';
       return;
     }
-    const curUp = String(currentCode || '').trim().toUpperCase();
-    const codes = buyers.map(b => String(b.code || '').trim()).filter(Boolean);
-    const hasCurrent = curUp && codes.some(c => c.toUpperCase() === curUp);
-    if (!hasCurrent) {
-      const opt = document.createElement('option');
-      // Sentinel value chosen so it can never collide with a real code.
-      opt.value = '__NONE__'; opt.textContent = '— pick a code —';
-      sel.appendChild(opt);
+    if (buyers.length > 1) {
+      const codes = buyers.map(b => String(b.code || '').trim()).filter(Boolean).join(', ');
+      hint.textContent = '(' + buyers.length + ' codes share this trade name: ' + codes + ')';
     }
-    for (const b of buyers) {
-      const code = (b.code || '').trim();
-      const opt = document.createElement('option');
-      opt.value = code;
-      // Show ONLY the code in the dropdown so the field stays compact
-      // and reads like "Code: JPJ8". The extra buyer/sale/place context
-      // moves to the title attribute — visible on hover when an
-      // operator needs to disambiguate similar codes.
-      opt.textContent = code || '(no code)';
-      const ctxParts = [b.buyer, b.sale ? '['+b.sale+']' : '', b.pla].filter(Boolean);
-      if (ctxParts.length) opt.title = ctxParts.join(' · ');
-      if (hasCurrent && code.toUpperCase() === curUp) opt.selected = true;
-      sel.appendChild(opt);
-    }
-    // Escape hatch for the rare case the operator needs to type a code
-    // that isn't in any of the candidate buyer rows.
-    const otherOpt = document.createElement('option');
-    otherOpt.value = '__OTHER__';
-    otherOpt.textContent = 'Other (type custom)…';
-    sel.appendChild(otherOpt);
-
-    // Hand control to the select; the free-text input is hidden but
-    // kept in the DOM so saveLot's L_FIELDS read still works — the
-    // picker writes back into it.
-    codeEl.style.display = 'none';
-    sel.style.display = 'block';
-    if (hint) hint.textContent = '(' + buyers.length + ' codes share this trade name — pick one)';
   } catch (_) { /* non-fatal */ }
-}
-
-// Picker change: mirror the chosen value into l-code so saveLot still
-// reads from the same place, then fire l-code's change event to trigger
-// the existing buyer/buyer1/sale auto-fill. Sentinel values:
-//   __NONE__   → no-op (placeholder selected)
-//   __OTHER__  → swap back to free-text so the operator can type a code
-//                that isn't in any candidate row.
-function lotCodePickerChanged(sel){
-  const val = sel.value;
-  const codeEl = document.getElementById('l-code');
-  const hint   = document.getElementById('l-code-hint');
-  if (!codeEl) return;
-  if (val === '__NONE__') return;
-  if (val === '__OTHER__') {
-    sel.style.display = 'none';
-    codeEl.style.display = '';
-    codeEl.value = '';
-    codeEl.focus();
-    if (hint) hint.textContent = '(type a code, then Tab — buyer fields will auto-fill)';
-    return;
-  }
-  codeEl.value = val;
-  codeEl.dispatchEvent(new Event('change'));
 }
 async function saveLot(){
   const id=document.getElementById('l-id').value;
