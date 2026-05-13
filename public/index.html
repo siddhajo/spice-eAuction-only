@@ -6946,9 +6946,22 @@ async function loadFormulas(){
     },
     {
       label: 'GST on services (commission + handling)',
-      note: 'Intra-state if seller GSTIN starts with the company state code; otherwise inter-state.',
-      formula: `Intra:  CGST = round( (Commission + Handling) × ${pill('Service GST/2', '(' + num('gst_service','0') + '/2)')} / 100 ),    SGST = same as CGST<br>
-                Inter:  IGST = round( (Commission + Handling) × ${pill('Service GST', num('gst_service','0'))} / 100 )`,
+      note: 'Split into three cases by the seller\'s CR / GSTIN field. The CR-prefix rule wins over GSTIN state when both are present.',
+      formula: `<b>1) CR-tagged seller</b> &nbsp;<span style="color:var(--text3)">(cr starts with "CR", "CR.", or "CR " — e.g. "CR.001", "CR.32ABCDE…", or just "CR.")</span><br>
+                &nbsp;&nbsp;&nbsp;Always treated as intra-state registered seller:<br>
+                &nbsp;&nbsp;&nbsp;CGST = round( (Commission + Handling) × ${pill('Service GST/2', '(' + num('gst_service','0') + '/2)')} / 100 ),&nbsp;&nbsp; SGST = same as CGST<br>
+                <br>
+                <b>2) Bare GSTIN seller</b> &nbsp;<span style="color:var(--text3)">(cr is a 15-char GSTIN with no CR prefix, e.g. "32ABCDE1234F1Z5")</span><br>
+                &nbsp;&nbsp;&nbsp;State code = first 2 chars of GSTIN.&nbsp;&nbsp;
+                Company state = from <code>${pill('kl_gstin', cfg.kl_gstin || '—')}</code> /
+                <code>${pill('tn_gstin', cfg.tn_gstin || '—')}</code> based on
+                <code>${pill('business_state', cfg.business_state || '—')}</code>.<br>
+                &nbsp;&nbsp;&nbsp;Intra (states match):&nbsp; CGST = SGST = round( (Commission + Handling) × ${pill('Service GST/2', '(' + num('gst_service','0') + '/2)')} / 100 )<br>
+                &nbsp;&nbsp;&nbsp;Inter (states differ):&nbsp; IGST = round( (Commission + Handling) × ${pill('Service GST', num('gst_service','0'))} / 100 )<br>
+                <br>
+                <b>3) Unregistered seller</b> &nbsp;<span style="color:var(--text3)">(cr is blank or anything else)</span><br>
+                &nbsp;&nbsp;&nbsp;No GST is applied — these go on Bills of Supply, not tax invoices.<br>
+                &nbsp;&nbsp;&nbsp;CGST = SGST = IGST = 0`,
     },
     {
       label: 'Payable to seller',
