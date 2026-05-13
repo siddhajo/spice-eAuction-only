@@ -7791,6 +7791,13 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
   let imported = 0, skipped = 0, failed = 0;
   const errors = [];
   let total = 0;
+  // Capture the primary-key id of every row this import inserts so the
+  // Undo button on the History panel can roll back this specific file.
+  // Declared OUTSIDE the parse/import try so it's still in scope for the
+  // audit-log INSERT further down — previously it lived inside the try
+  // and the INSERT threw `insertedIds is not defined`, which meant
+  // successful imports never made it into the history table at all.
+  const insertedIds = [];
   try {
     const wb = XLSX.readFile(req.file.path);
     const ws = wb.Sheets[wb.SheetNames[0]];
@@ -7863,7 +7870,10 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
           }
           values[auctionIdSlot] = aid;
         }
-        if (!dryRun) db.run(insertSql, values);
+        if (!dryRun) {
+          const info = db.run(insertSql, values);
+          if (info && info.lastInsertRowid != null) insertedIds.push(Number(info.lastInsertRowid));
+        }
         imported++;
       } catch (e) {
         failed++;
@@ -7891,28 +7901,121 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
     } catch (_) { /* non-fatal */ }
   }
 
-  // Log this run regardless of outcome.
+  // Log this run regardless of outcome. `inserted_ids` is left blank on
+  // dry-runs (no rows were inserted) so the Undo button stays disabled
+  // for that entry. Log failures to the server console — silent
+  // best-effort hid a class of bugs where the column schema didn't
+  // match the INSERT and every run disappeared from History.
+  let importLogId = null;
   try {
-    db.run(`INSERT INTO import_log
-      (module, filename, dry_run, total, imported, skipped, failed, errors, user_id, username)
-      VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    const info = db.run(`INSERT INTO import_log
+      (module, filename, dry_run, total, imported, skipped, failed, errors, inserted_ids, user_id, username)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       [moduleKey, req.file.originalname || '', dryRun ? 1 : 0,
        total, imported, skipped, failed, JSON.stringify(errors).slice(0, 4000),
+       dryRun ? '' : JSON.stringify(insertedIds),
        (req.user && req.user.id) || null, (req.user && req.user.username) || '']);
-  } catch (_) { /* best-effort */ }
+    if (info && info.lastInsertRowid != null) importLogId = Number(info.lastInsertRowid);
+    console.log('[import-old-data] Logged run id=' + importLogId +
+                ' module=' + moduleKey +
+                ' file="' + (req.file.originalname || '') + '"' +
+                ' imported=' + imported + ' skipped=' + skipped + ' failed=' + failed +
+                ' insertedIds=' + insertedIds.length);
+  } catch (e) {
+    console.error('[import-old-data] Failed to write import_log entry:', e && e.message ? e.message : e);
+  }
 
   fs.unlink(req.file.path, () => {});
-  res.json({ success: true, module: moduleKey, dryRun, total, imported, skipped, failed, errors });
+  res.json({ success: true, module: moduleKey, dryRun, total, imported, skipped, failed, errors, importLogId });
 });
 app.get('/api/import-old-data/history', requireAdmin, (req, res) => {
+  // Force every request to hit the DB — without this, browsers
+  // heuristically cache the JSON for hours and the "View History" panel
+  // stays stuck on yesterday's data even after a fresh import lands.
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
   const rows = getDb().all(
     `SELECT id, module, filename, dry_run, total, imported, skipped, failed,
-            errors, username, created_at
+            errors, inserted_ids, undone_at, username, created_at
        FROM import_log ORDER BY id DESC LIMIT 200`
   );
-  res.json(rows.map(r => ({
-    ...r, dry_run: !!r.dry_run, errors: r.errors ? safeJSON(r.errors) : [],
-  })));
+  res.json(rows.map(r => {
+    const ids = r.inserted_ids ? safeJSON(r.inserted_ids) : [];
+    // Don't bloat the wire — the client only needs the count.
+    return {
+      id: r.id, module: r.module, filename: r.filename,
+      dry_run: !!r.dry_run, total: r.total, imported: r.imported,
+      skipped: r.skipped, failed: r.failed,
+      errors: r.errors ? safeJSON(r.errors) : [],
+      undone_at: r.undone_at || '',
+      // Undo is available iff this wasn't a dry-run, the import actually
+      // inserted rows, and it hasn't already been rolled back.
+      undoable: !r.dry_run && Array.isArray(ids) && ids.length > 0 && !r.undone_at,
+      inserted_count: Array.isArray(ids) ? ids.length : 0,
+      username: r.username, created_at: r.created_at,
+    };
+  }));
+});
+
+// Roll back a specific import: DELETE every row in the target table
+// whose primary key was captured in import_log.inserted_ids, after
+// snapshotting the live DB so the rollback itself is reversible.
+// Marks the log entry as undone with a timestamp so a second click is
+// a no-op and the History panel can disable the button.
+app.post('/api/import-old-data/undo/:id', requireAdmin, (req, res) => {
+  const db = getDb();
+  const logId = Number(req.params.id);
+  if (!Number.isFinite(logId)) return res.status(400).json({ error: 'Invalid import id' });
+  const logRow = db.get('SELECT * FROM import_log WHERE id = ?', [logId]);
+  if (!logRow) return res.status(404).json({ error: 'Import not found' });
+  if (logRow.undone_at) return res.status(400).json({ error: 'This import has already been undone at ' + logRow.undone_at });
+  if (logRow.dry_run)   return res.status(400).json({ error: 'Dry-run imports did not insert any rows — nothing to undo' });
+
+  const def = IMPORT_MODULES[logRow.module];
+  if (!def) return res.status(400).json({ error: 'Unknown module on this import — cannot resolve target table' });
+
+  let ids = [];
+  try { ids = JSON.parse(logRow.inserted_ids || '[]'); } catch (_) {}
+  if (!Array.isArray(ids) || !ids.length) {
+    return res.status(400).json({
+      error: 'This import did not record its inserted row IDs (was it run before per-import Undo was added?). To clear it, use the Backup tab → Delete All for ' + def.table + '.',
+    });
+  }
+
+  // Snapshot before we delete — uses the same helper the Delete All
+  // routes use, so an Undo misclick is recoverable via Restore.
+  let backupPath = '';
+  try { backupPath = _snapshotBackupBeforeDelete('undo-import-' + logRow.module + '-' + logId); }
+  catch (e) {
+    return res.status(500).json({ error: 'Backup snapshot failed; refusing to undo: ' + (e.message || e) });
+  }
+
+  // Bulk-delete by id. SQLite limits parameter count per statement
+  // (default 999), so chunk for very large imports.
+  let deleted = 0;
+  const CHUNK = 500;
+  try {
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const slice = ids.slice(i, i + CHUNK).filter(n => Number.isFinite(Number(n)));
+      if (!slice.length) continue;
+      const placeholders = slice.map(() => '?').join(',');
+      const info = db.run(`DELETE FROM ${def.table} WHERE id IN (${placeholders})`, slice);
+      if (info && typeof info.changes === 'number') deleted += info.changes;
+    }
+    db.run('UPDATE import_log SET undone_at = datetime("now","localtime") WHERE id = ?', [logId]);
+  } catch (e) {
+    return res.status(500).json({ error: 'Undo failed mid-way; partial deletions may have occurred. Backup at: ' + backupPath + ' — ' + (e.message || e) });
+  }
+
+  res.json({
+    success: true,
+    importLogId: logId,
+    module: logRow.module,
+    table: def.table,
+    requested: ids.length,
+    deleted,
+    backupPath,
+  });
 });
 function safeJSON(s){ try { return JSON.parse(s); } catch(_) { return []; } }
 

@@ -431,7 +431,13 @@ async function initDb() {
     errors TEXT DEFAULT '',
     user_id INTEGER,
     username TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    -- JSON array of target-table primary key IDs created by this import.
+    -- Drives the "Undo this import" action on the Import Old Data screen:
+    -- to roll back, we DELETE rows in the target table whose id is in
+    -- this list, snapshot the DB first, then stamp undone_at.
+    inserted_ids TEXT DEFAULT '',
+    undone_at TEXT DEFAULT ''
   )`);
 
   // Records each lot-range reassignment so the tile UI can flag
@@ -498,6 +504,11 @@ async function initDb() {
 
   // ── MIGRATIONS (for existing databases created before schema changes) ──
   const migrations = [
+    // Per-import undo: existing DBs need the two new columns added so
+    // the Undo button on the History panel can find inserted rows and
+    // mark the entry as rolled back.
+    "ALTER TABLE import_log ADD COLUMN inserted_ids TEXT DEFAULT ''",
+    "ALTER TABLE import_log ADD COLUMN undone_at TEXT DEFAULT ''",
     'ALTER TABLE purchases ADD COLUMN auction_id INTEGER',
     'ALTER TABLE invoices ADD COLUMN auction_id INTEGER',
     'ALTER TABLE bills ADD COLUMN auction_id INTEGER',

@@ -15893,7 +15893,10 @@ async function impRun(){
       h += '</ul></div>';
     }
     result.innerHTML = h;
-    if (!dryRun) impLoadHistory();
+    // Always refresh history — dry-runs are logged too, and the
+    // operator usually wants to confirm "did my last run land in the
+    // log?" without an extra click.
+    impLoadHistory();
   } catch (e) {
     result.innerHTML = '<span style="color:#c00">Error: '+escAttr(e.message||String(e))+'</span>';
   }
@@ -15902,11 +15905,19 @@ async function impLoadHistory(){
   const box = document.getElementById('imp-history');
   box.innerHTML = 'Loading…';
   try {
-    const r = await fetch(B + '/api/import-old-data/history', {
-      headers: { 'Authorization': 'Bearer ' + T }
+    // Cache-bust + no-store so a stale 304 from any intermediary can't
+    // hide a freshly-logged import. The user explicitly clicked
+    // "View History" or just ran an import — they want the truth.
+    const r = await fetch(B + '/api/import-old-data/history?_=' + Date.now(), {
+      headers: { 'Authorization': 'Bearer ' + T },
+      cache: 'no-store',
     });
     const rows = await r.json();
-    if (!Array.isArray(rows) || !rows.length) { box.innerHTML = '<i>No imports yet.</i>'; return; }
+    const stamp = new Date().toLocaleTimeString();
+    if (!Array.isArray(rows) || !rows.length) {
+      box.innerHTML = '<i>No imports yet.</i> <span style="color:#999;font-size:11px">(loaded at '+stamp+')</span>';
+      return;
+    }
     let h = '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#f4f4f4">'+
       '<th style="text-align:left;padding:4px 6px;border:1px solid #ddd">When</th>'+
       '<th style="text-align:left;padding:4px 6px;border:1px solid #ddd">User</th>'+
@@ -15917,9 +15928,34 @@ async function impLoadHistory(){
       '<th style="text-align:right;padding:4px 6px;border:1px solid #ddd">Skipped</th>'+
       '<th style="text-align:right;padding:4px 6px;border:1px solid #ddd">Failed</th>'+
       '<th style="text-align:center;padding:4px 6px;border:1px solid #ddd">Dry?</th>'+
+      '<th style="text-align:center;padding:4px 6px;border:1px solid #ddd">Action</th>'+
       '</tr></thead><tbody>';
     rows.forEach(r => {
-      h += '<tr>'+
+      // Action cell — concrete reason in every non-Undo case so the
+      // operator can tell WHY a row isn't undoable:
+      //   • undoable                         → red "Undo" button
+      //   • already undone                   → muted "Undone" label
+      //   • dry-run                          → "Dry-run"
+      //   • imported but no IDs recorded     → "Pre-update" (old import
+      //                                         that ran before the
+      //                                         per-import-undo feature
+      //                                         tracked rowids)
+      //   • zero rows inserted               → "—"
+      let action;
+      if (r.undone_at) {
+        action = '<span style="color:#888;font-style:italic" title="Rolled back at '+escAttr(r.undone_at)+'">↶ Undone</span>';
+      } else if (r.undoable) {
+        action = '<button class="btn" style="height:24px;padding:0 10px;font-size:11px;font-weight:600;background:#7F1D1D;color:#fff;border-color:#7F1D1D" '+
+          'onclick="impUndo('+r.id+', '+JSON.stringify(r.filename||'').replace(/"/g,'&quot;')+', '+JSON.stringify(r.module||'').replace(/"/g,'&quot;')+', '+(r.inserted_count||0)+')" '+
+          'title="Delete the '+(r.inserted_count||0)+' row(s) this import created">↶ Undo ('+(r.inserted_count||0)+')</button>';
+      } else if (r.dry_run) {
+        action = '<span style="color:#bbb" title="Dry-run inserts no rows">Dry-run</span>';
+      } else if ((r.imported || 0) > 0 && (r.inserted_count || 0) === 0) {
+        action = '<span style="color:#a16207;cursor:help" title="This import ran before per-import Undo was added. Row IDs weren\'t recorded. To clear it, use Backup → Delete All for the target table.">Pre-update</span>';
+      } else {
+        action = '<span style="color:#bbb" title="No rows were inserted by this run">—</span>';
+      }
+      h += '<tr'+(r.undone_at?' style="opacity:.55"':'')+'>'+
         '<td style="padding:3px 6px;border:1px solid #eee;white-space:nowrap">'+escAttr(r.created_at||'')+'</td>'+
         '<td style="padding:3px 6px;border:1px solid #eee">'+escAttr(r.username||'')+'</td>'+
         '<td style="padding:3px 6px;border:1px solid #eee">'+escAttr(r.module||'')+'</td>'+
@@ -15929,12 +15965,44 @@ async function impLoadHistory(){
         '<td style="padding:3px 6px;border:1px solid #eee;text-align:right;color:#888">'+(r.skipped||0)+'</td>'+
         '<td style="padding:3px 6px;border:1px solid #eee;text-align:right;color:'+(r.failed?'#c00':'#888')+'">'+(r.failed||0)+'</td>'+
         '<td style="padding:3px 6px;border:1px solid #eee;text-align:center">'+(r.dry_run?'✓':'')+'</td>'+
+        '<td style="padding:3px 6px;border:1px solid #eee;text-align:center;white-space:nowrap">'+action+'</td>'+
         '</tr>';
     });
     h += '</tbody></table>';
+    h = '<div style="font-size:11px;color:#999;margin-bottom:6px">Showing '+rows.length+' most recent imports — loaded at '+stamp+'</div>' + h;
     box.innerHTML = h;
   } catch (e) {
     box.innerHTML = '<span style="color:#c00">Error: '+escAttr(e.message||String(e))+'</span>';
+  }
+}
+
+// Undo a single import — wipes the rows that import inserted from the
+// target table. Double-confirms with concrete numbers + the filename,
+// then asks for typed DELETE. Server snapshots the DB before deleting,
+// so the rollback itself is recoverable via the Backup tab → Restore.
+async function impUndo(logId, filename, moduleKey, insertedCount){
+  const labelFile = filename || 'this import';
+  const msg = 'Undo import "' + labelFile + '"?\n\n' +
+    'The server will snapshot the database first, then DELETE the ' +
+    insertedCount + ' row(s) inserted by this run from the target table of "' + moduleKey + '".\n\n' +
+    'Rows inserted by OTHER imports stay untouched. The snapshot lets you Restore if needed.\n\n' +
+    'Continue?';
+  if (!confirm(msg)) return;
+  const typed = prompt('Type DELETE (in capitals) to confirm:');
+  if (typed !== 'DELETE') { alert('Cancelled.'); return; }
+  try {
+    const r = await fetch(B + '/api/import-old-data/undo/' + encodeURIComponent(logId), {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + T }
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Undo failed');
+    const bp = d.backupPath ? '\n\nSnapshot: ' + d.backupPath : '';
+    alert('Undone — deleted ' + (d.deleted || 0) + ' of ' + (d.requested || 0) + ' row(s) from ' + (d.table || moduleKey) + '.' + bp);
+    impLoadHistory();
+  } catch (e) {
+    if (typeof showError === 'function') showError(e);
+    else alert('Error: ' + (e.message || String(e)));
   }
 }
 function escAttr(s){ return String(s==null?'':s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
