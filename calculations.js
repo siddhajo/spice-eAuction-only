@@ -51,37 +51,53 @@ function gstinStateCode(cr) {
 /**
  * Calculate purchase amounts for a lot (after trade).
  *
- * e-Auction only build:
- *   refund     = round( sb_refund (kg) × price )
- *   commission = round( PurAmt × commission% / 100 )
- *   sertax     = round( commission × hpc%        / 100 )
- *   pqty       = qty                  (no sample-add-back)
- *   prate      = round(price)
- *   puramt     = pqty × prate
- *   balance    = puramt + refund − commission − sertax − GST-on-services
- *   GST        = on (commission + sertax) using gst_service rate
+ * e-Auction only build — canonical inputs:
+ *   Amount     = lot.amount (qty × price, already stored on the lot)
+ *   Refund     = round( sb_refund (kg) × price )
+ *   Commission = round( ( Amount + Refund ) × commission% / 100 )
+ *   Handling   = round( Commission × hpc% / 100 )
+ *   GST on services = (Commission + Handling) × gst_service
+ *                     split intra/inter per seller GSTIN state
+ *   Payable    = Amount + Refund − Commission − Handling − (CGST + SGST + IGST)
+ *
+ * The legacy split into pqty/prate/puramt is no longer used — every
+ * formula now reads `lot.amount` directly. The pqty/prate/puramt
+ * columns ARE still written (= qty / price / amount) so older SELECTs
+ * and exports that referenced them keep working, but they're just
+ * aliases now and don't introduce any rounding of their own.
  */
 function calculateLot(lot, cfg) {
   const result = { ...lot };
 
-  // Base purchase amount
-  result.pqty   = lot.qty || 0;
-  result.prate  = Math.round(lot.price || 0);
-  result.puramt = Math.round(result.pqty * result.prate * 100) / 100;
+  // ── Amount: qty × price, as stored on the lot ───────────
+  // We use lot.amount directly (rather than recomputing qty × price)
+  // because the lot's amount column is the canonical figure shown
+  // throughout the app — commission/payable/discount should match
+  // whatever the operator sees in the Lots table, not a re-rounded
+  // variant of it. Falls back to qty × price when amount is missing
+  // (e.g. fresh import before Calculate was run).
+  const amount = Number(lot.amount) || (Number(lot.qty) || 0) * (Number(lot.price) || 0);
+
+  // Legacy aliases — kept identical to qty / price / amount so any
+  // downstream code that still reads pqty/prate/puramt continues to
+  // resolve to the same numbers without their own rounding step.
+  result.pqty   = Number(lot.qty)   || 0;
+  result.prate  = Number(lot.price) || 0;
+  result.puramt = amount;
 
   // ── Sample-bag refund: SB Sample Refund (kg) × price ──────
   // 2-decimal precision: 2664 × 2.85 = 7,592.40 (not 7,592.00).
   const sbRefundKg = Number(cfg.sb_refund) || 0;
-  result.refund    = Math.round(sbRefundKg * (lot.price || 0) * 100) / 100;
+  result.refund    = Math.round(sbRefundKg * (Number(lot.price) || 0) * 100) / 100;
 
   // ── Commission + Handling ─────────────────────────────────
-  // Formula 5A:  Commission = ( Amount + Refund ) × 1/100
+  // Formula:  Commission = ( Amount + Refund ) × 1/100
   //   Commission rate defaults to 1% — `cfg.commission` is honoured as
   //   an override so existing installs can run a different rate, but
   //   the canonical formula is 1%. 2-decimal precision throughout.
   const commissionPct = Number(cfg.commission) > 0 ? Number(cfg.commission) : 1;
   const hpcPct        = Number(cfg.hpc)        || 0;
-  result.com    = Math.round((result.puramt + result.refund) * commissionPct / 100 * 100) / 100;
+  result.com    = Math.round((amount + result.refund) * commissionPct / 100 * 100) / 100;
   result.sertax = Math.round(result.com * hpcPct / 100 * 100) / 100;
 
   // Mirror dual-storage columns for legacy SELECTs that still read isp_*/asp_*.
@@ -143,29 +159,29 @@ function calculateLot(lot, cfg) {
   // advance = total tax on services (informational column)
   result.advance = result.cgst + result.sgst + result.igst;
 
-  // ── Payable (Formula 5B) ───────────────────────────────────
+  // ── Payable ──────────────────────────────────────────────
   //   Payable = Amount + Refund − Commission − Handling − (CGST+SGST+IGST)
   // `balance` is kept as the legacy alias so existing queries don't
   // break, and `payable` is exposed as the canonical key for new code.
   const totalDeductions = result.com + result.sertax + result.cgst + result.sgst + result.igst;
-  result.payable = Math.round((result.puramt + result.refund - totalDeductions) * 100) / 100;
+  result.payable = Math.round((amount + result.refund - totalDeductions) * 100) / 100;
   result.balance = result.payable;
 
-  // ── Discount (Formula 5C) ──────────────────────────────────
+  // ── Discount ─────────────────────────────────────────────
   //   Discount = round( Payable / 1000 × 14 × 0.65 )
   // Used by Spice Board export / reports as a derived field.
   result.discount = Math.round((result.payable / 1000) * 14 * 0.65);
 
-  // ── DN Amount (Formula 5D) ─────────────────────────────────
+  // ── DN Amount ────────────────────────────────────────────
   //   DN Amount = ( (Amount + Refund) × 1/100 ) + ( Commission × 0/100 )
   // Per spec, the second term contributes 0 — DN amount equals 1% of
   // (Amount + Refund). Stored as `dn_amount` so the Debit Note flow
   // can pick it up without recomputing.
-  result.dn_amount = Math.round(((result.puramt + result.refund) * 1 / 100
+  result.dn_amount = Math.round(((amount + result.refund) * 1 / 100
                                 + result.com * 0 / 100) * 100) / 100;
 
-  // Bill amount (for agriculturist bills) — always equals PurAmt
-  result.bilamt = result.puramt;
+  // Bill amount (for agriculturist bills) — equals Amount.
+  result.bilamt = amount;
 
   return result;
 }

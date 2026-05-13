@@ -6927,19 +6927,12 @@ async function loadFormulas(){
       </div>`;
 
   // ── Lot calculation ────────────────────────────────────────
+  // "Amount" throughout these formulas refers to the lot's stored
+  // amount column (qty × price). The legacy P_Qty / P_Rate / PurAmt
+  // breakdown was removed — calculation now reads `lot.amount`
+  // directly so the figures here match what the operator sees in the
+  // Lots table.
   html += card('Lot calculation (e-Auction)', [
-    {
-      label: 'Purchase Quantity (P_Qty)',
-      formula: `P_Qty = Lot Qty`,
-    },
-    {
-      label: 'Purchase Rate (P_Rate)',
-      formula: `P_Rate = round( Lot Price )`,
-    },
-    {
-      label: 'Purchase Amount (PurAmt)',
-      formula: `PurAmt = P_Qty × P_Rate`,
-    },
     {
       label: 'Sample Bag Refund (₹)',
       note: 'SB sample-bag refund credited back to the seller.',
@@ -6947,7 +6940,7 @@ async function loadFormulas(){
     },
     {
       label: 'Commission (₹)',
-      formula: `Commission = ( PurAmt + Refund ) × ${pill('Commission %', num('commission', '0'))} / 100  &nbsp; <span style="color:var(--text3)">(2 decimals)</span>`,
+      formula: `Commission = ( Amount + Refund ) × 1 / 100  &nbsp; <span style="color:var(--text3)">(2 decimals)</span>`,
     },
     {
       label: 'Handling (₹)',
@@ -6974,7 +6967,7 @@ async function loadFormulas(){
     },
     {
       label: 'Payable to seller',
-      formula: `Payable = PurAmt + Refund − Commission − Handling − ( CGST + SGST + IGST )`,
+      formula: `Payable = Amount + Refund − Commission − Handling − ( CGST + SGST + IGST )`,
     },
   ]);
 
@@ -6982,13 +6975,13 @@ async function loadFormulas(){
   html += card('Discount on Purchase (Debit Note)', [
     {
       label: 'Discount amount',
-      note: 'Quick-pay discount tied to settlement window. Rounded to nearest rupee.',
-      formula: `Discount = round( PurAmt / 1000 × ${pill('Discount Days', num('discount_days', '0'))} × ${pill('Discount %', num('discount_pct', '0'))} )`,
+      note: 'Derived from Payable, rounded to the nearest rupee.',
+      formula: `Discount = round( Payable / 1000 × 14 × 0.65 )`,
     },
     {
       label: 'Debit Note Amount',
-      note: 'In this build, the DN Amount column shows commission + handling instead of the discount above.',
-      formula: `DN Amount = ( ( PurAmt + Refund ) × ${pill('Commission %', num('commission', '0'))} / 100 ) + ( Commission × ${pill('Handling %', num('hpc', '0'))} / 100 )  &nbsp; <span style="color:var(--text3)">(2 decimals)</span>`,
+      note: 'DN Amount equals 1% of (Amount + Refund). The second term contributes 0 in this build.',
+      formula: `DN Amount = ( ( Amount + Refund ) × 1 / 100 ) + ( Commission × 0 / 100 )  &nbsp; <span style="color:var(--text3)">(2 decimals)</span>`,
     },
   ]);
 
@@ -7068,10 +7061,9 @@ async function loadFormulas(){
   // ── Payment summary ─────────────────────────────────────────
   html += card('Payment summary (per seller, per auction)', [
     {
-      label: 'Total Amount, Total Purchase, Total Discount',
+      label: 'Total Amount, Total Discount',
       note: 'Sum across all lots a seller sold in the auction.',
       formula: `Total Amount   = Σ ( Lot Amount )<br>
-                Total PurAmt   = Σ ( PurAmt )<br>
                 Total Discount = Σ ( Discount )`,
     },
     {
@@ -7081,7 +7073,7 @@ async function loadFormulas(){
     },
     {
       label: 'Payable',
-      formula: `Payable = Total PurAmt − Total Discount − GST 18%`,
+      formula: `Payable = Total Amount − Total Discount − GST 18%`,
     },
   ]);
 
