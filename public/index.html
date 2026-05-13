@@ -2624,6 +2624,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </div>
         <div id="auction-import-status" style="display:none;padding:8px 14px;border-radius:6px;font-size:12px;margin-bottom:10px"></div>
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Auction No</th><th>Date</th><th>Type</th><th>Lots</th><th>Actions</th></tr></thead><tbody id="auctions-list"></tbody></table></div>
+        <div id="auctions-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
       </div>
     </div>
 
@@ -3130,6 +3131,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </div>
 
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Sale</th><th>Inv#</th><th>Lorry</th><th>Distance (km)</th><th>Code</th><th>Auction Name</th><th>Qty</th><th>Amount</th><th>Insurance</th><th>Transport</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th>Actions</th></tr></thead><tbody id="invoices-list"></tbody></table></div>
+        <div id="invoices-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
       </div>
     </div>
 
@@ -3201,6 +3203,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </div>
 
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Inv#</th><th>Name</th><th>Qty</th><th>Amount</th><th>CGST</th><th>SGST</th><th>IGST</th><th>TDS</th><th>Total</th><th>Actions</th></tr></thead><tbody id="purchases-list"></tbody></table></div>
+        <div id="purchases-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
       </div>
     </div>
 
@@ -3477,6 +3480,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </div>
 
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Bill#</th><th>Date</th><th>Name</th><th>Place</th><th>Qty</th><th>Cost</th><th>Net</th><th>Actions</th></tr></thead><tbody id="bills-list"></tbody></table></div>
+        <div id="bills-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
       </div>
     </div>
 
@@ -3506,6 +3510,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <button id="dn-bulk-print" class="btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedDebitNotes()" title="Print all ticked debit notes as one combined PDF">🖨 Print Selected <span id="dn-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           <button id="dn-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotes()" title="Delete all ticked debit notes">🗑 Delete Selected</button>        </div>
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Note#</th><th>Date</th><th>Auction</th><th>Name</th><th>Amount</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th>Actions</th></tr></thead><tbody id="debit-list"></tbody></table></div>
+        <div id="debit-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
       </div>
     </div>
 
@@ -11416,7 +11421,24 @@ async function importBuyers(e){
   }catch(err){status.style.background='var(--red-bg)';status.style.color='var(--red)';status.textContent='Error: '+err.message}}
 
 // ── Auctions ──────────────────────────────────────────────
-async function loadAuctions(){const d=await j('/api/auctions');
+const _auctionsPager = { page: 1, pageSize: 50, total: 0, totalPages: 0, fetchToken: 0 };
+function gotoAuctionsPage(p){
+  _auctionsPager.page = Math.max(1, Math.min(_auctionsPager.totalPages || 1, p|0));
+  loadAuctions({ keepPage: true });
+}
+async function loadAuctions(opts){
+  // Filter-change callers (none today, but future-safe) hit this with
+  // no opts and the page resets to 1. Pager clicks pass keepPage:true.
+  if (!(opts && opts.keepPage)) _auctionsPager.page = 1;
+  const token = ++_auctionsPager.fetchToken;
+  const url = '/api/auctions?page=' + _auctionsPager.page + '&pageSize=' + _auctionsPager.pageSize;
+  const raw = await j(url);
+  if (token !== _auctionsPager.fetchToken) return;
+  const d = Array.isArray(raw) ? raw : (raw && raw.rows ? raw.rows : []);
+  const total = Array.isArray(raw) ? d.length : (raw && raw.total != null ? raw.total : d.length);
+  _auctionsPager.total = total;
+  _auctionsPager.totalPages = Math.max(1, Math.ceil(total / _auctionsPager.pageSize));
+  renderPager('auctions-pager', _auctionsPager, gotoAuctionsPage, '');
   DataTable.mount('auctions-list', d, {
     emptyState: { icon: 'auctions', title: "No auctions yet", body: "Create your first auction from the Add Auction button to start entering lots." }, 
     columns: [
@@ -12608,14 +12630,32 @@ async function generateInvoice(){
   }catch(e){showError(e)}
 }
 
-async function loadInvoices(){
+const _invoicesPager = { page: 1, pageSize: 50, total: 0, totalPages: 0, fetchToken: 0 };
+function gotoInvoicesPage(p){
+  _invoicesPager.page = Math.max(1, Math.min(_invoicesPager.totalPages || 1, p|0));
+  loadInvoices({ keepPage: true });
+}
+async function loadInvoices(opts){
+  // Reset to page 1 unless a pager click signalled keepPage:true. This
+  // way every filter change (auction, sale) starts a fresh page-1
+  // sequence without needing each onchange callsite to know about it.
+  if (!(opts && opts.keepPage)) _invoicesPager.page = 1;
   const aid=document.getElementById('inv-auction')?.value;
   const sale=(document.getElementById('inv-sale-filter')?.value||'').trim();
   const params=[];
   if(aid)params.push('auction_id='+encodeURIComponent(aid));
   if(sale)params.push('sale='+encodeURIComponent(sale));
-  const url='/api/invoices'+(params.length?('?'+params.join('&')):'');
-  const d=await j(url);
+  params.push('page=' + _invoicesPager.page);
+  params.push('pageSize=' + _invoicesPager.pageSize);
+  const url='/api/invoices?'+params.join('&');
+  const token = ++_invoicesPager.fetchToken;
+  const raw = await j(url);
+  if (token !== _invoicesPager.fetchToken) return;
+  const d = Array.isArray(raw) ? raw : (raw && raw.rows ? raw.rows : []);
+  const total = Array.isArray(raw) ? d.length : (raw && raw.total != null ? raw.total : d.length);
+  _invoicesPager.total = total;
+  _invoicesPager.totalPages = Math.max(1, Math.ceil(total / _invoicesPager.pageSize));
+  renderPager('invoices-pager', _invoicesPager, gotoInvoicesPage, '');
   // TDS column visibility — driven by flag_tds_sales / flag_wgst. When
   // either is on, the invoice carries a stamped tcs/tds value from
   // buildSalesInvoice() and we surface it as its own column. When both
@@ -12625,7 +12665,7 @@ async function loadInvoices(){
                || ['true','1','yes','on'].includes(String((_CCFG||{}).flag_wgst     ||'').toLowerCase());
   // Invoice count badge
   const badge=document.getElementById('inv-count-badge');
-  const arr = Array.isArray(d) ? d : [];
+  const arr = d;
   if(badge){
     const totalValue = arr.reduce((a,i)=>a+(Number(i.tot)||0),0);
     badge.style.display = arr.length>0 ? 'inline-block' : 'none';
@@ -13351,15 +13391,30 @@ async function generatePurchase(){
     loadPurchases();
   }catch(e){showError(e)}}
 
-async function loadPurchases(){
+const _purchasesPager = { page: 1, pageSize: 50, total: 0, totalPages: 0, fetchToken: 0 };
+function gotoPurchasesPage(p){
+  _purchasesPager.page = Math.max(1, Math.min(_purchasesPager.totalPages || 1, p|0));
+  loadPurchases({ keepPage: true });
+}
+async function loadPurchases(opts){
+  if (!(opts && opts.keepPage)) _purchasesPager.page = 1;
   const aid=document.getElementById('pur-auction')?.value;
   const sale=(document.getElementById('pur-sale-filter')?.value||'').trim();
   const params=[];
   if(aid)params.push('auction_id='+encodeURIComponent(aid));
   if(sale)params.push('sale='+encodeURIComponent(sale));
-  const url='/api/purchases'+(params.length?('?'+params.join('&')):'');
-  const d=await j(url);
-  const arr = Array.isArray(d) ? d : [];
+  params.push('page=' + _purchasesPager.page);
+  params.push('pageSize=' + _purchasesPager.pageSize);
+  const url='/api/purchases?'+params.join('&');
+  const token = ++_purchasesPager.fetchToken;
+  const raw=await j(url);
+  if (token !== _purchasesPager.fetchToken) return;
+  const d = Array.isArray(raw) ? raw : (raw && raw.rows ? raw.rows : []);
+  const total = Array.isArray(raw) ? d.length : (raw && raw.total != null ? raw.total : d.length);
+  _purchasesPager.total = total;
+  _purchasesPager.totalPages = Math.max(1, Math.ceil(total / _purchasesPager.pageSize));
+  renderPager('purchases-pager', _purchasesPager, gotoPurchasesPage, '');
+  const arr = d;
 
   // Update KPI strip (same pattern as loadInvoices)
   const kpiStrip = document.getElementById('pur-kpis');
@@ -14176,7 +14231,13 @@ function downloadCommissionBillF2(format){
   window.open(url,'_blank');
 }
 
-async function loadBills(){
+const _billsPager = { page: 1, pageSize: 50, total: 0, totalPages: 0, fetchToken: 0 };
+function gotoBillsPage(p){
+  _billsPager.page = Math.max(1, Math.min(_billsPager.totalPages || 1, p|0));
+  loadBills({ keepPage: true });
+}
+async function loadBills(opts){
+  if (!(opts && opts.keepPage)) _billsPager.page = 1;
   // Branch dropdown is populated from Settings → Branches (br1..br9) so
   // the user can filter by ANY configured branch — even ones with no
   // bills yet. Earlier code populated only from the result set, which
@@ -14187,9 +14248,18 @@ async function loadBills(){
   const params=[];
   if(aid)params.push('auction_id='+encodeURIComponent(aid));
   if(br) params.push('branch='+encodeURIComponent(br));
-  const url='/api/bills'+(params.length?('?'+params.join('&')):'');
-  const d=await j(url);
-  const arr = Array.isArray(d) ? d : [];
+  params.push('page=' + _billsPager.page);
+  params.push('pageSize=' + _billsPager.pageSize);
+  const url='/api/bills?'+params.join('&');
+  const token = ++_billsPager.fetchToken;
+  const raw=await j(url);
+  if (token !== _billsPager.fetchToken) return;
+  const d = Array.isArray(raw) ? raw : (raw && raw.rows ? raw.rows : []);
+  const total = Array.isArray(raw) ? d.length : (raw && raw.total != null ? raw.total : d.length);
+  _billsPager.total = total;
+  _billsPager.totalPages = Math.max(1, Math.ceil(total / _billsPager.pageSize));
+  renderPager('bills-pager', _billsPager, gotoBillsPage, '');
+  const arr = d;
 
   // Update KPI strip
   const kpiStrip = document.getElementById('bill-kpis');
@@ -14293,18 +14363,35 @@ function loadDnAuctions() {
 // loadDebitNotes — list view. Filters by the dn-auction dropdown's
 // selected trade ID (resolved to its `ano`) so users only see DNs for
 // the trade they're currently working on. With no selection, shows all.
-async function loadDebitNotes(){
+const _debitPager = { page: 1, pageSize: 50, total: 0, totalPages: 0, fetchToken: 0 };
+function gotoDebitNotesPage(p){
+  _debitPager.page = Math.max(1, Math.min(_debitPager.totalPages || 1, p|0));
+  loadDebitNotes({ keepPage: true });
+}
+async function loadDebitNotes(opts){
+  if (!(opts && opts.keepPage)) _debitPager.page = 1;
   const aid = document.getElementById('dn-auction')?.value || '';
   // Resolve trade id → ano. The DN table stores `ano` (the trade
-  // number string) rather than the auction id FK, so filtering happens
-  // client-side after fetch. Cheap because DN counts are small.
+  // number string) rather than the auction id FK, so we pass `ano` to
+  // the server endpoint instead of `auction_id`.
   let filterAno = '';
   if (aid) {
     const opt = document.querySelector(`#dn-auction option[value="${aid}"]`);
     if (opt) filterAno = (opt.textContent || '').split('—')[0].trim();
   }
-  const all = await j('/api/debit-notes');
-  const d = filterAno ? all.filter(n => String(n.ano) === filterAno) : all;
+  const params = [];
+  if (filterAno) params.push('ano=' + encodeURIComponent(filterAno));
+  params.push('page=' + _debitPager.page);
+  params.push('pageSize=' + _debitPager.pageSize);
+  const url = '/api/debit-notes?' + params.join('&');
+  const token = ++_debitPager.fetchToken;
+  const raw = await j(url);
+  if (token !== _debitPager.fetchToken) return;
+  const d = Array.isArray(raw) ? raw : (raw && raw.rows ? raw.rows : []);
+  const total = Array.isArray(raw) ? d.length : (raw && raw.total != null ? raw.total : d.length);
+  _debitPager.total = total;
+  _debitPager.totalPages = Math.max(1, Math.ceil(total / _debitPager.pageSize));
+  renderPager('debit-pager', _debitPager, gotoDebitNotesPage, '');
   DataTable.mount('debit-list', d, {
     columns: [
       { key:'_select', label:'',

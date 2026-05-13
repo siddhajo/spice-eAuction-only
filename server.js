@@ -1749,8 +1749,35 @@ app.post('/api/price-list/map-download', requireView, upload.single('file'), asy
 // AUCTIONS
 // ══════════════════════════════════════════════════════════════
 app.get('/api/auctions', requireViewOrLotEntry, (req, res) => {
-  const rows = getDb().all('SELECT *, (SELECT COUNT(*) FROM lots WHERE auction_id=auctions.id) as lot_count FROM auctions ORDER BY date DESC, ano DESC LIMIT 100');
-  res.json(withFmtDate(rows));
+  // Pagination contract identical to /api/traders + /api/buyers:
+  //   • `?page=` + `?pageSize=` → { rows, total, page, pageSize }
+  //   • no params              → bare array (legacy, top 100 by date)
+  // Search is keyword (matches ano / crop_type / state). Filters can
+  // be added here later without breaking existing callers because the
+  // bare-array branch stays in place.
+  const db = getDb();
+  const search   = String(req.query.search || '').trim();
+  const page     = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 50));
+  const offset   = (page - 1) * pageSize;
+  const wantPaged = req.query.page != null || req.query.pageSize != null;
+
+  let where = '', params = [];
+  if (search) {
+    const like = `%${search}%`;
+    where = 'WHERE CAST(ano AS TEXT) LIKE ? OR crop_type LIKE ? OR state LIKE ?';
+    params = [like, like, like];
+  }
+  const sel = `SELECT *, (SELECT COUNT(*) FROM lots WHERE auction_id=auctions.id) as lot_count
+                 FROM auctions ${where}
+                ORDER BY date DESC, ano DESC`;
+
+  if (wantPaged) {
+    const total = db.get(`SELECT COUNT(*) AS c FROM auctions ${where}`, params).c;
+    const rows = db.all(sel + ' LIMIT ? OFFSET ?', [...params, pageSize, offset]);
+    return res.json({ rows: withFmtDate(rows), total, page, pageSize });
+  }
+  res.json(withFmtDate(db.all(sel + ' LIMIT 100', params)));
 });
 app.post('/api/auctions', requireAuctionWrite, (req, res) => {
   const { ano, date, crop_type, state } = req.body;
@@ -2733,7 +2760,7 @@ app.get('/api/lots/validate/:auctionId', requireViewOrLotEntry, (req, res) => {
 // INVOICES — Sales (GSTIN.PRG / KGSTIN.PRG)
 // ══════════════════════════════════════════════════════════════
 app.get('/api/invoices', requireView, (req, res) => {
-  const { ano, auction_id, from, to, sale } = req.query;
+  const { ano, auction_id, from, to, sale, search } = req.query;
   const db = getDb();
   const cfg = getSettingsFlat(db);
   // Filter list by active business context: when state=KERALA show only
@@ -2741,16 +2768,32 @@ app.get('/api/invoices', requireView, (req, res) => {
   // This avoids the "two rows per buyer" confusion in users who run the
   // ASP→ISP flow on the same auction.
   const businessState = String(cfg.business_state || 'TAMIL NADU').toUpperCase();
-  let q = 'SELECT * FROM invoices WHERE 1=1'; const p = [];
-  if (auction_id) { q += ' AND auction_id = ?'; p.push(parseInt(auction_id)); }
-  if (ano) { q += ' AND ano = ?'; p.push(ano); }
-  if (from && to) { q += ' AND date BETWEEN ? AND ?'; p.push(from, to); }
+  let where = 'WHERE 1=1'; const p = [];
+  if (auction_id) { where += ' AND auction_id = ?'; p.push(parseInt(auction_id)); }
+  if (ano) { where += ' AND ano = ?'; p.push(ano); }
+  if (from && to) { where += ' AND date BETWEEN ? AND ?'; p.push(from, to); }
   // Sale-type filter (L / I / E) — added to the Sales Invoice list toolbar.
   const saleNorm = String(sale || '').trim().toUpperCase();
   if (saleNorm === 'L' || saleNorm === 'I' || saleNorm === 'E') {
-    q += ' AND UPPER(TRIM(COALESCE(sale,""))) = ?';
+    where += ' AND UPPER(TRIM(COALESCE(sale,""))) = ?';
     p.push(saleNorm);
   }
+  // Optional keyword search across the most-useful invoice columns.
+  // Operators wanted "find any invoice for buyer X regardless of trade",
+  // which the per-auction filters above can't express.
+  const q = String(search || '').trim();
+  if (q) {
+    const like = `%${q}%`;
+    where += ' AND (CAST(invo AS TEXT) LIKE ? OR buyer LIKE ? OR buyer1 LIKE ? OR gstin LIKE ? OR place LIKE ? OR CAST(ano AS TEXT) LIKE ?)';
+    p.push(like, like, like, like, like, like);
+  }
+
+  // Pagination — same contract as traders / buyers / auctions.
+  const page     = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 50));
+  const offset   = (page - 1) * pageSize;
+  const wantPaged = req.query.page != null || req.query.pageSize != null;
+
   // e-Auction-only build: every invoice belongs to the single company
   // (ISP), regardless of what's stamped in the `state` column. The
   // original Spice Config app used `state` to split rows between ISP
@@ -2758,8 +2801,13 @@ app.get('/api/invoices', requireView, (req, res) => {
   // state filter here; anything for the requested auction_id ships
   // back. (`businessState` is left unused but kept above so future
   // callers can reintroduce a filter without restructuring.)
-  q += ' ORDER BY date DESC, invo DESC LIMIT 500';
-  const rows = db.all(q, p);
+  const baseQuery = 'SELECT * FROM invoices ' + where + ' ORDER BY date DESC, invo DESC';
+  const total = wantPaged
+    ? db.get('SELECT COUNT(*) AS c FROM invoices ' + where, p).c
+    : null;
+  const rows = wantPaged
+    ? db.all(baseQuery + ' LIMIT ? OFFSET ?', [...p, pageSize, offset])
+    : db.all(baseQuery + ' LIMIT 500', p);
   // Hydrate asp_invo: for each invoice, find the ASP invoice number
   // recorded on its lots. Multiple distinct asp_invos are concatenated
   // (rare — usually one ASP invoice maps 1:1 to one ISP invoice for the
@@ -2838,6 +2886,7 @@ app.get('/api/invoices', requireView, (req, res) => {
     // Don't fail the whole endpoint — just leave resolved_distance_km null.
     console.warn('[invoices] resolved distance hydration failed:', e.message);
   }
+  if (wantPaged) return res.json({ rows, total, page, pageSize });
   res.json(rows);
 });
 
@@ -3603,11 +3652,19 @@ app.post('/api/invoices/purchase-pdf-bulk', requireView, async (req, res) => {
 // PURCHASES (GSTKBILT.PRG — registered dealer invoices)
 // ══════════════════════════════════════════════════════════════
 app.get('/api/purchases', requireView, (req, res) => {
-  const { auction_id, ano, from, to, sale } = req.query;
-  let q = 'SELECT * FROM purchases WHERE 1=1'; const p = [];
-  if (auction_id) { q += ' AND auction_id = ?'; p.push(parseInt(auction_id)); }
-  if (ano) { q += ' AND ano = ?'; p.push(ano); }
-  if (from && to) { q += ' AND date BETWEEN ? AND ?'; p.push(from, to); }
+  const { auction_id, ano, from, to, sale, search } = req.query;
+  const db = getDb();
+  let where = 'WHERE 1=1'; const p = [];
+  if (auction_id) { where += ' AND auction_id = ?'; p.push(parseInt(auction_id)); }
+  if (ano) { where += ' AND ano = ?'; p.push(ano); }
+  if (from && to) { where += ' AND date BETWEEN ? AND ?'; p.push(from, to); }
+  // Keyword search across the most-useful purchase columns.
+  const qstr = String(search || '').trim();
+  if (qstr) {
+    const like = `%${qstr}%`;
+    where += ' AND (CAST(invo AS TEXT) LIKE ? OR name LIKE ? OR gstin LIKE ? OR place LIKE ? OR CAST(ano AS TEXT) LIKE ?)';
+    p.push(like, like, like, like, like);
+  }
   // Sale-type filter (L / I / E). Purchases don't carry sale type, but
   // the GST split on each row is deterministic:
   //   • L (Local / intra-state)  → CGST + SGST > 0, IGST = 0
@@ -3620,12 +3677,12 @@ app.get('/api/purchases', requireView, (req, res) => {
   const saleNorm = String(sale || '').trim().toUpperCase();
   if (saleNorm === 'L') {
     // Intra-state purchase — CGST+SGST applied, IGST = 0.
-    q += ' AND COALESCE(igst,0) = 0 AND (COALESCE(cgst,0) > 0 OR COALESCE(sgst,0) > 0)';
+    where += ' AND COALESCE(igst,0) = 0 AND (COALESCE(cgst,0) > 0 OR COALESCE(sgst,0) > 0)';
   } else if (saleNorm === 'I') {
     // Inter-state purchase — IGST applied. Excludes Export rows (which
     // also use IGST) when any of the dealer's lots is explicitly E.
-    q += ' AND COALESCE(igst,0) > 0';
-    q += ` AND NOT EXISTS (
+    where += ' AND COALESCE(igst,0) > 0';
+    where += ` AND NOT EXISTS (
             SELECT 1 FROM lots l
              WHERE l.auction_id = purchases.auction_id
                AND UPPER(TRIM(COALESCE(l.name,''))) = UPPER(TRIM(COALESCE(purchases.name,'')))
@@ -3633,16 +3690,26 @@ app.get('/api/purchases', requireView, (req, res) => {
           )`;
   } else if (saleNorm === 'E') {
     // Export — IGST applied AND dealer has at least one E-tagged lot.
-    q += ' AND COALESCE(igst,0) > 0';
-    q += ` AND EXISTS (
+    where += ' AND COALESCE(igst,0) > 0';
+    where += ` AND EXISTS (
             SELECT 1 FROM lots l
              WHERE l.auction_id = purchases.auction_id
                AND UPPER(TRIM(COALESCE(l.name,''))) = UPPER(TRIM(COALESCE(purchases.name,'')))
                AND UPPER(TRIM(COALESCE(l.sale,''))) = 'E'
           )`;
   }
-  q += ' ORDER BY date DESC LIMIT 500';
-  res.json(getDb().all(q, p));
+  // Pagination — same contract as invoices/auctions/etc.
+  const page     = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 50));
+  const offset   = (page - 1) * pageSize;
+  const wantPaged = req.query.page != null || req.query.pageSize != null;
+  const baseQuery = 'SELECT * FROM purchases ' + where + ' ORDER BY date DESC';
+  if (wantPaged) {
+    const total = db.get('SELECT COUNT(*) AS c FROM purchases ' + where, p).c;
+    const rows = db.all(baseQuery + ' LIMIT ? OFFSET ?', [...p, pageSize, offset]);
+    return res.json({ rows, total, page, pageSize });
+  }
+  res.json(db.all(baseQuery + ' LIMIT 500', p));
 });
 
 app.post('/api/purchases/generate/:auctionId', requireInvoiceWrite, (req, res) => {
@@ -3973,11 +4040,12 @@ app.post('/api/purchases/pdf-bulk', requireView, async (req, res) => {
 // BILLS — Agriculturist Bills of Supply (GSTKBILP/GSTBILP)
 // ══════════════════════════════════════════════════════════════
 app.get('/api/bills', requireView, (req, res) => {
-  const { auction_id, ano, from, to, branch } = req.query;
-  let q = 'SELECT * FROM bills WHERE 1=1'; const p = [];
-  if (auction_id) { q += ' AND auction_id = ?'; p.push(parseInt(auction_id)); }
-  if (ano) { q += ' AND ano = ?'; p.push(ano); }
-  if (from && to) { q += ' AND date BETWEEN ? AND ?'; p.push(from, to); }
+  const { auction_id, ano, from, to, branch, search } = req.query;
+  const db = getDb();
+  let where = 'WHERE 1=1'; const p = [];
+  if (auction_id) { where += ' AND auction_id = ?'; p.push(parseInt(auction_id)); }
+  if (ano) { where += ' AND ano = ?'; p.push(ano); }
+  if (from && to) { where += ' AND date BETWEEN ? AND ?'; p.push(from, to); }
   // Branch filter — bills.br column may not be set for legacy rows, so
   // we also infer via the underlying lot's branch. lots has no `ano`
   // column; we join through bills.auction_id (or look up the auction id
@@ -3985,7 +4053,7 @@ app.get('/api/bills', requireView, (req, res) => {
   // when auction_id isn't populated either.
   const branchFilter = String(branch || '').trim();
   if (branchFilter) {
-    q += ` AND (
+    where += ` AND (
             UPPER(TRIM(COALESCE(br,''))) = UPPER(TRIM(?))
             OR EXISTS (
               SELECT 1 FROM lots l
@@ -3999,8 +4067,23 @@ app.get('/api/bills', requireView, (req, res) => {
           )`;
     p.push(branchFilter, branchFilter);
   }
-  q += ' ORDER BY date DESC, bil DESC LIMIT 500';
-  res.json(withFmtDate(getDb().all(q, p)));
+  const qstr = String(search || '').trim();
+  if (qstr) {
+    const like = `%${qstr}%`;
+    where += ' AND (CAST(bil AS TEXT) LIKE ? OR name LIKE ? OR pla LIKE ? OR CAST(ano AS TEXT) LIKE ? OR br LIKE ?)';
+    p.push(like, like, like, like, like);
+  }
+  const page     = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 50));
+  const offset   = (page - 1) * pageSize;
+  const wantPaged = req.query.page != null || req.query.pageSize != null;
+  const baseQuery = 'SELECT * FROM bills ' + where + ' ORDER BY date DESC, bil DESC';
+  if (wantPaged) {
+    const total = db.get('SELECT COUNT(*) AS c FROM bills ' + where, p).c;
+    const rows = db.all(baseQuery + ' LIMIT ? OFFSET ?', [...p, pageSize, offset]);
+    return res.json({ rows: withFmtDate(rows), total, page, pageSize });
+  }
+  res.json(withFmtDate(db.all(baseQuery + ' LIMIT 500', p)));
 });
 
 // Generate agri bill for a seller
@@ -4648,13 +4731,29 @@ function deriveDealerSaleType(db, auctionId, dealerName, dealerCr, cfg, purchase
 }
 
 app.get('/api/debit-notes', requireView, (req, res) => {
-  const { auction_id, ano, from, to } = req.query;
-  let q = 'SELECT * FROM debit_notes WHERE 1=1'; const p = [];
-  if (auction_id) { q += ' AND auction_id = ?'; p.push(parseInt(auction_id)); }
-  if (ano) { q += ' AND ano = ?'; p.push(ano); }
-  if (from && to) { q += ' AND date BETWEEN ? AND ?'; p.push(from, to); }
-  q += ' ORDER BY date DESC, note_no DESC LIMIT 500';
-  res.json(withFmtDate(getDb().all(q, p)));
+  const { auction_id, ano, from, to, search } = req.query;
+  const db = getDb();
+  let where = 'WHERE 1=1'; const p = [];
+  if (auction_id) { where += ' AND auction_id = ?'; p.push(parseInt(auction_id)); }
+  if (ano) { where += ' AND ano = ?'; p.push(ano); }
+  if (from && to) { where += ' AND date BETWEEN ? AND ?'; p.push(from, to); }
+  const qstr = String(search || '').trim();
+  if (qstr) {
+    const like = `%${qstr}%`;
+    where += ' AND (CAST(note_no AS TEXT) LIKE ? OR name LIKE ? OR CAST(ano AS TEXT) LIKE ?)';
+    p.push(like, like, like);
+  }
+  const page     = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 50));
+  const offset   = (page - 1) * pageSize;
+  const wantPaged = req.query.page != null || req.query.pageSize != null;
+  const baseQuery = 'SELECT * FROM debit_notes ' + where + ' ORDER BY date DESC, note_no DESC';
+  if (wantPaged) {
+    const total = db.get('SELECT COUNT(*) AS c FROM debit_notes ' + where, p).c;
+    const rows = db.all(baseQuery + ' LIMIT ? OFFSET ?', [...p, pageSize, offset]);
+    return res.json({ rows: withFmtDate(rows), total, page, pageSize });
+  }
+  res.json(withFmtDate(db.all(baseQuery + ' LIMIT 500', p)));
 });
 
 // Single-shot DN generation. Input: purchase invoice number + explicit
