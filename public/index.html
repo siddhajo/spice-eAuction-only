@@ -2584,13 +2584,15 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <div class="card">
         <h2>Sellers / Poolers <button class="needs-trader-write btn btn-g" onclick="openTraderAdd()">+ Add Seller</button></h2>
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:end">
-          <div class="fg" style="margin:0;flex:1;min-width:180px"><input type="search" placeholder="Search by name, phone, GSTIN, PAN, place..." oninput="searchTraders(this.value)"></div>
+          <div class="fg" style="margin:0;flex:1;min-width:180px"><input type="search" placeholder="Search across all sellers — name, phone, GSTIN, PAN, place, Aadhar…" oninput="searchTradersDebounced(this.value)"></div>
           <button class="btn btn-a" onclick="document.getElementById('imp-traders').click()">Import XLS/XLSX</button>
           <button class="btn btn-o" onclick="downloadTemplate('traders')">Download Template</button>
           <button id="seller-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('seller')">🗑 Delete Selected <span id="seller-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>          <input type="file" id="imp-traders" accept=".xlsx,.xls" style="display:none" onchange="importTraders(event)">
         </div>
         <div id="trader-import-status" style="display:none;padding:8px 14px;border-radius:6px;font-size:12px;margin-bottom:10px"></div>
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Name</th><th>CR/GSTIN</th><th>PAN</th><th>Phone</th><th>Place · State</th><th>Bank</th><th>Actions</th></tr></thead><tbody id="traders-list"></tbody></table></div>
+        <!-- Pager: rendered by searchTraders() once we know total/page. -->
+        <div id="traders-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
       </div>
     </div>
 
@@ -2599,13 +2601,15 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <div class="card">
         <h2>Buyers / Dealers <button class="needs-buyer-write btn btn-g" onclick="openBuyerAdd()">+ Add Buyer</button></h2>
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:end">
-          <div class="fg" style="margin:0;flex:1;min-width:180px"><input type="search" placeholder="Search by name, phone, GSTIN, PAN, TI..." oninput="searchBuyers(this.value)"></div>
+          <div class="fg" style="margin:0;flex:1;min-width:180px"><input type="search" placeholder="Search across all buyers — buyer, code, GSTIN, PAN, TI, place…" oninput="searchBuyersDebounced(this.value)"></div>
           <button class="btn btn-a" onclick="document.getElementById('imp-buyers').click()">Import XLS/XLSX</button>
           <button class="btn btn-o" onclick="downloadTemplate('buyers')">Download Template</button>
           <button id="buyer-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('buyer')">🗑 Delete Selected <span id="buyer-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>          <input type="file" id="imp-buyers" accept=".xlsx,.xls" style="display:none" onchange="importBuyers(event)">
         </div>
         <div id="buyer-import-status" style="display:none;padding:8px 14px;border-radius:6px;font-size:12px;margin-bottom:10px"></div>
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>BUYER</th><th>Code</th><th>Auction Name</th><th>GSTIN</th><th>PAN</th><th>Phone</th><th>TI</th><th>Place · State</th><th>Sale</th><th>Actions</th></tr></thead><tbody id="buyers-list"></tbody></table></div>
+        <!-- Pager: rendered by searchBuyers() once we know total/page. -->
+        <div id="buyers-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
       </div>
     </div>
 
@@ -10610,7 +10614,102 @@ const T_FIELDS=['name','cr','pan','tel','aadhar','padd','ppla','pstate','pst_cod
 const T_IDS={name:'t-name',cr:'t-cr',pan:'t-pan',tel:'t-tel',aadhar:'t-aadhar',padd:'t-padd',ppla:'t-ppla',
   pstate:'t-pstate',pst_code:'t-pstcode',pin:'t-pin'};
 
-async function searchTraders(q){const d=await j(`/api/traders?search=${encodeURIComponent(q)}&limit=100`);
+// Shared pager renderer used by sellers + buyers (and reusable for any
+// future paginated list). Renders a "Showing X–Y of N · matching 'q'"
+// caption on the left and First / Prev / Page input / Next / Last on
+// the right. Hides itself entirely when there's only one page so it
+// doesn't clutter small datasets.
+function renderPager(hostId, state, gotoFn, query){
+  const host = document.getElementById(hostId);
+  if (!host) return;
+  const { page, pageSize, total, totalPages } = state;
+  if (!total) {
+    host.innerHTML = query
+      ? '<span style="color:var(--text3)">No matches for &ldquo;'+esc(query)+'&rdquo;.</span>'
+      : '';
+    return;
+  }
+  const from = (page - 1) * pageSize + 1;
+  const to   = Math.min(total, page * pageSize);
+  const fmt  = n => Number(n).toLocaleString();
+  const caption = '<span>Showing <b>'+fmt(from)+'–'+fmt(to)+'</b> of <b>'+fmt(total)+'</b>' +
+                  (query ? ' &middot; matching &ldquo;<i>'+esc(query)+'</i>&rdquo;' : '') + '</span>';
+  if (totalPages <= 1) {
+    host.innerHTML = caption;
+    return;
+  }
+  // Page input lets the user jump to any page directly — useful for
+  // 7000-row masters where clicking Next 140 times would be painful.
+  const btnStyle = 'height:30px;padding:0 10px;border:1px solid var(--border);background:#fff;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer';
+  const btnDisabled = ';opacity:.4;cursor:not-allowed';
+  const mk = (label, target, disabled) =>
+    '<button type="button" style="'+btnStyle+(disabled?btnDisabled:'')+'"' +
+      (disabled ? ' disabled' : ' onclick="'+gotoFn.name+'('+target+')"') + '>'+label+'</button>';
+  host.innerHTML =
+    '<div>'+caption+'</div>' +
+    '<div style="display:flex;align-items:center;gap:6px">' +
+      mk('« First', 1, page <= 1) +
+      mk('‹ Prev',  page - 1, page <= 1) +
+      '<span>Page <input type="number" min="1" max="'+totalPages+'" value="'+page+'" ' +
+        'style="width:60px;height:30px;padding:0 6px;border:1px solid var(--border);border-radius:6px;text-align:center;font-size:12px;font-weight:600" ' +
+        'onkeydown="if(event.key===\'Enter\'){'+gotoFn.name+'(this.value);this.blur()}" ' +
+        'onblur="'+gotoFn.name+'(this.value)"> of <b>'+fmt(totalPages)+'</b></span>' +
+      mk('Next ›', page + 1, page >= totalPages) +
+      mk('Last »', totalPages, page >= totalPages) +
+    '</div>';
+}
+
+// Paginated traders list. Tracks current page + last query in module-
+// scope state so the pager buttons can re-request the same query at a
+// different page without re-reading the input. Searches run against
+// the full table (server-side), not just the page window — fixes the
+// "search hits only the first 500" issue on 7,000+-row masters.
+const _tradersPager = { page: 1, pageSize: 50, query: '', total: 0, totalPages: 0, fetchToken: 0 };
+
+function gotoTradersPage(page){
+  const p = Math.max(1, Math.min(_tradersPager.totalPages || 1, page|0));
+  _tradersPager.page = p;
+  searchTraders(_tradersPager.query, { page: p });
+}
+
+// Debounced search: every keystroke would otherwise trigger a full
+// LIKE-COUNT + LIKE-page round trip against a 7k-row table. 200ms is
+// short enough to feel live and long enough to coalesce typing.
+let _tradersSearchTimer = null;
+function searchTradersDebounced(q){
+  clearTimeout(_tradersSearchTimer);
+  _tradersSearchTimer = setTimeout(() => searchTraders(q, { page: 1 }), 200);
+}
+
+async function searchTraders(q, opts){
+  // `opts.page` overrides the current page; otherwise we reset to 1 on
+  // a fresh query and keep the existing page when the same query is
+  // re-fired by a pager click.
+  const query = (q == null ? _tradersPager.query : String(q)).trim();
+  const reset = query !== _tradersPager.query;
+  _tradersPager.query = query;
+  if (reset) _tradersPager.page = 1;
+  if (opts && opts.page) _tradersPager.page = opts.page;
+  const page = _tradersPager.page;
+  const pageSize = _tradersPager.pageSize;
+
+  // Race guard — if the user types fast, multiple in-flight requests
+  // can resolve out of order. Tag each request and only honour the
+  // newest one when it returns.
+  const myToken = ++_tradersPager.fetchToken;
+  const url = `/api/traders?search=${encodeURIComponent(query)}&page=${page}&pageSize=${pageSize}`;
+  const payload = await j(url);
+  if (myToken !== _tradersPager.fetchToken) return;
+
+  // Server returns { rows, total, page, pageSize } for paged requests.
+  const rows = Array.isArray(payload) ? payload : (payload && payload.rows) || [];
+  const total = Array.isArray(payload) ? rows.length : (payload && payload.total) || rows.length;
+  _tradersPager.total = total;
+  _tradersPager.totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  renderPager('traders-pager', _tradersPager, gotoTradersPage, query);
+
+  const d = rows;
   DataTable.mount('traders-list', d, {
     columns: [
       BulkActions.column('seller'),
@@ -11147,7 +11246,43 @@ const B_IDS={buyer:'b-buyer',buyer1:'b-buyer1',code:'b-code',sbl:'b-sbl',add1:'b
   state:'b-state',st_code:'b-stcode',gstin:'b-gstin',pan:'b-pan',tel:'b-tel',ti:'b-ti',sale:'b-sale',email:'b-email',
   cbuyer1:'b-cbuyer1',cadd1:'b-cadd1',cadd2:'b-cadd2',cpla:'b-cpla',cpin:'b-cpin',cstate:'b-cstate',cst_code:'b-cstcode',cgstin:'b-cgstin'};
 
-async function searchBuyers(q){const d=await j(`/api/buyers?search=${encodeURIComponent(q)}`);
+// Paginated buyers list — same shape as _tradersPager.
+const _buyersPager = { page: 1, pageSize: 50, query: '', total: 0, totalPages: 0, fetchToken: 0 };
+
+function gotoBuyersPage(page){
+  const p = Math.max(1, Math.min(_buyersPager.totalPages || 1, page|0));
+  _buyersPager.page = p;
+  searchBuyers(_buyersPager.query, { page: p });
+}
+
+let _buyersSearchTimer = null;
+function searchBuyersDebounced(q){
+  clearTimeout(_buyersSearchTimer);
+  _buyersSearchTimer = setTimeout(() => searchBuyers(q, { page: 1 }), 200);
+}
+
+async function searchBuyers(q, opts){
+  const query = (q == null ? _buyersPager.query : String(q)).trim();
+  const reset = query !== _buyersPager.query;
+  _buyersPager.query = query;
+  if (reset) _buyersPager.page = 1;
+  if (opts && opts.page) _buyersPager.page = opts.page;
+  const page = _buyersPager.page;
+  const pageSize = _buyersPager.pageSize;
+
+  const myToken = ++_buyersPager.fetchToken;
+  const url = `/api/buyers?search=${encodeURIComponent(query)}&page=${page}&pageSize=${pageSize}`;
+  const payload = await j(url);
+  if (myToken !== _buyersPager.fetchToken) return;
+
+  const rows = Array.isArray(payload) ? payload : (payload && payload.rows) || [];
+  const total = Array.isArray(payload) ? rows.length : (payload && payload.total) || rows.length;
+  _buyersPager.total = total;
+  _buyersPager.totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  renderPager('buyers-pager', _buyersPager, gotoBuyersPage, query);
+
+  const d = rows;
   const saleMap={L:'Local',I:'Inter-state',E:'Export'};
   DataTable.mount('buyers-list', d, {
     emptyState: { icon: 'buyers', title: "No buyers yet", body: "Register buyers to generate sales invoices. Use Add Buyer above or import from a template." }, 

@@ -885,13 +885,31 @@ app.get('/api/gst-lookup/:gstin', requireView, async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 app.get('/api/traders', requireViewOrLotEntry, (req, res) => {
   // Accept `?q=` (mobile PWA) as an alias for `?search=` (desktop UI).
-  const { q, limit } = req.query;
-  const search = req.query.search || q;
+  // Pagination: `?page=` (1-based) + `?pageSize=` cap page-window size.
+  //   • Search runs over the WHOLE table (LIKE on indexed-ish columns)
+  //     and the matching subset is then paged — fixes the bug where
+  //     search only hit the first 500 rows.
+  //   • Legacy `?limit=` is preserved as an alias for `pageSize` so
+  //     older callers (mobile PWA, the price-import dropdown) keep
+  //     working without changes.
+  //   • Response shape:
+  //         { rows: [...], total: N, page: P, pageSize: S }
+  //     Existing callers that expect a bare array still work because
+  //     the response is JSON.stringify-comparable — see the back-compat
+  //     branch below when `?legacy=1` is passed or no pagination params
+  //     are provided AND no search is active.
+  const { q } = req.query;
+  const search   = (req.query.search || q || '').trim();
+  const page     = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize || req.query.limit, 10) || 50));
+  const offset   = (page - 1) * pageSize;
+  const wantPaged = req.query.page != null || req.query.pageSize != null;
   const db = getDb();
+
   // Helper: attach the `banks` array to each trader row (from trader_banks
   // table). Kept as a post-query hydration step so we don't bloat the main
   // query with joins or GROUP_CONCAT — easier to read, and the N+1 is fine
-  // for the small trader counts this app handles (~few hundred max).
+  // for one page's worth of rows.
   const hydrateBanks = (rows) => {
     if (!rows.length) return rows;
     const ids = rows.map(r => r.id);
@@ -909,13 +927,36 @@ app.get('/api/traders', requireViewOrLotEntry, (req, res) => {
     for (const r of rows) r.banks = byTrader.get(r.id) || [];
     return rows;
   };
+
+  // Build the WHERE clause + params once; reused by both COUNT and the
+  // page query so they stay in lockstep.
+  let where = '', params = [];
   if (search) {
-    const q = `%${search}%`;
+    const like = `%${search}%`;
+    where = 'WHERE name LIKE ? OR tel LIKE ? OR cr LIKE ? OR pan LIKE ? OR ppla LIKE ? OR aadhar LIKE ?';
+    params = [like, like, like, like, like, like];
+  }
+  const total = db.get(`SELECT COUNT(*) AS c FROM traders ${where}`, params).c;
+
+  // Paginated mode: always return the rich response so the client can
+  // render "1–50 of 7,234" and page controls.
+  if (wantPaged) {
     const rows = db.all(
-      `SELECT * FROM traders 
-       WHERE name LIKE ? OR tel LIKE ? OR cr LIKE ? OR pan LIKE ? OR ppla LIKE ? OR aadhar LIKE ?
-       ORDER BY name LIMIT ?`,
-      [q, q, q, q, q, q, parseInt(limit)||50]
+      `SELECT * FROM traders ${where} ORDER BY name LIMIT ? OFFSET ?`,
+      [...params, pageSize, offset]
+    );
+    return res.json({ rows: hydrateBanks(rows), total, page, pageSize });
+  }
+
+  // Legacy / non-paged callers — return a bare array so existing code
+  // that does `const list = await fetch(...)` keeps working.
+  // For search: returns up to `pageSize` matches (default 50) but the
+  // search itself ran across ALL rows, so it actually finds buyers that
+  // sit past row 500 alphabetically.
+  if (search) {
+    const rows = db.all(
+      `SELECT * FROM traders ${where} ORDER BY name LIMIT ?`,
+      [...params, pageSize]
     );
     return res.json(hydrateBanks(rows));
   }
@@ -1308,15 +1349,41 @@ app.get('/api/traders/template', requireExport, async (req, res) => {
 // BUYERS (SBL.DBF — dealers/traders)
 // ══════════════════════════════════════════════════════════════
 app.get('/api/buyers', requireView, (req, res) => {
+  // Same pagination + full-table-search contract as /api/traders:
+  //   • `?page=` + `?pageSize=` → { rows, total, page, pageSize }
+  //   • `?all=1`                → bare array, every row (no LIMIT)
+  //   • `?search=` (no page)    → bare array, search runs over ALL rows
+  //   • no params               → bare array, top 500 (legacy)
   const { search, all } = req.query;
+  const page     = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 50));
+  const offset   = (page - 1) * pageSize;
+  const wantPaged = req.query.page != null || req.query.pageSize != null;
   const db = getDb();
+
+  let where = '', params = [];
   if (search) {
     const q = `%${search}%`;
+    where = 'WHERE buyer LIKE ? OR buyer1 LIKE ? OR tel LIKE ? OR gstin LIKE ? OR pan LIKE ? OR pla LIKE ? OR ti LIKE ? OR code LIKE ?';
+    params = [q, q, q, q, q, q, q, q];
+  }
+
+  if (wantPaged) {
+    const total = db.get(`SELECT COUNT(*) AS c FROM buyers ${where}`, params).c;
+    const rows = db.all(
+      `SELECT * FROM buyers ${where} ORDER BY buyer1 LIMIT ? OFFSET ?`,
+      [...params, pageSize, offset]
+    );
+    return res.json({ rows, total, page, pageSize });
+  }
+
+  if (search) {
+    // Search now runs over the WHOLE table, not just the first 500.
+    // Fixes the bug where codes alphabetically past the 500 boundary
+    // (e.g. HRS0, HSR) were unreachable via typing in the lot edit.
     return res.json(db.all(
-      `SELECT * FROM buyers
-       WHERE buyer LIKE ? OR buyer1 LIKE ? OR tel LIKE ? OR gstin LIKE ? OR pan LIKE ? OR pla LIKE ? OR ti LIKE ? OR code LIKE ?
-       ORDER BY buyer1 LIMIT 50`,
-      [q, q, q, q, q, q, q, q]
+      `SELECT * FROM buyers ${where} ORDER BY buyer1 LIMIT ?`,
+      [...params, pageSize]
     ));
   }
   // `?all=1` returns the unbounded master so the lot-edit autocomplete
