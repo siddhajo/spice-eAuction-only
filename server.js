@@ -1308,16 +1308,23 @@ app.get('/api/traders/template', requireExport, async (req, res) => {
 // BUYERS (SBL.DBF — dealers/traders)
 // ══════════════════════════════════════════════════════════════
 app.get('/api/buyers', requireView, (req, res) => {
-  const { search } = req.query;
+  const { search, all } = req.query;
   const db = getDb();
   if (search) {
     const q = `%${search}%`;
     return res.json(db.all(
-      `SELECT * FROM buyers 
+      `SELECT * FROM buyers
        WHERE buyer LIKE ? OR buyer1 LIKE ? OR tel LIKE ? OR gstin LIKE ? OR pan LIKE ? OR pla LIKE ? OR ti LIKE ? OR code LIKE ?
        ORDER BY buyer1 LIMIT 50`,
       [q, q, q, q, q, q, q, q]
     ));
+  }
+  // `?all=1` returns the unbounded master so the lot-edit autocomplete
+  // can cache every code — the default 500-row cap was hiding codes
+  // past that boundary (e.g. HRS0) from the dropdown AND from the
+  // post-change lookup, surfacing as "No buyer found for code".
+  if (all === '1' || all === 'true') {
+    return res.json(db.all('SELECT * FROM buyers ORDER BY buyer1'));
   }
   res.json(db.all('SELECT * FROM buyers ORDER BY buyer1 LIMIT 500'));
 });

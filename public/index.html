@@ -4153,18 +4153,18 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <label>Code
         <span id="l-code-hint" style="margin-left:6px;font-weight:400;font-size:11px;color:var(--text3)"></span>
       </label>
-      <!-- Type-ahead autocomplete: the operator can type a prefix
-           ("JP" → JP, JP0, JP1, JP2…) and the browser filters the
-           datalist client-side. The datalist is repopulated on every
-           modal open from the Buyers master, so newly-added codes
-           appear without a full page refresh. Picking a suggestion
-           fires the input's `change` event, which the existing
-           openLotEdit handler uses to auto-fill buyer/buyer1/sale. -->
-      <!-- color-scheme:light forces Chrome to render the datalist popup
-           in light mode regardless of the OS theme. Without it, macOS
-           dark mode users see a black dropdown over the white form. -->
-      <input id="l-code" list="l-code-suggestions" autocomplete="off" style="color-scheme:light">
-      <datalist id="l-code-suggestions"></datalist>
+      <!-- Custom type-ahead autocomplete. Native <datalist> filters its
+           suggestions against both the option's value AND its displayed
+           text — typing "HR" surfaced ASF2 because the buyer name
+           "ASHRAF" contains "HR". A custom dropdown gives strict
+           code-only matching while still showing buyer name, sale type,
+           and place next to each suggestion. Anchored to a relative
+           wrapper so the absolute-positioned panel sits flush under
+           the input. -->
+      <div style="position:relative">
+        <input id="l-code" autocomplete="off">
+        <div id="l-code-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;max-height:240px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:12.5px"></div>
+      </div>
     </div>
     <div class="fg"><label>Sale Type</label>
       <select id="l-sale"><option value=""></option><option value="L">Local (L)</option><option value="I">Inter-state (I)</option><option value="E">Export (E)</option></select>
@@ -12134,12 +12134,17 @@ function openLotEdit(l){
       const code = (codeEl.value || '').trim().toUpperCase();
       if (!code) return;
       try {
-        const buyers = await j('/api/buyers');
-        // Match preference: exact code → exact ti → exact buyer
-        const u = code;
-        const match = buyers.find(b => String(b.code||'').trim().toUpperCase() === u)
-          || buyers.find(b => String(b.ti||'').trim().toUpperCase() === u)
-          || buyers.find(b => String(b.buyer||'').trim().toUpperCase() === u);
+        // First try the in-memory cache populated when the modal opened
+        // (already fetched via ?all=1). Fall back to a code-specific
+        // server search only if the cache is somehow stale — covers the
+        // edge case of a buyer added in another tab between modal open
+        // and Code field commit.
+        let match = (_lotBuyerCache || []).find(b => b.codeUp === code);
+        if (!match) {
+          const fresh = await j('/api/buyers?search=' + encodeURIComponent(code));
+          const b = (fresh || []).find(x => String(x.code||'').trim().toUpperCase() === code);
+          if (b) match = b;
+        }
         if (!match) {
           if (typeof toast === 'function') toast(`No buyer found for code '${code}'`);
           return;
@@ -12186,43 +12191,54 @@ function openLotEdit(l){
   showModal('lot-modal');
 }
 
-// Populate the Code datalist + show a hint when the current trade
-// name maps to multiple codes. The datalist drives native typeahead:
-// the operator types "JP" and the browser surfaces JP, JP0, JP1, JP2…
-// as inline suggestions, picking one fires the input's `change` event
-// which auto-fills buyer/buyer1/sale via the handler in openLotEdit.
+// Cached buyer master for the Code dropdown. Refreshed on every modal
+// open so freshly-added buyers appear without a page reload, but kept
+// in module scope so input-event filtering doesn't refetch on every
+// keystroke.
+let _lotBuyerCache = [];
+
+// Refresh the buyer cache and wire up the custom code-autocomplete the
+// first time the modal opens. Also shows a hint when the lot's current
+// trade name maps to more than one code in the master.
 async function lotRefreshCodePicker(tradeName, currentCode){
-  const dl   = document.getElementById('l-code-suggestions');
   const hint = document.getElementById('l-code-hint');
   if (hint) hint.textContent = '';
 
-  // 1) Populate the datalist with every buyer code from the master.
-  //    `/api/buyers` caps at 500 rows; for shops with more buyers,
-  //    typing past the autocomplete prefix still works against the
-  //    full master via the existing change-handler lookup.
-  if (dl) {
-    try {
-      const buyers = await j('/api/buyers');
-      const seen = new Set();
-      const opts = [];
-      for (const b of (Array.isArray(buyers) ? buyers : [])) {
-        const code = String(b.code || '').trim();
-        if (!code) continue;
-        const key = code.toUpperCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        // Context (buyer string + sale + place) is rendered as the
-        // option's label/text — Chrome shows it next to the value,
-        // Safari shows the value only. Either way the typed prefix
-        // still matches against the value.
-        const ctx = [b.buyer, b.sale ? '['+b.sale+']' : '', b.pla].filter(Boolean).join(' · ');
-        opts.push('<option value="'+escAttr(code)+'">'+escAttr(ctx)+'</option>');
-      }
-      dl.innerHTML = opts.join('');
-    } catch (_) { /* non-fatal — leaves datalist as-is */ }
-  }
+  // 1) Refresh the buyer cache that drives the custom dropdown.
+  //    `?all=1` lifts the 500-row default cap so codes past that
+  //    boundary in alphabetical-by-buyer1 order still appear in the
+  //    dropdown and the post-change lookup.
+  try {
+    const buyers = await j('/api/buyers?all=1');
+    const seen = new Set();
+    _lotBuyerCache = [];
+    for (const b of (Array.isArray(buyers) ? buyers : [])) {
+      const code = String(b.code || '').trim();
+      if (!code) continue;
+      const key = code.toUpperCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      _lotBuyerCache.push({
+        code,
+        codeUp: key,
+        buyer: b.buyer || '',
+        buyer1: b.buyer1 || '',
+        sale: b.sale || '',
+        pla: b.pla || '',
+        // Needed by the change-handler's auto-fill so the CR/GSTIN
+        // field gets populated from the cache without a server round-trip.
+        gstin: b.gstin || '',
+        cr: b.cr || '',
+      });
+    }
+    // Sort alphabetically by code so the dropdown is predictable.
+    _lotBuyerCache.sort((a, b) => a.codeUp.localeCompare(b.codeUp));
+  } catch (_) { /* non-fatal — leaves cache as-is */ }
 
-  // 2) Hint when the current trade name maps to >1 code, so the
+  // 2) Wire input / focus / blur / keydown handlers exactly once.
+  _lotWireCodeAutocomplete();
+
+  // 3) Hint when the current trade name maps to >1 code, so the
   //    operator knows there's a disambiguation choice to make.
   const name = String(tradeName || '').trim();
   if (!name || !hint) return;
@@ -12241,6 +12257,107 @@ async function lotRefreshCodePicker(tradeName, currentCode){
       hint.textContent = '(' + buyers.length + ' codes share this trade name: ' + codes + ')';
     }
   } catch (_) { /* non-fatal */ }
+}
+
+// Wire input/focus/blur/keydown on the Code input exactly once.
+// Behaviour:
+//   • focus / non-empty input → opens dropdown with matches
+//   • input event           → re-filters (strictly by code)
+//   • click on a row        → fills l-code, fires change, hides
+//   • blur (with delay)     → hides (delay so click-on-row registers)
+//   • Esc                   → hides
+//   • Arrow down / up + Enter → keyboard nav (basic)
+function _lotWireCodeAutocomplete(){
+  const codeEl = document.getElementById('l-code');
+  const ddl    = document.getElementById('l-code-dropdown');
+  if (!codeEl || !ddl || codeEl._wiredAutocomplete) return;
+  codeEl._wiredAutocomplete = true;
+
+  let activeIdx = -1;  // currently-highlighted row in the rendered list
+
+  const render = () => {
+    const q = String(codeEl.value || '').trim().toUpperCase();
+    // Strict code match — startsWith first, then contains as a fallback
+    // so a typo in the middle ("J0" → "JP0") still surfaces something.
+    // Whitespace is ignored on both sides.
+    const starts = [];
+    const contains = [];
+    for (const b of _lotBuyerCache) {
+      if (!q) { starts.push(b); continue; }
+      if (b.codeUp.startsWith(q)) starts.push(b);
+      else if (b.codeUp.includes(q)) contains.push(b);
+    }
+    const matches = starts.concat(contains).slice(0, 50);
+    if (!matches.length) {
+      ddl.innerHTML = '<div style="padding:8px 12px;color:#888;font-style:italic">No code matches.</div>';
+      ddl.style.display = 'block';
+      activeIdx = -1;
+      return;
+    }
+    activeIdx = 0;
+    ddl.innerHTML = matches.map((b, i) => {
+      const ctxParts = [b.buyer, b.sale ? '['+b.sale+']' : '', b.pla].filter(Boolean);
+      const ctx = ctxParts.join(' · ');
+      return '<div class="lc-row" data-code="'+escAttr(b.code)+'" data-idx="'+i+'" '+
+        'style="padding:6px 12px;cursor:pointer;border-bottom:1px solid #f1f1f1;display:flex;gap:10px;align-items:baseline'+
+        (i === activeIdx ? ';background:#ecfdf5' : '')+'">'+
+        '<span style="font-weight:700;color:#15803d;min-width:60px">'+escAttr(b.code)+'</span>'+
+        '<span style="flex:1;color:#444">'+escAttr(ctx)+'</span>'+
+        '</div>';
+    }).join('');
+    ddl.style.display = 'block';
+  };
+
+  const hide = () => { ddl.style.display = 'none'; activeIdx = -1; };
+
+  const choose = (code) => {
+    if (code == null) return;
+    codeEl.value = code;
+    hide();
+    // Fire change so the existing handler resolves buyer/buyer1/sale.
+    codeEl.dispatchEvent(new Event('change'));
+  };
+
+  codeEl.addEventListener('focus', render);
+  codeEl.addEventListener('input', render);
+  codeEl.addEventListener('blur', () => {
+    // Defer so a mousedown-then-click on a row still registers.
+    setTimeout(hide, 150);
+  });
+  codeEl.addEventListener('keydown', (e) => {
+    if (ddl.style.display === 'none') return;
+    const rows = ddl.querySelectorAll('.lc-row');
+    if (e.key === 'Escape') { hide(); return; }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!rows.length) return;
+      activeIdx = (activeIdx + 1) % rows.length;
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!rows.length) return;
+      activeIdx = (activeIdx - 1 + rows.length) % rows.length;
+    } else if (e.key === 'Enter') {
+      if (activeIdx >= 0 && rows[activeIdx]) {
+        e.preventDefault();
+        choose(rows[activeIdx].getAttribute('data-code'));
+        return;
+      }
+    } else {
+      return;
+    }
+    rows.forEach((r, i) => {
+      r.style.background = (i === activeIdx) ? '#ecfdf5' : '';
+    });
+    if (rows[activeIdx]) rows[activeIdx].scrollIntoView({ block: 'nearest' });
+  });
+
+  // mousedown (not click) so the row commits BEFORE blur fires.
+  ddl.addEventListener('mousedown', (e) => {
+    const row = e.target.closest('.lc-row');
+    if (!row) return;
+    e.preventDefault();   // keep focus on the input so change fires cleanly
+    choose(row.getAttribute('data-code'));
+  });
 }
 async function saveLot(){
   const id=document.getElementById('l-id').value;
