@@ -8,30 +8,40 @@ const { getSettingsFlat, getGSTRates } = require('./company-config');
 /**
  * Extract the 2-digit state code from a seller's `cr` field.
  *
- * The `cr` column historically stored "GSTIN.<15-char-gstin>" (where the
- * "GSTIN." prefix was added by the UI for sellers). Some import paths
- * (Excel seller import, GST portal lookup, edge-case manual entry) end up
- * with a bare GSTIN without the prefix. Both forms should be supported,
- * because the state code only depends on the first 2 chars of the GSTIN
- * itself, not on the prefix.
+ * The `cr` column has accumulated several formats over the life of the
+ * data — UI inputs, Excel imports, GST-portal lookups, and edge-case
+ * manual entry all leave their fingerprints. We accept any of:
  *
- * Logic:
- *   "GSTIN.32AAACG1234F1Z2" → strip "GSTIN." prefix → first 2 chars → "32"
- *   "32AAACG1234F1Z2"       → already bare         → first 2 chars → "32"
- *   ""  / null / undefined  → ""                                    (no GSTIN)
- *   "CR.001" or other       → ""                                    (not a GSTIN)
+ *   "GSTIN.32AAACG1234F1Z2"  → UI prefix
+ *   "GSTIN 32AAACG1234F1Z2"  → no-dot variant
+ *   "CR.32AAACG1234F1Z2"     → legacy seller-CR prefix (DBF-era)
+ *   "CR 32AAACG1234F1Z2"     → no-dot variant
+ *   "32AAACG1234F1Z2"        → already bare
+ *   ""  / null / undefined   → "" (no GSTIN)
+ *   "CR.001" / "CR/12"       → ""  (CR-only, no GSTIN payload)
  *
- * Only a value that looks like a valid 15-char GSTIN starting with 2 digits
- * yields a state code; anything else returns "" (which means no intra-match,
- * so IGST applies — safe default for non-GSTIN sellers).
+ * Returns the 2-digit state code from the GSTIN. If the value after
+ * stripping prefixes doesn't start with 2 digits, returns "" (which
+ * means "treat as unregistered → no GST"). Caller decides what to do
+ * with that signal.
  */
 function gstinStateCode(cr) {
   if (!cr) return '';
   let s = String(cr).trim().toUpperCase();
-  if (s.startsWith('GSTIN.')) s = s.substring(6);
-  else if (s.startsWith('GSTIN')) s = s.substring(5);  // e.g. "GSTIN<no-dot>33AAA..."
-  // GSTIN format: 2 digits + 5 letters + 4 digits + 1 letter + 1 digit + Z + 1 alphanumeric
-  // We only need the first 2 chars, but verify they're digits.
+  // Strip every well-known prefix our data layer attaches to CR fields.
+  // Without the CR. branch, Kerala sellers stored as "CR.32ABC…" got
+  // tagged as unregistered and the calculator applied IGST on services
+  // instead of the correct CGST+SGST split.
+  if      (s.startsWith('GSTIN.')) s = s.substring(6);
+  else if (s.startsWith('GSTIN '))  s = s.substring(6);
+  else if (s.startsWith('GSTIN'))   s = s.substring(5);
+  else if (s.startsWith('CR.'))     s = s.substring(3);
+  else if (s.startsWith('CR '))     s = s.substring(3);
+  s = s.trim();
+  // GSTIN format: 2 digits + 5 letters + 4 digits + 1 letter + 1 digit + Z + 1 alphanumeric.
+  // We only need the first 2 chars, but verify they're digits so a
+  // bare CR number like "CR.001" → "001" doesn't accidentally return
+  // "00" as a state code.
   if (s.length < 2) return '';
   const head = s.substring(0, 2);
   if (!/^\d{2}$/.test(head)) return '';
@@ -83,26 +93,38 @@ function calculateLot(lot, cfg) {
   result.asp_puramt = result.puramt;
 
   // ── GST on services (commission + handling) ──────────────
-  // Intra-state if seller's GSTIN state matches company's; else inter.
-  // The company state is derived from the actual company GSTIN (the
-  // authoritative source) — falling back to the business_state dropdown
-  // only when no GSTIN is configured. Previously this read business_state
-  // alone, so a Kerala company left at the default 'TAMIL NADU' setting
-  // would wrongly tag every Kerala seller as inter-state and apply IGST
-  // even when the seller's GSTIN matched the company's own state.
-  const sellerGstState  = gstinStateCode(lot.cr);
-  const companyGstin    = cfg.business_state === 'KERALA'     ? (cfg.kl_gstin || '')
-                        : cfg.business_state === 'TAMIL NADU' ? (cfg.tn_gstin || '')
-                        : (cfg.kl_gstin || cfg.tn_gstin || '');
+  // Three classes of seller, in priority order:
+  //   1. CR-tagged seller — `lot.cr` starts with "CR" (with or without
+  //      "." / space), whether or not it carries a GSTIN payload after
+  //      the prefix. These are local registered sellers in the company's
+  //      own state; ALWAYS taxed as intra-state (CGST + SGST), per the
+  //      business rule that any "CR.*" value indicates a same-state
+  //      registered seller. This rule wins even when a GSTIN extracted
+  //      from the payload would suggest a different state.
+  //   2. Bare GSTIN seller — no CR prefix, a 2-digit state-code-bearing
+  //      value (e.g. "32AERPA…"). State code drives intra/inter:
+  //         • matches company state → CGST + SGST
+  //         • differs from company  → IGST
+  //   3. Unregistered seller — no CR prefix and no extractable GSTIN
+  //      state. No GST is applied (they go on Bills of Supply).
+  //
+  // Company state is derived from the actual company GSTIN (kl_gstin /
+  // tn_gstin), falling back to the business_state dropdown only when
+  // no GSTIN is configured — a Kerala company left on the default
+  // 'TAMIL NADU' setting would otherwise wrongly tag intra-state sales
+  // as IGST.
+  const crRaw         = String(lot.cr == null ? '' : lot.cr).trim().toUpperCase();
+  const isCrTagged    = /^CR(\b|[.\s])/.test(crRaw);
+  const sellerGstState = gstinStateCode(lot.cr);
+  const companyGstin   = cfg.business_state === 'KERALA'     ? (cfg.kl_gstin || '')
+                       : cfg.business_state === 'TAMIL NADU' ? (cfg.tn_gstin || '')
+                       : (cfg.kl_gstin || cfg.tn_gstin || '');
   const companyGstState = gstinStateCode(companyGstin)
                        || (cfg.business_state === 'KERALA'     ? '32'
                          : cfg.business_state === 'TAMIL NADU' ? '33'
                          : String(cfg.tally_state_code || '33'));
-  // Unregistered sellers (no GSTIN) attract no GST — they go on
-  // Bills of Supply, not tax invoices. Only registered sellers (with a
-  // valid CR / GSTIN) get the intra/inter split.
-  const isRegistered = !!sellerGstState;
-  const isIntra      = isRegistered && (sellerGstState === companyGstState);
+  const isRegistered = isCrTagged || !!sellerGstState;
+  const isIntra      = isCrTagged || (!!sellerGstState && sellerGstState === companyGstState);
 
   const svcRate = Number(cfg.gst_service) || 0;
   const half    = svcRate / 2;
