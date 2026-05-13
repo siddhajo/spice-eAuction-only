@@ -434,17 +434,22 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg) {
   for (const lot of lots) {
     const sellerState = gstinStateCode(lot.cr);
     const isInter = sellerState !== companyState;
-    const puramt = lot.puramt || 0;
-
-    const rcgst = isInter ? 0 : Math.round(puramt * (gstGoods / 2) / 100 * 100) / 100;
-    const rsgst = isInter ? 0 : Math.round(puramt * (gstGoods / 2) / 100 * 100) / 100;
-    const rigst = isInter ? Math.round(puramt * gstGoods / 100 * 100) / 100 : 0;
 
     const baseQty   = (lot.pqty || lot.qty) || 0;
     const lineTotal = baseQty + sbRefundKgPurchase;
+    // Line amount = Total Qty × price (qty + sample-bag refund kg).
+    // Previously this was qty-only via lot.puramt — the sample-bag
+    // refund kgs went uncharged. GST + grand total now scale with the
+    // full delivered weight per the business rule.
+    const lineAmount = Math.round(lineTotal * (Number(lot.price) || 0) * 100) / 100;
+
+    const rcgst = isInter ? 0 : Math.round(lineAmount * (gstGoods / 2) / 100 * 100) / 100;
+    const rsgst = isInter ? 0 : Math.round(lineAmount * (gstGoods / 2) / 100 * 100) / 100;
+    const rigst = isInter ? Math.round(lineAmount * gstGoods / 100 * 100) / 100 : 0;
+
     totalQty       += lineTotal;
     totalRefundQty += sbRefundKgPurchase;
-    totalPuramt    += puramt;
+    totalPuramt    += lineAmount;
     totalBags      += lot.bags || 0;
 
     lineItems.push({
@@ -453,7 +458,9 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg) {
       refundQty: sbRefundKgPurchase,
       totalQty:  lineTotal,
       price: lot.price, prate: lot.prate,
-      amount: lot.amount, puramt,
+      // amount + puramt both report the Total-Qty-based line amount
+      // so the PDF rows and downstream consumers stay in sync.
+      amount: lineAmount, puramt: lineAmount,
       com: lot.com, sertax: lot.sertax,
       cgst: rcgst, sgst: rsgst, igst: rigst
     });
@@ -764,15 +771,19 @@ function buildAgriBill(db, auctionId, sellerName, cfg) {
   for (const lot of lots) {
     const baseQty   = (lot.pqty || lot.qty) || 0;
     const lineTotal = baseQty + sbRefundKg;
+    // Line amount = Total Qty × price (qty + sample-bag refund kg).
+    // Previously this was qty-only via lot.puramt — the sample-bag
+    // refund kgs went uncharged on the Bill of Supply.
+    const lineAmount = Math.round(lineTotal * (Number(lot.price) || 0) * 100) / 100;
     totalQty       += lineTotal;
     totalRefundQty += sbRefundKg;
-    totalPuramt    += lot.puramt || 0;
+    totalPuramt    += lineAmount;
     lineItems.push({
       lot: lot.lot_no, qty: lot.qty, pqty: lot.pqty,
       refundQty: sbRefundKg,
       totalQty: lineTotal,
       price: lot.price, prate: lot.prate,
-      amount: lot.amount, puramt: lot.puramt,
+      amount: lineAmount, puramt: lineAmount,
       com: lot.com, sertax: lot.sertax
     });
   }
