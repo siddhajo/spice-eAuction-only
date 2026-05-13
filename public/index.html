@@ -1494,6 +1494,12 @@ body[data-perm-invoice-revert="1"] .icon-btn.needs-invoice-revert{display:inline
 body[data-perm-user-manage="1"]    .side-item.needs-user-manage{display:flex !important}
 body[data-perm-settings-write="1"] .side-item.needs-settings-write{display:flex !important}
 body[data-perm-lot-entry-view="1"] .side-item.needs-lot-entry-view{display:flex !important}
+/* Container divs that are permission-gated need block display, not the
+   `display:initial` (= inline) the generic rule above falls back to —
+   otherwise their border/background/padding collapses and inner block
+   children overflow. Mirrors the .btn fix above but for plain divs. */
+body[data-perm-delete-all="1"]     div.needs-delete-all,
+body[data-perm-user-manage="1"]    div.needs-user-manage{display:block !important}
 
 /* Lot-entry-only role: hide every sidebar item except Lot Entry.
    Sidebar items get scoped this way so a lot_entry user can't even
@@ -2239,6 +2245,49 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <input type="file" id="db-restore-file" accept=".db,.sqlite,.sqlite3" style="display:none" onchange="restoreDbBackup(event)">
           </div>
         </div>
+
+        <!-- ── Danger Zone: Delete All ────────────────────────────
+             Sits inside the Backup card (not a top-level `.card`) so
+             the global `.card h2 { justify-content: space-between }`
+             rule doesn't break the title row. Uses the same outer
+             style as the Restore panel just above for visual rhyme:
+             rounded 1.5px red border + #FEF2F2 fill + 16/18 padding.
+
+             Buttons use CSS grid (auto-fill, equal min-width) so they
+             align in a clean matrix regardless of viewport width —
+             flex-wrap was leaving them uneven and ragged.
+
+             Audit log is collapsed behind a `<details>` disclosure so
+             it doesn't add visual weight until the operator asks for it. -->
+        <div class="needs-delete-all" style="padding:16px 18px;border:1.5px solid #FCA5A5;border-radius:10px;background:#FEF2F2;margin-top:14px">
+          <div style="font-weight:700;color:#991B1B;font-size:14px;margin-bottom:4px;display:flex;align-items:center;gap:6px">
+            <span>🗑</span><span>Delete All — wipe an entire table</span>
+          </div>
+          <div style="font-size:12px;color:#7F1D1D;line-height:1.5;margin-bottom:12px">
+            Each button wipes <strong>every row</strong> from the named table (ignoring any filters elsewhere in the app). The server snapshots the database to <code style="background:#FEE2E2;padding:1px 5px;border-radius:3px;font-size:11px">data/backups/before-delete-…&lt;timestamp&gt;.db</code> first, so a misclick is recoverable via Restore above. Every wipe is audit-logged.
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px">
+            <button class="btn" onclick="deleteAll('invoices','Invoices')"   style="height:36px;padding:0 12px;background:#7F1D1D;color:#fff;font-weight:600;border-color:#7F1D1D">🗑 Invoices</button>
+            <button class="btn" onclick="deleteAll('purchases','Purchases')" style="height:36px;padding:0 12px;background:#7F1D1D;color:#fff;font-weight:600;border-color:#7F1D1D">🗑 Purchases</button>
+            <button class="btn" onclick="deleteAll('bills','Bills')"         style="height:36px;padding:0 12px;background:#7F1D1D;color:#fff;font-weight:600;border-color:#7F1D1D">🗑 Bills</button>
+            <button class="btn" onclick="deleteAll('buyers','Buyers')"       style="height:36px;padding:0 12px;background:#7F1D1D;color:#fff;font-weight:600;border-color:#7F1D1D">🗑 Buyers</button>
+            <button class="btn" onclick="deleteAll('traders','Sellers')"     style="height:36px;padding:0 12px;background:#7F1D1D;color:#fff;font-weight:600;border-color:#7F1D1D">🗑 Sellers</button>
+            <button class="btn" onclick="deleteAll('auctions','Auctions')"   style="height:36px;padding:0 12px;background:#7F1D1D;color:#fff;font-weight:600;border-color:#7F1D1D" title="Wipes EVERY auction AND cascades through lots, invoices, purchases, bills, debit notes, lot allocations">🗑 Auctions (full reset)</button>
+          </div>
+
+          <details style="margin-top:14px">
+            <summary style="cursor:pointer;font-size:12px;font-weight:600;color:#7F1D1D;padding:4px 0">📜 Audit log — recent wipes</summary>
+            <div style="display:flex;align-items:center;gap:10px;margin:10px 0 8px">
+              <span style="font-size:11.5px;color:#7F1D1D;opacity:.8">Shows the 200 most recent Delete All actions.</span>
+              <span style="flex:1"></span>
+              <button class="btn btn-o" onclick="loadDeleteLog()" style="height:28px;padding:0 12px;font-size:12px;font-weight:600">Refresh</button>
+            </div>
+            <div id="delete-log-host" style="overflow:auto;max-height:280px;border:1px solid #FCA5A5;border-radius:6px;background:#fff;font-size:12px">
+              <div style="padding:12px;color:#7F1D1D;font-style:italic">Click Refresh to load recent wipes.</div>
+            </div>
+          </details>
+        </div>
       </div>
     </div>
 
@@ -2568,11 +2617,6 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <button class="btn btn-a" onclick="openImportAuctionModal()">Import Lots from XLS/XLSX</button>
           <button class="btn btn-o" onclick="downloadTemplate('auctions')">Download Template</button>
           <button id="trade-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('trade')">🗑 Delete Selected <span id="trade-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
-          <!-- Full reset: wipes every auction AND cascades through lots,
-               invoices, purchases, bills, debit_notes, lot_allocations.
-               This is the "start from scratch" hammer; gated by the
-               delete_all permission. -->
-          <button class="needs-delete-all btn" style="height:38px;padding:0 14px;background:#7f1d1d;color:#fff;font-weight:600" onclick="deleteAll('auctions','Auctions')" title="Delete every auction AND all related lots / invoices / purchases / bills / debit notes (admin only)">🗑 Delete All</button>
         </div>
         <div id="auction-import-status" style="display:none;padding:8px 14px;border-radius:6px;font-size:12px;margin-bottom:10px"></div>
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Auction No</th><th>Date</th><th>Type</th><th>Lots</th><th>Actions</th></tr></thead><tbody id="auctions-list"></tbody></table></div>
@@ -3067,10 +3111,6 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <button class="btn" style="height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(16,185,129,.28)" onclick="printSelectedInvoices()" title="Print all ticked invoices">🖨 Print Selected</button>
             <button id="inv-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedInvoices()" title="Delete all ticked invoices">🗑 Delete Selected <span id="inv-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
-            <!-- Wipes the entire invoices table — bypasses Sales-tab filters
-                 so the operator can fully reset before re-importing. Gated by
-                 the `delete_all` permission so only admins see it. -->
-            <button class="needs-delete-all btn" style="height:38px;padding:0 14px;background:#7f1d1d;color:#fff;font-weight:600" onclick="deleteAll('invoices','Invoices')" title="Delete every invoice in the database (ignores filters)">🗑 Delete All</button>
             <!-- ASP-only: Print Selected Purchase. Hidden outside ASP context.
                  Visibility toggled by applyAspContextVisibility() at load + state switch. -->
             <button id="btn-print-asp-purchase" class="btn" style="display:none;height:38px;padding:0 16px;background:var(--spice-cardamom);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(22,101,52,.22)" onclick="printSelectedPurchaseFromInvoices()" title="Print purchase-side mirror PDF for all ticked invoices (ASP context only)">🖨 Print Selected Purchase</button>
@@ -3151,7 +3191,6 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <button class="btn" style="height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(16,185,129,.28)" onclick="printSelectedPurchases()" title="Print all ticked purchase invoices">🖨 Print Selected</button>
             <button class="btn feat-whatsapp" style="height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedPurchases()" title="Send merged PDF of ticked purchase invoices via WhatsApp">📱 WhatsApp Selected</button>
             <button id="pur-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedPurchases()" title="Delete all ticked purchase invoices">🗑 Delete Selected <span id="pur-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
-            <button class="needs-delete-all btn" style="height:38px;padding:0 14px;background:#7f1d1d;color:#fff;font-weight:600" onclick="deleteAll('purchases','Purchases')" title="Delete every purchase invoice in the database (ignores filters)">🗑 Delete All</button>
           </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:auto">          </div>
@@ -3428,7 +3467,6 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <button class="btn" style="height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(16,185,129,.28)" onclick="printSelectedBills()" title="Print all ticked bills">🖨 Print Selected</button>
             <button class="btn btn-o" style="height:38px;padding:0 16px;font-weight:600" onclick="printSelectedCommissionBoS()" title="Print Commission Bill (Memorandum) for all ticked bills — one A4 page per bill, matches IMCPC reference format">🧾 Commission Bill Selected</button>
             <button id="bill-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedBills()" title="Delete all ticked bills">🗑 Delete Selected <span id="bill-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
-            <button class="needs-delete-all btn" style="height:38px;padding:0 14px;background:#7f1d1d;color:#fff;font-weight:600" onclick="deleteAll('bills','Bills')" title="Delete every bill in the database (ignores filters)">🗑 Delete All</button>
           </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:auto">          </div>
@@ -10761,27 +10799,138 @@ async function downloadTemplate(type){
   const blob=await r.blob();const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);a.download=type+'-template.xlsx';a.click()}
 
-// ── Delete All (Item 3) ──────────────────────────────────
-// Double-confirm destructive action, then call /api/{resource}/delete-all
-async function deleteAll(resource,label){
-  const first=confirm(`Delete ALL ${label}?\n\nThis will permanently remove every record from the ${label.toLowerCase()} table. This action CANNOT be undone.\n\nClick OK to continue.`);
-  if(!first)return;
-  const typed=prompt(`To confirm, type DELETE in capitals:`);
-  if(typed!=='DELETE'){alert('Cancelled.');return}
-  try{
-    const r=await fetch(B+`/api/${resource}/delete-all`,{method:'DELETE',headers:{'Authorization':'Bearer '+T}});
-    const d=await r.json();
-    if(!r.ok)throw new Error(d.error||'Delete failed');
-    alert(`Deleted ${d.deleted||0} ${label.toLowerCase()}.`);
-    // Refresh the relevant list
-    if(resource==='traders')searchTraders('');
-    else if(resource==='buyers')searchBuyers('');
-    else if(resource==='invoices')loadInvoices&&loadInvoices();
-    else if(resource==='purchases')loadPurchases&&loadPurchases();
-    else if(resource==='bills')loadBills&&loadBills();
-    else if(resource==='debit-notes')loadDebitNotes&&loadDebitNotes();
-    else if(resource==='auctions')loadAuctions&&loadAuctions();
-  }catch(e){showError(e)}
+// ── Delete All — three-stage safety ──────────────────────
+// 1. PREFLIGHT: ask the server for the exact row counts that would be
+//    wiped (target table + every cascade child) so the confirm dialog
+//    shows real numbers instead of a generic warning.
+// 2. TYPED CONFIRMATION: operator types DELETE in caps.
+// 3. SERVER-SIDE: snapshots the DB to data/backups/ before the wipe,
+//    runs the DELETE, audit-logs the action.
+//
+// Resource is the URL slug (e.g. 'invoices'); label is the human name
+// used in the confirm dialog (e.g. 'Invoices').
+async function deleteAll(resource, label){
+  // 1) Fetch concrete row counts so the operator sees "1,247 invoices"
+  //    instead of an abstract "everything in the table".
+  let counts = null;
+  try {
+    const r = await fetch(B + '/api/admin/delete-all/preflight?resource=' + encodeURIComponent(resource), {
+      headers: { 'Authorization': 'Bearer ' + T }
+    });
+    const d = await r.json();
+    if (r.ok) counts = d.counts || {};
+  } catch (_) { /* fall through to a generic confirm */ }
+
+  const lines = [];
+  if (counts) {
+    // Sort cascade tables in DELETE order so the operator reads the
+    // children first ("1,247 invoices, 23 purchases, …") — matches
+    // what the server actually does.
+    const entries = Object.entries(counts);
+    if (!entries.length || entries.every(([, n]) => !n)) {
+      lines.push('• The target table is already empty.');
+    } else {
+      for (const [table, n] of entries) {
+        lines.push('• ' + n.toLocaleString() + ' row(s) from ' + table);
+      }
+    }
+  } else {
+    lines.push('• Could not preflight the row count — proceed with caution.');
+  }
+
+  const msg = 'Delete ALL ' + label + '?\n\n' +
+    'The server will snapshot the database to data/backups/ first, then permanently remove:\n\n' +
+    lines.join('\n') + '\n\n' +
+    'A misclick can be recovered by restoring the snapshot (Backup tab → Restore from File).\n\n' +
+    'Continue?';
+  if (!confirm(msg)) return;
+
+  const typed = prompt('Type DELETE (in capitals) to confirm:');
+  if (typed !== 'DELETE') { alert('Cancelled.'); return; }
+
+  try {
+    const r = await fetch(B + '/api/' + resource + '/delete-all', {
+      method: 'DELETE',
+      headers: { 'Authorization': 'Bearer ' + T }
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Delete failed');
+
+    // Confirmation message — includes the backup filename so the
+    // operator knows exactly where the snapshot landed.
+    const bp = d.backupPath ? '\n\nSnapshot: ' + d.backupPath : '';
+    alert('Deleted ' + (d.deleted || 0) + ' ' + label.toLowerCase() + '.' + bp);
+
+    // Refresh the relevant list — covers data tabs the user might
+    // currently be on. The Delete All buttons themselves live in the
+    // Backup tab now, but list views elsewhere should still reflect
+    // the wipe if they're loaded.
+    if (resource === 'traders') searchTraders && searchTraders('');
+    else if (resource === 'buyers') searchBuyers && searchBuyers('');
+    else if (resource === 'invoices') loadInvoices && loadInvoices();
+    else if (resource === 'purchases') loadPurchases && loadPurchases();
+    else if (resource === 'bills') loadBills && loadBills();
+    else if (resource === 'debit-notes') loadDebitNotes && loadDebitNotes();
+    else if (resource === 'auctions') loadAuctions && loadAuctions();
+
+    // Refresh the audit log if it's visible so the operator can see
+    // their own action recorded.
+    if (typeof loadDeleteLog === 'function') loadDeleteLog();
+  } catch (e) { showError(e); }
+}
+
+// Pull the most recent Delete All actions and render them as a table.
+// Each row shows when, who, the resource, how many rows went away, the
+// per-table cascade breakdown, the snapshot path, and the client IP.
+async function loadDeleteLog(){
+  const host = document.getElementById('delete-log-host');
+  if (!host) return;
+  host.innerHTML = '<div style="padding:12px;color:#7F1D1D;font-style:italic">Loading…</div>';
+  try {
+    const r = await fetch(B + '/api/admin/delete-log', {
+      headers: { 'Authorization': 'Bearer ' + T }
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(d.error || 'Failed to load audit log');
+    }
+    const rows = await r.json();
+    if (!Array.isArray(rows) || !rows.length) {
+      host.innerHTML = '<div style="padding:12px;color:#7F1D1D;font-style:italic">No Delete All actions recorded yet.</div>';
+      return;
+    }
+    let html = '<table style="width:100%;border-collapse:collapse">' +
+      '<thead><tr style="background:#FECACA"><th style="text-align:left;padding:6px 10px;border-bottom:1px solid #FCA5A5">When</th>' +
+      '<th style="text-align:left;padding:6px 10px;border-bottom:1px solid #FCA5A5">User</th>' +
+      '<th style="text-align:left;padding:6px 10px;border-bottom:1px solid #FCA5A5">Resource</th>' +
+      '<th style="text-align:right;padding:6px 10px;border-bottom:1px solid #FCA5A5">Deleted</th>' +
+      '<th style="text-align:left;padding:6px 10px;border-bottom:1px solid #FCA5A5">Cascade detail</th>' +
+      '<th style="text-align:left;padding:6px 10px;border-bottom:1px solid #FCA5A5">Snapshot</th>' +
+      '<th style="text-align:left;padding:6px 10px;border-bottom:1px solid #FCA5A5">IP</th></tr></thead><tbody>';
+    for (const rw of rows) {
+      const cascade = rw.cascade_counts || {};
+      const detail = Object.entries(cascade)
+        .filter(([, n]) => Number(n) > 0)
+        .map(([t, n]) => escAttr(t) + ': ' + n)
+        .join(' · ') || '—';
+      // Show just the filename of the snapshot, with the full path as title.
+      const bp = rw.backup_path || '';
+      const bpName = bp ? bp.split('/').pop() : '—';
+      html += '<tr>' +
+        '<td style="padding:5px 10px;border-bottom:1px solid #FEE2E2;white-space:nowrap">' + escAttr(rw.created_at || '') + '</td>' +
+        '<td style="padding:5px 10px;border-bottom:1px solid #FEE2E2">' + escAttr(rw.username || '—') + '</td>' +
+        '<td style="padding:5px 10px;border-bottom:1px solid #FEE2E2"><code>' + escAttr(rw.resource || '') + '</code></td>' +
+        '<td style="padding:5px 10px;border-bottom:1px solid #FEE2E2;text-align:right;font-family:monospace;font-weight:700">' + (rw.deleted_count || 0) + '</td>' +
+        '<td style="padding:5px 10px;border-bottom:1px solid #FEE2E2;font-size:11px">' + detail + '</td>' +
+        '<td style="padding:5px 10px;border-bottom:1px solid #FEE2E2;font-family:monospace;font-size:11px" title="' + escAttr(bp) + '">' + escAttr(bpName) + '</td>' +
+        '<td style="padding:5px 10px;border-bottom:1px solid #FEE2E2;font-family:monospace;font-size:11px">' + escAttr(rw.ip || '—') + '</td>' +
+        '</tr>';
+    }
+    html += '</tbody></table>';
+    host.innerHTML = html;
+  } catch (e) {
+    host.innerHTML = '<div style="padding:12px;color:#7F1D1D">' + escAttr(e.message || String(e)) + '</div>';
+  }
 }
 
 // ─────────────────────────────────────────────────────────────

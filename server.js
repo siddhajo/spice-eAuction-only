@@ -632,49 +632,149 @@ app.post('/api/company-settings/import', requireSettingsWrite, (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // BULK DELETE ROUTES (DELETE ALL records from a given table)
 // ══════════════════════════════════════════════════════════════
-function makeDeleteAll(table) {
+// Every wipe is wrapped in three safeguards:
+//   1. Auto-backup — the live SQLite file is copied to data/backups/
+//      with a timestamped, resource-tagged filename BEFORE any DELETE
+//      runs. One stray click is recoverable by restoring the snapshot.
+//   2. Audit log — a row in delete_log captures who/when/what/how-many
+//      plus the backup path, so a wipe can be traced months later.
+//   3. Cascade-count preflight — the client can hit /preflight to show
+//      "About to delete 1,247 invoices…" with the real number before
+//      asking the operator to type DELETE.
+//
+// `requireDeleteAll` is still enforced by Express middleware on every
+// route below; these protections are layered on top of it, not in
+// place of it.
+
+// Map of resource → { table, cascade: [tables wiped alongside], scope }.
+// `scope` is 'global' (wipes the whole table) or 'trade' (requires
+// ?ano= and only deletes rows matching that ano).
+const DELETE_ALL_RESOURCES = {
+  traders:      { table: 'traders',     cascade: ['trader_banks'],                                          scope: 'global' },
+  buyers:       { table: 'buyers',      cascade: [],                                                        scope: 'global' },
+  invoices:     { table: 'invoices',    cascade: [],                                                        scope: 'global' },
+  purchases:    { table: 'purchases',   cascade: [],                                                        scope: 'global' },
+  bills:        { table: 'bills',       cascade: [],                                                        scope: 'global' },
+  auctions:     { table: 'auctions',    cascade: ['lots','invoices','purchases','bills','debit_notes','lot_allocations'], scope: 'global' },
+  'debit-notes': { table: 'debit_notes', cascade: [],                                                        scope: 'trade' },
+};
+
+// Snapshot the live SQLite file before any destructive operation.
+// Returns the absolute backup path so the audit row can point at it.
+// Failure is fatal — we'd rather refuse the wipe than do it without a
+// safety net.
+function _snapshotBackupBeforeDelete(resource) {
+  const backupDir = path.join(process.env.SPICE_DATA_DIR || path.join(__dirname, 'data'), 'backups');
+  try { fs.mkdirSync(backupDir, { recursive: true }); } catch (_) {}
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const filename = `before-delete-${resource}-${stamp}.db`;
+  const target = path.join(backupDir, filename);
+  // Persist any pending in-memory state first so the snapshot is consistent.
+  try { require('./db').flushSave(); } catch (_) {}
+  fs.copyFileSync(DB_PATH, target);
+  return target;
+}
+
+function _logDelete(db, { resource, deletedCount, cascadeCounts, backupPath, req }) {
+  try {
+    db.run(
+      `INSERT INTO delete_log (resource, deleted_count, cascade_counts, backup_path, user_id, username, ip)
+       VALUES (?,?,?,?,?,?,?)`,
+      [
+        resource,
+        deletedCount,
+        JSON.stringify(cascadeCounts || {}),
+        backupPath || '',
+        (req.user && req.user.id) || null,
+        (req.user && req.user.username) || '',
+        String(req.ip || req.headers['x-forwarded-for'] || '').slice(0, 64),
+      ],
+    );
+  } catch (_) { /* best-effort */ }
+}
+
+// Count helper used both by the preflight endpoint and by the wipe
+// itself (so we record the exact row count being deleted).
+function _countDeleteAllImpact(db, resource, ano) {
+  const def = DELETE_ALL_RESOURCES[resource];
+  if (!def) return null;
+  const counts = {};
+  if (def.scope === 'trade') {
+    counts[def.table] = db.get(`SELECT COUNT(*) as c FROM ${def.table} WHERE ano = ?`, [ano || '']).c;
+  } else {
+    counts[def.table] = db.get(`SELECT COUNT(*) as c FROM ${def.table}`).c;
+    for (const t of def.cascade) {
+      try { counts[t] = db.get(`SELECT COUNT(*) as c FROM ${t}`).c; }
+      catch (_) { counts[t] = 0; }
+    }
+  }
+  return counts;
+}
+
+// GET /api/admin/delete-all/preflight?resource=invoices[&ano=16]
+// Returns the row count of the target table + each cascade table, so
+// the client can show "About to delete 1,247 invoices" before asking
+// for typed confirmation.
+app.get('/api/admin/delete-all/preflight', requireDeleteAll, (req, res) => {
+  const resource = String(req.query.resource || '').trim();
+  const def = DELETE_ALL_RESOURCES[resource];
+  if (!def) return res.status(400).json({ error: 'Unknown resource', available: Object.keys(DELETE_ALL_RESOURCES) });
+  if (def.scope === 'trade' && !String(req.query.ano || '').trim()) {
+    return res.status(400).json({ error: 'ano query param required for trade-scoped delete' });
+  }
+  const counts = _countDeleteAllImpact(getDb(), resource, req.query.ano);
+  res.json({ resource, scope: def.scope, counts });
+});
+
+// GET /api/admin/delete-log — recent Delete All audit entries.
+app.get('/api/admin/delete-log', requireDeleteAll, (req, res) => {
+  const rows = getDb().all(
+    `SELECT id, resource, deleted_count, cascade_counts, backup_path, username, ip, created_at
+       FROM delete_log ORDER BY id DESC LIMIT 200`
+  );
+  res.json(rows.map(r => ({
+    ...r,
+    cascade_counts: (() => { try { return JSON.parse(r.cascade_counts || '{}'); } catch (_) { return {}; } })(),
+  })));
+});
+
+function makeDeleteAll(resource) {
+  const def = DELETE_ALL_RESOURCES[resource];
   return (req, res) => {
     try {
       const db = getDb();
-      const before = db.get(`SELECT COUNT(*) as c FROM ${table}`).c;
-      db.run(`DELETE FROM ${table}`);
-      try { db.exec(`DELETE FROM sqlite_sequence WHERE name = '${table}'`); } catch(_) {}
-      res.json({ success: true, deleted: before });
+      // Snapshot first so the operator can always roll back. If this
+      // fails (disk full, permission), bail before touching any data.
+      let backupPath = '';
+      try { backupPath = _snapshotBackupBeforeDelete(resource); }
+      catch (e) {
+        return res.status(500).json({ error: 'Backup snapshot failed; refusing to delete: ' + (e.message || e) });
+      }
+      const counts = _countDeleteAllImpact(db, resource);
+      const before = counts[def.table] || 0;
+      for (const t of def.cascade) {
+        try { db.run(`DELETE FROM ${t}`); } catch (_) {}
+        try { db.exec(`DELETE FROM sqlite_sequence WHERE name = '${t}'`); } catch (_) {}
+      }
+      db.run(`DELETE FROM ${def.table}`);
+      try { db.exec(`DELETE FROM sqlite_sequence WHERE name = '${def.table}'`); } catch (_) {}
+      _logDelete(db, { resource, deletedCount: before, cascadeCounts: counts, backupPath, req });
+      res.json({ success: true, deleted: before, cascadeCounts: counts, backupPath });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
   };
 }
-// Traders have a FK from trader_banks.trader_id → traders.id. A plain
-// DELETE FROM traders fails with "FOREIGN KEY constraint failed" whenever
-// any seller has a row in trader_banks. Wipe children first, then parents.
-app.delete('/api/traders/delete-all', requireDeleteAll, (req, res) => {
-  try {
-    const db = getDb();
-    const before = db.get('SELECT COUNT(*) as c FROM traders').c;
-    db.run('DELETE FROM trader_banks');
-    db.run('DELETE FROM traders');
-    try {
-      db.exec("DELETE FROM sqlite_sequence WHERE name = 'traders'");
-      db.exec("DELETE FROM sqlite_sequence WHERE name = 'trader_banks'");
-    } catch(_) {}
-    res.json({ success: true, deleted: before });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+app.delete('/api/traders/delete-all',     requireDeleteAll, makeDeleteAll('traders'));
 app.delete('/api/buyers/delete-all',      requireDeleteAll, makeDeleteAll('buyers'));
 app.delete('/api/invoices/delete-all',    requireDeleteAll, makeDeleteAll('invoices'));
 app.delete('/api/purchases/delete-all',   requireDeleteAll, makeDeleteAll('purchases'));
 app.delete('/api/bills/delete-all',       requireDeleteAll, makeDeleteAll('bills'));
+app.delete('/api/auctions/delete-all',    requireDeleteAll, makeDeleteAll('auctions'));
 // Delete All Debit Notes — TRADE-SCOPED.
-// Earlier this was wired to the generic makeDeleteAll('debit_notes') which
-// wiped EVERY debit note in the database regardless of trade. Per the
-// trade-wise model (each trade owns its own DN sequence), Delete All
-// must operate within the currently-selected trade only.
-//
-// Required query param: ?ano=<trade-number>. Without it, return 400 to
-// avoid accidental cross-trade wipes.
+// Each trade owns its own DN sequence, so Delete All must operate
+// within the currently-selected trade only. ?ano=<trade-number> is
+// required; without it we refuse the wipe.
 app.delete('/api/debit-notes/delete-all', requireDeleteAll, (req, res) => {
   try {
     const db = getDb();
@@ -684,35 +784,26 @@ app.delete('/api/debit-notes/delete-all', requireDeleteAll, (req, res) => {
         error: 'Trade number (ano) is required for Delete All. Refusing global wipe.',
       });
     }
+    let backupPath = '';
+    try { backupPath = _snapshotBackupBeforeDelete('debit-notes-' + ano); }
+    catch (e) {
+      return res.status(500).json({ error: 'Backup snapshot failed; refusing to delete: ' + (e.message || e) });
+    }
     const before = db.get(
       'SELECT COUNT(*) as c FROM debit_notes WHERE ano = ?',
       [ano]
     ).c;
     db.run('DELETE FROM debit_notes WHERE ano = ?', [ano]);
-    res.json({ success: true, deleted: before, ano });
+    _logDelete(db, {
+      resource: 'debit-notes',
+      deletedCount: before,
+      cascadeCounts: { ano, debit_notes: before },
+      backupPath,
+      req,
+    });
+    res.json({ success: true, deleted: before, ano, backupPath });
   } catch (e) {
     res.status(500).json({ error: 'Delete All failed: ' + (e.message || e) });
-  }
-});
-
-// Trades (auctions) bulk-delete — cascades through every child table that
-// references auction_id. Order matters: clear leaf rows first so foreign-
-// key dependencies don't block the parent delete. Wraps in a try/catch
-// per-table because some installs may not have every optional table.
-app.delete('/api/auctions/delete-all', requireDeleteAll, (req, res) => {
-  try {
-    const db = getDb();
-    const before = db.get('SELECT COUNT(*) as c FROM auctions').c;
-    const childTables = ['lots', 'invoices', 'purchases', 'bills', 'debit_notes', 'lot_allocations'];
-    for (const t of childTables) {
-      try { db.run(`DELETE FROM ${t}`); } catch(_) {}
-      try { db.exec(`DELETE FROM sqlite_sequence WHERE name = '${t}'`); } catch(_) {}
-    }
-    db.run('DELETE FROM auctions');
-    try { db.exec("DELETE FROM sqlite_sequence WHERE name = 'auctions'"); } catch(_) {}
-    res.json({ success: true, deleted: before });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
   }
 });
 

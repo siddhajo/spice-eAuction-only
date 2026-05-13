@@ -448,6 +448,22 @@ async function initDb() {
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
+  // Forensic record of every "Delete All" wipe. Captures the operator,
+  // the affected resource, how many rows actually went away, where the
+  // pre-wipe backup landed, and the client IP — so a misclick can be
+  // traced and recovered from the snapshot.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS delete_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource TEXT NOT NULL,
+    deleted_count INTEGER DEFAULT 0,
+    cascade_counts TEXT DEFAULT '',
+    backup_path TEXT DEFAULT '',
+    user_id INTEGER,
+    username TEXT DEFAULT '',
+    ip TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  )`);
+
   // ── INDEXES ────────────────────────────────────────────────
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_traders_name ON traders(name)',
