@@ -1960,7 +1960,11 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
              that runs on lots, payments, and sales invoices. Helps the
              user verify the math against their spec without digging
              through code. -->
-        <button class="side-item" data-tab="formulas" onclick="go('formulas')">
+        <!-- Dev-only reference page. Hidden by default; reveal for the
+             current browser by running `spiceDev(true)` in the console.
+             Persists in localStorage so a reload keeps it visible.
+             To hide again: `spiceDev(false)`. -->
+        <button id="side-formulas" class="side-item" data-tab="formulas" onclick="go('formulas')" style="display:none">
           <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/><path d="M14.5 19.5l2 2 4-4"/></svg>
           Formulas
         </button>
@@ -5406,6 +5410,29 @@ applyBranding();
 // Track the most recently activated tab so the topbar Refresh button
 // knows what to re-load. Updated on every go() call.
 window._currentTab = 'dash';
+// Dev-only menu items (Formulas) — hidden by default for everyone.
+// Toggle for the current browser:
+//   spiceDev(true)   → show the Formulas item and persist the flag
+//   spiceDev(false)  → hide it and clear the flag
+// State lives in localStorage so a reload keeps the choice; nothing
+// server-side knows about it, so other users on the same install never
+// see the menu item.
+function _applySpiceDevMenu(){
+  const on = localStorage.getItem('spice_dev') === '1';
+  const el = document.getElementById('side-formulas');
+  if (el) el.style.display = on ? '' : 'none';
+}
+window.spiceDev = function(on){
+  if (on) localStorage.setItem('spice_dev', '1');
+  else    localStorage.removeItem('spice_dev');
+  _applySpiceDevMenu();
+  // If the user is currently viewing Formulas and turns dev off, send
+  // them to the dashboard so they can't keep looking at the hidden page.
+  if (!on && window._currentTab === 'formulas') go('dash');
+  return 'spiceDev → ' + (on ? 'ON' : 'OFF');
+};
+document.addEventListener('DOMContentLoaded', _applySpiceDevMenu);
+
 function go(tab){
   window._currentTab = tab;
   document.querySelectorAll('.side-item').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
