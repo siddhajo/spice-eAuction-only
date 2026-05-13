@@ -2568,6 +2568,11 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <button class="btn btn-a" onclick="openImportAuctionModal()">Import Lots from XLS/XLSX</button>
           <button class="btn btn-o" onclick="downloadTemplate('auctions')">Download Template</button>
           <button id="trade-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('trade')">🗑 Delete Selected <span id="trade-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
+          <!-- Full reset: wipes every auction AND cascades through lots,
+               invoices, purchases, bills, debit_notes, lot_allocations.
+               This is the "start from scratch" hammer; gated by the
+               delete_all permission. -->
+          <button class="needs-delete-all btn" style="height:38px;padding:0 14px;background:#7f1d1d;color:#fff;font-weight:600" onclick="deleteAll('auctions','Auctions')" title="Delete every auction AND all related lots / invoices / purchases / bills / debit notes (admin only)">🗑 Delete All</button>
         </div>
         <div id="auction-import-status" style="display:none;padding:8px 14px;border-radius:6px;font-size:12px;margin-bottom:10px"></div>
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Auction No</th><th>Date</th><th>Type</th><th>Lots</th><th>Actions</th></tr></thead><tbody id="auctions-list"></tbody></table></div>
@@ -3062,6 +3067,10 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <button class="btn" style="height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(16,185,129,.28)" onclick="printSelectedInvoices()" title="Print all ticked invoices">🖨 Print Selected</button>
             <button id="inv-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedInvoices()" title="Delete all ticked invoices">🗑 Delete Selected <span id="inv-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
+            <!-- Wipes the entire invoices table — bypasses Sales-tab filters
+                 so the operator can fully reset before re-importing. Gated by
+                 the `delete_all` permission so only admins see it. -->
+            <button class="needs-delete-all btn" style="height:38px;padding:0 14px;background:#7f1d1d;color:#fff;font-weight:600" onclick="deleteAll('invoices','Invoices')" title="Delete every invoice in the database (ignores filters)">🗑 Delete All</button>
             <!-- ASP-only: Print Selected Purchase. Hidden outside ASP context.
                  Visibility toggled by applyAspContextVisibility() at load + state switch. -->
             <button id="btn-print-asp-purchase" class="btn" style="display:none;height:38px;padding:0 16px;background:var(--spice-cardamom);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(22,101,52,.22)" onclick="printSelectedPurchaseFromInvoices()" title="Print purchase-side mirror PDF for all ticked invoices (ASP context only)">🖨 Print Selected Purchase</button>
@@ -3142,6 +3151,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <button class="btn" style="height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(16,185,129,.28)" onclick="printSelectedPurchases()" title="Print all ticked purchase invoices">🖨 Print Selected</button>
             <button class="btn feat-whatsapp" style="height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedPurchases()" title="Send merged PDF of ticked purchase invoices via WhatsApp">📱 WhatsApp Selected</button>
             <button id="pur-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedPurchases()" title="Delete all ticked purchase invoices">🗑 Delete Selected <span id="pur-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
+            <button class="needs-delete-all btn" style="height:38px;padding:0 14px;background:#7f1d1d;color:#fff;font-weight:600" onclick="deleteAll('purchases','Purchases')" title="Delete every purchase invoice in the database (ignores filters)">🗑 Delete All</button>
           </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:auto">          </div>
@@ -3418,6 +3428,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <button class="btn" style="height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(16,185,129,.28)" onclick="printSelectedBills()" title="Print all ticked bills">🖨 Print Selected</button>
             <button class="btn btn-o" style="height:38px;padding:0 16px;font-weight:600" onclick="printSelectedCommissionBoS()" title="Print Commission Bill (Memorandum) for all ticked bills — one A4 page per bill, matches IMCPC reference format">🧾 Commission Bill Selected</button>
             <button id="bill-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedBills()" title="Delete all ticked bills">🗑 Delete Selected <span id="bill-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
+            <button class="needs-delete-all btn" style="height:38px;padding:0 14px;background:#7f1d1d;color:#fff;font-weight:600" onclick="deleteAll('bills','Bills')" title="Delete every bill in the database (ignores filters)">🗑 Delete All</button>
           </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:auto">          </div>
@@ -10768,6 +10779,7 @@ async function deleteAll(resource,label){
     else if(resource==='purchases')loadPurchases&&loadPurchases();
     else if(resource==='bills')loadBills&&loadBills();
     else if(resource==='debit-notes')loadDebitNotes&&loadDebitNotes();
+    else if(resource==='auctions')loadAuctions&&loadAuctions();
   }catch(e){showError(e)}
 }
 
@@ -15563,7 +15575,7 @@ function _impRenderVerify(data){
       '<code>'+escAttr(data.targetTable)+'</code> currently holds '+
       '<b>'+data.targetRowCount+'</b> row(s) in the database.';
     if (stale) {
-      html += ' <span style="color:#9a3412">If you expected zero, check that the Sales / Purchases tab isn\'t hiding rows behind a filter (auction / branch / date) — delete only removes what\'s visible. Use the "Delete All" action under that tab\'s admin menu to clear the whole table.</span>';
+      html += ' <span style="color:#9a3412">If you expected zero, the Sales / Purchases / Bills tab is hiding rows behind a filter (auction / branch / date) — "Delete Selected" only deletes what\'s ticked. Use the dark-red <b>🗑 Delete All</b> button in that tab\'s toolbar to wipe the whole table (admin only).</span>';
     }
     html += '</div>';
   }
