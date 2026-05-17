@@ -349,6 +349,10 @@ mountMobile(app, {
 // Public branding (no auth) — login screen / topbar pulls company
 // name + logo from settings. Returns only the safe-to-expose subset:
 // trade name, short name, branch, GSTIN, and a logo URL when present.
+// Theme + theme_custom_color + preset bundle are also exposed so the
+// per-install branding (which customer this is) is applied BEFORE
+// login — gives every device on this install the same look-and-feel
+// even before the user signs in.
 app.get('/api/branding', (req, res) => {
   try {
     const cfg = getSettingsFlat(getDb());
@@ -356,16 +360,314 @@ app.get('/api/branding', (req, res) => {
     const branch = (isKL ? cfg.kl_branch : cfg.tn_branch) || cfg.tn_branch || cfg.kl_branch || '';
     const gstin  = (isKL ? cfg.kl_gstin  : cfg.tn_gstin)  || cfg.tn_gstin  || cfg.kl_gstin  || '';
     const logoFile = path.join(__dirname, 'public', 'logo-ispl.png');
+    // Preset = the full white-label bundle (color + density + font +
+    // hide-appearance flag) configured by you via /admin/branding.
+    // Empty string when no preset has been set — the frontend then
+    // treats it as the legacy "default" state with Appearance visible.
+    let presetConfig = null;
+    if (cfg.preset_config) {
+      try { presetConfig = JSON.parse(cfg.preset_config); }
+      catch (_) { presetConfig = null; }
+    }
     res.json({
       tradeName: cfg.trade_name || cfg.short_name || '',
       shortName: cfg.short_name || cfg.trade_name || '',
       branch,
       gstin,
       logoUrl: fs.existsSync(logoFile) ? '/logo-ispl.png' : null,
+      // Per-install branding choices — empty string when the admin
+      // hasn't picked one yet (frontend then falls back to localStorage
+      // and finally to 'emerald').
+      theme: cfg.theme || '',
+      themeCustomColor: cfg.theme_custom_color || '',
+      // Preset bundle. preset is the named slug (e.g. 'bluehill');
+      // presetConfig is the full {theme, density, font, hideAppearance}
+      // payload the frontend applies at boot.
+      preset: cfg.tenant_preset || '',
+      presetConfig,
     });
   } catch (e) {
-    res.json({ tradeName: '', shortName: '', branch: '', gstin: '', logoUrl: null });
+    res.json({ tradeName: '', shortName: '', branch: '', gstin: '', logoUrl: null, theme: '', themeCustomColor: '', preset: '', presetConfig: null });
   }
+});
+
+// Persist per-install branding (theme + custom color). Upserts directly
+// into company_settings — bypasses updateSettings() which only UPDATEs
+// existing rows (and these two keys may not be in DEFAULTS yet on
+// installs that pre-date the branding feature).
+//
+// Whitelisted to ONLY these two keys so a misbehaving client can't
+// write arbitrary settings through this endpoint. Larger settings
+// changes still go through PUT /api/company-settings.
+app.put('/api/branding', requireSettingsWrite, (req, res) => {
+  try {
+    const db = getDb();
+    const body = req.body || {};
+    const allowed = {};
+    if (typeof body.theme === 'string') {
+      // Validate against the same theme list the frontend uses
+      const THEMES = ['emerald','coral','violet','sunshine','electric','ocean','tech','minimal','trust','rose','indigo','teal','slate','custom'];
+      if (THEMES.includes(body.theme)) allowed.theme = body.theme;
+    }
+    if (typeof body.themeCustomColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(body.themeCustomColor)) {
+      allowed.theme_custom_color = body.themeCustomColor;
+    }
+    if (!Object.keys(allowed).length) {
+      return res.status(400).json({ error: 'No valid branding fields supplied' });
+    }
+    // INSERT OR REPLACE so the row is created on first write and
+    // updated on subsequent writes. category='branding' so the row
+    // is grouped sensibly if it ever lands in the Settings categories
+    // view (currently appearance lives in its own card).
+    const stmt = db.prepare(
+      `INSERT INTO company_settings (key, value, category, label, field_type)
+       VALUES (?, ?, 'branding', ?, 'text')
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    );
+    const labels = { theme: 'Theme', theme_custom_color: 'Custom primary color' };
+    for (const [k, v] of Object.entries(allowed)) {
+      stmt.run(k, String(v), labels[k] || k);
+    }
+    res.json({ success: true, updated: Object.keys(allowed).length });
+  } catch (e) {
+    res.status(500).json({ error: 'Branding save failed: ' + (e.message || e) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════
+// TENANT PRESET (white-label switcher) — DEVELOPER ONLY
+// ══════════════════════════════════════════════════════════════════
+// The "preset" is a named bundle of color + density + font + hide
+// flags. Lets you configure each customer install to look visually
+// distinct without changes to the customer's data. End users never
+// see this — the Appearance card in Settings is hidden once a preset
+// is active.
+//
+// Access is gated by ADMIN_BRANDING_KEY (env var). The /admin/branding
+// page expects ?key=<secret> on every request. Default key for dev is
+// 'change-me' so a non-secured deploy is obvious in the URL.
+//
+// Pre-baked presets — extend this list to add more. Each preset is a
+// pure config object; the frontend reads presetConfig from GET
+// /api/branding and applies it at boot.
+const TENANT_PRESETS = {
+  cardamom: {
+    label: 'Cardamom (default — premium spacious)',
+    theme: 'emerald', customColor: '', density: 'roomy', font: 'jakarta', hideAppearance: true,
+  },
+  bluehill: {
+    label: 'Bluehill (indigo + dense + inter)',
+    theme: 'indigo', customColor: '', density: 'compact', font: 'inter', hideAppearance: true,
+  },
+  'western-ghats': {
+    label: 'Western Ghats (teal + spacious + outfit)',
+    theme: 'teal', customColor: '', density: 'spacious', font: 'outfit', hideAppearance: true,
+  },
+  slate: {
+    label: 'Slate (corporate grey + dense + system)',
+    theme: 'slate', customColor: '', density: 'compact', font: 'system', hideAppearance: true,
+  },
+  marigold: {
+    label: 'Marigold (sunshine + roomy + jakarta)',
+    theme: 'sunshine', customColor: '', density: 'roomy', font: 'jakarta', hideAppearance: true,
+  },
+  ocean: {
+    label: 'Ocean (cool blue + roomy + inter)',
+    theme: 'ocean', customColor: '', density: 'roomy', font: 'inter', hideAppearance: true,
+  },
+};
+// Available font slugs that the frontend knows how to apply. Keep in
+// sync with the <link>s and CSS variable handling in index.html.
+const TENANT_FONTS = ['jakarta', 'inter', 'outfit', 'system'];
+// Available density slugs. Frontend maps each to a `data-density` attr
+// + CSS rules that adjust padding / corner radius / row heights.
+const TENANT_DENSITIES = ['compact', 'roomy', 'spacious'];
+
+// Gatekeeper. Compares against ADMIN_BRANDING_KEY env var, falling back
+// to 'change-me' so an unsecured deploy is loud — running ?key=change-me
+// in production logs is a clear signal to set the env var.
+function checkAdminKey(req) {
+  const expected = process.env.ADMIN_BRANDING_KEY || 'change-me';
+  const supplied = String(req.query.key || req.headers['x-admin-key'] || '');
+  return supplied === expected && supplied.length > 0;
+}
+
+// GET /admin/branding?key=… — hidden HTML control panel. Lists presets,
+// shows current selection, has a small form for the "custom" preset
+// (manual color/density/font picker). NOT linked from anywhere in the
+// app; you reach it by typing the URL.
+app.get('/admin/branding', (req, res) => {
+  if (!checkAdminKey(req)) {
+    return res.status(403).type('html').send(
+      '<html><body style="font-family:system-ui;padding:40px;text-align:center;color:#666"><h2>403 — Access denied</h2><p>This page requires a valid <code>?key=</code> in the URL.</p></body></html>'
+    );
+  }
+  const db = getDb();
+  const cfg = getSettingsFlat(db);
+  const currentPreset = cfg.tenant_preset || '';
+  let currentConfig = null;
+  try { currentConfig = JSON.parse(cfg.preset_config || 'null'); } catch (_) {}
+
+  const presetOptions = Object.entries(TENANT_PRESETS).map(([slug, p]) => {
+    const sel = slug === currentPreset ? 'selected' : '';
+    return `<option value="${slug}" ${sel}>${slug} — ${p.label}</option>`;
+  }).join('');
+  const customSel = currentPreset === 'custom' ? 'selected' : '';
+  const noneSel = !currentPreset ? 'selected' : '';
+
+  // Custom-preset form field defaults — populated from current config
+  // if the active preset IS 'custom', otherwise blank.
+  const c = (currentPreset === 'custom' && currentConfig) ? currentConfig : {};
+  const cTheme    = c.theme || 'emerald';
+  const cColor    = c.customColor || '';
+  const cDensity  = c.density || 'roomy';
+  const cFont     = c.font || 'jakarta';
+  const cHide     = c.hideAppearance !== false; // default true
+
+  const themeOpts = ['emerald','coral','violet','sunshine','electric','ocean','tech','minimal','trust','rose','indigo','teal','slate','custom']
+    .map(t => `<option value="${t}" ${t === cTheme ? 'selected' : ''}>${t}</option>`).join('');
+  const densityOpts = TENANT_DENSITIES.map(d => `<option value="${d}" ${d === cDensity ? 'selected' : ''}>${d}</option>`).join('');
+  const fontOpts = TENANT_FONTS.map(f => `<option value="${f}" ${f === cFont ? 'selected' : ''}>${f}</option>`).join('');
+
+  const keyEsc = String(req.query.key).replace(/[<>'"&]/g, '');
+
+  res.type('html').send(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Tenant Branding — Admin</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; max-width: 720px; margin: 40px auto; padding: 20px; color: #1f2937; background: #f9fafb; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 24px 0 10px; color: #374151; }
+  .sub { color: #6b7280; font-size: 13px; margin-bottom: 24px; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+  .current { background: #f0fdf4; border-color: #86efac; }
+  label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin: 12px 0 4px; text-transform: uppercase; letter-spacing: .3px; }
+  select, input[type=text], input[type=color] { width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
+  input[type=color] { height: 36px; padding: 2px; }
+  input[type=checkbox] { margin-right: 6px; }
+  button { background: #166534; color: #fff; border: 0; padding: 10px 18px; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  button.secondary { background: #6b7280; }
+  button:hover { opacity: .9; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  pre { background: #f3f4f6; padding: 10px; border-radius: 6px; font-size: 12px; overflow-x: auto; }
+  .msg { display: none; padding: 10px; border-radius: 6px; margin-bottom: 16px; }
+  .msg.ok { display: block; background: #dcfce7; color: #14532d; }
+  .msg.err { display: block; background: #fee2e2; color: #991b1b; }
+</style></head>
+<body>
+  <h1>Tenant branding</h1>
+  <p class="sub">Hidden admin panel. Sets the white-label preset for this install. End users never see this URL or page.</p>
+  <div id="msg" class="msg"></div>
+  <div class="card current">
+    <h2>Current setting</h2>
+    <p><strong>Active preset:</strong> ${currentPreset || '<em>none (legacy mode — Appearance card visible to users)</em>'}</p>
+    ${currentConfig ? `<pre>${JSON.stringify(currentConfig, null, 2)}</pre>` : ''}
+  </div>
+  <div class="card">
+    <h2>Pick a pre-baked preset</h2>
+    <label>Preset</label>
+    <select id="preset-pick">
+      <option value="" ${noneSel}>— none (show Appearance card to users) —</option>
+      ${presetOptions}
+      <option value="custom" ${customSel}>custom (use the form below)</option>
+    </select>
+    <p style="font-size: 12px; color: #6b7280; margin: 10px 0 0">Pick a named preset OR pick "custom" and fill in the form below.</p>
+  </div>
+  <div class="card">
+    <h2>Custom preset (used only when preset = "custom")</h2>
+    <div class="row">
+      <div><label>Color theme</label><select id="custom-theme">${themeOpts}</select></div>
+      <div><label>Custom hex (used when theme = "custom")</label><input type="color" id="custom-color" value="${cColor || '#166534'}"></div>
+      <div><label>Density</label><select id="custom-density">${densityOpts}</select></div>
+      <div><label>Font</label><select id="custom-font">${fontOpts}</select></div>
+    </div>
+    <label style="margin-top: 16px;"><input type="checkbox" id="custom-hide" ${cHide ? 'checked' : ''}> Hide Appearance card from users</label>
+  </div>
+  <div style="display: flex; gap: 10px;">
+    <button onclick="apply()">Apply preset</button>
+    <button class="secondary" onclick="clearPreset()">Clear (revert to legacy mode)</button>
+  </div>
+  <script>
+    const KEY = ${JSON.stringify(keyEsc)};
+    function msg(text, ok) {
+      const el = document.getElementById('msg');
+      el.className = 'msg ' + (ok ? 'ok' : 'err');
+      el.textContent = text;
+    }
+    async function apply() {
+      const preset = document.getElementById('preset-pick').value;
+      const body = { preset };
+      if (preset === 'custom') {
+        body.config = {
+          theme: document.getElementById('custom-theme').value,
+          customColor: document.getElementById('custom-color').value,
+          density: document.getElementById('custom-density').value,
+          font: document.getElementById('custom-font').value,
+          hideAppearance: document.getElementById('custom-hide').checked,
+        };
+      }
+      try {
+        const r = await fetch('/api/admin/preset?key=' + encodeURIComponent(KEY), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (!r.ok) return msg(d.error || 'Failed', false);
+        msg('Applied. Reload your customer-facing app to see the change.', true);
+        setTimeout(() => location.reload(), 800);
+      } catch (e) { msg(e.message, false); }
+    }
+    async function clearPreset() {
+      if (!confirm('Clear the active preset and show Appearance to users again?')) return;
+      try {
+        const r = await fetch('/api/admin/preset?key=' + encodeURIComponent(KEY), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ preset: '' }),
+        });
+        if (!r.ok) return msg('Failed to clear', false);
+        msg('Cleared.', true);
+        setTimeout(() => location.reload(), 800);
+      } catch (e) { msg(e.message, false); }
+    }
+  </script>
+</body></html>`);
+});
+
+// POST /api/admin/preset — receives the preset pick from the admin page.
+// Key-gated like the GET. Writes tenant_preset (slug) + preset_config
+// (full bundle as JSON) to company_settings so the frontend can pick
+// it up via GET /api/branding without further auth.
+app.post('/api/admin/preset', (req, res) => {
+  if (!checkAdminKey(req)) return res.status(403).json({ error: 'Invalid admin key' });
+  const db = getDb();
+  const { preset, config } = req.body || {};
+  const slug = String(preset || '').trim();
+
+  let finalConfig = null;
+  if (slug === '') {
+    finalConfig = null;
+  } else if (slug === 'custom') {
+    if (!config || typeof config !== 'object') {
+      return res.status(400).json({ error: 'custom preset requires a config object' });
+    }
+    finalConfig = {
+      theme: String(config.theme || 'emerald'),
+      customColor: /^#[0-9a-fA-F]{6}$/.test(config.customColor || '') ? config.customColor : '',
+      density: TENANT_DENSITIES.includes(config.density) ? config.density : 'roomy',
+      font: TENANT_FONTS.includes(config.font) ? config.font : 'jakarta',
+      hideAppearance: !!config.hideAppearance,
+    };
+  } else if (TENANT_PRESETS[slug]) {
+    finalConfig = TENANT_PRESETS[slug];
+  } else {
+    return res.status(400).json({ error: `Unknown preset: ${slug}` });
+  }
+
+  const stmt = db.prepare(
+    `INSERT INTO company_settings (key, value, category, label, field_type)
+     VALUES (?, ?, 'branding', ?, 'text')
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  );
+  stmt.run('tenant_preset', slug, 'Tenant preset');
+  stmt.run('preset_config', finalConfig ? JSON.stringify(finalConfig) : '', 'Tenant preset config (JSON)');
+  res.json({ success: true, preset: slug, config: finalConfig });
 });
 
 // Default-credential detection — used to force a password-change prompt
@@ -2496,7 +2798,7 @@ app.get('/api/auctions/template', requireExport, async (req, res) => {
 // LOTS (CPA1.DBF — main data)
 // ══════════════════════════════════════════════════════════════
 app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
-  const { branch, name, buyer, limit, offset, paginated, summary } = req.query;
+  const { branch, name, buyer, limit, offset, paginated, summary, search } = req.query;
   const db = getDb();
   // Correlated subquery (not LEFT JOIN) to avoid any risk of row duplication
   // if the same buyer code exists multiple times in the buyers table.
@@ -2508,6 +2810,22 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
   if (branch) { q += ' AND lots.branch = ?'; p.push(branch); }
   if (name)   { q += ' AND lots.name LIKE ?'; p.push(`%${name}%`); }
   if (buyer)  { q += ' AND lots.buyer = ?'; p.push(buyer); }
+  // Free-text search within the trade — lot no, seller name, buyer
+  // code/trade name, invoice no, branch. Wired to the #lot-search
+  // input on the Lots tab via searchLotsDebounced().
+  const searchTerm = String(search || '').trim();
+  if (searchTerm) {
+    const wild = `%${searchTerm}%`;
+    q += ` AND (
+            COALESCE(lots.lot_no,'')  LIKE ?
+            OR COALESCE(lots.name,'')   LIKE ?
+            OR COALESCE(lots.buyer,'')  LIKE ?
+            OR COALESCE(lots.buyer1,'') LIKE ?
+            OR COALESCE(lots.invo,'')   LIKE ?
+            OR COALESCE(lots.branch,'') LIKE ?
+          )`;
+    p.push(wild, wild, wild, wild, wild, wild);
+  }
 
   // Summary mode — returns aggregate counts only (cheap, no row data).
   // Used by the Lot Entry stats badge so it shows true totals even when
@@ -6981,6 +7299,93 @@ app.get('/api/stats', requireView, (req, res) => {
       lastMonthRevenue: lastMonthTot,
     }
   });
+});
+
+// ── Revenue trend (last N days, default 7) ─────────────────────
+// Powers the dashboard's "Recent revenue" sparkline. Aggregates daily
+// invoice totals over the requested window; missing days are zero-filled
+// so the client doesn't have to do date math.
+app.get('/api/stats/revenue-trend', requireView, (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  // Clamp days to 1–90; the chart space only fits ~30 cleanly,
+  // but 90 is allowed for power users who want a longer view.
+  const raw = parseInt(req.query.days, 10);
+  const days = Math.max(1, Math.min(90, Number.isFinite(raw) ? raw : 7));
+  const db = getDb();
+  // SQLite: aggregate by date(date) so a stray time-component
+  // doesn't break the group. COALESCE handles NULL totals.
+  const rows = db.all(
+    `SELECT date(date) as day, COALESCE(SUM(tot), 0) as total, COUNT(*) as count
+       FROM invoices
+      WHERE date IS NOT NULL AND date != ''
+        AND date(date) >= date('now', '-' || ? || ' days')
+        AND date(date) <= date('now')
+      GROUP BY date(date)
+      ORDER BY day ASC`,
+    [days - 1]
+  );
+  // Build a complete day series (zero-fill missing days).
+  const byDay = new Map(rows.map(r => [r.day, r]));
+  const series = [];
+  const today = new Date();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const iso = d.toISOString().slice(0, 10);
+    const hit = byDay.get(iso);
+    series.push({
+      date: iso,
+      total: hit ? Number(hit.total) || 0 : 0,
+      count: hit ? Number(hit.count) || 0 : 0,
+    });
+  }
+  res.json({ days, series });
+});
+
+// ══════════════════════════════════════════════════════════════
+// SYSTEM: DB backup snapshots (admin-only)
+// ══════════════════════════════════════════════════════════════
+// The on-disk auto-backup directory lives alongside the live DB at
+// `<db-dir>/backups/`. Files are named `auto-YYYY-MM-DD-HH-MM-SS.db`
+// (auto) or `manual-…` (POST /api/system/backup-now). Pruning is
+// driven by the `backup_keep_count` setting — handled by the backup
+// ticker, not by these endpoints. /api/system/backup (already in
+// this file) streams the live DB as a download; these two endpoints
+// manage the snapshot directory instead.
+
+// List the on-disk snapshots. Returns name + size + mtime so the
+// Settings UI can show "Last backup: …" and a rolling list. Empty
+// array when auto-backup has never fired.
+app.get('/api/system/backups', requireAdmin, (req, res) => {
+  try {
+    const bkDir = path.join(path.dirname(DB_PATH), 'backups');
+    if (!fs.existsSync(bkDir)) return res.json({ backups: [] });
+    const out = fs.readdirSync(bkDir)
+      .filter(f => f.endsWith('.db'))
+      .map(f => {
+        const st = fs.statSync(path.join(bkDir, f));
+        return { name: f, size: st.size, mtime: st.mtimeMs };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+    res.json({ backups: out });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Trigger a snapshot now (admin-only). Useful for "before a risky
+// import" or one-off snapshots without waiting for the auto-ticker.
+// Snapshot file is named `manual-<iso-stamp>.db` so it sorts next to
+// auto-* entries by mtime.
+app.post('/api/system/backup-now', requireAdmin, (req, res) => {
+  try {
+    const bkDir = path.join(path.dirname(DB_PATH), 'backups');
+    if (!fs.existsSync(bkDir)) fs.mkdirSync(bkDir, { recursive: true });
+    try { require('./db').flushSave(); } catch (_) {}
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const out = path.join(bkDir, `manual-${stamp}.db`);
+    fs.copyFileSync(DB_PATH, out);
+    const st = fs.statSync(out);
+    res.json({ success: true, file: path.basename(out), size: st.size, mtime: st.mtimeMs });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ══════════════════════════════════════════════════════════════

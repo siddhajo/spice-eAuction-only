@@ -144,6 +144,25 @@ const DEFAULTS = [
   { key: 'flag_round',           value: 'false', category: 'flags', label: 'Round Invoice Amounts',           type: 'boolean' },
   { key: 'flag_export',          value: 'false', category: 'flags', label: 'Export Invoices',                 type: 'boolean' },
   { key: 'flag_whatsapp',        value: 'false', category: 'flags', label: 'WhatsApp Share Buttons',          type: 'boolean' },
+  // Price List Mapping — sister tool of the Lots → Price Import button.
+  // When ON, a "Price List Mapping" item appears in the sidebar (under
+  // Lots) and a quick-access "🗺 Price List Mapping" button shows up on
+  // the Lots toolbar next to Price Import. When OFF, both surfaces are
+  // hidden via the .feat-price-list-mapping CSS hide rule. Default ON
+  // because most operators use the mapping flow; turning it OFF is for
+  // installs that only ever generate prices from the original Praman
+  // sheet without re-importing.
+  { key: 'flag_price_list_mapping', value: 'true',  category: 'flags', label: 'Price List Mapping',           type: 'boolean' },
+
+  // ── BACKUPS ────────────────────────────────────────────────
+  // Per-install database backup settings. The scheduler is driven by
+  // backup_auto_enabled + backup_interval_hours; the keep-count caps
+  // how many .db.gz snapshots are retained on disk (older are pruned).
+  // Manual snapshots can always be triggered via POST /api/system/backup-now
+  // regardless of these flags.
+  { key: 'backup_auto_enabled',   value: 'false', category: 'backups', label: 'Auto-backup enabled',         type: 'boolean' },
+  { key: 'backup_interval_hours', value: '24',    category: 'backups', label: 'Auto-backup interval (hours)', type: 'number'  },
+  { key: 'backup_keep_count',     value: '14',    category: 'backups', label: 'Max snapshots to retain',     type: 'number'  },
 
   // ── LOT ENTRY DEFAULTS ──────────────────────────────────────
   { key: 'sample_weight',      value: '0',     category: 'lot_entry', label: 'Default Sample Weight (kg)',         type: 'number'  },
