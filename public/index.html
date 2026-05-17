@@ -2767,7 +2767,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <button id="buyer-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('buyer')">🗑 Delete Selected <span id="buyer-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>          <input type="file" id="imp-buyers" accept=".xlsx,.xls" style="display:none" onchange="importBuyers(event)">
         </div>
         <div id="buyer-import-status" style="display:none;padding:8px 14px;border-radius:6px;font-size:12px;margin-bottom:10px"></div>
-        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>BUYER</th><th>Code</th><th>Auction Name</th><th>GSTIN</th><th>PAN</th><th>Phone</th><th>TI</th><th>Place · State</th><th>Sale</th><th>Actions</th></tr></thead><tbody id="buyers-list"></tbody></table></div>
+        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>BUYER</th><th>Code</th><th>Trade Name</th><th>GSTIN</th><th>PAN</th><th>Phone</th><th>TI</th><th>Place · State</th><th>Sale</th><th>Actions</th></tr></thead><tbody id="buyers-list"></tbody></table></div>
         <!-- Pager: rendered by searchBuyers() once we know total/page. -->
         <div id="buyers-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
       </div>
@@ -3301,7 +3301,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <button class="needs-invoice-revert btn" style="height:38px;padding:0 14px;background:var(--spice-turmeric);color:#fff;font-weight:600" onclick="revertAllInvoices()" title="Revert all invoices — deletes them and re-enables lots for re-invoicing">⟲ Revert All</button>          </div>
         </div>
 
-        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Sale</th><th>Inv#</th><th>Lorry</th><th>Distance (km)</th><th>Code</th><th>Auction Name</th><th>Qty</th><th>Amount</th><th>Insurance</th><th>Transport</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th>Actions</th></tr></thead><tbody id="invoices-list"></tbody></table></div>
+        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Sale</th><th>Inv#</th><th>Lorry</th><th>Distance (km)</th><th>Code</th><th>Trade Name</th><th>Qty</th><th>Amount</th><th>Insurance</th><th>Transport</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th>Actions</th></tr></thead><tbody id="invoices-list"></tbody></table></div>
         <div id="invoices-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
       </div>
     </div>
@@ -4155,7 +4155,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <div class="fg"><label>Code (short alias)</label><input id="b-code" placeholder="e.g. RSH" style="text-transform:uppercase">
       <div style="font-size:11px;color:var(--spice-text-hint);margin-top:4px">Short alias used in auction tags &amp; price files</div>
     </div>
-    <div class="fg"><label>Auction Name</label><input id="b-buyer1"></div>
+    <div class="fg"><label>Trade Name</label><input id="b-buyer1"></div>
     <div class="fg"><label>GSTIN</label><div style="display:flex;gap:6px"><input id="b-gstin" style="flex:1"><button class="btn btn-a" type="button" onclick="gstLookup('b')" style="white-space:nowrap;padding:6px 10px">Fetch from GST</button></div></div>
     <div class="fg"><label>Address 1</label><input id="b-add1"></div>
     <div class="fg"><label>Address 2</label><input id="b-add2"></div>
@@ -4625,7 +4625,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     </div>
     <div class="fg"><label>Invoice No</label><input id="ie-invo"></div>
     <div class="fg"><label>Buyer Code</label><input id="ie-buyer"></div>
-    <div class="fg"><label>Auction Name</label><input id="ie-buyer1"></div>
+    <div class="fg"><label>Trade Name</label><input id="ie-buyer1"></div>
     <div class="fg"><label>GSTIN</label><input id="ie-gstin"></div>
     <div class="fg"><label>Place</label><input id="ie-place"></div>
     <div class="fg"><label>Bags</label><input type="number" id="ie-bag" step="1"></div>
@@ -11587,7 +11587,7 @@ async function searchBuyers(q, opts){
           `<a href="#" onclick="viewBuyerDetails(${JSON.stringify(b).replace(/"/g,'&quot;')});return false" style="color:var(--green);font-weight:700;text-decoration:none">${esc(b.buyer)}</a>` },
       { key:'code', label:'Code', sort:'text', render:(b)=>
           b.code?`<span style="font-weight:600;color:var(--spice-saffron)">${esc(b.code)}</span>`:'<span style="color:var(--text3)">—</span>' },
-      { key:'buyer1', label:'Auction Name', sort:'text' },
+      { key:'buyer1', label:'Trade Name', sort:'text' },
       { key:'gstin', label:'GSTIN', sort:'text' },
       { key:'pan', label:'PAN', sort:'text' },
       { key:'tel', label:'Phone', sort:'text' },
@@ -11635,7 +11635,7 @@ function viewBuyerDetails(b){
   const fullAddress=[b.add1,b.add2].filter(Boolean).join(', ');
   const consigneeAddress=[b.cadd1].filter(Boolean).join(', ');
   let html='';
-  html+=section('Identity',[kv('Buyer Code',b.buyer),kv('Code (short alias)',b.code),kv('Auction Name',b.buyer1),kv('PAN',b.pan)]);
+  html+=section('Identity',[kv('Buyer Code',b.buyer),kv('Code (short alias)',b.code),kv('Trade Name',b.buyer1),kv('PAN',b.pan)]);
   html+=section('Registration',[kv('GSTIN',b.gstin),kv('TI',b.ti),kv('Sale Type',saleMap[b.sale]||b.sale)]);
   html+=section('Contact',[kv('Phone',b.tel)]);
   html+=section('Billing Address',[kv('Address',fullAddress),kv('Place',b.pla),kv('PIN',b.pin),kv('State',b.state),kv('State Code',b.st_code)]);
@@ -12090,7 +12090,7 @@ async function diagnoseEligibility(){
     html+=`Total lots: <b>${d.totals.total_lots}</b>, blank-buyer: <b>${d.totals.lots_with_blank_buyer}</b>, already invoiced: <b>${d.totals.lots_already_invoiced}</b><br>`;
     html+=`Distinct buyer codes in lots: <b>${d.totals.distinct_buyer_codes_in_lots}</b>, rows in buyers table: <b>${d.totals.buyers_table_total}</b><br><br>`;
     html+=`<table style="width:100%;border-collapse:collapse;font-size:11px">
-      <tr style="background:#ddd"><th style="text-align:left;padding:4px">Buyer Code</th><th style="text-align:left;padding:4px">Auction Name</th><th style="padding:4px">Lots</th><th style="padding:4px">Uninv.</th><th style="padding:4px">Priced</th><th style="text-align:left;padding:4px">Sale</th><th style="text-align:left;padding:4px">Master</th><th style="text-align:left;padding:4px">Eligible</th></tr>`;
+      <tr style="background:#ddd"><th style="text-align:left;padding:4px">Buyer Code</th><th style="text-align:left;padding:4px">Trade Name</th><th style="padding:4px">Lots</th><th style="padding:4px">Uninv.</th><th style="padding:4px">Priced</th><th style="text-align:left;padding:4px">Sale</th><th style="text-align:left;padding:4px">Master</th><th style="text-align:left;padding:4px">Eligible</th></tr>`;
     for(const r of d.breakdown){
       const elColor = r.eligible==='yes' ? '#2e7d32' : '#c62828';
       html+=`<tr style="border-bottom:1px solid #ccc">
@@ -13064,7 +13064,7 @@ async function loadInvoices(opts){
       // "Buyer" overloaded with the code field; renamed to make both
       // columns self-explanatory and let the user filter/sort each
       // independently.
-      { key:'_trade_name', label:'Auction Name', sort:'text',
+      { key:'_trade_name', label:'Trade Name', sort:'text',
         value:(i)=> i.buyer1 || '',
         render:(i)=> i.buyer1
           ? esc(i.buyer1)
@@ -15760,7 +15760,7 @@ async function loadJournal(){
       { key:'sale',   label:'Sale',     sort:'text' },
       { key:'invo',   label:'Inv#',     sort:'text' },
       { key:'buyer',  label:'Buyer',    sort:'text' },
-      { key:'buyer1', label:'Auction Name', sort:'text' },
+      { key:'buyer1', label:'Trade Name', sort:'text' },
       { key:'gstin',  label:'GSTIN',    sort:'text' },
       { key:'bag',    label:'Bags',     sort:'number', numeric:true, fmt:fmtNumWithDecimals(0) },
       { key:'qty',    label:'Qty',      sort:'number', numeric:true, fmt:fmtNumWithDecimals(3) },
