@@ -177,6 +177,10 @@ const DEFAULTS = [
   // e-Auction only build. State is a dropdown: TAMIL NADU or KERALA.
   { key: 'business_mode',  value: 'e-Auction',  category: 'mode', label: 'Business Mode',  type: 'readonly' },
   { key: 'business_state', value: 'TAMIL NADU', category: 'mode', label: 'Business State', type: 'select'   },
+  // Display-only date format. Stored in dd/mm/yyyy by default — the
+  // canonical DB storage stays ISO yyyy-mm-dd regardless. Picking a
+  // different value re-renders every date in the UI, exports, and PDFs.
+  { key: 'date_format',    value: 'dd/mm/yyyy', category: 'mode', label: 'Date Format',    type: 'select'   },
 
   // ── INTEGRATIONS ───────────────────────────────────────────
   { key: 'gst_api_key',    value: '', category: 'integrations', label: 'GST Lookup API Key (gstincheck.co.in)',   type: 'text' },

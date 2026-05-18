@@ -19,14 +19,21 @@ const PDFDocument = require('pdfkit');
 const {
   fmtMoney, fmtQty, fmtPrice,
   getCompanyHeader, writeXlsxCompanyHeader,
+  formatDateForDisplay,
 } = require('./report-formatters');
 
 // ── Helpers ──────────────────────────────────────────────────
+// Date rendering follows the operator's `date_format` Setting. The
+// module-level _dateFormat is set per-report by _loadDateFormat(db) at
+// the top of each entry point so the rest of the file keeps using
+// parameter-less fmtDateDMY() calls.
+let _dateFormat = 'dd/mm/yyyy';
+function _loadDateFormat(db) {
+  try { _dateFormat = require('./company-config').getSettingsFlat(db).date_format || 'dd/mm/yyyy'; }
+  catch (_) { _dateFormat = 'dd/mm/yyyy'; }
+}
 function fmtDateDMY(iso) {
-  if (!iso) return '';
-  const s = String(iso);
-  if (s.includes('-') && s.length >= 10) return s.slice(0, 10).split('-').reverse().join('/');
-  return s;
+  return formatDateForDisplay(iso, _dateFormat);
 }
 
 // Word-aware wrap: returns an array of lines where each line fits within
@@ -314,6 +321,7 @@ function buyersStatementJson(db, opts) {
 }
 
 async function buyersStatementXlsx(db, opts) {
+  _loadDateFormat(db);
   const ctx = getReportContext(db, opts);
   const data = buildBuyersStatement(ctx);
   const wb = new ExcelJS.Workbook();
@@ -394,6 +402,7 @@ async function buyersStatementXlsx(db, opts) {
 }
 
 async function buyersStatementPdf(db, opts) {
+  _loadDateFormat(db);
   const ctx = getReportContext(db, opts);
   const data = buildBuyersStatement(ctx);
   const company = readSetting(db, 'trade_name', readSetting(db, 'company_name', ''));
@@ -708,6 +717,7 @@ function formDJson(db, opts) {
 }
 
 async function formDXlsx(db, opts) {
+  _loadDateFormat(db);
   const ctx = getReportContext(db, opts);
   const d   = buildFormD(ctx, db);
   const wb  = new ExcelJS.Workbook();
@@ -777,6 +787,7 @@ async function formDXlsx(db, opts) {
 }
 
 async function formDPdf(db, opts) {
+  _loadDateFormat(db);
   const ctx = getReportContext(db, opts);
   const d   = buildFormD(ctx, db);
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 40 });
@@ -1109,6 +1120,7 @@ function formCJson(db, opts) {
 }
 
 async function formCXlsx(db, opts) {
+  _loadDateFormat(db);
   const ctx = getReportContext(db, opts);
   const d   = buildFormC(ctx);
   const licence = readSetting(db, 'sbl', '');
@@ -1176,6 +1188,7 @@ async function formCXlsx(db, opts) {
 }
 
 async function formCPdf(db, opts) {
+  _loadDateFormat(db);
   const ctx = getReportContext(db, opts);
   const d   = buildFormC(ctx);
   const licence = readSetting(db, 'sbl', '');

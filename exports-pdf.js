@@ -18,6 +18,7 @@ const auctionReports = require('./auction-reports');
 const {
   fmtMoney, fmtQty, fmtPrice,
   getCompanyHeader, drawCompanyHeader,
+  formatDateForDisplay,
 } = require('./report-formatters');
 
 // Manually truncate `text` to fit `maxWidth` using doc.widthOfString. PDFKit
@@ -707,10 +708,11 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
            JOIN auctions a ON a.id = l.auction_id
           WHERE l.auction_id = ?
           ORDER BY l.lot_no`, [auctionId]);
-      const fmtDate = s => String(s || '').slice(0, 10).split('-').reverse().join('/');
+      // Render date using the operator's configured `date_format`.
+      const dateFmt = (cfg && cfg.date_format) || 'dd/mm/yyyy';
       return lots.map(r => ({
         ...r,
-        date: fmtDate(r.date),
+        date: formatDateForDisplay(r.date, dateFmt),
         code: '',
         trade_name: '',
       }));
@@ -832,7 +834,8 @@ async function exportPdf(db, type, auctionId, cfg, extra = {}) {
   } else if (auctionId) {
     const auction = db.get('SELECT ano, date, crop_type FROM auctions WHERE id = ?', [auctionId]);
     if (auction) {
-      const d = auction.date ? auction.date.split('-').reverse().join('/') : '';
+      const dateFmt = (cfg && cfg.date_format) || 'dd/mm/yyyy';
+      const d = auction.date ? formatDateForDisplay(auction.date, dateFmt) : '';
       // Two clean meta lines, joined by " — " so renderTablePdf can split
       // them back into separate right-side rows. The crop type (ISP/ASP) is
       // omitted — the active preset is already obvious from the logo and

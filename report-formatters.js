@@ -13,6 +13,71 @@
 const fs = require('fs');
 const path = require('path');
 
+// ── Date formatter (user-configurable) ──────────────────────
+//
+// Accepts ISO `yyyy-mm-dd`, `dd/mm/yyyy`, `dd-mm-yyyy`, JS Date objects,
+// and Excel serial numbers; emits the format the operator picked in
+// Settings (`date_format`). The DB stores everything as ISO regardless
+// — this only changes how dates are shown in the UI / exports / PDFs.
+const _MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function _parseToYMD(value) {
+  if (value === null || value === undefined || value === '') return null;
+  // JS Date object
+  if (value instanceof Date && !isNaN(value)) {
+    return {
+      y: String(value.getFullYear()),
+      m: String(value.getMonth() + 1).padStart(2, '0'),
+      d: String(value.getDate()).padStart(2, '0'),
+    };
+  }
+  const s = String(value).trim();
+  // ISO yyyy-mm-dd (with optional time suffix)
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return { y: iso[1], m: iso[2], d: iso[3] };
+  // dd/mm/yyyy or dd-mm-yyyy
+  const dmy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (dmy) return { y: dmy[3], m: dmy[2].padStart(2,'0'), d: dmy[1].padStart(2,'0') };
+  // Excel serial number (days since 1900-01-01, with the 1900 leap-year bug)
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const n = Number(s);
+    if (n > 0 && n < 80000) {
+      const date = new Date((n - 25569) * 86400 * 1000);
+      if (!isNaN(date)) {
+        return {
+          y: String(date.getUTCFullYear()),
+          m: String(date.getUTCMonth() + 1).padStart(2, '0'),
+          d: String(date.getUTCDate()).padStart(2, '0'),
+        };
+      }
+    }
+  }
+  return null;
+}
+function formatDateForDisplay(value, format) {
+  const parts = _parseToYMD(value);
+  if (!parts) return value === null || value === undefined ? '' : String(value);
+  const { y, m, d } = parts;
+  const mmm = _MONTH_ABBR[Number(m) - 1] || m;
+  switch (String(format || 'dd/mm/yyyy').toLowerCase()) {
+    case 'mm/dd/yyyy':   return `${m}/${d}/${y}`;
+    case 'yyyy-mm-dd':   return `${y}-${m}-${d}`;
+    case 'dd-mmm-yyyy':  return `${d}-${mmm}-${y}`;
+    case 'dd mmm yyyy':  return `${d} ${mmm} ${y}`;
+    case 'dd/mm/yyyy':
+    default:             return `${d}/${m}/${y}`;
+  }
+}
+// Every supported date_format option, in the order they appear in the
+// Settings dropdown. Exposed so the client + server share one source
+// of truth.
+const DATE_FORMATS = [
+  'dd/mm/yyyy',
+  'mm/dd/yyyy',
+  'yyyy-mm-dd',
+  'dd-mmm-yyyy',
+  'dd mmm yyyy',
+];
+
 // ── Indian-format number formatters ─────────────────────────
 
 // Group an integer string (no sign) using Indian comma convention:
@@ -519,6 +584,7 @@ function writeXlsxCompanyHeader(wb, ws, header, opts) {
 
 module.exports = {
   fmtMoney, fmtQty, fmtPrice, fmtIndian,
+  formatDateForDisplay, DATE_FORMATS,
   getCompanyHeader, getCompanyIdentity, drawCompanyHeader,
   xlsxNumFmtForHeader, writeXlsxCompanyHeader,
 };

@@ -19,7 +19,7 @@ const PDFDocument = require('pdfkit');
 const {
   fmtMoney, fmtQty, fmtPrice,
   getCompanyHeader, drawCompanyHeader,
-  writeXlsxCompanyHeader,
+  writeXlsxCompanyHeader, formatDateForDisplay,
 } = require('./report-formatters');
 // Lazy import of the shared XLSX builder — `exports.js` itself doesn't
 // pull in `lorry-reports.js`, so a top-level require is safe (no cycle).
@@ -28,11 +28,16 @@ const {
 const { createExcelBuffer } = require('./exports');
 
 // ── Helpers ──────────────────────────────────────────────────
+// Date formatting follows the operator's `date_format` Setting. Each
+// PDF / XLSX entry point calls `_loadDateFormat(db)` once at the top so
+// the rest of this file keeps using a parameter-less helper.
+let _dateFormat = 'dd/mm/yyyy';
+function _loadDateFormat(db) {
+  try { _dateFormat = require('./company-config').getSettingsFlat(db).date_format || 'dd/mm/yyyy'; }
+  catch (_) { _dateFormat = 'dd/mm/yyyy'; }
+}
 function fmtDateDMY(iso) {
-  if (!iso) return '';
-  const s = String(iso);
-  if (s.includes('-') && s.length >= 10) return s.slice(0, 10).split('-').reverse().join('/');
-  return s;
+  return formatDateForDisplay(iso, _dateFormat);
 }
 // fmtMoney / fmtQty / fmtPrice come from report-formatters.js (Indian comma
 // grouping; 2 decimals for rupees, 3 for kilos).
@@ -144,6 +149,7 @@ function getLotSlipRows(db, auctionId) {
 }
 
 async function lotSlipCodeXlsx(db, auctionId) {
+  _loadDateFormat(db);
   const auction = getAuctionHeader(db, auctionId);
   const rows    = getLotSlipRows(db, auctionId);
 
@@ -195,6 +201,7 @@ async function lotSlipCodeXlsx(db, auctionId) {
 
 // PDF — carbon-copy layout (two identical halves side-by-side per page)
 async function lotSlipCodePdf(db, auctionId) {
+  _loadDateFormat(db);
   const auction = getAuctionHeader(db, auctionId);
   const rows    = getLotSlipRows(db, auctionId);
 
@@ -373,6 +380,7 @@ function getTruckListRows(db, auctionId) {
 }
 
 async function truckListXlsx(db, auctionId) {
+  _loadDateFormat(db);
   const auction = getAuctionHeader(db, auctionId);
   const rows = getTruckListRows(db, auctionId);
 
@@ -424,6 +432,7 @@ async function truckListXlsx(db, auctionId) {
 }
 
 async function truckListPdf(db, auctionId) {
+  _loadDateFormat(db);
   const auction = getAuctionHeader(db, auctionId);
   const rows = getTruckListRows(db, auctionId);
 
@@ -621,6 +630,7 @@ function getBuyerLotLorryData(db, auctionId) {
 }
 
 async function buyerLotLorryXlsx(db, auctionId) {
+  _loadDateFormat(db);
   const { auction, interState, intraState } = getBuyerLotLorryData(db, auctionId);
 
   const wb = new ExcelJS.Workbook();
@@ -764,6 +774,7 @@ async function buyerLotLorryXlsx(db, auctionId) {
 }
 
 async function buyerLotLorryPdf(db, auctionId) {
+  _loadDateFormat(db);
   const { auction, interState, intraState } = getBuyerLotLorryData(db, auctionId);
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 30 });

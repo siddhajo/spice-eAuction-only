@@ -8,6 +8,7 @@ const { collectionXlsx: newCollectionXlsx, tradeReportXlsx } = require('./auctio
 const {
   getCompanyHeader,
   writeXlsxCompanyHeader, xlsxNumFmtForHeader,
+  formatDateForDisplay,
 } = require('./report-formatters');
 // Defensive identity resolver — see _company-identity-fallback.js.
 // Avoids "getCompanyIdentity is not a function" on partial deploys.
@@ -190,7 +191,13 @@ function auctionMeta(db, auctionId) {
       'SELECT ano, date, crop_type FROM auctions WHERE id = ?', [auctionId]
     );
     if (!a) return [];
-    const dt = String(a.date || '').slice(0, 10).split('-').reverse().join('/');
+    // Format the meta date using the operator's `date_format` Setting
+    // so every XLSX export's brand band stays consistent with the rest
+    // of the app (list views, PDFs).
+    let dateFmt = 'dd/mm/yyyy';
+    try { dateFmt = require('./company-config').getSettingsFlat(db).date_format || 'dd/mm/yyyy'; }
+    catch (_) { /* settings unavailable — fall back to default */ }
+    const dt = formatDateForDisplay(a.date, dateFmt);
     const meta = [];
     if (a.ano) meta.push(`e-AUCTION No: ${a.ano}`);
     if (dt) meta.push(`Date: ${dt}`);
@@ -276,10 +283,13 @@ async function exportPriceListBefore(db, auctionId) {
       WHERE l.auction_id = ?
       ORDER BY l.lot_no`, [auctionId]
   );
-  // Normalise date to DD/MM/YYYY for display, matching auctionMeta.
-  const fmtDate = s => String(s || '').slice(0, 10).split('-').reverse().join('/');
+  // Render the date with the operator's configured `date_format`.
+  // Centralising via formatDateForDisplay keeps this report aligned
+  // with auctionMeta and every other PDF / XLSX in the app.
+  const cfg = (function(){ try { return require('./company-config').getSettingsFlat(db); } catch(_) { return {}; } })();
+  const dateFmt = cfg.date_format || 'dd/mm/yyyy';
   rows.forEach(r => {
-    r.date = fmtDate(r.date);
+    r.date = formatDateForDisplay(r.date, dateFmt);
     // CODE and TRADE NAME are intentionally left blank — buyers fill
     // them in by hand on the printed sheet during the pre-trade walk.
     r.code = '';

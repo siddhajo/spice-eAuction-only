@@ -16,7 +16,7 @@ const PDFDocument = require('pdfkit');
 const {
   fmtMoney, fmtQty, fmtPrice,
   getCompanyHeader, drawCompanyHeader,
-  writeXlsxCompanyHeader,
+  writeXlsxCompanyHeader, formatDateForDisplay,
 } = require('./report-formatters');
 // Defensive identity resolver — see _company-identity-fallback.js for
 // rationale. Decoupled from the destructure above so a stale
@@ -32,11 +32,19 @@ function _loadSettings(db) {
 // ── Number formatting ────────────────────────────────────────
 // fmtMoney / fmtQty / fmtPrice come from report-formatters.js (Indian comma
 // grouping; 2 decimals for rupees, 3 for kilos).
+//
+// Date formatting is driven by the operator's `date_format` Setting via
+// a module-level cache. Each PDF / XLSX entry point calls
+// `_loadDateFormat(db)` once at the top so the rest of the file can keep
+// using the parameter-less `fmtDateDMY()` helper without threading cfg
+// through every call site.
+let _dateFormat = 'dd/mm/yyyy';
+function _loadDateFormat(db) {
+  try { _dateFormat = _loadSettings(db).date_format || 'dd/mm/yyyy'; }
+  catch (_) { _dateFormat = 'dd/mm/yyyy'; }
+}
 function fmtDateDMY(iso) {
-  if (!iso) return '';
-  const s = String(iso);
-  if (s.includes('-') && s.length >= 10) return s.slice(0, 10).split('-').reverse().join('/');
-  return s;
+  return formatDateForDisplay(iso, _dateFormat);
 }
 
 // Manually truncate `text` so doc.widthOfString(out) <= maxWidth, appending an
@@ -128,6 +136,7 @@ function getLotSlipPreRows(db, auctionId, state) {
 }
 
 async function lotSlipPdf(db, auctionId, _cfg, extra) {
+  _loadDateFormat(db);
   const auction = getAuctionHeader(db, auctionId);
   const rows = getLotSlipPreRows(db, auctionId, extra && extra.state);
 
@@ -376,6 +385,7 @@ function classifyByState(rows, auctionState) {
 }
 
 async function collectionXlsx(db, auctionId) {
+  _loadDateFormat(db);
   const auction = getAuctionHeader(db, auctionId);
   const rows = getCollectionRows(db, auctionId);
   const groups = classifyByState(rows, auction.state);
@@ -451,6 +461,7 @@ async function collectionXlsx(db, auctionId) {
 }
 
 async function collectionPdf(db, auctionId) {
+  _loadDateFormat(db);
   const auction = getAuctionHeader(db, auctionId);
   const rows = getCollectionRows(db, auctionId);
   const groups = classifyByState(rows, auction.state);
@@ -759,6 +770,7 @@ function getTradeReportData(db, auctionId, opts) {
 }
 
 async function tradeReportXlsx(db, auctionId, opts) {
+  _loadDateFormat(db);
   const { auction, sortedStates, stats } = getTradeReportData(db, auctionId, opts);
 
   const wb = new ExcelJS.Workbook();
@@ -951,6 +963,7 @@ async function tradeReportXlsx(db, auctionId, opts) {
 }
 
 async function tradeReportPdf(db, auctionId, opts) {
+  _loadDateFormat(db);
   const { auction, sortedStates, stats } = getTradeReportData(db, auctionId, opts);
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 18 });

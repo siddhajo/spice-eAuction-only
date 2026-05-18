@@ -5101,28 +5101,50 @@ function fmtI(v, decimals){
   const formatted=rest?rest+','+last3:last3;
   return sign+formatted+(dp?'.'+dp:'');
 }
-// Format any date-ish value → dd/mm/yyyy. Handles ISO, Excel serial numbers, dd/mm/yyyy, Date objects.
-function fmtD(v){
-  if(v===null||v===undefined||v==='')return '';
+// Format any date-ish value using the operator's `date_format` setting.
+// The setting is cached in window._CCFG (loaded on first settings call);
+// default falls back to dd/mm/yyyy. Handles ISO, dd/mm/yyyy, dd-mm-yyyy,
+// JS Date objects, and Excel serial numbers — same parser surface as the
+// server-side formatter so a date round-trips identically.
+const _MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function _fmtDParseYMD(v){
+  if(v===null||v===undefined||v==='')return null;
+  if(v instanceof Date && !isNaN(v)){
+    const pad=x=>String(x).padStart(2,'0');
+    return { y:String(v.getFullYear()), m:pad(v.getMonth()+1), d:pad(v.getDate()) };
+  }
   const s=String(v).trim();
-  // Already ISO yyyy-mm-dd
-  const m1=s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if(m1)return m1[3]+'/'+m1[2]+'/'+m1[1];
-  // dd/mm/yyyy or dd-mm-yyyy — already in display format
-  if(/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}/.test(s))return s.replace(/-/g,'/');
-  // Numeric Excel serial (days since 1900-01-01, with leap-year bug)
+  const iso=s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(iso) return { y:iso[1], m:iso[2], d:iso[3] };
+  const dmy=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if(dmy) return { y:dmy[3], m:dmy[2].padStart(2,'0'), d:dmy[1].padStart(2,'0') };
   if(/^\d+(\.\d+)?$/.test(s)){
     const n=Number(s);
     if(n>0&&n<80000){
       const ms=(n-25569)*86400*1000;
-      const d=new Date(ms);
-      if(!isNaN(d)){
+      const date=new Date(ms);
+      if(!isNaN(date)){
         const pad=x=>String(x).padStart(2,'0');
-        return pad(d.getUTCDate())+'/'+pad(d.getUTCMonth()+1)+'/'+d.getUTCFullYear();
+        return { y:String(date.getUTCFullYear()), m:pad(date.getUTCMonth()+1), d:pad(date.getUTCDate()) };
       }
     }
   }
-  return s;
+  return null;
+}
+function fmtD(v){
+  const parts=_fmtDParseYMD(v);
+  if(!parts) return v===null||v===undefined?'':String(v);
+  const { y, m, d } = parts;
+  const mmm = _MONTH_ABBR[Number(m)-1] || m;
+  const fmt = String(((window._CCFG)||{}).date_format || 'dd/mm/yyyy').toLowerCase();
+  switch(fmt){
+    case 'mm/dd/yyyy':   return `${m}/${d}/${y}`;
+    case 'yyyy-mm-dd':   return `${y}-${m}-${d}`;
+    case 'dd-mmm-yyyy':  return `${d}-${mmm}-${y}`;
+    case 'dd mmm yyyy':  return `${d} ${mmm} ${y}`;
+    case 'dd/mm/yyyy':
+    default:             return `${d}/${m}/${y}`;
+  }
 }
 
 // ── Icon helpers ──────────────────────────────────────────
@@ -5560,6 +5582,10 @@ async function applyFeatureFlags() {
       cfg = await j('/api/company-settings/flat');
     }
   } catch (_) {}
+  // Stash the freshly-fetched settings in _CCFG so fmtD() (and any other
+  // setting-driven UI bits) see the current date_format on first paint
+  // instead of waiting for the first invoice render to populate it.
+  if (cfg) window._CCFG = cfg;
   const on = (v) => String(v == null ? '' : v).toLowerCase() === 'true' || v === true;
   // Default OFF when settings haven't loaded yet — safer than showing
   // dead controls. Re-runs after login + after save to reconcile.
@@ -10290,6 +10316,27 @@ function renderSettingsPanel(){
     for(const f of fields){
       if(f.key==='business_mode')html+=`<div class="fg"><label>${f.label}${helpTip(FIELD_HELP.business_mode)}</label><input type="text" data-key="${f.key}" value="e-Auction" readonly style="background:#f1f5f9;color:#475569;cursor:not-allowed" title="This build is e-Auction only"></div>`;
       else if(f.key==='business_state')html+=`<div class="fg"><label>${f.label}${helpTip(FIELD_HELP.business_state)}</label><select data-key="${f.key}" onchange="onBusinessStateChanged(this.value)"><option${f.value==='TAMIL NADU'?' selected':''}>TAMIL NADU</option><option${f.value==='KERALA'?' selected':''}>KERALA</option></select></div>`;
+      else if(f.key==='date_format'){
+        // Sample today's date in each format so the operator can see
+        // exactly what they're picking — easier than parsing the labels.
+        const now = new Date();
+        const yyyy = String(now.getFullYear());
+        const mm   = String(now.getMonth()+1).padStart(2,'0');
+        const dd   = String(now.getDate()).padStart(2,'0');
+        const mmmA = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const mmm  = mmmA[now.getMonth()];
+        const sample = {
+          'dd/mm/yyyy':   `${dd}/${mm}/${yyyy}`,
+          'mm/dd/yyyy':   `${mm}/${dd}/${yyyy}`,
+          'yyyy-mm-dd':   `${yyyy}-${mm}-${dd}`,
+          'dd-mmm-yyyy':  `${dd}-${mmm}-${yyyy}`,
+          'dd mmm yyyy':  `${dd} ${mmm} ${yyyy}`,
+        };
+        const opts = Object.entries(sample)
+          .map(([k,v]) => `<option value="${k}"${f.value===k?' selected':''}>${k} &nbsp; (e.g. ${v})</option>`)
+          .join('');
+        html += `<div class="fg"><label>${f.label}${helpTip('How dates are displayed everywhere in the app — list views, PDFs, XLSX. The database keeps storing ISO yyyy-mm-dd regardless.')}</label><select data-key="${f.key}">${opts}</select></div>`;
+      }
       else html+=fld(f);
     }
     html+='</div>';

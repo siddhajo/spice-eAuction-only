@@ -10,6 +10,13 @@ const { amountToWords } = require('./amount-words');
 // fallback otherwise. Fixes "getCompanyIdentity is not a function" when
 // a partial deploy ships an older report-formatters.js without the export.
 const getCompanyIdentity = require('./_company-identity-fallback').resolve();
+// Centralized date formatter — every "DATE: <today>" fallback in this
+// file uses it so the operator's `date_format` Setting is honored on
+// invoice/bill PDFs the same way as on lists and other reports.
+const { formatDateForDisplay } = require('./report-formatters');
+function _fallbackInvoiceDate(cfg) {
+  return formatDateForDisplay(new Date(), (cfg && cfg.date_format) || 'dd/mm/yyyy');
+}
 
 // Shared flag-reader: cfg flags can be `true|false` (booleans), `'true'|'false'`
 // (strings, from JSON storage), or `undefined`/empty (treat as defaultOn).
@@ -192,7 +199,7 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
   ];
   const rightPairs = [
     ['INVOICE NO', ''], // value blank per reference
-    ['DATE', invoiceData.invoiceDate || new Date().toLocaleDateString('en-GB')],
+    ['DATE', invoiceData.invoiceDate || _fallbackInvoiceDate(cfg)],
     ['PLACE OF SUPPLY', (cfg.s_place || '').toUpperCase() + (cfg.s_state ? '  [' + (cfg.s_state || '').toUpperCase() + ']' : '')],
     ['REVERSE CHARGE', ''],
   ];
@@ -612,7 +619,7 @@ function generateCropReceiptPDF(lot, cfg) {
   const details = [
     ['Trade No', lot.ano || ''],
     ['Lot No', lot.lot_no || ''],
-    ['Date', new Date().toLocaleDateString('en-GB')],
+    ['Date', _fallbackInvoiceDate(cfg)],
     ['No. of Bags', String(lot.bags || '')],
     ['Nett Weight', String(lot.qty || '')],
     ['Depot', lot.branch || ''],
@@ -1878,7 +1885,7 @@ function generateAgriBillPDF(billData, cfg, billNo, externalDoc) {
   const infoH = 16;
   doc.moveTo(x0, infoY).lineTo(x1, infoY).stroke();
   doc.moveTo(x0, infoY + infoH).lineTo(x1, infoY + infoH).stroke();
-  const invDate = (billData && billData.billDate) || new Date().toLocaleDateString('en-GB');
+  const invDate = (billData && billData.billDate) || _fallbackInvoiceDate(cfg);
   const eTradeNo = (billData && billData.eTradeNo) || cfg.e_trade_no || '';
   doc.font('Helvetica').fontSize(8.5);
   doc.text(`Invoice No: ${billNo || ''}`, x0 + 6, infoY + 4);

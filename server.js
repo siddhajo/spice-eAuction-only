@@ -10,7 +10,7 @@ const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSetti
 const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getPurchaseJournal } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF } = require('./invoice-pdf');
 const { EXPORT_TYPES, createExcelBuffer } = require('./exports');
-const { getCompanyHeader, writeXlsxCompanyHeader } = require('./report-formatters');
+const { getCompanyHeader, writeXlsxCompanyHeader, formatDateForDisplay } = require('./report-formatters');
 const { exportPdf: exportAnyPdf } = require('./exports-pdf');
 const { DBF_EXPORTS } = require('./dbf-exports');
 const { REPORTS: LORRY_REPORTS } = require('./lorry-reports');
@@ -138,15 +138,24 @@ function addDays(isoDate, days) {
   return `${yy}-${mm}-${dd}`;
 }
 
-// Display: yyyy-mm-dd → dd/mm/yyyy (handles Excel serials defensively too)
+// Display: render any date-ish value using the operator's configured
+// `date_format` setting (Settings → Business Mode → Date Format).
+// Default is dd/mm/yyyy if the setting is missing. Storage stays ISO
+// yyyy-mm-dd in the DB; this only affects how dates are shown.
 function fmtDate(d) {
   if (!d && d !== 0) return '';
   const iso = normalizeDate(d);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
-    const [y, m, day] = iso.split('-');
-    return `${day}/${m}/${y}`;
+  // Cache the active format on the call to avoid getSettingsFlat() for
+  // every row of a 500-row list — same DB hit otherwise.
+  if (!fmtDate._cachedFormat || (Date.now() - fmtDate._cachedAt) > 2000) {
+    try {
+      fmtDate._cachedFormat = getSettingsFlat(getDb()).date_format || 'dd/mm/yyyy';
+    } catch (_) {
+      fmtDate._cachedFormat = 'dd/mm/yyyy';
+    }
+    fmtDate._cachedAt = Date.now();
   }
-  return String(d);
+  return formatDateForDisplay(iso || d, fmtDate._cachedFormat);
 }
 
 function withFmtDate(rows, field = 'date') {
@@ -1640,7 +1649,7 @@ app.get('/api/traders/template', requireExport, async (req, res) => {
   }];
   const buf = await createExcelBuffer('Sellers', cols, sample, {
     db, title: 'SELLERS TEMPLATE',
-    metaLines: [`Date: ${new Date().toLocaleDateString('en-GB')}`],
+    metaLines: [`Date: ${fmtDate(new Date())}`],
   });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename="sellers-template.xlsx"');
@@ -1843,7 +1852,7 @@ app.get('/api/buyers/template', requireExport, async (req, res) => {
   }];
   const buf = await createExcelBuffer('Buyers', cols, sample, {
     db, title: 'BUYERS TEMPLATE',
-    metaLines: [`Date: ${new Date().toLocaleDateString('en-GB')}`],
+    metaLines: [`Date: ${fmtDate(new Date())}`],
   });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename="buyers-template.xlsx"');
@@ -2787,7 +2796,7 @@ app.get('/api/auctions/template', requireExport, async (req, res) => {
   }];
   const buf = await createExcelBuffer('Lots', cols, sample, {
     db, title: 'AUCTION / LOTS TEMPLATE',
-    metaLines: [`Date: ${new Date().toLocaleDateString('en-GB')}`],
+    metaLines: [`Date: ${fmtDate(new Date())}`],
   });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename="auction-lots-template.xlsx"');
@@ -4246,15 +4255,17 @@ app.get('/api/purchases/pdf/:auctionId/:sellerName', requireView, async (req, re
 // the app (ASP when Kerala+e-Auction, else ISP from company_settings).
 function enrichPurchaseForPDF(invoice, cfg, db, auctionId) {
   if (!invoice) return invoice;
-  // Stamp auction date + e-AUCTION no
+  // Stamp auction date + e-AUCTION no. Uses the operator's `date_format`
+  // setting so the invoice's date string matches what they see on the
+  // Sales list and every other document in the app.
+  const dateFmt = (cfg && cfg.date_format) || 'dd/mm/yyyy';
   if (!invoice.invoiceDate && auctionId) {
     const auction = db.get('SELECT date FROM auctions WHERE id = ?', [auctionId]);
     if (auction && auction.date) {
-      const d = new Date(auction.date);
-      if (!isNaN(d)) invoice.invoiceDate = d.toLocaleDateString('en-GB');
+      invoice.invoiceDate = formatDateForDisplay(auction.date, dateFmt);
     }
   }
-  if (!invoice.invoiceDate) invoice.invoiceDate = new Date().toLocaleDateString('en-GB');
+  if (!invoice.invoiceDate) invoice.invoiceDate = formatDateForDisplay(new Date(), dateFmt);
   if (!invoice.eTradeNo) invoice.eTradeNo = String(auctionId || '');
 
   // Buyer block — populated from the central company identity (which
@@ -4507,13 +4518,14 @@ app.get('/api/bills/pdf/:auctionId/:sellerName', requireView, async (req, res) =
     // details block when CR/GSTIN-style id is available on the trader row
     if (bill.seller && !bill.seller.crno) bill.seller.crno = bill.seller.cr || '';
     // Stamp the bill date + e-TRADE number so the new layout can render them
-    // in the top strip (Invoice No / e-TRADE No / Date).
+    // in the top strip (Invoice No / e-TRADE No / Date). Format follows
+    // the operator's `date_format` Setting.
+    const dateFmt = (cfg && cfg.date_format) || 'dd/mm/yyyy';
     const auction = db.get('SELECT date FROM auctions WHERE id = ?', [req.params.auctionId]);
     if (auction && auction.date) {
-      const d = new Date(auction.date);
-      if (!isNaN(d)) bill.billDate = d.toLocaleDateString('en-GB');
+      bill.billDate = formatDateForDisplay(auction.date, dateFmt);
     }
-    if (!bill.billDate) bill.billDate = new Date().toLocaleDateString('en-GB');
+    if (!bill.billDate) bill.billDate = formatDateForDisplay(new Date(), dateFmt);
     bill.eTradeNo = req.query.eTradeNo || req.params.auctionId;
 
     const pdf = await generateAgriBillPDF(bill, cfg, billNo);
@@ -4591,7 +4603,7 @@ app.get('/api/bills/commission-bill-f2/:auctionId', (req, res, next) => {
 
     const fmtAmt = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const fmtQty = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-    const dateFmt = auction.date ? String(auction.date).split('-').reverse().join('/') : '';
+    const dateFmt = auction.date ? fmtDate(auction.date) : '';
     const format = String(req.query.format || 'pdf').toLowerCase();
 
     if (format === 'xlsx') {
@@ -4755,14 +4767,14 @@ app.post('/api/bills/pdf-bulk', requireView, async (req, res) => {
       }
       // Enrich for new renderer layout (Invoice No / e-TRADE No / Date strip)
       if (bill.seller && !bill.seller.crno) bill.seller.crno = bill.seller.cr || '';
+      const dateFmt2 = (cfg && cfg.date_format) || 'dd/mm/yyyy';
       if (stored.auction_id) {
         const auction = db.get('SELECT date FROM auctions WHERE id = ?', [stored.auction_id]);
         if (auction && auction.date) {
-          const d = new Date(auction.date);
-          if (!isNaN(d)) bill.billDate = d.toLocaleDateString('en-GB');
+          bill.billDate = formatDateForDisplay(auction.date, dateFmt2);
         }
       }
-      if (!bill.billDate) bill.billDate = new Date().toLocaleDateString('en-GB');
+      if (!bill.billDate) bill.billDate = formatDateForDisplay(new Date(), dateFmt2);
       bill.eTradeNo = stored.auction_id || '';
       payloads.push({ billData: bill, billNo: stored.bil });
     }
@@ -4899,13 +4911,11 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
       // display correctly when both columns carry values.
       const interState = lots.length > 0 && lots.every(l => l.sale && l.sale !== 'L');
 
-      // Format the auction date dd/mm/yyyy.
+      // Format the auction date using the operator's `date_format` Setting.
+      const dateFmt3 = (cfg && cfg.date_format) || 'dd/mm/yyyy';
       let billDate = '';
-      if (auction && auction.date) {
-        const d = new Date(auction.date);
-        if (!isNaN(d)) billDate = d.toLocaleDateString('en-GB');
-      }
-      if (!billDate && b.date) billDate = b.date;
+      if (auction && auction.date) billDate = formatDateForDisplay(auction.date, dateFmt3);
+      if (!billDate && b.date) billDate = formatDateForDisplay(b.date, dateFmt3);
 
       const totalCost   = lineItems.reduce((s, li) => s + li.cardamomCost, 0);
       const totalRefund = lineItems.reduce((s, li) => s + li.refundAmount, 0);
@@ -7706,7 +7716,7 @@ app.get('/api/reports/summary-pdf/:auctionId', (req, res, next) => {
   // the page in three sections (totals strip, branch table, sellers).
   const titleRow = db.get(`SELECT value FROM company_settings WHERE key = 'trade_name'`);
   const appTitle = (titleRow && titleRow.value) || 'Spice Auction';
-  const dateFmt  = auction.date ? String(auction.date).split('-').reverse().join('/') : '';
+  const dateFmt  = auction.date ? fmtDate(auction.date) : '';
 
   // Optional branch filter — applied to totals & seller list when set.
   const branchFilterPdf = String(req.query.branch || '').trim();
