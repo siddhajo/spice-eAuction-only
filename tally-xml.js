@@ -2392,11 +2392,28 @@ function buildSalesIspRows(db, auctionId, cfg) {
 
     // total = the PRE-round, pre-addl-charge grand total.
     // totalRounded = rounded GST-inclusive subtotal (no addl charge).
-    // The Additional Charge is emitted as its own ledger entry, so the
-    // round-off math here must NOT include it.
+    // Derived from invoice components (amount + gunny + pava_hc + ins +
+    // cgst + sgst + igst) rather than reading r.tot - r.rund. The
+    // earlier approach silently produced rnd = 0 whenever the imported
+    // invoice's `rund` column was blank (Import Old Data files don't
+    // carry it) — which suppressed the Round On/Off ledger in Tally
+    // even when the GST math actually had a paise delta. Components
+    // are always populated, so deriving from them is robust regardless
+    // of how the invoice was created. TCS + Addl Charge are emitted as
+    // their own ledger lines below, so they MUST NOT appear in this
+    // round-off base.
     const addlChg = r2(r.addl_chg || 0);
-    const totalRounded = r0((r.tot || 0) - addlChg);
-    const total = r2((r.tot || 0) - addlChg - (r.rund || 0));
+    const componentsSum = r2(
+      (Number(r.amount)  || 0) +
+      (Number(r.gunny)   || 0) +
+      (Number(r.pava_hc) || 0) +
+      (Number(r.ins)     || 0) +
+      (Number(r.cgst)    || 0) +
+      (Number(r.sgst)    || 0) +
+      (Number(r.igst)    || 0)
+    );
+    const totalRounded = r0(componentsSum);
+    const total        = componentsSum;
 
     // Resolve the e-way bill distance: per-invoice override, then
     // route table lookup, then blank.
@@ -2635,7 +2652,6 @@ function buildSalesRows(db, auctionId, cfg) {
     g.sgst      += Number(r.sgst || 0);
     g.igst      += Number(r.igst || 0);
     g.tcsamt    += Number(r.tcs || 0);
-    g.total     += Number(r.tot || 0);
   }
 
   // round
@@ -2645,8 +2661,15 @@ function buildSalesRows(db, auctionId, cfg) {
     g.gunnyAmt  = r2(g.gunnyAmt);
     g.cgst = r2(g.cgst); g.sgst = r2(g.sgst); g.igst = r2(g.igst);
     g.tcsamt = r2(g.tcsamt);
-    g.total = r2(g.total);
-    g.totalRounded = r0(g.total);
+    // Derive the pre-round subtotal from components (cardamom + gunny +
+    // GST). Previously this was the sum of stored r.tot values — each
+    // already rounded — so totalRounded was always equal to total and
+    // the Round On/Off ledger never emitted. Computing from components
+    // recovers the paise delta even for imported invoices where
+    // r.rund is blank.
+    const componentsSum = r2(g.amounttot + g.gunnyAmt + g.cgst + g.sgst + g.igst);
+    g.total        = componentsSum;
+    g.totalRounded = r0(componentsSum);
   }
   return out;
 }
