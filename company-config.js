@@ -159,6 +159,12 @@ const DEFAULTS = [
   // installs that only ever generate prices from the original Praman
   // sheet without re-importing.
   { key: 'flag_price_list_mapping', value: 'true',  category: 'flags', label: 'Price List Mapping',           type: 'boolean' },
+  // Print Selected Purchase — the purchase-side mirror PDF button on the
+  // Sales tab toolbar. Default OFF because it only makes sense for the
+  // ASP→ISP transfer flow; admins enable it explicitly when they need it.
+  // The existing "ASP context" check (Kerala + e-Auction) stays as a
+  // secondary gate on top of this flag.
+  { key: 'flag_print_selected_purchase', value: 'false', category: 'flags', label: 'Print Selected Purchase (Sales tab)', type: 'boolean' },
 
   // ── BACKUPS ────────────────────────────────────────────────
   // Per-install database backup settings. The scheduler is driven by

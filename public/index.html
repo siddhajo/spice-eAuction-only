@@ -1017,6 +1017,11 @@ body:not([data-feat-debit-note="1"]) .feat-debit-note{display:none !important}
    toolbar are tagged .feat-price-list-mapping so this single rule hides
    both when flag_price_list_mapping is OFF. */
 body:not([data-feat-price-list-mapping="1"]) .feat-price-list-mapping{display:none !important}
+/* Print Selected Purchase — Sales tab toolbar button, hidden when
+   flag_print_selected_purchase is OFF. The ASP-context check (Kerala +
+   e-Auction) in applyAspContextVisibility() runs on top of this rule
+   and can hide it even when the flag is ON. */
+body:not([data-feat-print-selected-purchase="1"]) .feat-print-selected-purchase{display:none !important}
 .icon-btn.i-print{color:var(--spice-saffron);border-color:var(--spice-saffron)}
 .icon-btn.i-print:hover{background:var(--spice-saffron);color:#fff}
 
@@ -3289,7 +3294,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <button id="inv-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedInvoices()" title="Delete all ticked invoices">🗑 Delete Selected <span id="inv-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <!-- ASP-only: Print Selected Purchase. Hidden outside ASP context.
                  Visibility toggled by applyAspContextVisibility() at load + state switch. -->
-            <button id="btn-print-asp-purchase" class="btn" style="display:none;height:38px;padding:0 16px;background:var(--spice-cardamom);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(22,101,52,.22)" onclick="printSelectedPurchaseFromInvoices()" title="Print purchase-side mirror PDF for all ticked invoices (ASP context only)">🖨 Print Selected Purchase</button>
+            <button id="btn-print-asp-purchase" class="btn feat-print-selected-purchase" style="display:none;height:38px;padding:0 16px;background:var(--spice-cardamom);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(22,101,52,.22)" onclick="printSelectedPurchaseFromInvoices()" title="Print purchase-side mirror PDF for all ticked invoices (ASP context only)">🖨 Print Selected Purchase</button>
             <!-- Lorry no: bulk-set vehicle number on ticked invoices.
                  Stored in invoices.lorry_no, picked up by the Tally
                  sales voucher generator as e-way bill VehicleNo. -->
@@ -5598,6 +5603,11 @@ async function applyFeatureFlags() {
   const plmRaw = cfg ? cfg.flag_price_list_mapping : undefined;
   const plmOn = (plmRaw === undefined || plmRaw === null) ? true : on(plmRaw);
   document.body.setAttribute('data-feat-price-list-mapping', plmOn ? '1' : '0');
+  // Print Selected Purchase (Sales tab toolbar). Default OFF — admins
+  // explicitly enable. Still subject to the ASP context check applied
+  // by applyAspContextVisibility() (Kerala + e-Auction), so the button
+  // only shows when BOTH conditions hold.
+  document.body.setAttribute('data-feat-print-selected-purchase', cfg && on(cfg.flag_print_selected_purchase) ? '1' : '0');
 }
 
 // Public branding (no auth) — drives the login + topbar from settings.
