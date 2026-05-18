@@ -287,11 +287,23 @@ function generSalesIspXML(rows, cfg, opts = {}) {
   // Dispatch From — strictly the configured `dispatch_from`. No
   // hardcoded city/PIN fallbacks: when the setting is blank, downstream
   // XML emits an empty cell so the user notices and configures it.
+  //
+  // Place / PIN / State each try the Kerala-address keys first
+  // (kl_place/kl_pin/kl_state, defined under Settings → Address (Kerala)),
+  // then the older `tally_dispatch_*` keys for back-compat with installs
+  // that filled in Settings → To Tally before the Address panel had PIN
+  // fields, then kl_branch as a last resort for place. Without these
+  // fallbacks, Tally rejects the voucher with
+  // "consignor dispatch from pin is missing".
   const d_add        = cfgGet(cfg, 'dispatch_from', '');
   const d_add2       = cfgGet(cfg, 'kl_address2', '');
-  const d_place      = cfgGet(cfg, 'kl_place', cfgGet(cfg, 'kl_branch', ''));
-  const d_pin        = cfgGet(cfg, 'kl_pin', '');
-  const d_state      = cfgGet(cfg, 'kl_state', 'Kerala');
+  const d_place      = cfgGet(cfg, 'kl_place',
+                       cfgGet(cfg, 'tally_dispatch_place',
+                       cfgGet(cfg, 'kl_branch', '')));
+  const d_pin        = cfgGet(cfg, 'kl_pin',
+                       cfgGet(cfg, 'tally_dispatch_pin', ''));
+  const d_state      = cfgGet(cfg, 'kl_state',
+                       cfgGet(cfg, 'tally_dispatch_state', 'Kerala'));
   const d_state_code = '32';
   const d_gstin      = cfgGet(cfg, 'kl_gstin', '');
 
