@@ -165,6 +165,14 @@ const DEFAULTS = [
   // The existing "ASP context" check (Kerala + e-Auction) stays as a
   // secondary gate on top of this flag.
   { key: 'flag_print_selected_purchase', value: 'false', category: 'flags', label: 'Print Selected Purchase (Sales tab)', type: 'boolean' },
+  // Tally Purchase XML detail level — separate from the sales-side
+  // `tally_detailed` flag so the user can toggle purchase / URD / debit
+  // note vouchers independently. ON (default) emits one bill allocation
+  // per lot ("ano/lotno/season") AND one inventory entry per lot. OFF
+  // emits a single consolidated bill allocation ("ano/invno/season")
+  // AND a single aggregate inventory entry. Same flag covers RD
+  // purchase, URD purchase, and Debit Note vouchers.
+  { key: 'tally_purchase_detailed', value: 'true', category: 'flags', label: 'Tally Purchase XML — Detailed (per-lot)', type: 'boolean' },
 
   // ── BACKUPS ────────────────────────────────────────────────
   // Per-install database backup settings. The scheduler is driven by

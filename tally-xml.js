@@ -1603,7 +1603,11 @@ ${rnd < 0 ? TAGS.DEEMYES : TAGS.DEEMNO}
 function generRDPurchaseXML(rows, cfg, opts = {}) {
   const company    = opts.companyName || cfgGet(cfg, 'tally_company_name', 'Ideal Spices Private Limited');
   const season     = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
-  const detailed   = cfgBool(cfg, 'tally_detailed', true);
+  // Purchase-specific detail flag (independent of sales-side
+  // `tally_detailed`). ON → one bill allocation + one inventory entry
+  // per lot. OFF → single consolidated bill allocation keyed by
+  // `${ano}/${invoiceNo}/${season}` + aggregate inventory entry.
+  const detailed   = cfgBool(cfg, 'tally_purchase_detailed', true);
   const tlyrnd     = cfgBool(cfg, 'tally_round_enabled', true);
   const opt        = cfgBool(cfg, 'tally_optional', false);
   // Single-company build: intra/inter test uses the configured home state
@@ -1922,7 +1926,9 @@ ${TAGS.DEEMYES}
 function generURDPurchaseXML(rows, cfg, opts = {}) {
   const company   = opts.companyName || cfgGet(cfg, 'tally_company_name', cfgGet(cfg, 'short_name', 'Ideal Spices Private Limited'));
   const season    = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
-  const detailed  = cfgBool(cfg, 'tally_detailed', true);
+  // Same purchase-specific detail flag as RD purchase — keeps URD
+  // (agriculturist) vouchers in lock-step with the RD ones.
+  const detailed  = cfgBool(cfg, 'tally_purchase_detailed', true);
   const tlyrnd    = cfgBool(cfg, 'tally_round_enabled', true);
   const opt       = cfgBool(cfg, 'tally_optional', false);
   // amazing/ainvPrefix kept as locals so dead ASP branches below still
@@ -1964,9 +1970,13 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
 
     const startVoucher = `<VOUCHER VCHTYPE="Purchase" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
 
-    // Bill allocations (per lot)
+    // Bill allocations — driven by tally_purchase_detailed:
+    //   detailed (default) → one allocation per lot, keyed by lot number
+    //                        (matches the per-lot inventory below)
+    //   consolidated       → single allocation keyed by bill no, summed
+    //                        across the voucher's lots
     let billAlloc = '';
-    if (Array.isArray(row.lots)) {
+    if (detailed && Array.isArray(row.lots)) {
       for (const lot of row.lots) {
         billAlloc += `
 <BILLALLOCATIONS.LIST>
@@ -1975,6 +1985,14 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
 <AMOUNT>${tlyrnd ? r0(lot.bilamt || lot.amount) : r2(lot.bilamt || lot.amount)}</AMOUNT>
 </BILLALLOCATIONS.LIST>`;
       }
+    } else {
+      const bilamttot = r2((row.bilamttot != null ? row.bilamttot : row.amounttot) || 0);
+      billAlloc = `
+<BILLALLOCATIONS.LIST>
+<NAME>${xe(`${row.ano}/${taxNm}/${season}`)}</NAME>
+<BILLTYPE>New Ref</BILLTYPE>
+<AMOUNT>${tlyrnd ? r0(bilamttot) : bilamttot}</AMOUNT>
+</BILLALLOCATIONS.LIST>`;
     }
 
     // Inventory: detailed-per-lot or aggregated
