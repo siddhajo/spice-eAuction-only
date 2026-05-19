@@ -173,6 +173,13 @@ const DEFAULTS = [
   // AND a single aggregate inventory entry. Same flag covers RD
   // purchase, URD purchase, and Debit Note vouchers.
   { key: 'tally_purchase_detailed', value: 'true', category: 'flags', label: 'Tally Purchase XML — Detailed (per-lot)', type: 'boolean' },
+  // Set Buyer Code bulk action on the Lots tab — when ON, a "👤 Set
+  // Buyer Code" button appears next to "🗑 Delete Selected" once a
+  // lot is ticked, opening a modal where the operator picks a buyer
+  // code and applies it to every selected lot (with buyer / buyer1 /
+  // sale auto-filled from the buyers master). Default OFF so the
+  // button only appears when an admin explicitly enables it.
+  { key: 'flag_bulk_set_buyer_code', value: 'false', category: 'flags', label: 'Bulk Set Buyer Code (Lots tab)', type: 'boolean' },
 
   // ── BACKUPS ────────────────────────────────────────────────
   // Per-install database backup settings. The scheduler is driven by

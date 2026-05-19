@@ -3040,6 +3040,43 @@ app.post('/api/lots/bulk-delete', requireDelete, (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+// Bulk-set buyer code (+ buyer / buyer1 / sale / cr) on selected lots.
+// The client looks up the buyer master to fill the auxiliary fields so
+// they all stay in sync — this endpoint just persists whatever it's
+// handed. Lots are matched by id; empty/whitespace values are ignored
+// so callers can omit fields they don't want to overwrite.
+app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Number.isFinite) : [];
+  if (!ids.length) return res.status(400).json({ error: 'No lot ids provided' });
+  const code   = String(req.body.code   || '').trim();
+  const buyer  = String(req.body.buyer  || '').trim();
+  const buyer1 = String(req.body.buyer1 || '').trim();
+  const sale   = String(req.body.sale   || '').trim();
+  if (!code) return res.status(400).json({ error: 'code is required' });
+  const db = getDb();
+  // Build an UPDATE that only touches fields the client passed in. The
+  // CR field is intentionally omitted — sellers' CR/GSTIN comes from
+  // the trader (seller) side, not the buyer's. Touching it here would
+  // overwrite seller-side data with whatever the buyer record carries.
+  const sets = ['code = ?'];
+  const vals = [code];
+  if (buyer)  { sets.push('buyer = ?');  vals.push(buyer);  }
+  if (buyer1) { sets.push('buyer1 = ?'); vals.push(buyer1); }
+  if (sale)   { sets.push('sale = ?');   vals.push(sale);   }
+  // Chunk the IN(...) list so we stay under SQLite's parameter cap.
+  const CHUNK = 500;
+  let updated = 0;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK);
+    const placeholders = slice.map(() => '?').join(',');
+    const info = db.run(
+      `UPDATE lots SET ${sets.join(', ')} WHERE id IN (${placeholders})`,
+      [...vals, ...slice]
+    );
+    if (info && typeof info.changes === 'number') updated += info.changes;
+  }
+  res.json({ success: true, updated, requested: ids.length });
+});
 
 // ── Calculate all lots for an auction (GENERATE.PRG) ─────────
 app.post('/api/lots/calculate/:auctionId', requireLotWrite, (req, res) => {

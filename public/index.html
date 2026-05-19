@@ -1022,6 +1022,10 @@ body:not([data-feat-price-list-mapping="1"]) .feat-price-list-mapping{display:no
    e-Auction) in applyAspContextVisibility() runs on top of this rule
    and can hide it even when the flag is ON. */
 body:not([data-feat-print-selected-purchase="1"]) .feat-print-selected-purchase{display:none !important}
+/* Bulk Set Buyer Code — Lots tab toolbar button + the bulk-set-buyer
+   modal. Both are tagged with .feat-bulk-set-buyer-code so this single
+   rule hides them when flag_bulk_set_buyer_code is OFF. */
+body:not([data-feat-bulk-set-buyer-code="1"]) .feat-bulk-set-buyer-code{display:none !important}
 .icon-btn.i-print{color:var(--spice-saffron);border-color:var(--spice-saffron)}
 .icon-btn.i-print:hover{background:var(--spice-saffron);color:#fff}
 
@@ -2863,6 +2867,10 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:auto">
+            <!-- Bulk-set the buyer code on the ticked lots. Hidden until
+                 at least one lot is selected (BulkActions._sync flips
+                 visibility alongside the Delete Selected button). -->
+            <button id="lot-bulk-setbuyer" data-bulk-action="lot" class="needs-lot-write feat-bulk-set-buyer-code btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="openBulkSetBuyerModal()">👤 Set Buyer Code <span data-bulk-count="lot" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <button id="lot-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('lot')">🗑 Delete Selected <span id="lot-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <!-- Sister tool to Price Import. Opens the Price List Mapping
                  screen which fills the CODE column on a Price List sheet
@@ -4368,6 +4376,43 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   <div class="actions"><button class="btn btn-o" onclick="hideModal('lot-modal')">Cancel</button><button class="btn btn-g" onclick="saveLot()">Save</button></div>
 </div></div>
 
+<!-- Bulk-set buyer code on ticked lots. Opens from the "Set Buyer Code"
+     button next to "Delete Selected" in the Lots tab toolbar. The Code
+     input drives a custom autocomplete (same one used in Lot Edit) — as
+     the operator types or picks, the read-only preview below updates
+     with the resolved Buyer / Buyer Name / Sale Type so they can see
+     exactly what will be written to every selected lot before
+     committing. -->
+<div class="modal-bg feat-bulk-set-buyer-code" id="bulk-setbuyer-modal"><div class="modal" style="max-width:520px">
+  <h2>Set Buyer Code on <span id="bsb-count">0</span> lot(s)</h2>
+  <p style="font-size:12px;color:var(--text2);margin:0 0 14px;line-height:1.5">
+    Pick a buyer code below. The matching <b>Buyer</b>, <b>Buyer Name</b>, and <b>Sale Type</b> from the buyers master will be written to every selected lot.
+  </p>
+  <div class="fg">
+    <label>Buyer Code
+      <span id="bsb-hint" style="margin-left:6px;font-weight:400;font-size:11px;color:var(--text3)"></span>
+    </label>
+    <div style="position:relative">
+      <input id="bsb-code" autocomplete="off" placeholder="Start typing — e.g. JP">
+      <div id="bsb-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;max-height:240px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:12.5px"></div>
+    </div>
+  </div>
+  <!-- Preview of the resolved buyer record — read-only so the operator
+       sees what's about to be applied without it being editable. -->
+  <div id="bsb-preview" style="margin-top:10px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text2);display:none">
+    <div style="display:grid;grid-template-columns:90px 1fr;gap:4px 10px">
+      <div>Buyer</div>      <div id="bsb-p-buyer" style="font-weight:600;color:var(--text)"></div>
+      <div>Buyer Name</div> <div id="bsb-p-buyer1" style="font-weight:600;color:var(--text)"></div>
+      <div>Sale Type</div>  <div id="bsb-p-sale" style="font-weight:600;color:var(--text)"></div>
+      <div>Place</div>      <div id="bsb-p-place"></div>
+    </div>
+  </div>
+  <div class="actions">
+    <button class="btn btn-o" onclick="hideModal('bulk-setbuyer-modal')">Cancel</button>
+    <button class="btn btn-g" id="bsb-apply" onclick="applyBulkSetBuyer()" disabled>Apply</button>
+  </div>
+</div></div>
+
 <div class="modal-bg" id="gen-inv-modal"><div class="modal" style="max-width:580px">
   <h2>Generate Sales Invoice(s)</h2>
   <div class="fg">
@@ -5608,6 +5653,10 @@ async function applyFeatureFlags() {
   // by applyAspContextVisibility() (Kerala + e-Auction), so the button
   // only shows when BOTH conditions hold.
   document.body.setAttribute('data-feat-print-selected-purchase', cfg && on(cfg.flag_print_selected_purchase) ? '1' : '0');
+  // Bulk Set Buyer Code (Lots tab toolbar). Default OFF — surfaces the
+  // "👤 Set Buyer Code" button + its modal only when an admin
+  // explicitly enables it.
+  document.body.setAttribute('data-feat-bulk-set-buyer-code', cfg && on(cfg.flag_bulk_set_buyer_code) ? '1' : '0');
 }
 
 // Public branding (no auth) — drives the login + topbar from settings.
@@ -11458,6 +11507,18 @@ const BulkActions = (function(){
     const counter = document.getElementById(`${id}-sel-count`);
     if (delBtn)  delBtn.style.display  = ticked > 0 ? '' : 'none';
     if (counter) counter.textContent   = ticked > 0 ? `(${ticked})` : '';
+    // Any sibling bulk-action button (e.g. lot-bulk-setbuyer) follows
+    // the same visibility rule. We toggle by querySelectorAll on a
+    // shared data attribute so future bulk actions can be added without
+    // editing this function — just drop a button with
+    // `data-bulk-action="<id>"` (and an optional matching count span
+    // with `data-bulk-count="<id>"`) into the toolbar.
+    document.querySelectorAll(`[data-bulk-action="${id}"]`).forEach(el => {
+      el.style.display = ticked > 0 ? '' : 'none';
+    });
+    document.querySelectorAll(`[data-bulk-count="${id}"]`).forEach(el => {
+      el.textContent = ticked > 0 ? `(${ticked})` : '';
+    });
   }
   function toggleAll(id, state){
     getVisibleCheckboxes(id).forEach(cb => { cb.checked = state; });
@@ -12872,6 +12933,210 @@ function _lotWireCodeAutocomplete(){
     choose(row.getAttribute('data-code'));
   });
 }
+// ── Bulk: Set Buyer Code on selected lots ─────────────────────────
+// Opens the modal, refreshes the buyer cache, wires the code-input
+// autocomplete (same matcher as Lot Edit: strict on code, rich
+// dropdown with buyer/sale/place context), and tracks the selected
+// buyer record for the Apply button. The selected lot IDs are read
+// from BulkActions.getTickedIds('lot') at open time so a later
+// selection change is reflected when the user re-opens the modal.
+let _bsbSelected = null;       // resolved buyer { code, buyer, buyer1, sale, pla }
+let _bsbLotIds   = [];         // lot ids captured at modal open
+let _bsbWired    = false;      // input/blur/key handlers wired once
+
+async function openBulkSetBuyerModal(){
+  // BulkActions is declared with `const`, so it lives in the script's
+  // top-level scope but isn't on `window`. Reference it directly via
+  // `typeof` so we don't false-negative through window.BulkActions
+  // (which is always undefined for const declarations).
+  _bsbLotIds = (typeof BulkActions !== 'undefined' && BulkActions.getTickedIds)
+    ? BulkActions.getTickedIds('lot')
+    : [];
+  if (!_bsbLotIds.length) {
+    if (typeof toast === 'function') toast('Tick one or more lots first');
+    return;
+  }
+  document.getElementById('bsb-count').textContent = _bsbLotIds.length;
+  // Reset state on every open
+  _bsbSelected = null;
+  const codeEl = document.getElementById('bsb-code');
+  if (codeEl) codeEl.value = '';
+  _bsbRenderPreview();
+  // Refresh the buyer master so newly-added codes show up.
+  try {
+    const buyers = await j('/api/buyers?all=1');
+    const seen = new Set();
+    _lotBuyerCache = [];
+    for (const b of (Array.isArray(buyers) ? buyers : [])) {
+      const code = String(b.code || '').trim();
+      if (!code) continue;
+      const key = code.toUpperCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      _lotBuyerCache.push({
+        code, codeUp: key,
+        buyer: b.buyer || '', buyer1: b.buyer1 || '',
+        sale: b.sale || '', pla: b.pla || '',
+        gstin: b.gstin || '', cr: b.cr || '',
+      });
+    }
+    _lotBuyerCache.sort((a, b) => a.codeUp.localeCompare(b.codeUp));
+  } catch (_) { /* keep prior cache */ }
+  _bsbWireAutocomplete();
+  showModal('bulk-setbuyer-modal');
+  // Defer focus so the modal animation doesn't swallow it
+  setTimeout(() => { codeEl && codeEl.focus(); }, 50);
+}
+
+// Render the buyer preview block from _bsbSelected (or hide if none).
+// Also gates the Apply button.
+function _bsbRenderPreview(){
+  const host = document.getElementById('bsb-preview');
+  const btn  = document.getElementById('bsb-apply');
+  if (!_bsbSelected) {
+    if (host) host.style.display = 'none';
+    if (btn)  btn.disabled = true;
+    return;
+  }
+  if (host) {
+    host.style.display = '';
+    document.getElementById('bsb-p-buyer').textContent  = _bsbSelected.buyer  || '—';
+    document.getElementById('bsb-p-buyer1').textContent = _bsbSelected.buyer1 || '—';
+    document.getElementById('bsb-p-sale').textContent   = _bsbSelected.sale   || '—';
+    document.getElementById('bsb-p-place').textContent  = _bsbSelected.pla    || '—';
+  }
+  if (btn) btn.disabled = false;
+}
+
+function _bsbWireAutocomplete(){
+  const codeEl = document.getElementById('bsb-code');
+  const ddl    = document.getElementById('bsb-dropdown');
+  if (!codeEl || !ddl || _bsbWired) return;
+  _bsbWired = true;
+  let activeIdx = -1;
+
+  const render = () => {
+    const q = String(codeEl.value || '').trim().toUpperCase();
+    const starts = [], contains = [];
+    for (const b of _lotBuyerCache) {
+      if (!q) { starts.push(b); continue; }
+      if (b.codeUp.startsWith(q)) starts.push(b);
+      else if (b.codeUp.includes(q)) contains.push(b);
+    }
+    const matches = starts.concat(contains).slice(0, 50);
+    if (!matches.length) {
+      ddl.innerHTML = '<div style="padding:8px 12px;color:#888;font-style:italic">No code matches.</div>';
+      ddl.style.display = 'block';
+      activeIdx = -1;
+      return;
+    }
+    activeIdx = 0;
+    ddl.innerHTML = matches.map((b, i) => {
+      const ctxParts = [b.buyer, b.sale ? '['+b.sale+']' : '', b.pla].filter(Boolean);
+      return '<div class="bsb-row" data-code="'+escAttr(b.code)+'" data-idx="'+i+'" '+
+        'style="padding:6px 12px;cursor:pointer;border-bottom:1px solid #f1f1f1;display:flex;gap:10px;align-items:baseline'+
+        (i === activeIdx ? ';background:#ecfdf5' : '')+'">'+
+        '<span style="font-weight:700;color:#15803d;min-width:60px">'+escAttr(b.code)+'</span>'+
+        '<span style="flex:1;color:#444">'+escAttr(ctxParts.join(' · '))+'</span>'+
+        '</div>';
+    }).join('');
+    ddl.style.display = 'block';
+  };
+
+  const hide = () => { ddl.style.display = 'none'; activeIdx = -1; };
+
+  const choose = (code) => {
+    if (code == null) return;
+    const up = String(code).trim().toUpperCase();
+    const match = _lotBuyerCache.find(b => b.codeUp === up);
+    if (!match) return;
+    codeEl.value = match.code;
+    _bsbSelected = match;
+    hide();
+    _bsbRenderPreview();
+  };
+
+  codeEl.addEventListener('focus', render);
+  codeEl.addEventListener('input', () => {
+    // Typing in the input invalidates the previous selection until
+    // the operator picks (or types) an exact code match.
+    const up = String(codeEl.value || '').trim().toUpperCase();
+    const exact = _lotBuyerCache.find(b => b.codeUp === up);
+    _bsbSelected = exact || null;
+    _bsbRenderPreview();
+    render();
+  });
+  codeEl.addEventListener('blur', () => setTimeout(hide, 150));
+  codeEl.addEventListener('keydown', (e) => {
+    if (ddl.style.display === 'none') return;
+    const rows = ddl.querySelectorAll('.bsb-row');
+    if (e.key === 'Escape') { hide(); return; }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!rows.length) return;
+      activeIdx = (activeIdx + 1) % rows.length;
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!rows.length) return;
+      activeIdx = (activeIdx - 1 + rows.length) % rows.length;
+    } else if (e.key === 'Enter') {
+      if (activeIdx >= 0 && rows[activeIdx]) {
+        e.preventDefault();
+        choose(rows[activeIdx].getAttribute('data-code'));
+        return;
+      }
+    } else { return; }
+    rows.forEach((r, i) => {
+      r.style.background = (i === activeIdx) ? '#ecfdf5' : '';
+    });
+    if (rows[activeIdx]) rows[activeIdx].scrollIntoView({ block: 'nearest' });
+  });
+  ddl.addEventListener('mousedown', (e) => {
+    const row = e.target.closest('.bsb-row');
+    if (!row) return;
+    e.preventDefault();
+    choose(row.getAttribute('data-code'));
+  });
+}
+
+async function applyBulkSetBuyer(){
+  if (!_bsbSelected) {
+    if (typeof toast === 'function') toast('Pick a buyer code first');
+    return;
+  }
+  if (!_bsbLotIds.length) {
+    if (typeof toast === 'function') toast('No lots selected');
+    return;
+  }
+  const btn = document.getElementById('bsb-apply');
+  if (btn) { btn.disabled = true; btn.textContent = 'Applying…'; }
+  try {
+    const r = await fetch(B + '/api/lots/bulk-set-buyer', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ids:    _bsbLotIds,
+        code:   _bsbSelected.code,
+        buyer:  _bsbSelected.buyer,
+        buyer1: _bsbSelected.buyer1,
+        sale:   _bsbSelected.sale,
+      }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Bulk update failed');
+    if (typeof toast === 'function') {
+      toast('Updated ' + (d.updated || 0) + ' lot(s) with code ' + _bsbSelected.code);
+    }
+    hideModal('bulk-setbuyer-modal');
+    if (typeof loadLots === 'function') loadLots();
+  } catch (e) {
+    if (typeof showError === 'function') showError(e);
+    else alert('Error: ' + (e.message || String(e)));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Apply'; }
+  }
+}
+
 async function saveLot(){
   const id=document.getElementById('l-id').value;
   if(!id){showError('Lot ID missing');return}
