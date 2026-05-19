@@ -3058,11 +3058,17 @@ app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
   // CR field is intentionally omitted — sellers' CR/GSTIN comes from
   // the trader (seller) side, not the buyer's. Touching it here would
   // overwrite seller-side data with whatever the buyer record carries.
+  //
+  // Sale type: the modal advertises "Sale Type from the buyers master
+  // will be written to every selected lot", so whenever the client
+  // included the field (even with an empty string), we apply it. The
+  // bulk modal always sends sale from the picked buyer master record,
+  // so this faithfully syncs the lot with the buyer master.
   const sets = ['code = ?'];
   const vals = [code];
   if (buyer)  { sets.push('buyer = ?');  vals.push(buyer);  }
   if (buyer1) { sets.push('buyer1 = ?'); vals.push(buyer1); }
-  if (sale)   { sets.push('sale = ?');   vals.push(sale);   }
+  if (req.body.sale !== undefined) { sets.push('sale = ?'); vals.push(sale); }
   // Chunk the IN(...) list so we stay under SQLite's parameter cap.
   const CHUNK = 500;
   let updated = 0;
