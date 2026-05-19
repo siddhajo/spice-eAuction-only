@@ -2723,7 +2723,9 @@ function buildRDPurchaseRows(db, auctionId, cfg) {
     return {
       ano: p.ano,
       date: p.date,
-      name: p.name,
+      // Suffix " - PURCHASE" so the voucher's PARTYLEDGERNAME matches
+      // the suffixed RD party ledger emitted by buildRDPartyLedgerRows.
+      name: _purchaseLedgerName(p.name),
       address: p.add_line,
       place: p.place,
       pin: '',
@@ -2791,7 +2793,10 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
     return {
       ano: b.ano,
       date: b.date,
-      name: b.name,
+      // Suffix " - PURCHASE" so the voucher's PARTYLEDGERNAME matches
+      // the suffixed URD agriculturist ledger emitted by
+      // buildURDPartyLedgerRows.
+      name: _purchaseLedgerName(b.name),
       address: b.add_line,
       place: b.pla,
       pin: '',
@@ -2850,7 +2855,10 @@ function buildDebitNoteRows(db, auctionId, cfg) {
     return {
       ano: d.ano,
       date: d.date,
-      name: d.name,
+      // Suffix " - PURCHASE" so the DN's PARTYLEDGERNAME matches the
+      // suffixed RD party ledger (debit notes are always against
+      // registered dealers).
+      name: _purchaseLedgerName(d.name),
       address: dealer.padd || '',
       place:   dealer.ppla || '',
       pin:     dealer.pin  || '',
@@ -3068,6 +3076,20 @@ function _buyerRow(b, todayDate, intra, interDealer, localDealer) {
   };
 }
 
+// Purchase-side parties get a " - PURCHASE" suffix on every Tally
+// reference so they don't collide with the same party's sales-side
+// ledger. The suffix flows through:
+//   • LEDGER masters   — _rdTraderRow + _urdTraderRow → buildRD/URDPartyLedgerRows
+//   • Purchase voucher — buildRDPurchaseRows + buildURDPurchaseRows
+//   • Debit Note       — buildDebitNoteRows
+// All three references resolve to the same suffixed ledger in Tally, so
+// the voucher / DN posts against the correct purchase-side party.
+const _PURCHASE_LEDGER_SUFFIX = ' - PURCHASE';
+function _purchaseLedgerName(n) {
+  const s = String(n || '').trim();
+  return s ? s + _PURCHASE_LEDGER_SUFFIX : s;
+}
+
 function _rdTraderRow(t, todayDate, intra, interDealPur, localDealPur) {
   // `cr` carries the GSTIN with a "GSTIN." prefix for registered dealers
   const fullGstin = String(t.cr || '');
@@ -3076,7 +3098,7 @@ function _rdTraderRow(t, todayDate, intra, interDealPur, localDealPur) {
   return {
     kind: 'party',
     partyKind: 'rd',
-    name: t.name || '',
+    name: _purchaseLedgerName(t.name),
     parent: isIntra ? localDealPur : interDealPur,
     gstin: partyGstin,
     pan: t.pan || '',
@@ -3092,7 +3114,7 @@ function _urdTraderRow(t, todayDate, auctionLDR) {
   return {
     kind: 'party',
     partyKind: 'urd',
-    name: t.name || '',
+    name: _purchaseLedgerName(t.name),
     parent: auctionLDR,           // Agriculturists go under the auction-purchase parent
     gstin: '',
     pan: t.pan || '',
