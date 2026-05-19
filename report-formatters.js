@@ -479,7 +479,7 @@ function xlsxNumFmtForHeader(header) {
   // text columns to the left.
   // Treat all other numerics as rupees (price/amount/total/etc.)
   if (
-    h === 'PRICE'   || h === 'AMOUNT' || h === 'PURAMT' ||
+    h === 'PRICE'   || h === 'RATE'   || h === 'AMOUNT' || h === 'PURAMT' ||
     h === 'PRATE'   || h === 'PAYABLE'|| h === 'DISCOUNT' ||
     h === 'BALANCE' || h === 'ADVANCE'|| h === 'VALUE' ||
     h === 'INV.AMOUNT' || h === 'TOTAL' || h === 'COMMISSION' ||

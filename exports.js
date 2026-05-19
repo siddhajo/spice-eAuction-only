@@ -248,6 +248,114 @@ async function exportLotSlipAfter(db, auctionId, state) {
   });
 }
 
+// ── Lot Buyer: per-lot buyer name + place (KL/TN) ─────────────
+// LOT | BUYER (trade name) | PLACE (KL/TN) | BAG | QTY
+// Includes lots whether or not a buyer is assigned — empty cells
+// stay blank so the operator can spot un-coded lots at a glance.
+async function exportLotBuyer(db, auctionId) {
+  const rows = db.all(
+    `SELECT lot_no AS lot,
+            COALESCE(NULLIF(buyer1,''), buyer) AS buyer,
+            sale AS place,
+            bags AS bag, qty
+       FROM lots WHERE auction_id = ? ORDER BY lot_no`, [auctionId]
+  );
+  const cols = [
+    { header: 'LOT',   key: 'lot',   width: 8  },
+    { header: 'BUYER', key: 'buyer', width: 28 },
+    { header: 'PLACE', key: 'place', width: 8  },
+    { header: 'BAG',   key: 'bag',   width: 6  },
+    { header: 'QTY',   key: 'qty',   width: 12 },
+  ];
+  return createExcelBuffer('LotBuyer', cols, rows, {
+    db, title: 'Lot Buyer', metaLines: auctionMeta(db, auctionId),
+    grandTotal: {
+      label: 'TOTAL',
+      values: {
+        bag: rows.reduce((s, r) => s + (Number(r.bag) || 0), 0),
+        qty: rows.reduce((s, r) => s + (Number(r.qty) || 0), 0),
+      },
+    },
+  });
+}
+
+// ── Lot Name: per-lot seller name + price + blank control ─────
+// LOT | NAME (seller) | PLACE (KL/TN) | BAG | QTY | PRICE | CONTROL
+// PRICE auto-fills from lot.price when set; CONTROL is left blank
+// for hand-written verification on the printed sheet.
+async function exportLotName(db, auctionId) {
+  const rows = db.all(
+    `SELECT lot_no AS lot, name, sale AS place,
+            bags AS bag, qty, price
+       FROM lots WHERE auction_id = ? ORDER BY lot_no`, [auctionId]
+  );
+  rows.forEach(r => { r.control = ''; });
+  const cols = [
+    { header: 'LOT',     key: 'lot',     width: 8  },
+    { header: 'NAME',    key: 'name',    width: 28 },
+    { header: 'PLACE',   key: 'place',   width: 8  },
+    { header: 'BAG',     key: 'bag',     width: 6  },
+    { header: 'QTY',     key: 'qty',     width: 12 },
+    { header: 'PRICE',   key: 'price',   width: 10 },
+    { header: 'CONTROL', key: 'control', width: 12 },
+  ];
+  return createExcelBuffer('LotName', cols, rows, {
+    db, title: 'Lot Name', metaLines: auctionMeta(db, auctionId),
+    grandTotal: {
+      label: 'TOTAL',
+      values: {
+        bag: rows.reduce((s, r) => s + (Number(r.bag) || 0), 0),
+        qty: rows.reduce((s, r) => s + (Number(r.qty) || 0), 0),
+      },
+    },
+  });
+}
+
+// ── Lot Payment: per-lot cost grouped by seller place ─────────
+// LOT | QTY | RATE | COST | SELLER NAME, grouped by seller place
+// (lot.ppla) with one section header per place. PQTY/PRATE/PURAMT
+// columns are intentionally dropped — bills carry the post-purchase
+// numbers; this is the per-lot cost view only.
+async function exportLotPayment(db, auctionId) {
+  const rows = db.all(
+    `SELECT lot_no AS lot, qty, price AS rate, amount AS cost,
+            name AS seller_name, ppla AS place
+       FROM lots WHERE auction_id = ?
+       ORDER BY ppla, name, lot_no`, [auctionId]
+  );
+  const cols = [
+    { header: 'LOT',         key: 'lot',         width: 8  },
+    { header: 'QTY',         key: 'qty',         width: 12 },
+    { header: 'RATE',        key: 'rate',        width: 10 },
+    { header: 'COST',        key: 'cost',        width: 14 },
+    { header: 'SELLER NAME', key: 'seller_name', width: 28 },
+  ];
+  // Split into sections by seller place so the XLSX shows
+  // PAMPUPARA / BODI / etc. as inline section headers — mirrors
+  // the PDF's grouping behaviour.
+  const sections = [];
+  let cur = null;
+  rows.forEach(r => {
+    const key = r.place || '(no place)';
+    if (!cur || cur.title !== key) {
+      cur = { title: key, rows: [] };
+      sections.push(cur);
+    }
+    cur.rows.push(r);
+  });
+  return createExcelBuffer('LotPayment', cols, rows, {
+    db, title: 'Lot Payment', metaLines: auctionMeta(db, auctionId),
+    sections,
+    grandTotal: {
+      label: 'TOTAL',
+      values: {
+        qty:  rows.reduce((s, r) => s + (Number(r.qty)  || 0), 0),
+        cost: rows.reduce((s, r) => s + (Number(r.cost) || 0), 0),
+      },
+    },
+  });
+}
+
 // ── Export Type 3: Price List ─────────────────────────────────
 async function exportPriceList(db, auctionId) {
   const rows = db.all(
@@ -802,6 +910,9 @@ async function exportTradeReport(db, auctionId, _state, extra) {
 const EXPORT_TYPES = {
   lot_slip:           { fn: exportLotSlip,           name: 'LotSlip' },
   lot_slip_after:     { fn: exportLotSlipAfter,      name: 'LotSlipAfter' },
+  lot_buyer:          { fn: exportLotBuyer,          name: 'LotBuyer' },
+  lot_name:           { fn: exportLotName,           name: 'LotName' },
+  lot_payment:        { fn: exportLotPayment,        name: 'LotPayment' },
   // praman_csv removed in this build (e-Auction(Praman) export disabled).
   price_list:         { fn: exportPriceList,         name: 'PriceList' },
   price_list_before:  { fn: exportPriceListBefore,   name: 'PriceListBefore' },
@@ -823,7 +934,8 @@ module.exports = {
   // can route through the same standardized brand band + column-header
   // styling instead of building their own ExcelJS workbook.
   createExcelBuffer,
-  exportLotSlip, exportLotSlipAfter, exportPriceList, exportPriceListBefore,
+  exportLotSlip, exportLotSlipAfter, exportLotBuyer, exportLotName, exportLotPayment,
+  exportPriceList, exportPriceListBefore,
   exportBankPayment, exportBankPaymentBefore,
   exportPoolerRegister, exportFullFile, exportCollection, exportTradeReport, exportDealerList,
   exportSalesTaxes, exportPaymentSummary, exportTDSReturn, exportTallyPurchase,

@@ -478,6 +478,31 @@ const COLS = {
     { header: 'AMOUNT', key: 'amount', width: 14 },
     { header: 'CODE', key: 'code', width: 8 },
   ],
+  lot_buyer: [
+    { header: 'LOT',   key: 'lot',   width: 8  },
+    { header: 'BUYER', key: 'buyer', width: 30 },
+    { header: 'PLACE', key: 'place', width: 8  },
+    { header: 'BAG',   key: 'bag',   width: 6  },
+    { header: 'QTY',   key: 'qty',   width: 12 },
+  ],
+  lot_name: [
+    { header: 'LOT',     key: 'lot',     width: 8  },
+    { header: 'NAME',    key: 'name',    width: 28 },
+    { header: 'PLACE',   key: 'place',   width: 8  },
+    { header: 'BAG',     key: 'bag',     width: 6  },
+    { header: 'QTY',     key: 'qty',     width: 12 },
+    { header: 'PRICE',   key: 'price',   width: 10 },
+    { header: 'CONTROL', key: 'control', width: 14 },
+  ],
+  lot_payment: [
+    // Grouped by seller place via ROW_PREPROCESS — each place gets a
+    // subtotal row labelled "{PLACE} TOTAL" with summed QTY / COST.
+    { header: 'LOT',         key: 'lot',         width: 8  },
+    { header: 'QTY',         key: 'qty',         width: 12 },
+    { header: 'RATE',        key: 'rate',        width: 10 },
+    { header: 'COST',        key: 'cost',        width: 16 },
+    { header: 'SELLER NAME', key: 'seller_name', width: 28 },
+  ],
   price_list: [
     { header: 'LOT', key: 'lot', width: 8 },
     { header: 'BAG', key: 'bag', width: 6 },
@@ -607,6 +632,9 @@ const COLS = {
 const TOTAL_KEYS = {
   lot_slip:        ['bag', 'qty'],
   lot_slip_after:  ['bag', 'qty', 'amount'],
+  lot_buyer:       ['bag', 'qty'],
+  lot_name:        ['bag', 'qty'],
+  lot_payment:     ['qty', 'cost'],
   price_list:      ['bag', 'qty'],
   price_list_before: ['bag', 'qty'],
   bank_payment:    ['amount'],
@@ -623,6 +651,9 @@ const TOTAL_KEYS = {
 const TITLES = {
   lot_slip:        'Lot Slip',
   lot_slip_after:  'Lot Slip (After Trade)',
+  lot_buyer:       'Lot Buyer',
+  lot_name:        'Lot Name',
+  lot_payment:     'Lot Payment',
   price_list:      'Price List',
   price_list_before: 'Price List (Before)',
   bank_payment:    'Bank Payment (RTGS/NEFT)',
@@ -676,6 +707,13 @@ const ROW_PREPROCESS = {
     subtotalKeys: ['bag', 'qty', 'amount', 'pqty', 'puramt', 'discount', 'payable'],
     subtotalLabelKey: 'poolername',
   },
+  // Lot Payment — group by seller place (PAMPUPARA / BODI / etc.) and
+  // emit a subtotal row at the end of each place section.
+  lot_payment: {
+    groupByKey: 'place',
+    subtotalKeys: ['qty', 'cost'],
+    subtotalLabelKey: 'seller_name',
+  },
 };
 
 async function getRowsForType(db, type, auctionId, cfg, extra) {
@@ -691,6 +729,30 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
         `SELECT state, lot_no as lot, name, bags as bag, qty, price, amount, code
          FROM lots WHERE auction_id = ? ${extra.state ? 'AND state = ?' : ''}
          ORDER BY lot_no`, extra.state ? [auctionId, extra.state] : [auctionId]);
+
+    case 'lot_buyer':
+      return db.all(
+        `SELECT lot_no AS lot,
+                COALESCE(NULLIF(buyer1,''), buyer) AS buyer,
+                sale AS place,
+                bags AS bag, qty
+           FROM lots WHERE auction_id = ? ORDER BY lot_no`, [auctionId]);
+
+    case 'lot_name': {
+      const rows = db.all(
+        `SELECT lot_no AS lot, name, sale AS place,
+                bags AS bag, qty, price
+           FROM lots WHERE auction_id = ? ORDER BY lot_no`, [auctionId]);
+      rows.forEach(r => { r.control = ''; });
+      return rows;
+    }
+
+    case 'lot_payment':
+      return db.all(
+        `SELECT lot_no AS lot, qty, price AS rate, amount AS cost,
+                name AS seller_name, ppla AS place
+           FROM lots WHERE auction_id = ?
+           ORDER BY ppla, name, lot_no`, [auctionId]);
 
     case 'price_list':
       return db.all(
