@@ -167,6 +167,11 @@ function getReportContext(db, opts) {
       l.ppla            AS seller_place,
       l.pstate          AS seller_state,
       l.cr              AS seller_cr,
+      l.tel             AS seller_tel,
+      l.grade           AS grade,
+      l.crpt            AS crpt,
+      l.litre           AS litre,
+      l.moisture        AS moisture,
       l.trader_id       AS trader_id,
       t.name            AS trader_name,
       t.cr              AS trader_cr,
@@ -1554,54 +1559,68 @@ function csvEscape(v) {
 }
 async function eauctionCsv(db, opts) {
   const ctx = getReportContext(db, opts);
-  const cfg = (() => {
-    const out = {};
-    db.all('SELECT key, value FROM company_settings').forEach(r => { out[r.key] = r.value; });
-    return out;
-  })();
-  const licence    = readSetting(db, 'sbl', '');
-  const seasonRaw  = (() => {
-    const s = readSetting(db, 'season_start_year', '');
-    const e = readSetting(db, 'season_end_year', '');
-    return (s && e) ? `${s}-${e}` : readSetting(db, 'season', '');
-  })();
-  const auctioneer = readSetting(db, 'trade_name', readSetting(db, 'company_name', ''));
 
+  // Spice Board portal upload schema (EAUC_CSV). 20 columns, one row per lot.
+  // Column C is intentionally a blank-header reserved slot — the portal's
+  // canonical template carries it between COLLECTION and PLANTERNAME, so
+  // we preserve the position even though we don't populate it.
+  // Numeric formatting mirrors the portal sample: QUANTITY → 1 decimal,
+  // MOISTURE → 1 decimal, BAGS → integer.
   const headers = [
-    'Auctioneer', 'E-Auction Licence', 'Season',
-    'Auction No', 'Auction Date', 'Lot No',
-    'Planter/Dealer Name', 'Estate Reg / SBL #',
-    'Qty (kgs)', 'Rate (Rs./kg)', 'Value (Rs.)',
-    'Sample Refund (Rs.)', 'Commission (Rs.)',
-    'Buyer', 'Buyer SBL', 'GSTIN',
+    'LOTNUMBER',       // A
+    'COLLECTION',      // B
+    '',                // C (reserved — portal expects the slot, value blank)
+    'PLANTERNAME',     // D
+    'CRNOSBLNO',       // E
+    'CROPRECEIPT',     // F
+    'QUANTITYKG',      // G
+    'LITREWEIGHT',     // H
+    'BAGS',            // I
+    'GRADETYPE',       // J  (filled by board after grading)
+    'GRADE',           // K
+    'RESERVEDPRICE',   // L
+    'AUCTIONSTATUS',   // M
+    'IMMATURESEEDS',   // N
+    'MOISTURECONTENT', // O
+    'PLANTERMOBILE',   // P
+    'SPECIALLOT',      // Q
+    'COLOUR',          // R  (defaults to "green" — cardamom)
+    'SIZE',            // S
+    'REJECTIONS',      // T
   ];
   const lines = [headers.map(csvEscape).join(',')];
 
-  const fmt3 = n => Number(n || 0).toFixed(3);
-  const fmt2 = n => Number(n || 0).toFixed(2);
+  const fmt1 = n => {
+    const v = Number(n || 0);
+    return Number.isFinite(v) && v !== 0 ? v.toFixed(1) : '';
+  };
+  // litre/moisture/tel come through as TEXT in the schema — keep them
+  // as-is so manually entered values like "430" or "6.9" round-trip
+  // exactly to the portal without any formatter side-effects.
+  const passText = v => (v == null ? '' : String(v).trim());
 
-  // ctx.rows already merges in seller + buyer metadata; reuse it so the
-  // CSV agrees with FORM-C row-for-row.
   for (const r of (ctx.rows || [])) {
-    const seller = r.trader_name || r.seller_name || '';
-    const sellerReg = r.trader_cr || r.seller_cr || '';
     lines.push([
-      auctioneer,
-      licence,
-      seasonRaw,
-      ctx.auction.ano || '',
-      fmtDateDMY(ctx.auction.date),
-      r.lot || '',
-      seller,
-      sellerReg,
-      fmt3(r.qty),
-      fmt2(r.price),
-      fmt2(r.amount),
-      fmt2(r.sample_refund || r.sample_refud || 0),
-      fmt2(r.commission || 0),
-      r.buyer1 || r.buyer_full || r.buyer || '',
-      r.buyer_sbl || '',
-      r.buyer_gstin || r.gstin || '',
+      r.lot || '',                                       // LOTNUMBER
+      r.seller_place || '',                              // COLLECTION (planter place: VANDANMEDU, PARATHODU, …)
+      '',                                                // (reserved)
+      r.trader_name || r.seller_name || '',              // PLANTERNAME
+      r.seller_cr || r.trader_cr || '',                  // CRNOSBLNO
+      passText(r.crpt),                                  // CROPRECEIPT
+      fmt1(r.qty),                                       // QUANTITYKG
+      passText(r.litre),                                 // LITREWEIGHT
+      r.bags != null ? String(r.bags) : '',              // BAGS
+      '',                                                // GRADETYPE
+      passText(r.grade),                                 // GRADE
+      '',                                                // RESERVEDPRICE
+      '',                                                // AUCTIONSTATUS
+      '',                                                // IMMATURESEEDS
+      passText(r.moisture),                              // MOISTURECONTENT
+      passText(r.seller_tel),                            // PLANTERMOBILE
+      '',                                                // SPECIALLOT
+      'green',                                           // COLOUR
+      '',                                                // SIZE
+      '',                                                // REJECTIONS
     ].map(csvEscape).join(','));
   }
 
