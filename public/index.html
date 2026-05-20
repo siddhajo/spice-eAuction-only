@@ -2899,7 +2899,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
             <button class="btn btn-o" style="height:38px;padding:0 16px;font-weight:600" onclick="refreshLots(this)" title="Reload the lots table from the server">🔄 Refresh</button>
-            <button class="needs-lot-write btn btn-a" id="btn-calculate-all" style="height:38px;padding:0 16px;font-weight:600" onclick="calculateAll()">Calculate All</button>
+            <button class="needs-lot-write btn btn-a needs-price-check" id="btn-calculate-all" style="height:38px;padding:0 16px;font-weight:600" onclick="calculateAll()">Calculate All</button>
             <button class="btn btn-o" style="height:38px;padding:0 16px;font-weight:600" onclick="validateLots()">Validate</button>
           </div>
 
@@ -3329,8 +3329,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
           <!-- Create group -->
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
-            <button class="needs-invoice-write btn btn-g" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenInvModal()">+ Generate Invoice</button>
-            <button class="needs-invoice-write btn btn-a" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenAllModal('invoices')">⚡ Generate for All Buyers</button>
+            <button class="needs-invoice-write btn btn-g needs-price-check" id="btn-gen-inv-one" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenInvModal()">+ Generate Invoice</button>
+            <button class="needs-invoice-write btn btn-a needs-price-check" id="btn-gen-inv-all" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenAllModal('invoices')">⚡ Generate for All Buyers</button>
           </div>
 
           <!-- Print group -->
@@ -3412,8 +3412,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <input type="search" id="pur-search" placeholder="Search invoice no, seller, GSTIN…" oninput="searchPurchasesDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
-            <button class="needs-invoice-write btn btn-g" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenPurModal()">+ Generate Purchase</button>
-            <button class="needs-invoice-write btn btn-a" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenAllModal('purchases')">⚡ Generate for All Dealers</button>
+            <button class="needs-invoice-write btn btn-g needs-price-check" id="btn-gen-pur-one" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenPurModal()">+ Generate Purchase</button>
+            <button class="needs-invoice-write btn btn-a needs-price-check" id="btn-gen-pur-all" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenAllModal('purchases')">⚡ Generate for All Dealers</button>
           </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
@@ -3694,8 +3694,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <input type="search" id="bill-search" placeholder="Search bill no, seller…" oninput="searchBillsDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
-            <button class="btn btn-g" style="height:38px;padding:0 16px;font-weight:600" onclick="showModal('gen-bill-modal')">+ Generate Bill</button>
-            <button class="needs-invoice-write btn btn-a" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenAllModal('bills')">⚡ Generate for All Agri Sellers</button>
+            <button class="btn btn-g needs-price-check" id="btn-gen-bill-one" style="height:38px;padding:0 16px;font-weight:600" onclick="showModal('gen-bill-modal')">+ Generate Bill</button>
+            <button class="needs-invoice-write btn btn-a needs-price-check" id="btn-gen-bill-all" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenAllModal('bills')">⚡ Generate for All Agri Sellers</button>
             <button class="btn btn-o" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenCommissionBillModal()" title="Generate Commission Bill (Format 2) for the selected auction">+ Commission Bill (F2)</button>
           </div>
 
@@ -3729,12 +3729,12 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
                purchase invoice number (modal). Generates ONE DN for the
                specified purchase, validated to belong to the selected
                trade. -->
-          <button class="needs-invoice-write btn btn-g" onclick="openGenDebitSingleModal()">+ Generate Debit Note</button>
+          <button class="needs-invoice-write btn btn-g needs-price-check" id="btn-gen-dn-one" onclick="openGenDebitSingleModal()">+ Generate Debit Note</button>
 
           <!-- Generate All (trade-scoped): input = trade (dropdown).
                Generates one DN per eligible purchase IN THAT TRADE ONLY.
                No cross-trade data. -->
-          <button class="needs-invoice-write btn btn-a" onclick="openGenDebitAllModal()">⚡ Generate All</button>
+          <button class="needs-invoice-write btn btn-a needs-price-check" id="btn-gen-dn-all" onclick="openGenDebitAllModal()">⚡ Generate All</button>
 
           <!-- Bulk actions on ticked rows. Hidden until at least one row
                is selected; the count badge updates live as boxes toggle. -->
@@ -12765,6 +12765,8 @@ async function loadLots(){const aid=document.getElementById('lot-auction').value
   // avoids confusion when business mode + state map to different companies.
   const calcBtn = document.getElementById('btn-calculate-all');
   if (calcBtn) calcBtn.textContent = `Calculate All (${getCurrentLogoCode()} · ${mode})`;
+  // Price-check gate: disables Calculate All until verify has run + code fixes are clear.
+  pcRefreshGate(aid, '#tc-lots');
   // Column set: e-Auction-only build → show Refund, Commission, Handling;
   // HIDE P_Qty, P_Rate, PurAmt, Discount.
   const baseCols = [
@@ -13404,6 +13406,7 @@ async function loadInvoices(opts){
   // sequence without needing each onchange callsite to know about it.
   if (!(opts && opts.keepPage)) _invoicesPager.page = 1;
   const aid=document.getElementById('inv-auction')?.value;
+  pcRefreshGate(aid, '#tc-invoices');
   const sale=(document.getElementById('inv-sale-filter')?.value||'').trim();
   const _invSearch=(document.getElementById('inv-search')?.value||'').trim();
   const params=[];
@@ -14179,6 +14182,7 @@ function gotoPurchasesPage(p){
 async function loadPurchases(opts){
   if (!(opts && opts.keepPage)) _purchasesPager.page = 1;
   const aid=document.getElementById('pur-auction')?.value;
+  pcRefreshGate(aid, '#tc-purchases');
   const sale=(document.getElementById('pur-sale-filter')?.value||'').trim();
   const _purSearch=(document.getElementById('pur-search')?.value||'').trim();
   const params=[];
@@ -15048,6 +15052,7 @@ async function loadBills(opts){
   // hid valid branches when there was no data in them.
   await populateBranchSelect('bill-branch-filter');
   const aid=document.getElementById('bill-auction')?.value;
+  pcRefreshGate(aid, '#tc-bills');
   const br=(document.getElementById('bill-branch-filter')?.value||'').trim();
   const _billSearch=(document.getElementById('bill-search')?.value||'').trim();
   const params=[];
@@ -15178,6 +15183,7 @@ function gotoDebitNotesPage(p){
 async function loadDebitNotes(opts){
   if (!(opts && opts.keepPage)) _debitPager.page = 1;
   const aid = document.getElementById('dn-auction')?.value || '';
+  pcRefreshGate(aid, '#tc-debit');
   // Resolve trade id → ano. The DN table stores `ano` (the trade
   // number string) rather than the auction id FK, so we pass `ano` to
   // the server endpoint instead of `auction_id`.
@@ -17502,6 +17508,12 @@ async function pcVerify(){
     }
     _pcLastSummary = data;
     document.getElementById('pc-download-btn').disabled = false;
+    // The server may have just stamped (or skipped stamping) the gate
+    // for the verified auction. Drop its cached status so the next
+    // tab visit / load function re-reads fresh state from the server.
+    if (data.forcedAuction && data.forcedAuction.id) {
+      _PC_STATUS_CACHE.delete(String(data.forcedAuction.id));
+    }
     _pcRenderPreview(data);
     // One-line summary directly below the buttons. Mention which
     // column we actually validated — if the file has no SERVER PRICE
@@ -17554,11 +17566,32 @@ function _pcRenderPreview(data){
     const s = Math.abs(n).toLocaleString('en-IN');
     return (n < 0 ? '−' : (n > 0 ? '+' : '')) + '₹' + s;
   };
-  let html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'+
+  // Gate banner — green when this run cleared the transaction lock,
+  // red otherwise. Auto-stamped on the server when verify runs against
+  // a forced auction AND there are no fixable code issues left.
+  let html = '';
+  if (data.forcedAuction) {
+    if (data.gateReady) {
+      html += '<div style="margin-bottom:10px;padding:10px 14px;background:#DCFCE7;border:1px solid #86EFAC;border-radius:8px;color:#14532D;font-size:13px;line-height:1.5">'+
+        '<b>✓ Price check passed.</b> Calculate, invoice, purchase, agri-bill, and debit-note generation are now unlocked for this auction.'+
+        '</div>';
+    } else {
+      const pend = data.codeFixesPending || 0;
+      html += '<div style="margin-bottom:10px;padding:10px 14px;background:#FEE2E2;border:1px solid #FECACA;border-radius:8px;color:#7F1D1D;font-size:13px;line-height:1.5">'+
+        '<b>⛔ Transactions locked.</b> '+
+        (pend > 0
+          ? pend + ' code fix' + (pend===1?'':'es') + ' still pending. Apply them (or re-upload a clean file) to unlock Calculate / Invoice / Purchase / Bill / Debit Note generation.'
+          : 'Run verify again after fixing flagged rows to unlock transaction generation.')+
+        '</div>';
+    }
+  }
+
+  html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'+
     card('Total rows',         data.total||0,             '#374151')+
     card('Matched',            data.matched||0,           '#15803d')+
     card('Mismatched',         data.mismatched||0,        '#c00')+
     card('Blank price',        data.serverEmpty||0,       '#a16207')+
+    card('Withdrawn (WD)',     data.hasCodeCol ? (data.withdrawnFile||0) : (data.withdrawnDb||0), '#6B7280')+
     card('Missing in server',  data.missingServer||0,     '#a16207')+
     card('Missing in file',    data.missingFile||0,       '#a16207')+
     card('Net diff',           fmtMoney(data.totalSignedDiff||0), (data.totalSignedDiff||0) === 0 ? '#15803d' : '#c00')+
@@ -17748,6 +17781,61 @@ function _pcStatusBadge(rw){
     case 'blank':          return make('BLANK', '#e5e7eb', '#374151');
     default:               return make('CHECK', '#fecaca', '#991b1b');
   }
+}
+
+// ── Price Check — transaction gate (Calculate / Invoice / etc.) ──
+// Every tab that exposes a price-dependent action (Calculate All,
+// Generate Invoice / Purchase / Bill / Debit Note) tags its CTAs
+// with `.needs-price-check` and an id like `btn-gen-inv-one`.
+// On every auction-selector change we ping the status endpoint and
+// flip those buttons between enabled/disabled. The server enforces
+// the same rule (412 if bypassed), so the UI is just a courtesy.
+const _PC_STATUS_CACHE = new Map();    // auctionId → { checked, checkedAt }
+async function _pcFetchStatus(auctionId){
+  if (!auctionId) return null;
+  try {
+    const d = await j('/api/auctions/' + encodeURIComponent(auctionId) + '/price-check-status');
+    _PC_STATUS_CACHE.set(String(auctionId), d);
+    return d;
+  } catch (_) { return null; }
+}
+// Set / clear the disabled state on every button matching `selector`
+// within an optional `scopeSelector` ancestor. Adds a tooltip so the
+// user can see WHY a button is disabled, and a discreet badge nearby
+// (data-pc-badge attribute on the button).
+function _pcApplyDisable(selector, scopeSelector, ready, reason){
+  const scope = scopeSelector ? document.querySelector(scopeSelector) : document;
+  if (!scope) return;
+  scope.querySelectorAll(selector).forEach(el => {
+    if (ready) {
+      el.disabled = false;
+      el.removeAttribute('data-pc-locked');
+      // restore native cursor / opacity
+      el.style.opacity = '';
+      el.style.cursor = '';
+      el.title = el.dataset.pcOriginalTitle || '';
+    } else {
+      el.disabled = true;
+      el.setAttribute('data-pc-locked', '1');
+      el.style.opacity = '0.55';
+      el.style.cursor = 'not-allowed';
+      if (!el.dataset.pcOriginalTitle) el.dataset.pcOriginalTitle = el.title || '';
+      el.title = reason || 'Run Reports → Price Check on this auction first.';
+    }
+  });
+}
+// Refresh the gate for a specific tab. `tabScope` is a CSS selector
+// that narrows the apply-disable to that tab's container so different
+// tabs (each with their own auction selector) don't interfere.
+async function pcRefreshGate(auctionId, tabScope){
+  const ready = auctionId
+    ? (await _pcFetchStatus(auctionId))?.checked === true
+    : false;
+  const reason = auctionId
+    ? 'Price check pending — run Reports → Price Check against this auction first.'
+    : 'Pick an auction first, then run Price Check to unlock.';
+  _pcApplyDisable('.needs-price-check', tabScope, ready, reason);
+  return ready;
 }
 
 // ── Price Check — Apply CODE fixes ───────────────────────────

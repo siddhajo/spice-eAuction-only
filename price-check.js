@@ -418,7 +418,13 @@ async function processFile(filePath, db, opts) {
       serverEmpty = 0, blank = 0, noAuction = 0;
   let codeMatched = 0, codeMismatched = 0, codeFileBlank = 0,
       codeDbBlank = 0, codeBothBlank = 0;
+  // Withdrawn lots — sellers/operators write "WD" into the buyer CODE
+  // column on the auction sheet when a lot is pulled before sale. Counting
+  // these separately means a clean price check can co-exist with a few
+  // legitimately-blank prices (withdrawn lots have no buyer / no price).
+  let withdrawnFile = 0, withdrawnDb = 0;
   let totalAbsDiff = 0, totalSignedDiff = 0;
+  const isWD = v => String(v || '').trim().toUpperCase() === 'WD';
   for (const e of perRow) {
     switch (e.status) {
       case 'match':          matched++;        break;
@@ -436,17 +442,27 @@ async function processFile(filePath, db, opts) {
       case 'db_blank':   codeDbBlank++;     break;
       case 'both_blank': codeBothBlank++;   break;
     }
+    if (isWD(e.file_code)) withdrawnFile++;
+    if (isWD(e.db_code))   withdrawnDb++;
     if (e.diff != null) {
       totalAbsDiff += Math.abs(e.diff);
       totalSignedDiff += e.diff;
     }
   }
 
+  // Gate ready = no code mismatches + no DB-blank rows (those are the
+  // two buckets the Apply button can fix). File-blank rows are NOT
+  // counted — the operator was already warned via the inline note that
+  // they need to be fixed manually via Lots → Set Buyer Code.
+  const codeFixesPending = codeMismatched + codeDbBlank;
+  const gateReady = !!forcedAuction && codeFixesPending === 0;
   const summary = {
     total: perRow.length,
     matched, mismatched, missingServer, missingFile, serverEmpty,
     blank, noAuction,
     codeMatched, codeMismatched, codeFileBlank, codeDbBlank, codeBothBlank,
+    codeFixesPending, gateReady,
+    withdrawnFile, withdrawnDb,
     totalAbsDiff:    Math.round(totalAbsDiff * 100) / 100,
     totalSignedDiff: Math.round(totalSignedDiff * 100) / 100,
     hasServerPriceCol: cols.hasServerPriceCol,

@@ -2057,6 +2057,130 @@ app.post('/api/price-list/map-download', requireView, upload.single('file'), asy
 });
 
 // ══════════════════════════════════════════════════════════════
+// PRICE CHECK — reconcile an external price sheet against the
+// `lots` table. Replaces the legacy PriceCheck_VSTL.xlsm
+// (VBA macros `priceCheck` + `checkRate`). See price-check.js for
+// the matching logic and round-trip XLSX annotation.
+//
+//   POST /api/price-check/verify    → JSON preview (per-row + summary)
+//   POST /api/price-check/download  → XLSX with red/amber highlighting
+//
+// Optional form field `auction_id` forces every row to match against
+// that auction — used when the operator pre-picks an auction in the
+// Price Check tab. Without it, rows resolve per-row via TNO + DATE.
+// ══════════════════════════════════════════════════════════════
+const priceCheck = require('./price-check');
+
+// ── Price-check gate helpers ─────────────────────────────────
+// Stamp / clear / read the auctions.price_checked_at column. The gate
+// blocks calculate / invoice / purchase / bill / debit-note generation
+// until a verify run has reconciled the auction's prices AND codes.
+function pcStampGate(db, auctionId) {
+  if (!auctionId) return;
+  db.run(
+    `UPDATE auctions SET price_checked_at = datetime('now','localtime') WHERE id = ?`,
+    [auctionId]
+  );
+}
+function pcClearGate(db, auctionId) {
+  if (!auctionId) return;
+  db.run(`UPDATE auctions SET price_checked_at = '' WHERE id = ?`, [auctionId]);
+}
+function pcGateReady(db, auctionId) {
+  if (!auctionId) return false;
+  const row = db.get('SELECT price_checked_at FROM auctions WHERE id = ?', [auctionId]);
+  return !!(row && row.price_checked_at);
+}
+// Express middleware factory: drops a 412 PRECONDITION FAILED with a
+// descriptive error when the requested auction hasn't passed price
+// check yet. `getAuctionId(req)` returns the auction id to gate on.
+function requirePriceChecked(getAuctionId) {
+  return (req, res, next) => {
+    const aid = getAuctionId(req);
+    if (!aid) return next();           // can't gate a global call
+    if (pcGateReady(getDb(), aid)) return next();
+    return res.status(412).json({
+      error: 'Price check required',
+      detail: 'Run Reports → Price Check against the auction (and apply any code fixes) before this action.',
+      auctionId: aid,
+      gate: 'price_check',
+    });
+  };
+}
+
+app.post('/api/price-check/verify', requireView, upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try {
+    const auctionId = req.body.auction_id ? Number(req.body.auction_id) : null;
+    const { perRow, summary } = await priceCheck.processFile(
+      req.file.path, getDb(),
+      { auctionId }
+    );
+    // Auto-stamp the gate when verify ran against a specific auction
+    // AND there are no fixable code issues left. Operators can either
+    // (a) upload a clean file, or (b) re-run verify after applying
+    // every fixable row — both paths converge on gateReady=true.
+    if (auctionId && summary.gateReady) {
+      pcStampGate(getDb(), auctionId);
+    }
+    res.json({ ...summary, rows: perRow });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  } finally {
+    if (req.file) fs.unlink(req.file.path, () => {});
+  }
+});
+
+// Lightweight status probe — the client polls this to enable/disable
+// transaction CTAs without re-uploading a file.
+app.get('/api/auctions/:id/price-check-status', requireView, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'invalid auction id' });
+  const row = getDb().get(
+    'SELECT id, ano, date, price_checked_at FROM auctions WHERE id = ?', [id]
+  );
+  if (!row) return res.status(404).json({ error: 'auction not found' });
+  res.json({
+    auctionId: id,
+    ano: row.ano, date: row.date,
+    checked: !!row.price_checked_at,
+    checkedAt: row.price_checked_at || null,
+  });
+});
+
+app.post('/api/price-check/download', requireView, upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try {
+    const { wb, ws, cols, perRow } = await priceCheck.processFile(
+      req.file.path, getDb(),
+      { auctionId: req.body.auction_id || null }
+    );
+    priceCheck.annotateWorkbook(wb, ws, cols, perRow);
+    const buf = await wb.xlsx.writeBuffer();
+    // Filename: prefer the auction's ANO if pre-picked, otherwise
+    // append "-checked" to the uploaded filename (mirrors the legacy
+    // VBA `saveAs` which named files Price{TNO}.xls).
+    const aid = req.body.auction_id;
+    let baseName;
+    if (aid) {
+      const auc = getDb().get('SELECT ano FROM auctions WHERE id = ?', [aid]);
+      baseName = `Price${auc && auc.ano ? auc.ano : aid}-checked`;
+    } else {
+      baseName = (req.file.originalname || 'price-check.xlsx')
+        .replace(/\.xlsx?$/i, '')
+        .replace(/[^A-Za-z0-9._-]+/g, '-') + '-checked';
+    }
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${baseName}.xlsx"`);
+    res.send(Buffer.from(buf));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  } finally {
+    if (req.file) fs.unlink(req.file.path, () => {});
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
 // AUCTIONS
 // ══════════════════════════════════════════════════════════════
 app.get('/api/auctions', requireViewOrLotEntry, (req, res) => {
@@ -2957,6 +3081,7 @@ app.post('/api/lots', requireLotWrite, (req, res) => {
     `INSERT INTO lots (auction_id,lot_no,crop,grade,crpt,branch,state,trader_id,name,padd,ppla,ppin,pstate,pst_code,cr,pan,tel,aadhar,bags,litre,qty,gross_wt,sample_wt,moisture,user_id,bank_id)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,l.state||'TAMIL NADU',l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',l.user_id||'',l.bank_id||null]);
+  pcClearGate(db, auctionId);
   // Return the inserted lot so the mobile UI can refresh from the response
   // without an extra round-trip. Desktop UI ignores the body and re-fetches.
   const lot = db.get('SELECT * FROM lots WHERE id = ?', [info.lastInsertRowid]);
@@ -3026,11 +3151,19 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
   }
   vals.push(lotId);
   db.run(`UPDATE lots SET ${sets.join(',')} WHERE id=?`, vals);
+  // Any lot edit invalidates a previous price-check stamp — the data
+  // the verify run looked at has changed. Operator must re-verify
+  // before the next calculate/invoice/etc.
+  if (current && current.auction_id) pcClearGate(db, current.auction_id);
   res.json({ success: true });
 });
 
 app.delete('/api/lots/:id', requireDelete, (req, res) => {
-  getDb().run('DELETE FROM lots WHERE id = ?', [req.params.id]); res.json({ success: true });
+  const db = getDb();
+  const cur = db.get('SELECT auction_id FROM lots WHERE id = ?', [req.params.id]);
+  db.run('DELETE FROM lots WHERE id = ?', [req.params.id]);
+  if (cur && cur.auction_id) pcClearGate(db, cur.auction_id);
+  res.json({ success: true });
 });
 app.post('/api/lots/bulk-delete', requireDelete, (req, res) => {
   try {
@@ -3072,20 +3205,32 @@ app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
   // Chunk the IN(...) list so we stay under SQLite's parameter cap.
   const CHUNK = 500;
   let updated = 0;
+  // Capture every auction touched so we can clear their price-check
+  // stamps — codes just changed, so an earlier verify is stale.
+  const touchedAuctions = new Set();
   for (let i = 0; i < ids.length; i += CHUNK) {
     const slice = ids.slice(i, i + CHUNK);
     const placeholders = slice.map(() => '?').join(',');
+    const affectedRows = db.all(
+      `SELECT DISTINCT auction_id FROM lots WHERE id IN (${placeholders})`,
+      slice
+    );
+    affectedRows.forEach(r => { if (r.auction_id) touchedAuctions.add(r.auction_id); });
     const info = db.run(
       `UPDATE lots SET ${sets.join(', ')} WHERE id IN (${placeholders})`,
       [...vals, ...slice]
     );
     if (info && typeof info.changes === 'number') updated += info.changes;
   }
+  for (const aid of touchedAuctions) pcClearGate(db, aid);
   res.json({ success: true, updated, requested: ids.length });
 });
 
 // ── Calculate all lots for an auction (GENERATE.PRG) ─────────
-app.post('/api/lots/calculate/:auctionId', requireLotWrite, (req, res) => {
+app.post('/api/lots/calculate/:auctionId',
+  requireLotWrite,
+  requirePriceChecked(req => parseInt(req.params.auctionId, 10)),
+  (req, res) => {
   const db = getDb(); const cfg = getSettingsFlat(db);
   const lots = db.all('SELECT * FROM lots WHERE auction_id = ? AND amount > 0', [req.params.auctionId]);
   let count = 0;
@@ -3260,7 +3405,10 @@ app.get('/api/invoices', requireView, (req, res) => {
   res.json(rows);
 });
 
-app.post('/api/invoices/generate/:auctionId', requireInvoiceWrite, (req, res) => {
+app.post('/api/invoices/generate/:auctionId',
+  requireInvoiceWrite,
+  requirePriceChecked(req => parseInt(req.params.auctionId, 10)),
+  (req, res) => {
   const db = getDb(); const cfg = getSettingsFlat(db);
   const { saleType, buyerCode, invoiceNo } = req.body;
   
@@ -3447,7 +3595,10 @@ app.get('/api/invoices/eligibility-debug/:auctionId', requireView, (req, res) =>
 });
 
 // Batch: generate sales invoice for ALL buyers in an auction
-app.post('/api/invoices/generate-all/:auctionId', requireInvoiceWrite, (req, res) => {
+app.post('/api/invoices/generate-all/:auctionId',
+  requireInvoiceWrite,
+  requirePriceChecked(req => parseInt(req.params.auctionId, 10)),
+  (req, res) => {
   const db = getDb(); const cfg = getSettingsFlat(db);
   const { startInvoiceNo, saleType } = req.body;
   
@@ -4082,7 +4233,10 @@ app.get('/api/purchases', requireView, (req, res) => {
   res.json(db.all(baseQuery + ' LIMIT 500', p));
 });
 
-app.post('/api/purchases/generate/:auctionId', requireInvoiceWrite, (req, res) => {
+app.post('/api/purchases/generate/:auctionId',
+  requireInvoiceWrite,
+  requirePriceChecked(req => parseInt(req.params.auctionId, 10)),
+  (req, res) => {
   const db = getDb(); const cfg = getSettingsFlat(db);
   const { sellerName, invoiceNo } = req.body;
   const invoice = buildPurchaseInvoice(db, req.params.auctionId, sellerName, cfg);
@@ -4131,7 +4285,10 @@ app.get('/api/purchases/eligible-sellers/:auctionId', requireView, (req, res) =>
 });
 
 // Batch: generate purchase invoice for ALL registered dealers in an auction
-app.post('/api/purchases/generate-all/:auctionId', requireInvoiceWrite, (req, res) => {
+app.post('/api/purchases/generate-all/:auctionId',
+  requireInvoiceWrite,
+  requirePriceChecked(req => parseInt(req.params.auctionId, 10)),
+  (req, res) => {
   const db = getDb(); const cfg = getSettingsFlat(db);
   const { startInvoiceNo } = req.body;
   
@@ -4459,7 +4616,10 @@ app.get('/api/bills', requireView, (req, res) => {
 });
 
 // Generate agri bill for a seller
-app.post('/api/bills/generate/:auctionId', requireInvoiceWrite, (req, res) => {
+app.post('/api/bills/generate/:auctionId',
+  requireInvoiceWrite,
+  requirePriceChecked(req => parseInt(req.params.auctionId, 10)),
+  (req, res) => {
   const db = getDb(); const cfg = getSettingsFlat(db);
   const { sellerName, billNo } = req.body;
   
@@ -4498,7 +4658,10 @@ app.get('/api/bills/eligible-sellers/:auctionId', requireView, (req, res) => {
 });
 
 // Batch: generate bill of supply for ALL agriculturists (no GSTIN) in an auction
-app.post('/api/bills/generate-all/:auctionId', requireInvoiceWrite, (req, res) => {
+app.post('/api/bills/generate-all/:auctionId',
+  requireInvoiceWrite,
+  requirePriceChecked(req => parseInt(req.params.auctionId, 10)),
+  (req, res) => {
   const db = getDb(); const cfg = getSettingsFlat(db);
   const { startBillNo } = req.body;
   
@@ -5173,6 +5336,20 @@ app.post('/api/debit-notes/generate', requireInvoiceWrite, requireDebitNoteEnabl
   if (!purchno) return res.status(400).json({ error: 'purchno (purchase invoice number) is required' });
   if (!ano)     return res.status(400).json({ error: 'ano (trade number) is required' });
 
+  // Price-check gate: resolve auction by ano (debit notes don't carry
+  // the numeric id directly), then refuse if its lots haven't been
+  // verified yet. Same 412 contract as the URL-bound gates so the
+  // client can show a uniform "Run price check first" message.
+  const gateAuction = db.get('SELECT id, price_checked_at FROM auctions WHERE ano = ? ORDER BY date DESC LIMIT 1', [ano]);
+  if (gateAuction && !gateAuction.price_checked_at) {
+    return res.status(412).json({
+      error: 'Price check required',
+      detail: 'Run Reports → Price Check against the auction (and apply any code fixes) before generating debit notes.',
+      auctionId: gateAuction.id,
+      gate: 'price_check',
+    });
+  }
+
   // Look up the purchase. We find ALL rows with this purchno (in case of
   // legacy duplicates across trades) and pick the one that matches the
   // selected trade. Earlier code took the most-recent and silently
@@ -5394,6 +5571,19 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNote
     if (!p) return res.status(404).json({ error: `Purchase invoice ${purchno} not found` });
     ano = String(p.ano || '').trim();
     if (!ano) return res.status(400).json({ error: 'Purchase row has no trade number' });
+  }
+
+  // Price-check gate.
+  {
+    const ga = db.get('SELECT id, price_checked_at FROM auctions WHERE ano = ? ORDER BY date DESC LIMIT 1', [ano]);
+    if (ga && !ga.price_checked_at) {
+      return res.status(412).json({
+        error: 'Price check required',
+        detail: 'Run Reports → Price Check against the auction (and apply any code fixes) before generating debit notes.',
+        auctionId: ga.id,
+        gate: 'price_check',
+      });
+    }
   }
 
   // Pull every purchase row for this trade. Each becomes one DN unless
