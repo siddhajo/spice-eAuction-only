@@ -181,6 +181,15 @@ const DEFAULTS = [
   // button only appears when an admin explicitly enables it.
   { key: 'flag_bulk_set_buyer_code', value: 'false', category: 'flags', label: 'Bulk Set Buyer Code (Lots tab)', type: 'boolean' },
 
+  // Price Check tab + transaction gate. When ON the operator gets the
+  // Reports → Price Check tab, the gate banner, and a hard server-side
+  // block on Calculate / Invoice / Purchase / Bill / Debit-Note
+  // generation until verify clears for the active auction. When OFF
+  // the tab is hidden, buttons are never disabled, and the gate is a
+  // no-op (writes still happen). Default OFF so existing installs are
+  // unaffected on upgrade.
+  { key: 'flag_price_check',     value: 'false', category: 'flags', label: 'Price Check + transaction gate',  type: 'boolean' },
+
   // ── BACKUPS ────────────────────────────────────────────────
   // Per-install database backup settings. The scheduler is driven by
   // backup_auto_enabled + backup_interval_hours; the keep-count caps

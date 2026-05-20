@@ -2075,8 +2075,21 @@ const priceCheck = require('./price-check');
 // Stamp / clear / read the auctions.price_checked_at column. The gate
 // blocks calculate / invoice / purchase / bill / debit-note generation
 // until a verify run has reconciled the auction's prices AND codes.
+//
+// Everything below is gated by the `flag_price_check` feature flag.
+// When the flag is OFF: stamp / clear become no-ops, gateReady is
+// always true, and requirePriceChecked just calls next(). The whole
+// subsystem (tab, banners, button disables) collapses to a no-op,
+// matching the off-by-default rollout we want.
+function pcFlagOn(db) {
+  try {
+    const cfg = getSettingsFlat(db || getDb());
+    return String(cfg.flag_price_check || '').toLowerCase() === 'true';
+  } catch (_) { return false; }
+}
 function pcStampGate(db, auctionId) {
   if (!auctionId) return;
+  if (!pcFlagOn(db)) return;
   db.run(
     `UPDATE auctions SET price_checked_at = datetime('now','localtime') WHERE id = ?`,
     [auctionId]
@@ -2084,10 +2097,12 @@ function pcStampGate(db, auctionId) {
 }
 function pcClearGate(db, auctionId) {
   if (!auctionId) return;
+  if (!pcFlagOn(db)) return;
   db.run(`UPDATE auctions SET price_checked_at = '' WHERE id = ?`, [auctionId]);
 }
 function pcGateReady(db, auctionId) {
   if (!auctionId) return false;
+  if (!pcFlagOn(db)) return true;   // flag off → never gate
   const row = db.get('SELECT price_checked_at FROM auctions WHERE id = ?', [auctionId]);
   return !!(row && row.price_checked_at);
 }
@@ -2096,8 +2111,9 @@ function pcGateReady(db, auctionId) {
 // check yet. `getAuctionId(req)` returns the auction id to gate on.
 function requirePriceChecked(getAuctionId) {
   return (req, res, next) => {
+    if (!pcFlagOn()) return next();        // feature disabled
     const aid = getAuctionId(req);
-    if (!aid) return next();           // can't gate a global call
+    if (!aid) return next();               // can't gate a global call
     if (pcGateReady(getDb(), aid)) return next();
     return res.status(412).json({
       error: 'Price check required',
@@ -5356,14 +5372,18 @@ app.post('/api/debit-notes/generate', requireInvoiceWrite, requireDebitNoteEnabl
   // the numeric id directly), then refuse if its lots haven't been
   // verified yet. Same 412 contract as the URL-bound gates so the
   // client can show a uniform "Run price check first" message.
-  const gateAuction = db.get('SELECT id, price_checked_at FROM auctions WHERE ano = ? ORDER BY date DESC LIMIT 1', [ano]);
-  if (gateAuction && !gateAuction.price_checked_at) {
-    return res.status(412).json({
-      error: 'Price check required',
-      detail: 'Run Reports → Price Check against the auction (and apply any code fixes) before generating debit notes.',
-      auctionId: gateAuction.id,
-      gate: 'price_check',
-    });
+  // Short-circuit when the feature flag is OFF — keeps debit notes
+  // generation usable on installs that don't run price check.
+  if (pcFlagOn(db)) {
+    const gateAuction = db.get('SELECT id, price_checked_at FROM auctions WHERE ano = ? ORDER BY date DESC LIMIT 1', [ano]);
+    if (gateAuction && !gateAuction.price_checked_at) {
+      return res.status(412).json({
+        error: 'Price check required',
+        detail: 'Run Reports → Price Check against the auction (and apply any code fixes) before generating debit notes.',
+        auctionId: gateAuction.id,
+        gate: 'price_check',
+      });
+    }
   }
 
   // Look up the purchase. We find ALL rows with this purchno (in case of
@@ -5589,8 +5609,8 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNote
     if (!ano) return res.status(400).json({ error: 'Purchase row has no trade number' });
   }
 
-  // Price-check gate.
-  {
+  // Price-check gate — only when the feature is enabled.
+  if (pcFlagOn(db)) {
     const ga = db.get('SELECT id, price_checked_at FROM auctions WHERE ano = ? ORDER BY date DESC LIMIT 1', [ano]);
     if (ga && !ga.price_checked_at) {
       return res.status(412).json({
