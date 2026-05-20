@@ -669,6 +669,36 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 }
 .report-tile-desc{font-size:12.5px;line-height:1.45;color:var(--text3)}
 
+/* ── StatusBlock — shared empty / loading / error state ────
+   Used wherever a list/section needs to convey "nothing yet",
+   "still loading", or "request failed" in a consistent visual
+   language. Driven by StatusBlock.show(hostId, kind, opts). */
+.statusblock{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:6px;padding:44px 24px;text-align:center;color:var(--spice-text-mute);
+}
+.statusblock-icon{font-size:34px;line-height:1;opacity:.55;margin-bottom:2px}
+.statusblock-title{font-size:14.5px;font-weight:600;color:var(--text)}
+.statusblock-body{font-size:12.5px;max-width:380px;line-height:1.55;color:var(--spice-text-hint)}
+.statusblock-actions{margin-top:10px;display:flex;gap:8px;justify-content:center}
+/* Loading: subtle spinner-style on the icon */
+.statusblock-loading .statusblock-icon{
+  width:34px;height:34px;border-radius:50%;
+  border:3px solid var(--spice-line);border-top-color:var(--spice-cardamom);
+  animation:statusblock-spin .9s linear infinite;font-size:0;
+}
+@keyframes statusblock-spin{to{transform:rotate(360deg)}}
+/* Empty: muted, neutral */
+.statusblock-empty .statusblock-icon{opacity:.45}
+/* Error: red-tinted card */
+.statusblock-error{
+  background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;
+  padding:32px 24px;
+}
+.statusblock-error .statusblock-icon{opacity:.9;color:#B91C1C}
+.statusblock-error .statusblock-title{color:#991B1B}
+.statusblock-error .statusblock-body{color:#7F1D1D}
+
 /* ── Users tab — vibrant collapsible cards ───────────────── */
 /* Each card has a coloured top stripe (sets the mood) + an emoji
    chip in the header so the page reads more like Reports than a
@@ -2170,6 +2200,13 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <button class="side-item feat-price-list-mapping" data-tab="plmap" onclick="go('plmap')">
           <svg viewBox="0 0 24 24"><path d="M9 11H5a2 2 0 0 0-2 2v7h7v-9z"/><path d="M21 11h-4v9h4a2 2 0 0 0 2-2v-5a2 2 0 0 0-2-2z"/><path d="M14 4l-4 4 4 4"/></svg>
           Price List Mapping
+        </button>
+        <!-- Price Check — reconciles an externally-recorded price sheet
+             against the lots table. Replaces the legacy
+             PriceCheck_VSTL.xlsm macro workbook. -->
+        <button class="side-item" data-tab="pricecheck" onclick="go('pricecheck')">
+          <svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          Price Check
         </button>
         <!-- Lot Entry — fast desktop entry form for the auction-hall
              workflow (one row per lot, seller search, save & next).
@@ -4109,6 +4146,47 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <div id="pl-preview" style="overflow-x:auto;max-height:600px;border:1px solid var(--spice-line);border-radius:8px;padding:8px;background:#fff"></div>
       </div>
     </div>
+
+    <!-- ════════════════════════════════════════════════════════════
+         PRICE CHECK — replaces the legacy PriceCheck_VSTL.xlsm macro
+         workbook. Operator uploads an external price sheet (from the
+         auction-floor record or a third-party system) and the server
+         reconciles every row against the `lots` table, showing red
+         highlights on any mismatch. ════════════════════════════════ -->
+    <div class="tc" id="tc-pricecheck">
+      <div class="card">
+        <h2>Price Check
+          <span style="font-weight:400;font-size:12px;color:var(--text3)">
+            Upload a price sheet — server validates the <b>SERVER PRICE</b> column against <code>lots.price</code> in the database
+          </span>
+        </h2>
+        <div style="font-size:12px;color:var(--spice-cardamom-dk);background:var(--spice-cardamom-lt);border:1px solid #C5E3D2;border-radius:8px;padding:10px 12px;margin:6px 0 14px 0">
+          <strong>Expected columns:</strong> LOT and SERVER PRICE (required) &nbsp;·&nbsp;
+          KERALA/STATE, TNO/ANO, DATE, BAG, QTY, PRICE, CODE (optional, kept for context) &nbsp;·&nbsp;
+          If <code>SERVER PRICE</code> is absent, falls back to <code>PRICE</code>. Pre-pick an auction below to ignore TNO/DATE in the file.
+        </div>
+
+        <div class="sgrid" style="margin-bottom:14px">
+          <div class="fg"><label>Auction (optional — leave blank to resolve per row from TNO + DATE)</label>
+            <select id="pc-auction" style="height:38px;padding:0 10px;border-radius:6px;border:1px solid var(--border)">
+              <option value="">— Any (use TNO + DATE columns) —</option>
+            </select>
+          </div>
+          <div class="fg"><label>File (.xlsx / .xls)</label>
+            <input type="file" id="pc-file" accept=".xls,.xlsx" onchange="pcOnFileChange()">
+          </div>
+        </div>
+
+        <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+          <button class="btn btn-g" onclick="pcVerify()">1. Verify Prices</button>
+          <button class="btn btn-a" id="pc-download-btn" onclick="pcDownload()" disabled>2. Download Annotated File</button>
+          <button class="btn btn-o" onclick="pcClear()" style="margin-left:auto">Clear</button>
+        </div>
+
+        <div id="pc-result" style="margin-bottom:14px;font-size:12.5px;color:var(--text2)"></div>
+        <div id="pc-preview" style="overflow-x:auto;max-height:600px;border:1px solid var(--spice-line);border-radius:8px;padding:8px;background:#fff"></div>
+      </div>
+    </div>
   </div>
   </div>
 </div>
@@ -5255,6 +5333,59 @@ function iconBtn(kind,title,onclick){
 // component replaces the ENTIRE table so it can add a <thead>,
 // filter row, and <tfoot>.
 
+// ── StatusBlock — shared loading / empty / error state ──────
+// Use anywhere a tab / section needs to communicate state without
+// each loader rolling its own spinner or alert. Examples:
+//   StatusBlock.show('lots-list', 'loading');
+//   StatusBlock.show('invoices-list', 'error', { body: e.message,
+//     action: { label: 'Retry', onclick: 'loadInvoices()' } });
+// The host can be any element (div, tbody, td, etc.) — innerHTML
+// is replaced wholesale. For <tbody> hosts we wrap in a single
+// full-width <tr><td colspan="99"> so the block renders inside
+// the table without breaking layout.
+const StatusBlock = (function(){
+  const DEFAULTS = {
+    loading: { icon: '', title: 'Loading…',           body: '' },
+    empty:   { icon: '∅', title: 'Nothing to show',   body: '' },
+    error:   { icon: '⚠', title: 'Something went wrong', body: '' },
+  };
+  function html(kind, opts){
+    opts = opts || {};
+    const def = DEFAULTS[kind] || DEFAULTS.empty;
+    const icon  = opts.icon  != null ? opts.icon  : def.icon;
+    const title = opts.title != null ? opts.title : def.title;
+    const body  = opts.body  != null ? opts.body  : def.body;
+    let actions = '';
+    if (opts.action && opts.action.label) {
+      const oc = String(opts.action.onclick || '').replace(/"/g, '&quot;');
+      actions = `<div class="statusblock-actions">
+        <button class="btn btn-g btn-sm" onclick="${oc}">${esc(opts.action.label)}</button>
+      </div>`;
+    }
+    return `<div class="statusblock statusblock-${kind}">
+      ${icon ? `<div class="statusblock-icon">${esc(icon)}</div>` : '<div class="statusblock-icon"></div>'}
+      <div class="statusblock-title">${esc(title)}</div>
+      ${body ? `<div class="statusblock-body">${esc(body)}</div>` : ''}
+      ${actions}
+    </div>`;
+  }
+  function show(hostId, kind, opts){
+    const host = document.getElementById(hostId);
+    if (!host) return;
+    // tbody hosts need to wrap the block in a tr/td so the table renders.
+    if (host.tagName === 'TBODY') {
+      host.innerHTML = `<tr><td colspan="99" style="padding:0;border:none;background:transparent">${html(kind, opts)}</td></tr>`;
+    } else {
+      host.innerHTML = html(kind, opts);
+    }
+  }
+  function clear(hostId){
+    const host = document.getElementById(hostId);
+    if (host) host.innerHTML = '';
+  }
+  return { show, clear, html };
+})();
+
 const DataTable = (function(){
   const PAGE_SIZE = 100;       // rows shown per load
   const state = {}; // keyed by tbodyId: { data, cols, sort, search, visible }
@@ -5770,7 +5901,7 @@ function go(tab){
     auctions:loadAuctions,lots:loadLotAuctions,invoices:loadInvAuctions,purchases:loadPurAuctions,
     payments:loadPayAuctions,exports:loadExpAuctions,tds:()=>{},lorry:loadLorryAuctions,
     bills:loadBillAuctions,debit:loadDnAuctions,journals:loadJournalDefault,tally:loadTallyAuctions,
-    spicesboard:loadSpiceBoard};
+    spicesboard:loadSpiceBoard,pricecheck:loadPriceCheckAuctions};
   if(loaders[tab]){
     try{
       const r=loaders[tab]();
@@ -12561,10 +12692,9 @@ async function refreshLots(btn){
     button.disabled = true;
     button.textContent = '⟳ Refreshing…';
     try {
-      // Clear the tbody so the user SEES a blank state momentarily — this
-      // makes it obvious the table is being rebuilt from scratch.
-      const tbody = document.getElementById('lots-list');
-      if (tbody) tbody.innerHTML = '<tr><td colspan="99" style="text-align:center;padding:24px;color:var(--text3)">Loading…</td></tr>';
+      // Briefly show a loading state so the user SEES the table is being
+      // rebuilt from scratch — feedback matters even on a fast refresh.
+      StatusBlock.show('lots-list', 'loading');
       await loadLots();
       toast('Lots refreshed');
     } catch (e) {
@@ -12583,8 +12713,20 @@ async function loadLots(){const aid=document.getElementById('lot-auction').value
   const _lotSearch = (document.getElementById('lot-search')?.value || '').trim();
   const _lotSearchParam = _lotSearch ? `&search=${encodeURIComponent(_lotSearch)}` : '';
   // Cache-buster ensures the browser actually hits the server (otherwise Refresh
-  // may return stale cached JSON and nothing visibly changes)
-  const d=await j(`/api/lots/${aid}?_=${Date.now()}${_lotSearchParam}`);
+  // may return stale cached JSON and nothing visibly changes).
+  // Wrap the fetch so a network/API failure surfaces inside the table
+  // (consistent StatusBlock UI) instead of leaving the previous rows or
+  // a stale "Loading…" on screen.
+  let d;
+  try {
+    d = await j(`/api/lots/${aid}?_=${Date.now()}${_lotSearchParam}`);
+  } catch (e) {
+    StatusBlock.show('lots-list', 'error', {
+      body: (e && e.message) || 'Failed to load lots',
+      action: { label: 'Retry', onclick: 'loadLots()' },
+    });
+    throw e;
+  }
   const arr = Array.isArray(d) ? d : [];
 
   // Update KPI strip — count, qty, amount, calculated %
@@ -13272,7 +13414,21 @@ async function loadInvoices(opts){
   params.push('pageSize=' + _invoicesPager.pageSize);
   const url='/api/invoices?'+params.join('&');
   const token = ++_invoicesPager.fetchToken;
-  const raw = await j(url);
+  // Loading state stays visible until the fetch settles. The fetchToken
+  // race-guard below ensures stale responses don't overwrite this.
+  StatusBlock.show('invoices-list', 'loading');
+  let raw;
+  try {
+    raw = await j(url);
+  } catch (e) {
+    if (token === _invoicesPager.fetchToken) {
+      StatusBlock.show('invoices-list', 'error', {
+        body: (e && e.message) || 'Failed to load invoices',
+        action: { label: 'Retry', onclick: 'loadInvoices({keepPage:true})' },
+      });
+    }
+    throw e;
+  }
   if (token !== _invoicesPager.fetchToken) return;
   const d = Array.isArray(raw) ? raw : (raw && raw.rows ? raw.rows : []);
   const total = Array.isArray(raw) ? d.length : (raw && raw.total != null ? raw.total : d.length);
@@ -14033,7 +14189,19 @@ async function loadPurchases(opts){
   params.push('pageSize=' + _purchasesPager.pageSize);
   const url='/api/purchases?'+params.join('&');
   const token = ++_purchasesPager.fetchToken;
-  const raw=await j(url);
+  StatusBlock.show('purchases-list', 'loading');
+  let raw;
+  try {
+    raw = await j(url);
+  } catch (e) {
+    if (token === _purchasesPager.fetchToken) {
+      StatusBlock.show('purchases-list', 'error', {
+        body: (e && e.message) || 'Failed to load purchases',
+        action: { label: 'Retry', onclick: 'loadPurchases({keepPage:true})' },
+      });
+    }
+    throw e;
+  }
   if (token !== _purchasesPager.fetchToken) return;
   const d = Array.isArray(raw) ? raw : (raw && raw.rows ? raw.rows : []);
   const total = Array.isArray(raw) ? d.length : (raw && raw.total != null ? raw.total : d.length);
@@ -17254,6 +17422,485 @@ async function plDownload(){
     document.body.appendChild(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
     if (typeof toast === 'function') toast('Mapped file downloaded ✓');
+  } catch (e) {
+    result.innerHTML = '<span style="color:#c00">'+escAttr(e.message||String(e))+'</span>';
+  } finally {
+    btn.disabled = false; btn.textContent = origLabel;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// PRICE CHECK — Reconcile external price sheet vs. lots table.
+// Mirrors the legacy PriceCheck_VSTL.xlsm workflow (mapping →
+// priceCheck → checkRate) but as a single-screen flow against the
+// live DB. Same shape as plPreview/plDownload above so the muscle
+// memory carries over.
+// ════════════════════════════════════════════════════════════════
+let _pcLastSummary = null;
+
+async function loadPriceCheckAuctions(){
+  // Reuses the same /api/auctions endpoint other auction-pickers do.
+  // We can't share fillAucSelect() directly because it replaces the
+  // entire <option> set — we want to keep the "— Any —" sentinel at
+  // the top so the user can still run an auction-agnostic check.
+  const sel = document.getElementById('pc-auction');
+  if (!sel) return;
+  try {
+    const d = await j('/api/auctions');
+    const opts = ['<option value="">— Any (use TNO + DATE columns) —</option>']
+      .concat(d.map(a => '<option value="'+a.id+'">'+escAttr(a.ano)+' — '+escAttr(fmtD(a.date))+' ('+(a.lot_count||0)+' lots)</option>'));
+    sel.innerHTML = opts.join('');
+  } catch (e) {
+    console.error('loadPriceCheckAuctions failed', e);
+  }
+}
+
+function pcOnFileChange(){
+  // A new file invalidates the previous preview → reset download gate.
+  _pcLastSummary = null;
+  const btn = document.getElementById('pc-download-btn');
+  if (btn) btn.disabled = true;
+  const result  = document.getElementById('pc-result');
+  const host    = document.getElementById('pc-preview');
+  if (result) result.innerHTML = '';
+  if (host)   host.innerHTML = '';
+}
+
+function pcClear(){
+  const fileEl = document.getElementById('pc-file');
+  if (fileEl) fileEl.value = '';
+  const aucEl = document.getElementById('pc-auction');
+  if (aucEl) aucEl.value = '';
+  pcOnFileChange();
+}
+
+async function pcVerify(){
+  const fileEl = document.getElementById('pc-file');
+  const aucEl  = document.getElementById('pc-auction');
+  const result = document.getElementById('pc-result');
+  const host   = document.getElementById('pc-preview');
+  if (!fileEl.files || !fileEl.files[0]) {
+    result.innerHTML = '<span style="color:#c00">Select a file first.</span>';
+    return;
+  }
+  result.innerHTML = 'Checking prices…';
+  host.innerHTML = '';
+  const fd = new FormData();
+  fd.append('file', fileEl.files[0]);
+  if (aucEl && aucEl.value) fd.append('auction_id', aucEl.value);
+  try {
+    const r = await fetch(B + '/api/price-check/verify', {
+      method: 'POST', body: fd,
+      headers: { 'Authorization': 'Bearer ' + T }
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      result.innerHTML = '<span style="color:#c00">Error: '+escAttr(data.error||'verification failed')+'</span>';
+      _pcLastSummary = null;
+      document.getElementById('pc-download-btn').disabled = true;
+      return;
+    }
+    _pcLastSummary = data;
+    document.getElementById('pc-download-btn').disabled = false;
+    _pcRenderPreview(data);
+    // One-line summary directly below the buttons. Mention which
+    // column we actually validated — if the file has no SERVER PRICE
+    // column we fall back to PRICE, and the user needs to know that.
+    const priceIssues = (data.mismatched || 0) + (data.missingServer || 0) + (data.missingFile || 0) + (data.noAuction || 0);
+    const codeIssues  = (data.codeMismatched || 0) + (data.codeFileBlank || 0) + (data.codeDbBlank || 0);
+    const issues = priceIssues + codeIssues;
+    const clean = issues === 0;
+    const tone = clean ? '#15803d' : '#c00';
+    const msg = clean
+      ? '✓ All ' + data.matched + ' rows match the server — prices and codes reconciled.'
+      : '⚠ ' + priceIssues + ' price issue(s), ' + codeIssues + ' code issue(s) need review.';
+    const colNote = data.hasServerPriceCol
+      ? 'Validating <code>' + data.validatedColumn + '</code> column vs <code>lots.price</code>'
+      : '<span style="color:#a16207">No SERVER PRICE column found — falling back to <code>PRICE</code> column</span>';
+    result.innerHTML =
+      '<div style="font-size:11px;color:#555;margin-bottom:4px">'+colNote+'</div>'+
+      '<b>Total rows:</b> '+data.total+
+      ' · <b style="color:#15803d">matched:</b> '+(data.matched||0)+
+      ' · <b style="color:#c00">mismatched:</b> '+(data.mismatched||0)+
+      ' · <b style="color:#a16207">missing in server:</b> '+(data.missingServer||0)+
+      ' · <b style="color:#a16207">missing in file:</b> '+(data.missingFile||0)+
+      ((data.serverEmpty||0) ? ' · <b style="color:#a16207">blank price:</b> '+data.serverEmpty : '')+
+      ((data.codeMismatched||0) ? ' · <b style="color:#c00">code diff:</b> '+data.codeMismatched : '')+
+      (((data.codeFileBlank||0)+(data.codeDbBlank||0)) ? ' · <b style="color:#a16207">code blank:</b> '+((data.codeFileBlank||0)+(data.codeDbBlank||0)) : '')+
+      ' &nbsp;<span style="color:'+tone+'">'+msg+'</span>';
+  } catch (e) {
+    result.innerHTML = '<span style="color:#c00">Error: '+escAttr(e.message||String(e))+'</span>';
+    _pcLastSummary = null;
+    document.getElementById('pc-download-btn').disabled = true;
+  }
+}
+
+function _pcRenderPreview(data){
+  const host = document.getElementById('pc-preview');
+  if (!host) return;
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+
+  // Summary cards. Net price diff is a signed total — if it lands
+  // on zero the file is reconciled even when individual rows disagree
+  // (positive and negative diffs cancel). Total absolute diff is the
+  // stronger signal of "how far apart" things are.
+  const card = (label, value, color) =>
+    '<div style="flex:1;min-width:120px;padding:10px 12px;border:1px solid '+color+';border-radius:8px;background:'+color+'1a">'+
+      '<div style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:0.4px">'+label+'</div>'+
+      '<div style="font-size:22px;font-weight:700;color:'+color+'">'+value+'</div>'+
+    '</div>';
+  const fmtMoney = (n) => {
+    if (n == null) return '—';
+    const s = Math.abs(n).toLocaleString('en-IN');
+    return (n < 0 ? '−' : (n > 0 ? '+' : '')) + '₹' + s;
+  };
+  let html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'+
+    card('Total rows',         data.total||0,             '#374151')+
+    card('Matched',            data.matched||0,           '#15803d')+
+    card('Mismatched',         data.mismatched||0,        '#c00')+
+    card('Blank price',        data.serverEmpty||0,       '#a16207')+
+    card('Missing in server',  data.missingServer||0,     '#a16207')+
+    card('Missing in file',    data.missingFile||0,       '#a16207')+
+    card('Net diff',           fmtMoney(data.totalSignedDiff||0), (data.totalSignedDiff||0) === 0 ? '#15803d' : '#c00')+
+    card('Total |diff|',       fmtMoney(data.totalAbsDiff||0),    (data.totalAbsDiff||0) === 0 ? '#15803d' : '#c00')+
+    '</div>';
+
+  // Buyer-code reconciliation strip — separate from price totals so the
+  // operator can scan code health at a glance even when prices are clean.
+  // Only render when the file had a CODE column or the DB has code values
+  // that might be missing in the file (i.e. there is something to compare).
+  const hasCodeSignal = data.hasCodeCol
+    || (data.codeMatched|0) + (data.codeMismatched|0)
+       + (data.codeFileBlank|0) + (data.codeDbBlank|0) > 0;
+  if (hasCodeSignal) {
+    const codeIssues = (data.codeMismatched||0) + (data.codeFileBlank||0) + (data.codeDbBlank||0);
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">'+
+      '<div style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:#555;padding:4px 6px 4px 0">Buyer code</div>'+
+      card('Code matched',      data.codeMatched||0,     '#15803d')+
+      card('Code mismatches',   data.codeMismatched||0,  '#c00')+
+      card('Blank in file',     data.codeFileBlank||0,   '#a16207')+
+      card('Blank in DB',       data.codeDbBlank||0,     '#a16207')+
+      '</div>';
+
+    // Toolbar — show only when there are server-side fixable rows
+    // (rows that have a lot_id AND a non-empty file code different from DB).
+    const fixable = (data.rows || []).filter(rw =>
+      rw && rw.lot_id && rw.file_code &&
+      (rw.code_status === 'diff' || rw.code_status === 'db_blank'));
+    if (fixable.length) {
+      html += '<div style="display:flex;gap:8px;margin:-2px 0 10px 0;align-items:center">'+
+        '<button class="btn btn-g btn-sm" onclick="pcApplyAllCodeFixes()" '+
+        'title="Write each row\'s file CODE onto the matching lot, and re-fill buyer/buyer1/sale from the buyer master.">'+
+        '✓ Apply all '+fixable.length+' code fix'+(fixable.length===1?'':'es')+
+        '</button>'+
+        '<span style="font-size:11.5px;color:#555">Sets lots.code from the file and re-resolves buyer details. Skips blank-file rows.</span>'+
+        '</div>';
+    } else if (codeIssues === 0) {
+      html += '<div style="margin:-2px 0 10px 0;font-size:12px;color:#15803d">✓ All buyer codes match the server.</div>';
+    }
+
+    // Caveats about what Apply cannot fix. Surfaced inline so the operator
+    // understands why some red/amber rows have no Fix button.
+    html += '<div style="margin:-2px 0 12px 0;padding:8px 12px;background:#FEF3C7;border:1px solid #FDE68A;border-radius:6px;font-size:11.5px;color:#78350F;line-height:1.55">'+
+      '<b>Note:</b> Apply only handles rows that have both a DB lot and a non-blank file CODE.'+
+      ' Rows tagged <b>NOT IN SERVER</b> or <b>NO AUCTION</b> have no DB lot to update — create the lot in Lot Entry first, then re-verify.'+
+      ' Rows where the file CODE is <b>FILE BLANK</b> have nothing to write — use'+
+      ' <i>Lots → Set Buyer Code</i> with a manually-picked code instead.'+
+      '</div>';
+  }
+
+  const matchCount = rows.filter(rw => rw.status === 'match').length;
+
+  if (!rows.length) {
+    html += '<div style="padding:12px;color:#666;font-style:italic">No data rows found in the file.</div>';
+    host.innerHTML = html;
+    return;
+  }
+
+  html += '<div style="margin:4px 0 8px 0;font-size:12px;color:#555">'+
+    '<label style="cursor:pointer;user-select:none"><input type="checkbox" id="pc-show-matches" '+
+      (matchCount === 0 ? 'checked disabled' : '')+
+      ' onchange="_pcToggleMatches()"> Show '+matchCount+' matched rows</label>'+
+  '</div>';
+
+  // Column header — be explicit about which file column we validated
+  // (SERVER PRICE if present, otherwise PRICE). Manual PRICE shown
+  // for context but greyed so the operator knows it's not the
+  // validation target. We only show that column when the file has
+  // BOTH columns — in fallback mode, the manual col IS the validated
+  // col, and rendering it twice is just noise.
+  const showManualCol = !!data.hasServerPriceCol;
+  const validatedHeader = data.hasServerPriceCol ? 'File SERVER PRICE' : 'File PRICE';
+  html += '<div style="overflow:auto;max-height:520px;border:1px solid var(--border);border-radius:6px">';
+  html += '<table id="pc-table" style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#f4f4f4;position:sticky;top:0">'+
+    '<th style="text-align:left;padding:4px 8px;border:1px solid #ddd">#</th>'+
+    '<th style="text-align:left;padding:4px 8px;border:1px solid #ddd">Auction</th>'+
+    '<th style="text-align:left;padding:4px 8px;border:1px solid #ddd">Lot</th>'+
+    (showManualCol ? '<th style="text-align:right;padding:4px 8px;border:1px solid #ddd;color:#999">Manual PRICE</th>' : '')+
+    '<th style="text-align:right;padding:4px 8px;border:1px solid #ddd">'+validatedHeader+'</th>'+
+    '<th style="text-align:right;padding:4px 8px;border:1px solid #ddd">DB price</th>'+
+    '<th style="text-align:right;padding:4px 8px;border:1px solid #ddd">Diff</th>'+
+    '<th style="text-align:left;padding:4px 8px;border:1px solid #ddd">File CODE</th>'+
+    '<th style="text-align:left;padding:4px 8px;border:1px solid #ddd">DB CODE</th>'+
+    '<th style="text-align:left;padding:4px 8px;border:1px solid #ddd">Code</th>'+
+    '<th style="text-align:left;padding:4px 8px;border:1px solid #ddd">Status</th>'+
+    '<th style="text-align:center;padding:4px 8px;border:1px solid #ddd">Fix</th>'+
+    '</tr></thead><tbody>';
+  // Render ALL rows; match rows are display:none by default so the
+  // checkbox toggle is a no-network flip. Avoids re-rendering ~1000
+  // rows on every toggle.
+  for (const rw of rows) {
+    const display = rw.status === 'match' ? 'display:none' : '';
+    const bg = _pcRowBg(rw.status);
+    const issues = rw.issues || [];
+    const badge = _pcStatusBadge(rw);
+    const diffCell = rw.diff == null ? '—'
+      : (rw.diff === 0 ? '<span style="color:#15803d">0</span>'
+         : '<span style="color:#c00;font-weight:700">'+(rw.diff > 0 ? '+' : '')+rw.diff+'</span>');
+
+    // Manual PRICE — show greyed if absent or unhighlighted (it's
+    // context, not validation target).
+    const manualCell = rw.manual_price == null ? '<span style="color:#aaa">—</span>' : rw.manual_price;
+    // File SERVER PRICE — highlight if it disagrees or is blank.
+    const filePriceVal = rw.file_server_price;
+    const fileEmpty = filePriceVal == null;
+    const fileMismatch = issues.includes('server_diff') || issues.includes('server_empty');
+    const fileCell = fileEmpty ? '<span style="color:#a16207">blank</span>' : filePriceVal;
+
+    // Code cells: render in red when statuses signal action needed.
+    const fileCodeRaw = rw.file_code || '';
+    const dbCodeRaw   = rw.db_code   || '';
+    const codeStatus  = rw.code_status || 'both_blank';
+    const codeFileBlankUI = !fileCodeRaw;
+    const codeDbBlankUI   = !dbCodeRaw;
+    const codeFileCell = codeFileBlankUI
+      ? '<span style="color:#aaa">—</span>'
+      : escAttr(fileCodeRaw);
+    const codeDbCell = codeDbBlankUI
+      ? '<span style="color:#a16207">blank</span>'
+      : escAttr(dbCodeRaw);
+    let codeBadge;
+    if (codeStatus === 'match')        codeBadge = '<span style="display:inline-block;padding:1px 6px;border-radius:8px;background:#dcfce7;color:#15803d;font-weight:700;font-size:11px">MATCH</span>';
+    else if (codeStatus === 'diff')    codeBadge = '<span style="display:inline-block;padding:1px 6px;border-radius:8px;background:#fecaca;color:#991b1b;font-weight:700;font-size:11px">DIFF</span>';
+    else if (codeStatus === 'db_blank')   codeBadge = '<span style="display:inline-block;padding:1px 6px;border-radius:8px;background:#fed7aa;color:#9a3412;font-weight:700;font-size:11px">DB BLANK</span>';
+    else if (codeStatus === 'file_blank') codeBadge = '<span style="display:inline-block;padding:1px 6px;border-radius:8px;background:#fef3c7;color:#a16207;font-weight:700;font-size:11px">FILE BLANK</span>';
+    else codeBadge = '<span style="color:#aaa;font-size:11px">—</span>';
+
+    // Per-row Apply button — only when there's a lot_id to target AND
+    // a non-empty file code to write. file_blank rows have nothing to
+    // apply; missing_server / no_auction rows have no lot_id.
+    const canFix = rw.lot_id && fileCodeRaw && (codeStatus === 'diff' || codeStatus === 'db_blank');
+    const fixCell = canFix
+      ? '<button class="btn btn-g btn-sm" style="padding:2px 10px;font-size:11px" onclick="pcApplyCodeFix(this,'+rw.lot_id+',\''+escAttr(fileCodeRaw)+'\')">Apply</button>'
+      : '<span style="color:#aaa">—</span>';
+
+    html += '<tr class="pc-row pc-'+rw.status+'" data-code-status="'+codeStatus+'" style="'+display+';background:'+bg+'">'+
+      '<td style="padding:3px 8px;border:1px solid #f0f0f0;font-family:monospace">'+(rw.row || '+')+'</td>'+
+      '<td style="padding:3px 8px;border:1px solid #f0f0f0">'+escAttr(rw.auction_ano || rw.ano || '—')+'</td>'+
+      '<td style="padding:3px 8px;border:1px solid #f0f0f0;font-family:monospace;font-weight:600">'+escAttr(rw.lot || '—')+'</td>'+
+      (showManualCol ? '<td style="padding:3px 8px;border:1px solid #f0f0f0;text-align:right;color:#666">'+manualCell+'</td>' : '')+
+      '<td style="padding:3px 8px;border:1px solid #f0f0f0;text-align:right'+(fileMismatch?';color:#c00;font-weight:700':'')+'">'+fileCell+'</td>'+
+      '<td style="padding:3px 8px;border:1px solid #f0f0f0;text-align:right">'+(rw.db_price == null ? '—' : rw.db_price)+'</td>'+
+      '<td style="padding:3px 8px;border:1px solid #f0f0f0;text-align:right">'+diffCell+'</td>'+
+      '<td style="padding:3px 8px;border:1px solid #f0f0f0;font-family:monospace'+(codeStatus==='diff'||codeStatus==='db_blank'?';color:#c00;font-weight:700':'')+'">'+codeFileCell+'</td>'+
+      '<td style="padding:3px 8px;border:1px solid #f0f0f0;font-family:monospace'+(codeStatus==='diff'?';color:#c00':'')+'">'+codeDbCell+'</td>'+
+      '<td style="padding:3px 8px;border:1px solid #f0f0f0;white-space:nowrap">'+codeBadge+'</td>'+
+      '<td style="padding:3px 8px;border:1px solid #f0f0f0;white-space:nowrap">'+badge+'</td>'+
+      '<td style="padding:3px 8px;border:1px solid #f0f0f0;text-align:center">'+fixCell+'</td>'+
+    '</tr>';
+  }
+  html += '</tbody></table></div>';
+
+  // Legend.
+  html += '<div style="margin-top:10px;font-size:11.5px;color:#555;display:flex;gap:14px;flex-wrap:wrap">'+
+    '<span><span style="display:inline-block;width:12px;height:12px;background:#fee2e2;border:1px solid #fecaca;vertical-align:middle"></span> File price ≠ DB price (or lot missing from DB)</span>'+
+    '<span><span style="display:inline-block;width:12px;height:12px;background:#fef3c7;border:1px solid #fde68a;vertical-align:middle"></span> Blank price / missing in file / no auction match</span>'+
+    '<span><span style="display:inline-block;width:12px;height:12px;background:#dcfce7;border:1px solid #bbf7d0;vertical-align:middle"></span> Match</span>'+
+  '</div>';
+
+  host.innerHTML = html;
+}
+
+function _pcToggleMatches(){
+  const show = document.getElementById('pc-show-matches').checked;
+  const rows = document.querySelectorAll('#pc-table tr.pc-match');
+  rows.forEach(r => { r.style.display = show ? '' : 'none'; });
+}
+
+function _pcRowBg(status){
+  if (status === 'match') return '#f0fdf4';
+  // Soft-amber bucket: missing on the DB side, blanks, no-auction.
+  if (status === 'missing_file' || status === 'no_auction' || status === 'blank' || status === 'server_empty') return '#fef3c7';
+  // Red bucket: actual price disagreement, or lot in file but not in DB.
+  return '#fee2e2';
+}
+
+function _pcStatusBadge(rw){
+  const make = (label, bg, fg) =>
+    '<span style="display:inline-block;padding:1px 8px;border-radius:10px;background:'+bg+';color:'+fg+';font-weight:700;font-size:11px">'+label+'</span>';
+  switch (rw.status) {
+    case 'match':          return make('MATCH', '#dcfce7', '#15803d');
+    case 'server_diff':    return make('PRICE DIFF', '#fecaca', '#991b1b');
+    case 'server_empty':   return make('BLANK PRICE', '#fed7aa', '#9a3412');
+    case 'missing_server': return make('NOT IN SERVER', '#fecaca', '#991b1b');
+    case 'missing_file':   return make('NOT IN FILE', '#fed7aa', '#9a3412');
+    case 'no_auction':     return make('NO AUCTION', '#fed7aa', '#9a3412');
+    case 'blank':          return make('BLANK', '#e5e7eb', '#374151');
+    default:               return make('CHECK', '#fecaca', '#991b1b');
+  }
+}
+
+// ── Price Check — Apply CODE fixes ───────────────────────────
+// Reuses /api/lots/bulk-set-buyer. The buyer master is fetched once
+// per session and cached so per-row clicks don't refetch.
+let _pcBuyerCache = null;
+async function _pcEnsureBuyerCache(){
+  if (_pcBuyerCache) return _pcBuyerCache;
+  const buyers = await j('/api/buyers?all=1');
+  const cache = new Map();
+  for (const b of (Array.isArray(buyers) ? buyers : [])) {
+    const code = String(b.code || '').trim().toUpperCase();
+    if (!code) continue;
+    if (cache.has(code)) continue;   // first wins (alphabetical order)
+    cache.set(code, {
+      code: b.code || '',
+      buyer:  b.buyer  || '',
+      buyer1: b.buyer1 || '',
+      sale:   b.sale   || '',
+    });
+  }
+  _pcBuyerCache = cache;
+  return _pcBuyerCache;
+}
+
+// Apply a single row's file CODE onto its DB lot. Resolves buyer/buyer1/
+// sale from the buyer master so the lot stays internally consistent.
+async function pcApplyCodeFix(btn, lotId, fileCode){
+  if (!lotId || !fileCode) return;
+  const origLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const cache = await _pcEnsureBuyerCache();
+    const hit = cache.get(String(fileCode).trim().toUpperCase());
+    const payload = { ids: [Number(lotId)], code: fileCode };
+    if (hit) { payload.buyer = hit.buyer; payload.buyer1 = hit.buyer1; payload.sale = hit.sale; }
+    const r = await fetch(B + '/api/lots/bulk-set-buyer', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Apply failed');
+    if (typeof toast === 'function') {
+      toast(hit
+        ? `Set code ${fileCode} (${hit.buyer1 || hit.buyer || 'buyer master matched'})`
+        : `Set code ${fileCode} (no buyer master entry — buyer/sale left as-is)`);
+    }
+    if (btn) {
+      btn.textContent = '✓';
+      btn.style.background = '#15803d';
+      btn.style.borderColor = '#15803d';
+    }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = origLabel; }
+    if (typeof showError === 'function') showError(e);
+    else alert('Error: ' + (e.message || String(e)));
+  }
+}
+
+// Bulk-apply every row whose code_status is 'diff' or 'db_blank' AND
+// has a usable file_code + lot_id. Runs sequentially (small N, easier
+// to surface per-row errors).
+async function pcApplyAllCodeFixes(){
+  if (!_pcLastSummary || !Array.isArray(_pcLastSummary.rows)) {
+    if (typeof toast === 'function') toast('Run Verify Prices first.');
+    return;
+  }
+  const fixable = _pcLastSummary.rows.filter(rw =>
+    rw && rw.lot_id && rw.file_code &&
+    (rw.code_status === 'diff' || rw.code_status === 'db_blank'));
+  if (!fixable.length) {
+    if (typeof toast === 'function') toast('Nothing to fix.');
+    return;
+  }
+  if (!confirm(`Apply ${fixable.length} buyer-code fix${fixable.length===1?'':'es'}? Each row's lot will get the file's CODE plus buyer details from the buyer master.`)) return;
+  const cache = await _pcEnsureBuyerCache();
+  // Group by (code, buyer, buyer1, sale) so one POST handles many lots.
+  const groups = new Map();
+  for (const rw of fixable) {
+    const code = String(rw.file_code).trim();
+    const hit = cache.get(code.toUpperCase());
+    const key = [code, (hit && hit.buyer)||'', (hit && hit.buyer1)||'', (hit && hit.sale)||''].join('||');
+    let g = groups.get(key);
+    if (!g) {
+      g = { ids: [], code, payload: { code } };
+      if (hit) { g.payload.buyer = hit.buyer; g.payload.buyer1 = hit.buyer1; g.payload.sale = hit.sale; }
+      groups.set(key, g);
+    }
+    g.ids.push(Number(rw.lot_id));
+  }
+  let updated = 0, failed = 0;
+  for (const g of groups.values()) {
+    try {
+      const r = await fetch(B + '/api/lots/bulk-set-buyer', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: g.ids, ...g.payload }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'apply failed');
+      updated += (d.updated || 0);
+    } catch (e) {
+      failed += g.ids.length;
+      console.error('Bulk code-fix group failed', g, e);
+    }
+  }
+  const summary = failed
+    ? `Updated ${updated} lot(s). ${failed} failed — check console.`
+    : `Updated ${updated} lot(s).`;
+  if (typeof toast === 'function') toast(summary);
+  // Re-verify so the table reflects the new state.
+  pcVerify();
+}
+
+async function pcDownload(){
+  const fileEl = document.getElementById('pc-file');
+  const aucEl  = document.getElementById('pc-auction');
+  const result = document.getElementById('pc-result');
+  if (!fileEl.files || !fileEl.files[0]) {
+    result.innerHTML = '<span style="color:#c00">Select a file first.</span>';
+    return;
+  }
+  if (!_pcLastSummary) {
+    result.innerHTML = '<span style="color:#c00">Run "Verify Prices" first so you can see what will be flagged.</span>';
+    return;
+  }
+  const btn = document.getElementById('pc-download-btn');
+  const origLabel = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Building file…';
+  try {
+    const fd = new FormData();
+    fd.append('file', fileEl.files[0]);
+    if (aucEl && aucEl.value) fd.append('auction_id', aucEl.value);
+    const r = await fetch(B + '/api/price-check/download', {
+      method: 'POST', body: fd,
+      headers: { 'Authorization': 'Bearer ' + T }
+    });
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      throw new Error(data.error || ('Download failed ('+r.status+')'));
+    }
+    const blob = await r.blob();
+    let filename = 'price-check.xlsx';
+    const cd = r.headers.get('Content-Disposition') || '';
+    const m = /filename="?([^";]+)"?/i.exec(cd);
+    if (m) filename = m[1];
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+    if (typeof toast === 'function') toast('Annotated file downloaded ✓');
   } catch (e) {
     result.innerHTML = '<span style="color:#c00">'+escAttr(e.message||String(e))+'</span>';
   } finally {
