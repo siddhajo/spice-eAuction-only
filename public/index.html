@@ -17566,6 +17566,18 @@ function _pcRenderPreview(data){
     const s = Math.abs(n).toLocaleString('en-IN');
     return (n < 0 ? '−' : (n > 0 ? '+' : '')) + '₹' + s;
   };
+  // Helpers used by every UI section below. Defined up front so the
+  // gate banner, buyer-code strip, and per-row renderer can all share
+  // a single "is this row fixable?" definition.
+  const isFullyMatched = rw => rw.status === 'match'
+    && rw.code_status !== 'diff'
+    && rw.code_status !== 'db_blank';
+  const rowFixable = rw =>
+    rw && rw.lot_id && (
+      (rw.file_code && (rw.code_status === 'diff' || rw.code_status === 'db_blank'))
+      || (rw.status === 'server_diff' && rw.file_server_price != null)
+    );
+
   // Gate banner — green when this run cleared the transaction lock,
   // red otherwise. Auto-stamped on the server when verify runs against
   // a forced auction AND there are no fixable code issues left.
@@ -17605,8 +17617,8 @@ function _pcRenderPreview(data){
   const hasCodeSignal = data.hasCodeCol
     || (data.codeMatched|0) + (data.codeMismatched|0)
        + (data.codeFileBlank|0) + (data.codeDbBlank|0) > 0;
+  const codeIssues = (data.codeMismatched||0) + (data.codeFileBlank||0) + (data.codeDbBlank||0);
   if (hasCodeSignal) {
-    const codeIssues = (data.codeMismatched||0) + (data.codeFileBlank||0) + (data.codeDbBlank||0);
     html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">'+
       '<div style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:#555;padding:4px 6px 4px 0">Buyer code</div>'+
       card('Code matched',      data.codeMatched||0,     '#15803d')+
@@ -17614,35 +17626,38 @@ function _pcRenderPreview(data){
       card('Blank in file',     data.codeFileBlank||0,   '#a16207')+
       card('Blank in DB',       data.codeDbBlank||0,     '#a16207')+
       '</div>';
+  }
 
-    // Toolbar — show only when there are server-side fixable rows
-    // (rows that have a lot_id AND a non-empty file code different from DB).
-    const fixable = (data.rows || []).filter(rw =>
-      rw && rw.lot_id && rw.file_code &&
-      (rw.code_status === 'diff' || rw.code_status === 'db_blank'));
-    if (fixable.length) {
-      html += '<div style="display:flex;gap:8px;margin:-2px 0 10px 0;align-items:center">'+
-        '<button class="btn btn-g btn-sm" onclick="pcApplyAllCodeFixes()" '+
-        'title="Write each row\'s file CODE onto the matching lot, and re-fill buyer/buyer1/sale from the buyer master.">'+
-        '✓ Apply all '+fixable.length+' code fix'+(fixable.length===1?'':'es')+
-        '</button>'+
-        '<span style="font-size:11.5px;color:#555">Sets lots.code from the file and re-resolves buyer details. Skips blank-file rows.</span>'+
-        '</div>';
-    } else if (codeIssues === 0) {
-      html += '<div style="margin:-2px 0 10px 0;font-size:12px;color:#15803d">✓ All buyer codes match the server.</div>';
-    }
+  // Apply-all toolbar — lives ABOVE the code/price detail row table
+  // and is independent of whether the file has a CODE column, so
+  // price-only fixes can also be applied in bulk.
+  const fixable = (data.rows || []).filter(rowFixable);
+  if (fixable.length) {
+    html += '<div style="display:flex;gap:8px;margin:-2px 0 10px 0;align-items:center">'+
+      '<button class="btn btn-g btn-sm" onclick="pcApplyAllFixes()" '+
+      'title="For each fixable row: write the file\'s server PRICE and/or CODE onto the matching lot. Buyer / sale-type are re-resolved from the buyer master when a code changes.">'+
+      '✓ Apply all '+fixable.length+' fix'+(fixable.length===1?'':'es')+
+      '</button>'+
+      '<span style="font-size:11.5px;color:#555">Writes file price + code onto matched lots, re-resolving buyer details. Skips rows without a DB lot or with nothing fixable.</span>'+
+      '</div>';
+  } else if (codeIssues === 0 && (data.mismatched || 0) === 0) {
+    html += '<div style="margin:-2px 0 10px 0;font-size:12px;color:#15803d">✓ Prices and buyer codes both reconcile with the server.</div>';
+  }
 
-    // Caveats about what Apply cannot fix. Surfaced inline so the operator
-    // understands why some red/amber rows have no Fix button.
+  // Caveats about what Apply cannot fix. Surfaced inline so the operator
+  // understands why some red/amber rows have no Fix button.
+  if (hasCodeSignal || (data.missingServer||0) > 0 || (data.noAuction||0) > 0) {
     html += '<div style="margin:-2px 0 12px 0;padding:8px 12px;background:#FEF3C7;border:1px solid #FDE68A;border-radius:6px;font-size:11.5px;color:#78350F;line-height:1.55">'+
-      '<b>Note:</b> Apply only handles rows that have both a DB lot and a non-blank file CODE.'+
+      '<b>Note:</b> Apply only handles rows that have a matching DB lot.'+
       ' Rows tagged <b>NOT IN SERVER</b> or <b>NO AUCTION</b> have no DB lot to update — create the lot in Lot Entry first, then re-verify.'+
       ' Rows where the file CODE is <b>FILE BLANK</b> have nothing to write — use'+
       ' <i>Lots → Set Buyer Code</i> with a manually-picked code instead.'+
       '</div>';
   }
 
-  const matchCount = rows.filter(rw => rw.status === 'match').length;
+  // Count of rows where both price and code reconcile — used to
+  // size the "Show N matched rows" toggle below.
+  const matchCount = rows.filter(isFullyMatched).length;
 
   if (!rows.length) {
     html += '<div style="padding:12px;color:#666;font-style:italic">No data rows found in the file.</div>';
@@ -17653,7 +17668,7 @@ function _pcRenderPreview(data){
   html += '<div style="margin:4px 0 8px 0;font-size:12px;color:#555">'+
     '<label style="cursor:pointer;user-select:none"><input type="checkbox" id="pc-show-matches" '+
       (matchCount === 0 ? 'checked disabled' : '')+
-      ' onchange="_pcToggleMatches()"> Show '+matchCount+' matched rows</label>'+
+      ' onchange="_pcToggleMatches()"> Show '+matchCount+' matched rows (price + code OK)</label>'+
   '</div>';
 
   // Column header — be explicit about which file column we validated
@@ -17679,11 +17694,12 @@ function _pcRenderPreview(data){
     '<th style="text-align:left;padding:4px 8px;border:1px solid #ddd">Status</th>'+
     '<th style="text-align:center;padding:4px 8px;border:1px solid #ddd">Fix</th>'+
     '</tr></thead><tbody>';
-  // Render ALL rows; match rows are display:none by default so the
-  // checkbox toggle is a no-network flip. Avoids re-rendering ~1000
-  // rows on every toggle.
+  // Render ALL rows; rows where BOTH price and code reconcile are
+  // hidden by default. Rows with a code issue (diff / db_blank) stay
+  // visible even if the price matches — otherwise the per-row Apply
+  // button would be hidden along with the row.
   for (const rw of rows) {
-    const display = rw.status === 'match' ? 'display:none' : '';
+    const display = isFullyMatched(rw) ? 'display:none' : '';
     const bg = _pcRowBg(rw.status);
     const issues = rw.issues || [];
     const badge = _pcStatusBadge(rw);
@@ -17719,12 +17735,24 @@ function _pcRenderPreview(data){
     else if (codeStatus === 'file_blank') codeBadge = '<span style="display:inline-block;padding:1px 6px;border-radius:8px;background:#fef3c7;color:#a16207;font-weight:700;font-size:11px">FILE BLANK</span>';
     else codeBadge = '<span style="color:#aaa;font-size:11px">—</span>';
 
-    // Per-row Apply button — only when there's a lot_id to target AND
-    // a non-empty file code to write. file_blank rows have nothing to
-    // apply; missing_server / no_auction rows have no lot_id.
-    const canFix = rw.lot_id && fileCodeRaw && (codeStatus === 'diff' || codeStatus === 'db_blank');
+    // Per-row Apply button — visible whenever the row has a DB lot AND
+    // at least one fixable disagreement: a code diff/db_blank with a
+    // non-empty file code, OR a server price diff with a numeric file
+    // price. We send only the fields that need fixing — the rest of
+    // the lot is untouched.
+    const fixCode  = !!(fileCodeRaw && (codeStatus === 'diff' || codeStatus === 'db_blank'));
+    const fixPrice = !!(rw.status === 'server_diff' && filePriceVal != null);
+    const canFix   = rw.lot_id && (fixCode || fixPrice);
+    let btnLabel = 'Apply';
+    if (fixCode && fixPrice) btnLabel = 'Apply price + code';
+    else if (fixCode)        btnLabel = 'Apply code';
+    else if (fixPrice)       btnLabel = 'Apply price';
     const fixCell = canFix
-      ? '<button class="btn btn-g btn-sm" style="padding:2px 10px;font-size:11px" onclick="pcApplyCodeFix(this,'+rw.lot_id+',\''+escAttr(fileCodeRaw)+'\')">Apply</button>'
+      ? '<button class="btn btn-g btn-sm" style="padding:2px 10px;font-size:11px;white-space:nowrap" '+
+        'onclick="pcApplyFix(this,'+rw.lot_id+
+          ','+(fixCode ? '\''+escAttr(fileCodeRaw)+'\'' : 'null')+
+          ','+(fixPrice ? Number(filePriceVal) : 'null')+
+          ')">'+btnLabel+'</button>'
       : '<span style="color:#aaa">—</span>';
 
     html += '<tr class="pc-row pc-'+rw.status+'" data-code-status="'+codeStatus+'" style="'+display+';background:'+bg+'">'+
@@ -17756,8 +17784,18 @@ function _pcRenderPreview(data){
 
 function _pcToggleMatches(){
   const show = document.getElementById('pc-show-matches').checked;
+  // Only flip rows that have NO outstanding code issue. Rows with
+  // code diff / db_blank stay visible regardless of the toggle so
+  // the Apply button is always reachable.
   const rows = document.querySelectorAll('#pc-table tr.pc-match');
-  rows.forEach(r => { r.style.display = show ? '' : 'none'; });
+  rows.forEach(r => {
+    const cs = r.getAttribute('data-code-status') || '';
+    if (cs === 'diff' || cs === 'db_blank') {
+      r.style.display = '';   // keep visible
+      return;
+    }
+    r.style.display = show ? '' : 'none';
+  });
 }
 
 function _pcRowBg(status){
@@ -17861,17 +17899,29 @@ async function _pcEnsureBuyerCache(){
   return _pcBuyerCache;
 }
 
-// Apply a single row's file CODE onto its DB lot. Resolves buyer/buyer1/
-// sale from the buyer master so the lot stays internally consistent.
-async function pcApplyCodeFix(btn, lotId, fileCode){
-  if (!lotId || !fileCode) return;
+// Apply a single row's fixable disagreements onto its DB lot. `fileCode`
+// and `filePrice` are nullable — pass only the values to write. When a
+// code is written we also re-resolve buyer/buyer1/sale from the buyer
+// master so the lot stays internally consistent.
+async function pcApplyFix(btn, lotId, fileCode, filePrice){
+  if (!lotId) return;
+  if (fileCode == null && filePrice == null) return;
   const origLabel = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
   try {
-    const cache = await _pcEnsureBuyerCache();
-    const hit = cache.get(String(fileCode).trim().toUpperCase());
-    const payload = { ids: [Number(lotId)], code: fileCode };
-    if (hit) { payload.buyer = hit.buyer; payload.buyer1 = hit.buyer1; payload.sale = hit.sale; }
+    const payload = { ids: [Number(lotId)] };
+    let masterHit = null;
+    if (fileCode != null) {
+      payload.code = fileCode;
+      const cache = await _pcEnsureBuyerCache();
+      masterHit = cache.get(String(fileCode).trim().toUpperCase()) || null;
+      if (masterHit) {
+        payload.buyer  = masterHit.buyer;
+        payload.buyer1 = masterHit.buyer1;
+        payload.sale   = masterHit.sale;
+      }
+    }
+    if (filePrice != null) payload.price = Number(filePrice);
     const r = await fetch(B + '/api/lots/bulk-set-buyer', {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
@@ -17880,9 +17930,10 @@ async function pcApplyCodeFix(btn, lotId, fileCode){
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || 'Apply failed');
     if (typeof toast === 'function') {
-      toast(hit
-        ? `Set code ${fileCode} (${hit.buyer1 || hit.buyer || 'buyer master matched'})`
-        : `Set code ${fileCode} (no buyer master entry — buyer/sale left as-is)`);
+      const parts = [];
+      if (filePrice != null) parts.push(`price=${filePrice}`);
+      if (fileCode  != null) parts.push(`code=${fileCode}` + (masterHit && (masterHit.buyer1 || masterHit.buyer) ? ` (${masterHit.buyer1 || masterHit.buyer})` : ''));
+      toast(`Updated ${parts.join(', ')}`);
     }
     if (btn) {
       btn.textContent = '✓';
@@ -17896,33 +17947,53 @@ async function pcApplyCodeFix(btn, lotId, fileCode){
   }
 }
 
-// Bulk-apply every row whose code_status is 'diff' or 'db_blank' AND
-// has a usable file_code + lot_id. Runs sequentially (small N, easier
-// to surface per-row errors).
-async function pcApplyAllCodeFixes(){
+// Bulk-apply every row that has at least one fixable disagreement
+// (code diff/db_blank OR price server_diff). Groups rows by destination
+// payload so one POST handles many lots, then re-runs verify so the
+// table reflects the new DB state.
+async function pcApplyAllFixes(){
   if (!_pcLastSummary || !Array.isArray(_pcLastSummary.rows)) {
     if (typeof toast === 'function') toast('Run Verify Prices first.');
     return;
   }
   const fixable = _pcLastSummary.rows.filter(rw =>
-    rw && rw.lot_id && rw.file_code &&
-    (rw.code_status === 'diff' || rw.code_status === 'db_blank'));
+    rw && rw.lot_id && (
+      (rw.file_code && (rw.code_status === 'diff' || rw.code_status === 'db_blank'))
+      || (rw.status === 'server_diff' && rw.file_server_price != null)
+    ));
   if (!fixable.length) {
     if (typeof toast === 'function') toast('Nothing to fix.');
     return;
   }
-  if (!confirm(`Apply ${fixable.length} buyer-code fix${fixable.length===1?'':'es'}? Each row's lot will get the file's CODE plus buyer details from the buyer master.`)) return;
+  if (!confirm(`Apply ${fixable.length} fix${fixable.length===1?'':'es'}? Each row's lot will be updated with the file's PRICE and/or CODE (with buyer details re-resolved from the buyer master).`)) return;
+
   const cache = await _pcEnsureBuyerCache();
-  // Group by (code, buyer, buyer1, sale) so one POST handles many lots.
+  // Group by the exact payload contents so one POST handles every lot
+  // that needs the same write. Each row contributes either a code,
+  // a price, or both.
   const groups = new Map();
   for (const rw of fixable) {
-    const code = String(rw.file_code).trim();
-    const hit = cache.get(code.toUpperCase());
-    const key = [code, (hit && hit.buyer)||'', (hit && hit.buyer1)||'', (hit && hit.sale)||''].join('||');
+    const wantCode  = !!(rw.file_code && (rw.code_status === 'diff' || rw.code_status === 'db_blank'));
+    const wantPrice = !!(rw.status === 'server_diff' && rw.file_server_price != null);
+    const code  = wantCode ? String(rw.file_code).trim() : '';
+    const price = wantPrice ? Number(rw.file_server_price) : '';
+    const hit   = wantCode ? (cache.get(code.toUpperCase()) || null) : null;
+    const key = [
+      code, price,
+      (hit && hit.buyer)  || '',
+      (hit && hit.buyer1) || '',
+      (hit && hit.sale)   || '',
+    ].join('||');
     let g = groups.get(key);
     if (!g) {
-      g = { ids: [], code, payload: { code } };
-      if (hit) { g.payload.buyer = hit.buyer; g.payload.buyer1 = hit.buyer1; g.payload.sale = hit.sale; }
+      g = { ids: [], payload: {} };
+      if (wantCode)  g.payload.code  = code;
+      if (wantPrice) g.payload.price = price;
+      if (hit) {
+        g.payload.buyer  = hit.buyer;
+        g.payload.buyer1 = hit.buyer1;
+        g.payload.sale   = hit.sale;
+      }
       groups.set(key, g);
     }
     g.ids.push(Number(rw.lot_id));
@@ -17940,14 +18011,13 @@ async function pcApplyAllCodeFixes(){
       updated += (d.updated || 0);
     } catch (e) {
       failed += g.ids.length;
-      console.error('Bulk code-fix group failed', g, e);
+      console.error('Bulk fix group failed', g, e);
     }
   }
   const summary = failed
     ? `Updated ${updated} lot(s). ${failed} failed — check console.`
     : `Updated ${updated} lot(s).`;
   if (typeof toast === 'function') toast(summary);
-  // Re-verify so the table reflects the new state.
   pcVerify();
 }
 

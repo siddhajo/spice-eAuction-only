@@ -3185,7 +3185,21 @@ app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
   const buyer  = String(req.body.buyer  || '').trim();
   const buyer1 = String(req.body.buyer1 || '').trim();
   const sale   = String(req.body.sale   || '').trim();
-  if (!code) return res.status(400).json({ error: 'code is required' });
+  // Price is optional — added so the Price Check tab can apply price
+  // corrections through the same endpoint without duplicating SQL.
+  // Null / undefined → field is untouched; any number (including 0)
+  // is written to lots.price as-is.
+  const hasPrice = req.body.price !== undefined && req.body.price !== null && req.body.price !== '';
+  const priceNum = hasPrice ? Number(req.body.price) : null;
+  if (hasPrice && !Number.isFinite(priceNum)) {
+    return res.status(400).json({ error: 'price must be a number' });
+  }
+  // Caller must update at least one writable field — either the
+  // buyer-code triple or price (or both). Empty payload is a no-op
+  // that would silently do nothing, so we refuse it up front.
+  if (!code && !hasPrice) {
+    return res.status(400).json({ error: 'At least one of code or price is required' });
+  }
   const db = getDb();
   // Build an UPDATE that only touches fields the client passed in. The
   // CR field is intentionally omitted — sellers' CR/GSTIN comes from
@@ -3197,11 +3211,13 @@ app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
   // included the field (even with an empty string), we apply it. The
   // bulk modal always sends sale from the picked buyer master record,
   // so this faithfully syncs the lot with the buyer master.
-  const sets = ['code = ?'];
-  const vals = [code];
+  const sets = [];
+  const vals = [];
+  if (code)   { sets.push('code = ?');   vals.push(code);   }
   if (buyer)  { sets.push('buyer = ?');  vals.push(buyer);  }
   if (buyer1) { sets.push('buyer1 = ?'); vals.push(buyer1); }
   if (req.body.sale !== undefined) { sets.push('sale = ?'); vals.push(sale); }
+  if (hasPrice) { sets.push('price = ?'); vals.push(priceNum); }
   // Chunk the IN(...) list so we stay under SQLite's parameter cap.
   const CHUNK = 500;
   let updated = 0;
