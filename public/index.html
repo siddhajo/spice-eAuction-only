@@ -1056,6 +1056,10 @@ body:not([data-feat-print-selected-purchase="1"]) .feat-print-selected-purchase{
    modal. Both are tagged with .feat-bulk-set-buyer-code so this single
    rule hides them when flag_bulk_set_buyer_code is OFF. */
 body:not([data-feat-bulk-set-buyer-code="1"]) .feat-bulk-set-buyer-code{display:none !important}
+/* Price Check tab + its transaction gate. When OFF: the sidebar entry,
+   tab content, gate banners, and Apply UI are hidden, AND pcRefreshGate
+   skips every button-disable (so .needs-price-check stays enabled). */
+body:not([data-feat-price-check="1"]) .feat-price-check{display:none !important}
 .icon-btn.i-print{color:var(--spice-saffron);border-color:var(--spice-saffron)}
 .icon-btn.i-print:hover{background:var(--spice-saffron);color:#fff}
 
@@ -2204,7 +2208,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <!-- Price Check — reconciles an externally-recorded price sheet
              against the lots table. Replaces the legacy
              PriceCheck_VSTL.xlsm macro workbook. -->
-        <button class="side-item" data-tab="pricecheck" onclick="go('pricecheck')">
+        <button class="side-item feat-price-check" data-tab="pricecheck" onclick="go('pricecheck')">
           <svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
           Price Check
         </button>
@@ -3160,6 +3164,14 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <button id="le-print-by-seller-btn" type="button" onclick="lePrintBySeller()" class="le-toolbar-btn le-tb-secondary" style="display:none" title="One receipt per seller — bundles all checked lots of the same seller together">
             <span aria-hidden="true">👤</span> Print by Seller
             <span id="le-print-by-seller-count" class="le-tb-badge"></span>
+          </button>
+          <!-- Change Seller — rewrites every ticked lot's seller (trader_id
+               + all denormalised columns) to a newly picked trader.
+               Useful when a row was created under the wrong seller and
+               needs to be moved without re-entering each lot. -->
+          <button id="le-change-seller-btn" type="button" onclick="leOpenChangeSeller()" class="le-toolbar-btn le-tb-secondary" style="display:none" title="Replace the seller on every ticked lot — looks up the new seller and updates all linked seller details">
+            <span aria-hidden="true">↻</span> Change Seller
+            <span id="le-change-seller-count" class="le-tb-badge"></span>
           </button>
           <button id="le-print-clear-btn" type="button" onclick="leClearPrintSelection()" class="le-toolbar-btn le-tb-ghost" style="display:none">Clear</button>
         </h3>
@@ -4153,7 +4165,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
          auction-floor record or a third-party system) and the server
          reconciles every row against the `lots` table, showing red
          highlights on any mismatch. ════════════════════════════════ -->
-    <div class="tc" id="tc-pricecheck">
+    <div class="tc feat-price-check" id="tc-pricecheck">
       <div class="card">
         <h2>Price Check
           <span style="font-weight:400;font-size:12px;color:var(--text3)">
@@ -4414,12 +4426,55 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   </div>
 </div></div>
 
+<!-- Change Seller modal — used by BOTH the Lot Entry tab's Recent-Entries
+     toolbar (bulk mode) AND the Lots tab's lot-edit "Change Seller…" link
+     (form mode). Lives at the global modal level so it shows regardless
+     of which tab is active. Two modes wired through leOpenChangeSeller's
+     opts.mode argument: 'bulk' posts /api/lots/bulk-seller and refreshes
+     the recent list; 'form' invokes an onConfirm(trader) callback so the
+     caller can update its own form fields. -->
+<div class="modal-overlay" id="le-changeseller-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:14px;width:min(480px,92vw);padding:22px 24px;box-shadow:0 20px 60px rgba(0,0,0,.3)">
+    <h3 style="margin:0 0 6px;font-size:16px;display:flex;align-items:center;gap:8px">
+      <span style="width:6px;height:18px;background:var(--green);border-radius:3px;display:inline-block"></span>
+      Change Seller
+    </h3>
+    <p id="le-cs-summary" style="font-size:12px;color:var(--text3);margin:0 0 14px"></p>
+    <div style="position:relative">
+      <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Pick new seller</div>
+      <input type="text" id="le-cs-search" placeholder="Search by name, phone, CR no, or PAN…" autocomplete="off" oninput="leCsSearchSeller(this.value)" onfocus="leCsSearchSeller(this.value)" style="width:100%;height:42px;padding:0 14px;border:1.5px solid var(--border);border-radius:8px;font-size:14px">
+      <div id="le-cs-results" style="display:none;position:absolute;top:68px;left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.08);max-height:280px;overflow-y:auto;z-index:5"></div>
+    </div>
+    <div id="le-cs-picked" style="display:none;margin-top:12px;padding:10px 14px;border:1.5px solid var(--green);background:var(--green-bg);border-radius:8px">
+      <div id="le-cs-picked-name" style="font-weight:700;font-size:14px;color:var(--text)"></div>
+      <div id="le-cs-picked-meta" style="font-size:11px;color:var(--text3);margin-top:2px"></div>
+    </div>
+    <div id="le-cs-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:13px;margin-top:10px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="btn btn-o" onclick="leCloseChangeSeller()" style="height:38px;padding:0 16px">Cancel</button>
+      <button class="btn btn-g" id="le-cs-save" onclick="leApplyChangeSeller()" disabled style="height:38px;padding:0 18px;font-weight:600">Update Lots</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="lot-modal"><div class="modal" style="max-width:640px">
   <h2 id="lot-modal-title">Edit Lot</h2>
   <input type="hidden" id="l-id">
+  <!-- Hidden trader_id — populated from the loaded lot, rewritten when the
+       operator clicks "Change Seller…". The server PUT detects a change in
+       trader_id and auto-backfills every denormalised seller column (pan,
+       tel, ppla, ppin, pstate, pst_code, padd, aadhar) from the new
+       trader, even though those columns aren't in the form. -->
+  <input type="hidden" id="l-trader-id">
   <div class="sgrid">
     <div class="fg"><label>Lot No *</label><input id="l-lotno"></div>
-    <div class="fg"><label>Name</label><input id="l-name"></div>
+    <div class="fg">
+      <label style="display:flex;align-items:center;justify-content:space-between;gap:6px">
+        <span>Name</span>
+        <a href="#" onclick="lotOpenChangeSeller();return false" style="font-size:11px;font-weight:600;color:var(--green);text-decoration:none">↻ Change Seller…</a>
+      </label>
+      <input id="l-name">
+    </div>
     <div class="fg"><label>CR / GSTIN</label><input id="l-cr"></div>
     <div class="fg"><label>Branch</label><input id="l-branch"></div>
     <div class="fg"><label>Grade</label><input id="l-grade"></div>
@@ -5788,6 +5843,11 @@ async function applyFeatureFlags() {
   // "👤 Set Buyer Code" button + its modal only when an admin
   // explicitly enables it.
   document.body.setAttribute('data-feat-bulk-set-buyer-code', cfg && on(cfg.flag_bulk_set_buyer_code) ? '1' : '0');
+  // Price Check tab + transaction gate. Default OFF — when ON, the
+  // Reports → Price Check tab appears, gate banners render, and
+  // pcRefreshGate disables Calculate/Invoice/Purchase/Bill/DN buttons
+  // until verify clears for the active auction.
+  document.body.setAttribute('data-feat-price-check', cfg && on(cfg.flag_price_check) ? '1' : '0');
 }
 
 // Public branding (no auth) — drives the login + topbar from settings.
@@ -9709,15 +9769,19 @@ let _le_pending_print = null; // { lots:[], scope:'single'|'selected' }
 function leUpdatePrintToolbar() {
   const btn      = document.getElementById('le-print-selected-btn');
   const bySeller = document.getElementById('le-print-by-seller-btn');
+  const chgSel   = document.getElementById('le-change-seller-btn');
   const clr      = document.getElementById('le-print-clear-btn');
   const badge    = document.getElementById('le-print-selected-count');
   const seBadge  = document.getElementById('le-print-by-seller-count');
+  const csBadge  = document.getElementById('le-change-seller-count');
   if (!btn) return;
   const ids = (_le.selectedForPrint && _le.selectedForPrint.size) ? _le.selectedForPrint : new Set();
   const n = ids.size;
   btn.style.display = n > 0 ? 'inline-flex' : 'none';
   clr.style.display = n > 0 ? 'inline-flex' : 'none';
-  if (badge) badge.textContent = n;
+  if (chgSel)  chgSel.style.display  = n > 0 ? 'inline-flex' : 'none';
+  if (badge)   badge.textContent   = n;
+  if (csBadge) csBadge.textContent = n;
   // Sellers represented in the current selection.
   let sellerCount = 0;
   if (n > 0 && Array.isArray(_le.recentLots)) {
@@ -9726,6 +9790,165 @@ function leUpdatePrintToolbar() {
   }
   if (bySeller) bySeller.style.display = (n > 0 && sellerCount > 1) ? 'inline-flex' : 'none';
   if (seBadge)  seBadge.textContent = sellerCount;
+}
+
+// ── Change Seller modal ────────────────────────────────────
+// Two modes:
+//   • bulk  (default) — opens from the recent-entries toolbar when ≥1
+//     lot is checked. Confirming posts to /api/lots/bulk-seller which
+//     rewrites trader_id + every denormalised seller column on the
+//     ticked lots, then refreshes the recent list.
+//   • form  — opens from the single-lot edit modal's "Change Seller…"
+//     link. Confirming runs an onConfirm(trader) callback so the
+//     caller can update its form fields; no API call here. The actual
+//     persistence happens when the operator clicks Save on the lot.
+function leOpenChangeSeller(opts){
+  opts = opts || {};
+  const mode = opts.mode || 'bulk';
+  _le.changeSellerMode = mode;
+  _le.changeSellerOnConfirm = (typeof opts.onConfirm === 'function') ? opts.onConfirm : null;
+  if (mode === 'bulk') {
+    const ids = (_le.selectedForPrint && _le.selectedForPrint.size)
+      ? [..._le.selectedForPrint] : [];
+    if (!ids.length) { toast('Tick one or more lots first'); return; }
+  }
+  _le.changeSellerPick = null;
+  const m = document.getElementById('le-changeseller-modal');
+  const summary = document.getElementById('le-cs-summary');
+  if (summary) {
+    if (mode === 'form') {
+      summary.textContent = opts.summary
+        || 'Pick the new seller — the form will update with the new details. Save the lot to persist.';
+    } else {
+      const ids = [..._le.selectedForPrint];
+      const visible = (_le.recentLots || []).filter(l => _le.selectedForPrint.has(l.id));
+      const sellers = new Set(visible.map(l => l.name || '?'));
+      summary.textContent = `${ids.length} lot${ids.length===1?'':'s'} from ${sellers.size} seller${sellers.size===1?'':'s'} — every ticked lot will be reassigned.`;
+    }
+  }
+  // Save button label flips so the user knows whether the click commits
+  // to the DB (bulk) or just updates the form (single-lot).
+  const saveBtn = document.getElementById('le-cs-save');
+  if (saveBtn) saveBtn.textContent = (mode === 'form') ? 'Use This Seller' : 'Update Lots';
+  document.getElementById('le-cs-search').value = '';
+  document.getElementById('le-cs-results').style.display = 'none';
+  document.getElementById('le-cs-picked').style.display = 'none';
+  const err = document.getElementById('le-cs-err'); if (err) err.style.display = 'none';
+  if (saveBtn) saveBtn.disabled = true;
+  m.style.display = 'flex';
+  setTimeout(() => document.getElementById('le-cs-search').focus(), 50);
+}
+function leCloseChangeSeller(){
+  const m = document.getElementById('le-changeseller-modal');
+  if (m) m.style.display = 'none';
+  _le.changeSellerPick = null;
+}
+let _leCsSearchTimer = null;
+function leCsSearchSeller(q){
+  clearTimeout(_leCsSearchTimer);
+  const results = document.getElementById('le-cs-results');
+  if (!q || q.trim().length < 2) { results.style.display = 'none'; return; }
+  _leCsSearchTimer = setTimeout(async () => {
+    try {
+      const traders = await j(`/api/traders?search=${encodeURIComponent(q.trim())}&limit=10`);
+      const list = Array.isArray(traders) ? traders : [];
+      if (!list.length) {
+        results.innerHTML = '<div style="padding:10px 14px;color:var(--text3);font-size:13px;text-align:center">No sellers match this search.</div>';
+        results.style.display = 'block';
+        return;
+      }
+      results.innerHTML = list.map((t, i) => {
+        const loc = [t.ppla, t.pin].filter(Boolean).join(', ');
+        const meta = [t.cr, t.tel].filter(Boolean).join(' · ');
+        return `<div data-idx="${i}" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border)" onmouseenter="this.style.background='var(--bg)'" onmouseleave="this.style.background=''">
+          <div style="font-weight:600;color:var(--text)">${esc(t.name||'')}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px">${esc(loc)}${meta?' — '+esc(meta):''}</div>
+        </div>`;
+      }).join('');
+      results.style.display = 'block';
+      results.querySelectorAll('div[data-idx]').forEach(el => {
+        el.onclick = () => leCsPickSeller(list[parseInt(el.dataset.idx, 10)]);
+      });
+    } catch (e) {
+      console.error('Change-seller search failed:', e);
+    }
+  }, 200);
+}
+function leCsPickSeller(t){
+  if (!t) return;
+  _le.changeSellerPick = t;
+  document.getElementById('le-cs-results').style.display = 'none';
+  document.getElementById('le-cs-search').value = t.name || '';
+  document.getElementById('le-cs-picked-name').textContent = t.name || '(unnamed)';
+  const meta = [t.ppla, t.pin, t.pstate].filter(Boolean).join(', ');
+  const meta2 = [t.cr, t.tel, t.pan].filter(Boolean).join(' · ');
+  document.getElementById('le-cs-picked-meta').textContent = [meta, meta2].filter(Boolean).join('  ·  ');
+  document.getElementById('le-cs-picked').style.display = 'block';
+  document.getElementById('le-cs-save').disabled = false;
+}
+async function leApplyChangeSeller(){
+  const t = _le.changeSellerPick;
+  const err = document.getElementById('le-cs-err');
+  const showErr = (m) => { err.textContent = m; err.style.display = 'block'; };
+  err.style.display = 'none';
+  if (!t || !t.id) return showErr('Pick a seller first');
+  // Form mode — hand the picked trader to the caller (lot-edit modal)
+  // and close. No API call here; the caller is responsible for
+  // persisting via its own save flow.
+  if (_le.changeSellerMode === 'form') {
+    const cb = _le.changeSellerOnConfirm;
+    leCloseChangeSeller();
+    if (cb) try { cb(t); } catch (e) { console.error('onConfirm callback failed', e); }
+    return;
+  }
+  // Bulk mode — commit immediately via /api/lots/bulk-seller, refresh
+  // the recent list.
+  const ids = (_le.selectedForPrint && _le.selectedForPrint.size)
+    ? [..._le.selectedForPrint] : [];
+  if (!ids.length) return showErr('No lots selected');
+  const btn = document.getElementById('le-cs-save');
+  btn.disabled = true; btn.textContent = 'Updating…';
+  try {
+    const r = await j('/api/lots/bulk-seller', {
+      method: 'POST',
+      body: JSON.stringify({ ids, trader_id: t.id }),
+    });
+    toast(`Reassigned ${r.updated || ids.length} lot${(r.updated || ids.length) === 1 ? '' : 's'} to ${r.name || t.name}`);
+    leCloseChangeSeller();
+    if (_le.selectedForPrint) _le.selectedForPrint.clear();
+    if (typeof loadLeRecent === 'function') {
+      try { await loadLeRecent(); } catch (_) {}
+    }
+  } catch (e) {
+    showErr(e.message || 'Update failed');
+    btn.disabled = false; btn.textContent = 'Update Lots';
+  }
+}
+
+// Called from the Lot Edit modal's "Change Seller…" link. Opens the
+// shared picker in form mode; the onConfirm callback updates the
+// modal's form fields. Storing the trader_id in #l-trader-id lets
+// saveLot post it; server PUT then auto-backfills pan/tel/ppla/etc.
+// from the new trader.
+function lotOpenChangeSeller(){
+  const lotId = document.getElementById('l-id').value;
+  const cur   = document.getElementById('l-name').value;
+  const lotNo = (document.getElementById('l-lotno').value || '').trim();
+  leOpenChangeSeller({
+    mode: 'form',
+    summary: lotId
+      ? `Lot ${lotNo || '#' + lotId} · currently "${cur || '—'}". Pick a new seller; saving the lot will rewrite all linked seller details.`
+      : 'Pick the new seller for this lot.',
+    onConfirm: (t) => {
+      // Update visible name + cr; the hidden trader_id triggers the
+      // server-side backfill of pan/tel/ppla/ppin/pstate/pst_code/padd/aadhar.
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v == null ? '' : v); };
+      set('l-name', t.name);
+      set('l-cr',   t.cr);
+      set('l-trader-id', t.id);
+      toast(`Seller staged: ${t.name || '(unnamed)'} — click Save to persist`);
+    },
+  });
 }
 
 function leToggleLotSelected(lotId, on) {
@@ -12665,10 +12888,13 @@ async function downloadDbfRange(type){
 }
 
 // ── Lots ──────────────────────────────────────────────────
-const L_FIELDS=['lot_no','name','cr','branch','grade','bags','litre','qty','price','amount','buyer','buyer1','code','sale'];
+// trader_id is included so the modal's Change Seller flow can post the
+// new id; saveLot iterates L_FIELDS so adding it here makes the value
+// flow through without changing the save logic.
+const L_FIELDS=['lot_no','name','cr','branch','grade','bags','litre','qty','price','amount','buyer','buyer1','code','sale','trader_id'];
 const L_IDS={lot_no:'l-lotno',name:'l-name',cr:'l-cr',branch:'l-branch',grade:'l-grade',bags:'l-bags',
   litre:'l-litre',qty:'l-qty',price:'l-price',amount:'l-amount',buyer:'l-buyer',buyer1:'l-buyer1',
-  code:'l-code',sale:'l-sale'};
+  code:'l-code',sale:'l-sale',trader_id:'l-trader-id'};
 
 // Refresh wrapper: surfaces feedback so the user knows the click registered.
 // Root cause the button "did nothing" was: loadLots() silently bailed when
@@ -13290,6 +13516,16 @@ async function saveLot(){
     if(['bags','qty','price','amount'].includes(f)) body[f]=parseFloat(el.value)||0;
     else body[f]=el.value;
   });
+  // trader_id: drop when blank so the server's seller-backfill check
+  // doesn't fire on a NaN id (lots with NULL trader_id in legacy data).
+  // Convert to integer when present so the server doesn't have to.
+  if (!body.trader_id) {
+    delete body.trader_id;
+  } else {
+    const tid = parseInt(body.trader_id, 10);
+    if (Number.isFinite(tid)) body.trader_id = tid;
+    else delete body.trader_id;
+  }
   // Optimistic UI: close the modal immediately and show a pending toast.
   // The actual save runs in the background. If it fails, we show an error and
   // re-open the modal so the user can retry without re-entering data.
@@ -17865,7 +18101,18 @@ function _pcApplyDisable(selector, scopeSelector, ready, reason){
 // Refresh the gate for a specific tab. `tabScope` is a CSS selector
 // that narrows the apply-disable to that tab's container so different
 // tabs (each with their own auction selector) don't interfere.
+//
+// When the feature flag is OFF, this becomes a no-op that also un-locks
+// any buttons that were previously disabled by a prior gate refresh
+// (e.g. if an admin just turned the flag off — the UI should react
+// immediately without a page reload).
 async function pcRefreshGate(auctionId, tabScope){
+  const flagOn = document.body.getAttribute('data-feat-price-check') === '1';
+  if (!flagOn) {
+    // Re-enable any buttons that previous gate calls may have locked.
+    _pcApplyDisable('.needs-price-check', tabScope, true, '');
+    return true;
+  }
   const ready = auctionId
     ? (await _pcFetchStatus(auctionId))?.checked === true
     : false;

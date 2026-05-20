@@ -3258,6 +3258,95 @@ app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
   res.json({ success: true, updated, requested: ids.length });
 });
 
+// Bulk seller-reassign — paired with the Lot Entry "Change Seller"
+// action AND the Lots screen edit modal's "Change Seller…" link.
+// Body: { ids: [1, 2, …], trader_id: 42 }
+// Resolves the trader once and updates every selected lot's
+// trader_id + all denormalised seller columns (name, cr, pan, tel,
+// padd, ppla, ppin, pstate, pst_code, aadhar). Without this, a lot
+// would keep its previous seller's name in `lots.name` even though
+// `trader_id` was changed — that mismatch breaks invoice/bill
+// generation, exports, and Tally XML (which read directly from the
+// denormalised columns).
+app.post('/api/lots/bulk-seller', requireLotWrite, (req, res) => {
+  try {
+    const { ids, trader_id } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids[] is required' });
+    }
+    const tid = parseInt(trader_id, 10);
+    if (!Number.isFinite(tid)) {
+      return res.status(400).json({ error: 'trader_id must be a numeric id' });
+    }
+    const numericIds = ids.map(x => Number(x)).filter(Number.isFinite);
+    if (!numericIds.length) {
+      return res.status(400).json({ error: 'ids[] contains no valid numeric ids' });
+    }
+    const db = getDb();
+    const t = db.get('SELECT * FROM traders WHERE id = ?', [tid]);
+    if (!t) {
+      return res.status(404).json({ error: `No seller found with id ${tid}. Refresh the seller list and try again.` });
+    }
+    // Capture every auction touched so we can clear their price-check
+    // gates — seller details changed, so any prior verify is stale.
+    const CHUNK = 500;
+    let updated = 0;
+    const touchedAuctions = new Set();
+    for (let i = 0; i < numericIds.length; i += CHUNK) {
+      const slice = numericIds.slice(i, i + CHUNK);
+      const placeholders = slice.map(() => '?').join(',');
+      const affectedRows = db.all(
+        `SELECT DISTINCT auction_id FROM lots WHERE id IN (${placeholders})`,
+        slice
+      );
+      affectedRows.forEach(r => { if (r.auction_id) touchedAuctions.add(r.auction_id); });
+      // Mirror the same column set POST/PUT /api/lots populate when a
+      // trader_id is supplied — keeps the source of truth single.
+      const info = db.run(
+        `UPDATE lots SET
+           trader_id = ?,
+           name      = ?,
+           cr        = ?,
+           pan       = ?,
+           tel       = ?,
+           aadhar    = ?,
+           padd      = ?,
+           ppla      = ?,
+           ppin      = ?,
+           pstate    = ?,
+           pst_code  = ?
+         WHERE id IN (${placeholders})`,
+        [
+          tid,
+          t.name || '',
+          t.cr || '',
+          t.pan || '',
+          t.tel || '',
+          t.aadhar || '',
+          t.padd || '',
+          t.ppla || '',
+          t.pin || '',
+          t.pstate || '',
+          t.pst_code || '',
+          ...slice,
+        ]
+      );
+      if (info && typeof info.changes === 'number') updated += info.changes;
+    }
+    for (const aid of touchedAuctions) {
+      try { pcClearGate(db, aid); } catch (_) { /* gate clear is best-effort */ }
+    }
+    res.json({
+      success: true,
+      updated,
+      trader_id: tid,
+      name: t.name || '',
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Bulk seller update failed: ' + (e.message || e) });
+  }
+});
+
 // ── Calculate all lots for an auction (GENERATE.PRG) ─────────
 app.post('/api/lots/calculate/:auctionId',
   requireLotWrite,
