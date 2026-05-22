@@ -11974,6 +11974,7 @@ async function searchTraders(q, opts){
           + iconBtn('del','Delete seller',`delTrader(${t.id})`) }
     ]
   });
+  if (typeof BulkActions !== 'undefined' && BulkActions._sync) BulkActions._sync('seller');
 }
 
 function viewTraderDetails(t){
@@ -12615,6 +12616,7 @@ async function searchBuyers(q, opts){
           + iconBtn('del','Delete buyer',`delBuyer(${b.id})`) }
     ]
   });
+  if (typeof BulkActions !== 'undefined' && BulkActions._sync) BulkActions._sync('buyer');
 }
 
 function viewBuyerDetails(b){
@@ -12789,6 +12791,7 @@ async function loadAuctions(opts){
           + iconBtn('del','Delete auction',`delAuction(${a.id})`) }
     ]
   });
+  if (typeof BulkActions !== 'undefined' && BulkActions._sync) BulkActions._sync('trade');
 }
 
 function openAuctionAdd(){
@@ -13730,6 +13733,10 @@ async function loadLots(){const aid=document.getElementById('lot-auction').value
     // mode never paints a stray amber row.
     rowClass: (row) => row && row.locked_at ? 'row-locked' : '',
     columns });
+  // Re-sync toolbar visibility after the fresh mount — the new rows
+  // start unchecked, but the bulk buttons would otherwise inherit
+  // `display:''` left over from a previous selection.
+  if (typeof BulkActions !== 'undefined' && BulkActions._sync) BulkActions._sync('lot');
 }
 
 function openLotEdit(l){
@@ -14580,6 +14587,7 @@ async function loadInvoices(opts){
         } }
     ]
   });
+  if (typeof syncInvoiceMaster === 'function') syncInvoiceMaster();
 }
 
 async function revertInvoice(id, buyerName, invLabel){
@@ -15257,6 +15265,7 @@ async function loadPurchases(opts){
           + iconBtn('del','Delete purchase',`delPurchase(${p.id})`) }
     ]
   });
+  if (typeof syncPurchaseMaster === 'function') syncPurchaseMaster();
 }
 
 function openPurchaseEdit(p){
@@ -16114,6 +16123,7 @@ async function loadBills(opts){
           + iconBtn('del','Delete bill',`delBill(${b.id})`) }
     ]
   });
+  if (typeof syncBillMaster === 'function') syncBillMaster();
 }
 
 function openBillEdit(b){
@@ -16239,6 +16249,7 @@ async function loadDebitNotes(opts){
           + iconBtn('del','Delete debit note',`delDebitNote(${n.id})`) }
     ]
   });
+  if (typeof updateDnBulkButtons === 'function') updateDnBulkButtons();
 }
 
 function openDebitEdit(n){
