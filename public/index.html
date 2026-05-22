@@ -8572,6 +8572,19 @@ async function leSaveNewSeller(){
   const showErr = (msg) => { err.textContent = msg; err.style.display = 'block'; };
   if (!name) return showErr('Name is required');
 
+  // Hard-block duplicates by PAN — mirrors saveTrader / saveBuyer.
+  // Server-side dedup on /api/traders/quick still runs as a fallback,
+  // but blocking at the client surfaces the conflict explicitly instead
+  // of silently merging into the existing row.
+  const _panRaw = (document.getElementById('le-ns-pan').value || '').trim();
+  if (_panRaw) {
+    const _dups = await findExactDuplicates('/api/traders', 'pan', _panRaw);
+    if (_dups.length) {
+      showErr(`PAN ${_panRaw.toUpperCase()} already on seller: ${_dups.map(t => t.name).join(', ')}. Cancel and search for the existing seller.`);
+      return;
+    }
+  }
+
   const payload = {
     name,
     cr:     (document.getElementById('le-ns-cr').value   || '').trim(),
@@ -12055,6 +12068,16 @@ async function saveTrader(){
   const body={};
   T_FIELDS.forEach(f=>{const el=document.getElementById(T_IDS[f]);body[f]=el?el.value:''});
   if(!body.name){alert('Name is required');return}
+  // Hard-block duplicates by PAN — schema doesn't enforce uniqueness,
+  // so we guard at save time. Edit mode excludes the row itself via id.
+  const _pan = (body.pan || '').trim();
+  if (_pan) {
+    const _dups = await findExactDuplicates('/api/traders', 'pan', _pan, id);
+    if (_dups.length) {
+      alert(`Cannot save: PAN ${_pan.toUpperCase()} is already on seller: ${_dups.map(t => t.name).join(', ')}`);
+      return;
+    }
+  }
   // Banks: collect from the repeating section. The server persists these
   // into trader_banks AND mirrors the FIRST bank back into the legacy
   // traders.acctnum/ifsc/holder_name columns so older code paths still
@@ -12641,6 +12664,25 @@ async function saveBuyer(){
   const id=document.getElementById('b-id').value;
   const body={};B_FIELDS.forEach(f=>{const el=document.getElementById(B_IDS[f]);body[f]=el?el.value:''});
   if(!body.buyer){alert('Buyer code is required');return}
+  // Hard-block duplicates by buyer code AND short alias — both are
+  // expected to be unique even though the schema doesn't enforce it.
+  // Edit mode excludes the row itself via id.
+  const _buyer = (body.buyer || '').trim();
+  if (_buyer) {
+    const _dups = await findExactDuplicates('/api/buyers', 'buyer', _buyer, id);
+    if (_dups.length) {
+      alert(`Cannot save: Buyer Code "${_buyer}" is already on: ${_dups.map(b => b.buyer1 || b.buyer).join(', ')}`);
+      return;
+    }
+  }
+  const _code = (body.code || '').trim();
+  if (_code) {
+    const _dups = await findExactDuplicates('/api/buyers', 'code', _code, id);
+    if (_dups.length) {
+      alert(`Cannot save: Short alias "${_code.toUpperCase()}" is already on: ${_dups.map(b => b.buyer1 || b.buyer).join(', ')}`);
+      return;
+    }
+  }
   try{
     const r=await fetch(B+(id?`/api/buyers/${id}`:'/api/buyers'),{method:id?'PUT':'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},body:JSON.stringify(body)});
