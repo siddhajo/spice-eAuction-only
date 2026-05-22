@@ -207,7 +207,12 @@ async function initDb() {
     -- every code-level discrepancy. Acts as the green-light gate for
     -- calculate / invoice / purchase / bill / debit-note generation.
     -- Auto-cleared by any endpoint that mutates lot price or code.
-    price_checked_at TEXT DEFAULT ''
+    price_checked_at TEXT DEFAULT '',
+    -- Set on the FIRST successful price-check verify; never cleared
+    -- afterwards. Lets the gate distinguish "never verified" (hard
+    -- block on transactions) from "verified once but now stale"
+    -- (soft warning only — buttons stay clickable).
+    price_checked_ever_at TEXT DEFAULT ''
   )`);
 
   // ── LOTS (CPA1.DBF — main lot data, before + after trade) ─
@@ -523,6 +528,7 @@ async function initDb() {
     "ALTER TABLE import_log ADD COLUMN undone_at TEXT DEFAULT ''",
     // Price-check gate timestamp — see auctions schema for semantics.
     "ALTER TABLE auctions ADD COLUMN price_checked_at TEXT DEFAULT ''",
+    "ALTER TABLE auctions ADD COLUMN price_checked_ever_at TEXT DEFAULT ''",
     'ALTER TABLE purchases ADD COLUMN auction_id INTEGER',
     'ALTER TABLE invoices ADD COLUMN auction_id INTEGER',
     'ALTER TABLE bills ADD COLUMN auction_id INTEGER',

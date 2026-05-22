@@ -2153,14 +2153,24 @@ function pcFlagOn(db) {
 function pcStampGate(db, auctionId) {
   if (!auctionId) return;
   if (!pcFlagOn(db)) return;
+  // Sets the "currently fresh" stamp AND, on first run, the "ever
+  // verified" stamp. ever_at is set only when empty (COALESCE+NULLIF)
+  // so re-verifying after a stale period doesn't overwrite the
+  // original first-verify timestamp.
   db.run(
-    `UPDATE auctions SET price_checked_at = datetime('now','localtime') WHERE id = ?`,
+    `UPDATE auctions
+        SET price_checked_at      = datetime('now','localtime'),
+            price_checked_ever_at = COALESCE(NULLIF(price_checked_ever_at, ''), datetime('now','localtime'))
+      WHERE id = ?`,
     [auctionId]
   );
 }
 function pcClearGate(db, auctionId) {
   if (!auctionId) return;
   if (!pcFlagOn(db)) return;
+  // Only clears the "currently fresh" stamp — price_checked_ever_at
+  // stays so the gate can downgrade to a soft warning instead of a
+  // hard block after the first successful verify.
   db.run(`UPDATE auctions SET price_checked_at = '' WHERE id = ?`, [auctionId]);
 }
 function pcGateReady(db, auctionId) {
@@ -2169,15 +2179,25 @@ function pcGateReady(db, auctionId) {
   const row = db.get('SELECT price_checked_at FROM auctions WHERE id = ?', [auctionId]);
   return !!(row && row.price_checked_at);
 }
-// Express middleware factory: drops a 412 PRECONDITION FAILED with a
-// descriptive error when the requested auction hasn't passed price
-// check yet. `getAuctionId(req)` returns the auction id to gate on.
+// Has this auction passed price check at least once? Used by the
+// middleware to choose hard-block (never verified) vs. soft-warn
+// (verified once, now stale).
+function pcGateEverChecked(db, auctionId) {
+  if (!auctionId) return false;
+  if (!pcFlagOn(db)) return true;
+  const row = db.get('SELECT price_checked_ever_at FROM auctions WHERE id = ?', [auctionId]);
+  return !!(row && row.price_checked_ever_at);
+}
+// Express middleware factory. Hard-blocks (412) only when the auction
+// has NEVER been price-checked. Once it has been verified at least
+// once, requests pass through even if the current stamp is stale — the
+// UI surfaces a soft warning (amber outline + tooltip) instead.
 function requirePriceChecked(getAuctionId) {
   return (req, res, next) => {
     if (!pcFlagOn()) return next();        // feature disabled
     const aid = getAuctionId(req);
     if (!aid) return next();               // can't gate a global call
-    if (pcGateReady(getDb(), aid)) return next();
+    if (pcGateEverChecked(getDb(), aid)) return next();
     return res.status(412).json({
       error: 'Price check required',
       detail: 'Run Reports → Price Check against the auction (and apply any code fixes) before this action.',
@@ -2216,14 +2236,23 @@ app.get('/api/auctions/:id/price-check-status', requireView, (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id) return res.status(400).json({ error: 'invalid auction id' });
   const row = getDb().get(
-    'SELECT id, ano, date, price_checked_at FROM auctions WHERE id = ?', [id]
+    'SELECT id, ano, date, price_checked_at, price_checked_ever_at FROM auctions WHERE id = ?', [id]
   );
   if (!row) return res.status(404).json({ error: 'auction not found' });
+  const checked      = !!row.price_checked_at;
+  const everChecked  = !!row.price_checked_ever_at;
   res.json({
     auctionId: id,
     ano: row.ano, date: row.date,
-    checked: !!row.price_checked_at,
+    checked,
     checkedAt: row.price_checked_at || null,
+    // everChecked = passed verify at least once (first-time gate
+    // cleared). stale = was verified before, but a subsequent lot
+    // edit cleared the fresh stamp. UI uses stale to swap the hard
+    // block for a soft warning.
+    everChecked,
+    everCheckedAt: row.price_checked_ever_at || null,
+    stale: everChecked && !checked,
   });
 });
 

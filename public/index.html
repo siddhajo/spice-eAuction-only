@@ -18780,28 +18780,46 @@ async function _pcFetchStatus(auctionId){
     return d;
   } catch (_) { return null; }
 }
-// Set / clear the disabled state on every button matching `selector`
-// within an optional `scopeSelector` ancestor. Adds a tooltip so the
-// user can see WHY a button is disabled, and a discreet badge nearby
-// (data-pc-badge attribute on the button).
-function _pcApplyDisable(selector, scopeSelector, ready, reason){
+// Apply gate visuals to every button matching `selector` within an
+// optional `scopeSelector` ancestor. Three states:
+//   'open' — no gate; buttons fully clickable, no warning.
+//   'soft' — stale (verified before, lots changed since); button stays
+//            clickable, amber outline + warning tooltip.
+//   'hard' — never verified; button disabled with reason in tooltip.
+function _pcApplyDisable(selector, scopeSelector, state, reason){
   const scope = scopeSelector ? document.querySelector(scopeSelector) : document;
   if (!scope) return;
   scope.querySelectorAll(selector).forEach(el => {
-    if (ready) {
-      el.disabled = false;
-      el.removeAttribute('data-pc-locked');
-      // restore native cursor / opacity
-      el.style.opacity = '';
-      el.style.cursor = '';
-      el.title = el.dataset.pcOriginalTitle || '';
-    } else {
+    if (state === 'hard') {
       el.disabled = true;
       el.setAttribute('data-pc-locked', '1');
+      el.removeAttribute('data-pc-stale');
       el.style.opacity = '0.55';
       el.style.cursor = 'not-allowed';
+      el.style.boxShadow = '';
       if (!el.dataset.pcOriginalTitle) el.dataset.pcOriginalTitle = el.title || '';
       el.title = reason || 'Run Reports → Price Check on this auction first.';
+    } else if (state === 'soft') {
+      // Soft warning — button stays clickable but flagged with an
+      // amber inset outline so the operator sees there's something
+      // to review without being blocked from acting.
+      el.disabled = false;
+      el.removeAttribute('data-pc-locked');
+      el.setAttribute('data-pc-stale', '1');
+      el.style.opacity = '';
+      el.style.cursor = '';
+      el.style.boxShadow = 'inset 0 0 0 2px #f59e0b';
+      if (!el.dataset.pcOriginalTitle) el.dataset.pcOriginalTitle = el.title || '';
+      el.title = reason || '⚠ Lots changed since the last price check — values may be stale.';
+    } else {
+      // 'open' — fully restored to native state.
+      el.disabled = false;
+      el.removeAttribute('data-pc-locked');
+      el.removeAttribute('data-pc-stale');
+      el.style.opacity = '';
+      el.style.cursor = '';
+      el.style.boxShadow = '';
+      el.title = el.dataset.pcOriginalTitle || '';
     }
   });
 }
@@ -18817,17 +18835,32 @@ async function pcRefreshGate(auctionId, tabScope){
   const flagOn = document.body.getAttribute('data-feat-price-check') === '1';
   if (!flagOn) {
     // Re-enable any buttons that previous gate calls may have locked.
-    _pcApplyDisable('.needs-price-check', tabScope, true, '');
+    _pcApplyDisable('.needs-price-check', tabScope, 'open', '');
     return true;
   }
-  const ready = auctionId
-    ? (await _pcFetchStatus(auctionId))?.checked === true
-    : false;
-  const reason = auctionId
-    ? 'Price check pending — run Reports → Price Check against this auction first.'
-    : 'Pick an auction first, then run Price Check to unlock.';
-  _pcApplyDisable('.needs-price-check', tabScope, ready, reason);
-  return ready;
+  if (!auctionId) {
+    _pcApplyDisable('.needs-price-check', tabScope, 'hard',
+      'Pick an auction first, then run Price Check to unlock.');
+    return false;
+  }
+  const status = await _pcFetchStatus(auctionId);
+  // Currently fresh — no warning.
+  if (status && status.checked) {
+    _pcApplyDisable('.needs-price-check', tabScope, 'open', '');
+    return true;
+  }
+  // Verified at least once but now stale (a subsequent lot edit cleared
+  // the fresh stamp). Allow the action but flag it so the operator
+  // knows values may have drifted from the externally-recorded sheet.
+  if (status && status.everChecked) {
+    _pcApplyDisable('.needs-price-check', tabScope, 'soft',
+      '⚠ Lots changed since the last price check — values may be stale. Re-run Reports → Price Check to clear this warning.');
+    return true;
+  }
+  // Never verified — hard block until the first verify run.
+  _pcApplyDisable('.needs-price-check', tabScope, 'hard',
+    'Price check pending — run Reports → Price Check against this auction first.');
+  return false;
 }
 
 // ── Price Check — Apply CODE fixes ───────────────────────────
