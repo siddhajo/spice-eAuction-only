@@ -1060,6 +1060,23 @@ body:not([data-feat-bulk-set-buyer-code="1"]) .feat-bulk-set-buyer-code{display:
    tab content, gate banners, and Apply UI are hidden, AND pcRefreshGate
    skips every button-disable (so .needs-price-check stays enabled). */
 body:not([data-feat-price-check="1"]) .feat-price-check{display:none !important}
+/* Lot record-lock feature. When OFF: the "🔒 Lock Selected" /
+   "🔓 Unlock Selected" toolbar buttons, the per-row lock/unlock
+   icons, and the amber "🔒 Locked" badge all vanish (their
+   display:none here overrides BulkActions._sync which only flips
+   between '' and 'none'). Legacy locked_at values stay in the DB
+   but every server-side helper treats them as unlocked, so behaviour
+   reverts cleanly without touching data. */
+body:not([data-feat-lot-lock="1"]) .feat-lot-lock{display:none !important}
+/* Locked-lot row tint — pale amber so locked records stand out from
+   the zebra stripes without screaming. Applied by DataTable when the
+   columns config supplies a rowClass that returns 'row-locked'. */
+tr.row-locked > td{background:#fffbeb !important;border-top:1px solid #fde68a}
+tr.row-locked:hover > td{background:#fef3c7 !important}
+/* When the feature is OFF, neutralise the tint too — otherwise legacy
+   locked_at rows would still paint amber even though the lock is
+   ignored everywhere else. */
+body:not([data-feat-lot-lock="1"]) tr.row-locked > td{background:inherit !important;border-top:none}
 .icon-btn.i-print{color:var(--spice-saffron);border-color:var(--spice-saffron)}
 .icon-btn.i-print:hover{background:var(--spice-saffron);color:#fff}
 
@@ -2912,6 +2929,16 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
                  at least one lot is selected (BulkActions._sync flips
                  visibility alongside the Delete Selected button). -->
             <button id="lot-bulk-setbuyer" data-bulk-action="lot" class="needs-lot-write feat-bulk-set-buyer-code btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="openBulkSetBuyerModal()">👤 Set Buyer Code <span data-bulk-count="lot" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
+            <!-- Lock Selected: any user with lot_write can confirm + lock
+                 ticked lots. The .feat-lot-lock class collapses the button
+                 to display:none when flag_lot_lock is OFF (regardless of
+                 ticked-row count); BulkActions._sync flips display:inline
+                 alongside the count badge when at least one row is ticked. -->
+            <button id="lot-bulk-lock" class="needs-lot-write feat-lot-lock btn" style="display:none;height:38px;padding:0 14px;background:#1f2937;color:#fff;font-weight:600" onclick="lotBulkLock()" title="Lock the ticked lots — they become uneditable in the Lots tab and in any sales invoice / purchase / debit note that references them. Admin can unlock.">🔒 Lock Selected <span id="lot-bulk-lock-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
+            <!-- Unlock Selected: admin only. Both gates must clear for
+                 the button to appear: .needs-admin (role) AND
+                 .feat-lot-lock (flag) AND a non-empty selection. -->
+            <button id="lot-bulk-unlock" class="needs-admin feat-lot-lock btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#1f2937;font-weight:600;border:1px solid #b8860b" onclick="lotBulkUnlock()" title="Unlock the ticked lots — admin only. Lots become editable again.">🔓 Unlock Selected <span id="lot-bulk-unlock-count" style="margin-left:4px;background:rgba(0,0,0,.18);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <button id="lot-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('lot')">🗑 Delete Selected <span id="lot-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <!-- Sister tool to Price Import. Opens the Price List Mapping
                  screen which fills the CODE column on a Price List sheet
@@ -5848,6 +5875,13 @@ async function applyFeatureFlags() {
   // pcRefreshGate disables Calculate/Invoice/Purchase/Bill/DN buttons
   // until verify clears for the active auction.
   document.body.setAttribute('data-feat-price-check', cfg && on(cfg.flag_price_check) ? '1' : '0');
+  // Lot record-lock. Default OFF — when ON, lock/unlock buttons appear
+  // on the Lots toolbar + per-row Actions column, locked rows tint
+  // amber, and the server enforces lock guards on lot mutators +
+  // dependent sales invoice / purchase / debit-note edits. When OFF
+  // the whole UI surface collapses via the `.feat-lot-lock` CSS rule
+  // and the server-side helpers short-circuit to "nothing is locked".
+  document.body.setAttribute('data-feat-lot-lock', cfg && on(cfg.flag_lot_lock) ? '1' : '0');
 }
 
 // Public branding (no auth) — drives the login + topbar from settings.
@@ -11873,6 +11907,20 @@ const BulkActions = (function(){
     document.querySelectorAll(`[data-bulk-count="${id}"]`).forEach(el => {
       el.textContent = ticked > 0 ? `(${ticked})` : '';
     });
+    // Lock / Unlock Selected (Lots tab only — other resources don't
+    // define these element ids, so getElementById returns null and we
+    // no-op silently). Visibility follows the same "ticked > 0" rule;
+    // the feature-flag gate (.feat-lot-lock class) is enforced by CSS
+    // independent of selection state, and the role gate (.needs-admin
+    // on Unlock) is enforced by the existing permission CSS.
+    const lockBtn = document.getElementById(`${id}-bulk-lock`);
+    const lockCounter = document.getElementById(`${id}-bulk-lock-count`);
+    if (lockBtn)     lockBtn.style.display  = ticked > 0 ? '' : 'none';
+    if (lockCounter) lockCounter.textContent = ticked > 0 ? `(${ticked})` : '';
+    const unlockBtn = document.getElementById(`${id}-bulk-unlock`);
+    const unlockCounter = document.getElementById(`${id}-bulk-unlock-count`);
+    if (unlockBtn)     unlockBtn.style.display  = ticked > 0 ? '' : 'none';
+    if (unlockCounter) unlockCounter.textContent = ticked > 0 ? `(${ticked})` : '';
   }
   function toggleAll(id, state){
     getVisibleCheckboxes(id).forEach(cb => { cb.checked = state; });
@@ -13035,9 +13083,39 @@ async function loadLots(){const aid=document.getElementById('lot-auction').value
     { key:'balance', label:'Payable', sort:'number', numeric:true,
       fmt:(n)=>fmtI(n,2),
       render:(l)=>`<strong>${fmtI(l.balance||0,2)}</strong>` },
-    { key:'_actions', label:'Actions', sortable:false, searchable:false, render:(l)=>
-        iconBtn('edit','Edit lot',`openLotEdit(${JSON.stringify(l).replace(/"/g,'&quot;')})`)
-        + iconBtn('del','Delete lot',`delLot(${l.id})`) }
+    { key:'_actions', label:'Actions', sortable:false, searchable:false, render:(l)=>{
+        // Lock state — drives row visuals + which action buttons render.
+        // Locked rows show a small amber "🔒 Locked" pill on the left of
+        // the actions column; non-admins lose the Edit icon entirely
+        // (the server returns 423 anyway, but hiding the button avoids
+        // a confusing click→error round trip). Admins see Edit + Delete
+        // + Unlock; everyone else with lot_write sees Lock.
+        // The whole feature is hidden when flag_lot_lock is OFF — the
+        // .feat-lot-lock CSS class collapses the badge + lock buttons
+        // to display:none independent of locked_at state.
+        const locked = !!l.locked_at;
+        const isAdminUI = (window._userRole === 'admin');
+        const lockedBadge = locked
+          ? `<span class="lot-lock-badge feat-lot-lock" title="Locked${l.locked_by ? ' by ' + esc(l.locked_by) : ''}${l.locked_at ? ' on ' + esc(l.locked_at) : ''} — only an admin can edit." style="display:inline-flex;align-items:center;gap:3px;background:#fef3c7;color:#92400e;border:1px solid #fde68a;padding:2px 7px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">🔒 Locked</span>`
+          : '';
+        let actions = '';
+        if (locked) {
+          // Locked rows: admins still see Edit/Delete and an Unlock
+          // toggle. Non-admins see only the badge — Edit is suppressed
+          // (Delete is already CSS-hidden via .needs-delete).
+          if (isAdminUI) {
+            actions = iconBtn('edit','Edit lot (locked — admin override)',`openLotEdit(${JSON.stringify(l).replace(/"/g,'&quot;')})`)
+                    + iconBtn('del','Delete lot',`delLot(${l.id})`)
+                    + `<button class="icon-btn needs-admin feat-lot-lock" title="Unlock this lot" onclick="lotUnlockOne(${l.id})" style="color:#92400e">🔓</button>`;
+          }
+        } else {
+          // Unlocked rows: standard edit/delete + a Lock button.
+          actions = iconBtn('edit','Edit lot',`openLotEdit(${JSON.stringify(l).replace(/"/g,'&quot;')})`)
+                  + iconBtn('del','Delete lot',`delLot(${l.id})`)
+                  + `<button class="icon-btn needs-lot-write feat-lot-lock" title="Lock this lot — only an admin can unlock or edit afterwards" onclick="lotLockOne(${l.id})">🔒</button>`;
+        }
+        return lockedBadge + actions;
+      } }
   ];
   // CGST / SGST / IGST now always shown in the lots table — they're
   // useful for reconciling GST on services per lot. Payable + Actions
@@ -13052,7 +13130,14 @@ async function loadLots(){const aid=document.getElementById('lot-auction').value
   ];
   DataTable.mount('lots-list', d, {
     noSearch: true,
-    emptyState: { icon: 'lots', title: "No lots in this auction yet", body: "Add your first lot using the form on the left — enter Lot #, Name, Qty, and Price to get started." },  columns });
+    emptyState: { icon: 'lots', title: "No lots in this auction yet", body: "Add your first lot using the form on the left — enter Lot #, Name, Qty, and Price to get started." },
+    // Tint locked rows so the user can spot finalized lots at a glance.
+    // The `.row-locked` class is defined inline at the top of the Lots
+    // tab CSS — pale amber background that doesn't clash with zebra
+    // striping. Class is also gated by feat-lot-lock via CSS so OFF
+    // mode never paints a stray amber row.
+    rowClass: (row) => row && row.locked_at ? 'row-locked' : '',
+    columns });
 }
 
 function openLotEdit(l){
@@ -13303,6 +13388,71 @@ function _lotWireCodeAutocomplete(){
     choose(row.getAttribute('data-code'));
   });
 }
+// ── Bulk: Lock / Unlock selected lots ─────────────────────────────
+// Wired to the 🔒 Lock Selected / 🔓 Unlock Selected toolbar buttons
+// and the per-row icon buttons (rendered by the Lots tab columns
+// config). All four entry points share the same /api/lots/(un)lock
+// endpoints — single-row variants just send a one-element ids array.
+//
+// confirmTwoClick() is the same double-click arming pattern used by
+// Revert All / Delete All — first click flips the button into an
+// "armed" red state for 3 seconds, second click commits. Falls
+// through to confirm() when no button element is passed (per-row
+// path).
+async function lotBulkLock(){
+  if (typeof BulkActions === 'undefined' || !BulkActions.getTickedIds) return;
+  const ids = BulkActions.getTickedIds('lot');
+  if (!ids.length) { toast('Tick one or more lots first'); return; }
+  const btn = document.getElementById('lot-bulk-lock');
+  const ok = await confirmTwoClick('lotBulkLock', btn, {
+    confirmLabel: `⚠ Click again to lock ${ids.length} lot${ids.length === 1 ? '' : 's'}`,
+    fallbackMessage: `Lock ${ids.length} lot${ids.length === 1 ? '' : 's'}? After locking, only an admin can edit these rows or their dependent sales invoices / purchases / debit notes.`,
+  });
+  if (!ok) return;
+  try {
+    const r = await j('/api/lots/lock', { method: 'POST', body: JSON.stringify({ ids }) });
+    toast(`Locked ${r.locked || 0} of ${r.requested || ids.length} lot${(r.requested || ids.length) === 1 ? '' : 's'}`);
+    if (typeof loadLots === 'function') loadLots({ keepPage: true });
+  } catch (e) { showError(e); }
+}
+async function lotBulkUnlock(){
+  if (typeof BulkActions === 'undefined' || !BulkActions.getTickedIds) return;
+  const ids = BulkActions.getTickedIds('lot');
+  if (!ids.length) { toast('Tick one or more lots first'); return; }
+  const btn = document.getElementById('lot-bulk-unlock');
+  const ok = await confirmTwoClick('lotBulkUnlock', btn, {
+    confirmLabel: `⚠ Click again to unlock ${ids.length} lot${ids.length === 1 ? '' : 's'}`,
+    fallbackMessage: `Unlock ${ids.length} lot${ids.length === 1 ? '' : 's'}? They will become editable again by anyone with lot-write permission.`,
+  });
+  if (!ok) return;
+  try {
+    const r = await j('/api/lots/unlock', { method: 'POST', body: JSON.stringify({ ids }) });
+    toast(`Unlocked ${r.unlocked || 0} of ${r.requested || ids.length} lot${(r.requested || ids.length) === 1 ? '' : 's'}`);
+    if (typeof loadLots === 'function') loadLots({ keepPage: true });
+  } catch (e) { showError(e); }
+}
+// Per-row handlers — wired from the lock/unlock icons in the Lots-tab
+// Actions column. Each is a one-row variant of the bulk endpoint so
+// the audit trail and locking rules stay identical.
+async function lotLockOne(id){
+  if (!Number.isFinite(Number(id))) return;
+  if (!confirm('Lock this lot? Only an admin will be able to edit it or its dependent sales invoice / purchase / debit note afterwards.')) return;
+  try {
+    await j('/api/lots/lock', { method: 'POST', body: JSON.stringify({ ids: [Number(id)] }) });
+    toast('Lot locked');
+    if (typeof loadLots === 'function') loadLots({ keepPage: true });
+  } catch (e) { showError(e); }
+}
+async function lotUnlockOne(id){
+  if (!Number.isFinite(Number(id))) return;
+  if (!confirm('Unlock this lot? It will become editable again.')) return;
+  try {
+    await j('/api/lots/unlock', { method: 'POST', body: JSON.stringify({ ids: [Number(id)] }) });
+    toast('Lot unlocked');
+    if (typeof loadLots === 'function') loadLots({ keepPage: true });
+  } catch (e) { showError(e); }
+}
+
 // ── Bulk: Set Buyer Code on selected lots ─────────────────────────
 // Opens the modal, refreshes the buyer cache, wires the code-input
 // autocomplete (same matcher as Lot Edit: strict on code, rich

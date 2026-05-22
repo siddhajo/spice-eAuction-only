@@ -190,6 +190,16 @@ const DEFAULTS = [
   // unaffected on upgrade.
   { key: 'flag_price_check',     value: 'false', category: 'flags', label: 'Price Check + transaction gate',  type: 'boolean' },
 
+  // Lot record-lock. When ON: any user with lot_write can lock ticked
+  // lots (badge appears, row tints amber); admin-only unlock. Locked
+  // lots reject edit/delete/calculate by non-admins and cascade-block
+  // edits on dependent sales invoices / purchases / debit notes whose
+  // lots are locked. When OFF: every lock UI surface disappears, the
+  // lock/unlock endpoints refuse with 404, and lock state on existing
+  // rows is ignored so legacy locked rows don't silently freeze.
+  // Default OFF so existing installs are unaffected on upgrade.
+  { key: 'flag_lot_lock',        value: 'false', category: 'flags', label: 'Lot record lock',                 type: 'boolean' },
+
   // ── BACKUPS ────────────────────────────────────────────────
   // Per-install database backup settings. The scheduler is driven by
   // backup_auto_enabled + backup_interval_hours; the keep-count caps

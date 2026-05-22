@@ -263,6 +263,12 @@ async function initDb() {
     paid TEXT DEFAULT '',
     user_id TEXT DEFAULT '',
     bank_id INTEGER,
+    -- Record-lock columns (also added via ALTER for older DBs in the
+    -- migrations block below). See POST /api/lots/lock in server.js for
+    -- semantics. Defined here so fresh DBs get the columns + the
+    -- idx_lots_locked index on the very first boot.
+    locked_at TEXT DEFAULT NULL,
+    locked_by TEXT DEFAULT NULL,
     created_at TEXT DEFAULT (datetime('now','localtime')),
     FOREIGN KEY (auction_id) REFERENCES auctions(id),
     FOREIGN KEY (trader_id) REFERENCES traders(id)
@@ -612,11 +618,29 @@ async function initDb() {
        WHERE (pst_code IS NULL OR pst_code = '') AND trader_id IS NOT NULL`,
     `UPDATE lots SET aadhar = (SELECT aadhar FROM traders WHERE traders.id = lots.trader_id)
        WHERE (aadhar IS NULL OR aadhar = '') AND trader_id IS NOT NULL`,
+    // Per-lot record lock. When locked_at is set, the row becomes
+    // uneditable for non-admins, both directly (PUT/DELETE /api/lots,
+    // bulk lot mutations, calculate) and indirectly (sales invoice /
+    // purchase / debit-note edit/delete/revert that would touch the lot).
+    // Admins can always edit. Only an admin can clear the lock.
+    // locked_by carries the username of whoever set the lock — purely
+    // for audit/UI display; permission is decided from req.user.role.
+    // The whole feature collapses to a no-op when flag_lot_lock is off.
+    'ALTER TABLE lots ADD COLUMN locked_at TEXT DEFAULT NULL',
+    'ALTER TABLE lots ADD COLUMN locked_by TEXT DEFAULT NULL',
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }
     catch (e) { /* column already exists — ignore */ }
   }
+
+  // Index on locked_at — used by the Lots tab list sort/filter and by
+  // the cascade-lock helpers (lotsLockedFor*) that scan by auction +
+  // buyer/seller with locked_at NOT NULL. Created here (after the
+  // ALTERs ran) so upgrades to an existing DB still get the index
+  // without depending on the column having been declared in CREATE.
+  try { wrapped.exec('CREATE INDEX IF NOT EXISTS idx_lots_locked ON lots(locked_at)'); }
+  catch (_) { /* index may already exist — ignore */ }
 
   // One-time data fix: legacy ASP-only lots (where invo==asp_invo) had their
   // `sale` field set during the old ASP-generation logic. The current logic

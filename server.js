@@ -3020,6 +3020,151 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
   res.json(db.all(q, p));
 });
 
+// ──────────────────────────────────────────────────────────────
+// LOT LOCK / UNLOCK  (gated by flag_lot_lock)
+// ──────────────────────────────────────────────────────────────
+// Lock = mark a lot record as finalized. Locked lots become uneditable
+// for non-admins everywhere they get touched: direct PUT/DELETE on the
+// lot itself, every bulk-* helper, the calculate endpoints, and any
+// dependent transaction (sales invoice, purchase, debit note) that
+// would mutate or invalidate the lot. Only an admin can edit a locked
+// lot or clear its lock.
+//
+// The whole feature is gated by `flag_lot_lock` in company settings:
+//   OFF → lockFeatureOn() returns false, every helper short-circuits to
+//         "nothing is locked", endpoints respond with 404, and existing
+//         locked rows in the DB are treated as if they weren't locked.
+//   ON  → full enforcement as described above.
+//
+// Schema columns (see db.js):
+//   lots.locked_at — ISO timestamp set at lock time, NULL when unlocked
+//   lots.locked_by — username of the user who set the lock (audit only;
+//                    permission is decided from req.user.role, not this)
+function lockFeatureOn(db) {
+  try {
+    const cfg = getSettingsFlat(db || getDb());
+    return String(cfg.flag_lot_lock || '').toLowerCase() === 'true' || cfg.flag_lot_lock === true;
+  } catch (_) { return false; }
+}
+function isAdmin(req) {
+  return !!(req && req.user && req.user.role === 'admin');
+}
+
+// Filter a list of lot ids down to those whose row is NOT locked.
+// Used by every bulk lot mutation to skip locked rows silently. When
+// the feature flag is off, the lock columns are ignored — every id
+// passes through as "allowed". Returns { allowed, skipped }.
+function filterLockedLotIds(db, ids) {
+  const nums = (ids || []).map(x => Number(x)).filter(Number.isFinite);
+  if (!nums.length) return { allowed: [], skipped: [] };
+  if (!lockFeatureOn(db)) return { allowed: nums, skipped: [] };
+  const placeholders = nums.map(() => '?').join(',');
+  const locked = db.all(
+    `SELECT id FROM lots WHERE id IN (${placeholders}) AND locked_at IS NOT NULL`,
+    nums
+  );
+  const lockedSet = new Set(locked.map(r => Number(r.id)));
+  const allowed = nums.filter(id => !lockedSet.has(id));
+  const skipped = nums.filter(id =>  lockedSet.has(id));
+  return { allowed, skipped };
+}
+
+// Cascade lock checks. A sales invoice / purchase / debit note is
+// "lock-cascaded" when any lot in the same auction + buyer (or seller
+// for purchases / debit notes) is locked. Used by the dependent-doc
+// edit/delete/revert handlers to refuse non-admin mutations.
+// All three short-circuit to `false` when the feature flag is off so
+// existing data isn't accidentally frozen by a legacy `locked_at`.
+function lotsLockedForInvoice(db, invoiceId) {
+  if (!lockFeatureOn(db)) return false;
+  const inv = db.get('SELECT auction_id, buyer FROM invoices WHERE id = ?', [invoiceId]);
+  if (!inv) return false;
+  const hit = db.get(
+    `SELECT 1 FROM lots
+       WHERE auction_id = ? AND buyer = ? AND locked_at IS NOT NULL
+       LIMIT 1`,
+    [inv.auction_id, inv.buyer || '']
+  );
+  return !!hit;
+}
+function lotsLockedForPurchase(db, purchaseId) {
+  if (!lockFeatureOn(db)) return false;
+  const pur = db.get('SELECT auction_id, name FROM purchases WHERE id = ?', [purchaseId]);
+  if (!pur) return false;
+  const hit = db.get(
+    `SELECT 1 FROM lots
+       WHERE auction_id = ? AND name = ? AND locked_at IS NOT NULL
+       LIMIT 1`,
+    [pur.auction_id, pur.name || '']
+  );
+  return !!hit;
+}
+function lotsLockedForDebitNote(db, noteId) {
+  if (!lockFeatureOn(db)) return false;
+  const dn = db.get('SELECT auction_id, name FROM debit_notes WHERE id = ?', [noteId]);
+  if (!dn) return false;
+  const hit = db.get(
+    `SELECT 1 FROM lots
+       WHERE auction_id = ? AND name = ? AND locked_at IS NOT NULL
+       LIMIT 1`,
+    [dn.auction_id, dn.name || '']
+  );
+  return !!hit;
+}
+
+// True when a specific lot id should refuse a non-admin mutation.
+// Centralised so PUT/DELETE/calculate all gate identically.
+function lotIsLocked(db, lotId) {
+  if (!lockFeatureOn(db)) return false;
+  const r = db.get('SELECT locked_at FROM lots WHERE id = ?', [lotId]);
+  return !!(r && r.locked_at);
+}
+
+// POST /api/lots/lock   body: { ids:[int,...] }
+// Anyone with lot_write may lock. Re-locking an already-locked row is
+// a no-op so the locked_by/locked_at audit pair reflects the FIRST
+// confirmer, not the most recent click.
+app.post('/api/lots/lock', requireLotWrite, (req, res) => {
+  const db = getDb();
+  if (!lockFeatureOn(db)) {
+    return res.status(404).json({ error: 'Lot lock feature is disabled. Enable flag_lot_lock in Settings → Flags.' });
+  }
+  const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids : [];
+  const numericIds = ids.map(x => Number(x)).filter(Number.isFinite);
+  if (!numericIds.length) return res.status(400).json({ error: 'ids[] is required' });
+  const username = (req.user && req.user.username) || '';
+  const placeholders = numericIds.map(() => '?').join(',');
+  const info = db.run(
+    `UPDATE lots
+        SET locked_at = datetime('now','localtime'),
+            locked_by = ?
+      WHERE id IN (${placeholders}) AND locked_at IS NULL`,
+    [username, ...numericIds]
+  );
+  res.json({ success: true, locked: (info && info.changes) || 0, requested: numericIds.length });
+});
+
+// POST /api/lots/unlock   body: { ids:[int,...] }
+// Admin only. requireAdmin already gates this; the extra feature-flag
+// check is belt-and-braces so the endpoint disappears when the toggle
+// is off even for admins.
+app.post('/api/lots/unlock', requireAdmin, (req, res) => {
+  const db = getDb();
+  if (!lockFeatureOn(db)) {
+    return res.status(404).json({ error: 'Lot lock feature is disabled. Enable flag_lot_lock in Settings → Flags.' });
+  }
+  const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids : [];
+  const numericIds = ids.map(x => Number(x)).filter(Number.isFinite);
+  if (!numericIds.length) return res.status(400).json({ error: 'ids[] is required' });
+  const placeholders = numericIds.map(() => '?').join(',');
+  const info = db.run(
+    `UPDATE lots SET locked_at = NULL, locked_by = NULL
+      WHERE id IN (${placeholders}) AND locked_at IS NOT NULL`,
+    numericIds
+  );
+  res.json({ success: true, unlocked: (info && info.changes) || 0, requested: numericIds.length });
+});
+
 app.post('/api/lots', requireLotWrite, (req, res) => {
   const l = req.body;
   // Field-name aliasing for the mobile PWA, which uses gross_weight /
@@ -3117,7 +3262,14 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
   // duplicate validation that POST /api/lots applies. Skipping these
   // on edit was a previous gap that let users move a lot outside its
   // branch's range or collide with another lot's number.
-  const current = db.get('SELECT auction_id, lot_no, branch, trader_id FROM lots WHERE id = ?', [lotId]);
+  const current = db.get('SELECT auction_id, lot_no, branch, trader_id, locked_at FROM lots WHERE id = ?', [lotId]);
+  // Lock guard — admins always pass; non-admins are blocked the moment
+  // the row is locked, regardless of which fields they're trying to
+  // change. 423 (Locked) so the client can show a tailored message
+  // instead of the generic forbidden.
+  if (current && current.locked_at && lockFeatureOn(db) && !isAdmin(req)) {
+    return res.status(423).json({ error: 'This lot is locked — only an admin can edit it.' });
+  }
   if (current) {
     const newLotNo = (l.lot_no != null) ? String(l.lot_no).trim() : current.lot_no;
     const newBranch = (l.branch != null) ? String(l.branch).trim() : current.branch;
@@ -3176,15 +3328,23 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
 
 app.delete('/api/lots/:id', requireDelete, (req, res) => {
   const db = getDb();
-  const cur = db.get('SELECT auction_id FROM lots WHERE id = ?', [req.params.id]);
+  const cur = db.get('SELECT auction_id, locked_at FROM lots WHERE id = ?', [req.params.id]);
+  if (cur && cur.locked_at && lockFeatureOn(db) && !isAdmin(req)) {
+    return res.status(423).json({ error: 'This lot is locked — only an admin can delete it.' });
+  }
   db.run('DELETE FROM lots WHERE id = ?', [req.params.id]);
   if (cur && cur.auction_id) pcClearGate(db, cur.auction_id);
   res.json({ success: true });
 });
 app.post('/api/lots/bulk-delete', requireDelete, (req, res) => {
   try {
-    const deleted = bulkDeleteByIds(getDb(), 'lots', req.body.ids);
-    res.json({ success: true, deleted });
+    const db = getDb();
+    // Skip locked rows (when the feature is on, admins still skip them
+    // here — bulk delete is a batch action, not a force-override; admin
+    // can still hit DELETE /api/lots/:id directly).
+    const { allowed, skipped } = filterLockedLotIds(db, req.body.ids);
+    const deleted = bulkDeleteByIds(db, 'lots', allowed);
+    res.json({ success: true, deleted, skipped_locked: skipped.length });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -3234,14 +3394,18 @@ app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
   if (buyer1) { sets.push('buyer1 = ?'); vals.push(buyer1); }
   if (req.body.sale !== undefined) { sets.push('sale = ?'); vals.push(sale); }
   if (hasPrice) { sets.push('price = ?'); vals.push(priceNum); }
+  // Drop locked rows up-front so the chunked UPDATE below sees only
+  // mutable ids. Skip-locked behaviour means a single locked lot in a
+  // bulk action doesn't block the whole batch.
+  const { allowed: mutableIds, skipped: lockedIds } = filterLockedLotIds(db, ids);
   // Chunk the IN(...) list so we stay under SQLite's parameter cap.
   const CHUNK = 500;
   let updated = 0;
   // Capture every auction touched so we can clear their price-check
   // stamps — codes just changed, so an earlier verify is stale.
   const touchedAuctions = new Set();
-  for (let i = 0; i < ids.length; i += CHUNK) {
-    const slice = ids.slice(i, i + CHUNK);
+  for (let i = 0; i < mutableIds.length; i += CHUNK) {
+    const slice = mutableIds.slice(i, i + CHUNK);
     const placeholders = slice.map(() => '?').join(',');
     const affectedRows = db.all(
       `SELECT DISTINCT auction_id FROM lots WHERE id IN (${placeholders})`,
@@ -3255,7 +3419,7 @@ app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
     if (info && typeof info.changes === 'number') updated += info.changes;
   }
   for (const aid of touchedAuctions) pcClearGate(db, aid);
-  res.json({ success: true, updated, requested: ids.length });
+  res.json({ success: true, updated, requested: ids.length, skipped_locked: lockedIds.length });
 });
 
 // Bulk seller-reassign — paired with the Lot Entry "Change Seller"
@@ -3287,13 +3451,16 @@ app.post('/api/lots/bulk-seller', requireLotWrite, (req, res) => {
     if (!t) {
       return res.status(404).json({ error: `No seller found with id ${tid}. Refresh the seller list and try again.` });
     }
+    // Drop locked rows before the bulk update — same skip-locked
+    // behaviour as bulk-set-buyer and bulk-delete.
+    const { allowed: mutableIds, skipped: lockedIds } = filterLockedLotIds(db, numericIds);
     // Capture every auction touched so we can clear their price-check
     // gates — seller details changed, so any prior verify is stale.
     const CHUNK = 500;
     let updated = 0;
     const touchedAuctions = new Set();
-    for (let i = 0; i < numericIds.length; i += CHUNK) {
-      const slice = numericIds.slice(i, i + CHUNK);
+    for (let i = 0; i < mutableIds.length; i += CHUNK) {
+      const slice = mutableIds.slice(i, i + CHUNK);
       const placeholders = slice.map(() => '?').join(',');
       const affectedRows = db.all(
         `SELECT DISTINCT auction_id FROM lots WHERE id IN (${placeholders})`,
@@ -3341,6 +3508,7 @@ app.post('/api/lots/bulk-seller', requireLotWrite, (req, res) => {
       updated,
       trader_id: tid,
       name: t.name || '',
+      skipped_locked: lockedIds.length,
     });
   } catch (e) {
     res.status(500).json({ error: 'Bulk seller update failed: ' + (e.message || e) });
@@ -3353,7 +3521,12 @@ app.post('/api/lots/calculate/:auctionId',
   requirePriceChecked(req => parseInt(req.params.auctionId, 10)),
   (req, res) => {
   const db = getDb(); const cfg = getSettingsFlat(db);
-  const lots = db.all('SELECT * FROM lots WHERE auction_id = ? AND amount > 0', [req.params.auctionId]);
+  // When the lock feature is on, skip locked rows — recalculating
+  // would overwrite the planter-side values the user finalised. Admins
+  // also skip locked rows here intentionally: recalc is a batch refresh,
+  // not a force-edit; admins can still hit PUT /api/lots/:id directly.
+  const lockSuffix = lockFeatureOn(db) ? ' AND locked_at IS NULL' : '';
+  const lots = db.all(`SELECT * FROM lots WHERE auction_id = ? AND amount > 0${lockSuffix}`, [req.params.auctionId]);
   let count = 0;
   for (const lot of lots) {
     const calc = calculateLot(lot, cfg);
@@ -3373,7 +3546,9 @@ app.post('/api/lots/calculate/:auctionId',
 // Returns total lots calculated across all auctions.
 app.post('/api/lots/calculate-all', requireLotWrite, (req, res) => {
   const db = getDb(); const cfg = getSettingsFlat(db);
-  const lots = db.all('SELECT * FROM lots WHERE amount > 0');
+  // Skip locked lots (see per-auction calculate above for rationale).
+  const lockSuffix = lockFeatureOn(db) ? ' AND locked_at IS NULL' : '';
+  const lots = db.all(`SELECT * FROM lots WHERE amount > 0${lockSuffix}`);
   let count = 0;
   for (const lot of lots) {
     const calc = calculateLot(lot, cfg);
@@ -3855,6 +4030,12 @@ app.put('/api/invoices/lorry-no', requireInvoiceWrite, (req, res) => {
 // Update invoice fields (edit)
 app.put('/api/invoices/:id', requireInvoiceWrite, (req, res) => {
   const i = req.body;
+  const db = getDb();
+  // Cascade lock — if any lot in this invoice's (auction, buyer) is
+  // locked, the invoice is treated as finalised; only admin can edit.
+  if (!isAdmin(req) && lotsLockedForInvoice(db, req.params.id)) {
+    return res.status(423).json({ error: 'This invoice is locked because at least one of its lots is locked — only an admin can edit it.' });
+  }
   const fields = ['ano','date','state','sale','invo','buyer','buyer1','gstin','place',
     'bag','qty','amount','gunny','pava_hc','ins','cgst','sgst','igst','tcs','rund','tot'];
   const sets = []; const vals = [];
@@ -3863,7 +4044,7 @@ app.put('/api/invoices/:id', requireInvoiceWrite, (req, res) => {
   }
   if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
   vals.push(req.params.id);
-  getDb().run(`UPDATE invoices SET ${sets.join(',')} WHERE id=?`, vals);
+  db.run(`UPDATE invoices SET ${sets.join(',')} WHERE id=?`, vals);
   res.json({ success: true });
 });
 
@@ -3872,6 +4053,12 @@ app.delete('/api/invoices/:id', requireDelete, (req, res) => {
   const db = getDb();
   const inv = db.get('SELECT * FROM invoices WHERE id=?', [req.params.id]);
   if (!inv) return res.status(404).json({ error: 'Invoice not found' });
+  // Cascade lock — requireDelete is already admin-only today, but the
+  // guard stays in for defence in depth in case `delete` is ever
+  // opened up to managers, and to keep the rule consistent.
+  if (!isAdmin(req) && lotsLockedForInvoice(db, req.params.id)) {
+    return res.status(423).json({ error: 'This invoice is locked because at least one of its lots is locked — only an admin can delete it.' });
+  }
   // Clear sale/invo from the related lots so they're eligible again
   let lotsFreed = 0;
   if (inv.auction_id) {
@@ -3890,6 +4077,11 @@ app.post('/api/invoices/:id/revert', requireInvoiceRevert, (req, res) => {
   const db = getDb();
   const inv = db.get('SELECT * FROM invoices WHERE id=?', [req.params.id]);
   if (!inv) return res.status(404).json({ error: 'Invoice not found' });
+  // Cascade lock — revert clears lots.sale/invo, which mutates the lot
+  // row itself; locked lots reject that for non-admins.
+  if (!isAdmin(req) && lotsLockedForInvoice(db, req.params.id)) {
+    return res.status(423).json({ error: 'This invoice is locked because at least one of its lots is locked — only an admin can revert it.' });
+  }
   let lotsFreed = 0;
   if (inv.auction_id) {
     const affected = db.all(
@@ -3916,24 +4108,34 @@ app.post('/api/invoices/revert-all/:auctionId', requireInvoiceRevert, (req, res)
   const db = getDb();
   const aid = req.params.auctionId;
   const invoices = db.all('SELECT * FROM invoices WHERE auction_id = ?', [aid]);
+  const admin = isAdmin(req);
+  const lockSuffix = lockFeatureOn(db) ? ' AND locked_at IS NULL' : '';
   let lotsFreed = 0;
+  let skippedLocked = 0;
+  const revertedIds = [];
   for (const inv of invoices) {
-    const n = db.get('SELECT COUNT(*) as c FROM lots WHERE auction_id=? AND sale=? AND invo=? AND buyer=?',
+    // Cascade lock: non-admins skip any invoice whose buyer has a
+    // locked lot in this auction. Bulk-action design = "skip locked,
+    // process the rest" — a single locked record shouldn't block the
+    // whole batch.
+    if (!admin && lotsLockedForInvoice(db, inv.id)) { skippedLocked++; continue; }
+    const n = db.get(`SELECT COUNT(*) as c FROM lots WHERE auction_id=? AND sale=? AND invo=? AND buyer=?${lockSuffix}`,
       [inv.auction_id, inv.sale, inv.invo, inv.buyer]).c;
     lotsFreed += n;
-    db.run(`UPDATE lots SET sale='', invo='' WHERE auction_id=? AND sale=? AND invo=? AND buyer=?`,
+    db.run(`UPDATE lots SET sale='', invo='' WHERE auction_id=? AND sale=? AND invo=? AND buyer=?${lockSuffix}`,
       [inv.auction_id, inv.sale, inv.invo, inv.buyer]);
+    db.run('DELETE FROM invoices WHERE id=?', [inv.id]);
+    revertedIds.push(inv.id);
   }
-  db.run('DELETE FROM invoices WHERE auction_id = ?', [aid]);
-  // Safety net: clear any orphan invo values from lots in this auction
+  // Safety net: clear any orphan invo values from unlocked lots in this auction
   const orphan = db.get(
-    `SELECT COUNT(*) as c FROM lots WHERE auction_id = ? AND invo IS NOT NULL AND invo != ''`, [aid]
+    `SELECT COUNT(*) as c FROM lots WHERE auction_id = ? AND invo IS NOT NULL AND invo != ''${lockSuffix}`, [aid]
   ).c;
   if (orphan) {
-    db.run(`UPDATE lots SET sale='', invo='' WHERE auction_id = ?`, [aid]);
+    db.run(`UPDATE lots SET sale='', invo='' WHERE auction_id = ?${lockSuffix}`, [aid]);
     lotsFreed += orphan;
   }
-  res.json({ success: true, invoicesReverted: invoices.length, lotsFreed });
+  res.json({ success: true, invoicesReverted: revertedIds.length, lotsFreed, skipped_locked: skippedLocked });
 });
 
 // Sales Invoice PDF
@@ -4467,6 +4669,11 @@ app.post('/api/purchases/generate-all/:auctionId',
 // Update purchase (edit)
 app.put('/api/purchases/:id', requireInvoiceWrite, (req, res) => {
   const p = req.body;
+  const db = getDb();
+  // Cascade lock — see invoice PUT for rationale.
+  if (!isAdmin(req) && lotsLockedForPurchase(db, req.params.id)) {
+    return res.status(423).json({ error: 'This purchase is locked because at least one of its lots is locked — only an admin can edit it.' });
+  }
   const fields = ['ano','date','state','br','name','add_line','place','gstin','invo',
     'qty','amount','cgst','sgst','igst','rund','total','tds'];
   const sets = []; const vals = [];
@@ -4475,13 +4682,17 @@ app.put('/api/purchases/:id', requireInvoiceWrite, (req, res) => {
   }
   if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
   vals.push(req.params.id);
-  getDb().run(`UPDATE purchases SET ${sets.join(',')} WHERE id=?`, vals);
+  db.run(`UPDATE purchases SET ${sets.join(',')} WHERE id=?`, vals);
   res.json({ success: true });
 });
 
 // Delete purchase
 app.delete('/api/purchases/:id', requireDelete, (req, res) => {
-  getDb().run('DELETE FROM purchases WHERE id=?', [req.params.id]);
+  const db = getDb();
+  if (!isAdmin(req) && lotsLockedForPurchase(db, req.params.id)) {
+    return res.status(423).json({ error: 'This purchase is locked because at least one of its lots is locked — only an admin can delete it.' });
+  }
+  db.run('DELETE FROM purchases WHERE id=?', [req.params.id]);
   res.json({ success: true });
 });
 
@@ -5959,13 +6170,21 @@ app.post('/api/debit-notes/generate-all', requireInvoiceWrite, requireDebitNoteE
 });
 
 app.delete('/api/debit-notes/:id', requireDelete, (req, res) => {
-  getDb().run('DELETE FROM debit_notes WHERE id = ?', [req.params.id]);
+  const db = getDb();
+  if (!isAdmin(req) && lotsLockedForDebitNote(db, req.params.id)) {
+    return res.status(423).json({ error: 'This debit note is locked because at least one of its lots is locked — only an admin can delete it.' });
+  }
+  db.run('DELETE FROM debit_notes WHERE id = ?', [req.params.id]);
   res.json({ success: true });
 });
 
 // Update debit note (edit)
 app.put('/api/debit-notes/:id', requireInvoiceWrite, (req, res) => {
   const n = req.body;
+  const db = getDb();
+  if (!isAdmin(req) && lotsLockedForDebitNote(db, req.params.id)) {
+    return res.status(423).json({ error: 'This debit note is locked because at least one of its lots is locked — only an admin can edit it.' });
+  }
   const fields = ['ano','date','state','name','note_no','amount','cgst','sgst','igst','total'];
   const sets = []; const vals = [];
   for (const f of fields) {
@@ -5973,7 +6192,7 @@ app.put('/api/debit-notes/:id', requireInvoiceWrite, (req, res) => {
   }
   if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
   vals.push(req.params.id);
-  getDb().run(`UPDATE debit_notes SET ${sets.join(',')} WHERE id=?`, vals);
+  db.run(`UPDATE debit_notes SET ${sets.join(',')} WHERE id=?`, vals);
   res.json({ success: true });
 });
 
