@@ -1789,13 +1789,6 @@ body[data-comfort="1"] #comfort-toggle-label::after{content:'\2191';margin-left:
   padding:14px;text-align:center;font-size:11px;color:var(--text3);
 }
 body[data-comfort="1"] .le-lot-chip{min-width:48px;height:34px;font-size:13px}
-/* le-lotno turns red when the typed number matches an already-used chip,
-   so the operator notices before tabbing into bags/weight. */
-#le-lotno.le-lotno-used{
-  border-color:#C62828 !important;
-  background:#FEE2E2 !important;
-  color:#991B1B;
-}
 
 /* ── Lot-entry print toolbar (Print Selected / by Seller / Clear) ── */
 .le-toolbar-btn{
@@ -3228,6 +3221,16 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <datalist id="le-recent-sellers"></datalist>
           </div>
           <span id="le-recent-search-status" style="font-size:11.5px;color:var(--text3)"></span>
+          <!-- Tick lots for printing by typing a list / range of lot numbers.
+               Hits /api/lots/:aid (whole trade) so users can include lots
+               that aren't in the currently-loaded recent window. -->
+          <div style="position:relative;min-width:220px">
+            <input type="text" id="le-select-by-number" placeholder="Tick lots: 1,3,5-10 ↵" autocomplete="off"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();leSelectLotsByTyping()}"
+                   title="Type lot numbers (commas + ranges) and press Enter to tick them in the list below for printing"
+                   style="width:100%;height:34px;padding:0 12px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px">
+          </div>
+          <span id="le-select-by-number-status" style="font-size:11.5px;color:var(--text3)"></span>
         </div>
         <div id="le-recent-list" style="font-size:13px"></div>
       </div>
@@ -9911,7 +9914,6 @@ function lePickLot(lotNo) {
 
 // Sync chip highlight when user types/edits le-lotno directly. Wired
 // via DOMContentLoaded so dynamically-loaded chips still respond.
-// Matching is numeric-aware so "1", "01", "001" all resolve to chip "001".
 document.addEventListener('DOMContentLoaded', () => {
   const input = document.getElementById('le-lotno');
   if (!input) return;
@@ -9920,27 +9922,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const host = document.getElementById('le-lot-grid-host');
     if (!host) return;
     host.querySelectorAll('.le-lot-chip.selected').forEach(c => c.classList.remove('selected'));
-    input.classList.remove('le-lotno-used');
     if (!v) return;
-    let target = host.querySelector(`.le-lot-chip[data-lot="${CSS.escape(v)}"]`);
-    if (!target) {
-      const m = v.match(/^([A-Za-z]*)0*(\d+)$/);
-      if (m) {
-        const prefix = m[1].toUpperCase();
-        const num = parseInt(m[2], 10);
-        target = Array.from(host.querySelectorAll('.le-lot-chip')).find(c => {
-          const lm = String(c.dataset.lot || '').match(/^([A-Za-z]*)(\d+)$/);
-          return lm && lm[1].toUpperCase() === prefix && parseInt(lm[2], 10) === num;
-        });
-      }
-    }
-    if (!target) return;
-    if (target.classList.contains('used')) {
-      input.classList.add('le-lotno-used');
-    } else {
-      target.classList.add('selected');
-    }
-    target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    const target = host.querySelector(`.le-lot-chip[data-lot="${CSS.escape(v)}"]`);
+    if (target && !target.classList.contains('used')) target.classList.add('selected');
   });
 });
 
@@ -10201,6 +10185,100 @@ function leClearPrintSelection() {
   const all = document.getElementById('le-recent-select-all');
   if (all) { all.checked = false; all.indeterminate = false; }
   leUpdatePrintToolbar();
+}
+
+// Canonicalize a lot_no for comparison: strip leading zeros from the
+// numeric tail, upper-case the alpha prefix. So "001", "1", "0001" all
+// collapse to "1"; "a01" → "A1".
+function leCanonLot(s) {
+  const m = String(s || '').trim().match(/^([A-Za-z]*)0*(\d+)$/);
+  return m ? (m[1] || '').toUpperCase() + parseInt(m[2], 10) : '';
+}
+
+// Parse a free-text lot-number spec ("1,3,5-10  A1-A3") into a Set of
+// canonical lot keys. Mixed-prefix ranges (A1-B3) are ignored — they're
+// almost certainly a typo and silently expanding would surprise users.
+function leParseLotSpec(spec) {
+  const out = new Set();
+  String(spec || '').split(/[,;\s]+/).filter(Boolean).forEach(part => {
+    const range = part.match(/^([A-Za-z]*)0*(\d+)\s*-\s*([A-Za-z]*)0*(\d+)$/);
+    if (range) {
+      const p1 = (range[1] || '').toUpperCase();
+      const p2 = (range[3] || '').toUpperCase();
+      if (p1 !== p2) return;
+      const lo = parseInt(range[2], 10), hi = parseInt(range[4], 10);
+      if (!Number.isFinite(lo) || !Number.isFinite(hi)) return;
+      const a = Math.min(lo, hi), b = Math.max(lo, hi);
+      for (let n = a; n <= b; n++) out.add(p1 + n);
+      return;
+    }
+    const single = part.match(/^([A-Za-z]*)0*(\d+)$/);
+    if (single) out.add((single[1] || '').toUpperCase() + parseInt(single[2], 10));
+  });
+  return out;
+}
+
+// "Tick lots by typing" — parses the input, fetches the trade's full lot
+// list, ticks every matching row (merging unloaded lots into the recent
+// window so Print Selected can find them), then reports what matched.
+async function leSelectLotsByTyping() {
+  const input    = document.getElementById('le-select-by-number');
+  const statusEl = document.getElementById('le-select-by-number-status');
+  if (!input) return;
+  const spec = (input.value || '').trim();
+  if (statusEl) statusEl.textContent = '';
+  if (!spec) return;
+
+  const wanted = leParseLotSpec(spec);
+  if (!wanted.size) {
+    if (statusEl) { statusEl.textContent = 'Use commas + ranges, e.g. 1,3,5-10'; statusEl.style.color = '#C62828'; }
+    return;
+  }
+
+  const aid = document.getElementById('le-auction').value;
+  if (!aid) { toast('Pick a trade first'); return; }
+
+  if (statusEl) { statusEl.textContent = 'Looking up…'; statusEl.style.color = ''; }
+  let allLots = [];
+  try {
+    const data = await j(`/api/lots/${aid}`);
+    allLots = Array.isArray(data) ? data : (data && Array.isArray(data.rows) ? data.rows : []);
+  } catch (e) {
+    if (statusEl) { statusEl.textContent = 'Lookup failed'; statusEl.style.color = '#C62828'; }
+    return;
+  }
+
+  if (!_le.selectedForPrint) _le.selectedForPrint = new Set();
+  const matchedKeys = new Set();
+  const matched = [];
+  for (const l of allLots) {
+    const k = leCanonLot(l.lot_no);
+    if (k && wanted.has(k)) {
+      matched.push(l);
+      matchedKeys.add(k);
+      _le.selectedForPrint.add(l.id);
+    }
+  }
+
+  // Merge any matched lots that weren't in the recent window so the
+  // existing Print Selected / Print by Seller paths see them.
+  const have = new Set((_le.recentLots || []).map(l => l.id));
+  const additions = matched.filter(l => !have.has(l.id));
+  if (additions.length) _le.recentLots = (_le.recentLots || []).concat(additions);
+
+  renderLeRecent();
+
+  const notFound = [...wanted].filter(k => !matchedKeys.has(k));
+  const parts = [`Ticked ${matched.length}`];
+  if (notFound.length) {
+    const sample = notFound.slice(0, 5).join(', ');
+    parts.push(`not in trade: ${sample}${notFound.length > 5 ? `… (+${notFound.length - 5})` : ''}`);
+  }
+  if (statusEl) {
+    statusEl.textContent = parts.join(' · ');
+    statusEl.style.color = notFound.length ? '#92400E' : 'var(--green)';
+  }
+  input.value = '';
 }
 
 // Single-lot print entry point — wires the row's print icon.
