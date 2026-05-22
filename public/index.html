@@ -3266,7 +3266,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             </div>
             <div>
               <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">PAN</div>
-              <input type="text" id="le-ns-pan" style="width:100%;height:38px;padding:0 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;text-transform:uppercase">
+              <input type="text" id="le-ns-pan" onblur="leNsCheckPanDup()" style="width:100%;height:38px;padding:0 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;text-transform:uppercase">
+              <div id="le-ns-pan-warn" style="display:none"></div>
             </div>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
@@ -4286,7 +4287,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   <div class="sgrid">
     <div class="fg"><label>Name *</label><input id="t-name"></div>
     <div class="fg"><label>CR / GSTIN</label><div style="display:flex;gap:6px"><input id="t-cr" style="flex:1"><button class="btn btn-a" type="button" onclick="gstLookup('t')" style="white-space:nowrap;padding:6px 10px">Fetch from GST</button></div></div>
-    <div class="fg"><label>PAN</label><input id="t-pan"></div>
+    <div class="fg"><label>PAN</label><input id="t-pan" onblur="tCheckPanDup()"><div id="t-pan-warn" style="display:none"></div></div>
     <div class="fg"><label>Phone</label><input id="t-tel"></div>
     <div class="fg"><label>Aadhar</label><input id="t-aadhar"></div>
     <div class="fg"><label>Address</label><input id="t-padd"></div>
@@ -4319,11 +4320,13 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   <h2 id="buyer-modal-title">Add Buyer</h2>
   <input type="hidden" id="b-id">
   <div class="sgrid">
-    <div class="fg"><label>Buyer Code *</label><input id="b-buyer" placeholder="e.g. B042">
+    <div class="fg"><label>Buyer Code *</label><input id="b-buyer" placeholder="e.g. B042" onblur="bCheckBuyerDup()">
       <div style="font-size:11px;color:var(--spice-text-hint);margin-top:4px">Full buyer code used everywhere</div>
+      <div id="b-buyer-warn" style="display:none"></div>
     </div>
-    <div class="fg"><label>Code (short alias)</label><input id="b-code" placeholder="e.g. RSH" style="text-transform:uppercase">
+    <div class="fg"><label>Code (short alias)</label><input id="b-code" placeholder="e.g. RSH" style="text-transform:uppercase" onblur="bCheckCodeDup()">
       <div style="font-size:11px;color:var(--spice-text-hint);margin-top:4px">Short alias used in auction tags &amp; price files</div>
+      <div id="b-code-warn" style="display:none"></div>
     </div>
     <div class="fg"><label>Trade Name</label><input id="b-buyer1"></div>
     <div class="fg"><label>GSTIN</label><div style="display:flex;gap:6px"><input id="b-gstin" style="flex:1"><button class="btn btn-a" type="button" onclick="gstLookup('b')" style="white-space:nowrap;padding:6px 10px">Fetch from GST</button></div></div>
@@ -8503,6 +8506,8 @@ function leOpenNewSellerModal(prefilledName){
   document.getElementById('le-ns-pstate').value = getDefaultBusinessState();
   document.getElementById('le-ns-pst').value   = getDefaultBusinessState() === 'KERALA' ? '32' : '33';
   document.getElementById('le-ns-err').style.display = 'none';
+  const _lePanWarn = document.getElementById('le-ns-pan-warn');
+  if (_lePanWarn) { _lePanWarn.style.display = 'none'; _lePanWarn.innerHTML = ''; }
   const q = String(prefilledName || _le.lastSearchQuery || '').trim();
   if (q) {
     if (/^\d{4,}$/.test(q)) {
@@ -8517,6 +8522,48 @@ function leOpenNewSellerModal(prefilledName){
 
 function leCloseNewSellerModal(){
   document.getElementById('le-newseller-modal').style.display = 'none';
+}
+
+// ── Duplicate-warning helpers (shared by Seller + Buyer modals) ────
+// Hits the resource's existing `?search=` endpoint (LIKE match, fast,
+// indexed) and filters down to rows whose `field` exactly equals
+// `value` (case-insensitive). Returns at most 5 rows for compact UI.
+async function findExactDuplicates(endpoint, field, value, excludeId) {
+  const v = String(value || '').trim();
+  if (!v) return [];
+  try {
+    const data = await j(`${endpoint}?search=${encodeURIComponent(v)}&pageSize=50`);
+    const rows = Array.isArray(data) ? data : (data && Array.isArray(data.rows) ? data.rows : []);
+    const vU = v.toUpperCase();
+    return rows.filter(r => {
+      if (excludeId && Number(r.id) === Number(excludeId)) return false;
+      return String(r[field] || '').trim().toUpperCase() === vU;
+    }).slice(0, 5);
+  } catch (e) {
+    return [];
+  }
+}
+
+function renderDuplicateWarning(warnEl, label, rows, formatter) {
+  if (!warnEl) return;
+  if (!rows.length) {
+    warnEl.style.display = 'none';
+    warnEl.innerHTML = '';
+    return;
+  }
+  const safe = (s) => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const list = rows.map(r => safe(formatter(r))).join(', ');
+  warnEl.style.cssText = 'display:block;color:#92400E;background:#FEF3C7;padding:6px 10px;border-radius:6px;font-size:12px;margin-top:4px;border:1px solid #FDE68A';
+  warnEl.innerHTML = `⚠ ${safe(label)}: ${list}`;
+}
+
+async function leNsCheckPanDup() {
+  const pan = (document.getElementById('le-ns-pan').value || '').trim();
+  const warnEl = document.getElementById('le-ns-pan-warn');
+  if (!pan) { if (warnEl) warnEl.style.display = 'none'; return; }
+  const dups = await findExactDuplicates('/api/traders', 'pan', pan);
+  renderDuplicateWarning(warnEl, `PAN ${pan.toUpperCase()} already on seller`,
+    dups, t => `${t.name}${t.tel ? ` · ${t.tel}` : ''}`);
 }
 
 async function leSaveNewSeller(){
@@ -11908,6 +11955,8 @@ function openTraderAdd(){
   document.getElementById('trader-modal-title').textContent='Add Seller';
   document.getElementById('t-id').value='';
   T_FIELDS.forEach(f=>{const el=document.getElementById(T_IDS[f]);if(el)el.value=''});
+  const _w = document.getElementById('t-pan-warn');
+  if (_w) { _w.style.display = 'none'; _w.innerHTML = ''; }
   // Start with a single blank bank row so the user sees the shape of the
   // input without having to click "+ Add Bank" first. If they leave it
   // empty, saveTrader() just drops it.
@@ -11933,6 +11982,8 @@ async function openTraderEdit(tOrId){
   document.getElementById('trader-modal-title').textContent='Edit Seller';
   document.getElementById('t-id').value=t.id;
   T_FIELDS.forEach(f=>{const el=document.getElementById(T_IDS[f]);if(el)el.value=t[f]||''});
+  const _w = document.getElementById('t-pan-warn');
+  if (_w) { _w.style.display = 'none'; _w.innerHTML = ''; }
   // Prefer `banks` from the hydrated trader row; fall back to the legacy
   // flat ifsc/acctnum (older records predate trader_banks).
   const banks = (t.banks && t.banks.length)
@@ -11987,6 +12038,16 @@ function collectBankRows(){
     banks.push({ bank_name, acctnum, ifsc, holder_name });
   }
   return banks;
+}
+
+async function tCheckPanDup() {
+  const pan = (document.getElementById('t-pan').value || '').trim();
+  const excludeId = document.getElementById('t-id').value;
+  const warnEl = document.getElementById('t-pan-warn');
+  if (!pan) { if (warnEl) warnEl.style.display = 'none'; return; }
+  const dups = await findExactDuplicates('/api/traders', 'pan', pan, excludeId);
+  renderDuplicateWarning(warnEl, `PAN ${pan.toUpperCase()} already on seller`,
+    dups, t => `${t.name}${t.tel ? ` · ${t.tel}` : ''}`);
 }
 
 async function saveTrader(){
@@ -12239,6 +12300,15 @@ const BulkActions = (function(){
     // `data-bulk-action="<id>"` (and an optional matching count span
     // with `data-bulk-count="<id>"`) into the toolbar.
     document.querySelectorAll(`[data-bulk-action="${id}"]`).forEach(el => {
+      // Belt-and-suspenders for feature-flagged buttons: never unhide one
+      // whose flag is OFF, even when items are ticked. CSS rule at the
+      // top of the file already hides them with !important, but mirroring
+      // the gate in JS keeps the button truly inert if the CSS ever drifts.
+      if (el.classList.contains('feat-bulk-set-buyer-code') &&
+          document.body.getAttribute('data-feat-bulk-set-buyer-code') !== '1') {
+        el.style.display = 'none';
+        return;
+      }
       el.style.display = ticked > 0 ? '' : 'none';
     });
     document.querySelectorAll(`[data-bulk-count="${id}"]`).forEach(el => {
@@ -12503,16 +12573,24 @@ function viewBuyerDetails(b){
   showModal('buyer-view-modal');
 }
 
+function _bResetDupWarnings(){
+  ['b-buyer-warn','b-code-warn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+  });
+}
 function openBuyerAdd(){
   document.getElementById('buyer-modal-title').textContent='Add Buyer';
   document.getElementById('b-id').value='';
   B_FIELDS.forEach(f=>{const el=document.getElementById(B_IDS[f]);if(el)el.value=''});
+  _bResetDupWarnings();
   showModal('buyer-modal');
 }
 function openBuyerEdit(b){
   document.getElementById('buyer-modal-title').textContent='Edit Buyer';
   document.getElementById('b-id').value=b.id;
   B_FIELDS.forEach(f=>{const el=document.getElementById(B_IDS[f]);if(el)el.value=b[f]||''});
+  _bResetDupWarnings();
   showModal('buyer-modal');
 }
 // Clone: pre-fill all fields from an existing buyer. The primary key
@@ -12536,8 +12614,29 @@ function openBuyerClone(b){
   // Focus + select the Buyer Code input so typing replaces the suggestion
   const codeEl=document.getElementById(B_IDS.buyer);
   if(codeEl){setTimeout(()=>{codeEl.focus();codeEl.select();},60)}
+  _bResetDupWarnings();
   showModal('buyer-modal');
 }
+async function bCheckBuyerDup() {
+  const buyer = (document.getElementById('b-buyer').value || '').trim();
+  const excludeId = document.getElementById('b-id').value;
+  const warnEl = document.getElementById('b-buyer-warn');
+  if (!buyer) { if (warnEl) warnEl.style.display = 'none'; return; }
+  const dups = await findExactDuplicates('/api/buyers', 'buyer', buyer, excludeId);
+  renderDuplicateWarning(warnEl, `Buyer Code "${buyer}" already on buyer`,
+    dups, b => `${b.buyer1 || b.buyer}${b.pla ? ` · ${b.pla}` : ''}`);
+}
+
+async function bCheckCodeDup() {
+  const code = (document.getElementById('b-code').value || '').trim();
+  const excludeId = document.getElementById('b-id').value;
+  const warnEl = document.getElementById('b-code-warn');
+  if (!code) { if (warnEl) warnEl.style.display = 'none'; return; }
+  const dups = await findExactDuplicates('/api/buyers', 'code', code, excludeId);
+  renderDuplicateWarning(warnEl, `Alias "${code.toUpperCase()}" already on buyer`,
+    dups, b => `${b.buyer1 || b.buyer}${b.pla ? ` · ${b.pla}` : ''}`);
+}
+
 async function saveBuyer(){
   const id=document.getElementById('b-id').value;
   const body={};B_FIELDS.forEach(f=>{const el=document.getElementById(B_IDS[f]);body[f]=el?el.value:''});
