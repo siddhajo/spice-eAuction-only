@@ -1388,7 +1388,17 @@ function syncTraderBanks(db, traderId, banks) {
 app.post('/api/traders', requireTraderWrite, (req, res) => {
   const t = req.body;
   const db = getDb();
-  const info = db.run(`INSERT INTO traders (name,cr,pan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name) 
+  // Hard-block duplicate sellers by PAN — schema doesn't enforce uniqueness
+  // but desktop + PWA UIs both expect PAN to be unique. Done server-side so
+  // every code path (desktop, PWA mobile, direct API callers) is protected.
+  const _panChk = String(t.pan || '').trim();
+  if (_panChk) {
+    const _exist = db.get('SELECT id, name FROM traders WHERE UPPER(TRIM(pan)) = UPPER(?) LIMIT 1', [_panChk]);
+    if (_exist) {
+      return res.status(409).json({ error: `PAN ${_panChk.toUpperCase()} already on seller "${_exist.name}"` });
+    }
+  }
+  const info = db.run(`INSERT INTO traders (name,cr,pan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [t.name,t.cr||'',t.pan||'',t.tel||'',t.aadhar||'',t.padd||'',t.ppla||'',t.pin||'',t.pstate||'',t.pst_code||'',t.ifsc||'',t.acctnum||'',t.holder_name||'']);
   // If the client sent a banks array (new multi-bank UI), persist them.
@@ -1401,6 +1411,18 @@ app.post('/api/traders', requireTraderWrite, (req, res) => {
 app.put('/api/traders/:id', requireTraderWrite, (req, res) => {
   const t = req.body;
   const db = getDb();
+  // Same PAN-uniqueness guard as POST, but exclude this row's own id so
+  // editing a seller without changing the PAN still works.
+  const _panChk = String(t.pan || '').trim();
+  if (_panChk) {
+    const _exist = db.get(
+      'SELECT id, name FROM traders WHERE UPPER(TRIM(pan)) = UPPER(?) AND id <> ? LIMIT 1',
+      [_panChk, req.params.id]
+    );
+    if (_exist) {
+      return res.status(409).json({ error: `PAN ${_panChk.toUpperCase()} already on seller "${_exist.name}"` });
+    }
+  }
   // Unified seller schema — preserve whatsapp + email alongside the core
   // fields. Either app can edit either field; the other app sees the
   // change on the next fetch. (The mobile bridge also serves PUT on
@@ -1708,7 +1730,25 @@ app.get('/api/buyers', requireView, (req, res) => {
 });
 app.post('/api/buyers', requireBuyerWrite, (req, res) => {
   const b = req.body;
-  getDb().run(`INSERT INTO buyers (
+  const db = getDb();
+  // Hard-block duplicate buyers by Buyer Code (`buyer`) and Short Alias
+  // (`code`). Schema doesn't enforce uniqueness but the UIs expect both
+  // to be unique; server check protects every code path.
+  const _buyerChk = String(b.buyer || '').trim();
+  if (_buyerChk) {
+    const _exist = db.get('SELECT id, buyer1, buyer FROM buyers WHERE UPPER(TRIM(buyer)) = UPPER(?) LIMIT 1', [_buyerChk]);
+    if (_exist) {
+      return res.status(409).json({ error: `Buyer Code "${_buyerChk}" already on buyer "${_exist.buyer1 || _exist.buyer}"` });
+    }
+  }
+  const _codeChk = String(b.code || '').trim();
+  if (_codeChk) {
+    const _exist = db.get('SELECT id, buyer1, buyer FROM buyers WHERE UPPER(TRIM(code)) = UPPER(?) LIMIT 1', [_codeChk]);
+    if (_exist) {
+      return res.status(409).json({ error: `Short alias "${_codeChk.toUpperCase()}" already on buyer "${_exist.buyer1 || _exist.buyer}"` });
+    }
+  }
+  db.run(`INSERT INTO buyers (
       buyer, buyer1, code, sbl, add1, add2, pla, pin, state, st_code,
       gstin, pan, tel, ti, sale, email, tdsq,
       cbuyer1, cadd1, cadd2, cpla, cpin, cstate, cst_code, cgstin
@@ -1720,7 +1760,30 @@ app.post('/api/buyers', requireBuyerWrite, (req, res) => {
 });
 app.put('/api/buyers/:id', requireBuyerWrite, (req, res) => {
   const b = req.body;
-  getDb().run(`UPDATE buyers SET
+  const db = getDb();
+  // Same uniqueness guards as POST, with the row's own id excluded so
+  // re-saving an unchanged buyer still works.
+  const _buyerChk = String(b.buyer || '').trim();
+  if (_buyerChk) {
+    const _exist = db.get(
+      'SELECT id, buyer1, buyer FROM buyers WHERE UPPER(TRIM(buyer)) = UPPER(?) AND id <> ? LIMIT 1',
+      [_buyerChk, req.params.id]
+    );
+    if (_exist) {
+      return res.status(409).json({ error: `Buyer Code "${_buyerChk}" already on buyer "${_exist.buyer1 || _exist.buyer}"` });
+    }
+  }
+  const _codeChk = String(b.code || '').trim();
+  if (_codeChk) {
+    const _exist = db.get(
+      'SELECT id, buyer1, buyer FROM buyers WHERE UPPER(TRIM(code)) = UPPER(?) AND id <> ? LIMIT 1',
+      [_codeChk, req.params.id]
+    );
+    if (_exist) {
+      return res.status(409).json({ error: `Short alias "${_codeChk.toUpperCase()}" already on buyer "${_exist.buyer1 || _exist.buyer}"` });
+    }
+  }
+  db.run(`UPDATE buyers SET
       buyer=?, buyer1=?, code=?, sbl=?, add1=?, add2=?, pla=?, pin=?, state=?, st_code=?,
       gstin=?, pan=?, tel=?, ti=?, sale=?, email=?, tdsq=?,
       cbuyer1=?, cadd1=?, cadd2=?, cpla=?, cpin=?, cstate=?, cst_code=?, cgstin=?
