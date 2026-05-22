@@ -1513,14 +1513,27 @@ app.post('/api/traders/quick', requireAnyPermission('trader_write', 'lot_write')
   const panTrim  = String(t.pan || '').trim().toUpperCase();
   const telTrim  = String(t.tel || '').trim();
   let existing = null;
+  // UPPER(TRIM(...)) on the stored side so legacy rows with stray
+  // whitespace (common from XLSX imports) still match. The earlier
+  // `pan = ? COLLATE NOCASE` form was whitespace-blind and let
+  // duplicate sellers slip through this Lot Entry quick-add path.
   if (crTrim) {
-    existing = db.get('SELECT * FROM traders WHERE cr = ? COLLATE NOCASE LIMIT 1', [crTrim]);
+    existing = db.get(
+      'SELECT * FROM traders WHERE UPPER(TRIM(cr)) = UPPER(?) LIMIT 1',
+      [crTrim]
+    );
   }
   if (!existing && panTrim) {
-    existing = db.get('SELECT * FROM traders WHERE pan = ? COLLATE NOCASE LIMIT 1', [panTrim]);
+    existing = db.get(
+      'SELECT * FROM traders WHERE UPPER(TRIM(pan)) = UPPER(?) LIMIT 1',
+      [panTrim]
+    );
   }
   if (!existing && telTrim) {
-    existing = db.get('SELECT * FROM traders WHERE name = ? AND tel = ? LIMIT 1', [nameTrim, telTrim]);
+    existing = db.get(
+      'SELECT * FROM traders WHERE UPPER(TRIM(name)) = UPPER(?) AND TRIM(tel) = ? LIMIT 1',
+      [nameTrim, telTrim]
+    );
   }
   if (existing) {
     existing.banks = db.all(
@@ -1610,16 +1623,36 @@ app.post('/api/traders/import', requireTraderWrite, upload.single('file'), async
       const name = mapCol(row, 'NAME', 'SELLER', 'POOLER', 'TRADER');
       if (!name) { skipped++; continue; }
 
-      const cr = mapCol(row, 'CR', 'GSTIN', 'CR_NO', 'CRNO');
+      const cr  = mapCol(row, 'CR', 'GSTIN', 'CR_NO', 'CRNO');
+      // Normalize PAN to UPPER + trimmed BEFORE both the dedup check and
+      // the INSERT, so a single canonical form lands in the DB and
+      // future dedup checks against legacy whitespace-padded rows still
+      // match.
+      const pan = mapCol(row, 'PAN', 'PAN_NO').toUpperCase();
       if (mode === 'append') {
-        const existing = db.get('SELECT id FROM traders WHERE name = ? AND cr = ?', [name, cr]);
+        // PAN dedup runs FIRST in append mode — a registered seller is
+        // uniquely identified by their PAN, so an XLSX row carrying a
+        // PAN already present in the master must be skipped even when
+        // the name / CR differs (typo / re-export / etc.). The legacy
+        // `(name, cr)` check stays as a fallback for PAN-less rows.
+        if (pan) {
+          const dup = db.get(
+            'SELECT id FROM traders WHERE UPPER(TRIM(pan)) = UPPER(?) LIMIT 1',
+            [pan]
+          );
+          if (dup) { skipped++; continue; }
+        }
+        const existing = db.get(
+          'SELECT id FROM traders WHERE UPPER(TRIM(name)) = UPPER(?) AND UPPER(TRIM(cr)) = UPPER(?) LIMIT 1',
+          [name, cr]
+        );
         if (existing) { skipped++; continue; }
       }
 
-      db.run(`INSERT INTO traders (name,cr,pan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name) 
+      db.run(`INSERT INTO traders (name,cr,pan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [name, cr,
-         mapCol(row, 'PAN', 'PAN_NO'),
+         pan,
          mapCol(row, 'TEL', 'PHONE', 'MOBILE', 'CONTACT'),
          mapCol(row, 'AADHAR', 'AADHAAR', 'AADHAR_NO'),
          mapCol(row, 'PADD', 'ADDRESS', 'ADD', 'ADD1', 'ADDRESS1'),

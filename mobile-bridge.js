@@ -737,9 +737,15 @@ function mountMobile(app, deps) {
     const panTrim  = String(t.pan || '').trim().toUpperCase();
     const telTrim  = String(t.tel || '').trim();
 
-    // Strict uniqueness — GSTIN (cr) is the strongest identifier
+    // Strict uniqueness — GSTIN (cr) is the strongest identifier.
+    // Compare via UPPER(TRIM(...)) so legacy rows with stray whitespace
+    // (common from XLSX imports) still match — a `pan = ? COLLATE NOCASE`
+    // check is whitespace-blind and was letting duplicates through.
     if (crTrim) {
-      const dup = db.get('SELECT * FROM traders WHERE cr = ? COLLATE NOCASE LIMIT 1', [crTrim]);
+      const dup = db.get(
+        'SELECT * FROM traders WHERE UPPER(TRIM(cr)) = UPPER(?) LIMIT 1',
+        [crTrim]
+      );
       if (dup) {
         dup.banks = db.all(
           'SELECT * FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id', [dup.id]
@@ -747,9 +753,12 @@ function mountMobile(app, deps) {
         return res.json({ trader: dup, deduped: true, reason: 'GSTIN match' });
       }
     }
-    // PAN is the next strongest
+    // PAN is the next strongest. Same TRIM-tolerant comparison.
     if (panTrim) {
-      const dup = db.get('SELECT * FROM traders WHERE pan = ? COLLATE NOCASE LIMIT 1', [panTrim]);
+      const dup = db.get(
+        'SELECT * FROM traders WHERE UPPER(TRIM(pan)) = UPPER(?) LIMIT 1',
+        [panTrim]
+      );
       if (dup) {
         dup.banks = db.all(
           'SELECT * FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id', [dup.id]
@@ -811,15 +820,22 @@ function mountMobile(app, deps) {
     if (emailClean && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailClean)) {
       return res.status(400).json({ error: 'Invalid email format' });
     }
-    // Uniqueness re-check on cr / pan changes
+    // Uniqueness re-check on cr / pan changes. UPPER(TRIM(...)) on the
+    // stored side so legacy rows with stray whitespace still collide
+    // — a plain `pan = ? COLLATE NOCASE` is whitespace-blind and was
+    // letting duplicates through on edit.
     if (t.cr != null && String(t.cr).trim() && String(t.cr).trim() !== trader.cr) {
-      const dup = db.get('SELECT id FROM traders WHERE cr = ? COLLATE NOCASE AND id != ?',
-        [String(t.cr).trim(), id]);
+      const dup = db.get(
+        'SELECT id FROM traders WHERE UPPER(TRIM(cr)) = UPPER(?) AND id != ?',
+        [String(t.cr).trim(), id]
+      );
       if (dup) return res.status(409).json({ error: 'Another seller already has this GSTIN' });
     }
     if (t.pan != null && String(t.pan).trim() && String(t.pan).trim().toUpperCase() !== trader.pan) {
-      const dup = db.get('SELECT id FROM traders WHERE pan = ? COLLATE NOCASE AND id != ?',
-        [String(t.pan).trim().toUpperCase(), id]);
+      const dup = db.get(
+        'SELECT id FROM traders WHERE UPPER(TRIM(pan)) = UPPER(?) AND id != ?',
+        [String(t.pan).trim().toUpperCase(), id]
+      );
       if (dup) return res.status(409).json({ error: 'Another seller already has this PAN' });
     }
     // Partial update — only write fields that were sent. Mobile sends a
