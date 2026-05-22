@@ -3415,7 +3415,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
           <!-- Print group -->
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
-            <button class="btn" style="height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(16,185,129,.28)" onclick="printSelectedInvoices()" title="Print all ticked invoices">🖨 Print Selected</button>
+            <button class="btn" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(16,185,129,.28)" onclick="printSelectedInvoices()" title="Print all ticked invoices">🖨 Print Selected</button>
             <button id="inv-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedInvoices()" title="Delete all ticked invoices">🗑 Delete Selected <span id="inv-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <!-- ASP-only: Print Selected Purchase. Hidden outside ASP context.
                  Visibility toggled by applyAspContextVisibility() at load + state switch. -->
@@ -3423,7 +3423,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <!-- Lorry no: bulk-set vehicle number on ticked invoices.
                  Stored in invoices.lorry_no, picked up by the Tally
                  sales voucher generator as e-way bill VehicleNo. -->
-            <button class="btn" style="height:38px;padding:0 16px;background:var(--spice-cardamom);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(22,101,52,.22)" onclick="setLorryNoForSelected()" title="Set the lorry / vehicle number on ticked invoices (used by Tally sales voucher e-way bill)">🚚 Set Lorry No</button>
+            <button class="btn" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 16px;background:var(--spice-cardamom);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(22,101,52,.22)" onclick="setLorryNoForSelected()" title="Set the lorry / vehicle number on ticked invoices (used by Tally sales voucher e-way bill)">🚚 Set Lorry No</button>
           </div>
 
           <!-- Destructive group — pushed right -->
@@ -3497,8 +3497,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
-            <button class="btn" style="height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(16,185,129,.28)" onclick="printSelectedPurchases()" title="Print all ticked purchase invoices">🖨 Print Selected</button>
-            <button class="btn feat-whatsapp" style="height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedPurchases()" title="Send merged PDF of ticked purchase invoices via WhatsApp">📱 WhatsApp Selected</button>
+            <button class="btn" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(16,185,129,.28)" onclick="printSelectedPurchases()" title="Print all ticked purchase invoices">🖨 Print Selected</button>
+            <button class="btn feat-whatsapp" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedPurchases()" title="Send merged PDF of ticked purchase invoices via WhatsApp">📱 WhatsApp Selected</button>
             <button id="pur-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedPurchases()" title="Delete all ticked purchase invoices">🗑 Delete Selected <span id="pur-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           </div>
 
@@ -3572,8 +3572,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <button id="pay-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedPayments()" title="Delete the lots for the selected sellers in this auction">🗑 Delete Selected <span id="pay-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
-            <button class="btn" style="height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedPayments()" title="Print payment statements for ticked sellers">🖨 Print Selected</button>
-            <button class="btn feat-whatsapp" style="height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600" onclick="whatsappSelectedPayments()" title="Send merged payment statements via WhatsApp">📱 WhatsApp Selected</button>
+            <button class="btn" data-sel-toolbar="pay" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedPayments()" title="Print payment statements for ticked sellers">🖨 Print Selected</button>
+            <button class="btn feat-whatsapp" data-sel-toolbar="pay" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600" onclick="whatsappSelectedPayments()" title="Send merged payment statements via WhatsApp">📱 WhatsApp Selected</button>
           </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
@@ -3780,8 +3780,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
-            <button class="btn" style="height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(16,185,129,.28)" onclick="printSelectedBills()" title="Print all ticked bills">🖨 Print Selected</button>
-            <button class="btn btn-o" style="height:38px;padding:0 16px;font-weight:600" onclick="printSelectedCommissionBoS()" title="Print Commission Bill (Memorandum) for all ticked bills — one A4 page per bill, matches IMCPC reference format">🧾 Commission Bill Selected</button>
+            <button class="btn" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(16,185,129,.28)" onclick="printSelectedBills()" title="Print all ticked bills">🖨 Print Selected</button>
+            <button class="btn btn-o" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;font-weight:600" onclick="printSelectedCommissionBoS()" title="Print Commission Bill (Memorandum) for all ticked bills — one A4 page per bill, matches IMCPC reference format">🧾 Commission Bill Selected</button>
             <button id="bill-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedBills()" title="Delete all ticked bills">🗑 Delete Selected <span id="bill-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           </div>
 
@@ -8567,39 +8567,65 @@ async function leNsCheckPanDup() {
 }
 
 async function leSaveNewSeller(){
-  const name = (document.getElementById('le-ns-name').value || '').trim();
-  const err  = document.getElementById('le-ns-err');
-  const showErr = (msg) => { err.textContent = msg; err.style.display = 'block'; };
-  if (!name) return showErr('Name is required');
-
-  // Hard-block duplicates by PAN — mirrors saveTrader / saveBuyer.
-  // Server-side dedup on /api/traders/quick still runs as a fallback,
-  // but blocking at the client surfaces the conflict explicitly instead
-  // of silently merging into the existing row.
-  const _panRaw = (document.getElementById('le-ns-pan').value || '').trim();
-  if (_panRaw) {
-    const _dups = await findExactDuplicates('/api/traders', 'pan', _panRaw);
-    if (_dups.length) {
-      showErr(`PAN ${_panRaw.toUpperCase()} already on seller: ${_dups.map(t => t.name).join(', ')}. Cancel and search for the existing seller.`);
-      return;
-    }
-  }
-
-  const payload = {
-    name,
-    cr:     (document.getElementById('le-ns-cr').value   || '').trim(),
-    pan:    (document.getElementById('le-ns-pan').value  || '').trim(),
-    tel:    (document.getElementById('le-ns-tel').value  || '').trim(),
-    padd:   (document.getElementById('le-ns-padd').value || '').trim(),
-    ppla:   (document.getElementById('le-ns-ppla').value || '').trim(),
-    pin:    (document.getElementById('le-ns-pin').value  || '').trim(),
-    pstate: (document.getElementById('le-ns-pstate').value || getDefaultBusinessState()),
-    pst_code: (document.getElementById('le-ns-pst').value || (getDefaultBusinessState() === 'KERALA' ? '32' : '33')).trim(),
+  const err = document.getElementById('le-ns-err');
+  const btn = document.getElementById('le-ns-save');
+  // Remember the original button label so we can restore it after the
+  // request finishes. We deliberately change the text to "Saving…" so
+  // the user has visible feedback that their click did something — the
+  // previous "disable only" path looked identical to a frozen click on
+  // any network slower than ~200ms.
+  const origLabel = btn ? btn.textContent : 'Add & Continue';
+  const showErr = (msg) => {
+    if (!err) { alert(msg); return; } // last-resort fallback if the DOM was rewritten
+    err.textContent = msg;
+    err.style.display = 'block';
+    // Scroll the pill into view in case the modal is taller than the
+    // viewport (common on phones / small laptops).
+    try { err.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+  };
+  const setBusy = (busy) => {
+    if (!btn) return;
+    btn.disabled = busy;
+    btn.textContent = busy ? 'Saving…' : origLabel;
   };
 
-  const btn = document.getElementById('le-ns-save');
-  btn.disabled = true;
+  // Wrap the WHOLE function in try/catch so any unexpected error — a
+  // missing DOM node, a network blip, a server 500, a JSON parse fail —
+  // shows up as a readable message inside the modal instead of getting
+  // swallowed into the console while the user stares at a hung button.
   try {
+    // Clear any prior error so the user can see this attempt's result
+    // even if it's the same message text.
+    if (err) { err.style.display = 'none'; err.textContent = ''; }
+
+    const name = (document.getElementById('le-ns-name').value || '').trim();
+    if (!name) { showErr('Name is required.'); return; }
+
+    // Client-side PAN dedup — surfaces a clear message before the
+    // round trip. Server-side dedup on /api/traders/quick still runs
+    // as the source of truth.
+    const _panRaw = (document.getElementById('le-ns-pan').value || '').trim();
+    if (_panRaw) {
+      const _dups = await findExactDuplicates('/api/traders', 'pan', _panRaw);
+      if (_dups.length) {
+        showErr(`PAN ${_panRaw.toUpperCase()} is already on seller: ${_dups.map(t => t.name).join(', ')}. Cancel this dialog and search for the existing seller instead.`);
+        return;
+      }
+    }
+
+    const payload = {
+      name,
+      cr:     (document.getElementById('le-ns-cr').value   || '').trim(),
+      pan:    _panRaw,
+      tel:    (document.getElementById('le-ns-tel').value  || '').trim(),
+      padd:   (document.getElementById('le-ns-padd').value || '').trim(),
+      ppla:   (document.getElementById('le-ns-ppla').value || '').trim(),
+      pin:    (document.getElementById('le-ns-pin').value  || '').trim(),
+      pstate: (document.getElementById('le-ns-pstate').value || getDefaultBusinessState()),
+      pst_code: (document.getElementById('le-ns-pst').value || (getDefaultBusinessState() === 'KERALA' ? '32' : '33')).trim(),
+    };
+
+    setBusy(true);
     const result = await j('/api/traders/quick', { method: 'POST', body: JSON.stringify(payload) });
     if (result && result.deduped) {
       toast(`Existing seller picked: ${result.trader.name}`);
@@ -8607,13 +8633,26 @@ async function leSaveNewSeller(){
       toast(`Seller ${name} added ✓`);
     }
     leCloseNewSellerModal();
-    if (result && result.trader) {
-      lePickSeller(result.trader);
-    }
+    if (result && result.trader) lePickSeller(result.trader);
   } catch (e) {
-    showErr(e.message || 'Failed to add seller');
+    // Resolve the most useful message we can show. Order:
+    //   1. Server's own error text (e.body.error) — most specific
+    //   2. friendlyErr() mapping for HTTP / network errors
+    //   3. Raw e.message
+    //   4. Generic fallback so we NEVER show a blank pill
+    const serverMsg = e && e.body && e.body.error;
+    const friendly  = (typeof friendlyErr === 'function') ? friendlyErr(e) : null;
+    const msg = serverMsg || friendly || (e && e.message)
+      || 'Could not add seller. Check your input and your internet connection, then try again.';
+    showErr(msg);
+    // Stash the full error in the console so support can diagnose
+    // without us having to surface stack traces to the user.
+    console.error('leSaveNewSeller failed:', e);
   } finally {
-    btn.disabled = false;
+    // Always re-enable the button + restore its label. Even when the
+    // happy path closes the modal (so the user never sees this), the
+    // next open of the modal starts in a clean state.
+    setBusy(false);
   }
 }
 
@@ -14797,6 +14836,12 @@ function syncInvoiceMaster(){
   const counter = document.getElementById('inv-sel-count');
   if (delBtn)  delBtn.style.display = ticked > 0 ? '' : 'none';
   if (counter) counter.textContent  = ticked > 0 ? `(${ticked})` : '';
+  // Every "Selected" toolbar button on this tab — Print Selected, Set
+  // Lorry No — is tagged `data-sel-toolbar="inv"` so visibility tracks
+  // the ticked-row count uniformly.
+  document.querySelectorAll('[data-sel-toolbar="inv"]').forEach(el => {
+    el.style.display = ticked > 0 ? '' : 'none';
+  });
 }
 // Delete Selected for Invoices — parallel DELETE per ticked row, single
 // confirm dialog up front. Re-uses the existing inv-select-cb checkbox
@@ -14963,6 +15008,9 @@ function syncPurchaseMaster(){
   const counter = document.getElementById('pur-sel-count');
   if (delBtn)  delBtn.style.display = ticked > 0 ? '' : 'none';
   if (counter) counter.textContent  = ticked > 0 ? `(${ticked})` : '';
+  document.querySelectorAll('[data-sel-toolbar="pur"]').forEach(el => {
+    el.style.display = ticked > 0 ? '' : 'none';
+  });
 }
 async function deleteSelectedPurchases(){
   const body=document.getElementById('purchases-list');
@@ -15017,6 +15065,9 @@ function syncBillMaster(){
   const counter = document.getElementById('bill-sel-count');
   if (delBtn)  delBtn.style.display = ticked > 0 ? '' : 'none';
   if (counter) counter.textContent  = ticked > 0 ? `(${ticked})` : '';
+  document.querySelectorAll('[data-sel-toolbar="bill"]').forEach(el => {
+    el.style.display = ticked > 0 ? '' : 'none';
+  });
 }
 async function deleteSelectedBills(){
   const body=document.getElementById('bills-list');
@@ -15597,6 +15648,9 @@ function updatePaymentBulkButtons() {
     master.checked = checked > 0 && checked === total;
     master.indeterminate = checked > 0 && checked < total;
   }
+  document.querySelectorAll('[data-sel-toolbar="pay"]').forEach(el => {
+    el.style.display = checked > 0 ? '' : 'none';
+  });
 }
 
 async function deleteSelectedPayments() {
