@@ -1789,6 +1789,13 @@ body[data-comfort="1"] #comfort-toggle-label::after{content:'\2191';margin-left:
   padding:14px;text-align:center;font-size:11px;color:var(--text3);
 }
 body[data-comfort="1"] .le-lot-chip{min-width:48px;height:34px;font-size:13px}
+/* le-lotno turns red when the typed number matches an already-used chip,
+   so the operator notices before tabbing into bags/weight. */
+#le-lotno.le-lotno-used{
+  border-color:#C62828 !important;
+  background:#FEE2E2 !important;
+  color:#991B1B;
+}
 
 /* ── Lot-entry print toolbar (Print Selected / by Seller / Clear) ── */
 .le-toolbar-btn{
@@ -2133,6 +2140,14 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>
       <h1><span class="dot"><img id="topbar-logo-img" alt="" onerror="this.remove()"></span> <span id="topbar-brand-name">Admin Console</span></h1>
+      <!-- Shared trade selector — picking here defaults every other tab's
+           auction dropdown (Lots, Sales, Purchases, Bills, Payments, …)
+           to the same trade. Hidden until loadTopbarTradeSelector() has
+           found at least one auction. -->
+      <div id="topbar-trade-wrap" style="display:none;align-items:center;gap:6px;margin-left:14px;padding-left:14px;border-left:1px solid var(--spice-line)">
+        <span style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Auction</span>
+        <select id="topbar-trade" onchange="setSharedAucId(this.value, 'topbar')" title="Selected auction — applies to every tab that reads an auction" style="height:32px;padding:0 10px;border:1px solid var(--border);border-radius:6px;background:#fff;font-size:13px;font-weight:600;min-width:220px"></select>
+      </div>
     </div>
     <div style="display:flex;gap:10px;align-items:center">
       <span id="sync-indicator" class="sync-pill sync-ok" title="Last successful sync"></span>
@@ -3202,6 +3217,18 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </button>
           <button id="le-print-clear-btn" type="button" onclick="leClearPrintSelection()" class="le-toolbar-btn le-tb-ghost" style="display:none">Clear</button>
         </h3>
+        <!-- Seller filter: type-ahead by seller name. Hits /api/lots's
+             `name` LIKE filter so the search runs across the WHOLE trade,
+             not just the currently-loaded window. Datalist suggests
+             existing sellers in this trade for quick exact-pick. -->
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <div style="position:relative;flex:1;min-width:220px;max-width:360px">
+            <input type="search" id="le-recent-search" list="le-recent-sellers" placeholder="Filter by seller name…" oninput="leOnRecentSearchInput()" autocomplete="off"
+                   style="width:100%;height:34px;padding:0 32px 0 12px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px">
+            <datalist id="le-recent-sellers"></datalist>
+          </div>
+          <span id="le-recent-search-status" style="font-size:11.5px;color:var(--text3)"></span>
+        </div>
         <div id="le-recent-list" style="font-size:13px"></div>
       </div>
 
@@ -5812,6 +5839,9 @@ async function login(){
   // navigates to Settings.
   try { await loadSettings(); } catch(_) {}
   try { await applyFeatureFlags(); } catch(_) {}
+  // Topbar trade selector — fire-and-forget so login completion isn't
+  // gated on /api/auctions. Failures just hide the widget.
+  try { loadTopbarTradeSelector(); } catch(_) {}
   // lot_entry users land directly on the Lot Entry tab — they can't see
   // dash/anything else anyway, so this saves a click.
   go(window._userRole === 'lot_entry' ? 'lotentry' : 'dash');
@@ -5830,6 +5860,10 @@ function logout(){h('/api/logout',{method:'POST'});T='';localStorage.removeItem(
   window._userRole=null;window._userPerms=new Set();
   window._forcePwCurrent = null;
   const fpw = document.getElementById('force-pw-modal'); if (fpw) fpw.style.display = 'none';
+  // Clear the shared trade selection so the next user (or this user on
+  // a different account) doesn't inherit the previous session's pick.
+  try { sessionStorage.removeItem('spice.sharedAucId'); } catch(_) {}
+  const tw = document.getElementById('topbar-trade-wrap'); if (tw) tw.style.display = 'none';
   // Hide role badge + clear perm attributes (or stale hides persist on next login)
   for (const attr of Array.from(document.body.attributes)) {
     if (attr.name.startsWith('data-perm-')) document.body.removeAttribute(attr.name);
@@ -5942,6 +5976,7 @@ applyBranding();
   // ensures the topbar badge shows the correct Logo Code on tab open.
   try { await loadSettings(); } catch(_) {}
   try { await applyFeatureFlags(); } catch(_) {}
+  try { loadTopbarTradeSelector(); } catch(_) {}
   go(window._userRole === 'lot_entry' ? 'lotentry' : 'dash');}catch(e){T='';localStorage.removeItem('t')}})();
 
 // ── Navigation ────────────────────────────────────────────
@@ -7675,8 +7710,10 @@ const _le = {
   selectedBankId: null,    // chosen bank account id (null if seller has no banks)
   searchTimer: null,       // debounce timer for seller search
   recentLots: [],          // currently-loaded window of lots (server-paginated, lot_no DESC)
-  recentTotal: 0,          // total rows in this trade (from server) — drives Load More gating
+  recentTotal: 0,          // total rows matching current filter (from server) — drives Load More gating
   recentOffset: 0,         // rows already fetched from server; next Load More uses this as offset
+  recentSearch: '',        // active seller-name filter (LIKE on lots.name via /api/lots?name=)
+  recentSearchTimer: null, // debounce timer for the search input
   sampleWeight: 0,         // from settings (sample_weight key, defaults to 0)
   defaultLitre: '',        // from settings — pre-fills litre input on each new lot
   showMoisture: false,     // from settings — toggles the moisture column/input
@@ -7755,6 +7792,13 @@ async function leSaveNewTrade(){
     if (result && result.id) {
       sel.value = String(result.id);
       leOnAuctionChange();
+    }
+    // Refresh the topbar selector so the new trade appears for every
+    // other tab too. Then broadcast it as the active selection so
+    // tabs visited next pick up the right trade by default.
+    try { loadTopbarTradeSelector(); } catch(_) {}
+    if (result && result.id) {
+      try { setSharedAucId(String(result.id), 'topbar'); } catch(_) {}
     }
   } catch (e) {
     showErr(e.message || 'Failed to create auction');
@@ -7849,6 +7893,13 @@ async function loadLotEntry(){
 function leOnAuctionChange(){
   const aid = document.getElementById('le-auction').value;
   document.getElementById('le-form-card').style.display = aid ? 'block' : 'none';
+  // Reset the seller filter on every trade change. The previous trade's
+  // search has no meaning here and persisting it would silently hide
+  // rows in the new trade. Clearing the visible input keeps UI and
+  // state in sync.
+  _le.recentSearch = '';
+  const sb = document.getElementById('le-recent-search'); if (sb) sb.value = '';
+  const ss = document.getElementById('le-recent-search-status'); if (ss) ss.textContent = '';
   if (!aid) {
     _le.recentLots = []; _le.recentTotal = 0; _le.recentOffset = 0;
     if (_le.selectedForPrint) _le.selectedForPrint.clear();
@@ -7994,7 +8045,12 @@ document.addEventListener('DOMContentLoaded', () => {
   BulkActions.register({ id:'lot',    tbodyId:'lots-list',     resource:'lots',     label:'lot',
                          onChanged: () => { if (typeof loadLots === 'function') loadLots(); } });
   BulkActions.register({ id:'trade',  tbodyId:'auctions-list', resource:'auctions', label:'trade',
-                         onChanged: () => { if (typeof loadAuctions === 'function') loadAuctions(); } });
+                         onChanged: () => {
+                           if (typeof loadAuctions === 'function') loadAuctions();
+                           // Bulk-delete may have removed the currently-selected trade
+                           // from the topbar — refresh so the dropdown stays accurate.
+                           try { loadTopbarTradeSelector(); } catch(_) {}
+                         } });
 });
 
 // Live seller search — debounced 200ms, hits /api/traders?search=
@@ -8018,7 +8074,11 @@ async function leSearchSeller(q){
       if (list.length) {
         html = list.map((t, i) => {
           const loc = [t.ppla, t.pin].filter(Boolean).join(', ');
-          const meta = [t.cr, t.tel].filter(Boolean).join(' · ');
+          // Meta line order: CR/GSTIN · phone · PAN. PAN sits AFTER phone
+          // so the operator can disambiguate same-named sellers by PAN
+          // even when CR/GSTIN is blank (agriculturists). Matches the
+          // Change Seller modal's dropdown for consistency.
+          const meta = [t.cr, t.tel, t.pan].filter(Boolean).join(' · ');
           return `<div class="le-seller-result" data-idx="${i}" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s">
             <div style="font-weight:600;color:var(--text)">${esc(t.name||'')}</div>
             <div style="font-size:11px;color:var(--text3);margin-top:2px">${esc(loc)}${meta?' — '+esc(meta):''}</div>
@@ -8498,7 +8558,14 @@ async function loadLeRecent(){
   if (!aid) return;
   try {
     const PAGE = 25;
-    const data = await j(`/api/lots/${aid}?paginated=1&limit=${PAGE}&offset=0`);
+    const search = String(_le.recentSearch || '').trim();
+    // `name=` runs LIKE %X% against lots.name on the server, which is
+    // the seller column for this trade. Without this query param the
+    // search would only filter the locally-cached 25-row window and
+    // miss every other matching lot in the trade.
+    const qs = `paginated=1&limit=${PAGE}&offset=0`
+             + (search ? `&name=${encodeURIComponent(search)}` : '');
+    const data = await j(`/api/lots/${aid}?${qs}`);
     // Server now returns { rows, total, limit, offset } when paginated=1.
     // Defensive fall-through for very old servers that returned a flat
     // array even with paginated=1 — render whatever shape we got.
@@ -8513,6 +8580,10 @@ async function loadLeRecent(){
     }
     renderLeRecent();
     leUpdateStats();
+    // Datalist suggestions stay tied to the trade (unfiltered list of
+    // distinct sellers), so refresh it after every load. Cheap — one
+    // cached fetch keyed off the auction id.
+    leRefreshSellerSuggestions();
   } catch (e) {
     console.error('Failed to load recent lots:', e);
   }
@@ -8526,8 +8597,14 @@ async function leLoadMoreRecent(){
   if (!aid) return;
   const PAGE = 25;
   const offset = _le.recentOffset || _le.recentLots.length;
+  const search = String(_le.recentSearch || '').trim();
+  // Forward the active search so "Load more" extends the same filtered
+  // set. Without this, subsequent pages would arrive unfiltered and
+  // mix matching + non-matching rows.
+  const qs = `paginated=1&limit=${PAGE}&offset=${offset}`
+           + (search ? `&name=${encodeURIComponent(search)}` : '');
   try {
-    const data = await j(`/api/lots/${aid}?paginated=1&limit=${PAGE}&offset=${offset}`);
+    const data = await j(`/api/lots/${aid}?${qs}`);
     const rows = Array.isArray(data) ? data : (data.rows || []);
     if (!rows.length) return;
     _le.recentLots = _le.recentLots.concat(rows);
@@ -8538,6 +8615,81 @@ async function leLoadMoreRecent(){
     console.error('Failed to load more lots:', e);
     toast('Failed to load more lots');
   }
+}
+
+// Debounced seller-filter input. Hitting the server on every keystroke
+// would churn the lots table; 200ms feels live while still coalescing
+// typed bursts. Resets `_le.recentOffset` so "Load more" starts from
+// the top of the filtered set.
+function leOnRecentSearchInput(){
+  const el = document.getElementById('le-recent-search');
+  if (!el) return;
+  const v = (el.value || '').trim();
+  clearTimeout(_le.recentSearchTimer);
+  _le.recentSearchTimer = setTimeout(() => {
+    if (_le.recentSearch === v) return;
+    _le.recentSearch = v;
+    _le.recentOffset = 0;
+    // Drop any per-print selection — those ids may not survive the
+    // filter and would silently inflate the "Print Selected" badge.
+    if (_le.selectedForPrint) _le.selectedForPrint.clear();
+    loadLeRecent();
+    leUpdateRecentSearchStatus();
+  }, 200);
+}
+
+// Called from the empty-state "Clear filter" link in renderLeRecent().
+function leClearRecentSearch(){
+  const el = document.getElementById('le-recent-search');
+  if (el) el.value = '';
+  _le.recentSearch = '';
+  _le.recentOffset = 0;
+  loadLeRecent();
+  leUpdateRecentSearchStatus();
+}
+
+// Status line next to the search input — "matching 'RAM' — 3 results".
+// Updates after every load + on input. Keeps the user oriented while
+// they refine the filter.
+function leUpdateRecentSearchStatus(){
+  const el = document.getElementById('le-recent-search-status');
+  if (!el) return;
+  const q = String(_le.recentSearch || '').trim();
+  if (!q) { el.textContent = ''; return; }
+  const total = _le.recentTotal != null ? _le.recentTotal : (_le.recentLots || []).length;
+  el.textContent = `matching “${q}” — ${total} result${total === 1 ? '' : 's'}`;
+}
+
+// Populate the datalist with distinct sellers in this trade so the user
+// gets a dropdown of existing names while typing. Cheap — one cached
+// fetch keyed off the current auction id. Doesn't refetch when the
+// auction hasn't changed.
+async function leRefreshSellerSuggestions(){
+  const dl = document.getElementById('le-recent-sellers');
+  if (!dl) return;
+  const aid = document.getElementById('le-auction')?.value;
+  if (!aid) { dl.innerHTML = ''; return; }
+  _le._suggestCache = _le._suggestCache || {};
+  if (_le._suggestCache[aid]) { dl.innerHTML = _le._suggestCache[aid]; return; }
+  try {
+    // Pull a generous unfiltered slice to enumerate sellers. We don't
+    // have a dedicated /sellers-in-trade endpoint; using the lots list
+    // capped at 500 rows is enough for a trade-day view. Names are
+    // deduped client-side.
+    const data = await j(`/api/lots/${aid}?paginated=1&limit=500&offset=0`);
+    const rows = Array.isArray(data) ? data : (data.rows || []);
+    const seen = new Set();
+    const opts = [];
+    for (const l of rows) {
+      const n = String(l.name || '').trim();
+      if (!n || seen.has(n)) continue;
+      seen.add(n);
+      opts.push(`<option value="${esc(n)}">`);
+    }
+    const html = opts.join('');
+    _le._suggestCache[aid] = html;
+    dl.innerHTML = html;
+  } catch (_) { /* non-fatal — datalist stays empty */ }
 }
 
 // Read the Sort By selection (persisted in localStorage so it survives
@@ -8617,9 +8769,15 @@ function leSortRecent(rows, mode, dir){
 function renderLeRecent(){
   const host = document.getElementById('le-recent-list');
   const count = document.getElementById('le-recent-count');
+  const searchActive = !!String(_le.recentSearch || '').trim();
   if (!_le.recentLots.length) {
-    host.innerHTML = '<div style="padding:12px;color:var(--text3);font-size:12px;text-align:center">No lots in this trade yet</div>';
+    // Distinguish "no lots in trade" from "no matches for filter" so the
+    // user knows whether to enter a lot or clear the filter.
+    host.innerHTML = searchActive
+      ? `<div style="padding:14px;color:var(--text3);font-size:12px;text-align:center">No lots match <b>${esc(_le.recentSearch)}</b> in this trade. <a href="#" onclick="leClearRecentSearch();return false" style="color:var(--green)">Clear filter</a></div>`
+      : '<div style="padding:12px;color:var(--text3);font-size:12px;text-align:center">No lots in this trade yet</div>';
     if (count) count.textContent = '';
+    leUpdateRecentSearchStatus();
     leUpdatePrintToolbar();
     return;
   }
@@ -8637,7 +8795,10 @@ function renderLeRecent(){
         (sortMode === col ? 'color:var(--green);' : '');
   const total     = _le.recentTotal != null ? _le.recentTotal : visible.length;
   const remaining = Math.max(0, total - visible.length);
-  if (count) count.textContent = `Showing ${visible.length} of ${total}`;
+  if (count) {
+    const tail = searchActive ? ` matching “${_le.recentSearch}”` : '';
+    count.textContent = `Showing ${visible.length} of ${total}${tail}`;
+  }
   // 8-column grid: [select] [lot] [seller] [branch] [bags] [litre] [qty] [actions]
   // Header row + scrollable rows region. The wrapping container holds
   // the header outside the scroll area so column titles stay visible
@@ -8698,6 +8859,7 @@ function renderLeRecent(){
     all.indeterminate = inWindow > 0 && inWindow < visible.length;
   }
   leUpdatePrintToolbar();
+  leUpdateRecentSearchStatus();
 }
 
 // (leLoadMoreRecent now lives next to loadLeRecent above — server-side
@@ -9749,6 +9911,7 @@ function lePickLot(lotNo) {
 
 // Sync chip highlight when user types/edits le-lotno directly. Wired
 // via DOMContentLoaded so dynamically-loaded chips still respond.
+// Matching is numeric-aware so "1", "01", "001" all resolve to chip "001".
 document.addEventListener('DOMContentLoaded', () => {
   const input = document.getElementById('le-lotno');
   if (!input) return;
@@ -9757,9 +9920,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const host = document.getElementById('le-lot-grid-host');
     if (!host) return;
     host.querySelectorAll('.le-lot-chip.selected').forEach(c => c.classList.remove('selected'));
+    input.classList.remove('le-lotno-used');
     if (!v) return;
-    const target = host.querySelector(`.le-lot-chip[data-lot="${CSS.escape(v)}"]`);
-    if (target && !target.classList.contains('used')) target.classList.add('selected');
+    let target = host.querySelector(`.le-lot-chip[data-lot="${CSS.escape(v)}"]`);
+    if (!target) {
+      const m = v.match(/^([A-Za-z]*)0*(\d+)$/);
+      if (m) {
+        const prefix = m[1].toUpperCase();
+        const num = parseInt(m[2], 10);
+        target = Array.from(host.querySelectorAll('.le-lot-chip')).find(c => {
+          const lm = String(c.dataset.lot || '').match(/^([A-Za-z]*)(\d+)$/);
+          return lm && lm[1].toUpperCase() === prefix && parseInt(lm[2], 10) === num;
+        });
+      }
+    }
+    if (!target) return;
+    if (target.classList.contains('used')) {
+      input.classList.add('le-lotno-used');
+    } else {
+      target.classList.add('selected');
+    }
+    target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
 });
 
@@ -9893,7 +10074,10 @@ function leCsSearchSeller(q){
       }
       results.innerHTML = list.map((t, i) => {
         const loc = [t.ppla, t.pin].filter(Boolean).join(', ');
-        const meta = [t.cr, t.tel].filter(Boolean).join(' · ');
+        // Meta line order: CR/GSTIN · phone · PAN. PAN sits AFTER phone so
+        // the operator can disambiguate same-named sellers by PAN even
+        // when CR/GSTIN is blank (agriculturists).
+        const meta = [t.cr, t.tel, t.pan].filter(Boolean).join(' · ');
         return `<div data-idx="${i}" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border)" onmouseenter="this.style.background='var(--bg)'" onmouseleave="this.style.background=''">
           <div style="font-weight:600;color:var(--text)">${esc(t.name||'')}</div>
           <div style="font-size:11px;color:var(--text3);margin-top:2px">${esc(loc)}${meta?' — '+esc(meta):''}</div>
@@ -12302,9 +12486,18 @@ async function saveAuction(){
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},body:JSON.stringify(body)});
     if(!r.ok){const d=await r.json();throw new Error(d.error||'Save failed')}
     hideModal('auction-modal');toast(id?'Auction updated':'Auction created');loadAuctions();
+    // Newly created / renamed auction needs to surface in the topbar
+    // selector. Fire-and-forget so a slow /api/auctions doesn't block UX.
+    try { loadTopbarTradeSelector(); } catch(_) {}
   }catch(e){showError(e)}
 }
-async function delAuction(id){if(!confirm('Delete auction and ALL its lots?'))return;await j(`/api/auctions/${id}`,{method:'DELETE'});loadAuctions()}
+async function delAuction(id){
+  if(!confirm('Delete auction and ALL its lots?'))return;
+  await j(`/api/auctions/${id}`,{method:'DELETE'});
+  loadAuctions();
+  // Deleted auction must disappear from the topbar selector too.
+  try { loadTopbarTradeSelector(); } catch(_) {}
+}
 
 function openImportAuctionModal(){
   // Seed dynamic defaults each time the modal opens — same source as
@@ -12368,6 +12561,8 @@ async function importAuction(){
     }
     status.innerHTML=html;
     loadAuctions();
+    // Newly imported auctions need to appear in the topbar selector too.
+    try { loadTopbarTradeSelector(); } catch(_) {}
     // Don't auto-hide if there are skipped rows — user needs time to read
     if(d.skipped===0)setTimeout(()=>status.style.display='none',5000);
   }catch(err){status.style.background='var(--red-bg)';status.style.color='var(--red)';status.textContent='Error: '+err.message}}
@@ -12416,15 +12611,43 @@ async function doPriceImport(){
 }
 
 // ── Auction dropdowns ─────────────────────────────────────
-// Shared auction selection — when the user picks an auction in any tab,
-// the same auction is pre-selected on every other tab they visit. State
-// lives in sessionStorage so it resets each browser session (avoids
-// haunting the user with last-week's pick after a fresh login).
+// Shared auction selection — picking an auction in any tab (or in the
+// topbar widget) defaults the same auction on every other tab. Tabs
+// that are currently mounted receive a live `change` event so their
+// onchange-driven loaders re-fire; tabs visited later read the shared
+// id from sessionStorage on mount. Session-storage scope avoids
+// haunting the user with last-week's pick after a fresh login.
 function getSharedAucId() {
   try { return sessionStorage.getItem('spice.sharedAucId') || ''; } catch(_) { return ''; }
 }
-function setSharedAucId(id) {
-  try { sessionStorage.setItem('spice.sharedAucId', String(id || '')); } catch(_) {}
+// Set of <select> elements that should mirror the shared state. Selects
+// registered via _wireAuctionSync are added here; topbar uses its own id.
+const _wiredAuctionSelects = new Set();
+// Update shared state and broadcast to every wired select + the topbar.
+// `source` is the element (or string 'topbar') that originated the change
+// so we don't echo back to the originator and trigger an infinite loop.
+function setSharedAucId(id, source) {
+  const v = String(id == null ? '' : id);
+  try { sessionStorage.setItem('spice.sharedAucId', v); } catch(_) {}
+  // Topbar mirror — unless the change came from the topbar itself.
+  const topbar = document.getElementById('topbar-trade');
+  if (topbar && source !== 'topbar' && topbar.value !== v
+      && Array.from(topbar.options).some(o => o.value === v)) {
+    topbar.value = v;
+  }
+  // Broadcast to every other wired select. Dispatching a real `change`
+  // event lets each tab's existing onchange handler (loadInvoices,
+  // loadLots, etc.) reload its data without us having to know about
+  // them here. We only set when the option exists on that select —
+  // some tabs filter the auction list (e.g. Lot Entry hides closed).
+  for (const sel of _wiredAuctionSelects) {
+    if (!sel || !sel.isConnected) continue;
+    if (sel === source) continue;
+    if (!Array.from(sel.options).some(o => o.value === v)) continue;
+    if (sel.value === v) continue;
+    sel.value = v;
+    sel.dispatchEvent(new Event('change'));
+  }
 }
 // Apply the shared selection to a freshly-populated <select> and wire
 // it to mirror user picks back to the shared store. Idempotent — safe
@@ -12432,16 +12655,52 @@ function setSharedAucId(id) {
 function _wireAuctionSync(selId) {
   const sel = (typeof selId === 'string') ? document.getElementById(selId) : selId;
   if (!sel) return;
+  _wiredAuctionSelects.add(sel);
   const shared = getSharedAucId();
   if (shared && Array.from(sel.options).some(o => o.value === String(shared))) {
     if (sel.value !== shared) sel.value = shared;
   } else if (sel.value) {
-    setSharedAucId(sel.value);
+    // First-time setup — seed the shared store from whatever this
+    // select picked. Pass the element as `source` so we don't echo
+    // back into the same select.
+    setSharedAucId(sel.value, sel);
   }
   if (!sel._aucSyncWired) {
-    sel.addEventListener('change', () => setSharedAucId(sel.value));
+    sel.addEventListener('change', () => setSharedAucId(sel.value, sel));
     sel._aucSyncWired = true;
   }
+}
+// Populate the topbar trade selector and show the widget. Called after
+// login + page-load auth restore, and again after auction CRUD so newly
+// created / deleted trades surface immediately without a reload.
+async function loadTopbarTradeSelector(){
+  const wrap = document.getElementById('topbar-trade-wrap');
+  const sel  = document.getElementById('topbar-trade');
+  if (!wrap || !sel) return;
+  try {
+    const d = await j('/api/auctions');
+    // /api/auctions returns a flat array when no pagination params are
+    // passed, OR { rows, total, ... } when they are. Defensive: handle
+    // both shapes so this doesn't silently break if the response evolves.
+    const auctions = Array.isArray(d) ? d : (d && Array.isArray(d.rows) ? d.rows : []);
+    if (!auctions.length) { wrap.style.display = 'none'; return; }
+    sel.innerHTML = auctions.map(a => {
+      const dateFmt = (a.date || '').split('T')[0];
+      const lots = a.lot_count ? ` · ${a.lot_count} lots` : '';
+      return `<option value="${a.id}">#${esc(a.ano)} · ${esc(dateFmt)}${lots}</option>`;
+    }).join('');
+    wrap.style.display = 'inline-flex';
+    const shared = getSharedAucId();
+    if (shared && Array.from(sel.options).some(o => o.value === shared)) {
+      sel.value = shared;
+    } else {
+      // First load with no shared id — seed from the topbar's first
+      // option (most recent auction) and broadcast it out so every
+      // wired select picks up the default.
+      sel.value = String(auctions[0].id);
+      setSharedAucId(sel.value, 'topbar');
+    }
+  } catch (_) { wrap.style.display = 'none'; }
 }
 async function fillAucSelect(selId){const d=await j('/api/auctions');const sel=document.getElementById(selId);
   sel.innerHTML=d.map(a=>`<option value="${a.id}">${a.ano} — ${fmtD(a.date)} (${a.lot_count} lots)</option>`).join('');
@@ -13325,7 +13584,11 @@ function _lotWireCodeAutocomplete(){
     }
     activeIdx = 0;
     ddl.innerHTML = matches.map((b, i) => {
-      const ctxParts = [b.buyer, b.sale ? '['+b.sale+']' : '', b.pla].filter(Boolean);
+      // Context line: buyer code · trade name · [sale type] · place.
+      // Trade name is the most useful disambiguator when one trade-
+      // name maps to several codes (or vice versa), so it sits right
+      // after the buyer code and before the sale/place metadata.
+      const ctxParts = [b.buyer, b.buyer1, b.sale ? '['+b.sale+']' : '', b.pla].filter(Boolean);
       const ctx = ctxParts.join(' · ');
       return '<div class="lc-row" data-code="'+escAttr(b.code)+'" data-idx="'+i+'" '+
         'style="padding:6px 12px;cursor:pointer;border-bottom:1px solid #f1f1f1;display:flex;gap:10px;align-items:baseline'+
