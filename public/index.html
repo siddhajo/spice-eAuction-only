@@ -5834,6 +5834,21 @@ function applyPermissionAttributes(){
       badge.style.display = 'inline-block';
     }
   }
+  // Permission CSS uses `display:inline-flex !important` to reveal
+  // .btn.needs-X buttons once perms are granted, which would override
+  // any plain inline `display:none`. Run each registered sync now so
+  // bulk-action buttons start hidden via setProperty('display','none','important')
+  // — they re-show only when a row is ticked.
+  try {
+    if (typeof BulkActions !== 'undefined' && BulkActions._sync) {
+      ['lot','seller','buyer','trade'].forEach(id => { try { BulkActions._sync(id); } catch(_){} });
+    }
+    if (typeof syncInvoiceMaster      === 'function') syncInvoiceMaster();
+    if (typeof syncPurchaseMaster     === 'function') syncPurchaseMaster();
+    if (typeof syncBillMaster         === 'function') syncBillMaster();
+    if (typeof updateDnBulkButtons    === 'function') updateDnBulkButtons();
+    if (typeof updatePaymentBulkButtons === 'function') updatePaymentBulkButtons();
+  } catch (_) {}
 }
 
 async function login(){
@@ -12325,6 +12340,14 @@ async function loadDeleteLog(){
 // internal cb-class <id>-select-cb. The 'inv', 'pur', 'bill', 'dn'
 // hand-rolled implementations are left in place — this helper is
 // additive (used for screens that didn't have bulk actions yet).
+// Inline `display: none !important` to override permission CSS that sets
+// `.btn.needs-X { display: inline-flex !important }`. Plain
+// `el.style.display = 'none'` loses to stylesheet !important rules — this
+// helper writes the inline declaration with its own !important so the
+// selection-based hide actually takes effect for users who hold the perm.
+function _hideBulkBtn(el) { if (el) el.style.setProperty('display', 'none', 'important'); }
+function _showBulkBtn(el) { if (el) el.style.removeProperty('display'); }
+
 const BulkActions = (function(){
   const registry = {};
 
@@ -12354,7 +12377,7 @@ const BulkActions = (function(){
     // Show/hide the delete button + count badge
     const delBtn = document.getElementById(`${id}-bulk-del`);
     const counter = document.getElementById(`${id}-sel-count`);
-    if (delBtn)  delBtn.style.display  = ticked > 0 ? '' : 'none';
+    if (delBtn)  (ticked > 0 ? _showBulkBtn : _hideBulkBtn)(delBtn);
     if (counter) counter.textContent   = ticked > 0 ? `(${ticked})` : '';
     // Any sibling bulk-action button (e.g. lot-bulk-setbuyer) follows
     // the same visibility rule. We toggle by querySelectorAll on a
@@ -12369,10 +12392,10 @@ const BulkActions = (function(){
       // the gate in JS keeps the button truly inert if the CSS ever drifts.
       if (el.classList.contains('feat-bulk-set-buyer-code') &&
           document.body.getAttribute('data-feat-bulk-set-buyer-code') !== '1') {
-        el.style.display = 'none';
+        _hideBulkBtn(el);
         return;
       }
-      el.style.display = ticked > 0 ? '' : 'none';
+      (ticked > 0 ? _showBulkBtn : _hideBulkBtn)(el);
     });
     document.querySelectorAll(`[data-bulk-count="${id}"]`).forEach(el => {
       el.textContent = ticked > 0 ? `(${ticked})` : '';
@@ -12385,11 +12408,11 @@ const BulkActions = (function(){
     // on Unlock) is enforced by the existing permission CSS.
     const lockBtn = document.getElementById(`${id}-bulk-lock`);
     const lockCounter = document.getElementById(`${id}-bulk-lock-count`);
-    if (lockBtn)     lockBtn.style.display  = ticked > 0 ? '' : 'none';
+    if (lockBtn)     (ticked > 0 ? _showBulkBtn : _hideBulkBtn)(lockBtn);
     if (lockCounter) lockCounter.textContent = ticked > 0 ? `(${ticked})` : '';
     const unlockBtn = document.getElementById(`${id}-bulk-unlock`);
     const unlockCounter = document.getElementById(`${id}-bulk-unlock-count`);
-    if (unlockBtn)     unlockBtn.style.display  = ticked > 0 ? '' : 'none';
+    if (unlockBtn)     (ticked > 0 ? _showBulkBtn : _hideBulkBtn)(unlockBtn);
     if (unlockCounter) unlockCounter.textContent = ticked > 0 ? `(${ticked})` : '';
   }
   function toggleAll(id, state){
@@ -13577,7 +13600,7 @@ async function refreshLots(btn){
   }
 }
 
-async function loadLots(){const aid=document.getElementById('lot-auction').value;if(!aid)return;
+async function loadLots(){const aid=document.getElementById('lot-auction').value;if(!aid){if(typeof BulkActions!=='undefined'&&BulkActions._sync)BulkActions._sync('lot');return;}
   // Within-trade search across lot no, seller, buyer, invoice no, branch.
   const _lotSearch = (document.getElementById('lot-search')?.value || '').trim();
   const _lotSearchParam = _lotSearch ? `&search=${encodeURIComponent(_lotSearch)}` : '';
@@ -14842,13 +14865,13 @@ function syncInvoiceMaster(){
   // Bulk Delete Selected button + count badge (added in v4)
   const delBtn  = document.getElementById('inv-bulk-del');
   const counter = document.getElementById('inv-sel-count');
-  if (delBtn)  delBtn.style.display = ticked > 0 ? '' : 'none';
+  if (delBtn)  (ticked > 0 ? _showBulkBtn : _hideBulkBtn)(delBtn);
   if (counter) counter.textContent  = ticked > 0 ? `(${ticked})` : '';
   // Every "Selected" toolbar button on this tab — Print Selected, Set
   // Lorry No — is tagged `data-sel-toolbar="inv"` so visibility tracks
   // the ticked-row count uniformly.
   document.querySelectorAll('[data-sel-toolbar="inv"]').forEach(el => {
-    el.style.display = ticked > 0 ? '' : 'none';
+    (ticked > 0 ? _showBulkBtn : _hideBulkBtn)(el);
   });
 }
 // Delete Selected for Invoices — parallel DELETE per ticked row, single
@@ -15014,10 +15037,10 @@ function syncPurchaseMaster(){
   master.checked       = visible.length>0 && ticked===visible.length;
   const delBtn  = document.getElementById('pur-bulk-del');
   const counter = document.getElementById('pur-sel-count');
-  if (delBtn)  delBtn.style.display = ticked > 0 ? '' : 'none';
+  if (delBtn)  (ticked > 0 ? _showBulkBtn : _hideBulkBtn)(delBtn);
   if (counter) counter.textContent  = ticked > 0 ? `(${ticked})` : '';
   document.querySelectorAll('[data-sel-toolbar="pur"]').forEach(el => {
-    el.style.display = ticked > 0 ? '' : 'none';
+    (ticked > 0 ? _showBulkBtn : _hideBulkBtn)(el);
   });
 }
 async function deleteSelectedPurchases(){
@@ -15071,10 +15094,10 @@ function syncBillMaster(){
   master.checked       = visible.length>0 && ticked===visible.length;
   const delBtn  = document.getElementById('bill-bulk-del');
   const counter = document.getElementById('bill-sel-count');
-  if (delBtn)  delBtn.style.display = ticked > 0 ? '' : 'none';
+  if (delBtn)  (ticked > 0 ? _showBulkBtn : _hideBulkBtn)(delBtn);
   if (counter) counter.textContent  = ticked > 0 ? `(${ticked})` : '';
   document.querySelectorAll('[data-sel-toolbar="bill"]').forEach(el => {
-    el.style.display = ticked > 0 ? '' : 'none';
+    (ticked > 0 ? _showBulkBtn : _hideBulkBtn)(el);
   });
 }
 async function deleteSelectedBills(){
@@ -15648,7 +15671,7 @@ function updatePaymentBulkButtons() {
   const total   = body.querySelectorAll('.pay-select-cb').length;
   const btn = document.getElementById('pay-bulk-del');
   const cnt = document.getElementById('pay-sel-count');
-  if (btn) btn.style.display = checked > 0 ? '' : 'none';
+  if (btn) (checked > 0 ? _showBulkBtn : _hideBulkBtn)(btn);
   if (cnt) cnt.textContent = checked > 0 ? String(checked) : '';
   // Sync master checkbox with state — checked when ALL visible are
   // ticked, indeterminate when SOME are.
@@ -15658,7 +15681,7 @@ function updatePaymentBulkButtons() {
     master.indeterminate = checked > 0 && checked < total;
   }
   document.querySelectorAll('[data-sel-toolbar="pay"]').forEach(el => {
-    el.style.display = checked > 0 ? '' : 'none';
+    (checked > 0 ? _showBulkBtn : _hideBulkBtn)(el);
   });
 }
 
@@ -16507,9 +16530,9 @@ function updateDnBulkButtons(){
   const printBtn = document.getElementById('dn-bulk-print');
   const delBtn   = document.getElementById('dn-bulk-del');
   const counter  = document.getElementById('dn-sel-count');
-  if (printBtn) printBtn.style.display = tickedCount > 0 ? '' : 'none';
-  if (delBtn)   delBtn.style.display   = tickedCount > 0 ? '' : 'none';
-  if (counter)  counter.textContent    = tickedCount > 0 ? `(${tickedCount})` : '';
+  if (printBtn) (tickedCount > 0 ? _showBulkBtn : _hideBulkBtn)(printBtn);
+  if (delBtn)   (tickedCount > 0 ? _showBulkBtn : _hideBulkBtn)(delBtn);
+  if (counter)  counter.textContent = tickedCount > 0 ? `(${tickedCount})` : '';
 }
 // Delegate: any change on a row checkbox triggers the button-state sync
 document.addEventListener('change', (e)=>{
