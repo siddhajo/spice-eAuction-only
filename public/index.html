@@ -18911,6 +18911,36 @@ function _pcApplyDisable(selector, scopeSelector, state, reason){
     }
   });
 }
+// Render (or hide) a visible amber/red banner at the top of `tabScope`
+// announcing the gate state. The tooltip on each button still applies,
+// but the banner is the always-on signal so the operator doesn't have
+// to hover to learn the auction is stale or locked.
+function _pcRenderBanner(tabScope, state, message){
+  if (!tabScope) return;
+  const scope = document.querySelector(tabScope);
+  if (!scope) return;
+  let banner = scope.querySelector(':scope > .pc-gate-banner');
+  if (state === 'open') {
+    if (banner) banner.style.display = 'none';
+    return;
+  }
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.className = 'pc-gate-banner';
+    scope.insertBefore(banner, scope.firstChild);
+  }
+  const palette = state === 'hard'
+    ? { bg:'#FEE2E2', border:'#DC2626', fg:'#7F1D1D', icon:'⛔' }
+    : { bg:'#FEF3C7', border:'#F59E0B', fg:'#78350F', icon:'⚠' };
+  banner.style.cssText =
+    'margin:8px 0;padding:10px 14px;background:'+palette.bg+
+    ';border:1px solid '+palette.border+
+    ';border-left:4px solid '+palette.border+
+    ';border-radius:6px;color:'+palette.fg+
+    ';font-size:13px;line-height:1.5;display:block';
+  banner.innerHTML = palette.icon + ' ' + message;
+}
+
 // Refresh the gate for a specific tab. `tabScope` is a CSS selector
 // that narrows the apply-disable to that tab's container so different
 // tabs (each with their own auction selector) don't interfere.
@@ -18924,17 +18954,21 @@ async function pcRefreshGate(auctionId, tabScope){
   if (!flagOn) {
     // Re-enable any buttons that previous gate calls may have locked.
     _pcApplyDisable('.needs-price-check', tabScope, 'open', '');
+    _pcRenderBanner(tabScope, 'open');
     return true;
   }
   if (!auctionId) {
     _pcApplyDisable('.needs-price-check', tabScope, 'hard',
       'Pick an auction first, then run Price Check to unlock.');
+    _pcRenderBanner(tabScope, 'hard',
+      '<b>Pick an auction</b> — then run Reports → Price Check to unlock transaction generation.');
     return false;
   }
   const status = await _pcFetchStatus(auctionId);
   // Currently fresh — no warning.
   if (status && status.checked) {
     _pcApplyDisable('.needs-price-check', tabScope, 'open', '');
+    _pcRenderBanner(tabScope, 'open');
     return true;
   }
   // Verified at least once but now stale (a subsequent lot edit cleared
@@ -18942,12 +18976,17 @@ async function pcRefreshGate(auctionId, tabScope){
   // knows values may have drifted from the externally-recorded sheet.
   if (status && status.everChecked) {
     _pcApplyDisable('.needs-price-check', tabScope, 'soft',
-      '⚠ Lots changed since the last price check — values may be stale. Re-run Reports → Price Check to clear this warning.');
+      '⚠ Lots changed since the last Price Check — review before generating.');
+    _pcRenderBanner(tabScope, 'soft',
+      '<b>Lots changed since the last Price Check</b> — review before generating. ' +
+      'Re-run <i>Reports → Price Check</i> to refresh, or proceed if you\'re sure.');
     return true;
   }
   // Never verified — hard block until the first verify run.
   _pcApplyDisable('.needs-price-check', tabScope, 'hard',
     'Price check pending — run Reports → Price Check against this auction first.');
+  _pcRenderBanner(tabScope, 'hard',
+    '<b>Transactions locked</b> — run <i>Reports → Price Check</i> against this auction first.');
   return false;
 }
 
