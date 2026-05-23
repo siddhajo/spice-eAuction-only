@@ -2968,6 +2968,11 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </div>
 
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Lot</th><th>Name</th><th>Branch</th><th>Bags</th><th>Qty</th><th>Price</th><th>Amount</th><th>Buyer</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Payable</th><th>Actions</th></tr></thead><tbody id="lots-list"></tbody></table></div>
+        <!-- Pager — same shape as Sales / Purchases / Bills / DN tabs.
+             renderPager() hides itself when there's only one page worth
+             of rows, and is bypassed entirely when a search filter is
+             active (so every match stays visible on one page). -->
+        <div id="lots-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
       </div>
     </div>
 
@@ -13600,7 +13605,27 @@ async function refreshLots(btn){
   }
 }
 
-async function loadLots(){const aid=document.getElementById('lot-auction').value;if(!aid){if(typeof BulkActions!=='undefined'&&BulkActions._sync)BulkActions._sync('lot');return;}
+// Lots screen client-side pagination — matches the Sales / Purchases /
+// Bills / Debit Notes pager pattern. We fetch every lot for the active
+// auction in one request (the KPI strip + Sold/WD aggregates need the
+// full set) and slice client-side for display. Search bypasses the
+// pager so every match stays visible on a single page.
+const _lotsPager = { page: 1, pageSize: 50, total: 0, totalPages: 0 };
+function gotoLotsPage(p){
+  const max = _lotsPager.totalPages || 1;
+  _lotsPager.page = Math.max(1, Math.min(max, p|0));
+  // keepPage:true tells loadLots NOT to reset to page 1 — pager clicks
+  // are the only call site that should preserve the current page.
+  loadLots({ keepPage: true });
+}
+
+async function loadLots(opts){
+  const aid=document.getElementById('lot-auction').value;
+  if(!aid){if(typeof BulkActions!=='undefined'&&BulkActions._sync)BulkActions._sync('lot');return;}
+  // Reset to page 1 on every fresh load (auction change, search change,
+  // refresh button). Pager-driven navigation passes keepPage:true so
+  // the page survives the round trip.
+  if (!opts || !opts.keepPage) _lotsPager.page = 1;
   // Within-trade search across lot no, seller, buyer, invoice no, branch.
   const _lotSearch = (document.getElementById('lot-search')?.value || '').trim();
   const _lotSearchParam = _lotSearch ? `&search=${encodeURIComponent(_lotSearch)}` : '';
@@ -13746,7 +13771,31 @@ async function loadLots(){const aid=document.getElementById('lot-auction').value
     ...(isAuction ? auctionCols : filteredTradeCols),
     ...filteredTaxCols,
   ];
-  DataTable.mount('lots-list', d, {
+  // Client-side pagination. KPIs above used the full `arr` so they
+  // stay accurate; only the rendered table is page-windowed. When a
+  // search is active we skip paging so every match is visible at once
+  // — same behaviour as Sales / Purchases / Bills / DN tabs.
+  let pagedSlice;
+  if (_lotSearch) {
+    _lotsPager.total = arr.length;
+    _lotsPager.totalPages = 1;
+    _lotsPager.page = 1;
+    pagedSlice = arr;
+    const pagerHost = document.getElementById('lots-pager');
+    if (pagerHost) pagerHost.innerHTML = '';
+  } else {
+    _lotsPager.total = arr.length;
+    _lotsPager.totalPages = Math.max(1, Math.ceil(arr.length / _lotsPager.pageSize));
+    // A delete or auction-switch may have shrunk the list below the
+    // current page — clamp so we never render an empty page off the
+    // tail of the data.
+    if (_lotsPager.page > _lotsPager.totalPages) _lotsPager.page = _lotsPager.totalPages;
+    if (_lotsPager.page < 1) _lotsPager.page = 1;
+    renderPager('lots-pager', _lotsPager, gotoLotsPage, '');
+    const start = (_lotsPager.page - 1) * _lotsPager.pageSize;
+    pagedSlice = arr.slice(start, start + _lotsPager.pageSize);
+  }
+  DataTable.mount('lots-list', pagedSlice, {
     noSearch: true,
     emptyState: { icon: 'lots', title: "No lots in this auction yet", body: "Add your first lot using the form on the left — enter Lot #, Name, Qty, and Price to get started." },
     // Tint locked rows so the user can spot finalized lots at a glance.
@@ -18872,11 +18921,16 @@ async function _pcFetchStatus(auctionId){
 // optional `scopeSelector` ancestor. Three states:
 //   'open' — no gate; buttons fully clickable, no warning.
 //   'soft' — stale (verified before, lots changed since); button stays
-//            clickable, amber outline + warning tooltip.
+//            clickable. The click-time confirm() dialog
+//            (_pcInstallStaleConfirm) is the warning — no inline pill
+//            or banner, just the alert when the operator actually acts.
 //   'hard' — never verified; button disabled with reason in tooltip.
 function _pcApplyDisable(selector, scopeSelector, state, reason){
   const scope = scopeSelector ? document.querySelector(scopeSelector) : document;
   if (!scope) return;
+  // Clean up any inline stale-pill remnants from earlier UI iterations.
+  // The current design relies on the click-time confirm() alone.
+  scope.querySelectorAll('.pc-stale-badge').forEach(b => b.remove());
   scope.querySelectorAll(selector).forEach(el => {
     if (state === 'hard') {
       el.disabled = true;
@@ -18888,17 +18942,16 @@ function _pcApplyDisable(selector, scopeSelector, state, reason){
       if (!el.dataset.pcOriginalTitle) el.dataset.pcOriginalTitle = el.title || '';
       el.title = reason || 'Run Reports → Price Check on this auction first.';
     } else if (state === 'soft') {
-      // Soft warning — button stays clickable but flagged with an
-      // amber inset outline so the operator sees there's something
-      // to review without being blocked from acting.
+      // Soft warning — button stays fully clickable. The click
+      // interceptor in _pcInstallStaleConfirm pops the alert at the
+      // moment of action; no inline cue is added to the button.
       el.disabled = false;
       el.removeAttribute('data-pc-locked');
       el.setAttribute('data-pc-stale', '1');
       el.style.opacity = '';
       el.style.cursor = '';
-      el.style.boxShadow = 'inset 0 0 0 2px #f59e0b';
-      if (!el.dataset.pcOriginalTitle) el.dataset.pcOriginalTitle = el.title || '';
-      el.title = reason || '⚠ Lots changed since the last price check — values may be stale.';
+      el.style.boxShadow = '';
+      el.title = el.dataset.pcOriginalTitle || '';
     } else {
       // 'open' — fully restored to native state.
       el.disabled = false;
@@ -18911,16 +18964,17 @@ function _pcApplyDisable(selector, scopeSelector, state, reason){
     }
   });
 }
-// Render (or hide) a visible amber/red banner at the top of `tabScope`
-// announcing the gate state. The tooltip on each button still applies,
-// but the banner is the always-on signal so the operator doesn't have
-// to hover to learn the auction is stale or locked.
+// Render (or hide) a visible red banner at the top of `tabScope` for
+// the HARD-block state (auction never verified). The soft/stale state
+// is surfaced via a confirm() dialog on click instead (see
+// _pcInstallStaleConfirm below) — banners for "verified once, now
+// stale" were too easy to overlook in practice.
 function _pcRenderBanner(tabScope, state, message){
   if (!tabScope) return;
   const scope = document.querySelector(tabScope);
   if (!scope) return;
   let banner = scope.querySelector(':scope > .pc-gate-banner');
-  if (state === 'open') {
+  if (state !== 'hard') {
     if (banner) banner.style.display = 'none';
     return;
   }
@@ -18929,16 +18983,39 @@ function _pcRenderBanner(tabScope, state, message){
     banner.className = 'pc-gate-banner';
     scope.insertBefore(banner, scope.firstChild);
   }
-  const palette = state === 'hard'
-    ? { bg:'#FEE2E2', border:'#DC2626', fg:'#7F1D1D', icon:'⛔' }
-    : { bg:'#FEF3C7', border:'#F59E0B', fg:'#78350F', icon:'⚠' };
   banner.style.cssText =
-    'margin:8px 0;padding:10px 14px;background:'+palette.bg+
-    ';border:1px solid '+palette.border+
-    ';border-left:4px solid '+palette.border+
-    ';border-radius:6px;color:'+palette.fg+
+    'margin:8px 0;padding:10px 14px;background:#FEE2E2'+
+    ';border:1px solid #DC2626;border-left:4px solid #DC2626'+
+    ';border-radius:6px;color:#7F1D1D'+
     ';font-size:13px;line-height:1.5;display:block';
-  banner.innerHTML = palette.icon + ' ' + message;
+  banner.innerHTML = '⛔ ' + message;
+}
+
+// One-time click interceptor — installed lazily. When a button tagged
+// `data-pc-stale="1"` is clicked, pop a confirm() dialog so the
+// operator has to explicitly acknowledge the stale gate before the
+// underlying onclick handler fires. Cancel = the click is cancelled
+// outright. Capture-phase listener so it runs before any inline
+// onclick on the button itself.
+let _pcStaleBypass = null;
+let _pcConfirmInstalled = false;
+function _pcInstallStaleConfirm(){
+  if (_pcConfirmInstalled) return;
+  _pcConfirmInstalled = true;
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.needs-price-check[data-pc-stale="1"]');
+    if (!btn) return;
+    if (_pcStaleBypass === btn) return;       // re-fire after confirm — let through
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    const ok = confirm(
+      '⚠  Lots have changed since the last Price Check.\n\n' +
+      'Review the current values before generating. Continue anyway?'
+    );
+    if (!ok) return;
+    _pcStaleBypass = btn;
+    try { btn.click(); } finally { _pcStaleBypass = null; }
+  }, true);
 }
 
 // Refresh the gate for a specific tab. `tabScope` is a CSS selector
@@ -18972,14 +19049,14 @@ async function pcRefreshGate(auctionId, tabScope){
     return true;
   }
   // Verified at least once but now stale (a subsequent lot edit cleared
-  // the fresh stamp). Allow the action but flag it so the operator
-  // knows values may have drifted from the externally-recorded sheet.
+  // the fresh stamp). Allow the action but flag the button (amber
+  // outline) and install a confirm() interceptor so the operator
+  // has to explicitly acknowledge before the action fires.
   if (status && status.everChecked) {
     _pcApplyDisable('.needs-price-check', tabScope, 'soft',
       '⚠ Lots changed since the last Price Check — review before generating.');
-    _pcRenderBanner(tabScope, 'soft',
-      '<b>Lots changed since the last Price Check</b> — review before generating. ' +
-      'Re-run <i>Reports → Price Check</i> to refresh, or proceed if you\'re sure.');
+    _pcRenderBanner(tabScope, 'open');         // make sure any prior banner is hidden
+    _pcInstallStaleConfirm();
     return true;
   }
   // Never verified — hard block until the first verify run.
