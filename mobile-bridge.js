@@ -588,12 +588,35 @@ function mountMobile(app, deps) {
   app.get('/api/status', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
   // ── 5. LOGO ALIAS ───────────────────────────────────────────────
-  // PWA loads the brand logo from /api/logo. spice-config serves it via
-  // /api/company-settings/logo/isp (or asp). Redirect to /api/branding
-  // which returns the configured logo path / data URI.
+  // PWA's app.html does `<img src="/api/logo">` to render the company
+  // brand on the login screen and app bar. We have to stream actual
+  // image bytes here — the earlier 302 → /api/branding pointed at a
+  // JSON response, which an <img> tag cannot render (so the mobile UI
+  // silently fell back to the text-only "Spice Auction" title).
+  //
+  // spice-config stores the configured logo at public/logo-ispl.png
+  // (uploaded via Settings → Company → Logo, persisted by
+  // POST /api/company-settings/logo/ispl). We prefer the ISP file
+  // (matching /api/branding's logoUrl choice); if only the ASP variant
+  // is uploaded we fall back to that. 404 when neither exists so the
+  // client hides the <img> elements gracefully.
   app.get('/api/logo', (req, res) => {
-    // 302 to spice-config's branding endpoint; the client will follow.
-    res.redirect(302, '/api/branding');
+    const candidates = [
+      path.join(__dirname, 'public', 'logo-ispl.png'),
+      path.join(__dirname, 'public', 'logo-asp.png'),
+    ];
+    for (const file of candidates) {
+      if (fs.existsSync(file)) {
+        // Short cache — the client already cache-busts with ?t=<ms>
+        // (see loadAppLogo in public-mobile/app.html), so the max-age
+        // only protects against accidental re-fetches in the same
+        // session.
+        res.setHeader('Cache-Control', 'public, max-age=300');
+        res.setHeader('Content-Type', 'image/png');
+        return res.sendFile(file);
+      }
+    }
+    res.status(404).json({ error: 'No logo configured' });
   });
 
   // ── 6. LOTS — query-string filter form ──────────────────────────
