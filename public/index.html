@@ -3402,7 +3402,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
         <!-- ── Action toolbar — grouped: Auction selector / Create / Print / Manage ── -->
         <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
-          <select id="inv-auction" onchange="loadInvoices();loadInvEligibleBuyers()" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
+          <select id="inv-auction" onchange="loadInvoices();loadInvEligibleBuyers();refreshGenGate('invoices')" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
           <select id="inv-sale-filter" onchange="loadInvoices()" title="Filter invoices by sale type" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:150px">
             <option value="">All Sale Types</option>
             <option value="L">Local (L)</option>
@@ -3486,7 +3486,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </div>
 
         <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
-          <select id="pur-auction" onchange="loadPurchases();loadPurEligibleSellers()" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
+          <select id="pur-auction" onchange="loadPurchases();loadPurEligibleSellers();refreshGenGate('purchases')" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
           <select id="pur-sale-filter" onchange="loadPurchases()" title="Filter purchase invoices by dealer sale type" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:150px">
             <option value="">All Sale Types</option>
             <option value="L">Local (L)</option>
@@ -3771,7 +3771,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </div>
 
         <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
-          <select id="bill-auction" onchange="loadBills();loadEligibleSellers()" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
+          <select id="bill-auction" onchange="loadBills();loadEligibleSellers();refreshGenGate('bills')" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
           <select id="bill-branch-filter" onchange="loadBills()" title="Filter bills of supply by branch" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:160px">
             <option value="">All Branches</option>
           </select>
@@ -3806,7 +3806,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <!-- Trade selector: shared scope for BOTH actions below. The
                list view filters by it; both Generate buttons inherit it
                so neither action can ever cross trade boundaries. -->
-          <select id="dn-auction" onchange="loadDebitNotes()" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
+          <select id="dn-auction" onchange="loadDebitNotes();refreshGenGate('debit_notes')" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
           <!-- Within-trade search across note no, seller name -->
           <input type="search" id="dn-search" placeholder="Search note no, seller…" oninput="searchDebitNotesDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
 
@@ -13085,8 +13085,8 @@ async function fillAucSelect(selId){const d=await j('/api/auctions');const sel=d
   _wireAuctionSync(sel);
   return d}
 function loadLotAuctions(){fillAucSelect('lot-auction').then(()=>{loadLots();loadLotsSummary()})}
-function loadInvAuctions(){fillAucSelect('inv-auction').then(()=>{loadInvoices();loadInvEligibleBuyers()})}
-function loadPurAuctions(){fillAucSelect('pur-auction').then(()=>{loadPurchases();loadPurEligibleSellers()})}
+function loadInvAuctions(){fillAucSelect('inv-auction').then(()=>{loadInvoices();loadInvEligibleBuyers();refreshGenGate('invoices')})}
+function loadPurAuctions(){fillAucSelect('pur-auction').then(()=>{loadPurchases();loadPurEligibleSellers();refreshGenGate('purchases')})}
 
 async function loadInvEligibleBuyers(){
   const aid=document.getElementById('inv-auction').value;
@@ -13292,6 +13292,9 @@ async function doGenerateAll(){
     if(kind==='invoices')loadInvoices();
     else if(kind==='purchases')loadPurchases();
     else loadBills();
+    // Re-pull the generation status — buttons disable if this run
+    // exhausted the eligible targets for the kind.
+    refreshGenGate(kind === 'bills' ? 'bills' : kind);
   }catch(e){showError(e)}
   finally{submitBtn.disabled=false;submitBtn.textContent='Generate All'}
 }
@@ -14457,6 +14460,7 @@ async function generateInvoice(){
         hideModal('gen-inv-modal');
         toast('Invoice generated — Total: ₹'+fmtI(Number(d.invoice.grandTotal),2));
         await loadInvoices();
+        refreshGenGate('invoices');
       });
     }catch(e){showError(e)}
     return;
@@ -14494,6 +14498,7 @@ async function generateInvoice(){
       alert(`Done — ${okN} ok, ${failN} failed.\n\nFailures:\n${failLines}`);
     }
     await loadInvoices();
+    refreshGenGate('invoices');
   }catch(e){showError(e)}
 }
 
@@ -15287,6 +15292,7 @@ async function generatePurchase(){
     hideModal('gen-pur-modal');
     toast('Purchase invoice generated — Total: ₹'+Number(d.invoice.grandTotal).toFixed(2));
     loadPurchases();
+    refreshGenGate('purchases');
   }catch(e){showError(e)}}
 
 const _purchasesPager = { page: 1, pageSize: 50, total: 0, totalPages: 0, fetchToken: 0 };
@@ -16111,7 +16117,7 @@ async function exportTDS(format){format=format||'xlsx';const f=document.getEleme
 }
 
 // ── Bills (Agriculturist) ──────────────────────────────────
-function loadBillAuctions(){fillAucSelect('bill-auction').then(()=>{loadBills();loadEligibleSellers()})}
+function loadBillAuctions(){fillAucSelect('bill-auction').then(()=>{loadBills();loadEligibleSellers();refreshGenGate('bills')})}
 async function loadEligibleSellers(){
   const aid=document.getElementById('bill-auction').value;
   if(!aid){document.getElementById('gb-hint').textContent='';return}
@@ -16274,6 +16280,7 @@ async function generateBill(){
     hideModal('gen-bill-modal');
     toast('Bill generated — Net: ₹'+Number(d.bill.netAmount).toFixed(2));
     loadBills();
+    refreshGenGate('bills');
   }catch(e){showError(e)}}
 async function viewBillPDF(auctionId,sellerName,billNo){
   return fetchAndPrint(
@@ -16289,7 +16296,7 @@ async function delBill(id){if(!confirm('Delete bill?'))return;await j(`/api/bill
 // nav routing so it fires on every tab activation, not just first open
 // (otherwise newly-created trades won't appear).
 function loadDnAuctions() {
-  fillAucSelect('dn-auction').then(() => loadDebitNotes());
+  fillAucSelect('dn-auction').then(() => { loadDebitNotes(); refreshGenGate('debit_notes'); });
 }
 
 // loadDebitNotes — list view. Filters by the dn-auction dropdown's
@@ -16486,6 +16493,7 @@ async function generateDebitNoteSingle(){
       toast('Generated');
     }
     loadDebitNotes();
+    refreshGenGate('debit_notes');
   } catch (e) {
     showErr(e.message || 'Failed');
   } finally {
@@ -16581,6 +16589,7 @@ async function generateAllDebitNotesForTrade(){
       toast(`Generated ${c}${s ? ` · ${s} skipped` : ''}`);
     }
     loadDebitNotes();
+    refreshGenGate('debit_notes');
   } catch (e) {
     showErr(e.message || 'Failed');
   } finally {
@@ -19106,6 +19115,160 @@ async function pcRefreshGate(auctionId, tabScope){
   _pcRenderBanner(tabScope, 'hard',
     '<b>Transactions locked</b> — run <i>Reports → Price Check</i> against this auction first.');
   return false;
+}
+
+// ══════════════════════════════════════════════════════════════
+// TRANSACTION GENERATION GATE
+// ══════════════════════════════════════════════════════════════
+// Disables the "+ Generate X" and "⚡ Generate for All Y" buttons on
+// the Invoices / Purchases / Bills of Supply / Debit Notes tabs once
+// every eligible target for the picked auction has been processed.
+// Admins can flip a per-tab, per-session override to allow regenerating
+// already-done targets — useful for fixing a bad invoice without
+// re-opening DB. Payments are excluded (no generate flow — the tab is
+// a derived rollup view).
+//
+// Server contract: GET /api/auctions/:id/generation-status returns
+// `{ generated, pending, done }` per kind. `done` is the single signal
+// the client reads; if it ever needs more granular UX, the counts are
+// available to render in the banner.
+const _GEN_UI = {
+  invoices: {
+    auctionEl: 'inv-auction',
+    buttons: ['btn-gen-inv-one', 'btn-gen-inv-all'],
+    doneLabel: 'All eligible buyers invoiced',
+  },
+  purchases: {
+    auctionEl: 'pur-auction',
+    buttons: ['btn-gen-pur-one', 'btn-gen-pur-all'],
+    doneLabel: 'All eligible dealers invoiced',
+  },
+  bills: {
+    auctionEl: 'bill-auction',
+    buttons: ['btn-gen-bill-one', 'btn-gen-bill-all'],
+    doneLabel: 'All eligible agriculturist sellers billed',
+  },
+  debit_notes: {
+    auctionEl: 'dn-auction',
+    buttons: ['btn-gen-dn-one', 'btn-gen-dn-all'],
+    doneLabel: 'All invoices have a debit note',
+  },
+};
+
+// Per-kind override flag, per-session. Resets on page reload — admins
+// must opt-in every time, which keeps the override deliberate.
+const _genOverride = {};
+
+async function _genFetchStatus(auctionId){
+  if (!auctionId) return null;
+  try {
+    return await j('/api/auctions/' + encodeURIComponent(auctionId) + '/generation-status');
+  } catch (_) { return null; }
+}
+
+// Inject (or update / remove) the inline banner that sits next to the
+// generate buttons. Shows the "all done" message and an admin-only
+// "Allow regenerate" toggle. When the gate is open, the banner is
+// removed so the toolbar stays uncluttered.
+function _genRenderBanner(kind){
+  const def = _GEN_UI[kind];
+  if (!def) return;
+  const first = document.getElementById(def.buttons[0]);
+  if (!first || !first.parentNode) return;
+  const parent = first.parentNode;
+  let banner = parent.querySelector(':scope > .gen-gate-banner[data-kind="'+kind+'"]');
+  const status = _genLastStatus[kind];
+  const done = !!(status && status.done);
+  const overridden = !!_genOverride[kind];
+  const isAdminUser = window._userRole === 'admin';
+
+  if (!done) {
+    if (banner) banner.remove();
+    return;
+  }
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.className = 'gen-gate-banner';
+    banner.setAttribute('data-kind', kind);
+    parent.appendChild(banner);
+  }
+  banner.style.cssText =
+    'display:inline-flex;align-items:center;gap:8px;' +
+    'margin-left:8px;padding:4px 10px;' +
+    'background:' + (overridden ? '#FEF3C7' : '#DCFCE7') + ';' +
+    'color:' + (overridden ? '#78350F' : '#14532D') + ';' +
+    'border:1px solid ' + (overridden ? '#F59E0B' : '#86EFAC') + ';' +
+    'border-radius:8px;font-size:12px;font-weight:600;white-space:nowrap';
+  const icon = overridden ? '🔓' : '✓';
+  const msg  = overridden
+    ? 'Admin override — regeneration allowed'
+    : esc(def.doneLabel);
+  const adminBtn = isAdminUser
+    ? '<button type="button" onclick="_toggleGenOverride(\''+kind+'\')" style="padding:2px 8px;font-size:11px;font-weight:700;background:#fff;color:'+
+      (overridden ? '#9A3412' : '#14532D')+';border:1px solid '+
+      (overridden ? '#F59E0B' : '#86EFAC')+';border-radius:6px;cursor:pointer">'+
+      (overridden ? 'Lock again' : 'Allow regenerate') +
+      '</button>'
+    : '';
+  banner.innerHTML = icon + ' ' + msg + ' ' + adminBtn;
+}
+
+const _genLastStatus = {};
+
+function _toggleGenOverride(kind){
+  if (window._userRole !== 'admin') return;
+  _genOverride[kind] = !_genOverride[kind];
+  // Re-apply locally from the cached status (no need to refetch).
+  _applyGenGate(kind);
+}
+
+// Apply the disable / enable based on the cached status for one kind.
+function _applyGenGate(kind){
+  const def = _GEN_UI[kind];
+  if (!def) return;
+  const status = _genLastStatus[kind];
+  const done = !!(status && status.done);
+  const overridden = !!_genOverride[kind];
+  const shouldDisable = done && !overridden;
+  for (const id of def.buttons) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (shouldDisable) {
+      el.disabled = true;
+      el.setAttribute('data-gen-locked', '1');
+      if (!el.dataset.genOriginalTitle) el.dataset.genOriginalTitle = el.title || '';
+      el.title = def.doneLabel + (window._userRole === 'admin'
+        ? ' — click "Allow regenerate" to override.'
+        : ' — contact admin to regenerate.');
+    } else if (el.getAttribute('data-gen-locked') === '1') {
+      // Only clear when WE were the disabler — leave alone if another
+      // gate (e.g. price-check) is currently the one keeping it down.
+      el.disabled = false;
+      el.removeAttribute('data-gen-locked');
+      el.title = el.dataset.genOriginalTitle || '';
+    }
+  }
+  _genRenderBanner(kind);
+}
+
+async function refreshGenGate(kind){
+  const def = _GEN_UI[kind];
+  if (!def) return;
+  const aid = document.getElementById(def.auctionEl)?.value;
+  if (!aid) {
+    _genLastStatus[kind] = null;
+    _applyGenGate(kind);
+    return;
+  }
+  const status = await _genFetchStatus(aid);
+  _genLastStatus[kind] = status ? status[kind] : null;
+  _applyGenGate(kind);
+}
+
+// Refresh every kind in one shot — used after a successful generate
+// (any kind can affect others, e.g. an invoice unlocks a debit note).
+async function refreshAllGenGates(){
+  await Promise.all(Object.keys(_GEN_UI).map(refreshGenGate));
 }
 
 // ── Price Check — Apply CODE fixes ───────────────────────────
