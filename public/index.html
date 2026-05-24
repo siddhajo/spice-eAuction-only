@@ -2920,7 +2920,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <div id="lots-summary-strip" style="display:none;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px"></div>
 
         <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
-          <select id="lot-auction" onchange="loadLots();loadLotsSummary()" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
+          <select id="lot-auction" onchange="if(typeof _lotsTickedIds!=='undefined')_lotsTickedIds.clear();loadLots();loadLotsSummary()" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
           <select id="lot-branch-filter" onchange="loadLotsSummary()" title="Filter Sold/Withdrawn/Min/Max/Avg by branch"
                   style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:160px">
             <option value="">All Branches</option>
@@ -10415,25 +10415,45 @@ function leCanonLot(s) {
   return m ? (m[1] || '').toUpperCase() + parseInt(m[2], 10) : '';
 }
 
-// Parse a free-text lot-number spec ("1,3,5-10  A1-A3") into a Set of
-// canonical lot keys. Mixed-prefix ranges (A1-B3) are ignored — they're
-// almost certainly a typo and silently expanding would surprise users.
+// Parse a free-text lot-number spec ("1,3,5-10  A1-A3") into a
+// Map<canonical, original-as-typed>. Canonical keys collapse leading
+// zeros and upper-case any letter prefix (so "001" / "1" / "0001"
+// all key as "1") — that's what lot-matching uses. The original
+// strings are kept so error messages can show what the user typed
+// instead of the stripped form ("001-005" → "001" not "1").
+// Mixed-prefix ranges (A1-B3) are ignored — almost certainly a typo
+// and silently expanding would surprise users.
 function leParseLotSpec(spec) {
-  const out = new Set();
+  const out = new Map();
   String(spec || '').split(/[,;\s]+/).filter(Boolean).forEach(part => {
-    const range = part.match(/^([A-Za-z]*)0*(\d+)\s*-\s*([A-Za-z]*)0*(\d+)$/);
+    const range = part.match(/^([A-Za-z]*)(0*)(\d+)\s*-\s*([A-Za-z]*)(0*)(\d+)$/);
     if (range) {
       const p1 = (range[1] || '').toUpperCase();
-      const p2 = (range[3] || '').toUpperCase();
+      const p2 = (range[4] || '').toUpperCase();
       if (p1 !== p2) return;
-      const lo = parseInt(range[2], 10), hi = parseInt(range[4], 10);
-      if (!Number.isFinite(lo) || !Number.isFinite(hi)) return;
-      const a = Math.min(lo, hi), b = Math.max(lo, hi);
-      for (let n = a; n <= b; n++) out.add(p1 + n);
+      const loNum = parseInt(range[3], 10), hiNum = parseInt(range[6], 10);
+      if (!Number.isFinite(loNum) || !Number.isFinite(hiNum)) return;
+      const a = Math.min(loNum, hiNum), b = Math.max(loNum, hiNum);
+      // Preserve display width: the widest of the two endpoints sets
+      // the zero-padding. So "001-005" → "001","002",…,"005"; plain
+      // "1-5" → "1","2",…,"5"; "A001-A010" → "A001",…,"A010".
+      const lenA = (range[2] + range[3]).length;
+      const lenB = (range[5] + range[6]).length;
+      const width = Math.max(lenA, lenB);
+      for (let n = a; n <= b; n++) {
+        const canon = p1 + n;
+        if (out.has(canon)) continue;
+        const padded = p1 + String(n).padStart(width, '0');
+        out.set(canon, padded);
+      }
       return;
     }
     const single = part.match(/^([A-Za-z]*)0*(\d+)$/);
-    if (single) out.add((single[1] || '').toUpperCase() + parseInt(single[2], 10));
+    if (single) {
+      const canon = (single[1] || '').toUpperCase() + parseInt(single[2], 10);
+      // First-seen original wins so the user's typed form is preserved.
+      if (!out.has(canon)) out.set(canon, part);
+    }
   });
   return out;
 }
@@ -10488,10 +10508,13 @@ async function leSelectLotsByTyping() {
 
   renderLeRecent();
 
-  const notFound = [...wanted].filter(k => !matchedKeys.has(k));
+  // wanted is a Map<canon, original>; show originals in the diagnostic
+  // so the user sees what they typed ("001") not the canonical form ("1").
+  const notFound = [...wanted.keys()].filter(k => !matchedKeys.has(k));
   const parts = [`Ticked ${matched.length}`];
   if (notFound.length) {
-    const sample = notFound.slice(0, 5).join(', ');
+    const labels = notFound.slice(0, 5).map(k => wanted.get(k) || k);
+    const sample = labels.join(', ');
     parts.push(`not in trade: ${sample}${notFound.length > 5 ? `… (+${notFound.length - 5})` : ''}`);
   }
   if (statusEl) {
@@ -12040,6 +12063,16 @@ async function lotsSelectByTyping(){
     return;
   }
 
+  // Surface an explicit message when the trade is empty — easy to
+  // misread the generic "not in trade" diagnostic in that case.
+  if (!allLots.length) {
+    if (statusEl) {
+      statusEl.textContent = 'No lots in this trade yet — add lots in Lot Entry first.';
+      statusEl.style.color = '#C62828';
+    }
+    return;
+  }
+
   const matchedKeys = new Set();
   const matchedIds  = [];
   for (const l of allLots) {
@@ -12050,24 +12083,31 @@ async function lotsSelectByTyping(){
     }
   }
 
-  let ticked = 0, notInView = 0;
-  for (const id of matchedIds) {
-    const cb = document.querySelector(`.lot-select-cb[value="${id}"]`);
-    if (cb) { cb.checked = true; ticked++; }
-    else notInView++;
-  }
-  if (typeof BulkActions !== 'undefined' && BulkActions._sync) BulkActions._sync('lot');
+  // Record into the persistent ticked-IDs set so the Lots table can
+  // pull them to the top on the next render (issue: ticked lots
+  // scattered across paged views are easy to lose track of).
+  for (const id of matchedIds) _lotsTickedIds.add(id);
 
-  const notFound = [...wanted].filter(k => !matchedKeys.has(k));
-  const parts = [`Ticked ${ticked}`];
-  if (notInView) parts.push(`${notInView} not in current view (clear filter or load more)`);
+  const notFound = [...wanted.keys()].filter(k => !matchedKeys.has(k));
+  // Re-render the table so the ticked rows bubble to the top. This
+  // also restores ticks for matched lots that weren't in the current
+  // page view, so "not in view" no longer applies.
+  if (matchedIds.length) {
+    _lotsPager.page = 1;   // jump to page 1 — ticked rows live there now
+    await loadLots({ keepPage: true });
+  }
+
+  // Originals preserve the user's input format ("001" not "1") so
+  // they recognise their own diagnostic.
+  const parts = [`Ticked ${matchedIds.length}`];
   if (notFound.length) {
-    const sample = notFound.slice(0, 5).join(', ');
+    const labels = notFound.slice(0, 5).map(k => wanted.get(k) || k);
+    const sample = labels.join(', ');
     parts.push(`not in trade: ${sample}${notFound.length > 5 ? `… (+${notFound.length - 5})` : ''}`);
   }
   if (statusEl) {
     statusEl.textContent = parts.join(' · ');
-    statusEl.style.color = (notInView || notFound.length) ? '#92400E' : 'var(--green)';
+    statusEl.style.color = notFound.length ? '#92400E' : 'var(--green)';
   }
   input.value = '';
 }
@@ -13808,6 +13848,23 @@ function gotoLotsPage(p){
   loadLots({ keepPage: true });
 }
 
+// Lots tab — persistent tick state. Survives table re-renders (paging,
+// search, refresh) so the user never loses their selection mid-flow.
+// Cleared when the auction is switched (see #lot-auction onchange).
+// Two sync points keep it aligned with the DOM:
+//   (a) Checkbox change events — captured below.
+//   (b) After every loadLots() render — re-applies cb.checked from
+//       the set so the rows that just sorted to the top stay ticked.
+const _lotsTickedIds = new Set();
+document.addEventListener('change', (e) => {
+  const t = e.target;
+  if (!t || !t.classList || !t.classList.contains('lot-select-cb')) return;
+  const id = Number(t.value);
+  if (!Number.isFinite(id)) return;
+  if (t.checked) _lotsTickedIds.add(id);
+  else           _lotsTickedIds.delete(id);
+});
+
 async function loadLots(opts){
   const aid=document.getElementById('lot-auction').value;
   if(!aid){if(typeof BulkActions!=='undefined'&&BulkActions._sync)BulkActions._sync('lot');return;}
@@ -13960,6 +14017,18 @@ async function loadLots(opts){
     ...(isAuction ? auctionCols : filteredTradeCols),
     ...filteredTaxCols,
   ];
+  // Sort ticked lots to the top so they're always visible regardless
+  // of page. Stable sort: among ticked rows we preserve the server's
+  // ORDER BY lot_no order; same for non-ticked. This makes the typing-
+  // to-tick flow predictable (matched lots appear on page 1, top).
+  if (_lotsTickedIds.size) {
+    arr.sort((a, b) => {
+      const at = _lotsTickedIds.has(a.id) ? 0 : 1;
+      const bt = _lotsTickedIds.has(b.id) ? 0 : 1;
+      return at - bt;
+    });
+  }
+
   // Client-side pagination. KPIs above used the full `arr` so they
   // stay accurate; only the rendered table is page-windowed. When a
   // search is active we skip paging so every match is visible at once
@@ -13994,6 +14063,16 @@ async function loadLots(opts){
     // mode never paints a stray amber row.
     rowClass: (row) => row && row.locked_at ? 'row-locked' : '',
     columns });
+  // Restore ticks from the persistent set onto the freshly-mounted
+  // checkboxes (DataTable.mount creates new DOM nodes that all start
+  // unchecked). Without this, paging or refreshing would silently
+  // wipe the selection.
+  if (_lotsTickedIds.size) {
+    for (const id of _lotsTickedIds) {
+      const cb = document.querySelector(`.lot-select-cb[value="${id}"]`);
+      if (cb) cb.checked = true;
+    }
+  }
   // Re-sync toolbar visibility after the fresh mount — the new rows
   // start unchecked, but the bulk buttons would otherwise inherit
   // `display:''` left over from a previous selection.
