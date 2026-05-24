@@ -4149,6 +4149,13 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <div class="fg" id="sb-buyer-fg"><label>Buyer</label>
             <select id="sb-buyer"><option value="">— All buyers —</option></select>
           </div>
+          <!-- Form-D only: Place of auction picker. Hidden by
+               onSbTypeChange() unless the selected report is form_d.
+               Options are sourced from the formd_places setting
+               (Settings → Spice Board Reports). -->
+          <div class="fg" id="sb-place-fg" style="display:none"><label>Place of Auction</label>
+            <select id="sb-place"><option value="">— Use configured branch —</option></select>
+          </div>
         </div>
 
         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">
@@ -11423,6 +11430,13 @@ function fld(f){
     const tip = FIELD_HELP[f.key] ? helpTip(FIELD_HELP[f.key]) : '';
     return `<div class="fg" style="display:flex;align-items:center;justify-content:space-between;border:1px solid var(--border);border-radius:6px;padding:8px 12px"><label style="margin:0">${esc(f.label)}${tip}</label><label class="sw"><input type="checkbox" data-key="${f.key}" data-type="boolean" ${ck}><span class="sl"></span></label></div>`;
   }
+  // Textarea → multi-line value (used by formd_places for the Form-D
+  // place dropdown). captureCurrentPanel() reads el.value, which works
+  // identically for textarea and input.
+  if (f.field_type === 'textarea') {
+    const tip = FIELD_HELP[f.key] ? helpTip(FIELD_HELP[f.key]) : '';
+    return `<div class="fg"><label>${esc(f.label)}${tip}</label><textarea data-key="${f.key}" rows="5" style="width:100%;padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;resize:vertical">${esc(f.value || '')}</textarea></div>`;
+  }
   const t = f.field_type === 'number' ? 'number' : f.field_type === 'date' ? 'date' : 'text';
   const tip = FIELD_HELP[f.key] ? helpTip(FIELD_HELP[f.key]) : '';
   return `<div class="fg"><label>${esc(f.label)}${tip}</label><input type="${t}" data-key="${f.key}" value="${esc(f.value)}"${t==='number'?' step="any"':''}></div>`;
@@ -13334,15 +13348,38 @@ function sbQueryString(extra){
   const branch = document.getElementById('sb-branch')?.value || '';
   const seller = document.getElementById('sb-seller')?.value || '';
   const buyer  = document.getElementById('sb-buyer')?.value || '';
+  const place  = document.getElementById('sb-place')?.value || '';
   if (branch) q.set('branch', branch);
   if (seller) q.set('sellerId', seller);
   if (buyer)  q.set('buyerCode', buyer);
+  // Place override only applies to Form-D; sending it on other report
+  // types is harmless (the handler reads opts.place lazily) but we
+  // keep the wire payload tidy by gating on report type.
+  if (place && sbCurrent() === 'form_d') q.set('place', place);
   if (extra)  for (const k of Object.keys(extra)) q.set(k, extra[k]);
   return q.toString();
+}
+// Read the formd_places setting and populate the Place of Auction
+// dropdown. Newline-separated, with surrounding whitespace and blank
+// lines stripped. Called once per Spice Board tab visit; an admin edit
+// in Settings → Spice Board Reports takes effect on the next visit.
+async function sbLoadPlaces(){
+  const sel = document.getElementById('sb-place');
+  if (!sel) return;
+  try {
+    const cfg = await j('/api/company-settings/flat');
+    const raw = String((cfg && cfg.formd_places) || '');
+    const places = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    sel.innerHTML = '<option value="">— Use configured branch —</option>' +
+      places.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
+  } catch (_) {
+    // Non-fatal — dropdown stays at its empty default.
+  }
 }
 async function loadSpiceBoard(){
   await fillAucSelect('sb-auction');
   await onSbAuctionChange();
+  await sbLoadPlaces();
   onSbTypeChange();
 }
 async function onSbAuctionChange(){
@@ -13366,8 +13403,12 @@ function onSbTypeChange(){
   // Hide Buyer filter for FORM-C (planter/dealer level), Seller filter for Buyers Statement.
   const sellerFg = document.getElementById('sb-seller-fg');
   const buyerFg  = document.getElementById('sb-buyer-fg');
+  const placeFg  = document.getElementById('sb-place-fg');
   if (sellerFg) sellerFg.style.display = (t === 'buyers_statement') ? 'none' : '';
   if (buyerFg)  buyerFg.style.display  = (t === 'form_c')           ? 'none' : '';
+  // Place of Auction is Form-D specific — the value flows into the
+  // "Place of auction" field on the generated report.
+  if (placeFg)  placeFg.style.display  = (t === 'form_d')           ? '' : 'none';
   document.getElementById('sb-preview').innerHTML = '';
   document.getElementById('sb-meta').textContent = '';
 }

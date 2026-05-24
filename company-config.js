@@ -219,6 +219,18 @@ const DEFAULTS = [
   { key: 'edit_timeout_sec',   value: '0',     category: 'lot_entry', label: 'Edit Timeout (sec; 0 = no limit)',    type: 'number'  },
   { key: 'lot_receipt_format', value: '',      category: 'lot_entry', label: 'Lot Receipt Format (compact|detailed)', type: 'text' },
 
+  // ── SPICE BOARD REPORTS ────────────────────────────────────
+  // Newline-separated list of Form-D "Place of auction" options. The
+  // operator picks one from a dropdown when generating Form-D in the
+  // Spice Board menu — that value overrides the branch-derived default.
+  // Edit / add entries from Settings → Spice Board Reports (one place
+  // per line; blank lines and surrounding whitespace are ignored).
+  { key: 'formd_places',
+    value: 'e-Auction Spices Park Puttady\ne-Auction Spices Board Bodinayakanur',
+    category: 'spice_board',
+    label: 'Form-D Place of Auction (one per line)',
+    type: 'textarea' },
+
   // ── BUSINESS MODE ──────────────────────────────────────────
   // e-Auction only build. State is a dropdown: TAMIL NADU or KERALA.
   { key: 'business_mode',  value: 'e-Auction',  category: 'mode', label: 'Business Mode',  type: 'readonly' },
@@ -336,6 +348,7 @@ const CATEGORIES = {
   hsn:          { order: 7,    title: 'HSN / SAC Codes',         icon: '🏷' },
   bank:         { order: 8,    title: 'Bank Details',            icon: '🏦' },
   season:       { order: 9,    title: 'Season / Financial Year', icon: '📅' },
+  spice_board:  { order: 9.5,  title: 'Spice Board Reports',     icon: '📋' },
   invoice:      { order: 10,   title: 'Invoice Settings',        icon: '📄' },
   flags:        { order: 11,   title: 'Feature Flags',           icon: '🔧' },
   lot_entry:    { order: 11.5, title: 'Lot Entry Defaults',      icon: '📝' },

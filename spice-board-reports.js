@@ -642,7 +642,8 @@ async function buyersStatementPdf(db, opts) {
 // ════════════════════════════════════════════════════════════
 // REPORT 2 — FORM-D (Advance Auction Report)
 // ════════════════════════════════════════════════════════════
-function buildFormD(ctx, db) {
+function buildFormD(ctx, db, opts) {
+  opts = opts || {};
   const { auction, rows } = ctx;
   let totalKilos = 0, totalValue = 0, maxRate = 0, minRate = Infinity, maxKg = 0, minKg = 0;
   for (const r of rows) {
@@ -674,15 +675,22 @@ function buildFormD(ctx, db) {
   // licence field in this build.
   const licence = readSetting(db, 'sbl', '');
 
-  // Place of auction — pulled from the configured branch (Address →
-  // Office Branch) for the active business state. Falls back to the
-  // legacy `business_place` key.
-  const placeBizState = String(readSetting(db, 'business_state', '')).toUpperCase();
-  const placeKL = placeBizState === 'KERALA' || placeBizState === 'KL';
-  const place   = readSetting(db, placeKL ? 'kl_branch' : 'tn_branch',
-                    readSetting(db, 'tn_branch',
-                      readSetting(db, 'kl_branch',
-                        readSetting(db, 'business_place', ''))));
+  // Place of auction — caller-supplied value (the operator's pick from
+  // the Form-D place dropdown in Spice Board menu) takes top priority.
+  // Falls back to the configured branch (Address → Office Branch) for
+  // the active business state, then to the legacy `business_place` key.
+  const placeOverride = String(opts.place || '').trim();
+  let place;
+  if (placeOverride) {
+    place = placeOverride;
+  } else {
+    const placeBizState = String(readSetting(db, 'business_state', '')).toUpperCase();
+    const placeKL = placeBizState === 'KERALA' || placeBizState === 'KL';
+    place = readSetting(db, placeKL ? 'kl_branch' : 'tn_branch',
+              readSetting(db, 'tn_branch',
+                readSetting(db, 'kl_branch',
+                  readSetting(db, 'business_place', ''))));
+  }
   const company = readSetting(db, 'trade_name', readSetting(db, 'company_name', ''));
   // Address resolution: pick KL block when business_state = KERALA, otherwise
   // TN block. Falls back to the bare `address1` key for legacy installs.
@@ -703,7 +711,7 @@ function buildFormD(ctx, db) {
 
 function formDJson(db, opts) {
   const ctx = getReportContext(db, opts);
-  const d = buildFormD(ctx, db);
+  const d = buildFormD(ctx, db, opts);
   return {
     title: 'FORM - D (Advance Auction Report)',
     auction: { ano: ctx.auction.ano, date: fmtDateDMY(ctx.auction.date), state: ctx.auction.state },
@@ -724,7 +732,7 @@ function formDJson(db, opts) {
 async function formDXlsx(db, opts) {
   _loadDateFormat(db);
   const ctx = getReportContext(db, opts);
-  const d   = buildFormD(ctx, db);
+  const d   = buildFormD(ctx, db, opts);
   const wb  = new ExcelJS.Workbook();
   const ws  = wb.addWorksheet('FormD');
   ws.columns = [{ width: 8 }, { width: 36 }, { width: 14 }, { width: 18 }];
@@ -794,7 +802,7 @@ async function formDXlsx(db, opts) {
 async function formDPdf(db, opts) {
   _loadDateFormat(db);
   const ctx = getReportContext(db, opts);
-  const d   = buildFormD(ctx, db);
+  const d   = buildFormD(ctx, db, opts);
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 40 });
   const buffers = []; doc.on('data', b => buffers.push(b));
   const m = 40, usableW = doc.page.width - m * 2;

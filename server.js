@@ -7181,6 +7181,9 @@ app.get('/api/spice-board-reports/:type/data', requireView, (req, res) => {
       buyerCode: req.query.buyerCode || '',
       dateFrom:  req.query.dateFrom || '',
       dateTo:    req.query.dateTo || '',
+      // Form-D "Place of auction" override (picked from the dropdown in
+      // the Spice Board menu; populated from the formd_places setting).
+      place:     req.query.place || '',
     };
     res.json(def.json(getDb(), opts));
   } catch (e) {
@@ -7202,6 +7205,9 @@ app.get('/api/spice-board-reports/:type/export', requireExport, async (req, res)
       buyerCode: req.query.buyerCode || '',
       dateFrom:  req.query.dateFrom || '',
       dateTo:    req.query.dateTo || '',
+      // Form-D "Place of auction" override — see the matching field on
+      // the /data endpoint above.
+      place:     req.query.place || '',
     };
     if (format === 'pdf') {
       if (!def.pdf) return res.status(400).json({ error: 'PDF not supported for this report' });
