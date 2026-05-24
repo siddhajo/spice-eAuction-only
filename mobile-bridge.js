@@ -45,6 +45,34 @@ function getLogoPath() {
   return fs.existsSync(p) ? p : null;
 }
 
+// Sync a trader's banks array into the trader_banks table. Mirrors the
+// helper of the same name in server.js (the desktop UI POSTs the full
+// banks array on the main trader endpoints; both this bridge and the
+// native server route need to persist them).
+//
+// Strategy: delete the trader's existing rows and re-insert. Bank counts
+// per trader are tiny (typically 1–3), so the delete+reinsert cost is
+// negligible and the logic stays simple. Also mirrors the FIRST bank
+// back into traders.ifsc/acctnum/holder_name so legacy single-bank
+// code paths (exports, older invoice generators) still see a primary
+// account.
+function syncTraderBanks(db, traderId, banks) {
+  const arr = Array.isArray(banks) ? banks.filter(b => b && (b.acctnum || b.ifsc)) : [];
+  db.run('DELETE FROM trader_banks WHERE trader_id = ?', [traderId]);
+  for (const b of arr) {
+    db.run(
+      'INSERT INTO trader_banks (trader_id, bank_name, acctnum, ifsc, holder_name) VALUES (?,?,?,?,?)',
+      [traderId, b.bank_name || '', String(b.acctnum || ''), String(b.ifsc || ''), b.holder_name || '']
+    );
+  }
+  // Mirror first bank into the parent traders row for legacy compatibility
+  const first = arr[0] || {};
+  db.run(
+    'UPDATE traders SET ifsc=?, acctnum=?, holder_name=? WHERE id=?',
+    [first.ifsc || '', first.acctnum || '', first.holder_name || '', traderId]
+  );
+}
+
 // Mask an account number for the receipt according to admin-set policy.
 // Mirrors the PWA's privacy switch verbatim.
 function maskAcctForReceipt(acctnum, maskType) {
@@ -559,6 +587,10 @@ function mountMobile(app, deps) {
       editEnabled:     getBool('edit_enabled', true),
       sampleWeight:    getNum('sample_weight', 0),
       showMoisture:    getBool('show_moisture', false),
+      // Control Price + Crop Receipt visibility flag. Drives the
+      // Control Price input on the mobile Lot Entry form; the Crop
+      // Receipt input is always shown so it's omitted from gating.
+      showControlPrice: getBool('flag_control_price', false),
       defaultLitre:    get('default_litre', ''),
       // PWA defaults — surfaced here for completeness; not currently
       // backed by spice-config settings, so static-ish values are fine.
@@ -820,8 +852,20 @@ function mountMobile(app, deps) {
         emailClean,
       ]
     );
+    // Persist multi-bank rows when the desktop UI sends them. The flat
+    // ifsc/acctnum/holder_name columns above were intentionally set to
+    // empty strings — syncTraderBanks mirrors the first bank back into
+    // them, keeping legacy readers happy without duplicating data.
+    if (Array.isArray(t.banks)) {
+      syncTraderBanks(db, info.lastInsertRowid, t.banks);
+    }
     const created = db.get('SELECT * FROM traders WHERE id = ?', [info.lastInsertRowid]);
-    if (created) created.banks = [];
+    if (created) {
+      created.banks = db.all(
+        'SELECT * FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id',
+        [info.lastInsertRowid]
+      );
+    }
     res.status(201).json({ trader: created });
   });
 
@@ -883,11 +927,18 @@ function mountMobile(app, deps) {
     setField('holder_name', t.holder_name, (v) => String(v).trim());
     setField('whatsapp',    t.whatsapp,    (v) => String(v).trim());
     if (emailClean !== null) { sets.push('email = ?'); vals.push(emailClean); }
-    if (sets.length === 0) {
-      return res.json({ success: true, noop: true, trader });
+    // No flat-field changes is fine — the user may have only edited
+    // banks. Don't short-circuit before the banks sync below.
+    if (sets.length > 0) {
+      vals.push(id);
+      db.run(`UPDATE traders SET ${sets.join(', ')} WHERE id = ?`, vals);
     }
-    vals.push(id);
-    db.run(`UPDATE traders SET ${sets.join(', ')} WHERE id = ?`, vals);
+    // Persist banks when the desktop UI sends them. PWA/mobile typically
+    // omits the banks array (it uses /api/traders/:id/banks instead);
+    // the array-check means absent payload = leave existing banks alone.
+    if (Array.isArray(t.banks)) {
+      syncTraderBanks(db, id, t.banks);
+    }
     const updated = db.get('SELECT * FROM traders WHERE id = ?', [id]);
     updated.banks = db.all(
       'SELECT * FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id', [id]

@@ -200,6 +200,13 @@ const DEFAULTS = [
   // Default OFF so existing installs are unaffected on upgrade.
   { key: 'flag_lot_lock',        value: 'false', category: 'flags', label: 'Lot record lock',                 type: 'boolean' },
 
+  // Control price — when ON, the Control Price input appears in Lot
+  // Entry (desktop + mobile). First lot's value is typed by the user;
+  // every subsequent lot's field is pre-filled with last+1, still
+  // editable. When OFF the input is hidden everywhere; the database
+  // column always exists so toggling on later doesn't lose data.
+  { key: 'flag_control_price',   value: 'false', category: 'flags', label: 'Control Price (Lot Entry)',       type: 'boolean' },
+
   // ── BACKUPS ────────────────────────────────────────────────
   // Per-install database backup settings. The scheduler is driven by
   // backup_auto_enabled + backup_interval_hours; the keep-count caps

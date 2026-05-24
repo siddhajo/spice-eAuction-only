@@ -2240,6 +2240,83 @@ function requirePriceChecked(getAuctionId) {
   };
 }
 
+// Per-auction generation status. For each transaction type
+// (invoices / purchases / bills / debit notes) returns:
+//   - generated: how many rows already exist for this auction
+//   - pending:   how many distinct targets still have eligible lots
+//   - done:      generated>0 AND pending===0 (i.e. button can be disabled)
+// Powers the UI gate that disables Generate buttons once everything's
+// been generated. Admin can still override on the client. Payments
+// have no "generate" flow (they're a derived view), so they're not
+// reported here.
+app.get('/api/auctions/:id/generation-status', requireView, (req, res) => {
+  const db = getDb();
+  const aid = parseInt(req.params.id, 10);
+  if (!aid) return res.status(400).json({ error: 'Invalid auction id' });
+  const auction = db.get('SELECT ano FROM auctions WHERE id = ?', [aid]);
+  if (!auction) return res.status(404).json({ error: 'Auction not found' });
+  const ano = auction.ano;
+  const cfg = getSettingsFlat(db);
+
+  // ── INVOICES — eligibility mirrors /api/invoices/eligible-buyers
+  const isASPState = String(cfg.business_state || '').toUpperCase() === 'KERALA';
+  const invEligExpr = isASPState
+    ? `(l.invo IS NULL OR l.invo = '')`
+    : `(l.invo IS NULL OR l.invo = '' OR (l.asp_invo IS NOT NULL AND l.asp_invo != '' AND l.invo = l.asp_invo))`;
+  const invGenerated = db.get('SELECT COUNT(*) AS c FROM invoices WHERE auction_id = ?', [aid]).c;
+  const invPending = db.get(
+    `SELECT COUNT(*) AS c FROM (
+       SELECT l.buyer FROM lots l
+        WHERE l.auction_id = ? AND l.buyer IS NOT NULL AND l.buyer != ''
+          AND l.amount > 0
+        GROUP BY l.buyer
+       HAVING COUNT(CASE WHEN ${invEligExpr} THEN 1 END) > 0
+     ) sub`, [aid]).c;
+
+  // ── PURCHASES — dealers with GSTIN. "Generated" = seller name appears
+  //    in purchases for this auction.
+  const purAllDealers = db.get(
+    `SELECT COUNT(DISTINCT name) AS c FROM lots
+      WHERE auction_id = ? AND name IS NOT NULL AND name != '' AND amount > 0
+        AND (UPPER(cr) LIKE 'GSTIN%' OR (cr GLOB '[0-9][0-9]*' AND LENGTH(cr) >= 15))`,
+    [aid]).c;
+  const purInvoicedDealers = db.get(
+    `SELECT COUNT(DISTINCT name) AS c FROM purchases
+      WHERE auction_id = ? AND name IS NOT NULL AND name != ''`,
+    [aid]).c;
+  const purGenerated = db.get('SELECT COUNT(*) AS c FROM purchases WHERE auction_id = ?', [aid]).c;
+  const purPending = Math.max(0, purAllDealers - purInvoicedDealers);
+
+  // ── BILLS OF SUPPLY — agriculturist sellers (no GSTIN). bills table
+  //    is keyed by ano (text) not auction_id.
+  const billAllAgri = db.get(
+    `SELECT COUNT(DISTINCT name) AS c FROM lots
+      WHERE auction_id = ? AND amount > 0
+        AND (cr IS NULL OR cr = ''
+             OR (UPPER(cr) NOT LIKE 'GSTIN%' AND cr NOT GLOB '[0-9][0-9]*'))`,
+    [aid]).c;
+  const billedAgri = db.get(
+    `SELECT COUNT(DISTINCT name) AS c FROM bills WHERE ano = ? AND name IS NOT NULL AND name != ''`,
+    [ano]).c;
+  const billGenerated = db.get('SELECT COUNT(*) AS c FROM bills WHERE ano = ?', [ano]).c;
+  const billPending = Math.max(0, billAllAgri - billedAgri);
+
+  // ── DEBIT NOTES — one per generated invoice (heuristic). Pending = any
+  //    invoice in this auction without a corresponding debit_notes row.
+  //    Matched by ano because debit_notes uses ano, not auction_id.
+  const dnGenerated = db.get('SELECT COUNT(*) AS c FROM debit_notes WHERE ano = ?', [ano]).c;
+  const dnPending = Math.max(0, invGenerated - dnGenerated);
+
+  res.json({
+    auctionId: aid,
+    ano,
+    invoices:    { generated: invGenerated,  pending: invPending,  done: invGenerated  > 0 && invPending  === 0 },
+    purchases:   { generated: purGenerated,  pending: purPending,  done: purGenerated  > 0 && purPending  === 0 },
+    bills:       { generated: billGenerated, pending: billPending, done: billGenerated > 0 && billPending === 0 },
+    debit_notes: { generated: dnGenerated,   pending: dnPending,   done: dnGenerated   > 0 && dnPending   === 0 },
+  });
+});
+
 app.post('/api/price-check/verify', requireView, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
@@ -3364,9 +3441,9 @@ app.post('/api/lots', requireLotWrite, (req, res) => {
   }
 
   const info = db.run(
-    `INSERT INTO lots (auction_id,lot_no,crop,grade,crpt,branch,state,trader_id,name,padd,ppla,ppin,pstate,pst_code,cr,pan,tel,aadhar,bags,litre,qty,gross_wt,sample_wt,moisture,user_id,bank_id)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,l.state||'TAMIL NADU',l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',l.user_id||'',l.bank_id||null]);
+    `INSERT INTO lots (auction_id,lot_no,crop,grade,crpt,branch,state,trader_id,name,padd,ppla,ppin,pstate,pst_code,cr,pan,tel,aadhar,bags,litre,qty,gross_wt,sample_wt,moisture,control_price,user_id,bank_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,l.state||'TAMIL NADU',l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',Number(l.control_price)||0,l.user_id||'',l.bank_id||null]);
   pcClearGate(db, auctionId);
   // Return the inserted lot so the mobile UI can refresh from the response
   // without an extra round-trip. Desktop UI ignores the body and re-fetches.

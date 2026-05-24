@@ -1068,6 +1068,9 @@ body:not([data-feat-price-check="1"]) .feat-price-check{display:none !important}
    but every server-side helper treats them as unlocked, so behaviour
    reverts cleanly without touching data. */
 body:not([data-feat-lot-lock="1"]) .feat-lot-lock{display:none !important}
+/* Control Price (Lot Entry) — gated by flag_control_price. When the
+   flag is OFF the input + its label collapse cleanly via .feat-control-price. */
+body:not([data-feat-control-price="1"]) .feat-control-price{display:none !important}
 /* Locked-lot row tint — pale amber so locked records stand out from
    the zebra stripes without screaming. Applied by DataTable when the
    columns config supplies a rowClass that returns 'row-locked'. */
@@ -3172,6 +3175,22 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <div id="le-moisture-wrap" style="display:none;margin-bottom:16px">
           <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Moisture %</div>
           <input type="number" id="le-moisture" step="0.1" min="0" max="100" placeholder="e.g. 12.5" style="width:100%;height:40px;padding:0 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px">
+        </div>
+
+        <!-- Crop Receipt + Control Price row. Crop Receipt always
+             visible — flows into the e-Auction (Spices Board) CSV's
+             CROPRECEIPT column on export. Control Price is wrapped in
+             .feat-control-price so it collapses when the
+             flag_control_price toggle is OFF. -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+          <div>
+            <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Crop Receipt</div>
+            <input type="text" id="le-crpt" placeholder="e.g. CR1234" autocomplete="off" style="width:100%;height:40px;padding:0 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:monospace">
+          </div>
+          <div class="feat-control-price">
+            <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Control Price <span style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0">— auto-increments per lot</span></div>
+            <input type="number" id="le-control-price" step="any" min="0" placeholder="e.g. 1500" style="width:100%;height:40px;padding:0 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px">
+          </div>
         </div>
 
         <div id="le-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:13px;margin-bottom:12px"></div>
@@ -5959,6 +5978,11 @@ async function applyFeatureFlags() {
   // the whole UI surface collapses via the `.feat-lot-lock` CSS rule
   // and the server-side helpers short-circuit to "nothing is locked".
   document.body.setAttribute('data-feat-lot-lock', cfg && on(cfg.flag_lot_lock) ? '1' : '0');
+  // Control Price input in Lot Entry. When ON the field appears next
+  // to the lot fields; when OFF the row collapses via the
+  // .feat-control-price CSS rule. The companion Crop Receipt field is
+  // always shown — only Control Price is flag-gated.
+  document.body.setAttribute('data-feat-control-price', cfg && on(cfg.flag_control_price) ? '1' : '0');
 }
 
 // Public branding (no auth) — drives the login + topbar from settings.
@@ -8324,6 +8348,16 @@ async function leSaveLot(){
   const btn = document.getElementById('le-save-btn');
   btn.disabled = true;
   try {
+    // Crop Receipt — always sent; empty string when not entered.
+    // Flows into lots.crpt and into the e-Auction (Spices Board) CSV's
+    // CROPRECEIPT column on export.
+    const crpt = (document.getElementById('le-crpt')?.value || '').trim();
+    // Control Price — only sent when the feature flag is ON. Numeric;
+    // 0 / blank both round-trip to 0 server-side.
+    const controlEl = document.getElementById('le-control-price');
+    const controlPriceRaw = controlEl ? controlEl.value.trim() : '';
+    const controlPrice = controlPriceRaw === '' ? 0 : Number(controlPriceRaw);
+
     // Map onto e-Auction's /api/lots POST shape. e-Auction's lots table has
     // many more columns than the PWA payload — we send only what the
     // user supplied; e-Auction fills the rest from the trader record.
@@ -8342,6 +8376,8 @@ async function leSaveLot(){
       sample_wt: sample,
       gross_wt: gross,
       moisture: moisture,
+      crpt: crpt,
+      control_price: controlPrice,
       state: _le.selectedSeller.pstate || getDefaultBusinessState(),
       // Pull seller's denormalised fields onto the lot row so existing
       // listings (Lots tab, exports) work without a join.
@@ -8393,6 +8429,18 @@ async function leSaveLot(){
     document.getElementById('le-sample').value = _le.sampleWeight ? _le.sampleWeight.toFixed(3) : '0.000';
     const moistureEl = document.getElementById('le-moisture');
     if (moistureEl) moistureEl.value = '';
+    // Crop receipt — clear for next lot (no auto-increment; user types).
+    const crptEl = document.getElementById('le-crpt');
+    if (crptEl) crptEl.value = '';
+    // Control price — auto-increment the field for the next lot when
+    // the user typed a numeric value for this one. If the value was
+    // blank or non-numeric, leave the field empty so the user can
+    // type the first real value. Edit mode (wasEditing) leaves the
+    // current value alone — the increment is a create-flow nicety.
+    if (controlEl && !wasEditing) {
+      const last = Number(controlPriceRaw);
+      controlEl.value = (controlPriceRaw !== '' && Number.isFinite(last)) ? String(last + 1) : '';
+    }
     setTimeout(() => document.getElementById('le-lotno').focus(), 50);
     await loadLeRecent();
     // After a successful create (not edit), auto-suggest the next lot
@@ -8418,6 +8466,11 @@ function leResetForm(){
   document.getElementById('le-sample').value = _le.sampleWeight ? _le.sampleWeight.toFixed(3) : '0.000';
   const moistureEl = document.getElementById('le-moisture');
   if (moistureEl) moistureEl.value = '';
+  const crptEl2 = document.getElementById('le-crpt');
+  if (crptEl2) crptEl2.value = '';
+  // Full Clear → reset control price too (auto-increment chain breaks).
+  const controlEl2 = document.getElementById('le-control-price');
+  if (controlEl2) controlEl2.value = '';
   document.getElementById('le-err').style.display = 'none';
   // Drop edit mode if active
   _le.editingLotId = null;
@@ -8464,6 +8517,12 @@ async function leEditLot(lotId){
   document.getElementById('le-sample').value = lot.sample_wt ?? (_le.sampleWeight ? _le.sampleWeight.toFixed(3) : '0.000');
   const moistureEl = document.getElementById('le-moisture');
   if (moistureEl) moistureEl.value = lot.moisture || '';
+  // Crop Receipt + Control Price — populate from the existing lot so
+  // the user can adjust them mid-edit.
+  const crptEl3 = document.getElementById('le-crpt');
+  if (crptEl3) crptEl3.value = lot.crpt || '';
+  const controlEl3 = document.getElementById('le-control-price');
+  if (controlEl3) controlEl3.value = (lot.control_price != null && Number(lot.control_price) !== 0) ? lot.control_price : '';
   leCalcGross();
   // Branch may differ from the toolbar — pre-fill so the user sees what
   // this lot's branch is. Don't overwrite the toolbar branch input
