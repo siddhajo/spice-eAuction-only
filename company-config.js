@@ -200,12 +200,12 @@ const DEFAULTS = [
   // Default OFF so existing installs are unaffected on upgrade.
   { key: 'flag_lot_lock',        value: 'false', category: 'flags', label: 'Lot record lock',                 type: 'boolean' },
 
-  // Control price — when ON, the Control Price input appears in Lot
-  // Entry (desktop + mobile). First lot's value is typed by the user;
-  // every subsequent lot's field is pre-filled with last+1, still
-  // editable. When OFF the input is hidden everywhere; the database
+  // Reserved price — when ON, the Reserved Price input appears in Lot
+  // Entry (desktop + mobile). User types the value per-lot; no auto-
+  // increment (the field flows into column L of the e-Auction Spices
+  // Board CSV). When OFF the input is hidden everywhere; the database
   // column always exists so toggling on later doesn't lose data.
-  { key: 'flag_control_price',   value: 'false', category: 'flags', label: 'Control Price (Lot Entry)',       type: 'boolean' },
+  { key: 'flag_reserved_price',  value: 'false', category: 'flags', label: 'Reserved Price (Lot Entry)',      type: 'boolean' },
 
   // ── BACKUPS ────────────────────────────────────────────────
   // Per-install database backup settings. The scheduler is driven by
@@ -421,6 +421,8 @@ function initCompanySettings(db) {
     // for the pager. Reverted; the per-browser localStorage dropdown
     // in the pager footer is the only control now.
     'default_page_size',
+    // Renamed to flag_reserved_price in the same dev cycle.
+    'flag_control_price',
     // Inherited from earlier cleanups
     'asp_profit', 'isp_profit',
     'asp_profit_pooler', 'asp_profit_dealer',

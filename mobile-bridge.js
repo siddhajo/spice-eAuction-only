@@ -587,10 +587,11 @@ function mountMobile(app, deps) {
       editEnabled:     getBool('edit_enabled', true),
       sampleWeight:    getNum('sample_weight', 0),
       showMoisture:    getBool('show_moisture', false),
-      // Control Price + Crop Receipt visibility flag. Drives the
-      // Control Price input on the mobile Lot Entry form; the Crop
-      // Receipt input is always shown so it's omitted from gating.
-      showControlPrice: getBool('flag_control_price', false),
+      // Reserved Price visibility flag. Drives the Reserved Price
+      // input on the mobile Lot Entry form; the Crop Receipt input is
+      // always shown (it auto-increments — first lot typed by hand,
+      // subsequent lots get +1, editable) so it's not flag-gated.
+      showReservedPrice: getBool('flag_reserved_price', false),
       defaultLitre:    get('default_litre', ''),
       // PWA defaults — surfaced here for completeness; not currently
       // backed by spice-config settings, so static-ish values are fine.

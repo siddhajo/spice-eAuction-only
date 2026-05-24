@@ -152,6 +152,7 @@ function getReportContext(db, opts) {
       l.bags            AS bags,
       l.qty             AS qty,
       l.price           AS price,
+      l.reserved_price  AS reserved_price,
       l.amount          AS amount,
       l.refud           AS sample_refud,
       l.refund          AS sample_refund,
@@ -1568,33 +1569,41 @@ function csvEscape(v) {
 async function eauctionCsv(db, opts) {
   const ctx = getReportContext(db, opts);
 
-  // Spice Board portal upload schema (EAUC_CSV). 20 columns, one row per lot.
-  // Column C is intentionally a blank-header reserved slot — the portal's
-  // canonical template carries it between COLLECTION and PLANTERNAME, so
-  // we preserve the position even though we don't populate it.
-  // Numeric formatting mirrors the portal sample: QUANTITY → 1 decimal,
-  // MOISTURE → 1 decimal, BAGS → integer.
+  // Spice Board portal upload schema. 20 columns, one row per lot.
+  // Headers + column order match the ITCPC reference CSV exactly so
+  // the file lands on the portal without any post-processing.
+  //   - Column C "Planter/Dealer": 1 = planter (CR.* or blank CR),
+  //     2 = dealer (CS/* GSTIN-prefixed). Sourced from the seller's
+  //     registration string via classifySeller().
+  //   - Column F "Crop Receipt Number": from lots.crpt (entered in
+  //     Lot Entry — auto-increments per lot, editable).
+  //   - Column L "Reserved Price": from lots.reserved_price (Lot
+  //     Entry; flag-gated input).
+  //   - Column M "Auction Start Price(Rs)": blank — not currently
+  //     captured in the lot row.
+  //   - Other blanks (J/N/Q/S/T) follow the portal's sample template
+  //     where the board fills them in post-upload.
   const headers = [
-    'LOTNUMBER',       // A
-    'COLLECTION',      // B
-    '',                // C (reserved — portal expects the slot, value blank)
-    'PLANTERNAME',     // D
-    'CRNOSBLNO',       // E
-    'CROPRECEIPT',     // F
-    'QUANTITYKG',      // G
-    'LITREWEIGHT',     // H
-    'BAGS',            // I
-    'GRADETYPE',       // J  (filled by board after grading)
-    'GRADE',           // K
-    'RESERVEDPRICE',   // L
-    'AUCTIONSTATUS',   // M
-    'IMMATURESEEDS',   // N
-    'MOISTURECONTENT', // O
-    'PLANTERMOBILE',   // P
-    'SPECIALLOT',      // Q
-    'COLOUR',          // R  (defaults to "green" — cardamom)
-    'SIZE',            // S
-    'REJECTIONS',      // T
+    'Lot Number',              // A
+    'Collection Centre',       // B
+    'Planter/Dealer',          // C
+    'Planter Name',            // D
+    'CRNO/SBL No',             // E
+    'Crop Receipt Number',     // F
+    'Quantity(Kg)',            // G
+    'Litre Weight(Gms)',       // H
+    'Bags',                    // I
+    'Grade Type',              // J  (filled by board after grading)
+    'Grade',                   // K
+    'Reserved Price',          // L
+    'Auction Start Price(Rs)', // M
+    'Immature Seeds(%)',       // N
+    'Moisture Content(%)',     // O
+    'Planter Mobile Number',   // P
+    'Special Lot (Yes/No)',    // Q
+    'Colour ',                 // R  (trailing space mirrors the reference template)
+    'Size',                    // S
+    'Rejection/Split',         // T
   ];
   const lines = [headers.map(csvEscape).join(',')];
 
@@ -1602,33 +1611,44 @@ async function eauctionCsv(db, opts) {
     const v = Number(n || 0);
     return Number.isFinite(v) && v !== 0 ? v.toFixed(1) : '';
   };
+  // Reserved price renders as integer when the operator typed a whole
+  // number; otherwise up to 2 dp. Blank when 0/null.
+  const fmtReserved = n => {
+    const v = Number(n || 0);
+    if (!Number.isFinite(v) || v === 0) return '';
+    return Number.isInteger(v) ? String(v) : v.toFixed(2);
+  };
   // litre/moisture/tel come through as TEXT in the schema — keep them
   // as-is so manually entered values like "430" or "6.9" round-trip
   // exactly to the portal without any formatter side-effects.
   const passText = v => (v == null ? '' : String(v).trim());
 
   for (const r of (ctx.rows || [])) {
+    // Planter/Dealer code: 1 for planter, 2 for dealer.
+    const cr = r.seller_cr || r.trader_cr || '';
+    const planterOrDealer = classifySeller(cr) === 'DEALER' ? '2' : '1';
+
     lines.push([
-      r.lot || '',                                       // LOTNUMBER
-      r.branch || '',                                    // COLLECTION (branch the lot was entered against — VANDANMEDU, PARATHODU, …)
-      '',                                                // (reserved)
-      r.trader_name || r.seller_name || '',              // PLANTERNAME
-      r.seller_cr || r.trader_cr || '',                  // CRNOSBLNO
-      passText(r.crpt),                                  // CROPRECEIPT
-      fmt1(r.qty),                                       // QUANTITYKG
-      passText(r.litre),                                 // LITREWEIGHT
-      r.bags != null ? String(r.bags) : '',              // BAGS
-      '',                                                // GRADETYPE
-      passText(r.grade),                                 // GRADE
-      '',                                                // RESERVEDPRICE
-      '',                                                // AUCTIONSTATUS
-      '',                                                // IMMATURESEEDS
-      passText(r.moisture),                              // MOISTURECONTENT
-      passText(r.seller_tel),                            // PLANTERMOBILE
-      '',                                                // SPECIALLOT
-      'green',                                           // COLOUR
-      '',                                                // SIZE
-      '',                                                // REJECTIONS
+      r.lot || '',                                       // A  Lot Number
+      r.branch || '',                                    // B  Collection Centre (branch — VANDANMEDU, PARATHODU, …)
+      planterOrDealer,                                   // C  Planter/Dealer (1 / 2)
+      r.trader_name || r.seller_name || '',              // D  Planter Name
+      cr,                                                // E  CRNO/SBL No
+      passText(r.crpt),                                  // F  Crop Receipt Number  ← Lot Entry
+      fmt1(r.qty),                                       // G  Quantity(Kg)
+      passText(r.litre),                                 // H  Litre Weight(Gms)
+      r.bags != null ? String(r.bags) : '',              // I  Bags
+      '',                                                // J  Grade Type
+      passText(r.grade),                                 // K  Grade
+      fmtReserved(r.reserved_price),                     // L  Reserved Price  ← Lot Entry
+      '',                                                // M  Auction Start Price(Rs)
+      '',                                                // N  Immature Seeds(%)
+      passText(r.moisture),                              // O  Moisture Content(%)
+      passText(r.seller_tel),                            // P  Planter Mobile Number
+      '',                                                // Q  Special Lot (Yes/No)
+      'green',                                           // R  Colour  (cardamom)
+      '',                                                // S  Size
+      '',                                                // T  Rejection/Split
     ].map(csvEscape).join(','));
   }
 

@@ -243,13 +243,12 @@ async function initDb() {
     sample_wt REAL DEFAULT 0,
     moisture TEXT DEFAULT '',
     price REAL DEFAULT 0,
-    -- Reserve / minimum sale price entered at lot-entry time. Gated by
-    -- the flag_control_price feature toggle on the client; the column
-    -- always exists so legacy installs don't break, but the UI only
-    -- exposes it when the flag is on. The mobile + desktop entry
-    -- screens auto-increment this for sequential lots (first lot is
-    -- typed by hand, subsequent lots get +1, user can still override).
-    control_price REAL DEFAULT 0,
+    -- Reserved / floor price entered at lot-entry time. Gated by
+    -- flag_reserved_price on the client; the column always exists so
+    -- toggling the flag later doesn't lose data. User types this
+    -- per-lot (no auto-increment). Surfaces in column L of the
+    -- e-Auction (Spices Board) CSV.
+    reserved_price REAL DEFAULT 0,
     amount REAL DEFAULT 0,
     code TEXT DEFAULT '',
     buyer TEXT DEFAULT '',
@@ -549,9 +548,13 @@ async function initDb() {
     'ALTER TABLE lots ADD COLUMN dcgst REAL DEFAULT 0',
     'ALTER TABLE lots ADD COLUMN dsgst REAL DEFAULT 0',
     'ALTER TABLE lots ADD COLUMN digst REAL DEFAULT 0',
-    // Control price — gated by flag_control_price on the client.
-    // See lots schema for semantics.
+    // Reserved price — gated by flag_reserved_price on the client.
+    // See lots schema for semantics. The leading control_price ADD
+    // covers installs that briefly seeded that name (single dev cycle);
+    // the UPDATE migrates any values; then reserved_price is added.
     'ALTER TABLE lots ADD COLUMN control_price REAL DEFAULT 0',
+    'ALTER TABLE lots ADD COLUMN reserved_price REAL DEFAULT 0',
+    'UPDATE lots SET reserved_price = control_price WHERE reserved_price = 0 AND control_price > 0',
     // ASP invoice traceability — when a lot is first invoiced as an ASP
     // sale (state=Kerala), `lots.invo` gets the ASP invoice number AND a
     // copy is preserved here. Then when the same lot is invoiced as an
