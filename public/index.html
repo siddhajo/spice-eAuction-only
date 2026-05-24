@@ -5959,6 +5959,26 @@ async function applyFeatureFlags() {
   // the whole UI surface collapses via the `.feat-lot-lock` CSS rule
   // and the server-side helpers short-circuit to "nothing is locked".
   document.body.setAttribute('data-feat-lot-lock', cfg && on(cfg.flag_lot_lock) ? '1' : '0');
+
+  // Page-size — now that _CCFG holds the fresh company default, push it
+  // into every existing pager. The const initializers ran before login
+  // (when _CCFG was null) so they all locked in 50; without this they
+  // would ignore the configured default until the user manually picks
+  // from the inline dropdown. Per-user localStorage overrides still
+  // win — getPageSize() respects them.
+  try {
+    const newSize = getPageSize();
+    [
+      typeof _tradersPager   !== 'undefined' && _tradersPager,
+      typeof _buyersPager    !== 'undefined' && _buyersPager,
+      typeof _auctionsPager  !== 'undefined' && _auctionsPager,
+      typeof _lotsPager      !== 'undefined' && _lotsPager,
+      typeof _invoicesPager  !== 'undefined' && _invoicesPager,
+      typeof _purchasesPager !== 'undefined' && _purchasesPager,
+      typeof _billsPager     !== 'undefined' && _billsPager,
+      typeof _debitPager     !== 'undefined' && _debitPager,
+    ].forEach(p => { if (p) p.pageSize = newSize; });
+  } catch (_) { /* fail-safe — pre-init access is a no-op via typeof */ }
 }
 
 // Public branding (no auth) — drives the login + topbar from settings.
@@ -11182,6 +11202,15 @@ function renderSettingsPanel(){
           .join('');
         html += `<div class="fg"><label>${f.label}${helpTip('How dates are displayed everywhere in the app — list views, PDFs, XLSX. The database keeps storing ISO yyyy-mm-dd regardless.')}</label><select data-key="${f.key}">${opts}</select></div>`;
       }
+      else if(f.key==='default_page_size'){
+        // Hard-coded options must mirror _PAGE_SIZE_OPTIONS in the
+        // pager helpers so the inline override dropdown and this
+        // company default stay in sync.
+        const sizes = [20, 50, 100, 200];
+        const cur   = String(f.value || '50');
+        const opts2 = sizes.map(n => `<option value="${n}"${String(n)===cur?' selected':''}>${n} rows / page</option>`).join('');
+        html += `<div class="fg"><label>${f.label}${helpTip('Default rows-per-page for every paged list (Traders, Buyers, Auctions, Lots, Invoices, Purchases, Bills, Debit Notes). Each user can still override per-browser via the dropdown next to the Prev/Next buttons on any list.')}</label><select data-key="${f.key}">${opts2}</select></div>`;
+      }
       else html+=fld(f);
     }
     html+='</div>';
@@ -11770,14 +11799,79 @@ const T_IDS={name:'t-name',cr:'t-cr',pan:'t-pan',tel:'t-tel',aadhar:'t-aadhar',p
 // caption on the left and First / Prev / Page input / Next / Last on
 // the right. Hides itself entirely when there's only one page so it
 // doesn't clutter small datasets.
+// ── Page-size preference ─────────────────────────────────────
+// One global setting persisted in localStorage. Every paged list
+// (traders / buyers / auctions / lots / invoices / purchases / bills /
+// debit notes) reads this value at construction time and on every
+// setGlobalPageSize() change. The dropdown lives inside renderPager so
+// the control is right next to the page-nav buttons the user already
+// looks at.
+const _PAGE_SIZE_OPTIONS = [20, 50, 100, 200];
+const _PAGE_SIZE_KEY = 'sa_page_size';
+// Resolution order:
+//   1. Per-browser override (localStorage), set when the user picks
+//      from the inline dropdown on any paged list.
+//   2. Company default from Settings → Business Mode → Default Rows
+//      Per Page (window._CCFG.default_page_size, populated by
+//      applyFeatureFlags() at boot).
+//   3. Hardcoded 50.
+function getPageSize(){
+  const override = parseInt(localStorage.getItem(_PAGE_SIZE_KEY), 10);
+  if (_PAGE_SIZE_OPTIONS.includes(override)) return override;
+  const companyDefault = parseInt(window._CCFG && window._CCFG.default_page_size, 10);
+  if (_PAGE_SIZE_OPTIONS.includes(companyDefault)) return companyDefault;
+  return 50;
+}
+// Registry of every pager + its goto fn. Populated lazily — each
+// renderPager() call registers (or refreshes) its entry. Used by
+// setGlobalPageSize to update every pager + reload the active one.
+const _PAGER_REGISTRY = new Map();
+function setGlobalPageSize(n){
+  n = parseInt(n, 10);
+  if (!_PAGE_SIZE_OPTIONS.includes(n)) return;
+  localStorage.setItem(_PAGE_SIZE_KEY, String(n));
+  for (const entry of _PAGER_REGISTRY.values()) {
+    entry.state.pageSize = n;
+    entry.state.page = 1;
+  }
+  // Reload only the active tab's list. Other tabs pick up the new
+  // size on their next visit (their load fns read state.pageSize,
+  // which we just bumped).
+  const tab = window._currentTab || '';
+  const reloadByTab = {
+    traders: () => searchTraders(document.getElementById('traders-search')?.value || ''),
+    buyers:  () => searchBuyers(document.getElementById('buyers-search')?.value || ''),
+    auctions: () => (typeof loadAuctions === 'function') && loadAuctions(),
+    lots:    () => (typeof gotoLotsPage === 'function') && gotoLotsPage(1),
+    invoices: () => (typeof gotoInvoicesPage === 'function') && gotoInvoicesPage(1),
+    purchases: () => (typeof gotoPurchasesPage === 'function') && gotoPurchasesPage(1),
+    bills:   () => (typeof gotoBillsPage === 'function') && gotoBillsPage(1),
+    debit:   () => (typeof gotoDebitNotesPage === 'function') && gotoDebitNotesPage(1),
+  };
+  try { reloadByTab[tab] && reloadByTab[tab](); } catch (_) {}
+}
+
 function renderPager(hostId, state, gotoFn, query){
   const host = document.getElementById(hostId);
   if (!host) return;
+  // Register/refresh — setGlobalPageSize uses this to push new sizes
+  // into every paged view. Keyed by hostId so each pager is unique.
+  _PAGER_REGISTRY.set(hostId, { state, gotoFn });
   const { page, pageSize, total, totalPages } = state;
+  // Page-size <select> — built once and reused. Always rendered (even
+  // when there's only one page of results) so the user can switch
+  // pageSize before the list is large enough to need paging.
+  const sizeOptions = _PAGE_SIZE_OPTIONS
+    .map(n => '<option value="'+n+'"'+(n===pageSize?' selected':'')+'>'+n+' / page</option>')
+    .join('');
+  const sizeSelect =
+    '<select onchange="setGlobalPageSize(this.value)" ' +
+    'style="height:30px;padding:0 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-weight:600;background:#fff;cursor:pointer" ' +
+    'title="Rows per page (applies to every list — saved per browser)">' + sizeOptions + '</select>';
   if (!total) {
-    host.innerHTML = query
+    host.innerHTML = (query
       ? '<span style="color:var(--text3)">No matches for &ldquo;'+esc(query)+'&rdquo;.</span>'
-      : '';
+      : '') + '<div>' + sizeSelect + '</div>';
     return;
   }
   const from = (page - 1) * pageSize + 1;
@@ -11786,7 +11880,9 @@ function renderPager(hostId, state, gotoFn, query){
   const caption = '<span>Showing <b>'+fmt(from)+'–'+fmt(to)+'</b> of <b>'+fmt(total)+'</b>' +
                   (query ? ' &middot; matching &ldquo;<i>'+esc(query)+'</i>&rdquo;' : '') + '</span>';
   if (totalPages <= 1) {
-    host.innerHTML = caption;
+    host.innerHTML =
+      '<div>'+caption+'</div>' +
+      '<div>' + sizeSelect + '</div>';
     return;
   }
   // Page input lets the user jump to any page directly — useful for
@@ -11798,7 +11894,7 @@ function renderPager(hostId, state, gotoFn, query){
       (disabled ? ' disabled' : ' onclick="'+gotoFn.name+'('+target+')"') + '>'+label+'</button>';
   host.innerHTML =
     '<div>'+caption+'</div>' +
-    '<div style="display:flex;align-items:center;gap:6px">' +
+    '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
       mk('« First', 1, page <= 1) +
       mk('‹ Prev',  page - 1, page <= 1) +
       '<span>Page <input type="number" min="1" max="'+totalPages+'" value="'+page+'" ' +
@@ -11807,6 +11903,7 @@ function renderPager(hostId, state, gotoFn, query){
         'onblur="'+gotoFn.name+'(this.value)"> of <b>'+fmt(totalPages)+'</b></span>' +
       mk('Next ›', page + 1, page >= totalPages) +
       mk('Last »', totalPages, page >= totalPages) +
+      sizeSelect +
     '</div>';
 }
 
@@ -11815,7 +11912,7 @@ function renderPager(hostId, state, gotoFn, query){
 // different page without re-reading the input. Searches run against
 // the full table (server-side), not just the page window — fixes the
 // "search hits only the first 500" issue on 7,000+-row masters.
-const _tradersPager = { page: 1, pageSize: 50, query: '', total: 0, totalPages: 0, fetchToken: 0 };
+const _tradersPager = { page: 1, pageSize: getPageSize(), query: '', total: 0, totalPages: 0, fetchToken: 0 };
 
 function gotoTradersPage(page){
   const p = Math.max(1, Math.min(_tradersPager.totalPages || 1, page|0));
@@ -12574,7 +12671,7 @@ const B_IDS={buyer:'b-buyer',buyer1:'b-buyer1',code:'b-code',sbl:'b-sbl',add1:'b
   cbuyer1:'b-cbuyer1',cadd1:'b-cadd1',cadd2:'b-cadd2',cpla:'b-cpla',cpin:'b-cpin',cstate:'b-cstate',cst_code:'b-cstcode',cgstin:'b-cgstin'};
 
 // Paginated buyers list — same shape as _tradersPager.
-const _buyersPager = { page: 1, pageSize: 50, query: '', total: 0, totalPages: 0, fetchToken: 0 };
+const _buyersPager = { page: 1, pageSize: getPageSize(), query: '', total: 0, totalPages: 0, fetchToken: 0 };
 
 function gotoBuyersPage(page){
   const p = Math.max(1, Math.min(_buyersPager.totalPages || 1, page|0));
@@ -12792,7 +12889,7 @@ async function importBuyers(e){
   }catch(err){status.style.background='var(--red-bg)';status.style.color='var(--red)';status.textContent='Error: '+err.message}}
 
 // ── Auctions ──────────────────────────────────────────────
-const _auctionsPager = { page: 1, pageSize: 50, total: 0, totalPages: 0, fetchToken: 0 };
+const _auctionsPager = { page: 1, pageSize: getPageSize(), total: 0, totalPages: 0, fetchToken: 0 };
 function gotoAuctionsPage(p){
   _auctionsPager.page = Math.max(1, Math.min(_auctionsPager.totalPages || 1, p|0));
   loadAuctions({ keepPage: true });
@@ -13654,7 +13751,7 @@ async function refreshLots(btn){
 // auction in one request (the KPI strip + Sold/WD aggregates need the
 // full set) and slice client-side for display. Search bypasses the
 // pager so every match stays visible on a single page.
-const _lotsPager = { page: 1, pageSize: 50, total: 0, totalPages: 0 };
+const _lotsPager = { page: 1, pageSize: getPageSize(), total: 0, totalPages: 0 };
 function gotoLotsPage(p){
   const max = _lotsPager.totalPages || 1;
   _lotsPager.page = Math.max(1, Math.min(max, p|0));
@@ -14502,7 +14599,7 @@ async function generateInvoice(){
   }catch(e){showError(e)}
 }
 
-const _invoicesPager = { page: 1, pageSize: 50, total: 0, totalPages: 0, fetchToken: 0 };
+const _invoicesPager = { page: 1, pageSize: getPageSize(), total: 0, totalPages: 0, fetchToken: 0 };
 function gotoInvoicesPage(p){
   _invoicesPager.page = Math.max(1, Math.min(_invoicesPager.totalPages || 1, p|0));
   loadInvoices({ keepPage: true });
@@ -15295,7 +15392,7 @@ async function generatePurchase(){
     refreshGenGate('purchases');
   }catch(e){showError(e)}}
 
-const _purchasesPager = { page: 1, pageSize: 50, total: 0, totalPages: 0, fetchToken: 0 };
+const _purchasesPager = { page: 1, pageSize: getPageSize(), total: 0, totalPages: 0, fetchToken: 0 };
 function gotoPurchasesPage(p){
   _purchasesPager.page = Math.max(1, Math.min(_purchasesPager.totalPages || 1, p|0));
   loadPurchases({ keepPage: true });
@@ -16164,7 +16261,7 @@ function downloadCommissionBillF2(format){
   window.open(url,'_blank');
 }
 
-const _billsPager = { page: 1, pageSize: 50, total: 0, totalPages: 0, fetchToken: 0 };
+const _billsPager = { page: 1, pageSize: getPageSize(), total: 0, totalPages: 0, fetchToken: 0 };
 function gotoBillsPage(p){
   _billsPager.page = Math.max(1, Math.min(_billsPager.totalPages || 1, p|0));
   loadBills({ keepPage: true });
@@ -16302,7 +16399,7 @@ function loadDnAuctions() {
 // loadDebitNotes — list view. Filters by the dn-auction dropdown's
 // selected trade ID (resolved to its `ano`) so users only see DNs for
 // the trade they're currently working on. With no selection, shows all.
-const _debitPager = { page: 1, pageSize: 50, total: 0, totalPages: 0, fetchToken: 0 };
+const _debitPager = { page: 1, pageSize: getPageSize(), total: 0, totalPages: 0, fetchToken: 0 };
 function gotoDebitNotesPage(p){
   _debitPager.page = Math.max(1, Math.min(_debitPager.totalPages || 1, p|0));
   loadDebitNotes({ keepPage: true });
