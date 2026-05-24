@@ -1602,7 +1602,7 @@ async function eauctionCsv(db, opts) {
   for (const r of (ctx.rows || [])) {
     lines.push([
       r.lot || '',                                       // LOTNUMBER
-      r.seller_place || '',                              // COLLECTION (planter place: VANDANMEDU, PARATHODU, …)
+      r.branch || '',                                    // COLLECTION (branch the lot was entered against — VANDANMEDU, PARATHODU, …)
       '',                                                // (reserved)
       r.trader_name || r.seller_name || '',              // PLANTERNAME
       r.seller_cr || r.trader_cr || '',                  // CRNOSBLNO
