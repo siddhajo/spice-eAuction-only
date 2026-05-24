@@ -239,12 +239,6 @@ const DEFAULTS = [
   // canonical DB storage stays ISO yyyy-mm-dd regardless. Picking a
   // different value re-renders every date in the UI, exports, and PDFs.
   { key: 'date_format',    value: 'dd/mm/yyyy', category: 'mode', label: 'Date Format',    type: 'select'   },
-  // Company-wide default for rows-per-page on every paged list
-  // (Traders / Buyers / Auctions / Lots / Invoices / Purchases /
-  // Bills / Debit Notes). Each user can still override per-browser
-  // via the inline dropdown on any pager — this is just the default
-  // they start with before any override is set.
-  { key: 'default_page_size', value: '50',     category: 'mode', label: 'Default Rows Per Page', type: 'select' },
 
   // ── INTEGRATIONS ───────────────────────────────────────────
   { key: 'gst_api_key',    value: '', category: 'integrations', label: 'GST Lookup API Key (gstincheck.co.in)',   type: 'text' },
@@ -416,6 +410,10 @@ function initCompanySettings(db) {
     // and the user-facing field added clutter to the Tally panel
     // without any operational benefit.
     'praman_company',
+    // Default Rows Per Page — briefly seeded as a server-side default
+    // for the pager. Reverted; the per-browser localStorage dropdown
+    // in the pager footer is the only control now.
+    'default_page_size',
     // Inherited from earlier cleanups
     'asp_profit', 'isp_profit',
     'asp_profit_pooler', 'asp_profit_dealer',
