@@ -7936,11 +7936,10 @@ async function loadLotEntry(){
     // because lot save requires a branch.
     const branchSel = document.getElementById('le-branch');
     if (branches.length) {
-      // First option is the "ALL BRANCHES" sentinel — useful when the
-      // operator wants to view the recent-entries list across every
-      // branch rather than a single one. The recent-entries query
-      // honours this by skipping the branch filter when value === 'ALL'.
-      branchSel.innerHTML = '<option value="ALL">— ALL BRANCHES —</option>' +
+      // First option is the "All branches" sentinel — view every branch's
+      // allocation chips at once. Picking a chip auto-sets the branch
+      // dropdown so the entry / save flow continues normally.
+      branchSel.innerHTML = '<option value="ALL">All branches</option>' +
         branches.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
       // Restore last-used branch from localStorage if it's still in the
       // list (admin may have removed it). Defaults to ALL on first run.
@@ -10077,6 +10076,40 @@ async function leLoadAllocBar() {
     gridHost.innerHTML = '<div class="le-lot-grid-empty">Pick your branch in the dropdown above to see your assigned lots.</div>';
     return;
   }
+  const currentLotno = (document.getElementById('le-lotno').value || '').trim();
+  // "All branches" mode — render every branch's chips grouped under
+  // a per-branch heading. Clicking a chip passes its owning branch to
+  // lePickLot so the branch dropdown auto-switches before save.
+  if (myBr === 'ALL') {
+    gridLabel.textContent = 'All branches';
+    gridHelp.textContent = 'tap a free lot to select — branch sets automatically';
+    const groups = sorted.map(s => {
+      const branchSafe = String(s.branch || '').replace(/'/g, "\\'");
+      const chips = [];
+      for (const rng of (s.ranges || [])) {
+        for (const l of (rng.lots || [])) {
+          const safe = String(l.lot).replace(/'/g, "\\'");
+          let cls = 'le-lot-chip';
+          if (l.used) cls += ' used';
+          else if (currentLotno && l.lot === currentLotno && sameBranch(s.branch, myBr)) cls += ' selected';
+          const onclick = l.used ? '' : ` onclick="lePickLot('${safe}','${branchSafe}')"`;
+          const title = l.used ? `Lot ${l.lot} — already saved (${s.branch})` : `Click to select lot ${l.lot} in ${s.branch}`;
+          chips.push(`<span class="${cls}" data-lot="${esc(l.lot)}" data-branch="${esc(s.branch)}" title="${esc(title)}"${onclick}>${esc(l.lot)}</span>`);
+        }
+      }
+      const body = chips.length
+        ? `<div style="display:flex;flex-wrap:wrap;gap:4px">${chips.join('')}</div>`
+        : '<div class="le-lot-grid-empty" style="margin:4px 0">No lots in this branch\'s allocation</div>';
+      return `<div style="margin-bottom:10px">
+        <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">${esc(s.branch)}</div>
+        ${body}
+      </div>`;
+    });
+    gridHost.innerHTML = groups.length
+      ? groups.join('')
+      : '<div class="le-lot-grid-empty">No allocations to show.</div>';
+    return;
+  }
   const myStats = stats.find(s => sameBranch(s.branch, myBr));
   if (!myStats) {
     gridLabel.textContent = myBr;
@@ -10091,7 +10124,6 @@ async function leLoadAllocBar() {
   // Render the chip grid for the user's branch.
   gridLabel.textContent = myBr;
   gridHelp.textContent = 'tap a free lot to select';
-  const currentLotno = (document.getElementById('le-lotno').value || '').trim();
   const chips = [];
   for (const rng of (myStats.ranges || [])) {
     for (const l of (rng.lots || [])) {
@@ -10112,7 +10144,9 @@ async function leLoadAllocBar() {
 // Click handler for lot chips. Writes the lot number into the entry
 // form's le-lotno field and re-highlights chips so the visual state
 // matches. Called from chip onclick attributes inserted by leLoadAllocBar.
-function lePickLot(lotNo) {
+// `branch` is supplied in "All branches" mode so the dropdown auto-
+// switches to the chip's owning branch (save flow needs a specific one).
+function lePickLot(lotNo, branch) {
   const input = document.getElementById('le-lotno');
   if (!input) return;
   // If the user has typed weight/bag data into the form, swapping the
@@ -10131,6 +10165,17 @@ function lePickLot(lotNo) {
     document.getElementById('le-sample').value = _le.sampleWeight ? _le.sampleWeight.toFixed(3) : '0.000';
     const moistureEl = document.getElementById('le-moisture');
     if (moistureEl) moistureEl.value = '';
+  }
+  // Switch branch dropdown when a chip from a specific branch is
+  // clicked while the operator is viewing "All branches". Dispatch
+  // 'change' so the existing listener re-renders the grid filtered to
+  // that branch (and the chip we just picked re-highlights as selected).
+  if (branch) {
+    const branchEl = document.getElementById('le-branch');
+    if (branchEl && branchEl.value !== branch) {
+      branchEl.value = branch;
+      branchEl.dispatchEvent(new Event('change'));
+    }
   }
   input.value = lotNo;
   // Re-paint selected highlight without re-fetching stats from server

@@ -1764,22 +1764,36 @@ ${rates.cess}
 </ALLINVENTORYENTRIES.LIST>`;
     }
 
-    // Bill allocations split into "goods" + "GST" line items so Tally
-    // can age them separately in receivables/payables. Two cases:
+    // Bill allocations split into "goods" + "GST" + "TDS" line items so
+    // Tally can age them separately in receivables/payables. Cases:
     //   • detailed   → one allocation per lot for goods (billAlloc1)
-    //                  + one GST allocation = sum(taxes) − TDS
+    //                  + one GST allocation = sum(taxes)
+    //                  + one TDS allocation = −tdsamt (when non-zero)
     //   • aggregate  → single goods allocation = bilamttot
-    //                  + one GST allocation = sum(taxes) − TDS
-    // The total of all allocations = the party ledger AMOUNT. TDS is
-    // absorbed in the GST allocation (matches the original VBA macro).
+    //                  + one GST allocation = sum(taxes)
+    //                  + one TDS allocation = −tdsamt (when non-zero)
+    // The total of all allocations = the party ledger AMOUNT. TDS now
+    // gets its own negative "{ano}/TDS/{season-short}" ref so the GST
+    // allocation stays gross (matches the requested ageing layout).
     const gstSum     = cgst + sgst + igst;
-    const gstAllocAmt = tlyrnd ? r0(gstSum) - tdsamt : r2(gstSum) - tdsamt;
+    const gstAllocAmt = tlyrnd ? r0(gstSum) : r2(gstSum);
     const gstAlloc   = `
 <BILLALLOCATIONS.LIST>
 <NAME>${xe(`${row.ano}/GST/${season}`)}</NAME>
 <BILLTYPE>New Ref</BILLTYPE>
 <AMOUNT>${r2(gstAllocAmt)}</AMOUNT>
 </BILLALLOCATIONS.LIST>`;
+    // Short-form season identifier (e.g. "26-27"). Falls back to the
+    // main season suffix so the ref is never empty even when the
+    // operator hasn't configured a separate season_short.
+    const seasonShort = String(cfgGet(cfg, 'season_short', '')).trim() || season;
+    const tdsAllocAmt = tlyrnd ? r0(tdsamt) : r2(tdsamt);
+    const tdsAlloc = tdsamt > 0 ? `
+<BILLALLOCATIONS.LIST>
+<NAME>${xe(`${row.ano}/TDS/${seasonShort}`)}</NAME>
+<BILLTYPE>New Ref</BILLTYPE>
+<AMOUNT>${r2(-tdsAllocAmt)}</AMOUNT>
+</BILLALLOCATIONS.LIST>` : '';
 
     xml += `\n${startVoucher}
 <ADDRESS.LIST TYPE="String">
@@ -1823,7 +1837,7 @@ ${TAGS.DEEMNO}
 <NAME>${xe(`${row.ano}/${taxNm}/${season}`)}</NAME>
 <BILLTYPE>New Ref</BILLTYPE>
 <AMOUNT>${tlyrnd ? r0(bilamttot) : bilamttot}</AMOUNT>
-</BILLALLOCATIONS.LIST>`}${gstAlloc}
+</BILLALLOCATIONS.LIST>`}${gstAlloc}${tdsAlloc}
 </LEDGERENTRIES.LIST>`;
 
     // Tax ledgers
