@@ -3795,12 +3795,27 @@ app.post('/api/lots/calculate/:auctionId',
   // also skip locked rows here intentionally: recalc is a batch refresh,
   // not a force-edit; admins can still hit PUT /api/lots/:id directly.
   const lockSuffix = lockFeatureOn(db) ? ' AND locked_at IS NULL' : '';
-  const lots = db.all(`SELECT * FROM lots WHERE auction_id = ? AND amount > 0${lockSuffix}`, [req.params.auctionId]);
+  // Include lots where qty × price > 0 even if the stored amount is 0
+  // — covers the case where price was just corrected (e.g. Price Check
+  // Apply) but the amount column hasn't been refreshed yet.
+  const lots = db.all(
+    `SELECT * FROM lots WHERE auction_id = ?
+       AND (amount > 0 OR (qty > 0 AND price > 0))${lockSuffix}`,
+    [req.params.auctionId]
+  );
   let count = 0;
   for (const lot of lots) {
+    // Canonical formula: Amount = Price × Quantity (2-decimal precision).
+    // Recompute on every Calculate run so a downstream price correction
+    // (Price Check Apply, manual edit) flows through to commission /
+    // GST / payable without needing a separate amount-refresh step.
+    const qty   = Number(lot.qty)   || 0;
+    const price = Number(lot.price) || 0;
+    const amount = Math.round(qty * price * 100) / 100;
+    lot.amount = amount;
     const calc = calculateLot(lot, cfg);
-    db.run(`UPDATE lots SET pqty=?,prate=?,puramt=?,com=?,sertax=?,cgst=?,sgst=?,igst=?,advance=?,balance=?,bilamt=?,refund=?,refud=?,isp_pqty=?,isp_prate=?,isp_puramt=?,asp_pqty=?,asp_prate=?,asp_puramt=? WHERE id=?`,
-      [calc.pqty,calc.prate,calc.puramt,calc.com,calc.sertax,calc.cgst,calc.sgst,calc.igst,calc.advance,calc.balance,calc.bilamt,calc.refund||0,calc.refud||0,calc.isp_pqty||0,calc.isp_prate||0,calc.isp_puramt||0,calc.asp_pqty||0,calc.asp_prate||0,calc.asp_puramt||0,lot.id]);
+    db.run(`UPDATE lots SET amount=?,pqty=?,prate=?,puramt=?,com=?,sertax=?,cgst=?,sgst=?,igst=?,advance=?,balance=?,bilamt=?,refund=?,refud=?,isp_pqty=?,isp_prate=?,isp_puramt=?,asp_pqty=?,asp_prate=?,asp_puramt=? WHERE id=?`,
+      [amount,calc.pqty,calc.prate,calc.puramt,calc.com,calc.sertax,calc.cgst,calc.sgst,calc.igst,calc.advance,calc.balance,calc.bilamt,calc.refund||0,calc.refud||0,calc.isp_pqty||0,calc.isp_prate||0,calc.isp_puramt||0,calc.asp_pqty||0,calc.asp_prate||0,calc.asp_puramt||0,lot.id]);
     count++;
   }
   res.json({ success: true, calculated: count });
