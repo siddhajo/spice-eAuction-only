@@ -18904,6 +18904,12 @@ async function pcVerify(){
     if (data.forcedAuction && data.forcedAuction.id) {
       _PC_STATUS_CACHE.delete(String(data.forcedAuction.id));
     }
+    // When the verify run cleared the gate, actively refresh every
+    // consumer tab's gate so its red warning banner disappears now,
+    // instead of waiting until the user re-navigates to that tab.
+    if (data.gateReady) {
+      try { pcRefreshAllGates(); } catch (_) {}
+    }
     _pcRenderPreview(data);
     // The headline + summary line is rendered inside _pcRenderPreview
     // (via _pcRenderResultLine) so it auto-updates on every keep/undo
@@ -19565,6 +19571,28 @@ async function pcRefreshGate(auctionId, tabScope){
     '<b>Transactions locked</b> — run <i>Reports → Price Check</i> against this auction first.',
     aid);
   return false;
+}
+
+// Sweep every consumer tab's gate in one call. Reads each tab's
+// currently-selected auction from its own dropdown, drops its cached
+// status so the next fetch is fresh, and re-runs pcRefreshGate so the
+// banner + button state update immediately. Used right after a
+// successful Price Check verify so the Lots / Invoices / Purchases /
+// Bills / Debit Notes tabs lose their red banner without the operator
+// having to re-navigate to each one.
+async function pcRefreshAllGates(){
+  const consumers = [
+    ['lot-auction',  '#tc-lots'],
+    ['inv-auction',  '#tc-invoices'],
+    ['pur-auction',  '#tc-purchases'],
+    ['bill-auction', '#tc-bills'],
+    ['dn-auction',   '#tc-debit'],
+  ];
+  for (const [selId, scope] of consumers) {
+    const aid = document.getElementById(selId)?.value;
+    if (aid) _PC_STATUS_CACHE.delete(String(aid));
+    pcRefreshGate(aid, scope);
+  }
 }
 
 // ══════════════════════════════════════════════════════════════
