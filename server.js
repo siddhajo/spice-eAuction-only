@@ -2265,6 +2265,12 @@ function _remainingPartiesSql(db, docType, auctionId) {
   const ano = auction.ano;
   const cfg = getSettingsFlat(db);
 
+  // Lots tagged WD (withdrawn — pulled before sale) are not invoiceable
+  // / purchaseable / billable. Excluding them from the "remaining
+  // parties" count lets the gate flip done=true once every NON-WD lot
+  // has its doc, even if WD rows linger in the trade.
+  const notWD = `UPPER(TRIM(COALESCE(l.code,''))) != 'WD'`;
+
   if (docType === 'invoices') {
     // Mirrors /api/invoices/generate-all eligibility (ASP-aware).
     const isASPState = String(cfg.business_state || '').toUpperCase() === 'KERALA';
@@ -2277,6 +2283,7 @@ function _remainingPartiesSql(db, docType, auctionId) {
              WHERE l.auction_id = ?
                AND l.buyer IS NOT NULL AND l.buyer != ''
                AND l.amount > 0
+               AND ${notWD}
                AND ${uninvoicedExpr}`,
       params: [auctionId],
     };
@@ -2291,6 +2298,7 @@ function _remainingPartiesSql(db, docType, auctionId) {
              WHERE l.auction_id = ?
                AND l.amount > 0
                AND l.name IS NOT NULL AND l.name != ''
+               AND ${notWD}
                AND (UPPER(l.cr) LIKE 'GSTIN%'
                     OR (l.cr GLOB '[0-9][0-9]*' AND LENGTH(l.cr) >= 15))
                AND p.id IS NULL`,
@@ -2307,6 +2315,7 @@ function _remainingPartiesSql(db, docType, auctionId) {
              WHERE l.auction_id = ?
                AND l.amount > 0
                AND l.name IS NOT NULL AND l.name != ''
+               AND ${notWD}
                AND (l.cr IS NULL OR l.cr = ''
                     OR (UPPER(l.cr) NOT LIKE 'GSTIN%' AND l.cr NOT GLOB '[0-9][0-9]*'))
                AND b.id IS NULL`,

@@ -19785,6 +19785,11 @@ async function pcApplyFix(btn, lotId, fileCode, filePrice){
       btn.style.background = '#15803d';
       btn.style.borderColor = '#15803d';
     }
+    // Re-verify so _pcLastSummary reflects the new DB state. Without
+    // this the row keeps its stale `server_diff` status in the cached
+    // summary, so the "Keep DB price for all N rows" toolbar count
+    // never decrements after a single-row Apply price / Apply code.
+    pcVerify();
   } catch (e) {
     if (btn) { btn.disabled = false; btn.textContent = origLabel; }
     if (typeof showError === 'function') showError(e);
