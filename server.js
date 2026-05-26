@@ -2243,12 +2243,130 @@ function requirePriceChecked(getAuctionId) {
 // Per-auction generation status. For each transaction type
 // (invoices / purchases / bills / debit notes) returns:
 //   - generated: how many rows already exist for this auction
-//   - pending:   how many distinct targets still have eligible lots
+//   - pending:   how many distinct eligible parties still have no doc
 //   - done:      generated>0 AND pending===0 (i.e. button can be disabled)
-// Powers the UI gate that disables Generate buttons once everything's
-// been generated. Admin can still override on the client. Payments
-// have no "generate" flow (they're a derived view), so they're not
-// reported here.
+// Powers the UI gate that disables Generate buttons only once every
+// eligible party for the trade has its doc. Admin can still override on
+// the client. Payments have no "generate" flow (they're a derived
+// view), so they're not reported here.
+//
+// All four kinds share the same "fully done = at least one row exists
+// AND no eligible party is left without one" rule. Each doc type's
+// "remaining parties" SQL mirrors the eligibility filter used by the
+// matching generate-all endpoint, so the gate flips exactly when a
+// repeated generate-all run would no-op.
+function _remainingPartiesSql(db, docType, auctionId) {
+  // Returns { sql, params } whose execution yields one row per distinct
+  // eligible party in the trade that still lacks its doc. Caller wraps
+  // with COUNT(*) for pending or EXISTS(SELECT 1 ... LIMIT 1) for the
+  // boolean form.
+  const auction = db.get('SELECT ano FROM auctions WHERE id = ?', [auctionId]);
+  if (!auction) return null;
+  const ano = auction.ano;
+  const cfg = getSettingsFlat(db);
+
+  if (docType === 'invoices') {
+    // Mirrors /api/invoices/generate-all eligibility (ASP-aware).
+    const isASPState = String(cfg.business_state || '').toUpperCase() === 'KERALA';
+    const uninvoicedExpr = isASPState
+      ? `(l.invo IS NULL OR l.invo = '')`
+      : `(l.invo IS NULL OR l.invo = '' OR (l.asp_invo IS NOT NULL AND l.asp_invo != '' AND l.invo = l.asp_invo))`;
+    return {
+      sql: `SELECT DISTINCT l.buyer
+              FROM lots l
+             WHERE l.auction_id = ?
+               AND l.buyer IS NOT NULL AND l.buyer != ''
+               AND l.amount > 0
+               AND ${uninvoicedExpr}`,
+      params: [auctionId],
+    };
+  }
+  if (docType === 'purchases') {
+    // Mirrors /api/purchases/generate-all (dual-format GSTIN filter).
+    return {
+      sql: `SELECT DISTINCT l.name
+              FROM lots l
+              LEFT JOIN purchases p
+                ON p.auction_id = l.auction_id AND p.name = l.name
+             WHERE l.auction_id = ?
+               AND l.amount > 0
+               AND l.name IS NOT NULL AND l.name != ''
+               AND (UPPER(l.cr) LIKE 'GSTIN%'
+                    OR (l.cr GLOB '[0-9][0-9]*' AND LENGTH(l.cr) >= 15))
+               AND p.id IS NULL`,
+      params: [auctionId],
+    };
+  }
+  if (docType === 'bills') {
+    // Mirrors listAgriSellers (calculations.js) + LEFT JOIN bills. bills
+    // is keyed by ano (text), not auction_id.
+    return {
+      sql: `SELECT DISTINCT l.name
+              FROM lots l
+              LEFT JOIN bills b ON b.ano = ? AND b.name = l.name
+             WHERE l.auction_id = ?
+               AND l.amount > 0
+               AND l.name IS NOT NULL AND l.name != ''
+               AND (l.cr IS NULL OR l.cr = ''
+                    OR (UPPER(l.cr) NOT LIKE 'GSTIN%' AND l.cr NOT GLOB '[0-9][0-9]*'))
+               AND b.id IS NULL`,
+      params: [ano, auctionId],
+    };
+  }
+  if (docType === 'debit_notes') {
+    // Mirrors /api/debit-notes/eligible-purchases — distinct dealer
+    // names on purchases in this trade that don't yet have a matching
+    // debit_notes row (same idempotency key as /generate-bulk).
+    return {
+      sql: `SELECT DISTINCT p.name
+              FROM purchases p
+             WHERE p.ano = ?
+               AND p.amount > 0
+               AND p.name IS NOT NULL AND p.name != ''
+               AND NOT EXISTS (
+                 SELECT 1 FROM debit_notes dn
+                  WHERE dn.ano = p.ano AND dn.name = p.name
+               )`,
+      params: [ano],
+    };
+  }
+  return null;
+}
+
+function _hasRemainingParties(db, docType, auctionId) {
+  const q = _remainingPartiesSql(db, docType, auctionId);
+  if (!q) return false;
+  const row = db.get(`SELECT 1 AS x FROM (${q.sql} LIMIT 1) sub`, q.params);
+  return !!row;
+}
+
+function _countRemainingParties(db, docType, auctionId) {
+  const q = _remainingPartiesSql(db, docType, auctionId);
+  if (!q) return 0;
+  const row = db.get(`SELECT COUNT(*) AS c FROM (${q.sql}) sub`, q.params);
+  return row ? Number(row.c) || 0 : 0;
+}
+
+function _generatedCount(db, docType, auctionId, ano) {
+  switch (docType) {
+    case 'invoices':    return db.get('SELECT COUNT(*) AS c FROM invoices WHERE auction_id = ?', [auctionId]).c;
+    case 'purchases':   return db.get('SELECT COUNT(*) AS c FROM purchases WHERE auction_id = ?', [auctionId]).c;
+    case 'bills':       return db.get('SELECT COUNT(*) AS c FROM bills WHERE ano = ?', [ano]).c;
+    case 'debit_notes': return db.get('SELECT COUNT(*) AS c FROM debit_notes WHERE ano = ?', [ano]).c;
+    default: return 0;
+  }
+}
+
+function _isFullyGenerated(db, docType, auctionId) {
+  const auction = db.get('SELECT ano FROM auctions WHERE id = ?', [auctionId]);
+  if (!auction) return false;
+  const generated = _generatedCount(db, docType, auctionId, auction.ano);
+  // "At least one doc exists" guard ensures an empty trade reports
+  // false (un-locked) so operators can still start generating.
+  if (generated <= 0) return false;
+  return !_hasRemainingParties(db, docType, auctionId);
+}
+
 app.get('/api/auctions/:id/generation-status', requireView, (req, res) => {
   const db = getDb();
   const aid = parseInt(req.params.id, 10);
@@ -2256,65 +2374,14 @@ app.get('/api/auctions/:id/generation-status', requireView, (req, res) => {
   const auction = db.get('SELECT ano FROM auctions WHERE id = ?', [aid]);
   if (!auction) return res.status(404).json({ error: 'Auction not found' });
   const ano = auction.ano;
-  const cfg = getSettingsFlat(db);
 
-  // ── INVOICES — eligibility mirrors /api/invoices/eligible-buyers
-  const isASPState = String(cfg.business_state || '').toUpperCase() === 'KERALA';
-  const invEligExpr = isASPState
-    ? `(l.invo IS NULL OR l.invo = '')`
-    : `(l.invo IS NULL OR l.invo = '' OR (l.asp_invo IS NOT NULL AND l.asp_invo != '' AND l.invo = l.asp_invo))`;
-  const invGenerated = db.get('SELECT COUNT(*) AS c FROM invoices WHERE auction_id = ?', [aid]).c;
-  const invPending = db.get(
-    `SELECT COUNT(*) AS c FROM (
-       SELECT l.buyer FROM lots l
-        WHERE l.auction_id = ? AND l.buyer IS NOT NULL AND l.buyer != ''
-          AND l.amount > 0
-        GROUP BY l.buyer
-       HAVING COUNT(CASE WHEN ${invEligExpr} THEN 1 END) > 0
-     ) sub`, [aid]).c;
-
-  // ── PURCHASES — dealers with GSTIN. "Generated" = seller name appears
-  //    in purchases for this auction.
-  const purAllDealers = db.get(
-    `SELECT COUNT(DISTINCT name) AS c FROM lots
-      WHERE auction_id = ? AND name IS NOT NULL AND name != '' AND amount > 0
-        AND (UPPER(cr) LIKE 'GSTIN%' OR (cr GLOB '[0-9][0-9]*' AND LENGTH(cr) >= 15))`,
-    [aid]).c;
-  const purInvoicedDealers = db.get(
-    `SELECT COUNT(DISTINCT name) AS c FROM purchases
-      WHERE auction_id = ? AND name IS NOT NULL AND name != ''`,
-    [aid]).c;
-  const purGenerated = db.get('SELECT COUNT(*) AS c FROM purchases WHERE auction_id = ?', [aid]).c;
-  const purPending = Math.max(0, purAllDealers - purInvoicedDealers);
-
-  // ── BILLS OF SUPPLY — agriculturist sellers (no GSTIN). bills table
-  //    is keyed by ano (text) not auction_id.
-  const billAllAgri = db.get(
-    `SELECT COUNT(DISTINCT name) AS c FROM lots
-      WHERE auction_id = ? AND amount > 0
-        AND (cr IS NULL OR cr = ''
-             OR (UPPER(cr) NOT LIKE 'GSTIN%' AND cr NOT GLOB '[0-9][0-9]*'))`,
-    [aid]).c;
-  const billedAgri = db.get(
-    `SELECT COUNT(DISTINCT name) AS c FROM bills WHERE ano = ? AND name IS NOT NULL AND name != ''`,
-    [ano]).c;
-  const billGenerated = db.get('SELECT COUNT(*) AS c FROM bills WHERE ano = ?', [ano]).c;
-  const billPending = Math.max(0, billAllAgri - billedAgri);
-
-  // ── DEBIT NOTES — one per generated invoice (heuristic). Pending = any
-  //    invoice in this auction without a corresponding debit_notes row.
-  //    Matched by ano because debit_notes uses ano, not auction_id.
-  const dnGenerated = db.get('SELECT COUNT(*) AS c FROM debit_notes WHERE ano = ?', [ano]).c;
-  const dnPending = Math.max(0, invGenerated - dnGenerated);
-
-  res.json({
-    auctionId: aid,
-    ano,
-    invoices:    { generated: invGenerated,  pending: invPending,  done: invGenerated  > 0 && invPending  === 0 },
-    purchases:   { generated: purGenerated,  pending: purPending,  done: purGenerated  > 0 && purPending  === 0 },
-    bills:       { generated: billGenerated, pending: billPending, done: billGenerated > 0 && billPending === 0 },
-    debit_notes: { generated: dnGenerated,   pending: dnPending,   done: dnGenerated   > 0 && dnPending   === 0 },
-  });
+  const status = {};
+  for (const kind of ['invoices', 'purchases', 'bills', 'debit_notes']) {
+    const generated = _generatedCount(db, kind, aid, ano);
+    const pending   = _countRemainingParties(db, kind, aid);
+    status[kind] = { generated, pending, done: generated > 0 && pending === 0 };
+  }
+  res.json({ auctionId: aid, ano, ...status });
 });
 
 app.post('/api/price-check/verify', requireView, upload.single('file'), async (req, res) => {

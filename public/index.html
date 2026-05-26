@@ -9012,7 +9012,19 @@ function renderLeRecent(){
   // visible window.
   const sortMode = leGetSortMode();
   const sortDir  = leGetSortDir();
-  const visible  = leSortRecent(_le.recentLots, sortMode, sortDir);
+  let visible  = leSortRecent(_le.recentLots, sortMode, sortDir);
+  // Bring ticked rows to the top — stable shuffle: ticked rows keep
+  // their relative order (governed by the user's current Sort By
+  // mode), same for unticked. Makes the typing-to-tick flow obvious:
+  // matched lots appear at the top of the Recent panel.
+  const tickedSet = _le.selectedForPrint;
+  if (tickedSet && tickedSet.size) {
+    visible = visible.slice().sort((a, b) => {
+      const at = tickedSet.has(a.id) ? 0 : 1;
+      const bt = tickedSet.has(b.id) ? 0 : 1;
+      return at - bt;
+    });
+  }
   const arrow = (col) => sortMode === col ? (sortDir === 'desc' ? ' ▼' : ' ▲') : '';
   const hdrStyle = (col, extra) => 'cursor:pointer;user-select:none;' + (extra||'') +
         (sortMode === col ? 'color:var(--green);' : '');
@@ -10377,14 +10389,15 @@ function leToggleLotSelected(lotId, on) {
   if (!_le.selectedForPrint) _le.selectedForPrint = new Set();
   if (on) _le.selectedForPrint.add(lotId);
   else    _le.selectedForPrint.delete(lotId);
-  // Sync header master checkbox state without re-rendering everything.
-  const all = document.getElementById('le-recent-select-all');
-  if (all) {
-    const total = _le.recentLots.length;
-    const inWindow = _le.recentLots.filter(l => _le.selectedForPrint.has(l.id)).length;
-    all.checked = inWindow > 0 && inWindow === total;
-    all.indeterminate = inWindow > 0 && inWindow < total;
-  }
+  // Re-render so ticked rows always sort to the top. Preserve scroll
+  // position so the row doesn't yank the viewport from under the user
+  // when they tick further-down checkboxes — the row visibly bubbles
+  // up, but the scrollbar stays put.
+  const scrollEl = document.getElementById('le-recent-scroll');
+  const scrollTop = scrollEl ? scrollEl.scrollTop : 0;
+  renderLeRecent();
+  const afterScroll = document.getElementById('le-recent-scroll');
+  if (afterScroll) afterScroll.scrollTop = scrollTop;
   leUpdatePrintToolbar();
 }
 
@@ -10488,6 +10501,16 @@ async function leSelectLotsByTyping() {
     return;
   }
 
+  // Explicit empty-trade signal — without this an empty trade reads the
+  // same as "lot numbers don't match" and the user can't tell which.
+  if (!allLots.length) {
+    if (statusEl) {
+      statusEl.textContent = 'No lots in this trade yet — add lots first.';
+      statusEl.style.color = '#C62828';
+    }
+    return;
+  }
+
   if (!_le.selectedForPrint) _le.selectedForPrint = new Set();
   const matchedKeys = new Set();
   const matched = [];
@@ -10507,6 +10530,13 @@ async function leSelectLotsByTyping() {
   if (additions.length) _le.recentLots = (_le.recentLots || []).concat(additions);
 
   renderLeRecent();
+  // Scroll the Recent panel back to the top — the renderLeRecent
+  // call just pushed every ticked row to the top via _le.selectedForPrint,
+  // so the user should land on them immediately.
+  if (matched.length) {
+    const scrollEl = document.getElementById('le-recent-scroll');
+    if (scrollEl) scrollEl.scrollTop = 0;
+  }
 
   // wanted is a Map<canon, original>; show originals in the diagnostic
   // so the user sees what they typed ("001") not the canonical form ("1").
@@ -18797,6 +18827,11 @@ async function plDownload(){
 // memory carries over.
 // ════════════════════════════════════════════════════════════════
 let _pcLastSummary = null;
+// Lots where the operator has decided the DB price is correct and the
+// file is wrong — UI-only state. Keeps the row acknowledged (greyed +
+// KEPT badge) without touching the DB price. Survives re-verify on the
+// same file; cleared when the user picks a new file or hits Clear.
+const _pcKeptLots = new Set();
 
 async function loadPriceCheckAuctions(){
   // Reuses the same /api/auctions endpoint other auction-pickers do.
@@ -18818,6 +18853,7 @@ async function loadPriceCheckAuctions(){
 function pcOnFileChange(){
   // A new file invalidates the previous preview → reset download gate.
   _pcLastSummary = null;
+  _pcKeptLots.clear();
   const btn = document.getElementById('pc-download-btn');
   if (btn) btn.disabled = true;
   const result  = document.getElementById('pc-result');
@@ -18923,14 +18959,20 @@ function _pcRenderPreview(data){
   // Helpers used by every UI section below. Defined up front so the
   // gate banner, buyer-code strip, and per-row renderer can all share
   // a single "is this row fixable?" definition.
+  const isKept = rw => rw && rw.lot_id != null && _pcKeptLots.has(rw.lot_id);
   const isFullyMatched = rw => rw.status === 'match'
     && rw.code_status !== 'diff'
     && rw.code_status !== 'db_blank';
-  const rowFixable = rw =>
-    rw && rw.lot_id && (
-      (rw.file_code && (rw.code_status === 'diff' || rw.code_status === 'db_blank'))
-      || (rw.status === 'server_diff' && rw.file_server_price != null)
-    );
+  // Whether a price-diff row still needs a price decision (i.e. not kept).
+  const hasOpenPriceDiff = rw =>
+    rw && rw.lot_id && rw.status === 'server_diff'
+    && rw.file_server_price != null
+    && !isKept(rw);
+  // Code fixes still apply on kept rows — we only suppress the price write.
+  const hasOpenCodeFix = rw =>
+    rw && rw.lot_id && rw.file_code
+    && (rw.code_status === 'diff' || rw.code_status === 'db_blank');
+  const rowFixable = rw => hasOpenCodeFix(rw) || hasOpenPriceDiff(rw);
 
   // Gate banner — green when this run cleared the transaction lock,
   // red otherwise. Auto-stamped on the server when verify runs against
@@ -18986,14 +19028,38 @@ function _pcRenderPreview(data){
   // and is independent of whether the file has a CODE column, so
   // price-only fixes can also be applied in bulk.
   const fixable = (data.rows || []).filter(rowFixable);
-  if (fixable.length) {
-    html += '<div style="display:flex;gap:8px;margin:-2px 0 10px 0;align-items:center">'+
-      '<button class="btn btn-g btn-sm" onclick="pcApplyAllFixes()" '+
-      'title="For each fixable row: write the file\'s server PRICE and/or CODE onto the matching lot. Buyer / sale-type are re-resolved from the buyer master when a code changes.">'+
-      '✓ Apply all '+fixable.length+' fix'+(fixable.length===1?'':'es')+
-      '</button>'+
-      '<span style="font-size:11.5px;color:#555">Writes file price + code onto matched lots, re-resolving buyer details. Skips rows without a DB lot or with nothing fixable.</span>'+
-      '</div>';
+  // Price-diff rows that have not yet been kept — candidates for
+  // bulk "Keep DB price for all". Price diffs already kept are
+  // tracked by the pill on the right; rows without a DB lot can't
+  // be kept (nothing to mark against).
+  const openPriceDiffs = (data.rows || []).filter(hasOpenPriceDiff);
+  const keptCount = (data.rows || []).reduce((n, rw) => n + (isKept(rw) ? 1 : 0), 0);
+  if (fixable.length || openPriceDiffs.length || keptCount) {
+    html += '<div style="display:flex;gap:8px;margin:-2px 0 10px 0;align-items:center;flex-wrap:wrap">';
+    if (fixable.length) {
+      html += '<button class="btn btn-g btn-sm" onclick="pcApplyAllFixes()" '+
+        'title="For each fixable row: write the file\'s server PRICE and/or CODE onto the matching lot. Kept rows get only the code update (DB price preserved). Buyer / sale-type are re-resolved from the buyer master when a code changes.">'+
+        '✓ Apply all '+fixable.length+' fix'+(fixable.length===1?'':'es')+
+        '</button>';
+    }
+    if (openPriceDiffs.length) {
+      html += '<button class="btn btn-sm" onclick="pcKeepAll()" '+
+        'title="Mark every remaining price-diff row as kept — DB price stays, file price is ignored, rows turn grey.">'+
+        '⊘ Keep DB price for all '+openPriceDiffs.length+' price diff'+(openPriceDiffs.length===1?'':'s')+
+        '</button>';
+    }
+    if (keptCount) {
+      html += '<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:12px;background:#e5e7eb;color:#374151;font-size:11.5px;font-weight:600">'+
+        keptCount+' kept (DB price preserved)'+
+        ' <a href="javascript:void(0)" onclick="pcUndoAllKept()" '+
+        'style="color:#1d4ed8;text-decoration:underline;font-weight:500" '+
+        'title="Restore every kept row so it needs a price decision again">undo all</a>'+
+        '</span>';
+    }
+    if (fixable.length || openPriceDiffs.length) {
+      html += '<span style="font-size:11.5px;color:#555">Writes file price + code onto matched lots, re-resolving buyer details. Kept rows preserve their DB price.</span>';
+    }
+    html += '</div>';
   } else if (codeIssues === 0 && (data.mismatched || 0) === 0) {
     html += '<div style="margin:-2px 0 10px 0;font-size:12px;color:#15803d">✓ Prices and buyer codes both reconcile with the server.</div>';
   }
@@ -19053,13 +19119,18 @@ function _pcRenderPreview(data){
   // visible even if the price matches — otherwise the per-row Apply
   // button would be hidden along with the row.
   for (const rw of rows) {
+    const kept = isKept(rw);
     const display = isFullyMatched(rw) ? 'display:none' : '';
-    const bg = _pcRowBg(rw.status);
+    const bg = kept ? '#f3f4f6' : _pcRowBg(rw.status);
     const issues = rw.issues || [];
-    const badge = _pcStatusBadge(rw);
+    const badge = kept && rw.status === 'server_diff'
+      ? '<span style="display:inline-block;padding:1px 8px;border-radius:10px;background:#e5e7eb;color:#374151;font-weight:700;font-size:11px" title="DB price kept; file price ignored">KEPT (DB)</span>'
+      : _pcStatusBadge(rw);
     const diffCell = rw.diff == null ? '—'
       : (rw.diff === 0 ? '<span style="color:#15803d">0</span>'
-         : '<span style="color:#c00;font-weight:700">'+(rw.diff > 0 ? '+' : '')+rw.diff+'</span>');
+         : (kept
+            ? '<span style="color:#9ca3af;text-decoration:line-through">'+(rw.diff > 0 ? '+' : '')+rw.diff+'</span>'
+            : '<span style="color:#c00;font-weight:700">'+(rw.diff > 0 ? '+' : '')+rw.diff+'</span>'));
 
     // Manual PRICE — show greyed if absent or unhighlighted (it's
     // context, not validation target).
@@ -19067,8 +19138,10 @@ function _pcRenderPreview(data){
     // File SERVER PRICE — highlight if it disagrees or is blank.
     const filePriceVal = rw.file_server_price;
     const fileEmpty = filePriceVal == null;
-    const fileMismatch = issues.includes('server_diff') || issues.includes('server_empty');
-    const fileCell = fileEmpty ? '<span style="color:#a16207">blank</span>' : filePriceVal;
+    const fileMismatch = !kept && (issues.includes('server_diff') || issues.includes('server_empty'));
+    const fileCell = fileEmpty
+      ? '<span style="color:#a16207">blank</span>'
+      : (kept ? '<span style="color:#9ca3af;text-decoration:line-through">'+filePriceVal+'</span>' : filePriceVal);
 
     // Code cells: render in red when statuses signal action needed.
     const fileCodeRaw = rw.file_code || '';
@@ -19089,27 +19162,57 @@ function _pcRenderPreview(data){
     else if (codeStatus === 'file_blank') codeBadge = '<span style="display:inline-block;padding:1px 6px;border-radius:8px;background:#fef3c7;color:#a16207;font-weight:700;font-size:11px">FILE BLANK</span>';
     else codeBadge = '<span style="color:#aaa;font-size:11px">—</span>';
 
-    // Per-row Apply button — visible whenever the row has a DB lot AND
-    // at least one fixable disagreement: a code diff/db_blank with a
-    // non-empty file code, OR a server price diff with a numeric file
-    // price. We send only the fields that need fixing — the rest of
-    // the lot is untouched.
+    // Per-row action cell. Layout depends on what the row needs and
+    // whether the operator has already chosen "keep DB price" on it.
+    //   - kept row → KEPT chip + Undo button. If there's an open code
+    //                fix, we still surface "Apply code" so the row can
+    //                clear its code diff while preserving DB price.
+    //   - price diff only → [Apply price] [Keep DB]
+    //   - code + price diff → [Apply price + code] [Apply code only]
+    //   - code diff only → [Apply code]
     const fixCode  = !!(fileCodeRaw && (codeStatus === 'diff' || codeStatus === 'db_blank'));
     const fixPrice = !!(rw.status === 'server_diff' && filePriceVal != null);
-    const canFix   = rw.lot_id && (fixCode || fixPrice);
-    let btnLabel = 'Apply';
-    if (fixCode && fixPrice) btnLabel = 'Apply price + code';
-    else if (fixCode)        btnLabel = 'Apply code';
-    else if (fixPrice)       btnLabel = 'Apply price';
-    const fixCell = canFix
-      ? '<button class="btn btn-g btn-sm" style="padding:2px 10px;font-size:11px;white-space:nowrap" '+
-        'onclick="pcApplyFix(this,'+rw.lot_id+
-          ','+(fixCode ? '\''+escAttr(fileCodeRaw)+'\'' : 'null')+
-          ','+(fixPrice ? Number(filePriceVal) : 'null')+
-          ')">'+btnLabel+'</button>'
-      : '<span style="color:#aaa">—</span>';
+    let fixCell;
+    if (!rw.lot_id) {
+      fixCell = '<span style="color:#aaa">—</span>';
+    } else if (kept) {
+      const chip = '<span style="display:inline-block;padding:1px 8px;border-radius:10px;background:#e5e7eb;color:#374151;font-weight:700;font-size:11px;white-space:nowrap">KEPT</span>';
+      const undoBtn = '<button class="btn btn-sm" style="padding:2px 8px;font-size:11px;white-space:nowrap" '+
+        'onclick="pcUndoKeep('+rw.lot_id+')" title="Restore this row to needing a price decision">Undo</button>';
+      // Even if a kept row also has an open code diff, the operator can
+      // still apply that without affecting the DB price.
+      const codeBtn = fixCode
+        ? ' <button class="btn btn-g btn-sm" style="padding:2px 10px;font-size:11px;white-space:nowrap" '+
+          'onclick="pcApplyCodeOnly(this,'+rw.lot_id+',\''+escAttr(fileCodeRaw)+'\',true)" '+
+          'title="Write the file CODE onto the lot, leave price untouched">Apply code</button>'
+        : '';
+      fixCell = '<div style="display:flex;gap:4px;align-items:center;justify-content:center;flex-wrap:wrap">'+chip+' '+undoBtn+codeBtn+'</div>';
+    } else if (fixCode && fixPrice) {
+      const applyBoth = '<button class="btn btn-g btn-sm" style="padding:2px 10px;font-size:11px;white-space:nowrap" '+
+        'onclick="pcApplyFix(this,'+rw.lot_id+',\''+escAttr(fileCodeRaw)+'\','+Number(filePriceVal)+')" '+
+        'title="Write both file CODE and PRICE onto the lot">Apply price + code</button>';
+      const applyCode = '<button class="btn btn-sm" style="padding:2px 10px;font-size:11px;white-space:nowrap" '+
+        'onclick="pcApplyCodeOnly(this,'+rw.lot_id+',\''+escAttr(fileCodeRaw)+'\',true)" '+
+        'title="Write only the file CODE; keep DB price and mark row as kept">Apply code only</button>';
+      fixCell = '<div style="display:flex;gap:4px;align-items:center;justify-content:center;flex-wrap:wrap">'+applyBoth+' '+applyCode+'</div>';
+    } else if (fixPrice) {
+      const applyPrice = '<button class="btn btn-g btn-sm" style="padding:2px 10px;font-size:11px;white-space:nowrap" '+
+        'onclick="pcApplyFix(this,'+rw.lot_id+',null,'+Number(filePriceVal)+')" '+
+        'title="Write the file PRICE onto the lot">Apply price</button>';
+      const keepDb = '<button class="btn btn-sm" style="padding:2px 10px;font-size:11px;white-space:nowrap" '+
+        'onclick="pcKeepDb('+rw.lot_id+')" '+
+        'title="DB price is correct — mark row resolved without touching the lot">Keep DB</button>';
+      fixCell = '<div style="display:flex;gap:4px;align-items:center;justify-content:center;flex-wrap:wrap">'+applyPrice+' '+keepDb+'</div>';
+    } else if (fixCode) {
+      fixCell = '<button class="btn btn-g btn-sm" style="padding:2px 10px;font-size:11px;white-space:nowrap" '+
+        'onclick="pcApplyFix(this,'+rw.lot_id+',\''+escAttr(fileCodeRaw)+'\',null)">Apply code</button>';
+    } else {
+      fixCell = '<span style="color:#aaa">—</span>';
+    }
 
-    html += '<tr class="pc-row pc-'+rw.status+'" data-code-status="'+codeStatus+'" style="'+display+';background:'+bg+'">'+
+    html += '<tr class="pc-row pc-'+rw.status+(kept?' pc-kept':'')+'" data-code-status="'+codeStatus+'"'+
+      (kept ? ' data-kept="1"' : '')+
+      ' style="'+display+';background:'+bg+(kept?';color:#6b7280':'')+'">'+
       '<td style="padding:3px 8px;border:1px solid #f0f0f0;font-family:monospace">'+(rw.row || '+')+'</td>'+
       '<td style="padding:3px 8px;border:1px solid #f0f0f0">'+escAttr(rw.auction_ano || rw.ano || '—')+'</td>'+
       '<td style="padding:3px 8px;border:1px solid #f0f0f0;font-family:monospace;font-weight:600">'+escAttr(rw.lot || '—')+'</td>'+
@@ -19131,6 +19234,7 @@ function _pcRenderPreview(data){
     '<span><span style="display:inline-block;width:12px;height:12px;background:#fee2e2;border:1px solid #fecaca;vertical-align:middle"></span> File price ≠ DB price (or lot missing from DB)</span>'+
     '<span><span style="display:inline-block;width:12px;height:12px;background:#fef3c7;border:1px solid #fde68a;vertical-align:middle"></span> Blank price / missing in file / no auction match</span>'+
     '<span><span style="display:inline-block;width:12px;height:12px;background:#dcfce7;border:1px solid #bbf7d0;vertical-align:middle"></span> Match</span>'+
+    '<span><span style="display:inline-block;width:12px;height:12px;background:#f3f4f6;border:1px solid #d1d5db;vertical-align:middle"></span> Kept (DB price preserved)</span>'+
   '</div>';
 
   host.innerHTML = html;
@@ -19243,12 +19347,29 @@ function _pcApplyDisable(selector, scopeSelector, state, reason){
 // is surfaced via a confirm() dialog on click instead (see
 // _pcInstallStaleConfirm below) — banners for "verified once, now
 // stale" were too easy to overlook in practice.
-function _pcRenderBanner(tabScope, state, message){
+// Per-auction admin override for the price-check hard block. Lets an
+// admin bypass the "first verify is mandatory" gate per-auction,
+// per-session — useful for a quick test auction or post-import cleanup
+// where running a real Price Check is overkill. Resets on page reload
+// so each bypass is deliberate.
+const _pcAdminOverride = new Set();
+function _pcToggleAdminOverride(auctionId, tabScope){
+  if (window._userRole !== 'admin') return;
+  const id = Number(auctionId);
+  if (!id) return;
+  if (_pcAdminOverride.has(id)) _pcAdminOverride.delete(id);
+  else                          _pcAdminOverride.add(id);
+  // Drop the cached status so the next refresh re-reads fresh state.
+  _PC_STATUS_CACHE.delete(String(id));
+  pcRefreshGate(id, tabScope);
+}
+
+function _pcRenderBanner(tabScope, state, message, auctionId){
   if (!tabScope) return;
   const scope = document.querySelector(tabScope);
   if (!scope) return;
   let banner = scope.querySelector(':scope > .pc-gate-banner');
-  if (state !== 'hard') {
+  if (state === 'open') {
     if (banner) banner.style.display = 'none';
     return;
   }
@@ -19257,12 +19378,36 @@ function _pcRenderBanner(tabScope, state, message){
     banner.className = 'pc-gate-banner';
     scope.insertBefore(banner, scope.firstChild);
   }
+  const isAdmin = window._userRole === 'admin';
+  const aid = Number(auctionId) || 0;
+  // 'admin-override' — admin has bypassed the hard block for this
+  // auction. Amber pill banner with a "Lock again" button to re-engage.
+  if (state === 'admin-override') {
+    banner.style.cssText =
+      'margin:8px 0;padding:10px 14px;background:#FEF3C7'+
+      ';border:1px solid #F59E0B;border-left:4px solid #F59E0B'+
+      ';border-radius:6px;color:#78350F'+
+      ';font-size:13px;line-height:1.5;display:flex;align-items:center;gap:10px';
+    const lockBtn = (isAdmin && aid)
+      ? '<button type="button" onclick="_pcToggleAdminOverride('+aid+', &quot;'+tabScope+'&quot;)" style="padding:3px 10px;font-size:11.5px;font-weight:700;background:#fff;color:#78350F;border:1px solid #F59E0B;border-radius:6px;cursor:pointer;white-space:nowrap">🔒 Lock again</button>'
+      : '';
+    banner.innerHTML =
+      '<span style="flex:1">⚠ <b>Price check skipped by admin</b> — verification was not run for this auction; lot prices may be unreliable.</span>' +
+      lockBtn;
+    return;
+  }
+  // 'hard' state — original red banner. For admins WITH an auction
+  // selected, append a "Skip (admin)" button so they can bypass the
+  // first-verify requirement per-auction.
   banner.style.cssText =
     'margin:8px 0;padding:10px 14px;background:#FEE2E2'+
     ';border:1px solid #DC2626;border-left:4px solid #DC2626'+
     ';border-radius:6px;color:#7F1D1D'+
-    ';font-size:13px;line-height:1.5;display:block';
-  banner.innerHTML = '⛔ ' + message;
+    ';font-size:13px;line-height:1.5;display:flex;align-items:center;gap:10px';
+  const skipBtn = (isAdmin && aid)
+    ? '<button type="button" onclick="_pcToggleAdminOverride('+aid+', &quot;'+tabScope+'&quot;)" style="padding:3px 10px;font-size:11.5px;font-weight:700;background:#fff;color:#7F1D1D;border:1px solid #DC2626;border-radius:6px;cursor:pointer;white-space:nowrap">🔓 Skip (admin)</button>'
+    : '';
+  banner.innerHTML = '<span style="flex:1">⛔ ' + message + '</span>' + skipBtn;
 }
 
 // One-time click interceptor — installed lazily. When a button tagged
@@ -19333,11 +19478,21 @@ async function pcRefreshGate(auctionId, tabScope){
     _pcInstallStaleConfirm();
     return true;
   }
-  // Never verified — hard block until the first verify run.
+  // Never verified — hard block until the first verify run, UNLESS the
+  // current user is an admin who has flipped the per-auction bypass.
+  // The bypass lives in _pcAdminOverride and is per-session (resets on
+  // page reload), so each skip is a deliberate click.
+  const aid = Number(auctionId) || 0;
+  if (aid && window._userRole === 'admin' && _pcAdminOverride.has(aid)) {
+    _pcApplyDisable('.needs-price-check', tabScope, 'open', '');
+    _pcRenderBanner(tabScope, 'admin-override', '', aid);
+    return true;
+  }
   _pcApplyDisable('.needs-price-check', tabScope, 'hard',
     'Price check pending — run Reports → Price Check against this auction first.');
   _pcRenderBanner(tabScope, 'hard',
-    '<b>Transactions locked</b> — run <i>Reports → Price Check</i> against this auction first.');
+    '<b>Transactions locked</b> — run <i>Reports → Price Check</i> against this auction first.',
+    aid);
   return false;
 }
 
@@ -19360,22 +19515,22 @@ const _GEN_UI = {
   invoices: {
     auctionEl: 'inv-auction',
     buttons: ['btn-gen-inv-one', 'btn-gen-inv-all'],
-    doneLabel: 'All eligible buyers invoiced',
+    doneLabel: 'All buyers in this trade have been invoiced',
   },
   purchases: {
     auctionEl: 'pur-auction',
     buttons: ['btn-gen-pur-one', 'btn-gen-pur-all'],
-    doneLabel: 'All eligible dealers invoiced',
+    doneLabel: 'All registered dealers in this trade have purchase invoices',
   },
   bills: {
     auctionEl: 'bill-auction',
     buttons: ['btn-gen-bill-one', 'btn-gen-bill-all'],
-    doneLabel: 'All eligible agriculturist sellers billed',
+    doneLabel: 'All agriculturist sellers in this trade have bills of supply',
   },
   debit_notes: {
     auctionEl: 'dn-auction',
     buttons: ['btn-gen-dn-one', 'btn-gen-dn-all'],
-    doneLabel: 'All invoices have a debit note',
+    doneLabel: 'Every purchase in this trade has a debit note',
   },
 };
 
@@ -19461,9 +19616,9 @@ function _applyGenGate(kind){
       el.disabled = true;
       el.setAttribute('data-gen-locked', '1');
       if (!el.dataset.genOriginalTitle) el.dataset.genOriginalTitle = el.title || '';
-      el.title = def.doneLabel + (window._userRole === 'admin'
-        ? ' — click "Allow regenerate" to override.'
-        : ' — contact admin to regenerate.');
+      el.title = def.doneLabel + '. ' + (window._userRole === 'admin'
+        ? 'Click 🔓 Allow regenerate to override.'
+        : 'Ask an admin to click 🔓 Allow regenerate to unlock.');
     } else if (el.getAttribute('data-gen-locked') === '1') {
       // Only clear when WE were the disabler — leave alone if another
       // gate (e.g. price-check) is currently the one keeping it down.
@@ -19575,16 +19730,30 @@ async function pcApplyAllFixes(){
     if (typeof toast === 'function') toast('Run Verify Prices first.');
     return;
   }
-  const fixable = _pcLastSummary.rows.filter(rw =>
-    rw && rw.lot_id && (
-      (rw.file_code && (rw.code_status === 'diff' || rw.code_status === 'db_blank'))
-      || (rw.status === 'server_diff' && rw.file_server_price != null)
-    ));
+  // A row is in the bulk set if it has a code fix OR an OPEN price fix.
+  // Kept rows are NOT dropped — if they also have a code diff, the
+  // bulk run still writes the code (price is skipped further down).
+  const fixable = _pcLastSummary.rows.filter(rw => {
+    if (!rw || !rw.lot_id) return false;
+    const wantCode  = !!(rw.file_code && (rw.code_status === 'diff' || rw.code_status === 'db_blank'));
+    const wantPrice = !!(rw.status === 'server_diff' && rw.file_server_price != null && !_pcKeptLots.has(rw.lot_id));
+    return wantCode || wantPrice;
+  });
   if (!fixable.length) {
     if (typeof toast === 'function') toast('Nothing to fix.');
     return;
   }
-  if (!confirm(`Apply ${fixable.length} fix${fixable.length===1?'':'es'}? Each row's lot will be updated with the file's PRICE and/or CODE (with buyer details re-resolved from the buyer master).`)) return;
+  // Kept rows that ride along for a code-only write — surfaced in the
+  // confirm so the operator doesn't think the bulk action is about to
+  // overwrite the DB price on those rows.
+  const keptWithCode = fixable.filter(rw =>
+    _pcKeptLots.has(rw.lot_id)
+    && rw.file_code && (rw.code_status === 'diff' || rw.code_status === 'db_blank'));
+  let confirmMsg = `Apply ${fixable.length} fix${fixable.length===1?'':'es'}? Each row's lot will be updated with the file's PRICE and/or CODE (with buyer details re-resolved from the buyer master).`;
+  if (keptWithCode.length) {
+    confirmMsg += `\n\nNote: ${keptWithCode.length} kept row${keptWithCode.length===1?'':'s'} will only get code updates — DB price stays as-is.`;
+  }
+  if (!confirm(confirmMsg)) return;
 
   const cache = await _pcEnsureBuyerCache();
   // Group by the exact payload contents so one POST handles every lot
@@ -19593,7 +19762,9 @@ async function pcApplyAllFixes(){
   const groups = new Map();
   for (const rw of fixable) {
     const wantCode  = !!(rw.file_code && (rw.code_status === 'diff' || rw.code_status === 'db_blank'));
-    const wantPrice = !!(rw.status === 'server_diff' && rw.file_server_price != null);
+    // Price write is suppressed on kept rows even if the file has a
+    // diff — that's the whole point of "Keep DB".
+    const wantPrice = !!(rw.status === 'server_diff' && rw.file_server_price != null && !_pcKeptLots.has(rw.lot_id));
     const code  = wantCode ? String(rw.file_code).trim() : '';
     const price = wantPrice ? Number(rw.file_server_price) : '';
     const hit   = wantCode ? (cache.get(code.toUpperCase()) || null) : null;
@@ -19638,6 +19809,83 @@ async function pcApplyAllFixes(){
     : `Updated ${updated} lot(s).`;
   if (typeof toast === 'function') toast(summary);
   pcVerify();
+}
+
+// ── Keep-DB helpers ─────────────────────────────────────────────
+// Mark a single lot as kept (DB price is correct, file is wrong).
+// Purely client-side — no fetch. Triggers a re-render of the
+// preview from the cached _pcLastSummary so the row turns grey.
+function pcKeepDb(lotId){
+  if (!lotId) return;
+  _pcKeptLots.add(Number(lotId));
+  if (_pcLastSummary) _pcRenderPreview(_pcLastSummary);
+}
+function pcUndoKeep(lotId){
+  if (!lotId) return;
+  _pcKeptLots.delete(Number(lotId));
+  if (_pcLastSummary) _pcRenderPreview(_pcLastSummary);
+}
+// Mark every still-open price-diff row as kept. Skips rows that
+// don't have a DB lot (nothing to mark against).
+function pcKeepAll(){
+  if (!_pcLastSummary || !Array.isArray(_pcLastSummary.rows)) return;
+  const candidates = _pcLastSummary.rows.filter(rw =>
+    rw && rw.lot_id
+    && rw.status === 'server_diff'
+    && rw.file_server_price != null
+    && !_pcKeptLots.has(rw.lot_id));
+  if (!candidates.length) {
+    if (typeof toast === 'function') toast('No open price diffs to keep.');
+    return;
+  }
+  if (!confirm(`Mark ${candidates.length} price-diff row${candidates.length===1?'':'s'} as kept? DB price stays untouched; file price is ignored. Use the "undo all" pill to revert.`)) return;
+  for (const rw of candidates) _pcKeptLots.add(Number(rw.lot_id));
+  _pcRenderPreview(_pcLastSummary);
+}
+function pcUndoAllKept(){
+  if (!_pcKeptLots.size) return;
+  _pcKeptLots.clear();
+  if (_pcLastSummary) _pcRenderPreview(_pcLastSummary);
+}
+
+// Apply just the code fix on a row, leaving DB price untouched.
+// Optionally marks the lot as kept on success — used by the
+// "Apply code only" button on rows that have both a code AND a
+// price diff (operator chose: take the new code, keep DB price).
+async function pcApplyCodeOnly(btn, lotId, fileCode, markKept){
+  if (!lotId || !fileCode) return;
+  const origLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const cache = await _pcEnsureBuyerCache();
+    const hit = cache.get(String(fileCode).trim().toUpperCase()) || null;
+    const payload = { ids: [Number(lotId)], code: fileCode };
+    if (hit) {
+      payload.buyer  = hit.buyer;
+      payload.buyer1 = hit.buyer1;
+      payload.sale   = hit.sale;
+    }
+    const r = await fetch(B + '/api/lots/bulk-set-buyer', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Apply failed');
+    // Only flip the kept flag after the POST succeeds — a failed fetch
+    // shouldn't leave a phantom kept row with no code applied.
+    if (markKept) _pcKeptLots.add(Number(lotId));
+    if (typeof toast === 'function') {
+      toast(`Updated code=${fileCode}` + (hit && (hit.buyer1 || hit.buyer) ? ` (${hit.buyer1 || hit.buyer})` : '') + (markKept ? ' — DB price kept' : ''));
+    }
+    // Re-verify to refresh DB state for code; preserves _pcKeptLots
+    // across the call so the KEPT badge survives the refresh.
+    pcVerify();
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = origLabel; }
+    if (typeof showError === 'function') showError(e);
+    else alert('Error: ' + (e.message || String(e)));
+  }
 }
 
 async function pcDownload(){
