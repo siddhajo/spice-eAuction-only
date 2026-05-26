@@ -18905,31 +18905,9 @@ async function pcVerify(){
       _PC_STATUS_CACHE.delete(String(data.forcedAuction.id));
     }
     _pcRenderPreview(data);
-    // One-line summary directly below the buttons. Mention which
-    // column we actually validated — if the file has no SERVER PRICE
-    // column we fall back to PRICE, and the user needs to know that.
-    const priceIssues = (data.mismatched || 0) + (data.missingServer || 0) + (data.missingFile || 0) + (data.noAuction || 0);
-    const codeIssues  = (data.codeMismatched || 0) + (data.codeFileBlank || 0) + (data.codeDbBlank || 0);
-    const issues = priceIssues + codeIssues;
-    const clean = issues === 0;
-    const tone = clean ? '#15803d' : '#c00';
-    const msg = clean
-      ? '✓ All ' + data.matched + ' rows match the server — prices and codes reconciled.'
-      : '⚠ ' + priceIssues + ' price issue(s), ' + codeIssues + ' code issue(s) need review.';
-    const colNote = data.hasServerPriceCol
-      ? 'Validating <code>' + data.validatedColumn + '</code> column vs <code>lots.price</code>'
-      : '<span style="color:#a16207">No SERVER PRICE column found — falling back to <code>PRICE</code> column</span>';
-    result.innerHTML =
-      '<div style="font-size:11px;color:#555;margin-bottom:4px">'+colNote+'</div>'+
-      '<b>Total rows:</b> '+data.total+
-      ' · <b style="color:#15803d">matched:</b> '+(data.matched||0)+
-      ' · <b style="color:#c00">mismatched:</b> '+(data.mismatched||0)+
-      ' · <b style="color:#a16207">missing in server:</b> '+(data.missingServer||0)+
-      ' · <b style="color:#a16207">missing in file:</b> '+(data.missingFile||0)+
-      ((data.serverEmpty||0) ? ' · <b style="color:#a16207">blank price:</b> '+data.serverEmpty : '')+
-      ((data.codeMismatched||0) ? ' · <b style="color:#c00">code diff:</b> '+data.codeMismatched : '')+
-      (((data.codeFileBlank||0)+(data.codeDbBlank||0)) ? ' · <b style="color:#a16207">code blank:</b> '+((data.codeFileBlank||0)+(data.codeDbBlank||0)) : '')+
-      ' &nbsp;<span style="color:'+tone+'">'+msg+'</span>';
+    // The headline + summary line is rendered inside _pcRenderPreview
+    // (via _pcRenderResultLine) so it auto-updates on every keep/undo
+    // without re-fetching from the server.
   } catch (e) {
     result.innerHTML = '<span style="color:#c00">Error: '+escAttr(e.message||String(e))+'</span>';
     _pcLastSummary = null;
@@ -18937,7 +18915,65 @@ async function pcVerify(){
   }
 }
 
+// Headline + one-line summary that lives in #pc-result above the
+// preview. Computed from per-row data + _pcKeptLots so kept rows
+// stop counting as "outstanding". Called from _pcRenderPreview, so
+// every keep/undo refreshes the message without a server round-trip.
+function _pcRenderResultLine(data){
+  const result = document.getElementById('pc-result');
+  if (!result) return;
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  const inKept = (rw) => rw && rw.lot_id != null && _pcKeptLots.has(rw.lot_id);
+  const openPriceDiffs  = rows.filter(rw => rw && rw.lot_id && rw.status === 'server_diff'  && rw.file_server_price != null && !inKept(rw)).length;
+  const openBlankPrices = rows.filter(rw => rw && rw.lot_id && rw.status === 'server_empty' && !inKept(rw)).length;
+  const openMissingSrv  = data.missingServer || 0;
+  const openMissingFile = data.missingFile   || 0;
+  const openNoAuction   = data.noAuction     || 0;
+  // Code issues that block the gate AND that the operator can actually
+  // resolve (file_blank is informational only — no value to write).
+  const openCodeFixes   = (data.codeMismatched || 0) + (data.codeDbBlank || 0);
+  const openMissing     = openMissingSrv + openMissingFile + openNoAuction;
+  const totalOpen       = openPriceDiffs + openBlankPrices + openMissing + openCodeFixes;
+  const keptCount       = rows.filter(inKept).length;
+
+  let headline;
+  if (totalOpen === 0) {
+    headline = '<div style="font-size:13px;font-weight:700;color:#14532d;margin-bottom:6px;padding:8px 12px;background:#dcfce7;border:1px solid #86efac;border-radius:6px">'+
+      '✓ Price check completed successfully — all '+(data.total||0)+' row'+((data.total||0)===1?'':'s')+' reconciled' +
+      (keptCount ? ' ('+keptCount+' kept, DB price preserved)' : '') + '.' +
+      '</div>';
+  } else {
+    const bits = [];
+    if (openPriceDiffs)   bits.push(openPriceDiffs+' price diff'+(openPriceDiffs===1?'':'s'));
+    if (openBlankPrices)  bits.push(openBlankPrices+' blank price'+(openBlankPrices===1?'':'s'));
+    if (openCodeFixes)    bits.push(openCodeFixes+' code issue'+(openCodeFixes===1?'':'s'));
+    if (openMissing)      bits.push(openMissing+' missing/unmatched');
+    headline = '<div style="font-size:13px;font-weight:700;color:#7f1d1d;margin-bottom:6px;padding:8px 12px;background:#fee2e2;border:1px solid #fecaca;border-radius:6px">'+
+      '✗ Price check did not complete — '+bits.join(', ')+' need'+(totalOpen===1?'s':'')+' review.'+
+      (keptCount ? ' <span style="font-weight:500;color:#6b7280">('+keptCount+' kept)</span>' : '')+
+      '</div>';
+  }
+
+  const colNote = data.hasServerPriceCol
+    ? 'Validating <code>' + data.validatedColumn + '</code> column vs <code>lots.price</code>'
+    : '<span style="color:#a16207">No SERVER PRICE column found — falling back to <code>PRICE</code> column</span>';
+
+  result.innerHTML =
+    headline +
+    '<div style="font-size:11px;color:#555;margin-bottom:4px">'+colNote+'</div>'+
+    '<b>Total rows:</b> '+(data.total||0)+
+    ' · <b style="color:#15803d">matched:</b> '+(data.matched||0)+
+    ' · <b style="color:#c00">mismatched:</b> '+(data.mismatched||0)+
+    ' · <b style="color:#a16207">missing in server:</b> '+openMissingSrv+
+    ' · <b style="color:#a16207">missing in file:</b> '+openMissingFile+
+    ((data.serverEmpty||0) ? ' · <b style="color:#a16207">blank price:</b> '+data.serverEmpty : '')+
+    ((data.codeMismatched||0) ? ' · <b style="color:#c00">code diff:</b> '+data.codeMismatched : '')+
+    (((data.codeFileBlank||0)+(data.codeDbBlank||0)) ? ' · <b style="color:#a16207">code blank:</b> '+((data.codeFileBlank||0)+(data.codeDbBlank||0)) : '')+
+    (keptCount ? ' · <b style="color:#6b7280">kept:</b> '+keptCount : '');
+}
+
 function _pcRenderPreview(data){
+  _pcRenderResultLine(data);
   const host = document.getElementById('pc-preview');
   if (!host) return;
   const rows = Array.isArray(data.rows) ? data.rows : [];
@@ -18963,11 +18999,21 @@ function _pcRenderPreview(data){
   const isFullyMatched = rw => rw.status === 'match'
     && rw.code_status !== 'diff'
     && rw.code_status !== 'db_blank';
-  // Whether a price-diff row still needs a price decision (i.e. not kept).
-  const hasOpenPriceDiff = rw =>
-    rw && rw.lot_id && rw.status === 'server_diff'
-    && rw.file_server_price != null
+  // Whether a row still needs a price decision (not kept). Covers
+  // both kinds of disagreement: server_diff (file has a number that
+  // differs from DB) and server_empty (file's price cell is blank).
+  // Either way the operator must decide: Keep DB, write the file's
+  // value (server_diff only), or enter a new price (server_empty only).
+  const hasOpenPriceDecision = rw =>
+    rw && rw.lot_id
+    && (rw.status === 'server_diff' || rw.status === 'server_empty')
     && !isKept(rw);
+  // Subset that has a usable file price for "Apply price" — only
+  // server_diff with a non-null file price qualifies.
+  const hasOpenPriceDiff = rw =>
+    hasOpenPriceDecision(rw)
+    && rw.status === 'server_diff'
+    && rw.file_server_price != null;
   // Code fixes still apply on kept rows — we only suppress the price write.
   const hasOpenCodeFix = rw =>
     rw && rw.lot_id && rw.file_code
@@ -19028,13 +19074,14 @@ function _pcRenderPreview(data){
   // and is independent of whether the file has a CODE column, so
   // price-only fixes can also be applied in bulk.
   const fixable = (data.rows || []).filter(rowFixable);
-  // Price-diff rows that have not yet been kept — candidates for
-  // bulk "Keep DB price for all". Price diffs already kept are
-  // tracked by the pill on the right; rows without a DB lot can't
-  // be kept (nothing to mark against).
-  const openPriceDiffs = (data.rows || []).filter(hasOpenPriceDiff);
+  // Rows that still need a price decision — covers both server_diff
+  // (file has a different number) and server_empty (file is blank).
+  // Either gets "Keep DB" via the bulk button below.
+  const openPriceDecisions = (data.rows || []).filter(hasOpenPriceDecision);
+  const openBlankPrices = openPriceDecisions.filter(rw => rw.status === 'server_empty').length;
+  const openPriceDiffsCount = openPriceDecisions.length - openBlankPrices;
   const keptCount = (data.rows || []).reduce((n, rw) => n + (isKept(rw) ? 1 : 0), 0);
-  if (fixable.length || openPriceDiffs.length || keptCount) {
+  if (fixable.length || openPriceDecisions.length || keptCount) {
     html += '<div style="display:flex;gap:8px;margin:-2px 0 10px 0;align-items:center;flex-wrap:wrap">';
     if (fixable.length) {
       html += '<button class="btn btn-g btn-sm" onclick="pcApplyAllFixes()" '+
@@ -19042,10 +19089,14 @@ function _pcRenderPreview(data){
         '✓ Apply all '+fixable.length+' fix'+(fixable.length===1?'':'es')+
         '</button>';
     }
-    if (openPriceDiffs.length) {
+    if (openPriceDecisions.length) {
+      const bits = [];
+      if (openPriceDiffsCount) bits.push(openPriceDiffsCount+' price diff'+(openPriceDiffsCount===1?'':'s'));
+      if (openBlankPrices)     bits.push(openBlankPrices+' blank price'+(openBlankPrices===1?'':'s'));
       html += '<button class="btn btn-sm" onclick="pcKeepAll()" '+
-        'title="Mark every remaining price-diff row as kept — DB price stays, file price is ignored, rows turn grey.">'+
-        '⊘ Keep DB price for all '+openPriceDiffs.length+' price diff'+(openPriceDiffs.length===1?'':'s')+
+        'title="Mark every remaining row as kept — DB price stays, file value (diff or blank) is ignored, rows turn grey.">'+
+        '⊘ Keep DB price for all '+openPriceDecisions.length+' row'+(openPriceDecisions.length===1?'':'s')+
+        ' ('+bits.join(' + ')+')'+
         '</button>';
     }
     if (keptCount) {
@@ -19056,7 +19107,7 @@ function _pcRenderPreview(data){
         'title="Restore every kept row so it needs a price decision again">undo all</a>'+
         '</span>';
     }
-    if (fixable.length || openPriceDiffs.length) {
+    if (fixable.length || openPriceDecisions.length) {
       html += '<span style="font-size:11.5px;color:#555">Writes file price + code onto matched lots, re-resolving buyer details. Kept rows preserve their DB price.</span>';
     }
     html += '</div>';
@@ -19123,8 +19174,8 @@ function _pcRenderPreview(data){
     const display = isFullyMatched(rw) ? 'display:none' : '';
     const bg = kept ? '#f3f4f6' : _pcRowBg(rw.status);
     const issues = rw.issues || [];
-    const badge = kept && rw.status === 'server_diff'
-      ? '<span style="display:inline-block;padding:1px 8px;border-radius:10px;background:#e5e7eb;color:#374151;font-weight:700;font-size:11px" title="DB price kept; file price ignored">KEPT (DB)</span>'
+    const badge = kept && (rw.status === 'server_diff' || rw.status === 'server_empty')
+      ? '<span style="display:inline-block;padding:1px 8px;border-radius:10px;background:#e5e7eb;color:#374151;font-weight:700;font-size:11px" title="DB price kept; file value ignored">KEPT (DB)</span>'
       : _pcStatusBadge(rw);
     const diffCell = rw.diff == null ? '—'
       : (rw.diff === 0 ? '<span style="color:#15803d">0</span>'
@@ -19170,8 +19221,11 @@ function _pcRenderPreview(data){
     //   - price diff only → [Apply price] [Keep DB]
     //   - code + price diff → [Apply price + code] [Apply code only]
     //   - code diff only → [Apply code]
+    //   - blank file price → [Set price…] [Keep DB] (writes price+code
+    //                        together if a code fix is also pending)
     const fixCode  = !!(fileCodeRaw && (codeStatus === 'diff' || codeStatus === 'db_blank'));
     const fixPrice = !!(rw.status === 'server_diff' && filePriceVal != null);
+    const blankPrice = !!(rw.status === 'server_empty');
     let fixCell;
     if (!rw.lot_id) {
       fixCell = '<span style="color:#aaa">—</span>';
@@ -19203,6 +19257,23 @@ function _pcRenderPreview(data){
         'onclick="pcKeepDb('+rw.lot_id+')" '+
         'title="DB price is correct — mark row resolved without touching the lot">Keep DB</button>';
       fixCell = '<div style="display:flex;gap:4px;align-items:center;justify-content:center;flex-wrap:wrap">'+applyPrice+' '+keepDb+'</div>';
+    } else if (blankPrice) {
+      // File price is blank. Operator picks either: enter a new
+      // price (pcSetPrice prompts and writes to DB, then marks
+      // the row kept so re-verify keeps it acknowledged), or keep
+      // DB price as-is. If a code fix is also pending, pcSetPrice
+      // writes both together; for "Keep DB" the operator can still
+      // apply the code afterward via the "Apply code" button that
+      // appears on the kept row.
+      const setPrice = '<button class="btn btn-g btn-sm" style="padding:2px 10px;font-size:11px;white-space:nowrap" '+
+        'onclick="pcSetPrice(this,'+rw.lot_id+
+          ','+(fixCode ? '\''+escAttr(fileCodeRaw)+'\'' : 'null')+
+          ','+(rw.db_price == null ? 'null' : Number(rw.db_price))+
+          ')" title="Enter a new price to write to the DB lot.">Set price…</button>';
+      const keepDb = '<button class="btn btn-sm" style="padding:2px 10px;font-size:11px;white-space:nowrap" '+
+        'onclick="pcKeepDb('+rw.lot_id+')" '+
+        'title="DB price is correct — mark row resolved without touching the lot">Keep DB</button>';
+      fixCell = '<div style="display:flex;gap:4px;align-items:center;justify-content:center;flex-wrap:wrap">'+setPrice+' '+keepDb+'</div>';
     } else if (fixCode) {
       fixCell = '<button class="btn btn-g btn-sm" style="padding:2px 10px;font-size:11px;white-space:nowrap" '+
         'onclick="pcApplyFix(this,'+rw.lot_id+',\''+escAttr(fileCodeRaw)+'\',null)">Apply code</button>';
@@ -19829,16 +19900,18 @@ function pcUndoKeep(lotId){
 // don't have a DB lot (nothing to mark against).
 function pcKeepAll(){
   if (!_pcLastSummary || !Array.isArray(_pcLastSummary.rows)) return;
+  // Sweep up every row still needing a price decision — both
+  // server_diff (file has a different number) and server_empty
+  // (file is blank). Skip rows already kept or without a DB lot.
   const candidates = _pcLastSummary.rows.filter(rw =>
     rw && rw.lot_id
-    && rw.status === 'server_diff'
-    && rw.file_server_price != null
+    && (rw.status === 'server_diff' || rw.status === 'server_empty')
     && !_pcKeptLots.has(rw.lot_id));
   if (!candidates.length) {
-    if (typeof toast === 'function') toast('No open price diffs to keep.');
+    if (typeof toast === 'function') toast('No open price decisions to keep.');
     return;
   }
-  if (!confirm(`Mark ${candidates.length} price-diff row${candidates.length===1?'':'s'} as kept? DB price stays untouched; file price is ignored. Use the "undo all" pill to revert.`)) return;
+  if (!confirm(`Mark ${candidates.length} row${candidates.length===1?'':'s'} as kept? DB price stays untouched; file value (diff or blank) is ignored. Use the "undo all" pill to revert.`)) return;
   for (const rw of candidates) _pcKeptLots.add(Number(rw.lot_id));
   _pcRenderPreview(_pcLastSummary);
 }
@@ -19846,6 +19919,62 @@ function pcUndoAllKept(){
   if (!_pcKeptLots.size) return;
   _pcKeptLots.clear();
   if (_pcLastSummary) _pcRenderPreview(_pcLastSummary);
+}
+
+// Enter a new price for a row whose file has a blank price.
+// Prompts the operator, writes the new price (plus the file CODE
+// if a code fix is also pending) to the DB lot, then marks the
+// lot as kept — the file is still blank on re-verify, so the
+// kept flag keeps the row acknowledged. `dbPriceHint` is the
+// current DB price (or null), shown as the default in the prompt.
+async function pcSetPrice(btn, lotId, fileCode, dbPriceHint){
+  if (!lotId) return;
+  const defaultStr = (dbPriceHint == null || dbPriceHint === '') ? '' : String(dbPriceHint);
+  const raw = prompt('Enter the new price for this lot (will overwrite DB):', defaultStr);
+  if (raw == null) return;                                  // cancelled
+  const trimmed = String(raw).trim();
+  if (!trimmed) { alert('Price is required.'); return; }
+  const price = Number(trimmed);
+  if (!Number.isFinite(price) || price < 0) {
+    alert('Price must be a non-negative number.');
+    return;
+  }
+  const origLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const payload = { ids: [Number(lotId)], price };
+    let masterHit = null;
+    if (fileCode) {
+      const cache = await _pcEnsureBuyerCache();
+      masterHit = cache.get(String(fileCode).trim().toUpperCase()) || null;
+      payload.code = fileCode;
+      if (masterHit) {
+        payload.buyer  = masterHit.buyer;
+        payload.buyer1 = masterHit.buyer1;
+        payload.sale   = masterHit.sale;
+      }
+    }
+    const r = await fetch(B + '/api/lots/bulk-set-buyer', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Apply failed');
+    // DB now holds the operator's chosen price. Mark kept so the
+    // row stays acknowledged on re-verify (file is still blank).
+    _pcKeptLots.add(Number(lotId));
+    if (typeof toast === 'function') {
+      const parts = ['price=' + price];
+      if (fileCode) parts.push('code=' + fileCode + (masterHit && (masterHit.buyer1 || masterHit.buyer) ? ' (' + (masterHit.buyer1 || masterHit.buyer) + ')' : ''));
+      toast('Set ' + parts.join(', '));
+    }
+    pcVerify();
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = origLabel; }
+    if (typeof showError === 'function') showError(e);
+    else alert('Error: ' + (e.message || String(e)));
+  }
 }
 
 // Apply just the code fix on a row, leaving DB price untouched.
