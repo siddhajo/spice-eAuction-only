@@ -2783,6 +2783,60 @@ app.post('/api/auctions/:id/allocations', requireAuctionWrite, (req, res) => {
   res.json({ allocations: saved });
 });
 
+// Auto-fill allocations from existing lots. Walks every lot in the
+// auction, groups uncovered ones by (branch, prefix), and APPENDS one
+// new allocation per group covering 001..999 (or higher if any
+// uncovered lot exceeds that). Existing allocations are kept as-is so
+// the operator's manual setup isn't overwritten.
+//
+// Idempotent: if every lot is already covered, returns the existing
+// list with `created: 0`. Useful as a one-click rescue for trades that
+// arrived with imported lots and no allocations.
+app.post('/api/auctions/:id/allocations/auto-fill', requireAuctionWrite, (req, res) => {
+  const db = getDb();
+  const auctionId = parseInt(req.params.id, 10);
+  if (!auctionId) return res.status(400).json({ error: 'Invalid auction id' });
+  const auc = db.get('SELECT id FROM auctions WHERE id = ?', [auctionId]);
+  if (!auc) return res.status(404).json({ error: 'Auction not found' });
+
+  const existing = db.all('SELECT * FROM lot_allocations WHERE auction_id = ?', [auctionId]);
+  const lots = db.all('SELECT lot_no, branch FROM lots WHERE auction_id = ?', [auctionId]);
+
+  // Group uncovered lots by (branch, prefix), tracking the highest lot
+  // number seen so the generated range is wide enough to cover them all.
+  const groups = new Map(); // key = `${branch}||${prefix}` → { branch, prefix, padLen, max }
+  for (const l of lots) {
+    const covered = existing.some(a => isLotInRange(l.lot_no, a.start_lot, a.end_lot));
+    if (covered) continue;
+    const p = parseLotNo(l.lot_no);
+    if (!p) continue;
+    const branch = String(l.branch || '').trim();
+    const key = `${branch}||${p.prefix}`;
+    const g = groups.get(key);
+    if (!g) groups.set(key, { branch, prefix: p.prefix, padLen: p.padLen, max: p.num });
+    else if (p.num > g.max) g.max = p.num;
+  }
+
+  let created = 0;
+  for (const g of groups.values()) {
+    const end = g.max > 999 ? 9999 : 999;
+    const padLen = Math.max(g.padLen, String(end).length);
+    const startLot = buildLotNo(g.prefix, 1, padLen);
+    const endLot   = buildLotNo(g.prefix, end, padLen);
+    db.run(
+      'INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?, ?, ?, ?)',
+      [auctionId, g.branch, startLot, endLot]
+    );
+    created++;
+  }
+
+  const allocations = db.all(
+    'SELECT * FROM lot_allocations WHERE auction_id = ? ORDER BY branch, start_lot',
+    [auctionId]
+  );
+  res.json({ created, allocations });
+});
+
 // Allocation stats (used/total per branch + per-lot grid)
 // Drives both the admin Allocations modal and the Lot Entry status bar.
 app.get('/api/auctions/:id/allocation-stats', requireViewOrLotEntry, (req, res) => {

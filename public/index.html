@@ -427,64 +427,95 @@ body[data-theme="custom"]{
 }
 body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 
-/* ── Login — "Aurora" redesign ─────────────────────────────────
-   A single centered glass sign-in card floating over an animated
-   emerald → lime → saffron aurora backdrop (replaces the old
-   split-screen layout). #login is toggled display:flex / none by
-   the JS, so the container just centers its card. Every brand ID
-   the JS writes is preserved: login-hero-name / -sub / -year /
-   -credit / -logo-img / -logo-dot, login-brand-name / -sub, plus
-   inp-u, inp-p and login-err. Field + card rules are prefixed with
-   #login so they outrank the global .fg / .err styles further down
-   the sheet regardless of source order. */
+/* ── Login — light split "Aurora" ─────────────────────────────
+   Two panes centered on a light aurora backdrop: LEFT = a bold
+   value-prop hero (what the app does), RIGHT = the glass sign-in
+   card. #login is toggled display:flex / none by the JS, so it
+   just centers the .login-stage; the stage collapses to one column
+   under 900px (card first on phones). Brand IDs the JS writes are
+   preserved (login-hero-name / -sub / -year / -credit / -logo-img /
+   -logo-dot, login-brand-name / -sub, inp-u, inp-p, login-err).
+   Field/card rules are prefixed with #login so they outrank the
+   global .fg / .err styles further down the sheet. */
 #login{
   position:relative;display:flex;align-items:center;justify-content:center;
-  min-height:100vh;width:100%;padding:28px;overflow:hidden;
-  background:#06170F;color:#0F172A;
+  min-height:100vh;width:100%;padding:40px 28px;overflow:hidden;
+  background:linear-gradient(160deg,#F5FBF7 0%,#ECF7EF 48%,#FFF8EA 100%);color:#0F172A;
   font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 }
 
-/* Animated aurora — three blurred color blobs drifting behind a
-   faint dotted grid that fades out toward the edges. */
+/* Aurora backdrop — soft drifting color blobs over a faint grid */
 .login-aurora{position:absolute;inset:0;z-index:0;overflow:hidden}
 .login-aurora .blob{position:absolute;border-radius:50%;filter:blur(90px);will-change:transform,opacity}
-.login-aurora .b1{width:min(60vw,560px);aspect-ratio:1;background:#16A34A;opacity:.55;top:-14%;left:-8%;animation:auroraA 19s ease-in-out infinite}
-.login-aurora .b2{width:min(55vw,520px);aspect-ratio:1;background:#84CC16;opacity:.5;bottom:-18%;right:-6%;animation:auroraB 23s ease-in-out infinite}
-.login-aurora .b3{width:min(45vw,420px);aspect-ratio:1;background:#F59E0B;opacity:.3;top:34%;left:52%;animation:auroraC 27s ease-in-out infinite}
+.login-aurora .b1{width:min(60vw,620px);aspect-ratio:1;background:#34D399;opacity:.3;top:-16%;left:-10%;animation:auroraA 19s ease-in-out infinite}
+.login-aurora .b2{width:min(55vw,560px);aspect-ratio:1;background:#A3E635;opacity:.28;bottom:-20%;right:-8%;animation:auroraB 23s ease-in-out infinite}
+.login-aurora .b3{width:min(45vw,460px);aspect-ratio:1;background:#FBBF24;opacity:.2;top:30%;left:48%;animation:auroraC 27s ease-in-out infinite}
 .login-aurora .grid{
   position:absolute;inset:0;
-  background-image:radial-gradient(rgba(255,255,255,.06) 1px,transparent 1px);background-size:26px 26px;
+  background-image:radial-gradient(rgba(15,61,46,.05) 1px,transparent 1px);background-size:26px 26px;
   -webkit-mask-image:radial-gradient(circle at 50% 42%,#000 0%,transparent 72%);
   mask-image:radial-gradient(circle at 50% 42%,#000 0%,transparent 72%);
 }
 @keyframes auroraA{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(40px,30px) scale(1.12)}}
 @keyframes auroraB{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-46px,-26px) scale(1.08)}}
-@keyframes auroraC{0%,100%{transform:translate(0,0) scale(1);opacity:.3}50%{transform:translate(-30px,34px) scale(1.16);opacity:.42}}
+@keyframes auroraC{0%,100%{transform:translate(0,0) scale(1);opacity:.2}50%{transform:translate(-30px,34px) scale(1.16);opacity:.3}}
 
-/* Glass card */
+/* Stage — two columns */
+.login-stage{position:relative;z-index:1;width:100%;max-width:1060px;display:grid;grid-template-columns:1.08fr .92fr;gap:60px;align-items:center}
+
+/* ── LEFT: value-prop hero ─────────────────────────────────── */
+.login-hero{max-width:520px}
+.login-eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:11.5px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:#15803D;background:rgba(22,163,74,.1);border:1px solid rgba(22,163,74,.22);padding:7px 14px;border-radius:999px;margin-bottom:24px}
+.login-eyebrow .dot{width:7px;height:7px;border-radius:50%;background:#22C55E;box-shadow:0 0 8px rgba(34,197,94,.8);animation:loginPulse 2s ease-in-out infinite}
+.login-hero-title{font-size:clamp(34px,4.2vw,50px);font-weight:800;line-height:1.05;letter-spacing:-1px;color:#0F3D2E;margin:0 0 20px}
+.login-hero-title em{font-style:normal;background:linear-gradient(100deg,#16A34A 0%,#84CC16 46%,#F59E0B 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.login-hero-sub{font-size:15.5px;line-height:1.6;color:#475569;margin:0 0 30px;max-width:460px}
+.login-feats{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
+.login-feats li{
+  display:flex;align-items:center;gap:14px;font-size:14.5px;font-weight:600;color:#1E293B;
+  background:rgba(255,255,255,.72);border:1px solid rgba(15,61,46,.08);border-radius:14px;padding:13px 18px;
+  box-shadow:0 8px 20px -12px rgba(15,61,46,.3);
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+  transition:transform .16s,box-shadow .16s,border-color .16s;animation:featIn .5s ease both;
+}
+.login-feats li:hover{transform:translateX(4px);border-color:rgba(22,163,74,.4);box-shadow:0 12px 26px -12px rgba(22,163,74,.4)}
+.login-feats li:nth-child(1){animation-delay:.06s}
+.login-feats li:nth-child(2){animation-delay:.13s}
+.login-feats li:nth-child(3){animation-delay:.2s}
+.login-feats li:nth-child(4){animation-delay:.27s}
+.login-feats .ck{flex-shrink:0;width:28px;height:28px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#16A34A,#22C55E);box-shadow:0 5px 12px -3px rgba(22,163,74,.55)}
+.login-feats .ck svg{width:15px;height:15px;fill:none;stroke:#fff;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+@keyframes featIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.login-hero-foot{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:30px;font-size:12px;font-weight:500;color:#64748B}
+
+/* status pill — shared by hero footer */
+.login-card-status{display:inline-flex;align-items:center;gap:6px;color:#15803D;font-weight:700}
+.login-card-status::before{content:'';width:7px;height:7px;border-radius:50%;background:#22C55E;box-shadow:0 0 8px rgba(34,197,94,.8);animation:loginPulse 2s ease-in-out infinite}
+@keyframes loginPulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* ── RIGHT: glass sign-in card ─────────────────────────────── */
 .login-card{
-  position:relative;z-index:1;width:100%;max-width:430px;
+  position:relative;z-index:1;width:100%;max-width:430px;justify-self:end;
   background:rgba(255,255,255,.97);
   -webkit-backdrop-filter:blur(22px) saturate(150%);backdrop-filter:blur(22px) saturate(150%);
-  border:1px solid rgba(255,255,255,.7);border-radius:26px;
-  padding:38px 36px 26px;
-  box-shadow:0 36px 90px -28px rgba(0,0,0,.6),0 2px 6px rgba(6,23,15,.12),inset 0 1px 0 rgba(255,255,255,.8);
+  border:1px solid rgba(255,255,255,.8);border-radius:26px;padding:38px 36px 30px;
+  box-shadow:0 30px 80px -30px rgba(15,61,46,.32),0 2px 6px rgba(15,61,46,.08),inset 0 1px 0 rgba(255,255,255,.9);
   animation:cardRise .6s cubic-bezier(.2,.8,.2,1) both;
 }
 @keyframes cardRise{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:none}}
 
-/* Brand row */
-.login-card-brand{display:flex;align-items:center;gap:13px;margin-bottom:26px}
+/* Brand row — name wraps fully (no truncation) */
+.login-card-brand{display:flex;align-items:center;gap:13px;margin-bottom:24px}
 .login-card-logo{
-  width:50px;height:50px;border-radius:14px;flex-shrink:0;overflow:hidden;
+  width:54px;height:54px;border-radius:14px;flex-shrink:0;overflow:hidden;
   display:inline-flex;align-items:center;justify-content:center;
-  background:linear-gradient(135deg,#0F3D2E,#16A34A);box-shadow:0 6px 16px rgba(22,163,74,.32);
+  background:#fff;border:1px solid #E2E8F0;box-shadow:0 6px 16px rgba(15,61,46,.12);
 }
-.login-card-logo img{max-width:78%;max-height:78%;object-fit:contain;display:block}
-.login-card-logo:not(:has(img))::before{content:'';width:15px;height:15px;border-radius:50%;background:#84CC16;display:block}
+.login-card-logo img{width:100%;height:100%;object-fit:cover;display:block}
+.login-card-logo:not(:has(img)){background:linear-gradient(135deg,#0F3D2E,#16A34A);border-color:transparent}
 .login-card-brand-text{min-width:0}
-.login-card-name{font-size:14px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:#0F172A;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.login-card-sub{font-size:11.5px;font-weight:500;letter-spacing:.4px;color:#64748B;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.login-card-name{font-size:13.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:#0F172A;line-height:1.3}
+.login-card-sub{font-size:11.5px;font-weight:500;letter-spacing:.3px;color:#64748B;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* Headings */
 .login-welcome{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:#16A34A;margin-bottom:10px}
@@ -508,7 +539,7 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 #login .login-card .fg input:focus{border-color:#16A34A;background:#fff;box-shadow:0 0 0 4px rgba(22,163,74,.12)}
 .login-input-wrap:focus-within .login-input-ic{color:#16A34A}
 
-/* Password field — toggle sits inside on the right */
+/* Password field — toggle inside on the right */
 .login-pw-wrap input{padding-right:46px}
 .login-pw-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:34px;height:34px;border:none;background:transparent;cursor:pointer;color:#64748B;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;transition:color .15s,background .15s}
 .login-pw-toggle:hover{color:#16A34A;background:#F0FDF4}
@@ -535,16 +566,6 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 .login-help{display:flex;gap:9px;align-items:flex-start;margin-top:18px;padding:12px 14px;border-radius:12px;background:#F0FDF4;border:1px solid #BBF7D0;color:#166534;font-size:12.5px;line-height:1.5}
 .login-help svg{flex-shrink:0;width:16px;height:16px;margin-top:1px;color:#16A34A;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .login-help strong{color:#15803D;font-weight:700}
-
-/* Card footer */
-.login-card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:22px;padding-top:16px;border-top:1px solid #EEF2F6;font-size:11.5px;color:#94A3B8;font-weight:500}
-.login-card-status{display:inline-flex;align-items:center;gap:6px;color:#15803D;font-weight:600}
-.login-card-status::before{content:'';width:7px;height:7px;border-radius:50%;background:#22C55E;box-shadow:0 0 8px rgba(34,197,94,.8);animation:loginPulse 2s ease-in-out infinite}
-@keyframes loginPulse{0%,100%{opacity:1}50%{opacity:.35}}
-
-@media (prefers-reduced-motion:reduce){
-  .login-aurora .blob,.login-card,.login-card-status::before{animation:none!important}
-}
 .err{color:#B91C1C;background:#FEE2E2;border:1px solid #FECACA;padding:10px 12px;border-radius:8px;font-size:13px;margin-top:12px;display:none}
 .err.active{display:block}
 
@@ -756,14 +777,30 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 .user-table-scroll thead{position:sticky;top:0;background:#F8FAFC;z-index:1}
 .user-table-scroll thead th{background:#F8FAFC;border-bottom:1px solid var(--spice-line)}
 
-/* Responsive — the card is fluid (max-width:430px) so it already
-   adapts; on short/!narrow viewports just tighten the padding and
-   trim the aurora blur so it stays light on low-power phones. */
-@media (max-width: 560px){
-  #login{padding:18px}
-  .login-card{padding:30px 24px 22px;border-radius:22px}
+/* Responsive — collapse the two panes to one column under 900px
+   (sign-in card first on phones), then trim the hero on small
+   screens so the form stays the focus. */
+@media (max-width:900px){
+  #login{align-items:flex-start;overflow-y:auto;padding:32px 18px}
+  /* min-width:0 lets the grid column shrink below its content's
+     intrinsic width (default min-width:auto would otherwise push
+     the panes wider than the viewport on phones). */
+  .login-stage{grid-template-columns:1fr;max-width:440px;gap:30px;min-width:0}
+  .login-hero,.login-card{min-width:0;max-width:100%}
+  .login-hero{max-width:none}
+  .login-card{order:-1;justify-self:stretch}
+  #login .login-card .fg input{min-width:0}
+  .login-hero-sub{display:none}
+}
+@media (max-width:560px){
+  .login-card{padding:30px 22px 24px;border-radius:22px}
   .login-card h1{font-size:23px}
+  .login-hero-title{font-size:30px}
+  .login-feats li:nth-child(n+4){display:none}
   .login-aurora .blob{filter:blur(70px)}
+}
+@media (prefers-reduced-motion:reduce){
+  .login-aurora .blob,.login-card,.login-feats li,.login-card-status::before,.login-eyebrow .dot{animation:none!important}
 }
 .fg{margin-bottom:14px}
 .fg label{display:block;font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px}
@@ -2072,54 +2109,67 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <span class="grid"></span>
   </div>
 
-  <!-- Centered glass sign-in card -->
-  <main class="login-card">
-    <div class="login-card-brand">
-      <span class="login-card-logo" id="login-hero-logo-dot"><img id="login-hero-logo-img" alt="" onerror="this.remove()"></span>
-      <div class="login-card-brand-text">
-        <div class="login-card-name" id="login-hero-name">Admin Console</div>
-        <div class="login-card-sub" id="login-hero-sub">&nbsp;</div>
+  <div class="login-stage">
+    <!-- LEFT: value-prop hero — what the app does -->
+    <section class="login-hero">
+      <div class="login-eyebrow"><span class="dot"></span> Spice e-Auction Platform</div>
+      <h2 class="login-hero-title">Run every <em>e-Auction</em> day with confidence.</h2>
+      <p class="login-hero-sub">From lot entry to ledger — branch allocation, GST invoices, RTGS payments, trade reports and Tally export, all on one floor.</p>
+      <ul class="login-feats">
+        <li><span class="ck"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span>Lot entry with branch allocation &amp; live validation</li>
+        <li><span class="ck"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span>One-click GST invoices, debit notes &amp; PDFs</li>
+        <li><span class="ck"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span>RTGS bank payment files &amp; receipts</li>
+        <li><span class="ck"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span>Trade reports, journals &amp; Tally XML export — no re-keying</li>
+      </ul>
+      <div class="login-hero-foot">
+        <span>&copy; <span id="login-hero-year"></span> &middot; <span id="login-hero-credit">Powered by KJ &amp; Co</span></span>
+        <span class="login-card-status">Server live</span>
       </div>
-    </div>
+    </section>
 
-    <div class="login-welcome">Welcome back</div>
-    <h1 id="login-brand-name">Sign in to your account</h1>
-    <p class="login-card-lead" id="login-brand-sub">Enter your credentials to continue.</p>
-
-    <div class="fg">
-      <label for="inp-u">Username</label>
-      <div class="login-input-wrap">
-        <svg class="login-input-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-        <input id="inp-u" value="admin" autocomplete="username" placeholder="Enter your username">
+    <!-- RIGHT: sign-in card -->
+    <main class="login-card">
+      <div class="login-card-brand">
+        <span class="login-card-logo" id="login-hero-logo-dot"><img id="login-hero-logo-img" src="logo-ispl.png" alt="" onerror="this.remove()"></span>
+        <div class="login-card-brand-text">
+          <div class="login-card-name" id="login-hero-name">Admin Console</div>
+          <div class="login-card-sub" id="login-hero-sub">&nbsp;</div>
+        </div>
       </div>
-    </div>
 
-    <div class="fg">
-      <label for="inp-p">Password</label>
-      <div class="login-input-wrap login-pw-wrap">
-        <svg class="login-input-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-        <input type="password" id="inp-p" autocomplete="current-password" placeholder="Enter your password" onkeydown="if(event.key==='Enter')login()">
-        <button type="button" class="login-pw-toggle" onclick="(function(b){var i=document.getElementById('inp-p');var hidden=i.type==='password';i.type=hidden?'text':'password';b.setAttribute('aria-label',hidden?'Hide password':'Show password');})(this)" aria-label="Show password" title="Show / hide password">
-          <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
-        </button>
+      <div class="login-welcome">Welcome back</div>
+      <h1 id="login-brand-name">Sign in to your account</h1>
+      <p class="login-card-lead" id="login-brand-sub">Enter your credentials to continue.</p>
+
+      <div class="fg">
+        <label for="inp-u">Username</label>
+        <div class="login-input-wrap">
+          <svg class="login-input-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <input id="inp-u" value="admin" autocomplete="username" placeholder="Enter your username">
+        </div>
       </div>
-    </div>
 
-    <button class="btn-signin" onclick="login()">Sign In <span class="arrow" aria-hidden="true">→</span></button>
-    <div class="err" id="login-err"></div>
+      <div class="fg">
+        <label for="inp-p">Password</label>
+        <div class="login-input-wrap login-pw-wrap">
+          <svg class="login-input-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <input type="password" id="inp-p" autocomplete="current-password" placeholder="Enter your password" onkeydown="if(event.key==='Enter')login()">
+          <button type="button" class="login-pw-toggle" onclick="(function(b){var i=document.getElementById('inp-p');var hidden=i.type==='password';i.type=hidden?'text':'password';b.setAttribute('aria-label',hidden?'Hide password':'Show password');})(this)" aria-label="Show password" title="Show / hide password">
+            <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
 
-    <div class="login-help">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-      <span>Default credentials <strong>admin</strong> / <strong>admin123</strong> — please change your password after first login.</span>
-    </div>
+      <button class="btn-signin" onclick="login()">Sign In <span class="arrow" aria-hidden="true">→</span></button>
+      <div class="err" id="login-err"></div>
 
-    <div class="login-card-foot">
-      <span>&copy; <span id="login-hero-year"></span> &middot; <span id="login-hero-credit">Powered by KJ &amp; Co</span></span>
-      <span class="login-card-status">Server live</span>
-    </div>
-  </main>
+      <div class="login-help">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        <span>Default credentials <strong>admin</strong> / <strong>admin123</strong> — please change your password after first login.</span>
+      </div>
+    </main>
+  </div>
 </div>
-
 <div id="app">
   <div class="topbar">
     <div class="topbar-left">
@@ -4440,7 +4490,13 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <div style="display:flex;gap:8px;margin:12px 0;flex-wrap:wrap">
       <button type="button" class="btn btn-g" style="height:30px;padding:0 14px;font-size:12px;font-weight:600" onclick="openAllocAddBranch()" title="Add a brand-new branch range">+ Add Branch</button>
       <button type="button" class="btn btn-o" style="height:30px;padding:0 14px;font-size:12px;font-weight:600" onclick="openAllocAddLots()" title="Quick-append a range to an existing branch">+ Add Extra Lots</button>
+      <button type="button" class="btn" style="height:30px;padding:0 14px;font-size:12px;font-weight:600;background:#FEF3C7;color:#7C2D12;border:1px solid #F59E0B" onclick="autoFillAllocations()" title="Scan every lot already in this trade and create allocation ranges to cover any that aren't yet assigned to a branch. Existing allocations are left untouched.">📋 Auto-fill from existing lots</button>
       <span id="alloc-edit-marked-count" style="margin-left:auto;font-size:11px;color:var(--text3);align-self:center"></span>
+    </div>
+    <!-- Inline description for the Auto-fill action — explains what it
+         does in plain English so first-time users aren't guessing. -->
+    <div style="font-size:11.5px;color:var(--text2);background:#FFFBEB;border-left:3px solid #F59E0B;padding:8px 12px;border-radius:4px;margin-bottom:12px;line-height:1.5">
+      <b>📋 Auto-fill from existing lots</b> — Use this when a trade was created via import (or otherwise has lots without matching allocations). One click adds a wide range (e.g. <code>001–999</code>) per branch + lot-prefix combination found in the lots table, so every existing lot has a branch home. Safe to re-run: anything already covered is skipped.
     </div>
 
     <div id="alloc-edit-summary" style="font-size:11px;color:var(--text3);margin-bottom:10px"></div>
@@ -9538,6 +9594,44 @@ function _allocClearMarks(branch, rStart, rEnd) {
 // a branch, matching the prior + Add Branch row-editor behavior.
 async function openAllocAddBranch() {
   return openAllocAddLots();
+}
+
+// One-click rescue for trades that have lots but no allocations
+// covering them — most commonly trades created via Excel import.
+// Hits the server's auto-fill endpoint (which knows how to group lots
+// by branch + prefix and append a wide catch-all range per group),
+// then refreshes the modal so the new rows show immediately.
+async function autoFillAllocations() {
+  if (!_allocEditAuctionId) { toast('Open a trade first'); return; }
+  const errEl = document.getElementById('alloc-err');
+  if (errEl) errEl.style.display = 'none';
+  try {
+    const d = await j(`/api/auctions/${_allocEditAuctionId}/allocations/auto-fill`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    const n = d.created || 0;
+    if (n === 0) {
+      toast('Nothing to add — every existing lot is already covered.');
+    } else {
+      toast(`Added ${n} allocation${n === 1 ? '' : 's'} to cover existing lots ✓`);
+    }
+    // Refresh the modal's per-range cards + reassign tiles so the new
+    // allocations are visible without the user having to close-reopen.
+    try {
+      const statsData = await j(`/api/auctions/${_allocEditAuctionId}/allocation-stats`);
+      const stats = statsData.stats || [];
+      _raAllocStats = stats;
+      _raSelected.clear();
+      renderReassignTiles();
+      renderAllocEditCards(stats);
+    } catch (_) { /* non-fatal */ }
+    if (typeof leLoadAllocBar === 'function') leLoadAllocBar();
+    if (typeof loadAuctions === 'function') loadAuctions();
+  } catch (e) {
+    if (errEl) { errEl.textContent = e.message || 'Auto-fill failed'; errEl.style.display = 'block'; }
+    else showError(e);
+  }
 }
 
 function renderReassignTiles() {
