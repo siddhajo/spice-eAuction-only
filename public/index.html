@@ -164,11 +164,32 @@ body[data-preset="ocean"] .kpi{border-left:3px solid var(--spice-saffron);box-sh
   --spice-saffron-dk: #047857;
   --spice-turmeric: #F59E0B;
   --spice-turmeric-lt: #FEF3C7;
-  --spice-cardamom: #166534;
-  --spice-cardamom-lt: #DCFCE7;
-  --spice-cardamom-dk: #14532D;
+  /* "Deep brand" tokens — derived from the active theme primary so they
+     track the theme instead of staying a fixed green. (Themes only ever
+     override --spice-saffron; deriving here means the cardamom/clove
+     family — used by status pills, badges, the topbar dot, etc. — re-skins
+     automatically.) */
+  --spice-cardamom:    color-mix(in srgb, var(--spice-saffron) 72%, black);
+  --spice-cardamom-lt: color-mix(in srgb, var(--spice-saffron) 14%, white);
+  --spice-cardamom-dk: color-mix(in srgb, var(--spice-saffron) 58%, black);
   --spice-pepper: var(--spice-text-main);
-  --spice-clove: #047857;
+  --spice-clove: var(--spice-saffron-dk);
+
+  /* ── Sidebar palette — also derived from the theme primary ──────────
+     The rail used to be hardcoded deep-green + lime + yellow accents and
+     never changed with the theme. These tokens mix the primary with
+     near-black for the dark surface and with white for readable text, so
+     the whole rail re-skins to shades of the chosen theme. */
+  --side-bg-1:        color-mix(in srgb, var(--spice-saffron) 38%, #070707);
+  --side-bg-2:        color-mix(in srgb, var(--spice-saffron) 28%, #050505);
+  --side-bg-3:        color-mix(in srgb, var(--spice-saffron) 22%, #040404);
+  --side-glow:        var(--spice-saffron);
+  --side-text:        color-mix(in srgb, var(--spice-saffron) 14%, white);
+  --side-text-mute:   color-mix(in srgb, var(--spice-saffron) 22%, #d7dee6);
+  --side-label:       color-mix(in srgb, var(--spice-saffron) 45%, white);
+  --side-hover:       color-mix(in srgb, var(--spice-saffron) 14%, transparent);
+  --side-active-bg:   color-mix(in srgb, var(--spice-saffron) 20%, transparent);
+  --side-active-line: color-mix(in srgb, var(--spice-saffron) 38%, transparent);
   --spice-chili: #DC2626;
   --spice-chili-lt: #FEE2E2;
   --spice-chili-dk: #991B1B;
@@ -192,7 +213,7 @@ body[data-preset="ocean"] .kpi{border-left:3px solid var(--spice-saffron);box-sh
   --green:         var(--spice-cardamom);
   --green-dk:      var(--spice-cardamom-dk);
   --green-bg:      var(--spice-cardamom-lt);
-  --green-border:  #BBF7D0;
+  --green-border:  color-mix(in srgb, var(--spice-saffron) 35%, white);
   --orange:        var(--spice-turmeric);
   --orange-bg:     var(--spice-turmeric-lt);
   --red:           var(--spice-chili);
@@ -406,152 +427,124 @@ body[data-theme="custom"]{
 }
 body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 
-/* ── Login ───────────────────────────────────────────────── */
-/* ─────────────────────────────────────────────────────────────
-   Split-screen login: left = brand panel (dark green gradient),
-   right = sign-in card (white). Stacks vertically below 880px so
-   the form remains usable on phones/tablets. */
+/* ── Login — "Aurora" redesign ─────────────────────────────────
+   A single centered glass sign-in card floating over an animated
+   emerald → lime → saffron aurora backdrop (replaces the old
+   split-screen layout). #login is toggled display:flex / none by
+   the JS, so the container just centers its card. Every brand ID
+   the JS writes is preserved: login-hero-name / -sub / -year /
+   -credit / -logo-img / -logo-dot, login-brand-name / -sub, plus
+   inp-u, inp-p and login-err. Field + card rules are prefixed with
+   #login so they outrank the global .fg / .err styles further down
+   the sheet regardless of source order. */
 #login{
-  display:grid;grid-template-columns:1fr 1fr;
-  min-height:100vh;background:#fff;font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  position:relative;display:flex;align-items:center;justify-content:center;
+  min-height:100vh;width:100%;padding:28px;overflow:hidden;
+  background:#06170F;color:#0F172A;
+  font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 }
-.login-hero{
-  position:relative;display:flex;flex-direction:column;justify-content:space-between;
-  padding:48px 56px;color:#fff;overflow:hidden;
-  background:
-    radial-gradient(circle at 20% 0%, rgba(132,204,22,.18) 0%, transparent 50%),
-    radial-gradient(circle at 80% 100%, rgba(34,197,94,.18) 0%, transparent 55%),
-    linear-gradient(140deg,#0F3D2E 0%,#0A2F22 60%,#0A2F22 100%);
-}
-.login-hero::before{
-  /* subtle noise/texture overlay so the gradient doesn't look flat */
-  content:'';position:absolute;inset:0;pointer-events:none;
-  background-image:radial-gradient(rgba(255,255,255,.04) 1px,transparent 1px);
-  background-size:24px 24px;opacity:.5;
-}
-.login-hero > *{position:relative;z-index:1}
-.login-hero-brand{display:flex;align-items:center;gap:14px}
-.login-hero-brand .badge{
-  width:56px;height:56px;border-radius:14px;background:rgba(255,255,255,.08);
-  border:1px solid rgba(255,255,255,.18);display:inline-flex;align-items:center;justify-content:center;
-  overflow:hidden;flex-shrink:0;
-}
-.login-hero-brand .badge img{max-width:78%;max-height:78%;object-fit:contain;display:block}
-.login-hero-brand .badge::before{
-  content:'';display:none;width:16px;height:16px;background:#84CC16;
-  border-radius:50%;
-}
-.login-hero-brand .badge:not(:has(img))::before{display:block}
-.login-hero-brand .name{
-  font-size:14px;font-weight:700;color:#fff;letter-spacing:1px;text-transform:uppercase;
-  line-height:1.3;
-}
-.login-hero-brand .sub{
-  font-size:11.5px;color:rgba(255,255,255,.55);letter-spacing:.6px;margin-top:4px;
-  text-transform:uppercase;font-weight:500;
-}
-.login-hero-headline{
-  font-size:46px;font-weight:800;line-height:1.08;letter-spacing:-.5px;color:#fff;
-  margin:0 0 18px;max-width:560px;
-}
-.login-hero-headline em{font-style:normal;background:linear-gradient(90deg,#FACC15 0%,#84CC16 50%,#22C55E 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
-.login-hero-tagline{
-  font-size:15px;line-height:1.55;color:rgba(255,255,255,.72);margin:0 0 32px;
-  max-width:480px;
-}
-.login-feat-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:14px}
-.login-feat-list li{
-  display:flex;align-items:center;gap:14px;
-  font-size:14.5px;color:rgba(255,255,255,.92);font-weight:500;
-}
-.login-feat-check{
-  width:24px;height:24px;border-radius:50%;flex-shrink:0;
-  background:rgba(132,204,22,.18);border:1px solid rgba(132,204,22,.5);
-  display:inline-flex;align-items:center;justify-content:center;
-  color:#84CC16;
-}
-.login-hero-footer{
-  display:flex;align-items:center;justify-content:space-between;gap:12px;
-  font-size:12px;color:rgba(255,255,255,.4);font-weight:500;
-}
-.login-hero-pill{
-  display:inline-flex;align-items:center;gap:6px;
-  background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);
-  color:#86EFAC;padding:5px 12px;border-radius:999px;font-size:11.5px;font-weight:600;
-}
-.login-hero-pill::before{
-  content:'';width:7px;height:7px;border-radius:50%;background:#22C55E;
-  box-shadow:0 0 8px rgba(34,197,94,.8);
-  animation:loginPulse 2s ease-in-out infinite;
-}
-@keyframes loginPulse{0%,100%{opacity:1}50%{opacity:.4}}
 
-/* ── Right panel: sign-in form card ─────────────────────── */
-.login-panel{
-  display:flex;align-items:center;justify-content:center;
-  padding:48px 56px;background:#fff;
+/* Animated aurora — three blurred color blobs drifting behind a
+   faint dotted grid that fades out toward the edges. */
+.login-aurora{position:absolute;inset:0;z-index:0;overflow:hidden}
+.login-aurora .blob{position:absolute;border-radius:50%;filter:blur(90px);will-change:transform,opacity}
+.login-aurora .b1{width:min(60vw,560px);aspect-ratio:1;background:#16A34A;opacity:.55;top:-14%;left:-8%;animation:auroraA 19s ease-in-out infinite}
+.login-aurora .b2{width:min(55vw,520px);aspect-ratio:1;background:#84CC16;opacity:.5;bottom:-18%;right:-6%;animation:auroraB 23s ease-in-out infinite}
+.login-aurora .b3{width:min(45vw,420px);aspect-ratio:1;background:#F59E0B;opacity:.3;top:34%;left:52%;animation:auroraC 27s ease-in-out infinite}
+.login-aurora .grid{
+  position:absolute;inset:0;
+  background-image:radial-gradient(rgba(255,255,255,.06) 1px,transparent 1px);background-size:26px 26px;
+  -webkit-mask-image:radial-gradient(circle at 50% 42%,#000 0%,transparent 72%);
+  mask-image:radial-gradient(circle at 50% 42%,#000 0%,transparent 72%);
 }
-.login-box{
-  width:100%;max-width:420px;
+@keyframes auroraA{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(40px,30px) scale(1.12)}}
+@keyframes auroraB{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-46px,-26px) scale(1.08)}}
+@keyframes auroraC{0%,100%{transform:translate(0,0) scale(1);opacity:.3}50%{transform:translate(-30px,34px) scale(1.16);opacity:.42}}
+
+/* Glass card */
+.login-card{
+  position:relative;z-index:1;width:100%;max-width:430px;
+  background:rgba(255,255,255,.97);
+  -webkit-backdrop-filter:blur(22px) saturate(150%);backdrop-filter:blur(22px) saturate(150%);
+  border:1px solid rgba(255,255,255,.7);border-radius:26px;
+  padding:38px 36px 26px;
+  box-shadow:0 36px 90px -28px rgba(0,0,0,.6),0 2px 6px rgba(6,23,15,.12),inset 0 1px 0 rgba(255,255,255,.8);
+  animation:cardRise .6s cubic-bezier(.2,.8,.2,1) both;
 }
-.login-welcome{
-  font-size:12.5px;font-weight:700;color:#16A34A;letter-spacing:1.6px;
-  text-transform:uppercase;margin:0 0 14px;
+@keyframes cardRise{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:none}}
+
+/* Brand row */
+.login-card-brand{display:flex;align-items:center;gap:13px;margin-bottom:26px}
+.login-card-logo{
+  width:50px;height:50px;border-radius:14px;flex-shrink:0;overflow:hidden;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#0F3D2E,#16A34A);box-shadow:0 6px 16px rgba(22,163,74,.32);
 }
-.login-box h1{
-  font-size:26px;font-weight:800;color:#0F172A;
-  margin:0 0 8px;display:flex;align-items:center;gap:12px;letter-spacing:-.4px;line-height:1.2;
+.login-card-logo img{max-width:78%;max-height:78%;object-fit:contain;display:block}
+.login-card-logo:not(:has(img))::before{content:'';width:15px;height:15px;border-radius:50%;background:#84CC16;display:block}
+.login-card-brand-text{min-width:0}
+.login-card-name{font-size:14px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:#0F172A;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.login-card-sub{font-size:11.5px;font-weight:500;letter-spacing:.4px;color:#64748B;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Headings */
+.login-welcome{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:#16A34A;margin-bottom:10px}
+.login-welcome::before{content:'';width:18px;height:2px;border-radius:2px;background:linear-gradient(90deg,#84CC16,#22C55E)}
+.login-card h1{font-size:25px;font-weight:800;letter-spacing:-.4px;color:#0F172A;margin:0 0 7px;line-height:1.2}
+.login-card-lead{font-size:14px;color:#64748B;margin:0 0 26px;line-height:1.5}
+
+/* Fields (scoped under #login to beat the global .fg input rules) */
+#login .login-card .fg{margin-bottom:16px}
+#login .login-card .fg label{display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#475569;margin-bottom:8px}
+.login-input-wrap{position:relative}
+.login-input-ic{position:absolute;left:14px;top:50%;transform:translateY(-50%);width:18px;height:18px;color:#94A3B8;pointer-events:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transition:color .15s}
+#login .login-card .fg input{
+  width:100%;height:50px;padding:0 14px 0 42px;
+  border:1.5px solid #E2E8F0;border-radius:12px;background:#F8FAFC;
+  font-size:15px;font-family:inherit;color:#0F172A;outline:none;
+  -webkit-appearance:none;appearance:none;
+  transition:border-color .15s,box-shadow .15s,background .15s;
 }
-.login-box h1 .dot{
-  flex:0 0 auto;width:42px;height:42px;border-radius:12px;
-  background:#F0FDF4;border:1px solid #BBF7D0;
-  display:inline-flex;align-items:center;justify-content:center;overflow:hidden;
-}
-.login-box h1 .dot img{display:block;max-width:78%;max-height:78%;width:auto;height:auto;object-fit:contain}
-.login-box h1 .dot:not(:has(img))::before{
-  content:'';width:14px;height:14px;border-radius:50%;background:#84CC16;display:block;
-}
-#login-brand-name{display:inline-block;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.login-box p{font-size:14px;color:#64748B;margin:0 0 28px}
-.login-box .fg{margin-bottom:16px}
-.login-box .fg label{
-  display:block;font-size:11px;font-weight:700;color:#475569;
-  text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;
-}
-.login-box .fg input{
-  width:100%;height:48px;padding:0 14px;border:1.5px solid #E2E8F0;border-radius:10px;
-  font-size:15px;font-family:inherit;background:#fff;outline:none;transition:all .15s;
-  color:#0F172A;
-}
-.login-box .fg input:focus{
-  border-color:#16A34A;box-shadow:0 0 0 4px rgba(22,163,74,.1);
-}
-/* Password field — wrap so the eye toggle button sits inside the input */
-.login-pw-wrap{position:relative}
-.login-pw-wrap input{padding-right:44px}
-.login-pw-toggle{
-  position:absolute;right:10px;top:50%;transform:translateY(-50%);
-  width:30px;height:30px;border:none;background:transparent;cursor:pointer;color:#64748B;
-  display:inline-flex;align-items:center;justify-content:center;border-radius:6px;
-}
+#login .login-card .fg input::placeholder{color:#94A3B8}
+#login .login-card .fg input:focus{border-color:#16A34A;background:#fff;box-shadow:0 0 0 4px rgba(22,163,74,.12)}
+.login-input-wrap:focus-within .login-input-ic{color:#16A34A}
+
+/* Password field — toggle sits inside on the right */
+.login-pw-wrap input{padding-right:46px}
+.login-pw-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:34px;height:34px;border:none;background:transparent;cursor:pointer;color:#64748B;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;transition:color .15s,background .15s}
 .login-pw-toggle:hover{color:#16A34A;background:#F0FDF4}
 .login-pw-toggle svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+/* Sign-in button */
 .btn-signin{
-  width:100%;height:52px;border:none;border-radius:10px;cursor:pointer;
-  font-size:15px;font-weight:700;color:#fff;letter-spacing:.2px;
-  background:linear-gradient(135deg,#15803D 0%,#16A34A 50%,#22C55E 100%);
-  box-shadow:0 6px 16px rgba(22,163,74,.28);
-  transition:transform .1s,box-shadow .15s;
-  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  width:100%;height:52px;margin-top:6px;border:none;border-radius:12px;cursor:pointer;
+  font-size:15px;font-weight:700;letter-spacing:.2px;color:#fff;
+  background:linear-gradient(135deg,#15803D 0%,#16A34A 48%,#22C55E 100%);
+  box-shadow:0 10px 24px -6px rgba(22,163,74,.5);
+  display:inline-flex;align-items:center;justify-content:center;gap:9px;
+  transition:transform .1s,box-shadow .18s,filter .15s;
 }
-.btn-signin:hover{transform:translateY(-1px);box-shadow:0 10px 24px rgba(22,163,74,.32)}
+.btn-signin:hover{transform:translateY(-1px);box-shadow:0 16px 30px -8px rgba(22,163,74,.55);filter:brightness(1.04)}
 .btn-signin:active{transform:translateY(0)}
-.login-help{
-  margin-top:20px;padding:14px 16px;border-radius:10px;
-  background:#F0FDF4;border:1px dashed #BBF7D0;color:#166534;
-  font-size:13px;line-height:1.5;
-}
+.btn-signin .arrow{transition:transform .18s}
+.btn-signin:hover .arrow{transform:translateX(3px)}
+
+/* Error — appearance only; login() toggles inline display + .active */
+#login-err{margin-top:14px;padding:11px 14px;border-radius:10px;background:#FEE2E2;border:1px solid #FECACA;color:#B91C1C;font-size:13px;font-weight:600;text-align:left}
+
+/* Help note */
+.login-help{display:flex;gap:9px;align-items:flex-start;margin-top:18px;padding:12px 14px;border-radius:12px;background:#F0FDF4;border:1px solid #BBF7D0;color:#166534;font-size:12.5px;line-height:1.5}
+.login-help svg{flex-shrink:0;width:16px;height:16px;margin-top:1px;color:#16A34A;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .login-help strong{color:#15803D;font-weight:700}
+
+/* Card footer */
+.login-card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:22px;padding-top:16px;border-top:1px solid #EEF2F6;font-size:11.5px;color:#94A3B8;font-weight:500}
+.login-card-status{display:inline-flex;align-items:center;gap:6px;color:#15803D;font-weight:600}
+.login-card-status::before{content:'';width:7px;height:7px;border-radius:50%;background:#22C55E;box-shadow:0 0 8px rgba(34,197,94,.8);animation:loginPulse 2s ease-in-out infinite}
+@keyframes loginPulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+@media (prefers-reduced-motion:reduce){
+  .login-aurora .blob,.login-card,.login-card-status::before{animation:none!important}
+}
 .err{color:#B91C1C;background:#FEE2E2;border:1px solid #FECACA;padding:10px 12px;border-radius:8px;font-size:13px;margin-top:12px;display:none}
 .err.active{display:block}
 
@@ -763,16 +756,14 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 .user-table-scroll thead{position:sticky;top:0;background:#F8FAFC;z-index:1}
 .user-table-scroll thead th{background:#F8FAFC;border-bottom:1px solid var(--spice-line)}
 
-/* Responsive — stack the two panels under 880px so phones / narrow
-   tablets still see the form. Brand panel becomes a compact banner. */
-@media (max-width: 880px){
-  #login{grid-template-columns:1fr}
-  .login-hero{padding:32px 28px;min-height:auto}
-  .login-hero-headline{font-size:32px;margin-bottom:12px}
-  .login-hero-tagline{margin-bottom:20px}
-  .login-feat-list{display:none}
-  .login-hero-footer{margin-top:18px}
-  .login-panel{padding:32px 24px}
+/* Responsive — the card is fluid (max-width:430px) so it already
+   adapts; on short/!narrow viewports just tighten the padding and
+   trim the aurora blur so it stays light on low-power phones. */
+@media (max-width: 560px){
+  #login{padding:18px}
+  .login-card{padding:30px 24px 22px;border-radius:22px}
+  .login-card h1{font-size:23px}
+  .login-aurora .blob{filter:blur(70px)}
 }
 .fg{margin-bottom:14px}
 .fg label{display:block;font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px}
@@ -787,7 +778,7 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 }
 .fg textarea{height:auto;padding:10px 14px;min-height:60px}
 .fg input[type="date"]{padding:0 12px}
-.fg input:not([type="checkbox"]):not([type="radio"]):focus,.fg select:focus,.fg textarea:focus{border-color:var(--spice-saffron);box-shadow:0 0 0 3px rgba(16,185,129,.20)}
+.fg input:not([type="checkbox"]):not([type="radio"]):focus,.fg select:focus,.fg textarea:focus{border-color:var(--spice-saffron);box-shadow:0 0 0 3px color-mix(in srgb, var(--spice-saffron) 22%, transparent)}
 .fg select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='10'%3E%3Cpath d='M1 1l6 6 6-6' stroke='%23666' fill='none' stroke-width='2'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center}
 
 /* ── Buttons ─────────────────────────────────────────────── */
@@ -802,7 +793,7 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 .btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
 .btn-g{background:var(--spice-cardamom);color:#fff;box-shadow:0 2px 6px rgba(22,101,52,.22)}
 .btn-g:hover{background:var(--spice-cardamom-dk)}
-.btn-a{background:var(--spice-saffron);color:#fff;box-shadow:0 2px 6px rgba(16,185,129,.28)}
+.btn-a{background:var(--spice-saffron);color:#fff;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)}
 .btn-a:hover{background:var(--spice-saffron-dk)}
 .btn-r{background:var(--spice-chili);color:#fff;box-shadow:0 2px 6px rgba(220,38,38,.22)}
 .btn-o{background:var(--spice-saffron-lt);border:1.5px solid var(--spice-saffron);color:var(--spice-saffron-dk);font-weight:600}
@@ -833,9 +824,9 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 }
 .topbar h1 .dot{
   width:36px;height:36px;border-radius:10px;
-  background:linear-gradient(135deg,var(--spice-saffron) 0%,#84CC16 100%);
+  background:linear-gradient(135deg,var(--spice-saffron) 0%,var(--spice-saffron-dk) 100%);
   display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;font-weight:800;
-  animation:none;box-shadow:0 3px 10px rgba(16,185,129,.22);
+  animation:none;box-shadow:0 3px 10px color-mix(in srgb, var(--spice-saffron) 25%, transparent);
   overflow:hidden;
   position:relative;
 }
@@ -869,38 +860,38 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 
 /* ── Layout: Sidebar + Content ──────────────────────────── */
 .layout{display:flex;min-height:calc(100vh - 64px)}
-/* ── Sidebar — brand-matched deep cardamom green ─────────────────
-   Background mirrors the login hero panel (#0F3D2E → #0A2F22) so
-   the visual identity is consistent from sign-in through every
-   screen. Active item gets a subtle emerald glow + a left accent
+/* ── Sidebar — brand-matched, derived from the active theme ──────
+   Colours come from the --side-* tokens (set in :root from the theme
+   primary) so the rail re-skins with the theme instead of staying a
+   fixed green. Active item gets a subtle primary glow + a left accent
    bar, and the rail uses a soft radial highlight at the top so the
    surface doesn't look flat. */
 .sidebar{
   width:244px;
   background:
-    radial-gradient(circle at 30% 0%, rgba(132,204,22,.10) 0%, transparent 55%),
-    radial-gradient(circle at 80% 100%, rgba(16,185,129,.08) 0%, transparent 60%),
-    linear-gradient(180deg,#0F3D2E 0%,#0A2F22 60%,#082619 100%);
-  color:#D1FAE5;
+    radial-gradient(circle at 30% 0%, color-mix(in srgb, var(--side-glow) 12%, transparent) 0%, transparent 55%),
+    radial-gradient(circle at 80% 100%, color-mix(in srgb, var(--side-glow) 8%, transparent) 0%, transparent 60%),
+    linear-gradient(180deg,var(--side-bg-1) 0%,var(--side-bg-2) 60%,var(--side-bg-3) 100%);
+  color:var(--side-text);
   border-right:none;
   padding:20px 12px;flex-shrink:0;position:sticky;top:64px;
   height:calc(100vh - 64px);overflow-y:auto
 }
 .sidebar::-webkit-scrollbar{width:6px}
-.sidebar::-webkit-scrollbar-thumb{background:rgba(132,204,22,.2);border-radius:3px}
-.sidebar::-webkit-scrollbar-thumb:hover{background:rgba(132,204,22,.35)}
+.sidebar::-webkit-scrollbar-thumb{background:color-mix(in srgb, var(--side-glow) 20%, transparent);border-radius:3px}
+.sidebar::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb, var(--side-glow) 35%, transparent)}
 .side-group{margin-bottom:18px}
 .side-group-lbl{
-  font-size:10.5px;font-weight:700;color:#6EE7B7;text-transform:uppercase;
+  font-size:10.5px;font-weight:700;color:var(--side-label);text-transform:uppercase;
   letter-spacing:1.2px;padding:0 12px 8px;margin-top:4px;
   cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;
   transition:color .15s;opacity:.7
 }
-.side-group-lbl:hover{color:#84CC16;opacity:1}
+.side-group-lbl:hover{color:var(--side-text);opacity:1}
 /* Chevron flips when group is collapsed via .side-group.section-collapsed */
 .side-group-lbl::before{
   content:'▼';font-size:8px;display:inline-block;transition:transform .2s;
-  color:#86EFAC;opacity:.6
+  color:var(--side-text-mute);opacity:.6
 }
 .side-group.section-collapsed .side-group-lbl::before{transform:rotate(-90deg)}
 /* Hide the items when section is collapsed — pure CSS, no JS height calc.
@@ -909,30 +900,30 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 .side-item{
   display:flex;align-items:center;gap:12px;
   padding:11px 14px;border-radius:10px;cursor:pointer;
-  font-size:14px;font-weight:500;color:rgba(220,252,231,.78);
+  font-size:14px;font-weight:500;color:var(--side-text-mute);
   margin-bottom:2px;transition:background .15s,color .15s,box-shadow .15s;
   border:none;background:none;font-family:inherit;width:100%;text-align:left;
   position:relative
 }
-.side-item:hover{background:rgba(132,204,22,.10);color:#F0FDF4}
+.side-item:hover{background:var(--side-hover);color:var(--side-text)}
 .side-item.active{
-  background:linear-gradient(90deg,rgba(132,204,22,.18) 0%,rgba(16,185,129,.10) 100%);
-  color:#FACC15;font-weight:600;
-  box-shadow:inset 0 0 0 1px rgba(132,204,22,.18);
+  background:linear-gradient(90deg,var(--side-active-bg) 0%,color-mix(in srgb, var(--side-glow) 10%, transparent) 100%);
+  color:var(--side-text);font-weight:600;
+  box-shadow:inset 0 0 0 1px var(--side-active-line);
 }
 /* Left accent bar on the active item so the selection reads at a glance */
 .side-item.active::before{
   content:'';position:absolute;left:0;top:8px;bottom:8px;width:3px;
-  background:linear-gradient(180deg,#FACC15 0%,#84CC16 50%,#22C55E 100%);
+  background:linear-gradient(180deg,var(--spice-saffron-md) 0%,var(--spice-saffron) 100%);
   border-radius:0 3px 3px 0
 }
-.side-item.active svg{color:#FACC15}
+.side-item.active svg{color:var(--spice-saffron-md)}
 .side-item svg{
   width:18px;height:18px;flex-shrink:0;stroke-width:2;fill:none;stroke:currentColor;
-  stroke-linecap:round;stroke-linejoin:round;color:#86EFAC;opacity:.85;
+  stroke-linecap:round;stroke-linejoin:round;color:var(--side-text-mute);opacity:.85;
   transition:color .15s,opacity .15s
 }
-.side-item:hover svg{color:#BBF7D0;opacity:1}
+.side-item:hover svg{color:var(--side-text);opacity:1}
 
 /* ─────── Collapsed sidebar (icons-only) ───────
    Toggled by the chevron button at the top of the sidebar; persisted
@@ -982,8 +973,8 @@ html.sidebar-collapsed .sidebar .side-item > *:not(svg){
 html.sidebar-collapsed .sidebar .side-item:hover::after{
   content:attr(data-tab);
   position:absolute;left:64px;top:50%;transform:translateY(-50%);
-  background:#0A2F22;color:#F0FDF4;padding:6px 12px;
-  border:1px solid rgba(132,204,22,.25);
+  background:var(--side-bg-2);color:var(--side-text);padding:6px 12px;
+  border:1px solid color-mix(in srgb, var(--side-glow) 25%, transparent);
   border-radius:6px;font-size:13px;line-height:1.2;font-weight:500;white-space:nowrap;
   box-shadow:0 4px 14px rgba(0,0,0,.3);z-index:30;
   text-transform:capitalize;letter-spacing:.2px;pointer-events:none
@@ -992,10 +983,10 @@ html.sidebar-collapsed .sidebar .side-item:hover::after{
 .sb-collapse-btn{
   display:flex;align-items:center;justify-content:center;
   width:100%;padding:8px;margin:0 0 12px;
-  background:rgba(132,204,22,.08);border:1px solid rgba(132,204,22,.12);
-  border-radius:8px;color:#86EFAC;cursor:pointer;transition:all .15s
+  background:color-mix(in srgb, var(--side-glow) 8%, transparent);border:1px solid color-mix(in srgb, var(--side-glow) 12%, transparent);
+  border-radius:8px;color:var(--side-text-mute);cursor:pointer;transition:all .15s
 }
-.sb-collapse-btn:hover{background:rgba(132,204,22,.18);color:#F0FDF4;border-color:rgba(132,204,22,.3)}
+.sb-collapse-btn:hover{background:var(--side-hover);color:var(--side-text);border-color:color-mix(in srgb, var(--side-glow) 30%, transparent)}
 .sb-collapse-btn svg{width:18px;height:18px;transition:transform .2s}
 .sidebar.collapsed .sb-collapse-btn svg,
 html.sidebar-collapsed .sidebar .sb-collapse-btn svg{transform:rotate(180deg)}
@@ -2073,60 +2064,60 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 </head>
 <body>
 <div id="login">
-  <!-- LEFT: brand / value-prop panel -->
-  <aside class="login-hero">
-    <div class="login-hero-brand">
-      <span class="badge" id="login-hero-logo-dot"><img id="login-hero-logo-img" alt="" onerror="this.remove()"></span>
-      <div>
-        <div class="name" id="login-hero-name">Admin Console</div>
-        <div class="sub" id="login-hero-sub">&nbsp;</div>
+  <!-- Animated aurora backdrop (decorative) -->
+  <div class="login-aurora" aria-hidden="true">
+    <span class="blob b1"></span>
+    <span class="blob b2"></span>
+    <span class="blob b3"></span>
+    <span class="grid"></span>
+  </div>
+
+  <!-- Centered glass sign-in card -->
+  <main class="login-card">
+    <div class="login-card-brand">
+      <span class="login-card-logo" id="login-hero-logo-dot"><img id="login-hero-logo-img" alt="" onerror="this.remove()"></span>
+      <div class="login-card-brand-text">
+        <div class="login-card-name" id="login-hero-name">Admin Console</div>
+        <div class="login-card-sub" id="login-hero-sub">&nbsp;</div>
       </div>
     </div>
 
-    <div>
-      <h2 class="login-hero-headline">From lot to ledger.Run every <em>e-Auction</em> day<br>with confidence.</h2>
-      <p class="login-hero-tagline">The spice auction floor in one workspace — lot entry, invoices, payments, Tally.</p>
-      <ul class="login-feat-list">
-        <li><span class="login-feat-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>Lot entry with branch allocation &amp; live validation</li>
-        <li><span class="login-feat-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>One-click GST invoices, debit notes &amp; PDFs</li>
-        <li><span class="login-feat-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>RTGS bank payment files &amp; receipts</li>
-        <li><span class="login-feat-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>Trade reports, journals &amp; Tally XML export — no re-keying</li>
-      </ul>
+    <div class="login-welcome">Welcome back</div>
+    <h1 id="login-brand-name">Sign in to your account</h1>
+    <p class="login-card-lead" id="login-brand-sub">Enter your credentials to continue.</p>
+
+    <div class="fg">
+      <label for="inp-u">Username</label>
+      <div class="login-input-wrap">
+        <svg class="login-input-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <input id="inp-u" value="admin" autocomplete="username" placeholder="Enter your username">
+      </div>
     </div>
 
-    <div class="login-hero-footer">
+    <div class="fg">
+      <label for="inp-p">Password</label>
+      <div class="login-input-wrap login-pw-wrap">
+        <svg class="login-input-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <input type="password" id="inp-p" autocomplete="current-password" placeholder="Enter your password" onkeydown="if(event.key==='Enter')login()">
+        <button type="button" class="login-pw-toggle" onclick="(function(b){var i=document.getElementById('inp-p');var hidden=i.type==='password';i.type=hidden?'text':'password';b.setAttribute('aria-label',hidden?'Hide password':'Show password');})(this)" aria-label="Show password" title="Show / hide password">
+          <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <button class="btn-signin" onclick="login()">Sign In <span class="arrow" aria-hidden="true">→</span></button>
+    <div class="err" id="login-err"></div>
+
+    <div class="login-help">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+      <span>Default credentials <strong>admin</strong> / <strong>admin123</strong> — please change your password after first login.</span>
+    </div>
+
+    <div class="login-card-foot">
       <span>&copy; <span id="login-hero-year"></span> &middot; <span id="login-hero-credit">Powered by KJ &amp; Co</span></span>
-      <span class="login-hero-pill">Server live</span>
+      <span class="login-card-status">Server live</span>
     </div>
-  </aside>
-
-  <!-- RIGHT: sign-in card -->
-  <section class="login-panel">
-    <div class="login-box">
-      <div class="login-welcome">Welcome back</div>
-      <h1>
-        <span class="dot" id="login-logo-dot"><img id="login-logo-img" alt="" onerror="this.remove()"></span>
-        <span id="login-brand-name">Sign in to your account</span>
-      </h1>
-      <p id="login-brand-sub">Enter your credentials to continue.</p>
-      <div class="fg"><label for="inp-u">Username</label><input id="inp-u" value="admin" autocomplete="username"></div>
-      <div class="fg">
-        <label for="inp-p">Password</label>
-        <div class="login-pw-wrap">
-          <input type="password" id="inp-p" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
-          <button type="button" class="login-pw-toggle" onclick="(function(b){var i=document.getElementById('inp-p');var hidden=i.type==='password';i.type=hidden?'text':'password';b.setAttribute('aria-label',hidden?'Hide password':'Show password');})(this)" aria-label="Show password" title="Show / hide password">
-            <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
-        </div>
-      </div>
-      <button class="btn-signin" onclick="login()">Sign In <span aria-hidden="true">→</span></button>
-      <div class="err" id="login-err"></div>
-      <div class="login-help">
-        Default credentials: <strong>admin</strong> / <strong>admin123</strong><br>
-        Please change your password after first login.
-      </div>
-    </div>
-  </section>
+  </main>
 </div>
 
 <div id="app">
@@ -2147,6 +2138,10 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     </div>
     <div style="display:flex;gap:10px;align-items:center">
       <span id="sync-indicator" class="sync-pill sync-ok" title="Last successful sync"></span>
+      <!-- Licence countdown pill — hidden by default; shown by
+           _refreshLicenseBadge when ≤ 7 days remain (or already expired).
+           Clicking opens /renew.html. -->
+      <a id="license-badge" href="/renew.html" title="License renewal" style="display:none;font-size:11.5px;font-weight:700;letter-spacing:.2px;padding:4px 10px;border-radius:14px;text-decoration:none;border:1.5px solid transparent"></a>
       <span id="logo-badge" style="font-size:18px;font-weight:800;color:var(--green);background:var(--green-bg);padding:9px 20px;border-radius:18px;border:2px solid var(--green-border);display:none;letter-spacing:1px;box-shadow:0 1px 3px rgba(22,101,52,.12)" title="Active company for invoices & calculations"></span>
       <span id="user-lbl" class="topbar-user"></span>
       <span id="user-role-badge" class="role-badge" title="Your role"></span>
@@ -3441,7 +3436,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
           <!-- Print group -->
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
-            <button class="btn" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(16,185,129,.28)" onclick="printSelectedInvoices()" title="Print all ticked invoices">🖨 Print Selected</button>
+            <button class="btn" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="printSelectedInvoices()" title="Print all ticked invoices">🖨 Print Selected</button>
             <button id="inv-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedInvoices()" title="Delete all ticked invoices">🗑 Delete Selected <span id="inv-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <!-- ASP-only: Print Selected Purchase. Hidden outside ASP context.
                  Visibility toggled by applyAspContextVisibility() at load + state switch. -->
@@ -3523,7 +3518,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
-            <button class="btn" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(16,185,129,.28)" onclick="printSelectedPurchases()" title="Print all ticked purchase invoices">🖨 Print Selected</button>
+            <button class="btn" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="printSelectedPurchases()" title="Print all ticked purchase invoices">🖨 Print Selected</button>
             <button class="btn feat-whatsapp" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedPurchases()" title="Send merged PDF of ticked purchase invoices via WhatsApp">📱 WhatsApp Selected</button>
             <button id="pur-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedPurchases()" title="Delete all ticked purchase invoices">🗑 Delete Selected <span id="pur-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           </div>
@@ -3806,7 +3801,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
-            <button class="btn" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(16,185,129,.28)" onclick="printSelectedBills()" title="Print all ticked bills">🖨 Print Selected</button>
+            <button class="btn" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="printSelectedBills()" title="Print all ticked bills">🖨 Print Selected</button>
             <button class="btn btn-o" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;font-weight:600" onclick="printSelectedCommissionBoS()" title="Print Commission Bill (Memorandum) for all ticked bills — one A4 page per bill, matches IMCPC reference format">🧾 Commission Bill Selected</button>
             <button id="bill-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedBills()" title="Delete all ticked bills">🗑 Delete Selected <span id="bill-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           </div>
@@ -5884,6 +5879,48 @@ function applyPermissionAttributes(){
   } catch (_) {}
 }
 
+// ── Licence countdown badge (topbar) ─────────────────────────────
+// Hidden by default; shown when ≤ 7 days remain (or already expired).
+// Repaints once at login and every 30 minutes thereafter so a long-
+// running session catches the day rollover without a refresh.
+async function _refreshLicenseBadge(){
+  const badge = document.getElementById('license-badge');
+  if (!badge) return;
+  try {
+    const r = await fetch('/api/license/status', { cache: 'no-store' });
+    if (!r.ok) return;
+    const s = await r.json();
+    const days = Number(s.days_remaining);
+    if (s.expired) {
+      badge.style.display = 'inline-block';
+      badge.style.background = '#fef2f2';
+      badge.style.color = '#991b1b';
+      badge.style.borderColor = '#fecaca';
+      badge.textContent = `⚠ License expired — renew`;
+    } else if (days <= 3) {
+      badge.style.display = 'inline-block';
+      badge.style.background = '#fef2f2';
+      badge.style.color = '#991b1b';
+      badge.style.borderColor = '#fecaca';
+      badge.textContent = `⚠ ${days} day${days === 1 ? '' : 's'} left`;
+    } else if (days <= 7) {
+      badge.style.display = 'inline-block';
+      badge.style.background = '#fffbeb';
+      badge.style.color = '#92400e';
+      badge.style.borderColor = '#fde68a';
+      badge.textContent = `⏳ ${days} days left`;
+    } else {
+      badge.style.display = 'none';
+    }
+  } catch (_) {
+    // Status probe failed (network blip / boot race) — leave badge as-is.
+  }
+}
+// Poll every 30 minutes. Cheap (one tiny GET) and survives the day
+// rollover so a session that started yesterday at "8 days left" sees
+// "7 days left" today without a manual refresh.
+setInterval(_refreshLicenseBadge, 30 * 60 * 1000);
+
 async function login(){
   const e=document.getElementById('login-err');
   if (e) { e.style.display='none'; e.classList.remove('active'); }
@@ -5906,6 +5943,9 @@ async function login(){
   // Topbar trade selector — fire-and-forget so login completion isn't
   // gated on /api/auctions. Failures just hide the widget.
   try { loadTopbarTradeSelector(); } catch(_) {}
+  // Refresh the topbar licence countdown badge once we're past the
+  // login screen (the badge is hidden until the user authenticates).
+  try { _refreshLicenseBadge(); } catch(_) {}
   // lot_entry users land directly on the Lot Entry tab — they can't see
   // dash/anything else anyway, so this saves a click.
   go(window._userRole === 'lot_entry' ? 'lotentry' : 'dash');
@@ -5919,7 +5959,19 @@ async function login(){
     openForceChangePwModal();
   }
   }
-  catch(x){if(e){e.textContent='Invalid credentials';e.style.display='block';e.classList.add('active');}}}
+  catch(x){
+    // The server returns 451 (RFC 7725 — Unavailable For Legal Reasons,
+    // the closest standard code for "this thing is gated") when the
+    // licence window has lapsed. Redirect to the standalone renewal
+    // page with the install_id pre-filled so the operator can paste a
+    // new token from the dev without having to copy the ID by hand.
+    if (x && x.status === 451 && x.body && x.body.error === 'license_expired') {
+      const iid = encodeURIComponent(x.body.install_id || '');
+      const exp = encodeURIComponent(x.body.expires_at || '');
+      window.location.href = '/renew.html?install_id=' + iid + '&expired=' + exp;
+      return;
+    }
+    if(e){e.textContent='Invalid credentials';e.style.display='block';e.classList.add('active');}}}
 function logout(){h('/api/logout',{method:'POST'});T='';localStorage.removeItem('t');
   window._userRole=null;window._userPerms=new Set();
   window._forcePwCurrent = null;

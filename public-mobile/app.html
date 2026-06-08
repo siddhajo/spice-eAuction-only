@@ -231,8 +231,10 @@ select:focus{border-color:var(--green)}
 
       <!-- Lot Picker -->
       <div style="padding:8px 12px;background:var(--bg)">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
           <span style="font-size:10px;font-weight:700;color:var(--text2);letter-spacing:.5px">SELECT LOT</span>
+          <button type="button" id="le-toggle-booked" onclick="toggleBookedLots()" style="display:none;background:transparent;border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:10px;font-weight:600;color:var(--text2);cursor:pointer;font-family:inherit">Show booked</button>
+          <span style="flex:1"></span>
           <span id="le-lot-selected" style="font-size:11px;color:var(--green);font-weight:700"></span>
         </div>
         <div id="le-lot-grid-wrap">
@@ -635,6 +637,10 @@ var selectedLots=[];
 var availableLots=[];
 var recentLots=[];
 var lastSavedLot=null;
+// Hide booked (used) lots by default so the chip grid stays compact —
+// auctions with 200+ allocated lots become overwhelming when every
+// already-saved chip is visible. Toggle via #le-toggle-booked.
+var showBookedLots=false;
 async function loadStats(){try{const r=await fetch(B+'/api/lots?auction_id='+aid+'&branch='+encodeURIComponent(br),{headers:ah()});const d=await r.json();const lots=d.lots||[];lc=d.stats?.lotCount||lots.length;tq=d.stats?.totalQty||0;
 // Don't show previous lots on entry screen - only show after save
 renderRecentLots();
@@ -647,10 +653,18 @@ function renderLotGrid(){
   var myBranch=allocStats?allocStats.find(function(s){return s.branch===br}):null;
   if(!myBranch||!myBranch.ranges){grid.innerHTML='<span style="font-size:10px;color:var(--text3)">No lots allocated</span>';return}
   availableLots=[];
+  var bookedCount=0;
   var html='';
   myBranch.ranges.forEach(function(rng){
     if(rng.lots){
       rng.lots.forEach(function(l){
+        if(l.used){
+          bookedCount++;
+          // Booked lots are hidden by default. The toggle button below
+          // flips showBookedLots and re-renders, so the operator can
+          // still see what's been taken when they need to.
+          if(!showBookedLots) return;
+        }
         var cls='lot-chip';
         if(l.used)cls+=' used';
         else{availableLots.push(l.lot);if(selectedLots.indexOf(l.lot)>=0)cls+=' selected'}
@@ -658,8 +672,27 @@ function renderLotGrid(){
       });
     }
   });
-  grid.innerHTML=html||'<span style="font-size:10px;color:var(--text3)">No lots</span>';
+  if(!html){
+    grid.innerHTML='<span style="font-size:10px;color:var(--text3)">'+(bookedCount?'All lots booked':'No lots')+'</span>';
+  } else {
+    grid.innerHTML=html;
+  }
+  // Toggle button — surfaces booked-lot count and the show/hide action.
+  // Hidden entirely when there are no booked lots (nothing to reveal).
+  var btn=document.getElementById('le-toggle-booked');
+  if(btn){
+    if(bookedCount===0){btn.style.display='none'}
+    else{
+      btn.style.display='';
+      btn.textContent=showBookedLots?'Hide '+bookedCount+' booked':'Show '+bookedCount+' booked';
+    }
+  }
   updateLotSelection();
+}
+
+function toggleBookedLots(){
+  showBookedLots=!showBookedLots;
+  renderLotGrid();
 }
 
 function hasFormData(){
