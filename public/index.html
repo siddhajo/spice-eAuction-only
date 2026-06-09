@@ -832,6 +832,12 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 }
 .fg{margin-bottom:14px}
 .fg label{display:block;font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px}
+/* Settings panel: field labels take the theme colour (themed dark variant
+   for readable contrast on the light card). Used directly on the label
+   element, so var() resolves against the inherited *themed* --spice-saffron-dk
+   — no :root-resolution pitfall. `.sw` is the toggle-switch wrapper, excluded
+   so the switch UI is untouched. */
+#settings-root .fg label:not(.sw){color:var(--spice-saffron-dk)}
 .fg input:not([type="checkbox"]):not([type="radio"]),.fg select,.fg textarea{
   width:100%;height:44px;padding:0 14px;border:1.5px solid var(--spice-line);border-radius:10px;
   font-size:15px;font-family:inherit;background:#fff;outline:none;transition:all .15s;
@@ -6488,13 +6494,36 @@ async function loadStats(auctionId){
         <div class="hero-stat" style="color:var(--spice-text-mute);opacity:1"><strong style="color:var(--spice-text-main)">${A.invoiced||0}</strong>Invoiced</div>
         <div class="hero-stat" style="color:var(--spice-text-mute);opacity:1"><strong style="color:var(--spice-text-main)">${inrL(A.totalAmt)}</strong>Volume</div>
       </div>
-      <div style="height:10px;background:#ffffff;border:1px solid rgba(22,101,52,.18);border-radius:999px;overflow:hidden;margin-bottom:8px">
-        <div style="height:100%;background:var(--spice-cardamom);width:${A.totalLots?Math.round(A.invoiced/A.totalLots*100):0}%;border-radius:999px;transition:width .6s ease-out"></div>
-      </div>
-      <div class="progress-label" style="color:var(--spice-text-mute);opacity:1">
-        <span>Invoicing progress</span>
-        <span><strong style="color:var(--spice-cardamom-dk)">${A.totalLots?Math.round(A.invoiced/A.totalLots*100):0}%</strong> complete</span>
-      </div>
+      ${(() => {
+        // Compact 2×2 grid of mini progress bars — one per document
+        // workflow for this trade. Kept thin (6px) with the label and
+        // percentage on a single line so all four fit without crowding
+        // the hero. Denominators differ per workflow (see /api/stats):
+        // invoicing/payments are lot-level, purchases/bills are
+        // per-seller. A 0-denominator workflow (e.g. no URD sellers)
+        // shows "n/a" rather than a misleading 0%.
+        const bar = (label, done, total, color) => {
+          const has = total > 0;
+          const pct = has ? Math.round(done / total * 100) : 0;
+          return `
+            <div>
+              <div class="progress-label" style="color:var(--spice-text-mute);opacity:1;font-size:11.5px;margin-bottom:3px">
+                <span>${label}</span>
+                <span>${has ? `<strong style="color:var(--spice-cardamom-dk)">${pct}%</strong>` : '<span style="color:var(--spice-text-hint)">n/a</span>'}</span>
+              </div>
+              <div style="height:6px;background:#ffffff;border:1px solid rgba(22,101,52,.18);border-radius:999px;overflow:hidden" title="${done} of ${total}">
+                <div style="height:100%;background:${color};width:${pct}%;border-radius:999px;transition:width .6s ease-out"></div>
+              </div>
+            </div>`;
+        };
+        return `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px 16px;margin-top:2px">
+            ${bar('Invoicing', A.invoiced || 0, A.totalLots || 0, 'var(--spice-cardamom)')}
+            ${bar('Payments', A.paymentsDone || 0, A.paymentsTotal || 0, 'var(--spice-saffron)')}
+            ${bar('Purchases', A.purchasesDone || 0, A.purchasesTotal || 0, 'var(--spice-turmeric)')}
+            ${bar('Bills of Supply', A.billsDone || 0, A.billsTotal || 0, 'var(--spice-clove)')}
+          </div>`;
+      })()}
     </div>
   ` : `
     <div class="auction-hero" style="background:var(--tab-bg);color:var(--spice-text-main)">
