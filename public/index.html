@@ -17995,11 +17995,25 @@ function _renderPayLotsTable() {
     const cls = isExported ? 'pay-lot-cb pay-lot-cb-exported' : 'pay-lot-cb';
     const rowStyle = isExported ? ' style="background:#fef2f2"' : '';
     const expCell = isExported ? `<span class="pay-lot-exported-tag" title="Already included in a previous export.">🚫</span>` : '';
-    const effBankId = l.bank_id != null ? l.bank_id : _payLotsState.defaultBankId;
+    // Bank routing per lot. A lot with its OWN bank_id (chosen during lot
+    // entry) shows that account plainly. A lot with no bank_id falls back
+    // to the seller's current default — render it muted + "(default)" so
+    // the operator can tell at a glance it has no explicit per-lot bank
+    // (and can open Lot Entry to set one). An explicit bank_id that no
+    // longer matches any current account flags a removed/renumbered bank.
+    const hasOwnBank = l.bank_id != null;
+    const effBankId = hasOwnBank ? l.bank_id : _payLotsState.defaultBankId;
     const bankText = (effBankId != null && _payLotsState.bankLabels) ? _payLotsState.bankLabels[effBankId] : '';
-    const bankLabel = bankText
-      ? `<span title="${esc(bankText)}" style="font-family:monospace;font-size:11.5px">${esc(bankText)}</span>`
-      : '<span style="color:var(--text3)">—</span>';
+    let bankLabel;
+    if (bankText) {
+      bankLabel = hasOwnBank
+        ? `<span title="Bank chosen for this lot during entry: ${esc(bankText)}" style="font-family:monospace;font-size:11.5px">${esc(bankText)}</span>`
+        : `<span title="No bank was set on this lot — it routes to the seller's default account (${esc(bankText)}). Open the lot in Lot Entry to assign a specific account." style="font-family:monospace;font-size:11.5px;color:var(--text3);font-style:italic">${esc(bankText)} <span style="font-style:normal">(default)</span></span>`;
+    } else if (hasOwnBank) {
+      bankLabel = `<span title="This lot's saved bank account is no longer in the seller record (it may have been edited or removed). Re-assign it in Lot Entry." style="color:var(--spice-chili);font-size:11.5px">⚠ account removed</span>`;
+    } else {
+      bankLabel = '<span style="color:var(--text3)">—</span>';
+    }
     return `<tr${rowStyle}>
       <td style="text-align:center"><input type="checkbox" class="${cls}" data-id="${l.id}" data-lot="${esc(lotKey)}"${checked ? ' checked' : ''}${dis} onchange="updatePayLotsTotals()" style="cursor:pointer"></td>
       <td style="font-family:monospace;font-weight:600">${esc(lotKey)} ${expCell}</td>
