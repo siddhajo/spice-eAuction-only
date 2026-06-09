@@ -9727,6 +9727,27 @@ async function leEditLot(lotId){
         pstate: lot.pstate || '', banks: []
       });
     }
+  } else if (lot.name) {
+    // Older / imported lots can lack the trader_id FK. Resolve the seller
+    // by name (→ id → full record with banks) so edit still defaults the
+    // seller; fall back to the lot's denormalised fields otherwise.
+    let picked = false;
+    try {
+      const hit = await j(`/api/traders/by-name/${encodeURIComponent(lot.name)}`);
+      if (hit && hit.id) {
+        const seller = await j(`/api/traders/${hit.id}`);
+        lePickSeller(seller);
+        picked = true;
+      }
+    } catch (e) { /* fall through to denormalised fields */ }
+    if (!picked) {
+      lePickSeller({
+        id: null,
+        name: lot.name || '', cr: lot.cr || '', pan: lot.pan || '',
+        tel: lot.tel || '', ppla: lot.ppla || '', pin: lot.ppin || '',
+        pstate: lot.pstate || '', banks: []
+      });
+    }
   }
   // Scroll the form into view so the user sees what they're editing
   setTimeout(() => {
@@ -17819,6 +17840,14 @@ async function openPayLotsModal(auctionId, sellerName) {
           const parts = [b.acctnum, b.bank_name, b.ifsc].filter(Boolean);
           _payLotsState.bankLabels[b.id] = parts.join(' · ') + (b.is_default ? ' ★' : '');
         }
+        // Legacy single-bank fallback: sellers with no trader_banks rows
+        // route to the trader's own ifsc/acctnum (same chain the bank-payment
+        // export uses), so the modal shows the account instead of "—".
+        if (!banks.length && (seller.acctnum || seller.ifsc)) {
+          _payLotsState.defaultBankId = '_legacy';
+          const parts = [seller.acctnum, seller.holder_name, seller.ifsc].filter(Boolean);
+          _payLotsState.bankLabels['_legacy'] = parts.join(' · ');
+        }
       } catch (_) { /* non-fatal — lots fall back to "—" */ }
     }
     _renderPayLotsTable();
@@ -17857,9 +17886,9 @@ function _renderPayLotsTable() {
       <td style="font-family:monospace;font-weight:600">${esc(lotKey)} ${expCell}</td>
       <td>${esc(l.branch || '')}</td>
       <td>${bankLabel}</td>
-      <td style="text-align:right">${fmtI(Number(l.pqty)||0, 3)}</td>
-      <td style="text-align:right">${fmtI(Number(l.prate)||0, 2)}</td>
-      <td style="text-align:right">${fmtI(Number(l.puramt)||0, 2)}</td>
+      <td style="text-align:right">${fmtI(Number(l.pqty)||Number(l.qty)||0, 3)}</td>
+      <td style="text-align:right">${fmtI(Number(l.prate)||Number(l.price)||0, 2)}</td>
+      <td style="text-align:right">${fmtI(Number(l.puramt)||Number(l.amount)||0, 2)}</td>
       <td style="text-align:right;color:#B45309">${fmtI(Number(l.refund)||0, 2)}</td>
       <td style="text-align:right;color:#0891B2">${fmtI(tax, 2)}</td>
       <td style="text-align:right;font-weight:700;color:var(--spice-cardamom-dk)">${fmtI(Number(l.balance)||0, 2)}</td>
@@ -17890,8 +17919,8 @@ function updatePayLotsTotals() {
   let qty = 0, amt = 0, disc = 0, tax = 0, payable = 0;
   for (const l of _payLotsState.lots) {
     if (!selectedIds.has(l.id)) continue;
-    qty     += Number(l.pqty)    || 0;
-    amt     += Number(l.puramt)  || 0;
+    qty     += Number(l.pqty)    || Number(l.qty)    || 0;
+    amt     += Number(l.puramt)  || Number(l.amount) || 0;
     disc    += Number(l.refund)  || 0;
     tax     += (Number(l.cgst)||0) + (Number(l.sgst)||0) + (Number(l.igst)||0);
     payable += Number(l.balance) || 0;
