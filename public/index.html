@@ -12326,11 +12326,31 @@ function renderSettingsPanel(){
     if (ck === 'company') {
       html += logoUploadWidget('ispl', 'Company Logo');
     }
+    // Integrations tab gets a live status card for the GST lookup API
+    // (credits left, plan expiry, last-checked) ABOVE the API-key input so
+    // the recharge nudge is visible before scrolling. Hydrated by
+    // _renderGstApiStatus() once the panel HTML lands in the DOM.
+    if (ck === 'integrations') {
+      html += '<div id="gst-api-status-host" style="margin-bottom:14px"></div>';
+    }
     html+='<div class="sgrid">';
     for(const f of fields)html+=fld(f);
     html+='</div>';
+    // WhatsApp Business config lives in a dedicated server-side table
+    // (secrets never reach the browser), so it renders as its own card
+    // below the standard integration fields rather than via fld().
+    if (ck === 'integrations') {
+      html += '<div id="whatsapp-config-host" style="margin-top:18px"></div>';
+    }
   }
   document.getElementById('settings-root').innerHTML=html;
+  // Hydrate the Integrations cards after the panel HTML has landed.
+  if (ck === 'integrations' && typeof _renderGstApiStatus === 'function') {
+    try { _renderGstApiStatus(); } catch(_){}
+  }
+  if (ck === 'integrations' && typeof _renderWhatsappCard === 'function') {
+    try { _renderWhatsappCard(); } catch(_){}
+  }
   // Reset dirty flag on panel render so stale dirty state doesn't trigger
   // a false "unsaved changes" warning when switching presets.
   if (ck === 'company') {
@@ -12350,6 +12370,201 @@ function renderSettingsPanel(){
   }
   // Company tab logo preview — single identity in this build.
   if (ck === 'company') refreshLogoPreview('ispl');
+}
+
+// ── Settings → Integrations: GST lookup API status card ───────────
+// Self-contained so it can be called from renderSettingsPanel() and from
+// gstLookup() (which refreshes it live when the operator is on the panel).
+async function _renderGstApiStatus(){
+  const host = document.getElementById('gst-api-status-host');
+  if (!host) return;
+  host.innerHTML =
+    '<div style="padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:#f9fafb;font-size:12.5px;color:var(--text2)">Loading GST lookup status…</div>';
+  let s;
+  try {
+    const r = await fetch(B + '/api/gst-lookup/status', {
+      headers: T ? { 'Authorization': 'Bearer ' + T } : {},
+      cache: 'no-store',
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    s = await r.json();
+  } catch (e) {
+    host.innerHTML =
+      `<div style="padding:14px 16px;border:1px solid #fecaca;border-radius:10px;background:#fef2f2;color:#991b1b;font-size:12.5px">Could not load GST lookup status: ${esc(e.message || String(e))}</div>`;
+    return;
+  }
+  const tones = {
+    exhausted: { bg:'#fef2f2', bd:'#fecaca', fg:'#991b1b', icon:'🚫', head:'GST credits exhausted — recharge before the next lookup' },
+    critical:  { bg:'#fef2f2', bd:'#fecaca', fg:'#991b1b', icon:'⚠',  head:'Very low — recharge soon' },
+    warning:   { bg:'#fffbeb', bd:'#fde68a', fg:'#92400e', icon:'⏳', head:'Running low — consider recharging' },
+    ok:        { bg:'#ecfdf5', bd:'#a7f3d0', fg:'#065f46', icon:'✓',  head:'GST lookup API is healthy' },
+    unknown:   { bg:'#f9fafb', bd:'#e5e7eb', fg:'#374151', icon:'ℹ',  head:'GST lookup status unknown' },
+  };
+  const tone = tones[s.level] || tones.unknown;
+  const rows = [];
+  if (s.has_api_key) {
+    rows.push(['API key', '<span style="color:#065f46;font-weight:600">✓ configured</span>']);
+  } else {
+    rows.push(['API key', '<span style="color:#991b1b;font-weight:600">not set</span> — paste your key into the field below to enable live lookups']);
+  }
+  if (s.credits_remaining != null) {
+    const total = s.credits_total != null ? ` of ${fmtI(s.credits_total, 0)}` : '';
+    rows.push(['Credits remaining',
+      `<strong style="font-size:14px;color:${tone.fg}">${fmtI(s.credits_remaining, 0)}</strong>${total}`]);
+  } else if (s.has_api_key && s.last_envelope) {
+    rows.push(['Credits remaining',
+      '<span style="color:#991b1b;font-weight:600">unknown</span> — the API did not include a recognised credit field. See the raw response below.']);
+  } else if (s.has_api_key) {
+    rows.push(['Credits remaining', '<span style="color:var(--text3)">unknown — run one GST lookup to refresh</span>']);
+  }
+  if (s.plan_expires_at) {
+    rows.push(['Plan expires', `<code style="font-family:ui-monospace,Menlo,Consolas,monospace">${esc(s.plan_expires_at)}</code>`]);
+  }
+  if (s.last_checked_at) {
+    const t = new Date(s.last_checked_at);
+    const when = isNaN(t.getTime()) ? esc(s.last_checked_at) : t.toLocaleString();
+    rows.push(['Last refreshed', `<span style="color:var(--text3)">${esc(when)}</span>`]);
+  }
+  rows.push(['Warn at', `<code>≤ ${s.warn_below}</code> credits · critical at <code>≤ ${s.critical_below}</code>`]);
+
+  const rechargeHref = s.recharge_url || 'https://gstincheck.co.in/';
+  let envelopeHtml = '';
+  if (s.last_envelope) {
+    const probeMissed = (s.level === 'unknown') && s.has_api_key;
+    const pretty = JSON.stringify(s.last_envelope, null, 2);
+    envelopeHtml = `
+      <details ${probeMissed ? 'open' : ''} style="margin-top:12px;border-top:1px dashed ${tone.bd};padding-top:10px">
+        <summary style="cursor:pointer;font-size:11.5px;font-weight:600;color:${tone.fg};user-select:none">
+          ${probeMissed ? '⚠ Raw response from gstincheck.co.in (probe found no credit field — see what came back)' : 'Show raw response from gstincheck.co.in'}
+        </summary>
+        <pre style="margin:8px 0 0;padding:10px 12px;background:#0b1220;color:#e2e8f0;border-radius:6px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.45;max-height:280px;overflow:auto;white-space:pre-wrap;word-break:break-word">${esc(pretty)}</pre>
+      </details>`;
+  }
+  host.innerHTML = `
+    <div style="padding:14px 16px;border:1px solid ${tone.bd};border-radius:10px;background:${tone.bg};color:${tone.fg}">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+        <span style="font-size:18px;line-height:1">${tone.icon}</span>
+        <strong style="font-size:13.5px;min-width:0">${esc(tone.head)}</strong>
+        <span style="flex:1;min-width:12px"></span>
+        <a href="${rechargeHref}" target="_blank" rel="noopener"
+           style="font-size:11.5px;font-weight:700;background:${tone.fg};color:#fff;padding:5px 12px;border-radius:6px;text-decoration:none">↗ Recharge at gstincheck.co.in</a>
+      </div>
+      <div style="display:grid;grid-template-columns:140px 1fr;gap:4px 12px;font-size:12.5px">
+        ${rows.map(([k, v]) => `<div style="color:var(--text2);font-weight:600">${esc(k)}</div><div>${v}</div>`).join('')}
+      </div>
+      <div style="margin-top:10px;font-size:11.5px;color:var(--text3);line-height:1.5">
+        Credits refresh automatically every time someone runs a real GST lookup (from the Sellers or Buyers form).
+        ${s.has_api_key ? '' : 'Paste your key from the gstincheck.co.in dashboard into the field below to start tracking.'}
+      </div>
+      ${envelopeHtml}
+    </div>`;
+}
+
+// ── Settings → Integrations: WhatsApp Business config card ────────
+// Secrets live server-side in the whatsapp_config table and are NEVER
+// returned to the browser; /api/whatsapp/status hands back only booleans
+// (hasToken etc.) + non-secret identifiers + live health from Meta.
+async function _renderWhatsappCard(){
+  const host = document.getElementById('whatsapp-config-host');
+  if (!host) return;
+  host.innerHTML = '<div style="padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:#f9fafb;font-size:12.5px;color:var(--text2)">Loading WhatsApp status…</div>';
+  let s;
+  try {
+    const r = await fetch(B + '/api/whatsapp/status', { headers: T ? { 'Authorization':'Bearer '+T } : {}, cache:'no-store' });
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    s = await r.json();
+  } catch (e) {
+    host.innerHTML = `<div style="padding:14px 16px;border:1px solid #fecaca;border-radius:10px;background:#fef2f2;color:#991b1b;font-size:12.5px">Could not load WhatsApp status: ${esc(e.message||String(e))}</div>`;
+    return;
+  }
+  const webhookUrl = `${location.origin}/api/whatsapp/webhook`;
+  const tone = s.configured
+    ? (s.live
+        ? {bd:'#a7f3d0',fg:'#065f46',icon:'✓',head:`Connected${s.displayPhone?(' · '+esc(s.displayPhone)):''}${s.qualityRating?(' · quality '+esc(s.qualityRating)):''}`}
+        : {bd:'#fde68a',fg:'#92400e',icon:'⚠',head:`Saved, but Meta check failed: ${esc(s.liveError||'unknown')}`})
+    : {bd:'#e5e7eb',fg:'#374151',icon:'ℹ',head:'Not configured — paste your Meta credentials below'};
+  const inStyle = 'width:100%;padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#0f172a;font-size:12.5px;box-sizing:border-box';
+  const lblStyle = 'display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:3px;text-transform:uppercase;letter-spacing:.3px';
+  const field = (id,label,val,ph,type) => `<div><label style="${lblStyle}">${esc(label)}</label><input id="${id}" type="${type||'text'}" value="${esc(val||'')}" placeholder="${esc(ph||'')}" autocomplete="off" spellcheck="false" style="${inStyle}"></div>`;
+  const secretPh = (has) => has ? '•••••••• configured — leave blank to keep' : 'not set';
+  host.innerHTML = `
+    <div style="border:1px solid ${tone.bd};border-radius:10px;background:#fff;overflow:hidden">
+      <div style="padding:13px 16px;display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;border-bottom:1px solid ${tone.bd};background:#f9fafb">
+        <span style="font-size:18px;line-height:1">📱</span>
+        <strong style="font-size:13.5px;color:${tone.fg}">WhatsApp Business (Cloud API)</strong>
+        <span style="flex:1;min-width:12px"></span>
+        <span style="font-size:11.5px;font-weight:700;color:${tone.fg};min-width:0;max-width:100%;word-break:break-all;overflow-wrap:anywhere">${tone.icon} ${tone.head}</span>
+      </div>
+      <div style="padding:14px 16px">
+        <div style="font-size:11.5px;color:var(--text3);line-height:1.55;margin-bottom:13px">
+          Every template send goes through an approved <strong>template</strong>, so invoices reach anyone — even contacts who never messaged you. Create two templates in Meta (a <strong>Document</strong> template + a <strong>Text</strong> template, both with body <code>Dear {{1}}, {{2}} Regards, {{3}}.</code>), get them approved, then paste their names below.${s.source==='env'?'<br><strong>Heads up:</strong> some values come from environment variables and override what you save here.':''}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px">
+          ${field('wa-token','Access token','',secretPh(s.hasToken),'password')}
+          ${field('wa-phone-id','Phone number ID',s.phoneId,'e.g. 123456789012345')}
+          ${field('wa-waba-id','WhatsApp Business Account ID',s.wabaId,'optional')}
+          ${field('wa-app-secret','App secret','',secretPh(s.hasAppSecret),'password')}
+          ${field('wa-verify-token','Webhook verify token','',secretPh(s.hasVerifyToken),'password')}
+          ${field('wa-display-number','Display number (label)',s.displayNumber,'optional')}
+          ${field('wa-tpl-document','Document template name',s.tplDocument,'e.g. invoice_document')}
+          ${field('wa-tpl-document-lang','Document template language',s.tplDocumentLang||'en','en')}
+          ${field('wa-tpl-text','Text template name',s.tplText,'e.g. payment_notice')}
+          ${field('wa-tpl-text-lang','Text template language',s.tplTextLang||'en','en')}
+        </div>
+        <div style="margin-top:13px">
+          <label style="${lblStyle}">Webhook callback URL — paste into Meta → WhatsApp → Configuration</label>
+          <div style="display:flex;gap:6px">
+            <input id="wa-webhook-url" type="text" readonly value="${esc(webhookUrl)}" style="${inStyle};background:#f1f5f9;color:#475569">
+            <button type="button" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(webhookUrl)}').then(()=>toast('Webhook URL copied'))" style="white-space:nowrap;padding:7px 12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;font-size:12px;cursor:pointer">Copy</button>
+          </div>
+          <div style="font-size:11px;color:${s.webhookReady?'#065f46':'var(--text3)'};margin-top:4px">${s.webhookReady?'✓ Webhook ready (verify token + app secret set) — subscribe to the “messages” field in Meta to receive delivery receipts.':'Set the app secret + verify token to enable delivery tracking.'}</div>
+        </div>
+        <div style="margin-top:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button type="button" id="wa-save-btn" onclick="_saveWhatsappConfig()" style="padding:8px 16px;border:none;border-radius:6px;background:#25D366;color:#fff;font-weight:700;font-size:12.5px;cursor:pointer">Save</button>
+          <button type="button" id="wa-test-btn" onclick="_testWhatsapp()" ${s.configured?'':'disabled'} style="padding:8px 16px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#0f172a;font-weight:600;font-size:12.5px;cursor:${s.configured?'pointer':'not-allowed'};opacity:${s.configured?'1':'.5'}">Send test message</button>
+          <span id="wa-card-msg" style="font-size:12px;color:var(--text3)"></span>
+        </div>
+      </div>
+    </div>`;
+}
+async function _saveWhatsappConfig(){
+  const v = (id) => { const el=document.getElementById(id); return el?el.value:undefined; };
+  const body = {
+    token: v('wa-token'), phoneId: v('wa-phone-id'), wabaId: v('wa-waba-id'),
+    appSecret: v('wa-app-secret'), verifyToken: v('wa-verify-token'), displayNumber: v('wa-display-number'),
+    tplDocument: v('wa-tpl-document'), tplDocumentLang: v('wa-tpl-document-lang'),
+    tplText: v('wa-tpl-text'), tplTextLang: v('wa-tpl-text-lang'),
+  };
+  const msgEl = document.getElementById('wa-card-msg');
+  const btn = document.getElementById('wa-save-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(B + '/api/whatsapp/config', { method:'PUT', headers:{'Authorization':'Bearer '+T,'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const d = await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error(d.error||'Save failed');
+    _waApiCheck = null; // invalidate cached capability probe so sends re-check
+    if (msgEl){ msgEl.textContent='Saved ✓'; msgEl.style.color='#065f46'; }
+    _renderWhatsappCard(); // re-hydrate: refresh masks + live status
+  } catch (e) {
+    if (msgEl){ msgEl.textContent = e.message; msgEl.style.color='#991b1b'; }
+    if (btn) btn.disabled = false;
+  }
+}
+async function _testWhatsapp(){
+  const phone = prompt('Send a test WhatsApp message to which number?\n(10-digit Indian number, or full international e.g. 919876543210)');
+  if (!phone) return;
+  const msgEl = document.getElementById('wa-card-msg');
+  const btn = document.getElementById('wa-test-btn');
+  if (btn) btn.disabled = true;
+  if (msgEl){ msgEl.textContent='Sending test…'; msgEl.style.color='var(--text3)'; }
+  try {
+    const r = await fetch(B + '/api/whatsapp/test', { method:'POST', headers:{'Authorization':'Bearer '+T,'Content-Type':'application/json'}, body: JSON.stringify({ phone }) });
+    const d = await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error(d.error||'Test failed');
+    if (msgEl){ msgEl.textContent='Test sent ✓ — check the recipient phone'; msgEl.style.color='#065f46'; }
+  } catch (e) {
+    if (msgEl){ msgEl.textContent = 'Test failed: '+e.message; msgEl.style.color='#991b1b'; }
+  } finally { if (btn) btn.disabled = false; }
 }
 
 // ── Logo upload widget ──────────────────────────────────────
@@ -13750,6 +13965,11 @@ async function gstLookup(prefix){
 
     if(d.source==='live'){
       alert(`✓ GST details fetched from GSTN\n\nTrade Name: ${d.tradeName||d.name||'(not provided)'}\n${d.status?'Status: '+d.status:''}\n\nAll fields have been filled automatically.`);
+      // If the operator is currently on Settings → Integrations, re-hydrate
+      // the GST status card so the credit count + last-refreshed update live.
+      if (document.getElementById('gst-api-status-host') && typeof _renderGstApiStatus === 'function') {
+        try { _renderGstApiStatus(); } catch(_){}
+      }
     } else {
       // No API key configured — we still extracted PAN + state from the GSTIN digits
       const filled = prefix==='t'

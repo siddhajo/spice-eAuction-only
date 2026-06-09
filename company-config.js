@@ -359,7 +359,7 @@ const CATEGORIES = {
   invoice:      { order: 10,   title: 'Invoice Settings',        icon: '📄' },
   flags:        { order: 11,   title: 'Feature Flags',           icon: '🔧' },
   lot_entry:    { order: 11.5, title: 'Lot Entry Defaults',      icon: '📝' },
-  integrations: { order: 12,   title: 'Integrations',            icon: '🔌' },
+  integrations: { order: 12,   title: 'Integrations',            icon: '🔌', description: 'Optional third-party services. The GST API key enables auto-fetching trade name and address when you enter a GSTIN (get a free key at gstincheck.co.in). The WhatsApp Business card lets you send invoices/notices straight from the app via Meta’s Cloud API.' },
   tally:        { order: 13,   title: 'To Tally',                icon: '📤' },
 };
 

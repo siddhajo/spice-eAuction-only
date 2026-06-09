@@ -36,7 +36,10 @@ const {
 } = require('./tally-xml');
 
 const app = express();
-app.use(express.json({ limit: '50mb' }));
+// Capture the raw request body so the WhatsApp webhook can verify Meta's
+// HMAC (X-Hub-Signature-256) over the exact bytes received. Cheap — just
+// stashes the Buffer express already has in hand.
+app.use(express.json({ limit: '50mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
 // Disable caching of HTML files so users always get the latest UI without
 // needing a hard-reload. This is critical for ngrok-tunnelled deployments
@@ -1257,6 +1260,187 @@ const STATE_CODES = {
 };
 const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 
+// ── GST lookup API credit-tracking helpers ──────────────────
+// Defaults for the low-credit warning thresholds. Operator can override
+// via settings keys `gst_warn_below` and `gst_critical_below`.
+const GST_WARN_BELOW_DEFAULT = 50;
+const GST_CRITICAL_BELOW_DEFAULT = 10;
+
+// gstincheck.co.in ships credit-related fields under several names
+// depending on plan and endpoint version. Probe each common one and
+// return the first non-empty match. Adding new aliases here is safe —
+// the probe is pure, just data lookups.
+function _gstPickField(obj, names) {
+  if (!obj || typeof obj !== 'object') return null;
+  for (const n of names) {
+    if (obj[n] != null && obj[n] !== '') return obj[n];
+  }
+  return null;
+}
+// Some gstincheck.co.in plans report quota via response headers, not
+// the JSON body. Pull headers into a plain {lowercase-name → value}
+// object so the probe can search them alongside the body.
+function _headersToObj(h) {
+  const out = {};
+  if (!h) return out;
+  try {
+    if (typeof h.forEach === 'function') {
+      h.forEach((v, k) => { out[String(k).toLowerCase()] = v; });
+    } else if (typeof h === 'object') {
+      for (const k of Object.keys(h)) out[String(k).toLowerCase()] = h[k];
+    }
+  } catch (_) {}
+  return out;
+}
+// Scan a "message" string for inline credit counts. gstincheck.co.in
+// returns sentences like "847 Searches Left" or "Total 1000 Credits".
+function _parseCreditsFromMessage(msg) {
+  const s = String(msg || '');
+  if (!s) return {};
+  const out = {};
+  let m = s.match(/(\d[\d,]*)\s*(?:searches?|credits?|hits?|requests?)\s*(?:left|remaining|available|balance)\b/i);
+  if (m) out.remaining = Number(m[1].replace(/,/g, ''));
+  if (out.remaining == null) {
+    m = s.match(/(?:balance|left|remaining|available)\s*[:=]\s*(\d[\d,]*)/i);
+    if (m) out.remaining = Number(m[1].replace(/,/g, ''));
+  }
+  m = s.match(/(?:of|total|out\s+of)\s*(\d[\d,]*)/i);
+  if (m) out.total = Number(m[1].replace(/,/g, ''));
+  m = s.match(/(?:valid|expir(?:es|y))[^0-9]*?(\d{4}-\d{2}-\d{2})/i);
+  if (m) out.expires = m[1];
+  return out;
+}
+function _gstExtractCredits(rawBody, rawHeaders) {
+  const candidates = [];
+  if (rawBody && typeof rawBody === 'object') {
+    candidates.push(rawBody);
+    for (const k of ['userInfo', 'quota', 'meta', 'pkg', 'plan', 'subscription', 'account']) {
+      if (rawBody[k] && typeof rawBody[k] === 'object') candidates.push(rawBody[k]);
+    }
+  }
+  if (rawHeaders && typeof rawHeaders === 'object') candidates.push(rawHeaders);
+  let remaining = null, total = null, expires = null;
+  for (const c of candidates) {
+    remaining = remaining ?? _gstPickField(c, [
+      'gstinAvailableSearch', 'availableSearch', 'remainingHits',
+      'remainingSearches', 'creditsLeft', 'credits_remaining', 'remaining',
+      'balance', 'searchLeft', 'searches_left', 'available_credits',
+      'creditBalance', 'credit_balance', 'apiCallsRemaining',
+      'x-credits-remaining', 'x-credit-remaining', 'x-credits-left',
+      'x-searches-remaining', 'x-quota-remaining', 'x-ratelimit-remaining',
+    ]);
+    total = total ?? _gstPickField(c, [
+      'gstinTotalSearch', 'totalSearch', 'totalHits',
+      'totalSearches', 'creditsTotal', 'credits_total', 'total',
+      'totalCredits', 'total_credits', 'plan_size', 'planSize',
+      'x-credits-total', 'x-quota-limit', 'x-ratelimit-limit',
+    ]);
+    expires = expires ?? _gstPickField(c, [
+      'gstinValidity', 'searchValidUpto', 'validUpto', 'validity',
+      'planExpiresAt', 'plan_expires_at', 'expiryDate', 'expiry_date',
+      'subscriptionEnd', 'subscription_end', 'expiresOn', 'expires_on',
+      'x-plan-expires', 'x-subscription-expires',
+    ]);
+  }
+  if (remaining == null || total == null || expires == null) {
+    const msgScan = _parseCreditsFromMessage(rawBody && (rawBody.message || rawBody.msg || rawBody.note));
+    if (remaining == null) remaining = msgScan.remaining != null ? msgScan.remaining : null;
+    if (total     == null) total     = msgScan.total     != null ? msgScan.total     : null;
+    if (expires   == null) expires   = msgScan.expires   != null ? msgScan.expires   : null;
+  }
+  return {
+    remaining: remaining == null ? null : Number(remaining),
+    total:     total     == null ? null : Number(total),
+    expires:   expires   == null ? null : String(expires),
+  };
+}
+function _gstSaveState(db, rawBody, rawHeaders) {
+  const headerObj = _headersToObj(rawHeaders);
+  const credits = _gstExtractCredits(rawBody, headerObj);
+  const meta = { _body: {}, _headers: {}, _extracted: credits };
+  if (rawBody && typeof rawBody === 'object') {
+    for (const k of Object.keys(rawBody)) {
+      if (k === 'data') continue;
+      meta._body[k] = rawBody[k];
+    }
+  }
+  for (const k of Object.keys(headerObj)) {
+    if (/^(x-credit|x-search|x-quota|x-ratelimit|x-plan|x-subscription|x-balance)/.test(k)) {
+      meta._headers[k] = headerObj[k];
+    }
+  }
+  const now = new Date().toISOString();
+  const exists = db.get('SELECT id FROM gst_api_state WHERE id = 1');
+  if (!exists) {
+    db.run(
+      `INSERT INTO gst_api_state
+        (id, credits_remaining, credits_total, plan_expires_at, last_checked_at, last_response_raw)
+       VALUES (1, ?, ?, ?, ?, ?)`,
+      [credits.remaining, credits.total, credits.expires, now, JSON.stringify(meta)]
+    );
+  } else {
+    const cur = db.get('SELECT * FROM gst_api_state WHERE id = 1') || {};
+    db.run(
+      `UPDATE gst_api_state SET
+         credits_remaining = ?, credits_total = ?, plan_expires_at = ?,
+         last_checked_at = ?, last_response_raw = ?
+       WHERE id = 1`,
+      [
+        credits.remaining ?? cur.credits_remaining ?? null,
+        credits.total     ?? cur.credits_total     ?? null,
+        credits.expires   ?? cur.plan_expires_at   ?? null,
+        now,
+        JSON.stringify(meta),
+      ]
+    );
+  }
+  return credits;
+}
+function _gstStatusFor(db, cfg) {
+  const row = db.get('SELECT * FROM gst_api_state WHERE id = 1') || {};
+  const cfgg = cfg || getSettingsFlat(db);
+  const warnBelow     = Number(cfgg.gst_warn_below)     || GST_WARN_BELOW_DEFAULT;
+  const criticalBelow = Number(cfgg.gst_critical_below) || GST_CRITICAL_BELOW_DEFAULT;
+  const remaining = row.credits_remaining == null ? null : Number(row.credits_remaining);
+  let level = 'unknown';
+  if (remaining == null)               level = 'unknown';
+  else if (remaining <= 0)             level = 'exhausted';
+  else if (remaining <  criticalBelow) level = 'critical';
+  else if (remaining <  warnBelow)     level = 'warning';
+  else                                 level = 'ok';
+  let lastEnvelope = null;
+  if (row.last_response_raw) {
+    try { lastEnvelope = JSON.parse(row.last_response_raw); } catch (_) { lastEnvelope = null; }
+  }
+  return {
+    has_api_key:        !!(cfgg.gst_api_key && String(cfgg.gst_api_key).trim()),
+    credits_remaining:  remaining,
+    credits_total:      row.credits_total == null ? null : Number(row.credits_total),
+    plan_expires_at:    row.plan_expires_at || null,
+    last_checked_at:    row.last_checked_at || null,
+    warn_below:         warnBelow,
+    critical_below:     criticalBelow,
+    level,
+    recharge_url:       'https://gstincheck.co.in/',
+    last_envelope:      lastEnvelope,
+  };
+}
+
+// ── Cheap status probe (registered BEFORE the dynamic :gstin route) ──
+// Express matches routes in registration order, so /api/gst-lookup/status
+// MUST be declared first — otherwise the :gstin handler below grabs the
+// word "status", fails the GSTIN regex, and returns 400. Used by the
+// Settings → Integrations card to render the credit count without burning
+// a real lookup.
+app.get('/api/gst-lookup/status', requireView, (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    res.json(_gstStatusFor(getDb(), null));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/gst-lookup/:gstin', requireView, async (req, res) => {
   const gstin = String(req.params.gstin || '').toUpperCase().trim();
   if (!GSTIN_RE.test(gstin)) {
@@ -1278,12 +1462,16 @@ app.get('/api/gst-lookup/:gstin', requireView, async (req, res) => {
     });
   }
 
-  // With API key → attempt live lookup
+  // With API key → attempt live lookup. Every response opportunistically
+  // refreshes gst_api_state so the Settings card stays current for free.
   try {
     const url = `https://sheet.gstincheck.co.in/check/${apiKey}/${gstin}`;
     const r = await fetch(url);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const body = await r.json();
+    const db = getDb();
+    try { _gstSaveState(db, body, r.headers); } catch (_) { /* best-effort */ }
+    const apiStatus = _gstStatusFor(db, cfg);
     if (body && body.flag && body.data) {
       const d = body.data;
       const addr = (d.pradr && d.pradr.addr) || {};
@@ -1297,13 +1485,15 @@ app.get('/api/gst-lookup/:gstin', requireView, async (req, res) => {
         state:    addr.stcd || state,
         status:   d.sts || '',
         regDate:  d.rgdt || '',
-        source:   'live'
+        source:   'live',
+        api:      apiStatus,
       });
     }
     return res.json({
       valid: true, gstin, pan, st_code: stCode, state,
       source: 'structural',
-      note: body && body.message ? body.message : 'GST portal returned no data'
+      note: body && body.message ? body.message : 'GST portal returned no data',
+      api:  apiStatus,
     });
   } catch (e) {
     return res.json({
@@ -1409,49 +1599,148 @@ app.get('/api/traders/by-name/:name', requireViewOrLotEntry, (req, res) => {
 });
 
 // ── WhatsApp Cloud API (Meta) ─────────────────────────────────
-// Optional automation: when WHATSAPP_TOKEN + WHATSAPP_PHONE_ID env vars
-// are set, these endpoints push messages directly via Meta's Graph API.
-// When env is unset, return 501 so the client falls back to its manual
-// (web.whatsapp.com link / Web Share API) flow without erroring.
+// Credentials resolve ENV-FIRST, then the DB (whatsapp_config table, set via
+// the in-app Settings → Integrations card). Railway can use dashboard env
+// vars while the desktop/in-app user pastes creds without touching the
+// environment. When unconfigured the send endpoints return 501 so the client
+// falls back to its manual (web.whatsapp.com / Web Share API) flow.
+//
+// Two send models coexist:
+//   • send-text / send-document — conversation-based (works within the 24h
+//     customer-service window, no template needed). Used by the share buttons.
+//   • send-template-text / send-template-document — APPROVED-template sends
+//     that reach ANYONE (cold), incl. delivery receipts via the webhook.
 //
 // Setup: https://developers.facebook.com/docs/whatsapp/cloud-api
-//   1. Create a Meta Business account → add a WhatsApp Business phone.
-//   2. Generate a permanent access token, capture the phone-number-id.
-//   3. Set env vars: WHATSAPP_TOKEN, WHATSAPP_PHONE_ID
-//   4. (Outbound to non-customers needs an approved message template;
-//      conversation-initiated messages within 24h work without templates.)
-function _waConfigured() {
-  return Boolean(process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_ID);
+//   Env keys: WHATSAPP_TOKEN, WHATSAPP_PHONE_ID, WHATSAPP_WABA_ID,
+//   WHATSAPP_APP_SECRET, WHATSAPP_VERIFY_TOKEN, WHATSAPP_TPL_DOCUMENT,
+//   WHATSAPP_TPL_TEXT — or set the same via the Settings card.
+
+// Resolve effective config: process.env wins over the DB row. Returns a flat
+// object plus `configured` (token + phoneId both present) and `source`
+// ('env' | 'db' | 'none') indicating where the live creds came from.
+function _waConfig(db) {
+  let row = {};
+  try { row = db.get('SELECT * FROM whatsapp_config WHERE id = 1') || {}; } catch (_) { row = {}; }
+  const envv = (k) => (process.env[k] && String(process.env[k]).trim()) || '';
+  const dbv = (c) => (row[c] != null && String(row[c]).trim()) || '';
+  const pick = (k, c) => envv(k) || dbv(c);
+  const token = pick('WHATSAPP_TOKEN', 'access_token');
+  const phoneId = pick('WHATSAPP_PHONE_ID', 'phone_id');
+  let source = 'none';
+  if (token && phoneId) source = (envv('WHATSAPP_TOKEN') && envv('WHATSAPP_PHONE_ID')) ? 'env' : 'db';
+  return {
+    token, phoneId,
+    wabaId:          pick('WHATSAPP_WABA_ID', 'waba_id'),
+    appSecret:       pick('WHATSAPP_APP_SECRET', 'app_secret'),
+    verifyToken:     pick('WHATSAPP_VERIFY_TOKEN', 'verify_token'),
+    displayNumber:   dbv('display_number'),
+    tplDocument:     pick('WHATSAPP_TPL_DOCUMENT', 'tpl_document'),
+    tplDocumentLang: dbv('tpl_document_lang') || 'en',
+    tplText:         pick('WHATSAPP_TPL_TEXT', 'tpl_text'),
+    tplTextLang:     dbv('tpl_text_lang') || 'en',
+    configured: Boolean(token && phoneId),
+    source,
+  };
 }
-async function _waPost(path, body) {
-  const url = `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}${path}`;
+function _waNormalizePhone(tel) {
+  const d = String(tel || '').replace(/\D/g, '');
+  if (!d) return '';
+  return d.length === 10 ? '91' + d : d; // default IN country code
+}
+// Parse positional template body params. JSON bodies send an array directly;
+// multipart sends a JSON-encoded string (or a bare string).
+function _waParseParams(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (raw == null || raw === '') return [];
+  if (typeof raw === 'string') {
+    const s = raw.trim();
+    if (s.startsWith('[')) { try { const a = JSON.parse(s); return Array.isArray(a) ? a : [s]; } catch (_) { return [s]; } }
+    return [s];
+  }
+  return [];
+}
+// POST to the Graph API with the resolved creds.
+async function _waGraphPost(cfg, path, body) {
+  const url = `https://graph.facebook.com/v18.0/${cfg.phoneId}${path}`;
   const r = await fetch(url, {
     method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + process.env.WHATSAPP_TOKEN, 'Content-Type': 'application/json' },
+    headers: { 'Authorization': 'Bearer ' + cfg.token, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error && j.error.message ? j.error.message : `Cloud API error ${r.status}`);
   return j;
 }
-function _waNormalizePhone(tel) {
-  const d = String(tel || '').replace(/\D/g, '');
-  if (!d) return '';
-  return d.length === 10 ? '91' + d : d;
+// Upload a PDF buffer to Meta /media → returns a media_id usable for ~30 days.
+async function _waUploadMedia(cfg, buffer, filename) {
+  const fd = new FormData();
+  fd.append('messaging_product', 'whatsapp');
+  fd.append('type', 'application/pdf');
+  fd.append('file', new Blob([buffer], { type: 'application/pdf' }), filename || 'document.pdf');
+  const r = await fetch(`https://graph.facebook.com/v18.0/${cfg.phoneId}/media`, {
+    method: 'POST', headers: { 'Authorization': 'Bearer ' + cfg.token }, body: fd,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.id) throw new Error((j.error && j.error.message) || `Media upload failed ${r.status}`);
+  return j.id;
+}
+// Send an approved template. Includes the document header component only when
+// a media id is supplied; the body component carries positional params.
+async function _waSendTemplate(cfg, { phone, template, lang, bodyParams = [], documentMediaId = null, filename = 'document.pdf' }) {
+  const components = [];
+  if (documentMediaId) {
+    components.push({ type: 'header', parameters: [{ type: 'document', document: { id: documentMediaId, filename } }] });
+  }
+  if (bodyParams.length) {
+    // Meta rejects template body params containing newlines, tabs, or 5+
+    // consecutive spaces. Flatten multi-line summaries into a single line.
+    const clean = (t) => String(t == null ? '' : t)
+      .replace(/\r?\n+/g, ' · ')
+      .replace(/\t+/g, ' ')
+      .replace(/ {2,}/g, ' ')
+      .trim();
+    components.push({ type: 'body', parameters: bodyParams.map((t) => ({ type: 'text', text: clean(t) })) });
+  }
+  const tpl = { name: template, language: { code: lang || 'en' } };
+  if (components.length) tpl.components = components;
+  const out = await _waGraphPost(cfg, '/messages', {
+    messaging_product: 'whatsapp', to: phone, type: 'template', template: tpl,
+  });
+  return out.messages && out.messages[0] && out.messages[0].id;
+}
+// Append a row to the send log. Best-effort — never throws into a handler.
+function _waLog(db, f) {
+  try {
+    db.run(
+      `INSERT INTO whatsapp_messages (wamid, direction, phone, msg_type, caption, status, error, ref_type, ref_id)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      [f.wamid || '', f.direction || 'out', f.phone || '', f.msg_type || '',
+       f.caption || '', f.status || 'queued', f.error || '', f.ref_type || '', f.ref_id || '']
+    );
+  } catch (_) { /* logging must not break sends */ }
 }
 
 // Send a plain text message. Body: { phone, message }
 app.post('/api/whatsapp/send-text', requireView, async (req, res) => {
-  if (!_waConfigured()) return res.status(501).json({ error: 'WhatsApp Cloud API not configured', fallback: true });
+  const db = getDb();
+  const cfg = _waConfig(db);
+  if (!cfg.configured) return res.status(501).json({ error: 'WhatsApp Cloud API not configured', fallback: true });
   try {
     const phone = _waNormalizePhone(req.body.phone);
     const message = String(req.body.message || '');
     if (!phone || !message) return res.status(400).json({ error: 'phone and message required' });
-    const out = await _waPost('/messages', {
+    const out = await _waGraphPost(cfg, '/messages', {
       messaging_product: 'whatsapp', to: phone, type: 'text', text: { body: message },
     });
-    res.json({ ok: true, id: out.messages && out.messages[0] && out.messages[0].id });
-  } catch (e) { res.status(502).json({ error: e.message }); }
+    const wamid = out.messages && out.messages[0] && out.messages[0].id;
+    _waLog(db, { wamid, phone, msg_type: 'text', caption: message.slice(0, 80), status: 'sent',
+      ref_type: req.body.ref_type || '', ref_id: req.body.ref_id || '' });
+    res.json({ ok: true, id: wamid });
+  } catch (e) {
+    _waLog(db, { phone: _waNormalizePhone(req.body.phone), msg_type: 'text', status: 'failed', error: e.message });
+    res.status(502).json({ error: e.message });
+  }
 });
 
 // Send a document. Body: { phone, caption, doc_url } where doc_url is a
@@ -1459,18 +1748,242 @@ app.post('/api/whatsapp/send-text', requireView, async (req, res) => {
 // generated PDFs you'd first POST /media to upload and use the returned
 // id — left as a TODO when you wire this up to the actual hosted URLs.)
 app.post('/api/whatsapp/send-document', requireView, async (req, res) => {
-  if (!_waConfigured()) return res.status(501).json({ error: 'WhatsApp Cloud API not configured', fallback: true });
+  const db = getDb();
+  const cfg = _waConfig(db);
+  if (!cfg.configured) return res.status(501).json({ error: 'WhatsApp Cloud API not configured', fallback: true });
   try {
     const phone = _waNormalizePhone(req.body.phone);
     const caption = String(req.body.caption || '');
     const docUrl = String(req.body.doc_url || '');
     if (!phone || !docUrl) return res.status(400).json({ error: 'phone and doc_url required' });
-    const out = await _waPost('/messages', {
+    const out = await _waGraphPost(cfg, '/messages', {
       messaging_product: 'whatsapp', to: phone, type: 'document',
       document: { link: docUrl, caption, filename: req.body.filename || 'document.pdf' },
     });
-    res.json({ ok: true, id: out.messages && out.messages[0] && out.messages[0].id });
-  } catch (e) { res.status(502).json({ error: e.message }); }
+    const wamid = out.messages && out.messages[0] && out.messages[0].id;
+    _waLog(db, { wamid, phone, msg_type: 'document', caption: caption || (req.body.filename || 'document.pdf'),
+      status: 'sent', ref_type: req.body.ref_type || '', ref_id: req.body.ref_id || '' });
+    res.json({ ok: true, id: wamid });
+  } catch (e) {
+    _waLog(db, { phone: _waNormalizePhone(req.body.phone), msg_type: 'document', status: 'failed', error: e.message });
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// ── Status / config / diagnostics ─────────────────────────────
+// Connection status for the Settings card. NEVER returns the token /
+// app-secret / verify-token — only booleans + non-secret identifiers. When
+// configured, best-effort pings Graph for live health.
+app.get('/api/whatsapp/status', requireView, async (req, res) => {
+  const cfg = _waConfig(getDb());
+  const result = {
+    configured: cfg.configured,
+    source: cfg.source,
+    phoneId: cfg.phoneId,
+    wabaId: cfg.wabaId,
+    displayNumber: cfg.displayNumber,
+    hasToken: !!cfg.token,
+    hasAppSecret: !!cfg.appSecret,
+    hasVerifyToken: !!cfg.verifyToken,
+    tplDocument: cfg.tplDocument,
+    tplDocumentLang: cfg.tplDocumentLang,
+    tplText: cfg.tplText,
+    tplTextLang: cfg.tplTextLang,
+    webhookReady: !!(cfg.verifyToken && cfg.appSecret),
+    qualityRating: null,
+    displayPhone: null,
+    verifiedName: null,
+    live: false,
+    liveError: null,
+  };
+  if (cfg.configured) {
+    try {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), 4000);
+      const r = await fetch(
+        `https://graph.facebook.com/v18.0/${cfg.phoneId}?fields=display_phone_number,quality_rating,verified_name`,
+        { headers: { 'Authorization': 'Bearer ' + cfg.token }, signal: ctrl.signal }
+      );
+      clearTimeout(to);
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) {
+        result.qualityRating = j.quality_rating || null;
+        result.displayPhone = j.display_phone_number || null;
+        result.verifiedName = j.verified_name || null;
+        result.live = true;
+      } else {
+        result.liveError = (j.error && j.error.message) || `HTTP ${r.status}`;
+      }
+    } catch (e) {
+      result.liveError = e.name === 'AbortError' ? 'Timed out contacting Meta' : e.message;
+    }
+  }
+  res.json(result);
+});
+
+// Upsert WhatsApp credentials + template config. Secrets (token, app secret,
+// verify token) are write-only: a blank/absent value leaves the stored secret
+// UNCHANGED, so saving other fields never wipes them.
+app.put('/api/whatsapp/config', requireSettingsWrite, (req, res) => {
+  const db = getDb();
+  const b = req.body || {};
+  const sets = [];
+  const vals = [];
+  const put = (col, val) => { sets.push(`${col} = ?`); vals.push(val); };
+  const putSecret = (col, val) => { if (typeof val === 'string' && val.trim()) put(col, val.trim()); };
+  const putField = (col, val, dflt) => { if (val !== undefined) put(col, String(val).trim() || (dflt || '')); };
+  putSecret('access_token', b.token);
+  putSecret('app_secret', b.appSecret);
+  putSecret('verify_token', b.verifyToken);
+  putField('phone_id', b.phoneId);
+  putField('waba_id', b.wabaId);
+  putField('display_number', b.displayNumber);
+  putField('tpl_document', b.tplDocument);
+  putField('tpl_document_lang', b.tplDocumentLang, 'en');
+  putField('tpl_text', b.tplText);
+  putField('tpl_text_lang', b.tplTextLang, 'en');
+  if (b.enabled !== undefined) put('enabled', b.enabled ? 1 : 0);
+  if (!sets.length) return res.json({ ok: true, updated: 0 });
+  try {
+    db.run(`UPDATE whatsapp_config SET ${sets.join(', ')}, updated_at = datetime('now','localtime') WHERE id = 1`, vals);
+  } catch (e) { return res.status(500).json({ error: e.message }); }
+  res.json({ ok: true, updated: sets.length });
+});
+
+// Fire a test send (text template) to verify the whole pipeline. Surfaces the
+// exact Meta error so the user can self-diagnose from the Settings card.
+app.post('/api/whatsapp/test', requireSettingsWrite, async (req, res) => {
+  const db = getDb();
+  const cfg = _waConfig(db);
+  if (!cfg.configured) return res.status(400).json({ error: 'Token and Phone number ID are required first.' });
+  if (!cfg.tplText) return res.status(400).json({ error: 'Set an approved Text template name first.' });
+  const phone = _waNormalizePhone(req.body.phone);
+  if (!phone) return res.status(400).json({ error: 'Recipient phone required.' });
+  const params = _waParseParams(req.body.params);
+  const bodyParams = params.length ? params
+    : ['Test', 'this is a test message confirming your WhatsApp Cloud API setup works.', cfg.verifiedName || 'Spice'];
+  try {
+    const wamid = await _waSendTemplate(cfg, { phone, template: cfg.tplText, lang: cfg.tplTextLang, bodyParams });
+    _waLog(db, { wamid, phone, msg_type: 'template-text', caption: '[test]', status: 'sent', ref_type: 'test' });
+    res.json({ ok: true, id: wamid });
+  } catch (e) {
+    _waLog(db, { phone, msg_type: 'template-text', caption: '[test]', status: 'failed', error: e.message, ref_type: 'test' });
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// ── Primary template send paths (reach anyone, incl. cold contacts) ────
+// Text-only template send. Body: { phone, params:[…], ref_type?, ref_id? }.
+app.post('/api/whatsapp/send-template-text', requireView, async (req, res) => {
+  const db = getDb();
+  const cfg = _waConfig(db);
+  if (!cfg.configured) return res.status(501).json({ error: 'WhatsApp Cloud API not configured', fallback: true });
+  if (!cfg.tplText) return res.status(400).json({ error: 'No text template configured', fallback: true });
+  const phone = _waNormalizePhone(req.body.phone);
+  if (!phone) return res.status(400).json({ error: 'phone required' });
+  const bodyParams = _waParseParams(req.body.params);
+  try {
+    const wamid = await _waSendTemplate(cfg, { phone, template: cfg.tplText, lang: cfg.tplTextLang, bodyParams });
+    _waLog(db, { wamid, phone, msg_type: 'template-text', caption: bodyParams[1] || '', status: 'sent',
+      ref_type: req.body.ref_type || '', ref_id: req.body.ref_id || '' });
+    res.json({ ok: true, id: wamid });
+  } catch (e) {
+    _waLog(db, { phone, msg_type: 'template-text', caption: bodyParams[1] || '', status: 'failed', error: e.message,
+      ref_type: req.body.ref_type || '', ref_id: req.body.ref_id || '' });
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// Document template send — delivers a locally-generated PDF to ANYONE (cold)
+// via an approved document-header template. Multipart body: file (required),
+// phone (required), params (JSON array), filename, ref_type/ref_id (optional).
+app.post('/api/whatsapp/send-template-document', requireView, upload.single('file'), async (req, res) => {
+  const db = getDb();
+  const cfg = _waConfig(db);
+  const cleanup = () => { if (req.file) fs.unlink(req.file.path, () => {}); };
+  if (!cfg.configured) { cleanup(); return res.status(501).json({ error: 'WhatsApp Cloud API not configured', fallback: true }); }
+  if (!cfg.tplDocument) { cleanup(); return res.status(400).json({ error: 'No document template configured', fallback: true }); }
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const phone = _waNormalizePhone(req.body.phone);
+  const filename = String(req.body.filename || req.file.originalname || 'document.pdf');
+  const bodyParams = _waParseParams(req.body.params);
+  if (!phone) { cleanup(); return res.status(400).json({ error: 'phone required' }); }
+  try {
+    const buffer = fs.readFileSync(req.file.path);
+    const mediaId = await _waUploadMedia(cfg, buffer, filename);
+    const wamid = await _waSendTemplate(cfg, {
+      phone, template: cfg.tplDocument, lang: cfg.tplDocumentLang,
+      bodyParams, documentMediaId: mediaId, filename,
+    });
+    _waLog(db, { wamid, phone, msg_type: 'template-document', caption: bodyParams[1] || filename, status: 'sent',
+      ref_type: req.body.ref_type || '', ref_id: req.body.ref_id || '' });
+    res.json({ ok: true, id: wamid, mediaId });
+  } catch (e) {
+    _waLog(db, { phone, msg_type: 'template-document', caption: bodyParams[1] || filename, status: 'failed', error: e.message,
+      ref_type: req.body.ref_type || '', ref_id: req.body.ref_id || '' });
+    res.status(502).json({ error: e.message });
+  } finally {
+    cleanup();
+  }
+});
+
+// ── Send log ───────────────────────────────────────────────────
+app.get('/api/whatsapp/messages', requireView, (req, res) => {
+  const db = getDb();
+  const rows = db.all(
+    `SELECT id, wamid, direction, phone, msg_type, caption, status, error, ref_type, ref_id, created_at, updated_at
+     FROM whatsapp_messages ORDER BY id DESC LIMIT 100`
+  );
+  res.json(rows);
+});
+
+// ── Webhook (PUBLIC — Meta calls these unauthenticated) ────────
+// GET: verification handshake. Echo hub.challenge when the verify token matches.
+app.get('/api/whatsapp/webhook', (req, res) => {
+  const cfg = _waConfig(getDb());
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+  if (mode === 'subscribe' && cfg.verifyToken && token === cfg.verifyToken) {
+    return res.status(200).send(String(challenge == null ? '' : challenge));
+  }
+  return res.sendStatus(403);
+});
+// POST: delivery-status + inbound-message events. Verify Meta's HMAC signature
+// over the RAW body (captured by the express.json verify hook), then update
+// the send log / record inbound replies. Always 200 fast — Meta retries hard.
+app.post('/api/whatsapp/webhook', (req, res) => {
+  const db = getDb();
+  const cfg = _waConfig(db);
+  if (cfg.appSecret) {
+    const sig = req.get('X-Hub-Signature-256') || '';
+    const expected = 'sha256=' + crypto.createHmac('sha256', cfg.appSecret).update(req.rawBody || Buffer.from('')).digest('hex');
+    const a = Buffer.from(sig), b = Buffer.from(expected);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.sendStatus(401);
+  }
+  try {
+    for (const entry of (req.body && req.body.entry) || []) {
+      for (const change of (entry.changes || [])) {
+        const v = change.value || {};
+        for (const st of (v.statuses || [])) {
+          const wamid = st.id || '';
+          const status = st.status || '';
+          const err = (st.errors && st.errors[0] && (st.errors[0].title || st.errors[0].message)) || '';
+          if (wamid && status) {
+            try {
+              db.run("UPDATE whatsapp_messages SET status = ?, error = ?, updated_at = datetime('now','localtime') WHERE wamid = ?",
+                [status, err, wamid]);
+            } catch (_) {}
+          }
+        }
+        for (const m of (v.messages || [])) {
+          const body = (m.text && m.text.body) || m.type || '';
+          try { db.run('INSERT INTO whatsapp_inbound (wamid, phone, body) VALUES (?,?,?)', [m.id || '', m.from || '', String(body)]); } catch (_) {}
+        }
+      }
+    }
+  } catch (_) { /* never let a malformed payload 500 — Meta would retry forever */ }
+  res.sendStatus(200);
 });
 
 app.get('/api/traders/:id', requireViewOrLotEntry, (req, res) => {
