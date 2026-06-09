@@ -170,7 +170,13 @@ function calculateLot(lot, cfg) {
   // ── Discount ─────────────────────────────────────────────
   //   Discount = round( Payable / 1000 × 14 × 0.65 )
   // Used by Spice Board export / reports as a derived field.
-  result.discount = Math.round((result.payable / 1000) * 14 * 0.65);
+  // Gated on the per-lot Immediate Payment flag: the early-payment
+  // discount is only earned when the seller is settled immediately, so
+  // lots with immediate_payment = 0 (or unset) get discount = 0.
+  const immediatePayment = Number(lot.immediate_payment) ? 1 : 0;
+  result.discount = immediatePayment
+    ? Math.round((result.payable / 1000) * 14 * 0.65)
+    : 0;
 
   // ── DN Amount ────────────────────────────────────────────
   //   DN Amount = ( (Amount + Refund) × 1/100 ) + ( Commission × 0/100 )

@@ -292,6 +292,11 @@ async function initDb() {
     paid TEXT DEFAULT '',
     user_id TEXT DEFAULT '',
     bank_id INTEGER,
+    -- Immediate-payment flag (per lot). When 1, the seller is settled
+    -- immediately and the early-payment discount is calculated for the
+    -- lot; when 0 the lot's discount is 0. Also added via ALTER for
+    -- older DBs in the migrations block below.
+    immediate_payment INTEGER DEFAULT 0,
     -- Record-lock columns (also added via ALTER for older DBs in the
     -- migrations block below). See POST /api/lots/lock in server.js for
     -- semantics. Defined here so fresh DBs get the columns + the
@@ -738,6 +743,9 @@ async function initDb() {
     // The whole feature collapses to a no-op when flag_lot_lock is off.
     'ALTER TABLE lots ADD COLUMN locked_at TEXT DEFAULT NULL',
     'ALTER TABLE lots ADD COLUMN locked_by TEXT DEFAULT NULL',
+    // Immediate-payment flag — drives whether the per-lot early-payment
+    // discount is calculated (only computed for lots flagged 1).
+    'ALTER TABLE lots ADD COLUMN immediate_payment INTEGER DEFAULT 0',
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }

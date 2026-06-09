@@ -3959,6 +3959,41 @@ app.get('/api/auctions/template', requireExport, async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // LOTS (CPA1.DBF — main data)
 // ══════════════════════════════════════════════════════════════
+// Per-trade lot activity feed. Filters audit_log to entity='lot' and the
+// requested auction (matched via the auction_id baked into details — the
+// trailing comma in the LIKE pattern stops "5" matching "50"). Open to
+// view + lot-entry roles so field staff see the feed in Lot Entry.
+// NOTE: must be registered BEFORE '/api/lots/:auctionId' or that param
+// route swallows "/api/lots/activity" (treating "activity" as an id).
+app.get('/api/lots/activity', requireViewOrLotEntry, (req, res) => {
+  const db = getDb();
+  const aid = parseInt(req.query.auction_id, 10);
+  const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+  let rows;
+  if (aid) {
+    rows = db.all(
+      `SELECT id, user_id, action, entity_id, details, created_at
+       FROM audit_log WHERE entity = 'lot' AND details LIKE ?
+       ORDER BY id DESC LIMIT ?`,
+      [`%"auction_id":${aid},%`, limit]
+    );
+  } else {
+    rows = db.all(
+      `SELECT id, user_id, action, entity_id, details, created_at
+       FROM audit_log WHERE entity = 'lot' ORDER BY id DESC LIMIT ?`,
+      [limit]
+    );
+  }
+  const items = rows.map(r => {
+    let d = {}; try { d = JSON.parse(r.details || '{}'); } catch (_) {}
+    return {
+      id: r.id, user: r.user_id, action: r.action, lot_id: r.entity_id,
+      lot_no: d.lot_no || '', branch: d.branch || '', name: d.name || '',
+      qty: d.qty, at: r.created_at,
+    };
+  });
+  res.json({ items });
+});
 app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
   const { branch, name, buyer, limit, offset, paginated, summary, search } = req.query;
   const db = getDb();
@@ -4178,6 +4213,27 @@ app.post('/api/lots/unlock', requireAdmin, (req, res) => {
   res.json({ success: true, unlocked: (info && info.changes) || 0, requested: numericIds.length });
 });
 
+// ── Lot-entry activity log ────────────────────────────────────────
+// Records who created / edited / deleted each lot into the shared
+// audit_log table (entity='lot'). The Lot Entry screen surfaces a
+// per-trade feed of these (GET /api/lots/activity). Best-effort — a
+// failure here must never block the underlying mutation.
+function logLotActivity(db, req, action, info) {
+  try {
+    const details = JSON.stringify({
+      auction_id: Number(info.auction_id) || 0,
+      lot_no: info.lot_no || '',
+      branch: info.branch || '',
+      name: info.name || '',
+      qty: (info.qty != null && info.qty !== '') ? Number(info.qty) : '',
+    });
+    db.run(
+      `INSERT INTO audit_log (user_id, action, entity, entity_id, details) VALUES (?,?,?,?,?)`,
+      [(req.user && req.user.username) || 'system', action, 'lot', info.id || null, details]
+    );
+  } catch (_) { /* never let logging break the write */ }
+}
+
 app.post('/api/lots', requireLotWrite, (req, res) => {
   const l = req.body;
   // Field-name aliasing for the mobile PWA, which uses gross_weight /
@@ -4252,10 +4308,11 @@ app.post('/api/lots', requireLotWrite, (req, res) => {
   }
 
   const info = db.run(
-    `INSERT INTO lots (auction_id,lot_no,crop,grade,crpt,branch,state,trader_id,name,padd,ppla,ppin,pstate,pst_code,cr,pan,tel,aadhar,bags,litre,qty,gross_wt,sample_wt,moisture,reserved_price,user_id,bank_id)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,l.state||'TAMIL NADU',l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',Number(l.reserved_price)||0,l.user_id||'',l.bank_id||null]);
+    `INSERT INTO lots (auction_id,lot_no,crop,grade,crpt,branch,state,trader_id,name,padd,ppla,ppin,pstate,pst_code,cr,pan,tel,aadhar,bags,litre,qty,gross_wt,sample_wt,moisture,reserved_price,user_id,bank_id,immediate_payment)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,l.state||'TAMIL NADU',l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',Number(l.reserved_price)||0,l.user_id||'',l.bank_id||null,Number(l.immediate_payment)?1:0]);
   pcClearGate(db, auctionId);
+  logLotActivity(db, req, 'create', { id: info.lastInsertRowid, auction_id: auctionId, lot_no: lotNoStr, branch, name: l.name, qty: l.qty });
   // Return the inserted lot so the mobile UI can refresh from the response
   // without an extra round-trip. Desktop UI ignores the body and re-fetches.
   const lot = db.get('SELECT * FROM lots WHERE id = ?', [info.lastInsertRowid]);
@@ -4268,6 +4325,10 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
   // spice-config columns (gross_wt/sample_wt).
   if (l.gross_weight  != null && l.gross_wt  == null) l.gross_wt  = l.gross_weight;
   if (l.sample_weight != null && l.sample_wt == null) l.sample_wt = l.sample_weight;
+  // Coerce the immediate-payment flag to a 0/1 integer — the dynamic
+  // UPDATE below binds req.body values verbatim, and better-sqlite3
+  // rejects booleans, so normalise before it reaches the bind.
+  if (l.immediate_payment != null) l.immediate_payment = Number(l.immediate_payment) ? 1 : 0;
   const db = getDb();
   const lotId = parseInt(req.params.id, 10);
 
@@ -4336,17 +4397,31 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
   // the verify run looked at has changed. Operator must re-verify
   // before the next calculate/invoice/etc.
   if (current && current.auction_id) pcClearGate(db, current.auction_id);
+  logLotActivity(db, req, 'edit', {
+    id: lotId,
+    auction_id: current && current.auction_id,
+    lot_no: (l.lot_no != null) ? l.lot_no : (current && current.lot_no),
+    branch: (l.branch != null) ? l.branch : (current && current.branch),
+    name: l.name, qty: l.qty,
+  });
   res.json({ success: true });
 });
 
 app.delete('/api/lots/:id', requireDelete, (req, res) => {
   const db = getDb();
-  const cur = db.get('SELECT auction_id, locked_at FROM lots WHERE id = ?', [req.params.id]);
+  // Pull the descriptive fields before the row is gone so the activity
+  // feed can show what was deleted (lot no / branch / seller).
+  const cur = db.get('SELECT auction_id, locked_at, lot_no, branch, name, qty FROM lots WHERE id = ?', [req.params.id]);
   if (cur && cur.locked_at && lockFeatureOn(db) && !isAdmin(req)) {
     return res.status(423).json({ error: 'This lot is locked — only an admin can delete it.' });
   }
   db.run('DELETE FROM lots WHERE id = ?', [req.params.id]);
   if (cur && cur.auction_id) pcClearGate(db, cur.auction_id);
+  logLotActivity(db, req, 'delete', {
+    id: parseInt(req.params.id, 10),
+    auction_id: cur && cur.auction_id,
+    lot_no: cur && cur.lot_no, branch: cur && cur.branch, name: cur && cur.name, qty: cur && cur.qty,
+  });
   res.json({ success: true });
 });
 app.post('/api/lots/bulk-delete', requireDelete, (req, res) => {
@@ -6670,8 +6745,10 @@ app.get('/api/debit-notes', requireView, (req, res) => {
 // without inspecting the DB.
 //
 // Discount + note number are server-derived (same rules as /generate-bulk):
-//   discount = round((amount/1000) × discount_days × discount_pct)
-//              or amount × discount_pct/100 if days isn't set
+//   discount = round( amount / 1000 × discount_days × discount_pct )
+//              where amount = the purchase taxable value (Payable), and
+//              discount_days / discount_pct come from Settings → Rates.
+//              discount_days = 0 (or discount_pct = 0) → no discount.
 //   note_no  = MAX(note_no) + 1
 //
 // Legacy callers still passing `{ discount, noteNo }` are accepted —
@@ -6774,12 +6851,15 @@ app.post('/api/debit-notes/generate', requireInvoiceWrite, requireDebitNoteEnabl
   }
   let discountAmt = req.body.discount != null ? parseFloat(req.body.discount) : NaN;
   if (!Number.isFinite(discountAmt) || discountAmt <= 0) {
-    const refundAmt     = Number(purchase.refund || 0);
-    const commissionAmt = Math.round((baseAmt + refundAmt) * 1 / 100 * 100) / 100;
-    discountAmt         = Math.round((commissionAmt + commissionAmt * 0 / 100) * 100) / 100;
+    // Discount = round( Payable / 1000 × discount_days × discount_pct ),
+    // Payable = the purchase taxable amount; days/pct from Settings → Rates.
+    // discount_days = 0 (or discount_pct = 0) → no discount (0).
+    const discDays = Number(cfg.discount_days) || 0;
+    const discPct  = Number(cfg.discount_pct)  || 0;
+    discountAmt    = Math.round(baseAmt / 1000 * discDays * discPct);
   }
   if (discountAmt <= 0) {
-    return res.status(400).json({ error: 'Computed DN amount is zero — check purchase amount/refund' });
+    return res.status(400).json({ error: 'Computed discount is zero — set "Discount %" and "No. of Days for Discount" in Settings → Rates' });
   }
 
   // GST split — driven by the dealer's SALE TYPE for this trade.
@@ -6907,9 +6987,10 @@ app.post('/api/debit-notes/generate', requireInvoiceWrite, requireDebitNoteEnabl
 // its trade `ano`, and treat it as a trade-wide generation. This way
 // older UI builds aren't broken if they're still in browser caches.
 //
-// Per-DN math (same as before):
-//   discount  = round((amount / 1000) × discount_days × discount_pct)
-//               or amount × discount_pct / 100 if days isn't set
+// Per-DN math:
+//   discount  = round( amount / 1000 × discount_days × discount_pct )
+//               amount = the purchase taxable value (Payable); days/pct from
+//               Settings → Rates. discount_days = 0 → no discount (skipped).
 //   GST split = mirrors source purchase (intra → CGST+SGST, inter → IGST)
 //   GST rate  = cfg.discount_gst (typically 18%) — DN is a service charge
 //
@@ -6977,12 +7058,14 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNote
     ? addDays(trade.date, 1)
     : new Date().toISOString().slice(0, 10);
 
-  // DN math constants — Formula 5D:
-  //   DN Amount = ( (Amount + Refund) × 1/100 ) + ( Commission × 0/100 )
-  // Read once and applied per-purchase below. The 1% factor is locked
-  // (the spec doesn't make it configurable); the only knob is the GST
-  // rate applied to the DN (cfg.discount_gst, typically 18%).
+  // DN (discount) math — read once, applied per-purchase below:
+  //   Discount = round( Payable / 1000 × discount_days × discount_pct ),
+  //   Payable = the purchase taxable amount; days/pct from Settings → Rates.
+  //   discount_days = 0 → 0 (the purchase is skipped). GST on the DN uses
+  //   cfg.discount_gst (typically 18%).
   const dnGstRate     = Number(cfg.discount_gst) || Number(cfg.gst_service) || 0;
+  const discDays      = Number(cfg.discount_days) || 0;
+  const discPct       = Number(cfg.discount_pct)  || 0;
 
   // Resolve next note number. The user can supply `startNoteNo` to
   // explicitly anchor the sequence (each generated DN gets startNoteNo,
@@ -7069,14 +7152,11 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNote
       skipped.push({ invo: p.invo, ano, buyer: dealerName, reason: 'zero amount' });
       continue;
     }
-    // Formula 5D — DN = (Amount + Refund) × 1/100 + Commission × 0/100.
-    // Second term contributes 0 by design; we still compute it
-    // explicitly so the comment matches the formula 1:1.
-    const refundAmt     = Number(p.refund || 0);
-    const commissionAmt = Math.round((baseAmt + refundAmt) * 1 / 100 * 100) / 100;
-    const discountAmt   = Math.round((commissionAmt + commissionAmt * 0 / 100) * 100) / 100;
+    // Discount = round( Payable / 1000 × discount_days × discount_pct ),
+    // Payable = purchase taxable amount. discount_days = 0 → 0 (skipped).
+    const discountAmt = Math.round(baseAmt / 1000 * discDays * discPct);
     if (discountAmt <= 0) {
-      skipped.push({ invo: p.invo, ano, buyer: dealerName, reason: 'computed DN amount is zero' });
+      skipped.push({ invo: p.invo, ano, buyer: dealerName, reason: 'zero discount (set Discount % and No. of Days for Discount in Settings → Rates)' });
       continue;
     }
 

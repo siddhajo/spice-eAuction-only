@@ -3400,6 +3400,13 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
         </div>
 
+        <!-- Immediate Payment — when ticked, this lot earns the early-
+             payment discount; unticked lots get zero discount. -->
+        <label for="le-immediate-payment" style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:10px 14px;border:1.5px solid var(--border);border-radius:8px;cursor:pointer;user-select:none">
+          <input type="checkbox" id="le-immediate-payment" style="width:18px;height:18px;accent-color:var(--green);cursor:pointer">
+          <span style="font-size:13.5px;font-weight:600;color:var(--text)">Immediate payment <span style="font-weight:400;color:var(--text3)">— calculate early-payment discount for this lot</span></span>
+        </label>
+
         <div id="le-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:13px;margin-bottom:12px"></div>
 
         <div style="display:flex;gap:10px;align-items:center">
@@ -3484,6 +3491,23 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <span id="le-select-by-number-status" style="font-size:11.5px;color:var(--text3)"></span>
         </div>
         <div id="le-recent-list" style="font-size:13px"></div>
+      </div>
+
+      <!-- Activity log — collapsible, scrollable feed of who entered /
+           edited / deleted lots in this trade. Sourced from
+           /api/lots/activity. Collapse state persists in localStorage. -->
+      <div class="card" id="le-activity-card" style="padding:0;margin-top:16px">
+        <div style="padding:14px 18px;display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none" onclick="leToggleActivity()" title="Show / hide the lot activity log">
+          <span style="width:6px;height:18px;background:var(--green);border-radius:3px;display:inline-block"></span>
+          <h3 style="margin:0;font-size:14px;color:var(--text)">Activity log</h3>
+          <span id="le-activity-count" style="font-weight:400;color:var(--text3);font-size:12px"></span>
+          <span style="flex:1"></span>
+          <button type="button" class="btn btn-o" onclick="event.stopPropagation();leLoadActivity()" style="height:28px;padding:0 10px;font-size:11.5px">↻ Refresh</button>
+          <span id="le-activity-chev" style="font-size:13px;color:var(--green-dk);font-weight:800;width:18px;text-align:center">▸</span>
+        </div>
+        <div id="le-activity-body" style="border-top:1px solid var(--border);display:none">
+          <div id="le-activity-list" style="max-height:300px;overflow-y:auto;font-size:12.5px"></div>
+        </div>
       </div>
 
       <!-- ───────────────────────────────────────────────────────────
@@ -8730,14 +8754,9 @@ async function loadFormulas(){
   // ── Discount on Purchase (DN context) ───────────────────────
   html += card('Discount on Purchase (Debit Note)', [
     {
-      label: 'Discount amount',
-      note: 'Derived from Payable, rounded to the nearest rupee.',
-      formula: `Discount = round( Payable / 1000 × 14 × 0.65 )`,
-    },
-    {
-      label: 'Debit Note Amount',
-      note: 'DN Amount equals 1% of (Amount + Refund). The second term contributes 0 in this build.',
-      formula: `DN Amount = ( ( Amount + Refund ) × 1 / 100 ) + ( Commission × 0 / 100 )  &nbsp; <span style="color:var(--text3)">(2 decimals)</span>`,
+      label: 'Discount / Debit Note amount',
+      note: 'The debit-note (discount) amount, rounded to the nearest rupee. Payable = the purchase taxable amount. Zero when No. of Days for Discount is 0.',
+      formula: `Discount = round( Payable / 1000 × ${pill('No. of Days for Discount', num('discount_days', '0'))} × ${pill('Discount %', num('discount_pct', '0'))} )`,
     },
   ]);
 
@@ -8864,6 +8883,7 @@ async function loadFormulas(){
 const _le = {
   selectedSeller: null,    // { id, name, cr, pan, tel, ppla, pin, banks: [...] }
   selectedBankId: null,    // chosen bank account id (null if seller has no banks)
+  activityOpen: (function(){ try { return localStorage.getItem('le_activity_open') === '1'; } catch(_) { return false; } })(), // activity-log panel collapse state
   searchTimer: null,       // debounce timer for seller search
   recentLots: [],          // current PAGE of lots (server-paginated, lot_no DESC)
   recentTotal: 0,          // total rows matching current filter (from server) — drives the pager
@@ -9028,6 +9048,8 @@ async function loadLotEntry(){
     // Show/hide the gunny-weight entry fields based on the configured
     // Default Gunny Weight, and flip Net Weight to computed/readonly.
     leApplyGunnyMode();
+    // Restore the activity-log panel's collapse state.
+    leApplyActivityOpen();
     // Render branch dropdown. Show a helpful empty state if no branches
     // are configured yet — the field user can't proceed without one
     // because lot save requires a branch.
@@ -9070,6 +9092,7 @@ function leOnAuctionChange(){
     _le.recentLots = []; _le.recentTotal = 0; _le.recentOffset = 0;
     if (_le.selectedForPrint) _le.selectedForPrint.clear();
     renderLeRecent();
+    leLoadActivity();
     const card = document.getElementById('le-alloc-card'); if (card) card.style.display = 'none';
     leStopAutoRefresh();
     return;
@@ -9086,6 +9109,7 @@ function leOnAuctionChange(){
   // Focus seller search to start fast entry flow
   setTimeout(() => document.getElementById('le-seller-search').focus(), 50);
   loadLeRecent();
+  leLoadActivity();
   leLoadAllocBar();
   // Start polling so lots entered from the mobile PWA appear here
   // without the operator hitting refresh.
@@ -9330,6 +9354,80 @@ function leRenderBankPicker(t){
   wrap.style.display = 'block';
 }
 
+// Force the bank picker to a specific account id (used on edit so the lot
+// shows the account it was saved with). No-op when the option isn't in
+// the seller's current bank list — leaves the default selection intact.
+function leSelectBank(bankId){
+  const sel = document.getElementById('le-bank-select');
+  if (!sel) return;
+  const v = String(bankId);
+  if ([...sel.options].some(o => o.value === v)) {
+    sel.value = v;
+    _le.selectedBankId = parseInt(v, 10);
+  }
+}
+
+// ── Lot Entry activity log ────────────────────────────────────────
+// Collapsible, scrollable feed of who entered / edited / deleted lots in
+// the current trade. Reads /api/lots/activity and refreshes after every
+// mutation so the team can see each other's work live.
+function leApplyActivityOpen(){
+  const body = document.getElementById('le-activity-body');
+  const chev = document.getElementById('le-activity-chev');
+  if (body) body.style.display = _le.activityOpen ? '' : 'none';
+  if (chev) chev.textContent = _le.activityOpen ? '▾' : '▸';
+}
+function leToggleActivity(){
+  _le.activityOpen = !_le.activityOpen;
+  try { localStorage.setItem('le_activity_open', _le.activityOpen ? '1' : '0'); } catch(_) {}
+  leApplyActivityOpen();
+  if (_le.activityOpen) leLoadActivity();
+}
+function _leFmtActivityTime(s){
+  if (!s) return '';
+  const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  return m ? `${m[3]}/${m[2]} ${m[4]}:${m[5]}` : String(s);
+}
+async function leLoadActivity(){
+  const aucEl = document.getElementById('le-auction');
+  const aid = aucEl ? aucEl.value : '';
+  const list = document.getElementById('le-activity-list');
+  const countEl = document.getElementById('le-activity-count');
+  if (!list) return;
+  if (!aid) {
+    list.innerHTML = '<div style="padding:14px;color:var(--text3);text-align:center">Pick a trade to see its activity.</div>';
+    if (countEl) countEl.textContent = '';
+    return;
+  }
+  try {
+    const d = await j(`/api/lots/activity?auction_id=${encodeURIComponent(aid)}&limit=100`);
+    const items = d.items || [];
+    if (countEl) countEl.textContent = items.length ? `${items.length} recent` : '';
+    if (!items.length) {
+      list.innerHTML = '<div style="padding:14px;color:var(--text3);text-align:center">No lot activity yet in this trade.</div>';
+      return;
+    }
+    const META = {
+      create: { ico:'➕', label:'entered', color:'#15803d' },
+      edit:   { ico:'✏️', label:'edited',  color:'#B45309' },
+      delete: { ico:'🗑', label:'deleted', color:'#991B1B' },
+    };
+    list.innerHTML = items.map(it => {
+      const m = META[it.action] || { ico:'•', label:it.action, color:'var(--text2)' };
+      const qty = (it.qty !== '' && it.qty != null) ? ` · ${Number(it.qty).toFixed(2)} kg` : '';
+      return `<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 14px;border-bottom:1px solid var(--border)">
+        <span style="font-size:14px;line-height:1.3">${m.ico}</span>
+        <div style="flex:1;min-width:0">
+          <div style="color:var(--text)"><b style="color:${m.color}">${esc(m.label)}</b> lot <b>${esc(it.lot_no || '?')}</b>${it.branch ? ` <span style="color:var(--text3)">(${esc(it.branch)})</span>` : ''}${it.name ? ` — ${esc(it.name)}` : ''}${qty}</div>
+          <div style="font-size:11px;color:var(--text3)">by <b>${esc(it.user || '?')}</b> · ${esc(_leFmtActivityTime(it.at))}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    list.innerHTML = '<div style="padding:14px;color:var(--red)">Could not load activity.</div>';
+  }
+}
+
 // Find the highest existing lot number on the current trade for THIS
 // branch and suggest +1. Falls back to "1" when nothing exists yet.
 // Pure numeric strings only — alphanumeric prefixes (e.g. "A001") aren't
@@ -9522,6 +9620,9 @@ async function leSaveLot(){
       moisture: moisture,
       crpt: crptRaw,
       reserved_price: reservedPrice,
+      // Immediate-payment flag (0/1) — gates the per-lot early-payment
+      // discount on the server (calculations.js).
+      immediate_payment: (document.getElementById('le-immediate-payment')?.checked ? 1 : 0),
       state: _le.selectedSeller.pstate || getDefaultBusinessState(),
       // Pull seller's denormalised fields onto the lot row so existing
       // listings (Lots tab, exports) work without a join.
@@ -9534,6 +9635,10 @@ async function leSaveLot(){
       pan: _le.selectedSeller.pan || '',
       tel: _le.selectedSeller.tel || '',
       aadhar: _le.selectedSeller.aadhar || '',
+      // Persist the bank account chosen during entry ONTO the lot so the
+      // Payments screen routes this lot's payout to the exact account the
+      // operator picked (not just the seller's current default).
+      bank_id: _le.selectedBankId || null,
     };
     await j(_le.editingLotId
       ? `/api/lots/${_le.editingLotId}`
@@ -9585,6 +9690,10 @@ async function leSaveLot(){
     // Reserved Price — clear for next lot. User types per-lot; no
     // auto-increment by design.
     if (reservedEl && !wasEditing) reservedEl.value = '';
+    // Immediate Payment — reset to unticked for the next lot (per-lot
+    // decision; doesn't carry over). Left untouched in edit mode.
+    const immEl = document.getElementById('le-immediate-payment');
+    if (immEl && !wasEditing) immEl.checked = false;
     setTimeout(() => document.getElementById('le-lotno').focus(), 50);
     // A freshly-created lot has the highest lot_no → it lands on page 1
     // (lot_no DESC). Jump there so the user sees the entry they just made.
@@ -9595,6 +9704,7 @@ async function leSaveLot(){
     if (!wasEditing) leAutoSuggestLotNo();
     leUpdateStats();
     leLoadAllocBar();
+    leLoadActivity();
   } catch (e) {
     leShowError(e.message || 'Save failed');
   } finally {
@@ -9645,6 +9755,8 @@ function leResetForm(){
   if (crptEl2) crptEl2.value = '';
   const reservedEl2 = document.getElementById('le-reserved-price');
   if (reservedEl2) reservedEl2.value = '';
+  const immEl2 = document.getElementById('le-immediate-payment');
+  if (immEl2) immEl2.checked = false;
   document.getElementById('le-err').style.display = 'none';
   // Drop edit mode if active
   _le.editingLotId = null;
@@ -9697,6 +9809,8 @@ async function leEditLot(lotId){
   if (crptEl3) crptEl3.value = lot.crpt || '';
   const reservedEl3 = document.getElementById('le-reserved-price');
   if (reservedEl3) reservedEl3.value = (lot.reserved_price != null && Number(lot.reserved_price) !== 0) ? lot.reserved_price : '';
+  const immEl3 = document.getElementById('le-immediate-payment');
+  if (immEl3) immEl3.checked = !!Number(lot.immediate_payment);
   // In gunny mode, reconstruct the entry-time fields from the stored net
   // weight: gunny = bags × default, weight w/ gunny = net + gunny. The
   // stored value remains the net weight (qty); these are display helpers.
@@ -9749,6 +9863,10 @@ async function leEditLot(lotId){
       });
     }
   }
+  // Pre-select the bank this lot was saved with so editing keeps (and can
+  // re-confirm) the same payout account. Falls back to the seller's
+  // default — set by leRenderBankPicker — when the lot has no bank_id.
+  if (lot.bank_id != null) leSelectBank(lot.bank_id);
   // Scroll the form into view so the user sees what they're editing
   setTimeout(() => {
     document.getElementById('le-form-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -9775,6 +9893,7 @@ async function leDeleteLot(lotId, lotNo){
     await loadLeRecent();
     leUpdateStats();
     leLoadAllocBar();
+    leLoadActivity();
   } catch (e) {
     toast(`Delete failed: ${e.message || e}`);
   }

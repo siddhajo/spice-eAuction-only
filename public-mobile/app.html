@@ -339,6 +339,13 @@ select:focus{border-color:var(--green)}
           <div id="le-reserved-price-wrap" style="display:none"><div class="elb">RSRV PRICE</div><input type="text" id="le-reserved-price" placeholder="0" inputmode="decimal" class="ein" oninput="sanitizeDec(this)"></div>
         </div>
 
+        <!-- Immediate Payment — gates the per-lot early-payment discount
+             on the server. Per-lot decision; resets after each save. -->
+        <label for="le-immediate-payment" style="display:flex;align-items:center;gap:8px;margin-bottom:6px;padding:8px 10px;border:1.5px solid var(--border2);border-radius:8px;background:var(--input-bg)">
+          <input type="checkbox" id="le-immediate-payment" style="width:18px;height:18px;accent-color:var(--green)">
+          <span style="font-size:12px;font-weight:600;color:var(--text)">Immediate payment</span>
+        </label>
+
         <!-- Buttons -->
         <div id="le-btn-save" style="display:flex;gap:8px">
           <button class="btn" id="le-save" onclick="saveLot()" title="Save lot" style="flex:2;height:40px;margin-top:0;font-size:14px;border-radius:10px">✓ Save</button>
@@ -473,6 +480,10 @@ select:focus{border-color:var(--green)}
       <div><div class="lb">CROP RCPT</div><input type="text" id="ed-crpt" placeholder="01208" autocomplete="off"></div>
       <div id="ed-reserved-price-wrap" style="display:none"><div class="lb">RSRV PRICE</div><input type="text" id="ed-reserved-price" placeholder="0" inputmode="decimal" oninput="sanitizeDec(this)"></div>
     </div>
+    <label for="ed-immediate-payment" style="display:flex;align-items:center;gap:8px;margin-top:10px;padding:8px 10px;border:1.5px solid var(--border2);border-radius:8px;background:var(--input-bg)">
+      <input type="checkbox" id="ed-immediate-payment" style="width:18px;height:18px;accent-color:var(--green)">
+      <span style="font-size:12px;font-weight:600;color:var(--text)">Immediate payment</span>
+    </label>
     <div id="ed-err"></div>
   </div>
   <div class="modal-foot"><button class="btn btn-sm btn-outline" onclick="closeEdit()" style="flex:1">Cancel</button><button class="btn btn-sm" onclick="saveEdit()" id="ed-save" style="flex:2">Save</button></div>
@@ -1107,7 +1118,9 @@ async function saveLot(){
   var reservedPrice=rpRaw===''?0:parseFloat(rpRaw)||0;
 
   document.getElementById('le-save').disabled=true;
-  var lotData={auction_id:aid,trader_id:selT.id,branch:br,grade:grade,bags:bags,litre:litre,qty:qty,lot_no:lotNo,state:'TAMIL NADU',bank_id:selBankId?parseInt(selBankId):null,gross_weight:grossWt,sample_weight:sampleWt,moisture:moisture,crpt:crpt,reserved_price:reservedPrice};
+  var immPay=document.getElementById('le-immediate-payment');
+  var immediatePayment=(immPay&&immPay.checked)?1:0;
+  var lotData={auction_id:aid,trader_id:selT.id,branch:br,grade:grade,bags:bags,litre:litre,qty:qty,lot_no:lotNo,state:'TAMIL NADU',bank_id:selBankId?parseInt(selBankId):null,gross_weight:grossWt,sample_weight:sampleWt,moisture:moisture,crpt:crpt,reserved_price:reservedPrice,immediate_payment:immediatePayment};
   try{
     var r=await fetch(B+'/api/lots',{method:'POST',headers:ah(),body:JSON.stringify(lotData)});
     var d=await r.json();
@@ -1153,6 +1166,9 @@ function resetFormKeepSeller(){
   // Reserved price — clear; user types per lot (no auto-increment).
   var rpEl2=document.getElementById('le-reserved-price');
   if(rpEl2)rpEl2.value='';
+  // Immediate payment — reset to unticked for the next lot.
+  var immK=document.getElementById('le-immediate-payment');
+  if(immK)immK.checked=false;
   renderLotGrid();
   selectNextAvailableLot();
 }
@@ -1169,7 +1185,7 @@ function _incrementCrptStr(prev){
   var padded=next.length>=num.length?next:next.padStart(num.length,'0');
   return prefix+padded;
 }
-function resetForm(){selT=null;selectedLots=[];lastSavedLot=null;document.getElementById('le-recent').innerHTML='';document.getElementById('le-name').value='';document.getElementById('le-grade').value='1';document.getElementById('le-bags').value='';document.getElementById('le-litre').value=cfgDefaultLitre||'';document.getElementById('le-qty').value='';document.getElementById('le-gross').value='';var wgR=document.getElementById('le-weight-gunny');if(wgR)wgR.value='';var gwR=document.getElementById('le-gunny-weight');if(gwR)gwR.value='';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';if(document.getElementById('le-moisture'))document.getElementById('le-moisture').value='';var crptEl3=document.getElementById('le-crpt');if(crptEl3)crptEl3.value='';var rpEl3=document.getElementById('le-reserved-price');if(rpEl3)rpEl3.value='';document.getElementById('le-lot-err').style.display='none';document.getElementById('le-res').style.display='none';document.getElementById('le-tc').style.display='none';document.getElementById('le-bank').style.display='none';document.getElementById('le-bank-form').style.display='none';document.getElementById('le-sw').style.display='block';hideSellerBookings();showLotGrid();renderLotGrid();selectNextAvailableLot();document.getElementById('le-scroll').scrollTop=0}
+function resetForm(){selT=null;selectedLots=[];lastSavedLot=null;document.getElementById('le-recent').innerHTML='';document.getElementById('le-name').value='';document.getElementById('le-grade').value='1';document.getElementById('le-bags').value='';document.getElementById('le-litre').value=cfgDefaultLitre||'';document.getElementById('le-qty').value='';document.getElementById('le-gross').value='';var wgR=document.getElementById('le-weight-gunny');if(wgR)wgR.value='';var gwR=document.getElementById('le-gunny-weight');if(gwR)gwR.value='';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';if(document.getElementById('le-moisture'))document.getElementById('le-moisture').value='';var crptEl3=document.getElementById('le-crpt');if(crptEl3)crptEl3.value='';var rpEl3=document.getElementById('le-reserved-price');if(rpEl3)rpEl3.value='';var immR=document.getElementById('le-immediate-payment');if(immR)immR.checked=false;document.getElementById('le-lot-err').style.display='none';document.getElementById('le-res').style.display='none';document.getElementById('le-tc').style.display='none';document.getElementById('le-bank').style.display='none';document.getElementById('le-bank-form').style.display='none';document.getElementById('le-sw').style.display='block';hideSellerBookings();showLotGrid();renderLotGrid();selectNextAvailableLot();document.getElementById('le-scroll').scrollTop=0}
 
 // ── MY LOTS (by branch) ──
 async function loadMyLots(){if(!aid)return;try{const r=await fetch(B+'/api/lots?auction_id='+aid+'&branch='+encodeURIComponent(br),{headers:ah()});const d=await r.json();allMyLots=d.lots||[];const stats=d.stats||{};document.getElementById('ml-cnt').textContent=stats.lotCount||0;document.getElementById('ml-bags').textContent=stats.totalBags||0;document.getElementById('ml-qty').textContent=(stats.totalQty||0).toFixed(3);document.getElementById('ml-search').value='';renderMyLots(allMyLots)}catch(e){}}
@@ -1194,7 +1210,7 @@ function openEdit(id,lotNo,s,g,bags,litre,qty,traderId,bankId){editId=id;editTra
    the /detail fetch returns. Visibility of the Reserved Price wrap
    mirrors the live cfgShowReservedPrice flag so toggling the feature
    in Settings reflects on the next modal open without a reload. */
-var edCrptOpen=document.getElementById('ed-crpt');if(edCrptOpen)edCrptOpen.value='';var edRpOpen=document.getElementById('ed-reserved-price');if(edRpOpen)edRpOpen.value='';var edRpWrap=document.getElementById('ed-reserved-price-wrap');if(edRpWrap)edRpWrap.style.display=cfgShowReservedPrice?'block':'none';document.getElementById('ed-err').innerHTML='';document.getElementById('ed-bank-form').style.display='none';document.getElementById('edit-modal').classList.add('show');if(traderId)loadEditBanks(traderId);fetch(B+'/api/lots/'+id+'/detail',{headers:ah()}).then(r=>r.json()).then(d=>{if(d.lot){var sw=d.lot.sample_weight!=null&&d.lot.sample_weight>0?d.lot.sample_weight:cfgSampleWeight||0;document.getElementById('ed-sample').value=Number(sw).toFixed(3);document.getElementById('ed-gross').value=d.lot.gross_weight?Number(d.lot.gross_weight).toFixed(3):'0';if(edCrptOpen)edCrptOpen.value=d.lot.crpt||'';if(edRpOpen)edRpOpen.value=(d.lot.reserved_price!=null&&Number(d.lot.reserved_price)!==0)?d.lot.reserved_price:'';calcEditGross()}}).catch(()=>{calcEditGross()})}
+var edCrptOpen=document.getElementById('ed-crpt');if(edCrptOpen)edCrptOpen.value='';var edRpOpen=document.getElementById('ed-reserved-price');if(edRpOpen)edRpOpen.value='';var edImmOpen=document.getElementById('ed-immediate-payment');if(edImmOpen)edImmOpen.checked=false;var edRpWrap=document.getElementById('ed-reserved-price-wrap');if(edRpWrap)edRpWrap.style.display=cfgShowReservedPrice?'block':'none';document.getElementById('ed-err').innerHTML='';document.getElementById('ed-bank-form').style.display='none';document.getElementById('edit-modal').classList.add('show');if(traderId)loadEditBanks(traderId);fetch(B+'/api/lots/'+id+'/detail',{headers:ah()}).then(r=>r.json()).then(d=>{if(d.lot){var sw=d.lot.sample_weight!=null&&d.lot.sample_weight>0?d.lot.sample_weight:cfgSampleWeight||0;document.getElementById('ed-sample').value=Number(sw).toFixed(3);document.getElementById('ed-gross').value=d.lot.gross_weight?Number(d.lot.gross_weight).toFixed(3):'0';if(edCrptOpen)edCrptOpen.value=d.lot.crpt||'';if(edRpOpen)edRpOpen.value=(d.lot.reserved_price!=null&&Number(d.lot.reserved_price)!==0)?d.lot.reserved_price:'';if(edImmOpen)edImmOpen.checked=!!Number(d.lot.immediate_payment);calcEditGross()}}).catch(()=>{calcEditGross()})}
 function closeEdit(){document.getElementById('edit-modal').classList.remove('show');editId=null;editTraderId=null}
 function editSellerMode(){document.getElementById('ed-seller-card').style.display='none';document.getElementById('ed-seller-search').style.display='block';document.getElementById('ed-seller-input').value='';document.getElementById('ed-seller-input').focus()}
 let edStm;
@@ -1300,7 +1316,7 @@ function calcEditGross(){var net=parseFloat(document.getElementById('ed-qty').va
 async function saveEdit(){const lotNo=document.getElementById('ed-lotno').value.trim(),grade=document.getElementById('ed-grade').value.trim()||'1',bags=parseInt(document.getElementById('ed-bags').value),litre=parseInt(document.getElementById('ed-litre').value),qty=parseFloat(document.getElementById('ed-qty').value),sampleWt=parseFloat(document.getElementById('ed-sample').value)||0,grossWt=parseFloat(document.getElementById('ed-gross').value)||0,er=document.getElementById('ed-err');er.innerHTML='';if(!lotNo||!bags||!litre||!qty){er.innerHTML='<div class="eb">Fill all fields</div>';return}/* Crop Receipt always written (empty string clears it). Reserved
    Price only when the flag is on — sending it from a UI where the
    input isn't visible would silently clobber a value set by the desktop. */
-var edCrptSave=document.getElementById('ed-crpt');var crptVal=edCrptSave?edCrptSave.value.trim():'';var edRpSave=document.getElementById('ed-reserved-price');var rpRawSave=(edRpSave&&cfgShowReservedPrice)?edRpSave.value.trim():null;document.getElementById('ed-save').disabled=true;try{const body={lot_no:lotNo,grade,bags,litre,qty,sample_weight:sampleWt,gross_weight:grossWt,crpt:crptVal};if(rpRawSave!==null)body.reserved_price=rpRawSave===''?0:parseFloat(rpRawSave)||0;if(editTraderId)body.trader_id=editTraderId;var edBankSel=document.getElementById('ed-bank-select');if(edBankSel)body.bank_id=edBankSel.value?parseInt(edBankSel.value):null;const r=await fetch(B+'/api/lots/'+editId,{method:'PUT',headers:ah(),body:JSON.stringify(body)});const d=await r.json();if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Failed')+'</div>';return}toast('Lot updated',false);closeEdit();loadMyLots();await loadStats();updUI()}catch(e){er.innerHTML='<div class="eb">Failed</div>'}finally{document.getElementById('ed-save').disabled=false}}
+var edCrptSave=document.getElementById('ed-crpt');var crptVal=edCrptSave?edCrptSave.value.trim():'';var edRpSave=document.getElementById('ed-reserved-price');var rpRawSave=(edRpSave&&cfgShowReservedPrice)?edRpSave.value.trim():null;document.getElementById('ed-save').disabled=true;try{const body={lot_no:lotNo,grade,bags,litre,qty,sample_weight:sampleWt,gross_weight:grossWt,crpt:crptVal};if(rpRawSave!==null)body.reserved_price=rpRawSave===''?0:parseFloat(rpRawSave)||0;var edImmSave=document.getElementById('ed-immediate-payment');body.immediate_payment=(edImmSave&&edImmSave.checked)?1:0;if(editTraderId)body.trader_id=editTraderId;var edBankSel=document.getElementById('ed-bank-select');if(edBankSel)body.bank_id=edBankSel.value?parseInt(edBankSel.value):null;const r=await fetch(B+'/api/lots/'+editId,{method:'PUT',headers:ah(),body:JSON.stringify(body)});const d=await r.json();if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Failed')+'</div>';return}toast('Lot updated',false);closeEdit();loadMyLots();await loadStats();updUI()}catch(e){er.innerHTML='<div class="eb">Failed</div>'}finally{document.getElementById('ed-save').disabled=false}}
 async function deleteLot(id,n){if(!confirm('Delete Lot #'+n+'?'))return;try{await fetch(B+'/api/lots/'+id,{method:'DELETE',headers:ah()});toast('Deleted',false);loadMyLots();await loadStats();updUI()}catch(e){}}
 
 function clearEntryForm(){
@@ -1317,6 +1333,9 @@ function clearEntryForm(){
   var gwK=document.getElementById('le-gunny-weight');if(gwK)gwK.value='';
   document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';
   if(document.getElementById('le-moisture'))document.getElementById('le-moisture').value='';
+  var crptCE=document.getElementById('le-crpt');if(crptCE)crptCE.value='';
+  var rpCE=document.getElementById('le-reserved-price');if(rpCE)rpCE.value='';
+  var immCE=document.getElementById('le-immediate-payment');if(immCE)immCE.checked=false;
   document.getElementById('le-res').style.display='none';
   document.getElementById('le-tc').style.display='none';
   document.getElementById('le-bank').style.display='none';
