@@ -523,7 +523,7 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 
 /* ── RIGHT: glass sign-in card ─────────────────────────────── */
 .login-card{
-  position:relative;z-index:1;width:100%;max-width:430px;justify-self:end;
+  position:relative;z-index:1;left:32px;width:100%;max-width:430px;justify-self:end;
   background:rgba(255,255,255,.97);
   -webkit-backdrop-filter:blur(22px) saturate(150%);backdrop-filter:blur(22px) saturate(150%);
   border:1px solid rgba(255,255,255,.8);border-radius:26px;padding:38px 36px 30px;
@@ -816,7 +816,7 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
   .login-stage{grid-template-columns:1fr;max-width:440px;gap:30px;min-width:0}
   .login-hero,.login-card{min-width:0;max-width:100%}
   .login-hero{max-width:none}
-  .login-card{order:-1;justify-self:stretch}
+  .login-card{order:-1;justify-self:stretch;left:0}
   #login .login-card .fg input{min-width:0}
   .login-hero-sub{display:none}
 }
@@ -3289,11 +3289,28 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
           <div>
             <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Bags</div>
-            <input type="number" id="le-bags" min="0" placeholder="0" style="width:100%;height:40px;padding:0 12px;border:1.5px solid var(--border);border-radius:8px;font-size:15px">
+            <input type="number" id="le-bags" min="0" placeholder="0" oninput="leOnBagsInput()" style="width:100%;height:40px;padding:0 12px;border:1.5px solid var(--border);border-radius:8px;font-size:15px">
           </div>
           <div>
             <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Litre Wt</div>
             <input type="number" id="le-litre" min="0" placeholder="0" style="width:100%;height:40px;padding:0 12px;border:1.5px solid var(--border);border-radius:8px;font-size:15px">
+          </div>
+        </div>
+
+        <!-- Gunny weight row — shown only when the "Default Gunny Weight"
+             lot-entry default is > 0. The user types the gross weight
+             INCLUDING the empty jute bags; Gunny Weight (= bags × default)
+             is auto-derived and Net Weight below is computed as
+             weight_with_gunny − gunny_weight. leApplyGunnyMode() toggles
+             this row + the Net Weight field's readonly state. -->
+        <div id="le-gunny-wrap" style="display:none;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+          <div>
+            <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Weight w/ Gunny (kg)</div>
+            <input type="number" id="le-weight-gunny" step="0.001" min="0" placeholder="0.000" oninput="leCalcNetFromGunny()" style="width:100%;height:40px;padding:0 12px;border:1.5px solid var(--green);border-radius:8px;font-size:16px;font-weight:700;color:var(--green)">
+          </div>
+          <div>
+            <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Gunny Weight (kg)</div>
+            <input type="number" id="le-gunny-weight" readonly placeholder="0.000" style="width:100%;height:40px;padding:0 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;background:var(--bg);color:var(--text3)">
           </div>
         </div>
 
@@ -3366,6 +3383,16 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <option value="date">Sort: Date</option>
             <option value="name">Sort: Seller</option>
             <option value="branch">Sort: Branch</option>
+          </select>
+          <!-- Page size — how many recent entries per page. Persisted in
+               localStorage so the user's choice survives reloads. -->
+          <select id="le-recent-page-size" onchange="leSetPageSize(this.value)" title="Rows per page"
+                  style="height:30px;font-size:12px;padding:0 10px;border:1px solid var(--border);border-radius:6px;background:#fff;margin-right:8px">
+            <option value="10">Show: 10/page</option>
+            <option value="20">Show: 20/page</option>
+            <option value="50">Show: 50/page</option>
+            <option value="100">Show: 100/page</option>
+            <option value="200">Show: 200/page</option>
           </select>
           <!-- Print Selected, Print by Seller, Clear — shown only when ≥1 lot
                is checked. The N badges update live. Styling is unified into a
@@ -4367,6 +4394,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <button class="btn btn-a" onclick="impVerify()">2. Verify Against Database</button>
           <button class="btn btn-a" onclick="impRun()">3. Run Import</button>
           <button class="btn btn-o" onclick="impLoadHistory()">View History</button>
+          <button class="btn btn-o" onclick="impClear()" style="margin-left:auto" title="Clear file, reset module pick, hide preview / verify panels">Clear</button>
         </div>
         <div id="imp-result" style="margin-bottom:14px;font-size:12.5px;color:var(--text2)"></div>
         <div id="imp-preview" style="overflow-x:auto;max-height:300px;border:1px solid var(--spice-line);border-radius:8px;padding:8px;background:#fff;margin-bottom:14px"></div>
@@ -8786,12 +8814,15 @@ const _le = {
   selectedSeller: null,    // { id, name, cr, pan, tel, ppla, pin, banks: [...] }
   selectedBankId: null,    // chosen bank account id (null if seller has no banks)
   searchTimer: null,       // debounce timer for seller search
-  recentLots: [],          // currently-loaded window of lots (server-paginated, lot_no DESC)
-  recentTotal: 0,          // total rows matching current filter (from server) — drives Load More gating
-  recentOffset: 0,         // rows already fetched from server; next Load More uses this as offset
+  recentLots: [],          // current PAGE of lots (server-paginated, lot_no DESC)
+  recentTotal: 0,          // total rows matching current filter (from server) — drives the pager
+  recentOffset: 0,         // (legacy) rows fetched; retained for back-compat helpers
+  recentPage: 1,           // current page (1-based) shown in the recent-entries pager
+  recentPageSize: (function(){ const v = parseInt(localStorage.getItem('leRecentPageSize'),10); return [10,20,50,100,200].includes(v) ? v : 20; })(),
   recentSearch: '',        // active seller-name filter (LIKE on lots.name via /api/lots?name=)
   recentSearchTimer: null, // debounce timer for the search input
   sampleWeight: 0,         // from settings (sample_weight key, defaults to 0)
+  defaultGunny: 0,         // from settings (default_gunny_weight) — per-bag empty gunny wt; > 0 enables the gunny-weight entry fields
   defaultLitre: '',        // from settings — pre-fills litre input on each new lot
   showMoisture: false,     // from settings — toggles the moisture column/input
   editEnabled: true,       // from settings — when false, only admins can edit lots
@@ -8914,6 +8945,9 @@ async function loadLotEntry(){
       const cfg = await j('/api/company-settings/flat');
       // Sample weight — accept legacy 'sample_wt' key too for older DBs
       _le.sampleWeight = Number(cfg.sample_weight ?? cfg.sample_wt ?? cfg.sampleWeight ?? 0) || 0;
+      // Per-bag empty gunny weight. > 0 switches Lot Entry into
+      // "Weight w/ Gunny" mode where net weight is derived.
+      _le.defaultGunny = Number(cfg.default_gunny_weight ?? 0) || 0;
       _le.defaultLitre  = String(cfg.default_litre || '').trim();
       _le.showMoisture  = String(cfg.show_moisture || 'false') === 'true';
       _le.editEnabled   = String(cfg.edit_enabled  || 'true')  === 'true';
@@ -8928,6 +8962,7 @@ async function loadLotEntry(){
       }
     } catch(e) {
       _le.sampleWeight = 0;
+      _le.defaultGunny = 0;
       _le.defaultLitre = '';
       _le.showMoisture = false;
       _le.editEnabled  = true;
@@ -8939,6 +8974,9 @@ async function loadLotEntry(){
     // workflow doesn't need moisture.
     const moistureWrap = document.getElementById('le-moisture-wrap');
     if (moistureWrap) moistureWrap.style.display = _le.showMoisture ? '' : 'none';
+    // Show/hide the gunny-weight entry fields based on the configured
+    // Default Gunny Weight, and flip Net Weight to computed/readonly.
+    leApplyGunnyMode();
     // Render branch dropdown. Show a helpful empty state if no branches
     // are configured yet — the field user can't proceed without one
     // because lot save requires a branch.
@@ -8974,6 +9012,7 @@ function leOnAuctionChange(){
   // rows in the new trade. Clearing the visible input keeps UI and
   // state in sync.
   _le.recentSearch = '';
+  _le.recentPage = 1; // every trade change starts at the first page
   const sb = document.getElementById('le-recent-search'); if (sb) sb.value = '';
   const ss = document.getElementById('le-recent-search-status'); if (ss) ss.textContent = '';
   if (!aid) {
@@ -9318,6 +9357,50 @@ function leCalcGross(){
   document.getElementById('le-gross').value = gross > 0 ? gross.toFixed(3) : '';
 }
 
+// Gunny-weight entry mode. Active when Settings → Lot Entry Defaults →
+// "Default Gunny Weight (kg)" is > 0. In that mode the operator weighs
+// the lot WITH its empty jute bags and types that into "Weight w/ Gunny";
+// the tare (bags × default) and the net weight are derived. When the
+// default is 0/unset the fields stay hidden and Net Weight is typed
+// directly, preserving the classic flow.
+function leGunnyActive(){ return (Number(_le.defaultGunny) || 0) > 0; }
+
+function leApplyGunnyMode(){
+  const active = leGunnyActive();
+  const wrap = document.getElementById('le-gunny-wrap');
+  if (wrap) wrap.style.display = active ? 'grid' : 'none';
+  // When gunny mode is on, Net Weight is a derived figure — make it
+  // read-only so it can't drift out of sync with Weight w/ Gunny.
+  const qtyEl = document.getElementById('le-qty');
+  if (qtyEl) {
+    qtyEl.readOnly = active;
+    qtyEl.title = active ? 'Computed: Weight w/ Gunny − (Bags × Default Gunny Weight)' : '';
+  }
+  if (active) leCalcNetFromGunny();
+}
+
+// Derive Gunny Weight (bags × default) and Net Weight (weight w/ gunny −
+// gunny weight) from the current inputs. No-op visually when gunny mode
+// is off (the fields are hidden), but still safe to call.
+function leCalcNetFromGunny(){
+  if (!leGunnyActive()) return;
+  const bags = parseInt(document.getElementById('le-bags').value, 10) || 0;
+  const wwg  = parseFloat(document.getElementById('le-weight-gunny').value) || 0;
+  const gunny = bags * (Number(_le.defaultGunny) || 0);
+  const gunnyEl = document.getElementById('le-gunny-weight');
+  if (gunnyEl) gunnyEl.value = gunny > 0 ? gunny.toFixed(3) : '';
+  const net = wwg - gunny;
+  const qtyEl = document.getElementById('le-qty');
+  if (qtyEl) qtyEl.value = net > 0 ? net.toFixed(3) : '';
+  leCalcGross();
+}
+
+// Bags drives the gunny tare, so recompute net weight when it changes —
+// but only in gunny mode (otherwise bags has no effect on weight).
+function leOnBagsInput(){
+  if (leGunnyActive()) leCalcNetFromGunny();
+}
+
 function leShowError(msg){
   const el = document.getElementById('le-err');
   el.textContent = msg;
@@ -9452,6 +9535,9 @@ async function leSaveLot(){
     // auto-increment by design.
     if (reservedEl && !wasEditing) reservedEl.value = '';
     setTimeout(() => document.getElementById('le-lotno').focus(), 50);
+    // A freshly-created lot has the highest lot_no → it lands on page 1
+    // (lot_no DESC). Jump there so the user sees the entry they just made.
+    if (!wasEditing) _le.recentPage = 1;
     await loadLeRecent();
     // After a successful create (not edit), auto-suggest the next lot
     // number for this branch so the user can hit Save again immediately.
@@ -9493,6 +9579,11 @@ function leResetForm(){
   document.getElementById('le-litre').value = _le.defaultLitre || '';
   document.getElementById('le-qty').value = '';
   document.getElementById('le-gross').value = '';
+  // Clear the gunny-entry fields and re-sync visibility / readonly state
+  // (the Default Gunny Weight setting may have changed since last open).
+  const wgEl = document.getElementById('le-weight-gunny'); if (wgEl) wgEl.value = '';
+  const gwEl = document.getElementById('le-gunny-weight'); if (gwEl) gwEl.value = '';
+  leApplyGunnyMode();
   document.getElementById('le-grade').value = '1';
   document.getElementById('le-sample').value = _le.sampleWeight ? _le.sampleWeight.toFixed(3) : '0.000';
   const moistureEl = document.getElementById('le-moisture');
@@ -9555,6 +9646,18 @@ async function leEditLot(lotId){
   if (crptEl3) crptEl3.value = lot.crpt || '';
   const reservedEl3 = document.getElementById('le-reserved-price');
   if (reservedEl3) reservedEl3.value = (lot.reserved_price != null && Number(lot.reserved_price) !== 0) ? lot.reserved_price : '';
+  // In gunny mode, reconstruct the entry-time fields from the stored net
+  // weight: gunny = bags × default, weight w/ gunny = net + gunny. The
+  // stored value remains the net weight (qty); these are display helpers.
+  if (leGunnyActive()) {
+    const bagsN  = parseInt(lot.bags, 10) || 0;
+    const gunny  = bagsN * (Number(_le.defaultGunny) || 0);
+    const net    = Number(lot.qty) || 0;
+    const gwEl   = document.getElementById('le-gunny-weight');
+    if (gwEl) gwEl.value = gunny > 0 ? gunny.toFixed(3) : '';
+    const wgEl   = document.getElementById('le-weight-gunny');
+    if (wgEl) wgEl.value = (net + gunny) > 0 ? (net + gunny).toFixed(3) : '';
+  }
   leCalcGross();
   // Branch may differ from the toolbar — pre-fill so the user sees what
   // this lot's branch is. Don't overwrite the toolbar branch input
@@ -9787,27 +9890,33 @@ async function loadLeRecent(){
   const aid = document.getElementById('le-auction').value;
   if (!aid) return;
   try {
-    const PAGE = 25;
+    const PAGE = _le.recentPageSize || 20;
+    if (!_le.recentPage || _le.recentPage < 1) _le.recentPage = 1;
+    const offset = (_le.recentPage - 1) * PAGE;
     const search = String(_le.recentSearch || '').trim();
     // `name=` runs LIKE %X% against lots.name on the server, which is
     // the seller column for this trade. Without this query param the
-    // search would only filter the locally-cached 25-row window and
-    // miss every other matching lot in the trade.
-    const qs = `paginated=1&limit=${PAGE}&offset=0`
+    // search would only filter the locally-loaded page and miss every
+    // other matching lot in the trade.
+    const qs = `paginated=1&limit=${PAGE}&offset=${offset}`
              + (search ? `&name=${encodeURIComponent(search)}` : '');
     const data = await j(`/api/lots/${aid}?${qs}`);
-    // Server now returns { rows, total, limit, offset } when paginated=1.
+    // Server returns { rows, total, limit, offset } when paginated=1.
     // Defensive fall-through for very old servers that returned a flat
     // array even with paginated=1 — render whatever shape we got.
     if (Array.isArray(data)) {
-      _le.recentLots = data;
-      _le.recentTotal  = data.length;
-      _le.recentOffset = data.length;
+      _le.recentLots  = data;
+      _le.recentTotal = data.length;
     } else {
-      _le.recentLots   = Array.isArray(data.rows) ? data.rows : [];
-      _le.recentTotal  = Number(data.total) || _le.recentLots.length;
-      _le.recentOffset = _le.recentLots.length;
+      _le.recentLots  = Array.isArray(data.rows) ? data.rows : [];
+      _le.recentTotal = Number(data.total) || _le.recentLots.length;
     }
+    _le.recentOffset = offset + _le.recentLots.length;
+    // Snap back to the last valid page when we've paged past the end
+    // (e.g. after deletions or switching to a larger page size) and
+    // reload once so the user never lands on a blank page.
+    const totalPages = Math.max(1, Math.ceil((_le.recentTotal || 0) / PAGE));
+    if (_le.recentPage > totalPages) { _le.recentPage = totalPages; return loadLeRecent(); }
     renderLeRecent();
     leUpdateStats();
     // Datalist suggestions stay tied to the trade (unfiltered list of
@@ -9818,6 +9927,27 @@ async function loadLeRecent(){
     console.error('Failed to load recent lots:', e);
   }
 }
+// Change rows-per-page from the "Show: N/page" selector. Persists the
+// choice and jumps back to page 1 so the new window starts at the top.
+function leSetPageSize(v){
+  const n = parseInt(v, 10);
+  if (![10,20,50,100,200].includes(n)) return;
+  _le.recentPageSize = n;
+  _le.recentPage = 1;
+  try { localStorage.setItem('leRecentPageSize', String(n)); } catch (_){}
+  loadLeRecent();
+}
+// Jump to a specific 1-based page (clamped) and reload that window.
+function leGoToPage(p){
+  const PAGE = _le.recentPageSize || 20;
+  const totalPages = Math.max(1, Math.ceil((_le.recentTotal || 0) / PAGE));
+  const next = Math.min(totalPages, Math.max(1, parseInt(p, 10) || 1));
+  if (next === _le.recentPage) return;
+  _le.recentPage = next;
+  loadLeRecent();
+}
+function lePrevPage(){ leGoToPage((_le.recentPage || 1) - 1); }
+function leNextPage(){ leGoToPage((_le.recentPage || 1) + 1); }
 
 // Append the next page of lots from the server. Cheap on the wire (25
 // rows of cardamom-lot data is ~3-5 KB) and avoids memory pressure on
@@ -9860,6 +9990,7 @@ function leOnRecentSearchInput(){
     if (_le.recentSearch === v) return;
     _le.recentSearch = v;
     _le.recentOffset = 0;
+    _le.recentPage = 1; // a new filter restarts at the first page
     // Drop any per-print selection — those ids may not survive the
     // filter and would silently inflate the "Print Selected" badge.
     if (_le.selectedForPrint) _le.selectedForPrint.clear();
@@ -9874,6 +10005,7 @@ function leClearRecentSearch(){
   if (el) el.value = '';
   _le.recentSearch = '';
   _le.recentOffset = 0;
+  _le.recentPage = 1;
   loadLeRecent();
   leUpdateRecentSearchStatus();
 }
@@ -10036,10 +10168,17 @@ function renderLeRecent(){
   const hdrStyle = (col, extra) => 'cursor:pointer;user-select:none;' + (extra||'') +
         (sortMode === col ? 'color:var(--green);' : '');
   const total     = _le.recentTotal != null ? _le.recentTotal : visible.length;
-  const remaining = Math.max(0, total - visible.length);
+  const PAGE      = _le.recentPageSize || 20;
+  const page      = _le.recentPage || 1;
+  const totalPages = Math.max(1, Math.ceil((total || 0) / PAGE));
+  const startIdx  = total === 0 ? 0 : (page - 1) * PAGE + 1;
+  const endIdx    = (page - 1) * PAGE + visible.length;
+  // Keep the page-size selector in sync with state (e.g. after reload).
+  const psSel = document.getElementById('le-recent-page-size');
+  if (psSel && psSel.value !== String(PAGE)) psSel.value = String(PAGE);
   if (count) {
     const tail = searchActive ? ` matching “${_le.recentSearch}”` : '';
-    count.textContent = `Showing ${visible.length} of ${total}${tail}`;
+    count.textContent = `Showing ${startIdx}–${endIdx} of ${total}${tail}`;
   }
   // 8-column grid: [select] [lot] [seller] [branch] [bags] [litre] [qty] [actions]
   // Header row + scrollable rows region. The wrapping container holds
@@ -10047,15 +10186,13 @@ function renderLeRecent(){
   // while the user scrolls through hundreds of lots. Max-height tuned
   // to ~9 rows visible (≈ a screenful on a typical 13" laptop) so the
   // form stays in the viewport above.
-  // Drop any selected ids that no longer exist in the loaded window so
-  // the "Print Selected" count never lies after a reload.
-  if (_le.selectedForPrint && _le.selectedForPrint.size) {
-    const live = new Set(visible.map(l => l.id));
-    for (const id of [..._le.selectedForPrint]) if (!live.has(id)) _le.selectedForPrint.delete(id);
-  }
+  // NOTE: selections (_le.selectedForPrint) intentionally PERSIST across
+  // pages — the user can tick lots on page 1, move to page 2, and still
+  // print them all. (A search-filter change clears the selection in
+  // leOnRecentSearchInput so the count can't refer to filtered-out rows.)
   const COLS = 'grid-template-columns:32px 80px 1fr 90px 70px 70px 80px 88px';
   host.innerHTML = `
-    <div style="display:grid;${COLS};gap:0;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;padding:6px 12px;border-bottom:1px solid var(--border);background:var(--bg);position:sticky;top:0;z-index:1">
+    <div style="display:grid;${COLS};gap:0;font-size:11px;font-weight:700;color:var(--green-dk);text-transform:uppercase;letter-spacing:.5px;padding:6px 12px;border-bottom:1px solid var(--green-border);background:var(--green-bg);position:sticky;top:0;z-index:1">
       <div style="text-align:center"><input type="checkbox" id="le-recent-select-all" onchange="leToggleSelectAll(this.checked)" title="Select all visible" style="cursor:pointer"></div>
       <div onclick="leSortByColumn('lot_no')" title="Sort by Lot No" style="${hdrStyle('lot_no')}">Lot${arrow('lot_no')}</div>
       <div onclick="leSortByColumn('name')"   title="Sort by Seller" style="${hdrStyle('name')}">Seller${arrow('name')}</div>
@@ -10084,13 +10221,13 @@ function renderLeRecent(){
           </div>
         </div>`;
       }).join('')}
-      ${remaining > 0 ? `
-        <div style="padding:10px;text-align:center;border-bottom:1px solid var(--border)">
-          <button onclick="leLoadMoreRecent()" class="btn btn-o" style="font-size:12px;padding:6px 14px">
-            Load More (${remaining} more)
-          </button>
-        </div>` : ''}
     </div>
+    ${totalPages > 1 ? `
+      <div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:10px;border-top:1px solid var(--border);font-size:12px;color:var(--text2)">
+        <button onclick="lePrevPage()" class="btn btn-o" style="font-size:12px;padding:5px 12px" ${page <= 1 ? 'disabled' : ''}>◀ Prev</button>
+        <span>Page <b>${page}</b> of ${totalPages}</span>
+        <button onclick="leNextPage()" class="btn btn-o" style="font-size:12px;padding:5px 12px" ${page >= totalPages ? 'disabled' : ''}>Next ▶</button>
+      </div>` : ''}
   `;
   // Sync the master "select all" checkbox state with current selection.
   const all = document.getElementById('le-recent-select-all');
@@ -15497,6 +15634,15 @@ function openLotEdit(l){
     codeEl._wiredLookup = true;
     codeEl.addEventListener('change', async () => {
       const code = (codeEl.value || '').trim().toUpperCase();
+      // Withdrawn lots carry no sale: zero the price so the amount (and,
+      // after save+recalc, every downstream tax/payable figure) drops to
+      // nil. No buyer lookup applies to the 'WD' marker, so bail early.
+      if (code === 'WD') {
+        codeEl.value = 'WD';
+        if (priceEl) priceEl.value = '0';
+        recalcAmount();
+        return;
+      }
       if (!code) return;
       try {
         // First try the in-memory cache populated when the modal opened
@@ -19377,6 +19523,37 @@ let _impLastKeyCols = [];
 let _impLastRows    = [];
 let _impLastAutoFillAuctionId = false;
 
+// Resets the Import Old Data screen back to its first-load state:
+// clears the file picker, drops every cached mapping / preview /
+// verify payload, hides the verify panel, wipes the result line and
+// the projected-rows table. Module dropdown is left at whatever the
+// user picked because it's their selection — they may want to clear
+// the picker and re-upload the same module. History panel stays as-is
+// (the user can refresh it via "View History").
+function impClear(){
+  const fileEl = document.getElementById('imp-file');
+  if (fileEl) fileEl.value = '';
+  // Drop every retained payload so the next Preview starts fresh.
+  _impLastMapping = null;
+  _impLastHeaders = [];
+  _impLastFields  = [];
+  _impLastKeyCols = [];
+  _impLastRows    = [];
+  _impLastAutoFillAuctionId = false;
+  if (typeof _impLastVerify !== 'undefined') _impLastVerify = null;
+  // Reset visible surfaces.
+  const result  = document.getElementById('imp-result');
+  const preview = document.getElementById('imp-preview');
+  const verify  = document.getElementById('imp-verify');
+  if (result)  result.innerHTML  = '';
+  if (preview) preview.innerHTML = '';
+  if (verify)  { verify.innerHTML = ''; verify.style.display = 'none'; }
+  // Re-tick dry-run so the next import is safe-by-default.
+  const dry = document.getElementById('imp-dryrun');
+  if (dry) dry.checked = true;
+  if (typeof toast === 'function') toast('Cleared');
+}
+
 async function impPreview(){
   const fileEl = document.getElementById('imp-file');
   const moduleKey = document.getElementById('imp-module').value;
@@ -19619,6 +19796,15 @@ async function impVerify(){
       ' · duplicates='+ (c.duplicate||0) +
       (c.duplicateChanged ? ' ('+c.duplicateChanged+' with changes)' : '') +
       ' · invalid='+ totalInvalid +
+      // Name-corrected count appears when the module supports GSTIN
+      // lookup AND at least one row's name will be rewritten from the
+      // master. Helps the operator catch unexpected over-corrections.
+      (c.nameCorrected ? ' · <span style="color:#0369a1">name-corrected='+c.nameCorrected+'</span>' : '') +
+      // Rund-derived count appears when the source file has no rund
+      // column and we compute it from taxable + tax (matches invoice
+      // generation). Lets the operator see how many round-offs were
+      // synthesized before they hit the DB.
+      (c.rundDerived ? ' · <span style="color:#0369a1">rund-derived='+c.rundDerived+'</span>' : '') +
       ' &nbsp;<span style="color:'+(totalInvalid?'#c00':'#15803d')+'">'+
         (totalInvalid ? '⚠ Fix invalid rows or adjust mapping before importing.' : '✓ Ready to import.')+
       '</span>';
@@ -19872,6 +20058,19 @@ async function impRun(){
     let h = '<div style="padding:8px;background:'+(dryRun?'#fff8e1':'#e8f5e9')+';border-radius:6px">';
     h += '<b>'+(dryRun?'Dry-run complete':'Import complete')+'</b> · ';
     h += 'total='+data.total+' · imported='+data.imported+' · skipped(dup)='+data.skipped+' · failed='+data.failed;
+    // Surface the GSTIN→master-name correction count when present —
+    // tells the operator "N rows had truncated names rewritten from
+    // the master." Hidden when the module doesn't support the lookup
+    // or no corrections were applied.
+    if (data.nameCorrected && data.nameCorrected > 0) {
+      h += ' · <span style="color:#0369a1">name-corrected='+data.nameCorrected+'</span>';
+    }
+    // Same idea for derived round-off — "N rows had rund computed from
+    // taxable + tax because the source file omitted the column." Hidden
+    // when the module isn't in IMPORT_DERIVE_RUND or everything was 0.
+    if (data.rundDerived && data.rundDerived > 0) {
+      h += ' · <span style="color:#0369a1">rund-derived='+data.rundDerived+'</span>';
+    }
     h += '</div>';
     if (data.errors && data.errors.length) {
       h += '<div style="margin-top:8px"><b>Errors (first '+data.errors.length+'):</b><ul style="margin:4px 0 0 18px;font-size:12px">';

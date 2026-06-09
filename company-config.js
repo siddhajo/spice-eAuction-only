@@ -14,6 +14,20 @@
  *     inv_prefix_sister, flag_sister.
  */
 
+// Setting keys that must NEVER surface in the Settings UI, even if rows
+// for them exist in the company_settings table (e.g. carried in via a
+// settings import from another build). This app doesn't support the
+// Grade-1 discount-into-P_Rate workflow or the legacy "Set Buyer bulk
+// action" toggle, so the corresponding flags + the discount-inclusive
+// pooler deduction rate are hidden from getAllSettings(). Filtering here
+// (rather than deleting rows) is durable — re-importing those settings
+// won't bring the controls back.
+const HIDDEN_SETTING_KEYS = new Set([
+  'flag_lot_set_buyer',      // Flags: "Lots → Set Buyer bulk action"
+  'flag_discount_in_prate',  // Flags: "Roll Discount into P_Rate (Grade 1 only)"
+  'deduction1_inclusive',    // Rates: "Deduction (Pooler) — discount-inclusive (Grade 1 only)"
+]);
+
 const DEFAULTS = [
   // ── COMPANY (Primary - ISP) ────────────────────────────────
   { key: 'logo',             value: '', category: 'company',     label: 'Logo Code',                type: 'text' },
@@ -219,6 +233,11 @@ const DEFAULTS = [
 
   // ── LOT ENTRY DEFAULTS ──────────────────────────────────────
   { key: 'sample_weight',      value: '0',     category: 'lot_entry', label: 'Default Sample Weight (kg)',         type: 'number'  },
+  // Per-bag empty gunny weight. When > 0, Lot Entry surfaces the
+  // "Weight w/ Gunny" + "Gunny Weight" fields and derives net weight as
+  // weight_with_gunny − (bags × this value). 0/blank keeps the classic
+  // direct net-weight entry.
+  { key: 'default_gunny_weight', value: '0',   category: 'lot_entry', label: 'Default Gunny Weight (kg)',          type: 'number'  },
   { key: 'show_moisture',      value: 'false', category: 'lot_entry', label: 'Show Moisture Column',               type: 'boolean' },
   { key: 'default_litre',      value: '',      category: 'lot_entry', label: 'Default Litre Weight',               type: 'text'    },
   { key: 'default_crop_type',  value: '',      category: 'lot_entry', label: 'Default Crop Type',                  type: 'text'    },
@@ -501,6 +520,9 @@ function getAllSettings(db) {
   const rows = db.prepare('SELECT key, value, category, label, field_type FROM company_settings ORDER BY rowid').all();
   const grouped = {};
   for (const r of rows) {
+    // Suppress retired/unsupported settings so they never render in the
+    // Settings UI even when present in the DB (e.g. via a settings import).
+    if (HIDDEN_SETTING_KEYS.has(r.key)) continue;
     if (!grouped[r.category]) grouped[r.category] = [];
     grouped[r.category].push(r);
   }

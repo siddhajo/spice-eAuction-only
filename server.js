@@ -9857,7 +9857,10 @@ const IMPORT_MODULES = {
   sales_invoice: {
     label: 'Sales Invoices',
     table: 'invoices',
-    keyCols: ['invo', 'sale'],
+    // Dedup on trade-no + invoice-no. Invoice numbers restart per trade,
+    // so keying on `invo` alone wrongly skips a legit invoice whose number
+    // already exists under a different trade. `ano` scopes it to the trade.
+    keyCols: ['ano', 'invo'],
     // auction_id is auto-derived from `ano` at import time so the
     // imported rows show up under the matching trade in the Sales tab
     // (the list filters by auction_id, not ano).
@@ -9882,7 +9885,9 @@ const IMPORT_MODULES = {
   purchase: {
     label: 'Purchase Invoices',
     table: 'purchases',
-    keyCols: ['invo'],
+    // Trade-no + invoice-no — see sales_invoice note. Invoice numbers
+    // repeat across trades, so `ano` is needed to avoid false-dup skips.
+    keyCols: ['ano', 'invo'],
     autoFillAuctionId: true,
     // Match the actual `purchases` schema. The legacy export's "cr"
     // column maps to `gstin` here; "bag"/"refund" don't exist on the
@@ -9890,6 +9895,7 @@ const IMPORT_MODULES = {
     fields: ['auction_id','ano','date','state','br','name','add_line','place','gstin','invo',
              'qty','amount','cgst','sgst','igst','rund','total','tds'],
     aliases: {
+      ano:     ['ano','auction_no','trade'],
       invo:    ['invo','invoice','invoice_no'],
       name:    ['name','seller','dealer'],
       gstin:   ['gstin','gst','gst_no','cr','registration'],
@@ -9906,13 +9912,16 @@ const IMPORT_MODULES = {
   bills: {
     label: 'Bills of Supply',
     table: 'bills',
-    keyCols: ['bil'],
+    // Trade-no + bill-no — see sales_invoice note. Bill numbers repeat
+    // across trades, so `ano` is needed to avoid false-dup skips.
+    keyCols: ['ano', 'bil'],
     // bills.auction_id is the field the Bills tab filters by — without
     // it the imported rows are orphaned and don't show up under any trade.
     autoFillAuctionId: true,
     fields: ['auction_id','ano','date','state','br','crpt','bil','name','add_line','pla',
              'pstate','st_code','crr','pan','qty','cost','igst','net'],
     aliases: {
+      ano: ['ano','auction_no','trade'],
       bil: ['bil','bill','bill_no'],
       name: ['name','seller','planter'],
       qty: ['qty','kilos','weight','kgs'],
@@ -9923,10 +9932,13 @@ const IMPORT_MODULES = {
   debit_notes: {
     label: 'Debit Notes',
     table: 'debit_notes',
-    keyCols: ['note_no','ano'],
+    // Already trade-scoped — trade-no + note-no (order normalized to match
+    // the other transactional modules; WHERE-clause order is irrelevant).
+    keyCols: ['ano', 'note_no'],
     autoFillAuctionId: true,
     fields: ['auction_id','ano','date','state','name','note_no','amount','cgst','sgst','igst','total'],
     aliases: {
+      ano: ['ano','auction_no','trade'],
       note_no: ['note_no','note','dn_no'],
       name: ['name','dealer','buyer'],
     },
@@ -9975,6 +9987,101 @@ function _importMapHeaders(headers, moduleDef) {
     }
   }
   return out;
+}
+
+// Per-module GSTIN→master-name lookup config. When a module is in
+// this table, the import flow will:
+//   1. Build an in-memory map of normalised GSTIN → canonical name
+//      from the listed master table (one DB call per import run).
+//   2. For each imported row that has a GSTIN, replace the row's name
+//      field with the master name when there's a match.
+// Solves the legacy-XLS truncation problem: source files often clip
+// long seller / buyer names to 30 chars, but the master record
+// already holds the full canonical name. The GSTIN is the reliable
+// pivot.
+const IMPORT_NAME_BY_GSTIN = {
+  purchase:      { masterTable: 'traders', masterGstin: 'cr',    masterName: 'name',   rowGstinField: 'gstin', rowNameField: 'name'   },
+  bills:         { masterTable: 'traders', masterGstin: 'cr',    masterName: 'name',   rowGstinField: 'crr',   rowNameField: 'name'   },
+  sales_invoice: { masterTable: 'buyers',  masterGstin: 'gstin', masterName: 'buyer1', rowGstinField: 'gstin', rowNameField: 'buyer1' },
+};
+
+// Normalize a GSTIN string for map keying. Mirrors _normGstin used by
+// the purchase same-entity check — strips legacy "GSTIN."/"GSTIN"
+// prefix, trims, uppercases. Defined inline here so this section
+// stays self-contained.
+function _normGstinForLookup(s) {
+  let v = String(s == null ? '' : s).trim().toUpperCase();
+  if (v.startsWith('GSTIN.')) v = v.slice(6);
+  else if (v.startsWith('GSTIN')) v = v.slice(5);
+  return v.trim();
+}
+
+// Build the GSTIN → name map for a given master table. Reads every
+// non-blank GSTIN row once. First-wins on duplicates (rare, since
+// GSTIN is supposed to be unique anyway).
+function _buildGstinNameMap(db, table, gstinCol, nameCol) {
+  const map = new Map();
+  let rows;
+  try {
+    rows = db.all(`SELECT ${gstinCol} AS g, ${nameCol} AS n FROM ${table} WHERE ${gstinCol} IS NOT NULL AND ${gstinCol} != ''`);
+  } catch (e) {
+    console.warn('[import] _buildGstinNameMap failed for', table, '-', e.message);
+    return map;
+  }
+  for (const row of rows) {
+    const norm = _normGstinForLookup(row.g);
+    if (norm && row.n && !map.has(norm)) map.set(norm, String(row.n).trim());
+  }
+  return map;
+}
+
+// Per-module config for "derive round-off when the source file
+// doesn't carry one." Mirrors the round-off math that calculations.js
+// `buildSalesInvoice` uses at invoice-generation time:
+//
+//   totalBeforeRound = taxableValue + cgst + sgst + igst
+//   subtotalRounded  = round(totalBeforeRound)         // whole rupees
+//   rund             = subtotalRounded - totalBeforeRound
+//
+// `taxableFields` are the source columns that sum to `taxableValue`
+// (cardamom amount + gunny + transport + insurance for sales). The
+// `targetField` is where the computed value lands. The lookup is
+// applied ONLY when the row's existing `targetField` value is blank
+// (so source files that DO carry a rund column are honoured).
+const IMPORT_DERIVE_RUND = {
+  sales_invoice: {
+    taxableFields: ['amount', 'gunny', 'pava_hc', 'ins'],
+    taxFields:     ['cgst', 'sgst', 'igst'],
+    targetField:   'rund',
+  },
+  // Purchase imports already carry rund in their export; bills don't
+  // have GST so there's no round-off to derive. Add modules here if
+  // their source file is missing rund.
+};
+
+// Excel-compatible integer round (round half away from zero). Mirrors
+// calculations.js `round0` so the derived rund matches what the live
+// invoice generator would have produced.
+function _round0Int(n) {
+  const x = Number(n);
+  if (!isFinite(x)) return 0;
+  if (x === 0) return 0;
+  return (x < 0 ? -1 : 1) * Math.round(Math.abs(x));
+}
+
+// Given a row of mapped `values` and a derive-rund config, compute the
+// round-off the same way invoice generation does. Returns the rund
+// value (positive or negative, two decimals). Caller decides whether
+// to overwrite — typically only when the row's stored rund is blank
+// or zero.
+function _deriveRund(values, cfg) {
+  let totalBeforeRound = 0;
+  for (const f of cfg.taxableFields) totalBeforeRound += Number(values[f] || 0);
+  for (const f of cfg.taxFields)     totalBeforeRound += Number(values[f] || 0);
+  const subtotalRounded = _round0Int(totalBeforeRound);
+  // Match calculations.js round2 — two-decimal precision.
+  const rund = subtotalRounded - totalBeforeRound;
+  return Math.round(rund * 100) / 100;
 }
 app.post('/api/import-old-data/preview', requireAdmin, upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -10087,6 +10194,21 @@ app.post('/api/import-old-data/verify', requireAdmin, upload.single('file'), (re
       return id;
     };
 
+    // GSTIN → canonical-name map for this module. Empty when the
+    // module doesn't support the lookup. Built once per request.
+    const nameLookupCfg = IMPORT_NAME_BY_GSTIN[moduleKey] || null;
+    const gstinNameMap = nameLookupCfg
+      ? _buildGstinNameMap(db, nameLookupCfg.masterTable, nameLookupCfg.masterGstin, nameLookupCfg.masterName)
+      : null;
+    let cntNameCorrected = 0;
+
+    // Derive-rund config for this module (null when not applicable).
+    // Source files exported from legacy systems often omit the rund
+    // column entirely — without this, every imported invoice ends up
+    // with rund = '' and Tally exports show 0 in the round-off ledger.
+    const deriveRundCfg = IMPORT_DERIVE_RUND[moduleKey] || null;
+    let cntRundDerived = 0;
+
     let cntNew = 0, cntDup = 0, cntDupChanged = 0, cntInvAno = 0, cntInvReq = 0;
     // Four independent sample buckets so the client always has concrete
     // rows from each non-empty status, regardless of where they sit in
@@ -10109,6 +10231,42 @@ app.post('/api/import-old-data/verify', requireAdmin, upload.single('file'), (re
       const values = {};
       for (const [f, src] of fieldSources) {
         values[f] = src ? r[src] : '';
+      }
+
+      // GSTIN→master-name lookup: when the row's GSTIN matches a
+      // master record, replace the row's name with the master's
+      // canonical name. Solves truncated names in legacy XLS dumps.
+      if (gstinNameMap && nameLookupCfg) {
+        const norm = _normGstinForLookup(values[nameLookupCfg.rowGstinField]);
+        if (norm) {
+          const masterName = gstinNameMap.get(norm);
+          if (masterName) {
+            const original = String(values[nameLookupCfg.rowNameField] || '').trim();
+            if (masterName !== original) {
+              values[nameLookupCfg.rowNameField] = masterName;
+              values._nameCorrected = { from: original, to: masterName, gstin: norm };
+              cntNameCorrected++;
+            }
+          }
+        }
+      }
+
+      // Derive round-off when the source file doesn't carry one.
+      // Mirrors invoice generation: rund = round0(taxable+tax) - (taxable+tax).
+      // Only fires when the row's stored rund is blank/zero so files
+      // that DO carry a rund column are honoured untouched.
+      if (deriveRundCfg) {
+        const cur = values[deriveRundCfg.targetField];
+        const curNum = Number(cur);
+        const isBlank = cur === '' || cur == null || (isFinite(curNum) && curNum === 0);
+        if (isBlank) {
+          const derived = _deriveRund(values, deriveRundCfg);
+          if (derived !== 0) {
+            values[deriveRundCfg.targetField] = derived;
+            values._rundDerived = { value: derived };
+            cntRundDerived++;
+          }
+        }
       }
 
       const reasons = [];
@@ -10235,6 +10393,14 @@ app.post('/api/import-old-data/verify', requireAdmin, upload.single('file'), (re
         duplicateChanged: cntDupChanged,
         invalidAno: cntInvAno,
         invalidRequired: cntInvReq,
+        // Rows where the imported name was overridden by the matching
+        // master record (looked up via GSTIN). Lets the UI tell the
+        // operator "20 names were corrected from the master."
+        nameCorrected: cntNameCorrected,
+        // Rows whose round-off was computed from taxable + tax columns
+        // because the source file had no rund column. 0 when the
+        // module isn't in IMPORT_DERIVE_RUND.
+        rundDerived: cntRundDerived,
       },
       samples: {
         new: sampleNew,
@@ -10266,6 +10432,14 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
 
   const db = getDb();
   let imported = 0, skipped = 0, failed = 0;
+  // GSTIN→master-name correction counter — hoisted out of the try
+  // block so the response builder further down can read it. Always
+  // defined; stays 0 when the module isn't in IMPORT_NAME_BY_GSTIN.
+  let nameCorrected = 0;
+  // Round-off derivation counter — hoisted for the same reason as
+  // nameCorrected. Stays 0 when the module isn't in IMPORT_DERIVE_RUND
+  // or when every row already had a non-zero rund.
+  let rundDerived = 0;
   const errors = [];
   let total = 0;
   // Capture the primary-key id of every row this import inserts so the
@@ -10302,6 +10476,32 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
     const valuePlaceholders = def.fields.map(() => '?').join(',');
     const insertSql = `INSERT INTO ${def.table} (${def.fields.join(',')}) VALUES (${valuePlaceholders})`;
 
+    // GSTIN → canonical-name map for this module (same logic as
+    // /verify above). Built once, looked up per row. Resolves the
+    // row's gstin field position and name field position so we can
+    // patch the positional `values` array before INSERT.
+    const nameLookupCfg = IMPORT_NAME_BY_GSTIN[moduleKey] || null;
+    const gstinNameMap = nameLookupCfg
+      ? _buildGstinNameMap(db, nameLookupCfg.masterTable, nameLookupCfg.masterGstin, nameLookupCfg.masterName)
+      : null;
+    const nameGstinIdx = nameLookupCfg ? def.fields.indexOf(nameLookupCfg.rowGstinField) : -1;
+    const nameSlotIdx  = nameLookupCfg ? def.fields.indexOf(nameLookupCfg.rowNameField)  : -1;
+    // (nameCorrected is hoisted to the outer scope so the response
+    //  builder can read it after this try block.)
+
+    // Round-off derivation: pre-resolve the positional slot for the
+    // target field and pre-resolve every taxable/tax field's slot so
+    // we can read them out of the positional `values` array without
+    // re-mapping per row.
+    const deriveRundCfg = IMPORT_DERIVE_RUND[moduleKey] || null;
+    const rundSlotIdx   = deriveRundCfg ? def.fields.indexOf(deriveRundCfg.targetField) : -1;
+    const rundTaxableSlots = deriveRundCfg
+      ? deriveRundCfg.taxableFields.map(f => def.fields.indexOf(f)).filter(i => i >= 0)
+      : [];
+    const rundTaxSlots = deriveRundCfg
+      ? deriveRundCfg.taxFields.map(f => def.fields.indexOf(f)).filter(i => i >= 0)
+      : [];
+
     // Cache `ano → auction_id` lookups for autoFillAuctionId modules.
     // Without this every row of a large import would hit the DB once
     // for the same trade number.
@@ -10332,7 +10532,48 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
         // the row is mapped — the auctions table is the source of truth
         // for ano→id, and without this the imported invoices show up
         // nowhere because the Sales tab filters by auction_id.
-        const values = fieldSources.map(([_, src]) => src ? r[src] : '');
+        // `date` is normalized to ISO yyyy-mm-dd here so downstream code
+        // (Tally XML's strict toTallyDate, the /api/invoices date BETWEEN
+        // filter, etc.) sees a canonical value regardless of whether the
+        // spreadsheet held an Excel serial, a DD-MM-YYYY string, etc.
+        const values = fieldSources.map(([fname, src]) => {
+          const v = src ? r[src] : '';
+          if (fname === 'date') return normalizeDate(v);
+          return v;
+        });
+        // GSTIN-driven name correction: when the row's GSTIN matches a
+        // master record, overwrite the (often truncated) imported name
+        // with the master's canonical name. Quiet — counted but not
+        // logged per-row.
+        if (gstinNameMap && nameGstinIdx >= 0 && nameSlotIdx >= 0) {
+          const norm = _normGstinForLookup(values[nameGstinIdx]);
+          if (norm) {
+            const masterName = gstinNameMap.get(norm);
+            if (masterName && masterName !== String(values[nameSlotIdx] || '').trim()) {
+              values[nameSlotIdx] = masterName;
+              nameCorrected++;
+            }
+          }
+        }
+        // Compute round-off when the source file didn't carry one.
+        // Only overwrite when the row's stored rund is blank or 0 so
+        // files that already include rund are honoured untouched.
+        if (deriveRundCfg && rundSlotIdx >= 0) {
+          const cur    = values[rundSlotIdx];
+          const curNum = Number(cur);
+          const isBlank = cur === '' || cur == null || (isFinite(curNum) && curNum === 0);
+          if (isBlank) {
+            let totalBeforeRound = 0;
+            for (const idx of rundTaxableSlots) totalBeforeRound += Number(values[idx] || 0);
+            for (const idx of rundTaxSlots)     totalBeforeRound += Number(values[idx] || 0);
+            const subtotalRounded = _round0Int(totalBeforeRound);
+            const derived = Math.round((subtotalRounded - totalBeforeRound) * 100) / 100;
+            if (derived !== 0) {
+              values[rundSlotIdx] = derived;
+              rundDerived++;
+            }
+          }
+        }
         if (def.autoFillAuctionId && auctionIdSlot >= 0) {
           const anoSrc = mapping.ano;
           const anoVal = anoSrc ? r[anoSrc] : '';
@@ -10378,6 +10619,15 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
     } catch (_) { /* non-fatal */ }
   }
 
+  // Repair any bad `date` values left behind by earlier imports (before
+  // the per-row normalize above was added). Same scan that runs at
+  // startup, but on-demand so the user doesn't have to restart the
+  // server to clear non-ISO date strings that make Tally XML drop the
+  // <DATE>/<REFERENCEDATE> tags. Idempotent and cheap on a fresh DB.
+  if (!dryRun) {
+    try { repairBadDates(db); } catch (_) { /* non-fatal */ }
+  }
+
   // Log this run regardless of outcome. `inserted_ids` is left blank on
   // dry-runs (no rows were inserted) so the Undo button stays disabled
   // for that entry. Log failures to the server console — silent
@@ -10403,7 +10653,19 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
   }
 
   fs.unlink(req.file.path, () => {});
-  res.json({ success: true, module: moduleKey, dryRun, total, imported, skipped, failed, errors, importLogId });
+  res.json({
+    success: true, module: moduleKey, dryRun,
+    total, imported, skipped, failed,
+    // Number of rows whose seller / buyer name was overridden by the
+    // master record (GSTIN match). 0 when the module isn't in
+    // IMPORT_NAME_BY_GSTIN — the UI can choose to hide the line.
+    nameCorrected,
+    // Number of rows whose round-off was computed from taxable + tax
+    // columns because the source file had no rund value. 0 when the
+    // module isn't in IMPORT_DERIVE_RUND.
+    rundDerived,
+    errors, importLogId,
+  });
 });
 app.get('/api/import-old-data/history', requireAdmin, (req, res) => {
   // Force every request to hit the DB — without this, browsers
