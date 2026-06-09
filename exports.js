@@ -428,7 +428,14 @@ async function exportPriceListBefore(db, auctionId) {
 async function exportBankPayment(db, auctionId, cfg, _state, extra) {
   const { getBankPaymentData } = require('./calculations');
   const sellers = (extra && extra.sellers) || null;
-  const payments = getBankPaymentData(db, auctionId, cfg, { sellers });
+  // lots / excludeLots flow through to getBankPaymentData, which recomputes
+  // each affected seller's payable over only the relevant lots (Payments-tab
+  // tracked-export flow).
+  const payments = getBankPaymentData(db, auctionId, cfg, {
+    sellers,
+    lots:        extra && extra.lots,
+    excludeLots: extra && extra.excludeLots,
+  });
   const cols = [
     { header: 'TransactionType', key: 'transactionType', width: 16 },
     { header: 'BeneIFSCode', key: 'ifsc', width: 14 },
@@ -452,7 +459,11 @@ async function exportBankPayment(db, auctionId, cfg, _state, extra) {
 async function exportBankPaymentBefore(db, auctionId, cfg, _state, extra) {
   const { getBankPaymentData } = require('./calculations');
   const sellers = (extra && extra.sellers) || null;
-  const payments = getBankPaymentData(db, auctionId, cfg, { before: true, sellers });
+  const payments = getBankPaymentData(db, auctionId, cfg, {
+    before: true, sellers,
+    lots:        extra && extra.lots,
+    excludeLots: extra && extra.excludeLots,
+  });
   const cols = [
     { header: 'TransactionType', key: 'transactionType', width: 16 },
     { header: 'BeneIFSCode',     key: 'ifsc',            width: 14 },
@@ -621,6 +632,31 @@ async function exportPaymentSummary(db, auctionId, cfg, _state, extra) {
   );
   if (sellersFilter) {
     rows = rows.filter(r => sellersFilter.has(String(r.poolername || '').trim().toUpperCase()));
+  }
+  // Per-seller lot-picks + already-exported exclusions (Payments tab's
+  // tracked-export flow). lots → keep ONLY these lot rows for the seller;
+  // excludeLots → drop these (already shipped before). Both compose.
+  const _lotSets = (m) => {
+    if (!m || typeof m !== 'object' || Array.isArray(m)) return null;
+    const o = {}; let any = false;
+    for (const k of Object.keys(m)) {
+      const arr = Array.isArray(m[k]) ? m[k].map(x => String(x)) : [];
+      if (arr.length) { o[String(k).trim().toUpperCase()] = new Set(arr); any = true; }
+    }
+    return any ? o : null;
+  };
+  const lotPicksU   = _lotSets(extra && extra.lots);
+  const excludeLotsU = _lotSets(extra && extra.excludeLots);
+  if (lotPicksU || excludeLotsU) {
+    rows = rows.filter(r => {
+      const key = String(r.poolername || '').trim().toUpperCase();
+      const lotKey = String(r.lot);
+      const picks = lotPicksU && lotPicksU[key];
+      if (picks && !picks.has(lotKey)) return false;
+      const excl = excludeLotsU && excludeLotsU[key];
+      if (excl && excl.has(lotKey)) return false;
+      return true;
+    });
   }
   // Spread debit_notes amount across the seller's lots proportionally so
   // every row totals to the same SUM as the payments view. Simpler approach:

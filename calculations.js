@@ -541,7 +541,9 @@ function getPaymentSummary(db, auctionId, state, cfg) {
     SUM(COALESCE(l.sgst,0)) as total_sgst,
     SUM(COALESCE(l.igst,0)) as total_igst,
     SUM(l.balance) as total_payable,
-    COUNT(*) as lot_count
+    COUNT(*) as lot_count,
+    GROUP_CONCAT(DISTINCT l.bank_id) AS bank_ids,
+    COUNT(l.bank_id) AS bank_lot_count
     FROM lots l WHERE l.auction_id = ? AND l.amount > 0`;
   const params = [auctionId];
   if (state) { query += ' AND l.state = ?'; params.push(state); }
@@ -591,6 +593,17 @@ function getPaymentSummary(db, auctionId, state, cfg) {
       ...s,
       total_discount: totalDiscount,
       total_tax: cgst + sgst + igst,
+      // True when this seller's lots point at more than one bank account
+      // (or a mix of tagged + untagged). Drives the "multiple banks" badge
+      // on the Payments table so the user knows to export each account's
+      // lots separately via the per-seller lot picker.
+      multipleBanks: (() => {
+        const ids = String(s.bank_ids || '').split(',')
+          .map(x => x.trim()).filter(x => x !== '' && x !== 'null');
+        const untagged = Number(s.lot_count || 0) > Number(s.bank_lot_count || 0);
+        const distinct = new Set(ids).size;
+        return distinct > 1 || (distinct >= 1 && untagged);
+      })(),
       // Payable: lots.balance was computed BEFORE DNs existed, using
       // lots.refund as the discount. So:
       //   - When DNs exist and equal lot refunds → balance is correct
@@ -609,12 +622,43 @@ function getPaymentSummary(db, auctionId, state, cfg) {
  * Used by both the "after discount" Bank Payment export (default) and
  * the "Bank Payment (Before)" export when `opts.before === true`.
  */
+// Format a raw GROUP_CONCAT(lot_no) string into a clean, de-duped,
+// numerically-sorted comma list for the bank payment REMARKS column
+// (e.g. "12,13,14"). Returns '' when there are no lots.
+function formatLotList(raw) {
+  if (!raw) return '';
+  const uniq = [...new Set(String(raw).split(',').map(s => s.trim()).filter(Boolean))];
+  const allNumeric = uniq.every(x => /^\d+$/.test(x));
+  uniq.sort(allNumeric ? (a, b) => Number(a) - Number(b) : undefined);
+  return uniq.join(',');
+}
+
 function getBankPaymentData(db, auctionId, cfg, opts) {
   opts = opts || {};
   const useBefore = !!opts.before;
   const sellersFilter = (Array.isArray(opts.sellers) && opts.sellers.length)
     ? new Set(opts.sellers.map(s => String(s).trim().toUpperCase()))
     : null;
+  // Per-seller lot-picks + already-exported exclusions (Payments tab's
+  // tracked-export flow). Each is { sellerName: ['lot_no', ...] }, keyed
+  // case-insensitively. lots → keep ONLY these lots; excludeLots → skip
+  // these (already shipped in a prior export, so don't re-pay them).
+  const _upMap = (m) => {
+    if (!m || typeof m !== 'object' || Array.isArray(m)) return null;
+    const o = {}; let any = false;
+    for (const k of Object.keys(m)) {
+      const arr = Array.isArray(m[k]) ? m[k].map(x => String(x).trim()).filter(Boolean) : [];
+      if (arr.length) { o[String(k).trim().toUpperCase()] = arr; any = true; }
+    }
+    return any ? o : null;
+  };
+  const lotPicks    = _upMap(opts.lots);
+  const excludeLots = _upMap(opts.excludeLots);
+  const hasLotFilter = !!(lotPicks || excludeLots);
+  let bankById = {};
+  if (hasLotFilter) {
+    try { for (const b of db.all('SELECT id, ifsc, acctnum, holder_name FROM trader_banks')) bankById[b.id] = b; } catch (_) {}
+  }
   // Bank Payment lists every seller in the trade with a non-zero
   // payable (or non-zero pre-discount amount in 'before' mode) — both
   // registered dealers AND unregistered (URD/agriculturist) farmers.
@@ -669,16 +713,45 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [auctionId]);
   const roundAmounts = cfg.flag_round;
 
-  return payments.map(p => {
+  let result = payments.map(p => {
     // 'before' uses puramt — pre-discount, useful when paying suppliers
     // before the deduction policy is applied. 'after' (default) uses
     // payable = puramt − discount − GST.
-    const rawAmount = useBefore ? (p.puramt || 0) : (p.payable || 0);
+    const nameUpper = String(p.name || '').trim().toUpperCase();
+    const picksArr   = lotPicks    ? lotPicks[nameUpper]    : null;
+    const excludeArr = excludeLots ? excludeLots[nameUpper] : null;
+    let rawAmount, lotList = '', routedBank = null;
+    if ((picksArr && picksArr.length) || (excludeArr && excludeArr.length)) {
+      // Re-sum balance/puramt over ONLY the picked (and not-excluded) lots
+      // so the bank row pays exactly what's being settled now.
+      const params = [auctionId, nameUpper];
+      let extra = '';
+      if (picksArr && picksArr.length)    { extra += ` AND l.lot_no IN (${picksArr.map(() => '?').join(',')})`;     for (const x of picksArr)   params.push(String(x)); }
+      if (excludeArr && excludeArr.length){ extra += ` AND l.lot_no NOT IN (${excludeArr.map(() => '?').join(',')})`; for (const x of excludeArr) params.push(String(x)); }
+      const sub = db.get(
+        `SELECT COALESCE(SUM(l.balance),0) AS payable, COALESCE(SUM(l.puramt),0) AS puramt,
+                GROUP_CONCAT(l.lot_no) AS lot_nos, GROUP_CONCAT(DISTINCT l.bank_id) AS bank_ids,
+                COUNT(*) AS lot_count, COUNT(l.bank_id) AS bank_lot_count
+           FROM lots l WHERE l.auction_id = ? AND l.amount > 0
+            AND (l.paid IS NULL OR l.paid = '') AND UPPER(TRIM(l.name)) = ?${extra}`,
+        params
+      ) || {};
+      rawAmount = useBefore ? (Number(sub.puramt) || 0) : (Number(sub.payable) || 0);
+      lotList = formatLotList(sub.lot_nos || '');
+      // Route to a single bank account when every covered lot points at the
+      // same one (the multi-account workflow: pay Account-1's lots, then
+      // Account-2's). Mixed/untagged → keep the seller-default account.
+      const subBankIds = String(sub.bank_ids || '').split(',').map(s => s.trim()).filter(s => s && s !== 'null').map(Number).filter(Number.isFinite);
+      const subUntagged = Number(sub.lot_count || 0) > Number(sub.bank_lot_count || 0);
+      if (subBankIds.length === 1 && !subUntagged) routedBank = bankById[subBankIds[0]] || null;
+    } else {
+      rawAmount = useBefore ? (p.puramt || 0) : (p.payable || 0);
+    }
     const amount = roundAmounts ? Math.round(rawAmount) : rawAmount;
     const tb = p.trader_id != null ? bankByTraderId[p.trader_id] : null;
-    const ifsc      = (tb && tb.ifsc)        || p.t_ifsc    || '';
-    const acctnum   = (tb && tb.acctnum)     || p.t_acctnum || '';
-    const holderNm  = (tb && tb.holder_name) || p.t_holder  || p.name;
+    const ifsc      = (routedBank && routedBank.ifsc)        || (tb && tb.ifsc)        || p.t_ifsc    || '';
+    const acctnum   = (routedBank && routedBank.acctnum)     || (tb && tb.acctnum)     || p.t_acctnum || '';
+    const holderNm  = (routedBank && routedBank.holder_name) || (tb && tb.holder_name) || p.t_holder  || p.name;
     return {
       transactionType: rawAmount >= 200000 ? 'RTGS' : 'NEFT',
       ifsc,
@@ -688,10 +761,14 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
       address2: p.ppla || '',
       pin: p.pin || '',
       amount,
-      remarks: `${auction ? auction.ano : ''} ${p.name} PAYMENT ${rawAmount.toFixed(2)} Credited`,
+      remarks: `${auction ? auction.ano : ''} ${p.name} PAYMENT ${rawAmount.toFixed(2)} Credited${lotList ? ` for lot${lotList.includes(',') ? 's' : ''} ${lotList}` : ''}`,
       holderName: holderNm,
     };
   });
+  // When lot-filtering is active, drop rows that net to zero — a seller
+  // whose remaining (un-exported) lots all net to zero shouldn't appear.
+  if (hasLotFilter) result = result.filter(r => Number(r.amount) > 0);
+  return result;
 }
 
 /**
@@ -1035,6 +1112,7 @@ module.exports = {
   listAgriSellers,
   getPaymentSummary,
   getBankPaymentData,
+  formatLotList,
   getTDSReturnData,
   getSalesJournal,
   getPurchaseJournal,

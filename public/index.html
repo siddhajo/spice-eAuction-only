@@ -2123,6 +2123,20 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   z-index:50;align-items:center;justify-content:center;padding:20px
 }
 .modal-bg.show{display:flex;animation:fadeIn .2s}
+/* Payments → "Multiple banks" warning badge — a seller whose lots route to
+   >1 account. Sky-blue so it reads as informational. */
+.pay-multibank-badge{display:inline-flex;align-items:center;gap:3px;background:#e0f2fe;color:#075985;border:1px solid #7dd3fc;border-radius:9px;padding:1px 6px;font-size:10.5px;font-weight:700;margin-left:6px;cursor:help;vertical-align:middle}
+/* Tracked-export row tinting + status badges on the Payments table. */
+.dt-scroll tbody tr.pay-row-exported > td{background:#fff1f2}
+.dt-scroll tbody tr.pay-row-exported-partial > td{background:#fffbeb}
+.pay-exported-badge{display:inline-flex;align-items:center;gap:3px;border-radius:9px;padding:1px 6px;font-size:10.5px;font-weight:700;margin-left:6px;cursor:help;vertical-align:middle}
+.pay-exported-full{background:#ffe4e6;color:#9f1239;border:1px solid #fda4af}
+.pay-exported-partial{background:#fef3c7;color:#92400e;border:1px solid #fde68a}
+.pay-lot-pick-badge{display:inline-flex;align-items:center;gap:3px;background:#fef3c7;color:#7c2d12;border:1px solid #fde68a;border-radius:9px;padding:1px 6px;font-size:10.5px;font-weight:700;margin-left:6px;cursor:help;vertical-align:middle}
+/* Per-seller lot picker (partial payment modal) — exported lots are shown
+   as a locked record (faded + 🚫). Inert until export-tracking is enabled. */
+.pay-lot-cb-exported{opacity:.5;cursor:not-allowed}
+.pay-lot-exported-tag{color:#b91c1c;font-size:11px;margin-left:4px;cursor:help}
 .modal{
   background:var(--card);border-radius:16px;padding:28px;
   width:100%;max-width:520px;max-height:90vh;overflow-y:auto;
@@ -2874,6 +2888,29 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </div>
       </div>
     </div>
+
+    <!-- Per-seller lot detail / partial-payment picker.
+         Opened from the 📋 action on a Payments row. Lists every payable lot
+         for that seller in the active trade with a checkbox so the operator
+         can pick which lots to settle right now ("Print Payment for
+         Selected"). Remaining lots stay payable for a later visit. -->
+    <div class="modal-bg" id="pay-lots-modal"><div class="modal" style="max-width:900px">
+      <h2 style="display:flex;align-items:center;gap:10px">
+        <span style="width:32px;height:32px;border-radius:10px;background:var(--spice-turmeric-lt);display:inline-flex;align-items:center;justify-content:center">📋</span>
+        Lots for <span id="pay-lots-seller" style="color:var(--spice-cardamom-dk)">—</span>
+        <span id="pay-lots-trade" style="font-weight:400;font-size:12px;color:var(--text3);margin-left:auto"></span>
+      </h2>
+      <div id="pay-lots-body" style="margin-top:10px;max-height:60vh;overflow:auto"></div>
+      <div id="pay-lots-totals" style="margin-top:10px;padding:10px 14px;background:var(--spice-cream);border:1px solid var(--spice-line);border-radius:8px;font-size:13px"></div>
+      <div id="pay-lots-pick-state" style="margin-top:8px;font-size:12px;color:var(--text2);display:none"></div>
+      <div class="actions" style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-o" onclick="hideModal('pay-lots-modal')">Close</button>
+        <button class="btn btn-a" type="button" onclick="saveSelectedPayLots()" id="pay-lots-save-btn" title="Persist the ticked lots as the export filter for this seller. Next 'Export Selected' will use ONLY these lots.">💾 Save Lot Selection</button>
+        <button class="btn btn-o" type="button" onclick="clearSelectedPayLots()" id="pay-lots-clear-btn" title="Drop the saved filter for this seller; next 'Export Selected' includes all their lots again.">✕ Clear Lot Selection</button>
+        <span style="flex:1"></span>
+        <button class="btn btn-a" onclick="printSelectedPayLots()" id="pay-lots-print-btn" title="PDF payment statement covering only the ticked lots">🖨 Print Payment for Selected</button>
+      </div>
+    </div></div>
 
     <!-- Add User Modal -->
     <div class="modal-bg" id="add-user-modal"><div class="modal">
@@ -3785,8 +3822,9 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
-            <button class="btn btn-a" style="height:38px;padding:0 16px;font-weight:600" onclick="exportType('bank_payment')" title="Export RTGS/NEFT file (ticked rows only when sellers are selected)">📤 Export Bank Payment</button>
-            <button class="btn btn-a" style="height:38px;padding:0 16px;font-weight:600" onclick="exportType('payment')" title="Per-lot detailed payment breakdown (ticked rows only when sellers are selected)">📊 Export Payment XLSX</button>
+            <button class="btn btn-a" style="height:38px;padding:0 16px;font-weight:600" onclick="exportBankPaymentTracked()" title="Export RTGS/NEFT file. When sellers are ticked, only those are exported and lots already exported are skipped automatically; otherwise exports the whole trade.">📤 Export Bank Payment</button>
+            <button class="btn btn-a" style="height:38px;padding:0 16px;font-weight:600" onclick="exportPaymentXlsxTracked()" title="Per-lot detailed payment breakdown. Ticked sellers → tracked selected export (skips already-exported lots); none ticked → whole trade.">📊 Export Payment XLSX</button>
+            <button id="pay-undo-last" class="btn btn-o" style="height:38px;padding:0 16px;font-weight:600;display:none" onclick="undoLastPaymentExport()" title="Undo the most recent export batch — restores those sellers to selectable.">↶ Undo Last Export</button>
           </div>
         </div>
 
@@ -17611,6 +17649,456 @@ async function deleteSelectedPayments() {
   }
 }
 
+// ══════════════════════════════════════════════════════════════
+// PAYMENTS — per-auction lot-pick / exported-marker state (localStorage)
+// Ported from eTrade. Pure storage helpers consumed by the per-seller lot
+// picker modal below. (The selected-export + undo flow that also writes
+// these markers is not yet wired in this build, so exportedLots stays
+// empty here — the helpers degrade gracefully to "nothing exported".)
+// ══════════════════════════════════════════════════════════════
+const _PAY_STATE_KEY = (aid) => `pay.state.${aid}`;
+const _PAY_EMPTY = () => ({ picks: {}, exportedLots: {}, batches: [] });
+function _payLoadState(aid) {
+  if (!aid) return _PAY_EMPTY();
+  try {
+    const raw = localStorage.getItem(_PAY_STATE_KEY(aid));
+    if (!raw) return _PAY_EMPTY();
+    const obj = JSON.parse(raw);
+    let exportedLots = (obj && typeof obj.exportedLots === 'object' && obj.exportedLots) ? obj.exportedLots : {};
+    const batches = Array.isArray(obj && obj.batches) ? obj.batches : [];
+    return {
+      picks: obj && typeof obj.picks === 'object' && obj.picks ? obj.picks : {},
+      exportedLots,
+      batches,
+    };
+  } catch (_) { return _PAY_EMPTY(); }
+}
+function _paySaveState(aid, state) {
+  if (!aid) return;
+  try { localStorage.setItem(_PAY_STATE_KEY(aid), JSON.stringify(state)); }
+  catch (_) { /* quota; ignore */ }
+}
+function _payGetLotPicks(aid, sellerName) {
+  const s = _payLoadState(aid);
+  const arr = s.picks[sellerName];
+  return Array.isArray(arr) && arr.length ? arr.slice() : null;
+}
+function _paySetLotPicks(aid, sellerName, lotNos) {
+  const s = _payLoadState(aid);
+  if (Array.isArray(lotNos) && lotNos.length) s.picks[sellerName] = lotNos.map(String);
+  else delete s.picks[sellerName];
+  _paySaveState(aid, s);
+}
+function _payExportedLotsFor(aid, sellerName) {
+  const s = _payLoadState(aid);
+  const ex = s.exportedLots[sellerName];
+  if (ex === '*' || (Array.isArray(ex) && ex.length)) return ex;
+  return null;
+}
+// Tri-state used by the Payments-row render. 'full' tints + disables the
+// row; 'partial' keeps it tickable but badges "X/Y exported"; 'none' is the
+// default. An array of length >= totalLots is promoted to 'full'.
+function _payExportStatus(aid, sellerName, totalLots) {
+  const ex = _payExportedLotsFor(aid, sellerName);
+  if (ex == null) return 'none';
+  if (ex === '*') return 'full';
+  if (Array.isArray(ex)) {
+    if (Number(totalLots) > 0 && ex.length >= Number(totalLots)) return 'full';
+    return 'partial';
+  }
+  return 'none';
+}
+// Record an export. exportsMap = { sellerName: '*' | ['lot_no', ...] }. New
+// lots merge into any existing array; a '*' promotion is sticky. Pushes the
+// batch onto the undo stack so a single Undo rolls only this export back.
+function _payMarkExported(aid, exportsMap) {
+  const keys = exportsMap && typeof exportsMap === 'object' ? Object.keys(exportsMap) : [];
+  if (!keys.length) return null;
+  const s = _payLoadState(aid);
+  for (const n of keys) {
+    const next = exportsMap[n];
+    const existing = s.exportedLots[n];
+    if (next === '*') {
+      s.exportedLots[n] = '*';
+    } else if (Array.isArray(next) && next.length) {
+      if (existing === '*') { /* already full */ }
+      else if (Array.isArray(existing)) {
+        const union = new Set(existing.map(String));
+        for (const v of next) union.add(String(v));
+        s.exportedLots[n] = Array.from(union);
+      } else { s.exportedLots[n] = next.map(String); }
+    }
+  }
+  const batch = {
+    id: 'b' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+    exports: keys.reduce((acc, n) => { acc[n] = exportsMap[n]; return acc; }, {}),
+    ts: new Date().toISOString(),
+  };
+  s.batches.push(batch);
+  _paySaveState(aid, s);
+  return batch;
+}
+// Surgical per-seller unmark (the ↶ icon on a row). Wipes the seller from
+// exportedLots AND strips them from every batch's exports map.
+function _payUnmarkExported(aid, sellerName) {
+  if (!sellerName) return;
+  const s = _payLoadState(aid);
+  delete s.exportedLots[sellerName];
+  s.batches = s.batches
+    .map(b => { const ex = Object.assign({}, b.exports || {}); delete ex[sellerName]; return Object.assign({}, b, { exports: ex }); })
+    .filter(b => Object.keys(b.exports || {}).length > 0);
+  _paySaveState(aid, s);
+}
+// Pop the most recent batch and roll back exactly what it added, honouring
+// older batches' claims on the same seller.
+function _payUndoLastBatch(aid) {
+  const s = _payLoadState(aid);
+  const batch = s.batches.pop();
+  if (!batch) { _paySaveState(aid, s); return null; }
+  for (const sellerName of Object.keys(batch.exports || {})) {
+    if (!s.exportedLots[sellerName]) continue;
+    const olderClaims = [];
+    for (const b of s.batches) { const v = b.exports && b.exports[sellerName]; if (v) olderClaims.push(v); }
+    if (!olderClaims.length) { delete s.exportedLots[sellerName]; continue; }
+    if (olderClaims.some(v => v === '*')) { s.exportedLots[sellerName] = '*'; }
+    else {
+      const merged = new Set();
+      for (const v of olderClaims) if (Array.isArray(v)) for (const lot of v) merged.add(String(lot));
+      if (merged.size) s.exportedLots[sellerName] = Array.from(merged); else delete s.exportedLots[sellerName];
+    }
+  }
+  _paySaveState(aid, s);
+  return batch;
+}
+
+// ── Per-seller lot picker modal (partial payments) ───────────────
+const _payLotsState = { aid: 0, seller: '', lots: [], bankLabels: {}, defaultBankId: null };
+async function openPayLotsModal(auctionId, sellerName) {
+  _payLotsState.aid = Number(auctionId) || 0;
+  _payLotsState.seller = String(sellerName || '');
+  _payLotsState.lots = [];
+  document.getElementById('pay-lots-seller').textContent = _payLotsState.seller || '—';
+  const tradeLabel = document.getElementById('pay-lots-trade');
+  if (tradeLabel) {
+    const sel = document.getElementById('pay-auction');
+    const opt = sel ? sel.options[sel.selectedIndex] : null;
+    tradeLabel.textContent = opt ? opt.textContent : '';
+  }
+  const body = document.getElementById('pay-lots-body');
+  body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3)">Loading lots…</div>';
+  document.getElementById('pay-lots-totals').innerHTML = '';
+  showModal('pay-lots-modal');
+  try {
+    // /api/lots/:aid?name= filters by partial name LIKE — narrow to exact
+    // name client-side so "BOSE SPICES" isn't mixed with "BOSE SPICES-CUMBUM".
+    const all = await j(`/api/lots/${_payLotsState.aid}?name=${encodeURIComponent(_payLotsState.seller)}`);
+    const arr = Array.isArray(all) ? all : (all && all.rows) || [];
+    const target = _payLotsState.seller.trim().toLowerCase();
+    const filtered = arr.filter(l =>
+      String(l.name || '').trim().toLowerCase() === target &&
+      (Number(l.amount) || 0) > 0
+    );
+    filtered.sort((a, b) => {
+      const an = parseInt(a.lot_no, 10), bn = parseInt(b.lot_no, 10);
+      if (Number.isFinite(an) && Number.isFinite(bn) && an !== bn) return an - bn;
+      return String(a.lot_no || '').localeCompare(String(b.lot_no || ''));
+    });
+    _payLotsState.lots = filtered;
+    // Build bank_id → "Acct · Bank · IFSC" labels so each lot shows where its
+    // payment routes (lots with no explicit bank_id fall back to the default).
+    _payLotsState.bankLabels = {};
+    _payLotsState.defaultBankId = null;
+    const tid = (filtered.find(l => l.trader_id) || {}).trader_id;
+    if (tid) {
+      try {
+        const seller = await j(`/api/traders/${tid}`);
+        const banks = (seller && seller.banks) || [];
+        const def = banks.find(b => b.is_default) || banks[0] || null;
+        _payLotsState.defaultBankId = def ? def.id : null;
+        for (const b of banks) {
+          const parts = [b.acctnum, b.bank_name, b.ifsc].filter(Boolean);
+          _payLotsState.bankLabels[b.id] = parts.join(' · ') + (b.is_default ? ' ★' : '');
+        }
+      } catch (_) { /* non-fatal — lots fall back to "—" */ }
+    }
+    _renderPayLotsTable();
+  } catch (e) {
+    body.innerHTML = `<div style="padding:24px;text-align:center;color:var(--spice-chili)">Failed to load lots: ${esc(e.message || String(e))}</div>`;
+  }
+}
+function _renderPayLotsTable() {
+  const body = document.getElementById('pay-lots-body');
+  if (!_payLotsState.lots.length) {
+    body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3)">No payable lots found for this seller in this trade.</div>';
+    document.getElementById('pay-lots-totals').innerHTML = '';
+    return;
+  }
+  const savedPicks = _payGetLotPicks(_payLotsState.aid, _payLotsState.seller);
+  const savedSet = savedPicks ? new Set(savedPicks.map(String)) : null;
+  const exportedLotsRaw = _payExportedLotsFor(_payLotsState.aid, _payLotsState.seller);
+  const exportedAll = exportedLotsRaw === '*';
+  const exportedSet = Array.isArray(exportedLotsRaw) ? new Set(exportedLotsRaw.map(String)) : (exportedAll ? null : new Set());
+  const rows = _payLotsState.lots.map(l => {
+    const tax = (Number(l.cgst)||0) + (Number(l.sgst)||0) + (Number(l.igst)||0);
+    const lotKey = String(l.lot_no || '');
+    const isExported = exportedAll || (exportedSet && exportedSet.has(lotKey));
+    const checked = isExported ? true : (savedSet ? savedSet.has(lotKey) : true);
+    const dis = isExported ? ' disabled' : '';
+    const cls = isExported ? 'pay-lot-cb pay-lot-cb-exported' : 'pay-lot-cb';
+    const rowStyle = isExported ? ' style="background:#fef2f2"' : '';
+    const expCell = isExported ? `<span class="pay-lot-exported-tag" title="Already included in a previous export.">🚫</span>` : '';
+    const effBankId = l.bank_id != null ? l.bank_id : _payLotsState.defaultBankId;
+    const bankText = (effBankId != null && _payLotsState.bankLabels) ? _payLotsState.bankLabels[effBankId] : '';
+    const bankLabel = bankText
+      ? `<span title="${esc(bankText)}" style="font-family:monospace;font-size:11.5px">${esc(bankText)}</span>`
+      : '<span style="color:var(--text3)">—</span>';
+    return `<tr${rowStyle}>
+      <td style="text-align:center"><input type="checkbox" class="${cls}" data-id="${l.id}" data-lot="${esc(lotKey)}"${checked ? ' checked' : ''}${dis} onchange="updatePayLotsTotals()" style="cursor:pointer"></td>
+      <td style="font-family:monospace;font-weight:600">${esc(lotKey)} ${expCell}</td>
+      <td>${esc(l.branch || '')}</td>
+      <td>${bankLabel}</td>
+      <td style="text-align:right">${fmtI(Number(l.pqty)||0, 3)}</td>
+      <td style="text-align:right">${fmtI(Number(l.prate)||0, 2)}</td>
+      <td style="text-align:right">${fmtI(Number(l.puramt)||0, 2)}</td>
+      <td style="text-align:right;color:#B45309">${fmtI(Number(l.refund)||0, 2)}</td>
+      <td style="text-align:right;color:#0891B2">${fmtI(tax, 2)}</td>
+      <td style="text-align:right;font-weight:700;color:var(--spice-cardamom-dk)">${fmtI(Number(l.balance)||0, 2)}</td>
+    </tr>`;
+  }).join('');
+  body.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+      <thead style="position:sticky;top:0;background:#fff;z-index:1">
+        <tr style="border-bottom:2px solid var(--border);text-align:left">
+          <th style="width:36px;text-align:center"><input type="checkbox" id="pay-lot-select-all" checked onchange="togglePayLotSelectAll(this.checked)" title="Select / clear all" style="cursor:pointer"></th>
+          <th>Lot</th><th>Branch</th><th>Bank</th>
+          <th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th>
+          <th style="text-align:right">Discount</th><th style="text-align:right">GST</th><th style="text-align:right">Payable</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  updatePayLotsTotals();
+}
+function togglePayLotSelectAll(checked) {
+  document.querySelectorAll('.pay-lot-cb').forEach(cb => { if (cb.disabled) return; cb.checked = !!checked; });
+  updatePayLotsTotals();
+}
+function updatePayLotsTotals() {
+  const selectedIds = new Set(
+    Array.from(document.querySelectorAll('.pay-lot-cb:not([disabled]):checked')).map(cb => Number(cb.dataset.id))
+  );
+  let qty = 0, amt = 0, disc = 0, tax = 0, payable = 0;
+  for (const l of _payLotsState.lots) {
+    if (!selectedIds.has(l.id)) continue;
+    qty     += Number(l.pqty)    || 0;
+    amt     += Number(l.puramt)  || 0;
+    disc    += Number(l.refund)  || 0;
+    tax     += (Number(l.cgst)||0) + (Number(l.sgst)||0) + (Number(l.igst)||0);
+    payable += Number(l.balance) || 0;
+  }
+  const n = selectedIds.size;
+  const totalN = document.querySelectorAll('.pay-lot-cb:not([disabled])').length;
+  const exportedN = document.querySelectorAll('.pay-lot-cb[disabled]').length;
+  document.getElementById('pay-lots-totals').innerHTML =
+    `<div style="display:flex;flex-wrap:wrap;gap:18px;align-items:center">
+      <div><strong>${n}</strong> of ${totalN} lots selected${exportedN ? ` <span style="color:#b91c1c;font-weight:600">· ${exportedN} already exported (excluded)</span>` : ''}</div>
+      <div>Qty: <strong>${fmtI(qty, 3)} kg</strong></div>
+      <div>Amount: <strong>₹${fmtI(amt, 2)}</strong></div>
+      <div>Discount: <strong style="color:#B45309">₹${fmtI(disc, 2)}</strong></div>
+      <div>GST: <strong style="color:#0891B2">₹${fmtI(tax, 2)}</strong></div>
+      <div style="margin-left:auto;font-size:14px">Payable now: <strong style="color:var(--spice-cardamom-dk)">₹${fmtI(payable, 2)}</strong></div>
+    </div>`;
+  const btn = document.getElementById('pay-lots-print-btn');
+  if (btn) btn.disabled = (n === 0);
+  // Save is enabled whenever any tickable (non-exported) lot is checked.
+  const tickableChecked = document.querySelectorAll('.pay-lot-cb:not([disabled]):checked').length;
+  const saveBtn = document.getElementById('pay-lots-save-btn');
+  if (saveBtn) saveBtn.disabled = (tickableChecked === 0);
+  // Pick-state indicator below the totals strip.
+  const picks = _payGetLotPicks(_payLotsState.aid, _payLotsState.seller);
+  const stateEl = document.getElementById('pay-lots-pick-state');
+  if (stateEl) {
+    if (!picks) { stateEl.style.display = 'none'; stateEl.innerHTML = ''; }
+    else {
+      const savedSet = new Set(picks.map(String));
+      const currentLotNos = new Set(Array.from(document.querySelectorAll('.pay-lot-cb:checked')).map(cb => String(cb.dataset.lot || '')).filter(Boolean));
+      const matches = savedSet.size === currentLotNos.size && [...savedSet].every(v => currentLotNos.has(v));
+      stateEl.style.display = 'block';
+      stateEl.innerHTML = matches
+        ? `<span style="color:var(--spice-cardamom-dk)">✓ Lot selection saved (${savedSet.size} lot${savedSet.size === 1 ? '' : 's'} — will be used by the next Export Selected).</span>`
+        : `<span style="color:#B45309">⚠ Saved selection differs from the current ticks. Hit <b>💾 Save</b> to update or <b>✕ Clear</b> to drop the filter.</span>`;
+    }
+  }
+}
+// Persist the ticked lots as this seller's export filter (lot_no strings —
+// stable across re-imports). Auto-ticks the seller row so the next Export
+// Selected picks it up.
+async function saveSelectedPayLots() {
+  const aid = _payLotsState.aid, seller = _payLotsState.seller;
+  if (!aid || !seller) return;
+  const lotNos = Array.from(document.querySelectorAll('.pay-lot-cb:not([disabled]):checked'))
+    .map(cb => String(cb.dataset.lot || '').trim()).filter(Boolean);
+  if (!lotNos.length) { alert('Tick at least one not-yet-exported lot first.'); return; }
+  _paySetLotPicks(aid, seller, lotNos);
+  if (typeof loadPayments === 'function') await loadPayments();
+  let autoTicked = false;
+  const body = document.getElementById('payments-list');
+  if (body) {
+    const cb = Array.from(body.querySelectorAll('.pay-select-cb')).find(c => c.value === seller);
+    if (cb && !cb.disabled) { cb.checked = true; autoTicked = true; if (typeof updatePaymentBulkButtons === 'function') updatePaymentBulkButtons(); }
+  }
+  toast(`Saved ${lotNos.length} lot${lotNos.length === 1 ? '' : 's'} for ${seller}.` +
+        (autoTicked ? ' Row auto-ticked — use Export Selected.' : ' Tick the row to include it in Export Selected.'));
+  updatePayLotsTotals();
+}
+// Drop this seller's export filter (next Export Selected pays all lots).
+async function clearSelectedPayLots() {
+  const aid = _payLotsState.aid, seller = _payLotsState.seller;
+  if (!aid || !seller) return;
+  _paySetLotPicks(aid, seller, null);
+  toast(`Cleared lot filter for ${seller}.`);
+  if (typeof loadPayments === 'function') await loadPayments();
+  updatePayLotsTotals();
+}
+async function printSelectedPayLots() {
+  const lot_ids = Array.from(document.querySelectorAll('.pay-lot-cb:not([disabled]):checked'))
+    .map(cb => Number(cb.dataset.id)).filter(Number.isFinite);
+  if (!lot_ids.length) { alert('Tick at least one lot first'); return; }
+  if (!_payLotsState.aid || !_payLotsState.seller) { alert('Open this from the Payments tab'); return; }
+  const safe = _payLotsState.seller.replace(/[^\w]/g, '_').slice(0, 40);
+  await fetchAndPrint(
+    '/api/payments/pdf-lots',
+    `Payment_${safe}_${_payLotsState.aid}_partial.pdf`,
+    { auction_id: _payLotsState.aid, seller_name: _payLotsState.seller, lot_ids }
+  );
+}
+
+// ── Tracked "Export Selected" + Undo ─────────────────────────────
+// Export only the ticked sellers, automatically EXCLUDING lots that already
+// shipped in a prior export (so re-export never double-pays), then mark the
+// exported lots so the rows tint and the undo stack records the batch.
+async function exportBankPaymentSelected() {
+  const aid = Number(document.getElementById('pay-auction')?.value || 0);
+  const names = _collectSelectedPaymentNames();
+  if (!aid) { alert('Select an auction first'); return; }
+  if (!names.length) { alert('Tick one or more sellers first'); return; }
+  await _payDownloadSelected('bank_payment', 'xlsx', aid, names);
+}
+async function exportPaymentXlsxSelected() {
+  const aid = Number(document.getElementById('pay-auction')?.value || 0);
+  const names = _collectSelectedPaymentNames();
+  if (!aid) { alert('Select an auction first'); return; }
+  if (!names.length) { alert('Tick one or more sellers first'); return; }
+  await _payDownloadSelected('payment', 'xlsx', aid, names);
+}
+// Toolbar buttons: tracked selected-export when sellers are ticked, else
+// fall back to the full-trade export (historical behaviour).
+function exportBankPaymentTracked() {
+  return _collectSelectedPaymentNames().length ? exportBankPaymentSelected() : exportType('bank_payment');
+}
+function exportPaymentXlsxTracked() {
+  return _collectSelectedPaymentNames().length ? exportPaymentXlsxSelected() : exportType('payment');
+}
+async function _payDownloadSelected(type, format, aid, names) {
+  const label = (typeof EXP_LABELS === 'object' && EXP_LABELS[type]) || type;
+  const state = _payLoadState(aid);
+  const lots = {};          // explicit per-seller lot picks
+  const excludeLots = {};   // lots already shipped — server subtracts them
+  const skippedFully = [];
+  const effectiveNames = [];
+  for (const n of names) {
+    const exported = state.exportedLots[n];
+    if (exported === '*') { skippedFully.push(n); continue; }
+    effectiveNames.push(n);
+    const picks = Array.isArray(state.picks[n]) ? state.picks[n] : null;
+    if (picks && picks.length) lots[n] = picks;
+    if (Array.isArray(exported) && exported.length) excludeLots[n] = exported;
+  }
+  if (!effectiveNames.length) {
+    alert(`All ${names.length} ticked seller${names.length === 1 ? ' has' : 's have'} already been fully exported. Use the ↶ Undo icon on a row (or ↶ Undo Last Export) before re-exporting.`);
+    return;
+  }
+  if (skippedFully.length) {
+    toast(`Skipped ${skippedFully.length} fully-exported seller${skippedFully.length === 1 ? '' : 's'}: ${skippedFully.slice(0, 3).join(', ')}${skippedFully.length > 3 ? '…' : ''}`);
+  }
+  names = effectiveNames;
+  const body = { names, format };
+  if (Object.keys(lots).length)        body.lots        = lots;
+  if (Object.keys(excludeLots).length) body.excludeLots = excludeLots;
+  let ok = false;
+  await withOverlay(`Exporting ${label} — ${names.length} seller${names.length === 1 ? '' : 's'}…`, async () => {
+    const r = await fetch(B + `/api/exports/${type}/${aid}`, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const errBody = await r.json().catch(() => ({}));
+      if (r.status === 404) alert('Selected export not available on this server (HTTP 404). The server is running an older build — restart it and try again.');
+      else alert(`Export failed: ${errBody.error || ('HTTP ' + r.status)}`);
+      return;
+    }
+    const blob = await r.blob();
+    let filename = `${type}_selected_${aid}.${format}`;
+    const cd = r.headers.get('Content-Disposition') || '';
+    const fm = /filename="?([^";]+)"?/i.exec(cd);
+    if (fm) filename = fm[1];
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+    ok = true;
+  });
+  if (ok) {
+    // Sellers without picks were exported in full ('*'); sellers WITH picks
+    // contribute their lot_no list so any remaining lots stay payable.
+    const exportsMap = {};
+    for (const n of names) {
+      const picksForN = Array.isArray(lots[n]) ? lots[n] : null;
+      exportsMap[n] = (picksForN && picksForN.length) ? picksForN.slice() : '*';
+    }
+    _payMarkExported(aid, exportsMap);
+    // Clear the now-consumed lot picks (they were the "next export filter").
+    for (const n of names) if (Array.isArray(lots[n]) && lots[n].length) _paySetLotPicks(aid, n, null);
+    const partialCount = Object.keys(lots).length;
+    toast(`Exported ${names.length} seller${names.length === 1 ? '' : 's'}${partialCount ? ` (${partialCount} partial)` : ''} — rows marked.`);
+    if (typeof loadPayments === 'function') loadPayments();
+  }
+}
+// Per-row undo (the ↶ icon on a tinted row) — restores ONE seller.
+function undoPaymentExport(sellerName) {
+  const aid = Number(document.getElementById('pay-auction')?.value || 0);
+  if (!aid || !sellerName) return;
+  _payUnmarkExported(aid, sellerName);
+  toast(`Restored ${sellerName} — can be exported again.`);
+  if (typeof loadPayments === 'function') loadPayments();
+}
+// Toolbar Undo — pops the most recent export batch and restores everyone in it.
+function undoLastPaymentExport() {
+  const aid = Number(document.getElementById('pay-auction')?.value || 0);
+  if (!aid) { alert('Select an auction first'); return; }
+  const batch = _payUndoLastBatch(aid);
+  if (!batch) { toast('Nothing left to undo for this trade.'); return; }
+  const sellerCount = Object.keys(batch.exports || {}).length;
+  toast(`Undid last export — restored ${sellerCount} seller${sellerCount === 1 ? '' : 's'}.`);
+  if (typeof loadPayments === 'function') loadPayments();
+}
+// Sync the toolbar Undo button's visibility/label with the batch stack.
+function _payRefreshUndoButton() {
+  const btn = document.getElementById('pay-undo-last');
+  if (!btn) return;
+  const aid = Number(document.getElementById('pay-auction')?.value || 0);
+  const batches = (aid ? _payLoadState(aid).batches : []) || [];
+  if (batches.length) {
+    btn.style.display = '';
+    btn.disabled = false;
+    btn.textContent = `↶ Undo Last Export (${batches.length})`;
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
 async function loadPayments(){
   const aid=document.getElementById('pay-auction').value;
   const body=document.getElementById('payments-list');
@@ -17676,6 +18164,13 @@ async function loadPayments(){
     DataTable.mount('payments-list', arr, {
       noSearch: true,
       emptyState: { icon: 'payments', title: "No payments to summarize yet", body: "Calculate the lots in this auction to see per-seller payable amounts here." },
+      // Tint rows by tracked-export status: fully-exported sellers get the
+      // rose row, partial ones amber.
+      rowClass:(p)=>{
+        const aid = Number((document.getElementById('pay-auction')||{}).value)||0;
+        const st = (typeof _payExportStatus==='function') ? _payExportStatus(aid, p.name, Number(p.lot_count)||0) : 'none';
+        return st==='full' ? 'pay-row-exported' : (st==='partial' ? 'pay-row-exported-partial' : '');
+      },
       columns: [
         // Selection column for bulk actions. Click on a checkbox toggles
         // the row's inclusion in the "Delete Selected" set; the master
@@ -17685,7 +18180,31 @@ async function loadPayments(){
           sortable:false, searchable:false,
           render:(p)=>`<input type="checkbox" class="pay-select-cb" value="${esc(p.name||'')}" onclick="event.stopPropagation();updatePaymentBulkButtons()" style="cursor:pointer">` },
         { key:'name', label:'Seller', sort:'text',
-          render:(p)=>`<span style="font-weight:600;color:var(--spice-text-main)">${esc(p.name||'')}</span>` },
+          render:(p)=>{
+            const aid = Number((document.getElementById('pay-auction')||{}).value)||0;
+            const total = Number(p.lot_count)||0;
+            const status = (typeof _payExportStatus==='function') ? _payExportStatus(aid, p.name, total) : 'none';
+            // "Multiple banks" warning when this seller's lots route to >1 account.
+            const bankBadge = p.multipleBanks
+              ? `<span class="pay-multibank-badge" title="This seller's lots use more than one bank account. Open 📋 Lots to review per-account routing.">🏦 multiple banks</span>`
+              : '';
+            // Exported-status badge (full ✓ / partial X/Y).
+            let exportedBadge = '';
+            if (status === 'full') {
+              exportedBadge = `<span class="pay-exported-badge pay-exported-full" title="Already exported. Use ↶ to undo before re-exporting.">✓ exported</span>`;
+            } else if (status === 'partial') {
+              const ex = _payExportedLotsFor(aid, p.name);
+              const n = Array.isArray(ex) ? ex.length : 0;
+              exportedBadge = `<span class="pay-exported-badge pay-exported-partial" title="${n} of ${total} lots already exported. Re-exporting pays only the remaining lots.">${n}/${total} exported</span>`;
+            }
+            // Saved lot-pick badge (📌 N picked) — the next Export Selected
+            // will narrow to these lots.
+            const picks = (typeof _payGetLotPicks==='function') ? _payGetLotPicks(aid, p.name) : null;
+            const pickBadge = (picks && picks.length && status !== 'full')
+              ? `<span class="pay-lot-pick-badge" title="${picks.length} lot${picks.length===1?'':'s'} saved as this seller's export filter.">📌 ${picks.length} picked</span>`
+              : '';
+            return `<span style="font-weight:600;color:var(--spice-text-main)">${esc(p.name||'')}</span>${bankBadge}${exportedBadge}${pickBadge}`;
+          } },
         { key:'lot_count', label:'Lots', sort:'number', numeric:true },
         { key:'total_qty', label:'Qty', sort:'number', numeric:true, fmt:(n)=>fmtI(n,3) },
         { key:'total_amount', label:'Amount', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
@@ -17720,7 +18239,16 @@ async function loadPayments(){
             const aid = Number((document.getElementById('pay-auction')||{}).value)||0;
             const nm = encodeURIComponent(p.name||'');
             const pay = Number(p.total_payable)||0;
-            return iconBtn('print','Print payment statement',`printPayment(${aid},decodeURIComponent('${nm}'))`)
+            // 📋 Lots — per-seller lot picker for partial payments (print a
+            // statement covering only chosen lots).
+            const lotsBtn = `<button class="icon-btn" title="Per-seller lots — pick lots for a partial payment statement" onclick="event.stopPropagation();openPayLotsModal(${aid},decodeURIComponent('${nm}'))" style="background:transparent;border:none;cursor:pointer;padding:2px 6px;border-radius:4px;font-size:14px">📋</button>`;
+            // ↶ Undo — only when this seller has a tracked export to restore.
+            const status = (typeof _payExportStatus==='function') ? _payExportStatus(aid, p.name, Number(p.lot_count)||0) : 'none';
+            const undoBtn = status !== 'none'
+              ? `<button class="icon-btn" title="Undo export for this seller — makes it selectable again" onclick="event.stopPropagation();undoPaymentExport(decodeURIComponent('${nm}'))" style="background:transparent;border:none;cursor:pointer;padding:2px 6px;border-radius:4px;font-size:15px;color:#b45309">↶</button>`
+              : '';
+            return undoBtn + lotsBtn
+                 + iconBtn('print','Print payment statement',`printPayment(${aid},decodeURIComponent('${nm}'))`)
                  + iconBtn('whatsapp','Send via WhatsApp',`whatsappPayment(${aid},decodeURIComponent('${nm}'),${pay})`);
           } }
       ]
@@ -17728,6 +18256,8 @@ async function loadPayments(){
 
     // Reset the bulk action UI after re-render — fresh checkbox state.
     updatePaymentBulkButtons();
+    // Sync the toolbar "Undo Last Export" button with this trade's batches.
+    if (typeof _payRefreshUndoButton === 'function') _payRefreshUndoButton();
 
     // Top Sellers chart — horizontal bars, top 10 by payable.
     // Hidden when fewer than 2 sellers (chart isn't meaningful).

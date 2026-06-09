@@ -7804,7 +7804,7 @@ app.get('/api/payments/bank/:auctionId', requireView, (req, res) => {
 // Lightweight A4 PDF showing the payment due to one seller for one
 // auction: header, seller block, lots breakdown, totals. Powers both
 // "Print" and "WhatsApp" actions on the Payments tab.
-function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg) {
+function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [auctionId]) || { ano:'', date:'' };
   // The lots table stores the per-kg price in `price` (not `rate`). The
   // query previously selected `rate`, which doesn't exist — sql.js
@@ -7812,12 +7812,23 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg) {
   // already-piped PDF stream early, producing a near-empty file. Aliasing
   // `price AS rate` keeps the existing rendering code (which reads
   // `row.rate`) working without further changes.
-  const lots = db.all(
-    `SELECT lot_no, qty, price AS rate, amount, puramt, refund, balance, cgst, sgst, igst
-       FROM lots WHERE auction_id = ? AND name = ? AND amount > 0
-       ORDER BY lot_no`,
-    [auctionId, sellerName]
-  ) || [];
+  //
+  // Optional `lotIds` narrows the statement to a caller-chosen subset of
+  // the seller's lots — supports the Payments tab's "partial payment"
+  // flow where the operator picks specific lots to settle now and leaves
+  // the rest for a later visit.
+  const lotIdFilter = Array.isArray(lotIds)
+    ? lotIds.map(n => parseInt(n, 10)).filter(Number.isFinite)
+    : [];
+  let lotSql = `SELECT lot_no, qty, price AS rate, amount, puramt, refund, balance, cgst, sgst, igst
+       FROM lots WHERE auction_id = ? AND name = ? AND amount > 0`;
+  const lotParams = [auctionId, sellerName];
+  if (lotIdFilter.length) {
+    lotSql += ` AND id IN (${lotIdFilter.map(() => '?').join(',')})`;
+    lotParams.push(...lotIdFilter);
+  }
+  lotSql += ' ORDER BY lot_no';
+  const lots = db.all(lotSql, lotParams) || [];
   const trader = db.get('SELECT * FROM traders WHERE LOWER(name) = LOWER(?) LIMIT 1', [sellerName]);
   const fmtAmt = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmtQty = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
@@ -7898,6 +7909,38 @@ app.get('/api/payments/pdf/:auctionId/:sellerName', requireView, (req, res) => {
     doc.pipe(res); piped = true;
     res.on('close', () => { try { doc.destroy(); } catch(_){} });
     _renderPaymentStatement(doc, db, auctionId, sellerName, cfg);
+    doc.end();
+  } catch (e) {
+    if (piped && doc) { try { doc.end(); } catch(_){} }
+    else if (!res.headersSent) res.status(500).json({ error: e.message || 'PDF failed' });
+  }
+});
+
+// Per-seller, lot-filtered PDF. Body { auction_id, seller_name, lot_ids: [...] }
+// Powers the Payments tab's "partial payment" flow — the operator opens the
+// per-seller lots modal, ticks the lots they're settling now, and prints a
+// statement covering only that subset. Remaining lots can be paid later.
+app.post('/api/payments/pdf-lots', requireView, (req, res) => {
+  let doc, piped = false;
+  try {
+    const db = getDb();
+    const cfg = getSettingsFlat(db);
+    const auctionId = Number(req.body.auction_id);
+    const sellerName = String(req.body.seller_name || '').trim();
+    const lotIds = Array.isArray(req.body.lot_ids) ? req.body.lot_ids : [];
+    if (!auctionId || !sellerName || !lotIds.length) {
+      return res.status(400).json({ error: 'auction_id, seller_name and lot_ids[] are required' });
+    }
+    const auction = db.get('SELECT id FROM auctions WHERE id = ?', [auctionId]);
+    if (!auction) return res.status(404).json({ error: 'Auction not found' });
+    const PDFDocument = require('pdfkit');
+    doc = new PDFDocument({ size: 'A4', margin: 30 });
+    res.setHeader('Content-Type', 'application/pdf');
+    const safeName = sellerName.replace(/[^\w]/g, '_').slice(0, 80) || 'seller';
+    res.setHeader('Content-Disposition', `inline; filename="Payment_${safeName}_${auctionId}_partial.pdf"`);
+    doc.pipe(res); piped = true;
+    res.on('close', () => { try { doc.destroy(); } catch(_){} });
+    _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds);
     doc.end();
   } catch (e) {
     if (piped && doc) { try { doc.end(); } catch(_){} }
@@ -8000,6 +8043,54 @@ app.get('/api/exports/:type/:auctionId', requireExport, async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${exportDef.name}_${auctionId}.${ext}"`);
     res.send(Buffer.from(buffer));
   } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST variant — powers the Payments tab's tracked "Export Selected" flow.
+// Body { names:[...], lots:{seller:[lot_no,…]}, excludeLots:{seller:[lot_no,…]},
+// format, state }. names → seller filter; lots → per-seller picked subset;
+// excludeLots → lots already shipped in a prior export (skipped so re-export
+// doesn't double-pay them). XLSX/CSV only (the GET route handles PDF).
+app.post('/api/exports/:type/:auctionId', requireExport, async (req, res) => {
+  const { type, auctionId } = req.params;
+  const body = req.body || {};
+  if (String(body.format || 'xlsx').toLowerCase() === 'pdf') {
+    return res.status(400).json({ error: 'PDF not supported on the selected-export route. Use the GET endpoint for a full PDF.' });
+  }
+  const exportDef = EXPORT_TYPES[type];
+  if (!exportDef) return res.status(400).json({ error: 'Unknown export type', available: Object.keys(EXPORT_TYPES) });
+  try {
+    const db = getDb();
+    const names = Array.isArray(body.names) ? body.names.map(s => String(s || '').trim()).filter(Boolean) : [];
+    const cleanMap = (src) => {
+      if (!src || typeof src !== 'object' || Array.isArray(src)) return null;
+      const out = {};
+      for (const k of Object.keys(src)) {
+        const arr = Array.isArray(src[k]) ? src[k].map(v => String(v || '').trim()).filter(Boolean) : [];
+        if (arr.length) out[k] = arr;
+      }
+      return Object.keys(out).length ? out : null;
+    };
+    const extra = {
+      branch: '', saleType: '',
+      sellers: names,
+      lots:        cleanMap(body.lots),
+      excludeLots: cleanMap(body.excludeLots),
+    };
+    let buffer;
+    if (exportDef.needsCfg) {
+      const cfg = getSettingsFlat(db);
+      buffer = await exportDef.fn(db, auctionId, cfg, body.state || null, extra);
+    } else {
+      buffer = await exportDef.fn(db, auctionId, body.state || null, extra);
+    }
+    const ext  = exportDef.ext  || 'xlsx';
+    const mime = exportDef.mime || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', `attachment; filename="${exportDef.name}_selected_${auctionId}.${ext}"`);
+    res.send(Buffer.from(buffer));
+  } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
