@@ -586,12 +586,18 @@ function mountMobile(app, deps) {
       editTimeout:     parseInt(get('edit_timeout_sec', '0'), 10) || 0,
       editEnabled:     getBool('edit_enabled', true),
       sampleWeight:    getNum('sample_weight', 0),
+      // Per-bag empty gunny weight. > 0 switches mobile Lot Entry into
+      // "Weight w/ Gunny" mode (net = weight_with_gunny − bags × this).
+      defaultGunny:    getNum('default_gunny_weight', 0),
       showMoisture:    getBool('show_moisture', false),
       // Reserved Price visibility flag. Drives the Reserved Price
       // input on the mobile Lot Entry form; the Crop Receipt input is
       // always shown (it auto-increments — first lot typed by hand,
       // subsequent lots get +1, editable) so it's not flag-gated.
       showReservedPrice: getBool('flag_reserved_price', false),
+      // Admin-designated default trade (auction id) — the mobile app
+      // pre-selects + highlights it in the trade picker. null = none set.
+      defaultAuctionId: (parseInt(get('default_auction_id', ''), 10) || null),
       defaultLitre:    get('default_litre', ''),
       // PWA defaults — surfaced here for completeness; not currently
       // backed by spice-config settings, so static-ish values are fine.
@@ -608,11 +614,16 @@ function mountMobile(app, deps) {
   // an envelope object, not the flat array spice-config returns natively.
   // Wrap the native array in {auctions: [...]} for the mobile client.
   app.get('/api/mobile/auctions', requireAuth, (_req, res) => {
-    const rows = getDb().all(
+    const db = getDb();
+    const rows = db.all(
       `SELECT *, (SELECT COUNT(*) FROM lots WHERE auction_id=auctions.id) AS lot_count
        FROM auctions ORDER BY date DESC, ano DESC LIMIT 100`
     );
-    res.json({ auctions: rows });
+    // The admin-chosen default trade — the mobile picker pre-selects +
+    // highlights it. null when none is set (or it was deleted).
+    const defRow = db.get(`SELECT value FROM company_settings WHERE key = 'default_auction_id'`);
+    const defaultAuctionId = defRow ? (parseInt(defRow.value, 10) || null) : null;
+    res.json({ auctions: rows, defaultAuctionId });
   });
 
   // ── 4. STATUS ALIAS ─────────────────────────────────────────────

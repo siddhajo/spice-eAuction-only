@@ -3187,11 +3187,32 @@ app.put('/api/auctions/:id', requireAuctionWrite, (req, res) => {
     [ano, normalizeDate(date), crop_type||defaultCrop, state||defaultState, req.params.id]);
   res.json({ success: true });
 });
+// Designate (or clear) the default trade — the auction the mobile app
+// pre-selects + highlights when an operator starts a session. Stored as
+// the `default_auction_id` company setting. Re-selecting the current
+// default toggles it off; pass {default:false} to force-clear.
+app.post('/api/auctions/:id/set-default', requireAuctionWrite, (req, res) => {
+  const db = getDb();
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid auction id' });
+  const auc = db.get('SELECT id FROM auctions WHERE id = ?', [id]);
+  if (!auc) return res.status(404).json({ error: 'Auction not found' });
+  const current = String(getSetting(db, 'default_auction_id') || '').trim();
+  const clear = req.body && req.body.default === false;
+  const next = (clear || current === String(id)) ? '' : String(id);
+  db.run('UPDATE company_settings SET value = ? WHERE key = ?', [next, 'default_auction_id']);
+  res.json({ success: true, default_auction_id: next ? parseInt(next, 10) : null });
+});
 app.delete('/api/auctions/:id', requireDelete, (req, res) => {
   const db = getDb();
   db.run('DELETE FROM lot_allocations WHERE auction_id = ?', [req.params.id]);
   db.run('DELETE FROM lots WHERE auction_id = ?', [req.params.id]);
   db.run('DELETE FROM auctions WHERE id = ?', [req.params.id]);
+  // If the deleted trade was the default, clear the pointer so the mobile
+  // app doesn't try to pre-select a trade that no longer exists.
+  if (String(getSetting(db, 'default_auction_id') || '').trim() === String(req.params.id)) {
+    db.run("UPDATE company_settings SET value = '' WHERE key = 'default_auction_id'");
+  }
   res.json({ success: true });
 });
 app.post('/api/auctions/bulk-delete', requireDelete, (req, res) => {

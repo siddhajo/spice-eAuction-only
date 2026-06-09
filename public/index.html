@@ -1138,6 +1138,14 @@ body:not([data-feat-reserved-price="1"]) .feat-reserved-price{display:none !impo
    columns config supplies a rowClass that returns 'row-locked'. */
 tr.row-locked > td{background:#fffbeb !important;border-top:1px solid #fde68a}
 tr.row-locked:hover > td{background:#fef3c7 !important}
+/* Default-trade row highlight on the Auctions tab — the trade the mobile
+   app pre-selects. Tinted green with an amber/filled star button. */
+tr.row-default-trade > td{background:var(--spice-cardamom-lt) !important}
+tr.row-default-trade:hover > td{background:var(--spice-cardamom-lt) !important}
+.icon-btn.i-star svg{fill:none}
+.icon-btn.i-star:hover{color:#B45309;border-color:#FCD34D}
+tr.row-default-trade .icon-btn.i-star{color:#B45309;border-color:#FCD34D;background:#FEF3C7}
+tr.row-default-trade .icon-btn.i-star svg{fill:#F59E0B;stroke:#B45309}
 /* When the feature is OFF, neutralise the tint too — otherwise legacy
    locked_at rows would still paint amber even though the lock is
    ignored everywhere else. */
@@ -5641,7 +5649,11 @@ const ICONS={
   // Allocations icon — a clipboard with bracketed lot ranges. Used on
   // the Auctions tab row actions to open the per-trade lot allocation
   // modal (Edit + Reassign).
-  alloc:'<svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2" ry="2"/><path d="M9 7h6M9 11h6M9 15h4"/></svg>'
+  alloc:'<svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2" ry="2"/><path d="M9 7h6M9 11h6M9 15h4"/></svg>',
+  // Star — toggles an auction as the "default trade" (Auctions tab). The
+  // current default's row is tinted via .row-default-trade and its star
+  // button shows filled/amber.
+  star:'<svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>'
 };
 function iconBtn(kind,title,onclick){
   // Map icon kinds to permission classes so per-row action buttons are
@@ -5651,6 +5663,7 @@ function iconBtn(kind,title,onclick){
     del:    'needs-delete',
     revert: 'needs-invoice-revert',
     alloc:  'needs-auction-write', // managing allocations is an auction-write action
+    star:   'needs-auction-write', // setting the default trade is an auction-write action
     edit:   '',
   };
   const permCls = PERM_FOR[kind] || '';
@@ -14533,12 +14546,16 @@ async function loadAuctions(opts){
   _auctionsPager.total = total;
   _auctionsPager.totalPages = Math.max(1, Math.ceil(total / _auctionsPager.pageSize));
   renderPager('auctions-pager', _auctionsPager, gotoAuctionsPage, '');
+  // The admin-designated default trade (mobile pre-selects + highlights it).
+  // Read from the cached flat settings; updated in-place by setDefaultTrade.
+  const _defAucId = parseInt((window._CCFG && window._CCFG.default_auction_id) || '', 10) || null;
   DataTable.mount('auctions-list', d, {
     noSearch: true,
-    emptyState: { icon: 'auctions', title: "No auctions yet", body: "Create your first auction from the Add Auction button to start entering lots." }, 
+    emptyState: { icon: 'auctions', title: "No auctions yet", body: "Create your first auction from the Add Auction button to start entering lots." },
+    rowClass: (a) => (_defAucId && a.id === _defAucId) ? 'row-default-trade' : '',
     columns: [
       BulkActions.column('trade'),
-      { key:'ano', label:'Auction No', sort:'text', render:(a)=>`<b>${esc(a.ano)}</b>` },
+      { key:'ano', label:'Auction No', sort:'text', render:(a)=>`<b>${esc(a.ano)}</b>${(_defAucId && a.id===_defAucId) ? ' <span style="font-size:10px;font-weight:700;color:#B45309;background:#FEF3C7;border:1px solid #FCD34D;border-radius:10px;padding:1px 7px;margin-left:6px;vertical-align:middle">⭐ DEFAULT</span>' : ''}` },
       { key:'date', label:'Date', sort:'date', render:(a)=>fmtD(a.date) },
       { key:'crop_type', label:'Type', sort:'text' },
       { key:'lot_count', label:'Lots', sort:'number', numeric:true, render:(a)=>String(a.lot_count||0) },
@@ -14547,7 +14564,8 @@ async function loadAuctions(opts){
           // HTML onclick. JSON.stringify here produces double quotes that
           // would terminate the onclick attribute — escape any single quote
           // in ano to keep the JS literal valid.
-          iconBtn('alloc','Manage lot allocations & reassign',`openAllocModal(${a.id},'${String(a.ano||'?').replace(/'/g,"\\'")}')`)
+          iconBtn('star', (_defAucId && a.id===_defAucId) ? 'Default trade — click to unset' : 'Set as the default trade (mobile pre-selects it)',`setDefaultTrade(${a.id})`)
+          + iconBtn('alloc','Manage lot allocations & reassign',`openAllocModal(${a.id},'${String(a.ano||'?').replace(/'/g,"\\'")}')`)
           + iconBtn('edit','Edit auction',`openAuctionEdit(${JSON.stringify(a).replace(/"/g,'&quot;')})`)
           + iconBtn('del','Delete auction',`delAuction(${a.id})`) }
     ]
@@ -14591,9 +14609,24 @@ async function saveAuction(){
 async function delAuction(id){
   if(!confirm('Delete auction and ALL its lots?'))return;
   await j(`/api/auctions/${id}`,{method:'DELETE'});
+  // Clearing the default server-side (if this was it) — reflect locally so
+  // the highlight disappears on the immediate re-render.
+  if (window._CCFG && parseInt(window._CCFG.default_auction_id||'',10) === id) window._CCFG.default_auction_id = '';
   loadAuctions();
   // Deleted auction must disappear from the topbar selector too.
   try { loadTopbarTradeSelector(); } catch(_) {}
+}
+// Toggle a trade as THE default the mobile app pre-selects + highlights.
+// Server stores it in default_auction_id; we mirror into window._CCFG so
+// the row highlight updates without re-fetching settings.
+async function setDefaultTrade(id){
+  try {
+    const r = await j(`/api/auctions/${id}/set-default`, { method:'POST', body: JSON.stringify({}) });
+    const newDef = (r && r.default_auction_id != null) ? String(r.default_auction_id) : '';
+    if (window._CCFG) window._CCFG.default_auction_id = newDef;
+    toast(newDef ? 'Set as default trade ✓' : 'Default trade cleared');
+    loadAuctions({ keepPage: true });
+  } catch (e) { showError(e); }
 }
 
 function openImportAuctionModal(){

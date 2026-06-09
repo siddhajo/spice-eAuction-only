@@ -26,6 +26,7 @@ const HIDDEN_SETTING_KEYS = new Set([
   'flag_lot_set_buyer',      // Flags: "Lots → Set Buyer bulk action"
   'flag_discount_in_prate',  // Flags: "Roll Discount into P_Rate (Grade 1 only)"
   'deduction1_inclusive',    // Rates: "Deduction (Pooler) — discount-inclusive (Grade 1 only)"
+  'default_auction_id',      // Internal: the admin-chosen default trade (set via the Auctions tab ⭐, not a typed setting)
 ]);
 
 const DEFAULTS = [
@@ -244,6 +245,10 @@ const DEFAULTS = [
   { key: 'edit_enabled',       value: 'false', category: 'lot_entry', label: 'Allow Lot Edits (non-admin)',        type: 'boolean' },
   { key: 'edit_timeout_sec',   value: '0',     category: 'lot_entry', label: 'Edit Timeout (sec; 0 = no limit)',    type: 'number'  },
   { key: 'lot_receipt_format', value: '',      category: 'lot_entry', label: 'Lot Receipt Format (compact|detailed)', type: 'text' },
+  // The admin-designated default trade (auction id). Set via the ⭐ on the
+  // Auctions tab; the mobile app pre-selects + highlights it. Hidden from
+  // the Settings UI (see HIDDEN_SETTING_KEYS); blank = no default.
+  { key: 'default_auction_id', value: '',      category: 'lot_entry', label: 'Default Trade (auction id)', type: 'text' },
 
   // ── SPICE BOARD REPORTS ────────────────────────────────────
   // Newline-separated list of Form-D "Place of auction" options. The
