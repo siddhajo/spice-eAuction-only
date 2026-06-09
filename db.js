@@ -171,6 +171,7 @@ async function initDb() {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     trader_id INTEGER NOT NULL,
     bank_name TEXT DEFAULT '',
+    branch TEXT DEFAULT '',
     acctnum TEXT NOT NULL,
     ifsc TEXT NOT NULL,
     holder_name TEXT DEFAULT '',
@@ -620,6 +621,8 @@ async function initDb() {
     // mark the entry as rolled back.
     "ALTER TABLE import_log ADD COLUMN inserted_ids TEXT DEFAULT ''",
     "ALTER TABLE import_log ADD COLUMN undone_at TEXT DEFAULT ''",
+    // Bank branch name — populated by the IFSC auto-lookup in seller edit.
+    "ALTER TABLE trader_banks ADD COLUMN branch TEXT DEFAULT ''",
     // Price-check gate timestamp — see auctions schema for semantics.
     "ALTER TABLE auctions ADD COLUMN price_checked_at TEXT DEFAULT ''",
     "ALTER TABLE auctions ADD COLUMN price_checked_ever_at TEXT DEFAULT ''",

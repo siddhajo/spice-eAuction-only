@@ -1539,7 +1539,7 @@ app.get('/api/traders', requireViewOrLotEntry, (req, res) => {
     const ids = rows.map(r => r.id);
     const placeholders = ids.map(() => '?').join(',');
     const banks = db.all(
-      `SELECT id, trader_id, bank_name, acctnum, ifsc, holder_name, is_default
+      `SELECT id, trader_id, bank_name, branch, acctnum, ifsc, holder_name, is_default
        FROM trader_banks WHERE trader_id IN (${placeholders})
        ORDER BY trader_id, is_default DESC, id`, ids
     );
@@ -1992,7 +1992,7 @@ app.get('/api/traders/:id', requireViewOrLotEntry, (req, res) => {
   if (!row) return res.status(404).json({ error: 'Not found' });
   // Attach banks array so the edit modal sees all bank accounts.
   row.banks = db.all(
-    'SELECT id, trader_id, bank_name, acctnum, ifsc, holder_name, is_default FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id',
+    'SELECT id, trader_id, bank_name, branch, acctnum, ifsc, holder_name, is_default FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id',
     [row.id]
   );
   res.json(row);
@@ -2009,8 +2009,8 @@ function syncTraderBanks(db, traderId, banks) {
   db.run('DELETE FROM trader_banks WHERE trader_id = ?', [traderId]);
   for (const b of arr) {
     db.run(
-      'INSERT INTO trader_banks (trader_id, bank_name, acctnum, ifsc, holder_name) VALUES (?,?,?,?,?)',
-      [traderId, b.bank_name||'', String(b.acctnum||''), String(b.ifsc||''), b.holder_name||'']
+      'INSERT INTO trader_banks (trader_id, bank_name, branch, acctnum, ifsc, holder_name) VALUES (?,?,?,?,?,?)',
+      [traderId, b.bank_name||'', b.branch||'', String(b.acctnum||''), String(b.ifsc||''), b.holder_name||'']
     );
   }
   // Mirror first bank into traders row for legacy compatibility
@@ -2021,18 +2021,45 @@ function syncTraderBanks(db, traderId, banks) {
   );
 }
 
+// Find an existing seller that duplicates `t`, applying the same priority
+// as the mobile bridge + lot-entry quick-add: GSTIN (cr) > PAN >
+// (name + phone). Comparison is UPPER(TRIM(...)) on both sides so legacy
+// rows with stray whitespace (common from XLSX imports) still match.
+// Returns { field, row } or null. `excludeId` skips the row being edited.
+function _findTraderDuplicate(db, t, excludeId) {
+  const cr  = String(t.cr  || '').trim();
+  const pan = String(t.pan || '').trim();
+  const tel = String(t.tel || '').trim();
+  const nm  = String(t.name|| '').trim();
+  const ex  = excludeId ? ' AND id <> ?' : '';
+  const tail = excludeId ? [excludeId] : [];
+  if (cr) {
+    const row = db.get(`SELECT id, name, cr, pan, tel FROM traders WHERE UPPER(TRIM(cr)) = UPPER(?)${ex} LIMIT 1`, [cr, ...tail]);
+    if (row) return { field: 'GSTIN', row };
+  }
+  if (pan) {
+    const row = db.get(`SELECT id, name, cr, pan, tel FROM traders WHERE UPPER(TRIM(pan)) = UPPER(?)${ex} LIMIT 1`, [pan, ...tail]);
+    if (row) return { field: 'PAN', row };
+  }
+  if (nm && tel) {
+    const row = db.get(`SELECT id, name, cr, pan, tel FROM traders WHERE UPPER(TRIM(name)) = UPPER(?) AND TRIM(tel) = ?${ex} LIMIT 1`, [nm, tel, ...tail]);
+    if (row) return { field: 'name + phone', row };
+  }
+  return null;
+}
 app.post('/api/traders', requireTraderWrite, (req, res) => {
   const t = req.body;
   const db = getDb();
-  // Hard-block duplicate sellers by PAN — schema doesn't enforce uniqueness
-  // but desktop + PWA UIs both expect PAN to be unique. Done server-side so
-  // every code path (desktop, PWA mobile, direct API callers) is protected.
-  const _panChk = String(t.pan || '').trim();
-  if (_panChk) {
-    const _exist = db.get('SELECT id, name FROM traders WHERE UPPER(TRIM(pan)) = UPPER(?) LIMIT 1', [_panChk]);
-    if (_exist) {
-      return res.status(409).json({ error: `PAN ${_panChk.toUpperCase()} already on seller "${_exist.name}"` });
-    }
+  // Hard-block duplicate sellers — same rules as the mobile bridge and the
+  // lot-entry quick-add so EVERY create path is consistent: GSTIN (cr) >
+  // PAN > (name + phone). Schema doesn't enforce uniqueness; the server
+  // check protects every code path (desktop, PWA, direct API callers).
+  const _dup = _findTraderDuplicate(db, t);
+  if (_dup) {
+    return res.status(409).json({
+      duplicate: true, field: _dup.field, existing: _dup.row,
+      error: `This seller already exists (${_dup.field} match): "${_dup.row.name || '(unnamed)'}". Edit that seller instead.`,
+    });
   }
   const info = db.run(`INSERT INTO traders (name,cr,pan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -2047,17 +2074,14 @@ app.post('/api/traders', requireTraderWrite, (req, res) => {
 app.put('/api/traders/:id', requireTraderWrite, (req, res) => {
   const t = req.body;
   const db = getDb();
-  // Same PAN-uniqueness guard as POST, but exclude this row's own id so
-  // editing a seller without changing the PAN still works.
-  const _panChk = String(t.pan || '').trim();
-  if (_panChk) {
-    const _exist = db.get(
-      'SELECT id, name FROM traders WHERE UPPER(TRIM(pan)) = UPPER(?) AND id <> ? LIMIT 1',
-      [_panChk, req.params.id]
-    );
-    if (_exist) {
-      return res.status(409).json({ error: `PAN ${_panChk.toUpperCase()} already on seller "${_exist.name}"` });
-    }
+  // Same uniqueness guard as POST (GSTIN > PAN > name+phone), but exclude
+  // this row's own id so re-saving an unchanged seller still works.
+  const _dup = _findTraderDuplicate(db, t, parseInt(req.params.id, 10));
+  if (_dup) {
+    return res.status(409).json({
+      duplicate: true, field: _dup.field, existing: _dup.row,
+      error: `Another seller already exists (${_dup.field} match): "${_dup.row.name || '(unnamed)'}".`,
+    });
   }
   // Unified seller schema — preserve whatsapp + email alongside the core
   // fields. Either app can edit either field; the other app sees the
@@ -4566,9 +4590,9 @@ app.get('/api/invoices', requireView, (req, res) => {
   if (auction_id) { where += ' AND auction_id = ?'; p.push(parseInt(auction_id)); }
   if (ano) { where += ' AND ano = ?'; p.push(ano); }
   if (from && to) { where += ' AND date BETWEEN ? AND ?'; p.push(from, to); }
-  // Sale-type filter (L / I / E) — added to the Sales Invoice list toolbar.
+  // Sale-type filter (L / I / E / W / N) — added to the Sales Invoice list toolbar.
   const saleNorm = String(sale || '').trim().toUpperCase();
-  if (saleNorm === 'L' || saleNorm === 'I' || saleNorm === 'E') {
+  if (['L','I','E','W','N'].includes(saleNorm)) {
     where += ' AND UPPER(TRIM(COALESCE(sale,""))) = ?';
     p.push(saleNorm);
   }

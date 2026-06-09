@@ -2076,6 +2076,30 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   .dt-scroll tbody td:last-child{white-space:nowrap}
 }
 
+/* ── Row actions collapsed behind an ellipsis (⋯) menu ──────────
+   DataTable wraps every `_actions` cell in a .dt-actions container: an
+   ellipsis toggle button + a popover holding the original icon buttons.
+   The popover is position:fixed (positioned in JS) so it isn't clipped by
+   the .dt-scroll overflow container. */
+.dt-actions{position:relative;display:inline-flex}
+.dt-act-toggle{
+  width:30px;height:30px;border-radius:8px;border:1px solid var(--spice-line);
+  background:#fff;color:var(--spice-text-mute);cursor:pointer;padding:0;
+  display:inline-flex;align-items:center;justify-content:center;
+  transition:background .12s,border-color .12s,color .12s
+}
+.dt-act-toggle:hover,.dt-actions.open .dt-act-toggle{
+  background:var(--spice-cardamom-lt);border-color:var(--spice-cardamom);
+  color:var(--spice-cardamom-dk)
+}
+.dt-act-toggle svg{fill:currentColor;pointer-events:none}
+.dt-act-menu{
+  display:none;position:fixed;z-index:60;
+  flex-direction:row;align-items:center;gap:4px;padding:6px;
+  background:#fff;border:1px solid var(--spice-line);border-radius:10px;
+  box-shadow:0 8px 24px rgba(0,0,0,.16)
+}
+
 
 .toast{
   display:none;position:fixed;top:80px;right:24px;
@@ -3548,6 +3572,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <option value="L">Local (L)</option>
             <option value="I">Inter-state (I)</option>
             <option value="E">Export (E)</option>
+            <option value="W">Withdrawn (W)</option>
+            <option value="N">N/A (N)</option>
           </select>
           <!-- Within-trade search across invoice no, buyer name, GSTIN. -->
           <input type="search" id="inv-search" placeholder="Search invoice no, buyer, GSTIN…" oninput="searchInvoicesDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
@@ -3632,6 +3658,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <option value="L">Local (L)</option>
             <option value="I">Inter-state (I)</option>
             <option value="E">Export (E)</option>
+            <option value="W">Withdrawn (W)</option>
+            <option value="N">N/A (N)</option>
           </select>
           <!-- Within-trade search across purchase invoice no, seller name, GSTIN. -->
           <input type="search" id="pur-search" placeholder="Search invoice no, seller, GSTIN…" oninput="searchPurchasesDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
@@ -4244,7 +4272,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <select id="jr-auction" style="width:100%;padding:6px"></select>
           </div>
           <div class="fg" style="margin:0" id="jr-sale-wrap"><label>Sale Type</label>
-            <select id="jr-sale"><option value="">All</option><option value="L">Local (L)</option><option value="I">Inter-state (I)</option><option value="E">Export (E)</option></select>
+            <select id="jr-sale"><option value="">All</option><option value="L">Local (L)</option><option value="I">Inter-state (I)</option><option value="E">Export (E)</option><option value="W">Withdrawn (W)</option><option value="N">N/A (N)</option></select>
           </div>
           <button class="btn btn-g" onclick="loadJournal()">Load</button>
           <button class="btn btn-a" onclick="exportJournal()">Export XLSX</button>
@@ -4498,6 +4526,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <option value="L">Local (L)</option>
         <option value="I">Inter-state (I)</option>
         <option value="E">Export (E)</option>
+        <option value="W">Withdrawn (W)</option>
+        <option value="N">N/A (N)</option>
       </select>
     </div>
   </div>
@@ -4731,7 +4761,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       </div>
     </div>
     <div class="fg"><label>Sale Type</label>
-      <select id="l-sale"><option value=""></option><option value="L">Local (L)</option><option value="I">Inter-state (I)</option><option value="E">Export (E)</option></select>
+      <select id="l-sale"><option value=""></option><option value="L">Local (L)</option><option value="I">Inter-state (I)</option><option value="E">Export (E)</option><option value="W">Withdrawn (W)</option><option value="N">N/A (N)</option></select>
     </div>
   </div>
   <div class="actions"><button class="btn btn-o" onclick="hideModal('lot-modal')">Cancel</button><button class="btn btn-g" onclick="saveLot()">Save</button></div>
@@ -4788,6 +4818,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <option value="L">Local (L)</option>
       <option value="I">Inter-state (I)</option>
       <option value="E">Export (E)</option>
+      <option value="W">Withdrawn (W)</option>
+      <option value="N">N/A (N)</option>
     </select>
   </div>
   <div class="fg">
@@ -4835,6 +4867,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <option value="L">Local (L) only</option>
       <option value="I">Inter-state (I) only</option>
       <option value="E">Export (E) only</option>
+      <option value="W">Withdrawn (W) only</option>
+      <option value="N">N/A (N) only</option>
     </select>
     <div style="font-size:11px;color:var(--text3);margin-top:4px">When set, only buyers whose default sale type matches are included.</div>
   </div>
@@ -5032,7 +5066,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <div class="fg"><label>Auction No</label><input id="ie-ano"></div>
     <div class="fg"><label>Date</label><input type="date" id="ie-date"></div>
     <div class="fg"><label>Sale Type</label>
-      <select id="ie-sale"><option value="L">Local</option><option value="I">Inter-state</option><option value="E">Export</option></select>
+      <select id="ie-sale"><option value="L">Local</option><option value="I">Inter-state</option><option value="E">Export</option><option value="W">Withdrawn</option><option value="N">N/A</option></select>
     </div>
     <div class="fg"><label>Invoice No</label><input id="ie-invo"></div>
     <div class="fg"><label>Buyer Code</label><input id="ie-buyer"></div>
@@ -5759,6 +5793,39 @@ const DataTable = (function(){
     return rows;
   }
 
+  // Wrap an action cell's icon HTML in an ellipsis (⋯) toggle + popover.
+  // Cells with no real action buttons (empty or a "—" placeholder) are left
+  // untouched so we don't show a menu that opens to nothing.
+  function wrapActionsCell(html){
+    const inner = String(html == null ? '' : html);
+    if (!/<button/i.test(inner)) return html;
+    return '<div class="dt-actions">'
+      + '<button type="button" class="dt-act-toggle" aria-label="Actions" title="Actions" '
+      +   'onclick="DataTable._toggleActions(this,event)">'
+      +   '<svg viewBox="0 0 24 24" width="18" height="18">'
+      +     '<circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/>'
+      +   '</svg>'
+      + '</button>'
+      + '<div class="dt-act-menu" role="menu">' + inner + '</div>'
+      + '</div>';
+  }
+
+  // Close every open action popover and reset its inline positioning.
+  function _closeAllActionMenus(){
+    document.querySelectorAll('.dt-actions.open').forEach(w => {
+      w.classList.remove('open');
+      const m = w.querySelector('.dt-act-menu');
+      if (m) { m.style.display = ''; m.style.top = ''; m.style.left = ''; m.style.visibility = ''; }
+    });
+  }
+  // One-time global closers: any click (outside the toggle, which stops
+  // propagation), Escape, resize, or scroll dismisses open menus. Scroll
+  // uses capture so it catches the inner scroll container too.
+  document.addEventListener('click', _closeAllActionMenus);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') _closeAllActionMenus(); });
+  window.addEventListener('resize', _closeAllActionMenus);
+  window.addEventListener('scroll', _closeAllActionMenus, true);
+
   function render(tbodyId){
     const s = state[tbodyId]; if (!s) return;
     const table = document.getElementById(tbodyId).closest('table');
@@ -5782,7 +5849,11 @@ const DataTable = (function(){
     // Body rows
     const bodyRows = visible.map(r => {
       const cells = s.cols.map(c => {
-        const v = displayValue(r, c);
+        let v = displayValue(r, c);
+        // Collapse the row's action icons behind an ellipsis (⋯) menu so the
+        // table stays uncluttered — applies to every screen's `_actions`
+        // column via this single code path.
+        if (c.key === '_actions') v = wrapActionsCell(v);
         const cls = c.numeric ? ' class="num"' : (c.tdClass ? ` class="${c.tdClass}"` : '');
         return `<td${cls}>${v}</td>`;
       }).join('');
@@ -5922,6 +5993,31 @@ const DataTable = (function(){
       const s = state[tbodyId]; if (!s) return;
       s.visible += PAGE_SIZE;
       render(tbodyId);
+    },
+    // Toggle a row's ⋯ action popover. Positioned with position:fixed at the
+    // toggle's rect so it escapes the scroll-overflow clip, and flips up /
+    // clamps horizontally when it would overflow the viewport.
+    _toggleActions(btn, ev){
+      if (ev) ev.stopPropagation();
+      const wrap = btn.closest('.dt-actions');
+      if (!wrap) return;
+      const menu = wrap.querySelector('.dt-act-menu');
+      const wasOpen = wrap.classList.contains('open');
+      _closeAllActionMenus();
+      if (wasOpen || !menu) return;
+      wrap.classList.add('open');
+      const r = btn.getBoundingClientRect();
+      menu.style.visibility = 'hidden';
+      menu.style.display = 'flex';
+      const mw = menu.offsetWidth, mh = menu.offsetHeight;
+      let top = r.bottom + 4;
+      if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+      let left = r.right - mw;                 // right-align to the toggle
+      if (left < 8) left = 8;
+      if (left + mw > window.innerWidth - 8) left = window.innerWidth - 8 - mw;
+      menu.style.top = top + 'px';
+      menu.style.left = left + 'px';
+      menu.style.visibility = '';
     },
     // Force-clear the cached state for a tbody. Used by Reload-style
     // actions where the caller wants the next mount() call to render
@@ -13524,18 +13620,73 @@ function appendBankRow(b){
   row.className = 'bank-row';
   row.style.cssText = 'display:grid;grid-template-columns:1.2fr 1.4fr 1fr 1.2fr auto;gap:8px;align-items:end;padding:8px;background:#fff;border:1px solid var(--border);border-radius:6px';
   // Use fieldsets so the inputs are clearly grouped, with mini-labels.
+  // The bank-branch hint sits under Bank Name and is populated by the IFSC
+  // auto-lookup (Razorpay public API) when the IFSC field changes.
   row.innerHTML = `
-    <div class="fg" style="margin:0"><label style="font-size:11px">Bank Name</label><input class="bank-name" value="${esc(b.bank_name||'')}" placeholder="e.g. HDFC"></div>
+    <div class="fg" style="margin:0">
+      <label style="font-size:11px">Bank Name</label>
+      <input class="bank-name" value="${esc(b.bank_name||'')}" data-ifsc-auto="${esc(b.bank_name||'')}" placeholder="e.g. HDFC">
+      <div class="bank-branch-hint" style="font-size:11px;color:var(--text3);margin-top:2px;min-height:14px">${b.branch ? 'Branch: '+esc(b.branch) : ''}</div>
+      <input type="hidden" class="bank-branch" value="${esc(b.branch||'')}">
+    </div>
     <div class="fg" style="margin:0"><label style="font-size:11px">Account No</label><input class="bank-acctnum" value="${esc(b.acctnum||'')}"></div>
-    <div class="fg" style="margin:0"><label style="font-size:11px">IFSC</label><input class="bank-ifsc" value="${esc(b.ifsc||'')}" style="text-transform:uppercase"></div>
+    <div class="fg" style="margin:0"><label style="font-size:11px">IFSC</label><input class="bank-ifsc" value="${esc(b.ifsc||'')}" style="text-transform:uppercase" oninput="onBankIfscInput(this)" onblur="lookupBankByIfsc(this)"></div>
     <div class="fg" style="margin:0"><label style="font-size:11px">Holder Name</label><input class="bank-holder" value="${esc(b.holder_name||'')}"></div>
     <button type="button" class="btn btn-o" onclick="this.closest('.bank-row').remove()" title="Remove this bank" style="padding:6px 10px;font-size:12px">✕</button>
   `;
   c.appendChild(row);
 }
-// Collect the current bank rows into an array of {bank_name, acctnum,
-// ifsc, holder_name}. Skips rows where both acctnum and ifsc are blank
-// (treated as "never filled in").
+
+// IFSC → bank/branch auto-lookup via Razorpay's free public IFSC API.
+// Fires once the user types a full 11-char IFSC code (debounced via the
+// input event) and again on blur as a safety net. Populates the Bank Name
+// field (only when blank or still holding a prior auto-fill, so manual
+// edits are preserved) and the read-only branch hint below it. Failures
+// (offline, 404, bad code) are silent — the user can still fill manually.
+const _ifscLookupCache = new Map(); // ifsc → {BANK, BRANCH} or null
+let _ifscLookupTimer = null;
+function onBankIfscInput(input){
+  const v = input.value.trim().toUpperCase();
+  if (v.length < 11) return;
+  clearTimeout(_ifscLookupTimer);
+  _ifscLookupTimer = setTimeout(() => lookupBankByIfsc(input), 350);
+}
+async function lookupBankByIfsc(input){
+  const row = input.closest('.bank-row');
+  if (!row) return;
+  const ifsc = input.value.trim().toUpperCase();
+  if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) return;
+  const nameEl   = row.querySelector('.bank-name');
+  const hintEl   = row.querySelector('.bank-branch-hint');
+  const branchEl = row.querySelector('.bank-branch');
+  let data;
+  if (_ifscLookupCache.has(ifsc)) {
+    data = _ifscLookupCache.get(ifsc);
+  } else {
+    try {
+      const r = await fetch('https://ifsc.razorpay.com/' + encodeURIComponent(ifsc));
+      data = r.ok ? await r.json() : null;
+    } catch (_) { data = null; }
+    _ifscLookupCache.set(ifsc, data);
+  }
+  if (!data) { if (hintEl) hintEl.textContent = ''; return; }
+  // Overwrite Bank Name when it's blank OR still holds the value a previous
+  // IFSC lookup auto-filled (tracked in dataset.ifscAuto). A genuine manual
+  // edit (value differs from the last auto-fill) is preserved.
+  if (nameEl && data.BANK) {
+    const cur = nameEl.value.trim();
+    if (!cur || cur === (nameEl.dataset.ifscAuto || '')) {
+      nameEl.value = data.BANK;
+      nameEl.dataset.ifscAuto = data.BANK;
+    }
+  }
+  if (branchEl) branchEl.value = data.BRANCH || '';
+  if (hintEl)   hintEl.textContent = data.BRANCH ? 'Branch: ' + data.BRANCH : '';
+}
+
+// Collect the current bank rows into an array of {bank_name, branch,
+// acctnum, ifsc, holder_name}. Skips rows where both acctnum and ifsc are
+// blank (treated as "never filled in").
 function collectBankRows(){
   const c = document.getElementById('t-banks-container');
   if (!c) return [];
@@ -13543,11 +13694,12 @@ function collectBankRows(){
   const banks = [];
   for (const r of rows) {
     const bank_name   = r.querySelector('.bank-name').value.trim();
+    const branch      = (r.querySelector('.bank-branch')?.value || '').trim();
     const acctnum     = r.querySelector('.bank-acctnum').value.trim();
     const ifsc        = r.querySelector('.bank-ifsc').value.trim().toUpperCase();
     const holder_name = r.querySelector('.bank-holder').value.trim();
     if (!acctnum && !ifsc) continue; // blank row — skip
-    banks.push({ bank_name, acctnum, ifsc, holder_name });
+    banks.push({ bank_name, branch, acctnum, ifsc, holder_name });
   }
   return banks;
 }
@@ -16076,6 +16228,8 @@ async function loadInvoices(opts){
             L: { bg:'var(--spice-cardamom-lt)', fg:'var(--spice-cardamom-dk)', label:'Local' },
             I: { bg:'var(--spice-turmeric-lt)', fg:'#B45309',                  label:'Inter-state' },
             E: { bg:'var(--spice-saffron-lt)',  fg:'var(--spice-saffron-dk)',  label:'Export' },
+            W: { bg:'#fee2e2',                  fg:'#991b1b',                  label:'Withdrawn' },
+            N: { bg:'#f1f5f9',                  fg:'#64748b',                  label:'N/A' },
           }[s] || { bg:'#f1f5f9', fg:'#64748b', label: s || '—' };
           return `<span title="${cfg.label}" style="display:inline-block;min-width:24px;padding:3px 9px;border-radius:6px;background:${cfg.bg};color:${cfg.fg};font-weight:700;font-size:11px;letter-spacing:.4px;text-align:center">${s || '—'}</span>`;
         },
