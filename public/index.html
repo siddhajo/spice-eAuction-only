@@ -16587,13 +16587,24 @@ async function delLot(id){if(!confirm('Delete this lot?'))return;
 }
 
 async function calculateAll(){
-  const aid=document.getElementById('lot-auction').value;if(!aid)return;
+  const aid=document.getElementById('lot-auction').value;
+  if(!aid){alert('Select an auction first');return;}
   const btn = document.getElementById('btn-calculate-all');
-  await withBusy(btn, async () => {
-    const d=await j(`/api/lots/calculate/${aid}`,{method:'POST'});
-    toast(`Calculated ${d.calculated} lots`);
-    await loadLots();
-  });
+  // Surface any failure to the user. Without this, a failed calculate
+  // (price-check gate, permission, expired session, network blip) would
+  // throw out of withBusy unhandled — the toast + loadLots never run, so
+  // the lots table keeps its old values and it looks like Commission /
+  // tax / Payable "didn't calculate" with no explanation. showError makes
+  // the real reason visible so it can be fixed.
+  try {
+    await withBusy(btn, async () => {
+      const d=await j(`/api/lots/calculate/${aid}`,{method:'POST'});
+      toast(`Calculated ${d.calculated} lots`);
+      await loadLots();
+    });
+  } catch(e) {
+    showError(e);
+  }
 }
 async function validateLots(){
   const aid=document.getElementById('lot-auction').value;if(!aid)return;
