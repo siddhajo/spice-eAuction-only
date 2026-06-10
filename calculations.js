@@ -719,40 +719,10 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [auctionId]);
   const roundAmounts = cfg.flag_round;
 
-  let result = payments.map(p => {
-    // 'before' uses puramt — pre-discount, useful when paying suppliers
-    // before the deduction policy is applied. 'after' (default) uses
-    // payable = puramt − discount − GST.
-    const nameUpper = String(p.name || '').trim().toUpperCase();
-    const picksArr   = lotPicks    ? lotPicks[nameUpper]    : null;
-    const excludeArr = excludeLots ? excludeLots[nameUpper] : null;
-    let rawAmount, lotList = '', routedBank = null;
-    if ((picksArr && picksArr.length) || (excludeArr && excludeArr.length)) {
-      // Re-sum balance/puramt over ONLY the picked (and not-excluded) lots
-      // so the bank row pays exactly what's being settled now.
-      const params = [auctionId, nameUpper];
-      let extra = '';
-      if (picksArr && picksArr.length)    { extra += ` AND l.lot_no IN (${picksArr.map(() => '?').join(',')})`;     for (const x of picksArr)   params.push(String(x)); }
-      if (excludeArr && excludeArr.length){ extra += ` AND l.lot_no NOT IN (${excludeArr.map(() => '?').join(',')})`; for (const x of excludeArr) params.push(String(x)); }
-      const sub = db.get(
-        `SELECT COALESCE(SUM(l.balance),0) AS payable, COALESCE(SUM(l.puramt),0) AS puramt,
-                GROUP_CONCAT(l.lot_no) AS lot_nos, GROUP_CONCAT(DISTINCT l.bank_id) AS bank_ids,
-                COUNT(*) AS lot_count, COUNT(l.bank_id) AS bank_lot_count
-           FROM lots l WHERE l.auction_id = ? AND l.amount > 0
-            AND (l.paid IS NULL OR l.paid = '') AND UPPER(TRIM(l.name)) = ?${extra}`,
-        params
-      ) || {};
-      rawAmount = useBefore ? (Number(sub.puramt) || 0) : (Number(sub.payable) || 0);
-      lotList = formatLotList(sub.lot_nos || '');
-      // Route to a single bank account when every covered lot points at the
-      // same one (the multi-account workflow: pay Account-1's lots, then
-      // Account-2's). Mixed/untagged → keep the seller-default account.
-      const subBankIds = String(sub.bank_ids || '').split(',').map(s => s.trim()).filter(s => s && s !== 'null').map(Number).filter(Number.isFinite);
-      const subUntagged = Number(sub.lot_count || 0) > Number(sub.bank_lot_count || 0);
-      if (subBankIds.length === 1 && !subUntagged) routedBank = bankById[subBankIds[0]] || null;
-    } else {
-      rawAmount = useBefore ? (p.puramt || 0) : (p.payable || 0);
-    }
+  // Build one bank-payment output row for seller `p`. `rawAmount` is the
+  // pre-round amount, `lotList` the formatted lot numbers for REMARKS, and
+  // `routedBank` (or null → seller-default fallback chain) the destination.
+  const buildRow = (p, rawAmount, lotList, routedBank) => {
     const amount = roundAmounts ? Math.round(rawAmount) : rawAmount;
     const tb = p.trader_id != null ? bankByTraderId[p.trader_id] : null;
     const ifsc      = (routedBank && routedBank.ifsc)        || (tb && tb.ifsc)        || p.t_ifsc    || '';
@@ -770,6 +740,59 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
       remarks: `${auction ? auction.ano : ''} ${p.name} PAYMENT ${rawAmount.toFixed(2)} Credited${lotList ? ` for lot${lotList.includes(',') ? 's' : ''} ${lotList}` : ''}`,
       holderName: holderNm,
     };
+  };
+
+  let result = payments.flatMap(p => {
+    // 'before' uses puramt — pre-discount, useful when paying suppliers
+    // before the deduction policy is applied. 'after' (default) uses
+    // payable = puramt − discount − GST.
+    const nameUpper = String(p.name || '').trim().toUpperCase();
+    const picksArr   = lotPicks    ? lotPicks[nameUpper]    : null;
+    const excludeArr = excludeLots ? excludeLots[nameUpper] : null;
+    if (!((picksArr && picksArr.length) || (excludeArr && excludeArr.length))) {
+      // No lot filter for this seller → one seller-level row, default bank.
+      return [buildRow(p, useBefore ? (p.puramt || 0) : (p.payable || 0), '', null)];
+    }
+    // Re-sum balance/puramt over ONLY the picked (and not-excluded) lots
+    // so the bank row pays exactly what's being settled now. Group the
+    // covered lots BY bank account so a selection that spans multiple banks
+    // produces one payment line per bank (NULL bank_id = untagged lots,
+    // grouped together and routed to the seller-default account).
+    const params = [auctionId, nameUpper];
+    let extra = '';
+    if (picksArr && picksArr.length)    { extra += ` AND l.lot_no IN (${picksArr.map(() => '?').join(',')})`;     for (const x of picksArr)   params.push(String(x)); }
+    if (excludeArr && excludeArr.length){ extra += ` AND l.lot_no NOT IN (${excludeArr.map(() => '?').join(',')})`; for (const x of excludeArr) params.push(String(x)); }
+    const groups = db.all(
+      `SELECT l.bank_id AS bank_id,
+              COALESCE(SUM(l.balance),0) AS payable, COALESCE(SUM(l.puramt),0) AS puramt,
+              GROUP_CONCAT(l.lot_no) AS lot_nos
+         FROM lots l WHERE l.auction_id = ? AND l.amount > 0
+          AND (l.paid IS NULL OR l.paid = '') AND UPPER(TRIM(l.name)) = ?${extra}
+        GROUP BY l.bank_id`,
+      params
+    ) || [];
+    // Only banks we can actually route to count toward "spans multiple banks".
+    const taggedBanks = groups.filter(g => g.bank_id != null && bankById[g.bank_id]);
+    const hasUntagged = groups.some(g => g.bank_id == null || !bankById[g.bank_id]);
+    const amtOf = g => useBefore ? (Number(g.puramt) || 0) : (Number(g.payable) || 0);
+
+    if (taggedBanks.length >= 2) {
+      // Spans multiple banks → one row per group, each routed to its bank
+      // (untagged group → null → seller default).
+      return groups.map(g => buildRow(
+        p, amtOf(g), formatLotList(g.lot_nos || ''),
+        (g.bank_id != null && bankById[g.bank_id]) || null
+      ));
+    }
+    // Single bank (or all-untagged) → preserve the original single merged
+    // row. Route to that one bank only when EVERY covered lot is tagged to
+    // it (no untagged lots); otherwise fall back to the seller-default.
+    const rawAmount = groups.reduce((s, g) => s + amtOf(g), 0);
+    const lotList = formatLotList(groups.map(g => g.lot_nos || '').filter(Boolean).join(','));
+    const routedBank = (taggedBanks.length === 1 && !hasUntagged)
+      ? bankById[taggedBanks[0].bank_id]
+      : null;
+    return [buildRow(p, rawAmount, lotList, routedBank)];
   });
   // When lot-filtering is active, drop rows that net to zero — a seller
   // whose remaining (un-exported) lots all net to zero shouldn't appear.
