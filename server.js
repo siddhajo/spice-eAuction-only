@@ -1089,6 +1089,10 @@ app.post('/api/company-settings/import', requireSettingsWrite, (req, res) => {
 const DELETE_ALL_RESOURCES = {
   traders:      { table: 'traders',     cascade: ['trader_banks'],                                          scope: 'global' },
   buyers:       { table: 'buyers',      cascade: [],                                                        scope: 'global' },
+  // Combined master-data wipe: clears every seller (+ their bank rows)
+  // AND every buyer in one action. Modelled as traders + a buyers
+  // cascade so the snapshot/preflight/audit machinery is reused as-is.
+  parties:      { table: 'traders',     cascade: ['trader_banks','buyers'],                                 scope: 'global' },
   invoices:     { table: 'invoices',    cascade: [],                                                        scope: 'global' },
   purchases:    { table: 'purchases',   cascade: [],                                                        scope: 'global' },
   bills:        { table: 'bills',       cascade: [],                                                        scope: 'global' },
@@ -1204,6 +1208,7 @@ function makeDeleteAll(resource) {
 }
 app.delete('/api/traders/delete-all',     requireDeleteAll, makeDeleteAll('traders'));
 app.delete('/api/buyers/delete-all',      requireDeleteAll, makeDeleteAll('buyers'));
+app.delete('/api/parties/delete-all',     requireDeleteAll, makeDeleteAll('parties'));
 app.delete('/api/invoices/delete-all',    requireDeleteAll, makeDeleteAll('invoices'));
 app.delete('/api/purchases/delete-all',   requireDeleteAll, makeDeleteAll('purchases'));
 app.delete('/api/bills/delete-all',       requireDeleteAll, makeDeleteAll('bills'));

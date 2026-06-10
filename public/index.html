@@ -2676,6 +2676,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <button class="btn" onclick="deleteAll('bills','Bills')"         style="height:36px;padding:0 12px;background:#7F1D1D;color:#fff;font-weight:600;border-color:#7F1D1D">🗑 Bills</button>
             <button class="btn" onclick="deleteAll('buyers','Buyers')"       style="height:36px;padding:0 12px;background:#7F1D1D;color:#fff;font-weight:600;border-color:#7F1D1D">🗑 Buyers</button>
             <button class="btn" onclick="deleteAll('traders','Sellers')"     style="height:36px;padding:0 12px;background:#7F1D1D;color:#fff;font-weight:600;border-color:#7F1D1D">🗑 Sellers</button>
+            <button class="btn" onclick="deleteAll('parties','Sellers + Buyers')" style="height:36px;padding:0 12px;background:#7F1D1D;color:#fff;font-weight:600;border-color:#7F1D1D" title="Wipes EVERY seller (and their bank records) AND every buyer in one action">🗑 Sellers + Buyers</button>
             <button class="btn" onclick="deleteAll('auctions','Auctions')"   style="height:36px;padding:0 12px;background:#7F1D1D;color:#fff;font-weight:600;border-color:#7F1D1D" title="Wipes EVERY auction AND cascades through lots, invoices, purchases, bills, debit notes, lot allocations">🗑 Auctions (full reset)</button>
           </div>
 
@@ -14168,6 +14169,7 @@ async function deleteAll(resource, label){
     // the wipe if they're loaded.
     if (resource === 'traders') searchTraders && searchTraders('');
     else if (resource === 'buyers') searchBuyers && searchBuyers('');
+    else if (resource === 'parties') { searchTraders && searchTraders(''); searchBuyers && searchBuyers(''); }
     else if (resource === 'invoices') loadInvoices && loadInvoices();
     else if (resource === 'purchases') loadPurchases && loadPurchases();
     else if (resource === 'bills') loadBills && loadBills();
