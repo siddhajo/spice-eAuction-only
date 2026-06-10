@@ -16020,8 +16020,10 @@ function openLotEdit(l){
 
   // Wire field-level reactivity for the edit modal:
   //   1) Changing CODE → look up the matching buyer (by code, ti, or full
-  //      buyer string) and auto-fill buyer/buyer1/cr/sale fields. Saves
-  //      dad from typing those manually after picking a buyer code.
+  //      buyer string) and auto-fill the buyer/buyer1/sale fields. Saves
+  //      dad from typing those manually after picking a buyer code. The
+  //      seller's CR/GSTIN (l-cr) is deliberately left untouched — it
+  //      belongs to the seller, not the buyer.
   //   2) Changing QTY or PRICE → auto-recalculate AMOUNT (qty × price)
   //      so the totals stay consistent without a separate save+recalc.
   // Handlers are attached fresh each open so we don't need to track
@@ -16066,7 +16068,11 @@ function openLotEdit(l){
         };
         setIf('l-buyer',  match.buyer  || '');
         setIf('l-buyer1', match.buyer1 || '');
-        setIf('l-cr',     match.gstin  || match.cr || '');
+        // NOTE: do NOT touch l-cr here. `cr` is the SELLER's CR/GSTIN
+        // (set from the seller via the Name lookup) and drives the
+        // seller-side GST classification in calculateLot. The buyer code
+        // only owns buyer/buyer1/sale — writing the buyer's GSTIN into
+        // l-cr would corrupt the seller's record.
         setIf('l-sale',   match.sale   || '');
         // Normalize the code field too — if user typed lowercase, snap to canonical
         codeEl.value = match.code || code;
