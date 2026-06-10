@@ -10054,10 +10054,13 @@ const IMPORT_MODULES = {
   sales_invoice: {
     label: 'Sales Invoices',
     table: 'invoices',
-    // Dedup on trade-no + invoice-no. Invoice numbers restart per trade,
-    // so keying on `invo` alone wrongly skips a legit invoice whose number
-    // already exists under a different trade. `ano` scopes it to the trade.
-    keyCols: ['ano', 'invo'],
+    // Dedup on trade-no + sale-type + invoice-no + state. Invoice numbers
+    // restart per trade AND per sale type, so `ano` + `sale` scope the
+    // `invo` match to the right series; `state` distinguishes rows that
+    // share a number across business states. NOTE: the dup check only runs
+    // when every key column is mapped and non-empty for a row — a sales row
+    // missing `sale` or `state` is inserted without a duplicate check.
+    keyCols: ['ano', 'sale', 'invo', 'state'],
     // auction_id is auto-derived from `ano` at import time so the
     // imported rows show up under the matching trade in the Sales tab
     // (the list filters by auction_id, not ano).
