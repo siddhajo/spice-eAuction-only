@@ -3609,6 +3609,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
         <div class="actions">
           <button class="btn btn-o" onclick="hideModal('le-print-modal')">Cancel</button>
+          <button class="btn feat-whatsapp" id="le-print-whatsapp" onclick="leWhatsappReceipt()" style="background:#25D366;color:#fff;font-weight:600">💬 WhatsApp</button>
           <button class="btn btn-g" id="le-print-confirm" onclick="leConfirmPrint()">🖨 Print</button>
         </div>
       </div></div>
@@ -3684,6 +3685,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <!-- Print group -->
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <button class="btn" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="printSelectedInvoices()" title="Print all ticked invoices">🖨 Print Selected</button>
+            <button class="btn feat-whatsapp" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedInvoices()" title="Send ticked sales invoices via WhatsApp">📱 WhatsApp Selected</button>
             <button id="inv-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedInvoices()" title="Delete all ticked invoices">🗑 Delete Selected <span id="inv-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <!-- ASP-only: Print Selected Purchase. Hidden outside ASP context.
                  Visibility toggled by applyAspContextVisibility() at load + state switch. -->
@@ -4052,6 +4054,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <button class="btn" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="printSelectedBills()" title="Print all ticked bills">🖨 Print Selected</button>
+            <button class="btn feat-whatsapp" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedBills()" title="Send ticked bills of supply via WhatsApp">📱 WhatsApp Selected</button>
             <button class="btn btn-o" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;font-weight:600" onclick="printSelectedCommissionBoS()" title="Print Commission Bill (Memorandum) for all ticked bills — one A4 page per bill, matches IMCPC reference format">🧾 Commission Bill Selected</button>
             <button id="bill-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedBills()" title="Delete all ticked bills">🗑 Delete Selected <span id="bill-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           </div>
@@ -16574,7 +16577,7 @@ async function loadInvoices(opts){
     emptyState: { icon: 'invoices', title: "No invoices yet", body: "Once you have calculated lots for a buyer, use Generate Invoice to create one." }, 
     columns: [
       { key:'_select', label:'', labelHTML:'<input type="checkbox" id="inv-select-all" onclick="event.stopPropagation();toggleAllInvoices(this.checked)" title="Select / clear all visible" style="cursor:pointer;width:16px;height:16px;vertical-align:middle;accent-color:var(--green)">', sortable:false, searchable:false,
-        render:(i)=>`<input type="checkbox" class="inv-select-cb" value="${i.id}" onclick="event.stopPropagation()" style="cursor:pointer">` },
+        render:(i)=>`<input type="checkbox" class="inv-select-cb" value="${i.id}" data-name="${esc(i.buyer1||i.buyer||'')}" data-invo="${esc(i.invo||'')}" data-sale="${esc(i.sale||'')}" data-total="${Number(i.tot)||0}" data-ano="${esc(i.ano||'')}" onclick="event.stopPropagation()" style="cursor:pointer">` },
       { key:'sale', label:'Sale', sort:'text', totalKind:'count',
         // Color-coded pills for sale type so dad can scan the column visually:
         //   L (Local)        → cardamom green
@@ -16683,6 +16686,7 @@ async function loadInvoices(opts){
             + purchaseBtn
             + iconBtn('edit','Edit invoice',`openInvoiceEdit(${JSON.stringify(i).replace(/"/g,'&quot;')})`)
             + iconBtn('revert','Revert \u2014 delete invoice & re-enable lots for re-invoicing',`revertInvoice(${i.id},'${esc(i.buyer1||i.buyer)}','${esc(i.sale)}-${esc(i.invo)}')`)
+            + iconBtn('whatsapp','Send via WhatsApp',`whatsappInvoice(${i.id},'${encodeURIComponent(i.buyer1||i.buyer||'')}','${encodeURIComponent(i.invo||'')}','${encodeURIComponent(i.sale||'')}',${Number(i.tot)||0},'${esc(i.ano||'')}')`)
             + iconBtn('del','Delete invoice',`delInvoice(${i.id})`);
         } }
     ]
@@ -17437,7 +17441,18 @@ async function _lookupSellerPhone(name) {
     const r = await fetch(B + '/api/traders/by-name/' + encodeURIComponent(name), { headers: { 'Authorization': 'Bearer ' + T } });
     if (!r.ok) return '';
     const d = await r.json();
-    return d.tel || '';
+    // Prefer the dedicated WhatsApp number; fall back to the phone.
+    return d.whatsapp || d.tel || '';
+  } catch (_) { return ''; }
+}
+// Buyer phone for SALES invoices — buyers master is keyed by trade name.
+async function _lookupBuyerPhone(name) {
+  try {
+    const r = await fetch(B + '/api/buyers/by-tradename?name=' + encodeURIComponent(name), { headers: { 'Authorization': 'Bearer ' + T } });
+    if (!r.ok) return '';
+    const rows = await r.json();
+    if (!Array.isArray(rows) || !rows.length) return '';
+    return rows[0].tel || '';
   } catch (_) { return ''; }
 }
 
@@ -17455,18 +17470,55 @@ async function _getAuctionAno(auctionId) {
 }
 function _invalidateWaCaches() { _CCFG = null; _AUCTIONS = null; }
 
-// Cloud API — try server-side automated send. Returns true on success,
-// false when not configured (501) so caller falls back to manual flow.
-async function _waCloudSendText(phone, message) {
+// Cloud API — server-side automated send via Meta-approved templates.
+// Returns true on success; false when the server can't send via the API
+// (501 not-configured, or 400 with {fallback:true} when no template is
+// set) so the caller drops to the manual web.whatsapp.com flow.
+//   _waCloudSendText(phone, params)                      → text template
+//   _waCloudSendDocument(phone, params, blob, filename)  → document-header template
+// params is the positional template body: [name, summary, company].
+async function _waCloudSendText(phone, params) {
   try {
-    const r = await fetch(B + '/api/whatsapp/send-text', {
+    const r = await fetch(B + '/api/whatsapp/send-template-text', {
       method: 'POST', headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, message }),
+      body: JSON.stringify({ phone, params: params || [] }),
     });
     if (r.status === 501) return false; // not configured → fallback
-    if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.error || 'Send failed'); }
+    const d = await r.json().catch(()=>({}));
+    if (r.status === 400 && d.fallback) return false; // no text template → fallback
+    if (!r.ok) { throw new Error(d.error || 'Send failed'); }
     return true;
   } catch (e) { showError(e); return false; }
+}
+async function _waCloudSendDocument(phone, params, blob, filename) {
+  try {
+    const fd = new FormData();
+    fd.append('file', blob, filename || 'document.pdf');
+    fd.append('phone', phone || '');
+    fd.append('params', JSON.stringify(params || []));
+    fd.append('filename', filename || 'document.pdf');
+    // Don't set Content-Type — the browser adds the multipart boundary.
+    const r = await fetch(B + '/api/whatsapp/send-template-document', {
+      method: 'POST', headers: { 'Authorization': 'Bearer ' + T }, body: fd,
+    });
+    if (r.status === 501) return false; // not configured → manual fallback
+    const d = await r.json().catch(()=>({}));
+    if (r.status === 400 && d.fallback) return false; // no document template → fallback
+    if (!r.ok) { throw new Error(d.error || 'Send failed'); }
+    return true;
+  } catch (e) { showError(e); return false; }
+}
+// Document dispatcher: Cloud API template send first (true automation —
+// the PDF is uploaded to Meta and delivered), else the manual Web Share /
+// download + WhatsApp Web flow.
+async function _waSendDocument({ blob, filename, phone, params, message }) {
+  if (phone && await _waCloudApiAvailable()) {
+    const norm = _normalizePhoneForWa(phone);
+    const ok = await _waCloudSendDocument(norm, params, blob, filename);
+    if (ok) { if (typeof toast === 'function') toast(`WhatsApp sent (+${norm})`); return true; }
+  }
+  await _waOpenDocument({ blob, filename, phone, message });
+  return false;
 }
 
 // Manual flow for a TEXT-ONLY message (Payments format, no PDF).
@@ -17557,9 +17609,11 @@ async function _runWaQueue(items, opts) {
 
     // action === 'send'
     if (useApi) {
-      const ok = await _waCloudSendText(it.phone, it.message);
-      // Cloud API doesn't (yet) ship the locally generated PDF; for
-      // document items the caller falls back to manual once API misses.
+      const params = it.params || [it.name || '', it.message || '', ''];
+      let ok;
+      if (it.blob) ok = await _waCloudSendDocument(_normalizePhoneForWa(it.phone), params, it.blob, it.filename);
+      else ok = await _waCloudSendText(it.phone, params);
+      // On a Cloud API miss, fall back to the manual flow for this record.
       if (!ok) { it.blob ? await _waOpenDocument(it) : _waOpenText(it.phone, it.message); }
       sent++;
     } else {
@@ -17575,11 +17629,10 @@ let _waApiCheck = null;
 async function _waCloudApiAvailable() {
   if (_waApiCheck !== null) return _waApiCheck;
   try {
-    const r = await fetch(B + '/api/whatsapp/send-text', {
-      method: 'POST', headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    _waApiCheck = (r.status !== 501); // 400 (bad params) means configured; 501 means not
+    const r = await fetch(B + '/api/whatsapp/status', { headers: { 'Authorization': 'Bearer ' + T } });
+    if (!r.ok) { _waApiCheck = false; return false; }
+    const d = await r.json().catch(() => ({}));
+    _waApiCheck = !!d.configured;
   } catch (_) { _waApiCheck = false; }
   return _waApiCheck;
 }
@@ -17603,11 +17656,14 @@ async function whatsappDebitNote(id, dealerName, noteNo, totalAmt, ano) {
       _lookupSellerPhone(decoded),
       _getCompanyName(),
     ]);
-    const msg = `${ano || ''} ${decoded} ${company} DEBIT NOTE ${decNote} \u20B9${Number(totalAmt||0).toLocaleString('en-IN')}`.trim();
-    await _waOpenDocument({
+    const amt = `\u20B9${Number(totalAmt||0).toLocaleString('en-IN')}`;
+    const msg = `${ano || ''} ${decoded} ${company} DEBIT NOTE ${decNote} ${amt}`.trim();
+    const summary = `your DEBIT NOTE ${decNote} for ${amt} is attached.`;
+    await _waSendDocument({
       blob,
       filename: `DebitNote_${decoded}_${decNote || id}.pdf`,
       phone,
+      params: [decoded, summary, company],
       message: msg,
     });
   } catch (e) { showError(e); }
@@ -17624,8 +17680,33 @@ async function whatsappPurchase(auctionId, sellerName, invNo, totalAmt, ano) {
       _lookupSellerPhone(decoded), _getCompanyName(),
       ano ? Promise.resolve(ano) : _getAuctionAno(auctionId),
     ]);
-    const msg = `${anoVal} ${decoded} ${company} PURCHASE INVOICE ${decInv} ₹${Number(totalAmt||0).toLocaleString('en-IN')}`;
-    await _waOpenDocument({ blob, filename: `PurchaseInvoice_${decoded}_${decInv}.pdf`, phone, message: msg });
+    const amt = `₹${Number(totalAmt||0).toLocaleString('en-IN')}`;
+    const msg = `${anoVal} ${decoded} ${company} PURCHASE INVOICE ${decInv} ${amt}`;
+    const summary = `your PURCHASE INVOICE ${decInv} for ${amt} (Auction ${anoVal}) is attached.`;
+    await _waSendDocument({ blob, filename: `PurchaseInvoice_${decoded}_${decInv}.pdf`, phone, params: [decoded, summary, company], message: msg });
+  } catch (e) { showError(e); }
+}
+
+// ── Sales Invoice: WhatsApp ───────────────────────────────────
+// Recipient is the BUYER (buyers master, keyed by trade name). Mirrors
+// the purchase-invoice document flow but looks the phone up buyer-side.
+async function whatsappInvoice(id, buyerName, invNo, saleType, totalAmt, ano) {
+  try {
+    const decoded = decodeURIComponent(buyerName || '');
+    const decInv  = decodeURIComponent(invNo || '');
+    const decSale = decodeURIComponent(saleType || '');
+    // Composite "<sale>-<invo>" label matches filenames / revert dialogs.
+    const invLabel = decSale ? `${decSale}-${decInv}` : decInv;
+    const blob = await withOverlay('Building sales invoice…',
+      () => _fetchPdfBlob(`/api/invoices/pdf/${id}`)
+    );
+    const [phone, company] = await Promise.all([
+      _lookupBuyerPhone(decoded), _getCompanyName(),
+    ]);
+    const amt = `₹${Number(totalAmt||0).toLocaleString('en-IN')}`;
+    const msg = `${ano || ''} ${decoded} ${company} SALES INVOICE ${invLabel} ${amt}`.trim();
+    const summary = `your SALES INVOICE ${invLabel} for ${amt} is attached.`;
+    await _waSendDocument({ blob, filename: `SalesInvoice_${decoded}_${invLabel}.pdf`, phone, params: [decoded, summary, company], message: msg });
   } catch (e) { showError(e); }
 }
 // Bulk Purchases — queue, one PDF per seller
@@ -17649,10 +17730,12 @@ async function whatsappSelectedPurchases() {
     try {
       const blob = await _fetchPdfBlob(`/api/purchases/pdf/${r.auction_id}/${encodeURIComponent(r.name)}?invoiceNo=${encodeURIComponent(r.invo)}`);
       const phone = await _lookupSellerPhone(r.name);
+      const amt = `₹${Number(r.total||0).toLocaleString('en-IN')}`;
       items.push({
         name: r.name, phone, blob,
         filename: `PurchaseInvoice_${r.name}_${r.invo}.pdf`,
-        message: `${r.ano} ${r.name} ${company} PURCHASE INVOICE ${r.invo} ₹${Number(r.total||0).toLocaleString('en-IN')}`,
+        message: `${r.ano} ${r.name} ${company} PURCHASE INVOICE ${r.invo} ${amt}`,
+        params: [r.name, `your PURCHASE INVOICE ${r.invo} for ${amt} (Auction ${r.ano}) is attached.`, company],
       });
     } catch (e) { console.warn('Skipping', r.name, e); }
   }
@@ -17674,9 +17757,11 @@ async function whatsappPayment(auctionId, sellerName, payable) {
     const [phone, company, ano] = await Promise.all([
       _lookupSellerPhone(sellerName), _getCompanyName(), _getAuctionAno(auctionId),
     ]);
-    const msg = `${ano} ${sellerName} ${company} PAYMENT ${Number(payable||0).toLocaleString('en-IN')} CREDITED`;
-    if (await _waCloudApiAvailable()) {
-      const ok = await _waCloudSendText(phone, msg);
+    const amt = Number(payable||0).toLocaleString('en-IN');
+    const msg = `${ano} ${sellerName} ${company} PAYMENT ${amt} CREDITED`;
+    const summary = `your PAYMENT of ₹${amt} has been CREDITED (Auction ${ano}).`;
+    if (phone && await _waCloudApiAvailable()) {
+      const ok = await _waCloudSendText(phone, [sellerName, summary, company]);
       if (ok) { toast(`WhatsApp sent to ${sellerName}`); return; }
     }
     _waOpenText(phone, msg);
@@ -17720,12 +17805,175 @@ async function whatsappSelectedPayments() {
   const items = [];
   for (const nm of names) {
     const phone = await _lookupSellerPhone(nm);
+    const amt = Number(rowMap[nm]||0).toLocaleString('en-IN');
     items.push({
       name: nm, phone,
-      message: `${ano} ${nm} ${company} PAYMENT ${Number(rowMap[nm]||0).toLocaleString('en-IN')} CREDITED`,
+      message: `${ano} ${nm} ${company} PAYMENT ${amt} CREDITED`,
+      params: [nm, `your PAYMENT of ₹${amt} has been CREDITED (Auction ${ano}).`, company],
     });
   }
   await _runWaQueue(items);
+}
+
+// ── Bill of Supply (agriculturist purchase bill): WhatsApp ────
+// Recipient is the seller/agriculturist (traders master). Mirrors the
+// purchase-invoice document flow.
+async function whatsappBillOfSupply(auctionId, sellerName, billNo, totalAmt) {
+  try {
+    const decoded = decodeURIComponent(sellerName || '');
+    const decBill = decodeURIComponent(billNo || '');
+    const blob = await withOverlay('Building bill of supply…',
+      () => _fetchPdfBlob(`/api/bills/pdf/${auctionId}/${encodeURIComponent(decoded)}?billNo=${encodeURIComponent(decBill)}`)
+    );
+    const [phone, company, ano] = await Promise.all([
+      _lookupSellerPhone(decoded), _getCompanyName(), _getAuctionAno(auctionId),
+    ]);
+    const amt = `₹${Number(totalAmt||0).toLocaleString('en-IN')}`;
+    const msg = `${ano || ''} ${decoded} ${company} BILL OF SUPPLY ${decBill} ${amt}`.trim();
+    const summary = `your BILL OF SUPPLY ${decBill} for ${amt} is attached.`;
+    await _waSendDocument({ blob, filename: `BillOfSupply_${decoded}_${decBill}.pdf`, phone, params: [decoded, summary, company], message: msg });
+  } catch (e) { showError(e); }
+}
+// Bulk Bills of Supply — queue, one PDF per seller.
+async function whatsappSelectedBills() {
+  const body = document.getElementById('bills-list');
+  if (!body) { alert('No bills list'); return; }
+  const checked = Array.from(body.querySelectorAll('.bill-select-cb:checked'));
+  if (!checked.length) { alert('Tick one or more bills first'); return; }
+  const rows = checked.map(cb => ({
+    auction_id: Number(cb.dataset.aid || 1),
+    name: cb.dataset.name || '',
+    bil: cb.dataset.bil || '',
+    net: Number(cb.dataset.net || 0),
+  }));
+  const company = await _getCompanyName();
+  const items = [];
+  for (const r of rows) {
+    try {
+      const ano = await _getAuctionAno(r.auction_id);
+      const blob = await _fetchPdfBlob(`/api/bills/pdf/${r.auction_id}/${encodeURIComponent(r.name)}?billNo=${encodeURIComponent(r.bil)}`);
+      const phone = await _lookupSellerPhone(r.name);
+      const amt = `₹${Number(r.net||0).toLocaleString('en-IN')}`;
+      items.push({
+        name: r.name, phone, blob,
+        filename: `BillOfSupply_${r.name}_${r.bil}.pdf`,
+        message: `${ano || ''} ${r.name} ${company} BILL OF SUPPLY ${r.bil} ${amt}`.trim(),
+        params: [r.name, `your BILL OF SUPPLY ${r.bil} for ${amt} is attached.`, company],
+      });
+    } catch (e) { console.warn('Skipping', r.name, e); }
+  }
+  if (!items.length) { showError(new Error('No bills could be prepared')); return; }
+  await _runWaQueue(items);
+}
+
+// ── Sales Invoices: bulk WhatsApp ─────────────────────────────
+async function whatsappSelectedInvoices() {
+  const body = document.getElementById('invoices-list');
+  if (!body) { alert('No invoices list'); return; }
+  const checked = Array.from(body.querySelectorAll('.inv-select-cb:checked'));
+  if (!checked.length) { alert('Tick one or more invoices first'); return; }
+  const rows = checked.map(cb => ({
+    id: Number(cb.value),
+    name: cb.dataset.name || '',
+    invo: cb.dataset.invo || '',
+    sale: cb.dataset.sale || '',
+    total: Number(cb.dataset.total || 0),
+    ano: cb.dataset.ano || '',
+  }));
+  const company = await _getCompanyName();
+  const items = [];
+  for (const r of rows) {
+    try {
+      const invLabel = r.sale ? `${r.sale}-${r.invo}` : r.invo;
+      const blob = await _fetchPdfBlob(`/api/invoices/pdf/${r.id}`);
+      const phone = await _lookupBuyerPhone(r.name);
+      const amt = `₹${Number(r.total||0).toLocaleString('en-IN')}`;
+      items.push({
+        name: r.name, phone, blob,
+        filename: `SalesInvoice_${r.name}_${invLabel}.pdf`,
+        message: `${r.ano || ''} ${r.name} ${company} SALES INVOICE ${invLabel} ${amt}`.trim(),
+        params: [r.name, `your SALES INVOICE ${invLabel} for ${amt} is attached.`, company],
+      });
+    } catch (e) { console.warn('Skipping', r.name, e); }
+  }
+  if (!items.length) { showError(new Error('No invoices could be prepared')); return; }
+  await _runWaQueue(items);
+}
+
+// ── Lot Entry receipt: WhatsApp ───────────────────────────────
+// Flattens the print-receipt content into a chat-friendly text and sends
+// one message per seller (grouped by trader, same as the by-seller print).
+function leBuildReceiptText(traderName, lots, ctx) {
+  const auction = (ctx && ctx.auction) || {};
+  const cfg = (ctx && ctx.cfg) || {};
+  const company = (cfg.trade_name || cfg.short_name || cfg.tally_company_name || cfg.legal_name || 'COMPANY').toUpperCase();
+  const ano = auction.ano || '';
+  const date = String(auction.date || '').slice(0,10).split('-').reverse().join('/');
+  const fmtN = (n, dp=2) => Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:dp,maximumFractionDigits:dp});
+  const lines = [];
+  lines.push(`*${company}*`);
+  if (ano || date) lines.push(`Trade ${ano}${date ? '  '+date : ''}`);
+  lines.push(`To: ${traderName || ''}`);
+  lines.push('');
+  let totBags = 0, totQty = 0, totAmt = 0;
+  for (const l of lots) {
+    const bags = Number(l.bags) || 0;
+    const qty  = Number(l.qty)  || 0;
+    const price = Number(l.price) || 0;
+    const amt = Number(l.amount) || (qty * price);
+    totBags += bags; totQty += qty; totAmt += amt;
+    lines.push(`Lot ${l.lot_no}: ${bags} bag · ${fmtN(qty,3)} kg · ₹${fmtN(price)} = ₹${fmtN(amt)}`);
+  }
+  lines.push('');
+  lines.push(`Total: ${totBags} bag · ${fmtN(totQty,3)} kg · ₹${fmtN(totAmt)}`);
+  return lines.join('\n');
+}
+async function leWhatsappReceipt() {
+  if (!_le_pending_print) return;
+  const errEl = document.getElementById('le-print-err');
+  const showErr = (m) => { if (errEl) { errEl.textContent = m; errEl.style.display = 'block'; } };
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+  let cfg = {};
+  try { cfg = await j('/api/company-settings/flat'); } catch (_) {}
+  const aid = document.getElementById('le-auction').value;
+  let auction = null;
+  try {
+    const all = await j('/api/auctions');
+    auction = (all || []).find(a => String(a.id) === String(aid)) || null;
+  } catch (_) {}
+
+  const lots = _le_pending_print.lots;
+  // Group by trader (same key the by-seller print uses) so one chat thread
+  // gets one message containing all of that seller's lots.
+  const groups = lots.reduce((m, l) => {
+    const k = l.trader_id != null ? `id:${l.trader_id}` : `name:${l.name || ''}`;
+    (m[k] = m[k] || { traderName: l.name || '', lots: [] }).lots.push(l);
+    return m;
+  }, {});
+  const items = Object.values(groups);
+  if (!items.length) { showErr('Nothing to send.'); return; }
+
+  const useApi = await _waCloudApiAvailable();
+  const company = (cfg.trade_name || cfg.short_name || cfg.tally_company_name || cfg.legal_name || 'Company').toUpperCase();
+  let sent = 0, opened = 0;
+  for (const grp of items) {
+    const phone = await _lookupSellerPhone(grp.traderName);
+    const msg = leBuildReceiptText(grp.traderName, grp.lots, { cfg, auction });
+    if (useApi && phone) {
+      // The multi-line receipt is flattened to one line server-side
+      // (template body params can't contain newlines).
+      const ok = await _waCloudSendText(phone, [grp.traderName, msg, company]);
+      if (ok) { sent++; continue; }
+    }
+    _waOpenText(phone, msg);
+    opened++;
+  }
+  toast(useApi && sent
+    ? `WhatsApp sent to ${sent} seller${sent===1?'':'s'}${opened?` · ${opened} opened in browser`:''}`
+    : `Opened ${opened} WhatsApp tab${opened===1?'':'s'}`);
+  hideModal('le-print-modal');
+  _le_pending_print = null;
 }
 
 // ── Payments ──────────────────────────────────────────────
@@ -18721,7 +18969,7 @@ async function loadBills(opts){
       { key:'_select', label:'',
         labelHTML:'<input type="checkbox" id="bill-select-all" onclick="event.stopPropagation();toggleAllBills(this.checked)" title="Select / clear all visible" style="cursor:pointer;width:16px;height:16px;vertical-align:middle;accent-color:var(--green)">',
         sortable:false, searchable:false,
-        render:(b)=>`<input type="checkbox" class="bill-select-cb" value="${b.id}" onclick="event.stopPropagation()" style="cursor:pointer">` },
+        render:(b)=>`<input type="checkbox" class="bill-select-cb" value="${b.id}" data-aid="${b.auction_id||1}" data-name="${esc(b.name||'')}" data-bil="${esc(b.bil||'')}" data-net="${Number(b.net)||0}" onclick="event.stopPropagation()" style="cursor:pointer">` },
       { key:'bil', label:'Bill#', sort:'text',
         render:(b)=>`<strong style="color:var(--spice-cardamom-dk);font-weight:700">${esc(b.bil)}</strong>` },
       { key:'date', label:'Date', sort:'date', render:(b)=>fmtD(b.date) },
@@ -18735,6 +18983,7 @@ async function loadBills(opts){
       { key:'_actions', label:'Actions', sortable:false, searchable:false, render:(b)=>
           iconBtn('pdf','View PDF',`viewBillPDF('${b.auction_id||1}','${encodeURIComponent(b.name)}','${b.bil}')`)
           + iconBtn('edit','Edit bill',`openBillEdit(${JSON.stringify(b).replace(/"/g,'&quot;')})`)
+          + iconBtn('whatsapp','Send via WhatsApp',`whatsappBillOfSupply('${b.auction_id||1}','${encodeURIComponent(b.name||'')}','${encodeURIComponent(b.bil||'')}',${Number(b.net)||0})`)
           + iconBtn('del','Delete bill',`delBill(${b.id})`) }
     ]
   });

@@ -1598,7 +1598,7 @@ app.get('/api/traders/by-name/:name', requireViewOrLotEntry, (req, res) => {
   const db = getDb();
   const nm = String(req.params.name || '').trim();
   if (!nm) return res.status(400).json({ error: 'name required' });
-  const row = db.get('SELECT id, name, tel FROM traders WHERE LOWER(name) = LOWER(?) LIMIT 1', [nm]);
+  const row = db.get('SELECT id, name, tel, whatsapp FROM traders WHERE LOWER(name) = LOWER(?) LIMIT 1', [nm]);
   if (!row) return res.status(404).json({ error: 'Not found' });
   res.json(row);
 });
