@@ -592,8 +592,13 @@ function generateCropReceiptPDF(lot, cfg) {
   // ── Company block (centered, all fields from settings) ──
   const headerX = x + (logoDrawn ? 54 : 0);
   const headerW = w - (logoDrawn ? 54 : 0);
-  doc.fontSize(11).font('Helvetica-Bold').text((co.name || '').toUpperCase(), headerX, y, { align: 'center', width: headerW });
-  y += 14;
+  doc.fontSize(11).font('Helvetica-Bold');
+  const _coNameC = (co.name || '').toUpperCase();
+  doc.text(_coNameC, headerX, y, { align: 'center', width: headerW });
+  // Advance by the name's ACTUAL height so a name that wraps to 2+ lines
+  // doesn't get overprinted by the address. Math.max preserves the
+  // original 14pt spacing for single-line names.
+  y += Math.max(14, doc.heightOfString(_coNameC, { width: headerW }));
   doc.fontSize(7).font('Helvetica');
   const addrLine = [co.address1, co.address2, co.place, co.stateName, co.pin].filter(Boolean).join(', ');
   if (addrLine) { doc.text(addrLine, headerX, y, { align: 'center', width: headerW }); y += 10; }
@@ -891,8 +896,13 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   const textX = leftX + (logoDrawn ? 70 : 8);
   const textW = leftW - (logoDrawn ? 78 : 16);
   let ty = topY + 4;
-  doc.font('Helvetica-Bold').fontSize(10).text(co.name || '', textX, ty, { width: textW });
-  ty += 12;
+  doc.font('Helvetica-Bold').fontSize(10);
+  const _coName = co.name || '';
+  doc.text(_coName, textX, ty, { width: textW });
+  // Advance by the name's ACTUAL height so long names that wrap to 2+
+  // lines don't get overprinted by the address line below. Math.max keeps
+  // single-line names at the original 12pt spacing.
+  ty += Math.max(12, doc.heightOfString(_coName, { width: textW }));
   doc.font('Helvetica').fontSize(8);
   const addrLine = [co.address1, co.address2, co.place, co.stateName, co.pin].filter(Boolean).join(', ');
   doc.text(addrLine, textX, ty, { width: textW });
