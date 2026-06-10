@@ -66,12 +66,21 @@ async function writeDbfBuffer(fields, records) {
 }
 
 // ── LOTS (CPA1.DBF structure) ─────────────────────────────────
-async function exportLotsDbf(db, auctionId) {
+// Accepts a unified `filters` object { auctionId, ano, from, to } so lots
+// can be exported trade-wise (exact auction by id, or by ano) OR date-wise.
+// Backward-compatible: a bare id/string still works as a trade-wise filter.
+async function exportLotsDbf(db, filters = {}) {
+  if (filters === null || typeof filters !== 'object') filters = { auctionId: filters };
+  let where = '1=1';
+  const params = [];
+  if (filters.auctionId) { where += ' AND l.auction_id = ?'; params.push(filters.auctionId); }
+  else if (filters.ano)  { where += ' AND a.ano = ?'; params.push(filters.ano); }
+  if (filters.from && filters.to) { where += ' AND a.date BETWEEN ? AND ?'; params.push(filters.from, filters.to); }
   const rows = db.all(`
-    SELECT l.*, a.ano as trade_no, a.date as trade_date 
+    SELECT l.*, a.ano as trade_no, a.date as trade_date
     FROM lots l JOIN auctions a ON a.id = l.auction_id
-    WHERE l.auction_id = ? ORDER BY l.lot_no
-  `, [auctionId]);
+    WHERE ${where} ORDER BY a.date, l.lot_no
+  `, params);
 
   const fields = [
     { name: 'ANO',      type: 'C', size: 10 },
@@ -402,6 +411,7 @@ async function exportBuyersDbf(db) {
 async function exportDebitNotesDbf(db, filters = {}) {
   let query = 'SELECT * FROM debit_notes WHERE 1=1';
   const params = [];
+  if (filters.ano) { query += ' AND ano = ?'; params.push(filters.ano); }
   if (filters.from && filters.to) { query += ' AND date BETWEEN ? AND ?'; params.push(filters.from, filters.to); }
   query += ' ORDER BY date, note_no';
   const rows = db.all(query, params);
@@ -436,14 +446,17 @@ async function exportDebitNotesDbf(db, filters = {}) {
 }
 
 // ── Registry for easy routing ─────────────────────────────────
+// Every transactional module supports BOTH trade/auction-wise and date-wise
+// filtering (auctionWise + dateWise). Master data (traders, buyers) is
+// exported in full with no filter.
 const DBF_EXPORTS = {
-  lots:         { fn: exportLotsDbf,        name: 'CPA1',     needsAuction: true, label: 'Lots (CPA1.DBF)' },
-  invoices:     { fn: exportInvoicesDbf,    name: 'INV',      needsDateRange: true, label: 'Sales Invoices (INV.DBF)' },
-  purchases:    { fn: exportPurchasesDbf,   name: 'PURCHASE', needsDateRange: true, label: 'Purchases (PURCHASE.DBF)' },
-  bills:        { fn: exportBillsDbf,       name: 'BILL',     needsDateRange: true, label: 'Bills of Supply (BILL.DBF)' },
+  lots:         { fn: exportLotsDbf,        name: 'CPA1',     auctionWise: true, dateWise: true, label: 'Lots (CPA1.DBF)' },
+  invoices:     { fn: exportInvoicesDbf,    name: 'INV',      auctionWise: true, dateWise: true, label: 'Sales Invoices (INV.DBF)' },
+  purchases:    { fn: exportPurchasesDbf,   name: 'PURCHASE', auctionWise: true, dateWise: true, label: 'Purchases (PURCHASE.DBF)' },
+  bills:        { fn: exportBillsDbf,       name: 'BILL',     auctionWise: true, dateWise: true, label: 'Bills of Supply (BILL.DBF)' },
   traders:      { fn: exportTradersDbf,     name: 'NAM',      label: 'Sellers (NAM.DBF)' },
   buyers:       { fn: exportBuyersDbf,      name: 'SBL',      label: 'Buyers (SBL.DBF)' },
-  debit_notes:  { fn: exportDebitNotesDbf,  name: 'DEBIT',    needsDateRange: true, label: 'Debit Notes' },
+  debit_notes:  { fn: exportDebitNotesDbf,  name: 'DEBIT',    auctionWise: true, dateWise: true, label: 'Debit Notes' },
 };
 
 module.exports = {

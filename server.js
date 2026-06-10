@@ -9,7 +9,7 @@ const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
 const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSettings, getSettingsFlat, getGSTRates } = require('./company-config');
 const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getPurchaseJournal } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF } = require('./invoice-pdf');
-const { EXPORT_TYPES, createExcelBuffer } = require('./exports');
+const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx } = require('./exports');
 const { getCompanyHeader, writeXlsxCompanyHeader, formatDateForDisplay } = require('./report-formatters');
 const { exportPdf: exportAnyPdf } = require('./exports-pdf');
 const { DBF_EXPORTS } = require('./dbf-exports');
@@ -8075,6 +8075,22 @@ app.get('/api/tds-return', requireView, (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // EXPORTS (EXP.PRG — all 11 types + TDS + Tally)
 // ══════════════════════════════════════════════════════════════
+
+// Resolve the business-facing auction number (`ano`) for use in download
+// filenames. Export *contents* already resolve `ano` internally; this keeps
+// the downloaded file NAME consistent with what users recognise (e.g.
+// "LotSlip_42.xlsx" instead of "LotSlip_7.xlsx" where 7 is the internal id).
+// Falls back to the raw id when the auction can't be found. The result is
+// sanitised so values like "42/A" stay filesystem-safe.
+function anoForFilename(db, auctionId) {
+  let val = auctionId;
+  try {
+    const a = db.get('SELECT ano FROM auctions WHERE id = ?', [auctionId]);
+    if (a && a.ano != null && String(a.ano).trim()) val = String(a.ano).trim();
+  } catch (_) {}
+  return String(val).replace(/[\/\\:*?"<>|]+/g, '-');
+}
+
 app.get('/api/exports/:type/:auctionId', requireExport, async (req, res) => {
   const { type, auctionId } = req.params;
   const format = (req.query.format || 'xlsx').toLowerCase();
@@ -8086,7 +8102,7 @@ app.get('/api/exports/:type/:auctionId', requireExport, async (req, res) => {
       const buffer = await exportAnyPdf(db, type, auctionId, cfg, { state: req.query.state });
       const niceName = (EXPORT_TYPES[type] && EXPORT_TYPES[type].name) || type;
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${niceName}_${auctionId}.pdf"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${niceName}_${anoForFilename(db, auctionId)}.pdf"`);
       return res.send(buffer);
     } catch (e) {
       return res.status(500).json({ error: e.message });
@@ -8125,7 +8141,7 @@ app.get('/api/exports/:type/:auctionId', requireExport, async (req, res) => {
     const ext  = exportDef.ext  || 'xlsx';
     const mime = exportDef.mime || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     res.setHeader('Content-Type', mime);
-    res.setHeader('Content-Disposition', `attachment; filename="${exportDef.name}_${auctionId}.${ext}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${exportDef.name}_${anoForFilename(db, auctionId)}.${ext}"`);
     res.send(Buffer.from(buffer));
   } catch(e) {
     res.status(500).json({ error: e.message });
@@ -8173,7 +8189,7 @@ app.post('/api/exports/:type/:auctionId', requireExport, async (req, res) => {
     const ext  = exportDef.ext  || 'xlsx';
     const mime = exportDef.mime || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     res.setHeader('Content-Type', mime);
-    res.setHeader('Content-Disposition', `attachment; filename="${exportDef.name}_selected_${auctionId}.${ext}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${exportDef.name}_selected_${anoForFilename(db, auctionId)}.${ext}"`);
     res.send(Buffer.from(buffer));
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -8324,14 +8340,17 @@ app.get('/api/dbf-exports/list', requireExport, (req, res) => {
     list[key] = {
       label: def.label,
       name: def.name,
-      needsAuction: !!def.needsAuction,
-      needsDateRange: !!def.needsDateRange,
+      auctionWise: !!def.auctionWise,
+      dateWise: !!def.dateWise,
     };
   }
   res.json(list);
 });
 
-// Generic DBF export endpoint
+// Generic DBF export endpoint. Transactional modules (auctionWise/dateWise)
+// accept EITHER a trade filter (auctionId → resolved to ano, or a raw ano)
+// OR a date range (from/to). Master data (traders/buyers) exports in full.
+// Filenames use the business auction number (ano), never the internal id.
 app.get('/api/dbf-exports/:type', requireExport, async (req, res) => {
   const { type } = req.params;
   const def = DBF_EXPORTS[type];
@@ -8339,34 +8358,68 @@ app.get('/api/dbf-exports/:type', requireExport, async (req, res) => {
 
   try {
     const db = getDb();
-    let buffer;
+    const { auctionId, ano: anoParam, from, to } = req.query;
+    let buffer, fnameSuffix = '';
 
-    if (def.needsAuction) {
-      const { auctionId } = req.query;
-      if (!auctionId) return res.status(400).json({ error: 'auctionId query parameter required' });
-      buffer = await def.fn(db, auctionId);
-    } else if (def.needsDateRange) {
-      const { from, to, ano } = req.query;
+    if (def.auctionWise || def.dateWise) {
       const filters = {};
-      if (ano) filters.ano = ano;
+      // Trade-wise: keep the exact auction id (used by the lots export for an
+      // exact match) AND resolve its ano (used by invoice/purchase/bill/
+      // debit-note modules, which are keyed on ano).
+      let tradeAno = anoParam || '';
+      if (auctionId) {
+        filters.auctionId = auctionId;
+        const a = db.get('SELECT ano FROM auctions WHERE id = ?', [auctionId]);
+        if (a && a.ano != null) tradeAno = String(a.ano);
+      }
+      if (tradeAno) filters.ano = tradeAno;
       if (from && to) { filters.from = from; filters.to = to; }
       buffer = await def.fn(db, filters);
+      // Filename suffix: prefer the trade (ano) then the date range.
+      if (tradeAno) fnameSuffix = `_${String(tradeAno).replace(/[\/\\:*?"<>|]+/g, '-')}`;
+      else if (from && to) fnameSuffix = `_${from}_to_${to}`;
     } else {
       buffer = await def.fn(db);
     }
 
-    // Build filename: LOTS_1.dbf, INV_2026-04-01_to_2026-04-30.dbf, NAM.dbf
-    let filename = def.name;
-    if (def.needsAuction && req.query.auctionId) filename += `_${req.query.auctionId}`;
-    if (def.needsDateRange && req.query.from) filename += `_${req.query.from}_to_${req.query.to}`;
-    filename += '.dbf';
-
+    const filename = `${def.name}${fnameSuffix}.dbf`;
     res.setHeader('Content-Type', 'application/x-dbase');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
   } catch(e) {
     console.error('DBF export error:', e);
     res.status(500).json({ error: 'DBF export failed: ' + e.message });
+  }
+});
+
+// Master-data exports (Sellers / Buyers) in BOTH .xlsx and .dbf. The DBF
+// path reuses the existing traders/buyers DBF writers; the XLSX path uses
+// the mirror-column functions in exports.js so both formats are equivalent.
+app.get('/api/master-exports/:type', requireExport, async (req, res) => {
+  const { type } = req.params;
+  const format = (req.query.format || 'xlsx').toLowerCase();
+  const map = {
+    sellers: { dbf: 'traders', xlsxFn: exportSellersXlsx, name: 'Sellers' },
+    buyers:  { dbf: 'buyers',  xlsxFn: exportBuyersXlsx,  name: 'Buyers' },
+  };
+  const def = map[type];
+  if (!def) return res.status(400).json({ error: 'Unknown master export', available: Object.keys(map) });
+  try {
+    const db = getDb();
+    if (format === 'dbf') {
+      const dbfDef = DBF_EXPORTS[def.dbf];
+      const buffer = await dbfDef.fn(db);
+      res.setHeader('Content-Type', 'application/x-dbase');
+      res.setHeader('Content-Disposition', `attachment; filename="${dbfDef.name}.dbf"`);
+      return res.send(buffer);
+    }
+    const buffer = await def.xlsxFn(db);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${def.name}.xlsx"`);
+    res.send(Buffer.from(buffer));
+  } catch (e) {
+    console.error('master export error:', e);
+    res.status(500).json({ error: 'Master export failed: ' + e.message });
   }
 });
 
@@ -8857,7 +8910,7 @@ app.get('/api/tally/export/:type/:auctionId', requireExport, (req, res) => {
       return res.status(404).json({ error: `No ${what} found for auction ${auctionId}` });
     }
     const xml = def.generator(rows, cfg, { companyName: resolveTallyCompanyName(cfg, def.company) });
-    const filename = `${def.name}_${auctionId}.xml`;
+    const filename = `${def.name}_${anoForFilename(db, auctionId)}.xml`;
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(xml);

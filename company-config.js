@@ -273,6 +273,13 @@ const DEFAULTS = [
 
   // ── INTEGRATIONS ───────────────────────────────────────────
   { key: 'gst_api_key',    value: '', category: 'integrations', label: 'GST Lookup API Key (gstincheck.co.in)',   type: 'text' },
+  // Config-driven external link buttons shown in the top-right of the Lots
+  // and To Tally screens. The button only appears when its URL has a value;
+  // the optional label overrides the default "Open Link" caption.
+  { key: 'link_lots_url',    value: '', category: 'integrations', label: 'Lots Screen — Top-right Link URL',       type: 'text' },
+  { key: 'link_lots_label',  value: '', category: 'integrations', label: 'Lots Screen — Link Button Label',         type: 'text' },
+  { key: 'link_tally_url',   value: '', category: 'integrations', label: 'To Tally Screen — Top-right Link URL',    type: 'text' },
+  { key: 'link_tally_label', value: '', category: 'integrations', label: 'To Tally Screen — Link Button Label',     type: 'text' },
 
   // ── TALLY EXPORT ──────────────────────────────────────────
   // REMOVED tally toggles per spec: tally_optional, tally_dispatch_from,

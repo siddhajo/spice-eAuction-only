@@ -943,6 +943,54 @@ async function exportTradeReport(db, auctionId, _state, extra) {
 }
 
 // ── Export router ────────────────────────────────────────────
+// ── Master Data: Sellers (mirrors the NAM.DBF column set) ─────
+// Full, unfiltered seller master. Column order/names match exportTradersDbf
+// in dbf-exports.js so the .xlsx and .dbf outputs are equivalent. All
+// columns are text (no numFmt) to preserve leading zeros in PIN / account
+// numbers / phone numbers.
+async function exportSellersXlsx(db) {
+  const rows = db.all('SELECT * FROM traders ORDER BY name');
+  const cols = [
+    { header: 'NAME',      key: 'name',        width: 30 },
+    { header: 'CR',        key: 'cr',          width: 22 },
+    { header: 'PAN',       key: 'pan',         width: 14 },
+    { header: 'TEL',       key: 'tel',         width: 16 },
+    { header: 'AADHAR',    key: 'aadhar',      width: 16 },
+    { header: 'PADD',      key: 'padd',        width: 40 },
+    { header: 'PPLA',      key: 'ppla',        width: 18 },
+    { header: 'PIN',       key: 'pin',         width: 10 },
+    { header: 'PSTATE',    key: 'pstate',      width: 16 },
+    { header: 'PST_CODE',  key: 'pst_code',    width: 10 },
+    { header: 'IFSC',      key: 'ifsc',        width: 14 },
+    { header: 'ACCTNUM',   key: 'acctnum',     width: 20 },
+    { header: 'HOLDER_NM', key: 'holder_name', width: 30 },
+  ];
+  return createExcelBuffer('Sellers', cols, rows, { db, title: 'Sellers' });
+}
+
+// ── Master Data: Buyers (mirrors the SBL.DBF column set) ──────
+async function exportBuyersXlsx(db) {
+  const rows = db.all('SELECT * FROM buyers ORDER BY buyer');
+  // SALE defaults to 'L' to match the DBF export's fallback.
+  rows.forEach(r => { if (!r.sale) r.sale = 'L'; });
+  const cols = [
+    { header: 'BUYER',   key: 'buyer',   width: 12 },
+    { header: 'BUYER1',  key: 'buyer1',  width: 30 },
+    { header: 'ADD1',    key: 'add1',    width: 40 },
+    { header: 'ADD2',    key: 'add2',    width: 40 },
+    { header: 'PLA',     key: 'pla',     width: 18 },
+    { header: 'PIN',     key: 'pin',     width: 10 },
+    { header: 'STATE',   key: 'state',   width: 16 },
+    { header: 'ST_CODE', key: 'st_code', width: 10 },
+    { header: 'GSTIN',   key: 'gstin',   width: 18 },
+    { header: 'PAN',     key: 'pan',     width: 14 },
+    { header: 'TEL',     key: 'tel',     width: 16 },
+    { header: 'TI',      key: 'ti',      width: 12 },
+    { header: 'SALE',    key: 'sale',    width: 6 },
+  ];
+  return createExcelBuffer('Buyers', cols, rows, { db, title: 'Buyers' });
+}
+
 const EXPORT_TYPES = {
   lot_slip:           { fn: exportLotSlip,           name: 'LotSlip' },
   lot_slip_after:     { fn: exportLotSlipAfter,      name: 'LotSlipAfter' },
@@ -976,4 +1024,5 @@ module.exports = {
   exportPoolerRegister, exportFullFile, exportCollection, exportTradeReport, exportDealerList,
   exportSalesTaxes, exportPaymentSummary, exportTDSReturn, exportTallyPurchase,
   exportSalesJournal, exportPurchaseJournal,
+  exportSellersXlsx, exportBuyersXlsx,
 };

@@ -561,6 +561,8 @@ async function buyersStatementPdf(db, opts) {
     doc.moveTo(m, top).lineTo(m, y).moveTo(m + usableW, top).lineTo(m + usableW, y)
        .lineWidth(0.6).strokeColor('#000').stroke();
     drawColSeparators(top, y);
+    // Horizontal separator under each row so every row is delimited.
+    doc.moveTo(m, y).lineTo(m + usableW, y).lineWidth(0.4).strokeColor('#000').stroke();
   }
   function sectionLabel(title) {
     const top = y;
@@ -989,6 +991,8 @@ async function formDPdf(db, opts) {
     doc.moveTo(m, rTop).lineTo(m, y2).moveTo(m + usableW, rTop).lineTo(m + usableW, y2)
        .lineWidth(0.6).strokeColor('#000').stroke();
     buyerCols(rTop, y2);
+    // Horizontal separator under each row so every row is delimited.
+    doc.moveTo(m, y2).lineTo(m + usableW, y2).lineWidth(0.4).strokeColor('#000').stroke();
   });
 
   // TOTAL row — label centered across cols 1+2 (Sl.No + Buyer Name)

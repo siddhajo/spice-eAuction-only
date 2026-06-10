@@ -393,6 +393,7 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
 
     const li = lineItems[i];
     stripeRow(y, lineH, i);
+    doc.save(); doc.moveTo(x0, y).lineTo(x1, y).lineWidth(0.25).strokeColor('#CCC').stroke(); doc.restore();
     // TOTAL QTY = sold qty + sample-refund qty (kg per lot from cfg.sb_refund).
     // Legacy line items without `totalQty` fall back to base + refundQty so
     // historical purchase invoices still render the column correctly.
@@ -419,6 +420,7 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
   const padRows = Math.max(minRowsTarget, Math.floor(remainingHeight / lineH) - 1);
   for (let i = 0; i < padRows; i++) {
     stripeRow(y, lineH, lineItems.length + i);
+    doc.save(); doc.moveTo(x0, y).lineTo(x1, y).lineWidth(0.25).strokeColor('#CCC').stroke(); doc.restore();
     y += lineH;
   }
 
@@ -817,14 +819,14 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
     }
   }
 
-  // Draws ONLY the vertical dividers + outer left/right borders for a row
-  // in the line-items table. Use this instead of `box()` for row rendering
-  // so horizontal lines don't appear between rows. Horizontal boundaries
-  // around the whole table are drawn once at the top (under header) and once
-  // at the bottom (under the total row).
+  // Draws the vertical dividers + outer left/right borders for a row in the
+  // line-items table, plus a hairline horizontal separator under the row so
+  // every row is visually delimited. Use this instead of `box()` for row
+  // rendering. The whole-table top boundary (under header) and bottom
+  // boundary (under the total row) are still drawn separately.
   function rowVerticals(ry, rh, skipBilledSplit) {
     // Outer left/right borders
-    doc.lineWidth(0.5);
+    doc.lineWidth(0.5).strokeColor('#000');
     doc.moveTo(x0, ry).lineTo(x0, ry + rh).stroke();
     doc.moveTo(x0 + W, ry).lineTo(x0 + W, ry + rh).stroke();
     // Inner column dividers
@@ -834,6 +836,10 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
       if (skipBilledSplit && k === 'billed') continue;
       doc.moveTo(cx, ry).lineTo(cx, ry + rh).stroke();
     }
+    // Bottom horizontal separator for the row — light hairline so rows read
+    // as distinct without competing with the heavier outer/total borders.
+    doc.moveTo(x0, ry + rh).lineTo(x0 + W, ry + rh).lineWidth(0.25).strokeColor('#CCC').stroke();
+    doc.strokeColor('#000'); // reset for subsequent strokes
   }
 
   // Alternate-row stripes for line-items + HSN summary tables.
@@ -1643,6 +1649,9 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
     // Stripe first, then verticals, then text
     stripeFill(y, hsnRowH, rowIndex);
     hsnRowVerticals(y, hsnRowH);
+    // Hairline at the row's top edge so each HSN row reads as a distinct
+    // line (drawn after the stripe fill so it isn't painted over).
+    doc.save(); doc.moveTo(x0, y).lineTo(x0 + W, y).lineWidth(0.25).strokeColor('#CCC').stroke(); doc.restore();
     let cx = x0;
     doc.font(isTotal ? 'Helvetica-Bold' : 'Helvetica').fontSize(8);
     // First column: HSN/SAC code when flag on, item description when off.
@@ -2084,6 +2093,7 @@ function generateAgriBillPDF(billData, cfg, billNo, externalDoc) {
 
     const li = rows[i];
     stripeRow(y, lineH, i);
+    doc.save(); doc.moveTo(x0, y).lineTo(x1, y).lineWidth(0.25).strokeColor('#CCC').stroke(); doc.restore();
     // TOTAL QTY = sold qty + sample-refund qty (kg per lot from cfg.sb_refund).
     // Falls back to (pqty || qty) for legacy line items that pre-date the
     // refundQty field so older saved invoices still render correctly.
@@ -2108,6 +2118,7 @@ function generateAgriBillPDF(billData, cfg, billNo, externalDoc) {
   const padRows = Math.max(minRowsTarget, Math.floor(remainingHeight / lineH) - 1);
   for (let i = 0; i < padRows; i++) {
     stripeRow(y, lineH, rows.length + i);
+    doc.save(); doc.moveTo(x0, y).lineTo(x1, y).lineWidth(0.25).strokeColor('#CCC').stroke(); doc.restore();
     y += lineH;
   }
   pageSegments[pageSegments.length - 1].end = y; // updated again after TOTAL below
@@ -2602,6 +2613,7 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
       width: col.w - (align === 'right' ? 3 : 0),
       align, lineBreak: false, ellipsis: true,
     });
+    doc.save(); doc.moveTo(x0, y).lineTo(x1, y).lineWidth(0.25).strokeColor('#CCC').stroke(); doc.restore();
     doc.text(String(li.lot || '').padStart(3, '0'), cols[0].x, y + 3, cellOpts(cols[0]));
     doc.text('CARDAMOM',                           cols[1].x, y + 3, cellOpts(cols[1]));
     doc.text(hsnCardamom,                          cols[2].x, y + 3, cellOpts(cols[2]));
@@ -2613,6 +2625,7 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
 
     // [+] SAMPLE REFUND row (only if refund > 0)
     if (refAmt > 0 || Number(li.refundQty || 0) > 0) {
+      doc.save(); doc.moveTo(x0, y).lineTo(x1, y).lineWidth(0.25).strokeColor('#CCC').stroke(); doc.restore();
       doc.text('[+]',                          cols[0].x, y + 3, cellOpts(cols[0]));
       doc.text('SAMPLE REFUND',                cols[1].x, y + 3, cellOpts(cols[1]));
       doc.text(fmtQty(li.refundQty),           cols[3].x, y + 3, cellOpts(cols[3], 'right'));
