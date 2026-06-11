@@ -543,13 +543,16 @@ function getPaymentSummary(db, auctionId, state, cfg) {
     SUM(l.pqty) as total_pqty, SUM(l.prate) as avg_prate,
     SUM(l.puramt) as total_puramt,
     SUM(l.refund) as lot_discount,
+    SUM(COALESCE(l.com,0)) as total_commission,
     SUM(COALESCE(l.cgst,0)) as total_cgst,
     SUM(COALESCE(l.sgst,0)) as total_sgst,
     SUM(COALESCE(l.igst,0)) as total_igst,
     SUM(l.balance) as total_payable,
     COUNT(*) as lot_count,
     GROUP_CONCAT(DISTINCT l.bank_id) AS bank_ids,
-    COUNT(l.bank_id) AS bank_lot_count
+    COUNT(l.bank_id) AS bank_lot_count,
+    MAX(COALESCE(l.immediate_payment,0)) AS any_immediate,
+    SUM(COALESCE(l.immediate_payment,0)) AS immediate_lot_count
     FROM lots l WHERE l.auction_id = ? AND l.amount > 0`;
   const params = [auctionId];
   if (state) { query += ' AND l.state = ?'; params.push(state); }
@@ -598,6 +601,9 @@ function getPaymentSummary(db, auctionId, state, cfg) {
     return {
       ...s,
       total_discount: totalDiscount,
+      // Per-seller commission (lots.com) — shown in the Payments "Commission"
+      // column. Independent of discount; does not affect payable.
+      total_commission: Number(s.total_commission) || 0,
       total_tax: cgst + sgst + igst,
       // True when this seller's lots point at more than one bank account
       // (or a mix of tagged + untagged). Drives the "multiple banks" badge

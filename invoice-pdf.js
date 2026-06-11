@@ -692,7 +692,7 @@ function generateCropReceiptPDF(lot, cfg) {
   });
 }
 
-module.exports = { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSPDF, generateCommissionBoSBatchPDF };
+module.exports = { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSPDF, generateCommissionBoSBatchPDF, effectiveCompany };
 
 /**
  * Sales Invoice PDF (Tax Invoice)
@@ -2447,7 +2447,7 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
   doc.text('COMMISSION BILL', x0, y, { width: W, align: 'center' });
   y += 14;
   doc.font('Helvetica').fontSize(8);
-  doc.text('[ MEMORANDAM OF CARDAMOM SOLD THROUGH ' + (cfg.short_name || ident.shortName || ident.name || 'COMPANY') + ' ]',
+  doc.text('[ MEMORANDAM OF CARDAMOM SOLD THROUGH ' + (cfg.short_name || co.short || co.name || 'COMPANY') + ' ]',
     x0, y, { width: W, align: 'center' });
   y += 14;
 
@@ -2754,7 +2754,7 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
 
   // ── "for COMPANY" + signatures ──
   doc.font('Helvetica-Bold').fontSize(9);
-  doc.text('for ' + (cfg.short_name || ident.shortName || ident.name || 'COMPANY'), x0, y, { width: W - 6, align: 'right' });
+  doc.text('for ' + (cfg.short_name || co.short || co.name || 'COMPANY'), x0, y, { width: W - 6, align: 'right' });
   y += 30;
   doc.font('Helvetica').fontSize(8);
   doc.text('Signature of Seller', x0 + 6, y);

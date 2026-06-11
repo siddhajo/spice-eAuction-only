@@ -1896,6 +1896,27 @@ body[data-comfort="1"] #comfort-toggle-label::after{content:'\2191';margin-left:
 }
 body[data-comfort="1"] .le-lot-chip{min-width:48px;height:34px;font-size:13px}
 
+/* ── Lot-entry collapsible sections ───────────────────────────────
+   Each major card on the Lot Entry screen gets a clickable header bar
+   with a rotating chevron; clicking it collapses the body. Collapsed
+   state per-section is persisted to localStorage (le_collapsed_sections)
+   and restored on init via leRestoreCollapsed(). Bodies that can grow
+   tall (recent list) cap their height and scroll. */
+.le-collapsible{padding:0;overflow:hidden}
+.le-collapsible-head{
+  display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;
+  padding:14px 18px;transition:background .12s;
+}
+.le-collapsible-head:hover{background:var(--bg)}
+.le-collapsible-title{font-size:14px;font-weight:700;color:var(--text)}
+.le-collapsible-chev{
+  display:inline-block;width:16px;text-align:center;font-size:12px;
+  color:var(--text3);transition:transform .15s;
+}
+.le-collapsible.is-collapsed .le-collapsible-chev{transform:rotate(-90deg)}
+.le-collapsible-body{border-top:1px solid var(--border)}
+.le-collapsible.is-collapsed .le-collapsible-body{display:none}
+
 /* ── Lot-entry print toolbar (Print Selected / by Seller / Clear) ── */
 .le-toolbar-btn{
   display:inline-flex;align-items:center;gap:6px;
@@ -2139,6 +2160,10 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 .pay-exported-full{background:#ffe4e6;color:#9f1239;border:1px solid #fda4af}
 .pay-exported-partial{background:#fef3c7;color:#92400e;border:1px solid #fde68a}
 .pay-lot-pick-badge{display:inline-flex;align-items:center;gap:3px;background:#fef3c7;color:#7c2d12;border:1px solid #fde68a;border-radius:9px;padding:1px 6px;font-size:10.5px;font-weight:700;margin-left:6px;cursor:help;vertical-align:middle}
+/* Immediate-payment highlight — violet, distinct from the sky/rose/amber
+   badges above. Tints the seller row and marks immediate lots in the picker. */
+.dt-scroll tbody tr.pay-row-immediate > td{background:#f5f3ff}
+.pay-immediate-badge{display:inline-flex;align-items:center;gap:3px;background:#ede9fe;color:#5b21b6;border:1px solid #c4b5fd;border-radius:9px;padding:1px 6px;font-size:10.5px;font-weight:700;margin-left:6px;cursor:help;vertical-align:middle}
 /* Per-seller lot picker (partial payment modal) — exported lots are shown
    as a locked record (faded + 🚫). Inert until export-tracking is enabled. */
 .pay-lot-cb-exported{opacity:.5;cursor:not-allowed}
@@ -3191,7 +3216,12 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       </div>
 
       <!-- Trade + branch picker — small bar at the top, sticky-feeling -->
-      <div class="card" style="padding:12px 18px;margin-bottom:14px">
+      <div class="card le-collapsible" id="le-sec-picker" style="margin-bottom:14px">
+        <div class="le-collapsible-head" onclick="leToggleSection('le-sec-picker')">
+          <span class="le-collapsible-chev">▾</span>
+          <span class="le-collapsible-title">Auction &amp; Branch</span>
+        </div>
+        <div class="le-collapsible-body" style="padding:12px 18px">
         <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">
           <div style="flex:1;min-width:200px">
             <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Auction</div>
@@ -3210,6 +3240,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">My Today's Lots</div>
             <div id="le-stats" style="height:38px;padding:0 12px;display:inline-flex;align-items:center;background:var(--green-bg);color:var(--green);font-weight:700;border-radius:8px;font-size:14px;font-family:monospace">0 lots · 0 kg</div>
           </div>
+        </div>
         </div>
       </div>
 
@@ -3258,13 +3289,15 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
            the top with a "+ Add Extra" affordance to extend the
            allocation in-place. The bar updates after every lot save
            via leUpdateAllocBar(). -->
-      <div class="card" id="le-alloc-card" style="padding:12px 18px;margin-bottom:14px;display:none">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-          <span style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px">Lot Allocation</span>
-          <span id="le-alloc-summary" style="font-size:11px;color:var(--text3)"></span>
+      <div class="card le-collapsible" id="le-alloc-card" style="margin-bottom:14px;display:none">
+        <div class="le-collapsible-head" onclick="leToggleSection('le-alloc-card')">
+          <span class="le-collapsible-chev">▾</span>
+          <span class="le-collapsible-title">Lot Allocation</span>
+          <span id="le-alloc-summary" style="font-size:11px;color:var(--text3);font-weight:400"></span>
           <span style="flex:1"></span>
-          <button class="needs-auction-write btn btn-o" type="button" onclick="leOpenAddLots()" style="height:28px;padding:0 12px;font-size:11px;font-weight:600">+ Add Extra Lots</button>
+          <button class="needs-auction-write btn btn-o" type="button" onclick="event.stopPropagation();leOpenAddLots()" style="height:28px;padding:0 12px;font-size:11px;font-weight:600">+ Add Extra Lots</button>
         </div>
+        <div class="le-collapsible-body" style="padding:12px 18px">
         <div id="le-alloc-bars" style="display:flex;flex-direction:column;gap:6px"></div>
 
         <!-- Per-lot picker grid for the user's currently-selected branch.
@@ -3286,10 +3319,16 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
           <div id="le-lot-grid-host" class="le-lot-grid-host"></div>
         </div>
+        </div>
       </div>
 
       <!-- Entry form — main card -->
-      <div class="card" id="le-form-card" style="padding:20px 24px;display:none">
+      <div class="card le-collapsible" id="le-form-card" style="display:none">
+        <div class="le-collapsible-head" onclick="leToggleSection('le-form-card')">
+          <span class="le-collapsible-chev">▾</span>
+          <span class="le-collapsible-title">Lot Entry Form</span>
+        </div>
+        <div class="le-collapsible-body" style="padding:20px 24px">
         <!-- Mode banner — flips between Create and Edit. Hidden in create
              mode, visible (with a Cancel-edit chip) in edit mode. -->
         <div id="le-edit-banner" style="display:none;padding:8px 14px;background:#FEF3C7;color:#92400E;border-radius:8px;font-size:13px;margin-bottom:14px;display:flex;align-items:center;gap:10px">
@@ -3424,14 +3463,21 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </button>
           <button class="btn btn-o" onclick="leResetForm()" style="flex:1;height:46px;font-size:14px">Clear</button>
         </div>
+        </div>
       </div>
 
       <!-- Recent entries — today's lots from this auction -->
-      <div class="card" style="padding:16px 20px;margin-top:16px">
-        <h3 style="margin:0 0 12px;font-size:14px;color:var(--text);display:flex;align-items:center;gap:8px">
-          <span style="width:6px;height:18px;background:var(--green);border-radius:3px;display:inline-block"></span>
-          Recent entries — this auction
+      <div class="card le-collapsible" id="le-sec-recent" style="margin-top:16px">
+        <div class="le-collapsible-head" onclick="leToggleSection('le-sec-recent')">
+          <span class="le-collapsible-chev">▾</span>
+          <span class="le-collapsible-title" style="display:inline-flex;align-items:center;gap:8px">
+            <span style="width:6px;height:18px;background:var(--green);border-radius:3px;display:inline-block"></span>
+            Recent entries — this auction
+          </span>
           <span id="le-recent-count" style="font-weight:400;color:var(--text3);font-size:12px;margin-left:8px"></span>
+        </div>
+        <div class="le-collapsible-body" style="padding:16px 20px">
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px">
           <span style="flex:1"></span>
           <!-- Sort By — controls how the recent-entries list is ordered.
                Persisted in localStorage so the user's preference survives
@@ -3475,7 +3521,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <span id="le-change-seller-count" class="le-tb-badge"></span>
           </button>
           <button id="le-print-clear-btn" type="button" onclick="leClearPrintSelection()" class="le-toolbar-btn le-tb-ghost" style="display:none">Clear</button>
-        </h3>
+        </div>
         <!-- Seller filter: type-ahead by seller name. Hits /api/lots's
              `name` LIKE filter so the search runs across the WHOLE trade,
              not just the currently-loaded window. Datalist suggests
@@ -3498,7 +3544,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
           <span id="le-select-by-number-status" style="font-size:11.5px;color:var(--text3)"></span>
         </div>
-        <div id="le-recent-list" style="font-size:13px"></div>
+        <div id="le-recent-list" style="font-size:13px;max-height:62vh;overflow:auto"></div>
+        </div>
       </div>
 
       <!-- Activity log — collapsible, scrollable feed of who entered /
@@ -3681,7 +3728,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <option value="N">N/A (N)</option>
           </select>
           <!-- Within-trade search across invoice no, buyer name, GSTIN. -->
-          <input type="search" id="inv-search" placeholder="Search invoice no, buyer, GSTIN…" oninput="searchInvoicesDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
+          <input type="search" id="inv-search" placeholder="Search invoice no, buyer, GSTIN, lorry…" oninput="searchInvoicesDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
 
           <!-- Create group -->
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
@@ -3708,7 +3755,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <button class="needs-invoice-revert btn" style="height:38px;padding:0 14px;background:var(--spice-turmeric);color:#fff;font-weight:600" onclick="revertAllInvoices()" title="Revert all invoices — deletes them and re-enables lots for re-invoicing">⟲ Revert All</button>          </div>
         </div>
 
-        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Sale</th><th>Inv#</th><th>Lorry</th><th>Distance (km)</th><th>Code</th><th>Trade Name</th><th>Qty</th><th>Amount</th><th>Insurance</th><th>Transport</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th>Actions</th></tr></thead><tbody id="invoices-list"></tbody></table></div>
+        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Sale</th><th>Inv#</th><th>Lorry</th><th>Distance (km)</th><th>Code</th><th>Trade Name</th><th>Bags</th><th>Qty</th><th>Amount</th><th>Insurance</th><th>Transport</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th>Actions</th></tr></thead><tbody id="invoices-list"></tbody></table></div>
         <div id="invoices-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
       </div>
     </div>
@@ -3818,8 +3865,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             </div>
           </div>
           <div class="kpi turmeric">
-            <div class="kpi-label">Total Discount</div>
-            <div class="kpi-value" id="pay-kpi-discount" style="font-size:24px"><span class="kpi-unit" style="margin-right:4px">₹</span>0</div>
+            <div class="kpi-label">Total Commission</div>
+            <div class="kpi-value" id="pay-kpi-commission" style="font-size:24px"><span class="kpi-unit" style="margin-right:4px">₹</span>0</div>
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>
             </div>
@@ -3874,7 +3921,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <div style="height:280px;position:relative"><canvas id="pay-top-sellers-chart"></canvas></div>
         </div>
 
-        <div style="overflow-x:auto"><table><thead><tr><th>Seller</th><th>Lots</th><th>Qty</th><th>Amount</th><th>Purchase</th><th>Discount</th><th>GST 18%</th><th>Payable</th><th>Actions</th></tr></thead><tbody id="payments-list"></tbody></table></div>
+        <div style="overflow-x:auto"><table><thead><tr><th>Seller</th><th>Lots</th><th>Qty</th><th>Amount</th><th>Purchase</th><th>Commission</th><th>GST 18%</th><th>Payable</th><th>Actions</th></tr></thead><tbody id="payments-list"></tbody></table></div>
       </div>
     </div>
 
@@ -9179,6 +9226,8 @@ async function loadLotEntry(){
     leApplyGunnyMode();
     // Restore the activity-log panel's collapse state.
     leApplyActivityOpen();
+    // Restore per-section collapse state for the Lot Entry cards.
+    leRestoreCollapsed();
     // Render branch dropdown. Show a helpful empty state if no branches
     // are configured yet — the field user can't proceed without one
     // because lot save requires a branch.
@@ -9505,6 +9554,32 @@ function leApplyActivityOpen(){
   const chev = document.getElementById('le-activity-chev');
   if (body) body.style.display = _le.activityOpen ? '' : 'none';
   if (chev) chev.textContent = _le.activityOpen ? '▾' : '▸';
+}
+
+// ── Lot Entry collapsible sections ────────────────────────────────
+// Each major card on the Lot Entry screen (.le-collapsible) can be
+// collapsed by clicking its header. The set of collapsed section ids
+// is persisted to localStorage so the operator's layout survives
+// reloads and auction switches. leRestoreCollapsed() re-applies it on
+// init; it's safe to call even for cards that are currently hidden
+// (display:none) since collapse is purely a CSS class toggle.
+function leToggleSection(id){
+  const card = document.getElementById(id);
+  if (!card) return;
+  card.classList.toggle('is-collapsed');
+  try {
+    const collapsed = Array.from(document.querySelectorAll('.le-collapsible.is-collapsed'))
+      .map(e => e.id).filter(Boolean);
+    localStorage.setItem('le_collapsed_sections', JSON.stringify(collapsed));
+  } catch(_) {}
+}
+function leRestoreCollapsed(){
+  let saved = [];
+  try { saved = JSON.parse(localStorage.getItem('le_collapsed_sections') || '[]'); } catch(_) {}
+  document.querySelectorAll('.le-collapsible').forEach(card => {
+    if (!card.id) return;
+    card.classList.toggle('is-collapsed', saved.includes(card.id));
+  });
 }
 function leToggleActivity(){
   _le.activityOpen = !_le.activityOpen;
@@ -16843,6 +16918,9 @@ async function loadInvoices(opts){
         render:(i)=> i.buyer1
           ? esc(i.buyer1)
           : '<span style="color:var(--text3)">—</span>' },
+      // Bags — total bags on the invoice (invoices.bag). Sits before Qty
+      // to mirror the Lots table column order; whole-number format.
+      { key:'bag', label:'Bags', sort:'number', numeric:true, fmt:(n)=>fmtI(n,0) },
       { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:(n)=>fmtI(n,3) },
       { key:'amount', label:'Amount', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
       // Gunny — bag charge billed alongside cardamom on each invoice.
@@ -18157,10 +18235,38 @@ async function leWhatsappReceipt() {
 
   const useApi = await _waCloudApiAvailable();
   const company = (cfg.trade_name || cfg.short_name || cfg.tally_company_name || cfg.legal_name || 'Company').toUpperCase();
+  // Render the receipt PDF in the same format the print flow uses, so the
+  // attached slip matches what the operator would have printed.
+  const fmt = (_le.receiptFormat === 'compact') ? 'compact' : 'detailed';
   let sent = 0, opened = 0;
   for (const grp of items) {
     const phone = await _lookupSellerPhone(grp.traderName);
     const msg = leBuildReceiptText(grp.traderName, grp.lots, { cfg, auction });
+
+    // Build a receipt PDF for exactly this seller's lots (print-batch
+    // groups by seller, so a single-seller id list yields a one-seller
+    // slip). If the PDF can't be built we fall back to text-only so the
+    // operator still gets a message out.
+    let blob = null;
+    const ids = grp.lots.map(l => l.id).filter(Boolean);
+    if (ids.length) {
+      try {
+        blob = await withOverlay('Building receipt…',
+          () => _fetchPdfBlob(`/api/lots/print-batch?format=${fmt}`, { ids, format: fmt }));
+      } catch (_) { blob = null; }
+    }
+
+    if (blob) {
+      // _waSendDocument tries the Cloud API document template first (PDF
+      // uploaded to Meta + delivered); else it falls back to Web Share on
+      // mobile (auto-attaches) or download + WhatsApp Web on desktop.
+      const fname = `LotReceipt_${(grp.traderName || 'Seller').replace(/[^A-Za-z0-9]+/g, '_')}.pdf`;
+      const ok = await _waSendDocument({ blob, filename: fname, phone, params: [grp.traderName, msg, company], message: msg });
+      if (ok) sent++; else opened++;
+      continue;
+    }
+
+    // No PDF — original text-only path.
     if (useApi && phone) {
       // The multi-line receipt is flattened to one line server-side
       // (template body params can't contain newlines).
@@ -18444,8 +18550,12 @@ function _renderPayLotsTable() {
     const checked = isExported ? true : (savedSet ? savedSet.has(lotKey) : true);
     const dis = isExported ? ' disabled' : '';
     const cls = isExported ? 'pay-lot-cb pay-lot-cb-exported' : 'pay-lot-cb';
-    const rowStyle = isExported ? ' style="background:#fef2f2"' : '';
+    const isImmediate = Number(l.immediate_payment) === 1;
+    // Exported tint wins (locked record); otherwise immediate lots get the
+    // violet highlight matching the seller-row badge in the main tab.
+    const rowStyle = isExported ? ' style="background:#fef2f2"' : (isImmediate ? ' style="background:#f5f3ff"' : '');
     const expCell = isExported ? `<span class="pay-lot-exported-tag" title="Already included in a previous export.">🚫</span>` : '';
+    const immTag = isImmediate ? `<span class="pay-immediate-badge" title="Immediate payment — this lot is settled immediately; the early-payment discount applies.">⚡ immediate</span>` : '';
     // Bank routing per lot. A lot with its OWN bank_id (chosen during lot
     // entry) shows that account plainly. A lot with no bank_id falls back
     // to the seller's current default — render it muted + "(default)" so
@@ -18467,13 +18577,13 @@ function _renderPayLotsTable() {
     }
     return `<tr${rowStyle}>
       <td style="text-align:center"><input type="checkbox" class="${cls}" data-id="${l.id}" data-lot="${esc(lotKey)}"${checked ? ' checked' : ''}${dis} onchange="updatePayLotsTotals()" style="cursor:pointer"></td>
-      <td style="font-family:monospace;font-weight:600">${esc(lotKey)} ${expCell}</td>
+      <td style="font-family:monospace;font-weight:600">${esc(lotKey)} ${expCell}${immTag}</td>
       <td>${esc(l.branch || '')}</td>
       <td>${bankLabel}</td>
       <td style="text-align:right">${fmtI(Number(l.pqty)||Number(l.qty)||0, 3)}</td>
       <td style="text-align:right">${fmtI(Number(l.prate)||Number(l.price)||0, 2)}</td>
       <td style="text-align:right">${fmtI(Number(l.puramt)||Number(l.amount)||0, 2)}</td>
-      <td style="text-align:right;color:#B45309">${fmtI(Number(l.refund)||0, 2)}</td>
+      <td style="text-align:right;color:#B45309">${fmtI(Number(l.com)||0, 2)}</td>
       <td style="text-align:right;color:#0891B2">${fmtI(tax, 2)}</td>
       <td style="text-align:right;font-weight:700;color:var(--spice-cardamom-dk)">${fmtI(Number(l.balance)||0, 2)}</td>
     </tr>`;
@@ -18485,7 +18595,7 @@ function _renderPayLotsTable() {
           <th style="width:36px;text-align:center"><input type="checkbox" id="pay-lot-select-all" checked onchange="togglePayLotSelectAll(this.checked)" title="Select / clear all" style="cursor:pointer"></th>
           <th>Lot</th><th>Branch</th><th>Bank</th>
           <th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th>
-          <th style="text-align:right">Discount</th><th style="text-align:right">GST</th><th style="text-align:right">Payable</th>
+          <th style="text-align:right">Commission</th><th style="text-align:right">GST</th><th style="text-align:right">Payable</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -18500,12 +18610,12 @@ function updatePayLotsTotals() {
   const selectedIds = new Set(
     Array.from(document.querySelectorAll('.pay-lot-cb:not([disabled]):checked')).map(cb => Number(cb.dataset.id))
   );
-  let qty = 0, amt = 0, disc = 0, tax = 0, payable = 0;
+  let qty = 0, amt = 0, comm = 0, tax = 0, payable = 0;
   for (const l of _payLotsState.lots) {
     if (!selectedIds.has(l.id)) continue;
     qty     += Number(l.pqty)    || Number(l.qty)    || 0;
     amt     += Number(l.puramt)  || Number(l.amount) || 0;
-    disc    += Number(l.refund)  || 0;
+    comm    += Number(l.com)     || 0;
     tax     += (Number(l.cgst)||0) + (Number(l.sgst)||0) + (Number(l.igst)||0);
     payable += Number(l.balance) || 0;
   }
@@ -18517,7 +18627,7 @@ function updatePayLotsTotals() {
       <div><strong>${n}</strong> of ${totalN} lots selected${exportedN ? ` <span style="color:#b91c1c;font-weight:600">· ${exportedN} already exported (excluded)</span>` : ''}</div>
       <div>Qty: <strong>${fmtI(qty, 3)} kg</strong></div>
       <div>Amount: <strong>₹${fmtI(amt, 2)}</strong></div>
-      <div>Discount: <strong style="color:#B45309">₹${fmtI(disc, 2)}</strong></div>
+      <div>Commission: <strong style="color:#B45309">₹${fmtI(comm, 2)}</strong></div>
       <div>GST: <strong style="color:#0891B2">₹${fmtI(tax, 2)}</strong></div>
       <div style="margin-left:auto;font-size:14px">Payable now: <strong style="color:var(--spice-cardamom-dk)">₹${fmtI(payable, 2)}</strong></div>
     </div>`;
@@ -18760,12 +18870,12 @@ async function loadPayments(){
       } else {
         kpiStrip.style.display = 'grid';
         const totalQty      = arr.reduce((a,i) => a + (Number(i.total_qty)      || 0), 0);
-        const totalDiscount = arr.reduce((a,i) => a + (Number(i.total_discount) || 0), 0);
+        const totalCommission = arr.reduce((a,i) => a + (Number(i.total_commission) || 0), 0);
         const totalPayable  = arr.reduce((a,i) => a + (Number(i.total_payable)  || 0), 0);
         const $ = (id) => document.getElementById(id);
         if ($('pay-kpi-sellers'))  $('pay-kpi-sellers').textContent  = arr.length;
         if ($('pay-kpi-qty'))      $('pay-kpi-qty').innerHTML        = `${fmtI(totalQty, 2)}<span class="kpi-unit">kg</span>`;
-        if ($('pay-kpi-discount')) $('pay-kpi-discount').innerHTML   = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalDiscount, 2)}`;
+        if ($('pay-kpi-commission')) $('pay-kpi-commission').innerHTML = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalCommission, 2)}`;
         if ($('pay-kpi-payable'))  $('pay-kpi-payable').innerHTML    = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalPayable, 2)}`;
         updateSummaryStats('payments',
           `<strong>${arr.length}</strong> seller${arr.length===1?'':'s'} · `
@@ -18782,7 +18892,11 @@ async function loadPayments(){
       rowClass:(p)=>{
         const aid = Number((document.getElementById('pay-auction')||{}).value)||0;
         const st = (typeof _payExportStatus==='function') ? _payExportStatus(aid, p.name, Number(p.lot_count)||0) : 'none';
-        return st==='full' ? 'pay-row-exported' : (st==='partial' ? 'pay-row-exported-partial' : '');
+        if (st==='full') return 'pay-row-exported';
+        if (st==='partial') return 'pay-row-exported-partial';
+        // Not yet exported — tint violet if any of this seller's lots are
+        // flagged immediate payment, so they stand out at a glance.
+        return p.any_immediate ? 'pay-row-immediate' : '';
       },
       columns: [
         // Selection column for bulk actions. Click on a checkbox toggles
@@ -18801,6 +18915,14 @@ async function loadPayments(){
             const bankBadge = p.multipleBanks
               ? `<span class="pay-multibank-badge" title="This seller's lots use more than one bank account. Open 📋 Lots to review per-account routing.">🏦 multiple banks</span>`
               : '';
+            // Immediate-payment badge — flags sellers with one or more lots
+            // marked for immediate settlement. Shows N/total when only some
+            // of the seller's lots are immediate.
+            const immLots = Number(p.immediate_lot_count)||0;
+            const immTotal = Number(p.lot_count)||0;
+            const immediateBadge = p.any_immediate
+              ? `<span class="pay-immediate-badge" title="${immLots} of ${immTotal} lot${immTotal===1?'':'s'} flagged for immediate payment.">⚡ immediate${(immLots>0 && immLots<immTotal) ? ` ${immLots}/${immTotal}` : ''}</span>`
+              : '';
             // Exported-status badge (full ✓ / partial X/Y).
             let exportedBadge = '';
             if (status === 'full') {
@@ -18816,17 +18938,17 @@ async function loadPayments(){
             const pickBadge = (picks && picks.length && status !== 'full')
               ? `<span class="pay-lot-pick-badge" title="${picks.length} lot${picks.length===1?'':'s'} saved as this seller's export filter.">📌 ${picks.length} picked</span>`
               : '';
-            return `<span style="font-weight:600;color:var(--spice-text-main)">${esc(p.name||'')}</span>${bankBadge}${exportedBadge}${pickBadge}`;
+            return `<span style="font-weight:600;color:var(--spice-text-main)">${esc(p.name||'')}</span>${immediateBadge}${bankBadge}${exportedBadge}${pickBadge}`;
           } },
         { key:'lot_count', label:'Lots', sort:'number', numeric:true },
         { key:'total_qty', label:'Qty', sort:'number', numeric:true, fmt:(n)=>fmtI(n,3) },
         { key:'total_amount', label:'Amount', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
         { key:'total_puramt', label:'Purchase', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
-        { key:'total_discount', label:'Discount', sort:'number', numeric:true,
+        { key:'total_commission', label:'Commission', sort:'number', numeric:true,
           fmt:(n)=>fmtI(n,2),
-          // Discount in turmeric/amber for visual distinction
+          // Commission (lots.com) in turmeric/amber for visual distinction
           render:(p)=>{
-            const v = Number(p.total_discount)||0;
+            const v = Number(p.total_commission)||0;
             return v>0
               ? `<span style="color:#B45309;font-weight:600">${fmtI(v,2)}</span>`
               : `<span style="color:var(--text3)">0.00</span>`;

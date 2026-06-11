@@ -8,7 +8,8 @@ const XLSX = require('xlsx');
 const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
 const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSettings, getSettingsFlat, getGSTRates } = require('./company-config');
 const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getPurchaseJournal } = require('./calculations');
-const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF } = require('./invoice-pdf');
+const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
+const { amountToWords } = require('./amount-words');
 const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx } = require('./exports');
 const { getCompanyHeader, writeXlsxCompanyHeader, formatDateForDisplay } = require('./report-formatters');
 const { exportPdf: exportAnyPdf } = require('./exports-pdf');
@@ -4703,8 +4704,8 @@ app.get('/api/invoices', requireView, (req, res) => {
   const q = String(search || '').trim();
   if (q) {
     const like = `%${q}%`;
-    where += ' AND (CAST(invo AS TEXT) LIKE ? OR buyer LIKE ? OR buyer1 LIKE ? OR gstin LIKE ? OR place LIKE ? OR CAST(ano AS TEXT) LIKE ?)';
-    p.push(like, like, like, like, like, like);
+    where += ' AND (CAST(invo AS TEXT) LIKE ? OR buyer LIKE ? OR buyer1 LIKE ? OR gstin LIKE ? OR place LIKE ? OR CAST(ano AS TEXT) LIKE ? OR lorry_no LIKE ?)';
+    p.push(like, like, like, like, like, like, like);
   }
 
   // Pagination — same contract as traders / buyers / auctions.
@@ -6142,23 +6143,64 @@ app.post('/api/bills/generate-all/:auctionId',
   res.json({ success: true, generated: results.length, results, errors });
 });
 
+// Bill-of-Supply PDFs render per-lot rows from the live `lots` table via
+// buildAgriBill(). A bill's stored `auction_id` can go stale when its trade
+// is deleted + re-imported under a new id, which makes the primary lookup
+// fail and the PDF fall back to the stored summary — dropping the LOT NO
+// column. Recover by re-resolving the auction through the bill's trade
+// number (`ano`). Because this is a tax document we only accept a recovered
+// auction whose recomputed net matches the stored bill net (guards against
+// `ano` collisions across trades); a unique-ano hit is trusted even if the
+// net drifted slightly (e.g. a config change). Returns a built bill with
+// lineItems, or null when nothing matches confidently.
+function recoverAgriBillByAno(db, stored, cfg, triedAuctionId) {
+  if (!stored || stored.ano == null || String(stored.ano).trim() === '') return null;
+  const cands = db.all(
+    'SELECT id FROM auctions WHERE CAST(ano AS TEXT) = CAST(? AS TEXT) ORDER BY id',
+    [String(stored.ano)]
+  );
+  const storedNet = Number(stored.net) || 0;
+  let firstHit = null;
+  for (const a of cands) {
+    if (triedAuctionId != null && String(a.id) === String(triedAuctionId)) continue;
+    const b = buildAgriBill(db, a.id, stored.name, cfg);
+    if (b && !b.error) {
+      if (!firstHit) firstHit = b;
+      const net = Number(b.summary && b.summary.netAmount) || 0;
+      if (storedNet <= 0 || Math.abs(net - storedNet) <= Math.max(2, storedNet * 0.005)) return b;
+    }
+  }
+  // Single auction carries this ano → no collision risk, so a found-but-
+  // net-mismatched candidate is still safe to use.
+  if (firstHit && cands.length === 1) return firstHit;
+  return null;
+}
+
 // Agri bill PDF
 app.get('/api/bills/pdf/:auctionId/:sellerName', requireView, async (req, res) => {
   try {
     const db = getDb(); const cfg = getSettingsFlat(db);
     const sellerName = decodeURIComponent(req.params.sellerName);
     const billNo = req.query.billNo || '001';
-    
+
     let bill = buildAgriBill(db, req.params.auctionId, sellerName, cfg);
     if (!bill || bill.error) {
       // Fallback to stored record
       const stored = db.get('SELECT * FROM bills WHERE name = ? AND bil = ? LIMIT 1', [sellerName, parseInt(billNo)]);
       if (!stored) return res.status(404).json({ error: bill?.error || `No bill data found for "${sellerName}"` });
-      bill = {
-        seller: { name: stored.name, address: stored.add_line, place: stored.pla, state: stored.pstate, st_code: stored.st_code, cr: stored.crr, crno: stored.crr, pan: stored.pan },
-        lineItems: [{ lot: '—', qty: stored.qty, pqty: stored.qty, prate: 0, amount: stored.cost, puramt: stored.cost }],
-        summary: { totalQty: stored.qty, totalPuramt: stored.cost, roundDiff: 0, netAmount: stored.net, cgst: 0, sgst: 0, igst: 0, tax: 0 }
-      };
+      // Try to recover live per-lot rows via the bill's trade number so the
+      // LOT NO column survives a stale auction_id; else use the lot-less
+      // stored summary.
+      const recovered = recoverAgriBillByAno(db, stored, cfg, req.params.auctionId);
+      if (recovered) {
+        bill = recovered;
+      } else {
+        bill = {
+          seller: { name: stored.name, address: stored.add_line, place: stored.pla, state: stored.pstate, st_code: stored.st_code, cr: stored.crr, crno: stored.crr, pan: stored.pan },
+          lineItems: [{ lot: '—', qty: stored.qty, pqty: stored.qty, prate: 0, amount: stored.cost, puramt: stored.cost }],
+          summary: { totalQty: stored.qty, totalPuramt: stored.cost, roundDiff: 0, netAmount: stored.net, cgst: 0, sgst: 0, igst: 0, tax: 0 }
+        };
+      }
     }
     // Enrich seller.crno so the new renderer can display "CR.<n>" in the
     // details block when CR/GSTIN-style id is available on the trader row
@@ -6396,7 +6438,10 @@ app.post('/api/bills/pdf-bulk', requireView, async (req, res) => {
         ? buildAgriBill(db, stored.auction_id, stored.name, cfg)
         : null;
       if (!bill || bill.error) {
-        bill = {
+        // Recover live per-lot rows via the bill's trade number (handles a
+        // stale auction_id) before dropping to the lot-less stored summary.
+        const recovered = recoverAgriBillByAno(db, stored, cfg, stored.auction_id);
+        bill = recovered || {
           seller: {
             name: stored.name, address: stored.add_line, place: stored.pla,
             state: stored.pstate, st_code: stored.st_code, cr: stored.crr, crno: stored.crr, pan: stored.pan
@@ -7378,35 +7423,9 @@ function _renderDebitNote(doc, dn, db, cfg) {
       lots = [{ lot_no: '—', qty: 0, prate: 0, puramt: 0, discount: dnAmount, taxable: dnAmount }];
     }
 
-    // ── Indian number-to-words formatter (lakhs/crores style) ──
-    // Mirrors the "Rupees X Only" convention used on tax invoices.
-    const ones  = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten',
-                   'Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
-    const tens  = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
-    const tw = (n) => { // 0..99
-      if (n < 20) return ones[n];
-      const t = Math.floor(n / 10), o = n % 10;
-      return tens[t] + (o ? ' ' + ones[o] : '');
-    };
-    const th = (n) => { // 0..999
-      if (n === 0) return '';
-      const h = Math.floor(n / 100), r = n % 100;
-      return (h ? ones[h] + ' Hundred' + (r ? ' And ' : '') : '') + (r ? tw(r) : '');
-    };
-    const numToIndianWords = (num) => {
-      const n = Math.abs(Math.round(Number(num) || 0));
-      if (n === 0) return 'Zero';
-      const crore = Math.floor(n / 10000000);
-      const lakh  = Math.floor((n % 10000000) / 100000);
-      const thou  = Math.floor((n % 100000) / 1000);
-      const rest  = n % 1000;
-      const parts = [];
-      if (crore) parts.push(tw(crore) + ' Crore');
-      if (lakh)  parts.push(tw(lakh) + ' Lakh');
-      if (thou)  parts.push(tw(thou) + ' Thousand');
-      if (rest)  parts.push(th(rest));
-      return parts.join(' ');
-    };
+    // Amount-in-words uses the shared paise-aware amountToWords() helper
+    // (imported at the top of this file) so the GRAND TOTAL reads e.g.
+    // "Rupees … and Seven Paise Only" exactly like the reference.
 
     const fmtAmt = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const fmtQty = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
@@ -7416,245 +7435,251 @@ function _renderDebitNote(doc, dn, db, cfg) {
       return m ? `${m[3]}/${m[2]}/${m[1]}` : String(d);
     };
 
-    // ── Render ────────────────────────────────────────────────
+    // ── Render: Commission Tax Invoice (matches the reference PDF) ──
+    // Issued on OUR company letterhead; the debit-note counterparty (the
+    // dealer in `traders`) is the Receiver. Totals come from the stored
+    // `debit_notes` record; the per-lot Commission column is the
+    // proportional allocation of dn.amount computed above.
     const PAGE_L = 30, PAGE_R = 565, PAGE_W = PAGE_R - PAGE_L; // ≈535pt usable
 
-    // Top-right ORIGINAL/DUPLICATE/TRIPLICATE strip
-    doc.font('Helvetica').fontSize(8).text('ORIGINAL/DUPLICATE/TRIPLICATE', PAGE_L, 32, { width: PAGE_W, align: 'right' });
+    // Robust date formatter — handles ISO (yyyy-mm-dd) AND the stored
+    // "16-Aug-25" style so both the receiver Date and the auction Dated
+    // line read DD/MM/YYYY like the reference.
+    const _MON = { jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12' };
+    const fmtDate2 = (d) => {
+      if (!d) return '';
+      const s = String(d);
+      let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+      m = s.match(/^(\d{1,2})[-\/]([A-Za-z]{3})[A-Za-z]*[-\/](\d{2,4})/);
+      if (m) {
+        const mm = _MON[m[2].toLowerCase()] || m[2];
+        const yyyy = m[3].length === 2 ? '20' + m[3] : m[3];
+        return `${String(m[1]).padStart(2,'0')}/${mm}/${yyyy}`;
+      }
+      return s;
+    };
 
-    // Dealer letterhead (top): name centered bold, address + GSTIN.
-    // Address resolution from traders table:
-    //   padd  → place-of-business address line
-    //   ppla  → city/place
-    //   pstate + pin → state + pin code
-    // Each piece is optional; we render only what's present, comma-joined.
-    let y = 50;
-    doc.font('Helvetica-Bold').fontSize(15).text(dealerName.toUpperCase(), PAGE_L, y, { width: PAGE_W, align: 'center' });
-    y = doc.y + 2;
-    doc.font('Helvetica').fontSize(9);
-    const dealerAddrParts = buyer ? [
-      buyer.padd, buyer.ppla, buyer.pin, buyer.pstate,
-    ].filter(s => s && String(s).trim()) : [];
-    const dealerAddr = dealerAddrParts.join(', ');
-    if (dealerAddr) { doc.text(dealerAddr, PAGE_L, y, { width: PAGE_W, align: 'center' }); y = doc.y; }
-    // Dealer GSTIN: traders.cr stores it (legacy "GSTIN.<15>" or bare 15-char).
-    // Strip the 'GSTIN.' prefix for clean rendering.
-    let dealerGstin = (buyer && buyer.cr) || '';
-    if (/^GSTIN\.?/i.test(dealerGstin)) dealerGstin = dealerGstin.replace(/^GSTIN\.?/i, '');
-    if (dealerGstin) { doc.font('Helvetica-Bold').text(`GSTIN: ${dealerGstin}`, PAGE_L, y, { width: PAGE_W, align: 'center' }); y = doc.y; }
-    y += 6;
+    // Issuing company (OUR letterhead) — state-aware resolver shared with
+    // the Commission BoS / Agri Bill generators (resolves the KL/TN
+    // address, phone, email, GSTIN, SBL block correctly).
+    const co = effectiveCompany(cfg);
+
+    // Top-right ORIGINAL/DUPLICATE/TRIPLICATE strip
+    doc.font('Helvetica').fontSize(8).fillColor('#000').text('ORIGINAL/DUPLICATE/TRIPLICATE', PAGE_L, 30, { width: PAGE_W, align: 'right' });
+
+    // ── Company letterhead (centered) ──
+    let y = 44;
+    doc.font('Helvetica-Bold').fontSize(13).text((co.name || '').toUpperCase(), PAGE_L, y, { width: PAGE_W, align: 'center', lineBreak: false });
+    y = doc.y + 1;
+    doc.font('Helvetica').fontSize(8);
+    // REGD OFFICE line: address1 + address2 + STATE CODE + Ph. Detect and
+    // avoid double-printing a "REGD OFFICE:" prefix / "STATE CODE:" that
+    // the user may already have baked into their address fields.
+    const addrJoined = [co.address1 || '', co.address2 || ''].filter(p => p && String(p).trim()).join(' ');
+    const stateCodeInAddr = co.stateName && new RegExp(co.stateName + '\\s*CODE\\s*:', 'i').test(addrJoined);
+    const stateTail = (co.stateName && !stateCodeInAddr) ? (co.stateName + ' CODE:' + (co.stateCode || '')) : '';
+    const phoneTail = co.phone ? 'Ph:' + co.phone : '';
+    const regdBody = [addrJoined, stateTail, phoneTail].filter(Boolean).join(' ');
+    if (regdBody) {
+      const hasPrefix = /^\s*REGD\s+OFFICE\s*:/i.test(addrJoined);
+      doc.text(hasPrefix ? regdBody : ('REGD OFFICE:' + regdBody), PAGE_L, y, { width: PAGE_W, align: 'center', lineBreak: false });
+      y = doc.y;
+    }
+    const coIdLabel = co.idLabel || 'CIN';
+    const coIdValue = (co.idValue != null && co.idValue !== '') ? co.idValue : (co.cin || cfg.cin || '');
+    doc.text(`${coIdLabel}:${coIdValue || ''}   PAN:${co.pan || cfg.pan || ''}`, PAGE_L, y, { width: PAGE_W, align: 'center', lineBreak: false }); y = doc.y;
+    doc.text(`GSTIN:${co.gstin || ''}   SBL:${co.sbl || cfg.sbl || ''}`, PAGE_L, y, { width: PAGE_W, align: 'center', lineBreak: false }); y = doc.y;
+    if (co.email) { doc.text('e-Mail ID:' + co.email, PAGE_L, y, { width: PAGE_W, align: 'center', lineBreak: false }); y = doc.y; }
+    y += 5;
 
     // Outer frame starts here
     const FRAME_TOP = y;
     doc.lineWidth(0.7).moveTo(PAGE_L, FRAME_TOP).lineTo(PAGE_R, FRAME_TOP).stroke();
+    doc.lineWidth(0.5);
     y += 4;
 
-    // CREDIT NOTE / DEBIT NOTE banner
-    doc.font('Helvetica-Bold').fontSize(11).text('CREDIT NOTE/DEBIT NOTE', PAGE_L, y, { width: PAGE_W, align: 'center' });
+    // ── Title band: "Tax Invoice" ──
+    doc.font('Helvetica-Bold').fontSize(11).text('Tax Invoice', PAGE_L, y, { width: PAGE_W, align: 'center' });
     y = doc.y + 4;
-    doc.moveTo(PAGE_L, y).lineTo(PAGE_R, y).stroke(); y += 6;
+    doc.moveTo(PAGE_L, y).lineTo(PAGE_R, y).stroke(); y += 5;
 
-    // Recipient block: OUR company on left, Note No / Date on right.
-    // Reads from the central company-identity resolver so the address
-    // appears below the company name reliably (the previous code looked
-    // for `cfg.address1` / `cfg.r_address1`, neither of which exist in
-    // the e-Auction single-company schema — both were always blank,
-    // dropping the address line entirely).
-    const _ident = getCompanyIdentity(cfg);
-    const company       = _ident.name || cfg.short_name || '';
-    const ispGstin      = _ident.gstin;
-    const ispPan        = _ident.pan;
-    const ispState      = _ident.state;
-    const ispStateCode  = _ident.stateCode || (ispState === 'KERALA' ? '32' : '33');
-    const ispAddrLine1  = _ident.address1;
-    const ispAddrLine2  = _ident.address2;
+    // ── Receiver block (the debit-note counterparty / dealer) ──
+    doc.font('Helvetica-Bold').fontSize(9).text('Name and Address of the Receiver', PAGE_L + 4, y);
+    const recvTop = doc.y + 2;
+    const rcv = buyer || {};
+    const rcvGstinClean = String(rcv.cr || '').trim().replace(/^GSTIN\.?/i, '').trim();
+    const rcvSbl    = String(rcv.aadhar || '').trim();   // SBL is stored in traders.aadhar
+    const rcvState  = String(rcv.pstate || dn.state || '').trim();
+    const rcvCode   = String(rcv.pst_code || '').trim();
+    const natureOfService = cfg.commission_nature || 'Service of an Auctioneer/Commission Agent';
+    const sac             = cfg.commission_sac    || '996111';
+    const noteSeason = (cfg.season_short || cfg.tally_season || '26-27');
 
-    const noteRefSuffix = (cfg.season_short || cfg.tally_season || '26-27').replace(/[^0-9-]/g,'');
+    const recvLines = [];
+    recvLines.push('M/s.' + dealerName);
+    if (rcv.padd) recvLines.push(String(rcv.padd));
+    const placeLine = [rcv.ppla, rcv.pin].filter(s => s && String(s).trim()).join(' ');
+    if (placeLine) recvLines.push(placeLine);
+    if (rcvGstinClean) recvLines.push('GSTIN.' + rcvGstinClean + (rcvSbl ? '    SBL:' + rcvSbl : ''));
+    else if (rcvSbl)   recvLines.push('SBL:' + rcvSbl);
+    if (rcvState || rcvCode) recvLines.push('Place of Supply:' + (rcvCode ? rcvCode + ' ' : '') + rcvState.toUpperCase());
+    recvLines.push('Nature of Service: ' + natureOfService);
+    recvLines.push('Service Account Code: ' + sac);
 
-    doc.font('Helvetica-Bold').fontSize(10).text(company.toUpperCase(), PAGE_L + 4, y);
-    doc.font('Helvetica-Bold').fontSize(10).text(`No.: ${dn.note_no || ''}/${noteRefSuffix}`, PAGE_R - 200, y, { width: 196, align: 'right' });
-    y = doc.y + 2;
-    // Address line 1 sits directly under the company name. Both lines
-    // optional — render whichever are populated.
-    if (ispAddrLine1) doc.font('Helvetica').fontSize(9).text(ispAddrLine1, PAGE_L + 4, y);
-    doc.font('Helvetica-Bold').fontSize(9).text(`Date :${fmtDate(dn.date)}`, PAGE_R - 200, y, { width: 196, align: 'right' });
-    y = doc.y + 2;
-    if (ispAddrLine2) { doc.font('Helvetica').fontSize(9).text(ispAddrLine2, PAGE_L + 4, y); y = doc.y; }
-    if (ispGstin) { doc.font('Helvetica').fontSize(9).text(`GSTIN : ${ispGstin}`, PAGE_L + 4, y); y = doc.y; }
-    if (ispPan)   { doc.font('Helvetica').fontSize(9).text(`PAN   : ${ispPan}`,   PAGE_L + 4, y); y = doc.y; }
-    if (ispState) { doc.font('Helvetica').fontSize(9).text(`STATE : ${ispState}    CODE:${ispStateCode}`, PAGE_L + 4, y); y = doc.y; }
-    y += 4;
-    doc.moveTo(PAGE_L, y).lineTo(PAGE_R, y).stroke(); y += 6;
+    const RIGHT_X = PAGE_R - 200, RIGHT_W = 196, LEFT_W = PAGE_W - 200 - 12;
+    doc.font('Helvetica').fontSize(9);
+    let ry = recvTop;
+    for (const line of recvLines) {
+      doc.text(line, PAGE_L + 4, ry, { width: LEFT_W, lineBreak: false, ellipsis: true });
+      ry += 11;
+    }
+    // Right column: No. + Date (aligned with the first two receiver lines)
+    doc.font('Helvetica-Bold').fontSize(9);
+    doc.text(`No.:${dn.note_no ? String(dn.note_no).trim() : ''}/${noteSeason}`, RIGHT_X, recvTop, { width: RIGHT_W, align: 'right' });
+    doc.text(`Date :${fmtDate2(dn.date)}`, RIGHT_X, recvTop + 11, { width: RIGHT_W, align: 'right' });
 
-    // "Discount on Sale of Cardamom HSN CODE:..." title
-    const hsnCardamom = cfg.tally_hsn_cardamom || cfg.hsn_cardamom || '09083120';
-    doc.font('Helvetica-Bold').fontSize(10).text(`Discount on Sale of Cardamom    HSN CODE:${hsnCardamom}`, PAGE_L + 4, y);
+    y = ry + 2;
+    doc.moveTo(PAGE_L, y).lineTo(PAGE_R, y).stroke(); y += 5;
+
+    // ── Middle band: commission context ──
+    doc.font('Helvetica-Bold').fontSize(10).text(
+      `Commission on sale of cardamom in eAuction No: ${dn.ano || ''}    Dated:${fmtDate2(auction && auction.date)}`,
+      PAGE_L + 4, y);
     y = doc.y + 4;
     doc.moveTo(PAGE_L, y).lineTo(PAGE_R, y).stroke(); y += 4;
 
-    // ── Line items table ──
-    // Column widths (sum ≈ 535pt usable). Match the reference layout:
-    // Column layout:
-    //   Sl | Lot | Quantity (kgs) | Rate/kg (Rs) | Value (Rs) | Discount (Rs) | [GST (Rs)?] | Taxable (Rs)
-    //
-    // The 7th column was previously a 40pt empty visual gap. It now shows
-    // GST on the discount (taken from cfg.discount_gst, e.g. 18%) WHEN the
-    // "Discount includes GST" feature flag (`flag_disc_gst`) is enabled.
-    // When the flag is off, we DROP the column entirely (not just blank it)
-    // so the surrounding columns redistribute the freed width — no visible
-    // empty band on the PDF. The Taxable Value column also widens to keep
-    // the table flush to PAGE_W.
-    const showGstCol = !!cfg.flag_disc_gst;
-    const gstHeaderRate = Number(cfg.discount_gst) || Number(cfg.gst_service) || 18;
+    // ── Line-item table (8 cols, incl. an empty spacer per the reference) ──
     const cols = [
-      { key:'sl',       w: 32,  label1:'Sl',       label2:'No',     align:'center' },
-      { key:'lot',      w: 38,  label1:'Lot',      label2:'No',     align:'center' },
-      { key:'qty',      w: 76,  label1:'Quantity', label2:'(kgs)',  align:'right'  },
-      { key:'rate',     w: 70,  label1:'Rate/kg',  label2:'(Rs)',   align:'right'  },
-      { key:'value',    w: 100, label1:'Value',    label2:'(Rs)',   align:'right'  },
-      { key:'discount', w: 80,  label1:'Discount', label2:'(Rs)',   align:'right'  },
+      { key:'sl',      w: 30, label1:'Sl',        label2:'No',    align:'center' },
+      { key:'lot',     w: 32, label1:'Lot',       label2:'No',    align:'center' },
+      { key:'qty',     w: 72, label1:'Quantity',  label2:'(kgs)', align:'right'  },
+      { key:'rate',    w: 66, label1:'Rate/kg',   label2:'(Rs)',  align:'right'  },
+      { key:'value',   w: 96, label1:'Value',     label2:'(Rs)',  align:'right'  },
+      { key:'comm',    w: 82, label1:'Commission',label2:'(Rs)',  align:'right'  },
+      { key:'spacer',  w: 68, label1:'',          label2:'',      align:'center' },
+      { key:'taxable', w: 89, label1:'Taxable',   label2:'Value', align:'right'  },
     ];
-    if (showGstCol) {
-      // GST column header shows the active rate (e.g. "GST 18%") so the
-      // user can immediately see what discount_gst is set to without
-      // cross-checking Settings.
-      cols.push({ key:'gst', w: 70,  label1:`GST ${gstHeaderRate}%`, label2:'(Rs)', align:'right' });
-      cols.push({ key:'taxable', w: 69, label1:'Taxable', label2:'Value', align:'right' });
-    } else {
-      // Flag off — taxable column absorbs the entire 109pt slot.
-      cols.push({ key:'taxable', w: 139, label1:'Taxable', label2:'Value', align:'right' });
-    }
-    // Compute x positions
-    let xs = [PAGE_L];
+    const xs = [PAGE_L];
     cols.forEach(c => xs.push(xs[xs.length - 1] + c.w));
+    const taxIdx = 7; // taxable column index
 
-    // Header rows
+    // Header
     const HEAD_H = 26;
     const headTop = y;
-    // Vertical lines (header)
     xs.forEach(x => doc.moveTo(x, headTop).lineTo(x, headTop + HEAD_H).stroke());
-    // Top + bottom of header
     doc.moveTo(PAGE_L, headTop).lineTo(PAGE_R, headTop).stroke();
     doc.moveTo(PAGE_L, headTop + HEAD_H).lineTo(PAGE_R, headTop + HEAD_H).stroke();
     doc.font('Helvetica-Bold').fontSize(9);
     cols.forEach((c, i) => {
-      doc.text(c.label1, xs[i] + 3, headTop + 4,  { width: c.w - 6, align: c.align });
-      doc.text(c.label2, xs[i] + 3, headTop + 14, { width: c.w - 6, align: c.align });
+      if (c.label1) doc.text(c.label1, xs[i] + 3, headTop + 4,  { width: c.w - 6, align: c.align });
+      if (c.label2) doc.text(c.label2, xs[i] + 3, headTop + 14, { width: c.w - 6, align: c.align });
     });
     y = headTop + HEAD_H;
 
-    // Resolve column indices by key — the layout is conditional on the
-    // GST column flag, so we can't hardcode positions. `colIdx` returns
-    // the array index of the named column or -1 if not present.
-    const colIdx = (key) => cols.findIndex(c => c.key === key);
-    const taxIdx = colIdx('taxable');
-    const gstIdx = colIdx('gst');  // -1 when flag is off
-
-    // Data rows
+    // Data rows (padded to MAX_ROWS so the table is a clean ruled box)
     const ROW_H = 14;
-    const MAX_ROWS = 14; // matches reference pdf — page can hold ~14 line rows comfortably
+    const MAX_ROWS = 14;
     doc.font('Helvetica').fontSize(9);
-    let totalQty = 0, totalValue = 0, totalDiscount = 0, totalTaxable = 0, totalGst = 0;
-    // Per-row GST = discount × discount_gst%. discount_gst is the rate
-    // (e.g. 18). Computed per-lot so the column sums back to the DN's
-    // total GST when the flag is on.
-    const gstRateFraction = gstHeaderRate / 100;
+    let totalQty = 0, totalValue = 0, totalCommission = 0, totalTaxable = 0;
     for (let i = 0; i < Math.max(lots.length, MAX_ROWS); i++) {
       const lot = lots[i];
-      // Vertical lines for this row
       xs.forEach(x => doc.moveTo(x, y).lineTo(x, y + ROW_H).stroke());
       if (lot) {
-        const value    = Number(lot.qty || 0) * Number(lot.prate || 0);
-        const discount = Number(lot.discount || 0);
-        // GST on discount — only meaningful when the column is shown.
-        const gstOnDiscount = showGstCol
-          ? Math.round(discount * gstRateFraction * 100) / 100
-          : 0;
-        // Taxable Value historically equals the discount; with the GST
-        // column visible we keep the same semantic so the existing
-        // GRAND TOTAL math is unchanged.
-        const taxable  = Number(lot.taxable || discount);
-        totalQty      += Number(lot.qty || 0);
-        totalValue    += value;
-        totalDiscount += discount;
-        totalGst      += gstOnDiscount;
-        totalTaxable  += taxable;
-        doc.text(String(i + 1),                 xs[0] + 3, y + 3, { width: cols[0].w - 6, align: cols[0].align });
-        doc.text(String(lot.lot_no || ''),      xs[1] + 3, y + 3, { width: cols[1].w - 6, align: cols[1].align });
-        doc.text(fmtQty(lot.qty),               xs[2] + 3, y + 3, { width: cols[2].w - 6, align: cols[2].align });
-        doc.text(fmtAmt(lot.prate),             xs[3] + 3, y + 3, { width: cols[3].w - 6, align: cols[3].align });
-        doc.text(fmtAmt(value),                 xs[4] + 3, y + 3, { width: cols[4].w - 6, align: cols[4].align });
-        doc.text(fmtAmt(discount),              xs[5] + 3, y + 3, { width: cols[5].w - 6, align: cols[5].align });
-        if (gstIdx >= 0) {
-          doc.text(fmtAmt(gstOnDiscount),       xs[gstIdx] + 3, y + 3, { width: cols[gstIdx].w - 6, align: cols[gstIdx].align });
-        }
-        doc.text(fmtAmt(taxable),               xs[taxIdx] + 3, y + 3, { width: cols[taxIdx].w - 6, align: cols[taxIdx].align });
+        const value      = Number(lot.qty || 0) * Number(lot.prate || 0);
+        const commission = Number(lot.discount || 0);
+        const taxable    = Number(lot.taxable != null ? lot.taxable : commission);
+        totalQty        += Number(lot.qty || 0);
+        totalValue      += value;
+        totalCommission += commission;
+        totalTaxable    += taxable;
+        doc.text(String(i + 1),            xs[0] + 3, y + 3, { width: cols[0].w - 6, align: cols[0].align });
+        doc.text(String(lot.lot_no || ''), xs[1] + 3, y + 3, { width: cols[1].w - 6, align: cols[1].align });
+        doc.text(fmtQty(lot.qty),          xs[2] + 3, y + 3, { width: cols[2].w - 6, align: cols[2].align });
+        doc.text(fmtAmt(lot.prate),        xs[3] + 3, y + 3, { width: cols[3].w - 6, align: cols[3].align });
+        doc.text(fmtAmt(value),            xs[4] + 3, y + 3, { width: cols[4].w - 6, align: cols[4].align });
+        doc.text(fmtAmt(commission),       xs[5] + 3, y + 3, { width: cols[5].w - 6, align: cols[5].align });
+        // spacer column (index 6) intentionally blank
+        doc.text(fmtAmt(taxable),          xs[taxIdx] + 3, y + 3, { width: cols[taxIdx].w - 6, align: cols[taxIdx].align });
       }
       y += ROW_H;
     }
-    // Bottom border of data area
     doc.moveTo(PAGE_L, y).lineTo(PAGE_R, y).stroke();
 
-    // TOTAL row
+    // ── TOTAL row ──
     const TOT_H = 16;
     doc.font('Helvetica-Bold').fontSize(9);
-    // Merged "TOTAL" cell across Sl + Lot
     doc.moveTo(PAGE_L, y).lineTo(PAGE_L, y + TOT_H).stroke();
-    doc.moveTo(xs[2], y).lineTo(xs[2], y + TOT_H).stroke();
+    doc.moveTo(xs[2], y).lineTo(xs[2], y + TOT_H).stroke();   // after merged TOTAL (Sl+Lot)
     doc.text('TOTAL', PAGE_L + 3, y + 4, { width: cols[0].w + cols[1].w - 6, align: 'center' });
     doc.text(fmtQty(totalQty), xs[2] + 3, y + 4, { width: cols[2].w - 6, align: 'right' });
-    doc.moveTo(xs[3], y).lineTo(xs[3], y + TOT_H).stroke();
-    // Skip Rate column on totals row (no average)
-    doc.moveTo(xs[4], y).lineTo(xs[4], y + TOT_H).stroke();
+    doc.moveTo(xs[3], y).lineTo(xs[3], y + TOT_H).stroke();   // after qty
+    doc.moveTo(xs[4], y).lineTo(xs[4], y + TOT_H).stroke();   // after rate (blank)
     doc.text(fmtAmt(totalValue), xs[4] + 3, y + 4, { width: cols[4].w - 6, align: 'right' });
-    doc.moveTo(xs[5], y).lineTo(xs[5], y + TOT_H).stroke();
-    doc.text(fmtAmt(totalDiscount), xs[5] + 3, y + 4, { width: cols[5].w - 6, align: 'right' });
-    if (gstIdx >= 0) {
-      doc.moveTo(xs[gstIdx], y).lineTo(xs[gstIdx], y + TOT_H).stroke();
-      doc.text(fmtAmt(totalGst), xs[gstIdx] + 3, y + 4, { width: cols[gstIdx].w - 6, align: 'right' });
-    }
-    doc.moveTo(xs[taxIdx], y).lineTo(xs[taxIdx], y + TOT_H).stroke();
+    doc.moveTo(xs[5], y).lineTo(xs[5], y + TOT_H).stroke();   // after value
+    doc.text(fmtAmt(totalCommission), xs[5] + 3, y + 4, { width: cols[5].w - 6, align: 'right' });
+    doc.moveTo(xs[6], y).lineTo(xs[6], y + TOT_H).stroke();   // after commission
+    doc.moveTo(xs[taxIdx], y).lineTo(xs[taxIdx], y + TOT_H).stroke(); // after spacer
     doc.moveTo(PAGE_R, y).lineTo(PAGE_R, y + TOT_H).stroke();
     doc.text(fmtAmt(totalTaxable), xs[taxIdx] + 3, y + 4, { width: cols[taxIdx].w - 6, align: 'right' });
     y += TOT_H;
     doc.moveTo(PAGE_L, y).lineTo(PAGE_R, y).stroke();
 
-    // GRAND TOTAL row — label area spans cols[5..taxIdx-1], amount sits
-    // in the taxable column. Indexing via taxIdx keeps this correct
-    // whether or not the GST column is shown (cols length differs by 1).
+    // ── Tax breakdown block (CGST/SGST/IGST on Commission & Handling) ──
+    // Driven by the stored DN record. The left region is one tall empty
+    // cell; the label sits in the middle span, the amount in the Taxable
+    // column. CGST/SGST/IGST always render (0.00 where N/A), as in the ref.
+    const rRate = Number(cfg.discount_gst) || Number(cfg.gst_service) || 18;
+    const halfRate = rRate / 2;
+    const roundOff = Math.round((Number(dn.total || 0)
+      - (Number(dn.amount || 0) + Number(dn.cgst || 0) + Number(dn.sgst || 0) + Number(dn.igst || 0))) * 100) / 100;
+    const taxRows = [
+      { label: `C G S T @ ${halfRate}% on C&H`, amt: Number(dn.cgst || 0) },
+      { label: `S G S T @ ${halfRate}% on C&H`, amt: Number(dn.sgst || 0) },
+      { label: `I G S T @ ${rRate}% on C&H`,    amt: Number(dn.igst || 0) },
+      { label: 'ROUND ON/OFF',                  amt: roundOff },
+    ];
+    const labelX = xs[4];       // tax-label span starts at the Value column
+    const valueX = xs[taxIdx];  // amounts sit in the Taxable column
+    const TAX_H = 14;
+    doc.font('Helvetica').fontSize(9);
+    for (const tr of taxRows) {
+      doc.moveTo(PAGE_L, y).lineTo(PAGE_L, y + TAX_H).stroke();
+      doc.moveTo(labelX, y).lineTo(labelX, y + TAX_H).stroke();
+      doc.moveTo(valueX, y).lineTo(valueX, y + TAX_H).stroke();
+      doc.moveTo(PAGE_R, y).lineTo(PAGE_R, y + TAX_H).stroke();
+      doc.text(tr.label, labelX + 6, y + 3, { width: valueX - labelX - 12, align: 'left' });
+      doc.text(fmtAmt(tr.amt), valueX + 3, y + 3, { width: cols[taxIdx].w - 6, align: 'right' });
+      y += TAX_H;
+    }
+    doc.moveTo(PAGE_L, y).lineTo(PAGE_R, y).stroke();   // divider above GRAND TOTAL
+
+    // ── GRAND TOTAL row ──
     const GT_H = 18;
-    const labelStartX = xs[5];
-    const valueX      = xs[taxIdx];
-    const valueW      = cols[taxIdx].w;
     doc.moveTo(PAGE_L, y).lineTo(PAGE_L, y + GT_H).stroke();
-    doc.moveTo(labelStartX, y).lineTo(labelStartX, y + GT_H).stroke();
+    doc.moveTo(labelX, y).lineTo(labelX, y + GT_H).stroke();
     doc.moveTo(valueX, y).lineTo(valueX, y + GT_H).stroke();
     doc.moveTo(PAGE_R, y).lineTo(PAGE_R, y + GT_H).stroke();
-    doc.font('Helvetica-Bold').fontSize(10).text('GRAND TOTAL', labelStartX + 3, y + 5, { width: valueX - labelStartX - 6, align: 'right' });
-    doc.text(fmtAmt(dn.total || totalTaxable), valueX + 3, y + 5, { width: valueW - 6, align: 'right' });
+    doc.font('Helvetica-Bold').fontSize(10).text('GRAND TOTAL', labelX + 6, y + 5, { width: valueX - labelX - 12, align: 'left' });
+    doc.text(fmtAmt(Number(dn.total || 0)), valueX + 3, y + 5, { width: cols[taxIdx].w - 6, align: 'right' });
     y += GT_H;
     doc.moveTo(PAGE_L, y).lineTo(PAGE_R, y).stroke();
     y += 14;
 
-    // Amount in words
-    const grandTotal = Math.round(Number(dn.total || totalTaxable) || 0);
+    // ── Amount in words (paise-aware) ──
     doc.font('Helvetica').fontSize(10).text(
-      `Rupees ${numToIndianWords(grandTotal)} Only`,
-      PAGE_L + 4, y,
-      { width: PAGE_W - 8 }
-    );
-    y = doc.y + 14;
+      `${amountToWords(Number(dn.total || 0))} Only`,
+      PAGE_L + 4, y, { width: PAGE_W - 8 });
+    y = doc.y + 18;
 
-    // "For DEALER" + Authorised Signatory (right-aligned). The DN is
-    // signed off by the dealer (the party crediting the discount).
-    doc.font('Helvetica-Bold').fontSize(10).text(`For ${dealerName.toUpperCase()}`, PAGE_L, y, { width: PAGE_W - 8, align: 'right' });
+    // ── Footer: issuing company signatory ──
+    doc.font('Helvetica-Bold').fontSize(10).text(`For ${(co.short || co.name || '').toUpperCase()}`, PAGE_L, y, { width: PAGE_W - 8, align: 'right' });
     y += 50;
     doc.font('Helvetica').fontSize(9).text('Authorised Signatory', PAGE_L, y, { width: PAGE_W - 8, align: 'right' });
     y += 14;
 
-    // Bottom frame line
+    // Bottom frame + left/right outer borders from FRAME_TOP to here
     doc.moveTo(PAGE_L, y).lineTo(PAGE_R, y).stroke();
-    // Left + right outer frame from FRAME_TOP to here
     doc.moveTo(PAGE_L, FRAME_TOP).lineTo(PAGE_L, y).stroke();
     doc.moveTo(PAGE_R, FRAME_TOP).lineTo(PAGE_R, y).stroke();
 }
