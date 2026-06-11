@@ -490,6 +490,34 @@ async function initDb() {
     undone_at TEXT DEFAULT ''
   )`);
 
+  // ── GRADE-2 BOOKING ALERTS ─────────────────────────────────
+  // One row per fired alert. Existence of rows IS the per-auction state
+  // machine: no 'manager' row for an auction → the manager alert can still
+  // fire; a 'manager' row present + grade-2 weight has grown since → the
+  // 'superior' escalation can fire. Each (auction_id, level) fires once.
+  // `channels` is a JSON blob recording per-channel send status (inapp /
+  // whatsapp / email). Written by grade2-alerts.js; surfaced in-app via
+  // GET /api/grade2-alerts and acknowledged via POST /api/grade2-alerts/:id/ack.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS grade2_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    auction_id INTEGER NOT NULL,
+    level TEXT NOT NULL,                -- 'manager' | 'superior'
+    grade2_weight REAL DEFAULT 0,
+    total_weight REAL DEFAULT 0,
+    ratio REAL DEFAULT 0,               -- grade2_weight / total_weight (0..1)
+    threshold REAL DEFAULT 0,           -- threshold ratio in effect (0..1)
+    lot_count INTEGER DEFAULT 0,
+    message TEXT DEFAULT '',
+    channels TEXT DEFAULT '',           -- JSON: { inapp, whatsapp, email } statuses
+    acknowledged_at TEXT DEFAULT NULL,
+    acknowledged_by TEXT DEFAULT NULL,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (auction_id) REFERENCES auctions(id)
+  )`);
+  wrapped.exec(
+    'CREATE INDEX IF NOT EXISTS idx_grade2_alerts_auction ON grade2_alerts(auction_id, level)'
+  );
+
   // Records each lot-range reassignment so the tile UI can flag
   // recently-moved lots and admins can audit branch transfers.
   wrapped.exec(`CREATE TABLE IF NOT EXISTS reassign_log (

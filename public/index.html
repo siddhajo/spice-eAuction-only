@@ -2502,6 +2502,9 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
     <div class="content">
     <div class="toast" id="toast"></div>
+    <!-- Grade-2 booking alerts: fixed stack of dismissible banners, fed by
+         the pollGrade2Alerts() poll. Empty until an alert fires. -->
+    <div id="g2-alert-stack" style="position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;width:min(680px,94vw);display:flex;flex-direction:column;gap:8px;pointer-events:none"></div>
 
     <!-- DASHBOARD -->
     <div class="tc active" id="tc-dash"><div class="stats" id="stats"></div></div>
@@ -5546,6 +5549,49 @@ function updateSyncIndicator(){
 // Refresh the indicator's "Xs ago" text every 10s
 setInterval(updateSyncIndicator, 10000);
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',3000)}
+
+// ── Grade-2 booking alerts (in-app banner) ─────────────────────────
+// Polls for un-acknowledged grade-2 alerts and renders a dismissible
+// banner for each. Manager-level = amber (soft alert); superior-level =
+// red (escalation). Acknowledging hides it and marks it ack'd server-side.
+let _g2Dismissed = new Set();   // ids dismissed locally this session
+async function pollGrade2Alerts(){
+  const stack = document.getElementById('g2-alert-stack');
+  if (!stack || typeof T === 'undefined' || !T) return;
+  let alerts = [];
+  try {
+    const r = await h('/api/grade2-alerts?unack=1');
+    if (!r.ok) return;            // 401/403 etc. — stay quiet
+    alerts = (await r.json()).alerts || [];
+  } catch(e){ return; }
+  const show = alerts.filter(a => !_g2Dismissed.has(a.id));
+  stack.innerHTML = show.map(a => {
+    const esc = a.level === 'superior';
+    const bg = esc ? '#b3261e' : '#9a6700';
+    const icon = esc ? '⛔' : '🚨';
+    const title = esc ? 'Grade-2 booking — ESCALATED to superior' : 'Grade-2 booking alert — depot manager';
+    const msg = (a.message || '').replace(/</g,'&lt;');
+    return `<div style="pointer-events:auto;background:${bg};color:#fff;border-radius:8px;padding:10px 12px;box-shadow:0 4px 14px rgba(0,0,0,.25);font-size:13px;line-height:1.45">
+      <div style="display:flex;align-items:flex-start;gap:8px">
+        <span style="font-size:16px">${icon}</span>
+        <div style="flex:1">
+          <div style="font-weight:700;margin-bottom:2px">${title}</div>
+          <div>${msg}</div>
+        </div>
+        <button onclick="ackGrade2Alert(${a.id})" title="Acknowledge & dismiss" style="background:rgba(255,255,255,.2);color:#fff;border:0;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:600;white-space:nowrap">Acknowledge</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+async function ackGrade2Alert(id){
+  _g2Dismissed.add(id);
+  pollGrade2Alerts();              // optimistic hide
+  try { await h('/api/grade2-alerts/' + id + '/ack', { method:'POST' }); } catch(e){}
+}
+// Poll every 15s (the booking that triggers an alert also returns it inline
+// for the entering user; this keeps the manager's screen current).
+setInterval(pollGrade2Alerts, 15000);
+setTimeout(pollGrade2Alerts, 1500);
 
 // Show a user-friendly error. Uses the friendlyErr() mapping for HTTP/network
 // errors; falls back to the message string. Non-blocking — shows a red toast.

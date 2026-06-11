@@ -7,6 +7,7 @@ const ExcelJS = require('exceljs');
 const XLSX = require('xlsx');
 const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
 const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSettings, getSettingsFlat, getGSTRates } = require('./company-config');
+const grade2Alerts = require('./grade2-alerts');
 const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getPurchaseJournal } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 const { amountToWords } = require('./amount-words');
@@ -1727,26 +1728,42 @@ function _waLog(db, f) {
   } catch (_) { /* logging must not break sends */ }
 }
 
+// Send a plain WhatsApp text message, server-side. Shared by the
+// /api/whatsapp/send-text route AND internal callers (e.g. the grade-2
+// booking-alert engine). Resolves to { ok, id?, error? } and never throws,
+// so fire-and-forget callers can ignore the promise safely.
+async function _waSendText(db, rawPhone, message, ref = {}) {
+  const cfg = _waConfig(db);
+  if (!cfg.configured) return { ok: false, error: 'WhatsApp Cloud API not configured' };
+  const phone = _waNormalizePhone(rawPhone);
+  const body = String(message || '');
+  if (!phone || !body) return { ok: false, error: 'phone and message required' };
+  try {
+    const out = await _waGraphPost(cfg, '/messages', {
+      messaging_product: 'whatsapp', to: phone, type: 'text', text: { body },
+    });
+    const wamid = out.messages && out.messages[0] && out.messages[0].id;
+    _waLog(db, { wamid, phone, msg_type: 'text', caption: body.slice(0, 80), status: 'sent',
+      ref_type: ref.ref_type || '', ref_id: ref.ref_id || '' });
+    return { ok: true, id: wamid };
+  } catch (e) {
+    _waLog(db, { phone, msg_type: 'text', status: 'failed', error: e.message });
+    return { ok: false, error: e.message };
+  }
+}
+
 // Send a plain text message. Body: { phone, message }
 app.post('/api/whatsapp/send-text', requireView, async (req, res) => {
   const db = getDb();
   const cfg = _waConfig(db);
   if (!cfg.configured) return res.status(501).json({ error: 'WhatsApp Cloud API not configured', fallback: true });
-  try {
-    const phone = _waNormalizePhone(req.body.phone);
-    const message = String(req.body.message || '');
-    if (!phone || !message) return res.status(400).json({ error: 'phone and message required' });
-    const out = await _waGraphPost(cfg, '/messages', {
-      messaging_product: 'whatsapp', to: phone, type: 'text', text: { body: message },
-    });
-    const wamid = out.messages && out.messages[0] && out.messages[0].id;
-    _waLog(db, { wamid, phone, msg_type: 'text', caption: message.slice(0, 80), status: 'sent',
-      ref_type: req.body.ref_type || '', ref_id: req.body.ref_id || '' });
-    res.json({ ok: true, id: wamid });
-  } catch (e) {
-    _waLog(db, { phone: _waNormalizePhone(req.body.phone), msg_type: 'text', status: 'failed', error: e.message });
-    res.status(502).json({ error: e.message });
+  if (!_waNormalizePhone(req.body.phone) || !String(req.body.message || '')) {
+    return res.status(400).json({ error: 'phone and message required' });
   }
+  const result = await _waSendText(db, req.body.phone, req.body.message,
+    { ref_type: req.body.ref_type || '', ref_id: req.body.ref_id || '' });
+  if (result.ok) return res.json({ ok: true, id: result.id });
+  return res.status(502).json({ error: result.error });
 });
 
 // Send a document. Body: { phone, caption, doc_url } where doc_url is a
@@ -4240,6 +4257,39 @@ function logLotActivity(db, req, action, info) {
   } catch (_) { /* never let logging break the write */ }
 }
 
+// Email channel for booking alerts. No SMTP transport is wired into this
+// build yet, so this is a best-effort stub: it records that an email was
+// requested but skipped. To enable real email, add a transport (e.g.
+// nodemailer + SMTP creds in settings) and replace the body here.
+async function _sendAlertEmail(to, subject, body) {
+  return { ok: false, skipped: true, reason: 'email not configured' };
+}
+
+// Run the grade-2 booking-alert engine for an auction after a lot was
+// created or edited. Wraps the pure module with this server's WhatsApp
+// sender, email stub, and audit logger. Never throws into the caller.
+// Returns the alert row that just fired (for echoing in the API response),
+// or null.
+function runGrade2Alerts(db, req, auctionId) {
+  try {
+    return grade2Alerts.evaluate(db, auctionId, {
+      sendWhatsApp: (phone, message, ref) => _waSendText(db, phone, message, ref),
+      sendEmail:    (toAddr, subject, bdy) => _sendAlertEmail(toAddr, subject, bdy),
+      audit: (action, entityId, det) => {
+        try {
+          db.run(
+            `INSERT INTO audit_log (user_id, action, entity, entity_id, details) VALUES (?,?,?,?,?)`,
+            [(req.user && req.user.username) || 'system', action, 'grade2_alert', entityId || null, JSON.stringify(det || {})]
+          );
+        } catch (_) {}
+      },
+    });
+  } catch (e) {
+    console.error('grade-2 alert evaluation failed:', e && e.message);
+    return null;
+  }
+}
+
 app.post('/api/lots', requireLotWrite, (req, res) => {
   const l = req.body;
   // Field-name aliasing for the mobile PWA, which uses gross_weight /
@@ -4319,10 +4369,14 @@ app.post('/api/lots', requireLotWrite, (req, res) => {
     [auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,l.state||'TAMIL NADU',l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',Number(l.reserved_price)||0,l.user_id||'',l.bank_id||null,Number(l.immediate_payment)?1:0]);
   pcClearGate(db, auctionId);
   logLotActivity(db, req, 'create', { id: info.lastInsertRowid, auction_id: auctionId, lot_no: lotNoStr, branch, name: l.name, qty: l.qty });
+  // Grade-2 booking-alert check. Returns the just-fired alert (if any) so
+  // the entering user gets immediate feedback; the depot manager/superior
+  // are notified via WhatsApp + the in-app banner poll.
+  const grade2Alert = runGrade2Alerts(db, req, auctionId);
   // Return the inserted lot so the mobile UI can refresh from the response
   // without an extra round-trip. Desktop UI ignores the body and re-fetches.
   const lot = db.get('SELECT * FROM lots WHERE id = ?', [info.lastInsertRowid]);
-  res.json({ success: true, lot });
+  res.json({ success: true, lot, grade2Alert: grade2Alert || null });
 });
 
 app.put('/api/lots/:id', requireLotWrite, (req, res) => {
@@ -4410,7 +4464,11 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
     branch: (l.branch != null) ? l.branch : (current && current.branch),
     name: l.name, qty: l.qty,
   });
-  res.json({ success: true });
+  // Re-evaluate grade-2 alerts — an edit can change a lot's grade or qty,
+  // which shifts the grade-2 share. Uses the lot's (unchanged) auction.
+  const grade2Alert = current && current.auction_id
+    ? runGrade2Alerts(db, req, current.auction_id) : null;
+  res.json({ success: true, grade2Alert: grade2Alert || null });
 });
 
 app.delete('/api/lots/:id', requireDelete, (req, res) => {
@@ -4430,6 +4488,42 @@ app.delete('/api/lots/:id', requireDelete, (req, res) => {
   });
   res.json({ success: true });
 });
+
+// ── GRADE-2 BOOKING ALERTS ─────────────────────────────────────
+// List recent grade-2 alerts. ?unack=1 → only un-acknowledged ones (what
+// the in-app banner poll asks for). ?auction_id=N scopes to one trade.
+app.get('/api/grade2-alerts', requireView, (req, res) => {
+  const db = getDb();
+  const clauses = [];
+  const params = [];
+  if (String(req.query.unack || '') === '1') clauses.push('acknowledged_at IS NULL');
+  if (req.query.auction_id) { clauses.push('a.auction_id = ?'); params.push(parseInt(req.query.auction_id, 10)); }
+  const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
+  const rows = db.all(
+    `SELECT a.*, au.ano AS auction_ano, au.date AS auction_date
+       FROM grade2_alerts a
+       LEFT JOIN auctions au ON au.id = a.auction_id
+       ${where}
+      ORDER BY a.id DESC
+      LIMIT 50`,
+    params
+  );
+  res.json({ alerts: rows });
+});
+
+// Acknowledge an alert so it stops surfacing in the banner.
+app.post('/api/grade2-alerts/:id/ack', requireView, (req, res) => {
+  const db = getDb();
+  const id = parseInt(req.params.id, 10);
+  const row = db.get('SELECT id FROM grade2_alerts WHERE id = ?', [id]);
+  if (!row) return res.status(404).json({ error: 'Alert not found' });
+  db.run(
+    "UPDATE grade2_alerts SET acknowledged_at = datetime('now','localtime'), acknowledged_by = ? WHERE id = ? AND acknowledged_at IS NULL",
+    [(req.user && req.user.username) || 'system', id]
+  );
+  res.json({ success: true });
+});
+
 app.post('/api/lots/bulk-delete', requireDelete, (req, res) => {
   try {
     const db = getDb();

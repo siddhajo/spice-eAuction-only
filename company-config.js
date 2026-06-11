@@ -250,6 +250,26 @@ const DEFAULTS = [
   // the Settings UI (see HIDDEN_SETTING_KEYS); blank = no default.
   { key: 'default_auction_id', value: '',      category: 'lot_entry', label: 'Default Trade (auction id)', type: 'text' },
 
+  // ── BOOKING ALERTS (grade-2 concentration) ─────────────────
+  // When grade-2 booked weight crosses `threshold_pct` of the TOTAL weight
+  // booked so far in an auction, the depot manager gets a soft alert; any
+  // further grade-2 booking after that escalates to the immediate superior.
+  // Each level fires at most once per auction. See grade2-alerts.js for the
+  // evaluation logic and POST /api/lots for the hook point.
+  { key: 'grade2_alert_enabled',       value: 'false', category: 'alerts', label: 'Enable Grade-2 Booking Alerts',          type: 'boolean' },
+  { key: 'grade2_alert_threshold_pct', value: '25',    category: 'alerts', label: 'Grade-2 Threshold (% of booked weight)', type: 'number'  },
+  // Noise guard: don't evaluate until at least this many lots are booked, so
+  // the very first grade-2 lot doesn't read as 100%. 0 = evaluate from lot 1.
+  { key: 'grade2_alert_min_lots',      value: '4',     category: 'alerts', label: 'Minimum Lots Before Alerting',          type: 'number'  },
+  // Depot manager — notified first (soft alert).
+  { key: 'grade2_manager_name',        value: '',      category: 'alerts', label: 'Depot Manager — Name',                  type: 'text' },
+  { key: 'grade2_manager_whatsapp',    value: '',      category: 'alerts', label: 'Depot Manager — WhatsApp (with country code)', type: 'text' },
+  { key: 'grade2_manager_email',       value: '',      category: 'alerts', label: 'Depot Manager — Email',                 type: 'text' },
+  // Immediate superior — notified on escalation.
+  { key: 'grade2_superior_name',       value: '',      category: 'alerts', label: 'Immediate Superior — Name',             type: 'text' },
+  { key: 'grade2_superior_whatsapp',   value: '',      category: 'alerts', label: 'Immediate Superior — WhatsApp (with country code)', type: 'text' },
+  { key: 'grade2_superior_email',      value: '',      category: 'alerts', label: 'Immediate Superior — Email',            type: 'text' },
+
   // ── SPICE BOARD REPORTS ────────────────────────────────────
   // Newline-separated list of Form-D "Place of auction" options. The
   // operator picks one from a dropdown when generating Form-D in the
@@ -390,6 +410,7 @@ const CATEGORIES = {
   invoice:      { order: 10,   title: 'Invoice Settings',        icon: '📄' },
   flags:        { order: 11,   title: 'Feature Flags',           icon: '🔧' },
   lot_entry:    { order: 11.5, title: 'Lot Entry Defaults',      icon: '📝' },
+  alerts:       { order: 11.7, title: 'Booking Alerts',          icon: '🚨', description: 'Soft alerts when grade-2 bookings dominate an auction. When grade-2 weight exceeds the threshold percentage of the total weight booked so far, the depot manager is notified (in-app + WhatsApp); any further grade-2 booking after that escalates to the immediate superior. Each level fires once per auction.' },
   integrations: { order: 12,   title: 'Integrations',            icon: '🔌', description: 'Optional third-party services. The GST API key enables auto-fetching trade name and address when you enter a GSTIN (get a free key at gstincheck.co.in). The WhatsApp Business card lets you send invoices/notices straight from the app via Meta’s Cloud API.' },
   tally:        { order: 13,   title: 'To Tally',                icon: '📤' },
 };
