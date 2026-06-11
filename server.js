@@ -7621,7 +7621,7 @@ function _renderDebitNote(doc, dn, db, cfg) {
     // ── Middle band: commission context ──
     doc.font('Helvetica-Bold').fontSize(10).text(
       `Commission on sale of cardamom in eAuction No: ${dn.ano || ''}    Dated:${fmtDate2(auction && auction.date)}`,
-      PAGE_L + 4, y);
+      PAGE_L, y, { width: PAGE_W, align: 'center' });
     y = doc.y + 4;
     doc.moveTo(PAGE_L, y).lineTo(PAGE_R, y).stroke(); y += 4;
 
@@ -7647,9 +7647,10 @@ function _renderDebitNote(doc, dn, db, cfg) {
     doc.moveTo(PAGE_L, headTop).lineTo(PAGE_R, headTop).stroke();
     doc.moveTo(PAGE_L, headTop + HEAD_H).lineTo(PAGE_R, headTop + HEAD_H).stroke();
     doc.font('Helvetica-Bold').fontSize(9);
+    // Header labels are always centred (data rows below still use c.align).
     cols.forEach((c, i) => {
-      if (c.label1) doc.text(c.label1, xs[i] + 3, headTop + 4,  { width: c.w - 6, align: c.align });
-      if (c.label2) doc.text(c.label2, xs[i] + 3, headTop + 14, { width: c.w - 6, align: c.align });
+      if (c.label1) doc.text(c.label1, xs[i] + 3, headTop + 4,  { width: c.w - 6, align: 'center' });
+      if (c.label2) doc.text(c.label2, xs[i] + 3, headTop + 14, { width: c.w - 6, align: 'center' });
     });
     y = headTop + HEAD_H;
 
@@ -10370,6 +10371,18 @@ function _normGstinForLookup(s) {
   return v.trim();
 }
 
+// True only for a syntactically valid 15-char GSTIN. The name-by-GSTIN
+// correction MUST gate on this: many master/seller records carry
+// placeholder "CR numbers" instead of a real GSTIN (e.g. "CR.",
+// "CR.A9/1103/19", case/registration ids). Thousands of traders share
+// the literal placeholder "CR.", so without this gate every no-GSTIN
+// bill row would collide on that key and be renamed to whichever trader
+// happened to be first in the map — silently corrupting "a lot of lots".
+const _GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/;
+function _isValidGstin(norm) {
+  return typeof norm === 'string' && _GSTIN_RE.test(norm);
+}
+
 // Build the GSTIN → name map for a given master table. Reads every
 // non-blank GSTIN row once. First-wins on duplicates (rare, since
 // GSTIN is supposed to be unique anyway).
@@ -10384,7 +10397,9 @@ function _buildGstinNameMap(db, table, gstinCol, nameCol) {
   }
   for (const row of rows) {
     const norm = _normGstinForLookup(row.g);
-    if (norm && row.n && !map.has(norm)) map.set(norm, String(row.n).trim());
+    // Only real GSTINs are reliable pivots. Skip placeholder "CR." /
+    // case-number values so they never become collision keys.
+    if (_isValidGstin(norm) && row.n && !map.has(norm)) map.set(norm, String(row.n).trim());
   }
   return map;
 }
