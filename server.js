@@ -6083,13 +6083,13 @@ app.post('/api/bills/generate/:auctionId',
   
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [req.params.auctionId]);
   const s = bill.summary;
-  db.run(`INSERT INTO bills (auction_id,ano,date,state,br,crpt,bil,name,add_line,pla,pstate,st_code,crr,pan,qty,cost,igst,net)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  db.run(`INSERT INTO bills (auction_id,ano,date,state,br,crpt,bil,name,add_line,pla,pstate,st_code,crr,pan,qty,cost,igst,net,line_items)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [req.params.auctionId,auction.ano,auction.date,auction.state||'','',auction.crop_type||(getSetting(getDb(),'default_crop_type')||'VST'),
      parseInt(billNo),bill.seller.name,bill.seller.address||'',bill.seller.place||'',
      bill.seller.state||'',bill.seller.st_code||'',bill.seller.cr||'',bill.seller.pan||'',
-     s.totalQty,s.totalPuramt,0,s.netAmount]);
-  
+     s.totalQty,s.totalPuramt,0,s.netAmount,JSON.stringify(bill.lineItems||[])]);
+
   res.json({ success: true, bill: s });
 });
 
@@ -6129,12 +6129,12 @@ app.post('/api/bills/generate-all/:auctionId',
       const bill = buildAgriBill(db, req.params.auctionId, row.name, cfg);
       if (!bill || bill.error) { errors.push({ seller: row.name, error: bill?.error || 'Build failed' }); continue; }
       const s = bill.summary;
-      db.run(`INSERT INTO bills (auction_id,ano,date,state,br,crpt,bil,name,add_line,pla,pstate,st_code,crr,pan,qty,cost,igst,net)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      db.run(`INSERT INTO bills (auction_id,ano,date,state,br,crpt,bil,name,add_line,pla,pstate,st_code,crr,pan,qty,cost,igst,net,line_items)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [req.params.auctionId,auction.ano,auction.date,auction.state||'','',auction.crop_type||(getSetting(getDb(),'default_crop_type')||'VST'),
          nextNo,bill.seller.name,bill.seller.address||'',bill.seller.place||'',
          bill.seller.state||'',bill.seller.st_code||'',bill.seller.cr||'',bill.seller.pan||'',
-         s.totalQty,s.totalPuramt,0,s.netAmount]);
+         s.totalQty,s.totalPuramt,0,s.netAmount,JSON.stringify(bill.lineItems||[])]);
       results.push({ seller: row.name, billNo: nextNo, netAmount: s.netAmount });
       nextNo++;
     } catch (e) { errors.push({ seller: row.name, error: e.message }); }
@@ -6176,6 +6176,47 @@ function recoverAgriBillByAno(db, stored, cfg, triedAuctionId) {
   return null;
 }
 
+// Build a bill from the per-lot snapshot stored on the bill row at
+// generation time (bills.line_items JSON). This is the authoritative source
+// once lots may have changed. Returns null when no snapshot is present.
+function billFromStoredSnapshot(stored) {
+  if (!stored || !stored.line_items) return null;
+  let li;
+  try { li = JSON.parse(stored.line_items); } catch (_) { return null; }
+  if (!Array.isArray(li) || !li.length) return null;
+  return {
+    seller: { name: stored.name, address: stored.add_line, place: stored.pla, state: stored.pstate, st_code: stored.st_code, cr: stored.crr, crno: stored.crr, pan: stored.pan },
+    lineItems: li,
+    summary: { totalQty: stored.qty, totalPuramt: stored.cost, roundDiff: 0, netAmount: stored.net, cgst: 0, sgst: 0, igst: 0, tax: 0 }
+  };
+}
+
+// Last-resort fallback when no per-lot data is recoverable (older imported
+// bills whose lots no longer exist anywhere). Renders ONE consolidated line
+// so PRICE/VALUE reflect the bill's real money (derived from the stored
+// totals) instead of 0. Lot is left blank — the per-lot detail is gone.
+function consolidatedBillFromStored(stored) {
+  const qty = Number(stored.qty) || 0;
+  const cost = Number(stored.cost) || 0;
+  const rate = qty > 0 ? cost / qty : 0;
+  return {
+    seller: { name: stored.name, address: stored.add_line, place: stored.pla, state: stored.pstate, st_code: stored.st_code, cr: stored.crr, crno: stored.crr, pan: stored.pan },
+    lineItems: [{ lot: '', qty, pqty: qty, totalQty: qty, refundQty: 0, price: rate, prate: rate, amount: cost, puramt: cost }],
+    summary: { totalQty: qty, totalPuramt: cost, roundDiff: 0, netAmount: Number(stored.net) || Math.round(cost), cgst: 0, sgst: 0, igst: 0, tax: 0 }
+  };
+}
+
+// Cache a freshly-resolved per-lot snapshot back onto the bill row (only
+// when it doesn't already have one) so future views survive lot edits or
+// deletes. Best-effort — never blocks the PDF.
+function cacheBillLineItems(db, billId, lineItems) {
+  if (!billId || !Array.isArray(lineItems) || !lineItems.length) return;
+  try {
+    db.run("UPDATE bills SET line_items = ? WHERE id = ? AND (line_items IS NULL OR line_items = '')",
+      [JSON.stringify(lineItems), billId]);
+  } catch (_) { /* caching must not break the PDF */ }
+}
+
 // Agri bill PDF
 app.get('/api/bills/pdf/:auctionId/:sellerName', requireView, async (req, res) => {
   try {
@@ -6183,25 +6224,21 @@ app.get('/api/bills/pdf/:auctionId/:sellerName', requireView, async (req, res) =
     const sellerName = decodeURIComponent(req.params.sellerName);
     const billNo = req.query.billNo || '001';
 
+    const storedRow = db.get('SELECT * FROM bills WHERE name = ? AND bil = ? LIMIT 1', [sellerName, parseInt(billNo)]);
     let bill = buildAgriBill(db, req.params.auctionId, sellerName, cfg);
-    if (!bill || bill.error) {
-      // Fallback to stored record
-      const stored = db.get('SELECT * FROM bills WHERE name = ? AND bil = ? LIMIT 1', [sellerName, parseInt(billNo)]);
-      if (!stored) return res.status(404).json({ error: bill?.error || `No bill data found for "${sellerName}"` });
-      // Try to recover live per-lot rows via the bill's trade number so the
-      // LOT NO column survives a stale auction_id; else use the lot-less
-      // stored summary.
-      const recovered = recoverAgriBillByAno(db, stored, cfg, req.params.auctionId);
-      if (recovered) {
-        bill = recovered;
-      } else {
-        bill = {
-          seller: { name: stored.name, address: stored.add_line, place: stored.pla, state: stored.pstate, st_code: stored.st_code, cr: stored.crr, crno: stored.crr, pan: stored.pan },
-          lineItems: [{ lot: '—', qty: stored.qty, pqty: stored.qty, prate: 0, amount: stored.cost, puramt: stored.cost }],
-          summary: { totalQty: stored.qty, totalPuramt: stored.cost, roundDiff: 0, netAmount: stored.net, cgst: 0, sgst: 0, igst: 0, tax: 0 }
-        };
-      }
+    let live = bill && !bill.error;
+    if (!live) {
+      if (!storedRow) return res.status(404).json({ error: bill?.error || `No bill data found for "${sellerName}"` });
+      // Resolution order: live lots via the bill's trade number → the per-lot
+      // snapshot stored at generation → a consolidated summary line (PRICE /
+      // VALUE derived from the stored totals so they're never shown as 0).
+      const recovered = recoverAgriBillByAno(db, storedRow, cfg, req.params.auctionId);
+      if (recovered) { bill = recovered; live = true; }
+      else { bill = billFromStoredSnapshot(storedRow) || consolidatedBillFromStored(storedRow); }
     }
+    // Cache real per-lot data (live / ano-recovered) onto the bill row so it
+    // keeps LOT NO / PRICE / VALUE even if the lots are later changed.
+    if (live && storedRow) cacheBillLineItems(db, storedRow.id, bill.lineItems);
     // Enrich seller.crno so the new renderer can display "CR.<n>" in the
     // details block when CR/GSTIN-style id is available on the trader row
     if (bill.seller && !bill.seller.crno) bill.seller.crno = bill.seller.cr || '';
@@ -6437,25 +6474,16 @@ app.post('/api/bills/pdf-bulk', requireView, async (req, res) => {
       let bill = stored.auction_id
         ? buildAgriBill(db, stored.auction_id, stored.name, cfg)
         : null;
-      if (!bill || bill.error) {
-        // Recover live per-lot rows via the bill's trade number (handles a
-        // stale auction_id) before dropping to the lot-less stored summary.
+      let live = bill && !bill.error;
+      if (!live) {
+        // Same resolution chain as the single-bill route: live lots via the
+        // trade number → stored per-lot snapshot → consolidated summary line
+        // (so PRICE / VALUE are derived from totals, never shown as 0).
         const recovered = recoverAgriBillByAno(db, stored, cfg, stored.auction_id);
-        bill = recovered || {
-          seller: {
-            name: stored.name, address: stored.add_line, place: stored.pla,
-            state: stored.pstate, st_code: stored.st_code, cr: stored.crr, crno: stored.crr, pan: stored.pan
-          },
-          lineItems: [{
-            lot: '—', qty: stored.qty, pqty: stored.qty, prate: 0,
-            amount: stored.cost, puramt: stored.cost
-          }],
-          summary: {
-            totalQty: stored.qty, totalPuramt: stored.cost, roundDiff: 0,
-            netAmount: stored.net, cgst: 0, sgst: 0, igst: 0, tax: 0
-          }
-        };
+        if (recovered) { bill = recovered; live = true; }
+        else { bill = billFromStoredSnapshot(stored) || consolidatedBillFromStored(stored); }
       }
+      if (live) cacheBillLineItems(db, stored.id, bill.lineItems);
       // Enrich for new renderer layout (Invoice No / e-TRADE No / Date strip)
       if (bill.seller && !bill.seller.crno) bill.seller.crno = bill.seller.cr || '';
       const dateFmt2 = (cfg && cfg.date_format) || 'dd/mm/yyyy';
@@ -6506,23 +6534,41 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
     for (const b of ordered) {
       // Resolve the auction record (id + ano + date) so we can pull the
       // matching lots and format the eAuction strip.
-      let auction = null;
-      if (b.auction_id) {
-        auction = db.get('SELECT id, ano, date FROM auctions WHERE id = ?', [b.auction_id]);
-      } else if (b.ano) {
-        auction = db.get('SELECT id, ano, date FROM auctions WHERE ano = ?', [b.ano]);
-      }
-
-      // Pull every lot for this seller in this auction. The cr-field
-      // filter mirrors buildAgriBill: skip GSTIN-registered sellers.
-      const lots = auction ? db.all(
+      // A stored auction_id can go stale when the trade was deleted and
+      // re-imported under a new id (same failure recoverAgriBillByAno
+      // guards against on the single-bill route). The old `else if` meant
+      // a non-null-but-dead auction_id blocked the `ano` fallback, leaving
+      // lots empty — so the bill printed the em-dash placeholder line with
+      // no LOT NO and no SAMPLE REFUND rows. Build a candidate list (stored
+      // id first, then every auction carrying this trade number) and keep
+      // the first that actually has lots for this seller. The cr-field /
+      // amount filter mirrors buildAgriBill: skip GSTIN-registered sellers.
+      const lotsForAuction = (aid) => db.all(
         `SELECT * FROM lots
            WHERE auction_id = ?
              AND UPPER(TRIM(name)) = UPPER(TRIM(?))
              AND (amount > 0 OR puramt > 0)
          ORDER BY lot_no`,
-        [auction.id, b.name]
-      ) : [];
+        [aid, b.name]
+      );
+      const auctionCands = [];
+      if (b.auction_id) {
+        const a = db.get('SELECT id, ano, date FROM auctions WHERE id = ?', [b.auction_id]);
+        if (a) auctionCands.push(a);
+      }
+      if (b.ano != null && String(b.ano).trim() !== '') {
+        const more = db.all(
+          'SELECT id, ano, date FROM auctions WHERE CAST(ano AS TEXT) = CAST(? AS TEXT) ORDER BY id',
+          [String(b.ano)]
+        );
+        for (const a of more) if (!auctionCands.some(c => c.id === a.id)) auctionCands.push(a);
+      }
+      let auction = auctionCands[0] || null;
+      let lots = [];
+      for (const a of auctionCands) {
+        const ls = lotsForAuction(a.id);
+        if (ls.length) { auction = a; lots = ls; break; }
+      }
 
       // First lot supplies seller details (consistent with buildAgriBill).
       const first = lots[0] || {};
@@ -6576,31 +6622,61 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
       // sb_refund × rate during lot entry — so the bill shows the
       // constant kg on every line and the rupee figure matches.
       const sbRefundKg = Number(cfg.sb_refund) || 0;
-      const lineItems = lots.map(l => {
-        const qty = Number(l.pqty || l.qty || 0);
-        const rate = Number(l.prate || l.price || 0);
-        const cardamomCost = Number(l.puramt || l.amount || (qty * rate));
-        const refundAmount = Number(l.refund || 0);
-        return {
-          lot: l.lot_no,
-          qty, bags: l.bags || 0, rate, cardamomCost,
-          refundQty: sbRefundKg, refundRate: rate, refundAmount,
-        };
-      });
+      let lineItems, commission, cgst, sgst, igst, interState;
+      if (lots.length) {
+        lineItems = lots.map(l => {
+          const qty = Number(l.pqty || l.qty || 0);
+          const rate = Number(l.prate || l.price || 0);
+          const cardamomCost = Number(l.puramt || l.amount || (qty * rate));
+          const refundAmount = Number(l.refund || 0);
+          return {
+            lot: l.lot_no,
+            qty, bags: l.bags || 0, rate, cardamomCost,
+            refundQty: sbRefundKg, refundRate: rate, refundAmount,
+          };
+        });
 
-      // Bill-level commission + GST: sum per-lot. CGST/SGST are charged
-      // intra-state (lot.sale == 'L'); IGST inter-state. We rely on the
-      // values that are already stored on each lot row (calculated when
-      // the bill was generated), so this PDF always agrees with the
-      // database.
-      const commission = lots.reduce((s, l) => s + Number(l.com || 0), 0);
-      const cgst       = lots.reduce((s, l) => s + Number(l.cgst || 0), 0);
-      const sgst       = lots.reduce((s, l) => s + Number(l.sgst || 0), 0);
-      const igst       = lots.reduce((s, l) => s + Number(l.igst || 0), 0);
-      // Inter-state if every lot is non-local (sale != 'L'). Mixed bills
-      // are rare in this flow; we fall back to "intra-state" so CGST+SGST
-      // display correctly when both columns carry values.
-      const interState = lots.length > 0 && lots.every(l => l.sale && l.sale !== 'L');
+        // Bill-level commission + GST: sum per-lot. CGST/SGST are charged
+        // intra-state (lot.sale == 'L'); IGST inter-state. We rely on the
+        // values that are already stored on each lot row (calculated when
+        // the bill was generated), so this PDF always agrees with the
+        // database.
+        commission = lots.reduce((s, l) => s + Number(l.com || 0), 0);
+        cgst       = lots.reduce((s, l) => s + Number(l.cgst || 0), 0);
+        sgst       = lots.reduce((s, l) => s + Number(l.sgst || 0), 0);
+        igst       = lots.reduce((s, l) => s + Number(l.igst || 0), 0);
+        // Inter-state if every lot is non-local (sale != 'L'). Mixed bills
+        // are rare in this flow; we fall back to "intra-state" so CGST+SGST
+        // display correctly when both columns carry values.
+        interState = lots.every(l => l.sale && l.sale !== 'L');
+      } else {
+        // Live lots are gone (e.g. deleted after generation). Rebuild from
+        // the per-lot snapshot stored on the bill row at generation time
+        // (bills.line_items JSON, written by buildAgriBill) so LOT NO and
+        // SAMPLE REFUND rows still render instead of the em-dash placeholder.
+        // Snapshot amounts fold the sample-refund kg into `puramt`, so split
+        // them back out: cardamomCost = soldQty×rate, refundAmount =
+        // refundQty×rate (their sum equals the stored puramt). The snapshot
+        // doesn't carry per-line GST, so leave cgst/sgst/igst at 0 and let
+        // the renderer derive them from gstRate × commission.
+        let snap = [];
+        try { snap = JSON.parse(b.line_items || '[]'); } catch (_) { snap = []; }
+        if (!Array.isArray(snap)) snap = [];
+        lineItems = snap.map(li => {
+          const qty  = Number(li.pqty || li.qty || 0);
+          const rate = Number(li.price || li.prate || 0);
+          const rQty = Number(li.refundQty != null ? li.refundQty : sbRefundKg) || 0;
+          return {
+            lot: li.lot, qty, bags: li.bags || 0, rate,
+            cardamomCost: Math.round(qty  * rate * 100) / 100,
+            refundQty: rQty, refundRate: rate,
+            refundAmount: Math.round(rQty * rate * 100) / 100,
+          };
+        });
+        commission = snap.reduce((s, li) => s + Number(li.com || 0), 0);
+        cgst = 0; sgst = 0; igst = 0;
+        interState = false;
+      }
 
       // Format the auction date using the operator's `date_format` Setting.
       const dateFmt3 = (cfg && cfg.date_format) || 'dd/mm/yyyy';
@@ -7930,7 +8006,7 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   const lotIdFilter = Array.isArray(lotIds)
     ? lotIds.map(n => parseInt(n, 10)).filter(Number.isFinite)
     : [];
-  let lotSql = `SELECT lot_no, qty, price AS rate, amount, puramt, refund, balance, cgst, sgst, igst
+  let lotSql = `SELECT lot_no, qty, price AS rate, amount, puramt, refund, com, balance, cgst, sgst, igst
        FROM lots WHERE auction_id = ? AND name = ? AND amount > 0`;
   const lotParams = [auctionId, sellerName];
   if (lotIdFilter.length) {
@@ -7966,7 +8042,7 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
     { k: 'qty',    label: 'Qty',      x: PAGE_L + 60,   w: 70,  align: 'right', fmt: fmtQty },
     { k: 'rate',   label: 'Rate',     x: PAGE_L + 130,  w: 60,  align: 'right', fmt: fmtAmt },
     { k: 'amount', label: 'Amount',   x: PAGE_L + 190,  w: 80,  align: 'right', fmt: fmtAmt },
-    { k: 'refund', label: 'Discount', x: PAGE_L + 270,  w: 75,  align: 'right', fmt: fmtAmt },
+    { k: 'com',    label: 'Commission', x: PAGE_L + 270, w: 75,  align: 'right', fmt: fmtAmt },
     { k: 'tax',    label: 'GST',      x: PAGE_L + 345,  w: 70,  align: 'right', fmt: fmtAmt },
     { k: 'balance',label: 'Payable',  x: PAGE_L + 415,  w: 120, align: 'right', fmt: fmtAmt },
   ];
@@ -7979,7 +8055,7 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   for (const l of lots) {
     const tax = (Number(l.cgst)||0)+(Number(l.sgst)||0)+(Number(l.igst)||0);
     const row = { ...l, tax };
-    tQty+=Number(l.qty)||0; tAmt+=Number(l.amount)||0; tDisc+=Number(l.refund)||0; tTax+=tax; tPay+=Number(l.balance)||0;
+    tQty+=Number(l.qty)||0; tAmt+=Number(l.amount)||0; tDisc+=Number(l.com)||0; tTax+=tax; tPay+=Number(l.balance)||0;
     if (y > 770) { doc.addPage(); y = 40; }
     for (const c of cols) {
       const v = c.fmt ? c.fmt(row[c.k]) : String(row[c.k] ?? '');

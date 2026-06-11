@@ -384,6 +384,10 @@ async function initDb() {
     cost REAL DEFAULT 0,
     igst REAL DEFAULT 0,
     net REAL DEFAULT 0,
+    -- Per-lot snapshot (JSON) captured at generation time so the Bill of
+    -- Supply PDF can always render the LOT NO / PRICE / VALUE columns even
+    -- if the underlying lots are later edited, deleted, or re-imported.
+    line_items TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
@@ -634,6 +638,7 @@ async function initDb() {
     'ALTER TABLE purchases ADD COLUMN auction_id INTEGER',
     'ALTER TABLE invoices ADD COLUMN auction_id INTEGER',
     'ALTER TABLE bills ADD COLUMN auction_id INTEGER',
+    "ALTER TABLE bills ADD COLUMN line_items TEXT DEFAULT ''",
     'ALTER TABLE debit_notes ADD COLUMN auction_id INTEGER',
     "ALTER TABLE buyers ADD COLUMN code TEXT DEFAULT ''",
     "ALTER TABLE buyers ADD COLUMN cadd2 TEXT DEFAULT ''",

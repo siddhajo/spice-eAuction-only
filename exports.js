@@ -626,7 +626,7 @@ async function exportPaymentSummary(db, auctionId, cfg, _state, extra) {
   }
   let rows = db.all(
     `SELECT name as poolername, lot_no as lot, bags as bag, qty, price, amount,
-      ${discountCol} as lot_discount, balance as payable
+      ${discountCol} as lot_discount, com as commission, balance as payable
      FROM lots WHERE auction_id = ? AND amount > 0
      ORDER BY state, name`, [auctionId]
   );
@@ -663,16 +663,18 @@ async function exportPaymentSummary(db, auctionId, cfg, _state, extra) {
   // attribute the FULL manual debit on the FIRST row for each seller; later
   // rows show only the lot policy discount. Avoids per-row arithmetic but
   // still preserves the seller-level total.
+  // Payable still subtracts manual debit_notes (the real discount), matching
+  // getPaymentSummary. The displayed column shows COMMISSION (lots.com), not
+  // discount — per the Payments-tab change.
   const seenSellers = new Set();
   const enriched = rows.map(r => {
-    const lotDisc = Number(r.lot_discount) || 0;
     const manualDisc = (!seenSellers.has(r.poolername))
       ? (Number(debitMap[r.poolername]) || 0)
       : 0;
     seenSellers.add(r.poolername);
     return {
       ...r,
-      discount: lotDisc + manualDisc,
+      commission: Number(r.commission) || 0,
       payable: (Number(r.payable) || 0) - manualDisc,
     };
   });
@@ -681,7 +683,7 @@ async function exportPaymentSummary(db, auctionId, cfg, _state, extra) {
     { header: 'LOT', key: 'lot', width: 8 }, { header: 'BAG', key: 'bag', width: 6 },
     { header: 'QTY', key: 'qty', width: 12 }, { header: 'PRICE', key: 'price', width: 10 },
     { header: 'AMOUNT', key: 'amount', width: 14 },
-    { header: 'DISCOUNT', key: 'discount', width: 14 },
+    { header: 'COMMISSION', key: 'commission', width: 14 },
     { header: 'PAYABLE', key: 'payable', width: 14 },
   ];
   // Footer totals — sum every numeric column. The earlier export had no
@@ -696,7 +698,7 @@ async function exportPaymentSummary(db, auctionId, cfg, _state, extra) {
       bag:     sum('bag'),
       qty:     sum('qty'),
       amount:  sum('amount'),
-      discount:sum('discount'),
+      commission:sum('commission'),
       payable: sum('payable'),
     },
   };

@@ -173,7 +173,7 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
 
   function isNumericCol(col) {
     const h = (col.header || '').toUpperCase();
-    return /^(QTY|BAG|BAGS|PRICE|RATE|AMOUNT|PQTY|PRATE|PURAMT|CGST|SGST|IGST|TCS|TOTAL|DISCOUNT|PAYABLE|ADVANCE|BALANCE|LITRE|LOTS|TDS|ASSESS_VALUE|COST|NET|GUNNY|TRANSPORT|INSURANCE|CARDAMOM|CARDAMOM_COST|GUNNY_COST|ROUND|BILAMT|COM)$/.test(h);
+    return /^(QTY|BAG|BAGS|PRICE|RATE|AMOUNT|PQTY|PRATE|PURAMT|CGST|SGST|IGST|TCS|TOTAL|DISCOUNT|PAYABLE|ADVANCE|BALANCE|LITRE|LOTS|TDS|ASSESS_VALUE|COST|NET|GUNNY|TRANSPORT|INSURANCE|CARDAMOM|CARDAMOM_COST|GUNNY_COST|ROUND|BILAMT|COM|COMMISSION)$/.test(h);
   }
 
   function fmtCell(val, col) {
@@ -606,7 +606,7 @@ const COLS = {
     { header: 'QTY',        key: 'qty',         width: 10 },
     { header: 'PRICE',      key: 'price',       width: 9  },
     { header: 'AMOUNT',     key: 'amount',      width: 14 },
-    { header: 'DISCOUNT',   key: 'discount',    width: 10 },
+    { header: 'COMMISSION', key: 'commission',  width: 12 },
     { header: 'PAYABLE',    key: 'payable',     width: 14 },
   ],
   tally_purchase: [
@@ -643,7 +643,7 @@ const TOTAL_KEYS = {
   collection:      ['bag', 'qty'],
   dealer_list:     ['lots', 'bags', 'qty'],
   sales_taxes:     ['bag', 'qty', 'cardamom_cost', 'gunny_cost', 'cgst', 'sgst', 'igst', 'tcs', 'transport', 'insurance', 'total'],
-  payment:         ['bag', 'qty', 'amount', 'discount', 'payable'],
+  payment:         ['bag', 'qty', 'amount', 'commission', 'payable'],
   tally_purchase:  ['bag', 'qty', 'amount', 'cgst', 'sgst', 'igst', 'discount', 'bilamt'],
   tds_return:      ['assess_value', 'tds'],
 };
@@ -822,12 +822,11 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
          ORDER BY sale, invo`, [auctionId]);
 
     case 'payment': {
-      // Mode-aware discount column — see exports.js exportPaymentSummary.
-      const mode = (cfg && cfg.business_mode || 'e-Auction').toLowerCase();
-      const discountCol = (mode === 'auction') ? 'advance' : 'refund';
+      // Payment Summary shows COMMISSION (lots.com) — matches the
+      // Payments-tab change from Discount to Commission.
       return db.all(
         `SELECT name as poolername, lot_no as lot, bags as bag, qty, price, amount,
-          ${discountCol} as discount, balance as payable
+          com as commission, balance as payable
          FROM lots WHERE auction_id = ? AND amount > 0
          ORDER BY state, name`, [auctionId]);
     }

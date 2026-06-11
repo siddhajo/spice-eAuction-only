@@ -2100,7 +2100,10 @@ function generateAgriBillPDF(billData, cfg, billNo, externalDoc) {
     const lineTotalQty = (li.totalQty != null)
       ? li.totalQty
       : ((li.pqty || li.qty || 0) + (li.refundQty || 0));
-    doc.text(String(li.lot || '').padStart(3, '0'), colSpec[0].x, y + 2, { width: colSpec[0].w, align: 'center' });
+    // Pad numeric lot numbers to 3 digits; leave blank/non-numeric values
+    // (e.g. a consolidated summary line) untouched so they don't print "000".
+    const _lotStr = /^\d+$/.test(String(li.lot || '')) ? String(li.lot).padStart(3, '0') : String(li.lot || '');
+    doc.text(_lotStr, colSpec[0].x, y + 2, { width: colSpec[0].w, align: 'center' });
     doc.text(fmtQty(li.qty), colSpec[1].x, y + 2, { width: colSpec[1].w - 3, align: 'right' });
     doc.text(fmtQty(lineTotalQty), colSpec[3].x, y + 2, { width: colSpec[3].w - 3, align: 'right' });
     doc.text(fmtRup(li.prate || li.price), colSpec[4].x, y + 2, { width: colSpec[4].w - 3, align: 'right' });
@@ -2614,7 +2617,9 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
       align, lineBreak: false, ellipsis: true,
     });
     doc.save(); doc.moveTo(x0, y).lineTo(x1, y).lineWidth(0.25).strokeColor('#CCC').stroke(); doc.restore();
-    doc.text(String(li.lot || '').padStart(3, '0'), cols[0].x, y + 3, cellOpts(cols[0]));
+    // Pad numeric lot numbers; leave blank/non-numeric (consolidated line) as-is.
+    const _lotStrC = /^\d+$/.test(String(li.lot || '')) ? String(li.lot).padStart(3, '0') : String(li.lot || '');
+    doc.text(_lotStrC, cols[0].x, y + 3, cellOpts(cols[0]));
     doc.text('CARDAMOM',                           cols[1].x, y + 3, cellOpts(cols[1]));
     doc.text(hsnCardamom,                          cols[2].x, y + 3, cellOpts(cols[2]));
     doc.text(fmtQty(li.qty),                       cols[3].x, y + 3, cellOpts(cols[3], 'right'));
