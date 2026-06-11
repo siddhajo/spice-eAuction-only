@@ -6582,134 +6582,138 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
         pan:     b.pan     || first.pan || '',
       };
 
-      // Purchaser block: derived from the first lot that has a buyer set.
-      // The `buyers` master table carries the full address (add1/add2,
-      // place, pin, state, GSTIN, PAN, SBL) — we join on the buyer
-      // CODE first, then fall back to buyer1/buyer name. Without this
-      // join the purchaser block on the commission bill was missing
-      // every address line.
-      const buyerLot = lots.find(l => l.buyer || l.buyer1 || l.code) || first;
-      let buyerRow = null;
-      if (buyerLot.code) {
-        buyerRow = db.get('SELECT * FROM buyers WHERE code = ? LIMIT 1', [buyerLot.code]);
-      }
-      if (!buyerRow && (buyerLot.buyer1 || buyerLot.buyer)) {
-        buyerRow = db.get(
-          'SELECT * FROM buyers WHERE UPPER(TRIM(buyer1)) = UPPER(TRIM(?)) OR UPPER(TRIM(buyer)) = UPPER(TRIM(?)) LIMIT 1',
-          [buyerLot.buyer1 || buyerLot.buyer, buyerLot.buyer1 || buyerLot.buyer]
-        );
-      }
-      const purchaser = {
-        name:    (buyerRow && (buyerRow.buyer1 || buyerRow.buyer)) || buyerLot.buyer1 || buyerLot.buyer || '',
-        invo:    buyerLot.invo || '',
-        // Address: combine add1 + add2 onto one wrap-able line. If the
-        // buyer master row is missing (older imports), the purchaser
-        // block still shows the name + INV: line by itself.
-        address: buyerRow ? [buyerRow.add1, buyerRow.add2].filter(Boolean).join(', ') : '',
-        place:   buyerRow ? (buyerRow.pla || '') : '',
-        pin:     buyerRow ? (buyerRow.pin || '') : '',
-        state:   buyerRow ? (buyerRow.state || '') : (buyerLot.sale === 'L' ? (cfg.state || '') : ''),
-        st_code: buyerRow ? (buyerRow.st_code || '') : '',
-        sbl:     buyerRow ? (buyerRow.sbl || '') : '',
-        gstin:   buyerRow ? (buyerRow.gstin || '') : '',
-        pan:     buyerRow ? (buyerRow.pan || '') : '',
-      };
-
-      // Build per-lot line items.
-      // Sample refund quantity is the company-wide "SB Sample Refund (Kgs)"
-      // setting (Settings → Rates & Charges → `sb_refund`). The rupee
-      // value stored on the lot (`refund`) was already calculated as
-      // sb_refund × rate during lot entry — so the bill shows the
-      // constant kg on every line and the rupee figure matches.
+      // ── One Commission Bill page PER LOT ──────────────────────
+      // A grower with two lots gets TWO commission bills, each showing
+      // only that lot's cardamom cost / sample-refund / commission / GST
+      // / NETT — and its OWN purchaser. Lots from the same seller can be
+      // sold to different buyers, so the previous "first buyer for the
+      // whole bill" approach printed the wrong purchaser whenever a
+      // seller's lots were split across buyers.
+      //
+      // Sample refund quantity is the company-wide "SB Sample Refund
+      // (Kgs)" setting (Settings → Rates & Charges → `sb_refund`). The
+      // rupee value stored on the lot (`refund`) was already calculated
+      // as sb_refund × rate during lot entry.
       const sbRefundKg = Number(cfg.sb_refund) || 0;
-      let lineItems, commission, cgst, sgst, igst, interState;
+
+      // Resolve the purchaser block for a SINGLE lot. The `buyers` master
+      // carries the full address (add1/add2, place, pin, state, GSTIN,
+      // PAN, SBL) — join on buyer CODE first, then buyer1/buyer name.
+      const purchaserForLot = (l) => {
+        l = l || {};
+        let buyerRow = null;
+        if (l.code) buyerRow = db.get('SELECT * FROM buyers WHERE code = ? LIMIT 1', [l.code]);
+        if (!buyerRow && (l.buyer1 || l.buyer)) {
+          buyerRow = db.get(
+            'SELECT * FROM buyers WHERE UPPER(TRIM(buyer1)) = UPPER(TRIM(?)) OR UPPER(TRIM(buyer)) = UPPER(TRIM(?)) LIMIT 1',
+            [l.buyer1 || l.buyer, l.buyer1 || l.buyer]
+          );
+        }
+        return {
+          name:    (buyerRow && (buyerRow.buyer1 || buyerRow.buyer)) || l.buyer1 || l.buyer || '',
+          invo:    l.invo || '',
+          address: buyerRow ? [buyerRow.add1, buyerRow.add2].filter(Boolean).join(', ') : '',
+          place:   buyerRow ? (buyerRow.pla || '') : '',
+          pin:     buyerRow ? (buyerRow.pin || '') : '',
+          state:   buyerRow ? (buyerRow.state || '') : (l.sale === 'L' ? (cfg.state || '') : ''),
+          st_code: buyerRow ? (buyerRow.st_code || '') : '',
+          sbl:     buyerRow ? (buyerRow.sbl || '') : '',
+          gstin:   buyerRow ? (buyerRow.gstin || '') : '',
+          pan:     buyerRow ? (buyerRow.pan || '') : '',
+        };
+      };
+      const emptyPurchaser = { name: '', invo: '', address: '', place: '', pin: '', state: '', st_code: '', sbl: '', gstin: '', pan: '' };
+      const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+      // Build one page-spec per lot. Each carries a single line item, that
+      // lot's own commission/GST split, its purchaser, and its NETT
+      // (cardamom cost + refund − commission − GST, matching the renderer's
+      // own fallback so the printed deduction rows add up on every page).
+      const perLot = [];
       if (lots.length) {
-        lineItems = lots.map(l => {
+        for (const l of lots) {
           const qty = Number(l.pqty || l.qty || 0);
           const rate = Number(l.prate || l.price || 0);
           const cardamomCost = Number(l.puramt || l.amount || (qty * rate));
           const refundAmount = Number(l.refund || 0);
-          return {
-            lot: l.lot_no,
-            qty, bags: l.bags || 0, rate, cardamomCost,
-            refundQty: sbRefundKg, refundRate: rate, refundAmount,
-          };
-        });
-
-        // Bill-level commission + GST: sum per-lot. CGST/SGST are charged
-        // intra-state (lot.sale == 'L'); IGST inter-state. We rely on the
-        // values that are already stored on each lot row (calculated when
-        // the bill was generated), so this PDF always agrees with the
-        // database.
-        commission = lots.reduce((s, l) => s + Number(l.com || 0), 0);
-        cgst       = lots.reduce((s, l) => s + Number(l.cgst || 0), 0);
-        sgst       = lots.reduce((s, l) => s + Number(l.sgst || 0), 0);
-        igst       = lots.reduce((s, l) => s + Number(l.igst || 0), 0);
-        // Inter-state if every lot is non-local (sale != 'L'). Mixed bills
-        // are rare in this flow; we fall back to "intra-state" so CGST+SGST
-        // display correctly when both columns carry values.
-        interState = lots.every(l => l.sale && l.sale !== 'L');
+          const com = Number(l.com || 0), cg = Number(l.cgst || 0), sg = Number(l.sgst || 0), ig = Number(l.igst || 0);
+          perLot.push({
+            line: { lot: l.lot_no, qty, bags: l.bags || 0, rate, cardamomCost,
+                    refundQty: sbRefundKg, refundRate: rate, refundAmount },
+            purchaser: purchaserForLot(l),
+            commission: com, cgst: cg, sgst: sg, igst: ig,
+            interState: !!(l.sale && l.sale !== 'L'),
+            nett: round2(cardamomCost + refundAmount - com - cg - sg - ig),
+            crpt: l.crpt || '',
+          });
+        }
       } else {
         // Live lots are gone (e.g. deleted after generation). Rebuild from
         // the per-lot snapshot stored on the bill row at generation time
-        // (bills.line_items JSON, written by buildAgriBill) so LOT NO and
-        // SAMPLE REFUND rows still render instead of the em-dash placeholder.
-        // Snapshot amounts fold the sample-refund kg into `puramt`, so split
-        // them back out: cardamomCost = soldQty×rate, refundAmount =
-        // refundQty×rate (their sum equals the stored puramt). The snapshot
-        // doesn't carry per-line GST, so leave cgst/sgst/igst at 0 and let
-        // the renderer derive them from gstRate × commission.
+        // (bills.line_items JSON, written by buildAgriBill). Snapshot amounts
+        // fold the sample-refund kg into `puramt`, so split them back out:
+        // cardamomCost = soldQty×rate, refundAmount = refundQty×rate. The
+        // snapshot carries no buyer or per-line GST, so purchaser stays
+        // minimal and GST is 0.
         let snap = [];
         try { snap = JSON.parse(b.line_items || '[]'); } catch (_) { snap = []; }
         if (!Array.isArray(snap)) snap = [];
-        lineItems = snap.map(li => {
+        for (const li of snap) {
           const qty  = Number(li.pqty || li.qty || 0);
           const rate = Number(li.price || li.prate || 0);
           const rQty = Number(li.refundQty != null ? li.refundQty : sbRefundKg) || 0;
-          return {
-            lot: li.lot, qty, bags: li.bags || 0, rate,
-            cardamomCost: Math.round(qty  * rate * 100) / 100,
-            refundQty: rQty, refundRate: rate,
-            refundAmount: Math.round(rQty * rate * 100) / 100,
-          };
-        });
-        commission = snap.reduce((s, li) => s + Number(li.com || 0), 0);
-        cgst = 0; sgst = 0; igst = 0;
-        interState = false;
+          const cardamomCost = round2(qty  * rate);
+          const refundAmount = round2(rQty * rate);
+          const com = Number(li.com || 0);
+          perLot.push({
+            line: { lot: li.lot, qty, bags: li.bags || 0, rate, cardamomCost,
+                    refundQty: rQty, refundRate: rate, refundAmount },
+            purchaser: emptyPurchaser,
+            commission: com, cgst: 0, sgst: 0, igst: 0, interState: false,
+            nett: round2(cardamomCost + refundAmount - com),
+            crpt: '',
+          });
+        }
       }
 
-      // Format the auction date using the operator's `date_format` Setting.
+      // Format the auction date once (shared by every page of this bill).
       const dateFmt3 = (cfg && cfg.date_format) || 'dd/mm/yyyy';
       let billDate = '';
       if (auction && auction.date) billDate = formatDateForDisplay(auction.date, dateFmt3);
       if (!billDate && b.date) billDate = formatDateForDisplay(b.date, dateFmt3);
 
-      const totalCost   = lineItems.reduce((s, li) => s + li.cardamomCost, 0);
-      const totalRefund = lineItems.reduce((s, li) => s + li.refundAmount, 0);
-      const nett = Number(
-        b.net != null
-          ? b.net
-          : (totalCost + totalRefund - commission - cgst - sgst - igst)
-      );
+      // Last-resort: no live lots and no snapshot (older imported bills whose
+      // lots are gone everywhere). Emit a single consolidated page from the
+      // stored bill totals so the memorandum still prints.
+      if (!perLot.length) {
+        perLot.push({
+          line: { lot: '—', qty: b.qty, bags: 0, rate: 0, cardamomCost: b.cost,
+                  refundQty: 0, refundRate: 0, refundAmount: 0 },
+          purchaser: emptyPurchaser,
+          commission: 0, cgst: 0, sgst: 0, igst: 0, interState: false,
+          nett: Number(b.net != null ? b.net : b.cost) || 0,
+          crpt: '',
+        });
+      }
 
-      payloads.push({
-        billNo: b.bil,
-        billData: {
-          crpt: b.crpt || (first.crpt || ''),
-          auction: { ano: auction ? auction.ano : (b.ano || ''), date: billDate },
-          seller,
-          purchaser,
-          lineItems: lineItems.length ? lineItems : [{
-            lot: '—', qty: b.qty, bags: 0, rate: 0,
-            cardamomCost: b.cost, refundQty: 0, refundRate: 0, refundAmount: 0,
-          }],
-          commission,
-          cgst, sgst, igst,
-          interState,
-          gstRate: Number(cfg.commission_gst_rate) || 9.0,
-          nett,
-        },
-      });
+      // One payload (→ one A4 page) per lot.
+      for (const pl of perLot) {
+        payloads.push({
+          billNo: b.bil,
+          billData: {
+            crpt: b.crpt || pl.crpt || (first.crpt || ''),
+            auction: { ano: auction ? auction.ano : (b.ano || ''), date: billDate },
+            seller,
+            purchaser: pl.purchaser,
+            lineItems: [pl.line],
+            commission: pl.commission,
+            cgst: pl.cgst, sgst: pl.sgst, igst: pl.igst,
+            interState: pl.interState,
+            gstRate: Number(cfg.commission_gst_rate) || 9.0,
+            nett: pl.nett,
+          },
+        });
+      }
     }
 
     const pdf = await generateCommissionBoSBatchPDF(payloads, cfg);
