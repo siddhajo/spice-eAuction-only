@@ -3887,6 +3887,13 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
                loadPayments() — see _paySearch handling there. -->
           <input type="search" id="pay-search" placeholder="Search seller…" oninput="searchPaymentsDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
 
+          <!-- Immediate-payment filter. Applied client-side in loadPayments()
+               on each seller's any_immediate flag — see _payImmediateFilter. -->
+          <select id="pay-immediate-filter" onchange="loadPayments()" title="Filter sellers by immediate-payment status" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:150px">
+            <option value="all">All payments</option>
+            <option value="immediate">⚡ Immediate only</option>
+          </select>
+
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
             <button class="btn btn-g" style="height:38px;padding:0 16px;font-weight:600" onclick="loadPayments()">↻ Reload</button>
           </div>
@@ -18857,9 +18864,15 @@ async function loadPayments(){
     // Within-trade search — /api/payments returns aggregated seller
     // rollups, so the filter is applied client-side on the seller name.
     const _paySearch = (document.getElementById('pay-search')?.value || '').trim().toLowerCase();
-    const arr = _paySearch
+    let arr = _paySearch
       ? allArr.filter(r => String(r.name || '').toLowerCase().includes(_paySearch))
       : allArr;
+    // Immediate-payment filter — "immediate" keeps only sellers with at
+    // least one lot flagged immediate; "all" (default) keeps everyone.
+    const _payImmediateFilter = document.getElementById('pay-immediate-filter')?.value || 'all';
+    if (_payImmediateFilter === 'immediate') {
+      arr = arr.filter(r => Number(r.any_immediate) === 1);
+    }
 
     // Update KPI strip
     const kpiStrip = document.getElementById('pay-kpis');
