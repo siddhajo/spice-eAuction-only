@@ -1097,6 +1097,8 @@ html.sidebar-collapsed .sidebar .sb-collapse-btn svg{transform:rotate(180deg)}
 .icon-btn.i-purchase:hover{background:var(--spice-saffron);color:#fff}
 .icon-btn.i-whatsapp{color:#25D366;border-color:#25D366}
 .icon-btn.i-whatsapp:hover{background:#25D366;color:#fff}
+.icon-btn.i-commission{color:var(--spice-saffron);border-color:var(--spice-saffron)}
+.icon-btn.i-commission:hover{background:var(--spice-saffron);color:#fff}
 /* Feature flag — when body[data-feat-whatsapp] != "1", every WhatsApp
    surface (icon button, bulk button, helper) is hidden. Single
    declarative gate driven by applyFeatureFlags() at boot/save. */
@@ -1118,6 +1120,14 @@ body:not([data-feat-print-selected-purchase="1"]) .feat-print-selected-purchase{
    modal. Both are tagged with .feat-bulk-set-buyer-code so this single
    rule hides them when flag_bulk_set_buyer_code is OFF. */
 body:not([data-feat-bulk-set-buyer-code="1"]) .feat-bulk-set-buyer-code{display:none !important}
+/* Bills of Supply — Purchase Bill vs Commission Bill (flag_bos_purchase_bill).
+   When ON (Purchase Bill) the "🖨 Print Selected" toolbar button + the
+   per-row PDF icon show, and the commission surfaces hide. When OFF
+   (Commission Bill) it's the reverse: "🧾 Commission Bill Selected" + the
+   per-row Commission-Bill download icon show, and the purchase-bill/PDF
+   surfaces hide. Both driven by the one data-feat-bos-purchase-bill attr. */
+body:not([data-feat-bos-purchase-bill="1"]) .feat-bos-purchase-bill{display:none !important}
+body[data-feat-bos-purchase-bill="1"] .feat-bos-commission{display:none !important}
 /* Price Check tab + its transaction gate. When OFF: the sidebar entry,
    tab content, gate banners, and Apply UI are hidden, AND pcRefreshGate
    skips every button-disable (so .needs-price-check stays enabled). */
@@ -3891,10 +3901,13 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <input type="search" id="pay-search" placeholder="Search seller…" oninput="searchPaymentsDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
 
           <!-- Immediate-payment filter. Applied client-side in loadPayments()
-               on each seller's any_immediate flag — see _payImmediateFilter. -->
+               on each seller's any_immediate flag — see _payImmediateFilter.
+               "Immediate only" = sellers with ≥1 immediate lot; "Non-immediate
+               / Due" = sellers with NO immediate lots (payments entirely due). -->
           <select id="pay-immediate-filter" onchange="loadPayments()" title="Filter sellers by immediate-payment status" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:150px">
             <option value="all">All payments</option>
             <option value="immediate">⚡ Immediate only</option>
+            <option value="due">⏳ Non-immediate / Due</option>
           </select>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
@@ -4156,9 +4169,9 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
-            <button class="btn" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="printSelectedBills()" title="Print all ticked bills">🖨 Print Selected</button>
+            <button class="btn feat-bos-purchase-bill" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="printSelectedBills()" title="Print all ticked bills">🖨 Print Selected</button>
             <button class="btn feat-whatsapp" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedBills()" title="Send ticked bills of supply via WhatsApp">📱 WhatsApp Selected</button>
-            <button class="btn btn-o" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;font-weight:600" onclick="printSelectedCommissionBoS()" title="Print Commission Bill (Memorandum) for all ticked bills — one A4 page per bill, matches IMCPC reference format">🧾 Commission Bill Selected</button>
+            <button class="btn btn-o feat-bos-commission" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;font-weight:600" onclick="printSelectedCommissionBoS()" title="Print Commission Bill (Memorandum) for all ticked bills — one A4 page per bill, matches IMCPC reference format">🧾 Commission Bill Selected</button>
             <button id="bill-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedBills()" title="Delete all ticked bills">🗑 Delete Selected <span id="bill-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           </div>
 
@@ -5927,12 +5940,17 @@ const ICONS={
   // the Auctions tab row actions to open the per-trade lot allocation
   // modal (Edit + Reassign).
   alloc:'<svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2" ry="2"/><path d="M9 7h6M9 11h6M9 15h4"/></svg>',
+  // Commission Bill (Memorandum) icon — a torn-edge receipt with a down
+  // arrow, signalling "download the commission bill". Shown on Bills of
+  // Supply row actions when flag_bos_purchase_bill is OFF (commission
+  // mode), in place of the PDF print icon.
+  commission:'<svg viewBox="0 0 24 24"><path d="M6 2h12a1 1 0 0 1 1 1v18l-2.5-1.6L14 21l-2-1.6L10 21l-2.5-1.6L5 21V3a1 1 0 0 1 1-1z"/><path d="M12 7v6M9.5 10.5L12 13l2.5-2.5"/></svg>',
   // Star — toggles an auction as the "default trade" (Auctions tab). The
   // current default's row is tinted via .row-default-trade and its star
   // button shows filled/amber.
   star:'<svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>'
 };
-function iconBtn(kind,title,onclick){
+function iconBtn(kind,title,onclick,extraCls){
   // Map icon kinds to permission classes so per-row action buttons are
   // hidden when the user lacks the underlying capability. Server still
   // validates every request — these classes are pure UX.
@@ -5944,7 +5962,9 @@ function iconBtn(kind,title,onclick){
     edit:   '',
   };
   const permCls = PERM_FOR[kind] || '';
-  return `<button class="icon-btn i-${kind} ${permCls}" title="${title}" onclick="${onclick}">${ICONS[kind]}</button>`;
+  // `extraCls` lets callers tag a button with a feature-flag class (e.g.
+  // feat-bos-purchase-bill / feat-bos-commission) so CSS can show/hide it per flag.
+  return `<button class="icon-btn i-${kind} ${permCls} ${extraCls||''}" title="${title}" onclick="${onclick}">${ICONS[kind]}</button>`;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -6564,6 +6584,14 @@ async function applyFeatureFlags() {
   // "👤 Set Buyer Code" button + its modal only when an admin
   // explicitly enables it.
   document.body.setAttribute('data-feat-bulk-set-buyer-code', cfg && on(cfg.flag_bulk_set_buyer_code) ? '1' : '0');
+  // Bills of Supply — Purchase Bill vs Commission Bill. Default ON
+  // (Purchase Bill) when the setting is missing (older installs that
+  // pre-date the flag) so the standard purchase-bill/PDF surfaces show out
+  // of the box; OFF swaps in the commission-bill toolbar button + per-row
+  // download icon.
+  const bosRaw = cfg ? cfg.flag_bos_purchase_bill : undefined;
+  const bosPurchaseBillOn = (bosRaw === undefined || bosRaw === null) ? true : on(bosRaw);
+  document.body.setAttribute('data-feat-bos-purchase-bill', bosPurchaseBillOn ? '1' : '0');
   // Price Check tab + transaction gate. Default OFF — when ON, the
   // Reports → Price Check tab appears, gate banners render, and
   // pcRefreshGate disables Calculate/Invoice/Purchase/Bill/DN buttons
@@ -18914,10 +18942,14 @@ async function loadPayments(){
       ? allArr.filter(r => String(r.name || '').toLowerCase().includes(_paySearch))
       : allArr;
     // Immediate-payment filter — "immediate" keeps only sellers with at
-    // least one lot flagged immediate; "all" (default) keeps everyone.
+    // least one lot flagged immediate; "due" keeps only sellers with NO
+    // immediate lots (payments entirely non-immediate / still due); "all"
+    // (default) keeps everyone.
     const _payImmediateFilter = document.getElementById('pay-immediate-filter')?.value || 'all';
     if (_payImmediateFilter === 'immediate') {
       arr = arr.filter(r => Number(r.any_immediate) === 1);
+    } else if (_payImmediateFilter === 'due') {
+      arr = arr.filter(r => Number(r.any_immediate) !== 1);
     }
 
     // Update KPI strip
@@ -19391,7 +19423,10 @@ async function loadBills(opts){
         fmt:(n)=>fmtI(n,2),
         render:(b)=>`<strong>${fmtI(b.net||0,2)}</strong>` },
       { key:'_actions', label:'Actions', sortable:false, searchable:false, render:(b)=>
-          iconBtn('pdf','View PDF',`viewBillPDF('${b.auction_id||1}','${encodeURIComponent(b.name)}','${b.bil}')`)
+          // Purchase Bill mode (flag_bos_purchase_bill ON): PDF (View/Print) icon.
+          iconBtn('pdf','View PDF',`viewBillPDF('${b.auction_id||1}','${encodeURIComponent(b.name)}','${b.bil}')`,'feat-bos-purchase-bill')
+          // Commission Bill mode (flag OFF): download the Commission Bill (BoS).
+          + iconBtn('commission','Download Commission Bill',`downloadBillCommissionBoS(${b.id},'${encodeURIComponent(b.name||'')}','${encodeURIComponent(b.bil||'')}')`,'feat-bos-commission')
           + iconBtn('edit','Edit bill',`openBillEdit(${JSON.stringify(b).replace(/"/g,'&quot;')})`)
           + iconBtn('whatsapp','Send via WhatsApp',`whatsappBillOfSupply('${b.auction_id||1}','${encodeURIComponent(b.name||'')}','${encodeURIComponent(b.bil||'')}',${Number(b.net)||0})`)
           + iconBtn('del','Delete bill',`delBill(${b.id})`) }
@@ -19441,6 +19476,20 @@ async function viewBillPDF(auctionId,sellerName,billNo){
   return fetchAndPrint(
     `/api/bills/pdf/${auctionId}/${sellerName}?billNo=${billNo}`,
     `BillOfSupply_${decodeURIComponent(sellerName)}_${billNo}.pdf`
+  );
+}
+// Download the Commission Bill (Bill of Supply variant) for a single row.
+// Shown in commission mode (flag_bos_purchase_bill OFF) in place of the PDF icon.
+// Reuses the bulk endpoint with a single id so the layout matches the
+// "🧾 Commission Bill Selected" toolbar output exactly.
+async function downloadBillCommissionBoS(id,sellerName,billNo){
+  if(!id){toast('Bill not found');return}
+  const name=decodeURIComponent(sellerName||'').replace(/[^\w.-]+/g,'_')||'bill';
+  await fetchPdfWithOverlay(
+    'Building Commission Bill (BoS)…',
+    '/api/bills/commission-bos-bulk',
+    `CommissionBoS_${name}_${decodeURIComponent(billNo||'')}.pdf`,
+    { ids:[id] }
   );
 }
 async function delBill(id){if(!confirm('Delete bill?'))return;await j(`/api/bills/${id}`,{method:'DELETE'});loadBills()}

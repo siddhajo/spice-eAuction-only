@@ -196,6 +196,19 @@ const DEFAULTS = [
   // button only appears when an admin explicitly enables it.
   { key: 'flag_bulk_set_buyer_code', value: 'false', category: 'flags', label: 'Bulk Set Buyer Code (Lots tab)', type: 'boolean' },
 
+  // Bills of Supply — which document the tab works with: the agriculturist
+  // Purchase Bill (Bill of Supply) or the Commission Bill. Picks the bulk +
+  // per-row actions to match:
+  //   ON  (Purchase Bill)   → toolbar shows "🖨 Print Selected"; each row's
+  //                           Actions column shows the PDF (View/Print) icon
+  //                           for the Bill of Supply purchase bill.
+  //   OFF (Commission Bill) → toolbar shows "🧾 Commission Bill Selected";
+  //                           the PDF icon is hidden and replaced by a
+  //                           Commission-Bill download icon on each row.
+  // Default ON so the standard Bill of Supply purchase-bill flow is the
+  // out-of-the-box behaviour; admins switch to commission bills explicitly.
+  { key: 'flag_bos_purchase_bill', value: 'true', category: 'flags', label: 'Bills of Supply: Purchase Bill (off = Commission Bill)', type: 'boolean' },
+
   // Price Check tab + transaction gate. When ON the operator gets the
   // Reports → Price Check tab, the gate banner, and a hard server-side
   // block on Calculate / Invoice / Purchase / Bill / Debit-Note
