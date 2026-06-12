@@ -1248,6 +1248,19 @@ tr:hover td{background:var(--spice-cream)}
 .kpi.chili .kpi-icon{background:var(--spice-chili-lt);color:var(--spice-chili)}
 .kpi-icon svg{width:18px;height:18px;stroke-width:2;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}
 
+/* Rich KPI cards — the transaction-module summary strips (Lots / Sales
+   Invoices / Purchases / Payments / Bills / Debit Notes). Same .kpi shell
+   as the dashboard, with a small breakdown table under the headline number
+   so each card reads as a detailed summary rather than a bare figure. */
+.kpi-grid-rich .kpi-label{padding-right:44px}
+.kpi-meta{
+  margin-top:12px;padding-top:9px;border-top:1px solid var(--spice-line);
+  display:grid;grid-template-columns:auto 1fr;gap:4px 12px;
+  font-size:11.5px;line-height:1.4
+}
+.kpi-meta .lbl{color:var(--spice-text-mute);font-weight:500;letter-spacing:.1px;white-space:nowrap}
+.kpi-meta .val{text-align:right;font-weight:600;color:var(--spice-text-main);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+
 /* Dashboard "Headline metrics" tiles — same .kpi shell as the top KPI
    row so colors, borders, and hover affordances match. Seven tiles
    (Trades / Lots / Sold / Withdrawn / Value / Payable / Outstanding);
@@ -3115,13 +3128,14 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </h2>
 
         <!-- KPI strip -->
-        <div id="lot-kpis" class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;display:none">
+        <div id="lot-kpis" class="kpi-grid kpi-grid-rich" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;display:none">
           <div class="kpi cardamom">
             <div class="kpi-label">Lots</div>
             <div class="kpi-value" id="lot-kpi-count">0</div>
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
             </div>
+            <div class="kpi-meta" id="lot-kpi-count-meta" style="display:none"></div>
           </div>
           <div class="kpi">
             <div class="kpi-label">Total Quantity</div>
@@ -3129,6 +3143,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><path d="M5 3h14l-1 9H6z"/><line x1="6" y1="20" x2="18" y2="20"/></svg>
             </div>
+            <div class="kpi-meta" id="lot-kpi-qty-meta" style="display:none"></div>
           </div>
           <div class="kpi turmeric">
             <div class="kpi-label">Total Amount</div>
@@ -3136,6 +3151,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
             </div>
+            <div class="kpi-meta" id="lot-kpi-amount-meta" style="display:none"></div>
           </div>
           <div class="kpi chili">
             <div class="kpi-label">Calculated</div>
@@ -3143,6 +3159,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
             </div>
+            <div class="kpi-meta" id="lot-kpi-calc-meta" style="display:none"></div>
           </div>
         </div>
 
@@ -3698,13 +3715,14 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <!-- ── KPI strip — at-a-glance summary of current invoice list ───────── -->
         <!-- Updated by loadInvoices() based on the visible/filtered invoices.
              Hidden until first data load completes (via display:none on container). -->
-        <div id="inv-kpis" class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;display:none">
+        <div id="inv-kpis" class="kpi-grid kpi-grid-rich" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;display:none">
           <div class="kpi cardamom">
             <div class="kpi-label">Invoices</div>
             <div class="kpi-value" id="inv-kpi-count">0</div>
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
             </div>
+            <div class="kpi-meta" id="inv-kpi-count-meta" style="display:none"></div>
           </div>
           <div class="kpi">
             <div class="kpi-label">Total Quantity</div>
@@ -3712,6 +3730,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><path d="M5 3h14l-1 9H6z"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="6" y1="20" x2="18" y2="20"/></svg>
             </div>
+            <div class="kpi-meta" id="inv-kpi-qty-meta" style="display:none"></div>
           </div>
           <div class="kpi turmeric">
             <div class="kpi-label">Taxable Amount</div>
@@ -3719,6 +3738,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
             </div>
+            <div class="kpi-meta" id="inv-kpi-amount-meta" style="display:none"></div>
           </div>
           <div class="kpi chili">
             <div class="kpi-label">Grand Total (incl. tax)</div>
@@ -3726,6 +3746,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
             </div>
+            <div class="kpi-meta" id="inv-kpi-total-meta" style="display:none"></div>
           </div>
         </div>
 
@@ -3786,13 +3807,14 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </h2>
 
         <!-- KPI strip — shown after first data load -->
-        <div id="pur-kpis" class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;display:none">
+        <div id="pur-kpis" class="kpi-grid kpi-grid-rich" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;display:none">
           <div class="kpi cardamom">
             <div class="kpi-label">Purchase Invoices</div>
             <div class="kpi-value" id="pur-kpi-count">0</div>
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/></svg>
             </div>
+            <div class="kpi-meta" id="pur-kpi-count-meta" style="display:none"></div>
           </div>
           <div class="kpi">
             <div class="kpi-label">Total Quantity</div>
@@ -3800,6 +3822,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><path d="M5 3h14l-1 9H6z"/><line x1="6" y1="20" x2="18" y2="20"/></svg>
             </div>
+            <div class="kpi-meta" id="pur-kpi-qty-meta" style="display:none"></div>
           </div>
           <div class="kpi turmeric">
             <div class="kpi-label">Taxable Amount</div>
@@ -3807,6 +3830,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
             </div>
+            <div class="kpi-meta" id="pur-kpi-amount-meta" style="display:none"></div>
           </div>
           <div class="kpi chili">
             <div class="kpi-label">Grand Total (incl. tax)</div>
@@ -3814,6 +3838,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
             </div>
+            <div class="kpi-meta" id="pur-kpi-total-meta" style="display:none"></div>
           </div>
         </div>
 
@@ -3862,13 +3887,14 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </h2>
 
         <!-- KPI strip — shown after first data load -->
-        <div id="pay-kpis" class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;display:none">
+        <div id="pay-kpis" class="kpi-grid kpi-grid-rich" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;display:none">
           <div class="kpi cardamom">
             <div class="kpi-label">Sellers</div>
             <div class="kpi-value" id="pay-kpi-sellers">0</div>
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
             </div>
+            <div class="kpi-meta" id="pay-kpi-sellers-meta" style="display:none"></div>
           </div>
           <div class="kpi">
             <div class="kpi-label">Total Quantity</div>
@@ -3876,6 +3902,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><path d="M5 3h14l-1 9H6z"/><line x1="6" y1="20" x2="18" y2="20"/></svg>
             </div>
+            <div class="kpi-meta" id="pay-kpi-qty-meta" style="display:none"></div>
           </div>
           <div class="kpi turmeric">
             <div class="kpi-label">Total Commission</div>
@@ -3883,6 +3910,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>
             </div>
+            <div class="kpi-meta" id="pay-kpi-commission-meta" style="display:none"></div>
           </div>
           <div class="kpi chili">
             <div class="kpi-label">Total Payable</div>
@@ -3890,6 +3918,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
             </div>
+            <div class="kpi-meta" id="pay-kpi-payable-meta" style="display:none"></div>
           </div>
         </div>
 
@@ -4130,13 +4159,14 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </h2>
 
         <!-- KPI strip — shown after first data load -->
-        <div id="bill-kpis" class="kpi-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px;display:none">
+        <div id="bill-kpis" class="kpi-grid kpi-grid-rich" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px;display:none">
           <div class="kpi cardamom">
             <div class="kpi-label">Bills</div>
             <div class="kpi-value" id="bill-kpi-count">0</div>
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
             </div>
+            <div class="kpi-meta" id="bill-kpi-count-meta" style="display:none"></div>
           </div>
           <div class="kpi">
             <div class="kpi-label">Total Quantity</div>
@@ -4144,6 +4174,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><path d="M5 3h14l-1 9H6z"/><line x1="6" y1="20" x2="18" y2="20"/></svg>
             </div>
+            <div class="kpi-meta" id="bill-kpi-qty-meta" style="display:none"></div>
           </div>
           <div class="kpi turmeric">
             <div class="kpi-label">Net Amount</div>
@@ -4151,6 +4182,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div class="kpi-icon">
               <svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
             </div>
+            <div class="kpi-meta" id="bill-kpi-net-meta" style="display:none"></div>
           </div>
         </div>
 
@@ -4210,6 +4242,41 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
                is selected; the count badge updates live as boxes toggle. -->
           <button id="dn-bulk-print" class="btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedDebitNotes()" title="Print all ticked debit notes as one combined PDF">🖨 Print Selected <span id="dn-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           <button id="dn-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotes()" title="Delete all ticked debit notes">🗑 Delete Selected</button>        </div>
+        <!-- KPI strip -->
+        <div id="debit-kpis" class="kpi-grid kpi-grid-rich" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;display:none">
+          <div class="kpi cardamom">
+            <div class="kpi-label">Debit Notes</div>
+            <div class="kpi-value" id="debit-kpi-count">0</div>
+            <div class="kpi-icon">
+              <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+            </div>
+            <div class="kpi-meta" id="debit-kpi-count-meta" style="display:none"></div>
+          </div>
+          <div class="kpi turmeric">
+            <div class="kpi-label">Amount</div>
+            <div class="kpi-value" id="debit-kpi-amount" style="font-size:24px"><span class="kpi-unit" style="margin-right:4px">₹</span>0</div>
+            <div class="kpi-icon">
+              <svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            </div>
+            <div class="kpi-meta" id="debit-kpi-amount-meta" style="display:none"></div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Total GST</div>
+            <div class="kpi-value" id="debit-kpi-gst" style="font-size:24px"><span class="kpi-unit" style="margin-right:4px">₹</span>0</div>
+            <div class="kpi-icon">
+              <svg viewBox="0 0 24 24"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>
+            </div>
+            <div class="kpi-meta" id="debit-kpi-gst-meta" style="display:none"></div>
+          </div>
+          <div class="kpi chili">
+            <div class="kpi-label">Grand Total</div>
+            <div class="kpi-value" id="debit-kpi-total" style="font-size:24px"><span class="kpi-unit" style="margin-right:4px">₹</span>0</div>
+            <div class="kpi-icon">
+              <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            </div>
+            <div class="kpi-meta" id="debit-kpi-total-meta" style="display:none"></div>
+          </div>
+        </div>
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Note#</th><th>Date</th><th>Auction</th><th>Name</th><th>Amount</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th>Actions</th></tr></thead><tbody id="debit-list"></tbody></table></div>
         <div id="debit-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
       </div>
@@ -7419,6 +7486,19 @@ window.addEventListener('resize', () => {
 // Fills #dash-headline-grid by querying /api/insights. When auctionId
 // is set we ask for that single trade; otherwise the endpoint defaults
 // to the current calendar month — the same default Insights uses.
+// Fill a .kpi-meta breakdown box under a KPI headline figure. `rows` is an
+// array of [label, valueHTML] pairs; falsy rows are skipped so callers can
+// drop a line that would only show a zero. Hides the box when empty.
+function setKpiMeta(id, rows){
+  const el = document.getElementById(id);
+  if (!el) return;
+  const html = (rows || []).filter(Boolean)
+    .map(([l, v]) => `<span class="lbl">${esc(String(l))}</span><span class="val">${v}</span>`)
+    .join('');
+  el.innerHTML = html;
+  el.style.display = html ? 'grid' : 'none';
+}
+
 async function renderDashHeadlineTiles(auctionId){
   const grid = document.getElementById('dash-headline-grid');
   if (!grid) return;
@@ -16003,11 +16083,31 @@ async function loadLots(opts){
         ((Number(i.puramt) || 0) > 0 || (Number(i.balance) || 0) > 0)).length;
       const realLotCount = arr.filter(i => (Number(i.amount) || 0) > 0).length;
       const pct = realLotCount > 0 ? Math.round((calculatedCount / realLotCount) * 100) : 0;
+      const totalBags  = arr.reduce((a,i) => a + (Number(i.bags) || 0), 0);
+      const soldCount  = arr.filter(i => /sold|sale/i.test(String(i.status||''))).length;
+      const avgQty     = arr.length ? totalQty / arr.length : 0;
+      const avgPrice   = totalQty > 0 ? totalAmount / totalQty : 0;
       const $ = (id) => document.getElementById(id);
       if ($('lot-kpi-count'))  $('lot-kpi-count').textContent  = arr.length;
       if ($('lot-kpi-qty'))    $('lot-kpi-qty').innerHTML      = `${fmtI(totalQty, 2)}<span class="kpi-unit">kg</span>`;
       if ($('lot-kpi-amount')) $('lot-kpi-amount').innerHTML   = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalAmount, 2)}`;
       if ($('lot-kpi-calc'))   $('lot-kpi-calc').innerHTML     = `${pct}%<span class="kpi-unit"> done</span>`;
+      setKpiMeta('lot-kpi-count-meta', [
+        totalBags > 0 && ['Bags', fmtI(totalBags, 0)],
+        ['Avg / lot', `${fmtI(avgQty, 2)} kg`],
+      ]);
+      setKpiMeta('lot-kpi-qty-meta', [
+        totalBags > 0 && ['Bags', fmtI(totalBags, 0)],
+        avgPrice > 0 && ['Avg price', `₹${fmtI(avgPrice, 0)}/kg`],
+      ]);
+      setKpiMeta('lot-kpi-amount-meta', [
+        ['Avg / lot', `₹${fmtI(arr.length ? totalAmount / arr.length : 0, 0)}`],
+        avgPrice > 0 && ['Avg price', `₹${fmtI(avgPrice, 0)}/kg`],
+      ]);
+      setKpiMeta('lot-kpi-calc-meta', [
+        ['Calculated', `${fmtI(calculatedCount, 0)} / ${fmtI(realLotCount, 0)}`],
+        ['Pending', fmtI(Math.max(0, realLotCount - calculatedCount), 0)],
+      ]);
       updateSummaryStats('lots',
         `<strong>${arr.length}</strong> lot${arr.length===1?'':'s'} · `
         + `<strong>${fmtI(totalQty,2)} kg</strong> · `
@@ -16921,11 +17021,29 @@ async function loadInvoices(opts){
       const totalQty    = arr.reduce((a,i) => a + (Number(i.qty)    || 0), 0);
       const totalAmount = arr.reduce((a,i) => a + (Number(i.amount) || 0), 0);
       const grandTotal  = arr.reduce((a,i) => a + (Number(i.tot)    || 0), 0);
+      const totalBags   = arr.reduce((a,i) => a + (Number(i.bag) || Number(i.bags) || 0), 0);
+      const totalTax    = Math.max(0, grandTotal - totalAmount);
+      const avgInv      = arr.length ? grandTotal / arr.length : 0;
       const $ = (id) => document.getElementById(id);
       if ($('inv-kpi-count'))  $('inv-kpi-count').textContent  = arr.length;
       if ($('inv-kpi-qty'))    $('inv-kpi-qty').innerHTML      = `${fmtI(totalQty, 2)}<span class="kpi-unit">kg</span>`;
       if ($('inv-kpi-amount')) $('inv-kpi-amount').innerHTML   = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalAmount, 2)}`;
       if ($('inv-kpi-total'))  $('inv-kpi-total').innerHTML    = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(grandTotal, 2)}`;
+      setKpiMeta('inv-kpi-count-meta', [
+        totalBags > 0 && ['Bags', fmtI(totalBags, 0)],
+        ['Avg / invoice', `₹${fmtI(avgInv, 0)}`],
+      ]);
+      setKpiMeta('inv-kpi-qty-meta', [
+        totalBags > 0 && ['Bags', fmtI(totalBags, 0)],
+        ['Avg / invoice', `${fmtI(arr.length ? totalQty / arr.length : 0, 2)} kg`],
+      ]);
+      setKpiMeta('inv-kpi-amount-meta', [
+        ['Taxes + round', `₹${fmtI(totalTax, 2)}`],
+      ]);
+      setKpiMeta('inv-kpi-total-meta', [
+        ['Taxable', `₹${fmtI(totalAmount, 2)}`],
+        ['Taxes + round', `₹${fmtI(totalTax, 2)}`],
+      ]);
       // Compact summary line shown when collapsed
       updateSummaryStats('invoices',
         `<strong>${arr.length}</strong> invoice${arr.length===1?'':'s'} · `
@@ -17662,11 +17780,28 @@ async function loadPurchases(opts){
       const totalQty    = arr.reduce((a,i) => a + (Number(i.qty)    || 0), 0);
       const totalAmount = arr.reduce((a,i) => a + (Number(i.amount) || 0), 0);
       const grandTotal  = arr.reduce((a,i) => a + (Number(i.total)  || 0), 0);
+      const totalTds    = arr.reduce((a,i) => a + (Number(i.tds) || 0), 0);
+      const totalTax    = arr.reduce((a,i) => a + (Number(i.cgst) || 0) + (Number(i.sgst) || 0) + (Number(i.igst) || 0), 0);
+      const avgPur      = arr.length ? grandTotal / arr.length : 0;
       const $ = (id) => document.getElementById(id);
       if ($('pur-kpi-count'))  $('pur-kpi-count').textContent  = arr.length;
       if ($('pur-kpi-qty'))    $('pur-kpi-qty').innerHTML      = `${fmtI(totalQty, 2)}<span class="kpi-unit">kg</span>`;
       if ($('pur-kpi-amount')) $('pur-kpi-amount').innerHTML   = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalAmount, 2)}`;
       if ($('pur-kpi-total'))  $('pur-kpi-total').innerHTML    = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(grandTotal, 2)}`;
+      setKpiMeta('pur-kpi-count-meta', [
+        ['Avg / invoice', `₹${fmtI(avgPur, 0)}`],
+      ]);
+      setKpiMeta('pur-kpi-qty-meta', [
+        ['Avg / invoice', `${fmtI(arr.length ? totalQty / arr.length : 0, 2)} kg`],
+      ]);
+      setKpiMeta('pur-kpi-amount-meta', [
+        totalTax > 0 && ['Total GST', `₹${fmtI(totalTax, 2)}`],
+        totalTds > 0 && ['TDS', `₹${fmtI(totalTds, 2)}`],
+      ]);
+      setKpiMeta('pur-kpi-total-meta', [
+        ['Taxable', `₹${fmtI(totalAmount, 2)}`],
+        totalTds > 0 && ['TDS deducted', `₹${fmtI(totalTds, 2)}`],
+      ]);
       updateSummaryStats('purchases',
         `<strong>${arr.length}</strong> invoice${arr.length===1?'':'s'} · `
         + `<strong>${fmtI(totalQty,2)} kg</strong> · `
@@ -18933,11 +19068,29 @@ async function loadPayments(){
         const totalQty      = arr.reduce((a,i) => a + (Number(i.total_qty)      || 0), 0);
         const totalCommission = arr.reduce((a,i) => a + (Number(i.total_commission) || 0), 0);
         const totalPayable  = arr.reduce((a,i) => a + (Number(i.total_payable)  || 0), 0);
+        const totalLots     = arr.reduce((a,i) => a + (Number(i.lot_count)   || 0), 0);
+        const totalAmount   = arr.reduce((a,i) => a + (Number(i.total_amount)|| 0), 0);
+        const totalGst      = arr.reduce((a,i) => a + (Number(i.total_tax)   || 0), 0);
         const $ = (id) => document.getElementById(id);
         if ($('pay-kpi-sellers'))  $('pay-kpi-sellers').textContent  = arr.length;
         if ($('pay-kpi-qty'))      $('pay-kpi-qty').innerHTML        = `${fmtI(totalQty, 2)}<span class="kpi-unit">kg</span>`;
         if ($('pay-kpi-commission')) $('pay-kpi-commission').innerHTML = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalCommission, 2)}`;
         if ($('pay-kpi-payable'))  $('pay-kpi-payable').innerHTML    = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalPayable, 2)}`;
+        setKpiMeta('pay-kpi-sellers-meta', [
+          totalLots > 0 && ['Lots', fmtI(totalLots, 0)],
+          ['Avg / seller', `₹${fmtI(arr.length ? totalPayable / arr.length : 0, 0)}`],
+        ]);
+        setKpiMeta('pay-kpi-qty-meta', [
+          ['Avg / seller', `${fmtI(arr.length ? totalQty / arr.length : 0, 2)} kg`],
+        ]);
+        setKpiMeta('pay-kpi-commission-meta', [
+          totalGst > 0 && ['GST 18%', `₹${fmtI(totalGst, 2)}`],
+          totalAmount > 0 && ['Sale value', `₹${fmtI(totalAmount, 2)}`],
+        ]);
+        setKpiMeta('pay-kpi-payable-meta', [
+          ['Commission', `₹${fmtI(totalCommission, 2)}`],
+          totalGst > 0 && ['GST 18%', `₹${fmtI(totalGst, 2)}`],
+        ]);
         updateSummaryStats('payments',
           `<strong>${arr.length}</strong> seller${arr.length===1?'':'s'} · `
           + `<strong>${fmtI(totalQty,2)} kg</strong> · `
@@ -19363,10 +19516,22 @@ async function loadBills(opts){
       kpiStrip.style.display = 'grid';
       const totalQty = arr.reduce((a,i) => a + (Number(i.qty) || 0), 0);
       const totalNet = arr.reduce((a,i) => a + (Number(i.net) || 0), 0);
+      const totalCost = arr.reduce((a,i) => a + (Number(i.cost) || 0), 0);
+      const totalIgst = arr.reduce((a,i) => a + (Number(i.igst) || 0), 0);
       const $ = (id) => document.getElementById(id);
       if ($('bill-kpi-count')) $('bill-kpi-count').textContent = arr.length;
       if ($('bill-kpi-qty'))   $('bill-kpi-qty').innerHTML     = `${fmtI(totalQty, 2)}<span class="kpi-unit">kg</span>`;
       if ($('bill-kpi-net'))   $('bill-kpi-net').innerHTML     = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalNet, 2)}`;
+      setKpiMeta('bill-kpi-count-meta', [
+        ['Avg / bill', `₹${fmtI(arr.length ? totalNet / arr.length : 0, 0)}`],
+      ]);
+      setKpiMeta('bill-kpi-qty-meta', [
+        ['Avg / bill', `${fmtI(arr.length ? totalQty / arr.length : 0, 2)} kg`],
+      ]);
+      setKpiMeta('bill-kpi-net-meta', [
+        totalCost > 0 && ['Cost', `₹${fmtI(totalCost, 2)}`],
+        totalIgst > 0 && ['IGST', `₹${fmtI(totalIgst, 2)}`],
+      ]);
       updateSummaryStats('bills',
         `<strong>${arr.length}</strong> bill${arr.length===1?'':'s'} · `
         + `<strong>${fmtI(totalQty,2)} kg</strong> · `
@@ -19508,6 +19673,42 @@ async function loadDebitNotes(opts){
   _debitPager.total = total;
   _debitPager.totalPages = Math.max(1, Math.ceil(total / _debitPager.pageSize));
   renderPager('debit-pager', _debitPager, gotoDebitNotesPage, '');
+
+  // Update KPI strip — count, amount (commission + handling), total GST, grand total.
+  const dnKpiStrip = document.getElementById('debit-kpis');
+  if (dnKpiStrip) {
+    if (d.length === 0) {
+      dnKpiStrip.style.display = 'none';
+    } else {
+      dnKpiStrip.style.display = 'grid';
+      const totalAmount = d.reduce((a,i) => a + (Number(i.amount) || 0), 0);
+      const totalCgst   = d.reduce((a,i) => a + (Number(i.cgst) || 0), 0);
+      const totalSgst   = d.reduce((a,i) => a + (Number(i.sgst) || 0), 0);
+      const totalIgst   = d.reduce((a,i) => a + (Number(i.igst) || 0), 0);
+      const totalGst    = totalCgst + totalSgst + totalIgst;
+      const grandTotal  = d.reduce((a,i) => a + (Number(i.total) || 0), 0);
+      const $ = (id) => document.getElementById(id);
+      if ($('debit-kpi-count'))  $('debit-kpi-count').textContent = d.length;
+      if ($('debit-kpi-amount')) $('debit-kpi-amount').innerHTML  = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalAmount, 2)}`;
+      if ($('debit-kpi-gst'))    $('debit-kpi-gst').innerHTML     = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalGst, 2)}`;
+      if ($('debit-kpi-total'))  $('debit-kpi-total').innerHTML   = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(grandTotal, 2)}`;
+      setKpiMeta('debit-kpi-count-meta', [
+        ['Avg / note', `₹${fmtI(d.length ? grandTotal / d.length : 0, 0)}`],
+      ]);
+      setKpiMeta('debit-kpi-amount-meta', [
+        ['Taxable', `₹${fmtI(totalAmount, 2)}`],
+      ]);
+      setKpiMeta('debit-kpi-gst-meta', [
+        (totalCgst + totalSgst) > 0 && ['CGST + SGST', `₹${fmtI(totalCgst + totalSgst, 2)}`],
+        totalIgst > 0 && ['IGST', `₹${fmtI(totalIgst, 2)}`],
+      ]);
+      setKpiMeta('debit-kpi-total-meta', [
+        ['Amount', `₹${fmtI(totalAmount, 2)}`],
+        ['Total GST', `₹${fmtI(totalGst, 2)}`],
+      ]);
+    }
+  }
+
   DataTable.mount('debit-list', d, {
     noSearch: true,
     columns: [
