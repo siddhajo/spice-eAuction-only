@@ -1270,8 +1270,8 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
     doc.font('Helvetica-Bold').text('Cardamom', colX('desc') + 4, y + 3, { width: colW.desc - 8 });
     doc.font('Helvetica');
     if (showHsn) doc.text(hsnCardamom, colX('hsn') + 2, y + 3, { width: colW.hsn - 4, align: 'center' });
-    doc.text(`${li.qty.toFixed(3)} Kgs.`, colX('shipped') + 2, y + 3, { width: colW.shipped - 4, align: 'right' , lineBreak: false});
-    doc.font('Helvetica-Bold').text(`${li.qty.toFixed(3)} Kgs.`, colX('billed') + 2, y + 3, { width: colW.billed - 4, align: 'right' , lineBreak: false});
+    doc.text(`${li.qty.toFixed(3)} Kgs.`, colX('shipped') + 2, y + 3, { width: colW.shipped - 4, align: 'right' , lineBreak: false, ellipsis: true});
+    doc.font('Helvetica-Bold').text(`${li.qty.toFixed(3)} Kgs.`, colX('billed') + 2, y + 3, { width: colW.billed - 4, align: 'right' , lineBreak: false, ellipsis: true});
     // ASP invoices: bill at P_Rate and show PurAmt (ASP→ISP internal transfer price)
     // ISP invoices: bill at Price and show Amount (external customer price)
     const lineRate = isASP ? (li.prate != null ? li.prate : li.price) : li.price;
@@ -1385,7 +1385,7 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
     doc.font('Helvetica-Bold').text('Transport', colX('desc') + 4, y + 3, { width: colW.desc - 8 });
     doc.font('Helvetica');
     if (showHsn) doc.text(sacTransport, colX('hsn') + 2, y + 3, { width: colW.hsn - 4, align: 'center' });
-    doc.text(`${summary.totalQty.toFixed(3)} Kgs.`, colX('shipped') + 2, y + 3, { width: colW.shipped - 4, align: 'right' , lineBreak: false});
+    doc.text(`${summary.totalQty.toFixed(3)} Kgs.`, colX('shipped') + 2, y + 3, { width: colW.shipped - 4, align: 'right' , lineBreak: false, ellipsis: true});
     doc.font('Helvetica-Bold').text(transportRate.toFixed(2), colX('rate') + 2, y + 3, { width: colW.rate - 4, align: 'right' });
     doc.font('Helvetica').text('Kgs.', colX('per') + 2, y + 3, { width: colW.per - 4, align: 'center' });
     doc.font('Helvetica-Bold').text(formatINR(summary.transportCost), colX('amount') + 2, y + 3, { width: colW.amount - 4, align: 'right' });
@@ -2506,17 +2506,31 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
   doc.moveTo(splitX, y).lineTo(splitX, y + partyH).stroke();
   doc.moveTo(x1, y).lineTo(x1, y + partyH).stroke();
   doc.moveTo(x0, y + partyH).lineTo(x1, y + partyH).stroke();
-  doc.font('Helvetica').fontSize(8);
   // lineBreak:false is critical — without it, a long address line wraps
   // back to x=0 and overprints the next y-positioned line, producing
   // the "stacked text" / "overlapping" effect in the seller and
-  // purchaser blocks.
+  // purchaser blocks. To avoid losing the END of long names / the
+  // GSTIN+PAN line to an ellipsis, pick the largest font (8pt → 6pt floor)
+  // at which EVERY line on that side fits its column, then draw uniformly.
+  const fitPartySize = (lines, colW) => {
+    let size = 8;
+    while (size > 6) {
+      doc.font('Helvetica').fontSize(size);
+      if (lines.every(l => doc.widthOfString(String(l)) <= colW - 12)) break;
+      size -= 0.25;
+    }
+    return size;
+  };
+  const sellerSize = fitPartySize(sellerLines, headColW);
+  const purSize = fitPartySize(purLines, W - headColW);
   let sy = y + 3;
+  doc.font('Helvetica').fontSize(sellerSize);
   for (const line of sellerLines) {
     doc.text(line, x0 + 6, sy, { width: headColW - 12, lineBreak: false, ellipsis: true });
     sy += partyLineH;
   }
   let py = y + 3;
+  doc.font('Helvetica').fontSize(purSize);
   for (const line of purLines) {
     doc.text(line, splitX + 6, py, { width: W - headColW - 12, lineBreak: false, ellipsis: true });
     py += partyLineH;
@@ -2527,12 +2541,13 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
   // 13 leaf columns. CGST/SGST/IGST each split RATE | AMOUNT.
   const cols = [
     { key: 'lot',   w: 26 },   // 0
-    { key: 'desc',  w: 72 },   // 1
-    { key: 'hsn',   w: 50 },   // 2
+    { key: 'desc',  w: 60 },   // 1  (trimmed: "CARDAMOM"/"SAMPLE REFUND" still fit)
+    { key: 'hsn',   w: 44 },   // 2  (trimmed)
     { key: 'qty',   w: 50 },   // 3
     { key: 'bags',  w: 32 },   // 4
     { key: 'rate',  w: 44 },   // 5
-    { key: 'cost',  w: 75 },   // 6  CARDAMOM COST / TAXABLE VALUE
+    { key: 'cost',  w: 93 },   // 6  CARDAMOM COST / TAXABLE VALUE — widened so
+                               //    large (lakh/crore) lot values don't truncate
     { key: 'cgstR', w: 28 },   // 7
     { key: 'cgstA', w: 50 },   // 8
     { key: 'sgstR', w: 28 },   // 9
@@ -2546,6 +2561,19 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
   let cx = x0;
   for (const c of cols) { c.x = cx; cx += c.w; }
   const colEndX = c => c.x + c.w;
+
+  // Right-aligned numeric drawer that shrinks the font from `baseSize` down to
+  // a 6pt floor so a wide ₹ amount (e.g. the rightmost IGST/CGST/SGST amount
+  // columns, only ~47pt wide, or a lakh/crore taxable value) fits on one line
+  // instead of being clipped/ellipsized. Restores the prevailing size after.
+  const drawNum = (text, x, yPos, w, baseSize) => {
+    const s = String(text == null ? '' : text);
+    let size = baseSize;
+    doc.font('Helvetica').fontSize(size);
+    while (size > 6 && doc.widthOfString(s) > w) { size -= 0.25; doc.fontSize(size); }
+    doc.text(s, x, yPos, { width: w, align: 'right', lineBreak: false });
+    doc.fontSize(baseSize);
+  };
 
   // ── Table header (two-band): top band has merged "CGST" / "SGST" /
   // "IGST" labels; bottom band has per-leaf sub-labels. ──
@@ -2622,10 +2650,10 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
     doc.text(_lotStrC, cols[0].x, y + 3, cellOpts(cols[0]));
     doc.text('CARDAMOM',                           cols[1].x, y + 3, cellOpts(cols[1]));
     doc.text(hsnCardamom,                          cols[2].x, y + 3, cellOpts(cols[2]));
-    doc.text(fmtQty(li.qty),                       cols[3].x, y + 3, cellOpts(cols[3], 'right'));
+    drawNum(fmtQty(li.qty),  cols[3].x, y + 3, cols[3].w - 3, 7.5);
     doc.text(String(li.bags || ''),                cols[4].x, y + 3, cellOpts(cols[4]));
-    doc.text(fmtRup(li.rate),                      cols[5].x, y + 3, cellOpts(cols[5], 'right'));
-    doc.text(fmtRup(cost),                         cols[6].x, y + 3, cellOpts(cols[6], 'right'));
+    drawNum(fmtRup(li.rate), cols[5].x, y + 3, cols[5].w - 3, 7.5);
+    drawNum(fmtRup(cost),    cols[6].x, y + 3, cols[6].w - 3, 7.5);
     y += rowH;
 
     // [+] SAMPLE REFUND row (only if refund > 0)
@@ -2633,9 +2661,9 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
       doc.save(); doc.moveTo(x0, y).lineTo(x1, y).lineWidth(0.25).strokeColor('#CCC').stroke(); doc.restore();
       doc.text('[+]',                          cols[0].x, y + 3, cellOpts(cols[0]));
       doc.text('SAMPLE REFUND',                cols[1].x, y + 3, cellOpts(cols[1]));
-      doc.text(fmtQty(li.refundQty),           cols[3].x, y + 3, cellOpts(cols[3], 'right'));
-      doc.text(fmtRup(li.refundRate||li.rate), cols[5].x, y + 3, cellOpts(cols[5], 'right'));
-      doc.text(fmtRup(refAmt),                 cols[6].x, y + 3, cellOpts(cols[6], 'right'));
+      drawNum(fmtQty(li.refundQty),           cols[3].x, y + 3, cols[3].w - 3, 7.5);
+      drawNum(fmtRup(li.refundRate||li.rate), cols[5].x, y + 3, cols[5].w - 3, 7.5);
+      drawNum(fmtRup(refAmt),                 cols[6].x, y + 3, cols[6].w - 3, 7.5);
       y += rowH;
     }
   }
@@ -2663,21 +2691,22 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
     width: col.w - (align === 'right' ? 3 : 0),
     align, lineBreak: false, ellipsis: true,
   });
+  doc.font('Helvetica').fontSize(7.5);
   doc.text('[-]',                 cols[0].x, y + 3, cellOptsCom(cols[0]));
   doc.text('COMMISSION',          cols[1].x, y + 3, cellOptsCom(cols[1]));
   doc.text(hsnCommission,         cols[2].x, y + 3, cellOptsCom(cols[2]));
-  doc.text(fmtRup(commission),    cols[6].x, y + 3, cellOptsCom(cols[6], 'right'));
+  drawNum(fmtRup(commission),     cols[6].x, y + 3, cols[6].w - 3, 7.5);
   if (cgstAmt) {
     doc.text(gstRate.toFixed(1) + '%', cols[7].x, y + 3, cellOptsCom(cols[7]));
-    doc.text(fmtRup(cgstAmt),          cols[8].x, y + 3, cellOptsCom(cols[8], 'right'));
+    drawNum(fmtRup(cgstAmt),           cols[8].x, y + 3, cols[8].w - 3, 7.5);
   }
   if (sgstAmt) {
     doc.text(gstRate.toFixed(1) + '%', cols[9].x,  y + 3, cellOptsCom(cols[9]));
-    doc.text(fmtRup(sgstAmt),          cols[10].x, y + 3, cellOptsCom(cols[10], 'right'));
+    drawNum(fmtRup(sgstAmt),           cols[10].x, y + 3, cols[10].w - 3, 7.5);
   }
   if (igstAmt) {
     doc.text((2 * gstRate).toFixed(1) + '%', cols[11].x, y + 3, cellOptsCom(cols[11]));
-    doc.text(fmtRup(igstAmt),                cols[12].x, y + 3, cellOptsCom(cols[12], 'right'));
+    drawNum(fmtRup(igstAmt),                 cols[12].x, y + 3, cols[12].w - 3, 7.5);
   }
   y += rowH;
 
@@ -2715,15 +2744,15 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
   // Taxable value = commission amount (the GST is charged on commission).
   doc.font('Helvetica').fontSize(8.5);
   doc.rect(cols[6].x, y, cols[6].w, taxRowH).stroke();
-  doc.text(fmtRup(commission), cols[6].x, y + 4, { width: cols[6].w - 3, align: 'right' });
+  drawNum(fmtRup(commission), cols[6].x, y + 4, cols[6].w - 3, 8.5);
   // Each GST group: RATE cell empty, AMOUNT cell carries the value
   for (const g of grpDefs) {
     doc.rect(cols[g.from].x, y, cols[g.from].w, taxRowH).stroke();
     doc.rect(cols[g.to].x,   y, cols[g.to].w,   taxRowH).stroke();
   }
-  if (cgstAmt) doc.text(fmtRup(cgstAmt), cols[8].x,  y + 4, { width: cols[8].w - 3,  align: 'right' });
-  if (sgstAmt) doc.text(fmtRup(sgstAmt), cols[10].x, y + 4, { width: cols[10].w - 3, align: 'right' });
-  if (igstAmt) doc.text(fmtRup(igstAmt), cols[12].x, y + 4, { width: cols[12].w - 3, align: 'right' });
+  if (cgstAmt) drawNum(fmtRup(cgstAmt), cols[8].x,  y + 4, cols[8].w - 3,  8.5);
+  if (sgstAmt) drawNum(fmtRup(sgstAmt), cols[10].x, y + 4, cols[10].w - 3, 8.5);
+  if (igstAmt) drawNum(fmtRup(igstAmt), cols[12].x, y + 4, cols[12].w - 3, 8.5);
   y += taxRowH;
 
   // ── NETT AMOUNT strip ──
@@ -2743,9 +2772,14 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
   doc.text('NETT AMOUNT', x0, y + 4, {
     width: nettValueX - x0 - 6, align: 'right', lineBreak: false,
   });
-  doc.text(fmtRup(nett), nettValueX, y + 4, {
-    width: x1 - nettValueX - 3, align: 'right', lineBreak: false,
-  });
+  // Bold nett value, shrink-to-fit so a large total can't clip at the page edge.
+  {
+    let _ns = 10;
+    doc.font('Helvetica-Bold').fontSize(_ns);
+    const _nw = x1 - nettValueX - 3;
+    while (_ns > 7 && doc.widthOfString(fmtRup(nett)) > _nw) { _ns -= 0.25; doc.fontSize(_ns); }
+    doc.text(fmtRup(nett), nettValueX, y + 4, { width: _nw, align: 'right', lineBreak: false });
+  }
   y += nettH;
 
   // ── Amount in words ──

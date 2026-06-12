@@ -222,11 +222,19 @@ async function lotSlipPdf(db, auctionId, _cfg, extra) {
         });
         cx += colW[ci];
       });
-      // Horizontal row separator
-      doc.moveTo(xOrigin, ry + ROW_H).lineTo(xOrigin + halfW, ry + ROW_H)
-         .lineWidth(0.25).strokeColor('#999').stroke();
       ry += ROW_H;
     });
+
+    // Horizontal row separators — drawn AFTER all the stripe fills. Drawing
+    // each line inside the loop let the NEXT row's grey fill paint over it,
+    // which dropped every separator that sat above a striped row.
+    doc.save();
+    for (let i = 1; i <= sliceRows.length; i++) {
+      const ly = BODY_TOP + HEAD_H + i * ROW_H;
+      doc.moveTo(xOrigin, ly).lineTo(xOrigin + halfW, ly)
+         .lineWidth(0.25).strokeColor('#999').stroke();
+    }
+    doc.restore();
 
     // Vertical column separators
     let vx = xOrigin;
@@ -337,6 +345,23 @@ function carbonCopySlipPdf({ auction, rows, columns, totalKeys, companyHeader, b
     return v == null ? '' : String(v);
   }
 
+  // Draw a cell value into width `w`, first shrinking the font from `baseFont`
+  // down to a 5.5pt floor to make the WHOLE value fit on one line. Only when it
+  // still overflows at the floor do we ellipsize (fitText). This keeps long
+  // seller names and large ₹ amounts intact on the narrow carbon-copy halves
+  // instead of cutting them off.
+  function drawFittedCell(fontName, text, x, y, w, align) {
+    const s = String(text == null ? '' : text);
+    let size = baseFont;
+    doc.font(fontName).fontSize(size);
+    while (size > 5.5 && doc.widthOfString(s) > w) {
+      size -= 0.25;
+      doc.fontSize(size);
+    }
+    doc.text(fitText(doc, s, w), x, y, { width: w, align, lineBreak: false });
+    doc.fontSize(baseFont);
+  }
+
   function drawHalfHeader(xOrigin, page) {
     // Compact company brand band (small logo, no address — too narrow).
     const afterY = drawCompanyHeader(doc, companyHeader, {
@@ -351,10 +376,10 @@ function carbonCopySlipPdf({ auction, rows, columns, totalKeys, companyHeader, b
 
     const hy = BODY_TOP;
     doc.rect(xOrigin, hy, halfW, HEAD_H).fillAndStroke('#E8E4DD', '#444');
-    doc.fillColor('#000').font('Helvetica-Bold').fontSize(8);
+    doc.fillColor('#000');
     let cx = xOrigin;
     columns.forEach((col, i) => {
-      doc.text(col.header, cx + 2, hy + 5, { width: colW[i] - 4, align: 'center', lineBreak: false, ellipsis: true });
+      drawFittedCell('Helvetica-Bold', col.header, cx + 2, hy + 5, colW[i] - 4, 'center');
       cx += colW[i];
     });
   }
@@ -365,19 +390,26 @@ function carbonCopySlipPdf({ auction, rows, columns, totalKeys, companyHeader, b
 
     sliceRows.forEach((r, i) => {
       if (i % 2 === 1) doc.rect(xOrigin, ry, halfW, ROW_H).fill('#F7F5F2');
-      doc.fillColor('#000').font('Helvetica').fontSize(baseFont);
+      doc.fillColor('#000').font('Helvetica');
       let cx = xOrigin;
       columns.forEach((col, ci) => {
         const w = colW[ci] - 4;
-        const txt = fitText(doc, cellText(col, r), w);
-        doc.text(txt, cx + 2, ry + 4, { width: w, align: col.align || 'right', lineBreak: false });
+        drawFittedCell('Helvetica', cellText(col, r), cx + 2, ry + 4, w, col.align || 'right');
         cx += colW[ci];
       });
-      // Horizontal row separator after every row.
-      doc.moveTo(xOrigin, ry + ROW_H).lineTo(xOrigin + halfW, ry + ROW_H)
-         .lineWidth(0.25).strokeColor('#999').stroke();
       ry += ROW_H;
     });
+
+    // Horizontal row separators — drawn AFTER all the stripe fills so the next
+    // row's grey fill can't paint over the line (which dropped every separator
+    // sitting above a striped row).
+    doc.save();
+    for (let i = 1; i <= sliceRows.length; i++) {
+      const ly = BODY_TOP + HEAD_H + i * ROW_H;
+      doc.moveTo(xOrigin, ly).lineTo(xOrigin + halfW, ly)
+         .lineWidth(0.25).strokeColor('#999').stroke();
+    }
+    doc.restore();
 
     // Vertical column separators
     let vx = xOrigin;
@@ -392,7 +424,7 @@ function carbonCopySlipPdf({ auction, rows, columns, totalKeys, companyHeader, b
     if (isLastPage && totalKeys && totalKeys.length) {
       const ty = ry + 2;
       doc.rect(xOrigin, ty, halfW, ROW_H + 2).fillAndStroke('#FFF3CD', '#E0B020');
-      doc.fillColor('#000').font('Helvetica-Bold').fontSize(baseFont);
+      doc.fillColor('#000').font('Helvetica-Bold');
       let cx = xOrigin;
       columns.forEach((col, ci) => {
         const w = colW[ci] - 4;
@@ -403,7 +435,7 @@ function carbonCopySlipPdf({ auction, rows, columns, totalKeys, companyHeader, b
           const sum = rows.reduce((s, r) => s + (Number(r[col.key]) || 0), 0);
           txt = col.fmt ? col.fmt(sum) : String(sum);
         }
-        doc.text(txt, cx + 2, ty + 5, { width: w, align: col.align || 'right', lineBreak: false });
+        drawFittedCell('Helvetica-Bold', txt, cx + 2, ty + 5, w, col.align || 'right');
         cx += colW[ci];
       });
       let vx2 = xOrigin;
@@ -468,21 +500,21 @@ async function lotBuyerPdf(db, auctionId, _cfg, extra) {
   });
 }
 
-// Lot Name — carbon-copy slip: LOT | NAME | PLACE | BAG | QTY | PRICE | CONTROL
+// Lot Name — carbon-copy slip: LOT | NAME | BAG | QTY | PRICE | CONTROL
+// (PLACE column dropped so the long seller NAME has room and isn't truncated.)
 async function lotNamePdf(db, auctionId, _cfg, extra) {
   _loadDateFormat(db);
   const auction = getAuctionHeader(db, auctionId);
   const rows = getLotCarbonRows(db, auctionId, extra && extra.state,
-    `name, sale AS place, bags AS bag, qty, price`);
+    `name, bags AS bag, qty, price`);
   rows.forEach(r => { r.control = ''; });
   const columns = [
-    { header: 'LOT',     key: 'lot',     w: 0.10, align: 'center' },
-    { header: 'NAME',    key: 'name',    w: 0.30, align: 'left' },
-    { header: 'PLACE',   key: 'place',   w: 0.12, align: 'center' },
-    { header: 'BAG',     key: 'bag',     w: 0.09, align: 'right', fmt: v => String(Number(v) || 0) },
-    { header: 'QTY',     key: 'qty',     w: 0.15, align: 'right', fmt: v => fmtQty(v) },
-    { header: 'PRICE',   key: 'price',   w: 0.12, align: 'right', fmt: v => (Number(v) ? fmtPrice(v) : '') },
-    { header: 'CONTROL', key: 'control', w: 0.12, align: 'center' },
+    { header: 'LOT',     key: 'lot',     w: 0.11, align: 'center' },
+    { header: 'NAME',    key: 'name',    w: 0.42, align: 'left' },
+    { header: 'BAG',     key: 'bag',     w: 0.10, align: 'right', fmt: v => String(Number(v) || 0) },
+    { header: 'QTY',     key: 'qty',     w: 0.16, align: 'right', fmt: v => fmtQty(v) },
+    { header: 'PRICE',   key: 'price',   w: 0.11, align: 'right', fmt: v => (Number(v) ? fmtPrice(v) : '') },
+    { header: 'CONTROL', key: 'control', w: 0.10, align: 'center' },
   ];
   return carbonCopySlipPdf({
     auction, rows, columns, totalKeys: ['bag', 'qty'],

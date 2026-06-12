@@ -13608,8 +13608,8 @@ function renderTallyPanel(fields){
     fields: pick(k => /^tally_(company_name|state_code|home_state|season|prefix|consignor_type|tally_state_code)$/.test(k)) });
 
   groups.push({ title: 'Sales / Purchase Ledgers',
-    hint: 'Cardamom + gunny ledger names for inter, intra, and export sales.',
-    fields: pick(k => /^tally_(sales|gunny|item|hsn|stock|purchase|prim_unit|sec_unit|sample|unit_rate)/.test(k)) });
+    hint: 'Cardamom + gunny ledger names for inter, intra, and export sales, plus the dealer sales/purchase ledgers.',
+    fields: pick(k => /^tally_(sales|gunny|item|hsn|stock|purchase|dealer_sale|prim_unit|sec_unit|sample|unit_rate)/.test(k)) });
 
   groups.push({ title: 'Tax Ledgers',
     hint: 'CGST / SGST / IGST / TCS / TDS output ledger names. Debit-note variants for the discount-as-DN flow.',
