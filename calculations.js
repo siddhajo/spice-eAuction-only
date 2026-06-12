@@ -548,6 +548,7 @@ function getPaymentSummary(db, auctionId, state, cfg) {
     SUM(COALESCE(l.sgst,0)) as total_sgst,
     SUM(COALESCE(l.igst,0)) as total_igst,
     SUM(l.balance) as total_payable,
+    SUM(CASE WHEN COALESCE(l.immediate_payment,0)=1 THEN l.balance ELSE 0 END) as immediate_payable,
     COUNT(*) as lot_count,
     GROUP_CONCAT(DISTINCT l.bank_id) AS bank_ids,
     COUNT(l.bank_id) AS bank_lot_count,
@@ -615,7 +616,11 @@ function getPaymentSummary(db, auctionId, state, cfg) {
       : (Number(s.total_payable) || 0);
     const isDealer = !!gstinStateCode(s.cr);
     const days = isDealer ? dealerDays : poolerDays;
-    const sellerDiscount = Math.round(netAmount / 1000 * days * discPct);
+    // Settlement discount applies ONLY to immediate-payment lots (the
+    // early-payment incentive). Base it on the net of those lots, not the
+    // seller's whole net — a seller with no immediate lots gets 0 discount.
+    const immediateNet = Number(s.immediate_payable) || 0;
+    const sellerDiscount = Math.round(immediateNet / 1000 * days * discPct);
     return {
       ...s,
       total_discount: totalDiscount,

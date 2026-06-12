@@ -8105,7 +8105,7 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   const lotIdFilter = Array.isArray(lotIds)
     ? lotIds.map(n => parseInt(n, 10)).filter(Number.isFinite)
     : [];
-  let lotSql = `SELECT lot_no, qty, price AS rate, amount, puramt, refund, com, balance, cgst, sgst, igst, cr
+  let lotSql = `SELECT lot_no, qty, price AS rate, amount, puramt, refund, com, balance, cgst, sgst, igst, cr, immediate_payment
        FROM lots WHERE auction_id = ? AND name = ? AND amount > 0`;
   const lotParams = [auctionId, sellerName];
   if (lotIdFilter.length) {
@@ -8183,7 +8183,9 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   const _isDealer   = !!gstinStateCode((lots[0] || {}).cr);
   const _days       = _isDealer ? _dealerDays : _poolerDays;
   const _netAmount  = tPay;
-  const _discount   = Math.round(_netAmount / 1000 * _days * _discPct);
+  // Discount applies ONLY to immediate-payment lots among those rendered.
+  const _immediateNet = lots.reduce((a, l) => a + (Number(l.immediate_payment) === 1 ? (Number(l.balance) || 0) : 0), 0);
+  const _discount   = Math.round(_immediateNet / 1000 * _days * _discPct);
   const _payable    = _netAmount - _discount;
   const sX = PAGE_R - 250, sLW = 150, sVW = 100;
   const sumRow = (label, val, bold) => {
@@ -8193,7 +8195,7 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
     y += bold ? 18 : 15;
   };
   sumRow('Net Amount', fmtAmt(_netAmount));
-  sumRow(`Less: Discount (${_isDealer ? 'dealer' : 'pooler'} · ${_days} days)`, '- ' + fmtAmt(_discount));
+  sumRow(`Less: Discount (immediate · ${_isDealer ? 'dealer' : 'pooler'} · ${_days} days)`, '- ' + fmtAmt(_discount));
   doc.moveTo(sX, y).lineTo(sX + sLW + sVW, y).lineWidth(0.5).stroke();
   y += 4;
   sumRow('Payable', fmtAmt(_payable), true);

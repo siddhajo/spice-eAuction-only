@@ -18818,7 +18818,7 @@ function updatePayLotsTotals() {
   const selectedIds = new Set(
     Array.from(document.querySelectorAll('.pay-lot-cb:not([disabled]):checked')).map(cb => Number(cb.dataset.id))
   );
-  let qty = 0, amt = 0, comm = 0, tax = 0, net = 0;
+  let qty = 0, amt = 0, comm = 0, tax = 0, net = 0, immNet = 0;
   for (const l of _payLotsState.lots) {
     if (!selectedIds.has(l.id)) continue;
     qty  += Number(l.pqty)    || Number(l.qty)    || 0;
@@ -18826,12 +18826,14 @@ function updatePayLotsTotals() {
     comm += Number(l.com)     || 0;
     tax  += (Number(l.cgst)||0) + (Number(l.sgst)||0) + (Number(l.igst)||0);
     net  += Number(l.balance) || 0;   // per-lot balance = Net Amount
+    if (Number(l.immediate_payment) === 1) immNet += Number(l.balance) || 0;
   }
-  // Days-based settlement discount on the SELECTED total net amount (single
-  // rounding). Pooler vs dealer days inferred from the seller's cr.
+  // Days-based settlement discount — applies ONLY to the selected lots that
+  // are flagged immediate (single rounding on their combined net). Pooler vs
+  // dealer days inferred from the seller's cr.
   const isDealer = _crIsDealer((_payLotsState.lots[0] || {}).cr);
   const days = isDealer ? _rateNum('dealer_days') : _rateNum('discount_days');
-  const discount = Math.round(net / 1000 * days * _rateNum('discount_pct'));
+  const discount = Math.round(immNet / 1000 * days * _rateNum('discount_pct'));
   const payable = net - discount;
   const n = selectedIds.size;
   const totalN = document.querySelectorAll('.pay-lot-cb:not([disabled])').length;
@@ -18844,7 +18846,7 @@ function updatePayLotsTotals() {
       <div>Commission: <strong style="color:#B45309">₹${fmtI(comm, 2)}</strong></div>
       <div>GST: <strong style="color:#0891B2">₹${fmtI(tax, 2)}</strong></div>
       <div>Net: <strong>₹${fmtI(net, 2)}</strong></div>
-      <div>Discount${days ? ` <span style="color:var(--text3);font-weight:400">(${isDealer ? 'dealer' : 'pooler'} · ${days}d)</span>` : ''}: <strong style="color:#9333EA">₹${fmtI(discount, 2)}</strong></div>
+      <div>Discount${days ? ` <span style="color:var(--text3);font-weight:400">(immediate · ${isDealer ? 'dealer' : 'pooler'} · ${days}d)</span>` : ''}: <strong style="color:#9333EA">₹${fmtI(discount, 2)}</strong></div>
       <div style="margin-left:auto;font-size:14px">Payable now: <strong style="color:var(--spice-cardamom-dk)">₹${fmtI(payable, 2)}</strong></div>
     </div>`;
   const btn = document.getElementById('pay-lots-print-btn');
