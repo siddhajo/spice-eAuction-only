@@ -6633,14 +6633,17 @@ async function applyBranding(){
   try { b = await fetch(B + '/api/branding').then(r => r.ok ? r.json() : null); } catch(_) {}
   b = b || {};
   const name = (b.tradeName || b.shortName || '').trim();
+  // Topbar uses the SHORT name (compact header); the login hero + page
+  // title keep the full trade name. Falls back to the trade name when no
+  // short name is configured.
+  const shortName = (b.shortName || b.tradeName || '').trim();
   const sub  = [b.branch, b.gstin && ('GSTIN: ' + b.gstin)].filter(Boolean).join(' · ');
   const setText = (id, val) => { const el = document.getElementById(id); if (el && val) el.textContent = val; };
   if (name) {
-    // Topbar + page title use the trade name; the login card keeps its
-    // own static "Sign in to your account" headline, so we deliberately
-    // do NOT overwrite #login-brand-name with the trade name (it makes
-    // the form heading look like a generic banner).
-    setText('topbar-brand-name', name);
+    // Topbar shows the short name; the login card keeps its own static
+    // "Sign in to your account" headline, so we deliberately do NOT
+    // overwrite #login-brand-name (it makes the form heading look generic).
+    setText('topbar-brand-name', shortName || name);
     setText('login-hero-name', name);
     document.title = `${name} — Admin`;
   }
@@ -8868,11 +8871,10 @@ function applyLogoBadge(){
   const img   = document.getElementById('topbar-logo-img');
   const code = getCurrentLogoCode();
 
-  // Pill text: "ISP" / "ASP"
-  if(badge){
-    if(!code){badge.style.display='none'}
-    else{badge.textContent = code; badge.style.display = 'inline-block'}
-  }
+  // Logo-code pill (e.g. "IMCPC") removed from the topbar — keep it
+  // permanently hidden. The active-company image (topbar dot) below is
+  // unaffected.
+  if(badge){ badge.textContent = ''; badge.style.display = 'none'; }
 
   // Topbar dot image: single-company build always uses logo-ispl.png.
   // The Logo Code is a free-text identifier shown in the badge text;
