@@ -295,6 +295,34 @@ function fitText(doc, text, maxWidth) {
 //   metaLines   — array of strings shown right-aligned (e.g. ["e-TRADE No: 3", "Date: 15/04/2026"])
 //   showAddress — whether to show the address (default true; false on narrow halves)
 //   logoH       — explicit logo height. Defaults to fit the company-text block.
+// Greedily wrap `text` into at most `maxLines` lines that each fit `maxW` at
+// the current font. The final line is ellipsized (via fitText) only if the
+// whole name genuinely cannot fit in `maxLines`. A name that already fits on
+// one line returns a single-element array unchanged — so the common case is
+// untouched.
+function wrapNameLines(doc, text, maxW, maxLines) {
+  const words = String(text || '').split(/\s+/).filter(Boolean);
+  if (!words.length) return [''];
+  const lines = [];
+  let cur = words[0];
+  for (let i = 1; i < words.length; i++) {
+    const trial = cur + ' ' + words[i];
+    if (doc.widthOfString(trial) <= maxW) {
+      cur = trial;
+    } else if (lines.length < maxLines - 1) {
+      lines.push(cur);
+      cur = words[i];
+    } else {
+      // No more lines available — keep appending; the overflow is trimmed by
+      // the fitText ellipsis below.
+      cur = trial;
+    }
+  }
+  lines.push(cur);
+  lines[lines.length - 1] = fitText(doc, lines[lines.length - 1], maxW);
+  return lines;
+}
+
 function drawCompanyHeader(doc, header, opts) {
   const { x, y, width } = opts;
   const showAddress = opts.showAddress !== false;
@@ -314,7 +342,7 @@ function drawCompanyHeader(doc, header, opts) {
   const addressLineCount = showAddress
     ? (header.address1 ? 1 : 0) + (header.address2 ? 1 : 0)
     : 0;
-  const textBlockH = NAME_LINE_H + addressLineCount * ADDR_LINE_H;
+  let textBlockH = NAME_LINE_H + addressLineCount * ADDR_LINE_H;
 
   // Logo sized to match the text block height (so they sit flush together).
   // Caller can override with opts.logoH for special cases (carbon-copy halves).
@@ -388,16 +416,31 @@ function drawCompanyHeader(doc, header, opts) {
     nameSize -= 0.5;
     doc.fontSize(nameSize);
   }
-  doc.fillColor('#000')
-     .text(fitText(doc, nameText, textW - 2), textX, startY, {
-       width: textW, align: 'left', lineBreak: false,
-     });
+  // If the name STILL overflows at the font floor, wrap it onto a second line
+  // rather than ellipsizing — on narrow carbon-copy halves a long company name
+  // such as "IDUKKI MAHILA CARDAMOM PRODUCER COMPANY LIMITED" was getting cut
+  // to "...COMPANY LIM…", hiding the legal entity type. Names that already fit
+  // on one line are unaffected (single-element array, same height as before).
+  const nameLines = (doc.widthOfString(nameText) > textW - 2)
+    ? wrapNameLines(doc, nameText, textW - 2, 2)
+    : [fitText(doc, nameText, textW - 2)];
+  doc.fillColor('#000');
+  nameLines.forEach((ln, li) => {
+    doc.text(ln, textX, startY + li * NAME_LINE_H, {
+      width: textW, align: 'left', lineBreak: false,
+    });
+  });
+  const nameBlockH = nameLines.length * NAME_LINE_H;
+  // Grow the text block (and therefore the band height returned to the caller)
+  // when the name spilled onto a second line, so the next section doesn't draw
+  // over it.
+  textBlockH = nameBlockH + addressLineCount * ADDR_LINE_H;
 
   // Address lines beneath the name, in the same left column. Use fitText to
   // ellipsize lines that exceed the column width — PDFKit's `lineBreak: false`
   // is unreliable with long single-token strings.
   if (showAddress) {
-    let aY = startY + NAME_LINE_H;
+    let aY = startY + nameBlockH;
     doc.font('Helvetica').fontSize(ADDR_FONT).fillColor('#444');
     if (header.address1) {
       doc.text(fitText(doc, header.address1, textW - 2), textX, aY, {

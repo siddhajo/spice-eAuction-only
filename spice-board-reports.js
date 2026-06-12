@@ -1470,6 +1470,10 @@ async function formCPdf(db, opts) {
     y = top + rowH;
     doc.moveTo(m, top).lineTo(m, y).moveTo(m + usableW, top).lineTo(m + usableW, y)
        .lineWidth(0.5).strokeColor('#000').stroke();
+    // Full-width horizontal separator after every data row, so the listing
+    // reads as a proper ruled grid (previously only the left/right borders and
+    // column separators were drawn, leaving rows visually unseparated).
+    doc.moveTo(m, y).lineTo(m + usableW, y).lineWidth(0.4).strokeColor('#000').stroke();
     drawColSeparators(top, y);
   }
 

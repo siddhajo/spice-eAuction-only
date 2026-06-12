@@ -8556,13 +8556,17 @@ app.get('/api/dbf-exports/:type', requireExport, async (req, res) => {
   const def = DBF_EXPORTS[type];
   if (!def) return res.status(400).json({ error: 'Unknown DBF export type', available: Object.keys(DBF_EXPORTS) });
 
+  // Every transaction module can also be exported as .xlsx (same columns as the
+  // DBF, machine-readable spreadsheet). `?format=xlsx` switches the output.
+  const format = (req.query.format || 'dbf').toLowerCase();
+
   try {
     const db = getDb();
     const { auctionId, ano: anoParam, from, to } = req.query;
     let buffer, fnameSuffix = '';
 
     if (def.auctionWise || def.dateWise) {
-      const filters = {};
+      const filters = { format };
       // Trade-wise: keep the exact auction id (used by the lots export for an
       // exact match) AND resolve its ano (used by invoice/purchase/bill/
       // debit-note modules, which are keyed on ano).
@@ -8579,13 +8583,17 @@ app.get('/api/dbf-exports/:type', requireExport, async (req, res) => {
       if (tradeAno) fnameSuffix = `_${String(tradeAno).replace(/[\/\\:*?"<>|]+/g, '-')}`;
       else if (from && to) fnameSuffix = `_${from}_to_${to}`;
     } else {
-      buffer = await def.fn(db);
+      buffer = await def.fn(db, { format });
     }
 
-    const filename = `${def.name}${fnameSuffix}.dbf`;
-    res.setHeader('Content-Type', 'application/x-dbase');
+    const ext = format === 'xlsx' ? 'xlsx' : 'dbf';
+    const contentType = format === 'xlsx'
+      ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      : 'application/x-dbase';
+    const filename = `${def.name}${fnameSuffix}.${ext}`;
+    res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(buffer);
+    res.send(Buffer.from(buffer));
   } catch(e) {
     console.error('DBF export error:', e);
     res.status(500).json({ error: 'DBF export failed: ' + e.message });

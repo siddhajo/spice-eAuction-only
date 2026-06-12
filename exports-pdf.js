@@ -858,6 +858,12 @@ async function exportPdf(db, type, auctionId, cfg, extra = {}) {
   if (type === 'lot_slip') {
     return auctionReports.lotSlipPdf(db, auctionId, cfg, extra);
   }
+  if (type === 'lot_buyer') {
+    return auctionReports.lotBuyerPdf(db, auctionId, cfg, extra);
+  }
+  if (type === 'lot_name') {
+    return auctionReports.lotNamePdf(db, auctionId, cfg, extra);
+  }
   if (type === 'collection') {
     return auctionReports.collectionPdf(db, auctionId);
   }

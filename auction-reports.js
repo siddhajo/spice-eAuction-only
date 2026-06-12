@@ -294,6 +294,203 @@ async function lotSlipPdf(db, auctionId, _cfg, extra) {
 }
 
 // ════════════════════════════════════════════════════════════
+// REPORT 1b/1c — LOT BUYER / LOT NAME (PDF carbon-copy)
+// ════════════════════════════════════════════════════════════
+//
+// Same tear-down-the-middle carbon-copy layout as the lot slip, but with the
+// buyer / seller-name column sets. `carbonCopySlipPdf` generalizes the lot-slip
+// machinery (two identical halves, ruled rows, per-row separators, dashed cut
+// line, grand-total strip) so all three slips share one tested renderer.
+//
+// `columns` is [{ header, key, w, align, fmt }] where `w` is a relative weight
+// (the last column absorbs the rounding remainder so each row spans exactly
+// halfW). `totalKeys` lists the numeric keys summed into the grand-total strip.
+function carbonCopySlipPdf({ auction, rows, columns, totalKeys, companyHeader, baseFont }) {
+  baseFont = baseFont || 9;
+  const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 18 });
+  const buffers = [];
+  doc.on('data', b => buffers.push(b));
+
+  const m = 18;
+  const gutter = 40;
+  const pageW = doc.page.width;
+  const pageH = doc.page.height;
+  const halfW = (pageW - m * 2 - gutter) / 2;
+
+  // Column widths from relative weights; the last column takes the remainder so
+  // the row always spans exactly halfW.
+  const totalWeight = columns.reduce((s, c) => s + (c.w || 1), 0);
+  const colW = columns.map(c => Math.floor(halfW * ((c.w || 1) / totalWeight)));
+  colW[colW.length - 1] = halfW - colW.slice(0, -1).reduce((s, v) => s + v, 0);
+
+  const ROW_H = 16;
+  const HEAD_H = 18;
+  const TOP_H = 50;
+  const BODY_TOP = m + TOP_H;
+  const BODY_MAX_Y = pageH - m - 8;
+  const ROWS_PER_HALF = Math.floor((BODY_MAX_Y - BODY_TOP - HEAD_H) / ROW_H);
+  const totalPages = Math.max(1, Math.ceil(rows.length / ROWS_PER_HALF));
+
+  function cellText(col, r) {
+    if (col.fmt) return col.fmt(r[col.key], r);
+    const v = r[col.key];
+    return v == null ? '' : String(v);
+  }
+
+  function drawHalfHeader(xOrigin, page) {
+    // Compact company brand band (small logo, no address — too narrow).
+    const afterY = drawCompanyHeader(doc, companyHeader, {
+      x: xOrigin, y: m, width: halfW,
+      logoH: 22, logoW: 22, showAddress: false,
+    });
+    doc.font('Helvetica').fontSize(8)
+       .text(`Page: ${page}`, xOrigin, afterY, { width: halfW, align: 'right' });
+    doc.font('Helvetica-Bold').fontSize(9)
+       .text(`e-AUCTION No:${auction.ano}`, xOrigin, afterY + 12, { width: halfW / 2, align: 'left' });
+    doc.text(`Date:${fmtDateDMY(auction.date)}`, xOrigin + halfW / 2, afterY + 12, { width: halfW / 2, align: 'right' });
+
+    const hy = BODY_TOP;
+    doc.rect(xOrigin, hy, halfW, HEAD_H).fillAndStroke('#E8E4DD', '#444');
+    doc.fillColor('#000').font('Helvetica-Bold').fontSize(8);
+    let cx = xOrigin;
+    columns.forEach((col, i) => {
+      doc.text(col.header, cx + 2, hy + 5, { width: colW[i] - 4, align: 'center', lineBreak: false, ellipsis: true });
+      cx += colW[i];
+    });
+  }
+
+  function drawHalfRows(xOrigin, sliceRows, isLastPage) {
+    let ry = BODY_TOP + HEAD_H;
+    const tblTop = BODY_TOP;
+
+    sliceRows.forEach((r, i) => {
+      if (i % 2 === 1) doc.rect(xOrigin, ry, halfW, ROW_H).fill('#F7F5F2');
+      doc.fillColor('#000').font('Helvetica').fontSize(baseFont);
+      let cx = xOrigin;
+      columns.forEach((col, ci) => {
+        const w = colW[ci] - 4;
+        const txt = fitText(doc, cellText(col, r), w);
+        doc.text(txt, cx + 2, ry + 4, { width: w, align: col.align || 'right', lineBreak: false });
+        cx += colW[ci];
+      });
+      // Horizontal row separator after every row.
+      doc.moveTo(xOrigin, ry + ROW_H).lineTo(xOrigin + halfW, ry + ROW_H)
+         .lineWidth(0.25).strokeColor('#999').stroke();
+      ry += ROW_H;
+    });
+
+    // Vertical column separators
+    let vx = xOrigin;
+    for (let ci = 0; ci < colW.length - 1; ci++) {
+      vx += colW[ci];
+      doc.moveTo(vx, tblTop).lineTo(vx, ry).lineWidth(0.25).strokeColor('#888').stroke();
+    }
+    // Outer table border
+    doc.rect(xOrigin, tblTop, halfW, ry - tblTop).lineWidth(0.5).strokeColor('#444').stroke();
+
+    // Grand total on the last page
+    if (isLastPage && totalKeys && totalKeys.length) {
+      const ty = ry + 2;
+      doc.rect(xOrigin, ty, halfW, ROW_H + 2).fillAndStroke('#FFF3CD', '#E0B020');
+      doc.fillColor('#000').font('Helvetica-Bold').fontSize(baseFont);
+      let cx = xOrigin;
+      columns.forEach((col, ci) => {
+        const w = colW[ci] - 4;
+        let txt = '';
+        if (ci === 0) {
+          txt = 'Total';
+        } else if (totalKeys.includes(col.key)) {
+          const sum = rows.reduce((s, r) => s + (Number(r[col.key]) || 0), 0);
+          txt = col.fmt ? col.fmt(sum) : String(sum);
+        }
+        doc.text(txt, cx + 2, ty + 5, { width: w, align: col.align || 'right', lineBreak: false });
+        cx += colW[ci];
+      });
+      let vx2 = xOrigin;
+      for (let ci = 0; ci < colW.length - 1; ci++) {
+        vx2 += colW[ci];
+        doc.moveTo(vx2, ty).lineTo(vx2, ty + ROW_H + 2).lineWidth(0.25).strokeColor('#E0B020').stroke();
+      }
+    }
+  }
+
+  for (let i = 0; i < totalPages; i++) {
+    if (i > 0) doc.addPage();
+    const slice = rows.slice(i * ROWS_PER_HALF, (i + 1) * ROWS_PER_HALF);
+    const isLast = (i === totalPages - 1);
+    drawHalfHeader(m, i + 1);
+    drawHalfRows(m, slice, isLast);
+    drawHalfHeader(m + halfW + gutter, i + 1);
+    drawHalfRows(m + halfW + gutter, slice, isLast);
+
+    // Dashed cut-line down the gutter — tear the page into two copies.
+    const cutX = m + halfW + gutter / 2;
+    doc.save();
+    doc.dash(3, { space: 3 });
+    doc.moveTo(cutX, m).lineTo(cutX, pageH - m).lineWidth(0.5).strokeColor('#888').stroke();
+    doc.undash();
+    doc.restore();
+    doc.font('Helvetica').fontSize(10).fillColor('#888')
+       .text('✂', cutX - 4, m - 12, { lineBreak: false });
+  }
+
+  return new Promise(resolve => {
+    doc.on('end', () => resolve(Buffer.concat(buffers)));
+    doc.end();
+  });
+}
+
+function getLotCarbonRows(db, auctionId, state, extraCols) {
+  const where = state ? 'AND state = ?' : '';
+  const params = state ? [auctionId, state] : [auctionId];
+  return db.all(
+    `SELECT lot_no AS lot, ${extraCols}
+       FROM lots WHERE auction_id = ? ${where}
+       ORDER BY CAST(lot_no AS INTEGER), lot_no`, params);
+}
+
+// Lot Buyer — carbon-copy slip: LOT | BUYER | PLACE | BAG | QTY
+async function lotBuyerPdf(db, auctionId, _cfg, extra) {
+  _loadDateFormat(db);
+  const auction = getAuctionHeader(db, auctionId);
+  const rows = getLotCarbonRows(db, auctionId, extra && extra.state,
+    `COALESCE(NULLIF(buyer1,''), buyer) AS buyer, sale AS place, bags AS bag, qty`);
+  const columns = [
+    { header: 'LOT',   key: 'lot',   w: 0.14, align: 'center' },
+    { header: 'BUYER', key: 'buyer', w: 0.40, align: 'left' },
+    { header: 'PLACE', key: 'place', w: 0.12, align: 'center' },
+    { header: 'BAG',   key: 'bag',   w: 0.12, align: 'right', fmt: v => String(Number(v) || 0) },
+    { header: 'QTY',   key: 'qty',   w: 0.22, align: 'right', fmt: v => fmtQty(v) },
+  ];
+  return carbonCopySlipPdf({
+    auction, rows, columns, totalKeys: ['bag', 'qty'],
+    companyHeader: getCompanyHeader(db), baseFont: 8,
+  });
+}
+
+// Lot Name — carbon-copy slip: LOT | NAME | PLACE | BAG | QTY | PRICE | CONTROL
+async function lotNamePdf(db, auctionId, _cfg, extra) {
+  _loadDateFormat(db);
+  const auction = getAuctionHeader(db, auctionId);
+  const rows = getLotCarbonRows(db, auctionId, extra && extra.state,
+    `name, sale AS place, bags AS bag, qty, price`);
+  rows.forEach(r => { r.control = ''; });
+  const columns = [
+    { header: 'LOT',     key: 'lot',     w: 0.10, align: 'center' },
+    { header: 'NAME',    key: 'name',    w: 0.30, align: 'left' },
+    { header: 'PLACE',   key: 'place',   w: 0.12, align: 'center' },
+    { header: 'BAG',     key: 'bag',     w: 0.09, align: 'right', fmt: v => String(Number(v) || 0) },
+    { header: 'QTY',     key: 'qty',     w: 0.15, align: 'right', fmt: v => fmtQty(v) },
+    { header: 'PRICE',   key: 'price',   w: 0.12, align: 'right', fmt: v => (Number(v) ? fmtPrice(v) : '') },
+    { header: 'CONTROL', key: 'control', w: 0.12, align: 'center' },
+  ];
+  return carbonCopySlipPdf({
+    auction, rows, columns, totalKeys: ['bag', 'qty'],
+    companyHeader: getCompanyHeader(db), baseFont: 7.5,
+  });
+}
+
+// ════════════════════════════════════════════════════════════
 // REPORT 2 — COLLECTION (XLSX + PDF, invoice register)
 // ════════════════════════════════════════════════════════════
 //
@@ -1317,6 +1514,9 @@ async function tradeReportPdf(db, auctionId, opts) {
 module.exports = {
   // Lot slip — PDF only (XLSX stays in exports.js)
   lotSlipPdf,
+  // Lot buyer / lot name — carbon-copy PDF (XLSX stays in exports.js)
+  lotBuyerPdf,
+  lotNamePdf,
   // Collection — both formats
   collectionXlsx,
   collectionPdf,

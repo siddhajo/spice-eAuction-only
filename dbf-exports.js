@@ -18,6 +18,7 @@
  */
 
 const { DBFFile } = require('dbffile');
+const ExcelJS = require('exceljs');
 const path = require('path');
 const fs = require('fs');
 
@@ -63,6 +64,50 @@ async function writeDbfBuffer(fields, records) {
     // Cleanup temp file
     try { fs.unlinkSync(tmpFile); } catch(e) {}
   }
+}
+
+/**
+ * Render the SAME field/record set the DBF writer uses into an .xlsx buffer.
+ * The DBF `fields` array is the single source of truth, so the spreadsheet
+ * columns always match the DBF columns one-for-one (no drift). Character
+ * fields stay text (preserving leading zeros on LOT / GRADE / PIN etc.);
+ * numeric fields carry the matching Indian-style number format.
+ */
+async function writeXlsxBuffer(sheetName, fields, records) {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet(sheetName || 'Sheet1');
+  ws.columns = fields.map(f => {
+    const numeric = f.type === 'N';
+    const numFmt = f.decimalPlaces === 3 ? '#,##0.000'
+      : f.decimalPlaces === 0 ? '#,##0'
+      : '#,##0.00';
+    return {
+      header: f.name,
+      key: f.name,
+      width: Math.min(40, Math.max(8, (f.size || 10) + 2)),
+      style: numeric
+        ? { numFmt, alignment: { horizontal: 'right' } }
+        : { alignment: { horizontal: 'left' } },
+    };
+  });
+  const head = ws.getRow(1);
+  head.font = { bold: true };
+  head.alignment = { horizontal: 'center' };
+  records.forEach(rec => ws.addRow(rec));
+  ws.views = [{ state: 'frozen', ySplit: 1 }];
+  if (fields.length) {
+    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: fields.length } };
+  }
+  return wb.xlsx.writeBuffer();
+}
+
+// Emit the prepared field/record set in the requested format. `filters.format`
+// of 'xlsx' produces a spreadsheet; anything else (the default) produces DBF.
+function emit(format, sheetName, fields, records) {
+  if (String(format || 'dbf').toLowerCase() === 'xlsx') {
+    return writeXlsxBuffer(sheetName, fields, records);
+  }
+  return writeDbfBuffer(fields, records);
 }
 
 // ── LOTS (CPA1.DBF structure) ─────────────────────────────────
@@ -162,7 +207,7 @@ async function exportLotsDbf(db, filters = {}) {
     BALANCE: num(r.balance, 2),
   }));
 
-  return writeDbfBuffer(fields, records);
+  return emit(filters.format, 'CPA1', fields, records);
 }
 
 // ── SALES INVOICES (INV.DBF structure) ────────────────────────
@@ -222,7 +267,7 @@ async function exportInvoicesDbf(db, filters = {}) {
     TOT: num(r.tot, 2),
   }));
 
-  return writeDbfBuffer(fields, records);
+  return emit(filters.format, 'INV', fields, records);
 }
 
 // ── PURCHASES (PURCHASE.DBF structure) ────────────────────────
@@ -274,7 +319,7 @@ async function exportPurchasesDbf(db, filters = {}) {
     TDS: num(r.tds, 2),
   }));
 
-  return writeDbfBuffer(fields, records);
+  return emit(filters.format, 'PURCHASE', fields, records);
 }
 
 // ── BILLS of SUPPLY (BILL.DBF structure) ──────────────────────
@@ -326,7 +371,7 @@ async function exportBillsDbf(db, filters = {}) {
     NET: num(r.net, 2),
   }));
 
-  return writeDbfBuffer(fields, records);
+  return emit(filters.format, 'BILL', fields, records);
 }
 
 // ── TRADERS / SELLERS (NAM.DBF structure) ─────────────────────
@@ -442,7 +487,7 @@ async function exportDebitNotesDbf(db, filters = {}) {
     TOTAL: num(r.total, 2),
   }));
 
-  return writeDbfBuffer(fields, records);
+  return emit(filters.format, 'DEBIT', fields, records);
 }
 
 // ── Registry for easy routing ─────────────────────────────────

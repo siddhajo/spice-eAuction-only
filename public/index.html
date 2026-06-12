@@ -3996,18 +3996,18 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <span style="font-weight:400;font-size:12px;color:var(--text3);margin-left:8px">FoxPro-compatible format for legacy integration</span>
           </h3>
           <div class="tally-section-body">
-            <p style="font-size:12px;color:var(--text2);margin:12px 0">These exports produce .dbf files that your dad's FoxPro application can read directly. Date format: DD/MM/YYYY. Lot numbers preserve leading zeros.</p>
+            <p style="font-size:12px;color:var(--text2);margin:12px 0">Each transaction module exports as <b>.dbf</b> (for the FoxPro application — date format DD/MM/YYYY, lot numbers keep leading zeros) or as <b>.xlsx</b> (same columns, opens in Excel).</p>
 
             <h3 style="font-size:13px;margin:16px 0 8px 0;color:var(--spice)">Trade-wise</h3>
             <div style="display:flex;gap:8px;align-items:end;margin-bottom:10px;flex-wrap:wrap">
               <div class="fg" style="margin:0;flex:1;min-width:200px"><label>Auction / Trade</label><select id="dbf-auction" style="padding:8px;border:1px solid var(--border);border-radius:6px;width:100%"></select></div>
             </div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:6px">
-              <button class="btn btn-a" onclick="downloadDbfTrade('lots')">Lots (CPA1.DBF)</button>
-              <button class="btn btn-a" onclick="downloadDbfTrade('invoices')">Sales Invoices (INV.DBF)</button>
-              <button class="btn btn-a" onclick="downloadDbfTrade('purchases')">Purchases (PURCHASE.DBF)</button>
-              <button class="btn btn-a" onclick="downloadDbfTrade('bills')">Bills of Supply (BILL.DBF)</button>
-              <button class="btn btn-a" onclick="downloadDbfTrade('debit_notes')">Debit Notes</button>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;margin-bottom:6px">
+              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Lots (CPA1)</span><button class="btn btn-a" onclick="downloadDbfTrade('lots','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfTrade('lots','xlsx')">.xlsx</button></div>
+              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Sales Invoices (INV)</span><button class="btn btn-a" onclick="downloadDbfTrade('invoices','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfTrade('invoices','xlsx')">.xlsx</button></div>
+              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Purchases (PURCHASE)</span><button class="btn btn-a" onclick="downloadDbfTrade('purchases','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfTrade('purchases','xlsx')">.xlsx</button></div>
+              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Bills of Supply (BILL)</span><button class="btn btn-a" onclick="downloadDbfTrade('bills','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfTrade('bills','xlsx')">.xlsx</button></div>
+              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Debit Notes</span><button class="btn btn-a" onclick="downloadDbfTrade('debit_notes','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfTrade('debit_notes','xlsx')">.xlsx</button></div>
             </div>
 
             <h3 style="font-size:13px;margin:16px 0 8px 0;color:var(--spice)">Date-wise</h3>
@@ -4015,12 +4015,12 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
               <div class="fg" style="margin:0"><label>From</label><input type="date" id="dbf-from"></div>
               <div class="fg" style="margin:0"><label>To</label><input type="date" id="dbf-to"></div>
             </div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">
-              <button class="btn btn-a" onclick="downloadDbfRange('lots')">Lots (CPA1.DBF)</button>
-              <button class="btn btn-a" onclick="downloadDbfRange('invoices')">Sales Invoices (INV.DBF)</button>
-              <button class="btn btn-a" onclick="downloadDbfRange('purchases')">Purchases (PURCHASE.DBF)</button>
-              <button class="btn btn-a" onclick="downloadDbfRange('bills')">Bills of Supply (BILL.DBF)</button>
-              <button class="btn btn-a" onclick="downloadDbfRange('debit_notes')">Debit Notes</button>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px">
+              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Lots (CPA1)</span><button class="btn btn-a" onclick="downloadDbfRange('lots','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfRange('lots','xlsx')">.xlsx</button></div>
+              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Sales Invoices (INV)</span><button class="btn btn-a" onclick="downloadDbfRange('invoices','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfRange('invoices','xlsx')">.xlsx</button></div>
+              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Purchases (PURCHASE)</span><button class="btn btn-a" onclick="downloadDbfRange('purchases','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfRange('purchases','xlsx')">.xlsx</button></div>
+              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Bills of Supply (BILL)</span><button class="btn btn-a" onclick="downloadDbfRange('bills','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfRange('bills','xlsx')">.xlsx</button></div>
+              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Debit Notes</span><button class="btn btn-a" onclick="downloadDbfRange('debit_notes','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfRange('debit_notes','xlsx')">.xlsx</button></div>
             </div>
 
             <h3 style="font-size:13px;margin:16px 0 8px 0;color:var(--spice)">Master Data</h3>
@@ -15844,19 +15844,22 @@ async function downloadDbf(type, extraParams={}){
   }catch(e){showError(e)}
 }
 
-async function downloadDbfRange(type){
+async function downloadDbfRange(type,format){
   const from=document.getElementById('dbf-from').value;
   const to=document.getElementById('dbf-to').value;
   if(!from||!to){alert('Select From and To dates');return}
-  await downloadDbf(type,{from,to});
+  const p={from,to};if(format)p.format=format;
+  await downloadDbf(type,p);
 }
 
 // Trade/auction-wise DBF export — reads the selected auction and exports
-// just that trade's rows for the chosen module.
-async function downloadDbfTrade(type){
+// just that trade's rows for the chosen module. `format` ('dbf' default, or
+// 'xlsx') picks the output file type.
+async function downloadDbfTrade(type,format){
   const auctionId=document.getElementById('dbf-auction').value;
   if(!auctionId){alert('Select an auction / trade');return}
-  await downloadDbf(type,{auctionId});
+  const p={auctionId};if(format)p.format=format;
+  await downloadDbf(type,p);
 }
 
 // Master-data (Sellers / Buyers) export in either .xlsx or .dbf.
@@ -17092,36 +17095,6 @@ async function revertAllInvoices(){
 // or PDF-type frames), fall back to opening the PDF in a new tab and ask
 // the user to press Ctrl+P.
 async function triggerBrowserPrint(blob, fallbackName) {
-  // ── DIAGNOSTIC MODE ────────────────────────────────────────────────
-  let diagPanel = document.getElementById('print-diag-panel');
-  if (!diagPanel) {
-    diagPanel = document.createElement('div');
-    diagPanel.id = 'print-diag-panel';
-    diagPanel.style.cssText = 'position:fixed;top:80px;right:20px;width:320px;max-height:60vh;overflow-y:auto;background:#1a1a1a;color:#0f0;font-family:monospace;font-size:11px;padding:12px;border-radius:6px;z-index:10000;box-shadow:0 4px 16px rgba(0,0,0,0.4)';
-    diagPanel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #444;padding-bottom:6px;margin-bottom:6px">
-        <strong style="color:#fff">Print Diagnostics</strong>
-        <span onclick="document.getElementById('print-diag-panel').remove()" style="cursor:pointer;color:#888;font-weight:bold">×</span>
-      </div>
-      <button onclick="document.querySelectorAll('#busy-overlay, .busy-overlay').forEach(n=>n.remove())" style="margin-bottom:8px;padding:4px 8px;background:#cc4444;color:#fff;border:0;border-radius:3px;cursor:pointer;font-size:11px;width:100%">Force-clear stuck overlay</button>
-      <div id="print-diag-log"></div>`;
-    document.body.appendChild(diagPanel);
-    setTimeout(() => { if (diagPanel.parentNode) diagPanel.remove(); }, 60000);
-  }
-  const diagLog = diagPanel.querySelector('#print-diag-log');
-  const diag = (msg, level = 'info') => {
-    const ts = new Date().toLocaleTimeString('en-GB');
-    const color = level === 'err' ? '#f66' : level === 'warn' ? '#ffaa00' : '#0f0';
-    const line = document.createElement('div');
-    line.style.cssText = `color:${color};margin:2px 0`;
-    line.textContent = `[${ts}] ${msg}`;
-    diagLog.appendChild(line);
-    diagLog.scrollTop = diagLog.scrollHeight;
-    console.log('[print-diag]', msg);
-  };
-
-  diag(`Step 1: blob received (${Math.round(blob.size / 1024)} KB)`);
-
   // Strategy: open the PDF blob URL DIRECTLY in a new tab.
   // Chrome/Edge load it in their built-in PDF viewer which has a Print
   // button in the toolbar (top-right corner). User clicks it OR Ctrl+P.
@@ -17132,19 +17105,14 @@ async function triggerBrowserPrint(blob, fallbackName) {
   // a blob PDF inside a blob HTML page. Direct blob navigation is the
   // only approach that works reliably across ngrok tunnels.
   const url = URL.createObjectURL(blob);
-  diag('Step 2: blob URL created');
 
   const w = window.open(url, '_blank');
   if (!w || w.closed) {
-    diag('Popup blocked — falling back to download', 'err');
+    // Popup blocked — fall back to a direct download the user can print.
     const a = document.createElement('a');
     a.href = url;
     a.download = fallbackName || 'document.pdf';
     a.click();
-    diag('PDF downloaded — open from Downloads, press Ctrl+P', 'warn');
-  } else {
-    diag('Step 3: PDF opened in new tab', 'info');
-    diag('Click Print icon in PDF viewer toolbar OR press Ctrl+P', 'warn');
   }
 
   // Defensive: ensure no stuck overlay survives this print step. If an
