@@ -8187,15 +8187,17 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   const _immediateNet = lots.reduce((a, l) => a + (Number(l.immediate_payment) === 1 ? (Number(l.balance) || 0) : 0), 0);
   const _discount   = Math.round(_immediateNet / 1000 * _days * _discPct);
   const _payable    = _netAmount - _discount;
-  const sX = PAGE_R - 250, sLW = 150, sVW = 100;
+  // Wide label column + lineBreak:false so the discount caption stays on one
+  // line (it was wrapping and overprinting the Payable row).
+  const sVW = 95, sLW = 250, sX = PAGE_R - (sLW + sVW);
   const sumRow = (label, val, bold) => {
-    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(bold ? 11 : 10);
-    doc.text(label, sX, y, { width: sLW, align: 'right' });
-    doc.text(val,   sX + sLW, y, { width: sVW, align: 'right' });
+    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(bold ? 11 : 9.5);
+    doc.text(label, sX, y, { width: sLW, align: 'right', lineBreak: false });
+    doc.text(val,   sX + sLW, y, { width: sVW, align: 'right', lineBreak: false });
     y += bold ? 18 : 15;
   };
   sumRow('Net Amount', fmtAmt(_netAmount));
-  sumRow(`Less: Discount (immediate · ${_isDealer ? 'dealer' : 'pooler'} · ${_days} days)`, '- ' + fmtAmt(_discount));
+  sumRow(`Less: Discount (immediate · ${_isDealer ? 'dealer' : 'pooler'} · ${_days}d)`, '- ' + fmtAmt(_discount));
   doc.moveTo(sX, y).lineTo(sX + sLW + sVW, y).lineWidth(0.5).stroke();
   y += 4;
   sumRow('Payable', fmtAmt(_payable), true);

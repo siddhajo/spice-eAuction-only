@@ -18795,7 +18795,10 @@ function togglePayLotSelectAll(checked) {
 // Read a numeric setting (e.g. discount_pct / discount_days / dealer_days)
 // from the in-memory settings store, scanning all categories.
 function _rateNum(key) {
-  const cats = window._sdata || {};
+  // Settings live in the lexically-scoped `_sdata` (a top-level `let`), which
+  // is NOT a property of window — reading window._sdata returned undefined and
+  // forced every rate to 0, so the modal discount always came out 0.
+  const cats = (typeof _sdata !== 'undefined' && _sdata) ? _sdata : (window._sdata || {});
   for (const k in cats) {
     const arr = cats[k];
     if (Array.isArray(arr)) { const f = arr.find(x => x.key === key); if (f) return Number(f.value) || 0; }
