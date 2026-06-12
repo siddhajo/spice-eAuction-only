@@ -590,6 +590,15 @@ function getPaymentSummary(db, auctionId, state, cfg) {
   // Earlier code did `lotDisc + manualDisc` unconditionally — every
   // trade with DNs generated showed double the actual discount, and
   // payable was off by that amount.
+  // Days-based settlement discount (Payments tab + statement). Pooler vs
+  // dealer is inferred from the seller's `cr`: a cr carrying a GSTIN →
+  // registered dealer (uses `dealer_days`); anything else → pooler (uses
+  // `discount_days`). `discount_pct` is applied directly (₹ per 1000 per
+  // day — no ÷100), matching the existing debit-note discount convention.
+  const discPct    = Number(cfg && cfg.discount_pct)  || 0;
+  const poolerDays = Number(cfg && cfg.discount_days) || 0;
+  const dealerDays = Number(cfg && cfg.dealer_days)   || 0;
+
   return sellers.map(s => {
     const lotDisc = Number(s.lot_discount) || 0;
     const manualDisc = Number(debitMap[s.name]) || 0;
@@ -598,6 +607,15 @@ function getPaymentSummary(db, auctionId, state, cfg) {
     const igst = Number(s.total_igst) || 0;
     // Authoritative discount: DN total when present, otherwise lot total.
     const totalDiscount = manualDisc > 0 ? manualDisc : lotDisc;
+    // Net amount = the value previously labelled "Payable" (lots.balance,
+    // with the DN-delta adjustment when a manual debit note overrides the
+    // lot refund). The new days-based discount is taken off THIS.
+    const netAmount = manualDisc > 0
+      ? (Number(s.total_payable) || 0) - (manualDisc - lotDisc)
+      : (Number(s.total_payable) || 0);
+    const isDealer = !!gstinStateCode(s.cr);
+    const days = isDealer ? dealerDays : poolerDays;
+    const sellerDiscount = Math.round(netAmount / 1000 * days * discPct);
     return {
       ...s,
       total_discount: totalDiscount,
@@ -605,6 +623,13 @@ function getPaymentSummary(db, auctionId, state, cfg) {
       // column. Independent of discount; does not affect payable.
       total_commission: Number(s.total_commission) || 0,
       total_tax: cgst + sgst + igst,
+      // Purchase = sale amount + sample-bag refund (the base commission is
+      // charged on), summed per seller.
+      purchase_value: (Number(s.total_amount) || 0) + lotDisc,
+      // Seller classification + the new days-based settlement discount.
+      seller_type: isDealer ? 'dealer' : 'pooler',
+      net_amount: netAmount,
+      seller_discount: sellerDiscount,
       // True when this seller's lots point at more than one bank account
       // (or a mix of tagged + untagged). Drives the "multiple banks" badge
       // on the Payments table so the user knows to export each account's
@@ -616,15 +641,8 @@ function getPaymentSummary(db, auctionId, state, cfg) {
         const distinct = new Set(ids).size;
         return distinct > 1 || (distinct >= 1 && untagged);
       })(),
-      // Payable: lots.balance was computed BEFORE DNs existed, using
-      // lots.refund as the discount. So:
-      //   - When DNs exist and equal lot refunds → balance is correct
-      //   - When DNs exist and DIFFER from lot refunds (user edited) →
-      //     adjust by the delta so payable reflects the current DN
-      //   - When no DNs → balance is already correct
-      total_payable: manualDisc > 0
-        ? (Number(s.total_payable) || 0) - (manualDisc - lotDisc)
-        : (Number(s.total_payable) || 0),
+      // Final payable = net amount − days-based settlement discount.
+      total_payable: netAmount - sellerDiscount,
     };
   });
 }

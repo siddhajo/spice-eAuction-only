@@ -8,7 +8,7 @@ const XLSX = require('xlsx');
 const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
 const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSettings, getSettingsFlat, getGSTRates } = require('./company-config');
 const grade2Alerts = require('./grade2-alerts');
-const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getPurchaseJournal } = require('./calculations');
+const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getPurchaseJournal, gstinStateCode } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 const { amountToWords } = require('./amount-words');
 const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx } = require('./exports');
@@ -8105,7 +8105,7 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   const lotIdFilter = Array.isArray(lotIds)
     ? lotIds.map(n => parseInt(n, 10)).filter(Number.isFinite)
     : [];
-  let lotSql = `SELECT lot_no, qty, price AS rate, amount, puramt, refund, com, balance, cgst, sgst, igst
+  let lotSql = `SELECT lot_no, qty, price AS rate, amount, puramt, refund, com, balance, cgst, sgst, igst, cr
        FROM lots WHERE auction_id = ? AND name = ? AND amount > 0`;
   const lotParams = [auctionId, sellerName];
   if (lotIdFilter.length) {
@@ -8143,7 +8143,7 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
     { k: 'amount', label: 'Amount',   x: PAGE_L + 190,  w: 80,  align: 'right', fmt: fmtAmt },
     { k: 'com',    label: 'Commission', x: PAGE_L + 270, w: 75,  align: 'right', fmt: fmtAmt },
     { k: 'tax',    label: 'GST',      x: PAGE_L + 345,  w: 70,  align: 'right', fmt: fmtAmt },
-    { k: 'balance',label: 'Payable',  x: PAGE_L + 415,  w: 120, align: 'right', fmt: fmtAmt },
+    { k: 'balance',label: 'Net Amt',  x: PAGE_L + 415,  w: 120, align: 'right', fmt: fmtAmt },
   ];
   doc.font('Helvetica-Bold').fontSize(9);
   doc.rect(PAGE_L, y, PAGE_W, 18).fillAndStroke('#f3f4f6', '#999').fillColor('#000');
@@ -8172,8 +8172,35 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   doc.text(fmtAmt(tTax), PAGE_L + 347, y + 6, { width: 66, align: 'right' });
   doc.text(fmtAmt(tPay), PAGE_L + 417, y + 6, { width: 116,align: 'right' });
   y += 30;
+
+  // ── Net Amount → days-based settlement discount → Payable ──
+  // tPay (Σ balance) is the Net Amount. Pooler vs dealer days from the seller's
+  // cr (a GSTIN-carrying cr → dealer). discount_pct is applied directly
+  // (₹ per 1000 per day). Debit notes are intentionally NOT involved here.
+  const _discPct    = Number(cfg.discount_pct)  || 0;
+  const _poolerDays = Number(cfg.discount_days) || 0;
+  const _dealerDays = Number(cfg.dealer_days)   || 0;
+  const _isDealer   = !!gstinStateCode((lots[0] || {}).cr);
+  const _days       = _isDealer ? _dealerDays : _poolerDays;
+  const _netAmount  = tPay;
+  const _discount   = Math.round(_netAmount / 1000 * _days * _discPct);
+  const _payable    = _netAmount - _discount;
+  const sX = PAGE_R - 250, sLW = 150, sVW = 100;
+  const sumRow = (label, val, bold) => {
+    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(bold ? 11 : 10);
+    doc.text(label, sX, y, { width: sLW, align: 'right' });
+    doc.text(val,   sX + sLW, y, { width: sVW, align: 'right' });
+    y += bold ? 18 : 15;
+  };
+  sumRow('Net Amount', fmtAmt(_netAmount));
+  sumRow(`Less: Discount (${_isDealer ? 'dealer' : 'pooler'} · ${_days} days)`, '- ' + fmtAmt(_discount));
+  doc.moveTo(sX, y).lineTo(sX + sLW + sVW, y).lineWidth(0.5).stroke();
+  y += 4;
+  sumRow('Payable', fmtAmt(_payable), true);
+  y += 10;
+
   doc.font('Helvetica').fontSize(9).text(`Generated: ${new Date().toLocaleString('en-IN')}`, PAGE_L, y, { width: PAGE_W, align: 'right' });
-  return tPay;
+  return _payable;
 }
 
 app.get('/api/payments/pdf/:auctionId/:sellerName', requireView, (req, res) => {

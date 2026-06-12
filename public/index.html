@@ -3973,7 +3973,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <div style="height:280px;position:relative"><canvas id="pay-top-sellers-chart"></canvas></div>
         </div>
 
-        <div style="overflow-x:auto"><table><thead><tr><th>Seller</th><th>Lots</th><th>Qty</th><th>Amount</th><th>Purchase</th><th>Commission</th><th>GST 18%</th><th>Payable</th><th>Actions</th></tr></thead><tbody id="payments-list"></tbody></table></div>
+        <div style="overflow-x:auto"><table><thead><tr><th>Seller</th><th>Lots</th><th>Qty</th><th>Amount</th><th>Purchase</th><th>Commission</th><th>GST 18%</th><th>Net Amount</th><th>Discount</th><th>Payable</th><th>Actions</th></tr></thead><tbody id="payments-list"></tbody></table></div>
       </div>
     </div>
 
@@ -18781,7 +18781,7 @@ function _renderPayLotsTable() {
           <th style="width:36px;text-align:center"><input type="checkbox" id="pay-lot-select-all" checked onchange="togglePayLotSelectAll(this.checked)" title="Select / clear all" style="cursor:pointer"></th>
           <th>Lot</th><th>Branch</th><th>Bank</th>
           <th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th>
-          <th style="text-align:right">Commission</th><th style="text-align:right">GST</th><th style="text-align:right">Payable</th>
+          <th style="text-align:right">Commission</th><th style="text-align:right">GST</th><th style="text-align:right">Net Amount</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -18792,19 +18792,47 @@ function togglePayLotSelectAll(checked) {
   document.querySelectorAll('.pay-lot-cb').forEach(cb => { if (cb.disabled) return; cb.checked = !!checked; });
   updatePayLotsTotals();
 }
+// Read a numeric setting (e.g. discount_pct / discount_days / dealer_days)
+// from the in-memory settings store, scanning all categories.
+function _rateNum(key) {
+  const cats = window._sdata || {};
+  for (const k in cats) {
+    const arr = cats[k];
+    if (Array.isArray(arr)) { const f = arr.find(x => x.key === key); if (f) return Number(f.value) || 0; }
+  }
+  return 0;
+}
+// Dealer when the seller's cr carries a GSTIN (mirrors server gstinStateCode):
+// strip the GSTIN./CR. prefix and check the leading two chars are a state code.
+function _crIsDealer(cr) {
+  if (!cr) return false;
+  let s = String(cr).trim().toUpperCase();
+  if      (s.startsWith('GSTIN.')) s = s.slice(6);
+  else if (s.startsWith('GSTIN '))  s = s.slice(6);
+  else if (s.startsWith('GSTIN'))   s = s.slice(5);
+  else if (s.startsWith('CR.'))     s = s.slice(3);
+  else if (s.startsWith('CR '))     s = s.slice(3);
+  return /^\d{2}/.test(s.trim());
+}
 function updatePayLotsTotals() {
   const selectedIds = new Set(
     Array.from(document.querySelectorAll('.pay-lot-cb:not([disabled]):checked')).map(cb => Number(cb.dataset.id))
   );
-  let qty = 0, amt = 0, comm = 0, tax = 0, payable = 0;
+  let qty = 0, amt = 0, comm = 0, tax = 0, net = 0;
   for (const l of _payLotsState.lots) {
     if (!selectedIds.has(l.id)) continue;
-    qty     += Number(l.pqty)    || Number(l.qty)    || 0;
-    amt     += Number(l.puramt)  || Number(l.amount) || 0;
-    comm    += Number(l.com)     || 0;
-    tax     += (Number(l.cgst)||0) + (Number(l.sgst)||0) + (Number(l.igst)||0);
-    payable += Number(l.balance) || 0;
+    qty  += Number(l.pqty)    || Number(l.qty)    || 0;
+    amt  += Number(l.puramt)  || Number(l.amount) || 0;
+    comm += Number(l.com)     || 0;
+    tax  += (Number(l.cgst)||0) + (Number(l.sgst)||0) + (Number(l.igst)||0);
+    net  += Number(l.balance) || 0;   // per-lot balance = Net Amount
   }
+  // Days-based settlement discount on the SELECTED total net amount (single
+  // rounding). Pooler vs dealer days inferred from the seller's cr.
+  const isDealer = _crIsDealer((_payLotsState.lots[0] || {}).cr);
+  const days = isDealer ? _rateNum('dealer_days') : _rateNum('discount_days');
+  const discount = Math.round(net / 1000 * days * _rateNum('discount_pct'));
+  const payable = net - discount;
   const n = selectedIds.size;
   const totalN = document.querySelectorAll('.pay-lot-cb:not([disabled])').length;
   const exportedN = document.querySelectorAll('.pay-lot-cb[disabled]').length;
@@ -18815,6 +18843,8 @@ function updatePayLotsTotals() {
       <div>Amount: <strong>₹${fmtI(amt, 2)}</strong></div>
       <div>Commission: <strong style="color:#B45309">₹${fmtI(comm, 2)}</strong></div>
       <div>GST: <strong style="color:#0891B2">₹${fmtI(tax, 2)}</strong></div>
+      <div>Net: <strong>₹${fmtI(net, 2)}</strong></div>
+      <div>Discount${days ? ` <span style="color:var(--text3);font-weight:400">(${isDealer ? 'dealer' : 'pooler'} · ${days}d)</span>` : ''}: <strong style="color:#9333EA">₹${fmtI(discount, 2)}</strong></div>
       <div style="margin-left:auto;font-size:14px">Payable now: <strong style="color:var(--spice-cardamom-dk)">₹${fmtI(payable, 2)}</strong></div>
     </div>`;
   const btn = document.getElementById('pay-lots-print-btn');
@@ -19011,13 +19041,13 @@ function _payRefreshUndoButton() {
 async function loadPayments(){
   const aid=document.getElementById('pay-auction').value;
   const body=document.getElementById('payments-list');
-  if(!aid){body.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:24px">Select an auction above</td></tr>';return}
+  if(!aid){body.innerHTML='<tr><td colspan="11" style="text-align:center;color:var(--text3);padding:24px">Select an auction above</td></tr>';return}
 
   // Visual feedback — set the body to a loading state so the user sees
   // an obvious refresh even when the underlying data hasn't changed.
   // Without this the click silently re-fetches and re-renders the same
   // numbers, so the "Reload" feels broken even when it's working.
-  body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:24px">Loading…</td></tr>';
+  body.innerHTML = '<tr><td colspan="11" style="text-align:center;color:var(--text3);padding:24px">Loading…</td></tr>';
 
   // Force a fresh DataTable state for this tbody so any retained sort
   // direction / pagination doesn't mask the new data. Without this the
@@ -19071,6 +19101,8 @@ async function loadPayments(){
         const totalLots     = arr.reduce((a,i) => a + (Number(i.lot_count)   || 0), 0);
         const totalAmount   = arr.reduce((a,i) => a + (Number(i.total_amount)|| 0), 0);
         const totalGst      = arr.reduce((a,i) => a + (Number(i.total_tax)   || 0), 0);
+        const totalNet      = arr.reduce((a,i) => a + (Number(i.net_amount)  || 0), 0);
+        const totalDiscount = arr.reduce((a,i) => a + (Number(i.seller_discount) || 0), 0);
         const $ = (id) => document.getElementById(id);
         if ($('pay-kpi-sellers'))  $('pay-kpi-sellers').textContent  = arr.length;
         if ($('pay-kpi-qty'))      $('pay-kpi-qty').innerHTML        = `${fmtI(totalQty, 2)}<span class="kpi-unit">kg</span>`;
@@ -19088,8 +19120,8 @@ async function loadPayments(){
           totalAmount > 0 && ['Sale value', `₹${fmtI(totalAmount, 2)}`],
         ]);
         setKpiMeta('pay-kpi-payable-meta', [
-          ['Commission', `₹${fmtI(totalCommission, 2)}`],
-          totalGst > 0 && ['GST 18%', `₹${fmtI(totalGst, 2)}`],
+          ['Net amount', `₹${fmtI(totalNet, 2)}`],
+          totalDiscount > 0 && ['Less discount', `₹${fmtI(totalDiscount, 2)}`],
         ]);
         updateSummaryStats('payments',
           `<strong>${arr.length}</strong> seller${arr.length===1?'':'s'} · `
@@ -19157,7 +19189,7 @@ async function loadPayments(){
         { key:'lot_count', label:'Lots', sort:'number', numeric:true },
         { key:'total_qty', label:'Qty', sort:'number', numeric:true, fmt:(n)=>fmtI(n,3) },
         { key:'total_amount', label:'Amount', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
-        { key:'total_puramt', label:'Purchase', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
+        { key:'purchase_value', label:'Purchase', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
         { key:'total_commission', label:'Commission', sort:'number', numeric:true,
           fmt:(n)=>fmtI(n,2),
           // Commission (lots.com) in turmeric/amber for visual distinction
@@ -19179,9 +19211,26 @@ async function loadPayments(){
               ? `<span style="color:#0891B2;font-weight:600">${fmtI(v,2)}</span>`
               : `<span style="color:var(--text3)">0.00</span>`;
           } },
+        // Net Amount — the value previously labelled "Payable" (balance:
+        // amount + refund − commission − handling − GST), BEFORE the
+        // days-based settlement discount.
+        { key:'net_amount', label:'Net Amount', sort:'number', numeric:true,
+          fmt:(n)=>fmtI(n,2),
+          render:(p)=>`<span style="font-weight:600">${fmtI(p.net_amount||0,2)}</span>` },
+        // Discount — round(net / 1000 × days × discount_pct); days from
+        // pooler (discount_days) vs dealer (dealer_days) per seller type.
+        { key:'seller_discount', label:'Discount', sort:'number', numeric:true,
+          fmt:(n)=>fmtI(n,2),
+          render:(p)=>{
+            const v = Number(p.seller_discount)||0;
+            const tip = p.seller_type ? ` title="${esc(p.seller_type)} rate"` : '';
+            return v>0
+              ? `<span style="color:#9333EA;font-weight:600"${tip}>${fmtI(v,2)}</span>`
+              : `<span style="color:var(--text3)"${tip}>0.00</span>`;
+          } },
         { key:'total_payable', label:'Payable', sort:'number', numeric:true,
           fmt:(n)=>fmtI(n,2),
-          // Payable as the "answer" — bigger, darker, cardamom
+          // Payable as the "answer" — bigger, darker, cardamom. = Net − Discount.
           render:(p)=>`<span style="font-weight:700;color:var(--spice-cardamom-dk);font-size:14px">${fmtI(p.total_payable||0,2)}</span>` },
         { key:'_actions', label:'Actions', sortable:false, searchable:false,
           render:(p)=>{
