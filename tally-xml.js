@@ -1592,65 +1592,6 @@ ${rnd < 0 ? TAGS.DEEMYES : TAGS.DEEMNO}
 //   total, totalRounded, voucherNum,
 // }, ...]
 //
-// ---------------------------------------------------------------------
-// Commission + cash-handling service charges for a purchase voucher.
-//
-// These are the auctioneer's service income, charged to the seller and
-// DEDUCTED from the seller's net payable (so the caller reduces the party
-// AMOUNT — and adds a matching negative bill allocation — by `deduction`).
-// All lines are CREDITS, so they use DEEMNO + positive amounts (same sign
-// convention as the party ledger in the purchase voucher).
-//
-// GST (default 18%) is charged on the combined commission+handling base and
-// split CGST+SGST (intra) or IGST (inter) using the same isIntra basis as
-// the goods. The income + output-GST ledger names come from settings.
-//
-// Returns null when there is nothing to post — zero amounts OR the income
-// ledgers aren't configured — so vouchers without commission stay byte-for-
-// byte identical to before this feature.
-function buildPurchaseServiceCharges(cfg, {
-  comtot, handtot, commLedger, handLedger, isIntra, tlyrnd,
-}) {
-  const rnd = (n) => (tlyrnd ? r0(n) : r2(n));
-  const com  = (commLedger && comtot  > 0) ? r2(comtot)  : 0;
-  const hand = (handLedger && handtot > 0) ? r2(handtot) : 0;
-  if (com <= 0 && hand <= 0) return null;
-
-  const rate       = cfgNum(cfg, 'tally_commission_gst_rate', 18);
-  const svcCgstLdr = cfgGet(cfg, 'tally_service_cgst', '');
-  const svcSgstLdr = cfgGet(cfg, 'tally_service_sgst', '');
-  const svcIgstLdr = cfgGet(cfg, 'tally_service_igst', '');
-
-  let entries = '';
-  let deduction = 0;
-  const creditLine = (ledger, amt) => {
-    deduction += amt;
-    entries += `
-<LEDGERENTRIES.LIST>
-<LEDGERNAME>${xe(ledger)}</LEDGERNAME>
-${TAGS.DEEMNO}
-<AMOUNT>${amt}</AMOUNT>
-</LEDGERENTRIES.LIST>`;
-  };
-
-  if (com  > 0) creditLine(commLedger, rnd(com));
-  if (hand > 0) creditLine(handLedger, rnd(hand));
-
-  // GST on the combined service base, split on the goods' intra/inter basis.
-  const gstTotal = (com + hand) * rate / 100;
-  if (gstTotal > 0) {
-    if (isIntra) {
-      const half = gstTotal / 2;
-      if (svcCgstLdr) creditLine(svcCgstLdr, rnd(half));
-      if (svcSgstLdr) creditLine(svcSgstLdr, rnd(half));
-    } else if (svcIgstLdr) {
-      creditLine(svcIgstLdr, rnd(gstTotal));
-    }
-  }
-
-  return { entries, deduction };
-}
-
 function generRDPurchaseXML(rows, cfg, opts = {}) {
   const company    = opts.companyName || cfgGet(cfg, 'tally_company_name', 'Ideal Spices Private Limited');
   const season     = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
@@ -1846,28 +1787,6 @@ ${rates.cess}
 <AMOUNT>${r2(-tdsAllocAmt)}</AMOUNT>
 </BILLALLOCATIONS.LIST>` : '';
 
-    // Commission + cash-handling service charges (RD → plain ledgers).
-    // Credited to the auctioneer's income/GST ledgers and deducted from the
-    // dealer's net payable; a matching negative bill allocation keeps the
-    // party ledger's allocations reconciled to its (reduced) AMOUNT.
-    const svc = buildPurchaseServiceCharges(cfg, {
-      comtot:  r2(row.comtot || 0),
-      handtot: r2(row.handtot || 0),
-      commLedger: cfgGet(cfg, 'tally_commission', ''),
-      handLedger: cfgGet(cfg, 'tally_cash_handling', ''),
-      isIntra,
-      tlyrnd,
-    });
-    const svcDeduction = svc ? svc.deduction : 0;
-    const svcEntries   = svc ? svc.entries : '';
-    const svcAlloc     = svc ? `
-<BILLALLOCATIONS.LIST>
-<NAME>${xe(`${row.ano}/COMM/${season}`)}</NAME>
-<BILLTYPE>New Ref</BILLTYPE>
-<AMOUNT>${r2(-svcDeduction)}</AMOUNT>
-</BILLALLOCATIONS.LIST>` : '';
-    const partyAmt = (tlyrnd ? r0(total) : total) - svcDeduction;
-
     xml += `\n${startVoucher}
 <ADDRESS.LIST TYPE="String">
 <ADDRESS>${address}</ADDRESS>
@@ -1905,12 +1824,12 @@ ${rates.cess}
 <LEDGERNAME>${name}</LEDGERNAME>
 ${TAGS.DEEMNO}
 <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
-<AMOUNT>${partyAmt}</AMOUNT>${detailed ? billAlloc1 : `
+<AMOUNT>${tlyrnd ? r0(total) : total}</AMOUNT>${detailed ? billAlloc1 : `
 <BILLALLOCATIONS.LIST>
 <NAME>${xe(`${row.ano}/${taxNm}/${season}`)}</NAME>
 <BILLTYPE>New Ref</BILLTYPE>
 <AMOUNT>${tlyrnd ? r0(bilamttot) : bilamttot}</AMOUNT>
-</BILLALLOCATIONS.LIST>`}${gstAlloc}${tdsAlloc}${svcAlloc}
+</BILLALLOCATIONS.LIST>`}${gstAlloc}${tdsAlloc}
 </LEDGERENTRIES.LIST>`;
 
     // Tax ledgers
@@ -1991,9 +1910,6 @@ ${TAGS.DEEMYES}
 <AMOUNT>${-r2(rnd)}</AMOUNT>
 <VATEXPAMOUNT>${-r2(rnd)}</VATEXPAMOUNT>
 </LEDGERENTRIES.LIST>`;
-
-    // Commission + cash-handling income (+ their output GST) credited here.
-    xml += svcEntries;
 
     xml += invEntries;
     xml += `\n${TAGS.ENDVOUCHER}`;
@@ -2084,32 +2000,6 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
 <AMOUNT>${tlyrnd ? r0(bilamttot) : bilamttot}</AMOUNT>
 </BILLALLOCATIONS.LIST>`;
     }
-
-    // Commission + cash-handling service charges (URD → planter ledgers).
-    // Same deduct-from-payable treatment as the RD voucher; the GST split's
-    // intra/inter basis is the planter's state vs the home (URD) state
-    // (blank state → treated as intra/home).
-    const _urdIntra = (() => {
-      const ps = String(row.pstate || '').trim().toLowerCase();
-      return !ps || ps === String(sStateName || '').trim().toLowerCase();
-    })();
-    const svc = buildPurchaseServiceCharges(cfg, {
-      comtot:  r2(row.comtot || 0),
-      handtot: r2(row.handtot || 0),
-      commLedger: cfgGet(cfg, 'tally_commission_planter', ''),
-      handLedger: cfgGet(cfg, 'tally_cash_handling_planter', ''),
-      isIntra: _urdIntra,
-      tlyrnd,
-    });
-    const svcDeduction = svc ? svc.deduction : 0;
-    const svcEntries   = svc ? svc.entries : '';
-    const svcAlloc     = svc ? `
-<BILLALLOCATIONS.LIST>
-<NAME>${xe(`${row.ano}/COMM/${season}`)}</NAME>
-<BILLTYPE>New Ref</BILLTYPE>
-<AMOUNT>${r2(-svcDeduction)}</AMOUNT>
-</BILLALLOCATIONS.LIST>` : '';
-    const partyAmt = (tlyrnd ? r0(total) : total) - svcDeduction;
 
     // Inventory: detailed-per-lot or aggregated
     let invEntries = '';
@@ -2225,7 +2115,7 @@ ${rates.scess}
 <LEDGERNAME>${name}</LEDGERNAME>
 ${TAGS.DEEMNO}
 <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
-<AMOUNT>${partyAmt}</AMOUNT>${billAlloc}${svcAlloc}
+<AMOUNT>${tlyrnd ? r0(total) : total}</AMOUNT>${billAlloc}
 </LEDGERENTRIES.LIST>`;
 
     if (tlyrnd && Math.abs(rnd) > 0.001) {
@@ -2237,9 +2127,6 @@ ${TAGS.DEEMYES}
 <VATEXPAMOUNT>${-r2(rnd)}</VATEXPAMOUNT>
 </LEDGERENTRIES.LIST>`;
     }
-
-    // Commission + cash-handling income (+ their output GST) credited here.
-    xml += svcEntries;
 
     xml += invEntries;
     xml += `\n${TAGS.ENDVOUCHER}`;
@@ -2851,25 +2738,20 @@ function buildRDPurchaseRows(db, auctionId, cfg) {
   // Pull lots for each purchase (matched by name + auction)
   const lotsStmt = db.prepare(`
     SELECT lot_no AS lot, bags AS bag, pqty AS qty, prate AS rate,
-           puramt AS amount, bilamt, com, sertax
+           puramt AS amount, bilamt
     FROM lots
     WHERE auction_id = ? AND name = ? AND puramt > 0
     ORDER BY lot_no
   `);
 
   return raw.map((p) => {
-    const rawLots = lotsStmt.all(auctionId, p.name);
-    const lots = rawLots.map(l => ({
+    const lots = lotsStmt.all(auctionId, p.name).map(l => ({
       lot: l.lot, bag: l.bag, qty: l.qty, rate: l.rate,
       amount: l.amount, bilamt: l.bilamt || l.amount,
     }));
     const qtytot = lots.reduce((s, l) => s + Number(l.qty || 0), 0);
     const amounttot = lots.reduce((s, l) => s + Number(l.amount || 0), 0);
     const bilamttot = lots.reduce((s, l) => s + Number(l.bilamt || 0), 0);
-    // Commission (com) + cash-handling (sertax) summed for the service-charge
-    // ledgers added to the voucher (deducted from the seller's net payable).
-    const comtot  = rawLots.reduce((s, l) => s + Number(l.com || 0), 0);
-    const handtot = rawLots.reduce((s, l) => s + Number(l.sertax || 0), 0);
     return {
       ano: p.ano,
       date: p.date,
@@ -2885,8 +2767,6 @@ function buildRDPurchaseRows(db, auctionId, cfg) {
       qtytot: r2(qtytot),
       amounttot: r2(amounttot),
       bilamttot: r2(bilamttot || p.amount),
-      comtot: r2(comtot),
-      handtot: r2(handtot),
       cgst: p.cgst, sgst: p.sgst, igst: p.igst,
       tdsamt: p.tds,
       // total = PRE-round grand total (= rounded total minus the stored
@@ -2933,7 +2813,7 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
            CASE WHEN isp_puramt > 0 THEN isp_pqty   ELSE pqty   END AS qty,
            CASE WHEN isp_puramt > 0 THEN isp_prate  ELSE prate  END AS rate,
            CASE WHEN isp_puramt > 0 THEN isp_puramt ELSE puramt END AS amount,
-           bilamt, pan, com, sertax
+           bilamt, pan
     FROM lots
     WHERE auction_id = ? AND name = ?
       AND (isp_puramt > 0 OR puramt > 0)
@@ -2965,22 +2845,17 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
       }
     } catch (_) { /* no usable snapshot → fall back to name match */ }
 
-    // PAN drives the URD ledger name "<name> - [<PAN>]". Read it from the
+    // PAN drives the URD ledger name "<name>-[<PAN>]". Read it from the
     // SAME lots table the LEDGER master reads (buildURDPartyLedgerRows), not
     // from bills.pan, so both derive an identical name and Tally matches them.
     const lotRows = lotsStmt.all(auctionId, b.name);
     const panForBill = (lotRows.find(r => String(r.pan || '').trim()) || {}).pan || '';
     const lots = [];
-    let comtot = 0, handtot = 0;
     for (const l of lotRows) {
       const key = String(l.lot);
       if (ownLotNos && !ownLotNos.has(key)) continue; // belongs to another bill
       if (usedLots.has(key)) continue;                // already counted in a prior voucher
       usedLots.add(key);
-      // Commission (com) + cash-handling (sertax) for the service-charge
-      // ledgers, summed only over the lots this voucher actually covers.
-      comtot  += Number(l.com || 0);
-      handtot += Number(l.sertax || 0);
       lots.push({
         lot: l.lot, bag: l.bag,
         qty: r2(l.qty), rate: r2(l.rate), amount: r2(l.amount),
@@ -2993,19 +2868,16 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
     return {
       ano: b.ano,
       date: b.date,
-      // Name "<name> - [<PAN>]" so the voucher's PARTYLEDGERNAME matches
+      // Name "<name>-[<PAN>]" so the voucher's PARTYLEDGERNAME matches
       // the URD agriculturist ledger emitted by buildURDPartyLedgerRows.
       name: _urdPurchaseLedgerName(b.name, panForBill),
       address: b.add_line,
       place: b.pla,
       pin: '',
-      pstate: b.pstate || '',
       lots,
       qtytot: r2(qtytot),
       amounttot: r2(amounttot),
       bilamttot: r2(bilamttot),
-      comtot: r2(comtot),
-      handtot: r2(handtot),
       // Voucher total = sum(isp_puramt). Refunds and commissions get
       // emitted as separate ledger entries inside the voucher, so they
       // are NOT subtracted from the voucher total. Matches the macro.
