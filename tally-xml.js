@@ -2277,7 +2277,7 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
   const Tax_CGST      = cfgGet(cfg, 'tally_dn_cgst', `OUTPUT CGST ${fmtRate(halfRate)}%`);
   const Tax_SGST      = cfgGet(cfg, 'tally_dn_sgst', `OUTPUT SGST ${fmtRate(halfRate)}%`);
   const Tax_IGST      = cfgGet(cfg, 'tally_dn_igst', `OUTPUT IGST ${fmtRate(dnGstRate)}%`);
-  const Round_LDR     = cfgGet(cfg, 'tally_round', 'Round Off');
+  const Round_LDR     = cfgGet(cfg, 'tally_round', 'Round On/Off');
   const HSN_Service   = cfgGet(cfg, 'tally_hsn_service', '996111');
 
   const rates = rateDetails(dnGstRate);
@@ -2308,9 +2308,19 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
     const cgsttot     = r2(row.cgsttot || row.cgst || 0);
     const sgsttot     = r2(row.sgsttot || row.sgst || 0);
     const igsttot     = r2(row.igsttot || row.igst || 0);
-    const total       = r2(row.total || (refundtot + cgsttot + sgsttot + igsttot));
-    const totalRound  = tlyrnd ? r0(total) : total;
-    const rnd         = tlyrnd ? r2(totalRound - total) : 0;
+    // The ledger lines actually posted below: the taxable base plus whatever
+    // GST applies (intra ⇒ CGST+SGST, inter ⇒ IGST; none when exempt). The
+    // round-off reconciles this sum against the rounded grand total, so the
+    // voucher always balances AND the round-off line shows up whenever the
+    // posted lines carry paise that round to the nearest rupee. (The old
+    // `r0(total) - total` was always 0 because debit_notes.total is already
+    // stored as a whole rupee, which is why the round-off ledger never
+    // appeared.)
+    const taxPosted    = exempt ? 0 : (isIntra ? r2(cgsttot + sgsttot) : igsttot);
+    const componentSum = r2(refundtot + taxPosted);
+    const total        = r2(row.total || (refundtot + cgsttot + sgsttot + igsttot));
+    const totalRound   = tlyrnd ? r0(total) : total;
+    const rnd          = tlyrnd ? r2(totalRound - componentSum) : 0;
 
     // Voucher number convention:
     //   regular DN → {debitnoteno}/{season-short}/SE
@@ -2320,7 +2330,7 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
     const voucherNo   = `${taxNm}/${seasonShort}/${isPlanter ? 'URD' : 'SE'}`;
     const discountLdr = isPlanter ? DiscountP_LDR : Discount_LDR;
 
-    const startVoucher = `<VOUCHER VCHTYPE="Debit Note" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
+    const startVoucher = `<VOUCHER VCHTYPE="Sales" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
 
     xml += `\n${startVoucher}
 <ADDRESS.LIST TYPE="String">
@@ -2343,7 +2353,7 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
 <PARTYPINCODE>${pin}</PARTYPINCODE>
 <NUMBERINGSTYLE>Manual</NUMBERINGSTYLE>
 <PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW>
-<VOUCHERTYPENAME>Debit Note</VOUCHERTYPENAME>
+<VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>
 <VCHENTRYMODE>Item Invoice</VCHENTRYMODE>
 <EFFECTIVEDATE>${dateval}</EFFECTIVEDATE>
 <ISINVOICE>Yes</ISINVOICE>
