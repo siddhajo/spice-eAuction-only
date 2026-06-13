@@ -1628,7 +1628,10 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
   for (const row of rows) {
     const dateval    = toTallyDate(row.date);
     const ano        = xe(row.ano);
-    const taxNm      = xe(row.voucherNum || row.invo || row.id || '');
+    // Trim the dealer invoice number — bills store single-digit trade numbers
+    // space-padded (e.g. " 799"), which otherwise leaks a space after the
+    // first slash in the voucher ref ("5/ 799/26-27").
+    const taxNm      = xe(String(row.voucherNum || row.invo || row.id || '').trim());
     const name       = xe(row.name);
     const address    = xe(row.address);
     const place      = xe(row.place);
@@ -2042,7 +2045,7 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
   for (const row of rows) {
     const dateval    = toTallyDate(row.date);
     const ano        = xe(row.ano);
-    const taxNm      = xe(row.voucherNum || row.invo || row.id || '');
+    const taxNm      = xe(String(row.voucherNum || row.invo || row.id || '').trim());
     const name       = xe(row.name);
     const address    = xe(row.address);
     const place      = xe(row.place);
@@ -2063,8 +2066,8 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
     // Round-off delta (party rounded vs exact goods); balanced by the Round
     // Off ledger emitted below.
     const rnd        = tlyrnd ? r2(partyAmt - grossGoods) : 0;
-    // Single-company build: URD voucher number uses the ISP prefix.
-    const voucherRef = `${invPrefix}P-${taxNm}/${season}`;
+    // URD voucher number = {invno}/{season-short} (e.g. "799/26-27").
+    const voucherRef = `${taxNm}/${seasonShort}`;
     const startVoucher = `<VOUCHER VCHTYPE="Purchase" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
 
     // Bill allocations (mirror the RD-purchase voucher):
@@ -2234,19 +2237,10 @@ ${TAGS.DEEMNO}
 <AMOUNT>${partyAmt}</AMOUNT>${billAlloc}${urdAlloc}
 </LEDGERENTRIES.LIST>`;
 
-    if (tlyrnd && Math.abs(rnd) > 0.001) {
-      xml += `
-<LEDGERENTRIES.LIST>
-<LEDGERNAME>${xe(Round_LDR)}</LEDGERNAME>
-${TAGS.DEEMYES}
-<AMOUNT>${-r2(rnd)}</AMOUNT>
-<VATEXPAMOUNT>${-r2(rnd)}</VATEXPAMOUNT>
-</LEDGERENTRIES.LIST>`;
-    }
-
     // Sample Refund to Planter — payable to the planter (debit, DEEMYES
     // negative, like the cardamom/Auction Purchase ledger). Separate line
     // mirroring the cardamom ledger so the refund shows on the voucher.
+    // Emitted BEFORE Round Off so the round-off stays the last ledger line.
     if (refundtot !== 0) {
       xml += `
 <LEDGERENTRIES.LIST>
@@ -2254,6 +2248,16 @@ ${TAGS.DEEMYES}
 ${TAGS.DEEMYES}
 <AMOUNT>${r2(-refundtot)}</AMOUNT>
 <VATEXPAMOUNT>${r2(-refundtot)}</VATEXPAMOUNT>
+</LEDGERENTRIES.LIST>`;
+    }
+
+    if (tlyrnd && Math.abs(rnd) > 0.001) {
+      xml += `
+<LEDGERENTRIES.LIST>
+<LEDGERNAME>${xe(Round_LDR)}</LEDGERNAME>
+${TAGS.DEEMYES}
+<AMOUNT>${-r2(rnd)}</AMOUNT>
+<VATEXPAMOUNT>${-r2(rnd)}</VATEXPAMOUNT>
 </LEDGERENTRIES.LIST>`;
     }
 
