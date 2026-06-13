@@ -2000,6 +2000,11 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
   const Round_LDR      = cfgGet(cfg, 'tally_round', 'Round Off');
   const Item_Card      = cfgGet(cfg, 'tally_item_cardamom', 'Cardamom');
   const HSN_Card       = cfgGet(cfg, 'tally_hsn_cardamom',  '09083110');
+  const SampleRefund_LDR = cfgGet(cfg, 'tally_sample_planter', 'Sample Refund to Planter');
+  const Commission_LDR   = cfgGet(cfg, 'tally_commission_planter', 'Commission-Planter');
+  // Short-form season identifier (e.g. "26-27") for the commission bill ref;
+  // falls back to the full season so the ref is never empty.
+  const seasonShort = String(cfgGet(cfg, 'season_short', '')).trim() || season;
 
   const rates = rateDetails(cfgNum(cfg, 'gst_goods', 5));
 
@@ -2019,8 +2024,25 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
     const amounttot  = r2(row.amounttot);
     const qtytot     = r2(row.qtytot);
     const rt         = r2(qtytot > 0 ? amounttot / qtytot : 0);
+    // Sample refund payable to the planter (adds to what we owe) and the
+    // commission + handling charged back (reduces it). Party AMOUNT carries
+    // both; Sample Refund to Planter posts as its own debit ledger and
+    // Commission-Planter as a credit ledger + a bill allocation, so the
+    // voucher balances. Round-off stays on the GOODS portion (the bill).
+    const refundtot  = r2(row.refundtot || 0);
+    const comhandtot = r2(row.comhandtot || 0);
+    const partyAmt   = r2((tlyrnd ? r0(total) : total) + refundtot - comhandtot);
     // Single-company build: URD voucher number uses the ISP prefix.
     const voucherRef = `${invPrefix}P-${taxNm}/${season}`;
+    // Commission + handling charged to the planter, aged on the party ledger
+    // under "<invno>/<season-short>/URD". Negative = reduces the payable
+    // (the matching Commission-Planter credit ledger is emitted below).
+    const comAlloc = comhandtot !== 0 ? `
+<BILLALLOCATIONS.LIST>
+<NAME>${xe(`${taxNm}/${seasonShort}/URD`)}</NAME>
+<BILLTYPE>New Ref</BILLTYPE>
+<AMOUNT>${r2(-comhandtot)}</AMOUNT>
+</BILLALLOCATIONS.LIST>` : '';
 
     const startVoucher = `<VOUCHER VCHTYPE="Purchase" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
 
@@ -2163,7 +2185,7 @@ ${rates.scess}
 <LEDGERNAME>${name}</LEDGERNAME>
 ${TAGS.DEEMNO}
 <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
-<AMOUNT>${tlyrnd ? r0(total) : total}</AMOUNT>${billAlloc}
+<AMOUNT>${partyAmt}</AMOUNT>${billAlloc}${comAlloc}
 </LEDGERENTRIES.LIST>`;
 
     if (tlyrnd && Math.abs(rnd) > 0.001) {
@@ -2173,6 +2195,32 @@ ${TAGS.DEEMNO}
 ${TAGS.DEEMYES}
 <AMOUNT>${-r2(rnd)}</AMOUNT>
 <VATEXPAMOUNT>${-r2(rnd)}</VATEXPAMOUNT>
+</LEDGERENTRIES.LIST>`;
+    }
+
+    // Sample Refund to Planter — payable to the planter (debit, DEEMYES
+    // negative, like the cardamom/Auction Purchase ledger). Separate line
+    // mirroring the cardamom ledger so the refund shows on the voucher.
+    if (refundtot !== 0) {
+      xml += `
+<LEDGERENTRIES.LIST>
+<LEDGERNAME>${xe(SampleRefund_LDR)}</LEDGERNAME>
+${TAGS.DEEMYES}
+<AMOUNT>${r2(-refundtot)}</AMOUNT>
+<VATEXPAMOUNT>${r2(-refundtot)}</VATEXPAMOUNT>
+</LEDGERENTRIES.LIST>`;
+    }
+
+    // Commission-Planter — commission + handling charged to the planter
+    // (income, credit, DEEMNO positive). Reduces the net payable; balanced
+    // by the "<invno>/<season-short>/URD" bill allocation on the party.
+    if (comhandtot !== 0) {
+      xml += `
+<LEDGERENTRIES.LIST>
+<LEDGERNAME>${xe(Commission_LDR)}</LEDGERNAME>
+${TAGS.DEEMNO}
+<AMOUNT>${r2(comhandtot)}</AMOUNT>
+<VATEXPAMOUNT>${r2(comhandtot)}</VATEXPAMOUNT>
 </LEDGERENTRIES.LIST>`;
     }
 
@@ -2888,7 +2936,7 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
            CASE WHEN isp_puramt > 0 THEN isp_pqty   ELSE pqty   END AS qty,
            CASE WHEN isp_puramt > 0 THEN isp_prate  ELSE prate  END AS rate,
            CASE WHEN isp_puramt > 0 THEN isp_puramt ELSE puramt END AS amount,
-           bilamt, pan
+           bilamt, pan, refund, com, sertax
     FROM lots
     WHERE auction_id = ? AND name = ?
       AND (isp_puramt > 0 OR puramt > 0)
@@ -2935,11 +2983,17 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
         lot: l.lot, bag: l.bag,
         qty: r2(l.qty), rate: r2(l.rate), amount: r2(l.amount),
         bilamt: r2(l.bilamt || l.amount),
+        refund: l.refund || 0, com: l.com || 0, sertax: l.sertax || 0,
       });
     }
     const qtytot = lots.reduce((s, l) => s + Number(l.qty || 0), 0);
     const amounttot = lots.reduce((s, l) => s + Number(l.amount || 0), 0);
     const bilamttot = lots.reduce((s, l) => s + Number(l.bilamt || 0), 0);
+    // Sample refund payable to the planter (added to the voucher total) and
+    // commission + handling charged back (deducted) — same treatment as the
+    // RD/dealer voucher, summed per lot from the columns calculateLot writes.
+    const refundtot  = lots.reduce((s, l) => s + Number(l.refund || 0), 0);
+    const comhandtot = lots.reduce((s, l) => s + Number(l.com || 0) + Number(l.sertax || 0), 0);
     return {
       ano: b.ano,
       date: b.date,
@@ -2953,9 +3007,12 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
       qtytot: r2(qtytot),
       amounttot: r2(amounttot),
       bilamttot: r2(bilamttot),
-      // Voucher total = sum(isp_puramt). Refunds and commissions get
-      // emitted as separate ledger entries inside the voucher, so they
-      // are NOT subtracted from the voucher total. Matches the macro.
+      refundtot:  r2(refundtot),
+      comhandtot: r2(comhandtot),
+      // `total` stays = sum(isp_puramt) (cardamom only) so the goods
+      // round-off matches the bill. The generator adds the sample refund
+      // and deducts commission+handling to get the planter's net payable,
+      // emitting each as its own balancing ledger entry.
       total: r2(amounttot),
       voucherNum: String(b.bil),
     };
