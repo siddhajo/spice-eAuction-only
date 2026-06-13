@@ -1621,6 +1621,8 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
   const Item_Card       = cfgGet(cfg, 'tally_item_cardamom', 'Cardamom');
   const HSN_Card        = cfgGet(cfg, 'tally_hsn_cardamom',  '09083110');
   const TDS_Rate        = cfgNum(cfg, 'tds_purchase_rate', 0.1);  // % rate for 194Q
+  const SampleRefund_LDR = cfgGet(cfg, 'tally_sample_dealer', 'Sample Refund to Dealer');
+  const Commission_LDR   = cfgGet(cfg, 'tally_commission', 'Commission');
 
   let xml = '\n' + startEnvelope(company, 'Vouchers');
 
@@ -1671,6 +1673,15 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
     const amounttot   = r2(row.amounttot || 0);
     const qtytot      = r2(row.qtytot || 0);
     const rt          = r2(row.rate || (qtytot > 0 ? amounttot / qtytot : 0));
+    // Sample refund payable to the dealer (adds to what we owe) and the
+    // commission + handling we charge back (reduces it). The party AMOUNT
+    // carries both; Sample Refund posts as its own debit ledger (−refundtot)
+    // and commission as a credit ledger (+comhandtot) + a bill allocation,
+    // so the voucher stays balanced. Round-off stays on the GOODS portion
+    // (matches the Purchase PDF) — these two lines don't re-round it.
+    const refundtot   = r2(row.refundtot || 0);
+    const comhandtot  = r2(row.comhandtot || 0);
+    const partyAmt    = r2((tlyrnd ? r0(total) : total) + refundtot - comhandtot);
 
     // bill allocations per lot
     let billAlloc1 = '';
@@ -1786,6 +1797,16 @@ ${rates.cess}
 <BILLTYPE>New Ref</BILLTYPE>
 <AMOUNT>${r2(-tdsAllocAmt)}</AMOUNT>
 </BILLALLOCATIONS.LIST>` : '';
+    // Commission + handling charged back to the dealer, aged on the party
+    // ledger under "<invno>/<season-short>/SE". Negative = it reduces the
+    // dealer's payable (the matching Commission credit ledger is emitted
+    // below). Ref uses the dealer invoice number (taxNm) + season-short.
+    const comAlloc = comhandtot !== 0 ? `
+<BILLALLOCATIONS.LIST>
+<NAME>${xe(`${taxNm}/${seasonShort}/SE`)}</NAME>
+<BILLTYPE>New Ref</BILLTYPE>
+<AMOUNT>${r2(-comhandtot)}</AMOUNT>
+</BILLALLOCATIONS.LIST>` : '';
 
     xml += `\n${startVoucher}
 <ADDRESS.LIST TYPE="String">
@@ -1824,12 +1845,12 @@ ${rates.cess}
 <LEDGERNAME>${name}</LEDGERNAME>
 ${TAGS.DEEMNO}
 <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
-<AMOUNT>${tlyrnd ? r0(total) : total}</AMOUNT>${detailed ? billAlloc1 : `
+<AMOUNT>${partyAmt}</AMOUNT>${detailed ? billAlloc1 : `
 <BILLALLOCATIONS.LIST>
 <NAME>${xe(`${row.ano}/${taxNm}/${season}`)}</NAME>
 <BILLTYPE>New Ref</BILLTYPE>
 <AMOUNT>${tlyrnd ? r0(bilamttot) : bilamttot}</AMOUNT>
-</BILLALLOCATIONS.LIST>`}${gstAlloc}${tdsAlloc}
+</BILLALLOCATIONS.LIST>`}${gstAlloc}${tdsAlloc}${comAlloc}
 </LEDGERENTRIES.LIST>`;
 
     // Tax ledgers
@@ -1910,6 +1931,33 @@ ${TAGS.DEEMYES}
 <AMOUNT>${-r2(rnd)}</AMOUNT>
 <VATEXPAMOUNT>${-r2(rnd)}</VATEXPAMOUNT>
 </LEDGERENTRIES.LIST>`;
+
+    // Sample Refund to Dealer — an expense/payable to the dealer (debit,
+    // DEEMYES negative, like the purchase/GST ledgers). Mirrors the Cardamom
+    // ledger as a separate line so the dealer's refund shows on the voucher.
+    if (refundtot !== 0) {
+      xml += `
+<LEDGERENTRIES.LIST>
+<LEDGERNAME>${xe(SampleRefund_LDR)}</LEDGERNAME>
+${TAGS.DEEMYES}
+<AMOUNT>${r2(-refundtot)}</AMOUNT>
+<VATEXPAMOUNT>${r2(-refundtot)}</VATEXPAMOUNT>
+</LEDGERENTRIES.LIST>`;
+    }
+
+    // Commission + handling charged to the dealer — income (credit, DEEMNO
+    // positive, like the DN discount ledger). Reduces the dealer's net
+    // payable; balanced by the "<invno>/<season-short>/SE" bill allocation
+    // on the party ledger above.
+    if (comhandtot !== 0) {
+      xml += `
+<LEDGERENTRIES.LIST>
+<LEDGERNAME>${xe(Commission_LDR)}</LEDGERNAME>
+${TAGS.DEEMNO}
+<AMOUNT>${r2(comhandtot)}</AMOUNT>
+<VATEXPAMOUNT>${r2(comhandtot)}</VATEXPAMOUNT>
+</LEDGERENTRIES.LIST>`;
+    }
 
     xml += invEntries;
     xml += `\n${TAGS.ENDVOUCHER}`;
@@ -2753,7 +2801,7 @@ function buildRDPurchaseRows(db, auctionId, cfg) {
   // Pull lots for each purchase (matched by name + auction)
   const lotsStmt = db.prepare(`
     SELECT lot_no AS lot, bags AS bag, pqty AS qty, prate AS rate,
-           puramt AS amount, bilamt
+           puramt AS amount, bilamt, refund, com, sertax
     FROM lots
     WHERE auction_id = ? AND name = ? AND puramt > 0
     ORDER BY lot_no
@@ -2763,10 +2811,16 @@ function buildRDPurchaseRows(db, auctionId, cfg) {
     const lots = lotsStmt.all(auctionId, p.name).map(l => ({
       lot: l.lot, bag: l.bag, qty: l.qty, rate: l.rate,
       amount: l.amount, bilamt: l.bilamt || l.amount,
+      refund: l.refund || 0, com: l.com || 0, sertax: l.sertax || 0,
     }));
     const qtytot = lots.reduce((s, l) => s + Number(l.qty || 0), 0);
     const amounttot = lots.reduce((s, l) => s + Number(l.amount || 0), 0);
     const bilamttot = lots.reduce((s, l) => s + Number(l.bilamt || 0), 0);
+    // Sample refund payable to the dealer (added to the voucher total) and
+    // commission + handling charged back (deducted). Summed per lot from
+    // the same columns calculateLot() writes.
+    const refundtot  = lots.reduce((s, l) => s + Number(l.refund || 0), 0);
+    const comhandtot = lots.reduce((s, l) => s + Number(l.com || 0) + Number(l.sertax || 0), 0);
     return {
       ano: p.ano,
       date: p.date,
@@ -2784,6 +2838,8 @@ function buildRDPurchaseRows(db, auctionId, cfg) {
       bilamttot: r2(bilamttot || p.amount),
       cgst: p.cgst, sgst: p.sgst, igst: p.igst,
       tdsamt: p.tds,
+      refundtot:  r2(refundtot),
+      comhandtot: r2(comhandtot),
       // Round-off must match the Purchase PDF, which recomputes it LIVE
       // from the lots — round(taxable+GST) − (taxable+GST) — rather than
       // reading purchases.rund. That stored column is 0 on imported/legacy
