@@ -286,39 +286,25 @@ function generSalesIspXML(rows, cfg, opts = {}) {
   const d_company    = _imcpcDisp
     ? cfgGet(cfg, 'trade_name', cfgGet(cfg, 'short_name', ''))
     : cfgGet(cfg, 'short_name', cfgGet(cfg, 'trade_name', ''));
-  // Dispatch From — strictly the configured `dispatch_from`. No
-  // hardcoded city/PIN fallbacks: when the setting is blank, downstream
-  // XML emits an empty cell so the user notices and configures it.
-  //
-  // Place / PIN / State each try the Kerala-address keys first
-  // (kl_place/kl_pin/kl_state, defined under Settings → Address (Kerala)),
-  // then the older `tally_dispatch_*` keys for back-compat with installs
-  // that filled in Settings → To Tally before the Address panel had PIN
-  // fields, then kl_branch as a last resort for place. Without these
-  // fallbacks, Tally rejects the voucher with
-  // "consignor dispatch from pin is missing".
-  // Primary dispatch-from source is the Kerala "Dispatch Address"
-  // (kl_dispatch); the legacy `dispatch_from` setting is the fallback.
-  // Feeds both the sales DISPATCHFROMADDRESS block and the e-way bill
-  // CONSIGNOR fields below.
-  const d_add        = cfgGet(cfg, 'kl_dispatch', cfgGet(cfg, 'dispatch_from', ''));
-  const d_add2       = cfgGet(cfg, 'kl_address2', '');
-  const d_place      = cfgGet(cfg, 'kl_place',
-                       cfgGet(cfg, 'tally_dispatch_place',
-                       cfgGet(cfg, 'kl_branch', '')));
-  const d_pin        = cfgGet(cfg, 'kl_pin',
-                       cfgGet(cfg, 'tally_dispatch_pin', ''));
-  const d_state      = cfgGet(cfg, 'kl_state',
-                       cfgGet(cfg, 'tally_dispatch_state', 'Kerala'));
-  const d_state_code = '32';
-  const d_gstin      = cfgGet(cfg, 'kl_gstin', '');
+  // Dispatch From — the dispatch-from block is driven SOLELY by the
+  // Settings → Address (Kerala) → "Dispatch Address" field (`kl_dispatch`).
+  // Nothing else is composed into it: no separate place / PIN / state /
+  // GSTIN / address-line-2.
+  const d_add   = cfgGet(cfg, 'kl_dispatch', '');
+  // The following are NOT used in the dispatch-from block. They feed only
+  // the separate e-way-bill CONSIGNOR fields below (which legally need the
+  // consignor's place / PIN / state / GSTIN), each read from Address (Kerala).
+  const d_place = cfgGet(cfg, 'kl_place', '');
+  const d_pin   = cfgGet(cfg, 'kl_pin', '');
+  const d_state = cfgGet(cfg, 'kl_state', 'Kerala');
+  const d_gstin = cfgGet(cfg, 'kl_gstin', '');
 
   // Emit the dispatch-from block whenever a dispatch address is actually
   // configured — Settings → Address (Kerala) → "Dispatch Address"
-  // (`kl_dispatch`), with the legacy `dispatch_from` as fallback (both
-  // feed `d_add` above). The previous `tally_dispatch_from` toggle was
-  // removed from Settings, so gating on it kept this block permanently
-  // off and the Sales voucher shipped with no dispatch-from address.
+  // (`kl_dispatch`, which feeds `d_add` above). The previous
+  // `tally_dispatch_from` toggle was removed from Settings, so gating on
+  // it kept this block permanently off and the Sales voucher shipped with
+  // no dispatch-from address.
   const dispatchEnabled = !!String(d_add || '').trim();
 
   // E-way bill consignor type — kept for reference compatibility
@@ -381,12 +367,10 @@ ${buyerAddrLines.map(l => `<BASICBUYERADDRESS>${xe(l)}</BASICBUYERADDRESS>`).joi
 </BASICBUYERADDRESS.LIST>`;
 
     if (dispatchEnabled) {
-      // Dispatch-from address — 5 lines as in reference, blanks for unused
-      const dispatchLines = [
-        d_add,
-        d_add2 || `${d_place}-${d_pin}`,
-        '', '', '',
-      ];
+      // Dispatch-from address — solely the "Dispatch Address" setting.
+      // A multi-line entry (split on newlines) becomes one address line
+      // each; nothing else is composed in.
+      const dispatchLines = String(d_add).split(/\r?\n/);
       xml += `
 <DISPATCHFROMADDRESS.LIST TYPE="String">
 ${dispatchLines.map(l => `<DISPATCHFROMADDRESS>${xe(l)}</DISPATCHFROMADDRESS>`).join('\n')}
@@ -408,10 +392,7 @@ ${dispatchLines.map(l => `<DISPATCHFROMADDRESS>${xe(l)}</DISPATCHFROMADDRESS>`).
 
     if (dispatchEnabled) {
       xml += `
-<DISPATCHFROMNAME>${xe(d_company)}</DISPATCHFROMNAME>
-<DISPATCHFROMSTATENAME>${xe(d_state)}</DISPATCHFROMSTATENAME>
-<DISPATCHFROMPINCODE>${xe(d_pin)}</DISPATCHFROMPINCODE>
-<DISPATCHFROMPLACE>${xe(d_place)}</DISPATCHFROMPLACE>`;
+<DISPATCHFROMNAME>${xe(d_company)}</DISPATCHFROMNAME>`;
     }
 
     xml += `
@@ -428,10 +409,7 @@ ${dispatchLines.map(l => `<DISPATCHFROMADDRESS>${xe(l)}</DISPATCHFROMADDRESS>`).
 <BASICORDERTERMS.LIST TYPE="String">
 <BASICORDERTERMS>Dispatch From:</BASICORDERTERMS>
 <BASICORDERTERMS>${xe(d_company)}</BASICORDERTERMS>
-<BASICORDERTERMS>${xe(d_add)}</BASICORDERTERMS>
-<BASICORDERTERMS>${xe(d_place)}-${xe(d_pin)}</BASICORDERTERMS>
-<BASICORDERTERMS>${xe(d_state)} Code:${xe(d_state_code)}</BASICORDERTERMS>
-<BASICORDERTERMS>GSTIN.${xe(d_gstin)}</BASICORDERTERMS>
+${String(d_add).split(/\r?\n/).map(l => `<BASICORDERTERMS>${xe(l)}</BASICORDERTERMS>`).join('\n')}
 </BASICORDERTERMS.LIST>`;
     }
 
@@ -2327,7 +2305,15 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
     const fullGstin   = String(row.gstin || '');
     const partyGstin  = row.partyGstin || (fullGstin.toUpperCase().startsWith('GST') ? fullGstin.slice(6, 21) : fullGstin);
     const state       = xe(findState(partyGstin));
-    const isIntra     = String(partyGstin).slice(0, 2) === String(intra);
+    // Intra/inter classification. Registered dealers carry a PARTYGSTIN, so
+    // we read its 2-digit state code (authoritative). URD / planter debit
+    // notes have NO GSTIN — for those we fall back to the GST amounts stored
+    // on the row (CGST/SGST present ⇒ intra, else inter). The fallback only
+    // fires when partyGstin is empty, so registered-dealer behaviour is
+    // unchanged.
+    const isIntra     = partyGstin
+      ? String(partyGstin).slice(0, 2) === String(intra)
+      : (Number(row.cgsttot || row.cgst || 0) > 0 || Number(row.sgsttot || row.sgst || 0) > 0);
     const refundtot   = r2(row.refundtot || row.amount || 0);
     const cgsttot     = r2(row.cgsttot || row.cgst || 0);
     const sgsttot     = r2(row.sgsttot || row.sgst || 0);
@@ -3087,6 +3073,61 @@ function buildDebitNoteRows(db, auctionId, cfg) {
   });
 }
 
+/**
+ * Pull PLANTER debit notes for an auction.
+ *
+ * Mirrors buildDebitNoteRows but reads the `debit_notes_planter` table.
+ * The parties are agriculturists / unregistered sellers (URD), so:
+ *   - the PARTYLEDGERNAME uses the URD ledger-name convention
+ *     (`<name>-[<PAN>]`, falling back to `<name>-PURCHASE`), matching the
+ *     URD party ledgers emitted by buildURDPartyLedgerRows;
+ *   - `gstin` is left blank (planters have none) — generDebitNoteXML then
+ *     classifies intra/inter from the stored CGST/SGST/IGST amounts.
+ * Address / place / PIN / PAN are pulled from the seller's own bill of
+ * supply for the trade (the same row the DN was generated from).
+ */
+function buildDebitNotePlanterRows(db, auctionId, cfg) {
+  const a = db.prepare('SELECT ano FROM auctions WHERE id = ?').get(auctionId);
+  if (!a) return [];
+  const raw = db.prepare(`
+    SELECT * FROM debit_notes_planter WHERE ano = ? ORDER BY id
+  `).all(a.ano);
+
+  // Pull the matching bill-of-supply row (address / place / PAN) for each
+  // distinct planter in this DN batch. Bills are padding-proof matched via
+  // TRIM(ano) since single-digit trade numbers are space-padded in `bills`.
+  const planterNames = [...new Set(raw.map(d => String(d.name || '').trim()).filter(Boolean))];
+  const planters = {};
+  for (const name of planterNames) {
+    const b = db.prepare(
+      `SELECT name, add_line, pla, st_code, pan
+         FROM bills
+        WHERE TRIM(ano) = ? AND UPPER(name) = UPPER(?)
+        ORDER BY id DESC LIMIT 1`
+    ).get(String(a.ano).trim(), name);
+    if (b) planters[name] = b;
+  }
+
+  return raw.map((d) => {
+    const planter = planters[String(d.name || '').trim()] || {};
+    return {
+      ano: d.ano,
+      date: d.date,
+      name: _urdPurchaseLedgerName(d.name, planter.pan),
+      address: planter.add_line || '',
+      place:   planter.pla || '',
+      pin:     '',
+      // URD/planter — no GSTIN. generDebitNoteXML reads the GST amounts to
+      // pick intra vs inter when the GSTIN is blank.
+      gstin: '',
+      refundtot: d.amount,
+      cgsttot: d.cgst, sgsttot: d.sgst, igsttot: d.igst,
+      total: d.total,
+      voucherNum: d.note_no || String(d.id),
+    };
+  });
+}
+
 // =====================================================================
 // 5. LEDGER MASTERS (party + tax + sales + purchase ledgers)
 // =====================================================================
@@ -3582,6 +3623,7 @@ module.exports = {
   buildRDPurchaseRows,
   buildURDPurchaseRows,
   buildDebitNoteRows,
+  buildDebitNotePlanterRows,
   buildLedgerRows,
   buildSalesPartyLedgerRows,
   buildRDPartyLedgerRows,

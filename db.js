@@ -407,6 +407,26 @@ async function initDb() {
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
+  // ── DEBIT NOTES — PLANTER ──────────────────────────────────
+  // Same schema as `debit_notes`, but scoped to PLANTER / agriculturist
+  // sellers (sourced from the `bills` / bills-of-supply table) rather than
+  // registered-dealer purchases. Kept in a separate table so the two DN
+  // streams have independent trade-wise numbering and never collide.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS debit_notes_planter (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ano TEXT NOT NULL,
+    date TEXT NOT NULL,
+    state TEXT DEFAULT '',
+    name TEXT DEFAULT '',
+    note_no TEXT DEFAULT '',
+    amount REAL DEFAULT 0,
+    cgst REAL DEFAULT 0,
+    sgst REAL DEFAULT 0,
+    igst REAL DEFAULT 0,
+    total REAL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  )`);
+
   // ── ROUTE DISTANCES (e-way bill <DISTANCE> field) ──────────
   // Saved per (from_pin, to_pin) pair, normalised so the smaller PIN
   // is always stored first — that way A↔B and B↔A share one row. Used

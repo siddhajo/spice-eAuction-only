@@ -161,6 +161,7 @@ const DEFAULTS = [
   { key: 'flag_tds_sales',       value: 'false', category: 'flags', label: 'TDS on Sales Invoice',            type: 'boolean' },
   { key: 'flag_wgst',            value: 'false', category: 'flags', label: 'TDS on Full Invoice Amount',      type: 'boolean' },
   { key: 'flag_debit_note',      value: 'false', category: 'flags', label: 'Debit Note for Discount',         type: 'boolean' },
+  { key: 'flag_debit_note_planter', value: 'false', category: 'flags', label: 'Debit Note for Discount — Planter', type: 'boolean' },
   { key: 'flag_invoice_stripe',  value: 'false', category: 'flags', label: 'Alternate Row Stripe in Invoice', type: 'boolean' },
   { key: 'flag_dummy',           value: 'false', category: 'flags', label: 'Allow Dummy Invoices',            type: 'boolean' },
   { key: 'flag_round',           value: 'false', category: 'flags', label: 'Round Invoice Amounts',           type: 'boolean' },
