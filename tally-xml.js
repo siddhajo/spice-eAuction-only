@@ -1748,7 +1748,7 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
     let invEntries = '';
     if (detailed && Array.isArray(row.lots)) {
       for (const lot of row.lots) {
-        const ledger = isIntra ? `${Purchase_LDR}-Local` : `${Purchase_LDR}-Inter_State`;
+        const ledger = Purchase_LDR;
         const nature = isIntra ? 'Local Purchase - Taxable' : 'Interstate Purchase - Taxable';
         invEntries += `\n<ALLINVENTORYENTRIES.LIST>
 <STOCKITEMNAME>${xe(Item_Card)}</STOCKITEMNAME>
@@ -1786,7 +1786,7 @@ ${rates.cess}
       }
     } else {
       // Aggregate single inventory entry
-      const ledger = isIntra ? `${Purchase_LDR}-Local` : `${Purchase_LDR}-Inter_State`;
+      const ledger = Purchase_LDR;
       const nature = isIntra ? 'Local Purchase - Taxable' : 'Interstate Purchase - Taxable';
       invEntries += `\n<ALLINVENTORYENTRIES.LIST>
 <STOCKITEMNAME>${xe(Item_Card)}</STOCKITEMNAME>
@@ -1946,7 +1946,7 @@ ${TAGS.DEEMYES}
     // count drops by 1 — matching the reference XMLs that show some
     // vouchers with TDS and some without.
     if (cfgBool(cfg, 'flag_tds_purchase', false)) {
-      const expensesLdr = isIntra ? `${Purchase_LDR}-Local` : `${Purchase_LDR}-Inter_State`;
+      const expensesLdr = Purchase_LDR;
       const assessable  = amounttot;
       xml += `
 <LEDGERENTRIES.LIST>
