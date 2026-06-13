@@ -1655,65 +1655,93 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
     const voucherRef = `${row.ano}/${taxNm}/${season}`;
 
     const startVoucher = `<VOUCHER VCHTYPE="Purchase" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
-    const total       = r2(row.total);
-    // Prefer the builder-supplied rounded total (matches purchases.total
-    // exactly so Tally's audit trail reconciles). Falls back to a fresh
-    // round when the row doesn't carry it.
-    const totalRound  = tlyrnd ? r0(row.totalRounded != null ? row.totalRounded : total) : total;
-    const rnd         = tlyrnd ? r2(totalRound - total) : 0;
-    const cgst        = r2(row.cgst || 0);
+    const cgst        = r2(row.cgst || 0);   // goods GST (purchases header)
     const sgst        = r2(row.sgst || 0);
     const igst        = r2(row.igst || 0);
-    // TDS amount is always passed through if computed by the builder; the
-    // TDS LEDGERENTRIES block is always emitted (per-conversation decision)
-    // so even a zero TDS amount shows up as a placeholder ledger entry.
-    const tdsamt      = r2(row.tdsamt || 0);
     const amounttot   = r2(row.amounttot || 0);
     const qtytot      = r2(row.qtytot || 0);
     const rt          = r2(row.rate || (qtytot > 0 ? amounttot / qtytot : 0));
-    // Sample refund payable to the dealer (adds to what we owe). The party
-    // AMOUNT = rounded goods+GST total + sample refund. Commission is NOT
-    // posted on this voucher — it lives on the dedicated Commission Bill /
-    // Debit Note, so it no longer reduces the payable here (would otherwise
-    // double-count). Round-off stays on the GOODS portion (matches the
-    // Purchase PDF). Sample Refund posts as its own debit ledger (−refundtot)
-    // above the tax ledgers; the voucher stays balanced.
     const refundtot   = r2(row.refundtot || 0);
-    const partyAmt    = r2((tlyrnd ? r0(total) : total) + refundtot);
+    // TDS is only in play when the purchase-TDS flag is on; gate every TDS
+    // term (party amount, bill ref, ledger) on it so the voucher always
+    // balances whether or not TDS applies.
+    const tdsOn       = cfgBool(cfg, 'flag_tds_purchase', false);
+    const tds         = tdsOn ? r2(row.tdsamt || 0) : 0;
 
-    // Per-lot bill allocations (Option A). Each lot's New Ref carries that
-    // lot's full purchase payable to the dealer = goods + sample refund +
-    // its share of goods GST. The GST + round-off remainder is spread
-    // pro-rata across lots (by goods+refund base) and the residual lands on
-    // the last lot, so the allocations sum EXACTLY to the party AMOUNT —
-    // no On Account, no separate GST/commission refs. TDS (when enabled)
-    // keeps its own negative ref, so the lots cover the party AMOUNT minus
-    // that TDS ref.
-    const tdsAllocValue = tdsamt > 0 ? r2(-(tlyrnd ? r0(tdsamt) : r2(tdsamt))) : 0;
-    const lotRefTotal   = r2(partyAmt - tdsAllocValue);
+    // ── Amounts (mirror the reference RD-purchase voucher) ────────
+    // Items subtotal = goods + sample refund (the refund is its own stock
+    // line, see invEntries). Goods GST sits on that whole subtotal. The
+    // dealer payable (party AMOUNT) = subtotal + goods GST − TDS, rounded
+    // only when tally_round_enabled is on.
+    const grossGoods  = r2(amounttot + refundtot);
+    const goodsGst    = r2(cgst + sgst + igst);
+    const preRound    = r2(grossGoods + goodsGst);
+    const rnd         = tlyrnd ? r2(r0(preRound) - preRound) : 0;
+    const partyAmt    = r2((tlyrnd ? r0(preRound) : preRound) - tds);
+
+    // ── Per-lot payable + bill allocations ───────────────────────
+    // Each lot's "New Ref" = its payable to the dealer
+    //   = goods + refund − commission − handling − service GST.
+    // Commission + handling + service GST are added back as ONE positive
+    // "{invo}/{season}/SE" New Ref so (Σ lot payables + SE) = the goods+refund
+    // subtotal. Goods GST and TDS get their own "Agst Ref" bills. Together all
+    // bills sum EXACTLY to the party AMOUNT — no On Account. Commission is not
+    // a voucher ledger (it lives on the Commission Bill / Debit Note); here it
+    // only reclassifies the bill ageing.
+    const lotPayable = (lot) => r2(
+      Number(lot.amount || 0) + Number(lot.refund || 0)
+      - Number(lot.com || 0) - Number(lot.sertax || 0)
+      - Number(lot.cgst || 0) - Number(lot.sgst || 0) - Number(lot.igst || 0)
+    );
+    let lotPayableSum = 0;
+    const lotRows = (Array.isArray(row.lots) ? row.lots : []).map((lot) => {
+      const pay = lotPayable(lot);
+      lotPayableSum = r2(lotPayableSum + pay);
+      return { lot, pay };
+    });
     let billAlloc1 = '';
-    if (detailed && Array.isArray(row.lots) && row.lots.length) {
-      const lotBase = row.lots.map(l => r2(Number(l.amount || 0) + Number(l.refund || 0)));
-      const baseSum = r2(lotBase.reduce((s, b) => s + b, 0));
-      const spread  = r2(lotRefTotal - baseSum); // GST + round-off to distribute
-      let allocated = 0;
-      row.lots.forEach((lot, i) => {
-        let amt;
-        if (i === row.lots.length - 1) {
-          amt = r2(lotRefTotal - allocated); // last lot absorbs the residual
-        } else {
-          const share = baseSum > 0 ? r2(spread * (lotBase[i] / baseSum)) : 0;
-          amt = r2(lotBase[i] + share);
-          allocated = r2(allocated + amt);
-        }
+    if (detailed && lotRows.length) {
+      for (const { lot, pay } of lotRows) {
         billAlloc1 += `
 <BILLALLOCATIONS.LIST>
 <NAME>${xe(`${row.ano}/${lot.lot}/${season}`)}</NAME>
 <BILLTYPE>New Ref</BILLTYPE>
-<AMOUNT>${amt}</AMOUNT>
+<AMOUNT>${pay}</AMOUNT>
 </BILLALLOCATIONS.LIST>`;
-      });
+      }
+    } else {
+      billAlloc1 = `
+<BILLALLOCATIONS.LIST>
+<NAME>${xe(`${row.ano}/${taxNm}/${season}`)}</NAME>
+<BILLTYPE>New Ref</BILLTYPE>
+<AMOUNT>${lotPayableSum}</AMOUNT>
+</BILLALLOCATIONS.LIST>`;
     }
+    // SE = commission + handling + service GST, added back (positive Cr).
+    const seAmt   = r2(grossGoods - lotPayableSum);
+    const seAlloc = seAmt !== 0 ? `
+<BILLALLOCATIONS.LIST>
+<NAME>${xe(`${taxNm}/${season}/SE`)}</NAME>
+<BILLTYPE>New Ref</BILLTYPE>
+<AMOUNT>${seAmt}</AMOUNT>
+</BILLALLOCATIONS.LIST>` : '';
+    // Goods GST as an "Agst Ref" bill (any round-off delta folds in here so
+    // the bill total still equals the party AMOUNT).
+    const gstRefAmt = r2(goodsGst + rnd);
+    const gstAlloc  = gstRefAmt !== 0 ? `
+<BILLALLOCATIONS.LIST>
+<NAME>${xe(`${row.ano}/GST/${season}`)}</NAME>
+<BILLTYPE>Agst Ref</BILLTYPE>
+<AMOUNT>${gstRefAmt}</AMOUNT>
+</BILLALLOCATIONS.LIST>` : '';
+    // TDS as an "Agst Ref" bill (negative = Dr, reduces payable).
+    const tdsRefAmt = tlyrnd ? r0(tds) : r2(tds);
+    const tdsAlloc  = tds > 0 ? `
+<BILLALLOCATIONS.LIST>
+<NAME>${xe(`${row.ano}/TDS/${season}`)}</NAME>
+<BILLTYPE>Agst Ref</BILLTYPE>
+<AMOUNT>${r2(-tdsRefAmt)}</AMOUNT>
+</BILLALLOCATIONS.LIST>` : '';
 
     // Inventory blocks (per lot when detailed)
     let invEntries = '';
@@ -1786,21 +1814,52 @@ ${rates.cess}
 </ALLINVENTORYENTRIES.LIST>`;
     }
 
-    // Bill allocations (Option A): each lot's New Ref already carries that
-    // lot's goods + sample refund + its share of goods GST (built above in
-    // billAlloc1), so the lots alone cover the party AMOUNT. There is no
-    // separate GST ref and no commission/SE ref — commission is off this
-    // voucher entirely. TDS keeps its own negative "{ano}/TDS/{season-short}"
-    // ref when enabled; the lot refs already account for it (lotRefTotal =
-    // partyAmt − that TDS ref) so all allocations sum to the party AMOUNT.
-    const seasonShort = String(cfgGet(cfg, 'season_short', '')).trim() || season;
-    const tdsAllocAmt = tlyrnd ? r0(tdsamt) : r2(tdsamt);
-    const tdsAlloc = tdsamt > 0 ? `
-<BILLALLOCATIONS.LIST>
-<NAME>${xe(`${row.ano}/TDS/${seasonShort}`)}</NAME>
-<BILLTYPE>New Ref</BILLTYPE>
-<AMOUNT>${r2(-tdsAllocAmt)}</AMOUNT>
-</BILLALLOCATIONS.LIST>` : '';
+    // Sample refund — a Cardamom stock line whose value posts to the Sample
+    // Refund to Dealer ledger (per config). Quantity = total sample-bag
+    // refund kg (sb_refund × lot count); amount = total refund. Marked
+    // taxable so the goods GST base = goods + refund (matches the tax ledger
+    // amounts). Rate is the last lot's rate for display only — Tally posts by
+    // AMOUNT. Sits in the items section, i.e. above the tax ledgers.
+    if (refundtot !== 0) {
+      const sbRefundKg = cfgNum(cfg, 'sb_refund', 0);
+      const nLots   = Array.isArray(row.lots) ? row.lots.length : 0;
+      const refQty  = r2(sbRefundKg * nLots);
+      const refRate = (Array.isArray(row.lots) && row.lots.length)
+        ? r2(row.lots[row.lots.length - 1].rate) : rt;
+      const nature  = isIntra ? 'Local Purchase - Taxable' : 'Interstate Purchase - Taxable';
+      invEntries += `\n<ALLINVENTORYENTRIES.LIST>
+<STOCKITEMNAME>${xe(Item_Card)}</STOCKITEMNAME>
+<GSTOVRDNTAXABILITY>Taxable</GSTOVRDNTAXABILITY>
+<GSTSOURCETYPE>Ledger</GSTSOURCETYPE>
+<HSNLEDGERSOURCE>${xe(SampleRefund_LDR)}</HSNLEDGERSOURCE>
+<GSTOVRDNSTOREDNATURE>${nature}</GSTOVRDNSTOREDNATURE>
+<GSTOVRDNTYPEOFSUPPLY>Goods</GSTOVRDNTYPEOFSUPPLY>
+<GSTHSNNAME>${xe(HSN_Card)}</GSTHSNNAME>
+<GSTHSNDESCRIPTION>Cardamom</GSTHSNDESCRIPTION>
+<BASICPACKAGEMARKS></BASICPACKAGEMARKS>
+<BASICNUMPACKAGES></BASICNUMPACKAGES>
+${TAGS.DEEMYES}
+<RATE>${refRate}/Kgs.</RATE>
+<AMOUNT>${-refundtot}</AMOUNT>
+<ACTUALQTY>${refQty}Kgs.</ACTUALQTY>
+<BILLEDQTY>${refQty}Kgs.</BILLEDQTY>
+<BATCHALLOCATIONS.LIST>
+<GODOWNNAME>Main Location</GODOWNNAME>
+<DESTINATIONGODOWNNAME>Main Location</DESTINATIONGODOWNNAME>
+<AMOUNT>${-refundtot}</AMOUNT>
+<ACTUALQTY>${refQty}Kgs.</ACTUALQTY>
+<BILLEDQTY>${refQty}Kgs.</BILLEDQTY>
+</BATCHALLOCATIONS.LIST>
+<ACCOUNTINGALLOCATIONS.LIST>
+<LEDGERNAME>${xe(SampleRefund_LDR)}</LEDGERNAME>
+<GSTOVRDNTAXABILITY>Taxable</GSTOVRDNTAXABILITY>
+${TAGS.DEEMYES}
+<AMOUNT>${-refundtot}</AMOUNT>
+</ACCOUNTINGALLOCATIONS.LIST>
+${isIntra ? rates.igst : `${rates.cgst}\n${rates.sgst}`}
+${rates.cess}
+</ALLINVENTORYENTRIES.LIST>`;
+    }
 
     xml += `\n${startVoucher}
 <ADDRESS.LIST TYPE="String">
@@ -1839,29 +1898,11 @@ ${rates.cess}
 <LEDGERNAME>${name}</LEDGERNAME>
 ${TAGS.DEEMNO}
 <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
-<AMOUNT>${partyAmt}</AMOUNT>${detailed ? billAlloc1 : `
-<BILLALLOCATIONS.LIST>
-<NAME>${xe(`${row.ano}/${taxNm}/${season}`)}</NAME>
-<BILLTYPE>New Ref</BILLTYPE>
-<AMOUNT>${lotRefTotal}</AMOUNT>
-</BILLALLOCATIONS.LIST>`}${tdsAlloc}
+<AMOUNT>${partyAmt}</AMOUNT>${billAlloc1}${seAlloc}${gstAlloc}${tdsAlloc}
 </LEDGERENTRIES.LIST>`;
 
-    // Sample Refund to Dealer — an expense/payable to the dealer (debit,
-    // DEEMYES negative, like the purchase/GST ledgers). Emitted ABOVE the
-    // tax ledgers so it appears immediately under the goods on the voucher
-    // (per the requested layout).
-    if (refundtot !== 0) {
-      xml += `
-<LEDGERENTRIES.LIST>
-<LEDGERNAME>${xe(SampleRefund_LDR)}</LEDGERNAME>
-${TAGS.DEEMYES}
-<AMOUNT>${r2(-refundtot)}</AMOUNT>
-<VATEXPAMOUNT>${r2(-refundtot)}</VATEXPAMOUNT>
-</LEDGERENTRIES.LIST>`;
-    }
-
-    // Tax ledgers
+    // Tax ledgers (goods GST). Sample refund is NOT a ledger here — it's a
+    // stock line in invEntries above, so it already shows above these.
     if (isIntra) {
       xml += `
 <LEDGERENTRIES.LIST>
@@ -1900,8 +1941,8 @@ ${TAGS.DEEMYES}
 <LEDGERENTRIES.LIST>
 <LEDGERNAME>${xe(TDS_LDR)}</LEDGERNAME>
 ${TAGS.DEEMYES}
-<AMOUNT>${tlyrnd ? r0(tdsamt) : tdsamt}</AMOUNT>
-<VATEXPAMOUNT>${tlyrnd ? r0(tdsamt) : tdsamt}</VATEXPAMOUNT>
+<AMOUNT>${tlyrnd ? r0(tds) : tds}</AMOUNT>
+<VATEXPAMOUNT>${tlyrnd ? r0(tds) : tds}</VATEXPAMOUNT>
 <TAXOBJECTALLOCATIONS.LIST>
 <CATEGORY>${xe(TDS_LDR)}</CATEGORY>
 <TAXTYPE>TDS</TAXTYPE>
@@ -1914,7 +1955,7 @@ ${TAGS.DEEMYES}
 <DUTYLEDGER>${xe(TDS_LDR)}</DUTYLEDGER>
 <TAXRATE>${TDS_Rate}</TAXRATE>
 <ASSESSABLEAMOUNT>${tlyrnd ? r0(assessable) : assessable}</ASSESSABLEAMOUNT>
-<TAX>${tlyrnd ? r0(tdsamt) : tdsamt}</TAX>
+<TAX>${tlyrnd ? r0(tds) : tds}</TAX>
 </SUBCATEGORYALLOCATION.LIST>
 <SUBCATEGORYALLOCATION.LIST>
 <SUBCATEGORY>Surcharge</SUBCATEGORY>
@@ -1929,20 +1970,24 @@ ${TAGS.DEEMYES}
 </LEDGERENTRIES.LIST>`;
     }
 
-    // Round Off — always emit (matches target which has it on every voucher).
-    // If round flag is off OR rnd is zero we still emit a 0-amount entry,
-    // because Tally expects the structural slot per the reference XMLs.
-    xml += `
+    // Round Off — only when rounding is enabled AND there's a non-zero delta
+    // (the reference voucher keeps paise, so no round-off line appears). The
+    // delta is folded into the goods-GST bill ref above so bills still total
+    // the party AMOUNT.
+    if (tlyrnd && rnd !== 0) {
+      xml += `
 <LEDGERENTRIES.LIST>
 <LEDGERNAME>${xe(Round_LDR)}</LEDGERNAME>
 ${TAGS.DEEMYES}
 <AMOUNT>${-r2(rnd)}</AMOUNT>
 <VATEXPAMOUNT>${-r2(rnd)}</VATEXPAMOUNT>
 </LEDGERENTRIES.LIST>`;
+    }
 
-    // Commission is intentionally NOT posted on this voucher — it lives on
-    // the dedicated Commission Bill / Debit Note, so the dealer payable here
-    // is gross of commission (matches Option A bill allocations above).
+    // Commission is intentionally NOT posted as a voucher ledger — it lives
+    // on the dedicated Commission Bill / Debit Note. On this voucher it only
+    // appears as the positive "{invo}/{season}/SE" bill ref above, which
+    // reclassifies the per-lot payable ageing without changing the total.
 
     xml += invEntries;
     xml += `\n${TAGS.ENDVOUCHER}`;
@@ -2842,9 +2887,13 @@ function buildRDPurchaseRows(db, auctionId, cfg) {
   const raw = stmt.all(auctionId);
 
   // Pull lots for each purchase (matched by name + auction)
+  // cgst/sgst/igst here are the SERVICE GST (on commission + handling) that
+  // calculateLot() stores per lot — needed for the per-lot payable used as
+  // each lot's Tally bill "New Ref". (The goods GST lives on the purchases
+  // header, p.cgst/p.sgst/p.igst, and is emitted as the voucher tax ledgers.)
   const lotsStmt = db.prepare(`
     SELECT lot_no AS lot, bags AS bag, pqty AS qty, prate AS rate,
-           puramt AS amount, bilamt, refund, com, sertax
+           puramt AS amount, bilamt, refund, com, sertax, cgst, sgst, igst
     FROM lots
     WHERE auction_id = ? AND name = ? AND puramt > 0
     ORDER BY lot_no
@@ -2855,6 +2904,7 @@ function buildRDPurchaseRows(db, auctionId, cfg) {
       lot: l.lot, bag: l.bag, qty: l.qty, rate: l.rate,
       amount: l.amount, bilamt: l.bilamt || l.amount,
       refund: l.refund || 0, com: l.com || 0, sertax: l.sertax || 0,
+      cgst: l.cgst || 0, sgst: l.sgst || 0, igst: l.igst || 0,
     }));
     const qtytot = lots.reduce((s, l) => s + Number(l.qty || 0), 0);
     const amounttot = lots.reduce((s, l) => s + Number(l.amount || 0), 0);
