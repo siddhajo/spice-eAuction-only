@@ -2031,7 +2031,6 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
   const Item_Card      = cfgGet(cfg, 'tally_item_cardamom', 'Cardamom');
   const HSN_Card       = cfgGet(cfg, 'tally_hsn_cardamom',  '09083110');
   const SampleRefund_LDR = cfgGet(cfg, 'tally_sample_planter', 'Sample Refund to Planter');
-  const Commission_LDR   = cfgGet(cfg, 'tally_commission_planter', 'Commission-Planter');
   // Short-form season identifier (e.g. "26-27") for the commission bill ref;
   // falls back to the full season so the ref is never empty.
   const seasonShort = String(cfgGet(cfg, 'season_short', '')).trim() || season;
@@ -2048,58 +2047,75 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
     const address    = xe(row.address);
     const place      = xe(row.place);
     const pin        = xe(row.pin);
-    const total      = r2(row.total);
-    const totalRound = tlyrnd ? r0(total) : total;
-    const rnd        = tlyrnd ? r2(totalRound - total) : 0;
     const amounttot  = r2(row.amounttot);
     const qtytot     = r2(row.qtytot);
     const rt         = r2(qtytot > 0 ? amounttot / qtytot : 0);
-    // Sample refund payable to the planter (adds to what we owe) and the
-    // commission + handling charged back (reduces it). Party AMOUNT carries
-    // both; Sample Refund to Planter posts as its own debit ledger and
-    // Commission-Planter as a credit ledger + a bill allocation, so the
-    // voucher balances. Round-off stays on the GOODS portion (the bill).
     const refundtot  = r2(row.refundtot || 0);
     const comhandtot = r2(row.comhandtot || 0);
-    const partyAmt   = r2((tlyrnd ? r0(total) : total) + refundtot - comhandtot);
+    // Party AMOUNT = the GROSS goods payable (cardamom + sample refund),
+    // matching Σ inventory. Commission + handling is NOT netted off the party
+    // and is NOT a voucher ledger — it only reclassifies the bill ageing as a
+    // positive "Agst Ref" below (mirrors the RD-purchase voucher; the
+    // commission income is booked on the planter Debit Note). Sample Refund to
+    // Planter still posts as its own debit ledger so the voucher balances.
+    const grossGoods = r2(amounttot + refundtot);
+    const partyAmt   = r2(tlyrnd ? r0(grossGoods) : grossGoods);
+    // Round-off delta (party rounded vs exact goods); balanced by the Round
+    // Off ledger emitted below.
+    const rnd        = tlyrnd ? r2(partyAmt - grossGoods) : 0;
     // Single-company build: URD voucher number uses the ISP prefix.
     const voucherRef = `${invPrefix}P-${taxNm}/${season}`;
-    // Commission + handling charged to the planter, aged on the party ledger
-    // under "<invno>/<season-short>/URD". Negative = reduces the payable
-    // (the matching Commission-Planter credit ledger is emitted below).
-    const comAlloc = comhandtot !== 0 ? `
-<BILLALLOCATIONS.LIST>
-<NAME>${xe(`${taxNm}/${seasonShort}/URD`)}</NAME>
-<BILLTYPE>New Ref</BILLTYPE>
-<AMOUNT>${r2(-comhandtot)}</AMOUNT>
-</BILLALLOCATIONS.LIST>` : '';
-
     const startVoucher = `<VOUCHER VCHTYPE="Purchase" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
 
-    // Bill allocations — driven by tally_purchase_detailed:
-    //   detailed (default) → one allocation per lot, keyed by lot number
-    //                        (matches the per-lot inventory below)
-    //   consolidated       → single allocation keyed by bill no, summed
-    //                        across the voucher's lots
+    // Bill allocations (mirror the RD-purchase voucher):
+    //   • Each lot's "New Ref" = its NET payable to the planter
+    //       = goods + sample refund − commission − handling.
+    //   • Commission + handling is added back as ONE positive "Agst Ref"
+    //       "<invo>/<season-short>/URD" so (Σ lot payables + URD ref) equals
+    //       the gross goods = party AMOUNT (no On Account). Any round-off
+    //       delta folds into that same URD ref.
+    // Driven by tally_purchase_detailed: detailed → one New Ref per lot
+    // (keyed by lot number, matching the per-lot inventory); consolidated →
+    // a single New Ref keyed by bill no, summed across the voucher's lots.
+    const lotPayable = (lot) => r2(
+      Number(lot.amount || 0) + Number(lot.refund || 0)
+      - Number(lot.com || 0) - Number(lot.sertax || 0)
+    );
+    let lotPayableSum = 0;
+    const lotPayRows = (Array.isArray(row.lots) ? row.lots : []).map((lot) => {
+      const pay = lotPayable(lot);
+      lotPayableSum = r2(lotPayableSum + pay);
+      return { lot, pay };
+    });
     let billAlloc = '';
-    if (detailed && Array.isArray(row.lots)) {
-      for (const lot of row.lots) {
+    if (detailed && lotPayRows.length) {
+      for (const { lot, pay } of lotPayRows) {
         billAlloc += `
 <BILLALLOCATIONS.LIST>
 <NAME>${xe(`${row.ano}/${lot.lot}/${season}`)}</NAME>
 <BILLTYPE>New Ref</BILLTYPE>
-<AMOUNT>${tlyrnd ? r0(lot.bilamt || lot.amount) : r2(lot.bilamt || lot.amount)}</AMOUNT>
+<AMOUNT>${pay}</AMOUNT>
 </BILLALLOCATIONS.LIST>`;
       }
     } else {
-      const bilamttot = r2((row.bilamttot != null ? row.bilamttot : row.amounttot) || 0);
       billAlloc = `
 <BILLALLOCATIONS.LIST>
 <NAME>${xe(`${row.ano}/${taxNm}/${season}`)}</NAME>
 <BILLTYPE>New Ref</BILLTYPE>
-<AMOUNT>${tlyrnd ? r0(bilamttot) : bilamttot}</AMOUNT>
+<AMOUNT>${lotPayableSum}</AMOUNT>
 </BILLALLOCATIONS.LIST>`;
     }
+    // Commission + handling charged back to the planter, aged as a positive
+    // "Agst Ref" against the planter's "<invo>/<season-short>/URD" provisional
+    // bill. = party AMOUNT − Σ lot payables, so all bills sum EXACTLY to the
+    // party AMOUNT (this also absorbs any round-off delta).
+    const urdRefAmt = r2(partyAmt - lotPayableSum);
+    const urdAlloc  = urdRefAmt !== 0 ? `
+<BILLALLOCATIONS.LIST>
+<NAME>${xe(`${taxNm}/${seasonShort}/URD`)}</NAME>
+<BILLTYPE>Agst Ref</BILLTYPE>
+<AMOUNT>${urdRefAmt}</AMOUNT>
+</BILLALLOCATIONS.LIST>` : '';
 
     // Inventory: detailed-per-lot or aggregated
     let invEntries = '';
@@ -2215,7 +2231,7 @@ ${rates.scess}
 <LEDGERNAME>${name}</LEDGERNAME>
 ${TAGS.DEEMNO}
 <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
-<AMOUNT>${partyAmt}</AMOUNT>${billAlloc}${comAlloc}
+<AMOUNT>${partyAmt}</AMOUNT>${billAlloc}${urdAlloc}
 </LEDGERENTRIES.LIST>`;
 
     if (tlyrnd && Math.abs(rnd) > 0.001) {
@@ -2241,18 +2257,10 @@ ${TAGS.DEEMYES}
 </LEDGERENTRIES.LIST>`;
     }
 
-    // Commission-Planter — commission + handling charged to the planter
-    // (income, credit, DEEMNO positive). Reduces the net payable; balanced
-    // by the "<invno>/<season-short>/URD" bill allocation on the party.
-    if (comhandtot !== 0) {
-      xml += `
-<LEDGERENTRIES.LIST>
-<LEDGERNAME>${xe(Commission_LDR)}</LEDGERNAME>
-${TAGS.DEEMNO}
-<AMOUNT>${r2(comhandtot)}</AMOUNT>
-<VATEXPAMOUNT>${r2(comhandtot)}</VATEXPAMOUNT>
-</LEDGERENTRIES.LIST>`;
-    }
+    // Commission + handling is intentionally NOT a voucher ledger here — it
+    // only reclassifies the bill ageing via the "<invo>/<season-short>/URD"
+    // Agst Ref above (the commission income is booked on the planter Debit
+    // Note). This mirrors the RD-purchase voucher.
 
     xml += invEntries;
     xml += `\n${TAGS.ENDVOUCHER}`;
