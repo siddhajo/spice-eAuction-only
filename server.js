@@ -11267,9 +11267,19 @@ const IMPORT_DERIVE_RUND = {
     taxFields:     ['cgst', 'sgst', 'igst'],
     targetField:   'rund',
   },
-  // Purchase imports already carry rund in their export; bills don't
-  // have GST so there's no round-off to derive. Add modules here if
-  // their source file is missing rund.
+  // Purchase invoices: taxable = puramt subtotal (`amount`) + GST. Legacy
+  // purchase exports often omit the round-off column, which left rund = 0
+  // and made the RD-purchase Tally export show 0 in the Round On/Off
+  // ledger. Mirrors calculations.js buildPurchase:
+  //   totalBeforeRound = totalPuramt + cgst + sgst + igst
+  //   rund             = round0(totalBeforeRound) - totalBeforeRound
+  purchase: {
+    taxableFields: ['amount'],
+    taxFields:     ['cgst', 'sgst', 'igst'],
+    targetField:   'rund',
+  },
+  // Bills don't have GST so there's no round-off to derive. Add modules
+  // here if their source file is missing rund.
 };
 
 // Excel-compatible integer round (round half away from zero). Mirrors
