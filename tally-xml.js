@@ -240,7 +240,9 @@ function generSalesIspXML(rows, cfg, opts = {}) {
   const invPrefix = /[/\-]$/.test(_activePrefix) ? _activePrefix : (_activePrefix + '/');
   const ainvPrefix    = cfgGet(cfg, 'tally_ainv_prefix', '');  // legacy ASP-prefix (sister company); empty means "no aux prefix"
   const detailed      = cfgBool(cfg, 'tally_detailed', true);
-  const dispatchEnabled = cfgBool(cfg, 'tally_dispatch_from', false);
+  // `dispatchEnabled` is derived below, once the dispatch-from address is
+  // resolved — see the note at `d_add`. The old `tally_dispatch_from`
+  // toggle was removed from Settings, so gating on it left the block off.
   // E-way bill emission gate — user-controlled, defaults ON, independent
   // of the dispatch-from-address toggle so they can be flipped separately.
   const ewayEnabled    = cfgBool(cfg, 'tally_eway_enabled', false);
@@ -310,6 +312,14 @@ function generSalesIspXML(rows, cfg, opts = {}) {
                        cfgGet(cfg, 'tally_dispatch_state', 'Kerala'));
   const d_state_code = '32';
   const d_gstin      = cfgGet(cfg, 'kl_gstin', '');
+
+  // Emit the dispatch-from block whenever a dispatch address is actually
+  // configured — Settings → Address (Kerala) → "Dispatch Address"
+  // (`kl_dispatch`), with the legacy `dispatch_from` as fallback (both
+  // feed `d_add` above). The previous `tally_dispatch_from` toggle was
+  // removed from Settings, so gating on it kept this block permanently
+  // off and the Sales voucher shipped with no dispatch-from address.
+  const dispatchEnabled = !!String(d_add || '').trim();
 
   // E-way bill consignor type — kept for reference compatibility
   const consignorType = cfgGet(cfg, 'tally_consignor_type', 'Self');
