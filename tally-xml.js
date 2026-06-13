@@ -2194,6 +2194,55 @@ ${rates.scess}
 </ALLINVENTORYENTRIES.LIST>`;
     }
 
+    // Sample refund — a Nil-Rated Cardamom stock line whose value posts to the
+    // Sample Refund to Planter ledger (mirrors the RD-purchase voucher; sits in
+    // the items section, not as a separate top-level ledger). Quantity = total
+    // sample-bag refund kg (sb_refund × lot count); amount = total refund. Rate
+    // is the last lot's rate for display only — Tally posts by AMOUNT.
+    if (refundtot !== 0) {
+      const sbRefundKg = cfgNum(cfg, 'sb_refund', 0);
+      const nLots   = Array.isArray(row.lots) ? row.lots.length : 0;
+      const refQty  = r2(sbRefundKg * nLots);
+      const refRate = (Array.isArray(row.lots) && row.lots.length)
+        ? r2(row.lots[row.lots.length - 1].rate) : rt;
+      invEntries += `\n<ALLINVENTORYENTRIES.LIST>
+<STOCKITEMNAME>${xe(Item_Card)}</STOCKITEMNAME>
+<GSTOVRDNTAXABILITY>Nil Rated</GSTOVRDNTAXABILITY>
+<GSTSOURCETYPE>Ledger</GSTSOURCETYPE>
+<GSTLEDGERSOURCE>${xe(SampleRefund_LDR)}</GSTLEDGERSOURCE>
+<HSNSOURCETYPE>Stock Item</HSNSOURCETYPE>
+<HSNITEMSOURCE>${xe(Item_Card)}</HSNITEMSOURCE>
+<GSTOVRDNTYPEOFSUPPLY>Goods</GSTOVRDNTYPEOFSUPPLY>
+<GSTHSNNAME>${xe(HSN_Card)}</GSTHSNNAME>
+<GSTHSNDESCRIPTION>${xe(Item_Card)}</GSTHSNDESCRIPTION>
+<BASICPACKAGEMARKS></BASICPACKAGEMARKS>
+<BASICNUMPACKAGES></BASICNUMPACKAGES>
+${TAGS.DEEMYES}
+<RATE>${refRate}/Kgs.</RATE>
+<AMOUNT>${-r2(refundtot)}</AMOUNT>
+<ACTUALQTY>${refQty}Kgs.</ACTUALQTY>
+<BILLEDQTY>${refQty}Kgs.</BILLEDQTY>
+<BATCHALLOCATIONS.LIST>
+<GODOWNNAME>Main Location</GODOWNNAME>
+<DESTINATIONGODOWNNAME>Main Location</DESTINATIONGODOWNNAME>
+<AMOUNT>${-r2(refundtot)}</AMOUNT>
+<ACTUALQTY>${refQty}Kgs.</ACTUALQTY>
+<BILLEDQTY>${refQty}Kgs.</BILLEDQTY>
+</BATCHALLOCATIONS.LIST>
+<ACCOUNTINGALLOCATIONS.LIST>
+<LEDGERNAME>${xe(SampleRefund_LDR)}</LEDGERNAME>
+<GSTOVRDNTAXABILITY>Nil Rated</GSTOVRDNTAXABILITY>
+${TAGS.DEEMYES}
+<AMOUNT>${-r2(refundtot)}</AMOUNT>
+</ACCOUNTINGALLOCATIONS.LIST>
+${rates.cgst}
+${rates.sgst}
+${rates.igst}
+${rates.cess}
+${rates.scess}
+</ALLINVENTORYENTRIES.LIST>`;
+    }
+
     xml += `\n${startVoucher}
 <ADDRESS.LIST TYPE="String">
 <ADDRESS>${address}</ADDRESS>
@@ -2236,20 +2285,6 @@ ${TAGS.DEEMNO}
 <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
 <AMOUNT>${partyAmt}</AMOUNT>${billAlloc}${urdAlloc}
 </LEDGERENTRIES.LIST>`;
-
-    // Sample Refund to Planter — payable to the planter (debit, DEEMYES
-    // negative, like the cardamom/Auction Purchase ledger). Separate line
-    // mirroring the cardamom ledger so the refund shows on the voucher.
-    // Emitted BEFORE Round Off so the round-off stays the last ledger line.
-    if (refundtot !== 0) {
-      xml += `
-<LEDGERENTRIES.LIST>
-<LEDGERNAME>${xe(SampleRefund_LDR)}</LEDGERNAME>
-${TAGS.DEEMYES}
-<AMOUNT>${r2(-refundtot)}</AMOUNT>
-<VATEXPAMOUNT>${r2(-refundtot)}</VATEXPAMOUNT>
-</LEDGERENTRIES.LIST>`;
-    }
 
     if (tlyrnd && Math.abs(rnd) > 0.001) {
       xml += `
