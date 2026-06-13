@@ -3041,15 +3041,20 @@ function _remainingPartiesSql(db, docType, auctionId) {
     };
   }
   if (docType === 'debit_notes') {
-    // Mirrors /api/debit-notes/eligible-purchases — distinct dealer
-    // names on purchases in this trade that don't yet have a matching
-    // debit_notes row (same idempotency key as /generate-bulk).
+    // Mirrors /api/debit-notes/eligible-purchases — distinct dealer names
+    // on purchases in this trade that have GRADE-2 commission/handling and
+    // don't yet have a matching debit_notes row.
     return {
       sql: `SELECT DISTINCT p.name
               FROM purchases p
              WHERE p.ano = ?
-               AND p.amount > 0
                AND p.name IS NOT NULL AND p.name != ''
+               AND EXISTS (
+                 SELECT 1 FROM lots l2
+                  WHERE l2.auction_id = p.auction_id AND l2.name = p.name
+                    AND TRIM(COALESCE(l2.grade,'')) = '2'
+                    AND (COALESCE(l2.com,0) + COALESCE(l2.sertax,0)) > 0
+               )
                AND NOT EXISTS (
                  SELECT 1 FROM debit_notes dn
                   WHERE dn.ano = p.ano AND dn.name = p.name
@@ -3059,15 +3064,20 @@ function _remainingPartiesSql(db, docType, auctionId) {
   }
   if (docType === 'debit_notes_planter') {
     // Mirrors /api/debit-notes-planter/eligible-bills — distinct planter
-    // names on bills of supply in this trade that don't yet have a
-    // matching debit_notes_planter row. `bills` stores single-digit trade
-    // numbers space-padded, so match on TRIM(ano).
+    // names on bills of supply in this trade that have GRADE-1 commission/
+    // handling and don't yet have a matching debit_notes_planter row.
+    // `bills` stores single-digit trade numbers space-padded → TRIM(ano).
     return {
       sql: `SELECT DISTINCT b.name
               FROM bills b
              WHERE TRIM(b.ano) = ?
-               AND COALESCE(b.cost, b.net, 0) > 0
                AND b.name IS NOT NULL AND b.name != ''
+               AND EXISTS (
+                 SELECT 1 FROM lots l2
+                  WHERE l2.auction_id = b.auction_id AND l2.name = b.name
+                    AND TRIM(COALESCE(l2.grade,'')) = '1'
+                    AND (COALESCE(l2.com,0) + COALESCE(l2.sertax,0)) > 0
+               )
                AND NOT EXISTS (
                  SELECT 1 FROM debit_notes_planter dn
                   WHERE dn.ano = ? AND dn.name = b.name
@@ -6911,6 +6921,25 @@ app.put('/api/bills/:id', requireInvoiceWrite, (req, res) => {
 //     that pre-dates invoice generation).
 // Returns one of 'I', 'E', 'L', or '' (no fallback was possible — caller
 // should treat empty as local-by-default).
+
+// Debit-note discount BASE for a seller, scoped to a single grade. The
+// base is the sum of commission (`com`) + cash-handling (`sertax`) across
+// the seller's lots of that grade in the auction. Debit Notes use grade
+// '2' (registered dealers); Debit Notes — Planter use grade '1' (planter /
+// agriculturist sellers). The seller is matched by name + auction_id (the
+// same join buildRDPurchaseRows / buildURDPurchaseRows use), and grade is
+// compared TRIM-insensitively since lot grades may carry stray whitespace.
+function gradedServiceBase(db, auctionId, sellerName, grade) {
+  if (!auctionId || !sellerName) return 0;
+  const row = db.get(
+    `SELECT COALESCE(SUM(COALESCE(com,0) + COALESCE(sertax,0)), 0) AS base
+       FROM lots
+      WHERE auction_id = ? AND name = ? AND TRIM(COALESCE(grade,'')) = ?`,
+    [auctionId, sellerName, String(grade)]
+  );
+  return row ? Number(row.base) || 0 : 0;
+}
+
 function deriveDealerSaleType(db, auctionId, dealerName, dealerCr, cfg, purchase) {
   // For Debit Notes, inter/intra is determined by the DEALER'S state vs
   // the COMPANY'S state — NOT the buyer-facing sale type on lots
@@ -7124,20 +7153,18 @@ app.post('/api/debit-notes/generate', requireInvoiceWrite, requireDebitNoteEnabl
     });
   }
 
-  // ── DN amount (Formula 5D) ───────────────────────────────
-  //   DN Amount = ( (Amount + Refund) × 1/100 ) + ( Commission × 0/100 )
-  // The second term contributes 0 per spec — DN amount equals 1% of
-  // (Amount + Refund). 2-decimal precision throughout. Caller may
-  // override via `req.body.discount` for back-compat.
-  const baseAmt = Number(purchase.amount || 0);
+  // ── DN amount (GRADE 2) ──────────────────────────────────
+  //   Base    = sum(commission + cash-handling) on the dealer's GRADE-2
+  //             lots in this trade (grade '2' = registered-dealer side).
+  //   Discount = round( Base / 1000 × discount_days × discount_pct );
+  //             days/pct from Settings → Rates. Caller may override the
+  //             computed discount via `req.body.discount`.
+  const baseAmt = gradedServiceBase(db, purchase.auction_id, dealerName, '2');
   if (baseAmt <= 0) {
-    return res.status(400).json({ error: 'Purchase amount is zero — cannot compute DN amount' });
+    return res.status(400).json({ error: `No grade-2 commission/handling found for ${dealerName} in trade #${ano} — nothing to debit` });
   }
   let discountAmt = req.body.discount != null ? parseFloat(req.body.discount) : NaN;
   if (!Number.isFinite(discountAmt) || discountAmt <= 0) {
-    // Discount = round( Payable / 1000 × discount_days × discount_pct ),
-    // Payable = the purchase taxable amount; days/pct from Settings → Rates.
-    // discount_days = 0 (or discount_pct = 0) → no discount (0).
     const discDays = Number(cfg.discount_days) || 0;
     const discPct  = Number(cfg.discount_pct)  || 0;
     discountAmt    = Math.round(baseAmt / 1000 * discDays * discPct);
@@ -7343,10 +7370,10 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNote
     : new Date().toISOString().slice(0, 10);
 
   // DN (discount) math — read once, applied per-purchase below:
-  //   Discount = round( Payable / 1000 × discount_days × discount_pct ),
-  //   Payable = the purchase taxable amount; days/pct from Settings → Rates.
-  //   discount_days = 0 → 0 (the purchase is skipped). GST on the DN uses
-  //   cfg.discount_gst (typically 18%).
+  //   Base     = sum(commission + handling) on the dealer's GRADE-2 lots.
+  //   Discount = round( Base / 1000 × discount_days × discount_pct ),
+  //   days/pct from Settings → Rates. discount_days = 0 → 0 (skipped).
+  //   GST on the DN uses cfg.discount_gst (typically 18%).
   const dnGstRate     = Number(cfg.discount_gst) || Number(cfg.gst_service) || 0;
   const discDays      = Number(cfg.discount_days) || 0;
   const discPct       = Number(cfg.discount_pct)  || 0;
@@ -7364,7 +7391,7 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNote
   // retry. The check + INSERTs all run inside the same JS turn (no
   // await), so a competing bulk can't slip in between.
   const eligibleCount = purchases.filter(
-    p => !existingKeys.has(p.name || '') && Number(p.amount || 0) > 0
+    p => !existingKeys.has(p.name || '') && gradedServiceBase(db, p.auction_id, p.name || '', '2') > 0
   ).length;
 
   let nextNoteNo;
@@ -7431,13 +7458,14 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNote
       });
       continue;
     }
-    const baseAmt = Number(p.amount || 0);
+    // Base = sum(commission + handling) on the dealer's GRADE-2 lots.
+    const baseAmt = gradedServiceBase(db, p.auction_id, dealerName, '2');
     if (baseAmt <= 0) {
-      skipped.push({ invo: p.invo, ano, buyer: dealerName, reason: 'zero amount' });
+      skipped.push({ invo: p.invo, ano, buyer: dealerName, reason: 'no grade-2 commission/handling' });
       continue;
     }
-    // Discount = round( Payable / 1000 × discount_days × discount_pct ),
-    // Payable = purchase taxable amount. discount_days = 0 → 0 (skipped).
+    // Discount = round( Base / 1000 × discount_days × discount_pct ).
+    // discount_days = 0 → 0 (skipped).
     const discountAmt = Math.round(baseAmt / 1000 * discDays * discPct);
     if (discountAmt <= 0) {
       skipped.push({ invo: p.invo, ano, buyer: dealerName, reason: 'zero discount (set Discount % and No. of Days for Discount in Settings → Rates)' });
@@ -7502,13 +7530,24 @@ app.get('/api/debit-notes/eligible-purchases/:auctionId', requireView, (req, res
 
   const ano = auction.ano;
   // Anti-join: purchases in this trade where no DN exists for the same
-  // (ano, dealer name) pair. The dealer name is the natural key here —
-  // matches the idempotency rule used by /generate-bulk.
+  // (ano, dealer name) pair, AND the dealer has GRADE-2 commission/handling
+  // to debit. `amount` here is the DN BASE (sum of com + sertax on the
+  // dealer's grade-2 lots), not the purchase value.
   const rows = db.all(
-    `SELECT p.id, p.invo, p.name, p.amount, p.cgst, p.sgst, p.igst, p.total, p.date, p.state
+    `SELECT p.id, p.invo, p.name,
+            (SELECT COALESCE(SUM(COALESCE(l.com,0) + COALESCE(l.sertax,0)), 0)
+               FROM lots l
+              WHERE l.auction_id = p.auction_id AND l.name = p.name
+                AND TRIM(COALESCE(l.grade,'')) = '2') AS amount,
+            p.cgst, p.sgst, p.igst, p.total, p.date, p.state
        FROM purchases p
       WHERE p.ano = ?
-        AND p.amount > 0
+        AND EXISTS (
+          SELECT 1 FROM lots l2
+           WHERE l2.auction_id = p.auction_id AND l2.name = p.name
+             AND TRIM(COALESCE(l2.grade,'')) = '2'
+             AND (COALESCE(l2.com,0) + COALESCE(l2.sertax,0)) > 0
+        )
         AND NOT EXISTS (
           SELECT 1 FROM debit_notes dn
            WHERE dn.ano = p.ano AND dn.name = p.name
@@ -8032,13 +8071,6 @@ function derivePlanterSaleType(bill, cfg) {
   return 'L';
 }
 
-// Taxable base for a planter DN — the bill's cost (gross value), falling
-// back to net for older rows where cost wasn't stored.
-function _planterBillBase(b) {
-  const cost = Number(b && b.cost || 0);
-  return cost > 0 ? cost : Number(b && b.net || 0);
-}
-
 // List planter debit notes (paginated, trade- + search-filterable).
 app.get('/api/debit-notes-planter', requireView, (req, res) => {
   const { ano, from, to, search } = req.query;
@@ -8074,11 +8106,24 @@ app.get('/api/debit-notes-planter/eligible-bills/:auctionId', requireView, (req,
   const auction = db.get('SELECT ano FROM auctions WHERE id = ?', [req.params.auctionId]);
   if (!auction) return res.status(404).json({ error: 'Auction not found' });
   const ano = auction.ano;
+  // `amount` is the DN BASE (sum of com + sertax on the planter's grade-1
+  // lots), not the bill value. Only planters who actually have grade-1
+  // service charges are eligible.
   const rows = db.all(
-    `SELECT b.id, b.bil, b.name, COALESCE(b.cost, b.net, 0) AS amount, b.date, b.pstate AS state
+    `SELECT b.id, b.bil, b.name,
+            (SELECT COALESCE(SUM(COALESCE(l.com,0) + COALESCE(l.sertax,0)), 0)
+               FROM lots l
+              WHERE l.auction_id = b.auction_id AND l.name = b.name
+                AND TRIM(COALESCE(l.grade,'')) = '1') AS amount,
+            b.date, b.pstate AS state
        FROM bills b
       WHERE TRIM(b.ano) = ?
-        AND COALESCE(b.cost, b.net, 0) > 0
+        AND EXISTS (
+          SELECT 1 FROM lots l2
+           WHERE l2.auction_id = b.auction_id AND l2.name = b.name
+             AND TRIM(COALESCE(l2.grade,'')) = '1'
+             AND (COALESCE(l2.com,0) + COALESCE(l2.sertax,0)) > 0
+        )
         AND NOT EXISTS (
           SELECT 1 FROM debit_notes_planter dn
            WHERE dn.ano = ? AND dn.name = b.name
@@ -8139,8 +8184,9 @@ app.post('/api/debit-notes-planter/generate', requireInvoiceWrite, requireDebitN
     });
   }
 
-  const baseAmt = _planterBillBase(bill);
-  if (baseAmt <= 0) return res.status(400).json({ error: 'Bill value is zero — cannot compute DN amount' });
+  // Base = sum(commission + handling) on the planter's GRADE-1 lots.
+  const baseAmt = gradedServiceBase(db, bill.auction_id, planterName, '1');
+  if (baseAmt <= 0) return res.status(400).json({ error: `No grade-1 commission/handling found for ${planterName} in trade #${ano} — nothing to debit` });
   let discountAmt = req.body.discount != null ? parseFloat(req.body.discount) : NaN;
   if (!Number.isFinite(discountAmt) || discountAmt <= 0) {
     const discDays = Number(cfg.discount_days) || 0;
@@ -8225,7 +8271,7 @@ app.post('/api/debit-notes-planter/generate-bulk', requireInvoiceWrite, requireD
   const discDays  = Number(cfg.discount_days) || 0;
   const discPct   = Number(cfg.discount_pct)  || 0;
 
-  const eligibleCount = bills.filter(b => !existingKeys.has(b.name || '') && _planterBillBase(b) > 0).length;
+  const eligibleCount = bills.filter(b => !existingKeys.has(b.name || '') && gradedServiceBase(db, b.auction_id, b.name || '', '1') > 0).length;
 
   let nextNoteNo;
   const rawStart = req.body.startNoteNo != null ? req.body.startNoteNo : req.body.startInvoiceNo;
@@ -8264,8 +8310,9 @@ app.post('/api/debit-notes-planter/generate-bulk', requireInvoiceWrite, requireD
       skipped.push({ invo: b.bil, ano, buyer: planterName, reason: 'duplicate (DN already exists for this planter in this trade)' });
       continue;
     }
-    const baseAmt = _planterBillBase(b);
-    if (baseAmt <= 0) { skipped.push({ invo: b.bil, ano, buyer: planterName, reason: 'zero amount' }); continue; }
+    // Base = sum(commission + handling) on the planter's GRADE-1 lots.
+    const baseAmt = gradedServiceBase(db, b.auction_id, planterName, '1');
+    if (baseAmt <= 0) { skipped.push({ invo: b.bil, ano, buyer: planterName, reason: 'no grade-1 commission/handling' }); continue; }
     const discountAmt = Math.round(baseAmt / 1000 * discDays * discPct);
     if (discountAmt <= 0) { skipped.push({ invo: b.bil, ano, buyer: planterName, reason: 'zero discount (set Discount % and No. of Days for Discount in Settings → Rates)' }); continue; }
 
