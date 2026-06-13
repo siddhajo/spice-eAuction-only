@@ -387,6 +387,13 @@ const DEFAULTS = [
   { key: 'tally_commission_planter',    value: '', category: 'tally', label: 'Commission-Planter Ledger',               type: 'text' },
   { key: 'tally_cash_handling',         value: '', category: 'tally', label: 'Cash Handling Charges Ledger',            type: 'text' },
   { key: 'tally_cash_handling_planter', value: '', category: 'tally', label: 'Cash Handling Charges Ledger-Planter',     type: 'text' },
+  // GST on commission / cash-handling (auctioneer's service income). Posted
+  // to dedicated output-GST ledgers; split CGST+SGST (intra) or IGST (inter)
+  // on the same basis as the goods. Used by the RD + URD purchase vouchers.
+  { key: 'tally_commission_gst_rate',   value: '18', category: 'tally', label: 'Commission / Handling GST Rate %',       type: 'number' },
+  { key: 'tally_service_cgst',          value: '', category: 'tally', label: 'Output CGST (Commission/Handling)',        type: 'text' },
+  { key: 'tally_service_sgst',          value: '', category: 'tally', label: 'Output SGST (Commission/Handling)',        type: 'text' },
+  { key: 'tally_service_igst',          value: '', category: 'tally', label: 'Output IGST (Commission/Handling)',        type: 'text' },
 
   // Tax / commercial rates
   { key: 'tally_gst_rate',         value: '0', category: 'tally', label: 'GST Goods Rate %',                type: 'number' },
