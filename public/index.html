@@ -18766,9 +18766,10 @@ function _renderPayLotsTable() {
       <td style="font-family:monospace;font-weight:600">${esc(lotKey)} ${expCell}${immTag}</td>
       <td>${esc(l.branch || '')}</td>
       <td>${bankLabel}</td>
-      <td style="text-align:right">${fmtI(Number(l.pqty)||Number(l.qty)||0, 3)}</td>
-      <td style="text-align:right">${fmtI(Number(l.prate)||Number(l.price)||0, 2)}</td>
-      <td style="text-align:right">${fmtI(Number(l.puramt)||Number(l.amount)||0, 2)}</td>
+      <td style="text-align:right">${fmtI(Number(l.qty)||0, 3)}</td>
+      <td style="text-align:right">${fmtI(Number(l.price)||0, 2)}</td>
+      <td style="text-align:right">${fmtI(Number(l.amount)||0, 2)}</td>
+      <td style="text-align:right;color:#7C3AED">${fmtI((Number(l.amount)||0)+(Number(l.refund)||0), 2)}</td>
       <td style="text-align:right;color:#B45309">${fmtI(Number(l.com)||0, 2)}</td>
       <td style="text-align:right;color:#0891B2">${fmtI(tax, 2)}</td>
       <td style="text-align:right;font-weight:700;color:var(--spice-cardamom-dk)">${fmtI(Number(l.balance)||0, 2)}</td>
@@ -18781,7 +18782,7 @@ function _renderPayLotsTable() {
           <th style="width:36px;text-align:center"><input type="checkbox" id="pay-lot-select-all" checked onchange="togglePayLotSelectAll(this.checked)" title="Select / clear all" style="cursor:pointer"></th>
           <th>Lot</th><th>Branch</th><th>Bank</th>
           <th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th>
-          <th style="text-align:right">Commission</th><th style="text-align:right">GST</th><th style="text-align:right">Net Amount</th>
+          <th style="text-align:right">Purchase</th><th style="text-align:right">Commission</th><th style="text-align:right">GST</th><th style="text-align:right">Net Amount</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -18821,11 +18822,16 @@ function updatePayLotsTotals() {
   const selectedIds = new Set(
     Array.from(document.querySelectorAll('.pay-lot-cb:not([disabled]):checked')).map(cb => Number(cb.dataset.id))
   );
-  let qty = 0, amt = 0, comm = 0, tax = 0, net = 0, immNet = 0;
+  let qty = 0, amt = 0, pur = 0, comm = 0, tax = 0, net = 0, immNet = 0;
   for (const l of _payLotsState.lots) {
     if (!selectedIds.has(l.id)) continue;
-    qty  += Number(l.pqty)    || Number(l.qty)    || 0;
-    amt  += Number(l.puramt)  || Number(l.amount) || 0;
+    // Sale-side figures, matching the main Payments list & statement:
+    // Qty = lots.qty, Amount = lots.amount. Purchase = amount + refund
+    // (the sample-bag refund the commission is charged on) — same
+    // definition as the list's purchase_value (calculations.js).
+    qty  += Number(l.qty)    || 0;
+    amt  += Number(l.amount) || 0;
+    pur  += (Number(l.amount) || 0) + (Number(l.refund) || 0);
     comm += Number(l.com)     || 0;
     tax  += (Number(l.cgst)||0) + (Number(l.sgst)||0) + (Number(l.igst)||0);
     net  += Number(l.balance) || 0;   // per-lot balance = Net Amount
@@ -18846,6 +18852,7 @@ function updatePayLotsTotals() {
       <div><strong>${n}</strong> of ${totalN} lots selected${exportedN ? ` <span style="color:#b91c1c;font-weight:600">· ${exportedN} already exported (excluded)</span>` : ''}</div>
       <div>Qty: <strong>${fmtI(qty, 3)} kg</strong></div>
       <div>Amount: <strong>₹${fmtI(amt, 2)}</strong></div>
+      <div>Purchase: <strong style="color:#7C3AED">₹${fmtI(pur, 2)}</strong></div>
       <div>Commission: <strong style="color:#B45309">₹${fmtI(comm, 2)}</strong></div>
       <div>GST: <strong style="color:#0891B2">₹${fmtI(tax, 2)}</strong></div>
       <div>Net: <strong>₹${fmtI(net, 2)}</strong></div>

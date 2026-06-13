@@ -8136,25 +8136,31 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   doc.text(`Date: ${fmtDate(auction.date)}`, PAGE_L + 280, y);
   y += 18;
 
+  // 8 columns sized to fill the 535pt usable width (sum of w === PAGE_W).
+  // Purchase = amount + sample-bag refund, matching the main Payments list's
+  // purchase_value (calculations.js) so the list, this statement, and the
+  // lot-selection modal all show the same Amount and Purchase figures.
   const cols = [
-    { k: 'lot_no', label: 'Lot#',     x: PAGE_L,        w: 60,  align: 'left' },
-    { k: 'qty',    label: 'Qty',      x: PAGE_L + 60,   w: 70,  align: 'right', fmt: fmtQty },
-    { k: 'rate',   label: 'Rate',     x: PAGE_L + 130,  w: 60,  align: 'right', fmt: fmtAmt },
-    { k: 'amount', label: 'Amount',   x: PAGE_L + 190,  w: 80,  align: 'right', fmt: fmtAmt },
-    { k: 'com',    label: 'Commission', x: PAGE_L + 270, w: 75,  align: 'right', fmt: fmtAmt },
-    { k: 'tax',    label: 'GST',      x: PAGE_L + 345,  w: 70,  align: 'right', fmt: fmtAmt },
-    { k: 'balance',label: 'Net Amt',  x: PAGE_L + 415,  w: 120, align: 'right', fmt: fmtAmt },
+    { k: 'lot_no',   label: 'Lot#',       x: PAGE_L,        w: 46,  align: 'left' },
+    { k: 'qty',      label: 'Qty',        x: PAGE_L + 46,   w: 64,  align: 'right', fmt: fmtQty },
+    { k: 'rate',     label: 'Rate',       x: PAGE_L + 110,  w: 52,  align: 'right', fmt: fmtAmt },
+    { k: 'amount',   label: 'Amount',     x: PAGE_L + 162,  w: 72,  align: 'right', fmt: fmtAmt },
+    { k: 'purchase', label: 'Purchase',   x: PAGE_L + 234,  w: 72,  align: 'right', fmt: fmtAmt },
+    { k: 'com',      label: 'Commission', x: PAGE_L + 306,  w: 66,  align: 'right', fmt: fmtAmt },
+    { k: 'tax',      label: 'GST',        x: PAGE_L + 372,  w: 58,  align: 'right', fmt: fmtAmt },
+    { k: 'balance',  label: 'Net Amt',    x: PAGE_L + 430,  w: 105, align: 'right', fmt: fmtAmt },
   ];
   doc.font('Helvetica-Bold').fontSize(9);
   doc.rect(PAGE_L, y, PAGE_W, 18).fillAndStroke('#f3f4f6', '#999').fillColor('#000');
   for (const c of cols) doc.text(c.label, c.x + 2, y + 5, { width: c.w - 4, align: c.align });
   y += 18;
   doc.font('Helvetica').fontSize(9).fillColor('#000');
-  let tQty=0,tAmt=0,tDisc=0,tTax=0,tPay=0;
+  let tQty=0,tAmt=0,tPur=0,tDisc=0,tTax=0,tPay=0;
   for (const l of lots) {
     const tax = (Number(l.cgst)||0)+(Number(l.sgst)||0)+(Number(l.igst)||0);
-    const row = { ...l, tax };
-    tQty+=Number(l.qty)||0; tAmt+=Number(l.amount)||0; tDisc+=Number(l.com)||0; tTax+=tax; tPay+=Number(l.balance)||0;
+    const purchase = (Number(l.amount)||0)+(Number(l.refund)||0);
+    const row = { ...l, tax, purchase };
+    tQty+=Number(l.qty)||0; tAmt+=Number(l.amount)||0; tPur+=purchase; tDisc+=Number(l.com)||0; tTax+=tax; tPay+=Number(l.balance)||0;
     if (y > 770) { doc.addPage(); y = 40; }
     for (const c of cols) {
       const v = c.fmt ? c.fmt(row[c.k]) : String(row[c.k] ?? '');
@@ -8165,12 +8171,22 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   }
   doc.font('Helvetica-Bold').fontSize(10);
   doc.rect(PAGE_L, y, PAGE_W, 20).fillAndStroke('#f3f4f6', '#666').fillColor('#000');
-  doc.text('TOTAL', PAGE_L + 2, y + 6);
-  doc.text(fmtQty(tQty), PAGE_L + 62, y + 6, { width: 66, align: 'right' });
-  doc.text(fmtAmt(tAmt), PAGE_L + 192, y + 6, { width: 76, align: 'right' });
-  doc.text(fmtAmt(tDisc),PAGE_L + 272, y + 6, { width: 71, align: 'right' });
-  doc.text(fmtAmt(tTax), PAGE_L + 347, y + 6, { width: 66, align: 'right' });
-  doc.text(fmtAmt(tPay), PAGE_L + 417, y + 6, { width: 116,align: 'right' });
+  // Render each total under its own column (driven by the cols layout) so
+  // the figures stay aligned with the data rows and the Purchase total fits.
+  const totalsByKey = {
+    lot_no:  'TOTAL',
+    qty:     fmtQty(tQty),
+    amount:  fmtAmt(tAmt),
+    purchase:fmtAmt(tPur),
+    com:     fmtAmt(tDisc),
+    tax:     fmtAmt(tTax),
+    balance: fmtAmt(tPay),
+  };
+  for (const c of cols) {
+    const v = totalsByKey[c.k];
+    if (v == null) continue;
+    doc.text(v, c.x + 2, y + 6, { width: c.w - 4, align: c.k === 'lot_no' ? 'left' : 'right' });
+  }
   y += 30;
 
   // ── Net Amount → days-based settlement discount → Payable ──

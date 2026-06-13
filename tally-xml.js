@@ -2821,12 +2821,42 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
     ORDER BY lot_no
   `);
 
+  // Each lot is purchased exactly once, so it may appear in only ONE URD
+  // voucher. Previously lots were matched to a bill purely by `name`, so
+  // every bill carrying that name re-pulled the SAME lots. That double-
+  // counted lots — inflating both the lot count and the voucher total
+  // (which is summed from the lots, below) — whenever two bills shared a
+  // name: a re-generated/imported duplicate bill for one agriculturist,
+  // or two different growers with a common name. Guard with a per-auction
+  // claimed-lot set, pin each bill to its OWN lots via the generation-time
+  // line_items snapshot when present, and drop any voucher left empty.
+  const usedLots = new Set();
+
   return raw.map((b) => {
-    const lots = lotsStmt.all(auctionId, b.name).map(l => ({
-      lot: l.lot, bag: l.bag,
-      qty: r2(l.qty), rate: r2(l.rate), amount: r2(l.amount),
-      bilamt: r2(l.bilamt || l.amount),
-    }));
+    // Lot numbers this bill actually covers, from its stored snapshot.
+    // When present it keeps the bill on its own lots even if a homonym
+    // bill exists; absent (older/imported bills with no snapshot) we fall
+    // back to every name-matched lot, still de-duplicated via usedLots.
+    let ownLotNos = null;
+    try {
+      const li = JSON.parse(b.line_items || '[]');
+      if (Array.isArray(li) && li.length) {
+        ownLotNos = new Set(li.map(x => String(x.lot)).filter(s => s && s !== 'undefined'));
+      }
+    } catch (_) { /* no usable snapshot → fall back to name match */ }
+
+    const lots = [];
+    for (const l of lotsStmt.all(auctionId, b.name)) {
+      const key = String(l.lot);
+      if (ownLotNos && !ownLotNos.has(key)) continue; // belongs to another bill
+      if (usedLots.has(key)) continue;                // already counted in a prior voucher
+      usedLots.add(key);
+      lots.push({
+        lot: l.lot, bag: l.bag,
+        qty: r2(l.qty), rate: r2(l.rate), amount: r2(l.amount),
+        bilamt: r2(l.bilamt || l.amount),
+      });
+    }
     const qtytot = lots.reduce((s, l) => s + Number(l.qty || 0), 0);
     const amounttot = lots.reduce((s, l) => s + Number(l.amount || 0), 0);
     const bilamttot = lots.reduce((s, l) => s + Number(l.bilamt || 0), 0);
@@ -2850,7 +2880,7 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
       total: r2(amounttot),
       voucherNum: String(b.bil),
     };
-  });
+  }).filter(v => v.lots.length > 0); // duplicate bills net to zero lots → omit
 }
 
 /**
