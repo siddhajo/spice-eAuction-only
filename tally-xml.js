@@ -2153,6 +2153,10 @@ ${TAGS.DEEMYES}
 function generDebitNoteXML(rows, cfg, opts = {}) {
   const company    = opts.companyName || cfgGet(cfg, 'tally_company_name', cfgGet(cfg, 'short_name', 'Ideal Spices Private Limited'));
   const season     = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
+  // Voucher numbers use the SHORT season form (e.g. "26-27"), matching the
+  // {debitnoteno}/{season-short}/SE convention. Falls back to the full
+  // season when no season_short is configured.
+  const seasonShort = String(cfgGet(cfg, 'season_short', '')).trim() || season;
   const tlyrnd     = cfgBool(cfg, 'tally_round_enabled', true);
   const exempt     = cfgBool(cfg, 'tally_dn_exempt', false);
   const opt        = cfgBool(cfg, 'tally_optional', false);
@@ -2160,6 +2164,9 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
   const sStateName = cfgGet(cfg, 'tally_home_state', 'Tamil Nadu');
 
   const Discount_LDR  = cfgGet(cfg, 'tally_dn_discount', 'Discount Received');
+  // Planter (URD) debit notes post to their own commission ledger. Falls
+  // back to the regular DN commission ledger when not separately configured.
+  const DiscountP_LDR = cfgGet(cfg, 'tally_dnp_discount', Discount_LDR);
   // Resolve the DN GST rate FIRST so the default ledger names below can
   // be composed from it (no hardcoded 18 literal anywhere). DN is a service
   // (commission/handling discount) so it defaults to the service GST rate
@@ -2209,6 +2216,14 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
     const totalRound  = tlyrnd ? r0(total) : total;
     const rnd         = tlyrnd ? r2(totalRound - total) : 0;
 
+    // Voucher number convention:
+    //   regular DN → {debitnoteno}/{season-short}/SE
+    //   planter DN → {debitnoteno}/{season-short}/URD
+    // and planter DNs post their commission to the planter commission ledger.
+    const isPlanter   = !!row.planter;
+    const voucherNo   = `${taxNm}/${seasonShort}/${isPlanter ? 'URD' : 'SE'}`;
+    const discountLdr = isPlanter ? DiscountP_LDR : Discount_LDR;
+
     const startVoucher = `<VOUCHER VCHTYPE="Debit Note" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
 
     xml += `\n${startVoucher}
@@ -2226,8 +2241,8 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
 <PLACEOFSUPPLY>${xe(sStateName)}</PLACEOFSUPPLY>
 <PARTYNAME>${name}</PARTYNAME>
 <PARTYLEDGERNAME>${name}</PARTYLEDGERNAME>
-<VOUCHERNUMBER>${xe(`DN/${taxNm}/${season}`)}</VOUCHERNUMBER>
-<REFERENCE>${xe(`DN/${taxNm}/${season}`)}</REFERENCE>
+<VOUCHERNUMBER>${xe(voucherNo)}</VOUCHERNUMBER>
+<REFERENCE>${xe(voucherNo)}</REFERENCE>
 <PARTYMAILINGNAME>${name}</PARTYMAILINGNAME>
 <PARTYPINCODE>${pin}</PARTYPINCODE>
 <NUMBERINGSTYLE>Manual</NUMBERINGSTYLE>
@@ -2244,20 +2259,20 @@ ${TAGS.DEEMYES}
 <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
 <AMOUNT>${-totalRound}</AMOUNT>
 <BILLALLOCATIONS.LIST>
-<NAME>${xe(`DN/${taxNm}/${season}`)}</NAME>
+<NAME>${xe(voucherNo)}</NAME>
 <BILLTYPE>New Ref</BILLTYPE>
 <AMOUNT>${-totalRound}</AMOUNT>
 </BILLALLOCATIONS.LIST>
 </LEDGERENTRIES.LIST>
 
 <LEDGERENTRIES.LIST>
-<LEDGERNAME>${xe(Discount_LDR)}</LEDGERNAME>
+<LEDGERNAME>${xe(discountLdr)}</LEDGERNAME>
 <GSTOVRDNTAXABILITY>Taxable</GSTOVRDNTAXABILITY>
 <HSNSOURCETYPE>Ledger</HSNSOURCETYPE>
-<HSNLEDGERSOURCE>${xe(Discount_LDR)}</HSNLEDGERSOURCE>
+<HSNLEDGERSOURCE>${xe(discountLdr)}</HSNLEDGERSOURCE>
 <GSTOVRDNTYPEOFSUPPLY>Services</GSTOVRDNTYPEOFSUPPLY>
 <GSTHSNNAME>${xe(HSN_Service)}</GSTHSNNAME>
-<GSTHSNDESCRIPTION>${xe(Discount_LDR)}</GSTHSNDESCRIPTION>
+<GSTHSNDESCRIPTION>${xe(discountLdr)}</GSTHSNDESCRIPTION>
 ${TAGS.DEEMNO}
 <AMOUNT>${refundtot}</AMOUNT>
 <VATEXPAMOUNT>${refundtot}</VATEXPAMOUNT>
@@ -2769,12 +2784,16 @@ function buildRDPurchaseRows(db, auctionId, cfg) {
       bilamttot: r2(bilamttot || p.amount),
       cgst: p.cgst, sgst: p.sgst, igst: p.igst,
       tdsamt: p.tds,
-      // total = PRE-round grand total (= rounded total minus the stored
-      // round-off adjustment). The generator computes rnd = totalRounded
-      // - total, so if both are equal the Round Off ledger gets a zero
-      // amount and may be skipped. Reading p.total directly broke that.
-      total: r2((p.total || 0) - (p.rund || 0)),
-      totalRounded: r0(p.total || 0),
+      // Round-off must match the Purchase PDF, which recomputes it LIVE
+      // from the lots — round(taxable+GST) − (taxable+GST) — rather than
+      // reading purchases.rund. That stored column is 0 on imported/legacy
+      // rows, which made the Tally Round On/Off ledger come out 0 even
+      // though the PDF showed a non-zero round-off. So derive the pre-round
+      // total from the voucher's OWN components (amounttot + GST); the
+      // generator then computes rnd = r0(total) − total, reproducing the
+      // PDF's round-off exactly and independent of the stale rund column.
+      total:        r2(r2(amounttot) + Number(p.cgst || 0) + Number(p.sgst || 0) + Number(p.igst || 0)),
+      totalRounded: r0(r2(amounttot) + Number(p.cgst || 0) + Number(p.sgst || 0) + Number(p.igst || 0)),
       voucherNum: p.invo || String(p.id),
     };
   });
@@ -2941,6 +2960,7 @@ function buildDebitNoteRows(db, auctionId, cfg) {
       cgsttot: d.cgst, sgsttot: d.sgst, igsttot: d.igst,
       total: d.total,
       voucherNum: d.note_no || String(d.id),
+      planter: false,
     };
   });
 }
@@ -2996,6 +3016,7 @@ function buildDebitNotePlanterRows(db, auctionId, cfg) {
       cgsttot: d.cgst, sgsttot: d.sgst, igsttot: d.igst,
       total: d.total,
       voucherNum: d.note_no || String(d.id),
+      planter: true,
     };
   });
 }
@@ -3468,6 +3489,7 @@ function buildLedgerRows(db, auctionId, cfg) {
 
   const services = [
     ['tally_dn_discount',          'Indirect Incomes',   hsnService],
+    ['tally_dnp_discount',         'Indirect Incomes',   hsnService],
     ['tally_sample_planter',       'Indirect Expenses',  hsnService],
     ['tally_sample_dealer',        'Indirect Expenses',  hsnService],
     ['tally_transport',            'Indirect Expenses',  cfgGet(cfg, 'tally_hsn_transport', '996791')],

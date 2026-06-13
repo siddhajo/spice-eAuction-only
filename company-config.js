@@ -371,7 +371,8 @@ const DEFAULTS = [
   { key: 'tally_tds_ledger', value: '', category: 'tally', label: 'TDS on Purchase of Goods',   type: 'text' },
 
   // Debit Note ledgers
-  { key: 'tally_dn_discount', value: '', category: 'tally', label: 'Discount on Purch (Debit Note ledger)', type: 'text'   },
+  { key: 'tally_dn_discount',  value: '', category: 'tally', label: 'Commission (Debit Note ledger)',                type: 'text'   },
+  { key: 'tally_dnp_discount', value: '', category: 'tally', label: 'Commission-Planter (Debit Note-Planter ledger)', type: 'text'   },
   { key: 'tally_dn_cgst',     value: '', category: 'tally', label: 'CGST 2.5% (Debit Note)',                type: 'text'   },
   { key: 'tally_dn_sgst',     value: '', category: 'tally', label: 'SGST 2.5% (Debit Note)',                type: 'text'   },
   { key: 'tally_dn_igst',     value: '', category: 'tally', label: 'IGST 5% (Debit Note)',                  type: 'text'   },
