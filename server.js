@@ -7202,10 +7202,10 @@ app.post('/api/debit-notes/generate', requireInvoiceWrite, requireDebitNoteEnabl
   }
   const total = Math.round((discountAmt + cgst + sgst + igst) * 100) / 100;
 
-  // DN date = trade.date + 1
+  // DN date = trade.date (same day as the auction / bill of supply)
   const trade = db.get('SELECT date FROM auctions WHERE ano = ? LIMIT 1', [ano]);
   const dnDate = trade && trade.date
-    ? addDays(trade.date, 1)
+    ? normalizeDate(trade.date)
     : new Date().toISOString().slice(0, 10);
 
   // Note number: client-supplied `startNoteNo` (preferred) or legacy
@@ -7291,7 +7291,7 @@ app.post('/api/debit-notes/generate', requireInvoiceWrite, requireDebitNoteEnabl
 //   - A trade is the unit of business activity (one auction day)
 //   - Purchases roll up per-dealer for that trade
 //   - Discount adjustments are negotiated trade-wide (per-day basis)
-//   - DN date = trade.date + 1
+//   - DN date = trade.date (same day as the auction / bill of supply)
 //
 // Backwards compatibility: legacy callers passing `{ purchno }` (single
 // purchase invoice number) still work — we look up the purchase, derive
@@ -7364,9 +7364,10 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNote
   );
 
   // Resolve DN date once per trade — saves a query per purchase.
+  // DN date = trade.date (same day as the auction / bill of supply).
   const trade = db.get('SELECT date FROM auctions WHERE ano = ? LIMIT 1', [ano]);
   const dnDate = trade && trade.date
-    ? addDays(trade.date, 1)
+    ? normalizeDate(trade.date)
     : new Date().toISOString().slice(0, 10);
 
   // DN (discount) math — read once, applied per-purchase below:
@@ -8205,8 +8206,9 @@ app.post('/api/debit-notes-planter/generate', requireInvoiceWrite, requireDebitN
   }
   const total = Math.round((dnAmount + cgst + sgst + igst) * 100) / 100;
 
+  // DN date = trade.date (same day as the auction / bill of supply).
   const trade = db.get('SELECT date FROM auctions WHERE ano = ? LIMIT 1', [ano]);
-  const dnDate = trade && trade.date ? addDays(trade.date, 1) : new Date().toISOString().slice(0, 10);
+  const dnDate = trade && trade.date ? normalizeDate(trade.date) : new Date().toISOString().slice(0, 10);
 
   const rawStart = req.body.startNoteNo != null ? req.body.startNoteNo : req.body.noteNo;
   let noteNo;
@@ -8263,8 +8265,9 @@ app.post('/api/debit-notes-planter/generate-bulk', requireInvoiceWrite, requireD
   const existingKeys = new Set(
     db.all(`SELECT name FROM debit_notes_planter WHERE ano = ?`, [ano]).map(r => r.name || '')
   );
+  // DN date = trade.date (same day as the auction / bill of supply).
   const trade = db.get('SELECT date FROM auctions WHERE ano = ? LIMIT 1', [ano]);
-  const dnDate = trade && trade.date ? addDays(trade.date, 1) : new Date().toISOString().slice(0, 10);
+  const dnDate = trade && trade.date ? normalizeDate(trade.date) : new Date().toISOString().slice(0, 10);
 
   const dnGstRate = Number(cfg.discount_gst) || Number(cfg.gst_service) || 0;
 
