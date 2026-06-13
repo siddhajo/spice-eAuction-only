@@ -607,23 +607,13 @@ async function exportPaymentSummary(db, auctionId, cfg, _state, extra) {
   const sellersFilter = (extra && Array.isArray(extra.sellers) && extra.sellers.length)
     ? new Set(extra.sellers.map(s => String(s).trim().toUpperCase()))
     : null;
-  // Match getPaymentSummary semantics: discount includes BOTH the per-lot
-  // policy discount AND any manual debit_notes for this auction's sellers.
-  // We compute it per-row by adding debit_notes (joined by ano + name).
+  // Payable is the per-lot net (lots.balance). Debit notes are NOT
+  // subtracted here — they are separate documents and no longer affect the
+  // Payments payable, matching getPaymentSummary and the on-screen Payments
+  // tab. (discountCol still drives which per-lot policy-discount column the
+  // detail rows read, by business mode.)
   const mode = (cfg && cfg.business_mode || 'e-Auction').toLowerCase();
   const discountCol = (mode === 'auction') ? 'advance' : 'refund';
-  const auction = db.get('SELECT ano FROM auctions WHERE id = ?', [auctionId]);
-  const ano = auction ? auction.ano : null;
-  // Build name → manual debit total map (debit_notes can have multiple
-  // rows per seller per auction; we sum)
-  const debitMap = {};
-  if (ano) {
-    const debits = db.all(
-      'SELECT name, SUM(amount) as total FROM debit_notes WHERE ano = ? GROUP BY name',
-      [ano]
-    );
-    for (const d of debits) debitMap[d.name] = Number(d.total) || 0;
-  }
   let rows = db.all(
     `SELECT name as poolername, lot_no as lot, bags as bag, qty, price, amount,
       ${discountCol} as lot_discount, com as commission, balance as payable
@@ -658,26 +648,14 @@ async function exportPaymentSummary(db, auctionId, cfg, _state, extra) {
       return true;
     });
   }
-  // Spread debit_notes amount across the seller's lots proportionally so
-  // every row totals to the same SUM as the payments view. Simpler approach:
-  // attribute the FULL manual debit on the FIRST row for each seller; later
-  // rows show only the lot policy discount. Avoids per-row arithmetic but
-  // still preserves the seller-level total.
-  // Payable still subtracts manual debit_notes (the real discount), matching
-  // getPaymentSummary. The displayed column shows COMMISSION (lots.com), not
-  // discount — per the Payments-tab change.
-  const seenSellers = new Set();
-  const enriched = rows.map(r => {
-    const manualDisc = (!seenSellers.has(r.poolername))
-      ? (Number(debitMap[r.poolername]) || 0)
-      : 0;
-    seenSellers.add(r.poolername);
-    return {
-      ...r,
-      commission: Number(r.commission) || 0,
-      payable: (Number(r.payable) || 0) - manualDisc,
-    };
-  });
+  // Payable = per-lot net (lots.balance), with no debit-note subtraction.
+  // The displayed column shows COMMISSION (lots.com), not discount — per the
+  // Payments-tab change.
+  const enriched = rows.map(r => ({
+    ...r,
+    commission: Number(r.commission) || 0,
+    payable: Number(r.payable) || 0,
+  }));
   const cols = [
     { header: 'POOLERNAME', key: 'poolername', width: 30 },
     { header: 'LOT', key: 'lot', width: 8 }, { header: 'BAG', key: 'bag', width: 6 },

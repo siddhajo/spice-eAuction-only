@@ -9173,21 +9173,33 @@ async function loadFormulas(){
   ]);
 
   // ── Payment summary ─────────────────────────────────────────
+  // Mirrors calculations.getPaymentSummary — the per-seller, per-auction
+  // roll-up shown on the Payments tab (and its lot-selection modal +
+  // statement). Net & Payable are built from each lot's Payable (balance),
+  // NOT a flat Amount − Discount − GST.
   html += card('Payment summary (per seller, per auction)', [
     {
-      label: 'Total Amount, Total Discount',
-      note: 'Sum across all lots a seller sold in the auction.',
-      formula: `Total Amount   = Σ ( Lot Amount )<br>
-                Total Discount = Σ ( Discount )`,
+      label: 'Column totals (summed over the seller\'s lots)',
+      note: '"Purchase" is the base the commission is charged on — the sale Amount plus the sample-bag Refund. It matches the Purchase column on the Payments tab, the lot-selection picker, and the payment statement.',
+      formula: `Total Amount     = Σ ( Lot Amount )<br>
+                Total Purchase   = Σ ( Lot Amount + Refund )<br>
+                Total Commission = Σ ( Commission )<br>
+                GST 18%          = Σ ( CGST + SGST + IGST )`,
     },
     {
-      label: 'GST 18% (column on Payments tab)',
-      note: 'Sum of CGST + SGST + IGST stamped on each lot.',
-      formula: `GST 18% = Σ ( CGST + SGST + IGST )`,
+      label: 'Net Amount',
+      note: 'Sum of each lot\'s Payable (Amount + Refund − Commission − Handling − GST). When a debit note already exists for this seller in this trade, Net is adjusted by the gap between the debit-note total and the lots\' own refund total — the debit note is the source of truth.',
+      formula: `Net Amount = Σ ( Lot Payable )`,
+    },
+    {
+      label: 'Settlement discount',
+      note: 'Early-payment incentive — applied ONLY to the net of the seller\'s immediate-payment lots, then rounded once. Days come from the seller type: a GSTIN-carrying seller is a dealer (Dealer Days); anyone else is a pooler (No. of Days for Discount). This is separate from the Debit-Note discount above.',
+      formula: `Settlement Discount = round( Immediate-lots Net / 1000 × Days × ${pill('Discount %', num('discount_pct','0'))} )<br>
+                Days = pooler ${pill('No. of Days for Discount', num('discount_days','0'))}  or  dealer ${pill('Dealer Days', num('dealer_days','0'))}`,
     },
     {
       label: 'Payable',
-      formula: `Payable = Total Amount − Total Discount − GST 18%`,
+      formula: `Payable = Net Amount − Settlement Discount`,
     },
   ]);
 

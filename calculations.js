@@ -526,18 +526,15 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg) {
  * Generate payment summary for sellers (PAYCHECK.PRG equivalent)
  */
 function getPaymentSummary(db, auctionId, state, cfg) {
-  // The "discount" column is the sum of two parts per seller per auction:
-  //   1. Per-lot computed discount (lots.refund in e-Auction, lots.advance in
-  //      auction mode) — based on discount_pct × days × puramt
-  //   2. Per-seller debit notes for this auction — manual adjustments
-  //      (e.g., quality complaints, settlement deductions). Joined by
-  //      seller name + auction ano so we sum all debit_notes that apply.
-  // Total payable already accounts for these via balance recalc, but the
-  // displayed "Discount" column needs the COMBINED figure so the user
-  // sees both the policy discount and any manual adjustments.
-  // First fetch the per-lot summary (e-Auction only — discount column is
-  // always lots.refund). Also pulls per-seller GST sums so the Payments
-  // tab can show a "GST 18% (CGST+SGST+IGST)" column next to the discount.
+  // Per-seller, per-auction payment roll-up for the Payments tab (and the
+  // lot-selection modal + payment statement, which must agree with it).
+  //   Net Amount = Σ lots.balance  (Amount + Refund − Commission − Handling − GST)
+  //   Discount   = early-payment settlement discount on immediate-payment lots
+  //   Payable    = Net − Discount
+  // Debit notes are NOT part of this — they are separate documents and do not
+  // change the Payments payable (see the note before the settlement-discount
+  // block below). The query also pulls per-seller GST sums so the tab can
+  // show a "GST 18% (CGST+SGST+IGST)" column.
   let query = `SELECT l.name, l.cr,
     SUM(l.qty) as total_qty, SUM(l.amount) as total_amount,
     SUM(l.pqty) as total_pqty, SUM(l.prate) as avg_prate,
@@ -560,37 +557,12 @@ function getPaymentSummary(db, auctionId, state, cfg) {
   query += ' GROUP BY l.name, l.cr ORDER BY l.state, l.name';
   const sellers = db.all(query, params);
 
-  // Fetch this auction's identifier (ano) so we can match debit_notes.
-  // Debit notes are keyed by ano + seller name (no FK to auctions.id),
-  // mirroring the legacy FoxPro flow.
-  const auction = db.get('SELECT ano FROM auctions WHERE id = ?', [auctionId]);
-  const ano = auction ? auction.ano : null;
-  // Build a name → debit_note total map for fast lookup
-  const debitMap = {};
-  if (ano) {
-    const debits = db.all(
-      'SELECT name, SUM(amount) as total FROM debit_notes WHERE ano = ? GROUP BY name',
-      [ano]
-    );
-    for (const d of debits) debitMap[d.name] = Number(d.total) || 0;
-  }
-  // Merge: total_discount per seller = ONE of two sources (never both):
-  //
-  //   - When debit notes exist for this seller in this trade → DN total
-  //     IS the authoritative discount. The DN was generated using the
-  //     same `discount_pct × days × puramt` formula as `lots.refund`,
-  //     so summing both was double-counting the same money. Furthermore,
-  //     the user may have manually edited the DN amount after generation
-  //     (via the Edit Debit Note flow), in which case the DN value is
-  //     the current source of truth — `lots.refund` is stale.
-  //
-  //   - When no DN exists yet → fall back to the per-lot computed
-  //     `lots.refund` so the Payments tab shows what the seller WILL
-  //     be discounted once DNs are generated.
-  //
-  // Earlier code did `lotDisc + manualDisc` unconditionally — every
-  // trade with DNs generated showed double the actual discount, and
-  // payable was off by that amount.
+  // Debit notes are intentionally NOT read here. They are separate
+  // documents and no longer affect the Payments payable — the on-screen
+  // list, the lot-selection modal, and the bank/XLSX exports all show the
+  // same clean net (lots.balance, less the early-payment settlement
+  // discount below). Previously this subtracted each seller's debit-note
+  // total from Net, which made the screen disagree with the modal.
   // Days-based settlement discount (Payments tab + statement). Pooler vs
   // dealer is inferred from the seller's `cr`: a cr carrying a GSTIN →
   // registered dealer (uses `dealer_days`); anything else → pooler (uses
@@ -602,18 +574,12 @@ function getPaymentSummary(db, auctionId, state, cfg) {
 
   return sellers.map(s => {
     const lotDisc = Number(s.lot_discount) || 0;
-    const manualDisc = Number(debitMap[s.name]) || 0;
     const cgst = Number(s.total_cgst) || 0;
     const sgst = Number(s.total_sgst) || 0;
     const igst = Number(s.total_igst) || 0;
-    // Authoritative discount: DN total when present, otherwise lot total.
-    const totalDiscount = manualDisc > 0 ? manualDisc : lotDisc;
-    // Net amount = the value previously labelled "Payable" (lots.balance,
-    // with the DN-delta adjustment when a manual debit note overrides the
-    // lot refund). The new days-based discount is taken off THIS.
-    const netAmount = manualDisc > 0
-      ? (Number(s.total_payable) || 0) - (manualDisc - lotDisc)
-      : (Number(s.total_payable) || 0);
+    // Net amount = sum of each lot's Payable (lots.balance). No debit-note
+    // adjustment — the days-based settlement discount below is taken off THIS.
+    const netAmount = Number(s.total_payable) || 0;
     const isDealer = !!gstinStateCode(s.cr);
     const days = isDealer ? dealerDays : poolerDays;
     // Settlement discount applies ONLY to immediate-payment lots (the
@@ -623,7 +589,6 @@ function getPaymentSummary(db, auctionId, state, cfg) {
     const sellerDiscount = Math.round(immediateNet / 1000 * days * discPct);
     return {
       ...s,
-      total_discount: totalDiscount,
       // Per-seller commission (lots.com) — shown in the Payments "Commission"
       // column. Independent of discount; does not affect payable.
       total_commission: Number(s.total_commission) || 0,
