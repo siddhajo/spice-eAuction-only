@@ -8187,24 +8187,23 @@ app.post('/api/debit-notes-planter/generate', requireInvoiceWrite, requireDebitN
   // Base = sum(commission + handling) on the planter's GRADE-1 lots.
   const baseAmt = gradedServiceBase(db, bill.auction_id, planterName, '1');
   if (baseAmt <= 0) return res.status(400).json({ error: `No grade-1 commission/handling found for ${planterName} in trade #${ano} — nothing to debit` });
-  let discountAmt = req.body.discount != null ? parseFloat(req.body.discount) : NaN;
-  if (!Number.isFinite(discountAmt) || discountAmt <= 0) {
-    const discDays = Number(cfg.discount_days) || 0;
-    const discPct  = Number(cfg.discount_pct)  || 0;
-    discountAmt    = Math.round(baseAmt / 1000 * discDays * discPct);
-  }
-  if (discountAmt <= 0) return res.status(400).json({ error: 'Computed discount is zero — set "Discount %" and "No. of Days for Discount" in Settings → Rates' });
+  // Debit Note — Planter charges the company's service fee back to the
+  // planter: the taxable amount IS commission + handling on the grade-1
+  // lots (baseAmt). GST is charged on that amount and total = amount + GST.
+  // This is NOT a Formula-5D cash discount — that math is for the
+  // registered-dealer flow only.
+  const dnAmount = baseAmt;
 
   const isInter = derivePlanterSaleType(bill, cfg) === 'I';
   const dnGstRate = Number(cfg.discount_gst) || Number(cfg.gst_service) || 18;
   let cgst = 0, sgst = 0, igst = 0;
   if (isInter) {
-    igst = Math.round(discountAmt * dnGstRate / 100 * 100) / 100;
+    igst = Math.round(dnAmount * dnGstRate / 100 * 100) / 100;
   } else {
-    const half = Math.round(discountAmt * (dnGstRate / 2) / 100 * 100) / 100;
+    const half = Math.round(dnAmount * (dnGstRate / 2) / 100 * 100) / 100;
     cgst = half; sgst = half;
   }
-  const total = Math.round((discountAmt + cgst + sgst + igst) * 100) / 100;
+  const total = Math.round((dnAmount + cgst + sgst + igst) * 100) / 100;
 
   const trade = db.get('SELECT date FROM auctions WHERE ano = ? LIMIT 1', [ano]);
   const dnDate = trade && trade.date ? addDays(trade.date, 1) : new Date().toISOString().slice(0, 10);
@@ -8233,9 +8232,9 @@ app.post('/api/debit-notes-planter/generate', requireInvoiceWrite, requireDebitN
   db.run(
     `INSERT INTO debit_notes_planter (ano,date,state,name,note_no,amount,cgst,sgst,igst,total)
      VALUES (?,?,?,?,?,?,?,?,?,?)`,
-    [ano, dnDate, bill.pstate || bill.state || '', planterName, noteNo, discountAmt, cgst, sgst, igst, total]
+    [ano, dnDate, bill.pstate || bill.state || '', planterName, noteNo, dnAmount, cgst, sgst, igst, total]
   );
-  res.json({ success: true, created: 1, note_no: noteNo, bilno, ano, planter: planterName, amount: discountAmt, cgst, sgst, igst, total });
+  res.json({ success: true, created: 1, note_no: noteNo, bilno, ano, planter: planterName, amount: dnAmount, cgst, sgst, igst, total });
 });
 
 // Trade-wide planter DN generation — one DN per eligible bill of supply.
@@ -8268,8 +8267,6 @@ app.post('/api/debit-notes-planter/generate-bulk', requireInvoiceWrite, requireD
   const dnDate = trade && trade.date ? addDays(trade.date, 1) : new Date().toISOString().slice(0, 10);
 
   const dnGstRate = Number(cfg.discount_gst) || Number(cfg.gst_service) || 0;
-  const discDays  = Number(cfg.discount_days) || 0;
-  const discPct   = Number(cfg.discount_pct)  || 0;
 
   const eligibleCount = bills.filter(b => !existingKeys.has(b.name || '') && gradedServiceBase(db, b.auction_id, b.name || '', '1') > 0).length;
 
@@ -8313,23 +8310,24 @@ app.post('/api/debit-notes-planter/generate-bulk', requireInvoiceWrite, requireD
     // Base = sum(commission + handling) on the planter's GRADE-1 lots.
     const baseAmt = gradedServiceBase(db, b.auction_id, planterName, '1');
     if (baseAmt <= 0) { skipped.push({ invo: b.bil, ano, buyer: planterName, reason: 'no grade-1 commission/handling' }); continue; }
-    const discountAmt = Math.round(baseAmt / 1000 * discDays * discPct);
-    if (discountAmt <= 0) { skipped.push({ invo: b.bil, ano, buyer: planterName, reason: 'zero discount (set Discount % and No. of Days for Discount in Settings → Rates)' }); continue; }
+    // Taxable amount = commission + handling on the grade-1 lots; GST on
+    // that, total = amount + GST. (Not a Formula-5D discount — dealer-only.)
+    const dnAmount = baseAmt;
 
     const isInter = derivePlanterSaleType(b, cfg) === 'I';
     let cgst = 0, sgst = 0, igst = 0;
     if (isInter) {
-      igst = Math.round(discountAmt * dnGstRate / 100 * 100) / 100;
+      igst = Math.round(dnAmount * dnGstRate / 100 * 100) / 100;
     } else {
-      const half = Math.round(discountAmt * (dnGstRate / 2) / 100 * 100) / 100;
+      const half = Math.round(dnAmount * (dnGstRate / 2) / 100 * 100) / 100;
       cgst = half; sgst = half;
     }
-    const total = Math.round((discountAmt + cgst + sgst + igst) * 100) / 100;
+    const total = Math.round((dnAmount + cgst + sgst + igst) * 100) / 100;
 
     db.run(
       `INSERT INTO debit_notes_planter (ano,date,state,name,note_no,amount,cgst,sgst,igst,total)
        VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      [ano, dnDate, b.pstate || b.state || '', planterName, String(nextNoteNo), discountAmt, cgst, sgst, igst, total]
+      [ano, dnDate, b.pstate || b.state || '', planterName, String(nextNoteNo), dnAmount, cgst, sgst, igst, total]
     );
     generated.push({ note_no: nextNoteNo, bilno: b.bil, planter: planterName, total });
     existingKeys.add(planterName);
