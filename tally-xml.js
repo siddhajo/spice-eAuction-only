@@ -2784,10 +2784,18 @@ function buildRDPurchaseRows(db, auctionId, cfg) {
  * Pull bills of supply (URD/agriculturist) for an auction.
  */
 function buildURDPurchaseRows(db, auctionId, cfg) {
+  // Scope bills to the auction via the auction_id FK (populated on every
+  // bill), NOT by matching auctions.ano. The old `ano IN (SELECT ano ...)`
+  // subquery had two flaws that produced "No data found":
+  //   1. bills store single-digit trade numbers space-padded (e.g. ' 1'),
+  //      so they never string-matched the auctions table's '1' — every
+  //      single-digit-trade auction returned zero bills.
+  //   2. two auctions can share a trade number (ano), so the match was
+  //      ambiguous and also pulled bills from unrelated/deleted auctions.
+  // Matching the FK is exact, padding-proof, and isolates this auction's
+  // own bills. Mirrors buildRDPurchaseRows, which filters by auction_id.
   const stmt = db.prepare(`
-    SELECT * FROM bills WHERE ano IN (
-      SELECT ano FROM auctions WHERE id = ?
-    )
+    SELECT * FROM bills WHERE auction_id = ?
     ORDER BY bil, id
   `);
   const raw = stmt.all(auctionId);
