@@ -1124,17 +1124,20 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   labeledCell(rightX + rCell, ry2, rCell, rSmall, 'Destination', destination);
   ry2 += rSmall;
 
-  // Dispatch From block — driven exclusively by the dedicated
-  // `dispatch_from` setting (Settings → Company → Dispatch From). No
-  // fallback to the company's primary address: if the field is blank,
-  // the cell stays empty so the user notices that the dispatch address
-  // hasn't been configured yet (prevents the silent "wrong address on
-  // the invoice" bug that the hardcoded fallback was producing).
+  // Dispatch From block — primary source is the Kerala "Dispatch Address"
+  // (Settings → Address (Kerala) → kl_dispatch); the legacy `dispatch_from`
+  // setting is kept only as a fallback for installs that haven't filled the
+  // new field. No fallback to the company's primary address: if both are
+  // blank the cell stays empty so the user notices the dispatch address
+  // hasn't been configured yet (prevents the silent "wrong address on the
+  // invoice" bug the old hardcoded fallback was producing). A per-invoice
+  // print-modal override (invoiceData.dispatchFrom) still wins.
   const dispatchFromH = midH - rSmall;
   box(rightX, ry2, rightW, dispatchFromH);
   if (showDispatch) {
     const dispatchFromText = String(
       (invoiceData && invoiceData.dispatchFrom) ||
+      cfg.kl_dispatch ||
       cfg.dispatch_from ||
       ''
     ).trim();

@@ -3939,6 +3939,15 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <option value="due">⏳ Non-immediate / Due</option>
           </select>
 
+          <!-- Party-grade filter. Grade1 = Planter (pooler, no GSTIN),
+               Grade2 = Dealer (has GSTIN). Applied client-side in
+               loadPayments() on each seller's seller_type — see _payGradeFilter. -->
+          <select id="pay-grade-filter" onchange="loadPayments()" title="Filter sellers by party grade" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:150px">
+            <option value="all">All parties</option>
+            <option value="planter">🌱 Planter (Grade1)</option>
+            <option value="dealer">🏷 Dealer (Grade2)</option>
+          </select>
+
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
             <button class="btn btn-g" style="height:38px;padding:0 16px;font-weight:600" onclick="loadPayments()">↻ Reload</button>
           </div>
@@ -13632,8 +13641,8 @@ function renderTallyPanel(fields){
     fields: pick(k => /^tally_(gst_rate|service_rate|tcs_rate|dn_gst_rate)$/.test(k)) });
 
   groups.push({ title: 'Services (Transport / Insurance / Handling)',
-    hint: 'Service ledger names + SAC codes for the freight + insurance line items.',
-    fields: pick(k => /^tally_(transport|insurance|local_transport|local_insurance|hsn_transport|hsn_insurance|hsn_service|service)/.test(k)) });
+    hint: 'Service ledger names + SAC codes for the freight + insurance line items, plus commission &amp; cash-handling ledgers.',
+    fields: pick(k => /^tally_(transport|insurance|local_transport|local_insurance|hsn_transport|hsn_insurance|hsn_service|service|commission|cash_handling)/.test(k)) });
 
   groups.push({ title: 'Round Off &amp; Misc',
     hint: 'Round-off ledger, detailed-invoice flag, sample weight, and other voucher tweaks.',
@@ -19109,6 +19118,15 @@ async function loadPayments(){
       arr = arr.filter(r => Number(r.any_immediate) === 1);
     } else if (_payImmediateFilter === 'due') {
       arr = arr.filter(r => Number(r.any_immediate) !== 1);
+    }
+
+    // Party-grade filter — Grade1/Planter = pooler (no GSTIN), Grade2/Dealer =
+    // dealer (has GSTIN). seller_type is set per seller by getPaymentSummary().
+    const _payGradeFilter = document.getElementById('pay-grade-filter')?.value || 'all';
+    if (_payGradeFilter === 'planter') {
+      arr = arr.filter(r => r.seller_type === 'pooler');
+    } else if (_payGradeFilter === 'dealer') {
+      arr = arr.filter(r => r.seller_type === 'dealer');
     }
 
     // Update KPI strip

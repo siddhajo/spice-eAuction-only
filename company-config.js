@@ -45,6 +45,7 @@ const DEFAULTS = [
   // ── ADDRESS (Kerala) ───────────────────────────────────────
   { key: 'kl_address1', value: '', category: 'address_kl', label: 'Address Line 1',  type: 'text' },
   { key: 'kl_address2', value: '', category: 'address_kl', label: 'Address Line 2',  type: 'text' },
+  { key: 'kl_dispatch', value: '', category: 'address_kl', label: 'Dispatch Address', type: 'text' },
   { key: 'kl_place',    value: '', category: 'address_kl', label: 'Place / City',    type: 'text' },
   { key: 'kl_pin',      value: '', category: 'address_kl', label: 'PIN Code',        type: 'text' },
   { key: 'kl_state',    value: 'Kerala', category: 'address_kl', label: 'State',     type: 'text' },
@@ -382,6 +383,10 @@ const DEFAULTS = [
   { key: 'tally_round',          value: '',     category: 'tally', label: 'Round On/Off Ledger',      type: 'text'   },
   { key: 'tally_transport',      value: '',     category: 'tally', label: 'Transport Charges Ledger', type: 'text'   },
   { key: 'tally_insurance',      value: '',     category: 'tally', label: 'Insurance Charges Ledger', type: 'text'   },
+  { key: 'tally_commission',            value: '', category: 'tally', label: 'Commission Ledger',                       type: 'text' },
+  { key: 'tally_commission_planter',    value: '', category: 'tally', label: 'Commission-Planter Ledger',               type: 'text' },
+  { key: 'tally_cash_handling',         value: '', category: 'tally', label: 'Cash Handling Charges Ledger',            type: 'text' },
+  { key: 'tally_cash_handling_planter', value: '', category: 'tally', label: 'Cash Handling Charges Ledger-Planter',     type: 'text' },
 
   // Tax / commercial rates
   { key: 'tally_gst_rate',         value: '0', category: 'tally', label: 'GST Goods Rate %',                type: 'number' },
@@ -499,7 +504,8 @@ function initCompanySettings(db) {
     's_phone', 's_email', 's_gstin', 's_cin', 's_pan', 's_fssai', 's_sbl',
     'tally_asp_company_name',
     'tally_amazing_mode',
-    'tally_commission', 'tally_cash_handling', 'tally_cash_handling_planter',
+    // NOTE: tally_commission / tally_cash_handling / tally_cash_handling_planter
+    // were previously removed but are now ACTIVE service ledgers (see DEFAULTS).
     'tally_chc_planter', 'tally_unit_rate',
     'tally_dispatch_company', 'tally_dispatch_address', 'tally_dispatch_place',
     'tally_dispatch_pin', 'tally_dispatch_state', 'tally_dispatch_gstin',

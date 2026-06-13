@@ -6418,7 +6418,8 @@ app.get('/api/bills/commission-bill-f2/:auctionId', (req, res, next) => {
       return acc;
     }, { lots:0, qty:0, puramt:0, refund:0, commission:0, handling:0, cgst:0, sgst:0, igst:0 });
     totals.gst = totals.cgst + totals.sgst + totals.igst;
-    totals.netDue = totals.commission + totals.handling + totals.gst;
+    // Net due to the seller = amount + refund − commission − gst − handling.
+    totals.netDue = totals.puramt + totals.refund - totals.commission - totals.gst - totals.handling;
 
     const fmtAmt = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const fmtQty = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
@@ -6443,7 +6444,7 @@ app.get('/api/bills/commission-bill-f2/:auctionId', (req, res, next) => {
         ],
       });
       const head = ws.getRow(headerStartRow);
-      ['SL', 'SELLER', 'BRANCH', 'LOTS', 'QTY (kg)', 'PUR AMOUNT', 'REFUND',
+      ['SL', 'SELLER', 'BRANCH', 'LOTS', 'QTY (kg)', 'AMOUNT', 'REFUND',
        'COMMISSION', 'HANDLING', 'GST', 'NET DUE'].forEach((h, i) => head.getCell(i + 1).value = h);
       head.font = { bold: true };
       head.eachCell(c => {
@@ -6453,7 +6454,7 @@ app.get('/api/bills/commission-bill-f2/:auctionId', (req, res, next) => {
       });
       rows.forEach((r, idx) => {
         const gst = (Number(r.cgst)||0)+(Number(r.sgst)||0)+(Number(r.igst)||0);
-        const netDue = (Number(r.commission)||0)+(Number(r.handling)||0)+gst;
+        const netDue = (Number(r.puramt)||0)+(Number(r.refund)||0)-(Number(r.commission)||0)-gst-(Number(r.handling)||0);
         const row = ws.addRow([
           idx + 1, r.name || '', r.branch || '', Number(r.lots) || 0,
           Number(r.qty) || 0, Number(r.puramt) || 0, Number(r.refund) || 0,
@@ -6495,25 +6496,30 @@ app.get('/api/bills/commission-bill-f2/:auctionId', (req, res, next) => {
       m, m + 18, { width: w, align: 'center' }
     );
 
-    // Column layout
+    // Column layout. Widths are scaled below to exactly fill the printable
+    // width so the right-most column (Net Due) can't overflow the page edge
+    // (previously the columns summed wider than the page and Net Due clipped).
     const colDefs = [
-      { k: 'sl',    label: '#',           w: 24, align: 'right' },
-      { k: 'name',  label: 'Seller',      w: 160, align: 'left'  },
-      { k: 'branch',label: 'Branch',      w: 70, align: 'left'  },
-      { k: 'lots',  label: 'Lots',        w: 36, align: 'right' },
-      { k: 'qty',   label: 'Qty (kg)',    w: 70, align: 'right' },
-      { k: 'puramt',label: 'Pur Amt',     w: 80, align: 'right' },
-      { k: 'refund',label: 'Refund',      w: 70, align: 'right' },
-      { k: 'commission', label: 'Commission', w: 85, align: 'right' },
-      { k: 'handling',   label: 'Handling',   w: 70, align: 'right' },
-      { k: 'gst',   label: 'GST',         w: 70, align: 'right' },
-      { k: 'netDue',label: 'Net Due',     w: 85, align: 'right' },
+      { k: 'sl',    label: '#',           w: 22,  align: 'right' },
+      { k: 'name',  label: 'Seller',      w: 150, align: 'left'  },
+      { k: 'branch',label: 'Branch',      w: 80,  align: 'left'  },
+      { k: 'lots',  label: 'Lots',        w: 32,  align: 'right' },
+      { k: 'qty',   label: 'Qty (kg)',    w: 66,  align: 'right' },
+      { k: 'puramt',label: 'Amount',      w: 82,  align: 'right' },
+      { k: 'refund',label: 'Refund',      w: 70,  align: 'right' },
+      { k: 'commission', label: 'Commission', w: 82, align: 'right' },
+      { k: 'handling',   label: 'Handling',   w: 72, align: 'right' },
+      { k: 'gst',   label: 'GST',         w: 66,  align: 'right' },
+      { k: 'netDue',label: 'Net Due',     w: 92,  align: 'right' },
     ];
+    // Scale every column proportionally so the row spans exactly `w`.
+    const _colTot = colDefs.reduce((s, c) => s + c.w, 0);
+    colDefs.forEach(c => { c.w = c.w * (w / _colTot); });
     let cx = m;
     const colX = colDefs.map(c => { const x = cx; cx += c.w; return x; });
     let y = m + 50;
     doc.font('Helvetica-Bold').fontSize(9);
-    colDefs.forEach((c, i) => doc.text(c.label, colX[i] + 2, y, { width: c.w - 4, align: c.align }));
+    colDefs.forEach((c, i) => doc.text(c.label, colX[i] + 2, y, { width: c.w - 4, align: c.align, lineBreak: false, ellipsis: true }));
     y += 14;
     doc.moveTo(m, y - 2).lineTo(m + w, y - 2).stroke();
 
@@ -6521,13 +6527,13 @@ app.get('/api/bills/commission-bill-f2/:auctionId', (req, res, next) => {
     rows.forEach((r, idx) => {
       if (y > doc.page.height - 60) { doc.addPage(); y = m + 20; }
       const gst = (Number(r.cgst)||0)+(Number(r.sgst)||0)+(Number(r.igst)||0);
-      const netDue = (Number(r.commission)||0)+(Number(r.handling)||0)+gst;
+      const netDue = (Number(r.puramt)||0)+(Number(r.refund)||0)-(Number(r.commission)||0)-gst-(Number(r.handling)||0);
       const cells = [
         String(idx + 1), r.name || '', r.branch || '', String(r.lots || 0),
         fmtQty(r.qty), fmtAmt(r.puramt), fmtAmt(r.refund),
         fmtAmt(r.commission), fmtAmt(r.handling), fmtAmt(gst), fmtAmt(netDue),
       ];
-      colDefs.forEach((c, i) => doc.text(cells[i], colX[i] + 2, y, { width: c.w - 4, align: c.align }));
+      colDefs.forEach((c, i) => doc.text(cells[i], colX[i] + 2, y, { width: c.w - 4, align: c.align, lineBreak: false, ellipsis: true }));
       y += 13;
     });
 
@@ -6539,7 +6545,7 @@ app.get('/api/bills/commission-bill-f2/:auctionId', (req, res, next) => {
       fmtQty(totals.qty), fmtAmt(totals.puramt), fmtAmt(totals.refund),
       fmtAmt(totals.commission), fmtAmt(totals.handling), fmtAmt(totals.gst), fmtAmt(totals.netDue),
     ];
-    colDefs.forEach((c, i) => doc.text(totCells[i], colX[i] + 2, y, { width: c.w - 4, align: c.align }));
+    colDefs.forEach((c, i) => doc.text(totCells[i], colX[i] + 2, y, { width: c.w - 4, align: c.align, lineBreak: false, ellipsis: true }));
 
     doc.end();
   } catch (e) {

@@ -295,7 +295,11 @@ function generSalesIspXML(rows, cfg, opts = {}) {
   // fields, then kl_branch as a last resort for place. Without these
   // fallbacks, Tally rejects the voucher with
   // "consignor dispatch from pin is missing".
-  const d_add        = cfgGet(cfg, 'dispatch_from', '');
+  // Primary dispatch-from source is the Kerala "Dispatch Address"
+  // (kl_dispatch); the legacy `dispatch_from` setting is the fallback.
+  // Feeds both the sales DISPATCHFROMADDRESS block and the e-way bill
+  // CONSIGNOR fields below.
+  const d_add        = cfgGet(cfg, 'kl_dispatch', cfgGet(cfg, 'dispatch_from', ''));
   const d_add2       = cfgGet(cfg, 'kl_address2', '');
   const d_place      = cfgGet(cfg, 'kl_place',
                        cfgGet(cfg, 'tally_dispatch_place',
@@ -2755,9 +2759,9 @@ function buildRDPurchaseRows(db, auctionId, cfg) {
     return {
       ano: p.ano,
       date: p.date,
-      // Suffix " - PURCHASE" so the voucher's PARTYLEDGERNAME matches
+      // Suffix "-PURCHASE" so the voucher's PARTYLEDGERNAME matches
       // the suffixed RD party ledger emitted by buildRDPartyLedgerRows.
-      name: _purchaseLedgerName(p.name),
+      name: _rdPurchaseLedgerName(p.name),
       address: p.add_line,
       place: p.place,
       pin: '',
@@ -2813,7 +2817,7 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
            CASE WHEN isp_puramt > 0 THEN isp_pqty   ELSE pqty   END AS qty,
            CASE WHEN isp_puramt > 0 THEN isp_prate  ELSE prate  END AS rate,
            CASE WHEN isp_puramt > 0 THEN isp_puramt ELSE puramt END AS amount,
-           bilamt
+           bilamt, pan
     FROM lots
     WHERE auction_id = ? AND name = ?
       AND (isp_puramt > 0 OR puramt > 0)
@@ -2845,8 +2849,13 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
       }
     } catch (_) { /* no usable snapshot → fall back to name match */ }
 
+    // PAN drives the URD ledger name "<name> - [<PAN>]". Read it from the
+    // SAME lots table the LEDGER master reads (buildURDPartyLedgerRows), not
+    // from bills.pan, so both derive an identical name and Tally matches them.
+    const lotRows = lotsStmt.all(auctionId, b.name);
+    const panForBill = (lotRows.find(r => String(r.pan || '').trim()) || {}).pan || '';
     const lots = [];
-    for (const l of lotsStmt.all(auctionId, b.name)) {
+    for (const l of lotRows) {
       const key = String(l.lot);
       if (ownLotNos && !ownLotNos.has(key)) continue; // belongs to another bill
       if (usedLots.has(key)) continue;                // already counted in a prior voucher
@@ -2863,10 +2872,9 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
     return {
       ano: b.ano,
       date: b.date,
-      // Suffix " - PURCHASE" so the voucher's PARTYLEDGERNAME matches
-      // the suffixed URD agriculturist ledger emitted by
-      // buildURDPartyLedgerRows.
-      name: _purchaseLedgerName(b.name),
+      // Name "<name> - [<PAN>]" so the voucher's PARTYLEDGERNAME matches
+      // the URD agriculturist ledger emitted by buildURDPartyLedgerRows.
+      name: _urdPurchaseLedgerName(b.name, panForBill),
       address: b.add_line,
       place: b.pla,
       pin: '',
@@ -2925,10 +2933,10 @@ function buildDebitNoteRows(db, auctionId, cfg) {
     return {
       ano: d.ano,
       date: d.date,
-      // Suffix " - PURCHASE" so the DN's PARTYLEDGERNAME matches the
+      // Suffix "-PURCHASE" so the DN's PARTYLEDGERNAME matches the
       // suffixed RD party ledger (debit notes are always against
       // registered dealers).
-      name: _purchaseLedgerName(d.name),
+      name: _rdPurchaseLedgerName(d.name),
       address: dealer.padd || '',
       place:   dealer.ppla || '',
       pin:     dealer.pin  || '',
@@ -3154,10 +3162,24 @@ function _buyerRow(b, todayDate, intra, interDealer, localDealer) {
 //   • Debit Note       — buildDebitNoteRows
 // All three references resolve to the same suffixed ledger in Tally, so
 // the voucher / DN posts against the correct purchase-side party.
-const _PURCHASE_LEDGER_SUFFIX = ' - PURCHASE';
-function _purchaseLedgerName(n) {
+// Purchase-side parties get a suffix on every Tally ledger reference so they
+// don't collide with the same party's sales-side ledger. The suffix MUST be
+// derived identically across the LEDGER master, the purchase voucher, and the
+// debit note — if they differ, Tally silently auto-creates an orphan ledger
+// and the voucher posts against the wrong account.
+//
+//   • RD  (registered dealers) → "<name>-PURCHASE"   (no spaces around the dash)
+//   • URD (agriculturists)     → "<name> - [<PAN>]"  (PAN in brackets; falls
+//                                back to " - PURCHASE" when no PAN is on file)
+function _rdPurchaseLedgerName(n) {
   const s = String(n || '').trim();
-  return s ? s + _PURCHASE_LEDGER_SUFFIX : s;
+  return s ? s + '-PURCHASE' : s;
+}
+function _urdPurchaseLedgerName(n, pan) {
+  const s = String(n || '').trim();
+  if (!s) return s;
+  const p = String(pan || '').trim();
+  return p ? `${s} - [${p}]` : `${s} - PURCHASE`;
 }
 
 function _rdTraderRow(t, todayDate, intra, interDealPur, localDealPur) {
@@ -3168,7 +3190,7 @@ function _rdTraderRow(t, todayDate, intra, interDealPur, localDealPur) {
   return {
     kind: 'party',
     partyKind: 'rd',
-    name: _purchaseLedgerName(t.name),
+    name: _rdPurchaseLedgerName(t.name),
     parent: isIntra ? localDealPur : interDealPur,
     gstin: partyGstin,
     pan: t.pan || '',
@@ -3184,8 +3206,8 @@ function _urdTraderRow(t, todayDate, auctionLDR) {
   return {
     kind: 'party',
     partyKind: 'urd',
-    name: _purchaseLedgerName(t.name),
-    parent: auctionLDR,           // Agriculturists go under the auction-purchase parent
+    name: _urdPurchaseLedgerName(t.name, t.pan),
+    parent: auctionLDR,           // Agriculturists go under the "Planters" parent group
     gstin: '',
     pan: t.pan || '',
     address: t.padd || '',
@@ -3259,7 +3281,11 @@ function buildRDPartyLedgerRows(db, auctionId, cfg, opts = {}) {
  */
 function buildURDPartyLedgerRows(db, auctionId, cfg, opts = {}) {
   const todayDate = toTallyDate(new Date());
-  const auctionLDR = cfgGet(cfg, 'tally_purchase_auction', 'Purchase From Agriculturist');
+  // URD agriculturist party ledgers sit under the "Planters" group in Tally.
+  // This is decoupled from `tally_purchase_auction` (which still drives the
+  // purchase ACCOUNTING ledger inside the voucher) — only the party-ledger
+  // PARENT changed. Overridable via `tally_purchase_planter_parent`.
+  const auctionLDR = cfgGet(cfg, 'tally_purchase_planter_parent', 'Planters');
 
   let sql = `
     SELECT DISTINCT name, padd, ppla, ppin, pstate, pan
