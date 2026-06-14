@@ -1099,8 +1099,12 @@ const DELETE_ALL_RESOURCES = {
   purchases:    { table: 'purchases',   cascade: [],                                                        scope: 'global' },
   bills:        { table: 'bills',       cascade: [],                                                        scope: 'global' },
   auctions:     { table: 'auctions',    cascade: ['lots','invoices','purchases','bills','debit_notes','debit_notes_planter','lot_allocations'], scope: 'global' },
-  'debit-notes': { table: 'debit_notes', cascade: [],                                                        scope: 'trade' },
-  'debit-notes-planter': { table: 'debit_notes_planter', cascade: [],                                        scope: 'trade' },
+  // Debit Notes are GLOBAL here — the Danger Zone "Delete All" wipes the
+  // entire table across every trade. (The DN toolbar's "Delete All (this
+  // trade)" is a separate, trade-scoped path that passes ?ano= straight
+  // to the DELETE route below.)
+  'debit-notes': { table: 'debit_notes', cascade: [],                                                        scope: 'global' },
+  'debit-notes-planter': { table: 'debit_notes_planter', cascade: [],                                        scope: 'global' },
 };
 
 // Snapshot the live SQLite file before any destructive operation.
@@ -1216,19 +1220,19 @@ app.delete('/api/invoices/delete-all',    requireDeleteAll, makeDeleteAll('invoi
 app.delete('/api/purchases/delete-all',   requireDeleteAll, makeDeleteAll('purchases'));
 app.delete('/api/bills/delete-all',       requireDeleteAll, makeDeleteAll('bills'));
 app.delete('/api/auctions/delete-all',    requireDeleteAll, makeDeleteAll('auctions'));
-// Delete All Debit Notes — TRADE-SCOPED.
-// Each trade owns its own DN sequence, so Delete All must operate
-// within the currently-selected trade only. ?ano=<trade-number> is
-// required; without it we refuse the wipe.
+// Delete All Debit Notes — DUAL-MODE.
+//  • No ?ano=  → GLOBAL wipe of the entire debit_notes table. Driven by
+//    the Backup tab's "Delete All — wipe an entire table" Danger Zone,
+//    which routes through the shared makeDeleteAll() machinery
+//    (snapshot + cascade-aware count + audit log + sequence reset).
+//  • ?ano=<n> → TRADE-SCOPED wipe. Each trade owns its own DN sequence,
+//    so the DN toolbar's "Delete All (this trade)" only clears the
+//    currently-selected trade, never globally.
 app.delete('/api/debit-notes/delete-all', requireDeleteAll, (req, res) => {
+  const ano = String(req.query.ano || '').trim();
+  if (!ano) return makeDeleteAll('debit-notes')(req, res);
   try {
     const db = getDb();
-    const ano = String(req.query.ano || '').trim();
-    if (!ano) {
-      return res.status(400).json({
-        error: 'Trade number (ano) is required for Delete All. Refusing global wipe.',
-      });
-    }
     let backupPath = '';
     try { backupPath = _snapshotBackupBeforeDelete('debit-notes-' + ano); }
     catch (e) {
@@ -1252,17 +1256,14 @@ app.delete('/api/debit-notes/delete-all', requireDeleteAll, (req, res) => {
   }
 });
 
-// Trade-scoped Delete All for PLANTER debit notes. Mirrors the
-// /api/debit-notes/delete-all contract (requires ?ano=, snapshots first).
+// Delete All PLANTER debit notes — DUAL-MODE. Mirrors the
+// /api/debit-notes/delete-all contract: no ?ano= → GLOBAL wipe via
+// makeDeleteAll(); ?ano= → trade-scoped wipe (snapshots first either way).
 app.delete('/api/debit-notes-planter/delete-all', requireDeleteAll, (req, res) => {
+  const ano = String(req.query.ano || '').trim();
+  if (!ano) return makeDeleteAll('debit-notes-planter')(req, res);
   try {
     const db = getDb();
-    const ano = String(req.query.ano || '').trim();
-    if (!ano) {
-      return res.status(400).json({
-        error: 'Trade number (ano) is required for Delete All. Refusing global wipe.',
-      });
-    }
     let backupPath = '';
     try { backupPath = _snapshotBackupBeforeDelete('debit-notes-planter-' + ano); }
     catch (e) {
