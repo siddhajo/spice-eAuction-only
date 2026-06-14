@@ -3148,7 +3148,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </h2>
 
         <!-- KPI strip -->
-        <div id="lot-kpis" class="kpi-grid kpi-grid-rich" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;display:none">
+        <div id="lot-kpis" class="kpi-grid kpi-grid-rich" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:20px;display:none">
           <div class="kpi cardamom">
             <div class="kpi-label">Lots</div>
             <div class="kpi-value" id="lot-kpi-count">0</div>
@@ -3181,14 +3181,21 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             </div>
             <div class="kpi-meta" id="lot-kpi-calc-meta" style="display:none"></div>
           </div>
+          <!-- Price spread (Sold lots) — filled by loadLotsSummary from the
+               server-side trade aggregates, honouring the branch filter. -->
+          <div class="kpi">
+            <div class="kpi-label">Avg Price</div>
+            <div class="kpi-value" id="lot-kpi-price"><span class="kpi-unit" style="margin-right:4px">₹</span>0</div>
+            <div class="kpi-icon">
+              <svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            </div>
+            <div class="kpi-meta" id="lot-kpi-price-meta" style="display:none"></div>
+          </div>
         </div>
 
-        <!-- Lots Summary — Sold / Withdrawn / Min / Max / Avg for the
-             selected trade, branch-filtered. Sits directly under the
-             KPI strip so all summary tiles cluster together. The branch
-             selector lives in the toolbar below. -->
-        <div id="lots-summary-scope" style="font-size:12px;color:var(--text3);margin:0 0 8px;display:none"></div>
-        <div id="lots-summary-strip" style="display:none;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px"></div>
+        <!-- Branch-scope caption for the Sold/Withdrawn/Price figures shown
+             inside the KPI tiles above (set by loadLotsSummary). -->
+        <div id="lots-summary-scope" style="font-size:12px;color:var(--text3);margin:-8px 0 14px;display:none"></div>
 
         <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
           <select id="lot-auction" onchange="if(typeof _lotsTickedIds!=='undefined')_lotsTickedIds.clear();loadLots();loadLotsSummary()" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
@@ -11362,54 +11369,62 @@ async function populateBranchSelect(selectId, opts){
 // Hits /api/reports/trade-summary?auctionId=...&branch=... and renders a
 // 5-card strip: Sold (kg) · Withdrawn (kg) · Min · Max · Avg. Refreshes
 // whenever the auction or branch dropdown changes.
+// Fills the Sold / Withdrawn / Price breakdown INTO the Lots KPI tiles
+// (as their .kpi-meta lines + the dedicated "Avg Price" tile) from the
+// server-side trade aggregates, honouring the branch filter. Keeping it
+// inside the existing tiles avoids a second, messy row of summary cards.
 async function loadLotsSummary(){
   const aid = document.getElementById('lot-auction')?.value;
   const branchSel = document.getElementById('lot-branch-filter');
-  const strip = document.getElementById('lots-summary-strip');
   const scope = document.getElementById('lots-summary-scope');
-  if (!strip || !scope) return;
   // Always (re)populate the branch dropdown from settings so the user has
   // every configured branch available, not just ones found in lots rows.
   await populateBranchSelect('lot-branch-filter');
   const branch = branchSel ? branchSel.value : '';
-  if (!aid) {
-    strip.style.display = 'none';
-    scope.style.display = 'none';
-    return;
-  }
+  const priceEl = document.getElementById('lot-kpi-price');
+  const clear = () => {
+    ['lot-kpi-count-meta','lot-kpi-qty-meta','lot-kpi-amount-meta','lot-kpi-price-meta']
+      .forEach(id => setKpiMeta(id, []));
+    if (priceEl) priceEl.innerHTML = '<span class="kpi-unit" style="margin-right:4px">₹</span>0';
+    if (scope) scope.style.display = 'none';
+  };
+  if (!aid) { clear(); return; }
   try {
     const qs = branch ? `?branch=${encodeURIComponent(branch)}` : '';
     const d = await j('/api/reports/trade-summary/' + aid + qs);
     const ba = d.branchAggregates || {};
     const sold = ba.sold || {}, wd = ba.withdrawn || {};
-    const inr = n => '₹' + Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
-    const kg  = n => Number(n||0).toFixed(3);
-    const int = n => Number(n||0).toLocaleString('en-IN');
-    // Grouped: Sold (green) · Withdrawn (amber) · Price spread (blue).
-    const SOLD='var(--green)', WD='#b45309', PRICE='#2563eb';
-    const items = [
-      { l: 'Sold Lots',        v: int(sold.lots),  c: SOLD },
-      { l: 'Sold Qty (kg)',    v: kg(sold.qty),    c: SOLD },
-      { l: 'Sold Value',       v: inr(sold.cost),  c: SOLD },
-      { l: 'Withdrawn Lots',   v: int(wd.lots),    c: WD },
-      { l: 'Withdrawn Qty (kg)', v: kg(wd.qty),    c: WD },
-      { l: 'Withdrawn Value',  v: inr(wd.cost),    c: WD },
-      { l: 'Min Price',        v: inr(ba.min),     c: PRICE },
-      { l: 'Max Price',        v: inr(ba.max),     c: PRICE },
-      { l: 'Avg Price',        v: inr(ba.avg),     c: PRICE },
-    ];
-    strip.style.display = 'grid';
-    strip.style.gridTemplateColumns = 'repeat(auto-fit,minmax(150px,1fr))';
-    strip.innerHTML = items.map(i =>
-      `<div style="background:var(--bg2);border:1px solid var(--border);border-left:4px solid ${i.c};border-radius:8px;padding:14px;text-align:center">
-         <div style="font-size:20px;font-weight:700;color:${i.c}">${i.v}</div>
-         <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-top:4px">${i.l}</div>
-       </div>`).join('');
-    scope.style.display = '';
-    scope.textContent = branch ? `Lots Summary — Branch: ${branch}` : 'Lots Summary — All Branches';
+    const inr  = n => '₹' + Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:0,maximumFractionDigits:0});
+    const inr2 = n => '₹' + Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const kg   = n => Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' kg';
+    const int  = n => Number(n||0).toLocaleString('en-IN');
+    // Lots tile → Sold / Withdrawn counts
+    setKpiMeta('lot-kpi-count-meta', [
+      ['Sold', int(sold.lots)],
+      ['Withdrawn', int(wd.lots)],
+    ]);
+    // Quantity tile → Sold / Withdrawn kg
+    setKpiMeta('lot-kpi-qty-meta', [
+      ['Sold', kg(sold.qty)],
+      ['Withdrawn', kg(wd.qty)],
+    ]);
+    // Amount tile → Sold / Withdrawn value
+    setKpiMeta('lot-kpi-amount-meta', [
+      ['Sold', inr2(sold.cost)],
+      ['Withdrawn', inr2(wd.cost)],
+    ]);
+    // Price tile → Avg headline, Min / Max meta
+    if (priceEl) priceEl.innerHTML = `<span class="kpi-unit" style="margin-right:4px">₹</span>${Number(ba.avg||0).toLocaleString('en-IN',{minimumFractionDigits:0,maximumFractionDigits:0})}<span class="kpi-unit"> /kg</span>`;
+    setKpiMeta('lot-kpi-price-meta', [
+      ['Min', inr(ba.min)],
+      ['Max', inr(ba.max)],
+    ]);
+    if (scope) {
+      scope.style.display = branch ? '' : 'none';
+      scope.textContent = branch ? `Sold / Withdrawn / Price figures scoped to branch: ${branch}` : '';
+    }
   } catch (e) {
-    strip.style.display = 'none';
-    scope.style.display = 'none';
+    clear();
   }
 }
 
@@ -16577,18 +16592,10 @@ async function loadLots(opts){
       if ($('lot-kpi-qty'))    $('lot-kpi-qty').innerHTML      = `${fmtI(totalQty, 2)}<span class="kpi-unit">kg</span>`;
       if ($('lot-kpi-amount')) $('lot-kpi-amount').innerHTML   = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalAmount, 2)}`;
       if ($('lot-kpi-calc'))   $('lot-kpi-calc').innerHTML     = `${pct}%<span class="kpi-unit"> done</span>`;
-      setKpiMeta('lot-kpi-count-meta', [
-        totalBags > 0 && ['Bags', fmtI(totalBags, 0)],
-        ['Avg / lot', `${fmtI(avgQty, 2)} kg`],
-      ]);
-      setKpiMeta('lot-kpi-qty-meta', [
-        totalBags > 0 && ['Bags', fmtI(totalBags, 0)],
-        avgPrice > 0 && ['Avg price', `₹${fmtI(avgPrice, 0)}/kg`],
-      ]);
-      setKpiMeta('lot-kpi-amount-meta', [
-        ['Avg / lot', `₹${fmtI(arr.length ? totalAmount / arr.length : 0, 0)}`],
-        avgPrice > 0 && ['Avg price', `₹${fmtI(avgPrice, 0)}/kg`],
-      ]);
+      // Sold / Withdrawn breakdown for the count, qty and amount tiles is
+      // owned by loadLotsSummary (accurate server aggregates, branch-aware),
+      // so loadLots no longer writes those metas — it would otherwise clobber
+      // them on every in-trade search/page with page-local Bags/Avg figures.
       setKpiMeta('lot-kpi-calc-meta', [
         ['Calculated', `${fmtI(calculatedCount, 0)} / ${fmtI(realLotCount, 0)}`],
         ['Pending', fmtI(Math.max(0, realLotCount - calculatedCount), 0)],
