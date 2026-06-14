@@ -11381,19 +11381,28 @@ async function loadLotsSummary(){
     const qs = branch ? `?branch=${encodeURIComponent(branch)}` : '';
     const d = await j('/api/reports/trade-summary/' + aid + qs);
     const ba = d.branchAggregates || {};
-    const inr = n => Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const sold = ba.sold || {}, wd = ba.withdrawn || {};
+    const inr = n => '₹' + Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
     const kg  = n => Number(n||0).toFixed(3);
+    const int = n => Number(n||0).toLocaleString('en-IN');
+    // Grouped: Sold (green) · Withdrawn (amber) · Price spread (blue).
+    const SOLD='var(--green)', WD='#b45309', PRICE='#2563eb';
     const items = [
-      { l: 'Sold (kg)',      v: kg((ba.sold && ba.sold.qty) || 0) },
-      { l: 'Withdrawn (kg)', v: kg((ba.withdrawn && ba.withdrawn.qty) || 0) },
-      { l: 'Min Price',      v: inr(ba.min || 0) },
-      { l: 'Max Price',      v: inr(ba.max || 0) },
-      { l: 'Avg Price',      v: inr(ba.avg || 0) },
+      { l: 'Sold Lots',        v: int(sold.lots),  c: SOLD },
+      { l: 'Sold Qty (kg)',    v: kg(sold.qty),    c: SOLD },
+      { l: 'Sold Value',       v: inr(sold.cost),  c: SOLD },
+      { l: 'Withdrawn Lots',   v: int(wd.lots),    c: WD },
+      { l: 'Withdrawn Qty (kg)', v: kg(wd.qty),    c: WD },
+      { l: 'Withdrawn Value',  v: inr(wd.cost),    c: WD },
+      { l: 'Min Price',        v: inr(ba.min),     c: PRICE },
+      { l: 'Max Price',        v: inr(ba.max),     c: PRICE },
+      { l: 'Avg Price',        v: inr(ba.avg),     c: PRICE },
     ];
     strip.style.display = 'grid';
+    strip.style.gridTemplateColumns = 'repeat(auto-fit,minmax(150px,1fr))';
     strip.innerHTML = items.map(i =>
-      `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center">
-         <div style="font-size:20px;font-weight:700;color:var(--green)">${i.v}</div>
+      `<div style="background:var(--bg2);border:1px solid var(--border);border-left:4px solid ${i.c};border-radius:8px;padding:14px;text-align:center">
+         <div style="font-size:20px;font-weight:700;color:${i.c}">${i.v}</div>
          <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-top:4px">${i.l}</div>
        </div>`).join('');
     scope.style.display = '';

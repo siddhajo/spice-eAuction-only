@@ -10459,10 +10459,10 @@ app.get('/api/reports/trade-summary/:auctionId', requireViewOrLotEntry, (req, re
   ) || { lots:0, qty:0, bags:0, cost:0 };
   const aggWithdrawn = db.get(
     `SELECT COUNT(*) AS lots, COALESCE(SUM(qty),0) AS qty,
-            COALESCE(SUM(bags),0) AS bags
+            COALESCE(SUM(bags),0) AS bags, COALESCE(SUM(amount),0) AS cost
        FROM lots WHERE auction_id = ? AND COALESCE(amount,0) <= 0` + bWhere,
     [auctionId, ...bParams]
-  ) || { lots:0, qty:0, bags:0 };
+  ) || { lots:0, qty:0, bags:0, cost:0 };
   const aggPrice = db.get(
     `SELECT MIN(price) AS min_price, MAX(price) AS max_price
        FROM lots WHERE auction_id = ? AND amount > 0` + bWhere,
@@ -10472,7 +10472,7 @@ app.get('/api/reports/trade-summary/:auctionId', requireViewOrLotEntry, (req, re
   const branchAggregates = {
     branch: branchFilter || null,
     sold:      { lots: aggSold.lots, bags: aggSold.bags, qty: aggSold.qty, cost: aggSold.cost },
-    withdrawn: { lots: aggWithdrawn.lots, bags: aggWithdrawn.bags, qty: aggWithdrawn.qty },
+    withdrawn: { lots: aggWithdrawn.lots, bags: aggWithdrawn.bags, qty: aggWithdrawn.qty, cost: aggWithdrawn.cost },
     min: Number(aggPrice.min_price) || 0,
     max: Number(aggPrice.max_price) || 0,
     avg: avgPrice,
