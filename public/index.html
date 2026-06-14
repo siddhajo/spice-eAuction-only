@@ -6992,6 +6992,11 @@ async function loadFixData(){
       tr.fd-filterrow th{position:sticky;top:40px;z-index:2;background:#eef2f7;padding:5px 6px}
       .fd-fcell{width:100%;box-sizing:border-box;padding:5px 8px;font-size:12.5px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#111;caret-color:#2563eb}
       .fd-fcell:focus{outline:2px solid var(--fdc);outline-offset:-1px}
+      .fd-fwrap{position:relative;display:block}
+      .fd-fwrap .fd-fcell{padding-right:22px}
+      .fd-fclear{position:absolute;right:3px;top:50%;transform:translateY(-50%);display:none;border:0;background:transparent;color:#64748b;cursor:pointer;font-size:13px;line-height:1;padding:2px;border-radius:50%}
+      .fd-fclear:hover{color:#dc2626;background:#fee2e2}
+      .fd-fwrap.has-val .fd-fclear{display:block}
       table.fd-grid tbody tr:nth-child(even){background:var(--zebra,#f7f9fc)}
       table.fd-grid tbody tr:hover{background:color-mix(in srgb,var(--fdc) 8%,#fff)}
       td.fd-edit{cursor:text;background:#fffbeb}
@@ -7064,7 +7069,7 @@ async function fdRender(){
   html += `<div class="fd-scroll"><table class="fd-grid"><thead>
     <tr class="fd-hrow">${FD.edit?'<th></th>':''}${cols.map(c=>`<th>${esc(c.label)}</th>`).join('')}</tr>
     <tr class="fd-filterrow">${FD.edit?'<th></th>':''}${cols.map(c=>
-      `<th><input class="fd-fcell" placeholder="filter…" value="${esc(FD.filters[c.name]||'')}" oninput="fdFilterChanged('${esc(c.name)}',this.value)"></th>`).join('')}</tr>
+      `<th><span class="fd-fwrap${FD.filters[c.name]?' has-val':''}"><input class="fd-fcell" data-col="${esc(c.name)}" placeholder="filter…" value="${esc(FD.filters[c.name]||'')}" oninput="fdFilterChanged('${esc(c.name)}',this.value,this)"><button class="fd-fclear" title="Clear filter" tabindex="-1" onmousedown="event.preventDefault()" onclick="fdClearFilter('${esc(c.name)}')">✕</button></span></th>`).join('')}</tr>
     </thead><tbody id="fd-tbody">${fdRowsHtml(d.rows)}</tbody></table></div>`;
   view.innerHTML = html;
   fdUpdateCount();
@@ -7104,9 +7109,18 @@ function fdUpdateCount(){
   if(pp) pp.disabled = FD.offset<=0; if(pn) pn.disabled = to>=FD.total;
 }
 function fdSearchChanged(val){ FD.q=val; FD.offset=0; clearTimeout(FD._t); FD._t=setTimeout(fdFetch,300); }
-function fdFilterChanged(col,val){
+function fdFilterChanged(col,val,el){
   if(val==='') delete FD.filters[col]; else FD.filters[col]=val;
+  if(el){ const w=el.closest('.fd-fwrap'); if(w) w.classList.toggle('has-val', val!==''); }
   FD.offset=0; clearTimeout(FD._t); FD._t=setTimeout(fdFetch,300);
+}
+// Clear a single column filter via its ✕ icon, then refresh immediately.
+function fdClearFilter(col){
+  delete FD.filters[col];
+  FD.offset=0;
+  const inp=document.querySelector('.fd-fcell[data-col="'+CSS.escape(col)+'"]');
+  if(inp){ inp.value=''; const w=inp.closest('.fd-fwrap'); if(w) w.classList.remove('has-val'); inp.focus(); }
+  clearTimeout(FD._t); fdFetch();
 }
 
 // Add a new record: a friendly form of the editable fields, then the same
