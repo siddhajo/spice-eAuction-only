@@ -1255,7 +1255,12 @@ tr:hover td{background:var(--spice-cream)}
    Invoices / Purchases / Payments / Bills / Debit Notes). Same .kpi shell
    as the dashboard, with a small breakdown table under the headline number
    so each card reads as a detailed summary rather than a bare figure. */
-.kpi-grid-rich .kpi-label{padding-right:44px}
+/* Reserve the corner-icon space on the label, and push the headline value
+   DOWN past the icon (icon bottom sits ~52px from the tile top) so a long
+   value — e.g. a multi-crore Total Amount — uses the FULL tile width on its
+   own line instead of running underneath the corner icon and being clipped. */
+.kpi-grid-rich .kpi-label{padding-right:44px;margin-bottom:20px}
+.kpi-grid-rich .kpi-value{white-space:nowrap}
 .kpi-meta{
   margin-top:12px;padding-top:9px;border-top:1px solid var(--spice-line);
   display:grid;grid-template-columns:auto 1fr;gap:4px 12px;
