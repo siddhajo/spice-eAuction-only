@@ -10038,8 +10038,17 @@ app.get('/api/insights', requireView, (req, res) => {
     }
   }
   if (from == null) {
-    from = dateRe.test(String(req.query.from || '')) ? String(req.query.from) : isoMonthStart;
-    to   = dateRe.test(String(req.query.to   || '')) ? String(req.query.to)   : isoToday;
+    // `range=all` → lifetime totals across every trade (used by the
+    // Dashboard's "All Auctions (Cumulative)" headline tiles). A spanning
+    // date window keeps every BETWEEN-based query below unchanged while
+    // including all rows. Otherwise default to the current calendar month.
+    if (String(req.query.range || '').trim() === 'all') {
+      from = '0000-01-01';
+      to   = '9999-12-31';
+    } else {
+      from = dateRe.test(String(req.query.from || '')) ? String(req.query.from) : isoMonthStart;
+      to   = dateRe.test(String(req.query.to   || '')) ? String(req.query.to)   : isoToday;
+    }
   }
 
   // Helper SQL fragment — "is this lot actually sold?" Code blank
