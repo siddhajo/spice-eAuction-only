@@ -4042,7 +4042,14 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </h3>
           <div class="tally-section-body">
             <div style="font-size:12px;color:var(--text2);margin:12px 0 0">Lot Slip, Lot Buyer, Lot Name, e-Auction CSV, Price List (Before) and Dealer List — your pre-import safety net. Run them now while the lots table still reflects the auction sheet.</div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-top:12px" id="export-btns-preauction"></div>
+            <!-- Same compact report-selector layout as the Export Center. -->
+            <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-top:12px">
+              <div class="fg" style="margin:0;min-width:240px;flex:1;max-width:380px">
+                <label>Report</label>
+                <select id="exp-preauction-report" onchange="renderExportPreauctionActions()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></select>
+              </div>
+              <div id="exp-preauction-actions" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -4092,42 +4099,58 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <div class="tally-section-body">
             <p style="font-size:12px;color:var(--text2);margin:12px 0">Each transaction module exports as <b>.dbf</b> (for the FoxPro application — date format DD/MM/YYYY, lot numbers keep leading zeros) or as <b>.xlsx</b> (same columns, opens in Excel).</p>
 
+            <!-- Compact module-selector layout (matches the Export Center):
+                 pick a module, then export it as .dbf or .xlsx. -->
             <h3 style="font-size:13px;margin:16px 0 8px 0;color:var(--spice)">Trade-wise</h3>
-            <div style="display:flex;gap:8px;align-items:end;margin-bottom:10px;flex-wrap:wrap">
-              <div class="fg" style="margin:0;flex:1;min-width:200px"><label>Auction / Trade</label><select id="dbf-auction" style="padding:8px;border:1px solid var(--border);border-radius:6px;width:100%"></select></div>
-            </div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;margin-bottom:6px">
-              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Lots (CPA1)</span><button class="btn btn-a" onclick="downloadDbfTrade('lots','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfTrade('lots','xlsx')">.xlsx</button></div>
-              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Sales Invoices (INV)</span><button class="btn btn-a" onclick="downloadDbfTrade('invoices','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfTrade('invoices','xlsx')">.xlsx</button></div>
-              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Purchases (PURCHASE)</span><button class="btn btn-a" onclick="downloadDbfTrade('purchases','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfTrade('purchases','xlsx')">.xlsx</button></div>
-              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Bills of Supply (BILL)</span><button class="btn btn-a" onclick="downloadDbfTrade('bills','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfTrade('bills','xlsx')">.xlsx</button></div>
-              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Debit Notes</span><button class="btn btn-a" onclick="downloadDbfTrade('debit_notes','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfTrade('debit_notes','xlsx')">.xlsx</button></div>
+            <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px">
+              <div class="fg" style="margin:0;flex:1;min-width:200px;max-width:300px"><label>Auction / Trade</label><select id="dbf-auction" style="padding:8px;border:1px solid var(--border);border-radius:6px;width:100%"></select></div>
+              <div class="fg" style="margin:0;min-width:200px;max-width:280px"><label>Module</label>
+                <select id="dbf-trade-module" style="padding:8px;border:1px solid var(--border);border-radius:6px;width:100%">
+                  <option value="lots">Lots (CPA1)</option>
+                  <option value="invoices">Sales Invoices (INV)</option>
+                  <option value="purchases">Purchases (PURCHASE)</option>
+                  <option value="bills">Bills of Supply (BILL)</option>
+                  <option value="debit_notes">Debit Notes</option>
+                </select>
+              </div>
+              <div style="display:flex;gap:8px">
+                <button class="btn btn-a" onclick="downloadDbfTrade(dbfMod('dbf-trade-module'),'dbf')" style="height:38px;padding:0 16px;font-weight:600">.dbf</button>
+                <button class="btn btn-a" onclick="downloadDbfTrade(dbfMod('dbf-trade-module'),'xlsx')" style="height:38px;padding:0 16px;font-weight:600">.xlsx</button>
+              </div>
             </div>
 
             <h3 style="font-size:13px;margin:16px 0 8px 0;color:var(--spice)">Date-wise</h3>
-            <div style="display:flex;gap:8px;align-items:end;margin-bottom:10px;flex-wrap:wrap">
+            <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px">
               <div class="fg" style="margin:0"><label>From</label><input type="date" id="dbf-from"></div>
               <div class="fg" style="margin:0"><label>To</label><input type="date" id="dbf-to"></div>
-            </div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px">
-              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Lots (CPA1)</span><button class="btn btn-a" onclick="downloadDbfRange('lots','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfRange('lots','xlsx')">.xlsx</button></div>
-              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Sales Invoices (INV)</span><button class="btn btn-a" onclick="downloadDbfRange('invoices','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfRange('invoices','xlsx')">.xlsx</button></div>
-              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Purchases (PURCHASE)</span><button class="btn btn-a" onclick="downloadDbfRange('purchases','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfRange('purchases','xlsx')">.xlsx</button></div>
-              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Bills of Supply (BILL)</span><button class="btn btn-a" onclick="downloadDbfRange('bills','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfRange('bills','xlsx')">.xlsx</button></div>
-              <div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;flex:1;color:var(--text2)">Debit Notes</span><button class="btn btn-a" onclick="downloadDbfRange('debit_notes','dbf')">.dbf</button><button class="btn btn-a" onclick="downloadDbfRange('debit_notes','xlsx')">.xlsx</button></div>
+              <div class="fg" style="margin:0;min-width:200px;max-width:280px"><label>Module</label>
+                <select id="dbf-range-module" style="padding:8px;border:1px solid var(--border);border-radius:6px;width:100%">
+                  <option value="lots">Lots (CPA1)</option>
+                  <option value="invoices">Sales Invoices (INV)</option>
+                  <option value="purchases">Purchases (PURCHASE)</option>
+                  <option value="bills">Bills of Supply (BILL)</option>
+                  <option value="debit_notes">Debit Notes</option>
+                </select>
+              </div>
+              <div style="display:flex;gap:8px">
+                <button class="btn btn-a" onclick="downloadDbfRange(dbfMod('dbf-range-module'),'dbf')" style="height:38px;padding:0 16px;font-weight:600">.dbf</button>
+                <button class="btn btn-a" onclick="downloadDbfRange(dbfMod('dbf-range-module'),'xlsx')" style="height:38px;padding:0 16px;font-weight:600">.xlsx</button>
+              </div>
             </div>
 
             <h3 style="font-size:13px;margin:16px 0 8px 0;color:var(--spice)">Master Data</h3>
             <p style="font-size:12px;color:var(--text2);margin:0 0 8px 0">Full seller / buyer master — available as Excel (.xlsx) or FoxPro (.dbf).</p>
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-              <span style="font-size:12px;min-width:64px;color:var(--text2)">Sellers:</span>
-              <button class="btn btn-a" onclick="downloadMaster('sellers','xlsx')">Excel (.xlsx)</button>
-              <button class="btn btn-a" onclick="downloadMaster('sellers','dbf')">FoxPro (.dbf)</button>
-            </div>
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
-              <span style="font-size:12px;min-width:64px;color:var(--text2)">Buyers:</span>
-              <button class="btn btn-a" onclick="downloadMaster('buyers','xlsx')">Excel (.xlsx)</button>
-              <button class="btn btn-a" onclick="downloadMaster('buyers','dbf')">FoxPro (.dbf)</button>
+            <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+              <div class="fg" style="margin:0;min-width:200px;max-width:280px"><label>Master</label>
+                <select id="dbf-master" style="padding:8px;border:1px solid var(--border);border-radius:6px;width:100%">
+                  <option value="sellers">Sellers</option>
+                  <option value="buyers">Buyers</option>
+                </select>
+              </div>
+              <div style="display:flex;gap:8px">
+                <button class="btn btn-a" onclick="downloadMaster(dbfMod('dbf-master'),'xlsx')" style="height:38px;padding:0 16px;font-weight:600">Excel (.xlsx)</button>
+                <button class="btn btn-a" onclick="downloadMaster(dbfMod('dbf-master'),'dbf')" style="height:38px;padding:0 16px;font-weight:600">FoxPro (.dbf)</button>
+              </div>
             </div>
           </div>
         </div>
@@ -19965,86 +19988,53 @@ async function updateExportCenterVisibility(){
 }
 // Auction changed on the Exports tab — re-evaluate Export Center gating.
 function onExpAuctionChange(){ updateExportCenterVisibility(); }
+// Populate one report-selector dropdown (Export Center / Pre-auction) and
+// render its action row. `keys` is the ordered list of report keys; `onChange`
+// is the actions-render fn to call after (re)building the options. The current
+// selection is preserved across re-renders so a refresh keeps the pick.
+function _fillExportSelect(selId, keys, onChange){
+  const sel = document.getElementById(selId);
+  if (!sel) return;
+  const valid = keys.filter(k => EXP_LABELS[k]);
+  const prev = sel.value;
+  sel.innerHTML = valid.map(k => `<option value="${k}">${esc(EXP_LABELS[k])}</option>`).join('');
+  if (prev && valid.includes(prev)) sel.value = prev;
+  onChange();
+}
 function renderExportBtns(){
-  const renderOne = ([k,v]) => {
-    if (EXP_CSV_ONLY.has(k)) {
-      return `<div style="display:flex;flex-direction:column;gap:4px;padding:8px;border:1px solid var(--border);border-radius:6px;background:#fff">
-        <div style="font-weight:600;font-size:13px;color:var(--text)">${v}</div>
-        <div style="display:flex;gap:4px">
-          <button class="btn btn-a" onclick="exportType('${k}','csv')" style="flex:1;padding:6px 8px;font-size:12px">CSV</button>
-        </div>
-      </div>`;
-    }
-    if (EXP_XLSX_ONLY.has(k)) {
-      return `<div style="display:flex;flex-direction:column;gap:4px;padding:8px;border:1px solid var(--border);border-radius:6px;background:#fff">
-        <div style="font-weight:600;font-size:13px;color:var(--text)">${v}</div>
-        <div style="display:flex;gap:4px">
-          <button class="btn btn-a" onclick="exportType('${k}','xlsx')" style="flex:1;padding:6px 8px;font-size:12px">XLSX</button>
-        </div>
-      </div>`;
-    }
-    // Full export type — offer the same four actions as the Spice Board
-    // screen: Preview / Print (both render the PDF) plus the XLSX and PDF
-    // downloads. Preview opens the PDF inline; Print sends it to the printer.
-    return `<div style="display:flex;flex-direction:column;gap:4px;padding:8px;border:1px solid var(--border);border-radius:6px;background:#fff">
-      <div style="font-weight:600;font-size:13px;color:var(--text)">${v}</div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap">
-        <button class="btn btn-g" onclick="exportPreview('${k}')" style="flex:1 1 calc(50% - 2px);padding:6px 8px;font-size:12px">Preview</button>
-        <button class="btn btn-o" onclick="exportPrint('${k}')" style="flex:1 1 calc(50% - 2px);padding:6px 8px;font-size:12px">Print</button>
-        <button class="btn btn-a" onclick="exportType('${k}','xlsx')" style="flex:1 1 calc(50% - 2px);padding:6px 8px;font-size:12px">XLSX</button>
-        <button class="btn btn-orange" onclick="exportType('${k}','pdf')" style="flex:1 1 calc(50% - 2px);padding:6px 8px;font-size:12px">PDF</button>
-      </div>
-    </div>`;
-  };
-  const all = Object.entries(EXP_LABELS);
   // Pre-auction group keeps EXP_PREAUCTION's declared order, so the snapshot
   // list reads the same way in the Exports tab and the import-modal banner.
-  const ptHost = document.getElementById('export-btns-preauction');
-  if (ptHost) {
-    ptHost.innerHTML = EXP_PREAUCTION
-      .filter(k => EXP_LABELS[k])
-      .map(k => renderOne([k, EXP_LABELS[k]]))
-      .join('');
-  }
-  // Export Center: populate the report dropdown (compact replacement for the
-  // old tile grid) and render the matching action row. Preserve the current
-  // selection across re-renders so a refresh doesn't reset the operator's pick.
-  const sel = document.getElementById('exp-center-report');
-  if (sel) {
-    const centerKeys = all
-      .map(([k]) => k)
-      .filter(k => !EXP_PREAUCTION_SET.has(k) || EXP_ALSO_IN_CENTER.has(k));
-    const prev = sel.value;
-    sel.innerHTML = centerKeys.map(k => `<option value="${k}">${esc(EXP_LABELS[k])}</option>`).join('');
-    if (prev && centerKeys.includes(prev)) sel.value = prev;
-    renderExportCenterActions();
-  }
+  _fillExportSelect('exp-preauction-report', EXP_PREAUCTION, renderExportPreauctionActions);
+  // Export Center reports — everything except the pre-auction-only ones.
+  const centerKeys = Object.keys(EXP_LABELS)
+    .filter(k => !EXP_PREAUCTION_SET.has(k) || EXP_ALSO_IN_CENTER.has(k));
+  _fillExportSelect('exp-center-report', centerKeys, renderExportCenterActions);
 }
-// Render the action buttons for the report picked in the Export Center
-// dropdown. Format support per report mirrors the old tiles: CSV-only and
-// XLSX-only types get a single button; full types get Preview / Print / XLSX
-// / PDF — the same four actions as the Spice Board screen.
-function renderExportCenterActions(){
-  const sel  = document.getElementById('exp-center-report');
-  const host = document.getElementById('exp-center-actions');
-  if (!sel || !host) return;
-  const k = sel.value;
-  if (!k) { host.innerHTML = ''; return; }
+// Build the action-button row HTML for a report. Format support mirrors the
+// old tiles: CSV-only and XLSX-only types get a single button; full types get
+// Preview / Print / XLSX / PDF — the same four actions as the Spice Board.
+function _expActionHtml(k){
   const btn = (cls, label, onclick) =>
     `<button class="btn ${cls}" onclick="${onclick}" style="height:38px;padding:0 16px;font-weight:600">${label}</button>`;
-  let html;
-  if (EXP_CSV_ONLY.has(k)) {
-    html = btn('btn-a', 'CSV', `exportType('${k}','csv')`);
-  } else if (EXP_XLSX_ONLY.has(k)) {
-    html = btn('btn-a', 'XLSX', `exportType('${k}','xlsx')`);
-  } else {
-    html = btn('btn-g', 'Preview', `exportPreview('${k}')`)
-         + btn('btn-o', 'Print',   `exportPrint('${k}')`)
-         + btn('btn-a', 'Excel (XLSX)', `exportType('${k}','xlsx')`)
-         + btn('btn-orange', 'PDF', `exportType('${k}','pdf')`);
-  }
-  host.innerHTML = html;
+  if (EXP_CSV_ONLY.has(k))  return btn('btn-a', 'CSV',  `exportType('${k}','csv')`);
+  if (EXP_XLSX_ONLY.has(k)) return btn('btn-a', 'XLSX', `exportType('${k}','xlsx')`);
+  return btn('btn-g', 'Preview', `exportPreview('${k}')`)
+       + btn('btn-o', 'Print',   `exportPrint('${k}')`)
+       + btn('btn-a', 'Excel (XLSX)', `exportType('${k}','xlsx')`)
+       + btn('btn-orange', 'PDF', `exportType('${k}','pdf')`);
 }
+// Render the action row for the report picked in a report-selector dropdown.
+function _renderExportActions(selId, hostId){
+  const sel  = document.getElementById(selId);
+  const host = document.getElementById(hostId);
+  if (!sel || !host) return;
+  host.innerHTML = sel.value ? _expActionHtml(sel.value) : '';
+}
+function renderExportCenterActions(){ _renderExportActions('exp-center-report', 'exp-center-actions'); }
+function renderExportPreauctionActions(){ _renderExportActions('exp-preauction-report', 'exp-preauction-actions'); }
+// Read the selected value of a DBF module/master dropdown (used by the inline
+// onclick handlers in the DBF Exports section).
+function dbfMod(id){ return (document.getElementById(id) || {}).value || ''; }
 async function exportType(type,format,aidOverride){format=format||'xlsx';
   // aidOverride lets non-Exports-tab callers (e.g. the pre-import reminder
   // banner inside the Price Import modal) pass an explicit auction id
