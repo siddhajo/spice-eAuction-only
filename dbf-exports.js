@@ -119,7 +119,7 @@ async function exportLotsDbf(db, filters = {}) {
   let where = '1=1';
   const params = [];
   if (filters.auctionId) { where += ' AND l.auction_id = ?'; params.push(filters.auctionId); }
-  else if (filters.ano)  { where += ' AND a.ano = ?'; params.push(filters.ano); }
+  else if (filters.ano)  { where += ' AND TRIM(a.ano) = TRIM(?)'; params.push(filters.ano); }
   if (filters.from && filters.to) { where += ' AND a.date BETWEEN ? AND ?'; params.push(filters.from, filters.to); }
   const rows = db.all(`
     SELECT l.*, a.ano as trade_no, a.date as trade_date
@@ -214,7 +214,7 @@ async function exportLotsDbf(db, filters = {}) {
 async function exportInvoicesDbf(db, filters = {}) {
   let query = 'SELECT * FROM invoices WHERE 1=1';
   const params = [];
-  if (filters.ano) { query += ' AND ano = ?'; params.push(filters.ano); }
+  if (filters.ano) { query += ' AND TRIM(ano) = TRIM(?)'; params.push(filters.ano); }
   if (filters.from && filters.to) { query += ' AND date BETWEEN ? AND ?'; params.push(filters.from, filters.to); }
   query += ' ORDER BY date, sale, invo';
   const rows = db.all(query, params);
@@ -274,7 +274,7 @@ async function exportInvoicesDbf(db, filters = {}) {
 async function exportPurchasesDbf(db, filters = {}) {
   let query = 'SELECT * FROM purchases WHERE 1=1';
   const params = [];
-  if (filters.ano) { query += ' AND ano = ?'; params.push(filters.ano); }
+  if (filters.ano) { query += ' AND TRIM(ano) = TRIM(?)'; params.push(filters.ano); }
   if (filters.from && filters.to) { query += ' AND date BETWEEN ? AND ?'; params.push(filters.from, filters.to); }
   query += ' ORDER BY date, invo';
   const rows = db.all(query, params);
@@ -326,7 +326,7 @@ async function exportPurchasesDbf(db, filters = {}) {
 async function exportBillsDbf(db, filters = {}) {
   let query = 'SELECT * FROM bills WHERE 1=1';
   const params = [];
-  if (filters.ano) { query += ' AND ano = ?'; params.push(filters.ano); }
+  if (filters.ano) { query += ' AND TRIM(ano) = TRIM(?)'; params.push(filters.ano); }
   if (filters.from && filters.to) { query += ' AND date BETWEEN ? AND ?'; params.push(filters.from, filters.to); }
   query += ' ORDER BY date, bil';
   const rows = db.all(query, params);
@@ -456,7 +456,7 @@ async function exportBuyersDbf(db) {
 async function exportDebitNotesDbf(db, filters = {}) {
   let query = 'SELECT * FROM debit_notes WHERE 1=1';
   const params = [];
-  if (filters.ano) { query += ' AND ano = ?'; params.push(filters.ano); }
+  if (filters.ano) { query += ' AND TRIM(ano) = TRIM(?)'; params.push(filters.ano); }
   if (filters.from && filters.to) { query += ' AND date BETWEEN ? AND ?'; params.push(filters.from, filters.to); }
   query += ' ORDER BY date, note_no';
   const rows = db.all(query, params);
