@@ -3620,6 +3620,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <span id="le-activity-count" style="font-weight:400;color:var(--text3);font-size:12px"></span>
           <span style="flex:1"></span>
           <button type="button" class="btn btn-o" onclick="event.stopPropagation();leLoadActivity()" style="height:28px;padding:0 10px;font-size:11.5px">↻ Refresh</button>
+          <button type="button" class="btn btn-sm" onclick="event.stopPropagation();leClearActivity()" title="Delete all activity-log entries for this trade" style="height:28px;padding:0 10px;font-size:11.5px;background:#fee;color:#b91c1c;border-color:#fcc">Clear All</button>
           <span id="le-activity-chev" style="font-size:13px;color:var(--green-dk);font-weight:800;width:18px;text-align:center">▸</span>
         </div>
         <div id="le-activity-body" style="border-top:1px solid var(--border);display:none">
@@ -4023,7 +4024,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <!-- Auction picker — shared by the Pre-auction Exports section and
            the main Export Center so both read from one canonical control. -->
       <div class="card" style="padding:14px 18px">
-        <div class="fg" style="max-width:300px;margin:0"><label>Select Auction</label><select id="exp-auction" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></select></div>
+        <div class="fg" style="max-width:300px;margin:0"><label>Select Auction</label><select id="exp-auction" onchange="onExpAuctionChange()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></select></div>
       </div>
 
       <!-- Pre-auction Exports — a fixed snapshot the operator should
@@ -4046,7 +4047,11 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </div>
       </div>
 
-      <div class="card">
+      <!-- Export Center — only meaningful once Price Import has run (the
+           post-auction prices/amounts power every report here). Hidden until
+           the selected trade has at least one priced lot; until then the
+           "locked" notice below points the operator to Price Import. -->
+      <div class="card" id="export-center-card" style="display:none">
         <div class="tally-section" id="exp-sec-center" style="margin:0">
           <h3 class="tally-section-head" onclick="toggleTallySection('exp-sec-center')">
             <span class="tally-section-chev">▼</span>
@@ -4054,6 +4059,15 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </h3>
           <div class="tally-section-body">
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-top:12px" id="export-btns"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card" id="export-center-locked" style="display:none">
+        <div style="display:flex;align-items:center;gap:12px;padding:6px 2px">
+          <span style="font-size:22px">🔒</span>
+          <div>
+            <div style="font-weight:700;color:var(--text);font-size:14px">Export Center locked</div>
+            <div style="font-size:12.5px;color:var(--text2);margin-top:2px">The post-auction Export Center unlocks once <b>Price Import</b> has been run for this trade. Import the auctioneer's price sheet from <b>Lots → Price Import</b>, then return here.</div>
           </div>
         </div>
       </div>
@@ -7964,11 +7978,18 @@ window.addEventListener('resize', () => {
 // Fill a .kpi-meta breakdown box under a KPI headline figure. `rows` is an
 // array of [label, valueHTML] pairs; falsy rows are skipped so callers can
 // drop a line that would only show a zero. Hides the box when empty.
+// Ensure a single space sits between the ₹ symbol and the figure across all
+// KPI tiles. Idempotent — collapses any existing gap to one space and only
+// fires when ₹ is immediately followed by a number/sign, so plain "₹" labels
+// are left alone. Applied centrally in the KPI render helpers (setKpiMeta,
+// the dashboard tile() and insights kpi() builders) so every KPI value/meta
+// reads consistently without touching dozens of call sites.
+function _rupeeSpace(s){ return String(s).replace(/₹\s*(?=[\d.,+\-−])/g, '₹ '); }
 function setKpiMeta(id, rows){
   const el = document.getElementById(id);
   if (!el) return;
   const html = (rows || []).filter(Boolean)
-    .map(([l, v]) => `<span class="lbl">${esc(String(l))}</span><span class="val">${v}</span>`)
+    .map(([l, v]) => `<span class="lbl">${esc(String(l))}</span><span class="val">${_rupeeSpace(v)}</span>`)
     .join('');
   el.innerHTML = html;
   el.style.display = html ? 'grid' : 'none';
@@ -7991,8 +8012,8 @@ async function renderDashHeadlineTiles(auctionId){
   const tile = (icon, label, value, accent, meta) => `<div class="kpi${accent ? ' ' + accent : ''}">
     <div class="kpi-icon">${icon}</div>
     <div class="kpi-label">${esc(label)}</div>
-    <div class="kpi-value">${value}</div>
-    ${meta && meta.length ? `<div class="kpi-meta">${meta.map(([l, v]) => `<span class="lbl">${esc(l)}</span><span class="val">${v}</span>`).join('')}</div>` : ''}
+    <div class="kpi-value">${_rupeeSpace(value)}</div>
+    ${meta && meta.length ? `<div class="kpi-meta">${meta.map(([l, v]) => `<span class="lbl">${esc(l)}</span><span class="val">${_rupeeSpace(v)}</span>`).join('')}</div>` : ''}
   </div>`;
   const price = n => (n != null && Number(n) > 0) ? fmtI(n, 0) : '—';
   try {
@@ -8283,14 +8304,14 @@ async function _renderInsights(){
     const t = _INS_THEMES[theme] || _INS_THEMES.emerald;
     const plain = String(value).replace(/<[^>]+>/g, '');
     const metaHtml = meta && meta.length
-      ? `<div class="ins-kpi-meta">${meta.map(([l, v]) => `<span class="lbl">${esc(l)}</span><span class="val">${v}</span>`).join('')}</div>`
+      ? `<div class="ins-kpi-meta">${meta.map(([l, v]) => `<span class="lbl">${esc(l)}</span><span class="val">${_rupeeSpace(v)}</span>`).join('')}</div>`
       : '';
     return `
       <div class="ins-kpi${meta && meta.length ? ' ins-kpi-tall' : ''}" style="background:${_insGrad(theme)}; --ins-glow:${t.glow}" title="${esc(label)}: ${esc(plain)}">
         <div class="ins-kpi-icon">${icon}</div>
         <div class="ins-kpi-body">
           <div class="ins-kpi-label">${esc(label)}</div>
-          <div class="ins-kpi-value">${value}</div>
+          <div class="ins-kpi-value">${_rupeeSpace(value)}</div>
           ${metaHtml}
         </div>
       </div>`;
@@ -10282,6 +10303,20 @@ async function leLoadActivity(){
   }
 }
 
+// Clear the activity log for the current trade. Scoped to the selected
+// auction so other trades' feeds are untouched. Refreshes the panel after.
+async function leClearActivity(){
+  const aucEl = document.getElementById('le-auction');
+  const aid = aucEl ? aucEl.value : '';
+  if (!aid) { toast('Pick a trade first'); return; }
+  if (!confirm('Clear ALL activity-log entries for this trade? This cannot be undone.')) return;
+  try {
+    const d = await j(`/api/lots/activity?auction_id=${encodeURIComponent(aid)}`, { method:'DELETE' });
+    toast(`Cleared ${d.removed || 0} activity ${((d.removed||0)===1)?'entry':'entries'}`);
+    leLoadActivity();
+  } catch (e) { showError(e); }
+}
+
 // Find the highest existing lot number on the current trade for THIS
 // branch and suggest +1. Falls back to "1" when nothing exists yet.
 // Pure numeric strings only — alphanumeric prefixes (e.g. "A001") aren't
@@ -10962,6 +10997,13 @@ async function loadLeRecent(){
     // reload once so the user never lands on a blank page.
     const totalPages = Math.max(1, Math.ceil((_le.recentTotal || 0) / PAGE));
     if (_le.recentPage > totalPages) { _le.recentPage = totalPages; return loadLeRecent(); }
+    // Filtered totals for the totals row — count(lots) / sum(bags) / sum(qty).
+    // The summary endpoint honours the same `name=` seller filter, so the row
+    // reflects the WHOLE filtered set, not just the currently-loaded page.
+    try {
+      const sumQs = 'summary=1' + (search ? `&name=${encodeURIComponent(search)}` : '');
+      _le.recentSummary = await j(`/api/lots/${aid}?${sumQs}`);
+    } catch (_) { _le.recentSummary = null; }
     renderLeRecent();
     leUpdateStats();
     // Datalist suggestions stay tied to the trade (unfiltered list of
@@ -11236,6 +11278,25 @@ function renderLeRecent(){
   // print them all. (A search-filter change clears the selection in
   // leOnRecentSearchInput so the count can't refer to filtered-out rows.)
   const COLS = 'grid-template-columns:32px 80px 1fr 90px 70px 70px 80px 88px';
+  // Totals row (mirrors the Lots screen): count(lots), sum(bags), sum(qty).
+  // Driven by the server summary so it reflects the whole filtered set, not
+  // just the loaded page. Falls back to the known total / local sums when the
+  // summary fetch was unavailable.
+  const _sum   = _le.recentSummary || {};
+  const totN   = _sum.n    != null ? Number(_sum.n)    : (_le.recentTotal != null ? _le.recentTotal : visible.length);
+  const totBags= _sum.bags != null ? Number(_sum.bags) : null;
+  const totQty = _sum.qty  != null ? Number(_sum.qty)  : null;
+  const totalsRow = `
+    <div style="display:grid;${COLS};gap:0;font-size:12px;font-weight:800;color:var(--green-dk);padding:9px 12px;border-top:2px solid var(--green-border);background:var(--green-bg);position:sticky;bottom:0;z-index:1">
+      <div></div>
+      <div>${fmtI(totN,0)} ${totN===1?'lot':'lots'}</div>
+      <div style="color:var(--text3);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${searchActive ? esc(_le.recentSearch) : 'All sellers'}</div>
+      <div></div>
+      <div style="text-align:right">${totBags!=null ? fmtI(totBags,0) : '—'}</div>
+      <div></div>
+      <div style="text-align:right">${totQty!=null ? Number(totQty).toFixed(3) : '—'}</div>
+      <div></div>
+    </div>`;
   host.innerHTML = `
     <div style="display:grid;${COLS};gap:0;font-size:11px;font-weight:700;color:var(--green-dk);text-transform:uppercase;letter-spacing:.5px;padding:6px 12px;border-bottom:1px solid var(--green-border);background:var(--green-bg);position:sticky;top:0;z-index:1">
       <div style="text-align:center"><input type="checkbox" id="le-recent-select-all" onchange="leToggleSelectAll(this.checked)" title="Select all visible" style="cursor:pointer"></div>
@@ -11267,6 +11328,7 @@ function renderLeRecent(){
         </div>`;
       }).join('')}
     </div>
+    ${totalsRow}
     ${totalPages > 1 ? `
       <div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:10px;border-top:1px solid var(--border);font-size:12px;color:var(--text2)">
         <button onclick="lePrevPage()" class="btn btn-o" style="font-size:12px;padding:5px 12px" ${page <= 1 ? 'disabled' : ''}>◀ Prev</button>
@@ -16136,7 +16198,7 @@ async function doGenerateAll(){
 }
 function loadPayAuctions(){fillAucSelect('pay-auction').then(()=>loadPayments())}
 function loadExpAuctions(){
-  fillAucSelect('exp-auction').then(renderExportBtns);
+  fillAucSelect('exp-auction').then(() => { renderExportBtns(); updateExportCenterVisibility(); });
   fillAucSelect('dbf-auction');
   // Default DBF date range: current month
   const today=new Date().toISOString().slice(0,10);
@@ -19871,6 +19933,28 @@ const EXP_PREAUCTION_SET = new Set(EXP_PREAUCTION);
 // both before pricing and after the auction closes). Without this they'd
 // render only in the pre-auction group and be missing from the Center grid.
 const EXP_ALSO_IN_CENTER = new Set(['dealer_list']);
+// Export Center is post-auction: it only makes sense after Price Import has
+// populated prices/amounts on the trade's lots. Show the Center when the
+// selected trade has at least one priced lot (amount > 0); otherwise show the
+// "locked" notice that points to Price Import. The pre-auction + DBF sections
+// stay visible regardless — those are the pre-import safety net.
+async function updateExportCenterVisibility(){
+  const card   = document.getElementById('export-center-card');
+  const locked = document.getElementById('export-center-locked');
+  if (!card || !locked) return;
+  const aid = document.getElementById('exp-auction')?.value || '';
+  if (!aid) { card.style.display='none'; locked.style.display='none'; return; }
+  let priced = 0;
+  try {
+    const s = await j(`/api/lots/${aid}?summary=1`);
+    priced = Number(s && s.priced) || 0;
+  } catch (_) { priced = 0; }
+  const done = priced > 0;
+  card.style.display   = done ? '' : 'none';
+  locked.style.display = done ? 'none' : '';
+}
+// Auction changed on the Exports tab — re-evaluate Export Center gating.
+function onExpAuctionChange(){ updateExportCenterVisibility(); }
 function renderExportBtns(){
   const renderOne = ([k,v]) => {
     if (EXP_CSV_ONLY.has(k)) {
@@ -19889,11 +19973,16 @@ function renderExportBtns(){
         </div>
       </div>`;
     }
+    // Full export type — offer the same four actions as the Spice Board
+    // screen: Preview / Print (both render the PDF) plus the XLSX and PDF
+    // downloads. Preview opens the PDF inline; Print sends it to the printer.
     return `<div style="display:flex;flex-direction:column;gap:4px;padding:8px;border:1px solid var(--border);border-radius:6px;background:#fff">
       <div style="font-weight:600;font-size:13px;color:var(--text)">${v}</div>
-      <div style="display:flex;gap:4px">
-        <button class="btn btn-a" onclick="exportType('${k}','xlsx')" style="flex:1;padding:6px 8px;font-size:12px">XLSX</button>
-        <button class="btn btn-orange" onclick="exportType('${k}','pdf')" style="flex:1;padding:6px 8px;font-size:12px">PDF</button>
+      <div style="display:flex;gap:4px;flex-wrap:wrap">
+        <button class="btn btn-g" onclick="exportPreview('${k}')" style="flex:1 1 calc(50% - 2px);padding:6px 8px;font-size:12px">Preview</button>
+        <button class="btn btn-o" onclick="exportPrint('${k}')" style="flex:1 1 calc(50% - 2px);padding:6px 8px;font-size:12px">Print</button>
+        <button class="btn btn-a" onclick="exportType('${k}','xlsx')" style="flex:1 1 calc(50% - 2px);padding:6px 8px;font-size:12px">XLSX</button>
+        <button class="btn btn-orange" onclick="exportType('${k}','pdf')" style="flex:1 1 calc(50% - 2px);padding:6px 8px;font-size:12px">PDF</button>
       </div>
     </div>`;
   };
@@ -19966,6 +20055,56 @@ async function exportType(type,format,aidOverride){format=format||'xlsx';
     }
     const blob=await r.blob();
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`${type}_${aid}.${format}`;a.click();
+  });
+}
+
+// Build the same seller-scoping query string exportType() uses, so Preview
+// and Print honour any Payments-tab seller selection for the bank/payment
+// exports. Empty → full-trade.
+function _expSellersQs(type){
+  if (type === 'bank_payment' || type === 'bank_payment_before' || type === 'payment') {
+    const body = document.getElementById('payments-list');
+    if (body) {
+      const checked = Array.from(body.querySelectorAll('.pay-select-cb:checked'))
+        .map(cb => cb.value).filter(Boolean);
+      if (checked.length) return '&sellers=' + encodeURIComponent(checked.join(','));
+    }
+  }
+  return '';
+}
+// Fetch an export as a PDF blob (shared by Preview + Print). Returns a blob
+// URL or null on failure (alert already shown).
+async function _expPdfBlobUrl(type){
+  const aid=document.getElementById('exp-auction')?.value||document.getElementById('pay-auction')?.value;
+  if(!aid){alert('Select an auction first');return null}
+  const url = B+`/api/exports/${type}/${aid}?format=pdf${_expSellersQs(type)}`;
+  const r = await fetch(url,{headers:{'Authorization':'Bearer '+T}});
+  if(!r.ok){
+    const errBody = await r.json().catch(()=>({}));
+    alert(`Failed: ${errBody.error || 'HTTP '+r.status}`);
+    return null;
+  }
+  const blob = await r.blob();
+  return URL.createObjectURL(blob);
+}
+// Preview an export's PDF inline in a new tab (mirrors the Spice Board
+// screen's Preview action).
+async function exportPreview(type){
+  const label = (EXP_LABELS[type]||type);
+  await withOverlay(`Preparing ${label} preview…`, async () => {
+    const blobUrl = await _expPdfBlobUrl(type);
+    if (blobUrl) window.open(blobUrl);
+  });
+}
+// Print an export's PDF — opens the rendered PDF in a new window and fires the
+// browser print dialog (mirrors the Spice Board screen's Print action).
+async function exportPrint(type){
+  const label = (EXP_LABELS[type]||type);
+  await withOverlay(`Preparing ${label} for print…`, async () => {
+    const blobUrl = await _expPdfBlobUrl(type);
+    if (!blobUrl) return;
+    const w = window.open(blobUrl);
+    if (w) { w.addEventListener('load', () => { try { w.focus(); w.print(); } catch(_){} }); }
   });
 }
 

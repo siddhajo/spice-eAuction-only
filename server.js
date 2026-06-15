@@ -4082,6 +4082,39 @@ app.get('/api/lots/activity', requireViewOrLotEntry, (req, res) => {
   });
   res.json({ items });
 });
+// Clear the lot activity feed. Scoped to one trade when auction_id is given
+// (the "Clear All" button in the Lot Entry activity panel), otherwise wipes
+// every lot entry. Removes the underlying audit_log rows; gated on the
+// delete permission since it's destructive. Registered before the
+// '/api/lots/:auctionId' param route so the verb+path resolve correctly.
+app.delete('/api/lots/activity', requireDelete, (req, res) => {
+  const db = getDb();
+  const aid = parseInt(req.query.auction_id, 10);
+  let removed = 0;
+  if (aid) {
+    const before = db.get(
+      `SELECT COUNT(*) AS cnt FROM audit_log WHERE entity = 'lot' AND details LIKE ?`,
+      [`%"auction_id":${aid},%`]
+    );
+    db.run(`DELETE FROM audit_log WHERE entity = 'lot' AND details LIKE ?`,
+      [`%"auction_id":${aid},%`]);
+    removed = (before && before.cnt) || 0;
+  } else {
+    const before = db.get(`SELECT COUNT(*) AS cnt FROM audit_log WHERE entity = 'lot'`);
+    db.run(`DELETE FROM audit_log WHERE entity = 'lot'`);
+    removed = (before && before.cnt) || 0;
+  }
+  // Self-log the wipe so there's a trail of who cleared the feed.
+  try {
+    db.run(
+      `INSERT INTO audit_log (user_id, action, entity, entity_id, details)
+       VALUES (?, ?, ?, NULL, ?)`,
+      [req.user && req.user.username || 'admin', 'clear', 'lot_activity',
+       JSON.stringify({ auction_id: aid || null, removed })]
+    );
+  } catch (_) {}
+  res.json({ cleared: true, removed });
+});
 app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
   const { branch, name, buyer, limit, offset, paginated, summary, search } = req.query;
   const db = getDb();
@@ -4119,14 +4152,15 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
     const aggSql =
       `SELECT COUNT(*) AS n,
               COALESCE(SUM(CAST(bags AS INTEGER)), 0) AS bags,
-              COALESCE(SUM(qty), 0)                  AS qty
+              COALESCE(SUM(qty), 0)                  AS qty,
+              COALESCE(SUM(CASE WHEN amount > 0 THEN 1 ELSE 0 END), 0) AS priced
          FROM lots
         WHERE lots.auction_id = ?`
       + (branch ? ' AND lots.branch = ?' : '')
       + (name   ? ' AND lots.name LIKE ?' : '')
       + (buyer  ? ' AND lots.buyer = ?' : '');
-    const row = db.get(aggSql, p) || { n:0, bags:0, qty:0 };
-    return res.json({ n: row.n, bags: row.bags, qty: row.qty });
+    const row = db.get(aggSql, p) || { n:0, bags:0, qty:0, priced:0 };
+    return res.json({ n: row.n, bags: row.bags, qty: row.qty, priced: row.priced });
   }
 
   // Pagination — opt-in via `paginated=1` so the existing callers

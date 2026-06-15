@@ -38,14 +38,17 @@ function gstinStateCode(cr) {
   else if (s.startsWith('CR.'))     s = s.substring(3);
   else if (s.startsWith('CR '))     s = s.substring(3);
   s = s.trim();
-  // GSTIN format: 2 digits + 5 letters + 4 digits + 1 letter + 1 digit + Z + 1 alphanumeric.
-  // We only need the first 2 chars, but verify they're digits so a
-  // bare CR number like "CR.001" → "001" doesn't accidentally return
-  // "00" as a state code.
-  if (s.length < 2) return '';
-  const head = s.substring(0, 2);
-  if (!/^\d{2}$/.test(head)) return '';
-  return head;
+  // GSTIN format: 2 digits (state) + 10-char PAN (5 letters + 4 digits + 1
+  // letter) + 1 entity char + 'Z' + 1 checksum char = 15 chars total.
+  // Validate the WHOLE shape, not just the leading two characters. Checking
+  // only the first two digits misclassified CR registration numbers whose
+  // value happens to start with two digits — e.g. "CR.21472/19" → "21472/19"
+  // → returned "21" and tagged the (unregistered/planter) seller as a
+  // registered dealer. That broke the Payments planter/dealer filter and any
+  // intra/inter-state GST decision keyed off this state code. A full-format
+  // match still detects a real GSTIN stored under a "CR." prefix.
+  if (!/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(s)) return '';
+  return s.substring(0, 2);
 }
 
 /**
