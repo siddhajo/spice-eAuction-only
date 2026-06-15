@@ -4058,7 +4058,17 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <span>Export Center — XLSX</span>
           </h3>
           <div class="tally-section-body">
-            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-top:12px" id="export-btns"></div>
+            <!-- Report-selector layout (mirrors the Spice Board screen) keeps
+                 the Export Center compact: pick a report from the dropdown,
+                 then the matching actions (Preview / Print / XLSX / PDF) appear
+                 in one row instead of a tile per report. -->
+            <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-top:12px">
+              <div class="fg" style="margin:0;min-width:240px;flex:1;max-width:380px">
+                <label>Report</label>
+                <select id="exp-center-report" onchange="renderExportCenterActions()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></select>
+              </div>
+              <div id="exp-center-actions" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -19996,8 +20006,44 @@ function renderExportBtns(){
       .map(k => renderOne([k, EXP_LABELS[k]]))
       .join('');
   }
-  document.getElementById('export-btns').innerHTML =
-    all.filter(([k]) => !EXP_PREAUCTION_SET.has(k) || EXP_ALSO_IN_CENTER.has(k)).map(renderOne).join('');
+  // Export Center: populate the report dropdown (compact replacement for the
+  // old tile grid) and render the matching action row. Preserve the current
+  // selection across re-renders so a refresh doesn't reset the operator's pick.
+  const sel = document.getElementById('exp-center-report');
+  if (sel) {
+    const centerKeys = all
+      .map(([k]) => k)
+      .filter(k => !EXP_PREAUCTION_SET.has(k) || EXP_ALSO_IN_CENTER.has(k));
+    const prev = sel.value;
+    sel.innerHTML = centerKeys.map(k => `<option value="${k}">${esc(EXP_LABELS[k])}</option>`).join('');
+    if (prev && centerKeys.includes(prev)) sel.value = prev;
+    renderExportCenterActions();
+  }
+}
+// Render the action buttons for the report picked in the Export Center
+// dropdown. Format support per report mirrors the old tiles: CSV-only and
+// XLSX-only types get a single button; full types get Preview / Print / XLSX
+// / PDF — the same four actions as the Spice Board screen.
+function renderExportCenterActions(){
+  const sel  = document.getElementById('exp-center-report');
+  const host = document.getElementById('exp-center-actions');
+  if (!sel || !host) return;
+  const k = sel.value;
+  if (!k) { host.innerHTML = ''; return; }
+  const btn = (cls, label, onclick) =>
+    `<button class="btn ${cls}" onclick="${onclick}" style="height:38px;padding:0 16px;font-weight:600">${label}</button>`;
+  let html;
+  if (EXP_CSV_ONLY.has(k)) {
+    html = btn('btn-a', 'CSV', `exportType('${k}','csv')`);
+  } else if (EXP_XLSX_ONLY.has(k)) {
+    html = btn('btn-a', 'XLSX', `exportType('${k}','xlsx')`);
+  } else {
+    html = btn('btn-g', 'Preview', `exportPreview('${k}')`)
+         + btn('btn-o', 'Print',   `exportPrint('${k}')`)
+         + btn('btn-a', 'Excel (XLSX)', `exportType('${k}','xlsx')`)
+         + btn('btn-orange', 'PDF', `exportType('${k}','pdf')`);
+  }
+  host.innerHTML = html;
 }
 async function exportType(type,format,aidOverride){format=format||'xlsx';
   // aidOverride lets non-Exports-tab callers (e.g. the pre-import reminder
