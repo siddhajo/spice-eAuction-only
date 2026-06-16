@@ -5494,50 +5494,16 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       Once you import prices the lots table is overwritten with the auctioneer's data. These reports are your record of the pre-auction state.
       <span style="display:block;margin-top:4px">Snapshots use the auction picked in the Lots tab.</span>
     </div>
-    <!-- Per report: label on the left, XLSX + PDF buttons on the right.
-         e-Auction CSV stays CSV-only (fixed Spices Board portal schema). -->
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:4px 8px">
-        <span style="font-size:12px;font-weight:600;color:#7C2D12">Lot Slip</span>
-        <span style="display:flex;gap:4px">
-          <button class="btn btn-o" type="button" onclick="piQuickExport('lot_slip','xlsx')" title="Download as Excel" style="padding:3px 8px;font-size:11px;font-weight:600">📊 XLSX</button>
-          <button class="btn btn-o" type="button" onclick="piQuickExport('lot_slip','pdf')" title="Download as PDF" style="padding:3px 8px;font-size:11px;font-weight:600">📄 PDF</button>
-        </span>
+    <!-- Report-selector layout (mirrors the Export Center): pick a snapshot
+         report from the dropdown, then its download actions appear in one
+         row. e-Auction CSV stays CSV-only (fixed Spices Board portal schema);
+         the rest offer XLSX + PDF. -->
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
+      <div class="fg" style="margin:0;min-width:200px;flex:1;max-width:320px">
+        <label style="font-size:12px;font-weight:600;color:#7C2D12">Report</label>
+        <select id="pi-preauction-report" onchange="renderPiPreauctionActions()" style="width:100%;padding:8px;border:1px solid #FDE68A;border-radius:6px;background:#FFFBEB;color:#7C2D12;font-weight:600"></select>
       </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:4px 8px">
-        <span style="font-size:12px;font-weight:600;color:#7C2D12">Lot Buyer</span>
-        <span style="display:flex;gap:4px">
-          <button class="btn btn-o" type="button" onclick="piQuickExport('lot_buyer','xlsx')" title="Download as Excel" style="padding:3px 8px;font-size:11px;font-weight:600">📊 XLSX</button>
-          <button class="btn btn-o" type="button" onclick="piQuickExport('lot_buyer','pdf')" title="Download as PDF" style="padding:3px 8px;font-size:11px;font-weight:600">📄 PDF</button>
-        </span>
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:4px 8px">
-        <span style="font-size:12px;font-weight:600;color:#7C2D12">Lot Name</span>
-        <span style="display:flex;gap:4px">
-          <button class="btn btn-o" type="button" onclick="piQuickExport('lot_name','xlsx')" title="Download as Excel" style="padding:3px 8px;font-size:11px;font-weight:600">📊 XLSX</button>
-          <button class="btn btn-o" type="button" onclick="piQuickExport('lot_name','pdf')" title="Download as PDF" style="padding:3px 8px;font-size:11px;font-weight:600">📄 PDF</button>
-        </span>
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:4px 8px">
-        <span style="font-size:12px;font-weight:600;color:#7C2D12">e-Auction CSV</span>
-        <span style="display:flex;gap:4px">
-          <button class="btn btn-o" type="button" onclick="piQuickExport('eauction_csv','csv')" title="Download as CSV" style="padding:3px 8px;font-size:11px;font-weight:600">📄 CSV</button>
-        </span>
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:4px 8px">
-        <span style="font-size:12px;font-weight:600;color:#7C2D12">Price List (Before)</span>
-        <span style="display:flex;gap:4px">
-          <button class="btn btn-o" type="button" onclick="piQuickExport('price_list_before','xlsx')" title="Download as Excel" style="padding:3px 8px;font-size:11px;font-weight:600">📊 XLSX</button>
-          <button class="btn btn-o" type="button" onclick="piQuickExport('price_list_before','pdf')" title="Download as PDF" style="padding:3px 8px;font-size:11px;font-weight:600">📄 PDF</button>
-        </span>
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:4px 8px">
-        <span style="font-size:12px;font-weight:600;color:#7C2D12">Dealer List</span>
-        <span style="display:flex;gap:4px">
-          <button class="btn btn-o" type="button" onclick="piQuickExport('dealer_list','xlsx')" title="Download as Excel" style="padding:3px 8px;font-size:11px;font-weight:600">📊 XLSX</button>
-          <button class="btn btn-o" type="button" onclick="piQuickExport('dealer_list','pdf')" title="Download as PDF" style="padding:3px 8px;font-size:11px;font-weight:600">📄 PDF</button>
-        </span>
-      </div>
+      <div id="pi-preauction-actions" style="display:flex;gap:6px;flex-wrap:wrap"></div>
     </div>
     <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#7C2D12;margin-top:10px;cursor:pointer;font-weight:600">
       <input type="checkbox" id="pi-ack" onchange="piAckChanged()">
@@ -15852,7 +15818,25 @@ function openPriceImport(){
   if(ack) ack.checked=false;
   const submit=document.getElementById('pi-submit');
   if(submit) submit.disabled=true;
+  // (Re)populate the snapshot report-selector dropdown — same ordered list
+  // as the Pre-auction Exports section on the Exports tab.
+  _fillExportSelect('pi-preauction-report', EXP_PREAUCTION, renderPiPreauctionActions);
   showModal('price-import-modal');
+}
+// Build the download-action row for the snapshot report picked in the Price
+// Import reminder dropdown. Mirrors the Export Center actions but uses
+// piQuickExport (download-only, anchored to the Lots-tab auction): e-Auction
+// CSV is CSV-only, every other snapshot offers XLSX + PDF.
+function renderPiPreauctionActions(){
+  const sel=document.getElementById('pi-preauction-report');
+  const host=document.getElementById('pi-preauction-actions');
+  if(!sel||!host) return;
+  const k=sel.value;
+  if(!k){ host.innerHTML=''; return; }
+  const btn=(label,fmt)=>`<button class="btn btn-o" type="button" onclick="piQuickExport('${k}','${fmt}')" style="padding:3px 8px;font-size:11px;font-weight:600">${label}</button>`;
+  host.innerHTML = EXP_CSV_ONLY.has(k)
+    ? btn('📄 CSV','csv')
+    : btn('📊 XLSX','xlsx') + btn('📄 PDF','pdf');
 }
 function piAckChanged(){
   const ack=document.getElementById('pi-ack');
