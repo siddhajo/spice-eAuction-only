@@ -4757,10 +4757,10 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             </select>
           </div>
           <div class="fg" style="margin:0;min-width:240px"><label>Auction</label>
-            <select id="jr-auction" style="width:100%;padding:6px"></select>
+            <select id="jr-auction" style="width:100%;padding:6px" onchange="nudgeJournalsLoad()"></select>
           </div>
           <div class="fg" style="margin:0" id="jr-sale-wrap"><label>Sale Type</label>
-            <select id="jr-sale"><option value="">All</option><option value="L">Local (L)</option><option value="I">Inter-state (I)</option><option value="E">Export (E)</option><option value="W">Withdrawn (W)</option><option value="N">N/A (N)</option></select>
+            <select id="jr-sale" onchange="nudgeJournalsLoad()"><option value="">All</option><option value="L">Local (L)</option><option value="I">Inter-state (I)</option><option value="E">Export (E)</option><option value="W">Withdrawn (W)</option><option value="N">N/A (N)</option></select>
           </div>
           <button class="btn btn-g" onclick="loadJournal()">Load</button>
           <button class="btn btn-a" onclick="exportJournal()">Export XLSX</button>
@@ -4783,7 +4783,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <!-- Report selector -->
         <div class="sgrid" style="margin-bottom:14px">
           <div class="fg"><label>Report</label>
-            <select id="sb-type" onchange="onSbTypeChange()">
+            <select id="sb-type" onchange="onSbTypeChange();nudgeSpiceBoard()">
               <option value="buyers_statement">Report 1 — Buyers Statement</option>
               <option value="form_d">Report 2 — FORM-D (Advance Auction Report)</option>
               <option value="form_c">Report 3 — FORM-C (Auction Report)</option>
@@ -4794,23 +4794,23 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <!-- Filters: Trade, Date range, Branch, Seller, Buyer -->
         <div class="sgrid" style="margin-bottom:14px">
           <div class="fg"><label>Auction</label>
-            <select id="sb-auction" onchange="onSbAuctionChange()"></select>
+            <select id="sb-auction" onchange="onSbAuctionChange();nudgeSpiceBoard()"></select>
           </div>
           <div class="fg"><label>Branch</label>
-            <select id="sb-branch"><option value="">— All branches —</option></select>
+            <select id="sb-branch" onchange="nudgeSpiceBoard()"><option value="">— All branches —</option></select>
           </div>
           <div class="fg" id="sb-seller-fg"><label>Seller</label>
-            <select id="sb-seller"><option value="">— All sellers —</option></select>
+            <select id="sb-seller" onchange="nudgeSpiceBoard()"><option value="">— All sellers —</option></select>
           </div>
           <div class="fg" id="sb-buyer-fg"><label>Buyer</label>
-            <select id="sb-buyer"><option value="">— All buyers —</option></select>
+            <select id="sb-buyer" onchange="nudgeSpiceBoard()"><option value="">— All buyers —</option></select>
           </div>
           <!-- Form-D only: Place of auction picker. Hidden by
                onSbTypeChange() unless the selected report is form_d.
                Options are sourced from the formd_places setting
                (Settings → Spice Board Reports). -->
           <div class="fg" id="sb-place-fg" style="display:none"><label>Place of Auction</label>
-            <select id="sb-place"><option value="">— Use configured branch —</option></select>
+            <select id="sb-place" onchange="nudgeSpiceBoard()"><option value="">— Use configured branch —</option></select>
           </div>
         </div>
 
@@ -7408,6 +7408,203 @@ const SCREEN_GUIDE = {
       'Preview, then print or download the report.',
     ],
   },
+  insights: {
+    icon: '📈',
+    title: 'Insights — sales trends & KPIs',
+    steps: [
+      'Pick a quick range (Today / Week / Month…) or type a custom From–To.',
+      'Read the KPI cards, branch chart and top-sellers table.',
+      'Open or close any section to focus on what you need.',
+    ],
+    warn: 'Typing a custom From/To date does nothing until you click “Apply” — the figures stay on the old range otherwise.',
+  },
+  formulas: {
+    icon: '🧮',
+    title: 'Formulas — how every figure is calculated',
+    steps: [
+      'Read each card to see exactly how cost, commission, GST and discounts are worked out.',
+      'The green pills show your live Settings values plugged into each formula.',
+      'Cross-check these against Settings — this page is read-only.',
+    ],
+  },
+  fixdata: {
+    icon: '🛠️',
+    title: 'Fix Data — careful manual corrections',
+    steps: [
+      'Click a section (Auctions, Lots, Sellers…) to load that table.',
+      'Search or use the column filters to find the exact row.',
+      'Turn on “Edit mode”, click a cell, type the fix, then click away.',
+      'Confirm the change in the pop-up — each edit saves on its own with a backup.',
+    ],
+    warn: 'This edits raw records directly. Every change is confirmed and auto-saved; use “Undo last change” if you slip.',
+  },
+  lotentry: {
+    icon: '⌨️',
+    title: 'Lot Entry — fast keyboard lot capture',
+    steps: [
+      'Choose the auction (and branch) at the top.',
+      'Search and pick the seller.',
+      'Fill Lot No, Grade, Bags and weight, then press Enter to save the lot.',
+      'Repeat for the next lot; recent entries show below.',
+    ],
+    warn: 'This only records lots. To get Commission, Tax & Payable, open the Lots screen and run “Calculate All”.',
+  },
+  users: {
+    icon: '👥',
+    title: 'Users — team access & security',
+    steps: [
+      'Add team members with “+ Add User” and give each the right role.',
+      'Review active sessions and revoke any device you don’t recognise.',
+      'Change your own password under “Change My Password”.',
+      'Admins can check Login History and the Audit Log below.',
+    ],
+  },
+  traders: {
+    icon: '🧑‍🌾',
+    title: 'Sellers — your seller master list',
+    steps: [
+      'Type to search by name, phone, GSTIN, PAN or place — results filter as you type.',
+      'Add one seller, or “Import XLS/XLSX” to bulk-load many.',
+      'Click a row to view or edit a seller’s details and bank info.',
+    ],
+  },
+  buyers: {
+    icon: '🛒',
+    title: 'Buyers — your buyer master list',
+    steps: [
+      'Type to search by buyer, code, GSTIN, PAN or place — results filter as you type.',
+      'Add one buyer, or “Import XLS/XLSX” to bulk-load many.',
+      'Click a row to set GST, sale type (Local / Inter-state) and consignee address.',
+    ],
+  },
+  auctions: {
+    icon: '🗂️',
+    title: 'Auctions — create & manage trades',
+    steps: [
+      'Search existing auctions by trade number, or click “+ New Auction”.',
+      'Use “Import Lots from XLS/XLSX” to bulk-load a trade’s lots.',
+      'Open “Allocations” to set per-branch lot limits; star one as the mobile default.',
+    ],
+  },
+  tds: {
+    icon: '🧾',
+    title: 'TDS — tax-deducted-at-source returns',
+    steps: [
+      'Set the From and To dates for the return period.',
+      'Click “Load” to fetch the matching entries.',
+      'Export the return as XLSX or PDF.',
+    ],
+    warn: 'Changing the dates does NOT refresh the table on its own — click “Load” each time before exporting.',
+  },
+  lorry: {
+    icon: '🚚',
+    title: 'Lorry — auction-floor movement reports',
+    steps: [
+      'Select the auction.',
+      'Pick the report type (Lot Slip, Truck List, Buyer Lot Lorry…).',
+      'Download it as Excel or PDF.',
+    ],
+  },
+  bills: {
+    icon: '📃',
+    title: 'Bills of Supply — agriculturist invoices',
+    steps: [
+      'Select the auction (and branch) — the bill list loads automatically.',
+      'Click “+ Generate Bill”, or “Generate for All Agri Sellers”.',
+      'Select bills to Print, WhatsApp or produce Commission Bills.',
+    ],
+    warn: 'Generated bills capture the figures at generation time. If you change lot prices later, re-generate so the bills stay correct.',
+  },
+  debit: {
+    icon: '➖',
+    title: 'Debit Notes — dealer purchase adjustments',
+    steps: [
+      'Select the auction — existing debit notes load automatically.',
+      'Click “+ Generate Debit Note” for one, or “Generate All”.',
+      'Select notes to Print or Delete.',
+    ],
+    warn: 'Debit notes freeze the figures when generated — re-generate after any later price or lot change.',
+  },
+  debitplanter: {
+    icon: '➖',
+    title: 'Debit Notes (Planter) — agri seller adjustments',
+    steps: [
+      'Select the auction — existing planter debit notes load automatically.',
+      'Click “+ Generate Debit Note” for one, or “Generate All”.',
+      'Select notes to Print or Delete.',
+    ],
+    warn: 'These freeze the figures when generated — re-generate after any later price or lot change.',
+  },
+  journals: {
+    icon: '📒',
+    title: 'Journals — sales & purchase registers',
+    steps: [
+      'Pick the journal type (Sales, Dealer Purchase, Agri Purchase).',
+      'Choose the auction and, for sales, the sale type.',
+      'Click “Load” to show the register, then “Export XLSX”.',
+    ],
+    warn: 'Picking an auction or sale type does NOT refresh the table — click “Load” before reading or exporting.',
+  },
+  tally: {
+    icon: '🔁',
+    title: 'To Tally — export ledgers & vouchers',
+    steps: [
+      'Select the auction at the top.',
+      'In each section, click “Preview” to check, then “Download XML”.',
+      'Import the XML files into Tally.',
+    ],
+    warn: 'Changing the auction clears the preview and party list — click “Refresh List”/“Preview” again before downloading.',
+  },
+  spicesboard: {
+    icon: '📋',
+    title: 'Spice Board — statutory cardamom reports',
+    steps: [
+      'Choose the report (Buyers Statement, FORM-D, FORM-C).',
+      'Select the auction and any branch / seller / buyer filters.',
+      'Click “Preview”, then Excel, PDF or Print.',
+    ],
+    warn: 'Changing the report or any filter clears the preview — click “Preview” again before you Excel/PDF/Print, or you’ll export the old view.',
+  },
+  pricecheck: {
+    icon: '✅',
+    title: 'Price Check — verify a price sheet',
+    steps: [
+      'Optionally pre-select the auction, then upload the price sheet (.xlsx/.xls).',
+      'Click “1. Verify Prices” to compare against the database.',
+      'Fix any mismatches, then “2. Download Annotated File”.',
+    ],
+    warn: 'Download stays locked until “Verify Prices” passes — uploading a new file resets the check.',
+  },
+  plmap: {
+    icon: '🔗',
+    title: 'Price List Mapping — fill buyer codes',
+    steps: [
+      'Upload the Price List (Before) sheet with a TRADE NAME column.',
+      'Click “1. Preview Mapping” to match names to buyer codes.',
+      'Fix any unmatched names in the source file, then “2. Download Updated File”.',
+    ],
+    warn: 'Download is locked until a preview succeeds — re-preview after editing the source file.',
+  },
+  importold: {
+    icon: '📦',
+    title: 'Import Old Data — bring in legacy records',
+    steps: [
+      'Pick the module and choose your old XLS/XLSX file.',
+      'Click “1. Preview & Detect Mapping” and check the column mapping.',
+      'Click “2. Verify Against Database”, then “3. Run Import”.',
+    ],
+    warn: 'Nothing is written until step 3. “Dry-run” is on by default — uncheck it when you’re ready to actually import.',
+  },
+  backup: {
+    icon: '💾',
+    title: 'Backup — protect & restore your data',
+    steps: [
+      'Click “Download Backup” to save a full snapshot now.',
+      'Turn on “Auto Backup Schedule” and pick an interval (saves instantly).',
+      'To restore, use “Restore from File…” and pick a saved .db file.',
+    ],
+    warn: 'Restore and the “Delete All” buttons overwrite or wipe data — take a fresh Download Backup first.',
+  },
 };
 
 /* Repaint the banner for the given tab. Called from go(). Reads the
@@ -7457,6 +7654,8 @@ const NUDGE_COPY = {
   lotCalc:          { msg: 'Lot saved — run “Calculate All” so Commission, Tax & Payable update.',     action: 'Calculate All' },
   insightsDate:     { msg: 'You changed the date range — click Apply so the figures refresh.',         action: 'Apply' },
   tdsDate:          { msg: 'You changed the date range — click Load to fetch the TDS return.',          action: 'Load' },
+  journalsLoad:     { msg: 'You changed the auction/sale type — click Load to refresh the register.',  action: 'Load' },
+  spiceBoard:       { msg: 'You changed a filter — click Preview before you export, or it uses the old view.', action: 'Preview' },
 };
 let _nudgeKey = null;
 let _nudgeAction = null;
@@ -7491,6 +7690,15 @@ function hideNudge(key){
 }
 function dismissNudge(){ hideNudge(); }
 
+/* Nudges that must follow the user across screens because the unfinished
+   action affects data everywhere (unsaved settings, un-recalculated lots).
+   All others are screen-local filters — clear them on navigation so a
+   "click Apply" reminder doesn't trail onto an unrelated screen. */
+const _NUDGE_PERSIST_ACROSS_NAV = new Set(['settingsSave', 'lotCalc']);
+function clearScreenLocalNudge(){
+  if (_nudgeKey && !_NUDGE_PERSIST_ACROSS_NAV.has(_nudgeKey)) hideNudge();
+}
+
 /* Filter-change → nudge helpers, wired from the date inputs' onchange. */
 function nudgeInsightsDate(){
   showNudge('insightsDate', NUDGE_COPY.insightsDate.msg, NUDGE_COPY.insightsDate.action,
@@ -7499,6 +7707,14 @@ function nudgeInsightsDate(){
 function nudgeTdsDate(){
   showNudge('tdsDate', NUDGE_COPY.tdsDate.msg, NUDGE_COPY.tdsDate.action,
     () => { if (typeof loadTDS === 'function') loadTDS(); });
+}
+function nudgeJournalsLoad(){
+  showNudge('journalsLoad', NUDGE_COPY.journalsLoad.msg, NUDGE_COPY.journalsLoad.action,
+    () => { if (typeof loadJournal === 'function') loadJournal(); });
+}
+function nudgeSpiceBoard(){
+  showNudge('spiceBoard', NUDGE_COPY.spiceBoard.msg, NUDGE_COPY.spiceBoard.action,
+    () => { if (typeof sbLoadPreview === 'function') sbLoadPreview(); });
 }
 
 function go(tab){
@@ -7509,6 +7725,9 @@ function go(tab){
   // Repaint the per-screen guide banner. Lives outside .tc panels, so it
   // survives every loader's innerHTML rebuild — we just refresh its copy.
   if(typeof renderScreenGuide==='function'){try{renderScreenGuide(tab);}catch(_){}}
+  // Drop any screen-local filter nudge when leaving its screen; keep the
+  // cross-screen reminders (unsaved settings, un-recalculated lots).
+  if(typeof clearScreenLocalNudge==='function'){try{clearScreenLocalNudge();}catch(_){}}
   // Auto-refresh polling — start on the relevant tab, stop on others
   // so we don't waste cycles polling for tabs the user isn't looking at.
   if (typeof leStartAutoRefresh === 'function' && typeof lotsStartAutoRefresh === 'function') {
@@ -16610,6 +16829,7 @@ async function sbLoadPreview(){
     try {
       const data = await j(`/api/spice-board-reports/${t}/data?${sbQueryString()}`);
       sbRenderPreview(t, data);
+      if (typeof hideNudge === 'function') hideNudge('spiceBoard');
     } catch (e) {
       toast('Preview failed: ' + (e.message||e));
     }
@@ -22094,6 +22314,7 @@ async function loadJournal(){
   const type=document.getElementById('jr-type').value;
   const auctionId=document.getElementById('jr-auction').value;
   if(!auctionId){alert('Select a auction');return}
+  if (typeof hideNudge === 'function') hideNudge('journalsLoad');
   let url, cols;
   // Each col entry is the DataTable column descriptor. `sort:'date'`,
   // `'text'`, or `'number'` enables click-to-sort. Numeric columns also
