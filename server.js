@@ -8639,6 +8639,33 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   }
   lotSql += ' ORDER BY lot_no';
   const lots = db.all(lotSql, lotParams) || [];
+
+  // TDS (u/s 194Q) is held once per seller on the purchase invoice — not on the
+  // lots. Pull it and allocate across the rendered lots in proportion to lot
+  // amount so a partial (selected-lot) statement carries a matching share and
+  // the column total reconciles to the seller's purchase TDS. The remainder
+  // lands on the last lot to keep the sum exact.
+  const _tdsRow = db.get(
+    'SELECT SUM(COALESCE(tds,0)) AS tds FROM purchases WHERE auction_id = ? AND LOWER(name) = LOWER(?)',
+    [auctionId, sellerName]) || {};
+  // When the statement covers a subset of lots, scale TDS to that subset's
+  // share of the seller's full sale amount so it doesn't over-state.
+  const _fullTds = Number(_tdsRow.tds) || 0;
+  const _allAmt = Number((db.get(
+    'SELECT SUM(amount) AS a FROM lots WHERE auction_id = ? AND name = ? AND amount > 0',
+    [auctionId, sellerName]) || {}).a) || 0;
+  const _shownAmt = lots.reduce((a, l) => a + (Number(l.amount) || 0), 0);
+  const _stmtTds = (_allAmt > 0) ? Math.round(_fullTds * (_shownAmt / _allAmt) * 100) / 100 : 0;
+  let _tdsAlloc = 0;
+  lots.forEach((l, i) => {
+    if (i === lots.length - 1) {
+      l._tds = Math.max(0, Math.round((_stmtTds - _tdsAlloc) * 100) / 100);
+    } else {
+      const v = _shownAmt > 0 ? Math.round(_stmtTds * (Number(l.amount) || 0) / _shownAmt * 100) / 100 : 0;
+      l._tds = v; _tdsAlloc += v;
+    }
+  });
+
   const trader = db.get('SELECT * FROM traders WHERE LOWER(name) = LOWER(?) LIMIT 1', [sellerName]);
   const fmtAmt = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmtQty = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
@@ -8666,26 +8693,27 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   // purchase_value (calculations.js) so the list, this statement, and the
   // lot-selection modal all show the same Amount and Purchase figures.
   const cols = [
-    { k: 'lot_no',   label: 'Lot#',       x: PAGE_L,        w: 46,  align: 'left' },
-    { k: 'qty',      label: 'Qty',        x: PAGE_L + 46,   w: 64,  align: 'right', fmt: fmtQty },
-    { k: 'rate',     label: 'Rate',       x: PAGE_L + 110,  w: 52,  align: 'right', fmt: fmtAmt },
-    { k: 'amount',   label: 'Amount',     x: PAGE_L + 162,  w: 72,  align: 'right', fmt: fmtAmt },
-    { k: 'purchase', label: 'Purchase',   x: PAGE_L + 234,  w: 72,  align: 'right', fmt: fmtAmt },
-    { k: 'com',      label: 'Commission', x: PAGE_L + 306,  w: 66,  align: 'right', fmt: fmtAmt },
-    { k: 'tax',      label: 'GST',        x: PAGE_L + 372,  w: 58,  align: 'right', fmt: fmtAmt },
-    { k: 'balance',  label: 'Net Amt',    x: PAGE_L + 430,  w: 105, align: 'right', fmt: fmtAmt },
+    { k: 'lot_no',   label: 'Lot#',       x: PAGE_L,        w: 42,  align: 'left' },
+    { k: 'qty',      label: 'Qty',        x: PAGE_L + 42,   w: 58,  align: 'right', fmt: fmtQty },
+    { k: 'rate',     label: 'Rate',       x: PAGE_L + 100,  w: 48,  align: 'right', fmt: fmtAmt },
+    { k: 'amount',   label: 'Amount',     x: PAGE_L + 148,  w: 66,  align: 'right', fmt: fmtAmt },
+    { k: 'purchase', label: 'Purchase',   x: PAGE_L + 214,  w: 66,  align: 'right', fmt: fmtAmt },
+    { k: 'com',      label: 'Commission', x: PAGE_L + 280,  w: 60,  align: 'right', fmt: fmtAmt },
+    { k: 'tax',      label: 'GST',        x: PAGE_L + 340,  w: 52,  align: 'right', fmt: fmtAmt },
+    { k: 'tds',      label: 'TDS',        x: PAGE_L + 392,  w: 52,  align: 'right', fmt: fmtAmt },
+    { k: 'balance',  label: 'Net Amt',    x: PAGE_L + 444,  w: 91,  align: 'right', fmt: fmtAmt },
   ];
   doc.font('Helvetica-Bold').fontSize(9);
   doc.rect(PAGE_L, y, PAGE_W, 18).fillAndStroke('#f3f4f6', '#999').fillColor('#000');
   for (const c of cols) doc.text(c.label, c.x + 2, y + 5, { width: c.w - 4, align: c.align });
   y += 18;
   doc.font('Helvetica').fontSize(9).fillColor('#000');
-  let tQty=0,tAmt=0,tPur=0,tDisc=0,tTax=0,tPay=0;
+  let tQty=0,tAmt=0,tPur=0,tDisc=0,tTax=0,tPay=0,tTds=0;
   for (const l of lots) {
     const tax = (Number(l.cgst)||0)+(Number(l.sgst)||0)+(Number(l.igst)||0);
     const purchase = (Number(l.amount)||0)+(Number(l.refund)||0);
-    const row = { ...l, tax, purchase };
-    tQty+=Number(l.qty)||0; tAmt+=Number(l.amount)||0; tPur+=purchase; tDisc+=Number(l.com)||0; tTax+=tax; tPay+=Number(l.balance)||0;
+    const row = { ...l, tax, purchase, tds: Number(l._tds)||0 };
+    tQty+=Number(l.qty)||0; tAmt+=Number(l.amount)||0; tPur+=purchase; tDisc+=Number(l.com)||0; tTax+=tax; tPay+=Number(l.balance)||0; tTds+=Number(l._tds)||0;
     if (y > 770) { doc.addPage(); y = 40; }
     for (const c of cols) {
       const v = c.fmt ? c.fmt(row[c.k]) : String(row[c.k] ?? '');
@@ -8705,6 +8733,7 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
     purchase:fmtAmt(tPur),
     com:     fmtAmt(tDisc),
     tax:     fmtAmt(tTax),
+    tds:     fmtAmt(tTds),
     balance: fmtAmt(tPay),
   };
   for (const c of cols) {
@@ -8738,6 +8767,7 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
     y += bold ? 18 : 15;
   };
   sumRow('Net Amount', fmtAmt(_netAmount));
+  if (tTds > 0) sumRow('TDS (u/s 194Q) on Purchase', fmtAmt(tTds));
   sumRow(`Less: Discount (immediate · ${_isDealer ? 'dealer' : 'pooler'} · ${_days}d)`, '- ' + fmtAmt(_discount));
   doc.moveTo(sX, y).lineTo(sX + sLW + sVW, y).lineWidth(0.5).stroke();
   y += 4;

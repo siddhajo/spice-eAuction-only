@@ -687,6 +687,67 @@ async function exportPaymentSummary(db, auctionId, cfg, _state, extra) {
   });
 }
 
+// ── Export: Payment Summary — Party-wise ─────────────────────
+// One row per party (seller), aggregated, mirroring the on-screen Payments
+// tab. Built from calculations.getPaymentSummary so the figures (incl. the
+// purchase TDS column) match the list, lot modal and statement exactly.
+async function exportPaymentPartyWise(db, auctionId, cfg, state, extra) {
+  const { getPaymentSummary } = require('./calculations');
+  const sellersFilter = (extra && Array.isArray(extra.sellers) && extra.sellers.length)
+    ? new Set(extra.sellers.map(s => String(s).trim().toUpperCase()))
+    : null;
+  let rows = getPaymentSummary(db, auctionId, state, cfg) || [];
+  if (sellersFilter) {
+    rows = rows.filter(r => sellersFilter.has(String(r.name || '').trim().toUpperCase()));
+  }
+  const enriched = rows.map(r => ({
+    poolername: r.name || '',
+    lots:       Number(r.lot_count) || 0,
+    qty:        Number(r.total_qty) || 0,
+    amount:     Number(r.total_amount) || 0,
+    purchase:   Number(r.purchase_value) || 0,
+    commission: Number(r.total_commission) || 0,
+    gst:        Number(r.total_tax) || 0,
+    tds:        Number(r.tds) || 0,
+    net:        Number(r.net_amount) || 0,
+    discount:   Number(r.seller_discount) || 0,
+    payable:    Number(r.total_payable) || 0,
+  }));
+  const cols = [
+    { header: 'POOLERNAME', key: 'poolername', width: 30 },
+    { header: 'LOTS', key: 'lots', width: 7 },
+    { header: 'QTY', key: 'qty', width: 12 },
+    { header: 'AMOUNT', key: 'amount', width: 14 },
+    { header: 'PURCHASE', key: 'purchase', width: 14 },
+    { header: 'COMMISSION', key: 'commission', width: 14 },
+    { header: 'GST', key: 'gst', width: 12 },
+    { header: 'TDS', key: 'tds', width: 12 },
+    { header: 'NET AMOUNT', key: 'net', width: 14 },
+    { header: 'DISCOUNT', key: 'discount', width: 12 },
+    { header: 'PAYABLE', key: 'payable', width: 14 },
+  ];
+  const sum = (key) => enriched.reduce((s, r) => s + (Number(r[key]) || 0), 0);
+  const grandTotal = {
+    label: 'GRAND TOTAL',
+    values: {
+      lots:       sum('lots'),
+      qty:        sum('qty'),
+      amount:     sum('amount'),
+      purchase:   sum('purchase'),
+      commission: sum('commission'),
+      gst:        sum('gst'),
+      tds:        sum('tds'),
+      net:        sum('net'),
+      discount:   sum('discount'),
+      payable:    sum('payable'),
+    },
+  };
+  return createExcelBuffer('PaymentPartyWise', cols, enriched, {
+    db, title: 'Payment Summary — Party-wise', metaLines: auctionMeta(db, auctionId),
+    grandTotal,
+  });
+}
+
 // ── Export: TDS Return ───────────────────────────────────────
 async function exportTDSReturn(db, fromDate, toDate) {
   const { getTDSReturnData } = require('./calculations');
@@ -990,6 +1051,7 @@ const EXPORT_TYPES = {
   dealer_list:        { fn: exportDealerList,        name: 'DealerList' },
   sales_taxes:        { fn: exportSalesTaxes,        name: 'SalesTaxes' },
   payment:            { fn: exportPaymentSummary,    name: 'Payment',           needsCfg: true },
+  payment_party_wise: { fn: exportPaymentPartyWise,  name: 'PaymentPartyWise',  needsCfg: true },
   tally_purchase:     { fn: exportTallyPurchase,     name: 'TallyPurchase',     needsCfg: true },
 };
 
@@ -1003,7 +1065,7 @@ module.exports = {
   exportPriceList, exportPriceListBefore,
   exportBankPayment, exportBankPaymentBefore,
   exportPoolerRegister, exportFullFile, exportCollection, exportTradeReport, exportDealerList,
-  exportSalesTaxes, exportPaymentSummary, exportTDSReturn, exportTallyPurchase,
+  exportSalesTaxes, exportPaymentSummary, exportPaymentPartyWise, exportTDSReturn, exportTallyPurchase,
   exportSalesJournal, exportPurchaseJournal,
   exportSellersXlsx, exportBuyersXlsx,
 };

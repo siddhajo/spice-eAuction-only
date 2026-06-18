@@ -560,6 +560,15 @@ function getPaymentSummary(db, auctionId, state, cfg) {
   query += ' GROUP BY l.name, l.cr ORDER BY l.state, l.name';
   const sellers = db.all(query, params);
 
+  // TDS (u/s 194Q) is held on the purchase invoice — one row per seller per
+  // auction in `purchases` — not on the lots. Pull it per seller name so the
+  // Payments tab can show a "TDS" column alongside the lot-derived figures.
+  const tdsRows = db.all(
+    'SELECT name, SUM(COALESCE(tds,0)) AS tds FROM purchases WHERE auction_id = ? GROUP BY name',
+    [auctionId]) || [];
+  const tdsByName = {};
+  tdsRows.forEach(r => { tdsByName[String(r.name || '').trim().toUpperCase()] = Number(r.tds) || 0; });
+
   // Debit notes are intentionally NOT read here. They are separate
   // documents and no longer affect the Payments payable — the on-screen
   // list, the lot-selection modal, and the bank/XLSX exports all show the
@@ -596,6 +605,9 @@ function getPaymentSummary(db, auctionId, state, cfg) {
       // column. Independent of discount; does not affect payable.
       total_commission: Number(s.total_commission) || 0,
       total_tax: cgst + sgst + igst,
+      // TDS deducted on this seller's purchase invoice (194Q). Display-only —
+      // does not alter net/payable here.
+      tds: tdsByName[String(s.name || '').trim().toUpperCase()] || 0,
       // Purchase = sale amount + sample-bag refund (the base commission is
       // charged on), summed per seller.
       purchase_value: (Number(s.total_amount) || 0) + lotDisc,

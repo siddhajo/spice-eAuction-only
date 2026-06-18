@@ -18841,6 +18841,8 @@ async function loadPurchases(opts){
   _purchasesPager.total = total;
   _purchasesPager.totalPages = Math.max(1, Math.ceil(total / _purchasesPager.pageSize));
   renderPager('purchases-pager', _purchasesPager, gotoPurchasesPage, '');
+  // Derive Payable (Total − TDS) on each row so the column can sort/format.
+  d.forEach(p => { p.payable = (Number(p.total)||0) - (Number(p.tds)||0); });
   const arr = d;
 
   // Update KPI strip (same pattern as loadInvoices)
@@ -18898,10 +18900,13 @@ async function loadPurchases(opts){
       { key:'cgst', label:'CGST', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
       { key:'sgst', label:'SGST', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
       { key:'igst', label:'IGST', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
-      { key:'tds', label:'TDS', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
       { key:'total', label:'Total', sort:'number', numeric:true,
         fmt:(n)=>fmtI(n,2),
         render:(p)=>`<strong>${fmtI(p.total||0,2)}</strong>` },
+      { key:'tds', label:'TDS', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
+      { key:'payable', label:'Payable', sort:'number', numeric:true,
+        fmt:(n)=>fmtI(n,2),
+        render:(p)=>`<strong>${fmtI((Number(p.total)||0)-(Number(p.tds)||0),2)}</strong>` },
       { key:'_actions', label:'Actions', sortable:false, searchable:false, render:(p)=>
           iconBtn('pdf','View PDF',`viewPurchasePDF(${p.auction_id},'${encodeURIComponent(p.name)}','${encodeURIComponent(p.invo)}')`)
           + iconBtn('whatsapp','Send via WhatsApp',`whatsappPurchase(${p.auction_id},'${encodeURIComponent(p.name)}','${encodeURIComponent(p.invo)}',${Number(p.total)||0},'${esc(p.ano||'')}')`)
@@ -19760,6 +19765,22 @@ async function openPayLotsModal(auctionId, sellerName) {
       if (Number.isFinite(an) && Number.isFinite(bn) && an !== bn) return an - bn;
       return String(a.lot_no || '').localeCompare(String(b.lot_no || ''));
     });
+    // TDS (194Q) is a seller-level figure on the purchase invoice — allocate it
+    // across this seller's lots in proportion to lot amount so the column sums
+    // to the seller's total TDS and partial (selected-lot) statements get a
+    // matching share. Remainder lands on the last lot to keep the sum exact.
+    const tdsTotal = (window._payTdsByName || {})[_payLotsState.seller.trim().toUpperCase()] || 0;
+    _payLotsState.tdsTotal = tdsTotal;
+    const sumAmt = filtered.reduce((a, l) => a + (Number(l.amount) || 0), 0);
+    let alloc = 0;
+    filtered.forEach((l, i) => {
+      if (i === filtered.length - 1) {
+        l._tds = Math.max(0, Math.round((tdsTotal - alloc) * 100) / 100);
+      } else {
+        const v = sumAmt > 0 ? Math.round((tdsTotal * (Number(l.amount) || 0) / sumAmt) * 100) / 100 : 0;
+        l._tds = v; alloc += v;
+      }
+    });
     _payLotsState.lots = filtered;
     // Build bank_id → "Acct · Bank · IFSC" labels so each lot shows where its
     // payment routes (lots with no explicit bank_id fall back to the default).
@@ -19846,6 +19867,7 @@ function _renderPayLotsTable() {
       <td style="text-align:right;color:#7C3AED">${fmtI((Number(l.amount)||0)+(Number(l.refund)||0), 2)}</td>
       <td style="text-align:right;color:#B45309">${fmtI(Number(l.com)||0, 2)}</td>
       <td style="text-align:right;color:#0891B2">${fmtI(tax, 2)}</td>
+      <td style="text-align:right;color:#B91C1C">${fmtI(Number(l._tds)||0, 2)}</td>
       <td style="text-align:right;font-weight:700;color:var(--spice-cardamom-dk)">${fmtI(Number(l.balance)||0, 2)}</td>
     </tr>`;
   }).join('');
@@ -19856,7 +19878,7 @@ function _renderPayLotsTable() {
           <th style="width:36px;text-align:center"><input type="checkbox" id="pay-lot-select-all" checked onchange="togglePayLotSelectAll(this.checked)" title="Select / clear all" style="cursor:pointer"></th>
           <th>Lot</th><th>Branch</th><th>Bank</th>
           <th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th>
-          <th style="text-align:right">Purchase</th><th style="text-align:right">Commission</th><th style="text-align:right">GST</th><th style="text-align:right">Net Amount</th>
+          <th style="text-align:right">Purchase</th><th style="text-align:right">Commission</th><th style="text-align:right">GST</th><th style="text-align:right">TDS</th><th style="text-align:right">Net Amount</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -19896,9 +19918,10 @@ function updatePayLotsTotals() {
   const selectedIds = new Set(
     Array.from(document.querySelectorAll('.pay-lot-cb:not([disabled]):checked')).map(cb => Number(cb.dataset.id))
   );
-  let qty = 0, amt = 0, pur = 0, comm = 0, tax = 0, net = 0, immNet = 0;
+  let qty = 0, amt = 0, pur = 0, comm = 0, tax = 0, net = 0, immNet = 0, tds = 0;
   for (const l of _payLotsState.lots) {
     if (!selectedIds.has(l.id)) continue;
+    tds += Number(l._tds) || 0;
     // Sale-side figures, matching the main Payments list & statement:
     // Qty = lots.qty, Amount = lots.amount. Purchase = amount + refund
     // (the sample-bag refund the commission is charged on) — same
@@ -19929,6 +19952,7 @@ function updatePayLotsTotals() {
       <div>Purchase: <strong style="color:#7C3AED">₹${fmtI(pur, 2)}</strong></div>
       <div>Commission: <strong style="color:#B45309">₹${fmtI(comm, 2)}</strong></div>
       <div>GST: <strong style="color:#0891B2">₹${fmtI(tax, 2)}</strong></div>
+      ${tds > 0 ? `<div>TDS: <strong style="color:#B91C1C">₹${fmtI(tds, 2)}</strong></div>` : ''}
       <div>Net: <strong>₹${fmtI(net, 2)}</strong></div>
       <div>Discount${days ? ` <span style="color:var(--text3);font-weight:400">(immediate · ${isDealer ? 'dealer' : 'pooler'} · ${days}d)</span>` : ''}: <strong style="color:#9333EA">₹${fmtI(discount, 2)}</strong></div>
       <div style="margin-left:auto;font-size:14px">Payable now: <strong style="color:var(--spice-cardamom-dk)">₹${fmtI(payable, 2)}</strong></div>
@@ -20127,13 +20151,13 @@ function _payRefreshUndoButton() {
 async function loadPayments(){
   const aid=document.getElementById('pay-auction').value;
   const body=document.getElementById('payments-list');
-  if(!aid){body.innerHTML='<tr><td colspan="11" style="text-align:center;color:var(--text3);padding:24px">Select an auction above</td></tr>';return}
+  if(!aid){body.innerHTML='<tr><td colspan="12" style="text-align:center;color:var(--text3);padding:24px">Select an auction above</td></tr>';return}
 
   // Visual feedback — set the body to a loading state so the user sees
   // an obvious refresh even when the underlying data hasn't changed.
   // Without this the click silently re-fetches and re-renders the same
   // numbers, so the "Reload" feels broken even when it's working.
-  body.innerHTML = '<tr><td colspan="11" style="text-align:center;color:var(--text3);padding:24px">Loading…</td></tr>';
+  body.innerHTML = '<tr><td colspan="12" style="text-align:center;color:var(--text3);padding:24px">Loading…</td></tr>';
 
   // Force a fresh DataTable state for this tbody so any retained sort
   // direction / pagination doesn't mask the new data. Without this the
@@ -20156,6 +20180,10 @@ async function loadPayments(){
     // in another tab and clicks Reload.
     const d=await j(`/api/payments/${aid}?_=${Date.now()}`);
     const allArr = Array.isArray(d) ? d : [];
+    // Cache per-seller purchase TDS so the lot-selection modal (which loads
+    // raw lots, not the seller rollup) can show & allocate TDS per lot.
+    window._payTdsByName = {};
+    allArr.forEach(r => { window._payTdsByName[String(r.name||'').trim().toUpperCase()] = Number(r.tds)||0; });
     // Within-trade search — /api/payments returns aggregated seller
     // rollups, so the filter is applied client-side on the seller name.
     const _paySearch = (document.getElementById('pay-search')?.value || '').trim().toLowerCase();
@@ -20306,6 +20334,17 @@ async function loadPayments(){
               ? `<span style="color:#0891B2;font-weight:600">${fmtI(v,2)}</span>`
               : `<span style="color:var(--text3)">0.00</span>`;
           } },
+        // TDS (u/s 194Q) — taken from the seller's purchase invoice
+        // (calculations.getPaymentSummary joins purchases.tds by seller name).
+        // Display-only; does not change Net/Payable.
+        { key:'tds', label:'TDS', sort:'number', numeric:true,
+          fmt:(n)=>fmtI(n,2),
+          render:(p)=>{
+            const v = Number(p.tds)||0;
+            return v>0
+              ? `<span style="color:#B91C1C;font-weight:600">${fmtI(v,2)}</span>`
+              : `<span style="color:var(--text3)">0.00</span>`;
+          } },
         // Net Amount — the value previously labelled "Payable" (balance:
         // amount + refund − commission − handling − GST), BEFORE the
         // days-based settlement discount.
@@ -20431,7 +20470,7 @@ const EXP_LABELS={lot_slip:'Lot Slip',lot_slip_after:'Lot Slip (After)',
   lot_buyer:'Lot Buyer',lot_name:'Lot Name',lot_payment:'Lot Payment',
   price_list_before:'Price List (Before)',price_list:'Price List',bank_payment_before:'Bank Payment (Before)',bank_payment:'Bank Payment (RTGS/NEFT)',
   pooler_register:'Pooler Register',full_file:'Full File',collection:'Collection',trade_report:'Auction Report',dealer_list:'Dealer List',
-  payment:'Payment Summary',
+  payment:'Payment Summary',payment_party_wise:'Payment Summary - Party-wise',
   eauction_csv:'e-Auction (Spices Board) CSV'};
 // Export types that only support a specific format (no XLSX/PDF choice).
 // eauction_csv → fixed Spices Board portal schema, CSV only.

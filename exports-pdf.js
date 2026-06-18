@@ -173,7 +173,7 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
 
   function isNumericCol(col) {
     const h = (col.header || '').toUpperCase();
-    return /^(QTY|BAG|BAGS|PRICE|RATE|AMOUNT|PQTY|PRATE|PURAMT|CGST|SGST|IGST|TCS|TOTAL|DISCOUNT|PAYABLE|ADVANCE|BALANCE|LITRE|LOTS|TDS|ASSESS_VALUE|COST|NET|GUNNY|TRANSPORT|INSURANCE|CARDAMOM|CARDAMOM_COST|GUNNY_COST|ROUND|BILAMT|COM|COMMISSION)$/.test(h);
+    return /^(QTY|BAG|BAGS|PRICE|RATE|AMOUNT|PURCHASE|PQTY|PRATE|PURAMT|CGST|SGST|IGST|GST|TCS|TOTAL|DISCOUNT|PAYABLE|ADVANCE|BALANCE|LITRE|LOTS|TDS|ASSESS_VALUE|COST|NET|GUNNY|TRANSPORT|INSURANCE|CARDAMOM|CARDAMOM_COST|GUNNY_COST|ROUND|BILAMT|COM|COMMISSION)$/.test(h);
   }
 
   function fmtCell(val, col) {
@@ -609,6 +609,23 @@ const COLS = {
     { header: 'COMMISSION', key: 'commission',  width: 12 },
     { header: 'PAYABLE',    key: 'payable',     width: 14 },
   ],
+  payment_party_wise: [
+    // One row per party (seller), aggregated — mirrors the on-screen Payments
+    // tab and the party-wise XLSX export. Landscape (see PDF_LAYOUT) so the
+    // 12 money columns fit comfortably.
+    { header: 'SL.NO',      key: '_sn',        width: 4  },
+    { header: 'POOLERNAME', key: 'poolername', width: 20 },
+    { header: 'LOTS',       key: 'lots',       width: 5  },
+    { header: 'QTY',        key: 'qty',        width: 9  },
+    { header: 'AMOUNT',     key: 'amount',     width: 11 },
+    { header: 'PURCHASE',   key: 'purchase',   width: 11 },
+    { header: 'COMMISSION', key: 'commission', width: 10 },
+    { header: 'GST',        key: 'gst',        width: 8  },
+    { header: 'TDS',        key: 'tds',        width: 7  },
+    { header: 'NET',        key: 'net',        width: 10 },
+    { header: 'DISCOUNT',   key: 'discount',   width: 8  },
+    { header: 'PAYABLE',    key: 'payable',    width: 11 },
+  ],
   tally_purchase: [
     { header: 'NAME', key: 'name', width: 24 }, { header: 'ADD', key: 'add', width: 24 },
     { header: 'PLACE', key: 'place', width: 12 }, { header: 'GSTIN', key: 'gstin', width: 16 },
@@ -644,6 +661,7 @@ const TOTAL_KEYS = {
   dealer_list:     ['lots', 'bags', 'qty'],
   sales_taxes:     ['bag', 'qty', 'cardamom_cost', 'gunny_cost', 'cgst', 'sgst', 'igst', 'tcs', 'transport', 'insurance', 'total'],
   payment:         ['bag', 'qty', 'amount', 'commission', 'payable'],
+  payment_party_wise: ['lots', 'qty', 'amount', 'purchase', 'commission', 'gst', 'tds', 'net', 'discount', 'payable'],
   tally_purchase:  ['bag', 'qty', 'amount', 'cgst', 'sgst', 'igst', 'discount', 'bilamt'],
   tds_return:      ['assess_value', 'tds'],
 };
@@ -663,6 +681,7 @@ const TITLES = {
   dealer_list:     'Dealer List',
   sales_taxes:     'Sales & Taxes',
   payment:         'Payment Summary',
+  payment_party_wise: 'Payment Summary — Party-wise',
   tally_purchase:  'Tally Purchase',
   tds_return:      'TDS Return',
 };
@@ -676,6 +695,8 @@ const PDF_LAYOUT = {
   // BUYER1, SALE, INVO, PQTY, PRATE, PURAMT, COM, CGST, SGST, IGST,
   // ADVANCE, BALANCE). Portrait is impossible — stays landscape.
   full_file: 'landscape',
+  // 12 aggregated money columns — needs the wider landscape page.
+  payment_party_wise: 'landscape',
 };
 
 // Per-type row preprocessing: add a serial-number column, optionally group
@@ -697,6 +718,10 @@ const ROW_PREPROCESS = {
   },
   // Dealer list — flat sequential serial (no grouping).
   dealer_list: {
+    serialKey: '_sn',
+  },
+  // Party-wise payment summary — one row per party already, just a flat serial.
+  payment_party_wise: {
     serialKey: '_sn',
   },
   // Payment summary — serial restarts per pooler name; subtotal of bag, qty,
@@ -829,6 +854,26 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
           com as commission, balance as payable
          FROM lots WHERE auction_id = ? AND amount > 0
          ORDER BY state, name`, [auctionId]);
+    }
+
+    case 'payment_party_wise': {
+      // Aggregated per-party rollup — reuse the same source as the Payments
+      // tab and the XLSX party-wise export so all three agree (incl. TDS).
+      const { getPaymentSummary } = require('./calculations');
+      const rows = getPaymentSummary(db, auctionId, extra && extra.state, cfg) || [];
+      return rows.map(r => ({
+        poolername: r.name || '',
+        lots:       Number(r.lot_count) || 0,
+        qty:        Number(r.total_qty) || 0,
+        amount:     Number(r.total_amount) || 0,
+        purchase:   Number(r.purchase_value) || 0,
+        commission: Number(r.total_commission) || 0,
+        gst:        Number(r.total_tax) || 0,
+        tds:        Number(r.tds) || 0,
+        net:        Number(r.net_amount) || 0,
+        discount:   Number(r.seller_discount) || 0,
+        payable:    Number(r.total_payable) || 0,
+      }));
     }
 
     case 'tally_purchase': {

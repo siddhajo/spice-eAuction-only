@@ -865,6 +865,12 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
     doc.fillColor('#000'); // reset for text
   }
 
+  // ── ORIGINAL/DUPLICATE/TRIPLICATE marker (top-right, above title) ──
+  // Mirrors the purchase invoice header so sales invoices carry the same tag.
+  doc.fontSize(7.5).font('Helvetica').fillColor('#000');
+  doc.text('ORIGINAL/DUPLICATE/TRIPLICATE', x0, y, { width: W, align: 'right' });
+  y += 9;
+
   // ── Title ───────────────────────────────────────────────────
   doc.font('Helvetica-Bold').fontSize(10).text(isPurchaseView ? 'Purchase Invoice' : 'Tax Invoice', x0, y, { width: W, align: 'center' });
   y += 14;
@@ -2323,7 +2329,7 @@ function generateAgriBillsBatchPDF(bills, cfg) {
  * (memorandum of cardamom sold). One A4 page per bill.
  *
  * Layout, top to bottom:
- *   - "DUMMY INVOICE" marker (top-right, above outer border)
+ *   - "ORIGINAL/DUPLICATE/TRIPLICATE" marker (top-right, above outer border)
  *   - Outer border
  *   - Company letterhead (name, regd office, CIN/PAN, GSTIN/SBL, email)
  *   - Cropt Receipt No (left) | Bill No (right)
@@ -2396,9 +2402,9 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
   const hsnCardamom = billData.hsnCardamom || cfg.hsn_cardamom || '09083120';
   const hsnCommission = billData.hsnCommission || '996111';
 
-  // ── "DUMMY INVOICE" tag (top-right, above outer border) ──
+  // ── "ORIGINAL/DUPLICATE/TRIPLICATE" tag (top-right, above outer border) ──
   doc.font('Helvetica').fontSize(7.5).fillColor('#000');
-  doc.text('DUMMY INVOICE', x0, y, { width: W - 4, align: 'right' });
+  doc.text('ORIGINAL/DUPLICATE/TRIPLICATE', x0, y, { width: W - 4, align: 'right' });
   y += 9;
 
   const boxTopY = y;
