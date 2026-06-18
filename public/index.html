@@ -4063,6 +4063,16 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <option value="dealer">🏷 Dealer (Grade2)</option>
           </select>
 
+          <!-- Payment (export) status filter. A seller is "Paid" once all
+               their lots have been exported (tracked-export status === full);
+               anything not fully exported is still "To be paid". Applied
+               client-side in loadPayments() — see _payExportFilter. -->
+          <select id="pay-export-filter" onchange="loadPayments()" title="Filter sellers by payment (export) status" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:150px">
+            <option value="all">All statuses</option>
+            <option value="paid">✓ Paid (exported)</option>
+            <option value="unpaid">⏳ To be paid (not exported)</option>
+          </select>
+
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
             <button class="btn btn-g" style="height:38px;padding:0 16px;font-weight:600" onclick="loadPayments()">↻ Reload</button>
           </div>
@@ -20208,6 +20218,20 @@ async function loadPayments(){
       arr = arr.filter(r => r.seller_type === 'pooler');
     } else if (_payGradeFilter === 'dealer') {
       arr = arr.filter(r => r.seller_type === 'dealer');
+    }
+
+    // Payment (export) status filter — "paid" keeps sellers fully exported
+    // (tracked-export status === 'full'); "unpaid" keeps everyone not yet
+    // fully exported (status 'none' or 'partial' — still has lots to pay).
+    const _payExportFilter = document.getElementById('pay-export-filter')?.value || 'all';
+    if (_payExportFilter === 'paid' || _payExportFilter === 'unpaid') {
+      const _exAid = Number((document.getElementById('pay-auction')||{}).value)||0;
+      arr = arr.filter(r => {
+        const st = (typeof _payExportStatus==='function')
+          ? _payExportStatus(_exAid, r.name, Number(r.lot_count)||0) : 'none';
+        const isPaid = st === 'full';
+        return _payExportFilter === 'paid' ? isPaid : !isPaid;
+      });
     }
 
     // Update KPI strip
