@@ -176,6 +176,7 @@ function getReportContext(db, opts) {
       l.trader_id       AS trader_id,
       t.name            AS trader_name,
       t.cr              AS trader_cr,
+      t.aadhar          AS trader_aadhar,
       t.padd            AS trader_addr,
       t.ppla            AS trader_place,
       t.pstate          AS trader_state,
@@ -1050,11 +1051,18 @@ function buildFormC(ctx) {
     const seller = r.trader_name || r.seller_name || '';
     const cr = r.trader_cr || r.seller_cr || '';
     const place = r.trader_place || r.seller_place || '';
+    // Estate Reg / Licence # — prefer the seller's Spices Board Licence (SBL)
+    // number, falling back to GSTIN (the `cr` registration). The SBL is held
+    // in the trader's `aadhar` column: that column doubles as Aadhaar OR SBL,
+    // so a value matching the Aadhaar format (XXXX-XXXX-XXXX) is a real Aadhaar
+    // (not an SBL) and is ignored here; anything else is treated as the SBL.
+    const aadhar = String(r.trader_aadhar || '').trim();
+    const sblNo = (aadhar && !/^\d{4}-\d{4}-\d{4}$/.test(aadhar)) ? aadhar : '';
     const item = {
       lot:    r.lot,
       seller: seller,
       address: place,
-      regId:  cr,
+      regId:  sblNo || cr,
       qtyPut: Number(r.qty) || 0,
       qtySold: Number(r.qty) || 0,
       rate:   Number(r.price) || 0,
