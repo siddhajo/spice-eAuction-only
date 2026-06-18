@@ -727,6 +727,12 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
     const holderNm  = (routedBank && routedBank.holder_name) || (tb && tb.holder_name) || p.t_holder  || p.name;
     return {
       transactionType: rawAmount >= 200000 ? 'RTGS' : 'NEFT',
+      // Firm's own account that funds are debited from. Kerala account per
+      // config; same value on every row (single debit account for the batch).
+      debitAccount: (cfg && cfg.bank_kl_acct) || '',
+      // Beneficiary account type (SB/CA) is not stored per seller — left
+      // blank for the user to fill before upload.
+      accountType: '',
       ifsc,
       accountNo: acctnum,
       beneficiaryName: holderNm,

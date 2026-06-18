@@ -103,6 +103,7 @@ function effectiveCompany(cfg) {
     idValue,
     fssai:   cfg.fssai       || '',
     sbl:     cfg.sbl         || '',
+    msme:    cfg.msme        || '',
     address1: isStateKL ? (cfg.kl_address1 || cfg.tn_address1 || '') : (cfg.tn_address1 || ''),
     address2: isStateKL ? (cfg.kl_address2 || cfg.tn_address2 || '') : (cfg.tn_address2 || ''),
     place:   isStateKL ? (cfg.kl_place || cfg.tn_place || '') : (cfg.tn_place || ''),
@@ -918,6 +919,9 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   if (co.idValue) { doc.text(`${co.idLabel}: ${co.idValue}`, textX, ty, { width: textW }); ty += 10; }
   if (co.fssai) { doc.text(`FSSAI No.: ${co.fssai}`, textX, ty, { width: textW }); ty += 10; }
   if (co.sbl)   { doc.text(`SBL No.: ${co.sbl}`,     textX, ty, { width: textW }); ty += 10; }
+  // MSME / Udyam registration — shown on the Sales (Tax) Invoice only, and
+  // only when configured in Settings → Company details.
+  if (!isPurchaseView && co.msme) { doc.text(`MSME No.: ${co.msme}`, textX, ty, { width: textW }); ty += 10; }
 
   // ── RIGHT BLOCK: 2-row metadata grid ────────────────────────
   // Row 1: Invoice No | e-Way Bill No | Dated

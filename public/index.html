@@ -2244,6 +2244,72 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   .qa-grid{grid-template-columns:1fr}
   .content{padding:18px 16px}
 }
+
+/* ══ In-app user guide ══════════════════════════════════════════
+   Two pieces, both live OUTSIDE the .tc panels so they survive the
+   innerHTML rebuilds that loaders do on navigation:
+   1) #screen-guide  — per-screen "what to do here" banner (collapsible,
+      per-screen state remembered in localStorage 'guide:<tab>').
+   2) #change-nudge  — sticky "you changed X → now do Y" reminder. Does
+      NOT auto-dismiss (unlike .toast); stays until the action runs or × .
+   All copy lives in the SCREEN_GUIDE dict + NUDGE_COPY map in JS. */
+.screen-guide{
+  background:linear-gradient(180deg, var(--spice-saffron-lt), var(--card));
+  border:1px solid var(--green-border, var(--spice-line));
+  border-left:4px solid var(--spice-saffron);
+  border-radius:14px;padding:14px 16px;margin-bottom:18px;
+  box-shadow:0 1px 2px rgba(15,23,42,.04);
+}
+.screen-guide-head{display:flex;align-items:center;gap:10px}
+.screen-guide-title{
+  font-size:14px;font-weight:700;color:var(--spice-cardamom-dk, var(--text));
+  display:flex;align-items:center;gap:8px;margin:0;flex:1;min-width:0
+}
+.screen-guide-title .sg-ic{font-size:16px;flex:none}
+.screen-guide-toggle{
+  flex:none;background:transparent;border:1px solid var(--spice-saffron);
+  color:var(--spice-saffron-dk, var(--spice-cardamom-dk));
+  font-size:11.5px;font-weight:700;border-radius:8px;padding:4px 10px;cursor:pointer;
+  text-transform:uppercase;letter-spacing:.4px;transition:background .15s,color .15s
+}
+.screen-guide-toggle:hover{background:var(--spice-saffron);color:#fff}
+.screen-guide-body{margin-top:10px}
+.screen-guide-steps{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:5px}
+.screen-guide-steps li{font-size:13px;line-height:1.5;color:var(--text2);padding-left:3px}
+.screen-guide-warn{
+  display:flex;align-items:flex-start;gap:8px;margin-top:11px;
+  background:var(--spice-turmeric-lt);color:#8B6508;
+  border-radius:9px;padding:8px 11px;font-size:12.5px;font-weight:600;line-height:1.45
+}
+.screen-guide-warn .sg-warn-ic{flex:none}
+.screen-guide.is-collapsed .screen-guide-body{display:none}
+
+.change-nudge{
+  display:none;position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(8px);
+  z-index:9998;width:min(560px,calc(100vw - 32px));
+  background:var(--spice-text-main);color:#fff;
+  border-radius:12px;padding:12px 14px;
+  box-shadow:0 8px 28px rgba(15,23,42,.32);
+  align-items:center;gap:12px;opacity:0;transition:opacity .18s,transform .18s
+}
+.change-nudge.is-open{display:flex;opacity:1;transform:translateX(-50%) translateY(0)}
+.change-nudge-ic{font-size:20px;flex:none;line-height:1}
+.change-nudge-msg{flex:1;min-width:0;font-size:13px;font-weight:600;line-height:1.4}
+.change-nudge-act{
+  flex:none;background:var(--spice-saffron);color:#fff;border:0;
+  border-radius:9px;padding:8px 16px;font-weight:700;font-size:13px;cursor:pointer;
+  white-space:nowrap;transition:filter .15s
+}
+.change-nudge-act:hover{filter:brightness(1.08)}
+.change-nudge-x{
+  flex:none;background:rgba(255,255,255,.16);color:#fff;border:0;
+  width:28px;height:28px;border-radius:8px;font-size:16px;line-height:1;cursor:pointer
+}
+.change-nudge-x:hover{background:rgba(255,255,255,.28)}
+@media(max-width:600px){
+  .change-nudge{flex-wrap:wrap}
+  .change-nudge-msg{flex:1 1 100%;order:-1}
+}
 </style>
 <!-- Chart.js for dashboard + payments charts. Loaded from cdnjs to keep
      the app fully self-contained on Railway (no build step needed).
@@ -2549,6 +2615,21 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
          the pollGrade2Alerts() poll. Empty until an alert fires. -->
     <div id="g2-alert-stack" style="position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;width:min(680px,94vw);display:flex;flex-direction:column;gap:8px;pointer-events:none"></div>
 
+    <!-- Per-screen guide banner. Lives here (inside .content, OUTSIDE every
+         .tc panel) so loader innerHTML rebuilds never wipe it. Repainted by
+         renderScreenGuide(tab), called from go(). Copy = SCREEN_GUIDE dict. -->
+    <div id="screen-guide" class="screen-guide" style="display:none"></div>
+
+    <!-- Sticky "you changed X → now do Y" nudge. position:fixed, so DOM spot
+         is cosmetic — but it must stay outside .tc so it isn't rebuilt. Driven
+         by showNudge()/hideNudge(). Copy = NUDGE_COPY map. -->
+    <div id="change-nudge" class="change-nudge" role="status" aria-live="polite">
+      <span class="change-nudge-ic" aria-hidden="true">⚡</span>
+      <span class="change-nudge-msg" id="change-nudge-msg"></span>
+      <button type="button" class="change-nudge-act" id="change-nudge-act"></button>
+      <button type="button" class="change-nudge-x" id="change-nudge-x" title="Dismiss" aria-label="Dismiss" onclick="dismissNudge()">×</button>
+    </div>
+
     <!-- DASHBOARD -->
     <div class="tc active" id="tc-dash"><div class="stats" id="stats"></div></div>
 
@@ -2679,11 +2760,12 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
              scheduled run to fire; closing the tab pauses the job.
              Persisted in localStorage so the schedule survives
              reloads. -->
-        <div style="padding:16px 18px;border:1px solid var(--border);border-radius:10px;background:#fff;margin-bottom:14px">
+        <div style="padding:16px 18px;border:1.5px solid var(--spice-turmeric);border-radius:10px;background:linear-gradient(135deg,var(--spice-turmeric-lt),#fff 70%);margin-bottom:14px;box-shadow:0 1px 3px rgba(245,158,11,.18);border-left:4px solid var(--spice-turmeric)">
           <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap">
             <div style="flex:1;min-width:260px">
-              <div style="font-weight:700;color:var(--text);font-size:14px;margin-bottom:4px;display:flex;align-items:center;gap:6px">
+              <div style="font-weight:700;color:var(--text);font-size:14px;margin-bottom:4px;display:flex;align-items:center;gap:8px">
                 <span>🕒</span><span>Auto Backup Schedule</span>
+                <span style="font-size:10px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--spice-turmeric);background:var(--spice-turmeric-lt);border:1px solid var(--spice-turmeric);padding:2px 7px;border-radius:999px">Recommended</span>
               </div>
               <div style="font-size:12px;color:var(--text3);line-height:1.5">
                 Automatically download a fresh backup at a fixed interval. Keep this browser tab open during business hours so the schedule can fire. Last run timestamp is shown below.
@@ -4163,52 +4245,17 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <h2>Lorry Reports
           <span style="font-weight:400;font-size:12px;color:var(--text3)">Auction-floor reports for the day's auction</span>
         </h2>
-        <div class="fg" style="max-width:360px"><label>Select Auction</label>
-          <select id="lorry-auction" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></select>
-        </div>
-
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-top:14px">
-          <div style="padding:14px;border:1px solid var(--border);border-radius:10px;background:#fff">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-              <span style="width:32px;height:32px;border-radius:8px;background:var(--spice-saffron-lt);display:inline-flex;align-items:center;justify-content:center;font-size:18px">📜</span>
-              <div>
-                <div style="font-weight:700;color:var(--text);font-size:14px">Lot Slip (Code)</div>
-                <div style="font-size:11px;color:var(--text3)">Per-lot list with bidder code · carbon-copy in PDF</div>
-              </div>
-            </div>
-            <div style="display:flex;gap:6px;margin-top:10px">
-              <button class="btn btn-a" onclick="downloadLorry('lot_slip_code','xlsx')" style="flex:1;padding:7px;font-size:12px">XLSX</button>
-              <button class="btn btn-orange" onclick="downloadLorry('lot_slip_code','pdf')" style="flex:1;padding:7px;font-size:12px">PDF</button>
-            </div>
+        <!-- Report-selector layout (mirrors the Export Center): pick an
+             auction and a report, then the matching XLSX / PDF actions appear
+             in one row instead of a tile per report. -->
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-top:4px">
+          <div class="fg" style="margin:0;min-width:240px;flex:1;max-width:360px"><label>Select Auction</label>
+            <select id="lorry-auction" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></select>
           </div>
-
-          <div style="padding:14px;border:1px solid var(--border);border-radius:10px;background:#fff">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-              <span style="width:32px;height:32px;border-radius:8px;background:var(--spice-saffron-lt);display:inline-flex;align-items:center;justify-content:center;font-size:18px">🚚</span>
-              <div>
-                <div style="font-weight:700;color:var(--text);font-size:14px">Truck List</div>
-                <div style="font-size:11px;color:var(--text3)">Buyer-code summary with totals</div>
-              </div>
-            </div>
-            <div style="display:flex;gap:6px;margin-top:10px">
-              <button class="btn btn-a" onclick="downloadLorry('truck_list','xlsx')" style="flex:1;padding:7px;font-size:12px">XLSX</button>
-              <button class="btn btn-orange" onclick="downloadLorry('truck_list','pdf')" style="flex:1;padding:7px;font-size:12px">PDF</button>
-            </div>
+          <div class="fg" style="margin:0;min-width:240px;flex:1;max-width:360px"><label>Report</label>
+            <select id="lorry-report" onchange="renderLorryActions()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></select>
           </div>
-
-          <div style="padding:14px;border:1px solid var(--border);border-radius:10px;background:#fff">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-              <span style="width:32px;height:32px;border-radius:8px;background:var(--spice-saffron-lt);display:inline-flex;align-items:center;justify-content:center;font-size:18px">📋</span>
-              <div>
-                <div style="font-weight:700;color:var(--text);font-size:14px">Buyer Lot Lorry</div>
-                <div style="font-size:11px;color:var(--text3)">Inter/Intra-state grouped buyer detail</div>
-              </div>
-            </div>
-            <div style="display:flex;gap:6px;margin-top:10px">
-              <button class="btn btn-a" onclick="downloadLorry('buyer_lot_lorry','xlsx')" style="flex:1;padding:7px;font-size:12px">XLSX</button>
-              <button class="btn btn-orange" onclick="downloadLorry('buyer_lot_lorry','pdf')" style="flex:1;padding:7px;font-size:12px">PDF</button>
-            </div>
-          </div>
+          <div id="lorry-actions" style="display:flex;gap:8px;flex-wrap:wrap"></div>
         </div>
 
         <div style="margin-top:14px;padding:10px 12px;background:var(--spice-saffron-lt);border-radius:8px;font-size:12px;color:var(--text2);line-height:1.5">
@@ -4223,8 +4270,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <div class="card">
         <h2>TDS Returns</h2>
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:end">
-          <div class="fg" style="margin:0"><label>From</label><input type="date" id="tds-from"></div>
-          <div class="fg" style="margin:0"><label>To</label><input type="date" id="tds-to"></div>
+          <div class="fg" style="margin:0"><label>From</label><input type="date" id="tds-from" onchange="nudgeTdsDate()"></div>
+          <div class="fg" style="margin:0"><label>To</label><input type="date" id="tds-to" onchange="nudgeTdsDate()"></div>
           <button class="btn btn-g" onclick="loadTDS()">Load</button>
           <button class="btn btn-a" onclick="exportTDS('xlsx')">Export XLSX</button>
           <button class="btn btn-orange" onclick="exportTDS('pdf')">Export PDF</button>
@@ -7271,11 +7318,197 @@ async function fdDelete(rid){
   }catch(e){ toast('Delete failed: '+(e.message||e)); }
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   IN-APP USER GUIDE
+   ────────────────────────────────────────────────────────────────
+   ALL guide copy lives in the two dictionaries below — SCREEN_GUIDE
+   (the per-screen banner) and NUDGE_COPY (the "you changed X → now do Y"
+   reminder). To edit what users read, change ONLY these objects; the
+   layout, toggle, persistence and wiring never need touching.
+
+   SCREEN_GUIDE keys = tab ids passed to go() (dash, settings, lots, …).
+   Each entry: { icon?, title, steps:[…2-4…], warn? }.
+   Add a screen by adding a key here — no other change required.
+   ══════════════════════════════════════════════════════════════════ */
+const SCREEN_GUIDE = {
+  dash: {
+    icon: '📊',
+    title: 'Dashboard — your day at a glance',
+    steps: [
+      'Pick the active auction in the top bar — every figure below follows it.',
+      'Scan the KPI tiles and branch tiles to see lots, values and pending work.',
+      'Click a tile or use the left menu to jump into Lots, Invoices or Reports.',
+    ],
+  },
+  settings: {
+    icon: '⚙️',
+    title: 'Company Settings — rates, charges & identity',
+    steps: [
+      'Open a section on the left (Company, Tax, Charges, Branches…).',
+      'Edit the fields — GST %, commission %, charges, address, branding.',
+      'Click “Save Changes” at the top. Nothing is stored until you do.',
+    ],
+    warn: 'Editing GST, commission or charges does NOT recalculate existing lots — after saving, go to Lots and run “Calculate All”.',
+  },
+  lots: {
+    icon: '🌿',
+    title: 'Lots — enter & price each lot',
+    steps: [
+      'Select the auction at the top.',
+      'Add or edit lots — set bags, quantity, price and buyer.',
+      'Click “Calculate All” to compute Commission, Tax and Payable.',
+      'Check the totals, then move on to Sales Invoices.',
+    ],
+    warn: 'Editing a lot’s price or quantity only updates that row — Commission & Tax stay stale until you run “Calculate All”.',
+  },
+  invoices: {
+    icon: '🧾',
+    title: 'Sales Invoices — generate buyer invoices',
+    steps: [
+      'Select the auction, then check eligible buyers are listed.',
+      'Set the starting invoice number and sale-type filter.',
+      'Click “Generate” to create invoices, then download or print the PDFs.',
+    ],
+    warn: 'Generate uses the CURRENT lot figures — if you just changed prices, run “Calculate All” on the Lots screen first.',
+  },
+  purchases: {
+    icon: '📥',
+    title: 'Purchases — record purchase invoices',
+    steps: [
+      'Select the auction to load its purchase lines.',
+      'Review supplier, quantity and rate for each entry.',
+      'Generate the purchase invoices and verify the totals.',
+    ],
+  },
+  payments: {
+    icon: '💳',
+    title: 'Payments — track receipts & dues',
+    steps: [
+      'Select the auction to see who owes what.',
+      'Record a payment against a buyer or seller as it comes in.',
+      'Use the charts and balances to follow up on outstanding dues.',
+    ],
+  },
+  exports: {
+    icon: '📤',
+    title: 'Exports — Excel, DBF & Tally files',
+    steps: [
+      'Select the auction (and date range where shown).',
+      'Pick the export format you need — Excel, DBF or Tally XML.',
+      'Click the export button and save the downloaded file.',
+    ],
+    warn: 'Exports reflect saved data only — generate invoices and run “Calculate All” BEFORE exporting, or figures will be missing.',
+  },
+  reports: {
+    icon: '📑',
+    title: 'Reports — auction, lorry & statutory reports',
+    steps: [
+      'Choose the auction and the report you want from the list.',
+      'Set any date range or filters the report offers.',
+      'Preview, then print or download the report.',
+    ],
+  },
+};
+
+/* Repaint the banner for the given tab. Called from go(). Reads the
+   collapsed/expanded choice from localStorage 'guide:<tab>' so each
+   screen remembers its own state. Safe to call for tabs with no entry. */
+function renderScreenGuide(tab){
+  const el = document.getElementById('screen-guide');
+  if (!el) return;
+  const g = SCREEN_GUIDE[tab];
+  if (!g) { el.style.display = 'none'; return; }
+  let collapsed = false;
+  try { collapsed = localStorage.getItem('guide:' + tab) === '1'; } catch(_) {}
+  const stepsHtml = (g.steps || []).map(s => '<li>' + s + '</li>').join('');
+  const warnHtml = g.warn
+    ? '<div class="screen-guide-warn"><span class="sg-warn-ic" aria-hidden="true">⚠️</span><span>' + g.warn + '</span></div>'
+    : '';
+  el.innerHTML =
+    '<div class="screen-guide-head">' +
+      '<p class="screen-guide-title"><span class="sg-ic" aria-hidden="true">' + (g.icon || '💡') + '</span>' + g.title + '</p>' +
+      '<button type="button" class="screen-guide-toggle" onclick="toggleScreenGuide()">' + (collapsed ? 'Show' : 'Hide') + '</button>' +
+    '</div>' +
+    '<div class="screen-guide-body"><ol class="screen-guide-steps">' + stepsHtml + '</ol>' + warnHtml + '</div>';
+  el.classList.toggle('is-collapsed', collapsed);
+  el.style.display = '';
+}
+
+/* Toggle the current screen's banner and persist the choice per screen. */
+function toggleScreenGuide(){
+  const tab = window._currentTab;
+  if (!tab) return;
+  let collapsed = false;
+  try { collapsed = localStorage.getItem('guide:' + tab) === '1'; } catch(_) {}
+  const next = !collapsed;
+  try { localStorage.setItem('guide:' + tab, next ? '1' : '0'); } catch(_) {}
+  renderScreenGuide(tab);
+}
+
+/* ── Active "you changed X → now do Y" nudge ──────────────────────
+   A sticky bar that appears on a change needing a follow-up action and
+   stays until the action runs or the user dismisses it (NOT a toast).
+   COPY lives in NUDGE_COPY; the showNudge/hideNudge engine is generic.
+   `key` identifies which gap is showing, so a stale hideNudge() for an
+   older gap can't clear a newer reminder. */
+const NUDGE_COPY = {
+  settingsCalc:     { msg: 'You changed a rate/charge — Save so your invoices & reports recalculate.', action: 'Save Changes' },
+  settingsCosmetic: { msg: 'You changed company settings — Save to apply them.',                       action: 'Save Changes' },
+  lotCalc:          { msg: 'Lot saved — run “Calculate All” so Commission, Tax & Payable update.',     action: 'Calculate All' },
+  insightsDate:     { msg: 'You changed the date range — click Apply so the figures refresh.',         action: 'Apply' },
+  tdsDate:          { msg: 'You changed the date range — click Load to fetch the TDS return.',          action: 'Load' },
+};
+let _nudgeKey = null;
+let _nudgeAction = null;
+
+function showNudge(key, msg, actionLabel, onAction){
+  const bar = document.getElementById('change-nudge');
+  if (!bar) return;
+  _nudgeKey = key;
+  _nudgeAction = (typeof onAction === 'function') ? onAction : null;
+  document.getElementById('change-nudge-msg').textContent = msg;
+  const actBtn = document.getElementById('change-nudge-act');
+  if (actionLabel && _nudgeAction) {
+    actBtn.textContent = actionLabel;
+    actBtn.style.display = '';
+    actBtn.onclick = () => { try { _nudgeAction(); } catch(e){ console.error('Nudge action failed:', e); } };
+  } else {
+    actBtn.style.display = 'none';
+    actBtn.onclick = null;
+  }
+  bar.classList.add('is-open');
+}
+
+/* Hide the nudge. With a key, only hides if it matches the one showing
+   (so completing an old action won't wipe a newer reminder). No key =
+   force hide. */
+function hideNudge(key){
+  if (key && key !== _nudgeKey) return;
+  const bar = document.getElementById('change-nudge');
+  if (bar) bar.classList.remove('is-open');
+  _nudgeKey = null;
+  _nudgeAction = null;
+}
+function dismissNudge(){ hideNudge(); }
+
+/* Filter-change → nudge helpers, wired from the date inputs' onchange. */
+function nudgeInsightsDate(){
+  showNudge('insightsDate', NUDGE_COPY.insightsDate.msg, NUDGE_COPY.insightsDate.action,
+    () => { if (typeof _insightsApplyDateInputs === 'function') _insightsApplyDateInputs(); });
+}
+function nudgeTdsDate(){
+  showNudge('tdsDate', NUDGE_COPY.tdsDate.msg, NUDGE_COPY.tdsDate.action,
+    () => { if (typeof loadTDS === 'function') loadTDS(); });
+}
+
 function go(tab){
   window._currentTab = tab;
   document.querySelectorAll('.side-item').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
   document.querySelectorAll('.tc').forEach(t=>t.classList.remove('active'));
   const el=document.getElementById('tc-'+tab);if(el)el.classList.add('active');
+  // Repaint the per-screen guide banner. Lives outside .tc panels, so it
+  // survives every loader's innerHTML rebuild — we just refresh its copy.
+  if(typeof renderScreenGuide==='function'){try{renderScreenGuide(tab);}catch(_){}}
   // Auto-refresh polling — start on the relevant tab, stop on others
   // so we don't waste cycles polling for tabs the user isn't looking at.
   if (typeof leStartAutoRefresh === 'function' && typeof lotsStartAutoRefresh === 'function') {
@@ -8092,6 +8325,7 @@ function _insightsApplyDateInputs(){
   if (from > to) { alert('“From” date must not be after “To”.'); return; }
   _insightsRange = { from, to };
   _renderInsights();
+  if (typeof hideNudge === 'function') hideNudge('insightsDate');
 }
 
 // Toggle one Insights section open/closed. State persists in
@@ -8144,6 +8378,7 @@ function _insightsQuickRange(kind){
   }
   _insightsRange = { from, to };
   _renderInsights();
+  if (typeof hideNudge === 'function') hideNudge('insightsDate');
 }
 
 // Branch chart palette — vibrant, distinguishable at thumbnail size.
@@ -8452,8 +8687,8 @@ async function _renderInsights(){
     <!-- Filter strip -->
     <div class="ins-filter">
       <div class="ins-filter-row">
-        <div><label>From</label><input type="date" id="ins-from" value="${esc(data.range.from)}"></div>
-        <div><label>To</label><input type="date" id="ins-to" value="${esc(data.range.to)}"></div>
+        <div><label>From</label><input type="date" id="ins-from" value="${esc(data.range.from)}" onchange="nudgeInsightsDate()"></div>
+        <div><label>To</label><input type="date" id="ins-to" value="${esc(data.range.to)}" onchange="nudgeInsightsDate()"></div>
         <button class="ins-pill ins-pill-primary" onclick="_insightsApplyDateInputs()">Apply</button>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-left:6px">
           <span style="font-size:10.5px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;font-weight:700">Quick:</span>
@@ -14254,7 +14489,20 @@ let _presets = { active: '' };
 let _companyDirty = false;
 
 async function loadPresets(){ /* no-op: single-company build */ }
-function markCompanyDirty(){ _companyDirty = true; }
+function markCompanyDirty(e){
+  _companyDirty = true;
+  // Surface the change as a sticky nudge so the user doesn't forget to Save.
+  // Tailor the wording: calc-affecting fields warn that figures recalculate;
+  // everything else just needs Save to "apply". Classified off the field's
+  // data-key (the same key used to post the setting).
+  try {
+    const key = (e && e.target && e.target.dataset && e.target.dataset.key) || '';
+    const calc = /gst|tax|cess|tcs|tds|commission|charge|rate|round|deduct|percent|weight|kg|qty|amount|brokerage|levy/i.test(key);
+    const c = calc ? NUDGE_COPY.settingsCalc : NUDGE_COPY.settingsCosmetic;
+    if (typeof showNudge === 'function') showNudge('settingsSave', c.msg, c.action,
+      () => { if (typeof saveSettings === 'function') saveSettings(); });
+  } catch(_) {}
+}
 async function onLogoCodeChanged(_fieldKey, _newCode){
   // Logo Code is a plain textbox now — there is nothing to switch.
   // Kept as a stub because some old onclick handlers may still reach
@@ -14321,6 +14569,7 @@ async function saveSettings(){
     }
   } catch (_) {}
   toast('Settings saved');
+  if (typeof hideNudge === 'function') hideNudge('settingsSave');
 }
 async function exportSettings(){const d=await j('/api/company-settings/export');const b=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='settings.json';a.click()}
@@ -16228,8 +16477,32 @@ function loadExpAuctions(){
 // ── Lorry Reports ─────────────────────────────────────────
 function loadLorryAuctions(){
   fillAucSelect('lorry-auction');
+  fillLorryReportSelect();
 }
 const LORRY_LABELS={lot_slip_code:'Lot Slip (Code)',truck_list:'Truck List',buyer_lot_lorry:'Buyer Lot Lorry'};
+// Declared order drives the dropdown order.
+const LORRY_REPORTS=['lot_slip_code','truck_list','buyer_lot_lorry'];
+// Populate the Lorry report-selector dropdown (mirrors the Export Center) and
+// render its action row. Selection is preserved across re-renders.
+function fillLorryReportSelect(){
+  const sel=document.getElementById('lorry-report');
+  if(!sel) return;
+  const prev=sel.value;
+  sel.innerHTML=LORRY_REPORTS.map(k=>`<option value="${k}">${esc(LORRY_LABELS[k])}</option>`).join('');
+  if(prev && LORRY_REPORTS.includes(prev)) sel.value=prev;
+  renderLorryActions();
+}
+// Render the XLSX / PDF action buttons for the report picked in the dropdown.
+function renderLorryActions(){
+  const sel=document.getElementById('lorry-report');
+  const host=document.getElementById('lorry-actions');
+  if(!sel||!host) return;
+  const k=sel.value;
+  host.innerHTML=k
+    ? `<button class="btn btn-a" onclick="downloadLorry('${k}','xlsx')" style="height:38px;padding:0 16px;font-weight:600">Excel (XLSX)</button>`
+    + `<button class="btn btn-orange" onclick="downloadLorry('${k}','pdf')" style="height:38px;padding:0 16px;font-weight:600">PDF</button>`
+    : '';
+}
 async function downloadLorry(type,format){
   format=format||'xlsx';
   const aid=document.getElementById('lorry-auction')?.value;
@@ -17417,6 +17690,10 @@ async function saveLot(){
     if(!r.ok){const d=await r.json().catch(()=>({}));const err=new Error(d.error||'Save failed');err.status=r.status;throw err;}
     toast('Lot updated ✓');
     loadLots();
+    // Saving a lot does NOT re-run the server-side calc — Commission, Tax &
+    // Payable stay stale until "Calculate All". Nudge the user to do it.
+    if (typeof showNudge === 'function') showNudge('lotCalc', NUDGE_COPY.lotCalc.msg, NUDGE_COPY.lotCalc.action,
+      () => { if (typeof calculateAll === 'function') calculateAll(); });
   }catch(e){
     // Save failed — show error and re-open the modal pre-filled so the user can retry.
     showError(e);
@@ -17444,6 +17721,7 @@ async function calculateAll(){
       const d=await j(`/api/lots/calculate/${aid}`,{method:'POST'});
       toast(`Calculated ${d.calculated} lots`);
       await loadLots();
+      if (typeof hideNudge === 'function') hideNudge('lotCalc');
     });
   } catch(e) {
     showError(e);
@@ -20141,6 +20419,7 @@ async function loadTDS(){const f=document.getElementById('tds-from').value,t=doc
       { key:'tds', label:'TDS', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) }
     ]
   });
+  if (typeof hideNudge === 'function') hideNudge('tdsDate');
 }
 async function exportTDS(format){format=format||'xlsx';const f=document.getElementById('tds-from').value,t=document.getElementById('tds-to').value;
   if(!f||!t){alert('Select date range');return}

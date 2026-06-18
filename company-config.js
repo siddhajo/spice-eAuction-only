@@ -41,6 +41,7 @@ const DEFAULTS = [
   { key: 'cin',              value: '', category: 'company',     label: 'CIN',                      type: 'text' },
   { key: 'fssai',            value: '', category: 'company',     label: 'FSSAI No.',                type: 'text' },
   { key: 'sbl',              value: '', category: 'company',     label: 'SBL No.',                  type: 'text' },
+  { key: 'msme',             value: '', category: 'company',     label: 'MSME / Udyam No.',         type: 'text' },
 
   // ── ADDRESS (Kerala) ───────────────────────────────────────
   { key: 'kl_address1', value: '', category: 'address_kl', label: 'Address Line 1',  type: 'text' },

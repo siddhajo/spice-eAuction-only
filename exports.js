@@ -437,15 +437,16 @@ async function exportBankPayment(db, auctionId, cfg, _state, extra) {
     excludeLots: extra && extra.excludeLots,
   });
   const cols = [
-    { header: 'TransactionType', key: 'transactionType', width: 16 },
-    { header: 'BeneIFSCode', key: 'ifsc', width: 14 },
-    { header: 'BeneAcctNo', key: 'accountNo', width: 20 },
-    { header: 'BeneName', key: 'beneficiaryName', width: 30 },
-    { header: 'BeneAddLine1', key: 'address1', width: 30 },
-    { header: 'BeneAddLine2', key: 'address2', width: 20 },
-    { header: 'BeneAddLine3', key: 'pin', width: 10 },
-    { header: 'Amount', key: 'amount', width: 14 },
-    { header: 'SendertoRcvrInfo', key: 'remarks', width: 50 },
+    { header: 'PAYSYS ID (RTGS/NEFT)',     key: 'transactionType', width: 18 },
+    { header: 'DEBIT ACCOUNT',             key: 'debitAccount',    width: 20 },
+    { header: 'TRAN AMOUNT',               key: 'amount',          width: 14 },
+    { header: 'BENEFICIARY ACCOUNT',       key: 'accountNo',       width: 20 },
+    { header: 'BENEFICIARY ACCOUNT TYPE',  key: 'accountType',     width: 16 },
+    { header: 'BENEFICIARY NAME',          key: 'beneficiaryName', width: 30 },
+    { header: 'BENEFICIARY ADD1',          key: 'address1',        width: 30 },
+    { header: 'BENEFICIARY ADD2',          key: 'address2',        width: 20 },
+    { header: 'BENEFICIARY IFSC',          key: 'ifsc',            width: 14 },
+    { header: 'SENDER TO RECEIVER INFO',   key: 'remarks',         width: 50 },
   ];
   return createExcelBuffer('BankPayment', cols, payments, {
     db, title: 'Bank Payment (RTGS/NEFT)', metaLines: auctionMeta(db, auctionId),
