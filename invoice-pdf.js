@@ -116,6 +116,39 @@ function effectiveCompany(cfg) {
   };
 }
 
+// Render a vertical stack of "LABEL : value" rows with the colons vertically
+// aligned. Each label is measured in the CURRENTLY-set font/size; the widest
+// label fixes the colon column, so ragged labels (TRANSPORT / VEHICLE NO /
+// STATION …) line up. Returns the y just below the last row.
+//   pairs : array of [label, value]
+//   x     : left edge of the block (cell border)
+//   colW  : full width of the block (used to clip values)
+function drawColonRows(doc, pairs, x, startY, rowH, colW, opts) {
+  opts = opts || {};
+  const pad = opts.pad != null ? opts.pad : 6;     // inset from the cell border
+  const gap = opts.gap != null ? opts.gap : 4;     // space after the colon
+  const labelW = pairs.reduce((m, p) => Math.max(m, doc.widthOfString(String(p[0] == null ? '' : p[0]))), 0);
+  const colonX = x + pad + labelW + 2;
+  const valX   = colonX + doc.widthOfString(':') + gap;
+  let ry = startY;
+  for (const [label, value] of pairs) {
+    doc.text(String(label == null ? '' : label), x + pad, ry, { width: labelW + 1, lineBreak: false });
+    doc.text(':', colonX, ry, { lineBreak: false });
+    const v = value == null ? '' : String(value);
+    if (v) doc.text(v, valX, ry, { width: Math.max(10, x + colW - valX - 4), lineBreak: false });
+    ry += rowH;
+  }
+  return ry;
+}
+
+// Strip a leading "IMC/" prefix (case-insensitive, tolerant of surrounding
+// spaces) from a value before it's printed — used for the company SBL /
+// dispatch address on the Sales Invoice, where the operator doesn't want the
+// "IMC/" prefix shown.
+function stripImcPrefix(s) {
+  return String(s == null ? '' : s).replace(/^\s*IMC\s*\/\s*/i, '').trim();
+}
+
 // Purchase Invoice — layout matches ALL_PURCHASES-1-2.pdf reference.
 // Structure: TAX INVOICE title → seller (supplier) block → 2x4 grid of
 // transport + invoice details → BILLED/SHIPPED TO → HSN → 9-col table →
@@ -204,14 +237,10 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
     ['PLACE OF SUPPLY', (cfg.s_place || '').toUpperCase() + (cfg.s_state ? '  [' + (cfg.s_state || '').toUpperCase() + ']' : '')],
     ['REVERSE CHARGE', ''],
   ];
-  for (let i = 0; i < gridRows; i++) {
-    const rowY = y + i * gridRowH + 2;
-    const [lL, lV] = leftPairs[i];
-    const [rL, rV] = rightPairs[i];
-    // Left: label left, value after colon
-    doc.text(`${lL} : ${lV || ''}`, x0 + 6, rowY, { width: gridLeftW - 12 });
-    doc.text(`${rL} : ${rV || ''}`, gridSplitX + 6, rowY, { width: gridRightW - 12 });
-  }
+  // Render each column with the colons aligned (labels in each column line up).
+  doc.font('Helvetica').fontSize(8);
+  drawColonRows(doc, leftPairs,  x0,         y + 2, gridRowH, gridLeftW,  { pad: 6 });
+  drawColonRows(doc, rightPairs, gridSplitX, y + 2, gridRowH, gridRightW, { pad: 6 });
   y += gridH;
 
   // ── BILLED TO / SHIPPED TO row ──
@@ -250,25 +279,40 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
     gstin: _ident.gstin,
     pan: _ident.pan,
   };
-  buyerLines.push((buyer.name || '').toUpperCase());
+  // Plain (full-width) lines: name + address. Colon-bearing identity lines
+  // (GSTIN / PAN / STATE) are rendered separately with aligned colons.
+  const plainLines = [];
+  plainLines.push((buyer.name || '').toUpperCase());
   const buyerAddr = [buyer.address, buyer.place ? 'DOOR No.650, ' + buyer.place : ''].filter(Boolean).join(', ').toUpperCase();
-  if (buyerAddr) buyerLines.push(buyerAddr);
-  if (buyer.gstin) buyerLines.push('GSTIN    : ' + buyer.gstin);
-  if (buyer.pan) buyerLines.push('PAN      : ' + buyer.pan);
-  if (buyer.state) buyerLines.push('STATE    : ' + (buyer.state || '').toUpperCase() + '     CODE:' + (buyer.st_code || ''));
+  if (buyerAddr) plainLines.push(buyerAddr);
+  // The buyer on a purchase invoice IS our company. getCompanyIdentity only
+  // reads tn_gstin/gstin, so a Kerala company's GSTIN (stored in kl_gstin)
+  // comes back blank — fall back to the state-aware effectiveCompany() GSTIN
+  // so BILLED TO / SHIPPED TO always carry it.
+  const _coEff = effectiveCompany(cfg);
+  const buyerGstin = buyer.gstin || _coEff.gstin || '';
+  const buyerStCode = buyer.st_code || _coEff.stateCode || '';
+  const pairLines = [];
+  if (buyerGstin) pairLines.push(['GSTIN', buyerGstin]);
+  if (buyer.pan)  pairLines.push(['PAN', buyer.pan]);
+  if (buyer.state) pairLines.push(['STATE', (buyer.state || '').toUpperCase() + '     CODE:' + buyerStCode]);
 
   const bodyLineH = 10;
-  const buyerBodyH = Math.max(6, buyerLines.length + 1) * bodyLineH;
+  const totalLines = plainLines.length + pairLines.length;
+  const buyerBodyH = Math.max(6, totalLines + 1) * bodyLineH;
   doc.moveTo(x0, y).lineTo(x0, y + buyerBodyH).stroke();
   doc.moveTo(gridSplitX, y).lineTo(gridSplitX, y + buyerBodyH).stroke();
   doc.moveTo(x1, y).lineTo(x1, y + buyerBodyH).stroke();
   doc.moveTo(x0, y + buyerBodyH).lineTo(x1, y + buyerBodyH).stroke();
   doc.font('Helvetica').fontSize(8);
-  let ly = y + 3;
-  for (const line of buyerLines) {
-    doc.text(line, x0 + 6, ly, { width: gridLeftW - 12 });
-    doc.text(line, gridSplitX + 6, ly, { width: gridRightW - 12 });
-    ly += bodyLineH;
+  // Render the same content in both BILLED TO and SHIPPED TO columns.
+  for (const [colX, colW] of [[x0, gridLeftW], [gridSplitX, gridRightW]]) {
+    let ly = y + 3;
+    for (const line of plainLines) {
+      doc.text(line, colX + 6, ly, { width: colW - 12 });
+      ly += bodyLineH;
+    }
+    drawColonRows(doc, pairLines, colX, ly, bodyLineH, colW, { pad: 6 });
   }
   y += buyerBodyH;
 
@@ -924,7 +968,10 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   if (co.stateName) { doc.text(`State Name : ${co.stateName}, Code : ${co.stateCode}`, textX, ty, { width: textW }); ty += 10; }
   if (co.idValue) { doc.text(`${co.idLabel}: ${co.idValue}`, textX, ty, { width: textW }); ty += 10; }
   if (co.fssai) { doc.text(`FSSAI No.: ${co.fssai}`, textX, ty, { width: textW }); ty += 10; }
-  if (co.sbl)   { doc.text(`SBL No.: ${co.sbl}`,     textX, ty, { width: textW }); ty += 10; }
+  // SBL No. — drop the unwanted "IMC/" prefix and keep it on ONE line
+  // (lineBreak:false) so a long value can't wrap and spill into the block
+  // below it.
+  if (co.sbl)   { doc.text(`SBL No.: ${stripImcPrefix(co.sbl)}`, textX, ty, { width: textW, lineBreak: false }); ty += 10; }
   // MSME / Udyam registration — shown on the Sales (Tax) Invoice only, and
   // only when configured in Settings → Company details.
   if (!isPurchaseView && co.msme) { doc.text(`MSME No.: ${co.msme}`, textX, ty, { width: textW }); ty += 10; }
@@ -1145,12 +1192,15 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   const dispatchFromH = midH - rSmall;
   box(rightX, ry2, rightW, dispatchFromH);
   if (showDispatch) {
-    const dispatchFromText = String(
+    // Dispatch address (drop any unwanted "IMC/" prefix), with the company
+    // name prepended at the beginning per spec.
+    const dispatchAddr = stripImcPrefix(String(
       (invoiceData && invoiceData.dispatchFrom) ||
       cfg.kl_dispatch ||
       cfg.dispatch_from ||
       ''
-    ).trim();
+    ).trim());
+    const dispatchFromText = [co.name, dispatchAddr].filter(Boolean).join('\n');
     doc.font('Helvetica-Bold').fontSize(7).fillColor('#000')
        .text('Dispatch From:', rightX + 3, ry2 + 4, { width: rightW - 6 });
     if (dispatchFromText) {
