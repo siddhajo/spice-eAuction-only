@@ -662,43 +662,42 @@ function buildFormD(ctx, db, opts) {
   if (!isFinite(minRate)) minRate = 0;
   const avgRate = totalKilos > 0 ? (totalValue / totalKilos) : 0;
 
-  // Cumulative invoice value per buyer for this auction — a buyer with more
-  // than one invoice has their invoice totals (incl. commission/GST/TCS/gunny)
-  // summed. Keyed by buyer code AND name so it can be matched to the
-  // lot-derived buyers below. Invoices aren't branch-tagged, so this value is
-  // the buyer's whole-auction invoice total even when the report is
-  // branch-filtered (lots can't be split back out of a combined invoice).
-  const invByBuyer = new Map();
+  // Top buyers — built from the invoices table so each buyer appears exactly
+  // ONCE with their CUMULATIVE invoice value (a buyer with more than one
+  // invoice has the totals, incl. commission/GST/TCS/gunny, summed). Grouping
+  // on buyer code (falling back to name) dedupes buyers that would otherwise
+  // split into two rows. Invoices aren't branch-tagged, so the buyer figures
+  // are whole-auction even when the report is branch-filtered. If no invoices
+  // exist yet for the auction, fall back to lot-derived figures so the report
+  // still renders.
+  let buyersAll = [];
   const invRows = db ? db.all(
-    `SELECT TRIM(buyer) AS code, TRIM(buyer1) AS name, SUM(COALESCE(tot,0)) AS value
+    `SELECT MAX(TRIM(buyer1)) AS name, MAX(TRIM(buyer)) AS code,
+            SUM(COALESCE(qty,0)) AS kilos, SUM(COALESCE(tot,0)) AS value
        FROM invoices WHERE ano = ?
        GROUP BY UPPER(TRIM(COALESCE(NULLIF(TRIM(buyer),''), buyer1)))`,
     [auction.ano]) || [] : [];
-  for (const ir of invRows) {
-    const v = Number(ir.value) || 0;
-    if (ir.code) invByBuyer.set(String(ir.code).toUpperCase(), v);
-    if (ir.name) invByBuyer.set(String(ir.name).toUpperCase(), v);
+  if (invRows.length) {
+    buyersAll = invRows.map(r => ({
+      name: r.name || r.code || 'UNKNOWN',
+      kilos: Number(r.kilos) || 0,
+      value: Number(r.value) || 0,
+    }));
+  } else {
+    // Fallback (pre-invoicing): derive from lots, keyed on buyer code when
+    // present else the full name — normalised so one buyer = one row.
+    const buyerMap = new Map();
+    for (const r of rows) {
+      const code = String(r.buyer_code || '').trim();
+      const name = r.buyer1 || r.buyer_full || '';
+      const key = (code || name || 'UNKNOWN').toUpperCase().replace(/\s+/g, ' ').trim();
+      if (!buyerMap.has(key)) buyerMap.set(key, { name, kilos: 0, value: 0 });
+      const b = buyerMap.get(key);
+      b.kilos += Number(r.qty) || 0; b.value += Number(r.amount) || 0;
+    }
+    buyersAll = [...buyerMap.values()];
   }
-
-  // Top 5 buyers by kilos (kilos from the filtered lots; value from invoices).
-  const buyerMap = new Map();
-  for (const r of rows) {
-    const key = (r.buyer_code || r.buyer_full || 'UNKNOWN').toUpperCase();
-    if (!buyerMap.has(key)) buyerMap.set(key, {
-      code: String(r.buyer_code || '').trim(),
-      name: r.buyer1 || r.buyer_full, kilos: 0, lotValue: 0,
-    });
-    const b = buyerMap.get(key);
-    b.kilos += Number(r.qty) || 0; b.lotValue += Number(r.amount) || 0;
-  }
-  // Resolve each buyer's value to the cumulative invoice total; fall back to
-  // the lot hammer-price sum only if no invoice exists yet for that buyer.
-  for (const b of buyerMap.values()) {
-    let inv = invByBuyer.get(String(b.code).toUpperCase());
-    if (inv == null) inv = invByBuyer.get(String(b.name || '').toUpperCase());
-    b.value = (inv != null) ? inv : b.lotValue;
-  }
-  const top5 = [...buyerMap.values()].sort((a, b) => b.kilos - a.kilos).slice(0, 5);
+  const top5 = buyersAll.sort((a, b) => b.kilos - a.kilos).slice(0, 5);
   const top5Totals = top5.reduce((a, b) => ({ kilos: a.kilos + b.kilos, value: a.value + b.value }), { kilos: 0, value: 0 });
 
   const seasonStart = readSetting(db, 'season_start_year', '');
@@ -1085,11 +1084,15 @@ function buildFormC(ctx) {
     // Estate Reg / Licence # — prefer the seller's Spices Board Licence (SBL)
     // number, falling back to the GSTIN held in the `cr` (CR / GSTIN) column.
     // The SBL is stored in the seller's `aadhar` column, which doubles as
-    // Aadhaar OR SBL: a value matching the Aadhaar format (XXXX-XXXX-XXXX) is a
-    // real Aadhaar and is NOT used; anything else is treated as the SBL. When
-    // there's no SBL we fall back to the GSTIN (cr) — never the Aadhaar number.
+    // Aadhaar OR SBL. They are told apart by character content, not length:
+    //   • SBL always contains LETTERS — a 2-letter category code + "REG",
+    //     e.g. "ML/REG/16071/2021". Any value with a letter is the SBL.
+    //   • Aadhaar is purely numeric (12 digits, with or without
+    //     hyphen/space/dot separators) — never used here.
+    // So a value containing a letter → SBL (used); a digits-only value →
+    // Aadhaar → ignored, falling back to the GSTIN (cr). Never the Aadhaar.
     const aadhar = String(r.trader_aadhar || r.seller_aadhar || '').trim();
-    const sblNo = (aadhar && !/^\d{4}-\d{4}-\d{4}$/.test(aadhar)) ? aadhar : '';
+    const sblNo = /[A-Za-z]/.test(aadhar) ? aadhar : '';
     // Withdrawn lots (code = 'WD') are put for auction but not sold — they
     // appear in Form C with their Qty put, but Qty sold / Rate / Value = 0
     // and no bidder.
@@ -1121,18 +1124,17 @@ function buildFormC(ctx) {
     if (item.rate < minRate && item.rate > 0) minRate = item.rate;
     totalKilosPut += item.qtyPut; totalKilos += item.qtySold; totalValue += item.value;
   }
-  // Sort each bucket by Estate Registration # / Board Licence # so the
-  // PDF, Excel, and JSON outputs are deterministic and grouped by SBL.
-  // Empty/non-numeric IDs sink to the bottom of their bucket.
-  const _sblSort = (a, b) => {
-    const aw = String(a.regId || '').trim();
-    const bw = String(b.regId || '').trim();
-    if (!aw && bw) return 1;
-    if (aw && !bw) return -1;
-    return aw.localeCompare(bw, 'en', { numeric: true, sensitivity: 'base' });
+  // Sort each bucket by lot number (the Sl.No column) ascending, so the PDF,
+  // Excel, and JSON outputs are deterministic and read in lot order. Numeric
+  // lots sort numerically ("2" before "10"); non-numeric lots fall back to a
+  // natural string compare.
+  const _lotSort = (a, b) => {
+    const an = parseInt(a.lot, 10), bn = parseInt(b.lot, 10);
+    if (Number.isFinite(an) && Number.isFinite(bn) && an !== bn) return an - bn;
+    return String(a.lot || '').localeCompare(String(b.lot || ''), 'en', { numeric: true, sensitivity: 'base' });
   };
-  planters.sort(_sblSort);
-  dealers.sort(_sblSort);
+  planters.sort(_lotSort);
+  dealers.sort(_lotSort);
   if (!isFinite(minRate)) minRate = 0;
   const avg = totalKilos > 0 ? totalValue / totalKilos : 0;
   // Track Qty put and Qty sold separately so withdrawn lots (put > 0, sold = 0)
