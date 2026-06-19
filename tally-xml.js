@@ -221,23 +221,14 @@ function generSalesIspXML(rows, cfg, opts = {}) {
   const company       = opts.companyName || cfgGet(cfg, 'tally_company_name', cfgGet(cfg, 'short_name', 'Ideal Spices Private Limited'));
   const season        = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
   const separator     = opts.separator || cfgGet(cfg, 'tally_separator', '/');
-  // Voucher prefix priority for <VOUCHERNUMBER>:
-  //   1. tally_inv_prefix setting (e.g. 'VSTK') — explicit, season-stable
-  //   2. cfg.logo (live Logo Code) — back-compat for installs that
-  //      historically used the Logo Code as the prefix
-  //   3. 'ISP' literal — final safety net so we never emit blank prefixes
-  // Trailing '/' appended only if the code doesn't already end with one
-  // or '-'. The slash is necessary because <VOUCHERNUMBER> is rendered
-  // as `${invPrefix}${separator}${seasonNum}` and a missing slash
-  // produces invalid voucher numbers in Tally.
+  // Voucher prefix for <VOUCHERNUMBER> comes ONLY from the "Voucher Prefix"
+  // field (tally_inv_prefix) in To Tally settings. When the user clears it,
+  // NO prefix is added — we do NOT fall back to the Logo Code / short name.
+  // A blank setting yields a prefix-less voucher number (e.g. "L-9/26-27"
+  // instead of "ISP/L-9/26-27"). A trailing '/' is appended only when the
+  // value doesn't already end with '/' or '-'.
   const _tallyPrefix = String(cfgGet(cfg, 'tally_inv_prefix', '')).trim();
-  const _logoCode    = String(cfgGet(cfg, 'logo', '')).trim();
-  // Voucher prefix priority: tally_inv_prefix (Tally settings) → logo
-  // (Settings → Company) → identity.shortName (derived) → 'INV' as a
-  // generic last-resort label. Avoids leaking the legacy 'ISP' code
-  // into voucher numbers on installs where logo isn't configured.
-  const _activePrefix = _tallyPrefix || _logoCode || _getCompanyIdentity(cfg).shortName || 'INV';
-  const invPrefix = /[/\-]$/.test(_activePrefix) ? _activePrefix : (_activePrefix + '/');
+  const invPrefix = _tallyPrefix ? (/[/\-]$/.test(_tallyPrefix) ? _tallyPrefix : _tallyPrefix + '/') : '';
   const ainvPrefix    = cfgGet(cfg, 'tally_ainv_prefix', '');  // legacy ASP-prefix (sister company); empty means "no aux prefix"
   const detailed      = cfgBool(cfg, 'tally_detailed', true);
   // `dispatchEnabled` is derived below, once the dispatch-from address is
@@ -1354,13 +1345,11 @@ function generSalesXML(rows, cfg, opts = {}) {
   const company       = opts.companyName || cfgGet(cfg, 'tally_company_name', cfgGet(cfg, 'short_name', 'Ideal Spices Private Limited'));
   const season        = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
   const separator     = opts.separator || cfgGet(cfg, 'tally_separator', '/');
-  // Voucher prefix from Logo Code (single source of truth — see the
-  // ISP generator above for rationale). Falls through to the central
-  // identity resolver's shortName instead of leaking the legacy 'ISP'
-  // literal into voucher numbers.
-  const _logoCode2 = String(cfgGet(cfg, 'logo', '')).trim()
-                  || _getCompanyIdentity(cfg).shortName || 'INV';
-  const invPrefix     = /[/\-]$/.test(_logoCode2) ? _logoCode2 : (_logoCode2 + '/');
+  // Voucher prefix comes ONLY from the "Voucher Prefix" field
+  // (tally_inv_prefix); a blank setting means NO prefix (no Logo Code / short
+  // name fallback) — matching the ISP generator above.
+  const _vPrefix = String(cfgGet(cfg, 'tally_inv_prefix', '')).trim();
+  const invPrefix     = _vPrefix ? (/[/\-]$/.test(_vPrefix) ? _vPrefix : _vPrefix + '/') : '';
   // ainvPrefix and amazing are kept as locals so the dead ASP branches
   // below still parse, but `amazing` is force-disabled in this e-Auction-only
   // build — there is no sister-company Tally export here.

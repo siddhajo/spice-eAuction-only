@@ -100,7 +100,7 @@ const DEFAULTS = [
   { key: 'tds_threshold',       value: '0', category: 'rates', label: 'TDS / TCS Annual Threshold (₹)',               type: 'number' },
   { key: 'gunny_rate',          value: '0', category: 'rates', label: 'Gunny Rate (₹)',                               type: 'number' },
   { key: 'transport',           value: '0', category: 'rates', label: 'Transport (₹/kg)',                             type: 'number' },
-  { key: 'insurance',           value: '0', category: 'rates', label: 'Insurance (₹/kg)',                             type: 'number' },
+  { key: 'insurance',           value: '0', category: 'rates', label: 'Insurance Rate (₹/₹1000)',                     type: 'number' },
   { key: 'local_transport',     value: '0', category: 'rates', label: 'Local Transport (₹/kg)',                       type: 'number' },
   { key: 'local_insurance',     value: '0', category: 'rates', label: 'Local Insurance (₹/kg)',                       type: 'number' },
   { key: 'discount_pct',        value: '0', category: 'rates', label: 'Discount %',                                   type: 'number' },

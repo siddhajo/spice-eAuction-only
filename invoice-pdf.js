@@ -983,16 +983,11 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   const r1W = rightW / 3;
   let ry = topY;
 
-  // Invoice prefix derives from the live Logo Code (cfg.logo) so the
-  // Invoice prefix priority — Invoice Settings (`inv_prefix`) wins, since
-  // that's the field labeled "Invoice Prefix" in the Invoice settings tab
-  // and is the value the user explicitly maintains for this purpose.
-  // Falls back to Logo Code (`logo`) only when `inv_prefix` is unset, then
-  // to the user's short_name / trade_name first word. NO hardcoded 'ISP'
-  // literal — a fresh install with no Invoice Prefix configured renders
-  // a prefix-less identifier rather than leaking the legacy ISP code.
-  const _idShort = (cfg.short_name || String(cfg.trade_name || '').split(/\s+/)[0] || '').toUpperCase();
-  const primaryPrefix = String(cfg.inv_prefix || cfg.logo || _idShort || '').trim();
+  // Invoice prefix comes ONLY from the "Invoice Prefix" field (`inv_prefix`)
+  // in Invoice settings. When the user clears it, NO prefix is added — we do
+  // NOT fall back to the Logo Code / short name. So a blank setting yields a
+  // prefix-less invoice number (e.g. "L-9/26-27" instead of "ISP/L-9/26-27").
+  const primaryPrefix = String(cfg.inv_prefix || '').trim();
   const otherPrefix   = primaryPrefix; // dead — kept for the few downstream sites that still read it
   const primaryCfg    = { ...cfg, inv_prefix: primaryPrefix };
   // ASP invoices always use the "I" segment irrespective of local/interstate
