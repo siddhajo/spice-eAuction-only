@@ -664,10 +664,12 @@ function buildFormD(ctx, db, opts) {
 
   // Top buyers — built from the invoices table so each buyer appears exactly
   // ONCE with their CUMULATIVE invoice value (a buyer with more than one
-  // invoice has the totals, incl. commission/GST/TCS/gunny, summed). Grouping
-  // on buyer code (falling back to name) dedupes buyers that would otherwise
-  // split into two rows. Invoices aren't branch-tagged, so the buyer figures
-  // are whole-auction even when the report is branch-filtered. If no invoices
+  // invoice has the totals, incl. commission/GST/TCS/gunny, summed). We group
+  // on the TRADE NAME (`buyer1`, falling back to the buyer code) because the
+  // same buyer can have more than one buyer code — e.g. "ALLUS CARDAMOM POINT"
+  // invoiced under both "...ACP" and "...ACP0" — and must still collapse to a
+  // single row. Invoices aren't branch-tagged, so the buyer figures are
+  // whole-auction even when the report is branch-filtered. If no invoices
   // exist yet for the auction, fall back to lot-derived figures so the report
   // still renders.
   let buyersAll = [];
@@ -675,7 +677,7 @@ function buildFormD(ctx, db, opts) {
     `SELECT MAX(TRIM(buyer1)) AS name, MAX(TRIM(buyer)) AS code,
             SUM(COALESCE(qty,0)) AS kilos, SUM(COALESCE(tot,0)) AS value
        FROM invoices WHERE ano = ?
-       GROUP BY UPPER(TRIM(COALESCE(NULLIF(TRIM(buyer),''), buyer1)))`,
+       GROUP BY UPPER(TRIM(COALESCE(NULLIF(TRIM(buyer1),''), buyer)))`,
     [auction.ano]) || [] : [];
   if (invRows.length) {
     buyersAll = invRows.map(r => ({
@@ -684,13 +686,13 @@ function buildFormD(ctx, db, opts) {
       value: Number(r.value) || 0,
     }));
   } else {
-    // Fallback (pre-invoicing): derive from lots, keyed on buyer code when
-    // present else the full name — normalised so one buyer = one row.
+    // Fallback (pre-invoicing): derive from lots, keyed on the trade name
+    // (falling back to buyer code) — normalised so one buyer = one row.
     const buyerMap = new Map();
     for (const r of rows) {
       const code = String(r.buyer_code || '').trim();
       const name = r.buyer1 || r.buyer_full || '';
-      const key = (code || name || 'UNKNOWN').toUpperCase().replace(/\s+/g, ' ').trim();
+      const key = (name || code || 'UNKNOWN').toUpperCase().replace(/\s+/g, ' ').trim();
       if (!buyerMap.has(key)) buyerMap.set(key, { name, kilos: 0, value: 0 });
       const b = buyerMap.get(key);
       b.kilos += Number(r.qty) || 0; b.value += Number(r.amount) || 0;
