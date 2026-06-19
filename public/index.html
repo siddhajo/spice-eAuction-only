@@ -11944,7 +11944,7 @@ async function loadLotsSummary(){
       ['Withdrawn', inr2(wd.cost)],
     ]);
     // Price tile → Avg headline, Min / Max meta
-    if (priceEl) priceEl.innerHTML = `<span class="kpi-unit" style="margin-right:4px">₹</span>${Number(ba.avg||0).toLocaleString('en-IN',{minimumFractionDigits:0,maximumFractionDigits:0})}<span class="kpi-unit"> /kg</span>`;
+    if (priceEl) priceEl.innerHTML = `<span class="kpi-unit" style="margin-right:4px">₹</span>${Number(ba.avg||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}<span class="kpi-unit"> /kg</span>`;
     setKpiMeta('lot-kpi-price-meta', [
       ['Min', inr(ba.min)],
       ['Max', inr(ba.max)],
