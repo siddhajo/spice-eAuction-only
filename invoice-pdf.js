@@ -928,14 +928,17 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   const leftX = x0;
   const rightX = x0 + leftW;
 
-  // Right-side grid cell sizes — 2 rows, sized so combined height matches
-  // the left company-details block (logo + name + address + GSTIN + State + CIN + optional FSSAI + SBL).
-  const topHeaderH = 100;
-  const rRow = topHeaderH / 2;       // 50pt each row
+  // Right-side grid cell width (2-col rows). The header HEIGHT (topHeaderH /
+  // rRow) is computed AFTER the left company-details block is laid out, so the
+  // box grows to fit however many detail lines this company has (name +
+  // address + GSTIN + State + CIN + optional FSSAI + SBL + MSME). A fixed
+  // 100pt height used to clip the last line (SBL) below the border, spilling
+  // it into the Consignee block underneath.
   const rCell = rightW / 2;          // each cell's width for 2-col rows
 
   // ── LEFT BLOCK: Logo + company details ──────────────────────
-  box(leftX, topY, leftW, topHeaderH);
+  // The bounding box is stroked AFTER the text below (box() only draws a
+  // border, never a fill), once its true height is known.
   // Logo file pick. For ASP sales invoice → ASP logo. For ASP purchase view
   // (issuer is ISPL, not ASP) → ISPL logo.
   const useASPLogo = !isPurchaseView
@@ -975,6 +978,15 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   // MSME / Udyam registration — shown on the Sales (Tax) Invoice only, and
   // only when configured in Settings → Company details.
   if (!isPurchaseView && co.msme) { doc.text(`MSME No.: ${co.msme}`, textX, ty, { width: textW }); ty += 10; }
+
+  // Size the header to fit the taller of: the left content just rendered
+  // (down to `ty`, plus a little bottom padding) or the original 100pt
+  // minimum (keeps short-profile companies and the 2-row right grid looking
+  // balanced). This stops the last detail line spilling past the border into
+  // the Consignee block below.
+  const topHeaderH = Math.max(100, (ty - topY) + 4);
+  const rRow = topHeaderH / 2;       // each right-grid row's height
+  box(leftX, topY, leftW, topHeaderH);
 
   // ── RIGHT BLOCK: 2-row metadata grid ────────────────────────
   // Row 1: Invoice No | e-Way Bill No | Dated
