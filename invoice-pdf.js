@@ -971,7 +971,7 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   // SBL No. — drop the unwanted "IMC/" prefix and keep it on ONE line
   // (lineBreak:false) so a long value can't wrap and spill into the block
   // below it.
-  if (co.sbl)   { doc.text(`SBL No.: ${stripImcPrefix(co.sbl)}`, textX, ty, { width: textW, lineBreak: false }); ty += 10; }
+  if (co.sbl)   { doc.text(`SBL No.: ${stripImcPrefix(co.sbl)}`, textX, ty, { width: textW, lineBreak: false, ellipsis: true }); ty += 10; }
   // MSME / Udyam registration — shown on the Sales (Tax) Invoice only, and
   // only when configured in Settings → Company details.
   if (!isPurchaseView && co.msme) { doc.text(`MSME No.: ${co.msme}`, textX, ty, { width: textW }); ty += 10; }
@@ -2599,13 +2599,16 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
   // 13 leaf columns. CGST/SGST/IGST each split RATE | AMOUNT.
   const cols = [
     { key: 'lot',   w: 26 },   // 0
-    { key: 'desc',  w: 60 },   // 1  (trimmed: "CARDAMOM"/"SAMPLE REFUND" still fit)
+    { key: 'desc',  w: 74 },   // 1  wide enough that "SAMPLE REFUND" (~64pt at
+                               //    7.5pt) fits on ONE line — at 60 it overflowed
+                               //    and PDFKit wrapped it, overlapping the next row
     { key: 'hsn',   w: 44 },   // 2  (trimmed)
     { key: 'qty',   w: 50 },   // 3
     { key: 'bags',  w: 32 },   // 4
     { key: 'rate',  w: 44 },   // 5
-    { key: 'cost',  w: 93 },   // 6  CARDAMOM COST / TAXABLE VALUE — widened so
-                               //    large (lakh/crore) lot values don't truncate
+    { key: 'cost',  w: 79 },   // 6  CARDAMOM COST / TAXABLE VALUE — still ample
+                               //    for lakh/crore values (drawNum auto-shrinks);
+                               //    gave 14pt to the DESCRIPTION column
     { key: 'cgstR', w: 28 },   // 7
     { key: 'cgstA', w: 50 },   // 8
     { key: 'sgstR', w: 28 },   // 9
