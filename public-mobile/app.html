@@ -804,6 +804,11 @@ function renderRecentLots(){
 
 // Open a print URL in a popup that auto-closes after printing.
 function printAndClose(url){
+  // Android Chrome can't render/print a PDF inside an iframe — it downloads it
+  // instead, so iframe.contentWindow.print() silently fails (works on iOS only).
+  // On Android open the PDF as a top-level tab; Chrome's PDF viewer has its own
+  // Print action (menu → Print). See receipt routes serving application/pdf.
+  if(/Android/i.test(navigator.userAgent)){window.open(url,'_blank');return}
   var w=window.open('','_blank','width=420,height=620');
   if(!w){window.open(url,'_blank');return}
   var html='<!DOCTYPE html><html><head><title>Print Receipt</title><style>html,body{margin:0;padding:0;height:100%;background:#fff;font-family:system-ui,Arial,sans-serif}.bar{padding:8px 12px;background:#0d7c5f;color:#fff;font-size:12px;display:flex;gap:8px;align-items:center}.bar button{margin-left:auto;background:#fff;color:#0d7c5f;border:0;border-radius:5px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer}iframe{border:0;width:100%;height:calc(100% - 34px)}<\/style></head><body>'
