@@ -11165,7 +11165,14 @@ async function leEditLot(lotId){
   document.getElementById('le-bags').value   = lot.bags ?? '';
   document.getElementById('le-litre').value  = lot.litre ?? '';
   document.getElementById('le-qty').value    = lot.qty ?? '';
-  document.getElementById('le-sample').value = lot.sample_wt ?? (_le.sampleWeight ? _le.sampleWeight.toFixed(3) : '0.000');
+  // Sample Wt is a readonly, config-driven field (no per-lot input), so on
+  // edit show the CONFIGURED sample weight whenever the lot's stored value
+  // is 0/absent — older or imported lots have sample_wt=0. A bare `??`
+  // failed here because the list endpoint returns a raw numeric 0, which
+  // `??` keeps instead of falling back. Mirrors the mobile PWA behaviour.
+  document.getElementById('le-sample').value = (Number(lot.sample_wt) > 0)
+    ? Number(lot.sample_wt).toFixed(3)
+    : (_le.sampleWeight ? _le.sampleWeight.toFixed(3) : '0.000');
   const moistureEl = document.getElementById('le-moisture');
   if (moistureEl) moistureEl.value = lot.moisture || '';
   // Crop Receipt + Reserved Price — populate from the existing lot
