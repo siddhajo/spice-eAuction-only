@@ -16314,34 +16314,43 @@ function openPriceImport(){
   _fillExportSelect('pi-preauction-report', EXP_PREAUCTION, renderPiPreauctionActions);
   showModal('price-import-modal');
 }
-// Build the download-action row for the snapshot report picked in the Price
-// Import reminder dropdown. Mirrors the Export Center actions but uses
-// piQuickExport (download-only, anchored to the Lots-tab auction): e-Auction
-// CSV is CSV-only, every other snapshot offers XLSX + PDF.
+// Build the action row for the snapshot report picked in the Price Import
+// reminder dropdown. Mirrors the Export Center actions but anchored to the
+// Lots-tab auction: e-Auction CSV is CSV-only; every other snapshot offers
+// Preview / Print / XLSX / PDF.
 function renderPiPreauctionActions(){
   const sel=document.getElementById('pi-preauction-report');
   const host=document.getElementById('pi-preauction-actions');
   if(!sel||!host) return;
   const k=sel.value;
   if(!k){ host.innerHTML=''; return; }
-  const btn=(label,fmt)=>`<button class="btn btn-o" type="button" onclick="piQuickExport('${k}','${fmt}')" style="padding:3px 8px;font-size:11px;font-weight:600">${label}</button>`;
+  const btn=(label,onclick)=>`<button class="btn btn-o" type="button" onclick="${onclick}" style="padding:3px 8px;font-size:11px;font-weight:600">${label}</button>`;
   host.innerHTML = EXP_CSV_ONLY.has(k)
-    ? btn('📄 CSV','csv')
-    : btn('📊 XLSX','xlsx') + btn('📄 PDF','pdf');
+    ? btn('📄 CSV',`piQuickExport('${k}','csv')`)
+    : btn('👁 Preview',`piQuickPreview('${k}')`)
+      + btn('🖨 Print',`piQuickPrint('${k}')`)
+      + btn('📊 XLSX',`piQuickExport('${k}','xlsx')`)
+      + btn('📄 PDF',`piQuickExport('${k}','pdf')`);
 }
 function piAckChanged(){
   const ack=document.getElementById('pi-ack');
   const submit=document.getElementById('pi-submit');
   if(submit) submit.disabled=!(ack && ack.checked);
 }
-// Quick-download for the "before auction" snapshot reports surfaced inside
-// the Price Import reminder banner. Uses the auction picked in the Lots tab
-// (where Price Import is launched from), falling back to the Exports picker.
-// e-Auction CSV is CSV-only; the others offer XLSX + PDF.
-async function piQuickExport(type, format){
-  const aid=document.getElementById('lot-auction')?.value
+// Resolve the auction for the Price Import snapshot actions: the Lots-tab
+// picker (where Price Import is launched from) wins, then the Exports /
+// Payments selectors as fallbacks. Returns '' when nothing is picked.
+function _piAuctionId(){
+  return document.getElementById('lot-auction')?.value
     ||document.getElementById('exp-auction')?.value
-    ||document.getElementById('pay-auction')?.value;
+    ||document.getElementById('pay-auction')?.value
+    ||'';
+}
+// Quick-download for the "before auction" snapshot reports surfaced inside
+// the Price Import reminder banner. e-Auction CSV is CSV-only; the others
+// offer XLSX + PDF.
+async function piQuickExport(type, format){
+  const aid=_piAuctionId();
   if(!aid){
     alert('Pick an auction in the Lots tab first — the snapshots need to know which auction to export.');
     return;
@@ -16349,6 +16358,20 @@ async function piQuickExport(type, format){
   let fmt=(format||'').toLowerCase();
   if(!fmt) fmt=(type==='eauction_csv') ? 'csv' : 'pdf';
   await exportType(type, fmt, aid);
+}
+// Preview / Print the picked snapshot's PDF inline — same actions as the
+// Export Center, but anchored to the Lots-tab auction so they work from the
+// Price Import modal. CSV-only reports (e-Auction) have no PDF and aren't
+// offered these buttons.
+async function piQuickPreview(type){
+  const aid=_piAuctionId();
+  if(!aid){ alert('Pick an auction in the Lots tab first — the snapshots need to know which auction to export.'); return; }
+  await exportPreview(type, aid);
+}
+async function piQuickPrint(type){
+  const aid=_piAuctionId();
+  if(!aid){ alert('Pick an auction in the Lots tab first — the snapshots need to know which auction to export.'); return; }
+  await exportPrint(type, aid);
 }
 
 async function doPriceImport(){
@@ -20668,8 +20691,11 @@ function _expSellersQs(type){
 }
 // Fetch an export as a PDF blob (shared by Preview + Print). Returns a blob
 // URL or null on failure (alert already shown).
-async function _expPdfBlobUrl(type){
-  const aid=document.getElementById('exp-auction')?.value||document.getElementById('pay-auction')?.value;
+async function _expPdfBlobUrl(type, aidOverride){
+  // aidOverride lets non-Exports-tab callers (e.g. the Price Import modal's
+  // pre-trade snapshot Preview/Print, anchored to the Lots-tab auction) pass
+  // an explicit auction id. Falls through to the Exports/Payments selectors.
+  const aid=aidOverride||document.getElementById('exp-auction')?.value||document.getElementById('pay-auction')?.value;
   if(!aid){alert('Select an auction first');return null}
   const url = B+`/api/exports/${type}/${aid}?format=pdf${_expSellersQs(type)}`;
   const r = await fetch(url,{headers:{'Authorization':'Bearer '+T}});
@@ -20683,19 +20709,19 @@ async function _expPdfBlobUrl(type){
 }
 // Preview an export's PDF inline in a new tab (mirrors the Spice Board
 // screen's Preview action).
-async function exportPreview(type){
+async function exportPreview(type, aidOverride){
   const label = (EXP_LABELS[type]||type);
   await withOverlay(`Preparing ${label} preview…`, async () => {
-    const blobUrl = await _expPdfBlobUrl(type);
+    const blobUrl = await _expPdfBlobUrl(type, aidOverride);
     if (blobUrl) window.open(blobUrl);
   });
 }
 // Print an export's PDF — opens the rendered PDF in a new window and fires the
 // browser print dialog (mirrors the Spice Board screen's Print action).
-async function exportPrint(type){
+async function exportPrint(type, aidOverride){
   const label = (EXP_LABELS[type]||type);
   await withOverlay(`Preparing ${label} for print…`, async () => {
-    const blobUrl = await _expPdfBlobUrl(type);
+    const blobUrl = await _expPdfBlobUrl(type, aidOverride);
     if (!blobUrl) return;
     const w = window.open(blobUrl);
     if (w) { w.addEventListener('load', () => { try { w.focus(); w.print(); } catch(_){} }); }
