@@ -4626,6 +4626,40 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </div>
         </div><!-- /tally-sec-single-voucher -->
 
+        <!-- Single Invoice Voucher picker -->
+        <div class="tally-section" id="tally-sec-single-invoice">
+        <h3 class="tally-section-head" onclick="toggleTallySection('tally-sec-single-invoice')">
+          <span class="tally-section-chev">▼</span>
+          <span>🧾 Single Invoice Voucher</span>
+        </h3>
+        <div class="tally-section-body">
+        <div style="padding:14px;border:1px solid var(--border);border-radius:10px;background:#fff">
+          <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Pick one sales invoice from this auction and download just that voucher's XML. Handy when a single invoice was missed or edited after the bulk import and you don't want to re-import the whole trade.</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+            <div style="flex:2;min-width:220px"><label style="font-size:11px;color:var(--text2);font-weight:600">Search</label>
+              <div class="tally-search" id="tally-inv-search-wrap">
+                <span class="tally-search-icon">🔍</span>
+                <input type="text" id="tally-inv-search" placeholder="Type to filter by invoice no, buyer, or GSTIN…" oninput="onTallySearchInput('tally-inv-search', renderTallyInvoiceList)">
+                <button type="button" class="tally-search-clear" onclick="clearTallySearch('tally-inv-search', renderTallyInvoiceList)" title="Clear">✕</button>
+              </div>
+            </div>
+            <div style="flex:1;min-width:140px"><label style="font-size:11px;color:var(--text2);font-weight:600">Filter by sale type</label>
+              <select id="tally-inv-sale" onchange="renderTallyInvoiceList()" style="width:100%;padding:7px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+                <option value="">All sale types</option>
+                <option value="L">L — Local</option>
+                <option value="I">I — Inter-state</option>
+                <option value="E">E — Export</option>
+              </select>
+            </div>
+            <button class="btn btn-a" onclick="loadTallyInvoices()" style="padding:7px 14px;font-size:12px">Refresh List</button>
+          </div>
+          <div id="tally-inv-list" style="margin-top:10px;max-height:380px;overflow:auto;border:1px solid var(--border);border-radius:6px;background:var(--bg)">
+            <div style="padding:14px;color:var(--text3);font-size:12px;text-align:center">Pick an auction and click <strong>Refresh List</strong> to load invoices.</div>
+          </div>
+        </div>
+        </div>
+        </div><!-- /tally-sec-single-invoice -->
+
         <div class="tally-section" id="tally-sec-vouchers">
         <h3 class="tally-section-head" onclick="toggleTallySection('tally-sec-vouchers')">
           <span class="tally-section-chev">▼</span>
@@ -21857,6 +21891,10 @@ function loadTallyAuctions(){
       if(list)list.innerHTML=resetMsg;
       const pvList=document.getElementById('tally-pv-list');
       if(pvList)pvList.innerHTML=resetMsg;
+      // also clear the single-invoice voucher list
+      _tallyInvoices=null;
+      const invList=document.getElementById('tally-inv-list');
+      if(invList)invList.innerHTML='<div style="padding:14px;color:var(--text3);font-size:12px;text-align:center">Auction changed — click <strong>Refresh List</strong> to reload invoices.</div>';
     });
     sel.dataset.tallyBound='1';
   }
@@ -22161,6 +22199,90 @@ async function tallyDownloadPartyVoucher(type,partyName){
     a.download=`Tally_${type}_${safeName}_${aid}.xml`;a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),5000);
     toast(`Downloaded ${TALLY_LABELS[type]||type} voucher for ${partyName}`);
+  });
+}
+
+// ── Single Invoice Voucher list ──────────────────────────────────
+// Lists the auction's ISP sales invoices (by invoice number) and lets the
+// user download a single invoice's sales voucher XML. Mirrors the Single
+// Party Voucher picker but keyed on the invoice rather than the buyer —
+// operators usually know the invoice number, not the party name. Each row
+// hits /api/tally/invoice-voucher/<auctionId>?id=<invoiceId>.
+let _tallyInvoices=null;
+async function loadTallyInvoices(){
+  const aid=document.getElementById('tally-auction')?.value;
+  if(!aid){alert('Select an auction first');return}
+  const list=document.getElementById('tally-inv-list');
+  if(list)list.innerHTML='<div style="padding:14px;color:var(--text3);font-size:12px;text-align:center">Loading invoices…</div>';
+  try{
+    const r=await fetch(B+`/api/tally/invoices/${aid}`,{headers:{'Authorization':'Bearer '+T}});
+    if(!r.ok){
+      let msg='Failed to load invoices';
+      try{const e=await r.json();if(e.error)msg=e.error}catch(x){}
+      if(list)list.innerHTML=`<div style="padding:14px;color:#C62828;font-size:12px;text-align:center">${esc(msg)}</div>`;
+      return;
+    }
+    const data=await r.json();
+    _tallyInvoices=data.invoices||[];
+    renderTallyInvoiceList();
+  }catch(e){
+    if(list)list.innerHTML=`<div style="padding:14px;color:#C62828;font-size:12px;text-align:center">Error: ${esc(e.message)}</div>`;
+  }
+}
+function renderTallyInvoiceList(){
+  const list=document.getElementById('tally-inv-list');
+  if(!list)return;
+  if(!_tallyInvoices){
+    list.innerHTML='<div style="padding:14px;color:var(--text3);font-size:12px;text-align:center">Click <strong>Refresh List</strong> to load invoices.</div>';
+    return;
+  }
+  const q=(document.getElementById('tally-inv-search')?.value||'').toLowerCase().trim();
+  const saleFilter=document.getElementById('tally-inv-sale')?.value||'';
+  const filtered=_tallyInvoices.filter(iv=>{
+    if(saleFilter&&String(iv.sale||'').toUpperCase()!==saleFilter)return false;
+    if(q){
+      const hay=`${iv.sale}-${iv.invo} ${iv.partyName||''} ${iv.gstin||''}`.toLowerCase();
+      if(!hay.includes(q))return false;
+    }
+    return true;
+  });
+  if(filtered.length===0){
+    list.innerHTML='<div style="padding:14px;color:var(--text3);font-size:12px;text-align:center">No invoices match.</div>';
+    return;
+  }
+  let html=`<div style="padding:6px 12px;background:var(--green-bg);font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.5px">Sales Invoices · ${filtered.length}</div>`;
+  for(const iv of filtered){
+    const vno=`${iv.sale?iv.sale+'-':''}${iv.invo}`;
+    const amt=(iv.total!=null)?'₹'+Number(iv.total).toLocaleString('en-IN',{maximumFractionDigits:2}):'';
+    const lots=iv.lotCount?` · ${iv.lotCount} lot${iv.lotCount===1?'':'s'}`:'';
+    const safeLabel=String(vno).replace(/'/g,"\\'").replace(/"/g,'&quot;');
+    html+=`<div style="padding:8px 12px;border-bottom:1px solid var(--border);background:#fff;display:flex;align-items:center;gap:10px">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="color:var(--green)">${esc(vno)}</span> · ${esc(iv.partyName||'')}</div>
+        <div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${iv.gstin?esc(iv.gstin):'<em>No GSTIN</em>'}${amt?' · '+esc(amt):''}${lots}</div>
+      </div>
+      <button class="btn btn-g" onclick="tallyDownloadInvoiceVoucher('${iv.id}','${safeLabel}')" style="padding:5px 10px;font-size:11px;flex:0 0 auto">Download</button>
+    </div>`;
+  }
+  list.innerHTML=html;
+}
+async function tallyDownloadInvoiceVoucher(id,label){
+  const aid=document.getElementById('tally-auction')?.value;
+  if(!aid){alert('Select an auction first');return}
+  await withOverlay(`Generating invoice ${label} voucher XML…`, async () => {
+    const url=B+`/api/tally/invoice-voucher/${aid}?id=${encodeURIComponent(id)}`;
+    const r=await fetch(url,{headers:{'Authorization':'Bearer '+T}});
+    if(!r.ok){
+      let msg='Invoice voucher export failed';
+      try{const e=await r.json();if(e.error)msg=e.error}catch(x){}
+      toast(msg);return;
+    }
+    const blob=await r.blob();
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+    const safeName=String(label).replace(/[^a-zA-Z0-9]/g,'_').slice(0,40);
+    a.download=`Tally_InvoiceVoucher_${safeName}_${aid}.xml`;a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+    toast(`Downloaded voucher for invoice ${label}`);
   });
 }
 

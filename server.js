@@ -9704,6 +9704,86 @@ app.get('/api/tally/party-voucher/:type/:auctionId', requireExport, (req, res) =
   }
 });
 
+// ── Single INVOICE voucher ───────────────────────────────────
+// Operators usually know the invoice number, not the buyer name. This
+// pair lets them pick one sales invoice from the auction and re-import
+// just that voucher into Tally — handy when a single invoice was missed
+// or edited after the bulk import and re-importing the whole trade would
+// create duplicates. Scoped to ISP sales invoices (the `invoices` table);
+// both endpoints reuse buildSalesIspRows so the picker list and the
+// generated voucher are guaranteed to be 1:1.
+
+// List the auction's sales invoices for the picker.
+app.get('/api/tally/invoices/:auctionId', requireExport, (req, res) => {
+  const { auctionId } = req.params;
+  try {
+    const db = getDb();
+    const cfg = getSettingsFlat(db);
+    const rows = buildSalesIspRows(db, auctionId, cfg);
+    const invoices = rows.map(r => ({
+      id: r.id,
+      invo: r.invo,
+      sale: r.sale,
+      partyName: r.partyName,
+      gstin: r.partyGstin || '',
+      date: r.date,
+      lotCount: Array.isArray(r.lots) ? r.lots.length : 0,
+      total: r.total,
+    }));
+    res.json({
+      auctionId,
+      total: invoices.length,
+      targetCompany: resolveTallyCompanyName(cfg, 'isp'),
+      invoices,
+    });
+  } catch (e) {
+    console.error('tally invoices list error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Single sales-invoice voucher XML — emits exactly one voucher.
+// Identify the invoice by its row id (?id=); falls back to invoice
+// number + sale type (?invo=&sale=) for callers that only have those.
+app.get('/api/tally/invoice-voucher/:auctionId', requireExport, (req, res) => {
+  const { auctionId } = req.params;
+  const wantId   = req.query.id != null && req.query.id !== '' ? String(req.query.id) : '';
+  const wantInvo = String(req.query.invo || '').trim();
+  const wantSale = String(req.query.sale || '').trim().toUpperCase();
+  if (!wantId && !wantInvo) {
+    return res.status(400).json({ error: 'Missing ?id=<invoiceId> (or ?invo=<no>&sale=<L|I|E>)' });
+  }
+  try {
+    const db = getDb();
+    const cfg = getSettingsFlat(db);
+    const allRows = buildSalesIspRows(db, auctionId, cfg);
+    let rows;
+    if (wantId) {
+      rows = allRows.filter(r => String(r.id) === wantId);
+    } else {
+      rows = allRows.filter(r =>
+        String(r.invo).trim() === wantInvo &&
+        (!wantSale || String(r.sale).trim().toUpperCase() === wantSale)
+      );
+    }
+    if (rows.length === 0) {
+      const what = wantId ? `#${wantId}` : `${wantSale ? wantSale + '-' : ''}${wantInvo}`;
+      return res.status(404).json({ error: `Invoice ${what} not found in auction ${auctionId}` });
+    }
+    const xml = generSalesIspXML(rows, cfg, { companyName: resolveTallyCompanyName(cfg, 'isp') });
+    const first = rows[0];
+    const label = `${first.sale ? first.sale + '-' : ''}${first.invo || first.id}`;
+    const safeName = String(label).replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40);
+    const filename = `Tally_InvoiceVoucher_${safeName}_${auctionId}.xml`;
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(xml);
+  } catch (e) {
+    console.error('tally invoice-voucher error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // XML download endpoint — the main thing.
 // Lorry / vehicle no on sales vouchers comes straight from invoices.lorry_no
 // (set via the Sales tab's "Set Lorry No" bulk action). The Tally row

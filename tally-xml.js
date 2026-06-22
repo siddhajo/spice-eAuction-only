@@ -2657,6 +2657,10 @@ function buildSalesIspRows(db, auctionId, cfg) {
     }
 
     out.push({
+      // invoices.id — carried through so callers can filter to exactly one
+      // invoice (e.g. the Single Invoice Voucher export). Generators ignore
+      // unknown fields, so this is additive and safe.
+      id: r.id,
       ano: r.ano,
       date: r.date,
       sale: r.sale,
