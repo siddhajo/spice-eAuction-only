@@ -1146,6 +1146,10 @@ body:not([data-feat-lot-lock="1"]) .feat-lot-lock{display:none !important}
 /* Reserved Price (Lot Entry) — gated by flag_reserved_price. When the
    flag is OFF the input + its label collapse cleanly via .feat-reserved-price. */
 body:not([data-feat-reserved-price="1"]) .feat-reserved-price{display:none !important}
+/* Validate Lots — gated by flag_lot_validation. When OFF the Lot Entry
+   "Validate Lots" button + the price-import gate banner collapse via
+   .feat-lot-validation (and the server-side import gate is a no-op too). */
+body:not([data-feat-lot-validation="1"]) .feat-lot-validation{display:none !important}
 /* Config-driven external link buttons in the Lots / To Tally screen
    headers. Each appears only when its URL config (link_lots_url /
    link_tally_url) has a value — applyFeatureFlags() flips the body
@@ -3384,6 +3388,10 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">My Today's Lots</div>
             <div id="le-stats" style="height:38px;padding:0 12px;display:inline-flex;align-items:center;background:var(--green-bg);color:var(--green);font-weight:700;border-radius:8px;font-size:14px;font-family:monospace">0 lots · 0 kg</div>
           </div>
+          <!-- Validate the entered lots for this trade (flag_lot_validation).
+               Sits here so the operator can check the lots tally right after
+               entry; price import (Lots tab) is also gated on this. -->
+          <button id="le-validate-btn" class="needs-lot-write btn btn-o feat-lot-validation" style="height:38px;padding:0 16px;font-weight:600;margin-left:auto" onclick="openLotValidate(document.getElementById('le-auction').value)" title="Check the entered lots tally — no duplicate lots, no sellers missing details — before price import">✅ Validate Lots</button>
         </div>
         </div>
       </div>
@@ -5593,9 +5601,52 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   <div class="fg" style="margin-top:10px"><label>Select File (.xls or .xlsx)</label>
     <input type="file" id="pi-file" accept=".xls,.xlsx" style="padding:6px">
   </div>
+
+  <!-- Lot-validation gate banner (flag_lot_validation). Rendered by
+       piRefreshValidationGate() when the picked trade hasn't passed
+       "Validate Lots" yet. Hidden when the flag is off or the trade is
+       already validated. -->
+  <div id="pi-validate-gate" class="feat-lot-validation" style="display:none;background:#FEE2E2;border:1px solid #DC2626;border-radius:8px;padding:12px 14px;margin-top:14px">
+    <div style="font-weight:700;color:#7F1D1D;font-size:13px;margin-bottom:4px">🚫 Validate entered lots first</div>
+    <div style="font-size:12px;color:#7F1D1D;margin-bottom:8px;line-height:1.45" id="pi-validate-gate-msg">
+      This trade's entered lots haven't been validated. Run validation and resolve any issues before importing prices.
+    </div>
+    <button class="btn btn-o" type="button" onclick="hideModal('price-import-modal');openLotValidate()" style="padding:6px 14px;font-size:12px;font-weight:700">✅ Validate Lots →</button>
+  </div>
+
   <div class="actions">
     <button class="btn btn-o" onclick="hideModal('price-import-modal')">Cancel</button>
     <button class="btn btn-g" id="pi-submit" onclick="doPriceImport()" disabled>Import Prices</button>
+  </div>
+</div></div>
+
+<!-- ═══ VALIDATE ENTERED LOTS ═══════════════════════════════ -->
+<!-- Pre-price-import safety net (flag_lot_validation). Shows a
+     reconciliation of entered lots, hard errors (duplicate lots, lots
+     with no seller) that block import, and acknowledge-able warnings
+     (sellers missing GSTIN / bank / PAN / phone). Confirming stamps the
+     gate that doPriceImport() checks. -->
+<div class="modal-bg" id="lot-validate-modal"><div class="modal" style="max-width:760px;display:flex;flex-direction:column;max-height:90vh;overflow:hidden;padding:0">
+  <!-- Flex column: fixed header, scrolling body, fixed footer. This keeps
+       the action buttons pinned at the bottom and stops the lot list from
+       overflowing past them. -->
+  <div style="flex-shrink:0;padding:24px 28px 10px">
+    <h2 style="margin:0 0 8px">Validate Entered Lots</h2>
+    <div id="lv-subtitle" style="font-size:12px;color:var(--spice-text-mute)"></div>
+  </div>
+  <div id="lv-body" style="flex:1 1 auto;overflow-y:auto;padding:4px 28px 10px;min-height:80px">
+    <div style="padding:24px;text-align:center;color:var(--spice-text-mute)">Loading…</div>
+  </div>
+  <div id="lv-footer" style="flex-shrink:0;background:var(--card);padding:14px 28px 22px;border-top:1px solid var(--border)">
+    <label id="lv-ack-wrap" style="display:none;align-items:center;gap:11px;font-size:13.5px;color:#7C2D12;cursor:pointer;font-weight:700;background:#FEF3C7;border:1.5px solid #F59E0B;border-radius:9px;padding:12px 14px;margin:0 0 12px">
+      <input type="checkbox" id="lv-ack" onchange="lvAckChanged()" style="width:18px;height:18px;cursor:pointer;flex-shrink:0">
+      <span id="lv-ack-label">I confirm the lots above are intentional</span>
+    </label>
+    <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;align-items:center">
+      <button class="btn btn-o" onclick="hideModal('lot-validate-modal')">Close</button>
+      <button class="btn" id="lv-show-sellers" onclick="lvShowSelectedSellers()" disabled style="background:#2563eb;color:#fff;font-weight:600;margin-right:auto">📋 Show selected in Recent Entries</button>
+      <button class="btn btn-g" id="lv-confirm" onclick="confirmLotValidate()" disabled>Mark Validated</button>
+    </div>
   </div>
 </div></div>
 
@@ -6940,6 +6991,12 @@ async function applyFeatureFlags() {
   // .feat-reserved-price CSS rule. The companion Crop Receipt field
   // is always shown — only Reserved Price is flag-gated.
   document.body.setAttribute('data-feat-reserved-price', cfg && on(cfg.flag_reserved_price) ? '1' : '0');
+  // Validate Lots before price import. Default OFF — when ON the "Validate
+  // Lots" button shows in Lot Entry, the price-import gate banner renders,
+  // and import is blocked until the trade's entered lots are validated.
+  // When OFF the whole UI surface collapses via the .feat-lot-validation
+  // CSS rule and the server-side import gate short-circuits to next().
+  document.body.setAttribute('data-feat-lot-validation', cfg && on(cfg.flag_lot_validation) ? '1' : '0');
   // Config-driven external link buttons (Lots + To Tally headers). The
   // button shows only when its URL config has a value; href (and optional
   // label override) are applied to the anchor here.
@@ -13587,10 +13644,15 @@ function leBuildReceiptHtml(format, lots, ctx) {
   const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 
   const co = { tradeName, shortName, phone, email, addr1, addr2, place, pin, gstin, pan, fssai, sbl, branch, logoUrl };
+  // Thermal paper width (Settings → Lot Entry Defaults → "Lot Receipt Paper
+  // Width"). Drives the printed slip's @page size + content width so a
+  // narrow roll (e.g. 58mm HOP-HL58) prints edge-to-edge instead of being
+  // scaled onto an A4 sheet. 0 / blank keeps each format's built-in default.
+  const paperWidthMm = parseFloat(cfg.lot_receipt_width_mm) || 0;
   if (format === 'compact') {
-    return leBuildCompactHtml({ groups, co, dateStr, ano, printedAt, escapeHtml });
+    return leBuildCompactHtml({ groups, co, dateStr, ano, printedAt, escapeHtml, paperWidthMm });
   }
-  return leBuildDetailedHtml({ groups, co, dateStr, ano, printedAt, traderInfo, escapeHtml });
+  return leBuildDetailedHtml({ groups, co, dateStr, ano, printedAt, traderInfo, escapeHtml, paperWidthMm });
 }
 
 function leGroupLotsByTrader(lots) {
@@ -13664,16 +13726,20 @@ function leBuildCompactHtml(p) {
     </section>`;
   }).join('');
 
-  // CSS targets 80mm thermal width but renders fine in a regular
-  // browser window for preview. font-size in mm so it scales right
-  // on actual thermal hardware.
+  // CSS targets 80mm thermal width by default but follows the configured
+  // paper width (p.paperWidthMm) when set — e.g. 58 for a HOP-HL58 roll.
+  // The 3mm @page margin is reserved on each side, so the slip body is the
+  // paper width minus 6mm. Renders fine in a regular browser window for
+  // preview; font-size in mm so it scales right on actual thermal hardware.
+  const pageMm = p.paperWidthMm > 0 ? p.paperWidthMm : 80;
+  const recMm  = Math.max(20, pageMm - 6);
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Receipt</title>
 <style>
-  @page { size: 80mm auto; margin: 3mm }
+  @page { size: ${pageMm}mm auto; margin: 3mm }
   html, body { margin:0; padding:0; background:#eee; font-family: 'Courier New', ui-monospace, monospace; }
   body { padding:20px; display:flex; flex-direction:column; align-items:center; gap:14px }
-  .receipt { width: 74mm; background:#fff; padding:6mm 4mm; box-sizing:border-box; box-shadow:0 2px 6px rgba(0,0,0,.15); page-break-after: always; }
+  .receipt { width: ${recMm}mm; background:#fff; padding:6mm 4mm; box-sizing:border-box; box-shadow:0 2px 6px rgba(0,0,0,.15); page-break-after: always; }
   .receipt:last-child { page-break-after: auto; }
   .logo-wrap { text-align:center; margin-bottom:4px }
   .logo-img { max-height:40px; max-width:60mm; object-fit:contain }
@@ -13761,18 +13827,24 @@ function leBuildDetailedHtml(p) {
     </section>`;
   }).join('');
 
+  // Detailed slip defaults to ~2.5in (≈64mm) wide but follows the configured
+  // paper width (p.paperWidthMm) when set — e.g. 58 for a HOP-HL58 roll. A 2mm
+  // @page margin is reserved each side, so the slip body is the paper width
+  // minus 4mm. Height is always auto so multi-lot receipts grow downward.
+  const pageSize = p.paperWidthMm > 0 ? `${p.paperWidthMm}mm auto` : '2.5in auto';
+  const recWidth = p.paperWidthMm > 0 ? `${Math.max(20, p.paperWidthMm - 4)}mm` : '60mm';
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Receipt</title>
 <style>
-  /* Detailed slip — sized to ~2.5in × 3.5in (≈ 64mm × 89mm). Width is
-     fixed; height is auto so receipts with multiple lots can grow
-     downward instead of clipping content. The browser's print dialog
-     respects @page size, so a thermal/label printer with matching
-     stock prints edge-to-edge. */
-  @page { size: 2.5in auto; margin: 2mm }
+  /* Detailed slip — sized to ~2.5in × 3.5in (≈ 64mm × 89mm) by default, or
+     to the configured Lot Receipt Paper Width. Width is fixed; height is
+     auto so receipts with multiple lots can grow downward instead of
+     clipping content. The browser's print dialog respects @page size, so a
+     thermal/label printer with matching stock prints edge-to-edge. */
+  @page { size: ${pageSize}; margin: 2mm }
   html, body { margin:0; padding:0; background:#eee; font-family: 'Inter', -apple-system, sans-serif; color:#1a1a1a; }
   body { padding:14px; display:flex; flex-direction:column; align-items:center; gap:12px }
-  .receipt { width: 60mm; background:#fff; padding:3mm 4mm; box-sizing:border-box; box-shadow:0 1px 4px rgba(0,0,0,.12); page-break-after: always; }
+  .receipt { width: ${recWidth}; background:#fff; padding:3mm 4mm; box-sizing:border-box; box-shadow:0 1px 4px rgba(0,0,0,.12); page-break-after: always; }
   .receipt:last-child { page-break-after: auto; }
   header { text-align:center; padding-bottom:4px }
   .brand { display:inline-flex; gap:6px; align-items:center; justify-content:center }
@@ -16320,6 +16392,39 @@ function openPriceImport(){
   // as the Pre-auction Exports section on the Exports tab.
   _fillExportSelect('pi-preauction-report', EXP_PREAUCTION, renderPiPreauctionActions);
   showModal('price-import-modal');
+  piRefreshValidationGate();
+}
+// Tracks the lot-validation gate for the auction Price Import targets.
+// true = gate clean OR feature off (import allowed); false = blocked.
+let _piGateClean = true;
+// Check the lot-validation gate for the Price-Import auction and reflect
+// it in the modal: show the red gate banner + keep Import disabled until
+// the trade is validated. No-op (allows import) when the flag is off.
+async function piRefreshValidationGate(){
+  const gate=document.getElementById('pi-validate-gate');
+  const msg=document.getElementById('pi-validate-gate-msg');
+  _piGateClean=true;
+  if(gate) gate.style.display='none';
+  const aid=(typeof _piAuctionId==='function') ? _piAuctionId() : '';
+  if(!aid){ piAckChanged(); return; }
+  try{
+    const d=await j('/api/auctions/'+aid+'/validate-lots');
+    // state: 'off' (flag off) | 'never' (not validated) | 'clean'
+    if(d.state==='off'||d.state==='clean'){ _piGateClean=true; }
+    else {
+      _piGateClean=false;
+      if(gate) gate.style.display='block';
+      if(msg){
+        const errs=(d.errors||[]).length, warns=(d.warnings||[]).length;
+        msg.textContent = errs>0
+          ? `This trade has ${errs} error(s) that must be fixed before import.`
+          : (warns>0
+              ? `This trade has ${warns} warning(s) to acknowledge before import.`
+              : `This trade's entered lots haven't been validated yet.`);
+      }
+    }
+  }catch(e){ /* leave gate permissive on a probe failure — server still enforces */ }
+  piAckChanged();
 }
 // Build the action row for the snapshot report picked in the Price Import
 // reminder dropdown. Mirrors the Export Center actions but anchored to the
@@ -16342,7 +16447,9 @@ function renderPiPreauctionActions(){
 function piAckChanged(){
   const ack=document.getElementById('pi-ack');
   const submit=document.getElementById('pi-submit');
-  if(submit) submit.disabled=!(ack && ack.checked);
+  // Import is allowed only when snapshots are acknowledged AND the
+  // lot-validation gate is clean (or the feature is off).
+  if(submit) submit.disabled=!(ack && ack.checked && _piGateClean);
 }
 // Resolve the auction for the Price Import snapshot actions: the Lots-tab
 // picker (where Price Import is launched from) wins, then the Exports /
@@ -16421,6 +16528,263 @@ async function doPriceImport(){
     alert('Price import failed: '+err.message);
   }finally{
     btn.disabled=false;btn.textContent='Import Prices';
+  }
+}
+
+// ── Validate Entered Lots (flag_lot_validation) ───────────
+// Pre-price-import safety net. Opens against a trade, fetches the
+// reconciliation report, and renders errors (block) + warnings
+// (acknowledge). Confirming stamps the gate doPriceImport() checks.
+let _lvData=null, _lvAid=null, _lvSellers=[];
+async function openLotValidate(aid){
+  // The Lot Entry button passes its own le-auction; the Price Import
+  // banner passes nothing and we fall back to the Price-Import auction
+  // (Lots-tab picker), then the shared trade. Whatever opened the modal
+  // is the auction every action in it (confirm, jump-to-lots) operates on.
+  aid = aid
+    || (typeof _piAuctionId==='function' ? _piAuctionId() : '')
+    || (typeof getSharedAucId==='function' ? getSharedAucId() : '');
+  if(!aid){ alert('Pick a trade first.'); return; }
+  _lvAid = aid;
+  _lvData=null;
+  document.getElementById('lv-subtitle').textContent='';
+  document.getElementById('lv-body').innerHTML='<div style="padding:24px;text-align:center;color:var(--spice-text-mute)">Loading…</div>';
+  document.getElementById('lv-ack-wrap').style.display='none';
+  document.getElementById('lv-ack').checked=false;
+  document.getElementById('lv-confirm').disabled=true;
+  showModal('lot-validate-modal');
+  try{
+    const d=await j('/api/auctions/'+aid+'/validate-lots');
+    _lvData=d;
+    renderLotValidate(d);
+  }catch(e){
+    document.getElementById('lv-body').innerHTML='<div style="padding:16px;color:#b91c1c">Could not load validation: '+esc(e.message||'error')+'</div>';
+  }
+}
+function renderLotValidate(d){
+  const sub=document.getElementById('lv-subtitle');
+  sub.innerHTML='Trade '+esc(String(d.ano||''))+(d.date?(' · '+fmtD(d.date)):'')+' — '+(d.totals?d.totals.lots:0)+' lot(s) entered'
+    +'<span style="display:block;margin-top:2px;color:var(--spice-text-mute);font-size:11px">Tip: tick the sellers you want to fix, then "Show selected in Recent Entries" to correct their lots.</span>';
+  const rc=d.reconciliation||{};
+  const errs=d.errors||[], warns=d.warnings||[];
+  const lotNum=(s)=>{const m=String(s).match(/\d+/);return m?parseInt(m[0],10):0;};
+  // One card per FLAGGED lot, styled like a Lot Entry "Recent entries"
+  // row: Lot · Branch · Bags · Qty, with a red (error) or amber (warning)
+  // background and the issue title(s) as badges. Seller name lives in the
+  // group heading. Cards are informational — the operator selects whole
+  // SELLERS (heading checkbox) to pull their lots into Recent Entries.
+  const lotRow=(e)=>{
+    const l=e.lot;
+    const isErr=e.severity==='error';
+    const bg=isErr?'#FEE2E2':'#FEF3C7';
+    const bd=isErr?'#DC2626':'#F59E0B';
+    const lotColor=isErr?'#7F1D1D':'#7C2D12';
+    const badges=e.titles.map(t=>'<span style="display:inline-block;font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;margin:2px 4px 0 0;background:'+(t.severity==='error'?'#DC2626':'#F59E0B')+';color:#fff">'+esc(t.title)+'</span>').join('');
+    const meta=[esc(l.branch||''),(l.bags!=null?esc(String(l.bags))+' bags':''),(Number(l.qty||0).toFixed(3)+' kg')].filter(Boolean).join(' · ');
+    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;margin-bottom:6px;background:'+bg+';border:1px solid '+bd+';border-radius:8px">'+
+      '<div style="font-family:monospace;font-weight:800;color:'+lotColor+';min-width:48px;text-align:center">#'+esc(String(l.lot_no))+'</div>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="font-size:11px;color:var(--spice-text-mute)">'+meta+'</div>'+
+        '<div>'+badges+'</div>'+
+      '</div>'+
+    '</div>';
+  };
+  let h='';
+  // Reconciliation summary — the "tally"
+  h+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">';
+  const stat=(label,val,color)=>'<div style="flex:1;min-width:110px;background:var(--spice-cardamom-lt);border:1px solid #C5E3D2;border-radius:8px;padding:8px 10px"><div style="font-size:10px;font-weight:700;color:var(--spice-text-mute);text-transform:uppercase;letter-spacing:.4px">'+label+'</div><div style="font-size:18px;font-weight:800;color:'+(color||'var(--spice-cardamom-dk)')+'">'+val+'</div></div>';
+  h+=stat('Total lots',rc.totalLots!=null?rc.totalLots:(d.totals?d.totals.lots:0));
+  h+=stat('In Dealer List',rc.dealerListLots!=null?rc.dealerListLots:'—');
+  h+=stat('Excluded (no GSTIN)',rc.excludedLots!=null?rc.excludedLots:'—', rc.excludedLots>0?'#b45309':undefined);
+  h+=stat('Total bags',d.totals?d.totals.bags:0);
+  h+=stat('Total qty',d.totals?(Number(d.totals.qty).toFixed(3)):0);
+  h+='</div>';
+  if(rc.excludedLots>0){
+    h+='<div style="font-size:11.5px;color:#7C2D12;background:#FEF3C7;border:1px solid #F59E0B;border-radius:6px;padding:8px 10px;margin-bottom:14px">'+rc.excludedLots+' lot(s) belong to sellers with no GSTIN and will NOT appear in the Dealer List (this is the count gap to expect).</div>';
+  }
+  // Aggregate one entry per flagged lot, collecting all its issue titles.
+  // Severity = 'error' if any blocking issue, else 'warn'.
+  const lotMap=new Map();
+  const addIssue=(lots,title,severity)=>{
+    (lots||[]).forEach(l=>{
+      let e=lotMap.get(l.id);
+      if(!e){ e={lot:l,titles:[],severity:'warn'}; lotMap.set(l.id,e); }
+      e.titles.push({title,severity});
+      if(severity==='error') e.severity='error';
+    });
+  };
+  errs.forEach(er=>addIssue(er.lots, er.title||er.type, 'error'));
+  warns.forEach(w=>addIssue(w.lots, w.title||w.type, 'warn'));
+  const rows=Array.from(lotMap.values());
+  const errLots=rows.filter(r=>r.severity==='error').length;
+  // Group the flagged lots BY SELLER — a seller heading, then that
+  // seller's flagged lot cards beneath it. Within a seller, errors first
+  // then by lot number. Sellers with any error sort to the top.
+  const groups=new Map();
+  rows.forEach(e=>{
+    const nm=String(e.lot.name||'(no seller)').trim()||'(no seller)';
+    if(!groups.has(nm)) groups.set(nm,[]);
+    groups.get(nm).push(e);
+  });
+  groups.forEach(arr=>arr.sort((a,b)=>{
+    if(a.severity!==b.severity) return a.severity==='error'?-1:1;
+    return lotNum(a.lot.lot_no)-lotNum(b.lot.lot_no);
+  }));
+  const sellerGroups=Array.from(groups.entries()).sort((a,b)=>{
+    const ae=a[1].some(x=>x.severity==='error'), be=b[1].some(x=>x.severity==='error');
+    if(ae!==be) return ae?-1:1;
+    return a[0].localeCompare(b[0]);
+  });
+  // Lookup for the seller checkboxes — name + its distinct trader_ids,
+  // indexed to match data-idx on each checkbox.
+  _lvSellers = sellerGroups.map(([nm,arr])=>({
+    name: nm,
+    tids: Array.from(new Set(arr.map(x=>x.lot.trader_id).filter(v=>v!=null).map(Number))),
+  }));
+  if(rows.length){
+    h+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0 8px">'
+      +'<span style="font-weight:700;font-size:13px;color:'+(errLots?'#7F1D1D':'#7C2D12')+'">'
+        +(errLots?'🚫':'⚠')+' Records needing attention ('+rows.length+' lot'+(rows.length>1?'s':'')+' · '+sellerGroups.length+' seller'+(sellerGroups.length>1?'s':'')+')'
+        +(errLots?' — '+errLots+' must fix before import':' — acknowledge to proceed')
+      +'</span>'
+      +'<a href="#" onclick="lvToggleAllSellers(true);return false" style="font-size:11px;color:var(--green);margin-left:auto">Select all</a>'
+      +'<a href="#" onclick="lvToggleAllSellers(false);return false" style="font-size:11px;color:var(--spice-text-mute)">Clear</a>'
+      +'<span style="color:var(--border)">|</span>'
+      +'<a href="#" onclick="lvToggleAllGroups(true);return false" style="font-size:11px;color:var(--green)">Expand all</a>'
+      +'<a href="#" onclick="lvToggleAllGroups(false);return false" style="font-size:11px;color:var(--spice-text-mute)">Collapse all</a>'
+      +'</div>';
+    h+='<div>';
+    sellerGroups.forEach(([nm,arr],gi)=>{
+      const hasErr=arr.some(x=>x.severity==='error');
+      const gid='lv-grp-'+gi;
+      // Distinct issue titles for this seller, shown as small badges on the
+      // (collapsed) heading so the operator sees what's wrong without expanding.
+      const titleMap=new Map();
+      arr.forEach(e=>e.titles.forEach(t=>{ if(!titleMap.has(t.title)||t.severity==='error') titleMap.set(t.title,t.severity); }));
+      const sumBadges=Array.from(titleMap.entries()).map(([t,sev])=>'<span style="font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:9px;margin-left:4px;background:'+(sev==='error'?'#DC2626':'#F59E0B')+';color:#fff">'+esc(t)+'</span>').join('');
+      h+='<div style="display:flex;align-items:center;gap:9px;margin:8px 0 0;padding:7px 8px;background:rgba(0,0,0,.03);border-radius:6px">'
+        +'<input type="checkbox" class="lv-seller-cb" data-idx="'+gi+'" onchange="lvUpdateSellerSelCount()" title="Select this seller" style="width:17px;height:17px;cursor:pointer;flex-shrink:0">'
+        +'<div onclick="lvToggleGroup(\''+gid+'\',this)" title="Show / hide this seller’s lots" style="flex:1;min-width:0;cursor:pointer;display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
+          +'<span class="lv-caret" style="font-size:10px;color:var(--text3);width:10px;flex-shrink:0">▸</span>'
+          +'<span style="font-weight:700;font-size:12.5px;color:'+(hasErr?'#7F1D1D':'var(--spice-text)')+'">'+esc(nm)+'</span>'
+          +'<span style="font-weight:400;color:var(--spice-text-mute);font-size:11px">— '+arr.length+' lot'+(arr.length>1?'s':'')+'</span>'
+          +sumBadges
+        +'</div>'
+      +'</div>';
+      h+='<div id="'+gid+'" style="display:none;padding:4px 0 2px 26px">'+arr.map(lotRow).join('')+'</div>';
+    });
+    h+='</div>';
+  }else{
+    h+='<div style="background:#DCFCE7;border:1px solid #16A34A;border-radius:8px;padding:12px 14px;font-weight:700;color:#166534;font-size:13px">✓ No issues found — all lots tally and every seller has full details.</div>';
+  }
+  document.getElementById('lv-body').innerHTML=h;
+  // Acknowledge UI: only meaningful when there are no hard errors.
+  const ackWrap=document.getElementById('lv-ack-wrap');
+  const ackLabel=document.getElementById('lv-ack-label');
+  const ack=document.getElementById('lv-ack');
+  const confirmBtn=document.getElementById('lv-confirm');
+  if(errs.length){
+    ackWrap.style.display='none';
+    confirmBtn.disabled=true;
+    confirmBtn.textContent='Fix errors to continue';
+  }else{
+    confirmBtn.textContent='Mark Validated';
+    if(warns.length){
+      const total=warns.reduce((s,w)=>s+(w.count||0),0);
+      ackLabel.textContent='I confirm these '+total+' flagged lot(s) are intentional';
+      ackWrap.style.display='flex';
+      ack.checked=false;
+      confirmBtn.disabled=true;
+    }else{
+      // Clean — no acknowledgement needed.
+      ackWrap.style.display='none';
+      confirmBtn.disabled=false;
+    }
+  }
+  lvUpdateSellerSelCount();
+}
+// Reflect how many sellers are ticked on the "Show selected" button.
+function lvUpdateSellerSelCount(){
+  const n=document.querySelectorAll('.lv-seller-cb:checked').length;
+  const btn=document.getElementById('lv-show-sellers');
+  if(!btn) return;
+  btn.disabled = n===0;
+  btn.textContent = n>0 ? ('📋 Show '+n+' seller'+(n>1?'s':'')+' in Recent Entries') : '📋 Show selected in Recent Entries';
+}
+function lvToggleAllSellers(on){
+  document.querySelectorAll('.lv-seller-cb').forEach(cb=>{ cb.checked=!!on; });
+  lvUpdateSellerSelCount();
+}
+// Collapse / expand a single seller's lot cards.
+function lvToggleGroup(id, headEl){
+  const box=document.getElementById(id);
+  if(!box) return;
+  const open = box.style.display==='none';
+  box.style.display = open ? 'block' : 'none';
+  const caret = headEl && headEl.querySelector('.lv-caret');
+  if(caret) caret.textContent = open ? '▾' : '▸';
+}
+function lvToggleAllGroups(open){
+  document.querySelectorAll('#lv-body [id^="lv-grp-"]').forEach(box=>{ box.style.display = open ? 'block' : 'none'; });
+  document.querySelectorAll('#lv-body .lv-caret').forEach(c=>{ c.textContent = open ? '▾' : '▸'; });
+}
+// Collect the ticked sellers, switch to Lot Entry on the validated trade,
+// and filter Recent Entries to the (first) selected seller so the operator
+// can correct their lots (each row opens its edit form on click, as usual).
+async function lvShowSelectedSellers(){
+  const cbs=document.querySelectorAll('.lv-seller-cb:checked');
+  if(!cbs.length) return;
+  const names=[];
+  cbs.forEach(cb=>{
+    const s=_lvSellers[parseInt(cb.dataset.idx,10)];
+    if(s) names.push(s.name);
+  });
+  const aid=_lvAid || ((typeof getSharedAucId==='function') ? getSharedAucId() : '');
+  hideModal('lot-validate-modal');
+  // Make sure we're on the Lot Entry tab (go() handles classes, the
+  // screen guide and auto-refresh wiring), then await loadLotEntry so the
+  // data is fully loaded BEFORE we apply the filter — order matters, or
+  // loadLotEntry would reset the search we set below.
+  if(window._currentTab!=='lotentry' && typeof go==='function'){ go('lotentry'); }
+  if(typeof loadLotEntry==='function'){ try{ await loadLotEntry(); }catch(_){} }
+  const sel=document.getElementById('le-auction');
+  if(sel && aid && String(sel.value)!==String(aid) && sel.querySelector('option[value="'+aid+'"]')){
+    sel.value=String(aid);
+    if(typeof leOnAuctionChange==='function'){ try{ leOnAuctionChange(); }catch(_){} }
+  }
+  // Recent Entries has a server-side seller-name filter — drive it from the
+  // search box. It's a single-name filter, so use the first selected seller
+  // (the common case is fixing one seller's lots at a time).
+  const search=document.getElementById('le-recent-search');
+  if(search && names.length){
+    search.value=names[0];
+    if(typeof leOnRecentSearchInput==='function'){ try{ leOnRecentSearchInput(); }catch(_){} }
+    if(names.length>1) toast('Filtered to "'+names[0]+'". Search another seller to fix the rest.');
+  }
+}
+function lvAckChanged(){
+  const ack=document.getElementById('lv-ack');
+  const confirmBtn=document.getElementById('lv-confirm');
+  const errs=_lvData&&_lvData.errors?_lvData.errors.length:0;
+  confirmBtn.disabled=!(ack && ack.checked && !errs);
+}
+async function confirmLotValidate(){
+  const aid=_lvAid || ((typeof getSharedAucId==='function') ? getSharedAucId() : '');
+  if(!aid) return;
+  const btn=document.getElementById('lv-confirm');
+  btn.disabled=true;btn.textContent='Saving…';
+  try{
+    await j('/api/auctions/'+aid+'/validate-lots/confirm',{method:'POST'});
+    toast('✓ Lots validated — price import unlocked');
+    hideModal('lot-validate-modal');
+    // Refresh the price-import gate banner if that modal is/becomes open.
+    _piGateClean=true;
+    if(typeof piRefreshValidationGate==='function') piRefreshValidationGate();
+  }catch(e){
+    btn.disabled=false;btn.textContent='Mark Validated';
+    alert(e.message||'Could not validate');
+    // Re-render the SAME trade in case errors appeared since load.
+    openLotValidate(_lvAid);
   }
 }
 

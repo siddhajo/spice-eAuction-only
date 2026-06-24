@@ -238,6 +238,14 @@ const DEFAULTS = [
   // column always exists so toggling on later doesn't lose data.
   { key: 'flag_reserved_price',  value: 'false', category: 'flags', label: 'Reserved Price (Lot Entry)',      type: 'boolean' },
 
+  // Validate entered lots before price import — when ON, the "Validate
+  // Lots" button shows in Lot Entry and price import is blocked until the
+  // trade's entered lots are validated (no duplicate lots, every lot has a
+  // seller; missing GSTIN/bank/PAN/phone are acknowledge-able warnings).
+  // When OFF the button is hidden and the server-side import gate is a
+  // no-op. Default OFF so existing installs are unaffected on upgrade.
+  { key: 'flag_lot_validation',  value: 'false', category: 'flags', label: 'Validate lots before price import', type: 'boolean' },
+
   // ── BACKUPS ────────────────────────────────────────────────
   // Per-install database backup settings. The scheduler is driven by
   // backup_auto_enabled + backup_interval_hours; the keep-count caps
@@ -261,6 +269,16 @@ const DEFAULTS = [
   { key: 'edit_enabled',       value: 'false', category: 'lot_entry', label: 'Allow Lot Edits (non-admin)',        type: 'boolean' },
   { key: 'edit_timeout_sec',   value: '0',     category: 'lot_entry', label: 'Edit Timeout (sec; 0 = no limit)',    type: 'number'  },
   { key: 'lot_receipt_format', value: '',      category: 'lot_entry', label: 'Lot Receipt Format (compact|detailed)', type: 'text' },
+  // Physical paper width of the lot-receipt slip, in millimetres. Thermal
+  // receipt printers come in fixed roll widths (e.g. the HOP-HL58 is a 58mm
+  // roll, common alternatives are 80mm and 76mm). When blank / 0 the slip
+  // uses its built-in default page size (80mm for the compact slip, ~63mm
+  // for the mobile thermal PDF) — which on a narrower 58mm printer overflows
+  // the paper and the driver silently scales the slip onto an A4 sheet. Set
+  // this to the printer's roll width (58 for the HOP-HL58) so both the
+  // desktop print @page size and the mobile receipt PDF match the paper.
+  // Height is always automatic — receipts grow down the continuous roll.
+  { key: 'lot_receipt_width_mm', value: '',    category: 'lot_entry', label: 'Lot Receipt Paper Width (mm; blank = default. e.g. 58 for HOP-HL58 thermal)', type: 'number' },
   // The admin-designated default trade (auction id). Set via the ⭐ on the
   // Auctions tab; the mobile app pre-selects + highlights it. Hidden from
   // the Settings UI (see HIDDEN_SETTING_KEYS); blank = no default.

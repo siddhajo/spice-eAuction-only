@@ -230,7 +230,15 @@ async function initDb() {
     -- afterwards. Lets the gate distinguish "never verified" (hard
     -- block on transactions) from "verified once but now stale"
     -- (soft warning only — buttons stay clickable).
-    price_checked_ever_at TEXT DEFAULT ''
+    price_checked_ever_at TEXT DEFAULT '',
+    -- Stamped by /api/auctions/:id/validate-lots/confirm when the
+    -- operator has validated the ENTERED lots (no duplicate lot numbers,
+    -- every lot has a seller) AND acknowledged any warnings (sellers
+    -- missing GSTIN / bank / PAN / phone). Acts as the green-light gate
+    -- for PRICE IMPORT (auctions/import mode='price'). Auto-cleared by any
+    -- endpoint that inserts/edits/deletes a lot, so re-validation is
+    -- required after every change. Gated by the flag_lot_validation flag.
+    lots_validated_at TEXT DEFAULT ''
   )`);
 
   // ── LOTS (CPA1.DBF — main lot data, before + after trade) ─
@@ -799,6 +807,10 @@ async function initDb() {
     // Immediate-payment flag — drives whether the per-lot early-payment
     // discount is calculated (only computed for lots flagged 1).
     'ALTER TABLE lots ADD COLUMN immediate_payment INTEGER DEFAULT 0',
+    // Lot-validation gate (flag_lot_validation). Stamped on a clean
+    // "Validate Entered Lots" confirm; cleared by any lot insert/edit/
+    // delete. Blocks price import (mode='price') until re-validated.
+    "ALTER TABLE auctions ADD COLUMN lots_validated_at TEXT DEFAULT ''",
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }
