@@ -252,11 +252,14 @@ function buildBuyersStatement(ctx) {
         sale:    String(r.buyer_sale || r.lot_sale || 'L').toUpperCase(),
         kilos:   0,
         amount:  0,
+        invos:   new Set(),   // real invoice number(s) for this buyer
       });
     }
     const g = groups.get(key);
     g.kilos  += Number(r.qty)    || 0;
     g.amount += Number(r.amount) || 0;
+    const inv = String(r.invo == null ? '' : r.invo).trim();
+    if (inv) g.invos.add(inv);
   }
 
   // Bucket by sale type. The Sales Invoice flow already stamps every
@@ -281,11 +284,17 @@ function buildBuyersStatement(ctx) {
   const sortFn = (a, b) => (a.name || '').localeCompare(b.name || '');
   inter.sort(sortFn); intra.sort(sortFn); exportS.sort(sortFn);
 
-  // Sequential invoice numbers per section (I 1.., L 1.., E 1..)
-  let iSeq = 0, lSeq = 0, eSeq = 0;
-  inter.forEach(g   => { iSeq++; g.invoice = `I ${iSeq}`; });
-  intra.forEach(g   => { lSeq++; g.invoice = `L ${lSeq}`; });
-  exportS.forEach(g => { eSeq++; g.invoice = `E ${eSeq}`; });
+  // Invoice column shows the buyer's actual sales-invoice number(s) (from
+  // l.invo), not a running serial. A buyer with more than one invoice in the
+  // trade lists them comma-separated; the temp Set is dropped afterwards so
+  // the row objects serialise cleanly to JSON.
+  const setInvoice = g => {
+    g.invoice = Array.from(g.invos).filter(Boolean).join(', ');
+    delete g.invos;
+  };
+  inter.forEach(setInvoice);
+  intra.forEach(setInvoice);
+  exportS.forEach(setInvoice);
 
   const sum = arr => arr.reduce((a, g) => ({ kilos: a.kilos + g.kilos, amount: a.amount + g.amount }),
                                 { kilos: 0, amount: 0 });
@@ -663,19 +672,21 @@ function buildFormD(ctx, db, opts) {
   const avgRate = totalKilos > 0 ? (totalValue / totalKilos) : 0;
 
   // Top buyers — built from the invoices table so each buyer appears exactly
-  // ONCE with their CUMULATIVE invoice value (a buyer with more than one
-  // invoice has the totals, incl. commission/GST/TCS/gunny, summed). We group
-  // on the TRADE NAME (`buyer1`, falling back to the buyer code) because the
-  // same buyer can have more than one buyer code — e.g. "ALLUS CARDAMOM POINT"
-  // invoiced under both "...ACP" and "...ACP0" — and must still collapse to a
-  // single row. Invoices aren't branch-tagged, so the buyer figures are
-  // whole-auction even when the report is branch-filtered. If no invoices
-  // exist yet for the auction, fall back to lot-derived figures so the report
-  // still renders.
+  // ONCE with their CUMULATIVE sales value. The value is the goods amount
+  // WITHOUT TAX (invoices.amount = price × qty), NOT the invoice grand total
+  // (`tot`, which adds gunny/handling/insurance/CGST/SGST/IGST/TCS/round-off).
+  // This keeps the buyer figures on the same pre-tax basis as the "(dd) Total
+  // value of the sales" row. We group on the TRADE NAME (`buyer1`, falling back
+  // to the buyer code) because the same buyer can have more than one buyer
+  // code — e.g. "ALLUS CARDAMOM POINT" invoiced under both "...ACP" and
+  // "...ACP0" — and must still collapse to a single row. Invoices aren't
+  // branch-tagged, so the buyer figures are whole-auction even when the report
+  // is branch-filtered. If no invoices exist yet for the auction, fall back to
+  // lot-derived figures (also pre-tax) so the report still renders.
   let buyersAll = [];
   const invRows = db ? db.all(
     `SELECT MAX(TRIM(buyer1)) AS name, MAX(TRIM(buyer)) AS code,
-            SUM(COALESCE(qty,0)) AS kilos, SUM(COALESCE(tot,0)) AS value
+            SUM(COALESCE(qty,0)) AS kilos, SUM(COALESCE(amount,0)) AS value
        FROM invoices WHERE ano = ?
        GROUP BY UPPER(TRIM(COALESCE(NULLIF(TRIM(buyer1),''), buyer)))`,
     [auction.ano]) || [] : [];
@@ -737,9 +748,15 @@ function buildFormD(ctx, db, opts) {
   const branch   = readSetting(db, isKL ? 'kl_branch' : 'tn_branch', '');
   const address  = [readSetting(db, a1key, ''), readSetting(db, a2key, ''), branch]
                     .filter(Boolean).join(', ') || readSetting(db, 'address1', '');
+  // Footer "Place :" — the company's Place / City (Settings → Address →
+  // Place / City), state-aware. Distinct from the "Place of auction" above
+  // (which is the operator's auction-venue pick / office branch). Falls back
+  // to the auction place when the address setting is blank.
+  const placeCity = readSetting(db, isKL ? 'kl_place' : 'tn_place',
+                      readSetting(db, 'tn_place', readSetting(db, 'kl_place', place)));
 
   return {
-    auction, season, licence, place, company, address,
+    auction, season, licence, place, placeCity, company, address,
     totalKilos, totalValue, maxRate, minRate, avgRate, maxKg, minKg,
     top5, top5Totals,
   };
@@ -884,11 +901,18 @@ async function formDPdf(db, opts) {
   const VAL_X   = innerL + LABEL_W;
   const VAL_W   = innerW - LABEL_W;
   const LINE_H  = 16;
+  // A single colon column so every row's ':' lines up vertically just before
+  // the value column. Labels wrap within LABEL_TXT_W (narrower than the cell)
+  // so they never run into the colon.
+  const COLON_X     = VAL_X - 12;
+  const LABEL_TXT_W = LABEL_W - 18;
 
   // Auctioneer block: label on first line, value(s) WRAP within VAL_W
   // (no fitText — long company names should wrap to 2-3 lines, not be cut).
+  const aucTop = innerY;
   doc.font('Helvetica').fontSize(10).fillColor('#000')
-     .text('Name and Address of the auctioneer:', innerL, innerY, { width: LABEL_W, lineBreak: false });
+     .text('Name and Address of the auctioneer', innerL, innerY, { width: LABEL_TXT_W, lineBreak: false });
+  doc.text(':', COLON_X, aucTop, { lineBreak: false });
   doc.font('Helvetica-Bold').fontSize(10)
      .text(d.company || '', VAL_X, innerY, { width: VAL_W, align: 'left' });
   innerY = doc.y + 2;
@@ -903,8 +927,9 @@ async function formDPdf(db, opts) {
   // way long company names / long licence ids show in full.
   function row(label, value, opts) {
     opts = opts || {};
+    const rowTop = innerY;
     doc.font('Helvetica').fontSize(10).fillColor('#000');
-    const labelLines = wrapText(doc, label, LABEL_W);
+    const labelLines = wrapText(doc, label, LABEL_TXT_W);
     doc.font(opts.bold === false ? 'Helvetica' : 'Helvetica-Bold').fontSize(10).fillColor('#000');
     const valueLines = wrapText(doc, String(value == null ? '' : value), VAL_W);
     const lines = Math.max(labelLines.length, valueLines.length);
@@ -912,8 +937,10 @@ async function formDPdf(db, opts) {
     // Render label (plain font)
     doc.font('Helvetica').fontSize(10).fillColor('#000');
     labelLines.forEach((ln, i) => {
-      doc.text(ln, innerL, innerY + i * lineH, { width: LABEL_W, lineBreak: false });
+      doc.text(ln, innerL, innerY + i * lineH, { width: LABEL_TXT_W, lineBreak: false });
     });
+    // Colon — fixed column so every row's ':' aligns, on the label's first line.
+    doc.text(':', COLON_X, rowTop, { lineBreak: false });
     // Render value (bold)
     doc.font(opts.bold === false ? 'Helvetica' : 'Helvetica-Bold').fontSize(10).fillColor('#000');
     valueLines.forEach((ln, i) => {
@@ -1046,7 +1073,7 @@ async function formDPdf(db, opts) {
   const halfW = usableW / 2;
   // Allow the company name to wrap on a second line so "For <very long
   // company name>" doesn't get clipped at the right edge.
-  const placeLines  = wrapText(doc, `Place : ${d.place || ''}`, halfW);
+  const placeLines  = wrapText(doc, `Place : ${d.placeCity || ''}`, halfW);
   const forLines    = wrapText(doc, `For ${d.company || ''}`,   halfW);
   const lH = 14;
   const footerH = Math.max(placeLines.length, forLines.length) * lH;

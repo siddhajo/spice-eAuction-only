@@ -517,6 +517,7 @@ const COLS = {
     { header: 'LOT',        key: 'lot',        width: 10 },
     { header: 'BAG',        key: 'bag',        width: 8  },
     { header: 'QTY',        key: 'qty',        width: 14 },
+    { header: 'PRICE',      key: 'price',      width: 10 },
     { header: 'CODE',       key: 'code',       width: 10 },
     { header: 'TRADE NAME', key: 'trade_name', width: 22 },
   ],

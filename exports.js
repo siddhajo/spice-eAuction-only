@@ -398,8 +398,9 @@ async function exportPriceListBefore(db, auctionId) {
   const dateFmt = cfg.date_format || 'dd/mm/yyyy';
   rows.forEach(r => {
     r.date = formatDateForDisplay(r.date, dateFmt);
-    // CODE and TRADE NAME are intentionally left blank — buyers fill
-    // them in by hand on the printed sheet during the pre-trade walk.
+    // PRICE, CODE and TRADE NAME are intentionally left blank — buyers
+    // fill them in by hand on the printed sheet during the pre-trade walk.
+    r.price = '';
     r.code = '';
     r.trade_name = '';
   });
@@ -409,6 +410,7 @@ async function exportPriceListBefore(db, auctionId) {
     { header: 'LOT',         key: 'lot',        width: 10 },
     { header: 'BAG',         key: 'bag',        width: 8  },
     { header: 'QTY',         key: 'qty',        width: 14 },
+    { header: 'PRICE',       key: 'price',      width: 10 },
     { header: 'CODE',        key: 'code',       width: 10 },
     { header: 'TRADE NAME',  key: 'trade_name', width: 22 },
   ];

@@ -4573,6 +4573,29 @@ app.post('/api/lots/unlock', requireAdmin, (req, res) => {
   res.json({ success: true, unlocked: (info && info.changes) || 0, requested: numericIds.length });
 });
 
+// POST /api/lots/bulk-no-ti   body: { ids:[int,...], value: 0|1 }
+// Mark / unmark the selected lots as "No Transport & Insurance". Flagged
+// lots are still sold normally but excluded from the sales invoice's
+// transport & insurance base (see buildSalesInvoice). value=1 marks,
+// value=0 clears. Re-run invoice generation for the affected buyer(s) to
+// recompute T&I.
+app.post('/api/lots/bulk-no-ti', requireLotWrite, (req, res) => {
+  const db = getDb();
+  const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids : [];
+  const numericIds = ids.map(x => Number(x)).filter(Number.isFinite);
+  if (!numericIds.length) return res.status(400).json({ error: 'ids[] is required' });
+  const value = Number(req.body && req.body.value) === 1 ? 1 : 0;
+  const placeholders = numericIds.map(() => '?').join(',');
+  // Respect the record lock the same way other lot mutators do: skip
+  // locked rows unless the caller is an admin.
+  const lockGuard = (lockFeatureOn(db) && !isAdmin(req)) ? ' AND locked_at IS NULL' : '';
+  const info = db.run(
+    `UPDATE lots SET no_ti = ? WHERE id IN (${placeholders})${lockGuard}`,
+    [value, ...numericIds]
+  );
+  res.json({ success: true, updated: (info && info.changes) || 0, requested: numericIds.length, value });
+});
+
 // ── Lot-entry activity log ────────────────────────────────────────
 // Records who created / edited / deleted each lot into the shared
 // audit_log table (entity='lot'). The Lot Entry screen surfaces a

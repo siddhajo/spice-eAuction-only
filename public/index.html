@@ -3329,6 +3329,12 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
                  the button to appear: .needs-admin (role) AND
                  .feat-lot-lock (flag) AND a non-empty selection. -->
             <button id="lot-bulk-unlock" class="needs-admin feat-lot-lock btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#1f2937;font-weight:600;border:1px solid #b8860b" onclick="lotBulkUnlock()" title="Unlock the ticked lots — admin only. Lots become editable again.">🔓 Unlock Selected <span id="lot-bulk-unlock-count" style="margin-left:4px;background:rgba(0,0,0,.18);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
+            <!-- Mark / clear "No Transport & Insurance" on the ticked lots.
+                 Flagged lots are sold normally but excluded from the sales
+                 invoice transport & insurance base. data-bulk-action="lot"
+                 lets BulkActions._sync show/hide them with the selection. -->
+            <button id="lot-bulk-noti" data-bulk-action="lot" class="needs-lot-write btn" style="display:none;height:38px;padding:0 14px;background:#0e7490;color:#fff;font-weight:600" onclick="lotBulkNoTi(1)" title="Mark the ticked lots as No Transport & Insurance — they'll be left out of the transport/insurance calculation on their sales invoice.">🚫 No T&amp;I <span data-bulk-count="lot" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
+            <button id="lot-bulk-yesti" data-bulk-action="lot" class="needs-lot-write btn" style="display:none;height:38px;padding:0 14px;background:#fff;color:#0e7490;font-weight:600;border:1px solid #0e7490" onclick="lotBulkNoTi(0)" title="Clear the No-T&I flag on the ticked lots — transport & insurance will be calculated for them again.">↩ Add T&amp;I <span data-bulk-count="lot" style="margin-left:4px;background:rgba(14,116,144,.18);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <button id="lot-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('lot')">🗑 Delete Selected <span id="lot-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <!-- Sister tool to Price Import. Opens the Price List Mapping
                  screen which fills the CODE column on a Price List sheet
@@ -5024,8 +5030,12 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <div style="font-size:11px;color:var(--spice-text-hint);margin-top:4px">Full buyer code used everywhere</div>
       <div id="b-buyer-warn" style="display:none"></div>
     </div>
-    <div class="fg"><label>Code (short alias)</label><input id="b-code" placeholder="e.g. RSH" style="text-transform:uppercase" onblur="bCheckCodeDup()">
-      <div style="font-size:11px;color:var(--spice-text-hint);margin-top:4px">Short alias used in auction tags &amp; price files</div>
+    <div class="fg"><label>Code (short alias)</label>
+      <div style="position:relative">
+        <input id="b-code" placeholder="e.g. RSH" style="text-transform:uppercase" autocomplete="off" onblur="bCheckCodeDup()">
+        <div id="b-code-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;max-height:240px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:12.5px"></div>
+      </div>
+      <div style="font-size:11px;color:var(--spice-text-hint);margin-top:4px">Short alias used in auction tags &amp; price files. Type a prefix (e.g. JPJ) to see existing codes.</div>
       <div id="b-code-warn" style="display:none"></div>
     </div>
     <div class="fg"><label>Trade Name</label><input id="b-buyer1"></div>
@@ -5282,6 +5292,13 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     </div>
     <div class="fg"><label>Sale Type</label>
       <select id="l-sale"><option value=""></option><option value="L">Local (L)</option><option value="I">Inter-state (I)</option><option value="E">Export (E)</option><option value="W">Withdrawn (W)</option><option value="N">N/A (N)</option></select>
+    </div>
+    <div class="fg" style="align-self:end">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600">
+        <input type="checkbox" id="l-no-ti" style="width:16px;height:16px;cursor:pointer">
+        No Transport &amp; Insurance
+      </label>
+      <div style="font-size:11px;color:var(--spice-text-hint);margin-top:4px">Exclude this lot from the sales invoice transport/insurance.</div>
     </div>
   </div>
   <div class="actions"><button class="btn btn-o" onclick="hideModal('lot-modal')">Cancel</button><button class="btn btn-g" onclick="saveLot()">Save</button></div>
@@ -16104,6 +16121,7 @@ function openBuyerAdd(){
   document.getElementById('b-id').value='';
   B_FIELDS.forEach(f=>{const el=document.getElementById(B_IDS[f]);if(el)el.value=''});
   _bResetDupWarnings();
+  bWireCodeAutocomplete(); bRefreshCodeCache();
   showModal('buyer-modal');
 }
 function openBuyerEdit(b){
@@ -16111,6 +16129,7 @@ function openBuyerEdit(b){
   document.getElementById('b-id').value=b.id;
   B_FIELDS.forEach(f=>{const el=document.getElementById(B_IDS[f]);if(el)el.value=b[f]||''});
   _bResetDupWarnings();
+  bWireCodeAutocomplete(); bRefreshCodeCache();
   showModal('buyer-modal');
 }
 // Clone: pre-fill all fields from an existing buyer. The primary key
@@ -16135,6 +16154,7 @@ function openBuyerClone(b){
   const codeEl=document.getElementById(B_IDS.buyer);
   if(codeEl){setTimeout(()=>{codeEl.focus();codeEl.select();},60)}
   _bResetDupWarnings();
+  bWireCodeAutocomplete(); bRefreshCodeCache();
   showModal('buyer-modal');
 }
 async function bCheckBuyerDup() {
@@ -16155,6 +16175,103 @@ async function bCheckCodeDup() {
   const dups = await findExactDuplicates('/api/buyers', 'code', code, excludeId);
   renderDuplicateWarning(warnEl, `Alias "${code.toUpperCase()}" already on buyer`,
     dups, b => `${b.buyer1 || b.buyer}${b.pla ? ` · ${b.pla}` : ''}`);
+}
+
+// ── Buyer-edit "Code" autocomplete ────────────────────────────────
+// Typing a prefix in the short-alias field (e.g. "JPJ") lists every
+// existing code that starts with it (JPJ0, JPJ1, JPJ2, …) so the
+// operator can see what's taken and pick the next free alias. Mirrors
+// the lot-edit code dropdown. Informational: clicking a row fills the
+// field, and the existing onblur=bCheckCodeDup() then flags it if the
+// chosen code is already in use.
+let _bCodeCache = [];
+async function bRefreshCodeCache(){
+  // `?all=1` lifts the 500-row cap so codes past that boundary still appear.
+  try {
+    const buyers = await j('/api/buyers?all=1');
+    const seen = new Set();
+    _bCodeCache = [];
+    for (const b of (Array.isArray(buyers) ? buyers : [])) {
+      const code = String(b.code || '').trim();
+      if (!code) continue;
+      const key = code.toUpperCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      _bCodeCache.push({ code, codeUp: key, buyer: b.buyer || '', buyer1: b.buyer1 || '', sale: b.sale || '', pla: b.pla || '' });
+    }
+    _bCodeCache.sort((a, b) => a.codeUp.localeCompare(b.codeUp, undefined, { numeric: true }));
+  } catch (_) { /* non-fatal — leaves cache as-is */ }
+}
+function bWireCodeAutocomplete(){
+  const codeEl = document.getElementById('b-code');
+  const ddl    = document.getElementById('b-code-dropdown');
+  if (!codeEl || !ddl || codeEl._wiredAutocomplete) return;
+  codeEl._wiredAutocomplete = true;
+  let activeIdx = -1;
+
+  const render = () => {
+    const q = String(codeEl.value || '').trim().toUpperCase();
+    // Strict code match — startsWith first, then contains as a fallback.
+    const starts = [], contains = [];
+    for (const b of _bCodeCache) {
+      if (!q) { starts.push(b); continue; }
+      if (b.codeUp.startsWith(q)) starts.push(b);
+      else if (b.codeUp.includes(q)) contains.push(b);
+    }
+    const matches = starts.concat(contains).slice(0, 50);
+    if (!matches.length) {
+      ddl.innerHTML = '<div style="padding:8px 12px;color:#888;font-style:italic">No existing code matches — this alias is free.</div>';
+      ddl.style.display = 'block';
+      activeIdx = -1;
+      return;
+    }
+    activeIdx = 0;
+    ddl.innerHTML = matches.map((b, i) => {
+      const ctxParts = [b.buyer1 || b.buyer, b.sale ? '['+b.sale+']' : '', b.pla].filter(Boolean);
+      const ctx = ctxParts.join(' · ');
+      return '<div class="bc-row" data-code="'+escAttr(b.code)+'" data-idx="'+i+'" '+
+        'style="padding:6px 12px;cursor:pointer;border-bottom:1px solid #f1f1f1;display:flex;gap:10px;align-items:baseline'+
+        (i === activeIdx ? ';background:#ecfdf5' : '')+'">'+
+        '<span style="font-weight:700;color:#15803d;min-width:60px">'+escAttr(b.code)+'</span>'+
+        '<span style="flex:1;color:#444">'+escAttr(ctx)+'</span>'+
+        '</div>';
+    }).join('');
+    ddl.style.display = 'block';
+  };
+  const hide = () => { ddl.style.display = 'none'; activeIdx = -1; };
+  const choose = (code) => {
+    if (code == null) return;
+    codeEl.value = code;
+    hide();
+    bCheckCodeDup();   // surface the dup warning if they picked an existing alias
+  };
+
+  codeEl.addEventListener('focus', render);
+  codeEl.addEventListener('input', render);
+  codeEl.addEventListener('blur', () => { setTimeout(hide, 150); });
+  codeEl.addEventListener('keydown', (e) => {
+    if (ddl.style.display === 'none') return;
+    const rows = ddl.querySelectorAll('.bc-row');
+    if (e.key === 'Escape') { hide(); return; }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault(); if (!rows.length) return;
+      activeIdx = (activeIdx + 1) % rows.length;
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault(); if (!rows.length) return;
+      activeIdx = (activeIdx - 1 + rows.length) % rows.length;
+    } else if (e.key === 'Enter') {
+      if (activeIdx >= 0 && rows[activeIdx]) { e.preventDefault(); choose(rows[activeIdx].getAttribute('data-code')); return; }
+    } else { return; }
+    rows.forEach((r, i) => { r.style.background = (i === activeIdx) ? '#ecfdf5' : ''; });
+    if (rows[activeIdx]) rows[activeIdx].scrollIntoView({ block: 'nearest' });
+  });
+  // mousedown (not click) so the row commits BEFORE blur fires.
+  ddl.addEventListener('mousedown', (e) => {
+    const row = e.target.closest('.bc-row');
+    if (!row) return;
+    e.preventDefault();
+    choose(row.getAttribute('data-code'));
+  });
 }
 
 async function saveBuyer(){
@@ -17615,7 +17732,13 @@ async function loadLots(opts){
   // HIDE P_Qty, P_Rate, PurAmt, Discount.
   const baseCols = [
     { key:'lot_no', label:'Lot', sort:'text', totalKind:'count',
-      totalLabel: (n)=> String(n) },
+      totalLabel: (n)=> String(n),
+      // Flag lots marked "No Transport & Insurance" with a small badge so
+      // it's visible at a glance which lots are excluded from the sales
+      // invoice T&I base.
+      render:(l)=> esc(String(l.lot_no||'')) + (Number(l.no_ti)===1
+        ? ' <span title="No Transport &amp; Insurance — excluded from this lot’s sales-invoice transport/insurance" style="display:inline-block;background:#cffafe;color:#0e7490;border:1px solid #0e7490;border-radius:5px;font-size:9.5px;font-weight:700;padding:0 4px;margin-left:5px;vertical-align:middle">No T&amp;I</span>'
+        : '') },
     { key:'name', label:'Name', sort:'text' },
     { key:'buyer', label:'Buyer', sort:'text' },
     { key:'buyer_code', label:'Code', sort:'text',
@@ -17764,6 +17887,8 @@ function openLotEdit(l){
   document.getElementById('lot-modal-title').textContent='Edit Lot #'+l.lot_no;
   document.getElementById('l-id').value=l.id;
   L_FIELDS.forEach(f=>{const el=document.getElementById(L_IDS[f]);if(el)el.value=l[f]!=null?l[f]:''});
+  // No-T&I is a checkbox (not in L_FIELDS) — set it explicitly.
+  const notiEl=document.getElementById('l-no-ti'); if(notiEl) notiEl.checked = Number(l.no_ti)===1;
 
   // Wire field-level reactivity for the edit modal:
   //   1) Changing CODE → look up the matching buyer (by code, ti, or full
@@ -18038,6 +18163,22 @@ function _lotWireCodeAutocomplete(){
 // "armed" red state for 3 seconds, second click commits. Falls
 // through to confirm() when no button element is passed (per-row
 // path).
+// Mark (value=1) or clear (value=0) the "No Transport & Insurance" flag on
+// the ticked lots. Flagged lots are sold normally but dropped from the
+// sales invoice transport/insurance base. After changing this, the buyer's
+// invoice must be (re)generated for the new T&I to take effect.
+async function lotBulkNoTi(value){
+  if (typeof BulkActions === 'undefined' || !BulkActions.getTickedIds) return;
+  const ids = BulkActions.getTickedIds('lot');
+  if (!ids.length) { toast('Tick one or more lots first'); return; }
+  const mark = Number(value) === 1;
+  try {
+    const r = await j('/api/lots/bulk-no-ti', { method: 'POST', body: JSON.stringify({ ids, value: mark ? 1 : 0 }) });
+    toast(`${mark ? 'Marked' : 'Cleared'} No T&I on ${r.updated || 0} of ${r.requested || ids.length} lot${(r.requested || ids.length) === 1 ? '' : 's'}`
+      + (mark ? ' — regenerate the buyer’s invoice to apply.' : ''));
+    if (typeof loadLots === 'function') loadLots({ keepPage: true });
+  } catch (e) { showError(e); }
+}
 async function lotBulkLock(){
   if (typeof BulkActions === 'undefined' || !BulkActions.getTickedIds) return;
   const ids = BulkActions.getTickedIds('lot');
@@ -18305,6 +18446,9 @@ async function saveLot(){
     if(['bags','qty','price','amount'].includes(f)) body[f]=parseFloat(el.value)||0;
     else body[f]=el.value;
   });
+  // No-T&I checkbox (not in L_FIELDS) — send as 0/1 so the lot is
+  // included/excluded from its sales invoice transport/insurance.
+  const notiEl=document.getElementById('l-no-ti'); body.no_ti = (notiEl && notiEl.checked) ? 1 : 0;
   // trader_id: drop when blank so the server's seller-backfill check
   // doesn't fire on a NaN id (lots with NULL trader_id in legacy data).
   // Convert to integer when present so the server doesn't have to.

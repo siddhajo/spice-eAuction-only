@@ -275,6 +275,11 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg) {
   const isInterState = buyerState !== companyState;
 
   let totalQty = 0, totalBags = 0, totalAmount = 0;
+  // Per-lot "No T&I" exemption: lots flagged no_ti are still sold normally
+  // (their goods value + gunny are billed), but they're left OUT of the
+  // transport & insurance base — so marked lots carry no freight/cover.
+  // tiQty / tiAmount / tiBags are the non-exempt sums that feed T&I below.
+  let tiQty = 0, tiAmount = 0, tiBags = 0;
   const lineItems = [];
 
   for (const lot of lots) {
@@ -286,15 +291,20 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg) {
     totalQty += lot.qty;
     totalAmount += lot.amount;
 
+    const exemptTI = Number(lot.no_ti) === 1;
+    if (!exemptTI) { tiQty += lot.qty; tiAmount += lot.amount; tiBags += lot.bags; }
+
     lineItems.push({
       lot: lot.lot_no, grade: lot.grade, bags: lot.bags, qty: lot.qty,
       price: lot.price, amount: lot.amount,
       prate: prate, puramt: puramt,
+      no_ti: exemptTI ? 1 : 0,
     });
   }
 
-  // Gunny cost (HSN: jute bags)
-  const gunnyCost = totalBags * (cfg.gunny_rate || 165);
+  // Gunny cost (HSN: jute bags) — charged on ALL bags regardless of T&I.
+  const gunnyRate = (cfg.gunny_rate || 165);
+  const gunnyCost = totalBags * gunnyRate;
 
   // Transport & Insurance rates depend on sale type:
   //   L (Local)        → local_transport / local_insurance
@@ -324,14 +334,19 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg) {
     ? pickRate(cfg.insurance, 0.75)
     : pickRate(cfg.local_insurance, cfg.insurance, 0.75));
 
-  // Transport: ₹/kg (qty × rate)
-  const transportCost = Math.round(totalQty * transportRate * 100) / 100;
+  // Transport: ₹/kg — billed only on the non-exempt lots' quantity.
+  const transportCost = Math.round(tiQty * transportRate * 100) / 100;
 
-  // Insurance: per ₹1000 of (cardamom + gunny + GST on those)
-  //   insurance = ((cardamom_amount + gunny_cost) × (1 + gstGoods/100)) / 1000 × rate
+  // Goods subtotal (cardamom + gunny) — the FULL value is always billed
+  // and taxed; only the insurance/transport base is reduced by exemptions.
   const subtotalGoods = totalAmount + gunnyCost;
-  const gstOnGoods = subtotalGoods * gstGoods / 100;
-  const insuranceCost = Math.round((subtotalGoods + gstOnGoods) / 1000 * insuranceRate * 100) / 100;
+
+  // Insurance: per ₹1000 of (cardamom + gunny + GST on those), computed on
+  // the NON-EXEMPT lots only — exempt lots aren't insured.
+  //   insurance = ((ti_amount + ti_gunny) × (1 + gstGoods/100)) / 1000 × rate
+  const tiSubtotalGoods = tiAmount + tiBags * gunnyRate;
+  const tiGstOnGoods = tiSubtotalGoods * gstGoods / 100;
+  const insuranceCost = Math.round((tiSubtotalGoods + tiGstOnGoods) / 1000 * insuranceRate * 100) / 100;
 
   // Taxable value = cardamom + gunny + transport + insurance
   const taxableValue = subtotalGoods + transportCost + insuranceCost;
@@ -400,6 +415,7 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg) {
     lineItems,
     summary: {
       totalQty, totalBags, totalAmount,
+      tiQty,   // quantity that actually bears transport (non-exempt lots)
       gunnyCost, transportCost, insuranceCost,
       taxableValue, cgst, sgst, igst,
       roundDiff, subtotalRounded,
