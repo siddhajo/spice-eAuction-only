@@ -1816,6 +1816,11 @@ ${rates.cess}
       const sbRefundKg = cfgNum(cfg, 'sb_refund', 0);
       const nLots   = Array.isArray(row.lots) ? row.lots.length : 0;
       const refQty  = r2(sbRefundKg * nLots);
+      // ACTUALQTY carries a small per-lot sample allowance over BILLEDQTY:
+      // add the configured grams/lot (default 50g) for every lot in the
+      // voucher. Only ACTUALQTY changes; BILLEDQTY stays at refQty.
+      const extraKg = cfgNum(cfg, 'sb_refund_actual_extra_g', 50) / 1000;
+      const refActualQty = r2(refQty + extraKg * nLots);
       const refRate = (Array.isArray(row.lots) && row.lots.length)
         ? r2(row.lots[row.lots.length - 1].rate) : rt;
       const nature  = isIntra ? 'Local Purchase - Taxable' : 'Interstate Purchase - Taxable';
@@ -1833,13 +1838,13 @@ ${rates.cess}
 ${TAGS.DEEMYES}
 <RATE>${refRate}/Kgs.</RATE>
 <AMOUNT>${-refundtot}</AMOUNT>
-<ACTUALQTY>${refQty}Kgs.</ACTUALQTY>
+<ACTUALQTY>${refActualQty}Kgs.</ACTUALQTY>
 <BILLEDQTY>${refQty}Kgs.</BILLEDQTY>
 <BATCHALLOCATIONS.LIST>
 <GODOWNNAME>Main Location</GODOWNNAME>
 <DESTINATIONGODOWNNAME>Main Location</DESTINATIONGODOWNNAME>
 <AMOUNT>${-refundtot}</AMOUNT>
-<ACTUALQTY>${refQty}Kgs.</ACTUALQTY>
+<ACTUALQTY>${refActualQty}Kgs.</ACTUALQTY>
 <BILLEDQTY>${refQty}Kgs.</BILLEDQTY>
 </BATCHALLOCATIONS.LIST>
 <ACCOUNTINGALLOCATIONS.LIST>
@@ -2192,6 +2197,11 @@ ${rates.scess}
       const sbRefundKg = cfgNum(cfg, 'sb_refund', 0);
       const nLots   = Array.isArray(row.lots) ? row.lots.length : 0;
       const refQty  = r2(sbRefundKg * nLots);
+      // ACTUALQTY carries a small per-lot sample allowance over BILLEDQTY:
+      // add the configured grams/lot (default 50g) for every lot in the
+      // voucher. Only ACTUALQTY changes; BILLEDQTY stays at refQty.
+      const extraKg = cfgNum(cfg, 'sb_refund_actual_extra_g', 50) / 1000;
+      const refActualQty = r2(refQty + extraKg * nLots);
       const refRate = (Array.isArray(row.lots) && row.lots.length)
         ? r2(row.lots[row.lots.length - 1].rate) : rt;
       invEntries += `\n<ALLINVENTORYENTRIES.LIST>
@@ -2209,13 +2219,13 @@ ${rates.scess}
 ${TAGS.DEEMYES}
 <RATE>${refRate}/Kgs.</RATE>
 <AMOUNT>${-r2(refundtot)}</AMOUNT>
-<ACTUALQTY>${refQty}Kgs.</ACTUALQTY>
+<ACTUALQTY>${refActualQty}Kgs.</ACTUALQTY>
 <BILLEDQTY>${refQty}Kgs.</BILLEDQTY>
 <BATCHALLOCATIONS.LIST>
 <GODOWNNAME>Main Location</GODOWNNAME>
 <DESTINATIONGODOWNNAME>Main Location</DESTINATIONGODOWNNAME>
 <AMOUNT>${-r2(refundtot)}</AMOUNT>
-<ACTUALQTY>${refQty}Kgs.</ACTUALQTY>
+<ACTUALQTY>${refActualQty}Kgs.</ACTUALQTY>
 <BILLEDQTY>${refQty}Kgs.</BILLEDQTY>
 </BATCHALLOCATIONS.LIST>
 <ACCOUNTINGALLOCATIONS.LIST>

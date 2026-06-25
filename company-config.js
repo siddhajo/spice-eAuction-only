@@ -92,6 +92,12 @@ const DEFAULTS = [
   { key: 'commission',          value: '0', category: 'rates', label: 'Commission %',                                 type: 'number' },
   { key: 'hpc',                 value: '0', category: 'rates', label: 'Handling %',                                   type: 'number' },
   { key: 'sb_refund',           value: '0', category: 'rates', label: 'SB Sample Refund (Kgs)',                       type: 'number' },
+  // Extra grams added PER LOT to the Sample Refund stock line's ACTUALQTY (not
+  // BILLEDQTY) in the RD purchase ("Sample Refund to Dealer") and URD purchase
+  // ("Sample Refund to Planter") Tally vouchers. Lets the physically-received
+  // quantity carry a small per-lot sample allowance over the billed quantity.
+  // Entered in grams; converted to Kgs internally. Blank/0 = no adjustment.
+  { key: 'sb_refund_actual_extra_g', value: '50', category: 'rates', label: 'Sample Refund ACTUALQTY Extra (grams per lot — RD/URD purchase XML)', type: 'number' },
   { key: 'gst_goods',           value: '0', category: 'rates', label: 'GST Goods Rate %',                             type: 'number' },
   { key: 'gst_service',         value: '0', category: 'rates', label: 'GST Service Rate %',                           type: 'number' },
   { key: 'discount_gst',        value: '0', category: 'rates', label: 'Discount GST %',                               type: 'number' },
