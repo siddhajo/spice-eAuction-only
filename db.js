@@ -311,11 +311,6 @@ async function initDb() {
     -- idx_lots_locked index on the very first boot.
     locked_at TEXT DEFAULT NULL,
     locked_by TEXT DEFAULT NULL,
-    -- "No Transport & Insurance" flag (per lot). When 1, this lot is sold
-    -- normally but excluded from the sales invoice's transport & insurance
-    -- base, so it bears no freight/cover. Also added via ALTER for older
-    -- DBs in the migrations block below.
-    no_ti INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now','localtime')),
     FOREIGN KEY (auction_id) REFERENCES auctions(id),
     FOREIGN KEY (trader_id) REFERENCES traders(id)
@@ -350,6 +345,12 @@ async function initDb() {
     tot REAL DEFAULT 0,
     addl_chg REAL DEFAULT 0,
     addl_name TEXT DEFAULT '',
+    -- Per-invoice "No Transport & Insurance" flag. When 1, this invoice
+    -- carries no transport/insurance: pava_hc + ins are 0, the PDF hides
+    -- both rows, and the Tally voucher skips both ledgers. Toggled from the
+    -- Invoices tab (and settable at generation). Also added via ALTER for
+    -- older DBs in the migrations block below.
+    no_ti INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
@@ -816,9 +817,10 @@ async function initDb() {
     // "Validate Entered Lots" confirm; cleared by any lot insert/edit/
     // delete. Blocks price import (mode='price') until re-validated.
     "ALTER TABLE auctions ADD COLUMN lots_validated_at TEXT DEFAULT ''",
-    // Per-lot "No Transport & Insurance" flag — excludes the lot from the
-    // sales invoice transport/insurance base. See buildSalesInvoice().
-    'ALTER TABLE lots ADD COLUMN no_ti INTEGER DEFAULT 0',
+    // Per-invoice "No Transport & Insurance" flag — when 1 the invoice's
+    // transport + insurance are 0 (hidden in PDF + Tally). See
+    // buildSalesInvoice() and POST /api/invoices/:id/no-ti.
+    'ALTER TABLE invoices ADD COLUMN no_ti INTEGER DEFAULT 0',
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }

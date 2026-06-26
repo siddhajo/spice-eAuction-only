@@ -281,20 +281,26 @@ function buildBuyersStatement(ctx) {
     if (isIntra) { g.saleLabel = 'INTRA'; intra.push(g); }
     else         { g.saleLabel = 'INTER'; inter.push(g); }
   }
-  const sortFn = (a, b) => (a.name || '').localeCompare(b.name || '');
-  inter.sort(sortFn); intra.sort(sortFn); exportS.sort(sortFn);
-
-  // Invoice column shows the buyer's actual sales-invoice number(s) (from
-  // l.invo), not a running serial. A buyer with more than one invoice in the
-  // trade lists them comma-separated; the temp Set is dropped afterwards so
-  // the row objects serialise cleanly to JSON.
-  const setInvoice = g => {
-    g.invoice = Array.from(g.invos).filter(Boolean).join(', ');
+  // Invoice column: the buyer's actual sales-invoice number(s) (from l.invo),
+  // prefixed by sale-type code — I = inter-state, L = intra/local, E = export.
+  // Invoice numbers reset per sale type, so the prefix keeps "I 15" and "L 15"
+  // distinct. A buyer with more than one invoice lists them comma-separated.
+  // A numeric sort key (`_invSort`) is stashed for ordering, then both it and
+  // the temp Set are dropped so the rows serialise cleanly to JSON.
+  const invNumKey = s => { const n = parseInt(String(s).replace(/\D/g, ''), 10); return isFinite(n) ? n : Number.POSITIVE_INFINITY; };
+  const setInvoice = prefix => g => {
+    const nums = Array.from(g.invos).filter(Boolean).sort((a, b) => invNumKey(a) - invNumKey(b));
+    g.invoice  = nums.length ? `${prefix} ${nums.join(', ')}` : '';
+    g._invSort = nums.length ? invNumKey(nums[0]) : Number.POSITIVE_INFINITY;
     delete g.invos;
   };
-  inter.forEach(setInvoice);
-  intra.forEach(setInvoice);
-  exportS.forEach(setInvoice);
+  inter.forEach(setInvoice('I'));
+  intra.forEach(setInvoice('L'));
+  exportS.forEach(setInvoice('E'));
+  // Order each section by invoice number (blank invoices last; ties by name).
+  const byInvoice = (a, b) => (a._invSort - b._invSort) || (a.name || '').localeCompare(b.name || '');
+  inter.sort(byInvoice); intra.sort(byInvoice); exportS.sort(byInvoice);
+  [...inter, ...intra, ...exportS].forEach(g => { delete g._invSort; });
 
   const sum = arr => arr.reduce((a, g) => ({ kilos: a.kilos + g.kilos, amount: a.amount + g.amount }),
                                 { kilos: 0, amount: 0 });

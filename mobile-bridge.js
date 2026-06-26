@@ -1005,7 +1005,11 @@ function mountMobile(app, deps) {
   // ── 8c. TRADER GET BY ID — ensures fresh fetch ──────────────────
   // Mobile uses this after edits to refresh the displayed trader. Always
   // reads from the DB (no cache); both apps see the same data.
-  app.get('/api/traders/:id', requireAuth, (req, res) => {
+  // :id is constrained to digits — the bridge mounts BEFORE the native
+  // server.js routes, so an unconstrained `:id` here captured the literal
+  // `/api/traders/template` request (id="template") and 404'd it as "Seller
+  // not found", breaking the seller import template download.
+  app.get('/api/traders/:id(\\d+)', requireAuth, (req, res) => {
     const db = getDb();
     const id = parseInt(req.params.id, 10);
     const trader = db.get('SELECT * FROM traders WHERE id = ?', [id]);

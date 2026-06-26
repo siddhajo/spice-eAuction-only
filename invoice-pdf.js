@@ -1455,15 +1455,7 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
     doc.font('Helvetica-Bold').text('Transport', colX('desc') + 4, y + 3, { width: colW.desc - 8 });
     doc.font('Helvetica');
     if (showHsn) doc.text(sacTransport, colX('hsn') + 2, y + 3, { width: colW.hsn - 4, align: 'center' });
-    // Quantity that actually bears transport. When some lots are exempt
-    // from T&I, the stored transport amount is on the reduced base, so we
-    // show the matching qty (amount ÷ rate) instead of the full invoice
-    // qty — keeps qty × rate = amount on the printed row. Falls back to the
-    // full qty for zero-rate / legacy rows.
-    const shippedQty = (transportRate > 0)
-      ? (summary.transportCost / transportRate)
-      : (summary.tiQty != null ? summary.tiQty : summary.totalQty);
-    doc.text(`${shippedQty.toFixed(3)} Kgs.`, colX('shipped') + 2, y + 3, { width: colW.shipped - 4, align: 'right' , lineBreak: false, ellipsis: true});
+    doc.text(`${summary.totalQty.toFixed(3)} Kgs.`, colX('shipped') + 2, y + 3, { width: colW.shipped - 4, align: 'right' , lineBreak: false, ellipsis: true});
     doc.font('Helvetica-Bold').text(transportRate.toFixed(2), colX('rate') + 2, y + 3, { width: colW.rate - 4, align: 'right' });
     doc.font('Helvetica').text('Kgs.', colX('per') + 2, y + 3, { width: colW.per - 4, align: 'center' });
     doc.font('Helvetica-Bold').text(formatINR(summary.transportCost), colX('amount') + 2, y + 3, { width: colW.amount - 4, align: 'right' });

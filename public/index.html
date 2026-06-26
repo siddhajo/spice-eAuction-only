@@ -3329,12 +3329,6 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
                  the button to appear: .needs-admin (role) AND
                  .feat-lot-lock (flag) AND a non-empty selection. -->
             <button id="lot-bulk-unlock" class="needs-admin feat-lot-lock btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#1f2937;font-weight:600;border:1px solid #b8860b" onclick="lotBulkUnlock()" title="Unlock the ticked lots — admin only. Lots become editable again.">🔓 Unlock Selected <span id="lot-bulk-unlock-count" style="margin-left:4px;background:rgba(0,0,0,.18);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
-            <!-- Mark / clear "No Transport & Insurance" on the ticked lots.
-                 Flagged lots are sold normally but excluded from the sales
-                 invoice transport & insurance base. data-bulk-action="lot"
-                 lets BulkActions._sync show/hide them with the selection. -->
-            <button id="lot-bulk-noti" data-bulk-action="lot" class="needs-lot-write btn" style="display:none;height:38px;padding:0 14px;background:#0e7490;color:#fff;font-weight:600" onclick="lotBulkNoTi(1)" title="Mark the ticked lots as No Transport & Insurance — they'll be left out of the transport/insurance calculation on their sales invoice.">🚫 No T&amp;I <span data-bulk-count="lot" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
-            <button id="lot-bulk-yesti" data-bulk-action="lot" class="needs-lot-write btn" style="display:none;height:38px;padding:0 14px;background:#fff;color:#0e7490;font-weight:600;border:1px solid #0e7490" onclick="lotBulkNoTi(0)" title="Clear the No-T&I flag on the ticked lots — transport & insurance will be calculated for them again.">↩ Add T&amp;I <span data-bulk-count="lot" style="margin-left:4px;background:rgba(14,116,144,.18);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <button id="lot-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('lot')">🗑 Delete Selected <span id="lot-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <!-- Sister tool to Price Import. Opens the Price List Mapping
                  screen which fills the CODE column on a Price List sheet
@@ -5293,13 +5287,6 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <div class="fg"><label>Sale Type</label>
       <select id="l-sale"><option value=""></option><option value="L">Local (L)</option><option value="I">Inter-state (I)</option><option value="E">Export (E)</option><option value="W">Withdrawn (W)</option><option value="N">N/A (N)</option></select>
     </div>
-    <div class="fg" style="align-self:end">
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600">
-        <input type="checkbox" id="l-no-ti" style="width:16px;height:16px;cursor:pointer">
-        No Transport &amp; Insurance
-      </label>
-      <div style="font-size:11px;color:var(--spice-text-hint);margin-top:4px">Exclude this lot from the sales invoice transport/insurance.</div>
-    </div>
   </div>
   <div class="actions"><button class="btn btn-o" onclick="hideModal('lot-modal')">Cancel</button><button class="btn btn-g" onclick="saveLot()">Save</button></div>
 </div></div>
@@ -5373,6 +5360,14 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   </div>
   <div id="gi-hint" style="font-size:11px;color:var(--text3);padding:4px 0"></div>
   <div class="fg"><label>Starting Invoice No <span style="color:var(--text3);font-weight:400">— auto-increments for each selected buyer</span></label><input id="gi-invno" type="number" placeholder="e.g. 6"></div>
+  <!-- Per-invoice "No Transport & Insurance". When ticked the generated
+       invoice(s) carry no transport/insurance — both come out 0 and drop
+       out of the PDF + Tally voucher. Can also be toggled later per
+       invoice from the Sales list. -->
+  <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;margin:4px 0 2px">
+    <input type="checkbox" id="gi-no-ti" style="width:16px;height:16px;cursor:pointer">
+    No Transport &amp; Insurance for this invoice
+  </label>
   <div class="actions">
     <button class="btn btn-o" onclick="hideModal('gen-inv-modal')">Cancel</button>
     <button class="btn btn-a" onclick="previewInvoice('sales')">Preview</button>
@@ -15615,9 +15610,27 @@ async function importTraders(e){
   }catch(err){status.style.background='var(--red-bg)';status.style.color='var(--red)';status.textContent='Error: '+err.message}}
 
 async function downloadTemplate(type){
-  const r=await fetch(B+`/api/${type}/template`,{headers:{'Authorization':'Bearer '+T}});
-  const blob=await r.blob();const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);a.download=type+'-template.xlsx';a.click()}
+  try{
+    const r=await fetch(B+`/api/${type}/template`,{headers:{'Authorization':'Bearer '+T}});
+    if(!r.ok){
+      // Surface the real error instead of silently downloading the JSON error
+      // body as a corrupt .xlsx (which looks like "the button does nothing").
+      let msg='Template download failed ('+r.status+')';
+      try{const e=await r.json(); if(e&&e.error) msg=e.error;}catch(_){}
+      throw new Error(msg);
+    }
+    const blob=await r.blob();
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=type+'-template.xlsx';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  }catch(e){
+    if(typeof showError==='function') showError(e);
+    else if(typeof toast==='function') toast(e.message||'Template download failed');
+    else alert(e.message||'Template download failed');
+  }
+}
 
 // ── Delete All — three-stage safety ──────────────────────
 // 1. PREFLIGHT: ask the server for the exact row counts that would be
@@ -17081,6 +17094,7 @@ async function loadPurEligibleSellers(){
 
 function openGenInvModal(){
   if(!document.getElementById('inv-auction').value){alert('Select an auction first');return}
+  const noti=document.getElementById('gi-no-ti'); if(noti) noti.checked=false;
   loadInvEligibleBuyers();showModal('gen-inv-modal');
 }
 function openGenPurModal(){
@@ -17732,13 +17746,7 @@ async function loadLots(opts){
   // HIDE P_Qty, P_Rate, PurAmt, Discount.
   const baseCols = [
     { key:'lot_no', label:'Lot', sort:'text', totalKind:'count',
-      totalLabel: (n)=> String(n),
-      // Flag lots marked "No Transport & Insurance" with a small badge so
-      // it's visible at a glance which lots are excluded from the sales
-      // invoice T&I base.
-      render:(l)=> esc(String(l.lot_no||'')) + (Number(l.no_ti)===1
-        ? ' <span title="No Transport &amp; Insurance — excluded from this lot’s sales-invoice transport/insurance" style="display:inline-block;background:#cffafe;color:#0e7490;border:1px solid #0e7490;border-radius:5px;font-size:9.5px;font-weight:700;padding:0 4px;margin-left:5px;vertical-align:middle">No T&amp;I</span>'
-        : '') },
+      totalLabel: (n)=> String(n) },
     { key:'name', label:'Name', sort:'text' },
     { key:'buyer', label:'Buyer', sort:'text' },
     { key:'buyer_code', label:'Code', sort:'text',
@@ -17887,8 +17895,6 @@ function openLotEdit(l){
   document.getElementById('lot-modal-title').textContent='Edit Lot #'+l.lot_no;
   document.getElementById('l-id').value=l.id;
   L_FIELDS.forEach(f=>{const el=document.getElementById(L_IDS[f]);if(el)el.value=l[f]!=null?l[f]:''});
-  // No-T&I is a checkbox (not in L_FIELDS) — set it explicitly.
-  const notiEl=document.getElementById('l-no-ti'); if(notiEl) notiEl.checked = Number(l.no_ti)===1;
 
   // Wire field-level reactivity for the edit modal:
   //   1) Changing CODE → look up the matching buyer (by code, ti, or full
@@ -18163,22 +18169,6 @@ function _lotWireCodeAutocomplete(){
 // "armed" red state for 3 seconds, second click commits. Falls
 // through to confirm() when no button element is passed (per-row
 // path).
-// Mark (value=1) or clear (value=0) the "No Transport & Insurance" flag on
-// the ticked lots. Flagged lots are sold normally but dropped from the
-// sales invoice transport/insurance base. After changing this, the buyer's
-// invoice must be (re)generated for the new T&I to take effect.
-async function lotBulkNoTi(value){
-  if (typeof BulkActions === 'undefined' || !BulkActions.getTickedIds) return;
-  const ids = BulkActions.getTickedIds('lot');
-  if (!ids.length) { toast('Tick one or more lots first'); return; }
-  const mark = Number(value) === 1;
-  try {
-    const r = await j('/api/lots/bulk-no-ti', { method: 'POST', body: JSON.stringify({ ids, value: mark ? 1 : 0 }) });
-    toast(`${mark ? 'Marked' : 'Cleared'} No T&I on ${r.updated || 0} of ${r.requested || ids.length} lot${(r.requested || ids.length) === 1 ? '' : 's'}`
-      + (mark ? ' — regenerate the buyer’s invoice to apply.' : ''));
-    if (typeof loadLots === 'function') loadLots({ keepPage: true });
-  } catch (e) { showError(e); }
-}
 async function lotBulkLock(){
   if (typeof BulkActions === 'undefined' || !BulkActions.getTickedIds) return;
   const ids = BulkActions.getTickedIds('lot');
@@ -18446,9 +18436,6 @@ async function saveLot(){
     if(['bags','qty','price','amount'].includes(f)) body[f]=parseFloat(el.value)||0;
     else body[f]=el.value;
   });
-  // No-T&I checkbox (not in L_FIELDS) — send as 0/1 so the lot is
-  // included/excluded from its sales invoice transport/insurance.
-  const notiEl=document.getElementById('l-no-ti'); body.no_ti = (notiEl && notiEl.checked) ? 1 : 0;
   // trader_id: drop when blank so the server's seller-backfill check
   // doesn't fire on a NaN id (lots with NULL trader_id in legacy data).
   // Convert to integer when present so the server doesn't have to.
@@ -18515,12 +18502,25 @@ async function validateLots(){
 }
 
 // ── Invoices ──────────────────────────────────────────────
+// Toggle "No Transport & Insurance" on one existing invoice. The server
+// recomputes transport/insurance/GST/total under the new flag and
+// persists them, so the list, PDF and Tally voucher all stay in sync.
+async function toggleInvoiceNoTI(id, value){
+  try{
+    await j('/api/invoices/'+id+'/no-ti',{method:'POST',body:JSON.stringify({value})});
+    toast(Number(value)===1
+      ? 'Transport & Insurance removed from this invoice'
+      : 'Transport & Insurance added back to this invoice');
+    await loadInvoices({keepPage:true});
+  }catch(e){ showError(e); }
+}
 async function generateInvoice(){
   const aid=document.getElementById('inv-auction').value;
   if(!aid){alert('Please select an auction first');return}
   const saleType=document.getElementById('gi-sale').value;
   const startInvNo=parseInt(document.getElementById('gi-invno').value.trim(),10);
   if(!startInvNo||isNaN(startInvNo)||startInvNo<1){alert('Enter a valid starting invoice number');return}
+  const noTI=!!document.getElementById('gi-no-ti')?.checked;
   const list=document.getElementById('gi-buyer-list');
   const checked=Array.from(list?.querySelectorAll('.gi-cb:checked')||[]);
   if(!checked.length){alert('Select at least one buyer');return}
@@ -18534,7 +18534,7 @@ async function generateInvoice(){
         const r=await fetch(B+`/api/invoices/generate/${aid}`,{
           method:'POST',
           headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},
-          body:JSON.stringify({saleType,buyerCode,invoiceNo:String(startInvNo)})});
+          body:JSON.stringify({saleType,buyerCode,invoiceNo:String(startInvNo),noTI})});
         const d=await r.json();
         if(!r.ok)throw new Error(d.error||'Failed to generate invoice');
         hideModal('gen-inv-modal');
@@ -18558,7 +18558,7 @@ async function generateInvoice(){
           const r=await fetch(B+`/api/invoices/generate/${aid}`,{
             method:'POST',
             headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},
-            body:JSON.stringify({saleType,buyerCode,invoiceNo:invNo})});
+            body:JSON.stringify({saleType,buyerCode,invoiceNo:invNo,noTI})});
           const d=await r.json();
           if(!r.ok)throw new Error(d.error||'Generation failed');
           results.success.push({buyerCode,invNo,total:Number(d.invoice.grandTotal)});
@@ -18800,8 +18800,16 @@ async function loadInvoices(opts){
           const purchaseBtn = isASPCtx
             ? iconBtn('purchase', purchaseTitle, `viewPurchaseViewPDF(${i.id})`)
             : `<button class="icon-btn i-purchase" title="${purchaseTitle}" style="opacity:.35;cursor:not-allowed" disabled>${ICONS.purchase}</button>`;
+          // No Transport & Insurance toggle. Active (coloured) when the
+          // invoice has T&I removed; clicking recomputes the invoice with
+          // the opposite state. Permission-gated like the other writers.
+          const tiOff = Number(i.no_ti) === 1;
+          const tiBtn = `<button class="icon-btn needs-invoice-write" title="${tiOff
+              ? 'No Transport & Insurance is ON — click to add T&I back and recompute totals'
+              : 'Remove Transport & Insurance from this invoice (recomputes totals)'}" onclick="toggleInvoiceNoTI(${i.id},${tiOff?0:1})" style="${tiOff?'color:#0e7490;font-weight:700':'opacity:.5'}">🚫</button>`;
           return iconBtn('pdf','View / download PDF',`viewInvoicePDF(${i.id})`)
             + purchaseBtn
+            + tiBtn
             + iconBtn('edit','Edit invoice',`openInvoiceEdit(${JSON.stringify(i).replace(/"/g,'&quot;')})`)
             + iconBtn('revert','Revert \u2014 delete invoice & re-enable lots for re-invoicing',`revertInvoice(${i.id},'${esc(i.buyer1||i.buyer)}','${esc(i.sale)}-${esc(i.invo)}')`)
             + iconBtn('whatsapp','Send via WhatsApp',`whatsappInvoice(${i.id},'${encodeURIComponent(i.buyer1||i.buyer||'')}','${encodeURIComponent(i.invo||'')}','${encodeURIComponent(i.sale||'')}',${Number(i.tot)||0},'${esc(i.ano||'')}')`)
@@ -23150,7 +23158,7 @@ async function previewInvoice(type){
     if(checked.length>1){
       if(!confirm(`Preview shows ONE buyer at a time. Showing "${checked[0].value}".\n\nContinue?`))return;
     }
-    body={saleType:document.getElementById('gi-sale').value,buyerCode:checked[0].value,type:'sales'};
+    body={saleType:document.getElementById('gi-sale').value,buyerCode:checked[0].value,type:'sales',noTI:!!document.getElementById('gi-no-ti')?.checked};
   }else if(type==='purchase'){
     aid=document.getElementById('pur-auction').value;
     body={buyerCode:document.getElementById('gp-seller').value.trim(),type:'purchase'};
