@@ -1153,6 +1153,207 @@ function buildDebitNote(db, invoiceNo, saleType, discount, cfg) {
   };
 }
 
+/**
+ * Purchase Register (lot-wise)
+ * One row PER LOT — the seller-side purchase detail. Unlike the Purchase
+ * Journal (one row per dealer invoice / agri bill), this is the raw lot
+ * ledger: STATE, TNO, DATE, LOT, BRANCH, NAME, PLACE, GSTIN, BAG, QTY,
+ * PRICE, AMOUNT, PQTY, PRATE, PURAMT, DISCOUNT, GST5, PAYABLE.
+ *
+ * DISCOUNT = refund, GST5 = stored GST-on-discount (`advance`), PAYABLE =
+ * balance (GST already netted). In auction mode `advance` is the discount,
+ * so GST5 → 0.
+ *
+ * Withdrawn lots (code = 'WD') ARE included even though withdrawal zeroes
+ * their price/amount, so the register accounts for every lot in the auction —
+ * they appear with their real BAG/QTY but zero money columns (the only
+ * zero-AMOUNT rows here, since unsold lots with no code stay excluded).
+ *
+ * Scope: a specific auction (opts.auctionId) OR a date range across auctions
+ * (opts.from/opts.to over the auction date). Auction wins when both given.
+ */
+function getPurchaseRegister(db, opts = {}) {
+  const mode = String(opts.mode || 'e-Auction').toLowerCase();
+  const discountCol = (mode === 'auction') ? 'advance' : 'refund';
+  const gstCol = (mode === 'auction') ? '0' : 'advance';
+  let q = `SELECT l.state AS state, a.ano AS tno, a.date AS date, l.lot_no AS lot,
+      l.branch AS branch, l.name AS name, l.ppla AS place, l.cr AS gstin,
+      l.bags AS bag, l.qty AS qty, l.price AS price, l.amount AS amount,
+      l.pqty AS pqty, l.prate AS prate, l.puramt AS puramt,
+      l.${discountCol} AS discount, l.${gstCol} AS gst5, l.balance AS payable
+    FROM lots l JOIN auctions a ON a.id = l.auction_id
+    WHERE (l.amount > 0 OR UPPER(TRIM(COALESCE(l.code,''))) = 'WD')`;
+  const params = [];
+  if (opts.auctionId) { q += ' AND l.auction_id = ?'; params.push(opts.auctionId); }
+  else if (opts.from && opts.to) { q += ' AND a.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
+  q += ' ORDER BY l.state, a.ano, CAST(l.lot_no AS INTEGER), l.lot_no';
+  const rows = db.all(q, params);
+  return rows.map(r => ({ ...r, date: _ddmmyyyy(r.date) }));
+}
+
+/**
+ * Sales Register (invoice-wise)
+ * One row PER INVOICE: STATE, TNO, DATE, SALE, INVO, TRADERNAME, BIDDER,
+ * BAG, QTY, AMOUNT, LORRY, GUNNY, IGST, CGST, SGST, INS, INVAMT.
+ * LORRY = freight charge (pava_hc); INVAMT = invoice grand total (tot).
+ *
+ * Scope: a specific auction (matched by auction_id OR ano for legacy rows)
+ * OR a date range across auctions. Optional saleType filter.
+ */
+function getSalesRegister(db, opts = {}) {
+  let q = `SELECT i.state AS state, i.ano AS tno, i.date AS date, i.sale AS sale,
+      i.invo AS invo, i.buyer1 AS tradername, i.buyer AS bidder,
+      i.bag AS bag, i.qty AS qty, i.amount AS amount,
+      i.pava_hc AS lorry, i.gunny AS gunny, i.igst AS igst, i.cgst AS cgst,
+      i.sgst AS sgst, i.ins AS ins, i.tot AS invamt
+    FROM invoices i`;
+  const params = [];
+  const where = [];
+  if (opts.auctionId) {
+    const a = db.get('SELECT id, ano FROM auctions WHERE id = ?', [opts.auctionId]);
+    if (a) { where.push('(i.auction_id = ? OR i.ano = ?)'); params.push(a.id, a.ano); }
+    else { where.push('i.auction_id = ?'); params.push(opts.auctionId); }
+  } else if (opts.from && opts.to) {
+    where.push('i.date BETWEEN ? AND ?'); params.push(opts.from, opts.to);
+  }
+  if (opts.saleType) { where.push('i.sale = ?'); params.push(opts.saleType); }
+  if (where.length) q += ' WHERE ' + where.join(' AND ');
+  q += ' ORDER BY i.state, i.ano, i.date, i.sale, i.invo';
+  const rows = db.all(q, params);
+  return rows.map(r => ({ ...r, date: _ddmmyyyy(r.date) }));
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PER-PARTY "INDIVIDUAL" REGISTERS (cross-auction, date-range)
+// ───────────────────────────────────────────────────────────────
+// Three party-statement registers that span MULTIPLE auctions within a
+// date range (unlike the lot/invoice registers above which are per-auction
+// OR a flat date-range list). Each returns { kind, parties: [...] } where
+// every party carries its own rows + summary totals so the export layer
+// can render one section/page per party (with an optional single-party
+// filter). Rows are returned pre-sorted by party so callers can group in
+// one pass.
+//   • Pooler   — the seller's own lots (lots table). Sold = amount>0.
+//   • Seller   — purchase invoices raised TO the pooler (purchases table),
+//                summarised per auction. INVO = count of invoices.
+//   • Merchant — sales invoices raised to the buyer (invoices table), one
+//                row per invoice. RECEIPT has no data source yet (no
+//                receipts table) so it renders 0 / blank; closing balance
+//                therefore equals the invoice total.
+function _groupRegister(rows, summaryFn) {
+  const parties = [];
+  let cur = null;
+  for (const r of rows) {
+    const name = r.party || '';
+    if (!cur || cur.name !== name) {
+      cur = { name, gstin: '', rows: [] };
+      parties.push(cur);
+    }
+    if (!cur.gstin && r.gstin) cur.gstin = String(r.gstin).trim();
+    // The party + gstin live on the group, not on each row.
+    const { party, gstin, ...rest } = r;
+    cur.rows.push(rest);
+  }
+  for (const p of parties) p.summary = summaryFn(p.rows);
+  return parties;
+}
+const _num = (v) => Number(v) || 0;
+const _sum = (rows, k) => rows.reduce((s, r) => s + _num(r[k]), 0);
+
+// Pooler Register — one row per lot the pooler put up, across all auctions
+// in range. TNo | Date | Lot | Qty | Rate | Value | P_Qty | P_Rate | PurAmt.
+// Withdrawn lots (code 'WD') ARE included so the register reconciles the
+// full lot list; the summary breaks the totals into Sold vs Withdrawn.
+function getPoolerRegister(db, opts = {}) {
+  let q = `SELECT a.ano AS tno, a.date AS date, l.lot_no AS lot, l.name AS party,
+      l.cr AS gstin, l.qty AS qty, l.price AS rate, l.amount AS value,
+      l.pqty AS pqty, l.prate AS prate, l.puramt AS puramt,
+      UPPER(TRIM(COALESCE(l.code,''))) AS code
+    FROM lots l JOIN auctions a ON a.id = l.auction_id
+    WHERE 1=1`;
+  const params = [];
+  if (opts.from && opts.to) { q += ' AND a.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
+  if (opts.party) { q += ' AND UPPER(TRIM(l.name)) = UPPER(?)'; params.push(String(opts.party).trim()); }
+  q += ' ORDER BY l.name, a.date, a.ano, CAST(l.lot_no AS INTEGER), l.lot_no';
+  const rows = db.all(q, params).map(r => ({ ...r, date: _ddmmyyyy(r.date) }));
+  const parties = _groupRegister(rows, (rs) => {
+    const isWd = (r) => String(r.code || '').trim().toUpperCase() === 'WD';
+    const qty = _sum(rs, 'qty');
+    const value = _sum(rs, 'value');
+    const pqty = _sum(rs, 'pqty');
+    const puramt = _sum(rs, 'puramt');
+    const sold = rs.filter(r => !isWd(r) && _num(r.value) > 0);
+    const wd = rs.filter(isWd);
+    const soldQty = sold.reduce((s, r) => s + _num(r.qty), 0);
+    const soldValue = sold.reduce((s, r) => s + _num(r.value), 0);
+    const wdQty = wd.reduce((s, r) => s + _num(r.qty), 0);
+    const wdValue = wd.reduce((s, r) => s + _num(r.value), 0);
+    return { qty, value, pqty, puramt, soldQty, soldValue, wdQty, wdValue };
+  });
+  return { kind: 'pooler', parties };
+}
+
+// Seller Register ("SELLERS INDIVIDUAL") — purchase invoices to the pooler,
+// summarised per auction. DATE | ANO | INVO(count) | QTY | INVOICE.
+function getSellerRegister(db, opts = {}) {
+  let q = `SELECT p.name AS party, MAX(p.gstin) AS gstin, p.ano AS ano, p.date AS date,
+      COUNT(*) AS invo, SUM(p.qty) AS qty,
+      SUM(CASE WHEN COALESCE(p.total,0) > 0 THEN p.total ELSE p.amount END) AS invoice
+    FROM purchases p WHERE 1=1`;
+  const params = [];
+  if (opts.from && opts.to) { q += ' AND p.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
+  if (opts.party) { q += ' AND UPPER(TRIM(p.name)) = UPPER(?)'; params.push(String(opts.party).trim()); }
+  q += ' GROUP BY p.name, p.ano, p.date ORDER BY p.name, p.date, p.ano';
+  const rows = db.all(q, params).map(r => ({ ...r, date: _ddmmyyyy(r.date) }));
+  const parties = _groupRegister(rows, (rs) => {
+    const invoice = _sum(rs, 'invoice');
+    return { qty: _sum(rs, 'qty'), invoice, closing: invoice };
+  });
+  return { kind: 'seller', parties };
+}
+
+// Merchant Register ("MERCHANTS INDIVIDUAL") — sales invoices to the buyer,
+// one row per invoice. DATE | TNo | INVO | RECP | QTY | INVOICE | RECEIPT.
+function getMerchantRegister(db, opts = {}) {
+  let q = `SELECT i.buyer1 AS party, i.gstin AS gstin, i.ano AS tno, i.date AS date,
+      i.invo AS invo, '' AS recp, i.qty AS qty, i.tot AS invoice, 0 AS receipt
+    FROM invoices i WHERE 1=1`;
+  const params = [];
+  if (opts.from && opts.to) { q += ' AND i.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
+  if (opts.party) { q += ' AND UPPER(TRIM(i.buyer1)) = UPPER(?)'; params.push(String(opts.party).trim()); }
+  q += " ORDER BY i.buyer1, i.date, i.ano, CAST(NULLIF(i.invo,'') AS INTEGER), i.invo";
+  const rows = db.all(q, params).map(r => ({ ...r, date: _ddmmyyyy(r.date) }));
+  const parties = _groupRegister(rows, (rs) => {
+    const invoice = _sum(rs, 'invoice');
+    const receipt = _sum(rs, 'receipt');
+    return { qty: _sum(rs, 'qty'), invoice, receipt, closing: invoice - receipt };
+  });
+  return { kind: 'merchant', parties };
+}
+
+// Distinct party names for the picker dropdown, scoped to the same source
+// table + date range as the matching register.
+function listRegisterParties(db, opts = {}) {
+  const kind = String(opts.kind || '').toLowerCase();
+  const params = [];
+  let q;
+  if (kind === 'merchant') {
+    q = `SELECT DISTINCT i.buyer1 AS name FROM invoices i WHERE COALESCE(i.buyer1,'') != ''`;
+    if (opts.from && opts.to) { q += ' AND i.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
+    q += ' ORDER BY i.buyer1';
+  } else if (kind === 'seller') {
+    q = `SELECT DISTINCT p.name AS name FROM purchases p WHERE COALESCE(p.name,'') != ''`;
+    if (opts.from && opts.to) { q += ' AND p.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
+    q += ' ORDER BY p.name';
+  } else {
+    q = `SELECT DISTINCT l.name AS name FROM lots l JOIN auctions a ON a.id = l.auction_id
+         WHERE COALESCE(l.name,'') != ''`;
+    if (opts.from && opts.to) { q += ' AND a.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
+    q += ' ORDER BY l.name';
+  }
+  return db.all(q, params).map(r => r.name);
+}
+
 module.exports = {
   calculateLot,
   calculateTDS,
@@ -1168,5 +1369,11 @@ module.exports = {
   getTDSReturnData,
   getSalesJournal,
   getPurchaseJournal,
+  getPurchaseRegister,
+  getSalesRegister,
+  getPoolerRegister,
+  getSellerRegister,
+  getMerchantRegister,
+  listRegisterParties,
   gstinStateCode,
 };

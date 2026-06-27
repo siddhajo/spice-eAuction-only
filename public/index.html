@@ -2598,6 +2598,10 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
           Journals
         </button>
+        <button class="side-item" data-tab="registers" onclick="go('registers')">
+          <svg viewBox="0 0 24 24"><path d="M3 3h18v4H3zM3 10h18v4H3zM3 17h18v4H3z"/></svg>
+          Registers
+        </button>
         <button class="side-item" data-tab="tally" onclick="go('tally')">
           <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
           To Tally
@@ -4797,6 +4801,39 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <button class="btn btn-a" onclick="exportJournal()">Export XLSX</button>
         </div>
         <div style="overflow-x:auto;max-height:500px"><table id="jr-table"><thead id="jr-head"></thead><tbody id="jr-body"></tbody></table></div>
+      </div>
+    </div>
+
+    <div class="tc" id="tc-registers">
+      <div class="card">
+        <h2>Registers <span style="font-weight:400;font-size:12px;color:var(--text3)">Lot-wise Purchase &amp; invoice-wise Sales — by auction or date range</span></h2>
+        <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:end">
+          <div class="fg" style="margin:0"><label>Register Type</label>
+            <select id="reg-type" onchange="onRegTypeChange()">
+              <option value="purchase">Purchase (lot-wise)</option>
+              <option value="sales">Sales (invoice-wise)</option>
+              <option value="pooler">Pooler Register (per pooler)</option>
+              <option value="seller">Sellers Individual (per seller)</option>
+              <option value="merchant">Merchants Individual (per merchant)</option>
+            </select>
+          </div>
+          <div class="fg" style="margin:0;min-width:220px" id="reg-auction-wrap"><label>Auction</label>
+            <select id="reg-auction" style="width:100%;padding:6px"></select>
+          </div>
+          <div class="fg" style="margin:0"><label>From</label><input type="date" id="reg-from" onchange="if(isIndividualReg(document.getElementById('reg-type').value))populateRegParties()"></div>
+          <div class="fg" style="margin:0"><label>To</label><input type="date" id="reg-to" onchange="if(isIndividualReg(document.getElementById('reg-type').value))populateRegParties()"></div>
+          <div class="fg" style="margin:0;min-width:220px;display:none" id="reg-party-wrap"><label>Party</label>
+            <select id="reg-party" style="width:100%;padding:6px"><option value="">— All parties —</option></select>
+          </div>
+          <div class="fg" style="margin:0;display:none" id="reg-sale-wrap"><label>Sale Type</label>
+            <select id="reg-sale"><option value="">All</option><option value="L">Local (L)</option><option value="I">Inter-state (I)</option><option value="E">Export (E)</option><option value="W">Withdrawn (W)</option><option value="N">N/A (N)</option></select>
+          </div>
+          <button class="btn btn-g" onclick="loadRegister()">Load</button>
+          <button class="btn btn-a" onclick="exportRegister('xlsx')">Export XLSX</button>
+          <button class="btn btn-orange" onclick="exportRegister('pdf')">Export PDF</button>
+        </div>
+        <div style="font-size:11.5px;color:var(--text3);margin-bottom:8px">Pick an Auction for a single auction, or leave it on “All auctions” and set a From/To date range. The date range is ignored when a specific auction is selected.</div>
+        <div style="overflow-x:auto;max-height:520px"><table id="reg-table"><thead id="reg-head"></thead><tbody id="reg-body"></tbody></table></div>
       </div>
     </div>
 
@@ -7838,7 +7875,7 @@ function go(tab){
   const loaders={dash:loadStats,insights:loadInsights,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>searchTraders(''),buyers:()=>searchBuyers(''),
     auctions:loadAuctions,lots:loadLotAuctions,invoices:loadInvAuctions,purchases:loadPurAuctions,
     payments:loadPayAuctions,exports:loadExpAuctions,tds:()=>{},lorry:loadLorryAuctions,
-    bills:loadBillAuctions,debit:loadDnAuctions,debitplanter:loadDnpAuctions,journals:loadJournalDefault,tally:loadTallyAuctions,
+    bills:loadBillAuctions,debit:loadDnAuctions,debitplanter:loadDnpAuctions,journals:loadJournalDefault,registers:loadRegisterDefault,tally:loadTallyAuctions,
     spicesboard:loadSpiceBoard,pricecheck:loadPriceCheckAuctions};
   if(loaders[tab]){
     try{
@@ -23260,6 +23297,228 @@ async function exportJournal(){
   }
   const r=await fetch(B+url,{headers:{'Authorization':'Bearer '+T}});
   const blob=await r.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click()}
+
+// ── Registers (lot-wise Purchase / invoice-wise Sales) ─────
+// Sibling of Journals. Scope by a specific Auction OR a date range; the
+// Sales register also offers a Sale Type filter. The Pooler / Sellers /
+// Merchants "individual" registers are per-party, date-range scoped.
+async function loadRegisterDefault(){
+  const sel = document.getElementById('reg-auction');
+  if (sel && !sel.options.length) {
+    const auctions = await j('/api/auctions');
+    const opts = (auctions||[]).map(a =>
+      `<option value="${a.id}">${esc(a.ano || ('#'+a.id))} — ${esc(a.date || '')}</option>`);
+    sel.innerHTML = '<option value="">— All auctions —</option>' + opts.join('');
+  }
+  // Default date range = current month (used when "All auctions" is picked).
+  const today = new Date().toISOString().slice(0,10);
+  const first = today.slice(0,8) + '01';
+  const f = document.getElementById('reg-from'), t = document.getElementById('reg-to');
+  if (f && !f.value) f.value = first;
+  if (t && !t.value) t.value = today;
+  onRegTypeChange();
+}
+// The three per-party "individual" registers (Pooler / Sellers / Merchants)
+// are date-range + optional-party, not auction-scoped.
+const REG_INDIVIDUAL = { pooler:1, seller:1, merchant:1 };
+function isIndividualReg(type){ return !!REG_INDIVIDUAL[type]; }
+function onRegTypeChange(){
+  const type = document.getElementById('reg-type').value;
+  const indiv = isIndividualReg(type);
+  const saleWrap = document.getElementById('reg-sale-wrap');
+  const auctionWrap = document.getElementById('reg-auction-wrap');
+  const partyWrap = document.getElementById('reg-party-wrap');
+  if (saleWrap) saleWrap.style.display = (type === 'sales') ? '' : 'none';
+  if (auctionWrap) auctionWrap.style.display = indiv ? 'none' : '';
+  if (partyWrap) partyWrap.style.display = indiv ? '' : 'none';
+  if (indiv) populateRegParties();
+}
+// Fill the Party dropdown for the active individual register + date range.
+async function populateRegParties(){
+  const type = document.getElementById('reg-type').value;
+  if (!isIndividualReg(type)) return;
+  const sel = document.getElementById('reg-party');
+  if (!sel) return;
+  const keep = sel.value;
+  const from = document.getElementById('reg-from').value;
+  const to = document.getElementById('reg-to').value;
+  const p = new URLSearchParams({ kind: type });
+  if (from && to) { p.set('from', from); p.set('to', to); }
+  let names = [];
+  try { names = await j('/api/registers/individual-parties?' + p.toString()); }
+  catch(e){ names = []; }
+  sel.innerHTML = '<option value="">— All parties —</option>' +
+    (names||[]).map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  if (keep && (names||[]).includes(keep)) sel.value = keep;
+}
+// Build the auction/date/sale query params shared by load + export.
+function regParams(){
+  const aid = document.getElementById('reg-auction').value;
+  const from = document.getElementById('reg-from').value;
+  const to = document.getElementById('reg-to').value;
+  const type = document.getElementById('reg-type').value;
+  const saleType = document.getElementById('reg-sale') ? document.getElementById('reg-sale').value : '';
+  const p = new URLSearchParams();
+  if (aid) p.set('auctionId', aid);
+  else if (from && to) { p.set('from', from); p.set('to', to); }
+  if (type === 'sales' && saleType) p.set('saleType', saleType);
+  return p;
+}
+// Indian-format number renderer for register columns (the Journal's
+// fmtNumWithDecimals is local to loadJournal, so registers carry their own).
+const regFmtNum = (decimals) => (v) => {
+  const n = Number(v) || 0;
+  if (decimals === 0) return Math.round(n).toLocaleString('en-IN');
+  return n.toLocaleString('en-IN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+};
+// Sold / Withdrawn breakdown rendered beneath the Pooler Register totals row.
+// Sold = lots not withdrawn with a value; Withdrawn = lots with code "WD".
+function poolerSummaryRows(rows){
+  const isWd = (r) => String(r.code || '').trim().toUpperCase() === 'WD';
+  const sum = (arr, k) => arr.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+  const sold = rows.filter(r => !isWd(r) && (Number(r.value) || 0) > 0);
+  const wd = rows.filter(isWd);
+  return [
+    { label:'Sold',      values:{ qty:sum(sold,'qty'), value:sum(sold,'value') } },
+    { label:'Withdrawn', values:{ qty:sum(wd,'qty'),   value:sum(wd,'value')   } },
+  ];
+}
+function regColumns(type){
+  if (type === 'pooler') return [
+    { key:'party', label:'Pooler', sort:'text', totalKind:'count', totalLabel:'Total' },
+    { key:'tno', label:'TNo', sort:'text' },
+    { key:'date', label:'Date', sort:'text' },
+    { key:'lot', label:'Lot', sort:'text' },
+    { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },
+    { key:'rate', label:'Rate', sort:'number', numeric:true, fmt:regFmtNum(2), noTotal:true },
+    { key:'value', label:'Value', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'pqty', label:'P_Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },
+    { key:'prate', label:'P_Rate', sort:'number', numeric:true, fmt:regFmtNum(2), noTotal:true },
+    { key:'puramt', label:'PurAmt', sort:'number', numeric:true, fmt:regFmtNum(2) },
+  ];
+  if (type === 'seller') return [
+    { key:'party', label:'Seller', sort:'text' },
+    { key:'date', label:'Date', sort:'text' },
+    { key:'ano', label:'ANO', sort:'text' },
+    { key:'invo', label:'Invo', sort:'number', numeric:true, fmt:regFmtNum(0) },
+    { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },
+    { key:'invoice', label:'Invoice', sort:'number', numeric:true, fmt:regFmtNum(2) },
+  ];
+  if (type === 'merchant') return [
+    { key:'party', label:'Merchant', sort:'text' },
+    { key:'date', label:'Date', sort:'text' },
+    { key:'tno', label:'TNo', sort:'text' },
+    { key:'invo', label:'Invo', sort:'text' },
+    { key:'recp', label:'Recp', sort:'text' },
+    { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },
+    { key:'invoice', label:'Invoice', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'receipt', label:'Receipt', sort:'number', numeric:true, fmt:regFmtNum(2) },
+  ];
+  if (type === 'sales') return [
+    { key:'state', label:'State', sort:'text' },
+    { key:'tno', label:'TNO', sort:'text' },
+    { key:'date', label:'Date', sort:'text' },
+    { key:'sale', label:'Sale', sort:'text' },
+    { key:'invo', label:'Invo', sort:'text' },
+    { key:'tradername', label:'Trader Name', sort:'text' },
+    { key:'bidder', label:'Bidder', sort:'text' },
+    { key:'bag', label:'Bag', sort:'number', numeric:true, fmt:regFmtNum(0) },
+    { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },
+    { key:'amount', label:'Amount', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'lorry', label:'Lorry', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'gunny', label:'Gunny', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'igst', label:'IGST', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'cgst', label:'CGST', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'sgst', label:'SGST', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'ins', label:'Ins', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'invamt', label:'Inv Amt', sort:'number', numeric:true, fmt:regFmtNum(2) },
+  ];
+  return [
+    { key:'state', label:'State', sort:'text' },
+    { key:'tno', label:'TNO', sort:'text' },
+    { key:'date', label:'Date', sort:'text' },
+    { key:'lot', label:'Lot', sort:'text' },
+    { key:'branch', label:'Branch', sort:'text' },
+    { key:'name', label:'Name', sort:'text' },
+    { key:'place', label:'Place', sort:'text' },
+    { key:'gstin', label:'GSTIN', sort:'text' },
+    { key:'bag', label:'Bag', sort:'number', numeric:true, fmt:regFmtNum(0) },
+    { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },
+    { key:'price', label:'Price', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'amount', label:'Amount', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'pqty', label:'PQty', sort:'number', numeric:true, fmt:regFmtNum(3) },
+    { key:'prate', label:'PRate', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'puramt', label:'PurAmt', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'discount', label:'Discount', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'gst5', label:'GST5', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'payable', label:'Payable', sort:'number', numeric:true, fmt:regFmtNum(2) },
+  ];
+}
+// Build query params for the individual (per-party) registers.
+function indivRegParams(){
+  const type = document.getElementById('reg-type').value;
+  const from = document.getElementById('reg-from').value;
+  const to = document.getElementById('reg-to').value;
+  const party = document.getElementById('reg-party') ? document.getElementById('reg-party').value : '';
+  const p = new URLSearchParams({ kind: type });
+  if (from && to) { p.set('from', from); p.set('to', to); }
+  if (party) p.set('party', party);
+  return p;
+}
+async function loadRegister(){
+  const type = document.getElementById('reg-type').value;
+  if (isIndividualReg(type)) {
+    let data = null;
+    try { data = await j('/api/registers/individual?' + indivRegParams().toString()); }
+    catch(e){ toast('Load failed: ' + (e.message || e)); return; }
+    // Flatten the per-party structure into a preview table (one row per
+    // record, prefixed with the party name).
+    const rows = [];
+    (data && data.parties || []).forEach(p => {
+      (p.rows || []).forEach(r => rows.push(Object.assign({ party: p.name }, r)));
+    });
+    DataTable.mount('reg-body', rows, {
+      columns: regColumns(type),
+      summaryRows: type === 'pooler' ? poolerSummaryRows : undefined,
+      paginate: true,
+      emptyState: { icon:'document', title:'No records', body:'No register entries for this selection.' }
+    });
+    return;
+  }
+  const ep = (type === 'sales') ? 'sales' : 'purchase';
+  const url = `/api/registers/${ep}?` + regParams().toString();
+  let d = [];
+  try { d = await j(url); }
+  catch(e){ toast('Load failed: ' + (e.message || e)); return; }
+  DataTable.mount('reg-body', Array.isArray(d) ? d : [], {
+    columns: regColumns(type),
+    paginate: true,
+    emptyState: { icon:'document', title:'No records', body:'No register entries for this selection.' }
+  });
+}
+async function exportRegister(format){
+  const type = document.getElementById('reg-type').value;
+  let ep, p, base;
+  if (isIndividualReg(type)) {
+    ep = 'individual-register';
+    p = indivRegParams();
+    base = { pooler:'PoolerRegister', seller:'SellerRegister', merchant:'MerchantRegister' }[type];
+  } else {
+    ep = (type === 'sales') ? 'sales-register' : 'purchase-register';
+    p = regParams();
+    base = (type === 'sales') ? 'SalesRegister' : 'PurchaseRegister';
+  }
+  if (format) p.set('format', format);
+  const name = base + '.' + (format === 'pdf' ? 'pdf' : 'xlsx');
+  await withOverlay(`Exporting ${base} (${(format||'xlsx').toUpperCase()})…`, async () => {
+    const r = await fetch(B + `/api/exports/${ep}?` + p.toString(), { headers:{'Authorization':'Bearer '+T} });
+    if (!r.ok) { let m='Export failed'; try { const e=await r.json(); if(e.error) m=e.error; } catch(x){} toast(m); return; }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  });
+}
 
 // ── Preview (shared across Sales / Purchase / Agri) ────────
 async function previewInvoice(type){

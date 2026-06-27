@@ -876,6 +876,178 @@ async function exportPurchaseJournal(db, auctionId, type) {
   });
 }
 
+// ══════════════════════════════════════════════════════════════
+// REGISTERS — lot-wise Purchase / invoice-wise Sales (XLSX)
+// ══════════════════════════════════════════════════════════════
+
+// Header meta lines for the Registers — auction (when scoped to one) or a
+// date range (when spanning auctions), plus an optional sale-type note.
+function registerMeta(db, opts) {
+  const lines = [];
+  if (opts && opts.auctionId) lines.push(...auctionMeta(db, opts.auctionId));
+  else if (opts && opts.from && opts.to) lines.push(`Period: ${opts.from} to ${opts.to}`);
+  else lines.push('All auctions');
+  if (opts && opts.saleType) lines.push(`Sale: ${opts.saleType}`);
+  return lines.filter(Boolean);
+}
+
+// ── Export: Purchase Register (lot-wise) ───────────────────
+async function exportPurchaseRegister(db, opts = {}) {
+  const { getPurchaseRegister } = require('./calculations');
+  const rows = getPurchaseRegister(db, opts);
+  const cols = [
+    { header: 'STATE',  key: 'state',  width: 14 },
+    { header: 'TNO',    key: 'tno',    width: 6  },
+    { header: 'DATE',   key: 'date',   width: 12 },
+    { header: 'LOT',    key: 'lot',    width: 8  },
+    { header: 'BRANCH', key: 'branch', width: 10 },
+    { header: 'NAME',   key: 'name',   width: 28 },
+    { header: 'PLACE',  key: 'place',  width: 14 },
+    { header: 'GSTIN',  key: 'gstin',  width: 18 },
+    { header: 'BAG',    key: 'bag',    width: 6  },
+    { header: 'QTY',    key: 'qty',    width: 11, numFmt: '#,##0.000' },
+    { header: 'PRICE',  key: 'price',  width: 10, numFmt: '#,##0.00' },
+    { header: 'AMOUNT', key: 'amount', width: 14, numFmt: '#,##0.00' },
+    { header: 'PQTY',   key: 'pqty',   width: 11, numFmt: '#,##0.000' },
+    { header: 'PRATE',  key: 'prate',  width: 10, numFmt: '#,##0.00' },
+    { header: 'PURAMT', key: 'puramt', width: 14, numFmt: '#,##0.00' },
+    { header: 'DISCOUNT', key: 'discount', width: 12, numFmt: '#,##0.00' },
+    { header: 'GST5',   key: 'gst5',   width: 11, numFmt: '#,##0.00' },
+    { header: 'PAYABLE', key: 'payable', width: 14, numFmt: '#,##0.00' },
+  ];
+  const sum = (k) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+  const grandTotal = { label: 'TOTAL', values: {
+    bag: sum('bag'), qty: sum('qty'), amount: sum('amount'), pqty: sum('pqty'),
+    puramt: sum('puramt'), discount: sum('discount'), gst5: sum('gst5'), payable: sum('payable'),
+  }};
+  return createExcelBuffer('PurchaseRegister', cols, rows, {
+    db, title: 'Purchase Register', metaLines: registerMeta(db, opts), grandTotal,
+  });
+}
+
+// ── Export: Sales Register (invoice-wise) ──────────────────
+async function exportSalesRegister(db, opts = {}) {
+  const { getSalesRegister } = require('./calculations');
+  const rows = getSalesRegister(db, opts);
+  const cols = [
+    { header: 'STATE',  key: 'state',  width: 14 },
+    { header: 'TNO',    key: 'tno',    width: 6  },
+    { header: 'DATE',   key: 'date',   width: 12 },
+    { header: 'SALE',   key: 'sale',   width: 6  },
+    { header: 'INVO',   key: 'invo',   width: 8  },
+    { header: 'TRADERNAME', key: 'tradername', width: 30 },
+    { header: 'BIDDER', key: 'bidder', width: 10 },
+    { header: 'BAG',    key: 'bag',    width: 6  },
+    { header: 'QTY',    key: 'qty',    width: 11, numFmt: '#,##0.000' },
+    { header: 'AMOUNT', key: 'amount', width: 14, numFmt: '#,##0.00' },
+    { header: 'LORRY',  key: 'lorry',  width: 10, numFmt: '#,##0.00' },
+    { header: 'GUNNY',  key: 'gunny',  width: 10, numFmt: '#,##0.00' },
+    { header: 'IGST',   key: 'igst',   width: 10, numFmt: '#,##0.00' },
+    { header: 'CGST',   key: 'cgst',   width: 10, numFmt: '#,##0.00' },
+    { header: 'SGST',   key: 'sgst',   width: 10, numFmt: '#,##0.00' },
+    { header: 'INS',    key: 'ins',    width: 10, numFmt: '#,##0.00' },
+    { header: 'INVAMT', key: 'invamt', width: 14, numFmt: '#,##0.00' },
+  ];
+  const sum = (k) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+  const grandTotal = { label: 'TOTAL', values: {
+    bag: sum('bag'), qty: sum('qty'), amount: sum('amount'), lorry: sum('lorry'),
+    gunny: sum('gunny'), igst: sum('igst'), cgst: sum('cgst'), sgst: sum('sgst'),
+    ins: sum('ins'), invamt: sum('invamt'),
+  }};
+  return createExcelBuffer('SalesRegister', cols, rows, {
+    db, title: 'Sales Register', metaLines: registerMeta(db, opts), grandTotal,
+  });
+}
+
+// ── Export: Per-party "Individual" Registers (cross-auction) ───────
+// Pooler / Seller / Merchant statements, one section per party. Shares the
+// createExcelBuffer section-grouped mode: each party becomes a banded
+// section (name + GSTIN) followed by its rows, a bold TOTAL subtotal, and a
+// summary line (Sold/Withdrawn for poolers, Closing Balance for the others).
+// `labelKey` is the first column the TOTAL/summary labels land in.
+const INDIVIDUAL_REG_DEFS = {
+  pooler: {
+    sheet: 'PoolerRegister', title: 'Pooler Register', labelKey: 'tno',
+    cols: [
+      { header: 'TNO',    key: 'tno',    width: 8  },
+      { header: 'DATE',   key: 'date',   width: 12 },
+      { header: 'LOT',    key: 'lot',    width: 8  },
+      { header: 'QTY',    key: 'qty',    width: 12, numFmt: '#,##0.000' },
+      { header: 'RATE',   key: 'rate',   width: 11, numFmt: '#,##0.00'  },
+      { header: 'VALUE',  key: 'value',  width: 16, numFmt: '#,##0.00'  },
+      { header: 'P_QTY',  key: 'pqty',   width: 12, numFmt: '#,##0.000' },
+      { header: 'P_RATE', key: 'prate',  width: 11, numFmt: '#,##0.00'  },
+      { header: 'PURAMT', key: 'puramt', width: 16, numFmt: '#,##0.00'  },
+    ],
+    summaryRows: (p) => ([
+      { _isSubtotal: true, tno: 'Total',     qty: p.summary.qty,     value: p.summary.value, pqty: p.summary.pqty, puramt: p.summary.puramt },
+      { _isSubtotal: true, tno: 'Sold',      qty: p.summary.soldQty, value: p.summary.soldValue },
+      { _isSubtotal: true, tno: 'Withdrawn', qty: p.summary.wdQty,   value: p.summary.wdValue },
+    ]),
+    grandKeys: ['qty', 'value', 'pqty', 'puramt'],
+  },
+  seller: {
+    sheet: 'SellerRegister', title: 'Sellers Individual', labelKey: 'date',
+    cols: [
+      { header: 'DATE',    key: 'date',    width: 12 },
+      { header: 'ANO',     key: 'ano',     width: 8  },
+      { header: 'INVO',    key: 'invo',    width: 8,  numFmt: '#,##0' },
+      { header: 'QTY',     key: 'qty',     width: 12, numFmt: '#,##0.000' },
+      { header: 'INVOICE', key: 'invoice', width: 16, numFmt: '#,##0.00' },
+    ],
+    summaryRows: (p) => ([
+      { _isSubtotal: true, date: 'Total',           qty: p.summary.qty, invoice: p.summary.invoice },
+      { _isSubtotal: true, date: 'Closing Balance', invoice: p.summary.closing },
+    ]),
+    grandKeys: ['qty', 'invoice'],
+  },
+  merchant: {
+    sheet: 'MerchantRegister', title: 'Merchants Individual', labelKey: 'date',
+    cols: [
+      { header: 'DATE',    key: 'date',    width: 12 },
+      { header: 'TNO',     key: 'tno',     width: 8  },
+      { header: 'INVO',    key: 'invo',    width: 8  },
+      { header: 'RECP',    key: 'recp',    width: 8  },
+      { header: 'QTY',     key: 'qty',     width: 12, numFmt: '#,##0.000' },
+      { header: 'INVOICE', key: 'invoice', width: 16, numFmt: '#,##0.00' },
+      { header: 'RECEIPT', key: 'receipt', width: 16, numFmt: '#,##0.00' },
+    ],
+    summaryRows: (p) => ([
+      { _isSubtotal: true, date: 'Total',           qty: p.summary.qty, invoice: p.summary.invoice, receipt: p.summary.receipt },
+      { _isSubtotal: true, date: 'Closing Balance', invoice: p.summary.closing },
+    ]),
+    grandKeys: ['qty', 'invoice', 'receipt'],
+  },
+};
+
+function individualRegisterData(db, kind, opts) {
+  const { getPoolerRegister, getSellerRegister, getMerchantRegister } = require('./calculations');
+  if (kind === 'seller')   return getSellerRegister(db, opts);
+  if (kind === 'merchant') return getMerchantRegister(db, opts);
+  return getPoolerRegister(db, opts);
+}
+
+async function exportIndividualRegister(db, kind, opts = {}) {
+  const def = INDIVIDUAL_REG_DEFS[kind];
+  if (!def) throw new Error(`Unknown individual register kind: ${kind}`);
+  const data = individualRegisterData(db, kind, opts);
+  const sections = data.parties.map(p => ({
+    title: p.name + (p.gstin ? `      GSTIN: ${p.gstin}` : ''),
+    rows: [...p.rows, ...def.summaryRows(p)],
+  }));
+  // Grand total across every party in the file.
+  const gv = {};
+  def.grandKeys.forEach(k => {
+    gv[k] = data.parties.reduce((s, p) => s + (Number(p.summary[k]) || 0), 0);
+  });
+  gv[def.labelKey] = 'GRAND TOTAL';
+  return createExcelBuffer(def.sheet, def.cols, [], {
+    db, title: def.title, metaLines: registerMeta(db, opts),
+    sections, spacerBetween: true,
+    grandTotal: { values: gv },
+  });
+}
+
 // ── Export: Praman CSV (Lot Slip in Praman auction platform format) ──
 // Produces a CSV (NOT xlsx) matching the column layout required by Praman's
 // lot-upload interface. Returns a Buffer of CSV text.
@@ -1075,5 +1247,6 @@ module.exports = {
   exportPoolerRegister, exportFullFile, exportCollection, exportTradeReport, exportDealerList,
   exportSalesTaxes, exportPaymentSummary, exportPaymentPartyWise, exportTDSReturn, exportTallyPurchase,
   exportSalesJournal, exportPurchaseJournal,
+  exportPurchaseRegister, exportSalesRegister, exportIndividualRegister,
   exportSellersXlsx, exportBuyersXlsx,
 };
