@@ -8376,6 +8376,11 @@ async function loadStats(auctionId){
       </div>
     </div>
 
+    <!-- "Current Auction" depot summary — depot-wise arrivals table + headline
+         stats panel. Hydrated async by loadDepotSummary() after this HTML
+         lands, so the dashboard paint is never blocked. -->
+    <div id="dash-current-auction" style="margin-bottom:20px"></div>
+
     ${chartHTML}
 
     ${branchHTML}
@@ -8406,6 +8411,10 @@ async function loadStats(auctionId){
   // synchronously above with a "Loading…" placeholder; this call fills
   // it in asynchronously so the dashboard paint is never blocked.
   renderDashHeadlineTiles(_dashSelectedAuctionId);
+
+  // "Current Auction" depot summary — uses the dashboard-selected trade, else
+  // the current/latest auction returned by /api/stats.
+  loadDepotSummary(_dashSelectedAuctionId || (A && A.id) || (AA[0] && AA[0].id) || null);
 
   // Restore branch panel open state after re-render — without this the
   // panel snaps shut every time loadStats() is called (e.g. picking a
@@ -8482,6 +8491,112 @@ async function loadStats(auctionId){
         }
       });
     });
+  }
+}
+
+// ── "Current Auction" depot summary panel (dashboard) ──────────────
+// Depot-wise arrivals table (planter/trader weight split) + headline stats,
+// matching the design ref. Hydrated after loadStats() paints the dashboard so
+// the initial render is never blocked on this extra fetch.
+async function loadDepotSummary(auctionId){
+  const host = document.getElementById('dash-current-auction');
+  if (!host) return;
+  if (!auctionId) { host.innerHTML = ''; return; }
+  let d;
+  try { d = await j(`/api/auctions/${auctionId}/depot-summary`); }
+  catch (e) { host.innerHTML = ''; return; }
+  const a = d.auction || {};
+  const depots = d.depots || [];
+  const t = d.totals || { lots:0, bags:0, planterWt:0, traderWt:0, totalWt:0 };
+  const s = d.stats || {};
+  const wt   = n => (Number(n)||0).toLocaleString('en-IN', { minimumFractionDigits:3, maximumFractionDigits:3 });
+  const intf = n => (Number(n)||0).toLocaleString('en-IN');
+  const inr0 = n => '₹'+Math.round(Number(n)||0).toLocaleString('en-IN');
+  const pct  = (part, whole) => whole > 0 ? (part/whole*100).toFixed(2) : '0.00';
+
+  const cellTd = 'padding:9px 12px;border-top:1px solid var(--spice-line);font-variant-numeric:tabular-nums';
+  const depotRow = (dp, isTotal) => `
+    <tr style="${isTotal ? 'font-weight:700;background:var(--spice-cardamom-lt)' : ''}">
+      <td style="${cellTd};text-align:left">
+        <div>${esc(dp.depot)}</div>
+        <div style="font-size:11px;color:var(--spice-text-hint);font-weight:400">Trader: ${pct(dp.traderWt, dp.totalWt)}%, Planter: ${pct(dp.planterWt, dp.totalWt)}%</div>
+      </td>
+      <td style="${cellTd};text-align:right">${intf(dp.lots)}</td>
+      <td style="${cellTd};text-align:right">${intf(dp.bags)}</td>
+      <td style="${cellTd};text-align:right">${wt(dp.planterWt)}</td>
+      <td style="${cellTd};text-align:right">${wt(dp.traderWt)}</td>
+      <td style="${cellTd};text-align:right">${wt(dp.totalWt)}</td>
+    </tr>`;
+
+  const th = 'padding:9px 12px;text-align:right;font-size:11px;font-weight:700;color:var(--spice-text-mute);text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid var(--spice-line)';
+  const tableHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr>
+        <th style="${th};text-align:left">Depot</th>
+        <th style="${th}">Lots</th><th style="${th}">Bags</th>
+        <th style="${th}">Planter Wt</th><th style="${th}">Trader Wt</th><th style="${th}">Total Wt</th>
+      </tr></thead>
+      <tbody>
+        ${depots.map(dp => depotRow(dp, false)).join('')}
+        ${depotRow({ depot:'Total', lots:t.lots, bags:t.bags, planterWt:t.planterWt, traderWt:t.traderWt, totalWt:t.totalWt }, true)}
+      </tbody>
+    </table>`;
+
+  const statRow = (label, val) => `
+    <div style="display:flex;justify-content:space-between;gap:10px;padding:9px 12px;border-bottom:1px solid var(--spice-line);font-size:13px">
+      <span style="color:var(--spice-text-mute)">${label}</span>
+      <span style="font-weight:700;color:var(--spice-text-main);font-variant-numeric:tabular-nums">${val}</span>
+    </div>`;
+  const statsHTML = [
+    ['Allocated Lots', intf(s.allocatedLots)],
+    ['Booked Lots',    intf(s.bookedLots)],
+    ['Sold Lots',      intf(s.soldLots)],
+    ['WD Lots',        intf(s.wdLots)],
+    ['NA Lots',        intf(s.naLots)],
+    ['Crop Weight',    wt(s.cropWeight)],
+    ['Planter Weight', wt(s.planterWeight)],
+    ['Dealer Weight',  wt(s.dealerWeight)],
+    ['Minimum Price',  inr0(s.minPrice)],
+    ['Maximum Price',  inr0(s.maxPrice)],
+    ['Average Price',  inr0(s.avgPrice)],
+  ].map(([l,v]) => statRow(l, v)).join('');
+
+  host.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:12px">
+      <h2 style="font-size:17px;font-weight:700;margin:0;color:var(--spice-text-main)">Current Auction</h2>
+      <a href="#" onclick="downloadArrivals(${a.id});return false" style="font-size:13px;color:var(--spice-saffron);font-weight:600;text-decoration:none;white-space:nowrap">Download Arrivals Data</a>
+    </div>
+    <div class="card" style="padding:20px">
+      <div style="font-size:20px;font-weight:700;color:var(--spice-text-main);line-height:1.2">Auction No ${esc(a.ano)}</div>
+      <div style="font-size:12px;color:var(--spice-text-mute);margin-bottom:16px">Auction Date: ${fmtD(a.date)}</div>
+      <div class="dash-row" style="margin-bottom:0">
+        <div style="overflow-x:auto">${tableHTML}</div>
+        <div style="border:1px solid var(--spice-line);border-radius:10px;overflow:hidden;align-self:start">${statsHTML}</div>
+      </div>
+    </div>`;
+}
+
+// "Download Arrivals Data" — XLSX of the trade's booked lots. Hardened to
+// surface server errors instead of silently saving a corrupt file.
+async function downloadArrivals(auctionId){
+  if (!auctionId) return;
+  try {
+    const r = await fetch(B+`/api/auctions/${auctionId}/arrivals-export`, { headers:{ 'Authorization':'Bearer '+T } });
+    if (!r.ok) {
+      let msg = 'Download failed ('+r.status+')';
+      try { const e = await r.json(); if (e && e.error) msg = e.error; } catch(_){}
+      throw new Error(msg);
+    }
+    const blob = await r.blob();
+    const el = document.createElement('a');
+    el.href = URL.createObjectURL(blob);
+    el.download = 'Arrivals_Auction.xlsx';
+    document.body.appendChild(el); el.click(); el.remove();
+    setTimeout(()=>URL.revokeObjectURL(el.href), 5000);
+  } catch (e) {
+    if (typeof showError === 'function') showError(e);
+    else if (typeof toast === 'function') toast(e.message || 'Download failed');
+    else alert(e.message || 'Download failed');
   }
 }
 

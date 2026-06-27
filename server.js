@@ -3766,6 +3766,140 @@ app.get('/api/auctions/:id/allocation-stats', requireViewOrLotEntry, (req, res) 
   res.json({ stats: Object.values(stats), allocations });
 });
 
+// Depot-wise summary for the dashboard "Current Auction" panel. Returns one
+// row per depot (branch) with booked-lot counts, bags and the planter-vs-trader
+// weight split, plus headline auction stats (allocated / booked / sold /
+// withdrawn / not-auctioned lots, weights, price band).
+//   • Depot      = lots.branch
+//   • Planter    = seller with NO valid GSTIN; Trader/Dealer = valid 15-char
+//                  GSTIN (same rule as the Dealer List export)
+//   • Lot state from `code`: '' = not auctioned (no buyer), 'WD' = withdrawn,
+//                  anything else = sold
+//   • Allocated  = sum of lot_allocations ranges (lots reserved per depot);
+//                  every allocated depot is listed even with 0 booked lots so a
+//                  fresh trade still shows each depot (matches the design ref)
+app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, res) => {
+  const db = getDb();
+  const auctionId = parseInt(req.params.id, 10);
+  const auction = db.get('SELECT id, ano, date, crop_type FROM auctions WHERE id = ?', [auctionId]);
+  if (!auction) return res.status(404).json({ error: 'Auction not found' });
+
+  // Inline "is this seller a registered dealer?" — strip a leading "gstin"
+  // token + punctuation, uppercase; a valid GSTIN cleans to length 15.
+  const DEALER = `LENGTH(UPPER(TRIM(
+      CASE WHEN LOWER(SUBSTR(TRIM(cr),1,5)) = 'gstin'
+           THEN LTRIM(SUBSTR(TRIM(cr),6), '. :-')
+           ELSE TRIM(cr) END))) = 15`;
+  const SOLD = `(UPPER(COALESCE(code,'')) <> '' AND UPPER(COALESCE(code,'')) <> 'WD')`;
+  const WD   = `(UPPER(COALESCE(code,'')) = 'WD')`;
+
+  // Per-depot booked-lot rollup (branch '' → '(unspecified)').
+  const perDepot = db.all(
+    `SELECT COALESCE(NULLIF(TRIM(branch),''), '(unspecified)') AS depot,
+            COUNT(*)                                            AS lots,
+            COALESCE(SUM(bags),0)                               AS bags,
+            COALESCE(SUM(CASE WHEN ${DEALER} THEN 0 ELSE qty END),0) AS planterWt,
+            COALESCE(SUM(CASE WHEN ${DEALER} THEN qty ELSE 0 END),0) AS traderWt
+       FROM lots WHERE auction_id = ?
+      GROUP BY COALESCE(NULLIF(TRIM(branch),''), '(unspecified)')`,
+    [auctionId]
+  );
+  const depotMap = new Map();
+  for (const r of perDepot) {
+    depotMap.set(r.depot, {
+      depot: r.depot, lots: Number(r.lots) || 0, bags: Number(r.bags) || 0,
+      planterWt: Number(r.planterWt) || 0, traderWt: Number(r.traderWt) || 0,
+    });
+  }
+
+  // Allocations → allocated lot count, and surface every allocated depot even
+  // with 0 booked lots yet.
+  const allocations = db.all(
+    'SELECT branch, start_lot, end_lot FROM lot_allocations WHERE auction_id = ?',
+    [auctionId]
+  );
+  let allocatedLots = 0;
+  for (const a of allocations) {
+    allocatedLots += rangeSize(a.start_lot, a.end_lot);
+    const key = String(a.branch || '').trim() || '(unspecified)';
+    if (!depotMap.has(key)) depotMap.set(key, { depot: key, lots: 0, bags: 0, planterWt: 0, traderWt: 0 });
+  }
+
+  const depots = Array.from(depotMap.values())
+    .map(d => ({ ...d, totalWt: d.planterWt + d.traderWt }))
+    .sort((a, b) => a.depot.localeCompare(b.depot));
+  const totals = depots.reduce((acc, d) => ({
+    lots: acc.lots + d.lots, bags: acc.bags + d.bags,
+    planterWt: acc.planterWt + d.planterWt, traderWt: acc.traderWt + d.traderWt,
+    totalWt: acc.totalWt + d.totalWt,
+  }), { lots: 0, bags: 0, planterWt: 0, traderWt: 0, totalWt: 0 });
+
+  const st = db.get(
+    `SELECT COUNT(*) AS booked,
+            SUM(CASE WHEN ${SOLD} THEN 1 ELSE 0 END) AS sold,
+            SUM(CASE WHEN ${WD}   THEN 1 ELSE 0 END) AS wd,
+            SUM(CASE WHEN COALESCE(code,'') = '' THEN 1 ELSE 0 END) AS na,
+            COALESCE(SUM(qty),0) AS cropWeight,
+            COALESCE(SUM(CASE WHEN ${DEALER} THEN 0 ELSE qty END),0) AS planterWeight,
+            COALESCE(SUM(CASE WHEN ${DEALER} THEN qty ELSE 0 END),0) AS dealerWeight,
+            MIN(CASE WHEN price > 0 AND ${SOLD} THEN price END) AS minPrice,
+            MAX(CASE WHEN price > 0 AND ${SOLD} THEN price END) AS maxPrice,
+            COALESCE(SUM(CASE WHEN ${SOLD} THEN amount ELSE 0 END),0) AS soldValue,
+            COALESCE(SUM(CASE WHEN ${SOLD} THEN qty    ELSE 0 END),0) AS soldQty
+       FROM lots WHERE auction_id = ?`,
+    [auctionId]
+  ) || {};
+  const soldQty = Number(st.soldQty) || 0;
+  const stats = {
+    allocatedLots,
+    bookedLots:    Number(st.booked) || 0,
+    soldLots:      Number(st.sold)   || 0,
+    wdLots:        Number(st.wd)     || 0,
+    naLots:        Number(st.na)     || 0,
+    cropWeight:    Number(st.cropWeight)    || 0,
+    planterWeight: Number(st.planterWeight) || 0,
+    dealerWeight:  Number(st.dealerWeight)  || 0,
+    minPrice:      Number(st.minPrice) || 0,
+    maxPrice:      Number(st.maxPrice) || 0,
+    avgPrice:      soldQty > 0 ? (Number(st.soldValue) || 0) / soldQty : 0,
+  };
+
+  res.json({ auction, depots, totals, stats });
+});
+
+// "Download Arrivals Data" — XLSX of the trade's arrivals (every booked lot)
+// with depot, seller, planter/trader type, bags and weight. Mirrors the depot
+// summary's planter/trader rule.
+app.get('/api/auctions/:id(\\d+)/arrivals-export', requireExport, async (req, res) => {
+  const db = getDb();
+  const auctionId = parseInt(req.params.id, 10);
+  const auction = db.get('SELECT id, ano, date FROM auctions WHERE id = ?', [auctionId]);
+  if (!auction) return res.status(404).json({ error: 'Auction not found' });
+  const DEALER = `LENGTH(UPPER(TRIM(CASE WHEN LOWER(SUBSTR(TRIM(cr),1,5))='gstin' THEN LTRIM(SUBSTR(TRIM(cr),6),'. :-') ELSE TRIM(cr) END)))=15`;
+  const rows = db.all(
+    `SELECT COALESCE(NULLIF(TRIM(branch),''),'(unspecified)') AS depot,
+            lot_no, name AS seller,
+            CASE WHEN ${DEALER} THEN 'Trader' ELSE 'Planter' END AS type,
+            COALESCE(bags,0) AS bags, COALESCE(qty,0) AS qty
+       FROM lots WHERE auction_id = ?
+      ORDER BY depot, CAST(lot_no AS INTEGER), lot_no`, [auctionId]);
+  const cols = [
+    { header: 'DEPOT',  key: 'depot',  width: 18 },
+    { header: 'LOT',    key: 'lot_no', width: 10 },
+    { header: 'SELLER', key: 'seller', width: 28 },
+    { header: 'TYPE',   key: 'type',   width: 12 },
+    { header: 'BAGS',   key: 'bags',   width: 8 },
+    { header: 'QTY',    key: 'qty',    width: 12 },
+  ];
+  const buf = await createExcelBuffer('Arrivals', cols, rows, {
+    db, title: `Arrivals — Auction ${auction.ano}`,
+    metaLines: [`Auction No: ${auction.ano}`, `Date: ${fmtDate(auction.date)}`],
+  });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="Arrivals_Auction_${auction.ano}.xlsx"`);
+  res.send(Buffer.from(buf));
+});
+
 // Reassign an unused range from one branch to another
 // Splits the source allocations around the reassigned range, then
 // inserts a single allocation covering the same range under the
