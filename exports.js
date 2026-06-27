@@ -548,7 +548,7 @@ async function exportCollection(db, auctionId) {
 async function exportDealerList(db, auctionId) {
   const rows = db.all(
     `WITH cleaned AS (
-       SELECT state, name, lot_no, bags, qty, amount,
+       SELECT state, name, lot_no, bags, qty, sample_wt, amount,
               UPPER(TRIM(
                 CASE
                   WHEN LOWER(SUBSTR(TRIM(cr),1,5)) = 'gstin'
@@ -560,7 +560,9 @@ async function exportDealerList(db, auctionId) {
         WHERE auction_id = ? AND amount > 0
      )
      SELECT state, name, gstin,
-            COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty
+            COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
+            SUM(sample_wt) as sample_wt,
+            (SUM(qty) + SUM(sample_wt)) as gross_wt
        FROM cleaned
       WHERE LENGTH(gstin) = 15
       GROUP BY state, name, gstin
@@ -573,6 +575,10 @@ async function exportDealerList(db, auctionId) {
     { header: 'LOTS', key: 'lots', width: 6 },
     { header: 'BAGS', key: 'bags', width: 6 },
     { header: 'QTY', key: 'qty', width: 12 },
+    // Sample weight, then gross weight = QTY + SAMPLE WT (per dad's spec).
+    // Explicit 3-decimal numFmt so both weigh columns match the QTY format.
+    { header: 'SAMPLE WT', key: 'sample_wt', width: 12, numFmt: '#,##0.000', align: 'right' },
+    { header: 'GROSS WT',  key: 'gross_wt',  width: 12, numFmt: '#,##0.000', align: 'right' },
   ];
   return createExcelBuffer('DealerList', cols, rows, {
     db, title: 'Dealer List', metaLines: auctionMeta(db, auctionId),
