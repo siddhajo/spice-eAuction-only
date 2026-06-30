@@ -611,14 +611,44 @@ function getAllSettings(db) {
   return grouped;
 }
 
-function updateSettings(db, settings) {
+// Rates & Charges settings whose every value change is recorded in the
+// settings_history table so the Settings UI can show a per-field history.
+const TRACKED_HISTORY_KEYS = new Set([
+  'gunny_rate', 'transport', 'insurance',
+  'discount_pct', 'discount_days', 'dealer_days',
+]);
+
+function updateSettings(db, settings, opts = {}) {
+  const username = opts.username || '';
   const upd = db.prepare('UPDATE company_settings SET value = ? WHERE key = ?');
+  const sel = db.prepare('SELECT value FROM company_settings WHERE key = ?');
+  const hist = db.prepare(
+    'INSERT INTO settings_history (key, old_value, new_value, username) VALUES (?,?,?,?)'
+  );
   const batch = db.transaction((items) => {
     let n = 0;
-    for (const [k, v] of Object.entries(items)) { upd.run(String(v), k); n++; }
+    for (const [k, v] of Object.entries(items)) {
+      const nv = String(v);
+      // Record a history row only when a tracked rate actually changes.
+      if (TRACKED_HISTORY_KEYS.has(k)) {
+        const row = sel.get(k);
+        const ov = row ? String(row.value) : null;
+        if (ov !== nv) hist.run(k, ov, nv, username);
+      }
+      upd.run(nv, k);
+      n++;
+    }
     return n;
   });
   return batch(settings);
+}
+
+function getSettingHistory(db, key, limit = 20) {
+  if (!TRACKED_HISTORY_KEYS.has(key)) return [];
+  return db.prepare(
+    `SELECT key, old_value, new_value, username, created_at
+       FROM settings_history WHERE key = ? ORDER BY id DESC LIMIT ?`
+  ).all(key, limit);
 }
 
 function getSettingsFlat(db) {
@@ -637,4 +667,4 @@ function getGSTRates(db) {
   return { cgst: g / 2, sgst: g / 2, igst: g, service: getSettingNum(db, 'gst_service'), tcs: getSettingNum(db, 'tcs_tds') };
 }
 
-module.exports = { DEFAULTS, CATEGORIES, initCompanySettings, getSetting, getSettingBool, getSettingNum, getAllSettings, updateSettings, getSettingsFlat, getGSTRates };
+module.exports = { DEFAULTS, CATEGORIES, initCompanySettings, getSetting, getSettingBool, getSettingNum, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates };

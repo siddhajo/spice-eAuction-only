@@ -720,8 +720,6 @@ const COLS = {
     { header: 'QTY',    key: 'qty',    width: 10 },
     { header: 'PRICE',  key: 'price',  width: 9  },
     { header: 'AMOUNT', key: 'amount', width: 13 },
-    { header: 'GST5',   key: 'gst5',   width: 10 },
-    { header: 'PAYABLE', key: 'payable', width: 13 },
     { header: 'REFUND', key: 'refund', width: 11 },
     { header: 'COMMISSION', key: 'commission', width: 12 },
     { header: 'CGST',   key: 'cgst',   width: 10 },
@@ -769,7 +767,7 @@ const TOTAL_KEYS = {
   payment_party_wise: ['lots', 'qty', 'amount', 'purchase', 'commission', 'gst', 'tds', 'net', 'discount', 'payable'],
   tally_purchase:  ['bag', 'qty', 'amount', 'cgst', 'sgst', 'igst', 'discount', 'bilamt'],
   tds_return:      ['assess_value', 'tds'],
-  purchase_register: ['bag', 'qty', 'amount', 'gst5', 'payable', 'refund', 'commission', 'cgst', 'sgst', 'igst', 'billamount'],
+  purchase_register: ['bag', 'qty', 'amount', 'refund', 'commission', 'cgst', 'sgst', 'igst', 'billamount'],
   sales_register:    ['bag', 'qty', 'amount', 'gunny', 'lorry', 'ins', 'cgst', 'sgst', 'igst', 'invamt'],
 };
 

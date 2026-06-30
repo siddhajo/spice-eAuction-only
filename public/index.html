@@ -8725,7 +8725,7 @@ async function renderDashHeadlineTiles(auctionId){
     <div class="kpi-value">${_rupeeSpace(value)}</div>
     ${meta && meta.length ? `<div class="kpi-meta">${meta.map(([l, v]) => `<span class="lbl">${esc(l)}</span><span class="val">${_rupeeSpace(v)}</span>`).join('')}</div>` : ''}
   </div>`;
-  const price = n => (n != null && Number(n) > 0) ? fmtI(n, 0) : '—';
+  const price = n => (n != null && Number(n) > 0) ? fmtI(n, 2) : '—';
   try {
     const url = auctionId
       ? `/api/insights?auction_id=${auctionId}&_=${Date.now()}`
@@ -9050,7 +9050,7 @@ async function _renderInsights(){
           <div class="ins-branch-stat"><div class="ins-branch-stat-val" style="color:#64748B">${fmtI(b.unsold, 0)}</div><div class="ins-branch-stat-lbl">Unsold</div></div>
         </div>
         <div class="ins-branch-row"><span>Qty</span><b>${fmtI(b.qty, 2)} kg</b></div>
-        <div class="ins-branch-row"><span>Price (min · max · avg)</span><b>${b.min_price != null ? '₹' + fmtI(b.min_price, 0) : '—'} · ${b.max_price != null ? '₹' + fmtI(b.max_price, 0) : '—'} · ${b.avg_price > 0 ? '₹' + fmtI(b.avg_price, 2) : '—'}</b></div>
+        <div class="ins-branch-row"><span>Price (min · max · avg)</span><b>${b.min_price != null ? '₹' + fmtI(b.min_price, 2) : '—'} · ${b.max_price != null ? '₹' + fmtI(b.max_price, 2) : '—'} · ${b.avg_price > 0 ? '₹' + fmtI(b.avg_price, 2) : '—'}</b></div>
         <div class="ins-branch-row"><span>Value</span><b style="color:#15803d">₹${fmtI(b.value, 2)}</b></div>
         <div class="ins-branch-row"><span>Payable to sellers</span><b style="color:#C2410C">₹${fmtI(b.payable_to_sellers, 2)}</b></div>
       </div>`;
@@ -9201,8 +9201,8 @@ async function _renderInsights(){
             ['Amount',   '₹' + fmtI(t.wd_value, 2)],
           ])}
           ${kpi('💰', 'Value',       '₹' + fmtI(t.value, 2), 'emerald', [
-            ['Min ₹', t.min_price != null && t.min_price > 0 ? fmtI(t.min_price, 0) : '—'],
-            ['Max ₹', t.max_price != null && t.max_price > 0 ? fmtI(t.max_price, 0) : '—'],
+            ['Min ₹', t.min_price != null && t.min_price > 0 ? fmtI(t.min_price, 2) : '—'],
+            ['Max ₹', t.max_price != null && t.max_price > 0 ? fmtI(t.max_price, 2) : '—'],
             ['Avg ₹', t.avg_price > 0 ? fmtI(t.avg_price, 2) : '—'],
           ])}
           ${kpi('💸', 'Payable',     '₹' + fmtI(t.payable_to_sellers, 2),    'orange')}
@@ -12180,7 +12180,6 @@ async function loadLotsSummary(){
     const d = await j('/api/reports/trade-summary/' + aid + qs);
     const ba = d.branchAggregates || {};
     const sold = ba.sold || {}, wd = ba.withdrawn || {};
-    const inr  = n => '₹' + Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:0,maximumFractionDigits:0});
     const inr2 = n => '₹' + Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
     const kg   = n => Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' kg';
     const int  = n => Number(n||0).toLocaleString('en-IN');
@@ -12202,8 +12201,8 @@ async function loadLotsSummary(){
     // Price tile → Avg headline, Min / Max meta
     if (priceEl) priceEl.innerHTML = `<span class="kpi-unit" style="margin-right:4px">₹</span>${Number(ba.avg||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}<span class="kpi-unit"> /kg</span>`;
     setKpiMeta('lot-kpi-price-meta', [
-      ['Min', inr(ba.min)],
-      ['Max', inr(ba.max)],
+      ['Min', inr2(ba.min)],
+      ['Max', inr2(ba.max)],
     ]);
     if (scope) {
       scope.style.display = branch ? '' : 'none';
@@ -14427,6 +14426,12 @@ function renderSettingsPanel(){
     html+='<div class="sgrid">';
     for(const f of fields)html+=fld(f);
     html+='</div>';
+    // Rates & Charges: a history panel below the grid. Stays empty until the
+    // operator hovers/focuses one of the tracked rate fields (see
+    // wireRateHistory), then shows that field's recent value changes.
+    if (ck === 'rates') {
+      html += '<div id="rate-history-host" style="margin-top:18px"></div>';
+    }
     // WhatsApp Business config lives in a dedicated server-side table
     // (secrets never reach the browser), so it renders as its own card
     // below the standard integration fields rather than via fld().
@@ -14435,6 +14440,8 @@ function renderSettingsPanel(){
     }
   }
   document.getElementById('settings-root').innerHTML=html;
+  // Rates & Charges: wire hover/focus → per-field history once the panel lands.
+  if (ck === 'rates') { try { wireRateHistory(); } catch(_){} }
   // Hydrate the Integrations cards after the panel HTML has landed.
   if (ck === 'integrations' && typeof _renderGstApiStatus === 'function') {
     try { _renderGstApiStatus(); } catch(_){}
@@ -14461,6 +14468,71 @@ function renderSettingsPanel(){
   }
   // Company tab logo preview — single identity in this build.
   if (ck === 'company') refreshLogoPreview('ispl');
+}
+
+// ── Settings → Rates & Charges: per-field change history ──────────
+// Keys whose history is recorded server-side (settings_history table) and
+// shown below the Rates & Charges grid on hover/focus.
+const RATE_HISTORY_KEYS = ['gunny_rate','transport','insurance','discount_pct','discount_days','dealer_days'];
+let _rateHistKey = null;   // which field's history is currently shown (de-dupes refetches)
+
+async function showRateHistory(key, label){
+  const host = document.getElementById('rate-history-host');
+  if(!host) return;
+  if(_rateHistKey === key && host.dataset.loaded === '1') return; // already showing
+  _rateHistKey = key;
+  const head = `<div style="font-weight:600;margin-bottom:6px">🕑 History — ${esc(label)}</div>`;
+  host.style.cssText = 'margin-top:18px;border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;background:#f8fafc';
+  host.dataset.loaded = '0';
+  host.innerHTML = head + '<div style="color:#64748b;font-size:13px">Loading…</div>';
+  try{
+    const d = await j('/api/company-settings/history/' + encodeURIComponent(key));
+    if(_rateHistKey !== key) return; // operator moved to another field while loading
+    const rows = (d && d.history) || [];
+    host.dataset.loaded = '1';
+    if(!rows.length){
+      host.innerHTML = head + '<div style="color:#64748b;font-size:13px">No changes recorded yet.</div>';
+      return;
+    }
+    let h = head;
+    h += '<table style="width:100%;border-collapse:collapse;font-size:13px">'
+       + '<thead><tr style="text-align:left;color:#64748b">'
+       + '<th style="padding:4px 8px">When</th><th style="padding:4px 8px">Old</th>'
+       + '<th style="padding:4px 8px">New</th><th style="padding:4px 8px">Changed by</th>'
+       + '</tr></thead><tbody>';
+    for(const r of rows){
+      const ov = (r.old_value === null || r.old_value === undefined) ? '—' : r.old_value;
+      h += '<tr style="border-top:1px solid #e2e8f0">'
+         + `<td style="padding:4px 8px;white-space:nowrap">${esc(r.created_at||'')}</td>`
+         + `<td style="padding:4px 8px">${esc(ov)}</td>`
+         + `<td style="padding:4px 8px;font-weight:600">${esc(r.new_value==null?'':r.new_value)}</td>`
+         + `<td style="padding:4px 8px">${esc(r.username||'—')}</td>`
+         + '</tr>';
+    }
+    h += '</tbody></table>';
+    host.innerHTML = h;
+  }catch(e){
+    if(_rateHistKey !== key) return;
+    host.dataset.loaded = '0';
+    host.innerHTML = head + '<div style="color:#b91c1c;font-size:13px">Could not load history.</div>';
+  }
+}
+
+function wireRateHistory(){
+  const root = document.getElementById('settings-root');
+  if(!root) return;
+  RATE_HISTORY_KEYS.forEach(key=>{
+    const el = root.querySelector(`[data-key="${key}"]`);
+    if(!el) return;                                  // hidden by flag/mode → skip
+    const fg = el.closest('.fg') || el;
+    if(fg.dataset._histBound === '1') return;        // bind once per render
+    fg.dataset._histBound = '1';
+    const labelEl = fg.querySelector('label');
+    const label = labelEl ? labelEl.textContent.trim() : key;
+    const trigger = ()=>showRateHistory(key, label);
+    fg.addEventListener('mouseenter', trigger);      // hover
+    fg.addEventListener('focusin', trigger);         // keyboard / cursor in field
+  });
 }
 
 // ── Settings → Integrations: GST lookup API status card ───────────
@@ -18833,7 +18905,7 @@ async function loadInvoices(opts){
       if ($('inv-kpi-total'))  $('inv-kpi-total').innerHTML    = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(grandTotal, 2)}`;
       setKpiMeta('inv-kpi-count-meta', [
         totalBags > 0 && ['Bags', fmtI(totalBags, 0)],
-        ['Avg / invoice', `₹${fmtI(avgInv, 0)}`],
+        ['Avg / invoice', `₹${fmtI(avgInv, 2)}`],
       ]);
       setKpiMeta('inv-kpi-qty-meta', [
         totalBags > 0 && ['Bags', fmtI(totalBags, 0)],
@@ -19601,7 +19673,7 @@ async function loadPurchases(opts){
       if ($('pur-kpi-amount')) $('pur-kpi-amount').innerHTML   = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalAmount, 2)}`;
       if ($('pur-kpi-total'))  $('pur-kpi-total').innerHTML    = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(grandTotal, 2)}`;
       setKpiMeta('pur-kpi-count-meta', [
-        ['Avg / invoice', `₹${fmtI(avgPur, 0)}`],
+        ['Avg / invoice', `₹${fmtI(avgPur, 2)}`],
       ]);
       setKpiMeta('pur-kpi-qty-meta', [
         ['Avg / invoice', `${fmtI(arr.length ? totalQty / arr.length : 0, 2)} kg`],
@@ -20983,7 +21055,7 @@ async function loadPayments(){
         if ($('pay-kpi-payable'))  $('pay-kpi-payable').innerHTML    = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalPayable, 2)}`;
         setKpiMeta('pay-kpi-sellers-meta', [
           totalLots > 0 && ['Lots', fmtI(totalLots, 0)],
-          ['Avg / seller', `₹${fmtI(arr.length ? totalPayable / arr.length : 0, 0)}`],
+          ['Avg / seller', `₹${fmtI(arr.length ? totalPayable / arr.length : 0, 2)}`],
         ]);
         setKpiMeta('pay-kpi-qty-meta', [
           ['Avg / seller', `${fmtI(arr.length ? totalQty / arr.length : 0, 2)} kg`],
@@ -21540,7 +21612,7 @@ async function loadBills(opts){
       if ($('bill-kpi-qty'))   $('bill-kpi-qty').innerHTML     = `${fmtI(totalQty, 2)}<span class="kpi-unit">kg</span>`;
       if ($('bill-kpi-net'))   $('bill-kpi-net').innerHTML     = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalNet, 2)}`;
       setKpiMeta('bill-kpi-count-meta', [
-        ['Avg / bill', `₹${fmtI(arr.length ? totalNet / arr.length : 0, 0)}`],
+        ['Avg / bill', `₹${fmtI(arr.length ? totalNet / arr.length : 0, 2)}`],
       ]);
       setKpiMeta('bill-kpi-qty-meta', [
         ['Avg / bill', `${fmtI(arr.length ? totalQty / arr.length : 0, 2)} kg`],
@@ -21710,7 +21782,7 @@ async function loadDebitNotes(opts){
       if ($('debit-kpi-gst'))    $('debit-kpi-gst').innerHTML     = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalGst, 2)}`;
       if ($('debit-kpi-total'))  $('debit-kpi-total').innerHTML   = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(grandTotal, 2)}`;
       setKpiMeta('debit-kpi-count-meta', [
-        ['Avg / note', `₹${fmtI(d.length ? grandTotal / d.length : 0, 0)}`],
+        ['Avg / note', `₹${fmtI(d.length ? grandTotal / d.length : 0, 2)}`],
       ]);
       setKpiMeta('debit-kpi-amount-meta', [
         ['Taxable', `₹${fmtI(totalAmount, 2)}`],
@@ -22271,7 +22343,7 @@ async function loadDebitNotesPlanter(opts){
       if ($('debitp-kpi-amount')) $('debitp-kpi-amount').innerHTML  = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalAmount, 2)}`;
       if ($('debitp-kpi-gst'))    $('debitp-kpi-gst').innerHTML     = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(totalGst, 2)}`;
       if ($('debitp-kpi-total'))  $('debitp-kpi-total').innerHTML   = `<span class="kpi-unit" style="margin-right:4px">₹</span>${fmtI(grandTotal, 2)}`;
-      setKpiMeta('debitp-kpi-count-meta', [['Avg / note', `₹${fmtI(d.length ? grandTotal / d.length : 0, 0)}`]]);
+      setKpiMeta('debitp-kpi-count-meta', [['Avg / note', `₹${fmtI(d.length ? grandTotal / d.length : 0, 2)}`]]);
       setKpiMeta('debitp-kpi-amount-meta', [['Taxable', `₹${fmtI(totalAmount, 2)}`]]);
       setKpiMeta('debitp-kpi-gst-meta', [
         (totalCgst + totalSgst) > 0 && ['CGST + SGST', `₹${fmtI(totalCgst + totalSgst, 2)}`],
@@ -23462,8 +23534,6 @@ function regColumns(type){
     { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },
     { key:'price', label:'Price', sort:'number', numeric:true, fmt:regFmtNum(2) },
     { key:'amount', label:'Amount', sort:'number', numeric:true, fmt:regFmtNum(2) },
-    { key:'gst5', label:'GST5', sort:'number', numeric:true, fmt:regFmtNum(2) },
-    { key:'payable', label:'Payable', sort:'number', numeric:true, fmt:regFmtNum(2) },
     { key:'refund', label:'Refund', sort:'number', numeric:true, fmt:regFmtNum(2) },
     { key:'commission', label:'Commission', sort:'number', numeric:true, fmt:regFmtNum(2) },
     { key:'cgst', label:'CGST', sort:'number', numeric:true, fmt:regFmtNum(2) },
@@ -24509,6 +24579,11 @@ function escAttr(s){ return String(s==null?'':s).replace(/[&<>"']/g,m=>({'&':'&a
 // a successful preview, otherwise downloads can race ahead of the
 // user's review.
 let _plLastSummary = null;
+// Per-row CODE the operator picked for ambiguous rows, keyed by Excel row
+// number (as a string). Sent to /map-download so the chosen code — not the
+// auto-picked first candidate — lands in the file. Reset whenever a fresh
+// preview renders or a new file is chosen.
+let _plOverrides = {};
 
 function plOnFileChange(){
   // Picking a new file invalidates the previous preview, so reset the
@@ -24516,6 +24591,7 @@ function plOnFileChange(){
   // it, swap to File B, and download File B's mapping without seeing
   // its preview first.
   _plLastSummary = null;
+  _plOverrides = {};
   const btn = document.getElementById('pl-download-btn');
   if (btn) btn.disabled = true;
   const result = document.getElementById('pl-result');
@@ -24573,6 +24649,8 @@ function _plRenderPreview(data){
   const host = document.getElementById('pl-preview');
   if (!host) return;
   const rows = Array.isArray(data.rows) ? data.rows : [];
+  // Fresh preview → drop any selections made against the previous file.
+  _plOverrides = {};
 
   // Card summary on top — same idiom as the Import Old Data verify panel.
   const card = (label, value, color) =>
@@ -24610,21 +24688,47 @@ function _plRenderPreview(data){
              : rw.status === 'ambiguous' ? '#fff7ed'
              : '#fff';
     const badge = _plStatusBadge(rw.status);
-    const cands = (rw.candidates || []).map(c =>
-      '<span style="display:inline-block;padding:1px 6px;margin:1px 3px 1px 0;border:1px solid #ddd;border-radius:10px;background:#fafafa;font-size:11px">'+
-      '<b>'+escAttr(c.code||'(no code)')+'</b>' +
-      ' · ' + escAttr(c.buyer||'') +
-      (c.sale ? ' · <span style="color:#666">'+escAttr(c.sale)+'</span>' : '')+
-      '</span>'
-    ).join('');
+    const isAmb = rw.status === 'ambiguous';
+    // For ambiguous rows, seed the selection map with the auto-picked code so
+    // the download matches what's shown even if the operator never touches it.
+    if (isAmb) _plOverrides[String(rw.row)] = rw.pickedCode || '';
+    // Candidate badges. On ambiguous rows they're clickable — clicking one
+    // picks its code (mirrors the dropdown in the Picked CODE column).
+    const cands = (rw.candidates || []).map(c => {
+      const code = c.code || '';
+      const lbl = '<b>'+escAttr(code||'(no code)')+'</b>'+
+        ' · '+escAttr(c.buyer||'')+
+        (c.sale ? ' · <span style="color:#666">'+escAttr(c.sale)+'</span>' : '');
+      if (isAmb) {
+        const on = code === rw.pickedCode;
+        return '<span data-pl-cand-row="'+rw.row+'" data-pl-cand-code="'+escAttr(code)+'" onclick="_plPickEl(this)" '+
+          'title="Click to pick this code" '+
+          'style="display:inline-block;padding:1px 6px;margin:1px 3px 1px 0;border:1px solid #ddd;border-radius:10px;cursor:pointer;font-size:11px;'+
+          'background:'+(on?'#dcfce7':'#fafafa')+';outline:'+(on?'2px solid #15803d':'none')+'">'+lbl+'</span>';
+      }
+      return '<span style="display:inline-block;padding:1px 6px;margin:1px 3px 1px 0;border:1px solid #ddd;border-radius:10px;background:#fafafa;font-size:11px">'+lbl+'</span>';
+    }).join('');
+    // Picked CODE cell: a dropdown for ambiguous rows so the operator can
+    // choose which buyer's code is written to the file; plain text otherwise.
+    let pickedCell;
+    if (isAmb) {
+      const opts = (rw.candidates || []).map(c => {
+        const code = c.code || '';
+        return '<option value="'+escAttr(code)+'"'+(code===rw.pickedCode?' selected':'')+'>'+
+          escAttr((code||'(no code)')+' · '+(c.buyer||''))+'</option>';
+      }).join('');
+      pickedCell = '<select data-pl-row="'+rw.row+'" onchange="_plPick(this.value, this.getAttribute(\'data-pl-row\'))" '+
+        'style="font-size:11px;padding:2px 4px;border:1px solid #ddd;border-radius:4px;max-width:240px;font-weight:700;color:#15803d">'+opts+'</select>';
+    } else {
+      pickedCell = '<span style="font-weight:'+(rw.pickedCode?'700':'400')+';color:'+(rw.pickedCode?'#15803d':'#c00')+'">'+
+        escAttr(rw.pickedCode || '— none —')+'</span>';
+    }
     html += '<tr style="background:'+bg+'">'+
       '<td style="padding:3px 8px;border:1px solid #f0f0f0;font-family:monospace">'+rw.row+'</td>'+
       '<td style="padding:3px 8px;border:1px solid #f0f0f0;font-family:monospace">'+escAttr(rw.lot||'')+'</td>'+
       '<td style="padding:3px 8px;border:1px solid #f0f0f0">'+escAttr(rw.tradeName||'')+'</td>'+
       '<td style="padding:3px 8px;border:1px solid #f0f0f0;white-space:nowrap">'+badge+'</td>'+
-      '<td style="padding:3px 8px;border:1px solid #f0f0f0;font-weight:'+(rw.pickedCode?'700':'400')+';color:'+(rw.pickedCode?'#15803d':'#c00')+'">'+
-        escAttr(rw.pickedCode || '— none —')+
-      '</td>'+
+      '<td style="padding:3px 8px;border:1px solid #f0f0f0">'+pickedCell+'</td>'+
       '<td style="padding:3px 8px;border:1px solid #f0f0f0">'+(cands || '<span style="color:#c00;font-style:italic">No buyer matches this trade name. Add it in the Buyers tab.</span>')+'</td>'+
     '</tr>';
   }
@@ -24632,8 +24736,9 @@ function _plRenderPreview(data){
 
   if (data.ambiguous) {
     html += '<div style="margin-top:10px;font-size:12px;color:#a16207;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px">'+
-      '<b>⚠ '+data.ambiguous+' row(s) are ambiguous</b> — the downloaded file uses the first candidate code. '+
-      'Switch a specific lot to a different code from the candidates by editing the lot after Price Import (the lot edit screen now lists every code that shares a trade name).'+
+      '<b>⚠ '+data.ambiguous+' row(s) are ambiguous</b> — more than one buyer shares the trade name. '+
+      'Pick the right code from the <b>Picked CODE</b> dropdown (or click a candidate). Your choice is written into the downloaded file. '+
+      'Untouched rows default to the first candidate code.'+
     '</div>';
   }
   if (data.unmatched) {
@@ -24649,6 +24754,25 @@ function _plStatusBadge(status){
   if (status === 'ambiguous') return '<span style="display:inline-block;padding:1px 8px;border-radius:10px;background:#fed7aa;color:#9a3412;font-weight:700;font-size:11px">AMBIGUOUS</span>';
   if (status === 'unmatched') return '<span style="display:inline-block;padding:1px 8px;border-radius:10px;background:#fecaca;color:#991b1b;font-weight:700;font-size:11px">UNMATCHED</span>';
   return '<span style="display:inline-block;padding:1px 8px;border-radius:10px;background:#e5e7eb;color:#374151;font-weight:700;font-size:11px">BLANK</span>';
+}
+
+// Record the operator's CODE choice for an ambiguous row and keep the
+// dropdown + candidate badges visually in sync. `row` is the Excel row number.
+function _plPick(code, row){
+  row = String(row);
+  _plOverrides[row] = code;
+  const sel = document.querySelector('select[data-pl-row="'+row+'"]');
+  if (sel && sel.value !== code) sel.value = code;
+  document.querySelectorAll('[data-pl-cand-row="'+row+'"]').forEach(el => {
+    const on = el.getAttribute('data-pl-cand-code') === code;
+    el.style.background = on ? '#dcfce7' : '#fafafa';
+    el.style.outline = on ? '2px solid #15803d' : 'none';
+  });
+}
+// Click handler for a candidate badge — reads its code/row from data-attrs so
+// we never have to escape the code into an inline onclick string.
+function _plPickEl(el){
+  _plPick(el.getAttribute('data-pl-cand-code'), el.getAttribute('data-pl-cand-row'));
 }
 
 async function plDownload(){
@@ -24668,6 +24792,9 @@ async function plDownload(){
   try {
     const fd = new FormData();
     fd.append('file', fileEl.files[0]);
+    // The operator's per-row CODE choices for ambiguous rows. The server
+    // validates each against that row's candidates before writing it.
+    fd.append('overrides', JSON.stringify(_plOverrides || {}));
     const r = await fetch(B + '/api/price-list/map-download', {
       method: 'POST', body: fd,
       headers: { 'Authorization': 'Bearer ' + T }

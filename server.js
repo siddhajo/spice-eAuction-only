@@ -6,7 +6,7 @@ const multer = require('multer');
 const ExcelJS = require('exceljs');
 const XLSX = require('xlsx');
 const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
-const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSettings, getSettingsFlat, getGSTRates } = require('./company-config');
+const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates } = require('./company-config');
 const grade2Alerts = require('./grade2-alerts');
 const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getPurchaseJournal, gstinStateCode } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
@@ -989,10 +989,17 @@ app.get('/api/company-settings', requireViewOrLotEntry, (req, res) => {
   res.json({ categories: CATEGORIES, settings: getAllSettings(getDb()) });
 });
 app.put('/api/company-settings', requireSettingsWrite, (req, res) => {
-  const count = updateSettings(getDb(), req.body.settings || {});
+  const count = updateSettings(getDb(), req.body.settings || {}, {
+    username: (req.user && req.user.username) || '',
+  });
   res.json({ success: true, updated: count });
 });
 app.get('/api/company-settings/flat', requireViewOrLotEntry, (req, res) => res.json(getSettingsFlat(getDb())));
+// Per-field change history for the tracked Rates & Charges settings. Returns
+// [] for any non-tracked key. Surfaced under each field in the Settings panel.
+app.get('/api/company-settings/history/:key', requireViewOrLotEntry, (req, res) => {
+  res.json({ key: req.params.key, history: getSettingHistory(getDb(), req.params.key, 20) });
+});
 
 // ── Company identity presets — REMOVED in e-Auction-only build ──────────
 // The original Spice Config app had ISP/ASP preset switching tied to the
@@ -1064,7 +1071,9 @@ app.get('/api/company-settings/export', requireExport, (req, res) => {
   res.json(getSettingsFlat(getDb()));
 });
 app.post('/api/company-settings/import', requireSettingsWrite, (req, res) => {
-  const count = updateSettings(getDb(), req.body.settings || {});
+  const count = updateSettings(getDb(), req.body.settings || {}, {
+    username: ((req.user && req.user.username) || '') + ' (import)',
+  });
   res.json({ success: true, imported: count });
 });
 
@@ -2766,8 +2775,11 @@ function _plBuildTradeIndex(db) {
   }
   return idx;
 }
-async function _plProcessFile(filePath) {
+async function _plProcessFile(filePath, overrides = {}) {
   // Returns { wb, ws, cols, perRow: [{row, tradeName, status, pickedCode, candidates}], summary }
+  // `overrides` maps an Excel row number (string) → a CODE the operator chose
+  // for that row's ambiguous match. An override is honoured only when it is one
+  // of the row's own candidate codes, so a stale/forged value can't slip in.
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(filePath);
   const ws = wb.worksheets[0];
@@ -2829,6 +2841,14 @@ async function _plProcessFile(filePath) {
       entry.pickedCode = (withCode || cands[0]).code || '';
       ambiguous++;
     }
+    // Apply an operator override (from the preview UI) when it names one of
+    // this row's candidate codes. Lets the user resolve ambiguous rows up
+    // front instead of per-lot after Price Import.
+    const ov = overrides && overrides[String(r)];
+    if (ov != null && String(ov) !== '' &&
+        entry.candidates.some(c => String(c.code) === String(ov))) {
+      entry.pickedCode = String(ov);
+    }
     perRow.push(entry);
   }
   const summary = {
@@ -2852,7 +2872,11 @@ app.post('/api/price-list/map-preview', requireView, upload.single('file'), asyn
 app.post('/api/price-list/map-download', requireView, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
-    const { wb, ws, cols, perRow } = await _plProcessFile(req.file.path);
+    // Per-row CODE choices the operator made for ambiguous rows in the
+    // preview UI, sent as a JSON string in the multipart form.
+    let overrides = {};
+    try { if (req.body && req.body.overrides) overrides = JSON.parse(req.body.overrides) || {}; } catch (_) {}
+    const { wb, ws, cols, perRow } = await _plProcessFile(req.file.path, overrides);
     // Write the resolved code back into each row's CODE cell. We
     // explicitly set the cell value so the existing column-level numFmt
     // (which Excel uses to right-pad short codes like "RSH") still

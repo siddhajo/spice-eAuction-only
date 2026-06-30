@@ -484,6 +484,23 @@ async function initDb() {
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
+  // ── SETTINGS HISTORY ───────────────────────────────────────
+  // Append-only change log for selected Rates & Charges settings
+  // (gunny_rate, transport, insurance, discount_pct, discount_days,
+  // dealer_days). One row per value change, written by updateSettings()
+  // in company-config.js. Surfaced in the Settings → Rates & Charges
+  // panel: hovering/focusing a rate field shows its history below.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS settings_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL,
+    old_value TEXT,
+    new_value TEXT,
+    username TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  )`);
+  wrapped.exec(`CREATE INDEX IF NOT EXISTS idx_settings_history_key
+    ON settings_history(key, id)`);
+
   // ── LOGIN HISTORY ──────────────────────────────────────────
   // Per-login tracking: IP, device type, username. Used by:
   //   - the desktop admin Users → Login History panel

@@ -908,8 +908,6 @@ async function exportPurchaseRegister(db, opts = {}) {
     { header: 'QTY',    key: 'qty',    width: 11, numFmt: '#,##0.000' },
     { header: 'PRICE',  key: 'price',  width: 10, numFmt: '#,##0.00' },
     { header: 'AMOUNT', key: 'amount', width: 14, numFmt: '#,##0.00' },
-    { header: 'GST5',   key: 'gst5',   width: 11, numFmt: '#,##0.00' },
-    { header: 'PAYABLE', key: 'payable', width: 14, numFmt: '#,##0.00' },
     { header: 'REFUND', key: 'refund', width: 12, numFmt: '#,##0.00' },
     { header: 'COMMISSION', key: 'commission', width: 13, numFmt: '#,##0.00' },
     { header: 'CGST',   key: 'cgst',   width: 11, numFmt: '#,##0.00' },
@@ -919,8 +917,8 @@ async function exportPurchaseRegister(db, opts = {}) {
   ];
   const sum = (k) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0);
   const grandTotal = { label: 'TOTAL', values: {
-    bag: sum('bag'), qty: sum('qty'), amount: sum('amount'), gst5: sum('gst5'),
-    payable: sum('payable'), refund: sum('refund'), commission: sum('commission'),
+    bag: sum('bag'), qty: sum('qty'), amount: sum('amount'),
+    refund: sum('refund'), commission: sum('commission'),
     cgst: sum('cgst'), sgst: sum('sgst'), igst: sum('igst'), billamount: sum('billamount'),
   }};
   return createExcelBuffer('PurchaseRegister', cols, rows, {
