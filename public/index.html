@@ -8028,6 +8028,7 @@ async function loadStats(auctionId){
 
   // Format helpers
   const inr = n => '₹'+Math.round(n||0).toLocaleString('en-IN');
+  const inr2 = n => '₹'+Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
   const inrL = n => { const v = (n||0)/100000; return v>=1 ? '₹'+v.toFixed(1)+'L' : inr(n); };
   const kg = n => (n||0).toFixed(0)+' kg';
   const kgK = n => { const v = (n||0)/1000; return v>=1 ? v.toFixed(1)+'T' : Math.round(n||0)+' kg'; };
@@ -8332,11 +8333,9 @@ async function loadStats(auctionId){
       <div class="kpi">
         <div class="kpi-icon"><svg viewBox="0 0 24 24"><path d="M3 3v18h18M8 13v5M13 9v9M18 6v12"/></svg></div>
         <div class="kpi-label">${isAllMode ? 'Total Volume' : 'Auction Volume'}</div>
-        <div class="kpi-value">${isAllMode
-          ? inrL(CUM.amount).replace('₹','').replace('L','')
-          : inrL(A ? A.totalAmt : 0).replace('₹','').replace('L','')}<span class="kpi-unit">${isAllMode
-            ? ((CUM.amount||0)>=100000?'L':'')
-            : (((A && A.totalAmt)||0)>=100000?'L':'')}</span></div>
+        <div class="kpi-value" style="font-size:22px">${isAllMode
+          ? inr2(CUM.amount)
+          : inr2(A ? A.totalAmt : 0)}</div>
         <span class="kpi-delta neutral">${isAllMode
           ? `${CUM.auctions||0} trade${CUM.auctions===1?'':'s'}`
           : (A ? `${kg(A.totalQty)} traded` : 'No auction')}</span>
@@ -8360,7 +8359,7 @@ async function loadStats(auctionId){
       <div class="kpi chili">
         <div class="kpi-icon"><svg viewBox="0 0 24 24"><path d="M12 2l3 7h7l-5.5 4 2 7L12 16l-6.5 4 2-7L2 9h7z"/></svg></div>
         <div class="kpi-label">Revenue This Month</div>
-        <div class="kpi-value">${inrL(K.monthRevenue).replace('₹','').replace('L','')}<span class="kpi-unit">${(K.monthRevenue||0)>=100000?'L':''}</span></div>
+        <div class="kpi-value" style="font-size:22px">${inr2(K.monthRevenue)}</div>
         ${revPill}
       </div>
     </div>
@@ -8565,7 +8564,7 @@ async function loadDepotSummary(auctionId){
       <td style="${cellTd};text-align:right">${wt(dp.totalWt)}</td>
     </tr>`;
 
-  const th = 'padding:9px 12px;text-align:right;font-size:11px;font-weight:700;color:var(--spice-text-mute);text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid var(--spice-line)';
+  const th = 'padding:9px 12px;text-align:right;font-size:11px;font-weight:700;color:#fff;background:var(--spice-cardamom);text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid var(--spice-line)';
   const tableHTML = `
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead><tr>
@@ -8598,12 +8597,16 @@ async function loadDepotSummary(auctionId){
     ['Average Price',  inr0(s.avgPrice)],
   ].map(([l,v]) => statRow(l, v)).join('');
 
+  const collapsed = localStorage.getItem('dashCurrentAuctionCollapsed') === '1';
   host.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:12px">
-      <h2 style="font-size:17px;font-weight:700;margin:0;color:var(--spice-text-main)">Current Auction</h2>
+      <h2 onclick="toggleCurrentAuction()" style="font-size:17px;font-weight:700;margin:0;color:var(--spice-text-main);cursor:pointer;display:flex;align-items:center;gap:6px;user-select:none">
+        <span id="ca-caret" style="display:inline-block;transition:transform .15s;transform:rotate(${collapsed ? '-90deg' : '0deg'});font-size:13px;color:var(--spice-text-mute)">▾</span>
+        Current Auction
+      </h2>
       <a href="#" onclick="downloadArrivals(${a.id});return false" style="font-size:13px;color:var(--spice-saffron);font-weight:600;text-decoration:none;white-space:nowrap">Download Arrivals Data</a>
     </div>
-    <div class="card" style="padding:20px">
+    <div class="card" id="ca-body" style="padding:20px;display:${collapsed ? 'none' : 'block'}">
       <div style="font-size:20px;font-weight:700;color:var(--spice-text-main);line-height:1.2">Auction No ${esc(a.ano)}</div>
       <div style="font-size:12px;color:var(--spice-text-mute);margin-bottom:16px">Auction Date: ${fmtD(a.date)}</div>
       <div class="dash-row" style="margin-bottom:0">
@@ -8611,6 +8614,18 @@ async function loadDepotSummary(auctionId){
         <div style="border:1px solid var(--spice-line);border-radius:10px;overflow:hidden;align-self:start">${statsHTML}</div>
       </div>
     </div>`;
+}
+
+// Collapse/expand the dashboard "Current Auction" panel. The state persists
+// across reloads so an operator who keeps it closed isn't re-opened each visit.
+function toggleCurrentAuction(){
+  const body = document.getElementById('ca-body');
+  const caret = document.getElementById('ca-caret');
+  if (!body) return;
+  const willCollapse = body.style.display !== 'none';
+  body.style.display = willCollapse ? 'none' : 'block';
+  if (caret) caret.style.transform = willCollapse ? 'rotate(-90deg)' : 'rotate(0deg)';
+  localStorage.setItem('dashCurrentAuctionCollapsed', willCollapse ? '1' : '0');
 }
 
 // "Download Arrivals Data" — XLSX of the trade's booked lots. Hardened to
@@ -23392,9 +23407,10 @@ function regColumns(type){
     { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },
     { key:'rate', label:'Rate', sort:'number', numeric:true, fmt:regFmtNum(2), noTotal:true },
     { key:'value', label:'Value', sort:'number', numeric:true, fmt:regFmtNum(2) },
-    { key:'pqty', label:'P_Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },
-    { key:'prate', label:'P_Rate', sort:'number', numeric:true, fmt:regFmtNum(2), noTotal:true },
-    { key:'puramt', label:'PurAmt', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'refund', label:'Refund', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'commission', label:'Commission', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'gst', label:'GST', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'billamount', label:'Bill Amount', sort:'number', numeric:true, fmt:regFmtNum(2) },
   ];
   if (type === 'seller') return [
     { key:'party', label:'Seller', sort:'text' },
@@ -23425,12 +23441,12 @@ function regColumns(type){
     { key:'bag', label:'Bag', sort:'number', numeric:true, fmt:regFmtNum(0) },
     { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },
     { key:'amount', label:'Amount', sort:'number', numeric:true, fmt:regFmtNum(2) },
-    { key:'lorry', label:'Lorry', sort:'number', numeric:true, fmt:regFmtNum(2) },
     { key:'gunny', label:'Gunny', sort:'number', numeric:true, fmt:regFmtNum(2) },
-    { key:'igst', label:'IGST', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'lorry', label:'Transport', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'ins', label:'Insurance', sort:'number', numeric:true, fmt:regFmtNum(2) },
     { key:'cgst', label:'CGST', sort:'number', numeric:true, fmt:regFmtNum(2) },
     { key:'sgst', label:'SGST', sort:'number', numeric:true, fmt:regFmtNum(2) },
-    { key:'ins', label:'Ins', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'igst', label:'IGST', sort:'number', numeric:true, fmt:regFmtNum(2) },
     { key:'invamt', label:'Inv Amt', sort:'number', numeric:true, fmt:regFmtNum(2) },
   ];
   return [
@@ -23446,12 +23462,14 @@ function regColumns(type){
     { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },
     { key:'price', label:'Price', sort:'number', numeric:true, fmt:regFmtNum(2) },
     { key:'amount', label:'Amount', sort:'number', numeric:true, fmt:regFmtNum(2) },
-    { key:'pqty', label:'PQty', sort:'number', numeric:true, fmt:regFmtNum(3) },
-    { key:'prate', label:'PRate', sort:'number', numeric:true, fmt:regFmtNum(2) },
-    { key:'puramt', label:'PurAmt', sort:'number', numeric:true, fmt:regFmtNum(2) },
-    { key:'discount', label:'Discount', sort:'number', numeric:true, fmt:regFmtNum(2) },
     { key:'gst5', label:'GST5', sort:'number', numeric:true, fmt:regFmtNum(2) },
     { key:'payable', label:'Payable', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'refund', label:'Refund', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'commission', label:'Commission', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'cgst', label:'CGST', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'sgst', label:'SGST', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'igst', label:'IGST', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'billamount', label:'Bill Amount', sort:'number', numeric:true, fmt:regFmtNum(2) },
   ];
 }
 // Build query params for the individual (per-party) registers.

@@ -1180,7 +1180,9 @@ function getPurchaseRegister(db, opts = {}) {
       l.branch AS branch, l.name AS name, l.ppla AS place, l.cr AS gstin,
       l.bags AS bag, l.qty AS qty, l.price AS price, l.amount AS amount,
       l.pqty AS pqty, l.prate AS prate, l.puramt AS puramt,
-      l.${discountCol} AS discount, l.${gstCol} AS gst5, l.balance AS payable
+      l.${discountCol} AS discount, l.${gstCol} AS gst5, l.balance AS payable,
+      l.refund AS refund, l.com AS commission, l.cgst AS cgst, l.sgst AS sgst,
+      l.igst AS igst, l.bilamt AS billamount
     FROM lots l JOIN auctions a ON a.id = l.auction_id
     WHERE (l.amount > 0 OR UPPER(TRIM(COALESCE(l.code,''))) = 'WD')`;
   const params = [];
@@ -1267,6 +1269,9 @@ const _sum = (rows, k) => rows.reduce((s, r) => s + _num(r[k]), 0);
 function getPoolerRegister(db, opts = {}) {
   let q = `SELECT a.ano AS tno, a.date AS date, l.lot_no AS lot, l.name AS party,
       l.cr AS gstin, l.qty AS qty, l.price AS rate, l.amount AS value,
+      l.refund AS refund, l.com AS commission,
+      (COALESCE(l.cgst,0) + COALESCE(l.sgst,0) + COALESCE(l.igst,0)) AS gst,
+      l.bilamt AS billamount,
       l.pqty AS pqty, l.prate AS prate, l.puramt AS puramt,
       UPPER(TRIM(COALESCE(l.code,''))) AS code
     FROM lots l JOIN auctions a ON a.id = l.auction_id
@@ -1282,13 +1287,17 @@ function getPoolerRegister(db, opts = {}) {
     const value = _sum(rs, 'value');
     const pqty = _sum(rs, 'pqty');
     const puramt = _sum(rs, 'puramt');
+    const refund = _sum(rs, 'refund');
+    const commission = _sum(rs, 'commission');
+    const gst = _sum(rs, 'gst');
+    const billamount = _sum(rs, 'billamount');
     const sold = rs.filter(r => !isWd(r) && _num(r.value) > 0);
     const wd = rs.filter(isWd);
     const soldQty = sold.reduce((s, r) => s + _num(r.qty), 0);
     const soldValue = sold.reduce((s, r) => s + _num(r.value), 0);
     const wdQty = wd.reduce((s, r) => s + _num(r.qty), 0);
     const wdValue = wd.reduce((s, r) => s + _num(r.value), 0);
-    return { qty, value, pqty, puramt, soldQty, soldValue, wdQty, wdValue };
+    return { qty, value, pqty, puramt, refund, commission, gst, billamount, soldQty, soldValue, wdQty, wdValue };
   });
   return { kind: 'pooler', parties };
 }

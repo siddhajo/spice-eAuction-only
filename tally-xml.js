@@ -236,7 +236,7 @@ function generSalesIspXML(rows, cfg, opts = {}) {
   // toggle was removed from Settings, so gating on it left the block off.
   // E-way bill emission gate — user-controlled, defaults ON, independent
   // of the dispatch-from-address toggle so they can be flipped separately.
-  const ewayEnabled    = cfgBool(cfg, 'tally_eway_enabled', false);
+  const ewayEnabled    = cfgBool(cfg, 'tally_eway_enabled', true);
   const tcs           = cfgBool(cfg, 'tally_tcs_enabled', false);
   const shipToOverride = cfgBool(cfg, 'tally_ship_to', false);
   const intra         = cfgGet(cfg, 'tally_state_code', '33');

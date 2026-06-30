@@ -173,7 +173,7 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
 
   function isNumericCol(col) {
     const h = (col.header || '').toUpperCase();
-    return /^(QTY|BAG|BAGS|PRICE|RATE|AMOUNT|PURCHASE|PQTY|PRATE|PURAMT|CGST|SGST|IGST|GST|TCS|TOTAL|DISCOUNT|PAYABLE|ADVANCE|BALANCE|LITRE|LOTS|TDS|ASSESS_VALUE|COST|NET|GUNNY|TRANSPORT|INSURANCE|CARDAMOM|CARDAMOM_COST|GUNNY_COST|ROUND|BILAMT|COM|COMMISSION)$/.test(h);
+    return /^(QTY|BAG|BAGS|PRICE|RATE|AMOUNT|PURCHASE|PQTY|PRATE|PURAMT|CGST|SGST|IGST|GST|TCS|TOTAL|DISCOUNT|PAYABLE|ADVANCE|BALANCE|LITRE|LOTS|TDS|ASSESS_VALUE|VALUE|COST|NET|GUNNY|TRANSPORT|INSURANCE|CARDAMOM|CARDAMOM_COST|GUNNY_COST|ROUND|BILAMT|BILLAMOUNT|REFUND|COM|COMMISSION)$/.test(h);
   }
 
   function fmtCell(val, col) {
@@ -685,9 +685,10 @@ const COLS = {
     { header: 'QTY',    key: 'qty',    width: 14 },
     { header: 'RATE',   key: 'rate',   width: 12 },
     { header: 'VALUE',  key: 'value',  width: 18 },
-    { header: 'P_QTY',  key: 'pqty',   width: 14 },
-    { header: 'P_RATE', key: 'prate',  width: 12 },
-    { header: 'PURAMT', key: 'puramt', width: 18 },
+    { header: 'REFUND', key: 'refund', width: 14 },
+    { header: 'COMMISSION', key: 'commission', width: 16 },
+    { header: 'GST',    key: 'gst',    width: 14 },
+    { header: 'BILLAMOUNT', key: 'billamount', width: 18 },
   ],
   seller_individual: [
     { header: 'DATE',    key: 'date',    width: 14 },
@@ -719,12 +720,14 @@ const COLS = {
     { header: 'QTY',    key: 'qty',    width: 10 },
     { header: 'PRICE',  key: 'price',  width: 9  },
     { header: 'AMOUNT', key: 'amount', width: 13 },
-    { header: 'PQTY',   key: 'pqty',   width: 10 },
-    { header: 'PRATE',  key: 'prate',  width: 9  },
-    { header: 'PURAMT', key: 'puramt', width: 13 },
-    { header: 'DISCOUNT', key: 'discount', width: 11 },
     { header: 'GST5',   key: 'gst5',   width: 10 },
     { header: 'PAYABLE', key: 'payable', width: 13 },
+    { header: 'REFUND', key: 'refund', width: 11 },
+    { header: 'COMMISSION', key: 'commission', width: 12 },
+    { header: 'CGST',   key: 'cgst',   width: 10 },
+    { header: 'SGST',   key: 'sgst',   width: 10 },
+    { header: 'IGST',   key: 'igst',   width: 10 },
+    { header: 'BILLAMOUNT', key: 'billamount', width: 13 },
   ],
   // Sales Register — invoice-wise (landscape).
   sales_register: [
@@ -738,12 +741,12 @@ const COLS = {
     { header: 'BAG',    key: 'bag',    width: 5  },
     { header: 'QTY',    key: 'qty',    width: 10 },
     { header: 'AMOUNT', key: 'amount', width: 13 },
-    { header: 'LORRY',  key: 'lorry',  width: 10 },
     { header: 'GUNNY',  key: 'gunny',  width: 10 },
-    { header: 'IGST',   key: 'igst',   width: 10 },
+    { header: 'TRANSPORT', key: 'lorry', width: 11 },
+    { header: 'INSURANCE', key: 'ins',  width: 11 },
     { header: 'CGST',   key: 'cgst',   width: 10 },
     { header: 'SGST',   key: 'sgst',   width: 10 },
-    { header: 'INS',    key: 'ins',    width: 10 },
+    { header: 'IGST',   key: 'igst',   width: 10 },
     { header: 'INVAMT', key: 'invamt', width: 13 },
   ],
 };
@@ -766,8 +769,8 @@ const TOTAL_KEYS = {
   payment_party_wise: ['lots', 'qty', 'amount', 'purchase', 'commission', 'gst', 'tds', 'net', 'discount', 'payable'],
   tally_purchase:  ['bag', 'qty', 'amount', 'cgst', 'sgst', 'igst', 'discount', 'bilamt'],
   tds_return:      ['assess_value', 'tds'],
-  purchase_register: ['bag', 'qty', 'amount', 'pqty', 'puramt', 'discount', 'gst5', 'payable'],
-  sales_register:    ['bag', 'qty', 'amount', 'lorry', 'gunny', 'igst', 'cgst', 'sgst', 'ins', 'invamt'],
+  purchase_register: ['bag', 'qty', 'amount', 'gst5', 'payable', 'refund', 'commission', 'cgst', 'sgst', 'igst', 'billamount'],
+  sales_register:    ['bag', 'qty', 'amount', 'gunny', 'lorry', 'ins', 'cgst', 'sgst', 'igst', 'invamt'],
 };
 
 const TITLES = {
@@ -1037,7 +1040,7 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
 // generic renderer styles them as yellow strips.
 const INDIVIDUAL_PDF_SUMMARY = {
   pooler_individual: (s) => ([
-    { _isSubtotal: true, tno: 'Total',     qty: s.qty,     value: s.value, pqty: s.pqty, puramt: s.puramt },
+    { _isSubtotal: true, tno: 'Total',     qty: s.qty,     value: s.value, refund: s.refund, commission: s.commission, gst: s.gst, billamount: s.billamount },
     { _isSubtotal: true, tno: 'Sold',      qty: s.soldQty, value: s.soldValue },
     { _isSubtotal: true, tno: 'Withdrawn', qty: s.wdQty,   value: s.wdValue },
   ]),
@@ -1051,7 +1054,7 @@ const INDIVIDUAL_PDF_SUMMARY = {
   ]),
 };
 const INDIVIDUAL_PDF_GRANDKEYS = {
-  pooler_individual: { keys: ['qty', 'value', 'pqty', 'puramt'], label: 'tno' },
+  pooler_individual: { keys: ['qty', 'value', 'refund', 'commission', 'gst', 'billamount'], label: 'tno' },
   seller_individual: { keys: ['qty', 'invoice'], label: 'date' },
   merchant_individual: { keys: ['qty', 'invoice', 'receipt'], label: 'date' },
 };
