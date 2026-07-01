@@ -4925,6 +4925,11 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <button class="btn btn-o" onclick="impLoadHistory()">View History</button>
           <button class="btn btn-o" onclick="impClear()" style="margin-left:auto" title="Clear file, reset module pick, hide preview / verify panels">Clear</button>
         </div>
+        <div style="border-top:1px solid var(--spice-line);margin:4px 0 14px;padding-top:12px">
+          <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Import auction lots from an XLS/XLSX export — full import (add new lots) or price update. Uses the same importer as the Auctions tab.</div>
+          <button class="btn btn-a" onclick="openImportAuctionModal('imp-auction-status')">Import Auction Lots (XLS / XLSX)</button>
+          <div id="imp-auction-status" style="display:none;padding:8px 14px;border-radius:6px;font-size:12px;margin-top:10px"></div>
+        </div>
         <div id="imp-result" style="margin-bottom:14px;font-size:12.5px;color:var(--text2)"></div>
         <div id="imp-preview" style="overflow-x:auto;max-height:300px;border:1px solid var(--spice-line);border-radius:8px;padding:8px;background:#fff;margin-bottom:14px"></div>
         <div id="imp-verify" style="overflow-x:auto;max-height:520px;border:1px solid var(--spice-line);border-radius:8px;padding:8px;background:#fff;margin-bottom:14px;display:none"></div>
@@ -16680,9 +16685,14 @@ async function setDefaultTrade(id){
   } catch (e) { showError(e); }
 }
 
-function openImportAuctionModal(){
+// Which status element importAuction() writes its result into. Defaults to
+// the Auctions tab; the Import Old Data menu overrides it so the result is
+// visible there instead.
+let _iaStatusId = 'auction-import-status';
+function openImportAuctionModal(statusId){
   // Seed dynamic defaults each time the modal opens — same source as
   // openAuctionAdd / leOpenNewTradeModal (Settings → Lot Entry / Mode).
+  _iaStatusId = statusId || 'auction-import-status';
   document.getElementById('ia-ano').value = '';
   document.getElementById('ia-date').value = '';
   document.getElementById('ia-crpt').value = getDefaultCropType();
@@ -16694,7 +16704,7 @@ async function importAuction(){
   const fileInput=document.getElementById('ia-file');
   const file=fileInput.files[0];
   if(!file){alert('Please select a file');return}
-  const status=document.getElementById('auction-import-status');
+  const status=document.getElementById(_iaStatusId)||document.getElementById('auction-import-status');
   status.style.display='block';status.style.background='var(--amber-bg)';status.style.color='var(--amber)';
   status.textContent='Importing... please wait';
   try{
