@@ -585,6 +585,44 @@ async function exportDealerList(db, auctionId) {
   });
 }
 
+// ── Export: Planter List (Grade 1) ───────────────────────────
+// Pre-trade counterpart to the Dealer List: one row per grade-1 planter
+// (agriculturist / pooler) with their lot count, bags and quantity. Grade is
+// matched TRIM-insensitively since lot grades may carry stray whitespace, and
+// — unlike the Dealer List — there is NO amount>0 gate so the list is usable
+// before pricing (the whole point of a pre-trade snapshot). The CR column
+// shows the planter's registration number with the stored "CR." prefix
+// stripped, mirroring how the Dealer List cleans the "GSTIN." prefix.
+async function exportPlanterList(db, auctionId) {
+  const rows = db.all(
+    `WITH cleaned AS (
+       SELECT name, bags, qty, lot_no,
+              TRIM(CASE
+                WHEN LOWER(SUBSTR(TRIM(cr),1,3)) = 'cr.'
+                  THEN LTRIM(SUBSTR(TRIM(cr),4), '. :-')
+                ELSE TRIM(cr)
+              END) AS cr
+         FROM lots
+        WHERE auction_id = ? AND TRIM(COALESCE(grade,'')) = '1'
+     )
+     SELECT name, cr,
+            COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty
+       FROM cleaned
+      GROUP BY name, cr
+      ORDER BY name`, [auctionId]
+  );
+  const cols = [
+    { header: 'NAME', key: 'name', width: 30 },
+    { header: 'CR',   key: 'cr',   width: 25 },
+    { header: 'LOTS', key: 'lots', width: 6 },
+    { header: 'BAGS', key: 'bags', width: 6 },
+    { header: 'QTY',  key: 'qty',  width: 12 },
+  ];
+  return createExcelBuffer('PlanterList', cols, rows, {
+    db, title: 'Planter List (Grade 1)', metaLines: auctionMeta(db, auctionId),
+  });
+}
+
 // ── Export Type 9: Sales & Taxes ─────────────────────────────
 async function exportSalesTaxes(db, auctionId) {
   const rows = db.all(
@@ -1231,6 +1269,7 @@ const EXPORT_TYPES = {
   collection:         { fn: exportCollection,        name: 'Collection' },
   trade_report:       { fn: exportTradeReport,       name: 'AuctionReport' },
   dealer_list:        { fn: exportDealerList,        name: 'DealerList' },
+  planter_list:       { fn: exportPlanterList,       name: 'PlanterList' },
   sales_taxes:        { fn: exportSalesTaxes,        name: 'SalesTaxes' },
   payment:            { fn: exportPaymentSummary,    name: 'Payment',           needsCfg: true },
   payment_party_wise: { fn: exportPaymentPartyWise,  name: 'PaymentPartyWise',  needsCfg: true },
@@ -1247,6 +1286,7 @@ module.exports = {
   exportPriceList, exportPriceListBefore,
   exportBankPayment, exportBankPaymentBefore,
   exportPoolerRegister, exportFullFile, exportCollection, exportTradeReport, exportDealerList,
+  exportPlanterList,
   exportSalesTaxes, exportPaymentSummary, exportPaymentPartyWise, exportTDSReturn, exportTallyPurchase,
   exportSalesJournal, exportPurchaseJournal,
   exportPurchaseRegister, exportSalesRegister, exportIndividualRegister,

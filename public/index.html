@@ -4900,36 +4900,31 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <h2>Import Old Data <span style="font-weight:400;font-size:12px;color:var(--text3)">Upload legacy XLS/XLSX exports back into the system</span></h2>
         <div class="sgrid" style="margin-bottom:14px">
           <div class="fg"><label>Module</label>
-            <select id="imp-module" onchange="impModuleChange()">
+            <select id="imp-module">
               <option value="sales_invoice">Sales Invoices</option>
               <option value="purchase">Purchase Invoices</option>
               <option value="bills">Bills of Supply</option>
               <option value="debit_notes">Debit Notes</option>
               <option value="sellers">Sellers</option>
               <option value="buyers">Buyers</option>
-              <option value="auction">Auctions</option>
+              <option value="auction">Auctions (Lots)</option>
             </select>
           </div>
-          <div class="fg" id="imp-file-fg"><label>File (.xlsx / .xls)</label>
+          <div class="fg"><label>File (.xlsx / .xls)</label>
             <input type="file" id="imp-file" accept=".xls,.xlsx">
           </div>
-          <div class="fg" id="imp-dryrun-fg" style="display:flex;align-items:end">
+          <div class="fg" style="display:flex;align-items:end">
             <label style="display:flex;align-items:center;gap:6px;font-size:13px">
               <input type="checkbox" id="imp-dryrun" checked> Dry-run (validate only, do not write)
             </label>
           </div>
         </div>
-        <div id="imp-standard-actions" style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+        <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
           <button class="btn btn-g" onclick="impPreview()">1. Preview &amp; Detect Mapping</button>
           <button class="btn btn-a" onclick="impVerify()">2. Verify Against Database</button>
           <button class="btn btn-a" onclick="impRun()">3. Run Import</button>
           <button class="btn btn-o" onclick="impLoadHistory()">View History</button>
           <button class="btn btn-o" onclick="impClear()" style="margin-left:auto" title="Clear file, reset module pick, hide preview / verify panels">Clear</button>
-        </div>
-        <div id="imp-auction-section" style="display:none;margin-bottom:14px">
-          <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Import auction lots from an XLS/XLSX export — full import (add new lots) or price update. Uses the same importer as the Auctions tab.</div>
-          <button class="btn btn-g" onclick="openImportAuctionModal('imp-auction-status')">Import Auction Lots (XLS / XLSX)</button>
-          <div id="imp-auction-status" style="display:none;padding:8px 14px;border-radius:6px;font-size:12px;margin-top:10px"></div>
         </div>
         <div id="imp-result" style="margin-bottom:14px;font-size:12.5px;color:var(--text2)"></div>
         <div id="imp-preview" style="overflow-x:auto;max-height:300px;border:1px solid var(--spice-line);border-radius:8px;padding:8px;background:#fff;margin-bottom:14px"></div>
@@ -16785,14 +16780,9 @@ async function setDefaultTrade(id){
   } catch (e) { showError(e); }
 }
 
-// Which status element importAuction() writes its result into. Defaults to
-// the Auctions tab; the Import Old Data menu overrides it so the result is
-// visible there instead.
-let _iaStatusId = 'auction-import-status';
-function openImportAuctionModal(statusId){
+function openImportAuctionModal(){
   // Seed dynamic defaults each time the modal opens — same source as
   // openAuctionAdd / leOpenNewTradeModal (Settings → Lot Entry / Mode).
-  _iaStatusId = statusId || 'auction-import-status';
   document.getElementById('ia-ano').value = '';
   document.getElementById('ia-date').value = '';
   document.getElementById('ia-crpt').value = getDefaultCropType();
@@ -16804,7 +16794,7 @@ async function importAuction(){
   const fileInput=document.getElementById('ia-file');
   const file=fileInput.files[0];
   if(!file){alert('Please select a file');return}
-  const status=document.getElementById(_iaStatusId)||document.getElementById('auction-import-status');
+  const status=document.getElementById('auction-import-status');
   status.style.display='block';status.style.background='var(--amber-bg)';status.style.color='var(--amber)';
   status.textContent='Importing... please wait';
   try{
@@ -21401,7 +21391,7 @@ async function loadPayments(){
 const EXP_LABELS={lot_slip:'Lot Slip',lot_slip_after:'Lot Slip (After)',
   lot_buyer:'Lot Buyer',lot_name:'Lot Name',lot_payment:'Lot Payment',
   price_list_before:'Price List (Before)',price_list:'Price List',bank_payment_before:'Bank Payment (Before)',bank_payment:'Bank Payment (RTGS/NEFT)',
-  pooler_register:'Pooler Register',full_file:'Full File',collection:'Collection',trade_report:'Auction Report',dealer_list:'Dealer List',
+  pooler_register:'Pooler Register',full_file:'Full File',collection:'Collection',trade_report:'Auction Report',dealer_list:'Dealer List',planter_list:'Planter List (Grade 1)',
   payment:'Payment Summary',payment_party_wise:'Payment Summary - Party-wise',
   eauction_csv:'e-Auction (Spices Board) CSV'};
 // Export types that only support a specific format (no XLSX/PDF choice).
@@ -21413,7 +21403,7 @@ const EXP_XLSX_ONLY = new Set(['full_file']);
 // "Pre-auction Exports" collapsible section above the main Export Center
 // AND surfaced as quick-download buttons inside the Price Import
 // reminder banner. Order here drives display order in both spots.
-const EXP_PREAUCTION = ['lot_slip', 'lot_buyer', 'lot_name', 'eauction_csv', 'price_list_before', 'dealer_list'];
+const EXP_PREAUCTION = ['lot_slip', 'lot_buyer', 'lot_name', 'eauction_csv', 'price_list_before', 'dealer_list', 'planter_list'];
 const EXP_PREAUCTION_SET = new Set(EXP_PREAUCTION);
 // Pre-auction exports that ALSO belong in the main Export Center (useful
 // both before pricing and after the auction closes). Without this they'd
@@ -24022,25 +24012,6 @@ let _impLastAutoFillAuctionId = false;
 // user picked because it's their selection — they may want to clear
 // the picker and re-upload the same module. History panel stays as-is
 // (the user can refresh it via "View History").
-// Auctions use a dedicated importer (own file picker + full/price modes) that
-// doesn't fit the standard preview→verify→run flow, so selecting it in the
-// module dropdown swaps the standard controls for the auction import button.
-function impModuleChange(){
-  const isAuction = document.getElementById('imp-module').value === 'auction';
-  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
-  show('imp-file-fg', !isAuction);
-  show('imp-dryrun-fg', !isAuction);
-  document.getElementById('imp-standard-actions').style.display = isAuction ? 'none' : 'flex';
-  show('imp-auction-section', isAuction);
-  if (isAuction) {
-    // Hide any lingering standard-flow output from a previous module.
-    ['imp-result','imp-preview','imp-verify','imp-history'].forEach(id => {
-      const el = document.getElementById(id); if (el) el.innerHTML = '';
-    });
-    const verify = document.getElementById('imp-verify'); if (verify) verify.style.display = 'none';
-  }
-}
-
 function impClear(){
   const fileEl = document.getElementById('imp-file');
   if (fileEl) fileEl.value = '';
@@ -24316,6 +24287,9 @@ async function impVerify(){
       // generation). Lets the operator see how many round-offs were
       // synthesized before they hit the DB.
       (c.rundDerived ? ' · <span style="color:#0369a1">rund-derived='+c.rundDerived+'</span>' : '') +
+      // Auction module only — parent trades that will be created for rows
+      // whose ANO isn't in the database yet.
+      (c.newAuctions ? ' · <span style="color:#0369a1">new-trades='+c.newAuctions+'</span>' : '') +
       ' &nbsp;<span style="color:'+(totalInvalid?'#c00':'#15803d')+'">'+
         (totalInvalid ? '⚠ Fix invalid rows or adjust mapping before importing.' : '✓ Ready to import.')+
       '</span>';
@@ -24569,6 +24543,10 @@ async function impRun(){
     let h = '<div style="padding:8px;background:'+(dryRun?'#fff8e1':'#e8f5e9')+';border-radius:6px">';
     h += '<b>'+(dryRun?'Dry-run complete':'Import complete')+'</b> · ';
     h += 'total='+data.total+' · imported='+data.imported+' · skipped(dup)='+data.skipped+' · failed='+data.failed;
+    // Auction module only — how many parent trades were created on the fly.
+    if (data.newAuctions && data.newAuctions > 0) {
+      h += ' · <span style="color:#0369a1">new-trades='+data.newAuctions+(dryRun?' (would create)':'')+'</span>';
+    }
     // Surface the GSTIN→master-name correction count when present —
     // tells the operator "N rows had truncated names rewritten from
     // the master." Hidden when the module doesn't support the lookup

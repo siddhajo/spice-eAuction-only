@@ -614,6 +614,16 @@ const COLS = {
     { header: 'BAGS',  key: 'bags',  width: 6  },
     { header: 'QTY',   key: 'qty',   width: 12 },
   ],
+  // Grade-1 planter counterpart to the Dealer List — CR registration number
+  // in place of the GSTIN column.
+  planter_list: [
+    { header: 'SL.NO', key: '_sn',  width: 6  },
+    { header: 'NAME',  key: 'name', width: 30 },
+    { header: 'CR',    key: 'cr',   width: 25 },
+    { header: 'LOTS',  key: 'lots', width: 6  },
+    { header: 'BAGS',  key: 'bags', width: 6  },
+    { header: 'QTY',   key: 'qty',  width: 12 },
+  ],
   sales_taxes: [
     { header: 'STATE', key: 'state', width: 10 }, { header: 'SALE', key: 'sale', width: 6 },
     { header: 'INVO', key: 'invo', width: 8 }, { header: 'TRADERNAME', key: 'tradername', width: 22 },
@@ -762,6 +772,7 @@ const TOTAL_KEYS = {
   full_file:       ['bags', 'qty', 'amount', 'cgst', 'sgst', 'igst', 'advance', 'balance'],
   collection:      ['bag', 'qty'],
   dealer_list:     ['lots', 'bags', 'qty'],
+  planter_list:    ['lots', 'bags', 'qty'],
   sales_taxes:     ['bag', 'qty', 'cardamom_cost', 'gunny_cost', 'cgst', 'sgst', 'igst', 'tcs', 'transport', 'insurance', 'total'],
   payment:         ['bag', 'qty', 'amount', 'commission', 'payable'],
   payment_party_wise: ['lots', 'qty', 'amount', 'purchase', 'commission', 'gst', 'tds', 'net', 'discount', 'payable'],
@@ -784,6 +795,7 @@ const TITLES = {
   full_file:       'Full File',
   collection:      'Collection / Lorry',
   dealer_list:     'Dealer List',
+  planter_list:    'Planter List (Grade 1)',
   sales_taxes:     'Sales & Taxes',
   payment:         'Payment Summary',
   payment_party_wise: 'Payment Summary — Party-wise',
@@ -834,6 +846,10 @@ const ROW_PREPROCESS = {
   },
   // Dealer list — flat sequential serial (no grouping).
   dealer_list: {
+    serialKey: '_sn',
+  },
+  // Planter list — flat sequential serial (no grouping).
+  planter_list: {
     serialKey: '_sn',
   },
   // Party-wise payment summary — one row per party already, just a flat serial.
@@ -953,6 +969,23 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
           COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty
          FROM lots WHERE auction_id = ? AND cr LIKE '%GST%' AND amount > 0
          GROUP BY state, name, cr ORDER BY name`, [auctionId]);
+
+    case 'planter_list':
+      // Grade-1 planter list — pre-trade, so NO amount>0 gate. CR prefix
+      // stripped to mirror the Dealer List's cleaned GSTIN column.
+      return db.all(
+        `WITH cleaned AS (
+           SELECT name, bags, qty, lot_no,
+                  TRIM(CASE
+                    WHEN LOWER(SUBSTR(TRIM(cr),1,3)) = 'cr.'
+                      THEN LTRIM(SUBSTR(TRIM(cr),4), '. :-')
+                    ELSE TRIM(cr)
+                  END) AS cr
+             FROM lots
+            WHERE auction_id = ? AND TRIM(COALESCE(grade,'')) = '1'
+         )
+         SELECT name, cr, COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty
+           FROM cleaned GROUP BY name, cr ORDER BY name`, [auctionId]);
 
     case 'sales_taxes':
       return db.all(

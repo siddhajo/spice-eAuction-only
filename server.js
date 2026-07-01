@@ -11950,6 +11950,57 @@ const IMPORT_MODULES = {
       pin: ['pin','pincode','zip'],
     },
   },
+  // Auction lots — the one module whose parent row (the auction) is created
+  // on the fly. `ano` + `date` are VIRTUAL source fields: they resolve or
+  // CREATE the auction, they are NOT columns on `lots`. Everything else maps
+  // 1:1 onto a lots column. Because the dedup key is (auction_id, lot_no)
+  // where auction_id is derived, /verify and /run take a dedicated
+  // auction-aware branch (see handleAuctionVerify / handleAuctionRun) rather
+  // than the generic keyCol machinery. `autoCreateAuction` is the switch.
+  auction: {
+    label: 'Auctions (Lots)',
+    table: 'lots',
+    keyCols: ['ano','lot_no'],
+    autoCreateAuction: true,
+    fields: ['ano','date','lot_no','name','crop','grade','crpt','branch','state',
+             'padd','ppla','ppin','pstate','pst_code','cr','pan','tel','aadhar',
+             'bags','litre','qty','price','amount','code','buyer','buyer1','sale','invo',
+             'pqty','prate','puramt','com','sertax','cgst','sgst','igst','advance','balance','bilamt'],
+    aliases: {
+      ano:      ['ano','auction_no','auctionno','tno','trade','trade_no','tradeno'],
+      date:     ['date','trade_date','auction_date'],
+      lot_no:   ['lot_no','lot','lotno'],
+      name:     ['name','seller','pooler','trader'],
+      crpt:     ['crpt','crop_type','croptype'],
+      branch:   ['branch','br','depot'],
+      padd:     ['padd','address','add','add1','address1'],
+      ppla:     ['ppla','place','pla'],
+      ppin:     ['ppin','pin','pincode'],
+      pst_code: ['pst_code','st_code','state_code'],
+      cr:       ['cr','gstin','cr_no'],
+      pan:      ['pan','pan_no'],
+      tel:      ['tel','phone','mobile'],
+      aadhar:   ['aadhar','aadhaar'],
+      bags:     ['bags','bag'],
+      litre:    ['litre','litre_wt'],
+      qty:      ['qty','quantity','net_qty','weight','kgs'],
+      price:    ['price','rate'],
+      amount:   ['amount'],
+      code:     ['code','buyer_code'],
+      buyer:    ['buyer','bidder'],
+      buyer1:   ['buyer1','trade_name','tradename'],
+      sale:     ['sale','sale_type'],
+      invo:     ['invo','invoice'],
+      pqty:     ['pqty','pur_qty'],
+      prate:    ['prate','pur_rate'],
+      puramt:   ['puramt','pur_amt','purchase_amt'],
+      com:      ['com','commission'],
+      sertax:   ['sertax','hpc'],
+      advance:  ['advance','discount'],
+      balance:  ['balance','payable'],
+      bilamt:   ['bilamt','bill_amt'],
+    },
+  },
 };
 function _importMapHeaders(headers, moduleDef) {
   const norm = s => String(s || '').trim().toLowerCase().replace(/[\s\-/]+/g, '_');
@@ -12081,6 +12132,247 @@ function _deriveRund(values, cfg) {
   const rund = subtotalRounded - totalBeforeRound;
   return Math.round(rund * 100) / 100;
 }
+// ── Auction (lots) import — dedicated /verify + /run branch ─────────────
+// The generic keyCol/mapping machinery can't express this module: its dedup
+// key is (auction_id, lot_no) where auction_id is DERIVED by resolving — and
+// creating when absent — the parent auction from each row's ano+date. So the
+// two handlers below own the auction logic while /preview stays generic.
+//
+// Lots columns actually written (order matches the INSERT built in the run
+// handler). `ano`/`date` are consumed to place the lot under an auction and
+// are deliberately absent here — `lots` has no such columns.
+const AUCTION_LOT_FIELDS = ['crop','grade','crpt','branch','state','name','padd','ppla','ppin',
+  'pstate','pst_code','cr','pan','tel','aadhar','bags','litre','qty','price','amount','code',
+  'buyer','buyer1','sale','invo','pqty','prate','puramt','com','sertax','cgst','sgst','igst',
+  'advance','balance','bilamt'];
+// Numeric lot columns — parsed with parseFloat (0 on blank); everything else
+// (incl. `litre`, kept as text like the Auctions-tab importer) stays a string.
+const AUCTION_LOT_NUM_FIELDS = new Set(['bags','qty','price','amount','pqty','prate','puramt',
+  'com','sertax','cgst','sgst','igst','advance','balance','bilamt']);
+
+// Parse the upload + resolve the effective field→column mapping, honouring
+// the same auto-detect + user-override + explicit-skip rules as the generic
+// endpoints so verify and run agree with what preview showed.
+function _auctionParseAndMap(req, def) {
+  const wb = XLSX.readFile(req.file.path);
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  if (!ws) throw new Error('No worksheet found');
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+  const headers = rows.length ? Object.keys(rows[0]) : [];
+  let userMapping = {};
+  if (req.body.mapping) { try { userMapping = JSON.parse(req.body.mapping) || {}; } catch (_) {} }
+  const mapping = Object.assign({}, _importMapHeaders(headers, def), userMapping);
+  for (const k of Object.keys(userMapping || {})) {
+    if (userMapping[k] === '' || userMapping[k] === null) delete mapping[k];
+  }
+  return { rows, mapping };
+}
+// Read one mapped cell as trimmed text ('' when unmapped/blank).
+function _auctionCell(row, mapping, field) {
+  const src = mapping[field];
+  if (!src) return '';
+  const v = row[src];
+  return v == null ? '' : String(v).trim();
+}
+// Build the projected lot value object for a row (used by verify samples/diff
+// and — via the same field order — the run INSERT).
+function _auctionLotValues(row, mapping) {
+  const out = {};
+  for (const f of AUCTION_LOT_FIELDS) {
+    let v = _auctionCell(row, mapping, f);
+    if (AUCTION_LOT_NUM_FIELDS.has(f)) v = parseFloat(v) || 0;
+    out[f] = v;
+  }
+  return out;
+}
+// A row is "blank" when every cell is empty — skipped silently (not counted),
+// matching the Auctions-tab importer's isBlankRow.
+function _auctionRowBlank(row) {
+  return !Object.values(row).some(v => String(v == null ? '' : v).trim() !== '');
+}
+
+function handleAuctionVerify(db, req, res, def, moduleKey) {
+  const PER_BUCKET_LIMIT = 50;
+  try {
+    const { rows, mapping } = _auctionParseAndMap(req, def);
+    const total = rows.length;
+    const todayIso = new Date().toISOString().slice(0, 10);
+    // Read-only auction lookup keyed exactly like the run handler's create
+    // (ano + stored date, today when the date cell is blank). A row whose
+    // auction doesn't exist yet is guaranteed NEW — no lot can predate its
+    // not-yet-created auction.
+    const aucCache = new Map();
+    const lookupAuctionId = (ano, dateStr) => {
+      const key = ano + '|' + (dateStr || todayIso);
+      if (aucCache.has(key)) return aucCache.get(key);
+      const r = db.get('SELECT id FROM auctions WHERE ano = ? AND date = ? LIMIT 1', [ano, dateStr || todayIso]);
+      const id = r ? r.id : null;
+      aucCache.set(key, id);
+      return id;
+    };
+    let cntNew = 0, cntDup = 0, cntDupChanged = 0, cntInvReq = 0;
+    const newAuctionKeys = new Set();
+    const sampleNew = [], sampleInvalid = [], sampleDupChanges = [], sampleDupIdentical = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (_auctionRowBlank(r)) continue;
+      const ano = _auctionCell(r, mapping, 'ano');
+      const lotNo = _auctionCell(r, mapping, 'lot_no');
+      const dateStr = normalizeDate(_auctionCell(r, mapping, 'date'));
+      const values = Object.assign({ ano, date: dateStr || '', lot_no: lotNo }, _auctionLotValues(r, mapping));
+      const missing = [];
+      if (!ano)   missing.push('ano');
+      if (!lotNo) missing.push('lot_no');
+      if (missing.length) {
+        cntInvReq++;
+        if (sampleInvalid.length < PER_BUCKET_LIMIT)
+          sampleInvalid.push({ row: i + 2, status: 'invalid', reasons: ['Missing required value(s): ' + missing.join(', ')], values, existing: null, diff: null });
+        continue;
+      }
+      const aid = lookupAuctionId(ano, dateStr);
+      if (aid == null) {
+        newAuctionKeys.add(ano + '|' + (dateStr || todayIso));
+        cntNew++;
+        if (sampleNew.length < PER_BUCKET_LIMIT)
+          sampleNew.push({ row: i + 2, status: 'new', reasons: ['New trade "' + ano + '" will be created'], values, existing: null, diff: null });
+        continue;
+      }
+      const existing = db.get('SELECT * FROM lots WHERE auction_id = ? AND lot_no = ? LIMIT 1', [aid, lotNo]);
+      if (existing) {
+        let diff = {};
+        for (const f of AUCTION_LOT_FIELDS) {
+          const a = existing[f] == null ? '' : String(existing[f]);
+          const b = values[f] == null ? '' : String(values[f]);
+          if (a !== b) diff[f] = { old: existing[f] == null ? '' : existing[f], new: values[f] == null ? '' : values[f] };
+        }
+        if (Object.keys(diff).length === 0) diff = null;
+        cntDup++;
+        if (diff) { cntDupChanged++; if (sampleDupChanges.length < PER_BUCKET_LIMIT) sampleDupChanges.push({ row: i + 2, status: 'duplicate', reasons: [], values, existing, diff }); }
+        else if (sampleDupIdentical.length < PER_BUCKET_LIMIT) sampleDupIdentical.push({ row: i + 2, status: 'duplicate', reasons: [], values, existing, diff: null });
+      } else {
+        cntNew++;
+        if (sampleNew.length < PER_BUCKET_LIMIT)
+          sampleNew.push({ row: i + 2, status: 'new', reasons: [], values, existing: null, diff: null });
+      }
+    }
+    let targetRowCount = 0;
+    try { const c = db.get('SELECT COUNT(*) as c FROM lots'); targetRowCount = c ? Number(c.c || 0) : 0; } catch (_) {}
+    fs.unlink(req.file.path, () => {});
+    return res.json({
+      module: moduleKey, label: def.label, total,
+      fields: def.fields, keyCols: def.keyCols,
+      autoFillAuctionId: false, autoCreateAuction: true,
+      sampleLimit: PER_BUCKET_LIMIT,
+      targetTable: 'lots', targetRowCount,
+      counts: {
+        new: cntNew, duplicate: cntDup, duplicateChanged: cntDupChanged,
+        invalidAno: 0, invalidRequired: cntInvReq, nameCorrected: 0, rundDerived: 0,
+        newAuctions: newAuctionKeys.size,
+      },
+      samples: { new: sampleNew, invalid: sampleInvalid, dupChanges: sampleDupChanges, dupIdentical: sampleDupIdentical },
+    });
+  } catch (e) {
+    if (req.file) fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: e.message });
+  }
+}
+
+function handleAuctionRun(db, req, res, def, moduleKey, dryRun) {
+  let imported = 0, skipped = 0, failed = 0, total = 0, newAuctions = 0;
+  const errors = [];
+  const insertedIds = [];
+  try {
+    const { rows, mapping } = _auctionParseAndMap(req, def);
+    total = rows.length;
+    if (!total) throw new Error('File is empty');
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const defaultCrop = getSetting(db, 'default_crop_type') || 'VST';
+    // Resolve-or-create the parent auction, keyed by (ano, stored date).
+    // Cached so a multi-row trade only touches the DB once. On dryRun we
+    // never insert — a missing auction returns null and its lots are counted
+    // as would-import (they can't collide with anything yet).
+    const aucCache = new Map();
+    const resolveOrCreateAuction = (ano, dateStr, cropForCreate, stateForCreate) => {
+      const storedDate = dateStr || todayIso;
+      const key = ano + '|' + storedDate;
+      if (aucCache.has(key)) return aucCache.get(key);
+      let auc = db.get('SELECT id FROM auctions WHERE ano = ? AND date = ? LIMIT 1', [ano, storedDate]);
+      if (!auc) {
+        newAuctions++;
+        if (!dryRun) {
+          db.run('INSERT INTO auctions (ano, date, crop_type, state) VALUES (?,?,?,?)',
+            [ano, storedDate, cropForCreate || defaultCrop, stateForCreate || 'TAMIL NADU']);
+          auc = db.get('SELECT id FROM auctions WHERE ano = ? AND date = ? ORDER BY id DESC LIMIT 1', [ano, storedDate]);
+        }
+      }
+      aucCache.set(key, auc || null);
+      return auc || null;
+    };
+    const lotCols = ['auction_id', 'lot_no', ...AUCTION_LOT_FIELDS, 'trader_id', 'user_id'];
+    const insertSql = `INSERT INTO lots (${lotCols.join(',')}) VALUES (${lotCols.map(() => '?').join(',')})`;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (_auctionRowBlank(r)) continue;
+      try {
+        const ano = _auctionCell(r, mapping, 'ano');
+        const lotNo = _auctionCell(r, mapping, 'lot_no');
+        if (!ano || !lotNo) {
+          skipped++;
+          if (errors.length < 50) errors.push({ row: i + 2, error: 'Missing ' + (!ano ? 'ano' : 'lot_no') });
+          continue;
+        }
+        const dateStr = normalizeDate(_auctionCell(r, mapping, 'date'));
+        const crpt  = _auctionCell(r, mapping, 'crpt')  || defaultCrop;
+        const state = _auctionCell(r, mapping, 'state') || 'TAMIL NADU';
+        const auc = resolveOrCreateAuction(ano, dateStr, crpt, state);
+        if (!auc) { imported++; continue; } // dryRun + auction not yet created → would-import
+        const dup = db.get('SELECT 1 FROM lots WHERE auction_id = ? AND lot_no = ? LIMIT 1', [auc.id, lotNo]);
+        if (dup) { skipped++; continue; }
+        const name = _auctionCell(r, mapping, 'name');
+        let traderId = null;
+        if (name) { const t = db.get('SELECT id FROM traders WHERE name = ? LIMIT 1', [name]); if (t) traderId = t.id; }
+        const lv = _auctionLotValues(r, mapping);
+        // crpt/state fall back to the auction defaults when the row omits them.
+        lv.crpt  = lv.crpt  || defaultCrop;
+        lv.state = lv.state || 'TAMIL NADU';
+        const vals = [auc.id, lotNo, ...AUCTION_LOT_FIELDS.map(f => lv[f]), traderId, 'import'];
+        if (!dryRun) {
+          const info = db.run(insertSql, vals);
+          if (info && info.lastInsertRowid != null) insertedIds.push(Number(info.lastInsertRowid));
+        }
+        imported++;
+      } catch (e) {
+        failed++;
+        if (errors.length < 50) errors.push({ row: i + 2, error: e.message });
+      }
+    }
+  } catch (e) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: e.message });
+  }
+  if (!dryRun) { try { repairBadDates(db); } catch (_) {} }
+  let importLogId = null;
+  try {
+    const info = db.run(`INSERT INTO import_log
+      (module, filename, dry_run, total, imported, skipped, failed, errors, inserted_ids, user_id, username)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      [moduleKey, req.file.originalname || '', dryRun ? 1 : 0,
+       total, imported, skipped, failed, JSON.stringify(errors).slice(0, 4000),
+       dryRun ? '' : JSON.stringify(insertedIds),
+       (req.user && req.user.id) || null, (req.user && req.user.username) || '']);
+    if (info && info.lastInsertRowid != null) importLogId = Number(info.lastInsertRowid);
+  } catch (e) {
+    console.error('[import-old-data] Failed to write import_log entry (auction):', e && e.message ? e.message : e);
+  }
+  fs.unlink(req.file.path, () => {});
+  return res.json({
+    success: true, module: moduleKey, dryRun,
+    total, imported, skipped, failed,
+    nameCorrected: 0, rundDerived: 0, newAuctions,
+    errors, importLogId,
+  });
+}
+
 app.post('/api/import-old-data/preview', requireAdmin, upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   const moduleKey = req.body.module;
@@ -12150,6 +12442,9 @@ app.post('/api/import-old-data/verify', requireAdmin, upload.single('file'), (re
   // NEW rows in the UI sample. Counts are always over the WHOLE file.
   const PER_BUCKET_LIMIT = 50;
   const db = getDb();
+  // Auction lots resolve/create their parent auction, so they take a
+  // dedicated branch rather than the generic keyCol dedup below.
+  if (def.autoCreateAuction) return handleAuctionVerify(db, req, res, def, moduleKey);
   try {
     const wb = XLSX.readFile(req.file.path);
     const ws = wb.Sheets[wb.SheetNames[0]];
@@ -12429,6 +12724,8 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
   }
 
   const db = getDb();
+  // Auction lots resolve/create their parent auction — dedicated branch.
+  if (def.autoCreateAuction) return handleAuctionRun(db, req, res, def, moduleKey, dryRun);
   let imported = 0, skipped = 0, failed = 0;
   // GSTIN→master-name correction counter — hoisted out of the try
   // block so the response builder further down can read it. Always
