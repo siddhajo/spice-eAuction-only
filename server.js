@@ -10990,6 +10990,43 @@ app.get('/api/insights', requireView, (req, res) => {
   totals.min_price = _mins.length ? Math.min(..._mins) : null;
   totals.max_price = _maxs.length ? Math.max(..._maxs) : null;
 
+  // ── Grade split — Grade 1 (Planter, no GSTIN) vs Grade 2 (Dealer, holds a
+  // valid 15-char GSTIN in the seller's CR field). Same classification as the
+  // Dealer List / party-grade filters (hasValidGstin). Grouped by CR in SQL,
+  // then bucketed in JS so the GSTIN-prefix cleanup in cleanGstin() stays the
+  // single source of truth rather than an approximate SQL LENGTH() check.
+  const gradeRows = db.all(
+    `SELECT
+       COALESCE(l.cr, '') AS cr,
+       COUNT(l.id) AS lots,
+       SUM(CASE WHEN ${SOLD} THEN 1 ELSE 0 END) AS sold,
+       COALESCE(SUM(l.qty),    0) AS qty,
+       COALESCE(SUM(l.bags),   0) AS bags,
+       COALESCE(SUM(l.amount), 0) AS value,
+       COALESCE(SUM(CASE WHEN ${SOLD} THEN l.amount ELSE 0 END), 0) AS sold_value,
+       COALESCE(SUM(CASE WHEN ${SOLD} THEN l.qty    ELSE 0 END), 0) AS sold_qty
+     FROM lots l
+     JOIN auctions a ON a.id = l.auction_id
+     WHERE date(a.date) BETWEEN date(?) AND date(?)${aidA}
+     GROUP BY COALESCE(l.cr, '')`,
+    [from, to]
+  );
+  const _mkGrade = () => ({ lots: 0, sold: 0, qty: 0, bags: 0, value: 0, sold_value: 0, sold_qty: 0 });
+  const gradeSplit = { grade1: _mkGrade(), grade2: _mkGrade() };
+  for (const r of gradeRows) {
+    const g = hasValidGstin(r.cr) ? gradeSplit.grade2 : gradeSplit.grade1;
+    g.lots       += Number(r.lots)       || 0;
+    g.sold       += Number(r.sold)       || 0;
+    g.qty        += Number(r.qty)        || 0;
+    g.bags       += Number(r.bags)       || 0;
+    g.value      += Number(r.value)      || 0;
+    g.sold_value += Number(r.sold_value) || 0;
+    g.sold_qty   += Number(r.sold_qty)   || 0;
+  }
+  for (const g of [gradeSplit.grade1, gradeSplit.grade2]) {
+    g.avg_price = g.sold_qty > 0 ? g.sold_value / g.sold_qty : 0;
+  }
+
   res.json({
     range: { from, to },
     auction_id: singleAuctionId,
@@ -10997,6 +11034,7 @@ app.get('/api/insights', requireView, (req, res) => {
     perTrade,
     perBranch,
     branchStacked,
+    gradeSplit,
     outstandingByBuyer,
     buyerActivity,
   });

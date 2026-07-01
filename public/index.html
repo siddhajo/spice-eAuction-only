@@ -4900,34 +4900,35 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <h2>Import Old Data <span style="font-weight:400;font-size:12px;color:var(--text3)">Upload legacy XLS/XLSX exports back into the system</span></h2>
         <div class="sgrid" style="margin-bottom:14px">
           <div class="fg"><label>Module</label>
-            <select id="imp-module">
+            <select id="imp-module" onchange="impModuleChange()">
               <option value="sales_invoice">Sales Invoices</option>
               <option value="purchase">Purchase Invoices</option>
               <option value="bills">Bills of Supply</option>
               <option value="debit_notes">Debit Notes</option>
               <option value="sellers">Sellers</option>
               <option value="buyers">Buyers</option>
+              <option value="auction">Auctions</option>
             </select>
           </div>
-          <div class="fg"><label>File (.xlsx / .xls)</label>
+          <div class="fg" id="imp-file-fg"><label>File (.xlsx / .xls)</label>
             <input type="file" id="imp-file" accept=".xls,.xlsx">
           </div>
-          <div class="fg" style="display:flex;align-items:end">
+          <div class="fg" id="imp-dryrun-fg" style="display:flex;align-items:end">
             <label style="display:flex;align-items:center;gap:6px;font-size:13px">
               <input type="checkbox" id="imp-dryrun" checked> Dry-run (validate only, do not write)
             </label>
           </div>
         </div>
-        <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+        <div id="imp-standard-actions" style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
           <button class="btn btn-g" onclick="impPreview()">1. Preview &amp; Detect Mapping</button>
           <button class="btn btn-a" onclick="impVerify()">2. Verify Against Database</button>
           <button class="btn btn-a" onclick="impRun()">3. Run Import</button>
           <button class="btn btn-o" onclick="impLoadHistory()">View History</button>
           <button class="btn btn-o" onclick="impClear()" style="margin-left:auto" title="Clear file, reset module pick, hide preview / verify panels">Clear</button>
         </div>
-        <div style="border-top:1px solid var(--spice-line);margin:4px 0 14px;padding-top:12px">
+        <div id="imp-auction-section" style="display:none;margin-bottom:14px">
           <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Import auction lots from an XLS/XLSX export — full import (add new lots) or price update. Uses the same importer as the Auctions tab.</div>
-          <button class="btn btn-a" onclick="openImportAuctionModal('imp-auction-status')">Import Auction Lots (XLS / XLSX)</button>
+          <button class="btn btn-g" onclick="openImportAuctionModal('imp-auction-status')">Import Auction Lots (XLS / XLSX)</button>
           <div id="imp-auction-status" style="display:none;padding:8px 14px;border-radius:6px;font-size:12px;margin-top:10px"></div>
         </div>
         <div id="imp-result" style="margin-bottom:14px;font-size:12.5px;color:var(--text2)"></div>
@@ -8787,6 +8788,7 @@ async function renderDashHeadlineTiles(auctionId){
 // canvas — Chart.js will otherwise leave the old chart attached and
 // the new one renders on top of it.
 let _insightsBarChart = null;
+let _insightsGradeChart = null;
 let _insightsRange    = null;
 
 async function loadInsights(){
@@ -8833,6 +8835,9 @@ function toggleInsightsSection(id, headEl){
   if (id === 'chart' && collapsed && _insightsBarChart) {
     try { _insightsBarChart.resize(); } catch(_) {}
   }
+  if (id === 'grade' && collapsed && _insightsGradeChart) {
+    try { _insightsGradeChart.resize(); } catch(_) {}
+  }
 }
 
 function _insightsQuickRange(kind){
@@ -8868,6 +8873,25 @@ function _insightsQuickRange(kind){
 // Cycles when there are more branches than colors so two branches at
 // the far ends of the alphabet don't collide visually.
 const _INS_PALETTE = ['#10B981','#F97316','#6366F1','#EC4899','#14B8A6','#A855F7','#F59E0B','#0EA5E9','#EF4444','#84CC16'];
+
+// Grade split colours — Grade 1 (Planter) reads "green/earth", Grade 2
+// (Dealer) reads "indigo/registered". Shared by the doughnut and the swatch
+// dots in the accompanying table so the two always agree.
+const _INS_GRADE_COLORS = { grade1: '#10B981', grade2: '#6366F1' };
+
+// One row of the grade-split table. `color` drives the leading swatch dot so
+// each row visually maps to its doughnut segment.
+function gradeSplitRow(label, g, color){
+  g = g || {};
+  return `<tr>
+    <td><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:7px;vertical-align:middle"></span>${esc(label)}</td>
+    <td class="ins-num">${fmtI(g.lots || 0, 0)}</td>
+    <td class="ins-num">${fmtI(g.sold || 0, 0)}</td>
+    <td class="ins-num">${fmtI(g.qty  || 0, 0)}</td>
+    <td class="ins-num">${g.avg_price ? '₹' + fmtI(g.avg_price, 2) : '—'}</td>
+    <td class="ins-num">₹${fmtI(g.value || 0, 0)}</td>
+  </tr>`;
+}
 
 // Themed gradient palette — keyed by `theme` string. Each entry pairs a
 // "from" and "to" stop plus a complementary shadow tint so KPI tiles +
@@ -8917,6 +8941,8 @@ async function _renderInsights(){
     .ins-section[data-collapsed="1"] .ins-section-body { display:none }
     .ins-section[data-collapsed="1"] .ins-section-head { margin-bottom:0 }
     .ins-section[data-collapsed="1"] .ins-chev { transform:rotate(-90deg) }
+    .ins-grade-wrap { display:grid; grid-template-columns:minmax(200px,300px) 1fr; gap:20px; align-items:center }
+    @media (max-width:720px) { .ins-grade-wrap { grid-template-columns:1fr } }
 
     /* Custom scrollbars — chunky enough to grab, themed to match the
        page accent so they don't feel like the OS default appearing
@@ -9227,6 +9253,33 @@ async function _renderInsights(){
       </div>
     </div>` : ''}
 
+    <!-- Grade 1 vs Grade 2 (Planter vs Dealer) -->
+    ${data.gradeSplit && (data.gradeSplit.grade1.lots || data.gradeSplit.grade2.lots) ? `
+    <div class="ins-section" ${sectionAttrs('grade')}>
+      ${sectionHead('🌱', 'Grade 1 vs Grade 2', 'Planter (Grade 1 — no GSTIN) vs Dealer (Grade 2 — GST-registered), split by seller. Share is by value.', 'emerald', 'grade')}
+      <div class="ins-section-body">
+        <div class="ins-grade-wrap">
+          <div style="height:240px;position:relative"><canvas id="ins-grade-canvas"></canvas></div>
+          <div class="ins-table-wrap ins-scroll">
+            <table class="ins-table">
+              <thead><tr>
+                <th>Grade</th>
+                <th style="text-align:right">Lots</th>
+                <th style="text-align:right">Sold</th>
+                <th style="text-align:right">Qty (kg)</th>
+                <th style="text-align:right">Avg ₹</th>
+                <th style="text-align:right">Value (₹)</th>
+              </tr></thead>
+              <tbody>
+                ${gradeSplitRow('Grade 1 · Planter', data.gradeSplit.grade1, _INS_GRADE_COLORS.grade1)}
+                ${gradeSplitRow('Grade 2 · Dealer',  data.gradeSplit.grade2, _INS_GRADE_COLORS.grade2)}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>` : ''}
+
     <!-- Per-branch cards -->
     ${data.perBranch.length ? `
     <div class="ins-section" ${sectionAttrs('branches')}>
@@ -9327,6 +9380,53 @@ async function _renderInsights(){
             cornerRadius: 8,
             callbacks: {
               label: (ctx) => `${ctx.dataset.label}: ₹${fmtI(ctx.parsed.y, 0)}`,
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // ── Draw the Grade 1 vs Grade 2 doughnut. Same lifecycle discipline as
+  // the bar chart above — dispose the prior instance before re-drawing.
+  if (_insightsGradeChart) {
+    try { _insightsGradeChart.destroy(); } catch(_) {}
+    _insightsGradeChart = null;
+  }
+  const gradeCanvas = document.getElementById('ins-grade-canvas');
+  const gs = data.gradeSplit;
+  if (gradeCanvas && gs && (gs.grade1.value || gs.grade2.value)) {
+    const gctx = gradeCanvas.getContext('2d');
+    _insightsGradeChart = new Chart(gctx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Grade 1 · Planter', 'Grade 2 · Dealer'],
+        datasets: [{
+          data: [gs.grade1.value, gs.grade2.value],
+          backgroundColor: [_INS_GRADE_COLORS.grade1, _INS_GRADE_COLORS.grade2],
+          borderColor: '#fff',
+          borderWidth: 2,
+          hoverOffset: 6,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '58%',
+        plugins: {
+          legend: { position: 'bottom', labels: { font: { size: 11, weight: '600' }, boxWidth: 12, boxHeight: 12, padding: 12, color: '#475569' } },
+          tooltip: {
+            backgroundColor: 'rgba(15,23,42,.95)',
+            titleFont: { size: 12, weight: '700' },
+            bodyFont: { size: 12 },
+            padding: 10,
+            cornerRadius: 8,
+            callbacks: {
+              label: (ctx) => {
+                const total = (gs.grade1.value + gs.grade2.value) || 1;
+                const pct = (ctx.parsed / total * 100).toFixed(1);
+                return `${ctx.label}: ₹${fmtI(ctx.parsed, 0)} (${pct}%)`;
+              }
             }
           }
         }
@@ -23922,6 +24022,25 @@ let _impLastAutoFillAuctionId = false;
 // user picked because it's their selection — they may want to clear
 // the picker and re-upload the same module. History panel stays as-is
 // (the user can refresh it via "View History").
+// Auctions use a dedicated importer (own file picker + full/price modes) that
+// doesn't fit the standard preview→verify→run flow, so selecting it in the
+// module dropdown swaps the standard controls for the auction import button.
+function impModuleChange(){
+  const isAuction = document.getElementById('imp-module').value === 'auction';
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  show('imp-file-fg', !isAuction);
+  show('imp-dryrun-fg', !isAuction);
+  document.getElementById('imp-standard-actions').style.display = isAuction ? 'none' : 'flex';
+  show('imp-auction-section', isAuction);
+  if (isAuction) {
+    // Hide any lingering standard-flow output from a previous module.
+    ['imp-result','imp-preview','imp-verify','imp-history'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.innerHTML = '';
+    });
+    const verify = document.getElementById('imp-verify'); if (verify) verify.style.display = 'none';
+  }
+}
+
 function impClear(){
   const fileEl = document.getElementById('imp-file');
   if (fileEl) fileEl.value = '';
