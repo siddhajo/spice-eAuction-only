@@ -3111,6 +3111,23 @@ function validateAuctionLots(db, auctionId) {
   // (The reconciliation below still uses hasValidGstin() so its Dealer-List
   // counts mirror the actual export's strict 15-char rule.)
   pushWarn('no_gstin', 'No GSTIN',       'Seller has no GSTIN (excluded from Dealer List)', l => !cleanGstin(l.cr));
+  // Prefix-convention checks — a Grade-2 GSTIN should be stored as
+  // "GSTIN.<15 chars>" and a Grade-1 registration number as "CR.<number>", so
+  // the grade heuristic (starts-with "CR." → planter, else dealer) and
+  // cleanGstin() stay reliable. Flag values that hold the right KIND of data
+  // but carry the wrong prefix. rawCr keeps the stored value verbatim so we
+  // test what was actually entered. A leading "CR." is authoritative — it
+  // marks a registration number even when it happens to be 15 chars long
+  // (e.g. "CR.H1-5610/2020"), so it must never be mistaken for a GSTIN.
+  const rawCr      = (l) => String(l.cr == null ? '' : l.cr).trim();
+  const startsCr   = (r) => /^cr\./i.test(r);
+  const startsGst  = (r) => /^gstin\./i.test(r);
+  pushWarn('gstin_prefix', 'GSTIN prefix',
+    'GSTIN is not prefixed with "GSTIN." (should read GSTIN.<number>)',
+    l => { const r = rawCr(l); return !!r && hasValidGstin(l.cr) && !startsCr(r) && !startsGst(r); });
+  pushWarn('cr_prefix', 'CR prefix',
+    'Registration no. is not prefixed with "CR." (should read CR.<number>)',
+    l => { const r = rawCr(l); return !!r && !hasValidGstin(l.cr) && !startsCr(r) && !startsGst(r); });
   pushWarn('no_bank',  'No bank account', 'Seller has no bank account on file',             l => l.trader_id && !tradersWithBank.has(l.trader_id));
   pushWarn('no_pan',   'No PAN',          'Seller has no PAN',                              l => !String(l.pan || '').trim());
   pushWarn('no_phone', 'No phone',        'Seller has no phone number',                     l => !String(l.tel || '').trim());
