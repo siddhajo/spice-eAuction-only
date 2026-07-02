@@ -38,6 +38,13 @@ const {
 } = require('./tally-xml');
 
 const app = express();
+
+// Performance instrumentation — MUST be the first middleware so it also times
+// body parsing and static file serving (the 80s homepage hang was a static
+// request, which never touches the DB). See perf-monitor.js for the why.
+const perf = require('./perf-monitor');
+app.use(perf.middleware);
+
 // Capture the raw request body so the WhatsApp webhook can verify Meta's
 // HMAC (X-Hub-Signature-256) over the exact bytes received. Cheap — just
 // stashes the Buffer express already has in hand.
@@ -202,6 +209,10 @@ function requireAdmin(req, res, next) {
     next();
   });
 }
+
+// Diagnostic snapshot of slow requests + event-loop blocks. Admin-only since
+// it exposes request URLs. Console logs carry the same data for Railway logs.
+app.get('/api/_perf', requireAdmin, (req, res) => res.json(perf.snapshot()));
 
 // ══════════════════════════════════════════════════════════════
 // ROLE-BASED PERMISSIONS
@@ -11965,7 +11976,7 @@ const IMPORT_MODULES = {
     fields: ['ano','date','lot_no','name','crop','grade','crpt','branch','state',
              'padd','ppla','ppin','pstate','pst_code','cr','pan','tel','aadhar',
              'bags','litre','qty','price','amount','code','buyer','buyer1','sale','invo',
-             'pqty','prate','puramt','com','sertax','cgst','sgst','igst','advance','balance','bilamt'],
+             'pqty','prate','puramt','com','sertax','cgst','sgst','igst','refund','advance','balance','bilamt'],
     aliases: {
       ano:      ['ano','auction_no','auctionno','tno','trade','trade_no','tradeno'],
       date:     ['date','trade_date','auction_date'],
@@ -11996,6 +12007,7 @@ const IMPORT_MODULES = {
       puramt:   ['puramt','pur_amt','purchase_amt'],
       com:      ['com','commission'],
       sertax:   ['sertax','hpc'],
+      refund:   ['refund','refud','sample_refund','sb_refund'],
       advance:  ['advance','discount'],
       balance:  ['balance','payable'],
       bilamt:   ['bilamt','bill_amt'],
@@ -12144,11 +12156,11 @@ function _deriveRund(values, cfg) {
 const AUCTION_LOT_FIELDS = ['crop','grade','crpt','branch','state','name','padd','ppla','ppin',
   'pstate','pst_code','cr','pan','tel','aadhar','bags','litre','qty','price','amount','code',
   'buyer','buyer1','sale','invo','pqty','prate','puramt','com','sertax','cgst','sgst','igst',
-  'advance','balance','bilamt'];
+  'refund','advance','balance','bilamt'];
 // Numeric lot columns — parsed with parseFloat (0 on blank); everything else
 // (incl. `litre`, kept as text like the Auctions-tab importer) stays a string.
 const AUCTION_LOT_NUM_FIELDS = new Set(['bags','qty','price','amount','pqty','prate','puramt',
-  'com','sertax','cgst','sgst','igst','advance','balance','bilamt']);
+  'com','sertax','cgst','sgst','igst','refund','advance','balance','bilamt']);
 
 // Parse the upload + resolve the effective field→column mapping, honouring
 // the same auto-detect + user-override + explicit-skip rules as the generic
@@ -13160,5 +13172,7 @@ const PORT = process.env.PORT || 3001;
   }
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n  Admin Console running at http://localhost:${PORT}\n`);
+    perf.startLagMonitor();
+    console.log('  [perf] request timing + event-loop lag monitor active');
   });
 })();
