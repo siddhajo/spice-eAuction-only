@@ -5201,7 +5201,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
   <!-- Reassign panel -->
   <div id="alloc-panel-reassign" style="display:none">
-    <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Move unused lot numbers from one branch to another. <b>Click</b> tiles to toggle individual lots — pick as many as you like, even non-adjacent (e.g. 003, 007, 012). Or type a contiguous range below. Booked lots (with sellers) cannot be reassigned.</p>
+    <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Move unused lot numbers from one branch to another. <b>Click</b> a tile to toggle it, or <b>drag</b> across tiles to sweep a whole range (e.g. 090–099) — drag again elsewhere to add another range. Non-adjacent picks (e.g. 003, 007, 012) work too. Or type a contiguous range below. Booked lots (with sellers) cannot be reassigned.</p>
     <div id="alloc-reassign-status" style="margin-bottom:14px"></div>
 
     <!-- Tile legend -->
@@ -12810,7 +12810,8 @@ function renderReassignTiles() {
         const tip = t.booked
           ? `Booked: ${t.seller || '—'}`
           : (t.state === 'reassigned' ? `Reassigned from another branch` : `Free for reassign`);
-        html += `<div title="${esc(tip)}" data-lot="${esc(t.lot)}" data-branch="${esc(branch)}" data-state="${esc(t.state)}" ${dis?'':`onclick="raToggleTile(this)"`} style="${stateStyle(t.state, selected)};padding:4px 6px;border-radius:4px;font-size:11px;font-family:monospace;min-width:42px;text-align:center;${dis?'opacity:.85':'cursor:pointer'};user-select:none">${esc(t.lot)}</div>`;
+        const handlers = dis ? '' : ` onmousedown="raTileMouseDown(event,this)" onmouseover="raTileMouseOver(event,this)" ontouchstart="raTileTouchStart(event,this)" ontouchmove="raTileTouchMove(event)" ontouchend="raTileTouchEnd(event)" onclick="raToggleTile(this)"`;
+        html += `<div title="${esc(tip)}" data-lot="${esc(t.lot)}" data-branch="${esc(branch)}" data-state="${esc(t.state)}"${handlers} style="${stateStyle(t.state, selected)};padding:4px 6px;border-radius:4px;font-size:11px;font-family:monospace;min-width:42px;text-align:center;${dis?'opacity:.85':'cursor:pointer'};user-select:none;touch-action:none">${esc(t.lot)}</div>`;
       }
     }
     html += `</div></div>`;
@@ -12842,9 +12843,107 @@ function updateSelectionSummary() {
   const n = _raSelected.size;
   el.innerHTML = n
     ? `<b>${n} lot${n === 1 ? '' : 's'} selected:</b> <span style="font-family:monospace">${esc(raChunkSummary(Array.from(_raSelected)))}</span>`
-    : '<span style="color:var(--text3)">No tiles selected — click tiles above, or type a start/end range below.</span>';
+    : '<span style="color:var(--text3)">No tiles selected — click or drag tiles above, or type a start/end range below.</span>';
 }
+
+// ── Drag-to-select across tiles ──────────────────────────────────
+// Press on a tile, sweep across others in the same branch, release. The
+// swept range is UNIONED with whatever was already selected, so users can
+// build several disjoint ranges (e.g. 001-010 then 090-099). A press with
+// no movement falls through to raToggleTile's single-tile toggle.
+let _raDrag = null;   // { branch, anchor, base:Set, moved:bool } while live
+function raBeginDrag(branch, lot) {
+  const fromSel = document.getElementById('ra-from');
+  if (fromSel.value && fromSel.value !== branch) _raSelected.clear();
+  if (fromSel.value !== branch) { fromSel.value = branch; loadReassignPreview(); }
+  _raDrag = { branch, anchor: lot, base: new Set(_raSelected), moved: false };
+}
+function raExtendDrag(lot) {
+  if (!_raDrag || lot === _raDrag.anchor) return;
+  _raDrag.moved = true;
+  _raApplyDragRange(lot);
+}
+// Union base ∪ [anchor..current] over the FROM branch's tile order,
+// skipping booked tiles, then re-render.
+function _raApplyDragRange(curLot) {
+  const s = (_raAllocStats || []).find(x => x.branch === _raDrag.branch);
+  if (!s) return;
+  const ordered = [];
+  for (const r of (s.ranges || [])) for (const t of (r.lots || [])) ordered.push(t);
+  const ia = ordered.findIndex(t => t.lot === _raDrag.anchor);
+  const ib = ordered.findIndex(t => t.lot === curLot);
+  if (ia < 0 || ib < 0) return;
+  const lo = Math.min(ia, ib), hi = Math.max(ia, ib);
+  _raSelected = new Set(_raDrag.base);
+  for (let i = lo; i <= hi; i++) {
+    if (ordered[i].state !== 'booked') _raSelected.add(ordered[i].lot);
+  }
+  raPaintTiles();   // repaint in place — never rebuild DOM mid-drag (breaks touchmove)
+}
+// Base tile colors by state (mirrors the stateStyle map in renderReassignTiles).
+function raBaseColors(state) {
+  switch (state) {
+    case 'booked':     return { bg:'#FCA5A5', fg:'#7f1d1d', bd:'#ef4444' };
+    case 'allocated':  return { bg:'#DBEAFE', fg:'#1e3a8a', bd:'#93c5fd' };
+    case 'reassigned': return { bg:'#FDE68A', fg:'#78350f', bd:'#f59e0b' };
+    default:           return { bg:'#E5E7EB', fg:'#1f2937', bd:'#cbd5e1' };
+  }
+}
+// Update tile colors from _raSelected without rebuilding the grid DOM.
+function raPaintTiles() {
+  const grid = document.getElementById('ra-tile-grid');
+  if (grid) grid.querySelectorAll('[data-lot]').forEach(el => {
+    const selected = _raSelected.has(el.getAttribute('data-lot'));
+    if (selected) { el.style.background = '#10B981'; el.style.color = '#fff'; el.style.borderColor = '#047857'; }
+    else { const c = raBaseColors(el.getAttribute('data-state')); el.style.background = c.bg; el.style.color = c.fg; el.style.borderColor = c.bd; }
+  });
+  updateRangeInputsFromSelection();
+  updateSelectionSummary();
+}
+// Mouse
+function raTileMouseDown(e, el) {
+  if (e.button !== 0) return;            // left button only
+  const lot = el.getAttribute('data-lot');
+  if (!lot) return;
+  raBeginDrag(el.getAttribute('data-branch'), lot);
+  e.preventDefault();                    // stop the browser text-selecting
+}
+function raTileMouseOver(e, el) {
+  if (!_raDrag) return;
+  if (!(e.buttons & 1)) { _raDrag = null; return; }   // button already released
+  if (el.getAttribute('data-branch') !== _raDrag.branch) return;
+  raExtendDrag(el.getAttribute('data-lot'));
+}
+document.addEventListener('mouseup', () => { _raDrag = null; });
+// Touch — the tile under the finger is found via elementFromPoint since
+// touchmove events keep firing on the original start element.
+function raTileTouchStart(e, el) {
+  const lot = el.getAttribute('data-lot');
+  if (!lot) return;
+  raBeginDrag(el.getAttribute('data-branch'), lot);
+}
+function raTileTouchMove(e) {
+  if (!_raDrag) return;
+  const t = e.touches && e.touches[0];
+  if (!t) return;
+  const el = document.elementFromPoint(t.clientX, t.clientY);
+  if (!el) return;
+  const tile = el.closest ? el.closest('[data-lot]') : null;
+  if (!tile || tile.getAttribute('data-branch') !== _raDrag.branch) return;
+  if (tile.getAttribute('data-state') === 'booked') return;
+  e.preventDefault();                    // suppress scroll while sweeping
+  raExtendDrag(tile.getAttribute('data-lot'));
+}
+function raTileTouchEnd() {
+  // A drag that moved has already applied its range; clear so the tap that
+  // follows (touchend → click) doesn't re-toggle the anchor tile.
+  if (_raDrag && _raDrag.moved) { _raDrag = null; _raSuppressClick = true; setTimeout(() => { _raSuppressClick = false; }, 400); }
+  else { _raDrag = null; }
+}
+let _raSuppressClick = false;
 function raToggleTile(el) {
+  if (_raDrag && _raDrag.moved) return;   // tail click right after a mouse drag
+  if (_raSuppressClick) return;           // synthetic click after a touch drag
   const lot = el.getAttribute('data-lot');
   const branch = el.getAttribute('data-branch');
   if (!lot) return;

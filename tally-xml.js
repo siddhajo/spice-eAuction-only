@@ -322,13 +322,14 @@ function generSalesIspXML(rows, cfg, opts = {}) {
     cfgGet(cfg, 'tn_gstin', '')
   ).trim();
 
-  // Emit the dispatch-from block whenever a dispatch address is actually
-  // configured — Settings → Address (Kerala) → "Dispatch Address"
-  // (`kl_dispatch`, which feeds `d_add` above). The previous
-  // `tally_dispatch_from` toggle was removed from Settings, so gating on
-  // it kept this block permanently off and the Sales voucher shipped with
-  // no dispatch-from address.
-  const dispatchEnabled = !!String(d_add || '').trim();
+  // Dispatch-from block is ON by default so the Sales voucher always carries
+  // the consignor's DISPATCHFROMNAME / PLACE / STATE / PINCODE (required for
+  // the e-invoice / e-way bill). Controllable via the `tally_dispatch_from`
+  // setting (default true); the individual place/pin/state values resolve
+  // through the fallback chain on d_place/d_pin/d_state above, and the
+  // free-text DISPATCHFROMADDRESS lines are emitted only when a dispatch
+  // address (`kl_dispatch` → d_add) is actually configured.
+  const dispatchEnabled = cfgBool(cfg, 'tally_dispatch_from', true);
 
   // E-way bill consignor type — kept for reference compatibility
   const consignorType = cfgGet(cfg, 'tally_consignor_type', 'Self');
@@ -389,10 +390,12 @@ ${buyerAddrLines.map(l => `<ADDRESS>${xe(l)}</ADDRESS>`).join('\n')}
 ${buyerAddrLines.map(l => `<BASICBUYERADDRESS>${xe(l)}</BASICBUYERADDRESS>`).join('\n')}
 </BASICBUYERADDRESS.LIST>`;
 
-    if (dispatchEnabled) {
+    if (dispatchEnabled && String(d_add || '').trim()) {
       // Dispatch-from address — solely the "Dispatch Address" setting.
       // A multi-line entry (split on newlines) becomes one address line
-      // each; nothing else is composed in.
+      // each; nothing else is composed in. Only emitted when an address is
+      // configured, so enabling the block by default never ships blank
+      // address lines.
       const dispatchLines = String(d_add).split(/\r?\n/);
       xml += `
 <DISPATCHFROMADDRESS.LIST TYPE="String">
@@ -414,8 +417,15 @@ ${dispatchLines.map(l => `<DISPATCHFROMADDRESS>${xe(l)}</DISPATCHFROMADDRESS>`).
 <BILLTOPLACE>${partyPlace}</BILLTOPLACE>`;
 
     if (dispatchEnabled) {
+      // Full consignor identity for the e-invoice / e-way bill. Previously
+      // only DISPATCHFROMNAME was emitted, so the dispatch-from PLACE / STATE
+      // / PINCODE were blank in Tally. d_place/d_pin/d_state resolve through
+      // the dispatch → Kerala → Tamil Nadu fallback chain defined above.
       xml += `
-<DISPATCHFROMNAME>${xe(d_company)}</DISPATCHFROMNAME>`;
+<DISPATCHFROMNAME>${xe(d_company)}</DISPATCHFROMNAME>
+<DISPATCHFROMSTATENAME>${xe(d_state)}</DISPATCHFROMSTATENAME>
+<DISPATCHFROMPINCODE>${xe(d_pin)}</DISPATCHFROMPINCODE>
+<DISPATCHFROMPLACE>${xe(d_place)}</DISPATCHFROMPLACE>`;
     }
 
     xml += `
