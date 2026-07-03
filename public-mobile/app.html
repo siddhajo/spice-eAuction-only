@@ -1873,12 +1873,14 @@ function renderRaTiles(){
   if(!_raFreeLots.length){host.innerHTML='<span style="font-size:11px;color:var(--text3)">No free lots in this branch</span>';raSelSummary();return}
   host.innerHTML=_raFreeLots.map(function(lot){
     var sel=_raPick.has(lot);
-    return '<span data-lot="'+lot+'" style="padding:6px 10px;border-radius:6px;font-size:12px;font-family:monospace;border:1px solid '+(sel?'var(--green)':'var(--border2)')+';background:'+(sel?'var(--green)':'var(--bg2)')+';color:'+(sel?'#fff':'var(--text)')+';font-weight:'+(sel?'700':'400')+';cursor:pointer;user-select:none;touch-action:none">'+lot+'</span>';
+    return '<span data-lot="'+lot+'"'
+      +' onmousedown="raPickDown(event,this)" onmouseover="raPickOver(event,this)" ontouchstart="raPickTouchStart(event,this)" onclick="raPickClick(this)"'
+      +' style="padding:6px 10px;border-radius:6px;font-size:12px;font-family:monospace;border:1px solid '+(sel?'var(--green)':'var(--border2)')+';background:'+(sel?'var(--green)':'var(--bg2)')+';color:'+(sel?'#fff':'var(--text)')+';font-weight:'+(sel?'700':'400')+';cursor:pointer;user-select:none;touch-action:none">'+lot+'</span>';
   }).join('');
-  raWirePickGrid();
   raSelSummary();
 }
-// Repaint tile colors from _raPick WITHOUT rebuilding the grid DOM.
+// Repaint tile colors from _raPick WITHOUT rebuilding the grid DOM (so a
+// touch sweep keeps its start-tile target alive).
 function raPaintPickTiles(){
   var host=document.getElementById('ra-tiles');if(!host)return;
   host.querySelectorAll('span[data-lot]').forEach(function(el){
@@ -1890,46 +1892,55 @@ function raPaintPickTiles(){
   });
   raSelSummary();
 }
-// ── Drag-to-select across mobile tiles (Pointer Events) ──
-// Delegated on the #ra-tiles container with pointer capture so touch, mouse
-// and pen all sweep reliably; a press with no move toggles a single tile.
-var _raPickDrag=null,_raPickWired=false;
-function raWirePickGrid(){
-  var host=document.getElementById('ra-tiles');if(!host||_raPickWired)return;
-  _raPickWired=true;
-  function tileAt(x,y){var el=document.elementFromPoint(x,y);return el&&el.closest?el.closest('span[data-lot]'):null}
-  host.addEventListener('pointerdown',function(e){
-    var tile=e.target.closest?e.target.closest('span[data-lot]'):null;if(!tile)return;
-    document.getElementById('ra-start').value='';document.getElementById('ra-end').value='';
-    _raPickDrag={anchor:tile.getAttribute('data-lot'),base:new Set(_raPick),moved:false};
-    try{host.setPointerCapture(e.pointerId)}catch(_){}
-    e.preventDefault();
-  });
-  host.addEventListener('pointermove',function(e){
-    if(!_raPickDrag)return;
-    var tile=tileAt(e.clientX,e.clientY);if(!tile)return;
-    var lot=tile.getAttribute('data-lot');if(lot===_raPickDrag.anchor)return;
-    var ia=_raFreeLots.indexOf(_raPickDrag.anchor),ib=_raFreeLots.indexOf(lot);
-    if(ia<0||ib<0)return;
-    _raPickDrag.moved=true;
-    var lo=Math.min(ia,ib),hi=Math.max(ia,ib);
-    _raPick=new Set(_raPickDrag.base);
-    for(var i=lo;i<=hi;i++)_raPick.add(_raFreeLots[i]);
-    raPaintPickTiles();
-    e.preventDefault();
-  });
-  function endPick(e){
-    if(!_raPickDrag)return;
-    if(!_raPickDrag.moved){   // no sweep → single-tile toggle
-      var lot=_raPickDrag.anchor;
-      if(_raPick.has(lot))_raPick.delete(lot);else _raPick.add(lot);
-      raPaintPickTiles();
-    }
+// ── Drag-to-select across mobile tiles (mouse + touch) ──
+var _raPickDrag=null,_raPickTouchMoved=false;
+function raPickBegin(lot){
+  document.getElementById('ra-start').value='';document.getElementById('ra-end').value='';
+  _raPickDrag={anchor:lot,base:new Set(_raPick),moved:false};
+}
+function raPickApply(curLot){
+  var ia=_raFreeLots.indexOf(_raPickDrag.anchor),ib=_raFreeLots.indexOf(curLot);
+  if(ia<0||ib<0)return;
+  _raPickDrag.moved=true;
+  var lo=Math.min(ia,ib),hi=Math.max(ia,ib);
+  _raPick=new Set(_raPickDrag.base);
+  for(var i=lo;i<=hi;i++)_raPick.add(_raFreeLots[i]);
+  raPaintPickTiles();
+}
+function raPickDown(e,el){if(e.button!==0)return;var lot=el.getAttribute('data-lot');if(!lot)return;raPickBegin(lot);e.preventDefault()}
+function raPickOver(e,el){if(!_raPickDrag)return;if(!(e.buttons&1)){_raPickDrag=null;return}var lot=el.getAttribute('data-lot');if(lot===_raPickDrag.anchor)return;raPickApply(lot)}
+document.addEventListener('mouseup',function(){_raPickDrag=null});
+function raPickClick(el){
+  if(_raPickDrag&&_raPickDrag.moved)return;   // tail click after a mouse drag
+  if(_raPickTouchMoved)return;                // synthetic click after a touch drag
+  var lot=el.getAttribute('data-lot');if(!lot)return;
+  document.getElementById('ra-start').value='';document.getElementById('ra-end').value='';
+  if(_raPick.has(lot))_raPick.delete(lot);else _raPick.add(lot);
+  raPaintPickTiles();
+}
+// Touch: bind move/end on the START tile (touchmove stays targeted there),
+// hit-test with elementFromPoint, repaint in place.
+function raPickTouchStart(e,el){
+  var lot=el.getAttribute('data-lot');if(!lot)return;
+  raPickBegin(lot);_raPickTouchMoved=false;
+  el.__pMove=function(ev){
+    var t=ev.touches&&ev.touches[0];if(!t||!_raPickDrag)return;
+    var p=document.elementFromPoint(t.clientX,t.clientY);
+    var tile=p&&p.closest?p.closest('span[data-lot]'):null;if(!tile)return;
+    var l2=tile.getAttribute('data-lot');if(l2===_raPickDrag.anchor)return;
+    ev.preventDefault();_raPickTouchMoved=true;raPickApply(l2);
+  };
+  el.__pEnd=function(){
+    if(_raPickDrag&&!_raPickDrag.moved){var l=_raPickDrag.anchor;if(_raPick.has(l))_raPick.delete(l);else _raPick.add(l);raPaintPickTiles()}
     _raPickDrag=null;
-    try{host.releasePointerCapture(e.pointerId)}catch(_){}
-  }
-  host.addEventListener('pointerup',endPick);
-  host.addEventListener('pointercancel',function(){_raPickDrag=null});
+    el.removeEventListener('touchmove',el.__pMove);
+    el.removeEventListener('touchend',el.__pEnd);
+    el.removeEventListener('touchcancel',el.__pEnd);
+    setTimeout(function(){_raPickTouchMoved=false},350);
+  };
+  el.addEventListener('touchmove',el.__pMove,{passive:false});
+  el.addEventListener('touchend',el.__pEnd);
+  el.addEventListener('touchcancel',el.__pEnd);
 }
 function raPickSummary(lots){
   var parsed=lots.map(function(l){var m=String(l).match(/^(\D*)(\d+)$/);return m?{lot:l,prefix:m[1]||'',num:parseInt(m[2],10)}:null}).filter(Boolean).sort(function(a,z){return a.prefix===z.prefix?a.num-z.num:a.prefix.localeCompare(z.prefix)});
