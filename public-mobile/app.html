@@ -526,8 +526,16 @@ select:focus{border-color:var(--green)}
     <div id="ra-err"></div>
     <button class="btn btn-sm" onclick="submitReassign()" id="ra-submit" style="width:100%;margin-top:12px">Send request to admin</button>
     <div style="border-top:1px solid var(--border);margin:16px 0 10px"></div>
-    <div style="font-weight:700;font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:.3px;margin-bottom:8px">My requests</div>
-    <div id="ra-list"><div style="font-size:12px;color:var(--text3)">Loading…</div></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span style="font-weight:700;font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:.3px">My requests</span>
+      <button type="button" id="ra-clear" onclick="clearMyRequests()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;color:var(--text2);cursor:pointer;font-family:inherit">Clear</button>
+    </div>
+    <div id="ra-list" style="max-height:260px;overflow-y:auto;-webkit-overflow-scrolling:touch"><div style="font-size:12px;color:var(--text3)">Loading…</div></div>
+    <div id="ra-pager" style="display:none;align-items:center;justify-content:space-between;gap:8px;margin-top:8px">
+      <button type="button" id="ra-prev" onclick="raPage(-1)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 12px;font-size:12px;color:var(--text2);cursor:pointer;font-family:inherit">‹ Prev</button>
+      <span id="ra-pageinfo" style="font-size:11px;color:var(--text3)"></span>
+      <button type="button" id="ra-next" onclick="raPage(1)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 12px;font-size:12px;color:var(--text2);cursor:pointer;font-family:inherit">Next ›</button>
+    </div>
   </div>
 </div></div>
 
@@ -1855,6 +1863,7 @@ function openReassign(){
   document.getElementById('ra-end').value='';
   document.getElementById('ra-reason').value='';
   document.getElementById('ra-err').innerHTML='';
+  _raPage=0;
   document.getElementById('reassign-modal').classList.add('show');
   loadMyReassignRequests();
 }
@@ -1920,22 +1929,58 @@ function raStatusChip(s){
   return '<span style="background:#fef9c3;color:#854d0e;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px">PENDING</span>';
 }
 function raEsc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+var _raPage=0;var RA_PER_PAGE=10;
+// Per-auction "cleared" marker: the highest request id the operator has
+// hidden from their list. Purely client-side (localStorage) — the rows
+// still exist on the server, they're just not shown. New requests (higher
+// id) still appear.
+function raClearedThreshold(){return parseInt(localStorage.getItem('sa_ra_cleared_'+aid)||'0',10)||0}
+function raVisibleReqs(){var t=raClearedThreshold();return _raReqs.filter(function(q){return q.id>t})}
+function clearMyRequests(){
+  if(!_raReqs.length)return;
+  if(!confirm('Hide all requests from this list? They are NOT deleted — this only clears your view.'))return;
+  var maxId=_raReqs.reduce(function(m,q){return q.id>m?q.id:m},0);
+  localStorage.setItem('sa_ra_cleared_'+aid,String(maxId));
+  _raPage=0;raRenderPage();
+  toast('Cleared from view',false);
+}
+function raRenderPage(){
+  var box=document.getElementById('ra-list');
+  var pager=document.getElementById('ra-pager');
+  var clearBtn=document.getElementById('ra-clear');
+  var list=raVisibleReqs();
+  if(clearBtn)clearBtn.style.display=list.length?'':'none';
+  if(!list.length){box.innerHTML='<div style="font-size:12px;color:var(--text3)">No requests yet.</div>';if(pager)pager.style.display='none';return}
+  var pages=Math.ceil(list.length/RA_PER_PAGE);
+  if(_raPage>=pages)_raPage=pages-1;if(_raPage<0)_raPage=0;
+  var start=_raPage*RA_PER_PAGE;
+  var slice=list.slice(start,start+RA_PER_PAGE);
+  box.innerHTML=slice.map(function(q){
+    var note=q.decision_note?'<div style="font-size:11px;color:var(--text3);margin-top:3px">Note: '+raEsc(q.decision_note)+'</div>':'';
+    return '<div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;background:var(--bg2)">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><strong style="font-size:13px">'+raEsc(q.from_branch)+' → '+raEsc(q.to_branch)+'</strong>'+raStatusChip(q.status)+'</div>'
+      +'<div style="font-size:12px;color:var(--text2);margin-top:2px">Lots '+raEsc(q.start_lot)+'–'+raEsc(q.end_lot)+'</div>'
+      +(q.reason?'<div style="font-size:11px;color:var(--text3);margin-top:2px">'+raEsc(q.reason)+'</div>':'')
+      +note+'</div>';
+  }).join('');
+  box.scrollTop=0;
+  if(pager){
+    if(pages<=1){pager.style.display='none'}
+    else{
+      pager.style.display='flex';
+      document.getElementById('ra-pageinfo').textContent=(start+1)+'–'+(start+slice.length)+' of '+list.length;
+      var prev=document.getElementById('ra-prev'),next=document.getElementById('ra-next');
+      prev.disabled=_raPage===0;prev.style.opacity=_raPage===0?'.4':'1';
+      next.disabled=_raPage>=pages-1;next.style.opacity=_raPage>=pages-1?'.4':'1';
+    }
+  }
+}
+function raPage(delta){_raPage+=delta;raRenderPage()}
 async function loadMyReassignRequests(){
   try{
     var r=await fetch(B+'/api/mobile/reassign-requests?auction_id='+aid,{headers:ah()});
     var d=await r.json();_raReqs=d.requests||[];
-    var box=document.getElementById('ra-list');
-    if(!_raReqs.length){box.innerHTML='<div style="font-size:12px;color:var(--text3)">No requests yet.</div>';}
-    else{
-      box.innerHTML=_raReqs.map(function(q){
-        var note=q.decision_note?'<div style="font-size:11px;color:var(--text3);margin-top:3px">Note: '+raEsc(q.decision_note)+'</div>':'';
-        return '<div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;background:var(--bg2)">'
-          +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><strong style="font-size:13px">'+raEsc(q.from_branch)+' → '+raEsc(q.to_branch)+'</strong>'+raStatusChip(q.status)+'</div>'
-          +'<div style="font-size:12px;color:var(--text2);margin-top:2px">Lots '+raEsc(q.start_lot)+'–'+raEsc(q.end_lot)+'</div>'
-          +(q.reason?'<div style="font-size:11px;color:var(--text3);margin-top:2px">'+raEsc(q.reason)+'</div>':'')
-          +note+'</div>';
-      }).join('');
-    }
+    raRenderPage();
     // Any decided-but-unseen requests → mark them seen (the operator is
     // looking at them now) and refresh the badge.
     var unseen=_raReqs.filter(function(q){return q.status!=='pending'&&!q.seen_at});
@@ -1993,7 +2038,15 @@ async function reloadAllocations(){
     var r=await fetch(B+'/api/auctions/'+aid+'/allocation-stats',{headers:ah()});
     var d=await r.json();allocStats=d.stats||[];
     if(typeof renderAllocBars==='function')renderAllocBars();
-    if(typeof renderLotGrid==='function')renderLotGrid();
+    if(typeof renderLotGrid==='function')renderLotGrid(); // repopulates availableLots
+    // If the lot the operator currently has selected was reassigned away
+    // (no longer available in this branch), the header/banner would keep
+    // showing the stale number while the grid no longer has it. Move the
+    // selection to the next free lot so display + grid stay in sync.
+    if(selectedLots.length && availableLots.indexOf(selectedLots[0])<0){
+      selectNextAvailableLot();
+      toast('Selected lot was reassigned — moved to next free lot',true);
+    }
   }catch(e){}
 }
 
