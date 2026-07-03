@@ -282,39 +282,17 @@ function generSalesIspXML(rows, cfg, opts = {}) {
   // Nothing else is composed into it: no separate place / PIN / state /
   // GSTIN / address-line-2.
   const d_add   = cfgGet(cfg, 'kl_dispatch', '');
-  // The following are NOT used in the dispatch-from block. They feed only
-  // the separate e-way-bill / e-invoice CONSIGNOR fields below (which
-  // legally need the consignor's place / PIN / state / GSTIN).
-  //
-  // Resolution falls back through the SAME chain the e-way distance
-  // calculation uses (Settings → To Tally dispatch → Kerala → Tamil Nadu),
-  // so the consignor block is populated even when the primary Kerala
-  // address fields are blank or the company operates from Tamil Nadu.
-  // Previously these read `kl_*` ONLY, so the e-invoice consignor state /
-  // pincode / place shipped empty whenever kl_place/kl_pin weren't filled
-  // (e.g. a TN-registered company, or a Kerala company that only populated
-  // the dispatch/TN address). The PIN default (685553) mirrors the distance
-  // calc's dispatchPin fallback so the e-way origin PIN is never blank.
-  const d_place = String(
-    cfgGet(cfg, 'tally_dispatch_place', '') ||
-    cfgGet(cfg, 's_place', '') ||
-    cfgGet(cfg, 'kl_place', '') ||
-    cfgGet(cfg, 'tn_place', '')
-  ).trim();
-  const d_pin   = String(
-    cfgGet(cfg, 'tally_dispatch_pin', '') ||
-    cfgGet(cfg, 's_pin', '') ||
-    cfgGet(cfg, 'kl_pin', '') ||
-    cfgGet(cfg, 'tn_pin', '') ||
-    '685553'
-  ).trim();
-  const d_state = String(
-    cfgGet(cfg, 'tally_dispatch_state', '') ||
-    cfgGet(cfg, 's_state', '') ||
-    cfgGet(cfg, 'kl_state', '') ||
-    cfgGet(cfg, 'tn_state', '') ||
-    'Kerala'
-  ).trim();
+  // Dispatch-from PLACE / PIN / STATE for the Sales-invoice DISPATCHFROM*
+  // tags and the e-way-bill / e-invoice CONSIGNOR block. Read from the
+  // DEDICATED dispatch fields in Settings → Address (Kerala)
+  // (kl_dispatch_place / kl_dispatch_pin / kl_dispatch_state) — deliberately
+  // kept SEPARATE from the company's own registered Place / PIN / State
+  // (kl_place / kl_pin / kl_state), so the dispatch origin can differ from
+  // the registered address. Set these three fields in Settings to populate
+  // DISPATCHFROMPLACE / DISPATCHFROMPINCODE / DISPATCHFROMSTATENAME.
+  const d_place = String(cfgGet(cfg, 'kl_dispatch_place', '')).trim();
+  const d_pin   = String(cfgGet(cfg, 'kl_dispatch_pin',   '')).trim();
+  const d_state = String(cfgGet(cfg, 'kl_dispatch_state', 'Kerala')).trim();
   const d_gstin = String(
     cfgGet(cfg, 'tally_dispatch_gstin', '') ||
     cfgGet(cfg, 's_gstin', '') ||

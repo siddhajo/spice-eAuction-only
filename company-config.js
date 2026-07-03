@@ -47,6 +47,13 @@ const DEFAULTS = [
   { key: 'kl_address1', value: '', category: 'address_kl', label: 'Address Line 1',  type: 'text' },
   { key: 'kl_address2', value: '', category: 'address_kl', label: 'Address Line 2',  type: 'text' },
   { key: 'kl_dispatch', value: '', category: 'address_kl', label: 'Dispatch Address', type: 'text' },
+  // Dedicated dispatch-from PLACE / PIN / STATE for the Tally Sales-invoice
+  // DISPATCHFROM* tags (e-invoice / e-way bill consignor). Kept separate from
+  // the company's own Place / PIN / State below so the dispatch origin can
+  // differ from the registered address.
+  { key: 'kl_dispatch_place', value: '',       category: 'address_kl', label: 'Dispatch Place',  type: 'text' },
+  { key: 'kl_dispatch_pin',   value: '',       category: 'address_kl', label: 'Dispatch PIN',    type: 'text' },
+  { key: 'kl_dispatch_state', value: 'Kerala', category: 'address_kl', label: 'Dispatch State',  type: 'text' },
   { key: 'kl_place',    value: '', category: 'address_kl', label: 'Place / City',    type: 'text' },
   { key: 'kl_pin',      value: '', category: 'address_kl', label: 'PIN Code',        type: 'text' },
   { key: 'kl_state',    value: 'Kerala', category: 'address_kl', label: 'State',     type: 'text' },
