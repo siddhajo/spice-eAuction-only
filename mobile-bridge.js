@@ -840,33 +840,54 @@ function mountMobile(app, deps) {
     const auction_id = parseInt(b.auction_id, 10);
     const from_branch = String(b.from_branch || '').trim();
     const to_branch   = String(b.to_branch || '').trim();
-    const start_lot   = String(b.start_lot || '').trim();
-    const end_lot     = String(b.end_lot || '').trim();
     const reason      = String(b.reason || '').trim();
 
+    // Two selection forms:
+    //   • lots: ["001","007","012"] — explicit, possibly-disjoint pick
+    //   • start_lot / end_lot        — contiguous range
+    // Either way we also stash a display range (min–max) in start/end so the
+    // admin queue + operator list can render without parsing the JSON.
+    let lotsArr = [];
+    let start_lot = String(b.start_lot || '').trim();
+    let end_lot   = String(b.end_lot || '').trim();
+    if (Array.isArray(b.lots) && b.lots.length) {
+      lotsArr = Array.from(new Set(b.lots.map((l) => String(l || '').trim()).filter(Boolean)));
+      // Sort by (prefix, numeric tail) to derive the display range.
+      const parsed = lotsArr
+        .map((l) => { const m = l.match(/^([A-Za-z]*)(\d+)$/); return m ? { lot: l, prefix: m[1].toUpperCase(), num: parseInt(m[2], 10) } : null; })
+        .filter(Boolean)
+        .sort((a, z) => a.prefix === z.prefix ? a.num - z.num : a.prefix.localeCompare(z.prefix));
+      if (!parsed.length) return res.status(400).json({ error: 'No valid lot numbers selected' });
+      start_lot = parsed[0].lot;
+      end_lot   = parsed[parsed.length - 1].lot;
+    }
+
     if (!auction_id || !from_branch || !to_branch || !start_lot || !end_lot) {
-      return res.status(400).json({ error: 'auction_id, from_branch, to_branch, start_lot and end_lot are all required' });
+      return res.status(400).json({ error: 'auction_id, from_branch, to_branch and at least one lot are all required' });
     }
     if (from_branch === to_branch) {
       return res.status(400).json({ error: 'FROM and TO branch must be different' });
     }
 
-    // Reject an identical range already awaiting a decision (avoids the
+    const lotsJson = lotsArr.length ? JSON.stringify(lotsArr) : '';
+
+    // Reject an identical selection already awaiting a decision (avoids the
     // admin seeing duplicate rows if the operator double-taps).
     const dup = db.get(
       `SELECT id FROM lot_reassign_requests
         WHERE auction_id = ? AND status = 'pending'
-          AND from_branch = ? AND to_branch = ? AND start_lot = ? AND end_lot = ?`,
-      [auction_id, from_branch, to_branch, start_lot, end_lot]
+          AND from_branch = ? AND to_branch = ? AND start_lot = ? AND end_lot = ?
+          AND COALESCE(lots,'') = ?`,
+      [auction_id, from_branch, to_branch, start_lot, end_lot, lotsJson]
     );
     if (dup) return res.status(409).json({ error: 'A matching request is already pending admin review' });
 
     db.run(
       `INSERT INTO lot_reassign_requests
-         (auction_id, from_branch, to_branch, start_lot, end_lot, reason,
+         (auction_id, from_branch, to_branch, start_lot, end_lot, lots, reason,
           requester_user_id, requester_username, status)
-       VALUES (?,?,?,?,?,?,?,?,'pending')`,
-      [auction_id, from_branch, to_branch, start_lot, end_lot, reason,
+       VALUES (?,?,?,?,?,?,?,?,?,'pending')`,
+      [auction_id, from_branch, to_branch, start_lot, end_lot, lotsJson, reason,
        (req.user && req.user.id) || null, (req.user && req.user.username) || '']
     );
     const row = db.get('SELECT * FROM lot_reassign_requests WHERE id = last_insert_rowid()');

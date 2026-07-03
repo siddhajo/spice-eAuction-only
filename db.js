@@ -597,6 +597,7 @@ async function initDb() {
     start_lot TEXT NOT NULL,
     end_lot TEXT NOT NULL,
     reason TEXT DEFAULT '',
+    lots TEXT DEFAULT '',
     requester_user_id INTEGER,
     requester_username TEXT DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pending',
@@ -607,6 +608,10 @@ async function initDb() {
     seen_at TEXT DEFAULT NULL,
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
+  // `lots` holds a JSON array of the exact (possibly disjoint) lot numbers
+  // requested. Empty when the request used the legacy start/end range.
+  // ALTER for DBs created before this column existed (idempotent).
+  try { wrapped.exec("ALTER TABLE lot_reassign_requests ADD COLUMN lots TEXT DEFAULT ''"); } catch (_) {}
   wrapped.exec(`CREATE INDEX IF NOT EXISTS idx_lot_reassign_requests_auction_status
     ON lot_reassign_requests(auction_id, status)`);
   wrapped.exec(`CREATE INDEX IF NOT EXISTS idx_lot_reassign_requests_requester

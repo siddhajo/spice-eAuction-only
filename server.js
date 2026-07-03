@@ -1845,7 +1845,7 @@ async function sendReassignRequestWhatsApp(db, reqRow) {
     const bodyParams = [
       reqRow.requester_username || 'operator',
       `${reqRow.from_branch} → ${reqRow.to_branch}`,
-      `${reqRow.start_lot}-${reqRow.end_lot}`,
+      reassignLotsLabel(reqRow),
       reqRow.reason ? reqRow.reason : '(no reason given)',
     ];
     const buttons = [
@@ -1881,10 +1881,7 @@ async function handleReassignWhatsAppDecision(db, action, requestId, fromPhone) 
   }
 
   if (action === 'approve') {
-    const result = applyLotReassignment(db, reqRow.auction_id, {
-      from_branch: reqRow.from_branch, to_branch: reqRow.to_branch,
-      start_lot: reqRow.start_lot, end_lot: reqRow.end_lot,
-    }, { id: null, username: 'WhatsApp' });
+    const result = applyLotReassignment(db, reqRow.auction_id, reassignFieldsFromRow(reqRow), { id: null, username: 'WhatsApp' });
     if (!result.ok) {
       return reply(`Could not approve #${requestId}: ${result.error} — please review in the app.`);
     }
@@ -1892,14 +1889,14 @@ async function handleReassignWhatsAppDecision(db, action, requestId, fromPhone) 
               SET status='approved', decided_by_username='WhatsApp', decision_note='Approved via WhatsApp',
                   decided_at=datetime('now','localtime'), seen_at=NULL
             WHERE id=?`, [requestId]);
-    return reply(`✅ Approved. Lots ${reqRow.start_lot}-${reqRow.end_lot} moved ${reqRow.from_branch} → ${reqRow.to_branch}. The operator has been notified.`);
+    return reply(`✅ Approved. Lots ${reassignLotsLabel(reqRow)} moved ${reqRow.from_branch} → ${reqRow.to_branch}. The operator has been notified.`);
   }
   if (action === 'deny') {
     db.run(`UPDATE lot_reassign_requests
               SET status='denied', decided_by_username='WhatsApp', decision_note='Denied via WhatsApp',
                   decided_at=datetime('now','localtime'), seen_at=NULL
             WHERE id=?`, [requestId]);
-    return reply(`❌ Denied request #${requestId} (${reqRow.from_branch} → ${reqRow.to_branch}, lots ${reqRow.start_lot}-${reqRow.end_lot}). The operator has been notified.`);
+    return reply(`❌ Denied request #${requestId} (${reqRow.from_branch} → ${reqRow.to_branch}, lots ${reassignLotsLabel(reqRow)}). The operator has been notified.`);
   }
 }
 
@@ -3715,6 +3712,42 @@ function rangeSize(startLot, endLot) {
   return e.num - s.num + 1;
 }
 
+// Enumerate every lot number in [start, end] inclusive. Throws if
+// start/end don't parse, have different prefixes, or end < start.
+function enumerateRange(startLot, endLot) {
+  const s = parseLotNo(startLot);
+  const e = parseLotNo(endLot);
+  if (!s) throw new Error(`Invalid start lot "${startLot}"`);
+  if (!e) throw new Error(`Invalid end lot "${endLot}"`);
+  if (s.prefix !== e.prefix) throw new Error(`Start and end must share the same prefix (${startLot} vs ${endLot})`);
+  if (e.num < s.num) throw new Error(`End lot (${endLot}) must be >= start lot (${startLot})`);
+  const pad = Math.max(s.padLen, e.padLen);
+  const out = [];
+  for (let n = s.num; n <= e.num; n++) out.push(buildLotNo(s.prefix, n, pad));
+  return out;
+}
+
+// Group a list of lot numbers into contiguous chunks (same prefix +
+// sequential num). Input is sorted first so callers can pass an
+// arbitrary/disjoint selection. Returns an array of {start,end} pairs.
+function chunkLots(lots) {
+  const parsed = lots
+    .map(l => ({ lot: String(l || '').trim(), p: parseLotNo(l) }))
+    .filter(x => x.p)
+    .sort((a, b) => a.p.prefix === b.p.prefix ? a.p.num - b.p.num : a.p.prefix.localeCompare(b.p.prefix));
+  const chunks = [];
+  if (!parsed.length) return chunks;
+  let chunk = [parsed[0]];
+  for (let i = 1; i < parsed.length; i++) {
+    const prev = chunk[chunk.length - 1].p;
+    const curr = parsed[i].p;
+    if (prev.prefix === curr.prefix && curr.num === prev.num + 1) chunk.push(parsed[i]);
+    else { chunks.push(chunk); chunk = [parsed[i]]; }
+  }
+  chunks.push(chunk);
+  return chunks.map(ch => ({ start: ch[0].lot, end: ch[ch.length - 1].lot }));
+}
+
 // Get allocations for a trade
 app.get('/api/auctions/:id/allocations', requireViewOrLotEntry, (req, res) => {
   const db = getDb();
@@ -4067,95 +4100,123 @@ app.get('/api/auctions/:id(\\d+)/arrivals-export', requireExport, async (req, re
 // operator's reassign request is approved). `actor` is {id, username} for
 // the reassign_log audit row.
 function applyLotReassignment(db, auctionId, fields, actor) {
-  const { from_branch, to_branch, start_lot, end_lot } = fields || {};
+  fields = fields || {};
+  const from_branch = String(fields.from_branch || '').trim();
+  const to_branch   = String(fields.to_branch || '').trim();
   actor = actor || {};
 
-  if (!from_branch || !to_branch || !start_lot || !end_lot) {
-    return { ok: false, error: 'All fields required: from_branch, to_branch, start_lot, end_lot' };
-  }
+  if (!from_branch || !to_branch) return { ok: false, error: 'from_branch and to_branch required' };
   if (from_branch === to_branch) return { ok: false, error: 'FROM and TO branch must be different' };
 
-  const s = parseLotNo(start_lot);
-  const e = parseLotNo(end_lot);
-  if (!s || !e) return { ok: false, error: 'Invalid lot number format' };
-  if (s.prefix !== e.prefix) return { ok: false, error: 'Start and end must have same prefix' };
-  if (s.num > e.num) return { ok: false, error: 'Start must be <= End' };
+  // Resolve the moving lot set from whichever body form was sent:
+  //   • lots: ["001","007","012", …]  — explicit, possibly-disjoint pick
+  //   • start_lot / end_lot           — contiguous range (legacy form)
+  let moving;
+  try {
+    if (Array.isArray(fields.lots) && fields.lots.length) {
+      moving = Array.from(new Set(fields.lots.map(l => String(l || '').trim()).filter(Boolean)));
+      const bad = moving.filter(l => !parseLotNo(l));
+      if (bad.length) return { ok: false, error: `Invalid lot number(s): ${bad.slice(0, 6).join(', ')}` };
+    } else {
+      const startLot = String(fields.start_lot || '').trim();
+      const endLot   = String(fields.end_lot || '').trim();
+      if (!startLot || !endLot) return { ok: false, error: 'Provide lots[] or start_lot/end_lot' };
+      moving = enumerateRange(startLot, endLot);
+    }
+  } catch (e) { return { ok: false, error: e.message }; }
+  if (!moving.length) return { ok: false, error: 'No lots selected to reassign' };
+  const movingSet = new Set(moving);
 
-  // Every lot in the range must currently belong to from_branch
-  const fromAllocs = db.all('SELECT * FROM lot_allocations WHERE auction_id = ? AND branch = ?', [auctionId, from_branch]);
-  for (let n = s.num; n <= e.num; n++) {
-    const lotNo = buildLotNo(s.prefix, n, s.padLen);
-    const inRange = fromAllocs.some(a => isLotInRange(lotNo, a.start_lot, a.end_lot));
-    if (!inRange) return { ok: false, error: `Lot ${lotNo} is not allocated to ${from_branch}` };
-  }
-
-  // None of the lots may already be saved
-  const usedLots = db.all('SELECT lot_no FROM lots WHERE auction_id = ?', [auctionId]).map(l => l.lot_no);
-  const usedSet = new Set(usedLots);
-  const usedInRange = [];
-  for (let n = s.num; n <= e.num; n++) {
-    const lotNo = buildLotNo(s.prefix, n, s.padLen);
-    if (usedSet.has(lotNo)) usedInRange.push(lotNo);
-  }
-  if (usedInRange.length > 0) {
+  // None of the moving lots may already be saved (booked)
+  const usedSet = new Set(db.all('SELECT lot_no FROM lots WHERE auction_id = ?', [auctionId]).map(l => String(l.lot_no || '').trim()));
+  const usedInSel = moving.filter(l => usedSet.has(l));
+  if (usedInSel.length > 0) {
     return {
       ok: false,
-      error: `Cannot reassign — ${usedInRange.length} lot(s) already used: ${usedInRange.slice(0, 5).join(', ')}${usedInRange.length > 5 ? '...' : ''}`
+      error: `Cannot reassign — ${usedInSel.length} lot(s) already used: ${usedInSel.slice(0, 5).join(', ')}${usedInSel.length > 5 ? '...' : ''}`
     };
   }
 
-  // Rebuild from_branch allocations excluding the reassigned range
-  const fromAllocsAll = db.all('SELECT * FROM lot_allocations WHERE auction_id = ? AND branch = ?', [auctionId, from_branch]);
-  db.run('DELETE FROM lot_allocations WHERE auction_id = ? AND branch = ?', [auctionId, from_branch]);
+  // Every moving lot must currently belong to from_branch. Enumerate the
+  // FROM branch's ranges (the selection may span several of them).
+  const fromRanges = db.all('SELECT id, start_lot, end_lot FROM lot_allocations WHERE auction_id = ? AND branch = ?', [auctionId, from_branch]);
+  const fromLotSet = new Set();
+  const lotsByRangeId = new Map();
+  for (const r of fromRanges) {
+    let lots = [];
+    try { lots = enumerateRange(r.start_lot, r.end_lot); } catch (_) {}
+    lotsByRangeId.set(r.id, lots);
+    lots.forEach(l => fromLotSet.add(l));
+  }
+  const notCovered = moving.filter(l => !fromLotSet.has(l));
+  if (notCovered.length) {
+    return { ok: false, error: `${notCovered.length} lot(s) not allocated to ${from_branch}: ${notCovered.slice(0, 6).join(', ')}${notCovered.length > 6 ? ', …' : ''}` };
+  }
 
-  for (const alloc of fromAllocsAll) {
-    const as = parseLotNo(alloc.start_lot);
-    const ae = parseLotNo(alloc.end_lot);
-    if (!as || !ae) continue;
-    const overlapStart = Math.max(as.num, s.num);
-    const overlapEnd = Math.min(ae.num, e.num);
-
-    if (overlapStart > overlapEnd) {
-      // No overlap — keep entire allocation
+  // Split each affected FROM range around the removed lots: delete it and
+  // re-insert the surviving contiguous chunks. Untouched ranges are left be.
+  for (const r of fromRanges) {
+    const lots = lotsByRangeId.get(r.id) || [];
+    if (!lots.some(l => movingSet.has(l))) continue;
+    db.run('DELETE FROM lot_allocations WHERE id = ?', [r.id]);
+    const keep = lots.filter(l => !movingSet.has(l));
+    for (const ch of chunkLots(keep)) {
       db.run('INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?, ?, ?, ?)',
-        [auctionId, from_branch, alloc.start_lot, alloc.end_lot]);
-    } else {
-      // Has overlap — keep slices before/after the reassigned range
-      if (as.num < overlapStart) {
-        db.run('INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?, ?, ?, ?)',
-          [auctionId, from_branch, buildLotNo(as.prefix, as.num, as.padLen), buildLotNo(as.prefix, overlapStart - 1, as.padLen)]);
-      }
-      if (ae.num > overlapEnd) {
-        db.run('INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?, ?, ?, ?)',
-          [auctionId, from_branch, buildLotNo(ae.prefix, overlapEnd + 1, ae.padLen), buildLotNo(ae.prefix, ae.num, ae.padLen)]);
-      }
+        [auctionId, from_branch, ch.start, ch.end]);
     }
   }
 
-  db.run('INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?, ?, ?, ?)',
-    [auctionId, to_branch, String(start_lot).trim(), String(end_lot).trim()]);
-
-  // Audit log — surfaces in the tile UI as "reassigned" state badges.
-  try {
-    db.run(
-      `INSERT INTO reassign_log
-         (auction_id, from_branch, to_branch, start_lot, end_lot, user_id, username)
-       VALUES (?,?,?,?,?,?,?)`,
-      [auctionId, from_branch, to_branch,
-       String(start_lot).trim(), String(end_lot).trim(),
-       actor.id || null, actor.username || '']
-    );
-  } catch (_) { /* best-effort */ }
+  // Dest branch gains the moved lots, collapsed into contiguous chunks.
+  // One reassign_log row per chunk keeps the "reassigned" tile overlay
+  // and the mobile alloc_rev marker accurate for the exact lots moved.
+  const destChunks = chunkLots(moving);
+  for (const ch of destChunks) {
+    db.run('INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?, ?, ?, ?)',
+      [auctionId, to_branch, ch.start, ch.end]);
+    try {
+      db.run(
+        `INSERT INTO reassign_log
+           (auction_id, from_branch, to_branch, start_lot, end_lot, user_id, username)
+         VALUES (?,?,?,?,?,?,?)`,
+        [auctionId, from_branch, to_branch, ch.start, ch.end, actor.id || null, actor.username || '']
+      );
+    } catch (_) { /* best-effort */ }
+  }
 
   const allocs = db.all('SELECT * FROM lot_allocations WHERE auction_id = ? ORDER BY branch, start_lot', [auctionId]);
-  return { ok: true, allocations: allocs, message: `Lots ${start_lot}-${end_lot} reassigned from ${from_branch} to ${to_branch}` };
+  // Friendly message: a single contiguous chunk reads as a range, a
+  // disjoint pick reads as a count.
+  const message = (destChunks.length === 1 && rangeSize(destChunks[0].start, destChunks[0].end) === moving.length)
+    ? `Lots ${destChunks[0].start}-${destChunks[0].end} reassigned from ${from_branch} to ${to_branch}`
+    : `Moved ${moving.length} lot(s) from ${from_branch} to ${to_branch}`;
+  return { ok: true, allocations: allocs, message, moved: moving.length };
 }
 
-// Reassign an unused range from one branch to another
-// Splits the source allocations around the reassigned range, then
-// inserts a single allocation covering the same range under the
-// destination branch. Refuses to act if any lot in the range is already
-// saved (lots can only be reassigned by deleting + re-entering).
+// Build applyLotReassignment() fields from a stored request row: prefer the
+// explicit disjoint `lots` JSON when present, else the start/end range.
+function reassignFieldsFromRow(reqRow) {
+  let lots = [];
+  if (reqRow.lots) { try { const a = JSON.parse(reqRow.lots); if (Array.isArray(a)) lots = a; } catch (_) {} }
+  return lots.length
+    ? { from_branch: reqRow.from_branch, to_branch: reqRow.to_branch, lots }
+    : { from_branch: reqRow.from_branch, to_branch: reqRow.to_branch, start_lot: reqRow.start_lot, end_lot: reqRow.end_lot };
+}
+// Human-readable label for a request's lots: "010, 012, 015" (disjoint) or
+// "010-020" (range). Used in WhatsApp bodies + reply text.
+function reassignLotsLabel(reqRow) {
+  let lots = [];
+  if (reqRow.lots) { try { const a = JSON.parse(reqRow.lots); if (Array.isArray(a)) lots = a; } catch (_) {} }
+  if (lots.length) {
+    const chunks = chunkLots(lots).map((ch) => ch.start === ch.end ? ch.start : `${ch.start}-${ch.end}`);
+    return `${chunks.join(', ')} (${lots.length} lot${lots.length === 1 ? '' : 's'})`;
+  }
+  return `${reqRow.start_lot}-${reqRow.end_lot}`;
+}
+
+// Reassign unused lots from one branch to another. Accepts an explicit
+// (possibly disjoint) `lots[]` selection or a contiguous start/end range.
+// Splits the source allocations around the moved lots; the dest branch
+// gains new range(s) covering them. Refuses to move any lot already saved.
 app.post('/api/auctions/:id/reassign-lots', requireAuctionWrite, (req, res) => {
   const db = getDb();
   const auctionId = parseInt(req.params.id, 10);
@@ -4206,12 +4267,7 @@ app.post('/api/reassign-requests/:id/approve', requireAuctionWrite, (req, res) =
     return res.status(409).json({ error: `Request already ${reqRow.status}` });
   }
 
-  const result = applyLotReassignment(db, reqRow.auction_id, {
-    from_branch: reqRow.from_branch,
-    to_branch:   reqRow.to_branch,
-    start_lot:   reqRow.start_lot,
-    end_lot:     reqRow.end_lot,
-  }, req.user || {});
+  const result = applyLotReassignment(db, reqRow.auction_id, reassignFieldsFromRow(reqRow), req.user || {});
 
   // Re-validation failed (range went stale) — surface the reason so the
   // admin can deny it explicitly; leave the row pending.

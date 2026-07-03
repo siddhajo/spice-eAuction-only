@@ -513,14 +513,18 @@ select:focus{border-color:var(--green)}
 <div class="modal-overlay" id="reassign-modal"><div class="modal">
   <div class="modal-hdr"><h2>Reassign Lots</h2><button class="modal-close" onclick="closeReassign()">&#x2715;</button></div>
   <div class="modal-body">
-    <div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.5">Request the admin to move a range of lot numbers between branches. The admin approves or denies — you'll be notified here.</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.5">Request the admin to move lots between branches. Tap the free lots you want, or type a contiguous range. The admin approves or denies — you'll be notified here.</div>
     <div class="fr">
-      <div><div class="lb">FROM BRANCH</div><select id="ra-from" style="width:100%;height:38px;border-radius:8px;border:1.5px solid var(--border2);padding:0 8px;font-size:13px;font-family:inherit;background:var(--input-bg);color:var(--text)"></select></div>
+      <div><div class="lb">FROM BRANCH</div><select id="ra-from" onchange="renderRaTiles()" style="width:100%;height:38px;border-radius:8px;border:1.5px solid var(--border2);padding:0 8px;font-size:13px;font-family:inherit;background:var(--input-bg);color:var(--text)"></select></div>
       <div><div class="lb">TO BRANCH</div><select id="ra-to" style="width:100%;height:38px;border-radius:8px;border:1.5px solid var(--border2);padding:0 8px;font-size:13px;font-family:inherit;background:var(--input-bg);color:var(--text)"></select></div>
     </div>
-    <div class="fr" style="margin-top:8px">
-      <div><div class="lb">START LOT</div><input type="text" id="ra-start" placeholder="e.g. 081" autocomplete="off"></div>
-      <div><div class="lb">END LOT</div><input type="text" id="ra-end" placeholder="e.g. 100" autocomplete="off"></div>
+    <div class="lb" style="margin-top:8px">TAP LOTS TO SELECT</div>
+    <div id="ra-tiles" style="max-height:150px;overflow-y:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:8px;padding:6px;background:var(--bg);display:flex;flex-wrap:wrap;gap:4px"></div>
+    <div id="ra-selsummary" style="font-size:11px;color:var(--text2);margin-top:4px;min-height:12px"></div>
+    <div class="lb" style="margin-top:8px">OR TYPE A RANGE</div>
+    <div class="fr">
+      <div><div class="lb" style="opacity:.7">START LOT</div><input type="text" id="ra-start" placeholder="e.g. 081" autocomplete="off" oninput="raClearTilePick()"></div>
+      <div><div class="lb" style="opacity:.7">END LOT</div><input type="text" id="ra-end" placeholder="e.g. 100" autocomplete="off" oninput="raClearTilePick()"></div>
     </div>
     <div class="lb" style="margin-top:8px">REASON (optional)</div><input type="text" id="ra-reason" placeholder="Why you need these lots" autocomplete="off">
     <div id="ra-err"></div>
@@ -1854,6 +1858,48 @@ function raBranchOptions(sel,selected){
   if(br&&branches.indexOf(br)<0)branches.unshift(br);
   return branches.map(function(b){return '<option value="'+b+'"'+(b===selected?' selected':'')+'>'+b+'</option>'}).join('');
 }
+var _raPick=new Set();
+// Render the FROM branch's FREE (unbooked) lots as tappable chips. Pulls
+// from the globally-loaded allocStats. Disjoint taps are supported.
+function renderRaTiles(){
+  var host=document.getElementById('ra-tiles');if(!host)return;
+  var from=document.getElementById('ra-from').value;
+  // Selecting a new FROM branch invalidates any prior picks.
+  _raPick.clear();
+  var stat=(typeof allocStats!=='undefined'&&allocStats)?allocStats.find(function(s){return s.branch===from}):null;
+  var free=[];
+  if(stat&&stat.ranges){stat.ranges.forEach(function(rng){(rng.lots||[]).forEach(function(l){if(!l.used)free.push(l.lot)})})}
+  if(!free.length){host.innerHTML='<span style="font-size:11px;color:var(--text3)">No free lots in this branch</span>';raSelSummary();return}
+  host.innerHTML=free.map(function(lot){
+    return '<span data-lot="'+lot+'" onclick="raTogglePickTile(this)" style="padding:5px 9px;border-radius:6px;font-size:12px;font-family:monospace;border:1px solid var(--border2);background:var(--bg2);color:var(--text);cursor:pointer;user-select:none">'+lot+'</span>';
+  }).join('');
+  raSelSummary();
+}
+function raTogglePickTile(el){
+  var lot=el.getAttribute('data-lot');if(!lot)return;
+  // Tapping a tile clears any typed range (the two modes are exclusive).
+  document.getElementById('ra-start').value='';document.getElementById('ra-end').value='';
+  if(_raPick.has(lot)){_raPick.delete(lot);el.style.background='var(--bg2)';el.style.color='var(--text)';el.style.borderColor='var(--border2)';el.style.fontWeight='400'}
+  else{_raPick.add(lot);el.style.background='var(--green)';el.style.color='#fff';el.style.borderColor='var(--green)';el.style.fontWeight='700'}
+  raSelSummary();
+}
+function raPickSummary(lots){
+  var parsed=lots.map(function(l){var m=String(l).match(/^(\D*)(\d+)$/);return m?{lot:l,prefix:m[1]||'',num:parseInt(m[2],10)}:null}).filter(Boolean).sort(function(a,z){return a.prefix===z.prefix?a.num-z.num:a.prefix.localeCompare(z.prefix)});
+  if(!parsed.length)return '';
+  var out=[],chunk=[parsed[0]];
+  for(var i=1;i<parsed.length;i++){var p=chunk[chunk.length-1];if(parsed[i].prefix===p.prefix&&parsed[i].num===p.num+1)chunk.push(parsed[i]);else{out.push(chunk);chunk=[parsed[i]]}}
+  out.push(chunk);
+  return out.map(function(ch){return ch.length===1?ch[0].lot:ch[0].lot+'-'+ch[ch.length-1].lot}).join(', ');
+}
+function raSelSummary(){
+  var el=document.getElementById('ra-selsummary');if(!el)return;
+  var n=_raPick.size;
+  el.innerHTML=n?('<strong>'+n+' lot'+(n===1?'':'s')+' selected:</strong> '+raPickSummary(Array.from(_raPick))):'';
+}
+// Typing in the range inputs clears the tile picks (modes are exclusive).
+function raClearTilePick(){
+  if(_raPick.size){_raPick.clear();var host=document.getElementById('ra-tiles');if(host)host.querySelectorAll('span[data-lot]').forEach(function(el){el.style.background='var(--bg2)';el.style.color='var(--text)';el.style.borderColor='var(--border2)';el.style.fontWeight='400'});raSelSummary()}
+}
 function openReassign(){
   toggleMenu(true);
   if(!aid){toast('Start a session first',true);return}
@@ -1863,6 +1909,8 @@ function openReassign(){
   document.getElementById('ra-end').value='';
   document.getElementById('ra-reason').value='';
   document.getElementById('ra-err').innerHTML='';
+  _raPick.clear();
+  renderRaTiles();
   _raPage=0;
   document.getElementById('reassign-modal').classList.add('show');
   loadMyReassignRequests();
@@ -1875,14 +1923,20 @@ async function submitReassign(){
   var reason=document.getElementById('ra-reason').value.trim();
   if(!from||!to){er.innerHTML='<div class="eb">Select both branches</div>';return}
   if(from===to){er.innerHTML='<div class="eb">FROM and TO branch must be different</div>';return}
-  if(!start||!end){er.innerHTML='<div class="eb">Enter start and end lot numbers</div>';return}
+  // Prefer the tapped tiles (disjoint); fall back to the typed range.
+  var picked=Array.from(_raPick);
+  var payload={auction_id:aid,from_branch:from,to_branch:to,reason:reason};
+  if(picked.length){payload.lots=picked}
+  else if(start&&end){payload.start_lot=start;payload.end_lot=end}
+  else{er.innerHTML='<div class="eb">Tap lots to select, or enter a start/end range</div>';return}
   var btn=document.getElementById('ra-submit');btn.disabled=true;
   try{
-    var r=await fetch(B+'/api/mobile/reassign-requests',{method:'POST',headers:ah(),body:JSON.stringify({auction_id:aid,from_branch:from,to_branch:to,start_lot:start,end_lot:end,reason:reason})});
+    var r=await fetch(B+'/api/mobile/reassign-requests',{method:'POST',headers:ah(),body:JSON.stringify(payload)});
     var d=await r.json();
     if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Failed')+'</div>';return}
     toast('Request sent to admin',false);
     document.getElementById('ra-start').value='';document.getElementById('ra-end').value='';document.getElementById('ra-reason').value='';
+    _raPick.clear();
     closeReassign();
   }catch(e){er.innerHTML='<div class="eb">Could not connect</div>'}finally{btn.disabled=false}
 }
@@ -1929,6 +1983,14 @@ function raStatusChip(s){
   return '<span style="background:#fef9c3;color:#854d0e;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px">PENDING</span>';
 }
 function raEsc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+// Label a request's lots: disjoint JSON list collapsed to "003, 007, 012"
+// (+ count) when present, else the legacy start–end range.
+function raReqLotsLabel(q){
+  var lots=[];
+  if(q.lots){try{var a=JSON.parse(q.lots);if(Array.isArray(a))lots=a}catch(e){}}
+  if(lots.length)return raPickSummary(lots)+' ('+lots.length+')';
+  return (q.start_lot||'')+'–'+(q.end_lot||'');
+}
 var _raPage=0;var RA_PER_PAGE=10;
 // Per-auction "cleared" marker: the highest request id the operator has
 // hidden from their list. Purely client-side (localStorage) — the rows
@@ -1959,7 +2021,7 @@ function raRenderPage(){
     var note=q.decision_note?'<div style="font-size:11px;color:var(--text3);margin-top:3px">Note: '+raEsc(q.decision_note)+'</div>':'';
     return '<div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;background:var(--bg2)">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><strong style="font-size:13px">'+raEsc(q.from_branch)+' → '+raEsc(q.to_branch)+'</strong>'+raStatusChip(q.status)+'</div>'
-      +'<div style="font-size:12px;color:var(--text2);margin-top:2px">Lots '+raEsc(q.start_lot)+'–'+raEsc(q.end_lot)+'</div>'
+      +'<div style="font-size:12px;color:var(--text2);margin-top:2px">Lots '+raEsc(raReqLotsLabel(q))+'</div>'
       +(q.reason?'<div style="font-size:11px;color:var(--text3);margin-top:2px">'+raEsc(q.reason)+'</div>':'')
       +note+'</div>';
   }).join('');
