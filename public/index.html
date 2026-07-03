@@ -12810,7 +12810,7 @@ function renderReassignTiles() {
         const tip = t.booked
           ? `Booked: ${t.seller || '—'}`
           : (t.state === 'reassigned' ? `Reassigned from another branch` : `Free for reassign`);
-        const handlers = dis ? '' : ` onmousedown="raTileMouseDown(event,this)" onmouseover="raTileMouseOver(event,this)" ontouchstart="raTileTouchStart(event,this)" onclick="raToggleTile(this)"`;
+        const handlers = dis ? '' : ` onmousedown="raTileMouseDown(event,this)" ontouchstart="raTileTouchStart(event,this)" onclick="raToggleTile(this)"`;
         html += `<div title="${esc(tip)}" data-lot="${esc(t.lot)}" data-branch="${esc(branch)}" data-state="${esc(t.state)}"${handlers} style="${stateStyle(t.state, selected)};padding:4px 6px;border-radius:4px;font-size:11px;font-family:monospace;min-width:42px;text-align:center;${dis?'opacity:.85':'cursor:pointer'};user-select:none;touch-action:none">${esc(t.lot)}</div>`;
       }
     }
@@ -12865,33 +12865,25 @@ function raTileMouseDown(e, el){
   _raDrag = { branch, anchor: lot, base: new Set(_raSelected), moved: false };
   e.preventDefault();   // stop the browser starting a text selection
 }
-function raTileMouseOver(e, el){
+// Document-level sweep: hit-test the tile under the cursor with
+// elementFromPoint rather than relying on per-tile onmouseover (which some
+// layouts/DOM-rebuilds swallow). Repaints in place — no grid rebuild.
+document.addEventListener('mousemove', function (e) {
   if (!_raDrag) return;
-  if (!(e.buttons & 1)) { _raDrag = null; return; }   // button already released
-  if (el.getAttribute('data-branch') !== _raDrag.branch) return;
-  const lot = el.getAttribute('data-lot');
-  if (lot === _raDrag.anchor) return;
+  if (!(e.buttons & 1)) { _raDrag = null; return; }   // button released
+  const p = document.elementFromPoint(e.clientX, e.clientY);
+  const tile = p && p.closest ? p.closest('[data-lot]') : null;
+  if (!tile || tile.getAttribute('data-branch') !== _raDrag.branch) return;
+  if (tile.getAttribute('data-state') === 'booked') return;
+  const lot = tile.getAttribute('data-lot');
+  if (lot === _raDrag.anchor && !_raDrag.moved) return;
   _raDrag.moved = true;
-  _raApplyDragRange(lot);
-}
-// Build (base ∪ [anchor..current]) over the FROM branch's tile order,
-// skipping booked tiles, then re-render.
-function _raApplyDragRange(curLot){
-  const s = (_raAllocStats || []).find(x => x.branch === _raDrag.branch);
-  if (!s) return;
-  const ordered = [];
-  for (const r of (s.ranges || [])) for (const t of (r.lots || [])) ordered.push(t);
-  const ia = ordered.findIndex(t => t.lot === _raDrag.anchor);
-  const ib = ordered.findIndex(t => t.lot === curLot);
-  if (ia < 0 || ib < 0) return;
-  const lo = Math.min(ia, ib), hi = Math.max(ia, ib);
-  _raSelected = new Set(_raDrag.base);
-  for (let i = lo; i <= hi; i++) {
-    if (ordered[i].state !== 'booked') _raSelected.add(ordered[i].lot);
-  }
-  renderReassignTiles();
-}
-document.addEventListener('mouseup', () => { _raDrag = null; });
+  _raApplyDragRangePaint(lot);
+});
+document.addEventListener('mouseup', () => {
+  if (_raDrag && _raDrag.moved) { _raTouchMoved = true; setTimeout(() => { _raTouchMoved = false; }, 100); }
+  _raDrag = null;
+});
 
 function raToggleTile(el){
   if (_raDrag && _raDrag.moved) return;   // tail click after a mouse drag — ignore
