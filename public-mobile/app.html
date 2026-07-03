@@ -1941,6 +1941,9 @@ async function loadMyReassignRequests(){
     var unseen=_raReqs.filter(function(q){return q.status!=='pending'&&!q.seen_at});
     for(var i=0;i<unseen.length;i++){markReassignSeen(unseen[i].id)}
     updateReassignBadge(0);
+    // If a freshly-seen decision was an approval, the lot ranges moved —
+    // reload allocations so the grid reflects it without a manual refresh.
+    if(unseen.some(function(q){return q.status==='approved'}))reloadAllocations();
   }catch(e){document.getElementById('ra-list').innerHTML='<div style="font-size:12px;color:var(--text3)">Could not load.</div>'}
 }
 async function markReassignSeen(id){try{await fetch(B+'/api/mobile/reassign-requests/'+id+'/seen',{method:'POST',headers:ah()})}catch(e){}}
@@ -1968,8 +1971,23 @@ async function pollReassignDecisions(){
       // and the next poll reflect the cleared state.
       for(var i=0;i<decided.length;i++){await markReassignSeen(decided[i].id)}
       updateReassignBadge(0);
+      // An approval moves lot-number ranges → the operator's available
+      // lots change. Reload allocations so the grid + bars update live,
+      // without waiting for a manual refresh.
+      if(decided.some(function(x){return x.status==='approved'}))reloadAllocations();
     }
   }catch(e){}finally{_raPolling=false}
+}
+// Reload allocation ranges from the server and repaint the lot grid +
+// per-branch usage bars. Used after a reassignment is approved.
+async function reloadAllocations(){
+  if(!aid)return;
+  try{
+    var r=await fetch(B+'/api/auctions/'+aid+'/allocation-stats',{headers:ah()});
+    var d=await r.json();allocStats=d.stats||[];
+    if(typeof renderAllocBars==='function')renderAllocBars();
+    if(typeof renderLotGrid==='function')renderLotGrid();
+  }catch(e){}
 }
 
 tryAutoLogin();
