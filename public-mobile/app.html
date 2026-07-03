@@ -562,6 +562,14 @@ select:focus{border-color:var(--green)}
 
 <div class="toast" id="toast"><span id="t-ico">&#10003;</span> <span id="t-msg"></span></div>
 
+<!-- Notification banner (reassign decisions) — slides down from the top,
+     louder than a toast; tap to dismiss. -->
+<div id="notif-banner" onclick="dismissNotifBanner()" style="display:none;position:fixed;top:0;left:0;right:0;z-index:2000;padding:14px 18px;padding-top:calc(14px + env(safe-area-inset-top,0px));color:#fff;font-weight:700;font-size:14px;box-shadow:0 4px 20px rgba(0,0,0,.25);cursor:pointer;transform:translateY(-120%);transition:transform .35s cubic-bezier(.2,.8,.2,1);display:flex;align-items:center;gap:10px">
+  <span id="notif-ico" style="font-size:20px">🔔</span>
+  <span id="notif-msg" style="flex:1;line-height:1.35"></span>
+  <span style="font-size:12px;opacity:.8">✕</span>
+</div>
+
 <script>
 const B=window.location.origin;
 let token=localStorage.getItem('sa_token')||'',user='',userBranch='',userRole='';
@@ -1866,8 +1874,45 @@ async function submitReassign(){
     if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Failed')+'</div>';return}
     toast('Request sent to admin',false);
     document.getElementById('ra-start').value='';document.getElementById('ra-end').value='';document.getElementById('ra-reason').value='';
-    loadMyReassignRequests();
+    closeReassign();
   }catch(e){er.innerHTML='<div class="eb">Could not connect</div>'}finally{btn.disabled=false}
+}
+// ── Notification banner + sound ──
+var _notifTimer=null,_audioCtx=null;
+function playNotifSound(){
+  try{
+    _audioCtx=_audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+    var ctx=_audioCtx;if(ctx.state==='suspended')ctx.resume();
+    // Two short rising tones — a friendly "ding-dong".
+    [[880,0],[1175,0.16]].forEach(function(p){
+      var o=ctx.createOscillator(),g=ctx.createGain();
+      o.type='sine';o.frequency.value=p[0];
+      var t=ctx.currentTime+p[1];
+      g.gain.setValueAtTime(0.0001,t);
+      g.gain.exponentialRampToValueAtTime(0.25,t+0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+0.35);
+      o.connect(g);g.connect(ctx.destination);o.start(t);o.stop(t+0.4);
+    });
+  }catch(e){}
+  try{if(navigator.vibrate)navigator.vibrate([80,40,80])}catch(e){}
+}
+function showNotifBanner(msg,type){
+  var b=document.getElementById('notif-banner');if(!b)return;
+  b.style.background=type==='error'?'linear-gradient(135deg,#dc2626,#991b1b)':'linear-gradient(135deg,#0d7c5f,#0a5f48)';
+  document.getElementById('notif-ico').textContent=type==='error'?'⚠️':'✅';
+  document.getElementById('notif-msg').textContent=msg;
+  b.style.display='flex';
+  // force reflow so the transform transition runs
+  void b.offsetWidth;
+  b.style.transform='translateY(0)';
+  playNotifSound();
+  clearTimeout(_notifTimer);_notifTimer=setTimeout(dismissNotifBanner,8000);
+}
+function dismissNotifBanner(){
+  var b=document.getElementById('notif-banner');if(!b)return;
+  b.style.transform='translateY(-120%)';
+  clearTimeout(_notifTimer);
+  setTimeout(function(){b.style.display='none'},350);
 }
 function raStatusChip(s){
   if(s==='approved')return '<span style="background:#dcfce7;color:#166534;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px">APPROVED ✓</span>';
@@ -1912,7 +1957,12 @@ async function pollReassignDecisions(){
     if(n>0&&!document.getElementById('reassign-modal').classList.contains('show')){
       var decided=(d.requests||[]).filter(function(q){return q.status!=='pending'&&!q.seen_at});
       var q=decided[0];
-      if(q)toast('Reassign '+q.from_branch+'→'+q.to_branch+' '+(q.status==='approved'?'approved ✓':'denied ✗'),q.status!=='approved');
+      if(q){
+        var appr=q.status==='approved';
+        var msg='Reassign '+q.from_branch+'→'+q.to_branch+' (lots '+q.start_lot+'–'+q.end_lot+') '+(appr?'APPROVED':'DENIED')
+               +(q.decision_note?' — '+q.decision_note:'');
+        showNotifBanner(msg,appr?'ok':'error');
+      }
     }
   }catch(e){}
 }

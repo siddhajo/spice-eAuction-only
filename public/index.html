@@ -2623,6 +2623,13 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
     <div class="content">
     <div class="toast" id="toast"></div>
+    <!-- Reassign-request notification banner (new operator requests) —
+         slides in top-right with a sound; click to jump to the queue. -->
+    <div id="rr-notif" onclick="rrNotifClick()" style="display:none;position:fixed;top:16px;right:16px;z-index:4000;max-width:340px;background:linear-gradient(135deg,#E67E22,#c0392b);color:#fff;padding:14px 16px;border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.28);cursor:pointer;font-size:13.5px;font-weight:600;line-height:1.4;transform:translateX(120%);transition:transform .35s cubic-bezier(.2,.8,.2,1);display:flex;gap:10px;align-items:flex-start">
+      <span style="font-size:20px">🔔</span>
+      <span id="rr-notif-msg" style="flex:1"></span>
+      <span onclick="event.stopPropagation();dismissRrNotif()" style="font-size:12px;opacity:.85;padding:2px 4px">✕</span>
+    </div>
     <!-- Grade-2 booking alerts: fixed stack of dismissible banners, fed by
          the pollGrade2Alerts() poll. Empty until an alert fires. -->
     <div id="g2-alert-stack" style="position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;width:min(680px,94vw);display:flex;flex-direction:column;gap:8px;pointer-events:none"></div>
@@ -7985,16 +7992,61 @@ function updateReassignReqsBadge(n){
 }
 // Keep the sidebar badge live regardless of the current tab. Only polls
 // for users who can act on requests (auction-write) — checked each tick
-// so it activates as soon as permissions are applied post-login.
-var _rrBadgeTimer=null;
+// so it activates as soon as permissions are applied post-login. New
+// pending requests (ids not seen before) raise a banner + sound.
+var _rrBadgeTimer=null,_rrSeenIds=null,_rrAudioCtx=null;
+function playRrNotifSound(){
+  try{
+    _rrAudioCtx=_rrAudioCtx||new (window.AudioContext||window.webkitAudioContext)();
+    var ctx=_rrAudioCtx;if(ctx.state==='suspended')ctx.resume();
+    [[880,0],[1175,0.16]].forEach(function(p){
+      var o=ctx.createOscillator(),g=ctx.createGain();
+      o.type='sine';o.frequency.value=p[0];
+      var t=ctx.currentTime+p[1];
+      g.gain.setValueAtTime(0.0001,t);
+      g.gain.exponentialRampToValueAtTime(0.28,t+0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+0.35);
+      o.connect(g);g.connect(ctx.destination);o.start(t);o.stop(t+0.4);
+    });
+  }catch(e){}
+}
+var _rrNotifTimer=null;
+function showRrNotif(msg){
+  const b=document.getElementById('rr-notif');if(!b)return;
+  document.getElementById('rr-notif-msg').textContent=msg;
+  b.style.display='flex';void b.offsetWidth;b.style.transform='translateX(0)';
+  playRrNotifSound();
+  clearTimeout(_rrNotifTimer);_rrNotifTimer=setTimeout(dismissRrNotif,10000);
+}
+function dismissRrNotif(){const b=document.getElementById('rr-notif');if(!b)return;b.style.transform='translateX(120%)';clearTimeout(_rrNotifTimer);setTimeout(function(){b.style.display='none'},350)}
+function rrNotifClick(){dismissRrNotif();go('reassignreqs')}
 async function pollReassignReqBadge(){
   if(document.body.getAttribute('data-perm-auction-write')!=='1')return;
-  try{const d=await j('/api/reassign-requests?status=pending');updateReassignReqsBadge(d.pending_count||0);}catch(e){}
+  try{
+    const d=await j('/api/reassign-requests?status=pending');
+    updateReassignReqsBadge(d.pending_count||0);
+    const rows=d.requests||[];
+    const ids=rows.map(function(r){return r.id});
+    if(_rrSeenIds===null){
+      // First poll after login — seed silently, don't alert on backlog.
+      _rrSeenIds=new Set(ids);
+    }else{
+      const fresh=rows.filter(function(r){return !_rrSeenIds.has(r.id)});
+      fresh.forEach(function(r){_rrSeenIds.add(r.id)});
+      if(fresh.length){
+        const r=fresh[0];
+        const extra=fresh.length>1?(' (+'+(fresh.length-1)+' more)'):'';
+        showRrNotif('New reassign request from '+(r.requester_username||'operator')+': '+r.from_branch+'→'+r.to_branch+' lots '+r.start_lot+'–'+r.end_lot+extra);
+        // If the queue is open, refresh it live.
+        if(window._currentTab==='reassignreqs')loadReassignRequests();
+      }
+    }
+  }catch(e){}
 }
 function startReassignReqBadgePoll(){
   if(_rrBadgeTimer)return;
   pollReassignReqBadge();
-  _rrBadgeTimer=setInterval(pollReassignReqBadge,60000);
+  _rrBadgeTimer=setInterval(pollReassignReqBadge,30000);
 }
 
 // Click on a side-group label toggles its "section-collapsed" class —

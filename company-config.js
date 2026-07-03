@@ -310,6 +310,16 @@ const DEFAULTS = [
   { key: 'grade2_superior_whatsapp',   value: '',      category: 'alerts', label: 'Immediate Superior — WhatsApp (with country code)', type: 'text' },
   { key: 'grade2_superior_email',      value: '',      category: 'alerts', label: 'Immediate Superior — Email',            type: 'text' },
 
+  // ── LOT-REASSIGN REQUEST ALERTS (mobile operator → admin) ──
+  // When an operator requests a lot-range reassignment, a WhatsApp
+  // template with Approve/Deny quick-reply buttons is sent to each
+  // number below (comma-separated, with country code). Tapping a button
+  // fires the Meta webhook, which approves/denies the request. Only
+  // messages FROM one of these numbers are honoured.
+  { key: 'reassign_alert_whatsapp',    value: '',      category: 'alerts', label: 'Reassign Requests — Admin WhatsApp number(s), comma-separated (with country code)', type: 'text' },
+  { key: 'reassign_alert_tpl',         value: 'lot_reassign_approval', category: 'alerts', label: 'Reassign Requests — WhatsApp template name', type: 'text' },
+  { key: 'reassign_alert_tpl_lang',    value: 'en',    category: 'alerts', label: 'Reassign Requests — WhatsApp template language code', type: 'text' },
+
   // ── SPICE BOARD REPORTS ────────────────────────────────────
   // Newline-separated list of Form-D "Place of auction" options. The
   // operator picks one from a dropdown when generating Form-D in the

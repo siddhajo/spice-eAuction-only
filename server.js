@@ -370,6 +370,10 @@ mountMobile(app, {
   requireAuth,
   hash,
   ROLE_PERMISSIONS,
+  // Fire-and-forget WhatsApp notification when an operator raises a
+  // lot-reassign request. Defined later in the file (hoisted); safe to
+  // reference here. Never throws into the mobile handler.
+  onReassignRequest: (row) => { try { sendReassignRequestWhatsApp(getDb(), row); } catch (_) {} },
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -1750,7 +1754,7 @@ async function _waUploadMedia(cfg, buffer, filename) {
 }
 // Send an approved template. Includes the document header component only when
 // a media id is supplied; the body component carries positional params.
-async function _waSendTemplate(cfg, { phone, template, lang, bodyParams = [], documentMediaId = null, filename = 'document.pdf' }) {
+async function _waSendTemplate(cfg, { phone, template, lang, bodyParams = [], documentMediaId = null, filename = 'document.pdf', buttons = [] }) {
   const components = [];
   if (documentMediaId) {
     components.push({ type: 'header', parameters: [{ type: 'document', document: { id: documentMediaId, filename } }] });
@@ -1764,6 +1768,16 @@ async function _waSendTemplate(cfg, { phone, template, lang, bodyParams = [], do
       .replace(/ {2,}/g, ' ')
       .trim();
     components.push({ type: 'body', parameters: bodyParams.map((t) => ({ type: 'text', text: clean(t) })) });
+  }
+  // Per-message quick-reply button payloads. The template defines the
+  // button LABELS ("Approve"/"Deny"); we bind a dynamic payload to each
+  // index here (e.g. "approve:42") so the webhook knows which request +
+  // action a tap refers to without any extra correlation lookup.
+  for (const b of buttons) {
+    components.push({
+      type: 'button', sub_type: 'quick_reply', index: String(b.index),
+      parameters: [{ type: 'payload', payload: String(b.payload) }],
+    });
   }
   const tpl = { name: template, language: { code: lang || 'en' } };
   if (components.length) tpl.components = components;
@@ -1805,6 +1819,87 @@ async function _waSendText(db, rawPhone, message, ref = {}) {
   } catch (e) {
     _waLog(db, { phone, msg_type: 'text', status: 'failed', error: e.message });
     return { ok: false, error: e.message };
+  }
+}
+
+// ── LOT-REASSIGN REQUEST — WhatsApp notify + button-tap decisions ──
+// Comma-separated admin numbers configured in Settings → Alerts. These
+// are BOTH the recipients of the request template AND the allowlist of
+// senders whose Approve/Deny button taps we honour.
+function _reassignAdminPhones(db) {
+  const raw = getSetting(db, 'reassign_alert_whatsapp') || '';
+  return String(raw).split(',').map((s) => _waNormalizePhone(s)).filter(Boolean);
+}
+// Fire a template with Approve/Deny quick-reply buttons to every admin
+// number. Best-effort: never throws into the request handler.
+async function sendReassignRequestWhatsApp(db, reqRow) {
+  try {
+    const cfg = _waConfig(db);
+    if (!cfg.configured) return;
+    const phones = _reassignAdminPhones(db);
+    if (!phones.length) return;
+    const template = getSetting(db, 'reassign_alert_tpl') || 'lot_reassign_approval';
+    const lang = getSetting(db, 'reassign_alert_tpl_lang') || 'en';
+    // Body variable order MUST match the approved template:
+    //   {{1}} operator  {{2}} branch move  {{3}} lot range  {{4}} reason
+    const bodyParams = [
+      reqRow.requester_username || 'operator',
+      `${reqRow.from_branch} → ${reqRow.to_branch}`,
+      `${reqRow.start_lot}-${reqRow.end_lot}`,
+      reqRow.reason ? reqRow.reason : '(no reason given)',
+    ];
+    const buttons = [
+      { index: 0, payload: `approve:${reqRow.id}` },
+      { index: 1, payload: `deny:${reqRow.id}` },
+    ];
+    for (const phone of phones) {
+      try {
+        const wamid = await _waSendTemplate(cfg, { phone, template, lang, bodyParams, buttons });
+        _waLog(db, { wamid, phone, msg_type: 'template-reassign', caption: bodyParams.join(' | ').slice(0, 80),
+          status: 'sent', ref_type: 'lot_reassign_request', ref_id: String(reqRow.id) });
+      } catch (e) {
+        _waLog(db, { phone, msg_type: 'template-reassign', status: 'failed', error: e.message,
+          ref_type: 'lot_reassign_request', ref_id: String(reqRow.id) });
+      }
+    }
+  } catch (_) { /* best-effort notification */ }
+}
+// Apply an Approve/Deny decision that arrived via a WhatsApp button tap.
+// Verifies the sender is an allow-listed admin, then mirrors the in-app
+// approve/deny flow (same applyLotReassignment path) and replies with the
+// outcome. Returns nothing; all feedback goes back over WhatsApp.
+async function handleReassignWhatsAppDecision(db, action, requestId, fromPhone) {
+  const from = _waNormalizePhone(fromPhone);
+  const allowed = _reassignAdminPhones(db);
+  if (!allowed.includes(from)) return; // not an authorised approver — ignore
+  const reply = (msg) => { _waSendText(db, from, msg, { ref_type: 'lot_reassign_request', ref_id: String(requestId) }); };
+
+  const reqRow = db.get('SELECT * FROM lot_reassign_requests WHERE id = ?', [requestId]);
+  if (!reqRow) return reply(`Reassign request #${requestId} not found.`);
+  if (reqRow.status !== 'pending') {
+    return reply(`Request #${requestId} was already ${reqRow.status}. No change made.`);
+  }
+
+  if (action === 'approve') {
+    const result = applyLotReassignment(db, reqRow.auction_id, {
+      from_branch: reqRow.from_branch, to_branch: reqRow.to_branch,
+      start_lot: reqRow.start_lot, end_lot: reqRow.end_lot,
+    }, { id: null, username: 'WhatsApp' });
+    if (!result.ok) {
+      return reply(`Could not approve #${requestId}: ${result.error} — please review in the app.`);
+    }
+    db.run(`UPDATE lot_reassign_requests
+              SET status='approved', decided_by_username='WhatsApp', decision_note='Approved via WhatsApp',
+                  decided_at=datetime('now','localtime'), seen_at=NULL
+            WHERE id=?`, [requestId]);
+    return reply(`✅ Approved. Lots ${reqRow.start_lot}-${reqRow.end_lot} moved ${reqRow.from_branch} → ${reqRow.to_branch}. The operator has been notified.`);
+  }
+  if (action === 'deny') {
+    db.run(`UPDATE lot_reassign_requests
+              SET status='denied', decided_by_username='WhatsApp', decision_note='Denied via WhatsApp',
+                  decided_at=datetime('now','localtime'), seen_at=NULL
+            WHERE id=?`, [requestId]);
+    return reply(`❌ Denied request #${requestId} (${reqRow.from_branch} → ${reqRow.to_branch}, lots ${reqRow.start_lot}-${reqRow.end_lot}). The operator has been notified.`);
   }
 }
 
@@ -2056,7 +2151,18 @@ app.post('/api/whatsapp/webhook', (req, res) => {
           }
         }
         for (const m of (v.messages || [])) {
-          const body = (m.text && m.text.body) || m.type || '';
+          // Quick-reply button tap on a template → m.type === 'button' with
+          // m.button.payload = "approve:<id>" / "deny:<id>". (Interactive
+          // reply buttons arrive as m.interactive.button_reply.id instead —
+          // handle both shapes so either template style works.)
+          let payload = '';
+          if (m.type === 'button' && m.button && m.button.payload) payload = String(m.button.payload);
+          else if (m.interactive && m.interactive.button_reply && m.interactive.button_reply.id) payload = String(m.interactive.button_reply.id);
+          const dec = payload.match(/^(approve|deny):(\d+)$/i);
+          if (dec) {
+            try { handleReassignWhatsAppDecision(db, dec[1].toLowerCase(), parseInt(dec[2], 10), m.from || ''); } catch (_) {}
+          }
+          const body = (m.text && m.text.body) || (m.button && m.button.text) || m.type || '';
           try { db.run('INSERT INTO whatsapp_inbound (wamid, phone, body) VALUES (?,?,?)', [m.id || '', m.from || '', String(body)]); } catch (_) {}
         }
       }

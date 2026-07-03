@@ -413,7 +413,7 @@ const LOT_SELECT_SQL = `
 `;
 
 function mountMobile(app, deps) {
-  const { getDb, requireAuth, hash, ROLE_PERMISSIONS } = deps;
+  const { getDb, requireAuth, hash, ROLE_PERMISSIONS, onReassignRequest } = deps;
 
   // ── 0. LAZY SELF-HEAL SCHEMA ──────────────────────────────────────
   // The bridge owns these tables/columns — declare them here so the
@@ -870,6 +870,8 @@ function mountMobile(app, deps) {
        (req.user && req.user.id) || null, (req.user && req.user.username) || '']
     );
     const row = db.get('SELECT * FROM lot_reassign_requests WHERE id = last_insert_rowid()');
+    // Notify admins over WhatsApp (best-effort; no-op if not configured).
+    if (typeof onReassignRequest === 'function') { try { onReassignRequest(row); } catch (_) {} }
     res.json({ success: true, request: row });
   });
 
