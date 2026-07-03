@@ -12615,7 +12615,7 @@ let _allocEditAuctionId = null;
 //   _raAllocStats: array of { branch, ranges:[{ lots:[{ lot, state, seller, branch, booked }] }] }
 //   _raSelected:   Set of lot_no currently selected for reassignment
 let _raAllocStats = [];
-const _raSelected = new Set();
+let _raSelected = new Set();   // reassigned wholesale during drag-select, so `let` not `const`
 
 // Edit Allocations — chip-based "mark for delete" state. Keys are
 // `${branch}|${lot}` so the same lot number in two different branches
