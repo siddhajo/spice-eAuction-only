@@ -583,6 +583,35 @@ async function initDb() {
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
+  // Mobile-operator requests to reassign a lot-number range between
+  // branches. The operator raises a request from the field; an admin
+  // approves (which performs the real reassignment via the same code
+  // path as a direct admin reassign) or denies with a note. Status
+  // flows pending -> approved | denied. seen_at is stamped once the
+  // operator has viewed the decision (clears the in-app badge).
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS lot_reassign_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    auction_id INTEGER NOT NULL,
+    from_branch TEXT NOT NULL,
+    to_branch TEXT NOT NULL,
+    start_lot TEXT NOT NULL,
+    end_lot TEXT NOT NULL,
+    reason TEXT DEFAULT '',
+    requester_user_id INTEGER,
+    requester_username TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    decided_by_user_id INTEGER,
+    decided_by_username TEXT DEFAULT '',
+    decision_note TEXT DEFAULT '',
+    decided_at TEXT DEFAULT NULL,
+    seen_at TEXT DEFAULT NULL,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  )`);
+  wrapped.exec(`CREATE INDEX IF NOT EXISTS idx_lot_reassign_requests_auction_status
+    ON lot_reassign_requests(auction_id, status)`);
+  wrapped.exec(`CREATE INDEX IF NOT EXISTS idx_lot_reassign_requests_requester
+    ON lot_reassign_requests(requester_user_id, status)`);
+
   // Forensic record of every "Delete All" wipe. Captures the operator,
   // the affected resource, how many rows actually went away, where the
   // pre-wipe backup landed, and the client IP — so a misclick can be

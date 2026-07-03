@@ -2515,6 +2515,10 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
           Auctions
         </button>
+        <button class="side-item needs-auction-write" data-tab="reassignreqs" onclick="go('reassignreqs')">
+          <svg viewBox="0 0 24 24"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          Reassign Requests<span id="reassignreqs-badge" style="display:none;margin-left:6px;background:#c0392b;color:#fff;font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px">0</span>
+        </button>
         <button class="side-item" data-tab="lots" onclick="go('lots')">
           <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.96 12 12.01l8.73-5.05M12 22.08V12"/></svg>
           Lots
@@ -3225,6 +3229,21 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <div id="auction-import-status" style="display:none;padding:8px 14px;border-radius:6px;font-size:12px;margin-bottom:10px"></div>
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Auction No</th><th>Date</th><th>Type</th><th>Lots</th><th>Actions</th></tr></thead><tbody id="auctions-list"></tbody></table></div>
         <div id="auctions-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
+      </div>
+    </div>
+
+    <!-- REASSIGN REQUESTS (from mobile operators) -->
+    <div class="tc" id="tc-reassignreqs">
+      <div class="card">
+        <h2 style="display:flex;align-items:center;gap:10px">Lot Reassignment Requests
+          <button class="btn btn-o" style="margin-left:auto" onclick="loadReassignRequests()">🔄 Refresh</button>
+        </h2>
+        <p style="font-size:12.5px;color:var(--text2);margin:0 0 12px">Mobile operators request lot-number ranges to be moved between branches. Approving performs the reassignment immediately (same as a manual reassign) and re-checks that no lot in the range is already booked. The operator is notified in their app.</p>
+        <div style="display:flex;gap:6px;margin-bottom:12px">
+          <button id="rr-filter-pending" type="button" class="btn btn-g" onclick="setReassignFilter('pending')">Pending</button>
+          <button id="rr-filter-all" type="button" class="btn btn-o" onclick="setReassignFilter('all')">All</button>
+        </div>
+        <div style="overflow-x:auto"><table><thead><tr><th>Requested</th><th>Operator</th><th>Auction</th><th>Move</th><th>Range</th><th>Reason</th><th>Status</th><th style="width:180px">Action</th></tr></thead><tbody id="reassignreqs-list"></tbody></table></div>
       </div>
     </div>
 
@@ -6870,6 +6889,7 @@ function applyPermissionAttributes(){
     if (typeof syncBillMaster         === 'function') syncBillMaster();
     if (typeof updateDnBulkButtons    === 'function') updateDnBulkButtons();
     if (typeof updatePaymentBulkButtons === 'function') updatePaymentBulkButtons();
+    if (typeof startReassignReqBadgePoll === 'function') startReassignReqBadgePoll();
   } catch (_) {}
 }
 
@@ -7874,7 +7894,7 @@ function go(tab){
     try { applyLogoBadge(); } catch(_) {}
   }
   const loaders={dash:loadStats,insights:loadInsights,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>searchTraders(''),buyers:()=>searchBuyers(''),
-    auctions:loadAuctions,lots:loadLotAuctions,invoices:loadInvAuctions,purchases:loadPurAuctions,
+    auctions:loadAuctions,reassignreqs:loadReassignRequests,lots:loadLotAuctions,invoices:loadInvAuctions,purchases:loadPurAuctions,
     payments:loadPayAuctions,exports:loadExpAuctions,tds:()=>{},lorry:loadLorryAuctions,
     bills:loadBillAuctions,debit:loadDnAuctions,debitplanter:loadDnpAuctions,journals:loadJournalDefault,registers:loadRegisterDefault,tally:loadTallyAuctions,
     spicesboard:loadSpiceBoard,pricecheck:loadPriceCheckAuctions};
@@ -7896,6 +7916,87 @@ function go(tab){
   // Auto-close sidebar on mobile after selection
   if(window.innerWidth<=900){const sb=document.getElementById('sidebar');const ov=document.getElementById('sb-overlay');if(sb)sb.classList.remove('open');if(ov)ov.classList.remove('open')}
 }
+// ── LOT REASSIGNMENT REQUESTS (admin review of operator requests) ──
+var _rrFilter='pending';
+function rrEsc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function setReassignFilter(f){
+  _rrFilter=f;
+  document.getElementById('rr-filter-pending').className='btn '+(f==='pending'?'btn-g':'btn-o');
+  document.getElementById('rr-filter-all').className='btn '+(f==='all'?'btn-g':'btn-o');
+  loadReassignRequests();
+}
+function rrStatusBadge(s){
+  if(s==='approved')return '<span style="background:#dcfce7;color:#166534;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px">Approved</span>';
+  if(s==='denied')return '<span style="background:#fee2e2;color:#991b1b;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px">Denied</span>';
+  return '<span style="background:#fef9c3;color:#854d0e;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px">Pending</span>';
+}
+async function loadReassignRequests(){
+  const body=document.getElementById('reassignreqs-list');
+  if(body)body.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:16px">Loading…</td></tr>';
+  try{
+    const d=await j('/api/reassign-requests?status='+_rrFilter);
+    const rows=d.requests||[];
+    updateReassignReqsBadge(d.pending_count||0);
+    if(!body)return;
+    if(!rows.length){body.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:16px">No '+(_rrFilter==='pending'?'pending ':'')+'requests.</td></tr>';return}
+    body.innerHTML=rows.map(function(r){
+      const when=rrEsc((r.created_at||'').replace('T',' ').slice(0,16));
+      const auc=r.auction_no?('#'+rrEsc(r.auction_no)):('id '+r.auction_id);
+      const decided=r.decided_at?('<div style="font-size:11px;color:var(--text3);margin-top:2px">by '+rrEsc(r.decided_by_username||'—')+(r.decision_note?(' · '+rrEsc(r.decision_note)):'')+'</div>'):'';
+      let action;
+      if(r.status==='pending'){
+        action='<button class="btn btn-g" style="padding:4px 10px;font-size:12px" onclick="approveReassign('+r.id+')">Approve</button> '
+              +'<button class="btn" style="padding:4px 10px;font-size:12px;background:#c0392b;color:#fff" onclick="denyReassign('+r.id+')">Deny</button>';
+      }else{action='<span style="color:var(--text3);font-size:12px">'+(r.decided_at?rrEsc(r.decided_at.replace('T',' ').slice(0,16)):'—')+'</span>';}
+      return '<tr><td>'+when+'</td><td>'+rrEsc(r.requester_username||'—')+'</td><td>'+auc+'</td>'
+        +'<td><strong>'+rrEsc(r.from_branch)+'</strong> → <strong>'+rrEsc(r.to_branch)+'</strong></td>'
+        +'<td>'+rrEsc(r.start_lot)+'–'+rrEsc(r.end_lot)+'</td>'
+        +'<td style="max-width:180px">'+rrEsc(r.reason||'')+'</td>'
+        +'<td>'+rrStatusBadge(r.status)+decided+'</td>'
+        +'<td>'+action+'</td></tr>';
+    }).join('');
+  }catch(e){if(body)body.innerHTML='<tr><td colspan="8" style="text-align:center;color:#c0392b;padding:16px">'+rrEsc(e.message||'Failed to load')+'</td></tr>'}
+}
+async function approveReassign(id){
+  const note=prompt('Approve this reassignment? Optional note for the operator:','');
+  if(note===null)return;
+  try{
+    await j('/api/reassign-requests/'+id+'/approve',{method:'POST',body:JSON.stringify({note:note})});
+    toast('Request approved — lots reassigned');
+    loadReassignRequests();
+    if(typeof loadAuctions==='function'&&window._currentTab==='auctions')loadAuctions();
+  }catch(e){
+    // Stale range (e.g. a lot got booked after the request) — surface why.
+    toast(e.message||'Approve failed');
+  }
+}
+async function denyReassign(id){
+  const note=prompt('Deny this request? Optional reason for the operator:','');
+  if(note===null)return;
+  try{
+    await j('/api/reassign-requests/'+id+'/deny',{method:'POST',body:JSON.stringify({note:note})});
+    toast('Request denied');
+    loadReassignRequests();
+  }catch(e){toast(e.message||'Deny failed')}
+}
+function updateReassignReqsBadge(n){
+  const b=document.getElementById('reassignreqs-badge');
+  if(b){if(n>0){b.textContent=n;b.style.display='inline-block'}else{b.style.display='none'}}
+}
+// Keep the sidebar badge live regardless of the current tab. Only polls
+// for users who can act on requests (auction-write) — checked each tick
+// so it activates as soon as permissions are applied post-login.
+var _rrBadgeTimer=null;
+async function pollReassignReqBadge(){
+  if(document.body.getAttribute('data-perm-auction-write')!=='1')return;
+  try{const d=await j('/api/reassign-requests?status=pending');updateReassignReqsBadge(d.pending_count||0);}catch(e){}
+}
+function startReassignReqBadgePoll(){
+  if(_rrBadgeTimer)return;
+  pollReassignReqBadge();
+  _rrBadgeTimer=setInterval(pollReassignReqBadge,60000);
+}
+
 // Click on a side-group label toggles its "section-collapsed" class —
 // hides the items beneath, leaves the label as a clickable header. State
 // persists per group label text, so reloads remember which sections the

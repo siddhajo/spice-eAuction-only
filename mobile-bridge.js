@@ -821,6 +821,90 @@ function mountMobile(app, deps) {
     });
   });
 
+  // ── 7b. LOT-REASSIGN REQUESTS (mobile operator → admin) ─────────
+  // A field operator raises a request to move a lot-number range between
+  // branches (e.g. they've run out of lots allocated to their branch).
+  // The request lands in a pending queue; an admin approves (which runs
+  // the real reassignment) or denies. These three routes are the operator
+  // side: raise a request, list my requests (also the polling signal for
+  // decisions), and mark a decision as seen (clears the in-app badge).
+  //
+  // Validation here is deliberately light — presence + no duplicate open
+  // request. The authoritative range validation (range belongs to the
+  // from-branch, no lots already saved) runs again at approval time in
+  // server.js, so a request that goes stale is cleanly denied rather than
+  // corrupting allocations.
+  app.post('/api/mobile/reassign-requests', requireAuth, (req, res) => {
+    const db = getDb();
+    const b = req.body || {};
+    const auction_id = parseInt(b.auction_id, 10);
+    const from_branch = String(b.from_branch || '').trim();
+    const to_branch   = String(b.to_branch || '').trim();
+    const start_lot   = String(b.start_lot || '').trim();
+    const end_lot     = String(b.end_lot || '').trim();
+    const reason      = String(b.reason || '').trim();
+
+    if (!auction_id || !from_branch || !to_branch || !start_lot || !end_lot) {
+      return res.status(400).json({ error: 'auction_id, from_branch, to_branch, start_lot and end_lot are all required' });
+    }
+    if (from_branch === to_branch) {
+      return res.status(400).json({ error: 'FROM and TO branch must be different' });
+    }
+
+    // Reject an identical range already awaiting a decision (avoids the
+    // admin seeing duplicate rows if the operator double-taps).
+    const dup = db.get(
+      `SELECT id FROM lot_reassign_requests
+        WHERE auction_id = ? AND status = 'pending'
+          AND from_branch = ? AND to_branch = ? AND start_lot = ? AND end_lot = ?`,
+      [auction_id, from_branch, to_branch, start_lot, end_lot]
+    );
+    if (dup) return res.status(409).json({ error: 'A matching request is already pending admin review' });
+
+    db.run(
+      `INSERT INTO lot_reassign_requests
+         (auction_id, from_branch, to_branch, start_lot, end_lot, reason,
+          requester_user_id, requester_username, status)
+       VALUES (?,?,?,?,?,?,?,?,'pending')`,
+      [auction_id, from_branch, to_branch, start_lot, end_lot, reason,
+       (req.user && req.user.id) || null, (req.user && req.user.username) || '']
+    );
+    const row = db.get('SELECT * FROM lot_reassign_requests WHERE id = last_insert_rowid()');
+    res.json({ success: true, request: row });
+  });
+
+  // List the current operator's own requests for an auction. Used both to
+  // render the "My requests" list and as the polling signal: any row with
+  // status != 'pending' and seen_at IS NULL is a decision the operator
+  // hasn't acknowledged yet.
+  app.get('/api/mobile/reassign-requests', requireAuth, (req, res) => {
+    const db = getDb();
+    const auction_id = parseInt(req.query.auction_id, 10);
+    const uid = (req.user && req.user.id) || null;
+    const params = [uid];
+    let where = 'requester_user_id = ?';
+    if (auction_id) { where += ' AND auction_id = ?'; params.push(auction_id); }
+    const rows = db.all(
+      `SELECT * FROM lot_reassign_requests WHERE ${where} ORDER BY created_at DESC, id DESC`,
+      params
+    );
+    const unseen = rows.filter(r => r.status !== 'pending' && !r.seen_at).length;
+    res.json({ requests: rows, unseen_decisions: unseen });
+  });
+
+  // Mark a decided request as seen (clears the badge). Scoped to the
+  // requesting operator so one operator can't clear another's badge.
+  app.post('/api/mobile/reassign-requests/:id/seen', requireAuth, (req, res) => {
+    const db = getDb();
+    const id = parseInt(req.params.id, 10);
+    const uid = (req.user && req.user.id) || null;
+    const row = db.get('SELECT * FROM lot_reassign_requests WHERE id = ?', [id]);
+    if (!row) return res.status(404).json({ error: 'Request not found' });
+    if (row.requester_user_id !== uid) return res.status(403).json({ error: 'Not your request' });
+    db.run(`UPDATE lot_reassign_requests SET seen_at = datetime('now','localtime') WHERE id = ?`, [id]);
+    res.json({ success: true });
+  });
+
   // ── 8. TRADER QUICK-CREATE (PWA POST /api/traders) ─────────────
   // Single unified seller-create path used by BOTH apps. Mobile PWA hits
   // /api/traders directly; desktop's "Add Seller" buttons also reach here

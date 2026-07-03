@@ -3952,33 +3952,35 @@ app.get('/api/auctions/:id(\\d+)/arrivals-export', requireExport, async (req, re
   res.send(Buffer.from(buf));
 });
 
-// Reassign an unused range from one branch to another
-// Splits the source allocations around the reassigned range, then
-// inserts a single allocation covering the same range under the
-// destination branch. Refuses to act if any lot in the range is already
-// saved (lots can only be reassigned by deleting + re-entering).
-app.post('/api/auctions/:id/reassign-lots', requireAuctionWrite, (req, res) => {
-  const db = getDb();
-  const auctionId = parseInt(req.params.id, 10);
-  const { from_branch, to_branch, start_lot, end_lot } = req.body;
+// Core lot-range reassignment. Validates the range, splits the source
+// branch's allocations around it, and inserts a single allocation for the
+// range under the destination branch. Refuses to act if any lot in the
+// range is already saved. Returns { ok: true } on success or
+// { ok: false, error } on any validation failure — the caller decides how
+// to surface it (HTTP 400 for direct reassign, or a denial reason when an
+// operator's reassign request is approved). `actor` is {id, username} for
+// the reassign_log audit row.
+function applyLotReassignment(db, auctionId, fields, actor) {
+  const { from_branch, to_branch, start_lot, end_lot } = fields || {};
+  actor = actor || {};
 
   if (!from_branch || !to_branch || !start_lot || !end_lot) {
-    return res.status(400).json({ error: 'All fields required: from_branch, to_branch, start_lot, end_lot' });
+    return { ok: false, error: 'All fields required: from_branch, to_branch, start_lot, end_lot' };
   }
-  if (from_branch === to_branch) return res.status(400).json({ error: 'FROM and TO branch must be different' });
+  if (from_branch === to_branch) return { ok: false, error: 'FROM and TO branch must be different' };
 
   const s = parseLotNo(start_lot);
   const e = parseLotNo(end_lot);
-  if (!s || !e) return res.status(400).json({ error: 'Invalid lot number format' });
-  if (s.prefix !== e.prefix) return res.status(400).json({ error: 'Start and end must have same prefix' });
-  if (s.num > e.num) return res.status(400).json({ error: 'Start must be <= End' });
+  if (!s || !e) return { ok: false, error: 'Invalid lot number format' };
+  if (s.prefix !== e.prefix) return { ok: false, error: 'Start and end must have same prefix' };
+  if (s.num > e.num) return { ok: false, error: 'Start must be <= End' };
 
   // Every lot in the range must currently belong to from_branch
   const fromAllocs = db.all('SELECT * FROM lot_allocations WHERE auction_id = ? AND branch = ?', [auctionId, from_branch]);
   for (let n = s.num; n <= e.num; n++) {
     const lotNo = buildLotNo(s.prefix, n, s.padLen);
     const inRange = fromAllocs.some(a => isLotInRange(lotNo, a.start_lot, a.end_lot));
-    if (!inRange) return res.status(400).json({ error: `Lot ${lotNo} is not allocated to ${from_branch}` });
+    if (!inRange) return { ok: false, error: `Lot ${lotNo} is not allocated to ${from_branch}` };
   }
 
   // None of the lots may already be saved
@@ -3990,9 +3992,10 @@ app.post('/api/auctions/:id/reassign-lots', requireAuctionWrite, (req, res) => {
     if (usedSet.has(lotNo)) usedInRange.push(lotNo);
   }
   if (usedInRange.length > 0) {
-    return res.status(400).json({
+    return {
+      ok: false,
       error: `Cannot reassign — ${usedInRange.length} lot(s) already used: ${usedInRange.slice(0, 5).join(', ')}${usedInRange.length > 5 ? '...' : ''}`
-    });
+    };
   }
 
   // Rebuild from_branch allocations excluding the reassigned range
@@ -4034,13 +4037,113 @@ app.post('/api/auctions/:id/reassign-lots', requireAuctionWrite, (req, res) => {
        VALUES (?,?,?,?,?,?,?)`,
       [auctionId, from_branch, to_branch,
        String(start_lot).trim(), String(end_lot).trim(),
-       (req.user && req.user.id) || null,
-       (req.user && req.user.username) || '']
+       actor.id || null, actor.username || '']
     );
   } catch (_) { /* best-effort */ }
 
   const allocs = db.all('SELECT * FROM lot_allocations WHERE auction_id = ? ORDER BY branch, start_lot', [auctionId]);
-  res.json({ success: true, allocations: allocs, message: `Lots ${start_lot}-${end_lot} reassigned from ${from_branch} to ${to_branch}` });
+  return { ok: true, allocations: allocs, message: `Lots ${start_lot}-${end_lot} reassigned from ${from_branch} to ${to_branch}` };
+}
+
+// Reassign an unused range from one branch to another
+// Splits the source allocations around the reassigned range, then
+// inserts a single allocation covering the same range under the
+// destination branch. Refuses to act if any lot in the range is already
+// saved (lots can only be reassigned by deleting + re-entering).
+app.post('/api/auctions/:id/reassign-lots', requireAuctionWrite, (req, res) => {
+  const db = getDb();
+  const auctionId = parseInt(req.params.id, 10);
+  const result = applyLotReassignment(db, auctionId, req.body, req.user || {});
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  res.json({ success: true, allocations: result.allocations, message: result.message });
+});
+
+// ── LOT-REASSIGN REQUESTS — admin side ────────────────────────────
+// Mobile operators raise range-reassignment requests (see mobile-bridge.js);
+// these routes let an admin review the queue and approve/deny. Approval
+// runs applyLotReassignment() — the exact same code path as a direct admin
+// reassign — so an approved request behaves identically to the admin doing
+// it by hand, and re-validates at decision time (a stale request is denied
+// with the reason rather than corrupting allocations).
+
+// Queue: pending by default; ?status=all|approved|denied for history.
+// Also returns pending_count for the nav badge.
+app.get('/api/reassign-requests', requireAuctionWrite, (req, res) => {
+  const db = getDb();
+  const status = String(req.query.status || 'pending');
+  const auctionId = parseInt(req.query.auction_id, 10);
+  const params = [];
+  let where = '1=1';
+  if (status !== 'all') { where += ' AND r.status = ?'; params.push(status); }
+  if (auctionId) { where += ' AND r.auction_id = ?'; params.push(auctionId); }
+  const rows = db.all(
+    `SELECT r.*, a.ano AS auction_no, a.date AS auction_date
+       FROM lot_reassign_requests r
+       LEFT JOIN auctions a ON a.id = r.auction_id
+      WHERE ${where}
+      ORDER BY (r.status = 'pending') DESC, r.created_at DESC, r.id DESC`,
+    params
+  );
+  const pending_count = db.get(
+    "SELECT COUNT(*) AS c FROM lot_reassign_requests WHERE status = 'pending'"
+  ).c;
+  res.json({ requests: rows, pending_count });
+});
+
+// Approve a pending request → perform the reassignment.
+app.post('/api/reassign-requests/:id/approve', requireAuctionWrite, (req, res) => {
+  const db = getDb();
+  const id = parseInt(req.params.id, 10);
+  const reqRow = db.get('SELECT * FROM lot_reassign_requests WHERE id = ?', [id]);
+  if (!reqRow) return res.status(404).json({ error: 'Request not found' });
+  if (reqRow.status !== 'pending') {
+    return res.status(409).json({ error: `Request already ${reqRow.status}` });
+  }
+
+  const result = applyLotReassignment(db, reqRow.auction_id, {
+    from_branch: reqRow.from_branch,
+    to_branch:   reqRow.to_branch,
+    start_lot:   reqRow.start_lot,
+    end_lot:     reqRow.end_lot,
+  }, req.user || {});
+
+  // Re-validation failed (range went stale) — surface the reason so the
+  // admin can deny it explicitly; leave the row pending.
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, stale: true });
+  }
+
+  const note = String((req.body && req.body.note) || '').trim();
+  db.run(
+    `UPDATE lot_reassign_requests
+        SET status = 'approved', decided_by_user_id = ?, decided_by_username = ?,
+            decision_note = ?, decided_at = datetime('now','localtime'), seen_at = NULL
+      WHERE id = ?`,
+    [(req.user && req.user.id) || null, (req.user && req.user.username) || '', note, id]
+  );
+  const row = db.get('SELECT * FROM lot_reassign_requests WHERE id = ?', [id]);
+  res.json({ success: true, request: row, allocations: result.allocations, message: result.message });
+});
+
+// Deny a pending request with an optional note.
+app.post('/api/reassign-requests/:id/deny', requireAuctionWrite, (req, res) => {
+  const db = getDb();
+  const id = parseInt(req.params.id, 10);
+  const reqRow = db.get('SELECT * FROM lot_reassign_requests WHERE id = ?', [id]);
+  if (!reqRow) return res.status(404).json({ error: 'Request not found' });
+  if (reqRow.status !== 'pending') {
+    return res.status(409).json({ error: `Request already ${reqRow.status}` });
+  }
+  const note = String((req.body && req.body.note) || '').trim();
+  db.run(
+    `UPDATE lot_reassign_requests
+        SET status = 'denied', decided_by_user_id = ?, decided_by_username = ?,
+            decision_note = ?, decided_at = datetime('now','localtime'), seen_at = NULL
+      WHERE id = ?`,
+    [(req.user && req.user.id) || null, (req.user && req.user.username) || '', note, id]
+  );
+  const row = db.get('SELECT * FROM lot_reassign_requests WHERE id = ?', [id]);
+  res.json({ success: true, request: row });
 });
 
 // Validate a single lot number against (a) duplicates and (b) the

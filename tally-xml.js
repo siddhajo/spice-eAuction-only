@@ -3101,7 +3101,7 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
   // line_items snapshot when present, and drop any voucher left empty.
   const usedLots = new Set();
 
-  return raw.map((b) => {
+  const result = raw.map((b) => {
     // Lot numbers this bill actually covers, from its stored snapshot.
     // When present it keeps the bill on its own lots even if a homonym
     // bill exists; absent (older/imported bills with no snapshot) we fall
@@ -3170,6 +3170,24 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
       voucherNum: String(b.bil),
     };
   }).filter(v => v.lots.length > 0); // duplicate bills net to zero lots → omit
+
+  // [URD-DIAG] When the export comes back empty, log exactly WHY so a
+  // "No data found for this auction" report can be diagnosed without guessing.
+  // Distinguishes: no bills at all vs bills-present-but-no-matching-URD-lots
+  // (all dealers registered / GSTIN, or lots under a different auction_id).
+  if (result.length === 0) {
+    try {
+      const a = db.prepare('SELECT ano FROM auctions WHERE id = ?').get(auctionId);
+      const billsById  = db.prepare('SELECT COUNT(*) c FROM bills WHERE auction_id = ?').get(auctionId).c;
+      const billsByAno = a ? db.prepare('SELECT COUNT(*) c FROM bills WHERE TRIM(ano) = TRIM(?)').get(a.ano).c : 0;
+      const lotsNoGstin = db.prepare(
+        `SELECT COUNT(*) c FROM lots WHERE auction_id = ? AND (isp_puramt>0 OR puramt>0) AND ${NO_GSTIN_SQL}`
+      ).get(auctionId).c;
+      const sampleName = raw[0] ? raw[0].name : '(no bills)';
+      console.log(`[URD-DIAG] auctionId=${auctionId} ano=${JSON.stringify(a && a.ano)} | bills(by auction_id)=${billsById} bills(by ano)=${billsByAno} | lots-with-no-GSTIN(this auction)=${lotsNoGstin} | rawBillsUsed=${raw.length} sampleBillName=${JSON.stringify(sampleName)}`);
+    } catch (e) { console.log('[URD-DIAG] failed:', e.message); }
+  }
+  return result;
 }
 
 /**
@@ -3257,6 +3275,18 @@ function buildDebitNotePlanterRows(db, auctionId, cfg) {
   const raw = db.prepare(`
     SELECT * FROM debit_notes_planter WHERE TRIM(ano) = TRIM(?) ORDER BY id
   `).all(a.ano);
+
+  // [DNP-DIAG] Log why the planter debit-note export is empty. Crucially
+  // distinguishes "table has no rows at all → the planter debit notes were
+  // never generated/saved" from "rows exist under a different ano → a real
+  // ano mismatch". `distinctAnos` shows what trade numbers ARE stored.
+  if (raw.length === 0) {
+    try {
+      const total = db.prepare('SELECT COUNT(*) c FROM debit_notes_planter').get().c;
+      const anos  = db.prepare('SELECT DISTINCT ano FROM debit_notes_planter').all().map(r => r.ano);
+      console.log(`[DNP-DIAG] auctionId=${auctionId} ano=${JSON.stringify(a.ano)} | table total rows=${total} | distinctAnos=${JSON.stringify(anos)}`);
+    } catch (e) { console.log('[DNP-DIAG] failed:', e.message); }
+  }
 
   // Pull the matching bill-of-supply row (address / place / PAN) for each
   // distinct planter in this DN batch. Bills are padding-proof matched via
