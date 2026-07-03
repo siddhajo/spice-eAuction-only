@@ -17605,9 +17605,45 @@ function renderLorryActions(){
   if(!sel||!host) return;
   const k=sel.value;
   host.innerHTML=k
-    ? `<button class="btn btn-a" onclick="downloadLorry('${k}','xlsx')" style="height:38px;padding:0 16px;font-weight:600">Excel (XLSX)</button>`
+    ? `<button class="btn btn-g" onclick="previewLorry('${k}')" style="height:38px;padding:0 16px;font-weight:600">Preview</button>`
+    + `<button class="btn btn-a" onclick="downloadLorry('${k}','xlsx')" style="height:38px;padding:0 16px;font-weight:600">Excel (XLSX)</button>`
     + `<button class="btn btn-orange" onclick="downloadLorry('${k}','pdf')" style="height:38px;padding:0 16px;font-weight:600">PDF</button>`
+    + `<button class="btn btn-o" onclick="printLorry('${k}')" style="height:38px;padding:0 16px;font-weight:600">Print</button>`
     : '';
+}
+// Fetch a lorry report PDF (inline) as an object URL, sending the auth
+// header the endpoint requires. Mirrors _expPdfBlobUrl. Returns null on
+// error (after toasting) so callers can bail cleanly.
+async function _lorryPdfBlobUrl(type){
+  const aid=document.getElementById('lorry-auction')?.value;
+  if(!aid){alert('Select an auction first');return null}
+  const r=await fetch(B+`/api/lorry-reports/${type}/${aid}?format=pdf&inline=1`,{headers:{'Authorization':'Bearer '+T}});
+  if(!r.ok){
+    let msg='Lorry report failed';
+    try{const e=await r.json();if(e.error)msg=e.error}catch(x){}
+    toast(msg);return null;
+  }
+  const blob=await r.blob();
+  return URL.createObjectURL(blob);
+}
+// Preview the lorry report PDF inline in a new tab (mirrors exportPreview).
+async function previewLorry(type){
+  const label=LORRY_LABELS[type]||type;
+  await withOverlay(`Preparing ${label} preview…`, async () => {
+    const blobUrl=await _lorryPdfBlobUrl(type);
+    if(blobUrl) window.open(blobUrl);
+  });
+}
+// Print the lorry report PDF — open in a new window and fire the browser
+// print dialog once it loads (mirrors exportPrint).
+async function printLorry(type){
+  const label=LORRY_LABELS[type]||type;
+  await withOverlay(`Preparing ${label} for print…`, async () => {
+    const blobUrl=await _lorryPdfBlobUrl(type);
+    if(!blobUrl) return;
+    const w=window.open(blobUrl);
+    if(w){ w.addEventListener('load', () => { try{ w.focus(); w.print(); }catch(_){} }); }
+  });
 }
 async function downloadLorry(type,format){
   format=format||'xlsx';
@@ -23270,9 +23306,20 @@ async function loadInvoiceDistances(){
       const km = resolvedKm == null ? '' : String(resolvedKm);
       const src = inv.distance_source || (inv.distance_km != null ? 'manual' : 'none');
       const buyerPin=String(inv.buyer_pin||'').trim();
+      // Which address the resolved PIN came from — ship-to (cpin) wins over
+      // bill-to (pin), mirroring the e-way bill generator. Server sends
+      // `pin_source`; fall back to inferring it from shipping_pin for older
+      // server builds. A "ship"/"bill" badge tells the operator at a glance
+      // which address this route distance is keyed to.
+      const pinSource = inv.pin_source || (String(inv.shipping_pin||'').trim() ? 'ship' : 'bill');
+      const pinBadge = buyerPin
+        ? (pinSource==='ship'
+            ? `<span title="Ship-to (consignee) PIN — goods delivered here" style="font-size:9px;padding:1px 5px;background:#DBEAFE;color:#1D4ED8;border-radius:8px;margin-left:6px;font-weight:700">ship</span>`
+            : `<span title="Bill-to (buyer) PIN — no separate consignee address on file" style="font-size:9px;padding:1px 5px;background:#F3E8FF;color:#7C3AED;border-radius:8px;margin-left:6px;font-weight:700">bill</span>`)
+        : '';
       const cellBg='padding:7px 8px;border-bottom:1px solid var(--border);background:#fff';
       html+=`<div style="${cellBg};font-family:monospace;font-weight:700;color:var(--spice-cardamom-dk)">${esc(inv.invo)}</div>`;
-      html+=`<div style="${cellBg};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(inv.buyer1||inv.buyer)} <span style="color:var(--text3);font-family:monospace">${esc(buyerPin||'(no pin)')}</span></div>`;
+      html+=`<div style="${cellBg};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(inv.buyer1||inv.buyer)} <span style="color:var(--text3);font-family:monospace">${esc(buyerPin||'(no pin)')}</span>${pinBadge}</div>`;
       // Distance cell with source badge (route / manual / —). Route
       // values get a subtle "auto" pill so the user can see at a glance
       // which rows came from the lookup table vs being typed manually.

@@ -283,12 +283,44 @@ function generSalesIspXML(rows, cfg, opts = {}) {
   // GSTIN / address-line-2.
   const d_add   = cfgGet(cfg, 'kl_dispatch', '');
   // The following are NOT used in the dispatch-from block. They feed only
-  // the separate e-way-bill CONSIGNOR fields below (which legally need the
-  // consignor's place / PIN / state / GSTIN), each read from Address (Kerala).
-  const d_place = cfgGet(cfg, 'kl_place', '');
-  const d_pin   = cfgGet(cfg, 'kl_pin', '');
-  const d_state = cfgGet(cfg, 'kl_state', 'Kerala');
-  const d_gstin = cfgGet(cfg, 'kl_gstin', '');
+  // the separate e-way-bill / e-invoice CONSIGNOR fields below (which
+  // legally need the consignor's place / PIN / state / GSTIN).
+  //
+  // Resolution falls back through the SAME chain the e-way distance
+  // calculation uses (Settings → To Tally dispatch → Kerala → Tamil Nadu),
+  // so the consignor block is populated even when the primary Kerala
+  // address fields are blank or the company operates from Tamil Nadu.
+  // Previously these read `kl_*` ONLY, so the e-invoice consignor state /
+  // pincode / place shipped empty whenever kl_place/kl_pin weren't filled
+  // (e.g. a TN-registered company, or a Kerala company that only populated
+  // the dispatch/TN address). The PIN default (685553) mirrors the distance
+  // calc's dispatchPin fallback so the e-way origin PIN is never blank.
+  const d_place = String(
+    cfgGet(cfg, 'tally_dispatch_place', '') ||
+    cfgGet(cfg, 's_place', '') ||
+    cfgGet(cfg, 'kl_place', '') ||
+    cfgGet(cfg, 'tn_place', '')
+  ).trim();
+  const d_pin   = String(
+    cfgGet(cfg, 'tally_dispatch_pin', '') ||
+    cfgGet(cfg, 's_pin', '') ||
+    cfgGet(cfg, 'kl_pin', '') ||
+    cfgGet(cfg, 'tn_pin', '') ||
+    '685553'
+  ).trim();
+  const d_state = String(
+    cfgGet(cfg, 'tally_dispatch_state', '') ||
+    cfgGet(cfg, 's_state', '') ||
+    cfgGet(cfg, 'kl_state', '') ||
+    cfgGet(cfg, 'tn_state', '') ||
+    'Kerala'
+  ).trim();
+  const d_gstin = String(
+    cfgGet(cfg, 'tally_dispatch_gstin', '') ||
+    cfgGet(cfg, 's_gstin', '') ||
+    cfgGet(cfg, 'kl_gstin', '') ||
+    cfgGet(cfg, 'tn_gstin', '')
+  ).trim();
 
   // Emit the dispatch-from block whenever a dispatch address is actually
   // configured — Settings → Address (Kerala) → "Dispatch Address"
@@ -3016,7 +3048,26 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
     SELECT * FROM bills WHERE auction_id = ?
     ORDER BY bil, id
   `);
-  const raw = stmt.all(auctionId);
+  let raw = stmt.all(auctionId);
+
+  // Fallback: some auctions have bills that were generated under a DIFFERENT
+  // auction row sharing the same trade number (ano) — e.g. a re-created /
+  // duplicate auction, or a legacy bill whose auction_id points at an old
+  // blank-ano auction. In those cases the FK query above returns zero bills
+  // even though the "Bills of Supply" report (which matches by ano) shows
+  // data. When the FK match is empty, fall back to a padding-proof ano match
+  // so the URD export stays in lock-step with the Bills of Supply report.
+  // Each bill's lots are then pulled by that bill's OWN auction_id (below),
+  // so the vouchers still resolve to the correct lots.
+  if (raw.length === 0) {
+    const a = db.prepare('SELECT ano FROM auctions WHERE id = ?').get(auctionId);
+    if (a) {
+      raw = db.prepare(`
+        SELECT * FROM bills WHERE TRIM(ano) = TRIM(?)
+        ORDER BY bil, id
+      `).all(a.ano);
+    }
+  }
 
   // Read ISP planter values directly from the dedicated columns. These are
   // populated by calculateLot() on every save (regardless of which
@@ -3066,14 +3117,21 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
     // PAN drives the URD ledger name "<name>-[<PAN>]". Read it from the
     // SAME lots table the LEDGER master reads (buildURDPartyLedgerRows), not
     // from bills.pan, so both derive an identical name and Tally matches them.
-    const lotRows = lotsStmt.all(auctionId, b.name);
+    // Scope lots to the BILL'S OWN auction_id (not the selected auction) so
+    // the ano-fallback above still resolves each bill's lots correctly when
+    // its bills live under a different auction row.
+    const billAid = b.auction_id != null ? b.auction_id : auctionId;
+    const lotRows = lotsStmt.all(billAid, b.name);
     const panForBill = (lotRows.find(r => String(r.pan || '').trim()) || {}).pan || '';
     const lots = [];
     for (const l of lotRows) {
       const key = String(l.lot);
+      // Dedup key is auction-scoped so lots that share a lot_no across two
+      // auction rows (possible in the ano-fallback path) aren't collapsed.
+      const dedupKey = `${billAid}:${key}`;
       if (ownLotNos && !ownLotNos.has(key)) continue; // belongs to another bill
-      if (usedLots.has(key)) continue;                // already counted in a prior voucher
-      usedLots.add(key);
+      if (usedLots.has(dedupKey)) continue;           // already counted in a prior voucher
+      usedLots.add(dedupKey);
       lots.push({
         lot: l.lot, bag: l.bag,
         qty: r2(l.qty), rate: r2(l.rate), amount: r2(l.amount),
@@ -3125,8 +3183,11 @@ function buildDebitNoteRows(db, auctionId, cfg) {
   // aligned back to trade.date), so date-equality filtering is unsafe.
   const a = db.prepare('SELECT ano FROM auctions WHERE id = ?').get(auctionId);
   if (!a) return [];
+  // Padding-proof ano match (see buildDebitNotePlanterRows) — debit_notes
+  // store trimmed ano while auctions.ano may be space-padded, which
+  // otherwise yields a spurious "No data" export.
   const stmt = db.prepare(`
-    SELECT * FROM debit_notes WHERE ano = ? ORDER BY id
+    SELECT * FROM debit_notes WHERE TRIM(ano) = TRIM(?) ORDER BY id
   `);
   const raw = stmt.all(a.ano);
 
@@ -3188,8 +3249,13 @@ function buildDebitNoteRows(db, auctionId, cfg) {
 function buildDebitNotePlanterRows(db, auctionId, cfg) {
   const a = db.prepare('SELECT ano FROM auctions WHERE id = ?').get(auctionId);
   if (!a) return [];
+  // Padding-proof ano match. Trade numbers are stored trimmed in
+  // debit_notes_planter (every INSERT path trims), but auctions.ano can
+  // carry leading/trailing whitespace — so a raw `ano = ?` silently
+  // returned zero rows and the export showed "No data" even though the
+  // Debit Notes — Planter report (which trims before querying) had data.
   const raw = db.prepare(`
-    SELECT * FROM debit_notes_planter WHERE ano = ? ORDER BY id
+    SELECT * FROM debit_notes_planter WHERE TRIM(ano) = TRIM(?) ORDER BY id
   `).all(a.ano);
 
   // Pull the matching bill-of-supply row (address / place / PAN) for each

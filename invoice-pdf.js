@@ -1094,7 +1094,9 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
     doc.font('Helvetica').fontSize(8);
     const cAnchor = { v: cy };
     writeLeft(ship.addr, cAnchor);
-    writeLeft(ship.pla,  cAnchor);
+    // Place + PIN on one line (e.g. "MUNNAR - 685612"). PIN was captured
+    // in `ship.pin` but previously never rendered.
+    writeLeft([ship.pla, ship.pin].filter(Boolean).join(' - '), cAnchor);
     if (ship.gstin) writeLeft(`GSTIN/UIN      : ${ship.gstin}`, cAnchor);
     if (ship.state) writeLeft(`State Name     : ${ship.state}, Code : ${ship.stCode || ''}`, cAnchor);
   }
@@ -1123,6 +1125,7 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
       add1:   _identBT.address1  || cfg.s_address1  || '',
       add2:   _identBT.address2  || cfg.s_address2  || '',
       pla:    cfg.s_place || '',
+      pin:    cfg.s_pin || cfg.kl_pin || '',
       gstin:  _identBT.gstin     || cfg.s_gstin     || '',
       state:  _identBT.state     || cfg.s_state     || 'KERALA',
       stCode: _identBT.stateCode || cfg.s_st_code   || '32',
@@ -1133,6 +1136,7 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
       add1:   _identBT.address1  || cfg.tn_address1 || '',
       add2:   _identBT.address2  || cfg.tn_address2 || '',
       pla:    cfg.tn_place || '',
+      pin:    cfg.tn_pin || '',
       gstin:  _identBT.gstin     || cfg.tn_gstin    || '',
       state:  _identBT.state     || cfg.tn_state    || 'TAMIL NADU',
       stCode: _identBT.stateCode || cfg.tn_st_code  || '33',
@@ -1143,6 +1147,7 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
       add1:  buyer.add1 || '',
       add2:  buyer.add2 || '',
       pla:   buyer.pla || '',
+      pin:   buyer.pin || '',
       gstin: buyer.gstin || '',
       state: buyer.state || '',
       stCode: buyer.st_code || '',
@@ -1160,7 +1165,8 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   const bAddr = [billTo.add1, billTo.add2].filter(Boolean).join(',');
   const bAnchor = { v: by };
   writeLeft(bAddr, bAnchor);
-  writeLeft(billTo.pla, bAnchor);
+  // Place + PIN on one line (e.g. "BODINAYAKANUR - 625513").
+  writeLeft([billTo.pla, billTo.pin].filter(Boolean).join(' - '), bAnchor);
   if (billTo.gstin) writeLeft(`GSTIN/UIN      : ${billTo.gstin}`, bAnchor);
   if (billTo.state) writeLeft(`State Name     : ${billTo.state}, Code : ${billTo.stCode || ''}`, bAnchor);
 

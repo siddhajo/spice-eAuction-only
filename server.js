@@ -9621,8 +9621,12 @@ app.get('/api/lorry-reports/:type/:auctionId', requireExport, async (req, res) =
     const db = getDb();
     if (format === 'pdf') {
       const buf = await def.pdf(db, auctionId);
+      // `inline=1` serves the PDF for in-browser Preview/Print (open in a
+      // new tab / print dialog) instead of forcing a download. Everything
+      // else keeps the download-as-attachment behaviour.
+      const inline = req.query.inline === '1' || req.query.inline === 'true';
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${def.name}_${auctionId}.pdf"`);
+      res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${def.name}_${auctionId}.pdf"`);
       return res.send(buf);
     }
     const buf = await def.xlsx(db, auctionId);
@@ -9999,9 +10003,19 @@ app.get('/api/invoices/distances/:auctionId', requireView, (req, res) => {
   try {
     const db = getDb();
     const dispatchPin = getDispatchPin(db);
+    // Return BOTH the bill-to (b.pin) and ship-to (b.cpin) pincodes, and
+    // the RESOLVED pincode the e-way bill actually uses. Resolution mirrors
+    // buildSalesIspRows exactly: ship-to (cpin) wins, bill-to (pin) is the
+    // fallback — because the goods are physically delivered to the ship-to
+    // address, so that's the correct e-way distance origin. The UI shows a
+    // "ship"/"bill" badge next to buyer_pin so the operator can see which
+    // address a given route distance is keyed to.
     const rows = db.all(
       `SELECT i.id, i.ano, i.invo, i.buyer, i.buyer1, i.gstin, i.state,
-              b.pin AS buyer_pin, b.pla AS buyer_pla,
+              b.pin  AS billing_pin,
+              b.cpin AS shipping_pin,
+              COALESCE(NULLIF(TRIM(b.cpin), ''), TRIM(b.pin)) AS buyer_pin,
+              b.pla  AS buyer_pla,
               i.distance_km
        FROM invoices i
        LEFT JOIN buyers b ON b.buyer = i.buyer
@@ -10037,7 +10051,10 @@ app.get('/api/invoices/distances/:auctionId', requireView, (req, res) => {
         km = routes[String(r.buyer_pin).trim()];
         source = 'route';
       }
-      return { ...r, resolved_km: km, distance_source: source };
+      // Which address the resolved pincode came from: ship-to (cpin) when
+      // present, else bill-to (pin). Drives the "ship"/"bill" UI badge.
+      const pin_source = String(r.shipping_pin || '').trim() ? 'ship' : 'bill';
+      return { ...r, resolved_km: km, distance_source: source, pin_source };
     });
 
     res.json({
@@ -11455,14 +11472,25 @@ app.get('/api/reports/summary-pdf/:auctionId', (req, res, next) => {
 
   const m = 40, w = 515;
 
-  // Helper for column rows so the table code stays readable
+  // Helper for column rows so the table code stays readable. Advances y by
+  // the TALLEST cell in the row (not a fixed line height) — otherwise a long
+  // value that wraps to 2+ lines (e.g. "ROSE SPICES AND FOOD PRODUCTS", long
+  // branch names) gets drawn over by the next row. Single-line rows keep the
+  // original y + size + 5 spacing, so short-name tables look unchanged.
   function drawRow(y, cols, font, size) {
-    doc.font(font || 'Helvetica').fontSize(size || 9);
+    const fs = size || 9;
+    doc.font(font || 'Helvetica').fontSize(fs);
+    let maxH = 0;
+    cols.forEach(c => {
+      const h = doc.heightOfString(String(c.val == null ? '' : c.val),
+        { width: c.w, align: c.align || 'left' });
+      if (h > maxH) maxH = h;
+    });
     cols.forEach(c => {
       doc.text(String(c.val == null ? '' : c.val), c.x, y,
         { width: c.w, align: c.align || 'left' });
     });
-    return y + (size || 9) + 5;
+    return y + Math.max(fs + 5, maxH + 3);
   }
 
   // ── Header ───────────────────────────────────────────────────
