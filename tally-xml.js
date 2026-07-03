@@ -1388,7 +1388,7 @@ function generSalesXML(rows, cfg, opts = {}) {
   const ainvPrefix    = cfgGet(cfg, 'tally_ainv_prefix', '');  // legacy ASP-prefix (sister company); empty means "no aux prefix"
   const amazing       = false;
   const detailed      = cfgBool(cfg, 'tally_detailed', true);
-  const dispatchEnabled = false; // dispatch-from override removed in e-Auction-only build
+  const dispatchEnabled = true; 
   const tcs           = cfgBool(cfg, 'tally_tcs_enabled', false);
   const intra         = cfgGet(cfg, 'tally_state_code', '33');
 
