@@ -891,7 +891,19 @@ function mountMobile(app, deps) {
       params
     );
     const unseen = rows.filter(r => r.status !== 'pending' && !r.seen_at).length;
-    res.json({ requests: rows, unseen_decisions: unseen });
+    // Allocation revision marker for this auction: the latest reassign_log
+    // id. It bumps on EVERY reassignment (this operator's, another
+    // operator's, or a direct admin move), so any polling session can
+    // detect that lot ranges changed and reload its grid — not just the
+    // operator who raised the request.
+    let alloc_rev = 0;
+    if (auction_id) {
+      try {
+        const r = db.get('SELECT MAX(id) AS rev FROM reassign_log WHERE auction_id = ?', [auction_id]);
+        alloc_rev = (r && r.rev) || 0;
+      } catch (_) { /* reassign_log optional */ }
+    }
+    res.json({ requests: rows, unseen_decisions: unseen, alloc_rev });
   });
 
   // Mark a decided request as seen (clears the badge). Scoped to the

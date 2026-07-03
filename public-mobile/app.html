@@ -1951,12 +1951,19 @@ function updateReassignBadge(n){
   var b=document.getElementById('menu-reassign-badge');
   if(b){if(n>0){b.textContent=n;b.style.display='inline-block'}else{b.style.display='none'}}
 }
-var _raPolling=false;
+var _raPolling=false,_lastAllocRev=null;
 async function pollReassignDecisions(){
   if(_raPolling)return;_raPolling=true; // guard against overlapping polls
   try{
     var r=await fetch(B+'/api/mobile/reassign-requests?auction_id='+aid,{headers:ah()});
     if(!r.ok)return;var d=await r.json();
+    // Reload allocations whenever ANY reassignment happened in this trade
+    // (detected via the server's alloc_rev marker) — this catches moves
+    // made by other operators / the admin that shrink THIS branch's range,
+    // not just decisions on requests we raised.
+    var rev=d.alloc_rev||0;
+    if(_lastAllocRev===null){_lastAllocRev=rev}
+    else if(rev!==_lastAllocRev){_lastAllocRev=rev;reloadAllocations()}
     var decided=(d.requests||[]).filter(function(q){return q.status!=='pending'&&!q.seen_at});
     updateReassignBadge(decided.length);
     if(decided.length&&!document.getElementById('reassign-modal').classList.contains('show')){
