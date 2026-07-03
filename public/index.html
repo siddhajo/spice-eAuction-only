@@ -8046,7 +8046,7 @@ async function pollReassignReqBadge(){
 function startReassignReqBadgePoll(){
   if(_rrBadgeTimer)return;
   pollReassignReqBadge();
-  _rrBadgeTimer=setInterval(pollReassignReqBadge,30000);
+  _rrBadgeTimer=setInterval(pollReassignReqBadge,10000);
 }
 
 // Click on a side-group label toggles its "section-collapsed" class —

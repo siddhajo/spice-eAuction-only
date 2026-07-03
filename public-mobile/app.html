@@ -638,7 +638,7 @@ setInterval(function(){if(document.getElementById('s-lots').classList.contains('
 // Poll for admin decisions on the operator's reassign requests while a
 // session is active (either tab). Cheap query; surfaces a badge + toast
 // when a pending request has been approved/denied.
-setInterval(function(){if(token&&aid&&(document.getElementById('s-lots').classList.contains('active')||document.getElementById('s-mylots').classList.contains('active')))pollReassignDecisions()},30000);
+setInterval(function(){if(token&&aid&&(document.getElementById('s-lots').classList.contains('active')||document.getElementById('s-mylots').classList.contains('active')))pollReassignDecisions()},10000);
 
 async function doLogin(forceLogin){const u=document.getElementById('l-user').value.trim(),p=document.getElementById('l-pass').value,er=document.getElementById('l-err');er.innerHTML='';if(!u||!p){er.innerHTML='<div class="eb">Enter username and password</div>';return}document.getElementById('l-btn').disabled=true;try{const r=await fetch(B+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p,force:forceLogin||false})});const d=await r.json();if(r.status===409&&d.error==='already_logged_in'){er.innerHTML='<div class="eb" style="text-align:center">'+d.message+'<br><button onclick="doLogin(true)" style="margin-top:8px;background:#1D9E75;color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Yes, switch to this device</button></div>';return}if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Login failed')+'</div>';return}token=d.token;user=d.user.username;userBranch=d.user.branch||'';userRole=d.user.role||'user';localStorage.setItem('sa_token',token);goSession()}catch(e){er.innerHTML='<div class="eb">Could not connect</div>'}finally{document.getElementById('l-btn').disabled=false}}
 function doLogout(){fetch(B+'/api/auth/logout',{method:'POST',headers:ah()}).catch(()=>{});token='';user='';localStorage.removeItem('sa_token');toggleMenu(true);show('s-login')}
@@ -1948,23 +1948,28 @@ function updateReassignBadge(n){
   var b=document.getElementById('menu-reassign-badge');
   if(b){if(n>0){b.textContent=n;b.style.display='inline-block'}else{b.style.display='none'}}
 }
+var _raPolling=false;
 async function pollReassignDecisions(){
+  if(_raPolling)return;_raPolling=true; // guard against overlapping polls
   try{
     var r=await fetch(B+'/api/mobile/reassign-requests?auction_id='+aid,{headers:ah()});
     if(!r.ok)return;var d=await r.json();
-    var n=d.unseen_decisions||0;
-    updateReassignBadge(n);
-    if(n>0&&!document.getElementById('reassign-modal').classList.contains('show')){
-      var decided=(d.requests||[]).filter(function(q){return q.status!=='pending'&&!q.seen_at});
+    var decided=(d.requests||[]).filter(function(q){return q.status!=='pending'&&!q.seen_at});
+    updateReassignBadge(decided.length);
+    if(decided.length&&!document.getElementById('reassign-modal').classList.contains('show')){
       var q=decided[0];
-      if(q){
-        var appr=q.status==='approved';
-        var msg='Reassign '+q.from_branch+'→'+q.to_branch+' (lots '+q.start_lot+'–'+q.end_lot+') '+(appr?'APPROVED':'DENIED')
-               +(q.decision_note?' — '+q.decision_note:'');
-        showNotifBanner(msg,appr?'ok':'error');
-      }
+      var appr=q.status==='approved';
+      var extra=decided.length>1?(' (+'+(decided.length-1)+' more)'):'';
+      var msg='Reassign '+q.from_branch+'→'+q.to_branch+' (lots '+q.start_lot+'–'+q.end_lot+') '+(appr?'APPROVED':'DENIED')
+             +(q.decision_note?' — '+q.decision_note:'')+extra;
+      showNotifBanner(msg,appr?'ok':'error');
+      // Mark every decision we just surfaced as seen so the banner fires
+      // ONCE per decision instead of on every poll. Await so the badge
+      // and the next poll reflect the cleared state.
+      for(var i=0;i<decided.length;i++){await markReassignSeen(decided[i].id)}
+      updateReassignBadge(0);
     }
-  }catch(e){}
+  }catch(e){}finally{_raPolling=false}
 }
 
 tryAutoLogin();
