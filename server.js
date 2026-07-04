@@ -2148,16 +2148,39 @@ app.post('/api/whatsapp/webhook', (req, res) => {
           }
         }
         for (const m of (v.messages || [])) {
-          // Quick-reply button tap on a template → m.type === 'button' with
-          // m.button.payload = "approve:<id>" / "deny:<id>". (Interactive
-          // reply buttons arrive as m.interactive.button_reply.id instead —
-          // handle both shapes so either template style works.)
+          // A tap on an Approve/Deny button. We resolve (action, requestId)
+          // from whatever the webhook actually carries — Meta's payload for
+          // template quick-reply buttons is inconsistent across accounts:
+          //   (a) our per-message payload "approve:<id>" comes back verbatim
+          //       (m.button.payload / m.interactive.button_reply.id), OR
+          //   (b) only the button TEXT ("Approve"/"Deny") comes back, with a
+          //       context.id pointing at the template message we sent — we
+          //       map that wamid → the request id via the whatsapp_messages
+          //       log so the decision still lands.
+          let action = '', requestId = 0;
           let payload = '';
           if (m.type === 'button' && m.button && m.button.payload) payload = String(m.button.payload);
           else if (m.interactive && m.interactive.button_reply && m.interactive.button_reply.id) payload = String(m.interactive.button_reply.id);
           const dec = payload.match(/^(approve|deny):(\d+)$/i);
-          if (dec) {
-            try { handleReassignWhatsAppDecision(db, dec[1].toLowerCase(), parseInt(dec[2], 10), m.from || ''); } catch (_) {}
+          if (dec) { action = dec[1].toLowerCase(); requestId = parseInt(dec[2], 10); }
+          else {
+            const btnText = String(
+              (m.button && m.button.text) ||
+              (m.interactive && m.interactive.button_reply && m.interactive.button_reply.title) || ''
+            ).trim().toLowerCase();
+            const ctxId = m.context && m.context.id;
+            if ((btnText === 'approve' || btnText === 'deny') && ctxId) {
+              try {
+                const row = db.get(
+                  "SELECT ref_id FROM whatsapp_messages WHERE wamid = ? AND ref_type = 'lot_reassign_request' ORDER BY id DESC LIMIT 1",
+                  [ctxId]
+                );
+                if (row && row.ref_id) { action = btnText; requestId = parseInt(row.ref_id, 10); }
+              } catch (_) {}
+            }
+          }
+          if (action && requestId) {
+            try { handleReassignWhatsAppDecision(db, action, requestId, m.from || ''); } catch (_) {}
           }
           const body = (m.text && m.text.body) || (m.button && m.button.text) || m.type || '';
           try { db.run('INSERT INTO whatsapp_inbound (wamid, phone, body) VALUES (?,?,?)', [m.id || '', m.from || '', String(body)]); } catch (_) {}
@@ -4101,12 +4124,26 @@ app.get('/api/auctions/:id(\\d+)/arrivals-export', requireExport, async (req, re
 // the reassign_log audit row.
 function applyLotReassignment(db, auctionId, fields, actor) {
   fields = fields || {};
-  const from_branch = String(fields.from_branch || '').trim();
-  const to_branch   = String(fields.to_branch || '').trim();
+  let from_branch = String(fields.from_branch || '').trim();
+  let to_branch   = String(fields.to_branch || '').trim();
   actor = actor || {};
 
   if (!from_branch || !to_branch) return { ok: false, error: 'from_branch and to_branch required' };
-  if (from_branch === to_branch) return { ok: false, error: 'FROM and TO branch must be different' };
+  if (from_branch.toUpperCase() === to_branch.toUpperCase()) return { ok: false, error: 'FROM and TO branch must be different' };
+
+  // Branch names can differ in case between where they were stored (admin
+  // types them in Settings, e.g. "Erode") and where they came from (the
+  // mobile config shim UPPERCASES them, e.g. "ERODE"). Match branches
+  // case-insensitively and adopt the spelling already used by this
+  // auction's allocations so we don't create a split-brain ("Erode" vs
+  // "ERODE") that allocation-stats would show as two branches.
+  {
+    const allBranches = db.all('SELECT DISTINCT branch FROM lot_allocations WHERE auction_id = ?', [auctionId]).map(r => r.branch);
+    const canonFrom = allBranches.find(b => String(b).toUpperCase() === from_branch.toUpperCase());
+    const canonTo   = allBranches.find(b => String(b).toUpperCase() === to_branch.toUpperCase());
+    if (canonFrom) from_branch = canonFrom;
+    if (canonTo)   to_branch   = canonTo;
+  }
 
   // Resolve the moving lot set from whichever body form was sent:
   //   • lots: ["001","007","012", …]  — explicit, possibly-disjoint pick
