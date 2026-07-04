@@ -2390,7 +2390,7 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
     const pin         = xe(row.pin);
     const fullGstin   = String(row.gstin || '');
     const partyGstin  = row.partyGstin || (fullGstin.toUpperCase().startsWith('GST') ? fullGstin.slice(6, 21) : fullGstin);
-    const state       = xe(findState(partyGstin));
+    const state       = partyGstin ? xe(findState(partyGstin)) : 'Kerala';
     // Intra/inter classification. Registered dealers carry a PARTYGSTIN, so
     // we read its 2-digit state code (authoritative). URD / planter debit
     // notes have NO GSTIN — for those we fall back to the GST amounts stored
