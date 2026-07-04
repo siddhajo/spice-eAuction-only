@@ -2427,6 +2427,7 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
     const discountLdr = isPlanter ? DiscountP_LDR : Discount_LDR;
 
     const startVoucher = `<VOUCHER VCHTYPE="Sales" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
+    const registrationType = isPlanter ? "Unregistered/Consumer" : "Regular"
 
     xml += `\n${startVoucher}
 <ADDRESS.LIST TYPE="String">
@@ -2436,7 +2437,7 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
 <DATE>${dateval}</DATE>
 <REFERENCEDATE>${dateval}</REFERENCEDATE>
 <VCHSTATUSDATE>${dateval}</VCHSTATUSDATE>
-<GSTREGISTRATIONTYPE>Regular</GSTREGISTRATIONTYPE>
+<GSTREGISTRATIONTYPE>${registrationType}</GSTREGISTRATIONTYPE>
 <STATENAME>${state}</STATENAME>
 <COUNTRYOFRESIDENCE>India</COUNTRYOFRESIDENCE>
 <PARTYGSTIN>${xe(partyGstin)}</PARTYGSTIN>
