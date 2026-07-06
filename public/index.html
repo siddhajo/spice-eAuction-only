@@ -6852,12 +6852,21 @@ function can(capability){
 // e.g. "Administration" for a user without settings-write or user-manage.
 // Uses computed display so it's correct regardless of which gating mechanism
 // hid the items.
+//
+// A user-COLLAPSED group (.section-collapsed) also hides its items via CSS —
+// but that must NOT count as "empty", or collapsing a group would make the
+// whole group vanish on the next re-run. So we measure item visibility with
+// the collapse class momentarily removed (synchronous — no visible flicker),
+// then restore it.
 function hideEmptySideGroups(){
   document.querySelectorAll('.side-group').forEach(group => {
+    const wasCollapsed = group.classList.contains('section-collapsed');
+    if (wasCollapsed) group.classList.remove('section-collapsed');
     let anyVisible = false;
     group.querySelectorAll('.side-item').forEach(it => {
       if (getComputedStyle(it).display !== 'none') anyVisible = true;
     });
+    if (wasCollapsed) group.classList.add('section-collapsed');
     group.style.display = anyVisible ? '' : 'none';
   });
 }
