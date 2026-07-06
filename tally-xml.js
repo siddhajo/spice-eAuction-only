@@ -3253,12 +3253,35 @@ function buildDebitNoteRows(db, auctionId, cfg) {
     if (t) dealers[name] = t;
   }
 
+  // Billing pincode / address for these dealers lives in the `buyers`
+  // master under the FIRM-name column `buyer1` (NOT `buyer`, which holds
+  // the person/short code). The `traders` master carries the GSTIN but its
+  // `pin` is routinely blank, which left <PARTYPINCODE> empty and made Tally
+  // reject the debit note ("Buyer (Bill to) pincode not specified/invalid").
+  // Pull pin/place/address from `buyers` (most-recent row that actually has a
+  // pin) and use them to fill the gaps `traders` leaves.
+  const buyerInfo = {};
+  for (const name of dealerNames) {
+    const b = db.prepare(
+      `SELECT pin, pla, add1, add2 FROM buyers
+        WHERE UPPER(TRIM(buyer1)) = UPPER(?) AND TRIM(COALESCE(pin,'')) <> ''
+        ORDER BY id DESC LIMIT 1`
+    ).get(name);
+    if (b) buyerInfo[name] = b;
+  }
+
   return raw.map((d) => {
     const dealer = dealers[String(d.name || '').trim()] || {};
+    const binfo  = buyerInfo[String(d.name || '').trim()] || {};
     // Strip 'GSTIN.' / 'gstin.' prefix from `cr` — Tally expects the
     // bare 15-char GSTIN.
     let gstin = String(dealer.cr || '').trim();
     if (/^GSTIN\.?/i.test(gstin)) gstin = gstin.replace(/^GSTIN\.?/i, '');
+    // Pincode — prefer traders.pin, fall back to buyers.pin. Sanitize to a
+    // bare 6-digit (Tally rejects spaces / non-digits); blank stays blank.
+    const rawPin = String(dealer.pin || binfo.pin || '').replace(/\D/g, '');
+    const pin    = /^[1-9][0-9]{5}$/.test(rawPin) ? rawPin : '';
+    const buyerAddr = [binfo.add1, binfo.add2].map(s => String(s || '').trim()).filter(Boolean).join(', ');
     return {
       ano: d.ano,
       date: d.date,
@@ -3266,9 +3289,9 @@ function buildDebitNoteRows(db, auctionId, cfg) {
       // suffixed RD party ledger (debit notes are always against
       // registered dealers).
       name: _rdPurchaseLedgerName(d.name),
-      address: dealer.padd || '',
-      place:   dealer.ppla || '',
-      pin:     dealer.pin  || '',
+      address: dealer.padd || buyerAddr || '',
+      place:   dealer.ppla || binfo.pla || '',
+      pin,
       gstin,
       refundtot: d.amount,
       cgsttot: d.cgst, sgsttot: d.sgst, igsttot: d.igst,
