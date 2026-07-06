@@ -519,6 +519,7 @@ ${TAGS.DEEMYES}
 <LEDGERNAME>${xe(LDR_Transport)}</LEDGERNAME>
 <GSTONINEVRDLIGIBLEITC>Applicable</GSTONINEVRDLIGIBLEITC>
 <GSTOVRDNTAXABILITY>Taxable</GSTOVRDNTAXABILITY>
+<GSTOVRDNISREVCHARGEAPPL>&#4; Not Applicable</GSTOVRDNISREVCHARGEAPPL>
 <GSTSOURCETYPE>Ledger</GSTSOURCETYPE>
 <GSTLEDGERSOURCE>${xe(LDR_Transport)}</GSTLEDGERSOURCE>
 <GSTOVRDNTYPEOFSUPPLY>Services</GSTOVRDNTYPEOFSUPPLY>
@@ -539,6 +540,7 @@ ${rates.cess}
 <LEDGERNAME>${xe(LDR_Insurance)}</LEDGERNAME>
 <GSTONINEVRDLIGIBLEITC>Applicable</GSTONINEVRDLIGIBLEITC>
 <GSTOVRDNTAXABILITY>Taxable</GSTOVRDNTAXABILITY>
+<GSTOVRDNISREVCHARGEAPPL>&#4; Not Applicable</GSTOVRDNISREVCHARGEAPPL>
 <GSTSOURCETYPE>Ledger</GSTSOURCETYPE>
 <GSTLEDGERSOURCE>${xe(LDR_Insurance)}</GSTLEDGERSOURCE>
 <GSTOVRDNTYPEOFSUPPLY>Services</GSTOVRDNTYPEOFSUPPLY>
@@ -640,6 +642,7 @@ ${TAGS.DEEMNO}
         xml += `
 <ALLINVENTORYENTRIES.LIST>
 <STOCKITEMNAME>${xe(Item_Card)}</STOCKITEMNAME>
+<GSTOVRDNISREVCHARGEAPPL>&#4; Not Applicable</GSTOVRDNISREVCHARGEAPPL>
 <GSTOVRDNTAXABILITY>Taxable</GSTOVRDNTAXABILITY>
 <HSNSOURCETYPE>Stock Item</HSNSOURCETYPE>
 <HSNITEMSOURCE>${xe(Item_Card)}</HSNITEMSOURCE>
@@ -687,6 +690,7 @@ ${rates.cess}
         xml += `
 <ALLINVENTORYENTRIES.LIST>
 <STOCKITEMNAME>${xe(Item_Card)}</STOCKITEMNAME>
+<GSTOVRDNISREVCHARGEAPPL>&#4; Not Applicable</GSTOVRDNISREVCHARGEAPPL>
 <GSTOVRDNTAXABILITY>Taxable</GSTOVRDNTAXABILITY>
 <HSNSOURCETYPE>Stock Item</HSNSOURCETYPE>
 <HSNITEMSOURCE>${xe(Item_Card)}</HSNITEMSOURCE>
@@ -726,6 +730,7 @@ ${rates.cess}
       xml += `
 <ALLINVENTORYENTRIES.LIST>
 <STOCKITEMNAME>${xe(Item_Gunny)}</STOCKITEMNAME>
+<GSTOVRDNISREVCHARGEAPPL>&#4; Not Applicable</GSTOVRDNISREVCHARGEAPPL>
 <GSTOVRDNTAXABILITY>Taxable</GSTOVRDNTAXABILITY>
 <GSTOVRDNSTOREDNATURE>${cardNature}</GSTOVRDNSTOREDNATURE>
 <GSTOVRDNTYPEOFSUPPLY>Goods</GSTOVRDNTYPEOFSUPPLY>
@@ -1436,6 +1441,7 @@ function generSalesXML(rows, cfg, opts = {}) {
           : (isIntra ? 'Local Sales - Taxable' : 'Interstate Sales - Taxable');
         invEntries += `\n<ALLINVENTORYENTRIES.LIST>
 <STOCKITEMNAME>${xe(Item_Card)}</STOCKITEMNAME>
+<GSTOVRDNISREVCHARGEAPPL>&#4; Not Applicable</GSTOVRDNISREVCHARGEAPPL>
 <GSTOVRDNTAXABILITY>Taxable</GSTOVRDNTAXABILITY>
 <HSNSOURCETYPE>Stock Item</HSNSOURCETYPE>
 <HSNITEMSOURCE>${xe(Item_Card)}</HSNITEMSOURCE>
@@ -2376,6 +2382,23 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
   const Round_LDR     = cfgGet(cfg, 'tally_round', 'Round On/Off');
   const HSN_Service   = cfgGet(cfg, 'tally_hsn_service', '996111');
 
+  // Dispatch-from (consignor) block — mirrors the Sales-invoice logic so
+  // debit notes carry the same DISPATCHFROM* consignor identity. The
+  // place / pin / state come from the dedicated Settings → Address (Kerala)
+  // dispatch fields; the free-text address lines from `kl_dispatch`. The
+  // whole block is gated by `tally_dispatch_from` (default true), matching
+  // the Sales invoice, and the free-text DISPATCHFROMADDRESS lines are only
+  // emitted when an address is actually configured.
+  const dispatchEnabled = cfgBool(cfg, 'tally_dispatch_from', true);
+  const _imcpcDisp = String(cfgGet(cfg, 'short_name', '') || '').trim().toUpperCase() === 'IMCPC';
+  const d_company = _imcpcDisp
+    ? cfgGet(cfg, 'trade_name', cfgGet(cfg, 'short_name', ''))
+    : cfgGet(cfg, 'short_name', cfgGet(cfg, 'trade_name', ''));
+  const d_add   = cfgGet(cfg, 'kl_dispatch', '');
+  const d_place = String(cfgGet(cfg, 'kl_dispatch_place', '')).trim();
+  const d_pin   = String(cfgGet(cfg, 'kl_dispatch_pin',   '')).trim();
+  const d_state = String(cfgGet(cfg, 'kl_dispatch_state', 'Kerala')).trim();
+
   const rates = rateDetails(dnGstRate);
 
   let xml = '\n' + startEnvelope(company, 'Vouchers');
@@ -2425,6 +2448,9 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
     const isPlanter   = !!row.planter;
     const voucherNo   = `${taxNm}/${seasonShort}/${isPlanter ? 'URD' : 'SE'}`;
     const discountLdr = isPlanter ? DiscountP_LDR : Discount_LDR;
+    // GST "stored nature" for the commission/discount ledger — same
+    // intra/inter classification as the Sales invoice (no export case here).
+    const dnNature    = isIntra ? 'Local Sales - Taxable' : 'Interstate Sales - Taxable';
 
     const startVoucher = `<VOUCHER VCHTYPE="Sales" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
     const registrationType = isPlanter ? "Unregistered/Consumer" : "Regular"
@@ -2433,7 +2459,10 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
 <ADDRESS.LIST TYPE="String">
 <ADDRESS>${address}</ADDRESS>
 <ADDRESS>${place}</ADDRESS>
-</ADDRESS.LIST>
+</ADDRESS.LIST>${dispatchEnabled && String(d_add || '').trim() ? `
+<DISPATCHFROMADDRESS.LIST TYPE="String">
+${String(d_add).split(/\r?\n/).map(l => `<DISPATCHFROMADDRESS>${xe(l)}</DISPATCHFROMADDRESS>`).join('\n')}
+</DISPATCHFROMADDRESS.LIST>` : ''}
 <DATE>${dateval}</DATE>
 <REFERENCEDATE>${dateval}</REFERENCEDATE>
 <VCHSTATUSDATE>${dateval}</VCHSTATUSDATE>
@@ -2446,6 +2475,12 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
 <PARTYLEDGERNAME>${name}</PARTYLEDGERNAME>
 <VOUCHERNUMBER>${xe(voucherNo)}</VOUCHERNUMBER>
 <REFERENCE>${xe(voucherNo)}</REFERENCE>
+<BILLTOPLACE>${place}</BILLTOPLACE>${dispatchEnabled ? `
+<DISPATCHFROMNAME>${xe(d_company)}</DISPATCHFROMNAME>
+<DISPATCHFROMSTATENAME>${xe(d_state)}</DISPATCHFROMSTATENAME>
+<DISPATCHFROMPINCODE>${xe(d_pin)}</DISPATCHFROMPINCODE>
+<DISPATCHFROMPLACE>${xe(d_place)}</DISPATCHFROMPLACE>` : ''}
+<SHIPTOPLACE>${place}</SHIPTOPLACE>
 <PARTYMAILINGNAME>${name}</PARTYMAILINGNAME>
 <PARTYPINCODE>${pin}</PARTYPINCODE>
 <NUMBERINGSTYLE>Manual</NUMBERINGSTYLE>
@@ -2471,8 +2506,10 @@ ${TAGS.DEEMYES}
 <LEDGERENTRIES.LIST>
 <LEDGERNAME>${xe(discountLdr)}</LEDGERNAME>
 <GSTOVRDNTAXABILITY>Taxable</GSTOVRDNTAXABILITY>
+<GSTOVRDNISREVCHARGEAPPL>&#4; Not Applicable</GSTOVRDNISREVCHARGEAPPL>
 <HSNSOURCETYPE>Ledger</HSNSOURCETYPE>
 <HSNLEDGERSOURCE>${xe(discountLdr)}</HSNLEDGERSOURCE>
+<GSTOVRDNSTOREDNATURE>${dnNature}</GSTOVRDNSTOREDNATURE>
 <GSTOVRDNTYPEOFSUPPLY>Services</GSTOVRDNTYPEOFSUPPLY>
 <GSTHSNNAME>${xe(HSN_Service)}</GSTHSNNAME>
 <GSTHSNDESCRIPTION>${xe(discountLdr)}</GSTHSNDESCRIPTION>
