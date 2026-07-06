@@ -953,15 +953,15 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 .sidebar::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb, var(--side-glow) 35%, transparent)}
 .side-group{margin-bottom:18px}
 .side-group-lbl{
-  font-size:10.5px;font-weight:700;color:var(--side-label);text-transform:uppercase;
-  letter-spacing:1.2px;padding:0 12px 8px;margin-top:4px;
-  cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;
-  transition:color .15s;opacity:.7
+  font-size:13.5px;font-weight:800;color:var(--side-label);text-transform:uppercase;
+  letter-spacing:.8px;padding:2px 12px 9px;margin-top:8px;
+  cursor:pointer;user-select:none;display:flex;align-items:center;gap:7px;
+  transition:color .15s;opacity:.92
 }
 .side-group-lbl:hover{color:var(--side-text);opacity:1}
 /* Chevron flips when group is collapsed via .side-group.section-collapsed */
 .side-group-lbl::before{
-  content:'▼';font-size:8px;display:inline-block;transition:transform .2s;
+  content:'▼';font-size:9px;display:inline-block;transition:transform .2s;
   color:var(--side-text-mute);opacity:.6
 }
 .side-group.section-collapsed .side-group-lbl::before{transform:rotate(-90deg)}
@@ -2465,41 +2465,6 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           Insights
         </button>
-        <button class="side-item needs-settings-write" data-tab="settings" onclick="go('settings')">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          Settings
-        </button>
-        <!-- Formulas reference: read-only summary of every calculation
-             that runs on lots, payments, and sales invoices. Helps the
-             user verify the math against their spec without digging
-             through code. -->
-        <!-- Dev-only reference page. Hidden by default; reveal for the
-             current browser by running `spiceDev(true)` in the console.
-             Persists in localStorage so a reload keeps it visible.
-             To hide again: `spiceDev(false)`. -->
-        <button id="side-formulas" class="side-item" data-tab="formulas" onclick="go('formulas')" style="display:none">
-          <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/><path d="M14.5 19.5l2 2 4-4"/></svg>
-          Formulas
-        </button>
-        <!-- Fix Data — gentle, no-SQL editor for the end user (dad).
-             Same spiceDev(true) reveal; enable it once on his machine and
-             it persists. Read-only until he flips "Edit mode"; every
-             change spells out the exact before→after and asks again. -->
-        <button id="side-fixdata" class="side-item" data-tab="fixdata" onclick="go('fixdata')" style="display:none">
-          <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-          Fix Data
-        </button>
-        <button class="side-item needs-user-manage" data-tab="users" onclick="go('users')">
-          <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          Users
-        </button>
-        <!-- Backup & Restore — admin only. Lives in its own tab so the
-             dangerous Restore button isn't a stray click away from the
-             everyday Settings flow. -->
-        <button class="side-item needs-user-manage" data-tab="backup" onclick="go('backup')">
-          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Backup
-        </button>
       </div>
       <div class="side-group">
         <div class="side-group-lbl">Master Data</div>
@@ -2515,13 +2480,21 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
           Auctions
         </button>
-        <button class="side-item needs-auction-write" data-tab="reassignreqs" onclick="go('reassignreqs')">
-          <svg viewBox="0 0 24 24"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
-          Reassign Requests<span id="reassignreqs-badge" style="display:none;margin-left:6px;background:#c0392b;color:#fff;font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px">0</span>
-        </button>
+      </div>
+      <div class="side-group">
+        <div class="side-group-lbl">Auction Operations</div>
         <button class="side-item" data-tab="lots" onclick="go('lots')">
           <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.96 12 12.01l8.73-5.05M12 22.08V12"/></svg>
           Lots
+        </button>
+        <!-- Lot Entry — fast desktop entry form for the auction-hall
+             workflow (one row per lot, seller search, save & next).
+             Uses the existing /api/traders + /api/lots endpoints so
+             data flows straight into the same DB the admin views.
+             Visible to lot_entry, operator, manager, admin roles. -->
+        <button class="side-item needs-lot-entry-view" data-tab="lotentry" onclick="go('lotentry')">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          Lot Entry
         </button>
         <!-- Price List Mapping — sister tool of the Lots screen's Price
              Import button. Fills the CODE column on a Price List (Before)
@@ -2540,14 +2513,9 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
           Price Check
         </button>
-        <!-- Lot Entry — fast desktop entry form for the auction-hall
-             workflow (one row per lot, seller search, save & next).
-             Uses the existing /api/traders + /api/lots endpoints so
-             data flows straight into the same DB the admin views.
-             Visible to lot_entry, operator, manager, admin roles. -->
-        <button class="side-item needs-lot-entry-view" data-tab="lotentry" onclick="go('lotentry')">
-          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-          Lot Entry
+        <button class="side-item needs-auction-write" data-tab="reassignreqs" onclick="go('reassignreqs')">
+          <svg viewBox="0 0 24 24"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          Reassign Requests<span id="reassignreqs-badge" style="display:none;margin-left:6px;background:#c0392b;color:#fff;font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px">0</span>
         </button>
       </div>
       <div class="side-group">
@@ -2578,7 +2546,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </button>
       </div>
       <div class="side-group">
-        <div class="side-group-lbl">Reports</div>
+        <div class="side-group-lbl">Reports &amp; Exports</div>
         <!-- Reports hub — trade summary, branch comparison, links to
              every report generator. Sits at the top of the Reports
              section so it's the first thing the user sees. -->
@@ -2614,9 +2582,45 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <svg viewBox="0 0 24 24"><path d="M3 3h18v18H3zM3 9h18M9 21V9"/></svg>
           Spice Board
         </button>
+      </div>
+      <div class="side-group">
+        <div class="side-group-lbl">Administration</div>
+        <button class="side-item needs-settings-write" data-tab="settings" onclick="go('settings')">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Settings
+        </button>
+        <button class="side-item needs-user-manage" data-tab="users" onclick="go('users')">
+          <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Users
+        </button>
+        <!-- Backup & Restore — admin only. Lives in its own tab so the
+             dangerous Restore button isn't a stray click away from the
+             everyday Settings flow. -->
+        <button class="side-item needs-user-manage" data-tab="backup" onclick="go('backup')">
+          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Backup
+        </button>
         <button class="side-item needs-user-manage" data-tab="importold" onclick="go('importold')">
           <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 14l-5 5-5-5M12 19V3"/></svg>
           Import Old Data
+        </button>
+        <!-- Formulas reference: read-only summary of every calculation
+             that runs on lots, payments, and sales invoices. Helps the
+             user verify the math against their spec without digging
+             through code. Dev-only page — hidden by default; reveal for the
+             current browser via `spiceDev(true)` (persists in localStorage;
+             hide again with `spiceDev(false)`). -->
+        <button id="side-formulas" class="side-item" data-tab="formulas" onclick="go('formulas')" style="display:none">
+          <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/><path d="M14.5 19.5l2 2 4-4"/></svg>
+          Formulas
+        </button>
+        <!-- Fix Data — gentle, no-SQL editor for the end user (dad).
+             Same spiceDev(true) reveal; enable it once on his machine and
+             it persists. Read-only until he flips "Edit mode"; every
+             change spells out the exact before→after and asks again. -->
+        <button id="side-fixdata" class="side-item" data-tab="fixdata" onclick="go('fixdata')" style="display:none">
+          <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          Fix Data
         </button>
       </div>
     </aside>
@@ -6843,6 +6847,21 @@ function can(capability){
 // buttons in bulk. Each capability becomes a body attribute like
 // data-perm-lot-write="1". Buttons opt in by setting a class
 // like .needs-lot-write — see styles below.
+// Hide any sidebar group whose items are ALL hidden (by role / permission /
+// feature flag) so a bare group header never floats with nothing under it —
+// e.g. "Administration" for a user without settings-write or user-manage.
+// Uses computed display so it's correct regardless of which gating mechanism
+// hid the items.
+function hideEmptySideGroups(){
+  document.querySelectorAll('.side-group').forEach(group => {
+    let anyVisible = false;
+    group.querySelectorAll('.side-item').forEach(it => {
+      if (getComputedStyle(it).display !== 'none') anyVisible = true;
+    });
+    group.style.display = anyVisible ? '' : 'none';
+  });
+}
+
 function applyPermissionAttributes(){
   const body = document.body;
   // Clear all old perm-* attributes + role attribute
@@ -6857,6 +6876,11 @@ function applyPermissionAttributes(){
   // Set role attribute for role-based UI gating (lot_entry hides
   // everything except Lot Entry sidebar item, etc.)
   if (window._userRole) body.setAttribute('data-role', window._userRole);
+  // With the menu grouped functionality-wise, a group like "Administration"
+  // holds only permission-gated items — so a low-privilege user could see a
+  // bare group header with nothing under it. Hide any group whose items are
+  // all hidden. Runs after the perm/role attributes above are applied.
+  hideEmptySideGroups();
   // Update the role badge in the topbar with role-themed colors. Hidden
   // when the username is literally the same as the role ('admin' user
   // with role 'admin') so we don't show "admin · ADMIN" redundantly.
