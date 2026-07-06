@@ -3253,35 +3253,23 @@ function buildDebitNoteRows(db, auctionId, cfg) {
     if (t) dealers[name] = t;
   }
 
-  // Billing pincode / address for these dealers lives in the `buyers`
-  // master under the FIRM-name column `buyer1` (NOT `buyer`, which holds
-  // the person/short code). The `traders` master carries the GSTIN but its
-  // `pin` is routinely blank, which left <PARTYPINCODE> empty and made Tally
-  // reject the debit note ("Buyer (Bill to) pincode not specified/invalid").
-  // Pull pin/place/address from `buyers` (most-recent row that actually has a
-  // pin) and use them to fill the gaps `traders` leaves.
-  const buyerInfo = {};
-  for (const name of dealerNames) {
-    const b = db.prepare(
-      `SELECT pin, pla, add1, add2 FROM buyers
-        WHERE UPPER(TRIM(buyer1)) = UPPER(?) AND TRIM(COALESCE(pin,'')) <> ''
-        ORDER BY id DESC LIMIT 1`
-    ).get(name);
-    if (b) buyerInfo[name] = b;
-  }
-
   return raw.map((d) => {
     const dealer = dealers[String(d.name || '').trim()] || {};
-    const binfo  = buyerInfo[String(d.name || '').trim()] || {};
     // Strip 'GSTIN.' / 'gstin.' prefix from `cr` — Tally expects the
     // bare 15-char GSTIN.
     let gstin = String(dealer.cr || '').trim();
     if (/^GSTIN\.?/i.test(gstin)) gstin = gstin.replace(/^GSTIN\.?/i, '');
-    // Pincode — prefer traders.pin, fall back to buyers.pin. Sanitize to a
-    // bare 6-digit (Tally rejects spaces / non-digits); blank stays blank.
-    const rawPin = String(dealer.pin || binfo.pin || '').replace(/\D/g, '');
-    const pin    = /^[1-9][0-9]{5}$/.test(rawPin) ? rawPin : '';
-    const buyerAddr = [binfo.add1, binfo.add2].map(s => String(s || '').trim()).filter(Boolean).join(', ');
+    // Seller pincode for <PARTYPINCODE>. The Sellers (traders) master uses
+    // the dedicated `pin` column when it's filled, but historically the pin
+    // was captured only as the trailing 6-digit block of the place text
+    // (ppla) — e.g. "PAMPADUMPARA 685552" — leaving the `pin` column blank.
+    // That blank column made Tally reject the debit note ("Buyer/Bill-to
+    // pincode not specified/invalid"). So resolve the pin from `pin`, then
+    // fall back to the last 6-digit group in ppla / padd. `_pin6` takes the
+    // LAST 6-digit run (Indian PINs start 1-9) so door numbers earlier in
+    // the text don't win.
+    const _pin6 = (s) => { const m = String(s || '').match(/[1-9]\d{5}/g); return m ? m[m.length - 1] : ''; };
+    const pin = _pin6(dealer.pin) || _pin6(dealer.ppla) || _pin6(dealer.padd) || '';
     return {
       ano: d.ano,
       date: d.date,
@@ -3289,8 +3277,8 @@ function buildDebitNoteRows(db, auctionId, cfg) {
       // suffixed RD party ledger (debit notes are always against
       // registered dealers).
       name: _rdPurchaseLedgerName(d.name),
-      address: dealer.padd || buyerAddr || '',
-      place:   dealer.ppla || binfo.pla || '',
+      address: dealer.padd || '',
+      place:   dealer.ppla || '',
       pin,
       gstin,
       refundtot: d.amount,
