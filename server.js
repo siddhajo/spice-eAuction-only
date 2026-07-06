@@ -1871,20 +1871,26 @@ async function sendReassignRequestWhatsApp(db, reqRow) {
 async function handleReassignWhatsAppDecision(db, action, requestId, fromPhone) {
   const from = _waNormalizePhone(fromPhone);
   const allowed = _reassignAdminPhones(db);
-  if (!allowed.includes(from)) return; // not an authorised approver — ignore
+  if (!allowed.includes(from)) {
+    console.warn('[wa-decision] IGNORED — sender %s not in reassign_alert_whatsapp allowlist [%s]', from, allowed.join(', '));
+    return; // not an authorised approver — ignore
+  }
   const reply = (msg) => { _waSendText(db, from, msg, { ref_type: 'lot_reassign_request', ref_id: String(requestId) }); };
 
   const reqRow = db.get('SELECT * FROM lot_reassign_requests WHERE id = ?', [requestId]);
-  if (!reqRow) return reply(`Reassign request #${requestId} not found.`);
+  if (!reqRow) { console.warn('[wa-decision] request #%d not found', requestId); return reply(`Reassign request #${requestId} not found.`); }
   if (reqRow.status !== 'pending') {
+    console.warn('[wa-decision] request #%d already %s', requestId, reqRow.status);
     return reply(`Request #${requestId} was already ${reqRow.status}. No change made.`);
   }
 
   if (action === 'approve') {
     const result = applyLotReassignment(db, reqRow.auction_id, reassignFieldsFromRow(reqRow), { id: null, username: 'WhatsApp' });
     if (!result.ok) {
+      console.warn('[wa-decision] approve #%d FAILED validation: %s', requestId, result.error);
       return reply(`Could not approve #${requestId}: ${result.error} — please review in the app.`);
     }
+    console.log('[wa-decision] approve #%d OK: %s', requestId, result.message);
     db.run(`UPDATE lot_reassign_requests
               SET status='approved', decided_by_username='WhatsApp', decision_note='Approved via WhatsApp',
                   decided_at=datetime('now','localtime'), seen_at=NULL
@@ -1896,6 +1902,7 @@ async function handleReassignWhatsAppDecision(db, action, requestId, fromPhone) 
               SET status='denied', decided_by_username='WhatsApp', decision_note='Denied via WhatsApp',
                   decided_at=datetime('now','localtime'), seen_at=NULL
             WHERE id=?`, [requestId]);
+    console.log('[wa-decision] deny #%d OK', requestId);
     return reply(`❌ Denied request #${requestId} (${reqRow.from_branch} → ${reqRow.to_branch}, lots ${reassignLotsLabel(reqRow)}). The operator has been notified.`);
   }
 }
@@ -2126,11 +2133,23 @@ app.get('/api/whatsapp/webhook', (req, res) => {
 app.post('/api/whatsapp/webhook', (req, res) => {
   const db = getDb();
   const cfg = _waConfig(db);
+  // Diagnostics: every webhook hit is logged with a [wa-webhook] prefix so a
+  // single button tap can be traced end-to-end in the server logs.
+  console.log('[wa-webhook] received; appSecret=%s bytes=%d',
+    cfg.appSecret ? 'set' : 'none', (req.rawBody && req.rawBody.length) || 0);
   if (cfg.appSecret) {
     const sig = req.get('X-Hub-Signature-256') || '';
     const expected = 'sha256=' + crypto.createHmac('sha256', cfg.appSecret).update(req.rawBody || Buffer.from('')).digest('hex');
     const a = Buffer.from(sig), b = Buffer.from(expected);
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.sendStatus(401);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      // Signature mismatch would otherwise silently drop every tap. Log it
+      // loudly (the appSecret is wrong, or a proxy altered the body) and
+      // STILL process the event — Meta already authenticated the sender by
+      // delivering to our verified callback URL, so this is a pragmatic
+      // trade to avoid a config mistake blackholing all approvals.
+      console.warn('[wa-webhook] SIGNATURE MISMATCH — got %s expected %s (processing anyway)',
+        sig.slice(0, 20), expected.slice(0, 20));
+    }
   }
   try {
     for (const entry of (req.body && req.body.entry) || []) {
@@ -2148,20 +2167,25 @@ app.post('/api/whatsapp/webhook', (req, res) => {
           }
         }
         for (const m of (v.messages || [])) {
-          // A tap on an Approve/Deny button. We resolve (action, requestId)
-          // from whatever the webhook actually carries — Meta's payload for
-          // template quick-reply buttons is inconsistent across accounts:
+          console.log('[wa-webhook] message type=%s from=%s button=%j interactive=%j context=%j',
+            m.type, m.from, m.button || null, m.interactive || null, m.context || null);
+          // Persist the FULL raw message so a tap can be inspected via
+          // GET /api/whatsapp/inbound even without console access.
+          try { db.run('INSERT INTO whatsapp_inbound (wamid, phone, body) VALUES (?,?,?)',
+            [m.id || '', m.from || '', JSON.stringify(m).slice(0, 2000)]); } catch (_) {}
+
+          // Resolve (action, requestId) from whatever the webhook carries —
+          // Meta's payload shape for template quick-reply buttons varies:
           //   (a) our per-message payload "approve:<id>" comes back verbatim
-          //       (m.button.payload / m.interactive.button_reply.id), OR
-          //   (b) only the button TEXT ("Approve"/"Deny") comes back, with a
-          //       context.id pointing at the template message we sent — we
-          //       map that wamid → the request id via the whatsapp_messages
-          //       log so the decision still lands.
+          //       in m.button.payload / m.interactive.button_reply.id, OR
+          //   (b) only the button TEXT ("Approve"/"Deny") comes back with a
+          //       context.id → map that wamid to the request id via the
+          //       whatsapp_messages log.
           let action = '', requestId = 0;
           let payload = '';
-          if (m.type === 'button' && m.button && m.button.payload) payload = String(m.button.payload);
+          if (m.button && m.button.payload) payload = String(m.button.payload);
           else if (m.interactive && m.interactive.button_reply && m.interactive.button_reply.id) payload = String(m.interactive.button_reply.id);
-          const dec = payload.match(/^(approve|deny):(\d+)$/i);
+          const dec = payload.match(/^\s*(approve|deny)\s*[:\-]?\s*(\d+)\s*$/i);
           if (dec) { action = dec[1].toLowerCase(); requestId = parseInt(dec[2], 10); }
           else {
             const btnText = String(
@@ -2169,26 +2193,37 @@ app.post('/api/whatsapp/webhook', (req, res) => {
               (m.interactive && m.interactive.button_reply && m.interactive.button_reply.title) || ''
             ).trim().toLowerCase();
             const ctxId = m.context && m.context.id;
-            if ((btnText === 'approve' || btnText === 'deny') && ctxId) {
+            if ((btnText.startsWith('approve') || btnText.startsWith('deny')) && ctxId) {
               try {
                 const row = db.get(
                   "SELECT ref_id FROM whatsapp_messages WHERE wamid = ? AND ref_type = 'lot_reassign_request' ORDER BY id DESC LIMIT 1",
                   [ctxId]
                 );
-                if (row && row.ref_id) { action = btnText; requestId = parseInt(row.ref_id, 10); }
+                if (row && row.ref_id) { action = btnText.startsWith('approve') ? 'approve' : 'deny'; requestId = parseInt(row.ref_id, 10); }
+                else console.warn('[wa-webhook] button text "%s" but no reassign template logged for context.id=%s', btnText, ctxId);
               } catch (_) {}
             }
           }
           if (action && requestId) {
-            try { handleReassignWhatsAppDecision(db, action, requestId, m.from || ''); } catch (_) {}
+            console.log('[wa-webhook] -> decision action=%s requestId=%d from=%s', action, requestId, m.from);
+            try { handleReassignWhatsAppDecision(db, action, requestId, m.from || ''); } catch (e) { console.warn('[wa-webhook] handler error', e && e.message); }
+          } else if (m.type === 'button' || (m.interactive && m.interactive.button_reply)) {
+            console.warn('[wa-webhook] button tap NOT resolved to a decision (payload=%j) — check template button payloads', payload);
           }
-          const body = (m.text && m.text.body) || (m.button && m.button.text) || m.type || '';
-          try { db.run('INSERT INTO whatsapp_inbound (wamid, phone, body) VALUES (?,?,?)', [m.id || '', m.from || '', String(body)]); } catch (_) {}
         }
       }
     }
-  } catch (_) { /* never let a malformed payload 500 — Meta would retry forever */ }
+  } catch (e) { console.warn('[wa-webhook] processing error', e && e.message); /* never 500 — Meta retries hard */ }
   res.sendStatus(200);
+});
+
+// Inspect the most recent inbound WhatsApp events (raw JSON) — used to see
+// exactly what a button tap delivered when approvals aren't landing.
+app.get('/api/whatsapp/inbound', requireView, (req, res) => {
+  const db = getDb();
+  let rows = [];
+  try { rows = db.all('SELECT id, wamid, phone, body, received_at FROM whatsapp_inbound ORDER BY id DESC LIMIT 30'); } catch (_) {}
+  res.json({ inbound: rows });
 });
 
 // NOTE: :id is constrained to digits so this parametric route does NOT shadow

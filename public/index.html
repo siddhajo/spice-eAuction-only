@@ -966,8 +966,16 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 }
 .side-group.section-collapsed .side-group-lbl::before{transform:rotate(-90deg)}
 /* Hide the items when section is collapsed — pure CSS, no JS height calc.
-   Group label stays visible as the click target. */
-.side-group.section-collapsed .side-item{display:none}
+   Group label stays visible as the click target.
+   Scoped to the FULL-WIDTH sidebar only (per-group collapse is meaningless in
+   icon-only mode, where labels are hidden). The extra :not()/class selectors
+   push specificity to (0,6,1) + !important so this beats the permission-gating
+   rules below that REVEAL gated sidebar items with `display:flex !important`
+   (specificity 0,3,1). Without it, a group whose items are ALL permission-
+   gated — e.g. Administration (Settings / Users / Backup / Import Old Data) —
+   would flip its chevron but never actually collapse, because the gated items'
+   !important display won the cascade. */
+html:not(.sidebar-collapsed) .sidebar:not(.collapsed) .side-group.section-collapsed .side-item{display:none !important}
 .side-item{
   display:flex;align-items:center;gap:12px;
   padding:11px 14px;border-radius:10px;cursor:pointer;
