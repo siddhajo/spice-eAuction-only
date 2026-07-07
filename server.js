@@ -5313,11 +5313,27 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
     }
   }
 
+  // Withdrawn (code = 'WD'): the lot carries no value, so force price and
+  // amount to 0 here and recompute the derived figures below — same rule
+  // as the bulk Set-Buyer path, so it's consistent however WD gets set.
+  const isWD = String(l.code || '').trim().toUpperCase() === 'WD';
+  if (isWD) { l.price = 0; l.amount = 0; }
+
   for (const [k,v] of Object.entries(l)) {
     if (k !== 'id' && k !== 'auction_id' && k !== 'created_at') { sets.push(`${k}=?`); vals.push(v); }
   }
   vals.push(lotId);
   db.run(`UPDATE lots SET ${sets.join(',')} WHERE id=?`, vals);
+  if (isWD) {
+    const cfg = getSettingsFlat(db);
+    const fresh = db.get('SELECT * FROM lots WHERE id = ?', [lotId]);
+    if (fresh) {
+      fresh.price = 0; fresh.amount = 0;
+      const calc = calculateLot(fresh, cfg);
+      db.run(`UPDATE lots SET amount=?,pqty=?,prate=?,puramt=?,com=?,sertax=?,cgst=?,sgst=?,igst=?,advance=?,balance=?,bilamt=?,refund=?,refud=?,isp_pqty=?,isp_prate=?,isp_puramt=?,asp_pqty=?,asp_prate=?,asp_puramt=? WHERE id=?`,
+        [0,calc.pqty,calc.prate,calc.puramt,calc.com,calc.sertax,calc.cgst,calc.sgst,calc.igst,calc.advance,calc.balance,calc.bilamt,calc.refund||0,calc.refud||0,calc.isp_pqty||0,calc.isp_prate||0,calc.isp_puramt||0,calc.asp_pqty||0,calc.asp_prate||0,calc.asp_puramt||0,lotId]);
+    }
+  }
   // Any lot edit invalidates a previous price-check stamp — the data
   // the verify run looked at has changed. Operator must re-verify
   // before the next calculate/invoice/etc.
@@ -5418,11 +5434,17 @@ app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
   // corrections through the same endpoint without duplicating SQL.
   // Null / undefined → field is untouched; any number (including 0)
   // is written to lots.price as-is.
-  const hasPrice = req.body.price !== undefined && req.body.price !== null && req.body.price !== '';
-  const priceNum = hasPrice ? Number(req.body.price) : null;
+  let hasPrice = req.body.price !== undefined && req.body.price !== null && req.body.price !== '';
+  let priceNum = hasPrice ? Number(req.body.price) : null;
   if (hasPrice && !Number.isFinite(priceNum)) {
     return res.status(400).json({ error: 'price must be a number' });
   }
+  // Withdrawn lots (code = 'WD') were pulled before sale, so they carry no
+  // value: force price to 0 here and recompute (below) so amount and every
+  // derived figure — commission, GST, payable — zero out. This overrides
+  // any price the caller passed alongside a WD code.
+  const isWD = code.toUpperCase() === 'WD';
+  if (isWD) { hasPrice = true; priceNum = 0; }
   // Caller must update at least one writable field — either the
   // buyer-code triple or price (or both). Empty payload is a no-op
   // that would silently do nothing, so we refuse it up front.
@@ -5470,6 +5492,24 @@ app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
       [...vals, ...slice]
     );
     if (info && typeof info.changes === 'number') updated += info.changes;
+  }
+  // For WD lots, recompute now (same formula as the Calculate endpoint):
+  // price is 0, so amount = qty × 0 = 0, and calculateLot() cascades that
+  // to every derived field. Scoped to the lots we just updated.
+  if (isWD && mutableIds.length) {
+    const cfg = getSettingsFlat(db);
+    for (let i = 0; i < mutableIds.length; i += CHUNK) {
+      const slice = mutableIds.slice(i, i + CHUNK);
+      const placeholders = slice.map(() => '?').join(',');
+      const wdLots = db.all(`SELECT * FROM lots WHERE id IN (${placeholders})`, slice);
+      for (const lot of wdLots) {
+        lot.price = 0;
+        lot.amount = 0;
+        const calc = calculateLot(lot, cfg);
+        db.run(`UPDATE lots SET amount=?,pqty=?,prate=?,puramt=?,com=?,sertax=?,cgst=?,sgst=?,igst=?,advance=?,balance=?,bilamt=?,refund=?,refud=?,isp_pqty=?,isp_prate=?,isp_puramt=?,asp_pqty=?,asp_prate=?,asp_puramt=? WHERE id=?`,
+          [0,calc.pqty,calc.prate,calc.puramt,calc.com,calc.sertax,calc.cgst,calc.sgst,calc.igst,calc.advance,calc.balance,calc.bilamt,calc.refund||0,calc.refud||0,calc.isp_pqty||0,calc.isp_prate||0,calc.isp_puramt||0,calc.asp_pqty||0,calc.asp_prate||0,calc.asp_puramt||0,lot.id]);
+      }
+    }
   }
   for (const aid of touchedAuctions) { pcClearGate(db, aid); lvClearGate(db, aid); }
   res.json({ success: true, updated, requested: ids.length, skipped_locked: lockedIds.length });
