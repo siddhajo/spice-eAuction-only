@@ -271,6 +271,10 @@ const DEFAULTS = [
 
   // ── LOT ENTRY DEFAULTS ──────────────────────────────────────
   { key: 'sample_weight',      value: '0',     category: 'lot_entry', label: 'Default Sample Weight (kg)',         type: 'number'  },
+  // Per-lot sample rates behind the dashboard trade-snapshot Stock tile:
+  //   Stock = (lots × Sample Collection) − (lots × Free Sample).
+  { key: 'sample_collection',  value: '0',     category: 'lot_entry', label: 'Default Sample Collection (kg)',     type: 'number'  },
+  { key: 'free_sample',        value: '0',     category: 'lot_entry', label: 'Default Free Sample (kg)',           type: 'number'  },
   // Per-bag empty gunny weight. When > 0, Lot Entry surfaces the
   // "Weight w/ Gunny" + "Gunny Weight" fields and derives net weight as
   // weight_with_gunny − (bags × this value). 0/blank keeps the classic

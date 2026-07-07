@@ -10847,11 +10847,17 @@ app.get('/api/stats', requireView, (req, res) => {
             COUNT(*) as lots
      FROM lots`
   ) || {};
+  // All-trades invoice GST — Σ(CGST+SGST+IGST) over every sales invoice.
+  // Feeds the dashboard trade-snapshot matrix's GST column in cumulative mode.
+  const cumGstRow = db.get(
+    `SELECT COALESCE(SUM(COALESCE(cgst,0)+COALESCE(sgst,0)+COALESCE(igst,0)),0) as gst FROM invoices`
+  ) || {};
   const cumulative = {
     qty:    cumRow.qty    || 0,
     amount: cumRow.amount || 0,
     lots:   cumRow.lots   || 0,
     auctions: counts.auctions,
+    gst:    Number(cumGstRow.gst) || 0,
   };
 
   // ── Per-trade breakdown (one row per auction, newest first) ──
@@ -10862,7 +10868,11 @@ app.get('/api/stats', requireView, (req, res) => {
             COALESCE(SUM(l.qty),0) as qty,
             COALESCE(SUM(l.amount),0) as amount,
             COALESCE(SUM(CASE WHEN l.amount > 0 THEN 1 ELSE 0 END),0) as priced,
-            COALESCE(SUM(CASE WHEN l.invo IS NOT NULL AND l.invo != '' THEN 1 ELSE 0 END),0) as invoiced
+            COALESCE(SUM(CASE WHEN l.invo IS NOT NULL AND l.invo != '' THEN 1 ELSE 0 END),0) as invoiced,
+            -- Invoice GST for this trade = Σ(CGST+SGST+IGST) over its sales
+            -- invoices. Drives the dashboard trade-snapshot matrix GST column.
+            COALESCE((SELECT SUM(COALESCE(iv.cgst,0)+COALESCE(iv.sgst,0)+COALESCE(iv.igst,0))
+                      FROM invoices iv WHERE iv.auction_id = a.id),0) as gst
      FROM auctions a
      LEFT JOIN lots l ON l.auction_id = a.id
      GROUP BY a.id, a.ano, a.date, a.crop_type
@@ -11195,6 +11205,17 @@ app.get('/api/insights', requireView, (req, res) => {
   const aidA = singleAuctionId ? ` AND a.id = ${Number(singleAuctionId)}` : '';
   const aidL = singleAuctionId ? ` AND l.auction_id = ${Number(singleAuctionId)}` : '';
 
+  // Sample-weight config — feeds the Dashboard trade-snapshot widget.
+  //   Seller Qty = net qty + (Sample Weight × lots): the seller (planter) is
+  //     credited for the sample taken from each lot.
+  //   Stock      = (lots × Sample Collection) − (lots × Free Sample).
+  //   Income     = ISP commission on sold value.
+  const _cfgIns = getSettingsFlat(db) || {};
+  const sampleWt           = Number(_cfgIns.sample_weight) || 0;
+  const sampleCollectionWt = Number(_cfgIns.sample_collection) || 0;
+  const freeSampleWt       = Number(_cfgIns.free_sample) || 0;
+  const ISP_COMMISSION_PCT = 1.25;   // ISP commission rate
+
   // ── Per-trade rollup ──────────────────────────────────────
   const tradeRows = db.all(
     `SELECT
@@ -11289,7 +11310,8 @@ app.get('/api/insights', requireView, (req, res) => {
        COALESCE(SUM(CASE WHEN ${SOLD} THEN l.amount ELSE 0 END), 0) AS sold_value,
        COALESCE(SUM(CASE WHEN ${SOLD} THEN l.qty    ELSE 0 END), 0) AS sold_qty,
        COALESCE(SUM(l.amount), 0) AS value,
-       COALESCE(SUM(l.balance), 0) AS payable_to_sellers
+       COALESCE(SUM(l.balance), 0) AS payable_to_sellers,
+       COALESCE(SUM(CASE WHEN l.amount > 0 THEN l.puramt ELSE 0 END), 0) AS seller_amount
      FROM lots l
      JOIN auctions a ON a.id = l.auction_id
      WHERE date(a.date) BETWEEN date(?) AND date(?)${aidA}
@@ -11309,6 +11331,8 @@ app.get('/api/insights', requireView, (req, res) => {
     avg_price: Number(r.sold_qty) > 0 ? Number(r.sold_value) / Number(r.sold_qty) : 0,
     value:     Number(r.value)     || 0,
     payable_to_sellers: Number(r.payable_to_sellers) || 0,
+    // Gross purchase amount = Σ puramt — the Payments screen's "Amount" column.
+    seller_amount: Number(r.seller_amount) || 0,
   }));
 
   // ── Stacked bar series — pivot perTrade × perBranch into a
@@ -11412,6 +11436,65 @@ app.get('/api/insights', requireView, (req, res) => {
   totals.min_price = _mins.length ? Math.min(..._mins) : null;
   totals.max_price = _maxs.length ? Math.max(..._maxs) : null;
 
+  // ── Dashboard trade-snapshot enrichments (T.*) ──
+  // Gross purchase amount = Σ puramt across the scope — the Payments screen's
+  // "Amount" total. The snapshot's "Payable to sellers" tile reads this,
+  // distinct from payable_to_sellers (net balance) used by the Insights tab.
+  totals.seller_amount = perBranch.reduce((s, b) => s + b.seller_amount, 0);
+
+  // "To be earned" — Σ of the Payments screen's Discount column across every
+  // in-scope trade. Reuses getPaymentSummary so the figure matches the Payments
+  // tab exactly. Feeds the snapshot Income tile.
+  let toBeEarned = 0;
+  try {
+    const cfgP = getSettingsFlat(db);
+    const scopeAucs = db.all(
+      `SELECT id FROM auctions a WHERE date(a.date) BETWEEN date(?) AND date(?)${aidA}`,
+      [from, to]
+    );
+    for (const a of scopeAucs) {
+      const summ = getPaymentSummary(db, a.id, undefined, cfgP) || [];
+      for (const s of summ) toBeEarned += Number(s.total_discount) || 0;
+    }
+  } catch (_) { toBeEarned = 0; }
+  totals.to_be_earned = toBeEarned;
+
+  // Purchase-invoice GST — Σ(CGST+SGST+IGST) over the Purchases screen's rows
+  // in scope. Feeds the snapshot Payable-to-sellers tile's GST sub-metric.
+  const purGstRow = db.get(
+    `SELECT COALESCE(SUM(COALESCE(cgst,0)+COALESCE(sgst,0)+COALESCE(igst,0)),0) AS gst
+     FROM purchases
+     WHERE date(date) BETWEEN date(?) AND date(?)${singleAuctionId ? ` AND auction_id = ${Number(singleAuctionId)}` : ''}`,
+    [from, to]
+  ) || {};
+  totals.purchase_gst = Number(purGstRow.gst) || 0;
+
+  // Amount straight from the lots table — Σ(lots.amount) for the scope, split
+  // Booked / Sold / Withdrawn. The snapshot matrix reads these so its "Amount"
+  // column equals SUM(amount) on the Lots screen exactly.
+  const lotsAmtRow = db.get(
+    `SELECT COALESCE(SUM(amount),0) AS total,
+            COALESCE(SUM(CASE WHEN UPPER(TRIM(COALESCE(code,''))) NOT IN ('','WD') THEN amount ELSE 0 END),0) AS sold,
+            COALESCE(SUM(CASE WHEN UPPER(TRIM(COALESCE(code,''))) = 'WD' THEN amount ELSE 0 END),0) AS wd
+     FROM lots${singleAuctionId ? ` WHERE auction_id = ${Number(singleAuctionId)}` : ''}`
+  ) || {};
+  totals.lots_amount      = Number(lotsAmtRow.total) || 0;
+  totals.lots_sold_amount = Number(lotsAmtRow.sold)  || 0;
+  totals.lots_wd_amount   = Number(lotsAmtRow.wd)    || 0;
+
+  // Seller (planter) weighment = net qty + the sample taken from each lot;
+  // Buyer Wt stays the net qty. Back the snapshot matrix Seller/Buyer columns.
+  totals.seller_qty      = totals.qty      + sampleWt * totals.lots;
+  totals.sold_seller_qty = totals.sold_qty + sampleWt * totals.sold;
+  totals.wd_seller_qty   = totals.wd_qty   + sampleWt * totals.withdrawn;
+  // Stock = sample collected − free sample, each = total lots × its per-lot
+  // default (dedicated Sample Collection / Free Sample rates, NOT sampleWt).
+  totals.sample_collected = sampleCollectionWt * totals.lots;
+  totals.free_sample      = freeSampleWt       * totals.lots;
+  totals.stock_kg         = totals.sample_collected - totals.free_sample;
+  totals.commission_income = totals.sold_value * (ISP_COMMISSION_PCT / 100);
+  totals.sample_weight    = sampleWt;
+
   // ── Grade split — Grade 1 (Planter, no GSTIN) vs Grade 2 (Dealer, holds a
   // valid 15-char GSTIN in the seller's CR field). Same classification as the
   // Dealer List / party-grade filters (hasValidGstin). Grouped by CR in SQL,
@@ -11449,6 +11532,31 @@ app.get('/api/insights', requireView, (req, res) => {
     g.avg_price = g.sold_qty > 0 ? g.sold_value / g.sold_qty : 0;
   }
 
+  // ── Grade breakdown per status — drives the click-through modal on the
+  //    Dashboard snapshot matrix (Booked / Sold / Withdrawn → Grade 1 / 2).
+  //    Grade here is the lot's own `grade` field ('1' / '2' / other), NOT the
+  //    GSTIN-based gradeSplit above — the two coexist for different screens. ──
+  const gradeBrRows = db.all(
+    `SELECT CASE WHEN TRIM(COALESCE(l.grade,'')) IN ('1','2') THEN TRIM(l.grade) ELSE 'other' END AS grade,
+            COUNT(*) AS b_lots, COALESCE(SUM(l.bags),0) AS b_bags, COALESCE(SUM(l.qty),0) AS b_qty, COALESCE(SUM(l.amount),0) AS b_amt,
+            SUM(CASE WHEN ${SOLD} THEN 1 ELSE 0 END) AS s_lots, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.bags ELSE 0 END),0) AS s_bags, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.qty ELSE 0 END),0) AS s_qty, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.amount ELSE 0 END),0) AS s_amt,
+            SUM(CASE WHEN ${WD} THEN 1 ELSE 0 END) AS w_lots, COALESCE(SUM(CASE WHEN ${WD} THEN l.bags ELSE 0 END),0) AS w_bags, COALESCE(SUM(CASE WHEN ${WD} THEN l.qty ELSE 0 END),0) AS w_qty, COALESCE(SUM(CASE WHEN ${WD} THEN l.amount ELSE 0 END),0) AS w_amt
+     FROM lots l JOIN auctions a ON a.id = l.auction_id
+     WHERE date(a.date) BETWEEN date(?) AND date(?)${aidA}
+     GROUP BY CASE WHEN TRIM(COALESCE(l.grade,'')) IN ('1','2') THEN TRIM(l.grade) ELSE 'other' END`,
+    [from, to]
+  );
+  const gradeCell = (lots, bags, qty, amount) => ({
+    lots: Number(lots)||0, bags: Number(bags)||0, qty: Number(qty)||0,
+    seller_qty: (Number(qty)||0) + sampleWt * (Number(lots)||0), amount: Number(amount)||0,
+  });
+  const gradeBreakdown = { booked: {}, sold: {}, withdrawn: {} };
+  for (const g of gradeBrRows) {
+    gradeBreakdown.booked[g.grade]    = gradeCell(g.b_lots, g.b_bags, g.b_qty, g.b_amt);
+    gradeBreakdown.sold[g.grade]      = gradeCell(g.s_lots, g.s_bags, g.s_qty, g.s_amt);
+    gradeBreakdown.withdrawn[g.grade] = gradeCell(g.w_lots, g.w_bags, g.w_qty, g.w_amt);
+  }
+
   res.json({
     range: { from, to },
     auction_id: singleAuctionId,
@@ -11457,6 +11565,7 @@ app.get('/api/insights', requireView, (req, res) => {
     perBranch,
     branchStacked,
     gradeSplit,
+    gradeBreakdown,
     outstandingByBuyer,
     buyerActivity,
   });
