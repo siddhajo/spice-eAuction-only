@@ -8536,58 +8536,7 @@ async function loadStats(auctionId){
       </div>
     </div>
 
-    <div class="kpi-grid">
-      <div class="kpi">
-        <div class="kpi-icon"><svg viewBox="0 0 24 24"><path d="M3 3v18h18M8 13v5M13 9v9M18 6v12"/></svg></div>
-        <div class="kpi-label">${isAllMode ? 'Total Volume' : 'Auction Volume'}</div>
-        <div class="kpi-value" style="font-size:22px">${isAllMode
-          ? inr2(CUM.amount)
-          : inr2(A ? A.totalAmt : 0)}</div>
-        <span class="kpi-delta neutral">${isAllMode
-          ? `${CUM.auctions||0} trade${CUM.auctions===1?'':'s'}`
-          : (A ? `${kg(A.totalQty)} traded` : 'No auction')}</span>
-      </div>
-      <div class="kpi cardamom">
-        <div class="kpi-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12l2 2 4-4"/></svg></div>
-        <div class="kpi-label">${isAllMode ? 'Total Lots' : 'Active Lots'}</div>
-        <div class="kpi-value">${isAllMode ? (CUM.lots||0) : (K.activeLots||0)}</div>
-        <span class="kpi-delta neutral">${isAllMode
-          ? `across all auctions`
-          : `${C.lots||0} total lots`}</span>
-      </div>
-      <div class="kpi turmeric">
-        <div class="kpi-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg></div>
-        <div class="kpi-label">Pending Invoices</div>
-        <div class="kpi-value">${K.pendingInvoices||0}</div>
-        <span class="kpi-delta ${K.pendingInvoices>0?'down':'neutral'}">${K.pendingInvoices>0
-          ? (isAllMode ? 'Across all auctions' : 'Buyers awaiting')
-          : 'All clear'}</span>
-      </div>
-      <div class="kpi chili">
-        <div class="kpi-icon"><svg viewBox="0 0 24 24"><path d="M12 2l3 7h7l-5.5 4 2 7L12 16l-6.5 4 2-7L2 9h7z"/></svg></div>
-        <div class="kpi-label">Revenue This Month</div>
-        <div class="kpi-value" style="font-size:22px">${inr2(K.monthRevenue)}</div>
-        ${revPill}
-      </div>
-    </div>
-
-    <div class="card" id="dash-headline-card" style="padding:0;margin-bottom:20px">
-      <div style="padding:18px 22px 12px;border-bottom:1px solid var(--spice-line);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-        <div>
-          <h2 style="font-size:17px;font-weight:700;margin:0 0 2px;color:var(--spice-text-main)">🎯 Headline metrics</h2>
-          <p style="margin:0;font-size:12.5px;color:var(--spice-text-mute)" id="dash-headline-sub">${isAllMode ? 'At-a-glance totals across every trade.' : 'At-a-glance totals for the selected trade.'}</p>
-        </div>
-        <div style="font-size:12px;color:var(--spice-text-hint)" id="dash-headline-range">${isAllMode ? 'All trades' : (A ? `Trade #${esc(A.ano)} · ${fmtD(A.date)}` : '')}</div>
-      </div>
-      <div style="padding:14px 22px 18px" id="dash-headline-body">
-        <div class="kpi-grid" id="dash-headline-grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:0">
-          <div style="grid-column:1/-1;padding:18px 8px;text-align:center;color:var(--spice-text-hint);font-size:13px">Loading…</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="dash-row">
-      ${aHTML}
+    <div style="margin-bottom:20px">
       <div class="card" style="padding:0">
         <div style="padding:18px 22px 12px;border-bottom:1px solid var(--spice-line);display:flex;justify-content:space-between;align-items:center">
           <h2 style="font-size:17px;font-weight:700;margin:0;color:var(--spice-text-main)">Quick Actions</h2>
@@ -8624,36 +8573,8 @@ async function loadStats(auctionId){
          lands, so the dashboard paint is never blocked. -->
     <div id="dash-current-auction" style="margin-bottom:20px"></div>
 
-    ${chartHTML}
-
-    ${branchHTML}
-
     ${ptHTML}
-
-    <div class="dash-row-eq">
-      <div class="card" style="padding:0">
-        <div style="padding:18px 22px 12px;border-bottom:1px solid var(--spice-line);display:flex;justify-content:space-between;align-items:center">
-          <h2 style="font-size:17px;font-weight:700;margin:0;color:var(--spice-text-main)">Recent Invoices</h2>
-          <a href="#" onclick="go('invoices');return false" style="font-size:13px;color:var(--spice-saffron);font-weight:600;text-decoration:none">View all →</a>
-        </div>
-        <div style="padding:0 4px">${invoicesHTML}</div>
-      </div>
-      <div class="card" style="padding:0">
-        <div style="padding:18px 22px 12px;border-bottom:1px solid var(--spice-line);display:flex;justify-content:space-between;align-items:center">
-          <h2 style="font-size:17px;font-weight:700;margin:0;color:var(--spice-text-main)">Top Sellers</h2>
-          <span style="font-size:12px;color:var(--spice-text-hint)">Last 7 days</span>
-        </div>
-        <div style="padding:4px 22px 18px">${sellersHTML}</div>
-      </div>
-    </div>
   `;
-
-  // Headline metric tiles. Mirrors the Insights "Headline metrics"
-  // strip but always for the dashboard-selected trade (or lifetime
-  // totals across every trade when "All Trades" is picked). The tile grid renders
-  // synchronously above with a "Loading…" placeholder; this call fills
-  // it in asynchronously so the dashboard paint is never blocked.
-  renderDashHeadlineTiles(_dashSelectedAuctionId);
 
   // "Current Auction" depot summary — uses the dashboard-selected trade, else
   // the current/latest auction returned by /api/stats.
