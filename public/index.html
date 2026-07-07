@@ -1372,10 +1372,25 @@ tr:hover td{background:var(--spice-cream)}
 .gm-table th,.gm-table td{padding:9px 12px;text-align:right;white-space:nowrap;
   font-variant-numeric:tabular-nums;border-bottom:1px solid var(--spice-line)}
 .gm-table th.l,.gm-table td.l{text-align:left}
-.gm-table thead th{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;
-  color:var(--spice-text-hint);font-weight:700}
-.gm-table tfoot td{font-weight:800;border-top:2px solid var(--spice-line);border-bottom:0}
+.gm-table thead th{position:sticky;top:0;z-index:1;background:var(--spice-cardamom);color:#fff;
+  font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+.gm-table thead th.dl-sortable{cursor:pointer;user-select:none}
+.gm-table thead th.dl-sortable:hover{background:var(--spice-cardamom-dk)}
+.gm-table tfoot td{font-weight:800;border-top:2px solid var(--spice-line);border-bottom:0;
+  position:sticky;bottom:0;background:var(--card)}
 .gm-empty{padding:24px;text-align:center;color:var(--spice-text-hint);font-size:13px}
+/* Lot-wise modal filter bar (lot / seller / buyer) */
+.dl-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.dl-filter{flex:1;min-width:120px;padding:7px 10px;border:1px solid var(--spice-line);
+  border-radius:7px;font-size:12.5px;font-family:inherit;background:#fff}
+.dl-filter:focus{outline:none;border-color:var(--spice-cardamom);box-shadow:0 0 0 2px var(--spice-cardamom-lt)}
+/* Dashboard modal (×) close button — top-right corner */
+.modal.has-x{position:relative}
+.modal.has-x h2{padding-right:34px}
+.modal-x{position:absolute;top:12px;right:14px;width:30px;height:30px;border:none;background:transparent;
+  font-size:24px;line-height:1;color:var(--spice-text-mute);cursor:pointer;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;padding:0;z-index:2}
+.modal-x:hover{background:var(--spice-line);color:var(--spice-text-main)}
 .gm-pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700}
 .gm-pill.sold{background:var(--spice-cardamom-lt);color:var(--spice-cardamom-dk)}
 .gm-pill.wd{background:var(--spice-turmeric-lt);color:var(--spice-turmeric)}
@@ -3161,7 +3176,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
          can pick which lots to settle right now ("Print Payment for
          Selected"). Remaining lots stay payable for a later visit. -->
     <!-- Dashboard snapshot: Grade 1 / Grade 2 breakdown for a status -->
-    <div class="modal-bg" id="dash-grade-modal"><div class="modal" style="max-width:560px">
+    <div class="modal-bg" id="dash-grade-modal"><div class="modal has-x" style="max-width:560px">
+      <button class="modal-x" onclick="hideModal('dash-grade-modal')" title="Close" aria-label="Close">&times;</button>
       <h2 id="dash-grade-title">Grade breakdown</h2>
       <div id="dash-grade-body" style="margin-top:10px;overflow-x:auto"></div>
       <div class="actions" style="margin-top:14px">
@@ -3170,10 +3186,12 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     </div></div>
 
     <!-- Dashboard "Current Auction": lot-wise details for a clicked branch/depot -->
-    <div class="modal-bg" id="depot-lots-modal"><div class="modal" style="max-width:900px">
+    <div class="modal-bg" id="depot-lots-modal"><div class="modal has-x" style="max-width:900px">
+      <button class="modal-x" onclick="hideModal('depot-lots-modal')" title="Close" aria-label="Close">&times;</button>
       <h2 id="depot-lots-title">Lot-wise details</h2>
       <div id="depot-lots-meta" style="font-size:12px;color:var(--spice-text-mute);margin:2px 0 10px"></div>
-      <div id="depot-lots-body" style="max-height:62vh;overflow:auto"></div>
+      <div id="depot-lots-filters" class="dl-filters" style="display:none"></div>
+      <div id="depot-lots-body" style="max-height:56vh;overflow:auto"></div>
       <div class="actions" style="margin-top:14px">
         <button class="btn btn-o" onclick="hideModal('depot-lots-modal')">Close</button>
       </div>
@@ -8977,61 +8995,124 @@ async function loadDepotSummary(auctionId){
 }
 
 // Lot-wise details for a clicked depot/branch in the "Current Auction" widget.
-// Fetches the trade's lots and shows the ones for this branch in a modal.
-// '(unspecified)' covers lots whose branch is blank/null, matching how the
-// depot-summary rollup buckets them server-side.
+// Fetches the trade's lots, keeps them (+ the current sort/filter) in _dl, and
+// renders a sortable/filterable table. '(unspecified)' covers lots whose branch
+// is blank/null, matching how the depot-summary rollup buckets them server-side.
+let _dl = { rows: [], sort: { col: 'lot_no', dir: 1 }, filt: { lot: '', seller: '', buyer: '' } };
+
 async function openDepotLots(auctionId, depot){
   const body = document.getElementById('depot-lots-body');
   const titleEl = document.getElementById('depot-lots-title');
   const metaEl = document.getElementById('depot-lots-meta');
+  const filtEl = document.getElementById('depot-lots-filters');
   if (!body) return;
   const dep = String(depot || '');
   if (titleEl) titleEl.textContent = 'Lot-wise details — ' + dep;
   if (metaEl) metaEl.textContent = '';
+  if (filtEl) filtEl.style.display = 'none';
   body.innerHTML = '<div class="gm-empty">Loading…</div>';
   showModal('depot-lots-modal');
   let rows;
   try { rows = await j(`/api/lots/${auctionId}`); }
   catch (e) { body.innerHTML = '<div class="gm-empty">Failed to load lots.</div>'; return; }
   const norm = b => (String(b || '').trim() || '(unspecified)');
-  const lots = (rows || []).filter(l => norm(l.branch) === dep)
-    .sort((a, b) => (parseInt(a.lot_no, 10) || 0) - (parseInt(b.lot_no, 10) || 0)
-                    || String(a.lot_no || '').localeCompare(String(b.lot_no || '')));
+  const lots = (rows || []).filter(l => norm(l.branch) === dep);
   if (!lots.length) {
     body.innerHTML = '<div class="gm-empty">No lots booked for this branch yet.</div>';
     return;
   }
+  // Normalize to the exact fields the table sorts/filters/renders on.
+  _dl = {
+    rows: lots.map(l => {
+      const code = String(l.code || '').trim().toUpperCase();
+      const status = code === 'WD' ? 'Withdrawn' : code ? 'Sold' : 'Booked';
+      const statusCls = code === 'WD' ? 'wd' : code ? 'sold' : 'book';
+      return {
+        lot_no: String(l.lot_no || ''),
+        seller: String(l.name || ''),
+        bags:   Number(l.bags) || 0,
+        qty:    Number(l.qty) || 0,
+        price:  Number(l.price) || 0,
+        amount: Number(l.amount) || 0,
+        buyer:  String(l.buyer1 || l.buyer || ''),
+        status, statusCls,
+      };
+    }),
+    sort: { col: 'lot_no', dir: 1 },
+    filt: { lot: '', seller: '', buyer: '' },
+  };
+  // Filter bar sits above the scroll area so it stays put while the table scrolls.
+  if (filtEl) {
+    filtEl.style.display = '';
+    filtEl.innerHTML =
+      `<input class="dl-filter" type="text" placeholder="Filter lot…"    oninput="depotLotsFilter('lot', this.value)">`
+    + `<input class="dl-filter" type="text" placeholder="Filter seller…" oninput="depotLotsFilter('seller', this.value)">`
+    + `<input class="dl-filter" type="text" placeholder="Filter buyer…"  oninput="depotLotsFilter('buyer', this.value)">`;
+  }
+  renderDepotLotsTable();
+}
+
+// Update one filter and re-render just the table (inputs keep focus).
+function depotLotsFilter(key, val){
+  _dl.filt[key] = String(val || '').toLowerCase();
+  renderDepotLotsTable();
+}
+
+// Toggle sort on a column; a fresh column starts ascending.
+function depotLotsSort(col){
+  if (_dl.sort.col === col) _dl.sort.dir = -_dl.sort.dir;
+  else { _dl.sort.col = col; _dl.sort.dir = 1; }
+  renderDepotLotsTable();
+}
+
+// Apply the current filter + sort to _dl.rows and paint the table body.
+function renderDepotLotsTable(){
+  const host = document.getElementById('depot-lots-body');
+  const metaEl = document.getElementById('depot-lots-meta');
+  if (!host) return;
   const money = n => '₹' + (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const qf   = n => (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const intf = n => (Number(n) || 0).toLocaleString('en-IN');
-  const statusOf = l => {
-    const code = String(l.code || '').trim().toUpperCase();
-    if (code === 'WD') return ['wd', 'Withdrawn'];
-    if (code) return ['sold', 'Sold'];
-    return ['book', 'Booked'];
-  };
+  const f = _dl.filt;
+  let rows = _dl.rows.filter(r =>
+    (!f.lot    || r.lot_no.toLowerCase().includes(f.lot)) &&
+    (!f.seller || r.seller.toLowerCase().includes(f.seller)) &&
+    (!f.buyer  || r.buyer.toLowerCase().includes(f.buyer))
+  );
+  const { col, dir } = _dl.sort;
+  const numCols = { bags: 1, qty: 1, price: 1, amount: 1 };
+  rows = rows.slice().sort((a, b) => {
+    if (col === 'lot_no') {
+      const an = parseInt(a.lot_no, 10), bn = parseInt(b.lot_no, 10);
+      if (Number.isFinite(an) && Number.isFinite(bn) && an !== bn) return (an - bn) * dir;
+      return String(a.lot_no).localeCompare(String(b.lot_no)) * dir;
+    }
+    if (numCols[col]) return ((Number(a[col]) || 0) - (Number(b[col]) || 0)) * dir;
+    return String(a[col] || '').localeCompare(String(b[col] || '')) * dir;
+  });
+  const caret = c => _dl.sort.col === c ? (_dl.sort.dir > 0 ? ' ▲' : ' ▼') : '';
+  const sTh = (c, label) => `<th class="l dl-sortable" onclick="depotLotsSort('${c}')" title="Sort by ${label}">${label}${caret(c)}</th>`;
   let bags = 0, qty = 0, amount = 0;
-  const trs = lots.map(l => {
-    const [cls, lbl] = statusOf(l);
-    bags += Number(l.bags) || 0; qty += Number(l.qty) || 0; amount += Number(l.amount) || 0;
-    const buyer = esc(l.buyer1 || l.buyer || '');
+  const trs = rows.map(r => {
+    bags += r.bags; qty += r.qty; amount += r.amount;
     return `<tr>
-      <td class="l">${esc(l.lot_no || '')}</td>
-      <td class="l">${esc(l.name || '')}</td>
-      <td>${intf(l.bags)}</td>
-      <td>${qf(l.qty)}</td>
-      <td>${Number(l.price) > 0 ? qf(l.price) : '—'}</td>
-      <td>${money(l.amount)}</td>
-      <td class="l">${buyer || '<span style="color:var(--spice-text-hint)">—</span>'}</td>
-      <td class="l"><span class="gm-pill ${cls}">${lbl}</span></td>
+      <td class="l">${esc(r.lot_no)}</td>
+      <td class="l">${esc(r.seller)}</td>
+      <td>${intf(r.bags)}</td>
+      <td>${qf(r.qty)}</td>
+      <td>${r.price > 0 ? qf(r.price) : '—'}</td>
+      <td>${money(r.amount)}</td>
+      <td class="l">${r.buyer ? esc(r.buyer) : '<span style="color:var(--spice-text-hint)">—</span>'}</td>
+      <td class="l"><span class="gm-pill ${r.statusCls}">${r.status}</span></td>
     </tr>`;
   }).join('');
-  if (metaEl) metaEl.textContent = `${lots.length} lot${lots.length === 1 ? '' : 's'} · ${intf(bags)} bags · ${qf(qty)} kg · ${money(amount)}`;
-  body.innerHTML = `<table class="gm-table" style="min-width:720px">
-    <thead><tr><th class="l">Lot</th><th class="l">Seller</th><th>Bags</th><th>Qty</th><th>Price</th><th>Amount</th><th class="l">Buyer</th><th class="l">Status</th></tr></thead>
+  const total = _dl.rows.length;
+  if (metaEl) metaEl.textContent = `${rows.length}${rows.length !== total ? ' of ' + total : ''} lot${total === 1 ? '' : 's'} · ${intf(bags)} bags · ${qf(qty)} kg · ${money(amount)}`;
+  host.innerHTML = rows.length ? `<table class="gm-table" style="min-width:720px">
+    <thead><tr>${sTh('lot_no', 'Lot')}${sTh('seller', 'Seller')}<th>Bags</th><th>Qty</th><th>Price</th><th>Amount</th>${sTh('buyer', 'Buyer')}<th class="l">Status</th></tr></thead>
     <tbody>${trs}</tbody>
-    <tfoot><tr><td class="l" colspan="2">Total · ${lots.length} lots</td><td>${intf(bags)}</td><td>${qf(qty)}</td><td></td><td>${money(amount)}</td><td colspan="2"></td></tr></tfoot>
-  </table>`;
+    <tfoot><tr><td class="l" colspan="2">Total · ${rows.length} lots</td><td>${intf(bags)}</td><td>${qf(qty)}</td><td></td><td>${money(amount)}</td><td colspan="2"></td></tr></tfoot>
+  </table>` : '<div class="gm-empty">No lots match the current filters.</div>';
 }
 
 // Collapse/expand the dashboard "Current Auction" panel. The state persists
