@@ -11610,6 +11610,60 @@ app.get('/api/insights', requireView, (req, res) => {
   });
 });
 
+// ── Lot-wise drill-down for the dashboard trade-snapshot ──────────────
+// Returns every lot matching a status / branch / grade within the current
+// dashboard scope (a specific auction_id, or every auction when auction_id=all
+// / range=all — mirroring /api/insights). Feeds the snapshot's grade → lots
+// drill (status → branch → grade → these rows).
+app.get('/api/insights/lots', requireView, (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const db = getDb();
+  const params = [];
+
+  // Scope: one auction, or all of them.
+  let auctionFilter = '';
+  const rawAid = String(req.query.auction_id || '').trim();
+  if (rawAid && rawAid !== 'all') {
+    const n = parseInt(rawAid, 10);
+    if (Number.isFinite(n) && n > 0) { auctionFilter = ' AND l.auction_id = ?'; params.push(n); }
+  }
+
+  // Status → same SOLD / WD predicates the snapshot matrix uses. "booked" is
+  // every lot (the Booked row is the full population), so it adds no filter.
+  const SOLD = `(UPPER(COALESCE(l.code,'')) <> '' AND UPPER(COALESCE(l.code,'')) <> 'WD')`;
+  const WD   = `(UPPER(COALESCE(l.code,'')) = 'WD')`;
+  const status = String(req.query.status || '').toLowerCase();
+  let statusFilter = '';
+  if (status === 'sold') statusFilter = ` AND ${SOLD}`;
+  else if (status === 'withdrawn') statusFilter = ` AND ${WD}`;
+
+  // Branch — '(unspecified)' matches blank/null, same bucketing as the rollup.
+  let branchFilter = '';
+  const branch = req.query.branch;
+  if (branch != null && String(branch) !== '') {
+    branchFilter = ` AND COALESCE(NULLIF(TRIM(l.branch),''),'(unspecified)') = ?`;
+    params.push(String(branch));
+  }
+
+  // Grade — '1' / '2' exact, or 'other' for everything else.
+  let gradeFilter = '';
+  const grade = String(req.query.grade || '').trim();
+  if (grade === '1' || grade === '2') { gradeFilter = ` AND TRIM(COALESCE(l.grade,'')) = ?`; params.push(grade); }
+  else if (grade === 'other') { gradeFilter = ` AND TRIM(COALESCE(l.grade,'')) NOT IN ('1','2')`; }
+
+  const rows = db.all(
+    `SELECT l.lot_no, l.name, l.branch, l.grade, l.bags, l.qty, l.price, l.amount,
+            l.code, l.buyer, l.buyer1, l.auction_id,
+            (SELECT a.ano FROM auctions a WHERE a.id = l.auction_id) AS ano
+       FROM lots l
+      WHERE 1=1${auctionFilter}${statusFilter}${branchFilter}${gradeFilter}
+      ORDER BY l.auction_id, CAST(l.lot_no AS INTEGER), l.lot_no
+      LIMIT 5000`,
+    params
+  );
+  res.json(rows);
+});
+
 // ══════════════════════════════════════════════════════════════
 // START
 // ══════════════════════════════════════════════════════════════
