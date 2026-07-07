@@ -4094,7 +4094,10 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
             MIN(CASE WHEN price > 0 AND ${SOLD} THEN price END) AS minPrice,
             MAX(CASE WHEN price > 0 AND ${SOLD} THEN price END) AS maxPrice,
             COALESCE(SUM(CASE WHEN ${SOLD} THEN amount ELSE 0 END),0) AS soldValue,
-            COALESCE(SUM(CASE WHEN ${SOLD} THEN qty    ELSE 0 END),0) AS soldQty
+            COALESCE(SUM(CASE WHEN ${SOLD} THEN qty    ELSE 0 END),0) AS soldQty,
+            -- Grade-2 booked weight — Spices Board caps grade 2 at 25% of the
+            -- total booked qty, so the dashboard flags over/under booking.
+            COALESCE(SUM(CASE WHEN TRIM(COALESCE(grade,'')) = '2' THEN qty ELSE 0 END),0) AS grade2Qty
        FROM lots WHERE auction_id = ?`,
     [auctionId]
   ) || {};
@@ -4108,6 +4111,7 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
     cropWeight:    Number(st.cropWeight)    || 0,
     planterWeight: Number(st.planterWeight) || 0,
     dealerWeight:  Number(st.dealerWeight)  || 0,
+    grade2Qty:     Number(st.grade2Qty)     || 0,
     minPrice:      Number(st.minPrice) || 0,
     maxPrice:      Number(st.maxPrice) || 0,
     avgPrice:      soldQty > 0 ? (Number(st.soldValue) || 0) / soldQty : 0,
@@ -11214,7 +11218,6 @@ app.get('/api/insights', requireView, (req, res) => {
   const sampleWt           = Number(_cfgIns.sample_weight) || 0;
   const sampleCollectionWt = Number(_cfgIns.sample_collection) || 0;
   const freeSampleWt       = Number(_cfgIns.free_sample) || 0;
-  const ISP_COMMISSION_PCT = 1.25;   // ISP commission rate
 
   // ── Per-trade rollup ──────────────────────────────────────
   const tradeRows = db.all(
@@ -11442,10 +11445,13 @@ app.get('/api/insights', requireView, (req, res) => {
   // distinct from payable_to_sellers (net balance) used by the Insights tab.
   totals.seller_amount = perBranch.reduce((s, b) => s + b.seller_amount, 0);
 
-  // "To be earned" — Σ of the Payments screen's Discount column across every
-  // in-scope trade. Reuses getPaymentSummary so the figure matches the Payments
-  // tab exactly. Feeds the snapshot Income tile.
-  let toBeEarned = 0;
+  // Payments-screen roll-up across every in-scope trade. Reuses
+  // getPaymentSummary so the figures match the Payments tab exactly:
+  //   payable_net  = Σ "Net Amount" column (= Σ lots.balance per seller)
+  //                  → the snapshot's "Payable to sellers" tile.
+  //   to_be_earned = Σ "Discount" column (early-payment settlement discount)
+  //                  → the snapshot's Income "To be earned" sub-metric.
+  let toBeEarned = 0, payableNet = 0;
   try {
     const cfgP = getSettingsFlat(db);
     const scopeAucs = db.all(
@@ -11454,10 +11460,14 @@ app.get('/api/insights', requireView, (req, res) => {
     );
     for (const a of scopeAucs) {
       const summ = getPaymentSummary(db, a.id, undefined, cfgP) || [];
-      for (const s of summ) toBeEarned += Number(s.total_discount) || 0;
+      for (const s of summ) {
+        toBeEarned += Number(s.seller_discount) || 0;
+        payableNet += Number(s.net_amount) || 0;
+      }
     }
-  } catch (_) { toBeEarned = 0; }
+  } catch (_) { toBeEarned = 0; payableNet = 0; }
   totals.to_be_earned = toBeEarned;
+  totals.payable_net  = payableNet;
 
   // Purchase-invoice GST — Σ(CGST+SGST+IGST) over the Purchases screen's rows
   // in scope. Feeds the snapshot Payable-to-sellers tile's GST sub-metric.
@@ -11492,7 +11502,12 @@ app.get('/api/insights', requireView, (req, res) => {
   totals.sample_collected = sampleCollectionWt * totals.lots;
   totals.free_sample      = freeSampleWt       * totals.lots;
   totals.stock_kg         = totals.sample_collected - totals.free_sample;
-  totals.commission_income = totals.sold_value * (ISP_COMMISSION_PCT / 100);
+  // Income (commission) = Σ lots.com over the scope — the Commission column
+  // on the Lots screen — so the snapshot Income tile equals SUM(com) exactly.
+  const comRow = db.get(
+    `SELECT COALESCE(SUM(COALESCE(com,0)),0) AS com FROM lots${singleAuctionId ? ` WHERE auction_id = ${Number(singleAuctionId)}` : ''}`
+  ) || {};
+  totals.commission_income = Number(comRow.com) || 0;
   totals.sample_weight    = sampleWt;
 
   // ── Grade split — Grade 1 (Planter, no GSTIN) vs Grade 2 (Dealer, holds a
@@ -11557,6 +11572,29 @@ app.get('/api/insights', requireView, (req, res) => {
     gradeBreakdown.withdrawn[g.grade] = gradeCell(g.w_lots, g.w_bags, g.w_qty, g.w_amt);
   }
 
+  // ── Same grade breakdown, split per BRANCH — drives the snapshot's
+  //    branch-wise drill-down (status → branch list → that branch's grades). ──
+  const gradeBrBranchRows = db.all(
+    `SELECT COALESCE(NULLIF(TRIM(l.branch),''),'(unspecified)') AS branch,
+            CASE WHEN TRIM(COALESCE(l.grade,'')) IN ('1','2') THEN TRIM(l.grade) ELSE 'other' END AS grade,
+            COUNT(*) AS b_lots, COALESCE(SUM(l.bags),0) AS b_bags, COALESCE(SUM(l.qty),0) AS b_qty, COALESCE(SUM(l.amount),0) AS b_amt,
+            SUM(CASE WHEN ${SOLD} THEN 1 ELSE 0 END) AS s_lots, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.bags ELSE 0 END),0) AS s_bags, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.qty ELSE 0 END),0) AS s_qty, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.amount ELSE 0 END),0) AS s_amt,
+            SUM(CASE WHEN ${WD} THEN 1 ELSE 0 END) AS w_lots, COALESCE(SUM(CASE WHEN ${WD} THEN l.bags ELSE 0 END),0) AS w_bags, COALESCE(SUM(CASE WHEN ${WD} THEN l.qty ELSE 0 END),0) AS w_qty, COALESCE(SUM(CASE WHEN ${WD} THEN l.amount ELSE 0 END),0) AS w_amt
+     FROM lots l JOIN auctions a ON a.id = l.auction_id
+     WHERE date(a.date) BETWEEN date(?) AND date(?)${aidA}
+     GROUP BY 1, 2
+     ORDER BY 1`,
+    [from, to]
+  );
+  const gradeBreakdownByBranch = {};
+  for (const g of gradeBrBranchRows) {
+    const br = g.branch || '(unspecified)';
+    if (!gradeBreakdownByBranch[br]) gradeBreakdownByBranch[br] = { booked: {}, sold: {}, withdrawn: {} };
+    gradeBreakdownByBranch[br].booked[g.grade]    = gradeCell(g.b_lots, g.b_bags, g.b_qty, g.b_amt);
+    gradeBreakdownByBranch[br].sold[g.grade]      = gradeCell(g.s_lots, g.s_bags, g.s_qty, g.s_amt);
+    gradeBreakdownByBranch[br].withdrawn[g.grade] = gradeCell(g.w_lots, g.w_bags, g.w_qty, g.w_amt);
+  }
+
   res.json({
     range: { from, to },
     auction_id: singleAuctionId,
@@ -11566,6 +11604,7 @@ app.get('/api/insights', requireView, (req, res) => {
     branchStacked,
     gradeSplit,
     gradeBreakdown,
+    gradeBreakdownByBranch,
     outstandingByBuyer,
     buyerActivity,
   });
