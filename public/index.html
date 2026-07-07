@@ -4837,7 +4837,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div id="tally-preview-sales_isp" style="font-size:11px;color:var(--text3);min-height:18px;margin:6px 0"></div>
             <div style="display:flex;gap:6px;margin-top:8px">
               <button class="btn btn-a" onclick="tallyPreview('sales_isp')" style="flex:1;padding:7px;font-size:12px">Preview</button>
-              <button class="btn btn-g" onclick="tallyDownload('sales_isp')" style="flex:1;padding:7px;font-size:12px">Download XML</button>
+              <button class="btn btn-g" onclick="tallyDownload('sales_isp')" style="flex:1;padding:7px;font-size:12px">XML</button>
+              <button class="btn btn-g" onclick="tallyDownload('sales_isp','json')" style="flex:1;padding:7px;font-size:12px">JSON</button>
             </div>
           </div>
 
@@ -4852,7 +4853,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div id="tally-preview-rd_purchase" style="font-size:11px;color:var(--text3);min-height:18px;margin:6px 0"></div>
             <div style="display:flex;gap:6px;margin-top:8px">
               <button class="btn btn-a" onclick="tallyPreview('rd_purchase')" style="flex:1;padding:7px;font-size:12px">Preview</button>
-              <button class="btn btn-g" onclick="tallyDownload('rd_purchase')" style="flex:1;padding:7px;font-size:12px">Download XML</button>
+              <button class="btn btn-g" onclick="tallyDownload('rd_purchase')" style="flex:1;padding:7px;font-size:12px">XML</button>
+              <button class="btn btn-g" onclick="tallyDownload('rd_purchase','json')" style="flex:1;padding:7px;font-size:12px">JSON</button>
             </div>
           </div>
 
@@ -4867,7 +4869,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div id="tally-preview-urd_purchase" style="font-size:11px;color:var(--text3);min-height:18px;margin:6px 0"></div>
             <div style="display:flex;gap:6px;margin-top:8px">
               <button class="btn btn-a" onclick="tallyPreview('urd_purchase')" style="flex:1;padding:7px;font-size:12px">Preview</button>
-              <button class="btn btn-g" onclick="tallyDownload('urd_purchase')" style="flex:1;padding:7px;font-size:12px">Download XML</button>
+              <button class="btn btn-g" onclick="tallyDownload('urd_purchase')" style="flex:1;padding:7px;font-size:12px">XML</button>
+              <button class="btn btn-g" onclick="tallyDownload('urd_purchase','json')" style="flex:1;padding:7px;font-size:12px">JSON</button>
             </div>
           </div>
 
@@ -4882,7 +4885,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div id="tally-preview-debit_note" style="font-size:11px;color:var(--text3);min-height:18px;margin:6px 0"></div>
             <div style="display:flex;gap:6px;margin-top:8px">
               <button class="btn btn-a" onclick="tallyPreview('debit_note')" style="flex:1;padding:7px;font-size:12px">Preview</button>
-              <button class="btn btn-g" onclick="tallyDownload('debit_note')" style="flex:1;padding:7px;font-size:12px">Download XML</button>
+              <button class="btn btn-g" onclick="tallyDownload('debit_note')" style="flex:1;padding:7px;font-size:12px">XML</button>
+              <button class="btn btn-g" onclick="tallyDownload('debit_note','json')" style="flex:1;padding:7px;font-size:12px">JSON</button>
             </div>
           </div>
 
@@ -4897,7 +4901,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div id="tally-preview-debit_note_planter" style="font-size:11px;color:var(--text3);min-height:18px;margin:6px 0"></div>
             <div style="display:flex;gap:6px;margin-top:8px">
               <button class="btn btn-a" onclick="tallyPreview('debit_note_planter')" style="flex:1;padding:7px;font-size:12px">Preview</button>
-              <button class="btn btn-g" onclick="tallyDownload('debit_note_planter')" style="flex:1;padding:7px;font-size:12px">Download XML</button>
+              <button class="btn btn-g" onclick="tallyDownload('debit_note_planter')" style="flex:1;padding:7px;font-size:12px">XML</button>
+              <button class="btn btn-g" onclick="tallyDownload('debit_note_planter','json')" style="flex:1;padding:7px;font-size:12px">JSON</button>
             </div>
           </div>
         </div>
@@ -23653,18 +23658,20 @@ async function tallyPreview(type){
     if(target)target.textContent='Preview failed: '+e.message;
   }
 }
-async function tallyDownload(type){
+async function tallyDownload(type,format){
   const aid=document.getElementById('tally-auction')?.value;
   if(!aid){alert('Select an auction first');return}
   const label=TALLY_LABELS[type]||type;
+  const fmt=(format==='json')?'json':'xml';
 
   // Lorry / vehicle no for the e-way bill is read directly from each
   // invoice's `lorry_no` column (set via the "Set Lorry No" bulk action
   // in the Sales tab). No per-export override here — what the user
   // saved on the invoice is what ships in the XML.
 
-  await withOverlay(`Generating Tally ${label} XML…`, async () => {
-    const r=await fetch(B+`/api/tally/export/${type}/${aid}`,{headers:{'Authorization':'Bearer '+T}});
+  await withOverlay(`Generating Tally ${label} ${fmt.toUpperCase()}…`, async () => {
+    const url=B+`/api/tally/export/${type}/${aid}`+(fmt==='json'?'?format=json':'');
+    const r=await fetch(url,{headers:{'Authorization':'Bearer '+T}});
     if(!r.ok){
       let msg='Tally export failed';
       try{const e=await r.json();if(e.error)msg=e.error}catch(x){}
@@ -23672,9 +23679,9 @@ async function tallyDownload(type){
     }
     const blob=await r.blob();
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);
-    a.download=`Tally_${label.replace(/\s/g,'')}_${aid}.xml`;a.click();
+    a.download=`Tally_${label.replace(/\s/g,'')}_${aid}.${fmt}`;a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),5000);
-    toast(`Downloaded Tally ${label} XML`);
+    toast(`Downloaded Tally ${label} ${fmt.toUpperCase()}`);
   });
 }
 
@@ -24004,16 +24011,18 @@ function renderTallyInvoiceList(){
         <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="color:var(--green)">${esc(vno)}</span> · ${esc(iv.partyName||'')}</div>
         <div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${iv.gstin?esc(iv.gstin):'<em>No GSTIN</em>'}${amt?' · '+esc(amt):''}${lots}</div>
       </div>
-      <button class="btn btn-g" onclick="tallyDownloadInvoiceVoucher('${iv.id}','${safeLabel}')" style="padding:5px 10px;font-size:11px;flex:0 0 auto">Download</button>
+      <button class="btn btn-g" onclick="tallyDownloadInvoiceVoucher('${iv.id}','${safeLabel}')" style="padding:5px 10px;font-size:11px;flex:0 0 auto">XML</button>
+      <button class="btn btn-g" onclick="tallyDownloadInvoiceVoucher('${iv.id}','${safeLabel}','json')" style="padding:5px 10px;font-size:11px;flex:0 0 auto">JSON</button>
     </div>`;
   }
   list.innerHTML=html;
 }
-async function tallyDownloadInvoiceVoucher(id,label){
+async function tallyDownloadInvoiceVoucher(id,label,format){
   const aid=document.getElementById('tally-auction')?.value;
   if(!aid){alert('Select an auction first');return}
-  await withOverlay(`Generating invoice ${label} voucher XML…`, async () => {
-    const url=B+`/api/tally/invoice-voucher/${aid}?id=${encodeURIComponent(id)}`;
+  const fmt=(format==='json')?'json':'xml';
+  await withOverlay(`Generating invoice ${label} voucher ${fmt.toUpperCase()}…`, async () => {
+    const url=B+`/api/tally/invoice-voucher/${aid}?id=${encodeURIComponent(id)}`+(fmt==='json'?'&format=json':'');
     const r=await fetch(url,{headers:{'Authorization':'Bearer '+T}});
     if(!r.ok){
       let msg='Invoice voucher export failed';
@@ -24023,9 +24032,9 @@ async function tallyDownloadInvoiceVoucher(id,label){
     const blob=await r.blob();
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);
     const safeName=String(label).replace(/[^a-zA-Z0-9]/g,'_').slice(0,40);
-    a.download=`Tally_InvoiceVoucher_${safeName}_${aid}.xml`;a.click();
+    a.download=`Tally_InvoiceVoucher_${safeName}_${aid}.${fmt}`;a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),5000);
-    toast(`Downloaded voucher for invoice ${label}`);
+    toast(`Downloaded voucher for invoice ${label} (${fmt.toUpperCase()})`);
   });
 }
 

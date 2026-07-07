@@ -10275,6 +10275,24 @@ const PARTY_LEDGER_BUILDERS = {
   urd_purchase: { builder: buildURDPartyLedgerRows,   company: 'isp' },
 };
 
+// Serialize a set of Tally builder rows into a self-describing JSON
+// envelope — the JSON counterpart to the XML generators. Instead of
+// Tally-import XML it hands back the same structured voucher data the
+// XML is built from, so the rows can be fed into another system or just
+// eyeballed. `meta` carries the export type/label (the single-invoice
+// endpoint passes its own, since it isn't a TALLY_EXPORTS key).
+function tallyJson(rows, auctionId, targetCompany, meta) {
+  return JSON.stringify({
+    exportType: meta.type,
+    label: meta.label,
+    auctionId,
+    targetCompany,
+    generatedAt: new Date().toISOString(),
+    count: rows.length,
+    vouchers: rows,
+  }, null, 2);
+}
+
 // List endpoint — used by the To Tally tab to render export buttons
 app.get('/api/tally/list', requireExport, (req, res) => {
   const list = {};
@@ -10761,10 +10779,19 @@ app.get('/api/tally/invoice-voucher/:auctionId', requireExport, (req, res) => {
       const what = wantId ? `#${wantId}` : `${wantSale ? wantSale + '-' : ''}${wantInvo}`;
       return res.status(404).json({ error: `Invoice ${what} not found in auction ${auctionId}` });
     }
-    const xml = generSalesIspXML(rows, cfg, { companyName: resolveTallyCompanyName(cfg, 'isp') });
     const first = rows[0];
     const label = `${first.sale ? first.sale + '-' : ''}${first.invo || first.id}`;
     const safeName = String(label).replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40);
+    const ispCompany = resolveTallyCompanyName(cfg, 'isp');
+    // ?format=json → the single invoice's voucher row as JSON.
+    if (String(req.query.format || '').toLowerCase() === 'json') {
+      const json = tallyJson(rows, auctionId, ispCompany, { type: 'invoice_voucher', label: `Sales Invoice ${label}` });
+      const filename = `Tally_InvoiceVoucher_${safeName}_${auctionId}.json`;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(json);
+    }
+    const xml = generSalesIspXML(rows, cfg, { companyName: ispCompany });
     const filename = `Tally_InvoiceVoucher_${safeName}_${auctionId}.xml`;
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -10791,7 +10818,16 @@ app.get('/api/tally/export/:type/:auctionId', requireExport, (req, res) => {
       const what = def.isLedger ? def.label.toLowerCase() : `${def.label.toLowerCase()}`;
       return res.status(404).json({ error: `No ${what} found for auction ${auctionId}` });
     }
-    const xml = def.generator(rows, cfg, { companyName: resolveTallyCompanyName(cfg, def.company) });
+    const targetCompany = resolveTallyCompanyName(cfg, def.company);
+    // ?format=json → same voucher rows as JSON instead of Tally XML.
+    if (String(req.query.format || '').toLowerCase() === 'json') {
+      const json = tallyJson(rows, auctionId, targetCompany, { type, label: def.label });
+      const filename = `${def.name}_${anoForFilename(db, auctionId)}.json`;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(json);
+    }
+    const xml = def.generator(rows, cfg, { companyName: targetCompany });
     const filename = `${def.name}_${anoForFilename(db, auctionId)}.xml`;
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
