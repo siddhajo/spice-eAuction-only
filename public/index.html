@@ -3461,7 +3461,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
         <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
           <select id="lot-auction" onchange="if(typeof _lotsTickedIds!=='undefined')_lotsTickedIds.clear();loadLots();loadLotsSummary()" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
-          <select id="lot-branch-filter" onchange="loadLotsSummary()" title="Filter Sold/Withdrawn/Min/Max/Avg by branch"
+          <select id="lot-branch-filter" onchange="loadLots();loadLotsSummary()" title="Filter the lots table and the Sold/Withdrawn/Min/Max/Avg summary by branch"
                   style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:160px">
             <option value="">All Branches</option>
           </select>
@@ -18864,6 +18864,10 @@ async function loadLots(opts){
   // Within-trade search across lot no, seller, buyer, invoice no, branch.
   const _lotSearch = (document.getElementById('lot-search')?.value || '').trim();
   const _lotSearchParam = _lotSearch ? `&search=${encodeURIComponent(_lotSearch)}` : '';
+  // Branch filter (shared with the summary strip). Empty = all branches.
+  // The /api/lots endpoint applies this as `WHERE lots.branch = ?`.
+  const _lotBranch = (document.getElementById('lot-branch-filter')?.value || '').trim();
+  const _lotBranchParam = _lotBranch ? `&branch=${encodeURIComponent(_lotBranch)}` : '';
   // Cache-buster ensures the browser actually hits the server (otherwise Refresh
   // may return stale cached JSON and nothing visibly changes).
   // Wrap the fetch so a network/API failure surfaces inside the table
@@ -18871,7 +18875,7 @@ async function loadLots(opts){
   // a stale "Loading…" on screen.
   let d;
   try {
-    d = await j(`/api/lots/${aid}?_=${Date.now()}${_lotSearchParam}`);
+    d = await j(`/api/lots/${aid}?_=${Date.now()}${_lotSearchParam}${_lotBranchParam}`);
   } catch (e) {
     StatusBlock.show('lots-list', 'error', {
       body: (e && e.message) || 'Failed to load lots',
