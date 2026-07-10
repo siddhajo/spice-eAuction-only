@@ -66,6 +66,134 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ══════════════════════════════════════════════════════════════
+// APP-WIDE ACTIVITY AUDIT (breadth) — feeds Backup → App Activity log
+// ══════════════════════════════════════════════════════════════
+// Records who changed what across the master + transaction modules into
+// the shared audit_log, with a field-level A→B diff on the known tables.
+// Lot entry has its OWN feed (entity='lot', logged separately) and Fix Data
+// edits are intentionally excluded — neither is mapped here. Best-effort: it
+// never blocks or fails a request (all DB work is wrapped in try/catch and the
+// write happens on res 'finish', after the handler has already responded).
+//
+// Registered before the API routes so it can snapshot the pre-edit row on the
+// way IN; the actual log row is written on the way OUT (successful status only).
+const AUDIT_RESOURCES = {
+  traders:               { entity: 'seller',              table: 'traders' },
+  buyers:                { entity: 'buyer',               table: 'buyers' },
+  auctions:              { entity: 'auction',             table: 'auctions' },
+  invoices:              { entity: 'invoice',             table: 'invoices' },
+  purchases:             { entity: 'purchase',            table: 'purchases' },
+  bills:                 { entity: 'bill',                table: 'bills' },
+  'debit-notes':         { entity: 'debit note',          table: 'debit_notes' },
+  'debit-notes-planter': { entity: 'planter debit note',  table: 'debit_notes_planter' },
+};
+// Columns never surfaced in an A→B diff (derived / volatile / noisy).
+const AUDIT_SKIP_COLS = new Set(['id', 'created_at', 'updated_at']);
+// POST sub-paths that don't mutate business data (PDF/print/preview/preflight)
+// — logging them would just be noise, so skip.
+const AUDIT_SKIP_POST = /\b(pdf|print|preview|preflight|export|download)\b/i;
+
+function _auditTrunc(v) {
+  const s = v == null ? '' : String(v);
+  return s.length > 160 ? s.slice(0, 157) + '…' : s;
+}
+function _auditResourceFor(pathname) {
+  const m = String(pathname || '').match(/^\/api\/([a-z0-9-]+)/i);
+  if (!m) return null;
+  const key = m[1].toLowerCase();
+  return AUDIT_RESOURCES[key] ? { key, ...AUDIT_RESOURCES[key] } : null;
+}
+function _auditIdFromPath(pathname) {
+  const m = String(pathname || '').match(/^\/api\/[a-z0-9-]+\/(\d+)(?:\/|$)/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+function _auditDiff(oldRow, newRow) {
+  if (!oldRow || !newRow) return [];
+  const out = [];
+  for (const k of Object.keys(newRow)) {
+    if (AUDIT_SKIP_COLS.has(k)) continue;
+    const a = oldRow[k], b = newRow[k];
+    const na = a == null ? '' : String(a), nb = b == null ? '' : String(b);
+    if (na === nb) continue;
+    // Numeric-aware equality so 3 vs "3.0" isn't flagged.
+    if (na !== '' && nb !== '' && !Number.isNaN(Number(a)) && !Number.isNaN(Number(b)) && Number(a) === Number(b)) continue;
+    out.push({ field: k, label: k, from: _auditTrunc(a), to: _auditTrunc(b) });
+    if (out.length >= 40) break;
+  }
+  return out;
+}
+// Best-effort human label for a row of a given resource.
+function _auditRowLabel(key, row) {
+  if (!row) return '';
+  const pick = (...ks) => { for (const k of ks) { const v = row[k]; if (v != null && String(v).trim() !== '') return String(v).trim(); } return ''; };
+  switch (key) {
+    case 'traders':
+    case 'buyers':               return pick('name', 'buyer1', 'buyer', 'trade_name');
+    case 'auctions':             return pick('ano', 'name', 'date');
+    case 'invoices':
+    case 'purchases':
+    case 'bills':                return pick('invo', 'invoice_no', 'buyer1', 'buyer', 'name');
+    case 'debit-notes':
+    case 'debit-notes-planter':  return pick('dn_no', 'invo', 'buyer1', 'buyer', 'name');
+    default:                     return pick('name', 'buyer', 'invo');
+  }
+}
+function auditMutations(req, res, next) {
+  try {
+    const method = req.method;
+    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return next();
+    if (!String(req.path || '').startsWith('/api/')) return next();
+    const rsrc = _auditResourceFor(req.path);
+    if (!rsrc) return next();
+    if (method === 'POST' && AUDIT_SKIP_POST.test(req.path)) return next();
+    const id = _auditIdFromPath(req.path);
+    // Snapshot the pre-edit row for PUT/PATCH/DELETE on /:id of a known table.
+    if ((method === 'PUT' || method === 'PATCH' || method === 'DELETE') && id != null) {
+      try { req._auditOld = getDb().get(`SELECT * FROM ${rsrc.table} WHERE id = ?`, [id]); } catch (_) {}
+    }
+    res.on('finish', () => {
+      try {
+        if (res.statusCode >= 400) return;   // only successful mutations
+        const db = getDb();
+        // Derive a friendly action from method + path.
+        let action;
+        if (method === 'DELETE') action = 'delete';
+        else if (method === 'PUT' || method === 'PATCH') action = 'update';
+        else if (/bulk-delete/i.test(req.path)) action = 'delete';
+        else if (/import/i.test(req.path)) action = 'import';
+        else if (/revert/i.test(req.path)) action = 'revert';
+        else if (/generate/i.test(req.path)) action = 'generate';
+        else if (id != null) action = 'update';   // POST /api/<r>/:id/<sub-action>
+        else action = 'create';
+
+        const details = {};
+        let changes = [];
+        if (action === 'update' && id != null) {
+          let fresh; try { fresh = db.get(`SELECT * FROM ${rsrc.table} WHERE id = ?`, [id]); } catch (_) {}
+          changes = _auditDiff(req._auditOld, fresh);
+          if (!changes.length) return;       // nothing actually changed → skip
+          const label = _auditRowLabel(rsrc.key, fresh || req._auditOld);
+          if (label) details.name = label;
+        } else if (action === 'delete') {
+          const label = _auditRowLabel(rsrc.key, req._auditOld);
+          if (label) details.name = label;
+        } else {
+          const label = _auditRowLabel(rsrc.key, req.body || {});
+          if (label) details.name = label;
+        }
+        db.run(
+          `INSERT INTO audit_log (user_id, action, entity, entity_id, details) VALUES (?,?,?,?,?)`,
+          [(req.user && req.user.username) || 'system', action, rsrc.entity, id || null,
+           JSON.stringify({ ...details, changes: changes.length ? changes : undefined })]
+        );
+      } catch (_) { /* never let logging break anything */ }
+    });
+  } catch (_) {}
+  return next();
+}
+app.use(auditMutations);
+
 // Prevent browser/proxy caching of API responses so Refresh buttons actually
 // fetch fresh data (without this, fetch() may return stale cached JSON)
 app.use('/api', (req, res, next) => {
@@ -1004,9 +1132,38 @@ app.get('/api/company-settings', requireViewOrLotEntry, (req, res) => {
   res.json({ categories: CATEGORIES, settings: getAllSettings(getDb()) });
 });
 app.put('/api/company-settings', requireSettingsWrite, (req, res) => {
-  const count = updateSettings(getDb(), req.body.settings || {}, {
+  const db = getDb();
+  const incoming = req.body.settings || {};
+  // Snapshot the current values of the keys being written so the app activity
+  // log can record a field-level A→B diff (settings has its own key-value
+  // table, so the generic mutation middleware can't diff it).
+  const before = {};
+  try {
+    for (const k of Object.keys(incoming)) {
+      const row = db.get('SELECT value FROM company_settings WHERE key = ?', [k]);
+      before[k] = row ? row.value : null;
+    }
+  } catch (_) {}
+  const count = updateSettings(db, incoming, {
     username: (req.user && req.user.username) || '',
   });
+  // Log only the keys that actually changed, as one grouped activity entry.
+  try {
+    const trunc = v => { const s = v == null ? '' : String(v); return s.length > 160 ? s.slice(0, 157) + '…' : s; };
+    const changes = [];
+    for (const [k, v] of Object.entries(incoming)) {
+      const ov = before[k] == null ? '' : String(before[k]);
+      const nv = v == null ? '' : String(v);
+      if (ov !== nv) { changes.push({ field: k, label: k, from: trunc(before[k]), to: trunc(v) }); if (changes.length >= 60) break; }
+    }
+    if (changes.length) {
+      db.run(
+        `INSERT INTO audit_log (user_id, action, entity, entity_id, details) VALUES (?,?,?,?,?)`,
+        [(req.user && req.user.username) || 'system', 'update', 'settings', null,
+         JSON.stringify({ name: `${changes.length} setting${changes.length === 1 ? '' : 's'} changed`, changes })]
+      );
+    }
+  } catch (_) {}
   res.json({ success: true, updated: count });
 });
 app.get('/api/company-settings/flat', requireViewOrLotEntry, (req, res) => res.json(getSettingsFlat(getDb())));
@@ -11798,6 +11955,13 @@ app.get('/api/audit-log', requireUserManage, (req, res) => {
     where.push('(user_id LIKE ? OR entity LIKE ? OR action LIKE ? OR details LIKE ?)');
     params.push(q, q, q, q);
   }
+  // App-wide activity view (Backup widget): hide lot-entry changes (they have
+  // their own feed) and Fix Data edits, per product requirement.
+  const appScope = String(req.query.scope || '') === 'app';
+  const scopeSql = appScope
+    ? `entity NOT IN ('lot','lot_activity') AND action NOT LIKE 'fixdata%'`
+    : '';
+  if (scopeSql) where.push(scopeSql);
   const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
   // Sort direction — the widget's "Newest / Oldest" toggle. Default newest.
   const dir = String(req.query.order || '').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
@@ -11807,12 +11971,14 @@ app.get('/api/audit-log', requireUserManage, (req, res) => {
     `SELECT * FROM audit_log ${whereSql} ORDER BY created_at ${dir}, id ${dir} LIMIT ? OFFSET ?`,
     [...params, limit, offset]
   );
-  // Distinct values (across the WHOLE table, unfiltered) so the widget's
-  // filter dropdowns stay populated regardless of the current filter.
+  // Distinct values (respecting the app scope, but not the current per-column
+  // filters) so the widget's filter dropdowns stay populated and never offer an
+  // excluded entity/action.
+  const facetScope = scopeSql ? `AND ${scopeSql}` : '';
   const facets = {
-    entities: db.all(`SELECT DISTINCT entity FROM audit_log WHERE entity IS NOT NULL AND entity <> '' ORDER BY entity`).map(r => r.entity),
-    actions:  db.all(`SELECT DISTINCT action FROM audit_log WHERE action IS NOT NULL AND action <> '' ORDER BY action`).map(r => r.action),
-    users:    db.all(`SELECT DISTINCT user_id FROM audit_log WHERE user_id IS NOT NULL AND user_id <> '' ORDER BY user_id`).map(r => r.user_id),
+    entities: db.all(`SELECT DISTINCT entity FROM audit_log WHERE entity IS NOT NULL AND entity <> '' ${facetScope} ORDER BY entity`).map(r => r.entity),
+    actions:  db.all(`SELECT DISTINCT action FROM audit_log WHERE action IS NOT NULL AND action <> '' ${facetScope} ORDER BY action`).map(r => r.action),
+    users:    db.all(`SELECT DISTINCT user_id FROM audit_log WHERE user_id IS NOT NULL AND user_id <> '' ${facetScope} ORDER BY user_id`).map(r => r.user_id),
   };
   res.json({ logs, total, page, totalPages: Math.max(1, Math.ceil(total / limit)), facets });
 });

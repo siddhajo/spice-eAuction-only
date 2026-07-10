@@ -900,14 +900,15 @@ function getTradeReportData(db, auctionId, opts) {
   //   TRADE NAME ← b.buyer1     (firm/trade name as user stores it —
   //                                "EMPEROR SPICES PRIVATE LIMITED",
   //                                "MAR TRADERS", "VARDHAN TRADING COMPANY")
-  //   BIDDER     ← b.sbl/b.code  (proprietor name from sbl if distinct,
-  //                                falls back to short code)
+  //   BIDDER     ← b.buyer / l.buyer (the buyer / proprietor short name, e.g.
+  //                                "SALIM ASA", "TOMY AJT"). NOT b.sbl — that
+  //                                column holds a spice-board / licence number
+  //                                ("CS/M179/274/23-24") — and NOT the short code.
   const rows = db.all(`
     SELECT
       l.code                                                  AS code,
-      COALESCE(NULLIF(b.sbl,    b.buyer1),
-               NULLIF(b.code,   ''),
-               l.buyer1,
+      COALESCE(NULLIF(b.buyer, ''),
+               NULLIF(l.buyer, ''),
                '')                                            AS bidder,
       COALESCE(b.buyer1, l.buyer1, '')                        AS trade_name,
       COALESCE(b.state,  '')                                  AS state,
@@ -923,7 +924,7 @@ function getTradeReportData(db, auctionId, opts) {
     WHERE l.auction_id = ?
       AND l.amount > 0
       ${branchFilter ? 'AND UPPER(TRIM(l.branch)) = UPPER(TRIM(?))' : ''}
-    GROUP BY l.code, b.buyer1, b.sbl, b.code, b.state, b.gstin, l.sale
+    GROUP BY l.code, b.buyer, b.buyer1, b.state, b.gstin, l.sale
     ORDER BY UPPER(COALESCE(b.buyer1, l.buyer1, l.code)), l.code
   `, branchFilter ? [auctionId, branchFilter] : [auctionId]);
 
