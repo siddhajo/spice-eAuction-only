@@ -1328,11 +1328,16 @@ tr:hover td{background:var(--spice-cream)}
 .dash-snap-row .qa-body .qa-grid{flex:1;grid-auto-rows:1fr}
 /* Compact, row-style tiles (icon left, label+sub right) so 7 fit the snapshot
    height without overflow. Scoped to the dashboard row only. */
-.dash-snap-row .qa{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;
-  column-gap:12px;row-gap:0;align-items:center;padding:8px 14px;min-height:0}
+.dash-snap-row .qa{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto auto;
+  column-gap:12px;row-gap:0;align-items:center;padding:8px 14px;min-height:0;min-width:0;overflow:hidden}
 .dash-snap-row .qa .qa-icon{grid-column:1;grid-row:1 / 3;width:34px;height:34px}
-.dash-snap-row .qa .qa-label{grid-column:2;grid-row:1;font-size:13px;line-height:1.2}
-.dash-snap-row .qa .qa-sub{grid-column:2;grid-row:2;font-size:11px;line-height:1.2}
+.dash-snap-row .qa .qa-label{grid-column:2;grid-row:1;font-size:13px;line-height:1.2;
+  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dash-snap-row .qa .qa-sub{grid-column:2;grid-row:2;font-size:11px;line-height:1.2;
+  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Let both tile columns shrink inside the fixed-width Quick Actions card so
+   long labels never push content past the card's right edge. */
+.dash-snap-row .qa-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
 .dash-snap{padding:0;overflow:hidden;margin-bottom:20px}
 /* Current-Auction depot table: colored, hover-stable totals row (light green
    fill + dark-green bold text stays visible through the global row hover). */
@@ -1398,9 +1403,48 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 .gm-table tfoot td{font-weight:800;border-top:2px solid var(--spice-line);border-bottom:0;
   position:sticky;bottom:0;background:var(--card)}
 .gm-empty{padding:24px;text-align:center;color:var(--spice-text-hint);font-size:13px}
+/* Tabs on the dashboard status-breakdown modal (Branch-wise / Grade-wise) */
+.gm-tabs{display:flex;gap:6px;border-bottom:2px solid var(--spice-line);margin-top:4px}
+.gm-tab{appearance:none;border:0;background:transparent;padding:9px 18px;font-size:13px;
+  font-weight:700;color:var(--spice-text-hint);cursor:pointer;border-bottom:3px solid transparent;
+  margin-bottom:-2px;border-radius:6px 6px 0 0}
+.gm-tab:hover{color:var(--spice-text-main);background:var(--spice-cardamom-lt)}
+.gm-tab.active{color:var(--spice-cardamom-dk);border-bottom-color:var(--spice-cardamom)}
+.gm-crumb{margin-bottom:10px;font-size:12.5px}
+.gm-crumb a{color:var(--spice-saffron);font-weight:600;text-decoration:none}
+.gm-crumb a:hover{text-decoration:underline}
 /* Clickable branch rows in the status→branch drill-down */
 .gm-table tbody tr.gm-rowlink{cursor:pointer}
 .gm-table tbody tr.gm-rowlink:hover td{background:var(--spice-cardamom-lt)}
+/* Activity-log tables (Lot Entry + Backup App Activity log) */
+.act-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.act-table th,.act-table td{padding:8px 12px;text-align:left;vertical-align:top;
+  border-bottom:1px solid var(--border);white-space:nowrap}
+.act-table thead th{position:sticky;top:0;z-index:1;
+  background:linear-gradient(90deg,var(--spice-cardamom),var(--spice-cardamom-dk));
+  color:#fff;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;
+  cursor:pointer;user-select:none}
+.act-table thead th.no-sort{cursor:default}
+.act-table thead th .act-arrow{font-size:9px;opacity:.85;margin-left:3px}
+.act-table tbody tr:nth-child(even) td{background:rgba(0,0,0,.02)}
+.act-table tbody tr:hover td{background:var(--spice-cardamom-lt)}
+.act-table td.act-changes{white-space:normal;min-width:220px}
+.act-badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:10.5px;
+  font-weight:700;text-transform:capitalize}
+.act-diff{display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap;margin:1px 0}
+.act-diff .act-field{color:var(--text3);font-weight:600}
+.act-diff .act-from{background:#fdeaea;color:#b91c1c;padding:0 5px;border-radius:4px;
+  text-decoration:line-through;text-decoration-color:#e59a9a}
+.act-diff .act-to{background:#e6f6ec;color:#15803d;padding:0 5px;border-radius:4px}
+.act-diff .act-arrow2{color:var(--text3)}
+.act-toolbar{padding:12px 16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.act-toolbar select,.act-toolbar input{height:32px;font-size:12px;padding:0 10px;
+  border:1px solid var(--border);border-radius:7px;background:#fff;font-family:inherit}
+.act-pager{padding:10px 16px;display:flex;gap:6px;align-items:center;justify-content:flex-end;
+  flex-wrap:wrap;font-size:12px;color:var(--text3);border-top:1px solid var(--border)}
+.act-pager button{height:30px;min-width:32px;padding:0 10px;border:1px solid var(--border);
+  border-radius:7px;background:#fff;cursor:pointer;font-size:12px}
+.act-pager button:disabled{opacity:.4;cursor:default}
 /* Lot-wise modal filter bar (lot / seller / buyer) */
 .dl-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
 .dl-filter{flex:1;min-width:120px;padding:7px 10px;border:1px solid var(--spice-line);
@@ -2995,6 +3039,49 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </details>
         </div>
       </div>
+
+      <!-- App Activity log — collapsible, app-wide audit trail of who
+           changed what (with A→B field diffs), sortable / filterable /
+           paginated. Reads /api/audit-log (admin). -->
+      <div class="card" id="backup-activity-card" style="padding:0;margin-top:16px">
+        <div style="padding:14px 18px;display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none" onclick="toggleBackupActivity()" title="Show / hide the app-wide activity log">
+          <span style="width:6px;height:18px;background:var(--spice-cardamom);border-radius:3px;display:inline-block"></span>
+          <h3 style="margin:0;font-size:14px;color:var(--text)">App Activity log</h3>
+          <span id="backup-activity-count" style="font-weight:400;color:var(--text3);font-size:12px"></span>
+          <span style="flex:1"></span>
+          <button type="button" class="btn btn-o" onclick="event.stopPropagation();backupActLoad()" style="height:28px;padding:0 10px;font-size:11.5px">↻ Refresh</button>
+          <span id="backup-activity-chev" style="font-size:13px;color:var(--spice-cardamom);font-weight:800;width:18px;text-align:center">▸</span>
+        </div>
+        <div id="backup-activity-body" style="border-top:1px solid var(--border);display:none">
+          <div class="act-toolbar">
+            <input type="search" id="bk-act-search" oninput="bkActDebouncedReload()" placeholder="Search user / entity / change…" style="flex:1;min-width:200px;max-width:320px">
+            <select id="bk-act-entity" onchange="bkActReload(true)" title="Filter by entity"><option value="">All entities</option></select>
+            <select id="bk-act-action" onchange="bkActReload(true)" title="Filter by action"><option value="">All actions</option></select>
+            <select id="bk-act-user" onchange="bkActReload(true)" title="Filter by user"><option value="">All users</option></select>
+            <span style="flex:1"></span>
+            <select id="bk-act-pagesize" onchange="bkActReload(true)" title="Rows per page">
+              <option value="10">10 / page</option>
+              <option value="25" selected>25 / page</option>
+              <option value="50">50 / page</option>
+              <option value="100">100 / page</option>
+            </select>
+          </div>
+          <div style="overflow:auto;max-height:56vh">
+            <table class="act-table" id="bk-act-table">
+              <thead><tr>
+                <th data-k="created_at" onclick="bkActSort('created_at')">When<span class="act-arrow">▼</span></th>
+                <th data-k="user_id" onclick="bkActSort('user_id')">User<span class="act-arrow"></span></th>
+                <th data-k="action" onclick="bkActSort('action')">Action<span class="act-arrow"></span></th>
+                <th data-k="entity" onclick="bkActSort('entity')">Entity<span class="act-arrow"></span></th>
+                <th data-k="item" onclick="bkActSort('item')">Item<span class="act-arrow"></span></th>
+                <th class="no-sort">Details (A → B)</th>
+              </tr></thead>
+              <tbody id="bk-act-tbody"></tbody>
+            </table>
+          </div>
+          <div class="act-pager" id="bk-act-pager"></div>
+        </div>
+      </div>
     </div>
 
     <!-- USERS -->
@@ -3198,10 +3285,11 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
          can pick which lots to settle right now ("Print Payment for
          Selected"). Remaining lots stay payable for a later visit. -->
     <!-- Dashboard snapshot: Grade 1 / Grade 2 breakdown for a status -->
-    <div class="modal-bg" id="dash-grade-modal"><div class="modal has-x" style="max-width:560px">
+    <div class="modal-bg" id="dash-grade-modal"><div class="modal has-x" style="max-width:920px;width:94vw">
       <button class="modal-x" onclick="hideModal('dash-grade-modal')" title="Close" aria-label="Close">&times;</button>
-      <h2 id="dash-grade-title">Grade breakdown</h2>
-      <div id="dash-grade-body" style="margin-top:10px;overflow-x:auto"></div>
+      <h2 id="dash-grade-title">Breakdown</h2>
+      <div id="dash-grade-tabs" class="gm-tabs"></div>
+      <div id="dash-grade-body" style="margin-top:12px;overflow:auto;max-height:64vh;min-height:320px"></div>
       <div class="actions" style="margin-top:14px">
         <button class="btn btn-o" onclick="hideModal('dash-grade-modal')">Close</button>
       </div>
@@ -3813,6 +3901,14 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <option value="name">Sort: Seller</option>
             <option value="branch">Sort: Branch</option>
           </select>
+          <!-- Branch filter — restricts the recent-entries list (and its
+               totals) to one branch. Server-side via /api/lots?branch=…,
+               so it filters the WHOLE trade, not just the loaded window.
+               Populated from the configured branches on trade load. -->
+          <select id="le-recent-branch" onchange="leOnRecentBranchFilter(this.value)" title="Filter recent entries by branch"
+                  style="height:30px;font-size:12px;padding:0 10px;border:1px solid var(--border);border-radius:6px;background:#fff;margin-right:8px">
+            <option value="">Branch: All</option>
+          </select>
           <!-- Page size — how many recent entries per page. Persisted in
                localStorage so the user's choice survives reloads. -->
           <select id="le-recent-page-size" onchange="leSetPageSize(this.value)" title="Rows per page"
@@ -3885,7 +3981,40 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <span id="le-activity-chev" style="font-size:13px;color:var(--green-dk);font-weight:800;width:18px;text-align:center">▸</span>
         </div>
         <div id="le-activity-body" style="border-top:1px solid var(--border);display:none">
-          <div id="le-activity-list" style="max-height:300px;overflow-y:auto;font-size:12.5px"></div>
+          <div class="act-toolbar">
+            <input type="search" id="le-act-search" oninput="leActRender()" placeholder="Search lot / seller / field / value…" style="flex:1;min-width:200px;max-width:340px">
+            <select id="le-act-action" onchange="leActRender()" title="Filter by action">
+              <option value="">All actions</option>
+              <option value="create">Entered</option>
+              <option value="edit">Edited</option>
+              <option value="delete">Deleted</option>
+            </select>
+            <select id="le-act-user" onchange="leActRender()" title="Filter by user">
+              <option value="">All users</option>
+            </select>
+            <span style="flex:1"></span>
+            <select id="le-act-pagesize" onchange="leActRender()" title="Rows per page">
+              <option value="10">10 / page</option>
+              <option value="25" selected>25 / page</option>
+              <option value="50">50 / page</option>
+              <option value="100">100 / page</option>
+            </select>
+          </div>
+          <div style="max-height:52vh;overflow:auto">
+            <table class="act-table" id="le-act-table">
+              <thead><tr>
+                <th data-k="at" onclick="leActSort('at')">When<span class="act-arrow"></span></th>
+                <th data-k="user" onclick="leActSort('user')">User<span class="act-arrow"></span></th>
+                <th data-k="action" onclick="leActSort('action')">Action<span class="act-arrow"></span></th>
+                <th data-k="lot_no" onclick="leActSort('lot_no')">Lot<span class="act-arrow"></span></th>
+                <th data-k="branch" onclick="leActSort('branch')">Branch<span class="act-arrow"></span></th>
+                <th data-k="name" onclick="leActSort('name')">Seller<span class="act-arrow"></span></th>
+                <th class="no-sort">Changes (A → B)</th>
+              </tr></thead>
+              <tbody id="le-act-tbody"></tbody>
+            </table>
+          </div>
+          <div class="act-pager" id="le-act-pager"></div>
         </div>
       </div>
 
@@ -8080,7 +8209,8 @@ function go(tab){
     auctions:loadAuctions,reassignreqs:loadReassignRequests,lots:loadLotAuctions,invoices:loadInvAuctions,purchases:loadPurAuctions,
     payments:loadPayAuctions,exports:loadExpAuctions,tds:()=>{},lorry:loadLorryAuctions,
     bills:loadBillAuctions,debit:loadDnAuctions,debitplanter:loadDnpAuctions,journals:loadJournalDefault,registers:loadRegisterDefault,tally:loadTallyAuctions,
-    spicesboard:loadSpiceBoard,pricecheck:loadPriceCheckAuctions};
+    spicesboard:loadSpiceBoard,pricecheck:loadPriceCheckAuctions,
+    backup:()=>{if(typeof initBackupActivity==='function')initBackupActivity();}};
   if(loaders[tab]){
     try{
       const r=loaders[tab]();
@@ -8361,87 +8491,139 @@ const _gmNum   = n => Math.round(Number(n) || 0).toLocaleString('en-IN');
 const _gmQty   = n => (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const _gmBlank = { lots: 0, bags: 0, qty: 0, seller_qty: 0, amount: 0 };
 
-// Level 1 — branch-wise breakdown for a snapshot status (booked/sold/withdrawn).
-// Rows are branches (Bags / Seller Qty / Buyer Qty / Amount); clicking a branch
-// drills into its Grade 1 / Grade 2 split via openGradeModal(status, branch).
-function openStatusBranches(status) {
-  const body = document.getElementById('dash-grade-body');
-  const titleEl = document.getElementById('dash-grade-title');
-  if (!body) return;
-  const stLabel = _STATUS_LABELS[status] || status;
-  if (titleEl) titleEl.textContent = stLabel + ' — by branch';
-  const byBranch = _dashGradeByBranch || {};
-  // Fold a branch's grade cells into one branch-total cell for this status.
-  const branchTotal = grades => Object.values(grades || {}).reduce((a, g) => ({
-    lots: a.lots + (g.lots || 0), bags: a.bags + (g.bags || 0), qty: a.qty + (g.qty || 0),
-    seller_qty: a.seller_qty + (g.seller_qty || 0), amount: a.amount + (g.amount || 0),
-  }), { ..._gmBlank });
-  const rows = Object.keys(byBranch)
-    .map(br => ({ br, cell: branchTotal((byBranch[br] || {})[status]) }))
-    .filter(r => r.cell.lots > 0)
-    .sort((a, b) => b.cell.amount - a.cell.amount);
-  if (!rows.length) {
-    body.innerHTML = `<div class="gm-empty">No ${stLabel.toLowerCase()} lots in this scope yet.</div>`;
-    showModal('dash-grade-modal');
-    return;
-  }
-  const tot = rows.reduce((a, r) => ({
-    lots: a.lots + r.cell.lots, bags: a.bags + r.cell.bags, qty: a.qty + r.cell.qty,
-    seller_qty: a.seller_qty + r.cell.seller_qty, amount: a.amount + r.cell.amount,
-  }), { ..._gmBlank });
-  const rowHtml = (br, g) => `<tr class="gm-rowlink" data-branch="${esc(br)}" onclick="openGradeModal('${status}', this.dataset.branch)" title="View grade breakdown for ${esc(br)}">
-    <td class="l">${esc(br)} <span style="color:var(--spice-text-hint);font-weight:500">· ${_gmNum(g.lots)} lot${g.lots === 1 ? '' : 's'}</span></td>
-    <td>${_gmNum(g.bags)}</td><td>${_gmQty(g.seller_qty)}</td><td>${_gmQty(g.qty)}</td><td>${_gmMoney(g.amount)}</td></tr>`;
-  body.innerHTML = `<table class="gm-table">
-    <thead><tr><th class="l">Branch</th><th>Bags</th><th>Seller Qty</th><th>Buyer Qty</th><th>Amount</th></tr></thead>
-    <tbody>${rows.map(r => rowHtml(r.br, r.cell)).join('')}</tbody>
-    <tfoot><tr><td class="l">Total · ${_gmNum(tot.lots)} lots</td><td>${_gmNum(tot.bags)}</td><td>${_gmQty(tot.seller_qty)}</td><td>${_gmQty(tot.qty)}</td><td>${_gmMoney(tot.amount)}</td></tr></tfoot>
-  </table>`;
+// ── Dashboard status drill-down (tabbed: Branch-wise / Grade-wise) ──────────
+// Opened from a snapshot status pill (Booked / Sold / Withdrawn). Two tabs:
+//   Branch-wise: branches → click a branch → its grade split → click a grade → lots
+//   Grade-wise:  grades   → click a grade  → its branch split → click a branch → lots
+// The final lot-wise level reuses openGradeLots() (depot-lots-modal). State lives
+// in _dashDrill so every click just re-renders the modal body in place.
+const _GRADE_DEFS = [['Grade 1', '1'], ['Grade 2', '2'], ['Ungraded', 'other']];
+let _dashDrill = { status: 'booked', tab: 'branch', branch: null, grade: null };
+
+// Entry point from a snapshot status pill — opens on the Branch-wise tab.
+function openStatusDrill(status) {
+  _dashDrill = { status, tab: 'branch', branch: null, grade: null };
+  dashDrillRender();
+  showModal('dash-grade-modal');
+}
+// Back-compat aliases (older callers). openStatusBranches → Branch-wise tab;
+// openGradeModal(status, branch) → that branch's grades (or Grade-wise root).
+function openStatusBranches(status) { openStatusDrill(status); }
+function openGradeModal(status, branch) {
+  if (branch != null && branch !== '') _dashDrill = { status, tab: 'branch', branch, grade: null };
+  else _dashDrill = { status, tab: 'grade', branch: null, grade: null };
+  dashDrillRender();
   showModal('dash-grade-modal');
 }
 
-// Level 2 — Grade 1 / Grade 2 breakdown for a status. Scoped to one `branch`
-// when drilled in from openStatusBranches (with a "← Back to branches" link),
-// or to the whole scope when called with no branch.
-function openGradeModal(status, branch) {
-  const body = document.getElementById('dash-grade-body');
-  const titleEl = document.getElementById('dash-grade-title');
-  if (!body) return;
-  const stLabel = _STATUS_LABELS[status] || status;
-  const scoped = branch != null && branch !== '';
-  const data = scoped
-    ? (((_dashGradeByBranch || {})[branch] || {})[status])
-    : ((_dashGrade || {})[status]);
-  if (titleEl) titleEl.textContent = scoped
-    ? `${stLabel} · ${branch} — grade breakdown`
-    : `${stLabel} — grade breakdown`;
-  const backLink = scoped
-    ? `<div style="margin-bottom:10px"><a href="#" onclick="openStatusBranches('${status}');return false" style="color:var(--spice-saffron);font-weight:600;text-decoration:none;font-size:12.5px">← Back to branches</a></div>`
-    : '';
-  if (!data) {
-    body.innerHTML = backLink + '<div class="gm-empty">No grade data in this scope yet.</div>';
-    showModal('dash-grade-modal');
-    return;
-  }
-  const rows = [['Grade 1', '1', data['1'] || _gmBlank], ['Grade 2', '2', data['2'] || _gmBlank]];
-  const other = data['other'];
-  if (other && (other.lots || other.bags || other.amount)) rows.push(['Ungraded', 'other', other]);
-  const tot = rows.reduce((a, [, , g]) => ({
-    lots: a.lots + g.lots, bags: a.bags + g.bags, qty: a.qty + g.qty,
-    seller_qty: a.seller_qty + g.seller_qty, amount: a.amount + g.amount,
+function dashDrillSetTab(tab) {
+  _dashDrill.tab = tab; _dashDrill.branch = null; _dashDrill.grade = null;
+  dashDrillRender();
+}
+function dashDrillToBranch(br) { _dashDrill.branch = br; dashDrillRender(); }
+function dashDrillToGrade(gk) { _dashDrill.grade = gk; dashDrillRender(); }
+function dashDrillBack() { _dashDrill.branch = null; _dashDrill.grade = null; dashDrillRender(); }
+
+// Sum an array of {cell} rows into a totals cell.
+function _gmSumCells(rows, pick) {
+  return rows.reduce((a, r) => {
+    const g = pick(r);
+    return { lots: a.lots + (g.lots || 0), bags: a.bags + (g.bags || 0), qty: a.qty + (g.qty || 0),
+      seller_qty: a.seller_qty + (g.seller_qty || 0), amount: a.amount + (g.amount || 0) };
+  }, { ..._gmBlank });
+}
+// Fold a {gradeKey→cell} object into a single total cell.
+function _gmFold(grades) {
+  return Object.values(grades || {}).reduce((a, g) => ({
+    lots: a.lots + (g.lots || 0), bags: a.bags + (g.bags || 0), qty: a.qty + (g.qty || 0),
+    seller_qty: a.seller_qty + (g.seller_qty || 0), amount: a.amount + (g.amount || 0),
   }), { ..._gmBlank });
-  // Each grade row drills into its lot-wise details (status + grade [+ branch]).
-  const brAttr = scoped ? ` data-branch="${esc(branch)}"` : '';
-  const rowHtml = (label, gradeKey, g) => `<tr class="gm-rowlink" data-grade="${gradeKey}"${brAttr} onclick="openGradeLots('${status}', this.dataset.branch, this.dataset.grade)" title="View lot-wise details for ${label}">
-    <td class="l">${label} <span style="color:var(--spice-text-hint);font-weight:500">· ${_gmNum(g.lots)} lot${g.lots === 1 ? '' : 's'}</span></td>
-    <td>${_gmNum(g.bags)}</td><td>${_gmQty(g.seller_qty)}</td>
-    <td>${_gmQty(g.qty)}</td><td>${_gmMoney(g.amount)}</td></tr>`;
-  body.innerHTML = backLink + `<table class="gm-table">
-    <thead><tr><th class="l">Grade</th><th>Bags</th><th>Seller Qty</th><th>Buyer Qty</th><th>Amount</th></tr></thead>
-    <tbody>${rows.map(([l, gk, g]) => rowHtml(l, gk, g)).join('')}</tbody>
+}
+function _gradeLabel(gk) { return gk === '1' ? 'Grade 1' : gk === '2' ? 'Grade 2' : 'Ungraded'; }
+
+// Render a branch/grade table given rows [{key,label,cell}], a header label for
+// the first column, and an onclick expression template (receives the row).
+function _gmDrillTable(firstCol, rows, dataAttr, onclick, titlePrefix) {
+  const tot = _gmSumCells(rows, r => r.cell);
+  const body = rows.map(r => `<tr class="gm-rowlink" ${dataAttr(r)} onclick="${onclick}" title="${esc(titlePrefix)} ${esc(r.label)}">
+    <td class="l">${esc(r.label)} <span style="color:var(--spice-text-hint);font-weight:500">· ${_gmNum(r.cell.lots)} lot${r.cell.lots === 1 ? '' : 's'}</span></td>
+    <td>${_gmNum(r.cell.bags)}</td><td>${_gmQty(r.cell.seller_qty)}</td><td>${_gmQty(r.cell.qty)}</td><td>${_gmMoney(r.cell.amount)}</td></tr>`).join('');
+  return `<table class="gm-table">
+    <thead><tr><th class="l">${firstCol}</th><th>Bags</th><th>Seller Qty</th><th>Buyer Qty</th><th>Amount</th></tr></thead>
+    <tbody>${body}</tbody>
     <tfoot><tr><td class="l">Total · ${_gmNum(tot.lots)} lots</td><td>${_gmNum(tot.bags)}</td><td>${_gmQty(tot.seller_qty)}</td><td>${_gmQty(tot.qty)}</td><td>${_gmMoney(tot.amount)}</td></tr></tfoot>
   </table>`;
-  showModal('dash-grade-modal');
+}
+
+// Level 1 (Branch-wise) — one row per branch, folding its grades together.
+function _drillBranchList(status) {
+  const stLabel = _STATUS_LABELS[status] || status;
+  const byBranch = _dashGradeByBranch || {};
+  const rows = Object.keys(byBranch)
+    .map(br => ({ key: br, label: br, cell: _gmFold((byBranch[br] || {})[status]) }))
+    .filter(r => r.cell.lots > 0)
+    .sort((a, b) => b.cell.amount - a.cell.amount);
+  if (!rows.length) return `<div class="gm-empty">No ${stLabel.toLowerCase()} lots in this scope yet.</div>`;
+  return _gmDrillTable('Branch', rows,
+    r => `data-branch="${esc(r.key)}"`,
+    "dashDrillToBranch(this.dataset.branch)", 'View grade breakdown for');
+}
+// Level 2 (Branch-wise) — grade split for the drilled branch; grade → lots.
+function _drillBranchGrades(status, branch) {
+  const data = ((_dashGradeByBranch || {})[branch] || {})[status];
+  const crumb = `<div class="gm-crumb"><a href="#" onclick="dashDrillBack();return false">← Back to branches</a> · <b>${esc(branch)}</b></div>`;
+  if (!data) return crumb + '<div class="gm-empty">No grade data for this branch.</div>';
+  const rows = _GRADE_DEFS
+    .map(([label, gk]) => ({ key: gk, label, cell: data[gk] || { ..._gmBlank } }))
+    .filter(r => r.key !== 'other' || r.cell.lots || r.cell.bags || r.cell.amount);
+  return crumb + _gmDrillTable('Grade', rows,
+    r => `data-grade="${r.key}" data-branch="${esc(branch)}"`,
+    "openGradeLots('" + status + "', this.dataset.branch, this.dataset.grade)", 'View lot-wise details for');
+}
+// Level 1 (Grade-wise) — one row per grade across the whole scope.
+function _drillGradeList(status) {
+  const data = (_dashGrade || {})[status];
+  if (!data) return '<div class="gm-empty">No grade data in this scope yet.</div>';
+  const rows = _GRADE_DEFS
+    .map(([label, gk]) => ({ key: gk, label, cell: data[gk] || { ..._gmBlank } }))
+    .filter(r => r.key !== 'other' || r.cell.lots || r.cell.bags || r.cell.amount);
+  return _gmDrillTable('Grade', rows,
+    r => `data-grade="${r.key}"`,
+    "dashDrillToGrade(this.dataset.grade)", 'View branch breakdown for');
+}
+// Level 2 (Grade-wise) — branch split for the drilled grade; branch → lots.
+function _drillGradeBranches(status, grade) {
+  const gLabel = _gradeLabel(grade);
+  const byBranch = _dashGradeByBranch || {};
+  const rows = Object.keys(byBranch)
+    .map(br => ({ key: br, label: br, cell: ((byBranch[br] || {})[status] || {})[grade] || { ..._gmBlank } }))
+    .filter(r => r.cell.lots > 0)
+    .sort((a, b) => b.cell.amount - a.cell.amount);
+  const crumb = `<div class="gm-crumb"><a href="#" onclick="dashDrillBack();return false">← Back to grades</a> · <b>${esc(gLabel)}</b></div>`;
+  if (!rows.length) return crumb + `<div class="gm-empty">No ${esc(gLabel)} lots in this scope.</div>`;
+  return crumb + _gmDrillTable('Branch', rows,
+    r => `data-branch="${esc(r.key)}" data-grade="${grade}"`,
+    "openGradeLots('" + status + "', this.dataset.branch, this.dataset.grade)", 'View lot-wise details for');
+}
+
+// Paint the tab bar + the body for the current drill state.
+function dashDrillRender() {
+  const body = document.getElementById('dash-grade-body');
+  const titleEl = document.getElementById('dash-grade-title');
+  const tabsEl = document.getElementById('dash-grade-tabs');
+  if (!body) return;
+  const { status, tab, branch, grade } = _dashDrill;
+  const stLabel = _STATUS_LABELS[status] || status;
+  if (titleEl) titleEl.textContent = stLabel + ' — breakdown';
+  if (tabsEl) {
+    const mk = (key, label) => `<button type="button" class="gm-tab${tab === key ? ' active' : ''}" onclick="dashDrillSetTab('${key}')">${label}</button>`;
+    tabsEl.innerHTML = mk('branch', 'Branch-wise') + mk('grade', 'Grade-wise');
+  }
+  if (tab === 'branch') {
+    body.innerHTML = (branch == null) ? _drillBranchList(status) : _drillBranchGrades(status, branch);
+  } else {
+    body.innerHTML = (grade == null) ? _drillGradeList(status) : _drillGradeBranches(status, grade);
+  }
 }
 
 // Branch panel collapse state — persists across loadStats() re-renders
@@ -8859,7 +9041,6 @@ async function loadStats(auctionId){
         <p>Here's what's happening today, ${today}</p>
       </div>
       <div style="display:flex;gap:10px">
-        <button class="btn btn-o" onclick="go('lots')">Import Data</button>
         <button class="btn btn-a" onclick="go('auctions')">+ New Auction</button>
       </div>
     </div>
@@ -8908,6 +9089,11 @@ async function loadStats(auctionId){
               <div class="qa-icon"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></div>
               <div class="qa-label">Export Data</div>
               <div class="qa-sub">XLSX or PDF</div>
+            </button>
+            <button class="qa" onclick="go('lots')">
+              <div class="qa-icon"><svg viewBox="0 0 24 24"><path d="M3 15v4a2 2 0 002 2h14a2 2 0 002-2v-4M7 8l5-5 5 5M12 3v12"/></svg></div>
+              <div class="qa-label">Import Data</div>
+              <div class="qa-sub">DBF or Excel</div>
             </button>
           </div>
         </div>
@@ -11419,8 +11605,11 @@ function leOnAuctionChange(){
   // state in sync.
   _le.recentSearch = '';
   _le.recentPage = 1; // every trade change starts at the first page
+  _le.recentBranch = ''; // reset branch filter on every trade change
   const sb = document.getElementById('le-recent-search'); if (sb) sb.value = '';
   const ss = document.getElementById('le-recent-search-status'); if (ss) ss.textContent = '';
+  const bf = document.getElementById('le-recent-branch'); if (bf) bf.value = '';
+  leFillRecentBranches();
   if (!aid) {
     _le.recentLots = []; _le.recentTotal = 0; _le.recentOffset = 0;
     if (_le.selectedForPrint) _le.selectedForPrint.clear();
@@ -11747,44 +11936,158 @@ function _leFmtActivityTime(s){
   const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
   return m ? `${m[3]}/${m[2]} ${m[4]}:${m[5]}` : String(s);
 }
+// ── Shared activity-log rendering helpers (Lot Entry + Backup) ────────
+// Colour + label per action, used for the pill badge in both activity tables.
+const ACT_META = {
+  create:  { label:'Entered', bg:'#e6f6ec', fg:'#15803d' },
+  edit:    { label:'Edited',  bg:'#fff4e0', fg:'#B45309' },
+  delete:  { label:'Deleted', bg:'#fdeaea', fg:'#b91c1c' },
+  update:  { label:'Updated', bg:'#fff4e0', fg:'#B45309' },
+  restore: { label:'Restored',bg:'#e7effe', fg:'#1d4ed8' },
+  clear:   { label:'Cleared', bg:'#f3e8ff', fg:'#7e22ce' },
+  export:  { label:'Exported',bg:'#e7f0f4', fg:'#0e7490' },
+  import:  { label:'Imported',bg:'#e7f0f4', fg:'#0e7490' },
+  login:   { label:'Login',   bg:'#eef2f7', fg:'#475569' },
+};
+function actBadge(action){
+  const m = ACT_META[String(action||'').toLowerCase()] || { label:action||'—', bg:'#eef2f7', fg:'#475569' };
+  return `<span class="act-badge" style="background:${m.bg};color:${m.fg}">${esc(m.label)}</span>`;
+}
+// A→B chips for a changes array: [{label, from, to}, …].
+function actDiffChips(changes){
+  if (!Array.isArray(changes) || !changes.length) return '<span style="color:var(--text3)">—</span>';
+  return changes.map(c => {
+    const from = (c.from === '' || c.from == null) ? '∅' : esc(String(c.from));
+    const to   = (c.to   === '' || c.to   == null) ? '∅' : esc(String(c.to));
+    return `<span class="act-diff"><span class="act-field">${esc(c.label || c.field || '')}:</span>` +
+           `<span class="act-from">${from}</span><span class="act-arrow2">→</span><span class="act-to">${to}</span></span>`;
+  }).join('<br>');
+}
+// Full timestamp dd/mm/yyyy hh:mm from a "YYYY-MM-DD HH:MM:SS" string.
+function actFmtTime(s){
+  if (!s) return '';
+  const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}` : String(s);
+}
+// Sortable-header arrow updater shared by both tables.
+function actUpdateSortArrows(tableId, sortKey, dir){
+  const t = document.getElementById(tableId);
+  if (!t) return;
+  t.querySelectorAll('thead th[data-k]').forEach(th => {
+    const a = th.querySelector('.act-arrow');
+    if (a) a.textContent = (th.getAttribute('data-k') === sortKey) ? (dir === 'asc' ? '▲' : '▼') : '';
+  });
+}
+
+// ── Lot Entry activity log (table: sort / filter / paginate / A→B) ────
+const _leAct = { items:[], sort:'at', dir:'desc', page:1 };
 async function leLoadActivity(){
   const aucEl = document.getElementById('le-auction');
   const aid = aucEl ? aucEl.value : '';
-  const list = document.getElementById('le-activity-list');
+  const tbody = document.getElementById('le-act-tbody');
   const countEl = document.getElementById('le-activity-count');
-  if (!list) return;
+  if (!tbody) return;
   if (!aid) {
-    list.innerHTML = '<div style="padding:14px;color:var(--text3);text-align:center">Pick a trade to see its activity.</div>';
+    _leAct.items = [];
+    tbody.innerHTML = '<tr><td colspan="7" style="padding:16px;text-align:center;color:var(--text3)">Pick a trade to see its activity.</td></tr>';
+    const pg = document.getElementById('le-act-pager'); if (pg) pg.innerHTML = '';
     if (countEl) countEl.textContent = '';
     return;
   }
   try {
-    const d = await j(`/api/lots/activity?auction_id=${encodeURIComponent(aid)}&limit=100`);
-    const items = d.items || [];
-    if (countEl) countEl.textContent = items.length ? `${items.length} recent` : '';
-    if (!items.length) {
-      list.innerHTML = '<div style="padding:14px;color:var(--text3);text-align:center">No lot activity yet in this trade.</div>';
-      return;
+    const d = await j(`/api/lots/activity?auction_id=${encodeURIComponent(aid)}&limit=200`);
+    _leAct.items = d.items || [];
+    _leAct.page = 1;
+    if (countEl) countEl.textContent = _leAct.items.length ? `${_leAct.items.length} recent` : '';
+    // Populate the user filter with the distinct users present.
+    const sel = document.getElementById('le-act-user');
+    if (sel) {
+      const cur = sel.value;
+      const users = [...new Set(_leAct.items.map(i => i.user).filter(Boolean))].sort();
+      sel.innerHTML = '<option value="">All users</option>' + users.map(u => `<option value="${esc(u)}">${esc(u)}</option>`).join('');
+      if (users.includes(cur)) sel.value = cur;
     }
-    const META = {
-      create: { ico:'➕', label:'entered', color:'#15803d' },
-      edit:   { ico:'✏️', label:'edited',  color:'#B45309' },
-      delete: { ico:'🗑', label:'deleted', color:'#991B1B' },
-    };
-    list.innerHTML = items.map(it => {
-      const m = META[it.action] || { ico:'•', label:it.action, color:'var(--text2)' };
-      const qty = (it.qty !== '' && it.qty != null) ? ` · ${Number(it.qty).toFixed(2)} kg` : '';
-      return `<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 14px;border-bottom:1px solid var(--border)">
-        <span style="font-size:14px;line-height:1.3">${m.ico}</span>
-        <div style="flex:1;min-width:0">
-          <div style="color:var(--text)"><b style="color:${m.color}">${esc(m.label)}</b> lot <b>${esc(it.lot_no || '?')}</b>${it.branch ? ` <span style="color:var(--text3)">(${esc(it.branch)})</span>` : ''}${it.name ? ` — ${esc(it.name)}` : ''}${qty}</div>
-          <div style="font-size:11px;color:var(--text3)">by <b>${esc(it.user || '?')}</b> · ${esc(_leFmtActivityTime(it.at))}</div>
-        </div>
-      </div>`;
-    }).join('');
+    leActRender();
   } catch (e) {
-    list.innerHTML = '<div style="padding:14px;color:var(--red)">Could not load activity.</div>';
+    tbody.innerHTML = '<tr><td colspan="7" style="padding:16px;text-align:center;color:var(--red)">Could not load activity.</td></tr>';
   }
+}
+function leActSort(k){
+  if (_leAct.sort === k) _leAct.dir = (_leAct.dir === 'asc') ? 'desc' : 'asc';
+  else { _leAct.sort = k; _leAct.dir = (k === 'at') ? 'desc' : 'asc'; }
+  leActRender();
+}
+function leActRender(){
+  const tbody = document.getElementById('le-act-tbody');
+  if (!tbody) return;
+  const q = (document.getElementById('le-act-search')?.value || '').trim().toLowerCase();
+  const fAction = document.getElementById('le-act-action')?.value || '';
+  const fUser = document.getElementById('le-act-user')?.value || '';
+  const pageSize = parseInt(document.getElementById('le-act-pagesize')?.value, 10) || 25;
+
+  let rows = _leAct.items.filter(it => {
+    if (fAction && it.action !== fAction) return false;
+    if (fUser && it.user !== fUser) return false;
+    if (q) {
+      const hay = [it.lot_no, it.branch, it.name, it.user, it.action,
+        ...(it.changes || []).flatMap(c => [c.label, c.from, c.to])].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  // Sort
+  const k = _leAct.sort, dir = _leAct.dir === 'asc' ? 1 : -1;
+  rows.sort((a,b) => {
+    let av = a[k], bv = b[k];
+    if (k === 'lot_no') { av = Number(av)||0; bv = Number(bv)||0; }
+    else { av = String(av==null?'':av).toLowerCase(); bv = String(bv==null?'':bv).toLowerCase(); }
+    return av < bv ? -dir : av > bv ? dir : 0;
+  });
+  actUpdateSortArrows('le-act-table', k, _leAct.dir);
+
+  const total = rows.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (_leAct.page > totalPages) _leAct.page = totalPages;
+  const start = (_leAct.page - 1) * pageSize;
+  const pageRows = rows.slice(start, start + pageSize);
+
+  if (!pageRows.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="padding:16px;text-align:center;color:var(--text3)">No matching activity.</td></tr>';
+  } else {
+    tbody.innerHTML = pageRows.map(it => {
+      const qty = (it.qty !== '' && it.qty != null) ? `<span style="color:var(--text3);font-size:11px"> · ${Number(it.qty).toFixed(2)}kg</span>` : '';
+      const changesCell = (it.action === 'edit')
+        ? actDiffChips(it.changes)
+        : (it.action === 'create' ? '<span style="color:#15803d">New lot</span>'
+          : it.action === 'delete' ? '<span style="color:#b91c1c">Removed</span>' : '—');
+      return `<tr>
+        <td style="color:var(--text3)">${esc(actFmtTime(it.at))}</td>
+        <td><b>${esc(it.user || '?')}</b></td>
+        <td>${actBadge(it.action)}</td>
+        <td><b>${esc(it.lot_no || '?')}</b>${qty}</td>
+        <td>${esc(it.branch || '—')}</td>
+        <td>${esc(it.name || '—')}</td>
+        <td class="act-changes">${changesCell}</td>
+      </tr>`;
+    }).join('');
+  }
+  renderActPager('le-act-pager', _leAct.page, totalPages, total, p => { _leAct.page = p; leActRender(); });
+}
+// Shared pager renderer for activity tables.
+function renderActPager(hostId, page, totalPages, total, goto){
+  const el = document.getElementById(hostId);
+  if (!el) return;
+  if (total === 0) { el.innerHTML = ''; return; }
+  el.innerHTML =
+    `<span>${total} ${total===1?'entry':'entries'}</span><span style="flex:1"></span>` +
+    `<button ${page<=1?'disabled':''} data-go="1">«</button>` +
+    `<button ${page<=1?'disabled':''} data-go="${page-1}">‹</button>` +
+    `<span style="padding:0 6px">Page ${page} / ${totalPages}</span>` +
+    `<button ${page>=totalPages?'disabled':''} data-go="${page+1}">›</button>` +
+    `<button ${page>=totalPages?'disabled':''} data-go="${totalPages}">»</button>`;
+  el.querySelectorAll('button[data-go]').forEach(b => {
+    b.onclick = () => { const p = parseInt(b.getAttribute('data-go'),10); if (p>=1 && p<=totalPages) goto(p); };
+  });
 }
 
 // Clear the activity log for the current trade. Scoped to the selected
@@ -12465,12 +12768,16 @@ async function loadLeRecent(){
     if (!_le.recentPage || _le.recentPage < 1) _le.recentPage = 1;
     const offset = (_le.recentPage - 1) * PAGE;
     const search = String(_le.recentSearch || '').trim();
+    // Branch filter — exact-match on lots.branch, applied server-side so it
+    // spans the whole trade (not just the loaded window).
+    const branch = String(_le.recentBranch || '').trim();
     // `name=` runs LIKE %X% against lots.name on the server, which is
     // the seller column for this trade. Without this query param the
     // search would only filter the locally-loaded page and miss every
     // other matching lot in the trade.
     const qs = `paginated=1&limit=${PAGE}&offset=${offset}`
-             + (search ? `&name=${encodeURIComponent(search)}` : '');
+             + (search ? `&name=${encodeURIComponent(search)}` : '')
+             + (branch ? `&branch=${encodeURIComponent(branch)}` : '');
     const data = await j(`/api/lots/${aid}?${qs}`);
     // Server returns { rows, total, limit, offset } when paginated=1.
     // Defensive fall-through for very old servers that returned a flat
@@ -12492,7 +12799,9 @@ async function loadLeRecent(){
     // The summary endpoint honours the same `name=` seller filter, so the row
     // reflects the WHOLE filtered set, not just the currently-loaded page.
     try {
-      const sumQs = 'summary=1' + (search ? `&name=${encodeURIComponent(search)}` : '');
+      const sumQs = 'summary=1'
+                  + (search ? `&name=${encodeURIComponent(search)}` : '')
+                  + (branch ? `&branch=${encodeURIComponent(branch)}` : '');
       _le.recentSummary = await j(`/api/lots/${aid}?${sumQs}`);
     } catch (_) { _le.recentSummary = null; }
     renderLeRecent();
@@ -12504,6 +12813,25 @@ async function loadLeRecent(){
   } catch (e) {
     console.error('Failed to load recent lots:', e);
   }
+}
+// Branch filter for the recent-entries list. Server-side (spans the whole
+// trade); resets to page 1 so the filtered window starts at the top.
+function leOnRecentBranchFilter(v){
+  _le.recentBranch = String(v || '').trim();
+  _le.recentPage = 1;
+  loadLeRecent();
+}
+// Populate the recent-entries branch dropdown from the configured branches,
+// preserving the current selection. Keeps a leading "Branch: All" option.
+async function leFillRecentBranches(){
+  const sel = document.getElementById('le-recent-branch');
+  if (!sel) return;
+  let branches = [];
+  try { branches = (await getAllocBranches()) || []; } catch (_) {}
+  const cur = _le.recentBranch || '';
+  sel.innerHTML = '<option value="">Branch: All</option>'
+    + branches.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
+  sel.value = branches.includes(cur) ? cur : '';
 }
 // Change rows-per-page from the "Show: N/page" selector. Persists the
 // choice and jumps back to page 1 so the new window starts at the top.
@@ -16865,6 +17193,123 @@ async function deleteAll(resource, label){
     // their own action recorded.
     if (typeof loadDeleteLog === 'function') loadDeleteLog();
   } catch (e) { showError(e); }
+}
+
+// ── Backup → App Activity log (app-wide audit trail, A→B diffs) ──────
+// Server-paginated over /api/audit-log. Filters (entity/action/user/search)
+// and time-order run server-side; the other column sorts reorder the loaded
+// page client-side. Restores its open state per-tab via initBackupActivity().
+const _bkAct = { page:1, order:'desc', total:0, totalPages:1, rows:[], facetsLoaded:false, sortK:'created_at', sortDir:'desc', _t:null };
+function initBackupActivity(){
+  let open = false;
+  try { open = localStorage.getItem('backup_activity_open') === '1'; } catch(_){}
+  const body = document.getElementById('backup-activity-body');
+  const chev = document.getElementById('backup-activity-chev');
+  if (body) body.style.display = open ? '' : 'none';
+  if (chev) chev.textContent = open ? '▾' : '▸';
+  if (open) backupActLoad();
+}
+function toggleBackupActivity(){
+  const body = document.getElementById('backup-activity-body');
+  const chev = document.getElementById('backup-activity-chev');
+  if (!body) return;
+  const open = body.style.display === 'none';
+  body.style.display = open ? '' : 'none';
+  if (chev) chev.textContent = open ? '▾' : '▸';
+  try { localStorage.setItem('backup_activity_open', open ? '1' : '0'); } catch(_){}
+  if (open) backupActLoad();
+}
+function bkActDebouncedReload(){ clearTimeout(_bkAct._t); _bkAct._t = setTimeout(() => bkActReload(true), 300); }
+function bkActReload(reset){ if (reset) _bkAct.page = 1; backupActLoad(); }
+async function backupActLoad(){
+  const tbody = document.getElementById('bk-act-tbody');
+  if (!tbody) return;
+  const pageSize = parseInt(document.getElementById('bk-act-pagesize')?.value, 10) || 25;
+  const params = new URLSearchParams();
+  params.set('page', _bkAct.page); params.set('limit', pageSize); params.set('order', _bkAct.order);
+  const ent = document.getElementById('bk-act-entity')?.value; if (ent) params.set('entity', ent);
+  const act = document.getElementById('bk-act-action')?.value; if (act) params.set('action', act);
+  const usr = document.getElementById('bk-act-user')?.value;   if (usr) params.set('user_id', usr);
+  const q = (document.getElementById('bk-act-search')?.value || '').trim(); if (q) params.set('q', q);
+  tbody.innerHTML = '<tr><td colspan="6" style="padding:16px;text-align:center;color:var(--text3)">Loading…</td></tr>';
+  try {
+    const d = await j('/api/audit-log?' + params.toString());
+    _bkAct.rows = d.logs || [];
+    _bkAct.total = d.total || 0;
+    _bkAct.totalPages = d.totalPages || 1;
+    _bkAct.page = d.page || 1;
+    if (!_bkAct.facetsLoaded && d.facets) { bkActFillFacets(d.facets); _bkAct.facetsLoaded = true; }
+    const countEl = document.getElementById('backup-activity-count');
+    if (countEl) countEl.textContent = _bkAct.total ? `${_bkAct.total} total` : '';
+    bkActRenderRows();
+    actUpdateSortArrows('bk-act-table', _bkAct.sortK, _bkAct.sortDir);
+    renderActPager('bk-act-pager', _bkAct.page, _bkAct.totalPages, _bkAct.total, p => { _bkAct.page = p; backupActLoad(); });
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="6" style="padding:16px;text-align:center;color:var(--red)">Could not load activity (admin only).</td></tr>';
+    const pg = document.getElementById('bk-act-pager'); if (pg) pg.innerHTML = '';
+  }
+}
+function bkActFillFacets(f){
+  const fill = (id, arr, label) => {
+    const sel = document.getElementById(id); if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = `<option value="">${label}</option>` + (arr || []).map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+    if ((arr || []).includes(cur)) sel.value = cur;
+  };
+  fill('bk-act-entity', f.entities, 'All entities');
+  fill('bk-act-action', f.actions, 'All actions');
+  fill('bk-act-user',   f.users,   'All users');
+}
+function bkActSort(k){
+  if (k === 'created_at'){
+    _bkAct.order = (_bkAct.order === 'asc') ? 'desc' : 'asc';
+    _bkAct.sortK = 'created_at'; _bkAct.sortDir = _bkAct.order;
+    _bkAct.page = 1; backupActLoad(); return;
+  }
+  if (_bkAct.sortK === k) _bkAct.sortDir = (_bkAct.sortDir === 'asc') ? 'desc' : 'asc';
+  else { _bkAct.sortK = k; _bkAct.sortDir = 'asc'; }
+  bkActRenderRows();
+  actUpdateSortArrows('bk-act-table', _bkAct.sortK, _bkAct.sortDir);
+}
+// Readable summary of a details blob when there's no explicit A→B changes array.
+function actDetailsSummary(d){
+  const parts = Object.keys(d).filter(k => k !== 'changes' && d[k] !== '' && d[k] != null)
+    .map(k => `<span class="act-field">${esc(k)}:</span> ${esc(String(d[k]))}`);
+  return parts.length ? parts.join(' · ') : '<span style="color:var(--text3)">—</span>';
+}
+function bkActRenderRows(){
+  const tbody = document.getElementById('bk-act-tbody');
+  if (!tbody) return;
+  let mapped = _bkAct.rows.map(r => {
+    let d = {}; try { d = JSON.parse(r.details || '{}'); } catch(_){}
+    const itemVal = (d.lot_no != null && d.lot_no !== '') ? String(d.lot_no)
+                  : (r.entity_id != null ? String(r.entity_id) : '');
+    const item = itemVal ? ('#' + itemVal) : '—';
+    const details = (Array.isArray(d.changes) && d.changes.length) ? actDiffChips(d.changes) : actDetailsSummary(d);
+    return { r, item, itemVal, details };
+  });
+  const k = _bkAct.sortK, dir = _bkAct.sortDir === 'asc' ? 1 : -1;
+  if (k && k !== 'created_at'){
+    mapped.sort((a,b) => {
+      let av, bv;
+      if (k === 'item'){ av = Number(a.itemVal); bv = Number(b.itemVal);
+        if (Number.isNaN(av) || Number.isNaN(bv)) { av = a.itemVal.toLowerCase(); bv = b.itemVal.toLowerCase(); } }
+      else { av = String(a.r[k] || '').toLowerCase(); bv = String(b.r[k] || '').toLowerCase(); }
+      return av < bv ? -dir : av > bv ? dir : 0;
+    });
+  }
+  if (!mapped.length){
+    tbody.innerHTML = '<tr><td colspan="6" style="padding:16px;text-align:center;color:var(--text3)">No activity found.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = mapped.map(m => `<tr>
+    <td style="color:var(--text3)">${esc(actFmtTime(m.r.created_at))}</td>
+    <td><b>${esc(m.r.user_id || '?')}</b></td>
+    <td>${actBadge(m.r.action)}</td>
+    <td>${esc(m.r.entity || '—')}</td>
+    <td>${esc(m.item)}</td>
+    <td class="act-changes">${m.details}</td>
+  </tr>`).join('');
 }
 
 // Pull the most recent Delete All actions and render them as a table.

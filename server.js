@@ -4847,6 +4847,7 @@ app.get('/api/lots/activity', requireViewOrLotEntry, (req, res) => {
       id: r.id, user: r.user_id, action: r.action, lot_id: r.entity_id,
       lot_no: d.lot_no || '', branch: d.branch || '', name: d.name || '',
       qty: d.qty, at: r.created_at,
+      changes: Array.isArray(d.changes) ? d.changes : [],
     };
   });
   res.json({ items });
@@ -5117,12 +5118,50 @@ function logLotActivity(db, req, action, info) {
       branch: info.branch || '',
       name: info.name || '',
       qty: (info.qty != null && info.qty !== '') ? Number(info.qty) : '',
+      // Field-level A→B diff for edits (only present when fields changed).
+      changes: Array.isArray(info.changes) && info.changes.length ? info.changes : undefined,
     });
     db.run(
       `INSERT INTO audit_log (user_id, action, entity, entity_id, details) VALUES (?,?,?,?,?)`,
       [(req.user && req.user.username) || 'system', action, 'lot', info.id || null, details]
     );
   } catch (_) { /* never let logging break the write */ }
+}
+
+// Human-readable labels for the lot fields we surface in the activity log's
+// A→B diff. Only these fields are compared, so the log stays readable and
+// doesn't churn on derived/internal columns. Order here is the display order.
+const LOT_DIFF_FIELDS = [
+  ['lot_no', 'Lot No'], ['branch', 'Branch'], ['grade', 'Grade'],
+  ['bags', 'Bags'], ['qty', 'Qty (kg)'], ['price', 'Price'], ['amount', 'Amount'],
+  ['code', 'Buyer code'], ['buyer', 'Buyer'], ['name', 'Seller'],
+  ['sale', 'Sale type'], ['litre', 'Litre wt'], ['gunny', 'Gunny wt'],
+];
+// Compare the incoming edit payload `next` against the stored row `prev` and
+// return an array of {field,label,from,to} for the tracked fields that changed.
+// Numeric fields are compared by value so 3 vs "3.0" isn't flagged.
+function _lotEditChanges(prev, next) {
+  if (!prev || !next) return [];
+  const out = [];
+  const numeric = new Set(['bags', 'qty', 'price', 'amount', 'litre', 'gunny']);
+  for (const [field, label] of LOT_DIFF_FIELDS) {
+    if (!(field in next)) continue;            // field wasn't part of this edit
+    const rawOld = prev[field], rawNew = next[field];
+    let changed;
+    if (numeric.has(field)) {
+      changed = (Number(rawOld) || 0) !== (Number(rawNew) || 0);
+    } else {
+      changed = String(rawOld == null ? '' : rawOld) !== String(rawNew == null ? '' : rawNew);
+    }
+    if (changed) {
+      out.push({
+        field, label,
+        from: rawOld == null ? '' : rawOld,
+        to:   rawNew == null ? '' : rawNew,
+      });
+    }
+  }
+  return out;
 }
 
 // Email channel for booking alerts. No SMTP transport is wired into this
@@ -5265,7 +5304,9 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
   // duplicate validation that POST /api/lots applies. Skipping these
   // on edit was a previous gap that let users move a lot outside its
   // branch's range or collide with another lot's number.
-  const current = db.get('SELECT auction_id, lot_no, branch, trader_id, locked_at FROM lots WHERE id = ?', [lotId]);
+  // Full old row so the activity log can record field-level A→B diffs
+  // (which fields changed, from what to what). Used by _lotEditChanges below.
+  const current = db.get('SELECT * FROM lots WHERE id = ?', [lotId]);
   // Lock guard — admins always pass; non-admins are blocked the moment
   // the row is locked, regardless of which fields they're trying to
   // change. 423 (Locked) so the client can show a tailored message
@@ -5347,7 +5388,10 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
     auction_id: current && current.auction_id,
     lot_no: (l.lot_no != null) ? l.lot_no : (current && current.lot_no),
     branch: (l.branch != null) ? l.branch : (current && current.branch),
-    name: l.name, qty: l.qty,
+    name: (l.name != null) ? l.name : (current && current.name),
+    qty:  (l.qty  != null) ? l.qty  : (current && current.qty),
+    // A→B diff of the tracked fields the operator actually changed.
+    changes: _lotEditChanges(current, l),
   });
   // Re-evaluate grade-2 alerts — an edit can change a lot's grade or qty,
   // which shifts the grade-2 share. Uses the lot's (unchanged) auction.
@@ -11748,14 +11792,29 @@ app.get('/api/audit-log', requireUserManage, (req, res) => {
   if (req.query.user_id) { where.push('user_id = ?'); params.push(req.query.user_id); }
   if (req.query.entity)  { where.push('entity = ?');  params.push(req.query.entity);  }
   if (req.query.action)  { where.push('action = ?');  params.push(req.query.action);  }
+  // Optional free-text search across user / entity / details (the A→B blob).
+  if (req.query.q) {
+    const q = `%${String(req.query.q).trim()}%`;
+    where.push('(user_id LIKE ? OR entity LIKE ? OR action LIKE ? OR details LIKE ?)');
+    params.push(q, q, q, q);
+  }
   const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  // Sort direction — the widget's "Newest / Oldest" toggle. Default newest.
+  const dir = String(req.query.order || '').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
   const totalRow = db.get(`SELECT COUNT(*) AS cnt FROM audit_log ${whereSql}`, params);
   const total = (totalRow && totalRow.cnt) || 0;
   const logs = db.all(
-    `SELECT * FROM audit_log ${whereSql} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+    `SELECT * FROM audit_log ${whereSql} ORDER BY created_at ${dir}, id ${dir} LIMIT ? OFFSET ?`,
     [...params, limit, offset]
   );
-  res.json({ logs, total, page, totalPages: Math.max(1, Math.ceil(total / limit)) });
+  // Distinct values (across the WHOLE table, unfiltered) so the widget's
+  // filter dropdowns stay populated regardless of the current filter.
+  const facets = {
+    entities: db.all(`SELECT DISTINCT entity FROM audit_log WHERE entity IS NOT NULL AND entity <> '' ORDER BY entity`).map(r => r.entity),
+    actions:  db.all(`SELECT DISTINCT action FROM audit_log WHERE action IS NOT NULL AND action <> '' ORDER BY action`).map(r => r.action),
+    users:    db.all(`SELECT DISTINCT user_id FROM audit_log WHERE user_id IS NOT NULL AND user_id <> '' ORDER BY user_id`).map(r => r.user_id),
+  };
+  res.json({ logs, total, page, totalPages: Math.max(1, Math.ceil(total / limit)), facets });
 });
 
 // Clear the audit log entirely. No partial-delete UI on the admin

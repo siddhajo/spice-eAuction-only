@@ -927,29 +927,39 @@ function getTradeReportData(db, auctionId, opts) {
     ORDER BY UPPER(COALESCE(b.buyer1, l.buyer1, l.code)), l.code
   `, branchFilter ? [auctionId, branchFilter] : [auctionId]);
 
-  // INV.AMOUNT per code from invoices table
-  const invRows = db.all(`
-    SELECT
-      COALESCE(b.code, '')       AS code,
-      SUM(i.tot)                 AS inv_amount
-    FROM invoices i
-    LEFT JOIN buyers b
-      ON UPPER(TRIM(b.buyer))  = UPPER(TRIM(i.buyer))
-      OR UPPER(TRIM(b.buyer1)) = UPPER(TRIM(i.buyer1))
-    WHERE i.auction_id = ?
-    GROUP BY b.code
-  `, [auctionId]);
-  const invByCode = {};
-  invRows.forEach(r => { if (r.code) invByCode[r.code] = Number(r.inv_amount) || 0; });
+  // INV.AMOUNT is derived per buyer-row from the same components the sales
+  // invoice uses, so the trade report reconciles with issued invoices even
+  // before any invoice is generated. Formula (per buyer code):
+  //   cardamomGunny = Σ amount + (Σ bags × gunny_rate)
+  //   transport     = Σ qty × transport_rate                          (inter-state only, else 0)
+  //   insurance     = ((cardamomGunny + cardamomGunny × gst_goods%) / 1000) × insurance_rate
+  //                                                                    (inter-state only, else 0)
+  //   GST           = (cardamomGunny + transport + insurance) × gst_goods%
+  //   INV.AMOUNT    = round(cardamomGunny + transport + insurance + GST)  → nearest rupee
+  const cfg           = _loadSettings(db);
+  const gstGoods      = Number(cfg.gst_goods)  || 5;
+  const gunnyRate     = Number(cfg.gunny_rate) || 165;
+  // Inter-state transport / insurance rates (same config keys the sales
+  // invoice uses for I-type sales).
+  const transportRate = Number(cfg.transport)  || 2.5;
+  const insuranceRate = Number(cfg.insurance)  || 0.75;
 
-  // Stamp each buyer-row with inv_amount and a uniform sale code (I/L)
+  // Stamp each buyer-row with a uniform sale code (I/L) then its INV.AMOUNT.
   const auctionState = String(auction.state || '').trim().toUpperCase();
   rows.forEach(r => {
-    r.inv_amount = invByCode[r.code] || 0;
     const buyerSt = String(r.state || '').trim().toUpperCase();
     // Inter-state if buyer state ≠ auction state. Empty buyer state defaults
     // to intra-state (matches the FoxPro fallback).
     r.sale = (buyerSt && buyerSt !== auctionState) ? 'I' : 'L';
+
+    const isInter       = r.sale === 'I';
+    const cardamomGunny = (Number(r.amount) || 0) + (Number(r.bag) || 0) * gunnyRate;
+    const transport     = isInter ? (Number(r.qty) || 0) * transportRate : 0;
+    const insurance     = isInter
+      ? ((cardamomGunny + cardamomGunny * gstGoods / 100) / 1000) * insuranceRate
+      : 0;
+    const gst           = (cardamomGunny + transport + insurance) * gstGoods / 100;
+    r.inv_amount = Math.round(cardamomGunny + transport + insurance + gst);
   });
 
   // Group by buyer-state (column on the report). Within each state, split into
