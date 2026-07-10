@@ -1331,17 +1331,14 @@ tr:hover td{background:var(--spice-cream)}
 .dash-snap-row .qa{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto auto;
   column-gap:12px;row-gap:0;align-items:center;padding:8px 14px;min-height:0;min-width:0;overflow:hidden}
 .dash-snap-row .qa .qa-icon{grid-column:1;grid-row:1 / 3;width:34px;height:34px}
-.dash-snap-row .qa .qa-label{grid-column:2;grid-row:1;font-size:13px;line-height:1.15;
-  min-width:0;white-space:normal;overflow-wrap:anywhere}
-.dash-snap-row .qa .qa-sub{grid-column:2;grid-row:2;font-size:11px;line-height:1.15;
-  min-width:0;white-space:normal;overflow-wrap:anywhere}
-/* Full label wraps rather than truncates, so let each tile grow to its
-   content instead of forcing equal-height rows that would clip 2-line labels. */
-.dash-snap-row .qa-body .qa-grid{grid-auto-rows:auto}
+.dash-snap-row .qa .qa-label{grid-column:2;grid-row:1;font-size:13px;line-height:1.2;
+  min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dash-snap-row .qa .qa-sub{grid-column:2;grid-row:2;font-size:11px;line-height:1.2;
+  min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dash-snap-row .qa{align-content:center}
-/* Let both tile columns shrink inside the fixed-width Quick Actions card so
-   long labels never push content past the card's right edge. */
-.dash-snap-row .qa-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+/* Single column of full-width tiles so every label sits on ONE line — no word
+   wrap, no truncation — inside the fixed-width Quick Actions card. */
+.dash-snap-row .qa-grid{grid-template-columns:1fr;grid-auto-rows:1fr}
 .dash-snap{padding:0;overflow:hidden;margin-bottom:20px}
 /* Current-Auction depot table: colored, hover-stable totals row (light green
    fill + dark-green bold text stays visible through the global row hover). */
