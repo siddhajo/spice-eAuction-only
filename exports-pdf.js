@@ -650,6 +650,8 @@ const COLS = {
     { header: 'AMOUNT',     key: 'amount',      width: 14 },
     { header: 'COMMISSION', key: 'commission',  width: 12 },
     { header: 'PAYABLE',    key: 'payable',     width: 14 },
+    { header: 'ADVANCE',    key: 'advance',     width: 11 },
+    { header: 'DISCOUNT',   key: 'discount',    width: 11 },
   ],
   payment_party_wise: [
     // One row per party (seller), aggregated — mirrors the on-screen Payments
@@ -665,8 +667,9 @@ const COLS = {
     { header: 'GST',        key: 'gst',        width: 8  },
     { header: 'TDS',        key: 'tds',        width: 7  },
     { header: 'NET',        key: 'net',        width: 10 },
-    { header: 'DISCOUNT',   key: 'discount',   width: 8  },
+    { header: 'ADVANCE',    key: 'advance',    width: 9  },
     { header: 'PAYABLE',    key: 'payable',    width: 11 },
+    { header: 'DISCOUNT',   key: 'discount',   width: 8  },
   ],
   tally_purchase: [
     { header: 'NAME', key: 'name', width: 24 }, { header: 'ADD', key: 'add', width: 24 },
@@ -774,8 +777,8 @@ const TOTAL_KEYS = {
   dealer_list:     ['lots', 'bags', 'qty'],
   planter_list:    ['lots', 'bags', 'qty'],
   sales_taxes:     ['bag', 'qty', 'cardamom_cost', 'gunny_cost', 'cgst', 'sgst', 'igst', 'tcs', 'transport', 'insurance', 'total'],
-  payment:         ['bag', 'qty', 'amount', 'commission', 'payable'],
-  payment_party_wise: ['lots', 'qty', 'amount', 'purchase', 'commission', 'gst', 'tds', 'net', 'discount', 'payable'],
+  payment:         ['bag', 'qty', 'amount', 'commission', 'payable', 'advance', 'discount'],
+  payment_party_wise: ['lots', 'qty', 'amount', 'purchase', 'commission', 'gst', 'tds', 'net', 'advance', 'payable', 'discount'],
   tally_purchase:  ['bag', 'qty', 'amount', 'cgst', 'sgst', 'igst', 'discount', 'bilamt'],
   tds_return:      ['assess_value', 'tds'],
   purchase_register: ['bag', 'qty', 'amount', 'refund', 'commission', 'cgst', 'sgst', 'igst', 'billamount'],
@@ -819,6 +822,9 @@ const PDF_LAYOUT = {
   full_file: 'landscape',
   // 12 aggregated money columns — needs the wider landscape page.
   payment_party_wise: 'landscape',
+  // Per-lot payment now carries seller-level Advance + Discount columns on top
+  // of the money columns — landscape keeps the wide values from wrapping.
+  payment: 'landscape',
   // 18 / 17 wide registers — portrait can't fit them.
   purchase_register: 'landscape',
   sales_register: 'landscape',
@@ -861,7 +867,7 @@ const ROW_PREPROCESS = {
   payment: {
     serialKey: '_sn',
     groupByKey: 'poolername',
-    subtotalKeys: ['bag', 'qty', 'amount', 'pqty', 'puramt', 'discount', 'payable'],
+    subtotalKeys: ['bag', 'qty', 'amount', 'pqty', 'puramt', 'discount', 'payable', 'advance'],
     subtotalLabelKey: 'poolername',
   },
   // Lot Payment — group by seller place (PAMPUPARA / BODI / etc.) and
@@ -997,12 +1003,29 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
 
     case 'payment': {
       // Payment Summary shows COMMISSION (lots.com) — matches the
-      // Payments-tab change from Discount to Commission.
-      return db.all(
+      // Payments-tab change from Discount to Commission. Seller-level Advance
+      // (deducted from Payable) and display-only Discount come from
+      // getPaymentSummary and are emitted once per seller (first lot row).
+      const _rows = db.all(
         `SELECT name as poolername, lot_no as lot, bags as bag, qty, price, amount,
           com as commission, balance as payable
          FROM lots WHERE auction_id = ? AND amount > 0
          ORDER BY state, name`, [auctionId]);
+      const { getPaymentSummary } = require('./calculations');
+      const _summ = getPaymentSummary(db, auctionId, extra && extra.state, cfg) || [];
+      const _adv = {}, _disc = {};
+      _summ.forEach(s => {
+        const k = String(s.name || '').trim().toUpperCase();
+        _adv[k]  = Number(s.advance) || 0;
+        _disc[k] = Number(s.seller_discount) || 0;
+      });
+      const _seen = new Set();
+      return _rows.map(r => {
+        const k = String(r.poolername || '').trim().toUpperCase();
+        const first = !_seen.has(k);
+        if (first) _seen.add(k);
+        return { ...r, advance: first ? (_adv[k] || 0) : 0, discount: first ? (_disc[k] || 0) : 0 };
+      });
     }
 
     case 'payment_party_wise': {
@@ -1020,8 +1043,9 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
         gst:        Number(r.total_tax) || 0,
         tds:        Number(r.tds) || 0,
         net:        Number(r.net_amount) || 0,
-        discount:   Number(r.seller_discount) || 0,
+        advance:    Number(r.advance) || 0,
         payable:    Number(r.total_payable) || 0,
+        discount:   Number(r.seller_discount) || 0,
       }));
     }
 

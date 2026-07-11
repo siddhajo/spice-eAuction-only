@@ -4384,6 +4384,11 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
             <button class="btn btn-g" style="height:38px;padding:0 16px;font-weight:600" onclick="loadPayments()">↻ Reload</button>
+            <!-- Calculate All Discounts — opt-in, display-only settlement
+                 discount for every seller at once. Toggles the per-auction
+                 discount_applied flag; label reflects current state (set in
+                 loadPayments). Discount never changes Payable. -->
+            <button id="pay-calc-discount" class="btn" style="height:38px;padding:0 16px;font-weight:600;background:#9333EA;color:#fff" onclick="toggleAllDiscounts()" title="Calculate the display-only settlement discount for every seller at once. Does not affect Payable.">🧮 Calculate All Discounts</button>
           </div>
 
           <!-- Delete Selected: appears only when at least one row's
@@ -4416,7 +4421,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <div style="height:280px;position:relative"><canvas id="pay-top-sellers-chart"></canvas></div>
         </div>
 
-        <div style="overflow-x:auto"><table><thead><tr><th>Seller</th><th>Lots</th><th>Qty</th><th>Amount</th><th>Purchase</th><th>Commission</th><th>GST 18%</th><th>Net Amount</th><th>Discount</th><th>Payable</th><th>Actions</th></tr></thead><tbody id="payments-list"></tbody></table></div>
+        <div style="overflow-x:auto"><table><thead><tr><th>Seller</th><th>Lots</th><th>Qty</th><th>Amount</th><th>Purchase</th><th>Commission</th><th>GST 18%</th><th>Net Amount</th><th>Advance</th><th>Payable</th><th>Discount</th><th>Actions</th></tr></thead><tbody id="payments-list"></tbody></table></div>
       </div>
     </div>
 
@@ -7554,6 +7559,19 @@ async function loadFixData(){
     </style>
     <div style="margin-bottom:4px"><strong style="font-size:20px">Fix Data</strong></div>
     <div style="font-size:14px;color:var(--text3,#6b7280);margin-bottom:6px">Pick a section below to view your records. To change something, switch on <b>Edit mode</b> — you'll see exactly what will change and confirm before it's saved. Every change keeps an automatic backup.</div>
+    <div style="margin:10px 0 2px">
+      <button id="fd-sql-toggle" class="fd-btn-add" style="background:#0f172a" onclick="fdToggleSql()">⌗ SQL Query</button>
+      <span style="font-size:12.5px;color:var(--text3,#6b7280);margin-left:8px">Run a read-only query for things the filters can't express (e.g. GSTIN length = 15).</span>
+    </div>
+    <div id="fd-sql-panel" style="display:none;margin:10px 0 16px;border:1px solid var(--line,#e5e7eb);border-radius:12px;padding:14px;background:var(--card,#fff)">
+      <div style="font-size:13px;color:var(--text3,#6b7280);margin-bottom:8px">Read-only <b>SELECT</b> only (writes are blocked). Example: <code style="background:#0f172a11;padding:2px 6px;border-radius:6px">SELECT name, cr FROM traders WHERE LENGTH(TRIM(cr)) = 15 AND SUBSTR(TRIM(cr),1,2) GLOB '[0-9][0-9]'</code></div>
+      <textarea id="fd-sql-text" spellcheck="false" placeholder="SELECT ..." style="width:100%;box-sizing:border-box;min-height:92px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13.5px;line-height:1.5;padding:10px 12px;border:2px solid #0f172a;border-radius:10px;background:var(--card,#fff);color:var(--text,#111);resize:vertical;caret-color:#0f172a"></textarea>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">
+        <button class="fd-btn-add" style="background:#0f172a" onclick="fdRunQuery()">▶ Run <span style="opacity:.7;font-weight:400;font-size:12px">(⌘/Ctrl+Enter)</span></button>
+        <span id="fd-sql-status" style="font-size:13px;color:var(--text3,#6b7280)"></span>
+      </div>
+      <div id="fd-sql-result" style="margin-top:12px"></div>
+    </div>
     <div id="fd-cards" class="fd-cards"></div>
     <div id="fd-view"></div>`;
   await fdLoadCatalog();
@@ -7571,6 +7589,65 @@ async function fdLoadCatalog(){
 }
 
 function fdOpen(key){ FD.entity=key; FD.offset=0; FD.q=''; FD.filters={}; FD.undo=null; fdLoadCatalog(); fdRender(); }
+
+// ── Fix Data → SQL Query (read-only) ──────────────────────────
+// A power-user escape hatch for conditions the per-column "contains"
+// filters can't express (length, ranges, GLOB, joins, aggregates). The
+// server hard-restricts this to a single read-only SELECT; the UI just
+// posts the text and renders whatever columns/rows come back.
+function fdToggleSql(){
+  const p = document.getElementById('fd-sql-panel');
+  if(!p) return;
+  const show = p.style.display === 'none';
+  p.style.display = show ? 'block' : 'none';
+  if(show){
+    const ta = document.getElementById('fd-sql-text');
+    if(ta){
+      // Seed with a sensible starter tied to the open section (if any).
+      if(!ta.value && FD.entity && FD.label){
+        const tbl = ({sellers:'traders',buyers:'buyers',auctions:'auctions',lots:'lots',invoices:'invoices',purchases:'purchases',bills:'bills',debit_notes:'debit_notes'})[FD.entity] || FD.entity;
+        ta.value = `SELECT * FROM ${tbl} LIMIT 50`;
+      }
+      ta.focus();
+      // ⌘/Ctrl+Enter to run (bound once).
+      if(!ta._sqlBound){
+        ta.addEventListener('keydown', e=>{ if((e.metaKey||e.ctrlKey) && e.key==='Enter'){ e.preventDefault(); fdRunQuery(); } });
+        ta._sqlBound = true;
+      }
+    }
+  }
+}
+
+async function fdRunQuery(){
+  const ta = document.getElementById('fd-sql-text');
+  const status = document.getElementById('fd-sql-status');
+  const out = document.getElementById('fd-sql-result');
+  if(!ta || !status || !out) return;
+  const sql = (ta.value||'').trim();
+  if(!sql){ status.textContent = 'Type a SELECT query first.'; return; }
+  status.textContent = 'Running…'; out.innerHTML = '';
+  try{
+    const d = await j('/api/data/query', { method:'POST', body: JSON.stringify({ sql }) });
+    const cols = d.columns || [];
+    const rows = d.rows || [];
+    status.textContent = `${rows.length} row${rows.length===1?'':'s'}`
+      + (d.truncated ? ` — showing first ${d.max} (add a LIMIT or tighten the WHERE)` : '');
+    if(!rows.length){ out.innerHTML = '<div style="padding:12px;color:var(--text3,#6b7280)">No rows matched.</div>'; return; }
+    let html = '<div class="fd-scroll"><table class="fd-grid"><thead><tr class="fd-hrow">'
+      + cols.map(c=>`<th>${esc(String(c))}</th>`).join('') + '</tr></thead><tbody>';
+    for(const row of rows){
+      html += '<tr>' + cols.map(c=>{
+        const v = row[c];
+        return v==null ? '<td><span class="fd-null">null</span></td>' : `<td>${esc(String(v))}</td>`;
+      }).join('') + '</tr>';
+    }
+    html += '</tbody></table></div>';
+    out.innerHTML = html;
+  }catch(e){
+    status.textContent = '';
+    out.innerHTML = `<div style="padding:12px;color:#dc2626">${esc(e.message||String(e))}</div>`;
+  }
+}
 
 // Build the query string for the current section, search, filters & page.
 function fdQuery(){
@@ -11359,14 +11436,20 @@ async function loadFormulas(){
       formula: `Net Amount = Σ ( Lot Payable )`,
     },
     {
-      label: 'Settlement discount',
-      note: 'Early-payment incentive — applied ONLY to the net of the seller\'s immediate-payment lots, then rounded once. Days come from the seller type: a GSTIN-carrying seller is a dealer (Dealer Days); anyone else is a pooler (No. of Days for Discount). This is separate from the Debit-Note discount above.',
-      formula: `Settlement Discount = round( Immediate-lots Net / 1000 × Days × ${pill('Discount %', num('discount_pct','0'))} )<br>
-                Days = pooler ${pill('No. of Days for Discount', num('discount_days','0'))}  or  dealer ${pill('Dealer Days', num('dealer_days','0'))}`,
+      label: 'Advance',
+      note: 'Amount already paid to the seller for this trade, entered inline on the Payments tab. It is deducted from Payable and flows into the bank payment file, the payment statement and the party-wise reports.',
+      formula: `Payable = Net Amount − Advance`,
     },
     {
       label: 'Payable',
-      formula: `Payable = Net Amount − Settlement Discount`,
+      note: 'What is actually paid to the seller — Net Amount less any Advance already paid. The Settlement discount below is display-only and is NOT deducted here.',
+      formula: `Payable = Net Amount − Advance`,
+    },
+    {
+      label: 'Settlement discount (display only)',
+      note: 'Early-payment incentive shown for reference only — it never changes Payable. Opt-in per auction: use "Calculate All Discounts" on the Payments tab to compute it for every seller at once. Applied ONLY to the net of the seller\'s immediate-payment lots, then rounded once. Days come from the seller type: a GSTIN-carrying seller is a dealer (Dealer Days); anyone else is a pooler (No. of Days for Discount). Separate from the Debit-Note discount above.',
+      formula: `Settlement Discount = round( Immediate-lots Net / 1000 × Days × ${pill('Discount %', num('discount_pct','0'))} )<br>
+                Days = pooler ${pill('No. of Days for Discount', num('discount_days','0'))}  or  dealer ${pill('Dealer Days', num('dealer_days','0'))}`,
     },
   ]);
 
@@ -22357,16 +22440,61 @@ function _payRefreshUndoButton() {
   }
 }
 
+// Save a seller's advance for the current auction, then reload so Payable
+// and the KPI/footer totals recompute from the server. Empty/0 clears it.
+// Advance is deducted from Payable (Payable = Net − Advance); the display
+// Discount is unaffected.
+async function savePaymentAdvance(inputEl, encName){
+  const aid = document.getElementById('pay-auction').value;
+  if (!aid) return;
+  const name = decodeURIComponent(encName || '');
+  const advance = Math.max(0, Number(inputEl && inputEl.value) || 0);
+  try {
+    if (inputEl) inputEl.disabled = true;
+    await j(`/api/payments/${aid}/advance`, {
+      method:'POST', body: JSON.stringify({ name, advance })
+    });
+    await loadPayments();
+  } catch (e) {
+    if (inputEl) inputEl.disabled = false;
+    toast('Could not save advance: ' + (e.message || e));
+  }
+}
+
+// Toggle the display-only settlement discount for every seller in this auction
+// at once (auctions.discount_applied). Reloads so the Discount column and the
+// payment statements/exports reflect it. Never changes Payable.
+async function toggleAllDiscounts(){
+  const aid = document.getElementById('pay-auction').value;
+  if (!aid) { toast('Select an auction first'); return; }
+  const btn = document.getElementById('pay-calc-discount');
+  const applied = !(btn && btn.dataset.applied === '1');
+  try {
+    if (btn) btn.disabled = true;
+    await j(`/api/payments/${aid}/apply-discount`, {
+      method:'POST', body: JSON.stringify({ applied })
+    });
+    await loadPayments();
+    toast(applied
+      ? 'Settlement discount calculated for all sellers (display only — Payable unchanged).'
+      : 'Settlement discounts cleared.');
+  } catch (e) {
+    toast('Could not update discounts: ' + (e.message || e));
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function loadPayments(){
   const aid=document.getElementById('pay-auction').value;
   const body=document.getElementById('payments-list');
-  if(!aid){body.innerHTML='<tr><td colspan="12" style="text-align:center;color:var(--text3);padding:24px">Select an auction above</td></tr>';return}
+  if(!aid){body.innerHTML='<tr><td colspan="14" style="text-align:center;color:var(--text3);padding:24px">Select an auction above</td></tr>';return}
 
   // Visual feedback — set the body to a loading state so the user sees
   // an obvious refresh even when the underlying data hasn't changed.
   // Without this the click silently re-fetches and re-renders the same
   // numbers, so the "Reload" feels broken even when it's working.
-  body.innerHTML = '<tr><td colspan="12" style="text-align:center;color:var(--text3);padding:24px">Loading…</td></tr>';
+  body.innerHTML = '<tr><td colspan="14" style="text-align:center;color:var(--text3);padding:24px">Loading…</td></tr>';
 
   // Force a fresh DataTable state for this tbody so any retained sort
   // direction / pagination doesn't mask the new data. Without this the
@@ -22448,6 +22576,7 @@ async function loadPayments(){
         const totalAmount   = arr.reduce((a,i) => a + (Number(i.total_amount)|| 0), 0);
         const totalGst      = arr.reduce((a,i) => a + (Number(i.total_tax)   || 0), 0);
         const totalNet      = arr.reduce((a,i) => a + (Number(i.net_amount)  || 0), 0);
+        const totalAdvance  = arr.reduce((a,i) => a + (Number(i.advance) || 0), 0);
         const totalDiscount = arr.reduce((a,i) => a + (Number(i.seller_discount) || 0), 0);
         const $ = (id) => document.getElementById(id);
         if ($('pay-kpi-sellers'))  $('pay-kpi-sellers').textContent  = arr.length;
@@ -22465,15 +22594,35 @@ async function loadPayments(){
           totalGst > 0 && ['GST 18%', `₹${fmtI(totalGst, 2)}`],
           totalAmount > 0 && ['Sale value', `₹${fmtI(totalAmount, 2)}`],
         ]);
+        // Payable = Net − Advance. Discount is display-only, so it's shown as
+        // a separate reference figure, not as a reducer of Payable.
         setKpiMeta('pay-kpi-payable-meta', [
           ['Net amount', `₹${fmtI(totalNet, 2)}`],
-          totalDiscount > 0 && ['Less discount', `₹${fmtI(totalDiscount, 2)}`],
+          totalAdvance > 0 && ['Less advance', `₹${fmtI(totalAdvance, 2)}`],
+          totalDiscount > 0 && ['Discount (info)', `₹${fmtI(totalDiscount, 2)}`],
         ]);
         updateSummaryStats('payments',
           `<strong>${arr.length}</strong> seller${arr.length===1?'':'s'} · `
           + `<strong>${fmtI(totalQty,2)} kg</strong> · `
           + `<strong>₹${fmtI(totalPayable,2)}</strong> payable`);
       }
+    }
+
+    // Sync the "Calculate All Discounts" button to this auction's opt-in flag.
+    // discount_applied is per-auction, so any row carries the same value.
+    const _discBtn = document.getElementById('pay-calc-discount');
+    if (_discBtn) {
+      const _applied = allArr.length && Number(allArr[0].discount_applied) === 1;
+      if (_applied) {
+        _discBtn.innerHTML = '✕ Clear Discounts';
+        _discBtn.style.background = '#6B7280';
+        _discBtn.title = 'Clear the display-only settlement discount for this auction.';
+      } else {
+        _discBtn.innerHTML = '🧮 Calculate All Discounts';
+        _discBtn.style.background = '#9333EA';
+        _discBtn.title = 'Calculate the display-only settlement discount for every seller at once. Does not affect Payable.';
+      }
+      _discBtn.dataset.applied = _applied ? '1' : '0';
     }
 
     DataTable.mount('payments-list', arr, {
@@ -22574,21 +22723,37 @@ async function loadPayments(){
         { key:'net_amount', label:'Net Amount', sort:'number', numeric:true,
           fmt:(n)=>fmtI(n,2),
           render:(p)=>`<span style="font-weight:600">${fmtI(p.net_amount||0,2)}</span>` },
-        // Discount — round(net / 1000 × days × discount_pct); days from
-        // pooler (discount_days) vs dealer (dealer_days) per seller type.
+        // Advance — user-entered amount already paid to the seller. Deducted
+        // from Payable (Payable = Net − Advance). Edited inline; onchange saves
+        // to the server and reloads so Payable + totals recompute exactly.
+        { key:'advance', label:'Advance', sort:'number', numeric:true,
+          fmt:(n)=>fmtI(n,2),
+          render:(p)=>{
+            const v = Number(p.advance)||0;
+            return `<input type="number" min="0" step="0.01" value="${v>0?v:''}" placeholder="0.00"`
+              + ` onclick="event.stopPropagation()"`
+              + ` onchange="savePaymentAdvance(this,'${encodeURIComponent(p.name||'')}')"`
+              + ` title="Advance already paid to this seller — deducted from Payable (display Discount is unaffected)."`
+              + ` style="width:92px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-size:12px;text-align:right;background:#fff;color:#B45309;font-weight:600">`;
+          } },
+        { key:'total_payable', label:'Payable', sort:'number', numeric:true,
+          fmt:(n)=>fmtI(n,2),
+          // Payable as the "answer" — bigger, darker, cardamom. = Net − Advance.
+          render:(p)=>`<span style="font-weight:700;color:var(--spice-cardamom-dk);font-size:14px">${fmtI(p.total_payable||0,2)}</span>` },
+        // Discount — display-only settlement discount, round(net / 1000 × days ×
+        // discount_pct); days from pooler (discount_days) vs dealer (dealer_days).
+        // Opt-in per auction via "Calculate All Discounts"; never affects Payable.
         { key:'seller_discount', label:'Discount', sort:'number', numeric:true,
           fmt:(n)=>fmtI(n,2),
           render:(p)=>{
             const v = Number(p.seller_discount)||0;
-            const tip = p.seller_type ? ` title="${esc(p.seller_type)} rate"` : '';
+            const applied = Number(p.discount_applied)===1;
+            const tip = p.seller_type ? ` title="${esc(p.seller_type)} rate · display only, not deducted from Payable"` : ' title="Display only — not deducted from Payable"';
+            if (!applied) return `<span style="color:var(--text3)" title="Not calculated yet — use ‘Calculate All Discounts’">—</span>`;
             return v>0
               ? `<span style="color:#9333EA;font-weight:600"${tip}>${fmtI(v,2)}</span>`
               : `<span style="color:var(--text3)"${tip}>0.00</span>`;
           } },
-        { key:'total_payable', label:'Payable', sort:'number', numeric:true,
-          fmt:(n)=>fmtI(n,2),
-          // Payable as the "answer" — bigger, darker, cardamom. = Net − Discount.
-          render:(p)=>`<span style="font-weight:700;color:var(--spice-cardamom-dk);font-size:14px">${fmtI(p.total_payable||0,2)}</span>` },
         { key:'_actions', label:'Actions', sortable:false, searchable:false,
           render:(p)=>{
             const aid = Number((document.getElementById('pay-auction')||{}).value)||0;

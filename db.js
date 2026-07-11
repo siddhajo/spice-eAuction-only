@@ -700,6 +700,21 @@ async function initDb() {
     received_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
+  // ── PAYMENT ADVANCES ───────────────────────────────────────
+  // Per-seller, per-auction advance already paid to a seller. Entered on
+  // the Payments tab's "Advance" column and deducted from the payable
+  // (Payable = Net Amount − Advance). Keyed by UPPER(TRIM(name)) so it
+  // survives minor name-casing differences and joins cleanly to the
+  // lot-derived seller rollup in getPaymentSummary().
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS payment_advances (
+    auction_id INTEGER NOT NULL,
+    name_key TEXT NOT NULL,
+    name TEXT NOT NULL,
+    advance REAL DEFAULT 0,
+    updated_at TEXT DEFAULT (datetime('now','localtime')),
+    PRIMARY KEY (auction_id, name_key)
+  )`);
+
   // ── INDEXES ────────────────────────────────────────────────
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_traders_name ON traders(name)',
@@ -733,6 +748,7 @@ async function initDb() {
     // Meta message id; the send-log panel filters by recipient.
     'CREATE INDEX IF NOT EXISTS idx_wa_messages_wamid ON whatsapp_messages(wamid)',
     'CREATE INDEX IF NOT EXISTS idx_wa_messages_phone ON whatsapp_messages(phone)',
+    'CREATE INDEX IF NOT EXISTS idx_payment_advances_auction ON payment_advances(auction_id)',
   ];
   for (const idx of indexes) { try { wrapped.exec(idx); } catch (e) {} }
 
@@ -872,6 +888,12 @@ async function initDb() {
     // transport + insurance are 0 (hidden in PDF + Tally). See
     // buildSalesInvoice() and POST /api/invoices/:id/no-ti.
     'ALTER TABLE invoices ADD COLUMN no_ti INTEGER DEFAULT 0',
+    // Per-auction "settlement discount applied" flag for the Payments tab.
+    // Discount is display-only (never changes Payable) and opt-in: it stays
+    // 0 until the operator clicks "Calculate All Discounts", which flips this
+    // to 1 so getPaymentSummary + the statements/exports surface the
+    // days-based settlement discount for every seller at once.
+    'ALTER TABLE auctions ADD COLUMN discount_applied INTEGER DEFAULT 0',
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }

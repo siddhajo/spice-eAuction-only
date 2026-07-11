@@ -9704,6 +9704,59 @@ app.get('/api/payments/:auctionId', requireView, (req, res) => {
   res.json(summary);
 });
 
+// Set (or clear) a seller's advance for this auction. The advance is
+// deducted from the Payments payable (Payable = Net − Advance) and flows
+// into the payment statement, bank export and party-wise reports via
+// getPaymentSummary/getBankPaymentData. Body: { name, advance }.
+app.post('/api/payments/:auctionId/advance', requireLotWrite, (req, res) => {
+  try {
+    const db = getDb();
+    const auctionId = Number(req.params.auctionId);
+    const name = String(req.body.name || '').trim();
+    const advance = Math.max(0, Number(req.body.advance) || 0);
+    if (!auctionId || !name) return res.status(400).json({ error: 'auctionId and name are required' });
+    const auction = db.get('SELECT id FROM auctions WHERE id = ?', [auctionId]);
+    if (!auction) return res.status(404).json({ error: 'Auction not found' });
+    const nameKey = name.toUpperCase();
+    if (advance > 0) {
+      // Upsert — one row per (auction, seller). REPLACE keeps it simple and
+      // idempotent; the PRIMARY KEY (auction_id, name_key) is the conflict key.
+      db.run(
+        `INSERT INTO payment_advances (auction_id, name_key, name, advance, updated_at)
+         VALUES (?, ?, ?, ?, datetime('now','localtime'))
+         ON CONFLICT(auction_id, name_key)
+         DO UPDATE SET advance = excluded.advance, name = excluded.name,
+                       updated_at = datetime('now','localtime')`,
+        [auctionId, nameKey, name, advance]);
+    } else {
+      // Zero advance → remove the row so it doesn't linger as a stale record.
+      db.run('DELETE FROM payment_advances WHERE auction_id = ? AND name_key = ?', [auctionId, nameKey]);
+    }
+    res.json({ success: true, name, advance });
+  } catch (e) {
+    res.status(500).json({ error: 'Advance save failed: ' + (e.message || e) });
+  }
+});
+
+// Opt in/out of the display-only settlement discount for this auction. When
+// applied=true the "Calculate All Discounts" button flips auctions.discount_applied
+// so getPaymentSummary + the statements/exports surface the days-based discount
+// for every seller at once. Discount never changes Payable. Body: { applied }.
+app.post('/api/payments/:auctionId/apply-discount', requireLotWrite, (req, res) => {
+  try {
+    const db = getDb();
+    const auctionId = Number(req.params.auctionId);
+    const applied = req.body.applied === false ? 0 : 1;
+    if (!auctionId) return res.status(400).json({ error: 'auctionId is required' });
+    const auction = db.get('SELECT id FROM auctions WHERE id = ?', [auctionId]);
+    if (!auction) return res.status(404).json({ error: 'Auction not found' });
+    db.run('UPDATE auctions SET discount_applied = ? WHERE id = ?', [applied, auctionId]);
+    res.json({ success: true, applied: !!applied });
+  } catch (e) {
+    res.status(500).json({ error: 'Discount toggle failed: ' + (e.message || e) });
+  }
+});
+
 // Delete the lots + DNs for a list of sellers in one auction. Powers
 // the "Delete Selected" button on the Payments tab. Each row in the
 // payments table is a roll-up of one seller's lots in the trade, so
@@ -9918,22 +9971,44 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   }
   y += 30;
 
-  // ── Net Amount → days-based settlement discount → Payable ──
-  // tPay (Σ balance) is the Net Amount. Pooler vs dealer days from the seller's
-  // cr (a GSTIN-carrying cr → dealer). discount_pct is applied directly
-  // (₹ per 1000 per day). Debit notes are intentionally NOT involved here.
+  // ── Net Amount → Advance → Payable (with display-only Discount) ──
+  // tPay (Σ balance) is the Net Amount. Payable = Net − Advance already paid.
+  // The days-based settlement discount is DISPLAY-ONLY (opt-in per auction) and
+  // is shown as a reference line below Payable — it never changes Payable.
   const _discPct    = Number(cfg.discount_pct)  || 0;
   const _poolerDays = Number(cfg.discount_days) || 0;
   const _dealerDays = Number(cfg.dealer_days)   || 0;
   const _isDealer   = !!gstinStateCode((lots[0] || {}).cr);
   const _days       = _isDealer ? _dealerDays : _poolerDays;
   const _netAmount  = tPay;
-  // Discount applies ONLY to immediate-payment lots among those rendered.
+
+  // Advance already paid to this seller for this auction. On a partial
+  // (lot-picked) statement, scale it to the shown share of the seller's full
+  // amount — same proportional basis as the TDS allocation above — so it never
+  // over-deducts on a subset of lots.
+  let _advance = 0;
+  try {
+    const _advRow = db.get(
+      'SELECT advance FROM payment_advances WHERE auction_id = ? AND name_key = ?',
+      [auctionId, String(sellerName || '').trim().toUpperCase()]);
+    const _fullAdv = _advRow ? (Number(_advRow.advance) || 0) : 0;
+    _advance = (lotIdFilter.length && _allAmt > 0)
+      ? Math.round(_fullAdv * (_shownAmt / _allAmt) * 100) / 100
+      : _fullAdv;
+  } catch (_) { _advance = 0; }
+  const _payable    = _netAmount - _advance;
+
+  // Display-only settlement discount — only when the operator has applied it
+  // for this auction (Payments tab → "Calculate All Discounts").
+  let _discountApplied = 0;
+  try {
+    const _a = db.get('SELECT discount_applied FROM auctions WHERE id = ?', [auctionId]);
+    _discountApplied = _a && Number(_a.discount_applied) === 1 ? 1 : 0;
+  } catch (_) { _discountApplied = 0; }
   const _immediateNet = lots.reduce((a, l) => a + (Number(l.immediate_payment) === 1 ? (Number(l.balance) || 0) : 0), 0);
-  const _discount   = Math.round(_immediateNet / 1000 * _days * _discPct);
-  const _payable    = _netAmount - _discount;
-  // Wide label column + lineBreak:false so the discount caption stays on one
-  // line (it was wrapping and overprinting the Payable row).
+  const _discount   = _discountApplied ? Math.round(_immediateNet / 1000 * _days * _discPct) : 0;
+
+  // Wide label column + lineBreak:false so the captions stay on one line.
   const sVW = 95, sLW = 250, sX = PAGE_R - (sLW + sVW);
   const sumRow = (label, val, bold) => {
     doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(bold ? 11 : 9.5);
@@ -9943,10 +10018,19 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   };
   sumRow('Net Amount', fmtAmt(_netAmount));
   if (tTds > 0) sumRow('TDS (u/s 194Q) on Purchase', fmtAmt(tTds));
-  sumRow(`Less: Discount (immediate · ${_isDealer ? 'dealer' : 'pooler'} · ${_days}d)`, '- ' + fmtAmt(_discount));
+  if (_advance > 0) sumRow('Less: Advance paid', '- ' + fmtAmt(_advance));
   doc.moveTo(sX, y).lineTo(sX + sLW + sVW, y).lineWidth(0.5).stroke();
   y += 4;
   sumRow('Payable', fmtAmt(_payable), true);
+  // Discount is informational only — shown after Payable and clearly captioned
+  // so it's never mistaken for a deduction from the amount payable.
+  if (_discountApplied && _discount > 0) {
+    doc.font('Helvetica-Oblique').fontSize(8.5).fillColor('#666');
+    doc.text(`Settlement discount (for reference only, not deducted · immediate · ${_isDealer ? 'dealer' : 'pooler'} · ${_days}d): ${fmtAmt(_discount)}`,
+      sX - 120, y, { width: sLW + sVW + 120, align: 'right', lineBreak: false });
+    doc.fillColor('#000');
+    y += 14;
+  }
   y += 10;
 
   doc.font('Helvetica').fontSize(9).text(`Generated: ${new Date().toLocaleString('en-IN')}`, PAGE_L, y, { width: PAGE_W, align: 'right' });
@@ -12691,6 +12775,74 @@ app.delete('/api/data/:entity/:rowid', requireAdmin, (req, res) => {
     } catch (_) {}
     res.json({ success: true, changes: info.changes });
   } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Ad-hoc READ-ONLY query for the Fix Data → SQL Query box. Admin-only.
+// Lets an operator express conditions the point-and-click filters can't
+// (e.g. WHERE LENGTH(TRIM(cr)) = 15). Hard-locked to a SINGLE read-only
+// SELECT / WITH…SELECT statement — every write/DDL/side-effecting verb is
+// rejected, and string/identifier literals are stripped before the keyword
+// scan so a value like name = 'UPDATE CORP' doesn't trip the guard. Results
+// are streamed from a raw sql.js statement and capped so a runaway cross
+// join can't exhaust memory.
+const _FIXDATA_QUERY_MAX = 2000;
+app.post('/api/data/query', requireAdmin, (req, res) => {
+  try {
+    // Trim trailing semicolons/whitespace so a lone "SELECT …;" is allowed.
+    const sql = String((req.body && req.body.sql) || '').trim().replace(/;+\s*$/, '');
+    if (!sql) return res.status(400).json({ error: 'Type a SELECT query first.' });
+
+    // Strip quoted string + double-quoted identifier literals so their
+    // contents can't match the statement-shape or banned-keyword checks.
+    const stripped = sql
+      .replace(/'(?:[^']|'')*'/g, "''")
+      .replace(/"(?:[^"]|"")*"/g, '""');
+
+    // Must be a single statement (no embedded ';') and start with SELECT/WITH.
+    if (stripped.includes(';')) {
+      return res.status(400).json({ error: 'Only a single SELECT statement is allowed (remove the ";").' });
+    }
+    if (!/^\s*(select|with)\b/i.test(stripped)) {
+      return res.status(400).json({ error: 'Only read-only SELECT queries are allowed.' });
+    }
+    // Reject any write / DDL / side-effecting verb, matched as whole words
+    // (column names like created_at / update_time won't trip these).
+    const banned = /\b(insert|update|delete|drop|alter|create|replace|attach|detach|reindex|vacuum|pragma|analyze|begin|commit|rollback|savepoint|release|truncate|grant|revoke)\b/i;
+    const hit = stripped.match(banned);
+    if (hit) {
+      return res.status(400).json({ error: `Not allowed in a read-only query: ${hit[1].toUpperCase()}` });
+    }
+
+    const db = getDb();
+    // Use the raw sql.js handle so we can stop stepping at the cap instead of
+    // materialising every row. No scheduleSave() runs on this path, so the DB
+    // file is never touched by a query.
+    const stmt = db.raw.prepare(sql);
+    let columns = [];
+    try { columns = stmt.getColumnNames() || []; } catch (_) {}
+    const rows = [];
+    let truncated = false;
+    try {
+      while (stmt.step()) {
+        if (rows.length >= _FIXDATA_QUERY_MAX) { truncated = true; break; }
+        rows.push(stmt.getAsObject());
+      }
+    } finally {
+      stmt.free();
+    }
+    if (!columns.length && rows.length) columns = Object.keys(rows[0]);
+
+    try {
+      db.run('INSERT INTO audit_log (user_id, action, entity, entity_id, details) VALUES (?,?,?,?,?)',
+        [req.user.id, 'fixdata_query', 'query', null, sql.slice(0, 500)]);
+    } catch (_) {}
+
+    res.json({ columns, rows, count: rows.length, truncated, max: _FIXDATA_QUERY_MAX });
+  } catch (e) {
+    // sql.js surfaces parse/runtime errors here — pass the message through so
+    // the operator can fix their SQL.
+    res.status(400).json({ error: e.message });
+  }
 });
 
 // ══════════════════════════════════════════════════════════════

@@ -695,14 +695,35 @@ async function exportPaymentSummary(db, auctionId, cfg, _state, extra) {
       return true;
     });
   }
+  // Seller-level Advance (deducted from Payable) and display-only settlement
+  // Discount come from getPaymentSummary so this per-lot export agrees with
+  // the Payments tab. They're emitted once per seller (on the seller's first
+  // lot row) since they're seller-level, not per-lot, figures.
+  const { getPaymentSummary } = require('./calculations');
+  const summ = getPaymentSummary(db, auctionId, _state, cfg) || [];
+  const advByName = {}, discByName = {};
+  summ.forEach(s => {
+    const k = String(s.name || '').trim().toUpperCase();
+    advByName[k]  = Number(s.advance) || 0;
+    discByName[k] = Number(s.seller_discount) || 0;
+  });
   // Payable = per-lot net (lots.balance), with no debit-note subtraction.
   // The displayed column shows COMMISSION (lots.com), not discount — per the
   // Payments-tab change.
-  const enriched = rows.map(r => ({
-    ...r,
-    commission: Number(r.commission) || 0,
-    payable: Number(r.payable) || 0,
-  }));
+  const _sellerSeen = new Set();
+  const enriched = rows.map(r => {
+    const k = String(r.poolername || '').trim().toUpperCase();
+    const firstForSeller = !_sellerSeen.has(k);
+    if (firstForSeller) _sellerSeen.add(k);
+    return {
+      ...r,
+      commission: Number(r.commission) || 0,
+      payable: Number(r.payable) || 0,
+      // Once-per-seller so column totals equal each seller's single value.
+      advance:  firstForSeller ? (advByName[k]  || 0) : 0,
+      discount: firstForSeller ? (discByName[k] || 0) : 0,
+    };
+  });
   const cols = [
     { header: 'POOLERNAME', key: 'poolername', width: 30 },
     { header: 'LOT', key: 'lot', width: 8 }, { header: 'BAG', key: 'bag', width: 6 },
@@ -710,6 +731,8 @@ async function exportPaymentSummary(db, auctionId, cfg, _state, extra) {
     { header: 'AMOUNT', key: 'amount', width: 14 },
     { header: 'COMMISSION', key: 'commission', width: 14 },
     { header: 'PAYABLE', key: 'payable', width: 14 },
+    { header: 'ADVANCE', key: 'advance', width: 12 },
+    { header: 'DISCOUNT', key: 'discount', width: 12 },
   ];
   // Footer totals — sum every numeric column. The earlier export had no
   // totals row, so users had to compute payable/discount sums manually
@@ -725,6 +748,8 @@ async function exportPaymentSummary(db, auctionId, cfg, _state, extra) {
       amount:  sum('amount'),
       commission:sum('commission'),
       payable: sum('payable'),
+      advance: sum('advance'),
+      discount:sum('discount'),
     },
   };
   return createExcelBuffer('Payment', cols, enriched, {
@@ -756,9 +781,12 @@ async function exportPaymentPartyWise(db, auctionId, cfg, state, extra) {
     gst:        Number(r.total_tax) || 0,
     tds:        Number(r.tds) || 0,
     net:        Number(r.net_amount) || 0,
-    discount:   Number(r.seller_discount) || 0,
+    advance:    Number(r.advance) || 0,
     payable:    Number(r.total_payable) || 0,
+    discount:   Number(r.seller_discount) || 0,
   }));
+  // Column order mirrors the Payments tab: Net → Advance → Payable → Discount.
+  // Payable = Net − Advance; Discount is display-only (never affects Payable).
   const cols = [
     { header: 'POOLERNAME', key: 'poolername', width: 30 },
     { header: 'LOTS', key: 'lots', width: 7 },
@@ -769,8 +797,9 @@ async function exportPaymentPartyWise(db, auctionId, cfg, state, extra) {
     { header: 'GST', key: 'gst', width: 12 },
     { header: 'TDS', key: 'tds', width: 12 },
     { header: 'NET AMOUNT', key: 'net', width: 14 },
-    { header: 'DISCOUNT', key: 'discount', width: 12 },
+    { header: 'ADVANCE', key: 'advance', width: 12 },
     { header: 'PAYABLE', key: 'payable', width: 14 },
+    { header: 'DISCOUNT', key: 'discount', width: 12 },
   ];
   const sum = (key) => enriched.reduce((s, r) => s + (Number(r[key]) || 0), 0);
   const grandTotal = {
@@ -784,8 +813,9 @@ async function exportPaymentPartyWise(db, auctionId, cfg, state, extra) {
       gst:        sum('gst'),
       tds:        sum('tds'),
       net:        sum('net'),
-      discount:   sum('discount'),
+      advance:    sum('advance'),
       payable:    sum('payable'),
+      discount:   sum('discount'),
     },
   };
   return createExcelBuffer('PaymentPartyWise', cols, enriched, {

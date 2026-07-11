@@ -540,8 +540,11 @@ function getPaymentSummary(db, auctionId, state, cfg) {
   // Per-seller, per-auction payment roll-up for the Payments tab (and the
   // lot-selection modal + payment statement, which must agree with it).
   //   Net Amount = Σ lots.balance  (Amount + Refund − Commission − Handling − GST)
-  //   Discount   = early-payment settlement discount on immediate-payment lots
-  //   Payable    = Net − Discount
+  //   Advance    = per-seller advance already paid (payment_advances table)
+  //   Payable    = Net − Advance
+  //   Discount   = early-payment settlement discount on immediate-payment lots;
+  //                DISPLAY-ONLY (opt-in via auctions.discount_applied) — it does
+  //                NOT change Payable.
   // Debit notes are NOT part of this — they are separate documents and do not
   // change the Payments payable (see the note before the settlement-discount
   // block below). The query also pulls per-seller GST sums so the tab can
@@ -577,6 +580,26 @@ function getPaymentSummary(db, auctionId, state, cfg) {
   const tdsByName = {};
   tdsRows.forEach(r => { tdsByName[String(r.name || '').trim().toUpperCase()] = Number(r.tds) || 0; });
 
+  // Per-seller advance already paid (Payments tab "Advance" column). Deducted
+  // from the payable: Payable = Net Amount − Advance. Keyed case-insensitively
+  // by seller name (same key as the lot rollup / TDS map above).
+  const advByName = {};
+  try {
+    const advRows = db.all(
+      'SELECT name_key, advance FROM payment_advances WHERE auction_id = ?',
+      [auctionId]) || [];
+    advRows.forEach(r => { advByName[String(r.name_key || '').trim().toUpperCase()] = Number(r.advance) || 0; });
+  } catch (_) { /* table missing on very old DBs — treat as no advances */ }
+
+  // Settlement discount is display-only and opt-in per auction: it stays 0
+  // until the operator clicks "Calculate All Discounts" (auctions.discount_applied
+  // = 1). When off, every seller's Discount reads 0 on-screen and in exports.
+  let discountApplied = 0;
+  try {
+    const a = db.get('SELECT discount_applied FROM auctions WHERE id = ?', [auctionId]);
+    discountApplied = a && Number(a.discount_applied) === 1 ? 1 : 0;
+  } catch (_) { discountApplied = 0; }
+
   // Debit notes are intentionally NOT read here. They are separate
   // documents and no longer affect the Payments payable — the on-screen
   // list, the lot-selection modal, and the bank/XLSX exports all show the
@@ -606,7 +629,13 @@ function getPaymentSummary(db, auctionId, state, cfg) {
     // early-payment incentive). Base it on the net of those lots, not the
     // seller's whole net — a seller with no immediate lots gets 0 discount.
     const immediateNet = Number(s.immediate_payable) || 0;
-    const sellerDiscount = Math.round(immediateNet / 1000 * days * discPct);
+    // Display-only settlement discount — only surfaced once the operator has
+    // opted in for this auction (discount_applied). Never affects Payable.
+    const sellerDiscount = discountApplied
+      ? Math.round(immediateNet / 1000 * days * discPct)
+      : 0;
+    // Advance already paid to this seller (deducted from Payable below).
+    const advance = advByName[String(s.name || '').trim().toUpperCase()] || 0;
     return {
       ...s,
       // Per-seller commission (lots.com) — shown in the Payments "Commission"
@@ -623,6 +652,12 @@ function getPaymentSummary(db, auctionId, state, cfg) {
       seller_type: isDealer ? 'dealer' : 'pooler',
       net_amount: netAmount,
       seller_discount: sellerDiscount,
+      // Whether the display-only settlement discount has been applied for this
+      // auction. Lets the UI/statement distinguish "0 discount" from "not yet
+      // calculated" and drives the reference line on the payment statement.
+      discount_applied: discountApplied,
+      // Advance already paid — user-entered per seller on the Payments tab.
+      advance,
       // True when this seller's lots point at more than one bank account
       // (or a mix of tagged + untagged). Drives the "multiple banks" badge
       // on the Payments table so the user knows to export each account's
@@ -634,8 +669,9 @@ function getPaymentSummary(db, auctionId, state, cfg) {
         const distinct = new Set(ids).size;
         return distinct > 1 || (distinct >= 1 && untagged);
       })(),
-      // Final payable = net amount − days-based settlement discount.
-      total_payable: netAmount - sellerDiscount,
+      // Final payable = net amount − advance already paid. The settlement
+      // discount is display-only and intentionally NOT subtracted here.
+      total_payable: netAmount - advance,
     };
   });
 }
@@ -733,6 +769,16 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
     }
   } catch (_) { /* trader_banks may not exist on partial migrations */ }
 
+  // Per-seller advance already paid — deducted from the bank payout so the
+  // exported amount matches the Payments tab's Payable (Net − Advance). Applied
+  // only to whole-seller rows; partial (lot-picked) exports pay the picked lots
+  // at face value since a seller-level advance can't be split across lots.
+  const advanceByName = {};
+  try {
+    const advRows = db.all('SELECT name_key, advance FROM payment_advances WHERE auction_id = ?', [auctionId]) || [];
+    advRows.forEach(r => { advanceByName[String(r.name_key || '').trim().toUpperCase()] = Number(r.advance) || 0; });
+  } catch (_) { /* table missing on old DBs — no advances */ }
+
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [auctionId]);
   const roundAmounts = cfg.flag_round;
 
@@ -774,7 +820,12 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
     const excludeArr = excludeLots ? excludeLots[nameUpper] : null;
     if (!((picksArr && picksArr.length) || (excludeArr && excludeArr.length))) {
       // No lot filter for this seller → one seller-level row, default bank.
-      return [buildRow(p, useBefore ? (p.puramt || 0) : (p.payable || 0), '', null)];
+      // Deduct any advance already paid so the payout equals the on-screen
+      // Payable (Net − Advance). Clamp at 0 so an advance ≥ payable never
+      // produces a negative bank line.
+      const adv = advanceByName[nameUpper] || 0;
+      const base = Math.max(0, (useBefore ? (p.puramt || 0) : (p.payable || 0)) - adv);
+      return [buildRow(p, base, '', null)];
     }
     // Re-sum balance/puramt over ONLY the picked (and not-excluded) lots
     // so the bank row pays exactly what's being settled now. Group the
