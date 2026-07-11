@@ -11447,8 +11447,8 @@ async function loadFormulas(){
     },
     {
       label: 'Settlement discount (display only)',
-      note: 'Early-payment incentive shown for reference only — it never changes Payable. Opt-in per auction: use "Calculate All Discounts" on the Payments tab to compute it for every seller at once. Applied ONLY to the net of the seller\'s immediate-payment lots, then rounded once. Days come from the seller type: a GSTIN-carrying seller is a dealer (Dealer Days); anyone else is a pooler (No. of Days for Discount). Separate from the Debit-Note discount above.',
-      formula: `Settlement Discount = round( Immediate-lots Net / 1000 × Days × ${pill('Discount %', num('discount_pct','0'))} )<br>
+      note: 'Shown for reference only — it never changes Payable. Opt-in per auction: use "Calculate All Discounts" on the Payments tab to compute it for every seller at once, on each seller\'s full Net Amount, then rounded. Days come from the seller type: a GSTIN-carrying seller is a dealer (Dealer Days); anyone else is a pooler (No. of Days for Discount). Separate from the Debit-Note discount above.',
+      formula: `Settlement Discount = round( Net Amount / 1000 × Days × ${pill('Discount %', num('discount_pct','0'))} )<br>
                 Days = pooler ${pill('No. of Days for Discount', num('discount_days','0'))}  or  dealer ${pill('Dealer Days', num('dealer_days','0'))}`,
     },
   ]);
@@ -21962,6 +21962,20 @@ function _payExportStatus(aid, sellerName, totalLots) {
   }
   return 'none';
 }
+// Most recent export timestamp (ISO string) for a seller in this auction, or
+// null when they've never been exported. Scans the undo-batch stack — each
+// batch carries the seller names it exported plus a `ts`. Drives the
+// "exported on {date}" row badge.
+function _payExportDateFor(aid, sellerName) {
+  const s = _payLoadState(aid);
+  let latest = null;
+  for (const b of (s.batches || [])) {
+    if (b && b.exports && Object.prototype.hasOwnProperty.call(b.exports, sellerName) && b.ts) {
+      if (!latest || String(b.ts) > String(latest)) latest = b.ts;
+    }
+  }
+  return latest;
+}
 // Record an export. exportsMap = { sellerName: '*' | ['lot_no', ...] }. New
 // lots merge into any existing array; a '*' promotion is sticky. Pushes the
 // batch onto the undo stack so a single Undo rolls only this export back.
@@ -22210,7 +22224,7 @@ function updatePayLotsTotals() {
   const selectedIds = new Set(
     Array.from(document.querySelectorAll('.pay-lot-cb:not([disabled]):checked')).map(cb => Number(cb.dataset.id))
   );
-  let qty = 0, amt = 0, pur = 0, comm = 0, tax = 0, net = 0, immNet = 0, tds = 0;
+  let qty = 0, amt = 0, pur = 0, comm = 0, tax = 0, net = 0, tds = 0;
   for (const l of _payLotsState.lots) {
     if (!selectedIds.has(l.id)) continue;
     tds += Number(l._tds) || 0;
@@ -22224,15 +22238,23 @@ function updatePayLotsTotals() {
     comm += Number(l.com)     || 0;
     tax  += (Number(l.cgst)||0) + (Number(l.sgst)||0) + (Number(l.igst)||0);
     net  += Number(l.balance) || 0;   // per-lot balance = Net Amount
-    if (Number(l.immediate_payment) === 1) immNet += Number(l.balance) || 0;
   }
-  // Days-based settlement discount — applies ONLY to the selected lots that
-  // are flagged immediate (single rounding on their combined net). Pooler vs
-  // dealer days inferred from the seller's cr.
+  // Settlement discount — display-only, mirrors the Payments tab. When the
+  // operator has run "Calculate All Discounts" for this trade
+  // (window._payDiscountApplied), it's computed on the SELECTED lots' full net
+  // (not just immediate lots). It never reduces Payable. Pooler vs dealer days
+  // inferred from the seller's cr.
   const isDealer = _crIsDealer((_payLotsState.lots[0] || {}).cr);
   const days = isDealer ? _rateNum('dealer_days') : _rateNum('discount_days');
-  const discount = Math.round(immNet / 1000 * days * _rateNum('discount_pct'));
-  const payable = net - discount;
+  const discountApplied = !!window._payDiscountApplied;
+  const discount = discountApplied ? Math.round(net / 1000 * days * _rateNum('discount_pct')) : 0;
+  // Advance already paid (seller-level). Scale it to the selected lots' share
+  // of the seller's full amount so this partial preview matches the printed
+  // statement (which allocates advance the same way). Payable = Net − Advance.
+  const fullAdvance = (window._payAdvanceByName || {})[String(_payLotsState.seller || '').trim().toUpperCase()] || 0;
+  const allAmt = _payLotsState.lots.reduce((a, l) => a + (Number(l.amount) || 0), 0);
+  const advance = (allAmt > 0) ? Math.round(fullAdvance * (amt / allAmt) * 100) / 100 : fullAdvance;
+  const payable = net - advance;
   const n = selectedIds.size;
   const totalN = document.querySelectorAll('.pay-lot-cb:not([disabled])').length;
   const exportedN = document.querySelectorAll('.pay-lot-cb[disabled]').length;
@@ -22246,9 +22268,10 @@ function updatePayLotsTotals() {
       <div>GST: <strong style="color:#0891B2">₹${fmtI(tax, 2)}</strong></div>
       ${tds > 0 ? `<div>TDS: <strong style="color:#B91C1C">₹${fmtI(tds, 2)}</strong></div>` : ''}
       <div>Net: <strong>₹${fmtI(net, 2)}</strong></div>
-      <div>Discount${days ? ` <span style="color:var(--text3);font-weight:400">(immediate · ${isDealer ? 'dealer' : 'pooler'} · ${days}d)</span>` : ''}: <strong style="color:#9333EA">₹${fmtI(discount, 2)}</strong></div>
+      ${advance > 0 ? `<div>Advance: <strong style="color:#B45309">− ₹${fmtI(advance, 2)}</strong></div>` : ''}
       <div style="margin-left:auto;font-size:14px">Payable now: <strong style="color:var(--spice-cardamom-dk)">₹${fmtI(payable, 2)}</strong></div>
-    </div>`;
+    </div>
+    ${discountApplied ? `<div style="margin-top:6px;font-size:11.5px;color:#9333EA">Settlement discount (display only — not deducted from Payable${days ? ` · ${isDealer ? 'dealer' : 'pooler'} · ${days}d` : ''}): <strong>₹${fmtI(discount, 2)}</strong></div>` : ''}`;
   const btn = document.getElementById('pay-lots-print-btn');
   if (btn) btn.disabled = (n === 0);
   // Save is enabled whenever any tickable (non-exported) lot is checked.
@@ -22334,8 +22357,24 @@ async function exportPaymentXlsxSelected() {
 }
 // Toolbar buttons: tracked selected-export when sellers are ticked, else
 // fall back to the full-trade export (historical behaviour).
-function exportBankPaymentTracked() {
-  return _collectSelectedPaymentNames().length ? exportBankPaymentSelected() : exportType('bank_payment');
+async function exportBankPaymentTracked() {
+  // Ticked sellers → tracked selected export (already records the marker).
+  if (_collectSelectedPaymentNames().length) return exportBankPaymentSelected();
+  // No selection → whole-trade export. On success, mark every seller in the
+  // trade as exported so each row shows the "exported on {date}" badge (and,
+  // where an advance is recorded, "Advance paid and exported on {date}").
+  // Undoable via ↶ Undo Last Export.
+  const aid = Number(document.getElementById('pay-auction')?.value || 0);
+  const ok = await exportType('bank_payment');
+  if (ok && aid) {
+    const names = (window._payLoadedNames || []);
+    if (names.length) {
+      const map = {};
+      names.forEach(n => { map[n] = '*'; });
+      _payMarkExported(aid, map);
+      if (typeof loadPayments === 'function') loadPayments();
+    }
+  }
 }
 function exportPaymentXlsxTracked() {
   return _collectSelectedPaymentNames().length ? exportPaymentXlsxSelected() : exportType('payment');
@@ -22448,13 +22487,33 @@ async function savePaymentAdvance(inputEl, encName){
   const aid = document.getElementById('pay-auction').value;
   if (!aid) return;
   const name = decodeURIComponent(encName || '');
-  const advance = Math.max(0, Number(inputEl && inputEl.value) || 0);
+  const prev = Math.max(0, Number(inputEl && inputEl.dataset ? inputEl.dataset.prev : 0) || 0);
+  // Parse the typed value — strip Indian-format grouping commas (and any stray
+  // non-numeric characters) before Number().
+  const raw = String((inputEl && inputEl.value) || '').replace(/[^0-9.]/g, '');
+  const advance = Math.max(0, Number(raw) || 0);
+  // No real change (e.g. blur without editing) → just re-normalise the display
+  // and skip the confirm so we don't nag the operator.
+  if (Math.abs(advance - prev) < 0.005) {
+    if (inputEl) inputEl.value = advance > 0 ? fmtI(advance, 2) : '';
+    return;
+  }
+  // Confirm before committing — advance changes the seller's Payable.
+  const msg = advance > 0
+    ? `Set advance for ${name} to ₹${fmtI(advance, 2)}?\n\nPayable becomes Net Amount − Advance. (Discount is display-only and unaffected.)`
+    : `Remove the advance for ${name}?\n\nPayable returns to the full Net Amount.`;
+  if (!confirm(msg)) {
+    // Cancelled → revert the field to its previous value, no save.
+    if (inputEl) inputEl.value = prev > 0 ? fmtI(prev, 2) : '';
+    return;
+  }
   try {
     if (inputEl) inputEl.disabled = true;
     await j(`/api/payments/${aid}/advance`, {
       method:'POST', body: JSON.stringify({ name, advance })
     });
     await loadPayments();
+    toast(advance > 0 ? `Advance ₹${fmtI(advance, 2)} saved for ${name}.` : `Advance cleared for ${name}.`);
   } catch (e) {
     if (inputEl) inputEl.disabled = false;
     toast('Could not save advance: ' + (e.message || e));
@@ -22521,6 +22580,15 @@ async function loadPayments(){
     // raw lots, not the seller rollup) can show & allocate TDS per lot.
     window._payTdsByName = {};
     allArr.forEach(r => { window._payTdsByName[String(r.name||'').trim().toUpperCase()] = Number(r.tds)||0; });
+    // Cache per-seller advance + the auction's discount-applied flag so the
+    // lot-selection modal (raw lots, not the rollup) can show Advance/Discount
+    // consistent with this tab.
+    window._payAdvanceByName = {};
+    allArr.forEach(r => { window._payAdvanceByName[String(r.name||'').trim().toUpperCase()] = Number(r.advance)||0; });
+    window._payDiscountApplied = allArr.length ? (Number(allArr[0].discount_applied) === 1) : false;
+    // All seller names in this trade — used to mark the whole-trade bank export
+    // as "exported" so every row shows the exported-on badge.
+    window._payLoadedNames = allArr.map(r => String(r.name || '')).filter(Boolean);
     // Within-trade search — /api/payments returns aggregated seller
     // rollups, so the filter is applied client-side on the seller name.
     const _paySearch = (document.getElementById('pay-search')?.value || '').trim().toLowerCase();
@@ -22664,14 +22732,26 @@ async function loadPayments(){
             const immediateBadge = p.any_immediate
               ? `<span class="pay-immediate-badge" title="${immLots} of ${immTotal} lot${immTotal===1?'':'s'} flagged for immediate payment.">⚡ immediate${(immLots>0 && immLots<immTotal) ? ` ${immLots}/${immTotal}` : ''}</span>`
               : '';
-            // Exported-status badge (full ✓ / partial X/Y).
+            // Exported-status badge. Shows the export DATE ("exported on
+            // {date}"); when this seller also has an advance recorded, the
+            // label leads with "Advance paid and …" so a glance tells the
+            // operator both facts. Partial exports keep the X/Y count.
             let exportedBadge = '';
-            if (status === 'full') {
-              exportedBadge = `<span class="pay-exported-badge pay-exported-full" title="Already exported. Use ↶ to undo before re-exporting.">✓ exported</span>`;
-            } else if (status === 'partial') {
-              const ex = _payExportedLotsFor(aid, p.name);
-              const n = Array.isArray(ex) ? ex.length : 0;
-              exportedBadge = `<span class="pay-exported-badge pay-exported-partial" title="${n} of ${total} lots already exported. Re-exporting pays only the remaining lots.">${n}/${total} exported</span>`;
+            if (status === 'full' || status === 'partial') {
+              const advPaid = Number(p.advance) > 0;
+              const _rawDate = (typeof _payExportDateFor==='function') ? _payExportDateFor(aid, p.name) : null;
+              const _dateStr = _rawDate ? fmtD(_rawDate) : fmtD(new Date());
+              if (status === 'full') {
+                const label = advPaid ? `Advance paid and exported on ${_dateStr}` : `exported on ${_dateStr}`;
+                exportedBadge = `<span class="pay-exported-badge pay-exported-full" title="Already exported${advPaid ? ' · advance recorded' : ''}. Use ↶ to undo before re-exporting.">✓ ${esc(label)}</span>`;
+              } else {
+                const ex = _payExportedLotsFor(aid, p.name);
+                const n = Array.isArray(ex) ? ex.length : 0;
+                const label = advPaid
+                  ? `Advance paid · ${n}/${total} exported on ${_dateStr}`
+                  : `${n}/${total} exported on ${_dateStr}`;
+                exportedBadge = `<span class="pay-exported-badge pay-exported-partial" title="${n} of ${total} lots already exported. Re-exporting pays only the remaining lots.">${esc(label)}</span>`;
+              }
             }
             // Saved lot-pick badge (📌 N picked) — the next Export Selected
             // will narrow to these lots.
@@ -22730,11 +22810,15 @@ async function loadPayments(){
           fmt:(n)=>fmtI(n,2),
           render:(p)=>{
             const v = Number(p.advance)||0;
-            return `<input type="number" min="0" step="0.01" value="${v>0?v:''}" placeholder="0.00"`
+            // Text input so the value can carry Indian-format grouping commas
+            // (e.g. 1,00,000.00). data-prev holds the raw number for change
+            // detection + revert-on-cancel. onchange confirms before saving.
+            return `<input type="text" inputmode="decimal" value="${v>0?fmtI(v,2):''}" placeholder="0.00" data-prev="${v}"`
               + ` onclick="event.stopPropagation()"`
+              + ` onfocus="this.select()"`
               + ` onchange="savePaymentAdvance(this,'${encodeURIComponent(p.name||'')}')"`
-              + ` title="Advance already paid to this seller — deducted from Payable (display Discount is unaffected)."`
-              + ` style="width:92px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-size:12px;text-align:right;background:#fff;color:#B45309;font-weight:600">`;
+              + ` title="Advance already paid to this seller — deducted from Payable (display Discount is unaffected). You'll confirm the amount before it's saved."`
+              + ` style="width:104px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-size:12px;text-align:right;background:#fff;color:#B45309;font-weight:600">`;
           } },
         { key:'total_payable', label:'Payable', sort:'number', numeric:true,
           fmt:(n)=>fmtI(n,2),
@@ -22987,7 +23071,9 @@ async function exportType(type,format,aidOverride){format=format||'xlsx';
       }
     }
   }
-  await withOverlay(`Exporting ${label} (${format.toUpperCase()})…`, async () => {
+  // Returns true when the file downloaded, false on error — lets callers
+  // (e.g. the Payments bank-export flow) run follow-up work only on success.
+  return await withOverlay(`Exporting ${label} (${format.toUpperCase()})…`, async () => {
     // CSV exports ignore format query param — server picks ext from EXPORT_TYPES.
     // Keep format in URL for consistency but download filename uses actual ext.
     const r=await fetch(B+`/api/exports/${type}/${aid}?format=${format}${sellersQs}`,{headers:{'Authorization':'Bearer '+T}});
@@ -22996,10 +23082,11 @@ async function exportType(type,format,aidOverride){format=format||'xlsx';
       const msg = errBody.error || `HTTP ${r.status}`;
       alert(`Export failed: ${msg}`);
       console.error(`Export failed (${type}, ${format}):`, errBody);
-      return;
+      return false;
     }
     const blob=await r.blob();
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`${type}_${aid}.${format}`;a.click();
+    return true;
   });
 }
 

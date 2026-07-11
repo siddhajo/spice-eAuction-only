@@ -10005,8 +10005,10 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
     const _a = db.get('SELECT discount_applied FROM auctions WHERE id = ?', [auctionId]);
     _discountApplied = _a && Number(_a.discount_applied) === 1 ? 1 : 0;
   } catch (_) { _discountApplied = 0; }
-  const _immediateNet = lots.reduce((a, l) => a + (Number(l.immediate_payment) === 1 ? (Number(l.balance) || 0) : 0), 0);
-  const _discount   = _discountApplied ? Math.round(_immediateNet / 1000 * _days * _discPct) : 0;
+  // "For all sellers" mode — discount is computed on the seller's FULL net
+  // amount (_netAmount), not just immediate-payment lots, so it's non-zero even
+  // when no lots are flagged immediate. Display-only; never reduces Payable.
+  const _discount   = _discountApplied ? Math.round(_netAmount / 1000 * _days * _discPct) : 0;
 
   // Wide label column + lineBreak:false so the captions stay on one line.
   const sVW = 95, sLW = 250, sX = PAGE_R - (sLW + sVW);
@@ -10026,7 +10028,7 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   // so it's never mistaken for a deduction from the amount payable.
   if (_discountApplied && _discount > 0) {
     doc.font('Helvetica-Oblique').fontSize(8.5).fillColor('#666');
-    doc.text(`Settlement discount (for reference only, not deducted · immediate · ${_isDealer ? 'dealer' : 'pooler'} · ${_days}d): ${fmtAmt(_discount)}`,
+    doc.text(`Settlement discount (for reference only, not deducted · ${_isDealer ? 'dealer' : 'pooler'} · ${_days}d): ${fmtAmt(_discount)}`,
       sX - 120, y, { width: sLW + sVW + 120, align: 'right', lineBreak: false });
     doc.fillColor('#000');
     y += 14;
@@ -12708,6 +12710,77 @@ app.get('/api/data/:entity', requireAdmin, (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Ad-hoc READ-ONLY query for the Fix Data → SQL Query box. Admin-only.
+// Lets an operator express conditions the point-and-click filters can't
+// (e.g. WHERE LENGTH(TRIM(cr)) = 15). Hard-locked to a SINGLE read-only
+// SELECT / WITH…SELECT statement — every write/DDL/side-effecting verb is
+// rejected, and string/identifier literals are stripped before the keyword
+// scan so a value like name = 'UPDATE CORP' doesn't trip the guard. Results
+// are streamed from a raw sql.js statement and capped so a runaway cross
+// join can't exhaust memory.
+// NOTE: registered BEFORE '/api/data/:entity' below so the literal path
+// 'query' isn't swallowed by the :entity param (which would 404 as
+// "Unknown data section").
+const _FIXDATA_QUERY_MAX = 2000;
+app.post('/api/data/query', requireAdmin, (req, res) => {
+  try {
+    // Trim trailing semicolons/whitespace so a lone "SELECT …;" is allowed.
+    const sql = String((req.body && req.body.sql) || '').trim().replace(/;+\s*$/, '');
+    if (!sql) return res.status(400).json({ error: 'Type a SELECT query first.' });
+
+    // Strip quoted string + double-quoted identifier literals so their
+    // contents can't match the statement-shape or banned-keyword checks.
+    const stripped = sql
+      .replace(/'(?:[^']|'')*'/g, "''")
+      .replace(/"(?:[^"]|"")*"/g, '""');
+
+    // Must be a single statement (no embedded ';') and start with SELECT/WITH.
+    if (stripped.includes(';')) {
+      return res.status(400).json({ error: 'Only a single SELECT statement is allowed (remove the ";").' });
+    }
+    if (!/^\s*(select|with)\b/i.test(stripped)) {
+      return res.status(400).json({ error: 'Only read-only SELECT queries are allowed.' });
+    }
+    // Reject any write / DDL / side-effecting verb, matched as whole words
+    // (column names like created_at / update_time won't trip these).
+    const banned = /\b(insert|update|delete|drop|alter|create|replace|attach|detach|reindex|vacuum|pragma|analyze|begin|commit|rollback|savepoint|release|truncate|grant|revoke)\b/i;
+    const hit = stripped.match(banned);
+    if (hit) {
+      return res.status(400).json({ error: `Not allowed in a read-only query: ${hit[1].toUpperCase()}` });
+    }
+
+    const db = getDb();
+    // Use the raw sql.js handle so we can stop stepping at the cap instead of
+    // materialising every row. No scheduleSave() runs on this path, so the DB
+    // file is never touched by a query.
+    const stmt = db.raw.prepare(sql);
+    let columns = [];
+    try { columns = stmt.getColumnNames() || []; } catch (_) {}
+    const rows = [];
+    let truncated = false;
+    try {
+      while (stmt.step()) {
+        if (rows.length >= _FIXDATA_QUERY_MAX) { truncated = true; break; }
+        rows.push(stmt.getAsObject());
+      }
+    } finally {
+      stmt.free();
+    }
+    if (!columns.length && rows.length) columns = Object.keys(rows[0]);
+
+    try {
+      db.run('INSERT INTO audit_log (user_id, action, entity, entity_id, details) VALUES (?,?,?,?,?)',
+        [req.user.id, 'fixdata_query', 'query', null, sql.slice(0, 500)]);
+    } catch (_) {}
+
+    res.json({ columns, rows, count: rows.length, truncated, max: _FIXDATA_QUERY_MAX });
+  } catch (e) {
+    // sql.js surfaces parse/runtime errors here — pass the message through so
+    // the operator can fix their SQL.
+    res.status(400).json({ error: e.message });
+  }
+});
+
 // Add a new row. Body: { values: { col: val, … } } — only non-locked,
 // real columns are accepted; blank fields are simply omitted so the
 // table's own defaults apply.
@@ -12775,74 +12848,6 @@ app.delete('/api/data/:entity/:rowid', requireAdmin, (req, res) => {
     } catch (_) {}
     res.json({ success: true, changes: info.changes });
   } catch (e) { res.status(400).json({ error: e.message }); }
-});
-
-// Ad-hoc READ-ONLY query for the Fix Data → SQL Query box. Admin-only.
-// Lets an operator express conditions the point-and-click filters can't
-// (e.g. WHERE LENGTH(TRIM(cr)) = 15). Hard-locked to a SINGLE read-only
-// SELECT / WITH…SELECT statement — every write/DDL/side-effecting verb is
-// rejected, and string/identifier literals are stripped before the keyword
-// scan so a value like name = 'UPDATE CORP' doesn't trip the guard. Results
-// are streamed from a raw sql.js statement and capped so a runaway cross
-// join can't exhaust memory.
-const _FIXDATA_QUERY_MAX = 2000;
-app.post('/api/data/query', requireAdmin, (req, res) => {
-  try {
-    // Trim trailing semicolons/whitespace so a lone "SELECT …;" is allowed.
-    const sql = String((req.body && req.body.sql) || '').trim().replace(/;+\s*$/, '');
-    if (!sql) return res.status(400).json({ error: 'Type a SELECT query first.' });
-
-    // Strip quoted string + double-quoted identifier literals so their
-    // contents can't match the statement-shape or banned-keyword checks.
-    const stripped = sql
-      .replace(/'(?:[^']|'')*'/g, "''")
-      .replace(/"(?:[^"]|"")*"/g, '""');
-
-    // Must be a single statement (no embedded ';') and start with SELECT/WITH.
-    if (stripped.includes(';')) {
-      return res.status(400).json({ error: 'Only a single SELECT statement is allowed (remove the ";").' });
-    }
-    if (!/^\s*(select|with)\b/i.test(stripped)) {
-      return res.status(400).json({ error: 'Only read-only SELECT queries are allowed.' });
-    }
-    // Reject any write / DDL / side-effecting verb, matched as whole words
-    // (column names like created_at / update_time won't trip these).
-    const banned = /\b(insert|update|delete|drop|alter|create|replace|attach|detach|reindex|vacuum|pragma|analyze|begin|commit|rollback|savepoint|release|truncate|grant|revoke)\b/i;
-    const hit = stripped.match(banned);
-    if (hit) {
-      return res.status(400).json({ error: `Not allowed in a read-only query: ${hit[1].toUpperCase()}` });
-    }
-
-    const db = getDb();
-    // Use the raw sql.js handle so we can stop stepping at the cap instead of
-    // materialising every row. No scheduleSave() runs on this path, so the DB
-    // file is never touched by a query.
-    const stmt = db.raw.prepare(sql);
-    let columns = [];
-    try { columns = stmt.getColumnNames() || []; } catch (_) {}
-    const rows = [];
-    let truncated = false;
-    try {
-      while (stmt.step()) {
-        if (rows.length >= _FIXDATA_QUERY_MAX) { truncated = true; break; }
-        rows.push(stmt.getAsObject());
-      }
-    } finally {
-      stmt.free();
-    }
-    if (!columns.length && rows.length) columns = Object.keys(rows[0]);
-
-    try {
-      db.run('INSERT INTO audit_log (user_id, action, entity, entity_id, details) VALUES (?,?,?,?,?)',
-        [req.user.id, 'fixdata_query', 'query', null, sql.slice(0, 500)]);
-    } catch (_) {}
-
-    res.json({ columns, rows, count: rows.length, truncated, max: _FIXDATA_QUERY_MAX });
-  } catch (e) {
-    // sql.js surfaces parse/runtime errors here — pass the message through so
-    // the operator can fix their SQL.
-    res.status(400).json({ error: e.message });
-  }
 });
 
 // ══════════════════════════════════════════════════════════════

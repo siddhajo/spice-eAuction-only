@@ -625,14 +625,14 @@ function getPaymentSummary(db, auctionId, state, cfg) {
     const netAmount = Number(s.total_payable) || 0;
     const isDealer = !!gstinStateCode(s.cr);
     const days = isDealer ? dealerDays : poolerDays;
-    // Settlement discount applies ONLY to immediate-payment lots (the
-    // early-payment incentive). Base it on the net of those lots, not the
-    // seller's whole net — a seller with no immediate lots gets 0 discount.
-    const immediateNet = Number(s.immediate_payable) || 0;
-    // Display-only settlement discount — only surfaced once the operator has
-    // opted in for this auction (discount_applied). Never affects Payable.
+    // Display-only settlement discount, opt-in per auction via
+    // "Calculate All Discounts" (discount_applied). This is the "for ALL
+    // sellers at once" mode: the days-based discount is computed on each
+    // seller's FULL net amount, not just their immediate-payment lots — so
+    // every seller gets a figure even when no lots are flagged immediate.
+    // Never affects Payable.
     const sellerDiscount = discountApplied
-      ? Math.round(immediateNet / 1000 * days * discPct)
+      ? Math.round(netAmount / 1000 * days * discPct)
       : 0;
     // Advance already paid to this seller (deducted from Payable below).
     const advance = advByName[String(s.name || '').trim().toUpperCase()] || 0;
