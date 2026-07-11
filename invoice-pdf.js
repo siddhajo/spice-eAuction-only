@@ -2014,7 +2014,10 @@ function generateAgriBillPDF(billData, cfg, billNo, externalDoc) {
   if (seller.address) sellerLines.push(seller.address);
   if (seller.place) sellerLines.push((seller.place || '').toUpperCase() + (seller.pan ? '   PAN:' + seller.pan : ''));
   if (seller.state) sellerLines.push('STATE:' + (seller.state || '').toUpperCase() + '   CODE:' + (seller.st_code || ''));
-  sellerLines.push('CR.' + (seller.crno || ''));
+  // Strip any existing "CR." / "CR " prefix so a stored "CR.32ABC…" doesn't
+  // render as the doubled "CR.CR." label.
+  const _crno = String(seller.crno || '').trim().replace(/^cr[.\s]+/i, '');
+  sellerLines.push('CR.' + _crno);
 
   const bodyH = Math.max(6, sellerLines.length + 2) * bodyLineH;
   doc.moveTo(x0, y).lineTo(x0, y + bodyH).stroke();
@@ -2562,7 +2565,11 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
   if (seller.address) sellerLines.push(seller.address);
   if (seller.place) sellerLines.push(String(seller.place || '').toUpperCase());
   if (seller.state) sellerLines.push(String(seller.state || '').toUpperCase() + '   CODE:' + (seller.st_code || ''));
-  sellerLines.push('CR.' + (seller.cr || '') + (seller.pan ? '   PAN:' + seller.pan : ''));
+  // The stored cr may already carry a "CR." / "CR " prefix (Kerala sellers are
+  // stored as "CR.32ABC…"); strip it before prepending so we don't render the
+  // doubled "CR.CR." label.
+  const _crText = String(seller.cr || '').trim().replace(/^cr[.\s]+/i, '');
+  sellerLines.push('CR.' + _crText + (seller.pan ? '   PAN:' + seller.pan : ''));
 
   const purLines = [];
   if (pur.name) purLines.push('M/s.' + pur.name + (pur.invo ? '   INV:' + pur.invo : ''));

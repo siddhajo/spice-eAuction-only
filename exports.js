@@ -1189,9 +1189,12 @@ async function exportPramanCSV(db, auctionId, cfg, state) {
   const lotCompany = identity.shortName || '';
 
   // Praman classifies sellers as 1=Planter (URD/agriculturist) or
-  // 2=Dealer (registered, with GSTIN). Per-lot decision based on
-  // whether the seller has a GSTIN attached.
-  const classify = (gstin) => (gstin && gstin.length >= 15) ? 2 : 1;
+  // 2=Dealer (registered, with GSTIN). Decide with the FULL GSTIN-format
+  // check (gstinStateCode) rather than a bare length test, so 15-char CR
+  // registration numbers (e.g. CR.A9/2789/2020) stay Planter — consistent
+  // with the dashboards, calculator and Dealer List.
+  const { gstinStateCode } = require('./calculations');
+  const classify = (gstin) => gstinStateCode(gstin) ? 2 : 1;
 
   const lines = [header.join(',')];
   for (const r of rows) {

@@ -3363,7 +3363,14 @@ function cleanGstin(cr) {
   }
   return s.trim().toUpperCase();
 }
-const hasValidGstin = (cr) => cleanGstin(cr).length === 15;
+// "Valid GSTIN" = the cleaned value matches the FULL GSTIN format (2-digit
+// state code + PAN + entity/Z/checksum), not merely 15 characters. The old
+// length-only test counted 15-char CR registration numbers (e.g.
+// CR.A9/2789/2020) as dealers, which mis-split Planter/Trader weight and
+// dealer-list/party-grade counts. Defer to gstinStateCode() — the single
+// source of truth also used by the calculator's registered/unregistered
+// (GST) decision — so every classification across the app agrees.
+const hasValidGstin = (cr) => !!gstinStateCode(cr);
 
 // Pure, read-only: build the validation report for one auction.
 // Returns { ok, errors[], warnings[], reconciliation, totals }.
@@ -3438,7 +3445,8 @@ function validateAuctionLots(db, auctionId) {
   // a present-but-malformed value. cleanGstin() strips the storage prefix
   // ("GSTIN.", "gstin ", etc.); an empty result means nothing was entered.
   // (The reconciliation below still uses hasValidGstin() so its Dealer-List
-  // counts mirror the actual export's strict 15-char rule.)
+  // counts mirror the actual export's rule — now a full GSTIN-format match,
+  // consistent with gstinStateCode() everywhere else.)
   pushWarn('no_gstin', 'No GSTIN',       'Seller has no GSTIN (excluded from Dealer List)', l => !cleanGstin(l.cr));
   // Prefix-convention checks — a Grade-2 GSTIN should be stored as
   // "GSTIN.<15 chars>" and a Grade-1 registration number as "CR.<number>", so
@@ -4191,11 +4199,15 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
   if (!auction) return res.status(404).json({ error: 'Auction not found' });
 
   // Inline "is this seller a registered dealer?" — strip a leading "gstin"
-  // token + punctuation, uppercase; a valid GSTIN cleans to length 15.
-  const DEALER = `LENGTH(UPPER(TRIM(
+  // token + punctuation, uppercase. A valid GSTIN cleans to 15 chars AND
+  // begins with a 2-digit state code. The old length-only test also matched
+  // 15-char CR registration codes (e.g. CR.A9/2789/2020), so those planters'
+  // weight was wrongly counted as Trader WT — hence the digit-prefix guard.
+  const CR_CLEAN = `UPPER(TRIM(
       CASE WHEN LOWER(SUBSTR(TRIM(cr),1,5)) = 'gstin'
            THEN LTRIM(SUBSTR(TRIM(cr),6), '. :-')
-           ELSE TRIM(cr) END))) = 15`;
+           ELSE TRIM(cr) END))`;
+  const DEALER = `(LENGTH(${CR_CLEAN}) = 15 AND SUBSTR(${CR_CLEAN},1,2) GLOB '[0-9][0-9]')`;
   const SOLD = `(UPPER(COALESCE(code,'')) <> '' AND UPPER(COALESCE(code,'')) <> 'WD')`;
   const WD   = `(UPPER(COALESCE(code,'')) = 'WD')`;
 
@@ -4285,7 +4297,11 @@ app.get('/api/auctions/:id(\\d+)/arrivals-export', requireExport, async (req, re
   const auctionId = parseInt(req.params.id, 10);
   const auction = db.get('SELECT id, ano, date FROM auctions WHERE id = ?', [auctionId]);
   if (!auction) return res.status(404).json({ error: 'Auction not found' });
-  const DEALER = `LENGTH(UPPER(TRIM(CASE WHEN LOWER(SUBSTR(TRIM(cr),1,5))='gstin' THEN LTRIM(SUBSTR(TRIM(cr),6),'. :-') ELSE TRIM(cr) END)))=15`;
+  // Trader vs Planter: a valid GSTIN cleans to 15 chars AND starts with a
+  // 2-digit state code. Length alone mislabels 15-char CR codes (e.g.
+  // CR.A9/2789/2020) as Trader — matches the depot-summary DEALER rule.
+  const CR_CLEAN = `UPPER(TRIM(CASE WHEN LOWER(SUBSTR(TRIM(cr),1,5))='gstin' THEN LTRIM(SUBSTR(TRIM(cr),6),'. :-') ELSE TRIM(cr) END))`;
+  const DEALER = `(LENGTH(${CR_CLEAN})=15 AND SUBSTR(${CR_CLEAN},1,2) GLOB '[0-9][0-9]')`;
   const rows = db.all(
     `SELECT COALESCE(NULLIF(TRIM(branch),''),'(unspecified)') AS depot,
             lot_no, name AS seller,
