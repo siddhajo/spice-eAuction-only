@@ -5043,7 +5043,7 @@ app.delete('/api/lots/activity', requireDelete, (req, res) => {
   res.json({ cleared: true, removed });
 });
 app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
-  const { branch, name, buyer, limit, offset, paginated, summary, search } = req.query;
+  const { branch, name, buyer, grade, limit, offset, paginated, summary, search } = req.query;
   const db = getDb();
   // Correlated subquery (not LEFT JOIN) to avoid any risk of row duplication
   // if the same buyer code exists multiple times in the buyers table.
@@ -5055,6 +5055,17 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
   if (branch) { q += ' AND lots.branch = ?'; p.push(branch); }
   if (name)   { q += ' AND lots.name LIKE ?'; p.push(`%${name}%`); }
   if (buyer)  { q += ' AND lots.buyer = ?'; p.push(buyer); }
+  // Grade filter (Lots tab #lot-grade-filter). Matched on trimmed grade so
+  // stray whitespace doesn't hide a lot. The '__none__' sentinel selects
+  // ungraded lots (empty grade); any other value is an exact grade match.
+  // Kept BEFORE the free-text search block so the grade param sits ahead of
+  // the search wildcards in `p` (the summary aggSql below mirrors this order).
+  const gradeFilter = String(grade || '').trim();
+  if (gradeFilter === '__none__') {
+    q += ` AND TRIM(COALESCE(lots.grade,'')) = ''`;
+  } else if (gradeFilter) {
+    q += ` AND TRIM(COALESCE(lots.grade,'')) = ?`; p.push(gradeFilter);
+  }
   // Free-text search within the trade — lot no, seller name, buyer
   // code/trade name, invoice no, branch. Wired to the #lot-search
   // input on the Lots tab via searchLotsDebounced().
@@ -5085,7 +5096,11 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
         WHERE lots.auction_id = ?`
       + (branch ? ' AND lots.branch = ?' : '')
       + (name   ? ' AND lots.name LIKE ?' : '')
-      + (buyer  ? ' AND lots.buyer = ?' : '');
+      + (buyer  ? ' AND lots.buyer = ?' : '')
+      // Mirror the grade clause (and its param position) from the main query
+      // above so the reused `p` array stays aligned.
+      + (gradeFilter === '__none__' ? ` AND TRIM(COALESCE(lots.grade,'')) = ''`
+         : gradeFilter ? ` AND TRIM(COALESCE(lots.grade,'')) = ?` : '');
     const row = db.get(aggSql, p) || { n:0, bags:0, qty:0, priced:0 };
     return res.json({ n: row.n, bags: row.bags, qty: row.qty, priced: row.priced });
   }

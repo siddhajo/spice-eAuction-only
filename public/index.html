@@ -3554,6 +3554,13 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
                   style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:160px">
             <option value="">All Branches</option>
           </select>
+          <select id="lot-grade-filter" onchange="loadLots()" title="Filter the lots table by grade"
+                  style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:130px">
+            <option value="">All Grades</option>
+            <option value="1">Grade 1</option>
+            <option value="2">Grade 2</option>
+            <option value="__none__">Ungraded</option>
+          </select>
           <!-- Within-trade search across lot no, seller name, buyer code,
                invoice no and branch. Wires to server-side `search` param. -->
           <input type="search" id="lot-search" placeholder="Search lot no, seller, buyer…" oninput="searchLotsDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
@@ -19398,6 +19405,11 @@ async function loadLots(opts){
   // The /api/lots endpoint applies this as `WHERE lots.branch = ?`.
   const _lotBranch = (document.getElementById('lot-branch-filter')?.value || '').trim();
   const _lotBranchParam = _lotBranch ? `&branch=${encodeURIComponent(_lotBranch)}` : '';
+  // Grade filter (Lots-table only; the summary strip stays branch-scoped).
+  // Empty = all grades; '__none__' = ungraded lots. Applied server-side by
+  // /api/lots as `WHERE TRIM(grade) = ?`.
+  const _lotGrade = (document.getElementById('lot-grade-filter')?.value || '').trim();
+  const _lotGradeParam = _lotGrade ? `&grade=${encodeURIComponent(_lotGrade)}` : '';
   // Cache-buster ensures the browser actually hits the server (otherwise Refresh
   // may return stale cached JSON and nothing visibly changes).
   // Wrap the fetch so a network/API failure surfaces inside the table
@@ -19405,7 +19417,7 @@ async function loadLots(opts){
   // a stale "Loading…" on screen.
   let d;
   try {
-    d = await j(`/api/lots/${aid}?_=${Date.now()}${_lotSearchParam}${_lotBranchParam}`);
+    d = await j(`/api/lots/${aid}?_=${Date.now()}${_lotSearchParam}${_lotBranchParam}${_lotGradeParam}`);
   } catch (e) {
     StatusBlock.show('lots-list', 'error', {
       body: (e && e.message) || 'Failed to load lots',
