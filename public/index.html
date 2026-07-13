@@ -3597,6 +3597,11 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
                  .feat-lot-lock (flag) AND a non-empty selection. -->
             <button id="lot-bulk-unlock" class="needs-admin feat-lot-lock btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#1f2937;font-weight:600;border:1px solid #b8860b" onclick="lotBulkUnlock()" title="Unlock the ticked lots — admin only. Lots become editable again.">🔓 Unlock Selected <span id="lot-bulk-unlock-count" style="margin-left:4px;background:rgba(0,0,0,.18);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <button id="lot-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('lot')">🗑 Delete Selected <span id="lot-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
+            <!-- Untick All: clears the current lot selection in one click.
+                 Appears (via data-bulk-action) only while at least one lot is
+                 ticked, alongside the other selection-scoped buttons. No
+                 permission gate — clearing your own selection is always safe. -->
+            <button id="lot-bulk-untick" data-bulk-action="lot" class="btn" style="display:none;height:38px;padding:0 14px;background:#6B7280;color:#fff;font-weight:600" onclick="clearLotSelection()" title="Untick all selected lots">✕ Untick All <span data-bulk-count="lot" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <!-- Sister tool to Price Import. Opens the Price List Mapping
                  screen which fills the CODE column on a Price List sheet
                  from TRADE NAME values, then the file can be re-imported
@@ -19390,6 +19395,15 @@ document.addEventListener('change', (e) => {
   if (t.checked) _lotsTickedIds.add(id);
   else           _lotsTickedIds.delete(id);
 });
+
+// Untick every selected lot — clears the persistent cross-page set AND every
+// rendered checkbox, then re-syncs the toolbar so the bulk buttons hide.
+// Wired to the "Untick All" button on the Lots toolbar.
+function clearLotSelection(){
+  _lotsTickedIds.clear();
+  document.querySelectorAll('#lots-list .lot-select-cb').forEach(cb => { cb.checked = false; });
+  if (typeof BulkActions !== 'undefined' && BulkActions._sync) BulkActions._sync('lot');
+}
 
 async function loadLots(opts){
   const aid=document.getElementById('lot-auction').value;
