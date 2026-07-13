@@ -584,11 +584,16 @@ function getPaymentSummary(db, auctionId, state, cfg) {
   // from the payable: Payable = Net Amount − Advance. Keyed case-insensitively
   // by seller name (same key as the lot rollup / TDS map above).
   const advByName = {};
+  const advAtByName = {};
   try {
     const advRows = db.all(
-      'SELECT name_key, advance FROM payment_advances WHERE auction_id = ?',
+      'SELECT name_key, advance, updated_at FROM payment_advances WHERE auction_id = ?',
       [auctionId]) || [];
-    advRows.forEach(r => { advByName[String(r.name_key || '').trim().toUpperCase()] = Number(r.advance) || 0; });
+    advRows.forEach(r => {
+      const k = String(r.name_key || '').trim().toUpperCase();
+      advByName[k] = Number(r.advance) || 0;
+      advAtByName[k] = r.updated_at || '';   // when the advance was recorded
+    });
   } catch (_) { /* table missing on very old DBs — treat as no advances */ }
 
   // Settlement discount is display-only and opt-in per auction: it stays 0
@@ -658,6 +663,9 @@ function getPaymentSummary(db, auctionId, state, cfg) {
       discount_applied: discountApplied,
       // Advance already paid — user-entered per seller on the Payments tab.
       advance,
+      // When the advance was recorded (payment_advances.updated_at) — drives
+      // the "Advance paid on {date}" badge in the Advance column.
+      advance_at: advAtByName[String(s.name || '').trim().toUpperCase()] || '',
       // True when this seller's lots point at more than one bank account
       // (or a mix of tagged + untagged). Drives the "multiple banks" badge
       // on the Payments table so the user knows to export each account's

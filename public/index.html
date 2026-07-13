@@ -22491,6 +22491,24 @@ function _payRefreshUndoButton() {
   }
 }
 
+// Enable/disable a row's Advance input from its ✎ checkbox. Advance is
+// read-only by default; ticking the box unlocks the field for editing and
+// focuses it. Unticking re-locks it. Saving (or reloading) re-renders the row,
+// which resets the box to unchecked so the field locks again.
+function togglePayAdvanceEdit(cb){
+  const wrap = cb.closest('td') || cb.parentElement;
+  const input = wrap ? wrap.querySelector('input.pay-adv-input') : null;
+  if (!input) return;
+  input.disabled = !cb.checked;
+  if (cb.checked) {
+    input.style.background = '#fff';
+    input.focus();
+    try { input.select(); } catch (_) {}
+  } else {
+    input.style.background = '#f3f4f6';
+  }
+}
+
 // Save a seller's advance for the current auction, then reload so Payable
 // and the KPI/footer totals recompute from the server. Empty/0 clears it.
 // Advance is deducted from Payable (Payable = Net − Advance); the display
@@ -22744,25 +22762,20 @@ async function loadPayments(){
             const immediateBadge = p.any_immediate
               ? `<span class="pay-immediate-badge" title="${immLots} of ${immTotal} lot${immTotal===1?'':'s'} flagged for immediate payment.">⚡ immediate${(immLots>0 && immLots<immTotal) ? ` ${immLots}/${immTotal}` : ''}</span>`
               : '';
-            // Exported-status badge. Shows the export DATE ("exported on
-            // {date}"); when this seller also has an advance recorded, the
-            // label leads with "Advance paid and …" so a glance tells the
-            // operator both facts. Partial exports keep the X/Y count.
+            // Exported-status badge. Shows the export DATE ("Exported on
+            // {date}"). The advance now has its own badge in the Advance
+            // column, so it's no longer folded into this label. Partial
+            // exports keep the X/Y count.
             let exportedBadge = '';
             if (status === 'full' || status === 'partial') {
-              const advPaid = Number(p.advance) > 0;
               const _rawDate = (typeof _payExportDateFor==='function') ? _payExportDateFor(aid, p.name) : null;
               const _dateStr = _rawDate ? fmtD(_rawDate) : fmtD(new Date());
               if (status === 'full') {
-                const label = advPaid ? `Advance paid and exported on ${_dateStr}` : `exported on ${_dateStr}`;
-                exportedBadge = `<span class="pay-exported-badge pay-exported-full" title="Already exported${advPaid ? ' · advance recorded' : ''}. Use ↶ to undo before re-exporting.">✓ ${esc(label)}</span>`;
+                exportedBadge = `<span class="pay-exported-badge pay-exported-full" title="Already exported. Use ↶ to undo before re-exporting.">✓ Exported on ${esc(_dateStr)}</span>`;
               } else {
                 const ex = _payExportedLotsFor(aid, p.name);
                 const n = Array.isArray(ex) ? ex.length : 0;
-                const label = advPaid
-                  ? `Advance paid · ${n}/${total} exported on ${_dateStr}`
-                  : `${n}/${total} exported on ${_dateStr}`;
-                exportedBadge = `<span class="pay-exported-badge pay-exported-partial" title="${n} of ${total} lots already exported. Re-exporting pays only the remaining lots.">${esc(label)}</span>`;
+                exportedBadge = `<span class="pay-exported-badge pay-exported-partial" title="${n} of ${total} lots already exported. Re-exporting pays only the remaining lots.">${n}/${total} exported on ${esc(_dateStr)}</span>`;
               }
             }
             // Saved lot-pick badge (📌 N picked) — the next Export Selected
@@ -22822,15 +22835,26 @@ async function loadPayments(){
           fmt:(n)=>fmtI(n,2),
           render:(p)=>{
             const v = Number(p.advance)||0;
-            // Text input so the value can carry Indian-format grouping commas
-            // (e.g. 1,00,000.00). data-prev holds the raw number for change
-            // detection + revert-on-cancel. onchange confirms before saving.
-            return `<input type="text" inputmode="decimal" value="${v>0?fmtI(v,2):''}" placeholder="0.00" data-prev="${v}"`
+            // Advance is READ-ONLY by default. Ticking the ✎ checkbox enables
+            // the input; after a value is saved the field locks again and a
+            // "Advance paid on {date}" badge is shown. The text input carries
+            // Indian-format grouping commas (e.g. 1,00,000.00); data-prev holds
+            // the raw number for change detection + revert-on-cancel; onchange
+            // confirms before saving.
+            const editToggle = `<input type="checkbox" class="pay-adv-edit" title="Tick to edit this advance" onclick="event.stopPropagation();togglePayAdvanceEdit(this)" style="cursor:pointer;width:14px;height:14px;flex:none;accent-color:var(--spice-turmeric,#B45309)">`;
+            const input = `<input type="text" class="pay-adv-input" inputmode="decimal" value="${v>0?fmtI(v,2):''}" placeholder="0.00" data-prev="${v}" disabled`
               + ` onclick="event.stopPropagation()"`
               + ` onfocus="this.select()"`
               + ` onchange="savePaymentAdvance(this,'${encodeURIComponent(p.name||'')}')"`
-              + ` title="Advance already paid to this seller — deducted from Payable (display Discount is unaffected). You'll confirm the amount before it's saved."`
-              + ` style="width:104px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-size:12px;text-align:right;background:#fff;color:#B45309;font-weight:600">`;
+              + ` title="Advance already paid to this seller — deducted from Payable (display Discount is unaffected). Tick the box to edit; you'll confirm the amount before it's saved."`
+              + ` style="width:96px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-size:12px;text-align:right;background:#f3f4f6;color:#B45309;font-weight:600">`;
+            const paidBadge = v>0
+              ? `<div class="pay-advance-badge" title="Advance recorded${p.advance_at ? ' on ' + esc(fmtD(p.advance_at)) : ''}" style="margin-top:3px;font-size:10px;font-weight:700;color:#166534;background:#dcfce7;border-radius:8px;padding:1px 6px;white-space:nowrap">✓ Advance paid${p.advance_at ? ` on ${esc(fmtD(p.advance_at))}` : ''}</div>`
+              : '';
+            return `<div style="display:flex;flex-direction:column;align-items:flex-end;gap:0">`
+              + `<div style="display:flex;align-items:center;gap:5px">${editToggle}${input}</div>`
+              + paidBadge
+              + `</div>`;
           } },
         { key:'total_payable', label:'Payable', sort:'number', numeric:true,
           fmt:(n)=>fmtI(n,2),
