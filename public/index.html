@@ -1357,7 +1357,7 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
   width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;
   font-size:13px;color:var(--spice-cardamom-dk);transition:transform .15s;flex:0 0 auto}
 .dash-snap.collapsed .dash-snap-collapse{transform:rotate(-90deg)}
-.dash-snap.collapsed .dash-snap-matrix,.dash-snap.collapsed .dash-snap-ft{display:none}
+.dash-snap.collapsed .dash-snap-matrix,.dash-snap.collapsed .dash-snap-ft,.dash-snap.collapsed .dash-snap-g2{display:none}
 .dash-snap-matrix{overflow-x:auto}
 .dash-snap-matrix table{width:100%;border-collapse:collapse;font-size:13px;min-width:560px}
 .dash-snap-matrix th,.dash-snap-matrix td{padding:11px 16px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -8821,6 +8821,37 @@ async function loadStats(auctionId){
     : (A ? { tag: '#'+esc(A.ano), t1: `Auction #${esc(A.ano)}${A.crop_type?' — '+esc(A.crop_type):''}`, t2: fmtD(A.date) }
          : { tag: '—', t1: 'No auction selected', t2: '' });
   const snapCollapsed = localStorage.getItem('dashSnapCollapsed') === '1';
+
+  // Cumulative Grade-2 booking vs the Spices Board 25% cap — shown in the
+  // All-auctions snapshot only (single-auction mode already surfaces it in the
+  // Current-Auction widget). Grade 2 should be ≤ 25% of total booked weight;
+  // a negative diff means headroom, positive means over the cap. Mirrors the
+  // per-auction alert in loadDepotSummary().
+  const _g2Qty    = Number(T.grade2_qty) || 0;
+  const _g2Booked = Number(T.total_weight) || 0;
+  const _g2Target = _g2Booked * 0.25;
+  const _g2Diff   = _g2Qty - _g2Target;
+  const _g2Pct    = _g2Booked > 0 ? (_g2Qty / _g2Booked * 100) : 0;
+  const _g2Excess = _g2Diff >  0.005;
+  const _g2Short  = _g2Diff < -0.005;
+  const _g2Color  = _g2Excess ? '#C62828' : _g2Short ? '#92400E' : 'var(--spice-cardamom-dk)';
+  const _g2Bg     = _g2Excess ? '#FDECEA' : _g2Short ? 'var(--spice-turmeric-lt)' : 'var(--spice-cardamom-lt)';
+  const _g2Label  = _g2Excess ? 'Excess grade 2 booking' : _g2Short ? 'Below 25% grade 2' : 'At the 25% limit';
+  const _g2Sign   = _g2Excess ? '+' : _g2Short ? '−' : '';
+  const snapGrade2HTML = (isAllMode && _g2Booked > 0) ? `
+    <div class="dash-snap-g2" style="margin:14px;border:1px solid var(--spice-line);border-left:4px solid ${_g2Color};border-radius:10px;padding:14px 16px;background:${_g2Bg};display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap">
+      <div style="min-width:0">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--spice-text-mute)">Grade 2 Booking · 25% limit</div>
+        <div style="font-size:13px;color:var(--spice-text-mute);margin-top:3px">
+          Grade 2: <strong style="color:var(--spice-text-main)">${nq(_g2Qty)} kg</strong> (${_g2Pct.toFixed(2)}%) &nbsp;·&nbsp; Target (25%): <strong style="color:var(--spice-text-main)">${nq(_g2Target)} kg</strong> &nbsp;·&nbsp; Booked: <strong style="color:var(--spice-text-main)">${nq(_g2Booked)} kg</strong>
+        </div>
+      </div>
+      <div style="text-align:right;white-space:nowrap">
+        <div style="font-size:22px;font-weight:800;color:${_g2Color};line-height:1.1">${_g2Sign}${nq(Math.abs(_g2Diff))} kg</div>
+        <div style="font-size:12px;font-weight:700;color:${_g2Color}">${_g2Label}</div>
+      </div>
+    </div>` : '';
+
   const snapHTML = (isAllMode || A) ? `
     <div class="card dash-snap${snapCollapsed?' collapsed':''}" id="dash-snap-card">
       <div class="dash-snap-hd">
@@ -8859,7 +8890,13 @@ async function loadStats(auctionId){
         <div class="mf"><div class="k">Min ₹/kg</div><div class="v">${T.min_price>0?inr2(T.min_price):'—'}</div></div>
         <div class="mf"><div class="k">Max ₹/kg</div><div class="v">${T.max_price>0?inr2(T.max_price):'—'}</div></div>
         <div class="mf" title="Range ${priceRange}"><div class="k">Avg ₹/kg</div><div class="v">${T.avg_price>0?inr2(T.avg_price):'—'}</div></div>
+        ${isAllMode ? `
+        <div class="mf" title="Weight booked from planters (non-GSTIN sellers)"><div class="k">Planter Wt (kg)</div><div class="v">${nq(T.planter_weight)}</div><div class="mf-sub"><span class="sk">of total</span><span class="sv">${T.total_weight>0?(T.planter_weight/T.total_weight*100).toFixed(2):'0.00'}%</span></div></div>
+        <div class="mf" title="Weight booked from traders (GSTIN-registered dealers)"><div class="k">Trader Wt (kg)</div><div class="v">${nq(T.trader_weight)}</div><div class="mf-sub"><span class="sk">of total</span><span class="sv">${T.total_weight>0?(T.trader_weight/T.total_weight*100).toFixed(2):'0.00'}%</span></div></div>
+        <div class="mf" title="Total booked weight (Planter + Trader)"><div class="k">Total Wt (kg)</div><div class="v">${nq(T.total_weight)}</div></div>
+        ` : ''}
       </div>
+      ${snapGrade2HTML}
     </div>
   ` : '';
 

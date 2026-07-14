@@ -11846,6 +11846,27 @@ app.get('/api/insights', requireView, (req, res) => {
   totals.lots_sold_amount = Number(lotsAmtRow.sold)  || 0;
   totals.lots_wd_amount   = Number(lotsAmtRow.wd)    || 0;
 
+  // Planter / Trader weight split + Grade-2 booked weight across the scope.
+  // "Trader" = registered dealer (a `cr` that cleans to a 15-char GSTIN
+  // starting with a 2-digit state code); everyone else is a Planter — the SAME
+  // rule as /depot-summary so the dashboard's cumulative tiles match the
+  // per-auction Current-Auction widget. Grade-2 weight (grade='2') feeds the
+  // Grade-2 25%-cap alert. Feeds the snapshot's Planter/Trader/Total tiles.
+  const CR_CLEAN_INS = `UPPER(TRIM(CASE WHEN LOWER(SUBSTR(TRIM(l.cr),1,5))='gstin' THEN LTRIM(SUBSTR(TRIM(l.cr),6),'. :-') ELSE TRIM(l.cr) END))`;
+  const DEALER_INS = `(LENGTH(${CR_CLEAN_INS})=15 AND SUBSTR(${CR_CLEAN_INS},1,2) GLOB '[0-9][0-9]')`;
+  const gwRow = db.get(
+    `SELECT COALESCE(SUM(CASE WHEN ${DEALER_INS} THEN 0 ELSE l.qty END),0) AS planter_wt,
+            COALESCE(SUM(CASE WHEN ${DEALER_INS} THEN l.qty ELSE 0 END),0) AS trader_wt,
+            COALESCE(SUM(CASE WHEN TRIM(COALESCE(l.grade,''))='2' THEN l.qty ELSE 0 END),0) AS grade2_qty
+       FROM lots l JOIN auctions a ON a.id = l.auction_id
+      WHERE date(a.date) BETWEEN date(?) AND date(?)${aidA}`,
+    [from, to]
+  ) || {};
+  totals.planter_weight = Number(gwRow.planter_wt) || 0;
+  totals.trader_weight  = Number(gwRow.trader_wt)  || 0;
+  totals.total_weight   = totals.planter_weight + totals.trader_weight;
+  totals.grade2_qty     = Number(gwRow.grade2_qty) || 0;
+
   // Seller (planter) weighment = net qty + the sample taken from each lot;
   // Buyer Wt stays the net qty. Back the snapshot matrix Seller/Buyer columns.
   totals.seller_qty      = totals.qty      + sampleWt * totals.lots;
