@@ -1458,6 +1458,21 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
   font-size:24px;line-height:1;color:var(--spice-text-mute);cursor:pointer;border-radius:8px;
   display:flex;align-items:center;justify-content:center;padding:0;z-index:2}
 .modal-x:hover{background:var(--spice-line);color:var(--spice-text-main)}
+/* Inline field-clear (✕) — a per-field quick-clear affordance used on the Lot
+   Entry form. The input is wrapped in `.fld-clear-wrap`; the ✕ shows only when
+   the field holds a value, driven purely by `:placeholder-shown` so it updates
+   even when the value is set programmatically (e.g. when editing a lot). */
+.fld-clear-wrap{position:relative;display:block;width:100%}
+.fld-clear{position:absolute;top:50%;right:7px;transform:translateY(-50%);width:20px;height:20px;padding:0;
+  border:none;background:transparent;color:var(--spice-text-mute,#94a3b8);font-size:17px;line-height:1;cursor:pointer;
+  border-radius:50%;display:none;align-items:center;justify-content:center}
+.fld-clear:hover{background:var(--spice-line,#e5e7eb);color:var(--spice-text-main,#111)}
+.fld-clear-wrap input:not(:placeholder-shown) + .fld-clear{display:flex}
+/* Suppress native number spinners on cleared fields so they don't collide with
+   the ✕ (scoped to wrapped inputs only — the rest of the app is unaffected). */
+.fld-clear-wrap input[type=number]::-webkit-outer-spin-button,
+.fld-clear-wrap input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.fld-clear-wrap input[type=number]{-moz-appearance:textfield}
 .gm-pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700}
 .gm-pill.sold{background:var(--spice-cardamom-lt);color:var(--spice-cardamom-dk)}
 .gm-pill.wd{background:var(--spice-turmeric-lt);color:var(--spice-turmeric)}
@@ -6601,6 +6616,88 @@ if (document.readyState === 'loading') {
 }
 function showModal(id){document.getElementById(id).classList.add('show')}
 function hideModal(id){document.getElementById(id).classList.remove('show')}
+
+// Ensure every modal shows a top-right ✕ close button, app-wide. Covers both
+// modal systems: the standard `.modal-bg > .modal` overlays (closed via
+// hideModal) and the lot-entry `.modal-overlay` dialogs (closed by hiding the
+// overlay). Modals that already ship an explicit `.modal-x` are left as-is, so
+// this never double-adds. Runs once at startup; re-callable for any modal
+// markup injected later.
+function installModalCloseButtons(){
+  const makeX = (onClose) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'modal-x';
+    btn.title = 'Close';
+    btn.setAttribute('aria-label', 'Close');
+    btn.innerHTML = '&times;';
+    btn.addEventListener('click', (e) => { e.stopPropagation(); onClose(); });
+    return btn;
+  };
+  // Standard `.modal-bg > .modal` overlays.
+  document.querySelectorAll('.modal-bg').forEach(bg => {
+    const modal = bg.querySelector(':scope > .modal');
+    if (!modal || modal.querySelector(':scope > .modal-x')) return;
+    modal.classList.add('has-x');
+    const id = bg.id;
+    modal.insertBefore(makeX(() => { id ? hideModal(id) : bg.classList.remove('show'); }), modal.firstChild);
+  });
+  // Lot-entry `.modal-overlay` dialogs — the card is the overlay's first
+  // element child; hide the overlay to close (mirrors their Cancel buttons).
+  document.querySelectorAll('.modal-overlay').forEach(ov => {
+    const card = ov.firstElementChild;
+    if (!card || card.querySelector(':scope > .modal-x')) return;
+    if (getComputedStyle(card).position === 'static') card.style.position = 'relative';
+    card.insertBefore(makeX(() => { ov.style.display = 'none'; }), card.firstChild);
+  });
+}
+document.addEventListener('DOMContentLoaded', installModalCloseButtons);
+
+// Add an inline ✕ "clear" affordance to a single editable text/number input.
+// Wraps the input in `.fld-clear-wrap` and appends the ✕ button. Value-gating
+// is handled in CSS via `:placeholder-shown`, so a blank placeholder is set on
+// inputs that lack one. Skips readonly/disabled inputs and non-text types
+// (checkbox/date/etc.); search inputs already have a native clear button.
+function _attachClearIcon(input){
+  if (!input || input.dataset.clearWired) return;
+  const t = (input.getAttribute('type') || 'text').toLowerCase();
+  if (['checkbox','radio','date','datetime-local','month','time','week','hidden','file','range','color','search'].includes(t)) return;
+  if (input.readOnly || input.disabled) return;
+  input.dataset.clearWired = '1';
+  if (!input.getAttribute('placeholder')) input.setAttribute('placeholder', ' ');
+  const wrap = document.createElement('span');
+  wrap.className = 'fld-clear-wrap';
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+  input.style.paddingRight = '30px';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'fld-clear';
+  btn.tabIndex = -1;
+  btn.title = 'Clear';
+  btn.setAttribute('aria-label', 'Clear field');
+  btn.innerHTML = '&times;';
+  btn.addEventListener('mousedown', e => e.preventDefault()); // don't steal focus/blur
+  btn.addEventListener('click', e => {
+    e.preventDefault(); e.stopPropagation();
+    input.value = '';
+    // Fire input + change so dependent logic (totals, calc, search) reacts.
+    input.dispatchEvent(new Event('input',  { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    input.focus();
+  });
+  wrap.appendChild(btn);
+}
+// Wire the clear ✕ onto every editable text/number input inside `root`.
+function attachClearIconsIn(root){
+  if (!root) return;
+  root.querySelectorAll('input').forEach(_attachClearIcon);
+}
+document.addEventListener('DOMContentLoaded', () => {
+  // Lot Entry screen + its dialogs (Change Seller lives outside the tab).
+  attachClearIconsIn(document.getElementById('tc-lotentry'));
+  attachClearIconsIn(document.getElementById('le-changeseller-modal'));
+});
 function esc(s){return s?String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'):''}
 // ── Indian number formatter (lakhs grouping) ──────────────────
 // fmtI(1234567.89)    → "12,34,567.89"

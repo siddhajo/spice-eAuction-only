@@ -35,6 +35,15 @@ body{font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,sans-serif
 /* ── INPUTS ── */
 .ein{width:100%;height:34px;border-radius:8px;border:1.5px solid var(--border);padding:0 10px;font-size:14px;font-family:inherit;outline:none;background:var(--input-bg);color:var(--text);-webkit-appearance:none;transition:all .25s}
 .ein:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(13,124,95,.1);transform:translateY(-1px)}
+/* Inline field-clear (✕) — quick per-field clear on the entry/edit forms. The
+   ✕ shows only when the field holds a value, via :placeholder-shown, so it
+   tracks programmatic value changes (e.g. when editing a lot). */
+.fld-clear-wrap{position:relative;display:block;width:100%}
+.fld-clear{position:absolute;top:50%;right:8px;transform:translateY(-50%);width:22px;height:22px;padding:0;
+  border:none;background:transparent;color:var(--text3);font-size:15px;line-height:1;cursor:pointer;border-radius:50%;
+  display:none;align-items:center;justify-content:center}
+.fld-clear:active,.fld-clear:hover{background:var(--border);color:var(--text)}
+.fld-clear-wrap input:not(:placeholder-shown) + .fld-clear{display:flex}
 input[type=text],input[type=password],input[type=tel],input[type=email],input[type=number]{width:100%;height:44px;border-radius:var(--radius);border:1.5px solid var(--border);padding:0 14px;font-size:14px;font-family:inherit;outline:none;background:var(--input-bg);color:var(--text);-webkit-appearance:none;transition:all .25s}
 input.invalid{border-color:#d93025;background:#fff5f5}
 input:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(13,124,95,.1)}
@@ -934,10 +943,40 @@ function attachSearchClear(inputId, onAfterClear){
   });
   sync();
 }
+// Generic per-field clear ✕ for editable text/number inputs across the app.
+// Skips readonly/disabled, password, non-text types, and fields that already
+// ship a bespoke clear (search inputs wired via attachSearchClear / inside a
+// `.sx` wrapper). Value-gating is pure CSS (:placeholder-shown), so a blank
+// placeholder is set on inputs that lack one.
+function attachFieldClear(inp){
+  if(!inp||inp.dataset.clearWired)return;
+  var t=(inp.getAttribute('type')||'text').toLowerCase();
+  if(['checkbox','radio','date','datetime-local','month','time','week','hidden','file','range','color','search','password'].indexOf(t)>=0)return;
+  if(inp.readOnly||inp.disabled)return;
+  if(inp.id&&document.getElementById(inp.id+'-clear'))return; // already has a bespoke clear
+  if(inp.closest&&inp.closest('.sx'))return;
+  inp.dataset.clearWired='1';
+  if(!inp.getAttribute('placeholder'))inp.setAttribute('placeholder',' ');
+  var wrap=document.createElement('span');wrap.className='fld-clear-wrap';
+  inp.parentNode.insertBefore(wrap,inp);wrap.appendChild(inp);
+  inp.style.paddingRight='32px';
+  var btn=document.createElement('button');btn.type='button';btn.className='fld-clear';btn.tabIndex=-1;
+  btn.title='Clear';btn.setAttribute('aria-label','Clear field');btn.innerHTML='&times;';
+  btn.addEventListener('mousedown',function(e){e.preventDefault();});
+  btn.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();
+    inp.value='';
+    inp.dispatchEvent(new Event('input',{bubbles:true}));
+    inp.dispatchEvent(new Event('change',{bubbles:true}));
+    inp.focus();
+  });
+  wrap.appendChild(btn);
+}
+function attachAllFieldClears(){document.querySelectorAll('input').forEach(attachFieldClear);}
 document.addEventListener('DOMContentLoaded', function(){
   attachSearchClear('le-name', function(){document.getElementById('le-res').style.display='none'});
   attachSearchClear('ml-search');
   attachSearchClear('ed-seller-input', function(){var r=document.getElementById('ed-seller-res');if(r)r.style.display='none'});
+  attachAllFieldClears();
 });
 
 var sellerBookingsReq=0;
