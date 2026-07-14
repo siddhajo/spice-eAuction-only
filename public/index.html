@@ -8822,11 +8822,11 @@ async function loadStats(auctionId){
          : { tag: '—', t1: 'No auction selected', t2: '' });
   const snapCollapsed = localStorage.getItem('dashSnapCollapsed') === '1';
 
-  // Cumulative Grade-2 booking vs the Spices Board 25% cap — shown in the
-  // All-auctions snapshot only (single-auction mode already surfaces it in the
-  // Current-Auction widget). Grade 2 should be ≤ 25% of total booked weight;
-  // a negative diff means headroom, positive means over the cap. Mirrors the
-  // per-auction alert in loadDepotSummary().
+  // Grade-2 booking vs the Spices Board 25% cap. This is a PER-AUCTION rule
+  // (grade 2 ≤ 25% of that auction's total booked weight), so the alert only
+  // makes sense for a selected auction — it's hidden in the All-auctions
+  // (cumulative) view where a blended 25% has no meaning. Negative diff means
+  // headroom, positive means over the cap. Mirrors loadDepotSummary().
   const _g2Qty    = Number(T.grade2_qty) || 0;
   const _g2Booked = Number(T.total_weight) || 0;
   const _g2Target = _g2Booked * 0.25;
@@ -8838,7 +8838,7 @@ async function loadStats(auctionId){
   const _g2Bg     = _g2Excess ? '#FDECEA' : _g2Short ? 'var(--spice-turmeric-lt)' : 'var(--spice-cardamom-lt)';
   const _g2Label  = _g2Excess ? 'Excess grade 2 booking' : _g2Short ? 'Below 25% grade 2' : 'At the 25% limit';
   const _g2Sign   = _g2Excess ? '+' : _g2Short ? '−' : '';
-  const snapGrade2HTML = (isAllMode && _g2Booked > 0) ? `
+  const snapGrade2HTML = (!isAllMode && _g2Booked > 0) ? `
     <div class="dash-snap-g2" style="margin:14px;border:1px solid var(--spice-line);border-left:4px solid ${_g2Color};border-radius:10px;padding:14px 16px;background:${_g2Bg};display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap">
       <div style="min-width:0">
         <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--spice-text-mute)">Grade 2 Booking · 25% limit</div>
@@ -8890,11 +8890,9 @@ async function loadStats(auctionId){
         <div class="mf"><div class="k">Min ₹/kg</div><div class="v">${T.min_price>0?inr2(T.min_price):'—'}</div></div>
         <div class="mf"><div class="k">Max ₹/kg</div><div class="v">${T.max_price>0?inr2(T.max_price):'—'}</div></div>
         <div class="mf" title="Range ${priceRange}"><div class="k">Avg ₹/kg</div><div class="v">${T.avg_price>0?inr2(T.avg_price):'—'}</div></div>
-        ${isAllMode ? `
         <div class="mf" title="Weight booked from planters (non-GSTIN sellers)"><div class="k">Planter Wt (kg)</div><div class="v">${nq(T.planter_weight)}</div><div class="mf-sub"><span class="sk">of total</span><span class="sv">${T.total_weight>0?(T.planter_weight/T.total_weight*100).toFixed(2):'0.00'}%</span></div></div>
         <div class="mf" title="Weight booked from traders (GSTIN-registered dealers)"><div class="k">Trader Wt (kg)</div><div class="v">${nq(T.trader_weight)}</div><div class="mf-sub"><span class="sk">of total</span><span class="sv">${T.total_weight>0?(T.trader_weight/T.total_weight*100).toFixed(2):'0.00'}%</span></div></div>
         <div class="mf" title="Total booked weight (Planter + Trader)"><div class="k">Total Wt (kg)</div><div class="v">${nq(T.total_weight)}</div></div>
-        ` : ''}
       </div>
       ${snapGrade2HTML}
     </div>
