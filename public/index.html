@@ -4616,6 +4616,24 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       </div>
     </div>
 
+    <!-- Lorry report → WhatsApp: operator enters a phone number and taps Send.
+         The report PDF is delivered via the WhatsApp Cloud API when configured,
+         else the manual Web Share / download + WhatsApp Web fallback. -->
+    <div class="modal-bg" id="lorry-wa-modal"><div class="modal" style="max-width:440px">
+      <h2>Send Lorry Report via WhatsApp</h2>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:14px">Report: <strong id="lorry-wa-report">—</strong> &middot; Auction <strong id="lorry-wa-ano">—</strong></div>
+      <div class="fg" style="margin:0">
+        <label>Phone number</label>
+        <input type="tel" id="lorry-wa-phone" inputmode="numeric" autocomplete="off" placeholder="e.g. 9876543210" onkeydown="if(event.key==='Enter'){event.preventDefault();sendLorryWhatsapp()}" style="width:100%;height:42px;padding:0 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px">
+        <div style="font-size:11px;color:var(--text3);margin-top:5px">10-digit Indian number (91 added automatically), or a full international number with country code.</div>
+      </div>
+      <div id="lorry-wa-err" style="display:none;color:var(--spice-chili);font-size:12.5px;margin-top:8px;font-weight:600"></div>
+      <div class="actions">
+        <button class="btn btn-o" onclick="hideModal('lorry-wa-modal')">Cancel</button>
+        <button class="btn" id="lorry-wa-send" onclick="sendLorryWhatsapp()" style="background:#25D366;color:#fff;font-weight:600">📤 Send</button>
+      </div>
+    </div></div>
+
     <!-- TDS -->
     <div class="tc" id="tc-tds">
       <div class="card">
@@ -19097,6 +19115,7 @@ function renderLorryActions(){
     + `<button class="btn btn-a" onclick="downloadLorry('${k}','xlsx')" style="height:38px;padding:0 16px;font-weight:600">Excel (XLSX)</button>`
     + `<button class="btn btn-orange" onclick="downloadLorry('${k}','pdf')" style="height:38px;padding:0 16px;font-weight:600">PDF</button>`
     + `<button class="btn btn-o" onclick="printLorry('${k}')" style="height:38px;padding:0 16px;font-weight:600">Print</button>`
+    + `<button class="btn feat-whatsapp" onclick="openLorryWhatsapp('${k}')" style="height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600" title="Send this report's PDF via WhatsApp">💬 WhatsApp</button>`
     : '';
 }
 // Fetch a lorry report PDF (inline) as an object URL, sending the auth
@@ -19150,6 +19169,48 @@ async function downloadLorry(type,format){
     a.download=`${type}_${aid}.${format}`;a.click();
     URL.revokeObjectURL(a.href);
   });
+}
+
+// ── Lorry report → WhatsApp ───────────────────────────────
+// Opens a small dialog where the operator types a phone number and taps Send.
+// The report's PDF is delivered via the WhatsApp Cloud API when configured,
+// otherwise the shared _waSendDocument() manual fallback (Web Share on mobile,
+// or download + WhatsApp Web with the number pre-filled).
+let _lorryWaType = null;
+async function openLorryWhatsapp(type){
+  const aid=document.getElementById('lorry-auction')?.value;
+  if(!aid){alert('Select an auction first');return}
+  _lorryWaType=type;
+  document.getElementById('lorry-wa-report').textContent = LORRY_LABELS[type]||type;
+  const ano = await _getAuctionAno(aid);
+  document.getElementById('lorry-wa-ano').textContent = ano || aid;
+  const err=document.getElementById('lorry-wa-err'); if(err){err.style.display='none';err.textContent='';}
+  const ph=document.getElementById('lorry-wa-phone'); if(ph){ph.value='';}
+  showModal('lorry-wa-modal');
+  if(ph) setTimeout(()=>ph.focus(),60);
+}
+async function sendLorryWhatsapp(){
+  const aid=document.getElementById('lorry-auction')?.value;
+  const type=_lorryWaType;
+  const err=document.getElementById('lorry-wa-err');
+  const showErr=(m)=>{ if(err){err.textContent=m;err.style.display='block';} };
+  if(!aid||!type){hideModal('lorry-wa-modal');return}
+  const digits=String(document.getElementById('lorry-wa-phone')?.value||'').replace(/\D/g,'');
+  if(digits.length<10){ showErr('Enter a valid phone number (at least 10 digits).'); return; }
+  const label=LORRY_LABELS[type]||type;
+  const btn=document.getElementById('lorry-wa-send');
+  try{
+    if(btn) btn.disabled=true;
+    if(err){err.style.display='none';err.textContent='';}
+    const blob=await withOverlay(`Building ${label}…`, ()=> _fetchPdfBlob(`/api/lorry-reports/${type}/${aid}?format=pdf`));
+    const [company, ano]=await Promise.all([_getCompanyName(), _getAuctionAno(aid)]);
+    const summary=`the ${label} report for Auction ${ano||aid} is attached.`;
+    const msg=`${ano||''} ${company} ${label}`.trim();
+    const filename=`${label.replace(/[^\w]+/g,'_')}_${ano||aid}.pdf`;
+    hideModal('lorry-wa-modal');
+    await _waSendDocument({ blob, filename, phone:digits, params:[label, summary, company], message:msg });
+  }catch(e){ showErr(e.message||String(e)); }
+  finally{ if(btn) btn.disabled=false; }
 }
 
 // ── Spice Board Reports ───────────────────────────────────
