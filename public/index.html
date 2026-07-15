@@ -3275,6 +3275,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <option value="">All Branches</option>
           </select>
           <button class="btn btn-g btn-sm" onclick="openTradeSummaryPdf()" id="rep-pdf-btn" disabled>📄 Open PDF</button>
+          <button class="btn btn-o btn-sm" onclick="printTradeSummary()" id="rep-print-btn" disabled>🖨 Print</button>
         </div>
         <p style="color:var(--spice-text-mute);font-size:13px;margin:6px 0 16px">Per-branch and per-seller breakdown for the selected auction.</p>
         <div id="rep-summary-totals" style="display:none;display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px"></div>
@@ -3286,6 +3287,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <div class="card" id="rep-branch-card">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
           <h2 style="margin:0;flex:1">Branch Comparison (Lifetime)</h2>
+          <button class="btn btn-g btn-sm" onclick="runReport('rep_branch','pdf')" title="Download the lifetime totals as PDF">📄 PDF</button>
+          <button class="btn btn-o btn-sm" onclick="runReport('rep_branch','print')" title="Print the lifetime totals">🖨 Print</button>
           <button class="btn btn-sm" onclick="loadBranchComparison()">↻ Refresh</button>
         </div>
         <p style="color:var(--spice-text-mute);font-size:13px;margin:0 0 16px">How each branch has performed across every auction in the database. Click ↻ to compute (can be slow on large DBs).</p>
@@ -8848,6 +8851,56 @@ function toggleBranchTotals() {
   if (body) body.style.display = _dashBranchOpen ? '' : 'none';
   if (toggle) toggle.textContent = _dashBranchOpen ? '▾ Hide' : '▸ Show';
 }
+// ── On-screen report → PDF / Print ────────────────────────────
+// Per-widget "Download PDF" + "Print" for the Dashboard / Insights / Reports
+// data widgets. Each screen stashes its data in window._reportData; a builder
+// (REPORT_BUILDERS[key]) turns that into {title, columns, rows, totals} which
+// the generic /api/report-pdf endpoint renders with the company header. Print
+// reuses triggerBrowserPrint — the same PDF-print pipeline document exports use.
+window._reportData = window._reportData || {};
+const REPORT_BUILDERS = {};
+async function _reportPdfBlob(spec){
+  const r = await fetch(B + '/api/report-pdf', {
+    method:'POST',
+    headers:{ 'Authorization':'Bearer '+T, 'Content-Type':'application/json' },
+    body: JSON.stringify(spec),
+  });
+  if(!r.ok){ let m='PDF failed'; try{const e=await r.json();if(e.error)m=e.error}catch(_){}; throw new Error(m); }
+  return r.blob();
+}
+async function runReport(key, mode){
+  const build = REPORT_BUILDERS[key];
+  let spec = null;
+  try { if (typeof build === 'function') spec = build(); } catch(_) { spec = null; }
+  if(!spec || !Array.isArray(spec.rows) || !spec.rows.length){ toast('No data to export yet — load the report first.'); return; }
+  await withOverlay(`Preparing ${spec.title||'report'}…`, async () => {
+    try{
+      const blob = await _reportPdfBlob(mode==='print' ? Object.assign({}, spec, {inline:1}) : spec);
+      if(mode==='print'){
+        if(typeof triggerBrowserPrint==='function'){ await triggerBrowserPrint(blob, spec.title||'report'); }
+        else { const u=URL.createObjectURL(blob); const w=window.open(u); if(w) w.addEventListener('load',()=>{try{w.focus();w.print()}catch(_){}}); }
+      } else {
+        const u=URL.createObjectURL(blob);
+        const a=document.createElement('a'); a.href=u; a.download=(spec.title||'report').replace(/[^\w]+/g,'_')+'.pdf';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(()=>URL.revokeObjectURL(u), 30000);
+      }
+    }catch(e){ toast(e.message||'Export failed'); }
+  });
+}
+// Inline "📄 PDF · 🖨 Print" button pair for a widget header. `key` selects the
+// builder in REPORT_BUILDERS. `small` renders a compact variant.
+function reportBtns(key, small){
+  const sz = small ? 'height:28px;padding:0 9px;font-size:11px' : 'height:32px;padding:0 12px;font-size:12px';
+  return `<span class="rep-actions" style="display:inline-flex;gap:6px;flex-wrap:wrap;white-space:nowrap">`
+    + `<button class="btn btn-g" onclick="event.stopPropagation();runReport('${key}','pdf')" style="${sz};font-weight:600" title="Download this report as PDF">📄 PDF</button>`
+    + `<button class="btn btn-o" onclick="event.stopPropagation();runReport('${key}','print')" style="${sz};font-weight:600" title="Print this report">🖨 Print</button>`
+    + `</span>`;
+}
+// Number coercion for report cells (rows carry raw numbers so the server-side
+// numeric formatter kicks in for money/qty columns).
+function _rn(v){ const n = Number(v); return isFinite(n) ? n : 0; }
+
 async function loadStats(auctionId){
   // Allow explicit override; otherwise use the remembered selection
   if (auctionId !== undefined) _dashSelectedAuctionId = auctionId || null;
@@ -8985,6 +9038,7 @@ async function loadStats(auctionId){
           </div>
         </div>
         <div class="dash-snap-hd-actions">
+          ${reportBtns('dash_snapshot', true)}
           ${picker}
           <button class="dash-snap-collapse" onclick="toggleDashSnap()" title="Collapse / expand" aria-label="Collapse or expand snapshot">▾</button>
         </div>
@@ -9189,7 +9243,10 @@ async function loadStats(auctionId){
     <div class="card" style="padding:0;margin-bottom:20px">
       <div style="padding:18px 22px 12px;border-bottom:1px solid var(--spice-line);display:flex;justify-content:space-between;align-items:center">
         <h2 style="font-size:17px;font-weight:700;margin:0;color:var(--spice-text-main)">Per-Auction Breakdown</h2>
-        <span style="font-size:12px;color:var(--spice-text-hint)">${PT.length} auction${PT.length===1?'':'s'} · click a row to drill in</span>
+        <div style="display:flex;align-items:center;gap:12px">
+          <span style="font-size:12px;color:var(--spice-text-hint)">${PT.length} auction${PT.length===1?'':'s'} · click a row to drill in</span>
+          ${reportBtns('dash_pertrade', true)}
+        </div>
       </div>
       <div style="padding:0 4px;overflow-x:auto">
         <table style="width:100%">
@@ -9280,6 +9337,43 @@ async function loadStats(auctionId){
   ` : '<div style="text-align:center;color:var(--spice-text-hint);padding:24px 0;font-size:13px">No invoices yet — <a href="#" onclick="go(\'invoices\');return false" style="color:var(--spice-saffron)">generate your first</a></div>';
 
   const uname = document.getElementById('user-lbl')?.textContent || 'there';
+
+  // Register PDF/Print builders for the dashboard data widgets. Each closes
+  // over this render's data so it always exports exactly what's on screen.
+  REPORT_BUILDERS.dash_snapshot = () => {
+    const scope = (snapWho && snapWho.t1) || 'Dashboard';
+    const amtOf = (a, b) => _rn(a != null ? a : b);
+    const cols = [
+      {header:'STATUS',key:'status',width:14},{header:'LOTS',key:'lots',width:7},{header:'BAGS',key:'bags',width:7},
+      {header:'SELLER QTY',key:'sqty',width:12},{header:'BUYER QTY',key:'bqty',width:12},{header:'AMOUNT',key:'amount',width:14},{header:'GST',key:'gst',width:11},
+    ];
+    const rows = [
+      {status:'Booked',    lots:_rn(T.lots),      bags:_rn(T.bags),      sqty:_rn(T.seller_qty),      bqty:_rn(T.qty),      amount:amtOf(T.lots_amount, T.value),          gst:''},
+      {status:'Sold',      lots:_rn(T.sold),      bags:_rn(T.sold_bags), sqty:_rn(T.sold_seller_qty), bqty:_rn(T.sold_qty), amount:amtOf(T.lots_sold_amount, T.sold_value), gst:_rn(scopeGst)},
+      {status:'Withdrawn', lots:_rn(T.withdrawn), bags:_rn(T.wd_bags),   sqty:_rn(T.wd_seller_qty),   bqty:_rn(T.wd_qty),   amount:amtOf(T.lots_wd_amount, T.wd_value),    gst:''},
+    ];
+    const meta = [
+      `Payable ₹${fmtI(T.payable_net != null ? T.payable_net : T.payable_to_sellers, 2)}`,
+      `Income ₹${fmtI(T.commission_income, 2)}`,
+    ];
+    if (_rn(T.total_weight) > 0) meta.push(`Planter ${fmtI(T.planter_weight,2)} / Trader ${fmtI(T.trader_weight,2)} / Total ${fmtI(T.total_weight,2)} kg`);
+    if (_rn(T.min_price) > 0) meta.push(`Price ₹${fmtI(T.min_price,2)}–${fmtI(T.max_price,2)} · avg ₹${fmtI(T.avg_price,2)}`);
+    return { title:`Trade Snapshot — ${scope}`, subtitle: meta.join('   —   '), columns: cols, rows };
+  };
+  REPORT_BUILDERS.dash_pertrade = () => {
+    if (!Array.isArray(PT) || !PT.length) return null;
+    const cols = [
+      {header:'AUCTION',key:'ano',width:8},{header:'DATE',key:'date',width:11},{header:'CROP',key:'crop',width:10},
+      {header:'LOTS',key:'lots',width:7},{header:'QTY',key:'qty',width:11},{header:'AMOUNT',key:'amount',width:13},{header:'INVOICED %',key:'inv',width:9},
+    ];
+    const rows = PT.map(t => ({
+      ano:'#'+(t.ano != null ? t.ano : ''), date:fmtD(t.date), crop:t.crop_type||'—',
+      lots:_rn(t.lots), qty:_rn(t.qty), amount:_rn(t.amount),
+      inv:(t.lots ? Math.round((t.invoiced||0)/t.lots*100) : 0)+'%',
+    }));
+    const totals = { ano:'TOTAL', lots:_rn(CUM.lots), qty:_rn(CUM.qty), amount:_rn(CUM.amount) };
+    return { title:'Per-Auction Breakdown', subtitle:`${PT.length} auction${PT.length===1?'':'s'}`, columns: cols, rows, totals };
+  };
 
   document.getElementById('tc-dash').innerHTML = `
     <div class="greeting">
@@ -9538,13 +9632,32 @@ async function loadDepotSummary(auctionId){
     </div>` : '';
 
   const collapsed = localStorage.getItem('dashCurrentAuctionCollapsed') === '1';
+  REPORT_BUILDERS.dash_depot = () => {
+    if (!Array.isArray(depots) || !depots.length) return null;
+    const cols = [
+      {header:'DEPOT',key:'depot',width:20},{header:'LOTS',key:'lots',width:7},{header:'BAGS',key:'bags',width:7},
+      {header:'PLANTER WT',key:'pw',width:12},{header:'TRADER WT',key:'tw',width:12},{header:'TOTAL WT',key:'total',width:12},
+    ];
+    const rows = depots.map(dp => ({ depot:dp.depot, lots:_rn(dp.lots), bags:_rn(dp.bags), pw:_rn(dp.planterWt), tw:_rn(dp.traderWt), total:_rn(dp.totalWt) }));
+    const totals = { depot:'TOTAL', lots:_rn(t.lots), bags:_rn(t.bags), pw:_rn(t.planterWt), tw:_rn(t.traderWt), total:_rn(t.totalWt) };
+    const meta = [
+      `Booked ${_rn(s.bookedLots)} · Sold ${_rn(s.soldLots)} · WD ${_rn(s.wdLots)} lots`,
+      `Crop ${fmtI(s.cropWeight,2)} kg · Planter ${fmtI(s.planterWeight,2)} · Dealer ${fmtI(s.dealerWeight,2)}`,
+    ];
+    if (_rn(s.minPrice) > 0) meta.push(`Price ₹${fmtI(s.minPrice,2)}–${fmtI(s.maxPrice,2)} · avg ₹${fmtI(s.avgPrice,2)}`);
+    return { title:`Depot Summary — Auction ${a.ano||''}`, subtitle: meta.join('   —   '), columns: cols, rows, totals };
+  };
+
   host.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:12px">
       <h2 onclick="toggleCurrentAuction()" style="font-size:17px;font-weight:700;margin:0;color:var(--spice-text-main);cursor:pointer;display:flex;align-items:center;gap:6px;user-select:none">
         <span id="ca-caret" style="display:inline-block;transition:transform .15s;transform:rotate(${collapsed ? '-90deg' : '0deg'});font-size:13px;color:var(--spice-text-mute)">▾</span>
         Current Auction
       </h2>
-      <a href="#" onclick="downloadArrivals(${a.id});return false" style="font-size:13px;color:var(--spice-saffron);font-weight:600;text-decoration:none;white-space:nowrap">Download Arrivals Data</a>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        ${reportBtns('dash_depot', true)}
+        <a href="#" onclick="downloadArrivals(${a.id});return false" style="font-size:13px;color:var(--spice-saffron);font-weight:600;text-decoration:none;white-space:nowrap">⬇ Arrivals XLSX</a>
+      </div>
     </div>
     <div class="card" id="ca-body" style="padding:20px;display:${collapsed ? 'none' : 'block'}">
       <div style="font-size:20px;font-weight:700;color:var(--spice-text-main);line-height:1.2">Auction No ${esc(a.ano)}</div>
@@ -10280,14 +10393,44 @@ async function _renderInsights(){
   const sectionAttrs = (id) => `data-ins-section="${id}"${collapsedSet.has(id) ? ' data-collapsed="1"' : ''}`;
 
   // ── Section header builder — colored icon + title + subtitle + chevron.
-  const sectionHead = (icon, title, sub, theme, id) => {
+  const sectionHead = (icon, title, sub, theme, id, actions) => {
     const t = _INS_THEMES[theme] || _INS_THEMES.emerald;
     return `
       <div class="ins-section-head" onclick="toggleInsightsSection('${id}', this)" title="Click to collapse / expand">
         <div class="ins-section-icon" style="background:${_insGrad(theme)};--ins-glow:${t.glow}">${icon}</div>
         <div class="ins-section-title"><h3>${esc(title)}</h3><div class="sub">${esc(sub)}</div></div>
+        ${actions ? `<div style="display:flex;align-items:center;gap:8px;margin-right:8px" onclick="event.stopPropagation()">${actions}</div>` : ''}
         <div class="ins-chev" aria-hidden="true">▾</div>
       </div>`;
+  };
+
+  // ── Register PDF/Print builders for the Insights data sections (close over
+  // this render's `data`, so they export exactly the current date range).
+  const _insRange = `Period ${data.range.from} to ${data.range.to}`;
+  REPORT_BUILDERS.ins_branches = () => {
+    const arr = data.perBranch || []; if (!arr.length) return null;
+    const cols = [{header:'BRANCH',key:'branch',width:20},{header:'LOTS',key:'lots',width:7},{header:'SOLD',key:'sold',width:7},{header:'QTY',key:'qty',width:11},{header:'MIN',key:'min',width:8},{header:'MAX',key:'max',width:8},{header:'AVG',key:'avg',width:8},{header:'VALUE',key:'value',width:13},{header:'PAYABLE',key:'payable',width:13}];
+    const rows = arr.map(b => ({ branch:b.branch, lots:_rn(b.lots), sold:_rn(b.sold), qty:_rn(b.qty), min:(b.min_price!=null?_rn(b.min_price):''), max:(b.max_price!=null?_rn(b.max_price):''), avg:_rn(b.avg_price), value:_rn(b.value), payable:_rn(b.payable_to_sellers) }));
+    return { title:'Insights — Per-branch summary', subtitle:_insRange, columns:cols, rows, layout:'landscape' };
+  };
+  REPORT_BUILDERS.ins_trades = () => {
+    const arr = data.perTrade || []; if (!arr.length) return null;
+    const cols = [{header:'TRADE',key:'trade',width:8},{header:'DATE',key:'date',width:11},{header:'STATE',key:'state',width:12},{header:'LOTS',key:'lots',width:6},{header:'SOLD',key:'sold',width:6},{header:'WD',key:'wd',width:6},{header:'QTY',key:'qty',width:11},{header:'MIN',key:'min',width:8},{header:'MAX',key:'max',width:8},{header:'AVG',key:'avg',width:8},{header:'VALUE',key:'value',width:13}];
+    const rows = arr.map(t2 => ({ trade:'#'+(t2.ano!=null?t2.ano:''), date:fmtD(t2.date), state:t2.state||'', lots:_rn(t2.lots), sold:_rn(t2.sold), wd:_rn(t2.withdrawn), qty:_rn(t2.qty), min:(t2.min_price!=null?_rn(t2.min_price):''), max:(t2.max_price!=null?_rn(t2.max_price):''), avg:_rn(t2.avg_price), value:_rn(t2.value) }));
+    return { title:'Insights — Per-trade details', subtitle:_insRange, columns:cols, rows, layout:'landscape' };
+  };
+  REPORT_BUILDERS.ins_outstanding = () => {
+    const arr = data.outstandingByBuyer || []; if (!arr.length) return null;
+    const cols = [{header:'BUYER',key:'buyer',width:22},{header:'CODE',key:'code',width:10},{header:'INVOICES',key:'invoices',width:8},{header:'OUTSTANDING',key:'value',width:14}];
+    const rows = arr.map(r => ({ buyer:r.buyer_name||'', code:r.buyer_code||'', invoices:_rn(r.invoices), value:_rn(r.value) }));
+    const totals = { buyer:'TOTAL', invoices:_rn(arr.reduce((s,r)=>s+_rn(r.invoices),0)), value:_rn(arr.reduce((s,r)=>s+_rn(r.value),0)) };
+    return { title:'Insights — Outstanding by buyer', subtitle:_insRange, columns:cols, rows, totals };
+  };
+  REPORT_BUILDERS.ins_leaderboard = () => {
+    const arr = data.buyerActivity || []; if (!arr.length) return null;
+    const cols = [{header:'RANK',key:'rank',width:5},{header:'BUYER',key:'buyer',width:22},{header:'CODE',key:'code',width:10},{header:'LOTS',key:'lots',width:7},{header:'QTY',key:'qty',width:11},{header:'VALUE',key:'value',width:14}];
+    const rows = arr.map((r,i) => ({ rank:i+1, buyer:r.buyer_name||'', code:r.buyer_code||'', lots:_rn(r.lots), qty:_rn(r.qty), value:_rn(r.value) }));
+    return { title:'Insights — Top buyer activity', subtitle:_insRange, columns:cols, rows };
   };
 
   // ── Assemble.
@@ -10383,7 +10526,7 @@ async function _renderInsights(){
     <!-- Per-branch cards -->
     ${data.perBranch.length ? `
     <div class="ins-section" ${sectionAttrs('branches')}>
-      ${sectionHead('🏪', 'Per-branch summary', 'Rolled up across every trade in the date range.', 'teal', 'branches')}
+      ${sectionHead('🏪', 'Per-branch summary', 'Rolled up across every trade in the date range.', 'teal', 'branches', reportBtns('ins_branches', true))}
       <div class="ins-section-body">
         <div class="ins-branch-scroll ins-scroll">
           <div class="ins-branch-grid">
@@ -10396,7 +10539,7 @@ async function _renderInsights(){
     <!-- Per-trade table -->
     ${data.perTrade.length ? `
     <div class="ins-section" ${sectionAttrs('trades')}>
-      ${sectionHead('📋', 'Per-trade details', 'Each row is one trade with branch composition (top 4 by value).', 'violet', 'trades')}
+      ${sectionHead('📋', 'Per-trade details', 'Each row is one trade with branch composition (top 4 by value).', 'violet', 'trades', reportBtns('ins_trades', true))}
       <div class="ins-section-body">
         <div class="ins-table-wrap ins-scroll">
           <table class="ins-table">
@@ -10423,13 +10566,13 @@ async function _renderInsights(){
     <!-- Two-column row: outstanding by buyer + buyer leaderboard -->
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:16px">
       <div class="ins-section" style="margin-bottom:0" ${sectionAttrs('outstanding')}>
-        ${sectionHead('💳', 'Outstanding by buyer', 'Sales invoices in this range — treated as outstanding (no per-invoice payment tracking yet).', 'amber', 'outstanding')}
+        ${sectionHead('💳', 'Outstanding by buyer', 'Sales invoices in this range — treated as outstanding (no per-invoice payment tracking yet).', 'amber', 'outstanding', reportBtns('ins_outstanding', true))}
         <div class="ins-section-body">
           <div class="ins-list-scroll ins-scroll">${outstandingTable(data.outstandingByBuyer)}</div>
         </div>
       </div>
       <div class="ins-section" style="margin-bottom:0" ${sectionAttrs('leaderboard')}>
-        ${sectionHead('🏆', 'Top buyer activity', 'Ranked by value across all trades in range.', 'pink', 'leaderboard')}
+        ${sectionHead('🏆', 'Top buyer activity', 'Ranked by value across all trades in range.', 'pink', 'leaderboard', reportBtns('ins_leaderboard', true))}
         <div class="ins-section-body">
           <div class="ins-list-scroll ins-scroll" style="padding:0 12px">${buyerLeaderboard(data.buyerActivity)}</div>
         </div>
@@ -10936,6 +11079,7 @@ async function loadTradeSummary(){
   const totalsBox=document.getElementById('rep-summary-totals');
   const body=document.getElementById('rep-summary-body');
   document.getElementById('rep-pdf-btn').disabled=!aid;
+  { const _pb=document.getElementById('rep-print-btn'); if(_pb) _pb.disabled=!aid; }
   if(!aid){
     totalsBox.style.display='none';
     body.innerHTML='<div style="text-align:center;padding:30px;color:var(--spice-text-hint)">Pick a auction above to see its breakdown.</div>';
@@ -11235,6 +11379,23 @@ function openTradeSummaryPdf(){
   // Token-in-querystring because window.open() can't set Authorization.
   window.open(`${B}/api/reports/summary-pdf/${aid}?token=${T}${branchQs}`,'_blank');
 }
+// Print the same Auction Summary PDF (fetch the blob, then hand it to the
+// shared browser-print pipeline so the OS print dialog opens on it).
+async function printTradeSummary(){
+  const aid=document.getElementById('rep-auction')?.value;
+  if(!aid){ alert('Pick an auction first'); return; }
+  const br=document.getElementById('rep-branch')?.value||'';
+  const branchQs=br?`&branch=${encodeURIComponent(br)}`:'';
+  await withOverlay('Preparing Auction Summary…', async () => {
+    try{
+      const r=await fetch(`${B}/api/reports/summary-pdf/${aid}?token=${encodeURIComponent(T)}${branchQs}`);
+      if(!r.ok){ toast('Summary PDF failed'); return; }
+      const blob=await r.blob();
+      if(typeof triggerBrowserPrint==='function'){ await triggerBrowserPrint(blob, 'Auction_Summary'); }
+      else { const u=URL.createObjectURL(blob); const w=window.open(u); if(w) w.addEventListener('load',()=>{try{w.focus();w.print()}catch(_){}}); }
+    }catch(e){ toast(e.message||'Print failed'); }
+  });
+}
 
 async function loadBranchComparison(){
   const body=document.getElementById('rep-branch-body');
@@ -11270,6 +11431,14 @@ async function loadBranchComparison(){
     // back when Chart.js inits (it has to run AFTER innerHTML lands).
     window._bcOverall = overall;
     window._bcData    = data;
+
+    // PDF/Print builder for the Branch Comparison "Lifetime Totals" table.
+    REPORT_BUILDERS.rep_branch = () => {
+      const arr = window._bcOverall || []; if (!arr.length) return null;
+      const cols = [{header:'BRANCH',key:'branch',width:20},{header:'AUCTIONS',key:'auctions',width:9},{header:'LOTS',key:'lots',width:8},{header:'BAGS',key:'bags',width:8},{header:'QTY',key:'qty',width:12},{header:'UNIQUE SELLERS',key:'sellers',width:12}];
+      const rows = arr.map(b => ({ branch:b.branch||'-', auctions:_rn(b.trade_count), lots:_rn(b.lot_count), bags:_rn(b.total_bags), qty:_rn(b.total_qty), sellers:_rn(b.seller_count) }));
+      return { title:'Branch Comparison (Lifetime)', subtitle:`${arr.length} branch${arr.length===1?'':'es'}`, columns:cols, rows };
+    };
 
     // ── Lifetime Totals: bar chart up top, data table hidden behind
     //    a "Show table" toggle. Cleaner first impression — numbers
