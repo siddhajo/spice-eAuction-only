@@ -9731,7 +9731,15 @@ app.post('/api/invoices/preview/:auctionId', requireView, (req, res) => {
 app.get('/api/payments/:auctionId', requireView, (req, res) => {
   const db = getDb();
   const cfg = getSettingsFlat(db);
-  const summary = getPaymentSummary(db, req.params.auctionId, req.query.state, cfg);
+  // `includeUnpriced=1` lists sellers whose lots aren't priced yet so the
+  // operator can pre-enter advances before price import. Also auto-fall back
+  // to it when the normal (priced-only) roll-up is empty — that's the
+  // pre-import state, where the screen would otherwise show nothing to act on.
+  const wantUnpriced = req.query.includeUnpriced === '1' || req.query.includeUnpriced === 'true';
+  let summary = getPaymentSummary(db, req.params.auctionId, req.query.state, cfg, wantUnpriced);
+  if (!wantUnpriced && (!Array.isArray(summary) || summary.length === 0)) {
+    summary = getPaymentSummary(db, req.params.auctionId, req.query.state, cfg, true);
+  }
   res.json(summary);
 });
 

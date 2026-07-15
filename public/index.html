@@ -4448,6 +4448,13 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <div style="height:280px;position:relative"><canvas id="pay-top-sellers-chart"></canvas></div>
         </div>
 
+        <!-- Pre-import notice: shown when sellers are listed before price
+             import (unpriced lots). Only the Advance column is actionable then;
+             Payable computes once prices are imported. Toggled in loadPayments. -->
+        <div id="pay-unpriced-note" style="display:none;margin-bottom:12px;padding:10px 14px;background:var(--spice-turmeric-lt);border:1px solid var(--spice-turmeric);border-radius:8px;font-size:12.5px;color:#92400E;line-height:1.5">
+          <strong>⏳ Not price-imported yet.</strong> These sellers' lots aren't priced, so Net Amount and Payable will show once you run Price Import. You can enter the <strong>Advance</strong> now — it'll be deducted from Payable automatically after import.
+        </div>
+
         <div style="overflow-x:auto"><table><thead><tr><th>Seller</th><th>Lots</th><th>Qty</th><th>Amount</th><th>Purchase</th><th>Commission</th><th>GST 18%</th><th>Net Amount</th><th>Advance</th><th>Payable</th><th>Discount</th><th>Actions</th></tr></thead><tbody id="payments-list"></tbody></table></div>
       </div>
     </div>
@@ -22876,7 +22883,9 @@ async function loadPayments(){
         kpiStrip.style.display = 'grid';
         const totalQty      = arr.reduce((a,i) => a + (Number(i.total_qty)      || 0), 0);
         const totalCommission = arr.reduce((a,i) => a + (Number(i.total_commission) || 0), 0);
-        const totalPayable  = arr.reduce((a,i) => a + (Number(i.total_payable)  || 0), 0);
+        // Unpriced (pre-import) sellers have net 0, so their payable would be
+        // −advance — exclude them from the total so it doesn't go negative.
+        const totalPayable  = arr.reduce((a,i) => a + (i.unpriced ? 0 : (Number(i.total_payable)  || 0)), 0);
         const totalLots     = arr.reduce((a,i) => a + (Number(i.lot_count)   || 0), 0);
         const totalAmount   = arr.reduce((a,i) => a + (Number(i.total_amount)|| 0), 0);
         const totalGst      = arr.reduce((a,i) => a + (Number(i.total_tax)   || 0), 0);
@@ -22929,6 +22938,14 @@ async function loadPayments(){
       }
       _discBtn.dataset.applied = _applied ? '1' : '0';
     }
+
+    // Pre-import notice + Calculate-Discounts button: when any listed seller is
+    // unpriced, only Advance is actionable, so surface the banner and disable
+    // the discount button (nothing to compute a discount on yet).
+    const _anyUnpriced = arr.some(r => r.unpriced);
+    const _note = document.getElementById('pay-unpriced-note');
+    if (_note) _note.style.display = _anyUnpriced ? 'block' : 'none';
+    if (_discBtn) _discBtn.disabled = _anyUnpriced && arr.every(r => r.unpriced);
 
     DataTable.mount('payments-list', arr, {
       noSearch: true,
@@ -23034,7 +23051,9 @@ async function loadPayments(){
         // days-based settlement discount.
         { key:'net_amount', label:'Net Amount', sort:'number', numeric:true,
           fmt:(n)=>fmtI(n,2),
-          render:(p)=>`<span style="font-weight:600">${fmtI(p.net_amount||0,2)}</span>` },
+          render:(p)=> p.unpriced
+            ? `<span style="color:var(--text3)" title="Pending price import">—</span>`
+            : `<span style="font-weight:600">${fmtI(p.net_amount||0,2)}</span>` },
         // Advance — user-entered amount already paid to the seller. Deducted
         // from Payable (Payable = Net − Advance). Edited inline; onchange saves
         // to the server and reloads so Payable + totals recompute exactly.
@@ -23066,13 +23085,16 @@ async function loadPayments(){
         { key:'total_payable', label:'Payable', sort:'number', numeric:true,
           fmt:(n)=>fmtI(n,2),
           // Payable as the "answer" — bigger, darker, cardamom. = Net − Advance.
-          render:(p)=>`<span style="font-weight:700;color:var(--spice-cardamom-dk);font-size:14px">${fmtI(p.total_payable||0,2)}</span>` },
+          render:(p)=> p.unpriced
+            ? `<span style="color:var(--text3)" title="Computes after price import">—</span>`
+            : `<span style="font-weight:700;color:var(--spice-cardamom-dk);font-size:14px">${fmtI(p.total_payable||0,2)}</span>` },
         // Discount — display-only settlement discount, round(net / 1000 × days ×
         // discount_pct); days from pooler (discount_days) vs dealer (dealer_days).
         // Opt-in per auction via "Calculate All Discounts"; never affects Payable.
         { key:'seller_discount', label:'Discount', sort:'number', numeric:true,
           fmt:(n)=>fmtI(n,2),
           render:(p)=>{
+            if (p.unpriced) return `<span style="color:var(--text3)" title="Pending price import">—</span>`;
             const v = Number(p.seller_discount)||0;
             const applied = Number(p.discount_applied)===1;
             const tip = p.seller_type ? ` title="${esc(p.seller_type)} rate · display only, not deducted from Payable"` : ' title="Display only — not deducted from Payable"';
@@ -23110,7 +23132,9 @@ async function loadPayments(){
     // Hidden when fewer than 2 sellers (chart isn't meaningful).
     const chartCard = document.getElementById('pay-chart-card');
     if (chartCard) {
-      if (typeof Chart !== 'undefined' && arr.length >= 2) {
+      // Skip the "by payable" chart while unpriced — payables aren't known yet.
+      const _pricedArr = arr.filter(r => !r.unpriced);
+      if (typeof Chart !== 'undefined' && _pricedArr.length >= 2) {
         chartCard.style.display = 'block';
         requestAnimationFrame(() => {
           const canvas = document.getElementById('pay-top-sellers-chart');
@@ -23119,7 +23143,7 @@ async function loadPayments(){
           // Sort descending by payable, take top 10, then reverse so the
           // highest bar is at the TOP of the chart (Chart.js indexAxis:y
           // draws first label at top).
-          const sorted = [...arr]
+          const sorted = [..._pricedArr]
             .sort((a, b) => (Number(b.total_payable)||0) - (Number(a.total_payable)||0))
             .slice(0, 10)
             .reverse();

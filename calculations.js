@@ -536,7 +536,7 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg) {
 /**
  * Generate payment summary for sellers (PAYCHECK.PRG equivalent)
  */
-function getPaymentSummary(db, auctionId, state, cfg) {
+function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
   // Per-seller, per-auction payment roll-up for the Payments tab (and the
   // lot-selection modal + payment statement, which must agree with it).
   //   Net Amount = Σ lots.balance  (Amount + Refund − Commission − Handling − GST)
@@ -565,7 +565,13 @@ function getPaymentSummary(db, auctionId, state, cfg) {
     COUNT(l.bank_id) AS bank_lot_count,
     MAX(COALESCE(l.immediate_payment,0)) AS any_immediate,
     SUM(COALESCE(l.immediate_payment,0)) AS immediate_lot_count
-    FROM lots l WHERE l.auction_id = ? AND l.amount > 0`;
+    FROM lots l WHERE l.auction_id = ?`;
+  // Normally only priced lots (amount > 0) count toward the Payments roll-up.
+  // `includeUnpriced` relaxes that so sellers whose lots aren't priced yet
+  // still appear — lets the operator pre-enter advances BEFORE price import.
+  // Their money columns come out 0 (flagged `unpriced` below); exports keep
+  // the strict amount>0 filter, so this never leaks into bank/XLSX output.
+  if (!includeUnpriced) query += ' AND l.amount > 0';
   const params = [auctionId];
   if (state) { query += ' AND l.state = ?'; params.push(state); }
   query += ' GROUP BY l.name, l.cr ORDER BY l.state, l.name';
@@ -641,8 +647,13 @@ function getPaymentSummary(db, auctionId, state, cfg) {
       : 0;
     // Advance already paid to this seller (deducted from Payable below).
     const advance = advByName[String(s.name || '').trim().toUpperCase()] || 0;
+    // Unpriced = this seller has no priced lots yet (all amounts still 0),
+    // i.e. price import hasn't run. Only possible when includeUnpriced is set.
+    // The UI shows "—" for the money columns and keeps just Advance editable.
+    const unpriced = (Number(s.total_amount) || 0) <= 0;
     return {
       ...s,
+      unpriced,
       // Per-seller commission (lots.com) — shown in the Payments "Commission"
       // column. Independent of discount; does not affect payable.
       total_commission: Number(s.total_commission) || 0,
