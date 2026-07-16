@@ -305,6 +305,10 @@ async function initDb() {
     -- lot; when 0 the lot's discount is 0. Also added via ALTER for
     -- older DBs in the migrations block below.
     immediate_payment INTEGER DEFAULT 0,
+    -- Lot RESERVATION flag (also added via ALTER for older DBs below). When 1
+    -- the lot is a held/reserved entry: shown in a distinct colour, kept out
+    -- of booked/invoice totals, and blocking that lot_no for other sellers.
+    reserved INTEGER DEFAULT 0,
     -- Record-lock columns (also added via ALTER for older DBs in the
     -- migrations block below). See POST /api/lots/lock in server.js for
     -- semantics. Defined here so fresh DBs get the columns + the
@@ -785,6 +789,11 @@ async function initDb() {
     'ALTER TABLE lots ADD COLUMN control_price REAL DEFAULT 0',
     'ALTER TABLE lots ADD COLUMN reserved_price REAL DEFAULT 0',
     'UPDATE lots SET reserved_price = control_price WHERE reserved_price = 0 AND control_price > 0',
+    // Lot RESERVATION status (distinct from reserved_price above). When 1 the
+    // lot is a "held" entry: shown in a reserved colour, kept out of
+    // booked/invoice totals, and — because lot_no is unique per auction —
+    // unavailable to other sellers. Cleared (→0) when converted to a booking.
+    'ALTER TABLE lots ADD COLUMN reserved INTEGER DEFAULT 0',
     // ASP invoice traceability — when a lot is first invoiced as an ASP
     // sale (state=Kerala), `lots.invo` gets the ASP invoice number AND a
     // copy is preserved here. Then when the same lot is invoiced as an

@@ -1366,9 +1366,80 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     doc.font('Helvetica').fontSize(12).fillColor('#000')
        .text(paragraph, left, y, { width, align: 'justify', lineGap: 6 });
 
-    // Signature block, bottom-right.
-    const sigY = doc.page.height - doc.page.margins.bottom - 70;
-    doc.font('Helvetica-Bold').fontSize(11)
+    // ── Annexure: lot-wise details table ──
+    // The certificate paragraph says "as reported in annexure"; this IS that
+    // annexure. One row per lot the pooler put up in the period, with a bold
+    // TOTAL. Paginates when a pooler has more lots than fit on the page.
+    y = doc.y + 24;
+    const rows = Array.isArray(p.rows) ? p.rows : [];
+    // Column layout: proportional widths that sum to `width`.
+    const annCols = [
+      { key: 'date',       label: 'Date',        w: 0.14, align: 'left'  },
+      { key: 'tno',        label: 'TNo',         w: 0.09, align: 'left'  },
+      { key: 'lot',        label: 'Lot',         w: 0.09, align: 'left'  },
+      { key: 'qty',        label: 'Qty',         w: 0.15, align: 'right', fmt: fmtQty   },
+      { key: 'rate',       label: 'Rate',        w: 0.15, align: 'right', fmt: fmtMoney },
+      { key: 'value',      label: 'Value',       w: 0.19, align: 'right', fmt: fmtMoney },
+      { key: 'billamount', label: 'Bill Amount', w: 0.19, align: 'right', fmt: fmtMoney },
+    ];
+    const annX = [];
+    { let cx = left; for (const c of annCols) { annX.push(cx); cx += c.w * width; } }
+    const ROW_H = 15;
+    const bottomLimit = () => doc.page.height - doc.page.margins.bottom - 90; // leave room for signature
+
+    const drawAnnCell = (text, ci, ry, opts2 = {}) => {
+      const c = annCols[ci];
+      const cw = c.w * width;
+      doc.font(opts2.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.5).fillColor('#000');
+      doc.text(fitText(doc, text == null ? '' : String(text), cw - 8), annX[ci] + 4, ry + 4, {
+        width: cw - 8, align: c.align, lineBreak: false,
+      });
+    };
+    const drawAnnHeader = (ry) => {
+      doc.rect(left, ry, width, ROW_H).fillAndStroke('#E8E4DD', '#999');
+      annCols.forEach((c, ci) => drawAnnCell(c.label, ci, ry, { bold: true }));
+      return ry + ROW_H;
+    };
+
+    // Annexure title + header.
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#000')
+       .text('Annexure — Lot-wise details', left, y);
+    y += 18;
+    y = drawAnnHeader(y);
+
+    let tQty = 0, tVal = 0, tBill = 0;
+    for (const r of rows) {
+      if (y + ROW_H > bottomLimit()) {
+        doc.addPage();
+        y = doc.page.margins.top;
+        doc.font('Helvetica-Bold').fontSize(10).fillColor('#000')
+           .text(`Annexure (continued) — ${name}`, left, y);
+        y += 18;
+        y = drawAnnHeader(y);
+      }
+      annCols.forEach((c, ci) => {
+        const raw = r[c.key];
+        const val = c.fmt ? c.fmt(Number(raw) || 0) : raw;
+        drawAnnCell(val, ci, y);
+      });
+      doc.rect(left, y, width, ROW_H).lineWidth(0.3).strokeColor('#ccc').stroke();
+      tQty += Number(r.qty) || 0; tVal += Number(r.value) || 0; tBill += Number(r.billamount) || 0;
+      y += ROW_H;
+    }
+    // TOTAL row.
+    if (y + ROW_H > bottomLimit()) { doc.addPage(); y = doc.page.margins.top; }
+    doc.rect(left, y, width, ROW_H).fillAndStroke('#FFF3CD', '#999');
+    drawAnnCell('TOTAL', 0, y, { bold: true });
+    drawAnnCell(fmtQty(tQty),   3, y, { bold: true });
+    drawAnnCell(fmtMoney(tVal), 5, y, { bold: true });
+    drawAnnCell(fmtMoney(tBill),6, y, { bold: true });
+    y += ROW_H;
+
+    // Signature block, bottom-right of the current (last) page. If the table
+    // ended too low, push it onto a fresh page so it never overlaps.
+    let sigY = doc.page.height - doc.page.margins.bottom - 70;
+    if (y > sigY - 10) { doc.addPage(); sigY = doc.page.height - doc.page.margins.bottom - 70; }
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000')
        .text(`For ${header && header.name ? header.name : ''}`.trim(), left, sigY, { width, align: 'right' });
     doc.font('Helvetica').fontSize(10)
        .text('Authorised Signatory', left, sigY + 44, { width, align: 'right' });

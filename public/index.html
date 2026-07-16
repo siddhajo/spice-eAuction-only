@@ -1169,6 +1169,10 @@ body:not([data-feat-tally-link="1"]) .feat-tally-link{display:none !important}
    columns config supplies a rowClass that returns 'row-locked'. */
 tr.row-locked > td{background:#fffbeb !important;border-top:1px solid #fde68a}
 tr.row-locked:hover > td{background:#fef3c7 !important}
+/* Reserved lots — held, not booked. Pale-blue tint so they read distinctly
+   from booked (white) and locked (amber) rows in the lots list. */
+tr.row-reserved > td{background:#e0f2fe !important;border-top:1px solid #7dd3fc}
+tr.row-reserved:hover > td{background:#bae6fd !important}
 /* Default-trade row highlight on the Auctions tab — the trade the mobile
    app pre-selects. Tinted green with an amber/filled star button. */
 tr.row-default-trade > td{background:var(--spice-cardamom-lt) !important}
@@ -4222,6 +4226,10 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
             <button class="needs-invoice-write btn btn-g needs-price-check" id="btn-gen-inv-one" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenInvModal()">+ Generate Invoice</button>
             <button class="needs-invoice-write btn btn-a needs-price-check" id="btn-gen-inv-all" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenAllModal('invoices')">⚡ Generate for All Buyers</button>
+            <!-- Pre-Invoice: opens the SAME selection modal but the user clicks
+                 "Pre-Invoice PDF" to view the exact sales-invoice PDF for
+                 verification — nothing is generated or numbered. -->
+            <button class="btn needs-price-check" id="btn-pre-inv" style="height:38px;padding:0 16px;font-weight:600;background:var(--spice-cardamom);color:#fff" onclick="openGenInvModal()" title="Preview the exact sales invoice without generating it">👁 Pre-Invoice</button>
           </div>
 
           <!-- Print group -->
@@ -5692,6 +5700,14 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <select id="l-sale"><option value=""></option><option value="L">Local (L)</option><option value="I">Inter-state (I)</option><option value="E">Export (E)</option><option value="W">Withdrawn (W)</option><option value="N">N/A (N)</option></select>
     </div>
   </div>
+  <!-- Reserve (hold) this lot instead of booking it. Reserved lots show in a
+       pale-blue row, stay out of booked/invoice totals, and — because the lot
+       number is taken — can't be booked by another seller. Untick to convert
+       the hold into a normal booking. -->
+  <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;margin:6px 2px 2px">
+    <input type="checkbox" id="l-reserved" style="width:16px;height:16px;cursor:pointer;accent-color:#0284c7">
+    Reserve this lot (hold — not booked)
+  </label>
   <div class="actions"><button class="btn btn-o" onclick="hideModal('lot-modal')">Cancel</button><button class="btn btn-g" onclick="saveLot()">Save</button></div>
 </div></div>
 
@@ -5774,7 +5790,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   </label>
   <div class="actions">
     <button class="btn btn-o" onclick="hideModal('gen-inv-modal')">Cancel</button>
-    <button class="btn btn-a" onclick="previewInvoice('sales')">Preview</button>
+    <button class="btn btn-a" onclick="previewInvoice('sales')">Quick Preview</button>
+    <button class="btn" style="background:var(--spice-cardamom);color:#fff" onclick="previewInvoicePdf()" title="View the exact sales-invoice PDF — nothing is generated">👁 Pre-Invoice PDF</button>
     <button class="btn btn-g" onclick="generateInvoice()">Generate</button>
   </div>
 </div></div>
@@ -19994,7 +20011,9 @@ async function loadLots(opts){
     // tab CSS — pale amber background that doesn't clash with zebra
     // striping. Class is also gated by feat-lot-lock via CSS so OFF
     // mode never paints a stray amber row.
-    rowClass: (row) => row && row.locked_at ? 'row-locked' : '',
+    // Locked rows tint amber; reserved (held) lots tint pale-blue. Locked
+    // wins when a lot is somehow both, since the lock is the stronger state.
+    rowClass: (row) => row && row.locked_at ? 'row-locked' : (row && Number(row.reserved) ? 'row-reserved' : ''),
     columns });
   // Restore ticks from the persistent set onto the freshly-mounted
   // checkboxes (DataTable.mount creates new DOM nodes that all start
@@ -20016,6 +20035,7 @@ function openLotEdit(l){
   document.getElementById('lot-modal-title').textContent='Edit Lot #'+l.lot_no;
   document.getElementById('l-id').value=l.id;
   L_FIELDS.forEach(f=>{const el=document.getElementById(L_IDS[f]);if(el)el.value=l[f]!=null?l[f]:''});
+  { const rc=document.getElementById('l-reserved'); if(rc) rc.checked = !!Number(l.reserved); }
 
   // Wire field-level reactivity for the edit modal:
   //   1) Changing CODE → look up the matching buyer (by code, ti, or full
@@ -20557,6 +20577,9 @@ async function saveLot(){
     if(['bags','qty','price','amount'].includes(f)) body[f]=parseFloat(el.value)||0;
     else body[f]=el.value;
   });
+  // Reservation flag lives on its own checkbox (not in L_FIELDS, which are
+  // text inputs). Send 1/0 so the server persists the held state.
+  { const rc=document.getElementById('l-reserved'); if(rc) body.reserved = rc.checked ? 1 : 0; }
   // trader_id: drop when blank so the server's seller-backfill check
   // doesn't fire on a NaN id (lots with NULL trader_id in legacy data).
   // Convert to integer when present so the server doesn't have to.
@@ -20566,6 +20589,15 @@ async function saveLot(){
     const tid = parseInt(body.trader_id, 10);
     if (Number.isFinite(tid)) body.trader_id = tid;
     else delete body.trader_id;
+  }
+  // Warn (but allow) when the buyer is the same party as the seller — usually
+  // a data-entry slip. norm ignores case + surrounding whitespace.
+  {
+    const norm = s => String(s||'').trim().toUpperCase();
+    const seller = norm(body.name);
+    if (seller && (seller === norm(body.buyer) || seller === norm(body.buyer1))) {
+      if (!confirm(`Seller and buyer are the same party ("${(body.name||'').trim()}").\n\nSave anyway?`)) return;
+    }
   }
   // Optimistic UI: close the modal immediately and show a pending toast.
   // The actual save runs in the background. If it fails, we show an error and
@@ -25796,6 +25828,31 @@ async function previewInvoice(type){
     renderPreview(d.invoice,type);
     showModal('preview-modal');
   }catch(e){showError(e)}}
+
+// Pre-Invoice — open the EXACT sales-invoice PDF (same renderer as Generate)
+// for the first ticked buyer, stamped "PREVIEW", without generating/saving
+// anything. Verification only.
+async function previewInvoicePdf(){
+  const aid=document.getElementById('inv-auction').value;
+  if(!aid){alert('Select auction');return}
+  const list=document.getElementById('gi-buyer-list');
+  const checked=list?list.querySelectorAll('.gi-cb:checked'):[];
+  if(!checked||checked.length===0){alert('Tick at least one buyer to preview');return}
+  if(checked.length>1){
+    if(!confirm(`Pre-Invoice shows ONE buyer at a time. Showing "${checked[0].value}".\n\nContinue?`))return;
+  }
+  const body={saleType:document.getElementById('gi-sale').value,buyerCode:checked[0].value,noTI:!!document.getElementById('gi-no-ti')?.checked};
+  await withOverlay('Building pre-invoice…', async () => {
+    const r=await fetch(B+`/api/invoices/preview-pdf/${aid}`,{method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},body:JSON.stringify(body)});
+    if(!r.ok){let m='Pre-invoice failed';try{const e=await r.json();if(e.error)m=e.error;}catch(_){}toast(m);return}
+    const blob=await r.blob();
+    const url=URL.createObjectURL(blob);
+    const w=window.open(url);
+    if(!w) toast('Allow pop-ups to view the pre-invoice');
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+  });
+}
 
 function renderPreview(inv,type){
   const s=inv.summary;

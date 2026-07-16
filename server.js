@@ -4033,7 +4033,7 @@ app.post('/api/auctions/:id/allocations', requireAuctionWrite, (req, res) => {
   for (const a of allocations) {
     db.run(
       'INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?, ?, ?, ?)',
-      [auctionId, a.branch, String(a.start_lot).trim(), String(a.end_lot).trim()]
+      [auctionId, String(a.branch).trim(), String(a.start_lot).trim(), String(a.end_lot).trim()]
     );
   }
 
@@ -4108,16 +4108,17 @@ app.get('/api/auctions/:id/allocation-stats', requireViewOrLotEntry, (req, res) 
     [auctionId]
   );
   const lots = db.all(
-    'SELECT lot_no, branch, name, amount FROM lots WHERE auction_id = ?',
+    'SELECT lot_no, branch, name, amount, reserved FROM lots WHERE auction_id = ?',
     [auctionId]
   );
-  // lot_no → { branch, seller, booked }
+  // lot_no → { branch, seller, booked, reserved }
   const lotInfo = {};
   for (const l of lots) {
     lotInfo[l.lot_no] = {
       branch: l.branch || '',
       seller: l.name   || '',
       booked: Number(l.amount) > 0,
+      reserved: !!Number(l.reserved),
     };
   }
 
@@ -4158,13 +4159,15 @@ app.get('/api/auctions/:id/allocation-stats', requireViewOrLotEntry, (req, res) 
         const info = lotInfo[lotNo];
         const reassigned = reassignedSet.has(lotNo);
         let state = 'free';
-        if (info && info.booked) state = 'booked';
+        if (info && info.reserved) state = 'reserved';      // held, not booked
+        else if (info && info.booked) state = 'booked';
         else if (info)           state = 'allocated';     // present in lots table but amount=0
         if (reassigned && state === 'free') state = 'reassigned';
         lotGrid.push({
           lot: lotNo,
           used: !!info,
           booked: !!(info && info.booked),
+          reserved: !!(info && info.reserved),
           seller: info ? info.seller : '',
           branch: a.branch,
           state,
@@ -4350,9 +4353,14 @@ function applyLotReassignment(db, auctionId, fields, actor) {
   // auction's allocations so we don't create a split-brain ("Erode" vs
   // "ERODE") that allocation-stats would show as two branches.
   {
+    // Compare trim+uppercase on BOTH sides so a stored " Erode " (stray
+    // whitespace) or a case difference still resolves to the same branch.
+    // Without the trim, a whitespace-padded stored name failed to match the
+    // UI's clean name and every moving lot read as "not allocated".
+    const normBr = (s) => String(s || '').trim().toUpperCase();
     const allBranches = db.all('SELECT DISTINCT branch FROM lot_allocations WHERE auction_id = ?', [auctionId]).map(r => r.branch);
-    const canonFrom = allBranches.find(b => String(b).toUpperCase() === from_branch.toUpperCase());
-    const canonTo   = allBranches.find(b => String(b).toUpperCase() === to_branch.toUpperCase());
+    const canonFrom = allBranches.find(b => normBr(b) === normBr(from_branch));
+    const canonTo   = allBranches.find(b => normBr(b) === normBr(to_branch));
     if (canonFrom) from_branch = canonFrom;
     if (canonTo)   to_branch   = canonTo;
   }
@@ -4388,7 +4396,10 @@ function applyLotReassignment(db, auctionId, fields, actor) {
 
   // Every moving lot must currently belong to from_branch. Enumerate the
   // FROM branch's ranges (the selection may span several of them).
-  const fromRanges = db.all('SELECT id, start_lot, end_lot FROM lot_allocations WHERE auction_id = ? AND branch = ?', [auctionId, from_branch]);
+  // Match the branch case/whitespace-insensitively so ranges stored with a
+  // slightly different spelling (" Erode " vs "ERODE") are still found — the
+  // exact-match query here was the direct cause of the false "not allocated".
+  const fromRanges = db.all('SELECT id, start_lot, end_lot FROM lot_allocations WHERE auction_id = ? AND UPPER(TRIM(branch)) = UPPER(TRIM(?))', [auctionId, from_branch]);
   const fromLotSet = new Set();
   const lotsByRangeId = new Map();
   for (const r of fromRanges) {
@@ -5459,9 +5470,9 @@ app.post('/api/lots', requireLotWrite, (req, res) => {
   }
 
   const info = db.run(
-    `INSERT INTO lots (auction_id,lot_no,crop,grade,crpt,branch,state,trader_id,name,padd,ppla,ppin,pstate,pst_code,cr,pan,tel,aadhar,bags,litre,qty,gross_wt,sample_wt,moisture,reserved_price,user_id,bank_id,immediate_payment)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,l.state||'TAMIL NADU',l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',Number(l.reserved_price)||0,l.user_id||'',l.bank_id||null,Number(l.immediate_payment)?1:0]);
+    `INSERT INTO lots (auction_id,lot_no,crop,grade,crpt,branch,state,trader_id,name,padd,ppla,ppin,pstate,pst_code,cr,pan,tel,aadhar,bags,litre,qty,gross_wt,sample_wt,moisture,reserved_price,user_id,bank_id,immediate_payment,reserved)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,l.state||'TAMIL NADU',l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',Number(l.reserved_price)||0,l.user_id||'',l.bank_id||null,Number(l.immediate_payment)?1:0,Number(l.reserved)?1:0]);
   pcClearGate(db, auctionId);
   lvClearGate(db, auctionId);   // new lot → trade must be re-validated before price import
   logLotActivity(db, req, 'create', { id: info.lastInsertRowid, auction_id: auctionId, lot_no: lotNoStr, branch, name: l.name, qty: l.qty });
@@ -5485,6 +5496,9 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
   // UPDATE below binds req.body values verbatim, and better-sqlite3
   // rejects booleans, so normalise before it reaches the bind.
   if (l.immediate_payment != null) l.immediate_payment = Number(l.immediate_payment) ? 1 : 0;
+  // Same 0/1 coercion for the reservation flag — the dynamic UPDATE binds it
+  // verbatim and better-sqlite3 rejects booleans.
+  if (l.reserved != null) l.reserved = Number(l.reserved) ? 1 : 0;
   const db = getDb();
   const lotId = parseInt(req.params.id, 10);
 
@@ -9803,6 +9817,45 @@ app.post('/api/invoices/preview/:auctionId', requireView, (req, res) => {
 
   if (!invoice) return res.status(404).json({ error: 'No data found' });
   res.json({ preview: true, invoice });
+});
+
+// PRE-INVOICE PDF — renders the EXACT sales-invoice PDF (same builder + same
+// renderer as the real Generate flow) for visual verification, WITHOUT
+// persisting anything: no invoices INSERT, no lots.invo/sale UPDATE, and no
+// invoice number consumed (a "PREVIEW" placeholder is stamped on the doc).
+// Body: { saleType, buyerCode, noTI }.
+app.post('/api/invoices/preview-pdf/:auctionId', requireView, async (req, res) => {
+  try {
+    const db = getDb(); const cfg = getSettingsFlat(db);
+    const { saleType, buyerCode } = req.body;
+    const noTI = (req.body.noTI === true || String(req.body.noTI || '').toLowerCase() === 'true' || Number(req.body.noTI) === 1) ? 1 : 0;
+    if (!saleType || !buyerCode) return res.status(400).json({ error: 'saleType and buyerCode are required' });
+
+    // Same uncalculated-lot top-up the JSON preview + Generate flows do, so the
+    // previewed figures match exactly what Generate would produce. This only
+    // fills derived calc fields on already-priced lots; it never touches
+    // invoice numbers or the invoices table.
+    const uncalc = db.all(`SELECT * FROM lots WHERE auction_id = ? AND amount > 0 AND (puramt IS NULL OR puramt = 0)`, [req.params.auctionId]);
+    for (const lot of uncalc) {
+      const c = calculateLot(lot, cfg);
+      db.run(`UPDATE lots SET pqty=?,prate=?,puramt=?,com=?,sertax=?,cgst=?,sgst=?,igst=?,advance=?,balance=?,bilamt=?,refund=?,refud=?,isp_pqty=?,isp_prate=?,isp_puramt=?,asp_pqty=?,asp_prate=?,asp_puramt=? WHERE id=?`,
+        [c.pqty,c.prate,c.puramt,c.com,c.sertax,c.cgst,c.sgst,c.igst,c.advance,c.balance,c.bilamt,c.refund||0,c.refud||0,c.isp_pqty||0,c.isp_prate||0,c.isp_puramt||0,c.asp_pqty||0,c.asp_prate||0,c.asp_puramt||0,lot.id]);
+    }
+
+    const invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, saleType, cfg, { noTI });
+    if (!invoice) return res.status(404).json({ error: `No lots found for buyer "${buyerCode}" in this auction.` });
+    const auction = db.get('SELECT * FROM auctions WHERE id = ?', [req.params.auctionId]);
+    const invoiceDate = (auction && auction.date) || new Date().toISOString().slice(0, 10);
+
+    // Placeholder invoice number — nothing is reserved or stored.
+    const pdf = await generateSalesInvoicePDF(invoice, cfg, saleType, 'PREVIEW', invoiceDate);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="PreInvoice_${saleType}_${String(buyerCode).replace(/[^A-Za-z0-9]/g,'')}.pdf"`);
+    res.send(pdf);
+  } catch (e) {
+    console.error('Pre-invoice PDF error:', e);
+    res.status(500).json({ error: 'Pre-invoice generation failed: ' + e.message });
+  }
 });
 
 // ══════════════════════════════════════════════════════════════

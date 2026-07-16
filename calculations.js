@@ -264,7 +264,8 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg, opts) {
   // Get all lots for this buyer in this auction that have amounts
   // Don't filter by sale — we're ASSIGNING the sale type now
   const lots = db.all(
-    `SELECT * FROM lots WHERE auction_id = ? AND buyer = ? AND amount > 0 
+    `SELECT * FROM lots WHERE auction_id = ? AND buyer = ? AND amount > 0
+     AND (reserved IS NULL OR reserved = 0)
      AND (sale IS NULL OR sale = '' OR sale = ?) ORDER BY lot_no`,
     [auctionId, buyerCode, saleType]
   );
@@ -431,6 +432,7 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg) {
   const lots = db.all(
     `SELECT * FROM lots
      WHERE auction_id = ? AND name = ? AND amount > 0
+       AND (reserved IS NULL OR reserved = 0)
        AND (UPPER(cr) LIKE 'GSTIN%' OR cr GLOB '[0-9][0-9]*')
      ORDER BY lot_no`,
     [auctionId, sellerName]
@@ -949,8 +951,9 @@ function buildAgriBill(db, auctionId, sellerName, cfg) {
     return { error: `Seller "${trimmedName}" has GSTIN (${withGstin[0].cr}). Use Generate Purchase Invoice instead — Bills of Supply are only for agriculturists without GSTIN.` };
   }
 
-  // Filter to agri-eligible lots with amount > 0
-  const lots = withoutGstin.filter(l => (l.amount || 0) > 0);
+  // Filter to agri-eligible lots with amount > 0 (reserved lots are held, not
+  // booked, so they never appear on a bill).
+  const lots = withoutGstin.filter(l => (l.amount || 0) > 0 && !Number(l.reserved));
   
   if (!lots.length) {
     if (withoutGstin.length) {
