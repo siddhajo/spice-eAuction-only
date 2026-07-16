@@ -623,6 +623,89 @@ async function exportPlanterList(db, auctionId) {
   });
 }
 
+// ── Export: Dealer List (Party-wise) ─────────────────────────
+// Consolidated one row per registered dealer (a seller whose `cr` holds a
+// valid 15-char GSTIN), grouped strictly by party (name + cleaned GSTIN)
+// across the whole trade. This is the party-wise counterpart to the plain
+// Dealer List (exportDealerList) — same GSTIN-cleaning rule, but it also
+// rolls up the AMOUNT so the file doubles as a per-dealer value summary.
+async function exportDealerListPartyWise(db, auctionId) {
+  const rows = db.all(
+    `WITH cleaned AS (
+       SELECT state, name, lot_no, bags, qty, amount,
+              UPPER(TRIM(
+                CASE
+                  WHEN LOWER(SUBSTR(TRIM(cr),1,5)) = 'gstin'
+                    THEN LTRIM(SUBSTR(TRIM(cr),6), '. :-')
+                  ELSE TRIM(cr)
+                END
+              )) AS gstin
+         FROM lots
+        WHERE auction_id = ? AND amount > 0
+     )
+     SELECT state, name, gstin,
+            COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
+            SUM(amount) as amount
+       FROM cleaned
+      -- A real GSTIN is exactly 15 alphanumeric chars. Requiring no
+      -- punctuation excludes CR registration numbers that happen to be
+      -- 15 chars long (e.g. "CR.H1-2436/2025"), which are poolers, not dealers.
+      WHERE LENGTH(gstin) = 15 AND gstin NOT GLOB '*[^0-9A-Z]*'
+      GROUP BY name, gstin
+      ORDER BY name`, [auctionId]
+  );
+  const cols = [
+    { header: 'STATE',  key: 'state',  width: 12 },
+    { header: 'NAME',   key: 'name',   width: 30 },
+    { header: 'GSTIN',  key: 'gstin',  width: 18 },
+    { header: 'LOTS',   key: 'lots',   width: 6  },
+    { header: 'BAGS',   key: 'bags',   width: 6  },
+    { header: 'QTY',    key: 'qty',    width: 12, numFmt: '#,##0.000' },
+    { header: 'AMOUNT', key: 'amount', width: 16, numFmt: '#,##0.00'  },
+  ];
+  const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+  return createExcelBuffer('DealerListPartyWise', cols, rows, {
+    db, title: 'Dealer List (Party-wise)', metaLines: auctionMeta(db, auctionId),
+    grandTotal: { label: 'TOTAL', values: {
+      lots: sum('lots'), bags: sum('bags'), qty: sum('qty'), amount: sum('amount'),
+    } },
+  });
+}
+
+// ── Export: Pooler List consolidated (Party-wise) ────────────
+// The Pooler Register (which is one row per lot) rolled up to a single line
+// per pooler: lot count, bags, qty, value and bill amount. Covers every
+// priced seller in the trade (no GSTIN gate — poolers are agriculturists
+// who typically have none).
+async function exportPoolerListConsolidated(db, auctionId) {
+  const rows = db.all(
+    `SELECT name, MAX(cr) as cr,
+            COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
+            SUM(amount) as value, SUM(bilamt) as billamount
+       FROM lots
+      WHERE auction_id = ? AND amount > 0
+      GROUP BY name
+      ORDER BY name`, [auctionId]
+  );
+  const cols = [
+    { header: 'NAME',       key: 'name',       width: 30 },
+    { header: 'CR/GSTIN',   key: 'cr',         width: 20 },
+    { header: 'LOTS',       key: 'lots',       width: 6  },
+    { header: 'BAGS',       key: 'bags',       width: 6  },
+    { header: 'QTY',        key: 'qty',        width: 12, numFmt: '#,##0.000' },
+    { header: 'VALUE',      key: 'value',      width: 16, numFmt: '#,##0.00'  },
+    { header: 'BILLAMOUNT', key: 'billamount', width: 16, numFmt: '#,##0.00'  },
+  ];
+  const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+  return createExcelBuffer('PoolerListConsolidated', cols, rows, {
+    db, title: 'Pooler List consolidated (Party-wise)', metaLines: auctionMeta(db, auctionId),
+    grandTotal: { label: 'TOTAL', values: {
+      lots: sum('lots'), bags: sum('bags'), qty: sum('qty'),
+      value: sum('value'), billamount: sum('billamount'),
+    } },
+  });
+}
+
 // ── Export Type 9: Sales & Taxes ─────────────────────────────
 async function exportSalesTaxes(db, auctionId) {
   const rows = db.all(
@@ -1302,6 +1385,8 @@ const EXPORT_TYPES = {
   collection:         { fn: exportCollection,        name: 'Collection' },
   trade_report:       { fn: exportTradeReport,       name: 'AuctionReport' },
   dealer_list:        { fn: exportDealerList,        name: 'DealerList' },
+  dealer_list_party_wise:   { fn: exportDealerListPartyWise,   name: 'DealerListPartyWise' },
+  pooler_list_consolidated: { fn: exportPoolerListConsolidated, name: 'PoolerListConsolidated' },
   planter_list:       { fn: exportPlanterList,       name: 'PlanterList' },
   sales_taxes:        { fn: exportSalesTaxes,        name: 'SalesTaxes' },
   payment:            { fn: exportPaymentSummary,    name: 'Payment',           needsCfg: true },
@@ -1319,6 +1404,7 @@ module.exports = {
   exportPriceList, exportPriceListBefore,
   exportBankPayment, exportBankPaymentBefore,
   exportPoolerRegister, exportFullFile, exportCollection, exportTradeReport, exportDealerList,
+  exportDealerListPartyWise, exportPoolerListConsolidated,
   exportPlanterList,
   exportSalesTaxes, exportPaymentSummary, exportPaymentPartyWise, exportTDSReturn, exportTallyPurchase,
   exportSalesJournal, exportPurchaseJournal,

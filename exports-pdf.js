@@ -173,7 +173,7 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
 
   function isNumericCol(col) {
     const h = (col.header || '').toUpperCase();
-    return /^(QTY|BAG|BAGS|PRICE|RATE|AMOUNT|PURCHASE|PQTY|PRATE|PURAMT|CGST|SGST|IGST|GST|TCS|TOTAL|DISCOUNT|PAYABLE|ADVANCE|BALANCE|LITRE|LOTS|TDS|ASSESS_VALUE|VALUE|COST|NET|GUNNY|TRANSPORT|INSURANCE|CARDAMOM|CARDAMOM_COST|GUNNY_COST|ROUND|BILAMT|BILLAMOUNT|REFUND|COM|COMMISSION)$/.test(h);
+    return /^(QTY|BAG|BAGS|PRICE|RATE|AMOUNT|BILL AMOUNT|PURCHASE|PQTY|PRATE|PURAMT|CGST|SGST|IGST|GST|TCS|TOTAL|DISCOUNT|PAYABLE|ADVANCE|BALANCE|LITRE|LOTS|TDS|ASSESS_VALUE|VALUE|COST|NET|GUNNY|TRANSPORT|INSURANCE|CARDAMOM|CARDAMOM_COST|GUNNY_COST|ROUND|BILAMT|BILLAMOUNT|REFUND|COM|COMMISSION)$/.test(h);
   }
 
   function fmtCell(val, col) {
@@ -614,6 +614,28 @@ const COLS = {
     { header: 'BAGS',  key: 'bags',  width: 6  },
     { header: 'QTY',   key: 'qty',   width: 12 },
   ],
+  // Dealer List rolled up strictly per party (name + GSTIN) with the amount.
+  dealer_list_party_wise: [
+    { header: 'SL.NO',  key: '_sn',   width: 6  },
+    { header: 'STATE',  key: 'state',  width: 10 },
+    { header: 'NAME',   key: 'name',   width: 28 },
+    { header: 'GSTIN',  key: 'gstin',  width: 18 },
+    { header: 'LOTS',   key: 'lots',   width: 6  },
+    { header: 'BAGS',   key: 'bags',   width: 6  },
+    { header: 'QTY',    key: 'qty',    width: 12 },
+    { header: 'AMOUNT', key: 'amount', width: 16 },
+  ],
+  // Pooler Register consolidated to one row per pooler.
+  pooler_list_consolidated: [
+    { header: 'SL.NO',      key: '_sn',        width: 6  },
+    { header: 'NAME',       key: 'name',       width: 28 },
+    { header: 'CR/GSTIN',   key: 'cr',         width: 18 },
+    { header: 'LOTS',       key: 'lots',       width: 6  },
+    { header: 'BAGS',       key: 'bags',       width: 6  },
+    { header: 'QTY',        key: 'qty',        width: 12 },
+    { header: 'VALUE',      key: 'value',      width: 16 },
+    { header: 'BILLAMOUNT', key: 'billamount', width: 16 },
+  ],
   // Grade-1 planter counterpart to the Dealer List — CR registration number
   // in place of the GSTIN column.
   planter_list: [
@@ -775,6 +797,8 @@ const TOTAL_KEYS = {
   full_file:       ['bags', 'qty', 'amount', 'cgst', 'sgst', 'igst', 'advance', 'balance'],
   collection:      ['bag', 'qty'],
   dealer_list:     ['lots', 'bags', 'qty'],
+  dealer_list_party_wise:   ['lots', 'bags', 'qty', 'amount'],
+  pooler_list_consolidated: ['lots', 'bags', 'qty', 'value', 'billamount'],
   planter_list:    ['lots', 'bags', 'qty'],
   sales_taxes:     ['bag', 'qty', 'cardamom_cost', 'gunny_cost', 'cgst', 'sgst', 'igst', 'tcs', 'transport', 'insurance', 'total'],
   payment:         ['bag', 'qty', 'amount', 'commission', 'payable', 'advance', 'discount'],
@@ -798,6 +822,8 @@ const TITLES = {
   full_file:       'Full File',
   collection:      'Collection / Lorry',
   dealer_list:     'Dealer List',
+  dealer_list_party_wise:   'Dealer List (Party-wise)',
+  pooler_list_consolidated: 'Pooler List consolidated (Party-wise)',
   planter_list:    'Planter List (Grade 1)',
   sales_taxes:     'Sales & Taxes',
   payment:         'Payment Summary',
@@ -822,6 +848,9 @@ const PDF_LAYOUT = {
   full_file: 'landscape',
   // 12 aggregated money columns — needs the wider landscape page.
   payment_party_wise: 'landscape',
+  // 8-column party rollups with money columns — landscape avoids truncation.
+  dealer_list_party_wise: 'landscape',
+  pooler_list_consolidated: 'landscape',
   // Per-lot payment now carries seller-level Advance + Discount columns on top
   // of the money columns — landscape keeps the wide values from wrapping.
   payment: 'landscape',
@@ -852,6 +881,13 @@ const ROW_PREPROCESS = {
   },
   // Dealer list — flat sequential serial (no grouping).
   dealer_list: {
+    serialKey: '_sn',
+  },
+  // Party-wise rollups — one row per party already, just a flat serial.
+  dealer_list_party_wise: {
+    serialKey: '_sn',
+  },
+  pooler_list_consolidated: {
     serialKey: '_sn',
   },
   // Planter list — flat sequential serial (no grouping).
@@ -975,6 +1011,37 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
           COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty
          FROM lots WHERE auction_id = ? AND cr LIKE '%GST%' AND amount > 0
          GROUP BY state, name, cr ORDER BY name`, [auctionId]);
+
+    case 'dealer_list_party_wise':
+      // Same GSTIN-cleaning rule as the XLSX exportDealerListPartyWise, so PDF
+      // and Excel reconcile. Grouped strictly per party (name + GSTIN) + amount.
+      return db.all(
+        `WITH cleaned AS (
+           SELECT state, name, lot_no, bags, qty, amount,
+                  UPPER(TRIM(
+                    CASE
+                      WHEN LOWER(SUBSTR(TRIM(cr),1,5)) = 'gstin'
+                        THEN LTRIM(SUBSTR(TRIM(cr),6), '. :-')
+                      ELSE TRIM(cr)
+                    END
+                  )) AS gstin
+             FROM lots
+            WHERE auction_id = ? AND amount > 0
+         )
+         SELECT state, name, gstin,
+                COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
+                SUM(amount) as amount
+           FROM cleaned
+          WHERE LENGTH(gstin) = 15 AND gstin NOT GLOB '*[^0-9A-Z]*'
+          GROUP BY name, gstin ORDER BY name`, [auctionId]);
+
+    case 'pooler_list_consolidated':
+      return db.all(
+        `SELECT name, MAX(cr) as cr,
+                COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
+                SUM(amount) as value, SUM(bilamt) as billamount
+           FROM lots WHERE auction_id = ? AND amount > 0
+          GROUP BY name ORDER BY name`, [auctionId]);
 
     case 'planter_list':
       // Grade-1 planter list — pre-trade, so NO amount>0 gate. CR prefix
@@ -1225,4 +1292,124 @@ async function exportPdf(db, type, auctionId, cfg, extra = {}) {
   });
 }
 
-module.exports = { exportPdf, TITLES, COLS, renderTablePdf };
+// ── Pooler Certificate ───────────────────────────────────────
+// A free-form printable certificate (NOT a table) attesting that a pooler
+// registered cardamom lots with us over a date range and was paid a total
+// bill amount. Modelled on the sample the user supplied: company letterhead,
+// issue date top-right, centered "CERTIFICATE" title, a single body
+// paragraph with the pooler's name + address + period + amount (in figures
+// and words), and a signature block.
+//
+// Scope: opts.party selects a single pooler; otherwise one page per pooler
+// with lots in range (batch). Requires opts.from + opts.to.
+async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
+  const { getPoolerRegister } = require('./calculations');
+  const { amountToWords } = require('./amount-words');
+  if (!opts.from || !opts.to) {
+    throw new Error('Certificate needs a From and To date — set the date range first.');
+  }
+  const data = getPoolerRegister(db, { from: opts.from, to: opts.to, party: opts.party || null });
+  const parties = (data.parties || []).filter(p => Number(p.summary && p.summary.billamount) !== 0 || (p.rows && p.rows.length));
+  if (!parties.length) throw new Error('No poolers found for the selected period.');
+
+  const header = getCompanyHeader(db);
+  const dateFmt = (cfg && cfg.date_format) || 'dd/mm/yyyy';
+  const issueDate = formatDateForDisplay(_todayIso(), dateFmt);
+  const fromDisp = formatDateForDisplay(opts.from, dateFmt);
+  const toDisp   = formatDateForDisplay(opts.to, dateFmt);
+
+  const doc = new PDFDocument({ size: 'A4', margin: 48 });
+  const buffers = [];
+  doc.on('data', b => buffers.push(b));
+
+  parties.forEach((p, idx) => {
+    if (idx > 0) doc.addPage();
+    const left = doc.page.margins.left;
+    const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+
+    // Letterhead (logo + company name + address), reused from the shared PDF
+    // header renderer so certificates match every other document.
+    const afterHeaderY = drawCompanyHeader(doc, header || {}, {
+      x: left, y: doc.page.margins.top, width, showAddress: true,
+    });
+    doc.moveTo(left, afterHeaderY + 6).lineTo(left + width, afterHeaderY + 6)
+       .lineWidth(0.75).strokeColor('#333').stroke();
+
+    // Issue date, top-right below the rule.
+    let y = afterHeaderY + 18;
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000')
+       .text(`Date: ${issueDate}`, left, y, { width, align: 'right' });
+
+    // Title.
+    y += 34;
+    const titleText = 'CERTIFICATE';
+    doc.font('Helvetica-Bold').fontSize(16);
+    const tW = doc.widthOfString(titleText);
+    const tX = left + (width - tW) / 2;
+    doc.text(titleText, tX, y);
+    doc.moveTo(tX, y + 20).lineTo(tX + tW, y + 20).lineWidth(1).strokeColor('#000').stroke();
+
+    // Body paragraph.
+    y += 54;
+    const name = String(p.name || '').trim();
+    const addr = _poolerAddress(db, name);
+    const billamt = Math.round(Number(p.summary && p.summary.billamount) || 0);
+    const amtFig = _fmtRupeesWhole(billamt);
+    const amtWords = amountToWords(billamt); // e.g. "Rupees Fourteen Lakh …"
+
+    const residentOf = addr ? ` and a resident of ${addr}` : '';
+    const paragraph =
+      `This is to certify that ${name}, a cardamom Planter${residentOf} has registered ` +
+      `Cardamom lots at our end during the period from ${fromDisp} to ${toDisp} and received ` +
+      `payment, totally to the tune of Rs. ${amtFig}/- (${amtWords} Only) as reported in annexure.`;
+
+    doc.font('Helvetica').fontSize(12).fillColor('#000')
+       .text(paragraph, left, y, { width, align: 'justify', lineGap: 6 });
+
+    // Signature block, bottom-right.
+    const sigY = doc.page.height - doc.page.margins.bottom - 70;
+    doc.font('Helvetica-Bold').fontSize(11)
+       .text(`For ${header && header.name ? header.name : ''}`.trim(), left, sigY, { width, align: 'right' });
+    doc.font('Helvetica').fontSize(10)
+       .text('Authorised Signatory', left, sigY + 44, { width, align: 'right' });
+  });
+
+  doc.end();
+  return new Promise(resolve => {
+    doc.on('end', () => resolve(Buffer.concat(buffers)));
+  });
+}
+
+// Today's date as an ISO yyyy-mm-dd string. Kept local so certificate issue
+// date matches the app's date-display formatting via formatDateForDisplay.
+function _todayIso() {
+  const d = new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+// Whole-rupee Indian grouping (no decimals) — matches the certificate sample
+// "Rs. 14,96,926/-".
+function _fmtRupeesWhole(n) {
+  const digits = String(Math.abs(Math.round(Number(n) || 0)));
+  if (digits.length <= 3) return digits;
+  const last3 = digits.slice(-3);
+  const rest = digits.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ',');
+  return `${rest},${last3}`;
+}
+
+// Compose a pooler's postal address from the traders master (padd + place +
+// state). Returns '' when the pooler isn't in the master or has no address.
+function _poolerAddress(db, name) {
+  if (!name) return '';
+  let t = null;
+  try {
+    t = db.get('SELECT padd, ppla, pin, pstate FROM traders WHERE UPPER(TRIM(name)) = UPPER(?) LIMIT 1', [String(name).trim()]);
+  } catch (e) { t = null; }
+  if (!t) return '';
+  const parts = [t.padd, t.ppla, t.pstate, t.pin].map(s => String(s || '').trim()).filter(Boolean);
+  return parts.join(', ');
+}
+
+module.exports = { exportPdf, TITLES, COLS, renderTablePdf, renderPoolerCertificatePdf };

@@ -13,7 +13,7 @@ const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF,
 const { amountToWords } = require('./amount-words');
 const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx } = require('./exports');
 const { getCompanyHeader, writeXlsxCompanyHeader, formatDateForDisplay } = require('./report-formatters');
-const { exportPdf: exportAnyPdf, renderTablePdf } = require('./exports-pdf');
+const { exportPdf: exportAnyPdf, renderTablePdf, renderPoolerCertificatePdf } = require('./exports-pdf');
 const { DBF_EXPORTS } = require('./dbf-exports');
 // Per-install time-bombed licensing — see license.js for the model.
 // Token signing/verification + the license_state row helpers live there
@@ -9691,6 +9691,86 @@ app.get('/api/exports/individual-register', requireExport, async (req, res) => {
     const buffer = await exportIndividualRegister(db, kind, opts);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${fileBase}.xlsx"`);
+    res.send(Buffer.from(buffer));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Pooler Certificate — printable PDF attesting a pooler registered cardamom
+// lots over a From/To period and was paid a total bill amount. When `party`
+// is given it's a single certificate; otherwise one page per pooler in range.
+app.get('/api/exports/pooler-certificate', requireExport, async (req, res) => {
+  try {
+    const db = getDb();
+    const cfg = getSettingsFlat(db);
+    const opts = {
+      from:  req.query.from  || null,
+      to:    req.query.to    || null,
+      party: req.query.party || null,
+    };
+    const buffer = await renderPoolerCertificatePdf(db, cfg, opts);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="PoolerCertificate.pdf"');
+    res.send(buffer);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Export the ticked (filtered) sales invoices as a compact list — Excel or
+// PDF — with headers: Sale type, Inv no, Trade name, GSTIN, Bags, Qty, Bill
+// amount. Body: { ids:[...], format:'xlsx'|'pdf' }.
+app.post('/api/invoices/export-selected', requireExport, async (req, res) => {
+  try {
+    const db = getDb();
+    const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : [])
+      .map(n => Number(n)).filter(Number.isFinite);
+    if (!ids.length) return res.status(400).json({ error: 'No invoices selected' });
+    const format = String(req.body.format || 'xlsx').toLowerCase();
+
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = db.all(
+      `SELECT sale, invo, buyer1, gstin, bag, qty, tot
+         FROM invoices WHERE id IN (${placeholders})
+        ORDER BY sale, invo`, ids);
+    if (!rows.length) return res.status(404).json({ error: 'No matching invoices found' });
+
+    const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+
+    if (format === 'pdf') {
+      const columns = [
+        { header: 'SALE',        key: 'sale',   width: 8  },
+        { header: 'INVO',        key: 'invo',   width: 10 },
+        { header: 'TRADE NAME',  key: 'buyer1', width: 30 },
+        { header: 'GSTIN',       key: 'gstin',  width: 18 },
+        { header: 'BAGS',        key: 'bag',    width: 8  },
+        { header: 'QTY',         key: 'qty',    width: 12 },
+        { header: 'BILL AMOUNT', key: 'tot',    width: 16 },
+      ];
+      const totals = { sale: 'TOTAL', bag: sum('bag'), qty: sum('qty'), tot: sum('tot') };
+      const buffer = await renderTablePdf({
+        title: 'Sales Invoices',
+        subtitle: `${rows.length} invoice(s)`,
+        columns, rows, totals,
+        companyHeader: getCompanyHeader(db),
+      });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'attachment; filename="SalesInvoices.pdf"');
+      return res.send(buffer);
+    }
+
+    const cols = [
+      { header: 'SALE TYPE',   key: 'sale',   width: 10 },
+      { header: 'INV NO',      key: 'invo',   width: 12 },
+      { header: 'TRADE NAME',  key: 'buyer1', width: 32 },
+      { header: 'GSTIN',       key: 'gstin',  width: 20 },
+      { header: 'BAGS',        key: 'bag',    width: 8  },
+      { header: 'QTY',         key: 'qty',    width: 12, numFmt: '#,##0.000' },
+      { header: 'BILL AMOUNT', key: 'tot',    width: 16, numFmt: '#,##0.00'  },
+    ];
+    const buffer = await createExcelBuffer('SalesInvoices', cols, rows, {
+      db, title: 'Sales Invoices',
+      grandTotal: { label: 'TOTAL', values: { bag: sum('bag'), qty: sum('qty'), tot: sum('tot') } },
+    });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="SalesInvoices.xlsx"');
     res.send(Buffer.from(buffer));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

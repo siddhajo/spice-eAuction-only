@@ -4228,6 +4228,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <button class="btn" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="printSelectedInvoices()" title="Print all ticked invoices">🖨 Print Selected</button>
             <button class="btn feat-whatsapp" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedInvoices()" title="Send ticked sales invoices via WhatsApp">📱 WhatsApp Selected</button>
+            <button class="btn" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 14px;background:var(--spice-cardamom);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(22,101,52,.22)" onclick="exportSelectedInvoices('xlsx')" title="Export ticked invoices to Excel (Sale type, Inv no, Trade name, GSTIN, Bags, Qty, Bill amount)">📊 Export Excel</button>
+            <button class="btn" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="exportSelectedInvoices('pdf')" title="Export ticked invoices to PDF (Sale type, Inv no, Trade name, GSTIN, Bags, Qty, Bill amount)">📄 Export PDF</button>
             <button id="inv-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedInvoices()" title="Delete all ticked invoices">🗑 Delete Selected <span id="inv-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <!-- ASP-only: Print Selected Purchase. Hidden outside ASP context.
                  Visibility toggled by applyAspContextVisibility() at load + state switch. -->
@@ -5193,6 +5195,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <button class="btn btn-g" onclick="loadRegister()">Load</button>
           <button class="btn btn-a" onclick="exportRegister('xlsx')">Export XLSX</button>
           <button class="btn btn-orange" onclick="exportRegister('pdf')">Export PDF</button>
+          <button class="btn btn-orange" id="reg-certificate-btn" style="display:none" onclick="generateCertificate()">Certificate</button>
         </div>
         <div style="font-size:11.5px;color:var(--text3);margin-bottom:8px">Pick an Auction for a single auction, or leave it on “All auctions” and set a From/To date range. The date range is ignored when a specific auction is selected.</div>
         <div style="overflow-x:auto;max-height:520px"><table id="reg-table"><thead id="reg-head"></thead><tbody id="reg-body"></tbody></table></div>
@@ -21213,6 +21216,30 @@ async function printSelectedInvoices(){
   );
 }
 
+// Export the ticked (filtered) invoices to Excel or PDF as a compact list:
+// Sale type | Inv no | Trade name | GSTIN | Bags | Qty | Bill amount.
+// Downloads the file (not a print dialog), matching the register exports.
+async function exportSelectedInvoices(format){
+  const body=document.getElementById('invoices-list');
+  if(!body){alert('No invoice list found');return}
+  const checked=Array.from(body.querySelectorAll('.inv-select-cb:checked'));
+  if(!checked.length){alert('Tick one or more invoices first (use the checkbox column)');return}
+  const ids=checked.map(cb=>Number(cb.value)).filter(Boolean);
+  const name = 'SalesInvoices.' + (format === 'pdf' ? 'pdf' : 'xlsx');
+  await withOverlay(`Exporting ${ids.length} invoice(s) (${(format||'xlsx').toUpperCase()})…`, async () => {
+    const r = await fetch(B + '/api/invoices/export-selected', {
+      method:'POST',
+      headers:{ 'Authorization':'Bearer '+T, 'Content-Type':'application/json' },
+      body: JSON.stringify({ ids, format: format || 'xlsx' })
+    });
+    if (!r.ok) { let m='Export failed'; try { const e=await r.json(); if(e.error) m=e.error; } catch(x){} toast(m); return; }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  });
+}
+
 // Bulk-set the lorry / vehicle number on ticked invoices. Stored in
 // invoices.lorry_no, picked up by the Tally sales voucher XML generator
 // as e-way bill VehicleNo. Empty input clears the field.
@@ -23377,7 +23404,8 @@ async function loadPayments(){
 const EXP_LABELS={lot_slip:'Lot Slip',lot_slip_after:'Lot Slip (After)',
   lot_buyer:'Lot Buyer',lot_name:'Lot Name',lot_payment:'Lot Payment',
   price_list_before:'Price List (Before)',price_list:'Price List',bank_payment_before:'Bank Payment (Before)',bank_payment:'Bank Payment (RTGS/NEFT)',
-  pooler_register:'Pooler Register',full_file:'Full File',collection:'Collection',trade_report:'Auction Report',dealer_list:'Dealer List',planter_list:'Planter List (Grade 1)',
+  pooler_register:'Pooler Register',full_file:'Full File',collection:'Collection',trade_report:'Auction Report',dealer_list:'Dealer List',
+  dealer_list_party_wise:'Dealer List (Party-wise)',pooler_list_consolidated:'Pooler List consolidated (Party-wise)',planter_list:'Planter List (Grade 1)',
   payment:'Payment Summary',payment_party_wise:'Payment Summary - Party-wise',
   eauction_csv:'e-Auction (Spices Board) CSV'};
 // Export types that only support a specific format (no XLSX/PDF choice).
@@ -25522,6 +25550,8 @@ function onRegTypeChange(){
   if (saleWrap) saleWrap.style.display = (type === 'sales') ? '' : 'none';
   if (auctionWrap) auctionWrap.style.display = indiv ? 'none' : '';
   if (partyWrap) partyWrap.style.display = indiv ? '' : 'none';
+  const certBtn = document.getElementById('reg-certificate-btn');
+  if (certBtn) certBtn.style.display = (type === 'pooler') ? '' : 'none';
   if (indiv) populateRegParties();
 }
 // Fill the Party dropdown for the active individual register + date range.
@@ -25705,6 +25735,29 @@ async function exportRegister(format){
   await withOverlay(`Exporting ${base} (${(format||'xlsx').toUpperCase()})…`, async () => {
     const r = await fetch(B + `/api/exports/${ep}?` + p.toString(), { headers:{'Authorization':'Bearer '+T} });
     if (!r.ok) { let m='Export failed'; try { const e=await r.json(); if(e.error) m=e.error; } catch(x){} toast(m); return; }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  });
+}
+// Pooler Certificate — PDF certifying the selected pooler (or every pooler in
+// range if "All parties") registered cardamom lots over the From/To period and
+// was paid a total bill amount. Requires a date range.
+async function generateCertificate(){
+  const type = document.getElementById('reg-type').value;
+  if (type !== 'pooler') { toast('Certificates are available for the Pooler Register only'); return; }
+  const from = document.getElementById('reg-from').value;
+  const to = document.getElementById('reg-to').value;
+  if (!from || !to) { toast('Set a From and To date first'); return; }
+  const party = document.getElementById('reg-party') ? document.getElementById('reg-party').value : '';
+  const p = new URLSearchParams();
+  p.set('from', from); p.set('to', to);
+  if (party) p.set('party', party);
+  const name = 'PoolerCertificate.pdf';
+  await withOverlay('Generating Certificate…', async () => {
+    const r = await fetch(B + '/api/exports/pooler-certificate?' + p.toString(), { headers:{'Authorization':'Bearer '+T} });
+    if (!r.ok) { let m='Certificate failed'; try { const e=await r.json(); if(e.error) m=e.error; } catch(x){} toast(m); return; }
     const blob = await r.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = name; a.click();
