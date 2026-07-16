@@ -9858,6 +9858,53 @@ app.post('/api/invoices/preview-pdf/:auctionId', requireView, async (req, res) =
   }
 });
 
+// PRE-INVOICE (bulk) — returns the built sales-invoice details for EVERY buyer
+// in the auction (optionally filtered by sale type) so the Pre-Invoice screen
+// can list bill-to / ship-to / amounts exactly as they'll appear on the real
+// invoice, WITHOUT generating or numbering anything. Query: ?sale=L&noTI=0.
+app.get('/api/invoices/preview-all/:auctionId', requireView, (req, res) => {
+  try {
+    const db = getDb(); const cfg = getSettingsFlat(db);
+    const aid = req.params.auctionId;
+    const saleFilter = String(req.query.sale || '').trim().toUpperCase();
+    const noTI = (req.query.noTI === '1' || String(req.query.noTI || '').toLowerCase() === 'true') ? 1 : 0;
+
+    // Match the Generate/Preview flows: top up any uncalculated priced lots so
+    // the previewed figures equal what Generate would produce. No invoice
+    // numbers or invoices rows are touched.
+    const uncalc = db.all(`SELECT * FROM lots WHERE auction_id = ? AND amount > 0 AND (puramt IS NULL OR puramt = 0)`, [aid]);
+    for (const lot of uncalc) {
+      const c = calculateLot(lot, cfg);
+      db.run(`UPDATE lots SET pqty=?,prate=?,puramt=?,com=?,sertax=?,cgst=?,sgst=?,igst=?,advance=?,balance=?,bilamt=?,refund=?,refud=?,isp_pqty=?,isp_prate=?,isp_puramt=?,asp_pqty=?,asp_prate=?,asp_puramt=? WHERE id=?`,
+        [c.pqty,c.prate,c.puramt,c.com,c.sertax,c.cgst,c.sgst,c.igst,c.advance,c.balance,c.bilamt,c.refund||0,c.refud||0,c.isp_pqty||0,c.isp_prate||0,c.isp_puramt||0,c.asp_pqty||0,c.asp_prate||0,c.asp_puramt||0,lot.id]);
+    }
+
+    // Every buyer with priced, non-reserved lots in this auction.
+    const buyers = db.all(
+      `SELECT DISTINCT l.buyer FROM lots l
+        WHERE l.auction_id = ? AND l.buyer IS NOT NULL AND l.buyer != ''
+          AND l.amount > 0 AND (l.reserved IS NULL OR l.reserved = 0)
+        ORDER BY l.buyer`, [aid]).map(r => r.buyer);
+
+    const previews = [];
+    for (const buyer of buyers) {
+      // Effective sale type: a sale already stamped on the lots wins, else the
+      // buyer's default, else Local. Mirrors eligible-buyers' COALESCE.
+      const lotSale = db.get(`SELECT sale FROM lots WHERE auction_id = ? AND buyer = ? AND amount > 0 AND sale IS NOT NULL AND sale != '' LIMIT 1`, [aid, buyer]);
+      const bRow = db.get('SELECT sale FROM buyers WHERE buyer = ? LIMIT 1', [buyer]);
+      const eff = String((lotSale && lotSale.sale) || (bRow && bRow.sale) || 'L').toUpperCase();
+      if (saleFilter && eff !== saleFilter) continue;
+      const inv = buildSalesInvoice(db, aid, buyer, eff, cfg, { noTI });
+      if (!inv) continue;
+      previews.push({ buyerCode: buyer, saleType: eff, buyer: inv.buyer, summary: inv.summary, lineItems: inv.lineItems });
+    }
+    res.json({ previews });
+  } catch (e) {
+    console.error('Pre-invoice preview-all error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════
 // PAYMENTS (PAYCHECK.PRG)
 // ══════════════════════════════════════════════════════════════

@@ -1327,16 +1327,34 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     const left = doc.page.margins.left;
     const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
 
-    // Letterhead (logo + company name + address), reused from the shared PDF
-    // header renderer so certificates match every other document.
-    const afterHeaderY = drawCompanyHeader(doc, header || {}, {
-      x: left, y: doc.page.margins.top, width, showAddress: true,
-    });
-    doc.moveTo(left, afterHeaderY + 6).lineTo(left + width, afterHeaderY + 6)
-       .lineWidth(0.75).strokeColor('#333').stroke();
+    // Letterhead — full company name centred across the whole page width so a
+    // long legal name wraps naturally instead of being ellipsized. (The shared
+    // drawCompanyHeader packs name+logo+address into a narrow left column and
+    // truncates with "…" when the name is long — fine for wide table reports,
+    // wrong for a certificate that has the whole page to use.)
+    let hy = doc.page.margins.top;
+    if (header && header.logoPath) {
+      try { doc.image(header.logoPath, left + (width - 46) / 2, hy, { fit: [46, 46] }); hy += 52; }
+      catch (_) { /* logo optional */ }
+    }
+    doc.font('Helvetica-Bold').fillColor('#000');
+    let nameSize = 15; doc.fontSize(nameSize);
+    // Shrink only if the name would spill past two lines at this size — it
+    // still wraps (never truncates) if it's longer than that.
+    while (nameSize > 11 && doc.heightOfString(header.name || '', { width, align: 'center' }) > nameSize * 2.4) {
+      nameSize -= 0.5; doc.fontSize(nameSize);
+    }
+    doc.text(header.name || '', left, hy, { width, align: 'center' });
+    let ay = doc.y + 2;
+    if (header && header.address1) {
+      doc.font('Helvetica').fontSize(9).fillColor('#444').text(header.address1, left, ay, { width, align: 'center' });
+      ay = doc.y;
+    }
+    const ruleY = ay + 6;
+    doc.moveTo(left, ruleY).lineTo(left + width, ruleY).lineWidth(0.75).strokeColor('#333').stroke();
 
     // Issue date, top-right below the rule.
-    let y = afterHeaderY + 18;
+    let y = ruleY + 14;
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#000')
        .text(`Date: ${issueDate}`, left, y, { width, align: 'right' });
 
@@ -1439,8 +1457,12 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     // ended too low, push it onto a fresh page so it never overlaps.
     let sigY = doc.page.height - doc.page.margins.bottom - 70;
     if (y > sigY - 10) { doc.addPage(); sigY = doc.page.height - doc.page.margins.bottom - 70; }
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000')
-       .text(`For ${header && header.name ? header.name : ''}`.trim(), left, sigY, { width, align: 'right' });
+    // Full company name — shrink the font so a long legal name stays on one
+    // right-aligned line instead of wrapping or truncating.
+    const forStr = `For ${header && header.name ? header.name : ''}`.trim();
+    let sigSize = 11; doc.font('Helvetica-Bold').fillColor('#000').fontSize(sigSize);
+    while (sigSize > 8 && doc.widthOfString(forStr) > width) { sigSize -= 0.5; doc.fontSize(sigSize); }
+    doc.text(forStr, left, sigY, { width, align: 'right' });
     doc.font('Helvetica').fontSize(10)
        .text('Authorised Signatory', left, sigY + 44, { width, align: 'right' });
   });

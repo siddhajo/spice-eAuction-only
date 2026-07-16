@@ -2096,6 +2096,9 @@ body[data-comfort="1"] #comfort-toggle-label::after{content:'\2191';margin-left:
   cursor:not-allowed;opacity:.95;box-shadow:0 1px 2px rgba(13,124,95,.25);
 }
 .le-lot-chip.used:hover{transform:none;background:linear-gradient(135deg,var(--green) 0%,#0a6a50 100%);color:#fff}
+/* Reserved (held) lots — blue instead of the booked green, so an operator
+   can see at a glance which taken lots are reservations vs real bookings. */
+.le-lot-chip.used.reserved,.le-lot-chip.used.reserved:hover{background:linear-gradient(135deg,#0284c7 0%,#0369a1 100%);border-color:#0369a1;box-shadow:0 1px 2px rgba(2,132,199,.25)}
 .le-lot-chip.selected{
   background:#FEF3C7;color:#92400E;border-style:solid;border-color:#F59E0B;
   box-shadow:0 0 0 2px rgba(245,158,11,.25);
@@ -2702,6 +2705,13 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <button class="side-item" data-tab="invoices" onclick="go('invoices')">
           <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
           Sales Invoices
+        </button>
+        <!-- Pre-Invoice — read-only preview of every sales invoice that would
+             be generated (bill-to, ship-to, amounts) + exact-PDF preview.
+             Nothing is generated or numbered from here. -->
+        <button class="side-item" data-tab="preinvoice" onclick="go('preinvoice')">
+          <svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+          Pre-Invoice
         </button>
         <button class="side-item" data-tab="purchases" onclick="go('purchases')">
           <svg viewBox="0 0 24 24"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4zM3 6h18M16 10a4 4 0 0 1-8 0"/></svg>
@@ -3900,6 +3910,15 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <span style="font-size:13.5px;font-weight:600;color:var(--text)">Immediate payment <span style="font-weight:400;color:var(--text3)">— calculate early-payment discount for this lot</span></span>
         </label>
 
+        <!-- Reserve (hold) this lot instead of booking it. Reserved lots show
+             in a pale-blue row/chip, stay out of booked/invoice totals, and —
+             because the lot number is taken — can't be booked by another
+             seller. Untick (on edit) to convert the hold into a booking. -->
+        <label for="le-reserved" style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:10px 14px;border:1.5px solid var(--border);border-radius:8px;cursor:pointer;user-select:none">
+          <input type="checkbox" id="le-reserved" style="width:18px;height:18px;accent-color:#0284c7;cursor:pointer">
+          <span style="font-size:13.5px;font-weight:600;color:var(--text)">Reserve this lot <span style="font-weight:400;color:var(--text3)">— hold the lot number without booking it</span></span>
+        </label>
+
         <div id="le-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:13px;margin-bottom:12px"></div>
 
         <div style="display:flex;gap:10px;align-items:center">
@@ -4226,10 +4245,6 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
             <button class="needs-invoice-write btn btn-g needs-price-check" id="btn-gen-inv-one" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenInvModal()">+ Generate Invoice</button>
             <button class="needs-invoice-write btn btn-a needs-price-check" id="btn-gen-inv-all" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenAllModal('invoices')">⚡ Generate for All Buyers</button>
-            <!-- Pre-Invoice: opens the SAME selection modal but the user clicks
-                 "Pre-Invoice PDF" to view the exact sales-invoice PDF for
-                 verification — nothing is generated or numbered. -->
-            <button class="btn needs-price-check" id="btn-pre-inv" style="height:38px;padding:0 16px;font-weight:600;background:var(--spice-cardamom);color:#fff" onclick="openGenInvModal()" title="Preview the exact sales invoice without generating it">👁 Pre-Invoice</button>
           </div>
 
           <!-- Print group -->
@@ -4255,6 +4270,37 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
         <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Sale</th><th>Inv#</th><th>Lorry</th><th>Distance (km)</th><th>Code</th><th>Trade Name</th><th>Bags</th><th>Qty</th><th>Amount</th><th>Insurance</th><th>Transport</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th>Actions</th></tr></thead><tbody id="invoices-list"></tbody></table></div>
         <div id="invoices-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
+      </div>
+    </div>
+
+    <!-- PRE-INVOICE — read-only preview of every sales invoice that WOULD be
+         generated for an auction (bill-to, ship-to, amounts, taxes) plus a
+         one-click exact-PDF preview. Nothing is generated or numbered here. -->
+    <div class="tc" id="tc-preinvoice">
+      <div class="card">
+        <h2>Pre-Invoice <span style="font-weight:400;font-size:12px;color:var(--text3)">Preview how each sales invoice will look — before you generate. Nothing is saved.</span></h2>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:12px">
+          <div class="fg" style="margin:0;min-width:200px"><label>Auction</label>
+            <select id="pi-auction" onchange="loadPreInvoiceList()" style="width:100%;height:38px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px"></select>
+          </div>
+          <div class="fg" style="margin:0"><label>Sale Type</label>
+            <select id="pi-sale" onchange="loadPreInvoiceList()" style="height:38px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px">
+              <option value="">All sale types</option>
+              <option value="L">Local (L)</option>
+              <option value="I">Inter-state (I)</option>
+              <option value="E">Export (E)</option>
+              <option value="W">Withdrawn (W)</option>
+              <option value="N">N/A (N)</option>
+            </select>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;height:38px;font-size:13px;font-weight:600;cursor:pointer">
+            <input type="checkbox" id="pi-no-ti" onchange="loadPreInvoiceList()" style="width:16px;height:16px;cursor:pointer">
+            No Transport &amp; Insurance
+          </label>
+          <button class="btn btn-g" onclick="loadPreInvoiceList()" style="height:38px;padding:0 16px;font-weight:600">Reload</button>
+          <span id="pi-count" style="font-size:12px;color:var(--text3);margin-left:auto"></span>
+        </div>
+        <div id="pi-list"><div style="color:var(--text3);font-size:13px;padding:16px;text-align:center">Select an auction to preview its sales invoices.</div></div>
       </div>
     </div>
 
@@ -5700,14 +5746,6 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <select id="l-sale"><option value=""></option><option value="L">Local (L)</option><option value="I">Inter-state (I)</option><option value="E">Export (E)</option><option value="W">Withdrawn (W)</option><option value="N">N/A (N)</option></select>
     </div>
   </div>
-  <!-- Reserve (hold) this lot instead of booking it. Reserved lots show in a
-       pale-blue row, stay out of booked/invoice totals, and — because the lot
-       number is taken — can't be booked by another seller. Untick to convert
-       the hold into a normal booking. -->
-  <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;margin:6px 2px 2px">
-    <input type="checkbox" id="l-reserved" style="width:16px;height:16px;cursor:pointer;accent-color:#0284c7">
-    Reserve this lot (hold — not booked)
-  </label>
   <div class="actions"><button class="btn btn-o" onclick="hideModal('lot-modal')">Cancel</button><button class="btn btn-g" onclick="saveLot()">Save</button></div>
 </div></div>
 
@@ -5791,7 +5829,6 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   <div class="actions">
     <button class="btn btn-o" onclick="hideModal('gen-inv-modal')">Cancel</button>
     <button class="btn btn-a" onclick="previewInvoice('sales')">Quick Preview</button>
-    <button class="btn" style="background:var(--spice-cardamom);color:#fff" onclick="previewInvoicePdf()" title="View the exact sales-invoice PDF — nothing is generated">👁 Pre-Invoice PDF</button>
     <button class="btn btn-g" onclick="generateInvoice()">Generate</button>
   </div>
 </div></div>
@@ -8441,7 +8478,7 @@ function go(tab){
     try { applyLogoBadge(); } catch(_) {}
   }
   const loaders={dash:loadStats,insights:loadInsights,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>searchTraders(''),buyers:()=>searchBuyers(''),
-    auctions:loadAuctions,reassignreqs:loadReassignRequests,lots:loadLotAuctions,invoices:loadInvAuctions,purchases:loadPurAuctions,
+    auctions:loadAuctions,reassignreqs:loadReassignRequests,lots:loadLotAuctions,invoices:loadInvAuctions,preinvoice:loadPreInvoice,purchases:loadPurAuctions,
     payments:loadPayAuctions,exports:loadExpAuctions,tds:()=>{},lorry:loadLorryAuctions,
     bills:loadBillAuctions,debit:loadDnAuctions,debitplanter:loadDnpAuctions,journals:loadJournalDefault,registers:loadRegisterDefault,tally:loadTallyAuctions,
     spicesboard:loadSpiceBoard,pricecheck:loadPriceCheckAuctions,
@@ -12741,6 +12778,9 @@ async function leSaveLot(){
       // Immediate-payment flag (0/1) — gates the per-lot early-payment
       // discount on the server (calculations.js).
       immediate_payment: (document.getElementById('le-immediate-payment')?.checked ? 1 : 0),
+      // Reservation flag (0/1) — held lot: distinct colour, out of
+      // booked/invoice totals, blocks the lot number for other sellers.
+      reserved: (document.getElementById('le-reserved')?.checked ? 1 : 0),
       state: _le.selectedSeller.pstate || getDefaultBusinessState(),
       // Pull seller's denormalised fields onto the lot row so existing
       // listings (Lots tab, exports) work without a join.
@@ -12812,6 +12852,9 @@ async function leSaveLot(){
     // decision; doesn't carry over). Left untouched in edit mode.
     const immEl = document.getElementById('le-immediate-payment');
     if (immEl && !wasEditing) immEl.checked = false;
+    // Reserve — reset so holding a lot is a deliberate per-lot choice.
+    const resEl = document.getElementById('le-reserved');
+    if (resEl && !wasEditing) resEl.checked = false;
     setTimeout(() => document.getElementById('le-lotno').focus(), 50);
     // A freshly-created lot has the highest lot_no → it lands on page 1
     // (lot_no DESC). Jump there so the user sees the entry they just made.
@@ -12875,6 +12918,8 @@ function leResetForm(){
   if (reservedEl2) reservedEl2.value = '';
   const immEl2 = document.getElementById('le-immediate-payment');
   if (immEl2) immEl2.checked = false;
+  const resEl2 = document.getElementById('le-reserved');
+  if (resEl2) resEl2.checked = false;
   document.getElementById('le-err').style.display = 'none';
   // Drop edit mode if active
   _le.editingLotId = null;
@@ -12936,6 +12981,8 @@ async function leEditLot(lotId){
   if (reservedEl3) reservedEl3.value = (lot.reserved_price != null && Number(lot.reserved_price) !== 0) ? lot.reserved_price : '';
   const immEl3 = document.getElementById('le-immediate-payment');
   if (immEl3) immEl3.checked = !!Number(lot.immediate_payment);
+  const resEl3 = document.getElementById('le-reserved');
+  if (resEl3) resEl3.checked = !!Number(lot.reserved);
   // In gunny mode, reconstruct the entry-time fields from the stored net
   // weight: gunny = bags × default, weight w/ gunny = net + gunny. The
   // stored value remains the net weight (qty); these are display helpers.
@@ -14066,6 +14113,7 @@ function renderReassignTiles() {
     if (selected) return 'background:#10B981;color:#fff;border:1px solid #047857';
     switch (st) {
       case 'booked':     return 'background:#FCA5A5;color:#7f1d1d;border:1px solid #ef4444;cursor:not-allowed';
+      case 'reserved':   return 'background:#BAE6FD;color:#075985;border:1px solid #0284c7;cursor:not-allowed';
       case 'allocated': return 'background:#DBEAFE;color:#1e3a8a;border:1px solid #93c5fd';
       case 'reassigned':return 'background:#FDE68A;color:#78350f;border:1px solid #f59e0b';
       default:          return 'background:#E5E7EB;color:#1f2937;border:1px solid #cbd5e1';
@@ -14083,10 +14131,13 @@ function renderReassignTiles() {
     for (const r of (s.ranges || [])) {
       for (const t of (r.lots || [])) {
         const selected = _raSelected.has(t.lot);
-        const dis = (t.state === 'booked');
+        // Reserved lots are real saved lots, so — like booked ones — they can't
+        // be reassigned; disable their tiles too (the server refuses them).
+        const dis = (t.state === 'booked' || t.state === 'reserved');
         const tip = t.booked
           ? `Booked: ${t.seller || '—'}`
-          : (t.state === 'reassigned' ? `Reassigned from another branch` : `Free for reassign`);
+          : (t.state === 'reserved' ? `Reserved (held): ${t.seller || '—'}`
+             : (t.state === 'reassigned' ? `Reassigned from another branch` : `Free for reassign`));
         const handlers = dis ? '' : ` onmousedown="raTileMouseDown(event,this)" ontouchstart="raTileTouchStart(event,this)" onclick="raToggleTile(this)"`;
         html += `<div title="${esc(tip)}" data-lot="${esc(t.lot)}" data-branch="${esc(branch)}" data-state="${esc(t.state)}"${handlers} style="${stateStyle(t.state, selected)};padding:4px 6px;border-radius:4px;font-size:11px;font-family:monospace;min-width:42px;text-align:center;${dis?'opacity:.85':'cursor:pointer'};user-select:none;touch-action:none">${esc(t.lot)}</div>`;
       }
@@ -14329,8 +14380,8 @@ function renderAllocEditOverview(stats) {
     const chips = [];
     for (const rng of (s.ranges || [])) {
       for (const l of (rng.lots || [])) {
-        const cls = l.used ? 'le-lot-chip used' : 'le-lot-chip';
-        const title = l.used ? `${l.lot} — booked${l.seller ? ' (' + l.seller + ')' : ''}` : `${l.lot} — free`;
+        const cls = l.used ? (l.reserved ? 'le-lot-chip used reserved' : 'le-lot-chip used') : 'le-lot-chip';
+        const title = l.used ? `${l.lot} — ${l.reserved ? 'reserved' : 'booked'}${l.seller ? ' (' + l.seller + ')' : ''}` : `${l.lot} — free`;
         chips.push(`<span class="${cls}" title="${esc(title)}">${esc(l.lot)}</span>`);
       }
     }
@@ -14799,10 +14850,10 @@ async function leLoadAllocBar() {
         for (const l of (rng.lots || [])) {
           const safe = String(l.lot).replace(/'/g, "\\'");
           let cls = 'le-lot-chip';
-          if (l.used) cls += ' used';
+          if (l.used) cls += l.reserved ? ' used reserved' : ' used';
           else if (currentLotno && l.lot === currentLotno && sameBranch(s.branch, myBr)) cls += ' selected';
           const onclick = l.used ? '' : ` onclick="lePickLot('${safe}','${branchSafe}')"`;
-          const title = l.used ? `Lot ${l.lot} — already saved (${s.branch})` : `Click to select lot ${l.lot} in ${s.branch}`;
+          const title = l.used ? `Lot ${l.lot} — ${l.reserved ? 'reserved (held)' : 'already saved'} (${s.branch})` : `Click to select lot ${l.lot} in ${s.branch}`;
           chips.push(`<span class="${cls}" data-lot="${esc(l.lot)}" data-branch="${esc(s.branch)}" title="${esc(title)}"${onclick}>${esc(l.lot)}</span>`);
         }
       }
@@ -14838,10 +14889,10 @@ async function leLoadAllocBar() {
     for (const l of (rng.lots || [])) {
       const safe = String(l.lot).replace(/'/g, "\\'");
       let cls = 'le-lot-chip';
-      if (l.used) cls += ' used';
+      if (l.used) cls += l.reserved ? ' used reserved' : ' used';
       else if (currentLotno && l.lot === currentLotno) cls += ' selected';
       const onclick = l.used ? '' : ` onclick="lePickLot('${safe}')"`;
-      const title = l.used ? `Lot ${l.lot} — already saved` : `Click to select lot ${l.lot}`;
+      const title = l.used ? `Lot ${l.lot} — ${l.reserved ? 'reserved (held)' : 'already saved'}` : `Click to select lot ${l.lot}`;
       chips.push(`<span class="${cls}" data-lot="${esc(l.lot)}" title="${esc(title)}"${onclick}>${esc(l.lot)}</span>`);
     }
   }
@@ -20035,7 +20086,6 @@ function openLotEdit(l){
   document.getElementById('lot-modal-title').textContent='Edit Lot #'+l.lot_no;
   document.getElementById('l-id').value=l.id;
   L_FIELDS.forEach(f=>{const el=document.getElementById(L_IDS[f]);if(el)el.value=l[f]!=null?l[f]:''});
-  { const rc=document.getElementById('l-reserved'); if(rc) rc.checked = !!Number(l.reserved); }
 
   // Wire field-level reactivity for the edit modal:
   //   1) Changing CODE → look up the matching buyer (by code, ti, or full
@@ -20577,9 +20627,6 @@ async function saveLot(){
     if(['bags','qty','price','amount'].includes(f)) body[f]=parseFloat(el.value)||0;
     else body[f]=el.value;
   });
-  // Reservation flag lives on its own checkbox (not in L_FIELDS, which are
-  // text inputs). Send 1/0 so the server persists the held state.
-  { const rc=document.getElementById('l-reserved'); if(rc) body.reserved = rc.checked ? 1 : 0; }
   // trader_id: drop when blank so the server's seller-backfill check
   // doesn't fire on a NaN id (lots with NULL trader_id in legacy data).
   // Convert to integer when present so the server doesn't have to.
@@ -25829,28 +25876,114 @@ async function previewInvoice(type){
     showModal('preview-modal');
   }catch(e){showError(e)}}
 
-// Pre-Invoice — open the EXACT sales-invoice PDF (same renderer as Generate)
-// for the first ticked buyer, stamped "PREVIEW", without generating/saving
-// anything. Verification only.
-async function previewInvoicePdf(){
-  const aid=document.getElementById('inv-auction').value;
-  if(!aid){alert('Select auction');return}
-  const list=document.getElementById('gi-buyer-list');
-  const checked=list?list.querySelectorAll('.gi-cb:checked'):[];
-  if(!checked||checked.length===0){alert('Tick at least one buyer to preview');return}
-  if(checked.length>1){
-    if(!confirm(`Pre-Invoice shows ONE buyer at a time. Showing "${checked[0].value}".\n\nContinue?`))return;
+// ── PRE-INVOICE SCREEN ─────────────────────────────────────────
+// A read-only screen listing every sales invoice that WOULD be generated for
+// the selected auction — bill-to, ship-to, amounts and taxes exactly as they
+// will print — with a one-click exact-PDF preview per buyer. Nothing is
+// generated, numbered, or saved.
+const PI_SALE_LABEL = { L:'Local', I:'Inter-state', E:'Export', W:'Withdrawn', N:'N/A' };
+function loadPreInvoice(){
+  return fillAucSelect('pi-auction').then(() => loadPreInvoiceList());
+}
+async function loadPreInvoiceList(){
+  const aid = document.getElementById('pi-auction')?.value;
+  const list = document.getElementById('pi-list');
+  const countEl = document.getElementById('pi-count');
+  if (!aid) { if(list) list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px;text-align:center">Select an auction.</div>'; return; }
+  const sale = document.getElementById('pi-sale')?.value || '';
+  const noTI = document.getElementById('pi-no-ti')?.checked ? '1' : '0';
+  if (list) list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px;text-align:center">Loading pre-invoices…</div>';
+  if (countEl) countEl.textContent = '';
+  let data;
+  try {
+    data = await j(`/api/invoices/preview-all/${aid}?sale=${encodeURIComponent(sale)}&noTI=${noTI}`);
+  } catch(e) {
+    if (list) list.innerHTML = `<div style="color:var(--red);font-size:13px;padding:16px;text-align:center">Failed to load: ${esc(e.message||e)}</div>`;
+    return;
   }
-  const body={saleType:document.getElementById('gi-sale').value,buyerCode:checked[0].value,noTI:!!document.getElementById('gi-no-ti')?.checked};
+  const previews = (data && data.previews) || [];
+  if (!previews.length) {
+    if (list) list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px;text-align:center">No sales invoices to preview for this selection. Make sure lots have buyer codes and prices, then try again.</div>';
+    return;
+  }
+  if (countEl) countEl.textContent = `${previews.length} invoice${previews.length===1?'':'s'}`;
+  list.innerHTML = previews.map((p, i) => piCard(p, aid, noTI, i)).join('');
+}
+// Build one preview card. Shows Bill-To + Ship-To (consignee, falling back to
+// the buyer) and the full money breakdown that the invoice will carry.
+function piCard(p, aid, noTI, idx){
+  const b = p.buyer || {};
+  const s = p.summary || {};
+  const money = v => '₹' + (Number(v)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const nBags = v => Math.round(Number(v)||0).toLocaleString('en-IN');
+  const nQty  = v => (Number(v)||0).toLocaleString('en-IN',{minimumFractionDigits:3,maximumFractionDigits:3});
+  const billName = b.buyer1 || b.buyer || p.buyerCode || '—';
+  const billAddr = [b.add1, b.add2, b.pla, b.state].map(x=>String(x||'').trim()).filter(Boolean).join(', ');
+  // Consignee (ship-to) uses c* fields; blank consignee → same as bill-to.
+  const hasConsignee = String(b.cbuyer1||'').trim() || String(b.cadd1||'').trim();
+  const shipName = hasConsignee ? (b.cbuyer1 || billName) : billName;
+  const shipAddr = hasConsignee
+    ? [b.cadd1, b.cadd2, b.cpla, b.cstate].map(x=>String(x||'').trim()).filter(Boolean).join(', ')
+    : billAddr;
+  const shipGst = hasConsignee ? (b.cgstin || b.gstin || '') : (b.gstin || '');
+  const row = (label, val, opts) => `<div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0;${opts&&opts.strong?'font-weight:700':''}"><span style="color:var(--text2)">${label}</span><span style="font-family:monospace">${val}</span></div>`;
+  const taxRows = s.isInterState
+    ? row('IGST', money(s.igst))
+    : row('CGST', money(s.cgst)) + row('SGST', money(s.sgst));
+  const tiRows = (Number(s.transportCost)||Number(s.insuranceCost))
+    ? row('Transport', money(s.transportCost)) + row('Insurance', money(s.insuranceCost))
+    : (s.noTI ? '<div style="color:var(--text3);font-size:11px;padding:2px 0">No transport &amp; insurance</div>' : '');
+  const tdsRow = (Number(s.tdsAmount)>0) ? row(`TDS${s.tdsRate?` @ ${s.tdsRate}%`:''}`, money(s.tdsAmount)) : '';
+  const addlRow = (Number(s.addlCharge)>0) ? row(esc(s.addlChargeName||'Additional'), money(s.addlCharge)) : '';
+  return `<div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px;background:#fff">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+      <span style="font-weight:700;font-size:15px">${esc(billName)}</span>
+      <span style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;background:var(--spice-cardamom-lt);color:var(--spice-cardamom)">${esc(PI_SALE_LABEL[p.saleType]||p.saleType)} (${esc(p.saleType)})</span>
+      <span style="font-size:11px;color:var(--text3)">${(p.lineItems||[]).length} lot${(p.lineItems||[]).length===1?'':'s'} · ${esc(b.code||p.buyerCode)}</span>
+      <span style="margin-left:auto;font-weight:800;font-size:16px;color:var(--spice-cardamom)">${money(s.grandTotal)}</span>
+      <button class="btn btn-g" style="height:32px;padding:0 12px;font-size:12px;font-weight:600" onclick="piPreviewPdf('${esc(aid)}','${esc(String(p.buyerCode).replace(/'/g,"\\'"))}','${esc(p.saleType)}',${noTI==='1'?'true':'false'})">👁 Preview Invoice</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:10px">
+      <div style="background:var(--bg);border-radius:8px;padding:10px 12px">
+        <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin-bottom:4px">Bill To</div>
+        <div style="font-weight:600;font-size:13px">${esc(billName)}</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px">${esc(billAddr||'—')}</div>
+        <div style="font-size:11.5px;color:var(--text2);margin-top:3px">GSTIN: <span style="font-family:monospace">${esc(b.gstin||'—')}</span></div>
+      </div>
+      <div style="background:var(--bg);border-radius:8px;padding:10px 12px">
+        <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin-bottom:4px">Ship To (Consignee)</div>
+        <div style="font-weight:600;font-size:13px">${esc(shipName)}</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px">${esc(shipAddr||'—')}</div>
+        <div style="font-size:11.5px;color:var(--text2);margin-top:3px">GSTIN: <span style="font-family:monospace">${esc(shipGst||'—')}</span></div>
+      </div>
+    </div>
+    <div style="font-size:12.5px;max-width:420px">
+      ${row('Bags', nBags(s.totalBags))}
+      ${row('Quantity (kg)', nQty(s.totalQty))}
+      ${row('Cardamom value', money(s.totalAmount))}
+      ${row('Gunny', money(s.gunnyCost))}
+      ${tiRows}
+      ${taxRows}
+      ${addlRow}
+      ${row('Round off', money(s.roundDiff))}
+      ${tdsRow}
+      <div style="border-top:1px solid var(--border);margin-top:4px;padding-top:4px">${row('Grand Total', money(s.grandTotal), {strong:true})}</div>
+    </div>
+  </div>`;
+}
+// Open the EXACT sales-invoice PDF (same renderer as Generate) for one buyer,
+// stamped "PREVIEW". Reuses the preview-pdf endpoint — no persistence.
+async function piPreviewPdf(aid, buyerCode, saleType, noTI){
   await withOverlay('Building pre-invoice…', async () => {
-    const r=await fetch(B+`/api/invoices/preview-pdf/${aid}`,{method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},body:JSON.stringify(body)});
-    if(!r.ok){let m='Pre-invoice failed';try{const e=await r.json();if(e.error)m=e.error;}catch(_){}toast(m);return}
-    const blob=await r.blob();
-    const url=URL.createObjectURL(blob);
-    const w=window.open(url);
-    if(!w) toast('Allow pop-ups to view the pre-invoice');
-    setTimeout(()=>URL.revokeObjectURL(url),60000);
+    const r = await fetch(B + `/api/invoices/preview-pdf/${aid}`, { method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},
+      body: JSON.stringify({ saleType, buyerCode, noTI: !!noTI }) });
+    if (!r.ok) { let m='Pre-invoice failed'; try { const e=await r.json(); if(e.error) m=e.error; } catch(_){} toast(m); return; }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url);
+    if (!w) toast('Allow pop-ups to view the pre-invoice');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   });
 }
 
