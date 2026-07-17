@@ -4280,11 +4280,11 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <div class="card">
         <h2>Pre-Invoice <span style="font-weight:400;font-size:12px;color:var(--text3)">Preview how each sales invoice will look — before you generate. Nothing is saved.</span></h2>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:12px">
-          <div class="fg" style="margin:0;min-width:200px"><label>Auction</label>
-            <select id="pi-auction" onchange="loadPreInvoiceList()" style="width:100%;height:38px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px"></select>
+          <div class="fg" style="margin:0;min-width:180px"><label>Auction</label>
+            <select id="pi-auction" onchange="loadPreInvoiceBuyers()" style="width:100%;height:38px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px"></select>
           </div>
           <div class="fg" style="margin:0"><label>Sale Type</label>
-            <select id="pi-sale" onchange="loadPreInvoiceList()" style="height:38px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px">
+            <select id="pi-sale" onchange="loadPreInvoiceBuyers()" style="height:38px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px">
               <option value="">All sale types</option>
               <option value="L">Local (L)</option>
               <option value="I">Inter-state (I)</option>
@@ -4293,14 +4293,17 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
               <option value="N">N/A (N)</option>
             </select>
           </div>
+          <div class="fg" style="margin:0;min-width:240px"><label>Buyer</label>
+            <select id="pi-buyer" onchange="renderPreInvoiceSelected()" style="width:100%;height:38px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px"></select>
+          </div>
           <label style="display:flex;align-items:center;gap:8px;height:38px;font-size:13px;font-weight:600;cursor:pointer">
-            <input type="checkbox" id="pi-no-ti" onchange="loadPreInvoiceList()" style="width:16px;height:16px;cursor:pointer">
+            <input type="checkbox" id="pi-no-ti" onchange="renderPreInvoiceSelected()" style="width:16px;height:16px;cursor:pointer">
             No Transport &amp; Insurance
           </label>
-          <button class="btn btn-g" onclick="loadPreInvoiceList()" style="height:38px;padding:0 16px;font-weight:600">Reload</button>
+          <button class="btn btn-g" onclick="loadPreInvoiceBuyers()" style="height:38px;padding:0 16px;font-weight:600">Reload</button>
           <span id="pi-count" style="font-size:12px;color:var(--text3);margin-left:auto"></span>
         </div>
-        <div id="pi-list"><div style="color:var(--text3);font-size:13px;padding:16px;text-align:center">Select an auction to preview its sales invoices.</div></div>
+        <div id="pi-list"><div style="color:var(--text3);font-size:13px;padding:16px;text-align:center">Select an auction and a buyer to preview the sales invoice.</div></div>
       </div>
     </div>
 
@@ -25883,17 +25886,20 @@ async function previewInvoice(type){
 // generated, numbered, or saved.
 const PI_SALE_LABEL = { L:'Local', I:'Inter-state', E:'Export', W:'Withdrawn', N:'N/A' };
 function loadPreInvoice(){
-  return fillAucSelect('pi-auction').then(() => loadPreInvoiceList());
+  return fillAucSelect('pi-auction').then(() => loadPreInvoiceBuyers());
 }
-async function loadPreInvoiceList(){
+// Step 1 — fetch the (cheap) buyer list for the auction + sale filter and fill
+// the Buyer dropdown, then render whichever buyer is selected. Default to the
+// first buyer so the screen shows one invoice, not every one.
+async function loadPreInvoiceBuyers(){
   const aid = document.getElementById('pi-auction')?.value;
   const list = document.getElementById('pi-list');
   const countEl = document.getElementById('pi-count');
-  if (!aid) { if(list) list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px;text-align:center">Select an auction.</div>'; return; }
+  const sel = document.getElementById('pi-buyer');
+  if (countEl) countEl.textContent = '';
+  if (!aid) { if(list) list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px;text-align:center">Select an auction.</div>'; if(sel) sel.innerHTML=''; return; }
   const sale = document.getElementById('pi-sale')?.value || '';
   const noTI = document.getElementById('pi-no-ti')?.checked ? '1' : '0';
-  if (list) list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px;text-align:center">Loading pre-invoices…</div>';
-  if (countEl) countEl.textContent = '';
   let data;
   try {
     data = await j(`/api/invoices/preview-all/${aid}?sale=${encodeURIComponent(sale)}&noTI=${noTI}`);
@@ -25901,12 +25907,48 @@ async function loadPreInvoiceList(){
     if (list) list.innerHTML = `<div style="color:var(--red);font-size:13px;padding:16px;text-align:center">Failed to load: ${esc(e.message||e)}</div>`;
     return;
   }
-  const previews = (data && data.previews) || [];
-  if (!previews.length) {
-    if (list) list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px;text-align:center">No sales invoices to preview for this selection. Make sure lots have buyer codes and prices, then try again.</div>';
+  const buyers = (data && data.buyers) || [];
+  if (!buyers.length) {
+    if (sel) sel.innerHTML = '';
+    if (list) list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px;text-align:center">No buyers to preview for this selection. Make sure lots have buyer codes and prices assigned.</div>';
     return;
   }
-  if (countEl) countEl.textContent = `${previews.length} invoice${previews.length===1?'':'s'}`;
+  const prev = sel ? sel.value : '';
+  if (sel) {
+    sel.innerHTML = buyers.map(b => `<option value="${esc(b.code)}">${esc(b.name)}${b.buyerCode?` (${esc(b.buyerCode)})`:''} · ${esc(b.saleType)}</option>`).join('')
+      + `<option value="__all__">— View all buyers (${buyers.length}) —</option>`;
+    // Preserve the prior selection when still valid; otherwise show the first.
+    if (prev && (prev === '__all__' || buyers.some(b => b.code === prev))) sel.value = prev;
+    else sel.value = buyers[0].code;
+  }
+  renderPreInvoiceSelected();
+}
+// Step 2 — build + render the full pre-invoice card(s) for the selected buyer
+// (or every buyer when "View all buyers" is chosen).
+async function renderPreInvoiceSelected(){
+  const aid = document.getElementById('pi-auction')?.value;
+  const list = document.getElementById('pi-list');
+  const countEl = document.getElementById('pi-count');
+  const sel = document.getElementById('pi-buyer');
+  const val = sel ? sel.value : '';
+  if (!aid || !val) return;
+  const sale = document.getElementById('pi-sale')?.value || '';
+  const noTI = document.getElementById('pi-no-ti')?.checked ? '1' : '0';
+  if (list) list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px;text-align:center">Building pre-invoice…</div>';
+  const q = (val === '__all__') ? '&all=1' : `&buyer=${encodeURIComponent(val)}`;
+  let data;
+  try {
+    data = await j(`/api/invoices/preview-all/${aid}?sale=${encodeURIComponent(sale)}&noTI=${noTI}${q}`);
+  } catch(e) {
+    if (list) list.innerHTML = `<div style="color:var(--red);font-size:13px;padding:16px;text-align:center">Failed to load: ${esc(e.message||e)}</div>`;
+    return;
+  }
+  const previews = (data && data.previews) || [];
+  if (!previews.length) {
+    if (list) list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px;text-align:center">Nothing to preview for this buyer.</div>';
+    return;
+  }
+  if (countEl) countEl.textContent = (val === '__all__') ? `${previews.length} invoice${previews.length===1?'':'s'}` : '';
   list.innerHTML = previews.map((p, i) => piCard(p, aid, noTI, i)).join('');
 }
 // Build one preview card. Shows Bill-To + Ship-To (consignee, falling back to
