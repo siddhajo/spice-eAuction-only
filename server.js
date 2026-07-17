@@ -3720,6 +3720,43 @@ app.get('/api/auctions/:id/generation-status', requireView, (req, res) => {
   res.json({ auctionId: aid, ano, ...status });
 });
 
+// ── Trade-stage gate (guided sidebar) ────────────────────────
+// Returns the workflow stage 0-4 the sidebar reveals menus by:
+//   0  trade selected/exists  → Lot Entry, Lots
+//   1  (reserved — same as trade exists; kept for clarity)
+//   2  lot_count > 0          → Price tools, Validate Lots, Payments
+//   3  price check passed     → Sales/Purchase/Bill/Debit-Note transactions
+//   4  ≥1 transaction doc     → Tally + after-trade exports
+// Everything is derived from data already stored — no schema change.
+// When flag_price_check is OFF, pcGateEverChecked() returns true, so
+// stage 3 collapses onto stage 2 (nothing to wait for), mirroring the
+// server-side requirePriceChecked() behaviour.
+app.get('/api/auctions/:id/stage', requireView, (req, res) => {
+  const db = getDb();
+  const aid = parseInt(req.params.id, 10);
+  if (!aid) return res.status(400).json({ error: 'Invalid auction id' });
+  const auction = db.get('SELECT id, ano FROM auctions WHERE id = ?', [aid]);
+  if (!auction) return res.status(404).json({ error: 'Auction not found' });
+
+  const lotCount = db.get('SELECT COUNT(*) AS c FROM lots WHERE auction_id = ?', [aid]).c;
+  const priceCheckedEver = pcGateEverChecked(db, aid);
+  const hasDocs = ['invoices', 'purchases', 'bills', 'debit_notes', 'debit_notes_planter']
+    .some(kind => _generatedCount(db, kind, aid, auction.ano) > 0);
+
+  // Monotonic climb — each stage requires all the ones below it.
+  let stage = 1;                                   // trade exists
+  if (lotCount > 0)                       stage = 2;
+  if (stage >= 2 && priceCheckedEver)     stage = 3;
+  if (stage >= 3 && hasDocs)              stage = 4;
+
+  res.json({
+    auctionId: aid,
+    ano: auction.ano,
+    stage,
+    signals: { lotCount, priceCheckedEver, hasDocs },
+  });
+});
+
 app.post('/api/price-check/verify', requireView, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
