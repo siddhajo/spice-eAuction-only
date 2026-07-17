@@ -19952,7 +19952,12 @@ async function loadLots(opts){
   // HIDE P_Qty, P_Rate, PurAmt, Discount.
   const baseCols = [
     { key:'lot_no', label:'Lot', sort:'text', totalKind:'count',
-      totalLabel: (n)=> String(n) },
+      totalLabel: (n)=> String(n),
+      // Held lots get an orange RESERVED badge next to the number (the row is
+      // also tinted orange via the row-reserved class).
+      render:(l)=> esc(l.lot_no||'') + (Number(l.reserved)
+        ? ' <span style="font-size:9px;font-weight:800;background:#f97316;color:#fff;padding:1px 5px;border-radius:8px;vertical-align:middle;letter-spacing:.3px" title="Reserved (held — not booked)">RESERVED</span>'
+        : '') },
     { key:'name', label:'Name', sort:'text' },
     { key:'buyer', label:'Buyer', sort:'text' },
     { key:'buyer_code', label:'Code', sort:'text',
