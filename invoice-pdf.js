@@ -1841,14 +1841,17 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
     doc.lineWidth(0.5).moveTo(rightX, bky - 2).lineTo(x0 + W, bky - 2).stroke();
     bky += 2;
   } // end if (showBank)
-  // "for COMPANY NAME" right-aligned — uses the SHORT name (Settings →
-  // Company → Short Name). The header block above already carries the
-  // full trade name; the footer signatory deliberately uses the short
-  // label so authorised-signatory stamps line up neatly underneath.
+  // "for COMPANY NAME" right-aligned — uses the FULL company/trade name (not
+  // the short label) so the signatory shows the complete legal name. The font
+  // shrinks to keep a long name on one line instead of wrapping/clipping.
   const forCompanyName = isPurchaseView
-    ? (cfg.s_company || getCompanyIdentity(cfg).shortName || getCompanyIdentity(cfg).name)
-    : (co.short || co.name || '');
-  doc.font('Helvetica-Bold').fontSize(8).text(`for ${forCompanyName}`, bkX, bky, { width: bkInnerW, align: 'right' });
+    ? (getCompanyIdentity(cfg).name || cfg.s_company || getCompanyIdentity(cfg).shortName)
+    : (co.name || co.short || '');
+  const _forStr = `for ${forCompanyName}`;
+  let _forSize = 8;
+  doc.font('Helvetica-Bold').fontSize(_forSize);
+  while (_forSize > 5.5 && doc.widthOfString(_forStr) > bkInnerW) { _forSize -= 0.25; doc.fontSize(_forSize); }
+  doc.text(_forStr, bkX, bky, { width: bkInnerW, align: 'right' });
   // Authorised Signatory at bottom-right of footer
   doc.font('Helvetica').fontSize(8).text('Authorised Signatory', bkX, y + footerH - 12, { width: bkInnerW, align: 'right' });
 

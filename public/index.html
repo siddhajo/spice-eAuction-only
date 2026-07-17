@@ -1169,10 +1169,10 @@ body:not([data-feat-tally-link="1"]) .feat-tally-link{display:none !important}
    columns config supplies a rowClass that returns 'row-locked'. */
 tr.row-locked > td{background:#fffbeb !important;border-top:1px solid #fde68a}
 tr.row-locked:hover > td{background:#fef3c7 !important}
-/* Reserved lots — held, not booked. Pale-blue tint so they read distinctly
-   from booked (white) and locked (amber) rows in the lots list. */
-tr.row-reserved > td{background:#e0f2fe !important;border-top:1px solid #7dd3fc}
-tr.row-reserved:hover > td{background:#bae6fd !important}
+/* Reserved lots — held, not booked. Bright-orange tint so they stand out
+   clearly from booked (white) and locked (amber) rows in the lots list. */
+tr.row-reserved > td{background:#fed7aa !important;border-top:1px solid #f97316}
+tr.row-reserved:hover > td{background:#fdba74 !important}
 /* Default-trade row highlight on the Auctions tab — the trade the mobile
    app pre-selects. Tinted green with an amber/filled star button. */
 tr.row-default-trade > td{background:var(--spice-cardamom-lt) !important}
@@ -2096,9 +2096,9 @@ body[data-comfort="1"] #comfort-toggle-label::after{content:'\2191';margin-left:
   cursor:not-allowed;opacity:.95;box-shadow:0 1px 2px rgba(13,124,95,.25);
 }
 .le-lot-chip.used:hover{transform:none;background:linear-gradient(135deg,var(--green) 0%,#0a6a50 100%);color:#fff}
-/* Reserved (held) lots — blue instead of the booked green, so an operator
-   can see at a glance which taken lots are reservations vs real bookings. */
-.le-lot-chip.used.reserved,.le-lot-chip.used.reserved:hover{background:linear-gradient(135deg,#0284c7 0%,#0369a1 100%);border-color:#0369a1;box-shadow:0 1px 2px rgba(2,132,199,.25)}
+/* Reserved (held) lots — bright orange instead of the booked green, so an
+   operator can see at a glance which taken lots are reservations. */
+.le-lot-chip.used.reserved,.le-lot-chip.used.reserved:hover{background:linear-gradient(135deg,#f97316 0%,#ea580c 100%);border-color:#ea580c;box-shadow:0 1px 2px rgba(234,88,12,.3)}
 .le-lot-chip.selected{
   background:#FEF3C7;color:#92400E;border-style:solid;border-color:#F59E0B;
   box-shadow:0 0 0 2px rgba(245,158,11,.25);
@@ -5702,6 +5702,13 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
 <div class="modal-bg" id="lot-modal"><div class="modal" style="max-width:640px">
   <h2 id="lot-modal-title">Edit Lot</h2>
+  <!-- Orange warning banner shown live when the entered Buyer is the same
+       party as the Seller (usually a data-entry slip). Non-blocking — the
+       user can still save. Toggled by lotCheckSellerBuyer(). -->
+  <div id="l-samebuyer-warn" style="display:none;align-items:center;gap:8px;background:#ffedd5;border:1px solid #fb923c;border-left:4px solid #f97316;color:#9a3412;padding:9px 12px;border-radius:8px;margin-bottom:12px;font-size:13px;font-weight:600">
+    <span style="font-size:16px">⚠️</span>
+    <span>Buyer is the <b>same party as the seller</b>. Double-check before saving.</span>
+  </div>
   <input type="hidden" id="l-id">
   <!-- Hidden trader_id — populated from the loaded lot, rewritten when the
        operator clicks "Change Seller…". The server PUT detects a change in
@@ -13623,10 +13630,16 @@ function renderLeRecent(){
       ${visible.map(l => {
         const safeLotNo = String(l.lot_no || '').replace(/'/g, "\\'");
         const checked = _le.selectedForPrint && _le.selectedForPrint.has(l.id) ? 'checked' : '';
+        // Reserved (held) lots get a bright-orange row + hover tooltip so they
+        // stand out from normal bookings in the recent-entries list.
+        const isRes = !!Number(l.reserved);
+        const baseBg = isRes ? '#fed7aa' : '';
+        const hovBg  = isRes ? '#fdba74' : 'var(--bg)';
+        const rowTitle = isRes ? 'Reserved (held — not booked). Click to edit / convert to a booking.' : 'Click to edit';
         return `
-        <div class="le-recent-row" data-lot-id="${l.id}" style="display:grid;${COLS};gap:0;padding:8px 12px;border-bottom:1px solid var(--border);font-size:13px;cursor:pointer;transition:background .1s" onmouseenter="this.style.background='var(--bg)'" onmouseleave="this.style.background=''" onclick="leEditLot(${l.id})" title="Click to edit">
+        <div class="le-recent-row${isRes?' reserved':''}" data-lot-id="${l.id}" style="display:grid;${COLS};gap:0;padding:8px 12px;border-bottom:1px solid var(--border);font-size:13px;cursor:pointer;transition:background .1s;background:${baseBg}" onmouseenter="this.style.background='${hovBg}'" onmouseleave="this.style.background='${baseBg}'" onclick="leEditLot(${l.id})" title="${esc(rowTitle)}">
           <div style="text-align:center" onclick="event.stopPropagation()"><input type="checkbox" class="le-recent-cb" data-lot-id="${l.id}" ${checked} onchange="leToggleLotSelected(${l.id}, this.checked)" style="cursor:pointer"></div>
-          <div style="font-family:monospace;font-weight:700;color:var(--green)">${esc(l.lot_no || '')}</div>
+          <div style="font-family:monospace;font-weight:700;color:${isRes?'#c2410c':'var(--green)'}">${esc(l.lot_no || '')}${isRes?' <span style="font-family:inherit;font-size:9px;font-weight:800;background:#f97316;color:#fff;padding:1px 5px;border-radius:8px;vertical-align:middle;letter-spacing:.3px">RESERVED</span>':''}</div>
           <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(l.name||'')}">${esc(l.name || '—')}</div>
           <div style="font-family:monospace;font-size:11px;color:var(--text2)">${esc(l.branch || '')}</div>
           <div style="text-align:right">${esc(String(l.bags ?? ''))}</div>
@@ -14116,7 +14129,7 @@ function renderReassignTiles() {
     if (selected) return 'background:#10B981;color:#fff;border:1px solid #047857';
     switch (st) {
       case 'booked':     return 'background:#FCA5A5;color:#7f1d1d;border:1px solid #ef4444;cursor:not-allowed';
-      case 'reserved':   return 'background:#BAE6FD;color:#075985;border:1px solid #0284c7;cursor:not-allowed';
+      case 'reserved':   return 'background:#FED7AA;color:#9a3412;border:1px solid #f97316;cursor:not-allowed';
       case 'allocated': return 'background:#DBEAFE;color:#1e3a8a;border:1px solid #93c5fd';
       case 'reassigned':return 'background:#FDE68A;color:#78350f;border:1px solid #f59e0b';
       default:          return 'background:#E5E7EB;color:#1f2937;border:1px solid #cbd5e1';
@@ -15188,6 +15201,7 @@ function lotOpenChangeSeller(){
       set('l-name', t.name);
       set('l-cr',   t.cr);
       set('l-trader-id', t.id);
+      if (typeof lotCheckSellerBuyer === 'function') lotCheckSellerBuyer();
       toast(`Seller staged: ${t.name || '(unnamed)'} — click Save to persist`);
     },
   });
@@ -20089,6 +20103,13 @@ function openLotEdit(l){
   document.getElementById('lot-modal-title').textContent='Edit Lot #'+l.lot_no;
   document.getElementById('l-id').value=l.id;
   L_FIELDS.forEach(f=>{const el=document.getElementById(L_IDS[f]);if(el)el.value=l[f]!=null?l[f]:''});
+  // Live buyer-vs-seller banner: refresh on open, and whenever the seller or
+  // buyer fields change (typed or auto-filled from the buyer-code lookup).
+  ['l-name','l-buyer','l-buyer1'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && !el._sbWired) { el._sbWired = true; el.addEventListener('input', lotCheckSellerBuyer); el.addEventListener('change', lotCheckSellerBuyer); }
+  });
+  lotCheckSellerBuyer();
 
   // Wire field-level reactivity for the edit modal:
   //   1) Changing CODE → look up the matching buyer (by code, ti, or full
@@ -20148,6 +20169,9 @@ function openLotEdit(l){
         setIf('l-sale',   match.sale   || '');
         // Normalize the code field too — if user typed lowercase, snap to canonical
         codeEl.value = match.code || code;
+        // Buyer fields were set programmatically (no input event) — refresh the
+        // buyer-vs-seller banner explicitly.
+        if (typeof lotCheckSellerBuyer === 'function') lotCheckSellerBuyer();
         if (typeof toast === 'function') toast(`Filled buyer: ${match.buyer1 || match.buyer}`);
       } catch (e) {
         console.warn('Code lookup failed', e);
@@ -20621,6 +20645,19 @@ async function applyBulkSetBuyer(){
   }
 }
 
+// Show/hide the orange "buyer == seller" banner in the lot modal. Compares the
+// seller name (l-name) against the buyer name/code fields, case/space-insensitive.
+function lotCheckSellerBuyer(){
+  const warn = document.getElementById('l-samebuyer-warn');
+  if (!warn) return;
+  const norm = s => String(s||'').trim().toUpperCase();
+  const seller = norm(document.getElementById('l-name')?.value);
+  const buyer  = norm(document.getElementById('l-buyer')?.value);
+  const buyer1 = norm(document.getElementById('l-buyer1')?.value);
+  const same = !!seller && (seller === buyer || seller === buyer1);
+  warn.style.display = same ? 'flex' : 'none';
+}
+
 async function saveLot(){
   const id=document.getElementById('l-id').value;
   if(!id){showError('Lot ID missing');return}
@@ -20640,15 +20677,8 @@ async function saveLot(){
     if (Number.isFinite(tid)) body.trader_id = tid;
     else delete body.trader_id;
   }
-  // Warn (but allow) when the buyer is the same party as the seller — usually
-  // a data-entry slip. norm ignores case + surrounding whitespace.
-  {
-    const norm = s => String(s||'').trim().toUpperCase();
-    const seller = norm(body.name);
-    if (seller && (seller === norm(body.buyer) || seller === norm(body.buyer1))) {
-      if (!confirm(`Seller and buyer are the same party ("${(body.name||'').trim()}").\n\nSave anyway?`)) return;
-    }
-  }
+  // Buyer == seller is warned via the live orange banner in the modal
+  // (lotCheckSellerBuyer), so no blocking dialog here — the user can save.
   // Optimistic UI: close the modal immediately and show a pending toast.
   // The actual save runs in the background. If it fails, we show an error and
   // re-open the modal so the user can retry without re-entering data.
