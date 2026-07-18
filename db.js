@@ -238,7 +238,13 @@ async function initDb() {
     -- for PRICE IMPORT (auctions/import mode='price'). Auto-cleared by any
     -- endpoint that inserts/edits/deletes a lot, so re-validation is
     -- required after every change. Gated by the flag_lot_validation flag.
-    lots_validated_at TEXT DEFAULT ''
+    lots_validated_at TEXT DEFAULT '',
+    -- Main / holding depot for the trade — the target branch that "Close
+    -- Depot" pushes a closed depot's remaining UN-BOOKED (free) lot numbers
+    -- back to, so they can be re-allocated elsewhere. Chosen by the operator
+    -- in Edit Allocations; blank until set. Must name a branch in the
+    -- allocation set (validated on save).
+    main_branch TEXT DEFAULT ''
   )`);
 
   // ── LOTS (CPA1.DBF — main lot data, before + after trade) ─
@@ -903,6 +909,10 @@ async function initDb() {
     // to 1 so getPaymentSummary + the statements/exports surface the
     // days-based settlement discount for every seller at once.
     'ALTER TABLE auctions ADD COLUMN discount_applied INTEGER DEFAULT 0',
+    // Main / holding depot for "Close Depot" lot pushback (see the auctions
+    // CREATE above). Added via ALTER for existing DBs so the feature works on
+    // upgrade without a rebuild.
+    "ALTER TABLE auctions ADD COLUMN main_branch TEXT DEFAULT ''",
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }

@@ -2047,7 +2047,7 @@ body[data-role="lot_entry"] #comfort-toggle{display:none !important}
 /* ── Guided flow: stage-locked sidebar items ───────────────────
    Menus tagged with data-min-stage are revealed as the CURRENT trade
    (the shared topbar auction) progresses through its workflow:
-     1 trade exists · 2 ≥1 lot · 3 price-checked · 4 ≥1 transaction.
+     1 trade exists · 2 ≥1 lot · 3 ≥1 lot priced · 4 ≥1 transaction.
    applyTradeStageLocks() adds `.locked` to any item whose min-stage is
    above the current trade's stage. Locked items stay visible but greyed
    with a 🔒 and an explanatory tooltip (title=), and a capture-phase
@@ -2769,7 +2769,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
           Reports Hub
         </button>
-        <button class="side-item" data-tab="exports" data-min-stage="4" onclick="go('exports')">
+        <button class="side-item" data-tab="exports" data-min-stage="2" onclick="go('exports')">
           <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
           Exports
         </button>
@@ -5595,6 +5595,18 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
     <!-- Per-range cards (rendered by renderAllocEditCards) -->
     <div id="alloc-edit-cards"></div>
+
+    <!-- Close Depot bar (rendered by renderAllocMainBar; hidden with < 2
+         branches). Nominate a main/holding depot, then close any other depot
+         to push its free lots there. -->
+    <div id="alloc-main-bar" style="display:none;margin:12px 0;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:#F8FAFC">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <span style="font-size:12px;font-weight:700;color:var(--text2)">🏬 Main depot</span>
+        <select id="alloc-main-select" onchange="onAllocMainChange(this.value)" style="height:28px;border:1px solid var(--border);border-radius:6px;font-size:12px;padding:0 8px;background:#fff;color:var(--text)"></select>
+        <span style="font-size:11px;color:var(--text3)">Close a depot to push its free (un-entered) lot numbers here. Booked lots stay put.</span>
+      </div>
+      <div id="alloc-close-buttons" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+    </div>
 
     <!-- Hidden alloc-edit-list kept for backward compat with helpers
          (addAllocRow / getAllocRows / populateAllocRows) that other call
@@ -8551,13 +8563,13 @@ function go(tab){
 // clicking one explains what unlocks it instead of navigating. An admin
 // "Show all menus" toggle (needs user-manage) bypasses the whole gate.
 //   1 trade exists → Lot Entry, Lots
-//   2 ≥1 lot       → Price tools, Price Check, Payments
-//   3 price-checked→ Sales/Purchase/Bill/Debit-Note transactions
+//   2 ≥1 lot       → Price tools, Price Check, Payments, Exports (Pre-auction only)
+//   3 ≥1 lot priced→ Sales/Purchase/Bill/Debit-Note transactions
 //   4 ≥1 doc       → Tally + after-trade exports
 const TRADE_STAGE_MSG = {
   1: 'Create or select a trade to unlock this.',
   2: 'Enter at least one lot for this trade to unlock this.',
-  3: 'Import prices and pass Price Check to unlock this.',
+  3: 'Enter a price for at least one lot to unlock this.',
   4: 'Generate a transaction (invoice / purchase) to unlock this.',
 };
 window._tradeStage = 0;
@@ -8931,13 +8943,16 @@ function _gradeLabel(gk) { return gk === '1' ? 'Grade 1' : gk === '2' ? 'Grade 2
 // the first column, and an onclick expression template (receives the row).
 function _gmDrillTable(firstCol, rows, dataAttr, onclick, titlePrefix) {
   const tot = _gmSumCells(rows, r => r.cell);
+  // "Lots" (lot count per branch/grade) is a dedicated column placed before
+  // Bags — the count used to sit inline as a "· N lots" subtitle on the first
+  // column; surfacing it as its own column makes it scannable alongside Bags.
   const body = rows.map(r => `<tr class="gm-rowlink" ${dataAttr(r)} onclick="${onclick}" title="${esc(titlePrefix)} ${esc(r.label)}">
-    <td class="l">${esc(r.label)} <span style="color:var(--spice-text-hint);font-weight:500">· ${_gmNum(r.cell.lots)} lot${r.cell.lots === 1 ? '' : 's'}</span></td>
-    <td>${_gmNum(r.cell.bags)}</td><td>${_gmQty(r.cell.seller_qty)}</td><td>${_gmQty(r.cell.qty)}</td><td>${_gmMoney(r.cell.amount)}</td></tr>`).join('');
+    <td class="l">${esc(r.label)}</td>
+    <td>${_gmNum(r.cell.lots)}</td><td>${_gmNum(r.cell.bags)}</td><td>${_gmQty(r.cell.seller_qty)}</td><td>${_gmQty(r.cell.qty)}</td><td>${_gmMoney(r.cell.amount)}</td></tr>`).join('');
   return `<table class="gm-table">
-    <thead><tr><th class="l">${firstCol}</th><th>Bags</th><th>Seller Qty</th><th>Buyer Qty</th><th>Amount</th></tr></thead>
+    <thead><tr><th class="l">${firstCol}</th><th>Lots</th><th>Bags</th><th>Seller Qty</th><th>Buyer Qty</th><th>Amount</th></tr></thead>
     <tbody>${body}</tbody>
-    <tfoot><tr><td class="l">Total · ${_gmNum(tot.lots)} lots</td><td>${_gmNum(tot.bags)}</td><td>${_gmQty(tot.seller_qty)}</td><td>${_gmQty(tot.qty)}</td><td>${_gmMoney(tot.amount)}</td></tr></tfoot>
+    <tfoot><tr><td class="l">Total</td><td>${_gmNum(tot.lots)}</td><td>${_gmNum(tot.bags)}</td><td>${_gmQty(tot.seller_qty)}</td><td>${_gmQty(tot.qty)}</td><td>${_gmMoney(tot.amount)}</td></tr></tfoot>
   </table>`;
 }
 
@@ -9773,6 +9788,26 @@ async function loadDepotSummary(auctionId){
     ['Average Price',  inr0(s.avgPrice)],
   ].map(([l,v]) => statRow(l, v)).join('');
 
+  // ── Pre-auction breakdown (min / max / avg) ──
+  // Arrivals spread per lot — how big the lots coming in are, before the
+  // auction prices them. Two rows: net weight (qty) and bags per lot.
+  const aq = s.arrivalsQty  || { min:0, max:0, avg:0 };
+  const ab = s.arrivalsBags || { min:0, max:0, avg:0 };
+  const triCell = (min, max, avg, fmt) => `
+    <div style="display:flex;justify-content:space-between;gap:8px;padding:8px 12px;border-bottom:1px solid var(--spice-line);font-size:12.5px;font-variant-numeric:tabular-nums">
+      <span style="color:var(--spice-cardamom-dk)">Min <b style="color:var(--spice-text-main)">${fmt(min)}</b></span>
+      <span style="color:var(--spice-cardamom-dk)">Avg <b style="color:var(--spice-text-main)">${fmt(avg)}</b></span>
+      <span style="color:var(--spice-cardamom-dk)">Max <b style="color:var(--spice-text-main)">${fmt(max)}</b></span>
+    </div>`;
+  const preAuctionHTML = `
+    <div style="margin-top:14px">
+      <div style="font-size:11px;font-weight:700;color:var(--spice-cardamom);text-transform:uppercase;letter-spacing:.4px;padding:0 12px 6px">Pre-auction breakdown</div>
+      <div style="padding:6px 12px 2px;font-size:11px;color:var(--spice-text-hint)">Net weight per lot (kg)</div>
+      ${triCell(aq.min, aq.max, aq.avg, wt)}
+      <div style="padding:6px 12px 2px;font-size:11px;color:var(--spice-text-hint)">Bags per lot</div>
+      ${triCell(ab.min, ab.max, ab.avg, intf)}
+    </div>`;
+
   // ── Grade-2 booking vs the Spices Board 25% cap ──
   // Rule: grade 2 should be 25% of the total booked qty. Show the booked
   // grade-2 weight against that 25% target and the qty difference — a positive
@@ -9835,7 +9870,10 @@ async function loadDepotSummary(auctionId){
       <div style="font-size:12px;color:var(--spice-text-mute);margin-bottom:16px">Auction Date: ${fmtD(a.date)}</div>
       <div class="dash-row" style="margin-bottom:0">
         <div style="overflow-x:auto">${tableHTML}</div>
-        <div style="border:1px solid var(--spice-line);border-radius:10px;overflow:hidden;align-self:start">${statsHTML}</div>
+        <div style="align-self:start">
+          <div style="border:1px solid var(--spice-line);border-radius:10px;overflow:hidden">${statsHTML}</div>
+          <div style="border:1px solid var(--spice-line);border-radius:10px;overflow:hidden;margin-top:12px">${preAuctionHTML}</div>
+        </div>
       </div>
       ${grade2HTML}
     </div>`;
@@ -12842,11 +12880,25 @@ async function leSaveLot(){
   const bags  = parseInt(document.getElementById('le-bags').value, 10);
   const litre = parseInt(document.getElementById('le-litre').value, 10);
   const qty   = parseFloat(document.getElementById('le-qty').value);
-  if (!Number.isFinite(bags) || bags < 0)   { leShowError('Bags must be a non-negative number'); return; }
-  if (!Number.isFinite(litre) || litre < 0) { leShowError('Litre weight must be a non-negative number'); return; }
-  if (!Number.isFinite(qty) || qty <= 0)    { leShowError('Net weight (kg) must be greater than 0'); return; }
+  // Reserve (hold) checkbox. A reserved lot only holds its lot number for the
+  // seller — bags / litre / net-weight are optional until it's booked. Read
+  // it before validation so a held lot can be saved with blank quantities.
+  const isReserved = document.getElementById('le-reserved')?.checked ? 1 : 0;
+  if (isReserved) {
+    if (Number.isFinite(bags)  && bags  < 0) { leShowError('Bags cannot be negative'); return; }
+    if (Number.isFinite(litre) && litre < 0) { leShowError('Litre cannot be negative'); return; }
+    if (Number.isFinite(qty)   && qty   < 0) { leShowError('Net weight cannot be negative'); return; }
+  } else {
+    if (!Number.isFinite(bags) || bags < 0)   { leShowError('Bags must be a non-negative number'); return; }
+    if (!Number.isFinite(litre) || litre < 0) { leShowError('Litre weight must be a non-negative number'); return; }
+    if (!Number.isFinite(qty) || qty <= 0)    { leShowError('Net weight (kg) must be greater than 0'); return; }
+  }
+  // Payload-safe numerics — reserved lots may leave these blank (NaN); ship 0.
+  const bagsSafe  = Number.isFinite(bags)  ? bags  : 0;
+  const litreSafe = Number.isFinite(litre) ? litre : 0;
+  const qtySafe   = Number.isFinite(qty)   ? qty   : 0;
   const sample = parseFloat(document.getElementById('le-sample').value) || 0;
-  const gross  = parseFloat(document.getElementById('le-gross').value) || (qty + sample);
+  const gross  = parseFloat(document.getElementById('le-gross').value) || (qtySafe + sample);
   // Moisture only when the show-moisture setting is on; we still read
   // the input value defensively because users may have typed something
   // before the wrap was hidden.
@@ -12878,9 +12930,9 @@ async function leSaveLot(){
       trader_id: _le.selectedSeller.id,
       branch: branch,
       grade: grade,
-      bags: bags,
-      litre: litre,
-      qty: qty,
+      bags: bagsSafe,
+      litre: litreSafe,
+      qty: qtySafe,
       // e-Auction's lots table uses sample_wt / gross_wt (NOT sample_weight /
       // gross_weight as in the PWA). Ship the e-Auction names so the INSERT
       // doesn't silently default these to 0.
@@ -12894,7 +12946,7 @@ async function leSaveLot(){
       immediate_payment: (document.getElementById('le-immediate-payment')?.checked ? 1 : 0),
       // Reservation flag (0/1) — held lot: distinct colour, out of
       // booked/invoice totals, blocks the lot number for other sellers.
-      reserved: (document.getElementById('le-reserved')?.checked ? 1 : 0),
+      reserved: isReserved,
       state: _le.selectedSeller.pstate || getDefaultBusinessState(),
       // Pull seller's denormalised fields onto the lot row so existing
       // listings (Lots tab, exports) work without a join.
@@ -14073,12 +14125,74 @@ const _allocHidden = new Set();
 const _allocCardKey = (branch, range) => `${branch}|${range.start}-${range.end}`;
 const _allocMarkKey = (branch, lot)   => `${branch}|${lot}`;
 
+// ── Close Depot (main/holding depot) ──────────────────────────────
+// The operator nominates one branch as the trade's "main" (holding) depot,
+// then can Close any OTHER depot: its entered (booked) lots stay put and its
+// remaining FREE lot numbers get pushed to the main depot for re-allocation.
+// _allocMainBranch is kept uppercased to match the server's case-insensitive
+// branch handling; it's hydrated from allocation-stats.main_branch on load.
+let _allocMainBranch = '';
+
+// Render the Main-depot picker + per-branch "Close depot" buttons. Driven off
+// the branches present in _raAllocStats so it always matches what's on screen.
+function renderAllocMainBar() {
+  const bar = document.getElementById('alloc-main-bar');
+  const sel = document.getElementById('alloc-main-select');
+  const btnHost = document.getElementById('alloc-close-buttons');
+  if (!bar || !sel || !btnHost) return;
+  const branches = Array.from(new Set((_raAllocStats || []).map(s => String(s.branch || '').trim().toUpperCase()).filter(Boolean)));
+  // Close Depot only makes sense with 2+ branches (somewhere to push to).
+  if (branches.length < 2) { bar.style.display = 'none'; return; }
+  bar.style.display = 'block';
+  if (_allocMainBranch && !branches.includes(_allocMainBranch)) _allocMainBranch = '';
+  sel.innerHTML = '<option value="">— none —</option>' +
+    branches.map(b => `<option value="${esc(b)}"${b === _allocMainBranch ? ' selected' : ''}>${esc(b)}</option>`).join('');
+  btnHost.innerHTML = branches.filter(b => b !== _allocMainBranch).map(b => {
+    const s = (_raAllocStats || []).find(x => String(x.branch).toUpperCase() === b) || {};
+    const free = (s.total || 0) - (s.used || 0);
+    const dis  = (!_allocMainBranch || free <= 0);
+    const title = !_allocMainBranch ? 'Pick a main depot first' : (free <= 0 ? 'No free lots to push' : `Push ${free} free lot(s) to ${_allocMainBranch}`);
+    return `<button type="button" class="btn btn-o" ${dis ? 'disabled' : ''} title="${esc(title)}" style="height:26px;padding:0 12px;font-size:11px;font-weight:600${dis ? ';opacity:.5;cursor:not-allowed' : ''}" onclick="closeDepot('${esc(b)}')">⏏ Close ${esc(b)} (${free} free)</button>`;
+  }).join('') || '<span style="font-size:11px;color:var(--text3)">Pick a main depot to enable closing the others.</span>';
+}
+// Main-depot dropdown changed — remember the choice and re-render the buttons.
+// Not persisted until Save Allocations (or a Close, which saves silently).
+function onAllocMainChange(v) { _allocMainBranch = String(v || '').trim().toUpperCase(); renderAllocMainBar(); }
+
+// Close a depot: push its free lots to the main depot. The main depot must be
+// saved server-side first, so we persist the current allocations + main branch
+// (silent save) before calling the endpoint.
+async function closeDepot(branch) {
+  if (!_allocEditAuctionId) return;
+  if (!_allocMainBranch) { toast('Pick a main depot first.'); return; }
+  if (!confirm(`Close ${branch}?\n\nIts entered (booked) lots stay put; its remaining free lots move to ${_allocMainBranch} so they can be re-allocated.`)) return;
+  try {
+    await saveAllocations({ silent: true });
+    const r = await j(`/api/auctions/${_allocEditAuctionId}/close-depot`, {
+      method: 'POST', body: JSON.stringify({ branch })
+    });
+    toast(r.message || `Closed ${branch}`);
+    // Reload fresh stats and re-render every allocation view.
+    const statsData = await j(`/api/auctions/${_allocEditAuctionId}/allocation-stats`);
+    _raAllocStats = statsData.stats || [];
+    _allocMainBranch = String(statsData.main_branch || '').toUpperCase();
+    _raSelected.clear(); _allocMarked.clear();
+    if (typeof renderReassignTiles === 'function') renderReassignTiles();
+    if (typeof renderAllocEditOverview === 'function') renderAllocEditOverview(_raAllocStats);
+    renderAllocEditCards(_raAllocStats);
+    if (typeof leLoadAllocBar === 'function') leLoadAllocBar();
+  } catch (e) {
+    toast(e.message || 'Close depot failed');
+  }
+}
+
 function renderAllocEditCards(stats) {
   const host = document.getElementById('alloc-edit-cards');
   if (!host) return;
   if (!Array.isArray(stats) || !stats.length) {
     host.innerHTML = '<div style="padding:18px;text-align:center;font-size:12px;color:var(--text3);background:#fafafa;border:1px dashed var(--border);border-radius:8px">No allocations yet. Click <b>+ Add Branch</b> below to create the first range.</div>';
     _updateAllocMarkedCount();
+    renderAllocMainBar();
     return;
   }
   // Flatten into per-range cards so we render one card per allocation
@@ -14145,6 +14259,7 @@ function renderAllocEditCards(stats) {
     </div>`;
   }).join('');
   _updateAllocMarkedCount();
+  renderAllocMainBar();   // keep the Close-Depot bar in sync with the cards
 }
 function _updateAllocMarkedCount() {
   const el = document.getElementById('alloc-edit-marked-count');
@@ -14576,6 +14691,8 @@ async function openAllocModal(auctionId, ano) {
       statusEl.innerHTML = '<div style="font-size:11px;color:var(--text3)">No allocations yet</div>';
     }
     _raAllocStats = stats;
+    // Hydrate the chosen main/holding depot for the Close-Depot bar.
+    _allocMainBranch = String(statsData.main_branch || '').toUpperCase();
     _raSelected.clear();
     // Reset edit-state on every open so leftover marks from the previous
     // trade don't bleed across.
@@ -14697,7 +14814,8 @@ async function executeReassign() {
 // bulk-replace endpoint, so we always send the full list. Used-chip
 // guard: the UI doesn't let the user mark a used lot, but we re-check
 // here so a stale render can't silently drop a saved lot.
-async function saveAllocations() {
+async function saveAllocations(opts) {
+  const silent = !!(opts && opts.silent);   // called from closeDepot — persist quietly, keep modal open
   const errEl = document.getElementById('alloc-err');
   errEl.style.display = 'none';
   if (!_raAllocStats || !_raAllocStats.length) {
@@ -14740,12 +14858,17 @@ async function saveAllocations() {
     return;
   }
   const droppedCt = _allocMarked.size;
-  if (droppedCt && !confirm(`Delete ${droppedCt} marked lot${droppedCt === 1 ? '' : 's'} from the allocations?`)) return;
+  if (!silent && droppedCt && !confirm(`Delete ${droppedCt} marked lot${droppedCt === 1 ? '' : 's'} from the allocations?`)) return;
   try {
     await j(`/api/auctions/${_allocEditAuctionId}/allocations`, {
       method: 'POST',
-      body: JSON.stringify({ allocations: next })
+      // main_branch rides along so the chosen Close-Depot target is persisted
+      // in the same save (server validates it against the allocation set).
+      body: JSON.stringify({ allocations: next, main_branch: _allocMainBranch })
     });
+    // Silent save (from closeDepot) just persists — the caller reloads stats
+    // and re-renders, and the modal stays open.
+    if (silent) return;
     hideModal('alloc-modal');
     toast(droppedCt
       ? `Deleted ${droppedCt} lot${droppedCt === 1 ? '' : 's'} · allocations saved ✓`
@@ -14755,6 +14878,7 @@ async function saveAllocations() {
   } catch (e) {
     errEl.textContent = e.message || 'Failed to save';
     errEl.style.display = 'block';
+    if (silent) throw e;   // let closeDepot surface the failure
   }
 }
 
@@ -23669,8 +23793,18 @@ async function updateExportCenterVisibility(){
   const card   = document.getElementById('export-center-card');
   const locked = document.getElementById('export-center-locked');
   if (!card || !locked) return;
+  // The DBF exports card (like the Export Center) is post-auction — its
+  // modules read priced/booked data. Hidden alongside the Export Center so
+  // that until a lot is priced the Exports tab shows only the Pre-auction
+  // snapshot section (guided-flow: Exports unlocks at stage 2 but only the
+  // pre-auction exports are meaningful until prices land).
+  const dbfCard = document.getElementById('exp-sec-dbf')?.closest('.card') || null;
   const aid = document.getElementById('exp-auction')?.value || '';
-  if (!aid) { card.style.display='none'; locked.style.display='none'; return; }
+  if (!aid) {
+    card.style.display='none'; locked.style.display='none';
+    if (dbfCard) dbfCard.style.display='none';
+    return;
+  }
   let priced = 0;
   try {
     const s = await j(`/api/lots/${aid}?summary=1`);
@@ -23679,6 +23813,7 @@ async function updateExportCenterVisibility(){
   const done = priced > 0;
   card.style.display   = done ? '' : 'none';
   locked.style.display = done ? 'none' : '';
+  if (dbfCard) dbfCard.style.display = done ? '' : 'none';
 }
 // Auction changed on the Exports tab — re-evaluate Export Center gating.
 function onExpAuctionChange(){ updateExportCenterVisibility(); }

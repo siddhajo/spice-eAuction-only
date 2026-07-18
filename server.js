@@ -3724,13 +3724,17 @@ app.get('/api/auctions/:id/generation-status', requireView, (req, res) => {
 // Returns the workflow stage 0-4 the sidebar reveals menus by:
 //   0  trade selected/exists  → Lot Entry, Lots
 //   1  (reserved — same as trade exists; kept for clarity)
-//   2  lot_count > 0          → Price tools, Validate Lots, Payments
-//   3  price check passed     → Sales/Purchase/Bill/Debit-Note transactions
-//   4  ≥1 transaction doc     → Tally + after-trade exports
+//   2  lot_count > 0          → Price tools, Validate Lots, Payments, Exports
+//                               (Exports shows only the Pre-auction snapshot
+//                                at this stage — see updateExportCenterVisibility)
+//   3  ≥1 lot has a price     → Sales/Purchase/Bill/Debit-Note transactions
+//   4  ≥1 transaction doc     → Tally + after-trade exports (Export Center, etc.)
 // Everything is derived from data already stored — no schema change.
-// When flag_price_check is OFF, pcGateEverChecked() returns true, so
-// stage 3 collapses onto stage 2 (nothing to wait for), mirroring the
-// server-side requirePriceChecked() behaviour.
+// NOTE (guided-flow refinement): stage 3 is gated purely on "at least one
+// lot carries a price" — independent of the Price-Check flag. The Price-Check
+// hard gate on actual invoice/purchase/bill GENERATION still applies
+// server-side (requirePriceChecked); this stage only controls sidebar
+// VISIBILITY of the Transactions module.
 app.get('/api/auctions/:id/stage', requireView, (req, res) => {
   const db = getDb();
   const aid = parseInt(req.params.id, 10);
@@ -3740,20 +3744,24 @@ app.get('/api/auctions/:id/stage', requireView, (req, res) => {
 
   const lotCount = db.get('SELECT COUNT(*) AS c FROM lots WHERE auction_id = ?', [aid]).c;
   const priceCheckedEver = pcGateEverChecked(db, aid);
+  // Transactions module unlocks the moment any single lot has a price entered.
+  const hasPricedLot = db.get(
+    'SELECT COUNT(*) AS c FROM lots WHERE auction_id = ? AND COALESCE(price,0) > 0', [aid]
+  ).c > 0;
   const hasDocs = ['invoices', 'purchases', 'bills', 'debit_notes', 'debit_notes_planter']
     .some(kind => _generatedCount(db, kind, aid, auction.ano) > 0);
 
   // Monotonic climb — each stage requires all the ones below it.
   let stage = 1;                                   // trade exists
   if (lotCount > 0)                       stage = 2;
-  if (stage >= 2 && priceCheckedEver)     stage = 3;
+  if (stage >= 2 && hasPricedLot)         stage = 3;
   if (stage >= 3 && hasDocs)              stage = 4;
 
   res.json({
     auctionId: aid,
     ano: auction.ano,
     stage,
-    signals: { lotCount, priceCheckedEver, hasDocs },
+    signals: { lotCount, priceCheckedEver, hasPricedLot, hasDocs },
   });
 });
 
@@ -4074,11 +4082,95 @@ app.post('/api/auctions/:id/allocations', requireAuctionWrite, (req, res) => {
     );
   }
 
+  // Persist the operator's choice of main / holding depot (Close Depot
+  // target). Only accept it when it names a branch actually in the saved
+  // allocation set — otherwise clear it, since a stale main branch would
+  // break Close Depot. Stored with the allocation's exact casing so the
+  // close-depot pushback appends free lots onto the SAME branch string
+  // (case mismatches would split one depot into two in allocation-stats).
+  if (req.body.main_branch !== undefined) {
+    const wanted = String(req.body.main_branch || '').trim();
+    const match = allocations.find(a => String(a.branch).trim().toUpperCase() === wanted.toUpperCase());
+    db.run('UPDATE auctions SET main_branch = ? WHERE id = ?', [match ? String(match.branch).trim() : '', auctionId]);
+  }
+
   const saved = db.all(
     'SELECT * FROM lot_allocations WHERE auction_id = ? ORDER BY branch, start_lot',
     [auctionId]
   );
-  res.json({ allocations: saved });
+  const a0 = db.get('SELECT main_branch FROM auctions WHERE id = ?', [auctionId]) || {};
+  res.json({ allocations: saved, main_branch: a0.main_branch || '' });
+});
+
+// POST /api/auctions/:id/close-depot — "close" a depot for the day and push
+// its remaining UN-BOOKED (free) lot numbers back to the trade's main depot
+// so they can be re-allocated elsewhere. Body: { branch }.
+//   • Booked lots (a saved lot exists for that number) STAY in the closed
+//     depot — only its free/allocated-but-unentered numbers move.
+//   • The freed numbers are appended to main_branch's allocation.
+//   • Lot numbers stay globally unique across branches because the moved
+//     numbers were exclusive to the closed depot to begin with.
+// Requires a main_branch set and different from the branch being closed.
+app.post('/api/auctions/:id/close-depot', requireAuctionWrite, (req, res) => {
+  const db = getDb();
+  const auctionId = parseInt(req.params.id, 10);
+  if (!auctionId) return res.status(400).json({ error: 'Invalid auction id' });
+  const branchRaw = String(req.body.branch || '').trim();
+  const branchU = branchRaw.toUpperCase();
+  try {
+    if (!branchU) return res.status(400).json({ error: 'branch is required' });
+    const a = db.get('SELECT main_branch FROM auctions WHERE id = ?', [auctionId]) || {};
+    const mainStored = String(a.main_branch || '').trim();   // exact casing for re-insert
+    const mainU = mainStored.toUpperCase();
+    if (!mainU)           return res.status(400).json({ error: 'No main depot is set for this trade. Pick a main depot in Edit Allocations first.' });
+    if (mainU === branchU) return res.status(400).json({ error: 'This depot is the main depot — it can’t be closed into itself.' });
+
+    // Every lot number currently allocated to the closing branch. Keep the
+    // branch's original casing for the booked re-insert.
+    const branchRanges = db.all(
+      'SELECT start_lot, end_lot, branch FROM lot_allocations WHERE auction_id = ? AND UPPER(branch) = ?',
+      [auctionId, branchU]
+    );
+    if (!branchRanges.length) return res.status(400).json({ error: `${branchRaw} has no allocated lots to close.` });
+    const branchStored = String(branchRanges[0].branch || branchRaw).trim();
+    let allLots = [];
+    for (const r of branchRanges) {
+      try { allLots = allLots.concat(enumerateRange(r.start_lot, r.end_lot)); } catch (_) {}
+    }
+    // Which of those are booked (a saved lot row exists)?
+    const bookedRows = db.all(
+      'SELECT lot_no FROM lots WHERE auction_id = ? AND UPPER(branch) = ?',
+      [auctionId, branchU]
+    );
+    const bookedSet = new Set(bookedRows.map(r => String(r.lot_no || '').trim()));
+    const freeLots = allLots.filter(l => !bookedSet.has(l));
+    if (!freeLots.length) {
+      return res.status(400).json({ error: `All lots in ${branchRaw} are already booked — nothing to push to ${mainStored}.` });
+    }
+    const keepLots = allLots.filter(l => bookedSet.has(l));
+
+    // Rebuild the closed branch to cover only its booked lots, then append
+    // the freed numbers onto the main depot. chunkLots collapses each list
+    // into contiguous {start,end} ranges (prefix + zero-padding preserved).
+    db.run('DELETE FROM lot_allocations WHERE auction_id = ? AND UPPER(branch) = ?', [auctionId, branchU]);
+    for (const ch of chunkLots(keepLots)) {
+      db.run('INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?,?,?,?)',
+        [auctionId, branchStored, ch.start, ch.end]);
+    }
+    for (const ch of chunkLots(freeLots)) {
+      db.run('INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?,?,?,?)',
+        [auctionId, mainStored, ch.start, ch.end]);
+    }
+    res.json({
+      success: true,
+      message: `Closed ${branchStored}: ${keepLots.length} booked lot(s) kept, ${freeLots.length} free lot(s) moved to ${mainStored}.`,
+      moved: freeLots.length,
+      kept: keepLots.length,
+      main_branch: mainStored,
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 // Auto-fill allocations from existing lots. Walks every lot in the
@@ -4217,7 +4309,9 @@ app.get('/api/auctions/:id/allocation-stats', requireViewOrLotEntry, (req, res) 
     });
   }
 
-  res.json({ stats: Object.values(stats), allocations });
+  // Current main/holding depot (for the Close Depot UI). Blank until set.
+  const a0 = db.get('SELECT main_branch FROM auctions WHERE id = ?', [auctionId]) || {};
+  res.json({ stats: Object.values(stats), allocations, main_branch: a0.main_branch || '' });
 });
 
 // Depot-wise summary for the dashboard "Current Auction" panel. Returns one
@@ -4302,6 +4396,16 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
             COALESCE(SUM(CASE WHEN ${DEALER} THEN qty ELSE 0 END),0) AS dealerWeight,
             MIN(CASE WHEN price > 0 AND ${SOLD} THEN price END) AS minPrice,
             MAX(CASE WHEN price > 0 AND ${SOLD} THEN price END) AS maxPrice,
+            -- Pre-auction ARRIVALS breakdown — per-lot qty/bags spread across
+            -- every entered lot (arrivals), independent of sale status. Only
+            -- lots that actually carry a weight/bag count feed the min/avg so
+            -- reserved/held placeholders (qty=0) don't drag the floor to 0.
+            MIN(CASE WHEN qty  > 0 THEN qty  END) AS minQty,
+            MAX(CASE WHEN qty  > 0 THEN qty  END) AS maxQty,
+            AVG(CASE WHEN qty  > 0 THEN qty  END) AS avgQty,
+            MIN(CASE WHEN bags > 0 THEN bags END) AS minBags,
+            MAX(CASE WHEN bags > 0 THEN bags END) AS maxBags,
+            AVG(CASE WHEN bags > 0 THEN bags END) AS avgBags,
             COALESCE(SUM(CASE WHEN ${SOLD} THEN amount ELSE 0 END),0) AS soldValue,
             COALESCE(SUM(CASE WHEN ${SOLD} THEN qty    ELSE 0 END),0) AS soldQty,
             -- Grade-2 booked weight — Spices Board caps grade 2 at 25% of the
@@ -4324,6 +4428,10 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
     minPrice:      Number(st.minPrice) || 0,
     maxPrice:      Number(st.maxPrice) || 0,
     avgPrice:      soldQty > 0 ? (Number(st.soldValue) || 0) / soldQty : 0,
+    // Pre-auction arrivals spread (per-lot), rendered as a "Pre-auction
+    // breakdown (min/max/avg)" block on the dashboard depot panel.
+    arrivalsQty:   { min: Number(st.minQty)  || 0, max: Number(st.maxQty)  || 0, avg: Number(st.avgQty)  || 0 },
+    arrivalsBags:  { min: Number(st.minBags) || 0, max: Number(st.maxBags) || 0, avg: Number(st.avgBags) || 0 },
   };
 
   res.json({ auction, depots, totals, stats });

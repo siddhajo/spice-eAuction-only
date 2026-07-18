@@ -488,8 +488,15 @@ select:focus{border-color:var(--green)}
       </div>
     </div>
     <div class="lb">GRADE</div><input type="text" id="ed-grade">
-    <div class="fr" style="margin-top:12px"><div><div class="lb">BAGS</div><input type="text" id="ed-bags" inputmode="numeric" oninput="sanitizeInt(this)"></div><div><div class="lb">LITRE</div><input type="text" id="ed-litre" inputmode="numeric" oninput="sanitizeInt(this)"></div></div>
-    <div class="lb">QUANTITY (KG)</div><input type="text" id="ed-qty" inputmode="decimal" class="qi" oninput="sanitizeDec(this);calcEditGross()">
+    <div class="fr" style="margin-top:12px"><div><div class="lb">BAGS</div><input type="text" id="ed-bags" inputmode="numeric" oninput="sanitizeInt(this);onEditBagsInput()"></div><div><div class="lb">LITRE</div><input type="text" id="ed-litre" inputmode="numeric" oninput="sanitizeInt(this)"></div></div>
+    <!-- Weight w/ Gunny + Gunny Weight — shown only in gunny mode (Default
+         Gunny Weight > 0), mirroring the entry form so an operator can
+         re-weigh WITH gunny while editing instead of back-solving net. -->
+    <div id="ed-gunny-wrap" style="display:none;grid-template-columns:2fr 1fr;gap:6px;margin-top:8px">
+      <div><div class="lb">WT W/ GUNNY (KG)</div><input type="text" id="ed-weight-gunny" placeholder="0.000" inputmode="decimal" class="qi" oninput="sanitizeDec(this);calcEditNetFromGunny()"></div>
+      <div><div class="lb">GUNNY WT</div><input type="text" id="ed-gunny-weight" placeholder="0" readonly style="background:var(--bg);color:var(--text3)"></div>
+    </div>
+    <div class="lb" style="margin-top:8px">QUANTITY (KG)</div><input type="text" id="ed-qty" inputmode="decimal" class="qi" oninput="sanitizeDec(this);calcEditGross()">
     <div class="fr" style="margin-top:8px"><div><div class="lb">SAMPLE WT</div><input type="text" id="ed-sample" inputmode="decimal" oninput="sanitizeDec(this);calcEditGross()" readonly style="background:var(--bg);color:var(--text3)"></div><div><div class="lb">GROSS WT</div><input type="text" id="ed-gross" readonly style="background:var(--bg);color:var(--green);font-weight:700"></div></div>
     <!-- Crop Receipt (always shown) + Reserved Price (visibility synced
          with cfgShowReservedPrice — flipped in openEdit() so the wrap
@@ -1200,11 +1207,23 @@ async function saveLot(){
   var bags=parseInt(document.getElementById('le-bags').value);
   var litre=parseInt(document.getElementById('le-litre').value);
   var qty=parseFloat(document.getElementById('le-qty').value);
-  if(!bags&&bags!==0){toast('Enter bags',true);return}
-  if(bags<0){toast('Bags cannot be negative',true);return}
-  if(!litre&&litre!==0){toast('Enter litre weight',true);return}
-  if(litre<0){toast('Litre cannot be negative',true);return}
-  if(!qty||qty<=0){toast('Enter net weight',true);return}
+  // Reserve (hold) checkbox read up-front: a reserved lot just holds the lot
+  // number for the seller, so bags/litre/net-weight are optional. Only guard
+  // against negatives and normalise blanks to 0 for the payload.
+  var resElChk=document.getElementById('le-reserved');
+  var isReservedLE=(resElChk&&resElChk.checked)?1:0;
+  if(isReservedLE){
+    if(!isNaN(bags)&&bags<0){toast('Bags cannot be negative',true);return}
+    if(!isNaN(litre)&&litre<0){toast('Litre cannot be negative',true);return}
+    if(!isNaN(qty)&&qty<0){toast('Net weight cannot be negative',true);return}
+    if(isNaN(bags))bags=0; if(isNaN(litre))litre=0; if(isNaN(qty))qty=0;
+  }else{
+    if(!bags&&bags!==0){toast('Enter bags',true);return}
+    if(bags<0){toast('Bags cannot be negative',true);return}
+    if(!litre&&litre!==0){toast('Enter litre weight',true);return}
+    if(litre<0){toast('Litre cannot be negative',true);return}
+    if(!qty||qty<=0){toast('Enter net weight',true);return}
+  }
   var moisture=cfgShowMoisture?parseFloat(document.getElementById('le-moisture').value)||null:null;
   if(moisture!==null&&moisture<0){toast('Moisture cannot be negative',true);return}
   var sampleWt=parseFloat(document.getElementById('le-sample').value)||0;
@@ -1321,7 +1340,7 @@ function openEdit(id,lotNo,s,g,bags,litre,qty,traderId,bankId){editId=id;editTra
    the /detail fetch returns. Visibility of the Reserved Price wrap
    mirrors the live cfgShowReservedPrice flag so toggling the feature
    in Settings reflects on the next modal open without a reload. */
-var edCrptOpen=document.getElementById('ed-crpt');if(edCrptOpen)edCrptOpen.value='';var edRpOpen=document.getElementById('ed-reserved-price');if(edRpOpen)edRpOpen.value='';var edImmOpen=document.getElementById('ed-immediate-payment');if(edImmOpen)edImmOpen.checked=false;var edRpWrap=document.getElementById('ed-reserved-price-wrap');if(edRpWrap)edRpWrap.style.display=cfgShowReservedPrice?'block':'none';document.getElementById('ed-err').innerHTML='';document.getElementById('ed-bank-form').style.display='none';document.getElementById('edit-modal').classList.add('show');if(traderId)loadEditBanks(traderId);fetch(B+'/api/lots/'+id+'/detail',{headers:ah()}).then(r=>r.json()).then(d=>{if(d.lot){var sw=d.lot.sample_weight!=null&&d.lot.sample_weight>0?d.lot.sample_weight:cfgSampleWeight||0;document.getElementById('ed-sample').value=Number(sw).toFixed(3);document.getElementById('ed-gross').value=d.lot.gross_weight?Number(d.lot.gross_weight).toFixed(3):'0';if(edCrptOpen)edCrptOpen.value=d.lot.crpt||'';if(edRpOpen)edRpOpen.value=(d.lot.reserved_price!=null&&Number(d.lot.reserved_price)!==0)?d.lot.reserved_price:'';if(edImmOpen)edImmOpen.checked=!!Number(d.lot.immediate_payment);var edResOpen=document.getElementById('ed-reserved');if(edResOpen)edResOpen.checked=!!Number(d.lot.reserved);calcEditGross()}}).catch(()=>{calcEditGross()})}
+var edCrptOpen=document.getElementById('ed-crpt');if(edCrptOpen)edCrptOpen.value='';var edRpOpen=document.getElementById('ed-reserved-price');if(edRpOpen)edRpOpen.value='';var edImmOpen=document.getElementById('ed-immediate-payment');if(edImmOpen)edImmOpen.checked=false;var edRpWrap=document.getElementById('ed-reserved-price-wrap');if(edRpWrap)edRpWrap.style.display=cfgShowReservedPrice?'block':'none';document.getElementById('ed-err').innerHTML='';document.getElementById('ed-bank-form').style.display='none';document.getElementById('edit-modal').classList.add('show');applyEditGunnyMode();if(traderId)loadEditBanks(traderId);fetch(B+'/api/lots/'+id+'/detail',{headers:ah()}).then(r=>r.json()).then(d=>{if(d.lot){var sw=d.lot.sample_weight!=null&&d.lot.sample_weight>0?d.lot.sample_weight:cfgSampleWeight||0;document.getElementById('ed-sample').value=Number(sw).toFixed(3);document.getElementById('ed-gross').value=d.lot.gross_weight?Number(d.lot.gross_weight).toFixed(3):'0';if(edCrptOpen)edCrptOpen.value=d.lot.crpt||'';if(edRpOpen)edRpOpen.value=(d.lot.reserved_price!=null&&Number(d.lot.reserved_price)!==0)?d.lot.reserved_price:'';if(edImmOpen)edImmOpen.checked=!!Number(d.lot.immediate_payment);var edResOpen=document.getElementById('ed-reserved');if(edResOpen)edResOpen.checked=!!Number(d.lot.reserved);calcEditGross()}}).catch(()=>{calcEditGross()})}
 function closeEdit(){document.getElementById('edit-modal').classList.remove('show');editId=null;editTraderId=null}
 function editSellerMode(){document.getElementById('ed-seller-card').style.display='none';document.getElementById('ed-seller-search').style.display='block';document.getElementById('ed-seller-input').value='';document.getElementById('ed-seller-input').focus()}
 let edStm;
@@ -1424,10 +1443,49 @@ async function saveEditBankAccount(){
   }catch(e){toast('Failed',true)}
 }
 function calcEditGross(){var net=parseFloat(document.getElementById('ed-qty').value)||0;var sample=parseFloat(document.getElementById('ed-sample').value)||0;document.getElementById('ed-gross').value=(net+sample).toFixed(3)}
-async function saveEdit(){const lotNo=document.getElementById('ed-lotno').value.trim(),grade=document.getElementById('ed-grade').value.trim()||'1',bags=parseInt(document.getElementById('ed-bags').value),litre=parseInt(document.getElementById('ed-litre').value),qty=parseFloat(document.getElementById('ed-qty').value),sampleWt=parseFloat(document.getElementById('ed-sample').value)||0,grossWt=parseFloat(document.getElementById('ed-gross').value)||0,er=document.getElementById('ed-err');er.innerHTML='';if(!lotNo||!bags||!litre||!qty){er.innerHTML='<div class="eb">Fill all fields</div>';return}/* Crop Receipt always written (empty string clears it). Reserved
+// ── Gunny-weight EDIT mode ────────────────────────────────────────
+// Mirrors the entry-form gunny flow (applyGunnyMode/calcNetFromGunny) for
+// the edit modal. The original "weight w/ gunny" isn't stored (only the
+// derived net is), so on open we back-solve it from net + bags×default so
+// the field starts populated; the operator can then re-weigh and net
+// recomputes.
+function editGunnyActive(){return (Number(cfgDefaultGunny)||0)>0}
+function applyEditGunnyMode(){
+  var active=editGunnyActive();
+  var wrap=document.getElementById('ed-gunny-wrap');
+  if(wrap)wrap.style.display=active?'grid':'none';
+  var qtyEl=document.getElementById('ed-qty');
+  if(qtyEl){qtyEl.readOnly=active;qtyEl.style.background=active?'var(--bg)':'';qtyEl.style.color=active?'var(--green)':'';}
+  if(active){
+    var bags=parseInt(document.getElementById('ed-bags').value)||0;
+    var net=parseFloat(document.getElementById('ed-qty').value)||0;
+    var gunny=bags*(Number(cfgDefaultGunny)||0);
+    var wg=net+gunny;
+    var wgEl=document.getElementById('ed-weight-gunny');if(wgEl)wgEl.value=wg>0?wg.toFixed(3):'';
+    var gwEl=document.getElementById('ed-gunny-weight');if(gwEl)gwEl.value=gunny>0?gunny.toFixed(3):'';
+  }
+}
+function calcEditNetFromGunny(){
+  if(!editGunnyActive())return;
+  var bags=parseInt(document.getElementById('ed-bags').value)||0;
+  var wwg=parseFloat(document.getElementById('ed-weight-gunny').value)||0;
+  var gunny=bags*(Number(cfgDefaultGunny)||0);
+  var gwEl=document.getElementById('ed-gunny-weight');if(gwEl)gwEl.value=gunny>0?gunny.toFixed(3):'';
+  var net=wwg-gunny;
+  var qtyEl=document.getElementById('ed-qty');if(qtyEl)qtyEl.value=net>0?net.toFixed(3):'';
+  calcEditGross();
+}
+function onEditBagsInput(){if(editGunnyActive())calcEditNetFromGunny();}
+async function saveEdit(){const lotNo=document.getElementById('ed-lotno').value.trim(),grade=document.getElementById('ed-grade').value.trim()||'1',bags=parseInt(document.getElementById('ed-bags').value),litre=parseInt(document.getElementById('ed-litre').value),qty=parseFloat(document.getElementById('ed-qty').value),sampleWt=parseFloat(document.getElementById('ed-sample').value)||0,grossWt=parseFloat(document.getElementById('ed-gross').value)||0,er=document.getElementById('ed-err');er.innerHTML='';var edResChk=document.getElementById('ed-reserved');var isReservedEd=(edResChk&&edResChk.checked)?1:0;if(!lotNo){er.innerHTML='<div class="eb">Enter lot number</div>';return}
+/* Reserved (held) lots may carry no bags/qty yet, so only require a net
+   weight when the lot is being booked (not reserved). Bags/litre of 0 are
+   valid values and must not block the save — the old !bags||!litre check
+   rejected any lot with a legit zero. */
+if(!isReservedEd&&(!qty||qty<=0)){er.innerHTML='<div class="eb">Enter net weight</div>';return}
+if((!isNaN(bags)&&bags<0)||(!isNaN(litre)&&litre<0)){er.innerHTML='<div class="eb">Bags / litre cannot be negative</div>';return}/* Crop Receipt always written (empty string clears it). Reserved
    Price only when the flag is on — sending it from a UI where the
    input isn't visible would silently clobber a value set by the desktop. */
-var edCrptSave=document.getElementById('ed-crpt');var crptVal=edCrptSave?edCrptSave.value.trim():'';var edRpSave=document.getElementById('ed-reserved-price');var rpRawSave=(edRpSave&&cfgShowReservedPrice)?edRpSave.value.trim():null;document.getElementById('ed-save').disabled=true;try{const body={lot_no:lotNo,grade,bags,litre,qty,sample_weight:sampleWt,gross_weight:grossWt,crpt:crptVal};if(rpRawSave!==null)body.reserved_price=rpRawSave===''?0:parseFloat(rpRawSave)||0;var edImmSave=document.getElementById('ed-immediate-payment');body.immediate_payment=(edImmSave&&edImmSave.checked)?1:0;var edResSave=document.getElementById('ed-reserved');body.reserved=(edResSave&&edResSave.checked)?1:0;if(editTraderId)body.trader_id=editTraderId;var edBankSel=document.getElementById('ed-bank-select');if(edBankSel)body.bank_id=edBankSel.value?parseInt(edBankSel.value):null;const r=await fetch(B+'/api/lots/'+editId,{method:'PUT',headers:ah(),body:JSON.stringify(body)});const d=await r.json();if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Failed')+'</div>';return}toast('Lot updated',false);closeEdit();loadMyLots();await loadStats();updUI()}catch(e){er.innerHTML='<div class="eb">Failed</div>'}finally{document.getElementById('ed-save').disabled=false}}
+var edCrptSave=document.getElementById('ed-crpt');var crptVal=edCrptSave?edCrptSave.value.trim():'';var edRpSave=document.getElementById('ed-reserved-price');var rpRawSave=(edRpSave&&cfgShowReservedPrice)?edRpSave.value.trim():null;document.getElementById('ed-save').disabled=true;try{const body={lot_no:lotNo,grade,bags:isNaN(bags)?0:bags,litre:isNaN(litre)?0:litre,qty:isNaN(qty)?0:qty,sample_weight:sampleWt,gross_weight:grossWt,crpt:crptVal};if(rpRawSave!==null)body.reserved_price=rpRawSave===''?0:parseFloat(rpRawSave)||0;var edImmSave=document.getElementById('ed-immediate-payment');body.immediate_payment=(edImmSave&&edImmSave.checked)?1:0;var edResSave=document.getElementById('ed-reserved');body.reserved=(edResSave&&edResSave.checked)?1:0;if(editTraderId)body.trader_id=editTraderId;var edBankSel=document.getElementById('ed-bank-select');if(edBankSel)body.bank_id=edBankSel.value?parseInt(edBankSel.value):null;const r=await fetch(B+'/api/lots/'+editId,{method:'PUT',headers:ah(),body:JSON.stringify(body)});const d=await r.json();if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Failed')+'</div>';return}toast('Lot updated',false);closeEdit();loadMyLots();await loadStats();updUI()}catch(e){er.innerHTML='<div class="eb">Failed</div>'}finally{document.getElementById('ed-save').disabled=false}}
 async function deleteLot(id,n){if(!confirm('Delete Lot #'+n+'?'))return;try{await fetch(B+'/api/lots/'+id,{method:'DELETE',headers:ah()});toast('Deleted',false);loadMyLots();await loadStats();updUI()}catch(e){}}
 
 function clearEntryForm(){
