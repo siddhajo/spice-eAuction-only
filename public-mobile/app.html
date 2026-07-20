@@ -357,11 +357,14 @@ select:focus{border-color:var(--green)}
         </label>
 
         <!-- Reserve (hold) instead of book. Reserved lots show in a distinct
-             colour and hold the lot number so no other seller can book it. -->
+             colour and hold the lot number so no other seller can book it.
+             When ON, the lot grid becomes MULTI-select so several lots can be
+             held for the seller in one save (bags/qty not needed). -->
         <label for="le-reserved" style="display:flex;align-items:center;gap:8px;margin-bottom:6px;padding:8px 10px;border:1.5px solid var(--border2);border-radius:8px;background:var(--input-bg)">
-          <input type="checkbox" id="le-reserved" style="width:18px;height:18px;accent-color:#0284c7">
+          <input type="checkbox" id="le-reserved" onchange="onReserveToggle()" style="width:18px;height:18px;accent-color:#0284c7">
           <span style="font-size:12px;font-weight:600;color:var(--text)">Reserve this lot (hold — not booked)</span>
         </label>
+        <div id="le-reserve-hint" style="display:none;font-size:11px;color:#0369a1;background:#e0f2fe;border:1px solid #7dd3fc;border-radius:8px;padding:6px 10px;margin-bottom:6px;line-height:1.4">Multi-reserve is ON — tap <b>several lot numbers</b> above to hold them all for this seller, then Save. Bags/weight aren’t needed for held lots.</div>
 
         <!-- Buttons -->
         <div id="le-btn-save" style="display:flex;gap:8px">
@@ -397,6 +400,7 @@ select:focus{border-color:var(--green)}
     <div class="mi" onclick="toggleDarkMode()"><span id="dm-icon">🌙</span> <span id="dm-label">Dark Mode</span></div>
     <div class="mi" id="menu-undo" style="display:none" onclick="showUndoHistory()">↩ Undo History</div>
     <div class="mi" onclick="openReassign()">🔀 Reassign Lots<span id="menu-reassign-badge" style="display:none;margin-left:6px;background:var(--red);color:#fff;font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px"></span></div>
+    <div class="mi" onclick="closeDepotMobile()">⏏ Close Depot</div>
     <div class="mi" onclick="togglePrintFormat()">🖨 Print format: <span id="pf-label">Full</span></div>
     <div class="mi" onclick="showChangePassword()">🔑 Change Password</div>
     <div class="mi" onclick="changeSession()">Change session</div>
@@ -746,6 +750,9 @@ await loadStats();goLots()}
 var allocStats=null;
 var selectedLots=[];
 var availableLots=[];
+// Multi-select mode for the lot grid — turned on by the Reserve checkbox so
+// several lots can be held for one seller in a single save.
+var reserveMulti=false;
 var recentLots=[];
 var lastSavedLot=null;
 // Hide booked (used) lots by default so the chip grid stays compact —
@@ -811,8 +818,32 @@ function hasFormData(){
   return !!(selT || document.getElementById('le-name').value.trim() || document.getElementById('le-bags').value || document.getElementById('le-qty').value);
 }
 
+// Reserve checkbox toggled — flip the grid between single- and multi-select.
+function onReserveToggle(){
+  var on=document.getElementById('le-reserved').checked;
+  reserveMulti=on;
+  var hint=document.getElementById('le-reserve-hint');
+  if(hint)hint.style.display=on?'block':'none';
+  if(on){
+    showLotGrid();   // expand so multiple chips can be tapped
+  }else{
+    // Back to single-select: keep only the first pick.
+    if(selectedLots.length>1)selectedLots=[selectedLots[0]];
+  }
+  renderLotGrid();
+  updateLotSelection();
+}
+
 function toggleLotChip(el){
   var lot=el.dataset.lot;
+  // Multi-select (reserve mode): toggle this lot in/out; keep the grid open.
+  if(reserveMulti){
+    var mi=selectedLots.indexOf(lot);
+    if(mi>=0){selectedLots.splice(mi,1);el.classList.remove('selected');}
+    else{selectedLots.push(lot);el.classList.add('selected');}
+    updateLotSelection();
+    return;
+  }
   if(selectedLots.length && selectedLots[0]===lot){return}
   // Warn if form has data (only bags/qty filled)
   if((document.getElementById('le-bags').value || document.getElementById('le-qty').value) && selectedLots.length){
@@ -853,6 +884,10 @@ function updateLotSelection(){
   var bannerNum=document.getElementById('le-lot-banner-num');
   if(selectedLots.length===0){
     el.textContent='';
+    banner.style.display='none';
+  } else if(reserveMulti){
+    // Multi-reserve: show the count + list, keep the grid open (no banner).
+    el.textContent=selectedLots.length+' lot'+(selectedLots.length>1?'s':'')+' selected';
     banner.style.display='none';
   } else {
     el.textContent='Lot #'+selectedLots[0];
@@ -1202,6 +1237,9 @@ function onBagsInput(){if(gunnyActive())calcNetFromGunny();}
 async function saveLot(){
   if(!selT){toast('Select seller',true);return}
   if(!selectedLots.length){toast('Tap a lot number to select',true);return}
+  // Multi-reserve: hold every selected lot for this seller in one go.
+  var resChk0=document.getElementById('le-reserved');
+  if(resChk0&&resChk0.checked&&selectedLots.length>1){return saveReservedBatch();}
   var lotNo=selectedLots[0];
   var grade=document.getElementById('le-grade').value.trim()||'1';
   var bags=parseInt(document.getElementById('le-bags').value);
@@ -1268,6 +1306,45 @@ async function saveLot(){
   }catch(e){toast('Save failed',true)}
   document.getElementById('le-save').disabled=false;
 }
+
+// Batch-reserve every selected lot for the current seller. Held lots need no
+// bags/qty; a shared Reserved Price (when the feature is on) is applied to all.
+// Reserve mode stays ON afterwards so the operator can hold more in the next
+// batch. Partial failures (e.g. a lot got taken) are reported without losing
+// the successes.
+async function saveReservedBatch(){
+  if(!selT){toast('Select seller',true);return}
+  var lots=selectedLots.slice();
+  if(!lots.length){toast('Tap lot numbers to reserve',true);return}
+  var grade=document.getElementById('le-grade').value.trim()||'1';
+  var selBankId=document.getElementById('le-bank-select')?document.getElementById('le-bank-select').value:'';
+  var rpEl=document.getElementById('le-reserved-price');
+  var rpRaw=(rpEl&&cfgShowReservedPrice)?rpEl.value.trim():'';
+  var reservedPrice=rpRaw===''?0:parseFloat(rpRaw)||0;
+  var immPay=document.getElementById('le-immediate-payment');
+  var immediatePayment=(immPay&&immPay.checked)?1:0;
+  document.getElementById('le-save').disabled=true;
+  var ok=0,failed=[];
+  for(var i=0;i<lots.length;i++){
+    var lotData={auction_id:aid,trader_id:selT.id,branch:br,grade:grade,bags:0,litre:0,qty:0,lot_no:lots[i],state:'TAMIL NADU',bank_id:selBankId?parseInt(selBankId):null,gross_weight:0,sample_weight:0,moisture:null,crpt:'',reserved_price:reservedPrice,immediate_payment:immediatePayment,reserved:1};
+    try{
+      var r=await fetch(B+'/api/lots',{method:'POST',headers:ah(),body:JSON.stringify(lotData)});
+      var d=await r.json();
+      if(r.ok)ok++; else failed.push(lots[i]);
+    }catch(e){failed.push(lots[i]);}
+  }
+  document.getElementById('le-save').disabled=false;
+  if(ok){if(navigator.vibrate)navigator.vibrate(50);toast('Reserved '+ok+' lot'+(ok>1?'s':'')+' for '+selT.name+(failed.length?' · '+failed.length+' failed':''),!!failed.length,!failed.length);}
+  if(failed.length&&!ok)toast('Could not reserve: '+failed.slice(0,4).join(', ')+(failed.length>4?'…':''),true);
+  // Refresh stats + allocation grid so the newly-held lots show up.
+  await loadStats();updUI();
+  if(selT)loadSellerBookings(selT.id);
+  try{var r2=await fetch(B+'/api/auctions/'+aid+'/allocation-stats',{headers:ah()});var d2=await r2.json();allocStats=d2.stats||[];}catch(e){}
+  selectedLots=[];
+  renderLotGrid();
+  renderRecentLots();
+  updateLotSelection();
+}
 async function undoLot(){if(!lastId)return;try{await fetch(B+'/api/lots/'+lastId,{method:'DELETE',headers:ah()});lastId=null;await loadStats();updUI();toast('Undone',false);showSaveBtn()}catch(e){}}
 
 function showSaveBtn(){document.getElementById('le-btn-save').style.display='flex';document.getElementById('le-btn-saved').style.display='none'}
@@ -1299,6 +1376,8 @@ function resetFormKeepSeller(){
   // Reserve — reset so holding a lot is a deliberate per-lot choice.
   var resK=document.getElementById('le-reserved');
   if(resK)resK.checked=false;
+  reserveMulti=false;
+  var rhK=document.getElementById('le-reserve-hint');if(rhK)rhK.style.display='none';
   renderLotGrid();
   selectNextAvailableLot();
 }
@@ -1315,7 +1394,7 @@ function _incrementCrptStr(prev){
   var padded=next.length>=num.length?next:next.padStart(num.length,'0');
   return prefix+padded;
 }
-function resetForm(){selT=null;selectedLots=[];lastSavedLot=null;document.getElementById('le-recent').innerHTML='';document.getElementById('le-name').value='';document.getElementById('le-grade').value='1';document.getElementById('le-bags').value='';document.getElementById('le-litre').value=cfgDefaultLitre||'';document.getElementById('le-qty').value='';document.getElementById('le-gross').value='';var wgR=document.getElementById('le-weight-gunny');if(wgR)wgR.value='';var gwR=document.getElementById('le-gunny-weight');if(gwR)gwR.value='';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';if(document.getElementById('le-moisture'))document.getElementById('le-moisture').value='';var crptEl3=document.getElementById('le-crpt');if(crptEl3)crptEl3.value='';var rpEl3=document.getElementById('le-reserved-price');if(rpEl3)rpEl3.value='';var immR=document.getElementById('le-immediate-payment');if(immR)immR.checked=false;var resR=document.getElementById('le-reserved');if(resR)resR.checked=false;document.getElementById('le-lot-err').style.display='none';document.getElementById('le-res').style.display='none';document.getElementById('le-tc').style.display='none';document.getElementById('le-bank').style.display='none';document.getElementById('le-bank-form').style.display='none';document.getElementById('le-sw').style.display='block';hideSellerBookings();showLotGrid();renderLotGrid();selectNextAvailableLot();document.getElementById('le-scroll').scrollTop=0}
+function resetForm(){selT=null;selectedLots=[];lastSavedLot=null;document.getElementById('le-recent').innerHTML='';document.getElementById('le-name').value='';document.getElementById('le-grade').value='1';document.getElementById('le-bags').value='';document.getElementById('le-litre').value=cfgDefaultLitre||'';document.getElementById('le-qty').value='';document.getElementById('le-gross').value='';var wgR=document.getElementById('le-weight-gunny');if(wgR)wgR.value='';var gwR=document.getElementById('le-gunny-weight');if(gwR)gwR.value='';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';if(document.getElementById('le-moisture'))document.getElementById('le-moisture').value='';var crptEl3=document.getElementById('le-crpt');if(crptEl3)crptEl3.value='';var rpEl3=document.getElementById('le-reserved-price');if(rpEl3)rpEl3.value='';var immR=document.getElementById('le-immediate-payment');if(immR)immR.checked=false;var resR=document.getElementById('le-reserved');if(resR)resR.checked=false;reserveMulti=false;var rhR=document.getElementById('le-reserve-hint');if(rhR)rhR.style.display='none';document.getElementById('le-lot-err').style.display='none';document.getElementById('le-res').style.display='none';document.getElementById('le-tc').style.display='none';document.getElementById('le-bank').style.display='none';document.getElementById('le-bank-form').style.display='none';document.getElementById('le-sw').style.display='block';hideSellerBookings();showLotGrid();renderLotGrid();selectNextAvailableLot();document.getElementById('le-scroll').scrollTop=0}
 
 // ── MY LOTS (by branch) ──
 async function loadMyLots(){if(!aid)return;try{const r=await fetch(B+'/api/lots?auction_id='+aid+'&branch='+encodeURIComponent(br),{headers:ah()});const d=await r.json();allMyLots=d.lots||[];const stats=d.stats||{};document.getElementById('ml-cnt').textContent=stats.lotCount||0;document.getElementById('ml-bags').textContent=stats.totalBags||0;document.getElementById('ml-qty').textContent=(stats.totalQty||0).toFixed(3);document.getElementById('ml-search').value='';renderMyLots(allMyLots)}catch(e){}}
@@ -1505,6 +1584,9 @@ function clearEntryForm(){
   var crptCE=document.getElementById('le-crpt');if(crptCE)crptCE.value='';
   var rpCE=document.getElementById('le-reserved-price');if(rpCE)rpCE.value='';
   var immCE=document.getElementById('le-immediate-payment');if(immCE)immCE.checked=false;
+  var resCE=document.getElementById('le-reserved');if(resCE)resCE.checked=false;
+  reserveMulti=false;
+  var rhCE=document.getElementById('le-reserve-hint');if(rhCE)rhCE.style.display='none';
   document.getElementById('le-res').style.display='none';
   document.getElementById('le-tc').style.display='none';
   document.getElementById('le-bank').style.display='none';
@@ -2075,6 +2157,34 @@ function raSelSummary(){
 // Typing in the range inputs clears the tile picks (modes are exclusive).
 function raClearTilePick(){
   if(_raPick.size){_raPick.clear();raPaintPickTiles()}
+}
+// ── Close Depot (mobile) ──────────────────────────────────────────
+// End-of-day action for the operator running a depot: push this depot's
+// remaining FREE (un-entered) lot numbers to the trade's main/holding depot
+// so they can be re-allocated elsewhere. Booked lots stay put. The main
+// depot is configured by an admin on the desktop (Edit Allocations); if it
+// isn't set the server returns a clear message. lot_entry role carries
+// auction_write, so field operators are allowed to run this on their own
+// (branch-locked) session depot.
+async function closeDepotMobile(){
+  toggleMenu(true);
+  if(!aid||!br){toast('Start a session first',true);return}
+  if(!confirm('Close depot '+br+'?\n\nBooked lots stay put. The remaining FREE (un-entered) lot numbers move to the main depot so they can be re-allocated. You won’t be able to enter more lots in those freed numbers.'))return;
+  try{
+    var r=await fetch(B+'/api/auctions/'+aid+'/close-depot',{method:'POST',headers:ah(),body:JSON.stringify({branch:br})});
+    var d=await r.json();
+    if(!r.ok){toast(d.error||'Close depot failed',true);return}
+    if(navigator.vibrate)navigator.vibrate(50);
+    toast(d.message||('Closed '+br),false,true);
+    // Refresh the allocation bar + lot grid so freed numbers disappear.
+    try{
+      var r2=await fetch(B+'/api/auctions/'+aid+'/allocation-stats',{headers:ah()});
+      var d2=await r2.json();allocStats=d2.stats||[];
+      if(typeof renderAllocBars==='function')renderAllocBars();
+      if(typeof renderLotGrid==='function')renderLotGrid();
+    }catch(e){}
+    await loadStats();updUI();
+  }catch(e){toast('Close depot failed',true)}
 }
 function openReassign(){
   toggleMenu(true);
