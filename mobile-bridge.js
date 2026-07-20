@@ -1009,12 +1009,13 @@ function mountMobile(app, deps) {
     }
 
     const info = db.run(
-      `INSERT INTO traders (name,cr,pan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name,whatsapp,email)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO traders (name,cr,pan,tan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name,whatsapp,email)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         nameTrim,
         crTrim,
         panTrim,
+        (t.tan || '').toString().trim().toUpperCase(),
         telTrim,
         (t.aadhar || '').toString().trim(),
         (t.padd || '').toString().trim(),
@@ -1090,6 +1091,7 @@ function mountMobile(app, deps) {
     setField('name',        t.name,        (v) => String(v).trim().toUpperCase());
     setField('cr',          t.cr,          (v) => String(v).trim());
     setField('pan',         t.pan,         (v) => String(v).trim().toUpperCase());
+    setField('tan',         t.tan,         (v) => String(v).trim().toUpperCase());
     setField('tel',         t.tel,         (v) => String(v).trim());
     setField('aadhar',      t.aadhar,      (v) => String(v).trim());
     setField('padd',        t.padd,        (v) => String(v).trim());

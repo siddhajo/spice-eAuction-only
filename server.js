@@ -30,8 +30,9 @@ const { mountMobile } = require('./mobile-bridge');
 const getCompanyIdentity = require('./_company-identity-fallback').resolve();
 const {
   generSalesXML, generSalesIspXML, generSalesAspXML, generIspPurchaseXML,
+  generMerchantsXML,
   generRDPurchaseXML, generURDPurchaseXML, generDebitNoteXML, generLedgerXML,
-  buildSalesRows, buildSalesIspRows, buildSalesAspRows,
+  buildSalesRows, buildSalesIspRows, buildSalesAspRows, buildIrpJson,
   buildRDPurchaseRows, buildURDPurchaseRows, buildDebitNoteRows, buildDebitNotePlanterRows, buildLedgerRows,
   buildSalesPartyLedgerRows, buildRDPartyLedgerRows, buildURDPartyLedgerRows,
   listAuctionParties,
@@ -1204,6 +1205,35 @@ const LOGO_FILES = {
   ispl: path.join(__dirname, 'public', 'logo-ispl.png'),
   asp:  path.join(__dirname, 'public', 'logo-asp.png'),
 };
+// Persistent logo storage. Every logo reader resolves the image from `public/`,
+// but `public/` ships inside the deploy image and is rebuilt on each redeploy:
+// a committed logo there leaks into any new service created from the same repo
+// (the reported bug), and an operator-uploaded logo would be lost on the next
+// redeploy. The gitignored `data/` volume is the real per-deployment store —
+// uploads are written here and `public/` is rehydrated from it on boot, so a
+// brand-new service (empty data/ volume + no committed public logo) shows none.
+const LOGO_PERSIST_DIR = path.join(__dirname, 'data', 'branding');
+const LOGO_PERSIST_FILES = {
+  ispl: path.join(LOGO_PERSIST_DIR, 'logo-ispl.png'),
+  asp:  path.join(LOGO_PERSIST_DIR, 'logo-asp.png'),
+};
+// Sync persistent → public on boot. When only a public copy exists (first run
+// after this change, before the committed logo is removed from the repo) it is
+// adopted into persistent storage so a redeploy won't lose it.
+function rehydrateLogos() {
+  try {
+    fs.mkdirSync(LOGO_PERSIST_DIR, { recursive: true });
+    for (const which of Object.keys(LOGO_FILES)) {
+      const persist = LOGO_PERSIST_FILES[which];
+      const pub = LOGO_FILES[which];
+      if (fs.existsSync(persist)) {
+        fs.copyFileSync(persist, pub);            // persistent wins — refresh public
+      } else if (fs.existsSync(pub)) {
+        fs.copyFileSync(pub, persist);            // adopt this deployment's logo once
+      }
+    }
+  } catch (e) { console.error('rehydrateLogos failed:', e.message); }
+}
 app.post('/api/company-settings/logo/:which', requireSettingsWrite, upload.single('file'), (req, res) => {
   const which = req.params.which;
   if (!LOGO_FILES[which]) return res.status(400).json({ error: 'Invalid logo type (use ispl or asp)' });
@@ -1217,6 +1247,10 @@ app.post('/api/company-settings/logo/:which', requireSettingsWrite, upload.singl
   // Always save as .png at the fixed path (PDFKit handles both PNG and JPEG from PNG extension? No — rename to real ext)
   // Simpler: keep .png in the PDF code always pointing to PNG. For JPEG uploads, save as .jpg alongside.
   const target = LOGO_FILES[which];
+  // Write the persistent copy first (survives redeploys), then the public copy
+  // readers serve from.
+  try { fs.mkdirSync(LOGO_PERSIST_DIR, { recursive: true }); } catch (_) {}
+  fs.copyFileSync(req.file.path, LOGO_PERSIST_FILES[which]);
   fs.copyFileSync(req.file.path, target);
   fs.unlinkSync(req.file.path);
   res.json({ success: true, path: `/logo-${which}.png`, size: fs.statSync(target).size });
@@ -1224,8 +1258,11 @@ app.post('/api/company-settings/logo/:which', requireSettingsWrite, upload.singl
 app.delete('/api/company-settings/logo/:which', requireSettingsWrite, (req, res) => {
   const which = req.params.which;
   if (!LOGO_FILES[which]) return res.status(400).json({ error: 'Invalid logo type' });
-  const target = LOGO_FILES[which];
-  if (fs.existsSync(target)) fs.unlinkSync(target);
+  // Remove both the public and persistent copies, else a boot-time rehydrate
+  // would resurrect the deleted logo.
+  for (const target of [LOGO_FILES[which], LOGO_PERSIST_FILES[which]]) {
+    if (fs.existsSync(target)) fs.unlinkSync(target);
+  }
   res.json({ success: true });
 });
 // Quick probe so the UI knows whether a logo is uploaded
@@ -2462,9 +2499,9 @@ app.post('/api/traders', requireTraderWrite, (req, res) => {
       error: `This seller already exists (${_dup.field} match): "${_dup.row.name || '(unnamed)'}". Edit that seller instead.`,
     });
   }
-  const info = db.run(`INSERT INTO traders (name,cr,pan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [t.name,t.cr||'',t.pan||'',t.tel||'',t.aadhar||'',t.padd||'',t.ppla||'',t.pin||'',t.pstate||'',t.pst_code||'',t.ifsc||'',t.acctnum||'',t.holder_name||'']);
+  const info = db.run(`INSERT INTO traders (name,cr,pan,tan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [t.name,t.cr||'',t.pan||'',t.tan||'',t.tel||'',t.aadhar||'',t.padd||'',t.ppla||'',t.pin||'',t.pstate||'',t.pst_code||'',t.ifsc||'',t.acctnum||'',t.holder_name||'']);
   // If the client sent a banks array (new multi-bank UI), persist them.
   // Otherwise honor the legacy single-bank fields already inserted above.
   if (Array.isArray(t.banks)) {
@@ -2491,13 +2528,13 @@ app.put('/api/traders/:id', requireTraderWrite, (req, res) => {
   // fallback for direct desktop callers that bypass the bridge.)
   db.run(
     `UPDATE traders
-       SET name=?, cr=?, pan=?, tel=?, aadhar=?, padd=?, ppla=?, pin=?,
+       SET name=?, cr=?, pan=?, tan=?, tel=?, aadhar=?, padd=?, ppla=?, pin=?,
            pstate=?, pst_code=?, ifsc=?, acctnum=?, holder_name=?,
            whatsapp=COALESCE(?, whatsapp),
            email=COALESCE(?, email)
      WHERE id=?`,
     [
-      t.name, t.cr||'', t.pan||'', t.tel||'', t.aadhar||'',
+      t.name, t.cr||'', t.pan||'', t.tan||'', t.tel||'', t.aadhar||'',
       t.padd||'', t.ppla||'', t.pin||'', t.pstate||'', t.pst_code||'',
       t.ifsc||'', t.acctnum||'', t.holder_name||'',
       t.whatsapp != null ? String(t.whatsapp).trim() : null,
@@ -2844,11 +2881,11 @@ app.post('/api/buyers', requireBuyerWrite, (req, res) => {
   }
   db.run(`INSERT INTO buyers (
       buyer, buyer1, code, sbl, add1, add2, pla, pin, state, st_code,
-      gstin, pan, tel, ti, sale, email, tdsq,
+      gstin, pan, tan, tel, ti, sale, email, tdsq,
       cbuyer1, cadd1, cadd2, cpla, cpin, cstate, cst_code, cgstin
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [b.buyer, b.buyer1||'', b.code||'', b.sbl||'', b.add1||'', b.add2||'', b.pla||'', b.pin||'', b.state||'', b.st_code||'',
-     b.gstin||'', b.pan||'', b.tel||'', b.ti||'', b.sale||'L', b.email||'', b.tdsq||'',
+     b.gstin||'', b.pan||'', b.tan||'', b.tel||'', b.ti||'', b.sale||'L', b.email||'', b.tdsq||'',
      b.cbuyer1||'', b.cadd1||'', b.cadd2||'', b.cpla||'', b.cpin||'', b.cstate||'', b.cst_code||'', b.cgstin||'']);
   res.json({ success: true });
 });
@@ -2879,11 +2916,11 @@ app.put('/api/buyers/:id', requireBuyerWrite, (req, res) => {
   }
   db.run(`UPDATE buyers SET
       buyer=?, buyer1=?, code=?, sbl=?, add1=?, add2=?, pla=?, pin=?, state=?, st_code=?,
-      gstin=?, pan=?, tel=?, ti=?, sale=?, email=?, tdsq=?,
+      gstin=?, pan=?, tan=?, tel=?, ti=?, sale=?, email=?, tdsq=?,
       cbuyer1=?, cadd1=?, cadd2=?, cpla=?, cpin=?, cstate=?, cst_code=?, cgstin=?
     WHERE id=?`,
     [b.buyer, b.buyer1||'', b.code||'', b.sbl||'', b.add1||'', b.add2||'', b.pla||'', b.pin||'', b.state||'', b.st_code||'',
-     b.gstin||'', b.pan||'', b.tel||'', b.ti||'', b.sale||'L', b.email||'', b.tdsq||'',
+     b.gstin||'', b.pan||'', b.tan||'', b.tel||'', b.ti||'', b.sale||'L', b.email||'', b.tdsq||'',
      b.cbuyer1||'', b.cadd1||'', b.cadd2||'', b.cpla||'', b.cpin||'', b.cstate||'', b.cst_code||'', b.cgstin||'',
      req.params.id]);
   res.json({ success: true });
@@ -10979,6 +11016,10 @@ const TALLY_EXPORTS = {
   urd_purchase:        { label: 'URD Purchase Vouchers (Agriculturist)',            name: 'URDPurchase',        builder: buildURDPurchaseRows,      generator: generURDPurchaseXML,  company: 'isp' },
   debit_note:          { label: 'Debit Notes (Discount)',                           name: 'DebitNote',          builder: buildDebitNoteRows,        generator: generDebitNoteXML,    company: 'isp' },
   debit_note_planter:  { label: 'Debit Notes — Planter (Discount)',                 name: 'DebitNotePlanter',   builder: buildDebitNotePlanterRows, generator: generDebitNoteXML,    company: 'isp' },
+  // Merchants = consolidated Journal that debits every buyer by their invoice
+  // total and credits the "Merchants" control ledger. Reuses the Sales rows so
+  // per-party figures reconcile with the Sales export. Gated by `flag_merchants`.
+  merchants:           { label: 'Merchants (Consolidated Journal)',                 name: 'Merchants',          builder: buildSalesIspRows,         generator: generMerchantsXML,    company: 'isp', flag: 'flag_merchants' },
 };
 
 // Resolve the Tally company name for a given export type.
@@ -11042,6 +11083,11 @@ app.get('/api/tally/preview/:type/:auctionId', requireExport, (req, res) => {
   try {
     const db = getDb();
     const cfg = getSettingsFlat(db);
+    // Feature-flag gate — a flagged export (e.g. Merchants) is only available
+    // when its toggle is enabled in Settings → Flags.
+    if (def.flag && String(cfg[def.flag] || '').toLowerCase() !== 'true') {
+      return res.status(403).json({ error: `${def.label} is disabled — enable "${def.flag}" in Settings → Flags` });
+    }
     const rows = def.builder(db, auctionId, cfg);
     const targetCompany = resolveTallyCompanyName(cfg, def.company);
     if (def.isLedger) {
@@ -11514,8 +11560,17 @@ app.get('/api/tally/invoice-voucher/:auctionId', requireExport, (req, res) => {
     const label = `${first.sale ? first.sale + '-' : ''}${first.invo || first.id}`;
     const safeName = String(label).replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40);
     const ispCompany = resolveTallyCompanyName(cfg, 'isp');
+    const fmt = String(req.query.format || '').toLowerCase();
+    // ?format=irp → this single invoice as GST e-Invoice (IRP / NIC) JSON.
+    if (fmt === 'irp') {
+      const irp = buildIrpJson(rows, cfg, { companyName: ispCompany });
+      const filename = `EInvoice_${safeName}_${auctionId}.json`;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(JSON.stringify(irp, null, 2));
+    }
     // ?format=json → the single invoice's voucher row as JSON.
-    if (String(req.query.format || '').toLowerCase() === 'json') {
+    if (fmt === 'json') {
       const json = tallyJson(rows, auctionId, ispCompany, { type: 'invoice_voucher', label: `Sales Invoice ${label}` });
       const filename = `Tally_InvoiceVoucher_${safeName}_${auctionId}.json`;
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -11544,14 +11599,33 @@ app.get('/api/tally/export/:type/:auctionId', requireExport, (req, res) => {
   try {
     const db = getDb();
     const cfg = getSettingsFlat(db);
+    // Feature-flag gate — a flagged export (e.g. Merchants) is only available
+    // when its toggle is enabled in Settings → Flags.
+    if (def.flag && String(cfg[def.flag] || '').toLowerCase() !== 'true') {
+      return res.status(403).json({ error: `${def.label} is disabled — enable "${def.flag}" in Settings → Flags` });
+    }
     const rows = def.builder(db, auctionId, cfg);
     if (rows.length === 0) {
       const what = def.isLedger ? def.label.toLowerCase() : `${def.label.toLowerCase()}`;
       return res.status(404).json({ error: `No ${what} found for auction ${auctionId}` });
     }
     const targetCompany = resolveTallyCompanyName(cfg, def.company);
+    const fmt = String(req.query.format || '').toLowerCase();
+    // ?format=irp → GST e-Invoice (IRP / NIC) JSON, ready for the trade
+    // portal. Only meaningful for outside-customer sales (ISP), whose row
+    // shape carries the buyer GSTIN / address the schema needs.
+    if (fmt === 'irp') {
+      if (def.builder !== buildSalesIspRows) {
+        return res.status(400).json({ error: 'IRP e-invoice format is only available for Sales Vouchers — ISP (type "sales_isp").' });
+      }
+      const irp = buildIrpJson(rows, cfg, { companyName: targetCompany });
+      const filename = `EInvoice_${def.name}_${anoForFilename(db, auctionId)}.json`;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(JSON.stringify(irp, null, 2));
+    }
     // ?format=json → same voucher rows as JSON instead of Tally XML.
-    if (String(req.query.format || '').toLowerCase() === 'json') {
+    if (fmt === 'json') {
       const json = tallyJson(rows, auctionId, targetCompany, { type, label: def.label });
       const filename = `${def.name}_${anoForFilename(db, auctionId)}.json`;
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -14657,6 +14731,10 @@ const PORT = process.env.PORT || 3001;
 (async () => {
   const db = await initDb();
   initCompanySettings(db);
+  // Sync the persistent (data/) logo into public/ — and adopt an existing
+  // public logo on first run — so uploads survive redeploys and a fresh
+  // service doesn't inherit a committed logo.
+  rehydrateLogos();
   repairBadDates(db);
   assertSchemaSanity(db);
   backfillAuctionIds(db);

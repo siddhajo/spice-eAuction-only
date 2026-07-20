@@ -1115,6 +1115,7 @@ body:not([data-feat-whatsapp="1"]) .feat-whatsapp{display:none !important}
 /* Debit Note — gated by flag_debit_note. When OFF, hide every UI surface
    tagged .feat-debit-note (nav item, tab content, modal buttons, etc.). */
 body:not([data-feat-debit-note="1"]) .feat-debit-note{display:none !important}
+body:not([data-feat-merchants="1"]) .feat-merchants{display:none !important}
 /* Debit Note — Planter — gated by flag_debit_note_planter. Same single
    declarative gate, scoped to the .feat-debit-note-planter surfaces. */
 body:not([data-feat-debit-note-planter="1"]) .feat-debit-note-planter{display:none !important}
@@ -1154,6 +1155,9 @@ body:not([data-feat-lot-lock="1"]) .feat-lot-lock{display:none !important}
 /* Reserved Price (Lot Entry) — gated by flag_reserved_price. When the
    flag is OFF the input + its label collapse cleanly via .feat-reserved-price. */
 body:not([data-feat-reserved-price="1"]) .feat-reserved-price{display:none !important}
+/* TAN field on Sellers + Buyers — gated by flag_tan. When OFF the TAN input
+   + its label collapse cleanly. */
+body:not([data-feat-tan="1"]) .feat-tan{display:none !important}
 /* Validate Lots — gated by flag_lot_validation. When OFF the Lot Entry
    "Validate Lots" button + the price-import gate banner collapse via
    .feat-lot-validation (and the server-side import gate is a no-op too). */
@@ -5214,6 +5218,24 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
               <button class="btn btn-g" onclick="tallyDownload('debit_note_planter','json')" style="flex:1;padding:7px;font-size:12px">JSON</button>
             </div>
           </div>
+
+          <!-- Merchants — consolidated Journal (feature-flagged via flag_merchants;
+               hidden by the .feat-merchants CSS rule when OFF). Sits below the
+               voucher cards in the To Tally menu. -->
+          <div class="feat-merchants" data-tally-co="isp" style="padding:14px;border:1px solid var(--border);border-radius:10px;background:#fff">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+              <span style="width:32px;height:32px;border-radius:8px;background:#EEF2FF;display:inline-flex;align-items:center;justify-content:center;font-size:18px">🧾</span>
+              <div>
+                <div style="font-weight:700;color:var(--text);font-size:14px">Merchants</div>
+                <div style="font-size:11px;color:var(--text3)">Consolidated Journal — debits each buyer, credits the "Merchants" ledger</div>
+              </div>
+            </div>
+            <div id="tally-preview-merchants" style="font-size:11px;color:var(--text3);min-height:18px;margin:6px 0"></div>
+            <div style="display:flex;gap:6px;margin-top:8px">
+              <button class="btn btn-a" onclick="tallyPreview('merchants')" style="flex:1;padding:7px;font-size:12px">Preview</button>
+              <button class="btn btn-g" onclick="tallyDownload('merchants')" style="flex:1;padding:7px;font-size:12px">XML</button>
+            </div>
+          </div>
         </div>
         </div>
         </div><!-- /tally-sec-vouchers -->
@@ -5508,6 +5530,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <div class="fg"><label>Name *</label><input id="t-name"></div>
     <div class="fg"><label>CR / GSTIN</label><div style="display:flex;gap:6px"><input id="t-cr" style="flex:1"><button class="btn btn-a" type="button" onclick="gstLookup('t')" style="white-space:nowrap;padding:6px 10px">Fetch from GST</button></div></div>
     <div class="fg"><label>PAN</label><input id="t-pan" onblur="tCheckPanDup()"><div id="t-pan-warn" style="display:none"></div></div>
+    <div class="fg feat-tan"><label>TAN</label><input id="t-tan" maxlength="10" placeholder="e.g. BLRA12345C" style="text-transform:uppercase"></div>
     <div class="fg"><label>Phone</label><input id="t-tel"></div>
     <div class="fg"><label>Aadhar</label><input id="t-aadhar"></div>
     <div class="fg"><label>Address</label><input id="t-padd"></div>
@@ -5561,6 +5584,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <div class="fg"><label>State</label><input id="b-state"></div>
     <div class="fg"><label>State Code</label><input id="b-stcode"></div>
     <div class="fg"><label>PAN</label><input id="b-pan"></div>
+    <div class="fg feat-tan"><label>TAN</label><input id="b-tan" maxlength="10" placeholder="e.g. BLRA12345C" style="text-transform:uppercase"></div>
     <div class="fg"><label>Phone</label><input id="b-tel"></div>
     <div class="fg"><label>AI (auction identifier)</label><input id="b-ti"></div>
     <div class="fg"><label>SBL</label><input id="b-sbl"></div>
@@ -7613,6 +7637,7 @@ async function applyFeatureFlags() {
   document.body.setAttribute('data-feat-whatsapp', cfg && on(cfg.flag_whatsapp) ? '1' : '0');
   // Debit Note gated by flag_debit_note (Settings → Flags).
   document.body.setAttribute('data-feat-debit-note', cfg && on(cfg.flag_debit_note) ? '1' : '0');
+  document.body.setAttribute('data-feat-merchants', cfg && on(cfg.flag_merchants) ? '1' : '0');
   // Debit Note — Planter gated by flag_debit_note_planter (Settings → Flags).
   document.body.setAttribute('data-feat-debit-note-planter', cfg && on(cfg.flag_debit_note_planter) ? '1' : '0');
   // Price List Mapping — sidebar entry + Lots toolbar button. Default
@@ -7655,6 +7680,9 @@ async function applyFeatureFlags() {
   // .feat-reserved-price CSS rule. The companion Crop Receipt field
   // is always shown — only Reserved Price is flag-gated.
   document.body.setAttribute('data-feat-reserved-price', cfg && on(cfg.flag_reserved_price) ? '1' : '0');
+  // TAN field on Sellers + Buyers. When ON the TAN input shows in both
+  // add/edit forms; the traders.tan / buyers.tan columns always exist.
+  document.body.setAttribute('data-feat-tan', cfg && on(cfg.flag_tan) ? '1' : '0');
   // Validate Lots before price import. Default OFF — when ON the "Validate
   // Lots" button shows in Lot Entry, the price-import gate banner renders,
   // and import is blocked until the trade's entered lots are validated.
@@ -17397,8 +17425,8 @@ async function restoreDbBackup(ev){
 // Traders now support MULTIPLE bank accounts via a repeating section in the
 // modal. The flat trader fields here cover everything EXCEPT banking — that's
 // collected separately from the #t-banks-container rows at save time.
-const T_FIELDS=['name','cr','pan','tel','aadhar','padd','ppla','pstate','pst_code','pin'];
-const T_IDS={name:'t-name',cr:'t-cr',pan:'t-pan',tel:'t-tel',aadhar:'t-aadhar',padd:'t-padd',ppla:'t-ppla',
+const T_FIELDS=['name','cr','pan','tan','tel','aadhar','padd','ppla','pstate','pst_code','pin'];
+const T_IDS={name:'t-name',cr:'t-cr',pan:'t-pan',tan:'t-tan',tel:'t-tel',aadhar:'t-aadhar',padd:'t-padd',ppla:'t-ppla',
   pstate:'t-pstate',pst_code:'t-pstcode',pin:'t-pin'};
 
 // Shared pager renderer used by sellers + buyers (and reusable for any
@@ -18480,10 +18508,10 @@ async function gstLookup(prefix){
 }
 
 // ── Buyers ────────────────────────────────────────────────
-const B_FIELDS=['buyer','buyer1','code','sbl','add1','add2','pla','pin','state','st_code','gstin','pan','tel','ti','sale','email',
+const B_FIELDS=['buyer','buyer1','code','sbl','add1','add2','pla','pin','state','st_code','gstin','pan','tan','tel','ti','sale','email',
   'cbuyer1','cadd1','cadd2','cpla','cpin','cstate','cst_code','cgstin'];
 const B_IDS={buyer:'b-buyer',buyer1:'b-buyer1',code:'b-code',sbl:'b-sbl',add1:'b-add1',add2:'b-add2',pla:'b-pla',pin:'b-pin',
-  state:'b-state',st_code:'b-stcode',gstin:'b-gstin',pan:'b-pan',tel:'b-tel',ti:'b-ti',sale:'b-sale',email:'b-email',
+  state:'b-state',st_code:'b-stcode',gstin:'b-gstin',pan:'b-pan',tan:'b-tan',tel:'b-tel',ti:'b-ti',sale:'b-sale',email:'b-email',
   cbuyer1:'b-cbuyer1',cadd1:'b-cadd1',cadd2:'b-cadd2',cpla:'b-cpla',cpin:'b-cpin',cstate:'b-cstate',cst_code:'b-cstcode',cgstin:'b-cgstin'};
 
 // Paginated buyers list — same shape as _tradersPager.
@@ -25376,7 +25404,8 @@ const TALLY_LABELS={
   rd_purchase:'RD Purchase',
   urd_purchase:'URD Purchase',
   debit_note:'Debit Note',
-  debit_note_planter:'Debit Note - Planter'
+  debit_note_planter:'Debit Note - Planter',
+  merchants:'Merchants'
 };
 const TALLY_TYPES=Object.keys(TALLY_LABELS);
 const TALLY_LEDGER_TYPES=['ledger_sales','ledger_rd_purchase','ledger_urd_purchase','ledger'];

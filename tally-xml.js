@@ -2778,6 +2778,249 @@ function buildSalesIspRows(db, auctionId, cfg) {
   return out;
 }
 
+// =====================================================================
+// 1C. GST e-INVOICE (IRP / NIC) JSON — schema Version 1.1
+// =====================================================================
+//
+// Transforms buildSalesIspRows() output into the NIC e-Invoice JSON
+// schema — the array-of-invoices format the IRP / trade portal accepts
+// (matches the known-good reference SalesJSON.json). This is a pure
+// re-shape of the SAME data the ISP Tally XML is built from: no new DB
+// reads, so it always agrees with the Tally export and the printed PDF.
+//
+// Each cardamom lot, the gunny line, and (inter-state only) the transport
+// + insurance service lines become ItemList entries taxed at
+// `tally_gst_rate`. Summed item AssAmt + tax reproduces the invoice's
+// stored CGST/SGST/IGST, and RndOffAmt anchors TotInvVal to the invoice's
+// own rounded total — verified against real vouchers to the paise.
+//
+//   • Intra-state (buyer GSTIN state == seller GSTIN state) → CGST + SGST
+//   • Inter-state                                            → IGST
+//
+// Known scope limits (all zero in current data — surfaced here so a
+// future non-zero case is a conscious decision, not a silent gap):
+//   - TCS (row.tcsamt) is NOT modelled — e-invoice TotInvVal excludes it,
+//     matching NIC practice (TCS is collected/reported separately).
+//   - Additional Charge (row.addlCharge) is carried in ValDtls.OthChrg,
+//     untaxed. If it should be taxable, add it as an ItemList line instead.
+//
+// Returns a plain JS array; the caller JSON.stringifies it.
+function buildIrpJson(rows, cfg, opts = {}) {
+  const gstRate = cfgNum(cfg, 'tally_gst_rate', 5);
+
+  // HSN / SAC codes + item labels — the same config the ISP XML uses.
+  const HSN_Card   = String(cfgGet(cfg, 'tally_hsn_cardamom',  '09083120'));
+  const HSN_Gunny  = String(cfgGet(cfg, 'tally_hsn_gunny',     '63051040'));
+  const SAC_Transp = String(cfgGet(cfg, 'tally_hsn_transport', '996791'));
+  const SAC_Insur  = String(cfgGet(cfg, 'tally_hsn_insurance', '997136'));
+  const Item_Card  = cfgGet(cfg, 'tally_item_cardamom', 'Cardamom');
+  const Item_Gunny = cfgGet(cfg, 'tally_item_gunny',    'Gunny');
+  const LDR_Transp = cfgGet(cfg, 'tally_transport', 'Transport');
+  const LDR_Insur  = cfgGet(cfg, 'tally_insurance', 'Insurance');
+
+  // Document-number composition — mirror generSalesIspXML exactly so the
+  // e-invoice DocDtls.No is byte-identical to the Tally voucher / printed
+  // invoice number.
+  const season    = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
+  const separator = opts.separator || cfgGet(cfg, 'tally_separator', '/');
+  const _tallyPrefix = String(cfgGet(cfg, 'tally_inv_prefix', '')).trim();
+  const invPrefix = _tallyPrefix ? (/[/\-]$/.test(_tallyPrefix) ? _tallyPrefix : _tallyPrefix + '/') : '';
+
+  // Seller (supplier) identity — mirror invoice-pdf.js effectiveCompany():
+  // the business_state toggle picks which registered address/GSTIN block is
+  // used. Stcd is ALWAYS derived from the GSTIN (NIC requires the match).
+  const isStateKL = String(cfgGet(cfg, 'business_state', '')).toUpperCase() === 'KERALA';
+  const pick = (klKey, tnKey) => isStateKL
+    ? cfgGet(cfg, klKey, cfgGet(cfg, tnKey, ''))
+    : cfgGet(cfg, tnKey, '');
+  const sellerName  = cfgGet(cfg, 'trade_name', cfgGet(cfg, 'short_name', opts.companyName || 'Company'));
+  const sellerTrd   = cfgGet(cfg, 'short_name', sellerName);
+  const sellerGstin = String(
+    pick('kl_gstin', 'tn_gstin') ||
+    cfgGet(cfg, 'tally_dispatch_gstin', '') ||
+    cfgGet(cfg, 's_gstin', '') || cfgGet(cfg, 'kl_gstin', '') || cfgGet(cfg, 'tn_gstin', '')
+  ).trim();
+  const sellerAddr1 = pick('kl_address1', 'tn_address1');
+  const sellerAddr2 = pick('kl_address2', 'tn_address2');
+  const sellerLoc   = pick('kl_place', 'tn_place');
+  const sellerPin   = pick('kl_pin', 'tn_pin');
+  const sellerPh    = pick('kl_phone', 'tn_phone');
+  const sellerEm    = pick('kl_email', 'tn_email');
+  const sellerStcd  = sellerGstin.slice(0, 2);
+
+  // Optional bank block (PayDtls) — same KL/TN selection as invoice-pdf.js.
+  const bankAcct = pick('bank_kl_acct', 'bank_tn_acct');
+  const bankIfsc = pick('bank_kl_ifsc', 'bank_tn_ifsc');
+
+  // Optional IRP remark (the reference SalesJSON carried "NICGEPP").
+  const invRm = String(cfgGet(cfg, 'tally_einv_remark', '')).trim();
+
+  const pinNum   = (v) => { const n = parseInt(String(v).replace(/\D/g, ''), 10); return isFinite(n) ? n : null; };
+  // DD/MM/YYYY — toTallyDate normalizes any input to yyyymmdd first.
+  const toIrpDate = (d) => {
+    const s = toTallyDate(d);
+    return /^\d{8}$/.test(s) ? `${s.slice(6, 8)}/${s.slice(4, 6)}/${s.slice(0, 4)}` : String(d || '');
+  };
+
+  const out = [];
+  for (const row of rows) {
+    const sale     = String(row.sale || 'L').toUpperCase();
+    const isExport = sale === 'E';
+    const buyerGstin = String(row.partyGstin || '').trim();
+    const buyerStcd  = buyerGstin.slice(0, 2);
+    // Intra-state when the buyer's GSTIN state == the seller's GSTIN state.
+    const isIntra = !isExport && !!buyerStcd && !!sellerStcd && buyerStcd === sellerStcd;
+
+    // ---- ItemList -------------------------------------------------
+    const items = [];
+    let sl = 0;
+    const addItem = ({ desc, isServc, hsn, qty, unit, unitPrice, amount, batch }) => {
+      const assAmt = r2(amount);
+      let cgstAmt = 0, sgstAmt = 0, igstAmt = 0;
+      if (isIntra) {
+        const half = r2(assAmt * (gstRate / 2) / 100);
+        cgstAmt = half; sgstAmt = half;
+      } else {
+        igstAmt = r2(assAmt * gstRate / 100);
+      }
+      const item = {
+        SlNo: String(++sl),
+        PrdDesc: desc,
+        IsServc: isServc ? 'Y' : 'N',
+        HsnCd: hsn,
+        Qty: r2(qty),
+        FreeQty: 0,
+        Unit: unit,
+        UnitPrice: r2(unitPrice),
+        TotAmt: assAmt,
+        Discount: 0,
+        AssAmt: assAmt,
+        GstRt: gstRate,
+        IgstAmt: igstAmt,
+        CgstAmt: cgstAmt,
+        SgstAmt: sgstAmt,
+        CesRt: 0, CesAmt: 0, CesNonAdvlAmt: 0,
+        StateCesRt: 0, StateCesAmt: 0, StateCesNonadvlAmt: 0,
+        Othchrg: 0,
+        TotItemVal: r2(assAmt + cgstAmt + sgstAmt + igstAmt),
+      };
+      if (batch) item.BchDtls = { Nm: String(batch) };
+      items.push(item);
+    };
+
+    // Cardamom — one item per lot; batch name = lot no (as in reference).
+    for (const l of (row.lots || [])) {
+      const amount = Number(l.amount || 0);
+      if (amount <= 0) continue;
+      addItem({
+        desc: Item_Card, isServc: false, hsn: HSN_Card,
+        qty: Number(l.qty || 0), unit: 'KGS',
+        unitPrice: Number(l.rate || 0), amount, batch: l.lot,
+      });
+    }
+    // Gunny — single line. Derive UnitPrice so Qty*UnitPrice == amount even
+    // when the invoice's gunny total doesn't divide evenly by the bag count.
+    const gunnyAmt  = Number(row.gunnyAmt || 0);
+    const gunnyBags = Number(row.gunnyBags || 0);
+    if (gunnyAmt > 0) {
+      addItem({
+        desc: Item_Gunny, isServc: false, hsn: HSN_Gunny,
+        qty: gunnyBags || 1, unit: 'NOS',
+        unitPrice: gunnyBags ? r2(gunnyAmt / gunnyBags) : gunnyAmt,
+        amount: gunnyAmt,
+      });
+    }
+    // Transport + Insurance — taxable services (present on inter-state ISP
+    // invoices; zero on intra-state, so no line is emitted there).
+    const transportAmt = Number(row.transportAmt || 0);
+    if (transportAmt > 0) addItem({ desc: LDR_Transp, isServc: true, hsn: SAC_Transp, qty: 1, unit: 'OTH', unitPrice: transportAmt, amount: transportAmt });
+    const insuranceAmt = Number(row.insuranceAmt || 0);
+    if (insuranceAmt > 0) addItem({ desc: LDR_Insur, isServc: true, hsn: SAC_Insur, qty: 1, unit: 'OTH', unitPrice: insuranceAmt, amount: insuranceAmt });
+
+    // ---- ValDtls --------------------------------------------------
+    const assVal  = r2(items.reduce((s, it) => s + it.AssAmt, 0));
+    const cgstVal = r2(items.reduce((s, it) => s + it.CgstAmt, 0));
+    const sgstVal = r2(items.reduce((s, it) => s + it.SgstAmt, 0));
+    const igstVal = r2(items.reduce((s, it) => s + it.IgstAmt, 0));
+    const othChrg = r2(Number(row.addlCharge || 0));
+    const baseGrand = r2(assVal + cgstVal + sgstVal + igstVal + othChrg);
+    // Anchor TotInvVal to the invoice's own rounded total (what the customer
+    // pays); OthChrg is added on top. RndOffAmt absorbs the paise delta
+    // between the summed items and the stored total.
+    let totInvVal = r0(Number(row.totalRounded || 0)) + othChrg;
+    let rndOff    = r2(totInvVal - baseGrand);
+    // Safety net: NIC caps |RndOff| at 99.99. If the anchor is implausibly
+    // far off (e.g. an edited/blank totalRounded), fall back to a
+    // self-consistent round of the computed grand total.
+    if (Math.abs(rndOff) > 99) { totInvVal = r0(baseGrand); rndOff = r2(totInvVal - baseGrand); }
+
+    // ---- Assemble (key order mirrors the reference SalesJSON) ------
+    const inv = {
+      Version: '1.1',
+      TranDtls: {
+        TaxSch: 'GST',
+        SupTyp: isExport ? 'EXPWP' : 'B2B',
+        IgstOnIntra: 'N',
+        RegRev: null,
+        EcmGstin: null,
+      },
+      DocDtls: {
+        Typ: 'INV',
+        No: `${invPrefix}${sale}${separator}${String(row.invo || '').trim()}/${season}`,
+        Dt: toIrpDate(row.date),
+      },
+      SellerDtls: {
+        Gstin: sellerGstin,
+        LglNm: sellerName,
+        TrdNm: sellerTrd,
+        Addr1: sellerAddr1,
+        Addr2: sellerAddr2 || null,
+        Loc: sellerLoc,
+        Pin: pinNum(sellerPin),
+        Stcd: sellerStcd,
+        Ph: String(sellerPh || '').trim() || null,
+        Em: String(sellerEm || '').trim() || null,
+      },
+      BuyerDtls: {
+        Gstin: buyerGstin,
+        LglNm: row.partyName || '',
+        TrdNm: row.partyName || '',
+        Addr1: row.address || '',
+        Loc: row.place || '',
+        Pin: pinNum(row.pin),
+        Pos: isExport ? '96' : (buyerStcd || sellerStcd),
+        Stcd: buyerStcd,
+        Ph: null,
+        Em: null,
+      },
+      ValDtls: {
+        AssVal: assVal,
+        IgstVal: igstVal,
+        CgstVal: cgstVal,
+        SgstVal: sgstVal,
+        CesVal: 0,
+        StCesVal: 0,
+        RndOffAmt: rndOff,
+        Discount: 0,
+        OthChrg: othChrg,
+        TotInvVal: totInvVal,
+      },
+    };
+    if (invRm) inv.RefDtls = { InvRm: invRm };
+    if (String(bankAcct).trim()) {
+      inv.PayDtls = {
+        Nm: sellerName,
+        AccDet: String(bankAcct).trim(),
+        Mode: 'Direct Transfer',
+        FinInsBr: String(bankIfsc).trim(),
+      };
+    }
+    inv.ItemList = items;
+    out.push(inv);
+  }
+  return out;
+}
+
 /**
  * Pull ASP sales (state = KERALA) for an auction. Each ASP voucher is
  * an internal ASP→ISP transfer: ASP sells its lot inventory to the
@@ -3847,15 +4090,97 @@ function buildLedgerRows(db, auctionId, cfg) {
   return rows;
 }
 
+// ── Merchants (consolidated Journal) ──────────────────────────────
+// Port of the reference VBA `generXMLMERCH`: one Journal voucher for the
+// whole auction that debits every buyer (merchant) by their invoice grand
+// total and credits a single control ledger ("Merchants") with the sum.
+// It reuses the Sales rows (buildSalesIspRows) so each party figure equals
+// the party total the Sales voucher posts — the two exports reconcile — and
+// the debits sum exactly to the Merchants credit so the Journal balances.
+//
+// Input: rows from buildSalesIspRows (same shape the Sales export consumes).
+function generMerchantsXML(rows, cfg, opts = {}) {
+  const company     = opts.companyName || cfgGet(cfg, 'tally_company_name', cfgGet(cfg, 'short_name', 'Ideal Spices Private Limited'));
+  const season      = opts.season     || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
+  const separator   = opts.separator  || cfgGet(cfg, 'tally_separator', '/');
+  const _tallyPrefix = String(cfgGet(cfg, 'tally_inv_prefix', '')).trim();
+  const invPrefix   = _tallyPrefix ? (/[/\-]$/.test(_tallyPrefix) ? _tallyPrefix : _tallyPrefix + '/') : '';
+  // Control ledger name — overridable via Settings (tally_merchants), else "Merchants".
+  const merchLedger = cfgGet(cfg, 'tally_merchants', 'Merchants');
+
+  let xml = '\n' + startEnvelope(company, 'Vouchers');
+  if (!rows || rows.length === 0) { xml += '\n' + endEnvelope(); return xml; }
+
+  const first = rows[0];
+  // Voucher number / narration identify the auction (ano/season) — mirrors the
+  // reference VBA's `auction` value.
+  const voucherNo = `${invPrefix}${xe(String(first.ano || '').trim())}/${season}`;
+
+  xml += `
+<VOUCHER OBJVIEW="Invoice Voucher View">
+<DATE>${toTallyDate(first.date)}</DATE>
+<ISINVOICE>No</ISINVOICE>
+<VOUCHERNUMBER>${xe(voucherNo)}</VOUCHERNUMBER>
+<NARRATION>${xe(voucherNo)}</NARRATION>
+<VOUCHERTYPENAME>Journal</VOUCHERTYPENAME>`;
+
+  let grandTotal = 0;
+  for (const row of rows) {
+    const sale      = String(row.sale || 'L').toUpperCase();
+    const invoNo    = String(row.invo || '').trim();
+    const billName  = `${invPrefix}${sale}${separator}${invoNo}/${season}`;
+    const partyName = xe(row.partyName);
+    // Same grand total the Sales voucher posts to the party ledger: the
+    // rounded GST-inclusive subtotal plus any additional charge.
+    const partyTotal = r2(r0(row.totalRounded || row.total) + r2(row.addlCharge || 0));
+    grandTotal += partyTotal;
+    xml += `
+<LEDGERENTRIES.LIST>
+<LEDGERNAME>${partyName}</LEDGERNAME>
+<ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+<LEDGERFROMITEM>No</LEDGERFROMITEM>
+<REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
+<ISPARTYLEDGER>Yes</ISPARTYLEDGER>
+<ISLASTDEEMEDPOSITIVE>No</ISLASTDEEMEDPOSITIVE>
+<AMOUNT>${-partyTotal}</AMOUNT>
+<BILLALLOCATIONS.LIST>
+<NAME>${xe(billName)}</NAME>
+<BILLTYPE>New Ref</BILLTYPE>
+<TDSDEDUCTEEISSPECIALRATE>No</TDSDEDUCTEEISSPECIALRATE>
+<BILLCREDITPERIOD>7 Days</BILLCREDITPERIOD>
+<AMOUNT>${-partyTotal}</AMOUNT>
+</BILLALLOCATIONS.LIST>
+</LEDGERENTRIES.LIST>`;
+  }
+
+  // Balancing control ledger — credits the grand total (debits sum to this).
+  xml += `
+<LEDGERENTRIES.LIST>
+<LEDGERNAME>${xe(merchLedger)}</LEDGERNAME>
+<ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+<LEDGERFROMITEM>No</LEDGERFROMITEM>
+<REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
+<ISPARTYLEDGER>Yes</ISPARTYLEDGER>
+<ISLASTDEEMEDPOSITIVE>No</ISLASTDEEMEDPOSITIVE>
+<AMOUNT>${r2(grandTotal)}</AMOUNT>
+</LEDGERENTRIES.LIST>`;
+
+  xml += `\n${TAGS.ENDVOUCHER}`;
+  xml += '\n' + endEnvelope();
+  return xml;
+}
+
 module.exports = {
   generSalesXML,
   generSalesIspXML,
+  generMerchantsXML,
   generRDPurchaseXML,
   generURDPurchaseXML,
   generDebitNoteXML,
   generLedgerXML,
   buildSalesRows,
   buildSalesIspRows,
+  buildIrpJson,
   buildRDPurchaseRows,
   buildURDPurchaseRows,
   buildDebitNoteRows,

@@ -151,6 +151,10 @@ async function initDb() {
     name TEXT NOT NULL,
     cr TEXT DEFAULT '',
     pan TEXT DEFAULT '',
+    -- TAN (Tax Deduction & Collection Account No). Optional; surfaced in the
+    -- Sellers form only when flag_tan is on. Column always exists so toggling
+    -- the flag on later never loses data.
+    tan TEXT DEFAULT '',
     tel TEXT DEFAULT '',
     aadhar TEXT DEFAULT '',
     padd TEXT DEFAULT '',
@@ -194,6 +198,9 @@ async function initDb() {
     st_code TEXT DEFAULT '',
     gstin TEXT DEFAULT '',
     pan TEXT DEFAULT '',
+    -- TAN (Tax Deduction & Collection Account No). Optional; surfaced in the
+    -- Buyers form only when flag_tan is on.
+    tan TEXT DEFAULT '',
     tel TEXT DEFAULT '',
     ti TEXT DEFAULT '',
     sale TEXT DEFAULT 'L',
@@ -784,6 +791,10 @@ async function initDb() {
     "ALTER TABLE buyers ADD COLUMN email TEXT DEFAULT ''",
     "ALTER TABLE buyers ADD COLUMN tdsq TEXT DEFAULT ''",
     "ALTER TABLE buyers ADD COLUMN sbl TEXT DEFAULT ''",
+    // TAN (optional, gated by flag_tan) on sellers + buyers. Added via ALTER
+    // for existing DBs so the feature works on upgrade without a rebuild.
+    "ALTER TABLE traders ADD COLUMN tan TEXT DEFAULT ''",
+    "ALTER TABLE buyers ADD COLUMN tan TEXT DEFAULT ''",
     // Discount GST columns (per-lot, when flag_disc_gst is ON)
     'ALTER TABLE lots ADD COLUMN dcgst REAL DEFAULT 0',
     'ALTER TABLE lots ADD COLUMN dsgst REAL DEFAULT 0',

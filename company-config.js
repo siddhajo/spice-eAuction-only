@@ -176,6 +176,11 @@ const DEFAULTS = [
   { key: 'flag_wgst',            value: 'false', category: 'flags', label: 'TDS on Full Invoice Amount',      type: 'boolean' },
   { key: 'flag_debit_note',      value: 'false', category: 'flags', label: 'Debit Note for Discount',         type: 'boolean' },
   { key: 'flag_debit_note_planter', value: 'false', category: 'flags', label: 'Debit Note for Discount — Planter', type: 'boolean' },
+  // Merchants — adds a "Merchants" widget under Vouchers in the To Tally menu
+  // that exports a consolidated Journal (debit each buyer, credit the
+  // "Merchants" control ledger). Hidden via .feat-merchants when OFF; the
+  // export endpoints also 403 while disabled.
+  { key: 'flag_merchants',       value: 'false', category: 'flags', label: 'Merchants (Tally Journal)',       type: 'boolean' },
   { key: 'flag_invoice_stripe',  value: 'false', category: 'flags', label: 'Alternate Row Stripe in Invoice', type: 'boolean' },
   { key: 'flag_dummy',           value: 'false', category: 'flags', label: 'Allow Dummy Invoices',            type: 'boolean' },
   { key: 'flag_round',           value: 'false', category: 'flags', label: 'Round Invoice Amounts',           type: 'boolean' },
@@ -250,6 +255,12 @@ const DEFAULTS = [
   // Board CSV). When OFF the input is hidden everywhere; the database
   // column always exists so toggling on later doesn't lose data.
   { key: 'flag_reserved_price',  value: 'false', category: 'flags', label: 'Reserved Price (Lot Entry)',      type: 'boolean' },
+
+  // TAN (Tax Deduction & Collection Account No) on sellers + buyers. When ON,
+  // a TAN input shows in the Seller and Buyer add/edit forms and the value is
+  // saved to traders.tan / buyers.tan. When OFF the input is hidden; the DB
+  // column always exists so toggling on later doesn't lose data. Default OFF.
+  { key: 'flag_tan',             value: 'false', category: 'flags', label: 'TAN field (Sellers + Buyers)',    type: 'boolean' },
 
   // Validate entered lots before price import — when ON, the "Validate
   // Lots" button shows in Lot Entry and price import is blocked until the
