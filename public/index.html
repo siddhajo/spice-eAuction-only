@@ -17718,6 +17718,9 @@ async function searchTraders(q, opts){
           `<a href="#" onclick="viewTraderDetails(${JSON.stringify(t).replace(/"/g,'&quot;')});return false" style="color:var(--green);font-weight:600;text-decoration:none">${esc(t.name)}</a>` },
       { key:'cr', label:'CR/GSTIN', sort:'text', tdClass:'small' },
       { key:'pan', label:'PAN', sort:'text' },
+      // TAN column — only when the "TAN field (Sellers + Buyers)" flag is on
+      // (data-feat-tan is set by applyFeatureFlags). Sits right after PAN.
+      ...(document.body.getAttribute('data-feat-tan')==='1' ? [{ key:'tan', label:'TAN', sort:'text' }] : []),
       { key:'tel', label:'Phone', sort:'text' },
       { key:'_place', label:'Place · State', sort:'text',
         value:(t)=>[t.ppla,t.pstate].filter(Boolean).join(' · '),
@@ -18563,6 +18566,9 @@ async function searchBuyers(q, opts){
       { key:'buyer1', label:'Trade Name', sort:'text' },
       { key:'gstin', label:'GSTIN', sort:'text' },
       { key:'pan', label:'PAN', sort:'text' },
+      // TAN column — only when the "TAN field (Sellers + Buyers)" flag is on
+      // (data-feat-tan is set by applyFeatureFlags). Sits right after PAN.
+      ...(document.body.getAttribute('data-feat-tan')==='1' ? [{ key:'tan', label:'TAN', sort:'text' }] : []),
       { key:'tel', label:'Phone', sort:'text' },
       { key:'ti', label:'TI', sort:'text' },
       { key:'_place', label:'Place · State', sort:'text',
