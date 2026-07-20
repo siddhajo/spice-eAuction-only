@@ -4061,17 +4061,25 @@ app.post('/api/auctions/:id/allocations', requireAuctionWrite, (req, res) => {
     }
   }
 
-  // Refuse to remove an allocation that still has saved lots in its range
-  const existing = db.all('SELECT * FROM lot_allocations WHERE auction_id = ?', [auctionId]);
-  for (const ex of existing) {
-    const kept = allocations.find(a => a.id === ex.id);
-    if (!kept) {
-      const lots = db.all('SELECT lot_no FROM lots WHERE auction_id = ?', [auctionId]);
-      const lotsInRange = lots.filter(l => isLotInRange(l.lot_no, ex.start_lot, ex.end_lot));
-      if (lotsInRange.length > 0) {
-        return res.status(400).json({ error: `Cannot remove ${ex.branch} (${ex.start_lot}-${ex.end_lot}): ${lotsInRange.length} lots already entered` });
-      }
-    }
+  // Refuse to save if any ENTERED lot would fall outside the new allocation
+  // set. This is checked directly against the incoming ranges (by branch +
+  // range membership) rather than by matching allocation ids — the client
+  // rebuilds ranges from allocation-stats and does NOT echo the row ids, so
+  // an id-based "was this row kept?" test wrongly saw every allocation as
+  // removed and rejected any save on a trade that already had lots.
+  const savedLots = db.all('SELECT lot_no, branch FROM lots WHERE auction_id = ?', [auctionId]);
+  const orphaned = [];
+  for (const sl of savedLots) {
+    const slBranch = String(sl.branch || '').trim().toUpperCase();
+    const covered = allocations.some(a =>
+      String(a.branch).trim().toUpperCase() === slBranch &&
+      isLotInRange(sl.lot_no, a.start_lot, a.end_lot)
+    );
+    if (!covered) orphaned.push(`${sl.branch || '(no branch)'} #${sl.lot_no}`);
+  }
+  if (orphaned.length) {
+    const sample = orphaned.slice(0, 6).join(', ') + (orphaned.length > 6 ? `, …+${orphaned.length - 6} more` : '');
+    return res.status(400).json({ error: `Cannot save: ${orphaned.length} entered lot(s) would fall outside the new allocations — delete those lots or extend the ranges. Examples: ${sample}` });
   }
 
   db.run('DELETE FROM lot_allocations WHERE auction_id = ?', [auctionId]);
@@ -5634,9 +5642,13 @@ app.post('/api/lots', requireLotWrite, (req, res) => {
 app.put('/api/lots/:id', requireLotWrite, (req, res) => {
   const l = req.body; const sets = []; const vals = [];
   // Field-name aliasing for the mobile PWA (gross_weight/sample_weight) →
-  // spice-config columns (gross_wt/sample_wt).
+  // spice-config columns (gross_wt/sample_wt). Delete the mobile spellings
+  // afterwards: the dynamic UPDATE below emits `${key}=?` for every own key,
+  // so a leftover gross_weight/sample_weight would produce "no such column".
   if (l.gross_weight  != null && l.gross_wt  == null) l.gross_wt  = l.gross_weight;
   if (l.sample_weight != null && l.sample_wt == null) l.sample_wt = l.sample_weight;
+  delete l.gross_weight;
+  delete l.sample_weight;
   // Coerce the immediate-payment flag to a 0/1 integer — the dynamic
   // UPDATE below binds req.body values verbatim, and better-sqlite3
   // rejects booleans, so normalise before it reaches the bind.
@@ -11628,6 +11640,13 @@ app.get('/api/stats', requireView, (req, res) => {
             COALESCE(SUM(l.amount),0) as amount,
             COALESCE(SUM(CASE WHEN l.amount > 0 THEN 1 ELSE 0 END),0) as priced,
             COALESCE(SUM(CASE WHEN l.invo IS NOT NULL AND l.invo != '' THEN 1 ELSE 0 END),0) as invoiced,
+            -- Price band per trade (over SOLD lots — a buyer code that isn't
+            -- WD — with a real price), matching the snapshot/depot-panel
+            -- semantics. avg is quantity-weighted (sold_value / sold_qty).
+            MIN(CASE WHEN l.price > 0 AND UPPER(COALESCE(l.code,'')) <> '' AND UPPER(COALESCE(l.code,'')) <> 'WD' THEN l.price END) as min_price,
+            MAX(CASE WHEN l.price > 0 AND UPPER(COALESCE(l.code,'')) <> '' AND UPPER(COALESCE(l.code,'')) <> 'WD' THEN l.price END) as max_price,
+            COALESCE(SUM(CASE WHEN UPPER(COALESCE(l.code,'')) <> '' AND UPPER(COALESCE(l.code,'')) <> 'WD' THEN l.amount ELSE 0 END),0) as sold_value,
+            COALESCE(SUM(CASE WHEN UPPER(COALESCE(l.code,'')) <> '' AND UPPER(COALESCE(l.code,'')) <> 'WD' THEN l.qty    ELSE 0 END),0) as sold_qty,
             -- Invoice GST for this trade = Σ(CGST+SGST+IGST) over its sales
             -- invoices. Drives the dashboard trade-snapshot matrix GST column.
             COALESCE((SELECT SUM(COALESCE(iv.cgst,0)+COALESCE(iv.sgst,0)+COALESCE(iv.igst,0))
@@ -11637,7 +11656,12 @@ app.get('/api/stats', requireView, (req, res) => {
      GROUP BY a.id, a.ano, a.date, a.crop_type
      ORDER BY a.date DESC, a.id DESC
      LIMIT 50`
-  );
+  ).map(t => ({
+    ...t,
+    min_price: Number(t.min_price) || 0,
+    max_price: Number(t.max_price) || 0,
+    avg_price: Number(t.sold_qty) > 0 ? (Number(t.sold_value) || 0) / Number(t.sold_qty) : 0,
+  }));
 
   // Pick: ?auction_id=N if provided
   //   - "all" (or no param) => dashboard shows cumulative view, no individual auction highlighted

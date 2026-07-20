@@ -2733,16 +2733,17 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       </div>
       <div class="side-group">
         <div class="side-group-lbl">Transactions</div>
-        <button class="side-item" data-tab="invoices" data-min-stage="3" onclick="go('invoices')">
-          <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
-          Sales Invoices
-        </button>
         <!-- Pre-Invoice — read-only preview of every sales invoice that would
              be generated (bill-to, ship-to, amounts) + exact-PDF preview.
-             Nothing is generated or numbered from here. -->
+             Nothing is generated or numbered from here. Placed above Sales
+             Invoices as the natural "preview before you generate" step. -->
         <button class="side-item" data-tab="preinvoice" data-min-stage="3" onclick="go('preinvoice')">
           <svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
           Pre-Invoice
+        </button>
+        <button class="side-item" data-tab="invoices" data-min-stage="3" onclick="go('invoices')">
+          <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+          Sales Invoices
         </button>
         <button class="side-item" data-tab="purchases" data-min-stage="3" onclick="go('purchases')">
           <svg viewBox="0 0 24 24"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4zM3 6h18M16 10a4 4 0 0 1-8 0"/></svg>
@@ -9477,12 +9478,16 @@ async function loadStats(auctionId){
               <th class="num">Lots</th>
               <th class="num">Qty</th>
               <th class="num">Amount</th>
+              <th class="num">Min ₹</th>
+              <th class="num">Max ₹</th>
+              <th class="num">Avg ₹</th>
               <th class="num">Invoiced</th>
             </tr>
           </thead>
           <tbody>
             ${PT.map(t=>{
               const pct = t.lots ? Math.round((t.invoiced||0)/t.lots*100) : 0;
+              const pr = n => (Number(n)>0 ? inrL(n) : '—');
               return `<tr style="cursor:pointer" onclick="loadStats(${t.id})">
                 <td><strong>#${esc(t.ano)}</strong></td>
                 <td style="color:var(--spice-text-mute)">${fmtD(t.date)}</td>
@@ -9490,6 +9495,9 @@ async function loadStats(auctionId){
                 <td class="num">${t.lots||0}</td>
                 <td class="num">${kg(t.qty)}</td>
                 <td class="num"><strong>${inrL(t.amount)}</strong></td>
+                <td class="num">${pr(t.min_price)}</td>
+                <td class="num">${pr(t.max_price)}</td>
+                <td class="num">${pr(t.avg_price)}</td>
                 <td class="num">
                   <span style="display:inline-flex;align-items:center;gap:6px">
                     <span style="width:40px;height:6px;background:var(--spice-line);border-radius:999px;overflow:hidden;display:inline-block">
@@ -9507,6 +9515,9 @@ async function loadStats(auctionId){
               <td class="num">${CUM.lots||0}</td>
               <td class="num">${kg(CUM.qty)}</td>
               <td class="num">${inrL(CUM.amount)}</td>
+              <td class="num"></td>
+              <td class="num"></td>
+              <td class="num"></td>
               <td></td>
             </tr>
           </tfoot>
@@ -9583,11 +9594,14 @@ async function loadStats(auctionId){
     if (!Array.isArray(PT) || !PT.length) return null;
     const cols = [
       {header:'AUCTION',key:'ano',width:8},{header:'DATE',key:'date',width:11},{header:'CROP',key:'crop',width:10},
-      {header:'LOTS',key:'lots',width:7},{header:'QTY',key:'qty',width:11},{header:'AMOUNT',key:'amount',width:13},{header:'INVOICED %',key:'inv',width:9},
+      {header:'LOTS',key:'lots',width:7},{header:'QTY',key:'qty',width:11},{header:'AMOUNT',key:'amount',width:13},
+      {header:'MIN ₹',key:'minp',width:9},{header:'MAX ₹',key:'maxp',width:9},{header:'AVG ₹',key:'avgp',width:9},
+      {header:'INVOICED %',key:'inv',width:9},
     ];
     const rows = PT.map(t => ({
       ano:'#'+(t.ano != null ? t.ano : ''), date:fmtD(t.date), crop:t.crop_type||'—',
       lots:_rn(t.lots), qty:_rn(t.qty), amount:_rn(t.amount),
+      minp:_rn(t.min_price), maxp:_rn(t.max_price), avgp:_rn(t.avg_price),
       inv:(t.lots ? Math.round((t.invoiced||0)/t.lots*100) : 0)+'%',
     }));
     const totals = { ano:'TOTAL', lots:_rn(CUM.lots), qty:_rn(CUM.qty), amount:_rn(CUM.amount) };
