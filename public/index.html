@@ -19962,20 +19962,52 @@ function onSbTypeChange(){
   // Place of Auction is Form-D specific — the value flows into the
   // "Place of auction" field on the generated report.
   if (placeFg)  placeFg.style.display  = (t === 'form_d')           ? '' : 'none';
+  if (typeof _sbClearPreviewUrl === 'function') _sbClearPreviewUrl();
   document.getElementById('sb-preview').innerHTML = '';
   document.getElementById('sb-meta').textContent = '';
+}
+// Fetch the selected Spice Board report as an inline-disposition PDF and
+// return an object URL. Mirrors _expPdfBlobUrl / _lorryPdfBlobUrl. Returns
+// null on error (toast already shown).
+async function _sbPdfBlobUrl(){
+  const t = sbCurrent();
+  const r = await fetch(B+`/api/spice-board-reports/${t}/export?${sbQueryString({format:'pdf', inline:'1'})}`,
+    {headers:{'Authorization':'Bearer '+T}});
+  if (!r.ok) {
+    let m = 'Preview failed';
+    try { const e = await r.json(); if (e.error) m = e.error; } catch(_){}
+    toast(m); return null;
+  }
+  const blob = await r.blob();
+  return URL.createObjectURL(blob);
+}
+// Object URL of the PDF currently embedded in the preview pane, kept so we
+// can revoke it before embedding the next one (avoids leaking blob URLs).
+let _sbPreviewUrl = null;
+function _sbClearPreviewUrl(){
+  if (_sbPreviewUrl) { try { URL.revokeObjectURL(_sbPreviewUrl); } catch(_){} _sbPreviewUrl = null; }
 }
 async function sbLoadPreview(){
   if (!sbAuctionId()) { alert('Select a auction first'); return; }
   const t = sbCurrent();
   await withOverlay('Loading preview…', async () => {
+    const root = document.getElementById('sb-preview');
+    const meta = document.getElementById('sb-meta');
+    // Caption above the embedded PDF: pull the title / auction no / date from
+    // the JSON endpoint. Non-fatal if it fails — the PDF is the real preview.
     try {
       const data = await j(`/api/spice-board-reports/${t}/data?${sbQueryString()}`);
-      sbRenderPreview(t, data);
-      if (typeof hideNudge === 'function') hideNudge('spiceBoard');
-    } catch (e) {
-      toast('Preview failed: ' + (e.message||e));
-    }
+      const a = data.auction || {};
+      if (meta) meta.textContent = `${data.title} — Auction No: ${a.ano||''} · Date: ${a.date||''}${a.state?(' · '+a.state):''}`;
+    } catch(_) { if (meta) meta.textContent = ''; }
+    // Embed the actual report PDF inline — the same document Excel / PDF /
+    // Print produce — instead of an HTML approximation of it.
+    const blobUrl = await _sbPdfBlobUrl();
+    if (!blobUrl) return;
+    _sbClearPreviewUrl();
+    _sbPreviewUrl = blobUrl;
+    if (root) root.innerHTML = `<iframe title="Report preview" src="${blobUrl}" style="width:100%;height:580px;border:0;border-radius:6px;background:#fff"></iframe>`;
+    if (typeof hideNudge === 'function') hideNudge('spiceBoard');
   });
 }
 async function sbDownload(format){
@@ -20004,128 +20036,6 @@ async function sbPrint(){
     const w = window.open(blobUrl);
     if (w) { w.addEventListener('load', () => { try { w.focus(); w.print(); } catch(_){} }); }
   });
-}
-function sbRenderPreview(type, data){
-  const meta = document.getElementById('sb-meta');
-  const root = document.getElementById('sb-preview');
-  const a = data.auction || {};
-  meta.textContent = `${data.title} — Auction No: ${a.ano||''} · Date: ${a.date||''}${a.state?(' · '+a.state):''}`;
-  if (type === 'form_d') { root.innerHTML = sbRenderFormD(data); return; }
-  // Buyers Statement & FORM-C share a sectioned table layout.
-  const cols = data.columns || [];
-  const fmtCell = (v, c) => {
-    if (v == null || v === '') return '';
-    if (c && c.numeric) {
-      const n = Number(v);
-      if (!isNaN(n)) {
-        if (c.fmt === 'qty')   return n.toLocaleString('en-IN', {minimumFractionDigits:3, maximumFractionDigits:3});
-        if (c.fmt === 'price') return n.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
-        if (c.fmt === 'money') return n.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
-      }
-    }
-    return esc(String(v));
-  };
-  // Every cell sticks to a single line: white-space:nowrap stops wrap,
-  // overflow:hidden + text-overflow:ellipsis truncates long values
-  // gracefully instead of letting them push the table off-axis.
-  // `table-layout:fixed` makes column widths deterministic across rows
-  // so the body cells line up under their header cells.
-  const cellNoWrap = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-  let html = '<table style="width:100%;font-size:12px;border-collapse:collapse;table-layout:fixed"><thead><tr>';
-  cols.forEach(c => { html += `<th style="text-align:${c.align||'left'};padding:6px;border-bottom:2px solid var(--spice-line);background:var(--spice-cream);${cellNoWrap}" title="${esc(c.header)}">${esc(c.header)}</th>`; });
-  html += '</tr></thead><tbody>';
-  (data.sections || []).forEach(sec => {
-    html += `<tr><td colspan="${cols.length}" style="padding:8px;background:#FFF3CD;font-weight:700;${cellNoWrap}">${esc(sec.title)}</td></tr>`;
-    (sec.rows || []).forEach(r => {
-      html += '<tr>';
-      cols.forEach(c => {
-        const v = fmtCell(r[c.key], c);
-        html += `<td style="text-align:${c.align||'left'};padding:5px 6px;border-bottom:1px solid #eee;${cellNoWrap}" title="${v}">${v}</td>`;
-      });
-      html += '</tr>';
-    });
-    if (sec.totals) {
-      html += '<tr style="font-weight:700;background:#F7F5F2">';
-      cols.forEach((c, i) => {
-        let v = '';
-        if (i === 1 && sec.totals.label) v = sec.totals.label;
-        else if (sec.totals[c.key] != null) v = sec.totals[c.key];
-        const out = fmtCell(v, c);
-        html += `<td style="text-align:${c.align||'left'};padding:6px;border-top:1px solid #ddd;border-bottom:2px solid #ddd;${cellNoWrap}" title="${out}">${out}</td>`;
-      });
-      html += '</tr>';
-    }
-  });
-  if (data.grand) {
-    html += '<tr style="font-weight:700;background:#FFF3CD">';
-    cols.forEach((c, i) => {
-      let v = '';
-      if (i === 1 && data.grand.label) v = data.grand.label;
-      else if (data.grand[c.key] != null) v = data.grand[c.key];
-      const out = fmtCell(v, c);
-      html += `<td style="text-align:${c.align||'left'};padding:8px;border-top:2px double #9A6700;border-bottom:2px double #9A6700;${cellNoWrap}" title="${out}">${out}</td>`;
-    });
-    html += '</tr>';
-  }
-  html += '</tbody></table>';
-  root.innerHTML = html;
-}
-function sbRenderFormD(data){
-  const s = data.summary || {};
-  const fmt = (n, dec) => {
-    const v = Number(n);
-    if (isNaN(v)) return esc(String(n||''));
-    return v.toLocaleString('en-IN', {minimumFractionDigits:dec, maximumFractionDigits:dec});
-  };
-  const rows = [
-    ['Name and Address of the auctioneer:', s.auctioneer || ''],
-    ['', s.address || ''],
-    ['e-Auction Licence No.', s.licence || ''],
-    ['(s) Season', s.season || ''],
-    ['(t) Auction Number', s.auctionNo || ''],
-    ['(u) Date of auction', s.auctionDate || ''],
-    ['(v) Place of auction', s.place || ''],
-    ['(w) Quantity carried over from previous auction (kgs)', s.carriedOver || 'NIL'],
-    ['(x) Fresh arrivals (kgs)', fmt(s.freshArrivals, 3)],
-    ['(y) Total quantity put for auction (kgs)', fmt(s.totalForAuction, 3)],
-    ['(z) Total quantity sold (kgs)', fmt(s.totalSold, 3)],
-    ['(zz) Quantity Not Auctioned (kgs)', s.notAuctioned || 'NIL'],
-    ['(aa) Quantity withdrawn (kgs)', fmt(s.withdrawn, 3)],
-    ['(bb) Quantity returned to planter (kgs)', fmt(s.returnedToPlanter, 3)],
-    ['(cc) Balance with the auctioneer (kgs)', s.balance || 'NIL'],
-    ['(dd) Total value of the sales (Rs)', fmt(s.totalValue, 2)],
-    ['(ee) Maximum price (Rs/kg)', `${fmt(s.maxRate,2)} / kgs ${fmt(s.maxKg,3)}`],
-    ['(ff) Minimum price (Rs/kg)', `${fmt(s.minRate,2)} / kgs ${fmt(s.minKg,3)}`],
-    ['(gg) Average price (Rs/kg)', fmt(s.avgRate, 2)],
-  ];
-  let html = '<div style="border:1px solid var(--spice-line);border-radius:8px;padding:16px;background:#fff">';
-  html += '<h3 style="text-align:center;margin:0 0 4px">FORM - D</h3>';
-  html += '<div style="text-align:center;font-size:12px;color:var(--text3);margin-bottom:12px">[See rule 10(1)(1)] — Advance Auction Report</div>';
-  html += '<table style="width:100%;font-size:13px;border-collapse:collapse">';
-  rows.forEach(r => {
-    html += `<tr><td style="padding:5px 8px;color:var(--text2);width:55%">${esc(r[0])}</td><td style="padding:5px 8px;font-weight:600">${esc(String(r[1]||''))}</td></tr>`;
-  });
-  html += '</table>';
-  html += '<h4 style="text-align:center;margin:16px 0 8px">Name of 5 Highest Buyers</h4>';
-  html += '<table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr>';
-  ['Sl.No', 'Buyer Name', 'Kilos', 'Value'].forEach((h, i) => {
-    html += `<th style="text-align:${i>=2?'right':(i===0?'center':'left')};padding:6px;border-bottom:2px solid var(--spice-line);background:var(--spice-cream)">${h}</th>`;
-  });
-  html += '</tr></thead><tbody>';
-  (data.top5 || []).forEach(b => {
-    html += `<tr><td style="text-align:center;padding:5px 8px;border-bottom:1px solid #eee">${b.slNo}</td>`;
-    html += `<td style="padding:5px 8px;border-bottom:1px solid #eee">${esc(b.name||'')}</td>`;
-    html += `<td style="text-align:right;padding:5px 8px;border-bottom:1px solid #eee">${fmt(b.kilos,3)}</td>`;
-    html += `<td style="text-align:right;padding:5px 8px;border-bottom:1px solid #eee">${fmt(b.value,2)}</td></tr>`;
-  });
-  if (data.top5Totals) {
-    html += '<tr style="font-weight:700;background:#FFF3CD">';
-    html += `<td colspan="2" style="text-align:center;padding:8px">${esc(data.top5Totals.label||'TOTAL')}</td>`;
-    html += `<td style="text-align:right;padding:8px">${fmt(data.top5Totals.kilos,3)}</td>`;
-    html += `<td style="text-align:right;padding:8px">${fmt(data.top5Totals.value,2)}</td></tr>`;
-  }
-  html += '</tbody></table></div>';
-  return html;
 }
 
 // ── DBF Export Helpers ────────────────────────────────────
@@ -21173,31 +21083,35 @@ async function loadPriceEntryGrid(){
   let lots;
   try { lots = await j(`/api/lots/${aid}`); }
   catch (e) { grid.innerHTML = '<div style="padding:24px;color:#b91c1c">Failed to load lots.</div>'; return; }
-  // Reserved (held) lots aren't in the auction yet; withdrawn (WD) lots carry
-  // no price. Show sellable lots only.
-  _pe.lots = (Array.isArray(lots) ? lots : []).filter(l => !Number(l.reserved) && String(l.code||'').trim().toUpperCase() !== 'WD');
+  // Reserved (held) lots aren't in the auction yet, so stay hidden. Withdrawn
+  // (WD) lots ARE shown — they're part of the trade record and appear in the
+  // registers — but render as read-only zero-price rows below (withdrawal
+  // forces price/amount to 0, so there's nothing to enter).
+  _pe.lots = (Array.isArray(lots) ? lots : []).filter(l => !Number(l.reserved));
   renderPriceEntryGrid();
 }
 function renderPriceEntryGrid(){
   const grid = document.getElementById('pe-grid');
   const sumEl = document.getElementById('pe-summary');
   if (!_pe.lots.length) {
-    grid.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:13px">No sellable lots to price in this trade yet. Enter lots first — reserved (held) and withdrawn lots are hidden here.</div>';
+    grid.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:13px">No lots to price in this trade yet. Enter lots first — reserved (held) lots are hidden here.</div>';
     if (sumEl) sumEl.textContent = '';
     return;
   }
   const rows = _pe.lots.map((l, i) => {
-    const amt = (Number(l.qty)||0) * (Number(l.price)||0);
+    const isWD = String(l.code||'').trim().toUpperCase() === 'WD';
+    const amt = isWD ? 0 : (Number(l.qty)||0) * (Number(l.price)||0);
     const locked = !!(l.locked_at);   // locked lots are edited by admins in the modal only
-    return `<tr data-row="${i}">
+    const readonly = locked || isWD;  // WD lots carry no price — visible but not editable
+    return `<tr data-row="${i}"${isWD ? ' style="opacity:.55"' : ''}>
       <td style="padding:6px 8px;white-space:nowrap;font-weight:600">${esc(l.lot_no)}</td>
       <td style="padding:6px 8px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis">${esc(l.name||'')}</td>
       <td style="padding:6px 8px;text-align:right">${esc(l.branch||'')}</td>
       <td style="padding:6px 8px;text-align:right">${_peFmt(l.bags)}</td>
       <td style="padding:6px 8px;text-align:right">${_peFmt(l.qty)}</td>
-      <td style="padding:6px 8px;text-align:right"><input type="number" step="0.01" min="0" inputmode="decimal" data-peprice="${i}" value="${l.price ? Number(l.price) : ''}" placeholder="0.00" ${locked ? 'disabled title="Locked lot — edit via the Lots tab"' : ''} onkeydown="pePriceKey(event,${i})" oninput="pePriceInput(${i})" onblur="pePriceSave(${i})" style="width:110px;text-align:right;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px${locked ? ';background:#f3f4f6;color:var(--text3)' : ''}"></td>
+      <td style="padding:6px 8px;text-align:right"><input type="number" step="0.01" min="0" inputmode="decimal" data-peprice="${i}" value="${isWD ? '' : (l.price ? Number(l.price) : '')}" placeholder="${isWD ? '—' : '0.00'}" ${readonly ? `disabled title="${isWD ? 'Withdrawn lot — carries no price' : 'Locked lot — edit via the Lots tab'}"` : ''} onkeydown="pePriceKey(event,${i})" oninput="pePriceInput(${i})" onblur="pePriceSave(${i})" style="width:110px;text-align:right;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px${readonly ? ';background:#f3f4f6;color:var(--text3)' : ''}"></td>
       <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums" data-peamt="${i}">${_peFmt(amt)}</td>
-      <td data-pestatus="${i}" style="padding:6px 4px;width:26px;text-align:center;color:var(--text3)">${locked ? '🔒' : ''}</td>
+      <td data-pestatus="${i}" style="padding:6px 4px;width:26px;text-align:center;color:var(--text3)">${isWD ? '<span title="Withdrawn" style="color:#b91c1c;font-weight:700;font-size:10px">WD</span>' : (locked ? '🔒' : '')}</td>
     </tr>`;
   }).join('');
   grid.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -21210,8 +21124,11 @@ function renderPriceEntryGrid(){
 }
 function _peRenderSummary(){
   const sumEl = document.getElementById('pe-summary'); if (!sumEl) return;
-  const total = _pe.lots.length;
-  const priced = _pe.lots.filter(l => Number(l.price) > 0).length;
+  // WD lots are shown but can't be priced, so keep them out of the priced/total
+  // ratio — otherwise it could never read "all priced".
+  const sellable = _pe.lots.filter(l => String(l.code||'').trim().toUpperCase() !== 'WD');
+  const total = sellable.length;
+  const priced = sellable.filter(l => Number(l.price) > 0).length;
   const dirty = Object.keys(_pe.dirty).length;
   sumEl.innerHTML = `${priced}/${total} lots priced` + (dirty ? ` · <b style="color:#a16207">${dirty} unsaved</b>` : (total ? ' · all saved' : ''));
 }

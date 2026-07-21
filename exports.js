@@ -488,7 +488,7 @@ async function exportPoolerRegister(db, auctionId) {
   // per-lot pooler ledger.
   const rows = db.all(
     `SELECT state, lot_no as lot, name as poolername, branch as br, qty, price, amount
-     FROM lots WHERE auction_id = ? AND amount > 0
+     FROM lots WHERE auction_id = ? AND COALESCE(reserved,0) = 0
      ORDER BY name`, [auctionId]
   );
   const cols = [
@@ -557,7 +557,7 @@ async function exportDealerList(db, auctionId) {
                 END
               )) AS gstin
          FROM lots
-        WHERE auction_id = ? AND amount > 0
+        WHERE auction_id = ? AND COALESCE(reserved,0) = 0
      )
      SELECT state, name, gstin,
             COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
@@ -641,7 +641,7 @@ async function exportDealerListPartyWise(db, auctionId) {
                 END
               )) AS gstin
          FROM lots
-        WHERE auction_id = ? AND amount > 0
+        WHERE auction_id = ? AND COALESCE(reserved,0) = 0
      )
      SELECT state, name, gstin,
             COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
@@ -675,15 +675,16 @@ async function exportDealerListPartyWise(db, auctionId) {
 // ── Export: Pooler List consolidated (Party-wise) ────────────
 // The Pooler Register (which is one row per lot) rolled up to a single line
 // per pooler: lot count, bags, qty, value and bill amount. Covers every
-// priced seller in the trade (no GSTIN gate — poolers are agriculturists
-// who typically have none).
+// seller in the trade — priced or not, so the list is usable before price
+// import (unpriced lots simply show zero value). No GSTIN gate either —
+// poolers are agriculturists who typically have none.
 async function exportPoolerListConsolidated(db, auctionId) {
   const rows = db.all(
     `SELECT name, MAX(cr) as cr,
             COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
             SUM(amount) as value, SUM(bilamt) as billamount
        FROM lots
-      WHERE auction_id = ? AND amount > 0
+      WHERE auction_id = ? AND COALESCE(reserved,0) = 0
       GROUP BY name
       ORDER BY name`, [auctionId]
   );
