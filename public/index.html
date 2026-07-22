@@ -21123,6 +21123,8 @@ async function validateLots(){
 let _pe = { aid: null, lots: [], dirty: {} };
 function _peFlagPriceCheck(){ return String(((window._CCFG)||{}).flag_price_check).toLowerCase() === 'true'; }
 function _peFmt(n){ return (Number(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+// Bags are counts — always whole numbers, no decimals.
+function _peBags(n){ return (Number(n)||0).toLocaleString('en-IN',{maximumFractionDigits:0}); }
 
 function loadPriceEntry(){
   const note = document.getElementById('pe-pc-note');
@@ -21163,9 +21165,9 @@ function renderPriceEntryGrid(){
       <td style="padding:6px 8px;white-space:nowrap;font-weight:600">${esc(l.lot_no)}</td>
       <td style="padding:6px 8px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis">${esc(l.name||'')}</td>
       <td style="padding:6px 8px;text-align:right">${esc(l.branch||'')}</td>
-      <td style="padding:6px 8px;text-align:right">${_peFmt(l.bags)}</td>
+      <td style="padding:6px 8px;text-align:right">${_peBags(l.bags)}</td>
       <td style="padding:6px 8px;text-align:right">${_peFmt(l.qty)}</td>
-      <td style="padding:6px 8px;text-align:right"><input type="number" step="0.01" min="0" inputmode="decimal" data-peprice="${i}" value="${isWD ? '' : (l.price ? Number(l.price) : '')}" placeholder="${isWD ? '—' : '0.00'}" ${readonly ? `disabled title="${isWD ? 'Withdrawn lot — carries no price' : 'Locked lot — edit via the Lots tab'}"` : ''} onkeydown="pePriceKey(event,${i})" oninput="pePriceInput(${i})" onblur="pePriceSave(${i})" style="width:110px;text-align:right;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px${readonly ? ';background:#f3f4f6;color:var(--text3)' : ''}"></td>
+      <td style="padding:6px 8px;text-align:right"><input type="number" step="0.01" min="0" inputmode="decimal" data-peprice="${i}" value="${isWD ? '' : (l.price ? Number(l.price).toFixed(2) : '')}" placeholder="${isWD ? '—' : '0.00'}" ${readonly ? `disabled title="${isWD ? 'Withdrawn lot — carries no price' : 'Locked lot — edit via the Lots tab'}"` : ''} onkeydown="pePriceKey(event,${i})" oninput="pePriceInput(${i})" onblur="pePriceSave(${i})" style="width:110px;text-align:right;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px${readonly ? ';background:#f3f4f6;color:var(--text3)' : ''}"></td>
       <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums" data-peamt="${i}">${_peFmt(amt)}</td>
       <td data-pestatus="${i}" style="padding:6px 4px;width:26px;text-align:center;color:var(--text3)">${isWD ? '<span title="Withdrawn" style="color:#b91c1c;font-weight:700;font-size:10px">WD</span>' : (locked ? '🔒' : '')}</td>
     </tr>`;
@@ -21220,6 +21222,9 @@ async function pePriceSave(i){
   try {
     await j(`/api/lots/${l.id}`, { method: 'PUT', body: JSON.stringify({ price, amount }) });
     l.price = price; l.amount = amount; delete _pe.dirty[i];
+    // Normalise the field to 2 decimals once saved (e.g. "2942" → "2942.00").
+    // Leave a cleared field blank rather than showing "0.00".
+    if (raw !== '' && price > 0) inp.value = price.toFixed(2);
     if (st) { st.textContent = '✓'; st.style.color = 'var(--green)'; }
     _peRenderSummary();
   } catch (e) {
