@@ -251,12 +251,12 @@ const S = [
 
 { id:'auctions', g:'master', ic:'📅', name:'Auctions', purpose:'Create and open an auction.',
   mock:{ title:'Auctions',
-    toolbar:[chip('+ New Auction',{green:1,pin:1}),search('Search by number…',{pin:2}),chip('Import Lots from XLS/XLSX',{pin:3}),chip('📡 Trade Fair',{blue:1,pin:3}),chip('Download Template')],
+    toolbar:[chip('+ New Auction',{green:1,pin:1}),search('Search by number…',{pin:2}),chip('Import Lots from XLS/XLSX',{pin:3}),chip('Download Template')],
     body:{table:{head:['Auction No','Date','Lots'],rows:[['12','13 Jul','438'],['11','06 Jul','402']]}} },
   steps:[
     'Click **+ New Auction**, set the number and date, and save.',
     'Find an old one with **Search by number**.',
-    'Load its lot list with **Import Lots from XLS/XLSX** (or **📡 Trade Fair** to pull prices online).',
+    'Load its lot list with **Import Lots from XLS/XLSX**.',
   ],
   warn:'**Import lots before you set prices.** Re-importing the lot list overwrites any prices already set.' },
 
@@ -556,30 +556,16 @@ const S = [
   ],
   warn:'Don\'t see these? You need an **admin** login. Everyday roles (lot_entry, operator) don\'t get the unlock, revert, or delete-all buttons — ask an admin.' },
 
-{ id:'integrations', g:'admin', ic:'🔌', name:'Settings → Integrations', purpose:'Connect the 3 optional extras.',
+{ id:'integrations', g:'admin', ic:'🔌', name:'Settings → Integrations', purpose:'Connect the 2 optional extras.',
   mock:{ title:'Settings → Integrations',
-    body:{boxes:[['🔎 GST lookup','Paste API key → auto-fills a buyer from their GSTIN. Shows credits left + Recharge link.',2],['💬 WhatsApp','Enter Meta token + Phone ID → send bills & receipts.',3],['📡 Trade Fair','Log in with mobile + OTP → sync prices. (See the Trade Fair guide.)',4]]} },
+    body:{boxes:[['🔎 GST lookup','Paste API key → auto-fills a buyer from their GSTIN. Shows credits left + Recharge link.',2],['💬 WhatsApp','Enter Meta token + Phone ID → send bills & receipts.',3]]} },
   steps:[
     'Open **Settings → Integrations**.',
     '**GST lookup** — paste your API key; it then fills a buyer\'s details from their GSTIN.',
     '**WhatsApp** — enter the Meta token and Phone number ID to send bills on WhatsApp.',
-    '**Trade Fair** — log in with your mobile + OTP to sync prices (full steps in the Trade Fair guide).',
     'Click **Save Changes** (each card also has its own Save / Connect).',
   ],
-  warn:'All three are **optional** — leave them blank and the app still works. If WhatsApp or Trade Fair stops, its login expired — connect again. GST lookup needs **credits** — use the Recharge link when low.' },
-
-{ id:'tradefair', g:'admin', ic:'📡', name:'Trade Fair — sync prices', hot:true,
-  purpose:'Pull the price list straight from tradefair.intelloinsights.com — no Excel file needed.',
-  mock:{ title:'Settings → Integrations → Trade Fair sync', body:{tfcard:1} },
-  steps:[
-    'Open **Settings → Integrations** and find the **"Trade Fair sync"** card.',
-    'Type your **registered 10-digit mobile number** and click **Send OTP**.',
-    'Enter the **OTP from the SMS** and click **Verify & Connect** — the card turns green **"Connected"**.',
-    'Click **Test connection** to make sure it works.',
-    'Click **📡 Open Sync →**, pick the auction, and it runs through the normal **Price Import**.',
-    'Later it may say **"Not connected"** — the session expired, so just log in again.',
-  ],
-  warn:'Log in with your **PHONE NUMBER + OTP** — you do **not** need a cookie. (The cookie box under **Advanced** is only a backup.) If a synced price list comes back **empty**, open **Advanced** and switch **"Id field"** between **trade_session_id** and **auction_id**.' },
+  warn:'Both are **optional** — leave them blank and the app still works. If WhatsApp stops, its login expired — connect again. GST lookup needs **credits** — use the Recharge link when low.' },
 
 { id:'users', g:'admin', ic:'👥', name:'Users', purpose:'Staff logins and roles.',
   mock:{ title:'Users',
@@ -643,7 +629,6 @@ function renderBody(b){
   if(b.table){ h+=renderTable(b.table, b.mismatch); }
   if(b.resolve){ h+=renderResolve(b.resolve); }
   if(b.boxes){ h+=b.boxes.map(x=>'<div class="mk-cardbox"'+dp(x[2])+'>'+pinEl(x[2])+'<div class="h">'+esc(x[0])+'</div><div style="font-size:.78rem;color:var(--muted)">'+esc(x[1])+'</div></div>').join(''); }
-  if(b.tfcard){ h+=renderTfCard(); }
   if(b.note){ h+='<div class="mk-note">'+esc(b.note)+'</div>'; }
   return h+'</div>';
 }
@@ -665,13 +650,6 @@ function renderResolve(rv){
   if(rv.bulk){ h+='<div class="mk-bulk"'+dp(rv.bulk.pin)+'>'+pinEl(rv.bulk.pin)+esc(rv.bulk.t)+'</div>'; }
   return h;
 }
-function renderTfCard(){
-  return '<div class="mk-cardbox" style="margin:0"><div class="h">📡 Trade Fair sync <span class="badge a" style="margin-left:auto">Not connected</span></div>'
-    +'<div class="mk-inline"><span class="mk-dd" style="min-width:140px">📱 10-digit mobile</span><span class="mt-chip blue"'+dp(2)+'>'+pinEl(2)+'Send OTP</span></div>'
-    +'<div class="mk-inline"><span class="mk-dd" style="min-width:140px">🔢 OTP from SMS</span><span class="mt-chip green"'+dp(3)+'>'+pinEl(3)+'Verify &amp; Connect</span></div>'
-    +'<div class="mk-inline" style="margin:0"><span class="mt-chip"'+dp(4)+'>'+pinEl(4)+'Test connection</span><span class="mt-chip blue"'+dp(5)+'>'+pinEl(5)+'📡 Open Sync →</span></div></div>';
-}
-
 function renderTiles(){
   let html='';
   for(const [label,gid] of GROUPS){
@@ -750,7 +728,6 @@ function collectPins(mock){
   (b.menu||[]).forEach(m=>{ if(Array.isArray(m)&&m[1]) set.add(m[1]); });
   (b.boxes||[]).forEach(x=>{ if(x[2]) set.add(x[2]); });
   if(b.resolve){ (b.resolve.rows||[]).forEach(r=>{ if(r[5]) set.add(r[5]); }); if(b.resolve.bulk&&b.resolve.bulk.pin) set.add(b.resolve.bulk.pin); }
-  if(b.tfcard){ [2,3,4,5].forEach(x=>set.add(x)); }
   return set;
 }
 function showHome(){ _tour=null; document.getElementById('poster').style.display='none'; document.getElementById('home').style.display='block'; window.scrollTo(0,0); }
