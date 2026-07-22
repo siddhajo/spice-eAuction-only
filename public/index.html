@@ -150,12 +150,13 @@ body[data-preset="ocean"] .modal{box-shadow:0 8px 24px rgba(6,182,212,.1)}
 body[data-preset="ocean"] .kpi{border-left:3px solid var(--spice-saffron);box-shadow:0 1px 2px rgba(6,182,212,.04)}
 
 /* ══════════════════════════════════════════════════════════════════
-   VIBRANT APPEARANCE — user-selectable accent + backdrop layers.
-   Set at boot from localStorage via body[data-accent] / body[data-bg]
-   (see setAccent/setBackdrop in the theme-switcher script). Every rule
-   is derived from the active theme's --spice-saffron, so switching the
-   colour theme automatically re-tints these too. Default (no attribute)
-   = the plain look, so installs that never touch these are unaffected.
+   VIBRANT APPEARANCE — white-label accent + backdrop layers.
+   Set at boot from the tenant preset (/admin/branding → preset_config)
+   via body[data-accent] / body[data-bg]. These are admin-only, part of
+   the locked white-label bundle — NOT exposed to end users. Every rule
+   derives from the active theme's --spice-saffron, so the preset's
+   colour choice automatically re-tints these too. Default (no attribute)
+   = the plain look, so installs that never set them are unaffected.
    ══════════════════════════════════════════════════════════════════ */
 
 /* ── ACCENT · GRADIENT — lively two-stop gradients on primary buttons,
@@ -185,15 +186,6 @@ body[data-bg="mesh"]{
     radial-gradient(at 60% 100%,color-mix(in srgb,var(--spice-saffron) 12%,transparent) 0px, transparent 50%);
   background-attachment:fixed;
 }
-
-/* ── Segmented controls used by the Appearance card's new option rows. */
-.appx-seg{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:9px;overflow:hidden;background:var(--spice-paper)}
-.appx-seg button{border:none;background:transparent;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;color:var(--text);padding:6px 11px;line-height:1.4;transition:background .12s,color .12s}
-.appx-seg button + button{border-left:1px solid var(--border)}
-.appx-seg button:hover:not(.active){background:color-mix(in srgb,var(--spice-saffron) 16%,transparent)}
-.appx-seg button.active{background:var(--spice-saffron);color:#fff}
-.appx-opt{display:flex;align-items:center;gap:7px}
-.appx-opt > .appx-lbl{font-size:11px;font-weight:600;color:var(--spice-text-hint,#94a3b8);text-transform:uppercase;letter-spacing:.4px}
 
 /* Topbar role badge — themed pill rendered next to username. Hidden
    by default; populated by applyPermissionAttributes() once role is
@@ -3005,45 +2997,6 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <span id="dark-mode-icon">🌓</span>
             <span id="dark-mode-label">Dark</span>
           </button>
-        </div>
-        <!-- Second row — vibrant style options. Each is a compact segmented
-             control; selection persists in localStorage and applies live via
-             a body[data-*] attribute (see setAccent/setBackdrop/setDensity/
-             setFontStyle). All derive from the active colour theme. -->
-        <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
-          <div class="appx-opt">
-            <span class="appx-lbl">Accent</span>
-            <div class="appx-seg" id="appx-accent">
-              <button data-v=""         onclick="setAccent('')"          title="Flat solid colours">Flat</button>
-              <button data-v="gradient" onclick="setAccent('gradient')"  title="Lively colour gradients">Gradient</button>
-              <button data-v="glow"     onclick="setAccent('glow')"      title="Soft glowing halos">Glow</button>
-            </div>
-          </div>
-          <div class="appx-opt">
-            <span class="appx-lbl">Backdrop</span>
-            <div class="appx-seg" id="appx-bg">
-              <button data-v=""     onclick="setBackdrop('')"     title="Plain background">Plain</button>
-              <button data-v="dots" onclick="setBackdrop('dots')" title="Themed dot grid">Dots</button>
-              <button data-v="mesh" onclick="setBackdrop('mesh')" title="Soft aurora mesh">Mesh</button>
-            </div>
-          </div>
-          <div class="appx-opt">
-            <span class="appx-lbl">Spacing</span>
-            <div class="appx-seg" id="appx-density">
-              <button data-v="compact"  onclick="setDensity('compact')"  title="Tight, professional spacing">Compact</button>
-              <button data-v="roomy"    onclick="setDensity('roomy')"    title="Balanced spacing">Cozy</button>
-              <button data-v="spacious" onclick="setDensity('spacious')" title="Generous, airy spacing">Spacious</button>
-            </div>
-          </div>
-          <div class="appx-opt">
-            <span class="appx-lbl">Font</span>
-            <div class="appx-seg" id="appx-font">
-              <button data-v="jakarta" onclick="setFontStyle('jakarta')" title="Plus Jakarta Sans (default)">Jakarta</button>
-              <button data-v="inter"   onclick="setFontStyle('inter')"   title="Inter">Inter</button>
-              <button data-v="outfit"  onclick="setFontStyle('outfit')"  title="Outfit">Outfit</button>
-              <button data-v="system"  onclick="setFontStyle('system')"  title="System font">System</button>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -26766,61 +26719,6 @@ function setCustomColor(hex){
   setTheme('custom');
 }
 
-// ── Vibrant appearance options ─────────────────────────────
-// Accent (flat/gradient/glow) and backdrop (plain/dots/mesh) are
-// pure visual layers driven by body[data-accent] / body[data-bg];
-// spacing (density) and font reuse the existing white-label
-// body[data-density] / body[data-font] CSS. Each setter mirrors
-// setTheme: apply the attribute, persist to localStorage, refresh
-// the active-button highlight. An empty value clears the attribute
-// (= the plain default look). All choices survive reloads and are
-// re-applied on boot below.
-const _ACCENTS   = ['', 'gradient', 'glow'];
-const _BACKDROPS = ['', 'dots', 'mesh'];
-const _DENSITIES = ['compact', 'roomy', 'spacious'];
-const _FONTS     = ['jakarta', 'inter', 'outfit', 'system'];
-
-function _applyAttr(attr, val){
-  if (val) document.body.setAttribute(attr, val);
-  else document.body.removeAttribute(attr);
-}
-function setAccent(v){
-  if (!_ACCENTS.includes(v)) v = '';
-  _applyAttr('data-accent', v);
-  try { localStorage.setItem('accent', v); } catch(e){}
-  syncAppearanceUI();
-}
-function setBackdrop(v){
-  if (!_BACKDROPS.includes(v)) v = '';
-  _applyAttr('data-bg', v);
-  try { localStorage.setItem('backdrop', v); } catch(e){}
-  syncAppearanceUI();
-}
-function setDensity(v){
-  if (!_DENSITIES.includes(v)) return;
-  document.body.setAttribute('data-density', v);
-  try { localStorage.setItem('density', v); } catch(e){}
-  syncAppearanceUI();
-}
-function setFontStyle(v){
-  if (!_FONTS.includes(v)) return;
-  document.body.setAttribute('data-font', v);
-  try { localStorage.setItem('font', v); } catch(e){}
-  syncAppearanceUI();
-}
-// Apply saved vibrant options on load (instant, before the async
-// /api/branding call). A tenant preset — applied later in that
-// fetch callback — still wins for density/font, matching the
-// "preset locks the look" contract; accent/backdrop are always
-// per-user since presets don't carry them.
-(function(){
-  try {
-    const a = localStorage.getItem('accent');   if (_ACCENTS.includes(a) && a) document.body.setAttribute('data-accent', a);
-    const b = localStorage.getItem('backdrop'); if (_BACKDROPS.includes(b) && b) document.body.setAttribute('data-bg', b);
-    const d = localStorage.getItem('density');  if (_DENSITIES.includes(d)) document.body.setAttribute('data-density', d);
-    const f = localStorage.getItem('font');     if (_FONTS.includes(f)) document.body.setAttribute('data-font', f);
-  } catch(e){}
-})();
 // Apply saved theme on load (including custom color if previously set).
 // Order: localStorage first for instant visual feedback (no flash of
 // default theme), then re-apply from /api/branding once it returns so
@@ -26866,6 +26764,11 @@ function setFontStyle(v){
         // Font — sets data-font attr; body[data-font="..."] CSS picks
         // which of the @import'd web fonts is active.
         if (p.font) document.body.setAttribute('data-font', p.font);
+        // Accent — flat / gradient / glow. Vibrant treatment of buttons,
+        // KPI rails and cards, derived from the theme colour.
+        if (p.accent) document.body.setAttribute('data-accent', p.accent);
+        // Backdrop — plain / dots / mesh. Themed page-background texture.
+        if (p.bg) document.body.setAttribute('data-bg', p.bg);
         // Preset slug — drives the per-preset "personality" CSS that
         // gives each preset distinct character beyond density + color.
         document.body.setAttribute('data-preset', d.preset);
@@ -26919,18 +26822,6 @@ function syncAppearanceUI(){
   const ico = document.getElementById('dark-mode-icon');
   if (lbl) lbl.textContent = isDark ? 'Light' : 'Dark';
   if (ico) ico.textContent = isDark ? '\u2600\uFE0F' : '\u{1F319}'; // sun / moon
-  // Highlight the active button in each vibrant-option segmented control.
-  // The value is read straight off the body attribute so the highlight
-  // always matches what's actually applied (empty attr \u2192 the "" button).
-  [['appx-accent','data-accent'],['appx-bg','data-bg'],
-   ['appx-density','data-density'],['appx-font','data-font']].forEach(([id, attr])=>{
-    const grp = document.getElementById(id);
-    if (!grp) return;
-    const cur = document.body.getAttribute(attr) || '';
-    grp.querySelectorAll('button').forEach(btn=>{
-      btn.classList.toggle('active', (btn.dataset.v || '') === cur);
-    });
-  });
 }
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', syncAppearanceUI);

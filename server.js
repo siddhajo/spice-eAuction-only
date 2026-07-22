@@ -616,27 +616,27 @@ app.put('/api/branding', requireSettingsWrite, (req, res) => {
 const TENANT_PRESETS = {
   cardamom: {
     label: 'Cardamom (default — premium spacious)',
-    theme: 'emerald', customColor: '', density: 'roomy', font: 'jakarta', hideAppearance: true,
+    theme: 'emerald', customColor: '', density: 'roomy', font: 'jakarta', accent: 'glow', bg: 'mesh', hideAppearance: true,
   },
   bluehill: {
     label: 'Bluehill (indigo + dense + inter)',
-    theme: 'indigo', customColor: '', density: 'compact', font: 'inter', hideAppearance: true,
+    theme: 'indigo', customColor: '', density: 'compact', font: 'inter', accent: 'gradient', bg: '', hideAppearance: true,
   },
   'western-ghats': {
     label: 'Western Ghats (teal + spacious + outfit)',
-    theme: 'teal', customColor: '', density: 'spacious', font: 'outfit', hideAppearance: true,
+    theme: 'teal', customColor: '', density: 'spacious', font: 'outfit', accent: 'glow', bg: 'dots', hideAppearance: true,
   },
   slate: {
     label: 'Slate (corporate grey + dense + system)',
-    theme: 'slate', customColor: '', density: 'compact', font: 'system', hideAppearance: true,
+    theme: 'slate', customColor: '', density: 'compact', font: 'system', accent: '', bg: '', hideAppearance: true,
   },
   marigold: {
     label: 'Marigold (sunshine + roomy + jakarta)',
-    theme: 'sunshine', customColor: '', density: 'roomy', font: 'jakarta', hideAppearance: true,
+    theme: 'sunshine', customColor: '', density: 'roomy', font: 'jakarta', accent: 'gradient', bg: 'mesh', hideAppearance: true,
   },
   ocean: {
     label: 'Ocean (cool blue + roomy + inter)',
-    theme: 'ocean', customColor: '', density: 'roomy', font: 'inter', hideAppearance: true,
+    theme: 'ocean', customColor: '', density: 'roomy', font: 'inter', accent: 'gradient', bg: 'dots', hideAppearance: true,
   },
 };
 // Available font slugs that the frontend knows how to apply. Keep in
@@ -645,6 +645,12 @@ const TENANT_FONTS = ['jakarta', 'inter', 'outfit', 'system'];
 // Available density slugs. Frontend maps each to a `data-density` attr
 // + CSS rules that adjust padding / corner radius / row heights.
 const TENANT_DENSITIES = ['compact', 'roomy', 'spacious'];
+// Available accent slugs — the "vibrant" treatment of buttons / KPI rails
+// / cards. Frontend maps each to a `data-accent` attr. '' = flat (default).
+const TENANT_ACCENTS = ['', 'gradient', 'glow'];
+// Available backdrop slugs — themed page-background texture. Frontend maps
+// each to a `data-bg` attr. '' = plain (default).
+const TENANT_BACKDROPS = ['', 'dots', 'mesh'];
 
 // Gatekeeper. Compares against ADMIN_BRANDING_KEY env var, falling back
 // to 'change-me' so an unsecured deploy is loud — running ?key=change-me
@@ -685,12 +691,20 @@ app.get('/admin/branding', (req, res) => {
   const cColor    = c.customColor || '';
   const cDensity  = c.density || 'roomy';
   const cFont     = c.font || 'jakarta';
+  const cAccent   = c.accent || '';
+  const cBg       = c.bg || '';
   const cHide     = c.hideAppearance !== false; // default true
+
+  // Human labels for the vibrant option slugs (slug '' = the plain default).
+  const ACCENT_LABELS = { '': 'flat (plain)', gradient: 'gradient', glow: 'glow' };
+  const BACKDROP_LABELS = { '': 'plain', dots: 'dots', mesh: 'mesh' };
 
   const themeOpts = ['emerald','coral','violet','sunshine','electric','ocean','tech','minimal','trust','rose','indigo','teal','slate','custom']
     .map(t => `<option value="${t}" ${t === cTheme ? 'selected' : ''}>${t}</option>`).join('');
   const densityOpts = TENANT_DENSITIES.map(d => `<option value="${d}" ${d === cDensity ? 'selected' : ''}>${d}</option>`).join('');
   const fontOpts = TENANT_FONTS.map(f => `<option value="${f}" ${f === cFont ? 'selected' : ''}>${f}</option>`).join('');
+  const accentOpts = TENANT_ACCENTS.map(a => `<option value="${a}" ${a === cAccent ? 'selected' : ''}>${ACCENT_LABELS[a]}</option>`).join('');
+  const backdropOpts = TENANT_BACKDROPS.map(b => `<option value="${b}" ${b === cBg ? 'selected' : ''}>${BACKDROP_LABELS[b]}</option>`).join('');
 
   const keyEsc = String(req.query.key).replace(/[<>'"&]/g, '');
 
@@ -742,6 +756,8 @@ app.get('/admin/branding', (req, res) => {
       <div><label>Custom hex (used when theme = "custom")</label><input type="color" id="custom-color" value="${cColor || '#166534'}"></div>
       <div><label>Density</label><select id="custom-density">${densityOpts}</select></div>
       <div><label>Font</label><select id="custom-font">${fontOpts}</select></div>
+      <div><label>Accent (button / KPI style)</label><select id="custom-accent">${accentOpts}</select></div>
+      <div><label>Backdrop (page texture)</label><select id="custom-bg">${backdropOpts}</select></div>
     </div>
     <label style="margin-top: 16px;"><input type="checkbox" id="custom-hide" ${cHide ? 'checked' : ''}> Hide Appearance card from users</label>
   </div>
@@ -765,6 +781,8 @@ app.get('/admin/branding', (req, res) => {
           customColor: document.getElementById('custom-color').value,
           density: document.getElementById('custom-density').value,
           font: document.getElementById('custom-font').value,
+          accent: document.getElementById('custom-accent').value,
+          bg: document.getElementById('custom-bg').value,
           hideAppearance: document.getElementById('custom-hide').checked,
         };
       }
@@ -815,6 +833,8 @@ app.post('/api/admin/preset', (req, res) => {
       customColor: /^#[0-9a-fA-F]{6}$/.test(config.customColor || '') ? config.customColor : '',
       density: TENANT_DENSITIES.includes(config.density) ? config.density : 'roomy',
       font: TENANT_FONTS.includes(config.font) ? config.font : 'jakarta',
+      accent: TENANT_ACCENTS.includes(config.accent) ? config.accent : '',
+      bg: TENANT_BACKDROPS.includes(config.bg) ? config.bg : '',
       hideAppearance: !!config.hideAppearance,
     };
   } else if (TENANT_PRESETS[slug]) {
