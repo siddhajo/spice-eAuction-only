@@ -8268,6 +8268,22 @@ function gradedServiceBase(db, auctionId, sellerName, grade) {
   return row ? Number(row.base) || 0 : 0;
 }
 
+// Sum of just the COMMISSION (lots.com) on a party's graded lots. This is
+// the debit-note amount per the business rule "the debit note amount is the
+// commission of the respective lots" — no handling (sertax), no discount
+// multiplier. Kept separate from gradedServiceBase (com + sertax), which
+// the planter debit-note flow still uses.
+function gradedCommission(db, auctionId, sellerName, grade) {
+  if (!auctionId || !sellerName) return 0;
+  const row = db.get(
+    `SELECT COALESCE(SUM(COALESCE(com,0)), 0) AS base
+       FROM lots
+      WHERE auction_id = ? AND name = ? AND TRIM(COALESCE(grade,'')) = ?`,
+    [auctionId, sellerName, String(grade)]
+  );
+  return row ? Number(row.base) || 0 : 0;
+}
+
 function deriveDealerSaleType(db, auctionId, dealerName, dealerCr, cfg, purchase) {
   // For Debit Notes, inter/intra is determined by the DEALER'S state vs
   // the COMPANY'S state — NOT the buyer-facing sale type on lots
@@ -8482,23 +8498,18 @@ app.post('/api/debit-notes/generate', requireInvoiceWrite, requireDebitNoteEnabl
   }
 
   // ── DN amount (GRADE 2) ──────────────────────────────────
-  //   Base    = sum(commission + cash-handling) on the dealer's GRADE-2
-  //             lots in this trade (grade '2' = registered-dealer side).
-  //   Discount = round( Base / 1000 × discount_days × discount_pct );
-  //             days/pct from Settings → Rates. Caller may override the
-  //             computed discount via `req.body.discount`.
-  const baseAmt = gradedServiceBase(db, purchase.auction_id, dealerName, '2');
-  if (baseAmt <= 0) {
-    return res.status(400).json({ error: `No grade-2 commission/handling found for ${dealerName} in trade #${ano} — nothing to debit` });
-  }
-  let discountAmt = req.body.discount != null ? parseFloat(req.body.discount) : NaN;
+  //   Amount = the COMMISSION of the dealer's GRADE-2 lots in this trade
+  //   (sum of lots.com). No handling, no discount multiplier — per the
+  //   business rule "the debit note amount is the commission of the
+  //   respective lots". A caller may still override via req.body.amount
+  //   (legacy `discount` is also honoured). GST is added on top below.
+  let discountAmt = req.body.amount != null ? parseFloat(req.body.amount)
+                  : req.body.discount != null ? parseFloat(req.body.discount) : NaN;
   if (!Number.isFinite(discountAmt) || discountAmt <= 0) {
-    const discDays = Number(cfg.discount_days) || 0;
-    const discPct  = Number(cfg.discount_pct)  || 0;
-    discountAmt    = Math.round(baseAmt / 1000 * discDays * discPct);
+    discountAmt = gradedCommission(db, purchase.auction_id, dealerName, '2');
   }
   if (discountAmt <= 0) {
-    return res.status(400).json({ error: 'Computed discount is zero — set "Discount %" and "No. of Days for Discount" in Settings → Rates' });
+    return res.status(400).json({ error: `No commission found for ${dealerName} in trade #${ano} — nothing to debit` });
   }
 
   // GST split — driven by the dealer's SALE TYPE for this trade.
@@ -8720,7 +8731,7 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNote
   // retry. The check + INSERTs all run inside the same JS turn (no
   // await), so a competing bulk can't slip in between.
   const eligibleCount = purchases.filter(
-    p => !existingKeys.has(p.name || '') && gradedServiceBase(db, p.auction_id, p.name || '', '2') > 0
+    p => !existingKeys.has(p.name || '') && gradedCommission(db, p.auction_id, p.name || '', '2') > 0
   ).length;
 
   let nextNoteNo;
@@ -8787,17 +8798,12 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNote
       });
       continue;
     }
-    // Base = sum(commission + handling) on the dealer's GRADE-2 lots.
-    const baseAmt = gradedServiceBase(db, p.auction_id, dealerName, '2');
-    if (baseAmt <= 0) {
-      skipped.push({ invo: p.invo, ano, buyer: dealerName, reason: 'no grade-2 commission/handling' });
-      continue;
-    }
-    // Discount = round( Base / 1000 × discount_days × discount_pct ).
-    // discount_days = 0 → 0 (skipped).
-    const discountAmt = Math.round(baseAmt / 1000 * discDays * discPct);
+    // Amount = the COMMISSION of the dealer's GRADE-2 lots (sum of lots.com).
+    // No handling, no discount multiplier — per the business rule that the
+    // debit note amount is the commission of the respective lots.
+    const discountAmt = gradedCommission(db, p.auction_id, dealerName, '2');
     if (discountAmt <= 0) {
-      skipped.push({ invo: p.invo, ano, buyer: dealerName, reason: 'zero discount (set Discount % and No. of Days for Discount in Settings → Rates)' });
+      skipped.push({ invo: p.invo, ano, buyer: dealerName, reason: 'no commission on grade-2 lots' });
       continue;
     }
 
@@ -8859,12 +8865,13 @@ app.get('/api/debit-notes/eligible-purchases/:auctionId', requireView, (req, res
 
   const ano = auction.ano;
   // Anti-join: purchases in this trade where no DN exists for the same
-  // (ano, dealer name) pair, AND the dealer has GRADE-2 commission/handling
-  // to debit. `amount` here is the DN BASE (sum of com + sertax on the
-  // dealer's grade-2 lots), not the purchase value.
+  // (ano, dealer name) pair, AND the dealer has GRADE-2 commission to debit.
+  // `amount` here is the DN AMOUNT = the COMMISSION (sum of lots.com) on the
+  // dealer's grade-2 lots — same figure the generate endpoints now store, so
+  // the modal preview matches what gets created (GST is added on top there).
   const rows = db.all(
     `SELECT p.id, p.invo, p.name,
-            (SELECT COALESCE(SUM(COALESCE(l.com,0) + COALESCE(l.sertax,0)), 0)
+            (SELECT COALESCE(SUM(COALESCE(l.com,0)), 0)
                FROM lots l
               WHERE l.auction_id = p.auction_id AND l.name = p.name
                 AND TRIM(COALESCE(l.grade,'')) = '2') AS amount,
@@ -8875,7 +8882,7 @@ app.get('/api/debit-notes/eligible-purchases/:auctionId', requireView, (req, res
           SELECT 1 FROM lots l2
            WHERE l2.auction_id = p.auction_id AND l2.name = p.name
              AND TRIM(COALESCE(l2.grade,'')) = '2'
-             AND (COALESCE(l2.com,0) + COALESCE(l2.sertax,0)) > 0
+             AND COALESCE(l2.com,0) > 0
         )
         AND NOT EXISTS (
           SELECT 1 FROM debit_notes dn
