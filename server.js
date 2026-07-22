@@ -3781,6 +3781,12 @@ app.get('/api/auctions/:id/stage', requireView, (req, res) => {
 
   const lotCount = db.get('SELECT COUNT(*) AS c FROM lots WHERE auction_id = ?', [aid]).c;
   const priceCheckedEver = pcGateEverChecked(db, aid);
+  // Lots screen (Price Import lives there) is gated behind Validate Lots:
+  // it reveals only once the lot-validation gate is clean. When the
+  // flag_lot_validation feature is OFF, lvGateState() returns 'off', so the
+  // gate auto-satisfies and the Lots screen reveals as usual (no dead step).
+  const lvState = lvGateState(db, aid);
+  const lotsValidated = lvState === 'clean' || lvState === 'off';
   // Transactions module unlocks the moment any single lot has a price entered.
   const hasPricedLot = db.get(
     'SELECT COUNT(*) AS c FROM lots WHERE auction_id = ? AND COALESCE(price,0) > 0', [aid]
@@ -3798,7 +3804,7 @@ app.get('/api/auctions/:id/stage', requireView, (req, res) => {
     auctionId: aid,
     ano: auction.ano,
     stage,
-    signals: { lotCount, priceCheckedEver, hasPricedLot, hasDocs },
+    signals: { lotCount, lotsValidated, priceCheckedEver, hasPricedLot, hasDocs },
   });
 });
 

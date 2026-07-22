@@ -426,9 +426,38 @@ async function exportPriceListBefore(db, auctionId) {
   });
 }
 
-// ── Export Type 4: Bank Payment (RTGS/NEFT format) ───────────
+// ── Bank Payment (config-driven column layout) ───────────────
+// Column layouts live in bank-formats.js keyed by the `bank_format` company
+// setting, so the same codebase serves each customer's bank upload template
+// without a fork. The payment DATA is identical across formats — only which
+// columns are emitted (and any per-cell transform) differs. `view` is the
+// resolved profile face (the profile itself for the after variant, or its
+// `.before` face for the pre-discount variant).
+function renderBankPaymentView(db, auctionId, view, payments) {
+  const cols = view.columns;
+  // Apply optional per-column value transforms (e.g. amount → "1234.00" text
+  // for banks that want a fixed-decimal string). Only clone rows when needed.
+  const hasXform = cols.some(c => typeof c.format === 'function');
+  const rows = hasXform
+    ? payments.map(p => {
+        const o = Object.assign({}, p);
+        for (const c of cols) if (typeof c.format === 'function') o[c.key] = c.format(p[c.key], p);
+        return o;
+      })
+    : payments;
+  // Strip the non-ExcelJS `format` key before handing columns to the builder.
+  const cleanCols = cols.map(({ format, ...rest }) => rest);
+  return createExcelBuffer(view.sheetName, cleanCols, rows, {
+    db,
+    title: view.title,
+    metaLines: view.includeMeta === false ? [] : auctionMeta(db, auctionId),
+  });
+}
+
+// ── Export Type 4: Bank Payment (after discount) ─────────────
 async function exportBankPayment(db, auctionId, cfg, _state, extra) {
   const { getBankPaymentData } = require('./calculations');
+  const { getBankFormat } = require('./bank-formats');
   const sellers = (extra && extra.sellers) || null;
   // lots / excludeLots flow through to getBankPaymentData, which recomputes
   // each affected seller's payable over only the relevant lots (Payments-tab
@@ -438,47 +467,27 @@ async function exportBankPayment(db, auctionId, cfg, _state, extra) {
     lots:        extra && extra.lots,
     excludeLots: extra && extra.excludeLots,
   });
-  const cols = [
-    { header: 'PAYSYS ID (RTGS/NEFT)',     key: 'transactionType', width: 18 },
-    { header: 'DEBIT ACCOUNT',             key: 'debitAccount',    width: 20 },
-    { header: 'TRAN AMOUNT',               key: 'amount',          width: 14 },
-    { header: 'BENEFICIARY ACCOUNT',       key: 'accountNo',       width: 20 },
-    { header: 'BENEFICIARY ACCOUNT TYPE',  key: 'accountType',     width: 16 },
-    { header: 'BENEFICIARY NAME',          key: 'beneficiaryName', width: 30 },
-    { header: 'BENEFICIARY ADD1',          key: 'address1',        width: 30 },
-    { header: 'BENEFICIARY ADD2',          key: 'address2',        width: 20 },
-    { header: 'BENEFICIARY IFSC',          key: 'ifsc',            width: 14 },
-    { header: 'SENDER TO RECEIVER INFO',   key: 'remarks',         width: 50 },
-  ];
-  return createExcelBuffer('BankPayment', cols, payments, {
-    db, title: 'Bank Payment (RTGS/NEFT)', metaLines: auctionMeta(db, auctionId),
-  });
+  const fmt = getBankFormat(cfg && cfg.bank_format);
+  return renderBankPaymentView(db, auctionId, fmt, payments);
 }
 
 // ── Export Type 4b: Bank Payment (Before discount) ───────────
 // Same data shape as bank_payment except `amount` is the pre-discount
-// puramt (raw purchase amount before refund/GST). Per the e-Auction spec
-// the Amount + SendertoRcvrInfo columns are omitted from this variant.
+// puramt (raw purchase amount before refund/GST). Uses the active profile's
+// `before` layout, falling back to the default profile's when the selected
+// format doesn't define one.
 async function exportBankPaymentBefore(db, auctionId, cfg, _state, extra) {
   const { getBankPaymentData } = require('./calculations');
+  const { getBankFormat, BANK_FORMATS, DEFAULT_BANK_FORMAT } = require('./bank-formats');
   const sellers = (extra && extra.sellers) || null;
   const payments = getBankPaymentData(db, auctionId, cfg, {
     before: true, sellers,
     lots:        extra && extra.lots,
     excludeLots: extra && extra.excludeLots,
   });
-  const cols = [
-    { header: 'TransactionType', key: 'transactionType', width: 16 },
-    { header: 'BeneIFSCode',     key: 'ifsc',            width: 14 },
-    { header: 'BeneAcctNo',      key: 'accountNo',       width: 20 },
-    { header: 'BeneName',        key: 'beneficiaryName', width: 30 },
-    { header: 'BeneAddLine1',    key: 'address1',        width: 30 },
-    { header: 'BeneAddLine2',    key: 'address2',        width: 20 },
-    { header: 'BeneAddLine3',    key: 'pin',             width: 10 },
-  ];
-  return createExcelBuffer('BankPaymentBefore', cols, payments, {
-    db, title: 'Bank Payment (Before)', metaLines: auctionMeta(db, auctionId),
-  });
+  const fmt = getBankFormat(cfg && cfg.bank_format);
+  const view = fmt.before || BANK_FORMATS[DEFAULT_BANK_FORMAT].before;
+  return renderBankPaymentView(db, auctionId, view, payments);
 }
 
 // ── Export Type 5: Pooler-wise Register ───────────────────────

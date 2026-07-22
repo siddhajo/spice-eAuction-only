@@ -2044,8 +2044,8 @@ body[data-perm-user-manage="1"]    div.needs-user-manage{display:block !importan
    Sidebar items get scoped this way so a lot_entry user can't even
    navigate to other tabs through the URL — buttons are gone, deep
    links are protected by the server's permission gates anyway. */
-body[data-role="lot_entry"] .side-item:not([data-tab="lotentry"]):not(.sb-collapse-btn),
-body[data-role="lot_entry"] .side-group-lbl,
+body[data-role="lot_entry"] .side-item:not([data-tab="lotentry"]):not(.sb-collapse-btn):not(.side-help),
+body[data-role="lot_entry"] .side-group-lbl:not(.side-help-lbl),
 body[data-role="lot_entry"] .topbar-comfort,
 body[data-role="lot_entry"] #comfort-toggle{display:none !important}
 
@@ -2668,6 +2668,17 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <button class="sb-collapse-btn" onclick="toggleSidebarCollapse()" title="Collapse / expand sidebar" aria-label="Toggle sidebar">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
       </button>
+      <!-- Help / how-to guide. Opens the static /help.html in an isolated
+           overlay iframe (not a routed tab) so its styles never touch the
+           app and it can't break the go() router. Always visible — no stage
+           gate, no permission gate. -->
+      <div class="side-group help-group">
+        <div class="side-group-lbl side-help-lbl">Help</div>
+        <button class="side-item side-help" onclick="var o=document.getElementById('help-ov');var f=o.querySelector('iframe');if(!f.getAttribute('src'))f.setAttribute('src','/help.html');o.style.display='flex'">
+          <svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          How-to Guide
+        </button>
+      </div>
       <div class="side-group">
         <div class="side-group-lbl">Overview</div>
         <button class="side-item active" data-tab="dash" onclick="go('dash')">
@@ -2696,7 +2707,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       </div>
       <div class="side-group">
         <div class="side-group-lbl">Auction Operations</div>
-        <button class="side-item" data-tab="lots" data-min-stage="1" onclick="go('lots')">
+        <button class="side-item" data-tab="lots" data-min-stage="2" data-req-validated="1" onclick="go('lots')">
           <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.96 12 12.01l8.73-5.05M12 22.08V12"/></svg>
           Lots
         </button>
@@ -3126,10 +3137,10 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <select id="bk-act-user" onchange="bkActReload(true)" title="Filter by user"><option value="">All users</option></select>
             <span style="flex:1"></span>
             <select id="bk-act-pagesize" onchange="bkActReload(true)" title="Rows per page">
-              <option value="10">10 / page</option>
               <option value="25" selected>25 / page</option>
               <option value="50">50 / page</option>
               <option value="100">100 / page</option>
+              <option value="500">500 / page</option>
             </select>
           </div>
           <div style="overflow:auto;max-height:56vh">
@@ -4031,11 +4042,11 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
                localStorage so the user's choice survives reloads. -->
           <select id="le-recent-page-size" onchange="leSetPageSize(this.value)" title="Rows per page"
                   style="height:30px;font-size:12px;padding:0 10px;border:1px solid var(--border);border-radius:6px;background:#fff;margin-right:8px">
-            <option value="10">Show: 10/page</option>
             <option value="20">Show: 20/page</option>
             <option value="50">Show: 50/page</option>
             <option value="100">Show: 100/page</option>
             <option value="200">Show: 200/page</option>
+            <option value="500">Show: 500/page</option>
           </select>
           <!-- Print Selected, Print by Seller, Clear — shown only when ≥1 lot
                is checked. The N badges update live. Styling is unified into a
@@ -4112,10 +4123,10 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             </select>
             <span style="flex:1"></span>
             <select id="le-act-pagesize" onchange="leActRender()" title="Rows per page">
-              <option value="10">10 / page</option>
               <option value="25" selected>25 / page</option>
               <option value="50">50 / page</option>
               <option value="100">100 / page</option>
+              <option value="500">500 / page</option>
             </select>
           </div>
           <div style="max-height:52vh;overflow:auto">
@@ -5151,7 +5162,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div style="display:flex;gap:6px;margin-top:8px">
               <button class="btn btn-a" onclick="tallyPreview('sales_isp')" style="flex:1;padding:7px;font-size:12px">Preview</button>
               <button class="btn btn-g" onclick="tallyDownload('sales_isp')" style="flex:1;padding:7px;font-size:12px">XML</button>
-              <button class="btn btn-g" onclick="tallyDownload('sales_isp','json')" style="flex:1;padding:7px;font-size:12px">JSON</button>
+              <button class="btn btn-g" onclick="tallyDownload('sales_isp','irp')" style="flex:1;padding:7px;font-size:12px" title="GST e-Invoice (IRP / NIC) JSON — ready for the trade portal">e-Invoice</button>
             </div>
           </div>
 
@@ -8624,17 +8635,24 @@ function go(tab){
 // sidebar groups unlock. Locked items stay visible but greyed with a 🔒;
 // clicking one explains what unlocks it instead of navigating. An admin
 // "Show all menus" toggle (needs user-manage) bypasses the whole gate.
-//   1 trade exists → Lot Entry, Lots
+//   1 trade exists → Lot Entry
 //   2 ≥1 lot       → Price tools, Price Check, Payments, Exports (Pre-auction only)
 //   3 ≥1 lot priced→ Sales/Purchase/Bill/Debit-Note transactions
 //   4 ≥1 doc       → Tally + after-trade exports
+// Plus a per-item requirement, orthogonal to the numeric stage: an item
+// tagged data-req-validated reveals only once the trade's lots have passed
+// "Validate Lots" (signals.lotsValidated). The Lots screen — which holds
+// Price Import — carries this so prices can't be imported before the lots
+// are validated. Auto-satisfied when the Validate-Lots feature is OFF.
 const TRADE_STAGE_MSG = {
   1: 'Create or select a trade to unlock this.',
   2: 'Enter at least one lot for this trade to unlock this.',
   3: 'Enter a price for at least one lot to unlock this.',
   4: 'Generate a transaction (invoice / purchase) to unlock this.',
 };
+const TRADE_VALIDATE_MSG = 'Validate this trade’s lots (Lot Entry → Validate Lots) to unlock this.';
 window._tradeStage = 0;
+window._tradeSignals = {};        // last /stage signals (lotsValidated, …)
 let _stagedTradeId = undefined;   // last id we fetched a stage for
 
 // Fetch + apply the current trade's stage. `force` re-fetches even when the
@@ -8644,15 +8662,18 @@ async function refreshTradeStage(force){
   if(!force && id === _stagedTradeId){ applyTradeStageLocks(); return; }
   _stagedTradeId = id;
   let stage = 0;
+  let signals = {};
   if(id){
     try{
       const d = await j(`/api/auctions/${id}/stage`);
       // Guard against a stale response after a rapid trade switch.
       if(((typeof getSharedAucId==='function'?getSharedAucId():'')||'') !== id) return;
       stage = Number(d && d.stage) || 1;
-    }catch(_){ stage = 1; }   // trade exists but stage lookup failed — reveal stage 1
+      signals = (d && d.signals) || {};
+    }catch(_){ stage = 1; signals = { lotsValidated: true }; }   // lookup failed — fail open
   }
   window._tradeStage = stage;
+  window._tradeSignals = signals;
   document.body.setAttribute('data-trade-stage', String(stage));
   applyTradeStageLocks();
 }
@@ -8663,11 +8684,21 @@ function applyTradeStageLocks(){
   const showAll = (function(){ try{ return localStorage.getItem('tradeStageShowAll')==='1'; }catch(_){ return false; } })();
   const bypass  = showAll || window._userRole === 'lot_entry';
   const stage   = bypass ? Infinity : (window._tradeStage || 0);
+  const sig     = window._tradeSignals || {};
+  // Fail-open when the signal is missing so a transient stage-lookup error
+  // never hides Lots (the server still enforces the real import gate).
+  const validated = bypass ? true : (sig.lotsValidated !== false);
   document.querySelectorAll('.side-item[data-min-stage]').forEach(it=>{
-    const need   = Number(it.dataset.minStage) || 0;
-    const locked = need > stage;
+    const need = Number(it.dataset.minStage) || 0;
+    let locked = false, msg = '';
+    if(need > stage){
+      locked = true; msg = TRADE_STAGE_MSG[need] || 'Not available yet.';
+    } else if(it.dataset.reqValidated === '1' && !validated){
+      // Passed the numeric-stage gate but still awaiting Validate Lots.
+      locked = true; msg = TRADE_VALIDATE_MSG;
+    }
     it.classList.toggle('locked', locked);
-    if(locked) it.setAttribute('title', TRADE_STAGE_MSG[need] || 'Not available yet.');
+    if(locked) it.setAttribute('title', msg);
     else       it.removeAttribute('title');
   });
 }
@@ -8684,8 +8715,10 @@ document.addEventListener('click', function(e){
   const it = e.target.closest && e.target.closest('.side-item.locked');
   if(it){
     e.preventDefault(); e.stopPropagation();
-    const need = Number(it.dataset.minStage) || 0;
-    if(typeof toast === 'function') toast('🔒 ' + (TRADE_STAGE_MSG[need] || 'Not available yet.'));
+    // The title we set while locking already holds the correct reason
+    // (numeric-stage message OR the Validate-Lots message).
+    const msg = it.getAttribute('title') || 'Not available yet.';
+    if(typeof toast === 'function') toast('🔒 ' + msg);
   }
 }, true);
 
@@ -12112,7 +12145,7 @@ const _le = {
   recentTotal: 0,          // total rows matching current filter (from server) — drives the pager
   recentOffset: 0,         // (legacy) rows fetched; retained for back-compat helpers
   recentPage: 1,           // current page (1-based) shown in the recent-entries pager
-  recentPageSize: (function(){ const v = parseInt(localStorage.getItem('leRecentPageSize'),10); return [10,20,50,100,200].includes(v) ? v : 20; })(),
+  recentPageSize: (function(){ const v = parseInt(localStorage.getItem('leRecentPageSize'),10); return [20,50,100,200,500].includes(v) ? v : 20; })(),
   recentSearch: '',        // active seller-name filter (LIKE on lots.name via /api/lots?name=)
   recentSearchTimer: null, // debounce timer for the search input
   sampleWeight: 0,         // from settings (sample_weight key, defaults to 0)
@@ -13652,7 +13685,7 @@ async function leFillRecentBranches(){
 // choice and jumps back to page 1 so the new window starts at the top.
 function leSetPageSize(v){
   const n = parseInt(v, 10);
-  if (![10,20,50,100,200].includes(n)) return;
+  if (![20,50,100,200,500].includes(n)) return;
   _le.recentPageSize = n;
   _le.recentPage = 1;
   try { localStorage.setItem('leRecentPageSize', String(n)); } catch (_){}
@@ -16564,7 +16597,21 @@ function renderSettingsPanel(){
       html += '<div id="gst-api-status-host" style="margin-bottom:14px"></div>';
     }
     html+='<div class="sgrid">';
-    for(const f of fields)html+=fld(f);
+    for(const f of fields){
+      if(f.key==='bank_format'){
+        // Bank Payment layout picker. Keep these options in sync with the
+        // profile keys in bank-formats.js (BANK_FORMATS) — each option value
+        // must equal a profile's object key. Add a line here when you add a
+        // customer format there.
+        const BANK_FORMAT_OPTIONS=[
+          {value:'rtgs_neft',label:'RTGS / NEFT (default)'},
+        ];
+        const sel=f.value||'rtgs_neft';
+        const opts=BANK_FORMAT_OPTIONS.map(o=>`<option value="${o.value}"${sel===o.value?' selected':''}>${esc(o.label)}</option>`).join('');
+        html+=`<div class="fg"><label>${esc(f.label)}${helpTip('Column layout for the Bank Payment export — pick the format your bank expects for its bulk-upload template. New formats are added in bank-formats.js.')}</label><select data-key="${f.key}">${opts}</select></div>`;
+      }
+      else html+=fld(f);
+    }
     html+='</div>';
     // Rates & Charges: a history panel below the grid. Stays empty until the
     // operator hovers/focuses one of the tracked rate fields (see
@@ -17441,7 +17488,7 @@ const T_IDS={name:'t-name',cr:'t-cr',pan:'t-pan',tan:'t-tan',tel:'t-tel',aadhar:
 // setGlobalPageSize() change. The dropdown lives inside renderPager so
 // the control is right next to the page-nav buttons the user already
 // looks at.
-const _PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 200];
+const _PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 500];
 const _PAGE_SIZE_KEY = 'sa_page_size';
 // Per-browser preference, set when the user picks from the inline
 // dropdown in any pager footer. No company-wide default — the
@@ -19410,6 +19457,9 @@ async function confirmLotValidate(){
     await j('/api/auctions/'+aid+'/validate-lots/confirm',{method:'POST'});
     toast('✓ Lots validated — price import unlocked');
     hideModal('lot-validate-modal');
+    // Validation crosses the Lots-screen gate — reveal it in the guided
+    // sidebar without needing a navigation (the locked item swallows clicks).
+    if(typeof refreshTradeStage==='function'){ try{ refreshTradeStage(true); }catch(_){} }
     // Refresh the price-import gate banner if that modal is/becomes open.
     _piGateClean=true;
     if(typeof piRefreshValidationGate==='function') piRefreshValidationGate();
@@ -21115,10 +21165,10 @@ function renderPriceEntryGrid(){
     </tr>`;
   }).join('');
   grid.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:13px">
-    <thead><tr style="text-align:left;border-bottom:2px solid var(--border);color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:.4px">
-      <th style="padding:8px">Lot</th><th style="padding:8px">Seller</th><th style="padding:8px;text-align:right">Branch</th>
+    <thead><tr style="text-align:left;background:var(--spice-cardamom);color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:.4px">
+      <th style="padding:8px;border-top-left-radius:6px">Lot</th><th style="padding:8px">Seller</th><th style="padding:8px;text-align:right">Branch</th>
       <th style="padding:8px;text-align:right">Bags</th><th style="padding:8px;text-align:right">Qty</th>
-      <th style="padding:8px;text-align:right">Price ₹/kg</th><th style="padding:8px;text-align:right">Amount</th><th></th>
+      <th style="padding:8px;text-align:right">Price ₹/kg</th><th style="padding:8px;text-align:right">Amount</th><th style="border-top-right-radius:6px"></th>
     </tr></thead><tbody>${rows}</tbody></table>`;
   _peRenderSummary();
 }
@@ -25406,26 +25456,35 @@ async function tallyDownload(type,format){
   const aid=document.getElementById('tally-auction')?.value;
   if(!aid){alert('Select an auction first');return}
   const label=TALLY_LABELS[type]||type;
-  const fmt=(format==='json')?'json':'xml';
+  // Three output formats:
+  //   'irp'  → GST e-Invoice (IRP / NIC) JSON, ready for the trade portal.
+  //            Sales (ISP) only — the endpoint rejects other types.
+  //   'json' → internal Tally-row JSON (still reachable, not surfaced here).
+  //   xml    → Tally import XML (default).
+  const fmt=(format==='irp')?'irp':(format==='json')?'json':'xml';
+  const ext=(fmt==='xml')?'xml':'json';
+  const qs=(fmt==='xml')?'':`?format=${fmt}`;
+  const kind=(fmt==='irp')?'e-Invoice JSON':fmt.toUpperCase();
+  const namePrefix=(fmt==='irp')?'EInvoice':'Tally';
 
   // Lorry / vehicle no for the e-way bill is read directly from each
   // invoice's `lorry_no` column (set via the "Set Lorry No" bulk action
   // in the Sales tab). No per-export override here — what the user
   // saved on the invoice is what ships in the XML.
 
-  await withOverlay(`Generating Tally ${label} ${fmt.toUpperCase()}…`, async () => {
-    const url=B+`/api/tally/export/${type}/${aid}`+(fmt==='json'?'?format=json':'');
+  await withOverlay(`Generating ${label} ${kind}…`, async () => {
+    const url=B+`/api/tally/export/${type}/${aid}`+qs;
     const r=await fetch(url,{headers:{'Authorization':'Bearer '+T}});
     if(!r.ok){
-      let msg='Tally export failed';
+      let msg='Export failed';
       try{const e=await r.json();if(e.error)msg=e.error}catch(x){}
       toast(msg);return;
     }
     const blob=await r.blob();
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);
-    a.download=`Tally_${label.replace(/\s/g,'')}_${aid}.${fmt}`;a.click();
+    a.download=`${namePrefix}_${label.replace(/\s/g,'')}_${aid}.${ext}`;a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),5000);
-    toast(`Downloaded Tally ${label} ${fmt.toUpperCase()}`);
+    toast(`Downloaded ${label} ${kind}`);
   });
 }
 
@@ -25756,7 +25815,7 @@ function renderTallyInvoiceList(){
         <div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${iv.gstin?esc(iv.gstin):'<em>No GSTIN</em>'}${amt?' · '+esc(amt):''}${lots}</div>
       </div>
       <button class="btn btn-g" onclick="tallyDownloadInvoiceVoucher('${iv.id}','${safeLabel}')" style="padding:5px 10px;font-size:11px;flex:0 0 auto">XML</button>
-      <button class="btn btn-g" onclick="tallyDownloadInvoiceVoucher('${iv.id}','${safeLabel}','json')" style="padding:5px 10px;font-size:11px;flex:0 0 auto">JSON</button>
+      <button class="btn btn-g" onclick="tallyDownloadInvoiceVoucher('${iv.id}','${safeLabel}','irp')" style="padding:5px 10px;font-size:11px;flex:0 0 auto" title="GST e-Invoice (IRP / NIC) JSON — ready for the trade portal">e-Invoice</button>
     </div>`;
   }
   list.innerHTML=html;
@@ -25764,9 +25823,14 @@ function renderTallyInvoiceList(){
 async function tallyDownloadInvoiceVoucher(id,label,format){
   const aid=document.getElementById('tally-auction')?.value;
   if(!aid){alert('Select an auction first');return}
-  const fmt=(format==='json')?'json':'xml';
-  await withOverlay(`Generating invoice ${label} voucher ${fmt.toUpperCase()}…`, async () => {
-    const url=B+`/api/tally/invoice-voucher/${aid}?id=${encodeURIComponent(id)}`+(fmt==='json'?'&format=json':'');
+  // 'irp' → GST e-Invoice JSON; 'json' → internal Tally-row JSON; xml default.
+  const fmt=(format==='irp')?'irp':(format==='json')?'json':'xml';
+  const ext=(fmt==='xml')?'xml':'json';
+  const qs=(fmt==='xml')?'':`&format=${fmt}`;
+  const kind=(fmt==='irp')?'e-Invoice JSON':fmt.toUpperCase();
+  const namePrefix=(fmt==='irp')?'EInvoice':'Tally_InvoiceVoucher';
+  await withOverlay(`Generating invoice ${label} ${kind}…`, async () => {
+    const url=B+`/api/tally/invoice-voucher/${aid}?id=${encodeURIComponent(id)}`+qs;
     const r=await fetch(url,{headers:{'Authorization':'Bearer '+T}});
     if(!r.ok){
       let msg='Invoice voucher export failed';
@@ -25776,9 +25840,9 @@ async function tallyDownloadInvoiceVoucher(id,label,format){
     const blob=await r.blob();
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);
     const safeName=String(label).replace(/[^a-zA-Z0-9]/g,'_').slice(0,40);
-    a.download=`Tally_InvoiceVoucher_${safeName}_${aid}.${fmt}`;a.click();
+    a.download=`${namePrefix}_${safeName}_${aid}.${ext}`;a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),5000);
-    toast(`Downloaded voucher for invoice ${label} (${fmt.toUpperCase()})`);
+    toast(`Downloaded invoice ${label} ${kind}`);
   });
 }
 
@@ -29006,5 +29070,15 @@ async function pcDownload(){
 }
 
 </script>
+<!-- In-app how-to guide overlay. Self-contained (no app JS deps); loads the
+     static /help.html in an isolated iframe. Placed at end of <body> so no
+     sidebar transform can clip its position:fixed. -->
+<div id="help-ov" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(9,20,14,.55);flex-direction:column">
+  <div style="display:flex;justify-content:space-between;align-items:center;padding:11px 18px;background:#137a4d;color:#fff;font-weight:700;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif">
+    <span>📖 How-to Guide — auction day, in order</span>
+    <button type="button" onclick="document.getElementById('help-ov').style.display='none'" style="background:rgba(255,255,255,.22);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;padding:7px 16px;cursor:pointer">✕ Close</button>
+  </div>
+  <iframe title="How-to Guide" style="flex:1;width:100%;border:0;background:#fff"></iframe>
+</div>
 </body>
 </html>

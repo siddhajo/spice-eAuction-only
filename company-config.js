@@ -136,6 +136,12 @@ const DEFAULTS = [
   { key: 'bank_tn_name', value: '', category: 'bank', label: 'TN Bank Name',       type: 'text' },
   { key: 'bank_tn_acct', value: '', category: 'bank', label: 'TN Account No.',     type: 'text' },
   { key: 'bank_tn_ifsc', value: '', category: 'bank', label: 'TN IFSC Code',       type: 'text' },
+  // Bank Payment upload layout for THIS install's bank. Options map to the
+  // profile keys in bank-formats.js; rendered as a dropdown (see the
+  // bank_format special-case in public/index.html renderSettingsPanel).
+  // Default 'rtgs_neft' reproduces the original hard-coded layout, so existing
+  // installs are unaffected.
+  { key: 'bank_format', value: 'rtgs_neft', category: 'bank', label: 'Bank Payment File Format', type: 'select' },
 
   // ── SEASON ─────────────────────────────────────────────────
   { key: 'season',            value: '', category: 'season', label: 'Season Name',           type: 'text' },
