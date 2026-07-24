@@ -165,6 +165,11 @@ async function initDb() {
     ifsc TEXT DEFAULT '',
     acctnum TEXT DEFAULT '',
     holder_name TEXT DEFAULT '',
+    -- Legacy "user id" carried in the source export (captured by Import Old
+    -- Data → Sellers). Free text; NOT a foreign key to the app's users table.
+    -- Column always exists so the import's dynamic INSERT never references a
+    -- missing column.
+    user_id TEXT DEFAULT '',
     whatsapp TEXT DEFAULT '',
     email TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now','localtime'))
@@ -795,6 +800,11 @@ async function initDb() {
     // for existing DBs so the feature works on upgrade without a rebuild.
     "ALTER TABLE traders ADD COLUMN tan TEXT DEFAULT ''",
     "ALTER TABLE buyers ADD COLUMN tan TEXT DEFAULT ''",
+    // Legacy per-seller "user id" from the source export — captured by the
+    // Sellers import. Added via ALTER so existing DBs gain the column on
+    // upgrade; otherwise the import's dynamic INSERT (which lists every
+    // module field as a column) would fail with "no such column: user_id".
+    "ALTER TABLE traders ADD COLUMN user_id TEXT DEFAULT ''",
     // Discount GST columns (per-lot, when flag_disc_gst is ON)
     'ALTER TABLE lots ADD COLUMN dcgst REAL DEFAULT 0',
     'ALTER TABLE lots ADD COLUMN dsgst REAL DEFAULT 0',

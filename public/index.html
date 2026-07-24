@@ -491,6 +491,34 @@ body{
   position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;
   border:none;padding:0;background:none
 }
+/* Login-skin swatches (Settings → Appearance → Login page). Rounded pill
+   showing the skin's signature gradient; active gets a ring + check. */
+.login-style-swatch{
+  display:inline-block;width:44px;height:26px;border-radius:8px;cursor:pointer;
+  border:2px solid transparent;flex-shrink:0;position:relative;outline:none;
+  transition:transform .12s, box-shadow .12s;
+}
+.login-style-swatch:hover{transform:scale(1.08)}
+.login-style-swatch.active{border-color:var(--spice-text-main);box-shadow:0 0 0 2px rgba(255,255,255,.9),0 2px 8px rgba(0,0,0,.18)}
+.login-style-swatch.active::after{content:'\2713';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:13px;text-shadow:0 1px 2px rgba(0,0,0,.5);pointer-events:none}
+.login-style-swatch[data-ls="aurora"]  {background:linear-gradient(120deg,#7C3AED,#06B6D4,#EC4899)}
+.login-style-swatch[data-ls="sunset"]  {background:linear-gradient(120deg,#F97316,#FB7185,#EC4899)}
+.login-style-swatch[data-ls="ocean"]   {background:linear-gradient(120deg,#0EA5E9,#22D3EE,#6366F1)}
+.login-style-swatch[data-ls="emerald"] {background:linear-gradient(120deg,#10B981,#34D399,#F59E0B)}
+.login-style-swatch[data-ls="royal"]   {background:linear-gradient(120deg,#4F46E5,#3B82F6,#8B5CF6)}
+.login-style-swatch[data-ls="rose"]    {background:linear-gradient(120deg,#E11D48,#FB7185,#F472B6)}
+.login-style-swatch[data-ls="midnight"]{background:linear-gradient(120deg,#0B1020,#6366F1,#F472B6)}
+.login-set-input{height:34px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--text);font-size:12.5px;font-family:inherit;outline:none;min-width:0}
+.login-set-input:focus{border-color:var(--spice-saffron)}
+/* Login-layout picker (Settings → Appearance → Login page). Each option is a
+   little schematic of the page structure + its name. */
+.login-set-sublabel{font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--spice-text-mute);width:58px;flex-shrink:0}
+.login-layout-opt{display:inline-flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;padding:8px 8px 7px;border:1.5px solid var(--border);border-radius:11px;background:var(--card);transition:border-color .15s,background .15s}
+.login-layout-opt:hover{border-color:color-mix(in srgb,var(--spice-saffron) 55%,var(--border))}
+.login-layout-opt.active{border-color:var(--spice-saffron);background:color-mix(in srgb,var(--spice-saffron) 9%,var(--card))}
+.login-layout-opt .diagram{display:flex;width:48px;height:31px;border-radius:5px;overflow:hidden;border:1px solid var(--border)}
+.login-layout-opt .lo-name{font-size:11px;font-weight:600;color:var(--text)}
+.login-layout-opt .lo-pane-c{background:linear-gradient(135deg,var(--spice-saffron),var(--spice-turmeric,var(--spice-saffron)))}
 body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 
 /* ── Login — light split "Aurora" ─────────────────────────────
@@ -504,18 +532,71 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
    Field/card rules are prefixed with #login so they outrank the
    global .fg / .err styles further down the sheet. */
 #login{
+  /* ── Login skin ────────────────────────────────────────────────────
+     The whole login screen is driven by three hue tokens (--lg-1 primary,
+     --lg-2 secondary, --lg-3 tertiary) plus three background tints. Every
+     login rule below derives from these, and the --spice-* tokens are
+     re-pointed at them so existing rules pick up the skin for free.
+     Per-customer skins live in body[data-login="…"] blocks further down,
+     so each tenant's branding preset can give its login a distinct look
+     WITHOUT touching the rest of the app's theme. Defaults = "aurora". */
+  --lg-1:    #7C3AED;   /* primary   (violet) */
+  --lg-1-dk: #6D28D9;
+  --lg-2:    #06B6D4;   /* secondary (cyan)   */
+  --lg-3:    #EC4899;   /* tertiary  (pink)   */
+  --lg-bg-1: #FBFAFF;   /* background gradient stops */
+  --lg-bg-2: #F4F7FF;
+  --lg-bg-3: #FFF5FB;
+  /* Re-point the shared theme tokens at the skin (scoped to #login only). */
+  --spice-saffron:    var(--lg-1);
+  --spice-saffron-dk: var(--lg-1-dk);
+  --spice-saffron-md: color-mix(in srgb,var(--lg-1) 45%,white);
+  --spice-saffron-lt: color-mix(in srgb,var(--lg-1) 8%,white);
+  --spice-turmeric:   var(--lg-3);
+  --spice-turmeric-lt:color-mix(in srgb,var(--lg-3) 10%,white);
   position:relative;display:flex;align-items:center;justify-content:center;
   min-height:100vh;width:100%;padding:40px 28px;overflow:hidden;
-  background:linear-gradient(160deg,color-mix(in srgb,var(--spice-saffron) 5%,white) 0%,color-mix(in srgb,var(--spice-saffron) 9%,white) 48%,var(--spice-turmeric-lt) 100%);color:#0F172A;
+  background:
+    radial-gradient(1200px 700px at 8% -8%, color-mix(in srgb,var(--lg-1) 22%,transparent) 0%, transparent 60%),
+    radial-gradient(1000px 640px at 100% 0%, color-mix(in srgb,var(--lg-2) 20%,transparent) 0%, transparent 58%),
+    radial-gradient(1100px 760px at 88% 108%, color-mix(in srgb,var(--lg-3) 22%,transparent) 0%, transparent 60%),
+    linear-gradient(155deg,var(--lg-bg-1) 0%,var(--lg-bg-2) 45%,var(--lg-bg-3) 100%);
+  color:#0F172A;
   font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 }
+
+/* ── Per-customer login skins ──────────────────────────────────────────
+   Selected by body[data-login]. Each only re-sets the three hue tokens
+   (+ background tints); everything else derives automatically. Set via the
+   branding preset (presetConfig.login.style) or the Appearance settings. */
+body[data-login="aurora"]  #login{--lg-1:#7C3AED;--lg-1-dk:#6D28D9;--lg-2:#06B6D4;--lg-3:#EC4899;--lg-bg-1:#FBFAFF;--lg-bg-2:#F4F7FF;--lg-bg-3:#FFF5FB}
+body[data-login="sunset"]  #login{--lg-1:#F97316;--lg-1-dk:#C2410C;--lg-2:#FB7185;--lg-3:#EC4899;--lg-bg-1:#FFFBF5;--lg-bg-2:#FFF6F0;--lg-bg-3:#FFF1F5}
+body[data-login="ocean"]   #login{--lg-1:#0EA5E9;--lg-1-dk:#0369A1;--lg-2:#22D3EE;--lg-3:#6366F1;--lg-bg-1:#F5FBFF;--lg-bg-2:#F0F8FF;--lg-bg-3:#F3F4FF}
+body[data-login="emerald"] #login{--lg-1:#10B981;--lg-1-dk:#047857;--lg-2:#34D399;--lg-3:#F59E0B;--lg-bg-1:#F6FEFB;--lg-bg-2:#F1FBF6;--lg-bg-3:#FFFBF2}
+body[data-login="royal"]   #login{--lg-1:#4F46E5;--lg-1-dk:#3730A3;--lg-2:#3B82F6;--lg-3:#8B5CF6;--lg-bg-1:#F8FAFF;--lg-bg-2:#F3F6FF;--lg-bg-3:#F7F5FF}
+body[data-login="rose"]    #login{--lg-1:#E11D48;--lg-1-dk:#9F1239;--lg-2:#FB7185;--lg-3:#F472B6;--lg-bg-1:#FFF7F9;--lg-bg-2:#FFF2F5;--lg-bg-3:#FFF4FA}
+/* Midnight — dark login. Also flips the card/text to a dark palette. */
+body[data-login="midnight"] #login{--lg-1:#818CF8;--lg-1-dk:#6366F1;--lg-2:#22D3EE;--lg-3:#F472B6;--lg-bg-1:#0B1020;--lg-bg-2:#0E1428;--lg-bg-3:#141024;color:#E2E8F0}
+body[data-login="midnight"] #login .login-hero-title{color:#F1F5F9}
+body[data-login="midnight"] #login .login-hero-sub,
+body[data-login="midnight"] #login .login-hero-foot{color:#94A3B8}
+body[data-login="midnight"] #login .login-feats li{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.10);color:#E2E8F0;box-shadow:0 8px 20px -12px rgba(0,0,0,.6)}
+body[data-login="midnight"] #login .login-card{background:rgba(20,26,45,.86);border-color:rgba(255,255,255,.10);box-shadow:0 30px 80px -30px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.06)}
+body[data-login="midnight"] #login .login-card-name,
+body[data-login="midnight"] #login .login-card h1{color:#F1F5F9}
+body[data-login="midnight"] #login .login-card-lead,
+body[data-login="midnight"] #login .login-card-sub{color:#94A3B8}
+body[data-login="midnight"] #login .login-card .fg label{color:#CBD5E1}
+body[data-login="midnight"] #login .login-card .fg input{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.14);color:#F1F5F9}
+body[data-login="midnight"] #login .login-card .fg input::placeholder{color:#64748B}
+body[data-login="midnight"] #login .login-card .fg input:focus{background:rgba(255,255,255,.08)}
 
 /* Aurora backdrop — soft drifting color blobs over a faint grid */
 .login-aurora{position:absolute;inset:0;z-index:0;overflow:hidden}
 .login-aurora .blob{position:absolute;border-radius:50%;filter:blur(90px);will-change:transform,opacity}
-.login-aurora .b1{width:min(60vw,620px);aspect-ratio:1;background:var(--spice-saffron);opacity:.3;top:-16%;left:-10%;animation:auroraA 19s ease-in-out infinite}
-.login-aurora .b2{width:min(55vw,560px);aspect-ratio:1;background:var(--spice-saffron-md);opacity:.28;bottom:-20%;right:-8%;animation:auroraB 23s ease-in-out infinite}
-.login-aurora .b3{width:min(45vw,460px);aspect-ratio:1;background:var(--spice-turmeric);opacity:.2;top:30%;left:48%;animation:auroraC 27s ease-in-out infinite}
+.login-aurora .b1{width:min(60vw,620px);aspect-ratio:1;background:radial-gradient(circle at 30% 30%,color-mix(in srgb,var(--lg-1) 85%,white),var(--lg-1-dk));opacity:.42;top:-16%;left:-10%;animation:auroraA 19s ease-in-out infinite}
+.login-aurora .b2{width:min(55vw,560px);aspect-ratio:1;background:radial-gradient(circle at 30% 30%,color-mix(in srgb,var(--lg-2) 88%,white),color-mix(in srgb,var(--lg-2) 72%,black));opacity:.4;bottom:-20%;right:-8%;animation:auroraB 23s ease-in-out infinite}
+.login-aurora .b3{width:min(45vw,460px);aspect-ratio:1;background:radial-gradient(circle at 30% 30%,color-mix(in srgb,var(--lg-3) 85%,white),color-mix(in srgb,var(--lg-3) 70%,black));opacity:.34;top:30%;left:48%;animation:auroraC 27s ease-in-out infinite}
 .login-aurora .grid{
   position:absolute;inset:0;
   background-image:radial-gradient(color-mix(in srgb,var(--spice-saffron-dk) 5%,transparent) 1px,transparent 1px);background-size:26px 26px;
@@ -524,7 +605,7 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 }
 @keyframes auroraA{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(40px,30px) scale(1.12)}}
 @keyframes auroraB{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-46px,-26px) scale(1.08)}}
-@keyframes auroraC{0%,100%{transform:translate(0,0) scale(1);opacity:.2}50%{transform:translate(-30px,34px) scale(1.16);opacity:.3}}
+@keyframes auroraC{0%,100%{transform:translate(0,0) scale(1);opacity:.34}50%{transform:translate(-30px,34px) scale(1.16);opacity:.46}}
 
 /* Stage — two columns */
 .login-stage{position:relative;z-index:1;width:100%;max-width:1060px;display:grid;grid-template-columns:1.08fr .92fr;gap:60px;align-items:center}
@@ -534,7 +615,7 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 .login-eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:11.5px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:var(--spice-saffron-dk);background:color-mix(in srgb,var(--spice-saffron) 10%,transparent);border:1px solid color-mix(in srgb,var(--spice-saffron) 22%,transparent);padding:7px 14px;border-radius:999px;margin-bottom:24px}
 .login-eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--spice-saffron);box-shadow:0 0 8px color-mix(in srgb,var(--spice-saffron) 80%,transparent);animation:loginPulse 2s ease-in-out infinite}
 .login-hero-title{font-size:clamp(34px,4.2vw,50px);font-weight:800;line-height:1.05;letter-spacing:-1px;color:var(--spice-saffron-dk);margin:0 0 20px}
-.login-hero-title em{font-style:normal;background:linear-gradient(100deg,var(--spice-saffron) 0%,var(--spice-saffron-md) 46%,var(--spice-turmeric) 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.login-hero-title em{font-style:normal;background:linear-gradient(100deg,var(--lg-2) 0%,var(--lg-1) 40%,color-mix(in srgb,var(--lg-1) 45%,var(--lg-3)) 72%,var(--lg-3) 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
 .login-hero-sub{font-size:15.5px;line-height:1.6;color:#475569;margin:0 0 30px;max-width:460px}
 .login-feats{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
 .login-feats li{
@@ -615,12 +696,12 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 .btn-signin{
   width:100%;height:52px;margin-top:6px;border:none;border-radius:12px;cursor:pointer;
   font-size:15px;font-weight:700;letter-spacing:.2px;color:#fff;
-  background:linear-gradient(135deg,var(--spice-saffron-dk) 0%,var(--spice-saffron) 100%);
-  box-shadow:0 10px 24px -6px color-mix(in srgb,var(--spice-saffron) 50%,transparent);
+  background:linear-gradient(120deg,var(--lg-1-dk) 0%,var(--lg-1) 34%,color-mix(in srgb,var(--lg-1) 45%,var(--lg-3)) 68%,var(--lg-3) 100%);
+  box-shadow:0 12px 28px -8px color-mix(in srgb,var(--spice-saffron) 60%,transparent),0 6px 16px -8px color-mix(in srgb,var(--spice-turmeric) 55%,transparent);
   display:inline-flex;align-items:center;justify-content:center;gap:9px;
   transition:transform .1s,box-shadow .18s,filter .15s;
 }
-.btn-signin:hover{transform:translateY(-1px);box-shadow:0 16px 30px -8px color-mix(in srgb,var(--spice-saffron) 55%,transparent);filter:brightness(1.04)}
+.btn-signin:hover{transform:translateY(-1px);box-shadow:0 18px 34px -8px color-mix(in srgb,var(--spice-saffron) 60%,transparent),0 8px 20px -8px color-mix(in srgb,var(--spice-turmeric) 55%,transparent);filter:saturate(1.1) brightness(1.05)}
 .btn-signin:active{transform:translateY(0)}
 .btn-signin .arrow{transition:transform .18s}
 .btn-signin:hover .arrow{transform:translateX(3px)}
@@ -634,6 +715,118 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 .login-help strong{color:var(--spice-saffron-dk);font-weight:700}
 .err{color:#B91C1C;background:#FEE2E2;border:1px solid #FECACA;padding:10px 12px;border-radius:8px;font-size:13px;margin-top:12px;display:none}
 .err.active{display:block}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   LOGIN LAYOUTS — structural variants, selected by body[data-login-layout].
+   The DOM is identical for every layout (hero panel + form card); each
+   layout below only re-composes it, so all layouts inherit the active
+   colour skin (body[data-login]) automatically. Modern-SaaS / clean.
+     split     — full-bleed brand panel + flush form panel (default)
+     centered  — one centered card, no marketing (Stripe-style)
+     minimal   — bare form on near-white, top logo, maximum air
+     showcase  — form left, product panel right (sells the app)
+   Set per-customer via presetConfig.login.layout, or in Appearance.
+   ═════════════════════════════════════════════════════════════════════ */
+
+/* Shared: coloured brand panels (split + showcase) put white text over a
+   gradient with a dark veil so every palette stays legible. */
+body[data-login-layout="split"]    .login-hero,
+body[data-login-layout="showcase"] .login-hero{
+  color:#fff;position:relative;overflow:hidden;max-width:none;
+  background:
+    linear-gradient(rgba(12,17,30,.30),rgba(12,17,30,.30)),
+    linear-gradient(150deg,var(--lg-1-dk) 0%,var(--lg-1) 58%,color-mix(in srgb,var(--lg-1) 45%,var(--lg-3)) 100%);
+}
+body[data-login-layout="split"]    .login-eyebrow,
+body[data-login-layout="showcase"] .login-eyebrow{color:#fff;background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.28)}
+body[data-login-layout="split"]    .login-eyebrow .dot,
+body[data-login-layout="showcase"] .login-eyebrow .dot{background:#fff;box-shadow:0 0 8px rgba(255,255,255,.85)}
+body[data-login-layout="split"]    .login-hero-title,
+body[data-login-layout="showcase"] .login-hero-title{color:#fff}
+body[data-login-layout="split"]    .login-hero-title em,
+body[data-login-layout="showcase"] .login-hero-title em{background:linear-gradient(100deg,#fff,color-mix(in srgb,var(--lg-3) 55%,white));-webkit-background-clip:text;background-clip:text;color:transparent}
+body[data-login-layout="split"]    .login-hero-sub,
+body[data-login-layout="showcase"] .login-hero-sub{color:rgba(255,255,255,.86);display:block}
+body[data-login-layout="split"]    .login-feats li,
+body[data-login-layout="showcase"] .login-feats li{background:rgba(255,255,255,.11);border-color:rgba(255,255,255,.18);color:#fff;box-shadow:none}
+body[data-login-layout="split"]    .login-feats li:hover,
+body[data-login-layout="showcase"] .login-feats li:hover{border-color:rgba(255,255,255,.42);box-shadow:none}
+body[data-login-layout="split"]    .login-feats .ck,
+body[data-login-layout="showcase"] .login-feats .ck{background:rgba(255,255,255,.22);box-shadow:none}
+body[data-login-layout="split"]    .login-hero-foot,
+body[data-login-layout="showcase"] .login-hero-foot{color:rgba(255,255,255,.72)}
+body[data-login-layout="split"]    .login-card-status,
+body[data-login-layout="showcase"] .login-card-status{color:#fff}
+body[data-login-layout="split"]    .login-card-status::before,
+body[data-login-layout="showcase"] .login-card-status::before{background:#fff;box-shadow:0 0 8px rgba(255,255,255,.85)}
+/* Ambient light orb inside coloured panels */
+body[data-login-layout="split"]    .login-hero::before,
+body[data-login-layout="showcase"] .login-hero::before{content:'';position:absolute;width:520px;height:520px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.16),transparent 70%);top:-170px;right:-130px;pointer-events:none}
+
+/* ── split (default) — two full-height panels, form flush (no card) ───── */
+body[data-login-layout="split"] #login{padding:0}
+body[data-login-layout="split"] .login-aurora{display:none}
+body[data-login-layout="split"] .login-stage{max-width:none;width:100%;gap:0;grid-template-columns:1.04fr .96fr;align-items:stretch;min-height:100vh}
+body[data-login-layout="split"] .login-hero{margin:0;padding:clamp(48px,6vw,88px);display:flex;flex-direction:column;justify-content:center}
+body[data-login-layout="split"] .login-card{
+  max-width:none;width:100%;justify-self:stretch;left:0;margin:0;
+  background:#fff;border:none;border-radius:0;box-shadow:none;
+  -webkit-backdrop-filter:none;backdrop-filter:none;animation:none;
+  display:flex;flex-direction:column;justify-content:center;
+  padding:clamp(40px,5vw,72px) clamp(30px,6vw,96px);
+}
+body[data-login-layout="split"] .login-card > *{width:100%;max-width:452px;margin-left:auto;margin-right:auto}
+
+/* ── topbar — slim brand nav bar on top, one centered card below ─────── */
+body[data-login-layout="topbar"] #login{padding:0;align-items:stretch;justify-content:flex-start;background:linear-gradient(180deg,#fff 0%,color-mix(in srgb,var(--lg-1) 6%,white) 100%)}
+body[data-login-layout="topbar"] .login-aurora{display:none}
+body[data-login-layout="topbar"] .login-stage{grid-template-columns:1fr;grid-template-rows:auto 1fr;max-width:none;width:100%;gap:0;align-items:start;min-height:100vh}
+/* the hero row becomes the top bar */
+body[data-login-layout="topbar"] .login-hero{grid-row:1;max-width:none;justify-self:stretch;display:flex;flex-direction:row;align-items:center;justify-content:space-between;gap:16px;padding:15px clamp(20px,4vw,46px);background:rgba(255,255,255,.85);border-bottom:1px solid color-mix(in srgb,var(--lg-1) 14%,#E4E9F0);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+body[data-login-layout="topbar"] .login-hero-title,
+body[data-login-layout="topbar"] .login-hero-sub,
+body[data-login-layout="topbar"] .login-feats{display:none}
+body[data-login-layout="topbar"] .login-eyebrow{margin:0;background:none;border:none;padding:0;font-size:14px;letter-spacing:.2px;text-transform:none;color:var(--spice-saffron-dk)}
+body[data-login-layout="topbar"] .login-eyebrow .dot{width:9px;height:9px}
+body[data-login-layout="topbar"] .login-hero-foot{margin:0;font-size:12px}
+body[data-login-layout="topbar"] .login-hero-foot > span:first-child{display:none}
+/* the card centers in the space beneath the bar */
+body[data-login-layout="topbar"] .login-card{grid-row:2;justify-self:center;align-self:center;max-width:432px;left:0;margin:0}
+
+/* ── minimal — bare form on near-white, top logo, maximum air ─────────── */
+/* ── aside — oversized brand headline left, compact form card offset right */
+body[data-login-layout="aside"] #login{padding:clamp(32px,5vw,64px);background:linear-gradient(140deg,#fff 0%,color-mix(in srgb,var(--lg-1) 7%,white) 58%,color-mix(in srgb,var(--lg-3) 6%,white) 100%)}
+body[data-login-layout="aside"] .login-aurora{opacity:.55}
+body[data-login-layout="aside"] .login-stage{grid-template-columns:1.15fr .85fr;gap:clamp(40px,6vw,88px);max-width:1080px;align-items:center}
+body[data-login-layout="aside"] .login-hero{max-width:none}
+body[data-login-layout="aside"] .login-hero-title{font-size:clamp(40px,5.2vw,62px);letter-spacing:-1.5px;line-height:1.02;margin-bottom:22px}
+body[data-login-layout="aside"] .login-hero-sub{font-size:17px;line-height:1.55;max-width:440px;display:block}
+body[data-login-layout="aside"] .login-feats{display:none}
+body[data-login-layout="aside"] .login-card{max-width:396px;justify-self:end;left:0}
+
+/* ── showcase — form left, product panel right ────────────────────────── */
+body[data-login-layout="showcase"] #login{padding:clamp(24px,4vw,48px)}
+body[data-login-layout="showcase"] .login-aurora{opacity:.5}
+body[data-login-layout="showcase"] .login-stage{grid-template-columns:.9fr 1.1fr;gap:44px;max-width:1120px;align-items:stretch}
+body[data-login-layout="showcase"] .login-card{order:1;left:0;justify-self:stretch;align-self:center;max-width:440px;margin:0 auto}
+body[data-login-layout="showcase"] .login-hero{order:2;max-width:none;align-self:stretch;display:flex;flex-direction:column;justify-content:center;border-radius:28px;padding:clamp(40px,4vw,60px);box-shadow:0 40px 90px -46px color-mix(in srgb,var(--lg-1-dk) 65%,transparent)}
+
+@media (max-width:900px){
+  body[data-login-layout="split"] .login-stage,
+  body[data-login-layout="showcase"] .login-stage{grid-template-columns:1fr;min-height:0;max-width:460px;gap:0}
+  body[data-login-layout="split"] .login-hero{order:2;padding:40px 28px;min-height:auto}
+  body[data-login-layout="split"] .login-card{order:1;padding:44px 26px}
+  body[data-login-layout="split"] .login-card > *{max-width:100%}
+  body[data-login-layout="showcase"] #login{padding:28px 18px}
+  body[data-login-layout="showcase"] .login-stage{gap:26px}
+  body[data-login-layout="showcase"] .login-card{order:1}
+  body[data-login-layout="showcase"] .login-hero{order:2;border-radius:22px;padding:36px 26px}
+  body[data-login-layout="topbar"] .login-hero{padding:13px 18px}
+  body[data-login-layout="aside"] #login{padding:28px 18px}
+  body[data-login-layout="aside"] .login-stage{grid-template-columns:1fr;max-width:440px;gap:26px}
+  body[data-login-layout="aside"] .login-card{justify-self:stretch;order:-1;max-width:100%}
+  body[data-login-layout="aside"] .login-hero-title{font-size:34px}
+}
 
 /* ── Branch Comparison — chart-first card body ─────────────── */
 .bc-chart-wrap{
@@ -2997,6 +3190,57 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <span id="dark-mode-icon">🌓</span>
             <span id="dark-mode-label">Dark</span>
           </button>
+        </div>
+
+        <!-- Login page — per-customer sign-in design. Layout = structure,
+             palette = colour, copy = text. All independent of the app theme
+             above, so each tenant gets a distinctly branded login. -->
+        <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px">
+          <div style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;color:var(--text);margin-bottom:13px">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--spice-saffron)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><circle cx="7" cy="6.5" r=".5"/></svg>
+            Login page
+          </div>
+
+          <!-- Layout — page structure -->
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <span class="login-set-sublabel">Layout</span>
+            <div id="settings-login-layouts" style="display:flex;gap:10px;flex-wrap:wrap">
+              <button type="button" class="login-layout-opt" data-ll="split" title="Brand panel + form" onclick="setLoginLayout('split')">
+                <span class="diagram"><span class="lo-pane-c" style="flex:1.05"></span><span style="flex:1;background:#fff"></span></span><span class="lo-name">Split</span>
+              </button>
+              <button type="button" class="login-layout-opt" data-ll="topbar" title="Top brand bar + centered card" onclick="setLoginLayout('topbar')">
+                <span class="diagram" style="flex-direction:column;background:#F4F6FB"><span style="height:9px;width:100%;background:#fff;border-bottom:1px solid var(--border);display:flex;align-items:center"><span style="width:6px;height:3px;border-radius:2px;background:var(--spice-saffron);margin-left:4px"></span></span><span style="margin:auto;width:20px;height:15px;border-radius:3px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.28)"></span></span><span class="lo-name">Top bar</span>
+              </button>
+              <button type="button" class="login-layout-opt" data-ll="aside" title="Big brand headline + offset card" onclick="setLoginLayout('aside')">
+                <span class="diagram" style="align-items:center;gap:3px;padding:0 5px;background:color-mix(in srgb,var(--spice-saffron) 7%,#fff)"><span style="display:flex;flex-direction:column;gap:2px;flex:1"><span style="width:16px;height:4px;border-radius:2px;background:var(--spice-saffron)"></span><span style="width:12px;height:3px;border-radius:2px;background:#CBD5E1"></span></span><span style="width:16px;height:20px;border-radius:3px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.28)"></span></span><span class="lo-name">Aside</span>
+              </button>
+              <button type="button" class="login-layout-opt" data-ll="showcase" title="Form + product panel" onclick="setLoginLayout('showcase')">
+                <span class="diagram"><span style="flex:1;background:#fff"></span><span class="lo-pane-c" style="flex:1.05"></span></span><span class="lo-name">Showcase</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Palette — colour skin -->
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px">
+            <span class="login-set-sublabel">Palette</span>
+            <div id="settings-login-skins" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span class="login-style-swatch" data-ls="aurora"   title="Aurora — violet · cyan · pink"   onclick="setLoginStyle('aurora')"></span>
+              <span class="login-style-swatch" data-ls="sunset"   title="Sunset — orange · coral · pink"   onclick="setLoginStyle('sunset')"></span>
+              <span class="login-style-swatch" data-ls="ocean"    title="Ocean — sky · cyan · indigo"      onclick="setLoginStyle('ocean')"></span>
+              <span class="login-style-swatch" data-ls="emerald"  title="Emerald — green · mint · amber"   onclick="setLoginStyle('emerald')"></span>
+              <span class="login-style-swatch" data-ls="royal"    title="Royal — indigo · blue · violet"   onclick="setLoginStyle('royal')"></span>
+              <span class="login-style-swatch" data-ls="rose"     title="Rose — crimson · coral · pink"    onclick="setLoginStyle('rose')"></span>
+              <span class="login-style-swatch" data-ls="midnight" title="Midnight — dark sign-in"          onclick="setLoginStyle('midnight')"></span>
+            </div>
+          </div>
+
+          <!-- Copy — optional per-customer text (blank keeps defaults) -->
+          <div style="margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span class="login-set-sublabel">Copy</span>
+            <input class="login-set-input" id="login-set-title"  placeholder="Headline (optional)"    style="flex:2;min-width:180px" oninput="setLoginText('title', this.value)">
+            <input class="login-set-input" id="login-set-sub"    placeholder="Sub-line (optional)"    style="flex:2;min-width:180px" oninput="setLoginText('sub', this.value)">
+            <input class="login-set-input" id="login-set-credit" placeholder="Footer credit (optional)" style="flex:1;min-width:140px" oninput="setLoginText('credit', this.value)">
+          </div>
         </div>
       </div>
 
@@ -26719,6 +26963,67 @@ function setCustomColor(hex){
   setTheme('custom');
 }
 
+// ── Login-page skin ────────────────────────────────────────
+// The login screen has its OWN colour skin, independent of the app theme,
+// so each customer can get a distinctly branded sign-in page. Driven by
+// body[data-login]; CSS derives the whole page from three hue tokens.
+// Persisted to localStorage for instant paint, and carried install-wide in
+// the branding preset (presetConfig.login.style) so every customer differs.
+const _LOGIN_STYLES = ['aurora','sunset','ocean','emerald','royal','rose','midnight'];
+function setLoginStyle(s){
+  if (!_LOGIN_STYLES.includes(s)) s = 'aurora';
+  document.body.setAttribute('data-login', s);
+  try { localStorage.setItem('loginStyle', s); } catch(e){}
+  document.querySelectorAll('.login-style-swatch').forEach(c=>{
+    c.classList.toggle('active', c.dataset.ls === s);
+  });
+}
+
+// Login LAYOUT — the structural design of the sign-in page (independent of
+// the colour skin above). 'split' is the default modern-SaaS redesign.
+const _LOGIN_LAYOUTS = ['split','topbar','aside','showcase'];
+function setLoginLayout(l){
+  if (!_LOGIN_LAYOUTS.includes(l)) l = 'split';
+  document.body.setAttribute('data-login-layout', l);
+  try { localStorage.setItem('loginLayout', l); } catch(e){}
+  document.querySelectorAll('.login-layout-opt').forEach(c=>{
+    c.classList.toggle('active', c.dataset.ll === l);
+  });
+}
+
+// Per-customer login copy. keys: 'title' (hero headline), 'sub' (hero
+// sub-line), 'credit' (footer credit). Blank restores the built-in default.
+const _LOGIN_TEXT_KEYS = { title:'login-hero-title-txt', sub:'login-hero-sub-txt', credit:'login-hero-credit' };
+function setLoginText(field, val){
+  const id = _LOGIN_TEXT_KEYS[field];
+  if (!id) return;
+  val = (val || '').trim();
+  try { localStorage.setItem('loginText_' + field, val); } catch(e){}
+  applyLoginText(field, val);
+}
+// Apply a single login-text override to the DOM. Title keeps its gradient
+// <em> word intact when the admin hasn't overridden it (val empty).
+function applyLoginText(field, val){
+  val = (val || '').trim();
+  if (field === 'title'){
+    const h = document.querySelector('#login .login-hero-title');
+    if (h && val) h.textContent = val;
+  } else if (field === 'sub'){
+    const s = document.querySelector('#login .login-hero-sub');
+    if (s && val) s.textContent = val;
+  } else if (field === 'credit'){
+    const c = document.getElementById('login-hero-credit');
+    if (c && val) c.textContent = val;
+  }
+}
+// Restore any locally-saved login copy on load (server preset can override).
+function applyLoginTextFromStore(){
+  Object.keys(_LOGIN_TEXT_KEYS).forEach(f=>{
+    let v = null; try { v = localStorage.getItem('loginText_' + f); } catch(e){}
+    if (v) applyLoginText(f, v);
+  });
+}
+
 // Apply saved theme on load (including custom color if previously set).
 // Order: localStorage first for instant visual feedback (no flash of
 // default theme), then re-apply from /api/branding once it returns so
@@ -26735,6 +27040,20 @@ function setCustomColor(hex){
     document.body.style.setProperty('--spice-custom-base', custom);
   }
   document.body.setAttribute('data-theme', saved);
+
+  // Login skin — instant paint from localStorage (server preset may override
+  // below). Defaults to 'aurora' when the customer hasn't picked one.
+  let loginSkin = 'aurora';
+  try { loginSkin = localStorage.getItem('loginStyle') || 'aurora'; } catch(e){}
+  if (!_LOGIN_STYLES.includes(loginSkin)) loginSkin = 'aurora';
+  document.body.setAttribute('data-login', loginSkin);
+  // Login layout — default 'split' (the modern-SaaS redesign) unless the
+  // customer picked another. Applied instantly to avoid a layout flash.
+  let loginLayout = 'split';
+  try { loginLayout = localStorage.getItem('loginLayout') || 'split'; } catch(e){}
+  if (!_LOGIN_LAYOUTS.includes(loginLayout)) loginLayout = 'split';
+  document.body.setAttribute('data-login-layout', loginLayout);
+  applyLoginTextFromStore();
 
   // Async: pull server-side branding and override localStorage if the
   // install's admin has picked a tenant preset or a different theme.
@@ -26769,6 +27088,23 @@ function setCustomColor(hex){
         if (p.accent) document.body.setAttribute('data-accent', p.accent);
         // Backdrop — plain / dots / mesh. Themed page-background texture.
         if (p.bg) document.body.setAttribute('data-bg', p.bg);
+        // Login skin — the tenant's branded sign-in page. p.login carries
+        // { style, title, sub, credit }. Style repaints the whole login
+        // screen; the text fields white-label the hero copy. This is what
+        // makes each customer's login look different from the next.
+        if (p.login) {
+          if (p.login.style && _LOGIN_STYLES.includes(p.login.style)) {
+            document.body.setAttribute('data-login', p.login.style);
+            try { localStorage.setItem('loginStyle', p.login.style); } catch(_){}
+          }
+          if (p.login.layout && _LOGIN_LAYOUTS.includes(p.login.layout)) {
+            document.body.setAttribute('data-login-layout', p.login.layout);
+            try { localStorage.setItem('loginLayout', p.login.layout); } catch(_){}
+          }
+          if (p.login.title)  { applyLoginText('title',  p.login.title);  try{ localStorage.setItem('loginText_title',  p.login.title);  }catch(_){} }
+          if (p.login.sub)    { applyLoginText('sub',    p.login.sub);    try{ localStorage.setItem('loginText_sub',    p.login.sub);    }catch(_){} }
+          if (p.login.credit) { applyLoginText('credit', p.login.credit); try{ localStorage.setItem('loginText_credit', p.login.credit); }catch(_){} }
+        }
         // Preset slug — drives the per-preset "personality" CSS that
         // gives each preset distinct character beyond density + color.
         document.body.setAttribute('data-preset', d.preset);
@@ -26799,6 +27135,22 @@ function setCustomColor(hex){
           c.classList.toggle('active', c.dataset.t === srvTheme);
         });
       }
+      // Login skin/copy in legacy mode (no preset bundle): honour top-level
+      // loginStyle / loginTitle / loginSub / loginCredit if the server sends them.
+      const srvLogin = String(d.loginStyle || '').trim();
+      if (srvLogin && _LOGIN_STYLES.includes(srvLogin)) {
+        document.body.setAttribute('data-login', srvLogin);
+        try { localStorage.setItem('loginStyle', srvLogin); } catch(_){}
+      }
+      const srvLayout = String(d.loginLayout || '').trim();
+      if (srvLayout && _LOGIN_LAYOUTS.includes(srvLayout)) {
+        document.body.setAttribute('data-login-layout', srvLayout);
+        try { localStorage.setItem('loginLayout', srvLayout); } catch(_){}
+      }
+      [['title', d.loginTitle], ['sub', d.loginSub], ['credit', d.loginCredit]].forEach(([f,v])=>{
+        v = String(v || '').trim();
+        if (v) { applyLoginText(f, v); try { localStorage.setItem('loginText_' + f, v); } catch(_){} }
+      });
     })
     .catch(()=>{}); // network failure is fine — localStorage already applied
 })();
@@ -26822,6 +27174,21 @@ function syncAppearanceUI(){
   const ico = document.getElementById('dark-mode-icon');
   if (lbl) lbl.textContent = isDark ? 'Light' : 'Dark';
   if (ico) ico.textContent = isDark ? '\u2600\uFE0F' : '\u{1F319}'; // sun / moon
+  // Login layout + skin swatches + saved copy fields.
+  const ll = document.body.getAttribute('data-login-layout') || 'split';
+  document.querySelectorAll('.login-layout-opt').forEach(c=>{
+    c.classList.toggle('active', c.dataset.ll === ll);
+  });
+  const ls = document.body.getAttribute('data-login') || 'aurora';
+  document.querySelectorAll('.login-style-swatch').forEach(c=>{
+    c.classList.toggle('active', c.dataset.ls === ls);
+  });
+  try {
+    const fill = (id, key) => { const el = document.getElementById(id); if (el && !el.value) el.value = localStorage.getItem(key) || ''; };
+    fill('login-set-title',  'loginText_title');
+    fill('login-set-sub',    'loginText_sub');
+    fill('login-set-credit', 'loginText_credit');
+  } catch(e){}
 }
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', syncAppearanceUI);

@@ -1342,6 +1342,7 @@ async function exportSellersXlsx(db) {
     { header: 'NAME',      key: 'name',        width: 30 },
     { header: 'CR',        key: 'cr',          width: 22 },
     { header: 'PAN',       key: 'pan',         width: 14 },
+    { header: 'TAN',       key: 'tan',         width: 14 },
     { header: 'TEL',       key: 'tel',         width: 16 },
     { header: 'AADHAR',    key: 'aadhar',      width: 16 },
     { header: 'PADD',      key: 'padd',        width: 40 },
@@ -1352,6 +1353,7 @@ async function exportSellersXlsx(db) {
     { header: 'IFSC',      key: 'ifsc',        width: 14 },
     { header: 'ACCTNUM',   key: 'acctnum',     width: 20 },
     { header: 'HOLDER_NM', key: 'holder_name', width: 30 },
+    { header: 'USER_ID',   key: 'user_id',     width: 16 },
   ];
   return createExcelBuffer('Sellers', cols, rows, { db, title: 'Sellers' });
 }

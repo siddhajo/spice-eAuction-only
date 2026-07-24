@@ -2767,10 +2767,16 @@ app.post('/api/traders/import', requireTraderWrite, upload.single('file'), async
         if (existing) { skipped++; continue; }
       }
 
-      db.run(`INSERT INTO traders (name,cr,pan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      // TAN normalised to UPPER like PAN (tax identifiers are canonical
+      // uppercase). user_id is a free-text legacy identifier — kept as-is.
+      const tan = mapCol(row, 'TAN', 'TAN_NO', 'TAN_NUMBER').toUpperCase();
+      const userId = mapCol(row, 'USER_ID', 'USERID', 'UID', 'USER', 'USER_NAME', 'USERNAME', 'USER_CODE', 'LOGIN', 'LOGIN_ID');
+
+      db.run(`INSERT INTO traders (name,cr,pan,tan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name,user_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [name, cr,
          pan,
+         tan,
          mapCol(row, 'TEL', 'PHONE', 'MOBILE', 'CONTACT'),
          mapCol(row, 'AADHAR', 'AADHAAR', 'AADHAR_NO'),
          mapCol(row, 'PADD', 'ADDRESS', 'ADD', 'ADD1', 'ADDRESS1'),
@@ -2780,7 +2786,8 @@ app.post('/api/traders/import', requireTraderWrite, upload.single('file'), async
          mapCol(row, 'PST_CODE', 'ST_CODE', 'STATE_CODE', 'STATECODE'),
          mapCol(row, 'IFSC', 'IFS_CODE', 'IFSCODE', 'IFS'),
          mapCol(row, 'ACCTNUM', 'ACCOUNT', 'ACCNO', 'ACC_NO', 'ACCOUNT_NO', 'ACCOUNTNO'),
-         mapCol(row, 'HOLDER_NAME', 'HOLDER', 'ACCOUNT_HOLDER')]);
+         mapCol(row, 'HOLDER_NAME', 'HOLDER', 'ACCOUNT_HOLDER'),
+         userId]);
       imported++;
     }
 
@@ -2801,6 +2808,7 @@ app.get('/api/traders/template', requireExport, async (req, res) => {
     { header: 'NAME',         key: 'name',         width: 30 },
     { header: 'CR',           key: 'cr',           width: 28 },
     { header: 'PAN',          key: 'pan',          width: 14 },
+    { header: 'TAN',          key: 'tan',          width: 14 },
     { header: 'TEL',          key: 'tel',          width: 16 },
     { header: 'AADHAR',       key: 'aadhar',       width: 16 },
     { header: 'PADD',         key: 'padd',         width: 50 },
@@ -2811,14 +2819,16 @@ app.get('/api/traders/template', requireExport, async (req, res) => {
     { header: 'IFSC',         key: 'ifsc',         width: 18 },
     { header: 'ACCTNUM',      key: 'acctnum',      width: 24, align: 'left' },
     { header: 'HOLDER_NAME',  key: 'holder_name',  width: 22 },
+    { header: 'USER_ID',      key: 'user_id',      width: 16, align: 'left' },
   ];
   // Sample row uses the configured business state — no hardcoded 'TAMIL NADU'
   const bizState = (getSetting(db, 'business_state') || 'TAMIL NADU').toUpperCase();
   const stCode = bizState === 'KERALA' ? '32' : '33';
   const sample = [{
-    name: 'SAMPLE SELLER', cr: 'CR.12345', pan: 'ABCDE1234F', tel: '9876543210',
+    name: 'SAMPLE SELLER', cr: 'CR.12345', pan: 'ABCDE1234F', tan: 'ABCD12345E', tel: '9876543210',
     aadhar: '', padd: '123 MAIN STREET', ppla: '', pin: '',
     pstate: bizState, pst_code: stCode, ifsc: '', acctnum: '', holder_name: 'SAMPLE SELLER',
+    user_id: '',
   }];
   const buf = await createExcelBuffer('Sellers', cols, sample, {
     db, title: 'SELLERS TEMPLATE',
@@ -13547,14 +13557,20 @@ const IMPORT_MODULES = {
     label: 'Sellers',
     table: 'traders',
     keyCols: ['name','cr'],
-    fields: ['name','cr','pan','tel','aadhar','padd','ppla','pin','pstate','pst_code',
-             'ifsc','acctnum','holder_name'],
+    // tan + user_id are optional legacy identifiers. Both must map to real
+    // `traders` columns (see db.js) because the /run INSERT lists every field
+    // here as a column name — an unknown column would break the whole import.
+    fields: ['name','cr','pan','tan','tel','aadhar','padd','ppla','pin','pstate','pst_code',
+             'ifsc','acctnum','holder_name','user_id'],
     aliases: {
       name: ['name','seller','planter','trader'],
       cr: ['cr','gstin'],
+      pan: ['pan','pan_no','pan_number'],
+      tan: ['tan','tan_no','tan_number'],
       padd: ['padd','address','add','add1','address1'],
       ppla: ['ppla','place','pla','city'],
       pin: ['pin','pincode','zip'],
+      user_id: ['user_id','userid','uid','user','user_name','username','user_code','login','login_id'],
     },
   },
   buyers: {
