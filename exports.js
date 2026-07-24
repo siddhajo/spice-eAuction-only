@@ -1374,6 +1374,7 @@ async function exportBuyersXlsx(db) {
     { header: 'ST_CODE', key: 'st_code', width: 10 },
     { header: 'GSTIN',   key: 'gstin',   width: 18 },
     { header: 'PAN',     key: 'pan',     width: 14 },
+    { header: 'TAN',     key: 'tan',     width: 14 },
     { header: 'TEL',     key: 'tel',     width: 16 },
     { header: 'TI',      key: 'ti',      width: 12 },
     { header: 'SALE',    key: 'sale',    width: 6 },

@@ -2616,7 +2616,8 @@ function buildSalesIspRows(db, auctionId, cfg) {
   // `i.id` is a final tiebreaker for safety against duplicate invo values.
   const stmt = db.prepare(`
     SELECT i.*, b.add1, b.add2, b.pla AS buyer_pla,
-           COALESCE(NULLIF(TRIM(b.cpin), ''), TRIM(b.pin)) AS buyer_pin
+           COALESCE(NULLIF(TRIM(b.cpin), ''), TRIM(b.pin)) AS buyer_pin,
+           b.cgstin, b.cbuyer1, b.cadd1, b.cadd2, b.cpla, b.cpin, b.cstate
     FROM invoices i
     LEFT JOIN buyers b ON b.buyer = i.buyer
     WHERE i.auction_id = ? AND ${ISP_STATE_SQL}
@@ -2742,6 +2743,23 @@ function buildSalesIspRows(db, auctionId, cfg) {
       place: r.place || r.buyer_pla || '',
       pin: r.buyer_pin || '',
       partyGstin: r.gstin || '',
+      // Ship-to (consignee) — a SEPARATE delivery party kept on the buyer
+      // master (cbuyer1 / cadd1 / cgstin / …). Surfaced as `shipTo` so the
+      // e-invoice ShipDtls uses the real ship-to when one exists and falls
+      // back to the bill-to (buyer) fields when it doesn't. `null` = no
+      // separate consignee on file → callers use bill-to.
+      shipTo: (() => {
+        const g  = String(r.cgstin  || '').trim();
+        const nm = String(r.cbuyer1 || '').trim();
+        const a1 = String(r.cadd1   || '').trim();
+        const a2 = String(r.cadd2   || '').trim();
+        const pl = String(r.cpla    || '').trim();
+        const pn = String(r.cpin    || '').trim();
+        const st = String(r.cstate  || '').trim();
+        // Consider a consignee "present" only when there's identifying data.
+        if (!(g || nm || a1 || pl || pn)) return null;
+        return { gstin: g, name: nm, addr1: a1, addr2: a2, place: pl, pin: pn, state: st };
+      })(),
       // E-way bill vehicle number — pulled from invoices.lorry_no, set
       // via the Invoices tab "Set Lorry No" bulk action. The generator
       // emits this into both <VEHICLENUMBER> and <BASICSHIPVESSELNO>;
@@ -2815,8 +2833,12 @@ function buildIrpJson(rows, cfg, opts = {}) {
   const SAC_Insur  = String(cfgGet(cfg, 'tally_hsn_insurance', '997136'));
   const Item_Card  = cfgGet(cfg, 'tally_item_cardamom', 'Cardamom');
   const Item_Gunny = cfgGet(cfg, 'tally_item_gunny',    'Gunny');
-  const LDR_Transp = cfgGet(cfg, 'tally_transport', 'Transport');
-  const LDR_Insur  = cfgGet(cfg, 'tally_insurance', 'Insurance');
+  // e-Invoice product descriptions for the service lines. Kept SEPARATE from
+  // the long Tally ledger names (tally_transport = "Transport Rs.2.50/per Kg")
+  // so the IRP PrdDesc stays short, matching the reference SALESINV.json.
+  const Desc_Transp = cfgGet(cfg, 'tally_einv_transport_desc', 'Transport');
+  const Desc_Insur  = cfgGet(cfg, 'tally_einv_insurance_desc', 'Insurance Received');
+  const insurRate   = cfgNum(cfg, 'tally_insurance_rate', 0.75);
 
   // Document-number composition — mirror generSalesIspXML exactly so the
   // e-invoice DocDtls.No is byte-identical to the Tally voucher / printed
@@ -2834,7 +2856,8 @@ function buildIrpJson(rows, cfg, opts = {}) {
     ? cfgGet(cfg, klKey, cfgGet(cfg, tnKey, ''))
     : cfgGet(cfg, tnKey, '');
   const sellerName  = cfgGet(cfg, 'trade_name', cfgGet(cfg, 'short_name', opts.companyName || 'Company'));
-  const sellerTrd   = cfgGet(cfg, 'short_name', sellerName);
+  // Trade name mirrors the legal name — both reference files set TrdNm == LglNm.
+  const sellerTrd   = sellerName;
   const sellerGstin = String(
     pick('kl_gstin', 'tn_gstin') ||
     cfgGet(cfg, 'tally_dispatch_gstin', '') ||
@@ -2855,6 +2878,32 @@ function buildIrpJson(rows, cfg, opts = {}) {
   // Optional IRP remark (the reference SalesJSON carried "NICGEPP").
   const invRm = String(cfgGet(cfg, 'tally_einv_remark', '')).trim();
 
+  // Dispatch-from (consignor) — mirror generSalesIspXML. This is a DISTINCT
+  // location from the seller's registered office (SellerDtls): goods ship from
+  // the dispatch address, not the regd. office. Populated from the dedicated
+  // dispatch fields; DispDtls is emitted per-invoice only when configured.
+  const _imcpcDisp = String(cfgGet(cfg, 'short_name', '')).trim().toUpperCase() === 'IMCPC';
+  const dispName  = _imcpcDisp
+    ? cfgGet(cfg, 'trade_name', cfgGet(cfg, 'short_name', sellerName))
+    : cfgGet(cfg, 'short_name', cfgGet(cfg, 'trade_name', sellerName));
+  const dispAddr  = String(cfgGet(cfg, 'kl_dispatch', '')).trim();
+  const dispPlace = String(cfgGet(cfg, 'kl_dispatch_place', '')).trim();
+  const dispPin   = String(cfgGet(cfg, 'kl_dispatch_pin', '')).trim();
+  const dispState = String(cfgGet(cfg, 'kl_dispatch_state', 'Kerala')).trim();
+  const dispGstin = String(
+    cfgGet(cfg, 'tally_dispatch_gstin', '') ||
+    cfgGet(cfg, 's_gstin', '') || cfgGet(cfg, 'kl_gstin', '') || cfgGet(cfg, 'tn_gstin', '')
+  ).trim();
+  const dispatchEnabled = cfgBool(cfg, 'tally_dispatch_from', true);
+  // DispDtls state code: the GSTIN is authoritative; fall back to mapping the
+  // state name, then to the seller's state code.
+  const _stcdFromName = (name) => {
+    const n = String(name || '').trim().toLowerCase();
+    for (const code in STATES) if (STATES[code].toLowerCase() === n) return code;
+    return '';
+  };
+  const dispStcd = dispGstin.slice(0, 2) || _stcdFromName(dispState) || sellerStcd;
+
   const pinNum   = (v) => { const n = parseInt(String(v).replace(/\D/g, ''), 10); return isFinite(n) ? n : null; };
   // DD/MM/YYYY — toTallyDate normalizes any input to yyyymmdd first.
   const toIrpDate = (d) => {
@@ -2874,7 +2923,7 @@ function buildIrpJson(rows, cfg, opts = {}) {
     // ---- ItemList -------------------------------------------------
     const items = [];
     let sl = 0;
-    const addItem = ({ desc, isServc, hsn, qty, unit, unitPrice, amount, batch }) => {
+    const addItem = ({ desc, isServc, hsn, qty, freeQty, unit, unitPrice, amount, batch }) => {
       const assAmt = r2(amount);
       let cgstAmt = 0, sgstAmt = 0, igstAmt = 0;
       if (isIntra) {
@@ -2889,7 +2938,7 @@ function buildIrpJson(rows, cfg, opts = {}) {
         IsServc: isServc ? 'Y' : 'N',
         HsnCd: hsn,
         Qty: r2(qty),
-        FreeQty: 0,
+        FreeQty: r2(freeQty || 0),
         Unit: unit,
         UnitPrice: r2(unitPrice),
         TotAmt: assAmt,
@@ -2904,6 +2953,9 @@ function buildIrpJson(rows, cfg, opts = {}) {
         Othchrg: 0,
         TotItemVal: r2(assAmt + cgstAmt + sgstAmt + igstAmt),
       };
+      // Service lines (transport/insurance) carry no free quantity or batch —
+      // drop FreeQty for them so the shape matches the reference SALESINV.json.
+      if (isServc) delete item.FreeQty;
       if (batch) item.BchDtls = { Nm: String(batch) };
       items.push(item);
     };
@@ -2930,12 +2982,24 @@ function buildIrpJson(rows, cfg, opts = {}) {
         amount: gunnyAmt,
       });
     }
-    // Transport + Insurance — taxable services (present on inter-state ISP
-    // invoices; zero on intra-state, so no line is emitted there).
+    // Transport — taxable service, modelled per-kg (Unit KGS, Qty = total kg,
+    // UnitPrice = amount ÷ kg) exactly like the reference SALESINV.json.
+    const totalQty = (row.lots || []).reduce((s, l) => s + Number(l.qty || 0), 0);
     const transportAmt = Number(row.transportAmt || 0);
-    if (transportAmt > 0) addItem({ desc: LDR_Transp, isServc: true, hsn: SAC_Transp, qty: 1, unit: 'OTH', unitPrice: transportAmt, amount: transportAmt });
+    if (transportAmt > 0) addItem({
+      desc: Desc_Transp, isServc: true, hsn: SAC_Transp,
+      qty: totalQty > 0 ? totalQty : 1,
+      unit: totalQty > 0 ? 'KGS' : 'OTH',
+      unitPrice: totalQty > 0 ? r2(transportAmt / totalQty) : transportAmt,
+      amount: transportAmt,
+    });
+    // Insurance — taxable service billed per-thousand of value, so it carries
+    // no per-kg quantity: Qty 0, Unit OTH, nominal per-thousand UnitPrice.
     const insuranceAmt = Number(row.insuranceAmt || 0);
-    if (insuranceAmt > 0) addItem({ desc: LDR_Insur, isServc: true, hsn: SAC_Insur, qty: 1, unit: 'OTH', unitPrice: insuranceAmt, amount: insuranceAmt });
+    if (insuranceAmt > 0) addItem({
+      desc: Desc_Insur, isServc: true, hsn: SAC_Insur,
+      qty: 0, unit: 'OTH', unitPrice: insurRate, amount: insuranceAmt,
+    });
 
     // ---- ValDtls --------------------------------------------------
     const assVal  = r2(items.reduce((s, it) => s + it.AssAmt, 0));
@@ -2990,21 +3054,67 @@ function buildIrpJson(rows, cfg, opts = {}) {
         Pin: pinNum(row.pin),
         Pos: isExport ? '96' : (buyerStcd || sellerStcd),
         Stcd: buyerStcd,
+      },
+    };
+
+    // Dispatch From (consignor) — goods ship from the dispatch address, which
+    // differs from the seller's registered office. Emitted only when a
+    // dispatch address is configured (mirrors the ISP XML's DISPATCHFROM* gate).
+    if (!isExport && dispatchEnabled && dispAddr) {
+      const dispLines = dispAddr.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      inv.DispDtls = {
+        Nm: dispName,
+        Addr1: dispLines[0] || dispAddr,
+        Addr2: dispLines[1] || null,
+        Loc: dispPlace,
+        Pin: pinNum(dispPin),
+        Stcd: dispStcd,
         Ph: null,
         Em: null,
-      },
-      ValDtls: {
-        AssVal: assVal,
-        IgstVal: igstVal,
-        CgstVal: cgstVal,
-        SgstVal: sgstVal,
-        CesVal: 0,
-        StCesVal: 0,
-        RndOffAmt: rndOff,
-        Discount: 0,
-        OthChrg: othChrg,
-        TotInvVal: totInvVal,
-      },
+      };
+    }
+    // Ship To (consignee) — use the buyer's SHIP-TO when a separate consignee
+    // is on file (row.shipTo, from the buyer master's c* columns); otherwise
+    // fall back to the bill-to (buyer) details. A ship-to consignee may be
+    // unregistered, so its GSTIN/state fall back to the buyer's.
+    if (!isExport && buyerGstin) {
+      const s = row.shipTo;
+      if (s) {
+        const sGstin = String(s.gstin || '').trim() || buyerGstin;
+        const sStcd  = sGstin.slice(0, 2) || _stcdFromName(s.state) || buyerStcd;
+        inv.ShipDtls = {
+          Gstin: sGstin,
+          LglNm: s.name || row.partyName || '',
+          TrdNm: s.name || row.partyName || '',
+          Addr1: [s.addr1, s.addr2].filter(Boolean).join(', ') || row.address || '',
+          Loc: s.place || row.place || '',
+          Pin: pinNum(s.pin || row.pin),
+          Stcd: sStcd,
+        };
+      } else {
+        inv.ShipDtls = {
+          Gstin: buyerGstin,
+          LglNm: row.partyName || '',
+          TrdNm: row.partyName || '',
+          Addr1: row.address || '',
+          Loc: row.place || '',
+          Pin: pinNum(row.pin),
+          Stcd: buyerStcd,
+        };
+      }
+    }
+
+    inv.ValDtls = {
+      AssVal: assVal,
+      IgstVal: igstVal,
+      CgstVal: cgstVal,
+      SgstVal: sgstVal,
+      CesVal: 0,
+      StCesVal: 0,
+      RndOffAmt: rndOff,
+      Discount: 0,
+      OthChrg: othChrg,
+      TotInvVal: totInvVal,
     };
     if (invRm) inv.RefDtls = { InvRm: invRm };
     if (String(bankAcct).trim()) {
@@ -3017,6 +3127,176 @@ function buildIrpJson(rows, cfg, opts = {}) {
     }
     inv.ItemList = items;
     out.push(inv);
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 1D. GST e-INVOICE (IRP / NIC) JSON for DEBIT NOTES — schema Version 1.1
+//
+// A debit note here is the commission/discount charged to a registered
+// dealer, filed with GST as a single "Commission" service line (SAC 996111,
+// taxed at the DN GST rate — default 18%). This produces the same array-of-
+// documents shape the trade portal accepts, mirroring the reference
+// SERVICE.json (Typ "INV", DocDtls.No = "{noteNo}/{season-short}/SE").
+//
+// One JSON object per debit-note row (from buildDebitNoteRows). URD / planter
+// debit notes have NO buyer GSTIN and cannot be e-invoiced, so rows without a
+// valid buyer GSTIN are skipped.
+//
+// Seller identity, the date/pin helpers, and the RndOff anchoring deliberately
+// mirror buildIrpJson (kept in sync by hand — see that function for rationale).
+// Returns a plain JS array; the caller JSON.stringifies it.
+function buildDebitNoteIrpJson(rows, cfg, opts = {}) {
+  // DN GST rate + service HSN + item label — resolved identically to
+  // generDebitNoteXML so the e-invoice matches the Tally voucher to the paise.
+  const dnGstRate = cfgNum(cfg, 'tally_dn_gst_rate',
+                     cfgNum(cfg, 'discount_gst',
+                       cfgNum(cfg, 'gst_service', 18)));
+  const HSN_Service = String(cfgGet(cfg, 'tally_hsn_service', '996111'));
+  const Item_Comm   = cfgGet(cfg, 'tally_dn_item', 'Commission');
+
+  // Document number — mirror generDebitNoteXML: {noteNo}/{season-short}/SE.
+  const season      = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
+  const seasonShort = String(cfgGet(cfg, 'season_short', '')).trim() || season;
+
+  // Seller (supplier) identity — same KL/TN business_state selection as
+  // buildIrpJson; Stcd is always derived from the GSTIN (NIC requires match).
+  const isStateKL = String(cfgGet(cfg, 'business_state', '')).toUpperCase() === 'KERALA';
+  const pick = (klKey, tnKey) => isStateKL
+    ? cfgGet(cfg, klKey, cfgGet(cfg, tnKey, ''))
+    : cfgGet(cfg, tnKey, '');
+  const sellerName  = cfgGet(cfg, 'trade_name', cfgGet(cfg, 'short_name', opts.companyName || 'Company'));
+  const sellerTrd   = cfgGet(cfg, 'short_name', sellerName);
+  const sellerGstin = String(
+    pick('kl_gstin', 'tn_gstin') ||
+    cfgGet(cfg, 'tally_dispatch_gstin', '') ||
+    cfgGet(cfg, 's_gstin', '') || cfgGet(cfg, 'kl_gstin', '') || cfgGet(cfg, 'tn_gstin', '')
+  ).trim();
+  const sellerAddr1 = pick('kl_address1', 'tn_address1');
+  const sellerAddr2 = pick('kl_address2', 'tn_address2');
+  const sellerLoc   = pick('kl_place', 'tn_place');
+  const sellerPin   = pick('kl_pin', 'tn_pin');
+  const sellerPh    = pick('kl_phone', 'tn_phone');
+  const sellerEm    = pick('kl_email', 'tn_email');
+  const sellerStcd  = sellerGstin.slice(0, 2);
+  const bankAcct    = pick('bank_kl_acct', 'bank_tn_acct');
+  const bankIfsc    = pick('bank_kl_ifsc', 'bank_tn_ifsc');
+  const invRm       = String(cfgGet(cfg, 'tally_einv_remark', '')).trim();
+
+  const pinNum   = (v) => { const n = parseInt(String(v).replace(/\D/g, ''), 10); return isFinite(n) ? n : null; };
+  const toIrpDate = (d) => {
+    const s = toTallyDate(d);
+    return /^\d{8}$/.test(s) ? `${s.slice(6, 8)}/${s.slice(4, 6)}/${s.slice(0, 4)}` : String(d || '');
+  };
+
+  const out = [];
+  for (const row of rows) {
+    // Buyer GSTIN — strip any 'GSTIN.' prefix (same as buildDebitNoteRows).
+    let buyerGstin = String(row.partyGstin || row.gstin || '').trim();
+    if (/^GSTIN\.?/i.test(buyerGstin)) buyerGstin = buyerGstin.replace(/^GSTIN\.?/i, '');
+    // No buyer GSTIN ⇒ B2C / URD ⇒ not e-invoiceable (planter DNs land here).
+    if (!buyerGstin) continue;
+    const buyerStcd = buyerGstin.slice(0, 2);
+    const isIntra   = !!buyerStcd && !!sellerStcd && buyerStcd === sellerStcd;
+
+    // ---- Single "Commission" service item -------------------------
+    const assAmt = r2(row.refundtot || row.amount || 0);
+    let cgstAmt = 0, sgstAmt = 0, igstAmt = 0;
+    if (isIntra) {
+      const half = r2(assAmt * (dnGstRate / 2) / 100);
+      cgstAmt = half; sgstAmt = half;
+    } else {
+      igstAmt = r2(assAmt * dnGstRate / 100);
+    }
+    const item = {
+      SlNo: '1',
+      PrdDesc: Item_Comm,
+      IsServc: 'Y',
+      HsnCd: HSN_Service,
+      Qty: 0,
+      Unit: 'OTH',
+      UnitPrice: 0,
+      TotAmt: assAmt,
+      Discount: 0,
+      AssAmt: assAmt,
+      GstRt: dnGstRate,
+      IgstAmt: igstAmt,
+      CgstAmt: cgstAmt,
+      SgstAmt: sgstAmt,
+      CesRt: 0, CesAmt: 0, CesNonAdvlAmt: 0,
+      StateCesRt: 0, StateCesAmt: 0, StateCesNonadvlAmt: 0,
+      Othchrg: 0,
+      TotItemVal: r2(assAmt + cgstAmt + sgstAmt + igstAmt),
+    };
+
+    // ---- ValDtls — anchor TotInvVal to the DN's stored rounded total;
+    // RndOffAmt absorbs the paise delta (same approach as generDebitNoteXML).
+    const baseGrand = r2(assAmt + cgstAmt + sgstAmt + igstAmt);
+    let totInvVal = r0(Number(row.total || baseGrand));
+    let rndOff    = r2(totInvVal - baseGrand);
+    if (Math.abs(rndOff) > 99) { totInvVal = r0(baseGrand); rndOff = r2(totInvVal - baseGrand); }
+
+    // Party legal name — prefer the raw dealer name; fall back to the
+    // ledger-suffixed name with the "-PURCHASE" suffix stripped.
+    const partyName = String(row.partyName || String(row.name || '').replace(/-PURCHASE$/i, '')).trim();
+
+    const dn = {
+      Version: '1.1',
+      TranDtls: { TaxSch: 'GST', SupTyp: 'B2B', IgstOnIntra: 'N', RegRev: null, EcmGstin: null },
+      DocDtls: {
+        Typ: 'INV',
+        No: `${String(row.voucherNum || row.note_no || row.id || '').trim()}/${seasonShort}/SE`,
+        Dt: toIrpDate(row.date),
+      },
+      SellerDtls: {
+        Gstin: sellerGstin,
+        LglNm: sellerName,
+        TrdNm: sellerTrd,
+        Addr1: sellerAddr1,
+        Addr2: sellerAddr2 || null,
+        Loc: sellerLoc,
+        Pin: pinNum(sellerPin),
+        Stcd: sellerStcd,
+        Ph: String(sellerPh || '').trim() || null,
+        Em: String(sellerEm || '').trim() || null,
+      },
+      BuyerDtls: {
+        Gstin: buyerGstin,
+        LglNm: partyName,
+        TrdNm: partyName,
+        Addr1: row.address || '',
+        Loc: row.place || '',
+        Pin: pinNum(row.pin),
+        Pos: buyerStcd || sellerStcd,
+        Stcd: buyerStcd,
+        Ph: null,
+        Em: null,
+      },
+      ValDtls: {
+        AssVal: assAmt,
+        IgstVal: igstAmt,
+        CgstVal: cgstAmt,
+        SgstVal: sgstAmt,
+        CesVal: 0,
+        StCesVal: 0,
+        Discount: 0,
+        RndOffAmt: rndOff,
+        OthChrg: 0,
+        TotInvVal: totInvVal,
+      },
+    };
+    if (invRm) dn.RefDtls = { InvRm: invRm };
+    if (String(bankAcct).trim()) {
+      dn.PayDtls = {
+        Nm: sellerName,
+        AccDet: String(bankAcct).trim(),
+        Mode: 'Direct Transfer',
+        FinInsBr: String(bankIfsc).trim(),
+      };
+    }
+    dn.ItemList = [item];
+    out.push(dn);
   }
   return out;
 }
@@ -3520,6 +3800,9 @@ function buildDebitNoteRows(db, auctionId, cfg) {
       // suffixed RD party ledger (debit notes are always against
       // registered dealers).
       name: _rdPurchaseLedgerName(d.name),
+      // Raw dealer legal name (no ledger suffix) — used by the e-invoice
+      // (IRP) JSON builder for BuyerDtls.LglNm / TrdNm.
+      partyName: String(d.name || '').trim(),
       address: dealer.padd || '',
       place:   dealer.ppla || '',
       pin,
@@ -4129,14 +4412,17 @@ function generMerchantsXML(rows, cfg, opts = {}) {
     const sale      = String(row.sale || 'L').toUpperCase();
     const invoNo    = String(row.invo || '').trim();
     const billName  = `${invPrefix}${sale}${separator}${invoNo}/${season}`;
-    const partyName = xe(row.partyName);
+    // Merchants journal debits the BUYER (row.buyer, e.g. "ARUL"), not the
+    // trade name (row.partyName / buyer1, e.g. "KAVISH TRADING COMPANY").
+    // Fall back to the trade name only if the buyer key is somehow blank.
+    const buyerName = xe(row.buyer || row.partyName);
     // Same grand total the Sales voucher posts to the party ledger: the
     // rounded GST-inclusive subtotal plus any additional charge.
     const partyTotal = r2(r0(row.totalRounded || row.total) + r2(row.addlCharge || 0));
     grandTotal += partyTotal;
     xml += `
 <LEDGERENTRIES.LIST>
-<LEDGERNAME>${partyName}</LEDGERNAME>
+<LEDGERNAME>${buyerName}</LEDGERNAME>
 <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
 <LEDGERFROMITEM>No</LEDGERFROMITEM>
 <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
@@ -4181,6 +4467,7 @@ module.exports = {
   buildSalesRows,
   buildSalesIspRows,
   buildIrpJson,
+  buildDebitNoteIrpJson,
   buildRDPurchaseRows,
   buildURDPurchaseRows,
   buildDebitNoteRows,

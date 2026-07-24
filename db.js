@@ -560,7 +560,12 @@ async function initDb() {
     -- to roll back, we DELETE rows in the target table whose id is in
     -- this list, snapshot the DB first, then stamp undone_at.
     inserted_ids TEXT DEFAULT '',
-    undone_at TEXT DEFAULT ''
+    undone_at TEXT DEFAULT '',
+    -- JSON array of the rows this import skipped as duplicates, each
+    -- { row, keys:{col:val,…}, reason }. Lets the Import Old Data screen
+    -- show WHICH rows were skipped and WHY (intra-file repeat vs already
+    -- in the DB) instead of only a bare count.
+    skipped_details TEXT DEFAULT ''
   )`);
 
   // ── GRADE-2 BOOKING ALERTS ─────────────────────────────────
@@ -781,6 +786,9 @@ async function initDb() {
     // mark the entry as rolled back.
     "ALTER TABLE import_log ADD COLUMN inserted_ids TEXT DEFAULT ''",
     "ALTER TABLE import_log ADD COLUMN undone_at TEXT DEFAULT ''",
+    // Per-row skipped-duplicate breakdown so the History panel can show
+    // which rows were skipped and why (intra-file repeat vs already in DB).
+    "ALTER TABLE import_log ADD COLUMN skipped_details TEXT DEFAULT ''",
     // Bank branch name — populated by the IFSC auto-lookup in seller edit.
     "ALTER TABLE trader_banks ADD COLUMN branch TEXT DEFAULT ''",
     // Price-check gate timestamp — see auctions schema for semantics.

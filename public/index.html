@@ -5499,6 +5499,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
               <button class="btn btn-a" onclick="tallyPreview('debit_note')" style="flex:1;padding:7px;font-size:12px">Preview</button>
               <button class="btn btn-g" onclick="tallyDownload('debit_note')" style="flex:1;padding:7px;font-size:12px">XML</button>
               <button class="btn btn-g" onclick="tallyDownload('debit_note','json')" style="flex:1;padding:7px;font-size:12px">JSON</button>
+              <button class="btn btn-g" onclick="tallyDownload('debit_note','irp')" style="flex:1;padding:7px;font-size:12px" title="GST e-Invoice (IRP / NIC) JSON — commission billed to registered dealers, ready for the trade portal">e-Invoice</button>
             </div>
           </div>
 
@@ -6397,6 +6398,16 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   <div class="actions">
     <button class="btn btn-o" onclick="hideModal('dn-skipped-modal')">Close</button>
     <button class="btn btn-a" onclick="copySkippedDnToClipboard()">Copy as text</button>
+  </div>
+</div></div>
+
+<!-- Import Old Data → skipped-duplicate detail. Opened from the History
+     panel's Skipped count; body is filled by impViewSkipped(). -->
+<div class="modal-bg" id="imp-skipped-modal"><div class="modal" style="max-width:860px;max-height:85vh">
+  <h2 id="imp-skipped-title" style="font-size:16px">Skipped rows</h2>
+  <div id="imp-skipped-body" style="max-height:65vh;overflow-y:auto"></div>
+  <div class="actions">
+    <button class="btn btn-o" onclick="impCloseSkipped()">Close</button>
   </div>
 </div></div>
 
@@ -27836,6 +27847,25 @@ async function impRun(){
       data.errors.forEach(e => { h += '<li>Row '+e.row+': '+escAttr(e.error)+'</li>'; });
       h += '</ul></div>';
     }
+    // Skipped-duplicate breakdown — the "why was this skipped?" answer.
+    // Most skips are duplicates *within the uploaded file* (the same
+    // invoice/lot appears more than once), which is exactly why checking
+    // the database afterwards shows no duplicates. Show the rows + reason
+    // inline so the operator can see it without leaving the screen.
+    if (data.skipped > 0) {
+      const det = Array.isArray(data.skippedDetails) ? data.skippedDetails : [];
+      h += '<details style="margin-top:8px" open><summary style="cursor:pointer;font-weight:700;color:#a16207">'+
+        '⚠ '+data.skipped+' row(s) skipped as duplicates — click to see which rows &amp; why</summary>';
+      if (det.length) {
+        h += impRenderSkippedTable(det);
+        if (data.skippedDetailsTruncated) {
+          h += '<div style="font-size:11px;color:#999;padding:4px 2px">Showing the first '+det.length+' of '+data.skipped+' skipped rows.</div>';
+        }
+      } else {
+        h += '<div style="font-size:12px;color:#999;padding:6px 2px">No per-row detail was recorded for this run.</div>';
+      }
+      h += '</details>';
+    }
     result.innerHTML = h;
     // Always refresh history — dry-runs are logged too, and the
     // operator usually wants to confirm "did my last run land in the
@@ -27906,7 +27936,10 @@ async function impLoadHistory(){
         '<td style="padding:3px 6px;border:1px solid #eee">'+escAttr(r.filename||'')+'</td>'+
         '<td style="padding:3px 6px;border:1px solid #eee;text-align:right">'+(r.total||0)+'</td>'+
         '<td style="padding:3px 6px;border:1px solid #eee;text-align:right;color:#080">'+(r.imported||0)+'</td>'+
-        '<td style="padding:3px 6px;border:1px solid #eee;text-align:right;color:#888">'+(r.skipped||0)+'</td>'+
+        '<td style="padding:3px 6px;border:1px solid #eee;text-align:right;color:#888">'+
+          ((r.skipped||0) > 0
+            ? '<a href="#" onclick="impViewSkipped('+r.id+');return false" style="color:#a16207;font-weight:600;text-decoration:underline" title="View which rows were skipped and why">'+r.skipped+'</a>'
+            : (r.skipped||0))+'</td>'+
         '<td style="padding:3px 6px;border:1px solid #eee;text-align:right;color:'+(r.failed?'#c00':'#888')+'">'+(r.failed||0)+'</td>'+
         '<td style="padding:3px 6px;border:1px solid #eee;text-align:center">'+(r.dry_run?'✓':'')+'</td>'+
         '<td style="padding:3px 6px;border:1px solid #eee;text-align:center;white-space:nowrap">'+action+'</td>'+
@@ -27950,6 +27983,90 @@ async function impUndo(logId, filename, moduleKey, insertedCount){
   }
 }
 function escAttr(s){ return String(s==null?'':s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+// Render a list of skipped-duplicate rows ({row, keys:{col:val}, reason})
+// as a compact table. Shared by the post-import result box and the
+// History "view skipped" modal. Groups nothing — one row per skipped
+// record so the operator can match it back to the spreadsheet by the
+// "Row" number (which is the 1-based sheet row, header counted).
+function impRenderSkippedTable(list){
+  if (!Array.isArray(list) || !list.length) return '';
+  // Collect the union of key columns so the table has stable headers.
+  const keyCols = [];
+  list.forEach(s => Object.keys(s.keys||{}).forEach(k => { if (!keyCols.includes(k)) keyCols.push(k); }));
+  let h = '<div style="overflow-x:auto;margin-top:6px"><table style="width:100%;border-collapse:collapse;font-size:12px">'+
+    '<thead><tr style="background:#f4f4f4">'+
+    '<th style="text-align:right;padding:4px 6px;border:1px solid #ddd">Sheet row</th>';
+  keyCols.forEach(k => { h += '<th style="text-align:left;padding:4px 6px;border:1px solid #ddd">'+escAttr(k)+'</th>'; });
+  h += '<th style="text-align:left;padding:4px 6px;border:1px solid #ddd">Reason</th></tr></thead><tbody>';
+  list.forEach(s => {
+    h += '<tr>'+
+      '<td style="padding:3px 6px;border:1px solid #eee;text-align:right;white-space:nowrap">'+escAttr(s.row)+'</td>';
+    keyCols.forEach(k => {
+      const v = s.keys ? s.keys[k] : '';
+      h += '<td style="padding:3px 6px;border:1px solid #eee">'+escAttr(v==null?'':v)+'</td>';
+    });
+    // Colour intra-file repeats amber, DB collisions grey — they mean
+    // different things to the operator.
+    const intra = /within this file/i.test(s.reason||'');
+    h += '<td style="padding:3px 6px;border:1px solid #eee;color:'+(intra?'#a16207':'#555')+'">'+escAttr(s.reason||'')+'</td>';
+    h += '</tr>';
+  });
+  h += '</tbody></table></div>';
+  return h;
+}
+
+// Open the History "view skipped" modal for one past import. Fetches the
+// per-row detail lazily (it's kept out of the history list payload).
+async function impViewSkipped(logId){
+  const modal = document.getElementById('imp-skipped-modal');
+  const body  = document.getElementById('imp-skipped-body');
+  const title = document.getElementById('imp-skipped-title');
+  if (title) title.textContent = 'Skipped rows';
+  if (body) body.innerHTML = 'Loading…';
+  if (modal) modal.classList.add('show');
+  try {
+    const r = await fetch(B + '/api/import-old-data/skipped/' + encodeURIComponent(logId) + '?_=' + Date.now(), {
+      headers: { 'Authorization': 'Bearer ' + T }, cache: 'no-store',
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Failed to load skipped rows');
+    if (title) title.textContent = 'Skipped rows · ' + (d.module||'') + (d.filename ? ' · '+d.filename : '');
+    const det = Array.isArray(d.skippedDetails) ? d.skippedDetails : [];
+    // Count the two reason classes so the operator immediately sees the
+    // in-file-vs-in-DB split that explains the "no duplicates in the DB"
+    // confusion.
+    let intra = 0, indb = 0, other = 0;
+    det.forEach(s => {
+      if (/within this file/i.test(s.reason||'')) intra++;
+      else if (/already exists in the database/i.test(s.reason||'')) indb++;
+      else other++;
+    });
+    let h = '<div style="font-size:13px;margin-bottom:8px">'+
+      '<b>'+(d.skipped||0)+'</b> row(s) skipped';
+    if (det.length) {
+      h += ' — <span style="color:#a16207">'+intra+' repeated inside this file</span>'+
+           ', <span style="color:#555">'+indb+' already in the database</span>'+
+           (other ? ', '+other+' other' : '')+'.';
+      if (intra > 0) {
+        h += '<div style="margin-top:6px;padding:6px 8px;background:#fff8e1;border-radius:6px;font-size:12px;color:#7a5c00">'+
+          '“Repeated inside this file” means the same key appeared more than once in the uploaded spreadsheet — only the first copy was imported. '+
+          'That is why verifying against the database afterwards shows no duplicates.</div>';
+      }
+    } else if (!d.detailsAvailable) {
+      h += '. <span style="color:#999">This import ran before per-row skip detail was recorded, so only the count is available.</span>';
+    }
+    h += '</div>';
+    if (det.length) {
+      h += impRenderSkippedTable(det);
+      if (d.truncated) h += '<div style="font-size:11px;color:#999;padding:4px 2px">Showing the first '+det.length+' of '+(d.skipped||0)+' skipped rows.</div>';
+    }
+    if (body) body.innerHTML = h;
+  } catch (e) {
+    if (body) body.innerHTML = '<span style="color:#c00">Error: '+escAttr(e.message||String(e))+'</span>';
+  }
+}
+function impCloseSkipped(){ const m=document.getElementById('imp-skipped-modal'); if(m) m.classList.remove('show'); }
 
 /* ─── PRICE LIST MAPPING — round-trip trade-name → buyer-code ──────── */
 // State for the "Download Updated File" button. We only enable it after

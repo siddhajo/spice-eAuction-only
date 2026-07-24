@@ -32,7 +32,7 @@ const {
   generSalesXML, generSalesIspXML, generSalesAspXML, generIspPurchaseXML,
   generMerchantsXML,
   generRDPurchaseXML, generURDPurchaseXML, generDebitNoteXML, generLedgerXML,
-  buildSalesRows, buildSalesIspRows, buildSalesAspRows, buildIrpJson,
+  buildSalesRows, buildSalesIspRows, buildSalesAspRows, buildIrpJson, buildDebitNoteIrpJson,
   buildRDPurchaseRows, buildURDPurchaseRows, buildDebitNoteRows, buildDebitNotePlanterRows, buildLedgerRows,
   buildSalesPartyLedgerRows, buildRDPartyLedgerRows, buildURDPartyLedgerRows,
   listAuctionParties,
@@ -613,30 +613,39 @@ app.put('/api/branding', requireSettingsWrite, (req, res) => {
 // Pre-baked presets — extend this list to add more. Each preset is a
 // pure config object; the frontend reads presetConfig from GET
 // /api/branding and applies it at boot.
+// Each preset also carries a `login` bundle { layout, style } so the
+// sign-in page differs per customer too (layout = structure, style =
+// palette). The frontend reads presetConfig.login at boot.
 const TENANT_PRESETS = {
   cardamom: {
     label: 'Cardamom (default — premium spacious)',
     theme: 'emerald', customColor: '', density: 'roomy', font: 'jakarta', accent: 'glow', bg: 'mesh', hideAppearance: true,
+    login: { layout: 'split', style: 'emerald' },
   },
   bluehill: {
     label: 'Bluehill (indigo + dense + inter)',
     theme: 'indigo', customColor: '', density: 'compact', font: 'inter', accent: 'gradient', bg: '', hideAppearance: true,
+    login: { layout: 'topbar', style: 'royal' },
   },
   'western-ghats': {
     label: 'Western Ghats (teal + spacious + outfit)',
     theme: 'teal', customColor: '', density: 'spacious', font: 'outfit', accent: 'glow', bg: 'dots', hideAppearance: true,
+    login: { layout: 'aside', style: 'ocean' },
   },
   slate: {
     label: 'Slate (corporate grey + dense + system)',
     theme: 'slate', customColor: '', density: 'compact', font: 'system', accent: '', bg: '', hideAppearance: true,
+    login: { layout: 'showcase', style: 'royal' },
   },
   marigold: {
     label: 'Marigold (sunshine + roomy + jakarta)',
     theme: 'sunshine', customColor: '', density: 'roomy', font: 'jakarta', accent: 'gradient', bg: 'mesh', hideAppearance: true,
+    login: { layout: 'aside', style: 'sunset' },
   },
   ocean: {
     label: 'Ocean (cool blue + roomy + inter)',
     theme: 'ocean', customColor: '', density: 'roomy', font: 'inter', accent: 'gradient', bg: 'dots', hideAppearance: true,
+    login: { layout: 'split', style: 'ocean' },
   },
 };
 // Available font slugs that the frontend knows how to apply. Keep in
@@ -651,6 +660,11 @@ const TENANT_ACCENTS = ['', 'gradient', 'glow'];
 // Available backdrop slugs — themed page-background texture. Frontend maps
 // each to a `data-bg` attr. '' = plain (default).
 const TENANT_BACKDROPS = ['', 'dots', 'mesh'];
+// Login-page structure + palette. Frontend maps these to `data-login-layout`
+// and `data-login` on <body>. Keep in sync with _LOGIN_LAYOUTS / _LOGIN_STYLES
+// in index.html.
+const TENANT_LOGIN_LAYOUTS = ['split', 'topbar', 'aside', 'showcase'];
+const TENANT_LOGIN_STYLES = ['aurora', 'sunset', 'ocean', 'emerald', 'royal', 'rose', 'midnight'];
 
 // Gatekeeper. Compares against ADMIN_BRANDING_KEY env var, falling back
 // to 'change-me' so an unsecured deploy is loud — running ?key=change-me
@@ -694,10 +708,18 @@ app.get('/admin/branding', (req, res) => {
   const cAccent   = c.accent || '';
   const cBg       = c.bg || '';
   const cHide     = c.hideAppearance !== false; // default true
+  const cLogin    = (c.login && typeof c.login === 'object') ? c.login : {};
+  const cLoginLayout = cLogin.layout || 'split';
+  const cLoginStyle  = cLogin.style  || 'aurora';
+  const cLoginTitle  = cLogin.title  || '';
+  const cLoginSub    = cLogin.sub    || '';
+  const cLoginCredit = cLogin.credit || '';
 
   // Human labels for the vibrant option slugs (slug '' = the plain default).
   const ACCENT_LABELS = { '': 'flat (plain)', gradient: 'gradient', glow: 'glow' };
   const BACKDROP_LABELS = { '': 'plain', dots: 'dots', mesh: 'mesh' };
+  // Escape user-supplied text before dropping it into a value="" attribute.
+  const escAttr = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
   const themeOpts = ['emerald','coral','violet','sunshine','electric','ocean','tech','minimal','trust','rose','indigo','teal','slate','custom']
     .map(t => `<option value="${t}" ${t === cTheme ? 'selected' : ''}>${t}</option>`).join('');
@@ -705,6 +727,8 @@ app.get('/admin/branding', (req, res) => {
   const fontOpts = TENANT_FONTS.map(f => `<option value="${f}" ${f === cFont ? 'selected' : ''}>${f}</option>`).join('');
   const accentOpts = TENANT_ACCENTS.map(a => `<option value="${a}" ${a === cAccent ? 'selected' : ''}>${ACCENT_LABELS[a]}</option>`).join('');
   const backdropOpts = TENANT_BACKDROPS.map(b => `<option value="${b}" ${b === cBg ? 'selected' : ''}>${BACKDROP_LABELS[b]}</option>`).join('');
+  const loginLayoutOpts = TENANT_LOGIN_LAYOUTS.map(l => `<option value="${l}" ${l === cLoginLayout ? 'selected' : ''}>${l}</option>`).join('');
+  const loginStyleOpts = TENANT_LOGIN_STYLES.map(s => `<option value="${s}" ${s === cLoginStyle ? 'selected' : ''}>${s}</option>`).join('');
 
   const keyEsc = String(req.query.key).replace(/[<>'"&]/g, '');
 
@@ -761,6 +785,17 @@ app.get('/admin/branding', (req, res) => {
     </div>
     <label style="margin-top: 16px;"><input type="checkbox" id="custom-hide" ${cHide ? 'checked' : ''}> Hide Appearance card from users</label>
   </div>
+  <div class="card">
+    <h2>Login page (used only when preset = "custom")</h2>
+    <p style="font-size: 12px; color: #6b7280; margin: 0 0 8px">Layout = page structure, palette = colour. Copy fields are optional — leave blank to keep the defaults.</p>
+    <div class="row">
+      <div><label>Login layout</label><select id="custom-login-layout">${loginLayoutOpts}</select></div>
+      <div><label>Login palette</label><select id="custom-login-style">${loginStyleOpts}</select></div>
+    </div>
+    <label>Headline (optional)</label><input type="text" id="custom-login-title" value="${escAttr(cLoginTitle)}" placeholder="Run every e-Auction day with confidence.">
+    <label>Sub-line (optional)</label><input type="text" id="custom-login-sub" value="${escAttr(cLoginSub)}" placeholder="From lot entry to ledger — all on one floor.">
+    <label>Footer credit (optional)</label><input type="text" id="custom-login-credit" value="${escAttr(cLoginCredit)}" placeholder="Powered by KJ &amp; Co">
+  </div>
   <div style="display: flex; gap: 10px;">
     <button onclick="apply()">Apply preset</button>
     <button class="secondary" onclick="clearPreset()">Clear (revert to legacy mode)</button>
@@ -784,6 +819,13 @@ app.get('/admin/branding', (req, res) => {
           accent: document.getElementById('custom-accent').value,
           bg: document.getElementById('custom-bg').value,
           hideAppearance: document.getElementById('custom-hide').checked,
+          login: {
+            layout: document.getElementById('custom-login-layout').value,
+            style: document.getElementById('custom-login-style').value,
+            title: document.getElementById('custom-login-title').value,
+            sub: document.getElementById('custom-login-sub').value,
+            credit: document.getElementById('custom-login-credit').value,
+          },
         };
       }
       try {
@@ -837,6 +879,20 @@ app.post('/api/admin/preset', (req, res) => {
       bg: TENANT_BACKDROPS.includes(config.bg) ? config.bg : '',
       hideAppearance: !!config.hideAppearance,
     };
+    // Login page — validate layout/style against the allow-lists; carry
+    // optional copy (trimmed + length-capped) only when non-empty.
+    const loginIn = (config.login && typeof config.login === 'object') ? config.login : {};
+    const login = {
+      layout: TENANT_LOGIN_LAYOUTS.includes(loginIn.layout) ? loginIn.layout : 'split',
+      style: TENANT_LOGIN_STYLES.includes(loginIn.style) ? loginIn.style : 'aurora',
+    };
+    const lTitle = String(loginIn.title || '').trim();
+    const lSub = String(loginIn.sub || '').trim();
+    const lCredit = String(loginIn.credit || '').trim();
+    if (lTitle) login.title = lTitle.slice(0, 140);
+    if (lSub) login.sub = lSub.slice(0, 220);
+    if (lCredit) login.credit = lCredit.slice(0, 140);
+    finalConfig.login = login;
   } else if (TENANT_PRESETS[slug]) {
     finalConfig = TENANT_PRESETS[slug];
   } else {
@@ -3010,9 +3066,9 @@ app.post('/api/buyers/import', requireBuyerWrite, upload.single('file'), async (
 
       db.run(`INSERT INTO buyers (
         buyer, buyer1, code, sbl, add1, add2, pla, pin, state, st_code,
-        gstin, pan, tel, ti, sale, email, tdsq,
+        gstin, pan, tan, tel, ti, sale, email, tdsq,
         cbuyer1, cadd1, cadd2, cpla, cpin, cstate, cst_code, cgstin
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [buyerVal,
          mapCol(row, 'BUYER1', 'TRADE_NAME', 'TRADENAME', 'NAME'),
          code,
@@ -3025,6 +3081,8 @@ app.post('/api/buyers/import', requireBuyerWrite, upload.single('file'), async (
          mapCol(row, 'ST_CODE', 'STATE_CODE', 'STATECODE'),
          mapCol(row, 'GSTIN', 'GST', 'GSTNO', 'GST_NO'),
          mapCol(row, 'PAN', 'PAN_NO'),
+         // TAN normalised to UPPER like PAN (canonical tax identifier).
+         mapCol(row, 'TAN', 'TAN_NO', 'TAN_NUMBER').toUpperCase(),
          mapCol(row, 'TEL', 'PHONE', 'MOBILE', 'CONTACT'),
          mapCol(row, 'TI'),
          mapCol(row, 'SALE', 'SALE_TYPE') || 'L',
@@ -3064,6 +3122,7 @@ app.get('/api/buyers/template', requireExport, async (req, res) => {
     { header: 'ST_CODE',  key: 'st_code',  width: 10, align: 'left' },
     { header: 'GSTIN',    key: 'gstin',    width: 18 },
     { header: 'PAN',      key: 'pan',      width: 14 },
+    { header: 'TAN',      key: 'tan',      width: 14 },
     { header: 'TEL',      key: 'tel',      width: 14 },
     { header: 'TI',       key: 'ti',       width: 10 },
     { header: 'SALE',     key: 'sale',     width: 8  },
@@ -3072,7 +3131,7 @@ app.get('/api/buyers/template', requireExport, async (req, res) => {
   const stCode = bizState === 'KERALA' ? '32' : '33';
   const sample = [{
     buyer: 'ABC', buyer1: 'ABC TRADERS', add1: '10 MARKET ROAD', add2: '', pla: '',
-    pin: '', state: bizState, st_code: stCode, gstin: '', pan: '', tel: '', ti: '', sale: 'L',
+    pin: '', state: bizState, st_code: stCode, gstin: '', pan: '', tan: '', tel: '', ti: '', sale: 'L',
   }];
   const buf = await createExcelBuffer('Buyers', cols, sample, {
     db, title: 'BUYERS TEMPLATE',
@@ -11655,13 +11714,19 @@ app.get('/api/tally/export/:type/:auctionId', requireExport, (req, res) => {
     const targetCompany = resolveTallyCompanyName(cfg, def.company);
     const fmt = String(req.query.format || '').toLowerCase();
     // ?format=irp → GST e-Invoice (IRP / NIC) JSON, ready for the trade
-    // portal. Only meaningful for outside-customer sales (ISP), whose row
-    // shape carries the buyer GSTIN / address the schema needs.
+    // portal. Available for outside-customer sales (ISP) and for Debit Notes
+    // (commission billed to registered dealers) — both row shapes carry the
+    // buyer GSTIN / address the schema needs. Debit notes route to the
+    // dedicated commission-line builder; everything else is rejected.
     if (fmt === 'irp') {
-      if (def.builder !== buildSalesIspRows) {
-        return res.status(400).json({ error: 'IRP e-invoice format is only available for Sales Vouchers — ISP (type "sales_isp").' });
+      let irp;
+      if (def.builder === buildSalesIspRows) {
+        irp = buildIrpJson(rows, cfg, { companyName: targetCompany });
+      } else if (def.builder === buildDebitNoteRows) {
+        irp = buildDebitNoteIrpJson(rows, cfg, { companyName: targetCompany });
+      } else {
+        return res.status(400).json({ error: 'IRP e-invoice format is only available for Sales Vouchers — ISP ("sales_isp") and Debit Notes ("debit_note").' });
       }
-      const irp = buildIrpJson(rows, cfg, { companyName: targetCompany });
       const filename = `EInvoice_${def.name}_${anoForFilename(db, auctionId)}.json`;
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -13578,12 +13643,14 @@ const IMPORT_MODULES = {
     table: 'buyers',
     keyCols: ['buyer','code'],
     fields: ['buyer','buyer1','code','sbl','add1','add2','pla','pin','state',
-             'st_code','gstin','pan','tel','ti','sale','email'],
+             'st_code','gstin','pan','tan','tel','ti','sale','email'],
     aliases: {
       buyer: ['buyer','buyer_code','code'],
       buyer1: ['buyer1','buyer_name','name'],
       pla: ['pla','place','city'],
       pin: ['pin','pincode','zip'],
+      pan: ['pan','pan_no','pan_number'],
+      tan: ['tan','tan_no','tan_number'],
     },
   },
   // Auction lots — the one module whose parent row (the auction) is created
@@ -13918,6 +13985,15 @@ function handleAuctionRun(db, req, res, def, moduleKey, dryRun) {
   let imported = 0, skipped = 0, failed = 0, total = 0, newAuctions = 0;
   const errors = [];
   const insertedIds = [];
+  // Per-row skipped-duplicate audit — mirrors the generic /run path so
+  // the History panel can show which lots were skipped and why.
+  const skippedDetails = [];
+  const SKIP_DETAIL_CAP = 1000;
+  const seenLotsThisRun = new Set(); // "ano|lot_no" accepted this run
+  const recordSkip = (rowNo, keys, reason) => {
+    skipped++;
+    if (skippedDetails.length < SKIP_DETAIL_CAP) skippedDetails.push({ row: rowNo, keys, reason });
+  };
   try {
     const { rows, mapping } = _auctionParseAndMap(req, def);
     total = rows.length;
@@ -13954,7 +14030,8 @@ function handleAuctionRun(db, req, res, def, moduleKey, dryRun) {
         const ano = _auctionCell(r, mapping, 'ano');
         const lotNo = _auctionCell(r, mapping, 'lot_no');
         if (!ano || !lotNo) {
-          skipped++;
+          recordSkip(i + 2, { ano: ano || '', lot_no: lotNo || '' },
+            'Missing required value: ' + (!ano ? 'ano' : 'lot_no'));
           if (errors.length < 50) errors.push({ row: i + 2, error: 'Missing ' + (!ano ? 'ano' : 'lot_no') });
           continue;
         }
@@ -13963,8 +14040,21 @@ function handleAuctionRun(db, req, res, def, moduleKey, dryRun) {
         const state = _auctionCell(r, mapping, 'state') || 'TAMIL NADU';
         const auc = resolveOrCreateAuction(ano, dateStr, crpt, state);
         if (!auc) { imported++; continue; } // dryRun + auction not yet created → would-import
+        const lotKey = String(ano).trim().toLowerCase() + '' + String(lotNo).trim().toLowerCase();
+        // Intra-file repeat: this trade+lot already appeared earlier in the
+        // same upload. Verifying against the DB won't reproduce it.
+        if (seenLotsThisRun.has(lotKey)) {
+          recordSkip(i + 2, { ano, lot_no: lotNo },
+            'Duplicate within this file — an earlier row in the same upload has the same ano + lot_no');
+          continue;
+        }
         const dup = db.get('SELECT 1 FROM lots WHERE auction_id = ? AND lot_no = ? LIMIT 1', [auc.id, lotNo]);
-        if (dup) { skipped++; continue; }
+        if (dup) {
+          recordSkip(i + 2, { ano, lot_no: lotNo },
+            'Already exists in the database — a lot with the same ano + lot_no was found');
+          continue;
+        }
+        seenLotsThisRun.add(lotKey);
         const name = _auctionCell(r, mapping, 'name');
         let traderId = null;
         if (name) { const t = db.get('SELECT id FROM traders WHERE name = ? LIMIT 1', [name]); if (t) traderId = t.id; }
@@ -13991,10 +14081,11 @@ function handleAuctionRun(db, req, res, def, moduleKey, dryRun) {
   let importLogId = null;
   try {
     const info = db.run(`INSERT INTO import_log
-      (module, filename, dry_run, total, imported, skipped, failed, errors, inserted_ids, user_id, username)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      (module, filename, dry_run, total, imported, skipped, failed, errors, skipped_details, inserted_ids, user_id, username)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       [moduleKey, req.file.originalname || '', dryRun ? 1 : 0,
        total, imported, skipped, failed, JSON.stringify(errors).slice(0, 4000),
+       JSON.stringify(skippedDetails),
        dryRun ? '' : JSON.stringify(insertedIds),
        (req.user && req.user.id) || null, (req.user && req.user.username) || '']);
     if (info && info.lastInsertRowid != null) importLogId = Number(info.lastInsertRowid);
@@ -14006,7 +14097,10 @@ function handleAuctionRun(db, req, res, def, moduleKey, dryRun) {
     success: true, module: moduleKey, dryRun,
     total, imported, skipped, failed,
     nameCorrected: 0, rundDerived: 0, newAuctions,
-    errors, importLogId,
+    errors,
+    skippedDetails,
+    skippedDetailsTruncated: skipped > skippedDetails.length,
+    importLogId,
   });
 }
 
@@ -14373,6 +14467,31 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
   // or when every row already had a non-zero rund.
   let rundDerived = 0;
   const errors = [];
+  // Per-row record of every skipped (duplicate) row so the operator can
+  // audit WHAT was skipped and WHY — the plain `skipped` count alone hid
+  // a common source of confusion: rows skipped because the SAME key
+  // appears more than once *inside the uploaded file* (intra-file
+  // duplicates) look identical, in the count, to rows skipped because the
+  // key already existed in the DB. Verifying "against the database" after
+  // the fact finds no duplicates for the former, which reads as a bug.
+  // Each entry: { row, keys: {col:val,…}, reason }.
+  const skippedDetails = [];
+  const SKIP_DETAIL_CAP = 1000;
+  // Composite keys of rows this run has already accepted (imported, or
+  // would-have-imported on a dry-run). Lets us label a later matching row
+  // as an intra-file duplicate rather than a pre-existing DB collision,
+  // and lets dry-runs detect intra-file dups at all (nothing is written,
+  // so the DB query below never would).
+  const seenKeysThisRun = new Set();
+  const _compKey = (vals) => vals.map(v => String(v).trim().toLowerCase()).join('');
+  const recordSkip = (rowNo, cols, vals, reason) => {
+    skipped++;
+    if (skippedDetails.length < SKIP_DETAIL_CAP) {
+      const keys = {};
+      cols.forEach((c, idx) => { keys[c] = vals[idx]; });
+      skippedDetails.push({ row: rowNo, keys, reason });
+    }
+  };
   let total = 0;
   // Capture the primary-key id of every row this import inserts so the
   // Undo button on the History panel can roll back this specific file.
@@ -14455,9 +14574,30 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
         // Duplicate detection — skip if any keyCol value already exists.
         const keyChecks = def.keyCols.map(k => mapping[k] ? r[mapping[k]] : null).filter(v => v != null && v !== '');
         if (keyChecks.length === def.keyCols.length) {
+          const compKey = _compKey(keyChecks);
+          // Intra-file duplicate: an earlier row in THIS upload already
+          // claimed this key. On a real run that earlier row is now in the
+          // DB so the query below would also catch it — but checking the
+          // in-memory set first lets us label the reason precisely (and is
+          // the ONLY way to catch it on a dry-run, where nothing was
+          // written). This is the case that "verify against the database"
+          // can never reproduce, because the file's own repeats aren't in
+          // the DB.
+          if (seenKeysThisRun.has(compKey)) {
+            recordSkip(i + 2, def.keyCols, keyChecks,
+              'Duplicate within this file — an earlier row in the same upload has the same ' + def.keyCols.join(' + '));
+            continue;
+          }
           const whereSql = def.keyCols.map(k => `${k} = ?`).join(' AND ');
           const dup = db.get(`SELECT 1 FROM ${def.table} WHERE ${whereSql} LIMIT 1`, keyChecks);
-          if (dup) { skipped++; continue; }
+          if (dup) {
+            recordSkip(i + 2, def.keyCols, keyChecks,
+              'Already exists in the database — a row with the same ' + def.keyCols.join(' + ') + ' was found in ' + def.table);
+            continue;
+          }
+          // Not a duplicate — remember the key so a later identical row in
+          // THIS file is reported as an intra-file duplicate.
+          seenKeysThisRun.add(compKey);
         }
         // Build positional values from the source mapping. For
         // autoFillAuctionId modules we derive auction_id from `ano` after
@@ -14568,10 +14708,11 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
   let importLogId = null;
   try {
     const info = db.run(`INSERT INTO import_log
-      (module, filename, dry_run, total, imported, skipped, failed, errors, inserted_ids, user_id, username)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      (module, filename, dry_run, total, imported, skipped, failed, errors, skipped_details, inserted_ids, user_id, username)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       [moduleKey, req.file.originalname || '', dryRun ? 1 : 0,
        total, imported, skipped, failed, JSON.stringify(errors).slice(0, 4000),
+       JSON.stringify(skippedDetails),
        dryRun ? '' : JSON.stringify(insertedIds),
        (req.user && req.user.id) || null, (req.user && req.user.username) || '']);
     if (info && info.lastInsertRowid != null) importLogId = Number(info.lastInsertRowid);
@@ -14596,7 +14737,13 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
     // columns because the source file had no rund value. 0 when the
     // module isn't in IMPORT_DERIVE_RUND.
     rundDerived,
-    errors, importLogId,
+    errors,
+    // Per-row breakdown of every skipped duplicate: { row, keys, reason }.
+    // Capped server-side (SKIP_DETAIL_CAP); skippedDetailsTruncated tells
+    // the UI whether the list is complete.
+    skippedDetails,
+    skippedDetailsTruncated: skipped > skippedDetails.length,
+    importLogId,
   });
 });
 app.get('/api/import-old-data/history', requireAdmin, (req, res) => {
@@ -14626,6 +14773,34 @@ app.get('/api/import-old-data/history', requireAdmin, (req, res) => {
       username: r.username, created_at: r.created_at,
     };
   }));
+});
+
+// Per-import skipped-duplicate detail. Kept out of the /history payload
+// (which lists 200 runs) so those rows stay small; the UI fetches this
+// lazily when the operator clicks the Skipped count for one run.
+app.get('/api/import-old-data/skipped/:id', requireAdmin, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  const logId = Number(req.params.id);
+  if (!Number.isFinite(logId)) return res.status(400).json({ error: 'Invalid import id' });
+  const r = getDb().get(
+    'SELECT id, module, filename, skipped, skipped_details, created_at FROM import_log WHERE id = ?',
+    [logId]
+  );
+  if (!r) return res.status(404).json({ error: 'Import not found' });
+  const details = r.skipped_details ? safeJSON(r.skipped_details) : [];
+  res.json({
+    id: r.id,
+    module: r.module,
+    filename: r.filename || '',
+    created_at: r.created_at || '',
+    skipped: r.skipped || 0,
+    skippedDetails: Array.isArray(details) ? details : [],
+    // Older imports (before this feature) recorded only the count, never
+    // the rows — tell the UI so it can explain the empty list.
+    detailsAvailable: !!(r.skipped_details && r.skipped_details !== ''),
+    // The stored list is capped; note when it's shorter than the count.
+    truncated: (r.skipped || 0) > (Array.isArray(details) ? details.length : 0),
+  });
 });
 
 // Roll back a specific import: DELETE every row in the target table
