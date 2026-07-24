@@ -5028,6 +5028,55 @@ app.get('/api/auctions/:id/next-lot/:branch', requireViewOrLotEntry, (req, res) 
   res.json({ next_lot: null, error: 'All lots in this branch are used' });
 });
 
+// ── SUGGEST NEXT DOCUMENT NUMBER (continue series across trades) ──
+// For the Sales-Invoice / Purchase / Bill-of-Supply generate modals,
+// suggest the starting document number as (highest number issued in any
+// auction BEFORE this one) + 1, so the numbering continues trade-to-trade
+// instead of restarting each auction. "Before" uses the app's canonical
+// auction order — date, then numeric ano, with id breaking exact ties —
+// the same order the auctions list is sorted by. Sales-invoice numbers run
+// a separate series per sale type, so an optional ?sale= narrows the max to
+// that type (omit for an overall/"all sale types" suggestion).
+// Returns { suggested: <int|null> } — null when no prior document exists
+// (the modal then leaves the field blank for manual entry).
+const DOC_NO_MODULES = {
+  invoices:  { table: 'invoices',  col: 'invo', perSale: true },
+  purchases: { table: 'purchases', col: 'invo', perSale: false },
+  bills:     { table: 'bills',     col: 'bil',  perSale: false },
+};
+app.get('/api/auctions/:id/suggest-doc-no/:module', requireView, (req, res) => {
+  const db = getDb();
+  const auctionId = parseInt(req.params.id, 10);
+  const mod = DOC_NO_MODULES[req.params.module];
+  if (!mod) return res.status(400).json({ error: 'Unknown module' });
+  const cur = db.get('SELECT id, ano, date FROM auctions WHERE id = ?', [auctionId]);
+  if (!cur) return res.status(404).json({ error: 'Auction not found' });
+
+  const saleType = mod.perSale ? String(req.query.sale || '').trim() : '';
+  // Highest numeric document number across every auction that sorts BEFORE
+  // the current one. Rows are joined back to their auction so the ordering
+  // is by (date, numeric ano, id), not by the trade-number text alone.
+  // `col`/`table`/`sale` interpolation is safe — module comes from the
+  // fixed whitelist above, never from user input.
+  const params = [cur.date, cur.date, cur.ano, cur.date, cur.ano, cur.id];
+  let saleClause = '';
+  if (saleType) { saleClause = ' AND t.sale = ?'; params.push(saleType); }
+  const row = db.get(
+    `SELECT MAX(CAST(t.${mod.col} AS INTEGER)) AS mx
+       FROM ${mod.table} t
+       JOIN auctions a ON a.id = t.auction_id
+      WHERE t.${mod.col} GLOB '[0-9]*'
+        AND ( a.date < ?
+           OR (a.date = ? AND CAST(a.ano AS INTEGER) < CAST(? AS INTEGER))
+           OR (a.date = ? AND CAST(a.ano AS INTEGER) = CAST(? AS INTEGER) AND a.id < ?) )
+        ${saleClause}`,
+    params
+  );
+  const mx = parseInt(row && row.mx, 10);
+  const suggested = Number.isFinite(mx) && mx > 0 ? mx + 1 : null;
+  res.json({ suggested });
+});
+
 // ── LOT VALIDATION ENDPOINTS (flag_lot_validation) ────────────
 // Read-only validation report for the auction's entered lots. Does NOT
 // stamp the gate — the operator confirms separately (below) once they've

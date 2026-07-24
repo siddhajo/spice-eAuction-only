@@ -5131,7 +5131,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <input type="search" id="bill-search" placeholder="Search bill no, seller…" oninput="searchBillsDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
-            <button class="btn btn-g needs-price-check" id="btn-gen-bill-one" style="height:38px;padding:0 16px;font-weight:600" onclick="showModal('gen-bill-modal')">+ Generate Bill</button>
+            <button class="btn btn-g needs-price-check" id="btn-gen-bill-one" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenBillModal()">+ Generate Bill</button>
             <button class="needs-invoice-write btn btn-a needs-price-check" id="btn-gen-bill-all" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenAllModal('bills')">⚡ Generate for All Agri Sellers</button>
             <button class="btn btn-o" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenCommissionBillModal()" title="Generate Commission Bill (Format 2) for the selected auction">+ Commission Bill (F2)</button>
           </div>
@@ -6219,7 +6219,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   <h2>Generate Sales Invoice(s)</h2>
   <div class="fg">
     <label>Sale Type — filters eligible buyers below</label>
-    <select id="gi-sale" onchange="loadInvEligibleBuyers()">
+    <select id="gi-sale" onchange="loadInvEligibleBuyers();suggestDocNo(document.getElementById('inv-auction').value,'invoices','gi-invno',this.value,true)">
       <!-- Default option: "All" — shows both local and interstate buyers
            together. Users can narrow to a single type if needed. Earlier
            the default was 'L' (Local), which silently hid every buyer
@@ -6281,7 +6281,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   <h2 id="gen-all-title">Generate All</h2>
   <p id="gen-all-desc" style="font-size:12px;color:var(--text2);margin-bottom:14px"></p>
   <div class="fg" id="gen-all-sale-wrap" style="display:none"><label>Sale Type — filter + fallback</label>
-    <select id="ga-sale" onchange="refreshGenAllPreview()">
+    <select id="ga-sale" onchange="refreshGenAllPreview();suggestDocNo(document.getElementById('inv-auction').value,'invoices','ga-start',this.value,true)">
       <option value="">All sale types (use each buyer's default)</option>
       <option value="L">Local (L) only</option>
       <option value="I">Inter-state (I) only</option>
@@ -20091,14 +20091,41 @@ async function loadPurEligibleSellers(){
   }catch(e){console.warn(e)}
 }
 
+// Suggest the starting document number for a generate modal by continuing
+// the series from the previous trade (server returns prev-auction max + 1).
+// `module` is invoices|purchases|bills; `sale` narrows the sales-invoice
+// series (per sale type). Fills `inputId` only when it's blank, unless
+// force=true (used when opening a modal / switching sale type, where a
+// fresh suggestion should replace any stale value). A null suggestion
+// (no prior document) leaves the field blank for manual entry.
+async function suggestDocNo(aid,module,inputId,sale,force){
+  const el=document.getElementById(inputId);
+  if(!el||!aid)return;
+  if(!force&&el.value.trim())return;
+  try{
+    let url=`/api/auctions/${aid}/suggest-doc-no/${module}`;
+    if(module==='invoices'&&sale)url+=`?sale=${encodeURIComponent(sale)}`;
+    const r=await j(url);
+    if(r&&r.suggested!=null)el.value=r.suggested;
+    else if(force)el.value='';
+  }catch(e){console.warn('suggestDocNo',e)}
+}
+
 function openGenInvModal(){
   if(!document.getElementById('inv-auction').value){alert('Select an auction first');return}
   const noti=document.getElementById('gi-no-ti'); if(noti) noti.checked=false;
   loadInvEligibleBuyers();showModal('gen-inv-modal');
+  suggestDocNo(document.getElementById('inv-auction').value,'invoices','gi-invno',document.getElementById('gi-sale')?.value||'',true);
 }
 function openGenPurModal(){
   if(!document.getElementById('pur-auction').value){alert('Select an auction first');return}
   loadPurEligibleSellers();showModal('gen-pur-modal');
+  suggestDocNo(document.getElementById('pur-auction').value,'purchases','gp-invno','',true);
+}
+function openGenBillModal(){
+  if(!document.getElementById('bill-auction').value){alert('Select an auction first');return}
+  loadEligibleSellers&&loadEligibleSellers();showModal('gen-bill-modal');
+  suggestDocNo(document.getElementById('bill-auction').value,'bills','gb-billno','',true);
 }
 
 // ── Generate All (batch) ─────────────────────────────────
@@ -20117,8 +20144,11 @@ async function openGenAllModal(kind){
   document.getElementById('gen-all-title').textContent=titles[kind];
   document.getElementById('gen-all-desc').textContent=descs[kind];
   document.getElementById('gen-all-sale-wrap').style.display=kind==='invoices'?'block':'none';
-  document.getElementById('ga-start').value='';
   if(document.getElementById('ga-sale'))document.getElementById('ga-sale').value='';
+  document.getElementById('ga-start').value='';
+  // Suggest the starting number by continuing the previous trade's series.
+  // kind (invoices|purchases|bills) matches the suggest-doc-no module names.
+  suggestDocNo(aid,kind,'ga-start',kind==='invoices'?(document.getElementById('ga-sale')?.value||''):'',true);
   document.getElementById('ga-preview').style.display='none';
   const diagEl=document.getElementById('ga-diag');
   if(diagEl){diagEl.style.display='none';diagEl.innerHTML=''}
