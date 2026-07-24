@@ -5924,6 +5924,29 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <div class="fg"><label>Crop Type</label><input id="a-crpt"></div>
     <div class="fg"><label>State</label><select id="a-state"><option>TAMIL NADU</option><option>KERALA</option></select></div>
   </div>
+
+  <!-- Copy from previous auction — create-mode only (hidden on edit).
+       Lets the operator seed the new trade from an earlier one: clone its
+       lot allocations as a starting point (editable afterwards via Edit
+       Allocations) and/or carry forward its UNSOLD lots as pre-entered,
+       booked slots keeping the seller + goods details and prior price. -->
+  <div id="a-carry-section" style="display:none;margin-top:10px;border-top:1px solid var(--border);padding-top:12px">
+    <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px">Copy from previous auction <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text3)">(optional)</span></div>
+    <div class="fg">
+      <label>Source auction</label>
+      <select id="a-carry-src" onchange="onCarrySrcChange()"><option value="">— None —</option></select>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:10px 0;cursor:pointer;opacity:.5" id="a-carry-alloc-lbl">
+      <input type="checkbox" id="a-carry-alloc" disabled style="width:16px;height:16px;flex-shrink:0">
+      <span>Copy lot allocations <span id="a-carry-alloc-note" style="color:var(--text3);font-size:12px"></span></span>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:10px 0;cursor:pointer;opacity:.5" id="a-carry-lots-lbl">
+      <input type="checkbox" id="a-carry-lots" disabled style="width:16px;height:16px;flex-shrink:0">
+      <span>Carry forward unsold lots <span id="a-carry-lots-note" style="color:var(--text3);font-size:12px"></span></span>
+    </label>
+    <div style="font-size:11px;color:var(--text3);line-height:1.5;margin-top:2px">Carried lots keep their original lot numbers, seller &amp; goods details and prior price, and are booked into the new trade ready to re-auction.</div>
+  </div>
+
   <div class="actions"><button class="btn btn-o" onclick="hideModal('auction-modal')">Cancel</button><button class="btn btn-g" id="auction-save-btn" onclick="saveAuction()">Save</button></div>
 </div></div>
 
@@ -14712,10 +14735,16 @@ function renderAllocEditCards(stats) {
     const keeping = lots.length - usedCt - marked;
     const chips = lots.map(l => {
       const isUsed = !!l.used;
+      const isCarried = !!l.carried;
       const mkKey  = _allocMarkKey(branch, l.lot);
       const isMark = _allocMarked.has(mkKey);
       let style;
-      if (isUsed) {
+      if (isCarried) {
+        // Carried-forward lot: booked into this trade from a previous
+        // auction. Distinct amber look (no strike-through) so it reads as
+        // an occupied-but-re-auctionable slot, not a dead/used chip.
+        style = 'background:#FEF3C7;color:#92400E;border:1.5px solid #F59E0B;font-weight:700;cursor:not-allowed';
+      } else if (isUsed) {
         style = 'background:#f3f4f6;color:#9ca3af;border:1px solid #e5e7eb;text-decoration:line-through;cursor:not-allowed';
       } else if (isMark) {
         style = 'background:#dcfce7;color:#15803d;border:1.5px solid #16a34a;font-weight:700;cursor:pointer';
@@ -14723,10 +14752,13 @@ function renderAllocEditCards(stats) {
         style = 'background:#fff;color:#374151;border:1px solid #d1d5db;cursor:pointer';
       }
       const click = isUsed ? '' : ` onclick="_allocChipClick('${esc(branch)}','${esc(l.lot)}')"`;
-      const title = isUsed
-        ? `Lot ${l.lot} — already entered${l.seller ? ' by ' + l.seller : ''} (locked)`
-        : (isMark ? `Lot ${l.lot} — marked for delete (click to unmark)` : `Lot ${l.lot} — free (click to mark for delete)`);
-      return `<span data-lot="${esc(l.lot)}" title="${esc(title)}" style="${style};display:inline-flex;align-items:center;justify-content:center;min-width:46px;height:28px;padding:0 8px;border-radius:6px;font-size:12px;font-family:monospace;user-select:none"${click}>${esc(l.lot)}</span>`;
+      const title = isCarried
+        ? `Lot ${l.lot} — carried forward${l.seller ? ' (' + l.seller + ')' : ''}, booked & awaiting re-auction`
+        : (isUsed
+          ? `Lot ${l.lot} — already entered${l.seller ? ' by ' + l.seller : ''} (locked)`
+          : (isMark ? `Lot ${l.lot} — marked for delete (click to unmark)` : `Lot ${l.lot} — free (click to mark for delete)`));
+      const cf = isCarried ? '<span style="font-size:9px;margin-right:2px">↻</span>' : '';
+      return `<span data-lot="${esc(l.lot)}" title="${esc(title)}" style="${style};display:inline-flex;align-items:center;justify-content:center;min-width:46px;height:28px;padding:0 8px;border-radius:6px;font-size:12px;font-family:monospace;user-select:none"${click}>${cf}${esc(l.lot)}</span>`;
     }).join('');
 
     return `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04)">
@@ -19241,10 +19273,75 @@ function openAuctionAdd(){
   document.getElementById('a-date').value='';
   document.getElementById('a-crpt').value=getDefaultCropType();
   document.getElementById('a-state').value=getDefaultBusinessState();
+  // Copy-from-previous section: create-mode only. Reset + populate sources.
+  resetCarrySection();
+  document.getElementById('a-carry-section').style.display='';
+  populateCarrySources();
   showModal('auction-modal');
+}
+
+// ── Copy from previous auction (New Auction modal) ──────────────
+// Reset the copy-from section to its empty/disabled state.
+function resetCarrySection(){
+  const src = document.getElementById('a-carry-src');
+  if (src) src.value='';
+  ['a-carry-alloc','a-carry-lots'].forEach(id=>{
+    const cb=document.getElementById(id); if(cb){cb.checked=false;cb.disabled=true;}
+  });
+  ['a-carry-alloc-lbl','a-carry-lots-lbl'].forEach(id=>{
+    const l=document.getElementById(id); if(l) l.style.opacity='.5';
+  });
+  const an=document.getElementById('a-carry-alloc-note'); if(an) an.textContent='';
+  const ln=document.getElementById('a-carry-lots-note');  if(ln) ln.textContent='';
+}
+// Fill the source-auction dropdown with existing trades (most recent first).
+async function populateCarrySources(){
+  const sel=document.getElementById('a-carry-src');
+  if(!sel) return;
+  try{
+    const auctions=await j('/api/auctions');
+    sel.innerHTML='<option value="">— None —</option>'+
+      (auctions||[]).map(a=>{
+        const d=(a.date||'').split('T')[0];
+        return `<option value="${a.id}">Auction #${esc(a.ano)} · ${esc(d)}</option>`;
+      }).join('');
+  }catch(_){ /* leave the single None option */ }
+}
+// When a source is picked, fetch its contribution counts and enable the
+// relevant checkboxes (auto-ticking those that actually have something).
+async function onCarrySrcChange(){
+  const id=document.getElementById('a-carry-src').value;
+  const allocCb=document.getElementById('a-carry-alloc');
+  const lotsCb =document.getElementById('a-carry-lots');
+  const allocLbl=document.getElementById('a-carry-alloc-lbl');
+  const lotsLbl =document.getElementById('a-carry-lots-lbl');
+  const allocNote=document.getElementById('a-carry-alloc-note');
+  const lotsNote =document.getElementById('a-carry-lots-note');
+  if(!id){ resetCarrySection(); return; }
+  // Optimistic: disable while loading.
+  allocCb.disabled=lotsCb.disabled=true;
+  allocNote.textContent=lotsNote.textContent='…';
+  try{
+    const p=await j(`/api/auctions/${id}/carry-forward-preview`);
+    const nAlloc=Number(p.allocations)||0, nUnsold=Number(p.unsold)||0;
+    allocCb.disabled=nAlloc===0;
+    allocCb.checked=nAlloc>0;
+    allocLbl.style.opacity=nAlloc?'1':'.5';
+    allocNote.textContent=nAlloc?`(${nAlloc} range${nAlloc===1?'':'s'})`:'(none)';
+    lotsCb.disabled=nUnsold===0;
+    lotsCb.checked=nUnsold>0;
+    lotsLbl.style.opacity=nUnsold?'1':'.5';
+    lotsNote.textContent=nUnsold?`(${nUnsold} unsold lot${nUnsold===1?'':'s'})`:'(none)';
+  }catch(e){
+    allocNote.textContent=lotsNote.textContent='';
+    toast(e.message||'Could not load source auction');
+  }
 }
 function openAuctionEdit(a){
   document.getElementById('auction-modal-title').textContent='Edit Auction';
+  // No copy-from-previous when editing an existing trade.
+  document.getElementById('a-carry-section').style.display='none';
+  resetCarrySection();
   document.getElementById('a-id').value=a.id;
   document.getElementById('a-ano').value=a.ano||'';
   document.getElementById('a-date').value=a.date||'';
@@ -19261,11 +19358,48 @@ async function saveAuction(){
     const r=await fetch(B+(id?`/api/auctions/${id}`:'/api/auctions'),{method:id?'PUT':'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},body:JSON.stringify(body)});
     if(!r.ok){const d=await r.json();throw new Error(d.error||'Save failed')}
+    // On CREATE, run the optional carry-forward (copy allocations / carry
+    // unsold lots) before closing so the operator gets one combined toast.
+    if(!id){
+      const created=await r.json().catch(()=>({}));
+      await runCarryForward(created && created.id);
+    }
     hideModal('auction-modal');toast(id?'Auction updated':'Auction created');loadAuctions();
     // Newly created / renamed auction needs to surface in the topbar
     // selector. Fire-and-forget so a slow /api/auctions doesn't block UX.
     try { loadTopbarTradeSelector(); } catch(_) {}
   }catch(e){showError(e)}
+}
+// Apply the "Copy from previous auction" choices to a freshly-created trade.
+// Best-effort: the auction already exists, so a carry-forward failure is
+// surfaced as a toast rather than rolling back the create.
+async function runCarryForward(newId){
+  if(!newId) return;
+  const srcId=document.getElementById('a-carry-src').value;
+  const copyAlloc=document.getElementById('a-carry-alloc').checked;
+  const carryLots=document.getElementById('a-carry-lots').checked;
+  if(!srcId || (!copyAlloc && !carryLots)) return;
+  try{
+    const res=await j(`/api/auctions/${newId}/carry-forward`,{
+      method:'POST',
+      body:JSON.stringify({source_auction_id:parseInt(srcId,10),copy_allocations:copyAlloc,carry_lots:carryLots})
+    });
+    const parts=[];
+    if(copyAlloc){
+      if(res.allocations_skipped) parts.push('allocations already set — skipped');
+      else parts.push(`${res.allocations_copied} allocation range(s) copied`);
+    }
+    if(carryLots){
+      parts.push(`${res.lots_carried} lot(s) carried forward`);
+      if((res.lots_skipped||[]).length) parts.push(`${res.lots_skipped.length} skipped`);
+    }
+    if(parts.length) toast(parts.join(' · '));
+    if((res.lots_skipped||[]).length){
+      console.warn('Carry-forward skipped lots:', res.lots_skipped);
+    }
+  }catch(e){
+    toast('Auction created, but carry-forward failed: '+(e.message||'error'));
+  }
 }
 async function delAuction(id){
   if(!confirm('Delete auction and ALL its lots?'))return;

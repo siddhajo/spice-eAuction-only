@@ -4367,6 +4367,128 @@ app.post('/api/auctions/:id/allocations/auto-fill', requireAuctionWrite, (req, r
   res.json({ created, allocations });
 });
 
+// ── CARRY-FORWARD ────────────────────────────────────────────────
+// Preview what a SOURCE auction can contribute to a new trade: how many
+// allocation ranges it has and how many UNSOLD lots (code empty, not held)
+// are available to carry forward. Drives the New Auction "Copy from
+// previous auction" section so the operator sees counts before committing.
+app.get('/api/auctions/:id/carry-forward-preview', requireViewOrLotEntry, (req, res) => {
+  const db = getDb();
+  const srcId = parseInt(req.params.id, 10);
+  if (!srcId) return res.status(400).json({ error: 'Invalid auction id' });
+  const src = db.get('SELECT id, ano, date FROM auctions WHERE id = ?', [srcId]);
+  if (!src) return res.status(404).json({ error: 'Auction not found' });
+  const allocations = db.get('SELECT COUNT(*) AS c FROM lot_allocations WHERE auction_id = ?', [srcId]).c;
+  const unsold = db.get(
+    `SELECT COUNT(*) AS c FROM lots
+      WHERE auction_id = ? AND UPPER(COALESCE(TRIM(code),'')) = '' AND COALESCE(reserved,0) = 0`,
+    [srcId]
+  ).c;
+  res.json({ source: { id: src.id, ano: src.ano, date: src.date }, allocations, unsold });
+});
+
+// Copy allocations and/or carry unsold lots from a SOURCE auction into this
+// (destination) auction. Driven by the New Auction flow; the destination
+// auction must already exist (created by POST /api/auctions first).
+//   • copy_allocations — clone the source's lot_allocations ranges + its
+//       main/holding depot. Skipped (never clobbered) if the destination
+//       already has allocations of its own.
+//   • carry_lots — clone every UNSOLD lot (code empty, reserved=0) as a
+//       fresh entry: keeps the original lot_no, seller + goods details, and
+//       the prior price / reserved_price as a starting point. The sale
+//       outcome (code / buyer / amount / GST / payment) is left cleared so
+//       the lot can be re-auctioned. Each carried lot is stamped with
+//       carried_from_auction_id so reports + the allocation grid can flag it.
+// Idempotent-ish: a lot_no already present in the destination is skipped, as
+// is any lot that would fall outside the destination's branch allocations.
+app.post('/api/auctions/:id/carry-forward', requireAuctionWrite, (req, res) => {
+  const db = getDb();
+  const destId  = parseInt(req.params.id, 10);
+  const srcId   = parseInt(req.body.source_auction_id, 10);
+  const doAlloc = !!req.body.copy_allocations;
+  const doLots  = !!req.body.carry_lots;
+  if (!destId) return res.status(400).json({ error: 'Invalid auction id' });
+  if (!srcId)  return res.status(400).json({ error: 'source_auction_id is required' });
+  if (srcId === destId) return res.status(400).json({ error: 'Source and destination auctions must be different' });
+  if (!doAlloc && !doLots) return res.status(400).json({ error: 'Nothing selected to carry forward' });
+  const dest = db.get('SELECT id FROM auctions WHERE id = ?', [destId]);
+  const src  = db.get('SELECT id, main_branch FROM auctions WHERE id = ?', [srcId]);
+  if (!dest) return res.status(404).json({ error: 'Destination auction not found' });
+  if (!src)  return res.status(404).json({ error: 'Source auction not found' });
+
+  let allocCopied = 0, allocSkipped = false;
+  if (doAlloc) {
+    const existing = db.get('SELECT COUNT(*) AS c FROM lot_allocations WHERE auction_id = ?', [destId]).c;
+    if (existing > 0) {
+      allocSkipped = true;   // don't clobber allocations already configured on the new trade
+    } else {
+      const srcAllocs = db.all(
+        'SELECT branch, start_lot, end_lot FROM lot_allocations WHERE auction_id = ? ORDER BY branch, start_lot',
+        [srcId]
+      );
+      for (const a of srcAllocs) {
+        db.run('INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?, ?, ?, ?)',
+          [destId, a.branch, a.start_lot, a.end_lot]);
+        allocCopied++;
+      }
+      // Carry the main/holding depot too, but only if it names a branch we
+      // just copied (otherwise Close Depot would break on a stale value).
+      const mb = String(src.main_branch || '').trim();
+      if (mb && srcAllocs.some(a => String(a.branch).trim().toUpperCase() === mb.toUpperCase())) {
+        db.run('UPDATE auctions SET main_branch = ? WHERE id = ?', [mb, destId]);
+      }
+    }
+  }
+
+  let lotsCarried = 0;
+  const lotsSkipped = [];
+  if (doLots) {
+    const unsold = db.all(
+      `SELECT * FROM lots
+        WHERE auction_id = ? AND UPPER(COALESCE(TRIM(code),'')) = '' AND COALESCE(reserved,0) = 0
+        ORDER BY lot_no`,
+      [srcId]
+    );
+    // Destination allocations (after any copy above) for range enforcement.
+    const destAllocs = db.all('SELECT branch, start_lot, end_lot FROM lot_allocations WHERE auction_id = ?', [destId]);
+    for (const l of unsold) {
+      const lotNo  = String(l.lot_no || '').trim();
+      const branch = String(l.branch || '').trim();
+      // Skip if that lot number is already taken in the destination trade.
+      const clash = db.get('SELECT id FROM lots WHERE auction_id = ? AND lot_no = ?', [destId, lotNo]);
+      if (clash) { lotsSkipped.push(`#${lotNo} (already exists)`); continue; }
+      // Enforce destination allocations when the branch has any.
+      const branchAllocs = destAllocs.filter(a => String(a.branch).trim().toUpperCase() === branch.toUpperCase());
+      if (branchAllocs.length && !branchAllocs.some(a => isLotInRange(lotNo, a.start_lot, a.end_lot))) {
+        lotsSkipped.push(`#${lotNo} (outside ${branch || '(no branch)'} allocation)`);
+        continue;
+      }
+      db.run(
+        `INSERT INTO lots (auction_id,lot_no,crop,grade,crpt,branch,state,trader_id,name,padd,ppla,ppin,pstate,pst_code,cr,pan,tel,aadhar,bags,litre,qty,gross_wt,sample_wt,moisture,price,reserved_price,user_id,bank_id,immediate_payment,carried_from_auction_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [destId, lotNo, l.crop||'', l.grade||'', l.crpt||'', branch, l.state||'TAMIL NADU', l.trader_id||null,
+         l.name||'', l.padd||'', l.ppla||'', l.ppin||'', l.pstate||'', l.pst_code||'', l.cr||'', l.pan||'',
+         l.tel||'', l.aadhar||'', l.bags||0, l.litre||'', l.qty||0, l.gross_wt||0, l.sample_wt||0, l.moisture||'',
+         Number(l.price)||0, Number(l.reserved_price)||0, l.user_id||'', l.bank_id||null,
+         Number(l.immediate_payment)?1:0, srcId]);
+      lotsCarried++;
+    }
+    if (lotsCarried) {
+      pcClearGate(db, destId);   // new lots → price-check must be re-run before transactions
+      lvClearGate(db, destId);   // new lots → trade must be re-validated before price import
+      try { runGrade2Alerts(db, req, destId); } catch (_) { /* alert best-effort */ }
+    }
+  }
+
+  res.json({
+    success: true,
+    allocations_copied: allocCopied,
+    allocations_skipped: allocSkipped,
+    lots_carried: lotsCarried,
+    lots_skipped: lotsSkipped,
+  });
+});
+
 // Allocation stats (used/total per branch + per-lot grid)
 // Drives both the admin Allocations modal and the Lot Entry status bar.
 app.get('/api/auctions/:id/allocation-stats', requireViewOrLotEntry, (req, res) => {
@@ -4377,10 +4499,10 @@ app.get('/api/auctions/:id/allocation-stats', requireViewOrLotEntry, (req, res) 
     [auctionId]
   );
   const lots = db.all(
-    'SELECT lot_no, branch, name, amount, reserved FROM lots WHERE auction_id = ?',
+    'SELECT lot_no, branch, name, amount, reserved, carried_from_auction_id FROM lots WHERE auction_id = ?',
     [auctionId]
   );
-  // lot_no → { branch, seller, booked, reserved }
+  // lot_no → { branch, seller, booked, reserved, carried }
   const lotInfo = {};
   for (const l of lots) {
     lotInfo[l.lot_no] = {
@@ -4388,6 +4510,7 @@ app.get('/api/auctions/:id/allocation-stats', requireViewOrLotEntry, (req, res) 
       seller: l.name   || '',
       booked: Number(l.amount) > 0,
       reserved: !!Number(l.reserved),
+      carried: l.carried_from_auction_id != null,
     };
   }
 
@@ -4430,6 +4553,7 @@ app.get('/api/auctions/:id/allocation-stats', requireViewOrLotEntry, (req, res) 
         let state = 'free';
         if (info && info.reserved) state = 'reserved';      // held, not booked
         else if (info && info.booked) state = 'booked';
+        else if (info && info.carried) state = 'carried';   // carried forward, awaiting new sale
         else if (info)           state = 'allocated';     // present in lots table but amount=0
         if (reassigned && state === 'free') state = 'reassigned';
         lotGrid.push({
@@ -4437,6 +4561,7 @@ app.get('/api/auctions/:id/allocation-stats', requireViewOrLotEntry, (req, res) 
           used: !!info,
           booked: !!(info && info.booked),
           reserved: !!(info && info.reserved),
+          carried: !!(info && info.carried),
           seller: info ? info.seller : '',
           branch: a.branch,
           state,
@@ -5440,7 +5565,10 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
     return res.json({ rows, total, limit: lim, offset: off });
   }
 
-  q += ' ORDER BY lots.lot_no';
+  // Natural numeric order: CAST sorts 1,2,…,10 correctly (plain text order
+  // gives 1,10,11,2). The lot_no tie-breaker keeps any non-numeric/prefixed
+  // lot numbers stable. Mirrors the paginated + depot-lots + report queries.
+  q += ' ORDER BY CAST(lots.lot_no AS INTEGER), lots.lot_no';
   res.json(db.all(q, p));
 });
 

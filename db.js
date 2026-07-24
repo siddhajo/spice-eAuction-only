@@ -333,6 +333,13 @@ async function initDb() {
     -- idx_lots_locked index on the very first boot.
     locked_at TEXT DEFAULT NULL,
     locked_by TEXT DEFAULT NULL,
+    -- Carry-forward marker (also added via ALTER for older DBs in the
+    -- migrations block below). Holds the SOURCE auction id when this lot
+    -- was carried forward from a previous auction's unsold lot (see
+    -- POST /api/auctions/:id/carry-forward). NULL for normally-entered
+    -- lots. Used for reporting + to make carry-forward idempotent (a lot
+    -- number already present in the destination is skipped on re-run).
+    carried_from_auction_id INTEGER DEFAULT NULL,
     created_at TEXT DEFAULT (datetime('now','localtime')),
     FOREIGN KEY (auction_id) REFERENCES auctions(id),
     FOREIGN KEY (trader_id) REFERENCES traders(id)
@@ -942,6 +949,10 @@ async function initDb() {
     // CREATE above). Added via ALTER for existing DBs so the feature works on
     // upgrade without a rebuild.
     "ALTER TABLE auctions ADD COLUMN main_branch TEXT DEFAULT ''",
+    // Carry-forward marker: the source auction id an unsold lot was carried
+    // from (see POST /api/auctions/:id/carry-forward). Added via ALTER for
+    // existing DBs so the feature works on upgrade without a rebuild.
+    'ALTER TABLE lots ADD COLUMN carried_from_auction_id INTEGER DEFAULT NULL',
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }
