@@ -359,7 +359,9 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
       y += rowH;
       return;
     }
-    if (i % 2 === 1) doc.rect(m, y, usableW, rowH).fill('#F7F5F2');
+    // Inset the stripe fill 0.5pt from the top so it never paints over the
+    // previous row's separator line — keeps every separator uniformly crisp.
+    if (i % 2 === 1) doc.rect(m, y + 0.5, usableW, rowH - 0.5).fill('#F7F5F2');
     const BASE = 7.5;
     const LINE_H = 10;
     const PAD_TOP = 3;
@@ -382,7 +384,10 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
         });
       }
     });
-    doc.moveTo(m, y + rowH).lineTo(m + usableW, y + rowH).lineWidth(0.25).strokeColor('#DDD').stroke();
+    // Visible horizontal separator after every row. Matches the vertical
+    // grid colour (#888) so the table reads as a clean grid; 0.5pt stays
+    // crisp even where the next striped row's fill overlaps its lower half.
+    doc.moveTo(m, y + rowH).lineTo(m + usableW, y + rowH).lineWidth(0.5).strokeColor('#888').stroke();
     y += rowH;
   }
 

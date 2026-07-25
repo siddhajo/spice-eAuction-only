@@ -508,6 +508,17 @@ body{
 .login-style-swatch[data-ls="royal"]   {background:linear-gradient(120deg,#4F46E5,#3B82F6,#8B5CF6)}
 .login-style-swatch[data-ls="rose"]    {background:linear-gradient(120deg,#E11D48,#FB7185,#F472B6)}
 .login-style-swatch[data-ls="midnight"]{background:linear-gradient(120deg,#0B1020,#6366F1,#F472B6)}
+.login-style-swatch[data-ls="forest"]  {background:linear-gradient(120deg,#15803D,#65A30D,#0D9488)}
+.login-style-swatch[data-ls="honey"]   {background:linear-gradient(120deg,#D97706,#F59E0B,#EAB308)}
+.login-style-swatch[data-ls="grape"]   {background:linear-gradient(120deg,#7E22CE,#C026D3,#6366F1)}
+.login-style-swatch[data-ls="candy"]   {background:linear-gradient(120deg,#EC4899,#A855F7,#38BDF8)}
+.login-style-swatch[data-ls="lagoon"]  {background:linear-gradient(120deg,#0891B2,#14B8A6,#22C55E)}
+.login-style-swatch[data-ls="graphite"]{background:linear-gradient(120deg,#334155,#64748B,#0EA5E9)}
+/* Custom login palette chip — conic rainbow hiding a native colour input,
+   mirrors the app-theme custom swatch. JS derives the whole login palette
+   from the single picked hue. */
+.login-style-swatch.custom{background:conic-gradient(from 200deg,#F43F5E,#F59E0B,#10B981,#3B82F6,#8B5CF6,#F43F5E)}
+.login-style-swatch.custom input[type="color"]{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;border:none;padding:0;background:none}
 .login-set-input{height:34px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--text);font-size:12.5px;font-family:inherit;outline:none;min-width:0}
 .login-set-input:focus{border-color:var(--spice-saffron)}
 /* Login-layout picker (Settings → Appearance → Login page). Each option is a
@@ -575,6 +586,12 @@ body[data-login="ocean"]   #login{--lg-1:#0EA5E9;--lg-1-dk:#0369A1;--lg-2:#22D3E
 body[data-login="emerald"] #login{--lg-1:#10B981;--lg-1-dk:#047857;--lg-2:#34D399;--lg-3:#F59E0B;--lg-bg-1:#F6FEFB;--lg-bg-2:#F1FBF6;--lg-bg-3:#FFFBF2}
 body[data-login="royal"]   #login{--lg-1:#4F46E5;--lg-1-dk:#3730A3;--lg-2:#3B82F6;--lg-3:#8B5CF6;--lg-bg-1:#F8FAFF;--lg-bg-2:#F3F6FF;--lg-bg-3:#F7F5FF}
 body[data-login="rose"]    #login{--lg-1:#E11D48;--lg-1-dk:#9F1239;--lg-2:#FB7185;--lg-3:#F472B6;--lg-bg-1:#FFF7F9;--lg-bg-2:#FFF2F5;--lg-bg-3:#FFF4FA}
+body[data-login="forest"]  #login{--lg-1:#15803D;--lg-1-dk:#166534;--lg-2:#65A30D;--lg-3:#0D9488;--lg-bg-1:#F5FCF7;--lg-bg-2:#F6FBEC;--lg-bg-3:#F0FBF8}
+body[data-login="honey"]   #login{--lg-1:#D97706;--lg-1-dk:#B45309;--lg-2:#F59E0B;--lg-3:#CA8A04;--lg-bg-1:#FFFBF3;--lg-bg-2:#FFFAEC;--lg-bg-3:#FEFCE8}
+body[data-login="grape"]   #login{--lg-1:#7E22CE;--lg-1-dk:#6B21A8;--lg-2:#C026D3;--lg-3:#6366F1;--lg-bg-1:#FBF6FF;--lg-bg-2:#FDF4FF;--lg-bg-3:#F5F5FF}
+body[data-login="candy"]   #login{--lg-1:#EC4899;--lg-1-dk:#DB2777;--lg-2:#A855F7;--lg-3:#38BDF8;--lg-bg-1:#FFF5FA;--lg-bg-2:#FBF5FF;--lg-bg-3:#F1FAFF}
+body[data-login="lagoon"]  #login{--lg-1:#0891B2;--lg-1-dk:#0E7490;--lg-2:#14B8A6;--lg-3:#22C55E;--lg-bg-1:#F2FCFF;--lg-bg-2:#EFFDFA;--lg-bg-3:#F2FDF5}
+body[data-login="graphite"]#login{--lg-1:#334155;--lg-1-dk:#1E293B;--lg-2:#64748B;--lg-3:#0EA5E9;--lg-bg-1:#F8FAFC;--lg-bg-2:#F5F7FA;--lg-bg-3:#F1F8FE}
 /* Midnight — dark login. Also flips the card/text to a dark palette. */
 body[data-login="midnight"] #login{--lg-1:#818CF8;--lg-1-dk:#6366F1;--lg-2:#22D3EE;--lg-3:#F472B6;--lg-bg-1:#0B1020;--lg-bg-2:#0E1428;--lg-bg-3:#141024;color:#E2E8F0}
 body[data-login="midnight"] #login .login-hero-title{color:#F1F5F9}
@@ -3230,7 +3247,19 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
               <span class="login-style-swatch" data-ls="emerald"  title="Emerald — green · mint · amber"   onclick="setLoginStyle('emerald')"></span>
               <span class="login-style-swatch" data-ls="royal"    title="Royal — indigo · blue · violet"   onclick="setLoginStyle('royal')"></span>
               <span class="login-style-swatch" data-ls="rose"     title="Rose — crimson · coral · pink"    onclick="setLoginStyle('rose')"></span>
+              <span class="login-style-swatch" data-ls="forest"   title="Forest — green · lime · teal"     onclick="setLoginStyle('forest')"></span>
+              <span class="login-style-swatch" data-ls="honey"    title="Honey — amber · gold · yellow"    onclick="setLoginStyle('honey')"></span>
+              <span class="login-style-swatch" data-ls="grape"    title="Grape — purple · magenta · indigo" onclick="setLoginStyle('grape')"></span>
+              <span class="login-style-swatch" data-ls="candy"    title="Candy — pink · violet · sky"      onclick="setLoginStyle('candy')"></span>
+              <span class="login-style-swatch" data-ls="lagoon"   title="Lagoon — cyan · teal · green"     onclick="setLoginStyle('lagoon')"></span>
+              <span class="login-style-swatch" data-ls="graphite" title="Graphite — slate · grey · sky"    onclick="setLoginStyle('graphite')"></span>
               <span class="login-style-swatch" data-ls="midnight" title="Midnight — dark sign-in"          onclick="setLoginStyle('midnight')"></span>
+              <!-- Divider before the custom login-palette picker -->
+              <span style="display:inline-block;width:1px;height:22px;background:var(--border)"></span>
+              <!-- Custom login palette: conic swatch hides a native colour input. -->
+              <span class="login-style-swatch custom" data-ls="custom" title="Pick a custom login palette">
+                <input type="color" id="login-custom-color-input" oninput="setLoginCustomColor(this.value)" value="#166534">
+              </span>
             </div>
           </div>
 
@@ -27144,13 +27173,92 @@ function setCustomColor(hex){
 // body[data-login]; CSS derives the whole page from three hue tokens.
 // Persisted to localStorage for instant paint, and carried install-wide in
 // the branding preset (presetConfig.login.style) so every customer differs.
-const _LOGIN_STYLES = ['aurora','sunset','ocean','emerald','royal','rose','midnight'];
+const _LOGIN_STYLES = ['aurora','sunset','ocean','emerald','royal','rose','forest','honey','grape','candy','lagoon','graphite','midnight','custom'];
+// The seven hue/background CSS tokens each login skin drives. When a PRESET
+// skin is picked we must strip any inline overrides the CUSTOM palette left
+// on #login, otherwise they'd win over the preset's stylesheet rule.
+const _LOGIN_VARS = ['--lg-1','--lg-1-dk','--lg-2','--lg-3','--lg-bg-1','--lg-bg-2','--lg-bg-3'];
+function _clearLoginCustomVars(){
+  const el = document.getElementById('login');
+  if (el) _LOGIN_VARS.forEach(v => el.style.removeProperty(v));
+}
 function setLoginStyle(s){
   if (!_LOGIN_STYLES.includes(s)) s = 'aurora';
+  if (s === 'custom'){
+    // Delegate to the custom-palette path (re-derives from the saved hue).
+    let hex = '#166534';
+    try { hex = localStorage.getItem('loginCustomColor') || hex; } catch(e){}
+    return setLoginCustomColor(hex);
+  }
+  _clearLoginCustomVars();               // preset stylesheet rule takes over
   document.body.setAttribute('data-login', s);
   try { localStorage.setItem('loginStyle', s); } catch(e){}
   document.querySelectorAll('.login-style-swatch').forEach(c=>{
     c.classList.toggle('active', c.dataset.ls === s);
+  });
+}
+
+// ── Custom login palette ───────────────────────────────────
+// Derive a coherent 3-hue login skin (+ three near-white background tints)
+// from a single picked colour, then paint it by setting the same --lg-*
+// tokens the preset skins use — but inline on #login so it overrides them.
+// hue-2 sits +32° from the base, hue-3 −32°, giving an attractive analogous
+// sweep for the hero gradient without the risk of clashing auto-picks.
+function _hexToHsl(hex){
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex||'').trim());
+  if (!m) return null;
+  const n = parseInt(m[1],16);
+  let r=(n>>16&255)/255, g=(n>>8&255)/255, b=(n&255)/255;
+  const mx=Math.max(r,g,b), mn=Math.min(r,g,b), d=mx-mn;
+  let h=0, s=0, l=(mx+mn)/2;
+  if (d){
+    s = l>0.5 ? d/(2-mx-mn) : d/(mx+mn);
+    if (mx===r) h=((g-b)/d + (g<b?6:0));
+    else if (mx===g) h=((b-r)/d + 2);
+    else h=((r-g)/d + 4);
+    h*=60;
+  }
+  return { h, s:s*100, l:l*100 };
+}
+function _hslToHex(h,s,l){
+  h=((h%360)+360)%360; s=Math.max(0,Math.min(100,s))/100; l=Math.max(0,Math.min(100,l))/100;
+  const c=(1-Math.abs(2*l-1))*s, x=c*(1-Math.abs((h/60)%2-1)), m=l-c/2;
+  let r=0,g=0,b=0;
+  if (h<60){r=c;g=x;} else if (h<120){r=x;g=c;} else if (h<180){g=c;b=x;}
+  else if (h<240){g=x;b=c;} else if (h<300){r=x;b=c;} else {r=c;b=x;}
+  const to=v=>('0'+Math.round((v+m)*255).toString(16)).slice(-2);
+  return '#'+to(r)+to(g)+to(b);
+}
+function _deriveLoginPalette(hex){
+  const hsl=_hexToHsl(hex); if(!hsl) return null;
+  const cl=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const H=hsl.h, S=cl(hsl.s,45,92), L=cl(hsl.l,40,58);
+  return {
+    '--lg-1':    _hslToHex(H,        S,        L),
+    '--lg-1-dk': _hslToHex(H,        cl(S+6,45,96), cl(L-15,22,44)),
+    '--lg-2':    _hslToHex(H+32,     S,        cl(L+4,42,62)),
+    '--lg-3':    _hslToHex(H-32,     cl(S-4,40,88), cl(L+2,40,60)),
+    '--lg-bg-1': _hslToHex(H,        cl(S,22,55), 98),
+    '--lg-bg-2': _hslToHex(H+32,     cl(S,22,55), 98),
+    '--lg-bg-3': _hslToHex(H-32,     cl(S,22,55), 98),
+  };
+}
+// Apply a derived custom palette to #login (inline tokens). Does NOT persist
+// or touch active-swatch state — callers (setLoginCustomColor / boot) do that.
+function applyLoginCustomPalette(hex){
+  const pal=_deriveLoginPalette(hex); if(!pal) return false;
+  const el=document.getElementById('login'); if(!el) return false;
+  Object.entries(pal).forEach(([k,v])=>el.style.setProperty(k,v));
+  document.body.setAttribute('data-login','custom');
+  return true;
+}
+function setLoginCustomColor(hex){
+  if (!/^#[0-9a-fA-F]{6}$/.test(String(hex||''))) return;
+  if (!applyLoginCustomPalette(hex)) return;
+  try { localStorage.setItem('loginCustomColor', hex); localStorage.setItem('loginStyle','custom'); } catch(e){}
+  const inp=document.getElementById('login-custom-color-input'); if(inp) inp.value=hex;
+  document.querySelectorAll('.login-style-swatch').forEach(c=>{
+    c.classList.toggle('active', c.dataset.ls === 'custom');
   });
 }
 
@@ -27221,7 +27329,14 @@ function applyLoginTextFromStore(){
   let loginSkin = 'aurora';
   try { loginSkin = localStorage.getItem('loginStyle') || 'aurora'; } catch(e){}
   if (!_LOGIN_STYLES.includes(loginSkin)) loginSkin = 'aurora';
-  document.body.setAttribute('data-login', loginSkin);
+  if (loginSkin === 'custom'){
+    // Re-derive the custom palette from the saved hue for instant paint.
+    let hex = '#166534';
+    try { hex = localStorage.getItem('loginCustomColor') || hex; } catch(e){}
+    if (!applyLoginCustomPalette(hex)) document.body.setAttribute('data-login','aurora');
+  } else {
+    document.body.setAttribute('data-login', loginSkin);
+  }
   // Login layout — default 'split' (the modern-SaaS redesign) unless the
   // customer picked another. Applied instantly to avoid a layout flash.
   let loginLayout = 'split';
@@ -27268,7 +27383,11 @@ function applyLoginTextFromStore(){
         // screen; the text fields white-label the hero copy. This is what
         // makes each customer's login look different from the next.
         if (p.login) {
-          if (p.login.style && _LOGIN_STYLES.includes(p.login.style)) {
+          if (p.login.style === 'custom' && /^#[0-9a-fA-F]{6}$/.test(String(p.login.customColor||''))) {
+            applyLoginCustomPalette(p.login.customColor);
+            try { localStorage.setItem('loginCustomColor', p.login.customColor); localStorage.setItem('loginStyle','custom'); } catch(_){}
+          } else if (p.login.style && _LOGIN_STYLES.includes(p.login.style)) {
+            _clearLoginCustomVars();
             document.body.setAttribute('data-login', p.login.style);
             try { localStorage.setItem('loginStyle', p.login.style); } catch(_){}
           }
@@ -27313,7 +27432,11 @@ function applyLoginTextFromStore(){
       // Login skin/copy in legacy mode (no preset bundle): honour top-level
       // loginStyle / loginTitle / loginSub / loginCredit if the server sends them.
       const srvLogin = String(d.loginStyle || '').trim();
-      if (srvLogin && _LOGIN_STYLES.includes(srvLogin)) {
+      if (srvLogin === 'custom' && /^#[0-9a-fA-F]{6}$/.test(String(d.loginCustomColor||''))) {
+        applyLoginCustomPalette(d.loginCustomColor);
+        try { localStorage.setItem('loginCustomColor', d.loginCustomColor); localStorage.setItem('loginStyle','custom'); } catch(_){}
+      } else if (srvLogin && _LOGIN_STYLES.includes(srvLogin)) {
+        _clearLoginCustomVars();
         document.body.setAttribute('data-login', srvLogin);
         try { localStorage.setItem('loginStyle', srvLogin); } catch(_){}
       }
@@ -27358,6 +27481,12 @@ function syncAppearanceUI(){
   document.querySelectorAll('.login-style-swatch').forEach(c=>{
     c.classList.toggle('active', c.dataset.ls === ls);
   });
+  // Reflect the saved custom login palette hue in its picker.
+  try {
+    const savedLg = localStorage.getItem('loginCustomColor');
+    const lgInp = document.getElementById('login-custom-color-input');
+    if (lgInp && savedLg && /^#[0-9a-fA-F]{6}$/.test(savedLg)) lgInp.value = savedLg;
+  } catch(e){}
   try {
     const fill = (id, key) => { const el = document.getElementById(id); if (el && !el.value) el.value = localStorage.getItem(key) || ''; };
     fill('login-set-title',  'loginText_title');

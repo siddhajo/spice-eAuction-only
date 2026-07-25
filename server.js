@@ -664,7 +664,7 @@ const TENANT_BACKDROPS = ['', 'dots', 'mesh'];
 // and `data-login` on <body>. Keep in sync with _LOGIN_LAYOUTS / _LOGIN_STYLES
 // in index.html.
 const TENANT_LOGIN_LAYOUTS = ['split', 'topbar', 'aside', 'showcase'];
-const TENANT_LOGIN_STYLES = ['aurora', 'sunset', 'ocean', 'emerald', 'royal', 'rose', 'midnight'];
+const TENANT_LOGIN_STYLES = ['aurora', 'sunset', 'ocean', 'emerald', 'royal', 'rose', 'forest', 'honey', 'grape', 'candy', 'lagoon', 'graphite', 'midnight'];
 
 // Gatekeeper. Compares against ADMIN_BRANDING_KEY env var, falling back
 // to 'change-me' so an unsecured deploy is loud — running ?key=change-me
@@ -4792,11 +4792,21 @@ function applyLotReassignment(db, auctionId, fields, actor) {
     }
   } catch (e) { return { ok: false, error: e.message }; }
   if (!moving.length) return { ok: false, error: 'No lots selected to reassign' };
-  const movingSet = new Set(moving);
+
+  // Compare lots by a canonical prefix+number key, NOT the raw string, so
+  // zero-padding differences never cause a false mismatch. The reassign
+  // tiles emit lot ids padded to the range's START length (buildLotNo with
+  // s.padLen), while enumerateRange() below pads to max(start,end) length.
+  // A range stored as "1"–"500" therefore yields tile "1" but enumerated
+  // "001", and an exact-string compare wrongly reported the low lots as
+  // "not allocated" (and, worse, would have split nothing off FROM while
+  // still adding to TO — duplicating the allocation).
+  const lotKey = (l) => { const p = parseLotNo(l); return p ? p.prefix + ' ' + p.num : String(l || '').trim(); };
+  const movingKeys = new Set(moving.map(lotKey));
 
   // None of the moving lots may already be saved (booked)
-  const usedSet = new Set(db.all('SELECT lot_no FROM lots WHERE auction_id = ?', [auctionId]).map(l => String(l.lot_no || '').trim()));
-  const usedInSel = moving.filter(l => usedSet.has(l));
+  const usedSet = new Set(db.all('SELECT lot_no FROM lots WHERE auction_id = ?', [auctionId]).map(l => lotKey(l.lot_no)));
+  const usedInSel = moving.filter(l => usedSet.has(lotKey(l)));
   if (usedInSel.length > 0) {
     return {
       ok: false,
@@ -4816,9 +4826,9 @@ function applyLotReassignment(db, auctionId, fields, actor) {
     let lots = [];
     try { lots = enumerateRange(r.start_lot, r.end_lot); } catch (_) {}
     lotsByRangeId.set(r.id, lots);
-    lots.forEach(l => fromLotSet.add(l));
+    lots.forEach(l => fromLotSet.add(lotKey(l)));
   }
-  const notCovered = moving.filter(l => !fromLotSet.has(l));
+  const notCovered = moving.filter(l => !fromLotSet.has(lotKey(l)));
   if (notCovered.length) {
     return { ok: false, error: `${notCovered.length} lot(s) not allocated to ${from_branch}: ${notCovered.slice(0, 6).join(', ')}${notCovered.length > 6 ? ', …' : ''}` };
   }
@@ -4827,9 +4837,9 @@ function applyLotReassignment(db, auctionId, fields, actor) {
   // re-insert the surviving contiguous chunks. Untouched ranges are left be.
   for (const r of fromRanges) {
     const lots = lotsByRangeId.get(r.id) || [];
-    if (!lots.some(l => movingSet.has(l))) continue;
+    if (!lots.some(l => movingKeys.has(lotKey(l)))) continue;
     db.run('DELETE FROM lot_allocations WHERE id = ?', [r.id]);
-    const keep = lots.filter(l => !movingSet.has(l));
+    const keep = lots.filter(l => !movingKeys.has(lotKey(l)));
     for (const ch of chunkLots(keep)) {
       db.run('INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?, ?, ?, ?)',
         [auctionId, from_branch, ch.start, ch.end]);

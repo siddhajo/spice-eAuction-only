@@ -981,18 +981,27 @@ function getTradeReportData(db, auctionId, opts) {
 
   // Statistics for the footer — same branch filter applies.
   const allLots = db.all(
-    `SELECT bags, qty, price, amount FROM lots WHERE auction_id = ?` +
+    `SELECT bags, qty, price, amount, code FROM lots WHERE auction_id = ?` +
       (branchFilter ? ' AND UPPER(TRIM(branch)) = UPPER(TRIM(?))' : ''),
     branchFilter ? [auctionId, branchFilter] : [auctionId]
   );
-  const sold = allLots.filter(l => Number(l.amount) > 0);
-  const notSold = allLots.filter(l => !(Number(l.amount) > 0));
+  // Lot state lives in `code`: 'WD' = withdrawn (pulled before sale), a real
+  // buyer code = sold, '' = not auctioned. Withdrawal zeroes the amount, so a
+  // WD lot would otherwise fall into NOT e-AUCTIONED below — pull it out first
+  // so it lands in the WITHDRAWN bucket instead. (Same convention as the
+  // SOLD/WD split in server.js.)
+  const isWD = l => String(l.code || '').trim().toUpperCase() === 'WD';
+  const withdrawn = allLots.filter(isWD);
+  const sold = allLots.filter(l => !isWD(l) && Number(l.amount) > 0);
+  const notSold = allLots.filter(l => !isWD(l) && !(Number(l.amount) > 0));
   const sumLots = (xs, k) => xs.reduce((s, r) => s + (Number(r[k]) || 0), 0);
   const stats = {
     arrivals_qty:  sumLots(allLots, 'qty'),
     arrivals_bags: sumLots(allLots, 'bags'),
     arrivals_lots: allLots.length,
-    withdrawn_qty: 0, withdrawn_bags: 0, withdrawn_lots: 0,
+    withdrawn_qty: sumLots(withdrawn, 'qty'),
+    withdrawn_bags: sumLots(withdrawn, 'bags'),
+    withdrawn_lots: withdrawn.length,
     sold_qty:      sumLots(sold, 'qty'),
     sold_bags:     sumLots(sold, 'bags'),
     sold_lots:     sold.length,
