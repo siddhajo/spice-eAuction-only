@@ -147,6 +147,11 @@ const DEFAULTS = [
   // Each picks an HTML template under templates/<docType>/<key>.hbs, resolved
   // by pdf/invoice-templates.js. Default 'classic' reproduces the current
   // PDFKit layout, so installs that never change these are unaffected.
+  // Engine: 'pdfkit' = existing hard-coded layout (default, unchanged for all
+  // installs); 'html' = render via the HTML template selected below. Flip to
+  // 'html' to serve the template-based PDF from the download button; revert
+  // instantly by setting it back to 'pdfkit'.
+  { key: 'sales_invoice_engine',      value: 'pdfkit',  category: 'invoice', label: 'Sales Invoice Engine (pdfkit/html)', type: 'select' },
   { key: 'sales_invoice_template',    value: 'classic', category: 'invoice', label: 'Sales Invoice Layout',    type: 'select' },
   { key: 'purchase_invoice_template', value: 'classic', category: 'invoice', label: 'Purchase Invoice Layout', type: 'select' },
   { key: 'agri_bill_template',        value: 'classic', category: 'invoice', label: 'Bill of Supply Layout',   type: 'select' },

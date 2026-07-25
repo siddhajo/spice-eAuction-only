@@ -50,23 +50,75 @@ async function renderViaElectron(html) {
   }
 }
 
-// ── Backend 2: Puppeteer (plain Node / dev) ───────────────────────────────
+// ── Backend 2: Puppeteer (plain Node — dev laptop AND Railway) ─────────────
 let _pptrBrowserPromise = null;
+const fs = require('fs');
+
 function getPuppeteer() {
   try { return require('puppeteer'); } catch (_) {}
   try { return require('puppeteer-core'); } catch (_) {}
   return null;
 }
+
+// Common local browser binaries — used for dev so `node server.js` on a
+// laptop "just works" with no env var.
+const LOCAL_BROWSERS = [
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+  '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable',
+  '/usr/bin/chromium', '/usr/bin/chromium-browser',
+];
+
+// Resolve which Chromium to launch, in priority order:
+//   1. PUPPETEER_EXECUTABLE_PATH   (explicit override — any env)
+//   2. a local Chrome/Chromium/Edge (dev laptop)
+//   3. @sparticuz/chromium         (serverless / container, e.g. Railway)
+//   4. puppeteer's bundled Chromium (if full `puppeteer` is installed)
+// Returns { executablePath, args, headless } or null.
+async function resolveChromium() {
+  const baseArgs = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];
+
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    return { executablePath: process.env.PUPPETEER_EXECUTABLE_PATH, args: baseArgs, headless: true };
+  }
+  for (const p of LOCAL_BROWSERS) {
+    try { if (fs.existsSync(p)) return { executablePath: p, args: baseArgs, headless: true }; } catch (_) {}
+  }
+  // Container Chromium (Railway). v149 nests the API under `.default`.
+  try {
+    const mod = require('@sparticuz/chromium');
+    const chromium = mod && mod.default ? mod.default : mod;
+    const ep = await chromium.executablePath();
+    if (ep) {
+      return {
+        executablePath: ep,
+        args: (chromium.args && chromium.args.length ? chromium.args : baseArgs),
+        headless: chromium.headless == null ? true : chromium.headless,
+      };
+    }
+  } catch (_) { /* not installed / not this platform */ }
+  // Bundled puppeteer as a last resort.
+  try {
+    const pptr = require('puppeteer');
+    if (typeof pptr.executablePath === 'function') {
+      return { executablePath: pptr.executablePath(), args: baseArgs, headless: true };
+    }
+  } catch (_) {}
+  return null;
+}
+
 async function renderViaPuppeteer(html) {
   const pptr = getPuppeteer();
   if (!pptr) return null;
   if (!_pptrBrowserPromise) {
-    const launchOpts = { headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox'] };
-    // puppeteer-core has no bundled Chromium — needs an explicit binary.
-    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-      launchOpts.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
-    }
-    _pptrBrowserPromise = pptr.launch(launchOpts);
+    const chrome = await resolveChromium();
+    if (!chrome) return null; // no browser binary anywhere — let caller throw
+    _pptrBrowserPromise = pptr.launch({
+      executablePath: chrome.executablePath,
+      args: chrome.args,
+      headless: chrome.headless,
+    });
   }
   const browser = await _pptrBrowserPromise;
   const page = await browser.newPage();

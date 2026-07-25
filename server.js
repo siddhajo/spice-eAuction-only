@@ -2780,14 +2780,24 @@ app.post('/api/traders/import', requireTraderWrite, upload.single('file'), async
       db.run('DELETE FROM traders');
     }
 
-    // Build flexible header map — normalize all keys to uppercase
+    // Build flexible header map — normalize all keys to uppercase.
+    // clean() strips a trailing zero-only decimal that Excel/SheetJS adds to
+    // plain-digit fields (phone, PIN, account, aadhar): a numeric or
+    // number-formatted cell can surface as "9790744444.0". None of the
+    // imported columns carry a real fractional part, so this only ever
+    // trims a spurious ".0"/".00" off an otherwise all-digit identifier.
+    const clean = (v) => {
+      let s = String(v).trim();
+      if (/^\d+\.0+$/.test(s)) s = s.slice(0, s.indexOf('.'));
+      return s;
+    };
     const mapCol = (row, ...names) => {
-      for (const n of names) { if (row[n] !== undefined) return String(row[n]).trim(); }
+      for (const n of names) { if (row[n] !== undefined) return clean(row[n]); }
       // Also try uppercase/lowercase variants
       const keys = Object.keys(row);
       for (const n of names) {
         const found = keys.find(k => k.toUpperCase() === n.toUpperCase());
-        if (found && row[found] !== undefined) return String(row[found]).trim();
+        if (found && row[found] !== undefined) return clean(row[found]);
       }
       return '';
     };
@@ -3037,12 +3047,20 @@ app.post('/api/buyers/import', requireBuyerWrite, upload.single('file'), async (
     const mode = req.body.mode || 'append';
     if (mode === 'replace') db.run('DELETE FROM buyers');
 
+    // clean() strips a trailing zero-only decimal (".0"/".00") that Excel adds
+    // to plain-digit fields like TEL/PIN/GST so "9790744444.0" imports as
+    // "9790744444". No imported column carries a real fractional part.
+    const clean = (v) => {
+      let s = String(v).trim();
+      if (/^\d+\.0+$/.test(s)) s = s.slice(0, s.indexOf('.'));
+      return s;
+    };
     const mapCol = (row, ...names) => {
-      for (const n of names) { if (row[n] !== undefined) return String(row[n]).trim(); }
+      for (const n of names) { if (row[n] !== undefined) return clean(row[n]); }
       const keys = Object.keys(row);
       for (const n of names) {
         const found = keys.find(k => k.toUpperCase() === n.toUpperCase());
-        if (found && row[found] !== undefined) return String(row[found]).trim();
+        if (found && row[found] !== undefined) return clean(row[found]);
       }
       return '';
     };
@@ -7167,7 +7185,20 @@ app.get('/api/invoices/pdf/:id', requireView, async (req, res) => {
       if (aspRow && aspRow.asp_invo) invoice.aspInvo = aspRow.asp_invo;
     }
 
-    const pdf = await generateSalesInvoicePDF(invoice, cfg, stored.sale, stored.invo, stored.date);
+    // Renderer engine: 'html' → new HTML template (pdf/render-html-invoice),
+    // anything else → existing PDFKit layout. Toggle order:
+    //   1. env SALES_INVOICE_ENGINE  (easiest on Railway — set in the dashboard)
+    //   2. `sales_invoice_engine` company setting
+    //   3. default 'pdfkit' (unchanged behavior)
+    // Reversible instantly by removing the env var / setting it back to pdfkit.
+    let pdf;
+    const engine = String(process.env.SALES_INVOICE_ENGINE || cfg.sales_invoice_engine || 'pdfkit').toLowerCase();
+    if (engine === 'html') {
+      const { generateSalesInvoiceHtmlPDF } = require('./pdf/render-html-invoice');
+      pdf = await generateSalesInvoiceHtmlPDF(invoice, cfg, stored.sale, stored.invo, stored.date);
+    } else {
+      pdf = await generateSalesInvoicePDF(invoice, cfg, stored.sale, stored.invo, stored.date);
+    }
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="Invoice_${stored.sale}_${stored.invo}.pdf"`);
     res.send(pdf);
