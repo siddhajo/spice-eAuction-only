@@ -143,6 +143,15 @@ const DEFAULTS = [
   // installs are unaffected.
   { key: 'bank_format', value: 'rtgs_neft', category: 'bank', label: 'Bank Payment File Format', type: 'select' },
 
+  // ── INVOICE PDF TEMPLATES (per-customer layout) ────────────
+  // Each picks an HTML template under templates/<docType>/<key>.hbs, resolved
+  // by pdf/invoice-templates.js. Default 'classic' reproduces the current
+  // PDFKit layout, so installs that never change these are unaffected.
+  { key: 'sales_invoice_template',    value: 'classic', category: 'invoice', label: 'Sales Invoice Layout',    type: 'select' },
+  { key: 'purchase_invoice_template', value: 'classic', category: 'invoice', label: 'Purchase Invoice Layout', type: 'select' },
+  { key: 'agri_bill_template',        value: 'classic', category: 'invoice', label: 'Bill of Supply Layout',   type: 'select' },
+  { key: 'commission_bill_template',  value: 'classic', category: 'invoice', label: 'Commission Bill Layout',  type: 'select' },
+
   // ── SEASON ─────────────────────────────────────────────────
   { key: 'season',            value: '', category: 'season', label: 'Season Name',           type: 'text' },
   { key: 'season_short',      value: '', category: 'season', label: 'Season Short',          type: 'text' },

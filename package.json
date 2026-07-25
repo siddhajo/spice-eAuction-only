@@ -16,6 +16,7 @@
     "dbffile": "^1.12.0",
     "exceljs": "^4.4.0",
     "express": "^4.21.0",
+    "handlebars": "^4.7.9",
     "multer": "^2.1.1",
     "pdfkit": "^0.15.0",
     "sql.js": "^1.10.3",
@@ -51,7 +52,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "public/logo-ispl.png",

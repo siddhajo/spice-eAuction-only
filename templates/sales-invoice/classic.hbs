@@ -1,0 +1,291 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{{title}} {{invoiceNo}}</title>
+<style>
+  /* Units are pt to match the PDFKit layout (72pt = 1in). A4 = 595x842pt. */
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 8pt; color: #000; line-height: 1.25;
+    padding: 20pt;                 /* mirrors the 20pt PDFKit page margin */
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .doc { border: 0.5pt solid #000; }
+  .b   { border: 0.5pt solid #000; }
+  .top-tag { text-align: right; font-size: 7.5pt; padding: 1pt 2pt; }
+  .title { text-align: center; font-weight: bold; font-size: 10pt; padding: 2pt 0 4pt; }
+
+  table { border-collapse: collapse; width: 100%; }
+  td, th { border: 0.5pt solid #000; padding: 2pt 3pt; vertical-align: top; }
+  .no-b td, .no-b th { border: none; }
+  .label { font-size: 7pt; }
+  .val   { font-weight: bold; font-size: 9pt; }
+  .name  { font-weight: bold; font-size: 9pt; }
+  .muted { font-size: 8pt; }
+  .center { text-align: center; }
+  .right  { text-align: right; }
+  .bold   { font-weight: bold; }
+  .ital   { font-style: italic; font-weight: bold; }
+
+  /* Header block */
+  .hdr td { vertical-align: top; }
+  .logo { width: 60pt; height: 60pt; object-fit: contain; }
+  .co-name { font-weight: bold; font-size: 10pt; }
+
+  /* Line-items table column widths (approx the PDFKit geometry) */
+  .items th, .items td { font-size: 8pt; padding: 2pt 3pt; }
+  .items th { font-weight: normal; font-size: 7pt; text-align: center; }
+  col.sl { width: 22pt; } col.lot { width: 40pt; } col.bags { width: 34pt; }
+  col.hsn { width: 52pt; } col.ship { width: 60pt; } col.bill { width: 60pt; }
+  col.rate { width: 48pt; } col.per { width: 20pt; } col.amt { width: 95pt; }
+  {{#if flags.stripe}}
+  .items tbody tr.stripe:nth-child(even) td { background: #ECECEC; }
+  {{/if}}
+
+  .footer-goods td { font-size: 8pt; }
+  .totals .lbl { text-align: left; font-weight: bold; }
+  .totals .num { text-align: right; font-weight: bold; }
+  .words { padding: 2pt 3pt; }
+  .sig { height: 90pt; }
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <div class="top-tag">ORIGINAL/DUPLICATE/TRIPLICATE</div>
+  <div class="title">{{title}}</div>
+
+  <!-- ── TOP HEADER: company (left) + metadata grid (right) ── -->
+  <table class="hdr">
+    <tr>
+      <td style="width:50%">
+        <table class="no-b"><tr>
+          {{#if co.logoDataUri}}<td style="width:66pt"><img class="logo" src="{{co.logoDataUri}}"></td>{{/if}}
+          <td>
+            <div class="co-name">{{co.name}}</div>
+            <div class="muted">{{co.address1}}{{#if co.address2}}, {{co.address2}}{{/if}}{{#if co.place}}, {{co.place}}{{/if}}, {{co.stateName}}{{#if co.pin}} - {{co.pin}}{{/if}}</div>
+            {{#if co.gstin}}<div class="muted">GSTIN/UIN: {{co.gstin}}</div>{{/if}}
+            <div class="muted">State Name : {{co.stateName}}, Code : {{co.stateCode}}</div>
+            {{#if co.idValue}}<div class="muted">{{co.idLabel}}: {{co.idValue}}</div>{{/if}}
+            {{#if co.fssai}}<div class="muted">FSSAI No.: {{co.fssai}}</div>{{/if}}
+            {{#if co.sbl}}<div class="muted">SBL No.: {{co.sbl}}</div>{{/if}}
+            {{#if co.msme}}<div class="muted">MSME No.: {{co.msme}}</div>{{/if}}
+          </td>
+        </tr></table>
+      </td>
+      <td style="width:50%; padding:0">
+        <table class="no-b" style="height:100%">
+          <tr>
+            <td class="b" style="width:33%"><div class="label">Invoice No.</div><div class="val">{{invoiceNo}}</div></td>
+            <td class="b" style="width:33%"><div class="label">e-Way Bill No.</div><div class="val">&nbsp;</div></td>
+            <td class="b"><div class="label">Dated</div><div class="val">{{shortDate invoiceDate}}</div></td>
+          </tr>
+          <tr>
+            <td class="b" colspan="2"><div class="label">Reference No. &amp; Date.</div><div class="val">{{invoiceNo}}</div></td>
+            <td class="b"><div class="label">Other References</div><div class="val">&nbsp;</div></td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+
+  <!-- ── MIDDLE: consignee/buyer (left) + dispatch (right) ── -->
+  <table>
+    <tr>
+      <td style="width:50%; padding:0">
+        <div class="b" style="padding:3pt">
+          <div class="label">Consignee (Ship to)</div>
+          <div class="name">{{ship.name}}</div>
+          {{#if ship.addr}}<div class="muted">{{ship.addr}}</div>{{/if}}
+          {{#if ship.place}}<div class="muted">{{ship.place}}</div>{{/if}}
+          {{#if ship.gstin}}<div class="muted">GSTIN/UIN      : {{ship.gstin}}</div>{{/if}}
+          {{#if ship.state}}<div class="muted">State Name     : {{ship.state}}, Code : {{ship.stCode}}</div>{{/if}}
+        </div>
+        <div class="b" style="padding:3pt">
+          <div class="label">Buyer (Bill to)</div>
+          <div class="name">{{billTo.name}}</div>
+          {{#if billTo.addr}}<div class="muted">{{billTo.addr}}</div>{{/if}}
+          {{#if billTo.place}}<div class="muted">{{billTo.place}}</div>{{/if}}
+          {{#if billTo.gstin}}<div class="muted">GSTIN/UIN      : {{billTo.gstin}}</div>{{/if}}
+          {{#if billTo.state}}<div class="muted">State Name     : {{billTo.state}}, Code : {{billTo.stCode}}</div>{{/if}}
+        </div>
+      </td>
+      <td style="width:50%; padding:0">
+        <table class="no-b">
+          <tr>
+            <td class="b"><div class="label">Dispatched through</div><div class="muted bold">{{dispatchedThrough}}</div></td>
+            <td class="b"><div class="label">Destination</div><div class="muted bold">{{destination}}</div></td>
+          </tr>
+        </table>
+        <div class="b" style="padding:3pt; min-height:60pt">
+          <div class="label bold">Dispatch From:</div>
+          <div class="muted">{{co.name}}</div>
+        </div>
+      </td>
+    </tr>
+  </table>
+
+  <!-- ── LINE ITEMS ── -->
+  <table class="items">
+    <colgroup>
+      <col class="sl"><col class="lot"><col class="bags"><col>
+      {{#if flags.showHsn}}<col class="hsn">{{/if}}
+      <col class="ship"><col class="bill"><col class="rate"><col class="per"><col class="amt">
+    </colgroup>
+    <thead>
+      <tr>
+        <th rowspan="2">SI<br>No.</th>
+        <th rowspan="2">Lot<br>No</th>
+        <th rowspan="2">No. of<br>Bags</th>
+        <th rowspan="2">Description of Goods</th>
+        {{#if flags.showHsn}}<th rowspan="2">HSN/SAC</th>{{/if}}
+        <th colspan="2">Quantity</th>
+        <th rowspan="2">Rate</th>
+        <th rowspan="2">per</th>
+        <th rowspan="2">Amount</th>
+      </tr>
+      <tr><th>Shipped</th><th>Billed</th></tr>
+    </thead>
+    <tbody>
+      {{#each rows}}
+      <tr class="stripe">
+        <td class="center">{{sl}}</td>
+        <td class="center">{{lot}}</td>
+        <td class="center">{{bags}}</td>
+        <td class="bold">{{desc}}</td>
+        {{#if ../flags.showHsn}}<td class="center">{{hsn}}</td>{{/if}}
+        <td class="right">{{qty qty}} Kgs.</td>
+        <td class="right bold">{{qty qty}} Kgs.</td>
+        <td class="right bold">{{inr rate}}</td>
+        <td class="center">Kgs.</td>
+        <td class="right bold">{{inr amount}}</td>
+      </tr>
+      {{/each}}
+
+      {{#if gunny}}
+      <tr class="stripe"><td></td><td></td><td></td><td class="bold">{{gunny.desc}}</td>
+        {{#if flags.showHsn}}<td class="center">{{gunny.hsn}}</td>{{/if}}
+        <td class="right">{{gunny.units}}</td><td></td>
+        <td class="right bold">{{fixed gunny.rate 2}}</td><td class="center">Nos.</td>
+        <td class="right bold">{{inr gunny.amount}}</td></tr>
+      {{/if}}
+      {{#if transport}}
+      <tr class="stripe"><td></td><td></td><td></td><td class="bold">{{transport.desc}}</td>
+        {{#if flags.showHsn}}<td class="center">{{transport.hsn}}</td>{{/if}}
+        <td class="right">{{transport.units}}</td><td></td>
+        <td class="right bold">{{fixed transport.rate 2}}</td><td class="center">Kgs.</td>
+        <td class="right bold">{{inr transport.amount}}</td></tr>
+      {{/if}}
+      {{#if insurance}}
+      <tr class="stripe"><td></td><td></td><td></td><td class="bold">{{insurance.desc}}</td>
+        {{#if flags.showHsn}}<td class="center">{{insurance.hsn}}</td>{{/if}}
+        <td></td><td></td>
+        <td class="right bold">{{fixed insurance.rate 2}}</td><td></td>
+        <td class="right bold">{{inr insurance.amount}}</td></tr>
+      {{/if}}
+    </tbody>
+  </table>
+
+  <!-- ── TOTALS ── -->
+  {{#with summary}}
+  <table class="totals no-b">
+    <tr><td class="lbl"></td><td class="num" style="width:95pt">{{inr taxableValue}}</td></tr>
+    {{#if ../flags.isInter}}
+      <tr><td class="ital">OUTPUT IGST {{../gstRate}}%</td><td class="num">{{inr igst}}</td></tr>
+    {{else}}
+      <tr><td class="ital">OUTPUT CGST {{../gstHalf}}%</td><td class="num">{{inr cgst}}</td></tr>
+      <tr><td class="ital">OUTPUT SGST {{../gstHalf}}%</td><td class="num">{{inr sgst}}</td></tr>
+    {{/if}}
+    <tr><td class="ital">Round On/off</td><td class="num">{{inr roundDiff}}</td></tr>
+    {{#if addlCharge}}<tr><td class="ital">{{addlChargeName}}</td><td class="num">{{inr addlCharge}}</td></tr>{{/if}}
+    {{#if tdsAmount}}<tr><td class="ital">TDS @ {{tdsRate}}%</td><td class="num">{{inr tdsAmount}}</td></tr>{{/if}}
+    <tr><td class="lbl bold">Total &nbsp;&nbsp; {{totalQty}} Kgs.</td><td class="num" style="font-size:9pt">{{inr grandTotal}}</td></tr>
+  </table>
+
+  <div class="b words"><span class="label">Amount Chargeable (in words)</span>
+    <span class="label" style="float:right">E. &amp; O.E</span>
+    <div class="val">INR {{words grandTotal}} Only</div>
+  </div>
+  {{/with}}
+
+  <!-- ── HSN SUMMARY ── -->
+  <table class="items">
+    <thead>
+      <tr>
+        <th rowspan="2">{{#if flags.showHsn}}HSN/SAC{{else}}Description of Goods{{/if}}</th>
+        <th rowspan="2">Taxable Value</th>
+        {{#if flags.isInter}}
+          <th colspan="2">IGST</th>
+        {{else}}
+          <th colspan="2">CGST</th><th colspan="2">SGST</th>
+        {{/if}}
+        <th rowspan="2">Total Tax Amount</th>
+      </tr>
+      <tr>
+        {{#if flags.isInter}}
+          <th>Rate</th><th>Amount</th>
+        {{else}}
+          <th>Rate</th><th>Amount</th><th>Rate</th><th>Amount</th>
+        {{/if}}
+      </tr>
+    </thead>
+    <tbody>
+      {{#each hsnRows}}
+      <tr class="stripe">
+        <td>{{#if ../flags.showHsn}}{{hsn}}{{else}}{{desc}}{{/if}}</td>
+        <td class="right">{{inr taxable}}</td>
+        {{#if ../flags.isInter}}
+          <td class="center">{{rate}}%</td><td class="right">{{inr igst}}</td>
+          <td class="right">{{inr igst}}</td>
+        {{else}}
+          <td class="center">{{../gstHalf}}%</td><td class="right">{{inr cgst}}</td>
+          <td class="center">{{../gstHalf}}%</td><td class="right">{{inr sgst}}</td>
+          <td class="right">{{inr (add cgst sgst)}}</td>
+        {{/if}}
+      </tr>
+      {{/each}}
+      <tr class="bold">
+        <td>Total</td><td class="right">{{inr hsnTotal.taxable}}</td>
+        {{#if flags.isInter}}
+          <td></td><td class="right">{{inr hsnTotal.igst}}</td><td class="right">{{inr hsnTotal.igst}}</td>
+        {{else}}
+          <td></td><td class="right">{{inr hsnTotal.cgst}}</td>
+          <td></td><td class="right">{{inr hsnTotal.sgst}}</td>
+          <td class="right">{{inr (add hsnTotal.cgst hsnTotal.sgst)}}</td>
+        {{/if}}
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="b" style="padding:3pt"><span class="label">Tax Amount (in words) :</span>
+    <span class="val">INR {{words (add (add summary.cgst summary.sgst) summary.igst)}} Only</span>
+  </div>
+
+  <!-- ── BANK + SIGNATURE ── -->
+  <table>
+    <tr>
+      <td style="width:50%" class="sig">
+        <div><span class="muted">Company's PAN&nbsp;&nbsp;&nbsp;&nbsp;: </span><span class="bold">{{co.pan}}</span></div>
+        <div class="muted" style="margin-top:8pt">Declaration</div>
+        <div class="label">We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.</div>
+      </td>
+      <td style="width:50%" class="sig">
+        {{#if bank}}
+        <div class="muted">Company's Bank Details</div>
+        <div class="muted">Bank Name&nbsp;: <span class="bold">{{bank.name}}</span></div>
+        <div class="muted">A/c No.&nbsp;: <span class="bold">{{bank.acct}}</span></div>
+        <div class="muted">Branch &amp; IFS Code&nbsp;: <span class="bold">{{bank.ifsc}}</span></div>
+        {{/if}}
+        <div class="right bold" style="margin-top:10pt">for {{forCompany}}</div>
+        <div class="right muted" style="margin-top:34pt">Authorised Signatory</div>
+      </td>
+    </tr>
+  </table>
+
+</div>
+</body>
+</html>

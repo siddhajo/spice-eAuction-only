@@ -6535,6 +6535,83 @@ app.get('/api/invoices', requireView, (req, res) => {
   res.json(rows);
 });
 
+// ── HTML-template preview (Step A of the per-customer PDF migration) ──────
+// Renders the sales invoice through the new HTML template (pdf/*), but returns
+// it as text/html so you can SEE the layout in a browser with NO headless
+// Chromium — ideal for testing the template on Railway before the PDF backend
+// is wired. Read-only; never writes to the DB.
+//
+//   /api/invoices/preview.html                         → synthetic sample invoice
+//   /api/invoices/preview.html?auctionId=16&buyer=B001&sale=I&invoiceNo=42
+//                                                      → a REAL invoice's layout
+//
+// This is a temporary scaffolding endpoint — safe to delete once the PDF path
+// is live. It does not touch the existing PDFKit generators.
+//
+// Auth: browser navigation can't send an Authorization header, so (like the
+// mobile routes) this accepts the session token via ?token=<token> as well.
+// Grab your token from the web app (localStorage) and append it, e.g.:
+//   /api/invoices/preview.html?token=ABC123
+app.get('/api/invoices/preview.html', (req, res) => {
+  try {
+    // Inline flex auth — header OR ?token= (mirrors mobile-bridge requireAuthFlex).
+    const tok = (req.headers.authorization || '').replace('Bearer ', '') || String(req.query.token || '');
+    if (!tok) return res.status(401).type('html').send('<pre>401 — append ?token=YOUR_SESSION_TOKEN</pre>');
+    const sess = getDb().get('SELECT * FROM sessions WHERE token = ?', [tok]);
+    if (!sess) return res.status(403).type('html').send('<pre>403 — session expired, sign in again</pre>');
+
+    const { buildSalesInvoiceView } = require('./pdf/render-html-invoice');
+    const { getInvoiceTemplate, clearCache } = require('./pdf/invoice-templates');
+    // Hot-reload templates on every preview hit so edits show without a restart.
+    if (String(req.query.reload || '') === '1') clearCache();
+
+    const db = getDb();
+    const cfg = getSettingsFlat(db);
+    const auctionId = req.query.auctionId;
+    const buyerCode = req.query.buyer;
+    const saleType = String(req.query.sale || 'I').trim().toUpperCase();
+    const invoiceNo = req.query.invoiceNo || 'PREVIEW';
+
+    let invoiceData, invoiceDate;
+    if (auctionId && buyerCode) {
+      invoiceData = buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg, { noTI: false });
+      if (!invoiceData) {
+        res.status(404).type('html');
+        return res.send(`<pre>No lots found for buyer "${buyerCode}" in auction ${auctionId}. ` +
+          `Try /api/invoices/preview.html (no params) for a sample invoice.</pre>`);
+      }
+      const auction = db.get('SELECT * FROM auctions WHERE id = ?', [auctionId]);
+      invoiceDate = (auction && auction.date) || null;
+    } else {
+      // Synthetic sample — lets you eyeball the layout with zero data setup.
+      invoiceData = {
+        buyer: { buyer: 'SAMPLE', buyer1: 'SAMPLE BUYER TRADERS PVT LTD',
+          add1: 'Market Road', add2: 'Sample Nagar', pla: 'Bodinayakanur', pin: '625513',
+          gstin: '33ABCDE1234F1Z5', state: 'TAMIL NADU', st_code: '33' },
+        lineItems: [
+          { lot: '101', bags: 5, qty: 250.5, price: 1850, amount: 463425 },
+          { lot: '102', bags: 3, qty: 150.0, price: 1920, amount: 288000 },
+        ],
+        summary: {
+          totalQty: 400.5, totalBags: 8, totalAmount: 751425,
+          gunnyCost: 1320, transportCost: 1001.25, insuranceCost: 592.05,
+          taxableValue: 754338.30, cgst: 18858.46, sgst: 18858.46, igst: 0,
+          roundDiff: 0.22, addlCharge: 0, addlChargeName: '',
+          tdsRate: 0, tdsAmount: 0, tdsMode: '', grandTotal: 792055,
+          isInterState: false,
+        },
+      };
+      invoiceDate = new Date().toISOString().slice(0, 10);
+    }
+
+    const view = buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDate);
+    const tpl = getInvoiceTemplate('sales-invoice', cfg);
+    res.type('html').send(tpl.render(view));
+  } catch (e) {
+    res.status(500).type('html').send(`<pre>preview error:\n${e && e.stack ? e.stack : e}</pre>`);
+  }
+});
+
 app.post('/api/invoices/generate/:auctionId',
   requireInvoiceWrite,
   requirePriceChecked(req => parseInt(req.params.auctionId, 10)),
