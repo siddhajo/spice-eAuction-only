@@ -165,6 +165,26 @@ async function createExcelBuffer(sheetName, columns, rows, opts) {
     });
   }
 
+  // ── Signature / sign-off footer (optional) ──
+  // A blank spacer then a bold row placing each label spread evenly across the
+  // sheet width (e.g. "Prepared By" | "Checked By" | "Approved By"). Used by
+  // bank-payment authorization sheets that carry a manual sign-off block.
+  if (Array.isArray(opts.signatures) && opts.signatures.length) {
+    ws.addRow([]);
+    const n = opts.signatures.length;
+    const cells = new Array(columns.length).fill('');
+    opts.signatures.forEach((label, i) => {
+      const col = Math.min(columns.length - 1, Math.round((i * columns.length) / n));
+      cells[col] = label;
+    });
+    const sigRow = ws.addRow(cells);
+    sigRow.font = { bold: true, size: 10 };
+    sigRow.height = 22;
+    sigRow.eachCell((cell) => {
+      cell.alignment = { horizontal: 'left', vertical: 'middle' };
+    });
+  }
+
   return wb.xlsx.writeBuffer();
 }
 
@@ -447,10 +467,21 @@ function renderBankPaymentView(db, auctionId, view, payments) {
     : payments;
   // Strip the non-ExcelJS `format` key before handing columns to the builder.
   const cleanCols = cols.map(({ format, ...rest }) => rest);
+  // Optional Total row (sums `amount`) + sign-off footer — profiles that set
+  // `total: true` / `signatures: [...]` get an authorization-sheet layout.
+  const extra = {};
+  if (view.total) {
+    const sum = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+    extra.grandTotal = { label: 'Total', values: { amount: sum } };
+  }
+  if (Array.isArray(view.signatures) && view.signatures.length) {
+    extra.signatures = view.signatures;
+  }
   return createExcelBuffer(view.sheetName, cleanCols, rows, {
     db,
     title: view.title,
     metaLines: view.includeMeta === false ? [] : auctionMeta(db, auctionId),
+    ...extra,
   });
 }
 

@@ -83,6 +83,32 @@ const BANK_FORMATS = {
     },
   },
 
+  // ── HDFC Bank A/C — payment authorization sheet ────────────────────────
+  // A human-readable payout list (not a bulk-upload CSV): Particulars +
+  // Customer Name + Amount, with Account Number / IFSC / Phone pulled from the
+  // seller master, a bold Total row, and a Prepared/Checked/Approved sign-off
+  // footer. `total` and `signatures` are honoured by renderBankPaymentView.
+  //
+  // NOTE: the "Particulars" column (e.g. "A10 024") is left blank pending
+  // confirmation of its source (CR / user_id / lot no) — see the `particulars`
+  // note in calculations.js getBankPaymentData. Once confirmed, either fill
+  // `particulars` there or give this column a format(v,row) that derives it.
+  hdfc_ac: {
+    label: 'rns bank format',
+    sheetName: 'Payments',
+    title: 'HDFC BANK A/C:',
+    total: true,
+    signatures: ['Prepared By', 'Checked By', 'Approved By'],
+    columns: [
+      { header: 'Particulars',    key: 'particulars',    width: 14 },
+      { header: 'Customer Name',  key: 'beneficiaryName', width: 30 },
+      { header: 'Amount',         key: 'amount',          width: 14, numFmt: '#,##0' },
+      { header: 'Account Number', key: 'accountNo',       width: 20 },
+      { header: 'IFSC',           key: 'ifsc',            width: 14 },
+      { header: 'Phone',          key: 'phone',           width: 16 },
+    ],
+  },
+
   // ── Add per-customer bank layouts below ────────────────────────────────
   // Example scaffold — copy, rename the key, and adjust columns to match the
   // customer's bank upload template. Keep the key in sync with the dropdown

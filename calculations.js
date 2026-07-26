@@ -758,7 +758,7 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
       SUM(l.puramt) as puramt, SUM(l.refund) as advance, SUM(l.balance) as payable,
       t.id AS trader_id,
       t.ifsc AS t_ifsc, t.acctnum AS t_acctnum, t.holder_name AS t_holder,
-      t.padd, t.ppla, t.pin
+      t.padd, t.ppla, t.pin, t.tel AS t_tel
     FROM lots l
     LEFT JOIN traders t ON UPPER(TRIM(t.name)) = UPPER(TRIM(l.name))
     WHERE l.auction_id = ? AND l.amount > 0
@@ -829,6 +829,17 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
       amount,
       remarks: `${auction ? auction.ano : ''} ${p.name} PAYMENT ${rawAmount.toFixed(2)} Credited${lotList ? ` for lot${lotList.includes(',') ? 's' : ''} ${lotList}` : ''}`,
       holderName: holderNm,
+      // Seller phone + CR carried for presentation-only bank formats (e.g. the
+      // HDFC A/C sheet's Phone column). `cr` is the leading candidate for that
+      // format's "Particulars" column.
+      phone: p.t_tel || '',
+      cr: p.cr || '',
+      // Particulars — a per-seller reference shown on the HDFC A/C sheet
+      // (e.g. "A10 024"). Its exact source (CR / user_id / lot no) is pending
+      // dad's confirmation, so it's left blank for now. When confirmed, derive
+      // it here (or via the column's format() in bank-formats.js) — the `cr`
+      // field above is already carried through for the CR-based option.
+      particulars: '',
     };
   };
 
