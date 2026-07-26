@@ -1,0 +1,150 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Tax Invoice (Purchase)</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: Helvetica, Arial, sans-serif; font-size: 8pt; color: #000;
+    line-height: 1.25; padding: 20pt;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .doc { border: 1pt solid #000; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { border: 0.5pt solid #000; padding: 2pt 4pt; vertical-align: top; }
+  .top-tag { text-align: right; font-size: 7.5pt; padding: 0 2pt 1pt; }
+  .title { text-align: center; font-weight: bold; font-size: 10pt; padding: 2pt 0; }
+  .center { text-align: center; } .right { text-align: right; } .bold { font-weight: bold; }
+  .seller-name { text-align: center; font-weight: bold; font-size: 11pt; padding-top: 4pt; }
+  .seller-sub { text-align: center; font-size: 8pt; }
+  .no-b td, .no-b th { border: none; }
+  .grey td, .grey th, td.grey { background: #e8e8e8; font-weight: bold; }
+  .pair { font-size: 8pt; white-space: nowrap; }
+  .items th { background: #e8e8e8; font-weight: bold; font-size: 7.5pt; text-align: center; white-space: pre-line; }
+  .items td { font-size: 9pt; }
+  {{#if stripe}} .items tbody tr:nth-child(even) td { background: #ECECEC; } {{/if}}
+  col.lot{width:34pt;} col.qty{width:60pt;} col.tqty{width:58pt;} col.price{width:50pt;}
+  col.value{width:68pt;} col.tax{width:74pt;} col.cg{width:52pt;} col.sg{width:52pt;} col.ig{width:58pt;}
+  .totals { width: 52%; margin-left: 48%; }
+  .totals td { font-size: 8.5pt; }
+  .tds td { font-size: 8.5pt; border: none; }
+  .words { padding: 4pt; font-size: 9pt; }
+  .sig { text-align: right; font-weight: bold; padding: 4pt 4pt 0; }
+  .sig2 { text-align: right; font-size: 8pt; padding: 22pt 4pt 6pt; }
+</style>
+</head>
+<body>
+<div>
+  <div class="top-tag">ORIGINAL/DUPLICATE/TRIPLICATE</div>
+  <div class="title">TAX INVOICE</div>
+</div>
+<div class="doc">
+
+  <!-- Seller header -->
+  <div class="seller-name">{{seller.name}}</div>
+  {{#if seller.addr}}<div class="seller-sub">{{seller.addr}}</div>{{/if}}
+  {{#if seller.gstin}}<div class="seller-sub" style="padding-bottom:3pt">GSTIN:{{seller.gstin}}</div>{{/if}}
+
+  <!-- Detail grid: 2 cols × 4 rows of label:value pairs -->
+  <table>
+    {{#each leftPairs}}
+    <tr>
+      <td style="width:50%" class="pair"><b>{{this.[0]}}</b> : {{this.[1]}}</td>
+      <td style="width:50%" class="pair"><b>{{lookup (lookup ../rightPairs @index) 0}}</b> : {{lookup (lookup ../rightPairs @index) 1}}</td>
+    </tr>
+    {{/each}}
+  </table>
+
+  <!-- Billed to / Shipped to -->
+  <table>
+    <tr><td class="grey center" style="width:50%">BILLED TO</td><td class="grey center" style="width:50%">SHIPPED TO</td></tr>
+    <tr>
+      <td style="width:50%">
+        {{#each plainLines}}<div>{{this}}</div>{{/each}}
+        {{#each pairLines}}<div class="pair">{{this.[0]}} : {{this.[1]}}</div>{{/each}}
+      </td>
+      <td style="width:50%">
+        {{#each plainLines}}<div>{{this}}</div>{{/each}}
+        {{#each pairLines}}<div class="pair">{{this.[0]}} : {{this.[1]}}</div>{{/each}}
+      </td>
+    </tr>
+  </table>
+
+  <!-- Description / HSN -->
+  <table>
+    {{#if showHsn}}
+    <tr><td class="grey center" style="width:50%">Description of Goods:{{descGoods}}</td>
+        <td class="grey center" style="width:50%">HSN CODE:{{hsnCode}}</td></tr>
+    {{else}}
+    <tr><td class="grey center">Description of Goods:{{descGoods}}</td></tr>
+    {{/if}}
+  </table>
+
+  <!-- Line items -->
+  <table class="items">
+    <colgroup><col class="lot"><col class="qty"><col class="tqty"><col class="price"><col class="value"><col class="tax"><col class="cg"><col class="sg"><col class="ig"></colgroup>
+    <thead><tr>
+      <th>LOT
+NO</th><th>QUANTITY
+KGS</th><th>TOTAL
+QTY/KGS</th><th>PRICE
+Rs.  P.</th><th>VALUE
+Rs.     P.</th><th>TAXABLE VALUE
+( Rs.    P.)</th><th>C G S T
+( 2.5%)</th><th>S G S T
+( 2.5%)</th><th>I G S T
+( 5.0%)</th>
+    </tr></thead>
+    <tbody>
+      {{#each rows}}
+      <tr>
+        <td class="center">{{lot}}</td>
+        <td class="right">{{qtyg qty}}</td>
+        <td class="right">{{qtyg totalQty}}</td>
+        <td class="right">{{rup price}}</td>
+        <td class="right">{{rup value}}</td>
+        <td class="right">{{rup taxable}}</td>
+        <td class="right">{{#if cgst}}{{rup cgst}}{{/if}}</td>
+        <td class="right">{{#if sgst}}{{rup sgst}}{{/if}}</td>
+        <td class="right">{{#if igst}}{{rup igst}}{{/if}}</td>
+      </tr>
+      {{/each}}
+      {{#times padRows}}<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>{{/times}}
+      <tr class="bold">
+        <td class="center">TOTAL</td>
+        <td class="right">{{qtyg totals.qtySum}}</td>
+        <td class="right">{{qtyg totals.totalQtySum}}</td>
+        <td></td>
+        <td class="right">{{rup totals.valueSum}}</td>
+        <td class="right">{{rup totals.taxableSum}}</td>
+        <td class="right">{{#if totals.totalCgst}}{{rup totals.totalCgst}}{{/if}}</td>
+        <td class="right">{{#if totals.totalSgst}}{{rup totals.totalSgst}}{{/if}}</td>
+        <td class="right">{{#if totals.totalIgst}}{{rup totals.totalIgst}}{{/if}}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- Right-side totals -->
+  <table class="totals">
+    {{#each totalsRows}}
+    <tr><td>{{this.[0]}}</td><td class="right" style="width:42%">{{rup this.[1]}}</td></tr>
+    {{/each}}
+    <tr class="bold"><td>Total Value</td><td class="right">{{rup totalValue}}</td></tr>
+  </table>
+
+  <!-- TDS + Invoice amount -->
+  <table class="tds">
+    <tr><td>TDS on Purchase of Goods [ U/S 194Q ]</td><td class="right" style="width:120pt">-{{rup tdsAmount}}</td></tr>
+    <tr class="bold"><td>Invoice Amount</td><td class="right">{{rup invoiceAmount}}</td></tr>
+  </table>
+
+  <div class="words" style="border-top:0.5pt solid #000">{{invoiceAmountWords}}</div>
+
+  <div class="sig">{{forSeller}}</div>
+  <div class="sig2">Authorised Signatory</div>
+</div>
+</body>
+</html>

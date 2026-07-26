@@ -71,7 +71,12 @@ function _load(docType, key) {
 function getInvoiceTemplate(docType, cfg) {
   const def = DEFAULTS[docType];
   if (!def) throw new Error(`Unknown invoice docType: ${docType}`);
-  const requested = String((cfg && cfg[SETTING_KEY[docType]]) || '').trim() || def;
+  // Resolution order: env <KEY_UPPER> (e.g. SALES_INVOICE_TEMPLATE — easiest to
+  // flip on Railway) → cfg[<key>] setting → the doc type's default.
+  const settingKey = SETTING_KEY[docType];
+  const requested = String(
+    process.env[settingKey.toUpperCase()] || (cfg && cfg[settingKey]) || ''
+  ).trim() || def;
   const tpl = _load(docType, requested) || _load(docType, def);
   if (!tpl) {
     throw new Error(`No template file found for ${docType} (tried "${requested}" and default "${def}") ` +

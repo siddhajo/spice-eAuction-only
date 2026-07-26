@@ -6622,6 +6622,9 @@ app.get('/api/invoices/preview.html', (req, res) => {
       invoiceDate = new Date().toISOString().slice(0, 10);
     }
 
+    // ?template=modern (or classic) lets you eyeball any variant instantly
+    // without changing the saved setting.
+    if (req.query.template) cfg.sales_invoice_template = String(req.query.template);
     const view = buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDate);
     const tpl = getInvoiceTemplate('sales-invoice', cfg);
     res.type('html').send(tpl.render(view));
@@ -7374,7 +7377,12 @@ app.post('/api/invoices/pdf-bulk', requireView, async (req, res) => {
 
     if (!payloads.length) return res.status(404).json({ error: 'No invoices resolved from the provided IDs' });
 
-    const pdf = await generateSalesInvoicesBatchPDF(payloads, cfg);
+    let pdf;
+    if (require('./pdf/engine-toggle').useHtmlEngine(cfg, 'sales_invoice_engine')) {
+      pdf = await require('./pdf/render-html-invoice').generateSalesInvoicesHtmlBatchPDF(payloads, cfg);
+    } else {
+      pdf = await generateSalesInvoicesBatchPDF(payloads, cfg);
+    }
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="Invoices_Batch_${payloads.length}.pdf"`);
     res.send(pdf);
@@ -7748,9 +7756,13 @@ app.get('/api/purchases/pdf/:auctionId/:sellerName', requireView, async (req, re
       };
     }
     
-    const pdf = await generatePurchaseInvoicePDF(
-      enrichPurchaseForPDF(invoice, cfg, db, auctionId), cfg, invoiceNo
-    );
+    const enriched = enrichPurchaseForPDF(invoice, cfg, db, auctionId);
+    let pdf;
+    if (require('./pdf/engine-toggle').useHtmlEngine(cfg, 'purchase_invoice_engine')) {
+      pdf = await require('./pdf/render-purchase-html').generatePurchaseInvoiceHtmlPDF(enriched, cfg, invoiceNo);
+    } else {
+      pdf = await generatePurchaseInvoicePDF(enriched, cfg, invoiceNo);
+    }
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="PurchaseInvoice_${sellerName.replace(/[^\w]/g, '_')}_${invoiceNo}.pdf"`);
     res.send(pdf);
@@ -7866,7 +7878,12 @@ app.post('/api/purchases/pdf-bulk', requireView, async (req, res) => {
       payloads.push({ invoiceData: enrichPurchaseForPDF(invoice, cfg, db, stored.auction_id), invoiceNo: stored.invo });
     }
 
-    const pdf = await generatePurchaseInvoicesBatchPDF(payloads, cfg);
+    let pdf;
+    if (require('./pdf/engine-toggle').useHtmlEngine(cfg, 'purchase_invoice_engine')) {
+      pdf = await require('./pdf/render-purchase-html').generatePurchaseInvoicesHtmlBatchPDF(payloads, cfg);
+    } else {
+      pdf = await generatePurchaseInvoicesBatchPDF(payloads, cfg);
+    }
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="PurchaseInvoices_Batch_${payloads.length}.pdf"`);
     res.send(pdf);
@@ -8123,7 +8140,12 @@ app.get('/api/bills/pdf/:auctionId/:sellerName', requireView, async (req, res) =
     if (!bill.billDate) bill.billDate = formatDateForDisplay(new Date(), dateFmt);
     bill.eTradeNo = req.query.eTradeNo || req.params.auctionId;
 
-    const pdf = await generateAgriBillPDF(bill, cfg, billNo);
+    let pdf;
+    if (require('./pdf/engine-toggle').useHtmlEngine(cfg, 'agri_bill_engine')) {
+      pdf = await require('./pdf/render-agri-html').generateAgriBillHtmlPDF(bill, cfg, billNo);
+    } else {
+      pdf = await generateAgriBillPDF(bill, cfg, billNo);
+    }
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="BillOfSupply_${sellerName.replace(/[^\w]/g,'_')}_${billNo}.pdf"`);
     res.send(pdf);
@@ -8374,7 +8396,12 @@ app.post('/api/bills/pdf-bulk', requireView, async (req, res) => {
       payloads.push({ billData: bill, billNo: stored.bil });
     }
 
-    const pdf = await generateAgriBillsBatchPDF(payloads, cfg);
+    let pdf;
+    if (require('./pdf/engine-toggle').useHtmlEngine(cfg, 'agri_bill_engine')) {
+      pdf = await require('./pdf/render-agri-html').generateAgriBillsHtmlBatchPDF(payloads, cfg);
+    } else {
+      pdf = await generateAgriBillsBatchPDF(payloads, cfg);
+    }
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="BillsOfSupply_Batch_${payloads.length}.pdf"`);
     res.send(pdf);
@@ -8471,6 +8498,11 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
       // rupee value stored on the lot (`refund`) was already calculated
       // as sb_refund × rate during lot entry.
       const sbRefundKg = Number(cfg.sb_refund) || 0;
+      // Trader-sample deduction (Settings → Rates & Charges → `sb_trader_sample`,
+      // Kgs). Some customers (e.g. RNS) deduct a trader-sample quantity from the
+      // seller's payout: it shows as its own row and reduces NETT. 0 (default)
+      // = no trader-sample row, no effect — keeps every other install unchanged.
+      const sbTraderSampleKg = Number(cfg.sb_trader_sample) || 0;
 
       // Resolve the purchaser block for a SINGLE lot. The `buyers` master
       // carries the full address (add1/add2, place, pin, state, GSTIN,
@@ -8513,13 +8545,15 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
           const cardamomCost = Number(l.puramt || l.amount || (qty * rate));
           const refundAmount = Number(l.refund || 0);
           const com = Number(l.com || 0), cg = Number(l.cgst || 0), sg = Number(l.sgst || 0), ig = Number(l.igst || 0);
+          const traderSampleAmount = round2(sbTraderSampleKg * rate);
           perLot.push({
             line: { lot: l.lot_no, qty, bags: l.bags || 0, rate, cardamomCost,
-                    refundQty: sbRefundKg, refundRate: rate, refundAmount },
+                    refundQty: sbRefundKg, refundRate: rate, refundAmount,
+                    traderSampleQty: sbTraderSampleKg, traderSampleAmount },
             purchaser: purchaserForLot(l),
             commission: com, cgst: cg, sgst: sg, igst: ig,
             interState: !!(l.sale && l.sale !== 'L'),
-            nett: round2(cardamomCost + refundAmount - com - cg - sg - ig),
+            nett: round2(cardamomCost + refundAmount - traderSampleAmount - com - cg - sg - ig),
             crpt: l.crpt || '',
           });
         }
@@ -8541,12 +8575,14 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
           const cardamomCost = round2(qty  * rate);
           const refundAmount = round2(rQty * rate);
           const com = Number(li.com || 0);
+          const traderSampleAmount = round2(sbTraderSampleKg * rate);
           perLot.push({
             line: { lot: li.lot, qty, bags: li.bags || 0, rate, cardamomCost,
-                    refundQty: rQty, refundRate: rate, refundAmount },
+                    refundQty: rQty, refundRate: rate, refundAmount,
+                    traderSampleQty: sbTraderSampleKg, traderSampleAmount },
             purchaser: emptyPurchaser,
             commission: com, cgst: 0, sgst: 0, igst: 0, interState: false,
-            nett: round2(cardamomCost + refundAmount - com),
+            nett: round2(cardamomCost + refundAmount - traderSampleAmount - com),
             crpt: '',
           });
         }
@@ -8592,7 +8628,12 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
       }
     }
 
-    const pdf = await generateCommissionBoSBatchPDF(payloads, cfg);
+    let pdf;
+    if (require('./pdf/engine-toggle').useHtmlEngine(cfg, 'commission_bill_engine')) {
+      pdf = await require('./pdf/render-commission-html').generateCommissionBoSHtmlPDF(payloads, cfg);
+    } else {
+      pdf = await generateCommissionBoSBatchPDF(payloads, cfg);
+    }
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="CommissionBoS_Batch_${payloads.length}.pdf"`);
     res.send(pdf);

@@ -1,0 +1,134 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Tax Invoice {{invoiceNo}}</title>
+<style>
+  /* A deliberately DIFFERENT look from classic.hbs — same data, new layout.
+     Demonstrates per-customer template selection via sales_invoice_template. */
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  :root { --accent: #b8410e; --accent-soft: #fbeae2; --line: #e2d9d3; }
+  body {
+    font-family: Helvetica, Arial, sans-serif; font-size: 8.5pt; color: #222;
+    line-height: 1.35; padding: 24pt;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .band { background: var(--accent); color: #fff; padding: 14pt 16pt; border-radius: 6pt 6pt 0 0;
+          display: flex; align-items: center; gap: 12pt; }
+  .band img { width: 46pt; height: 46pt; object-fit: contain; background: #fff; border-radius: 4pt; padding: 2pt; }
+  .band .co { font-size: 13pt; font-weight: bold; letter-spacing: .3pt; }
+  .band .sub { font-size: 7.5pt; opacity: .9; }
+  .band .doctype { margin-left: auto; text-align: right; }
+  .band .doctype b { font-size: 12pt; letter-spacing: 1pt; }
+  .meta { display: flex; gap: 0; border: 1pt solid var(--line); border-top: none; }
+  .meta > div { flex: 1; padding: 7pt 12pt; border-right: 1pt solid var(--line); }
+  .meta > div:last-child { border-right: none; }
+  .meta .k { font-size: 7pt; text-transform: uppercase; color: #999; letter-spacing: .5pt; }
+  .meta .v { font-size: 10pt; font-weight: bold; }
+  .parties { display: flex; gap: 0; border: 1pt solid var(--line); border-top: none; }
+  .parties > div { flex: 1; padding: 9pt 12pt; }
+  .parties > div:first-child { border-right: 1pt solid var(--line); }
+  .parties .lbl { font-size: 7pt; text-transform: uppercase; color: var(--accent); font-weight: bold; letter-spacing: .5pt; }
+  .parties .nm { font-weight: bold; font-size: 9.5pt; margin-top: 2pt; }
+  .parties .ln { font-size: 8pt; color: #555; }
+  table.items { width: 100%; border-collapse: collapse; margin-top: 10pt; }
+  table.items th { background: var(--accent-soft); color: var(--accent); font-size: 7.5pt;
+                   text-transform: uppercase; letter-spacing: .3pt; padding: 6pt 8pt; text-align: left; }
+  table.items th.r, table.items td.r { text-align: right; }
+  table.items td { padding: 6pt 8pt; border-bottom: 0.75pt solid var(--line); font-size: 8.5pt; }
+  table.items tbody tr:last-child td { border-bottom: 1pt solid var(--accent); }
+  .totbox { display: flex; justify-content: flex-end; margin-top: 10pt; }
+  .totbox table { border-collapse: collapse; min-width: 260pt; }
+  .totbox td { padding: 4pt 10pt; font-size: 9pt; }
+  .totbox td.k { color: #666; } .totbox td.v { text-align: right; font-weight: bold; }
+  .totbox tr.grand td { background: var(--accent); color: #fff; font-size: 11pt; }
+  .words { margin-top: 8pt; padding: 8pt 12pt; background: var(--accent-soft); border-radius: 4pt; font-size: 9pt; }
+  .foot { display: flex; justify-content: space-between; margin-top: 18pt; font-size: 8pt; color: #555; }
+  .foot .sig { text-align: right; }
+  .foot .sig .co { font-weight: bold; color: #222; }
+  .foot .sig .line { margin-top: 34pt; border-top: 0.75pt solid #999; padding-top: 3pt; }
+</style>
+</head>
+<body>
+  <div class="band">
+    {{#if co.logoDataUri}}<img src="{{co.logoDataUri}}">{{/if}}
+    <div>
+      <div class="co">{{co.name}}</div>
+      <div class="sub">{{co.address1}}{{#if co.place}}, {{co.place}}{{/if}} · {{co.stateName}} · GSTIN {{co.gstin}}</div>
+    </div>
+    <div class="doctype"><b>TAX INVOICE</b><div class="sub">{{invoiceNo}} · {{shortDate invoiceDate}}</div></div>
+  </div>
+
+  <div class="meta">
+    <div><div class="k">Invoice No</div><div class="v">{{invoiceNo}}</div></div>
+    <div><div class="k">Date</div><div class="v">{{shortDate invoiceDate}}</div></div>
+    <div><div class="k">State / Code</div><div class="v">{{co.stateName}} · {{co.stateCode}}</div></div>
+    <div><div class="k">PAN</div><div class="v">{{co.pan}}</div></div>
+  </div>
+
+  <div class="parties">
+    <div>
+      <div class="lbl">Bill To</div>
+      <div class="nm">{{billTo.name}}</div>
+      {{#if billTo.addr}}<div class="ln">{{billTo.addr}}</div>{{/if}}
+      {{#if billTo.place}}<div class="ln">{{billTo.place}}</div>{{/if}}
+      {{#if billTo.gstin}}<div class="ln">GSTIN {{billTo.gstin}}</div>{{/if}}
+      {{#if billTo.state}}<div class="ln">{{billTo.state}} · Code {{billTo.stCode}}</div>{{/if}}
+    </div>
+    <div>
+      <div class="lbl">Ship To</div>
+      <div class="nm">{{ship.name}}</div>
+      {{#if ship.addr}}<div class="ln">{{ship.addr}}</div>{{/if}}
+      {{#if ship.place}}<div class="ln">{{ship.place}}</div>{{/if}}
+      {{#if ship.gstin}}<div class="ln">GSTIN {{ship.gstin}}</div>{{/if}}
+      {{#if ship.state}}<div class="ln">{{ship.state}} · Code {{ship.stCode}}</div>{{/if}}
+    </div>
+  </div>
+
+  <table class="items">
+    <thead><tr>
+      <th>#</th><th>Lot</th><th>Description</th>{{#if flags.showHsn}}<th>HSN</th>{{/if}}
+      <th class="r">Qty (Kg)</th><th class="r">Rate</th><th class="r">Amount</th>
+    </tr></thead>
+    <tbody>
+      {{#each rows}}
+      <tr>
+        <td>{{sl}}</td><td>{{lot}}</td><td>{{desc}}</td>{{#if ../flags.showHsn}}<td>{{hsn}}</td>{{/if}}
+        <td class="r">{{qty qty}}</td><td class="r">{{inr rate}}</td><td class="r">{{inr amount}}</td>
+      </tr>
+      {{/each}}
+      {{#if gunny}}<tr><td></td><td></td><td>{{gunny.desc}}</td>{{#if flags.showHsn}}<td>{{gunny.hsn}}</td>{{/if}}<td class="r">{{gunny.units}}</td><td class="r">{{fixed gunny.rate 2}}</td><td class="r">{{inr gunny.amount}}</td></tr>{{/if}}
+      {{#if transport}}<tr><td></td><td></td><td>{{transport.desc}}</td>{{#if flags.showHsn}}<td>{{transport.hsn}}</td>{{/if}}<td class="r">{{transport.units}}</td><td class="r">{{fixed transport.rate 2}}</td><td class="r">{{inr transport.amount}}</td></tr>{{/if}}
+      {{#if insurance}}<tr><td></td><td></td><td>{{insurance.desc}}</td>{{#if flags.showHsn}}<td>{{insurance.hsn}}</td>{{/if}}<td></td><td class="r">{{fixed insurance.rate 2}}</td><td class="r">{{inr insurance.amount}}</td></tr>{{/if}}
+    </tbody>
+  </table>
+
+  {{#with summary}}
+  <div class="totbox"><table>
+    <tr><td class="k">Taxable Value</td><td class="v">{{inr taxableValue}}</td></tr>
+    {{#if ../flags.isInter}}
+      <tr><td class="k">IGST {{../gstRate}}%</td><td class="v">{{inr igst}}</td></tr>
+    {{else}}
+      <tr><td class="k">CGST {{../gstHalf}}%</td><td class="v">{{inr cgst}}</td></tr>
+      <tr><td class="k">SGST {{../gstHalf}}%</td><td class="v">{{inr sgst}}</td></tr>
+    {{/if}}
+    <tr><td class="k">Round Off</td><td class="v">{{inr roundDiff}}</td></tr>
+    <tr class="grand"><td>Grand Total</td><td class="v">{{inr grandTotal}}</td></tr>
+  </table></div>
+  <div class="words"><b>In words:</b> INR {{words grandTotal}} Only</div>
+  {{/with}}
+
+  <div class="foot">
+    <div>
+      {{#if bank}}<div><b>Bank</b>: {{bank.name}} · A/c {{bank.acct}} · {{bank.ifsc}}</div>{{/if}}
+      <div style="margin-top:6pt">Declaration: We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.</div>
+    </div>
+    <div class="sig">
+      <div class="co">for {{forCompany}}</div>
+      <div class="line">Authorised Signatory</div>
+    </div>
+  </div>
+</body>
+</html>

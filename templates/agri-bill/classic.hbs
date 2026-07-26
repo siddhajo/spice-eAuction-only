@@ -1,0 +1,138 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Bill of Supply {{billNo}}</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: Helvetica, Arial, sans-serif; font-size: 8pt; color: #000;
+    line-height: 1.25; padding: 20pt;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .doc { border: 1pt solid #000; padding: 0; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { border: 0.5pt solid #000; padding: 2pt 4pt; vertical-align: top; }
+  .top-tag { text-align: right; font-size: 7.5pt; padding: 0 2pt 2pt; }
+  .center { text-align: center; } .right { text-align: right; } .bold { font-weight: bold; }
+  .lead { position: relative; padding: 4pt 6pt; }
+  .logo { position: absolute; left: 6pt; top: 4pt; width: 54pt; height: 54pt; object-fit: contain; }
+  .co-name { text-align: center; font-weight: bold; font-size: 11pt; }
+  .co-sub { text-align: center; font-size: 8pt; }
+  .title { text-align: center; font-weight: bold; font-size: 12pt; padding-top: 4pt; }
+  .subtitle { text-align: center; font-style: italic; font-size: 8pt; padding-bottom: 3pt; }
+  .no-b td { border: none; }
+  .grey td, td.grey { background: #e8e8e8; font-weight: bold; }
+  .items th { background: #e8e8e8; font-weight: bold; font-size: 7.5pt; text-align: center; white-space: pre-line; }
+  .items td { font-size: 9pt; }
+  {{#if stripe}} .items tbody tr:nth-child(even) td { background: #ECECEC; } {{/if}}
+  col.lot{width:34pt;} col.qty{width:60pt;} col.tqty{width:58pt;} col.price{width:50pt;}
+  col.value{width:68pt;} col.tax{width:74pt;} col.cg{width:52pt;} col.sg{width:52pt;} col.ig{width:58pt;}
+  .totals { width: 52%; margin-left: 48%; }
+  .totals td { font-size: 8.5pt; }
+  .words { padding: 4pt 6pt; font-size: 9pt; }
+  .forco { text-align: right; font-weight: bold; padding: 6pt 6pt 0; }
+  .sigrow { display: flex; justify-content: space-between; font-size: 8pt; padding: 22pt 6pt 6pt; }
+</style>
+</head>
+<body>
+<div class="top-tag">ORIGINAL/DUPLICATE/TRIPLICATE</div>
+<div class="doc">
+
+  <!-- Letterhead (sister/ASP identity) -->
+  <div class="lead">
+    {{#if co.logoDataUri}}<img class="logo" src="{{co.logoDataUri}}">{{/if}}
+    <div class="co-name">{{co.name}}</div>
+    {{#if co.address1}}<div class="co-sub">{{co.address1}}</div>{{/if}}
+    <div class="co-sub">{{co.place}}{{#if co.pin}} - {{co.pin}}{{/if}}{{#if co.stCode}}  STATE CODE:{{co.stCode}}{{/if}}{{#if co.mobile}}  MOBILE:{{co.mobile}}{{/if}}</div>
+    <div class="co-sub">{{co.idLabel}}:{{co.idValue}}{{#if co.pan}}   PAN:{{co.pan}}{{/if}}</div>
+    <div class="co-sub">GSTIN:{{co.gstin}}{{#if co.sbl}}   SBL:{{co.sbl}}{{/if}}</div>
+    {{#if co.email}}<div class="co-sub">e-Mail ID:{{co.email}}</div>{{/if}}
+  </div>
+
+  <div class="title">Bill for Purchase from Agriculturist</div>
+  <div class="subtitle">[Self-Generated Bill for Unregistered Purchases from Agriculturist Sec 2(7) of the CGST Act, 2017]</div>
+
+  <!-- Info strip -->
+  <table><tr class="no-b" style="border-top:0.5pt solid #000">
+    <td style="border-left:none;border-right:none;width:34%">Invoice No: {{billNo}}</td>
+    <td class="center" style="border-left:none;border-right:none;width:33%">e-AUCTION No: {{eTradeNo}}</td>
+    <td class="right" style="border-left:none;border-right:none">Date: {{billDate}}</td>
+  </tr></table>
+
+  <!-- Seller / Consignee -->
+  <table>
+    <tr><td class="grey center" style="width:50%">DETAILS OF SELLER [BILLED FOR]</td>
+        <td class="grey center" style="width:50%">DETAILS OF CONSIGNEE [SHIPPED TO]</td></tr>
+    <tr>
+      <td style="width:50%">{{#each sellerLines}}<div>{{this}}</div>{{/each}}</td>
+      <td style="width:50%">&nbsp;</td>
+    </tr>
+  </table>
+
+  <!-- Description / HSN -->
+  <table>
+    {{#if showHsn}}
+    <tr><td class="grey center" style="width:50%">Description of Goods:{{descGoods}}</td>
+        <td class="grey center" style="width:50%">HSN CODE:{{hsnCode}}</td></tr>
+    {{else}}
+    <tr><td class="grey center">Description of Goods:{{descGoods}}</td></tr>
+    {{/if}}
+  </table>
+
+  <!-- Line items (GST columns blank for agriculturist) -->
+  <table class="items">
+    <colgroup><col class="lot"><col class="qty"><col class="tqty"><col class="price"><col class="value"><col class="tax"><col class="cg"><col class="sg"><col class="ig"></colgroup>
+    <thead><tr>
+      <th>LOT
+NO</th><th>QUANTITY
+KGS</th><th>TOTAL
+QTY/KGS</th><th>PRICE
+Rs.  P.</th><th>VALUE
+Rs.     P.</th><th>TAXABLE VALUE
+( Rs.    P.)</th><th>C G S T
+( 2.5%)</th><th>S G S T
+( 2.5%)</th><th>I G S T
+( 5.0%)</th>
+    </tr></thead>
+    <tbody>
+      {{#each rows}}
+      <tr>
+        <td class="center">{{lot}}</td>
+        <td class="right">{{qtyg qty}}</td>
+        <td class="right">{{qtyg totalQty}}</td>
+        <td class="right">{{rup price}}</td>
+        <td class="right">{{rup value}}</td>
+        <td class="right">{{rup taxable}}</td>
+        <td></td><td></td><td></td>
+      </tr>
+      {{/each}}
+      {{#times padRows}}<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>{{/times}}
+      <tr class="bold">
+        <td class="center">TOTAL</td>
+        <td class="right">{{qtyg totals.qtySum}}</td>
+        <td class="right">{{qtyg totals.totalQtySum}}</td>
+        <td></td>
+        <td class="right">{{rup totals.valueSum}}</td>
+        <td class="right">{{rup totals.taxableSum}}</td>
+        <td></td><td></td><td></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- Totals -->
+  <table class="totals">
+    {{#each totalsRows}}
+    <tr><td>{{this.[0]}}</td><td class="right" style="width:42%">{{rup this.[1]}}</td></tr>
+    {{/each}}
+    <tr class="bold"><td>Total Value</td><td class="right">{{rup netAmount}}</td></tr>
+  </table>
+
+  <div class="words" style="border-top:0.5pt solid #000">{{netAmountWords}}</div>
+  <div class="forco">for {{co.short}}</div>
+  <div class="sigrow"><span>Signature of Seller</span><span>Authorized Signatory</span></div>
+</div>
+</body>
+</html>

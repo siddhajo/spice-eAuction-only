@@ -1,8 +1,19 @@
 # Railway Nixpacks build config for spice-config
 # better-sqlite3 needs python3 + gcc to compile its native bindings on first install.
+# aptPkgs: shared libraries headless Chromium (@sparticuz/chromium) needs at
+#   runtime for the HTML→PDF invoice engine. Without these the browser process
+#   fails to launch ("Failed to launch the browser process") on the lean image.
+#   Verified against node:20-slim (Debian). Only needed when the html invoice
+#   engine is used (INVOICE_ENGINE=html or a *_engine setting = html).
 
 [phases.setup]
 nixPkgs = ["nodejs_20", "python3", "gcc", "gnumake"]
+aptPkgs = [
+  "libnss3", "libatk1.0-0", "libatk-bridge2.0-0", "libcups2", "libdrm2",
+  "libxkbcommon0", "libxcomposite1", "libxdamage1", "libxfixes3", "libxrandr2",
+  "libgbm1", "libasound2", "libpango-1.0-0", "libcairo2", "libatspi2.0-0",
+  "fonts-liberation",
+]
 
 [phases.install]
 cmds = ["npm ci --omit=dev || npm install --omit=dev"]

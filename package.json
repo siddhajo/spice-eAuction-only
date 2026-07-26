@@ -19,6 +19,7 @@
     "express": "^4.21.0",
     "handlebars": "^4.7.9",
     "multer": "^2.1.1",
+    "pdf-lib": "^1.17.1",
     "pdfkit": "^0.15.0",
     "puppeteer-core": "^25.3.0",
     "sql.js": "^1.10.3",

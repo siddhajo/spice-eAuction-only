@@ -166,9 +166,11 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
     ifsc: bizKL ? (cfg.bank_kl_ifsc || cfg.bank_tn_ifsc || '') : (cfg.bank_tn_ifsc || cfg.bank_kl_ifsc || ''),
   } : null;
 
+  const usedRows = rows.length + (gunny ? 1 : 0) + (transport ? 1 : 0) + (insurance ? 1 : 0);
   return {
     cfg,
     co,
+    padRows: Math.max(0, 13 - usedRows),
     title: 'Tax Invoice',
     invoiceNo: formatInvoiceNo(cfg, saleType, invoiceNo),
     invoiceDate: invoiceDate || null,
@@ -199,4 +201,15 @@ async function generateSalesInvoiceHtmlPDF(invoiceData, cfg, saleType, invoiceNo
   return htmlToPdf(html);
 }
 
-module.exports = { generateSalesInvoiceHtmlPDF, buildSalesInvoiceView };
+// Bulk: invoices = [{ invoiceData, saleType, invoiceNo, invoiceDate }].
+// Renders each independently, merges the PDFs into one multi-page document.
+async function generateSalesInvoicesHtmlBatchPDF(invoices, cfg) {
+  const { mergePdfs } = require('./merge-pdf');
+  const parts = [];
+  for (const inv of invoices) {
+    parts.push(await generateSalesInvoiceHtmlPDF(inv.invoiceData, cfg, inv.saleType, inv.invoiceNo, inv.invoiceDate));
+  }
+  return mergePdfs(parts);
+}
+
+module.exports = { generateSalesInvoiceHtmlPDF, generateSalesInvoicesHtmlBatchPDF, buildSalesInvoiceView };

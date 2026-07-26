@@ -99,6 +99,9 @@ const DEFAULTS = [
   { key: 'commission',          value: '0', category: 'rates', label: 'Commission %',                                 type: 'number' },
   { key: 'hpc',                 value: '0', category: 'rates', label: 'Handling %',                                   type: 'number' },
   { key: 'sb_refund',           value: '0', category: 'rates', label: 'SB Sample Refund (Kgs)',                       type: 'number' },
+  // Trader-sample deduction (Kgs) shown on the Commission Bill and subtracted
+  // from the seller's NETT. 0 = feature off (no row, no effect).
+  { key: 'sb_trader_sample',    value: '0', category: 'rates', label: 'Trader Sample (Kgs)',                          type: 'number' },
   // Extra grams added PER LOT to the Sample Refund stock line's ACTUALQTY (not
   // BILLEDQTY) in the RD purchase ("Sample Refund to Dealer") and URD purchase
   // ("Sample Refund to Planter") Tally vouchers. Lets the physically-received
@@ -151,7 +154,10 @@ const DEFAULTS = [
   // installs); 'html' = render via the HTML template selected below. Flip to
   // 'html' to serve the template-based PDF from the download button; revert
   // instantly by setting it back to 'pdfkit'.
-  { key: 'sales_invoice_engine',      value: 'pdfkit',  category: 'invoice', label: 'Sales Invoice Engine (pdfkit/html)', type: 'select' },
+  { key: 'sales_invoice_engine',      value: 'pdfkit',  category: 'invoice', label: 'Sales Invoice Engine (pdfkit/html)',    type: 'select' },
+  { key: 'purchase_invoice_engine',   value: 'pdfkit',  category: 'invoice', label: 'Purchase Invoice Engine (pdfkit/html)', type: 'select' },
+  { key: 'agri_bill_engine',          value: 'pdfkit',  category: 'invoice', label: 'Bill of Supply Engine (pdfkit/html)',   type: 'select' },
+  { key: 'commission_bill_engine',    value: 'pdfkit',  category: 'invoice', label: 'Commission Bill Engine (pdfkit/html)',  type: 'select' },
   { key: 'sales_invoice_template',    value: 'classic', category: 'invoice', label: 'Sales Invoice Layout',    type: 'select' },
   { key: 'purchase_invoice_template', value: 'classic', category: 'invoice', label: 'Purchase Invoice Layout', type: 'select' },
   { key: 'agri_bill_template',        value: 'classic', category: 'invoice', label: 'Bill of Supply Layout',   type: 'select' },

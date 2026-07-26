@@ -1,0 +1,114 @@
+{{#if first}}<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 8pt; color: #000; line-height: 1.25;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .cbos-page { padding: 20pt; }
+  .cbos-page + .cbos-page { page-break-before: always; }
+  .cbos-doc { border: 1pt solid #000; }
+  .cbos table { border-collapse: collapse; width: 100%; }
+  .cbos td, .cbos th { border: 0.5pt solid #000; padding: 2pt 3pt; vertical-align: top; }
+  .cbos .top-tag { text-align: right; font-size: 7.5pt; padding: 0 2pt 2pt; }
+  .cbos .center { text-align: center; } .cbos .right { text-align: right; } .cbos .bold { font-weight: bold; }
+  .cbos .lead { position: relative; padding: 4pt 6pt; }
+  .cbos .logo { position: absolute; left: 6pt; top: 4pt; width: 52pt; height: 52pt; object-fit: contain; }
+  .cbos .co-name { text-align: center; font-weight: bold; font-size: 11pt; }
+  .cbos .co-sub { text-align: center; font-size: 8pt; }
+  .cbos .title { text-align: center; font-weight: bold; font-size: 12pt; padding-top: 3pt; }
+  .cbos .subtitle { text-align: center; font-size: 8pt; padding-bottom: 3pt; }
+  .cbos .meta { display: flex; justify-content: space-between; font-size: 9pt; padding: 2pt 6pt; }
+  .cbos .no-b td { border: none; }
+  .cbos .grey td, .cbos td.grey { background: #e8e8e8; font-weight: bold; }
+  .cbos .items th { background: #e8e8e8; font-weight: bold; font-size: 7pt; text-align: center; }
+  .cbos .items td { font-size: 7.5pt; white-space: nowrap; }
+  .cbos .party td { font-size: 7.5pt; }
+  .cbos .nett { text-align: right; font-weight: bold; font-size: 10pt; padding: 4pt 6pt; }
+  .cbos .words { font-size: 9pt; padding: 2pt 6pt; }
+  .cbos .forco { text-align: right; font-weight: bold; padding: 6pt 6pt 0; }
+  .cbos .sigrow { display: flex; justify-content: space-between; font-size: 8pt; padding: 22pt 6pt 6pt; }
+</style>{{/if}}
+<div class="cbos-page cbos">
+  <div class="top-tag">ORIGINAL/DUPLICATE/TRIPLICATE</div>
+  <div class="cbos-doc">
+
+    <div class="lead">
+      {{#if co.logoDataUri}}<img class="logo" src="{{co.logoDataUri}}">{{/if}}
+      <div class="co-name">{{co.name}}</div>
+      <div class="co-sub">{{co.address1}}{{#if co.place}}, {{co.place}}{{/if}}{{#if co.stateName}}, {{co.stateName}}{{/if}}{{#if co.pin}} - {{co.pin}}{{/if}}</div>
+      <div class="co-sub">{{co.idLabel}}:{{co.idValue}}{{#if co.pan}}   PAN:{{co.pan}}{{/if}}</div>
+      <div class="co-sub">GSTIN:{{co.gstin}}{{#if co.sbl}}   SBL:{{co.sbl}}{{/if}}</div>
+    </div>
+
+    <div class="meta"><span>Cropt Receipt No.:{{crpt}}</span><span>Bill No: {{billNo}}</span></div>
+    <div class="title">COMMISSION BILL</div>
+    <div class="subtitle">{{subtitle}}</div>
+
+    <table><tr class="no-b" style="border-top:0.5pt solid #000">
+      <td style="border-left:none;border-right:none">eAuction No: {{ano}}</td>
+      <td class="right" style="border-left:none;border-right:none">Date :{{auctionDate}}</td>
+    </tr></table>
+
+    <table>
+      <tr><td class="grey center" style="width:50%">DETAILS OF SELLER [BILLED FOR]</td>
+          <td class="grey center" style="width:50%">DETAILS OF PURCHASER [SOLD TO]</td></tr>
+      <tr class="party">
+        <td style="width:50%">{{#each sellerLines}}<div>{{this}}</div>{{/each}}</td>
+        <td style="width:50%">{{#each purchaserLines}}<div>{{this}}</div>{{/each}}</td>
+      </tr>
+    </table>
+
+    <!-- 13-column line-item table -->
+    <table class="items">
+      <thead>
+        <tr>
+          <th rowspan="2">LOT
+NO</th><th rowspan="2">DESCRIPTION</th><th rowspan="2">HSN
+SAC</th><th rowspan="2">QTY
+Kg.gr.</th><th rowspan="2">UNIT
+BAGS</th><th rowspan="2">RATE
+Rs.P.</th><th rowspan="2">CARDAMOM
+COST</th>
+          <th colspan="2">CGST</th><th colspan="2">SGST</th><th colspan="2">IGST</th>
+        </tr>
+        <tr>
+          <th>RATE</th><th>AMOUNT</th><th>RATE</th><th>AMOUNT</th><th>RATE</th><th>AMOUNT</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="center">{{cardamom.lot}}</td><td>CARDAMOM</td><td class="center">{{hsnCardamom}}</td>
+          <td class="right">{{qtyg cardamom.qty}}</td><td class="center">{{cardamom.bags}}</td>
+          <td class="right">{{rup cardamom.rate}}</td><td class="right">{{rup cardamom.cost}}</td>
+          <td></td><td></td><td></td><td></td><td></td><td></td>
+        </tr>
+        {{#if refund}}
+        <tr>
+          <td class="center">[+]</td><td>SAMPLE REFUND</td><td></td><td></td><td></td>
+          <td class="right">{{rup refund.rate}}</td><td class="right">{{rup refund.amount}}</td>
+          <td></td><td></td><td></td><td></td><td></td><td></td>
+        </tr>
+        {{/if}}
+        <tr>
+          <td class="center">[-]</td><td>COMMISSION</td><td class="center">{{hsnCommission}}</td><td></td><td></td><td></td>
+          <td class="right">{{rup commission.amount}}</td>
+          <td class="center">{{commission.cgstRate}}</td><td class="right">{{#if commission.cgst}}{{rup commission.cgst}}{{/if}}</td>
+          <td class="center">{{commission.sgstRate}}</td><td class="right">{{#if commission.sgst}}{{rup commission.sgst}}{{/if}}</td>
+          <td class="center">{{commission.igstRate}}</td><td class="right">{{#if commission.igst}}{{rup commission.igst}}{{/if}}</td>
+        </tr>
+        <!-- Tax summary band -->
+        <tr class="bold">
+          <td colspan="6" class="center">TAX AMOUNT</td>
+          <td class="right grey">{{rup tax.taxable}}</td>
+          <td></td><td class="right">{{#if tax.cgst}}{{rup tax.cgst}}{{/if}}</td>
+          <td></td><td class="right">{{#if tax.sgst}}{{rup tax.sgst}}{{/if}}</td>
+          <td></td><td class="right">{{#if tax.igst}}{{rup tax.igst}}{{/if}}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="nett">NETT AMOUNT&nbsp;&nbsp;&nbsp;{{rup nett}}</div>
+    <div class="words" style="border-top:0.5pt solid #000">{{nettWords}}</div>
+    <div class="forco">{{forCo}}</div>
+    <div class="sigrow"><span>Signature of Seller</span><span>Authorized Signatory</span></div>
+  </div>
+</div>

@@ -43,8 +43,15 @@ function registerHelpers() {
   // Money in Indian grouping: {{inr summary.grandTotal}}
   Handlebars.registerHelper('inr', (v) => formatINR(v, 2));
 
-  // Quantity with 3 decimals + unit: {{qty li.qty}} → "12.345"
+  // Quantity with 3 decimals (no grouping): {{qty li.qty}} → "12.345"
   Handlebars.registerHelper('qty', (v) => Number(v || 0).toFixed(3));
+
+  // Indian-grouped money / qty matching the PDFKit fmtRup / fmtQty exactly
+  // (toLocaleString en-IN). Used by purchase invoice, bill of supply, commission.
+  Handlebars.registerHelper('rup', (v) =>
+    Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  Handlebars.registerHelper('qtyg', (v) =>
+    Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: 3, maximumFractionDigits: 3 }));
 
   // Fixed-decimals passthrough: {{fixed rate 2}}
   Handlebars.registerHelper('fixed', (v, d) => Number(v || 0).toFixed(typeof d === 'number' ? d : 2));
@@ -67,6 +74,15 @@ function registerHelpers() {
 
   // Arithmetic for template-side sums (e.g. CGST+SGST total): {{inr (add a b)}}
   Handlebars.registerHelper('add', (a, b) => Number(a || 0) + Number(b || 0));
+
+  // Repeat a block N times — used to pad blank filler rows so the totals/footer
+  // land near the bottom of the page (matches the PDFKit empty-row padding).
+  Handlebars.registerHelper('times', function (n, options) {
+    let out = '';
+    const count = Math.max(0, Number(n) || 0);
+    for (let i = 0; i < count; i++) out += options.fn(i);
+    return out;
+  });
 
   // Equality + comparison for {{#if (eq a b)}} style conditionals.
   Handlebars.registerHelper('eq', (a, b) => a === b);
