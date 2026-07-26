@@ -6633,6 +6633,18 @@ app.get('/api/invoices/preview.html', (req, res) => {
   }
 });
 
+// Lists the layout/template ids available for a document type, so the print UI
+// can offer the operator a format choice. docType e.g. 'commission-bill',
+// 'sales-invoice', 'purchase-invoice', 'agri-bill'.
+app.get('/api/invoices/templates/:docType', requireView, (req, res) => {
+  try {
+    const { listTemplates } = require('./pdf/invoice-templates');
+    res.json({ docType: req.params.docType, templates: listTemplates(req.params.docType) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/invoices/generate/:auctionId',
   requireInvoiceWrite,
   requirePriceChecked(req => parseInt(req.params.auctionId, 10)),
@@ -8628,8 +8640,21 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
       }
     }
 
+    // Per-print format choice: the print UI can pass a `template` (e.g. 'rns'
+    // or 'classic') so the operator picks the layout at print time. When
+    // supplied, it forces the HTML engine and overrides the saved template
+    // for THIS download only. Without it, fall back to the saved engine/layout.
+    const tplChoice = String((req.body && req.body.template) || (req.query && req.query.template) || '').trim();
     let pdf;
-    if (require('./pdf/engine-toggle').useHtmlEngine(cfg, 'commission_bill_engine')) {
+    if (tplChoice === 'pdfkit') {
+      // Explicit "original PDFKit layout" choice.
+      pdf = await generateCommissionBoSBatchPDF(payloads, cfg);
+    } else if (tplChoice) {
+      // A named HTML template (e.g. 'rns', 'classic') — force the HTML engine
+      // and use that layout for this download only.
+      pdf = await require('./pdf/render-commission-html')
+        .generateCommissionBoSHtmlPDF(payloads, { ...cfg, commission_bill_template: tplChoice });
+    } else if (require('./pdf/engine-toggle').useHtmlEngine(cfg, 'commission_bill_engine')) {
       pdf = await require('./pdf/render-commission-html').generateCommissionBoSHtmlPDF(payloads, cfg);
     } else {
       pdf = await generateCommissionBoSBatchPDF(payloads, cfg);
@@ -14207,12 +14232,18 @@ function _auctionParseAndMap(req, def) {
   }
   return { rows, mapping };
 }
-// Read one mapped cell as trimmed text ('' when unmapped/blank).
+// Read one mapped cell as trimmed text ('' when unmapped/blank). Strips the
+// trailing zero-only decimal Excel leaves on plain-digit fields (tel, aadhar,
+// ppin…) so "9790744444.0" reads as "9790744444". Only <digits>.<zeros> is
+// touched; real decimals and text are returned unchanged (numeric lot columns
+// are parseFloat'd by the caller afterwards, so a stripped "1234" is fine).
 function _auctionCell(row, mapping, field) {
   const src = mapping[field];
   if (!src) return '';
   const v = row[src];
-  return v == null ? '' : String(v).trim();
+  if (v == null) return '';
+  const s = String(v).trim();
+  return /^\d+\.0+$/.test(s) ? s.slice(0, s.indexOf('.')) : s;
 }
 // Build the projected lot value object for a row (used by verify samples/diff
 // and — via the same field order — the run INSERT).
@@ -14944,10 +14975,21 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
         // (Tally XML's strict toTallyDate, the /api/invoices date BETWEEN
         // filter, etc.) sees a canonical value regardless of whether the
         // spreadsheet held an Excel serial, a DD-MM-YYYY string, etc.
+        // stripZeroDecimal: Excel stores plain-digit fields (phone, PIN,
+        // account, aadhar) as numbers, and old-data exports surface them as
+        // text like "9790744444.0". Trim a trailing zero-only decimal so the
+        // stored identifier is clean. Surgical & value-preserving: it returns
+        // the ORIGINAL cell untouched unless it is exactly <digits>.<zeros>,
+        // so numeric amounts, real decimals ("1234.56") and text pass through
+        // unchanged — only the spurious ".0"/".00" artifact is removed.
+        const stripZeroDecimal = (v) => {
+          const s = String(v).trim();
+          return /^\d+\.0+$/.test(s) ? s.slice(0, s.indexOf('.')) : v;
+        };
         const values = fieldSources.map(([fname, src]) => {
           const v = src ? r[src] : '';
           if (fname === 'date') return normalizeDate(v);
-          return v;
+          return stripZeroDecimal(v);
         });
         // GSTIN-driven name correction: when the row's GSTIN matches a
         // master record, overwrite the (often truncated) imported name

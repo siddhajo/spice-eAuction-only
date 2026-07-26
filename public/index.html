@@ -22561,17 +22561,52 @@ async function printSelectedBills(){
 // + purchaser header, per-lot cardamom cost + sample refund rows, final
 // [-] COMMISSION row, NETT AMOUNT and amount in words. No CGST/SGST
 // columns — purely a Bill of Supply.
+// Lightweight format picker — shows one button per available layout and
+// resolves to the chosen template id (or null if cancelled). Built on the fly
+// so it stays in sync with whatever templates exist on the server.
+function chooseInvoiceFormat(templates, title){
+  return new Promise((resolve)=>{
+    const label=(t)=> t.replace(/[-_]/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+    const ov=document.createElement('div');
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;display:flex;align-items:center;justify-content:center';
+    const box=document.createElement('div');
+    box.style.cssText='background:#fff;border-radius:10px;padding:22px;min-width:290px;max-width:92vw;box-shadow:0 12px 44px rgba(0,0,0,.32)';
+    const h=document.createElement('h3'); h.textContent=title||'Choose format'; h.style.cssText='margin:0 0 14px;font-size:16px'; box.appendChild(h);
+    const wrap=document.createElement('div'); wrap.style.cssText='display:flex;flex-direction:column;gap:8px';
+    const done=(v)=>{ if(ov.parentNode) document.body.removeChild(ov); resolve(v); };
+    templates.forEach(t=>{
+      const b=document.createElement('button'); b.textContent=label(t); b.className='btn';
+      b.style.cssText='padding:11px 14px;text-align:left;font-weight:600'; b.onclick=()=>done(t); wrap.appendChild(b);
+    });
+    const c=document.createElement('button'); c.textContent='Cancel'; c.className='btn btn-o';
+    c.style.cssText='padding:9px 14px;margin-top:8px'; c.onclick=()=>done(null);
+    box.appendChild(wrap); box.appendChild(c); ov.appendChild(box);
+    ov.addEventListener('click',e=>{ if(e.target===ov) done(null); });
+    document.body.appendChild(ov);
+  });
+}
+
 async function printSelectedCommissionBoS(){
   const body=document.getElementById('bills-list');
   if(!body){alert('No bills list found');return}
   const checked=Array.from(body.querySelectorAll('.bill-select-cb:checked'));
   if(!checked.length){alert('Tick one or more bills first');return}
   const ids=checked.map(cb=>Number(cb.value)).filter(Boolean);
+  // Offer a layout choice when more than one commission-bill template exists.
+  let template='';
+  try{
+    const res=await j('/api/invoices/templates/commission-bill');
+    const templates=(res&&res.templates)||[];
+    if(templates.length>1){
+      template=await chooseInvoiceFormat(templates,'Choose commission bill format');
+      if(template===null) return; // operator cancelled
+    }
+  }catch(_){ /* server didn't list templates — use the saved default */ }
   await fetchPdfWithOverlay(
     `Building Commission Bill (BoS) for ${ids.length} bill${ids.length===1?'':'s'}…`,
     '/api/bills/commission-bos-bulk',
     `CommissionBoS_Batch_${ids.length}.pdf`,
-    { ids }
+    template ? { ids, template } : { ids }
   );
 }
 

@@ -12,13 +12,21 @@
 // `key` is the settings key, e.g. 'sales_invoice_engine',
 // 'purchase_invoice_engine', 'agri_bill_engine', 'commission_bill_engine'.
 function useHtmlEngine(cfg, key) {
-  const global = String(process.env.INVOICE_ENGINE || '').toLowerCase();
-  if (global === 'html') return true;
-  if (global === 'pdfkit') return false;
-  const perDoc = String(
-    process.env[key.toUpperCase()] || (cfg && cfg[key]) || 'pdfkit'
-  ).toLowerCase();
-  return perDoc === 'html';
+  // Only 'html' / 'pdfkit' are valid engine values. Any other value (e.g. a
+  // layout name like 'rns' accidentally put in an *_ENGINE variable) is IGNORED
+  // rather than treated as "not html" — so a typo can't silently disable it;
+  // resolution just falls through to the next source.
+  const norm = (v) => {
+    const s = String(v == null ? '' : v).toLowerCase().trim();
+    return (s === 'html' || s === 'pdfkit') ? s : '';
+  };
+  const global = norm(process.env.INVOICE_ENGINE);
+  if (global) return global === 'html';
+  const envDoc = norm(process.env[key.toUpperCase()]);
+  if (envDoc) return envDoc === 'html';
+  const setting = norm(cfg && cfg[key]);
+  if (setting) return setting === 'html';
+  return false; // default: pdfkit
 }
 
 module.exports = { useHtmlEngine };

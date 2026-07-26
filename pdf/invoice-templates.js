@@ -88,7 +88,20 @@ function getInvoiceTemplate(docType, cfg) {
   };
 }
 
+// List the template ids available on disk for a document type (the .hbs files
+// under templates/<docType>/). Used to build the print-time format chooser so
+// it stays in sync automatically as templates are added.
+function listTemplates(docType) {
+  const dir = path.join(TEMPLATES_DIR, docType);
+  try {
+    return fs.readdirSync(dir)
+      .filter((f) => f.endsWith('.hbs'))
+      .map((f) => f.replace(/\.hbs$/, ''))
+      .sort();
+  } catch (_) { return []; }
+}
+
 // Test/hot-reload aid — drop the compiled cache so edited .hbs files re-load.
 function clearCache() { _cache.clear(); }
 
-module.exports = { getInvoiceTemplate, clearCache, DEFAULTS, SETTING_KEY };
+module.exports = { getInvoiceTemplate, listTemplates, clearCache, DEFAULTS, SETTING_KEY };
