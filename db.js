@@ -967,6 +967,38 @@ async function initDb() {
   try { wrapped.exec('CREATE INDEX IF NOT EXISTS idx_lots_locked ON lots(locked_at)'); }
   catch (_) { /* index may already exist — ignore */ }
 
+  // One-time data fix: strip the trailing zero-decimal Excel leaves on
+  // plain-digit identifier columns. Buyer/Seller XLSX imports read a phone
+  // (PIN, account, aadhar…) cell as a number and stored SheetJS' formatted
+  // text — "9994159282.0" — into the DB. The importer now cleans this on the
+  // way in, but rows imported before that (and re-imports skipped in append
+  // mode as duplicates) keep the ".0". This heals them in place.
+  //
+  // Provably safe & idempotent: the substr(...) transform runs ONLY when the
+  // integer part is entirely digits AND the fractional part is entirely
+  // zeros, so real decimals ("12.5", "1234.30"), non-numeric text ("N/A")
+  // and already-clean values are all left untouched. Once cleaned, the WHERE
+  // matches nothing on subsequent startups.
+  const zeroDecimalCols = [
+    ['traders', 'tel'], ['traders', 'whatsapp'], ['traders', 'aadhar'],
+    ['traders', 'pin'], ['traders', 'pst_code'], ['traders', 'acctnum'],
+    ['buyers',  'tel'], ['buyers',  'pin'], ['buyers', 'st_code'],
+    ['buyers',  'cpin'], ['buyers', 'cst_code'],
+    ['lots',    'tel'], ['lots',    'ppin'], ['lots', 'aadhar'],
+  ];
+  for (const [tbl, col] of zeroDecimalCols) {
+    try {
+      wrapped.run(
+        `UPDATE ${tbl}
+            SET ${col} = substr(${col}, 1, instr(${col}, '.') - 1)
+          WHERE ${col} LIKE '%.%'
+            AND substr(${col}, 1, instr(${col}, '.') - 1) <> ''
+            AND substr(${col}, 1, instr(${col}, '.') - 1) NOT GLOB '*[^0-9]*'
+            AND substr(${col}, instr(${col}, '.') + 1) NOT GLOB '*[^0]*'`
+      );
+    } catch (_) { /* column may not exist on this DB — ignore */ }
+  }
+
   // One-time data fix: legacy ASP-only lots (where invo==asp_invo) had their
   // `sale` field set during the old ASP-generation logic. The current logic
   // doesn't set it (so ISP can pick the right sale type per buyer). Clear
