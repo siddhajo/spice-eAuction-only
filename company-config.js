@@ -197,6 +197,10 @@ const DEFAULTS = [
   { key: 'flag_ship',            value: 'false', category: 'flags', label: 'Show Ship To Address',            type: 'boolean' },
   { key: 'flag_hsn',             value: 'false', category: 'flags', label: 'Show HSN Codes',                  type: 'boolean' },
   { key: 'flag_bank',             value: 'false', category: 'flags', label: 'Bank Details in Invoice',         type: 'boolean' },
+  // Show the seller's phone + bank account number on the Commission Bill
+  // (RNS layout only). Off by default — some growers don't want their bank
+  // details printed. Consumed by pdf/render-commission-html.js.
+  { key: 'flag_commission_bank',  value: 'false', category: 'flags', label: 'Seller Phone & A/C on Commission Bill', type: 'boolean' },
   { key: 'flag_tds_purchase',    value: 'false', category: 'flags', label: 'TDS on Purchase Invoice',         type: 'boolean' },
   { key: 'flag_tds_sales',       value: 'false', category: 'flags', label: 'TDS on Sales Invoice',            type: 'boolean' },
   { key: 'flag_wgst',            value: 'false', category: 'flags', label: 'TDS on Full Invoice Amount',      type: 'boolean' },

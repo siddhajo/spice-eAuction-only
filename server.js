@@ -8602,6 +8602,20 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
         cr:      b.crr     || first.cr || '',
         pan:     b.pan     || first.pan || '',
       };
+      // Seller phone + bank account for the commission bill (shown only when
+      // flag_commission_bank is on, RNS layout). Phone from the trader master
+      // (fallback to the denormalised lot value); account prefers the trader's
+      // default bank (trader_banks) then the legacy single-account column.
+      try {
+        const t = db.get('SELECT id, tel, acctnum FROM traders WHERE UPPER(TRIM(name)) = UPPER(TRIM(?)) LIMIT 1', [seller.name]);
+        seller.phone = (t && t.tel) || first.tel || '';
+        let acct = (t && t.acctnum) || '';
+        if (t && t.id) {
+          const tb = db.get('SELECT acctnum FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id LIMIT 1', [t.id]);
+          if (tb && tb.acctnum) acct = tb.acctnum;
+        }
+        seller.account = acct;
+      } catch (_) { seller.phone = first.tel || ''; seller.account = ''; }
 
       // ── One Commission Bill page PER LOT ──────────────────────
       // A grower with two lots gets TWO commission bills, each showing
