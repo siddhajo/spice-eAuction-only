@@ -14998,8 +14998,18 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
         // so numeric amounts, real decimals ("1234.56") and text pass through
         // unchanged — only the spurious ".0"/".00" artifact is removed.
         const stripZeroDecimal = (v) => {
+          if (v == null) return '';
           const s = String(v).trim();
-          return /^\d+\.0+$/.test(s) ? s.slice(0, s.indexOf('.')) : v;
+          // Old exports carry the digit as text "9790744444.0" — trim the
+          // zero-only decimal.
+          if (/^\d+\.0+$/.test(s)) return s.slice(0, s.indexOf('.'));
+          // CRITICAL: when the cell is a numeric phone/PIN/account, XLSX
+          // returns a JS number. sql.js binds an integer > 2^31 as a SQLite
+          // REAL, which SQLite writes into a TEXT column as "9790744444.0".
+          // Returning the integer STRING forces a clean TEXT bind; numeric
+          // columns still coerce it back via column affinity.
+          if (typeof v === 'number' && Number.isInteger(v)) return s;
+          return v;
         };
         const values = fieldSources.map(([fname, src]) => {
           const v = src ? r[src] : '';
