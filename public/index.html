@@ -5867,6 +5867,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <div class="fg"><label>State</label><input id="t-pstate"></div>
     <div class="fg"><label>State Code</label><input id="t-pstcode"></div>
     <div class="fg"><label>PIN</label><input id="t-pin"></div>
+    <div class="fg"><label>Date of Birth</label><input id="t-dob" type="date"></div>
   </div>
   <div style="margin-top:14px;border:1px solid var(--spice-line);border-radius:8px;padding:10px 14px;background:var(--spice-cream)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -10357,8 +10358,8 @@ function showLotList(titleText, lots){
   _dl = {
     rows: (lots || []).map(l => {
       const code = String(l.code || '').trim().toUpperCase();
-      const status = code === 'WD' ? 'Withdrawn' : code ? 'Sold' : 'Booked';
-      const statusCls = code === 'WD' ? 'wd' : code ? 'sold' : 'book';
+      const status = code === 'WD' ? 'Withdrawn' : code === 'NA' ? 'Not Auctioned' : code ? 'Sold' : 'Booked';
+      const statusCls = code === 'WD' ? 'wd' : code === 'NA' ? 'book' : code ? 'sold' : 'book';
       return {
         lot_no: String(l.lot_no || ''),
         seller: String(l.name || ''),
@@ -17832,9 +17833,9 @@ async function restoreDbBackup(ev){
 // Traders now support MULTIPLE bank accounts via a repeating section in the
 // modal. The flat trader fields here cover everything EXCEPT banking — that's
 // collected separately from the #t-banks-container rows at save time.
-const T_FIELDS=['name','cr','pan','tan','tel','aadhar','padd','ppla','pstate','pst_code','pin'];
+const T_FIELDS=['name','cr','pan','tan','tel','aadhar','padd','ppla','pstate','pst_code','pin','dob'];
 const T_IDS={name:'t-name',cr:'t-cr',pan:'t-pan',tan:'t-tan',tel:'t-tel',aadhar:'t-aadhar',padd:'t-padd',ppla:'t-ppla',
-  pstate:'t-pstate',pst_code:'t-pstcode',pin:'t-pin'};
+  pstate:'t-pstate',pst_code:'t-pstcode',pin:'t-pin',dob:'t-dob'};
 
 // Shared pager renderer used by sellers + buyers (and reusable for any
 // future paginated list). Renders a "Showing X–Y of N · matching 'q'"
@@ -20993,11 +20994,12 @@ function openLotEdit(l){
     codeEl._wiredLookup = true;
     codeEl.addEventListener('change', async () => {
       const code = (codeEl.value || '').trim().toUpperCase();
-      // Withdrawn lots carry no sale: zero the price so the amount (and,
-      // after save+recalc, every downstream tax/payable figure) drops to
-      // nil. No buyer lookup applies to the 'WD' marker, so bail early.
-      if (code === 'WD') {
-        codeEl.value = 'WD';
+      // Withdrawn ('WD') and Not-Auctioned ('NA') lots carry no sale: zero the
+      // price so the amount (and, after save+recalc, every downstream
+      // tax/payable figure) drops to nil. These markers aren't a real buyer to
+      // look up, so bail early.
+      if (code === 'WD' || code === 'NA') {
+        codeEl.value = code;
         if (priceEl) priceEl.value = '0';
         recalcAmount();
         return;
@@ -21643,19 +21645,22 @@ function renderPriceEntryGrid(){
     return;
   }
   const rows = _pe.lots.map((l, i) => {
-    const isWD = String(l.code||'').trim().toUpperCase() === 'WD';
-    const amt = isWD ? 0 : (Number(l.qty)||0) * (Number(l.price)||0);
+    const codeUp = String(l.code||'').trim().toUpperCase();
+    const isWD = codeUp === 'WD';
+    const isNA = codeUp === 'NA';   // Not-Auctioned buyer — carries no sale value
+    const noSale = isWD || isNA;    // neither can be priced here
+    const amt = noSale ? 0 : (Number(l.qty)||0) * (Number(l.price)||0);
     const locked = !!(l.locked_at);   // locked lots are edited by admins in the modal only
-    const readonly = locked || isWD;  // WD lots carry no price — visible but not editable
-    return `<tr data-row="${i}"${isWD ? ' style="opacity:.55"' : ''}>
+    const readonly = locked || noSale;  // WD/NA lots carry no price — visible but not editable
+    return `<tr data-row="${i}"${noSale ? ' style="opacity:.55"' : ''}>
       <td style="padding:6px 8px;white-space:nowrap;font-weight:600">${esc(l.lot_no)}</td>
       <td style="padding:6px 8px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis">${esc(l.name||'')}</td>
       <td style="padding:6px 8px;text-align:right">${esc(l.branch||'')}</td>
       <td style="padding:6px 8px;text-align:right">${_peBags(l.bags)}</td>
       <td style="padding:6px 8px;text-align:right">${_peFmt(l.qty)}</td>
-      <td style="padding:6px 8px;text-align:right"><input type="number" step="0.01" min="0" inputmode="decimal" data-peprice="${i}" value="${isWD ? '' : (l.price ? Number(l.price).toFixed(2) : '')}" placeholder="${isWD ? '—' : '0.00'}" ${readonly ? `disabled title="${isWD ? 'Withdrawn lot — carries no price' : 'Locked lot — edit via the Lots tab'}"` : ''} onkeydown="pePriceKey(event,${i})" oninput="pePriceInput(${i})" onblur="pePriceSave(${i})" style="width:110px;text-align:right;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px${readonly ? ';background:#f3f4f6;color:var(--text3)' : ''}"></td>
+      <td style="padding:6px 8px;text-align:right"><input type="number" step="0.01" min="0" inputmode="decimal" data-peprice="${i}" value="${noSale ? '' : (l.price ? Number(l.price).toFixed(2) : '')}" placeholder="${noSale ? '—' : '0.00'}" ${readonly ? `disabled title="${isWD ? 'Withdrawn lot — carries no price' : isNA ? 'Not-auctioned lot — carries no price' : 'Locked lot — edit via the Lots tab'}"` : ''} onkeydown="pePriceKey(event,${i})" oninput="pePriceInput(${i})" onblur="pePriceSave(${i})" style="width:110px;text-align:right;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px${readonly ? ';background:#f3f4f6;color:var(--text3)' : ''}"></td>
       <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums" data-peamt="${i}">${_peFmt(amt)}</td>
-      <td data-pestatus="${i}" style="padding:6px 4px;width:26px;text-align:center;color:var(--text3)">${isWD ? '<span title="Withdrawn" style="color:#b91c1c;font-weight:700;font-size:10px">WD</span>' : (locked ? '🔒' : '')}</td>
+      <td data-pestatus="${i}" style="padding:6px 4px;width:26px;text-align:center;color:var(--text3)">${isWD ? '<span title="Withdrawn" style="color:#b91c1c;font-weight:700;font-size:10px">WD</span>' : isNA ? '<span title="Not Auctioned" style="color:#a16207;font-weight:700;font-size:10px">NA</span>' : (locked ? '🔒' : '')}</td>
     </tr>`;
   }).join('');
   grid.innerHTML = `<table class="pe-grid-table" style="width:100%;border-collapse:collapse;font-size:13px">
@@ -21670,7 +21675,7 @@ function _peRenderSummary(){
   const sumEl = document.getElementById('pe-summary'); if (!sumEl) return;
   // WD lots are shown but can't be priced, so keep them out of the priced/total
   // ratio — otherwise it could never read "all priced".
-  const sellable = _pe.lots.filter(l => String(l.code||'').trim().toUpperCase() !== 'WD');
+  const sellable = _pe.lots.filter(l => !['WD','NA'].includes(String(l.code||'').trim().toUpperCase()));
   const total = sellable.length;
   const priced = sellable.filter(l => Number(l.price) > 0).length;
   const dirty = Object.keys(_pe.dirty).length;
@@ -22586,6 +22591,24 @@ function chooseInvoiceFormat(templates, title){
   });
 }
 
+// Fetch the available commission-bill layouts and, when more than one exists,
+// let the operator pick one. Returns:
+//   ''    → no choice needed / not offered → use the server's saved default
+//   '<id>'→ chosen template id (forces the HTML engine for that download)
+//   null  → operator cancelled the popup (caller should abort)
+// Shared by BOTH the "Commission Bill Selected" toolbar button and the
+// per-row 🧾 download icon so the chooser appears no matter which is clicked.
+async function pickCommissionTemplate(){
+  try{
+    const res=await j('/api/invoices/templates/commission-bill');
+    const templates=(res&&res.templates)||[];
+    if(templates.length>1){
+      return await chooseInvoiceFormat(templates,'Choose commission bill format');
+    }
+  }catch(_){ /* server didn't list templates — use the saved default */ }
+  return '';
+}
+
 async function printSelectedCommissionBoS(){
   const body=document.getElementById('bills-list');
   if(!body){alert('No bills list found');return}
@@ -22593,15 +22616,8 @@ async function printSelectedCommissionBoS(){
   if(!checked.length){alert('Tick one or more bills first');return}
   const ids=checked.map(cb=>Number(cb.value)).filter(Boolean);
   // Offer a layout choice when more than one commission-bill template exists.
-  let template='';
-  try{
-    const res=await j('/api/invoices/templates/commission-bill');
-    const templates=(res&&res.templates)||[];
-    if(templates.length>1){
-      template=await chooseInvoiceFormat(templates,'Choose commission bill format');
-      if(template===null) return; // operator cancelled
-    }
-  }catch(_){ /* server didn't list templates — use the saved default */ }
+  const template=await pickCommissionTemplate();
+  if(template===null) return; // operator cancelled
   await fetchPdfWithOverlay(
     `Building Commission Bill (BoS) for ${ids.length} bill${ids.length===1?'':'s'}…`,
     '/api/bills/commission-bos-bulk',
@@ -24984,11 +25000,15 @@ async function viewBillPDF(auctionId,sellerName,billNo){
 async function downloadBillCommissionBoS(id,sellerName,billNo){
   if(!id){toast('Bill not found');return}
   const name=decodeURIComponent(sellerName||'').replace(/[^\w.-]+/g,'_')||'bill';
+  // Same chooser as the toolbar button, so a single-row download can also pick
+  // the format when more than one commission-bill layout exists.
+  const template=await pickCommissionTemplate();
+  if(template===null) return; // operator cancelled
   await fetchPdfWithOverlay(
     'Building Commission Bill (BoS)…',
     '/api/bills/commission-bos-bulk',
     `CommissionBoS_${name}_${decodeURIComponent(billNo||'')}.pdf`,
-    { ids:[id] }
+    template ? { ids:[id], template } : { ids:[id] }
   );
 }
 async function delBill(id){if(!confirm('Delete bill?'))return;await j(`/api/bills/${id}`,{method:'DELETE'});loadBills()}

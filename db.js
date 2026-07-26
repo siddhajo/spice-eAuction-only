@@ -172,6 +172,10 @@ async function initDb() {
     user_id TEXT DEFAULT '',
     whatsapp TEXT DEFAULT '',
     email TEXT DEFAULT '',
+    -- Seller's date of birth. Optional free text (stored as entered, typically
+    -- yyyy-mm-dd from the date picker). Captured in create/edit, the Sellers
+    -- Excel import, and Import Old Data → Sellers.
+    dob TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
@@ -869,6 +873,8 @@ async function initDb() {
     // optional; whatsapp falls back to tel in the UI when blank.
     "ALTER TABLE traders ADD COLUMN whatsapp TEXT DEFAULT ''",
     "ALTER TABLE traders ADD COLUMN email TEXT DEFAULT ''",
+    // Seller date of birth — create/edit, Sellers import, Import Old Data.
+    "ALTER TABLE traders ADD COLUMN dob TEXT DEFAULT ''",
     // Distance for e-way bill <DISTANCE> field on ISP sales vouchers.
     // Populated manually per-invoice from the To Tally → 🗺️ E-way Bill
     // Distance UI: user looks up the value on NIC's Pin-to-Pin Distance

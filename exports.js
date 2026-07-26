@@ -1354,6 +1354,7 @@ async function exportSellersXlsx(db) {
     { header: 'ACCTNUM',   key: 'acctnum',     width: 20 },
     { header: 'HOLDER_NM', key: 'holder_name', width: 30 },
     { header: 'USER_ID',   key: 'user_id',     width: 16 },
+    { header: 'DOB',       key: 'dob',         width: 14 },
   ];
   return createExcelBuffer('Sellers', cols, rows, { db, title: 'Sellers' });
 }

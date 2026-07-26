@@ -1009,8 +1009,8 @@ function mountMobile(app, deps) {
     }
 
     const info = db.run(
-      `INSERT INTO traders (name,cr,pan,tan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name,whatsapp,email)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO traders (name,cr,pan,tan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name,whatsapp,email,dob)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         nameTrim,
         crTrim,
@@ -1026,6 +1026,7 @@ function mountMobile(app, deps) {
         '', '', '',
         (t.whatsapp || '').toString().trim(),
         emailClean,
+        (t.dob || '').toString().trim(),
       ]
     );
     // Persist multi-bank rows when the desktop UI sends them. The flat
@@ -1102,6 +1103,7 @@ function mountMobile(app, deps) {
     setField('ifsc',        t.ifsc,        (v) => String(v).trim().toUpperCase());
     setField('acctnum',     t.acctnum,     (v) => String(v).trim());
     setField('holder_name', t.holder_name, (v) => String(v).trim());
+    setField('dob',         t.dob,         (v) => String(v).trim());
     setField('whatsapp',    t.whatsapp,    (v) => String(v).trim());
     if (emailClean !== null) { sets.push('email = ?'); vals.push(emailClean); }
     // No flat-field changes is fine — the user may have only edited

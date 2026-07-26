@@ -2575,9 +2575,9 @@ app.post('/api/traders', requireTraderWrite, (req, res) => {
       error: `This seller already exists (${_dup.field} match): "${_dup.row.name || '(unnamed)'}". Edit that seller instead.`,
     });
   }
-  const info = db.run(`INSERT INTO traders (name,cr,pan,tan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [t.name,t.cr||'',t.pan||'',t.tan||'',t.tel||'',t.aadhar||'',t.padd||'',t.ppla||'',t.pin||'',t.pstate||'',t.pst_code||'',t.ifsc||'',t.acctnum||'',t.holder_name||'']);
+  const info = db.run(`INSERT INTO traders (name,cr,pan,tan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name,dob)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [t.name,t.cr||'',t.pan||'',t.tan||'',t.tel||'',t.aadhar||'',t.padd||'',t.ppla||'',t.pin||'',t.pstate||'',t.pst_code||'',t.ifsc||'',t.acctnum||'',t.holder_name||'',t.dob||'']);
   // If the client sent a banks array (new multi-bank UI), persist them.
   // Otherwise honor the legacy single-bank fields already inserted above.
   if (Array.isArray(t.banks)) {
@@ -2605,14 +2605,14 @@ app.put('/api/traders/:id', requireTraderWrite, (req, res) => {
   db.run(
     `UPDATE traders
        SET name=?, cr=?, pan=?, tan=?, tel=?, aadhar=?, padd=?, ppla=?, pin=?,
-           pstate=?, pst_code=?, ifsc=?, acctnum=?, holder_name=?,
+           pstate=?, pst_code=?, ifsc=?, acctnum=?, holder_name=?, dob=?,
            whatsapp=COALESCE(?, whatsapp),
            email=COALESCE(?, email)
      WHERE id=?`,
     [
       t.name, t.cr||'', t.pan||'', t.tan||'', t.tel||'', t.aadhar||'',
       t.padd||'', t.ppla||'', t.pin||'', t.pstate||'', t.pst_code||'',
-      t.ifsc||'', t.acctnum||'', t.holder_name||'',
+      t.ifsc||'', t.acctnum||'', t.holder_name||'', t.dob||'',
       t.whatsapp != null ? String(t.whatsapp).trim() : null,
       t.email    != null ? String(t.email).trim()    : null,
       req.params.id,
@@ -2837,9 +2837,10 @@ app.post('/api/traders/import', requireTraderWrite, upload.single('file'), async
       // uppercase). user_id is a free-text legacy identifier — kept as-is.
       const tan = mapCol(row, 'TAN', 'TAN_NO', 'TAN_NUMBER').toUpperCase();
       const userId = mapCol(row, 'USER_ID', 'USERID', 'UID', 'USER', 'USER_NAME', 'USERNAME', 'USER_CODE', 'LOGIN', 'LOGIN_ID');
+      const dob = mapCol(row, 'DOB', 'DATE_OF_BIRTH', 'DATEOFBIRTH', 'BIRTH_DATE', 'BIRTHDATE', 'DATE_OF_BIRTH');
 
-      db.run(`INSERT INTO traders (name,cr,pan,tan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name,user_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      db.run(`INSERT INTO traders (name,cr,pan,tan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name,user_id,dob)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [name, cr,
          pan,
          tan,
@@ -2853,7 +2854,7 @@ app.post('/api/traders/import', requireTraderWrite, upload.single('file'), async
          mapCol(row, 'IFSC', 'IFS_CODE', 'IFSCODE', 'IFS'),
          mapCol(row, 'ACCTNUM', 'ACCOUNT', 'ACCNO', 'ACC_NO', 'ACCOUNT_NO', 'ACCOUNTNO'),
          mapCol(row, 'HOLDER_NAME', 'HOLDER', 'ACCOUNT_HOLDER'),
-         userId]);
+         userId, dob]);
       imported++;
     }
 
@@ -2886,6 +2887,7 @@ app.get('/api/traders/template', requireExport, async (req, res) => {
     { header: 'ACCTNUM',      key: 'acctnum',      width: 24, align: 'left' },
     { header: 'HOLDER_NAME',  key: 'holder_name',  width: 22 },
     { header: 'USER_ID',      key: 'user_id',      width: 16, align: 'left' },
+    { header: 'DOB',          key: 'dob',          width: 14, align: 'left' },
   ];
   // Sample row uses the configured business state — no hardcoded 'TAMIL NADU'
   const bizState = (getSetting(db, 'business_state') || 'TAMIL NADU').toUpperCase();
@@ -2894,7 +2896,7 @@ app.get('/api/traders/template', requireExport, async (req, res) => {
     name: 'SAMPLE SELLER', cr: 'CR.12345', pan: 'ABCDE1234F', tan: 'ABCD12345E', tel: '9876543210',
     aadhar: '', padd: '123 MAIN STREET', ppla: '', pin: '',
     pstate: bizState, pst_code: stCode, ifsc: '', acctnum: '', holder_name: 'SAMPLE SELLER',
-    user_id: '',
+    user_id: '', dob: '1980-01-31',
   }];
   const buf = await createExcelBuffer('Sellers', cols, sample, {
     db, title: 'SELLERS TEMPLATE',
@@ -3711,7 +3713,7 @@ function _remainingPartiesSql(db, docType, auctionId) {
   // / purchaseable / billable. Excluding them from the "remaining
   // parties" count lets the gate flip done=true once every NON-WD lot
   // has its doc, even if WD rows linger in the trade.
-  const notWD = `UPPER(TRIM(COALESCE(l.code,''))) != 'WD'`;
+  const notWD = `UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')`;
 
   if (docType === 'invoices') {
     // Mirrors /api/invoices/generate-all eligibility (ASP-aware).
@@ -4399,7 +4401,7 @@ app.get('/api/auctions/:id/carry-forward-preview', requireViewOrLotEntry, (req, 
   const allocations = db.get('SELECT COUNT(*) AS c FROM lot_allocations WHERE auction_id = ?', [srcId]).c;
   const unsold = db.get(
     `SELECT COUNT(*) AS c FROM lots
-      WHERE auction_id = ? AND UPPER(COALESCE(TRIM(code),'')) = '' AND COALESCE(reserved,0) = 0`,
+      WHERE auction_id = ? AND UPPER(COALESCE(TRIM(code),'')) IN ('', 'NA') AND COALESCE(reserved,0) = 0`,
     [srcId]
   ).c;
   res.json({ source: { id: src.id, ano: src.ano, date: src.date }, allocations, unsold });
@@ -4411,7 +4413,8 @@ app.get('/api/auctions/:id/carry-forward-preview', requireViewOrLotEntry, (req, 
 //   • copy_allocations — clone the source's lot_allocations ranges + its
 //       main/holding depot. Skipped (never clobbered) if the destination
 //       already has allocations of its own.
-//   • carry_lots — clone every UNSOLD lot (code empty, reserved=0) as a
+//   • carry_lots — clone every UNSOLD lot (code empty OR the explicit
+//       "NA" / Not-Auctioned buyer code, reserved=0) as a
 //       fresh entry: keeps the original lot_no, seller + goods details, and
 //       the prior price / reserved_price as a starting point. The sale
 //       outcome (code / buyer / amount / GST / payment) is left cleared so
@@ -4461,9 +4464,13 @@ app.post('/api/auctions/:id/carry-forward', requireAuctionWrite, (req, res) => {
   let lotsCarried = 0;
   const lotsSkipped = [];
   if (doLots) {
+    // "Unsold" = no buyer code, OR the explicit "NA" (Not Auctioned) buyer
+    // dad assigns to lots that were booked but not auctioned. Both carry
+    // forward; the carried lot's code/buyer is cleared below so it starts the
+    // next auction fresh. WD (withdrawn) and reserved lots are still excluded.
     const unsold = db.all(
       `SELECT * FROM lots
-        WHERE auction_id = ? AND UPPER(COALESCE(TRIM(code),'')) = '' AND COALESCE(reserved,0) = 0
+        WHERE auction_id = ? AND UPPER(COALESCE(TRIM(code),'')) IN ('', 'NA') AND COALESCE(reserved,0) = 0
         ORDER BY lot_no`,
       [srcId]
     );
@@ -4625,7 +4632,10 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
            THEN LTRIM(SUBSTR(TRIM(cr),6), '. :-')
            ELSE TRIM(cr) END))`;
   const DEALER = `(LENGTH(${CR_CLEAN}) = 15 AND SUBSTR(${CR_CLEAN},1,2) GLOB '[0-9][0-9]')`;
-  const SOLD = `(UPPER(COALESCE(code,'')) <> '' AND UPPER(COALESCE(code,'')) <> 'WD')`;
+  // SOLD = a real hammer transaction. Blank code = no buyer, 'WD' = withdrawn,
+  // 'NA' = the Not-Auctioned buyer dad assigns to booked-but-unsold lots — none
+  // of these three are sold.
+  const SOLD = `(UPPER(COALESCE(code,'')) NOT IN ('', 'WD', 'NA'))`;
   const WD   = `(UPPER(COALESCE(code,'')) = 'WD')`;
 
   // Per-depot booked-lot rollup (branch '' → '(unspecified)').
@@ -4673,7 +4683,7 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
     `SELECT COUNT(*) AS booked,
             SUM(CASE WHEN ${SOLD} THEN 1 ELSE 0 END) AS sold,
             SUM(CASE WHEN ${WD}   THEN 1 ELSE 0 END) AS wd,
-            SUM(CASE WHEN COALESCE(code,'') = '' THEN 1 ELSE 0 END) AS na,
+            SUM(CASE WHEN UPPER(COALESCE(code,'')) IN ('', 'NA') THEN 1 ELSE 0 END) AS na,
             COALESCE(SUM(qty),0) AS cropWeight,
             COALESCE(SUM(CASE WHEN ${DEALER} THEN 0 ELSE qty END),0) AS planterWeight,
             COALESCE(SUM(CASE WHEN ${DEALER} THEN qty ELSE 0 END),0) AS dealerWeight,
@@ -6054,18 +6064,22 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
     }
   }
 
-  // Withdrawn (code = 'WD'): the lot carries no value, so force price and
-  // amount to 0 here and recompute the derived figures below — same rule
-  // as the bulk Set-Buyer path, so it's consistent however WD gets set.
-  const isWD = String(l.code || '').trim().toUpperCase() === 'WD';
-  if (isWD) { l.price = 0; l.amount = 0; }
+  // Withdrawn ('WD') and Not-Auctioned ('NA') lots carry no sale value, so
+  // force price + amount to 0 here and recompute the derived figures below —
+  // same rule as the bulk Set-Buyer path, so it's consistent however the code
+  // gets set. The code may not be in this request (e.g. Price Entry sends only
+  // {price, amount}), so fall back to the lot's stored code — otherwise a
+  // price typed against a WD/NA lot would slip through with a live amount.
+  const _saveCode = ('code' in l) ? l.code : (current ? current.code : '');
+  const noSaleCode = ['WD','NA'].includes(String(_saveCode || '').trim().toUpperCase());
+  if (noSaleCode) { l.price = 0; l.amount = 0; }
 
   for (const [k,v] of Object.entries(l)) {
     if (k !== 'id' && k !== 'auction_id' && k !== 'created_at') { sets.push(`${k}=?`); vals.push(v); }
   }
   vals.push(lotId);
   db.run(`UPDATE lots SET ${sets.join(',')} WHERE id=?`, vals);
-  if (isWD) {
+  if (noSaleCode) {
     const cfg = getSettingsFlat(db);
     const fresh = db.get('SELECT * FROM lots WHERE id = ?', [lotId]);
     if (fresh) {
@@ -6187,8 +6201,8 @@ app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
   // value: force price to 0 here and recompute (below) so amount and every
   // derived figure — commission, GST, payable — zero out. This overrides
   // any price the caller passed alongside a WD code.
-  const isWD = code.toUpperCase() === 'WD';
-  if (isWD) { hasPrice = true; priceNum = 0; }
+  const noSaleCode = ['WD','NA'].includes(code.toUpperCase());
+  if (noSaleCode) { hasPrice = true; priceNum = 0; }
   // Caller must update at least one writable field — either the
   // buyer-code triple or price (or both). Empty payload is a no-op
   // that would silently do nothing, so we refuse it up front.
@@ -6237,10 +6251,10 @@ app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
     );
     if (info && typeof info.changes === 'number') updated += info.changes;
   }
-  // For WD lots, recompute now (same formula as the Calculate endpoint):
+  // For WD / NA lots, recompute now (same formula as the Calculate endpoint):
   // price is 0, so amount = qty × 0 = 0, and calculateLot() cascades that
   // to every derived field. Scoped to the lots we just updated.
-  if (isWD && mutableIds.length) {
+  if (noSaleCode && mutableIds.length) {
     const cfg = getSettingsFlat(db);
     for (let i = 0; i < mutableIds.length; i += CHUNK) {
       const slice = mutableIds.slice(i, i + CHUNK);
@@ -12186,10 +12200,10 @@ app.get('/api/stats', requireView, (req, res) => {
             -- Price band per trade (over SOLD lots — a buyer code that isn't
             -- WD — with a real price), matching the snapshot/depot-panel
             -- semantics. avg is quantity-weighted (sold_value / sold_qty).
-            MIN(CASE WHEN l.price > 0 AND UPPER(COALESCE(l.code,'')) <> '' AND UPPER(COALESCE(l.code,'')) <> 'WD' THEN l.price END) as min_price,
-            MAX(CASE WHEN l.price > 0 AND UPPER(COALESCE(l.code,'')) <> '' AND UPPER(COALESCE(l.code,'')) <> 'WD' THEN l.price END) as max_price,
-            COALESCE(SUM(CASE WHEN UPPER(COALESCE(l.code,'')) <> '' AND UPPER(COALESCE(l.code,'')) <> 'WD' THEN l.amount ELSE 0 END),0) as sold_value,
-            COALESCE(SUM(CASE WHEN UPPER(COALESCE(l.code,'')) <> '' AND UPPER(COALESCE(l.code,'')) <> 'WD' THEN l.qty    ELSE 0 END),0) as sold_qty,
+            MIN(CASE WHEN l.price > 0 AND UPPER(COALESCE(l.code,'')) NOT IN ('', 'WD', 'NA') THEN l.price END) as min_price,
+            MAX(CASE WHEN l.price > 0 AND UPPER(COALESCE(l.code,'')) NOT IN ('', 'WD', 'NA') THEN l.price END) as max_price,
+            COALESCE(SUM(CASE WHEN UPPER(COALESCE(l.code,'')) NOT IN ('', 'WD', 'NA') THEN l.amount ELSE 0 END),0) as sold_value,
+            COALESCE(SUM(CASE WHEN UPPER(COALESCE(l.code,'')) NOT IN ('', 'WD', 'NA') THEN l.qty    ELSE 0 END),0) as sold_qty,
             -- Invoice GST for this trade = Σ(CGST+SGST+IGST) over its sales
             -- invoices. Drives the dashboard trade-snapshot matrix GST column.
             COALESCE((SELECT SUM(COALESCE(iv.cgst,0)+COALESCE(iv.sgst,0)+COALESCE(iv.igst,0))
@@ -12234,7 +12248,7 @@ app.get('/api/stats', requireView, (req, res) => {
     //   • bills     — one bill of supply per UNREGISTERED / agri seller
     const REG_CR = `(UPPER(l.cr) LIKE 'GSTIN%' OR (l.cr GLOB '[0-9][0-9]*' AND LENGTH(l.cr) >= 15))`;
     const URD_CR = `(l.cr IS NULL OR l.cr = '' OR (UPPER(l.cr) NOT LIKE 'GSTIN%' AND l.cr NOT GLOB '[0-9][0-9]*'))`;
-    const NOT_WD = `UPPER(TRIM(COALESCE(l.code,''))) != 'WD'`;
+    const NOT_WD = `UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')`;
     const cnt1 = (sql) => (db.get(sql, [currentAuction.id]) || {}).c || 0;
     const paymentsTotal  = cnt1(`SELECT COUNT(*) AS c FROM lots l WHERE l.auction_id = ? AND l.amount > 0 AND ${NOT_WD}`);
     const paymentsDone   = cnt1(`SELECT COUNT(*) AS c FROM lots l WHERE l.auction_id = ? AND l.amount > 0 AND ${NOT_WD} AND l.paid IS NOT NULL AND l.paid != ''`);
@@ -12522,7 +12536,7 @@ app.get('/api/insights', requireView, (req, res) => {
   // Helper SQL fragment — "is this lot actually sold?" Code blank
   // means no buyer was assigned; "WD" means withdrawn. Anything else
   // is a real hammer transaction and counts towards min/max/avg price.
-  const SOLD = `(UPPER(COALESCE(l.code,'')) <> '' AND UPPER(COALESCE(l.code,'')) <> 'WD')`;
+  const SOLD = `(UPPER(COALESCE(l.code,'')) NOT IN ('', 'WD', 'NA'))`;
   const WD   = `(UPPER(COALESCE(l.code,'')) = 'WD')`;
 
   // Auction filter — appended to every WHERE that references `a` or `l`.
@@ -12548,7 +12562,7 @@ app.get('/api/insights', requireView, (req, res) => {
        COUNT(l.id) AS lots,
        SUM(CASE WHEN ${SOLD} THEN 1 ELSE 0 END) AS sold,
        SUM(CASE WHEN ${WD}   THEN 1 ELSE 0 END) AS withdrawn,
-       SUM(CASE WHEN COALESCE(l.code,'') = '' THEN 1 ELSE 0 END) AS unsold,
+       SUM(CASE WHEN UPPER(COALESCE(l.code,'')) IN ('', 'NA') THEN 1 ELSE 0 END) AS unsold,
        COALESCE(SUM(l.qty), 0) AS qty,
        COALESCE(SUM(l.bags), 0) AS bags,
        MIN(CASE WHEN l.price > 0 AND ${SOLD} THEN l.price END) AS min_price,
@@ -12628,7 +12642,7 @@ app.get('/api/insights', requireView, (req, res) => {
        COUNT(l.id) AS lots,
        SUM(CASE WHEN ${SOLD} THEN 1 ELSE 0 END) AS sold,
        SUM(CASE WHEN ${WD}   THEN 1 ELSE 0 END) AS withdrawn,
-       SUM(CASE WHEN COALESCE(l.code,'') = '' THEN 1 ELSE 0 END) AS unsold,
+       SUM(CASE WHEN UPPER(COALESCE(l.code,'')) IN ('', 'NA') THEN 1 ELSE 0 END) AS unsold,
        COALESCE(SUM(l.qty), 0) AS qty,
        MIN(CASE WHEN l.price > 0 AND ${SOLD} THEN l.price END) AS min_price,
        MAX(CASE WHEN l.price > 0 AND ${SOLD} THEN l.price END) AS max_price,
@@ -12973,7 +12987,7 @@ app.get('/api/insights/lots', requireView, (req, res) => {
 
   // Status → same SOLD / WD predicates the snapshot matrix uses. "booked" is
   // every lot (the Booked row is the full population), so it adds no filter.
-  const SOLD = `(UPPER(COALESCE(l.code,'')) <> '' AND UPPER(COALESCE(l.code,'')) <> 'WD')`;
+  const SOLD = `(UPPER(COALESCE(l.code,'')) NOT IN ('', 'WD', 'NA'))`;
   const WD   = `(UPPER(COALESCE(l.code,'')) = 'WD')`;
   const status = String(req.query.status || '').toLowerCase();
   let statusFilter = '';
@@ -13987,7 +14001,7 @@ const IMPORT_MODULES = {
     // `traders` columns (see db.js) because the /run INSERT lists every field
     // here as a column name — an unknown column would break the whole import.
     fields: ['name','cr','pan','tan','tel','aadhar','padd','ppla','pin','pstate','pst_code',
-             'ifsc','acctnum','holder_name','user_id'],
+             'ifsc','acctnum','holder_name','user_id','dob'],
     aliases: {
       name: ['name','seller','planter','trader'],
       cr: ['cr','gstin'],
@@ -13997,6 +14011,7 @@ const IMPORT_MODULES = {
       ppla: ['ppla','place','pla','city'],
       pin: ['pin','pincode','zip'],
       user_id: ['user_id','userid','uid','user','user_name','username','user_code','login','login_id'],
+      dob: ['dob','date_of_birth','dateofbirth','birth_date','birthdate'],
     },
   },
   buyers: {
