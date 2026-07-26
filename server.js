@@ -730,6 +730,28 @@ app.get('/admin/branding', (req, res) => {
   const loginLayoutOpts = TENANT_LOGIN_LAYOUTS.map(l => `<option value="${l}" ${l === cLoginLayout ? 'selected' : ''}>${l}</option>`).join('');
   const loginStyleOpts = TENANT_LOGIN_STYLES.map(s => `<option value="${s}" ${s === cLoginStyle ? 'selected' : ''}>${s}</option>`).join('');
 
+  // ── Company formats (bank payment + invoice layouts) ──────────────────
+  // Which per-customer file/layout formats this install uses. Pre-filled from
+  // the CURRENT settings and saved straight back to company_settings (so the
+  // server-side exports honour them) — orthogonal to the visual preset bundle.
+  let bankFmtOpts = '', salesTplOpts = '', purchaseTplOpts = '', agriTplOpts = '', commTplOpts = '';
+  try {
+    const { BANK_FORMATS } = require('./bank-formats');
+    const curBank = cfg.bank_format || 'rtgs_neft';
+    bankFmtOpts = Object.entries(BANK_FORMATS)
+      .map(([k, p]) => `<option value="${k}" ${k === curBank ? 'selected' : ''}>${escAttr(p.label || k)}</option>`)
+      .join('');
+  } catch (_) { /* bank-formats unavailable — leave empty */ }
+  try {
+    const { listTemplates } = require('./pdf/invoice-templates');
+    const tplOpts = (docType, cur) => (listTemplates(docType) || ['classic'])
+      .map(id => `<option value="${id}" ${id === cur ? 'selected' : ''}>${escAttr(id)}</option>`).join('');
+    salesTplOpts    = tplOpts('sales-invoice',    cfg.sales_invoice_template    || 'classic');
+    purchaseTplOpts = tplOpts('purchase-invoice', cfg.purchase_invoice_template || 'classic');
+    agriTplOpts     = tplOpts('agri-bill',        cfg.agri_bill_template        || 'classic');
+    commTplOpts     = tplOpts('commission-bill',  cfg.commission_bill_template  || 'classic');
+  } catch (_) { /* invoice-templates unavailable — leave empty */ }
+
   const keyEsc = String(req.query.key).replace(/[<>'"&]/g, '');
 
   res.type('html').send(`<!DOCTYPE html>
@@ -796,6 +818,18 @@ app.get('/admin/branding', (req, res) => {
     <label>Sub-line (optional)</label><input type="text" id="custom-login-sub" value="${escAttr(cLoginSub)}" placeholder="From lot entry to ledger — all on one floor.">
     <label>Footer credit (optional)</label><input type="text" id="custom-login-credit" value="${escAttr(cLoginCredit)}" placeholder="Powered by KJ &amp; Co">
   </div>
+  <div class="card">
+    <h2>Company formats</h2>
+    <p style="font-size: 12px; color: #6b7280; margin: 0 0 8px">The bank-payment file layout and invoice/bill PDF layouts this company uses. Saved straight to this install's settings — the app's exports honour them immediately. Independent of the visual preset above, so it has its own <strong>Save formats</strong> button (Apply preset does not touch these).</p>
+    <div class="row">
+      <div><label>Bank payment format</label><select id="fmt-bank">${bankFmtOpts}</select></div>
+      <div><label>Sales invoice layout</label><select id="fmt-sales">${salesTplOpts}</select></div>
+      <div><label>Purchase invoice layout</label><select id="fmt-purchase">${purchaseTplOpts}</select></div>
+      <div><label>Bill of supply layout</label><select id="fmt-agri">${agriTplOpts}</select></div>
+      <div><label>Commission bill layout</label><select id="fmt-comm">${commTplOpts}</select></div>
+    </div>
+    <div style="margin-top: 14px;"><button onclick="saveFormats()">Save formats</button></div>
+  </div>
   <div style="display: flex; gap: 10px;">
     <button onclick="apply()">Apply preset</button>
     <button class="secondary" onclick="clearPreset()">Clear (revert to legacy mode)</button>
@@ -847,6 +881,24 @@ app.get('/admin/branding', (req, res) => {
         if (!r.ok) return msg('Failed to clear', false);
         msg('Cleared.', true);
         setTimeout(() => location.reload(), 800);
+      } catch (e) { msg(e.message, false); }
+    }
+    async function saveFormats() {
+      const body = {
+        bank_format:               document.getElementById('fmt-bank').value,
+        sales_invoice_template:    document.getElementById('fmt-sales').value,
+        purchase_invoice_template: document.getElementById('fmt-purchase').value,
+        agri_bill_template:        document.getElementById('fmt-agri').value,
+        commission_bill_template:  document.getElementById('fmt-comm').value,
+      };
+      try {
+        const r = await fetch('/api/admin/formats?key=' + encodeURIComponent(KEY), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (!r.ok) return msg(d.error || 'Failed', false);
+        msg('Formats saved: ' + (d.saved || []).join(', ') + '. Reload the app to see the change.', true);
+        setTimeout(() => location.reload(), 900);
       } catch (e) { msg(e.message, false); }
     }
   </script>
@@ -907,6 +959,46 @@ app.post('/api/admin/preset', (req, res) => {
   stmt.run('tenant_preset', slug, 'Tenant preset');
   stmt.run('preset_config', finalConfig ? JSON.stringify(finalConfig) : '', 'Tenant preset config (JSON)');
   res.json({ success: true, preset: slug, config: finalConfig });
+});
+
+// POST /api/admin/formats — key-gated. Sets this company's per-customer file/
+// layout formats (bank payment + the four invoice/bill PDF layouts) straight
+// into company_settings, so the app's server-side exports honour them. Each
+// value is validated against the registered options (BANK_FORMATS keys /
+// on-disk .hbs template ids) — an unknown value is ignored, not saved.
+app.post('/api/admin/formats', (req, res) => {
+  if (!checkAdminKey(req)) return res.status(403).json({ error: 'Invalid admin key' });
+  const db = getDb();
+  const f = req.body || {};
+  let BANK_FORMATS, listTemplates;
+  try { ({ BANK_FORMATS } = require('./bank-formats')); } catch (_) { BANK_FORMATS = { rtgs_neft: 1 }; }
+  try { ({ listTemplates } = require('./pdf/invoice-templates')); } catch (_) { listTemplates = () => ['classic']; }
+
+  // key → { value, allowed[], category }. `allowed` guards against writing a
+  // format that doesn't exist on this install.
+  const specs = [
+    { key: 'bank_format',               val: f.bank_format,               allowed: Object.keys(BANK_FORMATS),          cat: 'bank' },
+    { key: 'sales_invoice_template',    val: f.sales_invoice_template,    allowed: listTemplates('sales-invoice'),     cat: 'invoice' },
+    { key: 'purchase_invoice_template', val: f.purchase_invoice_template, allowed: listTemplates('purchase-invoice'),  cat: 'invoice' },
+    { key: 'agri_bill_template',        val: f.agri_bill_template,        allowed: listTemplates('agri-bill'),         cat: 'invoice' },
+    { key: 'commission_bill_template',  val: f.commission_bill_template,  allowed: listTemplates('commission-bill'),   cat: 'invoice' },
+  ];
+
+  const stmt = db.prepare(
+    `INSERT INTO company_settings (key, value, category, label, field_type)
+     VALUES (?, ?, ?, ?, 'select')
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  );
+  const saved = [];
+  for (const s of specs) {
+    const v = String(s.val == null ? '' : s.val).trim();
+    if (!v) continue;                              // field omitted → leave as-is
+    if (!s.allowed.includes(v)) continue;          // unknown option → skip (don't clobber)
+    stmt.run(s.key, v, s.cat, s.key);
+    saved.push(s.key);
+  }
+  if (!saved.length) return res.status(400).json({ error: 'No valid format fields supplied' });
+  res.json({ success: true, saved });
 });
 
 // Default-credential detection — used to force a password-change prompt

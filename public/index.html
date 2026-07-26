@@ -16966,6 +16966,7 @@ function renderSettingsPanel(){
         // customer format there.
         const BANK_FORMAT_OPTIONS=[
           {value:'rtgs_neft',label:'RTGS / NEFT (default)'},
+          {value:'hdfc_ac',label:'rns bank format'},
         ];
         const sel=f.value||'rtgs_neft';
         const opts=BANK_FORMAT_OPTIONS.map(o=>`<option value="${o.value}"${sel===o.value?' selected':''}>${esc(o.label)}</option>`).join('');
