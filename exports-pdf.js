@@ -1358,10 +1358,17 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     const ruleY = ay + 6;
     doc.moveTo(left, ruleY).lineTo(left + width, ruleY).lineWidth(0.75).strokeColor('#333').stroke();
 
-    // Issue date, top-right below the rule.
+    // Auction No (distinct trade numbers from this pooler's lots), then the
+    // issue date — both top-right below the rule.
+    const anoStr = [...new Set((Array.isArray(p.rows) ? p.rows : [])
+      .map(r => String(r.tno || '').trim()).filter(Boolean))].join(', ');
     let y = ruleY + 14;
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000')
-       .text(`Date: ${issueDate}`, left, y, { width, align: 'right' });
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000');
+    if (anoStr) {
+      doc.text(`Auction No: ${anoStr}`, left, y, { width, align: 'right' });
+      y += 16;
+    }
+    doc.text(`Date: ${issueDate}`, left, y, { width, align: 'right' });
 
     // Title.
     y += 34;
@@ -1372,22 +1379,35 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     doc.text(titleText, tX, y);
     doc.moveTo(tX, y + 20).lineTo(tX + tW, y + 20).lineWidth(1).strokeColor('#000').stroke();
 
-    // Body paragraph.
+    // Body paragraph. The key facts — name (PAN), address, from/to dates, and
+    // the amount in figures + words — are rendered in BOLD via continued runs.
     y += 54;
     const name = String(p.name || '').trim();
+    const pan  = _poolerPan(db, name);
     const addr = _poolerAddress(db, name);
     const billamt = Math.round(Number(p.summary && p.summary.billamount) || 0);
     const amtFig = _fmtRupeesWhole(billamt);
     const amtWords = amountToWords(billamt); // e.g. "Rupees Fourteen Lakh …"
 
-    const residentOf = addr ? ` and a resident of ${addr}` : '';
-    const paragraph =
-      `This is to certify that ${name}, a cardamom Planter${residentOf} has registered ` +
-      `Cardamom lots at our end during the period from ${fromDisp} to ${toDisp} and received ` +
-      `payment, totally to the tune of Rs. ${amtFig}/- (${amtWords} Only) as reported in annexure.`;
-
-    doc.font('Helvetica').fontSize(12).fillColor('#000')
-       .text(paragraph, left, y, { width, align: 'justify', lineGap: 6 });
+    const nameWithPan = pan ? `${name} (PAN ${pan})` : name;
+    const pOpts = { width, align: 'justify', lineGap: 6, continued: true };
+    doc.fontSize(12).fillColor('#000');
+    const run = (txt, bold) => doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').text(txt, pOpts);
+    // First run sets the paragraph origin; the rest continue inline.
+    doc.font('Helvetica').text('This is to certify that ', left, y, pOpts);
+    run(nameWithPan, true);
+    if (addr) { run(', a cardamom Planter and a resident of ', false); run(addr, true); }
+    else      { run(', a cardamom Planter', false); }
+    run(' has registered Cardamom lots at our end during the period from ', false);
+    run(fromDisp, true);
+    run(' to ', false);
+    run(toDisp, true);
+    run(' and received payment, totally to the tune of Rs. ', false);
+    run(`${amtFig}/-`, true);
+    run(' (', false);
+    run(`${amtWords} Only`, true);
+    doc.font('Helvetica').text(') as reported in annexure.',
+      { width, align: 'justify', lineGap: 6, continued: false });
 
     // ── Annexure: lot-wise details table ──
     // The certificate paragraph says "as reported in annexure"; this IS that
@@ -1508,6 +1528,15 @@ function _poolerAddress(db, name) {
   if (!t) return '';
   const parts = [t.padd, t.ppla, t.pstate, t.pin].map(s => String(s || '').trim()).filter(Boolean);
   return parts.join(', ');
+}
+
+// PAN of a pooler by name (mirrors _poolerAddress). Blank when unknown.
+function _poolerPan(db, name) {
+  if (!name) return '';
+  try {
+    const t = db.get('SELECT pan FROM traders WHERE UPPER(TRIM(name)) = UPPER(?) LIMIT 1', [String(name).trim()]);
+    return t ? String(t.pan || '').trim() : '';
+  } catch (e) { return ''; }
 }
 
 module.exports = { exportPdf, TITLES, COLS, renderTablePdf, renderPoolerCertificatePdf };

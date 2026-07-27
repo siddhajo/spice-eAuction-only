@@ -758,7 +758,8 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
       SUM(l.puramt) as puramt, SUM(l.refund) as advance, SUM(l.balance) as payable,
       t.id AS trader_id,
       t.ifsc AS t_ifsc, t.acctnum AS t_acctnum, t.holder_name AS t_holder,
-      t.padd, t.ppla, t.pin, t.tel AS t_tel
+      t.padd, t.ppla, t.pin, t.tel AS t_tel,
+      GROUP_CONCAT(l.lot_no) AS lot_nos
     FROM lots l
     LEFT JOIN traders t ON UPPER(TRIM(t.name)) = UPPER(TRIM(l.name))
     WHERE l.auction_id = ? AND l.amount > 0
@@ -834,12 +835,10 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
       // format's "Particulars" column.
       phone: p.t_tel || '',
       cr: p.cr || '',
-      // Particulars — a per-seller reference shown on the HDFC A/C sheet
-      // (e.g. "A10 024"). Its exact source (CR / user_id / lot no) is pending
-      // dad's confirmation, so it's left blank for now. When confirmed, derive
-      // it here (or via the column's format() in bank-formats.js) — the `cr`
-      // field above is already carried through for the CR-based option.
-      particulars: '',
+      // Particulars — Auction No + space + lot no(s) (e.g. "A10 024"). Uses the
+      // picked lots when this is a lot-filtered export, otherwise all of the
+      // seller's lots for this auction.
+      particulars: `${auction ? auction.ano : ''} ${lotList || formatLotList(p.lot_nos || '')}`.trim(),
     };
   };
 

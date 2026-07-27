@@ -1579,6 +1579,16 @@ tr:hover td{background:var(--spice-cream)}
    a single column under 1100px (see media query below). Both columns stretch
    to equal height, and Quick Actions' tiles fill that height so the two cards
    always line up. */
+/* Vibrant centred company logo above the All-Auctions widget. */
+.dash-logo-hero{display:flex;justify-content:center;margin:2px 0 20px}
+.dash-logo-badge{width:104px;height:104px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  background:radial-gradient(circle at 32% 28%, var(--spice-cardamom-lt), var(--spice-cardamom) 78%);
+  box-shadow:0 10px 30px rgba(22,101,52,.34), 0 0 0 7px rgba(22,101,52,.10), inset 0 2px 8px rgba(255,255,255,.35);
+  animation:dashLogoFloat 4.5s ease-in-out infinite}
+.dash-logo-badge img{width:80px;height:80px;object-fit:contain;border-radius:50%;background:#fff;padding:8px;
+  box-shadow:0 2px 8px rgba(0,0,0,.12)}
+@keyframes dashLogoFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+@media (prefers-reduced-motion:reduce){.dash-logo-badge{animation:none}}
 .dash-snap-row{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:20px;
   margin-bottom:20px;align-items:stretch}
 .dash-snap-row .dash-snap{margin-bottom:0}
@@ -1620,6 +1630,10 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
   font-size:13px;color:var(--spice-cardamom-dk);transition:transform .15s;flex:0 0 auto}
 .dash-snap.collapsed .dash-snap-collapse{transform:rotate(-90deg)}
 .dash-snap.collapsed .dash-snap-matrix,.dash-snap.collapsed .dash-snap-ft,.dash-snap.collapsed .dash-snap-g2{display:none}
+/* When collapsed, don't stretch to fill the grid row height next to the tall
+   Quick Actions card — otherwise the card shows a big blank area below its
+   header. align-self:start makes it only as tall as the header. */
+.dash-snap-row .dash-snap.collapsed{align-self:start}
 .dash-snap-matrix{overflow-x:auto}
 .dash-snap-matrix table{width:100%;border-collapse:collapse;font-size:13px;min-width:560px}
 .dash-snap-matrix th,.dash-snap-matrix td{padding:11px 16px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -9558,6 +9572,9 @@ async function loadStats(auctionId){
     j(insUrl).catch(() => ({})),
   ]);
   const K=d.kpi||{}, A=d.currentAuction, S=d.topSellers||[], I=d.recentInvoices||[], C=d.counts||{}, AA=d.allAuctions||[];
+  // Company logo for the vibrant dashboard badge — reuse whatever the topbar
+  // shows (branding-aware, cache-busted), falling back to the default file.
+  const _dashLogo = (document.getElementById('topbar-logo-img') && document.getElementById('topbar-logo-img').getAttribute('src')) || 'logo-ispl.png';
   const CUM=d.cumulative||{qty:0,amount:0,lots:0,auctions:0};
   const PT=d.perTradeBreakdown||[];
   // Trade-snapshot totals + grade breakdown (for the click-through modal).
@@ -10034,6 +10051,9 @@ async function loadStats(auctionId){
 
     <!-- Top row: trade snapshot (left) + Quick Actions (right). Collapses to
          a single column under 1100px. -->
+    <div class="dash-logo-hero">
+      <div class="dash-logo-badge"><img src="${_dashLogo}" alt="" onerror="this.style.display='none'"></div>
+    </div>
     <div class="dash-snap-row">
       ${snapHTML || '<div></div>'}
       <div class="card" style="padding:0">
