@@ -120,24 +120,38 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
   // Line items — shipped == billed for e-Auction; rate/amount are the external
   // customer price (li.price / li.amount), matching the ISP branch of the
   // PDFKit renderer.
-  const rows = lineItems.map((li, i) => ({
-    sl: i + 1,
-    lot: li.lot || '',
-    bags: li.bags || '',
-    desc: 'Cardamom',
-    hsn: hsnCardamom,
-    qty: Number(li.qty || 0),
-    rate: Number(li.price || 0),
-    amount: Number(li.amount || 0),
-  }));
+  // Per-line tax split — CGST/SGST (intra) or IGST (inter) on each row's
+  // amount, plus a line total. Used by templates (e.g. RNS) that show tax
+  // per lot inline; templates that only show an HSN summary just ignore these.
+  const taxOf = (amount) => {
+    const a = Number(amount) || 0;
+    const cgst = isInter ? 0 : +(a * gstGoods / 2 / 100).toFixed(2);
+    const sgst = isInter ? 0 : +(a * gstGoods / 2 / 100).toFixed(2);
+    const igst = isInter ? +(a * gstGoods / 100).toFixed(2) : 0;
+    return { cgst, sgst, igst, total: +(a + cgst + sgst + igst).toFixed(2) };
+  };
+  const rows = lineItems.map((li, i) => {
+    const amount = Number(li.amount || 0);
+    return {
+      sl: i + 1,
+      lot: li.lot || '',
+      bags: li.bags || '',
+      desc: 'Cardamom',
+      hsn: hsnCardamom,
+      qty: Number(li.qty || 0),
+      rate: Number(li.price || 0),
+      amount,
+      ...taxOf(amount),
+    };
+  });
 
   // Footer goods rows (gunny/transport/insurance) — shown only when non-zero.
   const gunny = (summary.totalBags > 0 && summary.gunnyCost > 0)
-    ? { desc: 'Gunny', hsn: hsnGunny, units: `${summary.totalBags} Nos.`, rate: gunnyRate, per: 'Nos.', amount: summary.gunnyCost } : null;
+    ? { desc: 'Gunny', hsn: hsnGunny, units: `${summary.totalBags} Nos.`, bags: summary.totalBags, rate: gunnyRate, per: 'Nos.', amount: summary.gunnyCost, ...taxOf(summary.gunnyCost) } : null;
   const transport = (summary.transportCost > 0 && !hideTI)
-    ? { desc: 'Transport', hsn: sacTransport, units: `${summary.totalQty.toFixed(3)} Kgs.`, rate: transportRate, per: 'Kgs.', amount: summary.transportCost } : null;
+    ? { desc: 'Transport', hsn: sacTransport, units: `${summary.totalQty.toFixed(3)} Kgs.`, qty: summary.totalQty, rate: transportRate, per: 'Kgs.', amount: summary.transportCost, ...taxOf(summary.transportCost) } : null;
   const insurance = (summary.insuranceCost > 0 && !hideTI)
-    ? { desc: 'Insurance', hsn: sacInsurance, rate: insuranceRate, amount: summary.insuranceCost } : null;
+    ? { desc: 'Insurance', hsn: sacInsurance, rate: insuranceRate, amount: summary.insuranceCost, ...taxOf(summary.insuranceCost) } : null;
 
   // HSN summary rows (same construction as invoice-pdf.js).
   const mkHsn = (hsn, desc, taxable) => ({
@@ -174,6 +188,7 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
     title: 'Tax Invoice',
     invoiceNo: formatInvoiceNo(cfg, saleType, invoiceNo),
     invoiceDate: invoiceDate || null,
+    auctionNo: invoiceData.auctionNo || '',
     saleType: st,
     flags: { showHsn, showBank, stripe, isInter },
     ship, billTo,

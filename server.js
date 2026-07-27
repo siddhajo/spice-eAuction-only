@@ -9684,7 +9684,10 @@ function _renderDebitNote(doc, dn, db, cfg) {
     const coIdLabel = co.idLabel || 'CIN';
     const coIdValue = (co.idValue != null && co.idValue !== '') ? co.idValue : (co.cin || cfg.cin || '');
     doc.text(`${coIdLabel}:${coIdValue || ''}   PAN:${co.pan || cfg.pan || ''}`, PAGE_L, y, { width: PAGE_W, align: 'center', lineBreak: false }); y = doc.y;
-    doc.text(`GSTIN:${co.gstin || ''}   SBL:${co.sbl || cfg.sbl || ''}`, PAGE_L, y, { width: PAGE_W, align: 'center', lineBreak: false }); y = doc.y;
+    // FSSAI | GSTIN | SBL on one line (FSSAI only when configured) — matches
+    // the RNS reference debit-note letterhead.
+    const _fssai = String(co.fssai || cfg.fssai || '').trim();
+    doc.text(`${_fssai ? 'FSSAI:' + _fssai + '   ' : ''}GSTIN:${co.gstin || ''}   SBL:${co.sbl || cfg.sbl || ''}`, PAGE_L, y, { width: PAGE_W, align: 'center', lineBreak: false }); y = doc.y;
     if (co.email) { doc.text('e-Mail ID:' + co.email, PAGE_L, y, { width: PAGE_W, align: 'center', lineBreak: false }); y = doc.y; }
     y += 5;
 

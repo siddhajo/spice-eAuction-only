@@ -61,10 +61,16 @@ function buildPurchaseInvoiceView(invoiceData, cfg, invoiceNo) {
 
   // Line items.
   const rows = lineItems.map((li) => {
+    const qty = Number(li.qty || 0);
     const totalQty = (li.totalQty != null) ? li.totalQty : ((li.pqty || li.qty || 0) + (li.refundQty || 0));
     return {
       lot: String(li.lot || '').padStart(3, '0'),
-      qty: Number(li.qty || 0),
+      qty,
+      // Sample (kg) = the weight added to reach Total Qty (the app's sample-bag
+      // refund). Discount (kg) = weight deducted — this build has no per-lot
+      // discount-weight, so it's 0. Total Qty = qty + Sample − Discount holds.
+      sample: +(Math.max(0, totalQty - qty)).toFixed(3),
+      discount: 0,
       totalQty,
       price: Number(li.prate || li.price || 0),
       value: Number(li.prate || li.price || 0) * Number(li.pqty || li.qty || 0),
@@ -109,10 +115,17 @@ function buildPurchaseInvoiceView(invoiceData, cfg, invoiceNo) {
       gstin: seller.gstin || seller.cr || '',
     },
     leftPairs, rightPairs, plainLines, pairLines,
+    auctionNo: invoiceData.auctionNo || invoiceData.eTradeNo || '',
+    saleDate: invoiceData.invoiceDate || '',
     descGoods: cfg.desc_goods || 'CARDAMOM',
     hsnCode: cfg.hsn_cardamom || '09083120',
     rows,
     totals: { qtySum, totalQtySum, valueSum, taxableSum, totalCgst, totalSgst, totalIgst },
+    // SubTotal = taxable + all taxes (before TDS / round-off).
+    subTotal: +(taxableSum + totalCgst + totalSgst + totalIgst).toFixed(2),
+    gstRate: Number(cfg.gst_goods || 5),
+    gstHalf: Number(cfg.gst_goods || 5) / 2,
+    roundDiff,
     totalsRows,
     totalValue,
     tdsAmount,

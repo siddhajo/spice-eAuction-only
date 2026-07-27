@@ -402,9 +402,11 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg, opts) {
     ? Math.round((grandTotalBeforeTds + tdsAmount) * 100) / 100
     : grandTotalBeforeTds;
 
+  const _auc = db.get('SELECT ano FROM auctions WHERE id = ?', [auctionId]);
   return {
     buyer: buyer || {},
     saleType,
+    auctionNo: _auc ? _auc.ano : '',
     lineItems,
     summary: {
       totalQty, totalBags, totalAmount,
@@ -524,9 +526,11 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg) {
     : 0;
   const invoiceAmount = grandTotal - tdsAmount;
 
+  const _auc = db.get('SELECT ano FROM auctions WHERE id = ?', [auctionId]);
   return {
-    seller: { name: firstLot.name, address: firstLot.padd, place: firstLot.ppla, 
+    seller: { name: firstLot.name, address: firstLot.padd, place: firstLot.ppla,
               cr: firstLot.cr, pan: firstLot.pan, state: firstLot.pstate },
+    auctionNo: _auc ? _auc.ano : '',
     lineItems,
     summary: {
       totalQty, totalRefundQty, totalBags, totalPuramt, totalCgst, totalSgst, totalIgst,
