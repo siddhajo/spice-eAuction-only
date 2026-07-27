@@ -70,7 +70,7 @@ function buildCommissionView(billData, cfg, billNo, first) {
     // Show the seller's phone + bank account on the bill (RNS layout), gated by
     // the flag_commission_bank toggle. Coerced to a real boolean so Handlebars
     // {{#if}} works (a string "false" would otherwise read as truthy).
-    showSellerBank: String((cfg && cfg.flag_commission_bank) || '').toLowerCase() === 'true',
+    showSellerBank: ['true', '1', 'yes', 'on'].includes(String((cfg && cfg.flag_commission_bank) || '').trim().toLowerCase()),
     // Raw party objects — let alternate templates lay out seller/buyer freely.
     seller, purchaser,
     crpt: billData.crpt || '',
