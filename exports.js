@@ -531,12 +531,17 @@ async function exportPoolerRegister(db, auctionId) {
      FROM lots WHERE auction_id = ? AND COALESCE(reserved,0) = 0
      ORDER BY name`, [auctionId]
   );
+  // Gross Qty = net qty + the Default Sample Weight (cfg.sample_weight) taken
+  // from the lot. One row per lot here, so it's a single sample per row.
+  const sampleWt = Number((require('./company-config').getSettingsFlat(db) || {}).sample_weight) || 0;
+  for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + sampleWt;
   const cols = [
     { header: 'STATE', key: 'state', width: 12 },
     { header: 'NAME', key: 'poolername', width: 30 },
     { header: 'BRANCH', key: 'br', width: 15 },
     { header: 'LOT', key: 'lot', width: 8 },
     { header: 'QTY', key: 'qty', width: 12 },
+    { header: 'GROSS QTY', key: 'gross_qty', width: 12, numFmt: '#,##0.000', align: 'right' },
     { header: 'PRICE', key: 'price', width: 10 },
     { header: 'AMOUNT', key: 'amount', width: 14 },
   ];
@@ -608,6 +613,11 @@ async function exportDealerList(db, auctionId) {
       GROUP BY state, name, gstin
       ORDER BY state, name`, [auctionId]
   );
+  // Gross Qty = net qty + Default Sample Weight × lot count (one sample per
+  // lot). Computed from cfg.sample_weight so it's independent of the per-lot
+  // stored sample_wt (which feeds the SAMPLE WT / GROSS WT columns below).
+  const sampleWt = Number((require('./company-config').getSettingsFlat(db) || {}).sample_weight) || 0;
+  for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sampleWt;
   const cols = [
     { header: 'STATE', key: 'state', width: 12 },
     { header: 'NAME', key: 'name', width: 30 },
@@ -615,6 +625,7 @@ async function exportDealerList(db, auctionId) {
     { header: 'LOTS', key: 'lots', width: 6 },
     { header: 'BAGS', key: 'bags', width: 6 },
     { header: 'QTY', key: 'qty', width: 12 },
+    { header: 'GROSS QTY', key: 'gross_qty', width: 12, numFmt: '#,##0.000', align: 'right' },
     // Sample weight, then gross weight = QTY + SAMPLE WT (per dad's spec).
     // Explicit 3-decimal numFmt so both weigh columns match the QTY format.
     { header: 'SAMPLE WT', key: 'sample_wt', width: 12, numFmt: '#,##0.000', align: 'right' },
@@ -694,6 +705,9 @@ async function exportDealerListPartyWise(db, auctionId) {
       GROUP BY name, gstin
       ORDER BY name`, [auctionId]
   );
+  // Gross Qty = net qty + Default Sample Weight × lot count (one sample per lot).
+  const sampleWt = Number((require('./company-config').getSettingsFlat(db) || {}).sample_weight) || 0;
+  for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sampleWt;
   const cols = [
     { header: 'STATE',  key: 'state',  width: 12 },
     { header: 'NAME',   key: 'name',   width: 30 },
@@ -701,13 +715,14 @@ async function exportDealerListPartyWise(db, auctionId) {
     { header: 'LOTS',   key: 'lots',   width: 6  },
     { header: 'BAGS',   key: 'bags',   width: 6  },
     { header: 'QTY',    key: 'qty',    width: 12, numFmt: '#,##0.000' },
+    { header: 'GROSS QTY', key: 'gross_qty', width: 12, numFmt: '#,##0.000', align: 'right' },
     { header: 'AMOUNT', key: 'amount', width: 16, numFmt: '#,##0.00'  },
   ];
   const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
   return createExcelBuffer('DealerListPartyWise', cols, rows, {
     db, title: 'Dealer List (Party-wise)', metaLines: auctionMeta(db, auctionId),
     grandTotal: { label: 'TOTAL', values: {
-      lots: sum('lots'), bags: sum('bags'), qty: sum('qty'), amount: sum('amount'),
+      lots: sum('lots'), bags: sum('bags'), qty: sum('qty'), gross_qty: sum('gross_qty'), amount: sum('amount'),
     } },
   });
 }
@@ -728,12 +743,16 @@ async function exportPoolerListConsolidated(db, auctionId) {
       GROUP BY name
       ORDER BY name`, [auctionId]
   );
+  // Gross Qty = net qty + Default Sample Weight × lot count (one sample per lot).
+  const sampleWt = Number((require('./company-config').getSettingsFlat(db) || {}).sample_weight) || 0;
+  for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sampleWt;
   const cols = [
     { header: 'NAME',       key: 'name',       width: 30 },
     { header: 'CR/GSTIN',   key: 'cr',         width: 20 },
     { header: 'LOTS',       key: 'lots',       width: 6  },
     { header: 'BAGS',       key: 'bags',       width: 6  },
     { header: 'QTY',        key: 'qty',        width: 12, numFmt: '#,##0.000' },
+    { header: 'GROSS QTY',  key: 'gross_qty',  width: 12, numFmt: '#,##0.000', align: 'right' },
     { header: 'VALUE',      key: 'value',      width: 16, numFmt: '#,##0.00'  },
     { header: 'BILLAMOUNT', key: 'billamount', width: 16, numFmt: '#,##0.00'  },
   ];
@@ -741,7 +760,7 @@ async function exportPoolerListConsolidated(db, auctionId) {
   return createExcelBuffer('PoolerListConsolidated', cols, rows, {
     db, title: 'Pooler List consolidated (Party-wise)', metaLines: auctionMeta(db, auctionId),
     grandTotal: { label: 'TOTAL', values: {
-      lots: sum('lots'), bags: sum('bags'), qty: sum('qty'),
+      lots: sum('lots'), bags: sum('bags'), qty: sum('qty'), gross_qty: sum('gross_qty'),
       value: sum('value'), billamount: sum('billamount'),
     } },
   });

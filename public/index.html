@@ -3826,7 +3826,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <button id="seller-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('seller')">🗑 Delete Selected <span id="seller-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>          <input type="file" id="imp-traders" accept=".xlsx,.xls" style="display:none" onchange="importTraders(event)">
         </div>
         <div id="trader-import-status" style="display:none;padding:8px 14px;border-radius:6px;font-size:12px;margin-bottom:10px"></div>
-        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Name</th><th>CR/GSTIN</th><th>PAN</th><th>Phone</th><th>Place · State</th><th>Bank</th><th>Actions</th></tr></thead><tbody id="traders-list"></tbody></table></div>
+        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Name</th><th>CR/GSTIN</th><th>PAN</th><th>DOB</th><th>Phone</th><th>Place · State</th><th>Bank</th><th>Actions</th></tr></thead><tbody id="traders-list"></tbody></table></div>
         <!-- Pager: rendered by searchTraders() once we know total/page. -->
         <div id="traders-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
       </div>
@@ -18127,6 +18127,8 @@ async function searchTraders(q, opts){
           `<a href="#" onclick="viewTraderDetails(${JSON.stringify(t).replace(/"/g,'&quot;')});return false" style="color:var(--green);font-weight:600;text-decoration:none">${esc(t.name)}</a>` },
       { key:'cr', label:'CR/GSTIN', sort:'text', tdClass:'small' },
       { key:'pan', label:'PAN', sort:'text' },
+      { key:'dob', label:'DOB', sort:'text',
+        render:(t)=> t.dob ? esc(t.dob) : '<span style="color:var(--text3)">—</span>' },
       // TAN column — only when the "TAN field (Sellers + Buyers)" flag is on
       // (data-feat-tan is set by applyFeatureFlags). Sits right after PAN.
       ...(document.body.getAttribute('data-feat-tan')==='1' ? [{ key:'tan', label:'TAN', sort:'text' }] : []),
@@ -18169,7 +18171,7 @@ function viewTraderDetails(t){
   const kv=(k,v)=>v?`<tr><td style="padding:6px 10px;color:var(--text2);font-size:12px;width:40%">${k}</td><td style="padding:6px 10px;font-size:13px">${esc(v)}</td></tr>`:'';
   const section=(title,rows)=>{const filtered=rows.filter(Boolean).join('');return filtered?`<div style="margin-bottom:16px"><h3 style="font-size:13px;color:var(--green);margin:0 0 6px 0;padding-bottom:4px;border-bottom:1.5px solid var(--green-border)">${title}</h3><table style="width:100%">${filtered}</table></div>`:''};
   let html='';
-  html+=section('Identity',[kv('Name',t.name),kv('PAN',t.pan),kv('Aadhar',t.aadhar)]);
+  html+=section('Identity',[kv('Name',t.name),kv('PAN',t.pan),kv('Date of Birth',t.dob),kv('Aadhar',t.aadhar)]);
   html+=section('Registration',[kv('CR / GSTIN',t.cr)]);
   html+=section('Contact',[kv('Phone',t.tel)]);
   html+=section('Address',[kv('Address',t.padd),kv('Place',t.ppla),kv('PIN',t.pin),kv('State',t.pstate),kv('State Code',t.pst_code)]);

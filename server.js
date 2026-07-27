@@ -6744,8 +6744,19 @@ app.get('/api/invoices/preview.html', (req, res) => {
 // 'sales-invoice', 'purchase-invoice', 'agri-bill'.
 app.get('/api/invoices/templates/:docType', requireView, (req, res) => {
   try {
-    const { listTemplates } = require('./pdf/invoice-templates');
-    res.json({ docType: req.params.docType, templates: listTemplates(req.params.docType) });
+    const { listTemplates, DEFAULTS, SETTING_KEY } = require('./pdf/invoice-templates');
+    const docType = req.params.docType;
+    const all = listTemplates(docType) || [];
+    // Only offer the DEFAULT layout + THIS company's configured layout (both
+    // must exist on disk). So a company that kept the default ('classic') sees
+    // only the default — the print picker doesn't even open — while a company
+    // that set e.g. commission_bill_template='rns' sees default + rns.
+    const cfg = getSettingsFlat(getDb());
+    const def = (DEFAULTS && DEFAULTS[docType]) || 'classic';
+    const setKey = SETTING_KEY && SETTING_KEY[docType];
+    const configured = String((setKey && cfg[setKey]) || def).trim() || def;
+    const offered = [...new Set([def, configured])].filter(t => all.includes(t));
+    res.json({ docType, templates: offered.length ? offered : all });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -8607,7 +8618,12 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
       // (fallback to the denormalised lot value); account prefers the trader's
       // default bank (trader_banks) then the legacy single-account column.
       try {
-        const t = db.get('SELECT id, tel, acctnum FROM traders WHERE UPPER(TRIM(name)) = UPPER(TRIM(?)) LIMIT 1', [seller.name]);
+        // Resolve the trader by the lot's trader_id first (most reliable),
+        // then by name — so phone/account populate even when the stored bill
+        // name differs slightly from the trader master.
+        let t = null;
+        if (first.trader_id) t = db.get('SELECT id, tel, acctnum FROM traders WHERE id = ? LIMIT 1', [first.trader_id]);
+        if (!t) t = db.get('SELECT id, tel, acctnum FROM traders WHERE UPPER(TRIM(name)) = UPPER(TRIM(?)) LIMIT 1', [seller.name]);
         seller.phone = (t && t.tel) || first.tel || '';
         let acct = (t && t.acctnum) || '';
         if (t && t.id) {
