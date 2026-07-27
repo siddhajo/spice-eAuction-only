@@ -100,7 +100,10 @@ const BANK_FORMATS = {
     total: true,
     signatures: ['Prepared By', 'Checked By', 'Approved By'],
     columns: [
-      { header: 'Particulars',    key: 'particulars',    width: 14 },
+      // Particulars is "<ano> <lots>"; RNS wants the auction no shown as
+      // "A<ano>" (e.g. "A10 024"), so prefix an "A" to the whole value.
+      { header: 'Particulars',    key: 'particulars',    width: 14,
+        format: (v) => v ? 'A' + v : '' },
       { header: 'Customer Name',  key: 'beneficiaryName', width: 30 },
       { header: 'Amount',         key: 'amount',          width: 14, numFmt: '#,##0' },
       { header: 'Account Number', key: 'accountNo',       width: 20 },

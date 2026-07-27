@@ -1630,10 +1630,13 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
   font-size:13px;color:var(--spice-cardamom-dk);transition:transform .15s;flex:0 0 auto}
 .dash-snap.collapsed .dash-snap-collapse{transform:rotate(-90deg)}
 .dash-snap.collapsed .dash-snap-matrix,.dash-snap.collapsed .dash-snap-ft,.dash-snap.collapsed .dash-snap-g2{display:none}
-/* When collapsed, don't stretch to fill the grid row height next to the tall
-   Quick Actions card — otherwise the card shows a big blank area below its
-   header. align-self:start makes it only as tall as the header. */
-.dash-snap-row .dash-snap.collapsed{align-self:start}
+/* When collapsed, the snapshot shrinks to just its header — so drop the whole
+   row to a single column (thin bar on top, Quick Actions below) instead of
+   leaving a tall empty gap beside the Quick Actions list. The actions then
+   tile responsively across the full width. */
+.dash-snap-row.snap-collapsed{grid-template-columns:1fr}
+.dash-snap-row.snap-collapsed .dash-snap{align-self:start}
+.dash-snap-row.snap-collapsed .qa-grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));grid-auto-rows:auto}
 .dash-snap-matrix{overflow-x:auto}
 .dash-snap-matrix table{width:100%;border-collapse:collapse;font-size:13px;min-width:560px}
 .dash-snap-matrix th,.dash-snap-matrix td{padding:11px 16px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -9341,6 +9344,10 @@ function toggleDashSnap() {
   if (!card) return;
   const willCollapse = !card.classList.contains('collapsed');
   card.classList.toggle('collapsed', willCollapse);
+  // Reflow the row to a single column when collapsed so the freed side space
+  // doesn't leave an awkward empty gap next to Quick Actions.
+  const row = card.closest('.dash-snap-row');
+  if (row) row.classList.toggle('snap-collapsed', willCollapse);
   localStorage.setItem('dashSnapCollapsed', willCollapse ? '1' : '0');
 }
 
@@ -10054,7 +10061,7 @@ async function loadStats(auctionId){
     <div class="dash-logo-hero">
       <div class="dash-logo-badge"><img src="${_dashLogo}" alt="" onerror="this.style.display='none'"></div>
     </div>
-    <div class="dash-snap-row">
+    <div class="dash-snap-row${snapCollapsed?' snap-collapsed':''}">
       ${snapHTML || '<div></div>'}
       <div class="card" style="padding:0">
         <div style="padding:18px 22px 12px;border-bottom:1px solid var(--spice-line);display:flex;justify-content:space-between;align-items:center">
