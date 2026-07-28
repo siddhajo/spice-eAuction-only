@@ -22264,7 +22264,13 @@ async function viewInvoicePDF(id){
   const def = (window._sdata && (_sdata.dispatched_through || _sdata.dispatched_through_isp || undefined)) || '';
   const dispatchedThrough = await promptDispatchedThrough(def);
   if (dispatchedThrough === null) return; // user cancelled
-  const qs = dispatchedThrough ? `?dispatchedThrough=${encodeURIComponent(dispatchedThrough)}` : '';
+  // Offer a layout choice when more than one sales-invoice template exists.
+  const template = await pickTemplate('sales-invoice', 'Choose sales invoice format');
+  if (template === null) return; // operator cancelled
+  const params = [];
+  if (dispatchedThrough) params.push(`dispatchedThrough=${encodeURIComponent(dispatchedThrough)}`);
+  if (template) params.push(`template=${encodeURIComponent(template)}`);
+  const qs = params.length ? `?${params.join('&')}` : '';
   return fetchAndPrint(`/api/invoices/pdf/${id}${qs}`, `Invoice_${id}.pdf`);
 }
 
@@ -22355,11 +22361,17 @@ async function printSelectedInvoices(){
   const dispatchedThrough = await promptDispatchedThrough(def);
   if (dispatchedThrough === null) return;
 
+  // Offer a layout choice when more than one sales-invoice template exists.
+  const template = await pickTemplate('sales-invoice', 'Choose sales invoice format');
+  if (template === null) return; // operator cancelled
+
+  const body_ = { ids, dispatchedThrough };
+  if (template) body_.template = template;
   await fetchPdfWithOverlay(
     `Building merged PDF for ${ids.length} invoices…`,
     '/api/invoices/pdf-bulk',
     `Invoices_Batch_${ids.length}.pdf`,
-    { ids, dispatchedThrough }
+    body_
   );
 }
 
@@ -22527,11 +22539,14 @@ async function printSelectedPurchases(){
   const checked=Array.from(body.querySelectorAll('.pur-select-cb:checked'));
   if(!checked.length){alert('Tick one or more purchase invoices first');return}
   const ids=checked.map(cb=>Number(cb.value)).filter(Boolean);
+  // Offer a layout choice when more than one purchase-invoice template exists.
+  const template = await pickTemplate('purchase-invoice', 'Choose purchase invoice format');
+  if (template === null) return; // operator cancelled
   await fetchPdfWithOverlay(
     `Building merged PDF for ${ids.length} purchase invoices…`,
     '/api/purchases/pdf-bulk',
     `Purchases_Batch_${ids.length}.pdf`,
-    { ids }
+    template ? { ids, template } : { ids }
   );
 }
 
@@ -22634,6 +22649,20 @@ async function pickCommissionTemplate(){
     const templates=(res&&res.templates)||[];
     if(templates.length>1){
       return await chooseInvoiceFormat(templates,'Choose commission bill format');
+    }
+  }catch(_){ /* server didn't list templates — use the saved default */ }
+  return '';
+}
+
+// Generic layout picker for any doc type (sales-invoice / purchase-invoice /…).
+// Same contract as pickCommissionTemplate: '' = use saved default, '<id>' =
+// forced layout, null = operator cancelled.
+async function pickTemplate(docType, title){
+  try{
+    const res=await j('/api/invoices/templates/'+docType);
+    const templates=(res&&res.templates)||[];
+    if(templates.length>1){
+      return await chooseInvoiceFormat(templates, title||'Choose format');
     }
   }catch(_){ /* server didn't list templates — use the saved default */ }
   return '';
@@ -22850,8 +22879,12 @@ async function delPurchase(id){if(!confirm('Delete this purchase invoice?'))retu
   catch(e){showError(e)}}
 
 async function viewPurchasePDF(auctionId,sellerName,invNo){
+  // Offer a layout choice when more than one purchase-invoice template exists.
+  const template = await pickTemplate('purchase-invoice', 'Choose purchase invoice format');
+  if (template === null) return; // operator cancelled
+  const tq = template ? `&template=${encodeURIComponent(template)}` : '';
   return fetchAndPrint(
-    `/api/purchases/pdf/${auctionId}/${sellerName}?invoiceNo=${invNo}`,
+    `/api/purchases/pdf/${auctionId}/${sellerName}?invoiceNo=${invNo}${tq}`,
     `PurchaseInvoice_${decodeURIComponent(sellerName)}_${invNo}.pdf`
   );
 }

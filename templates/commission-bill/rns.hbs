@@ -64,6 +64,7 @@
           <div>{{#if seller.address}}{{seller.address}}{{else}}-{{/if}} &nbsp; {{seller.state}}</div>
           <div>STATE CODE: <span class="bold">{{seller.st_code}}</span>{{#if seller.aadhar}} &nbsp; AADHAR: <span class="bold">{{seller.aadhar}}</span>{{/if}}</div>
           <div>{{#if seller.cr}}CR.<span class="bold">{{seller.cr}}</span>{{/if}}{{#if seller.pan}} &nbsp; PAN: <span class="bold">{{seller.pan}}</span>{{/if}}</div>
+          {{#if showSellerBank}}<div>{{#if seller.phone}}Ph: <span class="bold">{{seller.phone}}</span>{{/if}}{{#if seller.account}}{{#if seller.phone}} &nbsp; {{/if}}A/C: <span class="bold">{{seller.account}}</span>{{/if}}</div>{{/if}}
         </td>
         <td>
           <div class="bold">M/s. {{purchaser.name}}{{#if purchaser.invo}} &nbsp;&nbsp; INV: {{purchaser.invo}}{{/if}}</div>

@@ -7323,11 +7323,17 @@ app.get('/api/invoices/pdf/:id', requireView, async (req, res) => {
     //   2. `sales_invoice_engine` company setting
     //   3. default 'pdfkit' (unchanged behavior)
     // Reversible instantly by removing the env var / setting it back to pdfkit.
+    // Per-print format choice: ?template=<id> ('rns'/'classic') forces the HTML
+    // engine + that layout; 'pdfkit' forces the legacy layout; blank falls back
+    // to the saved engine/template.
     let pdf;
-    const engine = String(process.env.SALES_INVOICE_ENGINE || cfg.sales_invoice_engine || 'pdfkit').toLowerCase();
-    if (engine === 'html') {
+    const tplChoice = String(req.query.template || '').trim();
+    const savedHtml = String(process.env.SALES_INVOICE_ENGINE || cfg.sales_invoice_engine || 'pdfkit').toLowerCase() === 'html';
+    const useHtml = tplChoice ? tplChoice !== 'pdfkit' : savedHtml;
+    if (useHtml) {
       const { generateSalesInvoiceHtmlPDF } = require('./pdf/render-html-invoice');
-      pdf = await generateSalesInvoiceHtmlPDF(invoice, cfg, stored.sale, stored.invo, stored.date);
+      const cfg2 = tplChoice ? { ...cfg, sales_invoice_template: tplChoice } : cfg;
+      pdf = await generateSalesInvoiceHtmlPDF(invoice, cfg2, stored.sale, stored.invo, stored.date);
     } else {
       pdf = await generateSalesInvoicePDF(invoice, cfg, stored.sale, stored.invo, stored.date);
     }
@@ -7507,8 +7513,11 @@ app.post('/api/invoices/pdf-bulk', requireView, async (req, res) => {
     if (!payloads.length) return res.status(404).json({ error: 'No invoices resolved from the provided IDs' });
 
     let pdf;
-    if (require('./pdf/engine-toggle').useHtmlEngine(cfg, 'sales_invoice_engine')) {
-      pdf = await require('./pdf/render-html-invoice').generateSalesInvoicesHtmlBatchPDF(payloads, cfg);
+    const tplChoice = String((req.body && req.body.template) || '').trim();
+    const useHtml = tplChoice ? tplChoice !== 'pdfkit' : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'sales_invoice_engine');
+    if (useHtml) {
+      const cfg2 = tplChoice ? { ...cfg, sales_invoice_template: tplChoice } : cfg;
+      pdf = await require('./pdf/render-html-invoice').generateSalesInvoicesHtmlBatchPDF(payloads, cfg2);
     } else {
       pdf = await generateSalesInvoicesBatchPDF(payloads, cfg);
     }
@@ -7887,8 +7896,11 @@ app.get('/api/purchases/pdf/:auctionId/:sellerName', requireView, async (req, re
     
     const enriched = enrichPurchaseForPDF(invoice, cfg, db, auctionId);
     let pdf;
-    if (require('./pdf/engine-toggle').useHtmlEngine(cfg, 'purchase_invoice_engine')) {
-      pdf = await require('./pdf/render-purchase-html').generatePurchaseInvoiceHtmlPDF(enriched, cfg, invoiceNo);
+    const tplChoice = String(req.query.template || '').trim();
+    const useHtml = tplChoice ? tplChoice !== 'pdfkit' : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'purchase_invoice_engine');
+    if (useHtml) {
+      const cfg2 = tplChoice ? { ...cfg, purchase_invoice_template: tplChoice } : cfg;
+      pdf = await require('./pdf/render-purchase-html').generatePurchaseInvoiceHtmlPDF(enriched, cfg2, invoiceNo);
     } else {
       pdf = await generatePurchaseInvoicePDF(enriched, cfg, invoiceNo);
     }
@@ -8008,8 +8020,11 @@ app.post('/api/purchases/pdf-bulk', requireView, async (req, res) => {
     }
 
     let pdf;
-    if (require('./pdf/engine-toggle').useHtmlEngine(cfg, 'purchase_invoice_engine')) {
-      pdf = await require('./pdf/render-purchase-html').generatePurchaseInvoicesHtmlBatchPDF(payloads, cfg);
+    const tplChoice = String((req.body && req.body.template) || '').trim();
+    const useHtml = tplChoice ? tplChoice !== 'pdfkit' : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'purchase_invoice_engine');
+    if (useHtml) {
+      const cfg2 = tplChoice ? { ...cfg, purchase_invoice_template: tplChoice } : cfg;
+      pdf = await require('./pdf/render-purchase-html').generatePurchaseInvoicesHtmlBatchPDF(payloads, cfg2);
     } else {
       pdf = await generatePurchaseInvoicesBatchPDF(payloads, cfg);
     }
