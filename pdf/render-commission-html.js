@@ -88,6 +88,17 @@ function buildCommissionView(billData, cfg, billNo, first) {
     },
     refund: (li.refundQty > 0 || refundAmount > 0)
       ? { qty: Number(li.refundQty || 0), rate: Number(li.refundRate || 0), amount: refundAmount } : null,
+    // RNS layout shows the SAMPLE REFUND line as (sample refund + trader sample):
+    // the gross sample weight returned to the seller. The separate TRADER SAMPLE
+    // deduction row still applies, so the net sample effect (and the Grand Total)
+    // is unchanged — this only relabels what the operator sees on that line.
+    sampleRefund: (() => {
+      const rQ = Number(li.refundQty || 0), rA = refundAmount;
+      const tQ = traderSample ? Number(traderSample.qty || 0) : 0;
+      const tA = traderSample ? Number(traderSample.amount || 0) : 0;
+      if (rQ + tQ <= 0 && rA + tA <= 0) return null;
+      return { qty: rQ + tQ, rate: Number(li.refundRate || li.rate || 0), amount: rA + tA };
+    })(),
     traderSample,
     commission: {
       amount: commission,
