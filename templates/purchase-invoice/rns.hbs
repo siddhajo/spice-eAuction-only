@@ -1,0 +1,129 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Purchase Invoice</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 8pt; color: #000; line-height: 1.25;
+    padding: 18pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .doc { border: 0.7pt solid #000; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { border: 0.6pt solid #000; padding: 2pt 4pt; vertical-align: top; }
+  .no-b, .no-b td, .no-b th { border: none; }
+  .c { text-align: center; } .r { text-align: right; } .b { font-weight: bold; }
+  .muted { font-size: 7.5pt; }
+  .head { text-align: center; padding: 5pt 6pt; }
+  .head .co { font-weight: bold; font-size: 12pt; }
+  .head .ln { font-size: 8pt; }
+  .items th { font-weight: bold; font-size: 7pt; text-align: center; }
+  .items td { font-size: 8pt; }
+  .grand td { font-size: 11pt; font-weight: bold; }
+</style>
+</head>
+<body>
+<div class="doc">
+  <!-- Seller letterhead -->
+  <div class="head">
+    <div class="co">{{seller.name}}</div>
+    {{#if seller.addr}}<div class="ln b">{{seller.addr}}</div>{{/if}}
+    {{#if seller.gstin}}<div class="ln b">GSTIN.{{seller.gstin}}</div>{{/if}}
+  </div>
+
+  <!-- Meta grid: seller/transport (left) + invoice/supply (right) -->
+  <table>
+    {{#each leftPairs}}
+    <tr>
+      <td class="b" style="width:50%">{{this.[0]}}: {{this.[1]}}</td>
+      {{#with (lookup ../rightPairs @index)}}<td class="b" style="width:50%">{{this.[0]}}: {{this.[1]}}</td>{{/with}}
+    </tr>
+    {{/each}}
+  </table>
+
+  <!-- Parties -->
+  <table>
+    <tr class="bar c b"><td style="width:50%">BILLED TO</td><td style="width:50%">SHIPPED TO</td></tr>
+    <tr>
+      <td>
+        {{#each plainLines}}<div class="b">{{this}}</div>{{/each}}
+        {{#each pairLines}}<div class="muted">{{this.[0]}}: <span class="b">{{this.[1]}}</span></div>{{/each}}
+      </td>
+      <td>
+        {{#each plainLines}}<div class="b">{{this}}</div>{{/each}}
+        {{#each pairLines}}<div class="muted">{{this.[0]}}: <span class="b">{{this.[1]}}</span></div>{{/each}}
+      </td>
+    </tr>
+  </table>
+
+  <table><tr class="c b"><td style="width:50%">Description of Goods: {{descGoods}}</td><td style="width:50%">HSN CODE: {{hsnCode}}</td></tr></table>
+
+  <!-- Line items -->
+  <table class="items">
+    <thead><tr>
+      <th style="width:28pt">Lot<br>No</th>
+      <th>Quantity (kg)</th>
+      <th>Sample (kg)</th>
+      <th>Discount (kg)</th>
+      <th>Total Qty (kg)</th>
+      <th>Price (Rs)</th>
+      <th>Taxable Value (Rs)</th>
+    </tr></thead>
+    <tbody>
+      {{#each rows}}
+      <tr>
+        <td class="c b">{{lot}}</td>
+        <td class="r">{{qty qty}}</td>
+        <td class="r">{{qty sample}}</td>
+        <td class="r">{{qty discount}}</td>
+        <td class="r">{{qty totalQty}}</td>
+        <td class="r">{{fixed price 2}}</td>
+        <td class="r">{{inr taxable}}</td>
+      </tr>
+      {{/each}}
+      <tr class="b">
+        <td colspan="4" class="c">Total</td>
+        <td class="r">{{qty totals.totalQtySum}}</td>
+        <td></td>
+        <td class="r">{{inr totals.taxableSum}}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- Note + tax box -->
+  <table>
+    <tr>
+      <td class="b" style="width:50%; vertical-align:middle">
+        We have supplied the above mentioned lots of {{descGoods}} for Auction Sales in Auction No: {{auctionNo}} Dated: {{shortDate saleDate}}
+      </td>
+      <td style="width:50%; padding:0">
+        <table class="no-b">
+          <tr><td class="r b">IGST {{gstRate}}%</td><td class="r b" style="width:45%">{{inr totals.totalIgst}}</td></tr>
+          <tr><td class="r b">CGST {{gstHalf}}%</td><td class="r b">{{inr totals.totalCgst}}</td></tr>
+          <tr><td class="r b">SGST {{gstHalf}}%</td><td class="r b">{{inr totals.totalSgst}}</td></tr>
+          <tr><td class="r b">SubTotal</td><td class="r b">{{inr subTotal}}</td></tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+
+  <table>
+    {{#if tdsAmount}}<tr class="b"><td style="width:50%">TDS on purchase of Goods [U/S 194Q]</td><td class="r">{{inr tdsAmount}}</td></tr>{{/if}}
+    <tr class="b"><td>Round Off</td><td class="r">{{inr roundDiff}}</td></tr>
+    <tr class="grand"><td>GrandTotal</td><td class="r">{{inr invoiceAmount}}</td></tr>
+  </table>
+
+  <table><tr class="c b"><td>Amount in words: {{invoiceAmountWords}}</td></tr></table>
+
+  <!-- Footer -->
+  <table class="no-b" style="margin-top:4pt">
+    <tr><td class="muted" style="width:70%">Bank Account No :</td><td class="r b" style="width:30%">FOR</td></tr>
+    <tr>
+      <td class="muted" style="padding-top:20pt">Bank Branch &amp; IFSC<br><span class="muted">[Certified that the particulars given above are true and correct]</span></td>
+      <td class="r b" style="padding-top:20pt">Authorised Signatory</td>
+    </tr>
+  </table>
+</div>
+</body>
+</html>
