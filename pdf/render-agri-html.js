@@ -17,16 +17,8 @@ function readFlag(val, defaultOn) {
 const sumKey = (rows, primary, fallback) =>
   rows.reduce((s, r) => s + Number(r[primary] || (fallback ? r[fallback] : 0) || 0), 0);
 
-const _logoCache = new Map();
-function logoDataUri(cfg) {
-  const code = String((cfg && cfg.logo) || 'ispl').trim() || 'ispl';
-  if (_logoCache.has(code)) return _logoCache.get(code);
-  const file = path.join(__dirname, '..', 'public', `logo-${code}.png`);
-  let uri = '';
-  try { if (fs.existsSync(file)) uri = 'data:image/png;base64,' + fs.readFileSync(file).toString('base64'); } catch (_) {}
-  _logoCache.set(code, uri);
-  return uri;
-}
+// Shared, case/extension-tolerant logo resolver (see pdf/logo-data-uri.js).
+const { logoDataUri } = require('./logo-data-uri');
 
 // Sister/ASP company identity used on the agri bill letterhead.
 function agriCompany(cfg) {

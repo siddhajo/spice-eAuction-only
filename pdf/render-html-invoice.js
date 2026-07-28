@@ -26,22 +26,9 @@ const { htmlToPdf } = require('./htmlToPdf');
 
 // Logos must be embedded as data: URIs — the renderer loads the HTML from a
 // data: URL / setContent, where file:// and external requests are blocked.
-// Resolves the same public/logo-<code>.png the PDFKit path uses; returns '' if
-// missing so the template just omits the <img>.
-const _logoCache = new Map();
-function logoDataUri(cfg) {
-  const code = String((cfg && cfg.logo) || 'ispl').trim() || 'ispl';
-  if (_logoCache.has(code)) return _logoCache.get(code);
-  const file = path.join(__dirname, '..', 'public', `logo-${code}.png`);
-  let uri = '';
-  try {
-    if (fs.existsSync(file)) {
-      uri = 'data:image/png;base64,' + fs.readFileSync(file).toString('base64');
-    }
-  } catch (_) { /* leave blank */ }
-  _logoCache.set(code, uri);
-  return uri;
-}
+// Shared resolver (case/extension-tolerant) so every document type embeds the
+// logo identically; returns '' if none so the template just omits the <img>.
+const { logoDataUri } = require('./logo-data-uri');
 
 function readFlag(val, defaultOn) {
   if (val === undefined || val === null || val === '') return defaultOn;
