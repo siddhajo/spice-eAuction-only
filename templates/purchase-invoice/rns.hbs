@@ -15,9 +15,15 @@
   .no-b, .no-b td, .no-b th { border: none; }
   .c { text-align: center; } .r { text-align: right; } .b { font-weight: bold; }
   .muted { font-size: 7.5pt; }
-  .head { text-align: center; padding: 5pt 6pt; }
-  .head .co { font-weight: bold; font-size: 12pt; }
+  /* Purchase = supplier's document, so NO logo (it is the seller's letterhead,
+     not ours). Centred seller name/GSTIN with a little breathing room. */
+  .head { text-align: center; padding: 7pt 8pt; }
+  .head .co { font-weight: bold; font-size: 12pt; letter-spacing: .2pt; }
   .head .ln { font-size: 8pt; }
+  /* Party cells: equal height so BILLED TO / SHIPPED TO read as two aligned
+     columns even when one side has fewer lines. */
+  .parties td { vertical-align: top; }
+  .parties tr:not(.bar) td { height: 58pt; }
   .items th { font-weight: bold; font-size: 7pt; text-align: center; }
   .items td { font-size: 8pt; }
   .grand td { font-size: 11pt; font-weight: bold; }
@@ -43,7 +49,7 @@
   </table>
 
   <!-- Parties -->
-  <table>
+  <table class="parties">
     <tr class="bar c b"><td style="width:50%">BILLED TO</td><td style="width:50%">SHIPPED TO</td></tr>
     <tr>
       <td>

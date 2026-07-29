@@ -25,6 +25,13 @@
   .subtitle { text-align: center; font-style: italic; font-size: 8pt; padding-bottom: 3pt; }
   .no-b td { border: none; }
   .grey td, td.grey { background: #e8e8e8; font-weight: bold; }
+  /* Party block: fixed label/value grid so every colon lines up (place/PAN,
+     STATE/CODE, CR/AADHAR), matching the sales invoice. */
+  .parties td { vertical-align: top; }
+  .parties .kv { width: 100%; table-layout: fixed; border-collapse: collapse; }
+  .parties .kv td { border: none; padding: 0.4pt 0; font-size: 8pt; vertical-align: top; }
+  .parties .kv .k { width: 34pt; white-space: nowrap; }
+  .parties .kv .v { width: calc(50% - 34pt); white-space: nowrap; }
   .items th { background: #e8e8e8; font-weight: bold; font-size: 7.5pt; text-align: center; white-space: pre-line; }
   .items td { font-size: 9pt; }
   {{#if stripe}} .items tbody tr:nth-child(even) td { background: #ECECEC; } {{/if}}
@@ -62,13 +69,30 @@
     <td class="right" style="border-left:none;border-right:none">Date: {{billDate}}</td>
   </tr></table>
 
-  <!-- Seller / Consignee -->
-  <table>
+  <!-- Seller / Consignee. Both columns use the same aligned label/value grid;
+       when there's no separate consignee, Shipped-To mirrors Billed-For. -->
+  <table class="parties">
     <tr><td class="grey center" style="width:50%">DETAILS OF SELLER [BILLED FOR]</td>
         <td class="grey center" style="width:50%">DETAILS OF CONSIGNEE [SHIPPED TO]</td></tr>
     <tr>
-      <td style="width:50%">{{#each sellerLines}}<div>{{this}}</div>{{/each}}</td>
-      <td style="width:50%">&nbsp;</td>
+      <td style="width:50%">{{#with party}}
+        <div class="bold">M/s.{{name}}</div>
+        {{#if addr}}<div>{{addr}}</div>{{/if}}
+        <table class="kv">
+          <tr><td class="v" colspan="2">{{place}}</td><td class="k">PAN</td><td class="v">{{#if pan}}: <span class="bold">{{pan}}</span>{{/if}}</td></tr>
+          {{#if state}}<tr><td class="k">STATE</td><td class="v">: <span class="bold">{{state}}</span></td><td class="k">CODE</td><td class="v">: <span class="bold">{{stCode}}</span></td></tr>{{/if}}
+          {{#if cr}}<tr><td class="k">CR</td><td class="v">: <span class="bold">{{cr}}</span></td><td class="k">{{#if aadhar}}AADHAR{{/if}}</td><td class="v">{{#if aadhar}}: <span class="bold">{{aadhar}}</span>{{/if}}</td></tr>{{/if}}
+        </table>
+      {{/with}}</td>
+      <td style="width:50%">{{#with consignee}}
+        <div class="bold">M/s.{{name}}</div>
+        {{#if addr}}<div>{{addr}}</div>{{/if}}
+        <table class="kv">
+          <tr><td class="v" colspan="2">{{place}}</td><td class="k">PAN</td><td class="v">{{#if pan}}: <span class="bold">{{pan}}</span>{{/if}}</td></tr>
+          {{#if state}}<tr><td class="k">STATE</td><td class="v">: <span class="bold">{{state}}</span></td><td class="k">CODE</td><td class="v">: <span class="bold">{{stCode}}</span></td></tr>{{/if}}
+          {{#if cr}}<tr><td class="k">CR</td><td class="v">: <span class="bold">{{cr}}</span></td><td class="k">{{#if aadhar}}AADHAR{{/if}}</td><td class="v">{{#if aadhar}}: <span class="bold">{{aadhar}}</span>{{/if}}</td></tr>{{/if}}
+        </table>
+      {{/with}}</td>
     </tr>
   </table>
 

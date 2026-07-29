@@ -44,12 +44,19 @@ function buildCommissionView(billData, cfg, billNo, first) {
   purchaserLines.push('GSTIN:' + (purchaser.gstin || '') + (purchaser.pan ? ' [PAN:' + purchaser.pan + ']' : ''));
 
   // Optional "trader sample" deduction (some customers, e.g. RNS, show it as a
-  // separate row that reduces the commission basis). Only present if the route
-  // supplies it — otherwise the row is omitted.
+  // separate row and fold its weight into the SAMPLE REFUND line). Source, in
+  // priority order: an explicit route-supplied value, a per-line field, then
+  // the company setting `sb_trader_sample` ("Trader Sample (Kgs)") — the last
+  // of which is what makes it appear at all on the standard RNS commission
+  // bill, since no route populates the per-line fields today. Rate mirrors the
+  // lot rate; amount is qty × rate.
+  const tsKg = Number(cfg && cfg.sb_trader_sample) || 0;
   const traderSample = billData.traderSample
     || (li.traderSampleQty || li.traderSampleAmount
         ? { qty: Number(li.traderSampleQty || 0), rate: Number(li.rate || 0), amount: Number(li.traderSampleAmount || 0) }
-        : null);
+        : (tsKg > 0
+            ? { qty: tsKg, rate: Number(li.rate || 0), amount: Math.round(tsKg * Number(li.rate || 0) * 100) / 100 }
+            : null));
   // Grand Total is nett rounded to the whole rupee; the paise become "Round Off".
   // If the route supplies an explicit roundDiff, honor it instead.
   const grandTotal = billData.roundDiff != null ? nett + Number(billData.roundDiff) : Math.round(nett);

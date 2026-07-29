@@ -9,15 +9,20 @@
   .rns .doc { border: 1pt solid #000; }
   .rns table { border-collapse: collapse; width: 100%; }
   .rns td, .rns th { border: 0.7pt solid #000; padding: 3pt 5pt; vertical-align: top; }
-  .rns .lead { position: relative; padding: 6pt 8pt 8pt; text-align: center; border: none; }
-  .rns .logo { position: absolute; left: 8pt; top: 6pt; width: 62pt; height: 62pt; object-fit: contain; }
+  /* Letterhead: centred text; when a logo is present reserve equal gutters on
+     both sides so the centred block stays balanced and clears the logo, and
+     vertically centre the logo against the whole letterhead. */
+  .rns .lead { position: relative; padding: 8pt; text-align: center; border: none; }
+  .rns .lead.has-logo { padding-left: 78pt; padding-right: 78pt; min-height: 68pt; }
+  .rns .logo { position: absolute; left: 8pt; top: 50%; transform: translateY(-50%);
+    width: 62pt; height: 62pt; object-fit: contain; }
   .rns .co-name { font-weight: bold; font-size: 14pt; letter-spacing: .5pt; }
   .rns .co-sub { font-size: 8pt; }
   .rns .co-strong { font-weight: bold; }
   .rns .band td { background: var(--green); color: #fff; font-weight: bold; text-align: center; }
   .rns .band2 td { background: var(--green-soft); font-weight: bold; text-align: center; }
   .rns .hdr td { background: var(--green-soft); font-weight: bold; text-align: center; }
-  .rns .party td { font-size: 8pt; }
+  .rns .party td { font-size: 8pt; vertical-align: top; height: 52pt; }
   .rns .center { text-align: center; } .rns .right { text-align: right; } .rns .bold { font-weight: bold; }
   .rns .items th { background: var(--green-soft); font-weight: bold; text-align: center; }
   .rns .items td { font-size: 8.5pt; }
@@ -30,7 +35,7 @@
 <div class="rns-page rns">
   <div class="doc">
     <!-- Letterhead -->
-    <div class="lead">
+    <div class="lead{{#if co.logoDataUri}} has-logo{{/if}}">
       {{#if co.logoDataUri}}<img class="logo" src="{{co.logoDataUri}}">{{/if}}
       <div class="co-name">{{co.name}}</div>
       {{#if co.idValue}}<div class="co-sub">{{co.idLabel}}: {{co.idValue}}</div>{{/if}}
@@ -88,11 +93,11 @@
           <td class="right">{{qtyg cardamom.qty}}</td><td class="right">{{rup cardamom.rate}}</td>
           <td class="right">{{rup cardamom.cost}}</td>
         </tr>
-        {{#if refund}}
+        {{#if sampleRefund}}
         <tr>
           <td class="center">2</td><td>SAMPLE REFUND</td>
-          <td class="right">{{qtyg refund.qty}}</td><td class="right">{{rup refund.rate}}</td>
-          <td class="right">{{rup refund.amount}}</td>
+          <td class="right">{{qtyg sampleRefund.qty}}</td><td class="right">{{rup sampleRefund.rate}}</td>
+          <td class="right">{{rup sampleRefund.amount}}</td>
         </tr>
         {{/if}}
         {{#if traderSample}}
@@ -112,7 +117,7 @@
         <tr><td colspan="4" class="sumlbl">SGST {{gstRate}}%</td><td class="right bold">{{rup tax.sgst}}</td></tr>
         <tr><td colspan="4" class="sumlbl">IGST {{add gstRate gstRate}}%</td><td class="right bold">{{#if tax.igst}}{{rup tax.igst}}{{else}}0{{/if}}</td></tr>
         <tr><td colspan="4" class="sumlbl">Round Off</td><td class="right bold">{{rup roundDiff}}</td></tr>
-        <tr><td colspan="4" class="sumlbl">Grand Total</td><td class="right bold">&#8377;{{rup grandTotal}}</td></tr>
+        <tr><td colspan="4" class="sumlbl">Grand Total</td><td class="right bold">{{rup grandTotal}}</td></tr>
       </tbody>
     </table>
 

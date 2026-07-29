@@ -51,13 +51,36 @@ function buildAgriBillView(billData, cfg, billNo) {
   const stripe = readFlag(cfg.flag_invoice_stripe, true);
   const co = agriCompany(cfg);
 
-  // Seller detail lines (consignee column is empty on a self-generated BoS).
+  // Seller detail lines (legacy string form, kept for any consumer that still
+  // reads it).
   const sellerLines = [];
   sellerLines.push('M/s.' + (seller.name || ''));
   if (seller.address) sellerLines.push(seller.address);
   if (seller.place) sellerLines.push(String(seller.place).toUpperCase() + (seller.pan ? '   PAN:' + seller.pan : ''));
   if (seller.state) sellerLines.push('STATE:' + String(seller.state).toUpperCase() + '   CODE:' + (seller.st_code || ''));
   if (seller.cr) sellerLines.push('CR.' + String(seller.cr).replace(/^\s*CR\.?\s*/i, ''));
+
+  // Structured party — lets the template align every colon in a fixed grid.
+  const party = {
+    name: seller.name || '',
+    addr: seller.address || '',
+    place: seller.place ? String(seller.place).toUpperCase() : '',
+    pan: seller.pan || '',
+    state: seller.state ? String(seller.state).toUpperCase() : '',
+    stCode: seller.st_code || '',
+    cr: seller.cr ? String(seller.cr).replace(/^\s*CR\.?\s*/i, '') : '',
+    aadhar: seller.aadhar || '',
+  };
+  // A self-generated BoS usually has no separate consignee — the goods ship to
+  // the seller themselves, so mirror Billed-For into Shipped-To rather than
+  // leaving the column blank.
+  const consignee = billData.consignee ? {
+    name: billData.consignee.name || '', addr: billData.consignee.address || '',
+    place: billData.consignee.place ? String(billData.consignee.place).toUpperCase() : '',
+    pan: billData.consignee.pan || '',
+    state: billData.consignee.state ? String(billData.consignee.state).toUpperCase() : '',
+    stCode: billData.consignee.st_code || '', cr: '', aadhar: '',
+  } : { ...party };
 
   const rows = lineItems.map((li) => {
     const totalQty = (li.totalQty != null) ? li.totalQty : ((li.pqty || li.qty || 0) + (li.refundQty || 0));
@@ -84,7 +107,7 @@ function buildAgriBillView(billData, cfg, billNo) {
     billNo: String(billNo),
     billDate: billData.billDate || '',
     eTradeNo: billData.eTradeNo || cfg.e_trade_no || '',
-    sellerLines,
+    sellerLines, party, consignee,
     descGoods: cfg.desc_goods || 'CARDAMOM',
     hsnCode: cfg.hsn_cardamom || '09083120',
     rows,

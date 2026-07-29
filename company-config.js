@@ -158,10 +158,12 @@ const DEFAULTS = [
   { key: 'purchase_invoice_engine',   value: 'pdfkit',  category: 'invoice', label: 'Purchase Invoice Engine (pdfkit/html)', type: 'select' },
   { key: 'agri_bill_engine',          value: 'pdfkit',  category: 'invoice', label: 'Bill of Supply Engine (pdfkit/html)',   type: 'select' },
   { key: 'commission_bill_engine',    value: 'pdfkit',  category: 'invoice', label: 'Commission Bill Engine (pdfkit/html)',  type: 'select' },
+  { key: 'debit_note_engine',         value: 'pdfkit',  category: 'invoice', label: 'Debit Note Engine (pdfkit/html)',       type: 'select' },
   { key: 'sales_invoice_template',    value: 'classic', category: 'invoice', label: 'Sales Invoice Layout',    type: 'select' },
   { key: 'purchase_invoice_template', value: 'classic', category: 'invoice', label: 'Purchase Invoice Layout', type: 'select' },
   { key: 'agri_bill_template',        value: 'classic', category: 'invoice', label: 'Bill of Supply Layout',   type: 'select' },
   { key: 'commission_bill_template',  value: 'classic', category: 'invoice', label: 'Commission Bill Layout',  type: 'select' },
+  { key: 'debit_note_template',       value: 'rns',     category: 'invoice', label: 'Debit Note Layout',       type: 'select' },
 
   // ── SEASON ─────────────────────────────────────────────────
   { key: 'season',            value: '', category: 'season', label: 'Season Name',           type: 'text' },

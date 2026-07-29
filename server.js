@@ -734,7 +734,7 @@ app.get('/admin/branding', (req, res) => {
   // Which per-customer file/layout formats this install uses. Pre-filled from
   // the CURRENT settings and saved straight back to company_settings (so the
   // server-side exports honour them) — orthogonal to the visual preset bundle.
-  let bankFmtOpts = '', salesTplOpts = '', purchaseTplOpts = '', agriTplOpts = '', commTplOpts = '';
+  let bankFmtOpts = '', salesTplOpts = '', purchaseTplOpts = '', agriTplOpts = '', commTplOpts = '', debitTplOpts = '';
   try {
     const { BANK_FORMATS } = require('./bank-formats');
     const curBank = cfg.bank_format || 'rtgs_neft';
@@ -750,6 +750,7 @@ app.get('/admin/branding', (req, res) => {
     purchaseTplOpts = tplOpts('purchase-invoice', cfg.purchase_invoice_template || 'classic');
     agriTplOpts     = tplOpts('agri-bill',        cfg.agri_bill_template        || 'classic');
     commTplOpts     = tplOpts('commission-bill',  cfg.commission_bill_template  || 'classic');
+    debitTplOpts    = tplOpts('debit-note',       cfg.debit_note_template       || 'rns');
   } catch (_) { /* invoice-templates unavailable — leave empty */ }
 
   const keyEsc = String(req.query.key).replace(/[<>'"&]/g, '');
@@ -827,6 +828,7 @@ app.get('/admin/branding', (req, res) => {
       <div><label>Purchase invoice layout</label><select id="fmt-purchase">${purchaseTplOpts}</select></div>
       <div><label>Bill of supply layout</label><select id="fmt-agri">${agriTplOpts}</select></div>
       <div><label>Commission bill layout</label><select id="fmt-comm">${commTplOpts}</select></div>
+      <div><label>Debit note layout</label><select id="fmt-debit">${debitTplOpts}</select></div>
     </div>
     <div style="margin-top: 14px;"><button onclick="saveFormats()">Save formats</button></div>
   </div>
@@ -890,6 +892,7 @@ app.get('/admin/branding', (req, res) => {
         purchase_invoice_template: document.getElementById('fmt-purchase').value,
         agri_bill_template:        document.getElementById('fmt-agri').value,
         commission_bill_template:  document.getElementById('fmt-comm').value,
+        debit_note_template:       document.getElementById('fmt-debit').value,
       };
       try {
         const r = await fetch('/api/admin/formats?key=' + encodeURIComponent(KEY), {
@@ -982,6 +985,7 @@ app.post('/api/admin/formats', (req, res) => {
     { key: 'purchase_invoice_template', val: f.purchase_invoice_template, allowed: listTemplates('purchase-invoice'),  cat: 'invoice' },
     { key: 'agri_bill_template',        val: f.agri_bill_template,        allowed: listTemplates('agri-bill'),         cat: 'invoice' },
     { key: 'commission_bill_template',  val: f.commission_bill_template,  allowed: listTemplates('commission-bill'),   cat: 'invoice' },
+    { key: 'debit_note_template',       val: f.debit_note_template,       allowed: listTemplates('debit-note'),        cat: 'invoice' },
   ];
 
   const stmt = db.prepare(
@@ -9923,17 +9927,28 @@ function _renderDebitNote(doc, dn, db, cfg) {
     doc.moveTo(PAGE_R, FRAME_TOP).lineTo(PAGE_R, y).stroke();
 }
 
-app.get('/api/debit-notes/:id/pdf', requireView, (req, res) => {
+app.get('/api/debit-notes/:id/pdf', requireView, async (req, res) => {
   try {
-    const PDFDocument = require('pdfkit');
     const db  = getDb();
     const cfg = getSettingsFlat(db);
     const dn  = db.get('SELECT * FROM debit_notes WHERE id = ?', [req.params.id]);
     if (!dn) return res.status(404).json({ error: 'Debit note not found' });
 
-    const doc = new PDFDocument({ size: 'A4', margin: 30 });
+    // Engine: 'html' → RNS template (pdf/render-debit-note-html), else legacy
+    // PDFKit. ?template=<id> forces the HTML engine + that layout; 'pdfkit'
+    // forces legacy — same convention as the sales/purchase routes.
+    const tplChoice = String(req.query.template || '').trim();
+    const useHtml = tplChoice ? tplChoice !== 'pdfkit'
+      : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'debit_note_engine');
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="DebitNote_${dn.note_no || dn.id}.pdf"`);
+    if (useHtml) {
+      const cfg2 = tplChoice ? { ...cfg, debit_note_template: tplChoice } : cfg;
+      const pdf = await require('./pdf/render-debit-note-html').generateDebitNoteHtmlPDF(dn, db, cfg2);
+      return res.send(pdf);
+    }
+    const PDFDocument = require('pdfkit');
+    const doc = new PDFDocument({ size: 'A4', margin: 30 });
     doc.pipe(res);
     _renderDebitNote(doc, dn, db, cfg);
     doc.end();
@@ -9947,10 +9962,9 @@ app.get('/api/debit-notes/:id/pdf', requireView, (req, res) => {
 // Used by the "Print Selected" button in the Debit Notes tab. Mirrors the
 // payments pdf-bulk endpoint so the UX is consistent (single-click yields
 // one downloadable PDF, no popup-blocker tab spam).
-app.post('/api/debit-notes/pdf-bulk', requireView, (req, res) => {
+app.post('/api/debit-notes/pdf-bulk', requireView, async (req, res) => {
   let doc, piped = false;
   try {
-    const PDFDocument = require('pdfkit');
     const db  = getDb();
     const cfg = getSettingsFlat(db);
     const ids = Array.isArray(req.body.ids)
@@ -9969,6 +9983,18 @@ app.post('/api/debit-notes/pdf-bulk', requireView, (req, res) => {
     const byId = new Map(rows.map(r => [r.id, r]));
     const dns  = ids.map(id => byId.get(id)).filter(Boolean);
 
+    const tplChoice = String(req.query.template || req.body.template || '').trim();
+    const useHtml = tplChoice ? tplChoice !== 'pdfkit'
+      : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'debit_note_engine');
+    if (useHtml) {
+      const cfg2 = tplChoice ? { ...cfg, debit_note_template: tplChoice } : cfg;
+      const pdf = await require('./pdf/render-debit-note-html').generateDebitNotesHtmlBatchPDF(dns, db, cfg2);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="DebitNotes_Batch_${dns.length}.pdf"`);
+      return res.send(pdf);
+    }
+
+    const PDFDocument = require('pdfkit');
     doc = new PDFDocument({ size: 'A4', margin: 30 });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="DebitNotes_Batch_${dns.length}.pdf"`);
@@ -10330,16 +10356,24 @@ app.put('/api/debit-notes-planter/:id', requireInvoiceWrite, (req, res) => {
 });
 
 // Planter DN PDF — reuses the same single-row renderer as dealer DNs.
-app.get('/api/debit-notes-planter/:id/pdf', requireView, (req, res) => {
+app.get('/api/debit-notes-planter/:id/pdf', requireView, async (req, res) => {
   try {
-    const PDFDocument = require('pdfkit');
     const db  = getDb();
     const cfg = getSettingsFlat(db);
     const dn  = db.get('SELECT * FROM debit_notes_planter WHERE id = ?', [req.params.id]);
     if (!dn) return res.status(404).json({ error: 'Debit note not found' });
-    const doc = new PDFDocument({ size: 'A4', margin: 30 });
+    const tplChoice = String(req.query.template || '').trim();
+    const useHtml = tplChoice ? tplChoice !== 'pdfkit'
+      : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'debit_note_engine');
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="DebitNotePlanter_${dn.note_no || dn.id}.pdf"`);
+    if (useHtml) {
+      const cfg2 = tplChoice ? { ...cfg, debit_note_template: tplChoice } : cfg;
+      const pdf = await require('./pdf/render-debit-note-html').generateDebitNoteHtmlPDF(dn, db, cfg2);
+      return res.send(pdf);
+    }
+    const PDFDocument = require('pdfkit');
+    const doc = new PDFDocument({ size: 'A4', margin: 30 });
     doc.pipe(res);
     _renderDebitNote(doc, dn, db, cfg);
     doc.end();
@@ -10349,10 +10383,9 @@ app.get('/api/debit-notes-planter/:id/pdf', requireView, (req, res) => {
   }
 });
 
-app.post('/api/debit-notes-planter/pdf-bulk', requireView, (req, res) => {
+app.post('/api/debit-notes-planter/pdf-bulk', requireView, async (req, res) => {
   let doc, piped = false;
   try {
-    const PDFDocument = require('pdfkit');
     const db  = getDb();
     const cfg = getSettingsFlat(db);
     const ids = Array.isArray(req.body.ids) ? req.body.ids.map(n => parseInt(n, 10)).filter(Number.isFinite) : [];
@@ -10362,6 +10395,17 @@ app.post('/api/debit-notes-planter/pdf-bulk', requireView, (req, res) => {
     if (!rows.length) return res.status(404).json({ error: 'No debit notes found' });
     const byId = new Map(rows.map(r => [r.id, r]));
     const dns  = ids.map(id => byId.get(id)).filter(Boolean);
+    const tplChoice = String(req.query.template || req.body.template || '').trim();
+    const useHtml = tplChoice ? tplChoice !== 'pdfkit'
+      : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'debit_note_engine');
+    if (useHtml) {
+      const cfg2 = tplChoice ? { ...cfg, debit_note_template: tplChoice } : cfg;
+      const pdf = await require('./pdf/render-debit-note-html').generateDebitNotesHtmlBatchPDF(dns, db, cfg2);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="DebitNotesPlanter_Batch_${dns.length}.pdf"`);
+      return res.send(pdf);
+    }
+    const PDFDocument = require('pdfkit');
     doc = new PDFDocument({ size: 'A4', margin: 30 });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="DebitNotesPlanter_Batch_${dns.length}.pdf"`);

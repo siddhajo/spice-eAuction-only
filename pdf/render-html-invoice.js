@@ -96,7 +96,9 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
   // Consignee (ship-to) — a real consignee if the row carries one; otherwise
   // the goods ship to the buyer themselves, so Shipped-To mirrors Billed-To in
   // full (name/address/PAN/GST/SBL) rather than showing a placeholder.
-  const hasConsignee = !!(buyer.cbuyer1 || buyer.cadd1 || buyer.cpla || buyer.cgstin);
+  // A genuine consignee needs a name/address/place — a stray consignee GSTIN
+  // alone shouldn't produce a sparse Shipped-To; in that case mirror Billed-To.
+  const hasConsignee = !!(buyer.cbuyer1 || buyer.cadd1 || buyer.cpla);
   const ship = hasConsignee ? {
     name: buyer.cbuyer1 || buyer.buyer1 || buyer.buyer || '',
     addr: buyer.cadd1 || '',

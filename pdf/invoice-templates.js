@@ -34,6 +34,8 @@ const DEFAULTS = {
   'purchase-invoice': 'classic',
   'agri-bill': 'classic',
   'commission-bill': 'classic',
+  // Debit note has only the RNS HTML layout so far, so it defaults to it.
+  'debit-note': 'rns',
 };
 
 // Maps a document type to the cfg setting key that selects its template.
@@ -42,6 +44,7 @@ const SETTING_KEY = {
   'purchase-invoice': 'purchase_invoice_template',
   'agri-bill': 'agri_bill_template',
   'commission-bill': 'commission_bill_template',
+  'debit-note': 'debit_note_template',
 };
 
 const _cache = new Map(); // "docType/key" → compiled Handlebars template

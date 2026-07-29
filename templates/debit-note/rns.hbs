@@ -1,0 +1,126 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{{title}} {{noteNo}}</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 8pt; color: #000; line-height: 1.25;
+    padding: 18pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .top-tag { text-align: right; font-size: 7.5pt; padding: 0 2pt 2pt; }
+  .doc { border: 0.7pt solid #000; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { border: 0.6pt solid #000; padding: 2pt 4pt; vertical-align: top; }
+  .no-b, .no-b td { border: none; }
+  .c { text-align: center; } .r { text-align: right; } .b { font-weight: bold; }
+  .muted { font-size: 7.5pt; }
+  /* Letterhead — logo left, company block centred with matching gutters. */
+  .head { position: relative; text-align: center; padding: 6pt 8pt; }
+  .head.has-logo { padding-left: 74pt; padding-right: 74pt; min-height: 64pt; }
+  .head .logo { position: absolute; left: 8pt; top: 50%; transform: translateY(-50%);
+    width: 60pt; height: 60pt; object-fit: contain; }
+  .head .co { font-weight: bold; font-size: 13pt; letter-spacing: .3pt; }
+  .head .ln { font-size: 7.5pt; }
+  .head .strong { font-weight: bold; }
+  .bar td { font-weight: bold; }
+  .bar .nowrap { white-space: nowrap; }
+  .title-cell { font-size: 10.5pt; letter-spacing: .5pt; }
+  /* Receiver block: fixed label/value grid so every colon lines up. */
+  .recv td { vertical-align: top; }
+  .recv .kv { width: 100%; table-layout: fixed; border-collapse: collapse; }
+  .recv .kv td { border: none; padding: 0.4pt 0; font-size: 8pt; }
+  .recv .kv .k { width: 60pt; white-space: nowrap; }
+  .recv .kv .v { width: calc(50% - 60pt); white-space: nowrap; }
+  .items th { font-weight: bold; font-size: 7pt; text-align: center; vertical-align: middle; }
+  .items td { font-size: 8pt; }
+  .sumlbl { text-align: right; font-weight: bold; }
+  .grand td { font-size: 11pt; font-weight: bold; }
+</style>
+</head>
+<body>
+<div class="top-tag">ORIGINAL/DUPLICATE/TRIPLICATE</div>
+<div class="doc">
+  <!-- Letterhead -->
+  <div class="head{{#if co.logoDataUri}} has-logo{{/if}}">
+    {{#if co.logoDataUri}}<img class="logo" src="{{co.logoDataUri}}">{{/if}}
+    <div class="co">{{co.name}}</div>
+    {{#if co.idValue}}<div class="ln strong">{{co.idLabel}}: {{co.idValue}}</div>{{/if}}
+    <div class="ln">{{co.address1}}{{#if co.address2}}, {{co.address2}}{{/if}}</div>
+    <div class="ln">{{co.place}}{{#if co.pin}} - {{co.pin}}{{/if}}, {{co.stateName}}, CODE: {{co.stateCode}}.</div>
+    {{#if co.phone}}<div class="ln">Ph: {{co.phone}}{{#if co.email}} E-mail: {{co.email}}{{/if}}</div>{{/if}}
+    <div class="ln strong">{{#if co.fssai}}FSSAI: {{co.fssai}} | {{/if}}GSTIN: {{co.gstin}}{{#if co.sbl}} | SBL: {{co.sbl}}{{/if}}{{#if co.pan}} | PAN: {{co.pan}}{{/if}}</div>
+  </div>
+
+  <!-- Title band -->
+  <table><tr class="bar"><td class="c title-cell">{{title}}</td></tr></table>
+
+  <!-- Receiver + No./Date -->
+  <table class="recv">
+    <tr class="bar"><td colspan="2" style="width:66%">Name &amp; Address of the Receiver</td><td class="r nowrap" style="width:34%">Sl. No: {{noteNo}}</td></tr>
+    <tr>
+      <td colspan="2">
+        <div class="b">Sri/M/s. {{receiver.name}}</div>
+        {{#if receiver.addr}}<div>{{receiver.addr}}</div>{{/if}}
+        <table class="kv">
+          <tr><td class="v" colspan="2">{{receiver.place}}</td><td class="k"></td><td class="v">{{receiver.state}}</td></tr>
+          <tr><td class="k">STATE CODE</td><td class="v">: <span class="b">{{receiver.stCode}}</span></td><td class="k">AADHAR</td><td class="v">{{#if receiver.aadhar}}: <span class="b">{{receiver.aadhar}}</span>{{/if}}</td></tr>
+          <tr><td class="k">GSTIN</td><td class="v">{{#if receiver.gstin}}: <span class="b">{{receiver.gstin}}</span>{{/if}}</td><td class="k">PAN</td><td class="v">{{#if receiver.pan}}: <span class="b">{{receiver.pan}}</span>{{/if}}</td></tr>
+          {{#if receiver.sbl}}<tr><td class="k">SBL</td><td class="v">: <span class="b">{{receiver.sbl}}</span></td><td class="k"></td><td class="v"></td></tr>{{/if}}
+        </table>
+        <div>Nature of Service: <span class="b">{{receiver.nature}}</span></div>
+        <div>Service Account Code: <span class="b">{{receiver.sac}}</span></div>
+      </td>
+      <td class="r"><div class="b">Date: {{noteDate}}</div></td>
+    </tr>
+  </table>
+
+  <!-- Context band -->
+  <table><tr class="bar c"><td>Commission On Sale of Cardamom in Auction No: {{ano}} dated {{auctionDate}}</td></tr></table>
+
+  <!-- Line items -->
+  <table class="items">
+    <thead><tr>
+      <th style="width:34pt">Lot No</th>
+      <th>Quantity<br>(kg.gr)</th>
+      <th>Rate/kg</th>
+      <th>Value</th>
+      <th>Commission</th>
+      <th>Incidental<br>Charges</th>
+    </tr></thead>
+    <tbody>
+      {{#each rows}}
+      <tr>
+        <td class="c b">{{lot}}</td>
+        <td class="r">{{qty qty}}</td>
+        <td class="r">{{inr rate}}</td>
+        <td class="r">{{inr value}}</td>
+        <td class="r">{{inr commission}}</td>
+        <td class="r">{{inr incidental}}</td>
+      </tr>
+      {{/each}}
+      {{#times padRows}}<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr>{{/times}}
+      <tr class="b">
+        <td colspan="4" class="sumlbl">SubTotal</td>
+        <td class="r">{{inr totals.commission}}</td>
+        <td class="r">{{inr totals.incidental}}</td>
+      </tr>
+      <tr class="b"><td colspan="5" class="sumlbl">Total Taxable Value</td><td class="r">{{inr totals.taxable}}</td></tr>
+      {{#each taxRows}}
+      <tr><td colspan="5" class="sumlbl">{{this.label}}</td><td class="r">{{inr this.amt}}</td></tr>
+      {{/each}}
+      <tr class="grand"><td colspan="5" class="sumlbl">Grand Total</td><td class="r">{{inr grandTotal}}</td></tr>
+    </tbody>
+  </table>
+
+  <table class="no-b"><tr><td class="b" style="padding-top:4pt">Amount in Words: {{grandTotalWords}}</td></tr></table>
+
+  <!-- Footer -->
+  <table class="no-b">
+    <tr><td class="r b" style="padding-top:8pt">{{forCo}}</td></tr>
+    <tr><td class="r b" style="padding-top:34pt">Authorised Signatory</td></tr>
+  </table>
+</div>
+</body>
+</html>
