@@ -42,9 +42,15 @@ function resolveLogoFile(code) {
   const wanted = ('logo-' + code).toLowerCase();
   // 1. Exact coded logo — case-insensitive, any image extension.
   let hit = images.find((f) => f.toLowerCase().replace(IMG_RE, '') === wanted);
-  // 2. Generic house logo — explicit opt-in names only, so we never grab an
-  //    unrelated image that happens to live in public/.
-  if (!hit) hit = images.find((f) => /^(logo-default|logo)\.(png|jpg|jpeg|webp|gif)$/i.test(f));
+  // 2. The file the in-app "Settings → Company → Logo" upload actually writes
+  //    to — `logo-ispl.png` on this single-company build — then a generic
+  //    deployment logo. This is what makes an uploaded logo appear on invoices
+  //    even when the Logo Code (e.g. "IMCPC") doesn't match that filename. It's
+  //    NOT another customer's brand: `logo-ispl.png` is the fixed upload target
+  //    for whatever logo THIS company uploads. Same fallback the PDFKit
+  //    invoices (invoice-pdf.js) and spice-board reports (report-formatters.js)
+  //    already use.
+  if (!hit) hit = images.find((f) => /^(logo-ispl|logo-default|logo)\.(png|jpg|jpeg|webp|gif)$/i.test(f));
   return hit ? path.join(PUBLIC_DIR, hit) : '';
 }
 

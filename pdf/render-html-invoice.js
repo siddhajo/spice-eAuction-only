@@ -84,25 +84,26 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
     : pickRate(cfg.insurance, 0.75));
   const gunnyRate = Number(cfg.gunny_rate || 165);
 
-  // Consignee (ship-to) — consignee fields if present, else buyer's own.
+  // Receiver (bill-to) — the buyer. PAN/SBL are carried so the party block can
+  // align them in a second column like the reference layout.
+  const billTo = {
+    name: buyer.buyer1 || buyer.buyer || '',
+    addr: [buyer.add1, buyer.add2].filter(Boolean).join(', '),
+    place: [buyer.pla, buyer.pin].filter(Boolean).join(' - '),
+    gstin: buyer.gstin || '', state: buyer.state || '', stCode: buyer.st_code || '',
+    pan: buyer.pan || '', sbl: buyer.sbl || '',
+  };
+  // Consignee (ship-to) — a real consignee if the row carries one; otherwise
+  // the goods ship to the buyer themselves, so Shipped-To mirrors Billed-To in
+  // full (name/address/PAN/GST/SBL) rather than showing a placeholder.
   const hasConsignee = !!(buyer.cbuyer1 || buyer.cadd1 || buyer.cpla || buyer.cgstin);
   const ship = hasConsignee ? {
     name: buyer.cbuyer1 || buyer.buyer1 || buyer.buyer || '',
     addr: buyer.cadd1 || '',
     place: [buyer.cpla, buyer.cpin].filter(Boolean).join(' - '),
     gstin: buyer.cgstin || '', state: buyer.cstate || '', stCode: buyer.cst_code || '',
-  } : {
-    name: buyer.buyer1 || buyer.buyer || '',
-    addr: [buyer.add1, buyer.add2].filter(Boolean).join(', '),
-    place: [buyer.pla, buyer.pin].filter(Boolean).join(' - '),
-    gstin: buyer.gstin || '', state: buyer.state || '', stCode: buyer.st_code || '',
-  };
-  const billTo = {
-    name: buyer.buyer1 || buyer.buyer || '',
-    addr: [buyer.add1, buyer.add2].filter(Boolean).join(', '),
-    place: [buyer.pla, buyer.pin].filter(Boolean).join(' - '),
-    gstin: buyer.gstin || '', state: buyer.state || '', stCode: buyer.st_code || '',
-  };
+    pan: buyer.cpan || '', sbl: '',
+  } : { ...billTo };
 
   // Line items — shipped == billed for e-Auction; rate/amount are the external
   // customer price (li.price / li.amount), matching the ISP branch of the

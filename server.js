@@ -7173,6 +7173,7 @@ app.delete('/api/invoices/:id', requireDelete, (req, res) => {
 // Explicit revert route (same effect as DELETE but returns richer info)
 app.post('/api/invoices/:id/revert', requireInvoiceRevert, (req, res) => {
   const db = getDb();
+  const cfg = getSettingsFlat(db);
   const inv = db.get('SELECT * FROM invoices WHERE id=?', [req.params.id]);
   if (!inv) return res.status(404).json({ error: 'Invoice not found' });
   // Cascade lock — revert clears lots.sale/invo, which mutates the lot
@@ -7182,13 +7183,37 @@ app.post('/api/invoices/:id/revert', requireInvoiceRevert, (req, res) => {
   }
   let lotsFreed = 0;
   if (inv.auction_id) {
+    // Identify this invoice's lots by (auction, buyer, invoice-number).
+    // IMPORTANT: do NOT filter on `sale`. In Kerala/ASP context invoice
+    // generation never writes lots.sale (it only sets invo/asp_invo), so a
+    // `sale = inv.sale` filter matched nothing and the lots stayed locked
+    // after the invoice row was deleted — the "revert doesn't free lots" bug.
+    // Match the number against BOTH invo and asp_invo (an ASP invoice tags
+    // asp_invo), and TRIM to tolerate padded numbers (e.g. stored as "   1").
+    const invNorm = String(inv.invo || '').trim();
     const affected = db.all(
-      'SELECT lot_no FROM lots WHERE auction_id=? AND sale=? AND invo=? AND buyer=?',
-      [inv.auction_id, inv.sale, inv.invo, inv.buyer]
+      `SELECT lot_no FROM lots
+         WHERE auction_id=? AND buyer=?
+           AND (TRIM(COALESCE(invo,''))=? OR TRIM(COALESCE(asp_invo,''))=?)`,
+      [inv.auction_id, inv.buyer, invNorm, invNorm]
     );
     lotsFreed = affected.length;
-    db.run(`UPDATE lots SET sale='', invo='' WHERE auction_id=? AND sale=? AND invo=? AND buyer=?`,
-      [inv.auction_id, inv.sale, inv.invo, inv.buyer]);
+    // Clear only the fields this invoice owns:
+    //  • invo     → cleared where it matches this invoice's number
+    //  • asp_invo → cleared where it matches (ASP invoices set it)
+    //  • sale     → cleared ONLY for ISP (non-Kerala) invoices, whose
+    //               generation set lots.sale in the first place. Kerala/ASP
+    //               never set it, so we must preserve the lot's real sale type.
+    const isKerala = String(inv.state || '').toUpperCase() === 'KERALA'
+      || String(cfg.business_state || '').toUpperCase() === 'KERALA';
+    db.run(
+      `UPDATE lots SET
+         invo = CASE WHEN TRIM(COALESCE(invo,''))=? THEN '' ELSE invo END,
+         asp_invo = CASE WHEN TRIM(COALESCE(asp_invo,''))=? THEN '' ELSE asp_invo END${isKerala ? '' : ",\n         sale = ''"}
+       WHERE auction_id=? AND buyer=?
+         AND (TRIM(COALESCE(invo,''))=? OR TRIM(COALESCE(asp_invo,''))=?)`,
+      [invNorm, invNorm, inv.auction_id, inv.buyer, invNorm, invNorm]
+    );
     db.run('DELETE FROM invoices WHERE id=?', [req.params.id]);
     return res.json({
       success: true,
