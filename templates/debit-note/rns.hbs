@@ -34,6 +34,8 @@
   .recv .kv td { border: none; padding: 0.4pt 0; font-size: 8pt; }
   .recv .kv .k { width: 60pt; white-space: nowrap; }
   .recv .kv .v { width: calc(50% - 60pt); white-space: nowrap; }
+  /* Rule separating the party identity block from the service description. */
+  .recv .recv-rule { border-top: 0.6pt solid #000; margin: 3pt 0 2pt; }
   .items th { font-weight: bold; font-size: 7pt; text-align: center; vertical-align: middle; background: #e8f1e0; }
   .items td { font-size: 8pt; }
   .sumlbl { text-align: right; font-weight: bold; }
@@ -64,12 +66,13 @@
       <td colspan="2">
         <div class="b">Sri/M/s. {{receiver.name}}</div>
         {{#if receiver.addr}}<div>{{receiver.addr}}</div>{{/if}}
+        {{#if receiver.place}}<div>{{receiver.place}}{{#if receiver.state}}, {{receiver.state}}{{/if}}</div>{{else}}{{#if receiver.state}}<div>{{receiver.state}}</div>{{/if}}{{/if}}
         <table class="kv">
-          <tr><td class="v" colspan="2">{{receiver.place}}</td><td class="k"></td><td class="v">{{receiver.state}}</td></tr>
           <tr><td class="k">STATE CODE</td><td class="v">: <span class="b">{{receiver.stCode}}</span></td><td class="k">AADHAR</td><td class="v">{{#if receiver.aadhar}}: <span class="b">{{receiver.aadhar}}</span>{{/if}}</td></tr>
           <tr><td class="k">GSTIN</td><td class="v">{{#if receiver.gstin}}: <span class="b">{{receiver.gstin}}</span>{{/if}}</td><td class="k">PAN</td><td class="v">{{#if receiver.pan}}: <span class="b">{{receiver.pan}}</span>{{/if}}</td></tr>
           {{#if receiver.sbl}}<tr><td class="k">SBL</td><td class="v">: <span class="b">{{receiver.sbl}}</span></td><td class="k"></td><td class="v"></td></tr>{{/if}}
         </table>
+        <div class="recv-rule"></div>
         <div>Nature of Service: <span class="b">{{receiver.nature}}</span></div>
         <div>Service Account Code: <span class="b">{{receiver.sac}}</span></div>
       </td>

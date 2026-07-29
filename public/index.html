@@ -22616,7 +22616,8 @@ async function printSelectedBills(){
 // so it stays in sync with whatever templates exist on the server.
 function chooseInvoiceFormat(templates, title){
   return new Promise((resolve)=>{
-    const label=(t)=> t.replace(/[-_]/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+    const NAMES={rns:'RNS',pdfkit:'Classic (Legacy)',classic:'Classic',modern:'Modern'};
+    const label=(t)=> NAMES[t] || t.replace(/[-_]/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
     const ov=document.createElement('div');
     ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;display:flex;align-items:center;justify-content:center';
     const box=document.createElement('div');
@@ -25471,6 +25472,9 @@ async function printSelectedDebitNotes(){
   if(!body)return;
   const ids=Array.from(body.querySelectorAll('.dn-select-cb:checked')).map(cb=>Number(cb.value)).filter(Boolean);
   if(!ids.length){toast('Tick one or more debit notes first');return}
+  // Offer a layout choice (RNS vs Classic) when more than one is available.
+  const template=await pickTemplate('debit-note','Choose debit note format');
+  if(template===null) return; // operator cancelled
   // One merged PDF (page-break per DN). The previous per-id loop opened
   // N tabs via window.open() — browsers' popup blockers killed all but
   // the first, so the user only ever saw one DN.
@@ -25478,7 +25482,7 @@ async function printSelectedDebitNotes(){
     `Building merged debit-note PDF for ${ids.length} note${ids.length===1?'':'s'}…`,
     '/api/debit-notes/pdf-bulk',
     `DebitNotes_Batch_${ids.length}.pdf`,
-    { ids }
+    template ? { ids, template } : { ids }
   );
 }
 
@@ -25509,7 +25513,10 @@ async function deleteSelectedDebitNotes(){
 // sales-invoice PDF download. The endpoint streams a PDF blob.
 async function printDebitNote(id){
   try {
-    const r = await fetch(B + `/api/debit-notes/${id}/pdf`, {
+    const template = await pickTemplate('debit-note','Choose debit note format');
+    if (template === null) return; // operator cancelled
+    const qs = template ? ('?template=' + encodeURIComponent(template)) : '';
+    const r = await fetch(B + `/api/debit-notes/${id}/pdf` + qs, {
       headers: { 'Authorization': 'Bearer ' + T }
     });
     if (!r.ok) {
@@ -25941,11 +25948,13 @@ async function printSelectedDebitNotesPlanter(){
   if(!body)return;
   const ids=Array.from(body.querySelectorAll('.dnp-select-cb:checked')).map(cb=>Number(cb.value)).filter(Boolean);
   if(!ids.length){toast('Tick one or more debit notes first');return}
+  const template=await pickTemplate('debit-note','Choose debit note format');
+  if(template===null) return; // operator cancelled
   await fetchPdfWithOverlay(
     `Building merged debit-note PDF for ${ids.length} note${ids.length===1?'':'s'}…`,
     '/api/debit-notes-planter/pdf-bulk',
     `DebitNotesPlanter_Batch_${ids.length}.pdf`,
-    { ids }
+    template ? { ids, template } : { ids }
   );
 }
 
@@ -25966,7 +25975,10 @@ async function deleteSelectedDebitNotesPlanter(){
 
 async function printDebitNotePlanter(id){
   try {
-    const r = await fetch(B + `/api/debit-notes-planter/${id}/pdf`, { headers: { 'Authorization': 'Bearer ' + T } });
+    const template = await pickTemplate('debit-note','Choose debit note format');
+    if (template === null) return; // operator cancelled
+    const qs = template ? ('?template=' + encodeURIComponent(template)) : '';
+    const r = await fetch(B + `/api/debit-notes-planter/${id}/pdf` + qs, { headers: { 'Authorization': 'Bearer ' + T } });
     if (!r.ok) {
       let msg = 'Failed to render debit note';
       try { const e = await r.json(); if (e.error) msg = e.error; } catch(_) {}

@@ -9,7 +9,9 @@
   @page { size: A4; margin: 0; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
-  :root { --accent: #b8410e; --accent-soft: #fbeae2; --line: #e2d9d3; }
+  /* Green accent to match the other RNS invoice formats (commission bill etc.).
+     --accent = solid green band/grand-total; --accent-soft = header/word fill. */
+  :root { --accent: #4e8a3a; --accent-soft: #e8f1e0; --line: #d7e0d1; }
   body {
     font-family: Helvetica, Arial, sans-serif; font-size: 8.5pt; color: #222;
     line-height: 1.35; padding: 24pt;
