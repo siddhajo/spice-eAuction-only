@@ -24,7 +24,9 @@
      columns even when one side has fewer lines. */
   .parties td { vertical-align: top; }
   .parties tr:not(.bar) td { height: 58pt; }
-  .items th { font-weight: bold; font-size: 7pt; text-align: center; }
+  /* Soft-green header/band + column-header fill, matching the commission bill. */
+  .bar td { font-weight: bold; background: #e8f1e0; }
+  .items th { font-weight: bold; font-size: 7pt; text-align: center; background: #e8f1e0; }
   .items td { font-size: 8pt; }
   .grand td { font-size: 11pt; font-weight: bold; }
 </style>
@@ -63,7 +65,7 @@
     </tr>
   </table>
 
-  <table><tr class="c b"><td style="width:50%">Description of Goods: {{descGoods}}</td><td style="width:50%">HSN CODE: {{hsnCode}}</td></tr></table>
+  <table><tr class="bar c b"><td style="width:50%">Description of Goods: {{descGoods}}</td><td style="width:50%">HSN CODE: {{hsnCode}}</td></tr></table>
 
   <!-- Line items -->
   <table class="items">
