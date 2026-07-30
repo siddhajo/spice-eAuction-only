@@ -34,8 +34,8 @@ const DEFAULTS = {
   'purchase-invoice': 'classic',
   'agri-bill': 'classic',
   'commission-bill': 'classic',
-  // Debit note has only the RNS HTML layout so far, so it defaults to it.
-  'debit-note': 'rns',
+  // Debit note has only the Letterhead HTML layout so far, so it defaults to it.
+  'debit-note': 'letterhead',
 };
 
 // Maps a document type to the cfg setting key that selects its template.

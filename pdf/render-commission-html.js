@@ -43,11 +43,11 @@ function buildCommissionView(billData, cfg, billNo, first) {
   if (purchaser.state) purchaserLines.push(String(purchaser.state).toUpperCase() + ' CODE:' + (purchaser.st_code || '') + (purchaser.sbl ? ' [SBL:' + purchaser.sbl + ']' : ''));
   purchaserLines.push('GSTIN:' + (purchaser.gstin || '') + (purchaser.pan ? ' [PAN:' + purchaser.pan + ']' : ''));
 
-  // Optional "trader sample" deduction (some customers, e.g. RNS, show it as a
+  // Optional "trader sample" deduction (some customers show it as a
   // separate row and fold its weight into the SAMPLE REFUND line). Source, in
   // priority order: an explicit route-supplied value, a per-line field, then
   // the company setting `sb_trader_sample` ("Trader Sample (Kgs)") — the last
-  // of which is what makes it appear at all on the standard RNS commission
+  // of which is what makes it appear at all on the standard Letterhead commission
   // bill, since no route populates the per-line fields today. Rate mirrors the
   // lot rate; amount is qty × rate.
   const tsKg = Number(cfg && cfg.sb_trader_sample) || 0;
@@ -66,7 +66,7 @@ function buildCommissionView(billData, cfg, billNo, first) {
 
   return {
     first, cfg, co,
-    // Show the seller's phone + bank account on the bill (RNS layout), gated by
+    // Show the seller's phone + bank account on the bill (Letterhead layout), gated by
     // the flag_commission_bank toggle. Coerced to a real boolean so Handlebars
     // {{#if}} works (a string "false" would otherwise read as truthy).
     showSellerBank: ['true', '1', 'yes', 'on'].includes(String((cfg && cfg.flag_commission_bank) || '').trim().toLowerCase()),
@@ -87,7 +87,7 @@ function buildCommissionView(billData, cfg, billNo, first) {
     },
     refund: (li.refundQty > 0 || refundAmount > 0)
       ? { qty: Number(li.refundQty || 0), rate: Number(li.refundRate || 0), amount: refundAmount } : null,
-    // RNS layout shows the SAMPLE REFUND line as (sample refund + trader sample):
+    // Letterhead layout shows the SAMPLE REFUND line as (sample refund + trader sample):
     // the gross sample weight returned to the seller. The separate TRADER SAMPLE
     // deduction row still applies, so the net sample effect (and the Grand Total)
     // is unchanged — this only relabels what the operator sees on that line.

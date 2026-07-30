@@ -6,7 +6,7 @@
 // Previously each render-*.js kept its own copy that looked ONLY for
 // `public/logo-<code>.png` — an exact, case-sensitive, PNG-only match. In
 // practice that silently produced NO logo whenever the real file was a .jpg,
-// had different casing (logo-RNS.png vs a code of "rns"), or simply hadn't
+// had different casing (logo-ABC.png vs a code of "abc"), or simply hadn't
 // been dropped in yet. Centralising here so every document type (sales,
 // commission, agri) resolves the logo identically, and widening the match so
 // a logo that IS present actually shows:

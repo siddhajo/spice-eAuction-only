@@ -111,7 +111,7 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
   // customer price (li.price / li.amount), matching the ISP branch of the
   // PDFKit renderer.
   // Per-line tax split — CGST/SGST (intra) or IGST (inter) on each row's
-  // amount, plus a line total. Used by templates (e.g. RNS) that show tax
+  // amount, plus a line total. Used by templates (e.g. Letterhead) that show tax
   // per lot inline; templates that only show an HSN summary just ignore these.
   const taxOf = (amount) => {
     const a = Number(amount) || 0;
@@ -138,7 +138,7 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
   // Footer goods rows. Gunny shows only when there are bags/cost. Transport &
   // Insurance always show for a NON-export invoice (both local AND inter-state)
   // — for a local sale the cost is 0, so the row reads "<total kilos> … 0.00",
-  // the RNS format the customer expects. Export (hideTI) still omits them.
+  // the Letterhead format the customer expects. Export (hideTI) still omits them.
   const gunny = (summary.totalBags > 0 && summary.gunnyCost > 0)
     ? { desc: 'Gunny', hsn: hsnGunny, units: `${summary.totalBags} Nos.`, bags: summary.totalBags, rate: gunnyRate, per: 'Nos.', amount: summary.gunnyCost, ...taxOf(summary.gunnyCost) } : null;
   const transport = hideTI ? null

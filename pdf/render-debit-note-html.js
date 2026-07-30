@@ -1,15 +1,15 @@
 // ── Debit Note (Tax Invoice On Commission) — HTML/template renderer ───────
 //
-// The RNS layout for a debit note (used for BOTH the dealer `debit_notes` and
+// The Letterhead layout for a debit note (used for BOTH the dealer `debit_notes` and
 // the planter `debit_notes_planter` tables — they share the same document).
 // Mirrors the data assembly of the legacy PDFKit `_renderDebitNote` in
 // server.js (dealer lookup → per-lot allocation of the DN amount → tax rows),
-// but emits the shared RNS HTML look: logo letterhead + colon-aligned receiver
+// but emits the shared Letterhead HTML look: logo letterhead + colon-aligned receiver
 // block, consistent with the sales / commission / bill-of-supply templates.
 //
 // Engine/template selection is the same as the other docs:
 //   cfg.debit_note_engine   ('html' → this renderer)
-//   cfg.debit_note_template ('rns' default; see templates/debit-note/)
+//   cfg.debit_note_template ('letterhead' default; see templates/debit-note/)
 
 const { effectiveCompany } = require('../invoice-pdf');
 const { amountToWords } = require('../amount-words');

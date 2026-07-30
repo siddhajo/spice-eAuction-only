@@ -94,13 +94,13 @@ const BANK_FORMATS = {
   // note in calculations.js getBankPaymentData. Once confirmed, either fill
   // `particulars` there or give this column a format(v,row) that derives it.
   hdfc_ac: {
-    label: 'rns bank format',
+    label: 'HDFC bank format',
     sheetName: 'Payments',
     title: 'HDFC BANK A/C:',
     total: true,
     signatures: ['Prepared By', 'Checked By', 'Approved By'],
     columns: [
-      // Particulars is "<ano> <lots>"; RNS wants the auction no shown as
+      // Particulars is "<ano> <lots>"; this format shows the auction no as
       // "A<ano>" (e.g. "A10 024"), so prefix an "A" to the whole value.
       { header: 'Particulars',    key: 'particulars',    width: 14,
         format: (v) => v ? 'A' + v : '' },

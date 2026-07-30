@@ -750,7 +750,7 @@ app.get('/admin/branding', (req, res) => {
     purchaseTplOpts = tplOpts('purchase-invoice', cfg.purchase_invoice_template || 'classic');
     agriTplOpts     = tplOpts('agri-bill',        cfg.agri_bill_template        || 'classic');
     commTplOpts     = tplOpts('commission-bill',  cfg.commission_bill_template  || 'classic');
-    debitTplOpts    = tplOpts('debit-note',       cfg.debit_note_template       || 'rns');
+    debitTplOpts    = tplOpts('debit-note',       cfg.debit_note_template       || 'letterhead');
   } catch (_) { /* invoice-templates unavailable — leave empty */ }
 
   const keyEsc = String(req.query.key).replace(/[<>'"&]/g, '');
@@ -6754,14 +6754,14 @@ app.get('/api/invoices/templates/:docType', requireView, (req, res) => {
     // Only offer the DEFAULT layout + THIS company's configured layout (both
     // must exist on disk). So a company that kept the default ('classic') sees
     // only the default — the print picker doesn't even open — while a company
-    // that set e.g. commission_bill_template='rns' sees default + rns.
+    // that set e.g. commission_bill_template='letterhead' sees default + letterhead.
     const cfg = getSettingsFlat(getDb());
     const def = (DEFAULTS && DEFAULTS[docType]) || 'classic';
     const setKey = SETTING_KEY && SETTING_KEY[docType];
     const configured = String((setKey && cfg[setKey]) || def).trim() || def;
     const offered = [...new Set([def, configured])].filter(t => all.includes(t));
     // Debit notes also keep a legacy PDFKit layout — surface it as an explicit
-    // choice ('pdfkit') so the operator is offered RNS vs Classic at print time,
+    // choice ('pdfkit') so the operator is offered Letterhead vs Classic at print time,
     // matching the sales/commission pickers. The /pdf route treats
     // template=pdfkit as "use the legacy renderer".
     if (docType === 'debit-note' && !offered.includes('pdfkit')) offered.push('pdfkit');
@@ -8670,7 +8670,7 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
         pan:     b.pan     || first.pan || '',
       };
       // Seller phone + bank account for the commission bill (shown only when
-      // flag_commission_bank is on, RNS layout). Phone from the trader master
+      // flag_commission_bank is on, Letterhead layout). Phone from the trader master
       // (fallback to the denormalised lot value); account prefers the trader's
       // default bank (trader_banks) then the legacy single-account column.
       try {
@@ -8703,7 +8703,7 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
       // as sb_refund × rate during lot entry.
       const sbRefundKg = Number(cfg.sb_refund) || 0;
       // Trader-sample deduction (Settings → Rates & Charges → `sb_trader_sample`,
-      // Kgs). Some customers (e.g. RNS) deduct a trader-sample quantity from the
+      // Kgs). Some customers deduct a trader-sample quantity from the
       // seller's payout: it shows as its own row and reduces NETT. 0 (default)
       // = no trader-sample row, no effect — keeps every other install unchanged.
       const sbTraderSampleKg = Number(cfg.sb_trader_sample) || 0;
@@ -8832,8 +8832,8 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
       }
     }
 
-    // Per-print format choice: the print UI can pass a `template` (e.g. 'rns'
-    // or 'classic') so the operator picks the layout at print time. When
+    // Per-print format choice: the print UI can pass a `template` (e.g.
+    // 'letterhead' or 'classic') so the operator picks the layout at print time. When
     // supplied, it forces the HTML engine and overrides the saved template
     // for THIS download only. Without it, fall back to the saved engine/layout.
     const tplChoice = String((req.body && req.body.template) || (req.query && req.query.template) || '').trim();
@@ -8842,7 +8842,7 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
       // Explicit "original PDFKit layout" choice ('pdfkit' or 'classic').
       pdf = await generateCommissionBoSBatchPDF(payloads, cfg);
     } else if (tplChoice) {
-      // A named HTML template (e.g. 'rns', 'classic') — force the HTML engine
+      // A named HTML template (e.g. 'letterhead') — force the HTML engine
       // and use that layout for this download only.
       pdf = await require('./pdf/render-commission-html')
         .generateCommissionBoSHtmlPDF(payloads, { ...cfg, commission_bill_template: tplChoice });
@@ -9741,7 +9741,7 @@ function _renderDebitNote(doc, dn, db, cfg) {
     const coIdValue = (co.idValue != null && co.idValue !== '') ? co.idValue : (co.cin || cfg.cin || '');
     doc.text(`${coIdLabel}:${coIdValue || ''}   PAN:${co.pan || cfg.pan || ''}`, PAGE_L, y, { width: PAGE_W, align: 'center', lineBreak: false }); y = doc.y;
     // FSSAI | GSTIN | SBL on one line (FSSAI only when configured) — matches
-    // the RNS reference debit-note letterhead.
+    // the Letterhead reference debit-note format.
     const _fssai = String(co.fssai || cfg.fssai || '').trim();
     doc.text(`${_fssai ? 'FSSAI:' + _fssai + '   ' : ''}GSTIN:${co.gstin || ''}   SBL:${co.sbl || cfg.sbl || ''}`, PAGE_L, y, { width: PAGE_W, align: 'center', lineBreak: false }); y = doc.y;
     if (co.email) { doc.text('e-Mail ID:' + co.email, PAGE_L, y, { width: PAGE_W, align: 'center', lineBreak: false }); y = doc.y; }
@@ -9946,7 +9946,7 @@ app.get('/api/debit-notes/:id/pdf', requireView, async (req, res) => {
     const dn  = db.get('SELECT * FROM debit_notes WHERE id = ?', [req.params.id]);
     if (!dn) return res.status(404).json({ error: 'Debit note not found' });
 
-    // Engine: 'html' → RNS template (pdf/render-debit-note-html), else legacy
+    // Engine: 'html' → Letterhead template (pdf/render-debit-note-html), else legacy
     // PDFKit. ?template=<id> forces the HTML engine + that layout; 'pdfkit'
     // forces legacy — same convention as the sales/purchase routes.
     const tplChoice = String(req.query.template || '').trim();

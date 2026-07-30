@@ -13,7 +13,7 @@
 // 'purchase_invoice_engine', 'agri_bill_engine', 'commission_bill_engine'.
 function useHtmlEngine(cfg, key) {
   // Only 'html' / 'pdfkit' are valid engine values. Any other value (e.g. a
-  // layout name like 'rns' accidentally put in an *_ENGINE variable) is IGNORED
+  // layout name like 'letterhead' accidentally put in an *_ENGINE variable) is IGNORED
   // rather than treated as "not html" — so a typo can't silently disable it;
   // resolution just falls through to the next source.
   const norm = (v) => {
@@ -36,7 +36,7 @@ function useHtmlEngine(cfg, key) {
 //     differently from the PDFKit "Classic". Since they can't be made to look
 //     the same, picking "Classic" in the print dialog must always produce the
 //     PDFKit output the operator expects. (Companies wanting the HTML look can
-//     still select a distinctly-named layout such as 'modern'/'rns'.)
+//     still select a distinctly-named layout such as 'modern'/'letterhead'.)
 // Compared case-insensitively against the trimmed template choice.
 const PDFKIT_TEMPLATE_IDS = new Set(['pdfkit', 'classic']);
 

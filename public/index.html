@@ -16993,7 +16993,7 @@ function renderSettingsPanel(){
         // customer format there.
         const BANK_FORMAT_OPTIONS=[
           {value:'rtgs_neft',label:'RTGS / NEFT (default)'},
-          {value:'hdfc_ac',label:'rns bank format'},
+          {value:'hdfc_ac',label:'HDFC bank format'},
         ];
         const sel=f.value||'rtgs_neft';
         const opts=BANK_FORMAT_OPTIONS.map(o=>`<option value="${o.value}"${sel===o.value?' selected':''}>${esc(o.label)}</option>`).join('');
@@ -22616,7 +22616,7 @@ async function printSelectedBills(){
 // so it stays in sync with whatever templates exist on the server.
 function chooseInvoiceFormat(templates, title){
   return new Promise((resolve)=>{
-    const NAMES={rns:'RNS',pdfkit:'Classic (Legacy)',classic:'Classic',modern:'Modern'};
+    const NAMES={letterhead:'Letterhead',pdfkit:'Classic (Legacy)',classic:'Classic',modern:'Modern'};
     const label=(t)=> NAMES[t] || t.replace(/[-_]/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
     const ov=document.createElement('div');
     ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;display:flex;align-items:center;justify-content:center';
@@ -25472,7 +25472,7 @@ async function printSelectedDebitNotes(){
   if(!body)return;
   const ids=Array.from(body.querySelectorAll('.dn-select-cb:checked')).map(cb=>Number(cb.value)).filter(Boolean);
   if(!ids.length){toast('Tick one or more debit notes first');return}
-  // Offer a layout choice (RNS vs Classic) when more than one is available.
+  // Offer a layout choice (Letterhead vs Classic) when more than one is available.
   const template=await pickTemplate('debit-note','Choose debit note format');
   if(template===null) return; // operator cancelled
   // One merged PDF (page-break per DN). The previous per-id loop opened

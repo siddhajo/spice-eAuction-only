@@ -163,7 +163,7 @@ const DEFAULTS = [
   { key: 'purchase_invoice_template', value: 'classic', category: 'invoice', label: 'Purchase Invoice Layout', type: 'select' },
   { key: 'agri_bill_template',        value: 'classic', category: 'invoice', label: 'Bill of Supply Layout',   type: 'select' },
   { key: 'commission_bill_template',  value: 'classic', category: 'invoice', label: 'Commission Bill Layout',  type: 'select' },
-  { key: 'debit_note_template',       value: 'rns',     category: 'invoice', label: 'Debit Note Layout',       type: 'select' },
+  { key: 'debit_note_template',       value: 'letterhead', category: 'invoice', label: 'Debit Note Layout',    type: 'select' },
 
   // ── SEASON ─────────────────────────────────────────────────
   { key: 'season',            value: '', category: 'season', label: 'Season Name',           type: 'text' },
@@ -200,7 +200,7 @@ const DEFAULTS = [
   { key: 'flag_hsn',             value: 'false', category: 'flags', label: 'Show HSN Codes',                  type: 'boolean' },
   { key: 'flag_bank',             value: 'false', category: 'flags', label: 'Bank Details in Invoice',         type: 'boolean' },
   // Show the seller's phone + bank account number on the Commission Bill
-  // (RNS layout only). Off by default — some growers don't want their bank
+  // (Letterhead layout only). Off by default — some growers don't want their bank
   // details printed. Consumed by pdf/render-commission-html.js.
   { key: 'flag_commission_bank',  value: 'false', category: 'flags', label: 'Seller Phone & A/C on Commission Bill', type: 'boolean' },
   { key: 'flag_tds_purchase',    value: 'false', category: 'flags', label: 'TDS on Purchase Invoice',         type: 'boolean' },
@@ -644,6 +644,16 @@ function initCompanySettings(db) {
   }
   autoEnableFlagIfAnyValue('flag_local_ti',     ['local_transport', 'local_insurance']);
   autoEnableFlagIfAnyValue('flag_addl_charges', ['addl_charge_name', 'addl_charge_value']);
+
+  // The 'rns' layout id was renamed to the generic 'letterhead' (RNS is a
+  // specific company name). Rewrite any stored *_template setting still pointing
+  // at 'rns' so those installs keep the same layout instead of silently
+  // falling back to their doc-type default.
+  db.prepare(
+    "UPDATE company_settings SET value = 'letterhead' WHERE value = 'rns' AND key IN " +
+    "('sales_invoice_template','purchase_invoice_template','agri_bill_template'," +
+    "'commission_bill_template','debit_note_template')"
+  ).run();
 
   console.log('Company settings ready (%d defaults)', DEFAULTS.length);
 }
