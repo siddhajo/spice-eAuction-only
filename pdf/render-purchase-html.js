@@ -113,6 +113,8 @@ function buildPurchaseInvoiceView(invoiceData, cfg, invoiceNo) {
       name: (seller.name || '').toUpperCase(),
       addr: [seller.address, seller.place, seller.pin].filter(Boolean).join(', '),
       gstin: seller.gstin || seller.cr || '',
+      pan: seller.pan || '',
+      sbl: seller.sbl || seller.aadhar || '',   // SBL is stored in traders.aadhar
     },
     leftPairs, rightPairs, plainLines, pairLines,
     auctionNo: invoiceData.auctionNo || invoiceData.eTradeNo || '',
