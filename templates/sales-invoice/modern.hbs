@@ -61,7 +61,7 @@
     {{#if co.logoDataUri}}<img src="{{co.logoDataUri}}">{{/if}}
     <div>
       <div class="co">{{co.name}}</div>
-      <div class="sub">{{co.address1}}{{#if co.place}}, {{co.place}}{{/if}} · {{co.stateName}} · GSTIN {{co.gstin}}</div>
+      <div class="sub">{{co.address1}}{{#if co.place}}, {{co.place}}{{/if}} · {{co.stateName}} · GSTIN {{co.gstin}}{{#if co.fssai}} · FSSAI {{co.fssai}}{{/if}}{{#if co.pan}} · PAN {{co.pan}}{{/if}}{{#if co.sbl}} · SBL {{co.sbl}}{{/if}}</div>
     </div>
     <div class="doctype"><b>TAX INVOICE</b></div>
   </div>
@@ -70,7 +70,7 @@
     <div><div class="k">Invoice No</div><div class="v">{{invoiceNo}}</div></div>
     <div><div class="k">Date</div><div class="v">{{shortDate invoiceDate}}</div></div>
     <div><div class="k">State / Code</div><div class="v">{{co.stateName}} · {{co.stateCode}}</div></div>
-    <div><div class="k">PAN</div><div class="v">{{co.pan}}</div></div>
+    <div><div class="k">SBL No</div><div class="v">{{co.sbl}}</div></div>
   </div>
 
   <div class="parties">

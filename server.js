@@ -6276,11 +6276,61 @@ app.post('/api/lots/bulk-delete', requireDelete, (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// Parse an uploaded price sheet (.xls/.xlsx) for the Price Entry "Import
+// Prices" flow and hand back its header row + data rows so the client can
+// show a column-mapping UI. Parsing lives here (using the bundled xlsx) so
+// the browser needs no SheetJS and the feature keeps working offline in the
+// Electron build. Nothing is written to the DB — the client applies the
+// mapped prices/codes per lot via PUT /api/lots/:id once the operator maps
+// the columns and confirms.
+app.post('/api/lots/price-import/parse', requireLotWrite, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const tmpPath = req.file.path;
+  try {
+    const workbook = XLSX.readFile(tmpPath);
+    const ws = workbook.Sheets[workbook.SheetNames[0]];
+    if (!ws) throw new Error('No worksheet found in the file');
+    // Array-of-arrays, blank rows dropped so the first element is the header
+    // row (same "row 1 = column names" convention the other imports use).
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', blankrows: false });
+    if (!aoa.length) throw new Error('File appears to be empty');
+    const rawHeaders = (aoa[0] || []).map(h => String(h).trim());
+    if (!rawHeaders.some(h => h !== '')) throw new Error('No column headers found in the first row');
+    // Resolve blank cells and de-duplicate so every column is uniquely
+    // addressable (duplicate labels would otherwise collide as object keys).
+    const seen = Object.create(null);
+    const headers = rawHeaders.map((h, i) => {
+      let name = h || `Column ${i + 1}`;
+      if (seen[name] != null) { seen[name] += 1; name = `${name} (${seen[name]})`; }
+      else seen[name] = 0;
+      return name;
+    });
+    // Build data rows by position so keys line up exactly with `headers`
+    // (including the de-duplicated / filled-in labels). Drop all-blank rows.
+    const rows = aoa.slice(1).map(arr => {
+      const o = {};
+      headers.forEach((h, i) => { o[h] = arr[i] == null ? '' : arr[i]; });
+      return o;
+    }).filter(r => Object.values(r).some(v => String(v).trim() !== ''));
+    res.json({ headers, rows, rowCount: rows.length });
+  } catch (e) {
+    res.status(400).json({ error: 'Could not read the file: ' + (e.message || e) });
+  } finally {
+    fs.unlink(tmpPath, () => {});
+  }
+});
+
 // Bulk-set buyer code (+ buyer / buyer1 / sale / cr) on selected lots.
 // The client looks up the buyer master to fill the auxiliary fields so
 // they all stay in sync — this endpoint just persists whatever it's
 // handed. Lots are matched by id; empty/whitespace values are ignored
 // so callers can omit fields they don't want to overwrite.
+//
+// Clear mode: when the body carries `clear:true` the four buyer-identity
+// fields (code/buyer/buyer1/sale) are wiped on the selected lots — used by
+// the Price Entry "Clear Buyer Code" action to undo a wrong assignment.
+// Price is left untouched.
 app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
   const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Number.isFinite) : [];
   if (!ids.length) return res.status(400).json({ error: 'No lot ids provided' });
@@ -6303,10 +6353,12 @@ app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
   // any price the caller passed alongside a WD code.
   const noSaleCode = ['WD','NA'].includes(code.toUpperCase());
   if (noSaleCode) { hasPrice = true; priceNum = 0; }
+  // Clear mode — wipe the buyer-identity fields rather than set them.
+  const clearBuyer = req.body.clear === true || String(req.body.clear) === 'true';
   // Caller must update at least one writable field — either the
-  // buyer-code triple or price (or both). Empty payload is a no-op
-  // that would silently do nothing, so we refuse it up front.
-  if (!code && !hasPrice) {
+  // buyer-code triple, price, or an explicit clear. Empty payload is a
+  // no-op that would silently do nothing, so we refuse it up front.
+  if (!code && !hasPrice && !clearBuyer) {
     return res.status(400).json({ error: 'At least one of code or price is required' });
   }
   const db = getDb();
@@ -6322,11 +6374,18 @@ app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
   // so this faithfully syncs the lot with the buyer master.
   const sets = [];
   const vals = [];
-  if (code)   { sets.push('code = ?');   vals.push(code);   }
-  if (buyer)  { sets.push('buyer = ?');  vals.push(buyer);  }
-  if (buyer1) { sets.push('buyer1 = ?'); vals.push(buyer1); }
-  if (req.body.sale !== undefined) { sets.push('sale = ?'); vals.push(sale); }
-  if (hasPrice) { sets.push('price = ?'); vals.push(priceNum); }
+  if (clearBuyer) {
+    // Blank out the buyer-identity quartet in one go. Price is deliberately
+    // left as-is — clearing a wrong buyer shouldn't discard the typed price.
+    sets.push('code = ?', 'buyer = ?', 'buyer1 = ?', 'sale = ?');
+    vals.push('', '', '', '');
+  } else {
+    if (code)   { sets.push('code = ?');   vals.push(code);   }
+    if (buyer)  { sets.push('buyer = ?');  vals.push(buyer);  }
+    if (buyer1) { sets.push('buyer1 = ?'); vals.push(buyer1); }
+    if (req.body.sale !== undefined) { sets.push('sale = ?'); vals.push(sale); }
+    if (hasPrice) { sets.push('price = ?'); vals.push(priceNum); }
+  }
   // Drop locked rows up-front so the chunked UPDATE below sees only
   // mutable ids. Skip-locked behaviour means a single locked lot in a
   // bulk action doesn't block the whole batch.

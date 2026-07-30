@@ -35,6 +35,7 @@ function agriCompany(cfg) {
     pan: cfg.s_pan || cfg.pan || '',
     gstin: cfg.s_gstin || '',
     sbl: cfg.s_sbl || cfg.sbl || '',
+    fssai: cfg.s_fssai || cfg.fssai || '',
     email: cfg.s_email || cfg.email || '',
     idLabel: isPartnership ? 'PARTNERSHIP' : 'CIN',
     idValue: isPartnership ? (cfg.partnership_name || '') : (cfg.cin || ''),

@@ -53,7 +53,7 @@
     {{#if co.logoDataUri}}<img src="{{co.logoDataUri}}">{{/if}}
     <div>
       <div class="co">{{co.name}}</div>
-      <div class="sub">{{co.address1}}{{#if co.place}}, {{co.place}}{{/if}}{{#if co.stCode}} · STATE CODE {{co.stCode}}{{/if}} · GSTIN {{co.gstin}}</div>
+      <div class="sub">{{co.address1}}{{#if co.place}}, {{co.place}}{{/if}}{{#if co.stCode}} · STATE CODE {{co.stCode}}{{/if}} · GSTIN {{co.gstin}}{{#if co.fssai}} · FSSAI {{co.fssai}}{{/if}}{{#if co.pan}} · PAN {{co.pan}}{{/if}}{{#if co.sbl}} · SBL {{co.sbl}}{{/if}}</div>
     </div>
     <div class="doctype"><b>BILL OF SUPPLY</b><div class="s">Bill for Purchase from Agriculturist · Sec 2(7)</div></div>
   </div>
