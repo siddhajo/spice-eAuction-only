@@ -130,6 +130,16 @@
         <td class="r">{{inr total}}</td>
       </tr>
       {{/each}}
+      {{#if sample}}
+      <tr>
+        <td></td><td>Sample</td>
+        <td class="r">{{qty sample.qty}}</td><td></td>
+        <td class="r">{{inr sample.amount}}</td>
+        <td class="r">({{inr sample.amount}})</td>
+        <td class="r">0</td>
+        <td></td><td></td><td></td><td></td>
+      </tr>
+      {{/if}}
       {{#if gunny}}
       <tr>
         <td></td><td>Gunny</td><td></td><td class="c b">{{gunny.bags}}</td><td></td>

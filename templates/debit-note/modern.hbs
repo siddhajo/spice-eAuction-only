@@ -1,0 +1,120 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{{title}} {{noteNo}}</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  :root { --accent: #4e8a3a; --accent-soft: #e8f1e0; --line: #d7e0d1; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 8.5pt; color: #222; line-height: 1.35;
+    padding: 24pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .band { background: var(--accent); color: #fff; padding: 14pt 16pt; border-radius: 6pt 6pt 0 0;
+    display: flex; align-items: center; gap: 12pt; }
+  .band img { width: 46pt; height: 46pt; object-fit: contain; background: #fff; border-radius: 4pt; padding: 2pt; }
+  .band .co { font-size: 13pt; font-weight: bold; letter-spacing: .3pt; }
+  .band .sub { font-size: 7.5pt; opacity: .9; }
+  .band .doctype { margin-left: auto; text-align: right; }
+  .band .doctype b { font-size: 11pt; letter-spacing: .5pt; }
+  .meta { display: flex; flex-wrap: wrap; border: 1pt solid var(--line); border-top: none; }
+  .meta > div { flex: 1 1 25%; padding: 7pt 12pt; border-right: 1pt solid var(--line); }
+  .meta > div:last-child { border-right: none; }
+  .meta .k { font-size: 7pt; text-transform: uppercase; color: #999; letter-spacing: .5pt; }
+  .meta .v { font-size: 9.5pt; font-weight: bold; }
+  .parties { display: flex; border: 1pt solid var(--line); border-top: none; }
+  .parties > div { flex: 1; padding: 9pt 12pt; }
+  .parties > div:first-child { border-right: 1pt solid var(--line); }
+  .parties .lbl { font-size: 7pt; text-transform: uppercase; color: var(--accent); font-weight: bold; letter-spacing: .5pt; }
+  .parties .nm { font-weight: bold; font-size: 9.5pt; margin-top: 2pt; }
+  .parties .ln { font-size: 8pt; color: #555; }
+  table.items { width: 100%; border-collapse: collapse; margin-top: 10pt; border: 1pt solid var(--line); }
+  table.items th { background: var(--accent-soft); color: var(--accent); font-size: 7.5pt; text-transform: uppercase;
+    letter-spacing: .3pt; padding: 6pt 8pt; text-align: left; border-right: 0.75pt solid var(--line); }
+  table.items th:last-child, table.items td:last-child { border-right: none; }
+  table.items th.r, table.items td.r { text-align: right; }
+  table.items td { padding: 6pt 8pt; border-bottom: 0.75pt solid var(--line); border-right: 0.75pt solid var(--line); font-size: 8.5pt; }
+  .totbox { display: flex; justify-content: flex-end; margin-top: 10pt; }
+  .totbox table { border-collapse: collapse; min-width: 260pt; }
+  .totbox td { padding: 4pt 10pt; font-size: 9pt; }
+  .totbox td.k { color: #666; } .totbox td.v { text-align: right; font-weight: bold; }
+  .totbox tr.grand td { background: var(--accent); color: #fff; font-size: 11pt; }
+  .words { margin-top: 8pt; padding: 8pt 12pt; background: var(--accent-soft); border-radius: 4pt; font-size: 9pt; }
+  .foot { display: flex; justify-content: space-between; margin-top: 18pt; font-size: 8pt; color: #555; }
+  .foot .sig { text-align: right; }
+  .foot .sig .co { font-weight: bold; color: #222; }
+  .foot .sig .line { margin-top: 34pt; border-top: 0.75pt solid #999; padding-top: 3pt; }
+</style>
+</head>
+<body>
+  <div class="band">
+    {{#if co.logoDataUri}}<img src="{{co.logoDataUri}}">{{/if}}
+    <div>
+      <div class="co">{{co.name}}</div>
+      <div class="sub">{{co.address1}}{{#if co.place}}, {{co.place}}{{/if}} · {{co.stateName}} · GSTIN {{co.gstin}}</div>
+    </div>
+    <div class="doctype"><b>{{title}}</b></div>
+  </div>
+
+  <div class="meta">
+    <div><div class="k">Sl No</div><div class="v">{{noteNo}}</div></div>
+    <div><div class="k">Date</div><div class="v">{{noteDate}}</div></div>
+    <div><div class="k">Auction No</div><div class="v">{{ano}}</div></div>
+    <div><div class="k">Auction Date</div><div class="v">{{auctionDate}}</div></div>
+  </div>
+
+  <div class="parties">
+    <div>
+      <div class="lbl">Name &amp; Address of the Receiver</div>
+      <div class="nm">Sri/M/s. {{receiver.name}}</div>
+      {{#if receiver.addr}}<div class="ln">{{receiver.addr}}</div>{{/if}}
+      {{#if receiver.place}}<div class="ln">{{receiver.place}}{{#if receiver.state}}, {{receiver.state}}{{/if}}</div>{{else}}{{#if receiver.state}}<div class="ln">{{receiver.state}}</div>{{/if}}{{/if}}
+      <div class="ln">State Code {{receiver.stCode}}{{#if receiver.gstin}} · GSTIN {{receiver.gstin}}{{/if}}</div>
+      {{#if receiver.pan}}<div class="ln">PAN {{receiver.pan}}{{#if receiver.sbl}} · SBL {{receiver.sbl}}{{/if}}</div>{{else}}{{#if receiver.sbl}}<div class="ln">SBL {{receiver.sbl}}</div>{{/if}}{{/if}}
+    </div>
+    <div>
+      <div class="lbl">Service</div>
+      <div class="ln" style="margin-top:2pt">Nature of Service: <b>{{receiver.nature}}</b></div>
+      <div class="ln">Service Account Code: <b>{{receiver.sac}}</b></div>
+      <div class="ln" style="margin-top:4pt">Commission on sale of cardamom in Auction No: <b>{{ano}}</b> dated <b>{{auctionDate}}</b></div>
+    </div>
+  </div>
+
+  <table class="items">
+    <thead><tr>
+      <th>Lot No</th><th class="r">Quantity (kg.gr)</th><th class="r">Rate/kg</th>
+      <th class="r">Value</th><th class="r">Commission</th><th class="r">Incidental</th>
+    </tr></thead>
+    <tbody>
+      {{#each rows}}
+      <tr>
+        <td>{{lot}}</td>
+        <td class="r">{{qty qty}}</td><td class="r">{{inr rate}}</td>
+        <td class="r">{{inr value}}</td><td class="r">{{inr commission}}</td><td class="r">{{inr incidental}}</td>
+      </tr>
+      {{/each}}
+      <tr>
+        <td colspan="4" class="r"><b>SubTotal</b></td>
+        <td class="r"><b>{{inr totals.commission}}</b></td><td class="r"><b>{{inr totals.incidental}}</b></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="totbox"><table>
+    <tr><td class="k">Total Taxable Value</td><td class="v">{{inr totals.taxable}}</td></tr>
+    {{#each taxRows}}
+    <tr><td class="k">{{this.label}}</td><td class="v">{{inr this.amt}}</td></tr>
+    {{/each}}
+    <tr class="grand"><td>Grand Total</td><td class="v">{{inr grandTotal}}</td></tr>
+  </table></div>
+  <div class="words"><b>Amount in Words:</b> {{grandTotalWords}}</div>
+
+  <div class="foot">
+    <div></div>
+    <div class="sig">
+      <div class="co">{{forCo}}</div>
+      <div class="line">Authorised Signatory</div>
+    </div>
+  </div>
+</body>
+</html>

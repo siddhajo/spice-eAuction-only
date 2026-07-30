@@ -1,0 +1,124 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Bill of Supply {{billNo}}</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  :root { --accent: #4e8a3a; --accent-soft: #e8f1e0; --line: #d7e0d1; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 8.5pt; color: #222; line-height: 1.35;
+    padding: 24pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .band { background: var(--accent); color: #fff; padding: 14pt 16pt; border-radius: 6pt 6pt 0 0;
+    display: flex; align-items: center; gap: 12pt; }
+  .band img { width: 46pt; height: 46pt; object-fit: contain; background: #fff; border-radius: 4pt; padding: 2pt; }
+  .band .co { font-size: 13pt; font-weight: bold; letter-spacing: .3pt; }
+  .band .sub { font-size: 7.5pt; opacity: .9; }
+  .band .doctype { margin-left: auto; text-align: right; }
+  .band .doctype b { font-size: 11pt; letter-spacing: .5pt; }
+  .band .doctype .s { font-size: 6.5pt; opacity: .9; }
+  .meta { display: flex; flex-wrap: wrap; border: 1pt solid var(--line); border-top: none; }
+  .meta > div { flex: 1 1 25%; padding: 7pt 12pt; border-right: 1pt solid var(--line); }
+  .meta > div:last-child { border-right: none; }
+  .meta .k { font-size: 7pt; text-transform: uppercase; color: #999; letter-spacing: .5pt; }
+  .meta .v { font-size: 9.5pt; font-weight: bold; }
+  .parties { display: flex; border: 1pt solid var(--line); border-top: none; }
+  .parties > div { flex: 1; padding: 9pt 12pt; }
+  .parties > div:first-child { border-right: 1pt solid var(--line); }
+  .parties .lbl { font-size: 7pt; text-transform: uppercase; color: var(--accent); font-weight: bold; letter-spacing: .5pt; }
+  .parties .nm { font-weight: bold; font-size: 9.5pt; margin-top: 2pt; }
+  .parties .ln { font-size: 8pt; color: #555; }
+  table.items { width: 100%; border-collapse: collapse; margin-top: 10pt; border: 1pt solid var(--line); }
+  table.items th { background: var(--accent-soft); color: var(--accent); font-size: 7.5pt; text-transform: uppercase;
+    letter-spacing: .3pt; padding: 6pt 8pt; text-align: left; border-right: 0.75pt solid var(--line); }
+  table.items th:last-child, table.items td:last-child { border-right: none; }
+  table.items th.r, table.items td.r { text-align: right; }
+  table.items td { padding: 6pt 8pt; border-bottom: 0.75pt solid var(--line); border-right: 0.75pt solid var(--line); font-size: 8.5pt; }
+  table.items tr.tot td { font-weight: bold; background: #fafdf8; }
+  .totbox { display: flex; justify-content: flex-end; margin-top: 10pt; }
+  .totbox table { border-collapse: collapse; min-width: 260pt; }
+  .totbox td { padding: 4pt 10pt; font-size: 9pt; }
+  .totbox td.k { color: #666; } .totbox td.v { text-align: right; font-weight: bold; }
+  .totbox tr.grand td { background: var(--accent); color: #fff; font-size: 11pt; }
+  .words { margin-top: 8pt; padding: 8pt 12pt; background: var(--accent-soft); border-radius: 4pt; font-size: 9pt; }
+  .foot { display: flex; justify-content: space-between; margin-top: 18pt; font-size: 8pt; color: #555; }
+  .foot .sig { text-align: right; }
+  .foot .sig .co { font-weight: bold; color: #222; }
+  .foot .sig .line { margin-top: 34pt; border-top: 0.75pt solid #999; padding-top: 3pt; }
+</style>
+</head>
+<body>
+  <div class="band">
+    {{#if co.logoDataUri}}<img src="{{co.logoDataUri}}">{{/if}}
+    <div>
+      <div class="co">{{co.name}}</div>
+      <div class="sub">{{co.address1}}{{#if co.place}}, {{co.place}}{{/if}}{{#if co.stCode}} · STATE CODE {{co.stCode}}{{/if}} · GSTIN {{co.gstin}}</div>
+    </div>
+    <div class="doctype"><b>BILL OF SUPPLY</b><div class="s">Bill for Purchase from Agriculturist · Sec 2(7)</div></div>
+  </div>
+
+  <div class="meta">
+    <div><div class="k">Invoice No</div><div class="v">{{billNo}}</div></div>
+    <div><div class="k">Date</div><div class="v">{{billDate}}</div></div>
+    <div><div class="k">e-Auction No</div><div class="v">{{eTradeNo}}</div></div>
+    <div><div class="k">Description / HSN</div><div class="v">{{descGoods}} · {{hsnCode}}</div></div>
+  </div>
+
+  <div class="parties">
+    <div>{{#with party}}
+      <div class="lbl">Details of Seller [Billed For]</div>
+      <div class="nm">M/s. {{name}}</div>
+      {{#if addr}}<div class="ln">{{addr}}</div>{{/if}}
+      {{#if place}}<div class="ln">{{place}}{{#if state}}, {{state}}{{/if}}</div>{{else}}{{#if state}}<div class="ln">{{state}}</div>{{/if}}{{/if}}
+      <div class="ln">State Code {{stCode}}{{#if pan}} · PAN {{pan}}{{/if}}</div>
+      {{#if cr}}<div class="ln">CR {{cr}}</div>{{/if}}{{#if aadhar}}<div class="ln">Aadhar {{aadhar}}</div>{{/if}}
+    {{/with}}</div>
+    <div>{{#with consignee}}
+      <div class="lbl">Details of Consignee [Shipped To]</div>
+      <div class="nm">M/s. {{name}}</div>
+      {{#if addr}}<div class="ln">{{addr}}</div>{{/if}}
+      {{#if place}}<div class="ln">{{place}}{{#if state}}, {{state}}{{/if}}</div>{{else}}{{#if state}}<div class="ln">{{state}}</div>{{/if}}{{/if}}
+      <div class="ln">State Code {{stCode}}{{#if pan}} · PAN {{pan}}{{/if}}</div>
+      {{#if cr}}<div class="ln">CR {{cr}}</div>{{/if}}{{#if aadhar}}<div class="ln">Aadhar {{aadhar}}</div>{{/if}}
+    {{/with}}</div>
+  </div>
+
+  <table class="items">
+    <thead><tr>
+      <th>Lot No</th><th class="r">Quantity (Kg)</th><th class="r">Total Qty (Kg)</th>
+      <th class="r">Price (Rs)</th><th class="r">Value (Rs)</th><th class="r">Taxable Value (Rs)</th>
+    </tr></thead>
+    <tbody>
+      {{#each rows}}
+      <tr>
+        <td>{{lot}}</td>
+        <td class="r">{{qtyg qty}}</td><td class="r">{{qtyg totalQty}}</td>
+        <td class="r">{{rup price}}</td><td class="r">{{rup value}}</td><td class="r">{{rup taxable}}</td>
+      </tr>
+      {{/each}}
+      <tr class="tot">
+        <td>Total</td>
+        <td class="r">{{qtyg totals.qtySum}}</td><td class="r">{{qtyg totals.totalQtySum}}</td>
+        <td></td><td class="r">{{rup totals.valueSum}}</td><td class="r">{{rup totals.taxableSum}}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="totbox"><table>
+    {{#each totalsRows}}
+    <tr><td class="k">{{this.[0]}}</td><td class="v">{{rup this.[1]}}</td></tr>
+    {{/each}}
+    <tr class="grand"><td>Total Value</td><td class="v">{{rup netAmount}}</td></tr>
+  </table></div>
+  <div class="words"><b>Amount in Words:</b> {{netAmountWords}}</div>
+
+  <div class="foot">
+    <div>Signature of Seller</div>
+    <div class="sig">
+      <div class="co">for {{co.short}}</div>
+      <div class="line">Authorized Signatory</div>
+    </div>
+  </div>
+</body>
+</html>

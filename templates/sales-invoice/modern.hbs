@@ -9,7 +9,7 @@
   @page { size: A4; margin: 0; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
-  /* Green accent to match the other RNS invoice formats (commission bill etc.).
+  /* Green accent to match the other Letterhead invoice formats (commission bill etc.).
      --accent = solid green band/grand-total; --accent-soft = header/word fill. */
   :root { --accent: #4e8a3a; --accent-soft: #e8f1e0; --line: #d7e0d1; }
   body {
@@ -20,7 +20,7 @@
   .band { background: var(--accent); color: #fff; padding: 14pt 16pt; border-radius: 6pt 6pt 0 0;
           display: flex; align-items: center; gap: 12pt; }
   .band img { width: 46pt; height: 46pt; object-fit: contain; background: #fff; border-radius: 4pt; padding: 2pt; }
-  .band .co { font-size: 13pt; font-weight: bold; letter-spacing: .3pt; }
+  .band .co { font-size: 13pt; font-weight: bold; letter-spacing: .3pt; white-space: nowrap; }
   .band .sub { font-size: 7.5pt; opacity: .9; }
   .band .doctype { margin-left: auto; text-align: right; }
   .band .doctype b { font-size: 12pt; letter-spacing: 1pt; }
@@ -35,11 +35,14 @@
   .parties .lbl { font-size: 7pt; text-transform: uppercase; color: var(--accent); font-weight: bold; letter-spacing: .5pt; }
   .parties .nm { font-weight: bold; font-size: 9.5pt; margin-top: 2pt; }
   .parties .ln { font-size: 8pt; color: #555; }
-  table.items { width: 100%; border-collapse: collapse; margin-top: 10pt; }
+  table.items { width: 100%; border-collapse: collapse; margin-top: 10pt; border: 1pt solid var(--line); }
   table.items th { background: var(--accent-soft); color: var(--accent); font-size: 7.5pt;
-                   text-transform: uppercase; letter-spacing: .3pt; padding: 6pt 8pt; text-align: left; }
+                   text-transform: uppercase; letter-spacing: .3pt; padding: 6pt 8pt; text-align: left;
+                   border-right: 0.75pt solid var(--line); }
+  table.items th:last-child, table.items td:last-child { border-right: none; }
   table.items th.r, table.items td.r { text-align: right; }
-  table.items td { padding: 6pt 8pt; border-bottom: 0.75pt solid var(--line); font-size: 8.5pt; }
+  table.items td { padding: 6pt 8pt; border-bottom: 0.75pt solid var(--line);
+                   border-right: 0.75pt solid var(--line); font-size: 8.5pt; }
   table.items tbody tr:last-child td { border-bottom: 1pt solid var(--accent); }
   .totbox { display: flex; justify-content: flex-end; margin-top: 10pt; }
   .totbox table { border-collapse: collapse; min-width: 260pt; }
@@ -60,7 +63,7 @@
       <div class="co">{{co.name}}</div>
       <div class="sub">{{co.address1}}{{#if co.place}}, {{co.place}}{{/if}} · {{co.stateName}} · GSTIN {{co.gstin}}</div>
     </div>
-    <div class="doctype"><b>TAX INVOICE</b><div class="sub">{{invoiceNo}} · {{shortDate invoiceDate}}</div></div>
+    <div class="doctype"><b>TAX INVOICE</b></div>
   </div>
 
   <div class="meta">
@@ -124,7 +127,7 @@
 
   <div class="foot">
     <div>
-      {{#if bank}}<div><b>Bank</b>: {{bank.name}} · A/c {{bank.acct}} · {{bank.ifsc}}</div>{{/if}}
+      {{#if bank}}<div><b>Bank</b>: {{bank.name}} · A/c {{bank.acct}} · IFSC: {{bank.ifsc}}</div>{{/if}}
       <div style="margin-top:6pt">Declaration: We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.</div>
     </div>
     <div class="sig">

@@ -1,0 +1,111 @@
+{{#if first}}<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 8.5pt; color: #222; line-height: 1.35;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  :root { --accent: #4e8a3a; --accent-soft: #e8f1e0; --line: #d7e0d1; }
+  .cb-page { padding: 24pt; }
+  .cb-page + .cb-page { page-break-before: always; }
+  .band { background: var(--accent); color: #fff; padding: 14pt 16pt; border-radius: 6pt 6pt 0 0;
+    display: flex; align-items: center; gap: 12pt; }
+  .band img { width: 46pt; height: 46pt; object-fit: contain; background: #fff; border-radius: 4pt; padding: 2pt; }
+  .band .co { font-size: 13pt; font-weight: bold; letter-spacing: .3pt; }
+  .band .sub { font-size: 7.5pt; opacity: .9; }
+  .band .doctype { margin-left: auto; text-align: right; }
+  .band .doctype b { font-size: 11pt; letter-spacing: .5pt; }
+  .band .doctype .s { font-size: 6.5pt; opacity: .9; }
+  .meta { display: flex; flex-wrap: wrap; border: 1pt solid var(--line); border-top: none; }
+  .meta > div { flex: 1 1 20%; padding: 7pt 12pt; border-right: 1pt solid var(--line); }
+  .meta > div:last-child { border-right: none; }
+  .meta .k { font-size: 7pt; text-transform: uppercase; color: #999; letter-spacing: .5pt; }
+  .meta .v { font-size: 9.5pt; font-weight: bold; }
+  .parties { display: flex; border: 1pt solid var(--line); border-top: none; }
+  .parties > div { flex: 1; padding: 9pt 12pt; }
+  .parties > div:first-child { border-right: 1pt solid var(--line); }
+  .parties .lbl { font-size: 7pt; text-transform: uppercase; color: var(--accent); font-weight: bold; letter-spacing: .5pt; }
+  .parties .nm { font-weight: bold; font-size: 9.5pt; margin-top: 2pt; }
+  .parties .ln { font-size: 8pt; color: #555; }
+  table.items { width: 100%; border-collapse: collapse; margin-top: 10pt; border: 1pt solid var(--line); }
+  table.items th { background: var(--accent-soft); color: var(--accent); font-size: 7.5pt; text-transform: uppercase;
+    letter-spacing: .3pt; padding: 6pt 8pt; text-align: left; border-right: 0.75pt solid var(--line); }
+  table.items th:last-child, table.items td:last-child { border-right: none; }
+  table.items th.r, table.items td.r { text-align: right; }
+  table.items td { padding: 6pt 8pt; border-bottom: 0.75pt solid var(--line); border-right: 0.75pt solid var(--line); font-size: 8.5pt; }
+  .totbox { display: flex; justify-content: flex-end; margin-top: 10pt; }
+  .totbox table { border-collapse: collapse; min-width: 260pt; }
+  .totbox td { padding: 4pt 10pt; font-size: 9pt; }
+  .totbox td.k { color: #666; } .totbox td.v { text-align: right; font-weight: bold; }
+  .totbox tr.grand td { background: var(--accent); color: #fff; font-size: 11pt; }
+  .words { margin-top: 8pt; padding: 8pt 12pt; background: var(--accent-soft); border-radius: 4pt; font-size: 9pt; }
+  .foot { display: flex; justify-content: space-between; margin-top: 18pt; font-size: 8pt; color: #555; }
+  .foot .sig { text-align: right; }
+  .foot .sig .co { font-weight: bold; color: #222; }
+  .foot .sig .line { margin-top: 34pt; border-top: 0.75pt solid #999; padding-top: 3pt; }
+</style>{{/if}}
+<div class="cb-page">
+  <div class="band">
+    {{#if co.logoDataUri}}<img src="{{co.logoDataUri}}">{{/if}}
+    <div>
+      <div class="co">{{co.name}}</div>
+      <div class="sub">{{co.address1}}{{#if co.place}}, {{co.place}}{{/if}} · GSTIN {{co.gstin}}</div>
+    </div>
+    <div class="doctype"><b>PAYMENT VOUCHER</b><div class="s">Memorandum of Cardamom Sold through {{cfg.short_name}}</div></div>
+  </div>
+
+  <div class="meta">
+    <div><div class="k">Crop Receipt No</div><div class="v">{{crpt}}</div></div>
+    <div><div class="k">Bill No</div><div class="v">{{billNo}}</div></div>
+    <div><div class="k">Auction No</div><div class="v">{{ano}}</div></div>
+    <div><div class="k">Lot No</div><div class="v">{{lotNo}}</div></div>
+    <div><div class="k">Date</div><div class="v">{{auctionDate}}</div></div>
+  </div>
+
+  <div class="parties">
+    <div>
+      <div class="lbl">Details of Seller [Billed For]</div>
+      <div class="nm">Sri. {{seller.name}}</div>
+      <div class="ln">{{#if seller.address}}{{seller.address}}{{/if}}{{#if seller.state}} · {{seller.state}}{{/if}}</div>
+      <div class="ln">State Code {{seller.st_code}}{{#if seller.aadhar}} · Aadhar {{seller.aadhar}}{{/if}}</div>
+      <div class="ln">{{#if seller.cr}}CR {{seller.cr}}{{/if}}{{#if seller.pan}} · PAN {{seller.pan}}{{/if}}</div>
+      {{#if showSellerBank}}<div class="ln">{{#if seller.phone}}Ph {{seller.phone}}{{/if}}{{#if seller.account}} · A/C {{seller.account}}{{/if}}</div>{{/if}}
+    </div>
+    <div>
+      <div class="lbl">Details of Buyer [Sold To]</div>
+      <div class="nm">M/s. {{purchaser.name}}{{#if purchaser.invo}} · INV {{purchaser.invo}}{{/if}}</div>
+      {{#if purchaser.address}}<div class="ln">{{purchaser.address}}</div>{{/if}}
+      <div class="ln">{{purchaser.place}}{{#if purchaser.pin}} - {{purchaser.pin}}{{/if}}{{#if purchaser.state}} · {{purchaser.state}}{{/if}} · Code {{purchaser.st_code}}</div>
+      <div class="ln">{{#if purchaser.gstin}}GSTIN {{purchaser.gstin}}{{/if}}{{#if purchaser.sbl}} · SBL {{purchaser.sbl}}{{/if}}</div>
+    </div>
+  </div>
+
+  <table class="items">
+    <thead><tr>
+      <th style="width:8%">S.No.</th><th style="width:40%">Description</th>
+      <th class="r">Quantity (kg.gr)</th><th class="r">Rate</th><th class="r">Cost</th>
+    </tr></thead>
+    <tbody>
+      <tr><td>1</td><td>CARDAMOM (HSN: {{hsnCardamom}})</td><td class="r">{{qtyg cardamom.qty}}</td><td class="r">{{rup cardamom.rate}}</td><td class="r">{{rup cardamom.cost}}</td></tr>
+      {{#if sampleRefund}}<tr><td>2</td><td>SAMPLE REFUND</td><td class="r">{{qtyg sampleRefund.qty}}</td><td class="r">{{rup sampleRefund.rate}}</td><td class="r">{{rup sampleRefund.amount}}</td></tr>{{/if}}
+      {{#if traderSample}}<tr><td>3</td><td>TRADER SAMPLE</td><td class="r">{{qtyg traderSample.qty}}</td><td class="r">({{rup traderSample.rate}})</td><td class="r">({{rup traderSample.amount}})</td></tr>{{/if}}
+      <tr><td>4</td><td>COMMISSION</td><td></td><td class="r">(1+2-3)*1%</td><td class="r">({{rup commission.amount}})</td></tr>
+    </tbody>
+  </table>
+
+  <div class="totbox"><table>
+    <tr><td class="k">Taxable Value</td><td class="v">{{rup tax.taxable}}</td></tr>
+    <tr><td class="k">CGST {{gstRate}}%</td><td class="v">{{rup tax.cgst}}</td></tr>
+    <tr><td class="k">SGST {{gstRate}}%</td><td class="v">{{rup tax.sgst}}</td></tr>
+    <tr><td class="k">IGST {{add gstRate gstRate}}%</td><td class="v">{{#if tax.igst}}{{rup tax.igst}}{{else}}0{{/if}}</td></tr>
+    <tr><td class="k">Round Off</td><td class="v">{{rup roundDiff}}</td></tr>
+    <tr class="grand"><td>Grand Total</td><td class="v">{{rup grandTotal}}</td></tr>
+  </table></div>
+  <div class="words"><b>Amount in Words:</b> {{nettWords}}</div>
+
+  <div class="foot">
+    <div>Signature of the seller</div>
+    <div class="sig">
+      <div class="co">For {{cfg.short_name}}</div>
+      <div class="line">Authorised Signatory</div>
+    </div>
+  </div>
+</div>

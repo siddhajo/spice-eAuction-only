@@ -1,0 +1,122 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Purchase Invoice</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  :root { --accent: #4e8a3a; --accent-soft: #e8f1e0; --line: #d7e0d1; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 8.5pt; color: #222; line-height: 1.35;
+    padding: 24pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .band { background: var(--accent); color: #fff; padding: 14pt 16pt; border-radius: 6pt 6pt 0 0;
+    display: flex; align-items: center; gap: 12pt; }
+  .band .co { font-size: 13pt; font-weight: bold; letter-spacing: .3pt; }
+  .band .sub { font-size: 7.5pt; opacity: .9; }
+  .band .doctype { margin-left: auto; text-align: right; }
+  .band .doctype b { font-size: 12pt; letter-spacing: 1pt; }
+  .meta { display: flex; flex-wrap: wrap; border: 1pt solid var(--line); border-top: none; }
+  .meta > div { flex: 1 1 25%; padding: 7pt 12pt; border-right: 1pt solid var(--line); }
+  .meta > div:last-child { border-right: none; }
+  .meta .k { font-size: 7pt; text-transform: uppercase; color: #999; letter-spacing: .5pt; }
+  .meta .v { font-size: 9pt; font-weight: bold; }
+  .parties { display: flex; border: 1pt solid var(--line); border-top: none; }
+  .parties > div { flex: 1; padding: 9pt 12pt; }
+  .parties > div:first-child { border-right: 1pt solid var(--line); }
+  .parties .lbl { font-size: 7pt; text-transform: uppercase; color: var(--accent); font-weight: bold; letter-spacing: .5pt; }
+  .parties .ln { font-size: 8pt; color: #333; }
+  .parties .ln.b { font-weight: bold; color: #222; }
+  table.items { width: 100%; border-collapse: collapse; margin-top: 10pt; border: 1pt solid var(--line); }
+  table.items th { background: var(--accent-soft); color: var(--accent); font-size: 7.5pt; text-transform: uppercase;
+    letter-spacing: .3pt; padding: 6pt 8pt; text-align: left; border-right: 0.75pt solid var(--line); }
+  table.items th:last-child, table.items td:last-child { border-right: none; }
+  table.items th.r, table.items td.r { text-align: right; }
+  table.items td { padding: 6pt 8pt; border-bottom: 0.75pt solid var(--line); border-right: 0.75pt solid var(--line); font-size: 8.5pt; }
+  table.items tr.tot td { font-weight: bold; background: #fafdf8; }
+  .note { margin-top: 8pt; font-size: 8pt; color: #444; }
+  .totbox { display: flex; justify-content: flex-end; margin-top: 10pt; }
+  .totbox table { border-collapse: collapse; min-width: 260pt; }
+  .totbox td { padding: 4pt 10pt; font-size: 9pt; }
+  .totbox td.k { color: #666; } .totbox td.v { text-align: right; font-weight: bold; }
+  .totbox tr.grand td { background: var(--accent); color: #fff; font-size: 11pt; }
+  .words { margin-top: 8pt; padding: 8pt 12pt; background: var(--accent-soft); border-radius: 4pt; font-size: 9pt; }
+  .foot { display: flex; justify-content: space-between; margin-top: 18pt; font-size: 8pt; color: #555; }
+  .foot .sig { text-align: right; }
+  .foot .sig .co { font-weight: bold; color: #222; }
+  .foot .sig .line { margin-top: 34pt; border-top: 0.75pt solid #999; padding-top: 3pt; }
+</style>
+</head>
+<body>
+  <div class="band">
+    <div>
+      <div class="co">{{seller.name}}</div>
+      <div class="sub">{{#if seller.addr}}{{seller.addr}}{{/if}}{{#if seller.gstin}} · GSTIN {{seller.gstin}}{{/if}}</div>
+    </div>
+    <div class="doctype"><b>PURCHASE INVOICE</b></div>
+  </div>
+
+  <div class="meta">
+    {{#each rightPairs}}<div><div class="k">{{this.[0]}}</div><div class="v">{{this.[1]}}</div></div>{{/each}}
+    {{#each leftPairs}}<div><div class="k">{{this.[0]}}</div><div class="v">{{this.[1]}}</div></div>{{/each}}
+  </div>
+
+  <div class="parties">
+    <div>
+      <div class="lbl">Billed To</div>
+      {{#each plainLines}}<div class="ln b">{{this}}</div>{{/each}}
+      {{#each pairLines}}<div class="ln">{{this.[0]}}: {{this.[1]}}</div>{{/each}}
+    </div>
+    <div>
+      <div class="lbl">Shipped To</div>
+      {{#each plainLines}}<div class="ln b">{{this}}</div>{{/each}}
+      {{#each pairLines}}<div class="ln">{{this.[0]}}: {{this.[1]}}</div>{{/each}}
+    </div>
+  </div>
+
+  <table class="items">
+    <thead><tr>
+      <th>Lot No</th><th class="r">Quantity (kg)</th><th class="r">Sample (kg)</th><th class="r">Discount (kg)</th>
+      <th class="r">Total Qty (kg)</th><th class="r">Price (Rs)</th><th class="r">Taxable Value (Rs)</th>
+    </tr></thead>
+    <tbody>
+      {{#each rows}}
+      <tr>
+        <td>{{lot}}</td>
+        <td class="r">{{qty qty}}</td><td class="r">{{qty sample}}</td><td class="r">{{qty discount}}</td>
+        <td class="r">{{qty totalQty}}</td><td class="r">{{fixed price 2}}</td><td class="r">{{inr taxable}}</td>
+      </tr>
+      {{/each}}
+      <tr class="tot">
+        <td colspan="4">Total</td>
+        <td class="r">{{qty totals.totalQtySum}}</td><td></td><td class="r">{{inr totals.taxableSum}}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="note">We have supplied the above mentioned lots of {{descGoods}} (HSN {{hsnCode}}) for Auction Sales in Auction No: {{auctionNo}} Dated: {{shortDate saleDate}}</div>
+
+  <div class="totbox"><table>
+    <tr><td class="k">IGST {{gstRate}}%</td><td class="v">{{inr totals.totalIgst}}</td></tr>
+    <tr><td class="k">CGST {{gstHalf}}%</td><td class="v">{{inr totals.totalCgst}}</td></tr>
+    <tr><td class="k">SGST {{gstHalf}}%</td><td class="v">{{inr totals.totalSgst}}</td></tr>
+    <tr><td class="k">SubTotal</td><td class="v">{{inr subTotal}}</td></tr>
+    {{#if tdsAmount}}<tr><td class="k">TDS on purchase [U/S 194Q]</td><td class="v">{{inr tdsAmount}}</td></tr>{{/if}}
+    <tr><td class="k">Round Off</td><td class="v">{{inr roundDiff}}</td></tr>
+    <tr class="grand"><td>Grand Total</td><td class="v">{{inr invoiceAmount}}</td></tr>
+  </table></div>
+  <div class="words"><b>Amount in words:</b> {{invoiceAmountWords}}</div>
+
+  <div class="foot">
+    <div>
+      <div>Bank Account No :</div>
+      <div style="margin-top:6pt">Bank Branch &amp; IFSC</div>
+      <div style="margin-top:4pt">[Certified that the particulars given above are true and correct]</div>
+    </div>
+    <div class="sig">
+      <div class="co">FOR</div>
+      <div class="line">Authorised Signatory</div>
+    </div>
+  </div>
+</body>
+</html>

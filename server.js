@@ -744,8 +744,12 @@ app.get('/admin/branding', (req, res) => {
   } catch (_) { /* bank-formats unavailable — leave empty */ }
   try {
     const { listTemplates } = require('./pdf/invoice-templates');
+    // Friendly labels for the layout dropdowns (raw ids like 'letterhead' read
+    // poorly). Falls back to a title-cased id for any layout not listed here.
+    const TPL_LABELS = { classic: 'Classic', letterhead: 'Letterhead', modern: 'Modern', pdfkit: 'Classic (Legacy)', rns: 'Letterhead' };
+    const tplLabel = (id) => TPL_LABELS[id] || String(id).replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     const tplOpts = (docType, cur) => (listTemplates(docType) || ['classic'])
-      .map(id => `<option value="${id}" ${id === cur ? 'selected' : ''}>${escAttr(id)}</option>`).join('');
+      .map(id => `<option value="${id}" ${id === cur ? 'selected' : ''}>${escAttr(tplLabel(id))}</option>`).join('');
     salesTplOpts    = tplOpts('sales-invoice',    cfg.sales_invoice_template    || 'classic');
     purchaseTplOpts = tplOpts('purchase-invoice', cfg.purchase_invoice_template || 'classic');
     agriTplOpts     = tplOpts('agri-bill',        cfg.agri_bill_template        || 'classic');
@@ -6748,24 +6752,17 @@ app.get('/api/invoices/preview.html', (req, res) => {
 // 'sales-invoice', 'purchase-invoice', 'agri-bill'.
 app.get('/api/invoices/templates/:docType', requireView, (req, res) => {
   try {
-    const { listTemplates, DEFAULTS, SETTING_KEY } = require('./pdf/invoice-templates');
+    const { listTemplates } = require('./pdf/invoice-templates');
     const docType = req.params.docType;
-    const all = listTemplates(docType) || [];
-    // Only offer the DEFAULT layout + THIS company's configured layout (both
-    // must exist on disk). So a company that kept the default ('classic') sees
-    // only the default — the print picker doesn't even open — while a company
-    // that set e.g. commission_bill_template='letterhead' sees default + letterhead.
-    const cfg = getSettingsFlat(getDb());
-    const def = (DEFAULTS && DEFAULTS[docType]) || 'classic';
-    const setKey = SETTING_KEY && SETTING_KEY[docType];
-    const configured = String((setKey && cfg[setKey]) || def).trim() || def;
-    const offered = [...new Set([def, configured])].filter(t => all.includes(t));
-    // Debit notes also keep a legacy PDFKit layout — surface it as an explicit
-    // choice ('pdfkit') so the operator is offered Letterhead vs Classic at print time,
-    // matching the sales/commission pickers. The /pdf route treats
-    // template=pdfkit as "use the legacy renderer".
+    // Offer EVERY layout available on disk so the operator always gets the
+    // print-time format chooser (the frontend only opens it when >1 option is
+    // returned). 'classic' renders via PDFKit, 'letterhead'/'modern' via HTML.
+    const offered = [...(listTemplates(docType) || [])];
+    // Debit notes have no 'classic' HTML layout, so surface the legacy PDFKit
+    // renderer explicitly as 'pdfkit' — giving Letterhead vs Classic at print
+    // time. The /pdf route treats template=pdfkit/classic as "use PDFKit".
     if (docType === 'debit-note' && !offered.includes('pdfkit')) offered.push('pdfkit');
-    res.json({ docType, templates: offered.length ? offered : all });
+    res.json({ docType, templates: offered });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
