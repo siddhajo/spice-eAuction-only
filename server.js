@@ -7357,13 +7357,14 @@ app.get('/api/invoices/pdf/:id', requireView, async (req, res) => {
     //   2. `sales_invoice_engine` company setting
     //   3. default 'pdfkit' (unchanged behavior)
     // Reversible instantly by removing the env var / setting it back to pdfkit.
-    // Per-print format choice: ?template=<id> ('rns'/'classic') forces the HTML
-    // engine + that layout; 'pdfkit' forces the legacy layout; blank falls back
-    // to the saved engine/template.
+    // Per-print format choice: ?template=<id> forces that layout for this
+    // download; 'pdfkit'/'classic' force the legacy PDFKit layout (see
+    // isPdfkitTemplate); blank falls back to the saved engine/template.
     let pdf;
     const tplChoice = String(req.query.template || '').trim();
-    const savedHtml = String(process.env.SALES_INVOICE_ENGINE || cfg.sales_invoice_engine || 'pdfkit').toLowerCase() === 'html';
-    const useHtml = tplChoice ? tplChoice !== 'pdfkit' : savedHtml;
+    const useHtml = tplChoice
+      ? !require('./pdf/engine-toggle').isPdfkitTemplate(tplChoice)
+      : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'sales_invoice_engine');
     if (useHtml) {
       const { generateSalesInvoiceHtmlPDF } = require('./pdf/render-html-invoice');
       const cfg2 = tplChoice ? { ...cfg, sales_invoice_template: tplChoice } : cfg;
@@ -7548,7 +7549,9 @@ app.post('/api/invoices/pdf-bulk', requireView, async (req, res) => {
 
     let pdf;
     const tplChoice = String((req.body && req.body.template) || '').trim();
-    const useHtml = tplChoice ? tplChoice !== 'pdfkit' : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'sales_invoice_engine');
+    const useHtml = tplChoice
+      ? !require('./pdf/engine-toggle').isPdfkitTemplate(tplChoice)
+      : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'sales_invoice_engine');
     if (useHtml) {
       const cfg2 = tplChoice ? { ...cfg, sales_invoice_template: tplChoice } : cfg;
       pdf = await require('./pdf/render-html-invoice').generateSalesInvoicesHtmlBatchPDF(payloads, cfg2);
@@ -7931,7 +7934,9 @@ app.get('/api/purchases/pdf/:auctionId/:sellerName', requireView, async (req, re
     const enriched = enrichPurchaseForPDF(invoice, cfg, db, auctionId);
     let pdf;
     const tplChoice = String(req.query.template || '').trim();
-    const useHtml = tplChoice ? tplChoice !== 'pdfkit' : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'purchase_invoice_engine');
+    const useHtml = tplChoice
+      ? !require('./pdf/engine-toggle').isPdfkitTemplate(tplChoice)
+      : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'purchase_invoice_engine');
     if (useHtml) {
       const cfg2 = tplChoice ? { ...cfg, purchase_invoice_template: tplChoice } : cfg;
       pdf = await require('./pdf/render-purchase-html').generatePurchaseInvoiceHtmlPDF(enriched, cfg2, invoiceNo);
@@ -8055,7 +8060,9 @@ app.post('/api/purchases/pdf-bulk', requireView, async (req, res) => {
 
     let pdf;
     const tplChoice = String((req.body && req.body.template) || '').trim();
-    const useHtml = tplChoice ? tplChoice !== 'pdfkit' : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'purchase_invoice_engine');
+    const useHtml = tplChoice
+      ? !require('./pdf/engine-toggle').isPdfkitTemplate(tplChoice)
+      : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'purchase_invoice_engine');
     if (useHtml) {
       const cfg2 = tplChoice ? { ...cfg, purchase_invoice_template: tplChoice } : cfg;
       pdf = await require('./pdf/render-purchase-html').generatePurchaseInvoicesHtmlBatchPDF(payloads, cfg2);
@@ -8831,8 +8838,8 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
     // for THIS download only. Without it, fall back to the saved engine/layout.
     const tplChoice = String((req.body && req.body.template) || (req.query && req.query.template) || '').trim();
     let pdf;
-    if (tplChoice === 'pdfkit') {
-      // Explicit "original PDFKit layout" choice.
+    if (require('./pdf/engine-toggle').isPdfkitTemplate(tplChoice)) {
+      // Explicit "original PDFKit layout" choice ('pdfkit' or 'classic').
       pdf = await generateCommissionBoSBatchPDF(payloads, cfg);
     } else if (tplChoice) {
       // A named HTML template (e.g. 'rns', 'classic') — force the HTML engine

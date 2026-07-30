@@ -135,13 +135,24 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
     };
   });
 
-  // Footer goods rows (gunny/transport/insurance) — shown only when non-zero.
+  // Footer goods rows. Gunny shows only when there are bags/cost. Transport &
+  // Insurance always show for a NON-export invoice (both local AND inter-state)
+  // — for a local sale the cost is 0, so the row reads "<total kilos> … 0.00",
+  // the RNS format the customer expects. Export (hideTI) still omits them.
   const gunny = (summary.totalBags > 0 && summary.gunnyCost > 0)
     ? { desc: 'Gunny', hsn: hsnGunny, units: `${summary.totalBags} Nos.`, bags: summary.totalBags, rate: gunnyRate, per: 'Nos.', amount: summary.gunnyCost, ...taxOf(summary.gunnyCost) } : null;
-  const transport = (summary.transportCost > 0 && !hideTI)
-    ? { desc: 'Transport', hsn: sacTransport, units: `${summary.totalQty.toFixed(3)} Kgs.`, qty: summary.totalQty, rate: transportRate, per: 'Kgs.', amount: summary.transportCost, ...taxOf(summary.transportCost) } : null;
-  const insurance = (summary.insuranceCost > 0 && !hideTI)
-    ? { desc: 'Insurance', hsn: sacInsurance, rate: insuranceRate, amount: summary.insuranceCost, ...taxOf(summary.insuranceCost) } : null;
+  const transport = hideTI ? null
+    : { desc: 'Transport', hsn: sacTransport, units: `${summary.totalQty.toFixed(3)} Kgs.`, qty: summary.totalQty, rate: transportRate, per: 'Kgs.', amount: Number(summary.transportCost || 0), ...taxOf(summary.transportCost) };
+  const insurance = hideTI ? null
+    : { desc: 'Insurance', hsn: sacInsurance, rate: insuranceRate, amount: Number(summary.insuranceCost || 0), ...taxOf(summary.insuranceCost) };
+
+  // Sample — DISPLAY-ONLY row: quantity = (number of cardamom lots) × 0.100 kg
+  // (the sample drawn per lot), valued at 0.100 × each lot's rate and shown as
+  // a negative deduction. It does NOT feed the taxable value or grand total.
+  const sample = rows.length
+    ? { qty: Math.round(rows.length * 0.1 * 1000) / 1000,
+        amount: Math.round(rows.reduce((s, r) => s + 0.1 * Number(r.rate || 0), 0) * 100) / 100 }
+    : null;
 
   // HSN summary rows (same construction as invoice-pdf.js).
   const mkHsn = (hsn, desc, taxable) => ({
@@ -170,7 +181,7 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
     ifsc: bizKL ? (cfg.bank_kl_ifsc || cfg.bank_tn_ifsc || '') : (cfg.bank_tn_ifsc || cfg.bank_kl_ifsc || ''),
   } : null;
 
-  const usedRows = rows.length + (gunny ? 1 : 0) + (transport ? 1 : 0) + (insurance ? 1 : 0);
+  const usedRows = rows.length + (sample ? 1 : 0) + (gunny ? 1 : 0) + (transport ? 1 : 0) + (insurance ? 1 : 0);
   return {
     cfg,
     co,
@@ -185,7 +196,7 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
     dispatchedThrough: (invoiceData.dispatchedThrough) || cfg.dispatched_through_isp || cfg.dispatched_through || '',
     destination: buyer.cpla || buyer.pla || cfg.dispatch_destination || '',
     rows,
-    gunny, transport, insurance,
+    sample, gunny, transport, insurance,
     gstRate: gstGoods,
     gstHalf: gstGoods / 2,
     summary,

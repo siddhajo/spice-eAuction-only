@@ -29,4 +29,19 @@ function useHtmlEngine(cfg, key) {
   return false; // default: pdfkit
 }
 
-module.exports = { useHtmlEngine };
+// Template ids that must be drawn by the legacy PDFKit renderer rather than an
+// HTML .hbs layout, when chosen explicitly at print time:
+//   • 'pdfkit'  — the explicit "Classic (Legacy)" choice.
+//   • 'classic' — there IS a classic.hbs HTML layout, but it renders noticeably
+//     differently from the PDFKit "Classic". Since they can't be made to look
+//     the same, picking "Classic" in the print dialog must always produce the
+//     PDFKit output the operator expects. (Companies wanting the HTML look can
+//     still select a distinctly-named layout such as 'modern'/'rns'.)
+// Compared case-insensitively against the trimmed template choice.
+const PDFKIT_TEMPLATE_IDS = new Set(['pdfkit', 'classic']);
+
+function isPdfkitTemplate(tplChoice) {
+  return PDFKIT_TEMPLATE_IDS.has(String(tplChoice == null ? '' : tplChoice).toLowerCase().trim());
+}
+
+module.exports = { useHtmlEngine, isPdfkitTemplate, PDFKIT_TEMPLATE_IDS };
