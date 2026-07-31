@@ -3917,6 +3917,14 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <span id="pe-pc-note" style="display:none;color:#a16207"> Price Check is ON for this install — you'll need to re-verify prices before generating invoices.</span>
         </div>
         <div id="pe-summary" style="font-size:12px;color:var(--text3);margin-top:6px"></div>
+        <!-- Quick-select by lot number — type lot numbers (or ranges like
+             12-18); the matching lots are ticked and moved to the top of the
+             grid. Leading zeros are ignored, so "1" finds "001". -->
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
+          <label style="font-size:12px;font-weight:600;color:var(--text2);margin:0;white-space:nowrap">🎯 Select lots:</label>
+          <input id="pe-lotno-input" placeholder="e.g. 1, 5, 12-18" onkeydown="if(event.key==='Enter'){event.preventDefault();peSelectByLotNos();}" style="flex:1;min-width:160px;max-width:340px;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+          <button class="btn btn-o" style="height:34px;padding:0 12px;font-weight:600" onclick="peSelectByLotNos()">Select &amp; bring to front</button>
+        </div>
         <!-- Bulk buyer-code bar — appears only when one or more lots are
              ticked in the grid below. Set applies a buyer code (picked from
              the dropdown) to every ticked lot; Clear wipes the buyer code on
@@ -21706,6 +21714,15 @@ function _peFlagPriceCheck(){ return String(((window._CCFG)||{}).flag_price_chec
 function _peFmt(n){ return (Number(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 // Bags are counts — always whole numbers, no decimals.
 function _peBags(n){ return (Number(n)||0).toLocaleString('en-IN',{maximumFractionDigits:0}); }
+// Normalise a lot number for matching: uppercase, trim, and drop leading
+// zeros so a padded "001" matches an unpadded "1" (and "010" ↔ "10").
+// All-zero / empty values collapse to "0" / "".
+function _peNormLot(v){
+  const s = String(v == null ? '' : v).trim().toUpperCase();
+  if (s === '') return '';
+  const stripped = s.replace(/^0+/, '');
+  return stripped === '' ? '0' : stripped;
+}
 
 function loadPriceEntry(){
   const note = document.getElementById('pe-pc-note');
@@ -21874,6 +21891,59 @@ function peClearSelection(){
   document.querySelectorAll('#pe-grid .pe-cb').forEach(cb => { cb.checked = false; });
   const all = document.getElementById('pe-selall'); if (all) { all.checked = false; all.indeterminate = false; }
   _peSyncSelectionUI();
+}
+// Tick the lots whose numbers are typed in the quick-select box and move them
+// to the top of the grid. Accepts a comma/space separated list, with numeric
+// ranges like "12-18". Leading zeros are ignored when matching.
+async function peSelectByLotNos(){
+  if (!_pe.aid) { toast('Select a trade first'); return; }
+  const inp = document.getElementById('pe-lotno-input');
+  const raw = inp ? inp.value : '';
+  if (!raw.trim()) { toast('Enter one or more lot numbers'); return; }
+  // Reordering the grid re-indexes the rows, and unsaved prices are tracked
+  // by row index — so flush any pending saves before we move rows around.
+  for (const k of Object.keys(_pe.dirty)) { try { await pePriceSave(Number(k)); } catch (_) {} }
+  // Parse tokens: split on commas/whitespace, expand numeric a-b ranges.
+  const tokens = raw.split(/[\s,]+/).filter(Boolean);
+  const wanted = [];   // { key, label } in entry order
+  for (const tok of tokens) {
+    const m = tok.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (m) {
+      let a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+      if (a > b) { const t = a; a = b; b = t; }
+      // Guard against a runaway range (typo like 1-99999).
+      for (let n = a; n <= b && (n - a) < 5000; n++) wanted.push({ key: _peNormLot(n), label: String(n) });
+    } else {
+      wanted.push({ key: _peNormLot(tok), label: tok });
+    }
+  }
+  const byLot = new Map();
+  for (const l of _pe.lots) byLot.set(_peNormLot(l.lot_no), l);
+  const matchedIds = [];
+  const notFound = [];
+  const seen = new Set();
+  for (const w of wanted) {
+    if (!w.key || seen.has(w.key)) continue;
+    seen.add(w.key);
+    const l = byLot.get(w.key);
+    if (l) { matchedIds.push(l.id); _pe.sel.add(l.id); }
+    else notFound.push(w.label);
+  }
+  if (matchedIds.length) {
+    // Bring matched lots to the front in the order entered; keep the rest
+    // in their current order.
+    const frontSet = new Set(matchedIds);
+    const front = matchedIds.map(id => _pe.lots.find(l => l.id === id)).filter(Boolean);
+    const rest = _pe.lots.filter(l => !frontSet.has(l.id));
+    _pe.lots = front.concat(rest);
+  }
+  renderPriceEntryGrid();
+  const msg = [`${matchedIds.length} lot(s) selected`];
+  if (notFound.length) msg.push(`${notFound.length} not found`);
+  toast(msg.join(' · '));
+  if (notFound.length) {
+    console.warn('Quick-select — lot numbers not in this trade:', notFound);
+  }
 }
 // Keep the action bar, count, and select-all tri-state in sync with _pe.sel.
 function _peSyncSelectionUI(){
@@ -22065,9 +22135,10 @@ async function peiApply(){
   const priceCol = document.getElementById('pei-map-price').value;
   const codeCol = document.getElementById('pei-map-code').value;
   if (!lotCol || !priceCol) { toast('Map Lot No and Price first'); return; }
-  // Index the current trade's lots by normalised lot number.
+  // Index the current trade's lots by normalised lot number. _peNormLot
+  // strips leading zeros so a file's "1" matches a stored "001".
   const byLot = new Map();
-  for (const l of _pe.lots) byLot.set(String(l.lot_no).trim().toUpperCase(), l);
+  for (const l of _pe.lots) byLot.set(_peNormLot(l.lot_no), l);
   const norm = (v) => String(v == null ? '' : v).trim();
   const parsePrice = (v) => {
     // Strip currency symbols / commas / spaces that Excel text cells may carry.
@@ -22082,7 +22153,7 @@ async function peiApply(){
   for (const row of _pei.rows) {
     const lotNo = norm(row[lotCol]);
     if (!lotNo) { continue; }   // blank lot cell — ignore silently
-    const lot = byLot.get(lotNo.toUpperCase());
+    const lot = byLot.get(_peNormLot(lotNo));
     if (!lot) { unmatched.push(lotNo); continue; }
     if (lot.locked_at) { lockedHit.push(lotNo); continue; }
     const price = parsePrice(row[priceCol]);
