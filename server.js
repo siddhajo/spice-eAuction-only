@@ -6321,22 +6321,33 @@ app.post('/api/lots/price-import/parse', requireLotWrite, upload.single('file'),
       }
       if (headerIdx < 0) headerIdx = 0;
     }
-    const rawHeaders = (aoa[headerIdx] || []).map(h => String(h).trim());
-    if (!rawHeaders.some(h => h !== '')) throw new Error('No column headers found in the file');
-    // Resolve blank cells and de-duplicate so every column is uniquely
-    // addressable (duplicate labels would otherwise collide as object keys).
+    const headerCells = (aoa[headerIdx] || []).map(h => String(h).trim());
+    if (!headerCells.some(h => h !== '')) throw new Error('No column headers found in the file');
+    // True column count. sheet_to_json trims each row to its last non-empty
+    // cell, so rows come back with varying lengths and data can extend past
+    // the header row's labelled columns. Take the widest of the sheet range,
+    // the header row, and every data row so NO column is dropped.
+    let maxCols = headerCells.length;
+    try { const rng = XLSX.utils.decode_range(ws['!ref']); maxCols = Math.max(maxCols, rng.e.c + 1); } catch (_) { /* no !ref */ }
+    for (let i = headerIdx + 1; i < aoa.length; i++) {
+      if (Array.isArray(aoa[i])) maxCols = Math.max(maxCols, aoa[i].length);
+    }
+    // Resolve blank/absent header cells and de-duplicate so every column is
+    // uniquely addressable (duplicate labels would collide as object keys;
+    // columns past the header labels become "Column N").
     const seen = Object.create(null);
-    const headers = rawHeaders.map((h, i) => {
-      let name = h || `Column ${i + 1}`;
+    const headers = [];
+    for (let i = 0; i < maxCols; i++) {
+      let name = headerCells[i] || `Column ${i + 1}`;
       if (seen[name] != null) { seen[name] += 1; name = `${name} (${seen[name]})`; }
       else seen[name] = 0;
-      return name;
-    });
-    // Build data rows (everything after the header row) by position so keys
-    // line up exactly with `headers`. Drop all-blank rows.
+      headers.push(name);
+    }
+    // Build data rows (everything after the header row) across ALL columns.
+    // Drop all-blank rows.
     const rows = aoa.slice(headerIdx + 1).map(arr => {
       const o = {};
-      headers.forEach((h, i) => { o[h] = arr[i] == null ? '' : arr[i]; });
+      for (let i = 0; i < maxCols; i++) { o[headers[i]] = (arr && arr[i] != null) ? arr[i] : ''; }
       return o;
     }).filter(r => Object.values(r).some(v => String(v).trim() !== ''));
     res.json({ headers, rows, rowCount: rows.length, headerRow: headerIdx + 1 });
