@@ -6291,6 +6291,29 @@ app.post('/api/lots/price-import/parse', requireLotWrite, upload.single('file'),
     const workbook = XLSX.readFile(tmpPath);
     const ws = workbook.Sheets[workbook.SheetNames[0]];
     if (!ws) throw new Error('No worksheet found in the file');
+    // Some exporters declare a `!ref` used-range that doesn't cover every
+    // populated cell (e.g. "A1:F…" when data actually runs to column J), and
+    // sheet_to_json silently obeys it — dropping the right-hand columns. Rebuild
+    // the true range from the actual cell addresses and widen !ref to match, so
+    // no column is lost. See the "reading only till column F" reports.
+    try {
+      let maxR = -1, maxC = -1;
+      for (const key of Object.keys(ws)) {
+        if (key[0] === '!') continue;
+        const cell = XLSX.utils.decode_cell(key);
+        if (cell.r > maxR) maxR = cell.r;
+        if (cell.c > maxC) maxC = cell.c;
+      }
+      if (maxR >= 0 && maxC >= 0) {
+        const cur = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : null;
+        if (!cur || cur.e.c < maxC || cur.e.r < maxR) {
+          ws['!ref'] = XLSX.utils.encode_range({
+            s: { r: 0, c: 0 },
+            e: { r: Math.max(maxR, cur ? cur.e.r : 0), c: Math.max(maxC, cur ? cur.e.c : 0) },
+          });
+        }
+      }
+    } catch (_) { /* fall back to the declared !ref */ }
     // Array-of-arrays, blank rows dropped. Many auction exports carry title /
     // description lines above the real column headings, so we don't assume the
     // first row is the header — we locate it below.
@@ -6298,10 +6321,11 @@ app.post('/api/lots/price-import/parse', requireLotWrite, upload.single('file'),
     if (!aoa.length) throw new Error('File appears to be empty');
     // Header-row detection. Column headings for a price sheet almost always
     // contain some of these words; a title/heading line rarely has two of
-    // them. Scan the first several rows and pick the first that looks like a
-    // header (≥2 keyword cells); fall back to the widest (most-populated) row.
+    // them. Scan the first several rows and pick the one with the MOST keyword
+    // cells (that's the real header, not a stray "PRICE LIST" title); require
+    // at least 2. Fall back to the widest (most-populated) row.
     const KEYWORDS = ['LOT', 'PRICE', 'RATE', 'QTY', 'QUANTITY', 'BAG', 'NAME',
-      'SELLER', 'CODE', 'BUYER', 'TNO', 'ANO', 'DATE', 'STATE', 'BRANCH', 'AMOUNT'];
+      'SELLER', 'CODE', 'BUYER', 'TNO', 'ANO', 'DATE', 'STATE', 'BRANCH', 'AMOUNT', 'GRADE'];
     const SCAN = Math.min(aoa.length, 25);
     const rowStats = (row) => {
       const cells = (row || []).map(c => String(c).trim());
@@ -6309,8 +6333,8 @@ app.post('/api/lots/price-import/parse', requireLotWrite, upload.single('file'),
       const kw = cells.filter(c => { const u = c.toUpperCase(); return KEYWORDS.some(k => u.includes(k)); }).length;
       return { nonEmpty, kw };
     };
-    let headerIdx = -1;
-    for (let i = 0; i < SCAN; i++) { if (rowStats(aoa[i]).kw >= 2) { headerIdx = i; break; } }
+    let headerIdx = -1, bestKw = 1;   // require ≥2 keyword cells to qualify
+    for (let i = 0; i < SCAN; i++) { const k = rowStats(aoa[i]).kw; if (k > bestKw) { bestKw = k; headerIdx = i; } }
     if (headerIdx < 0) {
       // No keyword row found — use the widest row in the scan window (the one
       // that best matches the data's column count), preferring the earliest.

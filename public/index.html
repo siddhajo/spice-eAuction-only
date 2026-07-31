@@ -22208,7 +22208,9 @@ function _peiBuildMapping(){
   codeSel.innerHTML = opt(codeSel, true);
   lotSel.value = guess(lotSel, 'LOT NO', 'LOTNO', 'LOT_NO', 'LOT', 'LOTNUMBER') || _pei.headers[0] || '';
   priceSel.value = guess(priceSel, 'PRICE', 'RATE', 'AMOUNT PER', 'PRICE/KG') || '';
-  codeSel.value = guess(codeSel, 'CODE', 'BUYER CODE', 'BUYERCODE', 'BUYER') || '';
+  // Deliberately NOT matching bare "BUYER" — that would grab a "NAME OF BUYER"
+  // column and write buyer names into the code field. Buyer code stays optional.
+  codeSel.value = guess(codeSel, 'BUYER CODE', 'BUYERCODE', 'CODE') || '';
   peiRenderPreview();
 }
 function peiRenderPreview(){
