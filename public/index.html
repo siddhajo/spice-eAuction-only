@@ -3925,6 +3925,16 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <input id="pe-lotno-input" placeholder="e.g. 1, 5, 12-18" onkeydown="if(event.key==='Enter'){event.preventDefault();peSelectByLotNos();}" style="flex:1;min-width:160px;max-width:340px;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
           <button class="btn btn-o" style="height:34px;padding:0 12px;font-weight:600" onclick="peSelectByLotNos()">Select &amp; bring to front</button>
         </div>
+        <!-- Column filters — kept OUTSIDE #pe-grid (which fully re-renders) so
+             the text inputs don't lose focus while typing. The branch dropdown
+             is rebuilt from the trade's distinct branches on load. -->
+        <div id="pe-filter-bar" style="display:none;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+          <label style="font-size:12px;font-weight:600;color:var(--text2);margin:0;white-space:nowrap">🔎 Filter:</label>
+          <input id="pe-filter-lot" placeholder="Lot no" oninput="peSetFilter('lot',this.value)" style="width:110px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+          <select id="pe-filter-branch" onchange="peSetFilter('branch',this.value)" style="min-width:130px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px"><option value="">All branches</option></select>
+          <input id="pe-filter-seller" placeholder="Seller" oninput="peSetFilter('seller',this.value)" style="width:180px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+          <button class="btn btn-o" style="height:32px;padding:0 10px;font-weight:600" onclick="peClearFilters()">Clear filters</button>
+        </div>
         <!-- Bulk buyer-code bar — appears only when one or more lots are
              ticked in the grid below. Set applies a buyer code (picked from
              the dropdown) to every ticked lot; Clear wipes the buyer code on
@@ -21709,7 +21719,12 @@ async function validateLots(){
 // commission/tax/payable and (when Price Check is on) nudges a re-verify.
 // See INLINE-PRICE-EDIT-RISKS.md for why this grid is preferred over making
 // the whole Lots table editable.
-let _pe = { aid: null, lots: [], dirty: {}, sel: new Set() };
+// _pe.lots is the CANONICAL list in server order — it is never reordered.
+// Display order is derived on the fly by _peViewLots() (filter → sort →
+// bring-to-front), so clearing the selection restores every lot's place.
+// dirty/sel/front are keyed by lot id (stable across re-render/reorder).
+let _pe = { aid: null, lots: [], byId: new Map(), view: [], dirty: new Set(), sel: new Set(),
+            front: [], sort: { col: null, dir: 1 }, filter: { lot: '', branch: '', seller: '' } };
 function _peFlagPriceCheck(){ return String(((window._CCFG)||{}).flag_price_check).toLowerCase() === 'true'; }
 function _peFmt(n){ return (Number(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 // Bags are counts — always whole numbers, no decimals.
@@ -21731,10 +21746,17 @@ function loadPriceEntry(){
 }
 async function loadPriceEntryGrid(){
   const aid = document.getElementById('pe-auction').value;
-  _pe.aid = aid; _pe.dirty = {}; _pe.sel = new Set();
+  const tradeChanged = aid !== _pe.aid;
+  _pe.aid = aid; _pe.dirty = new Set(); _pe.sel = new Set(); _pe.front = [];
+  // A fresh trade starts with no sort/filter; a same-trade refresh keeps them.
+  if (tradeChanged) { _pe.sort = { col: null, dir: 1 }; _pe.filter = { lot: '', branch: '', seller: '' }; }
   const grid = document.getElementById('pe-grid');
   const sumEl = document.getElementById('pe-summary');
-  if (!aid) { grid.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:13px">Select a trade to price its lots.</div>'; if (sumEl) sumEl.textContent = ''; return; }
+  const fbar = document.getElementById('pe-filter-bar');
+  if (!aid) {
+    grid.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:13px">Select a trade to price its lots.</div>';
+    if (sumEl) sumEl.textContent = ''; if (fbar) fbar.style.display = 'none'; return;
+  }
   grid.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3)">Loading…</div>';
   let lots;
   try { lots = await j(`/api/lots/${aid}`); }
@@ -21744,7 +21766,49 @@ async function loadPriceEntryGrid(){
   // registers — but render as read-only zero-price rows below (withdrawal
   // forces price/amount to 0, so there's nothing to enter).
   _pe.lots = (Array.isArray(lots) ? lots : []).filter(l => !Number(l.reserved));
+  _pe.byId = new Map(_pe.lots.map(l => [l.id, l]));
+  _pePopulateFilterUI(tradeChanged);
   renderPriceEntryGrid();
+}
+// Compare two lots under the active sort (lot no is numeric-aware).
+function _peSortCmp(a, b){
+  const { col, dir } = _pe.sort;
+  if (!col) return 0;
+  if (col === 'lot_no') {
+    const an = /^\d+$/.test(String(a.lot_no||'').trim()) ? parseInt(a.lot_no, 10) : null;
+    const bn = /^\d+$/.test(String(b.lot_no||'').trim()) ? parseInt(b.lot_no, 10) : null;
+    if (an != null && bn != null) { if (an !== bn) return (an - bn) * dir; return 0; }
+    if (an != null) return -1 * dir;   // numeric before alphanumeric
+    if (bn != null) return  1 * dir;
+  }
+  const av = String(a[col] || '').toUpperCase();
+  const bv = String(b[col] || '').toUpperCase();
+  return av < bv ? -dir : av > bv ? dir : 0;
+}
+// Does a lot pass the current column filters?
+function _pePasses(l){
+  const f = _pe.filter;
+  if (f.lot    && !String(l.lot_no || '').toLowerCase().includes(f.lot.toLowerCase()))    return false;
+  if (f.branch && String(l.branch || '') !== f.branch)                                    return false;
+  if (f.seller && !String(l.name   || '').toLowerCase().includes(f.seller.toLowerCase())) return false;
+  return true;
+}
+// Derive the display order from the canonical list: filter, then sort, with
+// any bring-to-front lots pinned on top (in the order they were entered).
+function _peViewLots(){
+  const fo = new Map(_pe.front.map((id, i) => [id, i]));
+  return _pe.lots.filter(_pePasses).sort((a, b) => {
+    const af = fo.has(a.id), bf = fo.has(b.id);
+    if (af && bf) return fo.get(a.id) - fo.get(b.id);
+    if (af) return -1;
+    if (bf) return 1;
+    return _peSortCmp(a, b);
+  });
+}
+// Arrow indicator + click handler markup for a sortable header.
+function _peSortArrow(col){
+  if (_pe.sort.col !== col) return '<span style="color:var(--text3);font-size:10px">↕</span>';
+  return _pe.sort.dir === 1 ? '<span style="font-size:10px">▲</span>' : '<span style="font-size:10px">▼</span>';
 }
 function renderPriceEntryGrid(){
   const grid = document.getElementById('pe-grid');
@@ -21754,7 +21818,9 @@ function renderPriceEntryGrid(){
     if (sumEl) sumEl.textContent = '';
     return;
   }
-  const rows = _pe.lots.map((l, i) => {
+  const view = _peViewLots();
+  _pe.view = view;
+  const rows = view.map((l) => {
     const codeUp = String(l.code||'').trim().toUpperCase();
     const isWD = codeUp === 'WD';
     const isNA = codeUp === 'NA';   // Not-Auctioned buyer — carries no sale value
@@ -21763,6 +21829,7 @@ function renderPriceEntryGrid(){
     const locked = !!(l.locked_at);   // locked lots are edited by admins in the modal only
     const readonly = locked || noSale;  // WD/NA lots carry no price — visible but not editable
     const ticked = _pe.sel.has(l.id);
+    const pinned = _pe.front.includes(l.id);
     // Buyer-code cell — shows the assigned code (green) with the buyer name
     // beneath. WD/NA render their status code muted; unassigned shows a dash.
     const buyerCell = noSale
@@ -21770,27 +21837,33 @@ function renderPriceEntryGrid(){
       : (l.code
           ? `<span style="font-weight:700;color:#15803d">${esc(l.code)}</span>${(l.buyer1 || l.buyer) ? `<span style="color:var(--text3);font-size:11px;display:block;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(l.buyer1 || l.buyer)}</span>` : ''}`
           : `<span style="color:var(--text3)">—</span>`);
-    return `<tr data-row="${i}" data-lotid="${l.id}"${noSale ? ' style="opacity:.55"' : ''}>
+    return `<tr data-lotid="${l.id}"${noSale ? ' style="opacity:.55"' : (pinned ? ' style="background:#f0fdf4"' : '')}>
       <td style="padding:6px 4px;width:28px;text-align:center"><input type="checkbox" class="pe-cb" data-pesel="${l.id}" ${locked ? 'disabled' : ''} ${ticked ? 'checked' : ''} onchange="peToggleSel(${l.id}, this.checked)" style="width:15px;height:15px;cursor:pointer"></td>
       <td style="padding:6px 8px;white-space:nowrap;font-weight:600">${esc(l.lot_no)}</td>
       <td style="padding:6px 8px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis">${esc(l.name||'')}</td>
       <td style="padding:6px 8px;text-align:right">${esc(l.branch||'')}</td>
       <td style="padding:6px 8px;text-align:right">${_peBags(l.bags)}</td>
       <td style="padding:6px 8px;text-align:right">${_peFmt(l.qty)}</td>
-      <td style="padding:6px 8px;text-align:right"><input type="number" step="0.01" min="0" inputmode="decimal" data-peprice="${i}" value="${noSale ? '' : (l.price ? Number(l.price).toFixed(2) : '')}" placeholder="${noSale ? '—' : '0.00'}" ${readonly ? `disabled title="${isWD ? 'Withdrawn lot — carries no price' : isNA ? 'Not-auctioned lot — carries no price' : 'Locked lot — edit via the Lots tab'}"` : ''} onkeydown="pePriceKey(event,${i})" oninput="pePriceInput(${i})" onblur="pePriceSave(${i})" style="width:110px;text-align:right;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px${readonly ? ';background:#f3f4f6;color:var(--text3)' : ''}"></td>
-      <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums" data-peamt="${i}">${_peFmt(amt)}</td>
+      <td style="padding:6px 8px;text-align:right"><input type="number" step="0.01" min="0" inputmode="decimal" data-peprice="${l.id}" value="${noSale ? '' : (l.price ? Number(l.price).toFixed(2) : '')}" placeholder="${noSale ? '—' : '0.00'}" ${readonly ? `disabled title="${isWD ? 'Withdrawn lot — carries no price' : isNA ? 'Not-auctioned lot — carries no price' : 'Locked lot — edit via the Lots tab'}"` : ''} onkeydown="pePriceKey(event,${l.id})" oninput="pePriceInput(${l.id})" onblur="pePriceSave(${l.id})" style="width:110px;text-align:right;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px${readonly ? ';background:#f3f4f6;color:var(--text3)' : ''}"></td>
+      <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums" data-peamt="${l.id}">${_peFmt(amt)}</td>
       <td data-pebuyer="${l.id}" style="padding:6px 8px;text-align:left;min-width:80px">${buyerCell}</td>
-      <td data-pestatus="${i}" style="padding:6px 4px;width:26px;text-align:center;color:var(--text3)">${isWD ? '<span title="Withdrawn" style="color:#b91c1c;font-weight:700;font-size:10px">WD</span>' : isNA ? '<span title="Not Auctioned" style="color:#a16207;font-weight:700;font-size:10px">NA</span>' : (locked ? '🔒' : '')}</td>
+      <td data-pestatus="${l.id}" style="padding:6px 4px;width:26px;text-align:center;color:var(--text3)">${isWD ? '<span title="Withdrawn" style="color:#b91c1c;font-weight:700;font-size:10px">WD</span>' : isNA ? '<span title="Not Auctioned" style="color:#a16207;font-weight:700;font-size:10px">NA</span>' : (locked ? '🔒' : '')}</td>
     </tr>`;
   }).join('');
+  const thStyle = 'cursor:pointer;user-select:none';
+  const bodyHtml = view.length
+    ? rows
+    : `<tr><td colspan="10" style="padding:20px;text-align:center;color:var(--text3);font-size:13px">No lots match the current filter. <a href="#" onclick="peClearFilters();return false" style="color:var(--green)">Clear filters</a></td></tr>`;
   grid.innerHTML = `<table class="pe-grid-table" style="width:100%;border-collapse:collapse;font-size:13px">
     <thead><tr>
       <th style="border-top-left-radius:6px;width:28px;text-align:center"><input type="checkbox" id="pe-selall" onchange="peToggleSelectAll(this.checked)" title="Select all priceable lots" style="width:15px;height:15px;cursor:pointer"></th>
-      <th>Lot</th><th>Seller</th><th style="text-align:right">Branch</th>
+      <th style="${thStyle}" onclick="peSort('lot_no')" title="Sort by lot number">Lot ${_peSortArrow('lot_no')}</th>
+      <th style="${thStyle}" onclick="peSort('name')" title="Sort by seller">Seller ${_peSortArrow('name')}</th>
+      <th style="text-align:right;${thStyle}" onclick="peSort('branch')" title="Sort by branch">Branch ${_peSortArrow('branch')}</th>
       <th style="text-align:right">Bags</th><th style="text-align:right">Qty</th>
       <th style="text-align:right">Price ₹/kg</th><th style="text-align:right">Amount</th>
       <th style="text-align:left">Buyer</th><th style="border-top-right-radius:6px"></th>
-    </tr></thead><tbody>${rows}</tbody></table>`;
+    </tr></thead><tbody>${bodyHtml}</tbody></table>`;
   _peSyncSelectionUI();
   _peRenderSummary();
 }
@@ -21801,41 +21874,46 @@ function _peRenderSummary(){
   const sellable = _pe.lots.filter(l => !['WD','NA'].includes(String(l.code||'').trim().toUpperCase()));
   const total = sellable.length;
   const priced = sellable.filter(l => Number(l.price) > 0).length;
-  const dirty = Object.keys(_pe.dirty).length;
-  sumEl.innerHTML = `${priced}/${total} lots priced` + (dirty ? ` · <b style="color:#a16207">${dirty} unsaved</b>` : (total ? ' · all saved' : ''));
+  const dirty = _pe.dirty.size;
+  // Note when a filter is hiding some rows so the on-screen count is clear.
+  const shown = (_pe.view || []).length;
+  const filtered = shown < _pe.lots.length ? ` · showing ${shown} of ${_pe.lots.length}` : '';
+  sumEl.innerHTML = `${priced}/${total} lots priced` + (dirty ? ` · <b style="color:#a16207">${dirty} unsaved</b>` : (total ? ' · all saved' : '')) + filtered;
 }
-function pePriceInput(i){
-  const inp = document.querySelector(`[data-peprice="${i}"]`); if (!inp) return;
+function pePriceInput(id){
+  const inp = document.querySelector(`[data-peprice="${id}"]`); if (!inp) return;
+  const l = _pe.byId.get(id); if (!l) return;
   const price = parseFloat(inp.value);
-  const l = _pe.lots[i];
   const amt = (Number(l.qty)||0) * (Number.isFinite(price) ? price : 0);
-  const amtEl = document.querySelector(`[data-peamt="${i}"]`); if (amtEl) amtEl.textContent = _peFmt(amt);
-  _pe.dirty[i] = true;
-  const st = document.querySelector(`[data-pestatus="${i}"]`); if (st && !_pe.lots[i].locked_at) { st.textContent = '•'; st.style.color = '#a16207'; }
+  const amtEl = document.querySelector(`[data-peamt="${id}"]`); if (amtEl) amtEl.textContent = _peFmt(amt);
+  _pe.dirty.add(id);
+  const st = document.querySelector(`[data-pestatus="${id}"]`); if (st && !l.locked_at) { st.textContent = '•'; st.style.color = '#a16207'; }
   _peRenderSummary();
 }
-function pePriceKey(e, i){
+function pePriceKey(e, id){
   if (e.key === 'Enter') {
     e.preventDefault();
-    // Advance focus immediately (no wait on the network). Focusing the next
-    // input blurs this one, whose onblur=pePriceSave(i) does the single save.
-    const nx = document.querySelector(`[data-peprice="${i+1}"]`);
-    if (nx && !nx.disabled) { nx.focus(); if (nx.select) nx.select(); }
-    else pePriceSave(i);   // last row — nothing to blur into, so save here
+    // Advance to the next editable price input in the CURRENT display order
+    // (rows are reordered by sort/filter/front, so "next" is DOM order, not id+1).
+    const inputs = Array.from(document.querySelectorAll('#pe-grid [data-peprice]:not([disabled])'));
+    const idx = inputs.findIndex(x => x.getAttribute('data-peprice') === String(id));
+    const nx = idx >= 0 ? inputs[idx + 1] : null;
+    if (nx) { nx.focus(); if (nx.select) nx.select(); }
+    else pePriceSave(id);   // last row — nothing to blur into, so save here
   }
 }
-async function pePriceSave(i){
-  if (!_pe.dirty[i]) return;   // nothing changed since last save
-  const inp = document.querySelector(`[data-peprice="${i}"]`); if (!inp) return;
-  const l = _pe.lots[i];
+async function pePriceSave(id){
+  if (!_pe.dirty.has(id)) return;   // nothing changed since last save
+  const inp = document.querySelector(`[data-peprice="${id}"]`); if (!inp) return;
+  const l = _pe.byId.get(id); if (!l) return;
   const raw = inp.value.trim();
   const price = raw === '' ? 0 : parseFloat(raw);
-  const st = document.querySelector(`[data-pestatus="${i}"]`);
+  const st = document.querySelector(`[data-pestatus="${id}"]`);
   if (!Number.isFinite(price) || price < 0) { if (st) { st.textContent = '✕'; st.style.color = '#b91c1c'; } return; }
   const amount = (Number(l.qty)||0) * price;
   try {
     await j(`/api/lots/${l.id}`, { method: 'PUT', body: JSON.stringify({ price, amount }) });
-    l.price = price; l.amount = amount; delete _pe.dirty[i];
+    l.price = price; l.amount = amount; _pe.dirty.delete(id);
     // Normalise the field to 2 decimals once saved (e.g. "2942" → "2942.00").
     // Leave a cleared field blank rather than showing "0.00".
     if (raw !== '' && price > 0) inp.value = price.toFixed(2);
@@ -21852,7 +21930,7 @@ async function peSaveAndCalculate(){
   const btn = document.getElementById('pe-save-calc');
   try {
     await withBusy(btn, async () => {
-      for (const k of Object.keys(_pe.dirty)) { await pePriceSave(Number(k)); }
+      for (const id of Array.from(_pe.dirty)) { await pePriceSave(id); }
       const d = await j(`/api/lots/calculate/${_pe.aid}`, { method: 'POST' });
       toast(`Saved prices · calculated ${d.calculated} lots`);
       await loadPriceEntryGrid();
@@ -21872,27 +21950,64 @@ function peToggleSel(id, checked){
   _peSyncSelectionUI();
 }
 function peToggleSelectAll(checked){
-  // Only the priceable (non-locked, non-WD/NA) lots are selectable — the
-  // same rows whose checkbox is enabled in the grid.
-  for (const l of _pe.lots) {
-    const codeUp = String(l.code||'').trim().toUpperCase();
-    if (l.locked_at || codeUp === 'WD' || codeUp === 'NA') continue;
-    if (checked) _pe.sel.add(l.id); else _pe.sel.delete(l.id);
-  }
-  // Reflect on every visible checkbox without a full re-render.
+  // Operate on the currently VISIBLE, enabled checkboxes so select-all
+  // respects any active filter.
   document.querySelectorAll('#pe-grid .pe-cb').forEach(cb => {
     if (cb.disabled) return;
+    const id = Number(cb.getAttribute('data-pesel'));
+    if (checked) _pe.sel.add(id); else _pe.sel.delete(id);
     cb.checked = checked;
   });
   _peSyncSelectionUI();
 }
+// Clear the tick selection AND the bring-to-front pinning, so every lot
+// returns to its natural place under the current sort/filter.
 function peClearSelection(){
   _pe.sel = new Set();
-  document.querySelectorAll('#pe-grid .pe-cb').forEach(cb => { cb.checked = false; });
-  const all = document.getElementById('pe-selall'); if (all) { all.checked = false; all.indeterminate = false; }
-  _peSyncSelectionUI();
+  _pe.front = [];
+  renderPriceEntryGrid();
 }
-// Tick the lots whose numbers are typed in the quick-select box and move them
+// ── Sort + filter ─────────────────────────────────────────────────
+// Toggle the sort column/direction and re-render. Clicking the active
+// column flips asc↔desc.
+function peSort(col){
+  if (_pe.sort.col === col) _pe.sort.dir = -_pe.sort.dir;
+  else _pe.sort = { col, dir: 1 };
+  renderPriceEntryGrid();
+}
+// Column filters live in the static bar above the grid (so their inputs keep
+// focus across grid re-renders). Only the grid re-renders here.
+function peSetFilter(key, val){
+  _pe.filter[key] = val;
+  renderPriceEntryGrid();
+}
+function peClearFilters(){
+  _pe.filter = { lot: '', branch: '', seller: '' };
+  const lf = document.getElementById('pe-filter-lot');    if (lf) lf.value = '';
+  const bf = document.getElementById('pe-filter-branch'); if (bf) bf.value = '';
+  const sf = document.getElementById('pe-filter-seller'); if (sf) sf.value = '';
+  renderPriceEntryGrid();
+}
+// Refresh the filter bar for the loaded trade: show it, and rebuild the
+// branch dropdown from the distinct branches present.
+function _pePopulateFilterUI(reset){
+  const fbar = document.getElementById('pe-filter-bar');
+  if (fbar) fbar.style.display = _pe.lots.length ? 'flex' : 'none';
+  if (reset) {
+    const lf = document.getElementById('pe-filter-lot');    if (lf) lf.value = '';
+    const sf = document.getElementById('pe-filter-seller'); if (sf) sf.value = '';
+  }
+  const bf = document.getElementById('pe-filter-branch');
+  if (bf) {
+    const branches = Array.from(new Set(_pe.lots.map(l => String(l.branch || '').trim()).filter(Boolean)))
+      .sort((a, b) => a.localeCompare(b));
+    const keep = reset ? '' : _pe.filter.branch;
+    bf.innerHTML = '<option value="">All branches</option>' +
+      branches.map(b => `<option value="${escAttr(b)}"${b === keep ? ' selected' : ''}>${esc(b)}</option>`).join('');
+    if (reset) bf.value = '';
+  }
+}
+// Tick the lots whose numbers are typed in the quick-select box and pin them
 // to the top of the grid. Accepts a comma/space separated list, with numeric
 // ranges like "12-18". Leading zeros are ignored when matching.
 async function peSelectByLotNos(){
@@ -21900,9 +22015,6 @@ async function peSelectByLotNos(){
   const inp = document.getElementById('pe-lotno-input');
   const raw = inp ? inp.value : '';
   if (!raw.trim()) { toast('Enter one or more lot numbers'); return; }
-  // Reordering the grid re-indexes the rows, and unsaved prices are tracked
-  // by row index — so flush any pending saves before we move rows around.
-  for (const k of Object.keys(_pe.dirty)) { try { await pePriceSave(Number(k)); } catch (_) {} }
   // Parse tokens: split on commas/whitespace, expand numeric a-b ranges.
   const tokens = raw.split(/[\s,]+/).filter(Boolean);
   const wanted = [];   // { key, label } in entry order
@@ -21930,12 +22042,10 @@ async function peSelectByLotNos(){
     else notFound.push(w.label);
   }
   if (matchedIds.length) {
-    // Bring matched lots to the front in the order entered; keep the rest
-    // in their current order.
-    const frontSet = new Set(matchedIds);
-    const front = matchedIds.map(id => _pe.lots.find(l => l.id === id)).filter(Boolean);
-    const rest = _pe.lots.filter(l => !frontSet.has(l.id));
-    _pe.lots = front.concat(rest);
+    // Pin matched lots to the front (newest entry first), keeping any
+    // previously-pinned lots after them. _peViewLots() applies the order —
+    // _pe.lots itself is never reordered, so Clear selection restores places.
+    _pe.front = matchedIds.concat(_pe.front.filter(id => !matchedIds.includes(id)));
   }
   renderPriceEntryGrid();
   const msg = [`${matchedIds.length} lot(s) selected`];
@@ -21945,7 +22055,8 @@ async function peSelectByLotNos(){
     console.warn('Quick-select — lot numbers not in this trade:', notFound);
   }
 }
-// Keep the action bar, count, and select-all tri-state in sync with _pe.sel.
+// Keep the action bar, count, and select-all tri-state in sync. The select-all
+// state reflects the VISIBLE (filtered) rows.
 function _peSyncSelectionUI(){
   const n = _pe.sel.size;
   const bar = document.getElementById('pe-action-bar');
@@ -21953,12 +22064,11 @@ function _peSyncSelectionUI(){
   const cnt = document.getElementById('pe-sel-count'); if (cnt) cnt.textContent = n;
   const all = document.getElementById('pe-selall');
   if (all) {
-    const selectable = _pe.lots.filter(l => {
-      const c = String(l.code||'').trim().toUpperCase();
-      return !l.locked_at && c !== 'WD' && c !== 'NA';
-    }).length;
-    all.checked = selectable > 0 && n >= selectable;
-    all.indeterminate = n > 0 && n < selectable;
+    const cbs = Array.from(document.querySelectorAll('#pe-grid .pe-cb')).filter(cb => !cb.disabled);
+    const selectable = cbs.length;
+    const selVisible = cbs.filter(cb => _pe.sel.has(Number(cb.getAttribute('data-pesel')))).length;
+    all.checked = selectable > 0 && selVisible >= selectable;
+    all.indeterminate = selVisible > 0 && selVisible < selectable;
   }
 }
 

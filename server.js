@@ -6291,12 +6291,38 @@ app.post('/api/lots/price-import/parse', requireLotWrite, upload.single('file'),
     const workbook = XLSX.readFile(tmpPath);
     const ws = workbook.Sheets[workbook.SheetNames[0]];
     if (!ws) throw new Error('No worksheet found in the file');
-    // Array-of-arrays, blank rows dropped so the first element is the header
-    // row (same "row 1 = column names" convention the other imports use).
+    // Array-of-arrays, blank rows dropped. Many auction exports carry title /
+    // description lines above the real column headings, so we don't assume the
+    // first row is the header — we locate it below.
     const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', blankrows: false });
     if (!aoa.length) throw new Error('File appears to be empty');
-    const rawHeaders = (aoa[0] || []).map(h => String(h).trim());
-    if (!rawHeaders.some(h => h !== '')) throw new Error('No column headers found in the first row');
+    // Header-row detection. Column headings for a price sheet almost always
+    // contain some of these words; a title/heading line rarely has two of
+    // them. Scan the first several rows and pick the first that looks like a
+    // header (≥2 keyword cells); fall back to the widest (most-populated) row.
+    const KEYWORDS = ['LOT', 'PRICE', 'RATE', 'QTY', 'QUANTITY', 'BAG', 'NAME',
+      'SELLER', 'CODE', 'BUYER', 'TNO', 'ANO', 'DATE', 'STATE', 'BRANCH', 'AMOUNT'];
+    const SCAN = Math.min(aoa.length, 25);
+    const rowStats = (row) => {
+      const cells = (row || []).map(c => String(c).trim());
+      const nonEmpty = cells.filter(c => c !== '').length;
+      const kw = cells.filter(c => { const u = c.toUpperCase(); return KEYWORDS.some(k => u.includes(k)); }).length;
+      return { nonEmpty, kw };
+    };
+    let headerIdx = -1;
+    for (let i = 0; i < SCAN; i++) { if (rowStats(aoa[i]).kw >= 2) { headerIdx = i; break; } }
+    if (headerIdx < 0) {
+      // No keyword row found — use the widest row in the scan window (the one
+      // that best matches the data's column count), preferring the earliest.
+      let best = 0;
+      for (let i = 0; i < SCAN; i++) {
+        const n = rowStats(aoa[i]).nonEmpty;
+        if (n > best) { best = n; headerIdx = i; }
+      }
+      if (headerIdx < 0) headerIdx = 0;
+    }
+    const rawHeaders = (aoa[headerIdx] || []).map(h => String(h).trim());
+    if (!rawHeaders.some(h => h !== '')) throw new Error('No column headers found in the file');
     // Resolve blank cells and de-duplicate so every column is uniquely
     // addressable (duplicate labels would otherwise collide as object keys).
     const seen = Object.create(null);
@@ -6306,14 +6332,14 @@ app.post('/api/lots/price-import/parse', requireLotWrite, upload.single('file'),
       else seen[name] = 0;
       return name;
     });
-    // Build data rows by position so keys line up exactly with `headers`
-    // (including the de-duplicated / filled-in labels). Drop all-blank rows.
-    const rows = aoa.slice(1).map(arr => {
+    // Build data rows (everything after the header row) by position so keys
+    // line up exactly with `headers`. Drop all-blank rows.
+    const rows = aoa.slice(headerIdx + 1).map(arr => {
       const o = {};
       headers.forEach((h, i) => { o[h] = arr[i] == null ? '' : arr[i]; });
       return o;
     }).filter(r => Object.values(r).some(v => String(v).trim() !== ''));
-    res.json({ headers, rows, rowCount: rows.length });
+    res.json({ headers, rows, rowCount: rows.length, headerRow: headerIdx + 1 });
   } catch (e) {
     res.status(400).json({ error: 'Could not read the file: ' + (e.message || e) });
   } finally {

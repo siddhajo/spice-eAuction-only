@@ -16,6 +16,7 @@
   .band .who { flex: 1; min-width: 0; }
   .band .co { font-size: 13pt; font-weight: bold; letter-spacing: .3pt; line-height: 1.15; overflow-wrap: anywhere; }
   .band .sub { font-size: 7.5pt; opacity: .9; }
+  .band .idp { white-space: nowrap; }   /* keep each LABEL VALUE pair unbroken */
   .band .doctype { margin-left: auto; text-align: right; flex-shrink: 0; padding-left: 12pt; }
   .band .doctype b { font-size: 11pt; letter-spacing: .5pt; white-space: nowrap; }
   .band .doctype .s { font-size: 6.5pt; opacity: .9; }
@@ -55,7 +56,7 @@
     <div class="who">
       <div class="co">{{co.name}}</div>
       <div class="sub">{{co.address1}}{{#if co.place}}, {{co.place}}{{/if}}{{#if co.stCode}} · STATE CODE {{co.stCode}}{{/if}}</div>
-      <div class="sub">GSTIN {{co.gstin}}{{#if co.fssai}} · FSSAI {{co.fssai}}{{/if}}{{#if co.pan}} · PAN {{co.pan}}{{/if}}{{#if co.sbl}} · SBL {{co.sbl}}{{/if}}</div>
+      <div class="sub"><span class="idp">GSTIN {{co.gstin}}{{#if (or co.fssai (or co.pan co.sbl))}}·{{/if}}</span>{{#if co.fssai}} <span class="idp">FSSAI {{co.fssai}}{{#if (or co.pan co.sbl)}}·{{/if}}</span>{{/if}}{{#if co.pan}} <span class="idp">PAN {{co.pan}}{{#if co.sbl}}·{{/if}}</span>{{/if}}{{#if co.sbl}} <span class="idp">SBL {{co.sbl}}</span>{{/if}}</div>
     </div>
     <div class="doctype"><b>BILL OF SUPPLY</b><div class="s">Bill for Purchase from Agriculturist · Sec 2(7)</div></div>
   </div>
