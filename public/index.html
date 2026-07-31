@@ -13024,13 +13024,14 @@ function lePickSeller(t){
   // Render the bank picker — only shown if seller has 1+ bank rows.
   // Default selection: the bank flagged is_default, else first bank.
   leRenderBankPicker(t);
-  // Auto-select grade based on CR field — same heuristic as the PWA:
-  //   CR.* prefix → grade 1 (registered)
-  //   GSTIN-shaped (15 chars) → grade 2 (GST-registered)
-  //   anything else → grade 1
-  const cr = String(t.cr || '').trim();
-  let grade = '1';
-  if (cr.length > 5 && !cr.toUpperCase().startsWith('CR.')) grade = '2';
+  // Auto-select grade from the seller — SAME rule as the Grade-2/dealer
+  // classification used for invoices & reports (isDealerSeller): cr starts
+  // with GSTIN AND the SBL (stored in aadhar) is present → Grade 2 (dealer);
+  // anything else → Grade 1 (planter). Still overridable — the operator can
+  // change the dropdown before saving.
+  const cr  = String(t.cr || '').trim().toUpperCase();
+  const sbl = String(t.aadhar || '').trim();
+  const grade = (cr.startsWith('GSTIN') && sbl !== '') ? '2' : '1';
   document.getElementById('le-grade').value = grade;
   // Auto-suggest the next lot number for the current branch + auction.
   // Keeps fields blank in edit mode so we don't clobber an existing lot

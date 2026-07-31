@@ -993,9 +993,10 @@ const qu=q.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');let html=ts.map((
 function pickTrader(t){selT=t;document.getElementById('le-res').style.display='none';document.getElementById('le-sw').style.display='none';
 var loc=[t.ppla,t.pin].filter(Boolean).join(', ');
 var cr=(t.cr||'').trim();
-// Auto-grade: starts with CR. → Grade 1, has GSTIN (number prefix) → Grade 2
-var grade='1';
-if(cr.length>5 && !cr.toUpperCase().startsWith('CR.'))grade='2';
+// Auto-grade (same rule as the dealer classification / isDealerSeller):
+// cr starts with GSTIN AND the SBL (aadhar) is present → Grade 2 (dealer);
+// anything else → Grade 1 (planter). Still overridable before saving.
+var grade=(cr.toUpperCase().startsWith('GSTIN') && String(t.aadhar||'').trim()!=='')?'2':'1';
 document.getElementById('le-tc').innerHTML='<div class="tc"><div class="ti"><div class="tn">'+t.name+'</div><div class="td">'+loc+(cr?' — '+cr:'')+'</div></div><button class="tx" onclick="clearTrader()">&#x2715;</button></div>';document.getElementById('le-tc').style.display='block';
 document.getElementById('le-grade').value=grade;
 cacheTrader(t);
@@ -1442,7 +1443,7 @@ function closeEdit(){document.getElementById('edit-modal').classList.remove('sho
 function editSellerMode(){document.getElementById('ed-seller-card').style.display='none';document.getElementById('ed-seller-search').style.display='block';document.getElementById('ed-seller-input').value='';document.getElementById('ed-seller-input').focus()}
 let edStm;
 function searchEditSeller(q){clearTimeout(edStm);var el=document.getElementById('ed-seller-res');if(q.length<2){el.style.display='none';return}edStm=setTimeout(async function(){try{var r=await fetch(B+'/api/traders?q='+encodeURIComponent(q),{headers:ah()});var d=await r.json();var ts=Array.isArray(d)?d:(d.traders||[]);var qu=q.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');el.innerHTML=ts.map(function(t,i){var h=(t.name||'').replace(new RegExp('('+qu+')','gi'),'<mark>$1</mark>');var loc=[t.ppla,t.pin].filter(Boolean).join(', ');var info=[t.cr,(t.pan?'PAN - '+t.pan:''),t.tel].filter(Boolean).join(' | ');return'<div class="si" data-idx="'+i+'"><div class="sn">'+h+'</div><div class="sd">'+loc+(info?' — '+info:'')+'</div></div>'}).join('')||'<div style="padding:10px;color:var(--text3);font-size:12px">No sellers found</div>';el.style.display='block';el._traders=ts;el.querySelectorAll('.si').forEach(function(item){item.onclick=function(){pickEditSeller(el._traders[parseInt(this.dataset.idx)])}})}catch(e){}},200)}
-function pickEditSeller(t){editTraderId=t.id;editLotBankId=null;document.getElementById('ed-seller-name').textContent=t.name;document.getElementById('ed-seller-card').style.display='flex';document.getElementById('ed-seller-search').style.display='none';document.getElementById('ed-seller-res').style.display='none';var cr=(t.cr||'').trim();var grade='1';if(cr.length>5&&!cr.toUpperCase().startsWith('CR.'))grade='2';document.getElementById('ed-grade').value=grade;loadEditBanks(t.id)}
+function pickEditSeller(t){editTraderId=t.id;editLotBankId=null;document.getElementById('ed-seller-name').textContent=t.name;document.getElementById('ed-seller-card').style.display='flex';document.getElementById('ed-seller-search').style.display='none';document.getElementById('ed-seller-res').style.display='none';var cr=(t.cr||'').trim();var grade=(cr.toUpperCase().startsWith('GSTIN') && String(t.aadhar||'').trim()!=='')?'2':'1';document.getElementById('ed-grade').value=grade;loadEditBanks(t.id)}
 
 async function loadEditBanks(traderId){
   try{
@@ -1648,7 +1649,7 @@ if(localStorage.getItem('sa_dark')==='dark'){document.documentElement.setAttribu
 // ── TRADER CACHE (for offline search) ──
 function cacheTrader(t) {
   var cache = JSON.parse(localStorage.getItem('sa_trader_cache') || '{}');
-  cache[t.id] = { id: t.id, name: t.name, cr: t.cr, pan: t.pan, tel: t.tel, ppla: t.ppla, pin: t.pin, pstate: t.pstate };
+  cache[t.id] = { id: t.id, name: t.name, cr: t.cr, aadhar: t.aadhar, pan: t.pan, tel: t.tel, ppla: t.ppla, pin: t.pin, pstate: t.pstate };
   // Keep max 100
   var keys = Object.keys(cache);
   if (keys.length > 100) { delete cache[keys[0]]; }
