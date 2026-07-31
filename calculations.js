@@ -51,6 +51,29 @@ function gstinStateCode(cr) {
   return s.substring(0, 2);
 }
 
+// ── Seller party grade (Grade 1 planter vs Grade 2 registered dealer) ────
+// SINGLE SOURCE OF TRUTH. A seller is GRADE 2 (registered dealer — eligible for
+// a Purchase Invoice, dealer settlement terms, RD-purchase treatment) iff:
+//     cr starts with "GSTIN"  AND  the SBL (stored in `aadhar`) is non-empty.
+// Everything else is GRADE 1 (planter / agriculturist — Bill of Supply):
+//   • cr starts with "GSTIN" but aadhar empty → Grade 1
+//   • cr starts with "CR"                     → Grade 1 (even if it parses as a GSTIN)
+//   • blank / anything else                   → Grade 1
+// NOTE: this is DISTINCT from gstinStateCode(), which extracts the GST state
+// code for the intra/inter-state (CGST/SGST vs IGST) decision — that must keep
+// using the full-format GSTIN check and is intentionally left unchanged.
+function isDealerSeller(cr, aadhar) {
+  const c = String(cr == null ? '' : cr).trim().toUpperCase();
+  const sbl = String(aadhar == null ? '' : aadhar).trim();
+  return c.startsWith('GSTIN') && sbl !== '';
+}
+// SQL predicate for the SAME rule. Pass the column expressions so it works with
+// table aliases, e.g. dealerSql('l.cr','l.aadhar'). Returns a boolean SQL expr;
+// planter = NOT dealerSql(...).
+function dealerSql(crCol = 'cr', aadharCol = 'aadhar') {
+  return `(UPPER(TRIM(COALESCE(${crCol},''))) LIKE 'GSTIN%' AND TRIM(COALESCE(${aadharCol},'')) <> '')`;
+}
+
 /**
  * Calculate purchase amounts for a lot (after trade).
  *
@@ -435,7 +458,7 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg) {
     `SELECT * FROM lots
      WHERE auction_id = ? AND name = ? AND amount > 0
        AND (reserved IS NULL OR reserved = 0)
-       AND (UPPER(cr) LIKE 'GSTIN%' OR cr GLOB '[0-9][0-9]*')
+       AND ${dealerSql('cr', 'aadhar')}
      ORDER BY lot_no`,
     [auctionId, sellerName]
   );
@@ -555,7 +578,7 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
   // change the Payments payable (see the note before the settlement-discount
   // block below). The query also pulls per-seller GST sums so the tab can
   // show a "GST 18% (CGST+SGST+IGST)" column.
-  let query = `SELECT l.name, l.cr,
+  let query = `SELECT l.name, l.cr, MAX(l.aadhar) AS aadhar,
     SUM(l.qty) as total_qty, SUM(l.amount) as total_amount,
     SUM(l.pqty) as total_pqty, SUM(l.prate) as avg_prate,
     SUM(l.puramt) as total_puramt,
@@ -640,7 +663,7 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
     // Net amount = sum of each lot's Payable (lots.balance). No debit-note
     // adjustment — the days-based settlement discount below is taken off THIS.
     const netAmount = Number(s.total_payable) || 0;
-    const isDealer = !!gstinStateCode(s.cr);
+    const isDealer = isDealerSeller(s.cr, s.aadhar);
     const days = isDealer ? dealerDays : poolerDays;
     // Display-only settlement discount, opt-in per auction via
     // "Calculate All Discounts" (discount_applied). This is the "for ALL
@@ -957,18 +980,20 @@ function buildAgriBill(db, auctionId, sellerName, cfg) {
     return { error: `No lots found for seller "${trimmedName}" in this auction. Check the exact spelling.` };
   }
 
-  // Check if any have GSTIN — those aren't eligible for Bills of Supply
-  const withGstin = allLots.filter(l => l.cr && l.cr.toUpperCase().startsWith('GSTIN'));
-  const withoutGstin = allLots.filter(l => !l.cr || !l.cr.toUpperCase().startsWith('GSTIN'));
-  
+  // Grade-2 (registered dealer) lots aren't eligible for a Bill of Supply;
+  // Grade-1 (planter) lots are. Dealer = cr starts with GSTIN AND SBL (aadhar)
+  // set — so a GSTIN seller with NO SBL is Grade 1 and DOES get a BoS.
+  const withGstin = allLots.filter(l => isDealerSeller(l.cr, l.aadhar));
+  const withoutGstin = allLots.filter(l => !isDealerSeller(l.cr, l.aadhar));
+
   if (withGstin.length && !withoutGstin.length) {
-    return { error: `Seller "${trimmedName}" has GSTIN (${withGstin[0].cr}). Use Generate Purchase Invoice instead — Bills of Supply are only for agriculturists without GSTIN.` };
+    return { error: `Seller "${trimmedName}" is a registered dealer (GSTIN ${withGstin[0].cr} with SBL). Use Generate Purchase Invoice instead — Bills of Supply are only for Grade-1 planters.` };
   }
 
   // Filter to agri-eligible lots with amount > 0 (reserved lots are held, not
   // booked, so they never appear on a bill).
   const lots = withoutGstin.filter(l => (l.amount || 0) > 0 && !Number(l.reserved));
-  
+
   if (!lots.length) {
     if (withoutGstin.length) {
       return { error: `Seller "${trimmedName}" has ${withoutGstin.length} lot(s) but none have amount > 0. Set prices on the lots first (or click Calculate All).` };
@@ -1036,15 +1061,14 @@ function buildAgriBill(db, auctionId, sellerName, cfg) {
  * (sellers without GSTIN who have lots with amount > 0)
  */
 function listAgriSellers(db, auctionId) {
-  // An "agri seller" is one without a GSTIN. Reject both prefixed
-  // ("GSTIN.<gstin>") and bare ("<gstin>") forms — anything else (empty,
-  // CR codes, plain text) qualifies.
+  // An "agri seller" is a Grade-1 (planter) seller — i.e. NOT a registered
+  // dealer under the shared rule (dealer = cr starts with GSTIN AND SBL/aadhar
+  // set). CR-coded and GSTIN-without-SBL sellers therefore qualify.
   return db.all(
     `SELECT name, COUNT(*) as lot_count, SUM(qty) as total_qty, SUM(amount) as total_amount
-     FROM lots 
-     WHERE auction_id = ? 
-       AND (cr IS NULL OR cr = ''
-            OR (UPPER(cr) NOT LIKE 'GSTIN%' AND cr NOT GLOB '[0-9][0-9]*'))
+     FROM lots
+     WHERE auction_id = ?
+       AND NOT ${dealerSql('cr', 'aadhar')}
        AND amount > 0
      GROUP BY name
      ORDER BY name`,
@@ -1472,4 +1496,6 @@ module.exports = {
   getMerchantRegister,
   listRegisterParties,
   gstinStateCode,
+  isDealerSeller,
+  dealerSql,
 };

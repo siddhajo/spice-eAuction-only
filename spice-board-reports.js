@@ -16,6 +16,8 @@
 
 const ExcelJS    = require('exceljs');
 const PDFDocument = require('pdfkit');
+// Shared Grade-1/Grade-2 seller rule (dealer = cr starts with GSTIN AND SBL set).
+const { isDealerSeller } = require('./calculations');
 const {
   fmtMoney, fmtQty, fmtPrice,
   getCompanyHeader, writeXlsxCompanyHeader,
@@ -1146,7 +1148,7 @@ function buildFormC(ctx) {
       commission: isWD ? 0 : (Number(r.commission) || 0),
       buyer:  isWD ? '' : (r.buyer1 || r.buyer_full || ''),
       sbl:    isWD ? '' : (r.buyer_sbl || ''),
-      hasGstin: isGstinDealer(cr),
+      hasGstin: isDealerSeller(cr, aadhar),
       isWD,
     };
     // Form C bucketing rule (user spec): rows whose registration parses
@@ -1722,7 +1724,7 @@ async function eauctionCsv(db, opts) {
   for (const r of (ctx.rows || [])) {
     // Planter/Dealer code: 1 for planter, 2 for dealer.
     const cr = r.seller_cr || r.trader_cr || '';
-    const planterOrDealer = classifySeller(cr) === 'DEALER' ? '2' : '1';
+    const planterOrDealer = isDealerSeller(cr, r.seller_aadhar || r.trader_aadhar) ? '2' : '1';
 
     lines.push([
       r.lot || '',                                       // A  Lot Number

@@ -591,6 +591,7 @@ async function exportCollection(db, auctionId) {
 // punctuation/whitespace, uppercase) and filter on its length being
 // exactly 15. Works for every storage form.
 async function exportDealerList(db, auctionId) {
+  const { dealerSql } = require('./calculations');
   const rows = db.all(
     `WITH cleaned AS (
        SELECT state, name, lot_no, bags, qty, sample_wt, amount,
@@ -603,13 +604,13 @@ async function exportDealerList(db, auctionId) {
               )) AS gstin
          FROM lots
         WHERE auction_id = ? AND COALESCE(reserved,0) = 0
+          AND ${dealerSql('cr', 'aadhar')}
      )
      SELECT state, name, gstin,
             COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
             SUM(sample_wt) as sample_wt,
             (SUM(qty) + SUM(sample_wt)) as gross_wt
        FROM cleaned
-      WHERE LENGTH(gstin) = 15
       GROUP BY state, name, gstin
       ORDER BY state, name`, [auctionId]
   );
@@ -681,6 +682,7 @@ async function exportPlanterList(db, auctionId) {
 // Dealer List (exportDealerList) — same GSTIN-cleaning rule, but it also
 // rolls up the AMOUNT so the file doubles as a per-dealer value summary.
 async function exportDealerListPartyWise(db, auctionId) {
+  const { dealerSql } = require('./calculations');
   const rows = db.all(
     `WITH cleaned AS (
        SELECT state, name, lot_no, bags, qty, amount,
@@ -693,15 +695,13 @@ async function exportDealerListPartyWise(db, auctionId) {
               )) AS gstin
          FROM lots
         WHERE auction_id = ? AND COALESCE(reserved,0) = 0
+          -- Grade-2 registered dealer: cr starts with GSTIN AND SBL (aadhar) set.
+          AND ${dealerSql('cr', 'aadhar')}
      )
      SELECT state, name, gstin,
             COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
             SUM(amount) as amount
        FROM cleaned
-      -- A real GSTIN is exactly 15 alphanumeric chars. Requiring no
-      -- punctuation excludes CR registration numbers that happen to be
-      -- 15 chars long (e.g. "CR.H1-2436/2025"), which are poolers, not dealers.
-      WHERE LENGTH(gstin) = 15 AND gstin NOT GLOB '*[^0-9A-Z]*'
       GROUP BY name, gstin
       ORDER BY name`, [auctionId]
   );
@@ -1283,8 +1283,8 @@ async function exportPramanCSV(db, auctionId, cfg, state) {
   // a lot has no associated seller record (legacy data, partial
   // imports).
   const rows = db.all(
-    `SELECT l.lot_no, l.branch, l.grade, l.name, l.cr, l.qty, l.litre, l.bags, l.tel,
-            t.cr AS trader_cr, t.tel AS trader_tel
+    `SELECT l.lot_no, l.branch, l.grade, l.name, l.cr, l.aadhar, l.qty, l.litre, l.bags, l.tel,
+            t.cr AS trader_cr, t.aadhar AS trader_aadhar, t.tel AS trader_tel
        FROM lots l
        LEFT JOIN traders t ON UPPER(TRIM(t.name)) = UPPER(TRIM(l.name))
       WHERE l.auction_id = ? ${state ? 'AND l.state = ?' : ''}
@@ -1331,13 +1331,11 @@ async function exportPramanCSV(db, auctionId, cfg, state) {
   const identity = getCompanyIdentity(cfg);
   const lotCompany = identity.shortName || '';
 
-  // Praman classifies sellers as 1=Planter (URD/agriculturist) or
-  // 2=Dealer (registered, with GSTIN). Decide with the FULL GSTIN-format
-  // check (gstinStateCode) rather than a bare length test, so 15-char CR
-  // registration numbers (e.g. CR.A9/2789/2020) stay Planter — consistent
-  // with the dashboards, calculator and Dealer List.
-  const { gstinStateCode } = require('./calculations');
-  const classify = (gstin) => gstinStateCode(gstin) ? 2 : 1;
+  // Praman classifies sellers as 1=Planter (URD/agriculturist) or 2=Dealer
+  // (registered). Uses the shared Grade rule (cr starts with GSTIN AND SBL set)
+  // so it matches the Dealer List, calculator and payments split.
+  const { isDealerSeller } = require('./calculations');
+  const classify = (cr, aadhar) => (isDealerSeller(cr, aadhar) ? 2 : 1);
 
   const lines = [header.join(',')];
   for (const r of rows) {
@@ -1347,7 +1345,7 @@ async function exportPramanCSV(db, auctionId, cfg, state) {
     const planterName   = (r.name || '').trim();
     const planterGstin  = stripGstinPrefix(r.trader_cr || r.cr);
     const planterMobile = (r.trader_tel || r.tel || '').trim();
-    const planterDealer = classify(planterGstin);
+    const planterDealer = classify(r.trader_cr || r.cr, r.trader_aadhar || r.aadhar);
 
     lines.push([
       r.lot_no || '',

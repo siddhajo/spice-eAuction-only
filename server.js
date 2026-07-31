@@ -8,7 +8,7 @@ const XLSX = require('xlsx');
 const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
 const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates } = require('./company-config');
 const grade2Alerts = require('./grade2-alerts');
-const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getPurchaseJournal, gstinStateCode } = require('./calculations');
+const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getPurchaseJournal, gstinStateCode, isDealerSeller, dealerSql } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 const { amountToWords } = require('./amount-words');
 const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx } = require('./exports');
@@ -3610,12 +3610,12 @@ function cleanGstin(cr) {
   return s.trim().toUpperCase();
 }
 // "Valid GSTIN" = the cleaned value matches the FULL GSTIN format (2-digit
-// state code + PAN + entity/Z/checksum), not merely 15 characters. The old
-// length-only test counted 15-char CR registration numbers (e.g.
-// CR.A9/2789/2020) as dealers, which mis-split Planter/Trader weight and
-// dealer-list/party-grade counts. Defer to gstinStateCode() — the single
-// source of truth also used by the calculator's registered/unregistered
-// (GST) decision — so every classification across the app agrees.
+// state code + PAN + entity/Z/checksum). This is a DATA-FORMAT check used ONLY
+// by the prefix-convention data-hygiene warnings below (is this value a GSTIN
+// that should carry a "GSTIN." prefix, vs a CR registration number). It is NOT
+// the Grade-1/Grade-2 party classification — that is isDealerSeller() (cr
+// starts with GSTIN AND SBL/aadhar set), used everywhere sellers are split
+// into planters vs dealers.
 const hasValidGstin = (cr) => !!gstinStateCode(cr);
 
 // Pure, read-only: build the validation report for one auction.
@@ -3624,7 +3624,7 @@ const hasValidGstin = (cr) => !!gstinStateCode(cr);
 //   warnings — acknowledge to proceed (missing GSTIN / bank / PAN / phone)
 function validateAuctionLots(db, auctionId) {
   const lots = db.all(
-    `SELECT id, lot_no, trader_id, bank_id, name, cr, pan, tel, branch,
+    `SELECT id, lot_no, trader_id, bank_id, name, cr, aadhar, pan, tel, branch,
             litre, COALESCE(bags,0) AS bags, COALESCE(qty,0) AS qty
        FROM lots WHERE auction_id = ?`,
     [auctionId]
@@ -3719,14 +3719,14 @@ function validateAuctionLots(db, auctionId) {
   const totalLots = lots.length;
   const totalBags = lots.reduce((s, l) => s + Number(l.bags || 0), 0);
   const totalQty  = Math.round(lots.reduce((s, l) => s + Number(l.qty || 0), 0) * 1000) / 1000;
-  const gstinLots = lots.filter(l => hasValidGstin(l.cr)).length;
+  const gstinLots = lots.filter(l => isDealerSeller(l.cr, l.aadhar)).length;
 
   // Per-seller breakdown (grouped by trader_id, falling back to name)
   const sellerMap = new Map();
   for (const l of lots) {
     const key = l.trader_id != null ? 't' + l.trader_id : 'n:' + String(l.name || '').trim().toUpperCase();
     if (!sellerMap.has(key)) {
-      sellerMap.set(key, { name: l.name || '(no name)', hasGstin: hasValidGstin(l.cr), lots: 0, bags: 0, qty: 0 });
+      sellerMap.set(key, { name: l.name || '(no name)', hasGstin: isDealerSeller(l.cr, l.aadhar), lots: 0, bags: 0, qty: 0 });
     }
     const s = sellerMap.get(key);
     s.lots += 1; s.bags += Number(l.bags || 0); s.qty += Number(l.qty || 0);
@@ -3843,8 +3843,7 @@ function _remainingPartiesSql(db, docType, auctionId) {
                AND l.amount > 0
                AND l.name IS NOT NULL AND l.name != ''
                AND ${notWD}
-               AND (UPPER(l.cr) LIKE 'GSTIN%'
-                    OR (l.cr GLOB '[0-9][0-9]*' AND LENGTH(l.cr) >= 15))
+               AND ${dealerSql('l.cr', 'l.aadhar')}
                AND p.id IS NULL`,
       params: [auctionId],
     };
@@ -3860,8 +3859,7 @@ function _remainingPartiesSql(db, docType, auctionId) {
                AND l.amount > 0
                AND l.name IS NOT NULL AND l.name != ''
                AND ${notWD}
-               AND (l.cr IS NULL OR l.cr = ''
-                    OR (UPPER(l.cr) NOT LIKE 'GSTIN%' AND l.cr NOT GLOB '[0-9][0-9]*'))
+               AND NOT ${dealerSql('l.cr', 'l.aadhar')}
                AND b.id IS NULL`,
       params: [ano, auctionId],
     };
@@ -4722,16 +4720,9 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
   const auction = db.get('SELECT id, ano, date, crop_type FROM auctions WHERE id = ?', [auctionId]);
   if (!auction) return res.status(404).json({ error: 'Auction not found' });
 
-  // Inline "is this seller a registered dealer?" — strip a leading "gstin"
-  // token + punctuation, uppercase. A valid GSTIN cleans to 15 chars AND
-  // begins with a 2-digit state code. The old length-only test also matched
-  // 15-char CR registration codes (e.g. CR.A9/2789/2020), so those planters'
-  // weight was wrongly counted as Trader WT — hence the digit-prefix guard.
-  const CR_CLEAN = `UPPER(TRIM(
-      CASE WHEN LOWER(SUBSTR(TRIM(cr),1,5)) = 'gstin'
-           THEN LTRIM(SUBSTR(TRIM(cr),6), '. :-')
-           ELSE TRIM(cr) END))`;
-  const DEALER = `(LENGTH(${CR_CLEAN}) = 15 AND SUBSTR(${CR_CLEAN},1,2) GLOB '[0-9][0-9]')`;
+  // "Is this seller a registered dealer?" — shared Grade-2 rule (cr starts with
+  // GSTIN AND SBL/aadhar set). See isDealerSeller()/dealerSql() in calculations.js.
+  const DEALER = dealerSql('cr', 'aadhar');
   // SOLD = a real hammer transaction. Blank code = no buyer, 'WD' = withdrawn,
   // 'NA' = the Not-Auctioned buyer dad assigns to booked-but-unsold lots — none
   // of these three are sold.
@@ -4841,8 +4832,7 @@ app.get('/api/auctions/:id(\\d+)/arrivals-export', requireExport, async (req, re
   // Trader vs Planter: a valid GSTIN cleans to 15 chars AND starts with a
   // 2-digit state code. Length alone mislabels 15-char CR codes (e.g.
   // CR.A9/2789/2020) as Trader — matches the depot-summary DEALER rule.
-  const CR_CLEAN = `UPPER(TRIM(CASE WHEN LOWER(SUBSTR(TRIM(cr),1,5))='gstin' THEN LTRIM(SUBSTR(TRIM(cr),6),'. :-') ELSE TRIM(cr) END))`;
-  const DEALER = `(LENGTH(${CR_CLEAN})=15 AND SUBSTR(${CR_CLEAN},1,2) GLOB '[0-9][0-9]')`;
+  const DEALER = dealerSql('cr', 'aadhar');
   const rows = db.all(
     `SELECT COALESCE(NULLIF(TRIM(branch),''),'(unspecified)') AS depot,
             lot_no, name AS seller,
@@ -7876,10 +7866,7 @@ app.get('/api/purchases/eligible-sellers/:auctionId', requireView, (req, res) =>
      FROM lots
      WHERE auction_id = ? AND name IS NOT NULL AND name != ''
        AND amount > 0
-       AND (
-         UPPER(cr) LIKE 'GSTIN%'
-         OR (cr GLOB '[0-9][0-9]*' AND LENGTH(cr) >= 15)
-       )
+       AND ${dealerSql('cr', 'aadhar')}
      GROUP BY name
      ORDER BY name`,
     [req.params.auctionId]
@@ -7913,13 +7900,10 @@ app.post('/api/purchases/generate-all/:auctionId',
      WHERE auction_id = ?
        AND amount > 0
        AND name IS NOT NULL AND name != ''
-       AND (
-         UPPER(cr) LIKE 'GSTIN%'
-         OR (cr GLOB '[0-9][0-9]*' AND LENGTH(cr) >= 15)
-       )`,
+       AND ${dealerSql('cr', 'aadhar')}`,
     [req.params.auctionId]
   );
-  
+
   if (!sellers.length) return res.status(404).json({ error: 'No registered dealers (with GSTIN) in this auction' });
   
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [req.params.auctionId]);
@@ -11100,7 +11084,7 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   const lotIdFilter = Array.isArray(lotIds)
     ? lotIds.map(n => parseInt(n, 10)).filter(Number.isFinite)
     : [];
-  let lotSql = `SELECT lot_no, qty, price AS rate, amount, puramt, refund, com, balance, cgst, sgst, igst, cr, immediate_payment
+  let lotSql = `SELECT lot_no, qty, price AS rate, amount, puramt, refund, com, balance, cgst, sgst, igst, cr, aadhar, immediate_payment
        FROM lots WHERE auction_id = ? AND name = ? AND amount > 0`;
   const lotParams = [auctionId, sellerName];
   if (lotIdFilter.length) {
@@ -11220,7 +11204,7 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   const _discPct    = Number(cfg.discount_pct)  || 0;
   const _poolerDays = Number(cfg.discount_days) || 0;
   const _dealerDays = Number(cfg.dealer_days)   || 0;
-  const _isDealer   = !!gstinStateCode((lots[0] || {}).cr);
+  const _isDealer   = isDealerSeller((lots[0] || {}).cr, (lots[0] || {}).aadhar);
   const _days       = _isDealer ? _dealerDays : _poolerDays;
   const _netAmount  = tPay;
 
@@ -12584,8 +12568,8 @@ app.get('/api/stats', requireView, (req, res) => {
     //   • payments  — every priced (non-WD) lot must be paid (lots.paid set)
     //   • purchases — one purchase invoice per REGISTERED seller (GSTIN cr)
     //   • bills     — one bill of supply per UNREGISTERED / agri seller
-    const REG_CR = `(UPPER(l.cr) LIKE 'GSTIN%' OR (l.cr GLOB '[0-9][0-9]*' AND LENGTH(l.cr) >= 15))`;
-    const URD_CR = `(l.cr IS NULL OR l.cr = '' OR (UPPER(l.cr) NOT LIKE 'GSTIN%' AND l.cr NOT GLOB '[0-9][0-9]*'))`;
+    const REG_CR = dealerSql('l.cr', 'l.aadhar');          // Grade-2 (registered dealer → RD purchase)
+    const URD_CR = `(NOT ${dealerSql('l.cr', 'l.aadhar')})`; // Grade-1 (planter → URD / Bill of Supply)
     const NOT_WD = `UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')`;
     const cnt1 = (sql) => (db.get(sql, [currentAuction.id]) || {}).c || 0;
     const paymentsTotal  = cnt1(`SELECT COUNT(*) AS c FROM lots l WHERE l.auction_id = ? AND l.amount > 0 AND ${NOT_WD}`);
@@ -13172,8 +13156,7 @@ app.get('/api/insights', requireView, (req, res) => {
   // rule as /depot-summary so the dashboard's cumulative tiles match the
   // per-auction Current-Auction widget. Grade-2 weight (grade='2') feeds the
   // Grade-2 25%-cap alert. Feeds the snapshot's Planter/Trader/Total tiles.
-  const CR_CLEAN_INS = `UPPER(TRIM(CASE WHEN LOWER(SUBSTR(TRIM(l.cr),1,5))='gstin' THEN LTRIM(SUBSTR(TRIM(l.cr),6),'. :-') ELSE TRIM(l.cr) END))`;
-  const DEALER_INS = `(LENGTH(${CR_CLEAN_INS})=15 AND SUBSTR(${CR_CLEAN_INS},1,2) GLOB '[0-9][0-9]')`;
+  const DEALER_INS = dealerSql('l.cr', 'l.aadhar');
   const gwRow = db.get(
     `SELECT COALESCE(SUM(CASE WHEN ${DEALER_INS} THEN 0 ELSE l.qty END),0) AS planter_wt,
             COALESCE(SUM(CASE WHEN ${DEALER_INS} THEN l.qty ELSE 0 END),0) AS trader_wt,
@@ -13213,6 +13196,7 @@ app.get('/api/insights', requireView, (req, res) => {
   const gradeRows = db.all(
     `SELECT
        COALESCE(l.cr, '') AS cr,
+       MAX(COALESCE(l.aadhar,'')) AS aadhar,
        COUNT(l.id) AS lots,
        SUM(CASE WHEN ${SOLD} THEN 1 ELSE 0 END) AS sold,
        COALESCE(SUM(l.qty),    0) AS qty,
@@ -13229,7 +13213,7 @@ app.get('/api/insights', requireView, (req, res) => {
   const _mkGrade = () => ({ lots: 0, sold: 0, qty: 0, bags: 0, value: 0, sold_value: 0, sold_qty: 0 });
   const gradeSplit = { grade1: _mkGrade(), grade2: _mkGrade() };
   for (const r of gradeRows) {
-    const g = hasValidGstin(r.cr) ? gradeSplit.grade2 : gradeSplit.grade1;
+    const g = isDealerSeller(r.cr, r.aadhar) ? gradeSplit.grade2 : gradeSplit.grade1;
     g.lots       += Number(r.lots)       || 0;
     g.sold       += Number(r.sold)       || 0;
     g.qty        += Number(r.qty)        || 0;
