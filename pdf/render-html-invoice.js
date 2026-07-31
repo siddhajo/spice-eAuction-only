@@ -120,7 +120,14 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
     const igst = isInter ? +(a * gstGoods / 100).toFixed(2) : 0;
     return { cgst, sgst, igst, total: +(a + cgst + sgst + igst).toFixed(2) };
   };
-  const rows = lineItems.map((li, i) => {
+  // Show lots in ascending lot-number order (numeric-aware, so 20 sorts before
+  // 185 and "12A" naturally after 12). The invoice arrives in allocation order,
+  // which reads as unsorted; the serial (sl) is assigned AFTER sorting so it
+  // still runs 1..n down the page. Shared by all sales-invoice layouts.
+  const sortedLineItems = lineItems.slice().sort((a, b) =>
+    String(a && a.lot != null ? a.lot : '').localeCompare(
+      String(b && b.lot != null ? b.lot : ''), undefined, { numeric: true }));
+  const rows = sortedLineItems.map((li, i) => {
     const amount = Number(li.amount || 0);
     return {
       sl: i + 1,
