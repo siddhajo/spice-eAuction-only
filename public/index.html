@@ -16573,49 +16573,38 @@ function leGroupLotsByTrader(lots) {
 // 80mm wide monospace slip. One <section> per seller. Page-break
 // between sections so each seller starts on a fresh slip.
 function leBuildCompactHtml(p) {
-  const { groups, co, dateStr, ano, printedAt, escapeHtml } = p;
-  const { tradeName, phone, email, addr1, addr2, place, pin, gstin, pan, fssai, sbl, logoUrl } = co;
-  const addrLine = [addr1, addr2, place, pin].filter(Boolean).join(', ');
-  const idLine = [gstin && `GSTIN: ${gstin}`, pan && `PAN: ${pan}`].filter(Boolean).join('  ');
-  const auxLine = [fssai && `FSSAI: ${fssai}`, sbl && `SBL: ${sbl}`].filter(Boolean).join('  ');
+  const { groups, co, dateStr, ano, escapeHtml } = p;
+  const { tradeName } = co;
+  // Lean thermal stub — company name + branch, auction/date, seller NAME, a
+  // 4-column lot table and one totals line. Everything else (logo, address,
+  // contact, GSTIN/PAN/FSSAI/SBL, sample row, thank-you) is intentionally
+  // dropped; the DETAILED slip carries the full record.
   const sections = groups.map(g => {
-    const lotRows = g.lots.map((l, i) => {
-      const wt = Number(l.qty || 0).toFixed(3);
+    const lotRows = g.lots.map(l => {
+      const net = Number(l.qty || 0).toFixed(3);
+      const grs = Number(l.gross_wt || 0).toFixed(3);
       return `<tr>
-        <td style="text-align:left">${i + 1}</td>
         <td style="text-align:left">${escapeHtml(l.lot_no || '')}</td>
         <td style="text-align:right">${escapeHtml(String(l.bags || 0))}</td>
-        <td style="text-align:right">${wt}</td>
+        <td style="text-align:right">${net}</td>
+        <td style="text-align:right">${grs}</td>
       </tr>`;
     }).join('');
-    const totalQty    = g.lots.reduce((s, l) => s + (Number(l.qty)       || 0), 0);
-    const totalBags   = g.lots.reduce((s, l) => s + (parseInt(l.bags, 10)|| 0), 0);
-    const totalSample = g.lots.reduce((s, l) => s + (Number(l.sample_wt) || 0), 0);
-    const totalGross  = g.lots.reduce((s, l) => s + (Number(l.gross_wt)  || 0), 0);
-    const sampleRow = totalSample > 0 ? `
-      <tr style="border-top:1px dashed #000">
-        <td colspan="2" style="text-align:left">Sample</td>
-        <td style="text-align:right">${g.lots.length}</td>
-        <td style="text-align:right">${totalSample.toFixed(3)} kg</td>
-      </tr>` : '';
+    const totalQty   = g.lots.reduce((s, l) => s + (Number(l.qty)        || 0), 0);
+    const totalBags  = g.lots.reduce((s, l) => s + (parseInt(l.bags, 10) || 0), 0);
+    const totalGross = g.lots.reduce((s, l) => s + (Number(l.gross_wt)   || 0), 0);
     return `
     <section class="receipt">
-      ${logoUrl ? `<div class="logo-wrap"><img class="logo-img" src="${logoUrl}" onerror="this.style.display='none'"></div>` : ''}
       <div class="hdr">${escapeHtml(tradeName)}</div>
-      ${addrLine ? `<div class="sub">${escapeHtml(addrLine)}</div>` : ''}
-      ${phone || email ? `<div class="sub">${escapeHtml([phone, email].filter(Boolean).join(' | '))}</div>` : ''}
-      ${idLine ? `<div class="sub">${escapeHtml(idLine)}</div>` : ''}
-      ${auxLine ? `<div class="sub">${escapeHtml(auxLine)}</div>` : ''}
-      <div class="planter">Planter: <b>${escapeHtml(g.name || '—')}</b></div>
-      <div class="meta">Auction: ${escapeHtml(String(ano))}&nbsp;&nbsp;Date: ${escapeHtml(dateStr)}</div>
-      ${g.branch ? `<div class="meta">Branch: ${escapeHtml(g.branch)}</div>` : ''}
+      ${g.branch ? `<div class="sub">${escapeHtml(g.branch.toUpperCase())} BRANCH</div>` : ''}
+      <hr class="dashed">
+      <div class="meta"><span>Auction #${escapeHtml(String(ano))}</span><span>${escapeHtml(dateStr)}</span></div>
+      <div class="planter">Seller: <b>${escapeHtml(g.name || '—')}</b></div>
       <table class="rows">
-        <thead><tr><th>S.No</th><th>Lots</th><th>Bags</th><th>Weight(kg)</th></tr></thead>
-        <tbody>${lotRows}${sampleRow}</tbody>
+        <thead><tr><th>Lot</th><th>Bags</th><th>Net</th><th>Gross</th></tr></thead>
+        <tbody>${lotRows}</tbody>
       </table>
-      ${totalGross > 0 ? `<div class="gross">Gross Wt.&nbsp;&nbsp;<b>${totalGross.toFixed(3)} kg</b></div>` : ''}
-      <div class="thanks">Thank you!</div>
-      <div class="printed">${escapeHtml(printedAt)}</div>
+      <div class="total">${g.lots.length} lots | ${totalBags} bags<br>Net ${totalQty.toFixed(3)}${totalGross > 0 ? ` | Grs ${totalGross.toFixed(3)}` : ''}</div>
     </section>`;
   }).join('');
 
@@ -16634,20 +16623,16 @@ function leBuildCompactHtml(p) {
   body { padding:20px; display:flex; flex-direction:column; align-items:center; gap:14px }
   .receipt { width: ${recMm}mm; background:#fff; padding:6mm 4mm; box-sizing:border-box; box-shadow:0 2px 6px rgba(0,0,0,.15); page-break-after: always; }
   .receipt:last-child { page-break-after: auto; }
-  .logo-wrap { text-align:center; margin-bottom:4px }
-  .logo-img { max-height:40px; max-width:60mm; object-fit:contain }
   .hdr { text-align:center; font-weight:700; font-size:14px; letter-spacing:.5px }
   .sub { text-align:center; font-size:11px; margin-top:1px }
-  .planter { margin-top:8px; font-size:12px }
-  .meta { font-size:11px; margin-top:2px }
-  table.rows { width:100%; border-collapse:collapse; margin-top:8px; font-size:11px }
-  table.rows th { text-align:left; border-bottom:1px solid #000; padding:2px 0; font-weight:700 }
+  hr.dashed { border:none; border-top:1px dashed #000; margin:6px 0 }
+  .meta { display:flex; justify-content:space-between; font-size:11px }
+  .planter { margin-top:6px; font-size:12px }
+  table.rows { width:100%; border-collapse:collapse; margin-top:6px; font-size:11px }
+  table.rows th { text-align:right; border-bottom:1px solid #000; padding:2px 0; font-weight:700 }
+  table.rows th:first-child { text-align:left }
   table.rows td { padding:2px 0 }
-  table.rows tr td:nth-child(3), table.rows tr td:nth-child(4),
-  table.rows tr th:nth-child(3), table.rows tr th:nth-child(4) { text-align:right }
-  .gross { margin-top:8px; padding-top:4px; border-top:1px solid #000; font-size:12px; text-align:right }
-  .thanks { text-align:center; font-weight:700; margin-top:10px; font-size:12px }
-  .printed { text-align:center; font-size:10px; margin-top:2px; color:#444 }
+  .total { text-align:center; font-weight:700; margin-top:8px; padding-top:4px; border-top:1px solid #000; font-size:12px; line-height:1.5 }
   @media print {
     body { background:#fff; padding:0; gap:0 }
     .receipt { box-shadow:none; padding:0 }
@@ -16660,11 +16645,10 @@ function leBuildCompactHtml(p) {
 // with Grade / Litre / Sample Wt columns DROPPED per his red marks.
 function leBuildDetailedHtml(p) {
   const { groups, co, dateStr, ano, printedAt, traderInfo, escapeHtml } = p;
-  // Detailed slip header keeps it minimal: company name + branch + GSTIN.
-  // Address / contact / PAN / FSSAI / SBL are intentionally omitted to
-  // keep the 60mm slip uncluttered — those fields still appear on the
-  // tax invoice PDFs where the legal layout requires them.
-  const { tradeName, shortName, gstin, logoUrl } = co;
+  // Detailed slip header is a compact letterhead: logo to the side with the
+  // company name, branch, phone and GSTIN beside it. PAN / FSSAI / SBL and the
+  // full address stay off the slip — those live on the tax invoice PDFs.
+  const { tradeName, shortName, phone, gstin, logoUrl } = co;
   const sections = groups.map(g => {
     const ti = (g.trader_id != null ? traderInfo[g.trader_id] : null) || {};
     const bank = ti.defaultBank || {};
@@ -16693,18 +16677,18 @@ function leBuildDetailedHtml(p) {
           <div class="brand-text">
             <div class="brand-title">${escapeHtml(tradeName)}</div>
             <div class="brand-branch">${escapeHtml((g.branch || '—').toUpperCase())} BRANCH</div>
+            ${phone ? `<div class="brand-addr">${escapeHtml('Ph: ' + phone)}</div>` : ''}
+            ${gstin ? `<div class="brand-addr">${escapeHtml('GSTIN: ' + gstin)}</div>` : ''}
           </div>
         </div>
-        ${gstin ? `<div class="brand-addr">${escapeHtml('GSTIN: ' + gstin)}</div>` : ''}
       </header>
       <div class="dateline">
-        <span>Date: <b>${escapeHtml(dateStr)}</b></span>
         <span>Auction #${escapeHtml(String(ano))}</span>
+        <span>Date: <b>${escapeHtml(dateStr)}</b></span>
       </div>
       <hr class="dashed">
       <table class="meta-table">
         <tr><td class="lbl">Name</td><td>${escapeHtml(g.name || '')}</td></tr>
-        <tr><td class="lbl">Place</td><td>${escapeHtml(place)}</td></tr>
         <tr><td class="lbl">CR</td><td>${escapeHtml(cr)}</td></tr>
         ${acctMasked ? `<tr><td class="lbl">A/C No</td><td style="font-family:monospace">${escapeHtml(acctMasked)}</td></tr>` : ''}
         ${ifsc ? `<tr><td class="lbl">IFSC</td><td style="font-family:monospace">${escapeHtml(ifsc)}</td></tr>` : ''}
@@ -16739,10 +16723,10 @@ function leBuildDetailedHtml(p) {
   body { padding:14px; display:flex; flex-direction:column; align-items:center; gap:12px }
   .receipt { width: ${recWidth}; background:#fff; padding:3mm 4mm; box-sizing:border-box; box-shadow:0 1px 4px rgba(0,0,0,.12); page-break-after: always; }
   .receipt:last-child { page-break-after: auto; }
-  header { text-align:center; padding-bottom:4px }
-  .brand { display:inline-flex; gap:6px; align-items:center; justify-content:center }
-  .logo { width:24px; height:24px; border-radius:50%; background:#0d7c5f; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:8px; letter-spacing:.3px }
-  .logo-img { max-height:30px; max-width:36px; object-fit:contain }
+  header { text-align:left; padding-bottom:4px }
+  .brand { display:flex; gap:8px; align-items:center; justify-content:flex-start }
+  .logo { width:34px; height:34px; border-radius:50%; background:#0d7c5f; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:9px; letter-spacing:.3px; flex:none }
+  .logo-img { max-height:38px; max-width:44px; object-fit:contain; flex:none }
   .brand-text { text-align:left }
   .brand-title { font-size:13px; font-weight:700; line-height:1.1 }
   .brand-branch { font-size:9px; font-weight:700; color:#444; margin-top:1px; letter-spacing:.3px }
@@ -22177,13 +22161,15 @@ function renderPriceEntryGrid(){
     const readonly = locked || noSale;  // WD/NA lots carry no price — visible but not editable
     const ticked = _pe.sel.has(l.id);
     const pinned = _pe.front.includes(l.id);
-    // Buyer-code cell — shows the assigned code (green) with the buyer name
-    // beneath. WD/NA render their status code muted; unassigned shows a dash.
-    const buyerCell = noSale
+    // Split buyer columns: Code (auction result code, green — or WD/NA status),
+    // Buyer Code (lots.buyer) and Buyer Name (lots.buyer1). Unassigned → dash.
+    const codeCell = noSale
       ? `<span style="color:var(--text3);font-weight:600">${esc(codeUp)}</span>`
       : (l.code
-          ? `<span style="font-weight:700;color:#15803d">${esc(l.code)}</span>${(l.buyer1 || l.buyer) ? `<span style="color:var(--text3);font-size:11px;display:block;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(l.buyer1 || l.buyer)}</span>` : ''}`
+          ? `<span style="font-weight:700;color:#15803d">${esc(l.code)}</span>`
           : `<span style="color:var(--text3)">—</span>`);
+    const buyerCodeCell = l.buyer  ? esc(l.buyer)  : `<span style="color:var(--text3)">—</span>`;
+    const buyerNameCell = l.buyer1 ? esc(l.buyer1) : `<span style="color:var(--text3)">—</span>`;
     return `<tr data-lotid="${l.id}"${noSale ? ' style="opacity:.55"' : (pinned ? ' style="background:#f0fdf4"' : '')}>
       <td style="padding:6px 4px;width:28px;text-align:center"><input type="checkbox" class="pe-cb" data-pesel="${l.id}" ${locked ? 'disabled' : ''} ${ticked ? 'checked' : ''} onchange="peToggleSel(${l.id}, this.checked)" style="width:15px;height:15px;cursor:pointer"></td>
       <td style="padding:6px 8px;white-space:nowrap;font-weight:600">${esc(l.lot_no)}</td>
@@ -22193,14 +22179,16 @@ function renderPriceEntryGrid(){
       <td style="padding:6px 8px;text-align:right">${_peFmt(l.qty)}</td>
       <td style="padding:6px 8px;text-align:right"><input type="number" step="0.01" min="0" inputmode="decimal" data-peprice="${l.id}" value="${noSale ? '' : (l.price ? Number(l.price).toFixed(2) : '')}" placeholder="${noSale ? '—' : '0.00'}" ${readonly ? `disabled title="${isWD ? 'Withdrawn lot — carries no price' : isNA ? 'Not-auctioned lot — carries no price' : 'Locked lot — edit via the Lots tab'}"` : ''} onkeydown="pePriceKey(event,${l.id})" oninput="pePriceInput(${l.id})" onblur="pePriceSave(${l.id})" style="width:110px;text-align:right;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px${readonly ? ';background:#f3f4f6;color:var(--text3)' : ''}"></td>
       <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums" data-peamt="${l.id}">${_peFmt(amt)}</td>
-      <td data-pebuyer="${l.id}" style="padding:6px 8px;text-align:left;min-width:80px">${buyerCell}</td>
+      <td data-pebuyer="${l.id}" style="padding:6px 8px;text-align:left;min-width:56px">${codeCell}</td>
+      <td style="padding:6px 8px;text-align:left;white-space:nowrap">${buyerCodeCell}</td>
+      <td style="padding:6px 8px;text-align:left;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${buyerNameCell}</td>
       <td data-pestatus="${l.id}" style="padding:6px 4px;width:26px;text-align:center;color:var(--text3)">${isWD ? '<span title="Withdrawn" style="color:#b91c1c;font-weight:700;font-size:10px">WD</span>' : isNA ? '<span title="Not Auctioned" style="color:#a16207;font-weight:700;font-size:10px">NA</span>' : (locked ? '🔒' : '')}</td>
     </tr>`;
   }).join('');
   const thStyle = 'cursor:pointer;user-select:none';
   const bodyHtml = view.length
     ? rows
-    : `<tr><td colspan="10" style="padding:20px;text-align:center;color:var(--text3);font-size:13px">No lots match the current filter. <a href="#" onclick="peClearFilters();return false" style="color:var(--green)">Clear filters</a></td></tr>`;
+    : `<tr><td colspan="12" style="padding:20px;text-align:center;color:var(--text3);font-size:13px">No lots match the current filter. <a href="#" onclick="peClearFilters();return false" style="color:var(--green)">Clear filters</a></td></tr>`;
   grid.innerHTML = `<table class="pe-grid-table" style="width:100%;border-collapse:collapse;font-size:13px">
     <thead><tr>
       <th style="border-top-left-radius:6px;width:28px;text-align:center"><input type="checkbox" id="pe-selall" onchange="peToggleSelectAll(this.checked)" title="Select all priceable lots" style="width:15px;height:15px;cursor:pointer"></th>
@@ -22209,7 +22197,9 @@ function renderPriceEntryGrid(){
       <th style="text-align:right;${thStyle}" onclick="peSort('branch')" title="Sort by branch">Branch ${_peSortArrow('branch')}</th>
       <th style="text-align:right">Bags</th><th style="text-align:right">Qty</th>
       <th style="text-align:right">Price ₹/kg</th><th style="text-align:right">Amount</th>
-      <th style="text-align:left">Buyer</th><th style="border-top-right-radius:6px"></th>
+      <th style="text-align:left">Code</th>
+      <th style="text-align:left">Buyer Code</th>
+      <th style="text-align:left">Buyer Name</th><th style="border-top-right-radius:6px"></th>
     </tr></thead><tbody>${bodyHtml}</tbody></table>`;
   _peSyncSelectionUI();
   _peRenderSummary();

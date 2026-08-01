@@ -147,10 +147,10 @@ function addReceiptHeader(doc, appTitle, branch, dateFmt, tradeNo, pageW, compan
   doc.moveDown(0.4);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.5).stroke(); doc.moveDown(0.4);
 
-  // Trade # (auction no) on the LEFT, Date on the RIGHT (swapped).
+  // Auction # on the LEFT, Date on the RIGHT (swapped).
   doc.font('Helvetica').fontSize(10);
   const y0 = doc.y;
-  doc.text('Trade #' + tradeNo, m, y0, { width: w / 2 });
+  doc.text('Auction #' + tradeNo, m, y0, { width: w / 2 });
   doc.text('Date: ' + dateFmt, m + w / 2, y0, { width: w / 2, align: 'right' });
   doc.y = y0 + 16;
   doc.moveDown(0.2);
@@ -168,10 +168,10 @@ function addReceiptHeaderCompact(doc, appTitle, branch, dateFmt, tradeNo, pageW)
   doc.fontSize(7.5).text((branch || '') + ' BRANCH', m, doc.y, { width: w, align: 'center' });
   doc.moveDown(0.2);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.4).stroke(); doc.moveDown(0.2);
-  // Trade # on the LEFT, Date on the RIGHT (matches the detailed slip).
+  // Auction # on the LEFT, Date on the RIGHT (matches the detailed slip).
   doc.font('Helvetica').fontSize(7);
   const y0 = doc.y;
-  doc.text('Trade #' + tradeNo, m, y0, { width: w / 2 });
+  doc.text('Auction #' + tradeNo, m, y0, { width: w / 2 });
   doc.text('Date: ' + dateFmt, m + w / 2, y0, { width: w / 2, align: 'right' });
   doc.y = y0 + 10;
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).dash(2, { space: 2 }).lineWidth(0.4).stroke().undash();
@@ -203,7 +203,6 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
   const maskedAcct = maskAcctForReceipt(lot.acctnum, cfg.acctMask);
   const sellerFields = [
     [lb('seller', 'Seller'), lot.trader_name],
-    [lb('place',  'Place'),  [lot.ppla, lot.pin].filter(Boolean).join(', ')],
     [lb('gstin',  'GSTIN'),  lot.cr],
     [lb('acct_no','A/C No'), maskedAcct || '--NIL--'],
     [lb('ifsc',   'IFSC'),   lot.ifsc || '--NIL--'],

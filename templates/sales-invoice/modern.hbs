@@ -27,10 +27,13 @@
   .band .doctype { margin-left: auto; text-align: right; flex-shrink: 0; padding-left: 12pt; }
   .band .doctype b { font-size: 12pt; letter-spacing: 1pt; white-space: nowrap; }
   .meta { display: flex; gap: 0; border: 1pt solid var(--line); border-top: none; }
+  /* Each cell keeps its default min-width:auto, so with the nowrap value below
+     the cell grows to fit a long value (e.g. the SBL No) instead of wrapping it
+     to a second line — the value row always stays on a single line. */
   .meta > div { flex: 1; padding: 7pt 12pt; border-right: 1pt solid var(--line); }
   .meta > div:last-child { border-right: none; }
-  .meta .k { font-size: 7pt; text-transform: uppercase; color: #999; letter-spacing: .5pt; }
-  .meta .v { font-size: 10pt; font-weight: bold; }
+  .meta .k { font-size: 7pt; text-transform: uppercase; color: #999; letter-spacing: .5pt; white-space: nowrap; }
+  .meta .v { font-size: 9.5pt; font-weight: bold; white-space: nowrap; }
   .parties { display: flex; gap: 0; border: 1pt solid var(--line); border-top: none; }
   .parties > div { flex: 1; padding: 9pt 12pt; }
   .parties > div:first-child { border-right: 1pt solid var(--line); }
@@ -38,6 +41,10 @@
   .parties .nm { font-weight: bold; font-size: 9.5pt; margin-top: 2pt; }
   .parties .ln { font-size: 8pt; color: #555; }
   table.items { width: 100%; border-collapse: collapse; margin-top: 10pt; border: 1pt solid var(--line); }
+  /* Pagination: when a long invoice spills onto a second page, repeat the
+     column header there and never split a single row across the break. */
+  table.items thead { display: table-header-group; }
+  table.items tr { page-break-inside: avoid; break-inside: avoid; }
   table.items th { background: var(--accent-soft); color: var(--accent); font-size: 7.5pt;
                    text-transform: uppercase; letter-spacing: .3pt; padding: 6pt 8pt; text-align: left;
                    border-right: 0.75pt solid var(--line); }
@@ -56,6 +63,10 @@
   .foot .sig { text-align: right; }
   .foot .sig .co { font-weight: bold; color: #222; }
   .foot .sig .line { margin-top: 34pt; border-top: 0.75pt solid #999; padding-top: 3pt; }
+  /* Keep the whole closing block — totals, amount-in-words, bank/signature —
+     together so a page break can't strand "Grand Total" on its own page. If it
+     doesn't fit under the table it moves to the next page as one coherent unit. */
+  .summary-block { page-break-inside: avoid; break-inside: avoid; }
 </style>
 </head>
 <body>
@@ -113,6 +124,7 @@
     </tbody>
   </table>
 
+  <div class="summary-block">
   {{#with summary}}
   <div class="totbox"><table>
     <tr><td class="k">Taxable Value</td><td class="v">{{inr taxableValue}}</td></tr>
@@ -137,6 +149,7 @@
       <div class="co">for {{forCompany}}</div>
       <div class="line">Authorised Signatory</div>
     </div>
+  </div>
   </div>
 </body>
 </html>

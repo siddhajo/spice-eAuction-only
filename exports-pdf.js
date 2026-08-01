@@ -173,7 +173,7 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
 
   function isNumericCol(col) {
     const h = (col.header || '').toUpperCase();
-    return /^(QTY|BAG|BAGS|PRICE|RATE|AMOUNT|BILL AMOUNT|PURCHASE|PQTY|PRATE|PURAMT|CGST|SGST|IGST|GST|TCS|TOTAL|DISCOUNT|PAYABLE|ADVANCE|BALANCE|LITRE|LOTS|TDS|ASSESS_VALUE|VALUE|COST|NET|GUNNY|TRANSPORT|INSURANCE|CARDAMOM|CARDAMOM_COST|GUNNY_COST|ROUND|BILAMT|BILLAMOUNT|REFUND|COM|COMMISSION)$/.test(h);
+    return /^(QTY|GROSS QTY|BAG|BAGS|PRICE|RATE|AMOUNT|BILL AMOUNT|PURCHASE|PQTY|PRATE|PURAMT|CGST|SGST|IGST|GST|TCS|TOTAL|DISCOUNT|PAYABLE|ADVANCE|BALANCE|LITRE|LOTS|TDS|ASSESS_VALUE|VALUE|COST|NET|GUNNY|TRANSPORT|INSURANCE|CARDAMOM|CARDAMOM_COST|GUNNY_COST|ROUND|BILAMT|BILLAMOUNT|REFUND|COM|COMMISSION)$/.test(h);
   }
 
   function fmtCell(val, col) {
@@ -185,7 +185,7 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
     if (h === 'LOT') return String(val);
     if (typeof val === 'number') {
       // Kilos / pure quantities: 3 decimals, Indian commas (1,100.000)
-      if (h === 'QTY' || h === 'PQTY' || h === 'LITRE' || h === 'KILOS' || h === 'QUANTITY') {
+      if (h === 'QTY' || h === 'GROSS QTY' || h === 'PQTY' || h === 'LITRE' || h === 'KILOS' || h === 'QUANTITY') {
         return fmtQty(val);
       }
       // Bag counts and other non-decimal integers stay plain
@@ -583,6 +583,7 @@ const COLS = {
     { header: 'BRANCH', key: 'br',          width: 12 },
     { header: 'LOT',    key: 'lot',         width: 7  },
     { header: 'QTY',    key: 'qty',         width: 12 },
+    { header: 'GROSS QTY', key: 'gross_qty', width: 12 },
     { header: 'PRICE',  key: 'price',       width: 9  },
     { header: 'AMOUNT', key: 'amount',      width: 16 },
   ],
@@ -618,6 +619,7 @@ const COLS = {
     { header: 'LOTS',  key: 'lots',  width: 6  },
     { header: 'BAGS',  key: 'bags',  width: 6  },
     { header: 'QTY',   key: 'qty',   width: 12 },
+    { header: 'GROSS QTY', key: 'gross_qty', width: 12 },
   ],
   // Dealer List rolled up strictly per party (name + GSTIN) with the amount.
   dealer_list_party_wise: [
@@ -628,6 +630,7 @@ const COLS = {
     { header: 'LOTS',   key: 'lots',   width: 6  },
     { header: 'BAGS',   key: 'bags',   width: 6  },
     { header: 'QTY',    key: 'qty',    width: 12 },
+    { header: 'GROSS QTY', key: 'gross_qty', width: 12 },
     { header: 'AMOUNT', key: 'amount', width: 16 },
   ],
   // Pooler Register consolidated to one row per pooler.
@@ -638,6 +641,7 @@ const COLS = {
     { header: 'LOTS',       key: 'lots',       width: 6  },
     { header: 'BAGS',       key: 'bags',       width: 6  },
     { header: 'QTY',        key: 'qty',        width: 12 },
+    { header: 'GROSS QTY',  key: 'gross_qty',  width: 12 },
     { header: 'VALUE',      key: 'value',      width: 16 },
     { header: 'BILLAMOUNT', key: 'billamount', width: 16 },
   ],
@@ -798,12 +802,12 @@ const TOTAL_KEYS = {
   price_list:      ['bag', 'qty'],
   price_list_before: ['bag', 'qty'],
   bank_payment:    ['amount'],
-  pooler_register: ['qty', 'amount'],
+  pooler_register: ['qty', 'gross_qty', 'amount'],
   full_file:       ['bags', 'qty', 'amount', 'cgst', 'sgst', 'igst', 'advance', 'balance'],
   collection:      ['bag', 'qty'],
-  dealer_list:     ['lots', 'bags', 'qty'],
-  dealer_list_party_wise:   ['lots', 'bags', 'qty', 'amount'],
-  pooler_list_consolidated: ['lots', 'bags', 'qty', 'value', 'billamount'],
+  dealer_list:     ['lots', 'bags', 'qty', 'gross_qty'],
+  dealer_list_party_wise:   ['lots', 'bags', 'qty', 'gross_qty', 'amount'],
+  pooler_list_consolidated: ['lots', 'bags', 'qty', 'gross_qty', 'value', 'billamount'],
   planter_list:    ['lots', 'bags', 'qty'],
   sales_taxes:     ['bag', 'qty', 'cardamom_cost', 'gunny_cost', 'cgst', 'sgst', 'igst', 'tcs', 'transport', 'insurance', 'total'],
   payment:         ['bag', 'qty', 'amount', 'commission', 'payable', 'advance', 'discount'],
@@ -881,7 +885,7 @@ const ROW_PREPROCESS = {
   pooler_register: {
     serialKey: '_sn',
     groupByKey: 'poolername',
-    subtotalKeys: ['qty', 'amount', 'pqty', 'puramt'],
+    subtotalKeys: ['qty', 'gross_qty', 'amount', 'pqty', 'puramt'],
     subtotalLabelKey: 'poolername',
   },
   // Dealer list — flat sequential serial (no grouping).
@@ -921,6 +925,10 @@ const ROW_PREPROCESS = {
 };
 
 async function getRowsForType(db, type, auctionId, cfg, extra) {
+  // SB Sample Refund (Kgs) — added back per lot to form Gross Qty on the
+  // dealer/pooler lists. Read the same way as the XLSX exports so PDF and
+  // Excel reconcile.
+  const sbRefund = Number((require('./company-config').getSettingsFlat(db) || {}).sb_refund) || 0;
   switch (type) {
     case 'lot_slip':
       return db.all(
@@ -997,10 +1005,13 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
       }));
     }
 
-    case 'pooler_register':
-      return db.all(
+    case 'pooler_register': {
+      const rows = db.all(
         `SELECT state, lot_no as lot, name as poolername, branch as br, qty, price, amount
          FROM lots WHERE auction_id = ? AND amount > 0 ORDER BY name`, [auctionId]);
+      for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + sbRefund;
+      return rows;
+    }
 
     case 'full_file':
       return db.all(`SELECT * FROM lots WHERE auction_id = ? ORDER BY lot_no`, [auctionId]);
@@ -1010,43 +1021,53 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
         `SELECT branch, name, cr, bags as bag, qty, litre, grade
          FROM lots WHERE auction_id = ? ORDER BY branch, name`, [auctionId]);
 
-    case 'dealer_list':
-      return db.all(
+    case 'dealer_list': {
+      const rows = db.all(
         `SELECT state, name, SUBSTR(cr, 7, 15) as gstin,
           COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty
          FROM lots WHERE auction_id = ? AND cr LIKE '%GST%' AND amount > 0
          GROUP BY state, name, cr ORDER BY name`, [auctionId]);
+      for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
+      return rows;
+    }
 
     case 'dealer_list_party_wise':
       // Same GSTIN-cleaning rule as the XLSX exportDealerListPartyWise, so PDF
       // and Excel reconcile. Grouped strictly per party (name + GSTIN) + amount.
-      return db.all(
-        `WITH cleaned AS (
-           SELECT state, name, lot_no, bags, qty, amount,
-                  UPPER(TRIM(
-                    CASE
-                      WHEN LOWER(SUBSTR(TRIM(cr),1,5)) = 'gstin'
-                        THEN LTRIM(SUBSTR(TRIM(cr),6), '. :-')
-                      ELSE TRIM(cr)
-                    END
-                  )) AS gstin
-             FROM lots
-            WHERE auction_id = ? AND amount > 0
-         )
-         SELECT state, name, gstin,
-                COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
-                SUM(amount) as amount
-           FROM cleaned
-          WHERE LENGTH(gstin) = 15 AND gstin NOT GLOB '*[^0-9A-Z]*'
-          GROUP BY name, gstin ORDER BY name`, [auctionId]);
+      {
+        const rows = db.all(
+          `WITH cleaned AS (
+             SELECT state, name, lot_no, bags, qty, amount,
+                    UPPER(TRIM(
+                      CASE
+                        WHEN LOWER(SUBSTR(TRIM(cr),1,5)) = 'gstin'
+                          THEN LTRIM(SUBSTR(TRIM(cr),6), '. :-')
+                        ELSE TRIM(cr)
+                      END
+                    )) AS gstin
+               FROM lots
+              WHERE auction_id = ? AND amount > 0
+           )
+           SELECT state, name, gstin,
+                  COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
+                  SUM(amount) as amount
+             FROM cleaned
+            WHERE LENGTH(gstin) = 15 AND gstin NOT GLOB '*[^0-9A-Z]*'
+            GROUP BY name, gstin ORDER BY name`, [auctionId]);
+        for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
+        return rows;
+      }
 
-    case 'pooler_list_consolidated':
-      return db.all(
+    case 'pooler_list_consolidated': {
+      const rows = db.all(
         `SELECT name, MAX(cr) as cr,
                 COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
                 SUM(amount) as value, SUM(bilamt) as billamount
            FROM lots WHERE auction_id = ? AND amount > 0
           GROUP BY name ORDER BY name`, [auctionId]);
+      for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
+      return rows;
+    }
 
     case 'planter_list':
       // Grade-1 planter list — pre-trade, so NO amount>0 gate. CR prefix
