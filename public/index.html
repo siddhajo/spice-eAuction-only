@@ -2953,6 +2953,10 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           Insights
         </button>
+        <button class="side-item" data-tab="pertrade" onclick="go('pertrade')">
+          <svg viewBox="0 0 24 24"><line x1="3" y1="3" x2="3" y2="21"/><line x1="3" y1="21" x2="21" y2="21"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="4" width="3" height="14"/></svg>
+          Per-Auction Breakdown
+        </button>
       </div>
       <div class="side-group">
         <div class="side-group-lbl">Master Data</div>
@@ -3180,6 +3184,14 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <div class="tc" id="tc-insights">
       <div id="insights-host">
         <div style="padding:32px;text-align:center;color:var(--text3)">Loading insights…</div>
+      </div>
+    </div>
+
+    <!-- Per-Auction Breakdown — moved off the dashboard to its own screen.
+         Rendered by loadPerTradeBreakdown() into #pertrade-host. -->
+    <div class="tc" id="tc-pertrade">
+      <div id="pertrade-host">
+        <div style="padding:32px;text-align:center;color:var(--text3)">Loading…</div>
       </div>
     </div>
 
@@ -9107,7 +9119,7 @@ function go(tab){
   if (typeof applyLogoBadge === 'function') {
     try { applyLogoBadge(); } catch(_) {}
   }
-  const loaders={dash:loadStats,insights:loadInsights,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>searchTraders(''),buyers:()=>searchBuyers(''),
+  const loaders={dash:loadStats,insights:loadInsights,pertrade:loadPerTradeBreakdown,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>searchTraders(''),buyers:()=>searchBuyers(''),
     auctions:loadAuctions,reassignreqs:loadReassignRequests,lotalloc:loadLotAllocation,lots:loadLotAuctions,invoices:loadInvAuctions,preinvoice:loadPreInvoice,purchases:loadPurAuctions,
     payments:loadPayAuctions,exports:loadExpAuctions,tds:()=>{},lorry:loadLorryAuctions,
     bills:loadBillAuctions,debit:loadDnAuctions,debitplanter:loadDnpAuctions,journals:loadJournalDefault,registers:loadRegisterDefault,tally:loadTallyAuctions,
@@ -9695,6 +9707,109 @@ function reportBtns(key, small){
 // numeric formatter kicks in for money/qty columns).
 function _rn(v){ const n = Number(v); return isFinite(n) ? n : 0; }
 
+// Per-Auction Breakdown — lives on its own screen (tc-pertrade), moved off
+// the dashboard. Always shows all auctions (lifetime), reusing the same
+// /api/stats?auction_id=all payload the dashboard consumes.
+async function loadPerTradeBreakdown(){
+  const host = document.getElementById('pertrade-host');
+  if (!host) return;
+  host.innerHTML = '<div style="padding:24px;color:var(--spice-text-hint)">Loading…</div>';
+  let d;
+  try {
+    d = await j(`/api/stats?auction_id=all&_=${Date.now()}`);
+  } catch(e) {
+    host.innerHTML = `<div style="padding:24px;color:#C62828">Failed to load: ${esc(e.message||'error')}</div>`;
+    return;
+  }
+  const PT = d.perTradeBreakdown || [];
+  const CUM = d.cumulative || { qty:0, amount:0, lots:0, auctions:0 };
+  // Local money/qty formatters (same as loadStats).
+  const inr  = n => '₹'+Math.round(n||0).toLocaleString('en-IN');
+  const inrL = n => { const v = (n||0)/100000; return v>=1 ? '₹'+v.toFixed(1)+'L' : inr(n); };
+  const kg   = n => (n||0).toFixed(0)+' kg';
+
+  // Report/print export builder (moved from loadStats). Drives the
+  // reportBtns('dash_pertrade') PDF/print button on this screen.
+  REPORT_BUILDERS.dash_pertrade = () => {
+    if (!Array.isArray(PT) || !PT.length) return null;
+    const cols = [
+      {header:'AUCTION',key:'ano',width:8},{header:'DATE',key:'date',width:11},{header:'CROP',key:'crop',width:10},
+      {header:'LOTS',key:'lots',width:7},{header:'QTY',key:'qty',width:11},{header:'AMOUNT',key:'amount',width:13},
+      {header:'MIN ₹',key:'minp',width:9},{header:'MAX ₹',key:'maxp',width:9},{header:'AVG ₹',key:'avgp',width:9},
+      {header:'INVOICED %',key:'inv',width:9},
+    ];
+    const rows = PT.map(t => ({
+      ano:'#'+(t.ano != null ? t.ano : ''), date:fmtD(t.date), crop:t.crop_type||'—',
+      lots:_rn(t.lots), qty:_rn(t.qty), amount:_rn(t.amount),
+      minp:_rn(t.min_price), maxp:_rn(t.max_price), avgp:_rn(t.avg_price),
+      inv:(t.lots ? Math.round((t.invoiced||0)/t.lots*100) : 0)+'%',
+    }));
+    const totals = { ano:'TOTAL', lots:_rn(CUM.lots), qty:_rn(CUM.qty), amount:_rn(CUM.amount) };
+    return { title:'Per-Auction Breakdown', subtitle:`${PT.length} auction${PT.length===1?'':'s'}`, columns: cols, rows, totals };
+  };
+
+  if (!PT.length) {
+    host.innerHTML = `<div class="card" style="padding:28px;text-align:center;color:var(--spice-text-hint)">No auctions to show yet.</div>`;
+    return;
+  }
+
+  host.innerHTML = `
+    <div class="card" style="padding:0;margin-bottom:20px">
+      <div style="padding:18px 22px 12px;border-bottom:1px solid var(--spice-line);display:flex;justify-content:space-between;align-items:center">
+        <h2 style="font-size:17px;font-weight:700;margin:0;color:var(--spice-text-main)">Per-Auction Breakdown</h2>
+        <div style="display:flex;align-items:center;gap:12px">
+          <span style="font-size:12px;color:var(--spice-text-hint)">${PT.length} auction${PT.length===1?'':'s'} · click a row to drill in</span>
+          ${reportBtns('dash_pertrade', true)}
+        </div>
+      </div>
+      <div style="padding:0 4px;overflow-x:auto">
+        <table style="width:100%">
+          <thead>
+            <tr>
+              <th>Auction</th><th>Date</th><th>Crop</th>
+              <th class="num">Lots</th><th class="num">Qty</th><th class="num">Amount</th>
+              <th class="num">Min ₹</th><th class="num">Max ₹</th><th class="num">Avg ₹</th><th class="num">Invoiced</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${PT.map(t=>{
+              const pct = t.lots ? Math.round((t.invoiced||0)/t.lots*100) : 0;
+              const pr = n => (Number(n)>0 ? inrL(n) : '—');
+              return `<tr style="cursor:pointer" onclick="go('dash');loadStats(${t.id})">
+                <td><strong>#${esc(t.ano)}</strong></td>
+                <td style="color:var(--spice-text-mute)">${fmtD(t.date)}</td>
+                <td>${esc(t.crop_type||'—')}</td>
+                <td class="num">${t.lots||0}</td>
+                <td class="num">${kg(t.qty)}</td>
+                <td class="num"><strong>${inrL(t.amount)}</strong></td>
+                <td class="num">${pr(t.min_price)}</td>
+                <td class="num">${pr(t.max_price)}</td>
+                <td class="num">${pr(t.avg_price)}</td>
+                <td class="num">
+                  <span style="display:inline-flex;align-items:center;gap:6px">
+                    <span style="width:40px;height:6px;background:var(--spice-line);border-radius:999px;overflow:hidden;display:inline-block">
+                      <span style="display:block;height:100%;width:${pct}%;background:var(--spice-cardamom);border-radius:999px"></span>
+                    </span>
+                    <span style="font-size:12px;color:var(--spice-text-mute);min-width:34px">${pct}%</span>
+                  </span>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+          <tfoot>
+            <tr style="background:var(--spice-cardamom-lt);font-weight:700">
+              <td colspan="3" style="padding:12px 22px">Totals</td>
+              <td class="num">${CUM.lots||0}</td>
+              <td class="num">${kg(CUM.qty)}</td>
+              <td class="num">${inrL(CUM.amount)}</td>
+              <td class="num"></td><td class="num"></td><td class="num"></td><td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>`;
+}
+
 async function loadStats(auctionId){
   // Allow explicit override; otherwise use the remembered selection
   if (auctionId !== undefined) _dashSelectedAuctionId = auctionId || null;
@@ -10036,72 +10151,8 @@ async function loadStats(auctionId){
     </div>
   ` : '';
 
-  const ptHTML = isAllMode && PT.length ? `
-    <div class="card" style="padding:0;margin-bottom:20px">
-      <div style="padding:18px 22px 12px;border-bottom:1px solid var(--spice-line);display:flex;justify-content:space-between;align-items:center">
-        <h2 style="font-size:17px;font-weight:700;margin:0;color:var(--spice-text-main)">Per-Auction Breakdown</h2>
-        <div style="display:flex;align-items:center;gap:12px">
-          <span style="font-size:12px;color:var(--spice-text-hint)">${PT.length} auction${PT.length===1?'':'s'} · click a row to drill in</span>
-          ${reportBtns('dash_pertrade', true)}
-        </div>
-      </div>
-      <div style="padding:0 4px;overflow-x:auto">
-        <table style="width:100%">
-          <thead>
-            <tr>
-              <th>Auction</th>
-              <th>Date</th>
-              <th>Crop</th>
-              <th class="num">Lots</th>
-              <th class="num">Qty</th>
-              <th class="num">Amount</th>
-              <th class="num">Min ₹</th>
-              <th class="num">Max ₹</th>
-              <th class="num">Avg ₹</th>
-              <th class="num">Invoiced</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${PT.map(t=>{
-              const pct = t.lots ? Math.round((t.invoiced||0)/t.lots*100) : 0;
-              const pr = n => (Number(n)>0 ? inrL(n) : '—');
-              return `<tr style="cursor:pointer" onclick="loadStats(${t.id})">
-                <td><strong>#${esc(t.ano)}</strong></td>
-                <td style="color:var(--spice-text-mute)">${fmtD(t.date)}</td>
-                <td>${esc(t.crop_type||'—')}</td>
-                <td class="num">${t.lots||0}</td>
-                <td class="num">${kg(t.qty)}</td>
-                <td class="num"><strong>${inrL(t.amount)}</strong></td>
-                <td class="num">${pr(t.min_price)}</td>
-                <td class="num">${pr(t.max_price)}</td>
-                <td class="num">${pr(t.avg_price)}</td>
-                <td class="num">
-                  <span style="display:inline-flex;align-items:center;gap:6px">
-                    <span style="width:40px;height:6px;background:var(--spice-line);border-radius:999px;overflow:hidden;display:inline-block">
-                      <span style="display:block;height:100%;width:${pct}%;background:var(--spice-cardamom);border-radius:999px"></span>
-                    </span>
-                    <span style="font-size:12px;color:var(--spice-text-mute);min-width:34px">${pct}%</span>
-                  </span>
-                </td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-          <tfoot>
-            <tr style="background:var(--spice-cardamom-lt);font-weight:700">
-              <td colspan="3" style="padding:12px 22px">Totals</td>
-              <td class="num">${CUM.lots||0}</td>
-              <td class="num">${kg(CUM.qty)}</td>
-              <td class="num">${inrL(CUM.amount)}</td>
-              <td class="num"></td>
-              <td class="num"></td>
-              <td class="num"></td>
-              <td></td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    </div>
-  ` : '';
+  // Per-Auction Breakdown moved to its own screen (tc-pertrade). See
+  // loadPerTradeBreakdown().
 
   const sellersHTML = S.length ? S.map((s,i)=>{
     const max = S[0].amount || 1;
@@ -10167,23 +10218,8 @@ async function loadStats(auctionId){
     if (_rn(T.min_price) > 0) meta.push(`Price ₹${fmtI(T.min_price,2)}–${fmtI(T.max_price,2)} · avg ₹${fmtI(T.avg_price,2)}`);
     return { title:`Trade Snapshot — ${scope}`, subtitle: meta.join('   —   '), columns: cols, rows };
   };
-  REPORT_BUILDERS.dash_pertrade = () => {
-    if (!Array.isArray(PT) || !PT.length) return null;
-    const cols = [
-      {header:'AUCTION',key:'ano',width:8},{header:'DATE',key:'date',width:11},{header:'CROP',key:'crop',width:10},
-      {header:'LOTS',key:'lots',width:7},{header:'QTY',key:'qty',width:11},{header:'AMOUNT',key:'amount',width:13},
-      {header:'MIN ₹',key:'minp',width:9},{header:'MAX ₹',key:'maxp',width:9},{header:'AVG ₹',key:'avgp',width:9},
-      {header:'INVOICED %',key:'inv',width:9},
-    ];
-    const rows = PT.map(t => ({
-      ano:'#'+(t.ano != null ? t.ano : ''), date:fmtD(t.date), crop:t.crop_type||'—',
-      lots:_rn(t.lots), qty:_rn(t.qty), amount:_rn(t.amount),
-      minp:_rn(t.min_price), maxp:_rn(t.max_price), avgp:_rn(t.avg_price),
-      inv:(t.lots ? Math.round((t.invoiced||0)/t.lots*100) : 0)+'%',
-    }));
-    const totals = { ano:'TOTAL', lots:_rn(CUM.lots), qty:_rn(CUM.qty), amount:_rn(CUM.amount) };
-    return { title:'Per-Auction Breakdown', subtitle:`${PT.length} auction${PT.length===1?'':'s'}`, columns: cols, rows, totals };
-  };
+  // REPORT_BUILDERS.dash_pertrade is defined in loadPerTradeBreakdown()
+  // (the Per-Auction Breakdown widget now lives on its own screen).
 
   document.getElementById('tc-dash').innerHTML = `
     <div class="greeting">
@@ -10258,8 +10294,6 @@ async function loadStats(auctionId){
          stats panel. Hydrated async by loadDepotSummary() after this HTML
          lands, so the dashboard paint is never blocked. -->
     <div id="dash-current-auction" style="margin-bottom:20px"></div>
-
-    ${ptHTML}
   `;
 
   // "Current Auction" depot summary — uses the dashboard-selected trade, else
@@ -10415,26 +10449,6 @@ async function loadDepotSummary(auctionId){
     ['Average Price',  inr0(s.avgPrice)],
   ].map(([l,v]) => statRow(l, v)).join('');
 
-  // ── Pre-auction breakdown (min / max / avg) ──
-  // Arrivals spread per lot — how big the lots coming in are, before the
-  // auction prices them. Two rows: net weight (qty) and bags per lot.
-  const aq = s.arrivalsQty  || { min:0, max:0, avg:0 };
-  const ab = s.arrivalsBags || { min:0, max:0, avg:0 };
-  const triCell = (min, max, avg, fmt) => `
-    <div style="display:flex;justify-content:space-between;gap:8px;padding:8px 12px;border-bottom:1px solid var(--spice-line);font-size:12.5px;font-variant-numeric:tabular-nums">
-      <span style="color:var(--spice-cardamom-dk)">Min <b style="color:var(--spice-text-main)">${fmt(min)}</b></span>
-      <span style="color:var(--spice-cardamom-dk)">Avg <b style="color:var(--spice-text-main)">${fmt(avg)}</b></span>
-      <span style="color:var(--spice-cardamom-dk)">Max <b style="color:var(--spice-text-main)">${fmt(max)}</b></span>
-    </div>`;
-  const preAuctionHTML = `
-    <div style="margin-top:14px">
-      <div style="font-size:11px;font-weight:700;color:var(--spice-cardamom);text-transform:uppercase;letter-spacing:.4px;padding:0 12px 6px">Pre-auction breakdown</div>
-      <div style="padding:6px 12px 2px;font-size:11px;color:var(--spice-text-hint)">Net weight per lot (kg)</div>
-      ${triCell(aq.min, aq.max, aq.avg, wt)}
-      <div style="padding:6px 12px 2px;font-size:11px;color:var(--spice-text-hint)">Bags per lot</div>
-      ${triCell(ab.min, ab.max, ab.avg, intf)}
-    </div>`;
-
   // ── Grade-2 booking vs the Spices Board 25% cap ──
   // Rule: grade 2 should be 25% of the total booked qty. Show the booked
   // grade-2 weight against that 25% target and the qty difference — a positive
@@ -10499,7 +10513,6 @@ async function loadDepotSummary(auctionId){
         <div style="overflow-x:auto">${tableHTML}</div>
         <div style="align-self:start">
           <div style="border:1px solid var(--spice-line);border-radius:10px;overflow:hidden">${statsHTML}</div>
-          <div style="border:1px solid var(--spice-line);border-radius:10px;overflow:hidden;margin-top:12px">${preAuctionHTML}</div>
         </div>
       </div>
       ${grade2HTML}

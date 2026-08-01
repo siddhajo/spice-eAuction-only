@@ -8,7 +8,7 @@ const XLSX = require('xlsx');
 const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
 const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates } = require('./company-config');
 const grade2Alerts = require('./grade2-alerts');
-const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getPurchaseJournal, gstinStateCode, isDealerSeller, dealerSql } = require('./calculations');
+const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getPurchaseJournal, gstinStateCode, isDealerSeller, dealerSql, hasValidGstinSql } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 const { amountToWords } = require('./amount-words');
 const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx } = require('./exports');
@@ -3610,12 +3610,13 @@ function cleanGstin(cr) {
   return s.trim().toUpperCase();
 }
 // "Valid GSTIN" = the cleaned value matches the FULL GSTIN format (2-digit
-// state code + PAN + entity/Z/checksum). This is a DATA-FORMAT check used ONLY
-// by the prefix-convention data-hygiene warnings below (is this value a GSTIN
-// that should carry a "GSTIN." prefix, vs a CR registration number). It is NOT
-// the Grade-1/Grade-2 party classification — that is isDealerSeller() (cr
-// starts with GSTIN AND SBL/aadhar set), used everywhere sellers are split
-// into planters vs dealers.
+// state code + PAN + entity/Z/checksum). Two uses: (1) the prefix-convention
+// data-hygiene warnings below, and (2) the PREVIOUS party-classification rule —
+// a seller is a dealer purely on holding a valid GSTIN (SBL/aadhar ignored),
+// used everywhere sellers are split into planters vs dealers EXCEPT the
+// Dashboard, Current-Auction widget, Lot Entry (web + mobile) and the Spice
+// Board e-Auction CSV, which use isDealerSeller() (GSTIN + SBL). Mirrors
+// calculations.hasValidGstin()/hasValidGstinSql().
 const hasValidGstin = (cr) => !!gstinStateCode(cr);
 
 // Pure, read-only: build the validation report for one auction.
@@ -3719,14 +3720,14 @@ function validateAuctionLots(db, auctionId) {
   const totalLots = lots.length;
   const totalBags = lots.reduce((s, l) => s + Number(l.bags || 0), 0);
   const totalQty  = Math.round(lots.reduce((s, l) => s + Number(l.qty || 0), 0) * 1000) / 1000;
-  const gstinLots = lots.filter(l => isDealerSeller(l.cr, l.aadhar)).length;
+  const gstinLots = lots.filter(l => hasValidGstin(l.cr)).length;
 
   // Per-seller breakdown (grouped by trader_id, falling back to name)
   const sellerMap = new Map();
   for (const l of lots) {
     const key = l.trader_id != null ? 't' + l.trader_id : 'n:' + String(l.name || '').trim().toUpperCase();
     if (!sellerMap.has(key)) {
-      sellerMap.set(key, { name: l.name || '(no name)', hasGstin: isDealerSeller(l.cr, l.aadhar), lots: 0, bags: 0, qty: 0 });
+      sellerMap.set(key, { name: l.name || '(no name)', hasGstin: hasValidGstin(l.cr), lots: 0, bags: 0, qty: 0 });
     }
     const s = sellerMap.get(key);
     s.lots += 1; s.bags += Number(l.bags || 0); s.qty += Number(l.qty || 0);
@@ -3843,7 +3844,7 @@ function _remainingPartiesSql(db, docType, auctionId) {
                AND l.amount > 0
                AND l.name IS NOT NULL AND l.name != ''
                AND ${notWD}
-               AND ${dealerSql('l.cr', 'l.aadhar')}
+               AND ${hasValidGstinSql('l.cr')}
                AND p.id IS NULL`,
       params: [auctionId],
     };
@@ -3859,7 +3860,7 @@ function _remainingPartiesSql(db, docType, auctionId) {
                AND l.amount > 0
                AND l.name IS NOT NULL AND l.name != ''
                AND ${notWD}
-               AND NOT ${dealerSql('l.cr', 'l.aadhar')}
+               AND NOT ${hasValidGstinSql('l.cr')}
                AND b.id IS NULL`,
       params: [ano, auctionId],
     };
@@ -4846,10 +4847,12 @@ app.get('/api/auctions/:id(\\d+)/arrivals-export', requireExport, async (req, re
   const auctionId = parseInt(req.params.id, 10);
   const auction = db.get('SELECT id, ano, date FROM auctions WHERE id = ?', [auctionId]);
   if (!auction) return res.status(404).json({ error: 'Auction not found' });
-  // Trader vs Planter: a valid GSTIN cleans to 15 chars AND starts with a
-  // 2-digit state code. Length alone mislabels 15-char CR codes (e.g.
-  // CR.A9/2789/2020) as Trader — matches the depot-summary DEALER rule.
-  const DEALER = dealerSql('cr', 'aadhar');
+  // Trader vs Planter: previous rule — a valid full-format GSTIN in `cr`
+  // (SBL/aadhar ignored). Length alone mislabels 15-char CR codes (e.g.
+  // CR.A9/2789/2020) as Trader, so we match the full GSTIN shape. NOTE: this
+  // export deliberately uses the previous GSTIN-only rule, unlike the
+  // Current-Auction depot-summary which uses GSTIN + SBL.
+  const DEALER = hasValidGstinSql('cr');
   const rows = db.all(
     `SELECT COALESCE(NULLIF(TRIM(branch),''),'(unspecified)') AS depot,
             lot_no, name AS seller,
@@ -7883,7 +7886,7 @@ app.get('/api/purchases/eligible-sellers/:auctionId', requireView, (req, res) =>
      FROM lots
      WHERE auction_id = ? AND name IS NOT NULL AND name != ''
        AND amount > 0
-       AND ${dealerSql('cr', 'aadhar')}
+       AND ${hasValidGstinSql('cr')}
      GROUP BY name
      ORDER BY name`,
     [req.params.auctionId]
@@ -7917,7 +7920,7 @@ app.post('/api/purchases/generate-all/:auctionId',
      WHERE auction_id = ?
        AND amount > 0
        AND name IS NOT NULL AND name != ''
-       AND ${dealerSql('cr', 'aadhar')}`,
+       AND ${hasValidGstinSql('cr')}`,
     [req.params.auctionId]
   );
 
@@ -10751,12 +10754,31 @@ app.post('/api/invoices/export-selected', requireExport, async (req, res) => {
 
     const placeholders = ids.map(() => '?').join(',');
     const rows = db.all(
-      `SELECT sale, invo, buyer1, gstin, bag, qty, tot
+      `SELECT sale, invo, buyer1, gstin, bag, qty, tot, lorry_no
          FROM invoices WHERE id IN (${placeholders})
         ORDER BY sale, invo`, ids);
     if (!rows.length) return res.status(404).json({ error: 'No matching invoices found' });
 
     const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+
+    // Group the selected invoices by their lorry number so each export shows
+    // a "Lorry: <no>" sub-header above that lorry's invoices. Invoices with no
+    // lorry set fall into a final "(not set)" group. Groups are ordered by
+    // lorry number; the original ORDER BY sale, invo is preserved within each.
+    const NO_LORRY = '(not set)';
+    const groupsMap = new Map();
+    for (const r of rows) {
+      const key = String(r.lorry_no || '').trim() || NO_LORRY;
+      if (!groupsMap.has(key)) groupsMap.set(key, []);
+      groupsMap.get(key).push(r);
+    }
+    const groups = [...groupsMap.entries()]
+      .sort(([a], [b]) => {
+        if (a === NO_LORRY) return 1;              // "(not set)" always last
+        if (b === NO_LORRY) return -1;
+        return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+      })
+      .map(([no, grpRows]) => ({ no, rows: grpRows }));
 
     if (format === 'pdf') {
       const columns = [
@@ -10768,11 +10790,18 @@ app.post('/api/invoices/export-selected', requireExport, async (req, res) => {
         { header: 'QTY',         key: 'qty',    width: 12 },
         { header: 'BILL AMOUNT', key: 'tot',    width: 16 },
       ];
+      // Flatten into section-banner rows + data rows. renderTablePdf draws a
+      // full-width banner for any row shaped { _isSection:true, label }.
+      const pdfRows = [];
+      for (const g of groups) {
+        pdfRows.push({ _isSection: true, label: `Lorry: ${g.no}` });
+        for (const r of g.rows) pdfRows.push(r);
+      }
       const totals = { sale: 'TOTAL', bag: sum('bag'), qty: sum('qty'), tot: sum('tot') };
       const buffer = await renderTablePdf({
         title: 'Sales Invoices',
         subtitle: `${rows.length} invoice(s)`,
-        columns, rows, totals,
+        columns, rows: pdfRows, totals,
         companyHeader: getCompanyHeader(db),
       });
       res.setHeader('Content-Type', 'application/pdf');
@@ -10789,8 +10818,11 @@ app.post('/api/invoices/export-selected', requireExport, async (req, res) => {
       { header: 'QTY',         key: 'qty',    width: 12, numFmt: '#,##0.000' },
       { header: 'BILL AMOUNT', key: 'tot',    width: 16, numFmt: '#,##0.00'  },
     ];
+    // createExcelBuffer renders opts.sections as a titled group band then its
+    // rows. Pass one section per lorry.
+    const sections = groups.map(g => ({ title: `Lorry: ${g.no}`, rows: g.rows }));
     const buffer = await createExcelBuffer('SalesInvoices', cols, rows, {
-      db, title: 'Sales Invoices',
+      db, title: 'Sales Invoices', sections,
       grandTotal: { label: 'TOTAL', values: { bag: sum('bag'), qty: sum('qty'), tot: sum('tot') } },
     });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -11221,7 +11253,7 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds) {
   const _discPct    = Number(cfg.discount_pct)  || 0;
   const _poolerDays = Number(cfg.discount_days) || 0;
   const _dealerDays = Number(cfg.dealer_days)   || 0;
-  const _isDealer   = isDealerSeller((lots[0] || {}).cr, (lots[0] || {}).aadhar);
+  const _isDealer   = hasValidGstin((lots[0] || {}).cr);
   const _days       = _isDealer ? _dealerDays : _poolerDays;
   const _netAmount  = tPay;
 
@@ -13168,12 +13200,13 @@ app.get('/api/insights', requireView, (req, res) => {
   totals.lots_wd_amount   = Number(lotsAmtRow.wd)    || 0;
 
   // Planter / Trader weight split + Grade-2 booked weight across the scope.
-  // "Trader" = registered dealer (a `cr` that cleans to a 15-char GSTIN
-  // starting with a 2-digit state code); everyone else is a Planter — the SAME
-  // rule as /depot-summary so the dashboard's cumulative tiles match the
-  // per-auction Current-Auction widget. Grade-2 weight (grade='2') feeds the
-  // Grade-2 25%-cap alert. Feeds the snapshot's Planter/Trader/Total tiles.
-  const DEALER_INS = dealerSql('l.cr', 'l.aadhar');
+  // "Trader" = registered dealer under the PREVIOUS rule — a `cr` that cleans
+  // to a valid 15-char GSTIN (SBL/aadhar ignored); everyone else is a Planter.
+  // (The Insights tab and these cumulative tiles use the previous GSTIN-only
+  // rule; the per-auction Current-Auction widget uses GSTIN + SBL.) Grade-2
+  // weight (grade='2') feeds the Grade-2 25%-cap alert. Feeds the snapshot's
+  // Planter/Trader/Total tiles.
+  const DEALER_INS = hasValidGstinSql('l.cr');
   const gwRow = db.get(
     `SELECT COALESCE(SUM(CASE WHEN ${DEALER_INS} THEN 0 ELSE l.qty END),0) AS planter_wt,
             COALESCE(SUM(CASE WHEN ${DEALER_INS} THEN l.qty ELSE 0 END),0) AS trader_wt,
@@ -13230,7 +13263,7 @@ app.get('/api/insights', requireView, (req, res) => {
   const _mkGrade = () => ({ lots: 0, sold: 0, qty: 0, bags: 0, value: 0, sold_value: 0, sold_qty: 0 });
   const gradeSplit = { grade1: _mkGrade(), grade2: _mkGrade() };
   for (const r of gradeRows) {
-    const g = isDealerSeller(r.cr, r.aadhar) ? gradeSplit.grade2 : gradeSplit.grade1;
+    const g = hasValidGstin(r.cr) ? gradeSplit.grade2 : gradeSplit.grade1;
     g.lots       += Number(r.lots)       || 0;
     g.sold       += Number(r.sold)       || 0;
     g.qty        += Number(r.qty)        || 0;

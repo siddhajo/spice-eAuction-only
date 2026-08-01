@@ -16,8 +16,12 @@
 
 const ExcelJS    = require('exceljs');
 const PDFDocument = require('pdfkit');
-// Shared Grade-1/Grade-2 seller rule (dealer = cr starts with GSTIN AND SBL set).
-const { isDealerSeller } = require('./calculations');
+// Seller classification helpers:
+//   • isDealerSeller — newer rule (cr starts with GSTIN AND SBL set); used by
+//     the e-Auction portal CSV (a "kept" surface).
+//   • hasValidGstin  — previous rule (cr holds a valid full-format GSTIN, SBL
+//     ignored); used by Form C, matching the other reports/exports.
+const { isDealerSeller, hasValidGstin } = require('./calculations');
 const {
   fmtMoney, fmtQty, fmtPrice,
   getCompanyHeader, writeXlsxCompanyHeader,
@@ -1148,7 +1152,7 @@ function buildFormC(ctx) {
       commission: isWD ? 0 : (Number(r.commission) || 0),
       buyer:  isWD ? '' : (r.buyer1 || r.buyer_full || ''),
       sbl:    isWD ? '' : (r.buyer_sbl || ''),
-      hasGstin: isDealerSeller(cr, aadhar),
+      hasGstin: hasValidGstin(cr),
       isWD,
     };
     // Form C bucketing rule (user spec): rows whose registration parses

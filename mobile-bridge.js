@@ -103,6 +103,10 @@ function getReceiptConfig(db) {
   };
   return {
     appTitle:     get('trade_name', 'Spice Auction'),
+    // Company contact shown on the DETAILED receipt header (logo-to-the-side
+    // letterhead). Kerala office is the primary; Tamil Nadu is the fallback.
+    companyPhone: get('kl_phone', '') || get('tn_phone', ''),
+    companyGstin: get('kl_gstin', '') || get('tn_gstin', ''),
     showUser:     getBool('show_username', false),
     acctMask:     get('acct_mask', 'none'),
     showMoisture: getBool('show_moisture', false),
@@ -117,27 +121,37 @@ function getReceiptConfig(db) {
 }
 
 // ── HEADER (full size: ~340pt wide) ──────────────────────────────
-function addReceiptHeader(doc, appTitle, branch, dateFmt, tradeNo, pageW) {
+function addReceiptHeader(doc, appTitle, branch, dateFmt, tradeNo, pageW, companyPhone, companyGstin) {
   const m = 20;
   const pw = pageW || 340;
   const w = pw - 2 * m;
-  const logoSz = Math.round(45 * (w / 300));  // scale logo with paper width
+  // Letterhead header: logo pinned to the LEFT, company block (name / branch /
+  // phone / GSTIN) set beside it and left-aligned so the lines stack cleanly.
+  const startY = doc.y;
   const logoPath = getLogoPath();
+  let textX = m, textW = w, logoSz = 0;
   if (logoPath) {
+    logoSz = Math.round(42 * (w / 300));  // scale logo with paper width
     try {
-      doc.image(logoPath, (pw - logoSz) / 2, doc.y, { width: logoSz, height: logoSz });
-      doc.y += logoSz + 5;
-    } catch (e) {}
+      doc.image(logoPath, m, startY, { width: logoSz, height: logoSz });
+      textX = m + logoSz + 9;
+      textW = w - logoSz - 9;
+    } catch (e) { logoSz = 0; textX = m; textW = w; }
   }
-  doc.font('Helvetica-Bold').fontSize(14).text(appTitle, m, doc.y, { width: w, align: 'center' });
-  doc.fontSize(10).text((branch || '') + ' BRANCH', m, doc.y, { width: w, align: 'center' });
+  doc.font('Helvetica-Bold').fontSize(14).text(appTitle, textX, startY, { width: textW });
+  doc.font('Helvetica').fontSize(9.5).text((branch || '') + ' BRANCH', textX, doc.y, { width: textW });
+  if (companyPhone) doc.fontSize(9).text('Ph: ' + companyPhone, textX, doc.y, { width: textW });
+  if (companyGstin) doc.fontSize(9).text('GSTIN: ' + companyGstin, textX, doc.y, { width: textW });
+  // Make sure the header clears the logo before drawing the divider.
+  if (logoSz && doc.y < startY + logoSz) doc.y = startY + logoSz;
   doc.moveDown(0.4);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.5).stroke(); doc.moveDown(0.4);
 
+  // Trade # (auction no) on the LEFT, Date on the RIGHT (swapped).
   doc.font('Helvetica').fontSize(10);
   const y0 = doc.y;
-  doc.text('Date: ' + dateFmt, m, y0, { width: w / 2 });
-  doc.text('Trade #' + tradeNo, m + w / 2, y0, { width: w / 2, align: 'right' });
+  doc.text('Trade #' + tradeNo, m, y0, { width: w / 2 });
+  doc.text('Date: ' + dateFmt, m + w / 2, y0, { width: w / 2, align: 'right' });
   doc.y = y0 + 16;
   doc.moveDown(0.2);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).dash(3, { space: 3 }).lineWidth(0.5).stroke().undash();
@@ -149,22 +163,16 @@ function addReceiptHeaderCompact(doc, appTitle, branch, dateFmt, tradeNo, pageW)
   const m = 10;
   const pw = pageW || 180;
   const w = pw - 2 * m;
-  const logoSz = Math.round(28 * (w / 160));  // scale logo with paper width
-  const logoPath = getLogoPath();
-  if (logoPath) {
-    try {
-      doc.image(logoPath, (pw - logoSz) / 2, doc.y, { width: logoSz, height: logoSz });
-      doc.y += logoSz + 2;
-    } catch (e) {}
-  }
+  // Compact stub: no logo — a lean thermal receipt keeps only the name/branch.
   doc.font('Helvetica-Bold').fontSize(10).text(appTitle, m, doc.y, { width: w, align: 'center' });
   doc.fontSize(7.5).text((branch || '') + ' BRANCH', m, doc.y, { width: w, align: 'center' });
   doc.moveDown(0.2);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.4).stroke(); doc.moveDown(0.2);
+  // Trade # on the LEFT, Date on the RIGHT (matches the detailed slip).
   doc.font('Helvetica').fontSize(7);
   const y0 = doc.y;
-  doc.text('Date: ' + dateFmt, m, y0, { width: w / 2 });
-  doc.text('Trade #' + tradeNo, m + w / 2, y0, { width: w / 2, align: 'right' });
+  doc.text('Trade #' + tradeNo, m, y0, { width: w / 2 });
+  doc.text('Date: ' + dateFmt, m + w / 2, y0, { width: w / 2, align: 'right' });
   doc.y = y0 + 10;
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).dash(2, { space: 2 }).lineWidth(0.4).stroke().undash();
   doc.moveDown(0.2);
@@ -189,7 +197,7 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
   const lb = (k, d) => L[k] || d;
   const headerBranch = cfg.branch || lot.branch;
 
-  addReceiptHeader(doc, cfg.appTitle, headerBranch, dateFmt, lot.ano, pageW);
+  addReceiptHeader(doc, cfg.appTitle, headerBranch, dateFmt, lot.ano, pageW, cfg.companyPhone, cfg.companyGstin);
 
   const lw = 70 * sc;
   const maskedAcct = maskAcctForReceipt(lot.acctnum, cfg.acctMask);
@@ -282,22 +290,10 @@ function renderSellerReceiptCompact(doc, sellerLots, cfg) {
 
   addReceiptHeaderCompact(doc, cfg.appTitle, headerBranch, dateFmt, lot.ano, pageW);
 
-  const lw = 32 * sc;
-  const maskedAcct = maskAcctForReceipt(lot.acctnum, cfg.acctMask);
-  const sellerFields = [
-    [lb('seller','Seller'), lot.trader_name],
-    [lb('place', 'Place'),  [lot.ppla, lot.pin].filter(Boolean).join(', ')],
-    [lb('acct_no','A/C'),   maskedAcct || '--NIL--'],
-    [lb('ifsc',  'IFSC'),   lot.ifsc || '--NIL--'],
-  ];
-  doc.fontSize(7);
-  sellerFields.forEach(([label, value]) => {
-    if (!value) return;
-    const y = doc.y;
-    doc.font('Helvetica-Bold').text(label, m, y, { width: lw });
-    doc.font('Helvetica').text(String(value), m + lw, y, { width: w - lw });
-    if (doc.y < y + 10) doc.y = y + 10;
-  });
+  // Lean stub — seller NAME only. Bank (A/C, IFSC), place and GSTIN are
+  // intentionally dropped; those live on the detailed receipt.
+  doc.font('Helvetica-Bold').fontSize(7.5)
+     .text(lb('seller','Seller') + ': ' + (lot.trader_name || ''), m, doc.y, { width: w });
 
   doc.moveDown(0.2);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.4).stroke(); doc.moveDown(0.2);
@@ -329,31 +325,15 @@ function renderSellerReceiptCompact(doc, sellerLots, cfg) {
     totalBags  += Number(l.bags) || 0;
   });
 
-  doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.4).stroke(); doc.moveDown(0.15);
-
-  const sumCols = [40, 40, 40, 40].map(c => c * sc);
-  const sumHdrs = ['Lots', lb('bags','Bags'), lb('net_wt','Net'), lb('gross_wt','Gross')];
-  const sumVals = [String(sellerLots.length), String(totalBags), totalQty.toFixed(3),
-                   totalGross ? totalGross.toFixed(3) : '-'];
-  const sHdrY = doc.y;
-  doc.font('Helvetica-Bold').fontSize(6.5);
-  let sx = m;
-  sumHdrs.forEach((h, i) => { doc.text(h, sx, sHdrY, { width: sumCols[i], align: 'center' }); sx += sumCols[i]; });
-  doc.y = sHdrY + 9;
-  const sValY = doc.y;
-  doc.font('Helvetica-Bold').fontSize(8.5);
-  sx = m;
-  sumVals.forEach((v, i) => { doc.text(v, sx, sValY, { width: sumCols[i], align: 'center' }); sx += sumCols[i]; });
-  doc.y = sValY + 12;
-
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.4).stroke(); doc.moveDown(0.2);
-  if (cfg.showUser) {
-    doc.font('Helvetica').fontSize(6).fillColor('#888')
-       .text('Entered by: ' + (lot.user_id || ''), m, doc.y, { width: w });
-    doc.moveDown(0.15);
-  }
-  doc.fillColor('#000').font('Helvetica-Bold').fontSize(9)
-     .text('** THANK YOU **', m, doc.y, { width: w, align: 'center' });
+
+  // Single totals line (no duplicate summary table). Net on one line, the
+  // lot/bag count above it — keeps the stub short and unambiguous.
+  const line1 = sellerLots.length + ' lots | ' + totalBags + ' ' + lb('bags','bags');
+  let line2 = lb('net_wt','Net') + ' ' + totalQty.toFixed(3);
+  if (totalGross) line2 += ' | ' + lb('gross_wt','Grs') + ' ' + totalGross.toFixed(3);
+  doc.fillColor('#000').font('Helvetica-Bold').fontSize(8)
+     .text(line1 + '\n' + line2, m, doc.y, { width: w, align: 'center' });
 }
 
 // Receipt page WIDTH in points. Mirrors the desktop `lot_receipt_width_mm`

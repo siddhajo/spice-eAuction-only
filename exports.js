@@ -591,7 +591,7 @@ async function exportCollection(db, auctionId) {
 // punctuation/whitespace, uppercase) and filter on its length being
 // exactly 15. Works for every storage form.
 async function exportDealerList(db, auctionId) {
-  const { dealerSql } = require('./calculations');
+  const { hasValidGstinSql } = require('./calculations');
   const rows = db.all(
     `WITH cleaned AS (
        SELECT state, name, lot_no, bags, qty, sample_wt, amount,
@@ -604,7 +604,7 @@ async function exportDealerList(db, auctionId) {
               )) AS gstin
          FROM lots
         WHERE auction_id = ? AND COALESCE(reserved,0) = 0
-          AND ${dealerSql('cr', 'aadhar')}
+          AND ${hasValidGstinSql('cr')}
      )
      SELECT state, name, gstin,
             COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
@@ -682,7 +682,7 @@ async function exportPlanterList(db, auctionId) {
 // Dealer List (exportDealerList) — same GSTIN-cleaning rule, but it also
 // rolls up the AMOUNT so the file doubles as a per-dealer value summary.
 async function exportDealerListPartyWise(db, auctionId) {
-  const { dealerSql } = require('./calculations');
+  const { hasValidGstinSql } = require('./calculations');
   const rows = db.all(
     `WITH cleaned AS (
        SELECT state, name, lot_no, bags, qty, amount,
@@ -695,8 +695,8 @@ async function exportDealerListPartyWise(db, auctionId) {
               )) AS gstin
          FROM lots
         WHERE auction_id = ? AND COALESCE(reserved,0) = 0
-          -- Grade-2 registered dealer: cr starts with GSTIN AND SBL (aadhar) set.
-          AND ${dealerSql('cr', 'aadhar')}
+          -- Previous rule: registered dealer = cr holds a valid GSTIN (SBL ignored).
+          AND ${hasValidGstinSql('cr')}
      )
      SELECT state, name, gstin,
             COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
@@ -1332,10 +1332,10 @@ async function exportPramanCSV(db, auctionId, cfg, state) {
   const lotCompany = identity.shortName || '';
 
   // Praman classifies sellers as 1=Planter (URD/agriculturist) or 2=Dealer
-  // (registered). Uses the shared Grade rule (cr starts with GSTIN AND SBL set)
+  // (registered). Previous rule: dealer = cr holds a valid GSTIN (SBL ignored)
   // so it matches the Dealer List, calculator and payments split.
-  const { isDealerSeller } = require('./calculations');
-  const classify = (cr, aadhar) => (isDealerSeller(cr, aadhar) ? 2 : 1);
+  const { hasValidGstin } = require('./calculations');
+  const classify = (cr) => (hasValidGstin(cr) ? 2 : 1);
 
   const lines = [header.join(',')];
   for (const r of rows) {
@@ -1345,7 +1345,7 @@ async function exportPramanCSV(db, auctionId, cfg, state) {
     const planterName   = (r.name || '').trim();
     const planterGstin  = stripGstinPrefix(r.trader_cr || r.cr);
     const planterMobile = (r.trader_tel || r.tel || '').trim();
-    const planterDealer = classify(r.trader_cr || r.cr, r.trader_aadhar || r.aadhar);
+    const planterDealer = classify(r.trader_cr || r.cr);
 
     lines.push([
       r.lot_no || '',
