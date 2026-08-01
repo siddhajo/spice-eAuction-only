@@ -4562,15 +4562,32 @@ app.post('/api/auctions/:id/carry-forward', requireAuctionWrite, (req, res) => {
   let lotsCarried = 0;
   const lotsSkipped = [];
   if (doLots) {
+    // Optional per-lot selection (Lot Allocation screen). When lot_ids is
+    // provided, carry only those specific lots; otherwise carry every unsold
+    // lot (the New-Auction create-modal flow). The unsold/reserved filters
+    // below still apply either way, so a stale/sold id in the selection can
+    // never be carried.
+    const rawIds = Array.isArray(req.body.lot_ids) ? req.body.lot_ids : null;
+    const lotIds = rawIds
+      ? [...new Set(rawIds.map(n => parseInt(n, 10)).filter(Number.isInteger))]
+      : null;
+    // An explicitly-supplied but empty selection means "carry nothing" — don't
+    // silently fall back to carrying everything.
+    if (rawIds && lotIds.length === 0) {
+      return res.status(400).json({ error: 'No lots selected to carry forward' });
+    }
     // "Unsold" = no buyer code, OR the explicit "NA" (Not Auctioned) buyer
     // dad assigns to lots that were booked but not auctioned. Both carry
     // forward; the carried lot's code/buyer is cleared below so it starts the
     // next auction fresh. WD (withdrawn) and reserved lots are still excluded.
+    const idClause = lotIds
+      ? ` AND id IN (${lotIds.map(() => '?').join(',')})`
+      : '';
     const unsold = db.all(
       `SELECT * FROM lots
-        WHERE auction_id = ? AND UPPER(COALESCE(TRIM(code),'')) IN ('', 'NA') AND COALESCE(reserved,0) = 0
+        WHERE auction_id = ? AND UPPER(COALESCE(TRIM(code),'')) IN ('', 'NA') AND COALESCE(reserved,0) = 0${idClause}
         ORDER BY lot_no`,
-      [srcId]
+      lotIds ? [srcId, ...lotIds] : [srcId]
     );
     // Destination allocations (after any copy above) for range enforcement.
     const destAllocs = db.all('SELECT branch, start_lot, end_lot FROM lot_allocations WHERE auction_id = ?', [destId]);

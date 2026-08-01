@@ -531,10 +531,10 @@ async function exportPoolerRegister(db, auctionId) {
      FROM lots WHERE auction_id = ? AND COALESCE(reserved,0) = 0
      ORDER BY name`, [auctionId]
   );
-  // Gross Qty = net qty + the Default Sample Weight (cfg.sample_weight) taken
-  // from the lot. One row per lot here, so it's a single sample per row.
-  const sampleWt = Number((require('./company-config').getSettingsFlat(db) || {}).sample_weight) || 0;
-  for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + sampleWt;
+  // Gross Qty = net qty + the SB Sample Refund (cfg.sb_refund) added back per
+  // lot. One row per lot here, so it's a single sample refund per row.
+  const sbRefund = Number((require('./company-config').getSettingsFlat(db) || {}).sb_refund) || 0;
+  for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + sbRefund;
   const cols = [
     { header: 'STATE', key: 'state', width: 12 },
     { header: 'NAME', key: 'poolername', width: 30 },
@@ -614,11 +614,11 @@ async function exportDealerList(db, auctionId) {
       GROUP BY state, name, gstin
       ORDER BY state, name`, [auctionId]
   );
-  // Gross Qty = net qty + Default Sample Weight × lot count (one sample per
-  // lot). Computed from cfg.sample_weight so it's independent of the per-lot
+  // Gross Qty = net qty + SB Sample Refund × lot count (one sample refund per
+  // lot). Computed from cfg.sb_refund so it's independent of the per-lot
   // stored sample_wt (which feeds the SAMPLE WT / GROSS WT columns below).
-  const sampleWt = Number((require('./company-config').getSettingsFlat(db) || {}).sample_weight) || 0;
-  for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sampleWt;
+  const sbRefund = Number((require('./company-config').getSettingsFlat(db) || {}).sb_refund) || 0;
+  for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
   const cols = [
     { header: 'STATE', key: 'state', width: 12 },
     { header: 'NAME', key: 'name', width: 30 },
@@ -705,9 +705,9 @@ async function exportDealerListPartyWise(db, auctionId) {
       GROUP BY name, gstin
       ORDER BY name`, [auctionId]
   );
-  // Gross Qty = net qty + Default Sample Weight × lot count (one sample per lot).
-  const sampleWt = Number((require('./company-config').getSettingsFlat(db) || {}).sample_weight) || 0;
-  for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sampleWt;
+  // Gross Qty = net qty + SB Sample Refund × lot count (one sample refund per lot).
+  const sbRefund = Number((require('./company-config').getSettingsFlat(db) || {}).sb_refund) || 0;
+  for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
   const cols = [
     { header: 'STATE',  key: 'state',  width: 12 },
     { header: 'NAME',   key: 'name',   width: 30 },
@@ -743,9 +743,9 @@ async function exportPoolerListConsolidated(db, auctionId) {
       GROUP BY name
       ORDER BY name`, [auctionId]
   );
-  // Gross Qty = net qty + Default Sample Weight × lot count (one sample per lot).
-  const sampleWt = Number((require('./company-config').getSettingsFlat(db) || {}).sample_weight) || 0;
-  for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sampleWt;
+  // Gross Qty = net qty + SB Sample Refund × lot count (one sample refund per lot).
+  const sbRefund = Number((require('./company-config').getSettingsFlat(db) || {}).sb_refund) || 0;
+  for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
   const cols = [
     { header: 'NAME',       key: 'name',       width: 30 },
     { header: 'CR/GSTIN',   key: 'cr',         width: 20 },

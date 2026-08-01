@@ -1403,6 +1403,10 @@ body:not([data-feat-lot-lock="1"]) .feat-lot-lock{display:none !important}
 /* Reserved Price (Lot Entry) — gated by flag_reserved_price. When the
    flag is OFF the input + its label collapse cleanly via .feat-reserved-price. */
 body:not([data-feat-reserved-price="1"]) .feat-reserved-price{display:none !important}
+/* Immediate Payment + Reserve this Lot (Lot Entry) — gated by
+   flag_immediate_reserve. When OFF both checkboxes + the reserve hint
+   collapse via .feat-immediate-reserve. */
+body:not([data-feat-immediate-reserve="1"]) .feat-immediate-reserve{display:none !important}
 /* TAN field on Sellers + Buyers — gated by flag_tan. When OFF the TAN input
    + its label collapse cleanly. */
 body:not([data-feat-tan="1"]) .feat-tan{display:none !important}
@@ -3005,6 +3009,13 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <svg viewBox="0 0 24 24"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
           Reassign Requests<span id="reassignreqs-badge" style="display:none;margin-left:6px;background:#c0392b;color:#fff;font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px">0</span>
         </button>
+        <!-- Lot Allocation — dedicated home to set up per-branch lot-number
+             ranges (opens the proven allocation editor modal) and to carry
+             selected UNSOLD lots forward from one auction into another. -->
+        <button class="side-item needs-auction-write" data-tab="lotalloc" onclick="go('lotalloc')">
+          <svg viewBox="0 0 24 24"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>
+          Lot Allocation
+        </button>
       </div>
       <div class="side-group">
         <div class="side-group-lbl">Transactions</div>
@@ -3897,6 +3908,52 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       </div>
     </div>
 
+    <!-- LOT ALLOCATION — dedicated screen: set up per-branch lot-number
+         ranges for an auction (via the existing allocation editor modal),
+         then carry selected UNSOLD lots forward into another (existing)
+         auction. See loadLotAllocation() and the la* helpers. -->
+    <div class="tc" id="tc-lotalloc">
+      <div class="card" style="padding:14px 18px;margin-bottom:14px">
+        <h2 style="margin:0 0 4px">Lot Allocation</h2>
+        <p style="font-size:12.5px;color:var(--text2);margin:0 0 12px">Set up per-branch lot-number ranges for an auction, then carry selected unsold lots forward into another auction.</p>
+        <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+          <div class="fg" style="min-width:260px;margin:0">
+            <label>Source auction</label>
+            <select id="la-auction" onchange="laOnSourceChange()"></select>
+          </div>
+          <button class="btn btn-o" onclick="loadLotAllocation()" style="height:38px">🔄 Refresh</button>
+        </div>
+      </div>
+
+      <!-- Allocation overview + editor launcher -->
+      <div class="card" id="la-alloc-card" style="padding:14px 18px;margin-bottom:14px;display:none">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+          <span style="font-weight:700;font-size:14px">Allocations</span>
+          <span id="la-alloc-summary" style="font-size:11px;color:var(--text3)"></span>
+          <span style="flex:1"></span>
+          <button class="needs-auction-write btn btn-g" id="la-edit-btn" style="height:32px;padding:0 14px;font-size:12px;font-weight:600">📝 Edit Allocations</button>
+        </div>
+        <div id="la-alloc-bars" style="display:flex;flex-direction:column;gap:6px"></div>
+      </div>
+
+      <!-- Carry-forward: select source's unsold lots → into destination -->
+      <div class="card" id="la-cf-card" style="padding:14px 18px;display:none">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+          <span style="font-weight:700;font-size:14px">Carry Forward Unsold Lots</span>
+          <span id="la-cf-summary" style="font-size:11px;color:var(--text3)"></span>
+        </div>
+        <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px">
+          <div class="fg" style="min-width:260px;margin:0">
+            <label>Destination auction</label>
+            <select id="la-dest" onchange="laUpdateCarryBtn()"></select>
+          </div>
+          <button class="needs-auction-write btn btn-g" id="la-cf-btn" onclick="laCarryForward()" style="height:38px;padding:0 16px;font-weight:600" disabled>Carry <span id="la-cf-count">0</span> lots forward</button>
+        </div>
+        <div id="la-cf-empty" style="display:none;font-size:12.5px;color:var(--text3);padding:8px 0">No unsold lots to carry forward in this auction.</div>
+        <div id="la-cf-table-wrap" style="overflow-x:auto"><table><tbody id="la-cf-list"></tbody></table></div>
+      </div>
+    </div>
+
     <!-- PRICE ENTRY — fast on-screen price typing (Price-only editable grid).
          Type a price, Enter jumps to the next lot; one Save & Calculate at the
          end. A focused alternative to opening the Edit modal per lot. -->
@@ -4336,6 +4393,9 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
         </div>
 
+        <!-- Immediate Payment + Reserve this Lot — both gated by
+             flag_immediate_reserve via .feat-immediate-reserve. -->
+        <div class="feat-immediate-reserve">
         <!-- Immediate Payment — when ticked, this lot earns the early-
              payment discount; unticked lots get zero discount. -->
         <label for="le-immediate-payment" style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:10px 14px;border:1.5px solid var(--border);border-radius:8px;cursor:pointer;user-select:none">
@@ -4356,6 +4416,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <div id="le-reserve-hint" style="display:none;font-size:12px;color:#0369a1;background:#e0f2fe;border:1px solid #7dd3fc;border-radius:8px;padding:8px 12px;margin-bottom:16px;line-height:1.45">
           Reserving — the <b>Lot No</b> field accepts several lots at once: a range like <b>001-010</b> or a list like <b>001,003,007</b>. Each becomes a held lot for this seller (bags/weight not needed).
         </div>
+        </div><!-- /.feat-immediate-reserve -->
 
         <div id="le-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:13px;margin-bottom:12px"></div>
 
@@ -6234,16 +6295,16 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <label>Code
         <span id="l-code-hint" style="margin-left:6px;font-weight:400;font-size:11px;color:var(--text3)"></span>
       </label>
-      <!-- Custom type-ahead autocomplete. Native <datalist> filters its
-           suggestions against both the option's value AND its displayed
-           text — typing "HR" surfaced ASF2 because the buyer name
-           "ASHRAF" contains "HR". A custom dropdown gives strict
-           code-only matching while still showing buyer name, sale type,
-           and place next to each suggestion. Anchored to a relative
-           wrapper so the absolute-positioned panel sits flush under
-           the input. -->
+      <!-- Custom type-ahead autocomplete (see _buyerMatch). Native
+           <datalist> can't rank, so typing "HR" surfaced ASF2 (buyer
+           name "ASHRAF" contains "HR") above real code matches. The
+           custom dropdown searches Code, Buyer Code and Buyer Name but
+           ranks code hits first, so name/buyer-code matches only fill in
+           below — while still showing buyer name, sale type, and place
+           next to each suggestion. Anchored to a relative wrapper so the
+           absolute-positioned panel sits flush under the input. -->
       <div style="position:relative">
-        <input id="l-code" autocomplete="off">
+        <input id="l-code" autocomplete="off" placeholder="Search code, buyer code or name">
         <div id="l-code-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;max-height:240px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:12.5px"></div>
       </div>
     </div>
@@ -6271,7 +6332,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <span id="bsb-hint" style="margin-left:6px;font-weight:400;font-size:11px;color:var(--text3)"></span>
     </label>
     <div style="position:relative">
-      <input id="bsb-code" autocomplete="off" placeholder="Start typing — e.g. JP">
+      <input id="bsb-code" autocomplete="off" placeholder="Search code, buyer code or name — e.g. JP">
       <div id="bsb-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;max-height:240px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:12.5px"></div>
     </div>
   </div>
@@ -8136,6 +8197,9 @@ async function applyFeatureFlags() {
   // .feat-reserved-price CSS rule. The companion Crop Receipt field
   // is always shown — only Reserved Price is flag-gated.
   document.body.setAttribute('data-feat-reserved-price', cfg && on(cfg.flag_reserved_price) ? '1' : '0');
+  // Immediate Payment + Reserve this Lot checkboxes (Lot Entry). When OFF both
+  // controls hide via .feat-immediate-reserve; the DB columns always exist.
+  document.body.setAttribute('data-feat-immediate-reserve', cfg && on(cfg.flag_immediate_reserve) ? '1' : '0');
   // TAN field on Sellers + Buyers. When ON the TAN input shows in both
   // add/edit forms; the traders.tan / buyers.tan columns always exist.
   document.body.setAttribute('data-feat-tan', cfg && on(cfg.flag_tan) ? '1' : '0');
@@ -9044,7 +9108,7 @@ function go(tab){
     try { applyLogoBadge(); } catch(_) {}
   }
   const loaders={dash:loadStats,insights:loadInsights,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>searchTraders(''),buyers:()=>searchBuyers(''),
-    auctions:loadAuctions,reassignreqs:loadReassignRequests,lots:loadLotAuctions,invoices:loadInvAuctions,preinvoice:loadPreInvoice,purchases:loadPurAuctions,
+    auctions:loadAuctions,reassignreqs:loadReassignRequests,lotalloc:loadLotAllocation,lots:loadLotAuctions,invoices:loadInvAuctions,preinvoice:loadPreInvoice,purchases:loadPurAuctions,
     payments:loadPayAuctions,exports:loadExpAuctions,tds:()=>{},lorry:loadLorryAuctions,
     bills:loadBillAuctions,debit:loadDnAuctions,debitplanter:loadDnpAuctions,journals:loadJournalDefault,registers:loadRegisterDefault,tally:loadTallyAuctions,
     spicesboard:loadSpiceBoard,pricecheck:loadPriceCheckAuctions,priceentry:loadPriceEntry,
@@ -19474,6 +19538,256 @@ async function onCarrySrcChange(){
     toast(e.message||'Could not load source auction');
   }
 }
+
+// ════════════════════════════════════════════════════════════════════
+// LOT ALLOCATION screen (tc-lotalloc)
+// A dedicated home for: (1) setting up per-branch lot-number ranges via
+// the existing allocation editor modal (openAllocModal), and (2) carrying
+// SELECTED unsold lots forward from a source auction into an existing
+// destination auction (POST /api/auctions/:destId/carry-forward with a
+// lot_ids array). Reuses j(), toast(), DataTable, fmtI, esc.
+// ════════════════════════════════════════════════════════════════════
+let _laAuctions = [];          // cached [{id,ano,date}] for both dropdowns
+let _laSrcId = null;           // currently-selected source auction id
+let _laSrcAno = '';            // its label (for the modal title)
+let _laUnsold = [];            // unsold lots of the source (for select-all)
+const _laSel = new Set();      // selected lot ids to carry
+
+// Fill an auction <select>, preserving the current value when possible.
+function laFillAuctionSelect(selId, { includeNone } = {}){
+  const sel = document.getElementById(selId);
+  if (!sel) return;
+  const keep = sel.value;
+  const opts = _laAuctions.map(a => {
+    const d = String(a.date||'').split('T')[0];
+    return `<option value="${a.id}">Auction #${esc(a.ano)}${d?` · ${esc(d)}`:''}</option>`;
+  }).join('');
+  sel.innerHTML = (includeNone ? '<option value="">— Select —</option>' : '') + opts;
+  if (keep && _laAuctions.some(a => String(a.id) === String(keep))) sel.value = keep;
+}
+
+async function loadLotAllocation(){
+  try {
+    _laAuctions = (await j('/api/auctions')) || [];
+  } catch(e) {
+    _laAuctions = [];
+    toast(e.message || 'Could not load auctions');
+  }
+  laFillAuctionSelect('la-auction', { includeNone: true });
+  laFillAuctionSelect('la-dest', { includeNone: true });
+  // If a source was already chosen (e.g. returning to the tab), keep it.
+  if (_laSrcId && _laAuctions.some(a => String(a.id) === String(_laSrcId))) {
+    document.getElementById('la-auction').value = _laSrcId;
+    await laOnSourceChange();
+  } else {
+    _laSrcId = null;
+    document.getElementById('la-alloc-card').style.display = 'none';
+    document.getElementById('la-cf-card').style.display = 'none';
+  }
+}
+
+async function laOnSourceChange(){
+  const sel = document.getElementById('la-auction');
+  const id = parseInt(sel.value, 10);
+  const allocCard = document.getElementById('la-alloc-card');
+  const cfCard = document.getElementById('la-cf-card');
+  _laSel.clear();
+  if (!id) {
+    _laSrcId = null;
+    allocCard.style.display = 'none';
+    cfCard.style.display = 'none';
+    return;
+  }
+  _laSrcId = id;
+  const a = _laAuctions.find(x => String(x.id) === String(id));
+  _laSrcAno = a ? String(a.ano || '?') : '?';
+  allocCard.style.display = '';
+  cfCard.style.display = '';
+  // Wire the Edit Allocations button to the existing modal editor, and
+  // auto-refresh the bars when that modal closes.
+  const editBtn = document.getElementById('la-edit-btn');
+  if (editBtn) editBtn.onclick = () => laEditAllocations();
+  // Exclude the source itself from the destination dropdown.
+  const destSel = document.getElementById('la-dest');
+  const keepDest = destSel.value;
+  destSel.innerHTML = '<option value="">— Select —</option>' + _laAuctions
+    .filter(x => String(x.id) !== String(id))
+    .map(x => { const d = String(x.date||'').split('T')[0];
+      return `<option value="${x.id}">Auction #${esc(x.ano)}${d?` · ${esc(d)}`:''}</option>`; })
+    .join('');
+  if (keepDest && String(keepDest) !== String(id)) destSel.value = keepDest;
+  await Promise.all([laRenderAllocBars(), laLoadUnsold()]);
+  laUpdateCarryBtn();
+}
+
+async function laRenderAllocBars(){
+  const host = document.getElementById('la-alloc-bars');
+  const summ = document.getElementById('la-alloc-summary');
+  if (!_laSrcId) return;
+  try {
+    const data = await j(`/api/auctions/${_laSrcId}/allocation-stats`);
+    const stats = data.stats || [];
+    if (!stats.length) {
+      host.innerHTML = '<div style="font-size:12px;color:var(--text3)">No allocations configured yet — click <b>Edit Allocations</b> to add branch ranges.</div>';
+      if (summ) summ.textContent = '';
+      return;
+    }
+    let totTotal = 0, totUsed = 0;
+    host.innerHTML = stats.map(s => {
+      const total = Number(s.total)||0, used = Number(s.used)||0;
+      totTotal += total; totUsed += used;
+      const avail = total - used;
+      const pct = total > 0 ? Math.round((used/total)*100) : 0;
+      const barColor = pct >= 90 ? '#C62828' : pct >= 70 ? '#E67E22' : 'var(--green)';
+      const rangeStr = (s.ranges||[]).map(r => `${r.start}-${r.end}`).join(', ');
+      return `<div style="display:flex;align-items:center;gap:8px;font-size:11.5px">
+        <span style="width:130px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(s.branch)}">${esc(s.branch)}</span>
+        <span style="width:120px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(rangeStr)}">${esc(rangeStr)}</span>
+        <div style="flex:1;height:7px;background:#e8e8e8;border-radius:4px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${barColor};border-radius:4px"></div></div>
+        <span style="width:64px;text-align:right;color:var(--text3);white-space:nowrap">${used}/${total}</span>
+        <span style="width:64px;text-align:right;color:${avail>0?'var(--green)':'#C62828'};font-weight:600;white-space:nowrap">${avail} free</span>
+      </div>`;
+    }).join('');
+    if (summ) summ.textContent = `${stats.length} branch${stats.length===1?'':'es'} · ${totUsed}/${totTotal} lots used`;
+  } catch(e) {
+    host.innerHTML = `<div style="font-size:12px;color:#C62828">Could not load allocations: ${esc(e.message||'error')}</div>`;
+  }
+}
+
+// Open the proven allocation editor modal, then refresh the on-screen bars
+// once the user closes it (save happens inside the modal).
+function laEditAllocations(){
+  if (!_laSrcId) return;
+  const modal = document.getElementById('alloc-modal');
+  openAllocModal(_laSrcId, _laSrcAno);
+  if (modal && typeof MutationObserver !== 'undefined') {
+    const obs = new MutationObserver(() => {
+      if (!modal.classList.contains('show')) {
+        obs.disconnect();
+        laRenderAllocBars();
+      }
+    });
+    obs.observe(modal, { attributes: true, attributeFilter: ['class'] });
+  }
+}
+
+// Load the source auction's UNSOLD lots into the selectable carry table.
+// "Unsold" mirrors the server rule: buyer code empty or 'NA', not reserved.
+async function laLoadUnsold(){
+  const wrap = document.getElementById('la-cf-table-wrap');
+  const empty = document.getElementById('la-cf-empty');
+  const summ = document.getElementById('la-cf-summary');
+  if (!_laSrcId) return;
+  let rows = [];
+  try {
+    rows = (await j(`/api/lots/${_laSrcId}?_=${Date.now()}`)) || [];
+  } catch(e) {
+    toast(e.message || 'Could not load lots');
+    rows = [];
+  }
+  _laUnsold = rows.filter(l => {
+    const code = String(l.code || '').trim().toUpperCase();
+    return (code === '' || code === 'NA') && !Number(l.reserved);
+  });
+  if (summ) summ.textContent = `${_laUnsold.length} unsold lot${_laUnsold.length===1?'':'s'} available`;
+  if (!_laUnsold.length) {
+    wrap.style.display = 'none';
+    empty.style.display = '';
+    laUpdateCarryBtn();
+    return;
+  }
+  wrap.style.display = '';
+  empty.style.display = 'none';
+  DataTable._reset('la-cf-list');
+  DataTable.mount('la-cf-list', _laUnsold, {
+    columns: [
+      { key:'_sel', sortable:false, noTotal:true,
+        labelHTML:`<input type="checkbox" id="la-cf-allcb" onclick="laToggleAll(this.checked)" title="Select all" style="cursor:pointer">`,
+        render:(l)=>`<input type="checkbox" ${_laSel.has(l.id)?'checked':''} onclick="laToggleLot(${l.id},this.checked)" style="cursor:pointer">` },
+      { key:'lot_no', label:'Lot', sort:'text' },
+      { key:'name', label:'Seller', sort:'text' },
+      { key:'grade', label:'Grade', sort:'text' },
+      { key:'branch', label:'Branch', sort:'text' },
+      { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:(n)=>fmtI(n,3) },
+      { key:'reserved_price', label:'Reserve ₹', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
+    ],
+    defaultSort:{ col:'lot_no', dir:'asc' },
+    noSearch:false,
+  });
+  laUpdateCarryBtn();
+}
+
+function laToggleLot(id, checked){
+  if (checked) _laSel.add(id); else _laSel.delete(id);
+  laUpdateCarryBtn();
+  laSyncAllCb();
+}
+
+function laToggleAll(checked){
+  _laSel.clear();
+  if (checked) _laUnsold.forEach(l => _laSel.add(l.id));
+  laRerenderTable();   // reflect new state on every row checkbox
+  laUpdateCarryBtn();
+}
+
+// Lightweight re-render of the table body to reflect _laSel without a
+// network round-trip (reuses the already-loaded _laUnsold).
+function laRerenderTable(){
+  if (!_laUnsold.length) return;
+  DataTable.mount('la-cf-list', _laUnsold, {
+    columns: [
+      { key:'_sel', sortable:false, noTotal:true,
+        labelHTML:`<input type="checkbox" id="la-cf-allcb" ${_laSel.size===_laUnsold.length?'checked':''} onclick="laToggleAll(this.checked)" title="Select all" style="cursor:pointer">`,
+        render:(l)=>`<input type="checkbox" ${_laSel.has(l.id)?'checked':''} onclick="laToggleLot(${l.id},this.checked)" style="cursor:pointer">` },
+      { key:'lot_no', label:'Lot', sort:'text' },
+      { key:'name', label:'Seller', sort:'text' },
+      { key:'grade', label:'Grade', sort:'text' },
+      { key:'branch', label:'Branch', sort:'text' },
+      { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:(n)=>fmtI(n,3) },
+      { key:'reserved_price', label:'Reserve ₹', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
+    ],
+  });
+}
+
+function laSyncAllCb(){
+  const cb = document.getElementById('la-cf-allcb');
+  if (cb) cb.checked = _laUnsold.length > 0 && _laSel.size === _laUnsold.length;
+}
+
+function laUpdateCarryBtn(){
+  const n = _laSel.size;
+  const cnt = document.getElementById('la-cf-count');
+  const btn = document.getElementById('la-cf-btn');
+  const dest = document.getElementById('la-dest');
+  if (cnt) cnt.textContent = n;
+  if (btn) btn.disabled = !(n > 0 && dest && dest.value);
+}
+
+async function laCarryForward(){
+  const destId = parseInt(document.getElementById('la-dest').value, 10);
+  const lotIds = [..._laSel];
+  if (!_laSrcId || !destId || !lotIds.length) return;
+  if (destId === _laSrcId) { toast('Source and destination must differ'); return; }
+  const btn = document.getElementById('la-cf-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await j(`/api/auctions/${destId}/carry-forward`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ source_auction_id:_laSrcId, carry_lots:true, lot_ids:lotIds }),
+    });
+    const carried = Number(r.lots_carried)||0;
+    const skipped = (r.lots_skipped||[]).length;
+    toast(`Carried ${carried} lot${carried===1?'':'s'} forward${skipped?`; ${skipped} skipped`:''}.`);
+    _laSel.clear();
+    await laLoadUnsold();   // refresh — carried lots are still unsold in source, but selection resets
+  } catch(e) {
+    toast(e.message || 'Carry forward failed');
+  } finally {
+    laUpdateCarryBtn();
+  }
+}
+
 function openAuctionEdit(a){
   document.getElementById('auction-modal-title').textContent='Edit Auction';
   // No copy-from-previous when editing an existing trade.
@@ -21183,6 +21497,33 @@ function openLotEdit(l){
 // keystroke.
 let _lotBuyerCache = [];
 
+// Shared matcher for the buyer type-ahead used by both the Lot Edit
+// modal and the (Lots + Price-Entry) Set-Buyer modals. Matches the
+// query against three fields — Code, Buyer Code (buyer) and Buyer Name
+// (buyer1) — so an operator can find a buyer by any of them.
+//
+// Ranking keeps code matches on top so the original concern that drove
+// the custom dropdown (a name-substring like "HR" jumping ASF2 above a
+// real code match) still can't happen — name/buyer-code hits only fill
+// in below the code hits:
+//   1) code startsWith   2) code contains
+//   3) buyer-code contains   4) buyer-name contains
+// Each buyer appears once (first bucket it qualifies for). Returns up
+// to `limit` entries (default 50).
+function _buyerMatch(query, limit){
+  limit = limit || 50;
+  const q = String(query || '').trim().toUpperCase();
+  if (!q) return _lotBuyerCache.slice(0, limit);
+  const codeStarts = [], codeContains = [], buyerHit = [], nameHit = [];
+  for (const b of _lotBuyerCache) {
+    if (b.codeUp.startsWith(q))       codeStarts.push(b);
+    else if (b.codeUp.includes(q))    codeContains.push(b);
+    else if (b.buyerUp && b.buyerUp.includes(q))   buyerHit.push(b);
+    else if (b.buyer1Up && b.buyer1Up.includes(q)) nameHit.push(b);
+  }
+  return codeStarts.concat(codeContains, buyerHit, nameHit).slice(0, limit);
+}
+
 // Refresh the buyer cache and wire up the custom code-autocomplete the
 // first time the modal opens. Also shows a hint when the lot's current
 // trade name maps to more than one code in the master.
@@ -21209,6 +21550,10 @@ async function lotRefreshCodePicker(tradeName, currentCode){
         codeUp: key,
         buyer: b.buyer || '',
         buyer1: b.buyer1 || '',
+        // Uppercased buyer code + trade name so the type-ahead can match
+        // on them too (see _buyerMatch), without re-uppercasing per keystroke.
+        buyerUp:  String(b.buyer  || '').toUpperCase(),
+        buyer1Up: String(b.buyer1 || '').toUpperCase(),
         sale: b.sale || '',
         pla: b.pla || '',
         // Needed by the change-handler's auto-fill so the CR/GSTIN
@@ -21262,20 +21607,11 @@ function _lotWireCodeAutocomplete(){
   let activeIdx = -1;  // currently-highlighted row in the rendered list
 
   const render = () => {
-    const q = String(codeEl.value || '').trim().toUpperCase();
-    // Strict code match — startsWith first, then contains as a fallback
-    // so a typo in the middle ("J0" → "JP0") still surfaces something.
-    // Whitespace is ignored on both sides.
-    const starts = [];
-    const contains = [];
-    for (const b of _lotBuyerCache) {
-      if (!q) { starts.push(b); continue; }
-      if (b.codeUp.startsWith(q)) starts.push(b);
-      else if (b.codeUp.includes(q)) contains.push(b);
-    }
-    const matches = starts.concat(contains).slice(0, 50);
+    // Match across Code, Buyer Code and Buyer Name (code hits rank
+    // first — see _buyerMatch). Whitespace is ignored on both sides.
+    const matches = _buyerMatch(codeEl.value, 50);
     if (!matches.length) {
-      ddl.innerHTML = '<div style="padding:8px 12px;color:#888;font-style:italic">No code matches.</div>';
+      ddl.innerHTML = '<div style="padding:8px 12px;color:#888;font-style:italic">No matches.</div>';
       ddl.style.display = 'block';
       activeIdx = -1;
       return;
@@ -21459,6 +21795,8 @@ async function openBulkSetBuyerModal(){
       _lotBuyerCache.push({
         code, codeUp: key,
         buyer: b.buyer || '', buyer1: b.buyer1 || '',
+        buyerUp:  String(b.buyer  || '').toUpperCase(),
+        buyer1Up: String(b.buyer1 || '').toUpperCase(),
         sale: b.sale || '', pla: b.pla || '',
         gstin: b.gstin || '', cr: b.cr || '',
       });
@@ -21499,23 +21837,18 @@ function _bsbWireAutocomplete(){
   let activeIdx = -1;
 
   const render = () => {
-    const q = String(codeEl.value || '').trim().toUpperCase();
-    const starts = [], contains = [];
-    for (const b of _lotBuyerCache) {
-      if (!q) { starts.push(b); continue; }
-      if (b.codeUp.startsWith(q)) starts.push(b);
-      else if (b.codeUp.includes(q)) contains.push(b);
-    }
-    const matches = starts.concat(contains).slice(0, 50);
+    // Match across Code, Buyer Code and Buyer Name (code hits rank
+    // first — see _buyerMatch).
+    const matches = _buyerMatch(codeEl.value, 50);
     if (!matches.length) {
-      ddl.innerHTML = '<div style="padding:8px 12px;color:#888;font-style:italic">No code matches.</div>';
+      ddl.innerHTML = '<div style="padding:8px 12px;color:#888;font-style:italic">No matches.</div>';
       ddl.style.display = 'block';
       activeIdx = -1;
       return;
     }
     activeIdx = 0;
     ddl.innerHTML = matches.map((b, i) => {
-      const ctxParts = [b.buyer, b.sale ? '['+b.sale+']' : '', b.pla].filter(Boolean);
+      const ctxParts = [b.buyer, b.buyer1, b.sale ? '['+b.sale+']' : '', b.pla].filter(Boolean);
       return '<div class="bsb-row" data-code="'+escAttr(b.code)+'" data-idx="'+i+'" '+
         'style="padding:6px 12px;cursor:pointer;border-bottom:1px solid #f1f1f1;display:flex;gap:10px;align-items:baseline'+
         (i === activeIdx ? ';background:#ecfdf5' : '')+'">'+
@@ -22100,6 +22433,8 @@ async function openPeSetBuyerModal(){
       _lotBuyerCache.push({
         code, codeUp: key,
         buyer: b.buyer || '', buyer1: b.buyer1 || '',
+        buyerUp:  String(b.buyer  || '').toUpperCase(),
+        buyer1Up: String(b.buyer1 || '').toUpperCase(),
         sale: b.sale || '', pla: b.pla || '',
         gstin: b.gstin || '', cr: b.cr || '',
       });

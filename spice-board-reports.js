@@ -1683,7 +1683,7 @@ async function eauctionCsv(db, opts) {
   //     where the board fills them in post-upload.
   const headers = [
     'Lot Number',              // A
-    'Collection Centre',       // B
+    'Collection Center',       // B
     'Planter/Dealer',          // C
     'Planter Name',            // D
     'CRNO/SBL No',             // E
@@ -1696,10 +1696,10 @@ async function eauctionCsv(db, opts) {
     'Reserved Price',          // L
     'Auction Start Price(Rs)', // M
     'Immature Seeds(%)',       // N
-    'Moisture Content(%)',     // O
+    'Moisture Content (%)',    // O
     'Planter Mobile Number',   // P
     'Special Lot (Yes/No)',    // Q
-    'Colour ',                 // R  (trailing space mirrors the reference template)
+    'Colour',                  // R
     'Size',                    // S
     'Rejection/Split',         // T
   ];

@@ -639,6 +639,9 @@ function mountMobile(app, deps) {
       // always shown (it auto-increments — first lot typed by hand,
       // subsequent lots get +1, editable) so it's not flag-gated.
       showReservedPrice: getBool('flag_reserved_price', false),
+      // Immediate Payment + Reserve-this-Lot checkboxes on the mobile Lot
+      // Entry + Edit forms. OFF hides both controls; the lot columns persist.
+      immediateReserve: getBool('flag_immediate_reserve', false),
       // Admin-designated default trade (auction id) — the mobile app
       // pre-selects + highlights it in the trade picker. null = none set.
       defaultAuctionId: (parseInt(get('default_auction_id', ''), 10) || null),

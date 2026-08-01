@@ -287,6 +287,11 @@ const DEFAULTS = [
   // Board CSV). When OFF the input is hidden everywhere; the database
   // column always exists so toggling on later doesn't lose data.
   { key: 'flag_reserved_price',  value: 'false', category: 'flags', label: 'Reserved Price (Lot Entry)',      type: 'boolean' },
+  // Immediate Payment + Reserve this Lot — the two Lot Entry checkboxes
+  // (desktop + mobile). When OFF both controls are hidden everywhere; the
+  // lots.immediate_payment / lots.reserved columns always exist so toggling
+  // on later doesn't lose data, and existing reserved lots still render.
+  { key: 'flag_immediate_reserve', value: 'false', category: 'flags', label: 'Immediate Payment & Reserve Lot (Lot Entry)', type: 'boolean' },
 
   // TAN (Tax Deduction & Collection Account No) on sellers + buyers. When ON,
   // a TAN input shows in the Seller and Buyer add/edit forms and the value is
