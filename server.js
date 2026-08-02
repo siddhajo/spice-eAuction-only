@@ -8862,6 +8862,10 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
       // lot's own commission/GST split, its purchaser, and its NETT
       // (cardamom cost + refund − commission − GST, matching the renderer's
       // own fallback so the printed deduction rows add up on every page).
+      // Trader sample is DISPLAY-ONLY: it's folded into the SAMPLE REFUND line
+      // (+ts) and shown again as a TRADER SAMPLE deduction (−ts), so it nets to
+      // zero. It must NOT be subtracted from NETT — doing so double-counts it
+      // and drops the Grand Total below the sum of the printed rows.
       const perLot = [];
       if (lots.length) {
         for (const l of lots) {
@@ -8878,7 +8882,7 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
             purchaser: purchaserForLot(l),
             commission: com, cgst: cg, sgst: sg, igst: ig,
             interState: !!(l.sale && l.sale !== 'L'),
-            nett: round2(cardamomCost + refundAmount - traderSampleAmount - com - cg - sg - ig),
+            nett: round2(cardamomCost + refundAmount - com - cg - sg - ig),
             crpt: l.crpt || '',
           });
         }
@@ -8907,7 +8911,9 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
                     traderSampleQty: sbTraderSampleKg, traderSampleAmount },
             purchaser: emptyPurchaser,
             commission: com, cgst: 0, sgst: 0, igst: 0, interState: false,
-            nett: round2(cardamomCost + refundAmount - traderSampleAmount - com),
+            // Trader sample is display-only (folded into SAMPLE REFUND, shown
+            // again as a deduction → nets to zero); never subtract it here.
+            nett: round2(cardamomCost + refundAmount - com),
             crpt: '',
           });
         }
