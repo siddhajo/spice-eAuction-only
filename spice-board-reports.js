@@ -1730,12 +1730,19 @@ async function eauctionCsv(db, opts) {
     const cr = r.seller_cr || r.trader_cr || '';
     const planterOrDealer = isDealerSeller(cr, r.seller_aadhar || r.trader_aadhar) ? '2' : '1';
 
+    // CRNO/SBL No: planters (grade 1) carry a CRNO, dealers (grade 2) an
+    // SBL/GSTIN. When a grade-1 planter's registration is actually a GSTIN
+    // (they have a GSTIN on file but no CRNO), emit the literal "CR."
+    // placeholder rather than leaking the GSTIN into the planter's CRNO
+    // column. Grade-2 dealers and CRNO planters keep their own value.
+    const crnoSbl = (planterOrDealer === '1' && hasValidGstin(cr)) ? 'CR.' : cr;
+
     lines.push([
       r.lot || '',                                       // A  Lot Number
       r.branch || '',                                    // B  Collection Centre (branch — VANDANMEDU, PARATHODU, …)
       planterOrDealer,                                   // C  Planter/Dealer (1 / 2)
       r.trader_name || r.seller_name || '',              // D  Planter Name
-      cr,                                                // E  CRNO/SBL No
+      crnoSbl,                                           // E  CRNO/SBL No
       passText(r.crpt),                                  // F  Crop Receipt Number  ← Lot Entry
       fmt1(r.qty),                                       // G  Quantity(Kg)
       passText(r.litre),                                 // H  Litre Weight(Gms)
