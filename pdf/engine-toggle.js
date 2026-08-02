@@ -44,4 +44,33 @@ function isPdfkitTemplate(tplChoice) {
   return PDFKIT_TEMPLATE_IDS.has(String(tplChoice == null ? '' : tplChoice).toLowerCase().trim());
 }
 
-module.exports = { useHtmlEngine, isPdfkitTemplate, PDFKIT_TEMPLATE_IDS };
+// Single source of truth for "should this download render via the HTML engine?"
+// Resolution order (first that applies wins):
+//   1. env INVOICE_ENGINE — the GLOBAL kill-switch. When ops set it to
+//                    'pdfkit' (or 'html') it forces every document to that
+//                    engine regardless of per-module layout — the emergency
+//                    lever if HTML/Chromium rendering breaks on the server.
+//   2. tplChoice   — an explicit per-print layout choice (query/body `template`).
+//                    classic/pdfkit ⇒ PDFKit; any other id ⇒ HTML.
+//   3. cfg[templateKey] — the module's SAVED default layout (e.g. cfg
+//                    .sales_invoice_template). This is what makes the Layout
+//                    dropdown the single control: picking 'modern' as the
+//                    default renders HTML even though the legacy *_engine
+//                    setting is still 'pdfkit'. 'classic' ⇒ PDFKit.
+//   4. useHtmlEngine(cfg, engineKey) — legacy fallback: per-doc <DOC>_ENGINE
+//                    env / cfg *_engine value, then 'pdfkit'. Keeps old installs
+//                    that only set an *_engine value working.
+// Returns a boolean (true ⇒ HTML). `engineKey`/`templateKey` are the cfg keys
+// for the module, e.g. 'sales_invoice_engine' / 'sales_invoice_template'.
+function resolveWantHtml(cfg, { engineKey, templateKey, tplChoice } = {}) {
+  // Global env kill-switch wins over everything (back-compat + emergency).
+  const g = String(process.env.INVOICE_ENGINE || '').toLowerCase().trim();
+  if (g === 'html' || g === 'pdfkit') return g === 'html';
+  const choice = String(tplChoice == null ? '' : tplChoice).trim();
+  if (choice) return !isPdfkitTemplate(choice);
+  const saved = String((cfg && templateKey && cfg[templateKey]) || '').trim();
+  if (saved) return !isPdfkitTemplate(saved);
+  return useHtmlEngine(cfg, engineKey);
+}
+
+module.exports = { useHtmlEngine, isPdfkitTemplate, resolveWantHtml, PDFKIT_TEMPLATE_IDS };

@@ -3991,7 +3991,10 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
              grid. Leading zeros are ignored, so "1" finds "001". -->
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
           <label style="font-size:12px;font-weight:600;color:var(--text2);margin:0;white-space:nowrap">🎯 Select lots:</label>
-          <input id="pe-lotno-input" placeholder="e.g. 1, 5, 12-18" onkeydown="if(event.key==='Enter'){event.preventDefault();peSelectByLotNos();}" style="flex:1;min-width:160px;max-width:340px;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+          <span style="position:relative;display:inline-flex;align-items:center;flex:1;min-width:160px;max-width:340px">
+            <input id="pe-lotno-input" placeholder="e.g. 1, 5, 12-18" oninput="peToggleLotNoClear()" onkeydown="if(event.key==='Enter'){event.preventDefault();peSelectByLotNos();}" style="width:100%;padding:7px 30px 7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box">
+            <button type="button" id="pe-lotno-clear" onclick="peClearLotNoInput()" title="Clear" aria-label="Clear" style="display:none;position:absolute;right:6px;top:50%;transform:translateY(-50%);width:20px;height:20px;border:none;background:var(--bg);border-radius:50%;cursor:pointer;font-size:11px;color:var(--text3);align-items:center;justify-content:center;padding:0;line-height:1">✕</button>
+          </span>
           <button class="btn btn-o" style="height:34px;padding:0 12px;font-weight:600" onclick="peSelectByLotNos()">Select &amp; bring to front</button>
         </div>
         <!-- Column filters — kept OUTSIDE #pe-grid (which fully re-renders) so
@@ -4774,6 +4777,9 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <button class="btn" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 16px;background:var(--spice-cardamom);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(22,101,52,.22)" onclick="setLorryNoForSelected()" title="Set the lorry / vehicle number on ticked invoices (used by Tally sales voucher e-way bill)">🚚 Set Lorry No</button>
           </div>
 
+          <!-- Print-layout override for this screen (populated by renderLayoutSelector) -->
+          <div style="display:flex;gap:6px;align-items:center;padding:0 8px;border-left:2px solid var(--spice-line)"><span id="inv-layout-host"></span></div>
+
           <!-- Destructive group — pushed right -->
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:auto">
             <button class="needs-invoice-revert btn" style="height:38px;padding:0 14px;background:var(--spice-turmeric);color:#fff;font-weight:600" onclick="revertAllInvoices()" title="Revert all invoices — deletes them and re-enables lots for re-invoicing">⟲ Revert All</button>          </div>
@@ -4889,6 +4895,9 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <button class="btn feat-whatsapp" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedPurchases()" title="Send merged PDF of ticked purchase invoices via WhatsApp">📱 WhatsApp Selected</button>
             <button id="pur-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedPurchases()" title="Delete all ticked purchase invoices">🗑 Delete Selected <span id="pur-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           </div>
+
+          <!-- Print-layout override for this screen (populated by renderLayoutSelector) -->
+          <div style="display:flex;gap:6px;align-items:center;padding:0 8px;border-left:2px solid var(--spice-line)"><span id="pur-layout-host"></span></div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:auto">          </div>
         </div>
@@ -5291,6 +5300,10 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <button id="bill-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedBills()" title="Delete all ticked bills">🗑 Delete Selected <span id="bill-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           </div>
 
+          <!-- Print-layout overrides for this screen: Bill of Supply (row downloads)
+               and Commission Bill (bulk). Populated by renderLayoutSelector. -->
+          <div style="display:flex;gap:14px;align-items:center;padding:0 8px;border-left:2px solid var(--spice-line)"><span id="bos-layout-host"></span><span id="comm-layout-host"></span></div>
+
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:auto">          </div>
         </div>
 
@@ -5325,7 +5338,9 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <!-- Bulk actions on ticked rows. Hidden until at least one row
                is selected; the count badge updates live as boxes toggle. -->
           <button id="dn-bulk-print" class="btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedDebitNotes()" title="Print all ticked debit notes as one combined PDF">🖨 Print Selected <span id="dn-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
-          <button id="dn-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotes()" title="Delete all ticked debit notes">🗑 Delete Selected</button>        </div>
+          <button id="dn-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotes()" title="Delete all ticked debit notes">🗑 Delete Selected</button>
+          <!-- Print-layout override for this screen (populated by renderLayoutSelector) -->
+          <span id="dn-layout-host" style="display:inline-flex;align-items:center;margin-left:8px"></span></div>
         <!-- KPI strip -->
         <div id="debit-kpis" class="kpi-grid kpi-grid-rich" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;display:none">
           <div class="kpi cardamom">
@@ -5378,7 +5393,9 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <button class="needs-invoice-write btn btn-g needs-price-check" id="btn-gen-dnp-one" onclick="openGenDebitPlanterSingleModal()">+ Generate Debit Note</button>
           <button class="needs-invoice-write btn btn-a needs-price-check" id="btn-gen-dnp-all" onclick="openGenDebitPlanterAllModal()">⚡ Generate All</button>
           <button id="dnp-bulk-print" class="btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedDebitNotesPlanter()" title="Print all ticked debit notes as one combined PDF">🖨 Print Selected <span id="dnp-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
-          <button id="dnp-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotesPlanter()" title="Delete all ticked debit notes">🗑 Delete Selected</button>        </div>
+          <button id="dnp-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotesPlanter()" title="Delete all ticked debit notes">🗑 Delete Selected</button>
+          <!-- Print-layout override for this screen (populated by renderLayoutSelector) -->
+          <span id="dnp-layout-host" style="display:inline-flex;align-items:center;margin-left:8px"></span></div>
         <!-- KPI strip -->
         <div id="debitp-kpis" class="kpi-grid kpi-grid-rich" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;display:none">
           <div class="kpi cardamom">
@@ -9139,6 +9156,23 @@ function go(tab){
       console.error(`Sync error loading tab '${tab}':`,err);
       toast(`Failed to load ${tab}: ${err.message||err}`);
     }
+  }
+  // Per-tab "Print Layout" override selector(s). Each document screen that
+  // prints PDFs gets a selector (host span in its toolbar) so the operator can
+  // override the saved default layout for prints on that screen. The Bills
+  // screen prints two modules (Bill of Supply row downloads + Commission Bill
+  // bulk), so it shows two. Idempotent — re-renders on every tab visit,
+  // preserving the current override.
+  const LAYOUT_HOSTS = {
+    invoices:     [['inv-layout-host',  'sales-invoice',    'Print Layout']],
+    purchases:    [['pur-layout-host',  'purchase-invoice', 'Print Layout']],
+    bills:        [['bos-layout-host',  'agri-bill',        'BoS Layout'],
+                   ['comm-layout-host', 'commission-bill',  'Commission']],
+    debit:        [['dn-layout-host',   'debit-note',       'Print Layout']],
+    debitplanter: [['dnp-layout-host',  'debit-note',       'Print Layout']],
+  };
+  if(LAYOUT_HOSTS[tab] && typeof renderLayoutSelector==='function'){
+    for(const [host,docType,lbl] of LAYOUT_HOSTS[tab]){ try{ renderLayoutSelector(host, docType, lbl); }catch(_){} }
   }
   // Re-evaluate the guided-flow stage on every navigation — cheap single
   // query — so a menu unlocked by an action on the previous screen (first
@@ -16531,7 +16565,9 @@ function leBuildReceiptHtml(format, lots, ctx) {
   // path. Cache-bust on print so a freshly-uploaded logo shows immediately.
   const logoUrl = `/logo-ispl.png?t=${Date.now()}`;
 
-  const dateStr = (auction.date || '').split('T')[0] || printedAt;
+  // Format the auction date with the operator's date_format (Settings →
+  // Business Mode), via the shared fmtD helper; fall back to today's date.
+  const dateStr = fmtD(auction.date || today);
   const ano = auction.ano || '?';
 
   const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -16768,6 +16804,74 @@ document.addEventListener('keydown', (ev) => {
   }
 });
 
+// ── Document layouts (per transaction module) ─────────────────────────────
+// The 5 transaction modules and the cfg setting key that stores each one's
+// DEFAULT layout. Mirrors SETTING_KEY in pdf/invoice-templates.js.
+const INVOICE_DOCTYPES = ['sales-invoice','purchase-invoice','agri-bill','commission-bill','debit-note'];
+const TEMPLATE_SETTING_MAP = {
+  sales_invoice_template:    'sales-invoice',
+  purchase_invoice_template: 'purchase-invoice',
+  agri_bill_template:        'agri-bill',
+  commission_bill_template:  'commission-bill',
+  debit_note_template:       'debit-note',
+};
+// Friendly labels for layout ids. 'classic' is the legacy PDFKit output (see
+// isPdfkitTemplate in pdf/engine-toggle.js), which is why it reads "Classic
+// (Legacy)". Unknown ids get Title-Cased.
+const LAYOUT_NAMES = { classic:'Classic (Legacy)', pdfkit:'Classic (Legacy)', modern:'Modern', letterhead:'Letterhead' };
+function layoutLabel(id){
+  return LAYOUT_NAMES[id] || String(id||'').replace(/[-_]/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+}
+// Build the option list for a module: a synthetic "Classic (Legacy)" first
+// (always the PDFKit renderer), then every HTML layout on disk except classic.
+// `available` is the server's listTemplates(docType) result.
+function layoutOptionsFor(docType){
+  const available = (window._invoiceLayouts && window._invoiceLayouts[docType]) || [];
+  const html = available.filter(id => id !== 'classic' && id !== 'pdfkit');
+  return ['classic', ...html];
+}
+// Fetch the available layouts per module ONCE and cache. Drives both the
+// Settings Layout dropdowns and the per-tab Print-Layout override selectors.
+window._invoiceLayouts = window._invoiceLayouts || null;
+async function ensureInvoiceLayouts(){
+  if (window._invoiceLayouts) return window._invoiceLayouts;
+  const out = {};
+  await Promise.all(INVOICE_DOCTYPES.map(async dt => {
+    try { const r = await j('/api/invoices/templates/'+dt); out[dt] = (r && r.templates) || []; }
+    catch(_){ out[dt] = []; }
+  }));
+  window._invoiceLayouts = out;
+  return out;
+}
+// Session-scoped per-print layout override (docType → id). Empty/absent means
+// "use the saved default from Settings". Set by the per-tab Print-Layout
+// selectors; read by pickTemplate()/pickCommissionTemplate().
+window._layoutOverride = window._layoutOverride || {};
+
+// Render a per-tab "Print Layout" override selector into `hostId`. First option
+// clears the override (use the saved Settings default); the rest are the same
+// layouts as the Settings dropdown. Selecting one applies to every print on
+// that screen — row-icon downloads AND bulk buttons — via pickTemplate().
+async function renderLayoutSelector(hostId, docType, labelText){
+  const host=document.getElementById(hostId);
+  if(!host) return;
+  try { await ensureInvoiceLayouts(); } catch(_){}
+  const cur=(window._layoutOverride&&window._layoutOverride[docType])||'';
+  const ids=layoutOptionsFor(docType);
+  if(cur && !ids.includes(cur)) ids.push(cur);
+  const opts=['<option value="">Default (from Settings)</option>']
+    .concat(ids.map(id=>`<option value="${escAttr(id)}"${cur===id?' selected':''}>${escAttr(layoutLabel(id))}</option>`))
+    .join('');
+  host.innerHTML=`<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--text3,#64748b)" title="Layout for ${escAttr(labelText||'prints')} on this screen. 'Default' uses the saved layout from Settings → Invoice Settings.">🎨 ${escAttr(labelText||'Print Layout')}
+    <select onchange="setLayoutOverride('${docType}',this.value)" style="height:34px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:#fff;font-size:13px;font-weight:500">${opts}</select></label>`;
+}
+// Apply a session-scoped print-layout override for a module (empty clears it).
+function setLayoutOverride(docType, val){
+  window._layoutOverride = window._layoutOverride || {};
+  if(val) window._layoutOverride[docType]=val; else delete window._layoutOverride[docType];
+  if(typeof toast==='function') toast(val ? ('Print layout: '+layoutLabel(val)+' — this session') : 'Print layout: using saved default');
+}
+
 async function loadSettings(){
   const root=document.getElementById('settings-root');
   const title=document.getElementById('set-panel-title');
@@ -16778,6 +16882,9 @@ async function loadSettings(){
   try{
     const d=await j('/api/company-settings');
     _cats=d.categories||{};_sdata=d.settings||{};
+    // Load the available document layouts so the Invoice Settings panel can
+    // render each module's Layout dropdown synchronously. Non-fatal on failure.
+    try { await ensureInvoiceLayouts(); } catch(_){}
     // Single-company build — no preset loading needed.
     // Company and Sister Company fields are edited INDEPENDENTLY in Settings.
     // No mutation on load — at read time (invoices, exports, PDFs),
@@ -17124,6 +17231,11 @@ function renderSettingsPanel(){
     }
     html+='<div class="sgrid">';
     for(const f of fields){
+      // Per-print renderer ENGINE settings (sales_invoice_engine, …) are no
+      // longer user-facing — the Layout dropdown below now drives the engine
+      // (Classic ⇒ legacy PDFKit, any HTML layout ⇒ html). The keys are kept
+      // in company-config.js only as an env/back-compat fallback, so hide them.
+      if(/_engine$/.test(f.key)) continue;
       if(f.key==='bank_format'){
         // Bank Payment layout picker. Keep these options in sync with the
         // profile keys in bank-formats.js (BANK_FORMATS) — each option value
@@ -17136,6 +17248,20 @@ function renderSettingsPanel(){
         const sel=f.value||'rtgs_neft';
         const opts=BANK_FORMAT_OPTIONS.map(o=>`<option value="${o.value}"${sel===o.value?' selected':''}>${esc(o.label)}</option>`).join('');
         html+=`<div class="fg"><label>${esc(f.label)}${helpTip('Column layout for the Bank Payment export — pick the format your bank expects for its bulk-upload template. New formats are added in bank-formats.js.')}</label><select data-key="${f.key}">${opts}</select></div>`;
+      }
+      else if(TEMPLATE_SETTING_MAP[f.key]){
+        // Per-module DEFAULT layout picker. Options come from the layouts on
+        // disk for this document type (templates/<docType>/*.hbs), fetched into
+        // window._invoiceLayouts. Picking "Classic (Legacy)" uses PDFKit; any
+        // other layout renders via the HTML engine automatically. This single
+        // control replaces the old (now hidden) Engine setting.
+        const docType=TEMPLATE_SETTING_MAP[f.key];
+        const sel=String(f.value||'classic');
+        const ids=layoutOptionsFor(docType);
+        // Keep the saved value selectable even if its .hbs was removed.
+        if(!ids.includes(sel)) ids.push(sel);
+        const opts=ids.map(id=>`<option value="${esc(id)}"${sel===id?' selected':''}>${esc(layoutLabel(id))}</option>`).join('');
+        html+=`<div class="fg"><label>${esc(f.label)}${helpTip('Default print layout for this document. "Classic (Legacy)" is the original PDFKit format; other layouts (Modern, Letterhead) render from HTML templates. You can still override the layout per print from the document screen’s Print Layout selector.')}</label><select data-key="${f.key}">${opts}</select></div>`;
       }
       else html+=fld(f);
     }
@@ -22347,6 +22473,21 @@ function _pePopulateFilterUI(reset){
 // Tick the lots whose numbers are typed in the quick-select box and pin them
 // to the top of the grid. Accepts a comma/space separated list, with numeric
 // ranges like "12-18". Leading zeros are ignored when matching.
+// Show the clear (✕) icon on the "Select lots" box only when it has text.
+function peToggleLotNoClear(){
+  const inp = document.getElementById('pe-lotno-input');
+  const btn = document.getElementById('pe-lotno-clear');
+  if (inp && btn) btn.style.display = inp.value ? 'flex' : 'none';
+}
+// Clear the "Select lots" box and refocus it.
+function peClearLotNoInput(){
+  const inp = document.getElementById('pe-lotno-input');
+  if (!inp) return;
+  inp.value = '';
+  peToggleLotNoClear();
+  inp.focus();
+}
+
 async function peSelectByLotNos(){
   if (!_pe.aid) { toast('Select a trade first'); return; }
   const inp = document.getElementById('pe-lotno-input');
@@ -23528,29 +23669,20 @@ function chooseInvoiceFormat(templates, title){
 //   null  → operator cancelled the popup (caller should abort)
 // Shared by BOTH the "Commission Bill Selected" toolbar button and the
 // per-row 🧾 download icon so the chooser appears no matter which is clicked.
-async function pickCommissionTemplate(){
-  try{
-    const res=await j('/api/invoices/templates/commission-bill');
-    const templates=(res&&res.templates)||[];
-    if(templates.length>1){
-      return await chooseInvoiceFormat(templates,'Choose commission bill format');
-    }
-  }catch(_){ /* server didn't list templates — use the saved default */ }
-  return '';
-}
-
-// Generic layout picker for any doc type (sales-invoice / purchase-invoice /…).
-// Same contract as pickCommissionTemplate: '' = use saved default, '<id>' =
-// forced layout, null = operator cancelled.
+// Resolve the layout for a print WITHOUT prompting. Returns:
+//   '<id>' → the operator picked a per-print override for this module via the
+//            document screen's "Print Layout" selector (window._layoutOverride)
+//   ''     → no override → the server renders the saved Settings default
+// The old behaviour popped a "Choose format" dialog on EVERY print when a
+// module had >1 layout; that's replaced by the persistent per-module default
+// (Settings) plus the per-tab override selector, so normal prints are silent.
+// Kept async + the `title` arg so existing `await pickTemplate(dt, title)` call
+// sites need no change.
 async function pickTemplate(docType, title){
-  try{
-    const res=await j('/api/invoices/templates/'+docType);
-    const templates=(res&&res.templates)||[];
-    if(templates.length>1){
-      return await chooseInvoiceFormat(templates, title||'Choose format');
-    }
-  }catch(_){ /* server didn't list templates — use the saved default */ }
-  return '';
+  return (window._layoutOverride && window._layoutOverride[docType]) || '';
+}
+async function pickCommissionTemplate(){
+  return pickTemplate('commission-bill');
 }
 
 async function printSelectedCommissionBoS(){

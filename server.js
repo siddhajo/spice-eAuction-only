@@ -7489,9 +7489,8 @@ app.get('/api/invoices/pdf/:id', requireView, async (req, res) => {
     // isPdfkitTemplate); blank falls back to the saved engine/template.
     let pdf;
     const tplChoice = String(req.query.template || '').trim();
-    const useHtml = tplChoice
-      ? !require('./pdf/engine-toggle').isPdfkitTemplate(tplChoice)
-      : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'sales_invoice_engine');
+    const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
+      engineKey: 'sales_invoice_engine', templateKey: 'sales_invoice_template', tplChoice });
     if (useHtml) {
       const { generateSalesInvoiceHtmlPDF } = require('./pdf/render-html-invoice');
       const cfg2 = tplChoice ? { ...cfg, sales_invoice_template: tplChoice } : cfg;
@@ -7676,9 +7675,8 @@ app.post('/api/invoices/pdf-bulk', requireView, async (req, res) => {
 
     let pdf;
     const tplChoice = String((req.body && req.body.template) || '').trim();
-    const useHtml = tplChoice
-      ? !require('./pdf/engine-toggle').isPdfkitTemplate(tplChoice)
-      : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'sales_invoice_engine');
+    const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
+      engineKey: 'sales_invoice_engine', templateKey: 'sales_invoice_template', tplChoice });
     if (useHtml) {
       const cfg2 = tplChoice ? { ...cfg, sales_invoice_template: tplChoice } : cfg;
       pdf = await require('./pdf/render-html-invoice').generateSalesInvoicesHtmlBatchPDF(payloads, cfg2);
@@ -8055,9 +8053,8 @@ app.get('/api/purchases/pdf/:auctionId/:sellerName', requireView, async (req, re
     const enriched = enrichPurchaseForPDF(invoice, cfg, db, auctionId);
     let pdf;
     const tplChoice = String(req.query.template || '').trim();
-    const useHtml = tplChoice
-      ? !require('./pdf/engine-toggle').isPdfkitTemplate(tplChoice)
-      : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'purchase_invoice_engine');
+    const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
+      engineKey: 'purchase_invoice_engine', templateKey: 'purchase_invoice_template', tplChoice });
     if (useHtml) {
       const cfg2 = tplChoice ? { ...cfg, purchase_invoice_template: tplChoice } : cfg;
       pdf = await require('./pdf/render-purchase-html').generatePurchaseInvoiceHtmlPDF(enriched, cfg2, invoiceNo);
@@ -8181,9 +8178,8 @@ app.post('/api/purchases/pdf-bulk', requireView, async (req, res) => {
 
     let pdf;
     const tplChoice = String((req.body && req.body.template) || '').trim();
-    const useHtml = tplChoice
-      ? !require('./pdf/engine-toggle').isPdfkitTemplate(tplChoice)
-      : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'purchase_invoice_engine');
+    const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
+      engineKey: 'purchase_invoice_engine', templateKey: 'purchase_invoice_template', tplChoice });
     if (useHtml) {
       const cfg2 = tplChoice ? { ...cfg, purchase_invoice_template: tplChoice } : cfg;
       pdf = await require('./pdf/render-purchase-html').generatePurchaseInvoicesHtmlBatchPDF(payloads, cfg2);
@@ -8447,8 +8443,12 @@ app.get('/api/bills/pdf/:auctionId/:sellerName', requireView, async (req, res) =
     bill.eTradeNo = req.query.eTradeNo || req.params.auctionId;
 
     let pdf;
-    if (require('./pdf/engine-toggle').useHtmlEngine(cfg, 'agri_bill_engine')) {
-      pdf = await require('./pdf/render-agri-html').generateAgriBillHtmlPDF(bill, cfg, billNo);
+    const tplChoice = String((req.query.template) || (req.body && req.body.template) || '').trim();
+    const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
+      engineKey: 'agri_bill_engine', templateKey: 'agri_bill_template', tplChoice });
+    if (useHtml) {
+      const cfg2 = tplChoice ? { ...cfg, agri_bill_template: tplChoice } : cfg;
+      pdf = await require('./pdf/render-agri-html').generateAgriBillHtmlPDF(bill, cfg2, billNo);
     } else {
       pdf = await generateAgriBillPDF(bill, cfg, billNo);
     }
@@ -8703,8 +8703,12 @@ app.post('/api/bills/pdf-bulk', requireView, async (req, res) => {
     }
 
     let pdf;
-    if (require('./pdf/engine-toggle').useHtmlEngine(cfg, 'agri_bill_engine')) {
-      pdf = await require('./pdf/render-agri-html').generateAgriBillsHtmlBatchPDF(payloads, cfg);
+    const tplChoice = String((req.body && req.body.template) || (req.query && req.query.template) || '').trim();
+    const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
+      engineKey: 'agri_bill_engine', templateKey: 'agri_bill_template', tplChoice });
+    if (useHtml) {
+      const cfg2 = tplChoice ? { ...cfg, agri_bill_template: tplChoice } : cfg;
+      pdf = await require('./pdf/render-agri-html').generateAgriBillsHtmlBatchPDF(payloads, cfg2);
     } else {
       pdf = await generateAgriBillsBatchPDF(payloads, cfg);
     }
@@ -8965,17 +8969,15 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
     // for THIS download only. Without it, fall back to the saved engine/layout.
     const tplChoice = String((req.body && req.body.template) || (req.query && req.query.template) || '').trim();
     let pdf;
-    if (require('./pdf/engine-toggle').isPdfkitTemplate(tplChoice)) {
-      // Explicit "original PDFKit layout" choice ('pdfkit' or 'classic').
-      pdf = await generateCommissionBoSBatchPDF(payloads, cfg);
-    } else if (tplChoice) {
-      // A named HTML template (e.g. 'letterhead') — force the HTML engine
-      // and use that layout for this download only.
-      pdf = await require('./pdf/render-commission-html')
-        .generateCommissionBoSHtmlPDF(payloads, { ...cfg, commission_bill_template: tplChoice });
-    } else if (require('./pdf/engine-toggle').useHtmlEngine(cfg, 'commission_bill_engine')) {
-      pdf = await require('./pdf/render-commission-html').generateCommissionBoSHtmlPDF(payloads, cfg);
+    const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
+      engineKey: 'commission_bill_engine', templateKey: 'commission_bill_template', tplChoice });
+    if (useHtml) {
+      // A named HTML template (e.g. 'letterhead') for this download, or the
+      // saved commission layout when no per-print choice was passed.
+      const cfg2 = tplChoice ? { ...cfg, commission_bill_template: tplChoice } : cfg;
+      pdf = await require('./pdf/render-commission-html').generateCommissionBoSHtmlPDF(payloads, cfg2);
     } else {
+      // 'pdfkit'/'classic' choice, or a saved Classic layout → legacy PDFKit.
       pdf = await generateCommissionBoSBatchPDF(payloads, cfg);
     }
     res.setHeader('Content-Type', 'application/pdf');
@@ -10077,8 +10079,8 @@ app.get('/api/debit-notes/:id/pdf', requireView, async (req, res) => {
     // PDFKit. ?template=<id> forces the HTML engine + that layout; 'pdfkit'
     // forces legacy — same convention as the sales/purchase routes.
     const tplChoice = String(req.query.template || '').trim();
-    const useHtml = tplChoice ? tplChoice !== 'pdfkit'
-      : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'debit_note_engine');
+    const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
+      engineKey: 'debit_note_engine', templateKey: 'debit_note_template', tplChoice });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="DebitNote_${dn.note_no || dn.id}.pdf"`);
     if (useHtml) {
@@ -10123,8 +10125,8 @@ app.post('/api/debit-notes/pdf-bulk', requireView, async (req, res) => {
     const dns  = ids.map(id => byId.get(id)).filter(Boolean);
 
     const tplChoice = String(req.query.template || req.body.template || '').trim();
-    const useHtml = tplChoice ? tplChoice !== 'pdfkit'
-      : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'debit_note_engine');
+    const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
+      engineKey: 'debit_note_engine', templateKey: 'debit_note_template', tplChoice });
     if (useHtml) {
       const cfg2 = tplChoice ? { ...cfg, debit_note_template: tplChoice } : cfg;
       const pdf = await require('./pdf/render-debit-note-html').generateDebitNotesHtmlBatchPDF(dns, db, cfg2);
@@ -10502,8 +10504,8 @@ app.get('/api/debit-notes-planter/:id/pdf', requireView, async (req, res) => {
     const dn  = db.get('SELECT * FROM debit_notes_planter WHERE id = ?', [req.params.id]);
     if (!dn) return res.status(404).json({ error: 'Debit note not found' });
     const tplChoice = String(req.query.template || '').trim();
-    const useHtml = tplChoice ? tplChoice !== 'pdfkit'
-      : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'debit_note_engine');
+    const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
+      engineKey: 'debit_note_engine', templateKey: 'debit_note_template', tplChoice });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="DebitNotePlanter_${dn.note_no || dn.id}.pdf"`);
     if (useHtml) {
@@ -10535,8 +10537,8 @@ app.post('/api/debit-notes-planter/pdf-bulk', requireView, async (req, res) => {
     const byId = new Map(rows.map(r => [r.id, r]));
     const dns  = ids.map(id => byId.get(id)).filter(Boolean);
     const tplChoice = String(req.query.template || req.body.template || '').trim();
-    const useHtml = tplChoice ? tplChoice !== 'pdfkit'
-      : require('./pdf/engine-toggle').useHtmlEngine(cfg, 'debit_note_engine');
+    const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
+      engineKey: 'debit_note_engine', templateKey: 'debit_note_template', tplChoice });
     if (useHtml) {
       const cfg2 = tplChoice ? { ...cfg, debit_note_template: tplChoice } : cfg;
       const pdf = await require('./pdf/render-debit-note-html').generateDebitNotesHtmlBatchPDF(dns, db, cfg2);

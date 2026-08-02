@@ -26,6 +26,7 @@ const express = require('express');
 const crypto = require('crypto');
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
+const { formatDateForDisplay } = require('./report-formatters');
 
 // ════════════════════════════════════════════════════════════════════
 // RECEIPT-PRINT HELPERS — ported from PWA server.js's renderer code.
@@ -103,6 +104,9 @@ function getReceiptConfig(db) {
   };
   return {
     appTitle:     get('trade_name', 'Spice Auction'),
+    // Operator's Date Format (Settings → Business Mode). Drives the receipt
+    // header date so it matches every other printed document.
+    dateFormat:   get('date_format', 'dd/mm/yyyy'),
     // Company contact shown on the DETAILED receipt header (logo-to-the-side
     // letterhead). Kerala office is the primary; Tamil Nadu is the fallback.
     companyPhone: get('kl_phone', '') || get('tn_phone', ''),
@@ -192,7 +196,7 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
   const fs = (b) => Math.max(5.5, b * sc);
   const vs = Math.max(0.78, Math.min(1, sc));
   const lot = sellerLots[0];
-  const dateFmt = lot.date ? String(lot.date).split('-').reverse().join('/') : '';
+  const dateFmt = formatDateForDisplay(lot.date, cfg.dateFormat);
   const L = cfg.labels || {};
   const lb = (k, d) => L[k] || d;
   const headerBranch = cfg.branch || lot.branch;
@@ -282,7 +286,7 @@ function renderSellerReceiptCompact(doc, sellerLots, cfg) {
   const w = pageW - 2 * m;
   const sc = w / 160;
   const lot = sellerLots[0];
-  const dateFmt = lot.date ? String(lot.date).split('-').reverse().join('/') : '';
+  const dateFmt = formatDateForDisplay(lot.date, cfg.dateFormat);
   const L = cfg.labels || {};
   const lb = (k, d) => L[k] || d;
   const headerBranch = cfg.branch || lot.branch;

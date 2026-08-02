@@ -2848,11 +2848,14 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
   // Label spans most of the row; the value sits in a 3-cell-wide area
   // on the right (cols 10..12 combined) so amounts like "5,02,579.00"
   // don't wrap to a second line at 10pt bold.
-  const nett = Number(
+  // Round the Grand Total to the whole rupee (classic layout), matching the
+  // HTML layouts' grandTotal and the amount-in-words line just below — the
+  // paise are dropped as a round-off so the figure and its words agree.
+  const nett = Math.round(Number(
     billData.nett != null
       ? billData.nett
       : (totalCost + totalRefund - commission - cgstAmt - sgstAmt - igstAmt)
-  );
+  ));
   const nettH = 18;
   const nettValueX = cols[10].x;
   doc.rect(x0, y, nettValueX - x0, nettH).stroke();
