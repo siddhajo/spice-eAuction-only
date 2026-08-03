@@ -59,18 +59,25 @@ function buildPurchaseInvoiceView(invoiceData, cfg, invoiceNo) {
   if (buyer.pan) pairLines.push(['PAN', buyer.pan]);
   if (buyer.state) pairLines.push(['STATE', String(buyer.state).toUpperCase() + '     CODE:' + buyerStCode]);
 
+  // Per-lot trader-sample quantity (Kgs), flat from settings — same value the
+  // commission bill uses. 0 when the feature is off.
+  const traderSampleKg = Number(cfg.sb_trader_sample) || 0;
+
   // Line items.
   const rows = lineItems.map((li) => {
     const qty = Number(li.qty || 0);
     const totalQty = (li.totalQty != null) ? li.totalQty : ((li.pqty || li.qty || 0) + (li.refundQty || 0));
+    // Sample-bag refund weight added to reach Total Qty (cfg.sb_refund per lot).
+    const refundKg = Math.max(0, totalQty - qty);
     return {
       lot: String(li.lot || '').padStart(3, '0'),
       qty,
-      // Sample (kg) = the weight added to reach Total Qty (the app's sample-bag
-      // refund). Discount (kg) = weight deducted — this build has no per-lot
-      // discount-weight, so it's 0. Total Qty = qty + Sample − Discount holds.
-      sample: +(Math.max(0, totalQty - qty)).toFixed(3),
-      discount: 0,
+      // Sample (kg)   = sample refund + trader sample.
+      // Discount (kg) = trader sample.
+      // Total Qty stays qty + sample refund, since the trader sample is both
+      // added (Sample) and removed (Discount): qty + Sample − Discount.
+      sample: +(refundKg + traderSampleKg).toFixed(3),
+      discount: +(traderSampleKg).toFixed(3),
       totalQty,
       price: Number(li.prate || li.price || 0),
       value: Number(li.prate || li.price || 0) * Number(li.pqty || li.qty || 0),

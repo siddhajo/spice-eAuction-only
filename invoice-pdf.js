@@ -1010,13 +1010,8 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   const row1H = isASP ? (rRow * 2) : rRow;
   labeledCell(rightX,             ry, r1W, row1H, 'Invoice No.', formatInvoiceNo(primaryCfg, displaySaleType, invoiceNo));
   labeledCell(rightX + r1W,       ry, r1W, row1H, 'e-Way Bill No.', '');
-  labeledCell(rightX + r1W * 2,   ry, rightW - r1W * 2, row1H, 'Dated', (() => {
-    const d = invoiceDate ? new Date(invoiceDate) : new Date();
-    const day = String(d.getDate()).padStart(2, '0');
-    const mon = d.toLocaleDateString('en-US', { month: 'short' });
-    const yr  = String(d.getFullYear()).slice(-2);
-    return `${day}-${mon}-${yr}`;
-  })());
+  labeledCell(rightX + r1W * 2,   ry, rightW - r1W * 2, row1H, 'Dated',
+    formatDateForDisplay(invoiceDate || new Date(), cfg.date_format));
   ry += row1H;
 
   // Row 2 — ONLY for ISP invoices (ASP omits Reference No. / Other References)

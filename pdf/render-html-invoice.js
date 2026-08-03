@@ -196,8 +196,16 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
     title: 'Tax Invoice',
     invoiceNo: formatInvoiceNo(cfg, saleType, invoiceNo),
     invoiceDate: invoiceDate || null,
+    // Operator's configured date format (Settings → date_format). Templates
+    // render the invoice date with {{date invoiceDate dateFormat}} so it honors
+    // the setting instead of a hardcoded dd-Mon-yy.
+    dateFormat: cfg.date_format || 'dd/mm/yyyy',
     auctionNo: invoiceData.auctionNo || '',
     saleType: st,
+    // HSN/SAC codes surfaced directly so templates that print a standalone
+    // "Commodity: Cardamom | HSN: {{hsnCardamom}}" line render a value (they
+    // were previously only embedded per-row / in the HSN summary).
+    hsnCardamom, hsnGunny, sacTransport, sacInsurance,
     flags: { showHsn, showBank, stripe, isInter },
     ship, billTo,
     dispatchedThrough: (invoiceData.dispatchedThrough) || cfg.dispatched_through_isp || cfg.dispatched_through || '',

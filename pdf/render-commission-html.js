@@ -70,8 +70,11 @@ function buildCommissionView(billData, cfg, billNo, first) {
     // the flag_commission_bank toggle. Coerced to a real boolean so Handlebars
     // {{#if}} works (a string "false" would otherwise read as truthy).
     showSellerBank: ['true', '1', 'yes', 'on'].includes(String((cfg && cfg.flag_commission_bank) || '').trim().toLowerCase()),
-    // Raw party objects — let alternate templates lay out seller/buyer freely.
-    seller, purchaser,
+    // Party objects — let alternate templates lay out seller/buyer freely.
+    // `cr` is normalized to strip any stored "CR."/"CR " label prefix so a
+    // template that prints "CR.{{seller.cr}}" doesn't double it to "CR.CR.…".
+    seller: { ...seller, cr: String(seller.cr || '').replace(/^\s*CR[.\s]+/i, '') },
+    purchaser,
     crpt: billData.crpt || '',
     billNo: String(billNo),
     lotNo: /^\d+$/.test(String(li.lot || '')) ? String(li.lot).padStart(3, '0') : (li.lot || ''),

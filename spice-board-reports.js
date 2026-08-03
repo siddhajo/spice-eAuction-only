@@ -758,7 +758,12 @@ function buildFormD(ctx, db, opts) {
   const a1key    = isKL ? 'kl_address1' : 'tn_address1';
   const a2key    = isKL ? 'kl_address2' : 'tn_address2';
   const branch   = readSetting(db, isKL ? 'kl_branch' : 'tn_branch', '');
-  const address  = [readSetting(db, a1key, ''), readSetting(db, a2key, ''), branch]
+  // PIN code (Settings → Address → PIN Code), state-aware. Appended to the
+  // branch/place as "<branch> - <pin>" so the auctioneer address carries the
+  // pincode (e.g. "NIRAPPELKADA - 685551").
+  const pin      = readSetting(db, isKL ? 'kl_pin' : 'tn_pin', '');
+  const branchPin = [branch, pin].filter(Boolean).join(' - ');
+  const address  = [readSetting(db, a1key, ''), readSetting(db, a2key, ''), branchPin]
                     .filter(Boolean).join(', ') || readSetting(db, 'address1', '');
   // Footer "Place :" — the company's Place / City (Settings → Address →
   // Place / City), state-aware. Distinct from the "Place of auction" above
