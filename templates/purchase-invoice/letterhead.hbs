@@ -29,6 +29,10 @@
   .items th { font-weight: bold; font-size: 7pt; text-align: center; background: #e8f1e0; }
   .items td { font-size: 8pt; }
   .grand td { font-size: 11pt; font-weight: bold; }
+  /* Fixed-width label so every colon in a label:value list lines up vertically.
+     .lbl for the meta grid (longer labels), .lbl2 for the party GSTIN/PAN/STATE. */
+  .lbl { display: inline-block; width: 92pt; }
+  .lbl2 { display: inline-block; width: 34pt; }
 </style>
 </head>
 <body>
@@ -44,8 +48,8 @@
   <table>
     {{#each leftPairs}}
     <tr>
-      <td class="b" style="width:50%">{{this.[0]}}: {{this.[1]}}</td>
-      {{#with (lookup ../rightPairs @index)}}<td class="b" style="width:50%">{{this.[0]}}: {{this.[1]}}</td>{{/with}}
+      <td class="b" style="width:50%"><span class="lbl">{{this.[0]}}</span>: {{this.[1]}}</td>
+      {{#with (lookup ../rightPairs @index)}}<td class="b" style="width:50%"><span class="lbl">{{this.[0]}}</span>: {{this.[1]}}</td>{{/with}}
     </tr>
     {{/each}}
   </table>
@@ -56,11 +60,11 @@
     <tr>
       <td>
         {{#each plainLines}}<div class="b">{{this}}</div>{{/each}}
-        {{#each pairLines}}<div class="muted">{{this.[0]}}: <span class="b">{{this.[1]}}</span></div>{{/each}}
+        {{#each pairLines}}<div class="muted"><span class="lbl2">{{this.[0]}}</span>: <span class="b">{{this.[1]}}</span></div>{{/each}}
       </td>
       <td>
         {{#each plainLines}}<div class="b">{{this}}</div>{{/each}}
-        {{#each pairLines}}<div class="muted">{{this.[0]}}: <span class="b">{{this.[1]}}</span></div>{{/each}}
+        {{#each pairLines}}<div class="muted"><span class="lbl2">{{this.[0]}}</span>: <span class="b">{{this.[1]}}</span></div>{{/each}}
       </td>
     </tr>
   </table>
