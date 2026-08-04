@@ -54,13 +54,20 @@ function _templatePath(docType, key) {
 }
 
 // Compile + cache a single template file. Returns null if it doesn't exist.
+// The cache is keyed by docType/key and invalidated on the file's mtime, so
+// editing a .hbs takes effect WITHOUT a server restart (the compiled template
+// was previously cached for the whole process life, which made template tweaks
+// appear to do nothing until a restart). The stat() per render is negligible.
 function _load(docType, key) {
   const cacheKey = `${docType}/${key}`;
-  if (_cache.has(cacheKey)) return _cache.get(cacheKey);
   const file = _templatePath(docType, key);
-  if (!fs.existsSync(file)) { _cache.set(cacheKey, null); return null; }
+  let mtime = 0;
+  try { mtime = fs.statSync(file).mtimeMs; }
+  catch (_) { _cache.set(cacheKey, { tpl: null, mtime: 0 }); return null; }
+  const hit = _cache.get(cacheKey);
+  if (hit && hit.mtime === mtime) return hit.tpl;
   const compiled = Handlebars.compile(fs.readFileSync(file, 'utf8'), { noEscape: false });
-  _cache.set(cacheKey, compiled);
+  _cache.set(cacheKey, { tpl: compiled, mtime });
   return compiled;
 }
 

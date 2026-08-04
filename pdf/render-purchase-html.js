@@ -119,7 +119,9 @@ function buildPurchaseInvoiceView(invoiceData, cfg, invoiceNo) {
     seller: {
       name: (seller.name || '').toUpperCase(),
       addr: [seller.address, seller.place, seller.pin].filter(Boolean).join(', '),
-      gstin: seller.gstin || seller.cr || '',
+      // Strip any stored "GSTIN." label prefix — the letterhead template prints
+      // its own "GSTIN." so a stored "GSTIN.32…" would otherwise double up.
+      gstin: String(seller.gstin || seller.cr || '').replace(/^\s*GSTIN[.\s]*/i, ''),
       pan: seller.pan || '',
       sbl: seller.sbl || seller.aadhar || '',   // SBL is stored in traders.aadhar
     },

@@ -1608,7 +1608,13 @@ ${rnd < 0 ? TAGS.DEEMYES : TAGS.DEEMNO}
 // }, ...]
 //
 function generRDPurchaseXML(rows, cfg, opts = {}) {
-  const company    = opts.companyName || cfgGet(cfg, 'tally_company_name', 'Ideal Spices Private Limited');
+  // SVCURRENTCOMPANY: explicit override → the Tally Company Name setting → the
+  // current company's name from settings (identity resolver). No hardcoded
+  // brand fallback.
+  const company    = opts.companyName || cfgGet(cfg, 'tally_company_name', '')
+                     || _getCompanyIdentity(cfg).name || 'Company';
+  // Voucher type for the RD purchase voucher — configurable (default "Purchase").
+  const vchType    = cfgGet(cfg, 'tally_rd_purchase_vchtype', 'Purchase');
   const season     = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
   // Purchase-specific detail flag (independent of sales-side
   // `tally_detailed`). ON → one bill allocation + one inventory entry
@@ -1672,7 +1678,7 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
     // bill allocations stay in their own <ano>/<lot>/<season> format.
     const voucherRef = `${row.ano}/${taxNm}/${season}`;
 
-    const startVoucher = `<VOUCHER VCHTYPE="Purchase" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
+    const startVoucher = `<VOUCHER VCHTYPE="${xe(vchType)}" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
     const cgst        = r2(row.cgst || 0);   // goods GST (purchases header)
     const sgst        = r2(row.sgst || 0);
     const igst        = r2(row.igst || 0);
@@ -2031,7 +2037,12 @@ ${TAGS.DEEMYES}
 // }, ...]
 //
 function generURDPurchaseXML(rows, cfg, opts = {}) {
-  const company   = opts.companyName || cfgGet(cfg, 'tally_company_name', cfgGet(cfg, 'short_name', 'Ideal Spices Private Limited'));
+  // SVCURRENTCOMPANY: same resolution as the RD purchase voucher — the current
+  // company from settings, no hardcoded brand fallback.
+  const company   = opts.companyName || cfgGet(cfg, 'tally_company_name', '')
+                    || _getCompanyIdentity(cfg).name || 'Company';
+  // Voucher type for the URD purchase voucher — configurable (default "Purchase").
+  const vchType   = cfgGet(cfg, 'tally_urd_purchase_vchtype', 'Purchase');
   const season    = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
   // Same purchase-specific detail flag as RD purchase — keeps URD
   // (agriculturist) vouchers in lock-step with the RD ones.
@@ -2088,7 +2099,7 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
     const rnd        = tlyrnd ? r2(partyAmt - grossGoods) : 0;
     // URD voucher number = {invno}/{season-short} (e.g. "799/26-27").
     const voucherRef = `${taxNm}/${seasonShort}`;
-    const startVoucher = `<VOUCHER VCHTYPE="Purchase" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
+    const startVoucher = `<VOUCHER VCHTYPE="${xe(vchType)}" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
 
     // Bill allocations (mirror the RD-purchase voucher):
     //   • Each lot's "New Ref" = its NET payable to the planter

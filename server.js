@@ -8789,10 +8789,12 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
         name: b.name || first.name || '',
         address: b.add_line || first.padd || '',
         place:   b.pla     || first.ppla || '',
+        pin:     b.ppin    || first.ppin || '',
         state:   b.pstate  || first.pstate || '',
         st_code: b.st_code || first.pst_code || '',
         cr:      b.crr     || first.cr || '',
         pan:     b.pan     || first.pan || '',
+        aadhar:  b.aadhar  || first.aadhar || '',
       };
       // Seller phone + bank account for the commission bill (shown only when
       // flag_commission_bank is on, Letterhead layout). Phone from the trader master

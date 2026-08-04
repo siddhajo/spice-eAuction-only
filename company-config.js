@@ -421,6 +421,11 @@ const DEFAULTS = [
   { key: 'tally_state_code',   value: '', category: 'tally', label: 'Home GSTIN State Code (intra)',      type: 'text' },
   { key: 'tally_home_state',   value: '', category: 'tally', label: 'Home Place of Supply',               type: 'text' },
   { key: 'tally_urd_state',    value: '', category: 'tally', label: 'URD Purchase State (agriculturist)', type: 'text' },
+  // Voucher type (VCHTYPE) for the purchase XML exports. Defaults to Tally's
+  // built-in "Purchase"; set to a custom Tally voucher-type name (e.g.
+  // "RD Purchase" / "URD Purchase") to import under that type instead.
+  { key: 'tally_rd_purchase_vchtype',  value: 'Purchase', category: 'tally', label: 'RD Purchase Voucher Type (VCHTYPE)',  type: 'text' },
+  { key: 'tally_urd_purchase_vchtype', value: 'Purchase', category: 'tally', label: 'URD Purchase Voucher Type (VCHTYPE)', type: 'text' },
 
   // Mode toggles
   { key: 'tally_detailed',        value: 'false', category: 'tally', label: 'Detailed Inv (one inventory entry per lot)', type: 'boolean' },
