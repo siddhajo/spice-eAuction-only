@@ -64,6 +64,18 @@ function buildCommissionView(billData, cfg, billNo, first) {
     ? Number(billData.roundDiff)
     : Math.round((grandTotal - nett) * 100) / 100;
 
+  // Combined single-line address: "<address>, <place>-<pin> <state>" with no
+  // "Place:" label. Trailing comma/space on the stored address is trimmed so we
+  // don't get a doubled comma before the place.
+  const addressFull = (p) => {
+    const addr  = String((p && p.address) || '').trim().replace(/[,\s]+$/, '');
+    const place = String((p && p.place) || '').trim();
+    const pin   = String((p && p.pin) || '').trim();
+    const placePin = place ? (pin ? place + '-' + pin : place) : pin;
+    const line = [addr, placePin].filter(Boolean).join(', ');
+    return [line, String((p && p.state) || '').trim()].filter(Boolean).join(' ');
+  };
+
   return {
     first, cfg, co,
     // Show the seller's phone + bank account on the bill (Letterhead layout), gated by
@@ -73,8 +85,8 @@ function buildCommissionView(billData, cfg, billNo, first) {
     // Party objects — let alternate templates lay out seller/buyer freely.
     // `cr` is normalized to strip any stored "CR."/"CR " label prefix so a
     // template that prints "CR.{{seller.cr}}" doesn't double it to "CR.CR.…".
-    seller: { ...seller, cr: String(seller.cr || '').replace(/^\s*CR[.\s]+/i, '') },
-    purchaser,
+    seller: { ...seller, cr: String(seller.cr || '').replace(/^\s*CR[.\s]+/i, ''), addressFull: addressFull(seller) },
+    purchaser: { ...purchaser, addressFull: addressFull(purchaser) },
     crpt: billData.crpt || '',
     billNo: String(billNo),
     lotNo: /^\d+$/.test(String(li.lot || '')) ? String(li.lot).padStart(3, '0') : (li.lot || ''),
