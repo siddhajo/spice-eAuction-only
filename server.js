@@ -8945,10 +8945,12 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
         });
       }
 
-      // One payload (→ one A4 page) per lot.
-      for (const pl of perLot) {
+      // One payload (→ one A4 page) per lot. When a bill spans more than one
+      // lot, suffix the Bill No per page (billno/1, billno/2, …) so each lot's
+      // page carries a distinct number; a single-lot bill keeps the plain number.
+      perLot.forEach((pl, _lotIdx) => {
         payloads.push({
-          billNo: b.bil,
+          billNo: perLot.length > 1 ? `${b.bil}/${_lotIdx + 1}` : String(b.bil),
           billData: {
             crpt: b.crpt || pl.crpt || (first.crpt || ''),
             auction: { ano: auction ? auction.ano : (b.ano || ''), date: billDate },
@@ -8962,7 +8964,7 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
             nett: pl.nett,
           },
         });
-      }
+      });
     }
 
     // Per-print format choice: the print UI can pass a `template` (e.g.
