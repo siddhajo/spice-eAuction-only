@@ -6087,9 +6087,9 @@ app.post('/api/lots', requireLotWrite, (req, res) => {
   }
 
   const info = db.run(
-    `INSERT INTO lots (auction_id,lot_no,crop,grade,crpt,branch,state,trader_id,name,padd,ppla,ppin,pstate,pst_code,cr,pan,tel,aadhar,bags,litre,qty,gross_wt,sample_wt,moisture,reserved_price,user_id,bank_id,immediate_payment,reserved)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,l.state||'TAMIL NADU',l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',Number(l.reserved_price)||0,l.user_id||'',l.bank_id||null,Number(l.immediate_payment)?1:0,Number(l.reserved)?1:0]);
+    `INSERT INTO lots (auction_id,lot_no,crop,grade,crpt,branch,state,trader_id,name,padd,ppla,ppin,pstate,pst_code,cr,pan,tel,aadhar,bags,litre,qty,gross_wt,sample_wt,moisture,reserved_price,user_id,bank_id,immediate_payment,reserved,gunny)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,l.state||'TAMIL NADU',l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',Number(l.reserved_price)||0,l.user_id||'',l.bank_id||null,Number(l.immediate_payment)?1:0,Number(l.reserved)?1:0,Number(l.gunny)||0]);
   pcClearGate(db, auctionId);
   lvClearGate(db, auctionId);   // new lot → trade must be re-validated before price import
   logLotActivity(db, req, 'create', { id: info.lastInsertRowid, auction_id: auctionId, lot_no: lotNoStr, branch, name: l.name, qty: l.qty });

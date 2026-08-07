@@ -1412,11 +1412,11 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     run(nameWithPan, true);
     if (addr) { run(', a cardamom Planter and a resident of ', false); run(addr, true); }
     else      { run(', a cardamom Planter', false); }
-    run(' has registered Cardamom lots at our end during the period from ', false);
+    run('  has registered Cardamom lots at our end during the period from ', false);
     run(fromDisp, true);
     run(' to ', false);
     run(toDisp, true);
-    run(' and received payment, totally to the tune of Rs. ', false);
+    run('  and received payment, totally to the tune of Rs. ', false);
     run(`${amtFig}/-`, true);
     run(' (', false);
     run(`${amtWords} Only`, true);

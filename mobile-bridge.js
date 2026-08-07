@@ -616,6 +616,10 @@ function mountMobile(app, deps) {
       // Per-bag empty gunny weight. > 0 switches mobile Lot Entry into
       // "Weight w/ Gunny" mode (net = weight_with_gunny − bags × this).
       defaultGunny:    getNum('default_gunny_weight', 0),
+      // When true, the operator picks the Gunny Wt/Bag per lot (editable,
+      // persisted across lots, stored on the lot) rather than the global
+      // Default Gunny Weight above.
+      userGunny:       getBool('user_gunny_weight', false),
       showMoisture:    getBool('show_moisture', false),
       // Reserved Price visibility flag. Drives the Reserved Price
       // input on the mobile Lot Entry form; the Crop Receipt input is

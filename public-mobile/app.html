@@ -506,7 +506,7 @@ select:focus{border-color:var(--green)}
          re-weigh WITH gunny while editing instead of back-solving net. -->
     <div id="ed-gunny-wrap" style="display:none;grid-template-columns:2fr 1fr;gap:6px;margin-top:8px">
       <div><div class="lb">WT W/ GUNNY (KG)</div><input type="text" id="ed-weight-gunny" placeholder="0.000" inputmode="decimal" class="qi" oninput="sanitizeDec(this);calcEditNetFromGunny()"></div>
-      <div><div class="lb">GUNNY WT</div><input type="text" id="ed-gunny-weight" placeholder="0" readonly style="background:var(--bg);color:var(--text3)"></div>
+      <div><div class="lb">GUNNY WT/BAG</div><input type="text" id="ed-gunny-weight" class="qi" inputmode="decimal" list="gunny-perbag-opts" placeholder="1.000" oninput="sanitizeDec(this);onEditGunnyPerBagChange()"></div>
     </div>
     <div class="lb" style="margin-top:8px">QUANTITY (KG)</div><input type="text" id="ed-qty" inputmode="decimal" class="qi" oninput="sanitizeDec(this);calcEditGross()">
     <div class="fr" style="margin-top:8px"><div><div class="lb">SAMPLE WT</div><input type="text" id="ed-sample" inputmode="decimal" oninput="sanitizeDec(this);calcEditGross()" readonly style="background:var(--bg);color:var(--text3)"></div><div><div class="lb">GROSS WT</div><input type="text" id="ed-gross" readonly style="background:var(--bg);color:var(--green);font-weight:700"></div></div>
@@ -673,7 +673,7 @@ async function refreshConfig(){
     if(d.showMoisture!=cfgShowMoisture){cfgShowMoisture=d.showMoisture||false;changed=true}
     if(d.showReservedPrice!=cfgShowReservedPrice){cfgShowReservedPrice=d.showReservedPrice||false;changed=true}
     if(d.immediateReserve!=cfgImmediateReserve){cfgImmediateReserve=d.immediateReserve||false;changed=true}
-    if(d.defaultGunny!=cfgDefaultGunny){cfgDefaultGunny=d.defaultGunny||0;changed=true}
+    if(d.defaultGunny!=cfgDefaultGunny){cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;changed=true}
     if(d.defaultLitre!=cfgDefaultLitre){cfgDefaultLitre=d.defaultLitre||'';changed=true}
     if(d.editEnabled!==undefined)editEnabled=d.editEnabled!==false;
     if(d.editTimeout!==undefined)editTimeoutMinutes=d.editTimeout||0;
@@ -704,7 +704,7 @@ setInterval(function(){if(token&&aid&&(document.getElementById('s-lots').classLi
 async function doLogin(forceLogin){const u=document.getElementById('l-user').value.trim(),p=document.getElementById('l-pass').value,er=document.getElementById('l-err');er.innerHTML='';if(!u||!p){er.innerHTML='<div class="eb">Enter username and password</div>';return}document.getElementById('l-btn').disabled=true;try{const r=await fetch(B+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p,force:forceLogin||false})});const d=await r.json();if(r.status===409&&d.error==='already_logged_in'){er.innerHTML='<div class="eb" style="text-align:center">'+d.message+'<br><button onclick="doLogin(true)" style="margin-top:8px;background:#1D9E75;color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Yes, switch to this device</button></div>';return}if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Login failed')+'</div>';return}token=d.token;user=d.user.username;userBranch=d.user.branch||'';userRole=d.user.role||'user';localStorage.setItem('sa_token',token);goSession()}catch(e){er.innerHTML='<div class="eb">Could not connect</div>'}finally{document.getElementById('l-btn').disabled=false}}
 function doLogout(){fetch(B+'/api/auth/logout',{method:'POST',headers:ah()}).catch(()=>{});token='';user='';localStorage.removeItem('sa_token');toggleMenu(true);show('s-login')}
 async function tryAutoLogin(){if(!token){loadTitle();return}try{const r=await fetch(B+'/api/auth/me',{headers:ah()});if(r.ok){const d=await r.json();user=d.user.username;userBranch=d.user.branch||'';userRole=d.user.role||'user';goSession()}else{token='';localStorage.removeItem('sa_token');loadTitle()}}catch(e){loadTitle()}}
-var cfgSampleWeight=0,cfgShowMoisture=false,cfgShowReservedPrice=false,cfgDefaultGunny=0,cfgImmediateReserve=false;
+var cfgSampleWeight=0,cfgShowMoisture=false,cfgShowReservedPrice=false,cfgDefaultGunny=0,cfgImmediateReserve=false,cfgUserGunny=false;
 // Show/hide the Immediate Payment + Reserve-this-Lot controls (Lot Entry form
 // and Edit modal) per the flag_immediate_reserve config (cfgImmediateReserve).
 function applyImmediateReserveVis(){var v=cfgImmediateReserve;var a=document.getElementById('le-immediate-reserve-wrap');if(a)a.style.display=v?'block':'none';var b=document.getElementById('ed-immediate-reserve-wrap');if(b)b.style.display=v?'block':'none';}
@@ -714,9 +714,9 @@ function applyLabels(){
   var map={'elb-seller':L.seller||'Seller','elb-grade':L.grade,'elb-bags':L.bags,'elb-litre':L.litre_wt,'elb-net':L.net_wt,'elb-sample':L.sample_wt,'elb-gross':L.gross_wt,'elb-moisture':L.moisture};
   Object.keys(map).forEach(function(id){var el=document.getElementById(id);if(el)el.textContent=map[id]});
 }
-async function loadTitle(){try{const r=await fetch(B+'/api/config');const d=await r.json();setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgDefaultGunny=d.defaultGunny||0;cfgDefaultLitre=d.defaultLitre||'';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw=document.getElementById('le-reserved-price-wrap');if(rpw)rpw.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();loadAppLogo()}catch(e){}}
+async function loadTitle(){try{const r=await fetch(B+'/api/config');const d=await r.json();setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgDefaultLitre=d.defaultLitre||'';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw=document.getElementById('le-reserved-price-wrap');if(rpw)rpw.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();loadAppLogo()}catch(e){}}
 
-async function goSession(){document.getElementById('ss-user').textContent=user;const lb=localStorage.getItem('sa_branch');try{const r=await fetch(B+'/api/config');const d=await r.json();window._allBranches=(d.branches||[]).map(function(b){return b.value});setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgDefaultGunny=d.defaultGunny||0;cfgDefaultLitre=d.defaultLitre||'';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw2=document.getElementById('le-reserved-price-wrap');if(rpw2)rpw2.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();var brSel=document.getElementById('ss-branch');if(userRole!=='admin'&&userBranch){brSel.innerHTML='<option value="'+userBranch+'">'+userBranch+'</option>';brSel.disabled=true}else{brSel.disabled=false;brSel.innerHTML=(d.branches||[]).map(b=>'<option value="'+b.value+'"'+(b.value===(userBranch||lb)?' selected':'')+'>'+b.value+'</option>').join('')}}catch(e){}
+async function goSession(){document.getElementById('ss-user').textContent=user;const lb=localStorage.getItem('sa_branch');try{const r=await fetch(B+'/api/config');const d=await r.json();window._allBranches=(d.branches||[]).map(function(b){return b.value});setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgDefaultLitre=d.defaultLitre||'';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw2=document.getElementById('le-reserved-price-wrap');if(rpw2)rpw2.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();var brSel=document.getElementById('ss-branch');if(userRole!=='admin'&&userBranch){brSel.innerHTML='<option value="'+userBranch+'">'+userBranch+'</option>';brSel.disabled=true}else{brSel.disabled=false;brSel.innerHTML=(d.branches||[]).map(b=>'<option value="'+b.value+'"'+(b.value===(userBranch||lb)?' selected':'')+'>'+b.value+'</option>').join('')}}catch(e){}
 await loadAvailableTrades();
 show('s-session')}
 
@@ -762,7 +762,7 @@ async function loadAvailableTrades(){
 
 async function startSession(){var sel=document.getElementById('ss-trade');var opt=sel.options[sel.selectedIndex];br=document.getElementById('ss-branch').value;var er=document.getElementById('ss-err');er.innerHTML='';if(!sel.value||!opt||!opt.value){er.innerHTML='<div class="eb">Select a trade</div>';return}if(!br){er.innerHTML='<div class="eb">Select branch</div>';return}aid=parseInt(sel.value);tno=parseInt(opt.getAttribute('data-ano'));sessionEnd=opt.getAttribute('data-end')||null;localStorage.setItem('sa_branch',br);
 // Reload config for sample weight + moisture
-try{var cr=await fetch(B+'/api/config');var cd=await cr.json();cfgSampleWeight=cd.sampleWeight||0;cfgShowMoisture=cd.showMoisture||false;cfgShowReservedPrice=cd.showReservedPrice||false;cfgImmediateReserve=cd.immediateReserve||false;cfgDefaultGunny=cd.defaultGunny||0;document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw3=document.getElementById('le-reserved-price-wrap');if(rpw3)rpw3.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode()}catch(e){}
+try{var cr=await fetch(B+'/api/config');var cd=await cr.json();cfgSampleWeight=cd.sampleWeight||0;cfgShowMoisture=cd.showMoisture||false;cfgShowReservedPrice=cd.showReservedPrice||false;cfgImmediateReserve=cd.immediateReserve||false;cfgDefaultGunny=cd.defaultGunny||0;cfgUserGunny=!!cd.userGunny;document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw3=document.getElementById('le-reserved-price-wrap');if(rpw3)rpw3.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode()}catch(e){}
 await loadStats();goLots()}
 
 var allocStats=null;
@@ -1252,21 +1252,29 @@ function calcGrossWeight(){
 // Gunny"; Gunny Weight (= bags × default) and Net Weight (= wt w/ gunny −
 // gunny weight) are derived. When 0/unset the fields stay hidden and Net
 // Weight is typed directly (classic flow).
-function gunnyActive(){return (Number(cfgDefaultGunny)||0)>0}
-// Per-bag gunny weight is chosen from the GUNNY WT/BAG dropdown. The operator's
-// selection persists across consecutive lots (a session default) — it is only
-// seeded once (from cfgDefaultGunny) and is never reset per-lot, so the next
-// lot reuses the same value until the operator changes it. Still editable.
+// Gunny mode is active when the user-driven flag is ON, OR (legacy/global) the
+// settings Default Gunny Weight is > 0.
+function gunnyActive(){return cfgUserGunny || (Number(cfgDefaultGunny)||0)>0}
+// Effective per-bag gunny for the ENTRY form:
+//   • user-driven mode → the operator's editable GUNNY WT/BAG value (persists
+//     across consecutive lots), falling back to the settings default.
+//   • global mode      → the settings Default Gunny Weight.
+function entryPerBag(){
+  if(cfgUserGunny){var el=document.getElementById('le-gunny-weight');var v=el?parseFloat(el.value):NaN;return isFinite(v)?v:(Number(cfgDefaultGunny)||0);}
+  return (Number(cfgDefaultGunny)||0);
+}
 var _gunnyInit=false;
 function initGunnyDropdown(){
-  var el=document.getElementById('le-gunny-weight');
-  if(!el||_gunnyInit)return;
-  _gunnyInit=true;
-  // Seed the editable GUNNY WT/BAG field with the configured default ONCE. The
-  // operator can then pick a preset (datalist) or type any value; that choice
-  // is what drives the net calc and persists across lots.
-  var def=(Number(cfgDefaultGunny)||0);
-  if(!el.value) el.value=def>0?def.toFixed(3):'1.000';
+  var el=document.getElementById('le-gunny-weight');if(!el)return;
+  if(cfgUserGunny){
+    // Editable; seed once from the default, then persist the operator's choice.
+    el.readOnly=false;el.style.color='';el.style.background='#fff';
+    if(!_gunnyInit){_gunnyInit=true;var def=(Number(cfgDefaultGunny)||0);if(!el.value)el.value=def>0?def.toFixed(3):'1.000';}
+  }else{
+    // Global mode: fixed to the settings default, read-only.
+    el.readOnly=true;el.style.color='var(--text3)';el.style.background='var(--bg)';
+    var d=(Number(cfgDefaultGunny)||0);el.value=d>0?d.toFixed(3):'';
+  }
 }
 function onGunnyPerBagChange(){ if(gunnyActive())calcNetFromGunny(); }
 function applyGunnyMode(){
@@ -1285,8 +1293,7 @@ function calcNetFromGunny(){
   if(!gunnyActive())return;
   var bags=parseInt(document.getElementById('le-bags').value)||0;
   var wwg=parseFloat(document.getElementById('le-weight-gunny').value)||0;
-  var gwEl=document.getElementById('le-gunny-weight');
-  var perBag=gwEl?(parseFloat(gwEl.value)||0):(Number(cfgDefaultGunny)||0);
+  var perBag=entryPerBag();
   var gunny=bags*perBag;
   var net=wwg-gunny;
   var qtyEl=document.getElementById('le-qty');
@@ -1348,7 +1355,7 @@ async function saveLot(){
   var immediatePayment=(immPay&&immPay.checked)?1:0;
   var resEl=document.getElementById('le-reserved');
   var reserved=(resEl&&resEl.checked)?1:0;
-  var lotData={auction_id:aid,trader_id:selT.id,branch:br,grade:grade,bags:bags,litre:litre,qty:qty,lot_no:lotNo,state:'TAMIL NADU',bank_id:selBankId?parseInt(selBankId):null,gross_weight:grossWt,sample_weight:sampleWt,moisture:moisture,crpt:crpt,reserved_price:reservedPrice,immediate_payment:immediatePayment,reserved:reserved};
+  var lotData={auction_id:aid,trader_id:selT.id,branch:br,grade:grade,bags:bags,litre:litre,qty:qty,lot_no:lotNo,state:'TAMIL NADU',bank_id:selBankId?parseInt(selBankId):null,gross_weight:grossWt,sample_weight:sampleWt,moisture:moisture,crpt:crpt,reserved_price:reservedPrice,immediate_payment:immediatePayment,reserved:reserved,gunny:gunnyActive()?entryPerBag():0};
   try{
     var r=await fetch(B+'/api/lots',{method:'POST',headers:ah(),body:JSON.stringify(lotData)});
     var d=await r.json();
@@ -1482,7 +1489,7 @@ function openEdit(id,lotNo,s,g,bags,litre,qty,traderId,bankId){editId=id;editTra
    the /detail fetch returns. Visibility of the Reserved Price wrap
    mirrors the live cfgShowReservedPrice flag so toggling the feature
    in Settings reflects on the next modal open without a reload. */
-var edCrptOpen=document.getElementById('ed-crpt');if(edCrptOpen)edCrptOpen.value='';var edRpOpen=document.getElementById('ed-reserved-price');if(edRpOpen)edRpOpen.value='';var edImmOpen=document.getElementById('ed-immediate-payment');if(edImmOpen)edImmOpen.checked=false;var edRpWrap=document.getElementById('ed-reserved-price-wrap');if(edRpWrap)edRpWrap.style.display=cfgShowReservedPrice?'block':'none';document.getElementById('ed-err').innerHTML='';document.getElementById('ed-bank-form').style.display='none';document.getElementById('edit-modal').classList.add('show');applyEditGunnyMode();if(traderId)loadEditBanks(traderId);fetch(B+'/api/lots/'+id+'/detail',{headers:ah()}).then(r=>r.json()).then(d=>{if(d.lot){var sw=d.lot.sample_weight!=null&&d.lot.sample_weight>0?d.lot.sample_weight:cfgSampleWeight||0;document.getElementById('ed-sample').value=Number(sw).toFixed(3);document.getElementById('ed-gross').value=d.lot.gross_weight?Number(d.lot.gross_weight).toFixed(3):'0';if(edCrptOpen)edCrptOpen.value=d.lot.crpt||'';if(edRpOpen)edRpOpen.value=(d.lot.reserved_price!=null&&Number(d.lot.reserved_price)!==0)?d.lot.reserved_price:'';if(edImmOpen)edImmOpen.checked=!!Number(d.lot.immediate_payment);var edResOpen=document.getElementById('ed-reserved');if(edResOpen)edResOpen.checked=!!Number(d.lot.reserved);calcEditGross()}}).catch(()=>{calcEditGross()})}
+var edCrptOpen=document.getElementById('ed-crpt');if(edCrptOpen)edCrptOpen.value='';var edRpOpen=document.getElementById('ed-reserved-price');if(edRpOpen)edRpOpen.value='';var edImmOpen=document.getElementById('ed-immediate-payment');if(edImmOpen)edImmOpen.checked=false;var edRpWrap=document.getElementById('ed-reserved-price-wrap');if(edRpWrap)edRpWrap.style.display=cfgShowReservedPrice?'block':'none';document.getElementById('ed-err').innerHTML='';document.getElementById('ed-bank-form').style.display='none';document.getElementById('edit-modal').classList.add('show');applyEditGunnyMode();if(traderId)loadEditBanks(traderId);fetch(B+'/api/lots/'+id+'/detail',{headers:ah()}).then(r=>r.json()).then(d=>{if(d.lot){var sw=d.lot.sample_weight!=null&&d.lot.sample_weight>0?d.lot.sample_weight:cfgSampleWeight||0;document.getElementById('ed-sample').value=Number(sw).toFixed(3);document.getElementById('ed-gross').value=d.lot.gross_weight?Number(d.lot.gross_weight).toFixed(3):'0';if(edCrptOpen)edCrptOpen.value=d.lot.crpt||'';if(edRpOpen)edRpOpen.value=(d.lot.reserved_price!=null&&Number(d.lot.reserved_price)!==0)?d.lot.reserved_price:'';if(edImmOpen)edImmOpen.checked=!!Number(d.lot.immediate_payment);var edResOpen=document.getElementById('ed-reserved');if(edResOpen)edResOpen.checked=!!Number(d.lot.reserved);if(editGunnyActive())editSeedGunny(d.lot.gunny);calcEditGross()}}).catch(()=>{calcEditGross()})}
 function closeEdit(){document.getElementById('edit-modal').classList.remove('show');editId=null;editTraderId=null}
 function editSellerMode(){document.getElementById('ed-seller-card').style.display='none';document.getElementById('ed-seller-search').style.display='block';document.getElementById('ed-seller-input').value='';document.getElementById('ed-seller-input').focus()}
 let edStm;
@@ -1591,29 +1598,44 @@ function calcEditGross(){var net=parseFloat(document.getElementById('ed-qty').va
 // derived net is), so on open we back-solve it from net + bags×default so
 // the field starts populated; the operator can then re-weigh and net
 // recomputes.
-function editGunnyActive(){return (Number(cfgDefaultGunny)||0)>0}
+function editGunnyActive(){return cfgUserGunny || (Number(cfgDefaultGunny)||0)>0}
+// Effective per-bag gunny for the EDIT modal — the editable GUNNY WT/BAG field
+// (seeded from the lot's SAVED per-bag), falling back to the settings default.
+function editPerBag(){
+  var el=document.getElementById('ed-gunny-weight');
+  var v=el?parseFloat(el.value):NaN;
+  return isFinite(v)&&v>0?v:(Number(cfgDefaultGunny)||0);
+}
+function onEditGunnyPerBagChange(){ if(editGunnyActive())calcEditNetFromGunny(); }
 function applyEditGunnyMode(){
   var active=editGunnyActive();
   var wrap=document.getElementById('ed-gunny-wrap');
   if(wrap)wrap.style.display=active?'grid':'none';
   var qtyEl=document.getElementById('ed-qty');
   if(qtyEl){qtyEl.readOnly=active;qtyEl.style.background=active?'var(--bg)':'';qtyEl.style.color=active?'var(--green)':'';}
-  if(active){
-    var bags=parseInt(document.getElementById('ed-bags').value)||0;
-    var net=parseFloat(document.getElementById('ed-qty').value)||0;
-    var gunny=bags*(Number(cfgDefaultGunny)||0);
-    var wg=net+gunny;
-    var wgEl=document.getElementById('ed-weight-gunny');if(wgEl)wgEl.value=wg>0?wg.toFixed(3):'';
-    var gwEl=document.getElementById('ed-gunny-weight');if(gwEl)gwEl.value=gunny>0?gunny.toFixed(3):'';
-  }
+  // GUNNY WT/BAG editable only in user-driven mode; fixed (read-only) in global.
+  var gwEl=document.getElementById('ed-gunny-weight');
+  if(gwEl){gwEl.readOnly=!cfgUserGunny;gwEl.style.background=cfgUserGunny?'#fff':'var(--bg)';gwEl.style.color=cfgUserGunny?'':'var(--text3)';}
+  if(active)editSeedGunny();
+}
+// Seed the per-bag field and back-solve WT W/ GUNNY from the stored net
+// (weight_w/gunny = net + bags × per-bag). Called on open with the default,
+// then again once /detail returns the lot's SAVED per-bag so editing reuses
+// exactly what the lot was saved with — not the current settings default.
+function editSeedGunny(perBagFromLot){
+  var gwEl=document.getElementById('ed-gunny-weight');if(!gwEl)return;
+  if(perBagFromLot!=null&&isFinite(Number(perBagFromLot))&&Number(perBagFromLot)>0){gwEl.value=Number(perBagFromLot).toFixed(3);}
+  else if(!gwEl.value){var d=(Number(cfgDefaultGunny)||0);gwEl.value=d>0?d.toFixed(3):'1.000';}
+  var bags=parseInt(document.getElementById('ed-bags').value)||0;
+  var net=parseFloat(document.getElementById('ed-qty').value)||0;
+  var wg=net+bags*editPerBag();
+  var wgEl=document.getElementById('ed-weight-gunny');if(wgEl)wgEl.value=wg>0?wg.toFixed(3):'';
 }
 function calcEditNetFromGunny(){
   if(!editGunnyActive())return;
   var bags=parseInt(document.getElementById('ed-bags').value)||0;
   var wwg=parseFloat(document.getElementById('ed-weight-gunny').value)||0;
-  var gunny=bags*(Number(cfgDefaultGunny)||0);
-  var gwEl=document.getElementById('ed-gunny-weight');if(gwEl)gwEl.value=gunny>0?gunny.toFixed(3):'';
-  var net=wwg-gunny;
+  var net=wwg-bags*editPerBag();
   var qtyEl=document.getElementById('ed-qty');if(qtyEl)qtyEl.value=net>0?net.toFixed(3):'';
   calcEditGross();
 }
@@ -1627,7 +1649,7 @@ if(!isReservedEd&&(!qty||qty<=0)){er.innerHTML='<div class="eb">Enter net weight
 if((!isNaN(bags)&&bags<0)||(!isNaN(litre)&&litre<0)){er.innerHTML='<div class="eb">Bags / litre cannot be negative</div>';return}/* Crop Receipt always written (empty string clears it). Reserved
    Price only when the flag is on — sending it from a UI where the
    input isn't visible would silently clobber a value set by the desktop. */
-var edCrptSave=document.getElementById('ed-crpt');var crptVal=edCrptSave?edCrptSave.value.trim():'';var edRpSave=document.getElementById('ed-reserved-price');var rpRawSave=(edRpSave&&cfgShowReservedPrice)?edRpSave.value.trim():null;document.getElementById('ed-save').disabled=true;try{const body={lot_no:lotNo,grade,bags:isNaN(bags)?0:bags,litre:isNaN(litre)?0:litre,qty:isNaN(qty)?0:qty,sample_weight:sampleWt,gross_weight:grossWt,crpt:crptVal};if(rpRawSave!==null)body.reserved_price=rpRawSave===''?0:parseFloat(rpRawSave)||0;var edImmSave=document.getElementById('ed-immediate-payment');body.immediate_payment=(edImmSave&&edImmSave.checked)?1:0;var edResSave=document.getElementById('ed-reserved');body.reserved=(edResSave&&edResSave.checked)?1:0;if(editTraderId)body.trader_id=editTraderId;var edBankSel=document.getElementById('ed-bank-select');if(edBankSel)body.bank_id=edBankSel.value?parseInt(edBankSel.value):null;const r=await fetch(B+'/api/lots/'+editId,{method:'PUT',headers:ah(),body:JSON.stringify(body)});const d=await r.json();if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Failed')+'</div>';return}toast('Lot updated',false);closeEdit();loadMyLots();await loadStats();updUI()}catch(e){er.innerHTML='<div class="eb">Failed</div>'}finally{document.getElementById('ed-save').disabled=false}}
+var edCrptSave=document.getElementById('ed-crpt');var crptVal=edCrptSave?edCrptSave.value.trim():'';var edRpSave=document.getElementById('ed-reserved-price');var rpRawSave=(edRpSave&&cfgShowReservedPrice)?edRpSave.value.trim():null;document.getElementById('ed-save').disabled=true;try{const body={lot_no:lotNo,grade,bags:isNaN(bags)?0:bags,litre:isNaN(litre)?0:litre,qty:isNaN(qty)?0:qty,sample_weight:sampleWt,gross_weight:grossWt,crpt:crptVal,gunny:editGunnyActive()?editPerBag():0};if(rpRawSave!==null)body.reserved_price=rpRawSave===''?0:parseFloat(rpRawSave)||0;var edImmSave=document.getElementById('ed-immediate-payment');body.immediate_payment=(edImmSave&&edImmSave.checked)?1:0;var edResSave=document.getElementById('ed-reserved');body.reserved=(edResSave&&edResSave.checked)?1:0;if(editTraderId)body.trader_id=editTraderId;var edBankSel=document.getElementById('ed-bank-select');if(edBankSel)body.bank_id=edBankSel.value?parseInt(edBankSel.value):null;const r=await fetch(B+'/api/lots/'+editId,{method:'PUT',headers:ah(),body:JSON.stringify(body)});const d=await r.json();if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Failed')+'</div>';return}toast('Lot updated',false);closeEdit();loadMyLots();await loadStats();updUI()}catch(e){er.innerHTML='<div class="eb">Failed</div>'}finally{document.getElementById('ed-save').disabled=false}}
 async function deleteLot(id,n){if(!confirm('Delete Lot #'+n+'?'))return;try{await fetch(B+'/api/lots/'+id,{method:'DELETE',headers:ah()});toast('Deleted',false);loadMyLots();await loadStats();updUI()}catch(e){}}
 
 function clearEntryForm(){

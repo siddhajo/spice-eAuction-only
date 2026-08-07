@@ -328,6 +328,11 @@ const DEFAULTS = [
   // weight_with_gunny − (bags × this value). 0/blank keeps the classic
   // direct net-weight entry.
   { key: 'default_gunny_weight', value: '0',   category: 'lot_entry', label: 'Default Gunny Weight (kg)',          type: 'number'  },
+  // When ON, the mobile operator picks the Gunny Wt/Bag per lot (editable,
+  // carried forward to consecutive lots, and stored on the lot so editing
+  // reuses the saved value). When OFF, the global Default Gunny Weight above
+  // is used for every lot.
+  { key: 'user_gunny_weight',  value: 'false', category: 'lot_entry', label: 'User-driven Gunny Wt/Bag (mobile)',   type: 'boolean' },
   { key: 'show_moisture',      value: 'false', category: 'lot_entry', label: 'Show Moisture Column',               type: 'boolean' },
   { key: 'default_litre',      value: '',      category: 'lot_entry', label: 'Default Litre Weight',               type: 'text'    },
   { key: 'default_crop_type',  value: '',      category: 'lot_entry', label: 'Default Crop Type',                  type: 'text'    },
