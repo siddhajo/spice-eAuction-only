@@ -1534,9 +1534,21 @@ function _fmtRupeesWhole(n) {
 function _poolerAddress(db, name) {
   if (!name) return '';
   let t = null;
+  // Prefer the lot's denormalised address — it's captured at lot entry and
+  // always matches the pooler in this register (the traders name-lookup can
+  // miss on spelling/spacing differences). Note lots uses `ppin` for the PIN.
   try {
-    t = db.get('SELECT padd, ppla, pin, pstate FROM traders WHERE UPPER(TRIM(name)) = UPPER(?) LIMIT 1', [String(name).trim()]);
+    t = db.get(
+      "SELECT padd, ppla, ppin AS pin FROM lots WHERE UPPER(TRIM(name)) = UPPER(?) " +
+      "AND (COALESCE(TRIM(padd),'')<>'' OR COALESCE(TRIM(ppla),'')<>'' OR COALESCE(TRIM(ppin),'')<>'') " +
+      "ORDER BY id LIMIT 1", [String(name).trim()]);
   } catch (e) { t = null; }
+  // Fall back to the traders master.
+  if (!t) {
+    try {
+      t = db.get('SELECT padd, ppla, pin FROM traders WHERE UPPER(TRIM(name)) = UPPER(?) LIMIT 1', [String(name).trim()]);
+    } catch (e) { t = null; }
+  }
   if (!t) return '';
   // Certificate address = address + place + "-" + pin. State is intentionally
   // omitted; place and pin are joined with a hyphen (e.g. "CUMBUM-625516").

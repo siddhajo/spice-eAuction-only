@@ -331,7 +331,7 @@ select:focus{border-color:var(--green)}
              derived. Toggled by applyGunnyMode(). -->
         <div id="le-gunny-wrap" style="display:none;grid-template-columns:2fr 1fr;gap:6px;margin-bottom:6px">
           <div><div class="elb">WT W/ GUNNY (KG)</div><input type="text" id="le-weight-gunny" placeholder="0.000" inputmode="decimal" onfocus="showSaveBtn()" class="ein qi" oninput="sanitizeDec(this);calcNetFromGunny()"></div>
-          <div><div class="elb">GUNNY WT/BAG</div><select id="le-gunny-weight" class="ein" onchange="onGunnyPerBagChange()" style="background:#fff"><option value="0.800">0.800</option><option value="0.900">0.900</option><option value="1.000">1.000</option><option value="1.100">1.100</option><option value="1.200">1.200</option></select></div>
+          <div><div class="elb">GUNNY WT/BAG</div><input type="text" id="le-gunny-weight" class="ein" inputmode="decimal" list="gunny-perbag-opts" placeholder="1.000" oninput="sanitizeDec(this);onGunnyPerBagChange()" style="background:#fff"><datalist id="gunny-perbag-opts"><option value="0.800"></option><option value="0.900"></option><option value="1.000"></option><option value="1.100"></option><option value="1.200"></option></datalist></div>
         </div>
 
         <!-- Net + Sample + Gross -->
@@ -1259,15 +1259,14 @@ function gunnyActive(){return (Number(cfgDefaultGunny)||0)>0}
 // lot reuses the same value until the operator changes it. Still editable.
 var _gunnyInit=false;
 function initGunnyDropdown(){
-  var sel=document.getElementById('le-gunny-weight');
-  if(!sel||_gunnyInit)return;
+  var el=document.getElementById('le-gunny-weight');
+  if(!el||_gunnyInit)return;
   _gunnyInit=true;
+  // Seed the editable GUNNY WT/BAG field with the configured default ONCE. The
+  // operator can then pick a preset (datalist) or type any value; that choice
+  // is what drives the net calc and persists across lots.
   var def=(Number(cfgDefaultGunny)||0);
-  var want=def>0?def.toFixed(3):'1.000';
-  // Seed with the configured default; add it as an option if it isn't a preset.
-  var has=Array.prototype.some.call(sel.options,function(o){return o.value===want});
-  if(!has){var o=document.createElement('option');o.value=want;o.textContent=want;sel.insertBefore(o,sel.firstChild);}
-  sel.value=want;
+  if(!el.value) el.value=def>0?def.toFixed(3):'1.000';
 }
 function onGunnyPerBagChange(){ if(gunnyActive())calcNetFromGunny(); }
 function applyGunnyMode(){
