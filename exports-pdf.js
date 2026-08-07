@@ -1379,16 +1379,9 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     const ruleY = ay + 6;
     doc.moveTo(left, ruleY).lineTo(left + width, ruleY).lineWidth(0.75).strokeColor('#333').stroke();
 
-    // Auction No (distinct trade numbers from this pooler's lots), then the
-    // issue date — both top-right below the rule.
-    const anoStr = [...new Set((Array.isArray(p.rows) ? p.rows : [])
-      .map(r => String(r.tno || '').trim()).filter(Boolean))].join(', ');
+    // Issue date, top-right below the rule.
     let y = ruleY + 14;
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#000');
-    if (anoStr) {
-      doc.text(`Auction No: ${anoStr}`, left, y, { width, align: 'right' });
-      y += 16;
-    }
     doc.text(`Date: ${issueDate}`, left, y, { width, align: 'right' });
 
     // Title.
@@ -1410,7 +1403,7 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     const amtFig = _fmtRupeesWhole(billamt);
     const amtWords = amountToWords(billamt); // e.g. "Rupees Fourteen Lakh …"
 
-    const nameWithPan = pan ? `${name} (PAN ${pan})` : name;
+    const nameWithPan = pan ? `${name} (PAN: ${pan})` : name;
     const pOpts = { width, align: 'justify', lineGap: 6, continued: true };
     doc.fontSize(12).fillColor('#000');
     const run = (txt, bold) => doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').text(txt, pOpts);
@@ -1438,13 +1431,12 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     const rows = Array.isArray(p.rows) ? p.rows : [];
     // Column layout: proportional widths that sum to `width`.
     const annCols = [
-      { key: 'date',       label: 'Date',        w: 0.14, align: 'left'  },
-      { key: 'tno',        label: 'TNo',         w: 0.09, align: 'left'  },
-      { key: 'lot',        label: 'Lot',         w: 0.09, align: 'left'  },
-      { key: 'qty',        label: 'Qty',         w: 0.15, align: 'right', fmt: fmtQty   },
-      { key: 'rate',       label: 'Rate',        w: 0.15, align: 'right', fmt: fmtMoney },
-      { key: 'value',      label: 'Value',       w: 0.19, align: 'right', fmt: fmtMoney },
-      { key: 'billamount', label: 'Bill Amount', w: 0.19, align: 'right', fmt: fmtMoney },
+      { key: 'date',       label: 'Date',        w: 0.16, align: 'left'  },
+      { key: 'tno',        label: 'ANO',         w: 0.11, align: 'right' },
+      { key: 'lot',        label: 'Lot',         w: 0.11, align: 'right' },
+      { key: 'qty',        label: 'Qty',         w: 0.18, align: 'right', fmt: fmtQty   },
+      { key: 'rate',       label: 'Rate',        w: 0.18, align: 'right', fmt: fmtMoney },
+      { key: 'billamount', label: 'Bill Amount', w: 0.26, align: 'right', fmt: fmtMoney },
     ];
     const annX = [];
     { let cx = left; for (const c of annCols) { annX.push(cx); cx += c.w * width; } }
@@ -1494,9 +1486,8 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     if (y + ROW_H > bottomLimit()) { doc.addPage(); y = doc.page.margins.top; }
     doc.rect(left, y, width, ROW_H).fillAndStroke('#FFF3CD', '#999');
     drawAnnCell('TOTAL', 0, y, { bold: true });
-    drawAnnCell(fmtQty(tQty),   3, y, { bold: true });
-    drawAnnCell(fmtMoney(tVal), 5, y, { bold: true });
-    drawAnnCell(fmtMoney(tBill),6, y, { bold: true });
+    drawAnnCell(fmtQty(tQty),    3, y, { bold: true });   // Qty column
+    drawAnnCell(fmtMoney(tBill), 5, y, { bold: true });   // Bill Amount column (Value column removed)
     y += ROW_H;
 
     // Signature block, bottom-right of the current (last) page. If the table
@@ -1547,7 +1538,10 @@ function _poolerAddress(db, name) {
     t = db.get('SELECT padd, ppla, pin, pstate FROM traders WHERE UPPER(TRIM(name)) = UPPER(?) LIMIT 1', [String(name).trim()]);
   } catch (e) { t = null; }
   if (!t) return '';
-  const parts = [t.padd, t.ppla, t.pstate, t.pin].map(s => String(s || '').trim()).filter(Boolean);
+  // Certificate address = address + place + "-" + pin. State is intentionally
+  // omitted; place and pin are joined with a hyphen (e.g. "CUMBUM-625516").
+  const placePin = [t.ppla, t.pin].map(s => String(s || '').trim()).filter(Boolean).join('-');
+  const parts = [String(t.padd || '').trim(), placePin].filter(Boolean);
   return parts.join(', ');
 }
 

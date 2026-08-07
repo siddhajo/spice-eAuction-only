@@ -3866,7 +3866,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <button id="seller-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('seller')">🗑 Delete Selected <span id="seller-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>          <input type="file" id="imp-traders" accept=".xlsx,.xls" style="display:none" onchange="importTraders(event)">
         </div>
         <div id="trader-import-status" style="display:none;padding:8px 14px;border-radius:6px;font-size:12px;margin-bottom:10px"></div>
-        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Name</th><th>CR/GSTIN</th><th>PAN</th><th>DOB</th><th>Phone</th><th>Place · State</th><th>Bank</th><th>Actions</th></tr></thead><tbody id="traders-list"></tbody></table></div>
+        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Name</th><th>User ID</th><th>CR/GSTIN</th><th>PAN</th><th>DOB</th><th>Phone</th><th>Place · State</th><th>Bank</th><th>Actions</th></tr></thead><tbody id="traders-list"></tbody></table></div>
         <!-- Pager: rendered by searchTraders() once we know total/page. -->
         <div id="traders-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
       </div>
@@ -4635,8 +4635,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div>
               <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">State</div>
               <select id="le-ns-pstate" onchange="document.getElementById('le-ns-pst').value = this.value === 'KERALA' ? '32' : '33'" style="width:100%;height:38px;padding:0 10px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;background:#fff">
-                <option value="TAMIL NADU">TAMIL NADU</option>
                 <option value="KERALA">KERALA</option>
+                <option value="TAMIL NADU">TAMIL NADU</option>
               </select>
             </div>
             <div>
@@ -6000,7 +6000,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <div class="fg"><label>Aadhar</label><input id="t-aadhar"></div>
     <div class="fg"><label>Address</label><input id="t-padd"></div>
     <div class="fg"><label>Place</label><input id="t-ppla"></div>
-    <div class="fg"><label>State</label><input id="t-pstate"></div>
+    <div class="fg"><label>State</label><select id="t-pstate" onchange="document.getElementById('t-pstcode').value=this.value==='KERALA'?'32':'33'"><option value="KERALA">KERALA</option><option value="TAMIL NADU">TAMIL NADU</option></select></div>
     <div class="fg"><label>State Code</label><input id="t-pstcode"></div>
     <div class="fg"><label>PIN</label><input id="t-pin"></div>
     <div class="fg"><label>Date of Birth</label><input id="t-dob" type="date"></div>
@@ -6047,7 +6047,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <div class="fg"><label>Address 2</label><input id="b-add2"></div>
     <div class="fg"><label>Place</label><input id="b-pla"></div>
     <div class="fg"><label>PIN</label><input id="b-pin"></div>
-    <div class="fg"><label>State</label><input id="b-state"></div>
+    <div class="fg"><label>State</label><select id="b-state" onchange="document.getElementById('b-stcode').value=this.value==='KERALA'?'32':'33'"><option value="KERALA">KERALA</option><option value="TAMIL NADU">TAMIL NADU</option></select></div>
     <div class="fg"><label>State Code</label><input id="b-stcode"></div>
     <div class="fg"><label>PAN</label><input id="b-pan"></div>
     <div class="fg feat-tan"><label>TAN</label><input id="b-tan" maxlength="10" placeholder="e.g. BLRA12345C" style="text-transform:uppercase"></div>
@@ -9927,8 +9927,12 @@ async function loadStats(auctionId){
   const mrow = (label, tone, lots, bags, sellerWt, buyerWt, amount, gst) => {
     const sk = tone === 'sold' ? 'sold' : tone === 'wd' ? 'withdrawn' : 'booked';
     const gstCell = gst != null ? inr2(gst) : '<span style="color:var(--spice-text-hint)">—</span>';
+    // Not-Auctioned has no branch/grade drill data, so its label isn't a link.
+    const labelCell = tone === 'na'
+      ? `<span class="snap-st snap-st-na"><span class="dot"></span>${label}</span>`
+      : `<span class="snap-st snap-st-${tone||'book'} snap-link" onclick="openStatusBranches('${sk}')" role="button" tabindex="0" title="View branch-wise breakdown"><span class="dot"></span>${label}</span>`;
     return `<tr class="snap-row${tone ? ' snap-'+tone : ''}">
-      <td class="l"><span class="snap-st snap-st-${tone||'book'} snap-link" onclick="openStatusBranches('${sk}')" role="button" tabindex="0" title="View branch-wise breakdown"><span class="dot"></span>${label}</span></td>
+      <td class="l">${labelCell}</td>
       <td class="num">${nkg(lots)}</td>
       <td class="num">${nkg(bags)}</td>
       <td class="num">${nq(sellerWt)}</td>
@@ -10002,6 +10006,12 @@ async function loadStats(auctionId){
             ${mrow('Booked', '',   T.lots, T.bags, T.seller_qty, T.qty, (T.lots_amount != null ? T.lots_amount : T.value), null)}
             ${mrow('Sold', 'sold', T.sold, T.sold_bags, T.sold_seller_qty, T.sold_qty, (T.lots_sold_amount != null ? T.lots_sold_amount : T.sold_value), scopeGst)}
             ${mrow('Withdrawn', 'wd', T.withdrawn, T.wd_bags, T.wd_seller_qty, T.wd_qty, (T.lots_wd_amount != null ? T.lots_wd_amount : T.wd_value), null)}
+            ${mrow('Not Auctioned', 'na',
+               ((T.lots||0) - (T.sold||0) - (T.withdrawn||0)),
+               ((T.bags||0) - (T.sold_bags||0) - (T.wd_bags||0)),
+               ((T.seller_qty||0) - (T.sold_seller_qty||0) - (T.wd_seller_qty||0)),
+               ((T.qty||0) - (T.sold_qty||0) - (T.wd_qty||0)),
+               0, null)}
           </tbody>
         </table>
       </div>
@@ -18416,6 +18426,8 @@ async function searchTraders(q, opts){
       BulkActions.column('seller'),
       { key:'name', label:'Name', sort:'text', render:(t)=>
           `<a href="#" onclick="viewTraderDetails(${JSON.stringify(t).replace(/"/g,'&quot;')});return false" style="color:var(--green);font-weight:600;text-decoration:none">${esc(t.name)}</a>` },
+      { key:'user_id', label:'User ID', sort:'text',
+        render:(t)=> t.user_id ? esc(t.user_id) : '<span style="color:var(--text3)">—</span>' },
       { key:'cr', label:'CR/GSTIN', sort:'text', tdClass:'small' },
       { key:'pan', label:'PAN', sort:'text' },
       { key:'dob', label:'DOB', sort:'text',
@@ -18485,10 +18497,33 @@ function viewTraderDetails(t){
   showModal('trader-view-modal');
 }
 
+// Uppercase-on-type for the seller/buyer master forms. A single delegated
+// listener per modal converts text inputs to uppercase as the operator types
+// (so the stored value is uppercase). Skips email (case-sensitive) and
+// non-text types; cursor position is preserved.
+(function(){
+  function wireUC(){
+    ['trader-modal','buyer-modal','le-newseller-modal'].forEach(function(id){
+      var m=document.getElementById(id); if(!m||m._ucWired)return; m._ucWired=true;
+      m.addEventListener('input',function(e){
+        var el=e.target; if(el.tagName!=='INPUT')return;
+        var t=(el.getAttribute('type')||'text').toLowerCase();
+        if(t==='email'||t==='tel'||t==='number'||t==='date'||t==='checkbox')return;
+        if((el.getAttribute('inputmode')||'').toLowerCase()==='email')return;
+        var up=el.value.toUpperCase();
+        if(up!==el.value){var s=el.selectionStart,en=el.selectionEnd;el.value=up;try{el.setSelectionRange(s,en);}catch(_){}}
+      });
+    });
+  }
+  if(document.readyState!=='loading')wireUC(); else document.addEventListener('DOMContentLoaded',wireUC);
+})();
 function openTraderAdd(){
   document.getElementById('trader-modal-title').textContent='Add Seller';
   document.getElementById('t-id').value='';
   T_FIELDS.forEach(f=>{const el=document.getElementById(T_IDS[f]);if(el)el.value=''});
+  // Default state → KERALA (code 32); the State dropdown drives the code.
+  document.getElementById('t-pstate').value='KERALA';
+  document.getElementById('t-pstcode').value='32';
   const _w = document.getElementById('t-pan-warn');
   if (_w) { _w.style.display = 'none'; _w.innerHTML = ''; }
   // Start with a single blank bank row so the user sees the shape of the
@@ -19338,6 +19373,9 @@ function openBuyerAdd(){
   document.getElementById('buyer-modal-title').textContent='Add Buyer';
   document.getElementById('b-id').value='';
   B_FIELDS.forEach(f=>{const el=document.getElementById(B_IDS[f]);if(el)el.value=''});
+  // Default state → KERALA (code 32); the State dropdown drives the code.
+  document.getElementById('b-state').value='KERALA';
+  document.getElementById('b-stcode').value='32';
   _bResetDupWarnings();
   bWireCodeAutocomplete(); bRefreshCodeCache();
   showModal('buyer-modal');

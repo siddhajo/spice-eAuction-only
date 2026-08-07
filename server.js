@@ -1994,8 +1994,8 @@ app.get('/api/traders', requireViewOrLotEntry, (req, res) => {
   let where = '', params = [];
   if (search) {
     const like = `%${search}%`;
-    where = 'WHERE name LIKE ? OR tel LIKE ? OR cr LIKE ? OR pan LIKE ? OR ppla LIKE ? OR aadhar LIKE ?';
-    params = [like, like, like, like, like, like];
+    where = 'WHERE name LIKE ? OR tel LIKE ? OR cr LIKE ? OR pan LIKE ? OR ppla LIKE ? OR aadhar LIKE ? OR user_id LIKE ?';
+    params = [like, like, like, like, like, like, like];
   }
   const total = db.get(`SELECT COUNT(*) AS c FROM traders ${where}`, params).c;
 
@@ -2913,30 +2913,37 @@ app.post('/api/traders/import', requireTraderWrite, upload.single('file'), async
       // future dedup checks against legacy whitespace-padded rows still
       // match.
       const pan = mapCol(row, 'PAN', 'PAN_NO').toUpperCase();
+      // user_id is a free-text legacy identifier — kept as-is. It's read up
+      // front because it participates in dedup: two rows that share a PAN or
+      // (name, cr) but carry DIFFERENT user_ids are treated as distinct
+      // sellers (e.g. the same person under two legacy login codes), so we
+      // import rather than skip. Only a matching user_id (both sides,
+      // normalised, empty included) makes a row a true duplicate.
+      const userId = mapCol(row, 'USER_ID', 'USERID', 'UID', 'USER', 'USER_NAME', 'USERNAME', 'USER_CODE', 'LOGIN', 'LOGIN_ID');
       if (mode === 'append') {
         // PAN dedup runs FIRST in append mode — a registered seller is
         // uniquely identified by their PAN, so an XLSX row carrying a
-        // PAN already present in the master must be skipped even when
-        // the name / CR differs (typo / re-export / etc.). The legacy
-        // `(name, cr)` check stays as a fallback for PAN-less rows.
+        // PAN already present in the master is skipped even when the
+        // name / CR differs (typo / re-export / etc.) — UNLESS the
+        // user_id differs, which marks it as a separate seller. The
+        // legacy `(name, cr)` check stays as a fallback for PAN-less rows.
         if (pan) {
           const dup = db.get(
-            'SELECT id FROM traders WHERE UPPER(TRIM(pan)) = UPPER(?) LIMIT 1',
-            [pan]
+            "SELECT id FROM traders WHERE UPPER(TRIM(pan)) = UPPER(?) AND UPPER(TRIM(COALESCE(user_id,''))) = UPPER(TRIM(?)) LIMIT 1",
+            [pan, userId]
           );
           if (dup) { skipped++; continue; }
         }
         const existing = db.get(
-          'SELECT id FROM traders WHERE UPPER(TRIM(name)) = UPPER(?) AND UPPER(TRIM(cr)) = UPPER(?) LIMIT 1',
-          [name, cr]
+          "SELECT id FROM traders WHERE UPPER(TRIM(name)) = UPPER(?) AND UPPER(TRIM(cr)) = UPPER(?) AND UPPER(TRIM(COALESCE(user_id,''))) = UPPER(TRIM(?)) LIMIT 1",
+          [name, cr, userId]
         );
         if (existing) { skipped++; continue; }
       }
 
       // TAN normalised to UPPER like PAN (tax identifiers are canonical
-      // uppercase). user_id is a free-text legacy identifier — kept as-is.
+      // uppercase).
       const tan = mapCol(row, 'TAN', 'TAN_NO', 'TAN_NUMBER').toUpperCase();
-      const userId = mapCol(row, 'USER_ID', 'USERID', 'UID', 'USER', 'USER_NAME', 'USERNAME', 'USER_CODE', 'LOGIN', 'LOGIN_ID');
       const dob = mapCol(row, 'DOB', 'DATE_OF_BIRTH', 'DATEOFBIRTH', 'BIRTH_DATE', 'BIRTHDATE', 'DATE_OF_BIRTH');
 
       db.run(`INSERT INTO traders (name,cr,pan,tan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name,user_id,dob)
@@ -14381,6 +14388,12 @@ const IMPORT_MODULES = {
     label: 'Sellers',
     table: 'traders',
     keyCols: ['name','cr'],
+    // Extra dedup dimension: two rows that match on (name, cr) but carry a
+    // DIFFERENT user_id are distinct sellers (e.g. the same person under two
+    // legacy login codes), so they're imported rather than skipped. Unlike
+    // keyCols this is not required to be present — an empty user_id is a
+    // valid value that matches other empty user_ids.
+    dedupExtraCols: ['user_id'],
     // tan + user_id are optional legacy identifiers. Both must map to real
     // `traders` columns (see db.js) because the /run INSERT lists every field
     // here as a column name — an unknown column would break the whole import.
@@ -15096,8 +15109,19 @@ app.post('/api/import-old-data/verify', requireAdmin, upload.single('file'), (re
       let existing = null;
       let diff = null;
       if (!requiredMissing) {
-        const keyVals = def.keyCols.map(k => r[mapping[k]]);
-        const whereSql = def.keyCols.map(k => `${k} = ?`).join(' AND ');
+        // Mirror /run's dedup exactly, including optional dedupExtraCols
+        // (e.g. Sellers' user_id): a row that matches on keyCols but differs
+        // on an extra col is a distinct record, so it must show as "new"
+        // here just as /run imports it. Empty is a valid matching value.
+        const extraCols = def.dedupExtraCols || [];
+        const extraVals = extraCols.map(k => {
+          const v = mapping[k] ? r[mapping[k]] : null;
+          return v == null ? '' : String(v).trim();
+        });
+        const keyVals = [...def.keyCols.map(k => r[mapping[k]]), ...extraVals];
+        const whereSql = def.keyCols.map(k => `${k} = ?`)
+          .concat(extraCols.map(k => `TRIM(COALESCE(${k},'')) = ?`))
+          .join(' AND ');
         existing = db.get(`SELECT * FROM ${def.table} WHERE ${whereSql} LIMIT 1`, keyVals);
         if (existing) {
           diff = {};
@@ -15340,7 +15364,20 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
         // Duplicate detection — skip if any keyCol value already exists.
         const keyChecks = def.keyCols.map(k => mapping[k] ? r[mapping[k]] : null).filter(v => v != null && v !== '');
         if (keyChecks.length === def.keyCols.length) {
-          const compKey = _compKey(keyChecks);
+          // Optional extra dedup dimensions (e.g. Sellers' user_id): a row
+          // that matches on keyCols but differs here is a distinct record and
+          // must NOT be skipped. Empty is a valid value (matches other empty
+          // values), so — unlike keyCols — these are never treated as
+          // "missing"; a blank simply participates as ''. Modules without
+          // dedupExtraCols keep the exact previous behaviour (empty arrays).
+          const extraCols = def.dedupExtraCols || [];
+          const extraVals = extraCols.map(k => {
+            const v = mapping[k] ? r[mapping[k]] : null;
+            return v == null ? '' : String(v).trim();
+          });
+          const dedupCols = [...def.keyCols, ...extraCols];
+          const dedupVals = [...keyChecks, ...extraVals];
+          const compKey = _compKey(dedupVals);
           // Intra-file duplicate: an earlier row in THIS upload already
           // claimed this key. On a real run that earlier row is now in the
           // DB so the query below would also catch it — but checking the
@@ -15350,15 +15387,17 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
           // can never reproduce, because the file's own repeats aren't in
           // the DB.
           if (seenKeysThisRun.has(compKey)) {
-            recordSkip(i + 2, def.keyCols, keyChecks,
-              'Duplicate within this file — an earlier row in the same upload has the same ' + def.keyCols.join(' + '));
+            recordSkip(i + 2, dedupCols, dedupVals,
+              'Duplicate within this file — an earlier row in the same upload has the same ' + dedupCols.join(' + '));
             continue;
           }
-          const whereSql = def.keyCols.map(k => `${k} = ?`).join(' AND ');
-          const dup = db.get(`SELECT 1 FROM ${def.table} WHERE ${whereSql} LIMIT 1`, keyChecks);
+          const whereSql = def.keyCols.map(k => `${k} = ?`)
+            .concat(extraCols.map(k => `TRIM(COALESCE(${k},'')) = ?`))
+            .join(' AND ');
+          const dup = db.get(`SELECT 1 FROM ${def.table} WHERE ${whereSql} LIMIT 1`, dedupVals);
           if (dup) {
-            recordSkip(i + 2, def.keyCols, keyChecks,
-              'Already exists in the database — a row with the same ' + def.keyCols.join(' + ') + ' was found in ' + def.table);
+            recordSkip(i + 2, dedupCols, dedupVals,
+              'Already exists in the database — a row with the same ' + dedupCols.join(' + ') + ' was found in ' + def.table);
             continue;
           }
           // Not a duplicate — remember the key so a later identical row in

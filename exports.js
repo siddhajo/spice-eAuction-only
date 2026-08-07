@@ -1181,7 +1181,7 @@ const INDIVIDUAL_REG_DEFS = {
   pooler: {
     sheet: 'PoolerRegister', title: 'Pooler Register', labelKey: 'tno',
     cols: [
-      { header: 'TNO',    key: 'tno',    width: 8  },
+      { header: 'ANO',    key: 'tno',    width: 8  },
       { header: 'DATE',   key: 'date',   width: 12 },
       { header: 'LOT',    key: 'lot',    width: 8  },
       { header: 'QTY',    key: 'qty',    width: 12, numFmt: '#,##0.000' },

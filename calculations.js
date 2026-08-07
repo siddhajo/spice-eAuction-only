@@ -1412,7 +1412,9 @@ function getPoolerRegister(db, opts = {}) {
       l.cr AS gstin, l.qty AS qty, l.price AS rate, l.amount AS value,
       l.refund AS refund, l.com AS commission,
       (COALESCE(l.cgst,0) + COALESCE(l.sgst,0) + COALESCE(l.igst,0)) AS gst,
-      l.bilamt AS billamount,
+      -- Bill amount = the lot's Payable (lots.balance), so the register's
+      -- BILLAMOUNT matches the payable shown on the Lots screen.
+      l.balance AS billamount,
       l.pqty AS pqty, l.prate AS prate, l.puramt AS puramt,
       UPPER(TRIM(COALESCE(l.code,''))) AS code
     FROM lots l JOIN auctions a ON a.id = l.auction_id
