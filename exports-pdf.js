@@ -723,7 +723,7 @@ const COLS = {
   // Per-party "individual" registers (cross-auction). Rendered via
   // renderIndividualRegisterPdf, not the generic getRowsForType path.
   pooler_individual: [
-    { header: 'TNO',    key: 'tno',    width: 8  },
+    { header: 'ANO',    key: 'tno',    width: 8  },
     { header: 'DATE',   key: 'date',   width: 14 },
     { header: 'LOT',    key: 'lot',    width: 8  },
     { header: 'QTY',    key: 'qty',    width: 14 },
@@ -1410,11 +1410,11 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     // First run sets the paragraph origin; the rest continue inline.
     doc.font('Helvetica').text('This is to certify that ', left, y, pOpts);
     run(nameWithPan, true);
-    if (addr) { run(', a cardamom Planter and a resident of ', false); run(addr, true); }
-    else      { run(', a cardamom Planter', false); }
-    run('  has registered Cardamom lots at our end during the period from ', false);
+    if (addr) { run(', a cardamom Planter/Dealer and a resident of ', false); run(addr, true); }
+    else      { run(', a cardamom Planter/Dealer', false); }
+    run('has registered Cardamom lots at our end during the period from', false);
     run(fromDisp, true);
-    run(' to ', false);
+    run('to', false);
     run(toDisp, true);
     run('  and received payment, totally to the tune of Rs. ', false);
     run(`${amtFig}/-`, true);
@@ -1431,8 +1431,8 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     const rows = Array.isArray(p.rows) ? p.rows : [];
     // Column layout: proportional widths that sum to `width`.
     const annCols = [
-      { key: 'date',       label: 'Date',        w: 0.16, align: 'left'  },
       { key: 'tno',        label: 'ANO',         w: 0.11, align: 'right' },
+      { key: 'date',       label: 'Date',        w: 0.16, align: 'left'  },
       { key: 'lot',        label: 'Lot',         w: 0.11, align: 'right' },
       { key: 'qty',        label: 'Qty',         w: 0.18, align: 'right', fmt: fmtQty   },
       { key: 'rate',       label: 'Rate',        w: 0.18, align: 'right', fmt: fmtMoney },
@@ -1485,7 +1485,7 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     // TOTAL row.
     if (y + ROW_H > bottomLimit()) { doc.addPage(); y = doc.page.margins.top; }
     doc.rect(left, y, width, ROW_H).fillAndStroke('#FFF3CD', '#999');
-    drawAnnCell('TOTAL', 0, y, { bold: true });
+    drawAnnCell('TOTAL', 1, y, { bold: true });           // Date column (ANO is now first)
     drawAnnCell(fmtQty(tQty),    3, y, { bold: true });   // Qty column
     drawAnnCell(fmtMoney(tBill), 5, y, { bold: true });   // Bill Amount column (Value column removed)
     y += ROW_H;

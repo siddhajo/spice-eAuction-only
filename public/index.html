@@ -4002,9 +4002,19 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
              is rebuilt from the trade's distinct branches on load. -->
         <div id="pe-filter-bar" style="display:none;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
           <label style="font-size:12px;font-weight:600;color:var(--text2);margin:0;white-space:nowrap">🔎 Filter:</label>
-          <input id="pe-filter-lot" placeholder="Lot no" oninput="peSetFilter('lot',this.value)" style="width:110px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+          <span style="position:relative;display:inline-flex;align-items:center">
+            <input id="pe-filter-lot" placeholder="Lot no" oninput="peSetFilter('lot',this.value)" style="width:110px;padding:6px 26px 6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box">
+            <button type="button" id="pe-filter-lot-clear" onclick="peClearFilterField('lot')" title="Clear" aria-label="Clear" style="display:none;position:absolute;right:5px;top:50%;transform:translateY(-50%);width:18px;height:18px;border:none;background:var(--bg);border-radius:50%;cursor:pointer;font-size:10px;color:var(--text3);align-items:center;justify-content:center;padding:0;line-height:1">✕</button>
+          </span>
           <select id="pe-filter-branch" onchange="peSetFilter('branch',this.value)" style="min-width:130px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px"><option value="">All branches</option></select>
-          <input id="pe-filter-seller" placeholder="Seller" oninput="peSetFilter('seller',this.value)" style="width:180px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+          <span style="position:relative;display:inline-flex;align-items:center">
+            <input id="pe-filter-seller" placeholder="Seller" oninput="peSetFilter('seller',this.value)" style="width:180px;padding:6px 26px 6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box">
+            <button type="button" id="pe-filter-seller-clear" onclick="peClearFilterField('seller')" title="Clear" aria-label="Clear" style="display:none;position:absolute;right:5px;top:50%;transform:translateY(-50%);width:18px;height:18px;border:none;background:var(--bg);border-radius:50%;cursor:pointer;font-size:10px;color:var(--text3);align-items:center;justify-content:center;padding:0;line-height:1">✕</button>
+          </span>
+          <span style="position:relative;display:inline-flex;align-items:center">
+            <input id="pe-filter-buyer" placeholder="Buyer (code or name)" oninput="peSetFilter('buyer',this.value)" style="width:180px;padding:6px 26px 6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box">
+            <button type="button" id="pe-filter-buyer-clear" onclick="peClearFilterField('buyer')" title="Clear" aria-label="Clear" style="display:none;position:absolute;right:5px;top:50%;transform:translateY(-50%);width:18px;height:18px;border:none;background:var(--bg);border-radius:50%;cursor:pointer;font-size:10px;color:var(--text3);align-items:center;justify-content:center;padding:0;line-height:1">✕</button>
+          </span>
           <button class="btn btn-o" style="height:32px;padding:0 10px;font-weight:600" onclick="peClearFilters()">Clear filters</button>
         </div>
         <!-- Bulk buyer-code bar — appears only when one or more lots are
@@ -22219,7 +22229,7 @@ async function validateLots(){
 // bring-to-front), so clearing the selection restores every lot's place.
 // dirty/sel/front are keyed by lot id (stable across re-render/reorder).
 let _pe = { aid: null, lots: [], byId: new Map(), view: [], dirty: new Set(), sel: new Set(),
-            front: [], sort: { col: null, dir: 1 }, filter: { lot: '', branch: '', seller: '' } };
+            front: [], sort: { col: null, dir: 1 }, filter: { lot: '', branch: '', seller: '', buyer: '' } };
 function _peFlagPriceCheck(){ return String(((window._CCFG)||{}).flag_price_check).toLowerCase() === 'true'; }
 function _peFmt(n){ return (Number(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 // Bags are counts — always whole numbers, no decimals.
@@ -22244,7 +22254,7 @@ async function loadPriceEntryGrid(){
   const tradeChanged = aid !== _pe.aid;
   _pe.aid = aid; _pe.dirty = new Set(); _pe.sel = new Set(); _pe.front = [];
   // A fresh trade starts with no sort/filter; a same-trade refresh keeps them.
-  if (tradeChanged) { _pe.sort = { col: null, dir: 1 }; _pe.filter = { lot: '', branch: '', seller: '' }; }
+  if (tradeChanged) { _pe.sort = { col: null, dir: 1 }; _pe.filter = { lot: '', branch: '', seller: '', buyer: '' }; }
   const grid = document.getElementById('pe-grid');
   const sumEl = document.getElementById('pe-summary');
   const fbar = document.getElementById('pe-filter-bar');
@@ -22286,6 +22296,14 @@ function _pePasses(l){
   if (f.lot    && !String(l.lot_no || '').toLowerCase().includes(f.lot.toLowerCase()))    return false;
   if (f.branch && String(l.branch || '') !== f.branch)                                    return false;
   if (f.seller && !String(l.name   || '').toLowerCase().includes(f.seller.toLowerCase())) return false;
+  // Buyer filter matches either the buyer CODE (l.buyer) or the buyer NAME
+  // (l.buyer1) — both are shown as separate columns, so a single box that
+  // hits either is the least surprising.
+  if (f.buyer) {
+    const q = f.buyer.toLowerCase();
+    if (!String(l.buyer || '').toLowerCase().includes(q) &&
+        !String(l.buyer1 || '').toLowerCase().includes(q)) return false;
+  }
   return true;
 }
 // Derive the display order from the canonical list: filter, then sort, with
@@ -22353,6 +22371,30 @@ function renderPriceEntryGrid(){
   const bodyHtml = view.length
     ? rows
     : `<tr><td colspan="12" style="padding:20px;text-align:center;color:var(--text3);font-size:13px">No lots match the current filter. <a href="#" onclick="peClearFilters();return false" style="color:var(--green)">Clear filters</a></td></tr>`;
+  // Totals row — computed over the CURRENTLY VISIBLE (filtered) lots, so when
+  // any filter is active this reads as a subtotal for the shown rows. WD/NA
+  // lots carry no sale value, so they add to the lot count and Qty but not to
+  // Amount (their per-row amount is 0), matching the cells above.
+  let totQty = 0, totBags = 0, totAmt = 0;
+  for (const l of view) {
+    const codeUp = String(l.code || '').trim().toUpperCase();
+    const noSale = codeUp === 'WD' || codeUp === 'NA';
+    totBags += Number(l.bags) || 0;
+    totQty  += Number(l.qty)  || 0;
+    totAmt  += noSale ? 0 : (Number(l.qty) || 0) * (Number(l.price) || 0);
+  }
+  const isFiltered = view.length < _pe.lots.length;
+  const totLabel = (isFiltered ? 'Filtered subtotal' : 'Total') +
+    ` · ${view.length} lot${view.length === 1 ? '' : 's'}`;
+  const footHtml = view.length ? `<tfoot><tr style="border-top:2px solid var(--border);font-weight:700;background:var(--bg)">
+      <td></td>
+      <td colspan="3" style="padding:8px;text-align:left">${totLabel}</td>
+      <td style="padding:8px;text-align:right;font-variant-numeric:tabular-nums">${_peBags(totBags)}</td>
+      <td style="padding:8px;text-align:right;font-variant-numeric:tabular-nums">${_peFmt(totQty)}</td>
+      <td></td>
+      <td style="padding:8px;text-align:right;font-variant-numeric:tabular-nums">${_peFmt(totAmt)}</td>
+      <td colspan="4"></td>
+    </tr></tfoot>` : '';
   grid.innerHTML = `<table class="pe-grid-table" style="width:100%;border-collapse:collapse;font-size:13px">
     <thead><tr>
       <th style="border-top-left-radius:6px;width:28px;text-align:center"><input type="checkbox" id="pe-selall" onchange="peToggleSelectAll(this.checked)" title="Select all priceable lots" style="width:15px;height:15px;cursor:pointer"></th>
@@ -22364,7 +22406,7 @@ function renderPriceEntryGrid(){
       <th style="text-align:left">Code</th>
       <th style="text-align:left">Buyer Code</th>
       <th style="text-align:left">Buyer Name</th><th style="border-top-right-radius:6px"></th>
-    </tr></thead><tbody>${bodyHtml}</tbody></table>`;
+    </tr></thead><tbody>${bodyHtml}</tbody>${footHtml}</table>`;
   _peSyncSelectionUI();
   _peRenderSummary();
 }
@@ -22480,13 +22522,28 @@ function peSort(col){
 // focus across grid re-renders). Only the grid re-renders here.
 function peSetFilter(key, val){
   _pe.filter[key] = val;
+  // Show the field's clear (✕) icon only while it holds text. Branch is a
+  // dropdown with no clear icon, so the lookup simply no-ops there.
+  const cb = document.getElementById('pe-filter-' + key + '-clear');
+  if (cb) cb.style.display = val ? 'flex' : 'none';
   renderPriceEntryGrid();
 }
+// Clear a single text filter (lot / seller / buyer) via its ✕ icon and
+// refocus the box so the user can keep typing.
+function peClearFilterField(key){
+  _pe.filter[key] = '';
+  const inp = document.getElementById('pe-filter-' + key);   if (inp) inp.value = '';
+  const cb  = document.getElementById('pe-filter-' + key + '-clear'); if (cb) cb.style.display = 'none';
+  renderPriceEntryGrid();
+  if (inp) inp.focus();
+}
 function peClearFilters(){
-  _pe.filter = { lot: '', branch: '', seller: '' };
+  _pe.filter = { lot: '', branch: '', seller: '', buyer: '' };
   const lf = document.getElementById('pe-filter-lot');    if (lf) lf.value = '';
   const bf = document.getElementById('pe-filter-branch'); if (bf) bf.value = '';
   const sf = document.getElementById('pe-filter-seller'); if (sf) sf.value = '';
+  const yf = document.getElementById('pe-filter-buyer');  if (yf) yf.value = '';
+  ['lot','seller','buyer'].forEach(k => { const c = document.getElementById('pe-filter-' + k + '-clear'); if (c) c.style.display = 'none'; });
   renderPriceEntryGrid();
 }
 // Refresh the filter bar for the loaded trade: show it, and rebuild the
@@ -22497,6 +22554,8 @@ function _pePopulateFilterUI(reset){
   if (reset) {
     const lf = document.getElementById('pe-filter-lot');    if (lf) lf.value = '';
     const sf = document.getElementById('pe-filter-seller'); if (sf) sf.value = '';
+    const yf = document.getElementById('pe-filter-buyer');  if (yf) yf.value = '';
+    ['lot','seller','buyer'].forEach(k => { const c = document.getElementById('pe-filter-' + k + '-clear'); if (c) c.style.display = 'none'; });
   }
   const bf = document.getElementById('pe-filter-branch');
   if (bf) {
