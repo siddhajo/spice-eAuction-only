@@ -4012,7 +4012,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <button type="button" id="pe-filter-seller-clear" onclick="peClearFilterField('seller')" title="Clear" aria-label="Clear" style="display:none;position:absolute;right:5px;top:50%;transform:translateY(-50%);width:18px;height:18px;border:none;background:var(--bg);border-radius:50%;cursor:pointer;font-size:10px;color:var(--text3);align-items:center;justify-content:center;padding:0;line-height:1">✕</button>
           </span>
           <span style="position:relative;display:inline-flex;align-items:center">
-            <input id="pe-filter-buyer" placeholder="Buyer (code or name)" oninput="peSetFilter('buyer',this.value)" style="width:180px;padding:6px 26px 6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box">
+            <input id="pe-filter-buyer" placeholder="Buyer (code / buyer code / name)" oninput="peSetFilter('buyer',this.value)" style="width:180px;padding:6px 26px 6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box">
             <button type="button" id="pe-filter-buyer-clear" onclick="peClearFilterField('buyer')" title="Clear" aria-label="Clear" style="display:none;position:absolute;right:5px;top:50%;transform:translateY(-50%);width:18px;height:18px;border:none;background:var(--bg);border-radius:50%;cursor:pointer;font-size:10px;color:var(--text3);align-items:center;justify-content:center;padding:0;line-height:1">✕</button>
           </span>
           <button class="btn btn-o" style="height:32px;padding:0 10px;font-weight:600" onclick="peClearFilters()">Clear filters</button>
@@ -22292,12 +22292,13 @@ function _pePasses(l){
   if (f.lot    && !String(l.lot_no || '').toLowerCase().includes(f.lot.toLowerCase()))    return false;
   if (f.branch && String(l.branch || '') !== f.branch)                                    return false;
   if (f.seller && !String(l.name   || '').toLowerCase().includes(f.seller.toLowerCase())) return false;
-  // Buyer filter matches either the buyer CODE (l.buyer) or the buyer NAME
-  // (l.buyer1) — both are shown as separate columns, so a single box that
-  // hits either is the least surprising.
+  // Buyer filter matches the short alias CODE (l.code), the buyer CODE
+  // (l.buyer) or the buyer NAME (l.buyer1) — a single box that hits any of the
+  // three is the least surprising (same fields as the Set-Buyer search).
   if (f.buyer) {
     const q = f.buyer.toLowerCase();
-    if (!String(l.buyer || '').toLowerCase().includes(q) &&
+    if (!String(l.code  || '').toLowerCase().includes(q) &&
+        !String(l.buyer || '').toLowerCase().includes(q) &&
         !String(l.buyer1 || '').toLowerCase().includes(q)) return false;
   }
   return true;
