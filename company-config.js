@@ -490,6 +490,7 @@ const DEFAULTS = [
   { key: 'tally_transport',      value: '',     category: 'tally', label: 'Transport Charges Ledger', type: 'text'   },
   { key: 'tally_insurance',      value: '',     category: 'tally', label: 'Insurance Charges Ledger', type: 'text'   },
   { key: 'tally_commission',            value: '', category: 'tally', label: 'Commission Ledger',                       type: 'text' },
+  { key: 'tally_commission_interstate', value: '', category: 'tally', label: 'Commission Ledger InterState',             type: 'text' },
   { key: 'tally_commission_planter',    value: '', category: 'tally', label: 'Commission-Planter Ledger',               type: 'text' },
   { key: 'tally_cash_handling',         value: '', category: 'tally', label: 'Cash Handling Charges Ledger',            type: 'text' },
   { key: 'tally_cash_handling_planter', value: '', category: 'tally', label: 'Cash Handling Charges Ledger-Planter',     type: 'text' },

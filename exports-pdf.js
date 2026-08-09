@@ -1404,7 +1404,7 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     const amtWords = amountToWords(billamt); // e.g. "Rupees Fourteen Lakh …"
 
     const nameWithPan = pan ? `${name} (PAN: ${pan})` : name;
-    const pOpts = { width, align: 'justify', lineGap: 6, continued: true };
+    const pOpts = { width, align: 'left', lineGap: 6, continued: true };
     doc.fontSize(12).fillColor('#000');
     const run = (txt, bold) => doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').text(txt, pOpts);
     // First run sets the paragraph origin; the rest continue inline.
@@ -1412,16 +1412,16 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     run(nameWithPan, true);
     if (addr) { run(', a cardamom Planter/Dealer and a resident of ', false); run(addr, true); }
     else      { run(', a cardamom Planter/Dealer', false); }
-    run('has registered Cardamom lots at our end during the period from', false);
+    run(' has registered Cardamom lots at our end during the period from ', false);
     run(fromDisp, true);
-    run('to', false);
+    run(' to ', false);
     run(toDisp, true);
-    run('  and received payment, totally to the tune of Rs. ', false);
+    run(' and received payment, totally to the tune of Rs. ', false);
     run(`${amtFig}/-`, true);
     run(' (', false);
     run(`${amtWords} Only`, true);
     doc.font('Helvetica').text(') as reported in annexure.',
-      { width, align: 'justify', lineGap: 6, continued: false });
+      { width, align: 'left', lineGap: 6, continued: false });
 
     // ── Annexure: lot-wise details table ──
     // The certificate paragraph says "as reported in annexure"; this IS that
@@ -1553,7 +1553,10 @@ function _poolerAddress(db, name) {
   // Certificate address = address + place + "-" + pin. State is intentionally
   // omitted; place and pin are joined with a hyphen (e.g. "CUMBUM-625516").
   const placePin = [t.ppla, t.pin].map(s => String(s || '').trim()).filter(Boolean).join('-');
-  const parts = [String(t.padd || '').trim(), placePin].filter(Boolean);
+  // Strip any trailing comma/space on the stored address so joining with the
+  // place doesn't produce a doubled comma (e.g. "…STREET,, CUMBUM-625516").
+  const addr = String(t.padd || '').trim().replace(/[,\s]+$/, '');
+  const parts = [addr, placePin].filter(Boolean);
   return parts.join(', ');
 }
 

@@ -5625,7 +5625,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div style="display:flex;gap:6px;margin-top:8px">
               <button class="btn btn-a" onclick="tallyPreview('sales_isp')" style="flex:1;padding:7px;font-size:12px">Preview</button>
               <button class="btn btn-g" onclick="tallyDownload('sales_isp')" style="flex:1;padding:7px;font-size:12px">XML</button>
-              <button class="btn btn-g" onclick="tallyDownload('sales_isp','irp')" style="flex:1;padding:7px;font-size:12px" title="GST e-Invoice (IRP / NIC) JSON — ready for the trade portal">e-Invoice</button>
+              <button class="btn btn-g" onclick="tallyDownload('sales_isp','irp')" style="flex:1;padding:7px;font-size:12px" title="GST e-Invoice (IRP / NIC) JSON — ready for the trade portal">JSON</button>
             </div>
           </div>
 
@@ -5641,7 +5641,6 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div style="display:flex;gap:6px;margin-top:8px">
               <button class="btn btn-a" onclick="tallyPreview('rd_purchase')" style="flex:1;padding:7px;font-size:12px">Preview</button>
               <button class="btn btn-g" onclick="tallyDownload('rd_purchase')" style="flex:1;padding:7px;font-size:12px">XML</button>
-              <button class="btn btn-g" onclick="tallyDownload('rd_purchase','json')" style="flex:1;padding:7px;font-size:12px">JSON</button>
             </div>
           </div>
 
@@ -5657,7 +5656,6 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div style="display:flex;gap:6px;margin-top:8px">
               <button class="btn btn-a" onclick="tallyPreview('urd_purchase')" style="flex:1;padding:7px;font-size:12px">Preview</button>
               <button class="btn btn-g" onclick="tallyDownload('urd_purchase')" style="flex:1;padding:7px;font-size:12px">XML</button>
-              <button class="btn btn-g" onclick="tallyDownload('urd_purchase','json')" style="flex:1;padding:7px;font-size:12px">JSON</button>
             </div>
           </div>
 
@@ -5673,8 +5671,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div style="display:flex;gap:6px;margin-top:8px">
               <button class="btn btn-a" onclick="tallyPreview('debit_note')" style="flex:1;padding:7px;font-size:12px">Preview</button>
               <button class="btn btn-g" onclick="tallyDownload('debit_note')" style="flex:1;padding:7px;font-size:12px">XML</button>
-              <button class="btn btn-g" onclick="tallyDownload('debit_note','json')" style="flex:1;padding:7px;font-size:12px">JSON</button>
-              <button class="btn btn-g" onclick="tallyDownload('debit_note','irp')" style="flex:1;padding:7px;font-size:12px" title="GST e-Invoice (IRP / NIC) JSON — commission billed to registered dealers, ready for the trade portal">e-Invoice</button>
+              <button class="btn btn-g" onclick="tallyDownload('debit_note','irp')" style="flex:1;padding:7px;font-size:12px" title="GST e-Invoice (IRP / NIC) JSON — commission billed to registered dealers, ready for the trade portal">JSON</button>
             </div>
           </div>
 
@@ -5690,7 +5687,6 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div style="display:flex;gap:6px;margin-top:8px">
               <button class="btn btn-a" onclick="tallyPreview('debit_note_planter')" style="flex:1;padding:7px;font-size:12px">Preview</button>
               <button class="btn btn-g" onclick="tallyDownload('debit_note_planter')" style="flex:1;padding:7px;font-size:12px">XML</button>
-              <button class="btn btn-g" onclick="tallyDownload('debit_note_planter','json')" style="flex:1;padding:7px;font-size:12px">JSON</button>
             </div>
           </div>
 
@@ -27988,7 +27984,7 @@ function poolerSummaryRows(rows){
 function regColumns(type){
   if (type === 'pooler') return [
     { key:'party', label:'Pooler', sort:'text', totalKind:'count', totalLabel:'Total' },
-    { key:'tno', label:'TNo', sort:'text' },
+    { key:'tno', label:'ANO', sort:'text' },
     { key:'date', label:'Date', sort:'text' },
     { key:'lot', label:'Lot', sort:'text' },
     { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },

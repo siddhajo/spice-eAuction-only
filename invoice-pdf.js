@@ -298,20 +298,32 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
   if (buyer.state) pairLines.push(['STATE', (buyer.state || '').toUpperCase() + '     CODE:' + buyerStCode]);
 
   const bodyLineH = 10;
-  const totalLines = plainLines.length + pairLines.length;
-  const buyerBodyH = Math.max(6, totalLines + 1) * bodyLineH;
+  // Measure each plain line's ACTUAL rendered height so a long company name
+  // (or address) that wraps to 2+ lines pushes the following lines down
+  // instead of being overwritten by them. Set the body font BEFORE measuring
+  // so heightOfString uses the right metrics. Both columns are the same width
+  // (W/2 ±1px), so one measurement against the narrower column serves both and
+  // keeps the two columns vertically aligned.
+  doc.font('Helvetica').fontSize(8);
+  const measureW = Math.min(gridLeftW, gridRightW) - 12;
+  const plainHeights = plainLines.map(line =>
+    Math.max(bodyLineH, doc.heightOfString(line || ' ', { width: measureW })));
+  const plainBodyH = plainHeights.reduce((a, b) => a + b, 0);
+  const pairBodyH  = pairLines.length * bodyLineH;
+  // Content height + one line of padding, floored at 6 lines so the block
+  // doesn't look cramped when there's little content (matches prior sizing).
+  const buyerBodyH = Math.max(6 * bodyLineH, plainBodyH + pairBodyH + bodyLineH);
   doc.moveTo(x0, y).lineTo(x0, y + buyerBodyH).stroke();
   doc.moveTo(gridSplitX, y).lineTo(gridSplitX, y + buyerBodyH).stroke();
   doc.moveTo(x1, y).lineTo(x1, y + buyerBodyH).stroke();
   doc.moveTo(x0, y + buyerBodyH).lineTo(x1, y + buyerBodyH).stroke();
-  doc.font('Helvetica').fontSize(8);
   // Render the same content in both BILLED TO and SHIPPED TO columns.
   for (const [colX, colW] of [[x0, gridLeftW], [gridSplitX, gridRightW]]) {
     let ly = y + 3;
-    for (const line of plainLines) {
+    plainLines.forEach((line, i) => {
       doc.text(line, colX + 6, ly, { width: colW - 12 });
-      ly += bodyLineH;
-    }
+      ly += plainHeights[i];
+    });
     drawColonRows(doc, pairLines, colX, ly, bodyLineH, colW, { pad: 6 });
   }
   y += buyerBodyH;
