@@ -218,6 +218,7 @@ const _saleLabel = (s) => {
 //   }, ...]
 //
 function generSalesIspXML(rows, cfg, opts = {}) {
+  const unitCard = cfgGet(cfg, 'tally_unit_cardamom', 'Kgs.'), unitGunny = cfgGet(cfg, 'tally_unit_gunny', 'Nos.');
   const company       = opts.companyName || cfgGet(cfg, 'tally_company_name', cfgGet(cfg, 'short_name', 'Ideal Spices Private Limited'));
   const season        = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
   const separator     = opts.separator || cfgGet(cfg, 'tally_separator', '/');
@@ -653,17 +654,17 @@ ${TAGS.DEEMNO}
 <BASICPACKAGEMARKS>${xe(lot.lot || '')}</BASICPACKAGEMARKS>
 <BASICNUMPACKAGES>${r0(lot.bag)}</BASICNUMPACKAGES>
 ${TAGS.DEEMNO}
-<RATE>${r2(lot.rate)}/Kgs.</RATE>
+<RATE>${r2(lot.rate)}/${unitCard}</RATE>
 <AMOUNT>${r2(lot.amount)}</AMOUNT>
-<ACTUALQTY>${r2(lot.qty)}Kgs.</ACTUALQTY>
-<BILLEDQTY>${r2(lot.qty)}Kgs.</BILLEDQTY>
+<ACTUALQTY>${r2(lot.qty)}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${r2(lot.qty)}${unitCard}</BILLEDQTY>
 <BATCHALLOCATIONS.LIST>
 <GODOWNNAME>Main Location</GODOWNNAME>
 <BATCHNAME>Primary Batch</BATCHNAME>
 <DESTINATIONGODOWNNAME>Main Location</DESTINATIONGODOWNNAME>
 <AMOUNT>${r2(lot.amount)}</AMOUNT>
-<ACTUALQTY>${r2(lot.qty)}Kgs.</ACTUALQTY>
-<BILLEDQTY>${r2(lot.qty)}Kgs.</BILLEDQTY>
+<ACTUALQTY>${r2(lot.qty)}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${r2(lot.qty)}${unitCard}</BILLEDQTY>
 </BATCHALLOCATIONS.LIST>
 <ACCOUNTINGALLOCATIONS.LIST>
 <LEDGERNAME>${xe(cardLedger)}</LEDGERNAME>
@@ -700,17 +701,17 @@ ${rates.cess}
 <GSTHSNDESCRIPTION>${xe(Item_Card)}</GSTHSNDESCRIPTION>
 <BASICNUMPACKAGES>${r0(aggBags)}</BASICNUMPACKAGES>
 ${TAGS.DEEMNO}
-<RATE>${r2(aggRate)}/Kgs.</RATE>
+<RATE>${r2(aggRate)}/${unitCard}</RATE>
 <AMOUNT>${r2(aggAmt)}</AMOUNT>
-<ACTUALQTY>${r2(aggQty)}Kgs.</ACTUALQTY>
-<BILLEDQTY>${r2(aggQty)}Kgs.</BILLEDQTY>
+<ACTUALQTY>${r2(aggQty)}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${r2(aggQty)}${unitCard}</BILLEDQTY>
 <BATCHALLOCATIONS.LIST>
 <GODOWNNAME>Main Location</GODOWNNAME>
 <BATCHNAME>Primary Batch</BATCHNAME>
 <DESTINATIONGODOWNNAME>Main Location</DESTINATIONGODOWNNAME>
 <AMOUNT>${r2(aggAmt)}</AMOUNT>
-<ACTUALQTY>${r2(aggQty)}Kgs.</ACTUALQTY>
-<BILLEDQTY>${r2(aggQty)}Kgs.</BILLEDQTY>
+<ACTUALQTY>${r2(aggQty)}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${r2(aggQty)}${unitCard}</BILLEDQTY>
 </BATCHALLOCATIONS.LIST>
 <ACCOUNTINGALLOCATIONS.LIST>
 <LEDGERNAME>${xe(cardLedger)}</LEDGERNAME>
@@ -737,15 +738,15 @@ ${rates.cess}
 <GSTHSNNAME>${xe(HSN_Gunny)}</GSTHSNNAME>
 <GSTHSNDESCRIPTION>${xe(Item_Gunny)}</GSTHSNDESCRIPTION>
 ${TAGS.DEEMNO}
-<RATE>${r0(GunnyRate)}/Nos.</RATE>
+<RATE>${r0(GunnyRate)}/${unitGunny}</RATE>
 <AMOUNT>${totalGunnyAmt}</AMOUNT>
-<ACTUALQTY>${totalGunnyBags}Nos.</ACTUALQTY>
+<ACTUALQTY>${totalGunnyBags}${unitGunny}</ACTUALQTY>
 <BATCHALLOCATIONS.LIST>
 <GODOWNNAME>Main Location</GODOWNNAME>
 <BATCHNAME>Primary Batch</BATCHNAME>
 <DESTINATIONGODOWNNAME>Main Location</DESTINATIONGODOWNNAME>
 <AMOUNT>${totalGunnyAmt}</AMOUNT>
-<ACTUALQTY>${totalGunnyBags}Nos.</ACTUALQTY>
+<ACTUALQTY>${totalGunnyBags}${unitGunny}</ACTUALQTY>
 </BATCHALLOCATIONS.LIST>
 <ACCOUNTINGALLOCATIONS.LIST>
 <LEDGERNAME>${xe(gunnyLedger)}</LEDGERNAME>
@@ -784,6 +785,7 @@ ${rates.cess}
 //   }, ...]
 //
 function generSalesAspXML(rows, cfg, opts = {}) {
+  const unitCard = cfgGet(cfg, 'tally_unit_cardamom', 'Kgs.'), unitGunny = cfgGet(cfg, 'tally_unit_gunny', 'Nos.');
   const company       = opts.companyName || cfgGet(cfg, 'tally_asp_company_name', 'Amazing Spice Park Private Limited');
   const season        = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
   const separator     = opts.separator || cfgGet(cfg, 'tally_separator', '/');
@@ -978,17 +980,17 @@ ${TAGS.DEEMNO}
 <BASICPACKAGEMARKS>${xe(lot.lot || '')}</BASICPACKAGEMARKS>
 <BASICNUMPACKAGES>${r0(lot.bag)}</BASICNUMPACKAGES>
 ${TAGS.DEEMNO}
-<RATE>${r2(lot.rate)}/Kgs.</RATE>
+<RATE>${r2(lot.rate)}/${unitCard}</RATE>
 <AMOUNT>${r2(lot.amount)}</AMOUNT>
-<ACTUALQTY>${r2(lot.qty)}Kgs.</ACTUALQTY>
-<BILLEDQTY>${r2(lot.qty)}Kgs.</BILLEDQTY>
+<ACTUALQTY>${r2(lot.qty)}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${r2(lot.qty)}${unitCard}</BILLEDQTY>
 <BATCHALLOCATIONS.LIST>
 <GODOWNNAME>Main Location</GODOWNNAME>
 <BATCHNAME>Primary Batch</BATCHNAME>
 <DESTINATIONGODOWNNAME>Main Location</DESTINATIONGODOWNNAME>
 <AMOUNT>${r2(lot.amount)}</AMOUNT>
-<ACTUALQTY>${r2(lot.qty)}Kgs.</ACTUALQTY>
-<BILLEDQTY>${r2(lot.qty)}Kgs.</BILLEDQTY>
+<ACTUALQTY>${r2(lot.qty)}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${r2(lot.qty)}${unitCard}</BILLEDQTY>
 </BATCHALLOCATIONS.LIST>
 <ACCOUNTINGALLOCATIONS.LIST>
 <LEDGERNAME>${xe(cardLedger)}</LEDGERNAME>
@@ -1014,15 +1016,15 @@ ${rates.cess}
 <GSTHSNNAME>${xe(HSN_Gunny)}</GSTHSNNAME>
 <GSTHSNDESCRIPTION>${xe(Item_Gunny)}</GSTHSNDESCRIPTION>
 ${TAGS.DEEMNO}
-<RATE>${r0(GunnyRate)}/Nos.</RATE>
+<RATE>${r0(GunnyRate)}/${unitGunny}</RATE>
 <AMOUNT>${totalGunnyAmt}</AMOUNT>
-<ACTUALQTY>${totalGunnyBags}Nos.</ACTUALQTY>
+<ACTUALQTY>${totalGunnyBags}${unitGunny}</ACTUALQTY>
 <BATCHALLOCATIONS.LIST>
 <GODOWNNAME>Main Location</GODOWNNAME>
 <BATCHNAME>Primary Batch</BATCHNAME>
 <DESTINATIONGODOWNNAME>Main Location</DESTINATIONGODOWNNAME>
 <AMOUNT>${totalGunnyAmt}</AMOUNT>
-<ACTUALQTY>${totalGunnyBags}Nos.</ACTUALQTY>
+<ACTUALQTY>${totalGunnyBags}${unitGunny}</ACTUALQTY>
 </BATCHALLOCATIONS.LIST>
 <ACCOUNTINGALLOCATIONS.LIST>
 <LEDGERNAME>${xe(gunnyLedger)}</LEDGERNAME>
@@ -1065,6 +1067,7 @@ ${rates.cess}
 // directly — no new builder needed.
 //
 function generIspPurchaseXML(rows, cfg, opts = {}) {
+  const unitCard = cfgGet(cfg, 'tally_unit_cardamom', 'Kgs.'), unitGunny = cfgGet(cfg, 'tally_unit_gunny', 'Nos.');
   // Imports into ISP company (the buyer's books)
   const company       = opts.companyName || cfgGet(cfg, 'tally_company_name', cfgGet(cfg, 'short_name', 'Ideal Spices Private Limited'));
   const tlyrnd        = cfgBool(cfg, 'flag_tally_round', true);
@@ -1266,17 +1269,17 @@ ${TAGS.DEEMYES}
 <BASICPACKAGEMARKS>${xe(lot.lot || '')}</BASICPACKAGEMARKS>
 <BASICNUMPACKAGES>${r0(lot.bag)}</BASICNUMPACKAGES>
 ${TAGS.DEEMYES}
-<RATE>${r0(lot.rate)}/Kgs.</RATE>
+<RATE>${r0(lot.rate)}/${unitCard}</RATE>
 <AMOUNT>${-amt}</AMOUNT>
-<ACTUALQTY>${r2(lot.qty)}Kgs.</ACTUALQTY>
-<BILLEDQTY>${r2(lot.qty)}Kgs.</BILLEDQTY>
+<ACTUALQTY>${r2(lot.qty)}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${r2(lot.qty)}${unitCard}</BILLEDQTY>
 <BATCHALLOCATIONS.LIST>
 <GODOWNNAME>Main Location</GODOWNNAME>
 <BATCHNAME>Primary Batch</BATCHNAME>
 <DESTINATIONGODOWNNAME>Main Location</DESTINATIONGODOWNNAME>
 <AMOUNT>${-amt}</AMOUNT>
-<ACTUALQTY>${r2(lot.qty)}Kgs.</ACTUALQTY>
-<BILLEDQTY>${r2(lot.qty)}Kgs.</BILLEDQTY>
+<ACTUALQTY>${r2(lot.qty)}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${r2(lot.qty)}${unitCard}</BILLEDQTY>
 </BATCHALLOCATIONS.LIST>
 <ACCOUNTINGALLOCATIONS.LIST>
 <LEDGERNAME>${xe(Purchase_LDR)}</LEDGERNAME>
@@ -1314,15 +1317,15 @@ ${TAGS.DEEMYES}
 <GSTHSNNAME>${xe(HSN_Gunny)}</GSTHSNNAME>
 <GSTHSNDESCRIPTION>${xe(Item_Gunny)}</GSTHSNDESCRIPTION>
 ${TAGS.DEEMYES}
-<RATE>${r0(gunnyRate)}/Nos.</RATE>
+<RATE>${r0(gunnyRate)}/${unitGunny}</RATE>
 <AMOUNT>${-gAmt}</AMOUNT>
-<ACTUALQTY>${gBags}Nos.</ACTUALQTY>
+<ACTUALQTY>${gBags}${unitGunny}</ACTUALQTY>
 <BATCHALLOCATIONS.LIST>
 <GODOWNNAME>Main Location</GODOWNNAME>
 <BATCHNAME>Primary Batch</BATCHNAME>
 <DESTINATIONGODOWNNAME>Main Location</DESTINATIONGODOWNNAME>
 <AMOUNT>${-gAmt}</AMOUNT>
-<ACTUALQTY>${gBags}Nos.</ACTUALQTY>
+<ACTUALQTY>${gBags}${unitGunny}</ACTUALQTY>
 </BATCHALLOCATIONS.LIST>
 <ACCOUNTINGALLOCATIONS.LIST>
 <LEDGERNAME>${xe(Purchase_LDR)}</LEDGERNAME>
@@ -1367,6 +1370,7 @@ ${TAGS.DEEMNO}
 //   }, ...]
 //
 function generSalesXML(rows, cfg, opts = {}) {
+  const unitCard = cfgGet(cfg, 'tally_unit_cardamom', 'Kgs.'), unitGunny = cfgGet(cfg, 'tally_unit_gunny', 'Nos.');
   const company       = opts.companyName || cfgGet(cfg, 'tally_company_name', cfgGet(cfg, 'short_name', 'Ideal Spices Private Limited'));
   const season        = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
   const separator     = opts.separator || cfgGet(cfg, 'tally_separator', '/');
@@ -1452,17 +1456,17 @@ function generSalesXML(rows, cfg, opts = {}) {
 <BASICPACKAGEMARKS>${xe(lot.lot || '')}</BASICPACKAGEMARKS>
 <BASICNUMPACKAGES>${r2(lot.bag)}</BASICNUMPACKAGES>
 ${TAGS.DEEMNO}
-<RATE>${r2(lot.rate)}/Kgs.</RATE>
+<RATE>${r2(lot.rate)}/${unitCard}</RATE>
 <AMOUNT>${r2(lot.amount)}</AMOUNT>
-<ACTUALQTY>${r2(lot.qty)}Kgs.</ACTUALQTY>
-<BILLEDQTY>${r2(lot.qty)}Kgs.</BILLEDQTY>
+<ACTUALQTY>${r2(lot.qty)}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${r2(lot.qty)}${unitCard}</BILLEDQTY>
 <BATCHALLOCATIONS.LIST>
 <GODOWNNAME>Main Location</GODOWNNAME>
 <BATCHNAME>Primary Batch</BATCHNAME>
 <DESTINATIONGODOWNNAME>Main Location</DESTINATIONGODOWNNAME>
 <AMOUNT>${r2(lot.amount)}</AMOUNT>
-<ACTUALQTY>${r2(lot.qty)}Kgs.</ACTUALQTY>
-<BILLEDQTY>${r2(lot.qty)}Kgs.</BILLEDQTY>
+<ACTUALQTY>${r2(lot.qty)}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${r2(lot.qty)}${unitCard}</BILLEDQTY>
 </BATCHALLOCATIONS.LIST>
 <ACCOUNTINGALLOCATIONS.LIST>
 <LEDGERNAME>${xe(ledger)}</LEDGERNAME>
@@ -1608,6 +1612,7 @@ ${rnd < 0 ? TAGS.DEEMYES : TAGS.DEEMNO}
 // }, ...]
 //
 function generRDPurchaseXML(rows, cfg, opts = {}) {
+  const unitCard = cfgGet(cfg, 'tally_unit_cardamom', 'Kgs.'), unitGunny = cfgGet(cfg, 'tally_unit_gunny', 'Nos.');
   // SVCURRENTCOMPANY: explicit override → the Tally Company Name setting → the
   // current company's name from settings (identity resolver). No hardcoded
   // brand fallback.
@@ -1785,17 +1790,17 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
 <BASICPACKAGEMARKS>${xe(lot.lot || '')}</BASICPACKAGEMARKS>
 <BASICNUMPACKAGES>${r0(lot.bag)} Bags</BASICNUMPACKAGES>
 ${TAGS.DEEMYES}
-<RATE>${r2(lot.rate)}/Kgs.</RATE>
+<RATE>${r2(lot.rate)}/${unitCard}</RATE>
 <AMOUNT>${-r2(lot.amount)}</AMOUNT>
-<ACTUALQTY>${r2(lot.qty)}Kgs.</ACTUALQTY>
-<BILLEDQTY>${r2(lot.qty)}Kgs.</BILLEDQTY>
+<ACTUALQTY>${r2(lot.qty)}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${r2(lot.qty)}${unitCard}</BILLEDQTY>
 <BATCHALLOCATIONS.LIST>
 <GODOWNNAME>Main Location</GODOWNNAME>
 <BATCHNAME>${xe(`${row.ano}/${lot.lot}`)}</BATCHNAME>
 <DESTINATIONGODOWNNAME>Main Location</DESTINATIONGODOWNNAME>
 <AMOUNT>${-r2(lot.amount)}</AMOUNT>
-<ACTUALQTY>${r2(lot.qty)}Kgs.</ACTUALQTY>
-<BILLEDQTY>${r2(lot.qty)}Kgs.</BILLEDQTY>
+<ACTUALQTY>${r2(lot.qty)}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${r2(lot.qty)}${unitCard}</BILLEDQTY>
 </BATCHALLOCATIONS.LIST>
 <ACCOUNTINGALLOCATIONS.LIST>
 <LEDGERNAME>${xe(ledger)}</LEDGERNAME>
@@ -1823,10 +1828,10 @@ ${rates.cess}
 <BASICPACKAGEMARKS></BASICPACKAGEMARKS>
 <BASICNUMPACKAGES></BASICNUMPACKAGES>
 ${TAGS.DEEMYES}
-<RATE>${rt}/Kgs.</RATE>
+<RATE>${rt}/${unitCard}</RATE>
 <AMOUNT>${-amounttot}</AMOUNT>
-<ACTUALQTY>${qtytot}Kgs.</ACTUALQTY>
-<BILLEDQTY>${qtytot}Kgs.</BILLEDQTY>
+<ACTUALQTY>${qtytot}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${qtytot}${unitCard}</BILLEDQTY>
 <ACCOUNTINGALLOCATIONS.LIST>
 <LEDGERNAME>${xe(ledger)}</LEDGERNAME>
 <GSTOVRDNTAXABILITY>Taxable</GSTOVRDNTAXABILITY>
@@ -1868,16 +1873,16 @@ ${rates.cess}
 <BASICPACKAGEMARKS></BASICPACKAGEMARKS>
 <BASICNUMPACKAGES></BASICNUMPACKAGES>
 ${TAGS.DEEMYES}
-<RATE>${refRate}/Kgs.</RATE>
+<RATE>${refRate}/${unitCard}</RATE>
 <AMOUNT>${-refundtot}</AMOUNT>
-<ACTUALQTY>${refActualQty}Kgs.</ACTUALQTY>
-<BILLEDQTY>${refQty}Kgs.</BILLEDQTY>
+<ACTUALQTY>${refActualQty}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${refQty}${unitCard}</BILLEDQTY>
 <BATCHALLOCATIONS.LIST>
 <GODOWNNAME>Main Location</GODOWNNAME>
 <DESTINATIONGODOWNNAME>Main Location</DESTINATIONGODOWNNAME>
 <AMOUNT>${-refundtot}</AMOUNT>
-<ACTUALQTY>${refActualQty}Kgs.</ACTUALQTY>
-<BILLEDQTY>${refQty}Kgs.</BILLEDQTY>
+<ACTUALQTY>${refActualQty}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${refQty}${unitCard}</BILLEDQTY>
 </BATCHALLOCATIONS.LIST>
 <ACCOUNTINGALLOCATIONS.LIST>
 <LEDGERNAME>${xe(SampleRefund_LDR)}</LEDGERNAME>
@@ -2038,6 +2043,7 @@ ${TAGS.DEEMYES}
 // }, ...]
 //
 function generURDPurchaseXML(rows, cfg, opts = {}) {
+  const unitCard = cfgGet(cfg, 'tally_unit_cardamom', 'Kgs.'), unitGunny = cfgGet(cfg, 'tally_unit_gunny', 'Nos.');
   // SVCURRENTCOMPANY: same resolution as the RD purchase voucher — the current
   // company from settings, no hardcoded brand fallback.
   const company   = opts.companyName || cfgGet(cfg, 'tally_company_name', '')
@@ -2169,17 +2175,17 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
 <BASICPACKAGEMARKS>${xe(lot.lot || '')}</BASICPACKAGEMARKS>
 <BASICNUMPACKAGES>${r0(lot.bag)} Bags</BASICNUMPACKAGES>
 ${TAGS.DEEMYES}
-<RATE>${r2(lot.rate)}/Kgs.</RATE>
+<RATE>${r2(lot.rate)}/${unitCard}</RATE>
 <AMOUNT>${-r2(lot.amount)}</AMOUNT>
-<ACTUALQTY>${r2(lot.qty)}Kgs.</ACTUALQTY>
-<BILLEDQTY>${r2(lot.qty)}Kgs.</BILLEDQTY>
+<ACTUALQTY>${r2(lot.qty)}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${r2(lot.qty)}${unitCard}</BILLEDQTY>
 <BATCHALLOCATIONS.LIST>
 <GODOWNNAME>Main Location</GODOWNNAME>
 <BATCHNAME>${xe(`${row.ano}/${lot.lot}`)}</BATCHNAME>
 <DESTINATIONGODOWNNAME>Main Location</DESTINATIONGODOWNNAME>
 <AMOUNT>${-r2(lot.amount)}</AMOUNT>
-<ACTUALQTY>${r2(lot.qty)}Kgs.</ACTUALQTY>
-<BILLEDQTY>${r2(lot.qty)}Kgs.</BILLEDQTY>
+<ACTUALQTY>${r2(lot.qty)}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${r2(lot.qty)}${unitCard}</BILLEDQTY>
 </BATCHALLOCATIONS.LIST>
 <ACCOUNTINGALLOCATIONS.LIST>
 <LEDGERNAME>${xe(Auction_LDR)}</LEDGERNAME>
@@ -2208,10 +2214,10 @@ ${rates.scess}
 <BASICPACKAGEMARKS></BASICPACKAGEMARKS>
 <BASICNUMPACKAGES></BASICNUMPACKAGES>
 ${TAGS.DEEMYES}
-<RATE>${rt}/Kgs.</RATE>
+<RATE>${rt}/${unitCard}</RATE>
 <AMOUNT>${-amounttot}</AMOUNT>
-<ACTUALQTY>${qtytot}Kgs.</ACTUALQTY>
-<BILLEDQTY>${qtytot}Kgs.</BILLEDQTY>
+<ACTUALQTY>${qtytot}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${qtytot}${unitCard}</BILLEDQTY>
 <ACCOUNTINGALLOCATIONS.LIST>
 <LEDGERNAME>${xe(Auction_LDR)}</LEDGERNAME>
 <GSTOVRDNTAXABILITY>Nil Rated</GSTOVRDNTAXABILITY>
@@ -2255,16 +2261,16 @@ ${rates.scess}
 <BASICPACKAGEMARKS></BASICPACKAGEMARKS>
 <BASICNUMPACKAGES></BASICNUMPACKAGES>
 ${TAGS.DEEMYES}
-<RATE>${refRate}/Kgs.</RATE>
+<RATE>${refRate}/${unitCard}</RATE>
 <AMOUNT>${-r2(refundtot)}</AMOUNT>
-<ACTUALQTY>${refActualQty}Kgs.</ACTUALQTY>
-<BILLEDQTY>${refQty}Kgs.</BILLEDQTY>
+<ACTUALQTY>${refActualQty}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${refQty}${unitCard}</BILLEDQTY>
 <BATCHALLOCATIONS.LIST>
 <GODOWNNAME>Main Location</GODOWNNAME>
 <DESTINATIONGODOWNNAME>Main Location</DESTINATIONGODOWNNAME>
 <AMOUNT>${-r2(refundtot)}</AMOUNT>
-<ACTUALQTY>${refActualQty}Kgs.</ACTUALQTY>
-<BILLEDQTY>${refQty}Kgs.</BILLEDQTY>
+<ACTUALQTY>${refActualQty}${unitCard}</ACTUALQTY>
+<BILLEDQTY>${refQty}${unitCard}</BILLEDQTY>
 </BATCHALLOCATIONS.LIST>
 <ACCOUNTINGALLOCATIONS.LIST>
 <LEDGERNAME>${xe(SampleRefund_LDR)}</LEDGERNAME>

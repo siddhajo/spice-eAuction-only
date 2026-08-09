@@ -510,6 +510,11 @@ const DEFAULTS = [
   // Stock Item Names + HSN
   { key: 'tally_item_cardamom', value: '', category: 'tally', label: 'Stock Item — Cardamom', type: 'text' },
   { key: 'tally_item_gunny',    value: '', category: 'tally', label: 'Stock Item — Gunny',    type: 'text' },
+  // Unit symbols emitted in the Tally XML (RATE / ACTUALQTY / BILLEDQTY). Must
+  // match the unit defined on the stock item in Tally. Blank keeps the defaults
+  // (cardamom "Kgs.", gunny "Nos.").
+  { key: 'tally_unit_cardamom', value: '', category: 'tally', label: 'Unit — Cardamom (default Kgs.)', type: 'text' },
+  { key: 'tally_unit_gunny',    value: '', category: 'tally', label: 'Unit — Gunny (default Nos.)',    type: 'text' },
   { key: 'tally_hsn_cardamom',  value: '', category: 'tally', label: 'HSN — Cardamom',        type: 'text' },
   { key: 'tally_hsn_gunny',     value: '', category: 'tally', label: 'HSN — Gunny',           type: 'text' },
   { key: 'tally_hsn_service',   value: '', category: 'tally', label: 'SAC — Service',         type: 'text' },
