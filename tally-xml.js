@@ -2376,6 +2376,10 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
   // Planter (URD) debit notes post to their own commission ledger. Falls
   // back to the regular DN commission ledger when not separately configured.
   const DiscountP_LDR = cfgGet(cfg, 'tally_dnp_discount', Discount_LDR);
+  // Interstate DEALER debit notes post to the "Commission Ledger InterState"
+  // (Settings → Tally → tally_commission_interstate). Falls back to the local
+  // DN commission ledger when not configured; planter DNs are unaffected.
+  const DiscountInter_LDR = cfgGet(cfg, 'tally_commission_interstate', Discount_LDR);
   // Resolve the DN GST rate FIRST so the default ledger names below can
   // be composed from it (no hardcoded 18 literal anywhere). DN is a service
   // (commission/handling discount) so it defaults to the service GST rate
@@ -2458,7 +2462,9 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
     // and planter DNs post their commission to the planter commission ledger.
     const isPlanter   = !!row.planter;
     const voucherNo   = `${taxNm}/${seasonShort}/${isPlanter ? 'URD' : 'SE'}`;
-    const discountLdr = isPlanter ? DiscountP_LDR : Discount_LDR;
+    // Dealer DN: interstate → Commission Ledger InterState, local → local
+    // commission ledger. Planter DN: always its own planter commission ledger.
+    const discountLdr = isPlanter ? DiscountP_LDR : (isIntra ? Discount_LDR : DiscountInter_LDR);
     // GST "stored nature" for the commission/discount ledger — same
     // intra/inter classification as the Sales invoice (no export case here).
     const dnNature    = isIntra ? 'Local Sales - Taxable' : 'Interstate Sales - Taxable';
@@ -4369,6 +4375,7 @@ function buildLedgerRows(db, auctionId, cfg) {
   const services = [
     ['tally_dn_discount',          'Indirect Incomes',   hsnService],
     ['tally_dnp_discount',         'Indirect Incomes',   hsnService],
+    ['tally_commission_interstate','Indirect Incomes',   hsnService],
     ['tally_sample_planter',       'Indirect Expenses',  hsnService],
     ['tally_sample_dealer',        'Indirect Expenses',  hsnService],
     ['tally_transport',            'Indirect Expenses',  cfgGet(cfg, 'tally_hsn_transport', '996791')],
