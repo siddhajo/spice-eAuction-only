@@ -27552,7 +27552,7 @@ function renderTallyInvoiceList(){
         <div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${iv.gstin?esc(iv.gstin):'<em>No GSTIN</em>'}${amt?' · '+esc(amt):''}${lots}</div>
       </div>
       <button class="btn btn-g" onclick="tallyDownloadInvoiceVoucher('${iv.id}','${safeLabel}')" style="padding:5px 10px;font-size:11px;flex:0 0 auto">XML</button>
-      <button class="btn btn-g" onclick="tallyDownloadInvoiceVoucher('${iv.id}','${safeLabel}','irp')" style="padding:5px 10px;font-size:11px;flex:0 0 auto" title="GST e-Invoice (IRP / NIC) JSON — ready for the trade portal">e-Invoice</button>
+      <button class="btn btn-g" onclick="tallyDownloadInvoiceVoucher('${iv.id}','${safeLabel}','irp')" style="padding:5px 10px;font-size:11px;flex:0 0 auto" title="GST e-Invoice (IRP / NIC) JSON — ready for the trade portal">JSON</button>
     </div>`;
   }
   list.innerHTML=html;
