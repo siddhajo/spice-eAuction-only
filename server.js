@@ -10939,7 +10939,17 @@ app.post('/api/invoices/preview/:auctionId', requireView, (req, res) => {
     invoice = buildAgriBill(db, req.params.auctionId, buyerCode, cfg);
     if (invoice && invoice.error) return res.status(404).json({ error: invoice.error });
   } else {
-    invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, saleType, cfg, { noTI, lotNos });
+    // "All sale types" reaches here as a blank saleType. A single-buyer
+    // preview needs one concrete type (it drives the lot filter + transport),
+    // so derive the buyer's effective sale: an explicit stored value, else
+    // L/I from the GSTIN — the same rule the buyer picker uses.
+    let effSale = String(saleType || '').trim();
+    if (!effSale) {
+      const b = db.get('SELECT gstin, sale FROM buyers WHERE buyer = ?', [buyerCode]);
+      effSale = (b && b.sale) ? String(b.sale).trim().toUpperCase() : '';
+      if (!effSale) effSale = deriveSaleType(b ? b.gstin : '', cfg);
+    }
+    invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, effSale, cfg, { noTI, lotNos });
   }
 
   if (!invoice) return res.status(404).json({ error: 'No data found' });

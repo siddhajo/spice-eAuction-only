@@ -23162,7 +23162,7 @@ async function toggleInvoiceNoTI(id, value){
 async function generateInvoice(){
   const aid=document.getElementById('inv-auction').value;
   if(!aid){alert('Please select an auction first');return}
-  const saleType=document.getElementById('gi-sale').value;
+  let saleType=document.getElementById('gi-sale').value;
   const startInvNo=parseInt(document.getElementById('gi-invno').value.trim(),10);
   if(!startInvNo||isNaN(startInvNo)||startInvNo<1){alert('Enter a valid starting invoice number');return}
   const noTI=!!document.getElementById('gi-no-ti')?.checked;
@@ -23170,6 +23170,14 @@ async function generateInvoice(){
   const checked=Array.from(list?.querySelectorAll('.gi-cb:checked')||[]);
   if(!checked.length){alert('Select at least one buyer');return}
   const buyers=checked.map(cb=>cb.value);
+
+  // "All sale types" is only a picker filter — a single invoice needs one
+  // concrete type. For one buyer, fall back to its effective sale (the chip's
+  // data-sale). For several buyers, they may differ, so ask the user to pick.
+  if(!saleType){
+    if(checked.length===1){ saleType=(checked[0].dataset.sale||'').trim(); }
+    if(!saleType){ alert('Choose a Sale Type (L/I/E) — "All sale types" only filters the buyer list.'); return; }
+  }
 
   // Split mode: one buyer → several invoices (see generateInvoiceSplit).
   const splitToggle=document.getElementById('gi-split-toggle');
@@ -28422,7 +28430,12 @@ async function previewInvoice(type){
     if(checked.length>1){
       if(!confirm(`Preview shows ONE buyer at a time. Showing "${checked[0].value}".\n\nContinue?`))return;
     }
-    body={saleType:document.getElementById('gi-sale').value,buyerCode:checked[0].value,type:'sales',noTI:!!document.getElementById('gi-no-ti')?.checked};
+    // "All sale types" (blank) is just a picker filter — preview needs one
+    // concrete type, so fall back to the buyer chip's effective sale. If it's
+    // also blank the server derives it from the buyer's GSTIN.
+    let _pvSale=document.getElementById('gi-sale').value;
+    if(!_pvSale)_pvSale=(checked[0].dataset.sale||'').trim();
+    body={saleType:_pvSale,buyerCode:checked[0].value,type:'sales',noTI:!!document.getElementById('gi-no-ti')?.checked};
     // Split mode: preview the ACTIVE invoice bucket's lots only, not the
     // whole buyer — so Quick Preview matches what that split invoice will be.
     const st=document.getElementById('gi-split-toggle');
