@@ -6866,10 +6866,13 @@ app.get('/api/invoices/preview.html', (req, res) => {
     const buyerCode = req.query.buyer;
     const saleType = String(req.query.sale || 'I').trim().toUpperCase();
     const invoiceNo = req.query.invoiceNo || 'PREVIEW';
+    // Honour the Pre-Invoice screen's No-Transport&Insurance toggle so the
+    // inline preview matches what will actually be generated.
+    const noTI = (String(req.query.noTI || '') === '1' || String(req.query.noTI || '').toLowerCase() === 'true') ? 1 : 0;
 
     let invoiceData, invoiceDate;
     if (auctionId && buyerCode) {
-      invoiceData = buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg, { noTI: false });
+      invoiceData = buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg, { noTI });
       if (!invoiceData) {
         res.status(404).type('html');
         return res.send(`<pre>No lots found for buyer "${buyerCode}" in auction ${auctionId}. ` +

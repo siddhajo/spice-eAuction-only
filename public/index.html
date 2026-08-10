@@ -28533,11 +28533,35 @@ async function renderPreInvoiceSelected(){
     return;
   }
   if (countEl) countEl.textContent = (val === '__all__') ? `${previews.length} invoice${previews.length===1?'':'s'}` : '';
-  list.innerHTML = previews.map((p, i) => piCard(p, aid, noTI, i)).join('');
+  // Single-buyer view auto-embeds the full invoice inline (no click). The
+  // all-buyers view keeps each inline preview collapsed (lazy-loaded on
+  // expand) so we don't fire N invoice renders at once.
+  const single = (val !== '__all__') && previews.length === 1;
+  list.innerHTML = previews.map((p, i) => piCard(p, aid, noTI, i, single)).join('');
+  if (single) piMountInline(0, aid, previews[0].buyerCode, previews[0].saleType, noTI);
+}
+
+// Build the inline HTML-invoice URL (same layout/templates as the PDF).
+// preview.html authenticates via ?token= because an <iframe> can't send an
+// Authorization header.
+function piInlineUrl(aid, buyerCode, saleType, noTI){
+  return `${B}/api/invoices/preview.html?auctionId=${encodeURIComponent(aid)}`
+    + `&buyer=${encodeURIComponent(buyerCode)}&sale=${encodeURIComponent(saleType||'')}`
+    + `&noTI=${noTI==='1'||noTI===1||noTI===true?'1':'0'}&token=${encodeURIComponent(T)}`;
+}
+// Inject the invoice iframe into a card's slot (idempotent — only once).
+function piMountInline(idx, aid, buyerCode, saleType, noTI){
+  const slot = document.getElementById('pi-inv-slot-'+idx);
+  if (!slot || slot.dataset.mounted === '1') return;
+  slot.dataset.mounted = '1';
+  const btn = document.getElementById('pi-inv-btn-'+idx);
+  if (btn) btn.style.display = 'none';
+  slot.innerHTML = `<iframe src="${piInlineUrl(aid, buyerCode, saleType, noTI)}" title="Invoice preview" loading="lazy"
+    style="width:100%;height:820px;border:1px solid var(--border);border-radius:8px;background:#fff;margin-top:8px"></iframe>`;
 }
 // Build one preview card. Shows Bill-To + Ship-To (consignee, falling back to
 // the buyer) and the full money breakdown that the invoice will carry.
-function piCard(p, aid, noTI, idx){
+function piCard(p, aid, noTI, idx, single){
   const b = p.buyer || {};
   const s = p.summary || {};
   const money = v => '₹' + (Number(v)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -28567,7 +28591,8 @@ function piCard(p, aid, noTI, idx){
       <span style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;background:var(--spice-cardamom-lt);color:var(--spice-cardamom)">${esc(PI_SALE_LABEL[p.saleType]||p.saleType)} (${esc(p.saleType)})</span>
       <span style="font-size:11px;color:var(--text3)">${(p.lineItems||[]).length} lot${(p.lineItems||[]).length===1?'':'s'} · ${esc(b.code||p.buyerCode)}</span>
       <span style="margin-left:auto;font-weight:800;font-size:16px;color:var(--spice-cardamom)">${money(s.grandTotal)}</span>
-      <button class="btn btn-g" style="height:32px;padding:0 12px;font-size:12px;font-weight:600" onclick="piPreviewPdf('${esc(aid)}','${esc(String(p.buyerCode).replace(/'/g,"\\'"))}','${esc(p.saleType)}',${noTI==='1'?'true':'false'})">👁 Preview Invoice</button>
+      ${single ? '' : `<button id="pi-inv-btn-${idx}" class="btn btn-g" style="height:32px;padding:0 12px;font-size:12px;font-weight:600" onclick="piMountInline(${idx},'${esc(aid)}','${esc(String(p.buyerCode).replace(/'/g,"\\'"))}','${esc(p.saleType)}','${noTI}')">👁 Show full invoice</button>`}
+      <button class="btn btn-o" style="height:32px;padding:0 12px;font-size:12px;font-weight:600" onclick="piPreviewPdf('${esc(aid)}','${esc(String(p.buyerCode).replace(/'/g,"\\'"))}','${esc(p.saleType)}',${noTI==='1'?'true':'false'})">Open PDF ↗</button>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:10px">
       <div style="background:var(--bg);border-radius:8px;padding:10px 12px">
@@ -28595,6 +28620,9 @@ function piCard(p, aid, noTI, idx){
       ${tdsRow}
       <div style="border-top:1px solid var(--border);margin-top:4px;padding-top:4px">${row('Grand Total', money(s.grandTotal), {strong:true})}</div>
     </div>
+    <!-- Inline full-invoice preview mounts here (auto for single buyer,
+         lazy on "Show full invoice" for the all-buyers list). -->
+    <div id="pi-inv-slot-${idx}"></div>
   </div>`;
 }
 // Open the EXACT sales-invoice PDF (same renderer as Generate) for one buyer,
