@@ -333,13 +333,26 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg, opts) {
   // out of the PDF + Tally via their >0 guards). Set per invoice from the
   // Generate modal / the Invoices-tab toggle (invoices.no_ti).
   const noTI = !!(opts && opts.noTI);
+  // Optional lot subset — when splitting one buyer's lots across several
+  // invoices, the caller passes the specific lot numbers for THIS invoice.
+  // When absent/empty we fall back to the default "all of the buyer's lots"
+  // behaviour, so existing single-invoice callers are unaffected.
+  const lotNos = (opts && Array.isArray(opts.lotNos))
+    ? opts.lotNos.map(x => String(x)).filter(x => x.trim() !== '')
+    : null;
   // Get all lots for this buyer in this auction that have amounts
   // Don't filter by sale — we're ASSIGNING the sale type now
+  const params = [auctionId, buyerCode, saleType];
+  let lotFilter = '';
+  if (lotNos && lotNos.length) {
+    lotFilter = ` AND lot_no IN (${lotNos.map(() => '?').join(',')})`;
+    params.push(...lotNos);
+  }
   const lots = db.all(
     `SELECT * FROM lots WHERE auction_id = ? AND buyer = ? AND amount > 0
      AND (reserved IS NULL OR reserved = 0)
-     AND (sale IS NULL OR sale = '' OR sale = ?) ORDER BY lot_no`,
-    [auctionId, buyerCode, saleType]
+     AND (sale IS NULL OR sale = '' OR sale = ?)${lotFilter} ORDER BY lot_no`,
+    params
   );
   
   if (!lots.length) return null;

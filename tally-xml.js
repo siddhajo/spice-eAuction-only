@@ -2444,6 +2444,10 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
     const fullGstin   = String(row.gstin || '');
     const partyGstin  = row.partyGstin || (fullGstin.toUpperCase().startsWith('GST') ? fullGstin.slice(6, 21) : fullGstin);
     const state       = partyGstin ? xe(findState(partyGstin)) : 'Kerala';
+    // Place of supply follows the PARTY's GSTIN state code (NIC/e-Invoice
+    // rule): 33 → Tamil Nadu, 32 → Kerala, etc. Falls back to the seller's
+    // home state only when the party carries no GSTIN (URD / planter DNs).
+    const placeOfSupply = partyGstin ? (findState(partyGstin) || sStateName) : sStateName;
     // Intra/inter classification. Registered dealers carry a PARTYGSTIN, so
     // we read its 2-digit state code (authoritative). URD / planter debit
     // notes have NO GSTIN — for those we fall back to the GST amounts stored
@@ -2502,7 +2506,7 @@ ${String(d_add).split(/\r?\n/).map(l => `<DISPATCHFROMADDRESS>${xe(l)}</DISPATCH
 <STATENAME>${state}</STATENAME>
 <COUNTRYOFRESIDENCE>India</COUNTRYOFRESIDENCE>
 <PARTYGSTIN>${xe(partyGstin)}</PARTYGSTIN>
-<PLACEOFSUPPLY>${xe(sStateName)}</PLACEOFSUPPLY>
+<PLACEOFSUPPLY>${xe(placeOfSupply)}</PLACEOFSUPPLY>
 <PARTYNAME>${name}</PARTYNAME>
 <PARTYLEDGERNAME>${name}</PARTYLEDGERNAME>
 <VOUCHERNUMBER>${xe(voucherNo)}</VOUCHERNUMBER>

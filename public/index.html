@@ -6465,6 +6465,31 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     </div>
   </div>
   <div id="gi-hint" style="font-size:11px;color:var(--text3);padding:4px 0"></div>
+  <!-- Split mode — divide ONE buyer's lots across several invoices.
+       Only usable when exactly one buyer is ticked above. Each group of
+       lots becomes its own invoice, numbered sequentially from the
+       starting number below. -->
+  <div class="fg" style="margin-top:2px">
+    <label id="gi-split-toggle-row" style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;cursor:pointer;opacity:.5">
+      <input type="checkbox" id="gi-split-toggle" onchange="toggleSplitMode()" style="width:16px;height:16px;cursor:pointer" disabled>
+      Split this buyer&rsquo;s lots into multiple invoices
+      <span id="gi-split-lock" style="font-size:11px;font-weight:400;color:var(--text3)">&mdash; select exactly one buyer</span>
+    </label>
+  </div>
+  <div id="gi-split-panel" style="display:none;border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px;background:var(--card,var(--bg))">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <label style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px">
+        Number of invoices
+        <input id="gi-split-count" type="number" min="2" max="20" value="2" style="width:60px" onchange="rebuildSplitGroupOptions()">
+      </label>
+      <button type="button" class="btn btn-o" style="padding:3px 10px;font-size:12px" onclick="distributeSplitEvenly()">Distribute evenly</button>
+      <span style="font-size:11px;color:var(--text3)">Set the invoice # (1&ndash;N) for each lot</span>
+    </div>
+    <div id="gi-split-lots" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:6px">
+      <div style="color:var(--text3);font-size:12px;padding:10px;text-align:center">Loading lots&hellip;</div>
+    </div>
+    <div id="gi-split-summary" style="font-size:12px;color:var(--text2);padding:6px 2px 0"></div>
+  </div>
   <div class="fg"><label>Starting Invoice No <span style="color:var(--text3);font-weight:400">— auto-increments for each selected buyer</span></label><input id="gi-invno" type="number" placeholder="e.g. 6"></div>
   <!-- Per-invoice "No Transport & Insurance". When ticked the generated
        invoice(s) carry no transport/insurance — both come out 0 and drop
@@ -20690,6 +20715,169 @@ function updateBuyerSelectionHint(){
   if(selected.length===0){h.innerHTML=`<span style="color:var(--amber)">No buyers selected</span>`}
   else if(selected.length===1){h.textContent=`1 buyer selected of ${boxes.length}`}
   else{h.textContent=`${selected.length} buyers selected of ${boxes.length} — will create ${selected.length} invoices`}
+  syncSplitAvailability();
+}
+
+// ── Split mode: divide ONE buyer's lots across several invoices ────
+// Cache of the currently loaded buyer's eligible lots. Each lot carries a
+// transient `_grp` (1..N) assigning it to one of the split invoices.
+let _splitLots = [];
+let _splitBuyer = '';
+
+// Split needs exactly one buyer ticked. Any other count disables + resets
+// the toggle so the panel can't get out of sync with the buyer selection.
+function syncSplitAvailability(){
+  const list=document.getElementById('gi-buyer-list');
+  const toggle=document.getElementById('gi-split-toggle');
+  const lock=document.getElementById('gi-split-lock');
+  const row=document.getElementById('gi-split-toggle-row');
+  if(!toggle)return;
+  const selected=list?list.querySelectorAll('.gi-cb:checked'):[];
+  const one=selected.length===1;
+  toggle.disabled=!one;
+  if(row)row.style.opacity=one?'1':'.5';
+  if(lock)lock.textContent=one?'':'— select exactly one buyer';
+  if(!one && toggle.checked){ toggle.checked=false; toggleSplitMode(); }
+  // If the panel is open and the selected buyer changed, reload its lots.
+  else if(one && toggle.checked){
+    const cb=list.querySelector('.gi-cb:checked');
+    if(cb && cb.value!==_splitBuyer) loadSplitLots();
+  }
+}
+
+async function toggleSplitMode(){
+  const on=!!document.getElementById('gi-split-toggle')?.checked;
+  const panel=document.getElementById('gi-split-panel');
+  if(panel)panel.style.display=on?'block':'none';
+  if(on) await loadSplitLots();
+}
+
+function splitGroupCount(){
+  const v=parseInt(document.getElementById('gi-split-count')?.value,10);
+  return (!v||v<2)?2:Math.min(v,20);
+}
+
+async function loadSplitLots(){
+  const aid=document.getElementById('inv-auction').value;
+  const list=document.getElementById('gi-buyer-list');
+  const cb=list?list.querySelector('.gi-cb:checked'):null;
+  const box=document.getElementById('gi-split-lots');
+  if(!aid||!cb||!box)return;
+  _splitBuyer=cb.value;
+  box.innerHTML='<div style="color:var(--text3);font-size:12px;padding:10px;text-align:center">Loading lots…</div>';
+  try{
+    const rows=await j(`/api/lots/${aid}?buyer=${encodeURIComponent(_splitBuyer)}`);
+    const arr=Array.isArray(rows)?rows:(rows&&rows.rows?rows.rows:[]);
+    // Eligible for a fresh sales invoice: priced, not reserved, and not yet
+    // invoiced (or holding only an ASP invoice — mirrors the buyer picker's
+    // eligibility so counts agree).
+    _splitLots=arr.filter(l=>Number(l.amount)>0
+      && Number(l.reserved)!==1
+      && (!l.invo || (l.asp_invo && String(l.invo)===String(l.asp_invo)))
+    ).sort((a,b)=>String(a.lot_no).localeCompare(String(b.lot_no),undefined,{numeric:true}));
+    renderSplitLots();
+  }catch(e){box.innerHTML=`<div style="color:var(--spice-chili);font-size:12px;padding:10px;text-align:center">Failed to load lots: ${esc(e.message||e)}</div>`}
+}
+
+function renderSplitLots(){
+  const box=document.getElementById('gi-split-lots');
+  const sum=document.getElementById('gi-split-summary');
+  if(!box)return;
+  if(!_splitLots.length){
+    box.innerHTML='<div style="color:var(--amber);font-size:12px;padding:10px;text-align:center">No un-invoiced lots to split for this buyer.</div>';
+    if(sum)sum.innerHTML='';
+    return;
+  }
+  const n=splitGroupCount();
+  const opt=(sel)=>Array.from({length:n},(_,i)=>`<option value="${i+1}"${sel===i+1?' selected':''}>${i+1}</option>`).join('');
+  box.innerHTML=_splitLots.map((l,idx)=>{
+    const g=(l._grp&&l._grp<=n)?l._grp:1; l._grp=g;
+    return `<label style="display:flex;align-items:center;gap:8px;padding:4px 8px;font-size:12px;border-bottom:1px solid var(--border)">
+      <span style="flex:1"><strong>${esc(l.lot_no)}</strong>${l.grade?` <span style="color:var(--text3)">${esc(l.grade)}</span>`:''}</span>
+      <span style="color:var(--text2);white-space:nowrap">${fmtI(Number(l.qty||0),1)}kg · ₹${fmtI(Number(l.amount||0),2)}</span>
+      <select class="gi-split-sel" data-idx="${idx}" onchange="onSplitGroupChange(this)" style="width:56px;padding:2px">${opt(g)}</select>
+    </label>`;
+  }).join('');
+  updateSplitSummary();
+}
+
+function onSplitGroupChange(sel){
+  const idx=parseInt(sel.dataset.idx,10);
+  if(_splitLots[idx])_splitLots[idx]._grp=parseInt(sel.value,10);
+  updateSplitSummary();
+}
+
+// Re-render when N changes, clamping any assignment above the new count.
+function rebuildSplitGroupOptions(){
+  const n=splitGroupCount();
+  _splitLots.forEach(l=>{ if(!l._grp||l._grp>n)l._grp=Math.min(l._grp||1,n); });
+  renderSplitLots();
+}
+
+// Split lots into N contiguous blocks by lot order (keeps consecutive lot
+// numbers together on the same invoice, which is what users expect).
+function distributeSplitEvenly(){
+  const n=splitGroupCount();
+  const total=_splitLots.length;
+  const per=Math.max(1,Math.ceil(total/n));
+  _splitLots.forEach((l,i)=>{ l._grp=Math.min(n,Math.floor(i/per)+1); });
+  renderSplitLots();
+}
+
+function updateSplitSummary(){
+  const el=document.getElementById('gi-split-summary');if(!el)return;
+  const n=splitGroupCount();
+  const groups=Array.from({length:n},()=>({lots:0,amt:0}));
+  _splitLots.forEach(l=>{const g=(l._grp||1)-1;if(groups[g]){groups[g].lots++;groups[g].amt+=Number(l.amount||0);}});
+  const empties=groups.filter(g=>g.lots===0).length;
+  const parts=groups.map((g,i)=>`Inv ${i+1}: <strong>${g.lots}</strong> lot(s) · ₹${fmtI(g.amt,2)}`).join(' &nbsp;|&nbsp; ');
+  el.innerHTML=parts+(empties?`<div style="color:var(--amber);margin-top:4px">⚠ ${empties} invoice(s) have no lots and will be skipped.</div>`:'');
+}
+
+// Split-mode generation: one buyer, several invoices. Loops the normal
+// single-invoice endpoint once per non-empty group, passing that group's
+// lotNos and a sequential invoice number.
+async function generateInvoiceSplit(aid,saleType,startInvNo,noTI,buyerCode){
+  const n=splitGroupCount();
+  const groups=[];
+  for(let i=1;i<=n;i++){
+    const lotNos=_splitLots.filter(l=>(l._grp||1)===i).map(l=>String(l.lot_no));
+    if(lotNos.length)groups.push(lotNos);
+  }
+  if(!groups.length){alert('Assign at least one lot to an invoice first');return}
+  if(groups.length===1 && !confirm('All lots are in a single group — this creates one normal invoice. Continue?'))return;
+  const lastNo=startInvNo+groups.length-1;
+  if(!confirm(`Split ${buyerCode}'s lots into ${groups.length} invoice(s), numbered ${startInvNo}–${lastNo}?`))return;
+  const results={success:[],failed:[]};
+  try{
+    await withOverlay(`Generating ${groups.length} invoices…`, async () => {
+      for(let i=0;i<groups.length;i++){
+        const invNo=String(startInvNo+i);
+        try{
+          const r=await fetch(B+`/api/invoices/generate/${aid}`,{
+            method:'POST',
+            headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},
+            body:JSON.stringify({saleType,buyerCode,invoiceNo:invNo,noTI,lotNos:groups[i]})});
+          const d=await r.json();
+          if(!r.ok)throw new Error(d.error||'Generation failed');
+          results.success.push({invNo,total:Number(d.invoice.grandTotal)});
+        }catch(err){
+          results.failed.push({invNo,error:err.message||String(err)});
+        }
+      }
+    });
+    hideModal('gen-inv-modal');
+    const okN=results.success.length, failN=results.failed.length;
+    const totalSum=results.success.reduce((a,r)=>a+r.total,0);
+    if(failN===0){
+      toast(`✓ ${okN} invoice${okN===1?'':'s'} generated — Total: ₹${fmtI(totalSum,2)}`);
+    }else{
+      const failLines=results.failed.map(f=>`• Inv#${f.invNo}: ${f.error}`).join('\n');
+      alert(`Done — ${okN} ok, ${failN} failed.\n\nFailures:\n${failLines}`);
+    }
+    await loadInvoices();
+    refreshGenGate('invoices');
+  }catch(e){showError(e)}
 }
 
 async function loadPurEligibleSellers(){
@@ -20732,6 +20920,10 @@ async function suggestDocNo(aid,module,inputId,sale,force){
 function openGenInvModal(){
   if(!document.getElementById('inv-auction').value){alert('Select an auction first');return}
   const noti=document.getElementById('gi-no-ti'); if(noti) noti.checked=false;
+  // Reset split mode so a fresh open never inherits a prior buyer's panel.
+  const st=document.getElementById('gi-split-toggle'); if(st){st.checked=false;st.disabled=true;}
+  const sp=document.getElementById('gi-split-panel'); if(sp)sp.style.display='none';
+  _splitLots=[]; _splitBuyer='';
   loadInvEligibleBuyers();showModal('gen-inv-modal');
   suggestDocNo(document.getElementById('inv-auction').value,'invoices','gi-invno',document.getElementById('gi-sale')?.value||'',true);
 }
@@ -22912,6 +23104,13 @@ async function generateInvoice(){
   const checked=Array.from(list?.querySelectorAll('.gi-cb:checked')||[]);
   if(!checked.length){alert('Select at least one buyer');return}
   const buyers=checked.map(cb=>cb.value);
+
+  // Split mode: one buyer → several invoices (see generateInvoiceSplit).
+  const splitToggle=document.getElementById('gi-split-toggle');
+  if(splitToggle && splitToggle.checked && !splitToggle.disabled){
+    if(buyers.length!==1){alert('Split mode needs exactly one buyer selected');return}
+    return generateInvoiceSplit(aid,saleType,startInvNo,noTI,buyers[0]);
+  }
 
   // Single buyer: keep old behavior (immediate feedback, quick)
   if(buyers.length===1){

@@ -6940,6 +6940,12 @@ app.post('/api/invoices/generate/:auctionId',
   // Per-invoice "No Transport & Insurance" — when set, this invoice is
   // generated with transport + insurance forced to 0.
   const noTI = (req.body.noTI === true || String(req.body.noTI || '').toLowerCase() === 'true' || Number(req.body.noTI) === 1) ? 1 : 0;
+  // Optional lot subset — when the Generate modal is in "split" mode, only
+  // these lot numbers go on this invoice (one buyer → several invoices).
+  // Absent/empty means "all of the buyer's lots" (the default behaviour).
+  const lotNos = Array.isArray(req.body.lotNos)
+    ? req.body.lotNos.map(x => String(x)).filter(x => x.trim() !== '')
+    : null;
 
   if (!saleType || !buyerCode || !invoiceNo) {
     return res.status(400).json({ error: 'saleType, buyerCode, and invoiceNo are required' });
@@ -6953,8 +6959,10 @@ app.post('/api/invoices/generate/:auctionId',
       [c.pqty,c.prate,c.puramt,c.com,c.sertax,c.cgst,c.sgst,c.igst,c.advance,c.balance,c.bilamt,c.refund||0,c.refud||0,c.isp_pqty||0,c.isp_prate||0,c.isp_puramt||0,c.asp_pqty||0,c.asp_prate||0,c.asp_puramt||0,lot.id]);
   }
 
-  const invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, saleType, cfg, { noTI });
-  if (!invoice) return res.status(404).json({ error: `No lots found for buyer "${buyerCode}" in this auction. Make sure lots have this buyer code assigned.` });
+  const invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, saleType, cfg, { noTI, lotNos });
+  if (!invoice) return res.status(404).json({ error: lotNos && lotNos.length
+    ? `None of the selected lots are available for buyer "${buyerCode}" (already invoiced, reserved, or unpriced).`
+    : `No lots found for buyer "${buyerCode}" in this auction. Make sure lots have this buyer code assigned.` });
 
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [req.params.auctionId]);
   const s = invoice.summary;
