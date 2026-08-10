@@ -6959,7 +6959,7 @@ app.post('/api/invoices/generate/:auctionId',
       [c.pqty,c.prate,c.puramt,c.com,c.sertax,c.cgst,c.sgst,c.igst,c.advance,c.balance,c.bilamt,c.refund||0,c.refud||0,c.isp_pqty||0,c.isp_prate||0,c.isp_puramt||0,c.asp_pqty||0,c.asp_prate||0,c.asp_puramt||0,lot.id]);
   }
 
-  const invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, saleType, cfg, { noTI, lotNos });
+  const invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, saleType, cfg, { noTI, lotNos, excludeInvoiced: true });
   if (!invoice) return res.status(404).json({ error: lotNos && lotNos.length
     ? `None of the selected lots are available for buyer "${buyerCode}" (already invoiced, reserved, or unpriced).`
     : `No lots found for buyer "${buyerCode}" in this auction. Make sure lots have this buyer code assigned.` });
@@ -7198,7 +7198,7 @@ app.post('/api/invoices/generate-all/:auctionId',
   for (const row of buyers) {
     const useSaleType = saleType || row.default_sale || 'L';
     try {
-      const invoice = buildSalesInvoice(db, req.params.auctionId, row.buyer, useSaleType, cfg, { noTI });
+      const invoice = buildSalesInvoice(db, req.params.auctionId, row.buyer, useSaleType, cfg, { noTI, excludeInvoiced: true });
       if (!invoice) { errors.push({ buyer: row.buyer, error: 'No matching lots' }); continue; }
       const s = invoice.summary;
       const invoNo = String(nextNo);
@@ -7303,6 +7303,22 @@ app.put('/api/invoices/:id', requireInvoiceWrite, (req, res) => {
   res.json({ success: true });
 });
 
+// Lot numbers belonging to ONE stored sales invoice. Split invoices share a
+// (buyer, sale) with their siblings, so every rebuild/reprint/Tally path must
+// scope to the lots actually stamped with THIS invoice's number — otherwise a
+// split invoice would recompute against the buyer's entire lot set. For a
+// whole-buyer invoice this returns all its lots, so behaviour there is
+// unchanged. Returns [] when the invoice's lots have been freed (reverted);
+// buildSalesInvoice then yields null and callers fall back to the stored row.
+function invoiceLotNos(db, inv) {
+  if (!inv || !inv.auction_id) return null;
+  const rows = db.all(
+    `SELECT lot_no FROM lots WHERE auction_id=? AND buyer=? AND invo=?`,
+    [inv.auction_id, inv.buyer, String(inv.invo)]
+  );
+  return rows.map(r => String(r.lot_no));
+}
+
 // Toggle "No Transport & Insurance" on an existing sales invoice.
 // Recomputes the invoice (transport, insurance, GST, round, total) with
 // the new flag and persists the financial columns + no_ti so the list,
@@ -7321,7 +7337,7 @@ app.post('/api/invoices/:id/no-ti', requireInvoiceWrite, (req, res) => {
   // carry this (auction, buyer, sale) — they do unless the invoice was
   // reverted, in which case there's nothing to recompute.
   const rebuilt = inv.auction_id
-    ? buildSalesInvoice(db, inv.auction_id, inv.buyer, inv.sale, cfg, { noTI: value })
+    ? buildSalesInvoice(db, inv.auction_id, inv.buyer, inv.sale, cfg, { noTI: value, lotNos: invoiceLotNos(db, inv) })
     : null;
   if (!rebuilt) {
     return res.status(409).json({ error: 'Cannot recompute this invoice — its lots are no longer available. Revert and regenerate instead.' });
@@ -7459,7 +7475,7 @@ app.get('/api/invoices/pdf/:id', requireView, async (req, res) => {
 
     // Try to rebuild fresh from lots (gives line-item detail), fall back to stored summary
     let invoice = stored.auction_id
-      ? buildSalesInvoice(db, stored.auction_id, stored.buyer, stored.sale, cfg, { noTI: stored.no_ti })
+      ? buildSalesInvoice(db, stored.auction_id, stored.buyer, stored.sale, cfg, { noTI: stored.no_ti, lotNos: invoiceLotNos(db, stored) })
       : null;
 
     // Defensive: even when lots exist, if buyer lookup missed, enrich from stored invoice fields
@@ -7582,7 +7598,7 @@ app.get('/api/invoices/purchase-pdf/:id', requireView, async (req, res) => {
 
     // Same enrichment pattern as the sales-invoice endpoint
     let invoice = stored.auction_id
-      ? buildSalesInvoice(db, stored.auction_id, stored.buyer, stored.sale, cfg, { noTI: stored.no_ti })
+      ? buildSalesInvoice(db, stored.auction_id, stored.buyer, stored.sale, cfg, { noTI: stored.no_ti, lotNos: invoiceLotNos(db, stored) })
       : null;
 
     const enrichBuyer = (buyer) => {
@@ -7679,7 +7695,7 @@ app.post('/api/invoices/pdf-bulk', requireView, async (req, res) => {
       const stored = db.get('SELECT * FROM invoices WHERE id=?', [id]);
       if (!stored) continue; // silently skip missing IDs
       let invoice = stored.auction_id
-        ? buildSalesInvoice(db, stored.auction_id, stored.buyer, stored.sale, cfg, { noTI: stored.no_ti })
+        ? buildSalesInvoice(db, stored.auction_id, stored.buyer, stored.sale, cfg, { noTI: stored.no_ti, lotNos: invoiceLotNos(db, stored) })
         : null;
       if (invoice) {
         invoice.buyer = enrichBuyer(invoice.buyer, stored);
@@ -7787,7 +7803,7 @@ app.post('/api/invoices/purchase-pdf-bulk', requireView, async (req, res) => {
       const stored = db.get('SELECT * FROM invoices WHERE id=?', [id]);
       if (!stored) continue;
       let invoice = stored.auction_id
-        ? buildSalesInvoice(db, stored.auction_id, stored.buyer, stored.sale, cfg, { noTI: stored.no_ti })
+        ? buildSalesInvoice(db, stored.auction_id, stored.buyer, stored.sale, cfg, { noTI: stored.no_ti, lotNos: invoiceLotNos(db, stored) })
         : null;
       if (invoice) {
         invoice.buyer = enrichBuyer(invoice.buyer, stored);
@@ -10902,7 +10918,12 @@ app.post('/api/invoices/preview/:auctionId', requireView, (req, res) => {
   const db = getDb(); const cfg = getSettingsFlat(db);
   const { saleType, buyerCode, type } = req.body;
   const noTI = (req.body.noTI === true || String(req.body.noTI || '').toLowerCase() === 'true' || Number(req.body.noTI) === 1) ? 1 : 0;
-  
+  // Optional lot subset — lets the Generate modal's Quick Preview show a
+  // single split group (the active invoice) rather than the whole buyer.
+  const lotNos = Array.isArray(req.body.lotNos)
+    ? req.body.lotNos.map(x => String(x)).filter(x => x.trim() !== '')
+    : null;
+
   // Auto-calculate any uncalculated lots first (read-only would be better but we need the data)
   const uncalc = db.all(`SELECT * FROM lots WHERE auction_id = ? AND amount > 0 AND (puramt IS NULL OR puramt = 0)`, [req.params.auctionId]);
   for (const lot of uncalc) {
@@ -10918,7 +10939,7 @@ app.post('/api/invoices/preview/:auctionId', requireView, (req, res) => {
     invoice = buildAgriBill(db, req.params.auctionId, buyerCode, cfg);
     if (invoice && invoice.error) return res.status(404).json({ error: invoice.error });
   } else {
-    invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, saleType, cfg, { noTI });
+    invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, saleType, cfg, { noTI, lotNos });
   }
 
   if (!invoice) return res.status(404).json({ error: 'No data found' });

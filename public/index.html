@@ -2412,6 +2412,29 @@ body[data-comfort="1"] #comfort-toggle-label::after{content:'\2191';margin-left:
 }
 body[data-comfort="1"] .le-lot-chip{min-width:48px;height:34px;font-size:13px}
 
+/* ── Split-invoice chips ──────────────────────────────────────────
+   Same chip language as Lot Entry, reused in the Generate Sales
+   Invoice modal to split ONE buyer's lots across several invoices.
+   Each chip is coloured by the invoice ("bucket") its lot is assigned
+   to; clicking a chip drops that lot into the active bucket. */
+.gi-split-chip{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:44px;height:30px;padding:0 8px;margin:2px;
+  border-radius:6px;font-size:11px;font-weight:700;font-family:monospace;
+  cursor:pointer;user-select:none;border:1px solid transparent;transition:all .12s;
+}
+.gi-split-chip:hover{transform:translateY(-1px);box-shadow:0 1px 3px rgba(0,0,0,.18);filter:brightness(.97)}
+body[data-comfort="1"] .gi-split-chip{min-width:50px;height:34px;font-size:13px}
+/* Bucket pills — one per split invoice; the active one takes new clicks. */
+.gi-split-bucket{
+  display:inline-flex;align-items:center;gap:6px;padding:5px 11px;
+  border-radius:14px;font-size:12px;font-weight:600;cursor:pointer;
+  border:1px solid var(--border);background:var(--bg);user-select:none;transition:all .12s;
+}
+.gi-split-bucket:hover{border-color:var(--green)}
+.gi-split-bucket.active{box-shadow:0 0 0 2px var(--green);border-color:var(--green)}
+.gi-split-bucket .dot{width:11px;height:11px;border-radius:50%;flex:none}
+
 /* ── Lot-entry collapsible sections ───────────────────────────────
    Each major card on the Lot Entry screen gets a clickable header bar
    with a rotating chevron; clicking it collapses the body. Collapsed
@@ -6477,16 +6500,19 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     </label>
   </div>
   <div id="gi-split-panel" style="display:none;border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px;background:var(--card,var(--bg))">
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
       <label style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px">
         Number of invoices
-        <input id="gi-split-count" type="number" min="2" max="20" value="2" style="width:60px" onchange="rebuildSplitGroupOptions()">
+        <input id="gi-split-count" type="number" min="2" max="10" value="2" style="width:56px" onchange="rebuildSplitGroupOptions()">
       </label>
       <button type="button" class="btn btn-o" style="padding:3px 10px;font-size:12px" onclick="distributeSplitEvenly()">Distribute evenly</button>
-      <span style="font-size:11px;color:var(--text3)">Set the invoice # (1&ndash;N) for each lot</span>
+      <span style="font-size:11px;color:var(--text3)">Pick an invoice, then click lots to add them to it</span>
     </div>
-    <div id="gi-split-lots" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:6px">
-      <div style="color:var(--text3);font-size:12px;padding:10px;text-align:center">Loading lots&hellip;</div>
+    <!-- Bucket pills: one per split invoice. The active pill takes clicks. -->
+    <div id="gi-split-buckets" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
+    <!-- Lot chip grid — coloured by the invoice each lot belongs to. -->
+    <div id="gi-split-lots" class="le-lot-grid-host" style="max-height:200px">
+      <div class="le-lot-grid-empty">Loading lots&hellip;</div>
     </div>
     <div id="gi-split-summary" style="font-size:12px;color:var(--text2);padding:6px 2px 0"></div>
   </div>
@@ -20721,8 +20747,25 @@ function updateBuyerSelectionHint(){
 // ── Split mode: divide ONE buyer's lots across several invoices ────
 // Cache of the currently loaded buyer's eligible lots. Each lot carries a
 // transient `_grp` (1..N) assigning it to one of the split invoices.
+// `_splitActive` is the "bucket" that receives the next chip click.
 let _splitLots = [];
 let _splitBuyer = '';
+let _splitActive = 1;
+// Distinct colours per split invoice (bucket). Beyond 10 invoices colours
+// repeat — well past any realistic split.
+const SPLIT_COLORS = [
+  { bg:'#DBEAFE', fg:'#1E40AF', dot:'#3B82F6' }, // blue
+  { bg:'#DCFCE7', fg:'#166534', dot:'#22C55E' }, // green
+  { bg:'#FEF3C7', fg:'#92400E', dot:'#F59E0B' }, // amber
+  { bg:'#FCE7F3', fg:'#9D174D', dot:'#EC4899' }, // pink
+  { bg:'#EDE9FE', fg:'#5B21B6', dot:'#8B5CF6' }, // violet
+  { bg:'#CCFBF1', fg:'#115E59', dot:'#14B8A6' }, // teal
+  { bg:'#FFE4E6', fg:'#9F1239', dot:'#F43F5E' }, // rose
+  { bg:'#FEF9C3', fg:'#854D0E', dot:'#CA8A04' }, // yellow
+  { bg:'#E0E7FF', fg:'#3730A3', dot:'#6366F1' }, // indigo
+  { bg:'#F1F5F9', fg:'#334155', dot:'#64748B' }, // slate
+];
+function splitColor(g){ return SPLIT_COLORS[((g||1)-1) % SPLIT_COLORS.length]; }
 
 // Split needs exactly one buyer ticked. Any other count disables + resets
 // the toggle so the panel can't get out of sync with the buyer selection.
@@ -20749,12 +20792,12 @@ async function toggleSplitMode(){
   const on=!!document.getElementById('gi-split-toggle')?.checked;
   const panel=document.getElementById('gi-split-panel');
   if(panel)panel.style.display=on?'block':'none';
-  if(on) await loadSplitLots();
+  if(on){ _splitActive=1; await loadSplitLots(); }
 }
 
 function splitGroupCount(){
   const v=parseInt(document.getElementById('gi-split-count')?.value,10);
-  return (!v||v<2)?2:Math.min(v,20);
+  return (!v||v<2)?2:Math.min(v,10);
 }
 
 async function loadSplitLots(){
@@ -20781,35 +20824,55 @@ async function loadSplitLots(){
 
 function renderSplitLots(){
   const box=document.getElementById('gi-split-lots');
+  const buckets=document.getElementById('gi-split-buckets');
   const sum=document.getElementById('gi-split-summary');
   if(!box)return;
   if(!_splitLots.length){
-    box.innerHTML='<div style="color:var(--amber);font-size:12px;padding:10px;text-align:center">No un-invoiced lots to split for this buyer.</div>';
+    box.innerHTML='<div class="le-lot-grid-empty">No un-invoiced lots to split for this buyer.</div>';
+    if(buckets)buckets.innerHTML='';
     if(sum)sum.innerHTML='';
     return;
   }
   const n=splitGroupCount();
-  const opt=(sel)=>Array.from({length:n},(_,i)=>`<option value="${i+1}"${sel===i+1?' selected':''}>${i+1}</option>`).join('');
-  box.innerHTML=_splitLots.map((l,idx)=>{
+  if(_splitActive>n)_splitActive=n;
+  // Tally per-bucket lot count + amount while normalising each lot's group.
+  const stats=Array.from({length:n},()=>({lots:0,amt:0}));
+  _splitLots.forEach(l=>{
     const g=(l._grp&&l._grp<=n)?l._grp:1; l._grp=g;
-    return `<label style="display:flex;align-items:center;gap:8px;padding:4px 8px;font-size:12px;border-bottom:1px solid var(--border)">
-      <span style="flex:1"><strong>${esc(l.lot_no)}</strong>${l.grade?` <span style="color:var(--text3)">${esc(l.grade)}</span>`:''}</span>
-      <span style="color:var(--text2);white-space:nowrap">${fmtI(Number(l.qty||0),1)}kg · ₹${fmtI(Number(l.amount||0),2)}</span>
-      <select class="gi-split-sel" data-idx="${idx}" onchange="onSplitGroupChange(this)" style="width:56px;padding:2px">${opt(g)}</select>
-    </label>`;
+    stats[g-1].lots++; stats[g-1].amt+=Number(l.amount||0);
+  });
+  // Bucket pills — click to make one active (receives subsequent chip clicks).
+  if(buckets){
+    buckets.innerHTML=stats.map((s,i)=>{
+      const g=i+1, c=splitColor(g);
+      return `<span class="gi-split-bucket${g===_splitActive?' active':''}" onclick="setSplitActive(${g})" title="Click, then click lots to add them to Invoice ${g}">
+        <span class="dot" style="background:${c.dot}"></span>Invoice ${g}
+        <span style="color:var(--text3);font-weight:500">${s.lots} · ₹${fmtI(s.amt,0)}</span></span>`;
+    }).join('');
+  }
+  // Lot chips — coloured by assigned invoice; click drops the lot in the active one.
+  box.innerHTML=_splitLots.map((l,idx)=>{
+    const c=splitColor(l._grp);
+    return `<span class="gi-split-chip" data-idx="${idx}" onclick="assignSplitChip(${idx})"
+      title="Lot ${esc(l.lot_no)}${l.grade?' · '+esc(l.grade):''} · ${fmtI(Number(l.qty||0),1)}kg · ₹${fmtI(Number(l.amount||0),2)} → Invoice ${l._grp}"
+      style="background:${c.bg};color:${c.fg};border-color:${c.dot}">${esc(l.lot_no)}</span>`;
   }).join('');
   updateSplitSummary();
 }
 
-function onSplitGroupChange(sel){
-  const idx=parseInt(sel.dataset.idx,10);
-  if(_splitLots[idx])_splitLots[idx]._grp=parseInt(sel.value,10);
-  updateSplitSummary();
+// Make a bucket active so subsequent chip clicks land in it.
+function setSplitActive(g){ _splitActive=g; renderSplitLots(); }
+
+// Drop a lot into the active invoice bucket.
+function assignSplitChip(idx){
+  if(_splitLots[idx]) _splitLots[idx]._grp=_splitActive;
+  renderSplitLots();
 }
 
 // Re-render when N changes, clamping any assignment above the new count.
 function rebuildSplitGroupOptions(){
   const n=splitGroupCount();
+  if(_splitActive>n)_splitActive=n;
   _splitLots.forEach(l=>{ if(!l._grp||l._grp>n)l._grp=Math.min(l._grp||1,n); });
   renderSplitLots();
 }
@@ -20824,14 +20887,17 @@ function distributeSplitEvenly(){
   renderSplitLots();
 }
 
+// Per-bucket totals live on the pills now; the summary line only flags
+// empty invoices (they'll be skipped) so nothing silently disappears.
 function updateSplitSummary(){
   const el=document.getElementById('gi-split-summary');if(!el)return;
   const n=splitGroupCount();
-  const groups=Array.from({length:n},()=>({lots:0,amt:0}));
-  _splitLots.forEach(l=>{const g=(l._grp||1)-1;if(groups[g]){groups[g].lots++;groups[g].amt+=Number(l.amount||0);}});
-  const empties=groups.filter(g=>g.lots===0).length;
-  const parts=groups.map((g,i)=>`Inv ${i+1}: <strong>${g.lots}</strong> lot(s) · ₹${fmtI(g.amt,2)}`).join(' &nbsp;|&nbsp; ');
-  el.innerHTML=parts+(empties?`<div style="color:var(--amber);margin-top:4px">⚠ ${empties} invoice(s) have no lots and will be skipped.</div>`:'');
+  const counts=Array.from({length:n},()=>0);
+  _splitLots.forEach(l=>{const g=(l._grp||1);if(g>=1&&g<=n)counts[g-1]++;});
+  const empties=counts.filter(c=>c===0).length;
+  el.innerHTML=empties
+    ? `<span style="color:var(--amber)">⚠ ${empties} invoice(s) have no lots and will be skipped — ${n-empties} will be created.</span>`
+    : `<span style="color:var(--text3)">${n} invoice(s) will be created.</span>`;
 }
 
 // Split-mode generation: one buyer, several invoices. Loops the normal
@@ -20923,7 +20989,7 @@ function openGenInvModal(){
   // Reset split mode so a fresh open never inherits a prior buyer's panel.
   const st=document.getElementById('gi-split-toggle'); if(st){st.checked=false;st.disabled=true;}
   const sp=document.getElementById('gi-split-panel'); if(sp)sp.style.display='none';
-  _splitLots=[]; _splitBuyer='';
+  _splitLots=[]; _splitBuyer=''; _splitActive=1;
   loadInvEligibleBuyers();showModal('gen-inv-modal');
   suggestDocNo(document.getElementById('inv-auction').value,'invoices','gi-invno',document.getElementById('gi-sale')?.value||'',true);
 }
@@ -28357,6 +28423,14 @@ async function previewInvoice(type){
       if(!confirm(`Preview shows ONE buyer at a time. Showing "${checked[0].value}".\n\nContinue?`))return;
     }
     body={saleType:document.getElementById('gi-sale').value,buyerCode:checked[0].value,type:'sales',noTI:!!document.getElementById('gi-no-ti')?.checked};
+    // Split mode: preview the ACTIVE invoice bucket's lots only, not the
+    // whole buyer — so Quick Preview matches what that split invoice will be.
+    const st=document.getElementById('gi-split-toggle');
+    if(st && st.checked && !st.disabled){
+      const lotNos=_splitLots.filter(l=>(l._grp||1)===_splitActive).map(l=>String(l.lot_no));
+      if(!lotNos.length){alert(`Invoice ${_splitActive} has no lots yet — add some, or pick another invoice.`);return}
+      body.lotNos=lotNos;
+    }
   }else if(type==='purchase'){
     aid=document.getElementById('pur-auction').value;
     body={buyerCode:document.getElementById('gp-seller').value.trim(),type:'purchase'};

@@ -340,6 +340,10 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg, opts) {
   const lotNos = (opts && Array.isArray(opts.lotNos))
     ? opts.lotNos.map(x => String(x)).filter(x => x.trim() !== '')
     : null;
+  // An explicitly-provided but empty subset means "these zero lots" — return
+  // no invoice rather than silently falling back to the whole buyer. (When
+  // lotNos is absent entirely, lotNos is null and the full-buyer path runs.)
+  if (lotNos && lotNos.length === 0) return null;
   // Get all lots for this buyer in this auction that have amounts
   // Don't filter by sale — we're ASSIGNING the sale type now
   const params = [auctionId, buyerCode, saleType];
@@ -348,10 +352,26 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg, opts) {
     lotFilter = ` AND lot_no IN (${lotNos.map(() => '?').join(',')})`;
     params.push(...lotNos);
   }
+  // Double-invoice guard (opt-in). Generation callers pass excludeInvoiced so
+  // a lot that already carries a sales invoice can't be pulled onto a second
+  // one. State-aware, mirroring the eligible-buyers rule so it never hides a
+  // lot that legitimately still needs invoicing:
+  //   - Kerala (ASP): eligible only when `invo` is empty.
+  //   - Tamil Nadu (ISP): also eligible when the only invoice on the lot is
+  //     its ASP one (invo == asp_invo) — that lot still needs its ISP invoice.
+  // Reprint / no-TI-toggle / preview-of-existing callers DON'T pass the flag,
+  // so they keep rebuilding from lots that already hold an invoice number.
+  let invoFilter = '';
+  if (opts && opts.excludeInvoiced) {
+    const isASPState = String(cfg.business_state || '').toUpperCase() === 'KERALA';
+    invoFilter = isASPState
+      ? ` AND (invo IS NULL OR invo = '')`
+      : ` AND (invo IS NULL OR invo = '' OR (asp_invo IS NOT NULL AND asp_invo != '' AND invo = asp_invo))`;
+  }
   const lots = db.all(
     `SELECT * FROM lots WHERE auction_id = ? AND buyer = ? AND amount > 0
      AND (reserved IS NULL OR reserved = 0)
-     AND (sale IS NULL OR sale = '' OR sale = ?)${lotFilter} ORDER BY lot_no`,
+     AND (sale IS NULL OR sale = '' OR sale = ?)${lotFilter}${invoFilter} ORDER BY lot_no`,
     params
   );
   
