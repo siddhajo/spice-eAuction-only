@@ -27994,7 +27994,9 @@ function regColumns(type){
     { key:'refund', label:'Refund', sort:'number', numeric:true, fmt:regFmtNum(2) },
     { key:'commission', label:'Commission', sort:'number', numeric:true, fmt:regFmtNum(2) },
     { key:'gst', label:'GST', sort:'number', numeric:true, fmt:regFmtNum(2) },
-    { key:'billamount', label:'Bill Amount', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    // Bill Amount rounded to the nearest rupee (per-row and the per-pooler
+    // total) — matches the whole-rupee figure on the Pooler Certificate.
+    { key:'billamount', label:'Bill Amount', sort:'number', numeric:true, fmt:regFmtNum(0) },
   ];
   if (type === 'seller') return [
     { key:'party', label:'Seller', sort:'text' },

@@ -51,6 +51,26 @@ function gstinStateCode(cr) {
   return s.substring(0, 2);
 }
 
+// ── Sale type (L / I) derivation — SINGLE SOURCE OF TRUTH ────────────────
+// The sale type on a sales transaction is a function of the BUYER's GST state
+// vs the company's business state:
+//   buyer GSTIN state == company state → 'L' (Local / intra-state)
+//   buyer GSTIN state != company state → 'I' (Inter-state)
+//   no / invalid GSTIN                 → '' (unknown — caller may default to 'L')
+// Export ('E') is a manual classification that cannot be inferred from a GSTIN,
+// so every caller PREFERS an explicit non-blank stored value and only falls
+// back to this derivation when the stored value is blank. This mirrors the
+// Buyers-tab live derivation in the UI so every surface (generation, import,
+// reports, backfill) agrees. Company state code follows the same fixed mapping
+// the UI uses: KERALA → 32, otherwise (Tamil Nadu) → 33.
+function deriveSaleType(gstin, cfg) {
+  const buyerState = gstinStateCode(gstin);
+  if (!buyerState) return '';
+  const biz = String((cfg && cfg.business_state) || '').toUpperCase();
+  const companyState = biz === 'KERALA' ? '32' : '33';
+  return buyerState === companyState ? 'L' : 'I';
+}
+
 // ── Seller party grade (Grade 1 planter vs Grade 2 registered dealer) ────
 // SINGLE SOURCE OF TRUTH. A seller is GRADE 2 (registered dealer — eligible for
 // a Purchase Invoice, dealer settlement terms, RD-purchase treatment) iff:
@@ -1528,6 +1548,7 @@ module.exports = {
   getMerchantRegister,
   listRegisterParties,
   gstinStateCode,
+  deriveSaleType,
   isDealerSeller,
   dealerSql,
   hasValidGstin,

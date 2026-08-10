@@ -8,7 +8,7 @@ const XLSX = require('xlsx');
 const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
 const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates } = require('./company-config');
 const grade2Alerts = require('./grade2-alerts');
-const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getPurchaseJournal, gstinStateCode, isDealerSeller, dealerSql, hasValidGstinSql } = require('./calculations');
+const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 const { amountToWords } = require('./amount-words');
 const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx } = require('./exports');
@@ -1878,6 +1878,32 @@ app.get('/api/gst-lookup/status', requireView, (req, res) => {
   }
 });
 
+// Build the best address line from a gstincheck.co.in `pradr` object.
+// The portal ships TWO representations: a pre-formatted flat string
+// `pradr.adr` (which carries the real door no / building / road) and a
+// structured `pradr.addr` object (which often DROPS those, leaving a
+// junk "0" bno). Prefer the flat string; only reconstruct from parts
+// when it's missing. We then:
+//   • split on commas, trim, drop empties
+//   • collapse consecutive duplicate segments (the portal repeats them,
+//     e.g. "CP/VII/532, CP/VII/532" / "Anakkara, Anakkara")
+//   • strip trailing district / state / PIN segments, since those are
+//     surfaced separately as place/state/pin and shouldn't be doubled
+//     inside the address line.
+function _gstBuildAddress(pradr) {
+  const addr = (pradr && pradr.addr) || {};
+  const flat = (pradr && pradr.adr) || '';
+  let segs = flat
+    ? flat.split(',').map(s => s.trim()).filter(Boolean)
+    : [addr.bno, addr.bnm, addr.st, addr.loc].map(s => (s || '').trim()).filter(Boolean);
+  // Collapse consecutive duplicates (case-insensitive).
+  segs = segs.filter((s, i) => i === 0 || s.toLowerCase() !== segs[i - 1].toLowerCase());
+  // Strip trailing district / state / PIN if they leak into the tail.
+  const tail = new Set([addr.dst, addr.stcd, addr.pncd].map(s => (s || '').trim().toLowerCase()).filter(Boolean));
+  while (segs.length && tail.has(segs[segs.length - 1].toLowerCase())) segs.pop();
+  return segs.join(', ');
+}
+
 app.get('/api/gst-lookup/:gstin', requireView, async (req, res) => {
   const gstin = String(req.params.gstin || '').toUpperCase().trim();
   if (!GSTIN_RE.test(gstin)) {
@@ -1916,7 +1942,7 @@ app.get('/api/gst-lookup/:gstin', requireView, async (req, res) => {
         valid: true, gstin, pan, st_code: stCode,
         name:     d.lgnm || d.tradeNam || '',
         tradeName:d.tradeNam || d.lgnm || '',
-        address:  [addr.bno, addr.bnm, addr.st, addr.loc].filter(Boolean).join(', '),
+        address:  _gstBuildAddress(d.pradr),
         place:    addr.dst || addr.loc || '',
         pin:      addr.pncd || '',
         state:    addr.stcd || state,
@@ -6988,15 +7014,11 @@ app.get('/api/invoices/eligible-buyers/:auctionId', requireView, (req, res) => {
   const cfg = getSettingsFlat(db);
   const params = [req.params.auctionId];
 
-  // Match buyers by sale type via their default (b.sale) when a type is specified.
-  // A buyer is eligible when any of their lots in this auction isn't yet invoiced
-  // for the current state context (so user can always see/regenerate; server
-  // endpoint has stricter filter).
-  let saleClause = '';
-  if (saleType) {
-    saleClause = ` AND (COALESCE(NULLIF(l.sale,''), b.sale, 'L') = ?)`;
-    params.push(saleType);
-  }
+  // Sale-type filtering is applied in JS below against each buyer's EFFECTIVE
+  // sale type (explicit stored value, else derived from GSTIN — see
+  // deriveSaleType), so the generation picker agrees with the Buyers tab and
+  // never shows a blank. No SQL sale clause here.
+  const saleClause = '';
 
   // State-aware eligibility:
   //   - In Kerala (ASP) context: a lot is eligible if no `invo` set yet,
@@ -7016,11 +7038,11 @@ app.get('/api/invoices/eligible-buyers/:auctionId', requireView, (req, res) => {
     ? `(l.invo IS NULL OR l.invo = '')`
     : `(l.invo IS NULL OR l.invo = '' OR (l.asp_invo IS NOT NULL AND l.asp_invo != '' AND l.invo = l.asp_invo))`;
 
-  res.json(db.all(
+  const rows = db.all(
     `SELECT l.buyer, COALESCE(b.buyer1, MAX(l.buyer1), l.buyer) as buyer1,
         b.code as code,
         COUNT(*) as lot_count, SUM(l.qty) as total_qty, SUM(l.amount) as total_amount,
-        b.gstin, b.sale as default_sale
+        b.gstin, b.sale as stored_sale
      FROM lots l
      LEFT JOIN buyers b ON b.buyer = l.buyer
      WHERE l.auction_id = ?
@@ -7030,7 +7052,22 @@ app.get('/api/invoices/eligible-buyers/:auctionId', requireView, (req, res) => {
      HAVING COUNT(CASE WHEN ${eligibleExpr} THEN 1 END) > 0
      ORDER BY l.buyer`,
     params
-  ));
+  );
+  // Effective sale type per buyer: prefer an explicit stored value (which can
+  // be a manual 'E'), else derive L/I from the buyer's GSTIN. This is the same
+  // rule the Buyers tab shows, so the two screens never disagree.
+  const annotated = rows.map(r => {
+    const stored = String(r.stored_sale || '').trim().toUpperCase();
+    const default_sale = stored || deriveSaleType(r.gstin, cfg);
+    const { stored_sale, ...rest } = r;
+    return { ...rest, default_sale };
+  });
+  // When a sale type is requested, keep buyers matching it — plus buyers whose
+  // type is still unknown (blank GSTIN), so they're never hidden from the user.
+  const out = saleType
+    ? annotated.filter(r => !r.default_sale || r.default_sale === saleType)
+    : annotated;
+  res.json(out);
 });
 
 // ── Diagnostic: show EVERYTHING about buyers in an auction ──
@@ -15256,6 +15293,11 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
   // nameCorrected. Stays 0 when the module isn't in IMPORT_DERIVE_RUND
   // or when every row already had a non-zero rund.
   let rundDerived = 0;
+  // Sale-type derivation counter — hoisted like the above. Counts rows whose
+  // blank `sale` was filled by deriving L/I from the buyer's GSTIN, so old
+  // exports without a SALE column still land with a correct sale type. Stays
+  // 0 for modules whose table has no `sale` column.
+  let saleDerived = 0;
   const errors = [];
   // Per-row record of every skipped (duplicate) row so the operator can
   // audit WHAT was skipped and WHY — the plain `skipped` count alone hid
@@ -15357,6 +15399,22 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
       return id;
     };
     const auctionIdSlot = def.fields.indexOf('auction_id');
+
+    // Sale-type derivation: when a module's table has a `sale` column and the
+    // imported row leaves it blank (old exports rarely carry a SALE column),
+    // derive L/I from the BUYER's GSTIN so imported rows match what the app
+    // shows everywhere else. Source of the buyer GSTIN differs per module:
+    //   • invoices — the buyer GSTIN is a field on the row (`gstin`).
+    //   • lots     — the row carries the buyer CODE (`buyer`, NOT the seller's
+    //                `cr`); resolve it to the buyer's GSTIN via a one-time map.
+    const importCfg = getSettingsFlat(db);
+    const saleSlotIdx      = def.fields.indexOf('sale');
+    const saleGstinSlotIdx = def.fields.indexOf('gstin');
+    const saleBuyerSlotIdx = def.fields.indexOf('buyer');
+    const buyerGstinMap = (saleSlotIdx >= 0 && saleGstinSlotIdx < 0 && saleBuyerSlotIdx >= 0)
+      ? new Map(db.all(`SELECT buyer, gstin FROM buyers WHERE COALESCE(buyer,'') <> ''`)
+          .map(b => [String(b.buyer).trim().toUpperCase(), b.gstin || '']))
+      : null;
 
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
@@ -15472,6 +15530,18 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
             }
           }
         }
+        // Derive sale type from the buyer's GSTIN when the row left it blank.
+        // Never overwrite an explicit value (which may be a manual 'E').
+        if (saleSlotIdx >= 0) {
+          const cur = String(values[saleSlotIdx] == null ? '' : values[saleSlotIdx]).trim();
+          if (!cur) {
+            const gstin = saleGstinSlotIdx >= 0
+              ? values[saleGstinSlotIdx]
+              : (buyerGstinMap ? buyerGstinMap.get(String(values[saleBuyerSlotIdx] || '').trim().toUpperCase()) : '');
+            const derivedSale = deriveSaleType(gstin, importCfg);
+            if (derivedSale) { values[saleSlotIdx] = derivedSale; saleDerived++; }
+          }
+        }
         if (def.autoFillAuctionId && auctionIdSlot >= 0) {
           const anoSrc = mapping.ano;
           const anoVal = anoSrc ? r[anoSrc] : '';
@@ -15563,6 +15633,9 @@ app.post('/api/import-old-data/run', requireAdmin, upload.single('file'), (req, 
     // columns because the source file had no rund value. 0 when the
     // module isn't in IMPORT_DERIVE_RUND.
     rundDerived,
+    // Number of rows whose blank sale type was derived from the buyer's
+    // GSTIN (L/I). 0 for modules whose table has no `sale` column.
+    saleDerived,
     errors,
     // Per-row breakdown of every skipped duplicate: { row, keys, reason }.
     // Capped server-side (SKIP_DETAIL_CAP); skippedDetailsTruncated tells
@@ -15777,6 +15850,48 @@ function backfillAuctionIds(db) {
   }
 }
 
+// Fill blank sale types (L/I) on existing rows from the buyer's GSTIN, using
+// the SAME deriveSaleType rule as generation + import so historical data reads
+// consistently across every surface. Idempotent and cheap: only blank rows are
+// scanned, and a row whose GSTIN can't be classified (no / invalid GSTIN, or —
+// for exports — a manual 'E' that is never blank) is simply left untouched, so
+// re-running on each boot is a near-no-op. Export ('E') can't be inferred from
+// a GSTIN, so it is set manually and preserved (it's non-blank).
+function backfillSaleTypes(db) {
+  try {
+    const cfg = getSettingsFlat(db);
+    // buyers.sale / invoices.sale ← the buyer GSTIN stored on the row itself.
+    for (const t of ['buyers', 'invoices']) {
+      const cols = db.all(`PRAGMA table_info(${t})`).map(r => r.name);
+      if (!cols.includes('sale') || !cols.includes('gstin')) continue;
+      let filled = 0;
+      for (const row of db.all(`SELECT id, gstin FROM ${t} WHERE COALESCE(TRIM(sale),'') = ''`)) {
+        const s = deriveSaleType(row.gstin, cfg);
+        if (s) { db.run(`UPDATE ${t} SET sale = ? WHERE id = ?`, [s, row.id]); filled++; }
+      }
+      if (filled > 0) console.log(`[backfill] ${t}: set sale type on ${filled} row(s) from GSTIN`);
+    }
+    // lots.sale ← the lot's BUYER GSTIN (via the buyers master by buyer code —
+    // NOT the seller's `cr`). Sold lots only; unsold / WD / NA lots carry no
+    // sale and stay blank.
+    const lotCols = db.all(`PRAGMA table_info(lots)`).map(r => r.name);
+    if (lotCols.includes('sale') && lotCols.includes('buyer')) {
+      const bmap = new Map(db.all(`SELECT buyer, gstin FROM buyers WHERE COALESCE(buyer,'') <> ''`)
+        .map(b => [String(b.buyer).trim().toUpperCase(), b.gstin || '']));
+      let filled = 0;
+      for (const l of db.all(
+        `SELECT id, buyer FROM lots
+          WHERE COALESCE(TRIM(sale),'') = '' AND COALESCE(amount,0) > 0 AND COALESCE(buyer,'') <> ''`)) {
+        const s = deriveSaleType(bmap.get(String(l.buyer).trim().toUpperCase()), cfg);
+        if (s) { db.run(`UPDATE lots SET sale = ? WHERE id = ?`, [s, l.id]); filled++; }
+      }
+      if (filled > 0) console.log(`[backfill] lots: set sale type on ${filled} row(s) from buyer GSTIN`);
+    }
+  } catch (e) {
+    console.warn(`[backfill] sale types: ${e.message}`);
+  }
+}
+
 const PORT = process.env.PORT || 3001;
 (async () => {
   const db = await initDb();
@@ -15788,6 +15903,7 @@ const PORT = process.env.PORT || 3001;
   repairBadDates(db);
   assertSchemaSanity(db);
   backfillAuctionIds(db);
+  backfillSaleTypes(db);
   // Bootstrap the per-install license row on first boot. This generates
   // the install_id, starts the trial window, and logs the current
   // status so the operator can spot expiry-soon at deploy time.

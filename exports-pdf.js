@@ -16,7 +16,7 @@
 const PDFDocument = require('pdfkit');
 const auctionReports = require('./auction-reports');
 const {
-  fmtMoney, fmtQty, fmtPrice,
+  fmtMoney, fmtQty, fmtPrice, fmtIndian,
   getCompanyHeader, drawCompanyHeader,
   formatDateForDisplay,
 } = require('./report-formatters');
@@ -1436,7 +1436,9 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
       { key: 'lot',        label: 'Lot',         w: 0.11, align: 'right' },
       { key: 'qty',        label: 'Qty',         w: 0.18, align: 'right', fmt: fmtQty   },
       { key: 'rate',       label: 'Rate',        w: 0.18, align: 'right', fmt: fmtMoney },
-      { key: 'billamount', label: 'Bill Amount', w: 0.26, align: 'right', fmt: fmtMoney },
+      // Bill Amount rounded to the nearest rupee (no paise) so the annexure
+      // matches the whole-rupee figure in the certificate paragraph above.
+      { key: 'billamount', label: 'Bill Amount', w: 0.26, align: 'right', fmt: (n) => fmtIndian(n, 0) },
     ];
     const annX = [];
     { let cx = left; for (const c of annCols) { annX.push(cx); cx += c.w * width; } }
@@ -1487,7 +1489,8 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     doc.rect(left, y, width, ROW_H).fillAndStroke('#FFF3CD', '#999');
     drawAnnCell('TOTAL', 1, y, { bold: true });           // Date column (ANO is now first)
     drawAnnCell(fmtQty(tQty),    3, y, { bold: true });   // Qty column
-    drawAnnCell(fmtMoney(tBill), 5, y, { bold: true });   // Bill Amount column (Value column removed)
+    drawAnnCell(fmtIndian(tBill, 0), 5, y, { bold: true });  // Bill Amount total — whole rupees
+
     y += ROW_H;
 
     // Signature block, bottom-right of the current (last) page. If the table
