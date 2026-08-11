@@ -622,10 +622,14 @@ function mountMobile(app, deps) {
       userGunny:       getBool('user_gunny_weight', false),
       showMoisture:    getBool('show_moisture', false),
       // Reserved Price visibility flag. Drives the Reserved Price
-      // input on the mobile Lot Entry form; the Crop Receipt input is
-      // always shown (it auto-increments — first lot typed by hand,
-      // subsequent lots get +1, editable) so it's not flag-gated.
+      // input on the mobile Lot Entry form. (The Crop Receipt input is now
+      // flag-gated too — see showCropReceipt below.)
       showReservedPrice: getBool('flag_reserved_price', false),
+      // Crop Receipt No field on the mobile Lot Entry form. When on, the field
+      // shows and seeds from the next number after the highest recorded crpt
+      // (or cropReceiptStart when the book is empty); subsequent lots +1.
+      showCropReceipt:  getBool('show_crop_receipt', false),
+      cropReceiptStart: get('crop_receipt_start_no', ''),
       // Immediate Payment + Reserve-this-Lot checkboxes on the mobile Lot
       // Entry + Edit forms. OFF hides both controls; the lot columns persist.
       immediateReserve: getBool('flag_immediate_reserve', false),

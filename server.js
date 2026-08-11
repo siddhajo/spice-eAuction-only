@@ -5709,6 +5709,46 @@ app.delete('/api/lots/activity', requireDelete, (req, res) => {
   } catch (_) {}
   res.json({ cleared: true, removed });
 });
+// Increment a crop-receipt string, preserving zero-pad width and any
+// non-digit prefix ("01208" → "01209", "CR1234" → "CR1235"). Mirrors the
+// mobile _incrementCrptStr so the seed and the client-side +1 agree.
+function incrementCrptStr(prev) {
+  const s = String(prev == null ? '' : prev).trim();
+  const m = s.match(/^(\D*?)(\d+)$/);
+  if (!m) return '';
+  const prefix = m[1] || '', num = m[2];
+  const next = (BigInt(num) + 1n).toString();
+  return prefix + (next.length >= num.length ? next : next.padStart(num.length, '0'));
+}
+
+// Next crop-receipt number for the mobile Lot Entry seed. Continues the book
+// from the highest numeric crpt already recorded (+1); if none exist yet it
+// falls back to the configured starting number. When the operator sets a
+// starting number higher than the current running max, that wins — so a fresh
+// receipt book can jump the series forward.
+app.get('/api/crop-receipt/next', requireViewOrLotEntry, (req, res) => {
+  const db = getDb();
+  const startCfg = String((db.get(`SELECT value FROM company_settings WHERE key='crop_receipt_start_no'`) || {}).value || '').trim();
+  const rows = db.all(`SELECT crpt FROM lots WHERE crpt IS NOT NULL AND TRIM(crpt) != ''`);
+  let bestStr = null, bestNum = -1n;
+  for (const r of rows) {
+    const m = String(r.crpt).trim().match(/^\D*?(\d+)$/);
+    if (!m) continue;
+    const n = BigInt(m[1]);
+    if (n > bestNum) { bestNum = n; bestStr = String(r.crpt).trim(); }
+  }
+  let next;
+  if (bestStr != null) {
+    const inc = incrementCrptStr(bestStr);
+    const incNum = /\d/.test(inc) ? BigInt(inc.match(/(\d+)$/)[1]) : -1n;
+    const startNum = /^\d+$/.test(startCfg) ? BigInt(startCfg) : -1n;
+    next = (startNum > incNum) ? startCfg : inc;   // config can jump the series forward
+  } else {
+    next = startCfg;   // fresh book → configured start (may be '')
+  }
+  res.json({ next });
+});
+
 app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
   const { branch, name, buyer, grade, limit, offset, paginated, summary, search } = req.query;
   const db = getDb();

@@ -336,6 +336,13 @@ const DEFAULTS = [
   { key: 'show_moisture',      value: 'false', category: 'lot_entry', label: 'Show Moisture Column',               type: 'boolean' },
   { key: 'default_litre',      value: '',      category: 'lot_entry', label: 'Default Litre Weight',               type: 'text'    },
   { key: 'default_crop_type',  value: '',      category: 'lot_entry', label: 'Default Crop Type',                  type: 'text'    },
+  // Crop Receipt No on the mobile Lot Entry form. When ON the CROP RCPT field
+  // is shown; the first lot seeds from "Starting Crop Receipt No" (or the next
+  // number after the highest already recorded), and each subsequent lot
+  // auto-increments (+1, preserving zero-pad width). TEXT so leading zeros
+  // like "01208" survive.
+  { key: 'show_crop_receipt',     value: 'false', category: 'lot_entry', label: 'Show Crop Receipt No (mobile Lot Entry)', type: 'boolean' },
+  { key: 'crop_receipt_start_no', value: '',      category: 'lot_entry', label: 'Starting Crop Receipt No',               type: 'text'    },
   { key: 'edit_enabled',       value: 'false', category: 'lot_entry', label: 'Allow Lot Edits (non-admin)',        type: 'boolean' },
   { key: 'edit_timeout_sec',   value: '0',     category: 'lot_entry', label: 'Edit Timeout (sec; 0 = no limit)',    type: 'number'  },
   { key: 'lot_receipt_format', value: '',      category: 'lot_entry', label: 'Lot Receipt Format (compact|detailed)', type: 'text' },
