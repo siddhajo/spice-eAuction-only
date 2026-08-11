@@ -293,9 +293,9 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
   // Totals line mirrors whichever weight columns the operator kept on.
   let totLine = sellerLots.length + ' lot(s)';
   if (onKeys.has('bags')) totLine += ' | ' + totalBags + ' ' + lb('bags','bags');
-  if (onKeys.has('net'))  totLine += ' | ' + lb('net_wt','Net') + ': ' + totalQty.toFixed(3);
-  if (onKeys.has('sample') && totalSample) totLine += ' | ' + lb('sample_wt','Smp') + ': ' + totalSample.toFixed(3);
-  if (onKeys.has('gross')  && totalGross)  totLine += ' | ' + lb('gross_wt','Grs') + ': ' + totalGross.toFixed(3);
+  if (onKeys.has('net'))  totLine += ' | ' + lb('net_wt','Net') + ': ' + totalQty.toFixed(3) + ' kg';
+  if (onKeys.has('sample') && totalSample) totLine += ' | ' + lb('sample_wt','Smp') + ': ' + totalSample.toFixed(3) + ' kg';
+  if (onKeys.has('gross')  && totalGross)  totLine += ' | ' + lb('gross_wt','Grs') + ': ' + totalGross.toFixed(3) + ' kg';
   doc.text(totLine, m, doc.y, { width: w, align: 'center' });
 
   doc.moveDown(0.4);
@@ -366,8 +366,8 @@ function renderSellerReceiptCompact(doc, sellerLots, cfg) {
   // Single totals line — mirrors whichever weight columns are on.
   const line1 = sellerLots.length + ' lots' + (onKeys.has('bags') ? ' | ' + totalBags + ' ' + lb('bags','bags') : '');
   let line2 = '';
-  if (onKeys.has('net'))   line2 += lb('net_wt','Net') + ' ' + totalQty.toFixed(3);
-  if (onKeys.has('gross') && totalGross) line2 += (line2 ? ' | ' : '') + lb('gross_wt','Grs') + ' ' + totalGross.toFixed(3);
+  if (onKeys.has('net'))   line2 += lb('net_wt','Net') + ' ' + totalQty.toFixed(3) + ' kg';
+  if (onKeys.has('gross') && totalGross) line2 += (line2 ? ' | ' : '') + lb('gross_wt','Grs') + ' ' + totalGross.toFixed(3) + ' kg';
   doc.fillColor('#000').font('Helvetica-Bold').fontSize(8)
      .text(line1 + (line2 ? '\n' + line2 : ''), m, doc.y, { width: w, align: 'center' });
 }

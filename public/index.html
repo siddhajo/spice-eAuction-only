@@ -16652,10 +16652,34 @@ function leBuildReceiptHtml(format, lots, ctx) {
   // narrow roll (e.g. 58mm HOP-HL58) prints edge-to-edge instead of being
   // scaled onto an A4 sheet. 0 / blank keeps each format's built-in default.
   const paperWidthMm = parseFloat(cfg.lot_receipt_width_mm) || 0;
+  // Operator-chosen columns (Settings → Lot Entry Defaults) — same set the
+  // mobile receipt honours, so the desktop print matches.
+  const fields = _leReceiptFields(cfg);
   if (format === 'compact') {
-    return leBuildCompactHtml({ groups, co, dateStr, ano, printedAt, escapeHtml, paperWidthMm });
+    return leBuildCompactHtml({ groups, co, dateStr, ano, printedAt, escapeHtml, paperWidthMm, fields });
   }
-  return leBuildDetailedHtml({ groups, co, dateStr, ano, printedAt, traderInfo, escapeHtml, paperWidthMm });
+  return leBuildDetailedHtml({ groups, co, dateStr, ano, printedAt, traderInfo, escapeHtml, paperWidthMm, fields });
+}
+
+// Lot-receipt columns the operator turned on (Settings → Lot Entry Defaults),
+// mirroring the mobile receipt so both formats print the same columns. Lot#
+// always prints; the rest are opt-in. `val(l)` returns cell text (text fields
+// pre-escaped). If everything else is off, fall back to Lot/Net/Gross.
+function _leReceiptFields(cfg){
+  const on = (k, def) => { const v = String((cfg && cfg[k]) != null ? cfg[k] : '').trim().toLowerCase(); return v === '' ? def : (v === 'true' || v === '1'); };
+  const all = [
+    { key:'lot_no',  hdr:'Lot',      on:true,                               align:'left',  val:l=>esc(String(l.lot_no||'')) },
+    { key:'grade',   hdr:'Grade',    on:on('lot_receipt_show_grade',false), align:'right', val:l=>esc(String(l.grade||'')) },
+    { key:'bags',    hdr:'Bags',     on:on('lot_receipt_show_bags',true),   align:'right', val:l=>esc(String(l.bags||0)) },
+    { key:'litre',   hdr:'Litre',    on:on('lot_receipt_show_litre',false), align:'right', val:l=>esc(String(l.litre||'')) },
+    { key:'net',     hdr:'Net',      on:on('lot_receipt_show_net',true),    align:'right', val:l=>Number(l.qty||0).toFixed(3) },
+    { key:'sample',  hdr:'Smp',      on:on('lot_receipt_show_sample',true), align:'right', val:l=>{const sw=Number(l.sample_wt||l.sample_weight||0);return sw?sw.toFixed(3):'';} },
+    { key:'gross',   hdr:'Gross',    on:on('lot_receipt_show_gross',true),  align:'right', val:l=>Number(l.gross_wt||0).toFixed(3) },
+    { key:'moisture',hdr:'Mst%',     on:on('show_moisture',false),          align:'right', val:l=>l.moisture?Number(l.moisture).toFixed(1):'' },
+    { key:'crpt',    hdr:'CropRcpt', on:on('lot_receipt_show_crpt',false),  align:'right', val:l=>esc(String(l.crpt||'')) },
+  ];
+  const sel = all.filter(f=>f.on);
+  return sel.length > 1 ? sel : all.filter(f=>['lot_no','net','gross'].includes(f.key));
 }
 
 function leGroupLotsByTrader(lots) {
@@ -16683,26 +16707,24 @@ function leGroupLotsByTrader(lots) {
 // 80mm wide monospace slip. One <section> per seller. Page-break
 // between sections so each seller starts on a fresh slip.
 function leBuildCompactHtml(p) {
-  const { groups, co, dateStr, ano, escapeHtml } = p;
+  const { groups, co, dateStr, ano, escapeHtml, fields } = p;
   const { tradeName } = co;
-  // Lean thermal stub — company name + branch, auction/date, seller NAME, a
-  // 4-column lot table and one totals line. Everything else (logo, address,
-  // contact, GSTIN/PAN/FSSAI/SBL, sample row, thank-you) is intentionally
-  // dropped; the DETAILED slip carries the full record.
+  const onKeys = new Set(fields.map(f => f.key));
+  // Lean thermal stub — company name + branch, auction/date, seller NAME, the
+  // operator-chosen lot columns and one totals line. Everything else (logo,
+  // address, contact, GSTIN/PAN/FSSAI/SBL, thank-you) is intentionally dropped;
+  // the DETAILED slip carries the full record.
+  const headRow = fields.map(f => `<th style="text-align:${f.align}">${esc(f.hdr)}</th>`).join('');
   const sections = groups.map(g => {
-    const lotRows = g.lots.map(l => {
-      const net = Number(l.qty || 0).toFixed(3);
-      const grs = Number(l.gross_wt || 0).toFixed(3);
-      return `<tr>
-        <td style="text-align:left">${escapeHtml(l.lot_no || '')}</td>
-        <td style="text-align:right">${escapeHtml(String(l.bags || 0))}</td>
-        <td style="text-align:right">${net}</td>
-        <td style="text-align:right">${grs}</td>
-      </tr>`;
-    }).join('');
+    const lotRows = g.lots.map(l =>
+      `<tr>${fields.map(f => `<td style="text-align:${f.align}">${f.val(l)}</td>`).join('')}</tr>`).join('');
     const totalQty   = g.lots.reduce((s, l) => s + (Number(l.qty)        || 0), 0);
     const totalBags  = g.lots.reduce((s, l) => s + (parseInt(l.bags, 10) || 0), 0);
     const totalGross = g.lots.reduce((s, l) => s + (Number(l.gross_wt)   || 0), 0);
+    let head = `${g.lots.length} lots${onKeys.has('bags') ? ` | ${totalBags} bags` : ''}`;
+    let wt = '';
+    if (onKeys.has('net'))   wt += `Net ${totalQty.toFixed(3)} kg`;
+    if (onKeys.has('gross') && totalGross > 0) wt += (wt ? ' | ' : '') + `Grs ${totalGross.toFixed(3)} kg`;
     return `
     <section class="receipt">
       <div class="hdr">${escapeHtml(tradeName)}</div>
@@ -16711,10 +16733,10 @@ function leBuildCompactHtml(p) {
       <div class="meta"><span>Auction #${escapeHtml(String(ano))}</span><span>${escapeHtml(dateStr)}</span></div>
       <div class="planter">Seller: <b>${escapeHtml(g.name || '—')}</b></div>
       <table class="rows">
-        <thead><tr><th>Lot</th><th>Bags</th><th>Net</th><th>Gross</th></tr></thead>
+        <thead><tr>${headRow}</tr></thead>
         <tbody>${lotRows}</tbody>
       </table>
-      <div class="total">${g.lots.length} lots | ${totalBags} bags<br>Net ${totalQty.toFixed(3)}${totalGross > 0 ? ` | Grs ${totalGross.toFixed(3)}` : ''}</div>
+      <div class="total">${head}${wt ? `<br>${wt}` : ''}</div>
     </section>`;
   }).join('');
 
@@ -16754,11 +16776,15 @@ function leBuildCompactHtml(p) {
 // Mirrors the modern ASPPL Spice e-Auction format reviewed by dad,
 // with Grade / Litre / Sample Wt columns DROPPED per his red marks.
 function leBuildDetailedHtml(p) {
-  const { groups, co, dateStr, ano, printedAt, traderInfo, escapeHtml } = p;
+  const { groups, co, dateStr, ano, printedAt, traderInfo, escapeHtml, fields } = p;
   // Detailed slip header is a compact letterhead: logo to the side with the
   // company name, branch, phone and GSTIN beside it. PAN / FSSAI / SBL and the
   // full address stay off the slip — those live on the tax invoice PDFs.
   const { tradeName, shortName, phone, gstin, logoUrl } = co;
+  const onKeys = new Set(fields.map(f => f.key));
+  // Detailed slip uses fuller header labels for the two headline weights.
+  const hdrLabel = (f) => f.key === 'net' ? 'Qty' : f.key === 'gross' ? 'Gross Wt' : f.key === 'bags' ? 'Bag' : f.hdr;
+  const headRow = fields.map(f => `<th style="text-align:${f.align}">${esc(hdrLabel(f))}</th>`).join('');
   const sections = groups.map(g => {
     const ti = (g.trader_id != null ? traderInfo[g.trader_id] : null) || {};
     const bank = ti.defaultBank || {};
@@ -16766,17 +16792,17 @@ function leBuildDetailedHtml(p) {
     const ifsc = bank.ifsc || '';
     const place = [g.ppla, g.ppin].filter(Boolean).join(', ');
     const cr = g.cr || '';
-    const lotRows = g.lots.map(l => {
-      return `<tr>
-        <td>${escapeHtml(l.lot_no || '')}</td>
-        <td style="text-align:right">${escapeHtml(String(l.bags || 0))}</td>
-        <td style="text-align:right">${Number(l.qty || 0).toFixed(3)}</td>
-        <td style="text-align:right">${Number(l.gross_wt || 0).toFixed(3)}</td>
-      </tr>`;
-    }).join('');
-    const totalBags  = g.lots.reduce((s, l) => s + (parseInt(l.bags, 10) || 0), 0);
-    const totalQty   = g.lots.reduce((s, l) => s + (Number(l.qty)        || 0), 0);
-    const totalGross = g.lots.reduce((s, l) => s + (Number(l.gross_wt)   || 0), 0);
+    const lotRows = g.lots.map(l =>
+      `<tr>${fields.map(f => `<td style="text-align:${f.align}">${f.val(l)}</td>`).join('')}</tr>`).join('');
+    const totalBags   = g.lots.reduce((s, l) => s + (parseInt(l.bags, 10) || 0), 0);
+    const totalQty    = g.lots.reduce((s, l) => s + (Number(l.qty)        || 0), 0);
+    const totalGross  = g.lots.reduce((s, l) => s + (Number(l.gross_wt)   || 0), 0);
+    const totalSample = g.lots.reduce((s, l) => s + (Number(l.sample_wt || l.sample_weight) || 0), 0);
+    let summary = `${g.lots.length} lot(s)`;
+    if (onKeys.has('bags'))   summary += ` | ${totalBags} Bag`;
+    if (onKeys.has('net'))    summary += ` | Qty: ${totalQty.toFixed(3)} kg`;
+    if (onKeys.has('sample') && totalSample > 0) summary += ` | Smp: ${totalSample.toFixed(3)} kg`;
+    if (onKeys.has('gross'))  summary += ` | Gross Wt: ${totalGross.toFixed(3)} kg`;
     return `
     <section class="receipt">
       <header>
@@ -16804,10 +16830,10 @@ function leBuildDetailedHtml(p) {
         ${ifsc ? `<tr><td class="lbl">IFSC</td><td style="font-family:monospace">${escapeHtml(ifsc)}</td></tr>` : ''}
       </table>
       <table class="lot-table">
-        <thead><tr><th>Lot</th><th style="text-align:right">Bag</th><th style="text-align:right">Qty</th><th style="text-align:right">Gross Wt</th></tr></thead>
+        <thead><tr>${headRow}</tr></thead>
         <tbody>${lotRows}</tbody>
         <tfoot>
-          <tr><td colspan="4" class="summary"><b>${g.lots.length} lot(s) | ${totalBags} Bag | Qty: ${totalQty.toFixed(3)} | Gross Wt: ${totalGross.toFixed(3)}</b></td></tr>
+          <tr><td colspan="${fields.length}" class="summary"><b>${summary}</b></td></tr>
         </tfoot>
       </table>
       <div class="thanks">** THANK YOU **</div>
