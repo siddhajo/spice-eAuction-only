@@ -959,6 +959,12 @@ async function initDb() {
     // from (see POST /api/auctions/:id/carry-forward). Added via ALTER for
     // existing DBs so the feature works on upgrade without a rebuild.
     'ALTER TABLE lots ADD COLUMN carried_from_auction_id INTEGER DEFAULT NULL',
+    // Per-bag empty gunny weight stored at lot-entry time. The mobile Lot
+    // Entry "Weight w/ Gunny" mode records the per-bag tare here so the edit
+    // screen can reconstruct the gross-with-gunny figure (net = wt w/ gunny −
+    // bags × gunny). Missing this column made the mobile lot save/update fail
+    // with "table lots has no column named gunny" on upgraded DBs.
+    'ALTER TABLE lots ADD COLUMN gunny REAL DEFAULT 0',
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }
