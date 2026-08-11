@@ -38,9 +38,7 @@
      one x, right pair at another). `table-layout:fixed` keeps the columns put. */
   .parties td { vertical-align: top; }
   .parties .kv { width: 100%; table-layout: fixed; border-collapse: collapse; }
-  .parties .kv td { border: none; padding: 0.4pt 0; font-size: 7.5pt; vertical-align: top; }
-  .parties .kv .k { width: 26pt; white-space: nowrap; text-align: right; padding-right: 2pt; }
-  .parties .kv .v { width: calc(50% - 26pt); white-space: nowrap; }
+  .parties .kv td { border: none; padding: 0.4pt 0; font-size: 7.5pt; vertical-align: top; width: 50%; white-space: nowrap; }
   .items th { font-weight: bold; font-size: 7pt; text-align: center; vertical-align: middle; background: #e8f1e0; }
   .items td { font-size: 8pt; }
   .grand td { font-size: 12pt; font-weight: bold; }
@@ -80,18 +78,18 @@
         <div class="b">M/s.{{name}}</div>
         {{#if addr}}<div class="muted">{{addr}}</div>{{/if}}
         <table class="kv">
-          <tr><td class="v" colspan="2">{{place}}</td><td class="k">PAN</td><td class="v">{{#if pan}}: <span class="b">{{pan}}</span>{{/if}}</td></tr>
-          {{#if state}}<tr><td class="k">STATE</td><td class="v">: <span class="b">{{state}}</span></td><td class="k">CODE</td><td class="v">: <span class="b">{{stCode}}</span></td></tr>{{/if}}
-          {{#if gstin}}<tr><td class="k">GST</td><td class="v">: <span class="b">{{gstin}}</span></td><td class="k">SBL</td><td class="v">{{#if sbl}}: <span class="b">{{sbl}}</span>{{/if}}</td></tr>{{/if}}
+          <tr><td>{{place}}</td><td>PAN{{#if pan}} : <span class="b">{{pan}}</span>{{/if}}</td></tr>
+          {{#if state}}<tr><td>STATE : <span class="b">{{state}}</span></td><td>CODE : <span class="b">{{stCode}}</span></td></tr>{{/if}}
+          {{#if gstin}}<tr><td>GST : <span class="b">{{gstin}}</span></td><td>SBL{{#if sbl}} : <span class="b">{{sbl}}</span>{{/if}}</td></tr>{{/if}}
         </table>
       {{/with}}</td>
       <td>{{#with ship}}
         <div class="b">M/s.{{name}}</div>
         {{#if addr}}<div class="muted">{{addr}}</div>{{/if}}
         <table class="kv">
-          <tr><td class="v" colspan="2">{{place}}</td><td class="k">PAN</td><td class="v">{{#if pan}}: <span class="b">{{pan}}</span>{{/if}}</td></tr>
-          {{#if state}}<tr><td class="k">STATE</td><td class="v">: <span class="b">{{state}}</span></td><td class="k">CODE</td><td class="v">: <span class="b">{{stCode}}</span></td></tr>{{/if}}
-          {{#if gstin}}<tr><td class="k">GST</td><td class="v">: <span class="b">{{gstin}}</span></td><td class="k">SBL</td><td class="v">{{#if sbl}}: <span class="b">{{sbl}}</span>{{/if}}</td></tr>{{/if}}
+          <tr><td>{{place}}</td><td>PAN{{#if pan}} : <span class="b">{{pan}}</span>{{/if}}</td></tr>
+          {{#if state}}<tr><td>STATE : <span class="b">{{state}}</span></td><td>CODE : <span class="b">{{stCode}}</span></td></tr>{{/if}}
+          {{#if gstin}}<tr><td>GST : <span class="b">{{gstin}}</span></td><td>SBL{{#if sbl}} : <span class="b">{{sbl}}</span>{{/if}}</td></tr>{{/if}}
         </table>
       {{/with}}</td>
     </tr>
