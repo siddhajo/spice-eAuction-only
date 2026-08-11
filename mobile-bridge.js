@@ -139,9 +139,11 @@ function getReceiptConfig(db) {
 
 // ── HEADER (full size: ~340pt wide) ──────────────────────────────
 function addReceiptHeader(doc, appTitle, branch, dateFmt, tradeNo, pageW, companyPhone, companyGstin) {
-  const m = 20;
   const pw = pageW || 340;
+  const m = receiptMargin(pw, false);
   const w = pw - 2 * m;
+  const sc = w / 300;                         // 1 at the default 340pt roll
+  const fs = (b) => Math.max(6, b * sc);      // shrink header text on a narrow roll
   // Letterhead header: logo pinned to the LEFT, company block (name / branch /
   // phone / GSTIN) set beside it and left-aligned so the lines stack cleanly.
   const startY = doc.y;
@@ -155,10 +157,10 @@ function addReceiptHeader(doc, appTitle, branch, dateFmt, tradeNo, pageW, compan
       textW = w - logoSz - 9;
     } catch (e) { logoSz = 0; textX = m; textW = w; }
   }
-  doc.font('Helvetica-Bold').fontSize(14).text(appTitle, textX, startY, { width: textW });
-  doc.font('Helvetica').fontSize(9.5).text((branch || '') + ' BRANCH', textX, doc.y, { width: textW });
-  if (companyPhone) doc.fontSize(9).text('Ph: ' + companyPhone, textX, doc.y, { width: textW });
-  if (companyGstin) doc.fontSize(9).text('GSTIN: ' + companyGstin, textX, doc.y, { width: textW });
+  doc.font('Helvetica-Bold').fontSize(fs(14)).text(appTitle, textX, startY, { width: textW });
+  doc.font('Helvetica').fontSize(fs(9.5)).text((branch || '') + ' BRANCH', textX, doc.y, { width: textW });
+  if (companyPhone) doc.fontSize(fs(9)).text('Ph: ' + companyPhone, textX, doc.y, { width: textW });
+  if (companyGstin) doc.fontSize(fs(9)).text('GSTIN: ' + companyGstin, textX, doc.y, { width: textW });
   // Make sure the header clears the logo before drawing the divider.
   if (logoSz && doc.y < startY + logoSz) doc.y = startY + logoSz;
   doc.moveDown(0.4);
@@ -167,11 +169,11 @@ function addReceiptHeader(doc, appTitle, branch, dateFmt, tradeNo, pageW, compan
   // Auction # on the LEFT, Date on the RIGHT. Smaller font, a wider Date
   // column and lineBreak:false keep "Date: dd/mm/yyyy" on ONE line even on a
   // narrow thermal roll (it used to wrap when w/2 was too small for the value).
-  doc.font('Helvetica').fontSize(8);
+  doc.font('Helvetica').fontSize(fs(8));
   const y0 = doc.y;
-  doc.text('Auction #' + tradeNo, m, y0, { width: w * 0.40, lineBreak: false });
-  doc.text('Date: ' + dateFmt, m + w * 0.40, y0, { width: w * 0.60, align: 'right', lineBreak: false });
-  doc.y = y0 + 13;
+  doc.text('Auction #' + tradeNo, m, y0, { width: w * 0.45, lineBreak: false });
+  doc.text('Date: ' + dateFmt, m + w * 0.45, y0, { width: w * 0.55, align: 'right', lineBreak: false });
+  doc.y = y0 + Math.max(10, 13 * Math.min(1, sc));
   doc.moveDown(0.2);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).dash(3, { space: 3 }).lineWidth(0.5).stroke().undash();
   doc.moveDown(0.4);
@@ -179,21 +181,23 @@ function addReceiptHeader(doc, appTitle, branch, dateFmt, tradeNo, pageW, compan
 
 // ── HEADER (compact: ~180pt wide, thermal-printer friendly) ──────
 function addReceiptHeaderCompact(doc, appTitle, branch, dateFmt, tradeNo, pageW) {
-  const m = 10;
   const pw = pageW || 180;
+  const m = receiptMargin(pw, true);
   const w = pw - 2 * m;
+  const sc = w / 160;                        // 1 at the default 180pt roll
+  const fs = (b) => Math.max(5, b * sc);     // shrink header text on a 58mm roll
   // Compact stub: no logo — a lean thermal receipt keeps only the name/branch.
-  doc.font('Helvetica-Bold').fontSize(10).text(appTitle, m, doc.y, { width: w, align: 'center' });
-  doc.fontSize(7.5).text((branch || '') + ' BRANCH', m, doc.y, { width: w, align: 'center' });
+  doc.font('Helvetica-Bold').fontSize(fs(10)).text(appTitle, m, doc.y, { width: w, align: 'center' });
+  doc.fontSize(fs(7.5)).text((branch || '') + ' BRANCH', m, doc.y, { width: w, align: 'center' });
   doc.moveDown(0.2);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.4).stroke(); doc.moveDown(0.2);
   // Auction # on the LEFT, Date on the RIGHT (matches the detailed slip).
   // Smaller font + wider Date column + no wrap keeps it on one line.
-  doc.font('Helvetica').fontSize(6);
+  doc.font('Helvetica').fontSize(fs(6.5));
   const y0 = doc.y;
-  doc.text('Auction #' + tradeNo, m, y0, { width: w * 0.40, lineBreak: false });
-  doc.text('Date: ' + dateFmt, m + w * 0.40, y0, { width: w * 0.60, align: 'right', lineBreak: false });
-  doc.y = y0 + 10;
+  doc.text('Auction #' + tradeNo, m, y0, { width: w * 0.45, lineBreak: false });
+  doc.text('Date: ' + dateFmt, m + w * 0.45, y0, { width: w * 0.55, align: 'right', lineBreak: false });
+  doc.y = y0 + Math.max(9, 10 * sc);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).dash(2, { space: 2 }).lineWidth(0.4).stroke().undash();
   doc.moveDown(0.2);
 }
@@ -225,13 +229,13 @@ function enabledReceiptFields(cfg) {
 
 // ── RENDERER (full) ──────────────────────────────────────────────
 function renderSellerReceipt(doc, sellerLots, cfg) {
-  const m = 20;
   // Content width + column scale follow the configured paper width (same
   // receiptPageW the document page was sized to). sc === 1 at the default
   // 340pt page, so default receipts are byte-for-byte unchanged. On a narrow
   // roll, shrink fonts (floored at 5.5pt so they stay legible) and the fixed
   // per-row heights (floored at vs=0.78) so the slip fits without overflow.
   const pageW = receiptPageW(false, cfg.paperWidthMm);
+  const m = receiptMargin(pageW, false);
   const w = pageW - 2 * m;
   const sc = w / 300;
   const fs = (b) => Math.max(5.5, b * sc);
@@ -274,7 +278,7 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
   const hdrY = doc.y;
   doc.font('Helvetica-Bold').fontSize(fs(7.5));
   let cx = m;
-  hdrs.forEach((h, i) => { doc.text(h, cx, hdrY, { width: cols[i], align: 'center' }); cx += cols[i]; });
+  hdrs.forEach((h, i) => { doc.text(h, cx, hdrY, { width: cols[i], align: 'center', lineBreak: false, ellipsis: true }); cx += cols[i]; });
   doc.y = hdrY + 11 * vs;
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.3).stroke(); doc.moveDown(0.2);
 
@@ -283,7 +287,9 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
   sellerLots.forEach(l => {
     const ry = doc.y;
     cx = m;
-    fields.forEach((f, i) => { doc.text(String(f.val(l, cfg)), cx, ry, { width: cols[i], align: 'center' }); cx += cols[i]; });
+    // lineBreak:false keeps every value on ONE line so a slightly-wide number
+    // (e.g. "105.000") can't wrap and shove the row's cells out of alignment.
+    fields.forEach((f, i) => { doc.text(String(f.val(l, cfg)), cx, ry, { width: cols[i], align: 'center', lineBreak: false }); cx += cols[i]; });
     doc.y = ry + 13 * vs;
     totalQty    += Number(l.qty) || 0;
     totalGross  += Number(l.gross_weight) || 0;
@@ -293,13 +299,16 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
 
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.5).stroke(); doc.moveDown(0.3);
   doc.font('Helvetica-Bold').fontSize(fs(8));
-  // Totals line mirrors whichever weight columns the operator kept on.
-  let totLine = sellerLots.length + ' lot(s)';
-  if (onKeys.has('bags')) totLine += ' | ' + totalBags + ' ' + lb('bags','bags');
-  if (onKeys.has('net'))  totLine += ' | ' + lb('net_wt','Net') + ': ' + totalQty.toFixed(3) + ' kg';
-  if (onKeys.has('sample') && totalSample) totLine += ' | ' + lb('sample_wt','Smp') + ': ' + totalSample.toFixed(3) + ' kg';
-  if (onKeys.has('gross')  && totalGross)  totLine += ' | ' + lb('gross_wt','Grs') + ': ' + totalGross.toFixed(3) + ' kg';
-  doc.text(totLine, m, doc.y, { width: w, align: 'center' });
+  // Totals line mirrors whichever weight columns the operator kept on. Each
+  // "Label: value unit" segment uses NON-BREAKING spaces ( ) so a number
+  // never gets split from its unit; the slip may wrap only at the "  |  "
+  // separators, keeping "Net: 100.500 kg" intact on a narrow roll.
+  const seg = [sellerLots.length + ' lot(s)'];
+  if (onKeys.has('bags')) seg.push(totalBags + ' ' + lb('bags','bags'));
+  if (onKeys.has('net'))  seg.push(lb('net_wt','Net') + ': ' + totalQty.toFixed(3) + ' kg');
+  if (onKeys.has('sample') && totalSample) seg.push(lb('sample_wt','Smp') + ': ' + totalSample.toFixed(3) + ' kg');
+  if (onKeys.has('gross')  && totalGross)  seg.push(lb('gross_wt','Grs') + ': ' + totalGross.toFixed(3) + ' kg');
+  doc.text(seg.join('   |   '), m, doc.y, { width: w, align: 'center' });
 
   doc.moveDown(0.4);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.5).stroke(); doc.moveDown(0.2);
@@ -314,14 +323,18 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
 
 // ── RENDERER (compact, thermal-printer / ~2.5"×3.5") ─────────────
 function renderSellerReceiptCompact(doc, sellerLots, cfg) {
-  const m = 10;
   // Content width + column scale follow the configured paper width (same
   // receiptPageW the document page was sized to). sc === 1 at the default
   // 180pt page, so default thermal slips are byte-for-byte unchanged; a
-  // narrower 58mm roll shrinks the columns to fit edge-to-edge.
+  // narrower 58mm roll shrinks the FONTS + row heights + columns in step so
+  // the slip fits edge-to-edge without wrapping.
   const pageW = receiptPageW(true, cfg.paperWidthMm);
+  const m = receiptMargin(pageW, true);
   const w = pageW - 2 * m;
   const sc = w / 160;
+  const fs = (b) => Math.max(5, b * sc);        // shrink text to fit a 58mm roll
+  const vs = Math.max(0.7, Math.min(1, sc));    // shrink row heights in step
+  const NB = String.fromCharCode(160);          // non-breaking space
   const lot = sellerLots[0];
   const dateFmt = formatDateForDisplay(lot.date, cfg.dateFormat);
   const L = cfg.labels || {};
@@ -332,7 +345,7 @@ function renderSellerReceiptCompact(doc, sellerLots, cfg) {
 
   // Lean stub — seller NAME only. Bank (A/C, IFSC), place and GSTIN are
   // intentionally dropped; those live on the detailed receipt.
-  doc.font('Helvetica-Bold').fontSize(7.5)
+  doc.font('Helvetica-Bold').fontSize(fs(7.5))
      .text(lb('seller','Seller') + ': ' + (lot.trader_name || ''), m, doc.y, { width: w });
 
   doc.moveDown(0.2);
@@ -346,19 +359,20 @@ function renderSellerReceiptCompact(doc, sellerLots, cfg) {
   const hdrs = fields.map(f => f.hdr);
 
   const hdrY = doc.y;
-  doc.font('Helvetica-Bold').fontSize(6.5);
+  doc.font('Helvetica-Bold').fontSize(fs(6.5));
   let cx = m;
-  hdrs.forEach((h, i) => { doc.text(h, cx, hdrY, { width: cols[i], align: 'center' }); cx += cols[i]; });
-  doc.y = hdrY + 9;
+  hdrs.forEach((h, i) => { doc.text(h, cx, hdrY, { width: cols[i], align: 'center', lineBreak: false, ellipsis: true }); cx += cols[i]; });
+  doc.y = hdrY + 9 * vs;
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.3).stroke(); doc.moveDown(0.15);
 
-  doc.font('Helvetica').fontSize(7);
+  doc.font('Helvetica').fontSize(fs(7));
   let totalQty = 0, totalGross = 0, totalBags = 0;
   sellerLots.forEach(l => {
     const ry = doc.y;
     cx = m;
-    fields.forEach((f, i) => { doc.text(String(f.val(l, cfg)), cx, ry, { width: cols[i], align: 'center' }); cx += cols[i]; });
-    doc.y = ry + 11;
+    // lineBreak:false → a value never wraps to a second line and breaks the row.
+    fields.forEach((f, i) => { doc.text(String(f.val(l, cfg)), cx, ry, { width: cols[i], align: 'center', lineBreak: false }); cx += cols[i]; });
+    doc.y = ry + 11 * vs;
     totalQty   += Number(l.qty) || 0;
     totalGross += Number(l.gross_weight) || 0;
     totalBags  += Number(l.bags) || 0;
@@ -366,12 +380,14 @@ function renderSellerReceiptCompact(doc, sellerLots, cfg) {
 
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.4).stroke(); doc.moveDown(0.2);
 
-  // Single totals line — mirrors whichever weight columns are on.
-  const line1 = sellerLots.length + ' lots' + (onKeys.has('bags') ? ' | ' + totalBags + ' ' + lb('bags','bags') : '');
-  let line2 = '';
-  if (onKeys.has('net'))   line2 += lb('net_wt','Net') + ' ' + totalQty.toFixed(3) + ' kg';
-  if (onKeys.has('gross') && totalGross) line2 += (line2 ? ' | ' : '') + lb('gross_wt','Grs') + ' ' + totalGross.toFixed(3) + ' kg';
-  doc.fillColor('#000').font('Helvetica-Bold').fontSize(8)
+  // Totals — non-breaking spaces keep every number glued to its unit; the two
+  // lines break only at the "  |  " separators so nothing splits awkwardly.
+  const line1 = sellerLots.length + NB + 'lots' + (onKeys.has('bags') ? '   |   ' + totalBags + NB + lb('bags','bags') : '');
+  const seg2 = [];
+  if (onKeys.has('net'))   seg2.push(lb('net_wt','Net') + NB + totalQty.toFixed(3) + NB + 'kg');
+  if (onKeys.has('gross') && totalGross) seg2.push(lb('gross_wt','Grs') + NB + totalGross.toFixed(3) + NB + 'kg');
+  const line2 = seg2.join('   |   ');
+  doc.fillColor('#000').font('Helvetica-Bold').fontSize(fs(8))
      .text(line1 + (line2 ? '\n' + line2 : ''), m, doc.y, { width: w, align: 'center' });
 }
 
@@ -387,6 +403,18 @@ function receiptPageW(compact, paperWidthMm) {
   const mm = Number(paperWidthMm) || 0;
   if (mm > 0) return Math.max(120, Math.round(mm * 72 / 25.4));
   return compact ? 180 : 340;
+}
+
+// Side margin (points) for a receipt of the given page width. At the default
+// widths this returns the legacy 10pt (compact) / 20pt (full) so existing
+// slips are unchanged; on a narrow 58mm roll it shrinks proportionally so the
+// content column stays wide enough that nothing wraps. Header + body both call
+// this, so their left edge (and the divider rules) always line up.
+function receiptMargin(pageW, compact) {
+  const base = compact ? 10 : 20;
+  const full = compact ? 180 : 340;
+  if (pageW >= full) return base;
+  return Math.max(compact ? 5 : 7, Math.round(pageW / (compact ? 22 : 18)));
 }
 
 function pickReceiptRenderer(fmt, paperWidthMm) {

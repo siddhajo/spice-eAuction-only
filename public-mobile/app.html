@@ -275,7 +275,7 @@ select:focus{border-color:var(--green)}
           <div class="elb" id="elb-seller">SELLER</div>
           <div class="sx">
             <span class="sx-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
-            <input type="text" id="le-name" placeholder="Search seller by name, phone, GSTIN, PAN..." autocomplete="off" onfocus="showSaveBtn()" oninput="searchTrader(this.value)" style="height:36px;font-size:13px">
+            <input type="text" id="le-name" placeholder="Search seller by name, phone, GSTIN, PAN..." autocomplete="off" onfocus="showSaveBtn()" oninput="searchTrader(this.value)">
             <button type="button" class="sx-clear" id="le-name-clear" aria-label="Clear search">✕</button>
           </div>
           <div class="sr" id="le-res" style="display:none"></div>
@@ -335,7 +335,7 @@ select:focus{border-color:var(--green)}
         </div>
 
         <!-- Net + Sample + Gross -->
-        <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;margin-bottom:6px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">
           <div><div class="elb" id="elb-net">NET WT (KG)</div><input type="text" id="le-qty" placeholder="0.000" inputmode="decimal" onfocus="showSaveBtn()" class="ein qi" oninput="sanitizeDec(this);calcGrossWeight()"></div>
           <div><div class="elb" id="elb-sample">SAMPLE</div><input type="text" id="le-sample" placeholder="0" readonly class="ein" style="background:var(--bg);color:var(--text3)"></div>
           <div><div class="elb" id="elb-gross">GROSS</div><input type="text" id="le-gross" placeholder="0" readonly class="ein" style="background:var(--bg);color:var(--green);font-weight:700"></div>
