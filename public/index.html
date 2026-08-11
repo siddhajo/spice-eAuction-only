@@ -4363,6 +4363,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <div id="le-bank-row" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed rgba(22,101,52,.25)">
               <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Bank Account</div>
               <select id="le-bank-select" style="width:100%;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;background:#fff;font-family:monospace"></select>
+              <div id="le-bank-info" style="font-size:11px;color:var(--text3);margin-top:5px;min-height:14px"></div>
             </div>
           </div>
         </div>
@@ -13234,10 +13235,12 @@ function leRenderBankPicker(t){
   const wrap = document.getElementById('le-bank-row');
   const sel  = document.getElementById('le-bank-select');
   const banks = Array.isArray(t.banks) ? t.banks : [];
+  _le.banks = banks;   // remembered so leRenderBankInfo() can resolve the selection
   if (!banks.length) {
     wrap.style.display = 'none';
     sel.innerHTML = '';
     _le.selectedBankId = null;
+    leRenderBankInfo();
     return;
   }
   // Pick a default: first is_default=1 bank, else the first bank in the list
@@ -13252,8 +13255,37 @@ function leRenderBankPicker(t){
   sel.onchange = () => {
     const v = parseInt(sel.value, 10);
     _le.selectedBankId = Number.isFinite(v) ? v : null;
+    leRenderBankInfo();
   };
   wrap.style.display = 'block';
+  leRenderBankInfo();
+}
+
+// Bank info line under the Lot Entry bank picker — shows IFSC, branch and
+// holder name for the selected account. Branch uses the stored value when
+// present, otherwise it's derived live from the IFSC (razorpay lookup, cached
+// in _ifscLookupCache) so it appears even for records saved before branch
+// capture existed.
+function leRenderBankInfo(){
+  const info = document.getElementById('le-bank-info');
+  if (!info) return;
+  const banks = (_le && Array.isArray(_le.banks)) ? _le.banks : [];
+  const b = banks.find(x => x.id === _le.selectedBankId);
+  if (!b) { info.textContent = ''; return; }
+  const code = String(b.ifsc || '').trim().toUpperCase();
+  const cached = _ifscLookupCache.get(code);
+  const branch = b.branch || (cached && cached.BRANCH) || '';
+  const parts = ['IFSC: ' + (b.ifsc || '—')];
+  if (branch) parts.push('Branch: ' + branch);
+  if (b.holder_name) parts.push('Holder: ' + b.holder_name);
+  info.textContent = parts.join('   |   ');
+  // Derive the branch live when unknown and the IFSC looks valid.
+  if (!branch && /^[A-Z]{4}0[A-Z0-9]{6}$/.test(code) && !_ifscLookupCache.has(code)) {
+    fetch('https://ifsc.razorpay.com/' + encodeURIComponent(code))
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { _ifscLookupCache.set(code, d); if (_le.selectedBankId === b.id) leRenderBankInfo(); })
+      .catch(() => { _ifscLookupCache.set(code, null); });
+  }
 }
 
 // Force the bank picker to a specific account id (used on edit so the lot
@@ -13266,6 +13298,7 @@ function leSelectBank(bankId){
   if ([...sel.options].some(o => o.value === v)) {
     sel.value = v;
     _le.selectedBankId = parseInt(v, 10);
+    leRenderBankInfo();
   }
 }
 
