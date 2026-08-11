@@ -5766,6 +5766,27 @@ app.post('/api/lots/:id/invoice-group', requireLotWrite, (req, res) => {
   res.json({ success: true, invoice_group: g });
 });
 
+// Bulk-set the invoice split group on many lots at once — powers the Price
+// Entry "select lots → Set Split #" action, so the operator marks a whole
+// group of lots for one invoice in a single click instead of per-lot typing.
+app.post('/api/lots/invoice-group/bulk', requireLotWrite, (req, res) => {
+  const db = getDb();
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.map(x => parseInt(x, 10)).filter(Number.isFinite) : [];
+  let g = parseInt(req.body.value, 10);
+  if (!Number.isFinite(g) || g < 0) g = 0;
+  if (!ids.length) return res.status(400).json({ error: 'No lot ids provided' });
+  const lockOn = lockFeatureOn(db), admin = isAdmin(req);
+  let updated = 0, skippedLocked = 0;
+  for (const id of ids) {
+    const lot = db.get('SELECT id, locked_at FROM lots WHERE id = ?', [id]);
+    if (!lot) continue;
+    if (lot.locked_at && lockOn && !admin) { skippedLocked++; continue; }
+    db.run('UPDATE lots SET invoice_group = ? WHERE id = ?', [g, id]);
+    updated++;
+  }
+  res.json({ success: true, updated, skippedLocked, value: g });
+});
+
 app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
   const { branch, name, buyer, grade, limit, offset, paginated, summary, search } = req.query;
   const db = getDb();
