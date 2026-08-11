@@ -343,6 +343,17 @@ const DEFAULTS = [
   // like "01208" survive.
   { key: 'show_crop_receipt',     value: 'false', category: 'lot_entry', label: 'Show Crop Receipt No (mobile Lot Entry)', type: 'boolean' },
   { key: 'crop_receipt_start_no', value: '',      category: 'lot_entry', label: 'Starting Crop Receipt No',               type: 'text'    },
+  // Lot Receipt columns — the operator decides which columns print on the
+  // lot receipt slip (both Full and Compact formats). Lot# always prints;
+  // everything else is toggled here. Moisture is driven by "Show Moisture
+  // Column" above so it isn't duplicated.
+  { key: 'lot_receipt_show_grade',  value: 'false', category: 'lot_entry', label: 'Lot Receipt: Grade column',     type: 'boolean' },
+  { key: 'lot_receipt_show_bags',   value: 'true',  category: 'lot_entry', label: 'Lot Receipt: Bags column',      type: 'boolean' },
+  { key: 'lot_receipt_show_litre',  value: 'false', category: 'lot_entry', label: 'Lot Receipt: Litre column',     type: 'boolean' },
+  { key: 'lot_receipt_show_net',    value: 'true',  category: 'lot_entry', label: 'Lot Receipt: Net Wt column',    type: 'boolean' },
+  { key: 'lot_receipt_show_sample', value: 'true',  category: 'lot_entry', label: 'Lot Receipt: Sample Wt column', type: 'boolean' },
+  { key: 'lot_receipt_show_gross',  value: 'true',  category: 'lot_entry', label: 'Lot Receipt: Gross Wt column',  type: 'boolean' },
+  { key: 'lot_receipt_show_crpt',   value: 'false', category: 'lot_entry', label: 'Lot Receipt: Crop Receipt column', type: 'boolean' },
   { key: 'edit_enabled',       value: 'false', category: 'lot_entry', label: 'Allow Lot Edits (non-admin)',        type: 'boolean' },
   { key: 'edit_timeout_sec',   value: '0',     category: 'lot_entry', label: 'Edit Timeout (sec; 0 = no limit)',    type: 'number'  },
   { key: 'lot_receipt_format', value: '',      category: 'lot_entry', label: 'Lot Receipt Format (compact|detailed)', type: 'text' },

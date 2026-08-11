@@ -5535,8 +5535,9 @@ app.post('/api/auctions/import', requireAuctionWrite, upload.single('file'), req
           db.run(`INSERT INTO lots (auction_id, lot_no, crop, grade, crpt, branch, state, trader_id,
             name, padd, ppla, ppin, pstate, pst_code, cr, pan, tel, aadhar,
             bags, litre, qty, price, amount, code, buyer, buyer1, sale, invo,
-            pqty, prate, puramt, com, sertax, cgst, sgst, igst, advance, balance, bilamt, user_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            pqty, prate, puramt, com, sertax, cgst, sgst, igst, advance, balance, bilamt, user_id,
+            gross_wt, sample_wt, moisture)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
             [auctionId, lotNo,
              mapCol(row, 'CROP'),
              mapCol(row, 'GRADE'),
@@ -5575,7 +5576,14 @@ app.post('/api/auctions/import', requireAuctionWrite, upload.single('file'), req
              mapNum(row, 'ADVANCE', 'DISCOUNT'),
              mapNum(row, 'BALANCE', 'PAYABLE'),
              mapNum(row, 'BILAMT', 'BILL_AMT'),
-             mapCol(row, 'USER_ID', 'USER') || 'import']);
+             mapCol(row, 'USER_ID', 'USER') || 'import',
+             // Weights the lot receipt prints. Use the file's Gross if present,
+             // else fall back to the app convention Gross = Net + Sample so the
+             // receipt shows a real figure instead of 0.
+             (mapNum(row, 'GROSS', 'GROSS_WT', 'GROSS_WEIGHT', 'GRS')
+                || (mapNum(row, 'QTY', 'QUANTITY', 'NET_QTY') + mapNum(row, 'SAMPLE', 'SAMPLE_WT', 'SMP', 'SAMPLE_WEIGHT'))),
+             mapNum(row, 'SAMPLE', 'SAMPLE_WT', 'SMP', 'SAMPLE_WEIGHT'),
+             mapCol(row, 'MOISTURE', 'MST', 'MOIST', 'MOISTURE_PCT')]);
           imported++;
           const key = `${rowAno}|${rowDate}`;
           auctionStats.set(key, (auctionStats.get(key) || 0) + 1);
@@ -14652,7 +14660,7 @@ const IMPORT_MODULES = {
     autoCreateAuction: true,
     fields: ['ano','date','lot_no','name','crop','grade','crpt','branch','state',
              'padd','ppla','ppin','pstate','pst_code','cr','pan','tel','aadhar',
-             'bags','litre','qty','price','amount','code','buyer','buyer1','sale','invo',
+             'bags','litre','qty','gross_wt','sample_wt','moisture','price','amount','code','buyer','buyer1','sale','invo',
              'pqty','prate','puramt','com','sertax','cgst','sgst','igst','refund','advance','balance','bilamt'],
     aliases: {
       ano:      ['ano','auction_no','auctionno','tno','trade','trade_no','tradeno'],
@@ -14671,7 +14679,10 @@ const IMPORT_MODULES = {
       aadhar:   ['aadhar','aadhaar'],
       bags:     ['bags','bag'],
       litre:    ['litre','litre_wt'],
-      qty:      ['qty','quantity','net_qty','weight','kgs'],
+      qty:      ['qty','quantity','net_qty','net_wt','net_weight','weight','kgs'],
+      gross_wt: ['gross_wt','gross','gross_weight','grs','gross_kg'],
+      sample_wt:['sample_wt','sample','sample_weight','smp','sample_wt_kg'],
+      moisture: ['moisture','mst','moist','moisture_pct','mst_pct'],
       price:    ['price','rate'],
       amount:   ['amount'],
       code:     ['code','buyer_code'],
@@ -14686,7 +14697,7 @@ const IMPORT_MODULES = {
       sertax:   ['sertax','hpc'],
       refund:   ['refund','refud','sample_refund','sb_refund'],
       advance:  ['advance','discount'],
-      balance:  ['balance','payable'],
+      balance:  ['balance','payable','net_amount','net_amt','net_payable','payable_amount','pay_amount','amount_payable','seller_payable','netamount'],
       bilamt:   ['bilamt','bill_amt'],
     },
   },
@@ -14831,12 +14842,13 @@ function _deriveRund(values, cfg) {
 // handler). `ano`/`date` are consumed to place the lot under an auction and
 // are deliberately absent here — `lots` has no such columns.
 const AUCTION_LOT_FIELDS = ['crop','grade','crpt','branch','state','name','padd','ppla','ppin',
-  'pstate','pst_code','cr','pan','tel','aadhar','bags','litre','qty','price','amount','code',
+  'pstate','pst_code','cr','pan','tel','aadhar','bags','litre','qty','gross_wt','sample_wt','moisture',
+  'price','amount','code',
   'buyer','buyer1','sale','invo','pqty','prate','puramt','com','sertax','cgst','sgst','igst',
   'refund','advance','balance','bilamt'];
 // Numeric lot columns — parsed with parseFloat (0 on blank); everything else
 // (incl. `litre`, kept as text like the Auctions-tab importer) stays a string.
-const AUCTION_LOT_NUM_FIELDS = new Set(['bags','qty','price','amount','pqty','prate','puramt',
+const AUCTION_LOT_NUM_FIELDS = new Set(['bags','qty','gross_wt','sample_wt','moisture','price','amount','pqty','prate','puramt',
   'com','sertax','cgst','sgst','igst','refund','advance','balance','bilamt']);
 
 // Parse the upload + resolve the effective field→column mapping, honouring

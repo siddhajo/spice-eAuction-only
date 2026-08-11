@@ -115,6 +115,19 @@ function getReceiptConfig(db) {
     acctMask:     get('acct_mask', 'none'),
     showMoisture: getBool('show_moisture', false),
     sampleWeight: parseFloat(get('sample_weight', '0')) || 0,
+    // Operator-chosen lot-receipt columns (Settings → Lot Entry Defaults).
+    // Lot# always prints; the rest are opt-in/out here. Drives both the Full
+    // and Compact receipt renderers so the user decides what's on the slip.
+    receiptCols: {
+      grade:    getBool('lot_receipt_show_grade',  false),
+      bags:     getBool('lot_receipt_show_bags',   true),
+      litre:    getBool('lot_receipt_show_litre',  false),
+      net:      getBool('lot_receipt_show_net',    true),
+      sample:   getBool('lot_receipt_show_sample', true),
+      gross:    getBool('lot_receipt_show_gross',  true),
+      crpt:     getBool('lot_receipt_show_crpt',   false),
+      moisture: getBool('show_moisture',           false),
+    },
     // Thermal paper width (Settings → Lot Entry Defaults → "Lot Receipt
     // Paper Width"). Same key the desktop print path reads, so a 58mm
     // HOP-HL58 prints the same width from mobile / WhatsApp. Blank/0 keeps
@@ -182,6 +195,31 @@ function addReceiptHeaderCompact(doc, appTitle, branch, dateFmt, tradeNo, pageW)
   doc.moveDown(0.2);
 }
 
+// Ordered lot-receipt columns the operator turned on (cfg.receiptCols).
+// Lot# is mandatory; the rest are opt-in. Each field carries a relative
+// `weight` so the renderers distribute the available width proportionally —
+// which means any combination of columns fits the slip without overflow.
+// `val(l, cfg)` produces the cell text for a lot row.
+function enabledReceiptFields(cfg) {
+  const L = cfg.labels || {}; const lb = (k, d) => L[k] || d;
+  const rc = cfg.receiptCols || {};
+  const all = [
+    { key: 'lot_no',   on: true,        hdr: lb('lot_no', 'Lot#'),      weight: 1.1, val: l => String(l.lot_no != null ? l.lot_no : '') },
+    { key: 'grade',    on: !!rc.grade,  hdr: lb('grade', 'Grade'),      weight: 0.9, val: l => String(l.grade || '') },
+    { key: 'bags',     on: rc.bags !== false, hdr: lb('bags', 'Bags'),  weight: 0.8, val: l => String(l.bags != null ? l.bags : '') },
+    { key: 'litre',    on: !!rc.litre,  hdr: lb('litre_wt', 'Litre'),   weight: 0.9, val: l => String(l.litre || '') },
+    { key: 'net',      on: rc.net !== false,  hdr: lb('net_wt', 'Net'),  weight: 1.2, val: l => Number(l.qty || 0).toFixed(3) },
+    { key: 'sample',   on: rc.sample !== false, hdr: lb('sample_wt', 'Smp'), weight: 1.0, val: (l, c) => { const sw = Number(l.sample_weight) || (c && c.sampleWeight) || 0; return sw ? sw.toFixed(3) : ''; } },
+    { key: 'gross',    on: rc.gross !== false, hdr: lb('gross_wt', 'Gross'), weight: 1.2, val: l => l.gross_weight != null ? Number(l.gross_weight).toFixed(3) : '' },
+    { key: 'moisture', on: !!rc.moisture, hdr: lb('moisture', 'Mst%'),  weight: 0.8, val: l => l.moisture ? Number(l.moisture).toFixed(1) : '' },
+    { key: 'crpt',     on: !!rc.crpt,   hdr: lb('crpt', 'CropRcpt'),    weight: 1.1, val: l => String(l.crpt || '') },
+  ];
+  const on = all.filter(f => f.on);
+  // Never render a lonely Lot# column — if the operator turned everything else
+  // off, fall back to the classic Net/Gross so the slip still carries weights.
+  return on.length > 1 ? on : all.filter(f => ['lot_no', 'net', 'gross'].includes(f.key));
+}
+
 // ── RENDERER (full) ──────────────────────────────────────────────
 function renderSellerReceipt(doc, sellerLots, cfg) {
   const m = 20;
@@ -223,9 +261,12 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
   doc.moveDown(0.3);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.5).stroke(); doc.moveDown(0.3);
 
-  const cols = [50, 46, 64, 50, 60].map(c => c * sc);
-  const hdrs = [lb('lot_no','Lot#'), lb('bags','Bags'), lb('net_wt','Net'), lb('sample_wt','Smp'), lb('gross_wt','Gross')];
-  if (cfg.showMoisture) { cols.push(38 * sc); hdrs.push(lb('moisture','Mst%')); }
+  // Columns are operator-chosen and width-distributed by weight so any mix fits.
+  const fields = enabledReceiptFields(cfg);
+  const onKeys = new Set(fields.map(f => f.key));
+  const totW = fields.reduce((a, f) => a + f.weight, 0);
+  const cols = fields.map(f => w * f.weight / totW);
+  const hdrs = fields.map(f => f.hdr);
 
   const hdrY = doc.y;
   doc.font('Helvetica-Bold').fontSize(fs(7.5));
@@ -239,29 +280,22 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
   sellerLots.forEach(l => {
     const ry = doc.y;
     cx = m;
-    const sw = Number(l.sample_weight) || cfg.sampleWeight || 0;
-    const rowData = [
-      l.lot_no,
-      l.bags,
-      Number(l.qty).toFixed(3),
-      sw ? sw.toFixed(3) : '',
-      l.gross_weight != null ? Number(l.gross_weight).toFixed(3) : '',
-    ];
-    if (cfg.showMoisture) rowData.push(l.moisture ? Number(l.moisture).toFixed(1) : '');
-    rowData.forEach((v, i) => { doc.text(String(v), cx, ry, { width: cols[i], align: 'center' }); cx += cols[i]; });
+    fields.forEach((f, i) => { doc.text(String(f.val(l, cfg)), cx, ry, { width: cols[i], align: 'center' }); cx += cols[i]; });
     doc.y = ry + 13 * vs;
     totalQty    += Number(l.qty) || 0;
     totalGross  += Number(l.gross_weight) || 0;
     totalBags   += Number(l.bags) || 0;
-    totalSample += sw;
+    totalSample += Number(l.sample_weight) || cfg.sampleWeight || 0;
   });
 
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.5).stroke(); doc.moveDown(0.3);
   doc.font('Helvetica-Bold').fontSize(fs(8));
-  let totLine = sellerLots.length + ' lot(s) | ' + totalBags + ' ' + lb('bags','bags') +
-                ' | ' + lb('net_wt','Net') + ': ' + totalQty.toFixed(3);
-  if (totalSample) totLine += ' | ' + lb('sample_wt','Smp') + ': ' + totalSample.toFixed(3);
-  if (totalGross)  totLine += ' | ' + lb('gross_wt','Grs') + ': ' + totalGross.toFixed(3);
+  // Totals line mirrors whichever weight columns the operator kept on.
+  let totLine = sellerLots.length + ' lot(s)';
+  if (onKeys.has('bags')) totLine += ' | ' + totalBags + ' ' + lb('bags','bags');
+  if (onKeys.has('net'))  totLine += ' | ' + lb('net_wt','Net') + ': ' + totalQty.toFixed(3);
+  if (onKeys.has('sample') && totalSample) totLine += ' | ' + lb('sample_wt','Smp') + ': ' + totalSample.toFixed(3);
+  if (onKeys.has('gross')  && totalGross)  totLine += ' | ' + lb('gross_wt','Grs') + ': ' + totalGross.toFixed(3);
   doc.text(totLine, m, doc.y, { width: w, align: 'center' });
 
   doc.moveDown(0.4);
@@ -301,8 +335,12 @@ function renderSellerReceiptCompact(doc, sellerLots, cfg) {
   doc.moveDown(0.2);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.4).stroke(); doc.moveDown(0.2);
 
-  const cols = [28, 28, 50, 54].map(c => c * sc);
-  const hdrs = [lb('lot_no','Lot#'), lb('bags','Bags'), lb('net_wt','Net'), lb('gross_wt','Gross')];
+  // Same operator-chosen columns as the full slip, width-distributed to fit.
+  const fields = enabledReceiptFields(cfg);
+  const onKeys = new Set(fields.map(f => f.key));
+  const totW = fields.reduce((a, f) => a + f.weight, 0);
+  const cols = fields.map(f => w * f.weight / totW);
+  const hdrs = fields.map(f => f.hdr);
 
   const hdrY = doc.y;
   doc.font('Helvetica-Bold').fontSize(6.5);
@@ -316,12 +354,7 @@ function renderSellerReceiptCompact(doc, sellerLots, cfg) {
   sellerLots.forEach(l => {
     const ry = doc.y;
     cx = m;
-    const rowData = [
-      l.lot_no, l.bags,
-      Number(l.qty).toFixed(3),
-      l.gross_weight != null ? Number(l.gross_weight).toFixed(3) : '',
-    ];
-    rowData.forEach((v, i) => { doc.text(String(v), cx, ry, { width: cols[i], align: 'center' }); cx += cols[i]; });
+    fields.forEach((f, i) => { doc.text(String(f.val(l, cfg)), cx, ry, { width: cols[i], align: 'center' }); cx += cols[i]; });
     doc.y = ry + 11;
     totalQty   += Number(l.qty) || 0;
     totalGross += Number(l.gross_weight) || 0;
@@ -330,13 +363,13 @@ function renderSellerReceiptCompact(doc, sellerLots, cfg) {
 
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.4).stroke(); doc.moveDown(0.2);
 
-  // Single totals line (no duplicate summary table). Net on one line, the
-  // lot/bag count above it — keeps the stub short and unambiguous.
-  const line1 = sellerLots.length + ' lots | ' + totalBags + ' ' + lb('bags','bags');
-  let line2 = lb('net_wt','Net') + ' ' + totalQty.toFixed(3);
-  if (totalGross) line2 += ' | ' + lb('gross_wt','Grs') + ' ' + totalGross.toFixed(3);
+  // Single totals line — mirrors whichever weight columns are on.
+  const line1 = sellerLots.length + ' lots' + (onKeys.has('bags') ? ' | ' + totalBags + ' ' + lb('bags','bags') : '');
+  let line2 = '';
+  if (onKeys.has('net'))   line2 += lb('net_wt','Net') + ' ' + totalQty.toFixed(3);
+  if (onKeys.has('gross') && totalGross) line2 += (line2 ? ' | ' : '') + lb('gross_wt','Grs') + ' ' + totalGross.toFixed(3);
   doc.fillColor('#000').font('Helvetica-Bold').fontSize(8)
-     .text(line1 + '\n' + line2, m, doc.y, { width: w, align: 'center' });
+     .text(line1 + (line2 ? '\n' + line2 : ''), m, doc.y, { width: w, align: 'center' });
 }
 
 // Receipt page WIDTH in points. Mirrors the desktop `lot_receipt_width_mm`
@@ -371,7 +404,7 @@ function pickReceiptRenderer(fmt, paperWidthMm) {
 // Output columns are aliased to the names PWA's renderer expects.
 const LOT_SELECT_SQL = `
   SELECT
-    l.id, l.lot_no, l.branch, l.bags, l.litre, l.qty,
+    l.id, l.lot_no, l.branch, l.grade, l.crpt, l.bags, l.litre, l.qty,
     l.gross_wt  AS gross_weight,
     l.sample_wt AS sample_weight,
     l.moisture, l.user_id, l.trader_id,
@@ -1152,7 +1185,7 @@ function mountMobile(app, deps) {
       [traderId]
     );
     let banks = db.all(
-      `SELECT id, trader_id, bank_name, acctnum, ifsc, holder_name, is_default
+      `SELECT id, trader_id, bank_name, branch, acctnum, ifsc, holder_name, is_default
          FROM trader_banks WHERE trader_id = ?
          ORDER BY is_default DESC, id ASC`,
       [traderId]
@@ -1184,7 +1217,7 @@ function mountMobile(app, deps) {
   app.post('/api/traders/:id/banks', requireAuth, (req, res) => {
     const db = getDb();
     const traderId = parseInt(req.params.id, 10);
-    const { acctnum, ifsc, label, holder_name, is_default } = req.body || {};
+    const { acctnum, ifsc, label, holder_name, branch, is_default } = req.body || {};
     if (!acctnum || !String(acctnum).trim()) {
       return res.status(400).json({ error: 'Account number is required' });
     }
@@ -1194,13 +1227,16 @@ function mountMobile(app, deps) {
       db.run('UPDATE trader_banks SET is_default = 0 WHERE trader_id = ?', [traderId]);
     }
     // Spice-config stores the user-visible bank label in `bank_name`. PWA
-    // calls it `label`. Map across.
+    // calls it `label`. Map across. `branch` (the bank branch, typically
+    // auto-filled from the IFSC lookup) is stored so the lot-entry seller
+    // picker can show it alongside the other bank details.
     const info = db.run(
-      `INSERT INTO trader_banks (trader_id, bank_name, acctnum, ifsc, holder_name, is_default)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO trader_banks (trader_id, bank_name, branch, acctnum, ifsc, holder_name, is_default)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         traderId,
         String(label || '').trim(),
+        String(branch || '').trim(),
         String(acctnum).trim(),
         String(ifsc || '').trim().toUpperCase(),
         String(holder_name || '').trim(),
@@ -1221,7 +1257,7 @@ function mountMobile(app, deps) {
     const db = getDb();
     const tid = parseInt(req.params.tid, 10);
     const bid = parseInt(req.params.bid, 10);
-    const { acctnum, ifsc, label, holder_name } = req.body || {};
+    const { acctnum, ifsc, label, holder_name, branch } = req.body || {};
     const bank = db.get(
       'SELECT * FROM trader_banks WHERE id = ? AND trader_id = ?', [bid, tid]
     );
@@ -1231,13 +1267,15 @@ function mountMobile(app, deps) {
        SET acctnum = COALESCE(?, acctnum),
            ifsc = COALESCE(?, ifsc),
            bank_name = COALESCE(?, bank_name),
-           holder_name = COALESCE(?, holder_name)
+           holder_name = COALESCE(?, holder_name),
+           branch = COALESCE(?, branch)
        WHERE id = ?`,
       [
         acctnum != null ? String(acctnum).trim() : null,
         ifsc != null ? String(ifsc).trim().toUpperCase() : null,
         label != null ? String(label).trim() : null,
         holder_name != null ? String(holder_name).trim() : null,
+        branch != null ? String(branch).trim() : null,
         bid,
       ]
     );

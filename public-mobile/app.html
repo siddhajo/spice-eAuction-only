@@ -1222,6 +1222,9 @@ function checkAcctMatch(prefix) {
 }
 
 var ifscTimer = null;
+// Branch names resolved from the IFSC lookup, keyed by IFSC code, so a bank
+// added on mobile carries its branch (the seller picker shows it later).
+var ifscBranchCache = {};
 function lookupIFSC(inp, infoId) {
   clearTimeout(ifscTimer);
   var code = inp.value.trim().toUpperCase();
@@ -1241,6 +1244,7 @@ function lookupIFSC(inp, infoId) {
       .then(function(r) { return r.ok ? r.json() : null; })
       .then(function(d) {
         if (d && d.BANK) {
+          if (d.BRANCH) ifscBranchCache[code] = d.BRANCH;
           infoEl.textContent = '🏦 ' + d.BANK + (d.BRANCH ? ' — ' + d.BRANCH : '');
           infoEl.style.color = 'var(--green)';
         } else {
@@ -1602,6 +1606,7 @@ async function saveEditBankAccount(){
   if(ifsc&&!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)){toast('Invalid IFSC (e.g., ICIC0003816)',true);return}
   try{
     var r;var body={acctnum:acct,ifsc:ifsc,label:label,holder_name:holder};
+    if(ifscBranchCache[ifsc])body.branch=ifscBranchCache[ifsc];
     if(needConfirm)body.confirm_acctnum=confirmVal;
     if(eid){r=await fetch(B+'/api/traders/'+editTraderId+'/banks/'+eid,{method:'PUT',headers:ah(),body:JSON.stringify(body)})}
     else{r=await fetch(B+'/api/traders/'+editTraderId+'/banks',{method:'POST',headers:ah(),body:JSON.stringify(body)})}
@@ -1785,6 +1790,7 @@ function onBankSelect(sel) {
   var b = sellerBanks.find(function(x) { return x.id == sel.value; });
   if (b) {
     var parts = ['IFSC: ' + (b.ifsc || '—')];
+    if (b.branch) parts.push('Branch: ' + b.branch);
     if (b.holder_name) parts.push('Holder: ' + b.holder_name);
     info.textContent = parts.join(' | ');
   } else { info.textContent = ''; }
@@ -1879,6 +1885,7 @@ async function saveBankAccount() {
   try {
     var r;
     var body = { acctnum: acct, ifsc: ifsc, label: label, holder_name: holder };
+    if (ifscBranchCache[ifsc]) body.branch = ifscBranchCache[ifsc];
     if (needConfirm) body.confirm_acctnum = confirmVal;
     if (editId) {
       r = await fetch(B + '/api/traders/' + selT.id + '/banks/' + editId, { method: 'PUT', headers: ah(), body: JSON.stringify(body) });
