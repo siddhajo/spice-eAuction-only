@@ -965,6 +965,11 @@ async function initDb() {
     // bags × gunny). Missing this column made the mobile lot save/update fail
     // with "table lots has no column named gunny" on upgraded DBs.
     'ALTER TABLE lots ADD COLUMN gunny REAL DEFAULT 0',
+    // Invoice split group set during Price Entry. Lots with the same
+    // (buyer, invoice_group) are billed together; a buyer's lots that carry
+    // different groups fan out into separate sales invoices at generation.
+    // 0 (the default) means "no split" — the buyer's whole set is one invoice.
+    'ALTER TABLE lots ADD COLUMN invoice_group INTEGER DEFAULT 0',
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }

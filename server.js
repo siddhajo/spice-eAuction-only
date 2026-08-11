@@ -5749,6 +5749,23 @@ app.get('/api/crop-receipt/next', requireViewOrLotEntry, (req, res) => {
   res.json({ next });
 });
 
+// Set a lot's invoice split group from Price Entry. Kept separate from the
+// generic lot PUT so it does NOT invalidate the price-check stamp (it changes
+// no priced values) — the operator can organise splits without re-verifying.
+app.post('/api/lots/:id/invoice-group', requireLotWrite, (req, res) => {
+  const db = getDb();
+  const id = parseInt(req.params.id, 10);
+  const lot = db.get('SELECT id, locked_at FROM lots WHERE id = ?', [id]);
+  if (!lot) return res.status(404).json({ error: 'Lot not found' });
+  if (lot.locked_at && lockFeatureOn(db) && !isAdmin(req)) {
+    return res.status(423).json({ error: 'This lot is locked — only an admin can change it.' });
+  }
+  let g = parseInt(req.body.value, 10);
+  if (!Number.isFinite(g) || g < 0) g = 0;
+  db.run('UPDATE lots SET invoice_group = ? WHERE id = ?', [g, id]);
+  res.json({ success: true, invoice_group: g });
+});
+
 app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
   const { branch, name, buyer, grade, limit, offset, paginated, summary, search } = req.query;
   const db = getDb();
@@ -7239,47 +7256,74 @@ app.post('/api/invoices/generate-all/:auctionId',
   const results = [];
   const errors = [];
   
+  const isASPStateBulk = String(cfg.business_state || '').toUpperCase() === 'KERALA';
   for (const row of buyers) {
     const useSaleType = saleType || row.default_sale || 'L';
-    try {
-      const invoice = buildSalesInvoice(db, req.params.auctionId, row.buyer, useSaleType, cfg, { noTI, excludeInvoiced: true });
-      if (!invoice) { errors.push({ buyer: row.buyer, error: 'No matching lots' }); continue; }
-      const s = invoice.summary;
-      const invoNo = String(nextNo);
-      // Store BUSINESS context state — see single-invoice handler for rationale
-      const invoiceState = cfg.business_state || auction.state || '';
-      db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [req.params.auctionId,auction.ano,auction.date,invoiceState,useSaleType,invoNo,row.buyer,invoice.buyer.buyer1||'',
-         invoice.buyer.gstin||'',invoice.buyer.pla||'',s.totalBags,s.totalQty,s.totalAmount,s.gunnyCost,s.transportCost,s.insuranceCost,
-         s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',noTI]);
-      // ASP-aware lot update: see single-invoice handler above for rationale.
-      const isASPStateBulk = String(cfg.business_state || '').toUpperCase() === 'KERALA';
-      for (const li of invoice.lineItems) {
-        if (isASPStateBulk) {
-          const existing = db.get(
-            'SELECT invo, asp_invo FROM lots WHERE auction_id=? AND lot_no=? AND buyer=? LIMIT 1',
-            [req.params.auctionId, li.lot, row.buyer]
-          );
-          const hasIspInvo = existing && existing.invo && existing.invo !== existing.asp_invo;
-          if (hasIspInvo) {
-            db.run('UPDATE lots SET asp_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
-              [invoNo, req.params.auctionId, li.lot, row.buyer]);
+    // Split by invoice_group set during Price Entry: a buyer's lots that carry
+    // different groups fan out into separate invoices; group 0 (the default)
+    // means "no split". Snapshot the buyer's eligible lots + their group using
+    // the same filters buildSalesInvoice applies, then bill one invoice per
+    // group. A buyer with a single group behaves exactly as before.
+    const lotRows = db.all(
+      `SELECT l.lot_no AS lot_no, COALESCE(l.invoice_group, 0) AS g
+         FROM lots l
+        WHERE l.auction_id = ? AND l.buyer = ? AND l.amount > 0
+          AND (l.reserved IS NULL OR l.reserved = 0)
+          AND (l.sale IS NULL OR l.sale = '' OR l.sale = ?)
+          AND ${uninvoicedExpr}
+        ORDER BY l.lot_no`,
+      [req.params.auctionId, row.buyer, useSaleType]
+    );
+    const groups = new Map();
+    for (const lr of lotRows) {
+      const g = Number(lr.g) || 0;
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(String(lr.lot_no));
+    }
+    // Ascending group order → predictable, sequential invoice numbers.
+    const groupKeys = Array.from(groups.keys()).sort((a, b) => a - b);
+    for (const gk of groupKeys) {
+      const lotNos = groups.get(gk);
+      try {
+        const invoice = buildSalesInvoice(db, req.params.auctionId, row.buyer, useSaleType, cfg, { noTI, excludeInvoiced: true, lotNos });
+        if (!invoice) { errors.push({ buyer: row.buyer, group: gk, error: 'No matching lots' }); continue; }
+        const s = invoice.summary;
+        const invoNo = String(nextNo);
+        // Store BUSINESS context state — see single-invoice handler for rationale
+        const invoiceState = cfg.business_state || auction.state || '';
+        db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [req.params.auctionId,auction.ano,auction.date,invoiceState,useSaleType,invoNo,row.buyer,invoice.buyer.buyer1||'',
+           invoice.buyer.gstin||'',invoice.buyer.pla||'',s.totalBags,s.totalQty,s.totalAmount,s.gunnyCost,s.transportCost,s.insuranceCost,
+           s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',noTI]);
+        // ASP-aware lot update: see single-invoice handler above for rationale.
+        // Scoped to this invoice's line items, so only THIS group's lots get stamped.
+        for (const li of invoice.lineItems) {
+          if (isASPStateBulk) {
+            const existing = db.get(
+              'SELECT invo, asp_invo FROM lots WHERE auction_id=? AND lot_no=? AND buyer=? LIMIT 1',
+              [req.params.auctionId, li.lot, row.buyer]
+            );
+            const hasIspInvo = existing && existing.invo && existing.invo !== existing.asp_invo;
+            if (hasIspInvo) {
+              db.run('UPDATE lots SET asp_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
+                [invoNo, req.params.auctionId, li.lot, row.buyer]);
+            } else {
+              // Don't set `sale` in ASP context — ISP step decides
+              db.run('UPDATE lots SET invo=?, asp_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
+                [invoNo, invoNo, req.params.auctionId, li.lot, row.buyer]);
+            }
           } else {
-            // Don't set `sale` in ASP context — ISP step decides
-            db.run('UPDATE lots SET invo=?, asp_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
-              [invoNo, invoNo, req.params.auctionId, li.lot, row.buyer]);
+            db.run('UPDATE lots SET sale=?, invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
+              [useSaleType, invoNo, req.params.auctionId, li.lot, row.buyer]);
           }
-        } else {
-          db.run('UPDATE lots SET sale=?, invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
-            [useSaleType, invoNo, req.params.auctionId, li.lot, row.buyer]);
         }
-      }
-      results.push({ buyer: row.buyer, invoiceNo: invoNo, sale: useSaleType, grandTotal: s.grandTotal });
-      nextNo++;
-    } catch (e) { errors.push({ buyer: row.buyer, error: e.message }); }
+        results.push({ buyer: row.buyer, group: gk, invoiceNo: invoNo, sale: useSaleType, grandTotal: s.grandTotal });
+        nextNo++;
+      } catch (e) { errors.push({ buyer: row.buyer, group: gk, error: e.message }); }
+    }
   }
-  
+
   res.json({ success: true, generated: results.length, results, errors });
 });
 

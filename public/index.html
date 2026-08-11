@@ -22642,12 +22642,13 @@ function renderPriceEntryGrid(){
       <td style="padding:6px 8px;text-align:left;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${buyerNameCell}</td>
       <td data-pestatus="${l.id}" style="padding:6px 4px;width:26px;text-align:center;color:var(--text3)">${isWD ? '<span title="Withdrawn" style="color:#b91c1c;font-weight:700;font-size:10px">WD</span>' : isNA ? '<span title="Not Auctioned" style="color:#a16207;font-weight:700;font-size:10px">NA</span>' : (locked ? '🔒' : '')}</td>
       <td style="padding:6px 8px;text-align:center;white-space:nowrap">${_peSalePill(_peEffectiveSale(l))}</td>
+      <td style="padding:6px 8px;text-align:center">${noSale ? '<span style="color:var(--text3)">—</span>' : `<input type="number" min="0" step="1" inputmode="numeric" value="${Number(l.invoice_group)>0?Number(l.invoice_group):''}" placeholder="—" ${readonly?'disabled':''} title="Invoice split group — lots with the SAME number bill together; different numbers split this buyer into separate invoices. Blank / 0 = one invoice." onchange="peSplitSave(${l.id}, this.value)" style="width:54px;text-align:center;padding:5px 4px;border:1.5px solid var(--border);border-radius:6px;font-size:13px${readonly?';background:#f3f4f6;color:var(--text3)':''}">`}</td>
     </tr>`;
   }).join('');
   const thStyle = 'cursor:pointer;user-select:none';
   const bodyHtml = view.length
     ? rows
-    : `<tr><td colspan="13" style="padding:20px;text-align:center;color:var(--text3);font-size:13px">No lots match the current filter. <a href="#" onclick="peClearFilters();return false" style="color:var(--green)">Clear filters</a></td></tr>`;
+    : `<tr><td colspan="14" style="padding:20px;text-align:center;color:var(--text3);font-size:13px">No lots match the current filter. <a href="#" onclick="peClearFilters();return false" style="color:var(--green)">Clear filters</a></td></tr>`;
   // Totals row — computed over the CURRENTLY VISIBLE (filtered) lots, so when
   // any filter is active this reads as a subtotal for the shown rows. WD/NA
   // lots carry no sale value, so they add to the lot count and Qty but not to
@@ -22670,7 +22671,7 @@ function renderPriceEntryGrid(){
       <td style="padding:8px;text-align:right;font-variant-numeric:tabular-nums">${_peFmt(totQty)}</td>
       <td></td>
       <td style="padding:8px;text-align:right;font-variant-numeric:tabular-nums">${_peFmt(totAmt)}</td>
-      <td colspan="5"></td>
+      <td colspan="6"></td>
     </tr></tfoot>` : '';
   grid.innerHTML = `<table class="pe-grid-table" style="width:100%;border-collapse:collapse;font-size:13px">
     <thead><tr>
@@ -22683,7 +22684,8 @@ function renderPriceEntryGrid(){
       <th style="text-align:left">Code</th>
       <th style="text-align:left">Buyer Code</th>
       <th style="text-align:left">Buyer Name</th><th></th>
-      <th style="text-align:center;border-top-right-radius:6px" title="Sale type — L Local · I Inter-state · E Export (derived from the buyer's GSTIN unless set explicitly)">Sale Type</th>
+      <th style="text-align:center" title="Sale type — L Local · I Inter-state · E Export (derived from the buyer's GSTIN unless set explicitly)">Sale Type</th>
+      <th style="text-align:center;border-top-right-radius:6px" title="Invoice split group — set a number to split this buyer's lots across separate invoices. Lots with the same number bill together; blank/0 = one invoice.">Split</th>
     </tr></thead><tbody>${bodyHtml}</tbody>${footHtml}</table>`;
   _peSyncSelectionUI();
   _peRenderSummary();
@@ -22722,6 +22724,18 @@ function pePriceKey(e, id){
     if (nx) { nx.focus(); if (nx.select) nx.select(); }
     else pePriceSave(id);   // last row — nothing to blur into, so save here
   }
+}
+// Save a lot's invoice split group (Price Entry "Split" column). Uses the
+// dedicated endpoint so it never invalidates the price-check stamp. Blank/0
+// clears the split (the lot rejoins the buyer's single invoice).
+async function peSplitSave(id, val){
+  const l = _pe.byId.get(id); if (!l) return;
+  let g = parseInt(val, 10);
+  if (!Number.isFinite(g) || g < 0) g = 0;
+  try {
+    await j(`/api/lots/${id}/invoice-group`, { method: 'POST', body: JSON.stringify({ value: g }) });
+    l.invoice_group = g;
+  } catch (e) { toast((e && e.message) || 'Save failed'); }
 }
 async function pePriceSave(id){
   if (!_pe.dirty.has(id)) return;   // nothing changed since last save
@@ -28659,8 +28673,8 @@ function piCard(p, aid, noTI, idx, single){
       <button class="btn btn-o" style="height:32px;padding:0 12px;font-size:12px;font-weight:600" onclick="piPreviewPdf('${esc(aid)}','${esc(String(p.buyerCode).replace(/'/g,"\\'"))}','${esc(p.saleType)}',${noTI==='1'?'true':'false'})">Open PDF ↗</button>
     </div>
 
-    ${secHd('det', 'Details', true)}
-    <div id="pi-sec-det-${idx}" style="display:block">
+    ${secHd('det', 'Details', false)}
+    <div id="pi-sec-det-${idx}" style="display:none">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:8px 0 10px">
         <div style="background:var(--bg);border-radius:8px;padding:10px 12px">
           <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin-bottom:4px">Bill To</div>
