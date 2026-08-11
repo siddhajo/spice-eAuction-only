@@ -16758,7 +16758,8 @@ function leBuildCompactHtml(p) {
   .hdr { text-align:center; font-weight:700; font-size:14px; letter-spacing:.5px }
   .sub { text-align:center; font-size:11px; margin-top:1px }
   hr.dashed { border:none; border-top:1px dashed #000; margin:6px 0 }
-  .meta { display:flex; justify-content:space-between; font-size:11px }
+  .meta { display:flex; justify-content:space-between; gap:8px; font-size:11px }
+  .meta span { white-space:nowrap }
   .planter { margin-top:6px; font-size:12px }
   table.rows { width:100%; border-collapse:collapse; margin-top:6px; font-size:11px }
   table.rows th { text-align:right; border-bottom:1px solid #000; padding:2px 0; font-weight:700 }
@@ -16867,7 +16868,10 @@ function leBuildDetailedHtml(p) {
   .brand-title { font-size:13px; font-weight:700; line-height:1.1 }
   .brand-branch { font-size:9px; font-weight:700; color:#444; margin-top:1px; letter-spacing:.3px }
   .brand-addr { font-size:8.5px; color:#444; margin-top:2px; line-height:1.25 }
-  .dateline { display:flex; justify-content:space-between; align-items:center; font-size:9.5px; padding:0 2px; margin-top:4px }
+  .dateline { display:flex; justify-content:space-between; align-items:baseline; gap:8px; font-size:9.5px; padding:0 2px; margin-top:4px }
+  /* Keep "Date: 12/08/2026" together on one line — never break the label off
+     from its value. */
+  .dateline span { white-space:nowrap }
   hr.dashed { border:none; border-top:1px dashed #888; margin:4px 0 6px }
   table.meta-table { width:100%; border-collapse:collapse; font-size:9.5px; margin-bottom:6px }
   table.meta-table td { padding:1px 0; vertical-align:top; line-height:1.3 }

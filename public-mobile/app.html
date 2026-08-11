@@ -430,6 +430,7 @@ select:focus{border-color:var(--green)}
       <button type="button" class="sx-clear" id="ml-search-clear" aria-label="Clear search">✕</button>
     </div></div>
     <div id="ml-actions" style="display:none;margin-bottom:8px;gap:6px;align-items:center;flex-wrap:wrap">
+      <label style="display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 10px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;background:var(--bg2);border:1px solid var(--border);border-radius:8px"><input type="checkbox" id="ml-selall" onchange="toggleSelectAllMyLots(this.checked)" style="width:16px;height:16px">Select all</label>
       <button style="background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border:none;border-radius:8px;height:30px;padding:0 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 6px rgba(37,99,235,.2)" onclick="printSelectedMyLots()" title="Print receipts for selected lots">🖨 Print selected</button>
       <button style="background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border:none;border-radius:8px;height:30px;padding:0 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 6px rgba(37,99,235,.2)" onclick="printAllBySellerUser()" title="Print all lots grouped by seller">🖨 Print all by seller</button>
       <button style="background:linear-gradient(135deg,#dc3545,#b91c1c);color:#fff;border:none;border-radius:8px;height:30px;padding:0 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 6px rgba(220,53,69,.2)" onclick="deleteSelectedMyLots()" title="Delete only the lots you have selected">🗑 Delete Selected</button>
@@ -1494,7 +1495,10 @@ function filterMyLots(q){if(!q||q.length<2){renderMyLots(allMyLots);return}const
 function renderMyLots(lots){const list=document.getElementById('ml-list');if(!lots.length){list.innerHTML='<div class="lot-empty">No lots found</div>';return}
 list.innerHTML=lots.map(l=>{const g=String(l.grade||''),q=Number(l.qty).toFixed(3);const isRes=Number(l.reserved);const tn=(l.trader_name||'Unknown').replace(/'/g,"\\'");const editBtns=editEnabled?` <button class="ico-btn ed" title="Edit lot" onclick="openEditFromList(${l.id})">${ICO_EDIT}</button> <button class="ico-btn dl" title="Delete lot" onclick="deleteLot(${l.id},'${String(l.lot_no).replace(/'/g,"\\'")}')">${ICO_DEL}</button>`:'';return`<div class="lot-card${isRes?' reserved':''}"><div class="lot-hdr"><label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="ml-cb" value="${l.id}" onchange="updateMySelCount()" style="width:16px;height:16px"><span class="lot-num">#${l.lot_no}</span>${isRes?'<span class="res-badge">RESERVED</span>':''}</label><span style="font-size:10px;color:var(--text3)">${l.user_id} · ${l.created_at?l.created_at.split(' ')[1]||'':''}</span></div><div class="lot-row"><div class="lot-name"><span style="color:var(--green);text-decoration:underline;cursor:pointer" onclick="showBankPop(event,'${tn}','${(l.acctnum||'').replace(/'/g,"\\'")}','${(l.ifsc||'').replace(/'/g,"\\'")}','${(l.tel||'').replace(/'/g,"\\'")}','${(l.cr||'').replace(/'/g,"\\'")}')">${l.trader_name}</span></div><div class="lot-actions"><button class="ico-btn pr" onclick="printLot(${l.id})" title="Print receipt">${ICO_PRINT}</button>${editBtns}</div></div><div class="lot-meta">${g} | ${l.bags} bags | ${l.litre} L | <strong>${q} kg</strong> · ${l.ppla||''}</div></div>`}).join('');updateMySelCount()}
 
-function updateMySelCount(){const checked=document.querySelectorAll('.ml-cb:checked').length;const bar=document.getElementById('ml-actions');const cnt=document.getElementById('ml-sel-count');const hasLots=allMyLots&&allMyLots.length>0;bar.style.display=hasLots?'flex':'none';cnt.textContent=checked>0?checked+' selected':''}
+function updateMySelCount(){const boxes=document.querySelectorAll('.ml-cb');const checked=document.querySelectorAll('.ml-cb:checked').length;const bar=document.getElementById('ml-actions');const cnt=document.getElementById('ml-sel-count');const hasLots=allMyLots&&allMyLots.length>0;bar.style.display=hasLots?'flex':'none';cnt.textContent=checked>0?checked+' selected':'';const sa=document.getElementById('ml-selall');if(sa){sa.checked=boxes.length>0&&checked===boxes.length;sa.indeterminate=checked>0&&checked<boxes.length}}
+// Tick / untick every lot currently shown in My Lots (respects the active
+// search filter, since only filtered cards are in the DOM).
+function toggleSelectAllMyLots(on){document.querySelectorAll('.ml-cb').forEach(function(cb){cb.checked=on});updateMySelCount()}
 
 async function printSelectedMyLots(){var ids=Array.from(document.querySelectorAll('.ml-cb:checked')).map(cb=>parseInt(cb.value));if(!ids.length){toast('Select lots to print',true);return}printAndClose(B+'/api/lots/print-batch?ids='+ids.join(',')+'&branch='+encodeURIComponent(br)+'&token='+token+'&format='+printFmt())}
 
@@ -1786,14 +1790,33 @@ function renderBankList() {
 }
 
 function onBankSelect(sel) {
-  var info = document.getElementById('le-bank-info');
   var b = sellerBanks.find(function(x) { return x.id == sel.value; });
-  if (b) {
-    var parts = ['IFSC: ' + (b.ifsc || '—')];
-    if (b.branch) parts.push('Branch: ' + b.branch);
-    if (b.holder_name) parts.push('Holder: ' + b.holder_name);
-    info.textContent = parts.join(' | ');
-  } else { info.textContent = ''; }
+  renderLeBankInfo(b);
+}
+// Render the bank info line for the selected bank. Shows the branch from the
+// stored value when present; otherwise derives it live from the IFSC (same
+// razorpay lookup the add-bank form uses) so a branch appears even for banks
+// saved before branch capture existed. Results are cached per IFSC.
+function renderLeBankInfo(b) {
+  var info = document.getElementById('le-bank-info');
+  if (!b) { info.textContent = ''; return; }
+  var code = String(b.ifsc || '').trim().toUpperCase();
+  var branch = b.branch || ifscBranchCache[code] || '';
+  var parts = ['IFSC: ' + (b.ifsc || '—')];
+  if (branch) parts.push('Branch: ' + branch);
+  if (b.holder_name) parts.push('Holder: ' + b.holder_name);
+  info.textContent = parts.join(' | ');
+  // No branch known yet but the IFSC is valid → look it up, cache, re-render.
+  if (!branch && /^[A-Z]{4}0[A-Z0-9]{6}$/.test(code) && ifscBranchCache[code] === undefined) {
+    fetch('https://ifsc.razorpay.com/' + code)
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) {
+        ifscBranchCache[code] = (d && d.BRANCH) ? d.BRANCH : '';
+        var sel = document.getElementById('le-bank-select');
+        if (sel && String(sel.value) === String(b.id)) renderLeBankInfo(b);
+      })
+      .catch(function() { ifscBranchCache[code] = ''; });
+  }
 }
 
 function editSelectedBank() {
