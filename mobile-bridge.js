@@ -164,12 +164,14 @@ function addReceiptHeader(doc, appTitle, branch, dateFmt, tradeNo, pageW, compan
   doc.moveDown(0.4);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.5).stroke(); doc.moveDown(0.4);
 
-  // Auction # on the LEFT, Date on the RIGHT (swapped).
-  doc.font('Helvetica').fontSize(10);
+  // Auction # on the LEFT, Date on the RIGHT. Smaller font, a wider Date
+  // column and lineBreak:false keep "Date: dd/mm/yyyy" on ONE line even on a
+  // narrow thermal roll (it used to wrap when w/2 was too small for the value).
+  doc.font('Helvetica').fontSize(8);
   const y0 = doc.y;
-  doc.text('Auction #' + tradeNo, m, y0, { width: w / 2 });
-  doc.text('Date: ' + dateFmt, m + w / 2, y0, { width: w / 2, align: 'right' });
-  doc.y = y0 + 16;
+  doc.text('Auction #' + tradeNo, m, y0, { width: w * 0.40, lineBreak: false });
+  doc.text('Date: ' + dateFmt, m + w * 0.40, y0, { width: w * 0.60, align: 'right', lineBreak: false });
+  doc.y = y0 + 13;
   doc.moveDown(0.2);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).dash(3, { space: 3 }).lineWidth(0.5).stroke().undash();
   doc.moveDown(0.4);
@@ -186,10 +188,11 @@ function addReceiptHeaderCompact(doc, appTitle, branch, dateFmt, tradeNo, pageW)
   doc.moveDown(0.2);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.4).stroke(); doc.moveDown(0.2);
   // Auction # on the LEFT, Date on the RIGHT (matches the detailed slip).
-  doc.font('Helvetica').fontSize(7);
+  // Smaller font + wider Date column + no wrap keeps it on one line.
+  doc.font('Helvetica').fontSize(6);
   const y0 = doc.y;
-  doc.text('Auction #' + tradeNo, m, y0, { width: w / 2 });
-  doc.text('Date: ' + dateFmt, m + w / 2, y0, { width: w / 2, align: 'right' });
+  doc.text('Auction #' + tradeNo, m, y0, { width: w * 0.40, lineBreak: false });
+  doc.text('Date: ' + dateFmt, m + w * 0.40, y0, { width: w * 0.60, align: 'right', lineBreak: false });
   doc.y = y0 + 10;
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).dash(2, { space: 2 }).lineWidth(0.4).stroke().undash();
   doc.moveDown(0.2);

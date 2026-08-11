@@ -1541,7 +1541,8 @@ function renderEditBankList(){
     var label=b.label?' ('+b.label+')':'';
     var opt=document.createElement('option');
     opt.value=b.id;
-    opt.textContent=b.acctnum+label;
+    // Match the desktop format: "<acctnum> · <bank name>" (label appended when set).
+    opt.textContent=[b.acctnum,b.bank_name].filter(Boolean).join(' · ')+label;
     if(editLotBankId?b.id==editLotBankId:b.is_default)opt.selected=true;
     sel.appendChild(opt);
   });
@@ -1549,9 +1550,8 @@ function renderEditBankList(){
 }
 
 function onEditBankSelect(sel){
-  var info=document.getElementById('ed-bank-info');
   var b=editBanks.find(function(x){return x.id==sel.value});
-  info.textContent=b?'IFSC: '+(b.ifsc||'—'):'';
+  renderBankInfoLine('ed-bank-info','ed-bank-select',b);
 }
 
 function editSelectedEditBank(){
@@ -1782,7 +1782,8 @@ function renderBankList() {
     var label = b.label ? ' (' + b.label + ')' : '';
     var opt = document.createElement('option');
     opt.value = b.id;
-    opt.textContent = b.acctnum + label;
+    // Match the desktop format: "<acctnum> · <bank name>" (label appended when set).
+    opt.textContent = [b.acctnum, b.bank_name].filter(Boolean).join(' · ') + label;
     if (b.is_default) opt.selected = true;
     sel.appendChild(opt);
   });
@@ -1798,7 +1799,16 @@ function onBankSelect(sel) {
 // razorpay lookup the add-bank form uses) so a branch appears even for banks
 // saved before branch capture existed. Results are cached per IFSC.
 function renderLeBankInfo(b) {
-  var info = document.getElementById('le-bank-info');
+  renderBankInfoLine('le-bank-info', 'le-bank-select', b);
+}
+// Shared bank info line — shows IFSC, branch and holder name for the selected
+// bank. Branch comes from the stored value when present; otherwise it's derived
+// live from the IFSC (razorpay lookup, cached per IFSC) so it appears even for
+// banks saved before branch capture existed. Used by both the lot-entry form
+// (le-bank) and the edit-lot modal (ed-bank).
+function renderBankInfoLine(infoElId, selectElId, b) {
+  var info = document.getElementById(infoElId);
+  if (!info) return;
   if (!b) { info.textContent = ''; return; }
   var code = String(b.ifsc || '').trim().toUpperCase();
   var branch = b.branch || ifscBranchCache[code] || '';
@@ -1812,8 +1822,8 @@ function renderLeBankInfo(b) {
       .then(function(r) { return r.ok ? r.json() : null; })
       .then(function(d) {
         ifscBranchCache[code] = (d && d.BRANCH) ? d.BRANCH : '';
-        var sel = document.getElementById('le-bank-select');
-        if (sel && String(sel.value) === String(b.id)) renderLeBankInfo(b);
+        var sel = document.getElementById(selectElId);
+        if (sel && String(sel.value) === String(b.id)) renderBankInfoLine(infoElId, selectElId, b);
       })
       .catch(function() { ifscBranchCache[code] = ''; });
   }
