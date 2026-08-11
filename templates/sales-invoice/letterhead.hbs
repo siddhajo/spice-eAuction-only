@@ -39,6 +39,8 @@
   .parties td { vertical-align: top; }
   .parties .kv { width: 100%; table-layout: fixed; border-collapse: collapse; }
   .parties .kv td { border: none; padding: 0.4pt 0; font-size: 7.5pt; vertical-align: top; width: 50%; white-space: nowrap; }
+  /* Left-aligned labels in a fixed-width box so every colon lines up in a column. */
+  .parties .kv .lbl { display: inline-block; width: 26pt; }
   .items th { font-weight: bold; font-size: 7pt; text-align: center; vertical-align: middle; background: #e8f1e0; }
   .items td { font-size: 8pt; }
   .grand td { font-size: 12pt; font-weight: bold; }
@@ -78,18 +80,18 @@
         <div class="b">M/s.{{name}}</div>
         {{#if addr}}<div class="muted">{{addr}}</div>{{/if}}
         <table class="kv">
-          <tr><td>{{place}}</td><td>PAN{{#if pan}} : <span class="b">{{pan}}</span>{{/if}}</td></tr>
-          {{#if state}}<tr><td>STATE : <span class="b">{{state}}</span></td><td>CODE : <span class="b">{{stCode}}</span></td></tr>{{/if}}
-          {{#if gstin}}<tr><td>GST : <span class="b">{{gstin}}</span></td><td>SBL{{#if sbl}} : <span class="b">{{sbl}}</span>{{/if}}</td></tr>{{/if}}
+          <tr><td>{{place}}</td><td><span class="lbl">PAN</span>{{#if pan}}: <span class="b">{{pan}}</span>{{/if}}</td></tr>
+          {{#if state}}<tr><td><span class="lbl">STATE</span>: <span class="b">{{state}}</span></td><td><span class="lbl">CODE</span>: <span class="b">{{stCode}}</span></td></tr>{{/if}}
+          {{#if gstin}}<tr><td><span class="lbl">GST</span>: <span class="b">{{gstin}}</span></td><td><span class="lbl">SBL</span>{{#if sbl}}: <span class="b">{{sbl}}</span>{{/if}}</td></tr>{{/if}}
         </table>
       {{/with}}</td>
       <td>{{#with ship}}
         <div class="b">M/s.{{name}}</div>
         {{#if addr}}<div class="muted">{{addr}}</div>{{/if}}
         <table class="kv">
-          <tr><td>{{place}}</td><td>PAN{{#if pan}} : <span class="b">{{pan}}</span>{{/if}}</td></tr>
-          {{#if state}}<tr><td>STATE : <span class="b">{{state}}</span></td><td>CODE : <span class="b">{{stCode}}</span></td></tr>{{/if}}
-          {{#if gstin}}<tr><td>GST : <span class="b">{{gstin}}</span></td><td>SBL{{#if sbl}} : <span class="b">{{sbl}}</span>{{/if}}</td></tr>{{/if}}
+          <tr><td>{{place}}</td><td><span class="lbl">PAN</span>{{#if pan}}: <span class="b">{{pan}}</span>{{/if}}</td></tr>
+          {{#if state}}<tr><td><span class="lbl">STATE</span>: <span class="b">{{state}}</span></td><td><span class="lbl">CODE</span>: <span class="b">{{stCode}}</span></td></tr>{{/if}}
+          {{#if gstin}}<tr><td><span class="lbl">GST</span>: <span class="b">{{gstin}}</span></td><td><span class="lbl">SBL</span>{{#if sbl}}: <span class="b">{{sbl}}</span>{{/if}}</td></tr>{{/if}}
         </table>
       {{/with}}</td>
     </tr>

@@ -397,6 +397,23 @@ select:focus{border-color:var(--green)}
       <!-- Recent lots strip -->
       <div id="le-recent" style="border-top:1px solid var(--border);font-size:11px"></div>
     </div>
+    <!-- Layout tweak: move the SELLER container (with its bank rows) to sit
+         BELOW the "Reserve this lot" section instead of at the top of the form.
+         Done as a one-time DOM move so the static markup above stays readable. -->
+    <script>(function(){
+      function moveSellerBelowReserve(){
+        var reserve=document.getElementById('le-immediate-reserve-wrap');
+        if(!reserve||!reserve.parentNode) return false;
+        // Insert each after `reserve`; reverse insert order keeps their
+        // original relative order (seller, trade-card, bank, bank-form).
+        ['le-bank-form','le-bank','le-tc','le-sw'].forEach(function(id){
+          var el=document.getElementById(id);
+          if(el) reserve.parentNode.insertBefore(el, reserve.nextSibling);
+        });
+        return true;
+      }
+      if(!moveSellerBelowReserve()) document.addEventListener('DOMContentLoaded', moveSellerBelowReserve);
+    })();</script>
 
     <!-- Received vs planned progress bar (replaces old totals summary) -->
     <div id="le-progress" class="le-progress" style="display:none"></div>

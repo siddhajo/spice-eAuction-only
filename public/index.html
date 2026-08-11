@@ -4487,6 +4487,20 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </div>
         </div>
       </div>
+      <!-- Layout tweak: move the SELLER container below the "Reserve this lot"
+           section (a one-time DOM move; keeps the static markup order above
+           intact). Seller and the reserve block are siblings in the same form. -->
+      <script>(function(){
+        function moveSellerBelowReserve(){
+          var seller=document.getElementById('le-seller-row');
+          if(!seller||!seller.parentNode) return false;
+          var reserve=seller.parentNode.querySelector(':scope > .feat-immediate-reserve');
+          if(!reserve) return false;
+          seller.parentNode.insertBefore(seller, reserve.nextSibling);
+          return true;
+        }
+        if(!moveSellerBelowReserve()) document.addEventListener('DOMContentLoaded', moveSellerBelowReserve);
+      })();</script>
 
       <!-- Recent entries — today's lots from this auction -->
       <div class="card le-collapsible" id="le-sec-recent" style="margin-top:16px">
