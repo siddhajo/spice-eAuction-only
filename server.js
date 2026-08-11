@@ -5715,7 +5715,8 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
   // Correlated subquery (not LEFT JOIN) to avoid any risk of row duplication
   // if the same buyer code exists multiple times in the buyers table.
   let q = `SELECT lots.*,
-             (SELECT b.code FROM buyers b WHERE b.buyer = lots.buyer LIMIT 1) AS buyer_code
+             (SELECT b.code  FROM buyers b WHERE b.buyer = lots.buyer LIMIT 1) AS buyer_code,
+             (SELECT b.gstin FROM buyers b WHERE b.buyer = lots.buyer LIMIT 1) AS buyer_gstin
            FROM lots
            WHERE lots.auction_id = ?`;
   const p = [req.params.auctionId];
@@ -10988,7 +10989,21 @@ app.post('/api/invoices/preview-pdf/:auctionId', requireView, async (req, res) =
     const invoiceDate = (auction && auction.date) || new Date().toISOString().slice(0, 10);
 
     // Placeholder invoice number — nothing is reserved or stored.
-    const pdf = await generateSalesInvoicePDF(invoice, cfg, saleType, 'PREVIEW', invoiceDate);
+    // Honour the layout selected in Settings (letterhead/modern → HTML engine,
+    // classic/pdfkit → legacy PDFKit) so the pre-invoice PDF matches the real
+    // Generate/print output and the inline HTML preview. ?template=<id>
+    // overrides for this one download.
+    const tplChoice = String(req.query.template || req.body.template || '').trim();
+    const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
+      engineKey: 'sales_invoice_engine', templateKey: 'sales_invoice_template', tplChoice });
+    let pdf;
+    if (useHtml) {
+      const { generateSalesInvoiceHtmlPDF } = require('./pdf/render-html-invoice');
+      const cfg2 = tplChoice ? { ...cfg, sales_invoice_template: tplChoice } : cfg;
+      pdf = await generateSalesInvoiceHtmlPDF(invoice, cfg2, saleType, 'PREVIEW', invoiceDate);
+    } else {
+      pdf = await generateSalesInvoicePDF(invoice, cfg, saleType, 'PREVIEW', invoiceDate);
+    }
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="PreInvoice_${saleType}_${String(buyerCode).replace(/[^A-Za-z0-9]/g,'')}.pdf"`);
     res.send(pdf);
@@ -11052,7 +11067,13 @@ app.get('/api/invoices/preview-all/:auctionId', requireView, (req, res) => {
         previews.push({ buyerCode: b.code, saleType: b.saleType, buyer: inv.buyer, summary: inv.summary, lineItems: inv.lineItems });
       }
     }
-    res.json({ buyers, previews });
+    // Which engine the selected sales-invoice layout resolves to. The inline
+    // preview uses this to stay consistent with "Open PDF": 'html' layouts
+    // (letterhead/modern) render via the fast HTML preview; 'pdfkit'
+    // (classic) embeds the actual PDF so both show the identical layout.
+    const salesEngine = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
+      engineKey: 'sales_invoice_engine', templateKey: 'sales_invoice_template' }) ? 'html' : 'pdfkit';
+    res.json({ buyers, previews, salesEngine });
   } catch (e) {
     console.error('Pre-invoice preview-all error:', e);
     res.status(500).json({ error: e.message });
@@ -13007,6 +13028,8 @@ app.get('/api/insights', requireView, (req, res) => {
   // is a real hammer transaction and counts towards min/max/avg price.
   const SOLD = `(UPPER(COALESCE(l.code,'')) NOT IN ('', 'WD', 'NA'))`;
   const WD   = `(UPPER(COALESCE(l.code,'')) = 'WD')`;
+  // Not Auctioned = booked but neither sold nor withdrawn (blank/NA code).
+  const NA   = `(UPPER(COALESCE(l.code,'')) IN ('', 'NA'))`;
 
   // Auction filter — appended to every WHERE that references `a` or `l`.
   // Two trades can fall on the same calendar date, so the date predicate
@@ -13382,7 +13405,8 @@ app.get('/api/insights', requireView, (req, res) => {
     `SELECT CASE WHEN TRIM(COALESCE(l.grade,'')) IN ('1','2') THEN TRIM(l.grade) ELSE 'other' END AS grade,
             COUNT(*) AS b_lots, COALESCE(SUM(l.bags),0) AS b_bags, COALESCE(SUM(l.qty),0) AS b_qty, COALESCE(SUM(l.amount),0) AS b_amt,
             SUM(CASE WHEN ${SOLD} THEN 1 ELSE 0 END) AS s_lots, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.bags ELSE 0 END),0) AS s_bags, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.qty ELSE 0 END),0) AS s_qty, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.amount ELSE 0 END),0) AS s_amt,
-            SUM(CASE WHEN ${WD} THEN 1 ELSE 0 END) AS w_lots, COALESCE(SUM(CASE WHEN ${WD} THEN l.bags ELSE 0 END),0) AS w_bags, COALESCE(SUM(CASE WHEN ${WD} THEN l.qty ELSE 0 END),0) AS w_qty, COALESCE(SUM(CASE WHEN ${WD} THEN l.amount ELSE 0 END),0) AS w_amt
+            SUM(CASE WHEN ${WD} THEN 1 ELSE 0 END) AS w_lots, COALESCE(SUM(CASE WHEN ${WD} THEN l.bags ELSE 0 END),0) AS w_bags, COALESCE(SUM(CASE WHEN ${WD} THEN l.qty ELSE 0 END),0) AS w_qty, COALESCE(SUM(CASE WHEN ${WD} THEN l.amount ELSE 0 END),0) AS w_amt,
+            SUM(CASE WHEN ${NA} THEN 1 ELSE 0 END) AS n_lots, COALESCE(SUM(CASE WHEN ${NA} THEN l.bags ELSE 0 END),0) AS n_bags, COALESCE(SUM(CASE WHEN ${NA} THEN l.qty ELSE 0 END),0) AS n_qty, COALESCE(SUM(CASE WHEN ${NA} THEN l.amount ELSE 0 END),0) AS n_amt
      FROM lots l JOIN auctions a ON a.id = l.auction_id
      WHERE date(a.date) BETWEEN date(?) AND date(?)${aidA}
      GROUP BY CASE WHEN TRIM(COALESCE(l.grade,'')) IN ('1','2') THEN TRIM(l.grade) ELSE 'other' END`,
@@ -13392,11 +13416,12 @@ app.get('/api/insights', requireView, (req, res) => {
     lots: Number(lots)||0, bags: Number(bags)||0, qty: Number(qty)||0,
     seller_qty: (Number(qty)||0) + sampleWt * (Number(lots)||0), amount: Number(amount)||0,
   });
-  const gradeBreakdown = { booked: {}, sold: {}, withdrawn: {} };
+  const gradeBreakdown = { booked: {}, sold: {}, withdrawn: {}, na: {} };
   for (const g of gradeBrRows) {
     gradeBreakdown.booked[g.grade]    = gradeCell(g.b_lots, g.b_bags, g.b_qty, g.b_amt);
     gradeBreakdown.sold[g.grade]      = gradeCell(g.s_lots, g.s_bags, g.s_qty, g.s_amt);
     gradeBreakdown.withdrawn[g.grade] = gradeCell(g.w_lots, g.w_bags, g.w_qty, g.w_amt);
+    gradeBreakdown.na[g.grade]        = gradeCell(g.n_lots, g.n_bags, g.n_qty, g.n_amt);
   }
 
   // ── Same grade breakdown, split per BRANCH — drives the snapshot's
@@ -13406,7 +13431,8 @@ app.get('/api/insights', requireView, (req, res) => {
             CASE WHEN TRIM(COALESCE(l.grade,'')) IN ('1','2') THEN TRIM(l.grade) ELSE 'other' END AS grade,
             COUNT(*) AS b_lots, COALESCE(SUM(l.bags),0) AS b_bags, COALESCE(SUM(l.qty),0) AS b_qty, COALESCE(SUM(l.amount),0) AS b_amt,
             SUM(CASE WHEN ${SOLD} THEN 1 ELSE 0 END) AS s_lots, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.bags ELSE 0 END),0) AS s_bags, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.qty ELSE 0 END),0) AS s_qty, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.amount ELSE 0 END),0) AS s_amt,
-            SUM(CASE WHEN ${WD} THEN 1 ELSE 0 END) AS w_lots, COALESCE(SUM(CASE WHEN ${WD} THEN l.bags ELSE 0 END),0) AS w_bags, COALESCE(SUM(CASE WHEN ${WD} THEN l.qty ELSE 0 END),0) AS w_qty, COALESCE(SUM(CASE WHEN ${WD} THEN l.amount ELSE 0 END),0) AS w_amt
+            SUM(CASE WHEN ${WD} THEN 1 ELSE 0 END) AS w_lots, COALESCE(SUM(CASE WHEN ${WD} THEN l.bags ELSE 0 END),0) AS w_bags, COALESCE(SUM(CASE WHEN ${WD} THEN l.qty ELSE 0 END),0) AS w_qty, COALESCE(SUM(CASE WHEN ${WD} THEN l.amount ELSE 0 END),0) AS w_amt,
+            SUM(CASE WHEN ${NA} THEN 1 ELSE 0 END) AS n_lots, COALESCE(SUM(CASE WHEN ${NA} THEN l.bags ELSE 0 END),0) AS n_bags, COALESCE(SUM(CASE WHEN ${NA} THEN l.qty ELSE 0 END),0) AS n_qty, COALESCE(SUM(CASE WHEN ${NA} THEN l.amount ELSE 0 END),0) AS n_amt
      FROM lots l JOIN auctions a ON a.id = l.auction_id
      WHERE date(a.date) BETWEEN date(?) AND date(?)${aidA}
      GROUP BY 1, 2
@@ -13416,10 +13442,11 @@ app.get('/api/insights', requireView, (req, res) => {
   const gradeBreakdownByBranch = {};
   for (const g of gradeBrBranchRows) {
     const br = g.branch || '(unspecified)';
-    if (!gradeBreakdownByBranch[br]) gradeBreakdownByBranch[br] = { booked: {}, sold: {}, withdrawn: {} };
+    if (!gradeBreakdownByBranch[br]) gradeBreakdownByBranch[br] = { booked: {}, sold: {}, withdrawn: {}, na: {} };
     gradeBreakdownByBranch[br].booked[g.grade]    = gradeCell(g.b_lots, g.b_bags, g.b_qty, g.b_amt);
     gradeBreakdownByBranch[br].sold[g.grade]      = gradeCell(g.s_lots, g.s_bags, g.s_qty, g.s_amt);
     gradeBreakdownByBranch[br].withdrawn[g.grade] = gradeCell(g.w_lots, g.w_bags, g.w_qty, g.w_amt);
+    gradeBreakdownByBranch[br].na[g.grade]        = gradeCell(g.n_lots, g.n_bags, g.n_qty, g.n_amt);
   }
 
   res.json({
@@ -13463,6 +13490,7 @@ app.get('/api/insights/lots', requireView, (req, res) => {
   let statusFilter = '';
   if (status === 'sold') statusFilter = ` AND ${SOLD}`;
   else if (status === 'withdrawn') statusFilter = ` AND ${WD}`;
+  else if (status === 'na') statusFilter = ` AND (UPPER(COALESCE(l.code,'')) IN ('', 'NA'))`;
 
   // Branch — '(unspecified)' matches blank/null, same bucketing as the rollup.
   let branchFilter = '';
