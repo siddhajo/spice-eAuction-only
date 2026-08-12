@@ -4480,6 +4480,9 @@ function generMerchantsXML(rows, cfg, opts = {}) {
   const separator   = opts.separator  || cfgGet(cfg, 'tally_separator', '/');
   const _tallyPrefix = String(cfgGet(cfg, 'tally_inv_prefix', '')).trim();
   const invPrefix   = _tallyPrefix ? (/[/\-]$/.test(_tallyPrefix) ? _tallyPrefix : _tallyPrefix + '/') : '';
+  // Extra prefix on the invoice NUMBER of inter-state (I) bills (Merchant XML
+  // only — see settings). Blank = none.
+  const interPrefix = String(cfgGet(cfg, 'interstate_invoice_prefix', '')).trim();
   // Control ledger name — overridable via Settings (tally_merchants), else "Merchants".
   const merchLedger = cfgGet(cfg, 'tally_merchants', 'Merchants');
 
@@ -4502,7 +4505,7 @@ function generMerchantsXML(rows, cfg, opts = {}) {
   let grandTotal = 0;
   for (const row of rows) {
     const sale      = String(row.sale || 'L').toUpperCase();
-    const invoNo    = String(row.invo || '').trim();
+    const invoNo    = (interPrefix && sale === 'I' ? interPrefix : '') + String(row.invo || '').trim();
     const billName  = `${invPrefix}${sale}${separator}${invoNo}/${season}`;
     // Merchants journal debits the BUYER (row.buyer, e.g. "ARUL"), not the
     // trade name (row.partyName / buyer1, e.g. "KAVISH TRADING COMPANY").

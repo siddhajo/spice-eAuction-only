@@ -1014,16 +1014,15 @@ async function exportTallyPurchase(db, auctionId, cfg) {
 // ── Export: Sales Journal (JOUR.PRG) ────────────────────────
 // Trade-based: filters by auction_id; dates rendered dd/mm/yyyy.
 async function exportSalesJournal(db, auctionId, saleType) {
-  const { getSalesJournal } = require('./calculations');
-  const rows = getSalesJournal(db, auctionId, saleType);
+  const calc = require('./calculations');
+  const rows = calc.getSalesJournal(db, auctionId, saleType);
+  const cfg = require('./company-config').getSettingsFlat(db);
+  // Date / Buyer / GSTIN / Place columns dropped per request — the register
+  // keeps the sale/invoice/trade-name identity and the money columns.
   const cols = [
-    { header: 'DATE', key: 'date', width: 12 },
     { header: 'SALE', key: 'sale', width: 6 },
     { header: 'INV#', key: 'invo', width: 8 },
-    { header: 'BUYER', key: 'buyer', width: 8 },
     { header: 'TRADE NAME', key: 'buyer1', width: 30 },
-    { header: 'GSTIN', key: 'gstin', width: 20 },
-    { header: 'PLACE', key: 'place', width: 15 },
     { header: 'BAGS', key: 'bag', width: 6 },
     { header: 'QTY', key: 'qty', width: 12 },
     { header: 'CARDAMOM', key: 'cardamom', width: 14 },
@@ -1037,9 +1036,21 @@ async function exportSalesJournal(db, auctionId, saleType) {
     { header: 'ROUND', key: 'rund', width: 8 },
     { header: 'TOTAL', key: 'total', width: 14 },
   ];
-  return createExcelBuffer('SalesJournal', cols, rows, {
+  // Column-sum "Total" row.
+  const sumKeys = ['bag','qty','cardamom','gunny','transport','insurance','cgst','sgst','igst','tcs','rund','total'];
+  const totalRow = { buyer1: 'Total' };
+  for (const k of sumKeys) totalRow[k] = rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+  // Sale-type ledger summary (as in the COLLECTION reference), each line as a
+  // trade-name label + optional qty + a value in the TOTAL column.
+  const summary = calc.getSalesJournalSummary(db, auctionId, saleType, cfg);
+  const summaryRows = summary
+    ? summary.lines.map(l => ({ buyer1: l.label, qty: (l.qty === '' ? undefined : l.qty), total: l.value }))
+    : [];
+  const augmented = [...rows, totalRow, {}, ...summaryRows];
+  return createExcelBuffer('SalesJournal', cols, augmented, {
     db, title: 'Sales Journal',
     metaLines: [...auctionMeta(db, auctionId), saleType ? `Type: ${saleType}` : ''].filter(Boolean),
+    grandTotal: summary ? { buyer1: `${summary.stateLabel} TOTAL`, total: summary.stateTotal } : null,
   });
 }
 

@@ -573,6 +573,10 @@ function getCollectionRows(db, auctionId) {
     if (name && byName[name] == null) byName[name] = b;
   }
 
+  // Inter-state invoice-number prefix (Collection only, per settings).
+  let isPrefix = '';
+  try { isPrefix = String(require('./company-config').getSettingsFlat(db).interstate_invoice_prefix || '').trim(); } catch (_) {}
+
   return invoices.map(i => {
     const iCode = String(i.buyer  || '').trim().toUpperCase();
     const iName = String(i.buyer1 || '').trim().toUpperCase();
@@ -584,7 +588,7 @@ function getCollectionRows(db, auctionId) {
       : (i.buyer || '');
     return {
       sale:        i.sale,
-      invo:        i.invo,
+      invo:        (isPrefix && String(i.sale || '').toUpperCase() === 'I') ? (isPrefix + i.invo) : i.invo,
       trade_name:  i.buyer1 || '',
       buyer_name:  buyerName,
       qty:         i.qty,

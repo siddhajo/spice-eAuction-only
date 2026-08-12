@@ -1029,7 +1029,14 @@ function mountMobile(app, deps) {
     // Compare via UPPER(TRIM(...)) so legacy rows with stray whitespace
     // (common from XLSX imports) still match — a `pan = ? COLLATE NOCASE`
     // check is whitespace-blind and was letting duplicates through.
-    if (crTrim) {
+    //
+    // BUT: a bare "CR." / "CR" placeholder carries NO real GSTIN — thousands
+    // of agriculturist sellers share it. Deduping on it would silently return
+    // an unrelated existing seller instead of creating the new one (the "seller
+    // added but not found" bug). Only dedup when `cr` has an actual identifier.
+    const crAlnum = crTrim.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const crIsReal = crAlnum !== '' && crAlnum !== 'CR';
+    if (crIsReal) {
       const dup = db.get(
         'SELECT * FROM traders WHERE UPPER(TRIM(cr)) = UPPER(?) LIMIT 1',
         [crTrim]
@@ -1067,8 +1074,8 @@ function mountMobile(app, deps) {
     }
 
     const info = db.run(
-      `INSERT INTO traders (name,cr,pan,tan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name,whatsapp,email,dob)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO traders (name,cr,pan,tan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name,whatsapp,email,dob,user_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         nameTrim,
         crTrim,
@@ -1085,6 +1092,7 @@ function mountMobile(app, deps) {
         (t.whatsapp || '').toString().trim(),
         emailClean,
         (t.dob || '').toString().trim(),
+        (t.user_id || '').toString().trim(),
       ]
     );
     // Persist multi-bank rows when the desktop UI sends them. The flat
@@ -1162,6 +1170,7 @@ function mountMobile(app, deps) {
     setField('acctnum',     t.acctnum,     (v) => String(v).trim());
     setField('holder_name', t.holder_name, (v) => String(v).trim());
     setField('dob',         t.dob,         (v) => String(v).trim());
+    setField('user_id',     t.user_id,     (v) => String(v).trim());
     setField('whatsapp',    t.whatsapp,    (v) => String(v).trim());
     if (emailClean !== null) { sets.push('email = ?'); vals.push(emailClean); }
     // No flat-field changes is fine — the user may have only edited

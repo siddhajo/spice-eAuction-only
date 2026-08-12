@@ -208,7 +208,10 @@ function getReportContext(db, opts) {
     ORDER BY CAST(l.lot_no AS INTEGER), l.lot_no
   `, params);
 
-  return { auction, rows, auctionState: String(auction.state || '').trim().toUpperCase() };
+  // Inter-state invoice-number prefix (Buyer Statement uses it for I invoices).
+  const _pref = db.get(`SELECT value FROM company_settings WHERE key = 'interstate_invoice_prefix'`);
+  const interstateInvoicePrefix = String((_pref && _pref.value) || '').trim();
+  return { auction, rows, auctionState: String(auction.state || '').trim().toUpperCase(), interstateInvoicePrefix };
 }
 
 // Distinct branches/sellers/buyers seen in an auction — populates the
@@ -294,13 +297,16 @@ function buildBuyersStatement(ctx) {
   // A numeric sort key (`_invSort`) is stashed for ordering, then both it and
   // the temp Set are dropped so the rows serialise cleanly to JSON.
   const invNumKey = s => { const n = parseInt(String(s).replace(/\D/g, ''), 10); return isFinite(n) ? n : Number.POSITIVE_INFINITY; };
-  const setInvoice = prefix => g => {
+  // Inter-state invoice numbers additionally carry the configured prefix.
+  const isPrefix = String(ctx.interstateInvoicePrefix || '').trim();
+  const setInvoice = (prefix, numPrefix) => g => {
     const nums = Array.from(g.invos).filter(Boolean).sort((a, b) => invNumKey(a) - invNumKey(b));
-    g.invoice  = nums.length ? `${prefix} ${nums.join(', ')}` : '';
+    const shown = numPrefix ? nums.map(nn => numPrefix + nn) : nums;
+    g.invoice  = nums.length ? `${prefix} ${shown.join(', ')}` : '';
     g._invSort = nums.length ? invNumKey(nums[0]) : Number.POSITIVE_INFINITY;
     delete g.invos;
   };
-  inter.forEach(setInvoice('I'));
+  inter.forEach(setInvoice('I', isPrefix));
   intra.forEach(setInvoice('L'));
   exportS.forEach(setInvoice('E'));
   // Order each section by invoice number (blank invoices last; ties by name).

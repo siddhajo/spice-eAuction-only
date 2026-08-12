@@ -5820,6 +5820,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
           <button class="btn btn-g" onclick="loadJournal()">Load</button>
           <button class="btn btn-a" onclick="exportJournal()">Export XLSX</button>
+          <button class="btn btn-o" onclick="exportJournalPdf()" title="Download the loaded journal as a PDF">Export PDF</button>
         </div>
         <div style="overflow-x:auto;max-height:500px"><table id="jr-table"><thead id="jr-head"></thead><tbody id="jr-body"></tbody></table></div>
       </div>
@@ -6057,6 +6058,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <div class="fg"><label>State Code</label><input id="t-pstcode"></div>
     <div class="fg"><label>PIN</label><input id="t-pin"></div>
     <div class="fg"><label>Date of Birth</label><input id="t-dob" type="date"></div>
+    <div class="fg"><label>User ID</label><input id="t-userid" autocomplete="off"></div>
   </div>
   <div style="margin-top:14px;border:1px solid var(--spice-line);border-radius:8px;padding:10px 14px;background:var(--spice-cream)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -18286,9 +18288,9 @@ async function restoreDbBackup(ev){
 // Traders now support MULTIPLE bank accounts via a repeating section in the
 // modal. The flat trader fields here cover everything EXCEPT banking — that's
 // collected separately from the #t-banks-container rows at save time.
-const T_FIELDS=['name','cr','pan','tan','tel','aadhar','padd','ppla','pstate','pst_code','pin','dob'];
+const T_FIELDS=['name','cr','pan','tan','tel','aadhar','padd','ppla','pstate','pst_code','pin','dob','user_id'];
 const T_IDS={name:'t-name',cr:'t-cr',pan:'t-pan',tan:'t-tan',tel:'t-tel',aadhar:'t-aadhar',padd:'t-padd',ppla:'t-ppla',
-  pstate:'t-pstate',pst_code:'t-pstcode',pin:'t-pin',dob:'t-dob'};
+  pstate:'t-pstate',pst_code:'t-pstcode',pin:'t-pin',dob:'t-dob',user_id:'t-userid'};
 
 // Shared pager renderer used by sellers + buyers (and reusable for any
 // future paginated list). Renders a "Showing X–Y of N · matching 'q'"
@@ -28253,19 +28255,20 @@ async function loadJournal(){
     const saleType=document.getElementById('jr-sale').value;
     url=`/api/journals/sales?auctionId=${auctionId}${saleType?'&saleType='+saleType:''}`;
     cols=[
-      { key:'date',   label:'Date',     sort:'date', render:(r)=>fmtD(r.date) },
       { key:'sale',   label:'Sale',     sort:'text' },
       { key:'invo',   label:'Inv#',     sort:'text' },
-      { key:'buyer',  label:'Buyer',    sort:'text' },
       { key:'buyer1', label:'Trade Name', sort:'text' },
-      { key:'gstin',  label:'GSTIN',    sort:'text' },
       { key:'bag',    label:'Bags',     sort:'number', numeric:true, fmt:fmtNumWithDecimals(0) },
       { key:'qty',    label:'Qty',      sort:'number', numeric:true, fmt:fmtNumWithDecimals(3) },
       { key:'cardamom', label:'Cardamom', sort:'number', numeric:true, fmt:fmtNumWithDecimals(2) },
       { key:'gunny',  label:'Gunny',    sort:'number', numeric:true, fmt:fmtNumWithDecimals(2) },
+      { key:'transport', label:'Transport', sort:'number', numeric:true, fmt:fmtNumWithDecimals(2) },
+      { key:'insurance', label:'Insurance', sort:'number', numeric:true, fmt:fmtNumWithDecimals(2) },
       { key:'cgst',   label:'CGST',     sort:'number', numeric:true, fmt:fmtNumWithDecimals(2) },
       { key:'sgst',   label:'SGST',     sort:'number', numeric:true, fmt:fmtNumWithDecimals(2) },
       { key:'igst',   label:'IGST',     sort:'number', numeric:true, fmt:fmtNumWithDecimals(2) },
+      { key:'tcs',    label:'TCS',      sort:'number', numeric:true, fmt:fmtNumWithDecimals(2) },
+      { key:'rund',   label:'Round',    sort:'number', numeric:true, fmt:fmtNumWithDecimals(2) },
       { key:'total',  label:'Total',    sort:'number', numeric:true, fmt:fmtNumWithDecimals(2) },
     ];
   }else if(type==='dealer'){
@@ -28305,7 +28308,13 @@ async function loadJournal(){
   // double-stack headers when the user switches journal types.
   const headEl = document.getElementById('jr-head');
   if (headEl) headEl.innerHTML = '';
-  DataTable.mount('jr-body', Array.isArray(d) ? d : [], {
+  const jrData = Array.isArray(d) ? d : [];
+  // Stash the loaded rows + columns so Export PDF renders exactly what's on
+  // screen (same filters) without re-fetching or duplicating column defs.
+  const _jrTitles = { sales:'Sales Journal', dealer:'Dealer Purchase Journal', agri:'Agri Bill Journal' };
+  const _jrSaleType = (type === 'sales') ? (document.getElementById('jr-sale')?.value || '') : '';
+  window._lastJournal = { data: jrData, cols, title: _jrTitles[type] || 'Journal', type, auctionId, saleType: _jrSaleType };
+  DataTable.mount('jr-body', jrData, {
     columns: cols,
     emptyState: { icon:'document', title:'No records', body:'No journal entries for this auction.' }
   });
@@ -28325,6 +28334,64 @@ async function exportJournal(){
   }
   const r=await fetch(B+url,{headers:{'Authorization':'Bearer '+T}});
   const blob=await r.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click()}
+
+// Export the currently-loaded journal to PDF, rendered through the shared
+// /api/report-pdf endpoint (company header + table) so it matches every other
+// on-screen report export.
+async function exportJournalPdf(){
+  const lj = window._lastJournal;
+  if(!lj || !Array.isArray(lj.data) || !lj.data.length){
+    toast('Load the journal first — nothing to export yet.'); return;
+  }
+  // Map the DataTable columns → report-pdf columns. Wider share for text.
+  const columns = lj.cols.map(c => ({ header: c.label || c.key, key: c.key, width: c.numeric ? 12 : 16 }));
+  // Format each cell the same way the table does: dates via fmtD, numbers via
+  // the column's fmt(), everything else as-is.
+  const cell = (c, row) => {
+    if (c.key === 'date') return fmtD(row.date);
+    const v = row[c.key];
+    if (c.fmt) return c.fmt(v);
+    return v == null ? '' : v;
+  };
+  const rows = lj.data.map(row => {
+    const o = {}; for (const c of lj.cols) o[c.key] = cell(c, row); return o;
+  });
+  // For the Sales journal, render a "Total" row + the sale-type ledger summary
+  // + the state grand total (as in the reference report), so the generic totals
+  // strip is suppressed there. Other journals keep the plain totals strip.
+  let totals = null;
+  const inr = (v, d) => Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
+  if (lj.type === 'sales') {
+    const totalRow = { buyer1: 'Total' };
+    for (const c of lj.cols) if (c.numeric) totalRow[c.key] = c.fmt ? c.fmt(lj.data.reduce((a, r) => a + (Number(r[c.key]) || 0), 0)) : '';
+    rows.push(totalRow, {});
+    try {
+      const sum = await j(`/api/journals/sales-summary?auctionId=${lj.auctionId}${lj.saleType ? ('&saleType=' + encodeURIComponent(lj.saleType)) : ''}`);
+      for (const ln of (sum && sum.lines) || []) {
+        const rr = { buyer1: ln.label, total: inr(ln.value, 2) };
+        if (ln.qty !== '' && ln.qty != null) rr.qty = inr(ln.qty, 3);
+        rows.push(rr);
+      }
+      if (sum && sum.stateLabel) rows.push({ buyer1: `${sum.stateLabel} TOTAL`, total: inr(sum.stateTotal, 2) });
+    } catch (e) { /* summary is best-effort */ }
+  } else {
+    totals = {};
+    for (const c of lj.cols) { if (!c.numeric) continue; const s = lj.data.reduce((a, r) => a + (Number(r[c.key]) || 0), 0); totals[c.key] = c.fmt ? c.fmt(s) : s; }
+  }
+  const aucSel = document.getElementById('jr-auction');
+  const subtitle = aucSel && aucSel.selectedIndex >= 0 ? (aucSel.options[aucSel.selectedIndex].text || '') : '';
+  const spec = { title: lj.title, subtitle, layout: 'landscape', columns, rows, totals };
+  try {
+    await withOverlay('Preparing journal PDF…', async () => {
+      const blob = await _reportPdfBlob(spec);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (lj.title || 'Journal').replace(/[^\w]+/g, '_') + '.pdf';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    });
+  } catch (e) { showError(e); }
+}
 
 // ── Registers (lot-wise Purchase / invoice-wise Sales) ─────
 // Sibling of Journals. Scope by a specific Auction OR a date range; the

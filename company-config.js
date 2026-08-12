@@ -154,6 +154,10 @@ const DEFAULTS = [
   // installs); 'html' = render via the HTML template selected below. Flip to
   // 'html' to serve the template-based PDF from the download button; revert
   // instantly by setting it back to 'pdfkit'.
+  // Prefix prepended to the invoice NUMBER of inter-state (I) sales invoices,
+  // shown ONLY in the Collection report, Spices Board Buyer Statement and the
+  // Merchant (Tally) XML — nowhere on the actual invoice. Blank = no prefix.
+  { key: 'interstate_invoice_prefix', value: '',        category: 'invoice', label: 'Inter-State Invoice No Prefix (Collection / Buyer Stmt / Merchant XML)', type: 'text' },
   { key: 'sales_invoice_engine',      value: 'pdfkit',  category: 'invoice', label: 'Sales Invoice Engine (pdfkit/html)',    type: 'select' },
   { key: 'purchase_invoice_engine',   value: 'pdfkit',  category: 'invoice', label: 'Purchase Invoice Engine (pdfkit/html)', type: 'select' },
   { key: 'agri_bill_engine',          value: 'pdfkit',  category: 'invoice', label: 'Bill of Supply Engine (pdfkit/html)',   type: 'select' },

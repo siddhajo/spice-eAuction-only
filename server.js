@@ -8,7 +8,7 @@ const XLSX = require('xlsx');
 const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
 const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates } = require('./company-config');
 const grade2Alerts = require('./grade2-alerts');
-const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql } = require('./calculations');
+const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 const { amountToWords } = require('./amount-words');
 const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx } = require('./exports');
@@ -10763,6 +10763,16 @@ app.get('/api/journals/sales', requireView, (req, res) => {
   const { auctionId, saleType } = req.query;
   if (!auctionId) return res.status(400).json({ error: 'auctionId required' });
   res.json(getSalesJournal(getDb(), auctionId, saleType));
+});
+
+// Sale-type ledger summary printed under the Sales journal / PDF (Cardamom &
+// Gunny by Export/Inter-State/Local, GST, charges, sample⇄discount, state total).
+app.get('/api/journals/sales-summary', requireView, (req, res) => {
+  const { auctionId, saleType } = req.query;
+  if (!auctionId) return res.status(400).json({ error: 'auctionId required' });
+  const db = getDb();
+  res.json(getSalesJournalSummary(db, parseInt(auctionId, 10), saleType, getSettingsFlat(db))
+    || { lines: [], stateLabel: '', stateTotal: 0 });
 });
 
 app.get('/api/journals/purchase', requireView, (req, res) => {
