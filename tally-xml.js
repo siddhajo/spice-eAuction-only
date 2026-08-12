@@ -2652,12 +2652,25 @@ function buildSalesIspRows(db, auctionId, cfg) {
   // 'L' (Local), 'I' (Inter-state), and 'E' (Export) vouchers together;
   // within each sale-type group, sort by numeric invoice number ascending.
   // `i.id` is a final tiebreaker for safety against duplicate invo values.
+  // Correlated subqueries (not a LEFT JOIN) so a buyer CODE shared by several
+  // buyer-master rows (e.g. "HANIFA" mapped to 4 trade names) matches at most
+  // ONE row — a JOIN fanned each invoice into N identical rows and so emitted
+  // N duplicate vouchers.
   const stmt = db.prepare(`
-    SELECT i.*, b.add1, b.add2, b.pla AS buyer_pla,
-           COALESCE(NULLIF(TRIM(b.cpin), ''), TRIM(b.pin)) AS buyer_pin,
-           b.cgstin, b.cbuyer1, b.cadd1, b.cadd2, b.cpla, b.cpin, b.cstate
+    SELECT i.*,
+           (SELECT b.add1    FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS add1,
+           (SELECT b.add2    FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS add2,
+           (SELECT b.pla     FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS buyer_pla,
+           (SELECT COALESCE(NULLIF(TRIM(b.cpin), ''), TRIM(b.pin))
+              FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS buyer_pin,
+           (SELECT b.cgstin  FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cgstin,
+           (SELECT b.cbuyer1 FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cbuyer1,
+           (SELECT b.cadd1   FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cadd1,
+           (SELECT b.cadd2   FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cadd2,
+           (SELECT b.cpla    FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cpla,
+           (SELECT b.cpin    FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cpin,
+           (SELECT b.cstate  FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cstate
     FROM invoices i
-    LEFT JOIN buyers b ON b.buyer = i.buyer
     WHERE i.auction_id = ? AND ${ISP_STATE_SQL}
     ORDER BY i.sale, CAST(i.invo AS INTEGER), i.id
   `);
@@ -2677,6 +2690,16 @@ function buildSalesIspRows(db, auctionId, cfg) {
     SELECT lot_no AS lot, bags AS bag, qty, price AS rate, amount, asp_invo
     FROM lots
     WHERE auction_id = ? AND buyer = ? AND amount > 0
+    ORDER BY CAST(lot_no AS INTEGER), lot_no
+  `);
+  // Split-aware variant: scope the inventory to lots stamped with THIS
+  // invoice's number, so a buyer split across several invoices lists only the
+  // lots that belong to each one. Falls back to the full buyer set below when
+  // this returns nothing (legacy data where lots.invo was overwritten).
+  const lotsByInvoStmt = db.prepare(`
+    SELECT lot_no AS lot, bags AS bag, qty, price AS rate, amount, asp_invo
+    FROM lots
+    WHERE auction_id = ? AND buyer = ? AND amount > 0 AND invo = ?
     ORDER BY CAST(lot_no AS INTEGER), lot_no
   `);
 
@@ -2716,7 +2739,10 @@ function buildSalesIspRows(db, auctionId, cfg) {
 
   const out = [];
   for (const r of raw) {
-    const lotRows = lotsStmt.all(auctionId, r.buyer);
+    // Prefer lots scoped to THIS invoice (respects split invoices); fall back
+    // to the buyer's full lot set for legacy/ASP-overwritten data.
+    let lotRows = lotsByInvoStmt.all(auctionId, r.buyer, String(r.invo));
+    if (!lotRows.length) lotRows = lotsStmt.all(auctionId, r.buyer);
     // Single-company e-Auction build: there is no ASP cross-reference.
     // Legacy lots may still carry `asp_invo` values from the old dual-
     // company app, but emitting them as <BASICORDERREF> would just put
@@ -3379,6 +3405,19 @@ function buildSalesAspRows(db, auctionId, cfg) {
       AND (asp_puramt > 0 OR puramt > 0)
     ORDER BY CAST(lot_no AS INTEGER), lot_no
   `);
+  // Split-aware variant: scope to lots stamped with THIS ASP invoice's number
+  // (lots.asp_invo) so a buyer split across several invoices lists only each
+  // one's lots. Falls back to the full buyer set below when empty.
+  const lotsByInvoStmt = db.prepare(`
+    SELECT lot_no AS lot, bags AS bag,
+           qty AS asp_qty,
+           CASE WHEN asp_puramt > 0 THEN asp_prate  ELSE prate  END AS asp_rate,
+           CASE WHEN asp_puramt > 0 THEN asp_puramt ELSE puramt END AS asp_amount
+    FROM lots
+    WHERE auction_id = ? AND buyer = ?
+      AND (asp_puramt > 0 OR puramt > 0) AND asp_invo = ?
+    ORDER BY CAST(lot_no AS INTEGER), lot_no
+  `);
 
   // ISP party identity — the ASP voucher's customer is always ISP.
   // In single-company e-Auction, this defaults to the central identity
@@ -3399,7 +3438,10 @@ function buildSalesAspRows(db, auctionId, cfg) {
 
   const out = [];
   for (const r of raw) {
-    const lotRows = lotsStmt.all(auctionId, r.buyer);
+    // Scope to THIS invoice's lots (respects splits); fall back to the buyer's
+    // full ASP lot set for legacy data where asp_invo doesn't match.
+    let lotRows = lotsByInvoStmt.all(auctionId, r.buyer, String(r.invo));
+    if (!lotRows.length) lotRows = lotsStmt.all(auctionId, r.buyer);
     const lots = lotRows.map(l => ({
       lot: l.lot,
       bag: Number(l.bag || 0),
@@ -3459,11 +3501,18 @@ function buildSalesAspRows(db, auctionId, cfg) {
 function buildSalesRows(db, auctionId, cfg) {
   // Ship-to first, bill-to fallback for distance/route lookup. See
   // buildSalesIspRows for full rationale.
+  // Correlated subqueries (not a LEFT JOIN) so a buyer CODE reused across
+  // several buyer-master rows (e.g. "HANIFA" mapped to 4 trade names) matches
+  // at most ONE row here — a JOIN would fan the invoice out into N duplicate
+  // rows and inflate the voucher N×.
   const stmt = db.prepare(`
-    SELECT i.*, b.add1, b.add2, b.pla AS buyer_pla,
-           COALESCE(NULLIF(TRIM(b.cpin), ''), TRIM(b.pin)) AS buyer_pin
+    SELECT i.*,
+           (SELECT b.add1 FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS add1,
+           (SELECT b.add2 FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS add2,
+           (SELECT b.pla  FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS buyer_pla,
+           (SELECT COALESCE(NULLIF(TRIM(b.cpin), ''), TRIM(b.pin))
+              FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS buyer_pin
     FROM invoices i
-    LEFT JOIN buyers b ON b.buyer = i.buyer
     WHERE i.auction_id = ?
     ORDER BY i.buyer, i.sale, i.invo, i.id
   `);
@@ -3479,7 +3528,11 @@ function buildSalesRows(db, auctionId, cfg) {
   // different buyer code.
   const grouped = {};
   for (const r of raw) {
-    const partyKey = `${r.buyer}|${r.gstin}|${r.sale || 'L'}`;
+    // Key by the invoice NUMBER (not just the party) so each sales invoice —
+    // INCLUDING each split invoice for the same buyer — becomes its own Tally
+    // voucher. Keying only on buyer|gstin|sale silently merged split invoices
+    // into a single voucher.
+    const partyKey = `${r.buyer}|${r.gstin}|${r.sale || 'L'}|${r.invo}`;
     if (!grouped[partyKey]) {
       grouped[partyKey] = {
         ano: r.ano,
