@@ -697,6 +697,10 @@ function mountMobile(app, deps) {
       // Immediate Payment + Reserve-this-Lot checkboxes on the mobile Lot
       // Entry + Edit forms. OFF hides both controls; the lot columns persist.
       immediateReserve: getBool('flag_immediate_reserve', false),
+      // "Send via WhatsApp" action on the mobile Saved bar (shares the lot
+      // receipt PDF with the seller). Gated by the same master flag the
+      // desktop share buttons use.
+      whatsapp:        getBool('flag_whatsapp', false),
       // Admin-designated default trade (auction id) — the mobile app
       // pre-selects + highlights it in the trade picker. null = none set.
       defaultAuctionId: (parseInt(get('default_auction_id', ''), 10) || null),
@@ -1073,6 +1077,15 @@ function mountMobile(app, deps) {
       }
     }
 
+    // User ID must be unique across sellers (when provided). Unlike GSTIN/PAN
+    // this is a hard reject, not a silent dedup — a duplicate user id is an
+    // operator error, not "the same person".
+    const userIdTrim = String(t.user_id || '').trim();
+    if (userIdTrim) {
+      const dupUid = db.get('SELECT id, name FROM traders WHERE UPPER(TRIM(user_id)) = UPPER(?) LIMIT 1', [userIdTrim]);
+      if (dupUid) return res.status(409).json({ error: `User ID "${userIdTrim}" is already used by seller "${dupUid.name}"` });
+    }
+
     const info = db.run(
       `INSERT INTO traders (name,cr,pan,tan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name,whatsapp,email,dob,user_id)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -1147,6 +1160,14 @@ function mountMobile(app, deps) {
         [String(t.pan).trim().toUpperCase(), id]
       );
       if (dup) return res.status(409).json({ error: 'Another seller already has this PAN' });
+    }
+    // User ID uniqueness (when set/changed) — exclude self.
+    if (t.user_id != null && String(t.user_id).trim() && String(t.user_id).trim() !== String(trader.user_id || '').trim()) {
+      const dup = db.get(
+        'SELECT id, name FROM traders WHERE UPPER(TRIM(user_id)) = UPPER(?) AND id != ?',
+        [String(t.user_id).trim(), id]
+      );
+      if (dup) return res.status(409).json({ error: `User ID "${String(t.user_id).trim()}" is already used by seller "${dup.name}"` });
     }
     // Partial update — only write fields that were sent. Mobile sends a
     // subset (just acctnum/ifsc/whatsapp/email on edit-from-banks);

@@ -384,6 +384,7 @@ select:focus{border-color:var(--green)}
             <span style="font-size:12px;font-weight:700;color:var(--green);flex:1" id="le-saved-label">✓ Saved #001</span>
             <button onclick="printLastLot()" style="background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">🖨 This Lot</button>
             <button onclick="printLastSeller()" style="background:var(--bg2);color:var(--text);border:1.5px solid var(--border);border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">📄 All by Seller</button>
+            <button id="le-wa-btn" onclick="whatsappLastLot()" style="display:none;background:#25D366;color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">📲 WhatsApp</button>
           </div>
         </div>
 
@@ -694,6 +695,7 @@ async function refreshConfig(){
     if(d.immediateReserve!=cfgImmediateReserve){cfgImmediateReserve=d.immediateReserve||false;changed=true}
     if(d.defaultGunny!=cfgDefaultGunny){cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;changed=true}
     if(d.defaultLitre!=cfgDefaultLitre){cfgDefaultLitre=d.defaultLitre||'';changed=true}
+    if(d.whatsapp!=cfgWhatsapp){cfgWhatsapp=!!d.whatsapp;applyWhatsappVis();changed=true}
     if(d.editEnabled!==undefined)editEnabled=d.editEnabled!==false;
     if(d.editTimeout!==undefined)editTimeoutMinutes=d.editTimeout||0;
     if(d.labels&&JSON.stringify(d.labels)!==JSON.stringify(cfgLabels)){
@@ -723,7 +725,8 @@ setInterval(function(){if(token&&aid&&(document.getElementById('s-lots').classLi
 async function doLogin(forceLogin){const u=document.getElementById('l-user').value.trim(),p=document.getElementById('l-pass').value,er=document.getElementById('l-err');er.innerHTML='';if(!u||!p){er.innerHTML='<div class="eb">Enter username and password</div>';return}document.getElementById('l-btn').disabled=true;try{const r=await fetch(B+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p,force:forceLogin||false})});const d=await r.json();if(r.status===409&&d.error==='already_logged_in'){er.innerHTML='<div class="eb" style="text-align:center">'+d.message+'<br><button onclick="doLogin(true)" style="margin-top:8px;background:#1D9E75;color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Yes, switch to this device</button></div>';return}if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Login failed')+'</div>';return}token=d.token;user=d.user.username;userBranch=d.user.branch||'';userRole=d.user.role||'user';localStorage.setItem('sa_token',token);goSession()}catch(e){er.innerHTML='<div class="eb">Could not connect</div>'}finally{document.getElementById('l-btn').disabled=false}}
 function doLogout(){fetch(B+'/api/auth/logout',{method:'POST',headers:ah()}).catch(()=>{});token='';user='';localStorage.removeItem('sa_token');toggleMenu(true);show('s-login')}
 async function tryAutoLogin(){if(!token){loadTitle();return}try{const r=await fetch(B+'/api/auth/me',{headers:ah()});if(r.ok){const d=await r.json();user=d.user.username;userBranch=d.user.branch||'';userRole=d.user.role||'user';goSession()}else{token='';localStorage.removeItem('sa_token');loadTitle()}}catch(e){loadTitle()}}
-var cfgSampleWeight=0,cfgShowMoisture=false,cfgShowReservedPrice=false,cfgDefaultGunny=0,cfgImmediateReserve=false,cfgUserGunny=false,cfgShowCropReceipt=false,cfgCropReceiptStart='';
+var cfgSampleWeight=0,cfgShowMoisture=false,cfgShowReservedPrice=false,cfgDefaultGunny=0,cfgImmediateReserve=false,cfgUserGunny=false,cfgShowCropReceipt=false,cfgCropReceiptStart='',cfgWhatsapp=false;
+function applyWhatsappVis(){var b=document.getElementById('le-wa-btn');if(b)b.style.display=cfgWhatsapp?'inline-block':'none'}
 // Show/hide the Immediate Payment + Reserve-this-Lot controls (Lot Entry form
 // and Edit modal) per the flag_immediate_reserve config (cfgImmediateReserve).
 function applyImmediateReserveVis(){var v=cfgImmediateReserve;var a=document.getElementById('le-immediate-reserve-wrap');if(a)a.style.display=v?'block':'none';var b=document.getElementById('ed-immediate-reserve-wrap');if(b)b.style.display=v?'block':'none';}
@@ -748,9 +751,9 @@ function applyLabels(){
   var map={'elb-seller':L.seller||'Seller','elb-grade':L.grade,'elb-bags':L.bags,'elb-litre':L.litre_wt,'elb-net':L.net_wt,'elb-sample':L.sample_wt,'elb-gross':L.gross_wt,'elb-moisture':L.moisture};
   Object.keys(map).forEach(function(id){var el=document.getElementById(id);if(el)el.textContent=map[id]});
 }
-async function loadTitle(){try{const r=await fetch(B+'/api/config');const d=await r.json();setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgDefaultLitre=d.defaultLitre||'';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw=document.getElementById('le-reserved-price-wrap');if(rpw)rpw.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();loadAppLogo()}catch(e){}}
+async function loadTitle(){try{const r=await fetch(B+'/api/config');const d=await r.json();setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgDefaultLitre=d.defaultLitre||'';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw=document.getElementById('le-reserved-price-wrap');if(rpw)rpw.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();loadAppLogo()}catch(e){}}
 
-async function goSession(){document.getElementById('ss-user').textContent=user;const lb=localStorage.getItem('sa_branch');try{const r=await fetch(B+'/api/config');const d=await r.json();window._allBranches=(d.branches||[]).map(function(b){return b.value});setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgDefaultLitre=d.defaultLitre||'';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw2=document.getElementById('le-reserved-price-wrap');if(rpw2)rpw2.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();var brSel=document.getElementById('ss-branch');if(userRole!=='admin'&&userBranch){brSel.innerHTML='<option value="'+userBranch+'">'+userBranch+'</option>';brSel.disabled=true}else{brSel.disabled=false;brSel.innerHTML=(d.branches||[]).map(b=>'<option value="'+b.value+'"'+(b.value===(userBranch||lb)?' selected':'')+'>'+b.value+'</option>').join('')}}catch(e){}
+async function goSession(){document.getElementById('ss-user').textContent=user;const lb=localStorage.getItem('sa_branch');try{const r=await fetch(B+'/api/config');const d=await r.json();window._allBranches=(d.branches||[]).map(function(b){return b.value});setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgDefaultLitre=d.defaultLitre||'';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw2=document.getElementById('le-reserved-price-wrap');if(rpw2)rpw2.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();var brSel=document.getElementById('ss-branch');if(userRole!=='admin'&&userBranch){brSel.innerHTML='<option value="'+userBranch+'">'+userBranch+'</option>';brSel.disabled=true}else{brSel.disabled=false;brSel.innerHTML=(d.branches||[]).map(b=>'<option value="'+b.value+'"'+(b.value===(userBranch||lb)?' selected':'')+'>'+b.value+'</option>').join('')}}catch(e){}
 await loadAvailableTrades();
 show('s-session')}
 
@@ -796,7 +799,7 @@ async function loadAvailableTrades(){
 
 async function startSession(){var sel=document.getElementById('ss-trade');var opt=sel.options[sel.selectedIndex];br=document.getElementById('ss-branch').value;var er=document.getElementById('ss-err');er.innerHTML='';if(!sel.value||!opt||!opt.value){er.innerHTML='<div class="eb">Select a trade</div>';return}if(!br){er.innerHTML='<div class="eb">Select branch</div>';return}aid=parseInt(sel.value);tno=parseInt(opt.getAttribute('data-ano'));sessionEnd=opt.getAttribute('data-end')||null;localStorage.setItem('sa_branch',br);
 // Reload config for sample weight + moisture
-try{var cr=await fetch(B+'/api/config');var cd=await cr.json();cfgSampleWeight=cd.sampleWeight||0;cfgShowMoisture=cd.showMoisture||false;cfgShowReservedPrice=cd.showReservedPrice||false;cfgImmediateReserve=cd.immediateReserve||false;cfgShowCropReceipt=cd.showCropReceipt||false;cfgCropReceiptStart=cd.cropReceiptStart||'';cfgDefaultGunny=cd.defaultGunny||0;cfgUserGunny=!!cd.userGunny;document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw3=document.getElementById('le-reserved-price-wrap');if(rpw3)rpw3.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis()}catch(e){}
+try{var cr=await fetch(B+'/api/config');var cd=await cr.json();cfgSampleWeight=cd.sampleWeight||0;cfgShowMoisture=cd.showMoisture||false;cfgShowReservedPrice=cd.showReservedPrice||false;cfgImmediateReserve=cd.immediateReserve||false;cfgShowCropReceipt=cd.showCropReceipt||false;cfgCropReceiptStart=cd.cropReceiptStart||'';cfgDefaultGunny=cd.defaultGunny||0;cfgUserGunny=!!cd.userGunny;cfgWhatsapp=!!cd.whatsapp;document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw3=document.getElementById('le-reserved-price-wrap');if(rpw3)rpw3.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis()}catch(e){}
 await loadStats();goLots()}
 
 var allocStats=null;
@@ -1406,6 +1409,7 @@ async function saveLot(){
     document.getElementById('le-saved-label').textContent='✓ Saved #'+lotNo;
     document.getElementById('le-btn-save').style.display='none';
     document.getElementById('le-btn-saved').style.display='block';
+    applyWhatsappVis();
     await loadStats();updUI();
     renderRecentLots();
     if(selT)loadSellerBookings(selT.id);
@@ -1458,6 +1462,64 @@ async function undoLot(){if(!lastId)return;try{await fetch(B+'/api/lots/'+lastId
 function showSaveBtn(){document.getElementById('le-btn-save').style.display='flex';document.getElementById('le-btn-saved').style.display='none'}
 function printLastLot(){if(lastSavedLot&&lastSavedLot.id)printLot(lastSavedLot.id)}
 function printLastSeller(){if(lastSavedLot&&lastSavedLot.trader_id)printSellerLots(lastSavedLot.trader_id)}
+
+// ── Share the last saved lot's receipt with the seller via WhatsApp ──
+// Order (mirrors the desktop share flow): (1) server Cloud API document
+// send straight to the seller's WhatsApp number — true automation, no
+// contact-picking; (2) the phone's native share sheet with the PDF
+// attached (operator taps the WhatsApp contact); (3) download the PDF +
+// open a wa.me chat to the seller so it can be attached manually.
+function _waNormPhone(t){var d=String(t||'').replace(/\D/g,'');if(!d)return '';return d.length===10?'91'+d:d}
+async function _lookupSellerWa(name){
+  try{var r=await fetch(B+'/api/traders/by-name/'+encodeURIComponent(name),{headers:ah()});if(!r.ok)return '';var d=await r.json();return d.whatsapp||d.tel||''}catch(e){return ''}
+}
+var _waCloudOk=null;
+async function _waCloudAvail(){
+  if(_waCloudOk!==null)return _waCloudOk;
+  try{var r=await fetch(B+'/api/whatsapp/status',{headers:ah()});if(!r.ok){_waCloudOk=false;return false}var d=await r.json();_waCloudOk=!!d.configured}catch(e){_waCloudOk=false}
+  return _waCloudOk;
+}
+async function whatsappLastLot(){
+  var l=lastSavedLot;
+  if(!l||!l.id){toast('Save a lot first',true);return}
+  var btn=document.getElementById('le-wa-btn');if(btn)btn.disabled=true;
+  try{
+    var comp=((document.getElementById('le-title-text')||{}).textContent||'Company').trim();
+    var url=B+'/api/lots/'+l.id+'/receipt?branch='+encodeURIComponent(br)+'&token='+token+'&format='+printFmt();
+    var pr=await fetch(url,{headers:{'Authorization':'Bearer '+token}});
+    if(!pr.ok){toast('Receipt not available',true);return}
+    var blob=await pr.blob();
+    var fname='Lot_'+l.lot_no+'_Receipt.pdf';
+    var qty=Number(l.qty||0).toFixed(3);
+    var phone=await _lookupSellerWa(l.trader_name||'');
+    var norm=_waNormPhone(phone);
+    var summary='Lot #'+l.lot_no+' ('+qty+' kg) receipt is attached.';
+    var caption=(l.trader_name||'Seller')+' — '+summary;
+    // (1) Cloud API direct to the seller's number.
+    if(norm && await _waCloudAvail()){
+      var fd=new FormData();
+      fd.append('file',blob,fname);fd.append('phone',norm);
+      fd.append('params',JSON.stringify([l.trader_name||'',summary,comp]));
+      fd.append('filename',fname);
+      var sr=await fetch(B+'/api/whatsapp/send-template-document',{method:'POST',headers:{'Authorization':'Bearer '+token},body:fd});
+      if(sr.ok){toast('WhatsApp sent (+'+norm+')',false);return}
+      /* 501 not-configured / 400 no-template → fall through to manual share */
+    }
+    // (2) Native share sheet with the PDF attached (mobile).
+    try{
+      var file=new File([blob],fname,{type:'application/pdf'});
+      if(navigator.canShare&&navigator.canShare({files:[file]})){
+        await navigator.share({files:[file],title:fname,text:caption});return;
+      }
+    }catch(e){if(e&&e.name==='AbortError')return}
+    // (3) Download the PDF + open a wa.me chat to the seller.
+    var durl=URL.createObjectURL(blob);var a=document.createElement('a');a.href=durl;a.download=fname;document.body.appendChild(a);a.click();a.remove();setTimeout(function(){URL.revokeObjectURL(durl)},30000);
+    var wa=norm?('https://wa.me/'+norm+'?text='+encodeURIComponent(caption)):('https://wa.me/?text='+encodeURIComponent(caption));
+    window.open(wa,'_blank');
+    toast('Receipt downloaded → attach it in WhatsApp',false);
+  }catch(e){toast('WhatsApp share failed',true)}
+  finally{if(btn)btn.disabled=false}
+}
 
 // After save: keep seller+bank, clear bags/litre/qty, auto-select next lot
 function resetFormKeepSeller(){

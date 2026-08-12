@@ -11867,8 +11867,26 @@ app.post('/api/report-pdf', requireView, async (req, res) => {
       for (const c of columns) if (b.totals[c.key] != null) totals[c.key] = b.totals[c.key];
       if (!Object.keys(totals).length) totals = null;
     }
+    // Optional separate summary container — a boxed breakdown drawn under the
+    // table (e.g. the Sales Journal ledger summary). Shape:
+    //   { title, lines:[{label, qty, value}], total:{label, value} }
+    let summary = null;
+    if (b.summary && typeof b.summary === 'object' && Array.isArray(b.summary.lines) && b.summary.lines.length) {
+      summary = {
+        title: String(b.summary.title || 'Summary').slice(0, 80),
+        lines: b.summary.lines.slice(0, 60).map(l => ({
+          label: String((l && l.label != null ? l.label : '')).slice(0, 80),
+          qty: (l && l.qty != null && l.qty !== '') ? String(l.qty).slice(0, 40) : '',
+          value: (l && l.value != null) ? String(l.value).slice(0, 40) : '',
+        })),
+        total: (b.summary.total && typeof b.summary.total === 'object') ? {
+          label: String(b.summary.total.label || 'TOTAL').slice(0, 80),
+          value: (b.summary.total.value != null) ? String(b.summary.total.value).slice(0, 40) : '',
+        } : null,
+      };
+    }
     const buf = await renderTablePdf({
-      title, subtitle, columns, rows, totals, layout,
+      title, subtitle, columns, rows, totals, layout, summary,
       companyHeader: getCompanyHeader(getDb()),
     });
     const safe = title.replace(/[^\w]+/g, '_').slice(0, 60) || 'report';

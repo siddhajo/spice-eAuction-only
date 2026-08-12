@@ -128,7 +128,7 @@ function preprocessRows(rows, opts) {
 }
 
 // ── Generic table-to-PDF renderer ───────────────────────────
-function renderTablePdf({ title, subtitle, columns, rows, totals, layout, companyHeader }) {
+function renderTablePdf({ title, subtitle, columns, rows, totals, layout, companyHeader, summary }) {
   // layout: 'portrait' (default) or 'landscape'. All exports default to
   // portrait per user preference. Override per-type via PDF_LAYOUT below
   // if a specific report ever needs landscape (e.g. very wide column sets).
@@ -469,6 +469,43 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
   } else {
     // No totals — close verticals + outer border in one go on the final page
     closePageBorders();
+  }
+
+  // ── Separate summary container (optional) ──
+  // A boxed, left-aligned block drawn under the main table. Keeps a breakdown
+  // (e.g. the Sales Journal sale-type ledger summary) visually distinct from
+  // the wide invoice table instead of being stretched across its columns.
+  if (summary && Array.isArray(summary.lines) && summary.lines.length) {
+    const boxW = Math.min(usableW, 360);
+    const bx = m;
+    const titleH = 18, lineH = 13.5;
+    const totalH = summary.total ? 20 : 0;
+    const boxH = titleH + summary.lines.length * lineH + totalH + 6;
+    let sy = y + 16;
+    if (sy + boxH > pageH - m - 20) { doc.addPage(); sy = m + 8; }
+    // Outer box + title bar.
+    doc.rect(bx, sy, boxW, boxH).lineWidth(0.8).strokeColor('#444').stroke();
+    doc.rect(bx, sy, boxW, titleH).fillAndStroke('#E8E4DD', '#444');
+    doc.fillColor('#000').font('Helvetica-Bold').fontSize(9)
+       .text(summary.title || 'Summary', bx + 8, sy + 5, { width: boxW - 16, lineBreak: false });
+    const cLabel = bx + 8, wLabel = boxW * 0.50;
+    const cQty = bx + boxW * 0.50, wQty = boxW * 0.22 - 4;
+    const cVal = bx + boxW * 0.72, wVal = boxW * 0.28 - 8;
+    let ly = sy + titleH + 4;
+    doc.font('Helvetica').fontSize(8.2).fillColor('#000');
+    for (const ln of summary.lines) {
+      doc.font('Helvetica').text(String(ln.label || ''), cLabel, ly, { width: wLabel, align: 'left', lineBreak: false });
+      if (ln.qty !== '' && ln.qty != null) doc.text(String(ln.qty), cQty, ly, { width: wQty, align: 'right', lineBreak: false });
+      doc.text(String(ln.value == null ? '' : ln.value), cVal, ly, { width: wVal, align: 'right', lineBreak: false });
+      ly += lineH;
+    }
+    if (summary.total) {
+      doc.rect(bx, ly - 1, boxW, totalH).fillAndStroke('#FFF3CD', '#E0B020');
+      doc.fillColor('#000').font('Helvetica-Bold').fontSize(9)
+         .text(String(summary.total.label || 'TOTAL'), cLabel, ly + 4, { width: boxW * 0.60, align: 'left', lineBreak: false });
+      doc.text(String(summary.total.value == null ? '' : summary.total.value), cVal, ly + 4, { width: wVal, align: 'right', lineBreak: false });
+    }
+    y = sy + boxH;
   }
 
   doc.fillColor('#888').font('Helvetica').fontSize(7)

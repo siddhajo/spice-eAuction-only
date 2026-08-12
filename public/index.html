@@ -28360,24 +28360,27 @@ async function exportJournalPdf(){
   // + the state grand total (as in the reference report), so the generic totals
   // strip is suppressed there. Other journals keep the plain totals strip.
   let totals = null;
+  let summary = null;
   const inr = (v, d) => Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
   if (lj.type === 'sales') {
-    // Highlighted column-sum Total row.
+    // Highlighted column-sum Total row (stays in the invoice table).
     const totalRow = { _isSubtotal: true, buyer1: 'Total' };
     for (const c of lj.cols) if (c.numeric) totalRow[c.key] = c.fmt ? c.fmt(lj.data.reduce((a, r) => a + (Number(r[c.key]) || 0), 0)) : '';
     rows.push(totalRow);
     try {
       const sum = await j(`/api/journals/sales-summary?auctionId=${lj.auctionId}${lj.saleType ? ('&saleType=' + encodeURIComponent(lj.saleType)) : ''}`);
       if (sum && (sum.lines || []).length) {
-        // A grey banner separates the ledger summary from the invoice rows,
-        // and the state grand total is highlighted like a subtotal.
-        rows.push({ _isSection: true, label: `${sum.stateLabel || ''} — LEDGER SUMMARY`.trim() });
-        for (const ln of sum.lines) {
-          const rr = { buyer1: ln.label, total: inr(ln.value, 2) };
-          if (ln.qty !== '' && ln.qty != null) rr.qty = inr(ln.qty, 3);
-          rows.push(rr);
-        }
-        rows.push({ _isSubtotal: true, buyer1: `${sum.stateLabel} TOTAL`, total: inr(sum.stateTotal, 2) });
+        // The sale-type ledger breakdown renders in its OWN boxed container
+        // below the invoice table (not stretched across the wide columns).
+        summary = {
+          title: `${sum.stateLabel || ''} — LEDGER SUMMARY`.trim(),
+          lines: sum.lines.map(ln => ({
+            label: ln.label,
+            qty: (ln.qty !== '' && ln.qty != null) ? inr(ln.qty, 3) : '',
+            value: inr(ln.value, 2),
+          })),
+          total: { label: `${sum.stateLabel || ''} TOTAL`.trim(), value: inr(sum.stateTotal, 2) },
+        };
       }
     } catch (e) { /* summary is best-effort */ }
   } else {
@@ -28386,7 +28389,7 @@ async function exportJournalPdf(){
   }
   const aucSel = document.getElementById('jr-auction');
   const subtitle = aucSel && aucSel.selectedIndex >= 0 ? (aucSel.options[aucSel.selectedIndex].text || '') : '';
-  const spec = { title: lj.title, subtitle, layout: 'landscape', columns, rows, totals };
+  const spec = { title: lj.title, subtitle, layout: 'landscape', columns, rows, totals, summary };
   try {
     await withOverlay('Preparing journal PDF…', async () => {
       const blob = await _reportPdfBlob(spec);
