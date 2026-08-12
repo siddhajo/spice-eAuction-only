@@ -1046,11 +1046,19 @@ async function exportSalesJournal(db, auctionId, saleType) {
   const summaryRows = summary
     ? summary.lines.map(l => ({ buyer1: l.label, qty: (l.qty === '' ? undefined : l.qty), total: l.value }))
     : [];
-  const augmented = [...rows, totalRow, {}, ...summaryRows];
-  return createExcelBuffer('SalesJournal', cols, augmented, {
+  // Two highlighted sections — the invoice register (with its Total row) and,
+  // separated below, the sale-type ledger summary — plus a bold grand-total
+  // footer. Keeps the summary visually distinct rather than blended into the
+  // invoice rows.
+  const sections = [{ title: 'SALES INVOICES', rows: [...rows, totalRow] }];
+  if (summaryRows.length) sections.push({ title: `${summary.stateLabel} — LEDGER SUMMARY`, rows: summaryRows });
+  return createExcelBuffer('SalesJournal', cols, [], {
     db, title: 'Sales Journal',
     metaLines: [...auctionMeta(db, auctionId), saleType ? `Type: ${saleType}` : ''].filter(Boolean),
-    grandTotal: summary ? { buyer1: `${summary.stateLabel} TOTAL`, total: summary.stateTotal } : null,
+    sections, spacerBetween: true,
+    grandTotal: summary
+      ? { values: { buyer1: `${summary.stateLabel} TOTAL`, total: summary.stateTotal }, fillArgb: 'FFD1E7DD' }
+      : null,
   });
 }
 

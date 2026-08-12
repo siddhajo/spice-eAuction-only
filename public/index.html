@@ -28362,17 +28362,23 @@ async function exportJournalPdf(){
   let totals = null;
   const inr = (v, d) => Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
   if (lj.type === 'sales') {
-    const totalRow = { buyer1: 'Total' };
+    // Highlighted column-sum Total row.
+    const totalRow = { _isSubtotal: true, buyer1: 'Total' };
     for (const c of lj.cols) if (c.numeric) totalRow[c.key] = c.fmt ? c.fmt(lj.data.reduce((a, r) => a + (Number(r[c.key]) || 0), 0)) : '';
-    rows.push(totalRow, {});
+    rows.push(totalRow);
     try {
       const sum = await j(`/api/journals/sales-summary?auctionId=${lj.auctionId}${lj.saleType ? ('&saleType=' + encodeURIComponent(lj.saleType)) : ''}`);
-      for (const ln of (sum && sum.lines) || []) {
-        const rr = { buyer1: ln.label, total: inr(ln.value, 2) };
-        if (ln.qty !== '' && ln.qty != null) rr.qty = inr(ln.qty, 3);
-        rows.push(rr);
+      if (sum && (sum.lines || []).length) {
+        // A grey banner separates the ledger summary from the invoice rows,
+        // and the state grand total is highlighted like a subtotal.
+        rows.push({ _isSection: true, label: `${sum.stateLabel || ''} — LEDGER SUMMARY`.trim() });
+        for (const ln of sum.lines) {
+          const rr = { buyer1: ln.label, total: inr(ln.value, 2) };
+          if (ln.qty !== '' && ln.qty != null) rr.qty = inr(ln.qty, 3);
+          rows.push(rr);
+        }
+        rows.push({ _isSubtotal: true, buyer1: `${sum.stateLabel} TOTAL`, total: inr(sum.stateTotal, 2) });
       }
-      if (sum && sum.stateLabel) rows.push({ buyer1: `${sum.stateLabel} TOTAL`, total: inr(sum.stateTotal, 2) });
     } catch (e) { /* summary is best-effort */ }
   } else {
     totals = {};

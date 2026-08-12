@@ -11849,7 +11849,10 @@ app.post('/api/report-pdf', requireView, async (req, res) => {
     const rows = Array.isArray(b.rows) ? b.rows.slice(0, 5000).map(r => {
       const o = {};
       if (r && typeof r === 'object') {
-        if (r._isSection) o._isSection = String(r.label || r._label || '').slice(0, 200);
+        // Section banner: renderTablePdf draws `row.label` (grey full-width
+        // band), so keep _isSection a truthy flag AND carry the label text.
+        if (r._isSection) { o._isSection = true; o.label = String(r.label || r._label || '').slice(0, 200); }
+        if (r._isSubtotal) o._isSubtotal = true;
         for (const c of columns) {
           const v = r[c.key];
           o[c.key] = (v == null) ? '' : (typeof v === 'number' ? v : String(v).slice(0, 200));
