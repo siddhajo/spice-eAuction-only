@@ -467,6 +467,7 @@ select:focus{border-color:var(--green)}
       <label style="display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 10px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;background:var(--bg2);border:1px solid var(--border);border-radius:8px"><input type="checkbox" id="ml-selall" onchange="toggleSelectAllMyLots(this.checked)" style="width:16px;height:16px">Select all</label>
       <button style="background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border:none;border-radius:8px;height:30px;padding:0 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 6px rgba(37,99,235,.2)" onclick="printSelectedMyLots()" title="Print receipts for selected lots">🖨 Print selected</button>
       <button style="background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border:none;border-radius:8px;height:30px;padding:0 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 6px rgba(37,99,235,.2)" onclick="printAllBySellerUser()" title="Print all lots grouped by seller">🖨 Print all by seller</button>
+      <button id="ml-wa-btn" style="display:none;background:#25D366;color:#fff;border:none;border-radius:8px;height:30px;padding:0 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 6px rgba(37,211,102,.25)" onclick="whatsappSelectedMyLots()" title="Send each seller their selected lots' receipt on WhatsApp">📲 WhatsApp selected</button>
       <button style="background:linear-gradient(135deg,#dc3545,#b91c1c);color:#fff;border:none;border-radius:8px;height:30px;padding:0 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 6px rgba(220,53,69,.2)" onclick="deleteSelectedMyLots()" title="Delete only the lots you have selected">🗑 Delete Selected</button>
       <span style="font-size:11px;color:var(--text3)" id="ml-sel-count"></span>
     </div>
@@ -744,7 +745,7 @@ async function doLogin(forceLogin){const u=document.getElementById('l-user').val
 function doLogout(){fetch(B+'/api/auth/logout',{method:'POST',headers:ah()}).catch(()=>{});token='';user='';localStorage.removeItem('sa_token');toggleMenu(true);show('s-login')}
 async function tryAutoLogin(){if(!token){loadTitle();return}try{const r=await fetch(B+'/api/auth/me',{headers:ah()});if(r.ok){const d=await r.json();user=d.user.username;userBranch=d.user.branch||'';userRole=d.user.role||'user';goSession()}else{token='';localStorage.removeItem('sa_token');loadTitle()}}catch(e){loadTitle()}}
 var cfgSampleWeight=0,cfgShowMoisture=false,cfgShowReservedPrice=false,cfgDefaultGunny=0,cfgImmediateReserve=false,cfgUserGunny=false,cfgShowCropReceipt=false,cfgCropReceiptStart='',cfgWhatsapp=false,cfgSellerAtBottom=false,cfgShowSample=true,cfgShowGross=true;
-function applyWhatsappVis(){var b=document.getElementById('le-wa-btn');if(b)b.style.display=cfgWhatsapp?'inline-block':'none'}
+function applyWhatsappVis(){var b=document.getElementById('le-wa-btn');if(b)b.style.display=cfgWhatsapp?'inline-block':'none';var mb=document.getElementById('ml-wa-btn');if(mb)mb.style.display=cfgWhatsapp?'':'none';}
 // Show/hide the auto-calculated read-only weight fields individually, and
 // collapse the Net/Sample/Gross grid so hidden cells leave no gap.
 function applyCalcFieldVis(){
@@ -1614,9 +1615,61 @@ async function _waCloudAvail(){
   return _waCloudOk;
 }
 async function whatsappLastLot(){
-  var l=lastSavedLot;
-  if(!l||!l.id){toast('Save a lot first',true);return}
-  var btn=document.getElementById('le-wa-btn');if(btn)btn.disabled=true;
+  if(!lastSavedLot||!lastSavedLot.id){toast('Save a lot first',true);return}
+  return whatsappLotReceipt(lastSavedLot, document.getElementById('le-wa-btn'));
+}
+// Bulk: send each seller their SELECTED lots' combined receipt via the
+// WhatsApp Cloud API (one tap, no manual steps). Groups the ticked lots by
+// seller, builds one grouped receipt PDF per seller, and delivers it to that
+// seller's WhatsApp number. Requires the Business API to be configured.
+async function whatsappSelectedMyLots(){
+  var ids=Array.from(document.querySelectorAll('.ml-cb:checked')).map(function(cb){return parseInt(cb.value);});
+  if(!ids.length){toast('Select lots to send',true);return}
+  if(!(await _waCloudAvail())){toast('Set up WhatsApp Business API (Settings → Integrations) to send in bulk.',true);return}
+  var btn=document.getElementById('ml-wa-btn');
+  var comp=((document.getElementById('ml-title-text')||document.getElementById('le-title-text')||{}).textContent||'Company').trim();
+  // Group the ticked lots by seller.
+  var groups={};
+  ids.forEach(function(id){
+    var l=(allMyLots||[]).find(function(x){return x.id===id;});
+    if(!l)return;
+    var key=l.trader_id||('u_'+(l.trader_name||'unknown'));
+    (groups[key]||(groups[key]={name:l.trader_name||'',ids:[]})).ids.push(id);
+  });
+  var keys=Object.keys(groups);
+  if(!keys.length){toast('No matching lots',true);return}
+  if(btn)btn.disabled=true;
+  var sent=0,failed=0,noPhone=0,done=0;
+  for(var k of keys){
+    var g=groups[k];
+    try{
+      var norm=_waNormPhone(await _lookupSellerWa(g.name));
+      if(!norm){noPhone++;done++;if(btn)btn.textContent='📲 '+done+'/'+keys.length;continue;}
+      var url=B+'/api/lots/print-batch?ids='+g.ids.join(',')+'&branch='+encodeURIComponent(br)+'&token='+token+'&format='+printFmt();
+      var pr=await fetch(url,{headers:{'Authorization':'Bearer '+token}});
+      if(!pr.ok){failed++;done++;if(btn)btn.textContent='📲 '+done+'/'+keys.length;continue;}
+      var blob=await pr.blob();
+      var fname='Receipt_'+String(g.name||'Seller').replace(/[^A-Za-z0-9]+/g,'_')+'.pdf';
+      var summary=g.ids.length+' lot(s) receipt is attached.';
+      var fd=new FormData();
+      fd.append('file',blob,fname);fd.append('phone',norm);
+      fd.append('params',JSON.stringify([g.name||'',summary,comp]));
+      fd.append('filename',fname);
+      var sr=await fetch(B+'/api/whatsapp/send-template-document',{method:'POST',headers:{'Authorization':'Bearer '+token},body:fd});
+      if(sr.ok)sent++;else failed++;
+    }catch(e){failed++;}
+    done++;if(btn)btn.textContent='📲 '+done+'/'+keys.length;
+  }
+  if(btn){btn.disabled=false;btn.textContent='📲 WhatsApp selected';}
+  var msg='WhatsApp: '+sent+' sent'+(noPhone?', '+noPhone+' no number':'')+(failed?', '+failed+' failed':'');
+  toast(msg, (failed>0||noPhone>0));
+}
+// Share ANY lot's receipt PDF with its seller on WhatsApp. Used by the Saved
+// bar (last lot) and the My Lots list. `l` needs {id, lot_no, qty, trader_name}.
+function whatsappLotById(id){var l=(allMyLots||[]).find(function(x){return x.id===id});if(l)whatsappLotReceipt(l);}
+async function whatsappLotReceipt(l, btn){
+  if(!l||!l.id){toast('Lot not found',true);return}
+  if(btn)btn.disabled=true;
   try{
     var comp=((document.getElementById('le-title-text')||{}).textContent||'Company').trim();
     var url=B+'/api/lots/'+l.id+'/receipt?branch='+encodeURIComponent(br)+'&token='+token+'&format='+printFmt();
@@ -1707,7 +1760,7 @@ function resetForm(){selT=null;selectedLots=[];lastSavedLot=null;document.getEle
 async function loadMyLots(){if(!aid)return;try{const r=await fetch(B+'/api/lots?auction_id='+aid+'&branch='+encodeURIComponent(br),{headers:ah()});const d=await r.json();allMyLots=d.lots||[];const stats=d.stats||{};document.getElementById('ml-cnt').textContent=stats.lotCount||0;document.getElementById('ml-bags').textContent=stats.totalBags||0;document.getElementById('ml-qty').textContent=(stats.totalQty||0).toFixed(3);document.getElementById('ml-search').value='';renderMyLots(allMyLots)}catch(e){}}
 function filterMyLots(q){if(!q||q.length<2){renderMyLots(allMyLots);return}const f=q.toUpperCase();renderMyLots(allMyLots.filter(l=>(l.trader_name||'').toUpperCase().includes(f)))}
 function renderMyLots(lots){const list=document.getElementById('ml-list');if(!lots.length){list.innerHTML='<div class="lot-empty">No lots found</div>';return}
-list.innerHTML=lots.map(l=>{const g=String(l.grade||''),q=Number(l.qty).toFixed(3);const isRes=Number(l.reserved);const tn=(l.trader_name||'Unknown').replace(/'/g,"\\'");const editBtns=editEnabled?` <button class="ico-btn ed" title="Edit lot" onclick="openEditFromList(${l.id})">${ICO_EDIT}</button> <button class="ico-btn dl" title="Delete lot" onclick="deleteLot(${l.id},'${String(l.lot_no).replace(/'/g,"\\'")}')">${ICO_DEL}</button>`:'';return`<div class="lot-card${isRes?' reserved':''}"><div class="lot-hdr"><label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="ml-cb" value="${l.id}" onchange="updateMySelCount()" style="width:16px;height:16px"><span class="lot-num">#${l.lot_no}</span>${isRes?'<span class="res-badge">RESERVED</span>':''}</label><span style="font-size:10px;color:var(--text3)">${l.user_id} · ${l.created_at?l.created_at.split(' ')[1]||'':''}</span></div><div class="lot-row"><div class="lot-name"><span style="color:var(--green);text-decoration:underline;cursor:pointer" onclick="showBankPop(event,'${tn}','${(l.acctnum||'').replace(/'/g,"\\'")}','${(l.ifsc||'').replace(/'/g,"\\'")}','${(l.tel||'').replace(/'/g,"\\'")}','${(l.cr||'').replace(/'/g,"\\'")}')">${l.trader_name}</span></div><div class="lot-actions"><button class="ico-btn pr" onclick="printLot(${l.id})" title="Print receipt">${ICO_PRINT}</button>${editBtns}</div></div><div class="lot-meta">${g} | ${l.bags} bags | ${l.litre} L | <strong>${q} kg</strong> · ${l.ppla||''}</div></div>`}).join('');updateMySelCount()}
+list.innerHTML=lots.map(l=>{const g=String(l.grade||''),q=Number(l.qty).toFixed(3);const isRes=Number(l.reserved);const tn=(l.trader_name||'Unknown').replace(/'/g,"\\'");const editBtns=editEnabled?` <button class="ico-btn ed" title="Edit lot" onclick="openEditFromList(${l.id})">${ICO_EDIT}</button> <button class="ico-btn dl" title="Delete lot" onclick="deleteLot(${l.id},'${String(l.lot_no).replace(/'/g,"\\'")}')">${ICO_DEL}</button>`:'';const waBtn=cfgWhatsapp?` <button class="ico-btn" style="color:#25D366" onclick="whatsappLotById(${l.id})" title="Send receipt on WhatsApp">📲</button>`:'';return`<div class="lot-card${isRes?' reserved':''}"><div class="lot-hdr"><label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="ml-cb" value="${l.id}" onchange="updateMySelCount()" style="width:16px;height:16px"><span class="lot-num">#${l.lot_no}</span>${isRes?'<span class="res-badge">RESERVED</span>':''}</label><span style="font-size:10px;color:var(--text3)">${l.user_id} · ${l.created_at?l.created_at.split(' ')[1]||'':''}</span></div><div class="lot-row"><div class="lot-name"><span style="color:var(--green);text-decoration:underline;cursor:pointer" onclick="showBankPop(event,'${tn}','${(l.acctnum||'').replace(/'/g,"\\'")}','${(l.ifsc||'').replace(/'/g,"\\'")}','${(l.tel||'').replace(/'/g,"\\'")}','${(l.cr||'').replace(/'/g,"\\'")}')">${l.trader_name}</span></div><div class="lot-actions"><button class="ico-btn pr" onclick="printLot(${l.id})" title="Print receipt">${ICO_PRINT}</button>${waBtn}${editBtns}</div></div><div class="lot-meta">${g} | ${l.bags} bags | ${l.litre} L | <strong>${q} kg</strong> · ${l.ppla||''}</div></div>`}).join('');updateMySelCount()}
 
 function updateMySelCount(){const boxes=document.querySelectorAll('.ml-cb');const checked=document.querySelectorAll('.ml-cb:checked').length;const bar=document.getElementById('ml-actions');const cnt=document.getElementById('ml-sel-count');const hasLots=allMyLots&&allMyLots.length>0;bar.style.display=hasLots?'flex':'none';cnt.textContent=checked>0?checked+' selected':'';const sa=document.getElementById('ml-selall');if(sa){sa.checked=boxes.length>0&&checked===boxes.length;sa.indeterminate=checked>0&&checked<boxes.length}}
 // Tick / untick every lot currently shown in My Lots (respects the active
