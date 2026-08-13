@@ -758,12 +758,15 @@ function applyCalcFieldVis(){
 function applyImmediateReserveVis(){var v=cfgImmediateReserve;var a=document.getElementById('le-immediate-reserve-wrap');if(a)a.style.display=v?'block':'none';var b=document.getElementById('ed-immediate-reserve-wrap');if(b)b.style.display=v?'block':'none';}
 // Crop Receipt No — show/hide the field per the flag and, when shown, seed the
 // entry field with the next number if it's currently empty.
-function applyCropReceiptVis(){var v=cfgShowCropReceipt;var a=document.getElementById('le-crpt-cell');if(a)a.style.display=v?'':'none';var b=document.getElementById('ed-crpt-cell');if(b)b.style.display=v?'':'none';if(v)seedCropReceipt();}
+// The flag only controls whether the CROP RCPT field is VISIBLE on the form.
+// The value is always seeded + saved regardless, so the crop receipt number
+// keeps advancing even when the operator has the field hidden.
+function applyCropReceiptVis(){var v=cfgShowCropReceipt;var a=document.getElementById('le-crpt-cell');if(a)a.style.display=v?'':'none';var b=document.getElementById('ed-crpt-cell');if(b)b.style.display=v?'':'none';seedCropReceipt();}
 // Seed the CROP RCPT field from the server's next-number endpoint, but only
 // when the field is empty (so a running sequence isn't overwritten). Falls
-// back to the configured starting number if the request fails.
+// back to the configured starting number if the request fails. Runs whether
+// or not the field is shown — visibility is a separate concern.
 function seedCropReceipt(){
-  if(!cfgShowCropReceipt)return;
   var el=document.getElementById('le-crpt');if(!el||el.value.trim()!=='')return;
   fetch(B+'/api/crop-receipt/next',{headers:ah()}).then(function(r){return r.ok?r.json():null;}).then(function(d){
     if(el.value.trim()!=='')return; // a value arrived meanwhile
