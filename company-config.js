@@ -347,6 +347,14 @@ const DEFAULTS = [
   // like "01208" survive.
   { key: 'show_crop_receipt',     value: 'false', category: 'lot_entry', label: 'Show Crop Receipt No (mobile Lot Entry)', type: 'boolean' },
   { key: 'crop_receipt_start_no', value: '',      category: 'lot_entry', label: 'Starting Crop Receipt No',               type: 'text'    },
+  // Seller field placement on the Lot Entry form (mobile + desktop). OFF =
+  // seller search sits at the TOP of the form (default); ON = it drops below
+  // the "Reserve this lot" section.
+  { key: 'lot_entry_seller_at_bottom', value: 'false', category: 'lot_entry', label: 'Seller field at bottom of Lot Entry', type: 'boolean' },
+  // Per-field visibility for the auto-calculated (read-only) weight fields on
+  // the mobile Lot Entry form. Both default ON.
+  { key: 'mobile_show_sample_field', value: 'true', category: 'lot_entry', label: 'Mobile Lot Entry: show Sample field', type: 'boolean' },
+  { key: 'mobile_show_gross_field',  value: 'true', category: 'lot_entry', label: 'Mobile Lot Entry: show Gross field',  type: 'boolean' },
   // Lot Receipt columns — the operator decides which columns print on the
   // lot receipt slip (both Full and Compact formats). Lot# always prints;
   // everything else is toggled here. Moisture is driven by "Show Moisture

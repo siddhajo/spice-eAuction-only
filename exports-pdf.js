@@ -128,7 +128,7 @@ function preprocessRows(rows, opts) {
 }
 
 // ── Generic table-to-PDF renderer ───────────────────────────
-function renderTablePdf({ title, subtitle, columns, rows, totals, layout, companyHeader, summary }) {
+function renderTablePdf({ title, subtitle, columns, rows, totals, layout, companyHeader, summary, autofit }) {
   // layout: 'portrait' (default) or 'landscape'. All exports default to
   // portrait per user preference. Override per-type via PDF_LAYOUT below
   // if a specific report ever needs landscape (e.g. very wide column sets).
@@ -142,21 +142,57 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
   const m = 24;
   const usableW = pageW - m * 2;
 
-  // Column widths proportional to exports.js width values.
-  // Scale so the sum exactly matches usableW; enforce a small min and rescale.
-  const totalWeight = columns.reduce((s, c) => s + (c.width || 12), 0);
   const MIN_COL = 22;
-  let colWidths = columns.map(c => (c.width || 12) / totalWeight * usableW);
-  // Bump narrow columns to MIN_COL, shrink wider cols proportionally to compensate
-  const deficit = colWidths.reduce((s, w) => s + Math.max(0, MIN_COL - w), 0);
-  if (deficit > 0) {
-    const donatePool = colWidths.reduce((s, w) => s + Math.max(0, w - MIN_COL), 0);
-    if (donatePool > 0) {
-      colWidths = colWidths.map(w => {
-        if (w < MIN_COL) return MIN_COL;
-        const share = (w - MIN_COL) / donatePool;
-        return w - deficit * share;
-      });
+  let colWidths;
+  if (autofit && rows.length) {
+    // ── Content-aware autofit ──
+    // Measure the header + a sample of each column's cell strings at the body
+    // font, size every column to its widest value (clamped), then scale the
+    // set to exactly fill usableW. Keeps numbers on one line at full size and
+    // stops text columns from cramping — a tidier, better-balanced table.
+    const SAMPLE = Math.min(rows.length, 400);
+    const CELL_PAD = 10;            // 3+3 text inset + a little breathing room
+    const maxColW = usableW * 0.35; // no single column may hog the page
+    const measured = columns.map((c) => {
+      doc.font('Helvetica-Bold').fontSize(8);
+      let w = doc.widthOfString(String(c.header || ''));
+      doc.font('Helvetica').fontSize(8);
+      for (let r = 0; r < SAMPLE; r++) {
+        const row = rows[r];
+        if (!row || row._isSection) continue;
+        const v = row[c.key];
+        if (v == null || v === '') continue;
+        const cw = doc.widthOfString(String(v));
+        if (cw > w) w = cw;
+      }
+      return Math.min(maxColW, Math.max(MIN_COL, w + CELL_PAD));
+    });
+    const sum = measured.reduce((s, w) => s + w, 0);
+    if (sum <= usableW) {
+      // Distribute the slack proportionally so the table fills the page width.
+      const slack = usableW - sum;
+      colWidths = measured.map(w => w + slack * (w / sum));
+    } else {
+      // Too wide to fit — scale down proportionally (MIN_COL enforced below).
+      const scale = usableW / sum;
+      colWidths = measured.map(w => w * scale);
+    }
+  } else {
+    // Column widths proportional to exports.js width weights.
+    // Scale so the sum matches usableW; enforce a small min and rescale.
+    const totalWeight = columns.reduce((s, c) => s + (c.width || 12), 0);
+    colWidths = columns.map(c => (c.width || 12) / totalWeight * usableW);
+    // Bump narrow columns to MIN_COL, shrink wider cols proportionally to compensate
+    const deficit = colWidths.reduce((s, w) => s + Math.max(0, MIN_COL - w), 0);
+    if (deficit > 0) {
+      const donatePool = colWidths.reduce((s, w) => s + Math.max(0, w - MIN_COL), 0);
+      if (donatePool > 0) {
+        colWidths = colWidths.map(w => {
+          if (w < MIN_COL) return MIN_COL;
+          const share = (w - MIN_COL) / donatePool;
+          return w - deficit * share;
+        });
+      }
     }
   }
   colWidths = colWidths.map(w => Math.max(MIN_COL, Math.floor(w)));

@@ -11887,6 +11887,7 @@ app.post('/api/report-pdf', requireView, async (req, res) => {
     }
     const buf = await renderTablePdf({
       title, subtitle, columns, rows, totals, layout, summary,
+      autofit: !!b.autofit,
       companyHeader: getCompanyHeader(getDb()),
     });
     const safe = title.replace(/[^\w]+/g, '_').slice(0, 60) || 'report';

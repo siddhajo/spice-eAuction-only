@@ -1474,6 +1474,10 @@ tr:hover td{background:var(--spice-cream)}
   background:var(--spice-cardamom);color:#fff;
   padding:8px;font-size:11px;letter-spacing:.4px;border-bottom:none
 }
+/* Price Entry list scrolls within a fixed viewport so the toolbar/actions
+   stay put and only the rows scroll; the coloured header sticks on top. */
+#pe-grid{max-height:calc(100vh - 300px);overflow:auto}
+#pe-grid .pe-grid-table thead th{position:sticky;top:0;z-index:2}
 .num{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
 
 /* ── Stat Cards ──────────────────────────────────────────── */
@@ -4060,7 +4064,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <button class="btn btn-o" style="height:34px;padding:0 12px;font-weight:600;margin-left:auto" onclick="peClearSelection()" title="Untick all lots">Clear selection</button>
         </div>
       </div>
-      <div class="card"><div id="pe-grid" style="overflow-x:auto"></div></div>
+      <div class="card"><div id="pe-grid"></div></div>
     </div>
 
     <!-- LOTS -->
@@ -4487,20 +4491,23 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         </div>
         </div>
       </div>
-      <!-- Layout tweak: move the SELLER container below the "Reserve this lot"
-           section (a one-time DOM move; keeps the static markup order above
-           intact). Seller and the reserve block are siblings in the same form. -->
-      <script>(function(){
-        function moveSellerBelowReserve(){
+      <!-- Seller-field placement is config-driven (lot_entry_seller_at_bottom).
+           The markup keeps the seller at the TOP; leApplySellerPosition() moves
+           it below the "Reserve this lot" block when the setting is ON, and can
+           move it back. Called from applyFeatureFlags() at boot + after save. -->
+      <script>
+        function leApplySellerPosition(atBottom){
           var seller=document.getElementById('le-seller-row');
-          if(!seller||!seller.parentNode) return false;
-          var reserve=seller.parentNode.querySelector(':scope > .feat-immediate-reserve');
-          if(!reserve) return false;
-          seller.parentNode.insertBefore(seller, reserve.nextSibling);
-          return true;
+          if(!seller||!seller.parentNode) return;
+          var parent=seller.parentNode;
+          if(atBottom){
+            var reserve=parent.querySelector(':scope > .feat-immediate-reserve');
+            if(reserve) parent.insertBefore(seller, reserve.nextSibling);
+          } else if(parent.firstElementChild && parent.firstElementChild!==seller){
+            parent.insertBefore(seller, parent.firstElementChild);
+          }
         }
-        if(!moveSellerBelowReserve()) document.addEventListener('DOMContentLoaded', moveSellerBelowReserve);
-      })();</script>
+      </script>
 
       <!-- Recent entries — today's lots from this auction -->
       <div class="card le-collapsible" id="le-sec-recent" style="margin-top:16px">
@@ -8264,6 +8271,8 @@ async function applyFeatureFlags() {
   // Default OFF when settings haven't loaded yet — safer than showing
   // dead controls. Re-runs after login + after save to reconcile.
   document.body.setAttribute('data-feat-whatsapp', cfg && on(cfg.flag_whatsapp) ? '1' : '0');
+  // Seller-field placement on the Lot Entry form (top vs below Reserve).
+  try { if (typeof leApplySellerPosition === 'function') leApplySellerPosition(cfg && on(cfg.lot_entry_seller_at_bottom)); } catch (_) {}
   // Debit Note gated by flag_debit_note (Settings → Flags).
   document.body.setAttribute('data-feat-debit-note', cfg && on(cfg.flag_debit_note) ? '1' : '0');
   document.body.setAttribute('data-feat-merchants', cfg && on(cfg.flag_merchants) ? '1' : '0');
@@ -18685,6 +18694,17 @@ function openTraderAdd(){
   renderBankRows([]);
   addBankRow();
   showModal('trader-modal');
+  // Pre-fill the User ID with the next auto-increment suggestion (editable;
+  // uniqueness still enforced server-side). Best-effort — leaves it blank on
+  // any failure so the operator can type their own.
+  (async () => {
+    try {
+      const el = document.getElementById('t-userid');
+      if (!el || el.value.trim()) return;
+      const d = await j('/api/traders/next-user-id');
+      if (d && d.next != null && !el.value.trim()) el.value = d.next;
+    } catch (_) {}
+  })();
 }
 // Fetch the CURRENT trader + banks from the server, then render the
 // modal. We used to pass the trader object inline from the list row, but
@@ -28389,7 +28409,7 @@ async function exportJournalPdf(){
   }
   const aucSel = document.getElementById('jr-auction');
   const subtitle = aucSel && aucSel.selectedIndex >= 0 ? (aucSel.options[aucSel.selectedIndex].text || '') : '';
-  const spec = { title: lj.title, subtitle, layout: 'landscape', columns, rows, totals, summary };
+  const spec = { title: lj.title, subtitle, layout: 'landscape', columns, rows, totals, summary, autofit: true };
   try {
     await withOverlay('Preparing journal PDF…', async () => {
       const blob = await _reportPdfBlob(spec);

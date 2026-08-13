@@ -269,7 +269,7 @@ select:focus{border-color:var(--green)}
       </div>
 
       <!-- Main form -->
-      <div style="padding:8px 12px">
+      <div id="le-form-body" style="padding:8px 12px">
         <!-- Seller -->
         <div id="le-sw" style="margin-bottom:6px">
           <div class="elb" id="elb-seller">SELLER</div>
@@ -334,11 +334,12 @@ select:focus{border-color:var(--green)}
           <div><div class="elb">GUNNY WT/BAG</div><input type="text" id="le-gunny-weight" class="ein" inputmode="decimal" list="gunny-perbag-opts" placeholder="1.000" oninput="sanitizeDec(this);onGunnyPerBagChange()" style="background:#fff"><datalist id="gunny-perbag-opts"><option value="0.800"></option><option value="0.900"></option><option value="1.000"></option><option value="1.100"></option><option value="1.200"></option></datalist></div>
         </div>
 
-        <!-- Net + Sample + Gross -->
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">
-          <div><div class="elb" id="elb-net">NET WT (KG)</div><input type="text" id="le-qty" placeholder="0.000" inputmode="decimal" onfocus="showSaveBtn()" class="ein qi" oninput="sanitizeDec(this);calcGrossWeight()"></div>
-          <div><div class="elb" id="elb-sample">SAMPLE</div><input type="text" id="le-sample" placeholder="0" readonly class="ein" style="background:var(--bg);color:var(--text3)"></div>
-          <div><div class="elb" id="elb-gross">GROSS</div><input type="text" id="le-gross" placeholder="0" readonly class="ein" style="background:var(--bg);color:var(--green);font-weight:700"></div>
+        <!-- Net + Sample + Gross. Sample/Gross are read-only auto-calculated
+             fields the operator can individually hide (applyCalcFieldVis). -->
+        <div id="le-nsg-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">
+          <div id="le-net-cell"><div class="elb" id="elb-net">NET WT (KG)</div><input type="text" id="le-qty" placeholder="0.000" inputmode="decimal" onfocus="showSaveBtn()" class="ein qi" oninput="sanitizeDec(this);calcGrossWeight()"></div>
+          <div id="le-sample-cell"><div class="elb" id="elb-sample">SAMPLE</div><input type="text" id="le-sample" placeholder="0" readonly class="ein" style="background:var(--bg);color:var(--text3)"></div>
+          <div id="le-gross-cell"><div class="elb" id="elb-gross">GROSS</div><input type="text" id="le-gross" placeholder="0" readonly class="ein" style="background:var(--bg);color:var(--green);font-weight:700"></div>
         </div>
 
         <!-- Moisture (conditional, compact) -->
@@ -398,23 +399,36 @@ select:focus{border-color:var(--green)}
       <!-- Recent lots strip -->
       <div id="le-recent" style="border-top:1px solid var(--border);font-size:11px"></div>
     </div>
-    <!-- Layout tweak: move the SELLER container (with its bank rows) to sit
-         BELOW the "Reserve this lot" section instead of at the top of the form.
-         Done as a one-time DOM move so the static markup above stays readable. -->
-    <script>(function(){
-      function moveSellerBelowReserve(){
-        var reserve=document.getElementById('le-immediate-reserve-wrap');
-        if(!reserve||!reserve.parentNode) return false;
-        // Insert each after `reserve`; reverse insert order keeps their
-        // original relative order (seller, trade-card, bank, bank-form).
-        ['le-bank-form','le-bank','le-tc','le-sw'].forEach(function(id){
-          var el=document.getElementById(id);
-          if(el) reserve.parentNode.insertBefore(el, reserve.nextSibling);
-        });
-        return true;
+    <!-- Seller-field placement is config-driven (cfgSellerAtBottom). The
+         markup keeps the seller block at the TOP; applySellerPosition() moves
+         it below the Reserve section when the operator opts for "bottom", and
+         can move it back. Called after each /api/config load. -->
+    <script>
+      var SELLER_BLOCK_IDS=['le-sw','le-tc','le-bank','le-bank-form'];
+      function applySellerPosition(){
+        var body=document.getElementById('le-form-body');
+        if(!body) return;
+        if(cfgSellerAtBottom){
+          var reserve=document.getElementById('le-immediate-reserve-wrap');
+          if(!reserve||!reserve.parentNode) return;
+          // Reverse insert order after `reserve` keeps original relative order.
+          SELLER_BLOCK_IDS.slice().reverse().forEach(function(id){
+            var el=document.getElementById(id);
+            if(el) reserve.parentNode.insertBefore(el, reserve.nextSibling);
+          });
+        } else {
+          // Top: insert the seller block before the first non-seller child.
+          var setIds={}; SELLER_BLOCK_IDS.forEach(function(id){setIds[id]=1;});
+          var anchor=null, kids=body.children;
+          for(var i=0;i<kids.length;i++){ if(!setIds[kids[i].id]){ anchor=kids[i]; break; } }
+          if(!anchor) return;
+          SELLER_BLOCK_IDS.forEach(function(id){
+            var el=document.getElementById(id);
+            if(el) body.insertBefore(el, anchor);
+          });
+        }
       }
-      if(!moveSellerBelowReserve()) document.addEventListener('DOMContentLoaded', moveSellerBelowReserve);
-    })();</script>
+    </script>
 
     <!-- Received vs planned progress bar (replaces old totals summary) -->
     <div id="le-progress" class="le-progress" style="display:none"></div>
@@ -428,6 +442,8 @@ select:focus{border-color:var(--green)}
     <div class="mi" onclick="openReassign()">🔀 Reassign Lots<span id="menu-reassign-badge" style="display:none;margin-left:6px;background:var(--red);color:#fff;font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px"></span></div>
     <div class="mi" onclick="closeDepotMobile()">⏏ Close Depot</div>
     <div class="mi" onclick="togglePrintFormat()">🖨 Print format: <span id="pf-label">Full</span></div>
+    <div class="mi" onclick="cyclePrintMethod()">🧾 Print method: <span id="pm-label">PDF (browser)</span></div>
+    <div class="mi" onclick="btConnect()">🔗 Connect Bluetooth printer</div>
     <div class="mi" onclick="showChangePassword()">🔑 Change Password</div>
     <div class="mi" onclick="changeSession()">Change session</div>
     <div class="mi dg" onclick="doLogout()">Logout</div>
@@ -696,6 +712,8 @@ async function refreshConfig(){
     if(d.defaultGunny!=cfgDefaultGunny){cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;changed=true}
     if(d.defaultLitre!=cfgDefaultLitre){cfgDefaultLitre=d.defaultLitre||'';changed=true}
     if(d.whatsapp!=cfgWhatsapp){cfgWhatsapp=!!d.whatsapp;applyWhatsappVis();changed=true}
+    if((!!d.sellerAtBottom)!=cfgSellerAtBottom){cfgSellerAtBottom=!!d.sellerAtBottom;applySellerPosition();changed=true}
+    if((d.showSampleField!==false)!=cfgShowSample||(d.showGrossField!==false)!=cfgShowGross){cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;applyCalcFieldVis();changed=true}
     if(d.editEnabled!==undefined)editEnabled=d.editEnabled!==false;
     if(d.editTimeout!==undefined)editTimeoutMinutes=d.editTimeout||0;
     if(d.labels&&JSON.stringify(d.labels)!==JSON.stringify(cfgLabels)){
@@ -725,8 +743,16 @@ setInterval(function(){if(token&&aid&&(document.getElementById('s-lots').classLi
 async function doLogin(forceLogin){const u=document.getElementById('l-user').value.trim(),p=document.getElementById('l-pass').value,er=document.getElementById('l-err');er.innerHTML='';if(!u||!p){er.innerHTML='<div class="eb">Enter username and password</div>';return}document.getElementById('l-btn').disabled=true;try{const r=await fetch(B+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p,force:forceLogin||false})});const d=await r.json();if(r.status===409&&d.error==='already_logged_in'){er.innerHTML='<div class="eb" style="text-align:center">'+d.message+'<br><button onclick="doLogin(true)" style="margin-top:8px;background:#1D9E75;color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Yes, switch to this device</button></div>';return}if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Login failed')+'</div>';return}token=d.token;user=d.user.username;userBranch=d.user.branch||'';userRole=d.user.role||'user';localStorage.setItem('sa_token',token);goSession()}catch(e){er.innerHTML='<div class="eb">Could not connect</div>'}finally{document.getElementById('l-btn').disabled=false}}
 function doLogout(){fetch(B+'/api/auth/logout',{method:'POST',headers:ah()}).catch(()=>{});token='';user='';localStorage.removeItem('sa_token');toggleMenu(true);show('s-login')}
 async function tryAutoLogin(){if(!token){loadTitle();return}try{const r=await fetch(B+'/api/auth/me',{headers:ah()});if(r.ok){const d=await r.json();user=d.user.username;userBranch=d.user.branch||'';userRole=d.user.role||'user';goSession()}else{token='';localStorage.removeItem('sa_token');loadTitle()}}catch(e){loadTitle()}}
-var cfgSampleWeight=0,cfgShowMoisture=false,cfgShowReservedPrice=false,cfgDefaultGunny=0,cfgImmediateReserve=false,cfgUserGunny=false,cfgShowCropReceipt=false,cfgCropReceiptStart='',cfgWhatsapp=false;
+var cfgSampleWeight=0,cfgShowMoisture=false,cfgShowReservedPrice=false,cfgDefaultGunny=0,cfgImmediateReserve=false,cfgUserGunny=false,cfgShowCropReceipt=false,cfgCropReceiptStart='',cfgWhatsapp=false,cfgSellerAtBottom=false,cfgShowSample=true,cfgShowGross=true;
 function applyWhatsappVis(){var b=document.getElementById('le-wa-btn');if(b)b.style.display=cfgWhatsapp?'inline-block':'none'}
+// Show/hide the auto-calculated read-only weight fields individually, and
+// collapse the Net/Sample/Gross grid so hidden cells leave no gap.
+function applyCalcFieldVis(){
+  var sc=document.getElementById('le-sample-cell'),gc=document.getElementById('le-gross-cell'),grid=document.getElementById('le-nsg-grid');
+  if(sc)sc.style.display=cfgShowSample?'':'none';
+  if(gc)gc.style.display=cfgShowGross?'':'none';
+  if(grid){var cols=1+(cfgShowSample?1:0)+(cfgShowGross?1:0);grid.style.gridTemplateColumns='repeat('+cols+',1fr)';}
+}
 // Show/hide the Immediate Payment + Reserve-this-Lot controls (Lot Entry form
 // and Edit modal) per the flag_immediate_reserve config (cfgImmediateReserve).
 function applyImmediateReserveVis(){var v=cfgImmediateReserve;var a=document.getElementById('le-immediate-reserve-wrap');if(a)a.style.display=v?'block':'none';var b=document.getElementById('ed-immediate-reserve-wrap');if(b)b.style.display=v?'block':'none';}
@@ -751,9 +777,9 @@ function applyLabels(){
   var map={'elb-seller':L.seller||'Seller','elb-grade':L.grade,'elb-bags':L.bags,'elb-litre':L.litre_wt,'elb-net':L.net_wt,'elb-sample':L.sample_wt,'elb-gross':L.gross_wt,'elb-moisture':L.moisture};
   Object.keys(map).forEach(function(id){var el=document.getElementById(id);if(el)el.textContent=map[id]});
 }
-async function loadTitle(){try{const r=await fetch(B+'/api/config');const d=await r.json();setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgDefaultLitre=d.defaultLitre||'';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw=document.getElementById('le-reserved-price-wrap');if(rpw)rpw.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();loadAppLogo()}catch(e){}}
+async function loadTitle(){try{const r=await fetch(B+'/api/config');const d=await r.json();setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw=document.getElementById('le-reserved-price-wrap');if(rpw)rpw.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();loadAppLogo()}catch(e){}}
 
-async function goSession(){document.getElementById('ss-user').textContent=user;const lb=localStorage.getItem('sa_branch');try{const r=await fetch(B+'/api/config');const d=await r.json();window._allBranches=(d.branches||[]).map(function(b){return b.value});setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgDefaultLitre=d.defaultLitre||'';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw2=document.getElementById('le-reserved-price-wrap');if(rpw2)rpw2.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();var brSel=document.getElementById('ss-branch');if(userRole!=='admin'&&userBranch){brSel.innerHTML='<option value="'+userBranch+'">'+userBranch+'</option>';brSel.disabled=true}else{brSel.disabled=false;brSel.innerHTML=(d.branches||[]).map(b=>'<option value="'+b.value+'"'+(b.value===(userBranch||lb)?' selected':'')+'>'+b.value+'</option>').join('')}}catch(e){}
+async function goSession(){document.getElementById('ss-user').textContent=user;const lb=localStorage.getItem('sa_branch');try{const r=await fetch(B+'/api/config');const d=await r.json();window._allBranches=(d.branches||[]).map(function(b){return b.value});setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw2=document.getElementById('le-reserved-price-wrap');if(rpw2)rpw2.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();var brSel=document.getElementById('ss-branch');if(userRole!=='admin'&&userBranch){brSel.innerHTML='<option value="'+userBranch+'">'+userBranch+'</option>';brSel.disabled=true}else{brSel.disabled=false;brSel.innerHTML=(d.branches||[]).map(b=>'<option value="'+b.value+'"'+(b.value===(userBranch||lb)?' selected':'')+'>'+b.value+'</option>').join('')}}catch(e){}
 await loadAvailableTrades();
 show('s-session')}
 
@@ -799,7 +825,7 @@ async function loadAvailableTrades(){
 
 async function startSession(){var sel=document.getElementById('ss-trade');var opt=sel.options[sel.selectedIndex];br=document.getElementById('ss-branch').value;var er=document.getElementById('ss-err');er.innerHTML='';if(!sel.value||!opt||!opt.value){er.innerHTML='<div class="eb">Select a trade</div>';return}if(!br){er.innerHTML='<div class="eb">Select branch</div>';return}aid=parseInt(sel.value);tno=parseInt(opt.getAttribute('data-ano'));sessionEnd=opt.getAttribute('data-end')||null;localStorage.setItem('sa_branch',br);
 // Reload config for sample weight + moisture
-try{var cr=await fetch(B+'/api/config');var cd=await cr.json();cfgSampleWeight=cd.sampleWeight||0;cfgShowMoisture=cd.showMoisture||false;cfgShowReservedPrice=cd.showReservedPrice||false;cfgImmediateReserve=cd.immediateReserve||false;cfgShowCropReceipt=cd.showCropReceipt||false;cfgCropReceiptStart=cd.cropReceiptStart||'';cfgDefaultGunny=cd.defaultGunny||0;cfgUserGunny=!!cd.userGunny;cfgWhatsapp=!!cd.whatsapp;document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw3=document.getElementById('le-reserved-price-wrap');if(rpw3)rpw3.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis()}catch(e){}
+try{var cr=await fetch(B+'/api/config');var cd=await cr.json();cfgSampleWeight=cd.sampleWeight||0;cfgShowMoisture=cd.showMoisture||false;cfgShowReservedPrice=cd.showReservedPrice||false;cfgImmediateReserve=cd.immediateReserve||false;cfgShowCropReceipt=cd.showCropReceipt||false;cfgCropReceiptStart=cd.cropReceiptStart||'';cfgDefaultGunny=cd.defaultGunny||0;cfgUserGunny=!!cd.userGunny;cfgWhatsapp=!!cd.whatsapp;cfgSellerAtBottom=!!cd.sellerAtBottom;cfgShowSample=cd.showSampleField!==false;cfgShowGross=cd.showGrossField!==false;document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw3=document.getElementById('le-reserved-price-wrap');if(rpw3)rpw3.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis()}catch(e){}
 await loadStats();goLots()}
 
 var allocStats=null;
@@ -994,9 +1020,66 @@ function printFmt(){return localStorage.getItem('sa_print_format')==='compact'?'
 function applyPrintFmtLabel(){var el=document.getElementById('pf-label');if(el)el.textContent=printFmt()==='compact'?'Compact (2.5×3.5)':'Full'}
 function togglePrintFormat(){localStorage.setItem('sa_print_format',printFmt()==='compact'?'full':'compact');applyPrintFmtLabel();toast('Print format: '+(printFmt()==='compact'?'Compact':'Full'),false)}
 applyPrintFmtLabel();
+
+// ── Print method: PDF (browser dialog) | Bluetooth (Web Bluetooth, direct
+//    ESC/POS) | RawBT (hand ESC/POS to the RawBT print-service app). Chosen
+//    once from the menu; the This-Lot / All-by-Seller actions route by it. ──
+function printMethod(){var m=localStorage.getItem('sa_print_method');return (m==='bt'||m==='rawbt')?m:'pdf'}
+function printMethodLabel(){var m=printMethod();return m==='bt'?'Bluetooth':(m==='rawbt'?'RawBT':'PDF (browser)')}
+function applyPrintMethodLabel(){var el=document.getElementById('pm-label');if(el)el.textContent=printMethodLabel()}
+function cyclePrintMethod(){var order=['pdf','bt','rawbt'];var i=order.indexOf(printMethod());localStorage.setItem('sa_print_method',order[(i+1)%order.length]);applyPrintMethodLabel();toast('Print method: '+printMethodLabel(),false)}
+applyPrintMethodLabel();
+
+// Web Bluetooth — connect once, reuse the writable characteristic. Common
+// thermal-printer GATT services are listed so the OS chooser shows them.
+var _btChar=null,_btDevice=null;
+var _BT_SERVICES=[0x18F0,0xFF00,0xFFE0,'000018f0-0000-1000-8000-00805f9b34fb','0000ff00-0000-1000-8000-00805f9b34fb','0000ffe0-0000-1000-8000-00805f9b34fb','49535343-fe7d-4ae5-8fa9-9fafd205e455'];
+async function btConnect(){
+  if(!(navigator.bluetooth&&navigator.bluetooth.requestDevice)){toast('This browser has no Web Bluetooth. Use Chrome on Android, or switch print method to RawBT.',true);return null;}
+  try{
+    var dev=await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalServices:_BT_SERVICES});
+    _btDevice=dev;
+    var server=await dev.gatt.connect();
+    var services=await server.getPrimaryServices();
+    _btChar=null;
+    for(var s of services){
+      var chars=await s.getCharacteristics();
+      for(var c of chars){ if(c.properties.write||c.properties.writeWithoutResponse){_btChar=c;break;} }
+      if(_btChar)break;
+    }
+    if(!_btChar){toast('No writable characteristic on that printer',true);return null;}
+    dev.addEventListener('gattserverdisconnected',function(){_btChar=null;});
+    toast('Printer connected'+(dev.name?': '+dev.name:''),false);
+    return _btChar;
+  }catch(e){ if(!(e&&e.name==='NotFoundError'))toast('Bluetooth connect failed',true); return null; }
+}
+async function _btWrite(buf){
+  if(!_btChar){ if(!await btConnect())return false; }
+  var u8=new Uint8Array(buf),CH=180;
+  for(var i=0;i<u8.length;i+=CH){
+    var slice=u8.slice(i,i+CH);
+    try{ if(_btChar.writeValueWithoutResponse)await _btChar.writeValueWithoutResponse(slice); else await _btChar.writeValue(slice); }
+    catch(e){ try{ await _btChar.writeValue(slice); }catch(_){ toast('Print failed — reconnect the printer',true); _btChar=null; return false; } }
+    await new Promise(function(r){setTimeout(r,18);});
+  }
+  return true;
+}
+function _ab2b64(buf){var u8=new Uint8Array(buf),s='';for(var i=0;i<u8.length;i++)s+=String.fromCharCode(u8[i]);return btoa(s);}
+async function _fetchEscpos(url){var r=await fetch(url,{headers:{'Authorization':'Bearer '+token}});if(!r.ok){toast('Receipt not available',true);return null;}return r.arrayBuffer();}
+async function btPrint(url){var buf=await _fetchEscpos(url);if(!buf)return;if(await _btWrite(buf))toast('Sent to printer',false);}
+async function rawbtPrint(url){var buf=await _fetchEscpos(url);if(!buf)return;try{window.location.href='rawbt:base64,'+_ab2b64(buf);}catch(e){toast('RawBT print failed — is the RawBT app installed?',true);}}
+// Route a receipt to the chosen output. pdfUrl prints via the browser dialog;
+// its ".escpos" sibling drives Bluetooth / RawBT.
+function routePrint(pdfUrl){
+  var m=printMethod();
+  if(m==='pdf')return printAndClose(pdfUrl);
+  var escUrl=pdfUrl.replace('/receipt?','/receipt.escpos?').replace('/print-seller?','/print-seller.escpos?');
+  return m==='bt'?btPrint(escUrl):rawbtPrint(escUrl);
+}
+
 async function printSellerLots(traderId){
   // Branch-scoped: only include lots from the currently logged-in branch.
-  printAndClose(B+'/api/lots/print-seller?trader_id='+traderId+'&auction_id='+aid+'&branch='+encodeURIComponent(br)+'&token='+token+'&format='+printFmt());
+  routePrint(B+'/api/lots/print-seller?trader_id='+traderId+'&auction_id='+aid+'&branch='+encodeURIComponent(br)+'&token='+token+'&format='+printFmt());
 }
 
 function editRecentLot(lotId){
@@ -1161,7 +1244,10 @@ function wireSellerUppercase(){
     if(up!==el.value){var s=el.selectionStart,en=el.selectionEnd;el.value=up;try{el.setSelectionRange(s,en);}catch(_){}}
   });
 }
-function openSellerModal(n,p){wireSellerUppercase();document.getElementById('le-res').style.display='none';document.getElementById('ns-name').value=n||'';document.getElementById('ns-cr').value='';document.getElementById('ns-pan').value='';document.getElementById('ns-tel').value=p||'';document.getElementById('ns-whatsapp').value='';document.getElementById('ns-email').value='';document.getElementById('ns-padd').value='';document.getElementById('ns-ppla').value='';document.getElementById('ns-pin').value='';document.getElementById('ns-pstate').value='KERALA';document.getElementById('ns-pst').value='32';document.getElementById('ns-dob').value='';document.getElementById('ns-userid').value='';var wa=document.getElementById('ns-wa-same');wa.checked=false;var waInp=document.getElementById('ns-whatsapp');waInp.readOnly=false;waInp.style.background='';var em=document.getElementById('ns-email');em.classList.remove('invalid');var emErr=document.getElementById('ns-email-err');if(emErr)emErr.style.display='none';document.getElementById('ns-err').innerHTML='';document.getElementById('seller-modal').classList.add('show')}
+function openSellerModal(n,p){wireSellerUppercase();document.getElementById('le-res').style.display='none';document.getElementById('ns-name').value=n||'';document.getElementById('ns-cr').value='';document.getElementById('ns-pan').value='';document.getElementById('ns-tel').value=p||'';document.getElementById('ns-whatsapp').value='';document.getElementById('ns-email').value='';document.getElementById('ns-padd').value='';document.getElementById('ns-ppla').value='';document.getElementById('ns-pin').value='';document.getElementById('ns-pstate').value='KERALA';document.getElementById('ns-pst').value='32';document.getElementById('ns-dob').value='';document.getElementById('ns-userid').value='';var wa=document.getElementById('ns-wa-same');wa.checked=false;var waInp=document.getElementById('ns-whatsapp');waInp.readOnly=false;waInp.style.background='';var em=document.getElementById('ns-email');em.classList.remove('invalid');var emErr=document.getElementById('ns-email-err');if(emErr)emErr.style.display='none';document.getElementById('ns-err').innerHTML='';document.getElementById('seller-modal').classList.add('show');_seedNextUserId()}
+// Pre-fill the New Seller "User ID" with the next auto-increment suggestion
+// (editable; server still enforces uniqueness). Best-effort.
+function _seedNextUserId(){var el=document.getElementById('ns-userid');if(!el||el.value.trim()!=='')return;fetch(B+'/api/traders/next-user-id',{headers:ah()}).then(function(r){return r.ok?r.json():null}).then(function(d){if(d&&d.next!=null&&el.value.trim()==='')el.value=d.next}).catch(function(){})}
 function onWaSameToggle(){var same=document.getElementById('ns-wa-same').checked;var wa=document.getElementById('ns-whatsapp');if(same){wa.value=document.getElementById('ns-tel').value;wa.readOnly=true;wa.style.background='var(--bg)'}else{wa.readOnly=false;wa.style.background=''}}
 function validateEmailField(el,showErr){var v=(el.value||'').trim();var ok=!v||/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v);el.classList.toggle('invalid',!ok);var er=document.getElementById('ns-email-err');if(er)er.style.display=(!ok&&showErr)?'block':'none';return ok}
 function closeSellerModal(){document.getElementById('seller-modal').classList.remove('show')}
@@ -1587,7 +1673,7 @@ async function printAllBySellerUser(){
   printAndClose(B+'/api/lots/print-all-sellers/'+aid+'?branch='+encodeURIComponent(br)+'&token='+token+'&format='+printFmt());
 }
 
-function printLot(id){printAndClose(B+'/api/lots/'+id+'/receipt?branch='+encodeURIComponent(br)+'&token='+token+'&format='+printFmt())}
+function printLot(id){routePrint(B+'/api/lots/'+id+'/receipt?branch='+encodeURIComponent(br)+'&token='+token+'&format='+printFmt())}
 
 var editBanks=[],editTraderId=null;
 var editLotBankId=null;

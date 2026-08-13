@@ -321,6 +321,88 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
      .text('** THANK YOU **', m, doc.y, { width: w, align: 'center' });
 }
 
+// ── RENDERER (ESC/POS raw bytes, for Bluetooth thermal printers) ──
+// Produces a 58mm ESC/POS receipt from the same lot data + operator column
+// config as the PDF renderers, so a Bluetooth print matches the PDF slip.
+// The client writes these bytes straight to the printer (Web Bluetooth) or
+// hands them to the RawBT print service. `charWidth` chars per line (32 for
+// a 58mm Font-A roll; 42/48 for wider rolls).
+function buildEscposReceipt(lots, cfg, opts) {
+  const ESC = 0x1B, GS = 0x1D;
+  const WIDTH = (opts && opts.charWidth) || 32;
+  const chunks = [];
+  const raw  = (...b) => chunks.push(Buffer.from(b));
+  const put  = (s)   => chunks.push(Buffer.from(String(s), 'latin1'));
+  const nl   = ()    => raw(0x0A);
+  const line = (s)   => { put(s == null ? '' : s); nl(); };
+  const left   = () => raw(ESC, 0x61, 0x00);
+  const center = () => raw(ESC, 0x61, 0x01);
+  const boldOn = () => raw(ESC, 0x45, 0x01);
+  const boldOff= () => raw(ESC, 0x45, 0x00);
+  const big    = (on) => raw(GS, 0x21, on ? 0x11 : 0x00); // double W+H / normal
+  const rule   = (ch) => line((ch || '-').repeat(WIDTH));
+  // Left/right justified on one WIDTH-wide line (truncates the left label if
+  // the pair would overflow so the right value always shows in full).
+  const lr = (l, r) => {
+    l = String(l == null ? '' : l); r = String(r == null ? '' : r);
+    let gap = WIDTH - l.length - r.length;
+    if (gap < 1) { l = l.slice(0, Math.max(0, WIDTH - r.length - 1)); gap = WIDTH - l.length - r.length; }
+    return l + ' '.repeat(Math.max(1, gap)) + r;
+  };
+
+  const lot0 = lots[0] || {};
+  const dateFmt = formatDateForDisplay(lot0.date, cfg.dateFormat);
+  const branch = cfg.branch || lot0.branch || '';
+  const fields = enabledReceiptFields(cfg);
+  const onKeys = new Set(fields.map(f => f.key));
+
+  raw(ESC, 0x40);                 // initialize
+  center();
+  boldOn(); big(true); line(cfg.appTitle || 'RECEIPT'); big(false);
+  if (branch) line(branch + ' BRANCH');
+  boldOff();
+  if (cfg.companyPhone) line('Ph: ' + cfg.companyPhone);
+  if (cfg.companyGstin) line('GSTIN: ' + cfg.companyGstin);
+  left();
+  rule();
+  line(lr('Auction #' + (lot0.ano || ''), 'Date: ' + dateFmt));
+  rule();
+  boldOn(); line('Seller: ' + (lot0.trader_name || '')); boldOff();
+  if (lot0.cr) line('GSTIN: ' + lot0.cr);
+  const acct = maskAcctForReceipt(lot0.acctnum, cfg.acctMask);
+  if (acct) line('A/C: ' + acct);
+  if (lot0.ifsc) line('IFSC: ' + lot0.ifsc);
+  rule();
+
+  let totalQty = 0, totalGross = 0, totalBags = 0, totalSample = 0;
+  lots.forEach(l => {
+    boldOn(); line('Lot #' + (l.lot_no != null ? l.lot_no : '')); boldOff();
+    fields.forEach(f => {
+      if (f.key === 'lot_no') return;
+      const v = String(f.val(l, cfg));
+      if (v === '') return;
+      line(lr('  ' + f.hdr, v));
+    });
+    totalQty    += Number(l.qty) || 0;
+    totalGross  += Number(l.gross_weight) || 0;
+    totalBags   += Number(l.bags) || 0;
+    totalSample += Number(l.sample_weight) || cfg.sampleWeight || 0;
+  });
+  rule();
+  boldOn();
+  line(lots.length + ' lot(s)');
+  if (onKeys.has('bags'))                   line(lr('Total Bags', String(totalBags)));
+  if (onKeys.has('net'))                    line(lr('Total Net', totalQty.toFixed(3) + ' kg'));
+  if (onKeys.has('sample') && totalSample)  line(lr('Total Smp', totalSample.toFixed(3) + ' kg'));
+  if (onKeys.has('gross')  && totalGross)   line(lr('Total Gross', totalGross.toFixed(3) + ' kg'));
+  boldOff();
+  rule();
+  center(); boldOn(); line('** THANK YOU **'); boldOff(); left();
+  raw(0x0A, 0x0A, 0x0A, 0x0A);    // feed clear of the tear bar
+  raw(GS, 0x56, 0x00);            // full cut (ignored by cutter-less printers)
+  return Buffer.concat(chunks);
+}
+
 // ── RENDERER (compact, thermal-printer / ~2.5"×3.5") ─────────────
 function renderSellerReceiptCompact(doc, sellerLots, cfg) {
   // Content width + column scale follow the configured paper width (same
@@ -697,6 +779,12 @@ function mountMobile(app, deps) {
       // Immediate Payment + Reserve-this-Lot checkboxes on the mobile Lot
       // Entry + Edit forms. OFF hides both controls; the lot columns persist.
       immediateReserve: getBool('flag_immediate_reserve', false),
+      // Seller field placement on the Lot Entry form. true = below the
+      // Reserve section; false (default) = at the top.
+      sellerAtBottom:  getBool('lot_entry_seller_at_bottom', false),
+      // Per-field visibility for the auto-calculated read-only weight fields.
+      showSampleField: getBool('mobile_show_sample_field', true),
+      showGrossField:  getBool('mobile_show_gross_field', true),
       // "Send via WhatsApp" action on the mobile Saved bar (shares the lot
       // receipt PDF with the seller). Gated by the same master flag the
       // desktop share buttons use.
@@ -713,6 +801,57 @@ function mountMobile(app, deps) {
       acctMask:        'none',
       labels:          {},
     });
+  });
+
+  // ── 3b. NEXT CROP-RECEIPT NUMBER ────────────────────────────────
+  // The mobile Lot Entry form seeds its Crop Receipt No from here.
+  // Mirrors the client-side _incrementCrptStr: take the highest existing
+  // crpt (compared by its numeric tail), +1, preserving any non-digit
+  // prefix and the zero-pad width. When no lot has a crpt yet, fall back
+  // to the configured start number (crop_receipt_start_no) as-is.
+  app.get('/api/crop-receipt/next', requireAuthFlex, (req, res) => {
+    const db = getDb();
+    const rows = db.all("SELECT crpt FROM lots WHERE crpt IS NOT NULL AND TRIM(crpt) != ''");
+    let best = null, bestNum = -1n;
+    for (const r of rows) {
+      const m = String(r.crpt || '').trim().match(/^(\D*?)(\d+)$/);
+      if (!m) continue;
+      let n; try { n = BigInt(m[2]); } catch (_) { continue; }
+      if (n > bestNum) { bestNum = n; best = { prefix: m[1] || '', num: m[2] }; }
+    }
+    let next = '';
+    if (best) {
+      const inc = (BigInt(best.num) + 1n).toString();
+      next = best.prefix + (inc.length >= best.num.length ? inc : inc.padStart(best.num.length, '0'));
+    } else {
+      const startRow = db.get("SELECT value FROM company_settings WHERE key = 'crop_receipt_start_no'");
+      next = startRow && startRow.value != null ? String(startRow.value).trim() : '';
+    }
+    res.json({ next });
+  });
+
+  // ── 3c. NEXT SELLER USER ID ─────────────────────────────────────
+  // Suggested User ID for a NEW seller: highest existing user_id (by
+  // numeric tail) + 1, preserving any prefix + zero-pad width. Starts at
+  // "1" when none exist. The client pre-fills this but leaves it editable,
+  // and the POST/PUT handlers still enforce uniqueness.
+  // Registered before the /api/traders/:id routes so ":id" can't shadow it.
+  app.get('/api/traders/next-user-id', requireAuthFlex, (req, res) => {
+    const db = getDb();
+    const rows = db.all("SELECT user_id FROM traders WHERE user_id IS NOT NULL AND TRIM(user_id) != ''");
+    let best = null, bestNum = -1n;
+    for (const r of rows) {
+      const m = String(r.user_id || '').trim().match(/^(\D*?)(\d+)$/);
+      if (!m) continue;
+      let n; try { n = BigInt(m[2]); } catch (_) { continue; }
+      if (n > bestNum) { bestNum = n; best = { prefix: m[1] || '', num: m[2] }; }
+    }
+    let next = '1';
+    if (best) {
+      const inc = (BigInt(best.num) + 1n).toString();
+      next = best.prefix + (inc.length >= best.num.length ? inc : inc.padStart(best.num.length, '0'));
+    }
+    res.json({ next });
   });
 
   // ── 4. AUCTIONS ENVELOPE ────────────────────────────────────────
@@ -1466,6 +1605,45 @@ function mountMobile(app, deps) {
     doc.pipe(res);
     r.render(doc, [lot], cfg);
     doc.end();
+  });
+
+  // (1b) Single-lot receipt as raw ESC/POS bytes — for Bluetooth thermal
+  // printers (Web Bluetooth writes these straight to the printer; RawBT
+  // consumes them too). ?width=32|42|48 chars per line (default 32 = 58mm).
+  app.get('/api/lots/:id/receipt.escpos', requireAuthFlex, (req, res) => {
+    const db = getDb();
+    const lot = db.get(LOT_SELECT_SQL + ' WHERE l.id = ?', [parseInt(req.params.id, 10)]);
+    if (!lot) return res.status(404).json({ error: 'Lot not found' });
+    const branch = req.query && req.query.branch;
+    if (branch && lot.branch !== branch) return res.status(404).json({ error: `Lot ${lot.lot_no} is not in ${branch}` });
+    const cfg = getReceiptConfig(db);
+    if (branch) cfg.branch = branch;
+    const charWidth = parseInt(req.query.width, 10) || 32;
+    const buf = buildEscposReceipt([lot], cfg, { charWidth });
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="Lot_${lot.lot_no}_Receipt.bin"`);
+    res.send(buf);
+  });
+
+  // (3b) All lots for one seller, as raw ESC/POS bytes.
+  app.get('/api/lots/print-seller.escpos', requireAuthFlex, (req, res) => {
+    const db = getDb();
+    const traderId = parseInt(req.query.trader_id, 10);
+    const auctionId = parseInt(req.query.auction_id, 10);
+    if (!traderId || !auctionId) return res.status(400).json({ error: 'trader_id and auction_id required' });
+    const branch = (req.query && req.query.branch) || '';
+    const params = [auctionId, traderId];
+    let where = 'l.auction_id = ? AND l.trader_id = ?';
+    if (branch) { where += ' AND l.branch = ?'; params.push(branch); }
+    const lots = db.all(LOT_SELECT_SQL + ' WHERE ' + where + ' ORDER BY CAST(l.lot_no AS INTEGER), l.lot_no', params);
+    if (!lots.length) return res.status(404).json({ error: branch ? `No lots for this seller in ${branch}` : 'No lots found' });
+    const cfg = getReceiptConfig(db);
+    if (branch) cfg.branch = branch;
+    const charWidth = parseInt(req.query.width, 10) || 32;
+    const buf = buildEscposReceipt(lots, cfg, { charWidth });
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="Seller_${(lots[0].trader_name || 'Receipt').replace(/[^A-Za-z0-9]+/g, '_')}.bin"`);
+    res.send(buf);
   });
 
   // Shared helper — groups arbitrary lot rows by seller, then renders
