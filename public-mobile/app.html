@@ -1033,36 +1033,68 @@ function applyPrintMethodLabel(){var el=document.getElementById('pm-label');if(e
 function cyclePrintMethod(){var order=['pdf','bt','rawbt'];var i=order.indexOf(printMethod());localStorage.setItem('sa_print_method',order[(i+1)%order.length]);applyPrintMethodLabel();toast('Print method: '+printMethodLabel(),false)}
 applyPrintMethodLabel();
 
-// Web Bluetooth — connect once, reuse the writable characteristic. Common
-// thermal-printer GATT services are listed so the OS chooser shows them.
+// Web Bluetooth — pick a printer once, then reconnect SILENTLY on each print.
+// BLE printers drop the GATT link when idle, so we can't just cache the
+// characteristic; we re-open the connection to the already-chosen device
+// (no chooser) whenever it has dropped. Common thermal-printer GATT services
+// are listed so the OS chooser surfaces them.
 var _btChar=null,_btDevice=null;
 var _BT_SERVICES=[0x18F0,0xFF00,0xFFE0,'000018f0-0000-1000-8000-00805f9b34fb','0000ff00-0000-1000-8000-00805f9b34fb','0000ffe0-0000-1000-8000-00805f9b34fb','49535343-fe7d-4ae5-8fa9-9fafd205e455'];
+function _btOnDisc(){ _btChar=null; }
+// Find the first writable characteristic across all services on a server.
+async function _btFindChar(server){
+  var services=await server.getPrimaryServices();
+  for(var s of services){
+    var chars=await s.getCharacteristics();
+    for(var c of chars){ if(c.properties.write||c.properties.writeWithoutResponse) return c; }
+  }
+  return null;
+}
+// Pick + pair a printer (shows the OS chooser). Remembers the device so
+// later prints can reconnect without prompting again.
 async function btConnect(){
-  if(!(navigator.bluetooth&&navigator.bluetooth.requestDevice)){toast('This browser has no Web Bluetooth. Use Chrome on Android, or switch print method to RawBT.',true);return null;}
+  if(!(navigator.bluetooth&&navigator.bluetooth.requestDevice)){toast('This browser has no Web Bluetooth. Serve the app over HTTPS + Chrome on Android, or set Print method to RawBT.',true);return null;}
   try{
     var dev=await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalServices:_BT_SERVICES});
     _btDevice=dev;
+    try{ dev.removeEventListener('gattserverdisconnected',_btOnDisc); }catch(_){}
+    dev.addEventListener('gattserverdisconnected',_btOnDisc);
     var server=await dev.gatt.connect();
-    var services=await server.getPrimaryServices();
-    _btChar=null;
-    for(var s of services){
-      var chars=await s.getCharacteristics();
-      for(var c of chars){ if(c.properties.write||c.properties.writeWithoutResponse){_btChar=c;break;} }
-      if(_btChar)break;
-    }
-    if(!_btChar){toast('No writable characteristic on that printer',true);return null;}
-    dev.addEventListener('gattserverdisconnected',function(){_btChar=null;});
+    _btChar=await _btFindChar(server);
+    if(!_btChar){toast('This printer can’t be driven over in-app Bluetooth (likely a Bluetooth Classic printer). Set Print method to RawBT instead.',true);return null;}
     toast('Printer connected'+(dev.name?': '+dev.name:''),false);
     return _btChar;
-  }catch(e){ if(!(e&&e.name==='NotFoundError'))toast('Bluetooth connect failed',true); return null; }
+  }catch(e){ if(!(e&&e.name==='NotFoundError'))toast('Bluetooth connect failed'+(e&&e.message?': '+e.message:''),true); return null; }
+}
+// Guarantee a live writable characteristic. Reuses the open link, else
+// reconnects silently to the already-chosen device; only shows the chooser
+// when no printer has been picked yet this session.
+async function btEnsureConnected(){
+  try{
+    if(_btChar&&_btDevice&&_btDevice.gatt&&_btDevice.gatt.connected) return _btChar;
+    if(_btDevice&&_btDevice.gatt){
+      var server=await _btDevice.gatt.connect();   // silent reconnect — no chooser
+      _btChar=await _btFindChar(server);
+      if(_btChar) return _btChar;
+    }
+  }catch(e){ /* fall through to a fresh pick */ }
+  return await btConnect();
 }
 async function _btWrite(buf){
-  if(!_btChar){ if(!await btConnect())return false; }
+  var ch=await btEnsureConnected();
+  if(!ch) return false;
   var u8=new Uint8Array(buf),CH=180;
   for(var i=0;i<u8.length;i+=CH){
     var slice=u8.slice(i,i+CH);
-    try{ if(_btChar.writeValueWithoutResponse)await _btChar.writeValueWithoutResponse(slice); else await _btChar.writeValue(slice); }
-    catch(e){ try{ await _btChar.writeValue(slice); }catch(_){ toast('Print failed — reconnect the printer',true); _btChar=null; return false; } }
+    try{ if(ch.writeValueWithoutResponse)await ch.writeValueWithoutResponse(slice); else await ch.writeValue(slice); }
+    catch(e){
+      // One retry after a fresh reconnect, then give up with clear guidance.
+      _btChar=null;
+      var ch2=await btEnsureConnected();
+      if(!ch2){ return false; }
+      try{ if(ch2.writeValueWithoutResponse)await ch2.writeValueWithoutResponse(slice); else await ch2.writeValue(slice); ch=ch2; }
+      catch(_){ toast('Printer dropped the connection. Tap “Connect Bluetooth printer”, then print again.',true); _btChar=null; return false; }
+    }
     await new Promise(function(r){setTimeout(r,18);});
   }
   return true;
