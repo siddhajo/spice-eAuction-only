@@ -508,39 +508,69 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
   }
 
   // ── Separate summary container (optional) ──
-  // A boxed, left-aligned block drawn under the main table. Keeps a breakdown
-  // (e.g. the Sales Journal sale-type ledger summary) visually distinct from
-  // the wide invoice table instead of being stretched across its columns.
+  // A boxed block drawn under the main table with its OWN Particulars/Qty/
+  // Amount columns + a full grid (column verticals + row horizontals), so a
+  // breakdown (e.g. the Sales Journal sale-type ledger summary) reads as a
+  // distinct little ledger instead of being stretched across the invoice
+  // columns where the smaller values (gunny sales, etc.) get lost.
   if (summary && Array.isArray(summary.lines) && summary.lines.length) {
-    const boxW = Math.min(usableW, 360);
+    const heads = summary.headers || ['Particulars', 'Qty', 'Amount'];
+    const boxW = Math.min(usableW, 380);
     const bx = m;
-    const titleH = 18, lineH = 13.5;
-    const totalH = summary.total ? 20 : 0;
-    const boxH = titleH + summary.lines.length * lineH + totalH + 6;
+    const titleH = 18, headH = 14, lineH = 13.5;
+    const totalH = summary.total ? 18 : 0;
+    const nL = summary.lines.length;
+    const boxH = titleH + headH + nL * lineH + totalH;
     let sy = y + 16;
     if (sy + boxH > pageH - m - 20) { doc.addPage(); sy = m + 8; }
-    // Outer box + title bar.
-    doc.rect(bx, sy, boxW, boxH).lineWidth(0.8).strokeColor('#444').stroke();
+    // Column geometry (x-offsets from bx).
+    const c1 = boxW * 0.52;   // Particulars | Qty divider
+    const c2 = boxW * 0.74;   // Qty | Amount divider
+    const PAD = 6;
+    const xLabel = bx + PAD,        wLabel = c1 - 2 * PAD;
+    const xQty   = bx + c1 + 2,     wQty   = (c2 - c1) - 6;
+    const xVal   = bx + c2 + 2,     wVal   = (boxW - c2) - PAD - 2;
+    const gridBottom = sy + titleH + headH + nL * lineH;
+
+    // Title bar.
     doc.rect(bx, sy, boxW, titleH).fillAndStroke('#E8E4DD', '#444');
     doc.fillColor('#000').font('Helvetica-Bold').fontSize(9)
-       .text(summary.title || 'Summary', bx + 8, sy + 5, { width: boxW - 16, lineBreak: false });
-    const cLabel = bx + 8, wLabel = boxW * 0.50;
-    const cQty = bx + boxW * 0.50, wQty = boxW * 0.22 - 4;
-    const cVal = bx + boxW * 0.72, wVal = boxW * 0.28 - 8;
-    let ly = sy + titleH + 4;
+       .text(summary.title || 'Summary', bx + PAD, sy + 5, { width: boxW - 2 * PAD, lineBreak: false });
+    // Header row.
+    const hy = sy + titleH;
+    doc.rect(bx, hy, boxW, headH).fillAndStroke('#F0EBE2', '#444');
+    doc.fillColor('#000').font('Helvetica-Bold').fontSize(8);
+    doc.text(String(heads[0] || ''), xLabel, hy + 3, { width: wLabel, align: 'left', lineBreak: false });
+    doc.text(String(heads[1] || ''), xQty,   hy + 3, { width: wQty, align: 'right', lineBreak: false });
+    doc.text(String(heads[2] || ''), xVal,   hy + 3, { width: wVal, align: 'right', lineBreak: false });
+    // Line rows.
+    let ly = hy + headH;
     doc.font('Helvetica').fontSize(8.2).fillColor('#000');
     for (const ln of summary.lines) {
-      doc.font('Helvetica').text(String(ln.label || ''), cLabel, ly, { width: wLabel, align: 'left', lineBreak: false });
-      if (ln.qty !== '' && ln.qty != null) doc.text(String(ln.qty), cQty, ly, { width: wQty, align: 'right', lineBreak: false });
-      doc.text(String(ln.value == null ? '' : ln.value), cVal, ly, { width: wVal, align: 'right', lineBreak: false });
+      doc.font('Helvetica').text(String(ln.label || ''), xLabel, ly + 2.5, { width: wLabel, align: 'left', lineBreak: false });
+      if (ln.qty !== '' && ln.qty != null) doc.text(String(ln.qty), xQty, ly + 2.5, { width: wQty, align: 'right', lineBreak: false });
+      doc.text(String(ln.value == null ? '' : ln.value), xVal, ly + 2.5, { width: wVal, align: 'right', lineBreak: false });
       ly += lineH;
     }
+    // Total row (highlighted).
     if (summary.total) {
-      doc.rect(bx, ly - 1, boxW, totalH).fillAndStroke('#FFF3CD', '#E0B020');
+      doc.rect(bx, ly, boxW, totalH).fillAndStroke('#FFF3CD', '#E0B020');
       doc.fillColor('#000').font('Helvetica-Bold').fontSize(9)
-         .text(String(summary.total.label || 'TOTAL'), cLabel, ly + 4, { width: boxW * 0.60, align: 'left', lineBreak: false });
-      doc.text(String(summary.total.value == null ? '' : summary.total.value), cVal, ly + 4, { width: wVal, align: 'right', lineBreak: false });
+         .text(String(summary.total.label || 'TOTAL'), xLabel, ly + 3.5, { width: c2 - 2 * PAD, align: 'left', lineBreak: false });
+      doc.text(String(summary.total.value == null ? '' : summary.total.value), xVal, ly + 3.5, { width: wVal, align: 'right', lineBreak: false });
     }
+    // ── Grid ──
+    // Horizontal row separators (between every line row, under the header).
+    doc.lineWidth(0.3).strokeColor('#999');
+    for (let r = 0; r <= nL; r++) {
+      const gy = hy + headH + r * lineH;
+      doc.moveTo(bx, gy).lineTo(bx + boxW, gy).stroke();
+    }
+    // Vertical column separators — through the header + data rows only.
+    doc.moveTo(bx + c1, hy).lineTo(bx + c1, gridBottom).stroke();
+    doc.moveTo(bx + c2, hy).lineTo(bx + c2, gridBottom + totalH).stroke();
+    // Outer border last, so it sits crisp over the grid.
+    doc.rect(bx, sy, boxW, boxH).lineWidth(0.8).strokeColor('#444').stroke();
     y = sy + boxH;
   }
 

@@ -165,6 +165,90 @@ async function createExcelBuffer(sheetName, columns, rows, opts) {
     });
   }
 
+  // ── Separate summary container (optional) ──
+  // Renders a self-contained mini-ledger (Particulars | Qty | Amount) in
+  // MERGED cells below the main table, so its own values — including the
+  // smaller ones like gunny sales — stay legible in their own container
+  // instead of being stretched thin across the wide invoice columns. Title
+  // and every field are merged cells with a full thin-border grid.
+  if (opts.summaryBlock && Array.isArray(opts.summaryBlock.lines) && opts.summaryBlock.lines.length) {
+    const sb = opts.summaryBlock;
+    const nCols = columns.length;
+    const labelEnd = Math.max(1, Math.round(nCols * 0.45));
+    const qtyEnd = Math.min(nCols - 1, Math.max(labelEnd + 1, Math.round(nCols * 0.66)));
+    const valStart = qtyEnd + 1;
+    const L = (nn) => colLetter(nn);
+    const thin = { style: 'thin' };
+    const box = { top: thin, bottom: thin, left: thin, right: thin };
+    const borderRange = (rowNum, c1, c2) => { for (let c = c1; c <= c2; c++) ws.getRow(rowNum).getCell(c).border = box; };
+    const AMT_FMT = '#,##0.00', QTY_FMT = '#,##0.000';
+
+    ws.addRow([]); // spacer separates the container from the table above
+
+    // Title — one merged cell across every column.
+    const tRow = ws.addRow([]);
+    ws.mergeCells(`A${tRow.number}:${L(nCols)}${tRow.number}`);
+    tRow.getCell(1).value = sb.title || 'Summary';
+    tRow.font = { bold: true, size: 11 };
+    tRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+    tRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E4DD' } };
+    borderRange(tRow.number, 1, nCols);
+    tRow.height = 20;
+
+    const heads = sb.headers || ['Particulars', 'Qty', 'Amount'];
+    // Column-header row (three merged spans).
+    const hRow = ws.addRow([]);
+    ws.mergeCells(`A${hRow.number}:${L(labelEnd)}${hRow.number}`);
+    ws.mergeCells(`${L(labelEnd + 1)}${hRow.number}:${L(qtyEnd)}${hRow.number}`);
+    ws.mergeCells(`${L(valStart)}${hRow.number}:${L(nCols)}${hRow.number}`);
+    hRow.getCell(1).value = heads[0];
+    hRow.getCell(labelEnd + 1).value = heads[1];
+    hRow.getCell(valStart).value = heads[2];
+    hRow.font = { bold: true, size: 10 };
+    [1, labelEnd + 1, valStart].forEach(ci => { hRow.getCell(ci).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0EBE2' } }; });
+    hRow.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+    hRow.getCell(labelEnd + 1).alignment = { horizontal: 'right', vertical: 'middle' };
+    hRow.getCell(valStart).alignment = { horizontal: 'right', vertical: 'middle' };
+    borderRange(hRow.number, 1, nCols);
+    hRow.height = 18;
+
+    // Line rows.
+    sb.lines.forEach(ln => {
+      const r = ws.addRow([]);
+      ws.mergeCells(`A${r.number}:${L(labelEnd)}${r.number}`);
+      ws.mergeCells(`${L(labelEnd + 1)}${r.number}:${L(qtyEnd)}${r.number}`);
+      ws.mergeCells(`${L(valStart)}${r.number}:${L(nCols)}${r.number}`);
+      r.getCell(1).value = ln.label || '';
+      r.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+      if (ln.qty !== '' && ln.qty != null && !isNaN(Number(ln.qty))) {
+        r.getCell(labelEnd + 1).value = Number(ln.qty);
+        r.getCell(labelEnd + 1).numFmt = QTY_FMT;
+      }
+      r.getCell(labelEnd + 1).alignment = { horizontal: 'right', vertical: 'middle' };
+      r.getCell(valStart).value = (ln.value == null || ln.value === '') ? '' : Number(ln.value);
+      r.getCell(valStart).numFmt = AMT_FMT;
+      r.getCell(valStart).alignment = { horizontal: 'right', vertical: 'middle' };
+      borderRange(r.number, 1, nCols);
+    });
+
+    // Total row (highlighted).
+    if (sb.total) {
+      const r = ws.addRow([]);
+      ws.mergeCells(`A${r.number}:${L(qtyEnd)}${r.number}`);
+      ws.mergeCells(`${L(valStart)}${r.number}:${L(nCols)}${r.number}`);
+      r.getCell(1).value = sb.total.label || 'TOTAL';
+      r.getCell(valStart).value = (sb.total.value == null || sb.total.value === '') ? '' : Number(sb.total.value);
+      r.getCell(valStart).numFmt = AMT_FMT;
+      r.font = { bold: true, size: 11 };
+      const fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: sb.fillArgb || 'FFD1E7DD' } };
+      r.getCell(1).fill = fill; r.getCell(valStart).fill = fill;
+      r.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+      r.getCell(valStart).alignment = { horizontal: 'right', vertical: 'middle' };
+      borderRange(r.number, 1, nCols);
+      r.height = 20;
+    }
+  }
+
   // ── Signature / sign-off footer (optional) ──
   // A blank spacer then a bold row placing each label spread evenly across the
   // sheet width (e.g. "Prepared By" | "Checked By" | "Approved By"). Used by
@@ -1040,25 +1124,23 @@ async function exportSalesJournal(db, auctionId, saleType) {
   const sumKeys = ['bag','qty','cardamom','gunny','transport','insurance','cgst','sgst','igst','tcs','rund','total'];
   const totalRow = { buyer1: 'Total' };
   for (const k of sumKeys) totalRow[k] = rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
-  // Sale-type ledger summary (as in the COLLECTION reference), each line as a
-  // trade-name label + optional qty + a value in the TOTAL column.
+  // Sale-type ledger summary (as in the COLLECTION reference). Rendered as its
+  // OWN merged-cell container (Particulars | Qty | Amount) below the invoice
+  // register, so each value — including the smaller gunny-sales lines — stays
+  // legible instead of being stretched across the wide invoice columns.
   const summary = calc.getSalesJournalSummary(db, auctionId, saleType, cfg);
-  const summaryRows = summary
-    ? summary.lines.map(l => ({ buyer1: l.label, qty: (l.qty === '' ? undefined : l.qty), total: l.value }))
-    : [];
-  // Two highlighted sections — the invoice register (with its Total row) and,
-  // separated below, the sale-type ledger summary — plus a bold grand-total
-  // footer. Keeps the summary visually distinct rather than blended into the
-  // invoice rows.
   const sections = [{ title: 'SALES INVOICES', rows: [...rows, totalRow] }];
-  if (summaryRows.length) sections.push({ title: `${summary.stateLabel} — LEDGER SUMMARY`, rows: summaryRows });
   return createExcelBuffer('SalesJournal', cols, [], {
     db, title: 'Sales Journal',
     metaLines: [...auctionMeta(db, auctionId), saleType ? `Type: ${saleType}` : ''].filter(Boolean),
     sections, spacerBetween: true,
-    grandTotal: summary
-      ? { values: { buyer1: `${summary.stateLabel} TOTAL`, total: summary.stateTotal }, fillArgb: 'FFD1E7DD' }
-      : null,
+    summaryBlock: summary ? {
+      title: `${summary.stateLabel} — LEDGER SUMMARY`,
+      headers: ['Particulars', 'Qty', 'Amount'],
+      lines: summary.lines.map(l => ({ label: l.label, qty: l.qty, value: l.value })),
+      total: { label: `${summary.stateLabel} TOTAL`, value: summary.stateTotal },
+      fillArgb: 'FFD1E7DD',
+    } : null,
   });
 }
 
