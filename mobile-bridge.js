@@ -374,15 +374,50 @@ function buildEscposReceipt(lots, cfg, opts) {
   if (lot0.ifsc) line('IFSC: ' + lot0.ifsc);
   rule();
 
+  // ── Lots as an ALIGNED COLUMN TABLE (matches the printed PDF receipt) ──
+  // Each lot is one row across the operator's chosen columns, not a vertical
+  // label/value list. Column widths are sized to content within the roll's
+  // character width; numbers right-aligned, text left-aligned.
+  const numericCol = (key) => key !== 'lot_no' && key !== 'grade' && key !== 'crpt';
+  const rowsData = lots.map(l => fields.map(f => String(f.val(l, cfg))));
+  const colW = fields.map((f, ci) => {
+    let w = String(f.hdr).length;
+    for (const rd of rowsData) w = Math.max(w, rd[ci].length);
+    return w;
+  });
+  const GAP = 1;
+  const gapTotal = GAP * Math.max(0, fields.length - 1);
+  // Too wide for the roll → shrink the widest TEXT column first so numbers
+  // (weights) keep their full width and stay readable.
+  let sumW = colW.reduce((a, b) => a + b, 0) + gapTotal, guard = 300;
+  while (sumW > WIDTH && guard-- > 0) {
+    let idx = -1, best = -1;
+    for (let i = 0; i < fields.length; i++) {
+      const floor = numericCol(fields[i].key) ? 4 : 3;
+      if (colW[i] > floor && colW[i] > best) { best = colW[i]; idx = i; }
+    }
+    if (idx < 0) break;
+    colW[idx]--; sumW--;
+  }
+  // Spare room → widen a text column so the table fills the roll edge-to-edge.
+  const spare = WIDTH - (colW.reduce((a, b) => a + b, 0) + gapTotal);
+  if (spare > 0) {
+    let ti = fields.findIndex(f => !numericCol(f.key));
+    if (ti < 0) ti = fields.length - 1;
+    colW[ti] += spare;
+  }
+  const cell = (text, w, right) => {
+    text = String(text == null ? '' : text);
+    if (text.length > w) text = right ? text.slice(text.length - w) : text.slice(0, w);
+    return right ? text.padStart(w) : text.padEnd(w);
+  };
+  const tableRow = (vals) => vals.map((v, i) => cell(v, colW[i], numericCol(fields[i].key))).join(' ');
+  boldOn(); line(tableRow(fields.map(f => f.hdr))); boldOff();
+  rule();
+  rowsData.forEach(rd => line(tableRow(rd)));
+
   let totalQty = 0, totalGross = 0, totalBags = 0, totalSample = 0;
   lots.forEach(l => {
-    boldOn(); line('Lot #' + (l.lot_no != null ? l.lot_no : '')); boldOff();
-    fields.forEach(f => {
-      if (f.key === 'lot_no') return;
-      const v = String(f.val(l, cfg));
-      if (v === '') return;
-      line(lr('  ' + f.hdr, v));
-    });
     totalQty    += Number(l.qty) || 0;
     totalGross  += Number(l.gross_weight) || 0;
     totalBags   += Number(l.bags) || 0;
