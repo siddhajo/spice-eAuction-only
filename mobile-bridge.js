@@ -507,6 +507,18 @@ function pickReceiptRenderer(fmt, paperWidthMm) {
     : { render: renderSellerReceipt,        pageW, pageSize: [pageW, 550], compact: false };
 }
 
+// Page HEIGHT needed to fit a whole seller receipt of `n` lot rows on ONE
+// page, so multi-lot receipts never overflow onto stray/blank continuation
+// pages. Generously over-estimated (extra white space at the foot is fine;
+// under-estimating is what produced the fragmented 37-page prints). A single
+// seller's receipt is one continuous strip, so a tall page is expected.
+function receiptPageHeight(n, compact) {
+  const rows = Math.max(1, n);
+  return compact
+    ? Math.min(180 + rows * 14 + 40, 12000)
+    : Math.min(280 + rows * 18 + 60, 12000);
+}
+
 // ── LOT SELECT — single helper used by every print endpoint ─────
 // Spice-config has denormalised seller fields on the lots row
 // (lots.name, lots.cr, lots.ppla, lots.ppin, lots.tel) so we don't
@@ -1655,12 +1667,17 @@ function mountMobile(app, deps) {
       const key = l.trader_id || ('u_' + (l.trader_name || 'unknown'));
       (groups[key] || (groups[key] = [])).push(l);
     }
-    const doc = new PDFDocument({ size: r.pageSize, margin: r.compact ? 10 : 20 });
+    const groupArr = Object.values(groups);
+    const margin = r.compact ? 10 : 20;
+    // Each seller page is sized to ITS lot count so a long seller never
+    // overflows onto blank continuation pages.
+    const sizeFor = (g) => [r.pageW, receiptPageHeight(g.length, r.compact)];
+    const doc = new PDFDocument({ size: sizeFor(groupArr[0] || []), margin });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     doc.pipe(res);
-    Object.values(groups).forEach((group, idx) => {
-      if (idx > 0) doc.addPage();
+    groupArr.forEach((group, idx) => {
+      if (idx > 0) doc.addPage({ size: sizeFor(group), margin });
       r.render(doc, group, cfg);
     });
     doc.end();
@@ -1711,10 +1728,10 @@ function mountMobile(app, deps) {
     const fmt = (req.query && req.query.format) || (req.body && req.body.format);
     const r = pickReceiptRenderer(fmt, cfg.paperWidthMm);
     // Auto-grow page for long seller histories. Width follows the configured
-    // paper roll (r.pageW); only the height grows with the lot count.
-    const pageSize = r.compact
-      ? [r.pageW, Math.min(160 + lots.length * 12 + 60, 700)]
-      : [r.pageW, Math.min(200 + lots.length * 18 + 80, 800)];
+    // paper roll (r.pageW); only the height grows with the lot count. Uses the
+    // shared, generously-sized helper so even very long seller lists fit on a
+    // single page instead of overflowing onto blank pages.
+    const pageSize = [r.pageW, receiptPageHeight(lots.length, r.compact)];
     const doc = new PDFDocument({ size: pageSize, margin: r.compact ? 10 : 20 });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition',

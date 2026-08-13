@@ -13171,6 +13171,18 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Live seller search — debounced 200ms, hits /api/traders?search=
+// Seller detail line for lot-entry search results — fixed, easy-to-scan
+// order with labelled bold values: PHONE | PAN | GSTIN | PLACE. (cr = GSTIN.)
+function leFmtSellerDetail(t){
+  const lab = (l, v) => `<span style="color:var(--text3);font-weight:600">${l}</span> <b style="color:var(--text)">${esc(v)}</b>`;
+  const seg = [];
+  if (t.tel) seg.push(lab('PHONE', t.tel));
+  if (t.pan) seg.push(lab('PAN', t.pan));
+  if (t.cr)  seg.push(lab('GSTIN', t.cr));
+  const place = [t.ppla, t.pin].filter(Boolean).join(' ');
+  if (place) seg.push(lab('PLACE', place));
+  return seg.join(' <span style="opacity:.35">|</span> ');
+}
 async function leSearchSeller(q){
   clearTimeout(_le.searchTimer);
   _le.lastSearchQuery = q || '';
@@ -13190,15 +13202,11 @@ async function leSearchSeller(q){
       let html = '';
       if (list.length) {
         html = list.map((t, i) => {
-          const loc = [t.ppla, t.pin].filter(Boolean).join(', ');
-          // Meta line order: CR/GSTIN · phone · PAN. PAN sits AFTER phone
-          // so the operator can disambiguate same-named sellers by PAN
-          // even when CR/GSTIN is blank (agriculturists). Matches the
-          // Change Seller modal's dropdown for consistency.
-          const meta = [t.cr, t.tel, t.pan].filter(Boolean).join(' · ');
+          // Fixed, easy-to-scan detail order with labelled bold values,
+          // highlighted in its own band: PHONE | PAN | GSTIN | PLACE.
           return `<div class="le-seller-result" data-idx="${i}" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s">
             <div style="font-weight:600;color:var(--text)">${esc(t.name||'')}</div>
-            <div style="font-size:11px;color:var(--text3);margin-top:2px">${esc(loc)}${meta?' — '+esc(meta):''}</div>
+            <div style="font-size:11px;margin-top:3px;padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;line-height:1.7;word-break:break-word">${leFmtSellerDetail(t)}</div>
           </div>`;
         }).join('');
       } else {
