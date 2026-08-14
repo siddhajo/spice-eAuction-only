@@ -494,6 +494,7 @@ select:focus{border-color:var(--green)}
     <div class="mi" onclick="cyclePrintMethod()">🧾 Print method: <span id="pm-label">PDF (browser)</span></div>
     <div class="mi" onclick="connectPrinter()">🔗 Connect Bluetooth printer</div>
     <div class="mi" onclick="nativeBtTestPrint()">🧪 Test print</div>
+    <div class="mi" onclick="openInstallPage()">📲 Install printing app</div>
     <div class="mi" onclick="showChangePassword()">🔑 Change Password</div>
     <div class="mi" onclick="changeSession()">Change session</div>
     <div class="mi dg" onclick="doLogout()">Logout</div>
@@ -1334,6 +1335,9 @@ function _btShowPicker(devs){
 // "Connect Bluetooth printer" menu action — native picker in the wrapper,
 // Web-Bluetooth chooser in a plain browser.
 function connectPrinter(){ return hasNativeBt()?nativeBtChoosePrinter():btConnect(); }
+// Opens the install page (download + setup steps for the native printing app)
+// in a new tab, so operators can grab the APK without being sent the URL.
+function openInstallPage(){ toggleMenu(true); window.open(B+'/mobile/install.html','_blank'); }
 
 // Route a receipt to the chosen output. pdfUrl prints via the browser dialog;
 // its ".escpos" sibling drives native SPP / Web Bluetooth / RawBT.
