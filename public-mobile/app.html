@@ -149,27 +149,35 @@ select:focus{border-color:var(--green)}
 .br-toggle{background:var(--green);color:#fff;border:none;border-radius:6px;padding:3px 9px;font-size:9px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap}
 .br-body{display:none;margin-top:8px;border-top:1px dashed var(--border);padding-top:8px}
 .br-body.open{display:block}
-/* Lot table inside an expanded depot: LOT | CROP RECEIPT | SELLER | BAGS·KG.
-   A 4-column grid so the header labels line up with the values beneath. */
-.br-lot,.br-lot-hd{display:grid;grid-template-columns:38px 56px 1fr auto;gap:6px;align-items:baseline;font-size:11px;padding:4px 0;border-bottom:1px solid var(--border)}
-.br-lot-hd{font-size:8px;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--border2,var(--border));padding-bottom:3px}
-.br-lot:last-child{border-bottom:none}
-.br-lot .n{font-weight:800;color:var(--green)}
-.br-lot .c{color:var(--text2);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.br-lot .s{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
-.br-lot .q{color:var(--text2);font-weight:600;white-space:nowrap;text-align:right}
-.br-lot-hd .q{text-align:right}
+/* Lot table inside an expanded depot: LOT | C RCPT | SELLER | BAGS | QTY(KG).
+   A real <table> with auto layout, so every column sizes itself to its widest
+   value and the header always lines up with the data. SELLER takes the slack
+   (width:100% + max-width:0 lets it ellipsize while the rest stay intact). */
+.br-tbl{width:100%;border-collapse:collapse;font-size:11px}
+.br-tbl th{font-size:8px;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;
+  text-align:left;padding:0 8px 4px 0;white-space:nowrap;border-bottom:1px solid var(--border);
+  position:sticky;top:0;background:var(--bg2);z-index:1}
+.br-tbl td{padding:4px 8px 4px 0;border-bottom:1px solid var(--border);white-space:nowrap;vertical-align:baseline}
+.br-tbl tbody tr:last-child td{border-bottom:none}
+.br-tbl th:last-child,.br-tbl td:last-child{padding-right:0}
+.br-tbl .r{text-align:right}
+.br-tbl .n{font-weight:800;color:var(--green)}
+.br-tbl .c{color:var(--text2);font-weight:600}
+.br-tbl .s{font-weight:600;width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis}
+.br-tbl .q{color:var(--text2);font-weight:600}
+.br-tbl td.br-empty{white-space:normal;text-align:left}
 /* Sortable headers — tap to sort, tap again to flip. `.on` marks the active
    column so the caret isn't the only cue. */
-.br-lot-hd .br-sort{cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none}
-.br-lot-hd .br-sort.on{color:var(--green)}
-.br-lot-hd .br-sort:active{opacity:.6}
+.br-tbl th.br-sort{cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none}
+.br-tbl th.br-sort.on{color:var(--green)}
+.br-tbl th.br-sort:active{opacity:.6}
 /* Per-depot search over lot no / crop receipt / seller. */
 .br-filter{width:100%;height:30px;padding:0 9px;margin-bottom:6px;font-size:12px;font-family:inherit;
   border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);-webkit-appearance:none}
 .br-filter:focus{outline:none;border-color:var(--green)}
-/* Rows scroll inside the card so a big depot doesn't stretch the page. */
-.br-rows{max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+/* Rows scroll inside the card so a big depot doesn't stretch the page. The
+   opaque background is what the sticky header sits on as rows pass under it. */
+.br-rows{max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;background:var(--bg2)}
 .br-count{font-size:9px;color:var(--text3);font-weight:700;text-align:right;padding-top:5px;letter-spacing:.3px}
 .br-empty{font-size:11px;color:var(--text3);padding:6px 0;font-style:italic}
 .lot-card{background:var(--bg2);border-radius:var(--radius);border:1px solid var(--border);padding:12px;margin-bottom:6px;box-shadow:var(--shadow);transition:all .25s}
@@ -2733,44 +2741,51 @@ function _brVisibleRows(depot){
     if(s.col==='lot')        r=_brLotNum(a)-_brLotNum(b);
     else if(s.col==='crpt')  r=String(a.crpt||'').localeCompare(String(b.crpt||''));
     else if(s.col==='seller')r=_brSellerOf(a).localeCompare(_brSellerOf(b));
+    else if(s.col==='bags')  r=(Number(a.bags)||0)-(Number(b.bags)||0);
     else if(s.col==='qty')   r=(Number(a.qty)||0)-(Number(b.qty)||0);
     // Lot number is the stable tiebreak so equal keys never reshuffle.
     return (r||(_brLotNum(a)-_brLotNum(b)))*mul;
   });
   return rows;
 }
-// Just the <div class="br-lot"> rows — re-rendered on its own when the search
-// or sort changes, so the filter input keeps focus and the caret position.
+// The whole table — sortable sticky header + rows. Rendered as ONE <table> so
+// the browser auto-fits every column to its widest value and the header can't
+// drift out of alignment with the data (separate header/body grids did).
+// Re-rendered wholesale on sort or search; the filter input sits outside it so
+// typing never loses focus.
 function _brRowsHtml(depot){
+  var key=encodeURIComponent(depot);
+  var s=_brSort[depot]||{col:'lot',dir:'asc'};
+  var caret=function(c){return s.col===c?(s.dir==='asc'?' ▲':' ▼'):''};
+  var th=function(col,label,right){
+    return '<th class="'+(right?'r ':'')+'br-sort'+(s.col===col?' on':'')+'"'
+      +' onclick="brSortLots(\''+key+'\',\''+col+'\')">'+label+caret(col)+'</th>';
+  };
   var rows=_brVisibleRows(depot);
-  if(!rows.length)return '<div class="br-empty">No lots match this search.</div>';
-  // Units live in the column header, not on every row — the values stay bare
-  // numbers so the column reads as a clean list.
-  return rows.map(function(l){
-    return '<div class="br-lot"><span class="n">#'+(l.lot_no||'')+'</span>'
-      +'<span class="c">'+(l.crpt||'—')+'</span>'
-      +'<span class="s">'+_brSellerOf(l)+'</span>'
-      +'<span class="q">'+_brFmt(l.bags)+' · '+Number(l.qty||0).toFixed(3)+'</span></div>';
-  }).join('');
+  var body=rows.length
+    ? rows.map(function(l){
+        // Units live in the column headers, so the values stay bare numbers.
+        return '<tr><td class="n">'+(l.lot_no||'')+'</td>'
+          +'<td class="c">'+(l.crpt||'—')+'</td>'
+          +'<td class="s">'+_brSellerOf(l)+'</td>'
+          +'<td class="r q">'+_brFmt(l.bags)+'</td>'
+          +'<td class="r q">'+Number(l.qty||0).toFixed(3)+'</td></tr>';
+      }).join('')
+    : '<tr><td colspan="5" class="br-empty">No lots match this search.</td></tr>';
+  return '<table class="br-tbl"><thead><tr>'
+    + th('lot','Lot') + th('crpt','C Rcpt') + th('seller','Seller')
+    + th('bags','Bags',true) + th('qty','Qty(kg)',true)
+    + '</tr></thead><tbody>'+body+'</tbody></table>';
 }
-// Search box + sortable header (both fixed) above a scrolling rows pane, so a
-// 70-lot depot scrolls inside its own card instead of stretching the page.
+// Search box above a scrolling table pane, so a 70-lot depot scrolls inside
+// its own card instead of stretching the page.
 function _brLotRows(depot){
   var rows=_brLots[depot];
   if(rows===undefined)return '<div class="br-empty">Loading lots…</div>';
   if(!rows.length)return '<div class="br-empty">No lots booked at this depot yet.</div>';
   var key=encodeURIComponent(depot);
-  var s=_brSort[depot]||{col:'lot',dir:'asc'};
   var q=_brQuery[depot]||'';
-  var caret=function(c){return s.col===c?(s.dir==='asc'?' ▲':' ▼'):''};
-  var cls=function(c){return 'br-sort'+(s.col===c?' on':'')};
   return '<input class="br-filter" type="search" placeholder="Search lot, crop receipt or seller…" value="'+String(q).replace(/"/g,'&quot;')+'" oninput="brFilterLots(\''+key+'\',this.value)">'
-    +'<div class="br-lot-hd">'
-    +'<span class="'+cls('lot')+'" onclick="brSortLots(\''+key+'\',\'lot\')">Lot'+caret('lot')+'</span>'
-    +'<span class="'+cls('crpt')+'" onclick="brSortLots(\''+key+'\',\'crpt\')">Crop Rcpt'+caret('crpt')+'</span>'
-    +'<span class="'+cls('seller')+'" onclick="brSortLots(\''+key+'\',\'seller\')">Seller'+caret('seller')+'</span>'
-    +'<span class="q '+cls('qty')+'" onclick="brSortLots(\''+key+'\',\'qty\')">Bags · Qty(kg)'+caret('qty')+'</span>'
-    +'</div>'
     +'<div class="br-rows" id="brr-'+key+'">'+_brRowsHtml(depot)+'</div>'
     +'<div class="br-count" id="brc-'+key+'">'+_brCountText(depot)+'</div>';
 }
@@ -2780,7 +2795,8 @@ function _brCountText(depot){
   return (shown===total?('Showing all '+total+' lots'):('Showing '+shown+' of '+total+' lots'))
     +' · '+_brFmt(kg,0)+' kg';
 }
-// Repaint only the rows pane + count; the input and header stay untouched.
+// Repaint the table (header carets included) + the count line. The search
+// input lives outside the pane, so it keeps its value, focus and caret.
 function _brRepaint(key){
   var depot=decodeURIComponent(key);
   var rowsEl=document.getElementById('brr-'+key);
@@ -2792,15 +2808,14 @@ function brFilterLots(key,val){
   _brQuery[decodeURIComponent(key)]=val;
   _brRepaint(key);
 }
-// Tapping the active column flips direction; a new column starts ascending
-// (descending for Bags·Qty, where "biggest first" is the useful default).
+// Tapping the active column flips direction; a new column starts ascending,
+// except Bags/Qty where "biggest first" is the more useful opening view.
 function brSortLots(key,col){
   var depot=decodeURIComponent(key);
   var s=_brSort[depot]||{col:'lot',dir:'asc'};
   _brSort[depot]= s.col===col ? {col:col,dir:s.dir==='asc'?'desc':'asc'}
-                              : {col:col,dir:col==='qty'?'desc':'asc'};
-  var body=document.getElementById('brb-'+key);
-  if(body)body.innerHTML=_brLotRows(depot);   // header carets need redrawing
+                              : {col:col,dir:(col==='qty'||col==='bags')?'desc':'asc'};
+  _brRepaint(key);
 }
 async function toggleBranchLots(key){
   var depot=decodeURIComponent(key);
