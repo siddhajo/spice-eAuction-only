@@ -1101,9 +1101,37 @@ async function _btWrite(buf){
   return true;
 }
 function _ab2b64(buf){var u8=new Uint8Array(buf),s='';for(var i=0;i<u8.length;i++)s+=String.fromCharCode(u8[i]);return btoa(s);}
-async function _fetchEscpos(url){var r=await fetch(url,{headers:{'Authorization':'Bearer '+token}});if(!r.ok){toast('Receipt not available',true);return null;}return r.arrayBuffer();}
+async function _fetchEscpos(url){
+  // Catch BOTH a bad HTTP status and a network throw, and surface either as a
+  // toast — the old version let a network error reject silently, which looked
+  // like "nothing happened" when an individual receipt failed to print.
+  try{
+    var r=await fetch(url,{headers:{'Authorization':'Bearer '+token}});
+    if(!r.ok){toast('Receipt fetch failed ('+r.status+')',true);return null;}
+    return await r.arrayBuffer();
+  }catch(e){toast('Network error fetching receipt',true);return null;}
+}
 async function btPrint(url){var buf=await _fetchEscpos(url);if(!buf)return;if(await _btWrite(buf))toast('Sent to printer',false);}
-async function rawbtPrint(url){var buf=await _fetchEscpos(url);if(!buf)return;try{window.location.href='rawbt:base64,'+_ab2b64(buf);}catch(e){toast('RawBT print failed — is the RawBT app installed?',true);}}
+async function rawbtPrint(url){
+  var buf=await _fetchEscpos(url);if(!buf)return;
+  var uri='rawbt:base64,'+_ab2b64(buf);
+  // A bare `location.href` to a custom scheme is silently swallowed by an
+  // INSTALLED (standalone) PWA on Android — so tapping print did nothing.
+  // Firing the link through a synthetic <a> click hands it to the OS as an
+  // external intent, which actually launches RawBT; `location.href` stays as a
+  // fallback. Always toast so the handoff is never silent.
+  try{
+    var a=document.createElement('a');
+    a.href=uri;a.style.display='none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function(){try{document.body.removeChild(a);}catch(_){}},1500);
+    toast('Sent to RawBT',false);
+  }catch(e){
+    try{window.location.href=uri;toast('Sent to RawBT',false);}
+    catch(_){toast('Could not open RawBT — is the app installed?',true);}
+  }
+}
 // Route a receipt to the chosen output. pdfUrl prints via the browser dialog;
 // its ".escpos" sibling drives Bluetooth / RawBT.
 function routePrint(pdfUrl){
