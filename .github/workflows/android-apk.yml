@@ -37,10 +37,11 @@ jobs:
         working-directory: mobile-native
         run: npm install
 
-      - name: Add Android platform + sync plugins
+      - name: Add Android platform (only if missing) + sync plugins
         working-directory: mobile-native
         run: |
-          npx cap add android
+          [ -d android ] || npx cap add android
+          rm -f android/local.properties   # drop any committed Mac SDK path; CI sets its own
           npx cap sync android
 
       - name: Add Bluetooth permissions (Android 12+)
@@ -60,7 +61,7 @@ jobs:
           keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
           keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
           EOF
-          printf '\napply from: "../../signing/signing.gradle"\n' >> app/build.gradle
+          grep -q 'signing.gradle' app/build.gradle || printf '\napply from: "../../signing/signing.gradle"\n' >> app/build.gradle
 
       - name: Build signed release APK
         working-directory: mobile-native/android
