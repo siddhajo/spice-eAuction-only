@@ -23,7 +23,7 @@ const PDFDocument = require('pdfkit');
 //     ignored); used by Form C, matching the other reports/exports.
 const { isDealerSeller, hasValidGstin } = require('./calculations');
 const {
-  fmtMoney, fmtQty, fmtPrice,
+  fmtMoney, fmtQty, fmtPrice, formatInvoiceNo,
   getCompanyHeader, writeXlsxCompanyHeader,
   formatDateForDisplay,
 } = require('./report-formatters');
@@ -208,10 +208,10 @@ function getReportContext(db, opts) {
     ORDER BY CAST(l.lot_no AS INTEGER), l.lot_no
   `, params);
 
-  // Inter-state invoice-number prefix (Buyer Statement uses it for I invoices).
-  const _pref = db.get(`SELECT value FROM company_settings WHERE key = 'interstate_invoice_prefix'`);
-  const interstateInvoicePrefix = String((_pref && _pref.value) || '').trim();
-  return { auction, rows, auctionState: String(auction.state || '').trim().toUpperCase(), interstateInvoicePrefix };
+  // Proforma invoice-number prefix (Buyer Statement prints it on every sale type).
+  const _pref = db.get(`SELECT value FROM company_settings WHERE key = 'proforma_invoice_prefix'`);
+  const proformaInvoicePrefix = String((_pref && _pref.value) || '').trim();
+  return { auction, rows, auctionState: String(auction.state || '').trim().toUpperCase(), proformaInvoicePrefix };
 }
 
 // Distinct branches/sellers/buyers seen in an auction — populates the
@@ -297,16 +297,20 @@ function buildBuyersStatement(ctx) {
   // A numeric sort key (`_invSort`) is stashed for ordering, then both it and
   // the temp Set are dropped so the rows serialise cleanly to JSON.
   const invNumKey = s => { const n = parseInt(String(s).replace(/\D/g, ''), 10); return isFinite(n) ? n : Number.POSITIVE_INFINITY; };
-  // Inter-state invoice numbers additionally carry the configured prefix.
-  const isPrefix = String(ctx.interstateInvoicePrefix || '').trim();
-  const setInvoice = (prefix, numPrefix) => g => {
+  // Configured proforma prefix — applies to EVERY sale type and leads the
+  // token, so each number renders "PI/I-2009" instead of the bare "I 2009".
+  const isPrefix = String(ctx.proformaInvoicePrefix || '').trim();
+  const setInvoice = (prefix) => g => {
     const nums = Array.from(g.invos).filter(Boolean).sort((a, b) => invNumKey(a) - invNumKey(b));
-    const shown = numPrefix ? nums.map(nn => numPrefix + nn) : nums;
-    g.invoice  = nums.length ? `${prefix} ${shown.join(', ')}` : '';
+    g.invoice = !nums.length ? ''
+      : isPrefix
+        // Prefixed form self-labels the sale type, so no leading "I ".
+        ? nums.map(nn => formatInvoiceNo(isPrefix, prefix, nn)).join(', ')
+        : `${prefix} ${nums.join(', ')}`;
     g._invSort = nums.length ? invNumKey(nums[0]) : Number.POSITIVE_INFINITY;
     delete g.invos;
   };
-  inter.forEach(setInvoice('I', isPrefix));
+  inter.forEach(setInvoice('I'));
   intra.forEach(setInvoice('L'));
   exportS.forEach(setInvoice('E'));
   // Order each section by invoice number (blank invoices last; ties by name).

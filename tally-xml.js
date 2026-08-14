@@ -27,6 +27,24 @@
 // deploys when the Tally XML generators run.
 const _getCompanyIdentity = require('./_company-identity-fallback').resolve();
 
+// Proforma invoice-number formatter, resolved the same defensive way: an
+// older report-formatters.js on a partial deploy must not blank this out
+// and blow up the Merchant XML with "formatInvoiceNo is not a function".
+const formatInvoiceNo = (() => {
+  try {
+    const f = require('./report-formatters').formatInvoiceNo;
+    if (typeof f === 'function') return f;
+  } catch (_) {}
+  return (prefix, sale, invo) => {
+    const p = String(prefix == null ? '' : prefix).trim();
+    const s = String(sale == null ? '' : sale).trim().toUpperCase();
+    const n = String(invo == null ? '' : invo).trim();
+    if (!n) return '';
+    if (!p) return s ? `${s} ${n}` : n;
+    return s ? `${p}/${s}-${n}` : `${p}-${n}`;
+  };
+})();
+
 const STATES = {
   '01': 'Jammu & Kashmir', '02': 'Himachal Pradesh', '03': 'Punjab',
   '04': 'Chandigarh', '05': 'Uttarakhand', '06': 'Haryana',
@@ -4480,9 +4498,9 @@ function generMerchantsXML(rows, cfg, opts = {}) {
   const separator   = opts.separator  || cfgGet(cfg, 'tally_separator', '/');
   const _tallyPrefix = String(cfgGet(cfg, 'tally_inv_prefix', '')).trim();
   const invPrefix   = _tallyPrefix ? (/[/\-]$/.test(_tallyPrefix) ? _tallyPrefix : _tallyPrefix + '/') : '';
-  // Extra prefix on the invoice NUMBER of inter-state (I) bills (Merchant XML
-  // only — see settings). Blank = none.
-  const interPrefix = String(cfgGet(cfg, 'interstate_invoice_prefix', '')).trim();
+  // Proforma series prefix on the bill reference (Merchant XML only — see
+  // settings). Applies to every sale type and leads the token. Blank = none.
+  const interPrefix = String(cfgGet(cfg, 'proforma_invoice_prefix', '')).trim();
   // Control ledger name — overridable via Settings (tally_merchants), else "Merchants".
   const merchLedger = cfgGet(cfg, 'tally_merchants', 'Merchants');
 
@@ -4505,8 +4523,13 @@ function generMerchantsXML(rows, cfg, opts = {}) {
   let grandTotal = 0;
   for (const row of rows) {
     const sale      = String(row.sale || 'L').toUpperCase();
-    const invoNo    = (interPrefix && sale === 'I' ? interPrefix : '') + String(row.invo || '').trim();
-    const billName  = `${invPrefix}${sale}${separator}${invoNo}/${season}`;
+    const invoNo    = String(row.invo || '').trim();
+    // With a proforma prefix the reference reads "PI/I-2009/2026-27"; without
+    // one it keeps the legacy "I/2009/2026-27" shape (separator from settings).
+    const billRef   = interPrefix
+      ? formatInvoiceNo(interPrefix, sale, invoNo)
+      : `${sale}${separator}${invoNo}`;
+    const billName  = `${invPrefix}${billRef}/${season}`;
     // Merchants journal debits the BUYER (row.buyer, e.g. "ARUL"), not the
     // trade name (row.partyName / buyer1, e.g. "KAVISH TRADING COMPANY").
     // Fall back to the trade name only if the buyer key is somehow blank.

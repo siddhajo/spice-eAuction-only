@@ -4194,7 +4194,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
         </div>
 
-        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Lot</th><th>Name</th><th>Branch</th><th>Bags</th><th>Qty</th><th>Price</th><th>Amount</th><th>Buyer</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Payable</th><th>Actions</th></tr></thead><tbody id="lots-list"></tbody></table></div>
+        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Lot</th><th>Crop Receipt</th><th>Name</th><th>Branch</th><th>Bags</th><th>Qty</th><th>Price</th><th>Amount</th><th>Buyer</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Payable</th><th>Actions</th></tr></thead><tbody id="lots-list"></tbody></table></div>
         <!-- Pager — same shape as Sales / Purchases / Bills / DN tabs.
              renderPager() hides itself when there's only one page worth
              of rows, and is bypassed entirely when a search filter is
@@ -5402,6 +5402,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <!-- Bulk actions on ticked rows. Hidden until at least one row
                is selected; the count badge updates live as boxes toggle. -->
           <button id="dn-bulk-print" class="btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedDebitNotes()" title="Print all ticked debit notes as one combined PDF">🖨 Print Selected <span id="dn-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
+          <button id="dn-bulk-wa" class="btn feat-whatsapp" style="display:none;height:38px;padding:0 14px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedDebitNotes()" title="Send ticked debit notes via WhatsApp">📱 WhatsApp Selected</button>
           <button id="dn-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotes()" title="Delete all ticked debit notes">🗑 Delete Selected</button>
           <!-- Print-layout override for this screen (populated by renderLayoutSelector) -->
           <span id="dn-layout-host" style="display:inline-flex;align-items:center;margin-left:8px"></span></div>
@@ -5457,6 +5458,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           <button class="needs-invoice-write btn btn-g needs-price-check" id="btn-gen-dnp-one" onclick="openGenDebitPlanterSingleModal()">+ Generate Debit Note</button>
           <button class="needs-invoice-write btn btn-a needs-price-check" id="btn-gen-dnp-all" onclick="openGenDebitPlanterAllModal()">⚡ Generate All</button>
           <button id="dnp-bulk-print" class="btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedDebitNotesPlanter()" title="Print all ticked debit notes as one combined PDF">🖨 Print Selected <span id="dnp-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
+          <button id="dnp-bulk-wa" class="btn feat-whatsapp" style="display:none;height:38px;padding:0 14px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedDebitNotesPlanter()" title="Send ticked planter debit notes via WhatsApp">📱 WhatsApp Selected</button>
           <button id="dnp-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotesPlanter()" title="Delete all ticked debit notes">🗑 Delete Selected</button>
           <!-- Print-layout override for this screen (populated by renderLayoutSelector) -->
           <span id="dnp-layout-host" style="display:inline-flex;align-items:center;margin-left:8px"></span></div>
@@ -21788,6 +21790,10 @@ async function loadLots(opts){
       render:(l)=> esc(l.lot_no||'') + (Number(l.reserved)
         ? ' <span style="font-size:9px;font-weight:800;background:#f97316;color:#fff;padding:1px 5px;border-radius:8px;vertical-align:middle;letter-spacing:.3px" title="Reserved (held — not booked)">RESERVED</span>'
         : '') },
+    // Crop Receipt No (lots.crpt) — the receipt-book number captured at lot
+    // entry. Sits right after Lot so the two identifiers read together.
+    { key:'crpt', label:'Crop Receipt', sort:'text',
+      render:(l)=> l.crpt ? esc(l.crpt) : '<span style="color:var(--text3)">—</span>' },
     { key:'name', label:'Name', sort:'text' },
     { key:'buyer', label:'Buyer', sort:'text' },
     { key:'buyer_code', label:'Code', sort:'text',
@@ -24508,7 +24514,12 @@ async function _lookupBuyerPhone(name) {
     if (!r.ok) return '';
     const rows = await r.json();
     if (!Array.isArray(rows) || !rows.length) return '';
-    return rows[0].tel || '';
+    // One trade name can map to several buyer codes (different GSTINs /
+    // consignees) and only some of them carry a phone — take the first
+    // row that actually has one rather than blindly rows[0], otherwise
+    // the Cloud API send is skipped and we drop to WhatsApp Web.
+    const withTel = rows.find(b => String(b.tel || '').trim());
+    return withTel ? String(withTel.tel).trim() : '';
   } catch (_) { return ''; }
 }
 
@@ -24723,6 +24734,79 @@ async function whatsappDebitNote(id, dealerName, noteNo, totalAmt, ano) {
       message: msg,
     });
   } catch (e) { showError(e); }
+}
+
+// Single PLANTER debit note — same flow, different source route.
+async function whatsappDebitNotePlanter(id, planterName, noteNo, totalAmt, ano) {
+  try {
+    const decoded = decodeURIComponent(planterName || '');
+    const decNote = decodeURIComponent(noteNo || '');
+    const blob = await withOverlay('Building debit note…',
+      () => _fetchPdfBlob(`/api/debit-notes-planter/${id}/pdf`)
+    );
+    const [phone, company] = await Promise.all([
+      _lookupSellerPhone(decoded),
+      _getCompanyName(),
+    ]);
+    const amt = `₹${Number(totalAmt||0).toLocaleString('en-IN')}`;
+    const msg = `${ano || ''} ${decoded} ${company} DEBIT NOTE ${decNote} ${amt}`.trim();
+    const summary = `your DEBIT NOTE ${decNote} for ${amt} is attached.`;
+    await _waSendDocument({
+      blob,
+      filename: `DebitNote_${decoded}_${decNote || id}.pdf`,
+      phone,
+      params: [decoded, summary, company],
+      message: msg,
+    });
+  } catch (e) { showError(e); }
+}
+
+// ── Debit Notes: bulk WhatsApp ────────────────────────────────
+// One PDF per note, queued through the standard _runWaQueue modal
+// (Cloud API auto-send when configured, manual WhatsApp Web otherwise).
+// Shared by the dealer tab (.dn-select-cb) and the planter tab
+// (.dnp-select-cb) — they differ only in the list id, checkbox class
+// and PDF route; the recipient is a trader either way, so the phone
+// resolves through _lookupSellerPhone for both.
+async function _whatsappSelectedDebitNotes({ listId, cbClass, pdfPath }) {
+  const body = document.getElementById(listId);
+  if (!body) { alert('No debit notes list'); return; }
+  const checked = Array.from(body.querySelectorAll(`.${cbClass}:checked`));
+  if (!checked.length) { alert('Tick one or more debit notes first'); return; }
+  const rows = checked.map(cb => ({
+    id: Number(cb.value),
+    name: cb.dataset.name || '',
+    note: cb.dataset.note || '',
+    total: Number(cb.dataset.total || 0),
+    ano: cb.dataset.ano || '',
+  }));
+  const company = await _getCompanyName();
+  const items = [];
+  for (const r of rows) {
+    try {
+      const blob = await _fetchPdfBlob(`${pdfPath}/${r.id}/pdf`);
+      const phone = await _lookupSellerPhone(r.name);
+      const amt = `₹${Number(r.total||0).toLocaleString('en-IN')}`;
+      items.push({
+        name: r.name, phone, blob,
+        filename: `DebitNote_${r.name}_${r.note || r.id}.pdf`,
+        message: `${r.ano || ''} ${r.name} ${company} DEBIT NOTE ${r.note} ${amt}`.trim(),
+        params: [r.name, `your DEBIT NOTE ${r.note} for ${amt} is attached.`, company],
+      });
+    } catch (e) { console.warn('Skipping', r.name, e); }
+  }
+  if (!items.length) { showError(new Error('No debit notes could be prepared')); return; }
+  await _runWaQueue(items);
+}
+function whatsappSelectedDebitNotes() {
+  return _whatsappSelectedDebitNotes({
+    listId: 'debit-list', cbClass: 'dn-select-cb', pdfPath: '/api/debit-notes',
+  });
+}
+function whatsappSelectedDebitNotesPlanter() {
+  return _whatsappSelectedDebitNotes({
+    listId: 'debitp-list', cbClass: 'dnp-select-cb', pdfPath: '/api/debit-notes-planter',
+  });
 }
 
 async function whatsappPurchase(auctionId, sellerName, invNo, totalAmt, ano) {
@@ -26734,7 +26818,7 @@ async function loadDebitNotes(opts){
       { key:'_select', label:'',
         labelHTML:'<input type="checkbox" id="dn-select-all" onclick="event.stopPropagation();toggleAllDn(this.checked)" title="Select / clear all visible" style="cursor:pointer;width:16px;height:16px;vertical-align:middle;accent-color:var(--green)">',
         sortable:false, searchable:false,
-        render:(n)=>`<input type="checkbox" class="dn-select-cb" value="${n.id}" onclick="event.stopPropagation();updateDnBulkButtons()" style="cursor:pointer">` },
+        render:(n)=>`<input type="checkbox" class="dn-select-cb" value="${n.id}" data-name="${esc(n.name||'')}" data-note="${esc(n.note_no||'')}" data-total="${Number(n.total)||0}" data-ano="${esc(n.ano||'')}" onclick="event.stopPropagation();updateDnBulkButtons()" style="cursor:pointer">` },
       { key:'note_no', label:'Note#', sort:'text' },
       { key:'date', label:'Date', sort:'date', render:(n)=>fmtD(n.date) },
       { key:'ano', label:'Auction', sort:'text', render:(n)=>n.ano?('#'+esc(n.ano)):'—' },
@@ -27022,9 +27106,13 @@ function updateDnBulkButtons(){
   // Show/hide the bulk action buttons + count badge
   const printBtn = document.getElementById('dn-bulk-print');
   const delBtn   = document.getElementById('dn-bulk-del');
+  const waBtn    = document.getElementById('dn-bulk-wa');
   const counter  = document.getElementById('dn-sel-count');
   if (printBtn) (tickedCount > 0 ? _showBulkBtn : _hideBulkBtn)(printBtn);
   if (delBtn)   (tickedCount > 0 ? _showBulkBtn : _hideBulkBtn)(delBtn);
+  // WhatsApp Selected — same show/hide rule; the .feat-whatsapp class
+  // still gates it off entirely when flag_whatsapp is OFF.
+  if (waBtn)    (tickedCount > 0 ? _showBulkBtn : _hideBulkBtn)(waBtn);
   if (counter)  counter.textContent = tickedCount > 0 ? `(${tickedCount})` : '';
 }
 // Delegate: any change on a row checkbox triggers the button-state sync
@@ -27298,7 +27386,7 @@ async function loadDebitNotesPlanter(opts){
       { key:'_select', label:'',
         labelHTML:'<input type="checkbox" id="dnp-select-all" onclick="event.stopPropagation();toggleAllDnp(this.checked)" title="Select / clear all visible" style="cursor:pointer;width:16px;height:16px;vertical-align:middle;accent-color:var(--green)">',
         sortable:false, searchable:false,
-        render:(n)=>`<input type="checkbox" class="dnp-select-cb" value="${n.id}" onclick="event.stopPropagation();updateDnpBulkButtons()" style="cursor:pointer">` },
+        render:(n)=>`<input type="checkbox" class="dnp-select-cb" value="${n.id}" data-name="${esc(n.name||'')}" data-note="${esc(n.note_no||'')}" data-total="${Number(n.total)||0}" data-ano="${esc(n.ano||'')}" onclick="event.stopPropagation();updateDnpBulkButtons()" style="cursor:pointer">` },
       { key:'note_no', label:'Note#', sort:'text' },
       { key:'date', label:'Date', sort:'date', render:(n)=>fmtD(n.date) },
       { key:'ano', label:'Auction', sort:'text', render:(n)=>n.ano?('#'+esc(n.ano)):'—' },
@@ -27311,6 +27399,9 @@ async function loadDebitNotesPlanter(opts){
         render:(n)=>`<strong>${fmtI(n.total||0,2)}</strong>` },
       { key:'_actions', label:'Actions', sortable:false, searchable:false, render:(n)=>
           iconBtn('print','Print debit note',`printDebitNotePlanter(${n.id})`)
+          // WhatsApp — mirrors the dealer DN row action; the planter is a
+          // trader row too, so the phone resolves via traders.tel.
+          + iconBtn('whatsapp','Send via WhatsApp',`whatsappDebitNotePlanter(${n.id},'${encodeURIComponent(n.name||'')}','${encodeURIComponent(n.note_no||'')}',${Number(n.total)||0},'${esc(n.ano||'')}')`)
           + iconBtn('edit','Edit debit note',`openDebitPlanterEdit(${JSON.stringify(n).replace(/"/g,'&quot;')})`)
           + iconBtn('del','Delete debit note',`delDebitNotePlanter(${n.id})`) }
     ]
@@ -27503,7 +27594,9 @@ function updateDnpBulkButtons(){
   }
   const printBtn = document.getElementById('dnp-bulk-print');
   const delBtn   = document.getElementById('dnp-bulk-del');
+  const waBtn    = document.getElementById('dnp-bulk-wa');
   const counter  = document.getElementById('dnp-sel-count');
+  if (waBtn) (tickedCount > 0 ? _showBulkBtn : _hideBulkBtn)(waBtn);
   if (printBtn) (tickedCount > 0 ? _showBulkBtn : _hideBulkBtn)(printBtn);
   if (delBtn)   (tickedCount > 0 ? _showBulkBtn : _hideBulkBtn)(delBtn);
   if (counter)  counter.textContent = tickedCount > 0 ? `(${tickedCount})` : '';

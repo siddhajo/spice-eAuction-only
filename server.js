@@ -3310,7 +3310,7 @@ app.get('/api/buyers/by-tradename', requireView, (req, res) => {
   // full buyer-code string can also be passed as a trade name from
   // free-text fields). Sort by code so the picker is stable.
   const rows = getDb().all(
-    `SELECT id, buyer, buyer1, code, ti, sale, gstin, pla
+    `SELECT id, buyer, buyer1, code, ti, sale, gstin, pla, tel
        FROM buyers
       WHERE UPPER(TRIM(buyer1)) = UPPER(TRIM(?))
          OR UPPER(TRIM(buyer))  = UPPER(TRIM(?))

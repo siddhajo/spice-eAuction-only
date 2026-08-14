@@ -438,6 +438,22 @@ function buildEscposReceipt(lots, cfg, opts) {
   return Buffer.concat(chunks);
 }
 
+// Group arbitrary lot rows by seller and emit ONE ESC/POS receipt per seller
+// (each buildEscposReceipt buffer already ends in a full cut, so concatenating
+// them gives one slip per seller). This is the thermal counterpart of the
+// PDF streamGroupedReceipts, used by the batch / all-by-seller print routes so
+// Bluetooth / RawBT get the same grouped output the PDF path produces.
+function buildGroupedEscpos(lots, cfg, opts) {
+  const groups = {};
+  const order = [];
+  for (const l of lots) {
+    const key = l.trader_id || ('u_' + (l.trader_name || 'unknown'));
+    if (!groups[key]) { groups[key] = []; order.push(key); }
+    groups[key].push(l);
+  }
+  return Buffer.concat(order.map(k => buildEscposReceipt(groups[k], cfg, opts)));
+}
+
 // ── RENDERER (compact, thermal-printer / ~2.5"×3.5") ─────────────
 function renderSellerReceiptCompact(doc, sellerLots, cfg) {
   // Content width + column scale follow the configured paper width (same
@@ -750,6 +766,7 @@ function mountMobile(app, deps) {
   //   showMoisture    ← show_moisture
   //   defaultLitre    ← default_litre
   //   editEnabled     ← edit_enabled (boolean)
+  //   deleteEnabled   ← delete_enabled (boolean)
   //   editTimeout     ← edit_timeout_sec
   //   labels{}        ← reserved; safe to leave empty (PWA has defaults)
   //   pageLimit, showUsername, tradeTileTitle, acctMask ← defaults
@@ -805,6 +822,11 @@ function mountMobile(app, deps) {
       title:           get('trade_name', 'Spice Auction'),
       editTimeout:     parseInt(get('edit_timeout_sec', '0'), 10) || 0,
       editEnabled:     getBool('edit_enabled', true),
+      // Split out of edit_enabled: gates the row 🗑 button AND the
+      // "Delete Selected" bulk action on the mobile My Lots screen.
+      // Falls back to editEnabled so a bridge talking to an older DB
+      // (no delete_enabled row) keeps the previous combined behaviour.
+      deleteEnabled:   getBool('delete_enabled', getBool('edit_enabled', true)),
       sampleWeight:    getNum('sample_weight', 0),
       // Per-bag empty gunny weight. > 0 switches mobile Lot Entry into
       // "Weight w/ Gunny" mode (net = weight_with_gunny − bags × this).
@@ -1215,42 +1237,11 @@ function mountMobile(app, deps) {
     const panTrim  = String(t.pan || '').trim().toUpperCase();
     const telTrim  = String(t.tel || '').trim();
 
-    // Strict uniqueness — GSTIN (cr) is the strongest identifier.
-    // Compare via UPPER(TRIM(...)) so legacy rows with stray whitespace
-    // (common from XLSX imports) still match — a `pan = ? COLLATE NOCASE`
-    // check is whitespace-blind and was letting duplicates through.
-    //
-    // BUT: a bare "CR." / "CR" placeholder carries NO real GSTIN — thousands
-    // of agriculturist sellers share it. Deduping on it would silently return
-    // an unrelated existing seller instead of creating the new one (the "seller
-    // added but not found" bug). Only dedup when `cr` has an actual identifier.
-    const crAlnum = crTrim.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    const crIsReal = crAlnum !== '' && crAlnum !== 'CR';
-    if (crIsReal) {
-      const dup = db.get(
-        'SELECT * FROM traders WHERE UPPER(TRIM(cr)) = UPPER(?) LIMIT 1',
-        [crTrim]
-      );
-      if (dup) {
-        dup.banks = db.all(
-          'SELECT * FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id', [dup.id]
-        );
-        return res.json({ trader: dup, deduped: true, reason: 'GSTIN match' });
-      }
-    }
-    // PAN is the next strongest. Same TRIM-tolerant comparison.
-    if (panTrim) {
-      const dup = db.get(
-        'SELECT * FROM traders WHERE UPPER(TRIM(pan)) = UPPER(?) LIMIT 1',
-        [panTrim]
-      );
-      if (dup) {
-        dup.banks = db.all(
-          'SELECT * FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id', [dup.id]
-        );
-        return res.json({ trader: dup, deduped: true, reason: 'PAN match' });
-      }
-    }
+    // Only USER ID is enforced unique (see below). GSTIN (cr) and PAN are
+    // intentionally NOT deduped/blocked on create: the same GSTIN/PAN
+    // legitimately recurs across seller rows (the shared "CR." placeholder,
+    // poolers split into several seller records, etc.), so a new seller is
+    // created even when its GSTIN/PAN matches an existing one.
     // Soft dedup — same name + same phone is treated as a single person
     if (telTrim) {
       const dup = db.get('SELECT * FROM traders WHERE name = ? AND tel = ? LIMIT 1',
@@ -1329,24 +1320,10 @@ function mountMobile(app, deps) {
     if (emailClean && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailClean)) {
       return res.status(400).json({ error: 'Invalid email format' });
     }
-    // Uniqueness re-check on cr / pan changes. UPPER(TRIM(...)) on the
-    // stored side so legacy rows with stray whitespace still collide
-    // — a plain `pan = ? COLLATE NOCASE` is whitespace-blind and was
-    // letting duplicates through on edit.
-    if (t.cr != null && String(t.cr).trim() && String(t.cr).trim() !== trader.cr) {
-      const dup = db.get(
-        'SELECT id FROM traders WHERE UPPER(TRIM(cr)) = UPPER(?) AND id != ?',
-        [String(t.cr).trim(), id]
-      );
-      if (dup) return res.status(409).json({ error: 'Another seller already has this GSTIN' });
-    }
-    if (t.pan != null && String(t.pan).trim() && String(t.pan).trim().toUpperCase() !== trader.pan) {
-      const dup = db.get(
-        'SELECT id FROM traders WHERE UPPER(TRIM(pan)) = UPPER(?) AND id != ?',
-        [String(t.pan).trim().toUpperCase(), id]
-      );
-      if (dup) return res.status(409).json({ error: 'Another seller already has this PAN' });
-    }
+    // Only USER ID is enforced unique. GSTIN (cr) and PAN are intentionally
+    // NOT unique here: the same GSTIN/PAN legitimately recurs across seller
+    // rows (e.g. the shared "CR." placeholder, or a pooler split into several
+    // seller records), and enforcing it blocked ordinary edits.
     // User ID uniqueness (when set/changed) — exclude self.
     if (t.user_id != null && String(t.user_id).trim() && String(t.user_id).trim() !== String(trader.user_id || '').trim()) {
       const dup = db.get(
@@ -1690,6 +1667,50 @@ function mountMobile(app, deps) {
     const buf = buildEscposReceipt(lots, cfg, { charWidth });
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `inline; filename="Seller_${(lots[0].trader_name || 'Receipt').replace(/[^A-Za-z0-9]+/g, '_')}.bin"`);
+    res.send(buf);
+  });
+
+  // (2b) Selected lot ids as raw ESC/POS — one receipt per seller. The
+  // Bluetooth / RawBT counterpart of POST/GET print-batch (PDF).
+  app.get('/api/lots/print-batch.escpos', requireAuthFlex, (req, res) => {
+    const db = getDb();
+    const ids = String(req.query.ids || '').split(',').map(Number).filter(n => n > 0);
+    if (!ids.length) return res.status(400).json({ error: 'No lot IDs provided' });
+    const branch = (req.query && req.query.branch) || '';
+    let lots = ids.map(id => db.get(LOT_SELECT_SQL + ' WHERE l.id = ?', [id])).filter(Boolean);
+    if (branch) lots = lots.filter(l => l.branch === branch);
+    if (!lots.length) return res.status(404).json({ error: branch ? `No lots in ${branch}` : 'No lots found' });
+    const cfg = getReceiptConfig(db);
+    if (branch) cfg.branch = branch;
+    const charWidth = parseInt(req.query.width, 10) || 32;
+    const buf = buildGroupedEscpos(lots, cfg, { charWidth });
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="Lots_${lots.length}.bin"`);
+    res.send(buf);
+  });
+
+  // (4b) Every seller in an auction as raw ESC/POS — one receipt per seller.
+  // A dedicated path (…-escpos/:id) rather than a ".escpos" suffix so the
+  // trailing numeric auction id stays a clean route param.
+  app.get('/api/lots/print-all-sellers-escpos/:auctionId', requireAuthFlex, (req, res) => {
+    const db = getDb();
+    const auctionId = parseInt(req.params.auctionId, 10);
+    const branch = req.query.branch || '';
+    const params = [auctionId];
+    let where = 'l.auction_id = ?';
+    if (branch) { where += ' AND l.branch = ?'; params.push(branch); }
+    const lots = db.all(
+      LOT_SELECT_SQL + ' WHERE ' + where +
+      ' ORDER BY COALESCE(t.name, l.name), CAST(l.lot_no AS INTEGER), l.lot_no',
+      params
+    );
+    if (!lots.length) return res.status(404).json({ error: branch ? `No lots in ${branch}` : 'No lots found' });
+    const cfg = getReceiptConfig(db);
+    if (branch) cfg.branch = branch;
+    const charWidth = parseInt(req.query.width, 10) || 32;
+    const buf = buildGroupedEscpos(lots, cfg, { charWidth });
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'inline; filename="AllSellers.bin"');
     res.send(buf);
   });
 

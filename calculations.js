@@ -1204,21 +1204,26 @@ function getSalesJournal(db, auctionId, saleType) {
 function getSalesJournalSummary(db, auctionId, saleType, cfg) {
   const auction = db.get('SELECT id, ano FROM auctions WHERE id = ?', [auctionId]);
   if (!auction) return null;
-  let q = `SELECT sale, qty, amount AS cardamom, gunny, pava_hc AS transport,
+  let q = `SELECT sale, bag, qty, amount AS cardamom, gunny, pava_hc AS transport,
              ins AS insurance, cgst, sgst, igst, tcs, tot AS total
            FROM invoices WHERE (auction_id = ? OR ano = ?)`;
   const params = [auction.id, auction.ano];
   if (saleType) { q += ' AND sale = ?'; params.push(saleType); }
   const rows = db.all(q, params);
 
-  const bt = { E: { q: 0, v: 0, g: 0 }, I: { q: 0, v: 0, g: 0 }, L: { q: 0, v: 0, g: 0 } };
+  // Per sale type: q = cardamom kilos, v = cardamom value, g = gunny value,
+  // gq = gunny QUANTITY. Gunny is billed per bag (Tally unit "Nos."), so the
+  // gunny lines' quantity is the bag count — the cardamom kilos would be
+  // meaningless there. Was previously left blank on the gunny rows.
+  const bt = { E: { q: 0, v: 0, g: 0, gq: 0 }, I: { q: 0, v: 0, g: 0, gq: 0 }, L: { q: 0, v: 0, g: 0, gq: 0 } };
   let igst = 0, cgst = 0, sgst = 0, transport = 0, insurance = 0, tcs = 0, total = 0;
   for (const r of rows) {
     const t = String(r.sale || 'L').toUpperCase();
-    const b = bt[t] || (bt[t] = { q: 0, v: 0, g: 0 });
+    const b = bt[t] || (bt[t] = { q: 0, v: 0, g: 0, gq: 0 });
     b.q += Number(r.qty) || 0;
     b.v += Number(r.cardamom) || 0;
     b.g += Number(r.gunny) || 0;
+    b.gq += Number(r.bag) || 0;
     igst += Number(r.igst) || 0; cgst += Number(r.cgst) || 0; sgst += Number(r.sgst) || 0;
     transport += Number(r.transport) || 0; insurance += Number(r.insurance) || 0;
     tcs += Number(r.tcs) || 0; total += Number(r.total) || 0;
@@ -1236,9 +1241,11 @@ function getSalesJournalSummary(db, auctionId, saleType, cfg) {
     { label: `${P}-Inter-State Card Sales`,  qty: n(bt.I.q), value: n(bt.I.v) },
     { label: `${P}-Local Cardamom Sales`,    qty: n(bt.L.q), value: n(bt.L.v) },
     { label: `${P}-Sales Through Sample`,    qty: '',        value: n(sampleVal) },
-    { label: `${P}-Export Gunny Sales`,      qty: '',        value: n(bt.E.g) },
-    { label: `${P}-Inter-State Gunny Sales`, qty: '',        value: n(bt.I.g) },
-    { label: `${P}-Local Gunny Sales`,       qty: '',        value: n(bt.L.g) },
+    // Gunny quantity = bags (only shown when that sale type actually billed
+    // gunny, so a zero-gunny trade doesn't sprout a stray bag count).
+    { label: `${P}-Export Gunny Sales`,      qty: bt.E.g ? n(bt.E.gq) : '', value: n(bt.E.g) },
+    { label: `${P}-Inter-State Gunny Sales`, qty: bt.I.g ? n(bt.I.gq) : '', value: n(bt.I.g) },
+    { label: `${P}-Local Gunny Sales`,       qty: bt.L.g ? n(bt.L.gq) : '', value: n(bt.L.g) },
     { label: `${P}-IGST`,                    qty: '',        value: n(igst) },
     { label: `${P}-CGST`,                    qty: '',        value: n(cgst) },
     { label: `${P}-SGST`,                    qty: '',        value: n(sgst) },

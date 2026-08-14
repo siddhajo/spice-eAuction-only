@@ -154,10 +154,14 @@ const DEFAULTS = [
   // installs); 'html' = render via the HTML template selected below. Flip to
   // 'html' to serve the template-based PDF from the download button; revert
   // instantly by setting it back to 'pdfkit'.
-  // Prefix prepended to the invoice NUMBER of inter-state (I) sales invoices,
-  // shown ONLY in the Collection report, Spices Board Buyer Statement and the
-  // Merchant (Tally) XML — nowhere on the actual invoice. Blank = no prefix.
-  { key: 'interstate_invoice_prefix', value: '',        category: 'invoice', label: 'Inter-State Invoice No Prefix (Collection / Buyer Stmt / Merchant XML)', type: 'text' },
+  // Proforma-invoice series prefix, shown ONLY in the Collection report, the
+  // Spices Board Buyer Statement and the Merchant (Tally) XML — never on the
+  // actual invoice. Leads the whole token, ahead of the sale type, so "PI"
+  // renders invoice 2009 as "PI/I-2009" (local: "PI/L-2009"). Applies to
+  // every sale type. Blank = no prefix, reports read as before ("I 2009").
+  // Renamed from `interstate_invoice_prefix` (was inter-state only) — see the
+  // migration in ensureSettings() which carries the old value across.
+  { key: 'proforma_invoice_prefix', value: '',          category: 'invoice', label: 'Proforma Invoice No Prefix (Collection / Buyer Stmt / Merchant XML)', type: 'text' },
   { key: 'sales_invoice_engine',      value: 'pdfkit',  category: 'invoice', label: 'Sales Invoice Engine (pdfkit/html)',    type: 'select' },
   { key: 'purchase_invoice_engine',   value: 'pdfkit',  category: 'invoice', label: 'Purchase Invoice Engine (pdfkit/html)', type: 'select' },
   { key: 'agri_bill_engine',          value: 'pdfkit',  category: 'invoice', label: 'Bill of Supply Engine (pdfkit/html)',   type: 'select' },
@@ -366,7 +370,13 @@ const DEFAULTS = [
   { key: 'lot_receipt_show_sample', value: 'true',  category: 'lot_entry', label: 'Lot Receipt: Sample Wt column', type: 'boolean' },
   { key: 'lot_receipt_show_gross',  value: 'true',  category: 'lot_entry', label: 'Lot Receipt: Gross Wt column',  type: 'boolean' },
   { key: 'lot_receipt_show_crpt',   value: 'false', category: 'lot_entry', label: 'Lot Receipt: Crop Receipt column', type: 'boolean' },
+  // Mobile Lot Entry permissions. Both are UI gates on the operator's own
+  // lots in the PWA ("My Lots"): edit shows the ✎ button, delete shows the
+  // 🗑 row button AND the "Delete Selected" bulk action. They used to be one
+  // switch (`edit_enabled` gated both) — split so a depot can be allowed to
+  // correct a lot without being able to remove it.
   { key: 'edit_enabled',       value: 'false', category: 'lot_entry', label: 'Allow Lot Edits (non-admin)',        type: 'boolean' },
+  { key: 'delete_enabled',     value: 'false', category: 'lot_entry', label: 'Allow Lot Deletes (non-admin)',      type: 'boolean' },
   { key: 'edit_timeout_sec',   value: '0',     category: 'lot_entry', label: 'Edit Timeout (sec; 0 = no limit)',    type: 'number'  },
   { key: 'lot_receipt_format', value: '',      category: 'lot_entry', label: 'Lot Receipt Format (compact|detailed)', type: 'text' },
   // Physical paper width of the lot-receipt slip, in millimetres. Thermal
@@ -589,6 +599,18 @@ function initCompanySettings(db) {
   const insert = db.prepare(
     'INSERT OR IGNORE INTO company_settings (key, value, category, label, field_type) VALUES (?, ?, ?, ?, ?)'
   );
+  // `delete_enabled` was split out of `edit_enabled` (one switch used to gate
+  // both edit and delete in the mobile app). Seed it from the current
+  // `edit_enabled` BEFORE the defaults land, so an install that already
+  // allowed edits keeps allowing deletes exactly as it did — the split
+  // changes what the operator can configure, not what they can do today.
+  const _delRow  = db.prepare("SELECT value FROM company_settings WHERE key = 'delete_enabled'").get();
+  const _editRow = db.prepare("SELECT value FROM company_settings WHERE key = 'edit_enabled'").get();
+  if (!_delRow && _editRow) {
+    insert.run('delete_enabled', String(_editRow.value || 'false'), 'lot_entry',
+      'Allow Lot Deletes (non-admin)', 'boolean');
+  }
+
   const seed = db.transaction(() => {
     for (const d of DEFAULTS) insert.run(d.key, d.value, d.category, d.label, d.type);
   });
@@ -705,6 +727,19 @@ function initCompanySettings(db) {
     "('sales_invoice_template','purchase_invoice_template','agri_bill_template'," +
     "'commission_bill_template','debit_note_template')"
   ).run();
+
+  // `interstate_invoice_prefix` → `proforma_invoice_prefix`. The prefix now
+  // applies to every sale type (not just inter-state) and leads the token
+  // ("PI/I-2009"), so the key was renamed to match. Carry a configured old
+  // value across — but never clobber a value already set on the new key —
+  // then drop the stale row so Settings shows only the new field.
+  const _oldPfx = db.prepare("SELECT value FROM company_settings WHERE key = 'interstate_invoice_prefix'").get();
+  if (_oldPfx && String(_oldPfx.value || '').trim()) {
+    db.prepare(
+      "UPDATE company_settings SET value = ? WHERE key = 'proforma_invoice_prefix' AND TRIM(COALESCE(value,'')) = ''"
+    ).run(String(_oldPfx.value).trim());
+  }
+  db.prepare("DELETE FROM company_settings WHERE key = 'interstate_invoice_prefix'").run();
 
   console.log('Company settings ready (%d defaults)', DEFAULTS.length);
 }

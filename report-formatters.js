@@ -120,6 +120,29 @@ function fmtQty(n) { return fmtIndian(n, 3); }
 // Per-kg price (also rupees): same as money — 2 decimals, Indian commas.
 function fmtPrice(n) { return fmtIndian(n, 2); }
 
+// ── Invoice number rendering ────────────────────────────────
+
+// Sales-invoice number as printed on the cross-cutting reports that show
+// the sale type alongside the number (Collection, Buyer Statement, Tally
+// Merchant XML). The optional proforma prefix comes from the
+// `proforma_invoice_prefix` setting and leads the whole token, so a
+// prefix of "PI" on inter-state invoice 2009 prints as:
+//
+//   PI/I-2009            (prefix set)
+//   I 2009               (no prefix — unchanged legacy form)
+//
+// The prefix applies to EVERY sale type (L / I / E), not just inter-state:
+// it identifies the document series, not the destination. Blank prefix
+// (the default) leaves every report exactly as it was.
+function formatInvoiceNo(prefix, sale, invo) {
+  const p = String(prefix == null ? '' : prefix).trim();
+  const s = String(sale == null ? '' : sale).trim().toUpperCase();
+  const n = String(invo == null ? '' : invo).trim();
+  if (!n) return '';
+  if (!p) return s ? `${s} ${n}` : n;
+  return s ? `${p}/${s}-${n}` : `${p}-${n}`;
+}
+
 // ── Company header (logo + name + address) ──────────────────
 
 // Resolve the active company branding from company_settings. Falls back to
@@ -627,6 +650,7 @@ function writeXlsxCompanyHeader(wb, ws, header, opts) {
 
 module.exports = {
   fmtMoney, fmtQty, fmtPrice, fmtIndian,
+  formatInvoiceNo,
   formatDateForDisplay, DATE_FORMATS,
   getCompanyHeader, getCompanyIdentity, drawCompanyHeader,
   xlsxNumFmtForHeader, writeXlsxCompanyHeader,

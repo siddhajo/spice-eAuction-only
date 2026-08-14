@@ -14,7 +14,7 @@
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 const {
-  fmtMoney, fmtQty, fmtPrice,
+  fmtMoney, fmtQty, fmtPrice, formatInvoiceNo,
   getCompanyHeader, drawCompanyHeader,
   writeXlsxCompanyHeader, formatDateForDisplay,
 } = require('./report-formatters');
@@ -573,9 +573,10 @@ function getCollectionRows(db, auctionId) {
     if (name && byName[name] == null) byName[name] = b;
   }
 
-  // Inter-state invoice-number prefix (Collection only, per settings).
+  // Proforma invoice-number prefix (Collection only, per settings). Applies
+  // to every sale type and leads the token — see formatInvoiceNo().
   let isPrefix = '';
-  try { isPrefix = String(require('./company-config').getSettingsFlat(db).interstate_invoice_prefix || '').trim(); } catch (_) {}
+  try { isPrefix = String(require('./company-config').getSettingsFlat(db).proforma_invoice_prefix || '').trim(); } catch (_) {}
 
   return invoices.map(i => {
     const iCode = String(i.buyer  || '').trim().toUpperCase();
@@ -588,7 +589,9 @@ function getCollectionRows(db, auctionId) {
       : (i.buyer || '');
     return {
       sale:        i.sale,
-      invo:        (isPrefix && String(i.sale || '').toUpperCase() === 'I') ? (isPrefix + i.invo) : i.invo,
+      invo:        i.invo,
+      // Ready-to-print INVO cell: "PI/I-2009" with a prefix, "I 2009" without.
+      invo_label:  formatInvoiceNo(isPrefix, i.sale, i.invo),
       trade_name:  i.buyer1 || '',
       buyer_name:  buyerName,
       qty:         i.qty,
@@ -664,9 +667,10 @@ async function collectionXlsx(db, auctionId) {
     sec.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } };
     sec.alignment = { horizontal: 'left' };
 
+    let sQty = 0, sValue = 0;
     items.forEach(it => {
       const r = ws.addRow([
-        `${it.sale || ''} ${it.invo || ''}`.trim(),
+        it.invo_label || `${it.sale || ''} ${it.invo || ''}`.trim(),
         it.trade_name || '',
         it.buyer_name || '',
         Number(it.qty) || 0,
@@ -676,13 +680,26 @@ async function collectionXlsx(db, auctionId) {
       r.getCell(4).alignment = { horizontal: 'right' };
       r.getCell(5).numFmt = '#,##,##0.00';
       r.getCell(5).alignment = { horizontal: 'right' };
-      gQty += Number(it.qty) || 0;
-      gValue += Number(it.value) || 0;
+      sQty += Number(it.qty) || 0;
+      sValue += Number(it.value) || 0;
     });
+    // Per-state subtotal, closing each section before the next state header.
+    const sub = ws.addRow(['', '', `${state || 'OTHER'} TOTAL`, sQty, sValue]);
+    sub.font = { bold: true };
+    sub.getCell(3).alignment = { horizontal: 'right' };
+    sub.getCell(4).numFmt = '#,##0.000';
+    sub.getCell(5).numFmt = '#,##,##0.00';
+    sub.eachCell((c) => {
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F0EA' } };
+      c.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
+    });
+    gQty += sQty;
+    gValue += sValue;
   });
 
-  const tot = ws.addRow(['', '', 'Total', gQty, gValue]);
+  const tot = ws.addRow(['', '', 'GRAND TOTAL', gQty, gValue]);
   tot.font = { bold: true };
+  tot.getCell(3).alignment = { horizontal: 'right' };
   tot.getCell(4).numFmt = '#,##0.000';
   tot.getCell(5).numFmt = '#,##,##0.00';
   tot.eachCell((c) => {
@@ -790,9 +807,27 @@ async function collectionPdf(db, auctionId) {
     y += SECT_H;
   }
 
+  // Totals strip — full-width band used for both the per-state subtotal and
+  // the closing grand total. Closes the current data segment first so the
+  // column verticals never run through it (same rule as section headers).
+  function drawTotalRow(label, qty, value, opts) {
+    const strong = !!(opts && opts.strong);
+    if (y + ROW_H + 4 > pageH - m - 12) {
+      finishPage(); doc.addPage(); drawTopHeader(); drawColHeader();
+    }
+    closeSegment();
+    doc.rect(m, y, usableW, ROW_H + 4)
+       .fillAndStroke(strong ? '#FFF3CD' : '#F3F0EA', strong ? '#E0B020' : '#BBB');
+    doc.fillColor('#000').font('Helvetica-Bold').fontSize(strong ? 10 : 9);
+    doc.text(label, colX[1] + 4, y + 6, { width: colW[1] + colW[2] - 8, align: 'right', lineBreak: false });
+    doc.text(fmtQty(qty),     colX[3] + 4, y + 6, { width: colW[3] - 8, align: 'right', lineBreak: false });
+    doc.text(fmtMoney(value), colX[4] + 4, y + 6, { width: colW[4] - 8, align: 'right', lineBreak: false });
+    y += ROW_H + 4;
+  }
+
   function drawDataRow(it, idx) {
     doc.font('Helvetica').fontSize(9);
-    const invoDisplay = `${it.sale || ''} ${it.invo || ''}`.trim();
+    const invoDisplay = it.invo_label || `${it.sale || ''} ${it.invo || ''}`.trim();
     const cells = [invoDisplay, it.trade_name || '', it.buyer_name || '',
                    fmtQty(it.qty), fmtMoney(it.value)];
     const aligns = ['center', 'left', 'left', 'right', 'right'];
@@ -847,25 +882,18 @@ async function collectionPdf(db, auctionId) {
   let rowIdx = 0;
   groups.forEach(([state, items]) => {
     drawSectionRow(state || 'OTHER');
+    let sQty = 0, sValue = 0;
     items.forEach(it => {
       drawDataRow(it, rowIdx++);
-      gQty += Number(it.qty) || 0;
-      gValue += Number(it.value) || 0;
+      sQty += Number(it.qty) || 0;
+      sValue += Number(it.value) || 0;
     });
+    drawTotalRow(`${state || 'OTHER'} TOTAL`, sQty, sValue);
+    gQty += sQty;
+    gValue += sValue;
   });
 
-  // Total row — full-width strip, close segment first
-  if (y + ROW_H + 4 > pageH - m - 12) {
-    finishPage(); doc.addPage(); drawTopHeader(); drawColHeader();
-  }
-  closeSegment();
-  doc.rect(m, y, usableW, ROW_H + 4).fillAndStroke('#FFF3CD', '#E0B020');
-  doc.fillColor('#000').font('Helvetica-Bold').fontSize(10);
-  // The total occupies cols: empty | empty | "Total" | qty | value
-  doc.text('Total', colX[2] + 4, y + 6, { width: colW[2] - 8, align: 'right', lineBreak: false });
-  doc.text(fmtQty(gQty),   colX[3] + 4, y + 6, { width: colW[3] - 8, align: 'right', lineBreak: false });
-  doc.text(fmtMoney(gValue), colX[4] + 4, y + 6, { width: colW[4] - 8, align: 'right', lineBreak: false });
-  y += ROW_H + 4;
+  drawTotalRow('GRAND TOTAL', gQty, gValue, { strong: true });
 
   finishPage();
 
