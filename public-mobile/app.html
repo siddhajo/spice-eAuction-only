@@ -159,6 +159,18 @@ select:focus{border-color:var(--green)}
 .br-lot .s{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 .br-lot .q{color:var(--text2);font-weight:600;white-space:nowrap;text-align:right}
 .br-lot-hd .q{text-align:right}
+/* Sortable headers — tap to sort, tap again to flip. `.on` marks the active
+   column so the caret isn't the only cue. */
+.br-lot-hd .br-sort{cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none}
+.br-lot-hd .br-sort.on{color:var(--green)}
+.br-lot-hd .br-sort:active{opacity:.6}
+/* Per-depot search over lot no / crop receipt / seller. */
+.br-filter{width:100%;height:30px;padding:0 9px;margin-bottom:6px;font-size:12px;font-family:inherit;
+  border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);-webkit-appearance:none}
+.br-filter:focus{outline:none;border-color:var(--green)}
+/* Rows scroll inside the card so a big depot doesn't stretch the page. */
+.br-rows{max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.br-count{font-size:9px;color:var(--text3);font-weight:700;text-align:right;padding-top:5px;letter-spacing:.3px}
 .br-empty{font-size:11px;color:var(--text3);padding:6px 0;font-style:italic}
 .lot-card{background:var(--bg2);border-radius:var(--radius);border:1px solid var(--border);padding:12px;margin-bottom:6px;box-shadow:var(--shadow);transition:all .25s}
 .lot-card:nth-child(even){background:var(--card-even)}
@@ -2696,19 +2708,99 @@ function renderBranchCards(){
       +'</div>';
   }).join('');
 }
+// Per-depot view state for the expanded lot table. Kept keyed by depot so
+// each card remembers its own search text and sort while the others stay put.
+var _brSort={},_brQuery={};
+function _brSellerOf(l){return l.trader_name||l.name||''}
+function _brLotNum(l){var n=parseInt(String(l.lot_no||'').replace(/\D/g,''),10);return isFinite(n)?n:Number.POSITIVE_INFINITY}
+// Filter + sort applied together — the visible rows are always derived from
+// the cached full list, never mutated in place, so clearing the search
+// restores everything without a refetch.
+function _brVisibleRows(depot){
+  var rows=(_brLots[depot]||[]).slice();
+  var q=String(_brQuery[depot]||'').trim().toLowerCase();
+  if(q){
+    rows=rows.filter(function(l){
+      return String(l.lot_no||'').toLowerCase().indexOf(q)>=0
+        || String(l.crpt||'').toLowerCase().indexOf(q)>=0
+        || _brSellerOf(l).toLowerCase().indexOf(q)>=0;
+    });
+  }
+  var s=_brSort[depot]||{col:'lot',dir:'asc'};
+  var mul=s.dir==='desc'?-1:1;
+  rows.sort(function(a,b){
+    var r=0;
+    if(s.col==='lot')        r=_brLotNum(a)-_brLotNum(b);
+    else if(s.col==='crpt')  r=String(a.crpt||'').localeCompare(String(b.crpt||''));
+    else if(s.col==='seller')r=_brSellerOf(a).localeCompare(_brSellerOf(b));
+    else if(s.col==='qty')   r=(Number(a.qty)||0)-(Number(b.qty)||0);
+    // Lot number is the stable tiebreak so equal keys never reshuffle.
+    return (r||(_brLotNum(a)-_brLotNum(b)))*mul;
+  });
+  return rows;
+}
+// Just the <div class="br-lot"> rows — re-rendered on its own when the search
+// or sort changes, so the filter input keeps focus and the caret position.
+function _brRowsHtml(depot){
+  var rows=_brVisibleRows(depot);
+  if(!rows.length)return '<div class="br-empty">No lots match this search.</div>';
+  // Units live in the column header, not on every row — the values stay bare
+  // numbers so the column reads as a clean list.
+  return rows.map(function(l){
+    return '<div class="br-lot"><span class="n">#'+(l.lot_no||'')+'</span>'
+      +'<span class="c">'+(l.crpt||'—')+'</span>'
+      +'<span class="s">'+_brSellerOf(l)+'</span>'
+      +'<span class="q">'+_brFmt(l.bags)+' · '+Number(l.qty||0).toFixed(3)+'</span></div>';
+  }).join('');
+}
+// Search box + sortable header (both fixed) above a scrolling rows pane, so a
+// 70-lot depot scrolls inside its own card instead of stretching the page.
 function _brLotRows(depot){
   var rows=_brLots[depot];
   if(rows===undefined)return '<div class="br-empty">Loading lots…</div>';
   if(!rows.length)return '<div class="br-empty">No lots booked at this depot yet.</div>';
-  // Units live in the column header, not on every row — the values stay bare
-  // numbers so the column reads as a clean list.
-  var head='<div class="br-lot-hd"><span>Lot</span><span>Crop Rcpt</span><span>Seller</span><span class="q">Bags · Qty(kg)</span></div>';
-  return head+rows.map(function(l){
-    return '<div class="br-lot"><span class="n">#'+(l.lot_no||'')+'</span>'
-      +'<span class="c">'+(l.crpt||'—')+'</span>'
-      +'<span class="s">'+(l.trader_name||l.name||'—')+'</span>'
-      +'<span class="q">'+_brFmt(l.bags)+' · '+Number(l.qty||0).toFixed(3)+'</span></div>';
-  }).join('');
+  var key=encodeURIComponent(depot);
+  var s=_brSort[depot]||{col:'lot',dir:'asc'};
+  var q=_brQuery[depot]||'';
+  var caret=function(c){return s.col===c?(s.dir==='asc'?' ▲':' ▼'):''};
+  var cls=function(c){return 'br-sort'+(s.col===c?' on':'')};
+  return '<input class="br-filter" type="search" placeholder="Search lot, crop receipt or seller…" value="'+String(q).replace(/"/g,'&quot;')+'" oninput="brFilterLots(\''+key+'\',this.value)">'
+    +'<div class="br-lot-hd">'
+    +'<span class="'+cls('lot')+'" onclick="brSortLots(\''+key+'\',\'lot\')">Lot'+caret('lot')+'</span>'
+    +'<span class="'+cls('crpt')+'" onclick="brSortLots(\''+key+'\',\'crpt\')">Crop Rcpt'+caret('crpt')+'</span>'
+    +'<span class="'+cls('seller')+'" onclick="brSortLots(\''+key+'\',\'seller\')">Seller'+caret('seller')+'</span>'
+    +'<span class="q '+cls('qty')+'" onclick="brSortLots(\''+key+'\',\'qty\')">Bags · Qty(kg)'+caret('qty')+'</span>'
+    +'</div>'
+    +'<div class="br-rows" id="brr-'+key+'">'+_brRowsHtml(depot)+'</div>'
+    +'<div class="br-count" id="brc-'+key+'">'+_brCountText(depot)+'</div>';
+}
+function _brCountText(depot){
+  var shown=_brVisibleRows(depot).length,total=(_brLots[depot]||[]).length;
+  var kg=_brVisibleRows(depot).reduce(function(a,l){return a+(Number(l.qty)||0)},0);
+  return (shown===total?('Showing all '+total+' lots'):('Showing '+shown+' of '+total+' lots'))
+    +' · '+_brFmt(kg,0)+' kg';
+}
+// Repaint only the rows pane + count; the input and header stay untouched.
+function _brRepaint(key){
+  var depot=decodeURIComponent(key);
+  var rowsEl=document.getElementById('brr-'+key);
+  if(rowsEl)rowsEl.innerHTML=_brRowsHtml(depot);
+  var cEl=document.getElementById('brc-'+key);
+  if(cEl)cEl.textContent=_brCountText(depot);
+}
+function brFilterLots(key,val){
+  _brQuery[decodeURIComponent(key)]=val;
+  _brRepaint(key);
+}
+// Tapping the active column flips direction; a new column starts ascending
+// (descending for Bags·Qty, where "biggest first" is the useful default).
+function brSortLots(key,col){
+  var depot=decodeURIComponent(key);
+  var s=_brSort[depot]||{col:'lot',dir:'asc'};
+  _brSort[depot]= s.col===col ? {col:col,dir:s.dir==='asc'?'desc':'asc'}
+                              : {col:col,dir:col==='qty'?'desc':'asc'};
+  var body=document.getElementById('brb-'+key);
+  if(body)body.innerHTML=_brLotRows(depot);   // header carets need redrawing
 }
 async function toggleBranchLots(key){
   var depot=decodeURIComponent(key);

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Spice Auction</string>
+    <string name="title_activity_main">Spice Auction</string>
+    <string name="package_name">app.rns.spiceauction</string>
+    <string name="custom_url_scheme">app.rns.spiceauction</string>
+</resources>
