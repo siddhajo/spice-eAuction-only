@@ -24618,9 +24618,16 @@ async function _waOpenDocument({ blob, filename, phone, message }) {
 }
 
 // ── Bulk queue UI ─────────────────────────────────────────────
-// Shows a sticky modal with one record at a time + Send / Skip / Stop.
-// Auto-advances when Cloud API succeeds; manual advance for fallback
-// (because the user has to click Send inside WhatsApp Web).
+// Two passes:
+//   1. AUTO — when the Cloud API is configured, every record that has a
+//      phone number is sent straight through with no clicking. The modal
+//      just reports progress and offers Stop.
+//   2. MANUAL — only for what pass 1 couldn't do (no number on file, or the
+//      API rejected it) and for every record when the Cloud API isn't set
+//      up at all. These need a click because the operator has to press Send
+//      inside WhatsApp Web themselves.
+// Nothing is dropped silently: whatever pass 1 skips is offered in pass 2,
+// and the closing toast breaks down sent / manual / skipped.
 function _ensureWaQueueModal() {
   let m = document.getElementById('wa-queue-modal');
   if (m) return m;
@@ -24640,8 +24647,8 @@ function _ensureWaQueueModal() {
         <div id="wa-q-pdf" style="font-size:11px;color:var(--text3);margin-top:6px;display:none">📎 <span></span></div>
       </div>
       <div class="actions">
-        <button class="btn" onclick="_waQueueAct('stop')" style="background:#eee">Stop</button>
-        <button class="btn" onclick="_waQueueAct('skip')" style="background:var(--spice-turmeric);color:#fff">Skip</button>
+        <button class="btn" id="wa-q-stop" onclick="_waQueueAct('stop')" style="background:#eee">Stop</button>
+        <button class="btn" id="wa-q-skip" onclick="_waQueueAct('skip')" style="background:var(--spice-turmeric);color:#fff">Skip</button>
         <button class="btn" id="wa-q-send" onclick="_waQueueAct('send')" style="background:#25D366;color:#fff">Send & Next →</button>
       </div>
     </div>`;
@@ -24649,48 +24656,89 @@ function _ensureWaQueueModal() {
   return m;
 }
 let _waQueueState = null;
-function _waQueueAct(action) { if (_waQueueState && _waQueueState.resolve) _waQueueState.resolve(action); }
+let _waQueueStopped = false;
+function _waQueueAct(action) {
+  // In the auto pass there's no promise to resolve — Stop just raises a flag
+  // that the send loop checks between records.
+  if (action === 'stop') _waQueueStopped = true;
+  if (_waQueueState && _waQueueState.resolve) _waQueueState.resolve(action);
+}
+// Paint one record into the queue modal.
+function _waQueueShow(it, i, total, status) {
+  document.getElementById('wa-q-count').textContent = `(${i + 1} of ${total})`;
+  document.getElementById('wa-q-name').textContent = it.name || '—';
+  document.getElementById('wa-q-phone').textContent = it.phone ? ('+' + _normalizePhoneForWa(it.phone)) : '(no phone on file)';
+  document.getElementById('wa-q-msg').textContent = it.message;
+  const pdfRow = document.getElementById('wa-q-pdf');
+  if (it.filename) { pdfRow.style.display = 'block'; pdfRow.querySelector('span').textContent = it.filename; }
+  else pdfRow.style.display = 'none';
+  document.getElementById('wa-q-status').textContent = status;
+}
+// Show/hide the per-record buttons — the auto pass only needs Stop.
+function _waQueueButtons(mode) {
+  const skip = document.getElementById('wa-q-skip');
+  const send = document.getElementById('wa-q-send');
+  const show = (el, on) => { if (el) el.style.display = on ? '' : 'none'; };
+  show(skip, mode === 'manual');
+  show(send, mode === 'manual');
+}
 async function _runWaQueue(items, opts) {
-  // items: [{name, phone, message, blob?, filename?}]
+  // items: [{name, phone, message, params?, blob?, filename?}]
   const useApi = await _waCloudApiAvailable();
-  const m = _ensureWaQueueModal();
+  _ensureWaQueueModal();
   showModal('wa-queue-modal');
-  let sent=0, skipped=0;
-  for (let i = 0; i < items.length; i++) {
-    const it = items[i];
-    document.getElementById('wa-q-count').textContent = `(${i+1} of ${items.length})`;
-    document.getElementById('wa-q-name').textContent = it.name || '—';
-    document.getElementById('wa-q-phone').textContent = it.phone ? ('+' + _normalizePhoneForWa(it.phone)) : '(no phone on file)';
-    document.getElementById('wa-q-msg').textContent = it.message;
-    const pdfRow = document.getElementById('wa-q-pdf');
-    if (it.filename) { pdfRow.style.display='block'; pdfRow.querySelector('span').textContent = it.filename; }
-    else pdfRow.style.display = 'none';
-    document.getElementById('wa-q-status').textContent = useApi ? 'Cloud API mode — auto-send enabled' : 'Manual mode — opens WhatsApp Web; click Send inside WhatsApp, then come back and hit "Send & Next"';
+  _waQueueStopped = false;
+  let sent = 0, skipped = 0;
+  // Anything the auto pass can't deliver lands here and is offered to the
+  // operator in the manual pass rather than being quietly dropped.
+  let pending = items;
 
-    // Wait for user to click an action button (in manual mode we ALSO
-    // open the WhatsApp tab on first click via the Send button — so the
-    // user lands inside WhatsApp ready to hit Send).
-    const action = await new Promise(res => { _waQueueState = { resolve: res }; });
-    if (action === 'stop') break;
-    if (action === 'skip') { skipped++; continue; }
-
-    // action === 'send'
-    if (useApi) {
+  if (useApi) {
+    _waQueueButtons('auto');
+    pending = [];
+    for (let i = 0; i < items.length; i++) {
+      if (_waQueueStopped) { pending = pending.concat(items.slice(i)); break; }
+      const it = items[i];
+      // No number on file → the Cloud API has nowhere to send it; hand it to
+      // the manual pass, which can still open a blank WhatsApp Web compose.
+      if (!it.phone) { pending.push(it); continue; }
+      _waQueueShow(it, i, items.length, `Sending automatically via WhatsApp Cloud API… (${sent} sent)`);
       const params = it.params || [it.name || '', it.message || '', ''];
-      let ok;
-      if (it.blob) ok = await _waCloudSendDocument(_normalizePhoneForWa(it.phone), params, it.blob, it.filename);
-      else ok = await _waCloudSendText(it.phone, params);
-      // On a Cloud API miss, fall back to the manual flow for this record.
-      if (!ok) { it.blob ? await _waOpenDocument(it) : _waOpenText(it.phone, it.message); }
-      sent++;
-    } else {
+      let ok = false;
+      try {
+        ok = it.blob
+          ? await _waCloudSendDocument(_normalizePhoneForWa(it.phone), params, it.blob, it.filename)
+          : await _waCloudSendText(_normalizePhoneForWa(it.phone), params);
+      } catch (_) { ok = false; }
+      if (ok) sent++; else pending.push(it);
+    }
+  }
+
+  // Manual pass — everything when the Cloud API isn't configured, otherwise
+  // just the leftovers. Each record waits for a click because the operator
+  // has to press Send inside WhatsApp Web themselves.
+  if (pending.length && !_waQueueStopped) {
+    _waQueueButtons('manual');
+    const manualNote = useApi
+      ? 'No WhatsApp number on file (or the API refused) — opens WhatsApp Web; click Send inside WhatsApp, then come back and hit "Send & Next"'
+      : 'Manual mode — opens WhatsApp Web; click Send inside WhatsApp, then come back and hit "Send & Next"';
+    for (let i = 0; i < pending.length; i++) {
+      const it = pending[i];
+      _waQueueShow(it, i, pending.length, manualNote);
+      const action = await new Promise(res => { _waQueueState = { resolve: res }; });
+      _waQueueState = null;
+      if (action === 'stop') break;
+      if (action === 'skip') { skipped++; continue; }
       if (it.blob) await _waOpenDocument(it);
       else _waOpenText(it.phone, it.message);
       sent++;
     }
   }
+
+  _waQueueButtons('manual');   // restore for the next run
   hideModal('wa-queue-modal');
-  toast(`WhatsApp queue done — sent ${sent}, skipped ${skipped}`);
+  const left = items.length - sent - skipped;
+  toast(`WhatsApp — ${sent} sent${skipped ? `, ${skipped} skipped` : ''}${left > 0 ? `, ${left} not sent` : ''}`);
 }
 let _waApiCheck = null;
 async function _waCloudApiAvailable() {

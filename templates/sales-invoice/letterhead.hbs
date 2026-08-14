@@ -25,6 +25,11 @@
     width: 60pt; height: 60pt; object-fit: contain; }
   .head .co { font-weight: bold; font-size: 13pt; letter-spacing: .3pt; }
   .head .ln { font-size: 7.5pt; }
+  /* Statutory-ID rows: centred, pipe-separated, each item unbreakable. */
+  .head .ids { display: flex; flex-wrap: wrap; justify-content: center; column-gap: 5pt; }
+  .head .ids:empty { display: none; }
+  .head .ids span { white-space: nowrap; }
+  .head .ids span + span::before { content: '|'; padding-right: 5pt; color: #555; }
   .head .strong { font-weight: bold; }
   /* Soft-green header/band + column-header fill, matching the commission bill. */
   .bar td { font-weight: bold; background: #e8f1e0; }
@@ -57,7 +62,10 @@
     <div class="ln">{{co.address1}}{{#if co.address2}}, {{co.address2}}{{/if}}</div>
     <div class="ln">{{co.place}}{{#if co.pin}} - {{co.pin}}{{/if}}, {{co.stateName}}, CODE: {{co.stateCode}}.</div>
     {{#if co.phone}}<div class="ln">Ph: {{co.phone}}{{#if co.email}} E-mail: {{co.email}}{{/if}}</div>{{/if}}
-    <div class="ln strong">{{#if co.fssai}}FSSAI: {{co.fssai}} | {{/if}}GSTIN: {{co.gstin}}{{#if co.sbl}} | SBL: {{co.sbl}}{{/if}}{{#if co.pan}} | PAN: {{co.pan}}{{/if}}</div>
+    <!-- Statutory IDs on two balanced rows (FSSAI · GSTIN / SBL · PAN) so a
+         long SBL never wraps mid-value and orphans "PAN:" on its own line. -->
+    <div class="ln strong ids">{{#if co.fssai}}<span>FSSAI:&nbsp;{{co.fssai}}</span>{{/if}}{{#if co.gstin}}<span>GSTIN:&nbsp;{{co.gstin}}</span>{{/if}}</div>
+    <div class="ln strong ids">{{#if co.sbl}}<span>SBL:&nbsp;{{co.sbl}}</span>{{/if}}{{#if co.pan}}<span>PAN:&nbsp;{{co.pan}}</span>{{/if}}</div>
   </div>
 
   <!-- Title strip — the invoice title is centred across the FULL width (one

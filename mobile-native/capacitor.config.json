@@ -1,0 +1,13 @@
+{
+  "appId": "app.rns.spiceauction",
+  "appName": "Spice Auction",
+  "webDir": "www",
+  "server": {
+    "url": "https://REPLACE-WITH-YOUR-HOST.up.railway.app/mobile",
+    "androidScheme": "https",
+    "cleartext": false
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}
