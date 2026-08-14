@@ -16,6 +16,7 @@ const { amountToWords } = require('../amount-words');
 const { getInvoiceTemplate } = require('./invoice-templates');
 const { htmlToPdf } = require('./htmlToPdf');
 const { logoDataUri } = require('./logo-data-uri');
+const { formatDebitNoteNo } = require('../report-formatters');
 
 const _MON = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
 // Handles ISO (yyyy-mm-dd) AND the stored "16-Aug-25" style → DD/MM/YYYY.
@@ -35,7 +36,11 @@ function fmtDate(d) {
 
 // Build the template view model from a stored debit-note row + a DB handle.
 // `db` is the better-sqlite wrapper (has .get/.all), matching server.js usage.
-function buildDebitNoteView(dn, db, cfg) {
+// `opts.planter` marks a `debit_notes_planter` row so the number picks up the
+// planter prefix/suffix settings rather than the dealer pair — the two tables
+// share this renderer, so the caller has to say which it is.
+function buildDebitNoteView(dn, db, cfg, opts) {
+  opts = opts || {};
   const co = effectiveCompany(cfg);
   co.logoDataUri = logoDataUri(cfg);
 
@@ -105,11 +110,16 @@ function buildDebitNoteView(dn, db, cfg) {
   const state = String(rcv.pstate || dn.state || '').trim().toUpperCase();
   const stCode = String(rcv.pst_code || '').trim();
   const noteSeason = cfg.season_short || cfg.tally_season || '26-27';
+  const _rawNoteNo = dn.note_no ? String(dn.note_no).trim() : String(dn.id || '');
 
   return {
     co, cfg,
     title: 'Tax Invoice On Commission',
-    noteNo: (dn.note_no ? String(dn.note_no).trim() : String(dn.id || '')) + '/' + noteSeason,
+    noteNo: formatDebitNoteNo(cfg, _rawNoteNo, {
+      planter: !!opts.planter,
+      ano: dn.ano,
+      legacy: _rawNoteNo + '/' + noteSeason,
+    }),
     // NB: field is `noteDate`, not `date` — `date` is a registered Handlebars
     // helper, so `{{date}}` would invoke the helper instead of this value.
     noteDate: fmtDate(dn.date),
@@ -143,17 +153,17 @@ function buildDebitNoteView(dn, db, cfg) {
   };
 }
 
-async function generateDebitNoteHtmlPDF(dn, db, cfg) {
-  const view = buildDebitNoteView(dn, db, cfg);
+async function generateDebitNoteHtmlPDF(dn, db, cfg, opts) {
+  const view = buildDebitNoteView(dn, db, cfg, opts);
   const tpl = getInvoiceTemplate('debit-note', cfg);
   return htmlToPdf(tpl.render(view));
 }
 
 // Batch: one merged PDF across many DN rows (mirrors the *-bulk routes).
-async function generateDebitNotesHtmlBatchPDF(dns, db, cfg) {
+async function generateDebitNotesHtmlBatchPDF(dns, db, cfg, opts) {
   const { mergePdfs } = require('./merge-pdf');
   const buffers = [];
-  for (const dn of dns) buffers.push(await generateDebitNoteHtmlPDF(dn, db, cfg));
+  for (const dn of dns) buffers.push(await generateDebitNoteHtmlPDF(dn, db, cfg, opts));
   return buffers.length === 1 ? buffers[0] : mergePdfs(buffers);
 }
 

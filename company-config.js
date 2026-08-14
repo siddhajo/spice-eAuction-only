@@ -162,6 +162,20 @@ const DEFAULTS = [
   // Renamed from `interstate_invoice_prefix` (was inter-state only) — see the
   // migration in ensureSettings() which carries the old value across.
   { key: 'proforma_invoice_prefix', value: '',          category: 'invoice', label: 'Proforma Invoice No Prefix (Collection / Buyer Stmt / Merchant XML)', type: 'text' },
+  // Debit-note numbering — what prints on the DN PDF and goes out in the Tally
+  // XML / e-invoice JSON, wrapped around the stored note number:
+  //     <prefix><note_no><suffix>
+  // Dealer and planter notes are configured separately since they're distinct
+  // series. Leave BOTH blank (default) to keep the historical formats:
+  // "111/26-27" on the PDF, "111/26-27/SE" (dealer) or "111/26-27/URD"
+  // (planter) in Tally. Setting either field replaces that automatic tail
+  // entirely, so the operator's format is what appears — {season} and {ano}
+  // expand to the short season and the auction no, e.g. a suffix of
+  // "/{season}/SE" reproduces the old Tally shape without retyping it yearly.
+  { key: 'debit_note_prefix',          value: '', category: 'invoice', label: 'Debit Note No Prefix — Dealer (PDF / Tally XML)',  type: 'text' },
+  { key: 'debit_note_suffix',          value: '', category: 'invoice', label: 'Debit Note No Suffix — Dealer (PDF / Tally XML)',  type: 'text' },
+  { key: 'debit_note_planter_prefix',  value: '', category: 'invoice', label: 'Debit Note No Prefix — Planter (PDF / Tally XML)', type: 'text' },
+  { key: 'debit_note_planter_suffix',  value: '', category: 'invoice', label: 'Debit Note No Suffix — Planter (PDF / Tally XML)', type: 'text' },
   { key: 'sales_invoice_engine',      value: 'pdfkit',  category: 'invoice', label: 'Sales Invoice Engine (pdfkit/html)',    type: 'select' },
   { key: 'purchase_invoice_engine',   value: 'pdfkit',  category: 'invoice', label: 'Purchase Invoice Engine (pdfkit/html)', type: 'select' },
   { key: 'agri_bill_engine',          value: 'pdfkit',  category: 'invoice', label: 'Bill of Supply Engine (pdfkit/html)',   type: 'select' },

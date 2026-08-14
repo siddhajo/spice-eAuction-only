@@ -12,7 +12,7 @@ const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, bu
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 const { amountToWords } = require('./amount-words');
 const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx } = require('./exports');
-const { getCompanyHeader, writeXlsxCompanyHeader, formatDateForDisplay } = require('./report-formatters');
+const { getCompanyHeader, writeXlsxCompanyHeader, formatDateForDisplay, formatDebitNoteNo } = require('./report-formatters');
 const { exportPdf: exportAnyPdf, renderTablePdf, renderPoolerCertificatePdf } = require('./exports-pdf');
 const { DBF_EXPORTS } = require('./dbf-exports');
 // Per-install time-bombed licensing — see license.js for the model.
@@ -9931,7 +9931,10 @@ app.put('/api/debit-notes/:id', requireInvoiceWrite, (req, res) => {
 // Render one debit note onto an existing PDFDocument page. Extracted from
 // the single-DN endpoint so the bulk endpoint can render N debit notes
 // into one merged document (page-break per DN).
-function _renderDebitNote(doc, dn, db, cfg) {
+// `opts.planter` marks a debit_notes_planter row — same layout, but the note
+// number picks up the planter prefix/suffix settings instead of the dealer pair.
+function _renderDebitNote(doc, dn, db, cfg, opts) {
+    opts = opts || {};
     // The DN layout (per the reference PDF) is BUYER-LETTERHEAD style:
     // the BUYER (the party benefiting from the discount, who issues the
     // credit/debit note in their books) prints on top with their address
@@ -10108,7 +10111,10 @@ function _renderDebitNote(doc, dn, db, cfg) {
     }
     // Right column: No. + Date (aligned with the first two receiver lines)
     doc.font('Helvetica-Bold').fontSize(9);
-    doc.text(`No.:${dn.note_no ? String(dn.note_no).trim() : ''}/${noteSeason}`, RIGHT_X, recvTop, { width: RIGHT_W, align: 'right' });
+    const _dnRawNo = dn.note_no ? String(dn.note_no).trim() : '';
+    doc.text(`No.:${formatDebitNoteNo(cfg, _dnRawNo, {
+      planter: !!opts.planter, ano: dn.ano, legacy: `${_dnRawNo}/${noteSeason}`,
+    })}`, RIGHT_X, recvTop, { width: RIGHT_W, align: 'right' });
     doc.text(`Date :${fmtDate2(dn.date)}`, RIGHT_X, recvTop + 11, { width: RIGHT_W, align: 'right' });
 
     y = ry + 2;
@@ -10699,13 +10705,13 @@ app.get('/api/debit-notes-planter/:id/pdf', requireView, async (req, res) => {
     res.setHeader('Content-Disposition', `inline; filename="DebitNotePlanter_${dn.note_no || dn.id}.pdf"`);
     if (useHtml) {
       const cfg2 = tplChoice ? { ...cfg, debit_note_template: tplChoice } : cfg;
-      const pdf = await require('./pdf/render-debit-note-html').generateDebitNoteHtmlPDF(dn, db, cfg2);
+      const pdf = await require('./pdf/render-debit-note-html').generateDebitNoteHtmlPDF(dn, db, cfg2, { planter: true });
       return res.send(pdf);
     }
     const PDFDocument = require('pdfkit');
     const doc = new PDFDocument({ size: 'A4', margin: 30 });
     doc.pipe(res);
-    _renderDebitNote(doc, dn, db, cfg);
+    _renderDebitNote(doc, dn, db, cfg, { planter: true });
     doc.end();
   } catch (e) {
     console.error('[dnp-pdf] failed:', e);
@@ -10730,7 +10736,7 @@ app.post('/api/debit-notes-planter/pdf-bulk', requireView, async (req, res) => {
       engineKey: 'debit_note_engine', templateKey: 'debit_note_template', tplChoice });
     if (useHtml) {
       const cfg2 = tplChoice ? { ...cfg, debit_note_template: tplChoice } : cfg;
-      const pdf = await require('./pdf/render-debit-note-html').generateDebitNotesHtmlBatchPDF(dns, db, cfg2);
+      const pdf = await require('./pdf/render-debit-note-html').generateDebitNotesHtmlBatchPDF(dns, db, cfg2, { planter: true });
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `inline; filename="DebitNotesPlanter_Batch_${dns.length}.pdf"`);
       return res.send(pdf);
@@ -10743,7 +10749,7 @@ app.post('/api/debit-notes-planter/pdf-bulk', requireView, async (req, res) => {
     res.on('close', () => { try { doc.destroy(); } catch (_) {} });
     dns.forEach((dn, i) => {
       if (i > 0) doc.addPage();
-      try { _renderDebitNote(doc, dn, db, cfg); }
+      try { _renderDebitNote(doc, dn, db, cfg, { planter: true }); }
       catch (e) { try { doc.font('Helvetica').fontSize(10).text(`Error rendering DN ${dn.note_no || dn.id}: ${e.message}`); } catch (_) {} }
     });
     doc.end();

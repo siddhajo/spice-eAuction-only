@@ -45,6 +45,29 @@ const formatInvoiceNo = (() => {
   };
 })();
 
+// Debit-note number formatter — resolved the same defensive way.
+const formatDebitNoteNo = (() => {
+  try {
+    const f = require('./report-formatters').formatDebitNoteNo;
+    if (typeof f === 'function') return f;
+  } catch (_) {}
+  return (cfg, noteNo, opts) => {
+    opts = opts || {};
+    const num = String(noteNo == null ? '' : noteNo).trim();
+    const k = opts.planter
+      ? ['debit_note_planter_prefix', 'debit_note_planter_suffix']
+      : ['debit_note_prefix', 'debit_note_suffix'];
+    const prefix = String((cfg && cfg[k[0]]) || '').trim();
+    const suffix = String((cfg && cfg[k[1]]) || '').trim();
+    if (!prefix && !suffix) return opts.legacy != null ? opts.legacy : num;
+    const g = (key) => String((cfg && cfg[key]) || '').trim();
+    const season = g('season_short') || g('tally_season') || g('season_code') || '';
+    const ano = String(opts.ano == null ? '' : opts.ano).trim();
+    const ex = (t) => String(t).replace(/\{season\}/gi, season).replace(/\{ano\}/gi, ano);
+    return ex(prefix) + num + ex(suffix);
+  };
+})();
+
 const STATES = {
   '01': 'Jammu & Kashmir', '02': 'Himachal Pradesh', '03': 'Punjab',
   '04': 'Chandigarh', '05': 'Uttarakhand', '06': 'Haryana',
@@ -2454,7 +2477,10 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
   for (const row of rows) {
     const dateval     = toTallyDate(row.date);
     const ano         = xe(row.ano);
-    const taxNm       = xe(row.voucherNum || row.note_no || row.id || '');
+    // RAW note number — every site that emits it wraps the composed voucherNo
+    // in xe(), so escaping here too would double-encode (and would mangle an
+    // operator-supplied prefix/suffix containing & or <).
+    const taxNm       = String(row.voucherNum || row.note_no || row.id || '');
     const name        = xe(row.name);
     const address     = xe(row.address);
     const place       = xe(row.place);
@@ -2493,12 +2519,18 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
     const totalRound   = tlyrnd ? r0(total) : total;
     const rnd          = tlyrnd ? r2(totalRound - componentSum) : 0;
 
-    // Voucher number convention:
+    // Voucher number convention (the default, when no prefix/suffix is set):
     //   regular DN → {debitnoteno}/{season-short}/SE
     //   planter DN → {debitnoteno}/{season-short}/URD
     // and planter DNs post their commission to the planter commission ledger.
+    // The debit_note_[planter_]prefix/suffix settings override that shape
+    // entirely — see formatDebitNoteNo().
     const isPlanter   = !!row.planter;
-    const voucherNo   = `${taxNm}/${seasonShort}/${isPlanter ? 'URD' : 'SE'}`;
+    const voucherNo   = formatDebitNoteNo(cfg, taxNm, {
+      planter: isPlanter,
+      ano: row.ano,
+      legacy: `${taxNm}/${seasonShort}/${isPlanter ? 'URD' : 'SE'}`,
+    });
     // Dealer DN: interstate → Commission Ledger InterState, local → local
     // commission ledger. Planter DN: always its own planter commission ledger.
     const discountLdr = isPlanter ? DiscountP_LDR : (isIntra ? Discount_LDR : DiscountInter_LDR);
@@ -3238,7 +3270,10 @@ function buildDebitNoteIrpJson(rows, cfg, opts = {}) {
   const HSN_Service = String(cfgGet(cfg, 'tally_hsn_service', '996111'));
   const Item_Comm   = cfgGet(cfg, 'tally_dn_item', 'Commission');
 
-  // Document number — mirror generDebitNoteXML: {noteNo}/{season-short}/SE.
+  // Document number — mirror generDebitNoteXML: {noteNo}/{season-short}/SE by
+  // default, or the debit_note_prefix/suffix format when one is configured.
+  // Only DEALER notes reach here (planter/URD rows are skipped below for want
+  // of a buyer GSTIN), so the dealer pair is always the right one.
   const season      = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
   const seasonShort = String(cfgGet(cfg, 'season_short', '')).trim() || season;
 
@@ -3328,7 +3363,12 @@ function buildDebitNoteIrpJson(rows, cfg, opts = {}) {
       TranDtls: { TaxSch: 'GST', SupTyp: 'B2B', IgstOnIntra: 'N', RegRev: null, EcmGstin: null },
       DocDtls: {
         Typ: 'INV',
-        No: `${String(row.voucherNum || row.note_no || row.id || '').trim()}/${seasonShort}/SE`,
+        No: (() => {
+          const raw = String(row.voucherNum || row.note_no || row.id || '').trim();
+          return formatDebitNoteNo(cfg, raw, {
+            planter: false, ano: row.ano, legacy: `${raw}/${seasonShort}/SE`,
+          });
+        })(),
         Dt: toIrpDate(row.date),
       },
       SellerDtls: {

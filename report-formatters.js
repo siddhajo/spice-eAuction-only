@@ -143,6 +143,52 @@ function formatInvoiceNo(prefix, sale, invo) {
   return s ? `${p}/${s}-${n}` : `${p}-${n}`;
 }
 
+// ── Debit note numbering ────────────────────────────────────
+
+// The printed/exported debit-note number, assembled as:
+//
+//   <prefix><stored note_no><suffix>
+//
+// Prefix and suffix come from settings, separately for dealer and planter
+// notes (`debit_note_prefix`/`_suffix`, `debit_note_planter_prefix`/`_suffix`),
+// so an operator can render note 111 as "DN/111", "RNS-111/26-27", or just
+// "111" — whatever their books use.
+//
+// BOTH BLANK (the default) → the caller's `legacy` string is returned
+// unchanged, so existing installs keep the historical formats exactly:
+//   PDF        111/26-27
+//   Tally      111/26-27/SE   (dealer)  ·  111/26-27/URD (planter)
+// As soon as either field is set the caller's automatic tail is dropped and
+// the operator's format wins outright — otherwise there'd be no way to get
+// rid of the hard-coded "/26-27".
+//
+// Two tokens are expanded inside prefix/suffix so a format doesn't have to be
+// retyped every season:
+//   {season} → season_short (falls back to tally_season / season_code)
+//   {ano}    → the auction number, when the caller supplies one
+// e.g. suffix "/{season}/SE" reproduces the legacy Tally shape.
+function debitNoteSeason(cfg) {
+  const g = (k) => String((cfg && cfg[k]) || '').trim();
+  return g('season_short') || g('tally_season') || g('season_code') || '';
+}
+
+function formatDebitNoteNo(cfg, noteNo, opts) {
+  opts = opts || {};
+  const num = String(noteNo == null ? '' : noteNo).trim();
+  const key = opts.planter
+    ? ['debit_note_planter_prefix', 'debit_note_planter_suffix']
+    : ['debit_note_prefix', 'debit_note_suffix'];
+  const prefix = String((cfg && cfg[key[0]]) || '').trim();
+  const suffix = String((cfg && cfg[key[1]]) || '').trim();
+  if (!prefix && !suffix) return opts.legacy != null ? opts.legacy : num;
+  const season = debitNoteSeason(cfg);
+  const ano = String(opts.ano == null ? '' : opts.ano).trim();
+  const expand = (t) => String(t)
+    .replace(/\{season\}/gi, season)
+    .replace(/\{ano\}/gi, ano);
+  return expand(prefix) + num + expand(suffix);
+}
+
 // ── Company header (logo + name + address) ──────────────────
 
 // Resolve the active company branding from company_settings. Falls back to
@@ -650,7 +696,7 @@ function writeXlsxCompanyHeader(wb, ws, header, opts) {
 
 module.exports = {
   fmtMoney, fmtQty, fmtPrice, fmtIndian,
-  formatInvoiceNo,
+  formatInvoiceNo, formatDebitNoteNo, debitNoteSeason,
   formatDateForDisplay, DATE_FORMATS,
   getCompanyHeader, getCompanyIdentity, drawCompanyHeader,
   xlsxNumFmtForHeader, writeXlsxCompanyHeader,
