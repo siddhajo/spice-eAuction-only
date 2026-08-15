@@ -321,6 +321,80 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
      .text('** THANK YOU **', m, doc.y, { width: w, align: 'center' });
 }
 
+// ── Logo → ESC/POS raster (thermal receipt header image) ─────────────
+// Decodes the company logo (JPEG), box-scales it to a header-sized monochrome
+// bitmap, Floyd–Steinberg dithers it, and wraps it in a GS v 0 raster command.
+// Cached by file mtime (decoded once). Returns null on ANY problem (missing
+// file, non-JPEG, decode error, or jpeg-js not installed) so the receipt falls
+// back to the text header and a logo issue can never break printing.
+let _logoRasterCache = null;
+function buildLogoRaster(charWidth) {
+  try {
+    const logoPath = getLogoPath();
+    if (!logoPath) return null;
+    const st = fs.statSync(logoPath);
+    const maxW = Math.min(384, Math.max(160, (charWidth || 32) * 11)); // fit the roll width
+    const maxH = 200;                                                   // ~25mm cap so it doesn't eat the slip
+    const key = logoPath + ':' + st.mtimeMs + ':' + maxW + 'x' + maxH;
+    if (_logoRasterCache && _logoRasterCache.key === key) return _logoRasterCache.buf;
+
+    const data = fs.readFileSync(logoPath);
+    if (!(data[0] === 0xFF && data[1] === 0xD8)) return null;           // only JPEG for now
+    const img = require('jpeg-js').decode(data, { useTArray: true, formatAsRGBA: true });
+    const buf = _imgToRaster(img, maxW, maxH);
+    _logoRasterCache = { key, buf };
+    return buf;
+  } catch (e) {
+    return null;
+  }
+}
+// Box-average downscale (RGBA → grayscale within maxW×maxH), Floyd–Steinberg
+// dither to 1bpp, then pack into a GS v 0 raster buffer (bit set = black dot).
+function _imgToRaster(img, maxW, maxH) {
+  const sw = img.width, sh = img.height, src = img.data;
+  const scale = Math.min(maxW / sw, maxH / sh, 1);
+  const w = Math.max(1, Math.round(sw * scale));
+  const h = Math.max(1, Math.round(sh * scale));
+  const gray = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const sy0 = Math.floor(y / scale), sy1 = Math.max(sy0 + 1, Math.min(sh, Math.floor((y + 1) / scale)));
+    for (let x = 0; x < w; x++) {
+      const sx0 = Math.floor(x / scale), sx1 = Math.max(sx0 + 1, Math.min(sw, Math.floor((x + 1) / scale)));
+      let sum = 0, n = 0;
+      for (let yy = sy0; yy < sy1; yy++) {
+        for (let xx = sx0; xx < sx1; xx++) {
+          const i = (yy * sw + xx) * 4;
+          const a = src[i + 3] / 255;
+          const lum = 0.299 * src[i] + 0.587 * src[i + 1] + 0.114 * src[i + 2];
+          sum += lum * a + 255 * (1 - a);   // transparent pixels count as white
+          n++;
+        }
+      }
+      gray[y * w + x] = n ? sum / n : 255;
+    }
+  }
+  const bytesPerRow = Math.ceil(w / 8);
+  const bits = Buffer.alloc(bytesPerRow * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = y * w + x;
+      const oldv = gray[idx];
+      const nv = oldv < 128 ? 0 : 255;
+      const err = oldv - nv;
+      if (nv === 0) bits[y * bytesPerRow + (x >> 3)] |= (0x80 >> (x & 7));
+      if (x + 1 < w) gray[idx + 1] += err * 7 / 16;
+      if (y + 1 < h) {
+        if (x > 0) gray[idx + w - 1] += err * 3 / 16;
+        gray[idx + w] += err * 5 / 16;
+        if (x + 1 < w) gray[idx + w + 1] += err * 1 / 16;
+      }
+    }
+  }
+  const hdr = Buffer.from([0x1D, 0x76, 0x30, 0x00,
+    bytesPerRow & 0xff, (bytesPerRow >> 8) & 0xff, h & 0xff, (h >> 8) & 0xff]);
+  return Buffer.concat([hdr, bits]);
+}
+
 // ── RENDERER (ESC/POS raw bytes, for Bluetooth thermal printers) ──
 // Produces a 58mm ESC/POS receipt from the same lot data + operator column
 // config as the PDF renderers, so a Bluetooth print matches the PDF slip.
@@ -358,6 +432,9 @@ function buildEscposReceipt(lots, cfg, opts) {
 
   raw(ESC, 0x40);                 // initialize
   center();
+  // Logo image on top (centered). Falls back to text-only when unavailable.
+  const _logo = buildLogoRaster(WIDTH);
+  if (_logo) { chunks.push(_logo); nl(); }
   boldOn(); big(true); line(cfg.appTitle || 'RECEIPT'); big(false);
   if (branch) line(branch + ' BRANCH');
   boldOff();

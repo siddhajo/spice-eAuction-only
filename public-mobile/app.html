@@ -1281,16 +1281,15 @@ async function _btsEnsure(addr,force){
   try{ await _btsConnect(addr); }
   catch(e){ await _btsConnectInsecure(addr); }
 }
-// Send raw ESC/POS bytes with one automatic reconnect-and-retry, so a dropped
-// idle link (common with these printers) doesn't need any user action.
+// Send raw ESC/POS bytes. The connection is (re)established BEFORE any bytes go
+// out — _btsEnsure reconnects a dropped idle link first — but we write the
+// receipt EXACTLY ONCE. We must never re-send after a mid-write failure: the
+// printer has already printed part of it, so a re-send reprints (e.g. a doubled
+// header). A failed write surfaces as "Print failed"; the user just prints
+// again on the now-healthy connection.
 async function _btsSend(u8){
-  var addr=localStorage.getItem('sa_bt_addr');
-  try{ await _btsEnsure(addr); await _btsWriteChunked(u8); }
-  catch(e){
-    await _btsDisconnect();
-    await _btsEnsure(localStorage.getItem('sa_bt_addr'),true);
-    await _btsWriteChunked(u8);
-  }
+  await _btsEnsure(localStorage.getItem('sa_bt_addr'));
+  await _btsWriteChunked(u8);
 }
 // Pick a paired printer via an in-app list (no fragile prompt()). Auto-selects
 // when only one is paired; remembered for next time.
