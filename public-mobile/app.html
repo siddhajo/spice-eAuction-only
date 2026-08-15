@@ -1258,6 +1258,7 @@ function _bts(){return window.bluetoothSerial;}
 function _btsList(){return new Promise(function(res,rej){_bts().list(res,rej);});}
 function _btsIsConnected(){return new Promise(function(res){try{_bts().isConnected(function(){res(true);},function(){res(false);});}catch(e){res(false);}});}
 function _btsConnect(a){return new Promise(function(res,rej){_bts().connect(a,res,rej);});}
+function _btsConnectInsecure(a){return new Promise(function(res,rej){ if(_bts().connectInsecure){_bts().connectInsecure(a,res,rej);} else {rej(new Error('insecure connect unsupported'));} });}
 function _btsDisconnect(){return new Promise(function(res){try{_bts().disconnect(res,res);}catch(e){res();}});}
 function _btsWriteRaw(data){return new Promise(function(res,rej){_bts().write(data,res,rej);});}
 function _sleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
@@ -1271,10 +1272,14 @@ async function _btsWriteChunked(u8){
   for(var i=0;i<u8.length;i+=CH){ await _btsWriteRaw(u8.slice(i,i+CH)); await _sleep(24); }
 }
 // Ensure a live RFCOMM link to `addr` (reuses an open one unless force).
+// Tries a SECURE connection first, then falls back to INSECURE — most budget
+// thermal printers (B|POS, MPT-II, etc.) only accept insecure RFCOMM, which is
+// the usual cause of "connection failed".
 async function _btsEnsure(addr,force){
   if(!force && await _btsIsConnected()) return;
   if(!addr){ addr=await nativeBtChoosePrinter(); if(!addr) throw new Error('No printer selected'); }
-  await _btsConnect(addr);
+  try{ await _btsConnect(addr); }
+  catch(e){ await _btsConnectInsecure(addr); }
 }
 // Send raw ESC/POS bytes with one automatic reconnect-and-retry, so a dropped
 // idle link (common with these printers) doesn't need any user action.
@@ -1291,7 +1296,7 @@ async function _btsSend(u8){
 // when only one is paired; remembered for next time.
 async function nativeBtChoosePrinter(){
   var devs; try{devs=await _btsList();}catch(e){toast('Turn Bluetooth on, then pair the printer in Android Settings',true);return null;}
-  if(!devs||!devs.length){toast('No paired printers. Pair the MPT-II in Android Settings → Bluetooth first.',true);return null;}
+  if(!devs||!devs.length){toast('No paired printers found. On THIS phone: pair the printer in Settings → Bluetooth, and allow the app’s “Nearby devices” permission.',true);return null;}
   var chosen = devs.length===1 ? devs[0] : await _btShowPicker(devs);
   if(!chosen) return null;
   localStorage.setItem('sa_bt_addr',chosen.address);

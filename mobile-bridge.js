@@ -425,11 +425,25 @@ function buildEscposReceipt(lots, cfg, opts) {
   });
   rule();
   boldOn();
-  line(lots.length + ' lot(s)');
-  if (onKeys.has('bags'))                   line(lr('Total Bags', String(totalBags)));
-  if (onKeys.has('net'))                    line(lr('Total Net', totalQty.toFixed(3) + ' kg'));
-  if (onKeys.has('sample') && totalSample)  line(lr('Total Smp', totalSample.toFixed(3) + ' kg'));
-  if (onKeys.has('gross')  && totalGross)   line(lr('Total Gross', totalGross.toFixed(3) + ' kg'));
+  // Compact totals — SAME segments + labels as the PDF/RawBT receipt so every
+  // print path looks identical. Segments are packed into centered lines no
+  // wider than the roll, breaking only at " | " so "Net: 240.800 kg" never
+  // splits across a wrap.
+  const L = cfg.labels || {};
+  const seg = [lots.length + ' lot(s)'];
+  if (onKeys.has('bags'))                   seg.push(totalBags + ' ' + (L.bags || 'bags'));
+  if (onKeys.has('net'))                    seg.push((L.net_wt || 'Net') + ': ' + totalQty.toFixed(3) + ' kg');
+  if (onKeys.has('sample') && totalSample)  seg.push((L.sample_wt || 'Smp') + ': ' + totalSample.toFixed(3) + ' kg');
+  if (onKeys.has('gross')  && totalGross)   seg.push((L.gross_wt || 'Grs') + ': ' + totalGross.toFixed(3) + ' kg');
+  center();
+  let _tline = '';
+  for (const s of seg) {
+    const cand = _tline ? _tline + ' | ' + s : s;
+    if (cand.length > WIDTH && _tline) { line(_tline); _tline = s; }
+    else _tline = cand;
+  }
+  if (_tline) line(_tline);
+  left();
   boldOff();
   rule();
   center(); boldOn(); line('** THANK YOU **'); boldOff(); left();
