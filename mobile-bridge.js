@@ -327,22 +327,34 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
 // Cached by file mtime (decoded once). Returns null on ANY problem (missing
 // file, non-JPEG, decode error, or jpeg-js not installed) so the receipt falls
 // back to the text header and a logo issue can never break printing.
-let _logoRasterCache = null;
-function buildLogoRaster(charWidth) {
+// Optional pre-designed letterhead banner (logo + company name laid out
+// together, exactly like the PDF header). Drop a JPG at public/receipt-header.jpg
+// and it prints as the header image; otherwise we fall back to the logo + text.
+function getHeaderImagePath() {
+  for (const n of ['receipt-header.jpg', 'receipt-header.jpeg']) {
+    const p = path.join(__dirname, 'public', n);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+const _rasterCache = new Map();
+function buildLogoRaster(charWidth, imgPath, maxHOverride) {
   try {
-    const logoPath = getLogoPath();
-    if (!logoPath) return null;
-    const st = fs.statSync(logoPath);
+    const p = imgPath || getLogoPath();
+    if (!p) return null;
+    const st = fs.statSync(p);
     const maxW = Math.min(384, Math.max(160, (charWidth || 32) * 11)); // fit the roll width
-    const maxH = 200;                                                   // ~25mm cap so it doesn't eat the slip
-    const key = logoPath + ':' + st.mtimeMs + ':' + maxW + 'x' + maxH;
-    if (_logoRasterCache && _logoRasterCache.key === key) return _logoRasterCache.buf;
+    const maxH = maxHOverride || 200;                                  // height cap so it doesn't eat the slip
+    const key = p + ':' + st.mtimeMs + ':' + maxW + 'x' + maxH;
+    if (_rasterCache.has(key)) return _rasterCache.get(key);
 
-    const data = fs.readFileSync(logoPath);
-    if (!(data[0] === 0xFF && data[1] === 0xD8)) return null;           // only JPEG for now
-    const img = require('jpeg-js').decode(data, { useTArray: true, formatAsRGBA: true });
-    const buf = _imgToRaster(img, maxW, maxH);
-    _logoRasterCache = { key, buf };
+    const data = fs.readFileSync(p);
+    let buf = null;
+    if (data[0] === 0xFF && data[1] === 0xD8) {                        // JPEG only
+      const img = require('jpeg-js').decode(data, { useTArray: true, formatAsRGBA: true });
+      buf = _imgToRaster(img, maxW, maxH);
+    }
+    _rasterCache.set(key, buf);
     return buf;
   } catch (e) {
     return null;
@@ -432,12 +444,19 @@ function buildEscposReceipt(lots, cfg, opts) {
 
   raw(ESC, 0x40);                 // initialize
   center();
-  // Logo image on top (centered). Falls back to text-only when unavailable.
-  const _logo = buildLogoRaster(WIDTH);
-  if (_logo) { chunks.push(_logo); nl(); }
-  boldOn(); big(true); line(cfg.appTitle || 'RECEIPT'); big(false);
-  if (branch) line(branch + ' BRANCH');
-  boldOff();
+  // Header: a pre-designed letterhead banner (logo + name together, like the
+  // PDF) if one is provided; otherwise the logo image + text company name.
+  const headerImgPath = getHeaderImagePath();
+  const banner = headerImgPath ? buildLogoRaster(WIDTH, headerImgPath, 260) : null;
+  if (banner) {
+    chunks.push(banner); nl();                 // banner already carries the name → no text name
+  } else {
+    const _logo = buildLogoRaster(WIDTH);
+    if (_logo) { chunks.push(_logo); nl(); }
+    boldOn(); big(true); line(cfg.appTitle || 'RECEIPT'); big(false);
+    if (branch) line(branch + ' BRANCH');
+    boldOff();
+  }
   if (cfg.companyPhone) line('Ph: ' + cfg.companyPhone);
   if (cfg.companyGstin) line('GSTIN: ' + cfg.companyGstin);
   left();
