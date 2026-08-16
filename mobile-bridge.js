@@ -413,6 +413,21 @@ function _imgToRaster(img, maxW, maxH) {
 // The client writes these bytes straight to the printer (Web Bluetooth) or
 // hands them to the RawBT print service. `charWidth` chars per line (32 for
 // a 58mm Font-A roll; 42/48 for wider rolls).
+// Word-wrap `s` to lines of at most `width` chars, breaking at spaces so a
+// name like "THAMARASSERIYIL SPICES POINT" never splits mid-word. A single word
+// longer than `width` is hard-split as a last resort.
+function _wrapWords(s, width) {
+  const out = [];
+  let cur = '';
+  for (const w of String(s == null ? '' : s).split(/\s+/).filter(Boolean)) {
+    if (!cur) { cur = w; }
+    else if ((cur + ' ' + w).length <= width) { cur += ' ' + w; }
+    else { out.push(cur); cur = w; }
+    while (cur.length > width) { out.push(cur.slice(0, width)); cur = cur.slice(width); }
+  }
+  if (cur) out.push(cur);
+  return out.length ? out : [''];
+}
 function buildEscposReceipt(lots, cfg, opts) {
   const ESC = 0x1B, GS = 0x1D;
   const WIDTH = (opts && opts.charWidth) || 32;
@@ -463,7 +478,9 @@ function buildEscposReceipt(lots, cfg, opts) {
   rule();
   line(lr('Auction #' + (lot0.ano || ''), 'Date: ' + dateFmt));
   rule();
-  boldOn(); line('Seller: ' + (lot0.trader_name || '')); boldOff();
+  boldOn();
+  for (const sl of _wrapWords('Seller: ' + (lot0.trader_name || ''), WIDTH)) line(sl);
+  boldOff();
   if (lot0.cr) line('GSTIN: ' + lot0.cr);
   const acct = maskAcctForReceipt(lot0.acctnum, cfg.acctMask);
   if (acct) line('A/C: ' + acct);
@@ -476,6 +493,11 @@ function buildEscposReceipt(lots, cfg, opts) {
   // character width; numbers right-aligned, text left-aligned.
   const numericCol = (key) => key !== 'lot_no' && key !== 'grade' && key !== 'crpt';
   const rowsData = lots.map(l => fields.map(f => String(f.val(l, cfg))));
+  // Print the lot table in the printer's SMALLER font (Font B, ESC M 1) so the
+  // extra columns + full weights fit without the leading digits being cut off
+  // (Font A's 32 chars can't hold 6 columns, which truncated "255.500"→"5.500").
+  // Font B is ~1.33× as many chars per line (≈42 on a 58mm roll).
+  const TWIDTH = Math.max(WIDTH, Math.floor(WIDTH * 4 / 3));
   const colW = fields.map((f, ci) => {
     let w = String(f.hdr).length;
     for (const rd of rowsData) w = Math.max(w, rd[ci].length);
@@ -483,10 +505,10 @@ function buildEscposReceipt(lots, cfg, opts) {
   });
   const GAP = 1;
   const gapTotal = GAP * Math.max(0, fields.length - 1);
-  // Too wide for the roll → shrink the widest TEXT column first so numbers
+  // Too wide even for Font B → shrink the widest TEXT column first so numbers
   // (weights) keep their full width and stay readable.
   let sumW = colW.reduce((a, b) => a + b, 0) + gapTotal, guard = 300;
-  while (sumW > WIDTH && guard-- > 0) {
+  while (sumW > TWIDTH && guard-- > 0) {
     let idx = -1, best = -1;
     for (let i = 0; i < fields.length; i++) {
       const floor = numericCol(fields[i].key) ? 4 : 3;
@@ -496,7 +518,7 @@ function buildEscposReceipt(lots, cfg, opts) {
     colW[idx]--; sumW--;
   }
   // Spare room → widen a text column so the table fills the roll edge-to-edge.
-  const spare = WIDTH - (colW.reduce((a, b) => a + b, 0) + gapTotal);
+  const spare = TWIDTH - (colW.reduce((a, b) => a + b, 0) + gapTotal);
   if (spare > 0) {
     let ti = fields.findIndex(f => !numericCol(f.key));
     if (ti < 0) ti = fields.length - 1;
@@ -504,13 +526,17 @@ function buildEscposReceipt(lots, cfg, opts) {
   }
   const cell = (text, w, right) => {
     text = String(text == null ? '' : text);
-    if (text.length > w) text = right ? text.slice(text.length - w) : text.slice(0, w);
+    // NEVER drop leading digits of a number (right-aligned) — that changes the
+    // value. Overflow the column instead; text columns still trim on the right.
+    if (text.length > w) return right ? text : text.slice(0, w);
     return right ? text.padStart(w) : text.padEnd(w);
   };
   const tableRow = (vals) => vals.map((v, i) => cell(v, colW[i], numericCol(fields[i].key))).join(' ');
+  raw(ESC, 0x4D, 0x01);   // ESC M 1 → Font B (condensed) for the table
   boldOn(); line(tableRow(fields.map(f => f.hdr))); boldOff();
-  rule();
+  line('-'.repeat(TWIDTH));   // rule sized to the Font-B table width
   rowsData.forEach(rd => line(tableRow(rd)));
+  raw(ESC, 0x4D, 0x00);   // ESC M 0 → back to Font A
 
   let totalQty = 0, totalGross = 0, totalBags = 0, totalSample = 0;
   lots.forEach(l => {
@@ -521,25 +547,12 @@ function buildEscposReceipt(lots, cfg, opts) {
   });
   rule();
   boldOn();
-  // Compact totals — SAME segments + labels as the PDF/RawBT receipt so every
-  // print path looks identical. Segments are packed into centered lines no
-  // wider than the roll, breaking only at " | " so "Net: 240.800 kg" never
-  // splits across a wrap.
-  const L = cfg.labels || {};
-  const seg = [lots.length + ' lot(s)'];
-  if (onKeys.has('bags'))                   seg.push(totalBags + ' ' + (L.bags || 'bags'));
-  if (onKeys.has('net'))                    seg.push((L.net_wt || 'Net') + ': ' + totalQty.toFixed(3) + ' kg');
-  if (onKeys.has('sample') && totalSample)  seg.push((L.sample_wt || 'Smp') + ': ' + totalSample.toFixed(3) + ' kg');
-  if (onKeys.has('gross')  && totalGross)   seg.push((L.gross_wt || 'Grs') + ': ' + totalGross.toFixed(3) + ' kg');
-  center();
-  let _tline = '';
-  for (const s of seg) {
-    const cand = _tline ? _tline + ' | ' + s : s;
-    if (cand.length > WIDTH && _tline) { line(_tline); _tline = s; }
-    else _tline = cand;
-  }
-  if (_tline) line(_tline);
-  left();
+  // Totals — label left, value right (aligned column), one line each.
+  line(lots.length + ' lot(s)');
+  if (onKeys.has('bags'))                   line(lr('Total Bags', String(totalBags)));
+  if (onKeys.has('net'))                    line(lr('Total Net', totalQty.toFixed(3) + ' kg'));
+  if (onKeys.has('sample') && totalSample)  line(lr('Total Smp', totalSample.toFixed(3) + ' kg'));
+  if (onKeys.has('gross')  && totalGross)   line(lr('Total Gross', totalGross.toFixed(3) + ' kg'));
   boldOff();
   rule();
   center(); boldOn(); line('** THANK YOU **'); boldOff(); left();

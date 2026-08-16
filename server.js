@@ -38,6 +38,22 @@ const {
   listAuctionParties,
 } = require('./tally-xml');
 
+// Display ordering by sale type: I (inter-state) first, then L (local), then
+// any other/blank. Ties break on buyer code ascending. Used by the on-screen
+// buyer pickers (eligible-buyers, pre-invoice preview) so both agree.
+const _saleRank = (s) => {
+  const t = String(s || '').trim().toUpperCase();
+  return t === 'I' ? 0 : t === 'L' ? 1 : 2;
+};
+const _bySaleThenBuyer = (a, b) => {
+  const ra = _saleRank(a.default_sale ?? a.sale ?? a.saleType);
+  const rb = _saleRank(b.default_sale ?? b.sale ?? b.saleType);
+  if (ra !== rb) return ra - rb;
+  const ka = String(a.buyer ?? a.code ?? '');
+  const kb = String(b.buyer ?? b.code ?? '');
+  return ka.localeCompare(kb, undefined, { numeric: true });
+};
+
 const app = express();
 
 // Performance instrumentation — MUST be the first middleware so it also times
@@ -7168,6 +7184,10 @@ app.get('/api/invoices/eligible-buyers/:auctionId', requireView, (req, res) => {
   const out = saleType
     ? annotated.filter(r => !r.default_sale || r.default_sale === saleType)
     : annotated;
+  // On-screen ordering: by sale type ascending (I before L, then others),
+  // and buyer code within each type. Invoice numbering itself uses buyer-code
+  // order (see generate-all); this only controls display grouping.
+  out.sort(_bySaleThenBuyer);
   res.json(out);
 });
 
@@ -7278,7 +7298,8 @@ app.post('/api/invoices/generate-all/:auctionId',
      FROM lots l LEFT JOIN buyers b ON b.buyer = l.buyer
      WHERE l.auction_id = ? AND l.buyer IS NOT NULL AND l.buyer != '' AND l.amount > 0
        AND ${uninvoicedExpr}
-       ${saleClause}`,
+       ${saleClause}
+     ORDER BY l.buyer`,   /* invoice numbers run in buyer-code ascending order */
     params
   );
 
@@ -11179,6 +11200,9 @@ app.get('/api/invoices/preview-all/:auctionId', requireView, (req, res) => {
       if (saleFilter && eff !== saleFilter) continue;
       buyers.push({ code, name: (bRow && bRow.buyer1) || code, buyerCode: (bRow && bRow.code) || '', saleType: eff });
     }
+    // Show buyers ordered by sale type (I before L, then others), buyer code
+    // within each — mirrors the generation picker (eligible-buyers).
+    buyers.sort(_bySaleThenBuyer);
 
     // Decide which buyers to fully build a preview for.
     const toBuild = buyerParam

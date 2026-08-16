@@ -620,11 +620,31 @@ function classifyByState(rows, auctionState) {
   });
 }
 
+// Group rows by SALE TYPE for the Collection report: I (inter-state) first,
+// then L (local), then any other/blank. The returned key doubles as the
+// section header + "{key} TOTAL" label (see collectionXlsx / collectionPdf).
+function classifyBySale(rows) {
+  const LABELS = { I: 'INTER-STATE (I)', L: 'LOCAL (L)', E: 'EXPORT (E)' };
+  const rank = (s) => {
+    const t = String(s || '').trim().toUpperCase();
+    return t === 'I' ? 0 : t === 'L' ? 1 : t === 'E' ? 2 : 3;
+  };
+  const groups = new Map();
+  for (const r of rows) {
+    const key = String(r.sale || '').trim().toUpperCase() || 'OTHER';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => (rank(a) - rank(b)) || a.localeCompare(b))
+    .map(([key, items]) => [LABELS[key] || key, items]);
+}
+
 async function collectionXlsx(db, auctionId) {
   _loadDateFormat(db);
   const auction = getAuctionHeader(db, auctionId);
   const rows = getCollectionRows(db, auctionId);
-  const groups = classifyByState(rows, auction.state);
+  const groups = classifyBySale(rows);
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Collection');
@@ -714,7 +734,7 @@ async function collectionPdf(db, auctionId) {
   _loadDateFormat(db);
   const auction = getAuctionHeader(db, auctionId);
   const rows = getCollectionRows(db, auctionId);
-  const groups = classifyByState(rows, auction.state);
+  const groups = classifyBySale(rows);
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 24 });
   const buffers = [];
