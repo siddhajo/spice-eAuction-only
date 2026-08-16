@@ -6610,6 +6610,16 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <input id="ga-start" type="number" placeholder="e.g. 100">
     <div style="font-size:11px;color:var(--text3);margin-top:4px">Each generated invoice increments by 1 from here</div>
   </div>
+  <!-- Respect the per-buyer invoice split set in Price Entry. ON → a buyer's
+       lots that were split into groups become separate invoices. OFF → each
+       buyer gets a single invoice regardless of the split. Invoices only. -->
+  <div class="fg" id="gen-all-split-wrap" style="display:none">
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400">
+      <input type="checkbox" id="ga-split" checked style="width:16px;height:16px;accent-color:var(--green)">
+      <span>Split invoices per Price Entry grouping</span>
+    </label>
+    <div style="font-size:11px;color:var(--text3);margin-top:4px">When off, each buyer's lots are billed as one invoice, ignoring any split set in Price Entry.</div>
+  </div>
   <div id="ga-preview" style="font-size:12px;color:var(--text2);background:var(--green-bg);border:1px solid var(--green-border);border-radius:8px;padding:10px;margin:6px 0;display:none"></div>
   <div id="ga-diag" style="display:none;font-size:11px;background:#F1F5F9;border:1px solid #ddd;border-radius:6px;padding:10px;margin:6px 0;max-height:300px;overflow:auto;font-family:monospace"></div>
   <div class="actions">
@@ -18013,7 +18023,7 @@ function renderTallyPanel(fields){
 
   groups.push({ title: 'Sales / Purchase Ledgers',
     hint: 'Cardamom + gunny ledger names for inter, intra, and export sales, plus the dealer sales/purchase ledgers.',
-    fields: pick(k => /^tally_(sales|gunny|item|hsn|stock|purchase|dealer_sale|prim_unit|sec_unit|sample|unit_rate)/.test(k)) });
+    fields: pick(k => /^tally_(sales|gunny|item|hsn|stock|purchase|dealer_sale|prim_unit|sec_unit|sample|unit_rate|rd_ledger|urd_ledger)/.test(k)) });
 
   groups.push({ title: 'Tax Ledgers',
     hint: 'CGST / SGST / IGST / TCS / TDS output ledger names. Debit-note variants for the discount-as-DN flow.',
@@ -21156,6 +21166,8 @@ async function openGenAllModal(kind){
   document.getElementById('gen-all-title').textContent=titles[kind];
   document.getElementById('gen-all-desc').textContent=descs[kind];
   document.getElementById('gen-all-sale-wrap').style.display=kind==='invoices'?'block':'none';
+  var _splitWrap=document.getElementById('gen-all-split-wrap');if(_splitWrap)_splitWrap.style.display=kind==='invoices'?'block':'none';
+  var _splitChk=document.getElementById('ga-split');if(_splitChk)_splitChk.checked=true;
   if(document.getElementById('ga-sale'))document.getElementById('ga-sale').value='';
   document.getElementById('ga-start').value='';
   // Suggest the starting number by continuing the previous trade's series.
@@ -21246,7 +21258,7 @@ async function doGenerateAll(){
   if(!start||parseInt(start)<1){alert('Enter a starting number (positive integer)');return}
   const body={};
   if(kind==='bills')body.startBillNo=start;
-  else{body.startInvoiceNo=start;if(kind==='invoices')body.saleType=document.getElementById('ga-sale').value||''}
+  else{body.startInvoiceNo=start;if(kind==='invoices'){body.saleType=document.getElementById('ga-sale').value||'';body.splitInvoices=document.getElementById('ga-split')?document.getElementById('ga-split').checked:true}}
   const routeMap={invoices:'invoices/generate-all',purchases:'purchases/generate-all',bills:'bills/generate-all'};
   const submitBtn=document.getElementById('ga-submit');
   submitBtn.disabled=true;submitBtn.textContent='Generating…';
@@ -29004,6 +29016,9 @@ async function loadPreInvoiceBuyers(){
     return;
   }
   const buyers = (data && data.buyers) || [];
+  // Pre-Invoice buyer picker is ordered by trade name (A→Z) so the operator
+  // can scan it alphabetically. (The generation picker orders by sale type.)
+  buyers.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true }));
   if (!buyers.length) {
     if (sel) sel.innerHTML = '';
     if (list) list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px;text-align:center">No buyers to preview for this selection. Make sure lots have buyer codes and prices assigned.</div>';

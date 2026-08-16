@@ -3355,8 +3355,9 @@ function buildDebitNoteIrpJson(rows, cfg, opts = {}) {
     if (Math.abs(rndOff) > 99) { totInvVal = r0(baseGrand); rndOff = r2(totInvVal - baseGrand); }
 
     // Party legal name — prefer the raw dealer name; fall back to the
-    // ledger-suffixed name with the "-PURCHASE" suffix stripped.
-    const partyName = String(row.partyName || String(row.name || '').replace(/-PURCHASE$/i, '')).trim();
+    // ledger-suffixed name with the configured RD suffix stripped.
+    const _rdSfxRe = new RegExp(_rdLedgerSuffix(cfg).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+    const partyName = String(row.partyName || String(row.name || '').replace(_rdSfxRe, '')).trim();
 
     const dn = {
       Version: '1.1',
@@ -3701,7 +3702,7 @@ function buildRDPurchaseRows(db, auctionId, cfg) {
       date: p.date,
       // Suffix "-PURCHASE" so the voucher's PARTYLEDGERNAME matches
       // the suffixed RD party ledger emitted by buildRDPartyLedgerRows.
-      name: _rdPurchaseLedgerName(p.name),
+      name: _rdPurchaseLedgerName(p.name, cfg),
       address: p.add_line,
       place: p.place,
       pin: '',
@@ -3852,7 +3853,7 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
       date: b.date,
       // Name "<name>-[<PAN>]" so the voucher's PARTYLEDGERNAME matches
       // the URD agriculturist ledger emitted by buildURDPartyLedgerRows.
-      name: _urdPurchaseLedgerName(b.name, panForBill),
+      name: _urdPurchaseLedgerName(b.name, panForBill, cfg),
       address: b.add_line,
       place: b.pla,
       pin: '',
@@ -3948,7 +3949,7 @@ function buildDebitNoteRows(db, auctionId, cfg) {
       // Suffix "-PURCHASE" so the DN's PARTYLEDGERNAME matches the
       // suffixed RD party ledger (debit notes are always against
       // registered dealers).
-      name: _rdPurchaseLedgerName(d.name),
+      name: _rdPurchaseLedgerName(d.name, cfg),
       // Raw dealer legal name (no ledger suffix) — used by the e-invoice
       // (IRP) JSON builder for BuyerDtls.LglNm / TrdNm.
       partyName: String(d.name || '').trim(),
@@ -4022,7 +4023,7 @@ function buildDebitNotePlanterRows(db, auctionId, cfg) {
     return {
       ano: d.ano,
       date: d.date,
-      name: _urdPurchaseLedgerName(d.name, planter.pan),
+      name: _urdPurchaseLedgerName(d.name, planter.pan, cfg),
       address: planter.add_line || '',
       place:   planter.pla || '',
       pin:     '',
@@ -4260,18 +4261,36 @@ function _buyerRow(b, todayDate, intra, interDealer, localDealer) {
 //   • RD  (registered dealers) → "<name>-PURCHASE"   (no spaces around the dash)
 //   • URD (agriculturists)     → "<name>-[<PAN>]"   (no spaces; PAN in brackets;
 //                                falls back to "-PURCHASE" when no PAN is on file)
-function _rdPurchaseLedgerName(n) {
-  const s = String(n || '').trim();
-  return s ? s + '-PURCHASE' : s;
+// The suffix strings are configurable (Settings → To Tally → RD/URD Party
+// Ledger Suffix); defaults reproduce the historical "-PURCHASE" / "-[<PAN>]"
+// convention exactly. The URD template supports a {PAN} placeholder.
+function _rdLedgerSuffix(cfg) {
+  const v = cfg && cfg.tally_rd_ledger_suffix;
+  return (v != null && String(v).trim() !== '') ? String(v) : '-PURCHASE';
 }
-function _urdPurchaseLedgerName(n, pan) {
+function _urdLedgerTemplate(cfg) {
+  const v = cfg && cfg.tally_urd_ledger_suffix;
+  return (v != null && String(v).trim() !== '') ? String(v) : '-[{PAN}]';
+}
+function _rdPurchaseLedgerName(n, cfg) {
+  const s = String(n || '').trim();
+  return s ? s + _rdLedgerSuffix(cfg) : s;
+}
+function _urdPurchaseLedgerName(n, pan, cfg) {
   const s = String(n || '').trim();
   if (!s) return s;
   const p = String(pan || '').trim();
-  return p ? `${s}-[${p}]` : `${s}-PURCHASE`;
+  const tmpl = _urdLedgerTemplate(cfg);
+  if (tmpl.includes('{PAN}')) {
+    // PAN-templated suffix: substitute the PAN when present; with no PAN on
+    // file, fall back to the RD suffix (matches the old "-PURCHASE" fallback).
+    return p ? s + tmpl.replace(/\{PAN\}/g, p) : s + _rdLedgerSuffix(cfg);
+  }
+  // Plain suffix (no placeholder) — always appended, PAN or not.
+  return s + tmpl;
 }
 
-function _rdTraderRow(t, todayDate, intra, interDealPur, localDealPur) {
+function _rdTraderRow(t, todayDate, intra, interDealPur, localDealPur, cfg) {
   // `cr` carries the GSTIN with a "GSTIN." prefix for registered dealers
   const fullGstin = String(t.cr || '');
   const partyGstin = fullGstin.toUpperCase().startsWith('GST') ? fullGstin.slice(6, 21) : fullGstin;
@@ -4279,7 +4298,7 @@ function _rdTraderRow(t, todayDate, intra, interDealPur, localDealPur) {
   return {
     kind: 'party',
     partyKind: 'rd',
-    name: _rdPurchaseLedgerName(t.name),
+    name: _rdPurchaseLedgerName(t.name, cfg),
     parent: isIntra ? localDealPur : interDealPur,
     gstin: partyGstin,
     pan: t.pan || '',
@@ -4291,11 +4310,11 @@ function _rdTraderRow(t, todayDate, intra, interDealPur, localDealPur) {
   };
 }
 
-function _urdTraderRow(t, todayDate, auctionLDR) {
+function _urdTraderRow(t, todayDate, auctionLDR, cfg) {
   return {
     kind: 'party',
     partyKind: 'urd',
-    name: _urdPurchaseLedgerName(t.name, t.pan),
+    name: _urdPurchaseLedgerName(t.name, t.pan, cfg),
     parent: auctionLDR,           // Agriculturists go under the "Planters" parent group
     gstin: '',
     pan: t.pan || '',
@@ -4361,7 +4380,7 @@ function buildRDPartyLedgerRows(db, auctionId, cfg, opts = {}) {
   sql += ` ORDER BY name`;
 
   const traders = db.prepare(sql).all(...params);
-  return traders.map(t => _rdTraderRow(t, todayDate, intra, interDealPur, localDealPur));
+  return traders.map(t => _rdTraderRow(t, todayDate, intra, interDealPur, localDealPur, cfg));
 }
 
 /**
@@ -4390,7 +4409,7 @@ function buildURDPartyLedgerRows(db, auctionId, cfg, opts = {}) {
   sql += ` ORDER BY name`;
 
   const traders = db.prepare(sql).all(...params);
-  return traders.map(t => _urdTraderRow(t, todayDate, auctionLDR));
+  return traders.map(t => _urdTraderRow(t, todayDate, auctionLDR, cfg));
 }
 
 /**

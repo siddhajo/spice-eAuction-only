@@ -486,6 +486,15 @@ const DEFAULTS = [
   { key: 'tally_rd_purchase_vchtype',  value: 'Purchase', category: 'tally', label: 'RD Purchase Voucher Type (VCHTYPE)',  type: 'text' },
   { key: 'tally_urd_purchase_vchtype', value: 'Purchase', category: 'tally', label: 'URD Purchase Voucher Type (VCHTYPE)', type: 'text' },
 
+  // Purchase-side party ledger-name suffixes. The purchase voucher, debit
+  // note, and LEDGER master all derive the party name the same way (see
+  // _rdPurchaseLedgerName / _urdPurchaseLedgerName in tally-xml.js), so these
+  // MUST stay in sync — change them here, not in one place. The URD template
+  // supports a {PAN} placeholder (replaced with the planter's PAN); when a
+  // planter has no PAN on file, the RD suffix is used as the fallback.
+  { key: 'tally_rd_ledger_suffix',  value: '-PURCHASE', category: 'tally', label: 'RD Party Ledger Suffix',           type: 'text' },
+  { key: 'tally_urd_ledger_suffix', value: '-[{PAN}]',  category: 'tally', label: 'URD Party Ledger Suffix ({PAN})',  type: 'text' },
+
   // Mode toggles
   { key: 'tally_detailed',        value: 'false', category: 'tally', label: 'Detailed Inv (one inventory entry per lot)', type: 'boolean' },
   { key: 'tally_round_enabled',   value: 'false', category: 'tally', label: 'Round (Round On/Off ledger)',                 type: 'boolean' },

@@ -7265,6 +7265,13 @@ app.post('/api/invoices/generate-all/:auctionId',
   // Batch-level "No Transport & Insurance" — applies to every invoice
   // generated in this run when set.
   const noTI = (req.body.noTI === true || String(req.body.noTI || '').toLowerCase() === 'true' || Number(req.body.noTI) === 1) ? 1 : 0;
+  // Whether to honour the per-buyer invoice split set during Price Entry.
+  // Defaults ON (respect the split); when the operator turns it off in the
+  // Generate Invoice screen, every buyer's lots are billed as ONE invoice
+  // regardless of their invoice_group. Missing/omitted → ON (back-compat).
+  const splitInvoices = !(req.body.splitInvoices === false
+    || String(req.body.splitInvoices).toLowerCase() === 'false'
+    || Number(req.body.splitInvoices) === 0);
 
   let nextNo = parseInt(startInvoiceNo);
   if (!nextNo || nextNo < 1) return res.status(400).json({ error: 'startInvoiceNo must be a positive integer' });
@@ -7329,7 +7336,8 @@ app.post('/api/invoices/generate-all/:auctionId',
     );
     const groups = new Map();
     for (const lr of lotRows) {
-      const g = Number(lr.g) || 0;
+      // Split OFF → collapse every lot into group 0 → one invoice per buyer.
+      const g = splitInvoices ? (Number(lr.g) || 0) : 0;
       if (!groups.has(g)) groups.set(g, []);
       groups.get(g).push(String(lr.lot_no));
     }
