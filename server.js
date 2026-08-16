@@ -6957,9 +6957,12 @@ app.get('/api/invoices/preview.html', (req, res) => {
     // inline preview matches what will actually be generated.
     const noTI = (String(req.query.noTI || '') === '1' || String(req.query.noTI || '').toLowerCase() === 'true') ? 1 : 0;
 
+    // Optional lot subset — the Pre-Invoice screen passes the split group's
+    // lot numbers so the inline preview shows only that invoice's lots.
+    const previewLotNos = String(req.query.lotNos || '').split(',').map(s => s.trim()).filter(Boolean);
     let invoiceData, invoiceDate;
     if (auctionId && buyerCode) {
-      invoiceData = buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg, { noTI });
+      invoiceData = buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg, { noTI, lotNos: previewLotNos.length ? previewLotNos : undefined });
       if (!invoiceData) {
         res.status(404).type('html');
         return res.send(`<pre>No lots found for buyer "${buyerCode}" in auction ${auctionId}. ` +
@@ -7278,7 +7281,7 @@ app.post('/api/invoices/generate-all/:auctionId',
        ${saleClause}`,
     params
   );
-  
+
   if (!buyers.length) return res.status(404).json({ error: saleType ? `No un-invoiced buyers for sale type ${saleType}` : 'No un-invoiced buyers with lots in this auction' });
   
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [req.params.auctionId]);
@@ -11099,6 +11102,8 @@ app.post('/api/invoices/preview-pdf/:auctionId', requireView, async (req, res) =
     const db = getDb(); const cfg = getSettingsFlat(db);
     const { saleType, buyerCode } = req.body;
     const noTI = (req.body.noTI === true || String(req.body.noTI || '').toLowerCase() === 'true' || Number(req.body.noTI) === 1) ? 1 : 0;
+    // Optional split-group lot subset (Pre-Invoice screen).
+    const pdfLotNos = Array.isArray(req.body.lotNos) ? req.body.lotNos.map(x => String(x)).filter(x => x.trim() !== '') : null;
     if (!saleType || !buyerCode) return res.status(400).json({ error: 'saleType and buyerCode are required' });
 
     // Same uncalculated-lot top-up the JSON preview + Generate flows do, so the
@@ -11112,7 +11117,7 @@ app.post('/api/invoices/preview-pdf/:auctionId', requireView, async (req, res) =
         [c.pqty,c.prate,c.puramt,c.com,c.sertax,c.cgst,c.sgst,c.igst,c.advance,c.balance,c.bilamt,c.refund||0,c.refud||0,c.isp_pqty||0,c.isp_prate||0,c.isp_puramt||0,c.asp_pqty||0,c.asp_prate||0,c.asp_puramt||0,lot.id]);
     }
 
-    const invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, saleType, cfg, { noTI });
+    const invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, saleType, cfg, { noTI, lotNos: (pdfLotNos && pdfLotNos.length) ? pdfLotNos : undefined });
     if (!invoice) return res.status(404).json({ error: `No lots found for buyer "${buyerCode}" in this auction.` });
     const auction = db.get('SELECT * FROM auctions WHERE id = ?', [req.params.auctionId]);
     const invoiceDate = (auction && auction.date) || new Date().toISOString().slice(0, 10);
@@ -11191,9 +11196,30 @@ app.get('/api/invoices/preview-all/:auctionId', requireView, (req, res) => {
           [c.pqty,c.prate,c.puramt,c.com,c.sertax,c.cgst,c.sgst,c.igst,c.advance,c.balance,c.bilamt,c.refund||0,c.refud||0,c.isp_pqty||0,c.isp_prate||0,c.isp_puramt||0,c.asp_pqty||0,c.asp_prate||0,c.asp_puramt||0,lot.id]);
       }
       for (const b of toBuild) {
-        const inv = buildSalesInvoice(db, aid, b.code, b.saleType, cfg, { noTI });
-        if (!inv) continue;
-        previews.push({ buyerCode: b.code, saleType: b.saleType, buyer: inv.buyer, summary: inv.summary, lineItems: inv.lineItems });
+        // Split by invoice_group (set in Price Entry) → one preview per group,
+        // exactly like generate-all produces. buildSalesInvoice's own lot
+        // filter is mirrored here so the grouping lines up.
+        const groupRows = db.all(
+          `SELECT COALESCE(invoice_group,0) AS g, lot_no
+             FROM lots
+            WHERE auction_id = ? AND buyer = ? AND amount > 0
+              AND (reserved IS NULL OR reserved = 0)
+              AND (sale IS NULL OR sale = '' OR sale = ?)
+            ORDER BY CAST(lot_no AS INTEGER), lot_no`,
+          [aid, b.code, b.saleType]
+        );
+        const gmap = new Map();
+        for (const gr of groupRows) { const g = Number(gr.g) || 0; if (!gmap.has(g)) gmap.set(g, []); gmap.get(g).push(String(gr.lot_no)); }
+        const gkeys = Array.from(gmap.keys()).sort((x, y) => x - y);
+        const isMulti = gkeys.length > 1;
+        for (const gk of gkeys) {
+          const lotNos = gmap.get(gk);
+          const inv = buildSalesInvoice(db, aid, b.code, b.saleType, cfg, { noTI, lotNos });
+          if (!inv) continue;
+          previews.push({ buyerCode: b.code, saleType: b.saleType, buyer: inv.buyer,
+            summary: inv.summary, lineItems: inv.lineItems,
+            splitGroup: isMulti ? gk : null, lotNos });
+        }
       }
     }
     // Which engine the selected sales-invoice layout resolves to. The inline

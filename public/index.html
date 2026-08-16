@@ -29042,6 +29042,7 @@ async function renderPreInvoiceSelected(){
   // preview embeds HTML (fast) or the actual PDF (classic), matching Open PDF.
   _piSalesEngine = (data && data.salesEngine) || 'html';
   const previews = (data && data.previews) || [];
+  _piPreviews = previews;   // for split-group lookups in piMountInline / piPreviewPdf
   if (!previews.length) {
     if (list) list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px;text-align:center">Nothing to preview for this buyer.</div>';
     return;
@@ -29058,10 +29059,12 @@ async function renderPreInvoiceSelected(){
 // Build the inline HTML-invoice URL (same layout/templates as the PDF).
 // preview.html authenticates via ?token= because an <iframe> can't send an
 // Authorization header.
-function piInlineUrl(aid, buyerCode, saleType, noTI){
+function piInlineUrl(aid, buyerCode, saleType, noTI, lotNos){
   return `${B}/api/invoices/preview.html?auctionId=${encodeURIComponent(aid)}`
     + `&buyer=${encodeURIComponent(buyerCode)}&sale=${encodeURIComponent(saleType||'')}`
-    + `&noTI=${noTI==='1'||noTI===1||noTI===true?'1':'0'}&token=${encodeURIComponent(T)}`;
+    + `&noTI=${noTI==='1'||noTI===1||noTI===true?'1':'0'}`
+    + (lotNos && lotNos.length ? `&lotNos=${encodeURIComponent(lotNos.join(','))}` : '')
+    + `&token=${encodeURIComponent(T)}`;
 }
 // Collapse / expand a pre-invoice card section. For the invoice section the
 // extra (aid, buyerCode, saleType, noTI) args let us lazy-mount the iframe the
@@ -29080,6 +29083,10 @@ function piToggleSection(kind, idx, aid, buyerCode, saleType, noTI){
 // supplied by preview-all. Governs the inline preview medium so it matches
 // exactly what "Open PDF" produces.
 let _piSalesEngine = 'html';
+// The previews currently on screen (one per buyer, or one per invoice_group
+// split). Indexed the same as the cards, so piMountInline / piPreviewPdf can
+// look up each card's split-group lot subset.
+let _piPreviews = [];
 
 // Inject the invoice preview into a card's slot (idempotent — only once).
 // HTML layouts → fast preview.html iframe. Classic (pdfkit) → embed the real
@@ -29088,12 +29095,14 @@ function piMountInline(idx, aid, buyerCode, saleType, noTI){
   const slot = document.getElementById('pi-inv-slot-'+idx);
   if (!slot || slot.dataset.mounted === '1') return;
   slot.dataset.mounted = '1';
+  // This card's split-group lot subset (empty for a non-split buyer).
+  const lotNos = (_piPreviews[idx] && _piPreviews[idx].lotNos) || [];
   const frameStyle = 'width:100%;height:820px;border:1px solid var(--border);border-radius:8px;background:#fff;margin-top:8px';
   if (_piSalesEngine === 'pdfkit') {
     slot.innerHTML = `<div style="padding:10px;color:var(--text3);font-size:12px">Building invoice preview…</div>`;
     fetch(B + `/api/invoices/preview-pdf/${aid}`, { method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},
-      body: JSON.stringify({ saleType, buyerCode, noTI: (noTI==='1'||noTI===1||noTI===true) }) })
+      body: JSON.stringify({ saleType, buyerCode, noTI: (noTI==='1'||noTI===1||noTI===true), lotNos }) })
       .then(async r => { if(!r.ok){ let m='Preview failed'; try{const e=await r.json(); if(e.error)m=e.error;}catch(_){}; throw new Error(m); } return r.blob(); })
       .then(blob => {
         const url = URL.createObjectURL(blob);
@@ -29102,7 +29111,7 @@ function piMountInline(idx, aid, buyerCode, saleType, noTI){
       .catch(e => { slot.dataset.mounted=''; slot.innerHTML = `<div style="padding:10px;color:var(--spice-chili);font-size:12px">${esc(e.message||e)}</div>`; });
     return;
   }
-  slot.innerHTML = `<iframe src="${piInlineUrl(aid, buyerCode, saleType, noTI)}" title="Invoice preview" loading="lazy"
+  slot.innerHTML = `<iframe src="${piInlineUrl(aid, buyerCode, saleType, noTI, lotNos)}" title="Invoice preview" loading="lazy"
     style="${frameStyle}"></iframe>`;
 }
 // Build one preview card. Shows Bill-To + Ship-To (consignee, falling back to
@@ -29142,9 +29151,10 @@ function piCard(p, aid, noTI, idx, single){
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
       <span style="font-weight:700;font-size:15px">${esc(billName)}</span>
       <span style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;background:var(--spice-cardamom-lt);color:var(--spice-cardamom)">${esc(PI_SALE_LABEL[p.saleType]||p.saleType)} (${esc(p.saleType)})</span>
+      ${p.splitGroup!=null?`<span style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;background:var(--spice-turmeric-lt,#fef3c7);color:#8B6508" title="Invoice split group set in Price Entry">Split #${esc(p.splitGroup)}</span>`:''}
       <span style="font-size:11px;color:var(--text3)">${(p.lineItems||[]).length} lot${(p.lineItems||[]).length===1?'':'s'} · ${esc(b.code||p.buyerCode)}</span>
       <span style="margin-left:auto;font-weight:800;font-size:16px;color:var(--spice-cardamom)">${money(s.grandTotal)}</span>
-      <button class="btn btn-o" style="height:32px;padding:0 12px;font-size:12px;font-weight:600" onclick="piPreviewPdf('${esc(aid)}','${esc(String(p.buyerCode).replace(/'/g,"\\'"))}','${esc(p.saleType)}',${noTI==='1'?'true':'false'})">Open PDF ↗</button>
+      <button class="btn btn-o" style="height:32px;padding:0 12px;font-size:12px;font-weight:600" onclick="piPreviewPdf('${esc(aid)}','${esc(String(p.buyerCode).replace(/'/g,"\\'"))}','${esc(p.saleType)}',${noTI==='1'?'true':'false'},'${(p.lotNos||[]).join(',')}')">Open PDF ↗</button>
     </div>
 
     ${secHd('det', 'Details', false)}
@@ -29186,11 +29196,12 @@ function piCard(p, aid, noTI, idx, single){
 }
 // Open the EXACT sales-invoice PDF (same renderer as Generate) for one buyer,
 // stamped "PREVIEW". Reuses the preview-pdf endpoint — no persistence.
-async function piPreviewPdf(aid, buyerCode, saleType, noTI){
+async function piPreviewPdf(aid, buyerCode, saleType, noTI, lotNosCsv){
+  const lotNos = String(lotNosCsv||'').split(',').map(s=>s.trim()).filter(Boolean);
   await withOverlay('Building pre-invoice…', async () => {
     const r = await fetch(B + `/api/invoices/preview-pdf/${aid}`, { method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},
-      body: JSON.stringify({ saleType, buyerCode, noTI: !!noTI }) });
+      body: JSON.stringify({ saleType, buyerCode, noTI: !!noTI, lotNos }) });
     if (!r.ok) { let m='Pre-invoice failed'; try { const e=await r.json(); if(e.error) m=e.error; } catch(_){} toast(m); return; }
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
@@ -29200,7 +29211,9 @@ async function piPreviewPdf(aid, buyerCode, saleType, noTI){
   });
 }
 
-function renderPreview(inv,type){
+// Build the HTML for ONE invoice preview. `label` (optional) is a heading shown
+// above it — used to title each split invoice ("Invoice 1 of 2 · split #1").
+function _previewInvHtml(inv,type,label){
   const s=inv.summary;
   const who=type==='sales'?(inv.buyer||{}):(inv.seller||{});
   const whoName=who.buyer1||who.name||'(unknown)';
@@ -29253,8 +29266,22 @@ function renderPreview(inv,type){
       <span>${type==='purchase'&&s.tdsAmount?'Invoice Amount':type==='agri'?'Net Amount':'Grand Total'}:</span>
       <span>₹${(s.invoiceAmount||s.netAmount||s.grandTotal||0).toFixed(2)}</span>
     </div></div>`;
-  
-  document.getElementById('preview-body').innerHTML=html;
+  const head = label
+    ? `<div style="font-weight:700;font-size:12px;color:var(--spice);background:var(--spice-lt);border-radius:6px;padding:6px 10px;margin-bottom:10px">${esc(label)}</div>`
+    : '';
+  return head + html;
+}
+// Single invoice (default).
+function renderPreview(inv,type){
+  document.getElementById('preview-body').innerHTML = _previewInvHtml(inv,type,'');
+}
+// Several invoices stacked — one per invoice_group split. Each carries an
+// optional `_splitGroup` used in its heading.
+function renderPreviewMulti(list,type){
+  const html = list.map((inv,i)=>_previewInvHtml(inv,type,
+    `Invoice ${i+1} of ${list.length}${inv._splitGroup!=null?` · split #${inv._splitGroup}`:''}`))
+    .join('<hr style="margin:20px 0;border:none;border-top:2px dashed var(--border)">');
+  document.getElementById('preview-body').innerHTML = html;
 }
 
 // ── Theme switcher ─────────────────────────────────────────
