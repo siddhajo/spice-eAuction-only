@@ -212,7 +212,7 @@ async function exportLotsDbf(db, filters = {}) {
 
 // ── SALES INVOICES (INV.DBF structure) ────────────────────────
 async function exportInvoicesDbf(db, filters = {}) {
-  let query = 'SELECT * FROM invoices WHERE 1=1';
+  let query = 'SELECT * FROM invoices WHERE 1=1 AND COALESCE(is_proforma,0) = 0';
   const params = [];
   if (filters.ano) { query += ' AND TRIM(ano) = TRIM(?)'; params.push(filters.ano); }
   if (filters.from && filters.to) { query += ' AND date BETWEEN ? AND ?'; params.push(filters.from, filters.to); }

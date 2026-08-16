@@ -928,7 +928,7 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   y += 9;
 
   // ── Title ───────────────────────────────────────────────────
-  doc.font('Helvetica-Bold').fontSize(10).text(isPurchaseView ? 'Purchase Invoice' : 'Tax Invoice', x0, y, { width: W, align: 'center' });
+  doc.font('Helvetica-Bold').fontSize(10).text(isPurchaseView ? 'Purchase Invoice' : (invoiceData && invoiceData.isProforma ? 'PROFORMA INVOICE' : 'Tax Invoice'), x0, y, { width: W, align: 'center' });
   y += 14;
 
   // ── TOP HEADER BLOCK ────────────────────────────────────────

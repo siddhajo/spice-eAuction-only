@@ -551,7 +551,7 @@ function getCollectionRows(db, auctionId) {
   const invoices = db.all(
     `SELECT id, sale, invo, buyer, buyer1, qty, tot
        FROM invoices
-      WHERE auction_id = ?
+      WHERE auction_id = ? AND COALESCE(is_proforma,0) = 0
       ORDER BY sale, CAST(invo AS INTEGER), invo`,
     [auctionId]
   );

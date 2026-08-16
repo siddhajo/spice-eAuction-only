@@ -27,6 +27,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const { formatDateForDisplay } = require('./report-formatters');
+const { syncLotsFromTrader } = require('./trader-lot-sync');
 
 // ════════════════════════════════════════════════════════════════════
 // RECEIPT-PRINT HELPERS — ported from PWA server.js's renderer code.
@@ -1492,11 +1493,16 @@ function mountMobile(app, deps) {
     if (Array.isArray(t.banks)) {
       syncTraderBanks(db, id, t.banks);
     }
+    // Push the corrected master record onto this seller's lots — the lot rows
+    // carry their own copy of name/GSTIN/PAN/phone/address. Invoiced and
+    // locked lots are left alone; `lots` reports both counts so the UI can say
+    // what moved. See trader-lot-sync.js.
+    const lotSync = sets.length > 0 ? syncLotsFromTrader(db, id) : { updated: 0, skipped: 0 };
     const updated = db.get('SELECT * FROM traders WHERE id = ?', [id]);
     updated.banks = db.all(
       'SELECT * FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id', [id]
     );
-    res.json({ success: true, trader: updated });
+    res.json({ success: true, trader: updated, lots: lotSync });
   });
 
   // ── 8c. TRADER GET BY ID — ensures fresh fetch ──────────────────

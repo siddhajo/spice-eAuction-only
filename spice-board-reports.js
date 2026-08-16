@@ -709,7 +709,7 @@ function buildFormD(ctx, db, opts) {
   const invRows = db ? db.all(
     `SELECT MAX(TRIM(buyer1)) AS name, MAX(TRIM(buyer)) AS code,
             SUM(COALESCE(qty,0)) AS kilos, SUM(COALESCE(amount,0)) AS value
-       FROM invoices WHERE ano = ?
+       FROM invoices WHERE ano = ? AND COALESCE(is_proforma,0) = 0
        GROUP BY UPPER(TRIM(COALESCE(NULLIF(TRIM(buyer1),''), buyer)))`,
     [auction.ano]) || [] : [];
   if (invRows.length) {

@@ -1181,7 +1181,7 @@ function getSalesJournal(db, auctionId, saleType) {
   let query = `SELECT date, sale, invo, buyer, buyer1, gstin, place,
       bag, qty, amount as cardamom, gunny, pava_hc as transport, ins as insurance,
       cgst, sgst, igst, tcs, rund, tot as total
-    FROM invoices WHERE (auction_id = ? OR ano = ?)`;
+    FROM invoices WHERE (auction_id = ? OR ano = ?) AND COALESCE(is_proforma,0) = 0`;
   const params = [auction.id, auction.ano];
   if (saleType) { query += ' AND sale = ?'; params.push(saleType); }
   query += ' ORDER BY date, sale, invo';
@@ -1206,7 +1206,7 @@ function getSalesJournalSummary(db, auctionId, saleType, cfg) {
   if (!auction) return null;
   let q = `SELECT sale, bag, qty, amount AS cardamom, gunny, pava_hc AS transport,
              ins AS insurance, cgst, sgst, igst, tcs, tot AS total
-           FROM invoices WHERE (auction_id = ? OR ano = ?)`;
+           FROM invoices WHERE (auction_id = ? OR ano = ?) AND COALESCE(is_proforma,0) = 0`;
   const params = [auction.id, auction.ano];
   if (saleType) { q += ' AND sale = ?'; params.push(saleType); }
   const rows = db.all(q, params);
@@ -1473,7 +1473,8 @@ function getSalesRegister(db, opts = {}) {
       i.sgst AS sgst, i.ins AS ins, i.tot AS invamt
     FROM invoices i`;
   const params = [];
-  const where = [];
+  // Proformas never appear in the sales register — originals only.
+  const where = ['COALESCE(i.is_proforma,0) = 0'];
   if (opts.auctionId) {
     const a = db.get('SELECT id, ano FROM auctions WHERE id = ?', [opts.auctionId]);
     if (a) { where.push('(i.auction_id = ? OR i.ano = ?)'); params.push(a.id, a.ano); }
@@ -1591,7 +1592,7 @@ function getSellerRegister(db, opts = {}) {
 function getMerchantRegister(db, opts = {}) {
   let q = `SELECT i.buyer1 AS party, i.gstin AS gstin, i.ano AS tno, i.date AS date,
       i.invo AS invo, '' AS recp, i.qty AS qty, i.tot AS invoice, 0 AS receipt
-    FROM invoices i WHERE 1=1`;
+    FROM invoices i WHERE 1=1 AND COALESCE(i.is_proforma,0) = 0`;
   const params = [];
   if (opts.from && opts.to) { q += ' AND i.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
   if (opts.party) { q += ' AND UPPER(TRIM(i.buyer1)) = UPPER(?)'; params.push(String(opts.party).trim()); }
@@ -1612,7 +1613,7 @@ function listRegisterParties(db, opts = {}) {
   const params = [];
   let q;
   if (kind === 'merchant') {
-    q = `SELECT DISTINCT i.buyer1 AS name FROM invoices i WHERE COALESCE(i.buyer1,'') != ''`;
+    q = `SELECT DISTINCT i.buyer1 AS name FROM invoices i WHERE COALESCE(i.buyer1,'') != '' AND COALESCE(i.is_proforma,0) = 0`;
     if (opts.from && opts.to) { q += ' AND i.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
     q += ' ORDER BY i.buyer1';
   } else if (kind === 'seller') {

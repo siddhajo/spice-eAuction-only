@@ -321,7 +321,13 @@ select:focus{border-color:var(--green)}
       <div id="le-form-body" style="padding:8px 12px">
         <!-- Seller -->
         <div id="le-sw" style="margin-bottom:6px">
-          <div class="elb" id="elb-seller">SELLER</div>
+          <!-- "+ Add seller" is also offered at the bottom of the search
+               results, but that only appears once you've typed 2+ characters.
+               This button makes creating a seller reachable at any point. -->
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
+            <div class="elb" id="elb-seller" style="margin-bottom:0">SELLER</div>
+            <button type="button" onclick="openSellerModalFromEntry()" title="Add a new seller" style="margin-left:auto;background:var(--green);color:#fff;border:none;border-radius:5px;padding:3px 9px;font-size:9px;font-weight:800;letter-spacing:.4px;cursor:pointer;font-family:inherit">+ ADD SELLER</button>
+          </div>
           <div class="sx">
             <span class="sx-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
             <input type="text" id="le-name" placeholder="Search seller by name, phone, GSTIN, PAN..." autocomplete="off" onfocus="showSaveBtn()" oninput="searchTrader(this.value)">
@@ -657,19 +663,26 @@ select:focus{border-color:var(--green)}
 <div class="modal-overlay" id="seller-modal"><div class="modal">
   <div class="modal-hdr"><h2>Add New Seller</h2><button class="modal-close" onclick="closeSellerModal()">&#x2715;</button></div>
   <div class="modal-body"><form autocomplete="off" onsubmit="event.preventDefault();saveNewSeller()">
-    <div class="lb">NAME *</div><input type="text" id="ns-name" autocapitalize="characters" autocomplete="off" name="ns-name">
-    <div class="lb">GSTIN / CR</div><input type="text" id="ns-cr" autocomplete="off" name="ns-cr">
+    <!-- Quick add: NAME (required by the server) + PAN + PHONE only. Everything
+         else lives behind "More details" so the hall operator can register a
+         seller in three taps; the section auto-opens if a field inside it
+         needs attention. -->
+    <div class="lb" style="margin-top:0">NAME *</div><input type="text" id="ns-name" autocapitalize="characters" autocomplete="off" name="ns-name">
     <div class="lb">PAN</div><input type="text" id="ns-pan" autocapitalize="characters" autocomplete="off" name="ns-pan">
     <div class="lb">PHONE</div><input type="tel" id="ns-tel" inputmode="tel" autocomplete="off" name="ns-tel" maxlength="15" oninput="this.value=this.value.replace(/[^0-9+]/g,'');if(document.getElementById('ns-wa-same').checked)document.getElementById('ns-whatsapp').value=this.value">
-    <div class="lb" style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>WHATSAPP</span><label style="font-size:11px;font-weight:600;color:var(--text2);display:inline-flex;align-items:center;gap:5px;cursor:pointer;text-transform:none;letter-spacing:0;margin:0"><input type="checkbox" id="ns-wa-same" onchange="onWaSameToggle()" style="width:14px;height:14px;cursor:pointer;margin:0"> Same as phone</label></div>
-    <input type="tel" id="ns-whatsapp" inputmode="tel" autocomplete="off" name="ns-whatsapp" maxlength="15" oninput="this.value=this.value.replace(/[^0-9+]/g,'')">
-    <div class="lb">EMAIL</div><input type="email" id="ns-email" inputmode="email" autocapitalize="none" autocomplete="off" name="ns-email" spellcheck="false" oninput="validateEmailField(this)" onblur="validateEmailField(this,true)">
-    <div id="ns-email-err" style="display:none;font-size:11px;color:#d93025;margin-top:4px;font-weight:600">Enter a valid email address</div>
-    <div class="lb">ADDRESS</div><input type="text" id="ns-padd" autocomplete="off" name="ns-padd">
-    <div class="fr"><div><div class="lb">PLACE</div><input type="text" id="ns-ppla" autocomplete="off" name="ns-ppla"></div><div><div class="lb">PIN</div><input type="text" id="ns-pin" inputmode="numeric" autocomplete="off" name="ns-pin"></div></div>
-    <div class="fr"><div><div class="lb">STATE</div><select id="ns-pstate" name="ns-pstate" onchange="document.getElementById('ns-pst').value=this.value==='KERALA'?'32':'33'"><option value="KERALA">KERALA</option><option value="TAMIL NADU">TAMIL NADU</option></select></div><div><div class="lb">STATE CODE</div><input type="text" id="ns-pst" value="32" autocomplete="off" name="ns-pst"></div></div>
-    <div class="lb">DATE OF BIRTH</div><input type="date" id="ns-dob" autocomplete="off" name="ns-dob">
-    <div class="lb">USER ID</div><input type="text" id="ns-userid" autocomplete="off" name="ns-userid">
+    <button type="button" id="ns-more-btn" onclick="toggleSellerMore()" style="width:100%;margin-top:14px;background:var(--bg2);border:1px dashed var(--border2);border-radius:8px;padding:9px 10px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;font-family:inherit;text-align:left">+ More details</button>
+    <div id="ns-more" style="display:none">
+      <div class="lb">GSTIN / CR</div><input type="text" id="ns-cr" autocomplete="off" name="ns-cr">
+      <div class="lb" style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>WHATSAPP</span><label style="font-size:11px;font-weight:600;color:var(--text2);display:inline-flex;align-items:center;gap:5px;cursor:pointer;text-transform:none;letter-spacing:0;margin:0"><input type="checkbox" id="ns-wa-same" onchange="onWaSameToggle()" style="width:14px;height:14px;cursor:pointer;margin:0"> Same as phone</label></div>
+      <input type="tel" id="ns-whatsapp" inputmode="tel" autocomplete="off" name="ns-whatsapp" maxlength="15" oninput="this.value=this.value.replace(/[^0-9+]/g,'')">
+      <div class="lb">EMAIL</div><input type="email" id="ns-email" inputmode="email" autocapitalize="none" autocomplete="off" name="ns-email" spellcheck="false" oninput="validateEmailField(this)" onblur="validateEmailField(this,true)">
+      <div id="ns-email-err" style="display:none;font-size:11px;color:#d93025;margin-top:4px;font-weight:600">Enter a valid email address</div>
+      <div class="lb">ADDRESS</div><input type="text" id="ns-padd" autocomplete="off" name="ns-padd">
+      <div class="fr"><div><div class="lb">PLACE</div><input type="text" id="ns-ppla" autocomplete="off" name="ns-ppla"></div><div><div class="lb">PIN</div><input type="text" id="ns-pin" inputmode="numeric" autocomplete="off" name="ns-pin"></div></div>
+      <div class="fr"><div><div class="lb">STATE</div><select id="ns-pstate" name="ns-pstate" onchange="document.getElementById('ns-pst').value=this.value==='KERALA'?'32':'33'"><option value="KERALA">KERALA</option><option value="TAMIL NADU">TAMIL NADU</option></select></div><div><div class="lb">STATE CODE</div><input type="text" id="ns-pst" value="32" autocomplete="off" name="ns-pst"></div></div>
+      <div class="lb">DATE OF BIRTH</div><input type="date" id="ns-dob" autocomplete="off" name="ns-dob">
+      <div class="lb">USER ID</div><input type="text" id="ns-userid" autocomplete="off" name="ns-userid">
+    </div>
     <div id="ns-err"></div>
   </form></div>
   <div class="modal-foot"><button class="btn btn-sm btn-outline" onclick="closeSellerModal()" style="flex:1">Cancel</button><button class="btn btn-sm" onclick="saveNewSeller()" id="ns-save" style="flex:2">Add Seller</button></div>
@@ -1547,7 +1560,26 @@ function wireSellerUppercase(){
     if(up!==el.value){var s=el.selectionStart,en=el.selectionEnd;el.value=up;try{el.setSelectionRange(s,en);}catch(_){}}
   });
 }
-function openSellerModal(n,p){wireSellerUppercase();document.getElementById('le-res').style.display='none';document.getElementById('ns-name').value=n||'';document.getElementById('ns-cr').value='';document.getElementById('ns-pan').value='';document.getElementById('ns-tel').value=p||'';document.getElementById('ns-whatsapp').value='';document.getElementById('ns-email').value='';document.getElementById('ns-padd').value='';document.getElementById('ns-ppla').value='';document.getElementById('ns-pin').value='';document.getElementById('ns-pstate').value='KERALA';document.getElementById('ns-pst').value='32';document.getElementById('ns-dob').value='';document.getElementById('ns-userid').value='';var wa=document.getElementById('ns-wa-same');wa.checked=false;var waInp=document.getElementById('ns-whatsapp');waInp.readOnly=false;waInp.style.background='';var em=document.getElementById('ns-email');em.classList.remove('invalid');var emErr=document.getElementById('ns-email-err');if(emErr)emErr.style.display='none';document.getElementById('ns-err').innerHTML='';document.getElementById('seller-modal').classList.add('show');_seedNextUserId()}
+function openSellerModal(n,p){wireSellerUppercase();document.getElementById('le-res').style.display='none';document.getElementById('ns-name').value=n||'';document.getElementById('ns-cr').value='';document.getElementById('ns-pan').value='';document.getElementById('ns-tel').value=p||'';document.getElementById('ns-whatsapp').value='';document.getElementById('ns-email').value='';document.getElementById('ns-padd').value='';document.getElementById('ns-ppla').value='';document.getElementById('ns-pin').value='';document.getElementById('ns-pstate').value='KERALA';document.getElementById('ns-pst').value='32';document.getElementById('ns-dob').value='';document.getElementById('ns-userid').value='';var wa=document.getElementById('ns-wa-same');wa.checked=false;var waInp=document.getElementById('ns-whatsapp');waInp.readOnly=false;waInp.style.background='';var em=document.getElementById('ns-email');em.classList.remove('invalid');var emErr=document.getElementById('ns-email-err');if(emErr)emErr.style.display='none';document.getElementById('ns-err').innerHTML='';setSellerMore(false);document.getElementById('seller-modal').classList.add('show');_seedNextUserId()}
+// "More details" section of the Add Seller form. Collapsed on every open —
+// the quick path is NAME + PAN + PHONE; GSTIN, address, state, DOB and user
+// id are one tap away. Anything that fails validation down there expands the
+// section first, so the operator can actually see the field being flagged.
+function setSellerMore(open){
+  var box=document.getElementById('ns-more'),btn=document.getElementById('ns-more-btn');
+  if(!box||!btn)return;
+  box.style.display=open?'block':'none';
+  btn.textContent=open?'− Fewer details':'+ More details';
+}
+function toggleSellerMore(){var box=document.getElementById('ns-more');setSellerMore(!!box&&box.style.display==='none')}
+// "+ ADD SELLER" beside the Lot Entry search box. Seeds the form with whatever
+// is already typed — as a phone number when it's all digits, otherwise as the
+// name — matching how the "Add new seller" search result splits it.
+function openSellerModalFromEntry(){
+  var q=((document.getElementById('le-name')||{}).value||'').trim();
+  var isPhone=/^\d{4,}$/.test(q);
+  openSellerModal(isPhone?'':q.toUpperCase(),isPhone?q:'');
+}
 // Pre-fill the New Seller "User ID" with the next auto-increment suggestion
 // (editable; server still enforces uniqueness). Best-effort.
 function _seedNextUserId(){var el=document.getElementById('ns-userid');if(!el||el.value.trim()!=='')return;fetch(B+'/api/traders/next-user-id',{headers:ah()}).then(function(r){return r.ok?r.json():null}).then(function(d){if(d&&d.next!=null&&el.value.trim()==='')el.value=d.next}).catch(function(){})}
@@ -1570,7 +1602,7 @@ async function _nsCheckPanDup(pan){
     return rows.filter(t=>String(t.pan||'').trim().toUpperCase()===vU).slice(0,5);
   }catch(e){return[]}
 }
-async function saveNewSeller(){const name=document.getElementById('ns-name').value.trim(),er=document.getElementById('ns-err');er.innerHTML='';if(!name){er.innerHTML='<div class="eb">Name required</div>';return}const emailEl=document.getElementById('ns-email');const email=emailEl.value.trim();if(!validateEmailField(emailEl,true)){er.innerHTML='<div class="eb">Invalid email format</div>';emailEl.focus();return}const panRaw=document.getElementById('ns-pan').value.trim();if(panRaw){const dups=await _nsCheckPanDup(panRaw);if(dups.length){er.innerHTML='<div class="eb">PAN '+panRaw.toUpperCase()+' already on seller: '+dups.map(t=>t.name).join(', ')+'. Cancel and search for the existing seller.</div>';return}}document.getElementById('ns-save').disabled=true;try{const r=await fetch(B+'/api/traders',{method:'POST',headers:ah(),body:JSON.stringify({name,cr:document.getElementById('ns-cr').value.trim(),pan:document.getElementById('ns-pan').value.trim(),tel:document.getElementById('ns-tel').value.trim(),whatsapp:document.getElementById('ns-whatsapp').value.trim(),email:email,padd:document.getElementById('ns-padd').value.trim(),ppla:document.getElementById('ns-ppla').value.trim(),pin:document.getElementById('ns-pin').value.trim(),pstate:document.getElementById('ns-pstate').value.trim(),pst_code:document.getElementById('ns-pst').value.trim(),dob:document.getElementById('ns-dob').value.trim(),user_id:document.getElementById('ns-userid').value.trim()})});const d=await r.json();if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Failed')+'</div>';return}closeSellerModal();pickTrader(d.trader);toast('"'+d.trader.name+'" added',false)}catch(e){er.innerHTML='<div class="eb">Failed</div>'}finally{document.getElementById('ns-save').disabled=false}}
+async function saveNewSeller(){const name=document.getElementById('ns-name').value.trim(),er=document.getElementById('ns-err');er.innerHTML='';if(!name){er.innerHTML='<div class="eb">Name required</div>';return}const emailEl=document.getElementById('ns-email');const email=emailEl.value.trim();if(!validateEmailField(emailEl,true)){er.innerHTML='<div class="eb">Invalid email format</div>';setSellerMore(true);emailEl.focus();return}const panRaw=document.getElementById('ns-pan').value.trim();if(panRaw){const dups=await _nsCheckPanDup(panRaw);if(dups.length){er.innerHTML='<div class="eb">PAN '+panRaw.toUpperCase()+' already on seller: '+dups.map(t=>t.name).join(', ')+'. Cancel and search for the existing seller.</div>';return}}document.getElementById('ns-save').disabled=true;try{const r=await fetch(B+'/api/traders',{method:'POST',headers:ah(),body:JSON.stringify({name,cr:document.getElementById('ns-cr').value.trim(),pan:document.getElementById('ns-pan').value.trim(),tel:document.getElementById('ns-tel').value.trim(),whatsapp:document.getElementById('ns-whatsapp').value.trim(),email:email,padd:document.getElementById('ns-padd').value.trim(),ppla:document.getElementById('ns-ppla').value.trim(),pin:document.getElementById('ns-pin').value.trim(),pstate:document.getElementById('ns-pstate').value.trim(),pst_code:document.getElementById('ns-pst').value.trim(),dob:document.getElementById('ns-dob').value.trim(),user_id:document.getElementById('ns-userid').value.trim()})});const d=await r.json();if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Failed')+'</div>';return}closeSellerModal();pickTrader(d.trader);toast('"'+d.trader.name+'" added',false)}catch(e){er.innerHTML='<div class="eb">Failed</div>'}finally{document.getElementById('ns-save').disabled=false}}
 
 var lotValidateTimer=null,lotIsValid=true;
 function validateLotNo(val){

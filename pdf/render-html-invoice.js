@@ -193,7 +193,10 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
     cfg,
     co,
     padRows: Math.max(0, 13 - usedRows),
-    title: 'Tax Invoice',
+    // Proforma documents are titled "Proforma Invoice"; `isProforma` is also
+    // exposed so templates can add a watermark / "not a valid tax invoice" note.
+    title: invoiceData.isProforma ? 'Proforma Invoice' : 'Tax Invoice',
+    isProforma: !!invoiceData.isProforma,
     invoiceNo: formatInvoiceNo(cfg, saleType, invoiceNo),
     invoiceDate: invoiceDate || null,
     // Operator's configured date format (Settings → date_format). Templates

@@ -4816,6 +4816,13 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <option value="W">Withdrawn (W)</option>
             <option value="N">N/A (N)</option>
           </select>
+          <!-- Original / Proforma / All. Defaults to Original so the list, KPIs
+               and totals show real tax invoices unless drafts are requested. -->
+          <select id="inv-doctype-filter" onchange="loadInvoices()" title="Show original tax invoices or proforma drafts" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:140px">
+            <option value="original">Original (Tax)</option>
+            <option value="proforma">Proforma</option>
+            <option value="all">All (both)</option>
+          </select>
           <!-- Within-trade search across invoice no, buyer name, GSTIN. -->
           <input type="search" id="inv-search" placeholder="Search invoice no, buyer, GSTIN, lorry…" oninput="searchInvoicesDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
 
@@ -6077,7 +6084,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <div id="t-banks-container" style="display:flex;flex-direction:column;gap:8px"></div>
     <div style="font-size:11px;color:var(--text3);margin-top:6px">Add one or more bank accounts. The first bank is used as the default on purchase invoices.</div>
   </div>
-  <div class="actions"><button class="btn btn-o" onclick="hideModal('trader-modal')">Cancel</button><button class="btn btn-g" id="trader-save-btn" onclick="saveTrader()">Save</button></div>
+  <div class="actions"><button class="btn btn-o" onclick="closeTraderModal()">Cancel</button><button class="btn btn-g" id="trader-save-btn" onclick="saveTrader()">Save</button></div>
 </div></div>
 
 <div class="modal-bg" id="buyer-view-modal"><div class="modal" style="max-width:560px">
@@ -6504,9 +6511,20 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
 <div class="modal-bg" id="gen-inv-modal"><div class="modal" style="max-width:580px">
   <h2>Generate Sales Invoice(s)</h2>
+  <!-- Proforma vs Original. Proforma = a saved DRAFT (own number series, kept
+       out of GST/Tally/reports, leaves lots un-shipped so they can be raised
+       as originals later). Original = the real tax invoice. -->
+  <div class="fg">
+    <label>Document Type</label>
+    <select id="gi-doctype" onchange="onGiDocTypeChange()">
+      <option value="original">Original (Tax Invoice)</option>
+      <option value="proforma">Proforma (draft — not a tax invoice)</option>
+    </select>
+    <div id="gi-doctype-hint" style="font-size:11px;color:var(--text3);margin-top:4px"></div>
+  </div>
   <div class="fg">
     <label>Sale Type — filters eligible buyers below</label>
-    <select id="gi-sale" onchange="loadInvEligibleBuyers();suggestDocNo(document.getElementById('inv-auction').value,'invoices','gi-invno',this.value,true)">
+    <select id="gi-sale" onchange="loadInvEligibleBuyers();suggestDocNo(document.getElementById('inv-auction').value,'invoices','gi-invno',this.value,true,document.getElementById('gi-doctype')?.value||'original')">
       <!-- Default option: "All" — shows both local and interstate buyers
            together. Users can narrow to a single type if needed. Earlier
            the default was 'L' (Local), which silently hid every buyer
@@ -6562,6 +6580,12 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <div id="gi-split-summary" style="font-size:12px;color:var(--text2);padding:6px 2px 0"></div>
   </div>
   <div class="fg"><label>Starting Invoice No <span style="color:var(--text3);font-weight:400">— auto-increments for each selected buyer</span></label><input id="gi-invno" type="number" placeholder="e.g. 6"></div>
+  <div class="fg"><label>Invoice Date</label>
+    <select id="gi-date-source">
+      <option value="today">Current date (today)</option>
+      <option value="auction">Auction date</option>
+    </select>
+  </div>
   <!-- Per-invoice "No Transport & Insurance". When ticked the generated
        invoice(s) carry no transport/insurance — both come out 0 and drop
        out of the PDF + Tally voucher. Can also be toggled later per
@@ -6595,8 +6619,16 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 <div class="modal-bg" id="gen-all-modal"><div class="modal">
   <h2 id="gen-all-title">Generate All</h2>
   <p id="gen-all-desc" style="font-size:12px;color:var(--text2);margin-bottom:14px"></p>
+  <!-- Proforma vs Original for the whole batch. Invoices only. -->
+  <div class="fg" id="gen-all-doctype-wrap" style="display:none"><label>Document Type</label>
+    <select id="ga-doctype" onchange="onGaDocTypeChange()">
+      <option value="original">Original (Tax Invoice)</option>
+      <option value="proforma">Proforma (draft — not a tax invoice)</option>
+    </select>
+    <div id="ga-doctype-hint" style="font-size:11px;color:var(--text3);margin-top:4px"></div>
+  </div>
   <div class="fg" id="gen-all-sale-wrap" style="display:none"><label>Sale Type — filter + fallback</label>
-    <select id="ga-sale" onchange="refreshGenAllPreview();suggestDocNo(document.getElementById('inv-auction').value,'invoices','ga-start',this.value,true)">
+    <select id="ga-sale" onchange="refreshGenAllPreview();suggestDocNo(document.getElementById('inv-auction').value,'invoices','ga-start',this.value,true,document.getElementById('ga-doctype')?.value||'original')">
       <option value="">All sale types (use each buyer's default)</option>
       <option value="L">Local (L) only</option>
       <option value="I">Inter-state (I) only</option>
@@ -6609,6 +6641,15 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   <div class="fg"><label>Starting Number</label>
     <input id="ga-start" type="number" placeholder="e.g. 100">
     <div style="font-size:11px;color:var(--text3);margin-top:4px">Each generated invoice increments by 1 from here</div>
+  </div>
+  <!-- Invoice date source — today's (ship) date by default, or the auction's
+       own date. Invoices only. -->
+  <div class="fg" id="gen-all-date-wrap" style="display:none"><label>Invoice Date</label>
+    <select id="ga-date-source">
+      <option value="today">Current date (today)</option>
+      <option value="auction">Auction date</option>
+    </select>
+    <div style="font-size:11px;color:var(--text3);margin-top:4px">Date stamped on every invoice in this run.</div>
   </div>
   <!-- Respect the per-buyer invoice split set in Price Entry. ON → a buyer's
        lots that were split into groups become separate invoices. OFF → each
@@ -18909,8 +18950,19 @@ async function saveTrader(){
   try{
     const r=await fetch(B+(id?`/api/traders/${id}`:'/api/traders'),{method:id?'PUT':'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},body:JSON.stringify(body)});
-    if(!r.ok){const d=await r.json();throw new Error(d.error||'Save failed')}
-    hideModal('trader-modal');toast(id?'Seller updated':'Seller added');searchTraders('');
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){throw new Error(d.error||'Save failed')}
+    hideModal('trader-modal');
+    // An edit re-stamps the seller's lots server-side (lots carry their own
+    // copy of name/GSTIN/PAN/phone/address). Say how many moved, and call out
+    // the invoiced/locked ones that were deliberately left as they were.
+    const ls=d.lots||{};
+    let msg=id?'Seller updated':'Seller added';
+    if(ls.updated) msg+=' — '+ls.updated+' lot'+(ls.updated>1?'s':'')+' updated';
+    if(ls.skipped) msg+=(ls.updated?' · ':' — ')+ls.skipped+' invoiced/locked lot'+(ls.skipped>1?'s':'')+' left unchanged';
+    toast(msg);
+    searchTraders('');
+    lvResumeAfterSellerEdit();
   }catch(e){showError(e)}
 }
 async function delTrader(id){if(!confirm('Delete?'))return;await j(`/api/traders/${id}`,{method:'DELETE'});searchTraders('')}
@@ -20492,7 +20544,7 @@ async function openLotValidate(aid){
 function renderLotValidate(d){
   const sub=document.getElementById('lv-subtitle');
   sub.innerHTML='Trade '+esc(String(d.ano||''))+(d.date?(' · '+fmtD(d.date)):'')+' — '+(d.totals?d.totals.lots:0)+' lot(s) entered'
-    +'<span style="display:block;margin-top:2px;color:var(--spice-text-mute);font-size:11px">Tip: tick the sellers you want to fix, then "Show selected in Recent Entries" to correct their lots.</span>';
+    +'<span style="display:block;margin-top:2px;color:var(--spice-text-mute);font-size:11px">Tip: click a seller’s name to correct their details (the fix flows back to their lots), or tick sellers and use "Show selected in Recent Entries" to edit the lots themselves.</span>';
   const rc=d.reconciliation||{};
   const errs=d.errors||[], warns=d.warnings||[];
   const lotNum=(s)=>{const m=String(s).match(/\d+/);return m?parseInt(m[0],10):0;};
@@ -20594,7 +20646,10 @@ function renderLotValidate(d){
         +'<input type="checkbox" class="lv-seller-cb" data-idx="'+gi+'" onchange="lvUpdateSellerSelCount()" title="Select this seller" style="width:17px;height:17px;cursor:pointer;flex-shrink:0">'
         +'<div onclick="lvToggleGroup(\''+gid+'\',this)" title="Show / hide this seller’s lots" style="flex:1;min-width:0;cursor:pointer;display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
           +'<span class="lv-caret" style="font-size:10px;color:var(--text3);width:10px;flex-shrink:0">▸</span>'
-          +'<span style="font-weight:700;font-size:12.5px;color:'+(hasErr?'#7F1D1D':'var(--spice-text)')+'">'+esc(nm)+'</span>'
+          // The seller NAME opens that seller's edit modal — this is the fix
+          // path for the "no PAN / no phone / no GSTIN" warnings listed here.
+          // stopPropagation so it doesn't also collapse/expand the group.
+          +'<span onclick="event.stopPropagation();lvEditSeller('+gi+')" title="Edit this seller’s details" style="font-weight:700;font-size:12.5px;color:'+(hasErr?'#7F1D1D':'var(--spice-text)')+';text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px">'+esc(nm)+' <span style="font-weight:400;opacity:.7">✎</span></span>'
           +'<span style="font-weight:400;color:var(--spice-text-mute);font-size:11px">— '+arr.length+' lot'+(arr.length>1?'s':'')+'</span>'
           +sumBadges
         +'</div>'
@@ -20638,6 +20693,46 @@ function lvUpdateSellerSelCount(){
   if(!btn) return;
   btn.disabled = n===0;
   btn.textContent = n>0 ? ('📋 Show '+n+' seller'+(n>1?'s':'')+' in Recent Entries') : '📋 Show selected in Recent Entries';
+}
+// ── Fix a seller straight from the validation report ───────
+// Clicking a seller name here hands off to the ordinary Edit Seller modal.
+// The validation modal steps aside (both are .modal-bg at the same z-index,
+// and this one sits later in the DOM so it would paint on top) and comes
+// back — re-run against the same trade — once the seller modal closes, so
+// the operator sees their fix reflected in the report immediately.
+let _lvResumeAid=null, _lvEditingTid=null;
+async function lvEditSeller(gi){
+  const s=_lvSellers[gi];
+  if(!s) return;
+  if(!s.tids.length){
+    toast('“'+s.name+'” isn’t linked to a seller record — open the lot in Recent Entries and pick a seller.');
+    return;
+  }
+  // Same name under two trader ids means duplicate seller records. Edit the
+  // first and say so, rather than silently fixing half their lots.
+  if(s.tids.length>1) toast('“'+s.name+'” exists as '+s.tids.length+' seller records — opening the first.');
+  _lvResumeAid=_lvAid;
+  _lvEditingTid=s.tids[0];
+  hideModal('lot-validate-modal');
+  await openTraderEdit(s.tids[0]);
+  // openTraderEdit bails out (showError) if the fetch failed — don't strand
+  // the operator with both modals shut.
+  const m=document.getElementById('trader-modal');
+  if(!m || !m.classList.contains('show')) lvResumeAfterSellerEdit();
+}
+// Re-open the validation report after the seller modal closes (saved OR
+// cancelled). No-op when the seller modal wasn't opened from here.
+function lvResumeAfterSellerEdit(){
+  if(!_lvEditingTid) return;
+  _lvEditingTid=null;
+  const aid=_lvResumeAid; _lvResumeAid=null;
+  if(aid) openLotValidate(aid);
+}
+// Cancel/close on the Edit Seller modal — routed through here so the
+// validation report can come back when that's where we came from.
+function closeTraderModal(){
+  hideModal('trader-modal');
+  lvResumeAfterSellerEdit();
 }
 function lvToggleAllSellers(on){
   document.querySelectorAll('.lv-seller-cb').forEach(cb=>{ cb.checked=!!on; });
@@ -21049,7 +21144,7 @@ function updateSplitSummary(){
 // Split-mode generation: one buyer, several invoices. Loops the normal
 // single-invoice endpoint once per non-empty group, passing that group's
 // lotNos and a sequential invoice number.
-async function generateInvoiceSplit(aid,saleType,startInvNo,noTI,buyerCode){
+async function generateInvoiceSplit(aid,saleType,startInvNo,noTI,buyerCode,dateSource,docType){
   const n=splitGroupCount();
   const groups=[];
   for(let i=1;i<=n;i++){
@@ -21069,7 +21164,7 @@ async function generateInvoiceSplit(aid,saleType,startInvNo,noTI,buyerCode){
           const r=await fetch(B+`/api/invoices/generate/${aid}`,{
             method:'POST',
             headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},
-            body:JSON.stringify({saleType,buyerCode,invoiceNo:invNo,noTI,lotNos:groups[i]})});
+            body:JSON.stringify({saleType,buyerCode,invoiceNo:invNo,noTI,lotNos:groups[i],dateSource:dateSource||'today',docType:docType||'original'})});
           const d=await r.json();
           if(!r.ok)throw new Error(d.error||'Generation failed');
           results.success.push({invNo,total:Number(d.invoice.grandTotal)});
@@ -21116,22 +21211,51 @@ async function loadPurEligibleSellers(){
 // force=true (used when opening a modal / switching sale type, where a
 // fresh suggestion should replace any stale value). A null suggestion
 // (no prior document) leaves the field blank for manual entry.
-async function suggestDocNo(aid,module,inputId,sale,force){
+async function suggestDocNo(aid,module,inputId,sale,force,type){
   const el=document.getElementById(inputId);
   if(!el||!aid)return;
   if(!force&&el.value.trim())return;
   try{
     let url=`/api/auctions/${aid}/suggest-doc-no/${module}`;
-    if(module==='invoices'&&sale)url+=`?sale=${encodeURIComponent(sale)}`;
+    const qs=[];
+    if(module==='invoices'&&sale)qs.push('sale='+encodeURIComponent(sale));
+    // Proforma numbers run their own series — ask for it so the field seeds
+    // from the right sequence.
+    if(module==='invoices'&&String(type||'').toLowerCase()==='proforma')qs.push('type=proforma');
+    if(qs.length)url+='?'+qs.join('&');
     const r=await j(url);
     if(r&&r.suggested!=null)el.value=r.suggested;
     else if(force)el.value='';
   }catch(e){console.warn('suggestDocNo',e)}
 }
+// Single-invoice modal: react to a Document Type switch — refresh the hint and
+// re-seed the number from the proforma/original series.
+function onGiDocTypeChange(){
+  const dt=document.getElementById('gi-doctype')?.value||'original';
+  const hint=document.getElementById('gi-doctype-hint');
+  if(hint)hint.textContent=dt==='proforma'
+    ? 'Saves a draft (PROFORMA series). Lots stay un-shipped; excluded from GST/Tally/reports.'
+    : 'Raises the real tax invoice and marks the lots invoiced.';
+  const aid=document.getElementById('inv-auction')?.value;
+  suggestDocNo(aid,'invoices','gi-invno',document.getElementById('gi-sale')?.value||'',true,dt);
+}
+// Generate-All modal: same reaction for the batch Document Type switch.
+function onGaDocTypeChange(){
+  const dt=document.getElementById('ga-doctype')?.value||'original';
+  const hint=document.getElementById('ga-doctype-hint');
+  if(hint)hint.textContent=dt==='proforma'
+    ? 'Saves draft proformas (own number series); lots stay un-shipped and excluded from GST/Tally/reports.'
+    : 'Raises real tax invoices and marks the lots invoiced.';
+  const aid=document.getElementById('inv-auction')?.value;
+  suggestDocNo(aid,'invoices','ga-start',document.getElementById('ga-sale')?.value||'',true,dt);
+}
 
 function openGenInvModal(){
   if(!document.getElementById('inv-auction').value){alert('Select an auction first');return}
   const noti=document.getElementById('gi-no-ti'); if(noti) noti.checked=false;
+  const gds=document.getElementById('gi-date-source'); if(gds) gds.value='today';
+  const gdt=document.getElementById('gi-doctype'); if(gdt) gdt.value='original';
+  onGiDocTypeChange();
   // Reset split mode so a fresh open never inherits a prior buyer's panel.
   const st=document.getElementById('gi-split-toggle'); if(st){st.checked=false;st.disabled=true;}
   const sp=document.getElementById('gi-split-panel'); if(sp)sp.style.display='none';
@@ -21168,6 +21292,11 @@ async function openGenAllModal(kind){
   document.getElementById('gen-all-sale-wrap').style.display=kind==='invoices'?'block':'none';
   var _splitWrap=document.getElementById('gen-all-split-wrap');if(_splitWrap)_splitWrap.style.display=kind==='invoices'?'block':'none';
   var _splitChk=document.getElementById('ga-split');if(_splitChk)_splitChk.checked=true;
+  var _dateWrap=document.getElementById('gen-all-date-wrap');if(_dateWrap)_dateWrap.style.display=kind==='invoices'?'block':'none';
+  var _dateSrc=document.getElementById('ga-date-source');if(_dateSrc)_dateSrc.value='today';
+  var _dtWrap=document.getElementById('gen-all-doctype-wrap');if(_dtWrap)_dtWrap.style.display=kind==='invoices'?'block':'none';
+  var _dtSel=document.getElementById('ga-doctype');if(_dtSel)_dtSel.value='original';
+  if(kind==='invoices')onGaDocTypeChange();
   if(document.getElementById('ga-sale'))document.getElementById('ga-sale').value='';
   document.getElementById('ga-start').value='';
   // Suggest the starting number by continuing the previous trade's series.
@@ -21258,7 +21387,7 @@ async function doGenerateAll(){
   if(!start||parseInt(start)<1){alert('Enter a starting number (positive integer)');return}
   const body={};
   if(kind==='bills')body.startBillNo=start;
-  else{body.startInvoiceNo=start;if(kind==='invoices'){body.saleType=document.getElementById('ga-sale').value||'';body.splitInvoices=document.getElementById('ga-split')?document.getElementById('ga-split').checked:true}}
+  else{body.startInvoiceNo=start;if(kind==='invoices'){body.saleType=document.getElementById('ga-sale').value||'';body.splitInvoices=document.getElementById('ga-split')?document.getElementById('ga-split').checked:true;body.dateSource=document.getElementById('ga-date-source')?document.getElementById('ga-date-source').value:'today';body.docType=document.getElementById('ga-doctype')?document.getElementById('ga-doctype').value:'original'}}
   const routeMap={invoices:'invoices/generate-all',purchases:'purchases/generate-all',bills:'bills/generate-all'};
   const submitBtn=document.getElementById('ga-submit');
   submitBtn.disabled=true;submitBtn.textContent='Generating…';
@@ -21547,6 +21676,18 @@ async function sbLoadPreview(){
     if (typeof hideNudge === 'function') hideNudge('spiceBoard');
   });
 }
+// Prefer the filename the server put on Content-Disposition — that's where
+// the company-short-name suffix on the e-Auction CSV is decided, so the saved
+// file matches what the server intended. Falls back to the caller's name when
+// the header is absent (or hidden by a cross-origin fetch).
+function filenameFromResponse(r, fallback){
+  try{
+    const cd = r.headers.get('Content-Disposition') || '';
+    const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+    if (m && m[1]) return decodeURIComponent(m[1].trim());
+  }catch(_){}
+  return fallback;
+}
 async function sbDownload(format){
   if (!sbAuctionId()) { alert('Select a auction first'); return; }
   const t = sbCurrent();
@@ -21555,7 +21696,7 @@ async function sbDownload(format){
     if (!r.ok) { let m=`Export failed`; try{const e=await r.json();if(e.error)m=e.error}catch(_){} toast(m); return; }
     const blob = await r.blob();
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-    a.download = `${t}_${sbAuctionId()}.${format}`;
+    a.download = filenameFromResponse(r, `${t}_${sbAuctionId()}.${format}`);
     a.click(); URL.revokeObjectURL(a.href);
   });
 }
@@ -23461,6 +23602,8 @@ async function generateInvoice(){
   const startInvNo=parseInt(document.getElementById('gi-invno').value.trim(),10);
   if(!startInvNo||isNaN(startInvNo)||startInvNo<1){alert('Enter a valid starting invoice number');return}
   const noTI=!!document.getElementById('gi-no-ti')?.checked;
+  const dateSource=document.getElementById('gi-date-source')?.value||'today';
+  const docType=document.getElementById('gi-doctype')?.value||'original';
   const list=document.getElementById('gi-buyer-list');
   const checked=Array.from(list?.querySelectorAll('.gi-cb:checked')||[]);
   if(!checked.length){alert('Select at least one buyer');return}
@@ -23478,7 +23621,7 @@ async function generateInvoice(){
   const splitToggle=document.getElementById('gi-split-toggle');
   if(splitToggle && splitToggle.checked && !splitToggle.disabled){
     if(buyers.length!==1){alert('Split mode needs exactly one buyer selected');return}
-    return generateInvoiceSplit(aid,saleType,startInvNo,noTI,buyers[0]);
+    return generateInvoiceSplit(aid,saleType,startInvNo,noTI,buyers[0],dateSource,docType);
   }
 
   // Single buyer: keep old behavior (immediate feedback, quick)
@@ -23489,11 +23632,11 @@ async function generateInvoice(){
         const r=await fetch(B+`/api/invoices/generate/${aid}`,{
           method:'POST',
           headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},
-          body:JSON.stringify({saleType,buyerCode,invoiceNo:String(startInvNo),noTI})});
+          body:JSON.stringify({saleType,buyerCode,invoiceNo:String(startInvNo),noTI,dateSource,docType})});
         const d=await r.json();
         if(!r.ok)throw new Error(d.error||'Failed to generate invoice');
         hideModal('gen-inv-modal');
-        toast('Invoice generated — Total: ₹'+fmtI(Number(d.invoice.grandTotal),2));
+        toast((d.proforma?'Proforma generated':'Invoice generated')+' — Total: ₹'+fmtI(Number(d.invoice.grandTotal),2));
         await loadInvoices();
         refreshGenGate('invoices');
       });
@@ -23513,7 +23656,7 @@ async function generateInvoice(){
           const r=await fetch(B+`/api/invoices/generate/${aid}`,{
             method:'POST',
             headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},
-            body:JSON.stringify({saleType,buyerCode,invoiceNo:invNo,noTI})});
+            body:JSON.stringify({saleType,buyerCode,invoiceNo:invNo,noTI,dateSource,docType})});
           const d=await r.json();
           if(!r.ok)throw new Error(d.error||'Generation failed');
           results.success.push({buyerCode,invNo,total:Number(d.invoice.grandTotal)});
@@ -23550,10 +23693,12 @@ async function loadInvoices(opts){
   const aid=document.getElementById('inv-auction')?.value;
   pcRefreshGate(aid, '#tc-invoices');
   const sale=(document.getElementById('inv-sale-filter')?.value||'').trim();
+  const docType=(document.getElementById('inv-doctype-filter')?.value||'original').trim();
   const _invSearch=(document.getElementById('inv-search')?.value||'').trim();
   const params=[];
   if(aid)params.push('auction_id='+encodeURIComponent(aid));
   if(sale)params.push('sale='+encodeURIComponent(sale));
+  if(docType)params.push('docType='+encodeURIComponent(docType));
   if(_invSearch)params.push('search='+encodeURIComponent(_invSearch));
   params.push('page=' + _invoicesPager.page);
   params.push('pageSize=' + _invoicesPager.pageSize);
@@ -23667,8 +23812,14 @@ async function loadInvoices(opts){
         },
         totalLabel: (n)=> String(n) },
       { key:'invo', label:'Inv#', sort:'text',
-        // Bold + dark green to make the primary identifier pop in a wide row
-        render:(i)=>`<strong style="color:var(--spice-cardamom-dk);font-weight:700">${esc(i.invo)}</strong>` },
+        // Bold + dark green to make the primary identifier pop in a wide row.
+        // Proforma rows carry an amber PROFORMA tag; once raised, they show the
+        // original number they became.
+        render:(i)=>`<strong style="color:var(--spice-cardamom-dk);font-weight:700">${esc(i.invo)}</strong>`
+          + (Number(i.is_proforma)
+              ? ` <span style="display:inline-block;padding:1px 6px;border-radius:5px;background:#FEF3C7;color:#92400E;font-size:10px;font-weight:700;letter-spacing:.3px;vertical-align:middle">PROFORMA</span>`
+                + (i.raised_invo?` <span style="font-size:10px;color:var(--text3)">&rarr; raised ${esc(i.raised_invo)}</span>`:'')
+              : '') },
       // Lorry + Distance moved up to sit right after Inv# (per spec) so
       // the e-way-bill identifiers cluster with the invoice number for
       // faster visual scanning.
@@ -23742,6 +23893,18 @@ async function loadInvoices(opts){
         // Bigger + darker total to make it the "answer" column at a glance
         render:(i)=>`<span style="font-weight:700;color:var(--spice-text-main);font-size:14px">${fmtI(i.tot||0,2)}</span>` },
       { key:'_actions', label:'Actions', sortable:false, searchable:false, render:(i)=>{
+          // Proforma rows get a focused action set: view/print, Raise Original
+          // (unless already raised), and delete. The tax-invoice-only actions
+          // (No T&I, purchase-view, revert) don't apply to a draft.
+          if (Number(i.is_proforma) === 1) {
+            const raiseBtn = (i.raised_invo && String(i.raised_invo).trim() !== '')
+              ? `<button class="icon-btn" title="Already raised as ${esc(i.raised_invo)}" style="opacity:.35;cursor:not-allowed" disabled>&#11014;</button>`
+              : `<button class="icon-btn needs-invoice-write" title="Raise the original tax invoice for this proforma" onclick="raiseOriginal(${i.id},'${esc(i.buyer1||i.buyer)}','${esc(i.sale)}-${esc(i.invo)}')" style="color:#0e7490;font-weight:700">&#11014;</button>`;
+            return iconBtn('pdf','View / download proforma PDF',`viewInvoicePDF(${i.id})`)
+              + raiseBtn
+              + iconBtn('edit','Edit proforma',`openInvoiceEdit(${JSON.stringify(i).replace(/"/g,'&quot;')})`)
+              + iconBtn('del','Delete proforma',`delInvoice(${i.id})`);
+          }
           // Purchase-view button is ALWAYS shown so users see the feature exists,
           // but is DISABLED outside ASP context (not Kerala + e-Auction). The
           // disabled state keeps the icon visible (greyed) with a tooltip
@@ -23775,6 +23938,17 @@ async function loadInvoices(opts){
   if (typeof syncInvoiceMaster === 'function') syncInvoiceMaster();
 }
 
+async function raiseOriginal(id, buyerName, pfLabel){
+  if(!confirm(`Raise the ORIGINAL tax invoice for proforma ${pfLabel} (${buyerName})?\n\nThis assigns the next invoice number, marks the lots invoiced, and keeps the proforma marked as raised.\n\nContinue?`))return;
+  try{
+    const r=await fetch(B+`/api/invoices/${id}/raise-original`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},body:JSON.stringify({})});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'Raise failed');
+    toast('Original raised — Invoice #'+d.invoiceNo);
+    await loadInvoices({keepPage:true});
+    refreshGenGate('invoices');
+  }catch(e){showError(e)}
+}
 async function revertInvoice(id, buyerName, invLabel){
   if(!confirm(`Revert invoice ${invLabel} for ${buyerName}?\n\nThis will DELETE this invoice and re-enable its lots so you can re-generate.\n\nContinue?`))return;
   try{
@@ -26577,7 +26751,8 @@ async function exportType(type,format,aidOverride){format=format||'xlsx';
       const blob = await r.blob();
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `EAuction_${aid}.csv`;
+      // Server names this one (it carries the "_<company short name>" suffix).
+      a.download = filenameFromResponse(r, `EAuction_${aid}.csv`);
       a.click();
     });
     return;

@@ -31,13 +31,29 @@
 
     <div class="card">
       <div class="step-h">1. Download &amp; install</div>
-      <a class="dl" href="downloads/spice-auction.apk" download>⬇ Download app</a>
+      <a id="dl-btn" class="dl" href="downloads/spice-auction.apk">⬇ Download app</a>
+      <div id="dl-status" class="note"></div>
       <ol>
         <li>Tap <b>Download app</b> above.</li>
         <li>Open the downloaded <code>spice-auction.apk</code>.</li>
         <li>If asked, allow <b>“install from unknown sources”</b> for your browser — then tap <b>Install</b>.</li>
       </ol>
       <div class="note">This is your own company app — the “unknown sources” warning is normal for apps not from the Play Store.</div>
+      <script>
+        // Don't fail silently: if the APK hasn't been published yet (404), grey
+        // out the button and say so, instead of a dead tap.
+        (function(){
+          var btn=document.getElementById('dl-btn'), st=document.getElementById('dl-status');
+          fetch('downloads/spice-auction.apk',{method:'HEAD',cache:'no-store'})
+            .then(function(r){ if(!r.ok) throw 0; })
+            .catch(function(){
+              btn.removeAttribute('href');
+              btn.style.opacity='.45'; btn.style.pointerEvents='none';
+              st.innerHTML='⚠️ The app isn’t published yet. Admin: build it once via '+
+                'GitHub → <b>Actions → Build Android APK → Run workflow</b>, then reload this page.';
+            });
+        })();
+      </script>
 
       <div class="step-h">2. Pair the printer (once)</div>
       <ol>

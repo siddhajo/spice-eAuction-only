@@ -2721,7 +2721,7 @@ function buildSalesIspRows(db, auctionId, cfg) {
            (SELECT b.cpin    FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cpin,
            (SELECT b.cstate  FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cstate
     FROM invoices i
-    WHERE i.auction_id = ? AND ${ISP_STATE_SQL}
+    WHERE i.auction_id = ? AND ${ISP_STATE_SQL} AND COALESCE(i.is_proforma,0) = 0
     ORDER BY i.sale, CAST(i.invo AS INTEGER), i.id
   `);
   const raw = stmt.all(auctionId);
@@ -3441,7 +3441,7 @@ function buildSalesAspRows(db, auctionId, cfg) {
   const stmt = db.prepare(`
     SELECT i.*
     FROM invoices i
-    WHERE i.auction_id = ? AND ${ASP_STATE_SQL}
+    WHERE i.auction_id = ? AND ${ASP_STATE_SQL} AND COALESCE(i.is_proforma,0) = 0
     ORDER BY i.buyer, i.sale, CAST(i.invo AS INTEGER), i.id
   `);
   const raw = stmt.all(auctionId);
@@ -3572,7 +3572,7 @@ function buildSalesRows(db, auctionId, cfg) {
            (SELECT COALESCE(NULLIF(TRIM(b.cpin), ''), TRIM(b.pin))
               FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS buyer_pin
     FROM invoices i
-    WHERE i.auction_id = ?
+    WHERE i.auction_id = ? AND COALESCE(i.is_proforma,0) = 0
     ORDER BY i.buyer, i.sale, i.invo, i.id
   `);
   const raw = stmt.all(auctionId);
@@ -4341,7 +4341,7 @@ function buildSalesPartyLedgerRows(db, auctionId, cfg, opts = {}) {
     SELECT DISTINCT b.*
     FROM invoices i
     JOIN buyers b ON b.buyer = i.buyer
-    WHERE i.auction_id = ?
+    WHERE i.auction_id = ? AND COALESCE(i.is_proforma,0) = 0
   `;
   const params = [auctionId];
   if (opts.partyName) {
@@ -4427,7 +4427,7 @@ function listAuctionParties(db, auctionId) {
     SELECT DISTINCT b.buyer1 AS name, b.gstin, b.pla AS place
     FROM invoices i
     JOIN buyers b ON b.buyer = i.buyer
-    WHERE i.auction_id = ?
+    WHERE i.auction_id = ? AND COALESCE(i.is_proforma,0) = 0
     ORDER BY b.buyer1
   `).all(auctionId);
   for (const b of buyers) {

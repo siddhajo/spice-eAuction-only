@@ -303,6 +303,7 @@ async function initDb() {
     buyer1 TEXT DEFAULT '',
     sale TEXT DEFAULT '',
     invo TEXT DEFAULT '',
+    proforma_invo TEXT DEFAULT '',
     pqty REAL DEFAULT 0,
     prate REAL DEFAULT 0,
     puramt REAL DEFAULT 0,
@@ -384,6 +385,12 @@ async function initDb() {
     -- Invoices tab (and settable at generation). Also added via ALTER for
     -- older DBs in the migrations block below.
     no_ti INTEGER DEFAULT 0,
+    -- Proforma vs original tax invoice. is_proforma=1 rows are saved proforma
+    -- documents, EXCLUDED from every statutory/analytical reader. raised_invo
+    -- records the original number a proforma was later raised as (empty =
+    -- still pending). See migrations block for the ALTERs on upgraded DBs.
+    is_proforma INTEGER DEFAULT 0,
+    raised_invo TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
@@ -970,6 +977,17 @@ async function initDb() {
     // different groups fan out into separate sales invoices at generation.
     // 0 (the default) means "no split" — the buyer's whole set is one invoice.
     'ALTER TABLE lots ADD COLUMN invoice_group INTEGER DEFAULT 0',
+    // Proforma vs original (tax) sales invoices. is_proforma=1 marks a saved
+    // proforma document — it is EXCLUDED from every statutory/analytical
+    // reader (Tally XML, GST journals, collection report, DBF, dashboards).
+    // raised_invo, on a proforma row, records the original invoice number it
+    // was later raised as (empty = still pending / not yet shipped).
+    'ALTER TABLE invoices ADD COLUMN is_proforma INTEGER DEFAULT 0',
+    "ALTER TABLE invoices ADD COLUMN raised_invo TEXT DEFAULT ''",
+    // Proforma number stamped on a lot when a proforma is generated for it.
+    // lots.invo stays the ORIGINAL-invoice gate; a priced lot with an empty
+    // invo is still "pending original" regardless of any proforma.
+    "ALTER TABLE lots ADD COLUMN proforma_invo TEXT DEFAULT ''",
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }

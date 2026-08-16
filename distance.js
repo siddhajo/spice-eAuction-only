@@ -114,7 +114,7 @@ function listMissingPins(db, auctionId = null) {
     SELECT DISTINCT b.pin AS pin, COALESCE(b.pla, '') AS place, COALESCE(b.state, '') AS state, 'buyer' AS kind
     FROM invoices i
     LEFT JOIN buyers b ON b.buyer = i.buyer
-    WHERE b.pin IS NOT NULL AND b.pin != ''
+    WHERE b.pin IS NOT NULL AND b.pin != '' AND COALESCE(i.is_proforma,0) = 0
     ${auctionId ? 'AND i.auction_id = ?' : ''}
   `;
   const traderSql = `

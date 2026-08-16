@@ -23,6 +23,7 @@ const license = require('./license');
 const { REPORTS: LORRY_REPORTS } = require('./lorry-reports');
 const { REPORTS: SPICE_BOARD_REPORTS, getReportFilters: getSpiceBoardFilters } = require('./spice-board-reports');
 const { mountMobile } = require('./mobile-bridge');
+const { syncLotsFromTrader } = require('./trader-lot-sync');
 // Defensive resolution — see _company-identity-fallback.js. Uses the
 // real getCompanyIdentity from report-formatters.js when available,
 // falls through to an inline fallback otherwise. Fixes
@@ -270,6 +271,25 @@ function normalizeDate(v) {
   const d = new Date(s);
   if (!isNaN(d)) return d.toISOString().slice(0, 10);
   return s;
+}
+
+// Today's LOCAL date as canonical YYYY-MM-DD. Uses local getters (not
+// toISOString, which is UTC) so an invoice raised late in the evening doesn't
+// jump to tomorrow. Matches the storage format of auctions.date.
+function todayLocalYMD() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+// Resolve the date to stamp on a generated invoice. dateSource 'auction' uses
+// the auction's own date (legacy behaviour); anything else (default) uses
+// today's local date — the ship/raise date, which is the sensible default for
+// a tax invoice and required when a late invoice is raised long after the sale.
+function resolveInvoiceDate(dateSource, auctionDate) {
+  return String(dateSource || '').trim().toLowerCase() === 'auction'
+    ? auctionDate
+    : todayLocalYMD();
 }
 
 // Add N days to an ISO date string (YYYY-MM-DD). String-based to avoid
@@ -2763,7 +2783,10 @@ app.put('/api/traders/:id', requireTraderWrite, (req, res) => {
   if (Array.isArray(t.banks)) {
     syncTraderBanks(db, parseInt(req.params.id), t.banks);
   }
-  res.json({ success: true });
+  // Keep the seller's lots in step with the master record — see the matching
+  // call in mobile-bridge.js (which normally serves this path).
+  const lotSync = syncLotsFromTrader(db, parseInt(req.params.id, 10));
+  res.json({ success: true, lots: lotSync });
 });
 app.delete('/api/traders/:id', requireDelete, (req, res) => {
   const db = getDb();
@@ -3978,7 +4001,7 @@ function _countRemainingParties(db, docType, auctionId) {
 
 function _generatedCount(db, docType, auctionId, ano) {
   switch (docType) {
-    case 'invoices':    return db.get('SELECT COUNT(*) AS c FROM invoices WHERE auction_id = ?', [auctionId]).c;
+    case 'invoices':    return db.get('SELECT COUNT(*) AS c FROM invoices WHERE auction_id = ? AND COALESCE(is_proforma,0) = 0', [auctionId]).c;
     case 'purchases':   return db.get('SELECT COUNT(*) AS c FROM purchases WHERE auction_id = ?', [auctionId]).c;
     case 'bills':       return db.get('SELECT COUNT(*) AS c FROM bills WHERE ano = ?', [ano]).c;
     case 'debit_notes': return db.get('SELECT COUNT(*) AS c FROM debit_notes WHERE ano = ?', [ano]).c;
@@ -5236,8 +5259,14 @@ app.get('/api/auctions/:id/next-lot/:branch', requireViewOrLotEntry, (req, res) 
 // that type (omit for an overall/"all sale types" suggestion).
 // Returns { suggested: <int|null> } — null when no prior document exists
 // (the modal then leaves the field blank for manual entry).
+// `global: true` means the suggestion is MAX(col)+1 across EVERY auction (a
+// single running series), not just auctions that sort before the current one.
+// Sales invoices use this so a late invoice from an old auction continues the
+// running number instead of backfilling that auction's block (e.g. Auction 1's
+// leftovers raised after Auction 2 take the next number, not a gap-fill).
+// `excludeProforma: true` keeps proforma rows out of the original series.
 const DOC_NO_MODULES = {
-  invoices:  { table: 'invoices',  col: 'invo', perSale: true },
+  invoices:  { table: 'invoices',  col: 'invo', perSale: true, global: true, excludeProforma: true },
   purchases: { table: 'purchases', col: 'invo', perSale: false },
   bills:     { table: 'bills',     col: 'bil',  perSale: false },
 };
@@ -5250,25 +5279,49 @@ app.get('/api/auctions/:id/suggest-doc-no/:module', requireView, (req, res) => {
   if (!cur) return res.status(404).json({ error: 'Auction not found' });
 
   const saleType = mod.perSale ? String(req.query.sale || '').trim() : '';
-  // Highest numeric document number across every auction that sorts BEFORE
-  // the current one. Rows are joined back to their auction so the ordering
-  // is by (date, numeric ano, id), not by the trade-number text alone.
-  // `col`/`table`/`sale` interpolation is safe — module comes from the
-  // fixed whitelist above, never from user input.
-  const params = [cur.date, cur.date, cur.ano, cur.date, cur.ano, cur.id];
-  let saleClause = '';
-  if (saleType) { saleClause = ' AND t.sale = ?'; params.push(saleType); }
-  const row = db.get(
-    `SELECT MAX(CAST(t.${mod.col} AS INTEGER)) AS mx
-       FROM ${mod.table} t
-       JOIN auctions a ON a.id = t.auction_id
-      WHERE t.${mod.col} GLOB '[0-9]*'
-        AND ( a.date < ?
-           OR (a.date = ? AND CAST(a.ano AS INTEGER) < CAST(? AS INTEGER))
-           OR (a.date = ? AND CAST(a.ano AS INTEGER) = CAST(? AS INTEGER) AND a.id < ?) )
-        ${saleClause}`,
-    params
-  );
+  // Proforma series is separate from the original series (?type=proforma).
+  // Only meaningful for the invoices module; harmless elsewhere.
+  const wantProforma = mod.excludeProforma && String(req.query.type || '').trim().toLowerCase() === 'proforma';
+  const proformaClause = mod.excludeProforma
+    ? (wantProforma ? ' AND COALESCE(t.is_proforma,0) = 1' : ' AND COALESCE(t.is_proforma,0) = 0')
+    : '';
+
+  let row;
+  if (mod.global) {
+    // Single running series across ALL auctions — highest numeric number
+    // anywhere in the (original- or proforma-) series, +1. `col`/`table`/`sale`
+    // interpolation is safe — module comes from the fixed whitelist above.
+    const params = [];
+    let saleClause = '';
+    if (saleType) { saleClause = ' AND t.sale = ?'; params.push(saleType); }
+    row = db.get(
+      `SELECT MAX(CAST(t.${mod.col} AS INTEGER)) AS mx
+         FROM ${mod.table} t
+        WHERE t.${mod.col} GLOB '[0-9]*'
+          ${saleClause}
+          ${proformaClause}`,
+      params
+    );
+  } else {
+    // Highest numeric document number across every auction that sorts BEFORE
+    // the current one. Rows are joined back to their auction so the ordering
+    // is by (date, numeric ano, id), not by the trade-number text alone.
+    const params = [cur.date, cur.date, cur.ano, cur.date, cur.ano, cur.id];
+    let saleClause = '';
+    if (saleType) { saleClause = ' AND t.sale = ?'; params.push(saleType); }
+    row = db.get(
+      `SELECT MAX(CAST(t.${mod.col} AS INTEGER)) AS mx
+         FROM ${mod.table} t
+         JOIN auctions a ON a.id = t.auction_id
+        WHERE t.${mod.col} GLOB '[0-9]*'
+          AND ( a.date < ?
+             OR (a.date = ? AND CAST(a.ano AS INTEGER) < CAST(? AS INTEGER))
+             OR (a.date = ? AND CAST(a.ano AS INTEGER) = CAST(? AS INTEGER) AND a.id < ?) )
+          ${saleClause}
+          ${proformaClause}`,
+      params
+    );
+  }
   const mx = parseInt(row && row.mx, 10);
   const suggested = Number.isFinite(mx) && mx > 0 ? mx + 1 : null;
   res.json({ suggested });
@@ -6803,7 +6856,7 @@ app.get('/api/lots/validate/:auctionId', requireViewOrLotEntry, (req, res) => {
 // INVOICES — Sales (GSTIN.PRG / KGSTIN.PRG)
 // ══════════════════════════════════════════════════════════════
 app.get('/api/invoices', requireView, (req, res) => {
-  const { ano, auction_id, from, to, sale, search } = req.query;
+  const { ano, auction_id, from, to, sale, search, docType } = req.query;
   const db = getDb();
   const cfg = getSettingsFlat(db);
   // Filter list by active business context: when state=KERALA show only
@@ -6812,6 +6865,13 @@ app.get('/api/invoices', requireView, (req, res) => {
   // ASP→ISP flow on the same auction.
   const businessState = String(cfg.business_state || 'TAMIL NADU').toUpperCase();
   let where = 'WHERE 1=1'; const p = [];
+  // Proforma / original filter. 'proforma' → drafts only; 'all' → both;
+  // anything else (incl. default) → originals only, so the list, KPIs and
+  // totals reflect real tax invoices unless the user explicitly asks for drafts.
+  const _dt = String(docType || '').trim().toLowerCase();
+  if (_dt === 'proforma')      where += ' AND COALESCE(is_proforma,0) = 1';
+  else if (_dt === 'all')      { /* no is_proforma filter */ }
+  else                         where += ' AND COALESCE(is_proforma,0) = 0';
   if (auction_id) { where += ' AND auction_id = ?'; p.push(parseInt(auction_id)); }
   if (ano) { where += ' AND ano = ?'; p.push(ano); }
   if (from && to) { where += ' AND date BETWEEN ? AND ?'; p.push(from, to); }
@@ -7049,6 +7109,11 @@ app.post('/api/invoices/generate/:auctionId',
   // Per-invoice "No Transport & Insurance" — when set, this invoice is
   // generated with transport + insurance forced to 0.
   const noTI = (req.body.noTI === true || String(req.body.noTI || '').toLowerCase() === 'true' || Number(req.body.noTI) === 1) ? 1 : 0;
+  // Proforma vs original (tax) invoice. A proforma is a saved draft: it stamps
+  // lots.proforma_invo (NOT lots.invo), so the lots stay eligible to be raised
+  // as originals later, and it is excluded from every statutory/analytical
+  // reader (Tally/GST/journals/dashboards).
+  const isProforma = String(req.body.docType || 'original').trim().toLowerCase() === 'proforma' ? 1 : 0;
   // Optional lot subset — when the Generate modal is in "split" mode, only
   // these lot numbers go on this invoice (one buyer → several invoices).
   // Absent/empty means "all of the buyer's lots" (the default behaviour).
@@ -7075,17 +7140,58 @@ app.post('/api/invoices/generate/:auctionId',
 
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [req.params.auctionId]);
   const s = invoice.summary;
+  // Invoice date: today (ship date) by default, or the auction's date when the
+  // operator picks "Auction date" in the Generate modal.
+  const invoiceDate = resolveInvoiceDate(req.body.dateSource, auction.date);
   // Store the BUSINESS context state (TAMIL NADU=ISP, KERALA=ASP), not
   // the auction's physical state. This lets us distinguish ASP invoices
   // from ISP invoices in the same auction, which matters for the sales
   // list cross-reference (ASP Inv# column).
   const invoiceState = cfg.business_state || auction.state || '';
-  db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [req.params.auctionId,auction.ano,auction.date,invoiceState,saleType,String(invoiceNo),buyerCode,invoice.buyer.buyer1||'',
+
+  // The set of prior proforma numbers currently stamped on THESE lots — used
+  // below either to clear replaced drafts (proforma path) or to mark the draft
+  // as raised (original path). Read before any stamping changes the lots.
+  const _priorProformaNos = () => {
+    const nos = new Set();
+    for (const li of invoice.lineItems) {
+      const r = db.get('SELECT proforma_invo FROM lots WHERE auction_id=? AND lot_no=? AND buyer=? LIMIT 1',
+        [req.params.auctionId, li.lot, buyerCode]);
+      if (r && r.proforma_invo) nos.add(String(r.proforma_invo));
+    }
+    return nos;
+  };
+
+  if (isProforma) {
+    // Replace any prior un-raised draft(s) covering these lots so regenerating
+    // a proforma doesn't pile up rows. (Raised proformas are history — kept.)
+    for (const pn of _priorProformaNos()) {
+      db.run("DELETE FROM invoices WHERE auction_id=? AND sale=? AND is_proforma=1 AND COALESCE(raised_invo,'')='' AND invo=?",
+        [req.params.auctionId, saleType, pn]);
+    }
+  }
+
+  db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti,is_proforma)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [req.params.auctionId,auction.ano,invoiceDate,invoiceState,saleType,String(invoiceNo),buyerCode,invoice.buyer.buyer1||'',
      invoice.buyer.gstin||'',invoice.buyer.pla||'',s.totalBags,s.totalQty,s.totalAmount,s.gunnyCost,s.transportCost,s.insuranceCost,
-     s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',noTI]);
-  
+     s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',noTI,isProforma]);
+
+  if (isProforma) {
+    // Proforma: stamp lots.proforma_invo ONLY — never invo/asp_invo/sale, so
+    // the lots stay eligible to be raised as originals later.
+    for (const li of invoice.lineItems) {
+      db.run('UPDATE lots SET proforma_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
+        [String(invoiceNo), req.params.auctionId, li.lot, buyerCode]);
+    }
+    return res.json({ success: true, invoice: invoice.summary, proforma: true });
+  }
+
+  // ── ORIGINAL (tax) invoice ──
+  // Any un-raised proforma draft that covered these lots is now being shipped:
+  // keep the draft row but stamp raised_invo with this original number.
+  const _proformaToRaise = _priorProformaNos();
+
   // Update lots with sale type and invoice number.
   // Workflow trace:
   //   - In Kerala (ASP) context: set `invo` AND `asp_invo` to the new ASP
@@ -7120,6 +7226,10 @@ app.post('/api/invoices/generate/:auctionId',
       db.run('UPDATE lots SET sale=?, invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
         [saleType, String(invoiceNo), req.params.auctionId, li.lot, buyerCode]);
     }
+  }
+  for (const pn of _proformaToRaise) {
+    db.run("UPDATE invoices SET raised_invo=? WHERE auction_id=? AND is_proforma=1 AND COALESCE(raised_invo,'')='' AND invo=?",
+      [String(invoiceNo), req.params.auctionId, pn]);
   }
   res.json({ success: true, invoice: invoice.summary });
 });
@@ -7272,6 +7382,10 @@ app.post('/api/invoices/generate-all/:auctionId',
   const splitInvoices = !(req.body.splitInvoices === false
     || String(req.body.splitInvoices).toLowerCase() === 'false'
     || Number(req.body.splitInvoices) === 0);
+  // Proforma vs original for the whole batch. Proforma rows stamp
+  // lots.proforma_invo (not invo), stay out of statutory readers, and leave
+  // the lots eligible to be raised as originals later.
+  const isProforma = String(req.body.docType || 'original').trim().toLowerCase() === 'proforma' ? 1 : 0;
 
   let nextNo = parseInt(startInvoiceNo);
   if (!nextNo || nextNo < 1) return res.status(400).json({ error: 'startInvoiceNo must be a positive integer' });
@@ -7315,7 +7429,10 @@ app.post('/api/invoices/generate-all/:auctionId',
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [req.params.auctionId]);
   const results = [];
   const errors = [];
-  
+  // Date for every invoice in this batch: today (ship date) by default, or the
+  // auction's date when "Auction date" is picked in the Generate-All modal.
+  const invoiceDate = resolveInvoiceDate(req.body.dateSource, auction.date);
+
   const isASPStateBulk = String(cfg.business_state || '').toUpperCase() === 'KERALA';
   for (const row of buyers) {
     const useSaleType = saleType || row.default_sale || 'L';
@@ -7352,31 +7469,62 @@ app.post('/api/invoices/generate-all/:auctionId',
         const invoNo = String(nextNo);
         // Store BUSINESS context state — see single-invoice handler for rationale
         const invoiceState = cfg.business_state || auction.state || '';
-        db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          [req.params.auctionId,auction.ano,auction.date,invoiceState,useSaleType,invoNo,row.buyer,invoice.buyer.buyer1||'',
+        // Proforma: clear this group's prior un-raised draft(s) so a re-run
+        // doesn't pile up rows (raised proformas are history — kept).
+        if (isProforma) {
+          const priorNos = new Set();
+          for (const li of invoice.lineItems) {
+            const r = db.get('SELECT proforma_invo FROM lots WHERE auction_id=? AND lot_no=? AND buyer=? LIMIT 1',
+              [req.params.auctionId, li.lot, row.buyer]);
+            if (r && r.proforma_invo) priorNos.add(String(r.proforma_invo));
+          }
+          for (const pn of priorNos) {
+            db.run("DELETE FROM invoices WHERE auction_id=? AND sale=? AND is_proforma=1 AND COALESCE(raised_invo,'')='' AND invo=?",
+              [req.params.auctionId, useSaleType, pn]);
+          }
+        }
+        db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti,is_proforma)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [req.params.auctionId,auction.ano,invoiceDate,invoiceState,useSaleType,invoNo,row.buyer,invoice.buyer.buyer1||'',
            invoice.buyer.gstin||'',invoice.buyer.pla||'',s.totalBags,s.totalQty,s.totalAmount,s.gunnyCost,s.transportCost,s.insuranceCost,
-           s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',noTI]);
-        // ASP-aware lot update: see single-invoice handler above for rationale.
-        // Scoped to this invoice's line items, so only THIS group's lots get stamped.
-        for (const li of invoice.lineItems) {
-          if (isASPStateBulk) {
-            const existing = db.get(
-              'SELECT invo, asp_invo FROM lots WHERE auction_id=? AND lot_no=? AND buyer=? LIMIT 1',
-              [req.params.auctionId, li.lot, row.buyer]
-            );
-            const hasIspInvo = existing && existing.invo && existing.invo !== existing.asp_invo;
-            if (hasIspInvo) {
-              db.run('UPDATE lots SET asp_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
-                [invoNo, req.params.auctionId, li.lot, row.buyer]);
+           s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',noTI,isProforma]);
+        if (isProforma) {
+          // Proforma: stamp lots.proforma_invo ONLY (leave invo/asp_invo/sale).
+          for (const li of invoice.lineItems) {
+            db.run('UPDATE lots SET proforma_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
+              [invoNo, req.params.auctionId, li.lot, row.buyer]);
+          }
+        } else {
+          // ASP-aware lot update: see single-invoice handler above for rationale.
+          // Scoped to this invoice's line items, so only THIS group's lots get stamped.
+          const raiseNos = new Set();
+          for (const li of invoice.lineItems) {
+            const pr = db.get('SELECT proforma_invo FROM lots WHERE auction_id=? AND lot_no=? AND buyer=? LIMIT 1',
+              [req.params.auctionId, li.lot, row.buyer]);
+            if (pr && pr.proforma_invo) raiseNos.add(String(pr.proforma_invo));
+            if (isASPStateBulk) {
+              const existing = db.get(
+                'SELECT invo, asp_invo FROM lots WHERE auction_id=? AND lot_no=? AND buyer=? LIMIT 1',
+                [req.params.auctionId, li.lot, row.buyer]
+              );
+              const hasIspInvo = existing && existing.invo && existing.invo !== existing.asp_invo;
+              if (hasIspInvo) {
+                db.run('UPDATE lots SET asp_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
+                  [invoNo, req.params.auctionId, li.lot, row.buyer]);
+              } else {
+                // Don't set `sale` in ASP context — ISP step decides
+                db.run('UPDATE lots SET invo=?, asp_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
+                  [invoNo, invoNo, req.params.auctionId, li.lot, row.buyer]);
+              }
             } else {
-              // Don't set `sale` in ASP context — ISP step decides
-              db.run('UPDATE lots SET invo=?, asp_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
-                [invoNo, invoNo, req.params.auctionId, li.lot, row.buyer]);
+              db.run('UPDATE lots SET sale=?, invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
+                [useSaleType, invoNo, req.params.auctionId, li.lot, row.buyer]);
             }
-          } else {
-            db.run('UPDATE lots SET sale=?, invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
-              [useSaleType, invoNo, req.params.auctionId, li.lot, row.buyer]);
+          }
+          // Mark any proforma draft that covered these lots as raised (kept).
+          for (const pn of raiseNos) {
+            db.run("UPDATE invoices SET raised_invo=? WHERE auction_id=? AND is_proforma=1 AND COALESCE(raised_invo,'')='' AND invo=?",
+              [invoNo, req.params.auctionId, pn]);
           }
         }
         results.push({ buyer: row.buyer, group: gk, invoiceNo: invoNo, sale: useSaleType, grandTotal: s.grandTotal });
@@ -7386,6 +7534,69 @@ app.post('/api/invoices/generate-all/:auctionId',
   }
 
   res.json({ success: true, generated: results.length, results, errors });
+});
+
+// ── RAISE ORIGINAL from a PROFORMA ──────────────────────────────
+// Ships a pending proforma: assigns the next global original number for its
+// sale type, generates the tax invoice for the proforma's still-un-shipped
+// lots (stamping lots.invo), and marks the proforma raised (kept for history).
+// Mirrors the original path of POST /api/invoices/generate.
+app.post('/api/invoices/:id/raise-original', requireInvoiceWrite, (req, res) => {
+  const db = getDb(); const cfg = getSettingsFlat(db);
+  const pf = db.get('SELECT * FROM invoices WHERE id=?', [req.params.id]);
+  if (!pf) return res.status(404).json({ error: 'Invoice not found' });
+  if (!Number(pf.is_proforma)) return res.status(400).json({ error: 'Not a proforma invoice' });
+  if (pf.raised_invo && String(pf.raised_invo).trim() !== '') {
+    return res.status(400).json({ error: `This proforma was already raised as invoice ${pf.raised_invo}` });
+  }
+
+  // The proforma's lots that haven't been shipped yet (no original invo).
+  const lotNos = db.all(
+    `SELECT lot_no FROM lots
+      WHERE auction_id=? AND buyer=? AND proforma_invo=?
+        AND (invo IS NULL OR invo='')
+      ORDER BY CAST(lot_no AS INTEGER), lot_no`,
+    [pf.auction_id, pf.buyer, pf.invo]).map(r => String(r.lot_no));
+  if (!lotNos.length) return res.status(400).json({ error: 'No un-shipped lots remain for this proforma' });
+
+  const saleType = pf.sale;
+  const invoice = buildSalesInvoice(db, pf.auction_id, pf.buyer, saleType, cfg,
+    { noTI: Number(pf.no_ti) || 0, lotNos, excludeInvoiced: true });
+  if (!invoice) return res.status(404).json({ error: 'Could not build the invoice (lots already invoiced or unpriced)' });
+
+  // Next GLOBAL original number for this sale type (same rule as suggest-doc-no).
+  const mx = db.get(`SELECT MAX(CAST(invo AS INTEGER)) AS mx FROM invoices
+      WHERE invo GLOB '[0-9]*' AND sale=? AND COALESCE(is_proforma,0)=0`, [saleType]);
+  const invoiceNo = String((parseInt(mx && mx.mx, 10) || 0) + 1);
+
+  const auction = db.get('SELECT * FROM auctions WHERE id=?', [pf.auction_id]);
+  const s = invoice.summary;
+  const invoiceDate = resolveInvoiceDate(req.body.dateSource, auction && auction.date);
+  const invoiceState = cfg.business_state || (auction && auction.state) || '';
+  db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti,is_proforma)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
+    [pf.auction_id, auction ? auction.ano : pf.ano, invoiceDate, invoiceState, saleType, invoiceNo, pf.buyer, invoice.buyer.buyer1||'',
+     invoice.buyer.gstin||'', invoice.buyer.pla||'', s.totalBags, s.totalQty, s.totalAmount, s.gunnyCost, s.transportCost, s.insuranceCost,
+     s.cgst, s.sgst, s.igst, s.tdsAmount||0, s.roundDiff, s.grandTotal, s.addlCharge||0, s.addlChargeName||'', Number(pf.no_ti)||0]);
+
+  const isASPState = String(cfg.business_state || '').toUpperCase() === 'KERALA';
+  for (const li of invoice.lineItems) {
+    if (isASPState) {
+      const existing = db.get('SELECT invo, asp_invo FROM lots WHERE auction_id=? AND lot_no=? AND buyer=? LIMIT 1',
+        [pf.auction_id, li.lot, pf.buyer]);
+      const hasIspInvo = existing && existing.invo && existing.invo !== existing.asp_invo;
+      if (hasIspInvo) {
+        db.run('UPDATE lots SET asp_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?', [invoiceNo, pf.auction_id, li.lot, pf.buyer]);
+      } else {
+        db.run('UPDATE lots SET invo=?, asp_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?', [invoiceNo, invoiceNo, pf.auction_id, li.lot, pf.buyer]);
+      }
+    } else {
+      db.run('UPDATE lots SET sale=?, invo=? WHERE auction_id=? AND lot_no=? AND buyer=?', [saleType, invoiceNo, pf.auction_id, li.lot, pf.buyer]);
+    }
+  }
+  // Keep the proforma row; mark it raised.
+  db.run('UPDATE invoices SET raised_invo=? WHERE id=?', [invoiceNo, pf.id]);
+  res.json({ success: true, invoiceNo, invoice: invoice.summary });
 });
 
 // ── LORRY / VEHICLE NUMBER — bulk-set on selected invoices ──
@@ -7583,7 +7794,7 @@ app.post('/api/invoices/:id/revert', requireInvoiceRevert, (req, res) => {
 app.post('/api/invoices/revert-all/:auctionId', requireInvoiceRevert, (req, res) => {
   const db = getDb();
   const aid = req.params.auctionId;
-  const invoices = db.all('SELECT * FROM invoices WHERE auction_id = ?', [aid]);
+  const invoices = db.all('SELECT * FROM invoices WHERE auction_id = ? AND COALESCE(is_proforma,0) = 0', [aid]);
   const admin = isAdmin(req);
   const lockSuffix = lockFeatureOn(db) ? ' AND locked_at IS NULL' : '';
   let lotsFreed = 0;
@@ -7680,6 +7891,9 @@ app.get('/api/invoices/pdf/:id', requireView, async (req, res) => {
     // Optional dispatched-through override from print modal (URL-encoded)
     const dispatchedThrough = req.query.dispatchedThrough || '';
     if (dispatchedThrough) invoice.dispatchedThrough = dispatchedThrough;
+
+    // Proforma flag → renderers title the document "PROFORMA INVOICE".
+    invoice.isProforma = !!Number(stored.is_proforma);
 
     // Look up the ASP invoice number from lots so the ISP PDF can show
     // the cross-reference under "Other References" as ASP/I-{asp}/{season}.
@@ -7869,6 +8083,7 @@ app.post('/api/invoices/pdf-bulk', requireView, async (req, res) => {
         };
       }
       if (dispatchedThrough) invoice.dispatchedThrough = dispatchedThrough;
+      invoice.isProforma = !!Number(stored.is_proforma);
       // ASP cross-reference for ISP invoices — see single endpoint for rationale
       if (String(stored.state || '').toUpperCase() !== 'KERALA') {
         const aspRow = db.get(
@@ -9452,7 +9667,7 @@ app.post('/api/debit-notes/generate', requireInvoiceWrite, requireDebitNoteEnabl
   if (!candidates.length) {
     // Distinguish "is a sales invoice" from "doesn't exist" for cleaner UX.
     const isSalesInv = db.get(
-      `SELECT id FROM invoices WHERE invo = ? LIMIT 1`,
+      `SELECT id FROM invoices WHERE invo = ? AND COALESCE(is_proforma,0) = 0 LIMIT 1`,
       [purchno]
     );
     if (isSalesInv) {
@@ -12011,6 +12226,17 @@ app.get('/api/spice-board-reports/:type/data', requireView, (req, res) => {
 });
 
 // XLSX / PDF download. ?format=xlsx (default) or ?format=pdf.
+// Company short name, reduced to something safe to put in a filename
+// (A-Z/0-9/dash only, so it survives Windows, macOS and the Content-
+// Disposition header without quoting games). Empty string when the install
+// has no short name configured — callers then omit the suffix entirely
+// rather than emitting a trailing underscore.
+function companyFilenameTag(db) {
+  try {
+    const short = getCompanyIdentity(getSettingsFlat(db)).shortName || '';
+    return String(short).toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  } catch (_) { return ''; }
+}
 app.get('/api/spice-board-reports/:type/export', requireExport, async (req, res) => {
   const def = SPICE_BOARD_REPORTS[req.params.type];
   if (!def) return res.status(400).json({ error: 'Unknown report', available: Object.keys(SPICE_BOARD_REPORTS) });
@@ -12038,8 +12264,17 @@ app.get('/api/spice-board-reports/:type/export', requireExport, async (req, res)
     if (format === 'csv') {
       if (!def.csv) return res.status(400).json({ error: 'CSV not supported for this report' });
       const buf = await def.csv(db, opts);
+      // e-Auction CSVs get a "_<company short name>" suffix — several sister
+      // concerns upload from the same machine and the portal files were
+      // otherwise indistinguishable in the downloads folder.
+      const tag = companyFilenameTag(db);
+      const fname = `${def.name}_${opts.auctionId}${tag ? '_' + tag : ''}.csv`;
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Content-Disposition', `attachment; filename="${def.name}_${opts.auctionId}.csv"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+      // The PWA can run off a different origin (window.SPICE_API_BASE); without
+      // this the browser hides Content-Disposition and the client can't name
+      // the blob it downloads.
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
       return res.send(buf);
     }
     if (!def.xlsx) return res.status(400).json({ error: 'XLSX not supported for this report' });
@@ -12371,7 +12606,7 @@ app.get('/api/invoices/distances/:auctionId', requireView, (req, res) => {
               i.distance_km
        FROM invoices i
        LEFT JOIN buyers b ON b.buyer = i.buyer
-       WHERE i.auction_id = ?
+       WHERE i.auction_id = ? AND COALESCE(i.is_proforma,0) = 0
        ORDER BY CAST(i.invo AS INTEGER), i.id`,
       [req.params.auctionId]
     );
@@ -12482,6 +12717,7 @@ app.put('/api/route-distances', requireExport, (req, res) => {
            LEFT JOIN buyers b ON b.buyer = i.buyer
            WHERE COALESCE(NULLIF(TRIM(b.cpin), ''), TRIM(b.pin)) = ?
              AND i.distance_km IS NOT NULL
+             AND COALESCE(i.is_proforma,0) = 0
          )`,
         [otherPin]
       );
@@ -12496,7 +12732,7 @@ app.put('/api/route-distances', requireExport, (req, res) => {
       const r = db.get(
         `SELECT COUNT(*) AS n FROM invoices i
          LEFT JOIN buyers b ON b.buyer = i.buyer
-         WHERE COALESCE(NULLIF(TRIM(b.cpin), ''), TRIM(b.pin)) = ?`,
+         WHERE COALESCE(NULLIF(TRIM(b.cpin), ''), TRIM(b.pin)) = ? AND COALESCE(i.is_proforma,0) = 0`,
         [otherPin]
       );
       appliedCount = r ? r.n : 0;
@@ -12855,7 +13091,7 @@ app.get('/api/stats', requireView, (req, res) => {
     buyers:     (db.get('SELECT COUNT(*) as c FROM buyers') || {}).c || 0,
     auctions:   (db.get('SELECT COUNT(*) as c FROM auctions') || {}).c || 0,
     lots:       (db.get('SELECT COUNT(*) as c FROM lots') || {}).c || 0,
-    invoices:   (db.get('SELECT COUNT(*) as c FROM invoices') || {}).c || 0,
+    invoices:   (db.get('SELECT COUNT(*) as c FROM invoices WHERE COALESCE(is_proforma,0) = 0') || {}).c || 0,
     purchases:  (db.get('SELECT COUNT(*) as c FROM purchases') || {}).c || 0,
     bills:      (db.get('SELECT COUNT(*) as c FROM bills') || {}).c || 0,
     debit_notes:(db.get('SELECT COUNT(*) as c FROM debit_notes') || {}).c || 0,
@@ -12877,7 +13113,7 @@ app.get('/api/stats', requireView, (req, res) => {
   // All-trades invoice GST — Σ(CGST+SGST+IGST) over every sales invoice.
   // Feeds the dashboard trade-snapshot matrix's GST column in cumulative mode.
   const cumGstRow = db.get(
-    `SELECT COALESCE(SUM(COALESCE(cgst,0)+COALESCE(sgst,0)+COALESCE(igst,0)),0) as gst FROM invoices`
+    `SELECT COALESCE(SUM(COALESCE(cgst,0)+COALESCE(sgst,0)+COALESCE(igst,0)),0) as gst FROM invoices WHERE COALESCE(is_proforma,0) = 0`
   ) || {};
   const cumulative = {
     qty:    cumRow.qty    || 0,
@@ -12906,7 +13142,7 @@ app.get('/api/stats', requireView, (req, res) => {
             -- Invoice GST for this trade = Σ(CGST+SGST+IGST) over its sales
             -- invoices. Drives the dashboard trade-snapshot matrix GST column.
             COALESCE((SELECT SUM(COALESCE(iv.cgst,0)+COALESCE(iv.sgst,0)+COALESCE(iv.igst,0))
-                      FROM invoices iv WHERE iv.auction_id = a.id),0) as gst
+                      FROM invoices iv WHERE iv.auction_id = a.id AND COALESCE(iv.is_proforma,0) = 0),0) as gst
      FROM auctions a
      LEFT JOIN lots l ON l.auction_id = a.id
      GROUP BY a.id, a.ano, a.date, a.crop_type
@@ -12974,6 +13210,7 @@ app.get('/api/stats', requireView, (req, res) => {
     `SELECT i.id, i.sale, i.invo, i.buyer, i.buyer1, i.tot, i.date,
             i.place
      FROM invoices i
+     WHERE COALESCE(i.is_proforma,0) = 0
      ORDER BY i.id DESC LIMIT 5`
   );
 
@@ -12984,13 +13221,14 @@ app.get('/api/stats', requireView, (req, res) => {
   // Revenue this month (sum of invoice totals in current month)
   const monthTot = (db.get(
     `SELECT COALESCE(SUM(tot),0) as s FROM invoices
-     WHERE date >= date('now','start of month')`
+     WHERE date >= date('now','start of month') AND COALESCE(is_proforma,0) = 0`
   ) || {}).s || 0;
   // Revenue last month (for comparison)
   const lastMonthTot = (db.get(
     `SELECT COALESCE(SUM(tot),0) as s FROM invoices
      WHERE date >= date('now','start of month','-1 month')
-       AND date <  date('now','start of month')`
+       AND date <  date('now','start of month')
+       AND COALESCE(is_proforma,0) = 0`
   ) || {}).s || 0;
 
   // Pending invoices:
@@ -13111,7 +13349,7 @@ app.get('/api/stats/revenue-trend', requireView, (req, res) => {
   const rows = db.all(
     `SELECT date(date) as day, COALESCE(SUM(tot), 0) as total, COUNT(*) as count
        FROM invoices
-      WHERE date IS NOT NULL AND date != ''
+      WHERE date IS NOT NULL AND date != '' AND COALESCE(is_proforma,0) = 0
         AND date(date) >= date('now', '-' || ? || ' days')
         AND date(date) <= date('now')
       GROUP BY date(date)
@@ -13405,7 +13643,7 @@ app.get('/api/insights', requireView, (req, res) => {
        COUNT(*) AS invoices,
        COALESCE(SUM(i.tot), 0) AS value
      FROM invoices i
-     WHERE date(i.date) BETWEEN date(?) AND date(?)${singleAuctionId ? ` AND i.auction_id = ${Number(singleAuctionId)}` : ''}
+     WHERE COALESCE(i.is_proforma,0) = 0 AND date(i.date) BETWEEN date(?) AND date(?)${singleAuctionId ? ` AND i.auction_id = ${Number(singleAuctionId)}` : ''}
      GROUP BY COALESCE(NULLIF(TRIM(i.buyer1), ''), TRIM(i.buyer))
      HAVING buyer_code IS NOT NULL AND buyer_code <> ''
      ORDER BY value DESC
