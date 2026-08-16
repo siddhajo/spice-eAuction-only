@@ -1429,6 +1429,9 @@ tr.row-locked:hover > td{background:#fef3c7 !important}
    clearly from booked (white) and locked (amber) rows in the lots list. */
 tr.row-reserved > td{background:#fed7aa !important;border-top:1px solid #f97316}
 tr.row-reserved:hover > td{background:#fdba74 !important}
+/* Seller GSTIN == Buyer GSTIN — self-deal alert (non-blocking). */
+tr.row-gstin-clash > td{background:#fee2e2 !important;border-top:1px solid #ef4444}
+tr.row-gstin-clash:hover > td{background:#fecaca !important}
 /* Default-trade row highlight on the Auctions tab — the trade the mobile
    app pre-selects. Tinted green with an amber/filled star button. */
 tr.row-default-trade > td{background:var(--spice-cardamom-lt) !important}
@@ -4044,6 +4047,11 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
             <button type="button" id="pe-filter-buyer-clear" onclick="peClearFilterField('buyer')" title="Clear" aria-label="Clear" style="display:none;position:absolute;right:5px;top:50%;transform:translateY(-50%);width:18px;height:18px;border:none;background:var(--bg);border-radius:50%;cursor:pointer;font-size:10px;color:var(--text3);align-items:center;justify-content:center;padding:0;line-height:1">✕</button>
           </span>
           <button class="btn btn-o" style="height:32px;padding:0 10px;font-weight:600" onclick="peClearFilters()">Clear filters</button>
+          <!-- Completed rows (priced + buyer set) are hidden by default so the
+               operator only sees what still needs work. Tick to show everything. -->
+          <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:var(--text2);white-space:nowrap;margin-left:6px;cursor:pointer">
+            <input type="checkbox" id="pe-show-all" onchange="peToggleShowAll(this.checked)" style="width:15px;height:15px;cursor:pointer"> Show all
+          </label>
         </div>
         <!-- Bulk buyer-code bar — appears only when one or more lots are
              ticked in the grid below. Set applies a buyer code (picked from
@@ -4051,16 +4059,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
              them. -->
         <div id="pe-action-bar" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding:10px 12px;background:var(--spice-cardamom-lt,#eef6f0);border:1px solid #C5E3D2;border-radius:8px">
           <span style="font-weight:700;font-size:13px;color:var(--text)"><span id="pe-sel-count">0</span> lot(s) selected</span>
-          <button class="btn btn-a" style="height:34px;padding:0 12px;font-weight:600" onclick="openPeSetBuyerModal()">👤 Set Buyer Code</button>
+          <button class="btn btn-a" style="height:34px;padding:0 12px;font-weight:600" onclick="openPeSetBuyerModal()">👤 Set Buyer Code &amp; Split</button>
           <button class="btn btn-o" style="height:34px;padding:0 12px;font-weight:600" onclick="peClearBuyerCode()" title="Remove the buyer code from the ticked lots">🧹 Clear Buyer Code</button>
-          <!-- Bulk split assignment: type a number, hit Set Split # → every
-               ticked lot gets that invoice split group (same number = same
-               invoice at generation). Clear Split resets them to 0. -->
-          <span style="display:inline-flex;align-items:center;gap:6px;padding-left:6px;border-left:1px solid #C5E3D2">
-            <input id="pe-split-input" type="number" min="0" step="1" placeholder="#" title="Invoice split group to assign to the ticked lots" onkeydown="if(event.key==='Enter')peSetSplitSelected()" style="width:56px;height:34px;text-align:center;border:1.5px solid var(--border);border-radius:6px;font-size:13px">
-            <button class="btn btn-a" style="height:34px;padding:0 12px;font-weight:600" onclick="peSetSplitSelected()" title="Assign this split number to all ticked lots">✂️ Set Split #</button>
-            <button class="btn btn-o" style="height:34px;padding:0 12px;font-weight:600" onclick="peClearSplitSelected()" title="Reset the split (to 0) on the ticked lots">Clear Split</button>
-          </span>
           <button class="btn btn-o" style="height:34px;padding:0 12px;font-weight:600;margin-left:auto" onclick="peClearSelection()" title="Untick all lots">Clear selection</button>
         </div>
       </div>
@@ -6356,7 +6356,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
        user can still save. Toggled by lotCheckSellerBuyer(). -->
   <div id="l-samebuyer-warn" style="display:none;align-items:center;gap:8px;background:#ffedd5;border:1px solid #fb923c;border-left:4px solid #f97316;color:#9a3412;padding:9px 12px;border-radius:8px;margin-bottom:12px;font-size:13px;font-weight:600">
     <span style="font-size:16px">⚠️</span>
-    <span>Buyer is the <b>same party as the seller</b>. Double-check before saving.</span>
+    <span class="sb-msg">Buyer is the <b>same party as the seller</b>. Double-check before saving.</span>
   </div>
   <input type="hidden" id="l-id">
   <!-- Hidden trader_id — populated from the loaded lot, rewritten when the
@@ -6438,6 +6438,15 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       <div>Sale Type</div>  <div id="bsb-p-sale" style="font-weight:600;color:var(--text)"></div>
       <div>Place</div>      <div id="bsb-p-place"></div>
     </div>
+  </div>
+  <!-- Invoice split — only shown when opened from Price Entry. Same number =
+       same invoice at generation; leave blank to not change it, 0 = no split.
+       Applied to the same lots on Apply. -->
+  <div id="bsb-split-row" class="fg" style="display:none;margin-top:12px">
+    <label>Invoice Split #
+      <span style="margin-left:6px;font-weight:400;font-size:11px;color:var(--text3)">optional — same number = same invoice · blank = leave unchanged · 0 = no split</span>
+    </label>
+    <input id="bsb-split" type="number" min="0" step="1" placeholder="#" style="width:110px">
   </div>
   <div class="actions">
     <button class="btn btn-o" onclick="hideModal('bulk-setbuyer-modal')">Cancel</button>
@@ -21795,7 +21804,10 @@ async function loadLots(opts){
     { key:'crpt', label:'Crop Receipt', sort:'text',
       render:(l)=> l.crpt ? esc(l.crpt) : '<span style="color:var(--text3)">—</span>' },
     { key:'name', label:'Name', sort:'text' },
-    { key:'buyer', label:'Buyer', sort:'text' },
+    { key:'buyer', label:'Buyer', sort:'text',
+      render:(l)=> sameGstin(l.cr, l.buyer_gstin)
+        ? `<span title="Seller and Buyer have the same GSTIN" style="color:#dc2626;font-weight:700">⚠ ${esc(l.buyer||'')}</span>`
+        : esc(l.buyer||'') },
     { key:'buyer_code', label:'Code', sort:'text',
       render:(l)=> l.buyer_code ? esc(l.buyer_code) : '<span style="color:var(--text3)">—</span>' },
     { key:'branch', label:'Branch', sort:'text' },
@@ -21922,7 +21934,7 @@ async function loadLots(opts){
     // mode never paints a stray amber row.
     // Locked rows tint amber; reserved (held) lots tint pale-blue. Locked
     // wins when a lot is somehow both, since the lock is the stronger state.
-    rowClass: (row) => row && row.locked_at ? 'row-locked' : (row && Number(row.reserved) ? 'row-reserved' : ''),
+    rowClass: (row) => row && row.locked_at ? 'row-locked' : (row && Number(row.reserved) ? 'row-reserved' : (row && sameGstin(row.cr, row.buyer_gstin) ? 'row-gstin-clash' : '')),
     columns });
   // Restore ticks from the persistent set onto the freshly-mounted
   // checkboxes (DataTable.mount creates new DOM nodes that all start
@@ -21944,9 +21956,12 @@ function openLotEdit(l){
   document.getElementById('lot-modal-title').textContent='Edit Lot #'+l.lot_no;
   document.getElementById('l-id').value=l.id;
   L_FIELDS.forEach(f=>{const el=document.getElementById(L_IDS[f]);if(el)el.value=l[f]!=null?l[f]:''});
+  // Stash the buyer's GSTIN (server-joined onto the lot row) so the
+  // seller-vs-buyer GSTIN check can compare it against l-cr.
+  { const _bEl=document.getElementById('l-buyer'); if(_bEl) _bEl.dataset.gstin = l.buyer_gstin || ''; }
   // Live buyer-vs-seller banner: refresh on open, and whenever the seller or
   // buyer fields change (typed or auto-filled from the buyer-code lookup).
-  ['l-name','l-buyer','l-buyer1'].forEach(id => {
+  ['l-name','l-buyer','l-buyer1','l-cr'].forEach(id => {
     const el = document.getElementById(id);
     if (el && !el._sbWired) { el._sbWired = true; el.addEventListener('input', lotCheckSellerBuyer); el.addEventListener('change', lotCheckSellerBuyer); }
   });
@@ -22003,6 +22018,8 @@ function openLotEdit(l){
         };
         setIf('l-buyer',  match.buyer  || '');
         setIf('l-buyer1', match.buyer1 || '');
+        // Keep the buyer GSTIN in sync for the seller-vs-buyer GSTIN check.
+        { const _bEl=document.getElementById('l-buyer'); if(_bEl) _bEl.dataset.gstin = match.gstin || ''; }
         // NOTE: do NOT touch l-cr here. `cr` is the SELLER's CR/GSTIN
         // (set from the seller via the Name lookup) and drives the
         // seller-side GST classification in calculateLot. The buyer code
@@ -22335,6 +22352,8 @@ async function openBulkSetBuyerModal(){
   _bsbSelected = null;
   const codeEl = document.getElementById('bsb-code');
   if (codeEl) codeEl.value = '';
+  // Split field is a Price-Entry concept — hide it on the Lots tab.
+  const splitRow = document.getElementById('bsb-split-row'); if (splitRow) splitRow.style.display = 'none';
   _bsbRenderPreview();
   // Refresh the buyer master so newly-added codes show up.
   try {
@@ -22495,8 +22514,32 @@ async function applyBulkSetBuyer(){
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || 'Bulk update failed');
+    // Price Entry only: if a split # was entered, apply it to the same lots in
+    // the same action (the split control now lives in this modal). Blank = leave
+    // the split unchanged; WD/NA lots can't be invoiced so are dropped.
+    let splitMsg = '';
+    if (_bsbContext === 'pe') {
+      const splitEl = document.getElementById('bsb-split');
+      const rawSplit = splitEl ? String(splitEl.value).trim() : '';
+      if (rawSplit !== '') {
+        const g = parseInt(rawSplit, 10);
+        if (Number.isFinite(g) && g >= 0) {
+          const splitIds = _bsbLotIds.filter(id => {
+            const l = _pe.byId.get(id); if (!l) return true;
+            const c = String(l.code || '').trim().toUpperCase();
+            return c !== 'WD' && c !== 'NA';
+          });
+          if (splitIds.length) {
+            try {
+              await j('/api/lots/invoice-group/bulk', { method: 'POST', body: JSON.stringify({ ids: splitIds, value: g }) });
+              splitMsg = g > 0 ? ` · split #${g}` : ' · split cleared';
+            } catch (e) { /* non-fatal — buyer already applied */ }
+          }
+        }
+      }
+    }
     if (typeof toast === 'function') {
-      toast('Updated ' + (d.updated || 0) + ' lot(s) with code ' + _bsbSelected.code);
+      toast('Updated ' + (d.updated || 0) + ' lot(s) with code ' + _bsbSelected.code + splitMsg);
     }
     hideModal('bulk-setbuyer-modal');
     if (_bsbContext === 'pe') {
@@ -22520,8 +22563,25 @@ function lotCheckSellerBuyer(){
   const seller = norm(document.getElementById('l-name')?.value);
   const buyer  = norm(document.getElementById('l-buyer')?.value);
   const buyer1 = norm(document.getElementById('l-buyer1')?.value);
-  const same = !!seller && (seller === buyer || seller === buyer1);
-  warn.style.display = same ? 'flex' : 'none';
+  const nameSame = !!seller && (seller === buyer || seller === buyer1);
+  // GSTIN match: seller's CR (l-cr) vs the buyer's GSTIN (stashed on l-buyer's
+  // dataset when the lot loaded or a buyer code was resolved).
+  const gstinSame = sameGstin(document.getElementById('l-cr')?.value,
+                              document.getElementById('l-buyer')?.dataset.gstin || '');
+  const msgEl = warn.querySelector('.sb-msg');
+  if (gstinSame) {
+    if (msgEl) msgEl.innerHTML = 'Seller and Buyer have the <b>same GSTIN</b>. Double-check before saving.';
+    warn.style.background = '#FEE2E2'; warn.style.borderColor = '#ef4444';
+    warn.style.borderLeftColor = '#dc2626'; warn.style.color = '#991B1B';
+  } else if (nameSame) {
+    if (msgEl) msgEl.innerHTML = 'Buyer is the <b>same party as the seller</b>. Double-check before saving.';
+    warn.style.background = '#ffedd5'; warn.style.borderColor = '#fb923c';
+    warn.style.borderLeftColor = '#f97316'; warn.style.color = '#9a3412';
+  }
+  warn.style.display = (gstinSame || nameSame) ? 'flex' : 'none';
+  // Tint the buyer inputs so the clash is visible at the field too.
+  const alertColor = gstinSame ? '#dc2626' : (nameSame ? '#f97316' : '');
+  ['l-buyer','l-code'].forEach(id => { const el = document.getElementById(id); if (el) el.style.borderColor = alertColor; });
 }
 
 async function saveLot(){
@@ -22613,7 +22673,16 @@ async function validateLots(){
 // bring-to-front), so clearing the selection restores every lot's place.
 // dirty/sel/front are keyed by lot id (stable across re-render/reorder).
 let _pe = { aid: null, lots: [], byId: new Map(), view: [], dirty: new Set(), sel: new Set(),
-            front: [], sort: { col: null, dir: 1 }, filter: { lot: '', branch: '', seller: '', buyer: '' } };
+            front: [], sort: { col: null, dir: 1 }, filter: { lot: '', branch: '', seller: '', buyer: '' },
+            showAll: false };
+// A row is "complete" (needs no more work) when it's priced AND has a buyer
+// code, OR it's a WD/NA lot (withdrawn / not-auctioned → no pricing needed).
+// Completed rows are hidden unless "Show all" is on.
+function _peIsComplete(l){
+  const code = String(l && l.code || '').trim().toUpperCase();
+  if (code === 'WD' || code === 'NA') return true;
+  return Number(l && l.price) > 0 && !!String(l && l.buyer || '').trim();
+}
 function _peFlagPriceCheck(){ return String(((window._CCFG)||{}).flag_price_check).toLowerCase() === 'true'; }
 function _peFmt(n){ return (Number(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 // Bags are counts — always whole numbers, no decimals.
@@ -22689,8 +22758,13 @@ function _pePasses(l){
         !String(l.buyer || '').toLowerCase().includes(q) &&
         !String(l.buyer1 || '').toLowerCase().includes(q)) return false;
   }
+  // Hide completed rows unless "Show all" is ticked — but always show a lot that
+  // was explicitly brought to front (a confirmed edit of a completed lot).
+  if (!_pe.showAll && _peIsComplete(l) && !_pe.front.includes(l.id)) return false;
   return true;
 }
+// Toggle showing completed rows (from the "Show all" checkbox).
+function peToggleShowAll(on){ _pe.showAll = !!on; renderPriceEntryGrid(); }
 // Derive the display order from the canonical list: filter, then sort, with
 // any bring-to-front lots pinned on top (in the order they were entered).
 function _peViewLots(){
@@ -22758,9 +22832,14 @@ function renderPriceEntryGrid(){
       : (l.code
           ? `<span style="font-weight:700;color:#15803d">${esc(l.code)}</span>`
           : `<span style="color:var(--text3)">—</span>`);
-    const buyerCodeCell = l.buyer  ? esc(l.buyer)  : `<span style="color:var(--text3)">—</span>`;
+    // Alert when this lot's seller and buyer are the SAME GSTIN.
+    const gstClash = sameGstin(l.cr, l.buyer_gstin);
+    const gstWarn = gstClash ? `<span title="Seller and Buyer have the same GSTIN" style="color:#dc2626;font-weight:700;margin-right:3px">⚠</span>` : '';
+    const buyerCodeCell = gstWarn + (l.buyer  ? esc(l.buyer)  : `<span style="color:var(--text3)">—</span>`);
     const buyerNameCell = l.buyer1 ? esc(l.buyer1) : `<span style="color:var(--text3)">—</span>`;
-    return `<tr data-lotid="${l.id}"${noSale ? ' style="opacity:.55"' : (pinned ? ' style="background:#f0fdf4"' : '')}>
+    const rowBg = gstClash ? '#fee2e2' : (pinned ? '#f0fdf4' : '');
+    const rowStyle = [noSale ? 'opacity:.55' : '', rowBg ? `background:${rowBg}` : ''].filter(Boolean).join(';');
+    return `<tr data-lotid="${l.id}"${rowStyle ? ` style="${rowStyle}"` : ''}${gstClash ? ' title="⚠ Seller and Buyer have the same GSTIN"' : ''}>
       <td style="padding:6px 4px;width:28px;text-align:center"><input type="checkbox" class="pe-cb" data-pesel="${l.id}" ${locked ? 'disabled' : ''} ${ticked ? 'checked' : ''} onchange="peToggleSel(${l.id}, this.checked)" style="width:15px;height:15px;cursor:pointer"></td>
       <td style="padding:6px 8px;white-space:nowrap;font-weight:600">${esc(l.lot_no)}</td>
       <td style="padding:6px 8px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis">${esc(l.name||'')}</td>
@@ -22778,9 +22857,10 @@ function renderPriceEntryGrid(){
     </tr>`;
   }).join('');
   const thStyle = 'cursor:pointer;user-select:none';
+  const _anyHiddenComplete = !_pe.showAll && _pe.lots.some(l => _peIsComplete(l) && !_pe.front.includes(l.id));
   const bodyHtml = view.length
     ? rows
-    : `<tr><td colspan="14" style="padding:20px;text-align:center;color:var(--text3);font-size:13px">No lots match the current filter. <a href="#" onclick="peClearFilters();return false" style="color:var(--green)">Clear filters</a></td></tr>`;
+    : `<tr><td colspan="14" style="padding:20px;text-align:center;color:var(--text3);font-size:13px">No incomplete lots to show.${_anyHiddenComplete ? ' Completed rows are hidden — <a href="#" onclick="document.getElementById(\'pe-show-all\').checked=true;peToggleShowAll(true);return false" style="color:var(--green)">Show all</a>.' : ''} <a href="#" onclick="peClearFilters();return false" style="color:var(--green)">Clear filters</a></td></tr>`;
   // Totals row — computed over the CURRENTLY VISIBLE (filtered) lots, so when
   // any filter is active this reads as a subtotal for the shown rows. WD/NA
   // lots carry no sale value, so they add to the lot count and Qty but not to
@@ -22833,7 +22913,13 @@ function _peRenderSummary(){
   // Note when a filter is hiding some rows so the on-screen count is clear.
   const shown = (_pe.view || []).length;
   const filtered = shown < _pe.lots.length ? ` · showing ${shown} of ${_pe.lots.length}` : '';
-  sumEl.innerHTML = `${priced}/${total} lots priced` + (dirty ? ` · <b style="color:#a16207">${dirty} unsaved</b>` : (total ? ' · all saved' : '')) + filtered;
+  // Count completed rows currently hidden (only when "Show all" is off).
+  const hiddenComplete = _pe.showAll ? 0
+    : _pe.lots.filter(l => _peIsComplete(l) && !_pe.front.includes(l.id)).length;
+  const hiddenNote = hiddenComplete
+    ? ` · <b style="color:#166534">${hiddenComplete} complete hidden</b> <span style="color:var(--text3)">(tick “Show all”)</span>`
+    : '';
+  sumEl.innerHTML = `${priced}/${total} lots priced` + (dirty ? ` · <b style="color:#a16207">${dirty} unsaved</b>` : (total ? ' · all saved' : '')) + filtered + hiddenNote;
 }
 function pePriceInput(id){
   const inp = document.querySelector(`[data-peprice="${id}"]`); if (!inp) return;
@@ -22869,31 +22955,8 @@ async function peSplitSave(id, val){
     l.invoice_group = g;
   } catch (e) { toast((e && e.message) || 'Save failed'); }
 }
-// Bulk split: assign the entered number to every ticked (priceable) lot in one
-// request. WD/NA lots carry no sale value, so they're skipped.
-function peSetSplitSelected(){
-  const raw = (document.getElementById('pe-split-input').value || '').trim();
-  const g = parseInt(raw, 10);
-  if (!Number.isFinite(g) || g < 0) { alert('Enter a split number (0 or more) first.'); return; }
-  _peApplySplitToSelected(g);
-}
-function peClearSplitSelected(){ _peApplySplitToSelected(0); }
-async function _peApplySplitToSelected(g){
-  const ids = Array.from(_pe.sel).filter(id => {
-    const l = _pe.byId.get(id); if (!l) return false;
-    const c = String(l.code || '').trim().toUpperCase();
-    return c !== 'WD' && c !== 'NA';   // these can't be invoiced
-  });
-  if (!ids.length) { alert('Tick at least one priceable lot first.'); return; }
-  try {
-    const d = await j('/api/lots/invoice-group/bulk', { method: 'POST', body: JSON.stringify({ ids, value: g }) });
-    ids.forEach(id => { const l = _pe.byId.get(id); if (l) l.invoice_group = g; });
-    renderPriceEntryGrid();
-    const n = (d && d.updated) != null ? d.updated : ids.length;
-    const skipped = (d && d.skippedLocked) ? ` · ${d.skippedLocked} locked skipped` : '';
-    toast(g > 0 ? `Split #${g} set on ${n} lot(s)${skipped}` : `Split cleared on ${n} lot(s)${skipped}`);
-  } catch (e) { toast((e && e.message) || 'Failed to set split'); }
-}
+// Bulk split assignment moved into the Set Buyer Code modal (applyBulkSetBuyer)
+// — the operator sets the buyer code and the invoice split together there.
 async function pePriceSave(id){
   if (!_pe.dirty.has(id)) return;   // nothing changed since last save
   const inp = document.querySelector(`[data-peprice="${id}"]`); if (!inp) return;
@@ -23055,24 +23118,46 @@ async function peSelectByLotNos(){
   }
   const byLot = new Map();
   for (const l of _pe.lots) byLot.set(_peNormLot(l.lot_no), l);
-  const matchedIds = [];
+  const matchedLots = [];
   const notFound = [];
   const seen = new Set();
   for (const w of wanted) {
     if (!w.key || seen.has(w.key)) continue;
     seen.add(w.key);
     const l = byLot.get(w.key);
-    if (l) { matchedIds.push(l.id); _pe.sel.add(l.id); }
+    if (l) matchedLots.push(l);
     else notFound.push(w.label);
   }
+  // Some of the typed lots may already be complete (priced + buyer set). Ask
+  // before pulling those in for editing, so the operator can skip them.
+  let include = matchedLots;
+  const completed = matchedLots.filter(_peIsComplete);
+  let skippedComplete = 0;
+  if (completed.length) {
+    const labels = completed.map(l => l.lot_no).join(', ');
+    const ok = confirm(
+      `Lot(s) ${labels} are already complete (priced + buyer set).\n\n` +
+      `Include them for editing too?\n\nOK = include them   ·   Cancel = skip them`
+    );
+    if (!ok) {
+      const skip = new Set(completed.map(l => l.id));
+      include = matchedLots.filter(l => !skip.has(l.id));
+      skippedComplete = completed.length;
+    }
+  }
+  const matchedIds = include.map(l => l.id);
+  matchedIds.forEach(id => _pe.sel.add(id));
   if (matchedIds.length) {
     // Pin matched lots to the front (newest entry first), keeping any
     // previously-pinned lots after them. _peViewLots() applies the order —
     // _pe.lots itself is never reordered, so Clear selection restores places.
+    // Front-pinning also forces a completed lot to stay visible even while
+    // completed rows are hidden.
     _pe.front = matchedIds.concat(_pe.front.filter(id => !matchedIds.includes(id)));
   }
   renderPriceEntryGrid();
   const msg = [`${matchedIds.length} lot(s) selected`];
+  if (skippedComplete) msg.push(`${skippedComplete} complete skipped`);
   if (notFound.length) msg.push(`${notFound.length} not found`);
   toast(msg.join(' · '));
   if (notFound.length) {
@@ -23107,6 +23192,9 @@ async function openPeSetBuyerModal(){
   _bsbSelected = null;
   const countEl = document.getElementById('bsb-count'); if (countEl) countEl.textContent = ids.length;
   const codeEl = document.getElementById('bsb-code'); if (codeEl) codeEl.value = '';
+  // Show the split field (Price Entry only) and clear any prior value.
+  const splitRow = document.getElementById('bsb-split-row'); if (splitRow) splitRow.style.display = 'block';
+  const splitEl = document.getElementById('bsb-split'); if (splitEl) splitEl.value = '';
   _bsbRenderPreview();
   // Refresh the buyer master so newly-added codes show up (same as the
   // Lots-tab opener).
@@ -25571,6 +25659,26 @@ function _crIsDealer(cr) {
   else if (s.startsWith('CR.'))     s = s.slice(3);
   else if (s.startsWith('CR '))     s = s.slice(3);
   return /^\d{2}/.test(s.trim());
+}
+// Normalize a stored CR/GSTIN to a bare 15-char GSTIN, or '' if it isn't a
+// real GSTIN. Seller values carry a "GSTIN."/"CR." prefix (lots.cr); buyer
+// values (buyers.gstin) are usually bare — so both sides must be normalized
+// before comparing. Non-GSTIN CR numbers normalize to '' (never a false match).
+function _normGstin(x) {
+  let s = String(x == null ? '' : x).trim().toUpperCase();
+  if      (s.startsWith('GSTIN.')) s = s.slice(6);
+  else if (s.startsWith('GSTIN '))  s = s.slice(6);
+  else if (s.startsWith('GSTIN'))   s = s.slice(5);
+  else if (s.startsWith('CR.'))     s = s.slice(3);
+  else if (s.startsWith('CR '))     s = s.slice(3);
+  s = s.trim();
+  return /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(s) ? s : '';
+}
+// True only when the seller's CR and the buyer's GSTIN are the SAME real GSTIN
+// (same registered party selling to itself — usually a data-entry slip).
+function sameGstin(sellerCr, buyerGstin) {
+  const a = _normGstin(sellerCr), b = _normGstin(buyerGstin);
+  return !!a && a === b;
 }
 function updatePayLotsTotals() {
   const selectedIds = new Set(
