@@ -113,6 +113,15 @@ select:focus{border-color:var(--green)}
 .si.add-new{color:var(--green);font-weight:700;font-size:12px;display:flex;align-items:center;gap:6px}
 .sn{font-size:13px;font-weight:600}.sn mark{background:none;color:var(--green);font-weight:800}
 .sd{font-size:11px;color:var(--text3);margin-top:2px}
+/* Seller search result detail: PHONE + PAN are always on show, GSTIN + PLACE
+   sit behind the row's "+ MORE" chip. State is per results-list (flipping one
+   chip flips them all) and remembered in localStorage, so an operator who
+   wants the full line every time only says so once. */
+.sr .sd-x{display:none}
+.sr.sd-open .sd-x{display:inline}
+.sd-tog{background:var(--bg);border:1px solid var(--border2);border-radius:9px;color:var(--text2);font-family:inherit;font-size:9px;font-weight:800;letter-spacing:.4px;padding:2px 8px;margin-left:6px;cursor:pointer;vertical-align:middle}
+.sd-tog::after{content:'+ MORE'}
+.sr.sd-open .sd-tog::after{content:'\2212 LESS'}
 .toast{position:fixed;bottom:110px;left:14px;right:14px;background:var(--green);color:#fff;padding:12px 16px;border-radius:var(--radius);font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px;transform:translateY(100px);opacity:0;transition:all .35s cubic-bezier(.34,1.56,.64,1);z-index:100;box-shadow:0 8px 28px rgba(0,0,0,.18);backdrop-filter:blur(4px)}
 .toast.show{transform:translateY(0);opacity:1}.toast.err{background:var(--red)}
 .tu{background:rgba(255,255,255,.2);border:none;color:#fff;padding:4px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;margin-left:auto;font-family:inherit}
@@ -1424,24 +1433,49 @@ function updProgress(){
     +(over?'<div class="pp-warn">⚠ Allocated lot limit exceeded</div>':'');
 }
 
-// Seller detail line for search results — fixed, easy-to-scan order with
-// labelled bold values: PHONE | PAN | GSTIN | PLACE. (cr holds the GSTIN.)
+// Seller detail line for search results. PHONE + PAN identify the seller at a
+// glance and are all most entries need; GSTIN + PLACE are folded away behind
+// a "+ MORE" chip (same model as the Add Seller form's "More details"). The
+// chip is per row but flips the whole list, and the choice is remembered —
+// see .sd-x / .sd-tog in the stylesheet and toggleSellerDetail() below.
 function fmtSellerDetail(t){
   var esc=function(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');};
   var lab=function(l,v){return '<span style="color:var(--text3);font-weight:600">'+l+'</span> <b style="color:var(--text)">'+esc(v)+'</b>';};
-  var seg=[];
-  if(t.tel) seg.push(lab('PHONE', t.tel));
-  if(t.pan) seg.push(lab('PAN', t.pan));
-  if(t.cr)  seg.push(lab('GSTIN', t.cr));
+  var SEP=' <span style="opacity:.35">|</span> ';
+  var vis=[], extra=[];
+  if(t.tel) vis.push(lab('PHONE', t.tel));
+  if(t.pan) vis.push(lab('PAN', t.pan));
+  if(t.cr)  extra.push(lab('GSTIN', t.cr));
   var place=[t.ppla,t.pin].filter(Boolean).join(' ');
-  if(place) seg.push(lab('PLACE', place));
-  return seg.join(' <span style="opacity:.35">|</span> ');
+  if(place) extra.push(lab('PLACE', place));
+  if(!extra.length) return vis.join(SEP);
+  // A seller with neither phone nor PAN would otherwise show an empty box —
+  // fall back to displaying what we do have instead of just a chip.
+  if(!vis.length) return extra.join(SEP);
+  // The separator lives INSIDE the hidden span so the collapsed line doesn't
+  // end on a dangling "|".
+  return vis.join(SEP)
+    +'<span class="sd-x">'+extra.map(function(s){return SEP+s}).join('')+'</span>'
+    +'<button type="button" class="sd-tog" aria-label="Show or hide GSTIN and place" onclick="event.stopPropagation();toggleSellerDetail(this)"></button>';
+}
+// Flip every open results list at once and remember the choice.
+function toggleSellerDetail(btn){
+  var box=btn.closest('.sr');
+  var open=!(box&&box.classList.contains('sd-open'));
+  document.querySelectorAll('.sr').forEach(function(el){el.classList.toggle('sd-open',open)});
+  try{localStorage.setItem('sa_seller_detail_full',open?'1':'0')}catch(_){}
+}
+// Apply the remembered choice to a freshly rendered results list.
+function applySellerDetailPref(el){
+  var on=false;
+  try{on=localStorage.getItem('sa_seller_detail_full')==='1'}catch(_){}
+  if(el) el.classList.toggle('sd-open',on);
 }
 function searchTrader(q){clearTimeout(stm);const el=document.getElementById('le-res');lastSearchQuery=q;if(q.length<2){el.style.display='none';return}stm=setTimeout(async()=>{
 // Try online first, fall back to cache
 var ts=[];
 try{const r=await fetch(B+'/api/traders?q='+encodeURIComponent(q),{headers:ah()});const d=await r.json();ts=Array.isArray(d)?d:(d.traders||[]);ts.forEach(cacheTrader)}catch(e){ts=searchTraderCache(q)}
-const qu=q.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');let html=ts.map((t,i)=>{const h=(t.name||'').replace(new RegExp('('+qu+')','gi'),'<mark>$1</mark>');const loc=[t.ppla,t.pin].filter(Boolean).join(', ');const info=[t.cr,(t.pan?'PAN - '+t.pan:''),t.tel].filter(Boolean).join(' | ');return'<div class="si" data-idx="'+i+'"><div class="sn">'+h+'</div><div class="sd" style="margin-top:3px;padding:4px 7px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;line-height:1.7;word-break:break-word">'+fmtSellerDetail(t)+'</div></div>'}).join('');const isPhone=/^\d{4,}$/.test(q.trim());if(!ts.length){html+='<div class="si add-new" onclick="openSellerModal(\''+(isPhone?'':q.toUpperCase().replace(/'/g,"\\'"))+'\',\''+(isPhone?q.trim():'')+'\')">&#43; Add new seller'+(isPhone?'':' &quot;'+q.toUpperCase()+'&quot;')+'</div>'}else if(!isPhone){html+='<div class="si add-new" onclick="openSellerModal(\''+q.toUpperCase().replace(/'/g,"\\'")+'\',\'\')">&#43; Add new seller &quot;'+q.toUpperCase()+'&quot;</div>'}el.innerHTML=html;el.style.display='block';el._traders=ts;el.querySelectorAll('.si:not(.add-new)').forEach(item=>{item.onclick=function(){pickTrader(el._traders[parseInt(this.dataset.idx)])}})},200)}
+const qu=q.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');let html=ts.map((t,i)=>{const h=(t.name||'').replace(new RegExp('('+qu+')','gi'),'<mark>$1</mark>');const loc=[t.ppla,t.pin].filter(Boolean).join(', ');const info=[t.cr,(t.pan?'PAN - '+t.pan:''),t.tel].filter(Boolean).join(' | ');return'<div class="si" data-idx="'+i+'"><div class="sn">'+h+'</div><div class="sd" style="margin-top:3px;padding:4px 7px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;line-height:1.7;word-break:break-word">'+fmtSellerDetail(t)+'</div></div>'}).join('');const isPhone=/^\d{4,}$/.test(q.trim());if(!ts.length){html+='<div class="si add-new" onclick="openSellerModal(\''+(isPhone?'':q.toUpperCase().replace(/'/g,"\\'"))+'\',\''+(isPhone?q.trim():'')+'\')">&#43; Add new seller'+(isPhone?'':' &quot;'+q.toUpperCase()+'&quot;')+'</div>'}else if(!isPhone){html+='<div class="si add-new" onclick="openSellerModal(\''+q.toUpperCase().replace(/'/g,"\\'")+'\',\'\')">&#43; Add new seller &quot;'+q.toUpperCase()+'&quot;</div>'}el.innerHTML=html;applySellerDetailPref(el);el.style.display='block';el._traders=ts;el.querySelectorAll('.si:not(.add-new)').forEach(item=>{item.onclick=function(){pickTrader(el._traders[parseInt(this.dataset.idx)])}})},200)}
 
 function pickTrader(t){selT=t;document.getElementById('le-res').style.display='none';document.getElementById('le-sw').style.display='none';
 var loc=[t.ppla,t.pin].filter(Boolean).join(', ');
@@ -2073,7 +2107,7 @@ var edCrptOpen=document.getElementById('ed-crpt');if(edCrptOpen)edCrptOpen.value
 function closeEdit(){document.getElementById('edit-modal').classList.remove('show');editId=null;editTraderId=null}
 function editSellerMode(){document.getElementById('ed-seller-card').style.display='none';document.getElementById('ed-seller-search').style.display='block';document.getElementById('ed-seller-input').value='';document.getElementById('ed-seller-input').focus()}
 let edStm;
-function searchEditSeller(q){clearTimeout(edStm);var el=document.getElementById('ed-seller-res');if(q.length<2){el.style.display='none';return}edStm=setTimeout(async function(){try{var r=await fetch(B+'/api/traders?q='+encodeURIComponent(q),{headers:ah()});var d=await r.json();var ts=Array.isArray(d)?d:(d.traders||[]);var qu=q.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');el.innerHTML=ts.map(function(t,i){var h=(t.name||'').replace(new RegExp('('+qu+')','gi'),'<mark>$1</mark>');var loc=[t.ppla,t.pin].filter(Boolean).join(', ');var info=[t.cr,(t.pan?'PAN - '+t.pan:''),t.tel].filter(Boolean).join(' | ');return'<div class="si" data-idx="'+i+'"><div class="sn">'+h+'</div><div class="sd" style="margin-top:3px;padding:4px 7px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;line-height:1.7;word-break:break-word">'+fmtSellerDetail(t)+'</div></div>'}).join('')||'<div style="padding:10px;color:var(--text3);font-size:12px">No sellers found</div>';el.style.display='block';el._traders=ts;el.querySelectorAll('.si').forEach(function(item){item.onclick=function(){pickEditSeller(el._traders[parseInt(this.dataset.idx)])}})}catch(e){}},200)}
+function searchEditSeller(q){clearTimeout(edStm);var el=document.getElementById('ed-seller-res');if(q.length<2){el.style.display='none';return}edStm=setTimeout(async function(){try{var r=await fetch(B+'/api/traders?q='+encodeURIComponent(q),{headers:ah()});var d=await r.json();var ts=Array.isArray(d)?d:(d.traders||[]);var qu=q.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');el.innerHTML=ts.map(function(t,i){var h=(t.name||'').replace(new RegExp('('+qu+')','gi'),'<mark>$1</mark>');var loc=[t.ppla,t.pin].filter(Boolean).join(', ');var info=[t.cr,(t.pan?'PAN - '+t.pan:''),t.tel].filter(Boolean).join(' | ');return'<div class="si" data-idx="'+i+'"><div class="sn">'+h+'</div><div class="sd" style="margin-top:3px;padding:4px 7px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;line-height:1.7;word-break:break-word">'+fmtSellerDetail(t)+'</div></div>'}).join('')||'<div style="padding:10px;color:var(--text3);font-size:12px">No sellers found</div>';applySellerDetailPref(el);el.style.display='block';el._traders=ts;el.querySelectorAll('.si').forEach(function(item){item.onclick=function(){pickEditSeller(el._traders[parseInt(this.dataset.idx)])}})}catch(e){}},200)}
 function pickEditSeller(t){editTraderId=t.id;editLotBankId=null;document.getElementById('ed-seller-name').textContent=t.name;document.getElementById('ed-seller-card').style.display='flex';document.getElementById('ed-seller-search').style.display='none';document.getElementById('ed-seller-res').style.display='none';var cr=(t.cr||'').trim();var grade=(cr.toUpperCase().startsWith('GSTIN') && String(t.aadhar||'').trim()!=='')?'2':'1';document.getElementById('ed-grade').value=grade;loadEditBanks(t.id)}
 
 async function loadEditBanks(traderId){
