@@ -578,6 +578,26 @@ function getCollectionRows(db, auctionId) {
   let isPrefix = '';
   try { isPrefix = String(require('./company-config').getSettingsFlat(db).proforma_invoice_prefix || '').trim(); } catch (_) {}
 
+  // Collection quotes the PROFORMA number — the one the buyer was sent at
+  // shipment — in place of the original tax-invoice number. Map each raised
+  // proforma back to the original it became (invoices.raised_invo), keyed on
+  // sale+buyer+original number. Several drafts can fold into one original, so
+  // the value is a list, printed comma-separated in invoice order.
+  const proformaByInvoice = new Map();
+  const proformaRows = db.all(
+    `SELECT sale, buyer, invo, raised_invo
+       FROM invoices
+      WHERE auction_id = ? AND COALESCE(is_proforma,0) = 1
+        AND TRIM(COALESCE(raised_invo,'')) != ''
+      ORDER BY CAST(invo AS INTEGER), invo`,
+    [auctionId]
+  );
+  for (const p of proformaRows) {
+    const k = `${String(p.sale || '').trim().toUpperCase()}|${String(p.buyer || '').trim().toUpperCase()}|${String(p.raised_invo || '').trim()}`;
+    if (!proformaByInvoice.has(k)) proformaByInvoice.set(k, []);
+    proformaByInvoice.get(k).push(String(p.invo || '').trim());
+  }
+
   return invoices.map(i => {
     const iCode = String(i.buyer  || '').trim().toUpperCase();
     const iName = String(i.buyer1 || '').trim().toUpperCase();
@@ -587,11 +607,20 @@ function getCollectionRows(db, auctionId) {
     const buyerName = b
       ? (b.buyer || b.sbl || i.buyer || '')
       : (i.buyer || '');
+    // Proforma number(s) this invoice was raised from, if any.
+    const pfNos = proformaByInvoice.get(
+      `${String(i.sale || '').trim().toUpperCase()}|${String(i.buyer || '').trim().toUpperCase()}|${String(i.invo || '').trim()}`
+    ) || [];
     return {
       sale:        i.sale,
       invo:        i.invo,
-      // Ready-to-print INVO cell: "PI/I-2009" with a prefix, "I 2009" without.
-      invo_label:  formatInvoiceNo(isPrefix, i.sale, i.invo),
+      // Ready-to-print INVO cell. Raised from a proforma → that proforma's
+      // number, carrying the configured prefix ("PI/I-2009"). Billed directly
+      // → the original number in the legacy bare form ("I 2009").
+      invo_label:  pfNos.length
+        ? pfNos.map(n => formatInvoiceNo(isPrefix, i.sale, n)).join(', ')
+        : formatInvoiceNo('', i.sale, i.invo),
+      proforma_invo: pfNos.join(', '),
       trade_name:  i.buyer1 || '',
       buyer_name:  buyerName,
       qty:         i.qty,

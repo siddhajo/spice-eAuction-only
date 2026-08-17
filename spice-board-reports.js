@@ -176,6 +176,10 @@ function getReportContext(db, opts) {
       l.refund          AS sample_refund,
       l.com             AS commission,
       l.invo            AS invo,
+      -- Proforma number stamped on the lot when its proforma was generated.
+      -- The Buyers Statement quotes this in place of the original invoice
+      -- number (see buildBuyersStatement).
+      l.proforma_invo   AS proforma_invo,
       l.sale            AS lot_sale,
       l.branch          AS branch,
       l.code            AS lot_code,
@@ -292,6 +296,7 @@ function buildBuyersStatement(ctx) {
         kilos:   0,
         amount:  0,
         invos:   new Set(),   // real invoice number(s) for this buyer
+        pfInvos: new Set(),   // proforma number(s) stamped on this buyer's lots
       });
     }
     const g = groups.get(key);
@@ -299,6 +304,8 @@ function buildBuyersStatement(ctx) {
     g.amount += Number(r.amount) || 0;
     const inv = String(r.invo == null ? '' : r.invo).trim();
     if (inv) g.invos.add(inv);
+    const pf = String(r.proforma_invo == null ? '' : r.proforma_invo).trim();
+    if (pf) g.pfInvos.add(pf);
   }
 
   // Bucket by sale type. The Sales Invoice flow already stamps every
@@ -331,14 +338,21 @@ function buildBuyersStatement(ctx) {
   // token, so each number renders "PI/I-2009" instead of the bare "I 2009".
   const isPrefix = String(ctx.proformaInvoicePrefix || '').trim();
   const setInvoice = (prefix) => g => {
-    const nums = Array.from(g.invos).filter(Boolean).sort((a, b) => invNumKey(a) - invNumKey(b));
-    g.invoice = !nums.length ? ''
-      : isPrefix
-        // Prefixed form self-labels the sale type, so no leading "I ".
-        ? nums.map(nn => formatInvoiceNo(isPrefix, prefix, nn)).join(', ')
-        : `${prefix} ${nums.join(', ')}`;
-    g._invSort = nums.length ? invNumKey(nums[0]) : Number.POSITIVE_INFINITY;
+    const pfNums = Array.from(g.pfInvos).filter(Boolean).sort((a, b) => invNumKey(a) - invNumKey(b));
+    const nums   = Array.from(g.invos).filter(Boolean).sort((a, b) => invNumKey(a) - invNumKey(b));
+    // A buyer whose lots carry a proforma is listed under that PROFORMA
+    // number (with the configured prefix) — it's the document they hold.
+    // Only lots billed without a proforma fall back to the original number
+    // in the legacy "I 2009" form.
+    if (pfNums.length) {
+      g.invoice = pfNums.map(nn => formatInvoiceNo(isPrefix, prefix, nn)).join(', ');
+      g._invSort = invNumKey(pfNums[0]);
+    } else {
+      g.invoice = !nums.length ? '' : `${prefix} ${nums.join(', ')}`;
+      g._invSort = nums.length ? invNumKey(nums[0]) : Number.POSITIVE_INFINITY;
+    }
     delete g.invos;
+    delete g.pfInvos;
   };
   inter.forEach(setInvoice('I'));
   intra.forEach(setInvoice('L'));

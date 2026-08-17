@@ -7747,6 +7747,52 @@ app.post('/api/invoices/:id/no-ti', requireInvoiceWrite, (req, res) => {
   res.json({ success: true, value, summary: s });
 });
 
+// Un-raise the proforma draft that an ORIGINAL invoice shipped. Reverting or
+// deleting the original must hand the draft back to the "pending" state:
+// raised_invo returns to '' so the list stops showing "→ raised N", the ⬆
+// Raise Original button re-enables, and POST /:id/raise-original stops
+// refusing with "already raised". `raised_invo` holds exactly one number, so
+// matching on (auction, buyer, that number) is unambiguous — no lot scan.
+// Returns how many drafts were handed back (normally 0 or 1).
+//
+// Split invoices: the generate path stamps raised_invo only on drafts where
+// it is still empty, so a draft split across originals 212 and 213 records
+// 212. Reverting 212 un-raises the draft while 213 keeps its lots — correct,
+// because Raise Original then only picks up lots with no `invo`.
+function unraiseProformaFor(db, inv) {
+  const no = String((inv && inv.invo) || '').trim();
+  if (!inv || !inv.auction_id || !no || Number(inv.is_proforma)) return 0;
+  const r = db.run(
+    `UPDATE invoices SET raised_invo=''
+      WHERE is_proforma=1 AND auction_id=? AND buyer=? AND TRIM(COALESCE(raised_invo,''))=?`,
+    [inv.auction_id, inv.buyer, no]
+  );
+  return (r && r.changes) || 0;
+}
+
+// Clear a PROFORMA draft's stamp from its lots. A draft only ever writes
+// lots.proforma_invo (never invo/asp_invo/sale), so this is the whole of what
+// a draft owns. Critically it must NOT match on invo: the proforma and
+// original series number independently, so proforma 7 and original 7 can
+// coexist for the same buyer — freeing lots by `invo` would strip the live
+// tax invoice's lots and leave them re-invoiceable.
+// Returns the lot numbers that were freed.
+function clearProformaStamp(db, inv) {
+  if (!inv || !inv.auction_id) return [];
+  const no = String(inv.invo || '').trim();
+  const affected = db.all(
+    `SELECT lot_no FROM lots
+       WHERE auction_id=? AND buyer=? AND TRIM(COALESCE(proforma_invo,''))=?`,
+    [inv.auction_id, inv.buyer, no]
+  );
+  db.run(
+    `UPDATE lots SET proforma_invo=''
+      WHERE auction_id=? AND buyer=? AND TRIM(COALESCE(proforma_invo,''))=?`,
+    [inv.auction_id, inv.buyer, no]
+  );
+  return affected.map(r => String(r.lot_no));
+}
+
 // Delete invoice
 app.delete('/api/invoices/:id', requireDelete, (req, res) => {
   const db = getDb();
@@ -7758,17 +7804,24 @@ app.delete('/api/invoices/:id', requireDelete, (req, res) => {
   if (!isAdmin(req) && lotsLockedForInvoice(db, req.params.id)) {
     return res.status(423).json({ error: 'This invoice is locked because at least one of its lots is locked — only an admin can delete it.' });
   }
-  // Clear sale/invo from the related lots so they're eligible again
+  // Clear the lot stamps this invoice owns so the lots are eligible again.
+  // Which column that is depends on the document type — see
+  // clearProformaStamp() for why a draft must never be freed by `invo`.
   let lotsFreed = 0;
-  if (inv.auction_id) {
+  let proformaUnraised = 0;
+  if (Number(inv.is_proforma)) {
+    lotsFreed = clearProformaStamp(db, inv).length;
+  } else if (inv.auction_id) {
     const before = db.get('SELECT COUNT(*) as c FROM lots WHERE auction_id=? AND sale=? AND invo=? AND buyer=?',
       [inv.auction_id, inv.sale, inv.invo, inv.buyer]).c;
     db.run(`UPDATE lots SET sale='', invo='' WHERE auction_id=? AND sale=? AND invo=? AND buyer=?`,
       [inv.auction_id, inv.sale, inv.invo, inv.buyer]);
     lotsFreed = before;
+    // Hand its proforma draft (if any) back to pending.
+    proformaUnraised = unraiseProformaFor(db, inv);
   }
   db.run('DELETE FROM invoices WHERE id=?', [req.params.id]);
-  res.json({ success: true, invoiceId: Number(req.params.id), lotsFreed });
+  res.json({ success: true, invoiceId: Number(req.params.id), lotsFreed, proformaUnraised });
 });
 
 // Explicit revert route (same effect as DELETE but returns richer info)
@@ -7782,6 +7835,34 @@ app.post('/api/invoices/:id/revert', requireInvoiceRevert, (req, res) => {
   if (!isAdmin(req) && lotsLockedForInvoice(db, req.params.id)) {
     return res.status(423).json({ error: 'This invoice is locked because at least one of its lots is locked — only an admin can revert it.' });
   }
+
+  // ── PROFORMA draft ─────────────────────────────────────────────
+  // Reverting a draft clears lots.proforma_invo and drops the draft row,
+  // leaving invo/asp_invo/sale untouched — the lots go back to "never had a
+  // draft". Refused once the draft has been raised: it is then the record of
+  // how a live tax invoice came to be. Revert that invoice first (which
+  // un-raises this draft) and the draft becomes revertible again.
+  if (Number(inv.is_proforma)) {
+    if (inv.raised_invo && String(inv.raised_invo).trim() !== '') {
+      return res.status(409).json({
+        error: `This proforma was already raised as invoice ${inv.raised_invo} — revert invoice ${inv.raised_invo} first.`
+      });
+    }
+    const lots = clearProformaStamp(db, inv);
+    db.run('DELETE FROM invoices WHERE id=?', [req.params.id]);
+    return res.json({
+      success: true,
+      proforma: true,
+      invoice: { sale: inv.sale, invo: inv.invo, buyer: inv.buyer, buyer1: inv.buyer1 },
+      lotsFreed: lots.length,
+      lots,
+    });
+  }
+
+  // ── ORIGINAL (tax) invoice ─────────────────────────────────────
+  // Hand the draft this invoice shipped (if any) back to pending before the
+  // row goes away — unraiseProformaFor() keys on inv.invo.
+  const proformaUnraised = unraiseProformaFor(db, inv);
   let lotsFreed = 0;
   if (inv.auction_id) {
     // Identify this invoice's lots by (auction, buyer, invoice-number).
@@ -7821,10 +7902,11 @@ app.post('/api/invoices/:id/revert', requireInvoiceRevert, (req, res) => {
       invoice: { sale: inv.sale, invo: inv.invo, buyer: inv.buyer, buyer1: inv.buyer1 },
       lotsFreed,
       lots: affected.map(r => r.lot_no),
+      proformaUnraised,
     });
   }
   db.run('DELETE FROM invoices WHERE id=?', [req.params.id]);
-  res.json({ success: true, lotsFreed: 0 });
+  res.json({ success: true, lotsFreed: 0, proformaUnraised });
 });
 
 // Bulk revert: revert ALL invoices in an auction
@@ -7836,6 +7918,7 @@ app.post('/api/invoices/revert-all/:auctionId', requireInvoiceRevert, (req, res)
   const lockSuffix = lockFeatureOn(db) ? ' AND locked_at IS NULL' : '';
   let lotsFreed = 0;
   let skippedLocked = 0;
+  let proformaUnraised = 0;
   const revertedIds = [];
   for (const inv of invoices) {
     // Cascade lock: non-admins skip any invoice whose buyer has a
@@ -7848,6 +7931,12 @@ app.post('/api/invoices/revert-all/:auctionId', requireInvoiceRevert, (req, res)
     lotsFreed += n;
     db.run(`UPDATE lots SET sale='', invo='' WHERE auction_id=? AND sale=? AND invo=? AND buyer=?${lockSuffix}`,
       [inv.auction_id, inv.sale, inv.invo, inv.buyer]);
+    // Hand each shipped draft back to pending, so after a bulk revert the
+    // auction's proformas are raisable again instead of pointing at deleted
+    // invoice numbers. (Draft ROWS are kept — the loop above selects
+    // originals only — and the safety net below touches sale/invo only, so
+    // lots.proforma_invo survives revert-all by design.)
+    proformaUnraised += unraiseProformaFor(db, inv);
     db.run('DELETE FROM invoices WHERE id=?', [inv.id]);
     revertedIds.push(inv.id);
   }
@@ -7859,7 +7948,7 @@ app.post('/api/invoices/revert-all/:auctionId', requireInvoiceRevert, (req, res)
     db.run(`UPDATE lots SET sale='', invo='' WHERE auction_id = ?${lockSuffix}`, [aid]);
     lotsFreed += orphan;
   }
-  res.json({ success: true, invoicesReverted: revertedIds.length, lotsFreed, skipped_locked: skippedLocked });
+  res.json({ success: true, invoicesReverted: revertedIds.length, lotsFreed, skipped_locked: skippedLocked, proformaUnraised });
 });
 
 // Sales Invoice PDF
@@ -13993,6 +14082,10 @@ app.get('/api/insights/lots', requireView, (req, res) => {
   const rows = db.all(
     `SELECT l.lot_no, l.name, l.branch, l.grade, l.bags, l.qty, l.price, l.amount,
             l.code, l.buyer, l.buyer1, l.auction_id,
+            -- Seller master link — the lot-wise drill-down turns the seller
+            -- name into a link to that seller's record, so the id travels
+            -- with the row (falls back to a by-name lookup when it's null).
+            l.trader_id,
             (SELECT a.ano FROM auctions a WHERE a.id = l.auction_id) AS ano
        FROM lots l
       WHERE 1=1${auctionFilter}${statusFilter}${branchFilter}${gradeFilter}

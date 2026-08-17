@@ -551,7 +551,7 @@ const S = [
   steps:[
     '**🔓 Allow regeneration** — on **Sales Invoices / Purchases / Bills / Debit Notes**. It stays hidden until *every* buyer/dealer/seller in the auction already has a document (the auction is "generation locked"). An admin clicks it to allow **one** more generate — best right after a **Revert**.',
     '**🔓 Unlock Selected** — on **Lots**. A **locked** lot can\'t be edited; an admin ticks it and unlocks so prices can change again.',
-    '**↩ Revert** — on an invoice/purchase/bill row: deletes that one document and frees its lots (needs revert permission).',
+    '**↩ Revert** — on an invoice/purchase/bill row: deletes that one document and frees its lots (needs revert permission). On a **tax invoice** raised from a proforma, the proforma goes back to **pending** so you can raise it again. On a **proforma** row it just drops the draft and clears it from the lots — allowed only while the draft is still pending; once it has been raised, revert the tax invoice first.',
     '**🗑 Delete All / full reset** — on the **Backup** screen: wipes invoices, masters, or every auction. Admin only; a snapshot is taken first.',
   ],
   warn:'Don\'t see these? You need an **admin** login. Everyday roles (lot_entry, operator) don\'t get the unlock, revert, or delete-all buttons — ask an admin.' },

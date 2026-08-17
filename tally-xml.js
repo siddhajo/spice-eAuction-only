@@ -2719,7 +2719,17 @@ function buildSalesIspRows(db, auctionId, cfg) {
            (SELECT b.cadd2   FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cadd2,
            (SELECT b.cpla    FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cpla,
            (SELECT b.cpin    FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cpin,
-           (SELECT b.cstate  FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cstate
+           (SELECT b.cstate  FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cstate,
+           -- The proforma this invoice was raised from, if any. The Merchant
+           -- (Journal) XML bills against the PROFORMA number the buyer already
+           -- holds, so the reference has to travel with the row. Lowest number
+           -- wins when several drafts were folded into one original.
+           (SELECT p.invo FROM invoices p
+             WHERE p.auction_id = i.auction_id
+               AND COALESCE(p.is_proforma,0) = 1
+               AND p.buyer = i.buyer AND p.sale = i.sale
+               AND TRIM(COALESCE(p.raised_invo,'')) = TRIM(COALESCE(i.invo,''))
+             ORDER BY CAST(p.invo AS INTEGER), p.invo LIMIT 1) AS proforma_invo
     FROM invoices i
     WHERE i.auction_id = ? AND ${ISP_STATE_SQL} AND COALESCE(i.is_proforma,0) = 0
     ORDER BY i.sale, CAST(i.invo AS INTEGER), i.id
@@ -2850,6 +2860,10 @@ function buildSalesIspRows(db, auctionId, cfg) {
       date: r.date,
       sale: r.sale,
       invo: r.invo,
+      // Proforma number this invoice was raised from ('' when it was billed
+      // directly). Only the Merchant XML uses it — every other generator
+      // ignores unknown fields, so carrying it here is additive and safe.
+      proformaInvo: String(r.proforma_invo || '').trim(),
       aspInvo,
       buyer: r.buyer,
       partyName: r.buyer1 || r.buyer || '',
@@ -4559,7 +4573,7 @@ function generMerchantsXML(rows, cfg, opts = {}) {
   const invPrefix   = _tallyPrefix ? (/[/\-]$/.test(_tallyPrefix) ? _tallyPrefix : _tallyPrefix + '/') : '';
   // Proforma series prefix on the bill reference (Merchant XML only — see
   // settings). Applies to every sale type and leads the token. Blank = none.
-  const interPrefix = String(cfgGet(cfg, 'proforma_invoice_prefix', '')).trim();
+  const proformaPrefix = String(cfgGet(cfg, 'proforma_invoice_prefix', '')).trim();
   // Control ledger name — overridable via Settings (tally_merchants), else "Merchants".
   const merchLedger = cfgGet(cfg, 'tally_merchants', 'Merchants');
 
@@ -4583,10 +4597,15 @@ function generMerchantsXML(rows, cfg, opts = {}) {
   for (const row of rows) {
     const sale      = String(row.sale || 'L').toUpperCase();
     const invoNo    = String(row.invo || '').trim();
-    // With a proforma prefix the reference reads "PI/I-2009/2026-27"; without
-    // one it keeps the legacy "I/2009/2026-27" shape (separator from settings).
-    const billRef   = interPrefix
-      ? formatInvoiceNo(interPrefix, sale, invoNo)
+    // The merchant is billed against the PROFORMA number they already hold,
+    // so that number — not the original tax-invoice number — is the bill
+    // reference whenever the invoice was raised from a proforma. It renders
+    // "PI/I-2009/2026-27" with the prefix configured, "I-2009/2026-27"
+    // without. An invoice billed directly (no proforma) keeps the legacy
+    // "I/2009/2026-27" shape (separator from settings).
+    const proformaNo = String(row.proformaInvo || '').trim();
+    const billRef   = proformaNo
+      ? formatInvoiceNo(proformaPrefix, sale, proformaNo)
       : `${sale}${separator}${invoNo}`;
     const billName  = `${invPrefix}${billRef}/${season}`;
     // Merchants journal debits the BUYER (row.buyer, e.g. "ARUL"), not the
