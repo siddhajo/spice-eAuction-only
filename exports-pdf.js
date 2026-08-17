@@ -1125,11 +1125,24 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
          FROM lots WHERE auction_id = ? ORDER BY branch, name`, [auctionId]);
 
     case 'dealer_list': {
+      // Pre-auction snapshot — NO amount>0 gate (lots aren't priced yet), and
+      // matches the XLSX exportDealerList exactly: strict GSTIN via
+      // hasValidGstinSql, exclude reserved lots, clean the GSTIN prefix.
+      const { hasValidGstinSql } = require('./calculations');
       const rows = db.all(
-        `SELECT state, name, SUBSTR(cr, 7, 15) as gstin,
-          COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty
-         FROM lots WHERE auction_id = ? AND cr LIKE '%GST%' AND amount > 0
-         GROUP BY state, name, cr ORDER BY name`, [auctionId]);
+        `WITH cleaned AS (
+           SELECT state, name, lot_no, bags, qty,
+                  UPPER(TRIM(CASE
+                    WHEN LOWER(SUBSTR(TRIM(cr),1,5)) = 'gstin'
+                      THEN LTRIM(SUBSTR(TRIM(cr),6), '. :-')
+                    ELSE TRIM(cr) END)) AS gstin
+             FROM lots
+            WHERE auction_id = ? AND COALESCE(reserved,0) = 0
+              AND ${hasValidGstinSql('cr')}
+         )
+         SELECT state, name, gstin,
+                COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty
+           FROM cleaned GROUP BY state, name, gstin ORDER BY state, name`, [auctionId]);
       for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
       return rows;
     }
