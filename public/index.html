@@ -20952,16 +20952,25 @@ async function loadInvEligibleBuyers(){
     }
     const rows=buyers.map(b=>{
       const bSale=(b.default_sale||'').trim();
-      const amount=Number(b.total_amount||0);
       const saleBadge=bSale?`<span style="font-size:10px;color:var(--text3);background:var(--green-bg);padding:1px 6px;border-radius:8px;margin-left:4px">${bSale}</span>`:'';
       // Show: CODE (small, distinct) · BUYER_CODE · TRADE_NAME
       // b.code is the short alias (e.g., "FLORA"); b.buyer is the primary key; b.buyer1 is the trade name.
       const codePill=b.code?`<span style="font-size:11px;color:var(--green);background:var(--green-bg);padding:1px 6px;border-radius:4px;font-weight:700;margin-right:4px">${esc(b.code)}</span>`:'';
-      return `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:4px;cursor:pointer;font-size:13px" class="gi-row" onmouseover="this.style.background='var(--green-bg)'" onmouseout="this.style.background='transparent'">
-        <input type="checkbox" class="gi-cb" value="${esc(b.buyer)}" data-sale="${esc(bSale)}" style="margin:0">
-        <span style="flex:1">${codePill}<strong>${esc(b.buyer)}</strong> &middot; ${esc(b.buyer1||'')}${saleBadge}</span>
-        <span style="color:var(--text2);font-size:12px;white-space:nowrap">${b.lot_count} lot(s) &middot; ₹${fmtI(amount,2)}</span>
-      </label>`;
+      // One row per line item — a plain buyer has exactly one, a buyer split in
+      // Price Entry (lots.invoice_group) has one per group with that group's own
+      // lots and value, so the operator sees the split before generating.
+      const parts=(b.groups&&b.groups.length>1)
+        ? b.groups.map((g,i)=>({
+            lots:Number(g.lot_count||0), amount:Number(g.total_amount||0),
+            lotNos:(g.lotNos||[]).join(','),
+            badge:`<span style="font-size:10px;font-weight:700;color:#8B6508;background:var(--spice-turmeric-lt,#fef3c7);padding:1px 6px;border-radius:8px;margin-left:4px" title="Invoice split set in Price Entry (group #${Number(g.group)||0}) — this becomes its own invoice">Split ${i+1}/${b.groups.length}</span>`
+          }))
+        : [{ lots:Number(b.lot_count||0), amount:Number(b.total_amount||0), lotNos:'', badge:'' }];
+      return parts.map(p=>`<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:4px;cursor:pointer;font-size:13px" class="gi-row" onmouseover="this.style.background='var(--green-bg)'" onmouseout="this.style.background='transparent'">
+        <input type="checkbox" class="gi-cb" value="${esc(b.buyer)}" data-sale="${esc(bSale)}" data-lots="${esc(p.lotNos)}" style="margin:0">
+        <span style="flex:1">${codePill}<strong>${esc(b.buyer)}</strong> &middot; ${esc(b.buyer1||'')}${saleBadge}${p.badge}</span>
+        <span style="color:var(--text2);font-size:12px;white-space:nowrap">${p.lots} lot(s) &middot; ₹${fmtI(p.amount,2)}</span>
+      </label>`).join('');
     }).join('');
     list.innerHTML=rows;
     updateBuyerSelectionHint();
@@ -20979,9 +20988,13 @@ function updateBuyerSelectionHint(){
   const boxes=list.querySelectorAll('.gi-cb');
   const selected=list.querySelectorAll('.gi-cb:checked');
   const h=document.getElementById('gi-hint');if(!h)return;
+  // A split buyer contributes several rows, so "rows selected" and "buyers
+  // selected" differ — each ticked row is one invoice either way.
+  const buyerCount=new Set(Array.from(selected).map(cb=>cb.value)).size;
+  const suffix=buyerCount<selected.length?` (${buyerCount} buyer${buyerCount===1?'':'s'}, split)`:'';
   if(selected.length===0){h.innerHTML=`<span style="color:var(--amber)">No buyers selected</span>`}
-  else if(selected.length===1){h.textContent=`1 buyer selected of ${boxes.length}`}
-  else{h.textContent=`${selected.length} buyers selected of ${boxes.length} — will create ${selected.length} invoices`}
+  else if(selected.length===1){h.textContent=`1 of ${boxes.length} selected`}
+  else{h.textContent=`${selected.length} of ${boxes.length} selected${suffix} — will create ${selected.length} invoices`}
   syncSplitAvailability();
 }
 
@@ -21017,10 +21030,13 @@ function syncSplitAvailability(){
   const row=document.getElementById('gi-split-toggle-row');
   if(!toggle)return;
   const selected=list?list.querySelectorAll('.gi-cb:checked'):[];
-  const one=selected.length===1;
+  // A row carrying data-lots is already one leg of a Price Entry split — manual
+  // splitting on top of it would fight that assignment, so keep it off.
+  const preSplit=selected.length===1 && !!(selected[0].dataset.lots||'').trim();
+  const one=selected.length===1 && !preSplit;
   toggle.disabled=!one;
   if(row)row.style.opacity=one?'1':'.5';
-  if(lock)lock.textContent=one?'':'— select exactly one buyer';
+  if(lock)lock.textContent=one?'':(preSplit?'— lots already split in Price Entry':'— select exactly one buyer');
   if(!one && toggle.checked){ toggle.checked=false; toggleSplitMode(); }
   // If the panel is open and the selected buyer changed, reload its lots.
   else if(one && toggle.checked){
@@ -23608,6 +23624,11 @@ async function generateInvoice(){
   const checked=Array.from(list?.querySelectorAll('.gi-cb:checked')||[]);
   if(!checked.length){alert('Select at least one buyer');return}
   const buyers=checked.map(cb=>cb.value);
+  // Each ticked row is one invoice. Rows coming from a Price Entry split carry
+  // that group's lot numbers in data-lots; a plain buyer row carries none and
+  // bills the buyer's whole eligible set (unchanged behaviour).
+  const rowLots=checked.map(cb=>(cb.dataset.lots||'').split(',').map(s=>s.trim()).filter(Boolean));
+  const splitRows=rowLots.filter(l=>l.length).length;
 
   // "All sale types" is only a picker filter — a single invoice needs one
   // concrete type. For one buyer, fall back to its effective sale (the chip's
@@ -23624,15 +23645,17 @@ async function generateInvoice(){
     return generateInvoiceSplit(aid,saleType,startInvNo,noTI,buyers[0],dateSource,docType);
   }
 
-  // Single buyer: keep old behavior (immediate feedback, quick)
+  // Single row: keep old behavior (immediate feedback, quick)
   if(buyers.length===1){
     const buyerCode=buyers[0];
+    const lotNos=rowLots[0];
     try{
       await withOverlay('Generating invoice…', async () => {
         const r=await fetch(B+`/api/invoices/generate/${aid}`,{
           method:'POST',
           headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},
-          body:JSON.stringify({saleType,buyerCode,invoiceNo:String(startInvNo),noTI,dateSource,docType})});
+          body:JSON.stringify(Object.assign({saleType,buyerCode,invoiceNo:String(startInvNo),noTI,dateSource,docType},
+            lotNos.length?{lotNos}:{}))});
         const d=await r.json();
         if(!r.ok)throw new Error(d.error||'Failed to generate invoice');
         hideModal('gen-inv-modal');
@@ -23644,19 +23667,22 @@ async function generateInvoice(){
     return;
   }
 
-  // Multiple buyers: loop + auto-increment invoice number per iteration
-  if(!confirm(`Generate ${buyers.length} invoices starting at #${startInvNo}?\n\nEach buyer gets sequential numbers (${startInvNo}, ${startInvNo+1}, …, ${startInvNo+buyers.length-1}).`))return;
+  // Multiple rows: loop + auto-increment invoice number per iteration
+  const splitNote=splitRows?`\n\n${splitRows} of them are Price Entry splits — each billed with only its own lots.`:'';
+  if(!confirm(`Generate ${buyers.length} invoices starting at #${startInvNo}?\n\nEach row gets sequential numbers (${startInvNo}, ${startInvNo+1}, …, ${startInvNo+buyers.length-1}).${splitNote}`))return;
   const results={success:[],failed:[]};
   try{
     await withOverlay(`Generating ${buyers.length} invoices…`, async () => {
       for(let i=0;i<buyers.length;i++){
         const buyerCode=buyers[i];
+        const lotNos=rowLots[i];
         const invNo=String(startInvNo+i);
         try{
           const r=await fetch(B+`/api/invoices/generate/${aid}`,{
             method:'POST',
             headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},
-            body:JSON.stringify({saleType,buyerCode,invoiceNo:invNo,noTI,dateSource,docType})});
+            body:JSON.stringify(Object.assign({saleType,buyerCode,invoiceNo:invNo,noTI,dateSource,docType},
+              lotNos.length?{lotNos}:{}))});
           const d=await r.json();
           if(!r.ok)throw new Error(d.error||'Generation failed');
           results.success.push({buyerCode,invNo,total:Number(d.invoice.grandTotal)});
@@ -29135,6 +29161,10 @@ async function previewInvoice(type){
     let _pvSale=document.getElementById('gi-sale').value;
     if(!_pvSale)_pvSale=(checked[0].dataset.sale||'').trim();
     body={saleType:_pvSale,buyerCode:checked[0].value,type:'sales',noTI:!!document.getElementById('gi-no-ti')?.checked};
+    // Price Entry split row: preview only that group's lots, so the preview
+    // matches the invoice this row will generate.
+    const _pvLots=(checked[0].dataset.lots||'').split(',').map(s=>s.trim()).filter(Boolean);
+    if(_pvLots.length)body.lotNos=_pvLots;
     // Split mode: preview the ACTIVE invoice bucket's lots only, not the
     // whole buyer — so Quick Preview matches what that split invoice will be.
     const st=document.getElementById('gi-split-toggle');

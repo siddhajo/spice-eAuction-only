@@ -7280,6 +7280,37 @@ app.get('/api/invoices/eligible-buyers/:auctionId', requireView, (req, res) => {
      ORDER BY l.buyer`,
     params
   );
+  // Per-buyer invoice split set during Price Entry (lots.invoice_group). A
+  // buyer whose eligible lots carry more than one group bills as several
+  // invoices (see generate-all), so the picker shows one row per group.
+  // Scoped to the lots generation would actually bill: priced, un-reserved
+  // and un-invoiced. Groups run ascending (0 = ungrouped first) — the same
+  // order generate-all numbers them in.
+  const splitLots = db.all(
+    `SELECT l.buyer AS buyer, COALESCE(l.invoice_group, 0) AS g, l.lot_no AS lot_no,
+            l.qty AS qty, l.amount AS amount
+       FROM lots l
+      WHERE l.auction_id = ?
+        AND l.buyer IS NOT NULL AND l.buyer != ''
+        AND l.amount > 0
+        AND (l.reserved IS NULL OR l.reserved = 0)
+        AND ${eligibleExpr}
+      ORDER BY l.buyer, g, l.lot_no`,
+    [req.params.auctionId]
+  );
+  const splitsByBuyer = new Map();
+  for (const lr of splitLots) {
+    if (!splitsByBuyer.has(lr.buyer)) splitsByBuyer.set(lr.buyer, new Map());
+    const byGroup = splitsByBuyer.get(lr.buyer);
+    const g = Number(lr.g) || 0;
+    if (!byGroup.has(g)) byGroup.set(g, { group: g, lot_count: 0, total_qty: 0, total_amount: 0, lotNos: [] });
+    const e = byGroup.get(g);
+    e.lot_count++;
+    e.total_qty += Number(lr.qty) || 0;
+    e.total_amount += Number(lr.amount) || 0;
+    e.lotNos.push(String(lr.lot_no));
+  }
+
   // Effective sale type per buyer: prefer an explicit stored value (which can
   // be a manual 'E'), else derive L/I from the buyer's GSTIN. This is the same
   // rule the Buyers tab shows, so the two screens never disagree.
@@ -7287,7 +7318,13 @@ app.get('/api/invoices/eligible-buyers/:auctionId', requireView, (req, res) => {
     const stored = String(r.stored_sale || '').trim().toUpperCase();
     const default_sale = stored || deriveSaleType(r.gstin, cfg);
     const { stored_sale, ...rest } = r;
-    return { ...rest, default_sale };
+    // `groups` is present ONLY when the buyer is actually split, so an
+    // unsplit buyer keeps exactly the old row shape.
+    const byGroup = splitsByBuyer.get(r.buyer);
+    const groups = byGroup && byGroup.size > 1
+      ? Array.from(byGroup.values()).sort((a, b) => a.group - b.group)
+      : undefined;
+    return groups ? { ...rest, default_sale, groups } : { ...rest, default_sale };
   });
   // When a sale type is requested, keep buyers matching it — plus buyers whose
   // type is still unknown (blank GSTIN), so they're never hidden from the user.

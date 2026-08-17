@@ -62,9 +62,13 @@ function syncTraderBanks(db, traderId, banks) {
   const arr = Array.isArray(banks) ? banks.filter(b => b && (b.acctnum || b.ifsc)) : [];
   db.run('DELETE FROM trader_banks WHERE trader_id = ?', [traderId]);
   for (const b of arr) {
+    // `branch` must be written here too. This helper deletes and re-inserts,
+    // so omitting the column wiped the branch that POST /api/traders/:id/banks
+    // had stored every time a seller was re-saved. (server.js's twin already
+    // persisted it — this copy is the one that actually runs.)
     db.run(
-      'INSERT INTO trader_banks (trader_id, bank_name, acctnum, ifsc, holder_name) VALUES (?,?,?,?,?)',
-      [traderId, b.bank_name || '', String(b.acctnum || ''), String(b.ifsc || ''), b.holder_name || '']
+      'INSERT INTO trader_banks (trader_id, bank_name, branch, acctnum, ifsc, holder_name) VALUES (?,?,?,?,?,?)',
+      [traderId, b.bank_name || '', b.branch || '', String(b.acctnum || ''), String(b.ifsc || ''), b.holder_name || '']
     );
   }
   // Mirror first bank into the parent traders row for legacy compatibility

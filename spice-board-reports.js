@@ -151,6 +151,18 @@ function getReportContext(db, opts) {
   if (opts.dateFrom) { where.push('a.date >= ?'); params.push(opts.dateFrom); }
   if (opts.dateTo)   { where.push('a.date <= ?'); params.push(opts.dateTo); }
 
+  // Price gate. The post-auction reports (Form C / Form D / Buyers Statement)
+  // only ever want lots that actually sold, so they keep the amount > 0 rule.
+  // `includeUnpriced` drops it for the PRE-auction e-Auction CSV: that file is
+  // uploaded to the Spices Board portal BEFORE bidding, when every lot still
+  // has amount = 0 — the gate made it export an empty file for exactly the
+  // trade it exists to serve.
+  const priceGate = opts.includeUnpriced
+    ? ''
+    : (opts.includeWithdrawn
+        ? "AND (l.amount > 0 OR UPPER(TRIM(COALESCE(l.code,''))) = 'WD')"
+        : 'AND l.amount > 0');
+
   const rows = db.all(`
     SELECT
       l.id              AS lot_id,
@@ -198,15 +210,33 @@ function getReportContext(db, opts) {
     FROM lots l
     LEFT JOIN auctions a ON a.id = l.auction_id
     LEFT JOIN traders  t ON t.id = l.trader_id
-    LEFT JOIN buyers   b
-      ON UPPER(TRIM(b.code))  = UPPER(TRIM(l.code))
-      OR UPPER(TRIM(b.buyer)) = UPPER(TRIM(l.buyer))
+    -- Exactly ONE buyer per lot. Joining buyers on "code matches OR name
+    -- matches" directly multiplies the lot whenever the buyers master holds
+    -- more than one row for that code/name (it does — duplicate buyer records
+    -- are common), and with the amount gate lifted a lot with a blank code
+    -- would match every blank-code buyer in the table. So resolve the best
+    -- single buyer per lot first — a code match wins, lowest id breaks ties —
+    -- and join to that. Written as a derived table rather than a correlated
+    -- subquery because sql.js (the cloud driver) can't correlate into a JOIN's
+    -- ON clause.
+    LEFT JOIN (
+      SELECT l2.id AS lot_id,
+             MIN(CASE WHEN TRIM(COALESCE(l2.code,'')) <> ''
+                       AND UPPER(TRIM(b2.code)) = UPPER(TRIM(l2.code))
+                      THEN b2.id END) AS code_buyer_id,
+             MIN(b2.id)               AS any_buyer_id
+        FROM lots l2
+        JOIN buyers b2
+          ON (TRIM(COALESCE(l2.code,''))  <> '' AND UPPER(TRIM(b2.code))  = UPPER(TRIM(l2.code)))
+          OR (TRIM(COALESCE(l2.buyer,'')) <> '' AND UPPER(TRIM(b2.buyer)) = UPPER(TRIM(l2.buyer)))
+       WHERE l2.auction_id = ?
+       GROUP BY l2.id
+    ) bm ON bm.lot_id = l.id
+    LEFT JOIN buyers b ON b.id = COALESCE(bm.code_buyer_id, bm.any_buyer_id)
     WHERE ${where.join(' AND ')}
-      AND ${opts.includeWithdrawn
-            ? "(l.amount > 0 OR UPPER(TRIM(COALESCE(l.code,''))) = 'WD')"
-            : 'l.amount > 0'}
+      ${priceGate}
     ORDER BY CAST(l.lot_no AS INTEGER), l.lot_no
-  `, params);
+  `, [auctionId, ...params]);   // leading param binds the buyer-match derived table
 
   // Proforma invoice-number prefix (Buyer Statement prints it on every sale type).
   const _pref = db.get(`SELECT value FROM company_settings WHERE key = 'proforma_invoice_prefix'`);
@@ -1684,7 +1714,10 @@ function csvEscape(v) {
   return s;
 }
 async function eauctionCsv(db, opts) {
-  const ctx = getReportContext(db, opts);
+  // Pre-auction upload: include lots that have no price yet (all of them, at
+  // the point this file is actually generated). See `includeUnpriced` in
+  // getReportContext.
+  const ctx = getReportContext(db, { ...(opts || {}), includeUnpriced: true });
 
   // Spice Board portal upload schema. 20 columns, one row per lot.
   // Headers + column order match the ITCPC reference CSV exactly so

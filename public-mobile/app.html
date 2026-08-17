@@ -692,6 +692,14 @@ select:focus{border-color:var(--green)}
       <div class="lb">DATE OF BIRTH</div><input type="date" id="ns-dob" autocomplete="off" name="ns-dob">
       <div class="lb">USER ID</div><input type="text" id="ns-userid" autocomplete="off" name="ns-userid">
     </div>
+    <!-- Bank details — same multi-account model as the desktop Sellers screen,
+         so a seller added on the phone lands complete instead of needing a
+         second trip through the lot-entry bank editor. -->
+    <button type="button" id="ns-banks-btn" onclick="toggleSellerBanks()" style="width:100%;margin-top:8px;background:var(--bg2);border:1px dashed var(--border2);border-radius:8px;padding:9px 10px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;font-family:inherit;text-align:left">+ Bank details</button>
+    <div id="ns-banks" style="display:none">
+      <div id="ns-bank-rows"></div>
+      <button type="button" onclick="nsAddBankRow()" style="width:100%;margin-top:8px;background:none;border:1px dashed var(--green);border-radius:8px;padding:8px;font-size:11px;font-weight:700;color:var(--green);cursor:pointer;font-family:inherit">+ Add another bank</button>
+    </div>
     <div id="ns-err"></div>
   </form></div>
   <div class="modal-foot"><button class="btn btn-sm btn-outline" onclick="closeSellerModal()" style="flex:1">Cancel</button><button class="btn btn-sm" onclick="saveNewSeller()" id="ns-save" style="flex:2">Add Seller</button></div>
@@ -1594,7 +1602,7 @@ function wireSellerUppercase(){
     if(up!==el.value){var s=el.selectionStart,en=el.selectionEnd;el.value=up;try{el.setSelectionRange(s,en);}catch(_){}}
   });
 }
-function openSellerModal(n,p){wireSellerUppercase();document.getElementById('le-res').style.display='none';document.getElementById('ns-name').value=n||'';document.getElementById('ns-cr').value='';document.getElementById('ns-pan').value='';document.getElementById('ns-tel').value=p||'';document.getElementById('ns-whatsapp').value='';document.getElementById('ns-email').value='';document.getElementById('ns-padd').value='';document.getElementById('ns-ppla').value='';document.getElementById('ns-pin').value='';document.getElementById('ns-pstate').value='KERALA';document.getElementById('ns-pst').value='32';document.getElementById('ns-dob').value='';document.getElementById('ns-userid').value='';var wa=document.getElementById('ns-wa-same');wa.checked=false;var waInp=document.getElementById('ns-whatsapp');waInp.readOnly=false;waInp.style.background='';var em=document.getElementById('ns-email');em.classList.remove('invalid');var emErr=document.getElementById('ns-email-err');if(emErr)emErr.style.display='none';document.getElementById('ns-err').innerHTML='';setSellerMore(false);document.getElementById('seller-modal').classList.add('show');_seedNextUserId()}
+function openSellerModal(n,p){wireSellerUppercase();document.getElementById('le-res').style.display='none';document.getElementById('ns-name').value=n||'';document.getElementById('ns-cr').value='';document.getElementById('ns-pan').value='';document.getElementById('ns-tel').value=p||'';document.getElementById('ns-whatsapp').value='';document.getElementById('ns-email').value='';document.getElementById('ns-padd').value='';document.getElementById('ns-ppla').value='';document.getElementById('ns-pin').value='';document.getElementById('ns-pstate').value='KERALA';document.getElementById('ns-pst').value='32';document.getElementById('ns-dob').value='';document.getElementById('ns-userid').value='';var wa=document.getElementById('ns-wa-same');wa.checked=false;var waInp=document.getElementById('ns-whatsapp');waInp.readOnly=false;waInp.style.background='';var em=document.getElementById('ns-email');em.classList.remove('invalid');var emErr=document.getElementById('ns-email-err');if(emErr)emErr.style.display='none';document.getElementById('ns-err').innerHTML='';setSellerMore(false);nsRenderBankRows();setSellerBanks(false);document.getElementById('seller-modal').classList.add('show');_seedNextUserId()}
 // "More details" section of the Add Seller form. Collapsed on every open —
 // the quick path is NAME + PAN + PHONE; GSTIN, address, state, DOB and user
 // id are one tap away. Anything that fails validation down there expands the
@@ -1606,6 +1614,112 @@ function setSellerMore(open){
   btn.textContent=open?'− Fewer details':'+ More details';
 }
 function toggleSellerMore(){var box=document.getElementById('ns-more');setSellerMore(!!box&&box.style.display==='none')}
+// ── Add Seller → bank accounts ────────────────────────────────
+// Repeating rows, mirroring the desktop Sellers screen: any number of
+// accounts, each needing BOTH an account number and an IFSC (leave a row
+// entirely blank to skip it). Sent as `banks[]` on POST /api/traders, which
+// already knows how to persist them.
+function setSellerBanks(open){
+  var box=document.getElementById('ns-banks'),btn=document.getElementById('ns-banks-btn');
+  if(!box||!btn)return;
+  box.style.display=open?'block':'none';
+  btn.textContent=open?'− Bank details':'+ Bank details';
+}
+function toggleSellerBanks(){
+  var box=document.getElementById('ns-banks');
+  var open=!!box&&box.style.display==='none';
+  setSellerBanks(open);
+  // First open with nothing in it — start them off with one empty row.
+  if(open&&!document.querySelector('#ns-bank-rows .ns-bank-row')) nsAddBankRow();
+}
+function nsAddBankRow(){
+  var host=document.getElementById('ns-bank-rows');
+  if(!host)return;
+  var row=document.createElement('div');
+  row.className='ns-bank-row';
+  row.style.cssText='border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-top:8px;background:var(--bg)';
+  row.innerHTML=
+     '<div style="display:flex;align-items:center;gap:8px">'
+    +'<span style="font-size:9px;font-weight:800;color:var(--text3);letter-spacing:.6px">BANK ACCOUNT</span>'
+    +'<button type="button" onclick="nsRemoveBankRow(this)" style="margin-left:auto;background:none;border:none;color:var(--red);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">✕ Remove</button>'
+    +'</div>'
+    +'<div class="lb" style="margin-top:6px">ACCOUNT NO</div>'
+    +'<input type="text" class="ns-bk-acct" inputmode="numeric" autocomplete="off" maxlength="18" oninput="this.value=this.value.replace(/[^0-9]/g,\'\')">'
+    +'<div class="lb">IFSC</div>'
+    +'<input type="text" class="ns-bk-ifsc" autocomplete="off" maxlength="11" placeholder="e.g. ICIC0003816" oninput="nsLookupIFSC(this)">'
+    +'<div class="ns-bk-info" style="display:none;font-size:11px;margin-top:4px"></div>'
+    +'<div class="lb">BANK NAME</div><input type="text" class="ns-bk-name" autocomplete="off">'
+    +'<div class="lb">HOLDER NAME</div><input type="text" class="ns-bk-holder" autocomplete="off">';
+  host.appendChild(row);
+}
+function nsRemoveBankRow(btn){
+  var row=btn.closest('.ns-bank-row');
+  if(row) row.remove();
+}
+function nsRenderBankRows(){
+  var host=document.getElementById('ns-bank-rows');
+  if(host) host.innerHTML='';
+}
+// Row-scoped IFSC lookup — same cache and endpoint as the lot-entry bank
+// form, but resolves its status line from the row instead of a fixed id.
+var nsIfscTimer=null;
+function nsLookupIFSC(inp){
+  clearTimeout(nsIfscTimer);
+  var row=inp.closest('.ns-bank-row'); if(!row)return;
+  var infoEl=row.querySelector('.ns-bk-info');
+  var code=inp.value.trim().toUpperCase();
+  if(!code||code.length<11){infoEl.style.display='none';return}
+  if(!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(code)){
+    infoEl.textContent='✕ Invalid IFSC format';infoEl.style.color='var(--red)';infoEl.style.display='block';return;
+  }
+  if(ifscBranchCache[code]){
+    infoEl.textContent='🏦 '+ifscBranchCache[code];infoEl.style.color='var(--green)';infoEl.style.display='block';return;
+  }
+  infoEl.textContent='Looking up...';infoEl.style.color='var(--text3)';infoEl.style.display='block';
+  nsIfscTimer=setTimeout(function(){
+    fetch('https://ifsc.razorpay.com/'+code)
+      .then(function(r){return r.ok?r.json():null})
+      .then(function(d){
+        if(d&&d.BANK){
+          if(d.BRANCH) ifscBranchCache[code]=d.BRANCH;
+          var nm=row.querySelector('.ns-bk-name');
+          if(nm&&!nm.value.trim()) nm.value=d.BANK;
+          infoEl.textContent='🏦 '+d.BANK+(d.BRANCH?' — '+d.BRANCH:'');
+          infoEl.style.color='var(--green)';
+        }else{
+          infoEl.textContent='✕ IFSC not found';infoEl.style.color='var(--red)';
+        }
+      })
+      .catch(function(){
+        // Offline in the auction hall is normal — format check is enough.
+        infoEl.textContent='✓ Format valid (lookup unavailable)';infoEl.style.color='var(--text3)';
+      });
+  },400);
+}
+// Blank rows are dropped, exactly like the desktop screen's collectBankRows().
+function nsCollectBanks(){
+  var out=[];
+  document.querySelectorAll('#ns-bank-rows .ns-bank-row').forEach(function(row){
+    var v=function(sel){return (row.querySelector(sel).value||'').trim()};
+    var acct=v('.ns-bk-acct'), ifsc=v('.ns-bk-ifsc').toUpperCase();
+    if(!acct&&!ifsc) return;
+    out.push({bank_name:v('.ns-bk-name'),branch:ifscBranchCache[ifsc]||'',
+              acctnum:acct,ifsc:ifsc,holder_name:v('.ns-bk-holder')});
+  });
+  return out;
+}
+// Returns '' when fine, otherwise the message to show. Same rules the
+// lot-entry bank form enforces, so an account added here can't be shaped
+// differently from one added there.
+function nsValidateBanks(banks){
+  for(var i=0;i<banks.length;i++){
+    var b=banks[i],n='Bank '+(i+1)+': ';
+    if(!b.acctnum||!b.ifsc) return n+'enter BOTH account number and IFSC (or clear the row).';
+    if(!/^\d{9,18}$/.test(b.acctnum)) return n+'account number must be 9–18 digits.';
+    if(!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(b.ifsc)) return n+'invalid IFSC (e.g. ICIC0003816).';
+  }
+  return '';
+}
 // "+ ADD SELLER" beside the Lot Entry search box. Seeds the form with whatever
 // is already typed — as a phone number when it's all digits, otherwise as the
 // name — matching how the "Add new seller" search result splits it.
@@ -1636,7 +1750,7 @@ async function _nsCheckPanDup(pan){
     return rows.filter(t=>String(t.pan||'').trim().toUpperCase()===vU).slice(0,5);
   }catch(e){return[]}
 }
-async function saveNewSeller(){const name=document.getElementById('ns-name').value.trim(),er=document.getElementById('ns-err');er.innerHTML='';if(!name){er.innerHTML='<div class="eb">Name required</div>';return}const emailEl=document.getElementById('ns-email');const email=emailEl.value.trim();if(!validateEmailField(emailEl,true)){er.innerHTML='<div class="eb">Invalid email format</div>';setSellerMore(true);emailEl.focus();return}const panRaw=document.getElementById('ns-pan').value.trim();if(panRaw){const dups=await _nsCheckPanDup(panRaw);if(dups.length){er.innerHTML='<div class="eb">PAN '+panRaw.toUpperCase()+' already on seller: '+dups.map(t=>t.name).join(', ')+'. Cancel and search for the existing seller.</div>';return}}document.getElementById('ns-save').disabled=true;try{const r=await fetch(B+'/api/traders',{method:'POST',headers:ah(),body:JSON.stringify({name,cr:document.getElementById('ns-cr').value.trim(),pan:document.getElementById('ns-pan').value.trim(),tel:document.getElementById('ns-tel').value.trim(),whatsapp:document.getElementById('ns-whatsapp').value.trim(),email:email,padd:document.getElementById('ns-padd').value.trim(),ppla:document.getElementById('ns-ppla').value.trim(),pin:document.getElementById('ns-pin').value.trim(),pstate:document.getElementById('ns-pstate').value.trim(),pst_code:document.getElementById('ns-pst').value.trim(),dob:document.getElementById('ns-dob').value.trim(),user_id:document.getElementById('ns-userid').value.trim()})});const d=await r.json();if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Failed')+'</div>';return}closeSellerModal();pickTrader(d.trader);toast('"'+d.trader.name+'" added',false)}catch(e){er.innerHTML='<div class="eb">Failed</div>'}finally{document.getElementById('ns-save').disabled=false}}
+async function saveNewSeller(){const name=document.getElementById('ns-name').value.trim(),er=document.getElementById('ns-err');er.innerHTML='';if(!name){er.innerHTML='<div class="eb">Name required</div>';return}const emailEl=document.getElementById('ns-email');const email=emailEl.value.trim();if(!validateEmailField(emailEl,true)){er.innerHTML='<div class="eb">Invalid email format</div>';setSellerMore(true);emailEl.focus();return}const panRaw=document.getElementById('ns-pan').value.trim();if(panRaw){const dups=await _nsCheckPanDup(panRaw);if(dups.length){er.innerHTML='<div class="eb">PAN '+panRaw.toUpperCase()+' already on seller: '+dups.map(t=>t.name).join(', ')+'. Cancel and search for the existing seller.</div>';return}}const banks=nsCollectBanks();const bankErr=nsValidateBanks(banks);if(bankErr){er.innerHTML='<div class="eb">'+bankErr+'</div>';setSellerBanks(true);return}document.getElementById('ns-save').disabled=true;try{const r=await fetch(B+'/api/traders',{method:'POST',headers:ah(),body:JSON.stringify({banks:banks,name,cr:document.getElementById('ns-cr').value.trim(),pan:document.getElementById('ns-pan').value.trim(),tel:document.getElementById('ns-tel').value.trim(),whatsapp:document.getElementById('ns-whatsapp').value.trim(),email:email,padd:document.getElementById('ns-padd').value.trim(),ppla:document.getElementById('ns-ppla').value.trim(),pin:document.getElementById('ns-pin').value.trim(),pstate:document.getElementById('ns-pstate').value.trim(),pst_code:document.getElementById('ns-pst').value.trim(),dob:document.getElementById('ns-dob').value.trim(),user_id:document.getElementById('ns-userid').value.trim()})});const d=await r.json();if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Failed')+'</div>';return}closeSellerModal();pickTrader(d.trader);toast('"'+d.trader.name+'" added',false)}catch(e){er.innerHTML='<div class="eb">Failed</div>'}finally{document.getElementById('ns-save').disabled=false}}
 
 var lotValidateTimer=null,lotIsValid=true;
 function validateLotNo(val){
