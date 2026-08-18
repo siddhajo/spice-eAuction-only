@@ -5886,7 +5886,12 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
               <input id="reg-party-input" placeholder="🔍 All parties — type to search name or phone" autocomplete="off"
                      onfocus="regPartyOpen()" oninput="regPartyOnInput(this.value)"
                      onkeydown="regPartyKey(event)" onblur="regPartyBlur()"
-                     style="width:100%;padding:6px;box-sizing:border-box">
+                     style="width:100%;padding:6px 26px 6px 6px;box-sizing:border-box">
+              <!-- Clear (×) — only rendered when something is selected. mousedown
+                   (not click) so it fires before the input's blur handler. -->
+              <span id="reg-party-clear" title="Clear party filter"
+                    onmousedown="event.preventDefault();regPartyClear()"
+                    style="display:none;position:absolute;top:50%;right:6px;transform:translateY(-50%);width:17px;height:17px;line-height:16px;text-align:center;border-radius:50%;cursor:pointer;color:var(--text3);background:#eee;font-size:12px;user-select:none;z-index:2">&times;</span>
               <div id="reg-party-list" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:60;max-height:260px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:12.5px"></div>
             </div>
             <input type="hidden" id="reg-party">
@@ -29108,6 +29113,22 @@ function regPartySelect(name){
   if (hidden) hidden.value = name || '';
   if (inp) inp.value = name || '';
   regPartyClose();
+  regPartySyncClear();
+}
+// The × only makes sense when there is something to clear, so its visibility
+// tracks the visible input (a selection or half-typed text).
+function regPartySyncClear(){
+  const inp = document.getElementById('reg-party-input');
+  const x = document.getElementById('reg-party-clear');
+  if (x) x.style.display = (inp && inp.value) ? 'block' : 'none';
+}
+// Reset to "All parties" and keep the operator in the field with the full list
+// showing, so clearing flows straight into picking someone else.
+function regPartyClear(){
+  regPartySelect('');
+  const inp = document.getElementById('reg-party-input');
+  if (inp) { try { inp.focus(); } catch(_) {} }
+  renderRegPartyOptions('');
 }
 function regPartyPick(i){
   const x = _regPartyMatches[i];
@@ -29128,6 +29149,7 @@ function regPartyOpen(){
 function regPartyOnInput(v){
   _regPartyActive = 0;
   renderRegPartyOptions(v);
+  regPartySyncClear();
 }
 // Blur is deferred so a mousedown on a row commits first. Whatever the
 // operator typed without picking is discarded — the input snaps back to the
@@ -29138,6 +29160,7 @@ function regPartyBlur(){
     const inp = document.getElementById('reg-party-input');
     if (inp) inp.value = hidden ? hidden.value : '';
     regPartyClose();
+    regPartySyncClear();
   }, 150);
 }
 function regPartyKey(e){
