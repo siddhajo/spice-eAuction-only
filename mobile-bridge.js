@@ -67,8 +67,8 @@ function syncTraderBanks(db, traderId, banks) {
     // had stored every time a seller was re-saved. (server.js's twin already
     // persisted it — this copy is the one that actually runs.)
     db.run(
-      'INSERT INTO trader_banks (trader_id, bank_name, branch, acctnum, ifsc, holder_name) VALUES (?,?,?,?,?,?)',
-      [traderId, b.bank_name || '', b.branch || '', String(b.acctnum || ''), String(b.ifsc || ''), b.holder_name || '']
+      'INSERT INTO trader_banks (trader_id, bank_name, branch, acctnum, ifsc, holder_name, account_type) VALUES (?,?,?,?,?,?,?)',
+      [traderId, b.bank_name || '', b.branch || '', String(b.acctnum || ''), String(b.ifsc || ''), b.holder_name || '', b.account_type || '']
     );
   }
   // Mirror first bank into the parent traders row for legacy compatibility
@@ -1542,7 +1542,7 @@ function mountMobile(app, deps) {
       [traderId]
     );
     let banks = db.all(
-      `SELECT id, trader_id, bank_name, branch, acctnum, ifsc, holder_name, is_default
+      `SELECT id, trader_id, bank_name, branch, acctnum, ifsc, holder_name, account_type, is_default
          FROM trader_banks WHERE trader_id = ?
          ORDER BY is_default DESC, id ASC`,
       [traderId]
@@ -1558,7 +1558,7 @@ function mountMobile(app, deps) {
           [traderId, String(t.acctnum).trim(), t.ifsc || '', t.holder_name || '']
         );
         banks = db.all(
-          `SELECT id, trader_id, bank_name, acctnum, ifsc, holder_name, is_default
+          `SELECT id, trader_id, bank_name, branch, acctnum, ifsc, holder_name, account_type, is_default
              FROM trader_banks WHERE trader_id = ?
              ORDER BY is_default DESC, id ASC`,
           [traderId]
@@ -1574,7 +1574,7 @@ function mountMobile(app, deps) {
   app.post('/api/traders/:id/banks', requireAuth, (req, res) => {
     const db = getDb();
     const traderId = parseInt(req.params.id, 10);
-    const { acctnum, ifsc, label, holder_name, branch, is_default } = req.body || {};
+    const { acctnum, ifsc, label, holder_name, branch, account_type, is_default } = req.body || {};
     if (!acctnum || !String(acctnum).trim()) {
       return res.status(400).json({ error: 'Account number is required' });
     }
@@ -1588,8 +1588,8 @@ function mountMobile(app, deps) {
     // auto-filled from the IFSC lookup) is stored so the lot-entry seller
     // picker can show it alongside the other bank details.
     const info = db.run(
-      `INSERT INTO trader_banks (trader_id, bank_name, branch, acctnum, ifsc, holder_name, is_default)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO trader_banks (trader_id, bank_name, branch, acctnum, ifsc, holder_name, account_type, is_default)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         traderId,
         String(label || '').trim(),
@@ -1597,6 +1597,7 @@ function mountMobile(app, deps) {
         String(acctnum).trim(),
         String(ifsc || '').trim().toUpperCase(),
         String(holder_name || '').trim(),
+        String(account_type || '').trim(),
         is_default ? 1 : 0,
       ]
     );
@@ -1614,7 +1615,7 @@ function mountMobile(app, deps) {
     const db = getDb();
     const tid = parseInt(req.params.tid, 10);
     const bid = parseInt(req.params.bid, 10);
-    const { acctnum, ifsc, label, holder_name, branch } = req.body || {};
+    const { acctnum, ifsc, label, holder_name, branch, account_type } = req.body || {};
     const bank = db.get(
       'SELECT * FROM trader_banks WHERE id = ? AND trader_id = ?', [bid, tid]
     );
@@ -1625,7 +1626,8 @@ function mountMobile(app, deps) {
            ifsc = COALESCE(?, ifsc),
            bank_name = COALESCE(?, bank_name),
            holder_name = COALESCE(?, holder_name),
-           branch = COALESCE(?, branch)
+           branch = COALESCE(?, branch),
+           account_type = COALESCE(?, account_type)
        WHERE id = ?`,
       [
         acctnum != null ? String(acctnum).trim() : null,
@@ -1633,6 +1635,7 @@ function mountMobile(app, deps) {
         label != null ? String(label).trim() : null,
         holder_name != null ? String(holder_name).trim() : null,
         branch != null ? String(branch).trim() : null,
+        account_type != null ? String(account_type).trim() : null,
         bid,
       ]
     );

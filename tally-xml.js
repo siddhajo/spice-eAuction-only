@@ -2724,6 +2724,8 @@ function buildSalesIspRows(db, auctionId, cfg) {
            -- (Journal) XML bills against the PROFORMA number the buyer already
            -- holds, so the reference has to travel with the row. Lowest number
            -- wins when several drafts were folded into one original.
+           -- FALLBACK ONLY: resolveDraft() below prefers the lot stamps, which
+           -- also cover splits and drafts billed under a different sale type.
            (SELECT p.invo FROM invoices p
              WHERE p.auction_id = i.auction_id
                AND COALESCE(p.is_proforma,0) = 1
@@ -2735,6 +2737,71 @@ function buildSalesIspRows(db, auctionId, cfg) {
     ORDER BY i.sale, CAST(i.invo AS INTEGER), i.id
   `);
   const raw = stmt.all(auctionId);
+
+  // ── Draft (proforma) resolution ────────────────────────────────
+  // The subquery above answers from `invoices.raised_invo` alone, which is
+  // stamped on at most ONE draft per original and only when buyer AND sale
+  // line up. Two everyday cases therefore fell back to the original number:
+  //   • SPLIT — one draft shipped as several originals; only the first
+  //     original is ever stamped (server.js only writes raised_invo where it
+  //     is still empty), so the rest carry no back-reference.
+  //   • SALE CHANGE — drafted Local, billed Inter-state; `p.sale = i.sale`
+  //     blocks the match.
+  // The lots hold the answer per lot: an original stamps lots.invo (lots.asp_invo
+  // in Kerala/ASP) while the draft that covered them left lots.proforma_invo
+  // behind. Index that by buyer + number, sale-agnostic on purpose — the sale
+  // type is exactly what can differ. Same resolution the Collection report and
+  // the Buyer Statement use, so all three quote the buyer the same number.
+  const draftsByInvoice = new Map();
+  const lotStamps = db.prepare(`
+    SELECT buyer,
+           TRIM(COALESCE(invo,''))          AS invo,
+           TRIM(COALESCE(asp_invo,''))      AS asp_invo,
+           TRIM(COALESCE(proforma_invo,'')) AS pf
+      FROM lots
+     WHERE auction_id = ? AND TRIM(COALESCE(proforma_invo,'')) != ''
+  `).all(auctionId);
+  for (const l of lotStamps) {
+    const bk = String(l.buyer || '').trim().toUpperCase();
+    // A lot can be stamped by both sides of the ASP→ISP cycle; index under
+    // each number so whichever invoice is being built finds it.
+    for (const no of new Set([l.invo, l.asp_invo])) {
+      if (!no) continue;
+      const k = `${bk}|${no}`;
+      if (!draftsByInvoice.has(k)) draftsByInvoice.set(k, new Set());
+      draftsByInvoice.get(k).add(l.pf);
+    }
+  }
+  // The sale letter printed with a draft number must be the DRAFT's own — it
+  // is what the buyer holds. Taking it from the invoice turned a draft read
+  // "PI/L-8" into "PI/I-8", a reference that matches no document.
+  const draftSaleByNo = new Map();
+  for (const p of db.prepare(`
+    SELECT buyer, TRIM(COALESCE(invo,'')) AS invo, sale
+      FROM invoices
+     WHERE auction_id = ? AND COALESCE(is_proforma,0) = 1
+  `).all(auctionId)) {
+    draftSaleByNo.set(
+      `${String(p.buyer || '').trim().toUpperCase()}|${p.invo}`,
+      String(p.sale || '').trim().toUpperCase()
+    );
+  }
+  // The bill reference is a single token, so when several drafts folded into
+  // one original the lowest number still wins — unchanged from before.
+  const resolveDraft = (r) => {
+    const bk = String(r.buyer || '').trim().toUpperCase();
+    const no = String(r.invo  || '').trim();
+    const cands = new Set(draftsByInvoice.get(`${bk}|${no}`) || []);
+    const fromRaised = String(r.proforma_invo || '').trim();
+    if (fromRaised) cands.add(fromRaised);
+    if (!cands.size) return { no: '', sale: '' };
+    const pick = [...cands].sort((a, b) => {
+      const na = parseInt(a, 10), nb = parseInt(b, 10);
+      if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na - nb;
+      return String(a).localeCompare(String(b));
+    })[0];
+    return { no: pick, sale: draftSaleByNo.get(`${bk}|${pick}`) || '' };
+  };
 
   // Per-lot details for ISP voucher inventory entries. ISP voucher uses
   // the SALES rate (lots.price / lots.amount), not the planter rate.
@@ -2799,6 +2866,8 @@ function buildSalesIspRows(db, auctionId, cfg) {
 
   const out = [];
   for (const r of raw) {
+    // Which draft (if any) the buyer holds for this invoice — see resolveDraft.
+    const _draft = resolveDraft(r);
     // Prefer lots scoped to THIS invoice (respects split invoices); fall back
     // to the buyer's full lot set for legacy/ASP-overwritten data.
     let lotRows = lotsByInvoStmt.all(auctionId, r.buyer, String(r.invo));
@@ -2861,9 +2930,11 @@ function buildSalesIspRows(db, auctionId, cfg) {
       sale: r.sale,
       invo: r.invo,
       // Proforma number this invoice was raised from ('' when it was billed
-      // directly). Only the Merchant XML uses it — every other generator
-      // ignores unknown fields, so carrying it here is additive and safe.
-      proformaInvo: String(r.proforma_invo || '').trim(),
+      // directly), and the sale letter that draft was numbered under. Only the
+      // Merchant XML uses them — every other generator ignores unknown fields,
+      // so carrying them here is additive and safe.
+      proformaInvo: _draft.no,
+      proformaSale: _draft.sale,
       aspInvo,
       buyer: r.buyer,
       partyName: r.buyer1 || r.buyer || '',
@@ -4604,8 +4675,11 @@ function generMerchantsXML(rows, cfg, opts = {}) {
     // without. An invoice billed directly (no proforma) keeps the legacy
     // "I/2009/2026-27" shape (separator from settings).
     const proformaNo = String(row.proformaInvo || '').trim();
+    // Sale letter comes from the DRAFT when there is one — an operator can
+    // draft Local and bill Inter-state, and the merchant holds the draft.
+    const proformaSale = String(row.proformaSale || '').trim().toUpperCase() || sale;
     const billRef   = proformaNo
-      ? formatInvoiceNo(proformaPrefix, sale, proformaNo)
+      ? formatInvoiceNo(proformaPrefix, proformaSale, proformaNo)
       : `${sale}${separator}${invoNo}`;
     const billName  = `${invPrefix}${billRef}/${season}`;
     // Merchants journal debits the BUYER (row.buyer, e.g. "ARUL"), not the

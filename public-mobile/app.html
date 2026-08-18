@@ -378,7 +378,10 @@ select:focus{border-color:var(--green)}
             <div><div class="elb">HOLDER NAME</div><input type="text" id="le-holder" placeholder="Holder name" class="ein"></div>
           </div>
           <div id="le-ifsc-info" style="display:none;font-size:9px;color:var(--green);font-weight:600"></div>
-          <div style="margin-top:4px"><div class="elb">LABEL</div><input type="text" id="le-bank-label" placeholder="e.g. SBI Main" class="ein"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px">
+            <div><div class="elb">LABEL</div><input type="text" id="le-bank-label" placeholder="e.g. SBI Main" class="ein"></div>
+            <div><div class="elb">ACCOUNT TYPE</div><select id="le-acct-type" class="ein" style="-webkit-appearance:menulist;appearance:menulist"><option value="">—</option><option value="Savings">Savings</option><option value="Current">Current</option></select></div>
+          </div>
           <input type="hidden" id="le-bank-edit-id" value="">
           <div style="display:flex;gap:6px;margin-top:6px">
             <button style="background:var(--green);color:#fff;border:none;border-radius:5px;padding:4px 12px;font-size:11px;font-weight:600;cursor:pointer" onclick="saveBankAccount()">Save</button>
@@ -626,7 +629,7 @@ select:focus{border-color:var(--green)}
         <div id="ed-acct-match" style="display:none;font-size:10px;font-weight:600;margin-top:2px"></div>
         <div class="fr" style="margin-top:6px"><div><div class="lb">IFSC CODE</div><input type="text" id="ed-ifsc" placeholder="IFSC code" style="text-transform:uppercase" oninput="lookupIFSC(this,'ed-ifsc-info')"></div><div><div class="lb">HOLDER NAME</div><input type="text" id="ed-holder" placeholder="Account holder name"></div></div>
         <div id="ed-ifsc-info" style="display:none;font-size:10px;margin-top:2px;color:var(--green);font-weight:600"></div>
-        <div class="lb" style="margin-top:6px">LABEL (optional)</div><input type="text" id="ed-bank-label" placeholder="e.g. SBI Main">
+        <div class="fr" style="margin-top:6px"><div><div class="lb">LABEL (optional)</div><input type="text" id="ed-bank-label" placeholder="e.g. SBI Main"></div><div><div class="lb">ACCOUNT TYPE</div><select id="ed-acct-type" style="width:100%;height:44px;border-radius:8px;border:1.5px solid var(--border);padding:0 10px;font-size:15px;background:var(--input-bg);color:var(--text)"><option value="">—</option><option value="Savings">Savings</option><option value="Current">Current</option></select></div></div>
         <input type="hidden" id="ed-bank-edit-id" value="">
         <div style="display:flex;gap:8px;margin-top:8px">
           <button style="background:var(--green);color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="saveEditBankAccount()">Save</button>
@@ -2283,13 +2286,13 @@ async function deleteSelectedEditBank(){
 }
 
 function showEditBankAdd(){
-  document.getElementById('ed-acct').value='';document.getElementById('ed-acct').dataset.original='';document.getElementById('ed-acct-confirm').value='';document.getElementById('ed-acct-confirm-lbl').style.display='block';document.getElementById('ed-acct-confirm').style.display='block';document.getElementById('ed-acct-match').style.display='none';document.getElementById('ed-ifsc').value='';document.getElementById('ed-holder').value='';document.getElementById('ed-bank-label').value='';document.getElementById('ed-bank-edit-id').value='';
+  document.getElementById('ed-acct').value='';document.getElementById('ed-acct').dataset.original='';document.getElementById('ed-acct-confirm').value='';document.getElementById('ed-acct-confirm-lbl').style.display='block';document.getElementById('ed-acct-confirm').style.display='block';document.getElementById('ed-acct-match').style.display='none';document.getElementById('ed-ifsc').value='';document.getElementById('ed-holder').value='';document.getElementById('ed-bank-label').value='';var edat=document.getElementById('ed-acct-type');if(edat)edat.value='';document.getElementById('ed-bank-edit-id').value='';
   document.getElementById('ed-bank-form').style.display='block';document.getElementById('ed-acct').focus();
 }
 
 function editEditBank(bankId){
   var b=editBanks.find(function(x){return x.id===bankId});if(!b)return;
-  document.getElementById('ed-acct').value=b.acctnum||'';document.getElementById('ed-acct').dataset.original=b.acctnum||'';document.getElementById('ed-acct-confirm').value='';document.getElementById('ed-acct-confirm-lbl').style.display='none';document.getElementById('ed-acct-confirm').style.display='none';document.getElementById('ed-acct-match').style.display='none';document.getElementById('ed-ifsc').value=b.ifsc||'';document.getElementById('ed-holder').value=b.holder_name||'';document.getElementById('ed-bank-label').value=b.label||'';document.getElementById('ed-bank-edit-id').value=bankId;
+  document.getElementById('ed-acct').value=b.acctnum||'';document.getElementById('ed-acct').dataset.original=b.acctnum||'';document.getElementById('ed-acct-confirm').value='';document.getElementById('ed-acct-confirm-lbl').style.display='none';document.getElementById('ed-acct-confirm').style.display='none';document.getElementById('ed-acct-match').style.display='none';document.getElementById('ed-ifsc').value=b.ifsc||'';document.getElementById('ed-holder').value=b.holder_name||'';document.getElementById('ed-bank-label').value=b.label||'';var edat2=document.getElementById('ed-acct-type');if(edat2)edat2.value=b.account_type||'';document.getElementById('ed-bank-edit-id').value=bankId;
   document.getElementById('ed-bank-form').style.display='block';document.getElementById('ed-acct').focus();
 }
 
@@ -2316,7 +2319,7 @@ async function saveEditBankAccount(){
   if(needConfirm&&acct!==confirmVal){toast('Account numbers do not match',true);return}
   if(ifsc&&!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)){toast('Invalid IFSC (e.g., ICIC0003816)',true);return}
   try{
-    var r;var body={acctnum:acct,ifsc:ifsc,label:label,holder_name:holder};
+    var r;var body={acctnum:acct,ifsc:ifsc,label:label,holder_name:holder,account_type:(document.getElementById('ed-acct-type')||{}).value||''};
     if(ifscBranchCache[ifsc])body.branch=ifscBranchCache[ifsc];
     if(needConfirm)body.confirm_acctnum=confirmVal;
     if(eid){r=await fetch(B+'/api/traders/'+editTraderId+'/banks/'+eid,{method:'PUT',headers:ah(),body:JSON.stringify(body)})}
@@ -2570,6 +2573,7 @@ function showAddBank() {
   document.getElementById('le-ifsc').value = '';
   document.getElementById('le-holder').value = '';
   document.getElementById('le-bank-label').value = '';
+  var lat=document.getElementById('le-acct-type');if(lat)lat.value='';
   document.getElementById('le-bank-edit-id').value = '';
   document.getElementById('le-bank-form').style.display = 'block';
   document.getElementById('le-acct').focus();
@@ -2586,6 +2590,7 @@ function editBankAccount(bankId) {
   document.getElementById('le-ifsc').value = b.ifsc || '';
   document.getElementById('le-holder').value = b.holder_name || '';
   document.getElementById('le-bank-label').value = b.label || '';
+  var lat2=document.getElementById('le-acct-type');if(lat2)lat2.value=b.account_type || '';
   document.getElementById('le-bank-edit-id').value = bankId;
   document.getElementById('le-bank-form').style.display = 'block';
   document.getElementById('le-acct').focus();
@@ -2628,7 +2633,7 @@ async function saveBankAccount() {
   if (ifsc && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) { toast('Invalid IFSC (e.g., ICIC0003816)', true); return; }
   try {
     var r;
-    var body = { acctnum: acct, ifsc: ifsc, label: label, holder_name: holder };
+    var body = { acctnum: acct, ifsc: ifsc, label: label, holder_name: holder, account_type: (document.getElementById('le-acct-type')||{}).value || '' };
     if (ifscBranchCache[ifsc]) body.branch = ifscBranchCache[ifsc];
     if (needConfirm) body.confirm_acctnum = confirmVal;
     if (editId) {

@@ -188,6 +188,7 @@ async function initDb() {
     acctnum TEXT NOT NULL,
     ifsc TEXT NOT NULL,
     holder_name TEXT DEFAULT '',
+    account_type TEXT DEFAULT '',
     is_default INTEGER DEFAULT 0,
     FOREIGN KEY (trader_id) REFERENCES traders(id)
   )`);
@@ -809,6 +810,8 @@ async function initDb() {
     "ALTER TABLE import_log ADD COLUMN skipped_details TEXT DEFAULT ''",
     // Bank branch name — populated by the IFSC auto-lookup in seller edit.
     "ALTER TABLE trader_banks ADD COLUMN branch TEXT DEFAULT ''",
+    // Current / Savings account type, captured in the seller bank details.
+    "ALTER TABLE trader_banks ADD COLUMN account_type TEXT DEFAULT ''",
     // Price-check gate timestamp — see auctions schema for semantics.
     "ALTER TABLE auctions ADD COLUMN price_checked_at TEXT DEFAULT ''",
     "ALTER TABLE auctions ADD COLUMN price_checked_ever_at TEXT DEFAULT ''",

@@ -584,18 +584,79 @@ function getCollectionRows(db, auctionId) {
   // sale+buyer+original number. Several drafts can fold into one original, so
   // the value is a list, printed comma-separated in invoice order.
   const proformaByInvoice = new Map();
-  const proformaRows = db.all(
+  const allDrafts = db.all(
     `SELECT sale, buyer, invo, raised_invo
        FROM invoices
       WHERE auction_id = ? AND COALESCE(is_proforma,0) = 1
-        AND TRIM(COALESCE(raised_invo,'')) != ''
       ORDER BY CAST(invo AS INTEGER), invo`,
     [auctionId]
   );
+  // The sale letter printed next to a draft number must be the DRAFT's own —
+  // that is what the buyer holds. An operator can draft under one sale type
+  // and bill under another (drafted Local, billed Inter-state), and taking
+  // the letter from the invoice turned "PI/L-8" into "PI/I-8": a number that
+  // appears on no document anywhere.
+  const draftSaleByNo = new Map();
+  for (const p of allDrafts) {
+    draftSaleByNo.set(
+      `${String(p.buyer || '').trim().toUpperCase()}|${String(p.invo || '').trim()}`,
+      String(p.sale || '').trim().toUpperCase()
+    );
+  }
+  const proformaRows = allDrafts.filter(p => String(p.raised_invo || '').trim() !== '');
+  // Sale-agnostic index of the same rows, used only when the sale-keyed
+  // lookup finds nothing (see the sale-change case below).
+  const proformaByInvoiceAnySale = new Map();
   for (const p of proformaRows) {
-    const k = `${String(p.sale || '').trim().toUpperCase()}|${String(p.buyer || '').trim().toUpperCase()}|${String(p.raised_invo || '').trim()}`;
+    const buyerKey = String(p.buyer || '').trim().toUpperCase();
+    const raised = String(p.raised_invo || '').trim();
+    const no = String(p.invo || '').trim();
+    const k = `${String(p.sale || '').trim().toUpperCase()}|${buyerKey}|${raised}`;
     if (!proformaByInvoice.has(k)) proformaByInvoice.set(k, []);
-    proformaByInvoice.get(k).push(String(p.invo || '').trim());
+    proformaByInvoice.get(k).push(no);
+    const k2 = `${buyerKey}|${raised}`;
+    if (!proformaByInvoiceAnySale.has(k2)) proformaByInvoiceAnySale.set(k2, []);
+    proformaByInvoiceAnySale.get(k2).push(no);
+  }
+
+  // `invoices.raised_invo` alone is not enough to answer "which draft did the
+  // buyer actually receive for this invoice?". It is stamped on at most ONE
+  // draft per original, and only when sale type and number line up, so two
+  // everyday cases fell through and printed the bare original number:
+  //
+  //   • SPLIT — one draft shipped as several originals. The generate path
+  //     stamps raised_invo only where it is still empty, so the 2nd, 3rd …
+  //     original carries no back-reference at all.
+  //   • SALE CHANGE — drafted Local, billed Inter-state (the Generate modal
+  //     lets the operator pick a different sale type when raising). `sale`
+  //     is part of the key, so the match misses.
+  //
+  // The LOTS are the ground truth: an original stamps lots.invo (lots.asp_invo
+  // in Kerala/ASP) and the draft that covered those lots left lots.proforma_invo
+  // behind, per lot. Index that by buyer + invoice number — sale-agnostic on
+  // purpose, since the sale type is exactly what can differ. This is the same
+  // source the Buyer Statement reads (spice-board-reports.js), so the two
+  // reports now agree on which number a buyer was billed under.
+  const proformaByLots = new Map();
+  const lotStamps = db.all(
+    `SELECT buyer,
+            TRIM(COALESCE(invo,''))          AS invo,
+            TRIM(COALESCE(asp_invo,''))      AS asp_invo,
+            TRIM(COALESCE(proforma_invo,'')) AS pf
+       FROM lots
+      WHERE auction_id = ? AND TRIM(COALESCE(proforma_invo,'')) != ''`,
+    [auctionId]
+  );
+  for (const l of lotStamps) {
+    const buyerKey = String(l.buyer || '').trim().toUpperCase();
+    // A lot can be stamped by both sides of the ASP→ISP cycle; index under
+    // each number so whichever invoice the report is printing finds it.
+    for (const no of new Set([l.invo, l.asp_invo])) {
+      if (!no) continue;
+      const k = `${buyerKey}|${no}`;
+      if (!proformaByLots.has(k)) proformaByLots.set(k, new Set());
+      proformaByLots.get(k).add(l.pf);
+    }
   }
 
   return invoices.map(i => {
@@ -607,10 +668,20 @@ function getCollectionRows(db, auctionId) {
     const buyerName = b
       ? (b.buyer || b.sbl || i.buyer || '')
       : (i.buyer || '');
-    // Proforma number(s) this invoice was raised from, if any.
-    const pfNos = proformaByInvoice.get(
-      `${String(i.sale || '').trim().toUpperCase()}|${String(i.buyer || '').trim().toUpperCase()}|${String(i.invo || '').trim()}`
-    ) || [];
+    // Proforma number(s) this invoice was raised from, if any. Union of the
+    // lot stamps (ground truth) and the raised_invo back-reference (covers
+    // invoices whose lots have since been edited away), lowest number first.
+    const buyerKey = String(i.buyer || '').trim().toUpperCase();
+    const invoKey  = String(i.invo  || '').trim();
+    const fromRaised = proformaByInvoice.get(
+      `${String(i.sale || '').trim().toUpperCase()}|${buyerKey}|${invoKey}`
+    ) || proformaByInvoiceAnySale.get(`${buyerKey}|${invoKey}`) || [];
+    const fromLots = [...(proformaByLots.get(`${buyerKey}|${invoKey}`) || [])];
+    const pfNos = [...new Set([...fromRaised, ...fromLots])].sort((a, b) => {
+      const na = parseInt(a, 10), nb = parseInt(b, 10);
+      if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na - nb;
+      return String(a).localeCompare(String(b));
+    });
     return {
       sale:        i.sale,
       invo:        i.invo,
@@ -618,7 +689,7 @@ function getCollectionRows(db, auctionId) {
       // number, carrying the configured prefix ("PI/I-2009"). Billed directly
       // → the original number in the legacy bare form ("I 2009").
       invo_label:  pfNos.length
-        ? pfNos.map(n => formatInvoiceNo(isPrefix, i.sale, n)).join(', ')
+        ? pfNos.map(n => formatInvoiceNo(isPrefix, draftSaleByNo.get(`${buyerKey}|${n}`) || i.sale, n)).join(', ')
         : formatInvoiceNo('', i.sale, i.invo),
       proforma_invo: pfNos.join(', '),
       trade_name:  i.buyer1 || '',

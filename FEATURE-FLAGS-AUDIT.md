@@ -42,6 +42,12 @@ The app consumes flags two ways:
 | `flag_price_check` | **Full gate**: Price Check tab + hard 412 block on Calculate/Invoice/Purchase/Bill/DN until verified | `server.js:2947`, guarded at `4808,5008,5198…` |
 | `flag_lot_lock` | **Full gate**: lock/unlock UI + endpoints 404 when off + lock guards on mutations/cascades | `server.js:4213,4299`, `index.html:1145` |
 | `flag_reserved_price` | Reserved Price input in Lot Entry (desktop + mobile) | `index.html:6942`, `app.html:596` |
+| `flag_proforma_invoice` | **Full gate**: Document Type selectors in both Generate modals + Original/Proforma/All list filter + ⬆ Raise Original action; server 403s proforma writes, 404s raise-original, pins `/api/invoices` to originals, ignores `?type=proforma`. OFF = the pre-proforma flow. Default OFF. | `server.js` `proformaFeatureOn()`, `index.html` `featProformaOn()`/`.feat-proforma` |
+
+> Added 2026-08-18. Note the `COALESCE(is_proforma,0) = 0` filters in the
+> statutory/analytical readers are deliberately **not** flag-gated — drafts
+> written while the flag was on must stay out of GST/Tally/reports after it is
+> switched off.
 
 ---
 
@@ -71,13 +77,14 @@ Verified by whole-repo grep: zero references outside their definition line.
 
 ## Caveats worth remembering
 
-- **20 flags** are genuinely wired and working.
+- **21 flags** are genuinely wired and working.
 - **4 flags are dead**: `flag_pooling`, `flag_sample`, `flag_dummy`, `flag_export` — candidates for removal.
 - **2 flags (`flag_dispatch`, `flag_ship`) are effectively inert** in the current
   e-Auction-only build; their code paths only matter in the ASP context, which the
   PDF generator hardcodes around.
-- **Only 3 flags are true security gates** (server enforces them):
-  `flag_debit_note`, `flag_debit_note_planter`, `flag_price_check`, `flag_lot_lock`.
+- **Only 5 flags are true server-enforced gates**:
+  `flag_debit_note`, `flag_debit_note_planter`, `flag_price_check`, `flag_lot_lock`,
+  `flag_proforma_invoice`.
   Several "WIRED" UI-toggle flags (`flag_bulk_set_buyer_code`, `flag_bos_purchase_bill`,
   `flag_reserved_price`, `flag_print_selected_purchase`) lack server-side flag re-checks —
   their endpoints respond regardless of flag state. By design (the flag just hides the

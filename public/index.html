@@ -1414,6 +1414,12 @@ body:not([data-feat-tan="1"]) .feat-tan{display:none !important}
    "Validate Lots" button + the price-import gate banner collapse via
    .feat-lot-validation (and the server-side import gate is a no-op too). */
 body:not([data-feat-lot-validation="1"]) .feat-lot-validation{display:none !important}
+/* Proforma sales invoices — gated by flag_proforma_invoice. When OFF the app
+   runs the OLD flow: the Document Type selectors in both Generate modals, the
+   Original/Proforma/All filter on the Sales list, and the ⬆ Raise Original
+   action all collapse via .feat-proforma, every generate call sends
+   docType=original, and the server refuses proforma writes anyway. */
+body:not([data-feat-proforma="1"]) .feat-proforma{display:none !important}
 /* Config-driven external link buttons in the Lots / To Tally screen
    headers. Each appears only when its URL config (link_lots_url /
    link_tally_url) has a value — applyFeatureFlags() flips the body
@@ -1485,7 +1491,7 @@ tr:hover td{background:var(--spice-cream)}
 /* Seller Bank Account rows (Add/Edit Seller) — a 2×2 grid that always fits
    inside the modal, with larger, clearly legible inputs + labels. */
 .bank-row .fg label{font-size:12.5px;font-weight:600;color:var(--text2);margin-bottom:4px;display:block}
-.bank-row input{height:42px;font-size:14.5px;padding:0 12px;box-sizing:border-box}
+.bank-row input,.bank-row select{height:42px;font-size:14.5px;padding:0 12px;box-sizing:border-box;width:100%}
 .bank-row .bank-branch-hint{font-size:11.5px}
 @media (max-width:560px){ .bank-row{grid-template-columns:1fr !important} }
 .num{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
@@ -4828,7 +4834,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </select>
           <!-- Original / Proforma / All. Defaults to Original so the list, KPIs
                and totals show real tax invoices unless drafts are requested. -->
-          <select id="inv-doctype-filter" onchange="loadInvoices()" title="Show original tax invoices or proforma drafts" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:140px">
+          <select id="inv-doctype-filter" class="feat-proforma" onchange="loadInvoices()" title="Show original tax invoices or proforma drafts" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:140px">
             <option value="original">Original (Tax)</option>
             <option value="proforma">Proforma</option>
             <option value="all">All (both)</option>
@@ -5870,7 +5876,8 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
           <div class="fg" style="margin:0"><label>From</label><input type="date" id="reg-from" onchange="if(isIndividualReg(document.getElementById('reg-type').value))populateRegParties()"></div>
           <div class="fg" style="margin:0"><label>To</label><input type="date" id="reg-to" onchange="if(isIndividualReg(document.getElementById('reg-type').value))populateRegParties()"></div>
-          <div class="fg" style="margin:0;min-width:220px;display:none" id="reg-party-wrap"><label>Party</label>
+          <div class="fg" style="margin:0;min-width:240px;display:none" id="reg-party-wrap"><label>Party</label>
+            <input id="reg-party-search" placeholder="🔍 Filter by name or phone…" oninput="renderRegPartyOptions(this.value)" autocomplete="off" style="width:100%;padding:6px;margin-bottom:4px;box-sizing:border-box">
             <select id="reg-party" style="width:100%;padding:6px"><option value="">— All parties —</option></select>
           </div>
           <div class="fg" style="margin:0;display:none" id="reg-sale-wrap"><label>Sale Type</label>
@@ -6525,7 +6532,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   <!-- Proforma vs Original. Proforma = a saved DRAFT (own number series, kept
        out of GST/Tally/reports, leaves lots un-shipped so they can be raised
        as originals later). Original = the real tax invoice. -->
-  <div class="fg">
+  <div class="fg feat-proforma">
     <label>Document Type</label>
     <select id="gi-doctype" onchange="onGiDocTypeChange()">
       <option value="original">Original (Tax Invoice)</option>
@@ -6535,7 +6542,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   </div>
   <div class="fg">
     <label>Sale Type — filters eligible buyers below</label>
-    <select id="gi-sale" onchange="loadInvEligibleBuyers();suggestDocNo(document.getElementById('inv-auction').value,'invoices','gi-invno',this.value,true,document.getElementById('gi-doctype')?.value||'original')">
+    <select id="gi-sale" onchange="loadInvEligibleBuyers();suggestDocNo(document.getElementById('inv-auction').value,'invoices','gi-invno',this.value,true,selectedDocType('gi-doctype'))">
       <!-- Default option: "All" — shows both local and interstate buyers
            together. Users can narrow to a single type if needed. Earlier
            the default was 'L' (Local), which silently hid every buyer
@@ -6631,7 +6638,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   <h2 id="gen-all-title">Generate All</h2>
   <p id="gen-all-desc" style="font-size:12px;color:var(--text2);margin-bottom:14px"></p>
   <!-- Proforma vs Original for the whole batch. Invoices only. -->
-  <div class="fg" id="gen-all-doctype-wrap" style="display:none"><label>Document Type</label>
+  <div class="fg feat-proforma" id="gen-all-doctype-wrap" style="display:none"><label>Document Type</label>
     <select id="ga-doctype" onchange="onGaDocTypeChange()">
       <option value="original">Original (Tax Invoice)</option>
       <option value="proforma">Proforma (draft — not a tax invoice)</option>
@@ -6639,7 +6646,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <div id="ga-doctype-hint" style="font-size:11px;color:var(--text3);margin-top:4px"></div>
   </div>
   <div class="fg" id="gen-all-sale-wrap" style="display:none"><label>Sale Type — filter + fallback</label>
-    <select id="ga-sale" onchange="refreshGenAllPreview();suggestDocNo(document.getElementById('inv-auction').value,'invoices','ga-start',this.value,true,document.getElementById('ga-doctype')?.value||'original')">
+    <select id="ga-sale" onchange="refreshGenAllPreview();suggestDocNo(document.getElementById('inv-auction').value,'invoices','ga-start',this.value,true,selectedDocType('ga-doctype'))">
       <option value="">All sale types (use each buyer's default)</option>
       <option value="L">Local (L) only</option>
       <option value="I">Inter-state (I) only</option>
@@ -6843,7 +6850,10 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 </div></div>
 
 <!-- ═══ PRICE IMPORT (post-auction) ═══════════════════════ -->
-<div class="modal-bg" id="price-import-modal"><div class="modal">
+<!-- Wider than the 520px default: this modal carries the snapshot-reminder
+     banner (report picker + download buttons on one row), the expected-columns
+     note, and a 2-up field grid, all of which wrap badly at the default width. -->
+<div class="modal-bg" id="price-import-modal"><div class="modal" style="max-width:780px">
   <h2>Price Import — Post-Auction Data</h2>
 
   <!-- "Before auction" snapshot reminder. Importing prices rewrites the
@@ -8404,6 +8414,20 @@ async function applyFeatureFlags() {
   // When OFF the whole UI surface collapses via the .feat-lot-validation
   // CSS rule and the server-side import gate short-circuits to next().
   document.body.setAttribute('data-feat-lot-validation', cfg && on(cfg.flag_lot_validation) ? '1' : '0');
+  // Proforma sales invoices. Default OFF — the old flow, where Generate always
+  // raises the real tax invoice. The mirror global is read by the JS paths that
+  // can't be handled with a CSS rule (the docType sent on generate, the list
+  // filter value, the per-row proforma action set).
+  const proformaOn = !!(cfg && on(cfg.flag_proforma_invoice));
+  window._FEAT_PROFORMA = proformaOn;
+  document.body.setAttribute('data-feat-proforma', proformaOn ? '1' : '0');
+  // Pin the Sales-list doc-type filter back to Original when the feature goes
+  // off mid-session, so a stale 'proforma'/'all' selection can't survive in a
+  // now-hidden dropdown and keep filtering the list.
+  if (!proformaOn) {
+    const dtf = document.getElementById('inv-doctype-filter');
+    if (dtf && dtf.value !== 'original') dtf.value = 'original';
+  }
   // Config-driven external link buttons (Lots + To Tally headers). The
   // button shows only when its URL config has a value; href (and optional
   // label override) are applied to the anchor here.
@@ -18897,7 +18921,14 @@ function appendBankRow(b){
     <div class="fg" style="margin:0"><label>Account No</label><input class="bank-acctnum" value="${esc(b.acctnum||'')}"></div>
     <div class="fg" style="margin:0"><label>IFSC</label><input class="bank-ifsc" value="${esc(b.ifsc||'')}" style="text-transform:uppercase" oninput="onBankIfscInput(this)" onblur="lookupBankByIfsc(this)"></div>
     <div class="fg" style="margin:0"><label>Holder Name</label><input class="bank-holder" value="${esc(b.holder_name||'')}"></div>
-    <button type="button" class="btn btn-o" onclick="this.closest('.bank-row').remove()" title="Remove this bank" style="grid-column:1 / -1;justify-self:end;padding:6px 16px;height:38px;font-size:13px">✕ Remove</button>
+    <div class="fg" style="margin:0"><label>Account Type</label>
+      <select class="bank-acct-type">
+        <option value="" ${!b.account_type?'selected':''}>—</option>
+        <option value="Savings" ${b.account_type==='Savings'?'selected':''}>Savings</option>
+        <option value="Current" ${b.account_type==='Current'?'selected':''}>Current</option>
+      </select>
+    </div>
+    <button type="button" class="btn btn-o" onclick="this.closest('.bank-row').remove()" title="Remove this bank" style="justify-self:end;align-self:end;padding:6px 16px;height:38px;font-size:13px">✕ Remove</button>
   `;
   c.appendChild(row);
 }
@@ -18963,8 +18994,9 @@ function collectBankRows(){
     const acctnum     = r.querySelector('.bank-acctnum').value.trim();
     const ifsc        = r.querySelector('.bank-ifsc').value.trim().toUpperCase();
     const holder_name = r.querySelector('.bank-holder').value.trim();
+    const account_type = (r.querySelector('.bank-acct-type')?.value || '').trim();
     if (!acctnum && !ifsc) continue; // blank row — skip
-    banks.push({ bank_name, branch, acctnum, ifsc, holder_name });
+    banks.push({ bank_name, branch, acctnum, ifsc, holder_name, account_type });
   }
   return banks;
 }
@@ -21305,10 +21337,22 @@ async function suggestDocNo(aid,module,inputId,sale,force,type){
     else if(force)el.value='';
   }catch(e){console.warn('suggestDocNo',e)}
 }
+// Proforma feature switch (flag_proforma_invoice), mirrored onto window by
+// applyFeatureFlags(). Every JS path that could still emit a proforma request
+// funnels through here so that with the flag OFF the app behaves exactly like
+// the pre-proforma build: docType is always 'original' and the doc-type list
+// filter is never sent.
+function featProformaOn(){ return window._FEAT_PROFORMA === true; }
+// The Document Type a Generate modal should act on. Reads the selector only
+// when the feature is live — a hidden select still holds a value.
+function selectedDocType(selId){
+  if(!featProformaOn())return'original';
+  return document.getElementById(selId)?.value||'original';
+}
 // Single-invoice modal: react to a Document Type switch — refresh the hint and
 // re-seed the number from the proforma/original series.
 function onGiDocTypeChange(){
-  const dt=document.getElementById('gi-doctype')?.value||'original';
+  const dt=selectedDocType('gi-doctype');
   const hint=document.getElementById('gi-doctype-hint');
   if(hint)hint.textContent=dt==='proforma'
     ? 'Saves a draft (PROFORMA series). Lots stay un-shipped; excluded from GST/Tally/reports.'
@@ -21318,7 +21362,7 @@ function onGiDocTypeChange(){
 }
 // Generate-All modal: same reaction for the batch Document Type switch.
 function onGaDocTypeChange(){
-  const dt=document.getElementById('ga-doctype')?.value||'original';
+  const dt=selectedDocType('ga-doctype');
   const hint=document.getElementById('ga-doctype-hint');
   if(hint)hint.textContent=dt==='proforma'
     ? 'Saves draft proformas (own number series); lots stay un-shipped and excluded from GST/Tally/reports.'
@@ -21464,7 +21508,7 @@ async function doGenerateAll(){
   if(!start||parseInt(start)<1){alert('Enter a starting number (positive integer)');return}
   const body={};
   if(kind==='bills')body.startBillNo=start;
-  else{body.startInvoiceNo=start;if(kind==='invoices'){body.saleType=document.getElementById('ga-sale').value||'';body.splitInvoices=document.getElementById('ga-split')?document.getElementById('ga-split').checked:true;body.dateSource=document.getElementById('ga-date-source')?document.getElementById('ga-date-source').value:'today';body.docType=document.getElementById('ga-doctype')?document.getElementById('ga-doctype').value:'original'}}
+  else{body.startInvoiceNo=start;if(kind==='invoices'){body.saleType=document.getElementById('ga-sale').value||'';body.splitInvoices=document.getElementById('ga-split')?document.getElementById('ga-split').checked:true;body.dateSource=document.getElementById('ga-date-source')?document.getElementById('ga-date-source').value:'today';body.docType=selectedDocType('ga-doctype')}}
   const routeMap={invoices:'invoices/generate-all',purchases:'purchases/generate-all',bills:'bills/generate-all'};
   const submitBtn=document.getElementById('ga-submit');
   submitBtn.disabled=true;submitBtn.textContent='Generating…';
@@ -23680,7 +23724,7 @@ async function generateInvoice(){
   if(!startInvNo||isNaN(startInvNo)||startInvNo<1){alert('Enter a valid starting invoice number');return}
   const noTI=!!document.getElementById('gi-no-ti')?.checked;
   const dateSource=document.getElementById('gi-date-source')?.value||'today';
-  const docType=document.getElementById('gi-doctype')?.value||'original';
+  const docType=selectedDocType('gi-doctype');
   const list=document.getElementById('gi-buyer-list');
   const checked=Array.from(list?.querySelectorAll('.gi-cb:checked')||[]);
   if(!checked.length){alert('Select at least one buyer');return}
@@ -23780,7 +23824,11 @@ async function loadInvoices(opts){
   const aid=document.getElementById('inv-auction')?.value;
   pcRefreshGate(aid, '#tc-invoices');
   const sale=(document.getElementById('inv-sale-filter')?.value||'').trim();
-  const docType=(document.getElementById('inv-doctype-filter')?.value||'original').trim();
+  // Doc-type filter only exists in the proforma flow; the old flow always
+  // lists originals (which is what the server pins to anyway).
+  const docType=featProformaOn()
+    ? (document.getElementById('inv-doctype-filter')?.value||'original').trim()
+    : 'original';
   const _invSearch=(document.getElementById('inv-search')?.value||'').trim();
   const params=[];
   if(aid)params.push('auction_id='+encodeURIComponent(aid));
@@ -24036,6 +24084,7 @@ async function loadInvoices(opts){
 }
 
 async function raiseOriginal(id, buyerName, pfLabel){
+  if(!featProformaOn()){alert('Proforma invoices are disabled. Enable "Proforma Sales Invoice" in Settings → Flags.');return}
   if(!confirm(`Raise the ORIGINAL tax invoice for proforma ${pfLabel} (${buyerName})?\n\nThis assigns the next invoice number, marks the lots invoiced, and keeps the proforma marked as raised.\n\nContinue?`))return;
   try{
     const r=await fetch(B+`/api/invoices/${id}/raise-original`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},body:JSON.stringify({})});
@@ -29012,6 +29061,9 @@ function onRegTypeChange(){
   if (indiv) populateRegParties();
 }
 // Fill the Party dropdown for the active individual register + date range.
+// Parties carry {name, phone}; the phone shows in the option label and the
+// search box (reg-party-search) filters on both name and phone.
+let _regParties = [];
 async function populateRegParties(){
   const type = document.getElementById('reg-type').value;
   if (!isIndividualReg(type)) return;
@@ -29022,12 +29074,28 @@ async function populateRegParties(){
   const to = document.getElementById('reg-to').value;
   const p = new URLSearchParams({ kind: type });
   if (from && to) { p.set('from', from); p.set('to', to); }
-  let names = [];
-  try { names = await j('/api/registers/individual-parties?' + p.toString()); }
-  catch(e){ names = []; }
+  let rows = [];
+  try { rows = await j('/api/registers/individual-parties?' + p.toString()) || []; }
+  catch(e){ rows = []; }
+  // Endpoint may return [string] (legacy) or [{name, phone}] — normalise.
+  _regParties = rows.map(x => (typeof x === 'string') ? { name: x, phone: '' } : { name: x.name || '', phone: x.phone || '' });
+  const searchEl = document.getElementById('reg-party-search');
+  renderRegPartyOptions(searchEl ? searchEl.value : '', keep);
+}
+// Rebuild the Party <select> options, optionally filtered by a name/phone
+// substring. The option VALUE stays the party name (what the register query
+// filters on); the label appends the phone. Preserves the current selection.
+function renderRegPartyOptions(filter, keep){
+  const sel = document.getElementById('reg-party');
+  if (!sel) return;
+  const prev = (keep != null) ? keep : sel.value;
+  const f = String(filter || '').trim().toLowerCase();
+  const list = f
+    ? _regParties.filter(x => x.name.toLowerCase().includes(f) || String(x.phone).toLowerCase().includes(f))
+    : _regParties;
   sel.innerHTML = '<option value="">— All parties —</option>' +
-    (names||[]).map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
-  if (keep && (names||[]).includes(keep)) sel.value = keep;
+    list.map(x => `<option value="${esc(x.name)}">${esc(x.name)}${x.phone ? ' · ' + esc(x.phone) : ''}</option>`).join('');
+  if (prev && list.some(x => x.name === prev)) sel.value = prev;
 }
 // Build the auction/date/sale query params shared by load + export.
 function regParams(){

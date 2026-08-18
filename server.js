@@ -2038,7 +2038,7 @@ app.get('/api/traders', requireViewOrLotEntry, (req, res) => {
     const ids = rows.map(r => r.id);
     const placeholders = ids.map(() => '?').join(',');
     const banks = db.all(
-      `SELECT id, trader_id, bank_name, branch, acctnum, ifsc, holder_name, is_default
+      `SELECT id, trader_id, bank_name, branch, acctnum, ifsc, holder_name, account_type, is_default
        FROM trader_banks WHERE trader_id IN (${placeholders})
        ORDER BY trader_id, is_default DESC, id`, ids
     );
@@ -5265,6 +5265,28 @@ app.get('/api/auctions/:id/next-lot/:branch', requireViewOrLotEntry, (req, res) 
 // running number instead of backfilling that auction's block (e.g. Auction 1's
 // leftovers raised after Auction 2 take the next number, not a gap-fill).
 // `excludeProforma: true` keeps proforma rows out of the original series.
+//
+// ── PROFORMA FEATURE GATE (flag_proforma_invoice) ──────────────
+// OFF (default) = the OLD flow: every generated sales invoice is an original
+// tax invoice. The Document Type selectors, the Original/Proforma list filter
+// and the Raise Original action are hidden in the UI, proforma writes are
+// refused here (403), the raise-original endpoint 404s, and the invoice list
+// is pinned to originals. Note the `COALESCE(is_proforma,0) = 0` filters
+// sprinkled through the statutory/analytical readers are deliberately NOT
+// gated: any drafts written while the flag was on must stay out of
+// GST/Tally/reports after it is switched off.
+function proformaFeatureOn(db) {
+  try {
+    const cfg = getSettingsFlat(db || getDb());
+    return String(cfg.flag_proforma_invoice || '').toLowerCase() === 'true' || cfg.flag_proforma_invoice === true;
+  } catch (_) { return false; }
+}
+// True when the request body explicitly asks for a proforma document.
+function wantsProformaDoc(req) {
+  return String((req && req.body && req.body.docType) || 'original').trim().toLowerCase() === 'proforma';
+}
+const PROFORMA_OFF_MSG = 'Proforma invoices are disabled. Enable flag_proforma_invoice in Settings → Flags.';
+
 const DOC_NO_MODULES = {
   invoices:  { table: 'invoices',  col: 'invo', perSale: true, global: true, excludeProforma: true },
   purchases: { table: 'purchases', col: 'invo', perSale: false },
@@ -5280,8 +5302,12 @@ app.get('/api/auctions/:id/suggest-doc-no/:module', requireView, (req, res) => {
 
   const saleType = mod.perSale ? String(req.query.sale || '').trim() : '';
   // Proforma series is separate from the original series (?type=proforma).
-  // Only meaningful for the invoices module; harmless elsewhere.
-  const wantProforma = mod.excludeProforma && String(req.query.type || '').trim().toLowerCase() === 'proforma';
+  // Only meaningful for the invoices module; harmless elsewhere. Ignored
+  // outright when flag_proforma_invoice is OFF — the original series is the
+  // only series that exists in the old flow.
+  const wantProforma = mod.excludeProforma
+    && String(req.query.type || '').trim().toLowerCase() === 'proforma'
+    && proformaFeatureOn(db);
   const proformaClause = mod.excludeProforma
     ? (wantProforma ? ' AND COALESCE(t.is_proforma,0) = 1' : ' AND COALESCE(t.is_proforma,0) = 0')
     : '';
@@ -6868,7 +6894,9 @@ app.get('/api/invoices', requireView, (req, res) => {
   // Proforma / original filter. 'proforma' → drafts only; 'all' → both;
   // anything else (incl. default) → originals only, so the list, KPIs and
   // totals reflect real tax invoices unless the user explicitly asks for drafts.
-  const _dt = String(docType || '').trim().toLowerCase();
+  // With flag_proforma_invoice OFF the request is pinned to originals — the old
+  // flow has no drafts to show, and any legacy rows stay hidden.
+  const _dt = proformaFeatureOn(db) ? String(docType || '').trim().toLowerCase() : '';
   if (_dt === 'proforma')      where += ' AND COALESCE(is_proforma,0) = 1';
   else if (_dt === 'all')      { /* no is_proforma filter */ }
   else                         where += ' AND COALESCE(is_proforma,0) = 0';
@@ -7112,8 +7140,13 @@ app.post('/api/invoices/generate/:auctionId',
   // Proforma vs original (tax) invoice. A proforma is a saved draft: it stamps
   // lots.proforma_invo (NOT lots.invo), so the lots stay eligible to be raised
   // as originals later, and it is excluded from every statutory/analytical
-  // reader (Tally/GST/journals/dashboards).
-  const isProforma = String(req.body.docType || 'original').trim().toLowerCase() === 'proforma' ? 1 : 0;
+  // reader (Tally/GST/journals/dashboards). Refused outright when the feature
+  // is off — silently falling back to an original would ship a real tax
+  // invoice (and mark the lots invoiced) when a draft was asked for.
+  if (wantsProformaDoc(req) && !proformaFeatureOn(db)) {
+    return res.status(403).json({ error: PROFORMA_OFF_MSG });
+  }
+  const isProforma = wantsProformaDoc(req) ? 1 : 0;
   // Optional lot subset — when the Generate modal is in "split" mode, only
   // these lot numbers go on this invoice (one buyer → several invoices).
   // Absent/empty means "all of the buyer's lots" (the default behaviour).
@@ -7421,8 +7454,12 @@ app.post('/api/invoices/generate-all/:auctionId',
     || Number(req.body.splitInvoices) === 0);
   // Proforma vs original for the whole batch. Proforma rows stamp
   // lots.proforma_invo (not invo), stay out of statutory readers, and leave
-  // the lots eligible to be raised as originals later.
-  const isProforma = String(req.body.docType || 'original').trim().toLowerCase() === 'proforma' ? 1 : 0;
+  // the lots eligible to be raised as originals later. Refused when the
+  // feature is off (see the single-invoice endpoint for why we don't fall back).
+  if (wantsProformaDoc(req) && !proformaFeatureOn(db)) {
+    return res.status(403).json({ error: PROFORMA_OFF_MSG });
+  }
+  const isProforma = wantsProformaDoc(req) ? 1 : 0;
 
   let nextNo = parseInt(startInvoiceNo);
   if (!nextNo || nextNo < 1) return res.status(400).json({ error: 'startInvoiceNo must be a positive integer' });
@@ -7580,6 +7617,8 @@ app.post('/api/invoices/generate-all/:auctionId',
 // Mirrors the original path of POST /api/invoices/generate.
 app.post('/api/invoices/:id/raise-original', requireInvoiceWrite, (req, res) => {
   const db = getDb(); const cfg = getSettingsFlat(db);
+  // Whole endpoint disappears in the old flow (mirrors the lot-lock gate).
+  if (!proformaFeatureOn(db)) return res.status(404).json({ error: PROFORMA_OFF_MSG });
   const pf = db.get('SELECT * FROM invoices WHERE id=?', [req.params.id]);
   if (!pf) return res.status(404).json({ error: 'Invoice not found' });
   if (!Number(pf.is_proforma)) return res.status(400).json({ error: 'Not a proforma invoice' });

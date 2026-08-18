@@ -329,6 +329,21 @@ const DEFAULTS = [
   // no-op. Default OFF so existing installs are unaffected on upgrade.
   { key: 'flag_lot_validation',  value: 'false', category: 'flags', label: 'Validate lots before price import', type: 'boolean' },
 
+  // Proforma sales invoices — the two-step "draft then raise" flow. When ON,
+  // the Generate Invoice / Generate All modals grow a Document Type selector
+  // (Original vs Proforma), proforma drafts get their own number series, the
+  // Sales list gains an Original/Proforma/All filter plus the ⬆ Raise Original
+  // action, and drafts are excluded from every statutory/analytical reader.
+  // When OFF the app follows the OLD flow: every generated sales invoice is an
+  // original tax invoice, no draft UI is shown anywhere, and the server refuses
+  // proforma writes (403) + the raise-original endpoint (404). Existing
+  // is_proforma rows stay in the DB and remain excluded from GST/Tally/reports
+  // by the COALESCE(is_proforma,0)=0 filters, which are NOT flag-dependent — so
+  // toggling off never leaks a draft into statutory output, and toggling back on
+  // restores the drafts untouched. Default OFF so existing installs are
+  // unaffected on upgrade.
+  { key: 'flag_proforma_invoice', value: 'false', category: 'flags', label: 'Proforma Sales Invoice (draft → raise original)', type: 'boolean' },
+
   // ── BACKUPS ────────────────────────────────────────────────
   // Per-install database backup settings. The scheduler is driven by
   // backup_auto_enabled + backup_interval_hours; the keep-count caps

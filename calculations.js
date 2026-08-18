@@ -1608,25 +1608,38 @@ function getMerchantRegister(db, opts = {}) {
 
 // Distinct party names for the picker dropdown, scoped to the same source
 // table + date range as the matching register.
+// Returns [{ name, phone }] for the party dropdown of each individual
+// register. Phone lets the UI show it alongside the name and filter on it:
+//   • pooler   → lots.tel (denormalised onto the lot)
+//   • seller   → traders.tel (matched on name)
+//   • merchant → buyers.tel (matched on trade name buyer1)
+// MAX(NULLIF(TRIM(..),'')) picks a non-empty phone when a party spans rows.
 function listRegisterParties(db, opts = {}) {
   const kind = String(opts.kind || '').toLowerCase();
   const params = [];
   let q;
   if (kind === 'merchant') {
-    q = `SELECT DISTINCT i.buyer1 AS name FROM invoices i WHERE COALESCE(i.buyer1,'') != '' AND COALESCE(i.is_proforma,0) = 0`;
+    q = `SELECT i.buyer1 AS name, MAX(NULLIF(TRIM(b.tel),'')) AS phone
+         FROM invoices i
+         LEFT JOIN buyers b ON UPPER(TRIM(b.buyer1)) = UPPER(TRIM(i.buyer1))
+         WHERE COALESCE(i.buyer1,'') != '' AND COALESCE(i.is_proforma,0) = 0`;
     if (opts.from && opts.to) { q += ' AND i.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
-    q += ' ORDER BY i.buyer1';
+    q += ' GROUP BY i.buyer1 ORDER BY i.buyer1';
   } else if (kind === 'seller') {
-    q = `SELECT DISTINCT p.name AS name FROM purchases p WHERE COALESCE(p.name,'') != ''`;
+    q = `SELECT p.name AS name, MAX(NULLIF(TRIM(t.tel),'')) AS phone
+         FROM purchases p
+         LEFT JOIN traders t ON UPPER(TRIM(t.name)) = UPPER(TRIM(p.name))
+         WHERE COALESCE(p.name,'') != ''`;
     if (opts.from && opts.to) { q += ' AND p.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
-    q += ' ORDER BY p.name';
+    q += ' GROUP BY p.name ORDER BY p.name';
   } else {
-    q = `SELECT DISTINCT l.name AS name FROM lots l JOIN auctions a ON a.id = l.auction_id
+    q = `SELECT l.name AS name, MAX(NULLIF(TRIM(l.tel),'')) AS phone
+         FROM lots l JOIN auctions a ON a.id = l.auction_id
          WHERE COALESCE(l.name,'') != ''`;
     if (opts.from && opts.to) { q += ' AND a.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
-    q += ' ORDER BY l.name';
+    q += ' GROUP BY l.name ORDER BY l.name';
   }
-  return db.all(q, params).map(r => r.name);
+  return db.all(q, params).map(r => ({ name: r.name, phone: r.phone || '' }));
 }
 
 module.exports = {
