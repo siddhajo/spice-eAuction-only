@@ -77,9 +77,15 @@ async function createExcelBuffer(sheetName, columns, rows, opts) {
     colObj.alignment = { horizontal: m.align, vertical: 'middle' };
   });
 
-  // Brand band: company name (row 1) + meta (row 2) + spacer (row 3).
+  // Brand band: company name (row 1) + meta (row 2) + spacer (row 3), with
+  // the column headers landing on row 4.
+  //
+  // `skipCompanyHeader` drops the band entirely so the column headers ARE
+  // row 1. Machine-read files want that: a bank's upload form reads the first
+  // row as its header, and a merged, logo-bearing title row above it either
+  // breaks the parse or has to be deleted by hand every time.
   const header = opts.companyHeader || getCompanyHeader(opts.db);
-  const startRow = writeXlsxCompanyHeader(wb, ws, header, {
+  const startRow = opts.skipCompanyHeader ? 1 : writeXlsxCompanyHeader(wb, ws, header, {
     colCount: columns.length,
     metaLines: opts.metaLines || [],
   });
@@ -575,6 +581,11 @@ function renderBankPaymentView(db, auctionId, view, payments) {
     db,
     title: view.title,
     metaLines: view.includeMeta === false ? [] : auctionMeta(db, auctionId),
+    // No brand band on the bank file — the column headers must be row 1.
+    // This sheet is uploaded to a bank portal, not read across a desk, and
+    // the logo/company row plus the e-AUCTION meta row above the headers had
+    // to be deleted by hand before every upload.
+    skipCompanyHeader: true,
     ...extra,
   });
 }

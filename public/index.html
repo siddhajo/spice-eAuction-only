@@ -13332,6 +13332,11 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Live seller search — debounced 200ms, hits /api/traders?search=
+// Page size for the lot-entry seller pickers. Matches what the mobile PWA
+// gets (it sends no limit, so the server's default 50 applies), so the same
+// query returns the same sellers on both. The results panel scrolls
+// (max-height:280px), so a long list costs nothing but a scroll.
+const LE_SELLER_SEARCH_MAX = 50;
 // Seller detail line for lot-entry search results — fixed, easy-to-scan
 // order with labelled bold values: PHONE | PAN | GSTIN | PLACE. (cr = GSTIN.)
 function leFmtSellerDetail(t){
@@ -13354,12 +13359,19 @@ async function leSearchSeller(q){
   }
   _le.searchTimer = setTimeout(async () => {
     try {
-      const traders = await j(`/api/traders?search=${encodeURIComponent(q.trim())}&limit=10`);
+      // Paged request (not the old `limit=10`): the server answers with
+      // {rows,total}, so we can both show more hits and say when there are
+      // still more. A phone-number search legitimately matches many sellers —
+      // a shared family number, or a short digit string — and the old cap of
+      // 10 silently dropped the rest, which the mobile PWA (no limit → 50)
+      // did not, hence "desktop shows fewer results than mobile".
+      const resp = await j(`/api/traders?search=${encodeURIComponent(q.trim())}&page=1&pageSize=${LE_SELLER_SEARCH_MAX}`);
       // Render the trader hits AND a trailing "+ Add new seller" option.
       // Both empty-results and matches show the add-new affordance — even
       // when the search hits something, the user might want a different
       // seller with a similar name.
-      const list = Array.isArray(traders) ? traders : [];
+      const list = Array.isArray(resp) ? resp : (resp && resp.rows) || [];
+      const total = (resp && !Array.isArray(resp) && Number(resp.total)) || list.length;
       let html = '';
       if (list.length) {
         html = list.map((t, i) => {
@@ -13372,6 +13384,12 @@ async function leSearchSeller(q){
         }).join('');
       } else {
         html = '<div style="padding:10px 14px;color:var(--text3);font-size:13px;text-align:center">No sellers match this search.</div>';
+      }
+      // Never truncate silently — if the match set is larger than one page,
+      // say so, so nobody concludes their seller isn't in the master.
+      if (total > list.length) {
+        html += `<div style="padding:7px 14px;font-size:11.5px;color:var(--text3);background:var(--bg);border-top:1px solid var(--border);text-align:center">`
+          + `Showing first ${list.length} of ${total} matches — type more to narrow it down.</div>`;
       }
       // Always append the add-new row at the end, styled to stand apart
       const safeQ = String(q || '').trim().replace(/'/g, "\\'");
@@ -16553,8 +16571,10 @@ function leCsSearchSeller(q){
   if (!q || q.trim().length < 2) { results.style.display = 'none'; return; }
   _leCsSearchTimer = setTimeout(async () => {
     try {
-      const traders = await j(`/api/traders?search=${encodeURIComponent(q.trim())}&limit=10`);
-      const list = Array.isArray(traders) ? traders : [];
+      // Same paged request as leSearchSeller — see LE_SELLER_SEARCH_MAX.
+      const resp = await j(`/api/traders?search=${encodeURIComponent(q.trim())}&page=1&pageSize=${LE_SELLER_SEARCH_MAX}`);
+      const list = Array.isArray(resp) ? resp : (resp && resp.rows) || [];
+      const total = (resp && !Array.isArray(resp) && Number(resp.total)) || list.length;
       if (!list.length) {
         results.innerHTML = '<div style="padding:10px 14px;color:var(--text3);font-size:13px;text-align:center">No sellers match this search.</div>';
         results.style.display = 'block';
@@ -16571,6 +16591,10 @@ function leCsSearchSeller(q){
           <div style="font-size:11px;color:var(--text3);margin-top:2px">${esc(loc)}${meta?' — '+esc(meta):''}</div>
         </div>`;
       }).join('');
+      if (total > list.length) {
+        results.innerHTML += `<div style="padding:7px 14px;font-size:11.5px;color:var(--text3);background:var(--bg);border-top:1px solid var(--border);text-align:center">`
+          + `Showing first ${list.length} of ${total} matches — type more to narrow it down.</div>`;
+      }
       results.style.display = 'block';
       results.querySelectorAll('div[data-idx]').forEach(el => {
         el.onclick = () => leCsPickSeller(list[parseInt(el.dataset.idx, 10)]);
