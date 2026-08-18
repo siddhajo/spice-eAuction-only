@@ -637,6 +637,16 @@ function getCollectionRows(db, auctionId) {
   // purpose, since the sale type is exactly what can differ. This is the same
   // source the Buyer Statement reads (spice-board-reports.js), so the two
   // reports now agree on which number a buyer was billed under.
+  //
+  // Lot stamps therefore WIN OUTRIGHT — raised_invo is consulted only for
+  // invoices that have none (see the pick below). The two used to be unioned,
+  // which printed phantom numbers: raised_invo survives on a draft that was
+  // later re-issued, and because the draft and original series are numbered
+  // independently, a stale "draft N was raised as original N" row gets pulled
+  // into the cell for a completely unrelated original that happens to share
+  // the number N. Real case: originals 5/6/21/22 whose lots carried drafts
+  // 6/7/5/8 printed "PI/L-5, PI/L-6" and "PI/L-6, PI/L-7" — every extra number
+  // was the invoice's own number reflected back off a stale draft row.
   const proformaByLots = new Map();
   const lotStamps = db.all(
     `SELECT buyer,
@@ -668,16 +678,18 @@ function getCollectionRows(db, auctionId) {
     const buyerName = b
       ? (b.buyer || b.sbl || i.buyer || '')
       : (i.buyer || '');
-    // Proforma number(s) this invoice was raised from, if any. Union of the
-    // lot stamps (ground truth) and the raised_invo back-reference (covers
-    // invoices whose lots have since been edited away), lowest number first.
+    // Proforma number(s) this invoice was raised from, if any — lowest first.
+    // The lots decide whenever they carry a stamp: they are per-lot, rewritten
+    // on every re-draft, and so cannot go stale. raised_invo is the fallback
+    // for invoices whose lots have since been edited away (it is invoice-level,
+    // one-shot, and survives a re-issue — see the note above the index).
     const buyerKey = String(i.buyer || '').trim().toUpperCase();
     const invoKey  = String(i.invo  || '').trim();
-    const fromRaised = proformaByInvoice.get(
-      `${String(i.sale || '').trim().toUpperCase()}|${buyerKey}|${invoKey}`
-    ) || proformaByInvoiceAnySale.get(`${buyerKey}|${invoKey}`) || [];
     const fromLots = [...(proformaByLots.get(`${buyerKey}|${invoKey}`) || [])];
-    const pfNos = [...new Set([...fromRaised, ...fromLots])].sort((a, b) => {
+    const fromRaised = fromLots.length ? [] : (proformaByInvoice.get(
+      `${String(i.sale || '').trim().toUpperCase()}|${buyerKey}|${invoKey}`
+    ) || proformaByInvoiceAnySale.get(`${buyerKey}|${invoKey}`) || []);
+    const pfNos = [...new Set([...fromLots, ...fromRaised])].sort((a, b) => {
       const na = parseInt(a, 10), nb = parseInt(b, 10);
       if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na - nb;
       return String(a).localeCompare(String(b));

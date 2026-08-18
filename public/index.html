@@ -6287,16 +6287,20 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
   <!-- Reassign panel -->
   <div id="alloc-panel-reassign" style="display:none">
-    <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Move unused lot numbers from one branch to another. <b>Click</b> a tile to toggle it, or <b>drag</b> across tiles to sweep a whole range (e.g. 090–099) — drag again elsewhere to add another range. Non-adjacent picks (e.g. 003, 007, 012) work too. Or type a contiguous range below. Booked lots (with sellers) cannot be reassigned.</p>
+    <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Move unused lot numbers from one branch to another. <b>Click</b> a tile to toggle it, or <b>drag</b> across tiles to sweep a whole range (e.g. 090–099) — drag again elsewhere to add another range. Non-adjacent picks (e.g. 003, 007, 012) work too. Or type a contiguous range below. Only <b>free</b> lot numbers can move — booked, reserved, entered, carried-forward and already-reassigned lots are locked.</p>
     <div id="alloc-reassign-status" style="margin-bottom:14px"></div>
 
     <!-- Tile legend -->
     <div style="display:flex;flex-wrap:wrap;gap:10px;font-size:11px;margin-bottom:10px;padding:8px 10px;background:#fafafa;border:1px solid #eee;border-radius:6px">
       <span><span style="display:inline-block;width:12px;height:12px;background:#E5E7EB;border:1px solid #cbd5e1;border-radius:3px;vertical-align:middle"></span> Free</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:#DBEAFE;border:1px solid #93c5fd;border-radius:3px;vertical-align:middle"></span> Allocated</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:#FCA5A5;border:1px solid #ef4444;border-radius:3px;vertical-align:middle"></span> Booked</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:#FDE68A;border:1px solid #f59e0b;border-radius:3px;vertical-align:middle"></span> Reassigned</span>
       <span><span style="display:inline-block;width:12px;height:12px;background:#10B981;border:1px solid #047857;border-radius:3px;vertical-align:middle"></span> Selected</span>
+      <span style="width:1px;height:14px;background:#ddd"></span>
+      <span style="color:var(--text3)">🔒 locked:</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#FCA5A5;border:1px solid #ef4444;border-radius:3px;vertical-align:middle"></span> Booked</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#FED7AA;border:1px solid #f97316;border-radius:3px;vertical-align:middle"></span> Reserved</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#DBEAFE;border:1px solid #93c5fd;border-radius:3px;vertical-align:middle"></span> Allocated</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#FEF3C7;border:1px solid #F59E0B;border-radius:3px;vertical-align:middle"></span> Carried fwd</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#FDE68A;border:1px solid #f59e0b;border-radius:3px;vertical-align:middle"></span> Reassigned</span>
     </div>
 
     <!-- Tile grid — grouped by branch with sticky branch headers -->
@@ -13445,6 +13449,9 @@ function leRenderBankPicker(t){
   sel.innerHTML = banks.map(b => {
     const labelParts = [b.acctnum];
     if (b.bank_name) labelParts.push(b.bank_name);
+    // Account type rides the option text so the operator can tell a Savings
+    // from a Current account without opening the seller master.
+    if (b.account_type) labelParts.push(b.account_type);
     if (b.is_default) labelParts.push('★ default');
     return `<option value="${b.id}" ${b.id === _le.selectedBankId ? 'selected' : ''}>${esc(labelParts.join(' · '))}</option>`;
   }).join('');
@@ -13473,6 +13480,7 @@ function leRenderBankInfo(){
   const branch = b.branch || (cached && cached.BRANCH) || '';
   const parts = ['IFSC: ' + (b.ifsc || '—')];
   if (branch) parts.push('Branch: ' + branch);
+  if (b.account_type) parts.push('Type: ' + b.account_type);
   if (b.holder_name) parts.push('Holder: ' + b.holder_name);
   info.textContent = parts.join('   |   ');
   // Derive the branch live when unknown and the IFSC looks valid.
@@ -15409,6 +15417,39 @@ async function autoFillAllocations() {
   }
 }
 
+// Which tile states may NOT be picked for a reassign.
+//
+// The server (applyLotReassignment) refuses EVERY lot that already exists in
+// the `lots` table — it tests membership only, not amount — so 'booked',
+// 'reserved', 'allocated' (row saved, amount still 0) and 'carried' (carried
+// forward from a previous trade) are all rejected with "Cannot reassign — N
+// lot(s) already used". The grid only greyed out booked + reserved, so an
+// operator could sweep allocated/carried tiles into the selection and only
+// learn they were untouchable when the whole reassign bounced.
+//
+// 'reassigned' is free server-side, but is locked here too: a lot number that
+// has already been moved once in this trade stays where it was put.
+const RA_LOCKED_STATES = new Set(['booked', 'reserved', 'allocated', 'carried', 'reassigned']);
+const raLocked = (st) => RA_LOCKED_STATES.has(String(st || '').trim());
+// Tile fills, shared by the initial render and the in-place drag repaint so
+// the two can never drift (the repaint map used to omit reserved/carried,
+// which repainted those tiles as plain grey "free" mid-drag).
+const RA_TILE_COLORS = {
+  booked:     ['#FCA5A5', '#7f1d1d', '#ef4444'],
+  reserved:   ['#FED7AA', '#9a3412', '#f97316'],
+  allocated:  ['#DBEAFE', '#1e3a8a', '#93c5fd'],
+  carried:    ['#FEF3C7', '#92400E', '#F59E0B'],
+  reassigned: ['#FDE68A', '#78350f', '#f59e0b'],
+  free:       ['#E5E7EB', '#1f2937', '#cbd5e1'],
+};
+// Lots skipped by the last typed start/end sync because they were locked.
+// Surfaced in the selection summary; reset whenever tiles drive the selection.
+let _raInputSkipped = 0;
+// True only while raSyncSelectionFromInputs is re-rendering, so the render
+// doesn't write the (possibly gap-riddled) selection back over the boxes the
+// operator is still typing into.
+let _raSyncingFromInputs = false;
+
 function renderReassignTiles() {
   const grid = document.getElementById('ra-tile-grid');
   if (!grid) return;
@@ -15416,15 +15457,18 @@ function renderReassignTiles() {
     grid.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:14px;text-align:center">No allocations yet</div>';
     return;
   }
+  // Drop anything locked that lingers in the selection (stale picks from a
+  // previous branch / a range typed before the tiles reloaded) so the grid,
+  // the summary and what we POST can never disagree.
+  for (const s of _raAllocStats) {
+    for (const r of (s.ranges || [])) {
+      for (const t of (r.lots || [])) if (raLocked(t.state)) _raSelected.delete(t.lot);
+    }
+  }
   const stateStyle = (st, selected) => {
     if (selected) return 'background:#10B981;color:#fff;border:1px solid #047857';
-    switch (st) {
-      case 'booked':     return 'background:#FCA5A5;color:#7f1d1d;border:1px solid #ef4444;cursor:not-allowed';
-      case 'reserved':   return 'background:#FED7AA;color:#9a3412;border:1px solid #f97316;cursor:not-allowed';
-      case 'allocated': return 'background:#DBEAFE;color:#1e3a8a;border:1px solid #93c5fd';
-      case 'reassigned':return 'background:#FDE68A;color:#78350f;border:1px solid #f59e0b';
-      default:          return 'background:#E5E7EB;color:#1f2937;border:1px solid #cbd5e1';
-    }
+    const c = RA_TILE_COLORS[st] || RA_TILE_COLORS.free;
+    return `background:${c[0]};color:${c[1]};border:1px solid ${c[2]}${raLocked(st) ? ';cursor:not-allowed' : ''}`;
   };
   let html = '';
   for (const s of _raAllocStats) {
@@ -15438,13 +15482,18 @@ function renderReassignTiles() {
     for (const r of (s.ranges || [])) {
       for (const t of (r.lots || [])) {
         const selected = _raSelected.has(t.lot);
-        // Reserved lots are real saved lots, so — like booked ones — they can't
-        // be reassigned; disable their tiles too (the server refuses them).
-        const dis = (t.state === 'booked' || t.state === 'reserved');
-        const tip = t.booked
-          ? `Booked: ${t.seller || '—'}`
-          : (t.state === 'reserved' ? `Reserved (held): ${t.seller || '—'}`
-             : (t.state === 'reassigned' ? `Reassigned from another branch` : `Free for reassign`));
+        // Every state the server would refuse is dead to the pointer — see
+        // RA_LOCKED_STATES. Anything with a row in `lots` (booked, reserved,
+        // allocated, carried) plus already-reassigned lots.
+        const dis = raLocked(t.state);
+        const TIPS = {
+          booked:     `Booked: ${t.seller || '—'} — cannot be reassigned`,
+          reserved:   `Reserved (held): ${t.seller || '—'} — cannot be reassigned`,
+          allocated:  `Lot entered${t.seller ? ' by ' + t.seller : ''} (not yet priced) — cannot be reassigned`,
+          carried:    `Carried forward${t.seller ? ' (' + t.seller + ')' : ''} — cannot be reassigned`,
+          reassigned: `Already reassigned from another branch — cannot be moved again`,
+        };
+        const tip = TIPS[t.state] || 'Free for reassign';
         const handlers = dis ? '' : ` onmousedown="raTileMouseDown(event,this)" ontouchstart="raTileTouchStart(event,this)" onclick="raToggleTile(this)"`;
         html += `<div title="${esc(tip)}" data-lot="${esc(t.lot)}" data-branch="${esc(branch)}" data-state="${esc(t.state)}"${handlers} style="${stateStyle(t.state, selected)};padding:4px 6px;border-radius:4px;font-size:11px;font-family:monospace;min-width:42px;text-align:center;${dis?'opacity:.85':'cursor:pointer'};user-select:none;touch-action:none">${esc(t.lot)}</div>`;
       }
@@ -15476,9 +15525,13 @@ function updateSelectionSummary() {
   const el = document.getElementById('ra-selsummary');
   if (!el) return;
   const n = _raSelected.size;
+  // A typed range silently drops locked lots — say so, otherwise the operator
+  // types 001–100, sees 62 selected and has no idea where the other 38 went.
+  const skip = _raInputSkipped
+    ? ` <span style="color:#9a3412">· ${_raInputSkipped} skipped (already used or reassigned)</span>` : '';
   el.innerHTML = n
-    ? `<b>${n} lot${n === 1 ? '' : 's'} selected:</b> <span style="font-family:monospace">${esc(raChunkSummary(Array.from(_raSelected)))}</span>`
-    : '<span style="color:var(--text3)">No tiles selected — click or drag tiles above, or type a start/end range below.</span>';
+    ? `<b>${n} lot${n === 1 ? '' : 's'} selected:</b> <span style="font-family:monospace">${esc(raChunkSummary(Array.from(_raSelected)))}</span>${skip}`
+    : `<span style="color:var(--text3)">No tiles selected — click or drag tiles above, or type a start/end range below.</span>${skip}`;
 }
 
 // ── Drag-to-select on the Reassign tile grid ───────────────────────
@@ -15509,7 +15562,7 @@ document.addEventListener('mousemove', function (e) {
   const p = document.elementFromPoint(e.clientX, e.clientY);
   const tile = p && p.closest ? p.closest('[data-lot]') : null;
   if (!tile || tile.getAttribute('data-branch') !== _raDrag.branch) return;
-  if (tile.getAttribute('data-state') === 'booked') return;
+  if (raLocked(tile.getAttribute('data-state'))) return;
   const lot = tile.getAttribute('data-lot');
   if (lot === _raDrag.anchor && !_raDrag.moved) return;
   _raDrag.moved = true;
@@ -15523,9 +15576,11 @@ document.addEventListener('mouseup', () => {
 function raToggleTile(el){
   if (_raDrag && _raDrag.moved) return;   // tail click after a mouse drag — ignore
   if (_raTouchMoved) return;              // synthetic click after a touch drag — ignore
+  if (raLocked(el.getAttribute('data-state'))) return;   // belt-and-braces: locked tiles carry no handler
   const lot = el.getAttribute('data-lot');
   const branch = el.getAttribute('data-branch');
   if (!lot) return;
+  _raInputSkipped = 0;
   const fromSel = document.getElementById('ra-from');
   if (fromSel.value && fromSel.value !== branch) _raSelected.clear();
   if (fromSel.value !== branch) { fromSel.value = branch; loadReassignPreview(); }
@@ -15552,7 +15607,7 @@ function raTileTouchStart(e, el){
     const p = document.elementFromPoint(t.clientX, t.clientY);
     const tile = p && p.closest ? p.closest('[data-lot]') : null;
     if (!tile || tile.getAttribute('data-branch') !== _raDrag.branch) return;
-    if (tile.getAttribute('data-state') === 'booked') return;
+    if (raLocked(tile.getAttribute('data-state'))) return;
     const lot2 = tile.getAttribute('data-lot');
     if (lot2 === _raDrag.anchor) return;
     ev.preventDefault();
@@ -15561,6 +15616,7 @@ function raTileTouchStart(e, el){
   };
   el.__raEnd = () => {
     if (_raDrag && !_raDrag.moved) {           // tap = toggle single tile
+      _raInputSkipped = 0;
       if (_raSelected.has(lot)) _raSelected.delete(lot); else _raSelected.add(lot);
       renderReassignTiles();
     }
@@ -15585,13 +15641,15 @@ function _raApplyDragRangePaint(curLot){
   const ib = ordered.findIndex(t => t.lot === curLot);
   if (ia < 0 || ib < 0) return;
   const lo = Math.min(ia, ib), hi = Math.max(ia, ib);
+  _raInputSkipped = 0;
   _raSelected = new Set(_raDrag.base);
-  for (let i = lo; i <= hi; i++) if (ordered[i].state !== 'booked') _raSelected.add(ordered[i].lot);
+  // A sweep across a mixed run picks up only the spare numbers; locked lots
+  // inside the swept span are stepped over rather than dragged along.
+  for (let i = lo; i <= hi; i++) if (!raLocked(ordered[i].state)) _raSelected.add(ordered[i].lot);
   const grid = document.getElementById('ra-tile-grid');
-  const base = { booked:['#FCA5A5','#7f1d1d','#ef4444'], allocated:['#DBEAFE','#1e3a8a','#93c5fd'], reassigned:['#FDE68A','#78350f','#f59e0b'], free:['#E5E7EB','#1f2937','#cbd5e1'] };
   if (grid) grid.querySelectorAll('[data-lot]').forEach(el => {
     if (_raSelected.has(el.getAttribute('data-lot'))) { el.style.background='#10B981'; el.style.color='#fff'; el.style.borderColor='#047857'; }
-    else { const c = base[el.getAttribute('data-state')] || base.free; el.style.background=c[0]; el.style.color=c[1]; el.style.borderColor=c[2]; }
+    else { const c = RA_TILE_COLORS[el.getAttribute('data-state')] || RA_TILE_COLORS.free; el.style.background=c[0]; el.style.color=c[1]; el.style.borderColor=c[2]; }
   });
   updateRangeInputsFromSelection();
   updateSelectionSummary();
@@ -15600,6 +15658,10 @@ function updateRangeInputsFromSelection() {
   const startEl = document.getElementById('ra-start');
   const endEl   = document.getElementById('ra-end');
   if (!startEl || !endEl) return;
+  // Never write back while the operator is typing into those very boxes:
+  // filtering out locked lots can leave a disjoint selection, and the
+  // disjoint branch below would blank the field mid-keystroke.
+  if (_raSyncingFromInputs) return;
   const sel = Array.from(_raSelected);
   if (!sel.length) { startEl.value = ''; endEl.value = ''; return; }
   // Sort by numeric tail, keep prefix from first.
@@ -15627,11 +15689,27 @@ function raSyncSelectionFromInputs() {
   const pad = sm[2].length;
   const a = parseInt(sm[2], 10), b = parseInt(em[2], 10);
   if (a > b) return;
-  _raSelected.clear();
-  for (let n = a; n <= b; n++) {
-    _raSelected.add(sm[1] + String(n).padStart(pad, '0'));
+  // Typing a range used to select every number in it blindly — booked,
+  // allocated and reassigned lots included — so a span that merely crossed a
+  // used lot got sent whole and the server bounced the entire reassign. Only
+  // lots the grid would let you click may enter the selection.
+  const from = (document.getElementById('ra-from') || {}).value || '';
+  const selectable = new Set();
+  for (const s of (_raAllocStats || [])) {
+    if (from && s.branch !== from) continue;
+    for (const r of (s.ranges || [])) {
+      for (const t of (r.lots || [])) if (!raLocked(t.state)) selectable.add(t.lot);
+    }
   }
-  renderReassignTiles();
+  _raSelected.clear();
+  let skipped = 0;
+  for (let n = a; n <= b; n++) {
+    const lot = sm[1] + String(n).padStart(pad, '0');
+    if (selectable.has(lot)) _raSelected.add(lot); else skipped++;
+  }
+  _raInputSkipped = skipped;
+  _raSyncingFromInputs = true;
+  try { renderReassignTiles(); } finally { _raSyncingFromInputs = false; }
 }
 
 function switchAllocTab(tab) {
@@ -18790,7 +18868,7 @@ async function searchTraders(q, opts){
           return banks.map(b => {
             const last4 = b.acctnum ? String(b.acctnum).slice(-4) : '';
             const display = `${esc(b.ifsc||'')}${last4?' ··'+last4:''}`;
-            const tooltip = [b.bank_name, b.ifsc, b.acctnum, b.holder_name].filter(Boolean).join(' · ');
+            const tooltip = [b.bank_name, b.ifsc, b.acctnum, b.account_type, b.holder_name].filter(Boolean).join(' · ');
             return `<span title="${esc(tooltip)}" style="display:inline-block;padding:2px 8px;margin:1px 2px 1px 0;background:var(--green-bg);color:var(--green);border-radius:8px;font-size:11px;font-weight:600">${display}</span>`;
           }).join('');
         } },
@@ -18819,7 +18897,7 @@ function viewTraderDetails(t){
   if (banks.length) {
     const bankRows = banks.map((b, i) => {
       const label = banks.length > 1 ? `Bank ${i+1}` : 'Bank';
-      const parts = [b.bank_name, b.ifsc, b.acctnum, b.holder_name].filter(Boolean).join(' · ');
+      const parts = [b.bank_name, b.ifsc, b.acctnum, b.account_type, b.holder_name].filter(Boolean).join(' · ');
       return `<tr><td style="padding:6px 10px;color:var(--text2);font-size:12px;width:40%">${label}</td><td style="padding:6px 10px;font-size:13px">${esc(parts)||'<span style="color:var(--text3)">—</span>'}</td></tr>`;
     }).join('');
     html+=`<div style="margin-bottom:16px"><h3 style="font-size:13px;color:var(--green);margin:0 0 6px 0;padding-bottom:4px;border-bottom:1.5px solid var(--green-border)">Banking (${banks.length} account${banks.length>1?'s':''})</h3><table style="width:100%">${bankRows}</table></div>`;
@@ -24693,6 +24771,49 @@ async function pickCommissionTemplate(){
   return pickTemplate('commission-bill');
 }
 
+// ── Commission bill: which sales-invoice number to quote ───────────
+// With proforma drafts in play a lot carries two numbers — the draft the buyer
+// was shipped against and the original tax invoice raised later — and only the
+// operator knows which one this memorandum should reference. Ask at print time.
+// Feature OFF (the default) → resolves 'original' silently, so the print flow
+// is byte-for-byte what it was before proforma existed.
+// Returns 'original' | 'proforma', or null when the operator cancels.
+let _commInvoNoLast = 'original';
+async function pickCommissionInvoiceNo(){
+  if(!featProformaOn()) return 'original';
+  return new Promise(resolve=>{
+    const bg=document.createElement('div');
+    bg.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;z-index:9999';
+    const row=(val,title,sub)=>`<label style="display:flex;gap:10px;align-items:flex-start;padding:11px 12px;border:1px solid var(--border);border-radius:10px;cursor:pointer;margin-top:8px">
+      <input type="radio" name="civn" value="${val}" ${_commInvoNoLast===val?'checked':''} style="margin-top:3px">
+      <span><b>${title}</b><br><span style="font-size:12px;color:var(--text3)">${sub}</span></span></label>`;
+    bg.innerHTML=`<div style="background:var(--card,#fff);color:var(--text,#111);border-radius:14px;padding:22px;max-width:460px;width:92%;box-shadow:0 20px 60px -15px rgba(0,0,0,.4)">
+      <strong style="font-size:16px">Which invoice number for the commission bill?</strong>
+      <div style="margin-top:6px;font-size:13px;color:var(--text3)">Printed in the purchaser block as <b>INV:</b> …</div>
+      ${row('original','Original tax invoice','The number on the buyer&rsquo;s tax invoice.')}
+      ${row('proforma','Proforma invoice','The draft number the buyer was shipped against. Lots without a draft fall back to the original.')}
+      <div style="margin-top:18px;display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn" data-x="0">Cancel</button>
+        <button class="btn btn-g" data-x="1">Print</button>
+      </div></div>`;
+    document.body.appendChild(bg);
+    const done=v=>{bg.remove();resolve(v)};
+    bg.addEventListener('click',e=>{if(e.target===bg)done(null)});
+    bg.querySelector('[data-x="0"]').onclick=()=>done(null);
+    bg.querySelector('[data-x="1"]').onclick=()=>{
+      const sel=bg.querySelector('input[name="civn"]:checked');
+      _commInvoNoLast=(sel&&sel.value)||'original';
+      done(_commInvoNoLast);
+    };
+    setTimeout(()=>{const b=bg.querySelector('[data-x="1"]');if(b)b.focus()},30);
+  });
+}
+// Fold the answer into the request body. 'original' is the server default, so
+// it is not sent — keeps the payload identical to the pre-proforma build.
+function withCommInvoiceNo(body,choice){
+  return choice==='proforma' ? Object.assign({},body,{invoiceNo:'proforma'}) : body;
+}
+
 async function printSelectedCommissionBoS(){
   const body=document.getElementById('bills-list');
   if(!body){alert('No bills list found');return}
@@ -24702,11 +24823,14 @@ async function printSelectedCommissionBoS(){
   // Offer a layout choice when more than one commission-bill template exists.
   const template=await pickCommissionTemplate();
   if(template===null) return; // operator cancelled
+  // Asked only when the proforma feature is on; otherwise resolves 'original'.
+  const invoiceNo=await pickCommissionInvoiceNo();
+  if(invoiceNo===null) return; // operator cancelled
   await fetchPdfWithOverlay(
     `Building Commission Bill (BoS) for ${ids.length} bill${ids.length===1?'':'s'}…`,
     '/api/bills/commission-bos-bulk',
     `CommissionBoS_Batch_${ids.length}.pdf`,
-    template ? { ids, template } : { ids }
+    withCommInvoiceNo(template ? { ids, template } : { ids }, invoiceNo)
   );
 }
 
@@ -25899,7 +26023,7 @@ async function openPayLotsModal(auctionId, sellerName) {
         const def = banks.find(b => b.is_default) || banks[0] || null;
         _payLotsState.defaultBankId = def ? def.id : null;
         for (const b of banks) {
-          const parts = [b.acctnum, b.bank_name, b.ifsc].filter(Boolean);
+          const parts = [b.acctnum, b.bank_name, b.account_type, b.ifsc].filter(Boolean);
           _payLotsState.bankLabels[b.id] = parts.join(' · ') + (b.is_default ? ' ★' : '');
         }
         // Legacy single-bank fallback: sellers with no trader_banks rows
@@ -27239,11 +27363,13 @@ async function downloadBillCommissionBoS(id,sellerName,billNo){
   // the format when more than one commission-bill layout exists.
   const template=await pickCommissionTemplate();
   if(template===null) return; // operator cancelled
+  const invoiceNo=await pickCommissionInvoiceNo();
+  if(invoiceNo===null) return; // operator cancelled
   await fetchPdfWithOverlay(
     'Building Commission Bill (BoS)…',
     '/api/bills/commission-bos-bulk',
     `CommissionBoS_${name}_${decodeURIComponent(billNo||'')}.pdf`,
-    template ? { ids:[id], template } : { ids:[id] }
+    withCommInvoiceNo(template ? { ids:[id], template } : { ids:[id] }, invoiceNo)
   );
 }
 async function delBill(id){if(!confirm('Delete bill?'))return;await j(`/api/bills/${id}`,{method:'DELETE'});loadBills()}

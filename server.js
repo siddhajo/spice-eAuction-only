@@ -12,7 +12,7 @@ const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, bu
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 const { amountToWords } = require('./amount-words');
 const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx } = require('./exports');
-const { getCompanyHeader, writeXlsxCompanyHeader, formatDateForDisplay, formatDebitNoteNo } = require('./report-formatters');
+const { getCompanyHeader, writeXlsxCompanyHeader, formatDateForDisplay, formatDebitNoteNo, formatInvoiceNo } = require('./report-formatters');
 const { exportPdf: exportAnyPdf, renderTablePdf, renderPoolerCertificatePdf } = require('./exports-pdf');
 const { DBF_EXPORTS } = require('./dbf-exports');
 // Per-install time-bombed licensing — see license.js for the model.
@@ -2667,8 +2667,10 @@ app.get('/api/traders/:id(\\d+)', requireViewOrLotEntry, (req, res) => {
   const row = db.get('SELECT * FROM traders WHERE id = ?', [req.params.id]);
   if (!row) return res.status(404).json({ error: 'Not found' });
   // Attach banks array so the edit modal sees all bank accounts.
+  // account_type included so the edit modal re-selects the saved Savings/
+  // Current instead of reopening on "—" (and re-saving it away).
   row.banks = db.all(
-    'SELECT id, trader_id, bank_name, branch, acctnum, ifsc, holder_name, is_default FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id',
+    'SELECT id, trader_id, bank_name, branch, acctnum, ifsc, holder_name, account_type, is_default FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id',
     [row.id]
   );
   res.json(row);
@@ -2684,9 +2686,15 @@ function syncTraderBanks(db, traderId, banks) {
   const arr = Array.isArray(banks) ? banks.filter(b => b && (b.acctnum || b.ifsc)) : [];
   db.run('DELETE FROM trader_banks WHERE trader_id = ?', [traderId]);
   for (const b of arr) {
+    // account_type must be listed here. The Add/Edit Seller form has offered a
+    // Savings/Current picker and POSTed it for some time, but this INSERT never
+    // named the column — so every desktop save silently dropped the operator's
+    // choice (and, since this helper deletes and re-inserts, wiped a type set
+    // from the mobile app on the next desktop edit). The mobile-bridge twin
+    // already persisted it; the two now match.
     db.run(
-      'INSERT INTO trader_banks (trader_id, bank_name, branch, acctnum, ifsc, holder_name) VALUES (?,?,?,?,?,?)',
-      [traderId, b.bank_name||'', b.branch||'', String(b.acctnum||''), String(b.ifsc||''), b.holder_name||'']
+      'INSERT INTO trader_banks (trader_id, bank_name, branch, acctnum, ifsc, holder_name, account_type) VALUES (?,?,?,?,?,?,?)',
+      [traderId, b.bank_name||'', b.branch||'', String(b.acctnum||''), String(b.ifsc||''), b.holder_name||'', b.account_type||'']
     );
   }
   // Mirror first bank into traders row for legacy compatibility
@@ -9333,6 +9341,20 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
     const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(Boolean) : [];
     if (!ids.length) return res.status(400).json({ error: 'No bill IDs provided' });
 
+    // Which sales-invoice number goes in the PURCHASER block ("INV: …").
+    // Only meaningful once flag_proforma_invoice is on: the buyer may have been
+    // shipped against a proforma draft and billed later under a different
+    // original number, so the print UI asks the operator which one this
+    // memorandum should quote. Anything else — and every request from a build
+    // with the flag off — stays on the original number, i.e. today's output.
+    const invoiceNoSrc = (proformaFeatureOn(db)
+      && String(req.body?.invoiceNo || '').trim().toLowerCase() === 'proforma')
+      ? 'proforma' : 'original';
+    // Draft numbers print in their document form ("PI/L-5"), the same
+    // prefix + sale-letter shape Collection and the Buyer Statement use — a
+    // bare "5" would be unreadable next to the original series.
+    const pfPrefix = String(cfg.proforma_invoice_prefix || '').trim();
+
     const placeholders = ids.map(() => '?').join(',');
     const stored = db.all(`SELECT * FROM bills WHERE id IN (${placeholders})`, ids);
     if (!stored.length) return res.status(404).json({ error: 'No matching bills found' });
@@ -9445,9 +9467,17 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
             [l.buyer1 || l.buyer, l.buyer1 || l.buyer]
           );
         }
+        // The lot carries both stamps: `invo` (original tax invoice) and
+        // `proforma_invo` (the draft the buyer was shipped against). A lot
+        // with no draft stamp falls back to the original rather than printing
+        // an empty INV — a blank there reads as "not yet invoiced".
+        const pfNo = String(l.proforma_invo || '').trim();
+        const invoLabel = (invoiceNoSrc === 'proforma' && pfNo)
+          ? formatInvoiceNo(pfPrefix, l.sale, pfNo)
+          : (l.invo || '');
         return {
           name:    (buyerRow && (buyerRow.buyer1 || buyerRow.buyer)) || l.buyer1 || l.buyer || '',
-          invo:    l.invo || '',
+          invo:    invoLabel,
           address: buyerRow ? [buyerRow.add1, buyerRow.add2].filter(Boolean).join(', ') : '',
           place:   buyerRow ? (buyerRow.pla || '') : '',
           pin:     buyerRow ? (buyerRow.pin || '') : '',

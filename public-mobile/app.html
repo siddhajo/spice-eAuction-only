@@ -1657,7 +1657,13 @@ function nsAddBankRow(){
     +'<input type="text" class="ns-bk-ifsc" autocomplete="off" maxlength="11" placeholder="e.g. ICIC0003816" oninput="nsLookupIFSC(this)">'
     +'<div class="ns-bk-info" style="display:none;font-size:11px;margin-top:4px"></div>'
     +'<div class="lb">BANK NAME</div><input type="text" class="ns-bk-name" autocomplete="off">'
-    +'<div class="lb">HOLDER NAME</div><input type="text" class="ns-bk-holder" autocomplete="off">';
+    +'<div class="lb">HOLDER NAME</div><input type="text" class="ns-bk-holder" autocomplete="off">'
+    // Same Savings/Current choice the lot-entry and edit-bank sheets offer —
+    // without it a seller registered from the phone reached the bank payment
+    // file with a blank BENEFICIARY ACCOUNT TYPE column.
+    +'<div class="lb">ACCOUNT TYPE</div>'
+    +'<select class="ns-bk-type" style="width:100%;height:44px;border-radius:8px;border:1.5px solid var(--border);padding:0 10px;font-size:15px;background:var(--input-bg);color:var(--text);-webkit-appearance:menulist;appearance:menulist">'
+    +'<option value="">—</option><option value="Savings">Savings</option><option value="Current">Current</option></select>';
   host.appendChild(row);
 }
 function nsRemoveBankRow(btn){
@@ -1712,7 +1718,8 @@ function nsCollectBanks(){
     var acct=v('.ns-bk-acct'), ifsc=v('.ns-bk-ifsc').toUpperCase();
     if(!acct&&!ifsc) return;
     out.push({bank_name:v('.ns-bk-name'),branch:ifscBranchCache[ifsc]||'',
-              acctnum:acct,ifsc:ifsc,holder_name:v('.ns-bk-holder')});
+              acctnum:acct,ifsc:ifsc,holder_name:v('.ns-bk-holder'),
+              account_type:v('.ns-bk-type')});
   });
   return out;
 }
@@ -2251,8 +2258,9 @@ function renderEditBankList(){
     var label=b.label?' ('+b.label+')':'';
     var opt=document.createElement('option');
     opt.value=b.id;
-    // Match the desktop format: "<acctnum> · <bank name>" (label appended when set).
-    opt.textContent=[b.acctnum,b.bank_name].filter(Boolean).join(' · ')+label;
+    // Match the desktop format: "<acctnum> · <bank name> · <account type>"
+    // (label appended when set).
+    opt.textContent=[b.acctnum,b.bank_name,b.account_type].filter(Boolean).join(' · ')+label;
     if(editLotBankId?b.id==editLotBankId:b.is_default)opt.selected=true;
     sel.appendChild(opt);
   });
@@ -2496,8 +2504,9 @@ function renderBankList() {
     var label = b.label ? ' (' + b.label + ')' : '';
     var opt = document.createElement('option');
     opt.value = b.id;
-    // Match the desktop format: "<acctnum> · <bank name>" (label appended when set).
-    opt.textContent = [b.acctnum, b.bank_name].filter(Boolean).join(' · ') + label;
+    // Match the desktop format: "<acctnum> · <bank name> · <account type>"
+    // (label appended when set).
+    opt.textContent = [b.acctnum, b.bank_name, b.account_type].filter(Boolean).join(' · ') + label;
     if (defaultBank && b.id === defaultBank.id) opt.selected = true;
     sel.appendChild(opt);
   });
@@ -2528,6 +2537,7 @@ function renderBankInfoLine(infoElId, selectElId, b) {
   var branch = b.branch || ifscBranchCache[code] || '';
   var parts = ['IFSC: ' + (b.ifsc || '—')];
   if (branch) parts.push('Branch: ' + branch);
+  if (b.account_type) parts.push('Type: ' + b.account_type);
   if (b.holder_name) parts.push('Holder: ' + b.holder_name);
   info.textContent = parts.join(' | ');
   // No branch known yet but the IFSC is valid → look it up, cache, re-render.
