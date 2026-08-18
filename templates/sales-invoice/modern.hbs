@@ -77,7 +77,7 @@
       <div class="sub">{{co.address1}}{{#if co.place}}, {{co.place}}{{/if}} · {{co.stateName}}</div>
       <div class="sub"><span class="idp">GSTIN {{co.gstin}}{{#if (or co.fssai (or co.pan co.sbl))}}·{{/if}}</span>{{#if co.fssai}} <span class="idp">FSSAI {{co.fssai}}{{#if (or co.pan co.sbl)}}·{{/if}}</span>{{/if}}{{#if co.pan}} <span class="idp">PAN {{co.pan}}{{#if co.sbl}}·{{/if}}</span>{{/if}}{{#if co.sbl}} <span class="idp">SBL {{co.sbl}}</span>{{/if}}</div>
     </div>
-    <div class="doctype"><b>TAX INVOICE</b></div>
+    <div class="doctype"><b>{{#if isProforma}}PROFORMA INVOICE{{else}}TAX INVOICE{{/if}}</b></div>
   </div>
 
   <div class="meta">

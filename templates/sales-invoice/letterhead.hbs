@@ -74,7 +74,7 @@
        single line. -->
   <table>
     <tr class="bar"><td colspan="3" class="c title-cell">AUCTION SALES INVOICE<span class="slno nowrap">Sl.NO: {{invoiceNo}}</span></td></tr>
-    <tr class="bar"><td style="width:35%">Auction No:{{auctionNo}}</td><td class="c" style="width:30%">TAX INVOICE</td><td class="r nowrap" style="width:35%">Date: {{date invoiceDate dateFormat}}</td></tr>
+    <tr class="bar"><td style="width:35%">Auction No:{{auctionNo}}</td><td class="c" style="width:30%">{{#if isProforma}}PROFORMA INVOICE{{else}}TAX INVOICE{{/if}}</td><td class="r nowrap" style="width:35%">Date: {{date invoiceDate dateFormat}}</td></tr>
   </table>
 
   <!-- Parties. Billed-To and Shipped-To use the same aligned two-column body
@@ -150,7 +150,10 @@
       {{/if}}
       {{#if gunny}}
       <tr>
-        <td></td><td>Gunny</td><td></td><td class="c b">{{gunny.bags}}</td><td></td>
+        {{!-- Lot-No cell carries the LOT COUNT for this invoice, sitting
+              directly under the lot numbers it totals — the same place the
+              Gunny row already totals the bags column beside it. --}}
+        <td class="c b">{{rows.length}}</td><td>Gunny</td><td></td><td class="c b">{{gunny.bags}}</td><td></td>
         <td class="r">{{inr gunny.amount}}</td><td class="r">{{inr gunny.amount}}</td>
         <td class="r">{{inr gunny.cgst}}</td><td class="r">{{inr gunny.sgst}}</td><td class="r">{{inr gunny.igst}}</td><td class="r">{{inr gunny.total}}</td>
       </tr>
