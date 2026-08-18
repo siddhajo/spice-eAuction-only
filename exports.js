@@ -1346,7 +1346,11 @@ async function exportIndividualRegister(db, kind, opts = {}) {
   if (!def) throw new Error(`Unknown individual register kind: ${kind}`);
   const data = individualRegisterData(db, kind, opts);
   const sections = data.parties.map(p => ({
-    title: p.name + (p.gstin ? `      GSTIN: ${p.gstin}` : ''),
+    // Party banner carries GSTIN and phone, matching the on-screen register
+    // and the PDF banner — the phone is the number the office calls back on.
+    title: p.name
+      + (p.gstin ? `      GSTIN: ${p.gstin}` : '')
+      + (p.phone ? `      Ph: ${p.phone}` : ''),
     rows: [...p.rows, ...def.summaryRows(p)],
   }));
   // Grand total across every party in the file.

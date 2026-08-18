@@ -356,10 +356,14 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
 
   function drawRow(row, i, rowH, wrapped) {
     if (row._isSection) {
-      // Full-width party banner (name + GSTIN). Verticals skip this band.
+      // Full-width party banner (name + GSTIN + phone). Verticals skip this
+      // band. Phone is what the office rings when a bill is queried, so it
+      // rides the banner alongside GSTIN — same as the on-screen register.
       sectionBands.push({ top: y, bottom: y + rowH });
       doc.rect(m, y, usableW, rowH).fillAndStroke('#E8E4DD', '#999');
-      const label = (row.label || '') + (row.gstin ? `      GSTIN: ${row.gstin}` : '');
+      const label = (row.label || '')
+        + (row.gstin ? `      GSTIN: ${row.gstin}` : '')
+        + (row.phone ? `      Ph: ${row.phone}` : '');
       doc.fillColor('#000').font('Helvetica-Bold').fontSize(8.5)
          .text(label, m + 5, y + 4.5, { width: usableW - 10, align: 'left', lineBreak: false });
       // Bottom rule so the banner is clearly separated from its rows.
@@ -1333,7 +1337,7 @@ async function renderIndividualRegisterPdf(db, type, extra) {
   // Flatten parties into one row list: section banner → rows → summary lines.
   const rows = [];
   data.parties.forEach((p) => {
-    rows.push({ _isSection: true, label: p.name, gstin: p.gstin });
+    rows.push({ _isSection: true, label: p.name, gstin: p.gstin, phone: p.phone });
     p.rows.forEach(r => rows.push(r));
     summaryFn(p.summary).forEach(r => rows.push(r));
   });
