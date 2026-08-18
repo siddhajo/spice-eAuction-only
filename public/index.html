@@ -1481,6 +1481,16 @@ tr:hover td{background:var(--spice-cream)}
    stay put and only the rows scroll; the coloured header sticks on top. */
 #pe-grid{max-height:calc(100vh - 300px);overflow:auto}
 #pe-grid .pe-grid-table thead th{position:sticky;top:0;z-index:2}
+
+/* Seller Bank Account rows (Add/Edit Seller) — larger, clearly legible
+   inputs + labels so account details are easy to read and edit. */
+.bank-row .fg label{font-size:12.5px;font-weight:600;color:var(--text2);margin-bottom:4px;display:block}
+.bank-row input{height:42px;font-size:14.5px;padding:0 12px}
+.bank-row .bank-branch-hint{font-size:11.5px}
+@media (max-width:820px){
+  .bank-row{grid-template-columns:1fr 1fr !important}
+  .bank-row>button{grid-column:1 / -1;height:40px !important}
+}
 .num{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
 
 /* ── Stat Cards ──────────────────────────────────────────── */
@@ -18876,21 +18886,21 @@ function appendBankRow(b){
   if (!c) return;
   const row = document.createElement('div');
   row.className = 'bank-row';
-  row.style.cssText = 'display:grid;grid-template-columns:1.2fr 1.4fr 1fr 1.2fr auto;gap:8px;align-items:end;padding:8px;background:#fff;border:1px solid var(--border);border-radius:6px';
+  row.style.cssText = 'display:grid;grid-template-columns:minmax(150px,1.4fr) minmax(160px,1.6fr) minmax(120px,1fr) minmax(150px,1.4fr) auto;gap:12px;align-items:end;padding:14px;background:#fff;border:1px solid var(--border);border-radius:8px';
   // Use fieldsets so the inputs are clearly grouped, with mini-labels.
   // The bank-branch hint sits under Bank Name and is populated by the IFSC
   // auto-lookup (Razorpay public API) when the IFSC field changes.
   row.innerHTML = `
     <div class="fg" style="margin:0">
-      <label style="font-size:11px">Bank Name</label>
+      <label>Bank Name</label>
       <input class="bank-name" value="${esc(b.bank_name||'')}" data-ifsc-auto="${esc(b.bank_name||'')}" placeholder="e.g. HDFC">
-      <div class="bank-branch-hint" style="font-size:11px;color:var(--text3);margin-top:2px;min-height:14px">${b.branch ? 'Branch: '+esc(b.branch) : ''}</div>
+      <div class="bank-branch-hint" style="color:var(--text3);margin-top:2px;min-height:14px">${b.branch ? 'Branch: '+esc(b.branch) : ''}</div>
       <input type="hidden" class="bank-branch" value="${esc(b.branch||'')}">
     </div>
-    <div class="fg" style="margin:0"><label style="font-size:11px">Account No</label><input class="bank-acctnum" value="${esc(b.acctnum||'')}"></div>
-    <div class="fg" style="margin:0"><label style="font-size:11px">IFSC</label><input class="bank-ifsc" value="${esc(b.ifsc||'')}" style="text-transform:uppercase" oninput="onBankIfscInput(this)" onblur="lookupBankByIfsc(this)"></div>
-    <div class="fg" style="margin:0"><label style="font-size:11px">Holder Name</label><input class="bank-holder" value="${esc(b.holder_name||'')}"></div>
-    <button type="button" class="btn btn-o" onclick="this.closest('.bank-row').remove()" title="Remove this bank" style="padding:6px 10px;font-size:12px">✕</button>
+    <div class="fg" style="margin:0"><label>Account No</label><input class="bank-acctnum" value="${esc(b.acctnum||'')}"></div>
+    <div class="fg" style="margin:0"><label>IFSC</label><input class="bank-ifsc" value="${esc(b.ifsc||'')}" style="text-transform:uppercase" oninput="onBankIfscInput(this)" onblur="lookupBankByIfsc(this)"></div>
+    <div class="fg" style="margin:0"><label>Holder Name</label><input class="bank-holder" value="${esc(b.holder_name||'')}"></div>
+    <button type="button" class="btn btn-o" onclick="this.closest('.bank-row').remove()" title="Remove this bank" style="padding:0 14px;height:42px;font-size:14px;align-self:end">✕</button>
   `;
   c.appendChild(row);
 }
