@@ -6287,24 +6287,26 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 
   <!-- Reassign panel -->
   <div id="alloc-panel-reassign" style="display:none">
-    <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Move unused lot numbers from one branch to another. <b>Click</b> a tile to toggle it, or <b>drag</b> across tiles to sweep a whole range (e.g. 090–099) — drag again elsewhere to add another range. Non-adjacent picks (e.g. 003, 007, 012) work too. Or type a contiguous range below. Only <b>free</b> lot numbers can move — booked, reserved, entered, carried-forward and already-reassigned lots are locked.</p>
+    <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Move unused lot numbers from one branch to another. <b>Click</b> a tile to toggle it, or <b>drag</b> across tiles to sweep a whole range (e.g. 090–099) — drag again elsewhere to add another range. Non-adjacent picks (e.g. 003, 007, 012) work too. Or type a contiguous range below. Only <b>free</b> lot numbers can move — booked, reserved, entered and carried-forward lots are locked. A lot already moved once (teal ↔) is still free and can be moved again.</p>
     <div id="alloc-reassign-status" style="margin-bottom:14px"></div>
 
     <!-- Tile legend -->
-    <div style="display:flex;flex-wrap:wrap;gap:10px;font-size:11px;margin-bottom:10px;padding:8px 10px;background:#fafafa;border:1px solid #eee;border-radius:6px">
-      <span><span style="display:inline-block;width:12px;height:12px;background:#E5E7EB;border:1px solid #cbd5e1;border-radius:3px;vertical-align:middle"></span> Free</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:#10B981;border:1px solid #047857;border-radius:3px;vertical-align:middle"></span> Selected</span>
-      <span style="width:1px;height:14px;background:#ddd"></span>
-      <span style="color:var(--text3)">🔒 locked:</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:#FCA5A5;border:1px solid #ef4444;border-radius:3px;vertical-align:middle"></span> Booked</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:#FED7AA;border:1px solid #f97316;border-radius:3px;vertical-align:middle"></span> Reserved</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:#DBEAFE;border:1px solid #93c5fd;border-radius:3px;vertical-align:middle"></span> Allocated</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:#FEF3C7;border:1px solid #F59E0B;border-radius:3px;vertical-align:middle"></span> Carried fwd</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:#FDE68A;border:1px solid #f59e0b;border-radius:3px;vertical-align:middle"></span> Reassigned</span>
+    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;font-size:11.5px;margin-bottom:10px;padding:10px 12px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px">
+      <span style="display:inline-flex;align-items:center;gap:5px;font-weight:700;color:#065F46"><span style="display:inline-block;width:16px;height:16px;background:#fff;border:2px solid #059669;border-radius:4px"></span> Free — can move</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;font-weight:700;color:#115E59"><span style="display:inline-block;width:16px;height:16px;background:#CCFBF1;border:1px solid #0D9488;border-radius:4px"></span> ↔ Free, moved before</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;font-weight:700;color:#065F46"><span style="display:inline-block;width:16px;height:16px;background:#059669;border:2px solid #065F46;border-radius:4px"></span> Selected</span>
+      <span style="width:1px;height:18px;background:#CBD5E1"></span>
+      <span style="color:var(--text3);font-weight:600">🔒 locked — cannot move:</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;color:#991B1B"><span style="display:inline-block;width:16px;height:16px;background:#FEE2E2;border:1px solid #DC2626;border-radius:4px"></span> ₹ Booked</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;color:#9A3412"><span style="display:inline-block;width:16px;height:16px;background:#FFEDD5;border:1px solid #EA580C;border-radius:4px"></span> ◆ Reserved</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;color:#1E3A8A"><span style="display:inline-block;width:16px;height:16px;background:#DBEAFE;border:1px solid #2563EB;border-radius:4px"></span> ✎ Entered</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;color:#5B21B6"><span style="display:inline-block;width:16px;height:16px;background:#EDE9FE;border:1px solid #7C3AED;border-radius:4px"></span> ↻ Carried fwd</span>
     </div>
 
     <!-- Tile grid — grouped by branch with sticky branch headers -->
-    <div id="ra-tile-grid" style="max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px;background:#fff;margin-bottom:8px"></div>
+    <!-- Tinted surface on purpose: FREE tiles are white, so they only read as
+         "empty slots" against a background that is not also white. -->
+    <div id="ra-tile-grid" style="max-height:340px;overflow:auto;border:1px solid #CBD5E1;border-radius:8px;padding:10px;background:#F1F5F9;margin-bottom:8px"></div>
     <div id="ra-selsummary" style="font-size:11.5px;color:var(--text2);margin-bottom:12px;min-height:14px"></div>
 
     <div style="background:#fff8f0;border:1px solid #f0d8c0;border-radius:10px;padding:14px">
@@ -15297,9 +15299,11 @@ function renderAllocEditCards(stats) {
       let style;
       if (isCarried) {
         // Carried-forward lot: booked into this trade from a previous
-        // auction. Distinct amber look (no strike-through) so it reads as
-        // an occupied-but-re-auctionable slot, not a dead/used chip.
-        style = 'background:#FEF3C7;color:#92400E;border:1.5px solid #F59E0B;font-weight:700;cursor:not-allowed';
+        // auction. Distinct violet look (no strike-through) so it reads as
+        // an occupied-but-re-auctionable slot, not a dead/used chip. Violet,
+        // not amber, so it matches the Reassign grid — amber there already
+        // means "reassigned", and the two were near-identical shades.
+        style = 'background:#EDE9FE;color:#5B21B6;border:1.5px solid #7C3AED;font-weight:700;cursor:not-allowed';
       } else if (isUsed) {
         style = 'background:#f3f4f6;color:#9ca3af;border:1px solid #e5e7eb;text-decoration:line-through;cursor:not-allowed';
       } else if (isMark) {
@@ -15427,20 +15431,46 @@ async function autoFillAllocations() {
 // operator could sweep allocated/carried tiles into the selection and only
 // learn they were untouchable when the whole reassign bounced.
 //
-// 'reassigned' is free server-side, but is locked here too: a lot number that
-// has already been moved once in this trade stays where it was put.
-const RA_LOCKED_STATES = new Set(['booked', 'reserved', 'allocated', 'carried', 'reassigned']);
+// 'reassigned' is NOT locked. The server only tags a lot 'reassigned' when it
+// is otherwise free, so those numbers are genuinely spare and a second hop
+// (A→B→C) is legitimate. Locking them was tried and reverted: in a trade where
+// whole ranges had been swept into one depot, every free lot there carried the
+// tag, which left the branch with nothing selectable at all. The teal fill and
+// the ↔ glyph flag the history without taking the ability away.
+const RA_LOCKED_STATES = new Set(['booked', 'reserved', 'allocated', 'carried']);
 const raLocked = (st) => RA_LOCKED_STATES.has(String(st || '').trim());
-// Tile fills, shared by the initial render and the in-place drag repaint so
+// Tile styling, shared by the initial render and the in-place drag repaint so
 // the two can never drift (the repaint map used to omit reserved/carried,
 // which repainted those tiles as plain grey "free" mid-drag).
-const RA_TILE_COLORS = {
-  booked:     ['#FCA5A5', '#7f1d1d', '#ef4444'],
-  reserved:   ['#FED7AA', '#9a3412', '#f97316'],
-  allocated:  ['#DBEAFE', '#1e3a8a', '#93c5fd'],
-  carried:    ['#FEF3C7', '#92400E', '#F59E0B'],
-  reassigned: ['#FDE68A', '#78350f', '#f59e0b'],
-  free:       ['#E5E7EB', '#1f2937', '#cbd5e1'],
+//
+// ── Why these colours ────────────────────────────────────────────────────
+// The old palette had it backwards for night work: FREE — the one thing the
+// operator is hunting for — was the palest tile on the grid (#E5E7EB on a
+// white card, near-invisible under hall lighting), while every untouchable
+// state was loud and saturated. The eye was pulled to what could not be used.
+// Carried (#FEF3C7) and Reassigned (#FDE68A) were also two shades of the same
+// amber, indistinguishable at a glance.
+//
+// The scheme is now: ONE colour family means "you can act on this" —
+//   free      = white fill, heavy emerald outline  (an empty, clickable slot)
+//   selected  = the same emerald, filled in        (you picked it)
+// and every locked state is a muted tint that recedes, separated by hue AND by
+// a leading glyph so hue is never the only signal (hall lighting, tired eyes,
+// colour-blindness). Glyphs match the ones already used elsewhere: ↻ carried
+// forward (Edit Allocations chips), ↔ reassign (the tab icon).
+const RA_TILE_STYLES = {
+  free:       { bg: '#FFFFFF', fg: '#065F46', bd: '#059669', bw: 2, glyph: ''  },
+  selected:   { bg: '#059669', fg: '#FFFFFF', bd: '#065F46', bw: 2, glyph: ''  },
+  booked:     { bg: '#FEE2E2', fg: '#991B1B', bd: '#DC2626', bw: 1, glyph: '₹' },
+  reserved:   { bg: '#FFEDD5', fg: '#9A3412', bd: '#EA580C', bw: 1, glyph: '◆' },
+  allocated:  { bg: '#DBEAFE', fg: '#1E3A8A', bd: '#2563EB', bw: 1, glyph: '✎' },
+  carried:    { bg: '#EDE9FE', fg: '#5B21B6', bd: '#7C3AED', bw: 1, glyph: '↻' },
+  reassigned: { bg: '#CCFBF1', fg: '#115E59', bd: '#0D9488', bw: 1, glyph: '↔' },
+};
+const raTileStyle = (st) => RA_TILE_STYLES[String(st || '').trim()] || RA_TILE_STYLES.free;
+const raTileCss = (st, selected) => {
+  const s = selected ? RA_TILE_STYLES.selected : raTileStyle(st);
+  return `background:${s.bg};color:${s.fg};border:${s.bw}px solid ${s.bd}`;
 };
 // Lots skipped by the last typed start/end sync because they were locked.
 // Surfaced in the selection summary; reset whenever tiles drive the selection.
@@ -15465,37 +15495,46 @@ function renderReassignTiles() {
       for (const t of (r.lots || [])) if (raLocked(t.state)) _raSelected.delete(t.lot);
     }
   }
-  const stateStyle = (st, selected) => {
-    if (selected) return 'background:#10B981;color:#fff;border:1px solid #047857';
-    const c = RA_TILE_COLORS[st] || RA_TILE_COLORS.free;
-    return `background:${c[0]};color:${c[1]};border:1px solid ${c[2]}${raLocked(st) ? ';cursor:not-allowed' : ''}`;
-  };
   let html = '';
   for (const s of _raAllocStats) {
     const branch = s.branch;
-    html += `<div style="margin-bottom:14px">
-      <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
+    // "Free to move" counts the tiles the operator can actually click, which
+    // is not always `total - used`: the server counts a carried-forward lot as
+    // used, and any future locked state would diverge too. Deriving it from
+    // the same predicate the tiles use keeps the header honest.
+    const movable = (s.ranges || []).reduce(
+      (n, r) => n + (r.lots || []).filter(t => !raLocked(t.state)).length, 0);
+    const movableTxt = movable
+      ? `<b style="color:#047857;font-size:12px">${movable} free to move</b>`
+      : `<b style="color:#B91C1C;font-size:12px">none free to move</b>`;
+    html += `<div style="margin-bottom:16px">
+      <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:7px;display:flex;justify-content:space-between;align-items:center;gap:10px">
         <span>📍 ${esc(branch)}</span>
-        <span style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0">${s.used}/${s.total} used</span>
+        <span style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0">${movableTxt} · ${s.used}/${s.total} used</span>
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:4px">`;
+      <div style="display:flex;flex-wrap:wrap;gap:5px">`;
     for (const r of (s.ranges || [])) {
       for (const t of (r.lots || [])) {
         const selected = _raSelected.has(t.lot);
         // Every state the server would refuse is dead to the pointer — see
-        // RA_LOCKED_STATES. Anything with a row in `lots` (booked, reserved,
-        // allocated, carried) plus already-reassigned lots.
+        // RA_LOCKED_STATES: anything with a row in `lots` (booked, reserved,
+        // allocated, carried). 'reassigned' is free and stays clickable.
         const dis = raLocked(t.state);
         const TIPS = {
           booked:     `Booked: ${t.seller || '—'} — cannot be reassigned`,
           reserved:   `Reserved (held): ${t.seller || '—'} — cannot be reassigned`,
           allocated:  `Lot entered${t.seller ? ' by ' + t.seller : ''} (not yet priced) — cannot be reassigned`,
           carried:    `Carried forward${t.seller ? ' (' + t.seller + ')' : ''} — cannot be reassigned`,
-          reassigned: `Already reassigned from another branch — cannot be moved again`,
+          reassigned: `FREE — moved here from another branch earlier; can be moved again`,
         };
-        const tip = TIPS[t.state] || 'Free for reassign';
+        const tip = TIPS[t.state] || 'FREE — click or drag to move this lot';
         const handlers = dis ? '' : ` onmousedown="raTileMouseDown(event,this)" ontouchstart="raTileTouchStart(event,this)" onclick="raToggleTile(this)"`;
-        html += `<div title="${esc(tip)}" data-lot="${esc(t.lot)}" data-branch="${esc(branch)}" data-state="${esc(t.state)}"${handlers} style="${stateStyle(t.state, selected)};padding:4px 6px;border-radius:4px;font-size:11px;font-family:monospace;min-width:42px;text-align:center;${dis?'opacity:.85':'cursor:pointer'};user-select:none;touch-action:none">${esc(t.lot)}</div>`;
+        // Glyph marks each locked state independently of its hue, so the tiles
+        // stay tellable apart in poor light and for colour-blind operators.
+        const gl = raTileStyle(t.state).glyph;
+        const glyph = (gl && !selected) ? `<span style="opacity:.7;font-size:10px;margin-right:3px">${gl}</span>` : '';
+        // Bigger, bolder type than the old 11px: this grid gets read at night.
+        html += `<div title="${esc(tip)}" data-lot="${esc(t.lot)}" data-branch="${esc(branch)}" data-state="${esc(t.state)}"${handlers} style="${raTileCss(t.state, selected)};padding:5px 7px;border-radius:5px;font-size:12.5px;font-weight:700;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-width:50px;text-align:center;cursor:${dis?'not-allowed':'pointer'};user-select:none;touch-action:none">${glyph}${esc(t.lot)}</div>`;
       }
     }
     html += `</div></div>`;
@@ -15528,7 +15567,7 @@ function updateSelectionSummary() {
   // A typed range silently drops locked lots — say so, otherwise the operator
   // types 001–100, sees 62 selected and has no idea where the other 38 went.
   const skip = _raInputSkipped
-    ? ` <span style="color:#9a3412">· ${_raInputSkipped} skipped (already used or reassigned)</span>` : '';
+    ? ` <span style="color:#9a3412">· ${_raInputSkipped} skipped (already used)</span>` : '';
   el.innerHTML = n
     ? `<b>${n} lot${n === 1 ? '' : 's'} selected:</b> <span style="font-family:monospace">${esc(raChunkSummary(Array.from(_raSelected)))}</span>${skip}`
     : `<span style="color:var(--text3)">No tiles selected — click or drag tiles above, or type a start/end range below.</span>${skip}`;
@@ -15647,9 +15686,14 @@ function _raApplyDragRangePaint(curLot){
   // inside the swept span are stepped over rather than dragged along.
   for (let i = lo; i <= hi; i++) if (!raLocked(ordered[i].state)) _raSelected.add(ordered[i].lot);
   const grid = document.getElementById('ra-tile-grid');
+  // Repaint in place (no DOM rebuild — the touch target must survive the
+  // sweep). Border WIDTH is repainted too: free/selected wear a 2px outline
+  // and the locked tints 1px, so colour alone would leave stale borders.
   if (grid) grid.querySelectorAll('[data-lot]').forEach(el => {
-    if (_raSelected.has(el.getAttribute('data-lot'))) { el.style.background='#10B981'; el.style.color='#fff'; el.style.borderColor='#047857'; }
-    else { const c = RA_TILE_COLORS[el.getAttribute('data-state')] || RA_TILE_COLORS.free; el.style.background=c[0]; el.style.color=c[1]; el.style.borderColor=c[2]; }
+    const sel = _raSelected.has(el.getAttribute('data-lot'));
+    const c = sel ? RA_TILE_STYLES.selected : raTileStyle(el.getAttribute('data-state'));
+    el.style.background = c.bg; el.style.color = c.fg;
+    el.style.borderColor = c.bd; el.style.borderWidth = c.bw + 'px';
   });
   updateRangeInputsFromSelection();
   updateSelectionSummary();
@@ -15689,10 +15733,10 @@ function raSyncSelectionFromInputs() {
   const pad = sm[2].length;
   const a = parseInt(sm[2], 10), b = parseInt(em[2], 10);
   if (a > b) return;
-  // Typing a range used to select every number in it blindly — booked,
-  // allocated and reassigned lots included — so a span that merely crossed a
-  // used lot got sent whole and the server bounced the entire reassign. Only
-  // lots the grid would let you click may enter the selection.
+  // Typing a range used to select every number in it blindly — booked and
+  // allocated lots included — so a span that merely crossed a used lot got
+  // sent whole and the server bounced the entire reassign. Only lots the grid
+  // would let you click may enter the selection.
   const from = (document.getElementById('ra-from') || {}).value || '';
   const selectable = new Set();
   for (const s of (_raAllocStats || [])) {
