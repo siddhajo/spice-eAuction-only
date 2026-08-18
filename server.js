@@ -4720,7 +4720,7 @@ app.get('/api/auctions/:id/allocation-stats', requireViewOrLotEntry, (req, res) 
     [auctionId]
   );
   const lots = db.all(
-    'SELECT lot_no, branch, name, amount, reserved, carried_from_auction_id FROM lots WHERE auction_id = ?',
+    'SELECT lot_no, branch, name, qty, reserved, carried_from_auction_id FROM lots WHERE auction_id = ?',
     [auctionId]
   );
   // lot_no → { branch, seller, booked, reserved, carried }
@@ -4729,7 +4729,12 @@ app.get('/api/auctions/:id/allocation-stats', requireViewOrLotEntry, (req, res) 
     lotInfo[l.lot_no] = {
       branch: l.branch || '',
       seller: l.name   || '',
-      booked: Number(l.amount) > 0,
+      // BOOKED = the lot has weight against it. This used to test `amount`
+      // (qty × price), which only becomes non-zero at price import — so a lot
+      // entered in the hall that morning read as merely "allocated" all day
+      // and only turned red in the evening. Goods on the floor are booked the
+      // moment the weight is recorded, so key it off qty.
+      booked: Number(l.qty) > 0,
       reserved: !!Number(l.reserved),
       carried: l.carried_from_auction_id != null,
     };
@@ -4771,11 +4776,16 @@ app.get('/api/auctions/:id/allocation-stats', requireViewOrLotEntry, (req, res) 
         const lotNo = buildLotNo(s.prefix, n, s.padLen);
         const info = lotInfo[lotNo];
         const reassigned = reassignedSet.has(lotNo);
+        // First match wins. `carried` now sits ABOVE `booked`: a carried-forward
+        // lot brings its weight with it, so once booked keys off qty every one
+        // of them would otherwise read as plain 'booked' and the carried-forward
+        // state would never appear. Carrying forward is the more specific fact,
+        // so it keeps the tile.
         let state = 'free';
         if (info && info.reserved) state = 'reserved';      // held, not booked
-        else if (info && info.booked) state = 'booked';
         else if (info && info.carried) state = 'carried';   // carried forward, awaiting new sale
-        else if (info)           state = 'allocated';     // present in lots table but amount=0
+        else if (info && info.booked) state = 'booked';     // weight recorded against the lot
+        else if (info)           state = 'allocated';     // row exists but no qty yet
         if (reassigned && state === 'free') state = 'reassigned';
         lotGrid.push({
           lot: lotNo,

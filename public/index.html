@@ -6291,17 +6291,9 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
     <div id="alloc-reassign-status" style="margin-bottom:14px"></div>
 
     <!-- Tile legend -->
-    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;font-size:11.5px;margin-bottom:10px;padding:10px 12px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px">
-      <span style="display:inline-flex;align-items:center;gap:5px;font-weight:700;color:#065F46"><span style="display:inline-block;width:16px;height:16px;background:#fff;border:2px solid #059669;border-radius:4px"></span> Free — can move</span>
-      <span style="display:inline-flex;align-items:center;gap:5px;font-weight:700;color:#115E59"><span style="display:inline-block;width:16px;height:16px;background:#CCFBF1;border:1px solid #0D9488;border-radius:4px"></span> ↔ Free, moved before</span>
-      <span style="display:inline-flex;align-items:center;gap:5px;font-weight:700;color:#065F46"><span style="display:inline-block;width:16px;height:16px;background:#059669;border:2px solid #065F46;border-radius:4px"></span> Selected</span>
-      <span style="width:1px;height:18px;background:#CBD5E1"></span>
-      <span style="color:var(--text3);font-weight:600">🔒 locked — cannot move:</span>
-      <span style="display:inline-flex;align-items:center;gap:5px;color:#991B1B"><span style="display:inline-block;width:16px;height:16px;background:#FEE2E2;border:1px solid #DC2626;border-radius:4px"></span> ₹ Booked</span>
-      <span style="display:inline-flex;align-items:center;gap:5px;color:#9A3412"><span style="display:inline-block;width:16px;height:16px;background:#FFEDD5;border:1px solid #EA580C;border-radius:4px"></span> ◆ Reserved</span>
-      <span style="display:inline-flex;align-items:center;gap:5px;color:#1E3A8A"><span style="display:inline-block;width:16px;height:16px;background:#DBEAFE;border:1px solid #2563EB;border-radius:4px"></span> ✎ Entered</span>
-      <span style="display:inline-flex;align-items:center;gap:5px;color:#5B21B6"><span style="display:inline-block;width:16px;height:16px;background:#EDE9FE;border:1px solid #7C3AED;border-radius:4px"></span> ↻ Carried fwd</span>
-    </div>
+    <!-- Populated by raRenderLegend() — only the states present in this
+         trade get a swatch, so there is nothing extra to read past. -->
+    <div id="ra-legend" style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;font-size:11.5px;margin-bottom:10px;padding:10px 12px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px"></div>
 
     <!-- Tile grid — grouped by branch with sticky branch headers -->
     <!-- Tinted surface on purpose: FREE tiles are white, so they only read as
@@ -15424,8 +15416,8 @@ async function autoFillAllocations() {
 // Which tile states may NOT be picked for a reassign.
 //
 // The server (applyLotReassignment) refuses EVERY lot that already exists in
-// the `lots` table — it tests membership only, not amount — so 'booked',
-// 'reserved', 'allocated' (row saved, amount still 0) and 'carried' (carried
+// the `lots` table — it tests membership only — so 'booked' (weight recorded),
+// 'reserved', 'allocated' (row saved but no qty yet) and 'carried' (carried
 // forward from a previous trade) are all rejected with "Cannot reassign — N
 // lot(s) already used". The grid only greyed out booked + reserved, so an
 // operator could sweep allocated/carried tiles into the selection and only
@@ -15459,14 +15451,41 @@ const raLocked = (st) => RA_LOCKED_STATES.has(String(st || '').trim());
 // colour-blindness). Glyphs match the ones already used elsewhere: ↻ carried
 // forward (Edit Allocations chips), ↔ reassign (the tab icon).
 const RA_TILE_STYLES = {
-  free:       { bg: '#FFFFFF', fg: '#065F46', bd: '#059669', bw: 2, glyph: ''  },
-  selected:   { bg: '#059669', fg: '#FFFFFF', bd: '#065F46', bw: 2, glyph: ''  },
-  booked:     { bg: '#FEE2E2', fg: '#991B1B', bd: '#DC2626', bw: 1, glyph: '₹' },
-  reserved:   { bg: '#FFEDD5', fg: '#9A3412', bd: '#EA580C', bw: 1, glyph: '◆' },
-  allocated:  { bg: '#DBEAFE', fg: '#1E3A8A', bd: '#2563EB', bw: 1, glyph: '✎' },
-  carried:    { bg: '#EDE9FE', fg: '#5B21B6', bd: '#7C3AED', bw: 1, glyph: '↻' },
-  reassigned: { bg: '#CCFBF1', fg: '#115E59', bd: '#0D9488', bw: 1, glyph: '↔' },
+  free:       { bg: '#FFFFFF', fg: '#065F46', bd: '#059669', bw: 2, glyph: '',  label: 'Free — can move' },
+  // `lfg` overrides the label colour in the legend: the selected tile's own
+  // text is white (on solid emerald), which would vanish on the pale legend.
+  selected:   { bg: '#059669', fg: '#FFFFFF', lfg: '#065F46', bd: '#065F46', bw: 2, glyph: '', label: 'Selected' },
+  booked:     { bg: '#FEE2E2', fg: '#991B1B', bd: '#DC2626', bw: 1, glyph: '₹', label: 'Booked' },
+  reserved:   { bg: '#FFEDD5', fg: '#9A3412', bd: '#EA580C', bw: 1, glyph: '◆', label: 'Reserved' },
+  allocated:  { bg: '#DBEAFE', fg: '#1E3A8A', bd: '#2563EB', bw: 1, glyph: '✎', label: 'No weight yet' },
+  carried:    { bg: '#EDE9FE', fg: '#5B21B6', bd: '#7C3AED', bw: 1, glyph: '↻', label: 'Carried fwd' },
+  reassigned: { bg: '#CCFBF1', fg: '#115E59', bd: '#0D9488', bw: 1, glyph: '↔', label: 'Reassigned — still free' },
 };
+// The legend lists ONLY the states actually on screen. Several are rare —
+// 'No weight yet' in particular can now only come from an import or legacy
+// data, since lot entry refuses a zero net weight unless the lot is reserved
+// — and a permanent swatch for a colour that never appears is just clutter to
+// read past at 11pm. Free and Selected are always shown; they are the two the
+// operator is working with.
+function raRenderLegend(present) {
+  const host = document.getElementById('ra-legend');
+  if (!host) return;
+  const chip = (key, bold) => {
+    const s = RA_TILE_STYLES[key];
+    return `<span style="display:inline-flex;align-items:center;gap:5px;color:${s.lfg || s.fg}${bold ? ';font-weight:700' : ''}">`
+         + `<span style="display:inline-block;width:16px;height:16px;background:${s.bg};border:${s.bw}px solid ${s.bd};border-radius:4px"></span> `
+         + `${s.glyph ? s.glyph + ' ' : ''}${s.label}</span>`;
+  };
+  const movable = ['free'].concat(present.has('reassigned') ? ['reassigned'] : []);
+  const locked  = ['booked', 'reserved', 'allocated', 'carried'].filter(k => present.has(k));
+  let html = movable.map(k => chip(k, true)).join('') + chip('selected', true);
+  if (locked.length) {
+    html += '<span style="width:1px;height:18px;background:#CBD5E1"></span>'
+          + '<span style="color:var(--text3);font-weight:600">🔒 locked — cannot move:</span>'
+          + locked.map(k => chip(k, false)).join('');
+  }
+  host.innerHTML = html;
+}
 const raTileStyle = (st) => RA_TILE_STYLES[String(st || '').trim()] || RA_TILE_STYLES.free;
 const raTileCss = (st, selected) => {
   const s = selected ? RA_TILE_STYLES.selected : raTileStyle(st);
@@ -15485,7 +15504,13 @@ function renderReassignTiles() {
   if (!grid) return;
   if (!_raAllocStats || !_raAllocStats.length) {
     grid.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:14px;text-align:center">No allocations yet</div>';
+    raRenderLegend(new Set());
     return;
+  }
+  // States actually present in this trade — drives which legend swatches show.
+  const present = new Set();
+  for (const s of _raAllocStats) {
+    for (const r of (s.ranges || [])) for (const t of (r.lots || [])) present.add(t.state);
   }
   // Drop anything locked that lingers in the selection (stale picks from a
   // previous branch / a range typed before the tiles reloaded) so the grid,
@@ -15523,7 +15548,7 @@ function renderReassignTiles() {
         const TIPS = {
           booked:     `Booked: ${t.seller || '—'} — cannot be reassigned`,
           reserved:   `Reserved (held): ${t.seller || '—'} — cannot be reassigned`,
-          allocated:  `Lot entered${t.seller ? ' by ' + t.seller : ''} (not yet priced) — cannot be reassigned`,
+          allocated:  `Lot opened${t.seller ? ' for ' + t.seller : ''} (no weight recorded yet) — cannot be reassigned`,
           carried:    `Carried forward${t.seller ? ' (' + t.seller + ')' : ''} — cannot be reassigned`,
           reassigned: `FREE — moved here from another branch earlier; can be moved again`,
         };
@@ -15540,6 +15565,7 @@ function renderReassignTiles() {
     html += `</div></div>`;
   }
   grid.innerHTML = html;
+  raRenderLegend(present);
   updateRangeInputsFromSelection();
   updateSelectionSummary();
 }
@@ -15953,12 +15979,15 @@ async function executeReassign() {
           const n = parseInt(tm[2], 10);
           return n >= parseInt(sm[2], 10) && n <= parseInt(em[2], 10);
         })();
-        if (inSel && t.booked) bookedSeen.push(t.lot);
+        // Test the same predicate the tiles use, not the bare `booked` flag:
+        // the server rejects every lot with a row in `lots`, so a selection
+        // holding a reserved / entered / carried lot fails too.
+        if (inSel && raLocked(t.state)) bookedSeen.push(t.lot);
       }
     }
   }
   if (bookedSeen.length) {
-    return showErr('Booked lots cannot be reassigned: ' +
+    return showErr('These lots are already in use and cannot be reassigned: ' +
       bookedSeen.slice(0, 5).join(', ') + (bookedSeen.length > 5 ? '…' : ''));
   }
 
