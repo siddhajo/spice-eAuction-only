@@ -3706,7 +3706,7 @@ const hasValidGstin = (cr) => !!gstinStateCode(cr);
 function validateAuctionLots(db, auctionId) {
   const lots = db.all(
     `SELECT id, lot_no, trader_id, bank_id, name, cr, aadhar, pan, tel, branch,
-            litre, COALESCE(bags,0) AS bags, COALESCE(qty,0) AS qty
+            grade, litre, COALESCE(bags,0) AS bags, COALESCE(qty,0) AS qty
        FROM lots WHERE auction_id = ?`,
     [auctionId]
   );
@@ -3795,6 +3795,24 @@ function validateAuctionLots(db, auctionId) {
   pushWarn('no_bank',  'No bank account', 'Seller has no bank account on file',             l => l.trader_id && !tradersWithBank.has(l.trader_id));
   pushWarn('no_pan',   'No PAN',          'Seller has no PAN',                              l => !String(l.pan || '').trim());
   pushWarn('no_phone', 'No phone',        'Seller has no phone number',                     l => !String(l.tel || '').trim());
+
+  // ── Grade vs seller classification ────────────────────────────
+  // The dashboard reports these two from the SAME lots, by different means:
+  //   TRADER WT  — computed live, dealerSql(cr, aadhar) on the lot's seller snapshot
+  //   GRADE 2 kg — read from the stored lots.grade column
+  // They drift because `grade` is captured once at lot entry and never revisited:
+  // it is not in trader-lot-sync.js's FIELD_MAP, so filling in a seller's GSTIN
+  // or SBL afterwards re-stamps cr/aadhar on their lots while grade stays put.
+  // The operator can also just override the dropdown. Either way the Spices
+  // Board 25% figure and the depot Trader WT stop agreeing, with nothing saying
+  // so. Flag both directions before price import, while it is still cheap to fix.
+  const isG2 = (l) => String(l.grade == null ? '' : l.grade).trim() === '2';
+  pushWarn('grade_not_dealer', 'Grade 2, not a dealer',
+    'Lot is Grade 2 but the seller has no GSTIN + SBL (counts toward the 25% cap anyway)',
+    l => isG2(l) && !isDealerSeller(l.cr, l.aadhar));
+  pushWarn('dealer_not_grade2', 'Dealer, not Grade 2',
+    'Seller has GSTIN + SBL but the lot is not Grade 2 (missing from the 25% cap figure)',
+    l => !isG2(l) && isDealerSeller(l.cr, l.aadhar));
 
   // ── Reconciliation (the "tally") ──────────────────────────────
   const totalLots = lots.length;
