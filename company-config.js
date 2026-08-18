@@ -399,6 +399,18 @@ const DEFAULTS = [
   { key: 'lot_receipt_show_sample', value: 'true',  category: 'lot_entry', label: 'Lot Receipt: Sample Wt column', type: 'boolean' },
   { key: 'lot_receipt_show_gross',  value: 'true',  category: 'lot_entry', label: 'Lot Receipt: Gross Wt column',  type: 'boolean' },
   { key: 'lot_receipt_show_crpt',   value: 'false', category: 'lot_entry', label: 'Lot Receipt: Crop Receipt column', type: 'boolean' },
+  // How the receipt's footer totals are laid out. Both styles carry exactly
+  // the same figures — only the arrangement differs, and which one reads
+  // better depends on the roll width and on the operator's eye:
+  //   inline  — one wrapped line:  13 lot(s) | 66 Bag | Qty: 2930.800 kg | …
+  //   stacked — label left / value right, one figure per line:
+  //               24 lot(s)
+  //               Total Bags            152
+  //               Total Net     7004.900 kg
+  // 'inline' is the default because it is what the desktop slip and the PDF
+  // receipt already printed; 'stacked' is what the thermal ESC/POS path used,
+  // and it is easier to read at a glance on a narrow roll.
+  { key: 'lot_receipt_totals_style', value: 'inline', category: 'lot_entry', label: 'Lot Receipt: Totals layout (inline | stacked)', type: 'text' },
   // Mobile Lot Entry permissions. Both are UI gates on the operator's own
   // lots in the PWA ("My Lots"): edit shows the ✎ button, delete shows the
   // 🗑 row button AND the "Delete Selected" bulk action. They used to be one

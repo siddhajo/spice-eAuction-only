@@ -711,7 +711,12 @@ async function exportDealerList(db, auctionId) {
             (SUM(qty) + SUM(sample_wt)) as gross_wt
        FROM cleaned
       GROUP BY state, name, gstin, branch
-      ORDER BY state, name, gstin, branch`, [auctionId]
+      -- Alphabetical by dealer name. UPPER(TRIM(..)) because SQLite's default
+      -- collation is binary: a plain ORDER BY name files every lowercase name
+      -- after every uppercase one, so "Anil" landed below "ZZZ". State moved
+      -- behind the name — the list is read by looking a dealer up, not by
+      -- state. Name+GSTIN stay adjacent, which withPartySubtotals requires.
+      ORDER BY UPPER(TRIM(name)), gstin, state, branch`, [auctionId]
   );
   // Gross Qty = net qty + SB Sample Refund × lot count (one sample refund per
   // lot). Computed from cfg.sb_refund so it's independent of the per-lot
@@ -834,7 +839,8 @@ async function exportDealerListPartyWise(db, auctionId) {
             SUM(amount) as amount
        FROM cleaned
       GROUP BY name, gstin, branch
-      ORDER BY name, gstin, branch`, [auctionId]
+      -- Case-insensitive alphabetical — see exportDealerList.
+      ORDER BY UPPER(TRIM(name)), gstin, branch`, [auctionId]
   );
   // Gross Qty = net qty + SB Sample Refund × lot count (one sample refund per lot).
   const sbRefund = Number((require('./company-config').getSettingsFlat(db) || {}).sb_refund) || 0;

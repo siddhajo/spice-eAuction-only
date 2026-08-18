@@ -1170,7 +1170,9 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
          SELECT state, name, gstin, COALESCE(branch,'—') AS branch,
                 COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty
            FROM cleaned GROUP BY state, name, gstin, branch
-          ORDER BY state, name, gstin, branch`, [auctionId]);
+          -- Case-insensitive alphabetical by dealer name; must match the XLSX
+          -- twin in exports.js so both formats list dealers in one order.
+          ORDER BY UPPER(TRIM(name)), gstin, state, branch`, [auctionId]);
       for (const r of rows) {
         r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
         r._party = `${r.name || ''}|${r.gstin || ''}`;
@@ -1201,7 +1203,8 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
                   SUM(amount) as amount
              FROM cleaned
             WHERE LENGTH(gstin) = 15 AND gstin NOT GLOB '*[^0-9A-Z]*'
-            GROUP BY name, gstin, branch ORDER BY name, gstin, branch`, [auctionId]);
+            GROUP BY name, gstin, branch
+            ORDER BY UPPER(TRIM(name)), gstin, branch`, [auctionId]);
         for (const r of rows) {
           r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
           r._party = `${r.name || ''}|${r.gstin || ''}`;

@@ -17032,6 +17032,9 @@ function leBuildReceiptHtml(format, lots, ctx) {
   // narrow roll (e.g. 58mm HOP-HL58) prints edge-to-edge instead of being
   // scaled onto an A4 sheet. 0 / blank keeps each format's built-in default.
   const paperWidthMm = parseFloat(cfg.lot_receipt_width_mm) || 0;
+  // Footer totals layout, shared with the mobile receipts. Anything other
+  // than 'stacked' (including unset) keeps the original inline single line.
+  const totalsStacked = String(cfg.lot_receipt_totals_style || '').trim().toLowerCase() === 'stacked';
   // Operator-chosen columns (Settings → Lot Entry Defaults) — same set the
   // mobile receipt honours, so the desktop print matches.
   const fields = _leReceiptFields(cfg);
@@ -17184,11 +17187,24 @@ function leBuildDetailedHtml(p) {
     const totalQty    = g.lots.reduce((s, l) => s + (Number(l.qty)        || 0), 0);
     const totalGross  = g.lots.reduce((s, l) => s + (Number(l.gross_wt)   || 0), 0);
     const totalSample = g.lots.reduce((s, l) => s + (Number(l.sample_wt || l.sample_weight) || 0), 0);
-    let summary = `${g.lots.length}&nbsp;lot(s)`;
-    if (onKeys.has('bags'))   summary += ` | ${totalBags}&nbsp;Bag`;
-    if (onKeys.has('net'))    summary += ` | Qty:&nbsp;${totalQty.toFixed(3)}&nbsp;kg`;
-    if (onKeys.has('sample') && totalSample > 0) summary += ` | Smp:&nbsp;${totalSample.toFixed(3)}&nbsp;kg`;
-    if (onKeys.has('gross'))  summary += ` | Gross&nbsp;Wt:&nbsp;${totalGross.toFixed(3)}&nbsp;kg`;
+    // ONE list of figures, two layouts — see lot_receipt_totals_style. The
+    // mobile PDF and thermal slips read the same setting, so a receipt looks
+    // the same whichever device prints it.
+    const figs = [];
+    if (onKeys.has('bags'))   figs.push(['Bags', `${totalBags}`, `${totalBags}&nbsp;Bag`]);
+    if (onKeys.has('net'))    figs.push(['Net', `${totalQty.toFixed(3)}&nbsp;kg`, `Qty:&nbsp;${totalQty.toFixed(3)}&nbsp;kg`]);
+    if (onKeys.has('sample') && totalSample > 0) figs.push(['Smp', `${totalSample.toFixed(3)}&nbsp;kg`, `Smp:&nbsp;${totalSample.toFixed(3)}&nbsp;kg`]);
+    if (onKeys.has('gross'))  figs.push(['Gross', `${totalGross.toFixed(3)}&nbsp;kg`, `Gross&nbsp;Wt:&nbsp;${totalGross.toFixed(3)}&nbsp;kg`]);
+    let summary;
+    if (totalsStacked) {
+      // Label left, value right, one figure per line.
+      summary = `<div style="text-align:left">${g.lots.length}&nbsp;lot(s)</div>`
+        + figs.map(([label, value]) =>
+            `<div style="display:flex;justify-content:space-between;gap:12px"><span>Total ${label}</span><span>${value}</span></div>`
+          ).join('');
+    } else {
+      summary = `${g.lots.length}&nbsp;lot(s)` + figs.map(f => ` | ${f[2]}`).join('');
+    }
     return `
     <section class="receipt">
       <header>

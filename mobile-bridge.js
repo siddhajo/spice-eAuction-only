@@ -138,6 +138,11 @@ function getReceiptConfig(db) {
     // HOP-HL58 prints the same width from mobile / WhatsApp. Blank/0 keeps
     // the legacy widths (compact ~63mm, full 340pt).
     paperWidthMm: parseFloat(get('lot_receipt_width_mm', '')) || 0,
+    // Footer totals layout — 'stacked' (one figure per line, label left /
+    // value right) or 'inline' (a single wrapped line). Same figures either
+    // way. Anything unrecognised falls back to inline.
+    totalsStyle:  (String(get('lot_receipt_totals_style', 'inline') || 'inline').trim().toLowerCase() === 'stacked')
+                    ? 'stacked' : 'inline',
     labels:       {},  // spice-config doesn't customize labels; defaults fine
   };
 }
@@ -308,12 +313,34 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
   // "Label: value unit" segment uses NON-BREAKING spaces ( ) so a number
   // never gets split from its unit; the slip may wrap only at the "  |  "
   // separators, keeping "Net: 100.500 kg" intact on a narrow roll.
-  const seg = [sellerLots.length + ' lot(s)'];
-  if (onKeys.has('bags')) seg.push(totalBags + ' ' + lb('bags','bags'));
-  if (onKeys.has('net'))  seg.push(lb('net_wt','Net') + ': ' + totalQty.toFixed(3) + ' kg');
-  if (onKeys.has('sample') && totalSample) seg.push(lb('sample_wt','Smp') + ': ' + totalSample.toFixed(3) + ' kg');
-  if (onKeys.has('gross')  && totalGross)  seg.push(lb('gross_wt','Grs') + ': ' + totalGross.toFixed(3) + ' kg');
-  doc.text(seg.join('   |   '), m, doc.y, { width: w, align: 'center' });
+  // Footer totals layout is the operator's choice (Settings → Lot Entry
+  // Defaults → 'Lot Receipt: Totals layout'). Same figures either way.
+  // NB: the NON-BREAKING spaces below are deliberate — they stop a number
+  // being split from its unit when a narrow roll wraps the line.
+  // ONE list of [label, value] figures drives BOTH layouts, so the two styles
+  // can never disagree about which figures print — only about arrangement.
+  const figs = [];
+  if (onKeys.has('bags')) figs.push([lb('bags','Bags'), String(totalBags)]);
+  if (onKeys.has('net'))  figs.push([lb('net_wt','Net'), totalQty.toFixed(3) + ' kg']);
+  if (onKeys.has('sample') && totalSample) figs.push([lb('sample_wt','Smp'), totalSample.toFixed(3) + ' kg']);
+  if (onKeys.has('gross')  && totalGross)  figs.push([lb('gross_wt','Grs'), totalGross.toFixed(3) + ' kg']);
+  if (cfg.totalsStyle === 'stacked') {
+    // One figure per line, label left / value right.
+    doc.text(sellerLots.length + ' lot(s)', m, doc.y, { width: w });
+    figs.forEach(([label, value]) => {
+      const y = doc.y;
+      doc.text('Total ' + label, m, y, { width: w / 2 });
+      doc.text(value, m + w / 2, y, { width: w / 2, align: 'right' });
+    });
+  } else {
+    // Single wrapped line. The NON-BREAKING spaces inside each value keep a
+    // number attached to its unit; wrapping happens only at the separators.
+    const seg = [sellerLots.length + ' lot(s)']
+      .concat(figs.map(([label, value]) =>
+        label === lb('bags','Bags') ? value + ' ' + lb('bags','bags')
+                                    : label + ': ' + value));
+    doc.text(seg.join('   |   '), m, doc.y, { width: w, align: 'center' });
+  }
 
   doc.moveDown(0.4);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.5).stroke(); doc.moveDown(0.2);
@@ -553,11 +580,25 @@ function buildEscposReceipt(lots, cfg, opts) {
   rule();
   boldOn();
   // Totals — label left, value right (aligned column), one line each.
-  line(lots.length + ' lot(s)');
-  if (onKeys.has('bags'))                   line(lr('Total Bags', String(totalBags)));
-  if (onKeys.has('net'))                    line(lr('Total Net', totalQty.toFixed(3) + ' kg'));
-  if (onKeys.has('sample') && totalSample)  line(lr('Total Smp', totalSample.toFixed(3) + ' kg'));
-  if (onKeys.has('gross')  && totalGross)   line(lr('Total Gross', totalGross.toFixed(3) + ' kg'));
+  // Same [label, value] list as the PDF slip, laid out per the operator's
+  // chosen style so the two prints of one receipt always match.
+  const figs = [];
+  if (onKeys.has('bags'))                   figs.push(['Bags',  String(totalBags)]);
+  if (onKeys.has('net'))                    figs.push(['Net',   totalQty.toFixed(3) + ' kg']);
+  if (onKeys.has('sample') && totalSample)  figs.push(['Smp',   totalSample.toFixed(3) + ' kg']);
+  if (onKeys.has('gross')  && totalGross)   figs.push(['Gross', totalGross.toFixed(3) + ' kg']);
+  if (cfg.totalsStyle === 'stacked') {
+    line(lots.length + ' lot(s)');
+    figs.forEach(function (f) { line(lr('Total ' + f[0], f[1])); });
+  } else {
+    // Inline: one wrapped line, word-wrapped to the roll width so a narrow
+    // 58mm slip breaks at a separator instead of overflowing.
+    var inline = [lots.length + ' lot(s)']
+      .concat(figs.map(function (f) {
+        return f[0] === 'Bags' ? f[1] + ' Bag' : f[0] + ': ' + f[1];
+      })).join(' | ');
+    _wrapWords(inline, WIDTH).forEach(function (sl) { line(sl); });
+  }
   boldOff();
   rule();
   center(); boldOn(); line('** THANK YOU **'); boldOff(); left();
@@ -716,14 +757,35 @@ const LOT_SELECT_SQL = `
     COALESCE(t.cr,   l.cr,   '') AS cr,
     COALESCE(t.ppla, l.ppla, '') AS ppla,
     COALESCE(t.pin,  l.ppin, '') AS pin,
+    -- Bank shown on the seller's receipt. Order matters, and it changed:
+    --
+    --   WAS  lot's pinned bank (l.bank_id) → seller's default → t.acctnum → l.cr
+    --   NOW  seller's default → lot's pinned bank → t.acctnum
+    --
+    -- The pin is stamped automatically at lot entry from whatever was default
+    -- THAT DAY, so once a seller opens a new account and makes it default, every
+    -- older lot's receipt kept printing the closed account — "not updated".
+    -- The desktop receipt never honoured the pin (it reads the seller's current
+    -- default), so the two prints disagreed for the same seller and trade.
+    --
+    -- Current default is also where the money actually goes: getBankPaymentData
+    -- only loads per-lot banks when the export is lot-filtered (calculations.js,
+    -- the hasLotFilter gate), so the ordinary whole-seller bank file pays the
+    -- default regardless of the pin. The receipt now promises what will be paid.
+    --
+    -- The pin subquery also gained "AND tb.trader_id = t.id": syncTraderBanks
+    -- deletes and re-inserts a seller's bank rows on every save, so ids get
+    -- recycled and an old bank_id could resolve to ANOTHER seller's account.
+    -- The old l.cr fallback is gone outright — it printed the GSTIN in the
+    -- A/C No field whenever a seller had no bank at all.
     COALESCE(
-      (SELECT tb.acctnum FROM trader_banks tb WHERE tb.id = l.bank_id),
       (SELECT tb.acctnum FROM trader_banks tb WHERE tb.trader_id = t.id ORDER BY tb.is_default DESC, tb.id LIMIT 1),
-      t.acctnum, l.cr, ''
+      (SELECT tb.acctnum FROM trader_banks tb WHERE tb.id = l.bank_id AND tb.trader_id = t.id),
+      t.acctnum, ''
     ) AS acctnum,
     COALESCE(
-      (SELECT tb.ifsc FROM trader_banks tb WHERE tb.id = l.bank_id),
       (SELECT tb.ifsc FROM trader_banks tb WHERE tb.trader_id = t.id ORDER BY tb.is_default DESC, tb.id LIMIT 1),
+      (SELECT tb.ifsc FROM trader_banks tb WHERE tb.id = l.bank_id AND tb.trader_id = t.id),
       t.ifsc, ''
     ) AS ifsc,
     a.ano, a.date, a.crop_type
