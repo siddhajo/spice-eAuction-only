@@ -659,7 +659,7 @@ function getCollectionRows(db, auctionId) {
     }
   }
 
-  return invoices.map(i => {
+  const out = invoices.map(i => {
     const iCode = String(i.buyer  || '').trim().toUpperCase();
     const iName = String(i.buyer1 || '').trim().toUpperCase();
     // Code match wins; fall back to name match for legacy invoices
@@ -699,6 +699,23 @@ function getCollectionRows(db, auctionId) {
       buyer_state: (b && b.state) || '',
     };
   });
+
+  // Order by the invoice number the report actually PRINTS. The SQL above
+  // sorts on `invoices.invo`, but the INVO cell shows the proforma number
+  // wherever one exists (see invo_label), so a register sorted on the
+  // original number came out visually shuffled — PI/I-4, PI/I-11, PI/I-7.
+  // Sort on the leading printed number instead, numerically, with the
+  // original number as tiebreak so rows without a proforma stay stable.
+  const printedNo = (r) => String(r.proforma_invo || '').split(',')[0].trim() || String(r.invo || '').trim();
+  const numOf = (s) => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : Number.MAX_SAFE_INTEGER; };
+  out.sort((a, b) => {
+    const pa = printedNo(a), pb = printedNo(b);
+    return (numOf(pa) - numOf(pb))
+        || pa.localeCompare(pb)
+        || (numOf(a.invo) - numOf(b.invo))
+        || String(a.invo || '').localeCompare(String(b.invo || ''));
+  });
+  return out;
 }
 
 function classifyByState(rows, auctionState) {

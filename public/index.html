@@ -5876,9 +5876,20 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
           </div>
           <div class="fg" style="margin:0"><label>From</label><input type="date" id="reg-from" onchange="if(isIndividualReg(document.getElementById('reg-type').value))populateRegParties()"></div>
           <div class="fg" style="margin:0"><label>To</label><input type="date" id="reg-to" onchange="if(isIndividualReg(document.getElementById('reg-type').value))populateRegParties()"></div>
-          <div class="fg" style="margin:0;min-width:240px;display:none" id="reg-party-wrap"><label>Party</label>
-            <input id="reg-party-search" placeholder="🔍 Filter by name or phone…" oninput="renderRegPartyOptions(this.value)" autocomplete="off" style="width:100%;padding:6px;margin-bottom:4px;box-sizing:border-box">
-            <select id="reg-party" style="width:100%;padding:6px"><option value="">— All parties —</option></select>
+          <!-- Party picker — ONE searchable control (was a filter box stacked
+               above a dropdown). Type to filter by name or phone, click /
+               Enter to pick. The visible input is display-only; the hidden
+               #reg-party carries the exact party name that indivRegParams()
+               sends, so half-typed text can never silently widen the query. -->
+          <div class="fg" style="margin:0;min-width:260px;display:none" id="reg-party-wrap"><label>Party</label>
+            <div style="position:relative">
+              <input id="reg-party-input" placeholder="🔍 All parties — type to search name or phone" autocomplete="off"
+                     onfocus="regPartyOpen()" oninput="regPartyOnInput(this.value)"
+                     onkeydown="regPartyKey(event)" onblur="regPartyBlur()"
+                     style="width:100%;padding:6px;box-sizing:border-box">
+              <div id="reg-party-list" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:60;max-height:260px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:12.5px"></div>
+            </div>
+            <input type="hidden" id="reg-party">
           </div>
           <div class="fg" style="margin:0;display:none" id="reg-sale-wrap"><label>Sale Type</label>
             <select id="reg-sale"><option value="">All</option><option value="L">Local (L)</option><option value="I">Inter-state (I)</option><option value="E">Export (E)</option><option value="W">Withdrawn (W)</option><option value="N">N/A (N)</option></select>
@@ -29060,16 +29071,21 @@ function onRegTypeChange(){
   if (certBtn) certBtn.style.display = (type === 'pooler') ? '' : 'none';
   if (indiv) populateRegParties();
 }
-// Fill the Party dropdown for the active individual register + date range.
-// Parties carry {name, phone}; the phone shows in the option label and the
-// search box (reg-party-search) filters on both name and phone.
+// ── Party picker (searchable combobox) ────────────────────────────
+// One control instead of the old filter-box + dropdown pair. `_regParties`
+// holds {name, phone} for the active register kind + date range;
+// `_regPartyMatches` is the currently-rendered list (index 0 is always the
+// "All parties" row) so keyboard navigation and click share one index.
 let _regParties = [];
+let _regPartyMatches = [];
+let _regPartyActive = 0;
+
 async function populateRegParties(){
   const type = document.getElementById('reg-type').value;
   if (!isIndividualReg(type)) return;
-  const sel = document.getElementById('reg-party');
-  if (!sel) return;
-  const keep = sel.value;
+  const hidden = document.getElementById('reg-party');
+  if (!hidden) return;
+  const keep = hidden.value;
   const from = document.getElementById('reg-from').value;
   const to = document.getElementById('reg-to').value;
   const p = new URLSearchParams({ kind: type });
@@ -29079,23 +29095,93 @@ async function populateRegParties(){
   catch(e){ rows = []; }
   // Endpoint may return [string] (legacy) or [{name, phone}] — normalise.
   _regParties = rows.map(x => (typeof x === 'string') ? { name: x, phone: '' } : { name: x.name || '', phone: x.phone || '' });
-  const searchEl = document.getElementById('reg-party-search');
-  renderRegPartyOptions(searchEl ? searchEl.value : '', keep);
+  // Keep the previous pick only when it still exists for the new kind/range;
+  // otherwise fall back to "All parties" rather than querying a stale name.
+  regPartySelect(keep && _regParties.some(x => x.name === keep) ? keep : '');
 }
-// Rebuild the Party <select> options, optionally filtered by a name/phone
-// substring. The option VALUE stays the party name (what the register query
-// filters on); the label appends the phone. Preserves the current selection.
-function renderRegPartyOptions(filter, keep){
-  const sel = document.getElementById('reg-party');
-  if (!sel) return;
-  const prev = (keep != null) ? keep : sel.value;
+
+// Commit a pick: hidden input = the exact name the query uses, visible input
+// = what the operator reads. Empty name means "All parties".
+function regPartySelect(name){
+  const hidden = document.getElementById('reg-party');
+  const inp = document.getElementById('reg-party-input');
+  if (hidden) hidden.value = name || '';
+  if (inp) inp.value = name || '';
+  regPartyClose();
+}
+function regPartyPick(i){
+  const x = _regPartyMatches[i];
+  if (x) regPartySelect(x.name);
+}
+function regPartyClose(){
+  const host = document.getElementById('reg-party-list');
+  if (host) host.style.display = 'none';
+  _regPartyActive = 0;
+}
+function regPartyOpen(){
+  const inp = document.getElementById('reg-party-input');
+  // Select-all so typing replaces the shown selection instead of appending.
+  if (inp) { try { inp.select(); } catch(_) {} }
+  _regPartyActive = 0;
+  renderRegPartyOptions('');
+}
+function regPartyOnInput(v){
+  _regPartyActive = 0;
+  renderRegPartyOptions(v);
+}
+// Blur is deferred so a mousedown on a row commits first. Whatever the
+// operator typed without picking is discarded — the input snaps back to the
+// committed selection, so the visible text always matches what's queried.
+function regPartyBlur(){
+  setTimeout(() => {
+    const hidden = document.getElementById('reg-party');
+    const inp = document.getElementById('reg-party-input');
+    if (inp) inp.value = hidden ? hidden.value : '';
+    regPartyClose();
+  }, 150);
+}
+function regPartyKey(e){
+  const host = document.getElementById('reg-party-list');
+  const open = host && host.style.display !== 'none';
+  if (e.key === 'Escape') { regPartyBlur(); return; }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (!open) { regPartyOpen(); return; }
+    const n = _regPartyMatches.length;
+    if (!n) return;
+    _regPartyActive = (_regPartyActive + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
+    renderRegPartyOptions(document.getElementById('reg-party-input').value);
+    return;
+  }
+  if (e.key === 'Enter' && open) {
+    e.preventDefault();
+    regPartyPick(_regPartyActive);
+  }
+}
+// Render the dropdown, filtered by name OR phone.
+function renderRegPartyOptions(filter){
+  const host = document.getElementById('reg-party-list');
+  if (!host) return;
   const f = String(filter || '').trim().toLowerCase();
-  const list = f
-    ? _regParties.filter(x => x.name.toLowerCase().includes(f) || String(x.phone).toLowerCase().includes(f))
-    : _regParties;
-  sel.innerHTML = '<option value="">— All parties —</option>' +
-    list.map(x => `<option value="${esc(x.name)}">${esc(x.name)}${x.phone ? ' · ' + esc(x.phone) : ''}</option>`).join('');
-  if (prev && list.some(x => x.name === prev)) sel.value = prev;
+  const cur = (document.getElementById('reg-party') || {}).value || '';
+  const hits = f
+    ? _regParties.filter(x => x.name.toLowerCase().includes(f) || String(x.phone || '').toLowerCase().includes(f))
+    : _regParties.slice();
+  _regPartyMatches = [{ name: '', phone: '' }].concat(hits);
+  if (_regPartyActive < 0 || _regPartyActive >= _regPartyMatches.length) _regPartyActive = 0;
+  let html = _regPartyMatches.map((x, i) => {
+    const isSel = !!x.name && x.name === cur;
+    const bg = (i === _regPartyActive) ? '#ecfdf5' : (isSel ? 'var(--green-bg)' : '');
+    const body = x.name
+      ? `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:${isSel ? '700' : '500'}">${esc(x.name)}</span>`
+        + `<span style="font-family:monospace;color:var(--text3);white-space:nowrap">${x.phone ? esc(x.phone) : '—'}</span>`
+      : `<span style="flex:1;color:var(--text2);font-style:italic">— All parties —</span>`;
+    return `<div data-idx="${i}" onmousedown="event.preventDefault();regPartyPick(${i})"`
+      + ` style="display:flex;gap:10px;align-items:baseline;padding:6px 10px;cursor:pointer;border-bottom:1px solid #f1f1f1${bg ? ';background:' + bg : ''}">${body}</div>`;
+  }).join('');
+  if (f && !hits.length) html += '<div style="padding:8px 10px;color:#888;font-style:italic">No party matches that name or phone.</div>';
+  host.innerHTML = html;
+  host.style.display = 'block';
 }
 // Build the auction/date/sale query params shared by load + export.
 function regParams(){
@@ -29132,6 +29218,10 @@ function poolerSummaryRows(rows){
 function regColumns(type){
   if (type === 'pooler') return [
     { key:'party', label:'Pooler', sort:'text', totalKind:'count', totalLabel:'Total' },
+    // Phone comes from the party group (lots.tel), not the lot row — see
+    // loadRegister's flattening below.
+    { key:'phone', label:'Phone', sort:'text',
+      render:(r)=> r.phone ? esc(r.phone) : '<span style="color:var(--text3)">—</span>' },
     { key:'tno', label:'ANO', sort:'text' },
     { key:'date', label:'Date', sort:'text' },
     { key:'lot', label:'Lot', sort:'text' },
@@ -29224,7 +29314,7 @@ async function loadRegister(){
     // record, prefixed with the party name).
     const rows = [];
     (data && data.parties || []).forEach(p => {
-      (p.rows || []).forEach(r => rows.push(Object.assign({ party: p.name }, r)));
+      (p.rows || []).forEach(r => rows.push(Object.assign({ party: p.name, phone: p.phone || '' }, r)));
     });
     DataTable.mount('reg-body', rows, {
       columns: regColumns(type),

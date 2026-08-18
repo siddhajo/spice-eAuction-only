@@ -1512,12 +1512,16 @@ function _groupRegister(rows, summaryFn) {
   for (const r of rows) {
     const name = r.party || '';
     if (!cur || cur.name !== name) {
-      cur = { name, gstin: '', rows: [] };
+      cur = { name, gstin: '', phone: '', rows: [] };
       parties.push(cur);
     }
     if (!cur.gstin && r.gstin) cur.gstin = String(r.gstin).trim();
-    // The party + gstin live on the group, not on each row.
-    const { party, gstin, ...rest } = r;
+    // Phone is a party attribute too — rows carry a denormalised copy (a
+    // register whose query doesn't select one just leaves this blank).
+    // First non-empty wins.
+    if (!cur.phone && r.phone) cur.phone = String(r.phone).trim();
+    // The party + gstin + phone live on the group, not on each row.
+    const { party, gstin, phone, ...rest } = r;
     cur.rows.push(rest);
   }
   for (const p of parties) p.summary = summaryFn(p.rows);
@@ -1532,7 +1536,7 @@ const _sum = (rows, k) => rows.reduce((s, r) => s + _num(r[k]), 0);
 // full lot list; the summary breaks the totals into Sold vs Withdrawn.
 function getPoolerRegister(db, opts = {}) {
   let q = `SELECT a.ano AS tno, a.date AS date, l.lot_no AS lot, l.name AS party,
-      l.cr AS gstin, l.qty AS qty, l.price AS rate, l.amount AS value,
+      l.cr AS gstin, l.tel AS phone, l.qty AS qty, l.price AS rate, l.amount AS value,
       l.refund AS refund, l.com AS commission,
       (COALESCE(l.cgst,0) + COALESCE(l.sgst,0) + COALESCE(l.igst,0)) AS gst,
       -- Bill amount = the lot's Payable (lots.balance), so the register's
