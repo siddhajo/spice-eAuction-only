@@ -114,6 +114,16 @@ async function createExcelBuffer(sheetName, columns, rows, opts) {
       // so rows align consistently regardless of font size differences.
       cell.alignment = { horizontal: colMeta[i].align, vertical: 'middle' };
     });
+    // A row flagged `_isSubtotal` closes a group (e.g. one dealer's per-branch
+    // rows in the Dealer List). Bold + a light band so it reads as a summary
+    // without competing with the yellow grand-total footer below.
+    if (rowObj && rowObj._isSubtotal) {
+      dataRow.font = { bold: true, size: 10 };
+      dataRow.eachCell((cell) => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+        cell.border = { top: { style: 'thin' } };
+      });
+    }
     return dataRow;
   }
 
@@ -676,9 +686,14 @@ async function exportCollection(db, auctionId) {
 // exactly 15. Works for every storage form.
 async function exportDealerList(db, auctionId) {
   const { hasValidGstinSql } = require('./calculations');
+  // One row per dealer PER BRANCH, closed by a "<NAME> TOTAL" row — a dealer
+  // who sold from two branches gets two rows plus their total. Branch is
+  // normalised to '—' when a lot carries none, so unbranched lots stay
+  // visible instead of merging into a neighbouring branch's row.
   const rows = db.all(
     `WITH cleaned AS (
        SELECT state, name, lot_no, bags, qty, sample_wt, amount,
+              NULLIF(TRIM(COALESCE(branch,'')),'') AS branch,
               UPPER(TRIM(
                 CASE
                   WHEN LOWER(SUBSTR(TRIM(cr),1,5)) = 'gstin'
@@ -690,23 +705,26 @@ async function exportDealerList(db, auctionId) {
         WHERE auction_id = ? AND COALESCE(reserved,0) = 0
           AND ${hasValidGstinSql('cr')}
      )
-     SELECT state, name, gstin,
+     SELECT state, name, gstin, COALESCE(branch,'—') AS branch,
             COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
             SUM(sample_wt) as sample_wt,
             (SUM(qty) + SUM(sample_wt)) as gross_wt
        FROM cleaned
-      GROUP BY state, name, gstin
-      ORDER BY state, name`, [auctionId]
+      GROUP BY state, name, gstin, branch
+      ORDER BY state, name, gstin, branch`, [auctionId]
   );
   // Gross Qty = net qty + SB Sample Refund × lot count (one sample refund per
   // lot). Computed from cfg.sb_refund so it's independent of the per-lot
   // stored sample_wt (which feeds the SAMPLE WT / GROSS WT columns below).
   const sbRefund = Number((require('./company-config').getSettingsFlat(db) || {}).sb_refund) || 0;
   for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
+  const grouped = withPartySubtotals(rows,
+    ['lots', 'bags', 'qty', 'gross_qty', 'sample_wt', 'gross_wt']);
   const cols = [
     { header: 'STATE', key: 'state', width: 12 },
     { header: 'NAME', key: 'name', width: 30 },
     { header: 'GSTIN', key: 'gstin', width: 18 },
+    { header: 'BRANCH', key: 'branch', width: 16 },
     { header: 'LOTS', key: 'lots', width: 6 },
     { header: 'BAGS', key: 'bags', width: 6 },
     { header: 'QTY', key: 'qty', width: 12 },
@@ -716,9 +734,37 @@ async function exportDealerList(db, auctionId) {
     { header: 'SAMPLE WT', key: 'sample_wt', width: 12, numFmt: '#,##0.000', align: 'right' },
     { header: 'GROSS WT',  key: 'gross_wt',  width: 12, numFmt: '#,##0.000', align: 'right' },
   ];
-  return createExcelBuffer('DealerList', cols, rows, {
+  return createExcelBuffer('DealerList', cols, grouped, {
     db, title: 'Dealer List', metaLines: auctionMeta(db, auctionId),
   });
+}
+
+// Insert a bold "<NAME> TOTAL" row after each party's per-branch rows.
+// `rows` must already be ordered so one party's rows are adjacent. Parties are
+// identified by name + GSTIN together, since two dealers can share a name;
+// the caption uses the name alone. The subtotal rows carry `_isSubtotal`,
+// which createExcelBuffer styles and every grand-total caller must skip.
+function withPartySubtotals(rows, sumKeys) {
+  const out = [];
+  let curKey = null, group = [];
+  const flush = () => {
+    if (!group.length) return;
+    // Emitted even for a single-branch dealer, where it just restates the one
+    // row: the PDF's serial number lives on this row, so dropping it here
+    // would leave the two formats with different row counts to reconcile.
+    const sub = { _isSubtotal: true, name: `${group[0].name || ''} TOTAL`, branch: '' };
+    sumKeys.forEach(k => { sub[k] = group.reduce((s, r) => s + (Number(r[k]) || 0), 0); });
+    out.push(sub);
+    group = [];
+  };
+  for (const r of rows) {
+    const k = `${r.name || ''}|${r.gstin || ''}`;
+    if (k !== curKey) { flush(); curKey = k; }
+    group.push(r);
+    out.push(r);
+  }
+  flush();
+  return out;
 }
 
 // ── Export: Planter List (Grade 1) ───────────────────────────
@@ -770,6 +816,7 @@ async function exportDealerListPartyWise(db, auctionId) {
   const rows = db.all(
     `WITH cleaned AS (
        SELECT state, name, lot_no, bags, qty, amount,
+              NULLIF(TRIM(COALESCE(branch,'')),'') AS branch,
               UPPER(TRIM(
                 CASE
                   WHEN LOWER(SUBSTR(TRIM(cr),1,5)) = 'gstin'
@@ -782,28 +829,32 @@ async function exportDealerListPartyWise(db, auctionId) {
           -- Previous rule: registered dealer = cr holds a valid GSTIN (SBL ignored).
           AND ${hasValidGstinSql('cr')}
      )
-     SELECT state, name, gstin,
+     SELECT state, name, gstin, COALESCE(branch,'—') AS branch,
             COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
             SUM(amount) as amount
        FROM cleaned
-      GROUP BY name, gstin
-      ORDER BY name`, [auctionId]
+      GROUP BY name, gstin, branch
+      ORDER BY name, gstin, branch`, [auctionId]
   );
   // Gross Qty = net qty + SB Sample Refund × lot count (one sample refund per lot).
   const sbRefund = Number((require('./company-config').getSettingsFlat(db) || {}).sb_refund) || 0;
   for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
+  const grouped = withPartySubtotals(rows, ['lots', 'bags', 'qty', 'gross_qty', 'amount']);
   const cols = [
     { header: 'STATE',  key: 'state',  width: 12 },
     { header: 'NAME',   key: 'name',   width: 30 },
     { header: 'GSTIN',  key: 'gstin',  width: 18 },
+    { header: 'BRANCH', key: 'branch', width: 16 },
     { header: 'LOTS',   key: 'lots',   width: 6  },
     { header: 'BAGS',   key: 'bags',   width: 6  },
     { header: 'QTY',    key: 'qty',    width: 12, numFmt: '#,##0.000' },
     { header: 'GROSS QTY', key: 'gross_qty', width: 12, numFmt: '#,##0.000', align: 'right' },
     { header: 'AMOUNT', key: 'amount', width: 16, numFmt: '#,##0.00'  },
   ];
+  // Grand total sums the branch rows only — `rows`, not `grouped` — so the
+  // per-party subtotals can't be counted twice.
   const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
-  return createExcelBuffer('DealerListPartyWise', cols, rows, {
+  return createExcelBuffer('DealerListPartyWise', cols, grouped, {
     db, title: 'Dealer List (Party-wise)', metaLines: auctionMeta(db, auctionId),
     grandTotal: { label: 'TOTAL', values: {
       lots: sum('lots'), bags: sum('bags'), qty: sum('qty'), gross_qty: sum('gross_qty'), amount: sum('amount'),

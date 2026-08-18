@@ -6847,6 +6847,63 @@ app.post('/api/lots/bulk-seller', requireLotWrite, (req, res) => {
   }
 });
 
+// ── Bulk grade set ────────────────────────────────────────────
+// Body: { ids: [1, 2, …], grade: '2' }
+//
+// Powers "Set Grade 2" in Validate Entered Lots. `grade` is captured once at
+// lot entry and deliberately never recomputed — neither the seller save
+// (trader-lot-sync.js FIELD_MAP) nor bulk-seller above touch it, because the
+// grade filed with the Spices Board must not change as a side effect of
+// correcting a phone number. That leaves a gap when a seller's GSTIN/SBL
+// arrives AFTER their lots were entered: the lots re-stamp as dealer while
+// their grade stays 1, and the dashboard's 25% figure quietly under-reports.
+// This is the explicit, operator-driven way to close that gap in one go.
+//
+// Invoiced/locked lots are skipped, not failed, matching every other bulk
+// action — a single locked lot must not block the batch.
+app.post('/api/lots/bulk-grade', requireLotWrite, (req, res) => {
+  try {
+    const { ids, grade } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids[] is required' });
+    }
+    // Grades are the single characters the lot-entry form offers. Anything
+    // else is a bug in the caller, not something to write into the column.
+    const g = String(grade == null ? '' : grade).trim();
+    if (g !== '1' && g !== '2') {
+      return res.status(400).json({ error: "grade must be '1' or '2'" });
+    }
+    const numericIds = ids.map(x => Number(x)).filter(Number.isFinite);
+    if (!numericIds.length) {
+      return res.status(400).json({ error: 'ids[] contains no valid numeric ids' });
+    }
+    const db = getDb();
+    const { allowed: mutableIds, skipped: lockedIds } = filterLockedLotIds(db, numericIds);
+    const CHUNK = 500;
+    let updated = 0;
+    const touchedAuctions = new Set();
+    for (let i = 0; i < mutableIds.length; i += CHUNK) {
+      const slice = mutableIds.slice(i, i + CHUNK);
+      const placeholders = slice.map(() => '?').join(',');
+      db.all(`SELECT DISTINCT auction_id FROM lots WHERE id IN (${placeholders})`, slice)
+        .forEach(r => { if (r.auction_id) touchedAuctions.add(r.auction_id); });
+      const info = db.run(
+        `UPDATE lots SET grade = ? WHERE id IN (${placeholders})`,
+        [g, ...slice]
+      );
+      if (info && typeof info.changes === 'number') updated += info.changes;
+    }
+    // Grade feeds the Spices Board 25% figure and the grade-2 booking alerts,
+    // so any earlier price-check / validation pass is stale once it moves.
+    for (const aid of touchedAuctions) {
+      try { pcClearGate(db, aid); lvClearGate(db, aid); } catch (_) { /* best-effort */ }
+    }
+    res.json({ success: true, updated, grade: g, skipped_locked: lockedIds.length });
+  } catch (e) {
+    res.status(500).json({ error: 'Bulk grade update failed: ' + (e.message || e) });
+  }
+});
+
 // ── Calculate all lots for an auction (GENERATE.PRG) ─────────
 app.post('/api/lots/calculate/:auctionId',
   requireLotWrite,

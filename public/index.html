@@ -20845,16 +20845,20 @@ function renderLotValidate(d){
   // Aggregate one entry per flagged lot, collecting all its issue titles.
   // Severity = 'error' if any blocking issue, else 'warn'.
   const lotMap=new Map();
-  const addIssue=(lots,title,severity)=>{
+  // `types` keeps the machine-readable issue key alongside the display title,
+  // so an action (e.g. Set Grade 2) can target exactly the lots one warning
+  // flagged instead of guessing from the label text.
+  const addIssue=(lots,title,severity,type)=>{
     (lots||[]).forEach(l=>{
       let e=lotMap.get(l.id);
-      if(!e){ e={lot:l,titles:[],severity:'warn'}; lotMap.set(l.id,e); }
+      if(!e){ e={lot:l,titles:[],types:new Set(),severity:'warn'}; lotMap.set(l.id,e); }
       e.titles.push({title,severity});
+      if(type) e.types.add(type);
       if(severity==='error') e.severity='error';
     });
   };
-  errs.forEach(er=>addIssue(er.lots, er.title||er.type, 'error'));
-  warns.forEach(w=>addIssue(w.lots, w.title||w.type, 'warn'));
+  errs.forEach(er=>addIssue(er.lots, er.title||er.type, 'error', er.type));
+  warns.forEach(w=>addIssue(w.lots, w.title||w.type, 'warn', w.type));
   const rows=Array.from(lotMap.values());
   const errLots=rows.filter(r=>r.severity==='error').length;
   // Group the flagged lots BY SELLER — a seller heading, then that
@@ -20880,6 +20884,10 @@ function renderLotValidate(d){
   _lvSellers = sellerGroups.map(([nm,arr])=>({
     name: nm,
     tids: Array.from(new Set(arr.map(x=>x.lot.trader_id).filter(v=>v!=null).map(Number))),
+    // Lots this seller has flagged "Dealer, not Grade 2" — the Set Grade 2
+    // action works off these, per seller, so it can be scoped by the ticks.
+    g2: arr.filter(x=>x.types.has('dealer_not_grade2'))
+           .map(x=>({ id:x.lot.id, qty:Number(x.lot.qty)||0 })),
   }));
   if(rows.length){
     h+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0 8px">'
@@ -20893,6 +20901,31 @@ function renderLotValidate(d){
       +'<a href="#" onclick="lvToggleAllGroups(true);return false" style="font-size:11px;color:var(--green)">Expand all</a>'
       +'<a href="#" onclick="lvToggleAllGroups(false);return false" style="font-size:11px;color:var(--spice-text-mute)">Collapse all</a>'
       +'</div>';
+    // One-click fix for the "Dealer, not Grade 2" warning: writes grade 2 onto
+    // the flagged lots. Only offered when such lots exist, and it names the
+    // weight involved because that weight lands straight on the 25% cap.
+    const g2Lots=_lvSellers.reduce((n,s)=>n+s.g2.length,0);
+    if(g2Lots){
+      const g2Kg=_lvSellers.reduce((n,s)=>n+s.g2.reduce((m,x)=>m+x.qty,0),0);
+      h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:9px 11px;background:#EEF2FF;border:1px solid #C7D2FE;border-radius:8px">'
+        +'<span style="font-size:12px;color:#3730A3">'
+          +'<b>'+g2Lots+' lot'+(g2Lots>1?'s':'')+'</b> ('+g2Kg.toFixed(3)+' kg) belong to GSTIN+SBL dealers but are not Grade 2, '
+          +'so they are missing from the Grade-2 / 25% figure.'
+        +'</span>'
+        +'<button class="btn" onclick="lvFixGrade2()" style="margin-left:auto;background:#4338CA;color:#fff;font-weight:600;font-size:12px;padding:6px 12px">⬆ Set Grade 2</button>'
+        +'</div>';
+    }
+    // Seller filter — a long trade can flag dozens of sellers, and the fix is
+    // usually "find THIS seller and sort them out". Matches on seller name or
+    // lot number, so either way in works. Purely client-side: it hides groups,
+    // it does not refetch or change what is selected.
+    h+='<div style="display:flex;align-items:center;gap:8px;margin:0 0 10px">'
+      +'<input type="search" id="lv-seller-filter" placeholder="🔍 Filter by seller name or lot no…" autocomplete="off"'
+        +' oninput="lvFilterSellers(this.value)"'
+        +' style="flex:1;min-width:0;height:34px;padding:0 12px;border:1.5px solid var(--border);border-radius:8px;font-size:12.5px;background:var(--card);color:var(--spice-text)">'
+      +'<span id="lv-filter-note" style="font-size:11px;color:var(--spice-text-mute);white-space:nowrap"></span>'
+      +'</div>'
+      +'<div id="lv-filter-empty" style="display:none;padding:14px;text-align:center;font-size:12px;color:var(--spice-text-mute)">No seller matches that search.</div>';
     h+='<div>';
     sellerGroups.forEach(([nm,arr],gi)=>{
       const hasErr=arr.some(x=>x.severity==='error');
@@ -20902,6 +20935,11 @@ function renderLotValidate(d){
       const titleMap=new Map();
       arr.forEach(e=>e.titles.forEach(t=>{ if(!titleMap.has(t.title)||t.severity==='error') titleMap.set(t.title,t.severity); }));
       const sumBadges=Array.from(titleMap.entries()).map(([t,sev])=>'<span style="font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:9px;margin-left:4px;background:'+(sev==='error'?'#DC2626':'#F59E0B')+';color:#fff">'+esc(t)+'</span>').join('');
+      // Heading + lot cards live inside ONE wrapper so the filter can hide a
+      // seller as a unit. data-search carries the name plus every lot number,
+      // lower-cased once here rather than on each keystroke.
+      const searchKey=(nm+' '+arr.map(x=>x.lot.lot_no).join(' ')).toLowerCase();
+      h+='<div class="lv-seller-group" data-search="'+esc(searchKey)+'">';
       h+='<div style="display:flex;align-items:center;gap:9px;margin:8px 0 0;padding:7px 8px;background:rgba(0,0,0,.03);border-radius:6px">'
         +'<input type="checkbox" class="lv-seller-cb" data-idx="'+gi+'" onchange="lvUpdateSellerSelCount()" title="Select this seller" style="width:17px;height:17px;cursor:pointer;flex-shrink:0">'
         +'<div onclick="lvToggleGroup(\''+gid+'\',this)" title="Show / hide this seller’s lots" style="flex:1;min-width:0;cursor:pointer;display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
@@ -20915,6 +20953,7 @@ function renderLotValidate(d){
         +'</div>'
       +'</div>';
       h+='<div id="'+gid+'" style="display:none;padding:4px 0 2px 26px">'+arr.map(lotRow).join('')+'</div>';
+      h+='</div>';
     });
     h+='</div>';
   }else{
@@ -20994,8 +21033,67 @@ function closeTraderModal(){
   hideModal('trader-modal');
   lvResumeAfterSellerEdit();
 }
+// Hide seller groups that don't match the search box. Selection is left
+// alone on purpose: filter → tick → filter again → tick lets the operator
+// build a selection across several searches, and the button label always
+// shows the true total. Select all / Clear act on what is VISIBLE, so
+// "Select all" while filtered can never quietly rope in hidden sellers.
+function lvFilterSellers(q){
+  const f=String(q||'').trim().toLowerCase();
+  const groups=document.querySelectorAll('#lv-body .lv-seller-group');
+  let shown=0;
+  groups.forEach(el=>{
+    const hit=!f || (el.getAttribute('data-search')||'').includes(f);
+    el.style.display=hit?'':'none';
+    if(hit) shown++;
+  });
+  const note=document.getElementById('lv-filter-note');
+  if(note) note.textContent = f ? (shown+' of '+groups.length+' sellers') : '';
+  const empty=document.getElementById('lv-filter-empty');
+  if(empty) empty.style.display = (f && shown===0) ? 'block' : 'none';
+}
+// Stamp grade 2 onto the lots flagged "Dealer, not Grade 2".
+// Scope: the ticked sellers if any are ticked, otherwise every flagged lot.
+// Tick-scoping matters — a seller can be flagged because their GSTIN/SBL was
+// entered by MISTAKE, in which case the seller record is what needs fixing and
+// their lots should stay Grade 1. The confirm spells out the weight, since it
+// lands directly on the Spices Board 25% cap.
+async function lvFixGrade2(){
+  const ticked=Array.from(document.querySelectorAll('.lv-seller-cb:checked'))
+    .map(cb=>_lvSellers[parseInt(cb.dataset.idx,10)]).filter(Boolean);
+  const scope=ticked.length?ticked:_lvSellers;
+  const lots=scope.flatMap(s=>s.g2||[]);
+  if(!lots.length){
+    toast(ticked.length?'None of the ticked sellers have lots to re-grade.':'Nothing to re-grade.');
+    return;
+  }
+  const kg=lots.reduce((n,x)=>n+x.qty,0);
+  const who=ticked.length
+    ? ticked.length+' selected seller'+(ticked.length>1?'s':'')
+    : 'ALL flagged sellers';
+  if(!confirm(
+      'Set Grade 2 on '+lots.length+' lot'+(lots.length>1?'s':'')+' ('+kg.toFixed(3)+' kg) from '+who+'?\n\n'
+      +'These lots belong to sellers with both a GSTIN and an SBL, so they count as dealer stock.\n'
+      +'This adds '+kg.toFixed(3)+' kg to the Grade-2 total that the 25% limit is measured against.\n\n'
+      +'Invoiced or locked lots are skipped.')) return;
+  try{
+    const r=await j('/api/lots/bulk-grade',{
+      method:'POST',
+      body:JSON.stringify({ ids: lots.map(x=>x.id), grade:'2' })
+    });
+    let msg=(r.updated||0)+' lot'+((r.updated||0)===1?'':'s')+' set to Grade 2';
+    if(r.skipped_locked) msg+=' · '+r.skipped_locked+' invoiced/locked lot(s) skipped';
+    toast(msg);
+    openLotValidate(_lvAid);   // re-run validation so the warning clears
+  }catch(e){ showError(e); }
+}
 function lvToggleAllSellers(on){
-  document.querySelectorAll('.lv-seller-cb').forEach(cb=>{ cb.checked=!!on; });
+  // Visible groups only — see lvFilterSellers.
+  document.querySelectorAll('#lv-body .lv-seller-group').forEach(g=>{
+    if(g.style.display==='none') return;
+    const cb=g.querySelector('.lv-seller-cb');
+    if(cb) cb.checked=!!on;
+  });
   lvUpdateSellerSelCount();
 }
 // Collapse / expand a single seller's lot cards.
@@ -21008,8 +21106,15 @@ function lvToggleGroup(id, headEl){
   if(caret) caret.textContent = open ? '▾' : '▸';
 }
 function lvToggleAllGroups(open){
-  document.querySelectorAll('#lv-body [id^="lv-grp-"]').forEach(box=>{ box.style.display = open ? 'block' : 'none'; });
-  document.querySelectorAll('#lv-body .lv-caret').forEach(c=>{ c.textContent = open ? '▾' : '▸'; });
+  // Visible groups only, so "Expand all" while filtered doesn't also unfurl
+  // every hidden seller waiting behind the search.
+  document.querySelectorAll('#lv-body .lv-seller-group').forEach(g=>{
+    if(g.style.display==='none') return;
+    const box=g.querySelector('[id^="lv-grp-"]');
+    if(box) box.style.display = open ? 'block' : 'none';
+    const c=g.querySelector('.lv-caret');
+    if(c) c.textContent = open ? '▾' : '▸';
+  });
 }
 // Collect the ticked sellers, switch to Lot Entry on the validated trade,
 // and filter Recent Entries to the (first) selected seller so the operator

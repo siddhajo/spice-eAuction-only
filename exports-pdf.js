@@ -83,8 +83,12 @@ function wrapText(doc, text, maxWidth) {
 //   subtotalKeys: list of numeric keys to sum into the subtotal row
 //   subtotalLabelKey: key under which to put the subtotal label
 //                     (e.g. "ABUDUL BASITH SUBTOTAL")
+// `groupLabelKey` splits "what identifies a group" from "what the subtotal row
+// is captioned with". Needed when the grouping key is a composite that must not
+// be printed — e.g. the Dealer List groups on name+GSTIN (two dealers can share
+// a name) but the subtotal must read "ACME TRADERS TOTAL", not "ACME|33AAA…".
 function preprocessRows(rows, opts) {
-  const { serialKey, groupByKey, subtotalKeys = [], subtotalLabelKey } = opts || {};
+  const { serialKey, groupByKey, subtotalKeys = [], subtotalLabelKey, groupLabelKey } = opts || {};
   if (!groupByKey) {
     // Simple serial numbering, no grouping.
     if (!serialKey) return rows.slice();
@@ -105,7 +109,8 @@ function preprocessRows(rows, opts) {
       sub[k] = curGroup.reduce((s, r) => s + (Number(r[k]) || 0), 0);
     });
     if (subtotalLabelKey) {
-      sub[subtotalLabelKey] = `${curKey || ''} TOTAL`;
+      const label = groupLabelKey ? (curGroup[0] || {})[groupLabelKey] : curKey;
+      sub[subtotalLabelKey] = `${label || ''} TOTAL`;
     }
     if (serialKey) sub[serialKey] = String(groupNo);
     out.push(sub);
@@ -719,10 +724,12 @@ const COLS = {
     { header: 'GRADE', key: 'grade', width: 8 },
   ],
   dealer_list: [
-    // STATE column dropped per user request; simple sequential serial number.
+    // STATE column dropped per user request; serial numbers the dealer, not
+    // the row — one dealer can now occupy several rows, one per branch.
     { header: 'SL.NO', key: '_sn',   width: 6  },
     { header: 'NAME',  key: 'name',  width: 30 },
     { header: 'GSTIN', key: 'gstin', width: 18 },
+    { header: 'BRANCH', key: 'branch', width: 16 },
     { header: 'LOTS',  key: 'lots',  width: 6  },
     { header: 'BAGS',  key: 'bags',  width: 6  },
     { header: 'QTY',   key: 'qty',   width: 12 },
@@ -734,6 +741,7 @@ const COLS = {
     { header: 'STATE',  key: 'state',  width: 10 },
     { header: 'NAME',   key: 'name',   width: 28 },
     { header: 'GSTIN',  key: 'gstin',  width: 18 },
+    { header: 'BRANCH', key: 'branch', width: 16 },
     { header: 'LOTS',   key: 'lots',   width: 6  },
     { header: 'BAGS',   key: 'bags',   width: 6  },
     { header: 'QTY',    key: 'qty',    width: 12 },
@@ -995,13 +1003,24 @@ const ROW_PREPROCESS = {
     subtotalKeys: ['qty', 'gross_qty', 'amount', 'pqty', 'puramt'],
     subtotalLabelKey: 'poolername',
   },
-  // Dealer list — flat sequential serial (no grouping).
+  // Dealer list — one row per BRANCH the dealer sold from, closed by a
+  // "<NAME> TOTAL" row. Grouped on the composite `_party` (name + GSTIN) so
+  // two dealers who share a name don't collapse into one block; the caption
+  // comes from `name` via groupLabelKey.
   dealer_list: {
     serialKey: '_sn',
+    groupByKey: '_party',
+    groupLabelKey: 'name',
+    subtotalKeys: ['lots', 'bags', 'qty', 'gross_qty'],
+    subtotalLabelKey: 'name',
   },
-  // Party-wise rollups — one row per party already, just a flat serial.
+  // Party-wise rollup, now broken out per branch under each party.
   dealer_list_party_wise: {
     serialKey: '_sn',
+    groupByKey: '_party',
+    groupLabelKey: 'name',
+    subtotalKeys: ['lots', 'bags', 'qty', 'gross_qty', 'amount'],
+    subtotalLabelKey: 'name',
   },
   pooler_list_consolidated: {
     serialKey: '_sn',
@@ -1133,9 +1152,13 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
       // matches the XLSX exportDealerList exactly: strict GSTIN via
       // hasValidGstinSql, exclude reserved lots, clean the GSTIN prefix.
       const { hasValidGstinSql } = require('./calculations');
+      // One row per dealer PER BRANCH. Branch is normalised to '—' when the
+      // lot carries none, so an unbranched lot still lands on a visible row
+      // instead of silently merging into the neighbouring branch.
       const rows = db.all(
         `WITH cleaned AS (
            SELECT state, name, lot_no, bags, qty,
+                  NULLIF(TRIM(COALESCE(branch,'')),'') AS branch,
                   UPPER(TRIM(CASE
                     WHEN LOWER(SUBSTR(TRIM(cr),1,5)) = 'gstin'
                       THEN LTRIM(SUBSTR(TRIM(cr),6), '. :-')
@@ -1144,10 +1167,14 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
             WHERE auction_id = ? AND COALESCE(reserved,0) = 0
               AND ${hasValidGstinSql('cr')}
          )
-         SELECT state, name, gstin,
+         SELECT state, name, gstin, COALESCE(branch,'—') AS branch,
                 COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty
-           FROM cleaned GROUP BY state, name, gstin ORDER BY state, name`, [auctionId]);
-      for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
+           FROM cleaned GROUP BY state, name, gstin, branch
+          ORDER BY state, name, gstin, branch`, [auctionId]);
+      for (const r of rows) {
+        r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
+        r._party = `${r.name || ''}|${r.gstin || ''}`;
+      }
       return rows;
     }
 
@@ -1158,6 +1185,7 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
         const rows = db.all(
           `WITH cleaned AS (
              SELECT state, name, lot_no, bags, qty, amount,
+                    NULLIF(TRIM(COALESCE(branch,'')),'') AS branch,
                     UPPER(TRIM(
                       CASE
                         WHEN LOWER(SUBSTR(TRIM(cr),1,5)) = 'gstin'
@@ -1168,13 +1196,16 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
                FROM lots
               WHERE auction_id = ? AND amount > 0
            )
-           SELECT state, name, gstin,
+           SELECT state, name, gstin, COALESCE(branch,'—') AS branch,
                   COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
                   SUM(amount) as amount
              FROM cleaned
             WHERE LENGTH(gstin) = 15 AND gstin NOT GLOB '*[^0-9A-Z]*'
-            GROUP BY name, gstin ORDER BY name`, [auctionId]);
-        for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
+            GROUP BY name, gstin, branch ORDER BY name, gstin, branch`, [auctionId]);
+        for (const r of rows) {
+          r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
+          r._party = `${r.name || ''}|${r.gstin || ''}`;
+        }
         return rows;
       }
 
