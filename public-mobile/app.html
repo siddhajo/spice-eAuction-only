@@ -2890,7 +2890,7 @@ async function loadBranches(force){
     var t=d.totals||{};
     document.getElementById('br-tot-lots').textContent=_brFmt(t.lots);
     document.getElementById('br-tot-bags').textContent=_brFmt(t.bags);
-    document.getElementById('br-tot-qty').textContent=_brFmt(t.totalWt,0);
+    document.getElementById('br-tot-qty').textContent=_brFmt(t.totalWt,3);
     document.getElementById('br-tot-depots').textContent=String(_brDepots.length);
     renderBranchCards();
   }catch(e){host.innerHTML='<div class="br-empty">Could not load branch details. Pull 🔄 to retry.</div>'}
@@ -2921,7 +2921,7 @@ function renderBranchCards(){
       +'<div class="br-figs">'
       +'<div class="br-fig"><div class="v">'+_brFmt(s.lots)+'</div><div class="l">Lots</div></div>'
       +'<div class="br-fig"><div class="v">'+_brFmt(s.bags)+'</div><div class="l">Bags</div></div>'
-      +'<div class="br-fig"><div class="v">'+_brFmt(s.totalWt,0)+'</div><div class="l">Kg</div></div>'
+      +'<div class="br-fig"><div class="v">'+_brFmt(s.totalWt,3)+'</div><div class="l">Kg</div></div>'
       +'</div>'
       +'<div class="br-body'+(_brOpen[s.depot]?' open':'')+'" id="brb-'+key+'">'+(_brOpen[s.depot]?_brLotRows(s.depot):'')+'</div>'
       +'</div>';
@@ -3004,7 +3004,7 @@ function _brCountText(depot){
   var shown=_brVisibleRows(depot).length,total=(_brLots[depot]||[]).length;
   var kg=_brVisibleRows(depot).reduce(function(a,l){return a+(Number(l.qty)||0)},0);
   return (shown===total?('Showing all '+total+' lots'):('Showing '+shown+' of '+total+' lots'))
-    +' · '+_brFmt(kg,0)+' kg';
+    +' · '+_brFmt(kg,3)+' kg';
 }
 // Repaint the table (header carets included) + the count line. The search
 // input lives outside the pane, so it keeps its value, focus and caret.
