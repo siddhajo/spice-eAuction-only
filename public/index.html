@@ -19360,6 +19360,11 @@ function renderBankRows(banks){
   if (!c) return;
   c.innerHTML = '';
   for (const b of banks) appendBankRow(b);
+  // Set the default explicitly once every row exists, rather than leaning on
+  // the browser's radio-group bookkeeping as rows are inserted one by one.
+  const radios = Array.from(c.querySelectorAll('.bank-default'));
+  const idx = (banks || []).findIndex(b => Number(b && b.is_default) === 1);
+  if (radios.length) radios[idx >= 0 ? idx : 0].checked = true;
 }
 function addBankRow(){ appendBankRow({}); }
 function appendBankRow(b){
@@ -19390,9 +19395,37 @@ function appendBankRow(b){
         <option value="O C C" ${b.account_type==='O C C'?'selected':''}>O C C</option>
       </select>
     </div>
-    <button type="button" class="btn btn-o" onclick="this.closest('.bank-row').remove()" title="Remove this bank" style="justify-self:end;align-self:end;padding:6px 16px;height:38px;font-size:13px">✕ Remove</button>
+    <div class="fg" style="margin:0;align-self:end">
+      <label>Default</label>
+      <label style="display:inline-flex;align-items:center;gap:6px;font-weight:500;cursor:pointer;height:38px">
+        <input type="radio" name="t-bank-default" class="bank-default" ${Number(b.is_default) === 1 ? 'checked' : ''}
+               style="width:16px;height:16px;cursor:pointer">
+        <span style="font-size:13px;color:var(--text2)">Pay to this account</span>
+      </label>
+    </div>
+    <button type="button" class="btn btn-o" onclick="removeBankRow(this)" title="Remove this bank" style="justify-self:end;align-self:end;padding:6px 16px;height:38px;font-size:13px">✕ Remove</button>
   `;
   c.appendChild(row);
+  ensureOneDefaultBank();
+}
+
+// Removing a row can take the checked default with it, leaving the seller with
+// accounts but no chosen one — so re-seed after any removal.
+function removeBankRow(btn){
+  const row = btn.closest('.bank-row');
+  if (row) row.remove();
+  ensureOneDefaultBank();
+}
+
+// Exactly one account must be flagged. If none is (fresh rows, a seller whose
+// records predate the flag, or the default's row was just removed) the first
+// row takes it — the same fallback the server applies on save, so what the
+// operator sees here is what gets stored.
+function ensureOneDefaultBank(){
+  const c = document.getElementById('t-banks-container');
+  if (!c) return;
+  const radios = Array.from(c.querySelectorAll('.bank-default'));
+  if (radios.length && !radios.some(r => r.checked)) radios[0].checked = true;
 }
 
 // IFSC → bank/branch auto-lookup via Razorpay's free public IFSC API.
@@ -19457,9 +19490,15 @@ function collectBankRows(){
     const ifsc        = r.querySelector('.bank-ifsc').value.trim().toUpperCase();
     const holder_name = r.querySelector('.bank-holder').value.trim();
     const account_type = (r.querySelector('.bank-acct-type')?.value || '').trim();
+    // Which account the seller is actually paid into. Sent as 0/1 so the
+    // server stores it verbatim instead of falling back to "first row wins".
+    const is_default = r.querySelector('.bank-default')?.checked ? 1 : 0;
     if (!acctnum && !ifsc) continue; // blank row — skip
-    banks.push({ bank_name, branch, acctnum, ifsc, holder_name, account_type });
+    banks.push({ bank_name, branch, acctnum, ifsc, holder_name, account_type, is_default });
   }
+  // The checked row may have been a blank one that got skipped above, which
+  // would send a set of accounts with no default at all. Promote the first.
+  if (banks.length && !banks.some(b => b.is_default === 1)) banks[0].is_default = 1;
   return banks;
 }
 
@@ -27626,7 +27665,7 @@ async function loadPayments(){
 
 // ── Exports ───────────────────────────────────────────────
 const EXP_LABELS={lot_slip:'Lot Slip',lot_slip_after:'Lot Slip (After)',
-  lot_buyer:'Lot Buyer',lot_name:'Lot Name',lot_payment:'Lot Payment',
+  lot_buyer:'Lot Buyer',lot_name:'Lot Name',lot_payment:'Lot Payment',checklist:'Checklist',
   price_list_before:'Price List (Before)',price_list:'Price List',bank_payment_before:'Bank Payment (Before)',bank_payment:'Bank Payment (RTGS/NEFT)',
   pooler_register:'Pooler Register',full_file:'Full File',collection:'Collection',trade_report:'Auction Report',dealer_list:'Dealer List',
   dealer_list_party_wise:'Dealer List (Party-wise)',pooler_list_consolidated:'Pooler List consolidated (Party-wise)',planter_list:'Planter List (Grade 1)',

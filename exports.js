@@ -399,6 +399,50 @@ async function exportLotBuyer(db, auctionId) {
   });
 }
 
+// ── Checklist: post-auction lot/buyer/sale verification sheet ─
+// LOT | BUYER | BAGS | QTY | SALE — the sheet the desk reads down after the
+// trade to confirm each lot went to the right buyer under the right sale type.
+//
+// BUYER is the short buyer CODE (TS, AG, MM…), not the trade name: the whole
+// point is a narrow sheet you can scan a column of, and the full name already
+// has its own report (Lot Buyer).
+//
+// SALE is lots.sale — 'L' local / 'I' inter-state (derived from the buyer's
+// GSTIN state vs the company state; see calculations.js). A withdrawn lot
+// stores 'W' but prints as 'WD', matching the WD that already stands in its
+// buyer column so the row reads consistently.
+//
+// Every lot is listed, withdrawn ones included — a checklist that silently
+// dropped rows would defeat its purpose.
+async function exportChecklist(db, auctionId) {
+  const rows = db.all(
+    `SELECT lot_no AS lot,
+            code AS buyer,
+            bags AS bag,
+            qty,
+            CASE WHEN UPPER(TRIM(COALESCE(sale,''))) = 'W' THEN 'WD'
+                 ELSE UPPER(TRIM(COALESCE(sale,''))) END AS sale
+       FROM lots WHERE auction_id = ? ORDER BY lot_no`, [auctionId]
+  );
+  const cols = [
+    { header: 'LOT',   key: 'lot',   width: 8  },
+    { header: 'BUYER', key: 'buyer', width: 12 },
+    { header: 'BAGS',  key: 'bag',   width: 7  },
+    { header: 'QTY',   key: 'qty',   width: 12, numFmt: '#,##0.000', align: 'right' },
+    { header: 'SALE',  key: 'sale',  width: 8  },
+  ];
+  return createExcelBuffer('Checklist', cols, rows, {
+    db, title: 'Checklist', metaLines: auctionMeta(db, auctionId),
+    grandTotal: {
+      label: 'TOTAL',
+      values: {
+        bag: rows.reduce((s, r) => s + (Number(r.bag) || 0), 0),
+        qty: rows.reduce((s, r) => s + (Number(r.qty) || 0), 0),
+      },
+    },
+  });
+}
+
 // ── Lot Name: per-lot seller name + price + blank control ─────
 // LOT | NAME (seller) | PLACE (KL/TN) | BAG | QTY | PRICE | CONTROL
 // PRICE auto-fills from lot.price when set; CONTROL is left blank
@@ -1583,6 +1627,7 @@ const EXPORT_TYPES = {
   lot_buyer:          { fn: exportLotBuyer,          name: 'LotBuyer' },
   lot_name:           { fn: exportLotName,           name: 'LotName' },
   lot_payment:        { fn: exportLotPayment,        name: 'LotPayment' },
+  checklist:          { fn: exportChecklist,         name: 'Checklist' },
   // praman_csv removed in this build (e-Auction(Praman) export disabled).
   price_list:         { fn: exportPriceList,         name: 'PriceList' },
   price_list_before:  { fn: exportPriceListBefore,   name: 'PriceListBefore' },
@@ -1609,6 +1654,7 @@ module.exports = {
   // styling instead of building their own ExcelJS workbook.
   createExcelBuffer,
   exportLotSlip, exportLotSlipAfter, exportLotBuyer, exportLotName, exportLotPayment,
+  exportChecklist,
   exportPriceList, exportPriceListBefore,
   exportBankPayment, exportBankPaymentBefore,
   exportPoolerRegister, exportFullFile, exportCollection, exportTradeReport, exportDealerList,

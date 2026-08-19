@@ -2684,7 +2684,19 @@ app.get('/api/traders/:id(\\d+)', requireViewOrLotEntry, (req, res) => {
 // read trader_banks yet still see a valid primary account.
 function syncTraderBanks(db, traderId, banks) {
   const arr = Array.isArray(banks) ? banks.filter(b => b && (b.acctnum || b.ifsc)) : [];
+  // Which account was default BEFORE this save? The rows are about to be
+  // deleted and re-inserted, so a save from a client that doesn't send the
+  // flag (the mobile app, an older desktop build) would otherwise demote the
+  // operator's choice back to whichever account happens to be first — and
+  // is_default decides which account actually gets paid (calculations.js
+  // getBankPaymentData, and every `ORDER BY is_default DESC` reader).
+  const bankKey = b => `${String(b.acctnum || '').trim()}|${String(b.ifsc || '').trim().toUpperCase()}`;
+  const prev = db.get(
+    'SELECT acctnum, ifsc FROM trader_banks WHERE trader_id = ? AND is_default = 1 LIMIT 1', [traderId]);
+  const prevKey = prev ? bankKey(prev) : '';
+
   db.run('DELETE FROM trader_banks WHERE trader_id = ?', [traderId]);
+  const insertedIds = [];
   for (const b of arr) {
     // account_type must be listed here. The Add/Edit Seller form has offered a
     // Savings/Current picker and POSTed it for some time, but this INSERT never
@@ -2692,16 +2704,31 @@ function syncTraderBanks(db, traderId, banks) {
     // choice (and, since this helper deletes and re-inserts, wiped a type set
     // from the mobile app on the next desktop edit). The mobile-bridge twin
     // already persisted it; the two now match.
-    db.run(
+    const info = db.run(
       'INSERT INTO trader_banks (trader_id, bank_name, branch, acctnum, ifsc, holder_name, account_type) VALUES (?,?,?,?,?,?,?)',
       [traderId, b.bank_name||'', b.branch||'', String(b.acctnum||''), String(b.ifsc||''), b.holder_name||'', b.account_type||'']
     );
+    insertedIds.push(info ? info.lastInsertRowid : null);
   }
-  // Mirror first bank into traders row for legacy compatibility
-  const first = arr[0] || {};
+  // Land on exactly one default, in priority order: the row the client
+  // flagged, else whichever surviving row still matches the previous default,
+  // else the first. A trader holding banks but no default leaves every
+  // `ORDER BY is_default DESC` reader picking an arbitrary account.
+  let defIdx = arr.findIndex(b => Number(b.is_default) === 1);
+  if (defIdx < 0 && prevKey) defIdx = arr.findIndex(b => bankKey(b) === prevKey);
+  if (defIdx < 0 && arr.length) defIdx = 0;
+  if (defIdx >= 0 && insertedIds[defIdx] != null) {
+    db.run('UPDATE trader_banks SET is_default = 0 WHERE trader_id = ?', [traderId]);
+    db.run('UPDATE trader_banks SET is_default = 1 WHERE id = ?', [insertedIds[defIdx]]);
+  }
+  // Mirror the DEFAULT bank — not merely the first — into the legacy
+  // traders.ifsc/acctnum/holder_name columns that older exports still read.
+  // This is what PUT /api/traders/:id/bank-default/:bankId already does, so
+  // both ways of choosing a default leave the trader row in the same state.
+  const primary = (defIdx >= 0 ? arr[defIdx] : null) || {};
   db.run(
     'UPDATE traders SET ifsc=?, acctnum=?, holder_name=? WHERE id=?',
-    [first.ifsc||'', first.acctnum||'', first.holder_name||'', traderId]
+    [primary.ifsc||'', primary.acctnum||'', primary.holder_name||'', traderId]
   );
 }
 

@@ -642,6 +642,15 @@ const COLS = {
     { header: 'BAG',   key: 'bag',   width: 6  },
     { header: 'QTY',   key: 'qty',   width: 12 },
   ],
+  // Post-auction verification sheet — see exportChecklist in exports.js for
+  // what BUYER (short code) and SALE (L / I / WD) hold.
+  checklist: [
+    { header: 'LOT',   key: 'lot',   width: 8  },
+    { header: 'BUYER', key: 'buyer', width: 12 },
+    { header: 'BAGS',  key: 'bag',   width: 7  },
+    { header: 'QTY',   key: 'qty',   width: 12 },
+    { header: 'SALE',  key: 'sale',  width: 8  },
+  ],
   lot_name: [
     { header: 'LOT',     key: 'lot',     width: 8  },
     { header: 'NAME',    key: 'name',    width: 28 },
@@ -921,6 +930,7 @@ const TOTAL_KEYS = {
   lot_slip:        ['bag', 'qty'],
   lot_slip_after:  ['bag', 'qty', 'amount'],
   lot_buyer:       ['bag', 'qty'],
+  checklist:       ['bag', 'qty'],
   lot_name:        ['bag', 'qty'],
   lot_payment:     ['qty', 'cost'],
   price_list:      ['bag', 'qty'],
@@ -946,6 +956,7 @@ const TITLES = {
   lot_slip:        'Lot Slip',
   lot_slip_after:  'Lot Slip (After Trade)',
   lot_buyer:       'Lot Buyer',
+  checklist:       'Checklist',
   lot_name:        'Lot Name',
   lot_payment:     'Lot Payment',
   price_list:      'Price List',
@@ -1083,6 +1094,18 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
                 COALESCE(NULLIF(buyer1,''), buyer) AS buyer,
                 sale AS place,
                 bags AS bag, qty
+           FROM lots WHERE auction_id = ? ORDER BY lot_no`, [auctionId]);
+
+    // Must stay identical to exportChecklist's query in exports.js so the
+    // PDF and the XLSX list the same lots in the same order.
+    case 'checklist':
+      return db.all(
+        `SELECT lot_no AS lot,
+                code AS buyer,
+                bags AS bag,
+                qty,
+                CASE WHEN UPPER(TRIM(COALESCE(sale,''))) = 'W' THEN 'WD'
+                     ELSE UPPER(TRIM(COALESCE(sale,''))) END AS sale
            FROM lots WHERE auction_id = ? ORDER BY lot_no`, [auctionId]);
 
     case 'lot_name': {

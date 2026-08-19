@@ -54,28 +54,53 @@ function getLogoPath() {
 //
 // Strategy: delete the trader's existing rows and re-insert. Bank counts
 // per trader are tiny (typically 1–3), so the delete+reinsert cost is
-// negligible and the logic stays simple. Also mirrors the FIRST bank
+// negligible and the logic stays simple. Also mirrors the DEFAULT bank
 // back into traders.ifsc/acctnum/holder_name so legacy single-bank
 // code paths (exports, older invoice generators) still see a primary
 // account.
 function syncTraderBanks(db, traderId, banks) {
   const arr = Array.isArray(banks) ? banks.filter(b => b && (b.acctnum || b.ifsc)) : [];
+  // Which account was default BEFORE this save? The rows are about to be
+  // deleted and re-inserted, so a save from a client that doesn't send the
+  // flag (the mobile app, an older desktop build) would otherwise demote the
+  // operator's choice back to whichever account happens to be first — and
+  // is_default decides which account actually gets paid (calculations.js
+  // getBankPaymentData, and every `ORDER BY is_default DESC` reader).
+  const bankKey = b => `${String(b.acctnum || '').trim()}|${String(b.ifsc || '').trim().toUpperCase()}`;
+  const prev = db.get(
+    'SELECT acctnum, ifsc FROM trader_banks WHERE trader_id = ? AND is_default = 1 LIMIT 1', [traderId]);
+  const prevKey = prev ? bankKey(prev) : '';
+
   db.run('DELETE FROM trader_banks WHERE trader_id = ?', [traderId]);
+  const insertedIds = [];
   for (const b of arr) {
     // `branch` must be written here too. This helper deletes and re-inserts,
     // so omitting the column wiped the branch that POST /api/traders/:id/banks
     // had stored every time a seller was re-saved. (server.js's twin already
     // persisted it — this copy is the one that actually runs.)
-    db.run(
+    const info = db.run(
       'INSERT INTO trader_banks (trader_id, bank_name, branch, acctnum, ifsc, holder_name, account_type) VALUES (?,?,?,?,?,?,?)',
       [traderId, b.bank_name || '', b.branch || '', String(b.acctnum || ''), String(b.ifsc || ''), b.holder_name || '', b.account_type || '']
     );
+    insertedIds.push(info ? info.lastInsertRowid : null);
   }
-  // Mirror first bank into the parent traders row for legacy compatibility
-  const first = arr[0] || {};
+  // Land on exactly one default, in priority order: the row the client
+  // flagged, else whichever surviving row still matches the previous default,
+  // else the first. Keep in step with the twin in server.js.
+  let defIdx = arr.findIndex(b => Number(b.is_default) === 1);
+  if (defIdx < 0 && prevKey) defIdx = arr.findIndex(b => bankKey(b) === prevKey);
+  if (defIdx < 0 && arr.length) defIdx = 0;
+  if (defIdx >= 0 && insertedIds[defIdx] != null) {
+    db.run('UPDATE trader_banks SET is_default = 0 WHERE trader_id = ?', [traderId]);
+    db.run('UPDATE trader_banks SET is_default = 1 WHERE id = ?', [insertedIds[defIdx]]);
+  }
+  // Mirror the DEFAULT bank — not merely the first — into the legacy
+  // traders.ifsc/acctnum/holder_name columns that older exports still read,
+  // matching what the set-default endpoints do.
+  const primary = (defIdx >= 0 ? arr[defIdx] : null) || {};
   db.run(
     'UPDATE traders SET ifsc=?, acctnum=?, holder_name=? WHERE id=?',
-    [first.ifsc || '', first.acctnum || '', first.holder_name || '', traderId]
+    [primary.ifsc || '', primary.acctnum || '', primary.holder_name || '', traderId]
   );
 }
 
