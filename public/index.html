@@ -24580,12 +24580,17 @@ async function peiApply(){
 // Toggle "No Transport & Insurance" on one existing invoice. The server
 // recomputes transport/insurance/GST/total under the new flag and
 // persists them, so the list, PDF and Tally voucher all stay in sync.
-async function toggleInvoiceNoTI(id, value){
+// Toggle No Transport & Insurance on a stored sales document. Used by both
+// the original and the proforma rows — `isProforma` only picks the wording.
+// A draft's flag carries into the tax invoice when it is raised, so setting
+// it here is what the original ships with.
+async function toggleInvoiceNoTI(id, value, isProforma){
   try{
     await j('/api/invoices/'+id+'/no-ti',{method:'POST',body:JSON.stringify({value})});
+    const what = isProforma ? 'this proforma' : 'this invoice';
     toast(Number(value)===1
-      ? 'Transport & Insurance removed from this invoice'
-      : 'Transport & Insurance added back to this invoice');
+      ? `Transport & Insurance removed from ${what}`
+      : `Transport & Insurance added back to ${what}`);
     await loadInvoices({keepPage:true});
   }catch(e){ showError(e); }
 }
@@ -24902,9 +24907,9 @@ async function loadInvoices(opts){
         render:(i)=>`<span style="font-weight:700;color:var(--spice-text-main);font-size:14px">${fmtI(i.tot||0,2)}</span>` },
       { key:'_actions', label:'Actions', sortable:false, searchable:false, render:(i)=>{
           // Proforma rows get a focused action set: view/print, Raise Original
-          // (unless already raised), revert (drop the draft + clear its stamp
-          // from the lots) and delete. The tax-invoice-only actions (No T&I,
-          // purchase-view) don't apply to a draft.
+          // (unless already raised), No Transport & Insurance, revert (drop the
+          // draft + clear its stamp from the lots) and delete. The purchase-view
+          // action is tax-invoice-only and doesn't apply to a draft.
           if (Number(i.is_proforma) === 1) {
             const isRaised = !!(i.raised_invo && String(i.raised_invo).trim() !== '');
             const raiseBtn = isRaised
@@ -24917,8 +24922,19 @@ async function loadInvoices(opts){
             const pfRevertBtn = isRaised
               ? `<button class="icon-btn i-revert needs-invoice-revert" title="Raised as ${esc(i.raised_invo)} — revert invoice ${esc(i.raised_invo)} first" style="opacity:.35;cursor:not-allowed" disabled>${ICONS.revert}</button>`
               : iconBtn('revert','Revert — delete this proforma & clear its draft stamp from the lots',`revertInvoice(${i.id},'${esc(i.buyer1||i.buyer)}','${esc(i.sale)}-${esc(i.invo)}',1)`);
+            // No Transport & Insurance — same control the originals have, since
+            // a draft is what gets quoted to the buyer. Recomputes the draft's
+            // totals. Disabled once the draft has been raised: the original it
+            // shipped is the live document, and the server refuses it too (409).
+            const pfTiOff = Number(i.no_ti) === 1;
+            const pfTiBtn = isRaised
+              ? `<button class="icon-btn" title="Raised as ${esc(i.raised_invo)} — change Transport &amp; Insurance on that invoice instead" style="opacity:.35;cursor:not-allowed" disabled>🚫</button>`
+              : `<button class="icon-btn needs-invoice-write" title="${pfTiOff
+                  ? 'No Transport & Insurance is ON for this proforma — click to add T&I back and recompute totals'
+                  : 'Remove Transport & Insurance from this proforma (recomputes totals)'}" onclick="toggleInvoiceNoTI(${i.id},${pfTiOff?0:1},1)" style="${pfTiOff?'color:#0e7490;font-weight:700':'opacity:.5'}">🚫</button>`;
             return iconBtn('pdf','View / download proforma PDF',`viewInvoicePDF(${i.id})`)
               + raiseBtn
+              + pfTiBtn
               + iconBtn('edit','Edit proforma',`openInvoiceEdit(${JSON.stringify(i).replace(/"/g,'&quot;')})`)
               + pfRevertBtn
               + iconBtn('del','Delete proforma',`delInvoice(${i.id})`);

@@ -7984,8 +7984,15 @@ app.put('/api/invoices/:id', requireInvoiceWrite, (req, res) => {
 // buildSalesInvoice then yields null and callers fall back to the stored row.
 function invoiceLotNos(db, inv) {
   if (!inv || !inv.auction_id) return null;
+  // A PROFORMA stamps lots.proforma_invo and deliberately leaves lots.invo
+  // empty — that's what keeps its lots eligible to be raised as originals
+  // later. Matching a draft on `invo` therefore found nothing, so every
+  // rebuild path silently fell back to the stored summary (draft PDFs lost
+  // their line items) and the No Transport & Insurance toggle failed with
+  // "its lots are no longer available". Scope a draft by its own column.
+  const col = Number(inv.is_proforma) ? 'proforma_invo' : 'invo';
   const rows = db.all(
-    `SELECT lot_no FROM lots WHERE auction_id=? AND buyer=? AND invo=?`,
+    `SELECT lot_no FROM lots WHERE auction_id=? AND buyer=? AND ${col}=?`,
     [inv.auction_id, inv.buyer, String(inv.invo)]
   );
   return rows.map(r => String(r.lot_no));
@@ -7995,6 +8002,12 @@ function invoiceLotNos(db, inv) {
 // Recomputes the invoice (transport, insurance, GST, round, total) with
 // the new flag and persists the financial columns + no_ti so the list,
 // PDF and Tally voucher all stay consistent. Body: { value: 0|1 }.
+//
+// Works on PROFORMA drafts too — a draft is quoted to the buyer, so the
+// operator needs the same "drop transport & insurance" control there that
+// originals have. The recompute reads the draft's own lots (see
+// invoiceLotNos), and a draft that has already been RAISED is refused:
+// changing it would leave it disagreeing with the tax invoice it shipped.
 app.post('/api/invoices/:id/no-ti', requireInvoiceWrite, (req, res) => {
   const db = getDb(); const cfg = getSettingsFlat(db);
   const inv = db.get('SELECT * FROM invoices WHERE id=?', [req.params.id]);
@@ -8002,6 +8015,11 @@ app.post('/api/invoices/:id/no-ti', requireInvoiceWrite, (req, res) => {
   // Cascade lock — same rule as edit: a locked lot finalises the invoice.
   if (!isAdmin(req) && lotsLockedForInvoice(db, req.params.id)) {
     return res.status(423).json({ error: 'This invoice is locked because at least one of its lots is locked — only an admin can change it.' });
+  }
+  if (Number(inv.is_proforma) && String(inv.raised_invo || '').trim() !== '') {
+    return res.status(409).json({
+      error: `This proforma was already raised as invoice ${String(inv.raised_invo).trim()}. Change Transport & Insurance on that invoice instead, or revert it first.`,
+    });
   }
   const value = (req.body.value === true || String(req.body.value || '').toLowerCase() === 'true' || Number(req.body.value) === 1) ? 1 : 0;
   // Rebuild from the invoice's lots so transport/insurance/GST/total are
