@@ -991,6 +991,13 @@ async function initDb() {
     // lots.invo stays the ORIGINAL-invoice gate; a priced lot with an empty
     // invo is still "pending original" regardless of any proforma.
     "ALTER TABLE lots ADD COLUMN proforma_invo TEXT DEFAULT ''",
+    // Per-lot snapshot (JSON) of the line items an invoice was built from,
+    // written at generation. The PDF normally rebuilds live from `lots` for
+    // the freshest figures; this is what it falls back to when that rebuild
+    // finds nothing — instead of collapsing to a single "—" summary row and
+    // losing the LOT NO / RATE columns. Mirrors bills.line_items, which has
+    // carried the same snapshot for Bills of Supply.
+    "ALTER TABLE invoices ADD COLUMN line_items TEXT DEFAULT ''",
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }

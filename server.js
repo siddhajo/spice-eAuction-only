@@ -7440,11 +7440,15 @@ app.post('/api/invoices/generate/:auctionId',
     }
   }
 
-  db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti,is_proforma)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  // line_items: per-lot snapshot stored alongside the totals so the PDF keeps
+  // its LOT NO / RATE columns even if the lots are later re-stamped, reverted
+  // or deleted. See cacheInvoiceLineItems().
+  db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti,is_proforma,line_items)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [req.params.auctionId,auction.ano,invoiceDate,invoiceState,saleType,String(invoiceNo),buyerCode,invoice.buyer.buyer1||'',
      invoice.buyer.gstin||'',invoice.buyer.pla||'',s.totalBags,s.totalQty,s.totalAmount,s.gunnyCost,s.transportCost,s.insuranceCost,
-     s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',noTI,isProforma]);
+     s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',noTI,isProforma,
+     JSON.stringify(invoice.lineItems||[])]);
 
   if (isProforma) {
     // Proforma: stamp lots.proforma_invo ONLY — never invo/asp_invo/sale, so
@@ -7793,11 +7797,13 @@ app.post('/api/invoices/generate-all/:auctionId',
               [req.params.auctionId, useSaleType, pn]);
           }
         }
-        db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti,is_proforma)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        // line_items — see the single-invoice handler above.
+        db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti,is_proforma,line_items)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [req.params.auctionId,auction.ano,invoiceDate,invoiceState,useSaleType,invoNo,row.buyer,invoice.buyer.buyer1||'',
            invoice.buyer.gstin||'',invoice.buyer.pla||'',s.totalBags,s.totalQty,s.totalAmount,s.gunnyCost,s.transportCost,s.insuranceCost,
-           s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',noTI,isProforma]);
+           s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',noTI,isProforma,
+           JSON.stringify(invoice.lineItems||[])]);
         if (isProforma) {
           // Proforma: stamp lots.proforma_invo ONLY (leave invo/asp_invo/sale).
           for (const li of invoice.lineItems) {
@@ -7996,6 +8002,43 @@ function invoiceLotNos(db, inv) {
     [inv.auction_id, inv.buyer, String(inv.invo)]
   );
   return rows.map(r => String(r.lot_no));
+}
+
+// ── Sales-invoice line-item snapshot ──────────────────────────
+// The PDF paths prefer a LIVE rebuild from `lots` (freshest figures, and it
+// reflects later lot edits). When that rebuild yields nothing the invoice used
+// to collapse to one "—" summary row: no LOT NO, and RATE printed as 0.00,
+// because a single row can't carry per-lot rates. These two helpers keep the
+// per-lot detail available in that case, exactly as bills.line_items +
+// cacheBillLineItems() already do for Bills of Supply.
+//
+// Applies to PROFORMA and ORIGINAL invoices alike — both share the same
+// fallback, so both lose their detail the same way.
+
+// Best-effort cache of a freshly-rebuilt snapshot onto the invoice row. Only
+// fills an EMPTY column, so a stored snapshot is never overwritten by a later
+// rebuild against changed lots. Also back-fills invoices generated before this
+// column existed, the first time each one is viewed. Never blocks the PDF.
+function cacheInvoiceLineItems(db, invoiceId, lineItems) {
+  if (!invoiceId || !Array.isArray(lineItems) || !lineItems.length) return;
+  try {
+    db.run("UPDATE invoices SET line_items = ? WHERE id = ? AND (line_items IS NULL OR line_items = '')",
+      [JSON.stringify(lineItems), invoiceId]);
+  } catch (_) { /* caching must not break the PDF */ }
+}
+
+// Line items for the stored-row fallback: the cached per-lot snapshot when we
+// have one, else the single consolidated row (unchanged legacy behaviour for
+// invoices that never got a snapshot and whose lots are gone).
+function storedInvoiceLineItems(stored) {
+  try {
+    const raw = stored && stored.line_items;
+    if (raw && String(raw).trim()) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length) return arr;
+    }
+  } catch (_) { /* malformed JSON → fall through to the summary row */ }
+  return [{ lot: '—', grade: '', bags: stored.bag || 0, qty: stored.qty || 0, price: 0, amount: stored.amount || 0 }];
 }
 
 // Toggle "No Transport & Insurance" on an existing sales invoice.
@@ -8280,12 +8323,16 @@ app.get('/api/invoices/pdf/:id', requireView, async (req, res) => {
 
     if (invoice) {
       invoice.buyer = enrichBuyer(invoice.buyer);
+      // Cache the freshly-rebuilt per-lot snapshot so this invoice keeps its
+      // LOT NO / RATE columns even if its lots are later re-stamped or removed.
+      // Back-fills invoices generated before line_items existed.
+      cacheInvoiceLineItems(db, stored.id, invoice.lineItems);
     } else {
       // Build a minimal invoice object from stored fields (lots may have been deleted)
       const buyer = enrichBuyer(db.get('SELECT * FROM buyers WHERE buyer=? LIMIT 1', [stored.buyer]));
       invoice = {
         buyer,
-        lineItems: [{ lot: '—', grade: '', bags: stored.bag || 0, qty: stored.qty || 0, price: 0, amount: stored.amount || 0 }],
+        lineItems: storedInvoiceLineItems(stored),
         summary: {
           totalBags: stored.bag || 0,
           totalQty: stored.qty || 0,
@@ -8402,11 +8449,15 @@ app.get('/api/invoices/purchase-pdf/:id', requireView, async (req, res) => {
 
     if (invoice) {
       invoice.buyer = enrichBuyer(invoice.buyer);
+      // Cache the freshly-rebuilt per-lot snapshot so this invoice keeps its
+      // LOT NO / RATE columns even if its lots are later re-stamped or removed.
+      // Back-fills invoices generated before line_items existed.
+      cacheInvoiceLineItems(db, stored.id, invoice.lineItems);
     } else {
       const buyer = enrichBuyer(db.get('SELECT * FROM buyers WHERE buyer=? LIMIT 1', [stored.buyer]));
       invoice = {
         buyer,
-        lineItems: [{ lot: '—', grade: '', bags: stored.bag || 0, qty: stored.qty || 0, price: 0, amount: stored.amount || 0 }],
+        lineItems: storedInvoiceLineItems(stored),
         summary: {
           totalBags: stored.bag || 0,
           totalQty: stored.qty || 0,
@@ -8481,11 +8532,13 @@ app.post('/api/invoices/pdf-bulk', requireView, async (req, res) => {
         : null;
       if (invoice) {
         invoice.buyer = enrichBuyer(invoice.buyer, stored);
+        // See the single-invoice endpoint — same back-fill.
+        cacheInvoiceLineItems(db, stored.id, invoice.lineItems);
       } else {
         const buyer = enrichBuyer(db.get('SELECT * FROM buyers WHERE buyer=? LIMIT 1', [stored.buyer]), stored);
         invoice = {
           buyer,
-          lineItems: [{ lot: '—', grade: '', bags: stored.bag || 0, qty: stored.qty || 0, price: 0, amount: stored.amount || 0 }],
+          lineItems: storedInvoiceLineItems(stored),
           summary: {
             totalBags: stored.bag || 0, totalQty: stored.qty || 0,
             totalAmount: stored.amount || 0, gunnyCost: stored.gunny || 0,
@@ -8590,11 +8643,13 @@ app.post('/api/invoices/purchase-pdf-bulk', requireView, async (req, res) => {
         : null;
       if (invoice) {
         invoice.buyer = enrichBuyer(invoice.buyer, stored);
+        // See the single-invoice endpoint — same back-fill.
+        cacheInvoiceLineItems(db, stored.id, invoice.lineItems);
       } else {
         const buyer = enrichBuyer(db.get('SELECT * FROM buyers WHERE buyer=? LIMIT 1', [stored.buyer]), stored);
         invoice = {
           buyer,
-          lineItems: [{ lot: '—', grade: '', bags: stored.bag || 0, qty: stored.qty || 0, price: 0, amount: stored.amount || 0 }],
+          lineItems: storedInvoiceLineItems(stored),
           summary: {
             totalBags: stored.bag || 0, totalQty: stored.qty || 0,
             totalAmount: stored.amount || 0, gunnyCost: stored.gunny || 0,
