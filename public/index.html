@@ -10280,6 +10280,14 @@ async function loadStats(auctionId){
         </div>
         <div class="dash-snap-hd-actions">
           ${reportBtns('dash_snapshot', true)}
+          <!-- e-Auction portal upload. This card is the one widget that heads
+               BOTH scopes, so the link follows it: drilled into a trade it
+               downloads that trade's file, and in the cumulative "All Auctions"
+               view — where there is no single trade to name — it opens the
+               auction chooser instead. -->
+          <a href="#" class="needs-export" onclick="downloadSpicesBoardCsv(${isAllMode ? 'null' : (A ? A.id : 'null')});return false"
+             title="${isAllMode ? 'e-Auction portal upload file — choose an auction' : 'e-Auction portal upload file for this auction'}"
+             style="font-size:12px;color:var(--spice-saffron);font-weight:600;text-decoration:none;white-space:nowrap">⬇ Spices Board CSV</a>
           ${picker}
           <button class="dash-snap-collapse" onclick="toggleDashSnap()" title="Collapse / expand" aria-label="Collapse or expand snapshot">▾</button>
         </div>
@@ -10839,6 +10847,9 @@ async function loadDepotSummary(auctionId){
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         ${reportBtns('dash_depot', true)}
         <a href="#" onclick="downloadArrivals(${a.id});return false" style="font-size:13px;color:var(--spice-saffron);font-weight:600;text-decoration:none;white-space:nowrap">⬇ Arrivals XLSX</a>
+        <!-- The trade is already pinned here, so this goes straight to the file
+             rather than through the chooser the All-Auctions view needs. -->
+        <a href="#" class="needs-export" onclick="downloadSpicesBoardCsv(${a.id});return false" title="e-Auction portal upload file for this auction" style="font-size:13px;color:var(--spice-saffron);font-weight:600;text-decoration:none;white-space:nowrap">⬇ Spices Board CSV</a>
       </div>
     </div>
     <div class="card" id="ca-body" style="padding:20px;display:${collapsed ? 'none' : 'block'}">
