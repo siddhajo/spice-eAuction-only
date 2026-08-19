@@ -726,7 +726,8 @@ async function exportDealerList(db, auctionId) {
       -- collation is binary: a plain ORDER BY name files every lowercase name
       -- after every uppercase one, so "Anil" landed below "ZZZ". State moved
       -- behind the name — the list is read by looking a dealer up, not by
-      -- state. Name+GSTIN stay adjacent, which withPartySubtotals requires.
+      -- state. Name+GSTIN stay adjacent so a dealer's branch rows read as one
+      -- block (and the PDF twin can number the dealer once per block).
       ORDER BY UPPER(TRIM(name)), gstin, state, branch`, [auctionId]
   );
   // Gross Qty = net qty + SB Sample Refund × lot count (one sample refund per
@@ -734,8 +735,9 @@ async function exportDealerList(db, auctionId) {
   // stored sample_wt (which feeds the SAMPLE WT / GROSS WT columns below).
   const sbRefund = Number((require('./company-config').getSettingsFlat(db) || {}).sb_refund) || 0;
   for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
-  const grouped = withPartySubtotals(rows,
-    ['lots', 'bags', 'qty', 'gross_qty', 'sample_wt', 'gross_wt']);
+  // Per-dealer "<NAME> TOTAL" subtotal rows were dropped per user request —
+  // the sheet is a flat one-row-per-branch list now. Keep the rows ordered by
+  // name so a dealer's branches still read as one block.
   const cols = [
     { header: 'STATE', key: 'state', width: 12 },
     { header: 'NAME', key: 'name', width: 30 },
@@ -750,37 +752,9 @@ async function exportDealerList(db, auctionId) {
     { header: 'SAMPLE WT', key: 'sample_wt', width: 12, numFmt: '#,##0.000', align: 'right' },
     { header: 'GROSS WT',  key: 'gross_wt',  width: 12, numFmt: '#,##0.000', align: 'right' },
   ];
-  return createExcelBuffer('DealerList', cols, grouped, {
+  return createExcelBuffer('DealerList', cols, rows, {
     db, title: 'Dealer List', metaLines: auctionMeta(db, auctionId),
   });
-}
-
-// Insert a bold "<NAME> TOTAL" row after each party's per-branch rows.
-// `rows` must already be ordered so one party's rows are adjacent. Parties are
-// identified by name + GSTIN together, since two dealers can share a name;
-// the caption uses the name alone. The subtotal rows carry `_isSubtotal`,
-// which createExcelBuffer styles and every grand-total caller must skip.
-function withPartySubtotals(rows, sumKeys) {
-  const out = [];
-  let curKey = null, group = [];
-  const flush = () => {
-    if (!group.length) return;
-    // Emitted even for a single-branch dealer, where it just restates the one
-    // row: the PDF's serial number lives on this row, so dropping it here
-    // would leave the two formats with different row counts to reconcile.
-    const sub = { _isSubtotal: true, name: `${group[0].name || ''} TOTAL`, branch: '' };
-    sumKeys.forEach(k => { sub[k] = group.reduce((s, r) => s + (Number(r[k]) || 0), 0); });
-    out.push(sub);
-    group = [];
-  };
-  for (const r of rows) {
-    const k = `${r.name || ''}|${r.gstin || ''}`;
-    if (k !== curKey) { flush(); curKey = k; }
-    group.push(r);
-    out.push(r);
-  }
-  flush();
-  return out;
 }
 
 // ── Export: Planter List (Grade 1) ───────────────────────────
@@ -856,7 +830,8 @@ async function exportDealerListPartyWise(db, auctionId) {
   // Gross Qty = net qty + SB Sample Refund × lot count (one sample refund per lot).
   const sbRefund = Number((require('./company-config').getSettingsFlat(db) || {}).sb_refund) || 0;
   for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
-  const grouped = withPartySubtotals(rows, ['lots', 'bags', 'qty', 'gross_qty', 'amount']);
+  // No per-dealer "<NAME> TOTAL" rows — see exportDealerList. Only the yellow
+  // grand-total footer below closes the sheet.
   const cols = [
     { header: 'STATE',  key: 'state',  width: 12 },
     { header: 'NAME',   key: 'name',   width: 30 },
@@ -868,10 +843,8 @@ async function exportDealerListPartyWise(db, auctionId) {
     { header: 'GROSS QTY', key: 'gross_qty', width: 12, numFmt: '#,##0.000', align: 'right' },
     { header: 'AMOUNT', key: 'amount', width: 16, numFmt: '#,##0.00'  },
   ];
-  // Grand total sums the branch rows only — `rows`, not `grouped` — so the
-  // per-party subtotals can't be counted twice.
   const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
-  return createExcelBuffer('DealerListPartyWise', cols, grouped, {
+  return createExcelBuffer('DealerListPartyWise', cols, rows, {
     db, title: 'Dealer List (Party-wise)', metaLines: auctionMeta(db, auctionId),
     grandTotal: { label: 'TOTAL', values: {
       lots: sum('lots'), bags: sum('bags'), qty: sum('qty'), gross_qty: sum('gross_qty'), amount: sum('amount'),

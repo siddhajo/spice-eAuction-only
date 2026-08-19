@@ -5933,7 +5933,15 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
   // if the same buyer code exists multiple times in the buyers table.
   let q = `SELECT lots.*,
              (SELECT b.code  FROM buyers b WHERE b.buyer = lots.buyer LIMIT 1) AS buyer_code,
-             (SELECT b.gstin FROM buyers b WHERE b.buyer = lots.buyer LIMIT 1) AS buyer_gstin
+             (SELECT b.gstin FROM buyers b WHERE b.buyer = lots.buyer LIMIT 1) AS buyer_gstin,
+             -- Does the lot's seller have ANY bank account on file? Feeds the
+             -- "No bank account" badge on the lot-wise drill-down (the one
+             -- warning from validateAuctionLots the client can't derive from
+             -- the lot row alone). IN (subquery) rather than a correlated
+             -- EXISTS so SQLite builds one ephemeral index instead of
+             -- re-scanning trader_banks per lot.
+             (CASE WHEN lots.trader_id IN (SELECT trader_id FROM trader_banks)
+                   THEN 1 ELSE 0 END) AS has_bank
            FROM lots
            WHERE lots.auction_id = ?`;
   const p = [req.params.auctionId];
@@ -6901,6 +6909,71 @@ app.post('/api/lots/bulk-grade', requireLotWrite, (req, res) => {
     res.json({ success: true, updated, grade: g, skipped_locked: lockedIds.length });
   } catch (e) {
     res.status(500).json({ error: 'Bulk grade update failed: ' + (e.message || e) });
+  }
+});
+
+// ── Re-route lots to a different bank account ────────────────
+// Sets `lots.bank_id` on a set of lots at once. Used by Payments → 📋 Lots,
+// where the operator picks the account a seller's lots should be paid into —
+// one lot at a time, or all of that seller's lots in the trade in one go.
+// Every downstream consumer (payment statement, bank-payment export, the
+// Payments "multiple banks" badge) reads `lots.bank_id` at render/export time
+// with the seller's default as the fallback, so writing this column is the
+// whole of "update it wherever it's used".
+//
+// `bank_id: null` clears the explicit choice and puts the lot back on the
+// seller's default account. A non-null id must belong to THAT lot's seller —
+// lots whose seller doesn't own the account are refused, never silently
+// pointed at a stranger's bank.
+app.post('/api/lots/bulk-bank', requireLotWrite, (req, res) => {
+  try {
+    const { ids, bank_id } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids[] is required' });
+    }
+    const numericIds = ids.map(x => Number(x)).filter(Number.isFinite);
+    if (!numericIds.length) {
+      return res.status(400).json({ error: 'ids[] contains no valid numeric ids' });
+    }
+    const db = getDb();
+
+    // Resolve the target account. Blank / null / 0 means "back to default".
+    let bankId = null;
+    if (bank_id != null && String(bank_id).trim() !== '' && Number(bank_id) !== 0) {
+      bankId = parseInt(bank_id, 10);
+      if (!Number.isFinite(bankId)) return res.status(400).json({ error: 'Invalid bank_id' });
+      const bank = db.get('SELECT id, trader_id FROM trader_banks WHERE id = ?', [bankId]);
+      if (!bank) return res.status(404).json({ error: 'Bank account not found' });
+      // Ownership check — every lot being re-routed must belong to the seller
+      // who owns this account.
+      const ph = numericIds.map(() => '?').join(',');
+      const foreign = db.all(
+        `SELECT id, lot_no FROM lots
+          WHERE id IN (${ph}) AND COALESCE(trader_id, -1) <> ?`,
+        [...numericIds, bank.trader_id]
+      );
+      if (foreign.length) {
+        return res.status(400).json({
+          error: `That bank account does not belong to the seller on lot #${foreign[0].lot_no}`,
+        });
+      }
+    }
+
+    const { allowed: mutableIds, skipped: lockedIds } = filterLockedLotIds(db, numericIds);
+    const CHUNK = 500;
+    let updated = 0;
+    for (let i = 0; i < mutableIds.length; i += CHUNK) {
+      const slice = mutableIds.slice(i, i + CHUNK);
+      const ph = slice.map(() => '?').join(',');
+      const info = db.run(`UPDATE lots SET bank_id = ? WHERE id IN (${ph})`, [bankId, ...slice]);
+      if (info && typeof info.changes === 'number') updated += info.changes;
+    }
+    // Deliberately does NOT clear the price-check / lot-validation gates: bank
+    // routing feeds no figure either of them checks, and the "no bank account"
+    // warning can only be resolved by a change like this one.
+    res.json({ success: true, updated, bank_id: bankId, skipped_locked: lockedIds.length });
+  } catch (e) {
+    res.status(500).json({ error: 'Bulk bank update failed: ' + (e.message || e) });
   }
 });
 
@@ -14240,6 +14313,12 @@ app.get('/api/insights/lots', requireView, (req, res) => {
             -- name into a link to that seller's record, so the id travels
             -- with the row (falls back to a by-name lookup when it's null).
             l.trader_id,
+            -- Seller-detail hygiene fields + bank presence: the lot-wise
+            -- drill-down badges "No GSTIN / No PAN / No phone / No bank"
+            -- beside the seller name, mirroring the Validate Lots warnings.
+            l.cr, l.pan, l.tel, l.aadhar,
+            (CASE WHEN l.trader_id IN (SELECT trader_id FROM trader_banks)
+                  THEN 1 ELSE 0 END) AS has_bank,
             (SELECT a.ano FROM auctions a WHERE a.id = l.auction_id) AS ano
        FROM lots l
       WHERE 1=1${auctionFilter}${statusFilter}${branchFilter}${gradeFilter}
@@ -14911,7 +14990,34 @@ const DATA_COL_LABELS = {
   crop:'Crop', grade:'Grade', price:'Price', net:'Net', cost:'Cost',
   note_no:'Note No', total:'Total', tds:'TDS',
 };
-function _dataColLabel(c) {
+// Per-entity label overrides. Needed where ONE table carries two different
+// "state" columns and the shared map above would print both as plain "State" —
+// which is exactly what made the Lots grid show two identical STATE headers,
+// with no way to tell which one a filter or an edit was hitting.
+//
+//   lots.state   — the TRADE's state (auction/branch side). Stamped at lot
+//                  entry / import and read by every state-wise report filter
+//                  (Lot Slip by state, Pooler Register, Payment Register…).
+//   lots.pstate  — the SELLER's own address state, copied from the seller
+//                  master (traders.pstate) alongside padd/ppla/ppin/pst_code.
+//                  Drives place-of-supply on that seller's bill / purchase
+//                  invoice, so a Kerala planter selling at a Tamil Nadu depot
+//                  legitimately reads TAMIL NADU / KERALA across the two.
+// Same split on bills. The `p*` block is relabelled with a "Seller" prefix so
+// the whole party-detail group reads as one thing.
+const DATA_COL_LABELS_BY_ENTITY = {
+  lots: {
+    state:'Trade State', pstate:'Seller State', pst_code:'Seller State Code',
+    padd:'Seller Address', ppla:'Seller Place', ppin:'Seller PIN',
+  },
+  bills: {
+    state:'Trade State', pstate:'Seller State', st_code:'State Code',
+    padd:'Seller Address', ppla:'Seller Place', ppin:'Seller PIN',
+  },
+};
+function _dataColLabel(c, entity) {
+  const per = entity && DATA_COL_LABELS_BY_ENTITY[entity];
+  if (per && per[c]) return per[c];
   return DATA_COL_LABELS[c] ||
     c.replace(/_/g, ' ').replace(/\b\w/g, m => m.toUpperCase());
 }
@@ -14941,7 +15047,7 @@ app.get('/api/data/:entity', requireAdmin, (req, res) => {
     const db = getDb();
     const cols = db.all(`PRAGMA table_info("${def.table}")`).map(c => ({
       name: c.name,
-      label: _dataColLabel(c.name),
+      label: _dataColLabel(c.name, req.params.entity),
       type: _dataColType(c.type, c.name),
       locked: _dataLocked(c.name),
     }));

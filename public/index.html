@@ -1758,6 +1758,13 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 /* Seller name in the lot-wise modal — opens that seller's master record. */
 .dl-seller{color:var(--spice-saffron);font-weight:600;text-decoration:none;cursor:pointer}
 .dl-seller:hover{text-decoration:underline}
+/* Seller data-hygiene badges beside that name (No GSTIN / No PAN / …).
+   Amber = warning (fixable, blocks nothing), red = error. Same red/amber
+   split the Validate Lots screen uses so the two read the same way. */
+.dl-issue{display:inline-flex;align-items:center;border-radius:9px;padding:0 5px;font-size:9.5px;
+  font-weight:700;margin-left:4px;cursor:help;vertical-align:middle;white-space:nowrap;line-height:15px}
+.dl-issue-warn{background:#fef3c7;color:#92400e;border:1px solid #fcd34d}
+.dl-issue-err{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5}
 /* Dashboard modal (×) close button — top-right corner */
 .modal.has-x{position:relative}
 .modal.has-x h2{padding-right:34px}
@@ -2731,6 +2738,23 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
    as a locked record (faded + 🚫). Inert until export-tracking is enabled. */
 .pay-lot-cb-exported{opacity:.5;cursor:not-allowed}
 .pay-lot-exported-tag{color:#b91c1c;font-size:11px;margin-left:4px;cursor:help}
+/* Bank-routing bar above the per-seller lot picker, and the per-lot account
+   dropdown in its Bank column. `display` is toggled from JS, so the flex
+   layout lives here rather than in a style attribute an inline
+   `display:none` would fight with. */
+.pay-bankbar{margin-top:12px;padding:9px 12px;background:var(--spice-cream);border:1px solid var(--spice-line);
+  border-radius:8px;gap:8px;align-items:center;flex-wrap:wrap}
+.pay-bankbar.show{display:flex}
+.pay-bankbar select{flex:1 1 260px;min-width:200px;height:32px;padding:0 8px;border:1px solid var(--border);
+  border-radius:6px;background:#fff;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px}
+.pay-bankbar .btn{height:32px;padding:0 12px;font-size:12px}
+/* Fixed width, not 100% — the Bank <td> in this wide table collapses to the
+   narrowest thing in it, which squashed a percentage-width select down to an
+   unreadable stub. */
+select.pay-lot-bank{width:200px;min-width:200px;height:26px;padding:0 4px;border:1px solid var(--border);
+  border-radius:5px;background:#fff;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px}
+select.pay-lot-bank.is-default{color:var(--text3);font-style:italic}
+select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-allowed}
 .modal{
   background:var(--card);border-radius:16px;padding:28px;
   width:100%;max-width:520px;max-height:90vh;overflow-y:auto;
@@ -3791,12 +3815,27 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
       </div>
     </div></div>
 
-    <div class="modal-bg" id="pay-lots-modal"><div class="modal" style="max-width:900px">
+    <!-- Wider than the default modal: the lot table already carried 12 money
+         columns, and the Bank column is now an editable account picker. -->
+    <div class="modal-bg" id="pay-lots-modal"><div class="modal" style="max-width:1120px">
       <h2 style="display:flex;align-items:center;gap:10px">
         <span style="width:32px;height:32px;border-radius:10px;background:var(--spice-turmeric-lt);display:inline-flex;align-items:center;justify-content:center">📋</span>
         Lots for <span id="pay-lots-seller" style="color:var(--spice-cardamom-dk)">—</span>
         <span id="pay-lots-trade" style="font-weight:400;font-size:12px;color:var(--text3);margin-left:auto"></span>
       </h2>
+      <!-- Bank routing bar. Re-points where this seller's lots are paid:
+           pick an account (or add one) and apply it to every lot at once —
+           the common case, since a seller's four lots normally settle into
+           the same account. Per-lot overrides live in the Bank column below.
+           Hidden until the modal knows which seller it is showing. -->
+      <div id="pay-lots-bankbar" class="pay-bankbar" style="display:none">
+        <span style="font-size:12.5px;font-weight:700;white-space:nowrap">🏦 Bank account</span>
+        <select id="pay-lots-bank-all" title="Account to route this seller's lots into"></select>
+        <button class="btn btn-a" type="button" id="pay-bank-apply-all" onclick="payApplyBankToLots('all')" title="Point every one of this seller's lots in this trade at the chosen account">Apply to all lots</button>
+        <button class="btn btn-o" type="button" onclick="payApplyBankToLots('ticked')" title="Point only the ticked lots at the chosen account">Apply to ticked</button>
+        <span style="flex:1"></span>
+        <button class="btn btn-o" type="button" onclick="openPayBankAdd()" title="Add a new bank account — it is saved to this seller's master record too">+ Add account</button>
+      </div>
       <div id="pay-lots-body" style="margin-top:10px;max-height:60vh;overflow:auto"></div>
       <div id="pay-lots-totals" style="margin-top:10px;padding:10px 14px;background:var(--spice-cream);border:1px solid var(--spice-line);border-radius:8px;font-size:13px"></div>
       <div id="pay-lots-pick-state" style="margin-top:8px;font-size:12px;color:var(--text2);display:none"></div>
@@ -3806,6 +3845,39 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
         <button class="btn btn-o" type="button" onclick="clearSelectedPayLots()" id="pay-lots-clear-btn" title="Drop the saved filter for this seller; next 'Export Selected' includes all their lots again.">✕ Clear Lot Selection</button>
         <span style="flex:1"></span>
         <button class="btn btn-a" onclick="printSelectedPayLots()" id="pay-lots-print-btn" title="PDF payment statement covering only the ticked lots">🖨 Print Payment for Selected</button>
+      </div>
+    </div></div>
+
+    <!-- Add a bank account from the Payments lot picker. Writes straight to
+         the seller's master record (trader_banks) via POST /api/traders/:id/
+         banks, so the account is available everywhere afterwards — Lot Entry's
+         picker, the seller card, the bank-payment export. Sits above
+         #pay-lots-modal so it stacks on top of it. -->
+    <div class="modal-bg" id="pay-bank-add-modal" style="z-index:60"><div class="modal" style="max-width:520px">
+      <h2>🏦 Add bank account</h2>
+      <p style="font-size:12px;color:var(--spice-text-mute);margin-bottom:14px">
+        Saved to <strong id="pay-bank-add-seller">this seller</strong>'s master record, then available for their lots here and everywhere else.
+      </p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 16px">
+        <div class="fg" style="margin:0"><label>IFSC</label>
+          <input id="pay-bank-ifsc" style="text-transform:uppercase" placeholder="e.g. HDFC0001234" oninput="payBankIfscInput()" onblur="payBankIfscLookup()">
+          <div id="pay-bank-branch-hint" style="font-size:11px;color:var(--text3);margin-top:2px;min-height:14px"></div>
+        </div>
+        <div class="fg" style="margin:0"><label>Account No <span style="color:var(--spice-chili)">*</span></label><input id="pay-bank-acctnum" inputmode="numeric" autocomplete="off" placeholder="required"></div>
+        <div class="fg" style="margin:0"><label>Bank Name</label><input id="pay-bank-name" placeholder="e.g. HDFC"></div>
+        <div class="fg" style="margin:0"><label>Holder Name</label><input id="pay-bank-holder"></div>
+        <div class="fg" style="margin:0"><label>Account Type</label>
+          <select id="pay-bank-acct-type"><option value="">—</option><option value="Savings">Savings</option><option value="Current">Current</option></select>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;align-self:end;padding-bottom:8px">
+          <input type="checkbox" id="pay-bank-make-default" style="width:16px;height:16px">
+          Make this the seller's default account
+        </label>
+      </div>
+      <div id="pay-bank-add-err" style="display:none;margin-top:10px;font-size:12px;color:var(--spice-chili)"></div>
+      <div class="actions">
+        <button class="btn btn-o" type="button" onclick="hideModal('pay-bank-add-modal')">Cancel</button>
+        <button class="btn btn-a" type="button" id="pay-bank-add-save" onclick="savePayBankAdd()">Save account</button>
       </div>
     </div></div>
 
@@ -10771,6 +10843,57 @@ async function loadDepotSummary(auctionId){
 // is blank/null, matching how the depot-summary rollup buckets them server-side.
 let _dl = { rows: [], sort: { col: 'lot_no', dir: 1 }, filt: { lot: '', seller: '', buyer: '' } };
 
+// ── Seller data-hygiene badges for the lot-wise drill-down ──────
+// Same checks the Validate Lots screen raises (server: validateAuctionLots),
+// evaluated per lot from the seller snapshot the lot already carries, plus
+// `has_bank` — the one warning that needs a trader_banks lookup, so both lot
+// endpoints now return it. Purely informational here: nothing is blocked, the
+// badges just say which seller record still needs filling in before invoices
+// and payments are raised. Clicking the name still opens that seller to fix it.
+//
+// Returns [{ label, sev:'warn'|'error', tip }], errors first.
+function lotSellerIssues(l){
+  if (!l) return [];
+  const s  = v => String(v == null ? '' : v).trim();
+  const cr = s(l.cr);
+  // Strip the storage prefix the way the server's cleanGstin() does — an
+  // empty result means nothing was entered at all. A present-but-malformed
+  // GSTIN is deliberately NOT flagged here (the server takes the same line).
+  const cleanedCr = (cr.slice(0,5).toUpperCase() === 'GSTIN')
+    ? cr.slice(5).replace(/^[.\s:-]+/, '').trim()
+    : cr;
+  // Dealer = GSTIN prefix AND an SBL (stored in aadhar) — the Dashboard /
+  // Current-Auction rule (calculations.isDealerSeller), which is also what
+  // validateAuctionLots uses for the two grade-mismatch warnings.
+  const isDealer = cr.toUpperCase().startsWith('GSTIN') && s(l.aadhar) !== '';
+  const isG2 = s(l.grade) === '2';
+  const out = [];
+  // The server calls this warning "No seller". Sitting right beside a seller
+  // NAME, that label reads as a contradiction, so it is captioned by what it
+  // actually means: the lot carries a name but no link to the seller master.
+  if (!l.trader_id || !s(l.name)) {
+    out.push({ label: s(l.name) ? 'Not linked' : 'No seller', sev:'error',
+      tip:'This lot is not linked to a seller in the master record, so none of that seller\'s details (GSTIN, PAN, bank) can be read for it. Open the lot in Lot Entry and pick the seller.' });
+  }
+  if (!cleanedCr)        out.push({ label:'No GSTIN', sev:'warn', tip:'Seller has no GSTIN — excluded from the Dealer List.' });
+  if (!s(l.pan))         out.push({ label:'No PAN',   sev:'warn', tip:'Seller has no PAN on file.' });
+  if (!s(l.tel))         out.push({ label:'No phone', sev:'warn', tip:'Seller has no phone number — no WhatsApp statement can be sent.' });
+  // Only meaningful once the lot IS linked to a seller; an unlinked lot
+  // already carries the "No seller" error above.
+  if (l.trader_id && Number(l.has_bank) === 0) {
+    out.push({ label:'No bank', sev:'warn', tip:'Seller has no bank account on file — the payment cannot be routed.' });
+  }
+  if (isG2 && !isDealer) out.push({ label:'G2, not a dealer', sev:'warn', tip:'Lot is Grade 2 but the seller has no GSTIN + SBL — it counts toward the Spices Board 25% cap anyway.' });
+  if (!isG2 && isDealer) out.push({ label:'Dealer, not G2',   sev:'warn', tip:'Seller has GSTIN + SBL but the lot is not Grade 2 — it is missing from the 25% cap figure.' });
+  return out.sort((a,b) => (a.sev === b.sev ? 0 : a.sev === 'error' ? -1 : 1));
+}
+function lotIssueBadgesHtml(issues){
+  if (!issues || !issues.length) return '';
+  return issues.map(i =>
+    `<span class="dl-issue ${i.sev === 'error' ? 'dl-issue-err' : 'dl-issue-warn'}" title="${esc(i.tip)}">${esc(i.label)}</span>`
+  ).join('');
+}
+
 // Populate + render the lot-wise modal from a raw lot array. Shared by the
 // Current-Auction branch drill (openDepotLots) and the snapshot's grade drill
 // (openGradeLots). `titleText` labels the modal.
@@ -10802,6 +10925,9 @@ function showLotList(titleText, lots, reload){
         amount: Number(l.amount) || 0,
         buyer:  String(l.buyer1 || l.buyer || ''),
         status, statusCls,
+        // Seller data-hygiene badges (No GSTIN / No PAN / …) — precomputed
+        // once here rather than on every filter/sort repaint.
+        issues: lotSellerIssues(l),
       };
     }),
     sort: { col: 'lot_no', dir: 1 },
@@ -10919,10 +11045,14 @@ function renderDepotLotsTable(){
     bags += r.bags; qty += r.qty; amount += r.amount;
     // Seller name links to that seller's master record (view → Edit), so the
     // operator can check or correct the details without leaving the drill-down.
-    const sellerCell = r.seller
+    // …with the seller's outstanding data warnings (No GSTIN / No PAN / …)
+    // badged right beside it, so the operator sees what needs fixing before
+    // they click through.
+    const issueBadges = lotIssueBadgesHtml(r.issues);
+    const sellerCell = (r.seller
       ? `<a href="#" class="dl-seller" data-tid="${esc(r.traderId)}" data-name="${esc(r.seller)}"
            onclick="dlOpenSeller(this);return false" title="View / edit seller details">${esc(r.seller)}</a>`
-      : '<span style="color:var(--spice-text-hint)">—</span>';
+      : '<span style="color:var(--spice-text-hint)">—</span>') + issueBadges;
     return `<tr>
       <td class="l">${esc(r.lot_no)}</td>
       <td class="l">${sellerCell}</td>
@@ -10935,7 +11065,11 @@ function renderDepotLotsTable(){
     </tr>`;
   }).join('');
   const total = _dl.rows.length;
-  if (metaEl) metaEl.textContent = `${rows.length}${rows.length !== total ? ' of ' + total : ''} lot${total === 1 ? '' : 's'} · ${intf(bags)} bags · ${qf(qty)} kg · ${money(amount)}`;
+  // How many of the VISIBLE lots carry a seller warning — a heads-up when the
+  // badges are scrolled out of view further down a long list.
+  const flagged = rows.filter(r => r.issues && r.issues.length).length;
+  if (metaEl) metaEl.textContent = `${rows.length}${rows.length !== total ? ' of ' + total : ''} lot${total === 1 ? '' : 's'} · ${intf(bags)} bags · ${qf(qty)} kg · ${money(amount)}`
+    + (flagged ? ` · ⚠ ${flagged} with seller warnings` : '');
   host.innerHTML = rows.length ? `<table class="gm-table" style="min-width:720px">
     <thead><tr>${sTh('lot_no', 'Lot')}${sTh('seller', 'Seller')}<th>Bags</th><th>Qty</th><th>Price</th><th>Amount</th>${sTh('buyer', 'Buyer')}<th class="l">Status</th></tr></thead>
     <tbody>${trs}</tbody>
@@ -17722,7 +17856,17 @@ function renderSettingsPanel(){
     html+='<div class="sgrid">';
     for(const f of fields){
       if(f.key==='business_mode')html+=`<div class="fg"><label>${f.label}${helpTip(FIELD_HELP.business_mode)}</label><input type="text" data-key="${f.key}" value="e-Auction" readonly style="background:#f1f5f9;color:#475569;cursor:not-allowed" title="This build is e-Auction only"></div>`;
-      else if(f.key==='business_state')html+=`<div class="fg"><label>${f.label}${helpTip(FIELD_HELP.business_state)}</label><select data-key="${f.key}" onchange="onBusinessStateChanged(this.value)"><option${f.value==='TAMIL NADU'?' selected':''}>TAMIL NADU</option><option${f.value==='KERALA'?' selected':''}>KERALA</option></select></div>`;
+      // Business State is a dropdown ONLY while it reads TAMIL NADU. Once it
+      // is set to KERALA the field locks: a Kerala setup drives the ASP
+      // company identity, GSTIN, invoice series and Spice Board reports, so
+      // flipping it back mid-trade silently re-points every one of those. It
+      // still renders with data-key so captureCurrentPanel() saves the same
+      // value straight back instead of dropping the key.
+      else if(f.key==='business_state'){
+        html += f.value==='KERALA'
+          ? `<div class="fg"><label>${f.label}${helpTip(FIELD_HELP.business_state)}</label><input type="text" data-key="${f.key}" value="KERALA" readonly style="background:#f1f5f9;color:#475569;cursor:not-allowed" title="Locked — this is a Kerala (ASP) setup. Changing the business state would re-point the company identity, GSTIN, invoice series and Spice Board reports."><div style="font-size:11px;color:var(--text3);margin-top:4px">🔒 Locked for Kerala setups — company identity, GSTIN and Spice Board reports are keyed to this.</div></div>`
+          : `<div class="fg"><label>${f.label}${helpTip(FIELD_HELP.business_state)}</label><select data-key="${f.key}" onchange="onBusinessStateChanged(this.value)"><option${f.value==='TAMIL NADU'?' selected':''}>TAMIL NADU</option><option${f.value==='KERALA'?' selected':''}>KERALA</option></select></div>`;
+      }
       else if(f.key==='date_format'){
         // Sample today's date in each format so the operator can see
         // exactly what they're picking — easier than parsing the labels.
@@ -26181,11 +26325,15 @@ function _payUndoLastBatch(aid) {
 }
 
 // ── Per-seller lot picker modal (partial payments) ───────────────
-const _payLotsState = { aid: 0, seller: '', lots: [], bankLabels: {}, defaultBankId: null };
+const _payLotsState = { aid: 0, seller: '', lots: [], banks: [], bankLabels: {}, defaultBankId: null, traderId: null };
 async function openPayLotsModal(auctionId, sellerName) {
   _payLotsState.aid = Number(auctionId) || 0;
   _payLotsState.seller = String(sellerName || '');
   _payLotsState.lots = [];
+  _payLotsState.banks = [];
+  _payLotsState.traderId = null;
+  const _bar = document.getElementById('pay-lots-bankbar');
+  if (_bar) { _bar.style.display = 'none'; _bar.classList.remove('show'); }
   document.getElementById('pay-lots-seller').textContent = _payLotsState.seller || '—';
   const tradeLabel = document.getElementById('pay-lots-trade');
   if (tradeLabel) {
@@ -26231,36 +26379,258 @@ async function openPayLotsModal(auctionId, sellerName) {
     _payLotsState.lots = filtered;
     // Build bank_id → "Acct · Bank · IFSC" labels so each lot shows where its
     // payment routes (lots with no explicit bank_id fall back to the default).
-    _payLotsState.bankLabels = {};
-    _payLotsState.defaultBankId = null;
-    const tid = (filtered.find(l => l.trader_id) || {}).trader_id;
-    if (tid) {
-      try {
-        const seller = await j(`/api/traders/${tid}`);
-        const banks = (seller && seller.banks) || [];
-        const def = banks.find(b => b.is_default) || banks[0] || null;
-        _payLotsState.defaultBankId = def ? def.id : null;
-        for (const b of banks) {
-          const parts = [b.acctnum, b.bank_name, b.account_type, b.ifsc].filter(Boolean);
-          _payLotsState.bankLabels[b.id] = parts.join(' · ') + (b.is_default ? ' ★' : '');
-        }
-        // Legacy single-bank fallback: sellers with no trader_banks rows
-        // route to the trader's own ifsc/acctnum (same chain the bank-payment
-        // export uses), so the modal shows the account instead of "—".
-        if (!banks.length && (seller.acctnum || seller.ifsc)) {
-          _payLotsState.defaultBankId = '_legacy';
-          const parts = [seller.acctnum, seller.holder_name, seller.ifsc].filter(Boolean);
-          _payLotsState.bankLabels['_legacy'] = parts.join(' · ');
-        }
-      } catch (_) { /* non-fatal — lots fall back to "—" */ }
-    }
+    _payLotsState.traderId = (filtered.find(l => l.trader_id) || {}).trader_id || null;
+    await _payLoadSellerBanks();
     _renderPayLotsTable();
   } catch (e) {
     body.innerHTML = `<div style="padding:24px;text-align:center;color:var(--spice-chili)">Failed to load lots: ${esc(e.message || String(e))}</div>`;
   }
 }
+
+// ── Bank routing for a seller's lots (Payments → 📋 Lots) ────────
+// Load (or reload) the seller's accounts and build the bank_id → "Acct ·
+// Bank · Type · IFSC" labels every picker in this modal renders from.
+async function _payLoadSellerBanks() {
+  _payLotsState.banks = [];
+  _payLotsState.bankLabels = {};
+  _payLotsState.defaultBankId = null;
+  const tid = _payLotsState.traderId;
+  if (!tid) return;
+  try {
+    const seller = await j(`/api/traders/${tid}`);
+    const banks = (seller && seller.banks) || [];
+    _payLotsState.banks = banks;
+    const def = banks.find(b => b.is_default) || banks[0] || null;
+    _payLotsState.defaultBankId = def ? def.id : null;
+    for (const b of banks) {
+      const parts = [b.acctnum, b.bank_name, b.account_type, b.ifsc].filter(Boolean);
+      _payLotsState.bankLabels[b.id] = parts.join(' · ') + (b.is_default ? ' ★' : '');
+    }
+    // Legacy single-bank fallback: sellers with no trader_banks rows route to
+    // the trader's own ifsc/acctnum (same chain the bank-payment export uses),
+    // so the modal shows the account instead of "—". It is display-only —
+    // there is no row to point a lot's bank_id at, so re-routing such a seller
+    // means adding a real account first (the + Add account button).
+    if (!banks.length && (seller.acctnum || seller.ifsc)) {
+      _payLotsState.defaultBankId = '_legacy';
+      const parts = [seller.acctnum, seller.holder_name, seller.ifsc].filter(Boolean);
+      _payLotsState.bankLabels['_legacy'] = parts.join(' · ');
+    }
+  } catch (_) { /* non-fatal — lots fall back to "—" */ }
+}
+
+// <option> list for a bank picker. `selectedId` is a lot's bank_id (null =
+// no explicit choice). The leading blank option means "follow the seller's
+// default", which is what a lot with no bank_id already does.
+function _payBankOptionsHtml(selectedId) {
+  const sel = (selectedId == null || selectedId === '') ? '' : String(selectedId);
+  const defLabel = (_payLotsState.defaultBankId != null)
+    ? (_payLotsState.bankLabels[_payLotsState.defaultBankId] || '') : '';
+  let h = `<option value=""${sel === '' ? ' selected' : ''}>`
+        + (defLabel ? `Seller default · ${esc(defLabel)}` : 'Seller default (none on file)')
+        + `</option>`;
+  for (const b of _payLotsState.banks) {
+    h += `<option value="${b.id}"${sel === String(b.id) ? ' selected' : ''}>${esc(_payLotsState.bankLabels[b.id] || '')}</option>`;
+  }
+  // An explicit bank_id that no longer matches any current account — keep it
+  // visible and selected rather than silently snapping the lot to "default".
+  if (sel && !_payLotsState.banks.some(b => String(b.id) === sel)) {
+    h += `<option value="${esc(sel)}" selected>⚠ account removed (id ${esc(sel)})</option>`;
+  }
+  return h;
+}
+
+// Paint the bar above the table: the "apply to every lot" picker plus the
+// Add-account button. Hidden entirely when the seller has no lots here.
+function _renderPayBankBar() {
+  const bar = document.getElementById('pay-lots-bankbar');
+  const sel = document.getElementById('pay-lots-bank-all');
+  const applyAll = document.getElementById('pay-bank-apply-all');
+  if (!bar || !sel) return;
+  if (!_payLotsState.lots.length || !_payLotsState.traderId) {
+    bar.style.display = 'none'; bar.classList.remove('show');
+    return;
+  }
+  bar.style.display = ''; bar.classList.add('show');
+  // Pre-select the account the lots already agree on, so "Apply to all" is a
+  // no-op until the operator actually picks something different. Lots split
+  // across accounts start on the blank option.
+  const ids = new Set(_payLotsState.lots.map(l => (l.bank_id == null ? '' : String(l.bank_id))));
+  sel.innerHTML = _payBankOptionsHtml(ids.size === 1 ? Array.from(ids)[0] : '');
+  if (ids.size !== 1) sel.value = '';
+  const n = _payLotsState.lots.length;
+  if (applyAll) applyAll.textContent = `Apply to all ${n} lot${n === 1 ? '' : 's'}`;
+}
+
+// Is this lot already covered by a tracked export? Already-exported lots are
+// a settled record: their tick-box and their bank picker are both locked, and
+// a bulk apply steps over them too rather than silently re-pointing a payment
+// that has already gone out.
+function _payIsExportedLot(l) {
+  const raw = _payExportedLotsFor(_payLotsState.aid, _payLotsState.seller);
+  if (raw === '*') return true;
+  return Array.isArray(raw) && raw.map(String).includes(String(l.lot_no || ''));
+}
+
+// Re-route lots to the account chosen in the bar. scope 'all' = every lot of
+// this seller in the trade (the usual case — one seller, one account);
+// 'ticked' = only the ticked rows.
+async function payApplyBankToLots(scope) {
+  const sel = document.getElementById('pay-lots-bank-all');
+  if (!sel) return;
+  const val = sel.value;
+  const pool = (scope === 'ticked')
+    ? (() => {
+        const ticked = new Set(Array.from(document.querySelectorAll('.pay-lot-cb:not([disabled]):checked')).map(cb => Number(cb.dataset.id)));
+        return _payLotsState.lots.filter(l => ticked.has(l.id));
+      })()
+    : _payLotsState.lots;
+  const ids = pool.filter(l => !_payIsExportedLot(l)).map(l => l.id);
+  const lockedOut = pool.length - ids.length;
+  if (!ids.length) {
+    toast(lockedOut ? 'Every one of those lots is already exported — undo the export first'
+                    : (scope === 'ticked' ? 'Tick at least one lot first' : 'No lots to update'));
+    return;
+  }
+  const label = val ? (_payLotsState.bankLabels[val] || 'the chosen account') : "the seller's default account";
+  if (!confirm(
+      `Route ${ids.length} lot${ids.length === 1 ? '' : 's'} to:\n\n${label}\n\n`
+    + (lockedOut ? `${lockedOut} already-exported lot${lockedOut === 1 ? '' : 's'} will be left alone.\n\n` : '')
+    + `This is where these lots get paid — the payment statement, the bank-payment export and Tally all follow it.`)) return;
+  try {
+    const r = await j('/api/lots/bulk-bank', {
+      method: 'POST',
+      body: JSON.stringify({ ids, bank_id: val || null }),
+    });
+    const newId = val ? Number(val) : null;
+    const idSet = new Set(ids);
+    for (const l of _payLotsState.lots) if (idSet.has(l.id)) l.bank_id = newId;
+    _renderPayLotsTable();
+    // The Payments row's "🏦 multiple banks" badge is derived server-side from
+    // these very bank_ids, so refresh the list behind the modal.
+    if (typeof loadPayments === 'function') loadPayments();
+    toast(`${r.updated} lot${r.updated === 1 ? '' : 's'} re-routed`
+      + (r.skipped_locked ? ` · ${r.skipped_locked} locked lot(s) skipped` : ''));
+  } catch (e) {
+    toast(`Could not change the bank account: ${e.message || e}`);
+  }
+}
+
+// Per-lot override from the Bank column dropdown.
+async function payLotBankChange(el, lotId) {
+  const val = el.value;
+  const prev = (_payLotsState.lots.find(l => l.id === lotId) || {}).bank_id;
+  try {
+    await j('/api/lots/bulk-bank', {
+      method: 'POST',
+      body: JSON.stringify({ ids: [lotId], bank_id: val || null }),
+    });
+    const lot = _payLotsState.lots.find(l => l.id === lotId);
+    if (lot) lot.bank_id = val ? Number(val) : null;
+    el.classList.toggle('is-default', !val);
+    if (typeof loadPayments === 'function') loadPayments();
+    toast('Bank account updated for this lot');
+  } catch (e) {
+    el.value = (prev == null ? '' : String(prev));   // revert the picker
+    toast(`Could not change the bank account: ${e.message || e}`);
+  }
+}
+
+// ── Add a bank account to the seller, from this modal ────────────
+function openPayBankAdd() {
+  if (!_payLotsState.traderId) { toast('This lot has no seller linked to the master record'); return; }
+  const who = document.getElementById('pay-bank-add-seller');
+  if (who) who.textContent = _payLotsState.seller || 'this seller';
+  ['pay-bank-ifsc','pay-bank-acctnum','pay-bank-name','pay-bank-holder'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  const type = document.getElementById('pay-bank-acct-type'); if (type) type.value = '';
+  _payBankBranch = '';   // don't carry the last lookup's branch onto a new account
+  // Default-on when the seller has no real account yet — that lone account has
+  // to be the default or nothing routes to it.
+  const mk = document.getElementById('pay-bank-make-default');
+  if (mk) mk.checked = !_payLotsState.banks.length;
+  const hint = document.getElementById('pay-bank-branch-hint'); if (hint) hint.textContent = '';
+  const err = document.getElementById('pay-bank-add-err'); if (err) { err.style.display = 'none'; err.textContent = ''; }
+  showModal('pay-bank-add-modal');
+  setTimeout(() => { const f = document.getElementById('pay-bank-ifsc'); if (f) f.focus(); }, 60);
+}
+// IFSC → bank/branch auto-fill, same Razorpay lookup + cache the seller form
+// uses; the branch is stored on the account so statements can print it.
+let _payBankIfscTimer = null;
+let _payBankBranch = '';
+function payBankIfscInput() {
+  const el = document.getElementById('pay-bank-ifsc');
+  if (!el || el.value.trim().length < 11) return;
+  clearTimeout(_payBankIfscTimer);
+  _payBankIfscTimer = setTimeout(payBankIfscLookup, 350);
+}
+async function payBankIfscLookup() {
+  const el = document.getElementById('pay-bank-ifsc');
+  const hint = document.getElementById('pay-bank-branch-hint');
+  const nameEl = document.getElementById('pay-bank-name');
+  if (!el) return;
+  const ifsc = el.value.trim().toUpperCase();
+  _payBankBranch = '';
+  if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) { if (hint) hint.textContent = ''; return; }
+  let data;
+  if (_ifscLookupCache.has(ifsc)) data = _ifscLookupCache.get(ifsc);
+  else {
+    try { const r = await fetch('https://ifsc.razorpay.com/' + encodeURIComponent(ifsc)); data = r.ok ? await r.json() : null; }
+    catch (_) { data = null; }
+    _ifscLookupCache.set(ifsc, data);
+  }
+  if (!data) { if (hint) hint.textContent = ''; return; }
+  _payBankBranch = data.BRANCH || '';
+  if (nameEl && data.BANK && !nameEl.value.trim()) nameEl.value = data.BANK;
+  if (hint) hint.textContent = _payBankBranch ? 'Branch: ' + _payBankBranch : '';
+}
+async function savePayBankAdd() {
+  const err = document.getElementById('pay-bank-add-err');
+  const showErr = (m) => { if (err) { err.textContent = m; err.style.display = 'block'; } };
+  const v = (id) => (document.getElementById(id) || {}).value || '';
+  const acctnum = v('pay-bank-acctnum').trim();
+  const ifsc    = v('pay-bank-ifsc').trim().toUpperCase();
+  // The account number is what the payment actually routes on, so the server
+  // requires it; fail here rather than round-tripping for the same answer.
+  if (!acctnum) { showErr('Enter the account number.'); return; }
+  const btn = document.getElementById('pay-bank-add-save');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await j(`/api/traders/${_payLotsState.traderId}/banks`, {
+      method: 'POST',
+      body: JSON.stringify({
+        // acctnum stays a STRING all the way through — a 10+ digit account
+        // number sent as a number binds as REAL under sql.js and is stored
+        // as "9790744444.0".
+        acctnum, ifsc,
+        bank_name:    v('pay-bank-name').trim(),
+        branch:       _payBankBranch,
+        holder_name:  v('pay-bank-holder').trim(),
+        account_type: v('pay-bank-acct-type').trim(),
+        make_default: !!(document.getElementById('pay-bank-make-default') || {}).checked,
+      }),
+    });
+    hideModal('pay-bank-add-modal');
+    await _payLoadSellerBanks();
+    _renderPayLotsTable();
+    // Pre-select the new account in the bar so the obvious next step —
+    // "Apply to all lots" — is one click away.
+    const sel = document.getElementById('pay-lots-bank-all');
+    if (sel && r && r.bank_id) sel.value = String(r.bank_id);
+    toast(r && r.deduped
+      ? 'That account was already on this seller — selected it'
+      : 'Bank account added to the seller. Choose "Apply to all lots" to route the lots into it.');
+  } catch (e) {
+    showErr(`Could not save the account: ${e.message || e}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 function _renderPayLotsTable() {
   const body = document.getElementById('pay-lots-body');
+  _renderPayBankBar();
   if (!_payLotsState.lots.length) {
     body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3)">No payable lots found for this seller in this trade.</div>';
     document.getElementById('pay-lots-totals').innerHTML = '';
@@ -26284,24 +26654,28 @@ function _renderPayLotsTable() {
     const rowStyle = isExported ? ' style="background:#fef2f2"' : (isImmediate ? ' style="background:#f5f3ff"' : '');
     const expCell = isExported ? `<span class="pay-lot-exported-tag" title="Already included in a previous export.">🚫</span>` : '';
     const immTag = isImmediate ? `<span class="pay-immediate-badge" title="Immediate payment — this lot is settled immediately; the early-payment discount applies.">⚡ immediate</span>` : '';
-    // Bank routing per lot. A lot with its OWN bank_id (chosen during lot
-    // entry) shows that account plainly. A lot with no bank_id falls back
-    // to the seller's current default — render it muted + "(default)" so
-    // the operator can tell at a glance it has no explicit per-lot bank
-    // (and can open Lot Entry to set one). An explicit bank_id that no
-    // longer matches any current account flags a removed/renumbered bank.
+    // Bank routing per lot — an editable picker, so an account can be changed
+    // right here instead of reopening the lot in Lot Entry. Selecting the
+    // blank option puts the lot back on the seller's default. The seller's
+    // whole account list is offered; adding one is the + Add account button
+    // in the bar above. A seller with NO real trader_banks row (legacy
+    // acctnum/ifsc on the traders row only) has nothing to point a bank_id
+    // at, so their column stays a read-only label until an account is added.
     const hasOwnBank = l.bank_id != null;
-    const effBankId = hasOwnBank ? l.bank_id : _payLotsState.defaultBankId;
-    const bankText = (effBankId != null && _payLotsState.bankLabels) ? _payLotsState.bankLabels[effBankId] : '';
     let bankLabel;
-    if (bankText) {
-      bankLabel = hasOwnBank
-        ? `<span title="Bank chosen for this lot during entry: ${esc(bankText)}" style="font-family:monospace;font-size:11.5px">${esc(bankText)}</span>`
-        : `<span title="No bank was set on this lot — it routes to the seller's default account (${esc(bankText)}). Open the lot in Lot Entry to assign a specific account." style="font-family:monospace;font-size:11.5px;color:var(--text3);font-style:italic">${esc(bankText)} <span style="font-style:normal">(default)</span></span>`;
-    } else if (hasOwnBank) {
-      bankLabel = `<span title="This lot's saved bank account is no longer in the seller record (it may have been edited or removed). Re-assign it in Lot Entry." style="color:var(--spice-chili);font-size:11.5px">⚠ account removed</span>`;
+    if (_payLotsState.banks.length) {
+      // Exported lots are a settled record — show where they went, don't let
+      // it be re-pointed from here (same rule as their locked tick-box).
+      const disabled = isExported ? ' disabled title="Already exported — undo the export before re-routing this lot."' : '';
+      bankLabel = `<select class="pay-lot-bank${hasOwnBank ? '' : ' is-default'}"${disabled}`
+        + ` onchange="payLotBankChange(this, ${l.id})"`
+        + ` title="Bank account this lot is paid into. Blank = follow the seller's default.">`
+        + _payBankOptionsHtml(l.bank_id) + `</select>`;
     } else {
-      bankLabel = '<span style="color:var(--text3)">—</span>';
+      const bankText = (_payLotsState.defaultBankId != null) ? (_payLotsState.bankLabels[_payLotsState.defaultBankId] || '') : '';
+      bankLabel = bankText
+        ? `<span title="Legacy account held on the seller record itself (${esc(bankText)}). Use + Add account above to make it a proper account this lot can be pointed at." style="font-family:monospace;font-size:11.5px;color:var(--text3);font-style:italic">${esc(bankText)} <span style="font-style:normal">(legacy)</span></span>`
+        : `<span title="This seller has no bank account on file — use + Add account above." style="color:var(--spice-chili);font-size:11.5px">⚠ no account</span>`;
     }
     return `<tr${rowStyle}>
       <td style="text-align:center"><input type="checkbox" class="${cls}" data-id="${l.id}" data-lot="${esc(lotKey)}"${checked ? ' checked' : ''}${dis} onchange="updatePayLotsTotals()" style="cursor:pointer"></td>

@@ -87,8 +87,13 @@ function wrapText(doc, text, maxWidth) {
 // is captioned with". Needed when the grouping key is a composite that must not
 // be printed — e.g. the Dealer List groups on name+GSTIN (two dealers can share
 // a name) but the subtotal must read "ACME TRADERS TOTAL", not "ACME|33AAA…".
+// `subtotalRow: false` keeps the per-group SERIAL numbering but emits no
+// subtotal row at all — the Dealer Lists want the dealer numbered once without
+// a "<NAME> TOTAL" line closing the block. With no subtotal row to carry it,
+// the serial moves onto the group's FIRST data row.
 function preprocessRows(rows, opts) {
-  const { serialKey, groupByKey, subtotalKeys = [], subtotalLabelKey, groupLabelKey } = opts || {};
+  const { serialKey, groupByKey, subtotalKeys = [], subtotalLabelKey, groupLabelKey,
+          subtotalRow = true } = opts || {};
   if (!groupByKey) {
     // Simple serial numbering, no grouping.
     if (!serialKey) return rows.slice();
@@ -97,13 +102,15 @@ function preprocessRows(rows, opts) {
   // Group while preserving caller's order. Caller should sort by groupByKey
   // first if they want all rows of one name to appear together.
   // Serial numbering: each unique group gets ONE serial number, placed on
-  // the subtotal row. Individual lot rows have a blank serial column.
+  // the subtotal row (or, without one, on the group's first row). Every other
+  // row of the group leaves the serial column blank.
   const out = [];
   let curKey = null;
   let curGroup = [];
   let groupNo = 0;
   function flushSubtotal() {
     if (!curGroup.length) return;
+    if (!subtotalRow) return;
     const sub = { _isSubtotal: true };
     subtotalKeys.forEach(k => {
       sub[k] = curGroup.reduce((s, r) => s + (Number(r[k]) || 0), 0);
@@ -125,7 +132,9 @@ function preprocessRows(rows, opts) {
     }
     curGroup.push(r);
     const stamped = { ...r };
-    if (serialKey) stamped[serialKey] = '';   // blank on per-row entries
+    // Blank on per-row entries — unless there's no subtotal row to carry the
+    // group serial, in which case the group's first row takes it.
+    if (serialKey) stamped[serialKey] = (!subtotalRow && curGroup.length === 1) ? String(groupNo) : '';
     out.push(stamped);
   });
   if (curKey !== null) flushSubtotal();
@@ -1003,24 +1012,24 @@ const ROW_PREPROCESS = {
     subtotalKeys: ['qty', 'gross_qty', 'amount', 'pqty', 'puramt'],
     subtotalLabelKey: 'poolername',
   },
-  // Dealer list — one row per BRANCH the dealer sold from, closed by a
-  // "<NAME> TOTAL" row. Grouped on the composite `_party` (name + GSTIN) so
-  // two dealers who share a name don't collapse into one block; the caption
-  // comes from `name` via groupLabelKey.
+  // Dealer list — one row per BRANCH the dealer sold from. Per-dealer
+  // "<NAME> TOTAL" rows were dropped per user request (subtotalRow:false), so
+  // the SL.NO still numbers the DEALER — printed on their first branch row and
+  // blank on any further ones. Grouped on the composite `_party` (name + GSTIN)
+  // so two dealers who share a name don't collapse into one block.
   dealer_list: {
     serialKey: '_sn',
     groupByKey: '_party',
     groupLabelKey: 'name',
-    subtotalKeys: ['lots', 'bags', 'qty', 'gross_qty'],
-    subtotalLabelKey: 'name',
+    subtotalRow: false,
   },
-  // Party-wise rollup, now broken out per branch under each party.
+  // Party-wise rollup, broken out per branch under each party. Same
+  // no-subtotal rule as the plain Dealer List above.
   dealer_list_party_wise: {
     serialKey: '_sn',
     groupByKey: '_party',
     groupLabelKey: 'name',
-    subtotalKeys: ['lots', 'bags', 'qty', 'gross_qty', 'amount'],
-    subtotalLabelKey: 'name',
+    subtotalRow: false,
   },
   pooler_list_consolidated: {
     serialKey: '_sn',

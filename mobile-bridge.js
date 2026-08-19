@@ -1633,44 +1633,83 @@ function mountMobile(app, deps) {
   // ── 10. TRADER BANK CRUD ───────────────────────────────────────
   // PWA exposes per-trader bank management. Spice-config does this through
   // a different route shape; replicate the PWA contract here.
+  // APPEND one account. Deliberately NOT server.js's syncTraderBanks(), which
+  // deletes every existing row and reinserts the array it was handed — a
+  // caller that only knows about the ONE new account would wipe the rest.
+  //
+  // Also used by the desktop Payments → 📋 Lots screen, which adds an account
+  // mid-payment and then re-routes the seller's lots into it. That caller
+  // sends `bank_name` / `make_default` (the names the rest of the desktop code
+  // uses); the PWA's original `label` / `is_default` spellings still work.
   app.post('/api/traders/:id/banks', requireAuth, (req, res) => {
     const db = getDb();
     const traderId = parseInt(req.params.id, 10);
-    const { acctnum, ifsc, label, holder_name, branch, account_type, is_default } = req.body || {};
+    const b = req.body || {};
+    const { acctnum, ifsc, label, holder_name, branch, account_type } = b;
+    const wantDefault = !!(b.is_default || b.make_default);
     if (!acctnum || !String(acctnum).trim()) {
       return res.status(400).json({ error: 'Account number is required' });
     }
     const trader = db.get('SELECT id FROM traders WHERE id = ?', [traderId]);
     if (!trader) return res.status(404).json({ error: 'Trader not found' });
-    if (is_default) {
-      db.run('UPDATE trader_banks SET is_default = 0 WHERE trader_id = ?', [traderId]);
-    }
-    // Spice-config stores the user-visible bank label in `bank_name`. PWA
-    // calls it `label`. Map across. `branch` (the bank branch, typically
-    // auto-filled from the IFSC lookup) is stored so the lot-entry seller
-    // picker can show it alongside the other bank details.
-    const info = db.run(
-      `INSERT INTO trader_banks (trader_id, bank_name, branch, acctnum, ifsc, holder_name, account_type, is_default)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        traderId,
-        String(label || '').trim(),
-        String(branch || '').trim(),
-        String(acctnum).trim(),
-        String(ifsc || '').trim().toUpperCase(),
-        String(holder_name || '').trim(),
-        String(account_type || '').trim(),
-        is_default ? 1 : 0,
-      ]
+    // Account numbers are TEXT. String() BEFORE the bind — a bare number binds
+    // as REAL under sql.js and lands in the column as "9790744444.0".
+    const acct = String(acctnum).trim();
+    const ifscUp = String(ifsc || '').trim().toUpperCase();
+    const holder = String(holder_name || '').trim();
+
+    // Same account already on file? Return it rather than stacking a
+    // duplicate — the caller's intent ("this seller banks here") is satisfied
+    // either way, and a re-submitted form shouldn't double the list.
+    const dupe = db.get(
+      'SELECT * FROM trader_banks WHERE trader_id = ? AND TRIM(acctnum) = ?', [traderId, acct]
     );
-    // Sync default to traders row (legacy callers read traders.acctnum/ifsc)
-    if (is_default) {
+    let bankId;
+    if (dupe) {
+      bankId = dupe.id;
+    } else {
+      // Spice-config stores the user-visible bank label in `bank_name`. PWA
+      // calls it `label`. Map across. `branch` (the bank branch, typically
+      // auto-filled from the IFSC lookup) is stored so the lot-entry seller
+      // picker can show it alongside the other bank details.
+      const info = db.run(
+        `INSERT INTO trader_banks (trader_id, bank_name, branch, acctnum, ifsc, holder_name, account_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          traderId,
+          String(b.bank_name || label || '').trim(),
+          String(branch || '').trim(),
+          acct, ifscUp, holder,
+          String(account_type || '').trim(),
+        ]
+      );
+      bankId = info.lastInsertRowid;
+    }
+
+    // Promote to default when asked, or automatically when this is the
+    // seller's ONLY account — a lone non-default account leaves every lot
+    // with no explicit bank_id routing nowhere.
+    const count = db.get('SELECT COUNT(*) c FROM trader_banks WHERE trader_id = ?', [traderId]).c;
+    if (wantDefault || count === 1) {
+      db.run('UPDATE trader_banks SET is_default = 0 WHERE trader_id = ?', [traderId]);
+      db.run('UPDATE trader_banks SET is_default = 1 WHERE id = ?', [bankId]);
+      // Sync default to traders row (legacy callers — the DBF/XLSX bank
+      // exports — read traders.acctnum/ifsc/holder_name directly).
+      const row = db.get('SELECT * FROM trader_banks WHERE id = ?', [bankId]);
       db.run(
         'UPDATE traders SET acctnum = ?, ifsc = ?, holder_name = ? WHERE id = ?',
-        [String(acctnum).trim(), String(ifsc || '').trim().toUpperCase(), String(holder_name || '').trim(), traderId]
+        [row.acctnum || '', row.ifsc || '', row.holder_name || '', traderId]
       );
     }
-    res.json({ id: info.lastInsertRowid });
+
+    // `id` is the PWA's original contract; the rest is additive so the desktop
+    // caller can re-render its picker without a second round-trip.
+    const banks = db.all(
+      `SELECT id, trader_id, bank_name, branch, acctnum, ifsc, holder_name, account_type, is_default
+         FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id ASC`,
+      [traderId]
+    );
+    res.json({ id: bankId, bank_id: bankId, deduped: !!dupe, banks });
   });
 
   app.put('/api/traders/:tid/banks/:bid', requireAuth, (req, res) => {
