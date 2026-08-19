@@ -10285,9 +10285,12 @@ async function loadStats(auctionId){
                downloads that trade's file, and in the cumulative "All Auctions"
                view — where there is no single trade to name — it opens the
                auction chooser instead. -->
-          <a href="#" class="needs-export" onclick="downloadSpicesBoardCsv(${isAllMode ? 'null' : (A ? A.id : 'null')});return false"
+          <!-- Sized to the small reportBtns() buttons sitting beside it so the
+               header reads as one row of actions. stopPropagation matches them
+               too: the card header is itself clickable (collapse). -->
+          <button class="btn btn-a needs-export" onclick="event.stopPropagation();downloadSpicesBoardCsv(${isAllMode ? 'null' : (A ? A.id : 'null')})"
              title="${isAllMode ? 'e-Auction portal upload file — choose an auction' : 'e-Auction portal upload file for this auction'}"
-             style="font-size:12px;color:var(--spice-saffron);font-weight:600;text-decoration:none;white-space:nowrap">⬇ Spices Board CSV</a>
+             style="height:28px;padding:0 9px;font-size:11px;font-weight:600">⬇ Spices Board CSV</button>
           ${picker}
           <button class="dash-snap-collapse" onclick="toggleDashSnap()" title="Collapse / expand" aria-label="Collapse or expand snapshot">▾</button>
         </div>
@@ -10848,8 +10851,9 @@ async function loadDepotSummary(auctionId){
         ${reportBtns('dash_depot', true)}
         <a href="#" onclick="downloadArrivals(${a.id});return false" style="font-size:13px;color:var(--spice-saffron);font-weight:600;text-decoration:none;white-space:nowrap">⬇ Arrivals XLSX</a>
         <!-- The trade is already pinned here, so this goes straight to the file
-             rather than through the chooser the All-Auctions view needs. -->
-        <a href="#" class="needs-export" onclick="downloadSpicesBoardCsv(${a.id});return false" title="e-Auction portal upload file for this auction" style="font-size:13px;color:var(--spice-saffron);font-weight:600;text-decoration:none;white-space:nowrap">⬇ Spices Board CSV</a>
+             rather than through the chooser the All-Auctions view needs. Sized
+             to the small reportBtns() buttons beside it. -->
+        <button class="btn btn-a needs-export" onclick="event.stopPropagation();downloadSpicesBoardCsv(${a.id})" title="e-Auction portal upload file for this auction" style="height:28px;padding:0 9px;font-size:11px;font-weight:600">⬇ Spices Board CSV</button>
       </div>
     </div>
     <div class="card" id="ca-body" style="padding:20px;display:${collapsed ? 'none' : 'block'}">
