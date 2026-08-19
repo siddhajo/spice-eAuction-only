@@ -548,10 +548,27 @@ function getCollectionRows(db, auctionId) {
   // (preferring code-match `buyers.buyer = invoices.buyer` over
   // name-match `buyers.buyer1 = invoices.buyer1`). Deterministic via
   // buyers.id ASC tiebreak.
+  // Collection lists ORIGINALS plus any proforma that has NOT yet been raised.
+  //
+  // Per user request: with proformas run but nothing raised yet, the register
+  // was empty — the drafts are the only documents the buyers hold at that
+  // point, so the report has to show them. (Collection is the one reader that
+  // does this; proformas stay excluded from the statutory ones — Tally XML,
+  // GST journals, DBF, dashboards.)
+  //
+  // The `raised_invo = ''` half is what keeps the totals honest: once a draft
+  // is raised, the ORIGINAL it became is already in this list, so counting the
+  // draft as well would print the buyer twice and inflate QUANTITY / VALUE.
+  // A fully-raised trade therefore reports exactly as it did before.
   const invoices = db.all(
-    `SELECT id, sale, invo, buyer, buyer1, qty, tot
+    `SELECT id, sale, invo, buyer, buyer1, qty, tot,
+            COALESCE(is_proforma,0) AS is_proforma
        FROM invoices
-      WHERE auction_id = ? AND COALESCE(is_proforma,0) = 0
+      WHERE auction_id = ?
+        AND (
+          COALESCE(is_proforma,0) = 0
+          OR (COALESCE(is_proforma,0) = 1 AND TRIM(COALESCE(raised_invo,'')) = '')
+        )
       ORDER BY sale, CAST(invo AS INTEGER), invo`,
     [auctionId]
   );
@@ -697,13 +714,24 @@ function getCollectionRows(db, auctionId) {
     return {
       sale:        i.sale,
       invo:        i.invo,
-      // Ready-to-print INVO cell. Raised from a proforma → that proforma's
-      // number, carrying the configured prefix ("PI/I-2009"). Billed directly
-      // → the original number in the legacy bare form ("I 2009").
-      invo_label:  pfNos.length
-        ? pfNos.map(n => formatInvoiceNo(isPrefix, draftSaleByNo.get(`${buyerKey}|${n}`) || i.sale, n)).join(', ')
-        : formatInvoiceNo('', i.sale, i.invo),
-      proforma_invo: pfNos.join(', '),
+      // Ready-to-print INVO cell.
+      //   • Row IS a pending proforma  → its OWN number under the proforma
+      //     prefix ("PI/I-8"). Nothing has been raised from it yet, so there is
+      //     no original number to show — and the prefix is what distinguishes a
+      //     draft line from a raised one at a glance.
+      //   • Raised from a proforma     → that proforma's number, with the
+      //     configured prefix ("PI/I-2009").
+      //   • Billed directly            → the original number, legacy bare form
+      //     ("I 2009").
+      invo_label:  Number(i.is_proforma)
+        ? formatInvoiceNo(isPrefix, i.sale, i.invo)
+        : (pfNos.length
+            ? pfNos.map(n => formatInvoiceNo(isPrefix, draftSaleByNo.get(`${buyerKey}|${n}`) || i.sale, n)).join(', ')
+            : formatInvoiceNo('', i.sale, i.invo)),
+      // Drives the print-order sort below. A draft's own number IS the number
+      // the register prints, so it belongs here too.
+      proforma_invo: Number(i.is_proforma) ? String(i.invo || '') : pfNos.join(', '),
+      is_proforma:   Number(i.is_proforma) ? 1 : 0,
       trade_name:  i.buyer1 || '',
       buyer_name:  buyerName,
       qty:         i.qty,
