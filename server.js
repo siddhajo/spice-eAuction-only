@@ -4732,7 +4732,9 @@ app.post('/api/auctions/:id/carry-forward', requireAuctionWrite, (req, res) => {
       db.run(
         `INSERT INTO lots (auction_id,lot_no,crop,grade,crpt,branch,state,trader_id,name,padd,ppla,ppin,pstate,pst_code,cr,pan,tel,aadhar,bags,litre,qty,gross_wt,sample_wt,moisture,price,reserved_price,user_id,bank_id,immediate_payment,carried_from_auction_id)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [destId, lotNo, l.crop||'', l.grade||'', l.crpt||'', branch, l.state||'TAMIL NADU', l.trader_id||null,
+        // State follows the DESTINATION trade, not the source lot — a lot
+        // carried into another trade takes that trade's state.
+        [destId, lotNo, l.crop||'', l.grade||'', l.crpt||'', branch, lotStateForAuction(db, destId), l.trader_id||null,
          l.name||'', l.padd||'', l.ppla||'', l.ppin||'', l.pstate||'', l.pst_code||'', l.cr||'', l.pan||'',
          l.tel||'', l.aadhar||'', l.bags||0, l.litre||'', l.qty||0, l.gross_wt||0, l.sample_wt||0, l.moisture||'',
          Number(l.price)||0, Number(l.reserved_price)||0, l.user_id||'', l.bank_id||null,
@@ -6055,6 +6057,32 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
   res.json(db.all(q, p));
 });
 
+// ── lots.state is the TRADE's state, never the seller's ───────
+// `lots.state` records which state the TRADE was held in (auction/branch
+// side). It is what every state-wise report filters on — Lot Slip by state,
+// Pooler Register, Payment Register, the Dealer List's STATE column. The
+// seller's own address state lives separately in `lots.pstate`.
+//
+// Both lot-entry clients used to compute this field themselves and both got
+// it wrong: the desktop sent the SELLER's `pstate`, the mobile PWA sent a
+// hard-coded 'TAMIL NADU'. On the desktop that meant every EDIT of a lot
+// re-stamped the trade state with the seller's state — so a Kerala seller
+// selling at a Tamil Nadu trade flipped the lot to KERALA on the first edit,
+// and the mirror case flipped the other way. The clients no longer send the
+// field at all; it is derived here, from the auction, so every entry path
+// (desktop, mobile, carry-forward) agrees.
+//
+// Falls back to the configured business_state, then TAMIL NADU, for trades
+// created before `auctions.state` was populated.
+function lotStateForAuction(db, auctionId) {
+  try {
+    const a = db.get('SELECT state FROM auctions WHERE id = ?', [auctionId]);
+    const s = String((a && a.state) || '').trim();
+    if (s) return s;
+  } catch (_) { /* fall through to the setting */ }
+  return String(getSetting(db, 'business_state') || '').trim() || 'TAMIL NADU';
+}
+
 // ──────────────────────────────────────────────────────────────
 // LOT LOCK / UNLOCK  (gated by flag_lot_lock)
 // ──────────────────────────────────────────────────────────────
@@ -6368,7 +6396,9 @@ app.post('/api/lots', requireLotWrite, (req, res) => {
   const info = db.run(
     `INSERT INTO lots (auction_id,lot_no,crop,grade,crpt,branch,state,trader_id,name,padd,ppla,ppin,pstate,pst_code,cr,pan,tel,aadhar,bags,litre,qty,gross_wt,sample_wt,moisture,reserved_price,user_id,bank_id,immediate_payment,reserved,gunny)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,l.state||'TAMIL NADU',l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',Number(l.reserved_price)||0,l.user_id||'',l.bank_id||null,Number(l.immediate_payment)?1:0,Number(l.reserved)?1:0,Number(l.gunny)||0]);
+    // `state` is derived from the trade, NOT taken from the request — see
+    // lotStateForAuction(). Whatever a client sends is ignored.
+    [auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,lotStateForAuction(db, auctionId),l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',Number(l.reserved_price)||0,l.user_id||'',l.bank_id||null,Number(l.immediate_payment)?1:0,Number(l.reserved)?1:0,Number(l.gunny)||0]);
   pcClearGate(db, auctionId);
   lvClearGate(db, auctionId);   // new lot → trade must be re-validated before price import
   logLotActivity(db, req, 'create', { id: info.lastInsertRowid, auction_id: auctionId, lot_no: lotNoStr, branch, name: l.name, qty: l.qty });
@@ -6401,6 +6431,10 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
   if (l.reserved != null) l.reserved = Number(l.reserved) ? 1 : 0;
   const db = getDb();
   const lotId = parseInt(req.params.id, 10);
+  // The trade state is never client-supplied — see lotStateForAuction(). A
+  // stale client that still posts `state` was flipping the lot to the SELLER's
+  // state on every edit, so drop it here and re-derive from the trade below.
+  delete l.state;
 
   // If lot_no or branch is being changed, re-run the allocation +
   // duplicate validation that POST /api/lots applies. Skipping these
@@ -6469,6 +6503,15 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
   const _saveCode = ('code' in l) ? l.code : (current ? current.code : '');
   const noSaleCode = ['WD','NA'].includes(String(_saveCode || '').trim().toUpperCase());
   if (noSaleCode) { l.price = 0; l.amount = 0; }
+
+  // Re-derive the trade state from the auction. This HEALS a row an older
+  // client already flipped to the seller's state — an edit now puts it back
+  // to the trade's own state instead of corrupting it further. No-op when the
+  // row is already correct, so it never shows up as a spurious change.
+  if (current && current.auction_id) {
+    const trueState = lotStateForAuction(db, current.auction_id);
+    if (String(current.state || '') !== trueState) l.state = trueState;
+  }
 
   for (const [k,v] of Object.entries(l)) {
     if (k !== 'id' && k !== 'auction_id' && k !== 'created_at') { sets.push(`${k}=?`); vals.push(v); }
@@ -8676,7 +8719,11 @@ app.get('/api/purchases/eligible-sellers/:auctionId', requireView, (req, res) =>
        AND amount > 0
        AND ${hasValidGstinSql('cr')}
      GROUP BY name
-     ORDER BY name`,
+     -- Case-insensitive alphabetical. A plain ORDER BY name uses SQLite's
+     -- binary collation, which files every lowercase name after every
+     -- uppercase one. Must match generate-all below so the list on screen
+     -- reads in the same order the invoice numbers get handed out.
+     ORDER BY UPPER(TRIM(name))`,
     [req.params.auctionId]
   ));
 });
@@ -8703,12 +8750,18 @@ app.post('/api/purchases/generate-all/:auctionId',
   // Same dual-format GSTIN filter as the eligible-sellers endpoint —
   // ensures bare-GSTIN imports aren't silently skipped during batch
   // generation.
+  // Invoice numbers are handed out in this loop's order, so the sort IS the
+  // numbering scheme: dealers are invoiced alphabetically. Previously there
+  // was no ORDER BY at all, leaving it to whatever order SQLite happened to
+  // return rows in. UPPER(TRIM(..)) for the same case-insensitivity reason as
+  // the eligible-sellers endpoint above, whose order this mirrors.
   const sellers = db.all(
     `SELECT DISTINCT name FROM lots
      WHERE auction_id = ?
        AND amount > 0
        AND name IS NOT NULL AND name != ''
-       AND ${hasValidGstinSql('cr')}`,
+       AND ${hasValidGstinSql('cr')}
+     ORDER BY UPPER(TRIM(name))`,
     [req.params.auctionId]
   );
 
@@ -10269,9 +10322,12 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNote
   }
 
   // Pull every purchase row for this trade. Each becomes one DN unless
-  // already DN'd.
+  // already DN'd. Ordered by party name (case-insensitively) rather than
+  // insertion id, because note numbers are assigned in this order — so the
+  // DN series runs alphabetically, matching the purchase invoices it derives
+  // from. `id` only breaks ties between two rows sharing a name.
   const purchases = db.all(
-    `SELECT * FROM purchases WHERE ano = ? ORDER BY id`,
+    `SELECT * FROM purchases WHERE ano = ? ORDER BY UPPER(TRIM(COALESCE(name,''))), id`,
     [ano]
   );
   if (!purchases.length) {
@@ -11210,7 +11266,13 @@ app.post('/api/debit-notes-planter/generate-bulk', requireInvoiceWrite, requireD
     }
   }
 
-  const bills = db.all(`SELECT * FROM bills WHERE TRIM(ano) = ? ORDER BY id`, [String(ano).trim()]);
+  // Ordered by planter name (case-insensitively) rather than insertion id —
+  // note numbers are handed out in this order, so the planter DN series runs
+  // alphabetically like the bills of supply it derives from. `id` only breaks
+  // ties between two bills sharing a name.
+  const bills = db.all(
+    `SELECT * FROM bills WHERE TRIM(ano) = ? ORDER BY UPPER(TRIM(COALESCE(name,''))), id`,
+    [String(ano).trim()]);
   if (!bills.length) {
     return res.json({ success: true, created: 0, skipped: 0, generated: [], skippedDetails: [], note: `No bills of supply in trade #${ano}` });
   }
@@ -11878,6 +11940,155 @@ app.get('/api/payments/:auctionId', requireView, (req, res) => {
     summary = getPaymentSummary(db, req.params.auctionId, req.query.state, cfg, true);
   }
   res.json(summary);
+});
+
+// ══════════════════════════════════════════════════════════════
+// LOT-WISE PAYMENTS (Settings → Flags → "Lot-wise Payments Screen")
+// ══════════════════════════════════════════════════════════════
+// Lot-level counterpart to /api/payments/:auctionId. The classic screen
+// rolls a trade up per seller; this one answers "these specific lots —
+// where does each one get paid, and how much?".
+//
+// Deliberately search-driven: the client only calls this when the
+// operator presses Search, so nothing is listed until they say which
+// lots they want. An EMPTY search (no seller, no lot numbers) is still
+// allowed and returns the whole trade — that's what makes
+// `link=unlinked` useful as a "every lot I cannot pay yet" worklist.
+//
+// Query params
+//   seller  partial, case-insensitive match on lots.name
+//   lots    comma-separated lot numbers. Matched both verbatim and
+//           numerically, so "24" finds lot "024" and vice versa.
+//   link    all (default) | linked | unlinked — see routeOfLot below.
+//
+// The lot set matches the bank-payment export's (amount > 0, not marked
+// paid) so what is listed here is exactly what an export of it would pay.
+app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
+  try {
+    const db = getDb();
+    const auctionId = Number(req.params.auctionId);
+    if (!auctionId) return res.status(400).json({ error: 'auctionId is required' });
+
+    const seller = String(req.query.seller || '').trim();
+    const link = String(req.query.link || 'all').trim().toLowerCase();
+    if (!['all', 'linked', 'unlinked'].includes(link)) {
+      return res.status(400).json({ error: 'link must be one of: all, linked, unlinked' });
+    }
+    // Lot tokens: split on comma/whitespace so a pasted list works whether
+    // the operator typed "12,13" or "12 13".
+    const lotTokens = [...new Set(
+      String(req.query.lots || '').split(/[,\s]+/).map(s => s.trim()).filter(Boolean)
+    )];
+
+    const where = [`l.auction_id = ?`, `l.amount > 0`, `(l.paid IS NULL OR l.paid = '')`];
+    const params = [auctionId];
+    if (seller) { where.push(`UPPER(l.name) LIKE ?`); params.push(`%${seller.toUpperCase()}%`); }
+    if (lotTokens.length) {
+      // Verbatim match OR numeric match — "024" and "24" are the same lot to
+      // an operator, and both spellings exist across imported trades.
+      const ph = lotTokens.map(() => '?').join(',');
+      const numeric = lotTokens.filter(t => /^\d+$/.test(t));
+      let clause = `TRIM(l.lot_no) IN (${ph})`;
+      params.push(...lotTokens);
+      if (numeric.length) {
+        clause += ` OR CAST(l.lot_no AS INTEGER) IN (${numeric.map(() => '?').join(',')})`;
+        params.push(...numeric.map(t => parseInt(t, 10)));
+      }
+      where.push(`(${clause})`);
+    }
+
+    const lots = db.all(
+      `SELECT l.id, l.lot_no, l.name, l.trader_id, l.branch, l.qty,
+              l.balance AS payable, l.amount, l.bank_id, l.immediate_payment,
+              l.locked_at
+         FROM lots l
+        WHERE ${where.join(' AND ')}
+        ORDER BY UPPER(l.name), CAST(l.lot_no AS INTEGER), l.lot_no`,
+      params
+    ) || [];
+
+    // Every account of every seller in the result — the client renders one
+    // dropdown per row from this, and re-renders after adding an account.
+    const traderIds = [...new Set(lots.map(l => l.trader_id).filter(id => id != null))];
+    const banksByTrader = {};
+    const legacyByTrader = {};
+    if (traderIds.length) {
+      const ph = traderIds.map(() => '?').join(',');
+      const banks = db.all(
+        `SELECT id, trader_id, bank_name, branch, acctnum, ifsc, holder_name, account_type, is_default
+           FROM trader_banks WHERE trader_id IN (${ph})
+          ORDER BY trader_id, is_default DESC, id`,
+        traderIds
+      ) || [];
+      for (const b of banks) (banksByTrader[b.trader_id] = banksByTrader[b.trader_id] || []).push(b);
+      // Legacy single-account sellers: the account lives on the traders row
+      // itself with no trader_banks row to point a lot's bank_id at. The
+      // bank-payment export still routes to it, so it counts as linked — it
+      // just can't be picked per lot until a real account is added.
+      const legacy = db.all(
+        `SELECT id, acctnum, ifsc, holder_name FROM traders WHERE id IN (${ph})`, traderIds) || [];
+      for (const t of legacy) {
+        if (!banksByTrader[t.id] && (String(t.acctnum || '').trim() || String(t.ifsc || '').trim())) {
+          legacyByTrader[t.id] = { acctnum: t.acctnum || '', ifsc: t.ifsc || '', holder_name: t.holder_name || '' };
+        }
+      }
+    }
+
+    // Where a lot's payment actually routes, in the same order the export
+    // resolves it:
+    //   explicit — lots.bank_id points at a live account
+    //   default  — no bank_id, but the seller has accounts (first/default wins)
+    //   legacy   — no trader_banks rows, account held on the traders row
+    //   none     — nothing to pay into. THIS is what "unlinked" means.
+    const routeOfLot = (l) => {
+      const banks = banksByTrader[l.trader_id] || [];
+      if (l.bank_id != null && banks.some(b => b.id === l.bank_id)) return 'explicit';
+      if (banks.length) return 'default';
+      if (legacyByTrader[l.trader_id]) return 'legacy';
+      return 'none';
+    };
+    let out = lots.map(l => {
+      const route = routeOfLot(l);
+      const banks = banksByTrader[l.trader_id] || [];
+      // The account this lot pays into today — explicit pick, else the
+      // seller's default. Null for legacy/none (no account row to name).
+      const effective = (route === 'explicit')
+        ? banks.find(b => b.id === l.bank_id)
+        : (route === 'default' ? (banks.find(b => b.is_default) || banks[0]) : null);
+      return {
+        ...l,
+        qty: Number(l.qty) || 0,
+        payable: Number(l.payable) || 0,
+        route,
+        linked: route !== 'none',
+        effectiveBankId: effective ? effective.id : null,
+        // An explicit bank_id whose account has since been deleted — surfaced
+        // rather than silently reading as "follows the default".
+        staleBankId: (l.bank_id != null && !banks.some(b => b.id === l.bank_id)) ? l.bank_id : null,
+      };
+    });
+
+    // Counts over the whole match, taken BEFORE the link filter narrows it,
+    // so the client can say "12 of 40 matching lots have no account".
+    const totalMatched = out.length;
+    const unlinkedCount = out.filter(l => !l.linked).length;
+    if (link === 'linked')   out = out.filter(l => l.linked);
+    if (link === 'unlinked') out = out.filter(l => !l.linked);
+
+    res.json({
+      auctionId,
+      link,
+      count: out.length,
+      totalMatched,
+      unlinkedCount,
+      lots: out,
+      banksByTrader,
+      legacyByTrader,
+    });
+  } catch (e) {
+    console.error('lot-wise payments search error:', e);
+    res.status(500).json({ error: 'Lot search failed: ' + (e.message || e) });
+  }
 });
 
 // Set (or clear) a seller's advance for this auction. The advance is
@@ -15258,6 +15469,54 @@ app.post('/api/data/:entity', requireAdmin, (req, res) => {
          JSON.stringify(keys.map(k => ({ field: k, to: vals[k] })))]);
     } catch (_) {}
     res.json({ success: true, rowid: info.lastInsertRowid });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Set the same field(s) on many rows at once (Fix Data → "Edit selected").
+//
+// NOTE: must be registered BEFORE '/api/data/:entity/:rowid' below, or that
+// param route matches "bulk" as a rowid — the same ordering trap the
+// /api/data/query route above documents.
+//
+// One _devSnapshot for the whole batch rather than one per row: the point of
+// a bulk edit is a single undoable step, and N backups of a multi-MB database
+// would make a 100-row change unusable.
+app.put('/api/data/:entity/bulk', requireAdmin, (req, res) => {
+  try {
+    const def = DATA_ENTITIES[req.params.entity];
+    if (!def) return res.status(404).json({ error: 'Unknown data section' });
+    const db = getDb();
+    const real = new Set(db.all(`PRAGMA table_info("${def.table}")`).map(c => c.name));
+    const vals = req.body.values || {};
+    const keys = Object.keys(vals).filter(k => real.has(k) && !_dataLocked(k));
+    const blocked = Object.keys(vals).filter(k => real.has(k) && _dataLocked(k));
+    if (blocked.length) return res.status(400).json({ error: `These fields are protected and can't be edited here: ${blocked.join(', ')}` });
+    if (!keys.length) return res.status(400).json({ error: 'No editable fields supplied' });
+    const rowids = (Array.isArray(req.body.rowids) ? req.body.rowids : [])
+      .map(n => parseInt(n, 10)).filter(Number.isFinite);
+    if (!rowids.length) return res.status(400).json({ error: 'No rows selected' });
+    if (rowids.length > 1000) return res.status(400).json({ error: 'Too many rows in one bulk edit (max 1000)' });
+    _devSnapshot('fixdata');
+    // Chunked so the bound-parameter count stays well under SQLite's
+    // SQLITE_MAX_VARIABLE_NUMBER, which is only 999 on older builds (the
+    // sql.js fallback backend among them).
+    const setSql = keys.map(k => `"${k}"=?`).join(',');
+    const setVals = keys.map(k => vals[k]);
+    let changes = 0;
+    for (let i = 0; i < rowids.length; i += 200) {
+      const chunk = rowids.slice(i, i + 200);
+      const info = db.run(
+        `UPDATE "${def.table}" SET ${setSql} WHERE rowid IN (${chunk.map(() => '?').join(',')})`,
+        [...setVals, ...chunk]);
+      changes += (info && info.changes) || 0;
+    }
+    try {
+      db.run('INSERT INTO audit_log (user_id, action, entity, entity_id, details) VALUES (?,?,?,?,?)',
+        [req.user.id, 'fixdata_bulk_update', def.table, `${rowids.length} rows`,
+         JSON.stringify({ rows: rowids.length, rowids,
+                          fields: keys.map(k => ({ field: k, to: vals[k] })) })]);
+    } catch (_) {}
+    res.json({ success: true, changes });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 

@@ -991,17 +991,22 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
     const hasUntagged = groups.some(g => g.bank_id == null || !bankById[g.bank_id]);
     const amtOf = g => useBefore ? (Number(g.puramt) || 0) : (Number(g.payable) || 0);
 
-    if (taggedBanks.length >= 2) {
-      // Spans multiple banks → one row per group, each routed to its bank
-      // (untagged group → null → seller default).
+    // Split into one row per destination whenever the covered lots don't all
+    // pay into the same place — either several tagged banks, or one tagged
+    // bank alongside untagged lots that follow the seller's default.
+    //
+    // That second case used to fall through to the merged row below, which
+    // paid the tagged lot into the DEFAULT account — silently discarding an
+    // explicit per-lot choice the operator had made. Splitting here routes
+    // each group where it was told to go (untagged group → null → default).
+    if (taggedBanks.length >= 2 || (taggedBanks.length === 1 && hasUntagged)) {
       return groups.map(g => buildRow(
         p, amtOf(g), formatLotList(g.lot_nos || ''),
         (g.bank_id != null && bankById[g.bank_id]) || null
       ));
     }
-    // Single bank (or all-untagged) → preserve the original single merged
-    // row. Route to that one bank only when EVERY covered lot is tagged to
-    // it (no untagged lots); otherwise fall back to the seller-default.
+    // Everything lands in one account — all lots untagged (→ seller default),
+    // or all tagged to the same bank. One merged row, as before.
     const rawAmount = groups.reduce((s, g) => s + amtOf(g), 0);
     const lotList = formatLotList(groups.map(g => g.lot_nos || '').filter(Boolean).join(','));
     const routedBank = (taggedBanks.length === 1 && !hasUntagged)
@@ -1154,7 +1159,12 @@ function listAgriSellers(db, auctionId) {
        AND NOT ${hasValidGstinSql('cr')}
        AND amount > 0
      GROUP BY name
-     ORDER BY name`,
+     -- Case-insensitive alphabetical. A plain ORDER BY name uses SQLite's
+     -- binary collation, which files every lowercase name after every
+     -- uppercase one ("Anil" landing below "ZZZ"). This order is also the
+     -- numbering scheme for Bills of Supply: /api/bills/generate-all walks
+     -- this list and hands out bill numbers as it goes.
+     ORDER BY UPPER(TRIM(name))`,
     [auctionId]
   );
 }

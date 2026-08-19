@@ -235,6 +235,13 @@ const DEFAULTS = [
   // "Merchants" control ledger). Hidden via .feat-merchants when OFF; the
   // export endpoints also 403 while disabled.
   { key: 'flag_merchants',       value: 'false', category: 'flags', label: 'Merchants (Tally Journal)',       type: 'boolean' },
+  // Lot-wise Payments screen — swaps the Payments tab from the seller-wise
+  // roll-up to a lot-level worklist (search by seller / lot numbers, set the
+  // bank account per lot, export the bank payment for exactly those lots).
+  // OFF = the classic seller-wise screen, untouched. The two screens are
+  // alternatives, not additions: the Payments sidebar entry stays a single
+  // item and this flag decides which one it opens.
+  { key: 'flag_lotwise_payments', value: 'false', category: 'flags', label: 'Lot-wise Payments Screen', type: 'boolean' },
   { key: 'flag_invoice_stripe',  value: 'false', category: 'flags', label: 'Alternate Row Stripe in Invoice', type: 'boolean' },
   { key: 'flag_dummy',           value: 'false', category: 'flags', label: 'Allow Dummy Invoices',            type: 'boolean' },
   { key: 'flag_round',           value: 'false', category: 'flags', label: 'Round Invoice Amounts',           type: 'boolean' },

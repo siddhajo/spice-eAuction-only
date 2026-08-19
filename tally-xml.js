@@ -3750,7 +3750,16 @@ function buildRDPurchaseRows(db, auctionId, cfg) {
     FROM purchases p
     WHERE p.auction_id = ?
       AND (UPPER(COALESCE(p.gstin,'')) LIKE 'GSTIN%' OR p.gstin GLOB '[0-9][0-9]*')
-    ORDER BY p.invo, p.id
+    -- Vouchers are emitted alphabetically by party, matching the order
+    -- purchase invoices are now generated in. Ordering on the party NAME
+    -- rather than on p.invo means historical trades — numbered before
+    -- generation was alphabetised — come out alphabetical too.
+    --
+    -- UPPER(TRIM(..)) because SQLite's default collation is binary, which
+    -- files every lowercase name after every uppercase one. The invoice
+    -- number is the tiebreak, CAST to INTEGER because invo is a TEXT
+    -- column: a bare ORDER BY p.invo sorts it 1, 10, 100, 11, 2, 20, 3, 9.
+    ORDER BY UPPER(TRIM(COALESCE(p.name,''))), CAST(p.invo AS INTEGER), p.id
   `);
   const raw = stmt.all(auctionId);
 

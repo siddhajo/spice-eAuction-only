@@ -1371,6 +1371,12 @@ body:not([data-feat-debit-note-planter="1"]) .feat-debit-note-planter{display:no
    toolbar are tagged .feat-price-list-mapping so this single rule hides
    both when flag_price_list_mapping is OFF. */
 body:not([data-feat-price-list-mapping="1"]) .feat-price-list-mapping{display:none !important}
+/* Payments screen chooser — flag_lotwise_payments. The Payments tab holds
+   BOTH screens and these two rules show exactly one: OFF (default) keeps
+   the classic seller-wise screen, ON swaps in the lot-wise one. Neither
+   screen knows about the other; the sidebar stays a single entry. */
+body:not([data-feat-lotwise-payments="1"]) .feat-pay-lotwise{display:none !important}
+body[data-feat-lotwise-payments="1"] .feat-pay-classic{display:none !important}
 /* Print Selected Purchase — Sales tab toolbar button, hidden when
    flag_print_selected_purchase is OFF. The ASP-context check (Kerala +
    e-Auction) in applyAspContextVisibility() runs on top of this rule
@@ -5088,6 +5094,10 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
 
     <!-- PAYMENTS -->
     <div class="tc" id="tc-payments">
+      <!-- Two alternative screens live here. flag_lotwise_payments picks one
+           (see the .feat-pay-classic / .feat-pay-lotwise CSS rules) — the
+           classic seller-wise screen below is unchanged. -->
+      <div class="feat-pay-classic">
       <div class="card">
         <h2>
           <span style="display:flex;align-items:center;gap:10px">
@@ -5218,7 +5228,95 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
 
         <div style="overflow-x:auto"><table><thead><tr><th>Seller</th><th>Lots</th><th>Qty</th><th>Amount</th><th>Purchase</th><th>Commission</th><th>GST 18%</th><th>Net Amount</th><th>Advance</th><th>Payable</th><th>Discount</th><th>Actions</th></tr></thead><tbody id="payments-list"></tbody></table></div>
       </div>
+      </div><!-- /.feat-pay-classic -->
+
+      <!-- ══ LOT-WISE PAYMENTS ══════════════════════════════════════
+           Shown instead of the classic screen when flag_lotwise_payments
+           is ON. Search-driven on purpose: nothing is listed until the
+           operator says which lots they want. -->
+      <div class="feat-pay-lotwise">
+      <div class="card">
+        <h2>
+          <span style="display:flex;align-items:center;gap:10px">
+            <span style="width:32px;height:32px;border-radius:10px;background:var(--spice-turmeric-lt);display:inline-flex;align-items:center;justify-content:center">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#B45309" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            </span>
+            Payments — Lot-wise
+          </span>
+        </h2>
+
+        <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;align-items:flex-end">
+          <div>
+            <label style="display:block;font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px">Trade</label>
+            <select id="paylw-auction" onchange="payLwOnAuctionChange()" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
+          </div>
+          <div style="flex:1;min-width:200px">
+            <label style="display:block;font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px">Seller name</label>
+            <input type="text" id="paylw-seller" placeholder="Part of the seller's name…" onkeydown="if(event.key==='Enter')payLwSearch()" style="width:100%;padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px">
+          </div>
+          <div style="flex:1;min-width:200px">
+            <label style="display:block;font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px">Lots <span style="font-weight:400;color:var(--text3)">(comma separated)</span></label>
+            <input type="text" id="paylw-lots" placeholder="e.g. 12, 24, 108" onkeydown="if(event.key==='Enter')payLwSearch()" style="width:100%;padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;font-family:monospace">
+          </div>
+          <button class="btn btn-g" style="height:38px;padding:0 22px;font-weight:600" onclick="payLwSearch()">🔍 Search</button>
+          <button class="btn btn-o" style="height:38px;padding:0 14px;font-weight:600" onclick="payLwClear()" title="Clear the filters and the results">✕ Clear</button>
+
+          <!-- Show unlinked — "unlinked" means NO account resolves for the lot:
+               no account picked on the lot and the seller has none on file, so
+               the payment cannot go out. Lots riding the seller's default
+               account are linked. -->
+          <label style="flex:0 0 auto;height:38px;display:inline-flex;align-items:center;gap:8px;padding:0 12px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer" title="ON = only lots with no bank account at all (these cannot be paid). OFF = only lots that do have one.">
+            <span style="font-size:12.5px;font-weight:600;color:var(--text2)">Show unlinked</span>
+            <input type="checkbox" id="paylw-unlinked" onchange="payLwSearch()" style="cursor:pointer;width:16px;height:16px">
+          </label>
+
+          <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
+            <button class="btn btn-a" style="height:38px;padding:0 16px;font-weight:600" onclick="payLwExportBank()" title="Export the RTGS/NEFT file for exactly the lots listed below.">📤 Export Bank Payment</button>
+          </div>
+        </div>
+
+        <div id="paylw-summary" style="display:none;margin-bottom:10px;padding:9px 14px;background:var(--spice-cream);border:1px solid var(--spice-line);border-radius:8px;font-size:12.5px;color:var(--text2)"></div>
+
+        <div id="paylw-body">
+          <div style="padding:34px;text-align:center;color:var(--text3);font-size:13px;line-height:1.7">
+            Search by <strong>seller name</strong>, <strong>lot numbers</strong>, or both — then press <strong>Search</strong>.<br>
+            <span style="font-size:12px">Searching with both boxes empty lists every payable lot in the trade. Turn on <strong>Show unlinked</strong> for the lots that have no bank account yet.</span>
+          </div>
+        </div>
+      </div>
+      </div><!-- /.feat-pay-lotwise -->
     </div>
+
+    <!-- Add a bank account to a seller, from the lot-wise Payments screen.
+         Separate from the classic screen's pay-bank-add-modal so that screen
+         keeps working exactly as it did. -->
+    <div class="modal-bg" id="paylw-bank-add-modal" style="z-index:60"><div class="modal" style="max-width:520px">
+      <h2>🏦 Add bank account</h2>
+      <p style="font-size:12px;color:var(--spice-text-mute);margin-bottom:14px">
+        Saved to <strong id="paylw-bank-add-seller">this seller</strong>'s master record, then available for their lots here and everywhere else.
+      </p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 16px">
+        <div class="fg" style="margin:0"><label>IFSC</label>
+          <input id="paylw-bank-ifsc" style="text-transform:uppercase" placeholder="e.g. HDFC0001234" oninput="payLwBankIfscInput()" onblur="payLwBankIfscLookup()">
+          <div id="paylw-bank-branch-hint" style="font-size:11px;color:var(--text3);margin-top:2px;min-height:14px"></div>
+        </div>
+        <div class="fg" style="margin:0"><label>Account No <span style="color:var(--spice-chili)">*</span></label><input id="paylw-bank-acctnum" inputmode="numeric" autocomplete="off" placeholder="required"></div>
+        <div class="fg" style="margin:0"><label>Bank Name</label><input id="paylw-bank-name" placeholder="e.g. HDFC"></div>
+        <div class="fg" style="margin:0"><label>Holder Name</label><input id="paylw-bank-holder"></div>
+        <div class="fg" style="margin:0"><label>Account Type</label>
+          <select id="paylw-bank-acct-type"><option value="">—</option><option value="Savings">Savings</option><option value="Current">Current</option><option value="O D">O D</option><option value="O C C">O C C</option></select>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;align-self:end;padding-bottom:8px">
+          <input type="checkbox" id="paylw-bank-make-default" style="width:16px;height:16px">
+          Make this the seller's default account
+        </label>
+      </div>
+      <div id="paylw-bank-add-err" style="display:none;margin-top:10px;font-size:12px;color:var(--spice-chili)"></div>
+      <div class="actions">
+        <button class="btn btn-o" type="button" onclick="hideModal('paylw-bank-add-modal')">Cancel</button>
+        <button class="btn btn-a" type="button" id="paylw-bank-add-save" onclick="payLwSaveBankAdd()">Save account</button>
+      </div>
+    </div></div>
 
     <!-- EXPORTS -->
     <div class="tc" id="tc-exports">
@@ -8479,6 +8577,10 @@ async function applyFeatureFlags() {
   // Debit Note gated by flag_debit_note (Settings → Flags).
   document.body.setAttribute('data-feat-debit-note', cfg && on(cfg.flag_debit_note) ? '1' : '0');
   document.body.setAttribute('data-feat-merchants', cfg && on(cfg.flag_merchants) ? '1' : '0');
+  // Payments screen chooser — OFF (default) = classic seller-wise screen,
+  // ON = the lot-wise screen. Only the visible one is ever loaded; see
+  // loadPayAuctions(), which routes on this same attribute.
+  document.body.setAttribute('data-feat-lotwise-payments', cfg && on(cfg.flag_lotwise_payments) ? '1' : '0');
   // Debit Note — Planter gated by flag_debit_note_planter (Settings → Flags).
   document.body.setAttribute('data-feat-debit-note-planter', cfg && on(cfg.flag_debit_note_planter) ? '1' : '0');
   // Price List Mapping — sidebar entry + Lots toolbar button. Default
@@ -8663,7 +8765,11 @@ document.addEventListener('DOMContentLoaded', _applySpiceDevMenu);
 // locked cells greyed out, and EVERY update/delete shows the exact
 // before→after and asks for a second confirmation. Backed by the
 // whitelisted /api/data/* endpoints (admin-only, auto-backup).
-const FD = { entity:null, label:'', columns:[], rows:[], total:0, offset:0, limit:100, q:'', filters:{}, edit:false, undo:null, _t:null };
+// `sel` holds the _rowid_s ticked for a bulk edit. It only ever refers to rows
+// on the page currently shown, so it is cleared whenever the visible set
+// changes (page, search, filter, section) — a stale id would otherwise send an
+// edit to a record the operator can no longer see.
+const FD = { entity:null, label:'', columns:[], rows:[], total:0, offset:0, limit:100, q:'', filters:{}, edit:false, undo:null, sel:new Set(), _t:null };
 // A cheerful colour per section so dad always knows where he is.
 const FD_COLORS = { sellers:'#2563eb', buyers:'#0891b2', auctions:'#7c3aed', lots:'#059669',
   invoices:'#d97706', purchases:'#db2777', bills:'#0d9488', debit_notes:'#dc2626' };
@@ -8708,6 +8814,10 @@ async function loadFixData(){
       td.fd-edit:focus{outline:2px solid var(--fdc);outline-offset:-2px;caret-color:var(--fdc);background:#eff6ff;color:#111}
       td.fd-lock{color:var(--text3,#9ca3af);background:repeating-linear-gradient(45deg,transparent,transparent 6px,#0000000a 6px,#0000000a 12px)}
       td.fd-saved{background:#dcfce7!important;transition:background .5s}
+      /* Bulk-select tick column — narrow, centred, and the box big enough to
+         hit comfortably on a touch screen. */
+      .fd-selcell{text-align:center;width:38px;padding:6px 8px!important}
+      .fd-selcell input{width:17px;height:17px;cursor:pointer;accent-color:#7c3aed}
       td.fd-rowact{text-align:center}
       td.fd-rowact button{border:0;background:transparent;cursor:pointer;font-size:16px;line-height:1}
       td.fd-rowact button:hover{transform:scale(1.15)}
@@ -8750,7 +8860,7 @@ async function fdLoadCatalog(){
   }catch(e){ el.innerHTML = `<div style="color:#dc2626;font-size:13px">${esc(e.message||e)}</div>`; }
 }
 
-function fdOpen(key){ FD.entity=key; FD.offset=0; FD.q=''; FD.filters={}; FD.undo=null; fdLoadCatalog(); fdRender(); }
+function fdOpen(key){ FD.entity=key; FD.offset=0; FD.q=''; FD.filters={}; FD.undo=null; FD.sel.clear(); fdLoadCatalog(); fdRender(); }
 
 // ── Fix Data → SQL Query (read-only) ──────────────────────────
 // A power-user escape hatch for conditions the per-column "contains"
@@ -8834,28 +8944,32 @@ async function fdRender(){
     <label class="fd-switch"><input type="checkbox" ${FD.edit?'checked':''} onchange="FD.edit=this.checked;fdRender()"> Edit mode</label>
     <input class="fd-q" placeholder="Search ${esc(d.label)}…" value="${esc(FD.q)}" oninput="fdSearchChanged(this.value)">
     ${FD.edit?`<button class="fd-btn-add" onclick="fdAddRecord()">+ Add ${esc(noun)}</button>`:''}
+    ${FD.edit?`<button id="fd-bulk" class="fd-btn-add" style="background:#7c3aed" disabled onclick="fdBulkEdit()">✎ Edit selected</button>`:''}
     <button id="fd-undo" class="btn" ${FD.undo?'':'disabled'} onclick="fdUndo()">↶ Undo last change</button>
     <span id="fd-count" style="margin-left:auto;font-size:13px;color:#888;font-variant-numeric:tabular-nums"></span>
     <button id="fd-prev" class="btn" onclick="FD.offset=Math.max(0,FD.offset-FD.limit);fdFetch()">‹</button>
     <button id="fd-next" class="btn" onclick="FD.offset+=FD.limit;fdFetch()">›</button>
   </div>`;
   html += FD.edit
-    ? `<div style="font-size:13px;color:#b45309;margin-bottom:8px">✎ Edit mode is ON. Click a yellow cell to change it; greyed cells are locked for safety. You'll confirm every change.</div>`
+    ? `<div style="font-size:13px;color:#b45309;margin-bottom:8px">✎ Edit mode is ON. Click a yellow cell to change it; greyed cells are locked for safety. You'll confirm every change.<br>To change the same field on several records at once, tick their boxes on the left and press <b>Edit selected</b>.</div>`
     : `<div style="font-size:13px;color:#888;margin-bottom:8px">Viewing only — nothing can be changed. Switch on <b>Edit mode</b> above to add, edit or delete.</div>`;
+  // In edit mode each row gains two leading cells: the bulk-select tick box
+  // and the delete button.
   html += `<div class="fd-scroll"><table class="fd-grid"><thead>
-    <tr class="fd-hrow">${FD.edit?'<th></th>':''}${cols.map(c=>`<th>${esc(c.label)}</th>`).join('')}</tr>
-    <tr class="fd-filterrow">${FD.edit?'<th></th>':''}${cols.map(c=>
+    <tr class="fd-hrow">${FD.edit?'<th class="fd-selcell"><input type="checkbox" id="fd-selall" title="Select every row on this page" onclick="fdToggleSelectAll(this.checked)"></th><th></th>':''}${cols.map(c=>`<th>${esc(c.label)}</th>`).join('')}</tr>
+    <tr class="fd-filterrow">${FD.edit?'<th></th><th></th>':''}${cols.map(c=>
       `<th><span class="fd-fwrap${FD.filters[c.name]?' has-val':''}"><input class="fd-fcell" data-col="${esc(c.name)}" placeholder="filter…" value="${esc(FD.filters[c.name]||'')}" oninput="fdFilterChanged('${esc(c.name)}',this.value,this)"><button class="fd-fclear" title="Clear filter" tabindex="-1" onmousedown="event.preventDefault()" onclick="fdClearFilter('${esc(c.name)}')">✕</button></span></th>`).join('')}</tr>
     </thead><tbody id="fd-tbody">${fdRowsHtml(d.rows)}</tbody></table></div>`;
   view.innerHTML = html;
   fdUpdateCount();
+  fdUpdateSelUi();
 }
 
 // Render just the data rows (re-used when filtering/searching/paging so we
 // don't rebuild — and lose focus on — the filter inputs).
 function fdRowsHtml(rows){
   const cols = FD.columns;
-  if(!rows.length) return `<tr><td colspan="${cols.length+1}" style="padding:16px;color:#888">No records match.</td></tr>`;
+  if(!rows.length) return `<tr><td colspan="${cols.length+(FD.edit?2:1)}" style="padding:16px;color:#888">No records match.</td></tr>`;
   return rows.map(r=>{
     const rid = r._rowid_;
     const tds = cols.map(c=>{
@@ -8864,9 +8978,117 @@ function fdRowsHtml(rows){
       if(FD.edit) return `<td class="fd-edit" contenteditable spellcheck="false" data-col="${esc(c.name)}" data-label="${esc(c.label)}" data-type="${c.type}" data-rowid="${rid}" data-orig="${esc(String(isNull?'':v))}" data-wasnull="${isNull?1:0}" onblur="fdCellBlur(this)">${isNull?'':esc(String(v))}</td>`;
       return `<td class="${isNull?'fd-null':''}">${isNull?'—':esc(String(v))}</td>`;
     }).join('');
-    const act = FD.edit ? `<td class="fd-rowact"><button title="Delete this record" onclick="fdDelete(${rid})">🗑</button></td>` : '';
+    const act = FD.edit
+      ? `<td class="fd-selcell"><input type="checkbox" class="fd-selbox" data-rowid="${rid}" ${FD.sel.has(rid)?'checked':''} onclick="fdToggleSelect(${rid},this.checked)"></td>`
+        + `<td class="fd-rowact"><button title="Delete this record" onclick="fdDelete(${rid})">🗑</button></td>`
+      : '';
     return `<tr data-rowid="${rid}">${act}${tds}</tr>`;
   }).join('');
+}
+
+// ── Bulk edit: same field, same new value, many rows ──────────
+// Selection is per-page by design (see FD.sel). Ticking rows enables the
+// "Edit selected" button; the edit itself goes through one bulk request so
+// the whole batch is a single backup and a single undo step.
+function fdToggleSelect(rid, on){
+  if(on) FD.sel.add(rid); else FD.sel.delete(rid);
+  fdUpdateSelUi();
+}
+function fdToggleSelectAll(on){
+  document.querySelectorAll('#fd-tbody .fd-selbox').forEach(cb=>{
+    cb.checked = on;
+    const rid = Number(cb.dataset.rowid);
+    if(on) FD.sel.add(rid); else FD.sel.delete(rid);
+  });
+  fdUpdateSelUi();
+}
+// Refresh the button + select-all tick without re-rendering the grid, so the
+// individual checkboxes keep their state.
+function fdUpdateSelUi(){
+  const n = FD.sel.size;
+  const b = document.getElementById('fd-bulk');
+  if(b){ b.disabled = !n; b.textContent = n ? `✎ Edit selected (${n})` : '✎ Edit selected'; }
+  const all = document.getElementById('fd-selall');
+  if(all){
+    const boxes = document.querySelectorAll('#fd-tbody .fd-selbox');
+    const checked = document.querySelectorAll('#fd-tbody .fd-selbox:checked').length;
+    all.checked = boxes.length > 0 && checked === boxes.length;
+    all.indeterminate = checked > 0 && checked < boxes.length;
+  }
+}
+
+function fdBulkEdit(){
+  const rids = Array.from(FD.sel);
+  if(!rids.length){ toast('Tick the rows you want to change first'); return; }
+  const cols = FD.columns.filter(c=>!c.locked);
+  if(!cols.length){ toast('Every field in this section is locked'); return; }
+  const bg = document.createElement('div'); bg.className='fd-modal-bg';
+  bg.innerHTML = `<div class="fd-modal" style="max-width:520px">
+    <strong style="font-size:17px">Edit ${rids.length} selected record${rids.length===1?'':'s'}</strong>
+    <div style="font-size:13px;color:#888;margin:6px 0 14px">Pick one field and the value to put in it. The same value is written to every selected record — you'll see exactly what changes before it's saved.</div>
+    <label style="font-size:12.5px;color:var(--text3,#6b7280);display:block;margin-bottom:10px">Field to change
+      <select class="fd-in" id="fd-bulk-col">${cols.map(c=>`<option value="${esc(c.name)}" data-type="${esc(c.type)}">${esc(c.label)}</option>`).join('')}</select>
+    </label>
+    <label style="font-size:12.5px;color:var(--text3,#6b7280);display:block">New value <span style="color:#9ca3af">(leave blank to empty the field)</span>
+      <input class="fd-in" id="fd-bulk-val">
+    </label>
+    <div style="margin-top:18px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" id="fd-bulk-x">Cancel</button>
+      <button class="fd-btn-add" style="background:#7c3aed" id="fd-bulk-ok">Review change</button>
+    </div></div>`;
+  document.body.appendChild(bg);
+  bg.addEventListener('click', e=>{ if(e.target===bg) bg.remove(); });
+  bg.querySelector('#fd-bulk-x').onclick = ()=>bg.remove();
+  bg.querySelector('#fd-bulk-ok').onclick = async ()=>{
+    const selEl = bg.querySelector('#fd-bulk-col');
+    const col   = selEl.value;
+    const type  = selEl.selectedOptions[0].dataset.type;
+    const label = (FD.columns.find(c=>c.name===col)||{}).label || col;
+    const text  = bg.querySelector('#fd-bulk-val').value.trim();
+    if(type==='number' && text!=='' && isNaN(Number(text.replace(/,/g,'')))){
+      toast(`${label} must be a number`); return;
+    }
+    // Group the picked rows by their CURRENT value — it drives both the
+    // "from" side of the confirmation and the undo, which restores each
+    // group to what it held rather than to one blanket value.
+    const groups = new Map();
+    for(const r of FD.rows){
+      if(!FD.sel.has(r._rowid_)) continue;
+      const prev = r[col]==null ? null : String(r[col]);
+      const key = prev==null ? ' null' : prev;
+      if(!groups.has(key)) groups.set(key, { prev, rids:[] });
+      groups.get(key).rids.push(r._rowid_);
+    }
+    const disp = v => (v==null || v==='') ? '(empty)' : v;
+    const newDisp = text==='' ? '(empty)' : text;
+    const from = Array.from(groups.values())
+      .sort((a,b)=>b.rids.length-a.rids.length).slice(0,5)
+      .map(g=>`${esc(disp(g.prev))} <span style="color:#888">× ${g.rids.length}</span>`).join('<br>');
+    const more = groups.size>5 ? `<br><span style="color:#888">…and ${groups.size-5} other value${groups.size-5===1?'':'s'}</span>` : '';
+    const ok = await fdConfirm({
+      title:`Change ${label} on ${rids.length} record${rids.length===1?'':'s'}?`,
+      body:`<div class="fd-fromto"><table>
+        <tr><td style="color:#888;vertical-align:top">From</td><td>${from}${more}</td></tr>
+        <tr><td style="color:#888">To</td><td><b style="color:#7c3aed">${esc(newDisp)}</b></td></tr></table></div>
+        <div style="color:#b45309;font-size:13px;margin-top:10px">This rewrites every selected record. A backup is saved first.</div>`,
+      confirmLabel:'Yes, change them all'
+    });
+    if(!ok) return;
+    const send = text==='' ? (type==='number' ? null : '') : text;
+    try{
+      await j(`/api/data/${encodeURIComponent(FD.entity)}/bulk`,
+        { method:'PUT', body: JSON.stringify({ rowids: rids, values:{ [col]: send } }) });
+      // Undo restores each group to its own previous value, so a bulk edit
+      // over mixed values can be walked back exactly.
+      FD.undo = { bulk:true, col, label, groups: Array.from(groups.values()) };
+      bg.remove();
+      FD.sel.clear();
+      toast(`${label} updated on ${rids.length} record${rids.length===1?'':'s'} — backup saved`);
+      await fdFetch();
+      const ub = document.getElementById('fd-undo'); if(ub) ub.disabled = false;
+    }catch(e){ toast('Could not save: '+(e.message||e)); }
+  };
+  setTimeout(()=>{ const f=bg.querySelector('#fd-bulk-val'); if(f) f.focus(); }, 30);
 }
 
 // Re-fetch the current page (after search/filter/page change) and swap only
@@ -8875,8 +9097,12 @@ async function fdFetch(){
   let d;
   try{ d = await fdQuery(); }catch(e){ toast('Search failed: '+(e.message||e)); return; }
   FD.rows=d.rows; FD.total=d.total;
+  // The visible rows just changed, so any ticked selection no longer refers to
+  // what's on screen — drop it rather than carry invisible rows into a bulk edit.
+  FD.sel.clear();
   const tb = document.getElementById('fd-tbody'); if(tb) tb.innerHTML = fdRowsHtml(d.rows);
   fdUpdateCount();
+  fdUpdateSelUi();
 }
 function fdUpdateCount(){
   const from = FD.total ? FD.offset+1 : 0, to = Math.min(FD.offset+FD.limit, FD.total);
@@ -8992,6 +9218,22 @@ async function fdCellBlur(td){
 async function fdUndo(){
   if(!FD.undo) return;
   const u = FD.undo;
+  // Bulk edits are walked back group by group, each restored to the value it
+  // actually held — one request per distinct previous value, not per row.
+  if(u.bulk){
+    const n = u.groups.reduce((s,g)=>s+g.rids.length,0);
+    const ok = await fdConfirm({ title:`Undo change to ${u.label} on ${n} record${n===1?'':'s'}?`,
+      body:`This puts <b>${esc(u.label)}</b> back to what each record held before.`, confirmLabel:'Undo it' });
+    if(!ok) return;
+    try{
+      for(const g of u.groups){
+        await j(`/api/data/${encodeURIComponent(FD.entity)}/bulk`,
+          { method:'PUT', body: JSON.stringify({ rowids:g.rids, values:{ [u.col]: g.prev } }) });
+      }
+      FD.undo = null; toast('Bulk change undone'); fdRender();
+    }catch(e){ toast('Undo failed: '+(e.message||e)); }
+    return;
+  }
   const ok = await fdConfirm({ title:`Undo change to ${u.label}?`,
     body:`This puts <b>${esc(u.label)}</b> back to its previous value.`, confirmLabel:'Undo it' });
   if(!ok) return;
@@ -14163,7 +14405,8 @@ async function leSaveReservedBatch(lotList){
       auction_id: parseInt(aid, 10), lot_no: lotNo, trader_id: s.id, branch, grade,
       bags: 0, litre: 0, qty: 0, sample_wt: 0, gross_wt: 0, moisture: '', crpt: '',
       reserved_price: reservedPrice, immediate_payment: immediate, reserved: 1,
-      state: s.pstate || getDefaultBusinessState(),
+      // `state` (the TRADE's state) is derived server-side from the auction —
+      // see the note in leSaveLot(). Only the seller's own `pstate` travels here.
       name: s.name || '', padd: s.padd || '', ppla: s.ppla || '', ppin: s.pin || '',
       pstate: s.pstate || '', cr: s.cr || '', pan: s.pan || '', tel: s.tel || '', aadhar: s.aadhar || '',
       bank_id: _le.selectedBankId || null,
@@ -14274,7 +14517,12 @@ async function leSaveLot(){
       // Reservation flag (0/1) — held lot: distinct colour, out of
       // booked/invoice totals, blocks the lot number for other sellers.
       reserved: isReserved,
-      state: _le.selectedSeller.pstate || getDefaultBusinessState(),
+      // NOTE: `state` (the TRADE's state) is deliberately NOT sent. It used to
+      // be filled from the seller's pstate, which meant every EDIT re-stamped
+      // the lot with the seller's state — a Kerala seller at a Tamil Nadu
+      // trade flipped the lot to KERALA, and vice versa. The server derives it
+      // from the auction now (lotStateForAuction) and ignores/strips any value
+      // sent here. The seller's own state still travels as `pstate` below.
       // Pull seller's denormalised fields onto the lot row so existing
       // listings (Lots tab, exports) work without a join.
       name: _le.selectedSeller.name || '',
@@ -22151,7 +22399,13 @@ async function doGenerateAll(){
   }catch(e){showError(e)}
   finally{submitBtn.disabled=false;submitBtn.textContent='Generate All'}
 }
-function loadPayAuctions(){fillAucSelect('pay-auction').then(()=>loadPayments())}
+// The Payments tab holds two alternative screens; flag_lotwise_payments
+// picks one (CSS shows it, this loader fills it). Only the visible screen
+// is ever loaded, so the hidden one costs nothing.
+function loadPayAuctions(){
+  if(document.body.getAttribute('data-feat-lotwise-payments')==='1') return loadPayLotwise();
+  return fillAucSelect('pay-auction').then(()=>loadPayments());
+}
 function loadExpAuctions(){
   fillAucSelect('exp-auction').then(() => { renderExportBtns(); updateExportCenterVisibility(); });
   fillAucSelect('dbf-auction');
@@ -27175,6 +27429,372 @@ function _payRefreshUndoButton() {
   } else {
     btn.style.display = 'none';
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// LOT-WISE PAYMENTS SCREEN (flag_lotwise_payments)
+// ══════════════════════════════════════════════════════════════
+// The alternative to the seller-wise screen above. Everything here is
+// prefixed payLw*/_payLw* and touches no state the classic screen owns,
+// so flipping the flag can never disturb it.
+//
+// Search-driven: `lots` stays empty until the operator presses Search.
+// The bank column writes lots.bank_id through the same /api/lots/bulk-bank
+// endpoint the classic screen's lot modal uses, so a change made here shows
+// up in the payment statement, the bank export and Tally identically.
+const _payLwState = {
+  aid: 0,
+  searched: false,       // has a search run? drives the empty-state copy
+  lots: [],
+  banksByTrader: {},
+  legacyByTrader: {},
+  addTraderId: null,     // seller the Add-account modal is currently for
+  addBranch: '',         // branch resolved by the IFSC lookup
+};
+
+function payLwOnAuctionChange() {
+  // A trade change invalidates the result set — clear it rather than leaving
+  // the previous trade's lots on screen under a new trade's heading.
+  _payLwState.aid = Number(document.getElementById('paylw-auction')?.value || 0);
+  _payLwState.lots = [];
+  _payLwState.searched = false;
+  _payLwRender();
+}
+
+function loadPayLotwise() {
+  return fillAucSelect('paylw-auction').then(() => {
+    _payLwState.aid = Number(document.getElementById('paylw-auction')?.value || 0);
+    _payLwState.lots = [];
+    _payLwState.searched = false;
+    _payLwRender();
+  });
+}
+
+function payLwClear() {
+  ['paylw-seller', 'paylw-lots'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  const u = document.getElementById('paylw-unlinked'); if (u) u.checked = false;
+  _payLwState.lots = [];
+  _payLwState.searched = false;
+  _payLwRender();
+}
+
+async function payLwSearch() {
+  const aid = Number(document.getElementById('paylw-auction')?.value || 0);
+  if (!aid) { alert('Select a trade first'); return; }
+  _payLwState.aid = aid;
+  const seller = (document.getElementById('paylw-seller')?.value || '').trim();
+  const lots   = (document.getElementById('paylw-lots')?.value || '').trim();
+  // The toggle is a two-way filter, never "all": ON = only lots with no
+  // account, OFF = only lots that have one.
+  const link = document.getElementById('paylw-unlinked')?.checked ? 'unlinked' : 'linked';
+  const qs = new URLSearchParams({ link });
+  if (seller) qs.set('seller', seller);
+  if (lots)   qs.set('lots', lots);
+  const body = document.getElementById('paylw-body');
+  if (body) body.innerHTML = '<div style="padding:30px;text-align:center;color:var(--text3)">Searching…</div>';
+  try {
+    const d = await j(`/api/payments/lots/${aid}?${qs.toString()}`);
+    _payLwState.lots = d.lots || [];
+    _payLwState.banksByTrader = d.banksByTrader || {};
+    _payLwState.legacyByTrader = d.legacyByTrader || {};
+    _payLwState.totalMatched = d.totalMatched || 0;
+    _payLwState.unlinkedCount = d.unlinkedCount || 0;
+    _payLwState.searched = true;
+    _payLwRender();
+  } catch (e) {
+    if (body) body.innerHTML = `<div style="padding:30px;text-align:center;color:var(--spice-chili)">Search failed: ${esc(e.message || String(e))}</div>`;
+  }
+}
+
+// Label for one account, e.g. "12345678 · HDFC · Savings · HDFC0001234 ★".
+function _payLwBankLabel(b) {
+  return [b.acctnum, b.bank_name, b.account_type, b.ifsc].filter(Boolean).join(' · ') + (b.is_default ? ' ★' : '');
+}
+
+// <option> list for a lot's bank picker. The blank option means "follow the
+// seller's default", which is exactly what a lot with no bank_id already does.
+function _payLwBankOptions(lot) {
+  const banks = _payLwState.banksByTrader[lot.trader_id] || [];
+  const sel = (lot.bank_id == null) ? '' : String(lot.bank_id);
+  const def = banks.find(b => b.is_default) || banks[0] || null;
+  let h = `<option value=""${sel === '' ? ' selected' : ''}>`
+        + (def ? `Seller default · ${esc(_payLwBankLabel(def))}` : 'Seller default (none on file)')
+        + `</option>`;
+  for (const b of banks) {
+    h += `<option value="${b.id}"${sel === String(b.id) ? ' selected' : ''}>${esc(_payLwBankLabel(b))}</option>`;
+  }
+  // An explicit bank_id whose account has since been deleted — kept visible
+  // and selected rather than silently reading as "follows the default".
+  if (sel && !banks.some(b => String(b.id) === sel)) {
+    h += `<option value="${esc(sel)}" selected>⚠ account removed (id ${esc(sel)})</option>`;
+  }
+  return h;
+}
+
+function _payLwRender() {
+  const body = document.getElementById('paylw-body');
+  const summary = document.getElementById('paylw-summary');
+  if (!body) return;
+  if (!_payLwState.searched) {
+    if (summary) summary.style.display = 'none';
+    body.innerHTML = `
+      <div style="padding:34px;text-align:center;color:var(--text3);font-size:13px;line-height:1.7">
+        Search by <strong>seller name</strong>, <strong>lot numbers</strong>, or both — then press <strong>Search</strong>.<br>
+        <span style="font-size:12px">Searching with both boxes empty lists every payable lot in the trade. Turn on <strong>Show unlinked</strong> for the lots that have no bank account yet.</span>
+      </div>`;
+    return;
+  }
+  const lots = _payLwState.lots;
+  const showingUnlinked = !!document.getElementById('paylw-unlinked')?.checked;
+  if (summary) {
+    const payable = lots.reduce((s, l) => s + (Number(l.payable) || 0), 0);
+    const qty = lots.reduce((s, l) => s + (Number(l.qty) || 0), 0);
+    const sellers = new Set(lots.map(l => String(l.name || '').trim().toUpperCase())).size;
+    // Lots whose seller isn't linked to a master record can't be given an
+    // account from here at all — call that out rather than leaving it to the
+    // per-row tooltip, since the fix lives on another screen.
+    const noSeller = lots.filter(l => !l.trader_id).length;
+    summary.style.display = '';
+    summary.innerHTML =
+      `<strong>${lots.length}</strong> lot${lots.length === 1 ? '' : 's'} · `
+      + `<strong>${sellers}</strong> seller${sellers === 1 ? '' : 's'} · `
+      + `Qty <strong>${fmtI(qty, 3)}</strong> · `
+      + `Payable <strong style="color:var(--spice-cardamom-dk)">₹${fmtI(payable, 2)}</strong>`
+      + (showingUnlinked
+          ? ` <span style="color:var(--spice-chili);font-weight:600">· showing lots with NO bank account</span>`
+          : (_payLwState.unlinkedCount
+              ? ` <span style="color:var(--spice-chili)">· ${_payLwState.unlinkedCount} more matching lot${_payLwState.unlinkedCount === 1 ? ' has' : 's have'} no bank account — turn on “Show unlinked”</span>`
+              : ''))
+      + (noSeller
+          ? `<div style="margin-top:5px;font-size:11.5px;color:var(--text3)">${noSeller} lot${noSeller === 1 ? '' : 's'} ${noSeller === 1 ? 'has' : 'have'} no seller master record — link the seller in Lot Entry before an account can be attached.</div>`
+          : '');
+  }
+  if (!lots.length) {
+    body.innerHTML = `<div style="padding:30px;text-align:center;color:var(--text3);font-size:13px">`
+      + (showingUnlinked
+          ? `No unlinked lots — every matching lot has a bank account. ✓`
+          : `No lots matched. Check the seller name / lot numbers, or turn on <strong>Show unlinked</strong> to see lots with no bank account.`)
+      + `</div>`;
+    return;
+  }
+  // Re-routing a lot writes lots.bank_id, which needs lot_write. Without it
+  // the picker renders as plain text rather than a control that 403s on use.
+  const canWrite = document.body.getAttribute('data-perm-lot-write') === '1';
+  const rows = lots.map(l => {
+    const banks = _payLwState.banksByTrader[l.trader_id] || [];
+    const legacy = _payLwState.legacyByTrader[l.trader_id];
+    let bankCell;
+    if (!l.trader_id) {
+      // Lot has no seller master record — nothing to hang an account off.
+      bankCell = `<span style="color:var(--spice-chili);font-size:11.5px" title="This lot's seller isn't linked to a seller master record, so no account can be attached. Fix the lot's seller in Lot Entry first.">⚠ no seller record</span>`;
+    } else if (banks.length && !canWrite) {
+      const eff = banks.find(b => b.id === l.bank_id) || banks.find(b => b.is_default) || banks[0];
+      bankCell = `<span style="font-family:monospace;font-size:11px;color:var(--text2)">${esc(_payLwBankLabel(eff))}`
+        + (l.bank_id == null ? ` <span style="font-style:italic;color:var(--text3)">(seller default)</span>` : '') + `</span>`;
+    } else if (banks.length) {
+      bankCell = `<select class="paylw-bank" onchange="payLwBankChange(this, ${l.id})"`
+        + ` title="Bank account this lot is paid into. Blank = follow the seller's default."`
+        + ` style="width:100%;max-width:340px;padding:5px 7px;border:1px solid var(--border);border-radius:6px;font-size:11.5px;background:#fff${l.bank_id == null ? ';color:var(--text3);font-style:italic' : ''}">`
+        + _payLwBankOptions(l) + `</select>`;
+    } else if (legacy) {
+      // Legacy account on the traders row: the export routes to it, but there
+      // is no trader_banks row for a lot's bank_id to point at.
+      const txt = [legacy.acctnum, legacy.holder_name, legacy.ifsc].filter(Boolean).join(' · ');
+      bankCell = `<span style="font-family:monospace;font-size:11px;color:var(--text3);font-style:italic" title="Legacy account held on the seller record itself. Add a proper account to route individual lots.">${esc(txt)} (legacy)</span>`;
+    } else {
+      bankCell = `<span style="color:var(--spice-chili);font-size:11.5px;font-weight:600">⚠ no account</span>`;
+    }
+    // JSON.stringify quotes/escapes the name for the JS call; esc() then makes
+    // it safe as an HTML attribute value (a seller name is master data, but it
+    // is still user-entered text).
+    const addBtn = l.trader_id
+      ? `<button class="btn btn-o needs-lot-write" style="padding:3px 8px;font-size:11px;font-weight:600;white-space:nowrap"
+           onclick="payLwOpenBankAdd(${l.trader_id}, ${esc(JSON.stringify(String(l.name || '')))})"
+           title="Add a bank account to this seller">+ Add</button>`
+      : '';
+    const rowStyle = l.linked ? '' : ' style="background:#FEF2F2"';
+    return `<tr${rowStyle}>
+      <td>${esc(l.name || '')}</td>
+      <td style="font-family:monospace;font-weight:600">${esc(String(l.lot_no || ''))}</td>
+      <td style="text-align:right">${fmtI(Number(l.qty) || 0, 3)}</td>
+      <td>${esc(l.branch || '')}</td>
+      <td><div style="display:flex;gap:6px;align-items:center">${bankCell}${addBtn}</div></td>
+      <td style="text-align:right;font-weight:700;color:var(--spice-cardamom-dk)">${fmtI(Number(l.payable) || 0, 2)}</td>
+    </tr>`;
+  }).join('');
+  body.innerHTML = `
+    <div style="overflow-x:auto">
+      <table style="width:100%">
+        <thead><tr>
+          <th>Seller</th><th>Lot</th><th style="text-align:right">Qty</th><th>Branch</th>
+          <th style="min-width:320px">Bank</th><th style="text-align:right">Payable</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+// Per-lot bank change. Writes lots.bank_id — the one column every payment
+// consumer reads — via the same endpoint the classic screen's lot modal uses.
+async function payLwBankChange(el, lotId) {
+  const lot = _payLwState.lots.find(l => l.id === lotId);
+  const prev = lot ? lot.bank_id : null;
+  try {
+    await j('/api/lots/bulk-bank', {
+      method: 'POST',
+      body: JSON.stringify({ ids: [lotId], bank_id: el.value || null }),
+    });
+    if (lot) lot.bank_id = el.value ? Number(el.value) : null;
+    // Blank (following the seller's default) renders muted; an explicit pick
+    // renders normally — same visual language as the classic lot modal.
+    el.style.color = el.value ? '' : 'var(--text3)';
+    el.style.fontStyle = el.value ? '' : 'italic';
+    toast('Bank account updated for this lot');
+  } catch (e) {
+    el.value = (prev == null ? '' : String(prev));   // revert the picker
+    toast(`Could not change the bank account: ${e.message || e}`);
+  }
+}
+
+// ── Add a bank account to a seller, from this screen ─────────────
+function payLwOpenBankAdd(traderId, sellerName) {
+  _payLwState.addTraderId = traderId;
+  _payLwState.addBranch = '';
+  const who = document.getElementById('paylw-bank-add-seller');
+  if (who) who.textContent = sellerName || 'this seller';
+  ['paylw-bank-ifsc', 'paylw-bank-acctnum', 'paylw-bank-name', 'paylw-bank-holder'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  const type = document.getElementById('paylw-bank-acct-type'); if (type) type.value = '';
+  // Default-on when the seller has no account yet — a lone non-default
+  // account leaves every one of their lots routing nowhere.
+  const existing = (_payLwState.banksByTrader[traderId] || []).length;
+  const mk = document.getElementById('paylw-bank-make-default'); if (mk) mk.checked = !existing;
+  const hint = document.getElementById('paylw-bank-branch-hint'); if (hint) hint.textContent = '';
+  const err = document.getElementById('paylw-bank-add-err'); if (err) { err.style.display = 'none'; err.textContent = ''; }
+  showModal('paylw-bank-add-modal');
+  setTimeout(() => { const f = document.getElementById('paylw-bank-ifsc'); if (f) f.focus(); }, 60);
+}
+let _payLwIfscTimer = null;
+function payLwBankIfscInput() {
+  const el = document.getElementById('paylw-bank-ifsc');
+  if (!el || el.value.trim().length < 11) return;
+  clearTimeout(_payLwIfscTimer);
+  _payLwIfscTimer = setTimeout(payLwBankIfscLookup, 350);
+}
+// IFSC → bank/branch auto-fill. Same Razorpay lookup + shared cache the
+// seller form and the classic screen's add-account modal use.
+async function payLwBankIfscLookup() {
+  const el = document.getElementById('paylw-bank-ifsc');
+  const hint = document.getElementById('paylw-bank-branch-hint');
+  const nameEl = document.getElementById('paylw-bank-name');
+  if (!el) return;
+  const ifsc = el.value.trim().toUpperCase();
+  _payLwState.addBranch = '';
+  if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) { if (hint) hint.textContent = ''; return; }
+  let data;
+  if (_ifscLookupCache.has(ifsc)) data = _ifscLookupCache.get(ifsc);
+  else {
+    try { const r = await fetch('https://ifsc.razorpay.com/' + encodeURIComponent(ifsc)); data = r.ok ? await r.json() : null; }
+    catch (_) { data = null; }
+    _ifscLookupCache.set(ifsc, data);
+  }
+  if (!data) { if (hint) hint.textContent = ''; return; }
+  _payLwState.addBranch = data.BRANCH || '';
+  if (nameEl && data.BANK && !nameEl.value.trim()) nameEl.value = data.BANK;
+  if (hint) hint.textContent = _payLwState.addBranch ? 'Branch: ' + _payLwState.addBranch : '';
+}
+async function payLwSaveBankAdd() {
+  const err = document.getElementById('paylw-bank-add-err');
+  const showErr = (m) => { if (err) { err.textContent = m; err.style.display = 'block'; } };
+  const v = (id) => (document.getElementById(id) || {}).value || '';
+  const traderId = _payLwState.addTraderId;
+  if (!traderId) { showErr('No seller selected.'); return; }
+  const acctnum = v('paylw-bank-acctnum').trim();
+  if (!acctnum) { showErr('Enter the account number.'); return; }
+  const btn = document.getElementById('paylw-bank-add-save');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await j(`/api/traders/${traderId}/banks`, {
+      method: 'POST',
+      body: JSON.stringify({
+        // acctnum stays a STRING end to end — a long account number sent as a
+        // number binds as REAL under sql.js and stores as "9790744444.0".
+        acctnum,
+        ifsc:         v('paylw-bank-ifsc').trim().toUpperCase(),
+        bank_name:    v('paylw-bank-name').trim(),
+        branch:       _payLwState.addBranch,
+        holder_name:  v('paylw-bank-holder').trim(),
+        account_type: v('paylw-bank-acct-type').trim(),
+        make_default: !!(document.getElementById('paylw-bank-make-default') || {}).checked,
+      }),
+    });
+    hideModal('paylw-bank-add-modal');
+    // The endpoint hands back the seller's full account list — fold it in so
+    // every row of theirs re-renders with the new account available.
+    if (r && Array.isArray(r.banks)) {
+      _payLwState.banksByTrader[traderId] = r.banks;
+      delete _payLwState.legacyByTrader[traderId];
+      for (const l of _payLwState.lots) if (l.trader_id === traderId) l.linked = true;
+    }
+    _payLwRender();
+    toast(r && r.deduped
+      ? 'That account was already on this seller'
+      : 'Bank account added. Their lots now route to it — pick it per lot to override.');
+  } catch (e) {
+    showErr(`Could not save the account: ${e.message || e}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ── Export Bank Payment — exactly the lots on screen ─────────────
+// Posts the listed lots as per-seller lot picks, so getBankPaymentData
+// re-sums over only those lots and emits one payment line per bank account
+// they route to. Deliberately independent of the classic screen's
+// exported-lot tracking: this screen pays what you searched for.
+async function payLwExportBank() {
+  const aid = _payLwState.aid || Number(document.getElementById('paylw-auction')?.value || 0);
+  if (!aid) { alert('Select a trade first'); return; }
+  const lots = _payLwState.lots;
+  if (!lots.length) { alert('Search for the lots you want to pay first — the export covers exactly the lots listed.'); return; }
+  const unlinked = lots.filter(l => !l.linked);
+  if (unlinked.length && !confirm(
+      `${unlinked.length} of the ${lots.length} listed lot${lots.length === 1 ? '' : 's'} ${unlinked.length === 1 ? 'has' : 'have'} no bank account.\n\n`
+    + `Those rows will export with a blank account number and IFSC, which the bank will reject.\n\n`
+    + `Export anyway?`)) return;
+  // { SELLER NAME: [lot_no, ...] } — the shape the export endpoint's lot
+  // filter takes. Names are matched case-insensitively server-side.
+  const byS = {};
+  for (const l of lots) {
+    const n = String(l.name || '').trim();
+    if (!n) continue;
+    (byS[n] = byS[n] || []).push(String(l.lot_no || ''));
+  }
+  const names = Object.keys(byS);
+  await withOverlay(`Exporting bank payment — ${lots.length} lot${lots.length === 1 ? '' : 's'}…`, async () => {
+    const r = await fetch(B + `/api/exports/bank_payment/${aid}`, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names, lots: byS, format: 'xlsx' }),
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      alert(`Export failed: ${e.error || ('HTTP ' + r.status)}`);
+      return;
+    }
+    const blob = await r.blob();
+    let filename = `bank_payment_lots_${aid}.xlsx`;
+    const cd = r.headers.get('Content-Disposition') || '';
+    const fm = /filename="?([^";]+)"?/i.exec(cd);
+    if (fm) filename = fm[1];
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toast(`Exported ${lots.length} lot${lots.length === 1 ? '' : 's'} across ${names.length} seller${names.length === 1 ? '' : 's'}`);
+  });
 }
 
 // Enable/disable a row's Advance input from its ✎ checkbox. Advance is
