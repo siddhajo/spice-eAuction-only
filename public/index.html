@@ -5271,7 +5271,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           </label>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
-            <button class="btn btn-a" style="height:38px;padding:0 16px;font-weight:600" onclick="payLwExportBank()" title="Export the RTGS/NEFT file for exactly the lots listed below.">📤 Export Bank Payment</button>
+            <button class="btn btn-a" id="paylw-export-btn" style="height:38px;padding:0 16px;font-weight:600" onclick="payLwExportBank()" title="Export the RTGS/NEFT file for the ticked lots. A fresh search ticks them all — untick any you don't want to pay yet.">📤 Export Bank Payment</button>
           </div>
         </div>
 
@@ -27450,6 +27450,11 @@ const _payLwState = {
   legacyByTrader: {},
   addTraderId: null,     // seller the Add-account modal is currently for
   addBranch: '',         // branch resolved by the IFSC lookup
+  // Ticked lot ids — what Export Bank Payment actually pays. Held in state
+  // rather than read off the DOM so a re-render (adding an account, say)
+  // doesn't silently throw the operator's selection away. A fresh search
+  // ticks everything, so "search then export" needs no extra clicks.
+  selected: new Set(),
 };
 
 function payLwOnAuctionChange() {
@@ -27457,6 +27462,7 @@ function payLwOnAuctionChange() {
   // the previous trade's lots on screen under a new trade's heading.
   _payLwState.aid = Number(document.getElementById('paylw-auction')?.value || 0);
   _payLwState.lots = [];
+  _payLwState.selected = new Set();
   _payLwState.searched = false;
   _payLwRender();
 }
@@ -27465,6 +27471,7 @@ function loadPayLotwise() {
   return fillAucSelect('paylw-auction').then(() => {
     _payLwState.aid = Number(document.getElementById('paylw-auction')?.value || 0);
     _payLwState.lots = [];
+    _payLwState.selected = new Set();
     _payLwState.searched = false;
     _payLwRender();
   });
@@ -27474,6 +27481,7 @@ function payLwClear() {
   ['paylw-seller', 'paylw-lots'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   const u = document.getElementById('paylw-unlinked'); if (u) u.checked = false;
   _payLwState.lots = [];
+  _payLwState.selected = new Set();
   _payLwState.searched = false;
   _payLwRender();
 }
@@ -27500,6 +27508,9 @@ async function payLwSearch() {
     _payLwState.totalMatched = d.totalMatched || 0;
     _payLwState.unlinkedCount = d.unlinkedCount || 0;
     _payLwState.searched = true;
+    // A new result set starts fully ticked — the common case is "export what
+    // I just searched for", and unticking a few is less work than ticking all.
+    _payLwState.selected = new Set(_payLwState.lots.map(l => l.id));
     _payLwRender();
   } catch (e) {
     if (body) body.innerHTML = `<div style="padding:30px;text-align:center;color:var(--spice-chili)">Search failed: ${esc(e.message || String(e))}</div>`;
@@ -27542,10 +27553,13 @@ function _payLwRender() {
         Search by <strong>seller name</strong>, <strong>lot numbers</strong>, or both — then press <strong>Search</strong>.<br>
         <span style="font-size:12px">Searching with both boxes empty lists every payable lot in the trade. Turn on <strong>Show unlinked</strong> for the lots that have no bank account yet.</span>
       </div>`;
+    _payLwRefreshSelection();
     return;
   }
   const lots = _payLwState.lots;
   const showingUnlinked = !!document.getElementById('paylw-unlinked')?.checked;
+  // Drop ids that are no longer in the result (a re-search narrowed it).
+  _payLwState.selected = new Set([..._payLwState.selected].filter(id => lots.some(l => l.id === id)));
   if (summary) {
     const payable = lots.reduce((s, l) => s + (Number(l.payable) || 0), 0);
     const qty = lots.reduce((s, l) => s + (Number(l.qty) || 0), 0);
@@ -27567,7 +27581,9 @@ function _payLwRender() {
               : ''))
       + (noSeller
           ? `<div style="margin-top:5px;font-size:11.5px;color:var(--text3)">${noSeller} lot${noSeller === 1 ? '' : 's'} ${noSeller === 1 ? 'has' : 'have'} no seller master record — link the seller in Lot Entry before an account can be attached.</div>`
-          : '');
+          : '')
+      // Live selection line — what Export Bank Payment will actually pay.
+      + `<div id="paylw-selinfo" style="margin-top:5px;font-size:12px"></div>`;
   }
   if (!lots.length) {
     body.innerHTML = `<div style="padding:30px;text-align:center;color:var(--text3);font-size:13px">`
@@ -27575,6 +27591,7 @@ function _payLwRender() {
           ? `No unlinked lots — every matching lot has a bank account. ✓`
           : `No lots matched. Check the seller name / lot numbers, or turn on <strong>Show unlinked</strong> to see lots with no bank account.`)
       + `</div>`;
+    _payLwRefreshSelection();
     return;
   }
   // Re-routing a lot writes lots.bank_id, which needs lot_write. Without it
@@ -27613,7 +27630,9 @@ function _payLwRender() {
            title="Add a bank account to this seller">+ Add</button>`
       : '';
     const rowStyle = l.linked ? '' : ' style="background:#FEF2F2"';
+    const ticked = _payLwState.selected.has(l.id) ? ' checked' : '';
     return `<tr${rowStyle}>
+      <td style="text-align:center"><input type="checkbox" class="paylw-cb" data-id="${l.id}"${ticked} onchange="payLwTick(${l.id}, this.checked)" style="cursor:pointer;width:15px;height:15px"></td>
       <td>${esc(l.name || '')}</td>
       <td style="font-family:monospace;font-weight:600">${esc(String(l.lot_no || ''))}</td>
       <td style="text-align:right">${fmtI(Number(l.qty) || 0, 3)}</td>
@@ -27626,12 +27645,59 @@ function _payLwRender() {
     <div style="overflow-x:auto">
       <table style="width:100%">
         <thead><tr>
+          <th style="width:36px;text-align:center"><input type="checkbox" id="paylw-cb-all" onchange="payLwTickAll(this.checked)" title="Select / clear every listed lot" style="cursor:pointer;width:15px;height:15px"></th>
           <th>Seller</th><th>Lot</th><th style="text-align:right">Qty</th><th>Branch</th>
           <th style="min-width:320px">Bank</th><th style="text-align:right">Payable</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+  _payLwRefreshSelection();
+}
+
+// Tick / untick one lot.
+function payLwTick(lotId, checked) {
+  if (checked) _payLwState.selected.add(lotId); else _payLwState.selected.delete(lotId);
+  _payLwRefreshSelection();
+}
+// Header box — applies to every listed lot.
+function payLwTickAll(checked) {
+  _payLwState.selected = checked ? new Set(_payLwState.lots.map(l => l.id)) : new Set();
+  document.querySelectorAll('#paylw-body .paylw-cb').forEach(cb => { cb.checked = !!checked; });
+  _payLwRefreshSelection();
+}
+// Repaint the selection line, the header box's tri-state, and the export
+// button's count — the three places that answer "what will I be paying?".
+function _payLwRefreshSelection() {
+  const sel = _payLwState.lots.filter(l => _payLwState.selected.has(l.id));
+  const all = document.getElementById('paylw-cb-all');
+  if (all) {
+    all.checked = sel.length > 0 && sel.length === _payLwState.lots.length;
+    all.indeterminate = sel.length > 0 && sel.length < _payLwState.lots.length;
+  }
+  const info = document.getElementById('paylw-selinfo');
+  if (info) {
+    if (!_payLwState.lots.length) {
+      info.innerHTML = '';   // nothing matched — the empty state already says so
+    } else if (!sel.length) {
+      info.innerHTML = `<span style="color:var(--spice-chili);font-weight:600">No lots selected</span> <span style="color:var(--text3)">— tick the lots to pay, or use the header box to select all.</span>`;
+    } else {
+      const amt = sel.reduce((s, l) => s + (Number(l.payable) || 0), 0);
+      const unl = sel.filter(l => !l.linked).length;
+      info.innerHTML = `<span style="color:var(--green);font-weight:600">${sel.length} of ${_payLwState.lots.length} lot${_payLwState.lots.length === 1 ? '' : 's'} selected</span>`
+        + ` · Export total <strong style="color:var(--spice-cardamom-dk)">₹${fmtI(amt, 2)}</strong>`
+        + (unl ? ` <span style="color:var(--spice-chili)">· ${unl} of them ${unl === 1 ? 'has' : 'have'} no bank account</span>` : '');
+    }
+  }
+  const btn = document.getElementById('paylw-export-btn');
+  if (btn) {
+    btn.textContent = sel.length
+      ? `📤 Export Bank Payment (${sel.length})`
+      : '📤 Export Bank Payment';
+    btn.disabled = !sel.length;
+    btn.style.opacity = sel.length ? '' : '.55';
+    btn.style.cursor = sel.length ? '' : 'not-allowed';
+  }
 }
 
 // Per-lot bank change. Writes lots.bank_id — the one column every payment
@@ -27748,19 +27814,20 @@ async function payLwSaveBankAdd() {
   }
 }
 
-// ── Export Bank Payment — exactly the lots on screen ─────────────
-// Posts the listed lots as per-seller lot picks, so getBankPaymentData
+// ── Export Bank Payment — the SELECTED lots ──────────────────────
+// Posts the ticked lots as per-seller lot picks, so getBankPaymentData
 // re-sums over only those lots and emits one payment line per bank account
 // they route to. Deliberately independent of the classic screen's
-// exported-lot tracking: this screen pays what you searched for.
+// exported-lot tracking: this screen pays exactly what you ticked.
 async function payLwExportBank() {
   const aid = _payLwState.aid || Number(document.getElementById('paylw-auction')?.value || 0);
   if (!aid) { alert('Select a trade first'); return; }
-  const lots = _payLwState.lots;
-  if (!lots.length) { alert('Search for the lots you want to pay first — the export covers exactly the lots listed.'); return; }
+  if (!_payLwState.lots.length) { alert('Search for the lots you want to pay first.'); return; }
+  const lots = _payLwState.lots.filter(l => _payLwState.selected.has(l.id));
+  if (!lots.length) { alert('Tick at least one lot to export — use the header checkbox to select them all.'); return; }
   const unlinked = lots.filter(l => !l.linked);
   if (unlinked.length && !confirm(
-      `${unlinked.length} of the ${lots.length} listed lot${lots.length === 1 ? '' : 's'} ${unlinked.length === 1 ? 'has' : 'have'} no bank account.\n\n`
+      `${unlinked.length} of the ${lots.length} selected lot${lots.length === 1 ? '' : 's'} ${unlinked.length === 1 ? 'has' : 'have'} no bank account.\n\n`
     + `Those rows will export with a blank account number and IFSC, which the bank will reject.\n\n`
     + `Export anyway?`)) return;
   // { SELLER NAME: [lot_no, ...] } — the shape the export endpoint's lot
