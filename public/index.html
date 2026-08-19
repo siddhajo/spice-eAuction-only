@@ -3884,7 +3884,10 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         <div class="fg" style="margin:0"><label>Bank Name</label><input id="pay-bank-name" placeholder="e.g. HDFC"></div>
         <div class="fg" style="margin:0"><label>Holder Name</label><input id="pay-bank-holder"></div>
         <div class="fg" style="margin:0"><label>Account Type</label>
-          <select id="pay-bank-acct-type"><option value="">—</option><option value="Savings">Savings</option><option value="Current">Current</option></select>
+          <!-- Kept in step with the other account-type pickers (seller modal,
+               mobile): a select missing a stored value renders blank and would
+               wipe it on save. -->
+          <select id="pay-bank-acct-type"><option value="">—</option><option value="Savings">Savings</option><option value="Current">Current</option><option value="O D">O D</option><option value="O C C">O C C</option></select>
         </div>
         <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;align-self:end;padding-bottom:8px">
           <input type="checkbox" id="pay-bank-make-default" style="width:16px;height:16px">
@@ -14561,7 +14564,9 @@ function leOpenNewSellerModal(prefilledName){
   // Phone-shaped queries (4+ digits, no letters) go in the phone slot
   // instead of the name slot — matches the PWA's heuristic.
   document.getElementById('le-ns-name').value  = '';
-  document.getElementById('le-ns-cr').value    = '';
+  // Same "CR." starting prefix as the Sellers-tab Add Seller form — see
+  // openTraderAdd(); both create sellers, so they open the same way.
+  document.getElementById('le-ns-cr').value    = 'CR.';
   document.getElementById('le-ns-pan').value   = '';
   document.getElementById('le-ns-tel').value   = '';
   document.getElementById('le-ns-padd').value  = '';
@@ -19286,6 +19291,13 @@ function openTraderAdd(){
   document.getElementById('trader-modal-title').textContent='Add Seller';
   document.getElementById('t-id').value='';
   T_FIELDS.forEach(f=>{const el=document.getElementById(T_IDS[f]);if(el)el.value=''});
+  // CR / GSTIN opens on the "CR." prefix so the operator types only the
+  // registration number after it — the storage form the CR-stripping readers
+  // (Planter List, e-Auction CSV) already expect. A seller who turns out to be
+  // a registered dealer just types over it with their GSTIN. Add-only: Edit
+  // loads whatever is stored, so this never overwrites an existing value.
+  const _crDefault = document.getElementById('t-cr');
+  if (_crDefault) _crDefault.value = 'CR.';
   // Default state → KERALA (code 32); the State dropdown drives the code.
   document.getElementById('t-pstate').value='KERALA';
   document.getElementById('t-pstcode').value='32';
@@ -19374,6 +19386,8 @@ function appendBankRow(b){
         <option value="" ${!b.account_type?'selected':''}>—</option>
         <option value="Savings" ${b.account_type==='Savings'?'selected':''}>Savings</option>
         <option value="Current" ${b.account_type==='Current'?'selected':''}>Current</option>
+        <option value="O D" ${b.account_type==='O D'?'selected':''}>O D</option>
+        <option value="O C C" ${b.account_type==='O C C'?'selected':''}>O C C</option>
       </select>
     </div>
     <button type="button" class="btn btn-o" onclick="this.closest('.bank-row').remove()" title="Remove this bank" style="justify-self:end;align-self:end;padding:6px 16px;height:38px;font-size:13px">✕ Remove</button>

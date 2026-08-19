@@ -380,7 +380,7 @@ select:focus{border-color:var(--green)}
           <div id="le-ifsc-info" style="display:none;font-size:9px;color:var(--green);font-weight:600"></div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px">
             <div><div class="elb">LABEL</div><input type="text" id="le-bank-label" placeholder="e.g. SBI Main" class="ein"></div>
-            <div><div class="elb">ACCOUNT TYPE</div><select id="le-acct-type" class="ein" style="-webkit-appearance:menulist;appearance:menulist"><option value="">—</option><option value="Savings">Savings</option><option value="Current">Current</option></select></div>
+            <div><div class="elb">ACCOUNT TYPE</div><select id="le-acct-type" class="ein" style="-webkit-appearance:menulist;appearance:menulist"><option value="">—</option><option value="Savings">Savings</option><option value="Current">Current</option><option value="O D">O D</option><option value="O C C">O C C</option></select></div>
           </div>
           <input type="hidden" id="le-bank-edit-id" value="">
           <div style="display:flex;gap:6px;margin-top:6px">
@@ -629,7 +629,7 @@ select:focus{border-color:var(--green)}
         <div id="ed-acct-match" style="display:none;font-size:10px;font-weight:600;margin-top:2px"></div>
         <div class="fr" style="margin-top:6px"><div><div class="lb">IFSC CODE</div><input type="text" id="ed-ifsc" placeholder="IFSC code" style="text-transform:uppercase" oninput="lookupIFSC(this,'ed-ifsc-info')"></div><div><div class="lb">HOLDER NAME</div><input type="text" id="ed-holder" placeholder="Account holder name"></div></div>
         <div id="ed-ifsc-info" style="display:none;font-size:10px;margin-top:2px;color:var(--green);font-weight:600"></div>
-        <div class="fr" style="margin-top:6px"><div><div class="lb">LABEL (optional)</div><input type="text" id="ed-bank-label" placeholder="e.g. SBI Main"></div><div><div class="lb">ACCOUNT TYPE</div><select id="ed-acct-type" style="width:100%;height:44px;border-radius:8px;border:1.5px solid var(--border);padding:0 10px;font-size:15px;background:var(--input-bg);color:var(--text)"><option value="">—</option><option value="Savings">Savings</option><option value="Current">Current</option></select></div></div>
+        <div class="fr" style="margin-top:6px"><div><div class="lb">LABEL (optional)</div><input type="text" id="ed-bank-label" placeholder="e.g. SBI Main"></div><div><div class="lb">ACCOUNT TYPE</div><select id="ed-acct-type" style="width:100%;height:44px;border-radius:8px;border:1.5px solid var(--border);padding:0 10px;font-size:15px;background:var(--input-bg);color:var(--text)"><option value="">—</option><option value="Savings">Savings</option><option value="Current">Current</option><option value="O D">O D</option><option value="O C C">O C C</option></select></div></div>
         <input type="hidden" id="ed-bank-edit-id" value="">
         <div style="display:flex;gap:8px;margin-top:8px">
           <button style="background:var(--green);color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="saveEditBankAccount()">Save</button>
@@ -1610,7 +1610,7 @@ function wireSellerUppercase(){
     if(up!==el.value){var s=el.selectionStart,en=el.selectionEnd;el.value=up;try{el.setSelectionRange(s,en);}catch(_){}}
   });
 }
-function openSellerModal(n,p){wireSellerUppercase();document.getElementById('le-res').style.display='none';document.getElementById('ns-name').value=n||'';document.getElementById('ns-cr').value='';document.getElementById('ns-pan').value='';document.getElementById('ns-tel').value=p||'';document.getElementById('ns-whatsapp').value='';document.getElementById('ns-email').value='';document.getElementById('ns-padd').value='';document.getElementById('ns-ppla').value='';document.getElementById('ns-pin').value='';document.getElementById('ns-pstate').value='KERALA';document.getElementById('ns-pst').value='32';document.getElementById('ns-dob').value='';document.getElementById('ns-userid').value='';var wa=document.getElementById('ns-wa-same');wa.checked=false;var waInp=document.getElementById('ns-whatsapp');waInp.readOnly=false;waInp.style.background='';var em=document.getElementById('ns-email');em.classList.remove('invalid');var emErr=document.getElementById('ns-email-err');if(emErr)emErr.style.display='none';document.getElementById('ns-err').innerHTML='';setSellerMore(false);nsRenderBankRows();setSellerBanks(false);document.getElementById('seller-modal').classList.add('show');_seedNextUserId()}
+function openSellerModal(n,p){wireSellerUppercase();document.getElementById('le-res').style.display='none';document.getElementById('ns-name').value=n||'';/* "CR." prefix pre-filled — matches the desktop Add Seller forms */document.getElementById('ns-cr').value='CR.';document.getElementById('ns-pan').value='';document.getElementById('ns-tel').value=p||'';document.getElementById('ns-whatsapp').value='';document.getElementById('ns-email').value='';document.getElementById('ns-padd').value='';document.getElementById('ns-ppla').value='';document.getElementById('ns-pin').value='';document.getElementById('ns-pstate').value='KERALA';document.getElementById('ns-pst').value='32';document.getElementById('ns-dob').value='';document.getElementById('ns-userid').value='';var wa=document.getElementById('ns-wa-same');wa.checked=false;var waInp=document.getElementById('ns-whatsapp');waInp.readOnly=false;waInp.style.background='';var em=document.getElementById('ns-email');em.classList.remove('invalid');var emErr=document.getElementById('ns-email-err');if(emErr)emErr.style.display='none';document.getElementById('ns-err').innerHTML='';setSellerMore(false);nsRenderBankRows();setSellerBanks(false);document.getElementById('seller-modal').classList.add('show');_seedNextUserId()}
 // "More details" section of the Add Seller form. Collapsed on every open —
 // the quick path is NAME + PAN + PHONE; GSTIN, address, state, DOB and user
 // id are one tap away. Anything that fails validation down there expands the
@@ -1663,7 +1663,7 @@ function nsAddBankRow(){
     // file with a blank BENEFICIARY ACCOUNT TYPE column.
     +'<div class="lb">ACCOUNT TYPE</div>'
     +'<select class="ns-bk-type" style="width:100%;height:44px;border-radius:8px;border:1.5px solid var(--border);padding:0 10px;font-size:15px;background:var(--input-bg);color:var(--text);-webkit-appearance:menulist;appearance:menulist">'
-    +'<option value="">—</option><option value="Savings">Savings</option><option value="Current">Current</option></select>';
+    +'<option value="">—</option><option value="Savings">Savings</option><option value="Current">Current</option><option value="O D">O D</option><option value="O C C">O C C</option></select>';
   host.appendChild(row);
 }
 function nsRemoveBankRow(btn){
