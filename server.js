@@ -12813,6 +12813,33 @@ const TALLY_EXPORTS = {
   merchants:           { label: 'Merchants (Consolidated Journal)',                 name: 'Merchants',          builder: buildSalesIspRows,         generator: generMerchantsXML,    company: 'isp', flag: 'flag_merchants' },
 };
 
+// ── Sale-type split (L / I / E) ───────────────────────────────
+// Sales vouchers can be pulled one sale type at a time so each batch
+// imports into Tally on its own (Local / Inter-state / Export). Every
+// sales row already carries the invoice's `sale` letter, so this is a
+// straight row filter — no second query, and the XML/JSON stays byte-for-
+// byte what the unfiltered export would have contained for those rows.
+// Asking for the filter on a non-sales export is a 400 rather than a
+// silently empty download.
+const SALE_TYPE_LABELS = { L: 'Local', I: 'Inter-state', E: 'Export' };
+const SALE_FILTERABLE_TYPES = new Set(['sales_isp', 'sales_asp', 'sales', 'isp_purchase', 'merchants']);
+
+// Returns { sale } ('' = no filter) or { error }.
+function parseSaleFilter(type, raw) {
+  const sale = String(raw || '').trim().toUpperCase();
+  if (!sale || sale === 'ALL') return { sale: '' };
+  if (!SALE_FILTERABLE_TYPES.has(type)) {
+    return { error: `Sale-type filter is only available for sales vouchers (${[...SALE_FILTERABLE_TYPES].join(', ')}).` };
+  }
+  if (!SALE_TYPE_LABELS[sale]) {
+    return { error: `Unknown sale type "${raw}" — expected L (Local), I (Inter-state) or E (Export).` };
+  }
+  return { sale };
+}
+
+const filterRowsBySale = (rows, sale) =>
+  sale ? rows.filter(r => String(r.sale || '').trim().toUpperCase() === sale) : rows;
+
 // Resolve the Tally company name for a given export type.
 // 'isp' → tally_company_name; 'asp' → tally_asp_company_name (falls
 // back to ISP if the ASP name is blank, but logs a warning so misconfig
@@ -12848,6 +12875,8 @@ function tallyJson(rows, auctionId, targetCompany, meta) {
   return JSON.stringify({
     exportType: meta.type,
     label: meta.label,
+    // Sale type this file was filtered to ('' / absent = all sale types).
+    saleType: meta.sale || '',
     auctionId,
     targetCompany,
     generatedAt: new Date().toISOString(),
@@ -12879,7 +12908,20 @@ app.get('/api/tally/preview/:type/:auctionId', requireExport, (req, res) => {
     if (def.flag && String(cfg[def.flag] || '').toLowerCase() !== 'true') {
       return res.status(403).json({ error: `${def.label} is disabled — enable "${def.flag}" in Settings → Flags` });
     }
-    const rows = def.builder(db, auctionId, cfg);
+    // ?sale=L|I|E → preview just that sale type's vouchers.
+    const saleFilter = parseSaleFilter(type, req.query.sale);
+    if (saleFilter.error) return res.status(400).json({ error: saleFilter.error });
+    const allRows = def.builder(db, auctionId, cfg);
+    // Per-sale-type counts over the UNFILTERED set, so the UI can show
+    // what's available in each bucket ("L 12 · I 4") without three calls.
+    const bySale = SALE_FILTERABLE_TYPES.has(type)
+      ? allRows.reduce((acc, r) => {
+          const s = String(r.sale || '').trim().toUpperCase();
+          if (s) acc[s] = (acc[s] || 0) + 1;
+          return acc;
+        }, {})
+      : undefined;
+    const rows = filterRowsBySale(allRows, saleFilter.sale);
     const targetCompany = resolveTallyCompanyName(cfg, def.company);
     if (def.isLedger) {
       // Ledger rows have a different shape — count by kind
@@ -12911,6 +12953,9 @@ app.get('/api/tally/preview/:type/:auctionId', requireExport, (req, res) => {
     }
     res.json({
       type, auctionId,
+      // '' when no sale-type filter was applied.
+      sale: saleFilter.sale,
+      bySale,
       voucherCount: rows.length,
       lotCount: totalLots,
       partyCount: distinctParties.size,
@@ -13396,12 +13441,21 @@ app.get('/api/tally/export/:type/:auctionId', requireExport, (req, res) => {
     if (def.flag && String(cfg[def.flag] || '').toLowerCase() !== 'true') {
       return res.status(403).json({ error: `${def.label} is disabled — enable "${def.flag}" in Settings → Flags` });
     }
-    const rows = def.builder(db, auctionId, cfg);
+    // ?sale=L|I|E → export just that sale type's vouchers, so Local,
+    // Inter-state and Export batches can be imported into Tally separately.
+    const saleFilter = parseSaleFilter(type, req.query.sale);
+    if (saleFilter.error) return res.status(400).json({ error: saleFilter.error });
+    const rows = filterRowsBySale(def.builder(db, auctionId, cfg), saleFilter.sale);
     if (rows.length === 0) {
       const what = def.isLedger ? def.label.toLowerCase() : `${def.label.toLowerCase()}`;
-      return res.status(404).json({ error: `No ${what} found for auction ${auctionId}` });
+      const forSale = saleFilter.sale
+        ? ` — sale type ${saleFilter.sale} (${SALE_TYPE_LABELS[saleFilter.sale]})`
+        : '';
+      return res.status(404).json({ error: `No ${what} found for auction ${auctionId}${forSale}` });
     }
     const targetCompany = resolveTallyCompanyName(cfg, def.company);
+    // Filename suffix keeps the three batches apart in the downloads folder.
+    const saleSuffix = saleFilter.sale ? `_${saleFilter.sale}` : '';
     const fmt = String(req.query.format || '').toLowerCase();
     // ?format=irp → GST e-Invoice (IRP / NIC) JSON, ready for the trade
     // portal. Available for outside-customer sales (ISP) and for Debit Notes
@@ -13417,21 +13471,25 @@ app.get('/api/tally/export/:type/:auctionId', requireExport, (req, res) => {
       } else {
         return res.status(400).json({ error: 'IRP e-invoice format is only available for Sales Vouchers — ISP ("sales_isp") and Debit Notes ("debit_note").' });
       }
-      const filename = `EInvoice_${def.name}_${anoForFilename(db, auctionId)}.json`;
+      const filename = `EInvoice_${def.name}${saleSuffix}_${anoForFilename(db, auctionId)}.json`;
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       return res.send(JSON.stringify(irp, null, 2));
     }
     // ?format=json → same voucher rows as JSON instead of Tally XML.
     if (fmt === 'json') {
-      const json = tallyJson(rows, auctionId, targetCompany, { type, label: def.label });
-      const filename = `${def.name}_${anoForFilename(db, auctionId)}.json`;
+      const json = tallyJson(rows, auctionId, targetCompany, {
+        type,
+        label: def.label + (saleFilter.sale ? ` — ${SALE_TYPE_LABELS[saleFilter.sale]} (${saleFilter.sale})` : ''),
+        sale: saleFilter.sale,
+      });
+      const filename = `${def.name}${saleSuffix}_${anoForFilename(db, auctionId)}.json`;
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       return res.send(json);
     }
     const xml = def.generator(rows, cfg, { companyName: targetCompany });
-    const filename = `${def.name}_${anoForFilename(db, auctionId)}.xml`;
+    const filename = `${def.name}${saleSuffix}_${anoForFilename(db, auctionId)}.xml`;
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(xml);

@@ -5792,6 +5792,19 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                 <div style="font-size:11px;color:var(--text3)">External customers — full e-way bill, dispatch + transport details</div>
               </div>
             </div>
+            <!-- Sale-type split — Local / Inter-state / Export can be pulled
+                 as separate XML / JSON files so each batch imports into
+                 Tally on its own. "All sale types" keeps the old single-file
+                 behaviour. The filename carries the letter (…_L.xml). -->
+            <div style="display:flex;gap:6px;align-items:center;margin-top:8px">
+              <label for="tally-sale-sales_isp" style="font-size:11px;color:var(--text2);font-weight:600;white-space:nowrap">Sale type</label>
+              <select id="tally-sale-sales_isp" onchange="onTallySaleChange('sales_isp')" style="flex:1;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px">
+                <option value="">All sale types</option>
+                <option value="L">L — Local</option>
+                <option value="I">I — Inter-state</option>
+                <option value="E">E — Export</option>
+              </select>
+            </div>
             <div id="tally-preview-sales_isp" style="font-size:11px;color:var(--text3);min-height:18px;margin:6px 0"></div>
             <div style="display:flex;gap:6px;margin-top:8px">
               <button class="btn btn-a" onclick="tallyPreview('sales_isp')" style="flex:1;padding:7px;font-size:12px">Preview</button>
@@ -29082,13 +29095,30 @@ function loadTallyAuctions(){
     sel.dataset.tallyBound='1';
   }
 }
+// ── Sale-type split (L / I / E) ──────────────────────────────
+// A voucher card can carry a `tally-sale-<type>` dropdown; when it's set
+// the preview and both downloads (XML + e-Invoice JSON) are scoped to
+// that sale type, and the server names the file with the letter.
+const TALLY_SALE_LABELS={L:'Local',I:'Inter-state',E:'Export'};
+function tallySaleFilter(type){
+  return (document.getElementById('tally-sale-'+type)?.value||'').trim().toUpperCase();
+}
+// Re-run the preview when the dropdown changes — but only once the user
+// has an auction picked and a preview already on screen, so switching
+// sale type doesn't nag with "Select an auction first".
+function onTallySaleChange(type){
+  const aid=document.getElementById('tally-auction')?.value;
+  const target=document.getElementById('tally-preview-'+type);
+  if(aid&&target&&target.textContent.trim())tallyPreview(type);
+}
 async function tallyPreview(type){
   const aid=document.getElementById('tally-auction')?.value;
   if(!aid){alert('Select an auction first');return}
   const target=document.getElementById('tally-preview-'+type);
   if(target)target.textContent='Loading…';
+  const sale=tallySaleFilter(type);
   try{
-    const r=await fetch(B+`/api/tally/preview/${type}/${aid}`,{headers:{'Authorization':'Bearer '+T}});
+    const r=await fetch(B+`/api/tally/preview/${type}/${aid}`+(sale?`?sale=${encodeURIComponent(sale)}`:''),{headers:{'Authorization':'Bearer '+T}});
     if(!r.ok){
       let msg='Preview failed';
       try{const e=await r.json();if(e.error)msg=e.error}catch(x){}
@@ -29109,7 +29139,9 @@ async function tallyPreview(type){
           target.innerHTML=`<strong style="color:var(--green)">${data.ledgerCount}</strong> ledger${data.ledgerCount===1?'':'s'}` + (breakdown?` · ${breakdown}`:'') + coBadge;
         }
       }else if(data.voucherCount===0){
-        target.innerHTML=`<span style="color:#C62828">No data found for this auction</span>`;
+        target.innerHTML=data.sale
+          ? `<span style="color:#C62828">No ${esc(TALLY_SALE_LABELS[data.sale]||data.sale)} (${esc(data.sale)}) vouchers in this auction</span>`
+          : `<span style="color:#C62828">No data found for this auction</span>`;
       }else{
         // For voucher types that don't carry per-row lots (debit notes,
         // journal entries), show the number of distinct dealers instead
@@ -29119,8 +29151,17 @@ async function tallyPreview(type){
           : (data.partyCount != null
               ? `<strong>${data.partyCount}</strong> dealer${data.partyCount===1?'':'s'}`
               : '');
+        // When the card has a sale-type dropdown, show which bucket the
+        // count belongs to and what the other buckets hold, so the user
+        // can see the whole split without switching the dropdown.
+        const saleBadge = data.sale
+          ? ` <span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;background:var(--green-bg);color:var(--green)">${esc(data.sale)} · ${esc(TALLY_SALE_LABELS[data.sale]||data.sale)}</span>`
+          : '';
+        const split = (data.bySale && Object.keys(data.bySale).length)
+          ? ` <span style="color:var(--text3)">(all: ${['L','I','E'].filter(s=>data.bySale[s]).map(s=>`${s} ${data.bySale[s]}`).join(' · ')})</span>`
+          : '';
         target.innerHTML = `<strong style="color:var(--green)">${data.voucherCount}</strong> voucher${data.voucherCount===1?'':'s'}` +
-                           (trailing ? ` · ${trailing}` : '') + coBadge;
+                           saleBadge + (trailing ? ` · ${trailing}` : '') + split + coBadge;
       }
     }
   }catch(e){
@@ -29138,16 +29179,26 @@ async function tallyDownload(type,format){
   //   xml    → Tally import XML (default).
   const fmt=(format==='irp')?'irp':(format==='json')?'json':'xml';
   const ext=(fmt==='xml')?'xml':'json';
-  const qs=(fmt==='xml')?'':`?format=${fmt}`;
   const kind=(fmt==='irp')?'e-Invoice JSON':fmt.toUpperCase();
   const namePrefix=(fmt==='irp')?'EInvoice':'Tally';
+
+  // Sale-type split — when the card's dropdown is set to L / I / E the
+  // export carries only that sale type, in both XML and JSON, and the
+  // downloaded file is suffixed with the letter.
+  const sale=tallySaleFilter(type);
+  const params=[];
+  if(fmt!=='xml')params.push(`format=${fmt}`);
+  if(sale)params.push(`sale=${encodeURIComponent(sale)}`);
+  const qs=params.length?`?${params.join('&')}`:'';
+  const saleSuffix=sale?`_${sale}`:'';
+  const saleLabel=sale?` — ${TALLY_SALE_LABELS[sale]||sale} (${sale})`:'';
 
   // Lorry / vehicle no for the e-way bill is read directly from each
   // invoice's `lorry_no` column (set via the "Set Lorry No" bulk action
   // in the Sales tab). No per-export override here — what the user
   // saved on the invoice is what ships in the XML.
 
-  await withOverlay(`Generating ${label} ${kind}…`, async () => {
+  await withOverlay(`Generating ${label}${saleLabel} ${kind}…`, async () => {
     const url=B+`/api/tally/export/${type}/${aid}`+qs;
     const r=await fetch(url,{headers:{'Authorization':'Bearer '+T}});
     if(!r.ok){
@@ -29157,9 +29208,9 @@ async function tallyDownload(type,format){
     }
     const blob=await r.blob();
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);
-    a.download=`${namePrefix}_${label.replace(/\s/g,'')}_${aid}.${ext}`;a.click();
+    a.download=`${namePrefix}_${label.replace(/\s/g,'')}${saleSuffix}_${aid}.${ext}`;a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),5000);
-    toast(`Downloaded ${label} ${kind}`);
+    toast(`Downloaded ${label}${saleLabel} ${kind}`);
   });
 }
 
