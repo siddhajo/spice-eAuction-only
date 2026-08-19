@@ -560,6 +560,18 @@ function getCollectionRows(db, auctionId) {
   // is raised, the ORIGINAL it became is already in this list, so counting the
   // draft as well would print the buyer twice and inflate QUANTITY / VALUE.
   // A fully-raised trade therefore reports exactly as it did before.
+  //
+  // Gated on flag_proforma_invoice. With the feature OFF the report is pinned
+  // to originals exactly as before — which also honours the rule stated at the
+  // PROFORMA FEATURE GATE in server.js: drafts written while the flag was on
+  // must NOT reappear in reports once it is switched off.
+  let cfgFlat = {};
+  try { cfgFlat = require('./company-config').getSettingsFlat(db) || {}; } catch (_) {}
+  const proformaOn = String(cfgFlat.flag_proforma_invoice || '').toLowerCase() === 'true'
+                  || cfgFlat.flag_proforma_invoice === true;
+  const pendingDraftClause = proformaOn
+    ? `OR (COALESCE(is_proforma,0) = 1 AND TRIM(COALESCE(raised_invo,'')) = '')`
+    : '';
   const invoices = db.all(
     `SELECT id, sale, invo, buyer, buyer1, qty, tot,
             COALESCE(is_proforma,0) AS is_proforma
@@ -567,7 +579,7 @@ function getCollectionRows(db, auctionId) {
       WHERE auction_id = ?
         AND (
           COALESCE(is_proforma,0) = 0
-          OR (COALESCE(is_proforma,0) = 1 AND TRIM(COALESCE(raised_invo,'')) = '')
+          ${pendingDraftClause}
         )
       ORDER BY sale, CAST(invo AS INTEGER), invo`,
     [auctionId]
@@ -592,8 +604,7 @@ function getCollectionRows(db, auctionId) {
 
   // Proforma invoice-number prefix (Collection only, per settings). Applies
   // to every sale type and leads the token — see formatInvoiceNo().
-  let isPrefix = '';
-  try { isPrefix = String(require('./company-config').getSettingsFlat(db).proforma_invoice_prefix || '').trim(); } catch (_) {}
+  const isPrefix = String(cfgFlat.proforma_invoice_prefix || '').trim();
 
   // Collection quotes the PROFORMA number — the one the buyer was sent at
   // shipment — in place of the original tax-invoice number. Map each raised
