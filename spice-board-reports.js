@@ -42,6 +42,20 @@ function fmtDateDMY(iso) {
   return formatDateForDisplay(iso, _dateFormat);
 }
 
+// Pull the seller's Spices Board Licence (SBL) number out of the `aadhar`
+// column, which doubles as Aadhaar OR SBL. The two are told apart by character
+// content, not length:
+//   • SBL always contains LETTERS — a 2-letter category code + "REG",
+//     e.g. "ML/REG/16071/2021". Any value with a letter is the SBL.
+//   • Aadhaar is purely numeric (12 digits, with or without hyphen/space/dot
+//     separators) and must NEVER be printed on a Spices Board return.
+// So: a value containing a letter → SBL; a digits-only value → Aadhaar → ''.
+// Shared by Form C and the e-Auction portal CSV so the two can't drift.
+function sblFromAadhar(aadhar) {
+  const a = String(aadhar == null ? '' : aadhar).trim();
+  return /[A-Za-z]/.test(a) ? a : '';
+}
+
 // Word-aware wrap: returns an array of lines where each line fits within
 // `maxWidth`. Falls back to character-level breaks for tokens longer than
 // the column (e.g. GSTIN/SBL strings with no whitespace). Caller must have
@@ -1183,16 +1197,9 @@ function buildFormC(ctx) {
     const place = r.trader_place || r.seller_place || '';
     // Estate Reg / Licence # — prefer the seller's Spices Board Licence (SBL)
     // number, falling back to the GSTIN held in the `cr` (CR / GSTIN) column.
-    // The SBL is stored in the seller's `aadhar` column, which doubles as
-    // Aadhaar OR SBL. They are told apart by character content, not length:
-    //   • SBL always contains LETTERS — a 2-letter category code + "REG",
-    //     e.g. "ML/REG/16071/2021". Any value with a letter is the SBL.
-    //   • Aadhaar is purely numeric (12 digits, with or without
-    //     hyphen/space/dot separators) — never used here.
-    // So a value containing a letter → SBL (used); a digits-only value →
-    // Aadhaar → ignored, falling back to the GSTIN (cr). Never the Aadhaar.
-    const aadhar = String(r.trader_aadhar || r.seller_aadhar || '').trim();
-    const sblNo = /[A-Za-z]/.test(aadhar) ? aadhar : '';
+    // See sblFromAadhar() for how the SBL is told apart from an Aadhaar number
+    // in the shared `aadhar` column. Never the Aadhaar.
+    const sblNo = sblFromAadhar(r.trader_aadhar || r.seller_aadhar);
     // Withdrawn lots (code = 'WD') are put for auction but not sold — they
     // appear in Form C with their Qty put, but Qty sold / Rate / Value = 0
     // and no bidder.
@@ -1790,14 +1797,23 @@ async function eauctionCsv(db, opts) {
   for (const r of (ctx.rows || [])) {
     // Planter/Dealer code: 1 for planter, 2 for dealer.
     const cr = r.seller_cr || r.trader_cr || '';
-    const planterOrDealer = isDealerSeller(cr, r.seller_aadhar || r.trader_aadhar) ? '2' : '1';
+    const aadhar = r.seller_aadhar || r.trader_aadhar;
+    const planterOrDealer = isDealerSeller(cr, aadhar) ? '2' : '1';
 
-    // CRNO/SBL No: planters (grade 1) carry a CRNO, dealers (grade 2) an
-    // SBL/GSTIN. When a grade-1 planter's registration is actually a GSTIN
-    // (they have a GSTIN on file but no CRNO), emit the literal "CR."
-    // placeholder rather than leaking the GSTIN into the planter's CRNO
-    // column. Grade-2 dealers and CRNO planters keep their own value.
-    const crnoSbl = (planterOrDealer === '1' && hasValidGstin(cr)) ? 'CR.' : cr;
+    // CRNO/SBL No — the column wants a CRNO for planters and an SBL for
+    // dealers, so each side is sourced from where that number actually lives:
+    //
+    //   • Dealer (2) → the Spices Board Licence number in `aadhar`. It used to
+    //     emit `cr`, which for a dealer holds the GSTIN — so every dealer row
+    //     went up carrying a GSTIN in the SBL column. `cr` is kept only as a
+    //     fallback for a dealer with no SBL on file: better a visible wrong
+    //     value the operator can chase than a silently blank column.
+    //   • Planter (1) → the CRNO in `cr`. A planter whose `cr` actually holds
+    //     a GSTIN (GSTIN on file, no CRNO) gets the literal "CR." placeholder
+    //     rather than leaking that GSTIN into the planter's CRNO column.
+    const crnoSbl = planterOrDealer === '2'
+      ? (sblFromAadhar(aadhar) || cr)
+      : (hasValidGstin(cr) ? 'CR.' : cr);
 
     lines.push([
       r.lot || '',                                       // A  Lot Number

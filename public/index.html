@@ -3815,6 +3815,23 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       </div>
     </div></div>
 
+    <!-- Dashboard "All Auctions": which trade's Spices Board portal CSV to get.
+         The e-Auction file is a per-auction upload (one row per lot), so the
+         cumulative view has no single trade to name — it opens this chooser
+         instead of guessing one. The "Current Auction" panel skips it and
+         downloads its own trade directly. -->
+    <div class="modal-bg" id="sb-csv-modal"><div class="modal has-x" style="max-width:600px">
+      <button class="modal-x" onclick="hideModal('sb-csv-modal')" title="Close" aria-label="Close">&times;</button>
+      <h2>Spices Board CSV</h2>
+      <div style="font-size:12px;color:var(--spice-text-mute);margin:2px 0 10px">
+        The e-Auction portal upload covers one auction at a time — pick which one to download.
+      </div>
+      <div id="sb-csv-body" style="max-height:56vh;overflow:auto"></div>
+      <div class="actions" style="margin-top:14px">
+        <button class="btn btn-o" onclick="hideModal('sb-csv-modal')">Close</button>
+      </div>
+    </div></div>
+
     <!-- Wider than the default modal: the lot table already carried 12 money
          columns, and the Bank column is now an editable account picker. -->
     <div class="modal-bg" id="pay-lots-modal"><div class="modal" style="max-width:1120px">
@@ -11147,6 +11164,71 @@ async function downloadArrivals(auctionId){
     else if (typeof toast === 'function') toast(e.message || 'Download failed');
     else alert(e.message || 'Download failed');
   }
+}
+
+// ── Spices Board (e-Auction) portal CSV — dashboard shortcut ─────
+// Same file the Export Center offers under "e-Auction (Spices Board) CSV",
+// surfaced on the dashboard so the operator can grab the portal upload
+// without navigating away. Download itself routes through exportType(),
+// which already owns the endpoint, the busy overlay, the server-supplied
+// filename (it carries the company short-name suffix that keeps sister
+// concerns' files apart) and the error alert.
+//
+// The file is strictly PER AUCTION — one row per lot in the board's fixed
+// 20-column schema — so a trade id is mandatory. The "Current Auction"
+// panel passes its own; the cumulative "All Auctions" view has no single
+// trade to name, so it calls this with none and gets the chooser below.
+function downloadSpicesBoardCsv(auctionId){
+  if (!auctionId) return openSpicesBoardCsvPicker();
+  return exportType('eauction_csv', 'csv', auctionId);
+}
+
+// Deliberately NOT seeded from the dashboard's `allAuctions` list: that one is
+// capped at 50 for the trade dropdown, and a downloads chooser that quietly
+// omits older trades is worse than one extra fetch. Asks for the paged form so
+// the cap is explicit (500) and `total` tells us when it actually bit.
+async function openSpicesBoardCsvPicker(){
+  const body = document.getElementById('sb-csv-body');
+  if (!body) return;
+  body.innerHTML = '<div class="gm-empty">Loading…</div>';
+  showModal('sb-csv-modal');
+  let list = [], total = 0;
+  try {
+    const r = await j('/api/auctions?page=1&pageSize=500');
+    list = (r && r.rows) || [];
+    total = (r && r.total) || list.length;
+  } catch (e) {
+    body.innerHTML = '<div class="gm-empty">Failed to load auctions.</div>';
+    return;
+  }
+  if (!list.length) {
+    body.innerHTML = '<div class="gm-empty">No auctions to export.</div>';
+    return;
+  }
+  const th = 'padding:8px 10px;text-align:left;font-size:11px;font-weight:700;color:var(--spice-text-mute);text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--spice-line)';
+  const td = 'padding:8px 10px;border-top:1px solid var(--spice-line);font-size:13px';
+  const more = total > list.length
+    ? `<div class="gm-empty" style="padding:10px">Showing the ${list.length} most recent of ${total} auctions — use Export Center for older ones.</div>`
+    : '';
+  body.innerHTML = `
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr>
+        <th style="${th}">Auction</th><th style="${th}">Date</th><th style="${th}">Crop</th>
+        <th style="${th};text-align:right">Lots</th>
+        <th style="${th};text-align:right"></th>
+      </tr></thead>
+      <tbody>${list.map(a => `
+        <tr>
+          <td style="${td}"><strong>#${esc(a.ano)}</strong></td>
+          <td style="${td};color:var(--spice-text-mute)">${fmtD(a.date)}</td>
+          <td style="${td}">${esc(a.crop_type || '—')}</td>
+          <td style="${td};text-align:right">${Number(a.lot_count) || 0}</td>
+          <td style="${td};text-align:right">
+            <button class="btn btn-o" style="padding:4px 10px;font-size:12px"
+              onclick="downloadSpicesBoardCsv(${a.id})">⬇ CSV</button>
+          </td>
+        </tr>`).join('')}</tbody>
+    </table>${more}`;
 }
 
 // Keep every headline value on ONE line with decimals visible. Money
