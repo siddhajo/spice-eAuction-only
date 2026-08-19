@@ -13094,7 +13094,12 @@ const TALLY_EXPORTS = {
   // Merchants = consolidated Journal that debits every buyer by their invoice
   // total and credits the "Merchants" control ledger. Reuses the Sales rows so
   // per-party figures reconcile with the Sales export. Gated by `flag_merchants`.
-  merchants:           { label: 'Merchants (Consolidated Journal)',                 name: 'Merchants',          builder: buildSalesIspRows,         generator: generMerchantsXML,    company: 'isp', flag: 'flag_merchants' },
+  // Merchants also covers PENDING proformas (flag_proforma_invoice gated), so
+  // it stays consistent with the Collection register and the Buyers Statement —
+  // per user request. Opt-in on purpose: the identical builder feeds
+  // sales_isp / sales above, where a draft would post GST output tax for a tax
+  // invoice that was never issued. See buildSalesIspRows.
+  merchants:           { label: 'Merchants (Consolidated Journal)',                 name: 'Merchants',          builder: (db, auctionId, cfg) => buildSalesIspRows(db, auctionId, cfg, { includePendingProformas: true }), generator: generMerchantsXML,    company: 'isp', flag: 'flag_merchants' },
 };
 
 // ── Sale-type split (L / I / E) ───────────────────────────────

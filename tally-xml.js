@@ -2690,7 +2690,20 @@ const ASP_STATE_SQL = `UPPER(COALESCE(i.state,'')) = 'KERALA'`;
  * Output shape (per row): one voucher per (buyer, sale-type, ISP invo).
  * `aspInvo` is the matching ASP invoice number (for BASICORDERREF).
  */
-function buildSalesIspRows(db, auctionId, cfg) {
+// `opts.includePendingProformas` — OPT-IN, passed only by the Merchants
+// (consolidated Journal) registry entry in server.js, per user request that
+// Collection / Buyers Statement / Merchant XML all cover proformas.
+//
+// It is deliberately NOT the default: this same builder feeds the SALES
+// VOUCHERS export, and a draft posted there would create GST output-tax
+// entries in Tally for a tax invoice that was never issued. Merchants is a
+// Journal against the buyer's control ledger, which is what the user wants
+// drafts to appear in.
+//
+// Like Collection, it takes only PENDING drafts (raised_invo empty) — once a
+// draft is raised, the original it became is already in the row set, and
+// counting both would debit the merchant twice.
+function buildSalesIspRows(db, auctionId, cfg, opts) {
   // `buyer_pin` is the SOURCE PINCODE for distance/route lookup.
   // Resolution: ship-to (cpin) wins, bill-to (pin) is the fallback.
   // Ship-to is where the goods are physically delivered — the correct
@@ -2733,7 +2746,12 @@ function buildSalesIspRows(db, auctionId, cfg) {
                AND TRIM(COALESCE(p.raised_invo,'')) = TRIM(COALESCE(i.invo,''))
              ORDER BY CAST(p.invo AS INTEGER), p.invo LIMIT 1) AS proforma_invo
     FROM invoices i
-    WHERE i.auction_id = ? AND ${ISP_STATE_SQL} AND COALESCE(i.is_proforma,0) = 0
+    WHERE i.auction_id = ? AND ${ISP_STATE_SQL} AND ${
+      (!!(opts && opts.includePendingProformas) && cfgBool(cfg, 'flag_proforma_invoice', false))
+        ? `(COALESCE(i.is_proforma,0) = 0
+            OR (COALESCE(i.is_proforma,0) = 1 AND TRIM(COALESCE(i.raised_invo,'')) = ''))`
+        : `COALESCE(i.is_proforma,0) = 0`
+    }
     ORDER BY i.sale, CAST(i.invo AS INTEGER), i.id
   `);
   const raw = stmt.all(auctionId);
@@ -2933,8 +2951,15 @@ function buildSalesIspRows(db, auctionId, cfg) {
       // directly), and the sale letter that draft was numbered under. Only the
       // Merchant XML uses them — every other generator ignores unknown fields,
       // so carrying them here is additive and safe.
-      proformaInvo: _draft.no,
-      proformaSale: _draft.sale,
+      //
+      // A row that IS itself a pending draft (only reachable via
+      // opts.includePendingProformas) references its OWN number: no original
+      // exists yet, and the draft is the document the merchant holds. That
+      // makes the bill reference render "PI/I-8" with no change needed in
+      // generMerchantsXML — it already prefixes whatever lands here.
+      proformaInvo: Number(r.is_proforma) ? String(r.invo || '') : _draft.no,
+      proformaSale: Number(r.is_proforma) ? String(r.sale || '') : _draft.sale,
+      isProforma:   Number(r.is_proforma) ? 1 : 0,
       aspInvo,
       buyer: r.buyer,
       partyName: r.buyer1 || r.buyer || '',
