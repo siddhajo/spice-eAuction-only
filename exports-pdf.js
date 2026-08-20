@@ -1520,7 +1520,13 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
   if (!opts.from || !opts.to) {
     throw new Error('Certificate needs a From and To date — set the date range first.');
   }
-  const data = getPoolerRegister(db, { from: opts.from, to: opts.to, party: opts.party || null });
+  // traderId narrows to ONE pooler when the picker knew which — without it a
+  // shared name certifies both people's lots on separate pages.
+  const data = getPoolerRegister(db, {
+    from: opts.from, to: opts.to,
+    party: opts.party || null,
+    traderId: opts.traderId || null,
+  });
   const parties = (data.parties || []).filter(p => Number(p.summary && p.summary.billamount) !== 0 || (p.rows && p.rows.length));
   if (!parties.length) throw new Error('No poolers found for the selected period.');
 
@@ -1583,8 +1589,8 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     // the amount in figures + words — are rendered in BOLD via continued runs.
     y += 54;
     const name = String(p.name || '').trim();
-    const pan  = _poolerPan(db, name);
-    const addr = _poolerAddress(db, name);
+    const pan  = _poolerPan(db, name, p.trader_id);
+    const addr = _poolerAddress(db, name, p.trader_id);
     const billamt = Math.round(Number(p.summary && p.summary.billamount) || 0);
     const amtFig = _fmtRupeesWhole(billamt);
     const amtWords = amountToWords(billamt); // e.g. "Rupees Fourteen Lakh …"
@@ -1720,22 +1726,34 @@ function _fmtRupeesWhole(n) {
 
 // Compose a pooler's postal address from the traders master (padd + place +
 // state). Returns '' when the pooler isn't in the master or has no address.
-function _poolerAddress(db, name) {
+function _poolerAddress(db, name, traderId) {
   if (!name) return '';
   let t = null;
+  // `traderId` (when the register supplied one) pins WHICH pooler this is —
+  // two can share a name, and a name-only lookup takes whichever row comes
+  // first, putting a namesake's address on the certificate.
+  const tid = Number(traderId);
+  const hasTid = Number.isFinite(tid) && tid > 0;
   // Prefer the lot's denormalised address — it's captured at lot entry and
   // always matches the pooler in this register (the traders name-lookup can
   // miss on spelling/spacing differences). Note lots uses `ppin` for the PIN.
   try {
-    t = db.get(
-      "SELECT padd, ppla, ppin AS pin FROM lots WHERE UPPER(TRIM(name)) = UPPER(?) " +
-      "AND (COALESCE(TRIM(padd),'')<>'' OR COALESCE(TRIM(ppla),'')<>'' OR COALESCE(TRIM(ppin),'')<>'') " +
-      "ORDER BY id LIMIT 1", [String(name).trim()]);
+    t = hasTid
+      ? db.get(
+          "SELECT padd, ppla, ppin AS pin FROM lots WHERE trader_id = ? " +
+          "AND (COALESCE(TRIM(padd),'')<>'' OR COALESCE(TRIM(ppla),'')<>'' OR COALESCE(TRIM(ppin),'')<>'') " +
+          "ORDER BY id LIMIT 1", [tid])
+      : db.get(
+          "SELECT padd, ppla, ppin AS pin FROM lots WHERE UPPER(TRIM(name)) = UPPER(?) " +
+          "AND (COALESCE(TRIM(padd),'')<>'' OR COALESCE(TRIM(ppla),'')<>'' OR COALESCE(TRIM(ppin),'')<>'') " +
+          "ORDER BY id LIMIT 1", [String(name).trim()]);
   } catch (e) { t = null; }
-  // Fall back to the traders master.
+  // Fall back to the traders master — by id where we have one.
   if (!t) {
     try {
-      t = db.get('SELECT padd, ppla, pin FROM traders WHERE UPPER(TRIM(name)) = UPPER(?) LIMIT 1', [String(name).trim()]);
+      t = hasTid
+        ? db.get('SELECT padd, ppla, pin FROM traders WHERE id = ? LIMIT 1', [tid])
+        : db.get('SELECT padd, ppla, pin FROM traders WHERE UPPER(TRIM(name)) = UPPER(?) ORDER BY id LIMIT 1', [String(name).trim()]);
     } catch (e) { t = null; }
   }
   if (!t) return '';
@@ -1749,11 +1767,23 @@ function _poolerAddress(db, name) {
   return parts.join(', ');
 }
 
-// PAN of a pooler by name (mirrors _poolerAddress). Blank when unknown.
-function _poolerPan(db, name) {
+// PAN of a pooler (mirrors _poolerAddress): by trader id where the register
+// supplied one, else by name. A PAN on a certificate names a specific person,
+// so the id path matters more here than anywhere else on the document.
+function _poolerPan(db, name, traderId) {
+  const tid = Number(traderId);
+  if (Number.isFinite(tid) && tid > 0) {
+    try {
+      const t = db.get('SELECT pan FROM traders WHERE id = ? LIMIT 1', [tid]);
+      if (t && String(t.pan || '').trim()) return String(t.pan).trim();
+      // Master has no PAN on file — the lot's denormalised copy may.
+      const l = db.get("SELECT pan FROM lots WHERE trader_id = ? AND COALESCE(TRIM(pan),'')<>'' ORDER BY id LIMIT 1", [tid]);
+      if (l) return String(l.pan || '').trim();
+    } catch (e) { /* fall through to the name lookup */ }
+  }
   if (!name) return '';
   try {
-    const t = db.get('SELECT pan FROM traders WHERE UPPER(TRIM(name)) = UPPER(?) LIMIT 1', [String(name).trim()]);
+    const t = db.get('SELECT pan FROM traders WHERE UPPER(TRIM(name)) = UPPER(?) ORDER BY id LIMIT 1', [String(name).trim()]);
     return t ? String(t.pan || '').trim() : '';
   } catch (e) { return ''; }
 }

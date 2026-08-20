@@ -1007,6 +1007,79 @@ async function initDb() {
     // operator-facing tag used to group / find lots while pricing — it is
     // not part of any invoice, voucher or statutory export.
     "ALTER TABLE lots ADD COLUMN dummy_code TEXT DEFAULT ''",
+    // ── Seller FK on the document tables ──────────────────────────────
+    // These four tables identified their seller by NAME alone, and seller
+    // names repeat: a real master holds 522 names shared by 2+ sellers
+    // (MANIKANDAN ×19, MURUGAN ×22), each with their own GSTIN and bank
+    // account. Every reader that resolved a seller from one of these rows
+    // therefore had to guess, and a reprint of a duplicated name merged two
+    // sellers' lots onto one document.
+    //
+    // `lots` already carries trader_id (→ traders.id, unique). These columns
+    // let a document record WHICH seller it was raised for, so reprints and
+    // reports stop guessing. Nullable on purpose: historical rows are
+    // backfilled where the lots resolve unambiguously and left NULL where
+    // they don't, and every reader falls back to the name when it is NULL.
+    'ALTER TABLE purchases ADD COLUMN trader_id INTEGER',
+    'ALTER TABLE bills ADD COLUMN trader_id INTEGER',
+    'ALTER TABLE debit_notes ADD COLUMN trader_id INTEGER',
+    'ALTER TABLE debit_notes_planter ADD COLUMN trader_id INTEGER',
+    // Backfill those FKs from the lots each document was raised from.
+    //
+    // ONLY where the answer is certain: the lots behind one (trade, seller
+    // name) must all point at the SAME trader. Where a duplicated name split
+    // its lots across two masters the document is left NULL rather than
+    // guessed at — every reader falls back to the name for those, exactly as
+    // it did before, so a NULL is never worse than the old behaviour.
+    //
+    // Idempotent (`WHERE trader_id IS NULL`), so it is safe on every start and
+    // picks up rows that become resolvable after a seller is corrected.
+    //
+    // The outer table is referenced by its FULL NAME, not an alias — sql.js
+    // raises "no such column" on outer-ALIAS references inside a nested
+    // subquery (same engine limitation noted in auction-reports.js).
+    `UPDATE purchases SET trader_id = (
+        SELECT MIN(l.trader_id) FROM lots l
+         WHERE l.auction_id = purchases.auction_id
+           AND UPPER(TRIM(l.name)) = UPPER(TRIM(purchases.name))
+           AND l.trader_id IS NOT NULL)
+      WHERE trader_id IS NULL AND auction_id IS NOT NULL
+        AND (SELECT COUNT(DISTINCT l.trader_id) FROM lots l
+              WHERE l.auction_id = purchases.auction_id
+                AND UPPER(TRIM(l.name)) = UPPER(TRIM(purchases.name))
+                AND l.trader_id IS NOT NULL) = 1`,
+    `UPDATE bills SET trader_id = (
+        SELECT MIN(l.trader_id) FROM lots l
+         WHERE l.auction_id = bills.auction_id
+           AND UPPER(TRIM(l.name)) = UPPER(TRIM(bills.name))
+           AND l.trader_id IS NOT NULL)
+      WHERE trader_id IS NULL AND auction_id IS NOT NULL
+        AND (SELECT COUNT(DISTINCT l.trader_id) FROM lots l
+              WHERE l.auction_id = bills.auction_id
+                AND UPPER(TRIM(l.name)) = UPPER(TRIM(bills.name))
+                AND l.trader_id IS NOT NULL) = 1`,
+    `UPDATE debit_notes SET trader_id = (
+        SELECT MIN(l.trader_id) FROM lots l
+         WHERE l.auction_id = debit_notes.auction_id
+           AND UPPER(TRIM(l.name)) = UPPER(TRIM(debit_notes.name))
+           AND l.trader_id IS NOT NULL)
+      WHERE trader_id IS NULL AND auction_id IS NOT NULL
+        AND (SELECT COUNT(DISTINCT l.trader_id) FROM lots l
+              WHERE l.auction_id = debit_notes.auction_id
+                AND UPPER(TRIM(l.name)) = UPPER(TRIM(debit_notes.name))
+                AND l.trader_id IS NOT NULL) = 1`,
+    // debit_notes_planter has no auction_id — matched through `ano` instead.
+    // TRIM both sides: single-digit trade numbers are space-padded in places.
+    `UPDATE debit_notes_planter SET trader_id = (
+        SELECT MIN(l.trader_id) FROM lots l JOIN auctions a ON a.id = l.auction_id
+         WHERE TRIM(a.ano) = TRIM(debit_notes_planter.ano)
+           AND UPPER(TRIM(l.name)) = UPPER(TRIM(debit_notes_planter.name))
+           AND l.trader_id IS NOT NULL)
+      WHERE trader_id IS NULL
+        AND (SELECT COUNT(DISTINCT l.trader_id) FROM lots l JOIN auctions a ON a.id = l.auction_id
+              WHERE TRIM(a.ano) = TRIM(debit_notes_planter.ano)
+                AND UPPER(TRIM(l.name)) = UPPER(TRIM(debit_notes_planter.name))
+                AND l.trader_id IS NOT NULL) = 1`,
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }

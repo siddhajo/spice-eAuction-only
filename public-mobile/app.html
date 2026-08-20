@@ -2054,8 +2054,26 @@ function printLastSeller(){if(lastSavedLot&&lastSavedLot.trader_id)printSellerLo
 // attached (operator taps the WhatsApp contact); (3) download the PDF +
 // open a wa.me chat to the seller so it can be attached manually.
 function _waNormPhone(t){var d=String(t||'').replace(/\D/g,'');if(!d)return '';return d.length===10?'91'+d:d}
-async function _lookupSellerWa(name){
-  try{var r=await fetch(B+'/api/traders/by-name/'+encodeURIComponent(name),{headers:ah()});if(!r.ok)return '';var d=await r.json();return d.whatsapp||d.tel||''}catch(e){return ''}
+// Resolve the seller's WhatsApp number from a UNIQUE key — seller NAMES
+// repeat, so a name lookup can hand back a namesake's number. Pass
+// {traderId, userId, name}; the server tries trader id, then the Sellers
+// screen's User ID, then the name. A name that matches several sellers
+// returns '' (no recipient) rather than risking the wrong one. A bare
+// string is still accepted for legacy callers.
+async function _lookupSellerWa(seller){
+  var s=(typeof seller==='string')?{name:seller}:(seller||{});
+  var qs=[];
+  if(s.traderId!=null&&String(s.traderId).trim()!=='')qs.push('id='+encodeURIComponent(s.traderId));
+  if(s.userId!=null&&String(s.userId).trim()!=='')qs.push('user_id='+encodeURIComponent(s.userId));
+  if(s.name)qs.push('name='+encodeURIComponent(s.name));
+  if(!qs.length)return '';
+  try{
+    var r=await fetch(B+'/api/traders/contact?'+qs.join('&'),{headers:ah()});
+    if(!r.ok)return '';
+    var d=await r.json();
+    if(d.ambiguous)return '';   // namesake — don't guess
+    return d.phone||''
+  }catch(e){return ''}
 }
 var _waCloudOk=null;
 async function _waCloudAvail(){
@@ -2083,7 +2101,9 @@ async function whatsappSelectedMyLots(){
     var l=(allMyLots||[]).find(function(x){return x.id===id;});
     if(!l)return;
     var key=l.trader_id||('u_'+(l.trader_name||'unknown'));
-    (groups[key]||(groups[key]={name:l.trader_name||'',ids:[]})).ids.push(id);
+    // Keep the trader id on the group — it's the unique seller key the phone
+    // lookup needs; the name is only a fallback for lots without one.
+    (groups[key]||(groups[key]={name:l.trader_name||'',traderId:(l.trader_id!=null?l.trader_id:null),ids:[]})).ids.push(id);
   });
   var keys=Object.keys(groups);
   if(!keys.length){toast('No matching lots',true);return}
@@ -2092,7 +2112,7 @@ async function whatsappSelectedMyLots(){
   for(var k of keys){
     var g=groups[k];
     try{
-      var norm=_waNormPhone(await _lookupSellerWa(g.name));
+      var norm=_waNormPhone(await _lookupSellerWa({traderId:g.traderId,name:g.name}));
       if(!norm){noPhone++;done++;if(btn)btn.textContent='📲 '+done+'/'+keys.length;continue;}
       var url=B+'/api/lots/print-batch?ids='+g.ids.join(',')+'&branch='+encodeURIComponent(br)+'&token='+token+'&format='+printFmt();
       var pr=await fetch(url,{headers:{'Authorization':'Bearer '+token}});
@@ -2127,7 +2147,7 @@ async function whatsappLotReceipt(l, btn){
     var blob=await pr.blob();
     var fname='Lot_'+l.lot_no+'_Receipt.pdf';
     var qty=Number(l.qty||0).toFixed(3);
-    var phone=await _lookupSellerWa(l.trader_name||'');
+    var phone=await _lookupSellerWa({traderId:(l.trader_id!=null?l.trader_id:null),name:l.trader_name||''});
     var norm=_waNormPhone(phone);
     var summary='Lot #'+l.lot_no+' ('+qty+' kg) receipt is attached.';
     var caption=(l.trader_name||'Seller')+' — '+summary;

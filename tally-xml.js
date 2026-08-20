@@ -4086,17 +4086,30 @@ function buildDebitNoteRows(db, auctionId, cfg) {
   // back to false for empty GSTINs, but PARTYGSTIN itself reaches
   // Tally blank — Tally then can't compute its own GST ledger linkage
   // and shows the OUTPUT IGST ledger as 0).
-  const dealerNames = [...new Set(raw.map(d => String(d.name || '').trim()).filter(Boolean))];
-  const dealers = {};
-  for (const name of dealerNames) {
-    const t = db.prepare(
-      `SELECT name, cr, padd, ppla, pin, pstate FROM traders WHERE UPPER(name) = UPPER(?) LIMIT 1`
-    ).get(name);
-    if (t) dealers[name] = t;
+  // Resolve each debit note's dealer by the FK the note carries
+  // (debit_notes.trader_id), so two dealers registered under the same name
+  // get their own GSTIN and address on the voucher. Notes raised before that
+  // column existed fall back to the name, deterministically (lowest id).
+  const dealers = {};        // keyed by trader_id
+  const dealersByName = {};  // fallback for notes with no FK
+  for (const d of raw) {
+    if (d.trader_id != null && dealers[d.trader_id] === undefined) {
+      dealers[d.trader_id] = db.prepare(
+        `SELECT name, cr, padd, ppla, pin, pstate FROM traders WHERE id = ? LIMIT 1`
+      ).get(d.trader_id) || null;
+    }
+    const nm = String(d.name || '').trim();
+    if (nm && dealersByName[nm] === undefined) {
+      dealersByName[nm] = db.prepare(
+        `SELECT name, cr, padd, ppla, pin, pstate FROM traders
+          WHERE UPPER(TRIM(name)) = UPPER(TRIM(?)) ORDER BY id LIMIT 1`
+      ).get(nm) || null;
+    }
   }
 
   return raw.map((d) => {
-    const dealer = dealers[String(d.name || '').trim()] || {};
+    const dealer = (d.trader_id != null && dealers[d.trader_id])
+      || dealersByName[String(d.name || '').trim()] || {};
     // Strip 'GSTIN.' / 'gstin.' prefix from `cr` — Tally expects the
     // bare 15-char GSTIN.
     let gstin = String(dealer.cr || '').trim();

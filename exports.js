@@ -689,11 +689,13 @@ async function exportBankPayment(db, auctionId, cfg, _state, extra) {
   const { getBankPaymentData } = require('./calculations');
   const { getBankFormat } = require('./bank-formats');
   const sellers = (extra && extra.sellers) || null;
-  // lots / excludeLots flow through to getBankPaymentData, which recomputes
-  // each affected seller's payable over only the relevant lots (Payments-tab
-  // tracked-export flow).
+  // sellerKeys are the identity form ('id:<trader_id>') of the same selection —
+  // they take precedence so ticking one of two same-named sellers exports only
+  // that one. lots / excludeLots flow through to getBankPaymentData, which
+  // recomputes each affected seller's payable over only the relevant lots.
   const payments = getBankPaymentData(db, auctionId, cfg, {
     sellers,
+    sellerKeys: (extra && extra.sellerKeys) || null,
     lots:        extra && extra.lots,
     excludeLots: extra && extra.excludeLots,
   });
@@ -712,6 +714,7 @@ async function exportBankPaymentBefore(db, auctionId, cfg, _state, extra) {
   const sellers = (extra && extra.sellers) || null;
   const payments = getBankPaymentData(db, auctionId, cfg, {
     before: true, sellers,
+    sellerKeys: (extra && extra.sellerKeys) || null,
     lots:        extra && extra.lots,
     excludeLots: extra && extra.excludeLots,
   });
@@ -1526,7 +1529,16 @@ async function exportPramanCSV(db, auctionId, cfg, state) {
     `SELECT l.lot_no, l.branch, l.grade, l.name, l.cr, l.aadhar, l.qty, l.litre, l.bags, l.tel,
             t.cr AS trader_cr, t.aadhar AS trader_aadhar, t.tel AS trader_tel
        FROM lots l
-       LEFT JOIN traders t ON UPPER(TRIM(t.name)) = UPPER(TRIM(l.name))
+       -- Joined on the seller FK, not the name. Two sellers can share a name
+       -- (two "BASKARAN S"), and a name join matched BOTH master rows, so
+       -- every one of their lots was emitted TWICE. trader_id is unique per
+       -- master row, so each lot yields exactly one line; lots that predate
+       -- the FK fall back to a name match narrowed to a single row.
+       LEFT JOIN traders t
+         ON t.id = COALESCE(l.trader_id,
+              (SELECT t2.id FROM traders t2
+                WHERE UPPER(TRIM(t2.name)) = UPPER(TRIM(l.name))
+                ORDER BY t2.id LIMIT 1))
       WHERE l.auction_id = ? ${state ? 'AND l.state = ?' : ''}
       ORDER BY CAST(l.lot_no AS INTEGER), l.lot_no`,
     state ? [auctionId, state] : [auctionId]

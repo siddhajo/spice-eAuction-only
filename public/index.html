@@ -11447,6 +11447,13 @@ async function dlOpenSeller(el){
       let hit = null;
       try { hit = await j(`/api/traders/by-name/${encodeURIComponent(name)}`); } catch (_) {}
       if (!hit || !hit.id) { toast(`"${name}" is not in the seller master`); return; }
+      // Several masters share this name and the lot has no trader_id to pick
+      // between them — opening one at random would show the wrong person's
+      // bank details. Say so instead.
+      if (hit.ambiguous) {
+        toast(`${hit.candidates} sellers are named "${name}" and this lot isn't linked to one — open the right seller from the Sellers screen.`);
+        return;
+      }
       id = hit.id;
     }
     const t = await j(`/api/traders/${id}`);
@@ -14827,10 +14834,16 @@ async function leEditLot(lotId){
     let picked = false;
     try {
       const hit = await j(`/api/traders/by-name/${encodeURIComponent(lot.name)}`);
-      if (hit && hit.id) {
+      // Only auto-pick when the name identifies ONE master. When several
+      // share it, fall through to the lot's own denormalised fields and let
+      // the operator choose — silently defaulting to a namesake would attach
+      // this lot to the wrong seller on save.
+      if (hit && hit.id && !hit.ambiguous) {
         const seller = await j(`/api/traders/${hit.id}`);
         lePickSeller(seller);
         picked = true;
+      } else if (hit && hit.ambiguous) {
+        toast(`${hit.candidates} sellers are named "${lot.name}" — pick the right one before saving.`);
       }
     } catch (e) { /* fall through to denormalised fields */ }
     if (!picked) {
@@ -22239,8 +22252,16 @@ async function loadPurEligibleSellers(){
       const h=document.getElementById('gp-hint');if(h)h.innerHTML='<span style="color:var(--amber)">⚠ No sellers with GSTIN in this auction. Use Bills of Supply tab for agriculturists.</span>';
       return;
     }
-    dd.innerHTML='<option value="">— Select seller —</option>'+sellers.map(s=>
-      `<option value="${esc(s.name)}">${esc(s.name)} — ${s.lot_count} lot(s), ₹${(s.total_amount||0).toFixed(2)}</option>`).join('');
+    // Two dealers can share a name. Carry the identity on the option and add
+    // the User ID to the label for the duplicated ones, so the operator picks
+    // a specific dealer rather than a name.
+    const dupNames={};
+    sellers.forEach(s=>{const k=String(s.name||'').trim().toUpperCase();dupNames[k]=(dupNames[k]||0)+1});
+    dd.innerHTML='<option value="">— Select seller —</option>'+sellers.map(s=>{
+      const dup=dupNames[String(s.name||'').trim().toUpperCase()]>1;
+      const tag=(dup&&s.user_id)?` [${esc(s.user_id)}]`:'';
+      return `<option value="${esc(s.name)}" data-trader-id="${esc(s.trader_id==null?'':s.trader_id)}" data-user-id="${esc(s.user_id||'')}">${esc(s.name)}${tag} — ${s.lot_count} lot(s), ₹${(s.total_amount||0).toFixed(2)}</option>`;
+    }).join('');
     const h=document.getElementById('gp-hint');if(h)h.textContent=`${sellers.length} dealer(s) with GSTIN`;
   }catch(e){console.warn(e)}
 }
@@ -25765,7 +25786,7 @@ async function generatePurchase(){
     const r=await fetch(B+`/api/purchases/generate/${aid}`,{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},
-      body:JSON.stringify({sellerName,invoiceNo})});
+      body:JSON.stringify({sellerName,invoiceNo,..._sellerIdentityFrom('gp-seller',sellerName)})});
     const d=await r.json();
     if(!r.ok)throw new Error(d.error||'Failed to generate purchase invoice');
     hideModal('gen-pur-modal');
@@ -25955,14 +25976,38 @@ async function _fetchPdfBlob(endpoint, postBody) {
   if (!r.ok) { let m='PDF failed'; try{const e=await r.json();if(e.error)m=e.error}catch(_){} throw new Error(m); }
   return r.blob();
 }
-async function _lookupSellerPhone(name) {
+// Resolve a seller's WhatsApp number from a UNIQUE key wherever the caller
+// has one — seller NAMES repeat, so a name lookup can return a namesake's
+// number. Accepts either:
+//   • an object { traderId, userId, name } — id wins, then the Sellers-screen
+//     User ID, then the name as a last resort; or
+//   • a bare name string (legacy callers whose source rows carry no trader FK).
+// Returns '' when nothing matches, which drops the caller to the manual
+// WhatsApp flow (no recipient pre-filled) rather than messaging the wrong seller.
+async function _lookupSellerContact(seller) {
+  const s = (typeof seller === 'string') ? { name: seller } : (seller || {});
+  const qs = [];
+  if (s.traderId != null && String(s.traderId).trim() !== '') qs.push('id=' + encodeURIComponent(s.traderId));
+  if (s.userId   != null && String(s.userId).trim()   !== '') qs.push('user_id=' + encodeURIComponent(s.userId));
+  if (s.name)                                                 qs.push('name=' + encodeURIComponent(s.name));
+  if (!qs.length) return null;
   try {
-    const r = await fetch(B + '/api/traders/by-name/' + encodeURIComponent(name), { headers: { 'Authorization': 'Bearer ' + T } });
-    if (!r.ok) return '';
-    const d = await r.json();
-    // Prefer the dedicated WhatsApp number; fall back to the phone.
-    return d.whatsapp || d.tel || '';
-  } catch (_) { return ''; }
+    const r = await fetch(B + '/api/traders/contact?' + qs.join('&'), { headers: { 'Authorization': 'Bearer ' + T } });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (_) { return null; }
+}
+async function _lookupSellerPhone(seller) {
+  const d = await _lookupSellerContact(seller);
+  if (!d) return '';
+  // A name that matched several sellers is not a safe recipient — send nothing
+  // rather than message a namesake. Callers fall back to the manual flow.
+  if (d.ambiguous) {
+    console.warn('[wa] seller name matched', d.candidates, 'records —', d.name,
+                 '— skipping the number; pass the trader id or User ID to disambiguate.');
+    return '';
+  }
+  return d.phone || '';
 }
 // Buyer phone for SALES invoices — buyers master is keyed by trade name.
 async function _lookupBuyerPhone(name) {
@@ -26389,18 +26434,22 @@ async function whatsappSelectedPurchases() {
 }
 
 // ── Payment Statement: Print + WhatsApp (single + bulk) ──────
-async function printPayment(auctionId, sellerName) {
+async function printPayment(auctionId, sellerName, userId) {
+  // Seller NAMES repeat. When the row carries a User ID, send it so the
+  // statement covers that seller's lots only — a name-only request pulls in a
+  // namesake's lots and prints their phone.
+  const q = userId ? `?userId=${encodeURIComponent(userId)}` : '';
   return fetchAndPrint(
-    `/api/payments/pdf/${auctionId}/${encodeURIComponent(sellerName)}`,
+    `/api/payments/pdf/${auctionId}/${encodeURIComponent(sellerName)}${q}`,
     `Payment_${sellerName}_${auctionId}.pdf`
   );
 }
 // Single Payment — TEXT ONLY, no PDF attachment.
 // Format: "{ano} {seller} {company} PAYMENT {amount} CREDITED"
-async function whatsappPayment(auctionId, sellerName, payable) {
+async function whatsappPayment(auctionId, sellerName, payable, userId) {
   try {
     const [phone, company, ano] = await Promise.all([
-      _lookupSellerPhone(sellerName), _getCompanyName(), _getAuctionAno(auctionId),
+      _lookupSellerPhone({ name: sellerName, userId }), _getCompanyName(), _getAuctionAno(auctionId),
     ]);
     const amt = Number(payable||0).toLocaleString('en-IN');
     const msg = `${ano} ${sellerName} ${company} PAYMENT ${amt} CREDITED`;
@@ -26417,22 +26466,38 @@ function _collectSelectedPaymentNames() {
   if (!body) return [];
   return Array.from(body.querySelectorAll('.pay-select-cb:checked')).map(cb => cb.value).filter(Boolean);
 }
+// Same selection, but carrying each row's User ID. Used by the statement
+// paths (bulk print / bulk WhatsApp), which must tell two same-named sellers
+// apart. The tracked-export machinery above stays on plain names: its saved
+// state, lot picks and the /api/exports seller filter are all name-keyed.
+function _collectSelectedPaymentSellers() {
+  const body = document.getElementById('payments-list');
+  if (!body) return [];
+  return Array.from(body.querySelectorAll('.pay-select-cb:checked'))
+    .map(cb => ({
+      name: cb.value,
+      user_id: cb.getAttribute('data-user-id') || '',
+      trader_id: cb.getAttribute('data-trader-id') || '',
+      key: _paySellerKey(cb.value, cb.getAttribute('data-trader-id')),
+    }))
+    .filter(x => String(x.name || '').trim() !== '');
+}
 async function printSelectedPayments() {
   const aid = Number(document.getElementById('pay-auction').value);
-  const names = _collectSelectedPaymentNames();
+  const names = _collectSelectedPaymentSellers();
   if (!aid) { alert('Select an auction first'); return; }
   if (!names.length) { alert('Tick one or more sellers first'); return; }
   await fetchPdfWithOverlay(
     `Building merged statement for ${names.length} sellers…`,
     '/api/payments/pdf-bulk',
     `Payments_Batch_${names.length}.pdf`,
-    { auction_id: aid, names }
+    { auction_id: aid, names }   // [{name, user_id}] — see /api/payments/pdf-bulk
   );
 }
 // Bulk Payments — queue of individual TEXT messages, one per seller.
 async function whatsappSelectedPayments() {
   const aid = Number(document.getElementById('pay-auction').value);
-  const names = _collectSelectedPaymentNames();
+  const names = _collectSelectedPaymentSellers();
   if (!aid) { alert('Select an auction first'); return; }
   if (!names.length) { alert('Tick one or more sellers first'); return; }
   // Need each seller's payable for the message — pull from the rendered
@@ -26444,13 +26509,16 @@ async function whatsappSelectedPayments() {
     const cells = tr.querySelectorAll('td');
     // Last cell before Actions is Payable (index -2 because Actions is last)
     const payText = cells[cells.length - 2] ? cells[cells.length - 2].textContent.replace(/[^\d.\-]/g,'') : '0';
-    rowMap[cb.value] = Number(payText) || 0;
+    // Keyed by name + user id: two sellers can share a name and would
+    // otherwise overwrite each other's payable here.
+    rowMap[cb.value + '|' + (cb.getAttribute('data-user-id') || '')] = Number(payText) || 0;
   });
   const [company, ano] = await Promise.all([_getCompanyName(), _getAuctionAno(aid)]);
   const items = [];
-  for (const nm of names) {
-    const phone = await _lookupSellerPhone(nm);
-    const amt = Number(rowMap[nm]||0).toLocaleString('en-IN');
+  for (const sel of names) {
+    const nm = sel.name;
+    const phone = await _lookupSellerPhone({ name: nm, userId: sel.user_id });
+    const amt = Number(rowMap[nm + '|' + (sel.user_id || '')]||0).toLocaleString('en-IN');
     items.push({
       name: nm, phone,
       message: `${ano} ${nm} ${company} PAYMENT ${amt} CREDITED`,
@@ -26591,9 +26659,12 @@ async function leWhatsappReceipt() {
   const lots = _le_pending_print.lots;
   // Group by trader (same key the by-seller print uses) so one chat thread
   // gets one message containing all of that seller's lots.
+  // Carry the trader id into the group: it's the unique seller key the phone
+  // lookup needs (names repeat). Legacy lots with no trader_id fall back to a
+  // name-keyed group and a name lookup.
   const groups = lots.reduce((m, l) => {
     const k = l.trader_id != null ? `id:${l.trader_id}` : `name:${l.name || ''}`;
-    (m[k] = m[k] || { traderName: l.name || '', lots: [] }).lots.push(l);
+    (m[k] = m[k] || { traderName: l.name || '', traderId: l.trader_id != null ? l.trader_id : null, lots: [] }).lots.push(l);
     return m;
   }, {});
   const items = Object.values(groups);
@@ -26606,7 +26677,7 @@ async function leWhatsappReceipt() {
   const fmt = (_le.receiptFormat === 'compact') ? 'compact' : 'detailed';
   let sent = 0, opened = 0;
   for (const grp of items) {
-    const phone = await _lookupSellerPhone(grp.traderName);
+    const phone = await _lookupSellerPhone({ traderId: grp.traderId, name: grp.traderName });
     const msg = leBuildReceiptText(grp.traderName, grp.lots, { cfg, auction });
 
     // Build a receipt PDF for exactly this seller's lots (print-batch
@@ -26741,6 +26812,15 @@ function _paySaveState(aid, state) {
   try { localStorage.setItem(_PAY_STATE_KEY(aid), JSON.stringify(state)); }
   catch (_) { /* quota; ignore */ }
 }
+// Key for everything the tracked export remembers about a seller (lot picks,
+// exported-on markers) and for the export request itself. Two sellers can
+// share a name, so the key is their trader id when the row has one; the bare
+// name is kept as the fallback for rows with no FK, which also means state
+// saved before this change still resolves.
+function _paySellerKey(sellerName, traderId) {
+  const t = (traderId == null || traderId === '') ? null : Number(traderId);
+  return Number.isFinite(t) && t > 0 ? `id:${t}` : String(sellerName || '').trim().toUpperCase();
+}
 function _payGetLotPicks(aid, sellerName) {
   const s = _payLoadState(aid);
   const arr = s.picks[sellerName];
@@ -26849,10 +26929,14 @@ function _payUndoLastBatch(aid) {
 }
 
 // ── Per-seller lot picker modal (partial payments) ───────────────
-const _payLotsState = { aid: 0, seller: '', lots: [], banks: [], bankLabels: {}, defaultBankId: null, traderId: null };
-async function openPayLotsModal(auctionId, sellerName) {
+const _payLotsState = { aid: 0, seller: '', userId: '', lots: [], banks: [], bankLabels: {}, defaultBankId: null, traderId: null };
+async function openPayLotsModal(auctionId, sellerName, userId) {
   _payLotsState.aid = Number(auctionId) || 0;
   _payLotsState.seller = String(sellerName || '');
+  // Two sellers can share a name, so the picker narrows on the User ID when
+  // the row has one — otherwise it would list a namesake's lots alongside
+  // this seller's and let the operator pay the wrong person's lot.
+  _payLotsState.userId = String(userId || '').trim();
   _payLotsState.lots = [];
   _payLotsState.banks = [];
   _payLotsState.traderId = null;
@@ -26875,8 +26959,10 @@ async function openPayLotsModal(auctionId, sellerName) {
     const all = await j(`/api/lots/${_payLotsState.aid}?name=${encodeURIComponent(_payLotsState.seller)}`);
     const arr = Array.isArray(all) ? all : (all && all.rows) || [];
     const target = _payLotsState.seller.trim().toLowerCase();
+    const wantUid = _payLotsState.userId;
     const filtered = arr.filter(l =>
       String(l.name || '').trim().toLowerCase() === target &&
+      (!wantUid || String(l.user_id || '').trim() === wantUid) &&
       (Number(l.amount) || 0) > 0
     );
     filtered.sort((a, b) => {
@@ -27362,7 +27448,7 @@ async function saveSelectedPayLots() {
   const lotNos = Array.from(document.querySelectorAll('.pay-lot-cb:not([disabled]):checked'))
     .map(cb => String(cb.dataset.lot || '').trim()).filter(Boolean);
   if (!lotNos.length) { alert('Tick at least one not-yet-exported lot first.'); return; }
-  _paySetLotPicks(aid, seller, lotNos);
+  _paySetLotPicks(aid, _paySellerKey(seller, _payLotsState.traderId), lotNos);
   if (typeof loadPayments === 'function') await loadPayments();
   let autoTicked = false;
   const body = document.getElementById('payments-list');
@@ -27378,7 +27464,7 @@ async function saveSelectedPayLots() {
 async function clearSelectedPayLots() {
   const aid = _payLotsState.aid, seller = _payLotsState.seller;
   if (!aid || !seller) return;
-  _paySetLotPicks(aid, seller, null);
+  _paySetLotPicks(aid, _paySellerKey(seller, _payLotsState.traderId), null);
   toast(`Cleared lot filter for ${seller}.`);
   if (typeof loadPayments === 'function') await loadPayments();
   updatePayLotsTotals();
@@ -27392,7 +27478,8 @@ async function printSelectedPayLots() {
   await fetchAndPrint(
     '/api/payments/pdf-lots',
     `Payment_${safe}_${_payLotsState.aid}_partial.pdf`,
-    { auction_id: _payLotsState.aid, seller_name: _payLotsState.seller, lot_ids }
+    { auction_id: _payLotsState.aid, seller_name: _payLotsState.seller, lot_ids,
+      user_id: _payLotsState.userId || '' }
   );
 }
 
@@ -27402,14 +27489,14 @@ async function printSelectedPayLots() {
 // exported lots so the rows tint and the undo stack records the batch.
 async function exportBankPaymentSelected() {
   const aid = Number(document.getElementById('pay-auction')?.value || 0);
-  const names = _collectSelectedPaymentNames();
+  const names = _collectSelectedPaymentSellers();
   if (!aid) { alert('Select an auction first'); return; }
   if (!names.length) { alert('Tick one or more sellers first'); return; }
   await _payDownloadSelected('bank_payment', 'xlsx', aid, names);
 }
 async function exportPaymentXlsxSelected() {
   const aid = Number(document.getElementById('pay-auction')?.value || 0);
-  const names = _collectSelectedPaymentNames();
+  const names = _collectSelectedPaymentSellers();
   if (!aid) { alert('Select an auction first'); return; }
   if (!names.length) { alert('Tick one or more sellers first'); return; }
   await _payDownloadSelected('payment', 'xlsx', aid, names);
@@ -27429,7 +27516,7 @@ async function exportBankPaymentTracked() {
     const names = (window._payLoadedNames || []);
     if (names.length) {
       const map = {};
-      names.forEach(n => { map[n] = '*'; });
+      names.forEach(n => { map[n] = '*'; });   // identity keys — see _payLoadedNames
       _payMarkExported(aid, map);
       if (typeof loadPayments === 'function') loadPayments();
     }
@@ -27438,30 +27525,40 @@ async function exportBankPaymentTracked() {
 function exportPaymentXlsxTracked() {
   return _collectSelectedPaymentNames().length ? exportPaymentXlsxSelected() : exportType('payment');
 }
-async function _payDownloadSelected(type, format, aid, names) {
+// `sellers` is [{name, trader_id, key}] — `key` is the seller identity that
+// the saved state, the lot picks and the export request are all keyed on, so
+// two sellers sharing a name are tracked and exported separately.
+async function _payDownloadSelected(type, format, aid, sellers) {
   const label = (typeof EXP_LABELS === 'object' && EXP_LABELS[type]) || type;
   const state = _payLoadState(aid);
-  const lots = {};          // explicit per-seller lot picks
+  const lots = {};          // explicit per-seller lot picks, keyed by identity
   const excludeLots = {};   // lots already shipped — server subtracts them
   const skippedFully = [];
-  const effectiveNames = [];
-  for (const n of names) {
-    const exported = state.exportedLots[n];
-    if (exported === '*') { skippedFully.push(n); continue; }
-    effectiveNames.push(n);
-    const picks = Array.isArray(state.picks[n]) ? state.picks[n] : null;
-    if (picks && picks.length) lots[n] = picks;
-    if (Array.isArray(exported) && exported.length) excludeLots[n] = exported;
+  const effective = [];
+  for (const sel of sellers) {
+    const k = sel.key;
+    // Read through to the legacy name key so state saved before identities
+    // were introduced is still honoured.
+    const legacy = String(sel.name || '').trim().toUpperCase();
+    const exported = state.exportedLots[k] !== undefined ? state.exportedLots[k] : state.exportedLots[legacy];
+    if (exported === '*') { skippedFully.push(sel.name); continue; }
+    effective.push(sel);
+    const picksSrc = state.picks[k] !== undefined ? state.picks[k] : state.picks[legacy];
+    const picks = Array.isArray(picksSrc) ? picksSrc : null;
+    if (picks && picks.length) lots[k] = picks;
+    if (Array.isArray(exported) && exported.length) excludeLots[k] = exported;
   }
-  if (!effectiveNames.length) {
-    alert(`All ${names.length} ticked seller${names.length === 1 ? ' has' : 's have'} already been fully exported. Use the ↶ Undo icon on a row (or ↶ Undo Last Export) before re-exporting.`);
+  if (!effective.length) {
+    alert(`All ${sellers.length} ticked seller${sellers.length === 1 ? ' has' : 's have'} already been fully exported. Use the ↶ Undo icon on a row (or ↶ Undo Last Export) before re-exporting.`);
     return;
   }
   if (skippedFully.length) {
     toast(`Skipped ${skippedFully.length} fully-exported seller${skippedFully.length === 1 ? '' : 's'}: ${skippedFully.slice(0, 3).join(', ')}${skippedFully.length > 3 ? '…' : ''}`);
   }
-  names = effectiveNames;
-  const body = { names, format };
+  sellers = effective;
+  const names = sellers.map(x => x.name);
+  const sellerKeys = sellers.map(x => x.key);
+  const body = { names, sellerKeys, format };
   if (Object.keys(lots).length)        body.lots        = lots;
   if (Object.keys(excludeLots).length) body.excludeLots = excludeLots;
   let ok = false;
@@ -27493,24 +27590,26 @@ async function _payDownloadSelected(type, format, aid, names) {
     // Sellers without picks were exported in full ('*'); sellers WITH picks
     // contribute their lot_no list so any remaining lots stay payable.
     const exportsMap = {};
-    for (const n of names) {
-      const picksForN = Array.isArray(lots[n]) ? lots[n] : null;
-      exportsMap[n] = (picksForN && picksForN.length) ? picksForN.slice() : '*';
+    for (const k of sellerKeys) {
+      const picksForK = Array.isArray(lots[k]) ? lots[k] : null;
+      exportsMap[k] = (picksForK && picksForK.length) ? picksForK.slice() : '*';
     }
     _payMarkExported(aid, exportsMap);
     // Clear the now-consumed lot picks (they were the "next export filter").
-    for (const n of names) if (Array.isArray(lots[n]) && lots[n].length) _paySetLotPicks(aid, n, null);
+    for (const k of sellerKeys) if (Array.isArray(lots[k]) && lots[k].length) _paySetLotPicks(aid, k, null);
     const partialCount = Object.keys(lots).length;
     toast(`Exported ${names.length} seller${names.length === 1 ? '' : 's'}${partialCount ? ` (${partialCount} partial)` : ''} — rows marked.`);
     if (typeof loadPayments === 'function') loadPayments();
   }
 }
 // Per-row undo (the ↶ icon on a tinted row) — restores ONE seller.
-function undoPaymentExport(sellerName) {
+// `sellerKey` is the identity the marker was stored under; `label` is what the
+// operator sees. Both are needed because two sellers can share the name.
+function undoPaymentExport(sellerKey, label) {
   const aid = Number(document.getElementById('pay-auction')?.value || 0);
-  if (!aid || !sellerName) return;
-  _payUnmarkExported(aid, sellerName);
-  toast(`Restored ${sellerName} — can be exported again.`);
+  if (!aid || !sellerKey) return;
+  _payUnmarkExported(aid, sellerKey);
+  toast(`Restored ${label || sellerKey} — can be exported again.`);
   if (typeof loadPayments === 'function') loadPayments();
 }
 // Toolbar Undo — pops the most recent export batch and restores everyone in it.
@@ -28073,7 +28172,7 @@ function togglePayAdvanceEdit(cb){
 // and the KPI/footer totals recompute from the server. Empty/0 clears it.
 // Advance is deducted from Payable (Payable = Net − Advance); the display
 // Discount is unaffected.
-async function savePaymentAdvance(inputEl, encName){
+async function savePaymentAdvance(inputEl, encName, traderId){
   const aid = document.getElementById('pay-auction').value;
   if (!aid) return;
   const name = decodeURIComponent(encName || '');
@@ -28100,7 +28199,9 @@ async function savePaymentAdvance(inputEl, encName){
   try {
     if (inputEl) inputEl.disabled = true;
     await j(`/api/payments/${aid}/advance`, {
-      method:'POST', body: JSON.stringify({ name, advance })
+      // trader_id keys the advance to THIS seller — a name-keyed advance is
+      // deducted from every seller sharing the name.
+      method:'POST', body: JSON.stringify({ name, advance, trader_id: traderId ?? null })
     });
     await loadPayments();
     toast(advance > 0 ? `Advance ₹${fmtI(advance, 2)} saved for ${name}.` : `Advance cleared for ${name}.`);
@@ -28178,7 +28279,11 @@ async function loadPayments(){
     window._payDiscountApplied = allArr.length ? (Number(allArr[0].discount_applied) === 1) : false;
     // All seller names in this trade — used to mark the whole-trade bank export
     // as "exported" so every row shows the exported-on badge.
-    window._payLoadedNames = allArr.map(r => String(r.name || '')).filter(Boolean);
+    // Seller IDENTITY keys, not names — the whole-trade export marks rows
+    // through these, and two sellers sharing a name must be marked separately.
+    window._payLoadedNames = allArr
+      .map(r => _paySellerKey(r.name, r.trader_id))
+      .filter(Boolean);
     // Within-trade search — /api/payments returns aggregated seller
     // rollups, so the filter is applied client-side on the seller name.
     const _paySearch = (document.getElementById('pay-search')?.value || '').trim().toLowerCase();
@@ -28213,7 +28318,7 @@ async function loadPayments(){
       const _exAid = Number((document.getElementById('pay-auction')||{}).value)||0;
       arr = arr.filter(r => {
         const st = (typeof _payExportStatus==='function')
-          ? _payExportStatus(_exAid, r.name, Number(r.lot_count)||0) : 'none';
+          ? _payExportStatus(_exAid, _paySellerKey(r.name, r.trader_id), Number(r.lot_count)||0) : 'none';
         const isPaid = st === 'full';
         return _payExportFilter === 'paid' ? isPaid : !isPaid;
       });
@@ -28300,7 +28405,7 @@ async function loadPayments(){
       // rose row, partial ones amber.
       rowClass:(p)=>{
         const aid = Number((document.getElementById('pay-auction')||{}).value)||0;
-        const st = (typeof _payExportStatus==='function') ? _payExportStatus(aid, p.name, Number(p.lot_count)||0) : 'none';
+        const st = (typeof _payExportStatus==='function') ? _payExportStatus(aid, _paySellerKey(p.name, p.trader_id), Number(p.lot_count)||0) : 'none';
         if (st==='full') return 'pay-row-exported';
         if (st==='partial') return 'pay-row-exported-partial';
         // Not yet exported — tint violet if any of this seller's lots are
@@ -28314,12 +28419,12 @@ async function loadPayments(){
         { key:'_select', label:'',
           labelHTML:'<input type="checkbox" id="pay-select-all" onclick="event.stopPropagation();toggleAllPayments(this.checked)" title="Select / clear all visible" style="cursor:pointer;width:16px;height:16px;vertical-align:middle;accent-color:var(--green)">',
           sortable:false, searchable:false,
-          render:(p)=>`<input type="checkbox" class="pay-select-cb" value="${esc(p.name||'')}" onclick="event.stopPropagation();updatePaymentBulkButtons()" style="cursor:pointer">` },
+          render:(p)=>`<input type="checkbox" class="pay-select-cb" value="${esc(p.name||'')}" data-user-id="${esc(p.user_id||'')}" data-trader-id="${esc(p.trader_id==null?'':p.trader_id)}" onclick="event.stopPropagation();updatePaymentBulkButtons()" style="cursor:pointer">` },
         { key:'name', label:'Seller', sort:'text',
           render:(p)=>{
             const aid = Number((document.getElementById('pay-auction')||{}).value)||0;
             const total = Number(p.lot_count)||0;
-            const status = (typeof _payExportStatus==='function') ? _payExportStatus(aid, p.name, total) : 'none';
+            const status = (typeof _payExportStatus==='function') ? _payExportStatus(aid, _paySellerKey(p.name, p.trader_id), total) : 'none';
             // "Multiple banks" warning when this seller's lots route to >1 account.
             const bankBadge = p.multipleBanks
               ? `<span class="pay-multibank-badge" title="This seller's lots use more than one bank account. Open 📋 Lots to review per-account routing.">🏦 multiple banks</span>`
@@ -28350,11 +28455,19 @@ async function loadPayments(){
             }
             // Saved lot-pick badge (📌 N picked) — the next Export Selected
             // will narrow to these lots.
-            const picks = (typeof _payGetLotPicks==='function') ? _payGetLotPicks(aid, p.name) : null;
+            const picks = (typeof _payGetLotPicks==='function') ? _payGetLotPicks(aid, _paySellerKey(p.name, p.trader_id)) : null;
             const pickBadge = (picks && picks.length && status !== 'full')
               ? `<span class="pay-lot-pick-badge" title="${picks.length} lot${picks.length===1?'':'s'} saved as this seller's export filter.">📌 ${picks.length} picked</span>`
               : '';
-            return `<span style="font-weight:600;color:var(--spice-text-main)">${esc(p.name||'')}</span>${immediateBadge}${bankBadge}${exportedBadge}${pickBadge}`;
+            // Sellers are grouped by USER ID, so two masters sharing a name
+            // are now two rows. Show the user id under the name — without it
+            // the rows are indistinguishable and there's no way to tell which
+            // "BASKARAN S" is which.
+            const uid = String(p.user_id||'').trim();
+            const uidLine = uid
+              ? `<div style="font-size:11px;color:var(--text3);font-family:monospace">${esc(uid)}</div>`
+              : '';
+            return `<span style="font-weight:600;color:var(--spice-text-main)">${esc(p.name||'')}</span>${immediateBadge}${bankBadge}${exportedBadge}${pickBadge}${uidLine}`;
           } },
         { key:'lot_count', label:'Lots', sort:'number', numeric:true },
         { key:'total_qty', label:'Qty', sort:'number', numeric:true, fmt:(n)=>fmtI(n,3) },
@@ -28417,7 +28530,7 @@ async function loadPayments(){
             const input = `<input type="text" class="pay-adv-input" inputmode="decimal" value="${v>0?fmtI(v,2):''}" placeholder="0.00" data-prev="${v}" disabled`
               + ` onclick="event.stopPropagation()"`
               + ` onfocus="this.select()"`
-              + ` onchange="savePaymentAdvance(this,'${encodeURIComponent(p.name||'')}')"`
+              + ` onchange="savePaymentAdvance(this,'${encodeURIComponent(p.name||'')}',${p.trader_id==null?'null':Number(p.trader_id)})"`
               + ` title="Advance already paid to this seller — deducted from Payable (display Discount is unaffected). Tick the box to edit; you'll confirm the amount before it's saved."`
               + ` style="width:96px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-size:12px;text-align:right;background:#f3f4f6;color:#B45309;font-weight:600">`;
             const paidBadge = v>0
@@ -28456,15 +28569,17 @@ async function loadPayments(){
             const pay = Number(p.total_payable)||0;
             // 📋 Lots — per-seller lot picker for partial payments (print a
             // statement covering only chosen lots).
-            const lotsBtn = `<button class="icon-btn" title="Per-seller lots — pick lots for a partial payment statement" onclick="event.stopPropagation();openPayLotsModal(${aid},decodeURIComponent('${nm}'))" style="background:transparent;border:none;cursor:pointer;padding:2px 6px;border-radius:4px;font-size:14px">📋</button>`;
+            const lotsBtn = `<button class="icon-btn" title="Per-seller lots — pick lots for a partial payment statement" onclick="event.stopPropagation();openPayLotsModal(${aid},decodeURIComponent('${nm}'),decodeURIComponent('${encodeURIComponent(p.user_id||'')}'))" style="background:transparent;border:none;cursor:pointer;padding:2px 6px;border-radius:4px;font-size:14px">📋</button>`;
             // ↶ Undo — only when this seller has a tracked export to restore.
-            const status = (typeof _payExportStatus==='function') ? _payExportStatus(aid, p.name, Number(p.lot_count)||0) : 'none';
+            const status = (typeof _payExportStatus==='function') ? _payExportStatus(aid, _paySellerKey(p.name, p.trader_id), Number(p.lot_count)||0) : 'none';
             const undoBtn = status !== 'none'
-              ? `<button class="icon-btn" title="Undo export for this seller — makes it selectable again" onclick="event.stopPropagation();undoPaymentExport(decodeURIComponent('${nm}'))" style="background:transparent;border:none;cursor:pointer;padding:2px 6px;border-radius:4px;font-size:15px;color:#b45309">↶</button>`
+              ? `<button class="icon-btn" title="Undo export for this seller — makes it selectable again" onclick="event.stopPropagation();undoPaymentExport('${esc(_paySellerKey(p.name, p.trader_id))}',decodeURIComponent('${nm}'))" style="background:transparent;border:none;cursor:pointer;padding:2px 6px;border-radius:4px;font-size:15px;color:#b45309">↶</button>`
               : '';
+            // The user id disambiguates two sellers who share a name.
+            const uid = encodeURIComponent(p.user_id||'');
             return undoBtn + lotsBtn
-                 + iconBtn('print','Print payment statement',`printPayment(${aid},decodeURIComponent('${nm}'))`)
-                 + iconBtn('whatsapp','Send via WhatsApp',`whatsappPayment(${aid},decodeURIComponent('${nm}'),${pay})`);
+                 + iconBtn('print','Print payment statement',`printPayment(${aid},decodeURIComponent('${nm}'),decodeURIComponent('${uid}'))`)
+                 + iconBtn('whatsapp','Send via WhatsApp',`whatsappPayment(${aid},decodeURIComponent('${nm}'),${pay},decodeURIComponent('${uid}'))`);
           } }
       ]
     });
@@ -28807,8 +28922,14 @@ async function loadEligibleSellers(){
       document.getElementById('gb-hint').innerHTML='<span style="color:var(--amber)">⚠ No agriculturist sellers (without GSTIN) found in this auction. Check if lots have been calculated or if all sellers have GSTIN.</span>';
       return;
     }
-    dd.innerHTML='<option value="">— Select seller —</option>'+sellers.map(s=>
-      `<option value="${esc(s.name)}">${esc(s.name)} — ${s.lot_count} lot(s), ₹${(s.total_amount||0).toFixed(2)}</option>`).join('');
+    // Two planters can share a name — see the dealer dropdown above.
+    const dupNames={};
+    sellers.forEach(s=>{const k=String(s.name||'').trim().toUpperCase();dupNames[k]=(dupNames[k]||0)+1});
+    dd.innerHTML='<option value="">— Select seller —</option>'+sellers.map(s=>{
+      const dup=dupNames[String(s.name||'').trim().toUpperCase()]>1;
+      const tag=(dup&&s.user_id)?` [${esc(s.user_id)}]`:'';
+      return `<option value="${esc(s.name)}" data-trader-id="${esc(s.trader_id==null?'':s.trader_id)}" data-user-id="${esc(s.user_id||'')}">${esc(s.name)}${tag} — ${s.lot_count} lot(s), ₹${(s.total_amount||0).toFixed(2)}</option>`;
+    }).join('');
     document.getElementById('gb-hint').textContent=`${sellers.length} eligible seller(s) available`;
   }catch(e){console.warn(e)}}
 // Commission Bill (Format 2) — opens the modal; branch dropdown is
@@ -28959,6 +29080,27 @@ async function saveBillEdit(){
     if(!r.ok){const d=await r.json();throw new Error(d.error||'Save failed')}
     hideModal('bill-edit-modal');toast('Bill updated');loadBills();
   }catch(e){showError(e)}}
+// Pull { traderId, userId } for the chosen seller off the dropdown.
+//
+// Two dealers with the same name produce two options with the SAME value, so
+// matching on the name can't tell them apart — read the option the operator
+// actually SELECTED. Falls back to a by-value match (for a name typed by hand
+// rather than picked), and returns blanks when that is ambiguous so the server
+// keeps its existing name-only behaviour instead of us guessing a dealer.
+function _sellerIdentityFrom(ddId, name){
+  const dd=document.getElementById(ddId);
+  if(!dd)return {};
+  const want=String(name||'').trim().toUpperCase();
+  const sel=(dd.selectedIndex!=null&&dd.selectedIndex>=0)?dd.options[dd.selectedIndex]:null;
+  let opt=(sel&&String(sel.value||'').trim().toUpperCase()===want)?sel:null;
+  if(!opt){
+    const hits=[...dd.querySelectorAll('option')].filter(o=>String(o.value||'').trim().toUpperCase()===want);
+    if(hits.length!==1)return {};
+    opt=hits[0];
+  }
+  return { traderId: opt.getAttribute('data-trader-id')||'',
+           userId:   opt.getAttribute('data-user-id')||'' };
+}
 async function generateBill(){
   const aid=document.getElementById('bill-auction').value;if(!aid){alert('Select auction');return}
   const sellerName=document.getElementById('gb-seller').value.trim();
@@ -28967,7 +29109,7 @@ async function generateBill(){
   try{
     const r=await fetch(B+`/api/bills/generate/${aid}`,{method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},
-      body:JSON.stringify({sellerName,billNo})});
+      body:JSON.stringify({sellerName,billNo,..._sellerIdentityFrom('gb-seller-dd',sellerName)})});
     const d=await r.json();
     if(!r.ok)throw new Error(d.error||'Failed');
     hideModal('gen-bill-modal');
@@ -31214,18 +31356,31 @@ async function populateRegParties(){
   try { rows = await j('/api/registers/individual-parties?' + p.toString()) || []; }
   catch(e){ rows = []; }
   // Endpoint may return [string] (legacy) or [{name, phone}] — normalise.
-  _regParties = rows.map(x => (typeof x === 'string') ? { name: x, phone: '' } : { name: x.name || '', phone: x.phone || '' });
+  // trader_id distinguishes two parties sharing a name (pooler kind supplies
+  // it; other kinds return null and the picker behaves exactly as before).
+  _regParties = rows.map(x => (typeof x === 'string')
+    ? { name: x, phone: '', trader_id: null }
+    : { name: x.name || '', phone: x.phone || '', trader_id: x.trader_id == null ? null : x.trader_id });
   // Keep the previous pick only when it still exists for the new kind/range;
   // otherwise fall back to "All parties" rather than querying a stale name.
-  regPartySelect(keep && _regParties.some(x => x.name === keep) ? keep : '');
+  const keptTid = (document.getElementById('reg-party') || {}).dataset
+    ? (document.getElementById('reg-party').dataset.traderId || '') : '';
+  const stillThere = _regParties.find(x => x.name === keep
+    && String(x.trader_id == null ? '' : x.trader_id) === String(keptTid));
+  regPartySelect(stillThere ? keep : '', stillThere ? stillThere.trader_id : null);
 }
 
 // Commit a pick: hidden input = the exact name the query uses, visible input
 // = what the operator reads. Empty name means "All parties".
-function regPartySelect(name){
+function regPartySelect(name, traderId){
   const hidden = document.getElementById('reg-party');
   const inp = document.getElementById('reg-party-input');
-  if (hidden) hidden.value = name || '';
+  if (hidden) {
+    hidden.value = name || '';
+    // Stashed on the hidden field so the Certificate request can name ONE
+    // pooler when two share this name.
+    hidden.dataset.traderId = (traderId == null ? '' : String(traderId));
+  }
   if (inp) inp.value = name || '';
   regPartyClose();
   regPartySyncClear();
@@ -31247,7 +31402,7 @@ function regPartyClear(){
 }
 function regPartyPick(i){
   const x = _regPartyMatches[i];
-  if (x) regPartySelect(x.name);
+  if (x) regPartySelect(x.name, x.trader_id);
 }
 function regPartyClose(){
   const host = document.getElementById('reg-party-list');
@@ -31305,13 +31460,24 @@ function renderRegPartyOptions(filter){
   const hits = f
     ? _regParties.filter(x => x.name.toLowerCase().includes(f) || String(x.phone || '').toLowerCase().includes(f))
     : _regParties.slice();
-  _regPartyMatches = [{ name: '', phone: '' }].concat(hits);
+  _regPartyMatches = [{ name: '', phone: '', trader_id: null }].concat(hits);
   if (_regPartyActive < 0 || _regPartyActive >= _regPartyMatches.length) _regPartyActive = 0;
+  // Two parties can share a name. Tag the duplicated ones with their seller id
+  // so the list offers a choice instead of two identical-looking rows.
+  const nameCount = {};
+  hits.forEach(x => { const k = String(x.name || '').toUpperCase(); nameCount[k] = (nameCount[k] || 0) + 1; });
+  const curTid = (document.getElementById('reg-party') || {}).dataset
+    ? ((document.getElementById('reg-party').dataset.traderId) || '') : '';
   let html = _regPartyMatches.map((x, i) => {
-    const isSel = !!x.name && x.name === cur;
+    // Match on name AND id, else both duplicates would render as selected.
+    const isSel = !!x.name && x.name === cur
+      && String(x.trader_id == null ? '' : x.trader_id) === String(curTid);
     const bg = (i === _regPartyActive) ? '#ecfdf5' : (isSel ? 'var(--green-bg)' : '');
+    const dupTag = (nameCount[String(x.name || '').toUpperCase()] > 1 && x.trader_id != null)
+      ? `<span style="font-family:monospace;color:var(--text3);font-size:11px">#${esc(String(x.trader_id))}</span>` : '';
     const body = x.name
       ? `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:${isSel ? '700' : '500'}">${esc(x.name)}</span>`
+        + dupTag
         + `<span style="font-family:monospace;color:var(--text3);white-space:nowrap">${x.phone ? esc(x.phone) : '—'}</span>`
       : `<span style="flex:1;color:var(--text2);font-style:italic">— All parties —</span>`;
     return `<div data-idx="${i}" onmousedown="event.preventDefault();regPartyPick(${i})"`
@@ -31505,10 +31671,14 @@ async function generateCertificate(){
   const from = document.getElementById('reg-from').value;
   const to = document.getElementById('reg-to').value;
   if (!from || !to) { toast('Set a From and To date first'); return; }
-  const party = document.getElementById('reg-party') ? document.getElementById('reg-party').value : '';
+  const partyEl = document.getElementById('reg-party');
+  const party = partyEl ? partyEl.value : '';
+  const partyTid = (partyEl && partyEl.dataset) ? (partyEl.dataset.traderId || '') : '';
   const p = new URLSearchParams();
   p.set('from', from); p.set('to', to);
   if (party) p.set('party', party);
+  // Pins the certificate to one pooler when the name is shared.
+  if (partyTid) p.set('traderId', partyTid);
   const name = 'PoolerCertificate.pdf';
   await withOverlay('Generating Certificate…', async () => {
     const r = await fetch(B + '/api/exports/pooler-certificate?' + p.toString(), { headers:{'Authorization':'Bearer '+T} });

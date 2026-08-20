@@ -532,17 +532,36 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg, opts) {
  * Build purchase invoice data for a seller
  * Aggregates lots by seller for a given auction (registered dealers only)
  */
-function buildPurchaseInvoice(db, auctionId, sellerName, cfg) {
+// `opts.traderId` / `opts.userId` identify WHICH seller when the name is
+// shared. Two dealers can be registered under the same name with different
+// GSTINs (real case: two "BASKARAN S", user ids P0002613 / P0003011). Keyed on
+// the name alone this built ONE invoice covering both dealers' lots and filed
+// it under whichever GSTIN came first — a ₹10,000 purchase from each became a
+// single ₹21,000 invoice against one GSTIN, wrong for GST input and for 194Q
+// TDS on both sides. The name stays the primary argument so existing callers
+// keep working; when they can supply an id, the invoice narrows to that seller.
+function buildPurchaseInvoice(db, auctionId, sellerName, cfg, opts) {
+  opts = opts || {};
+  const traderId = (opts.traderId != null && String(opts.traderId).trim() !== '')
+    ? Number(opts.traderId) : null;
+  // 'import' is the bulk importer's placeholder for "no USER_ID in the file",
+  // not a seller key — narrowing on it would match every imported lot.
+  const rawUid = String(opts.userId || '').trim();
+  const userId = rawUid.toUpperCase() === 'IMPORT' ? '' : rawUid;
+  let sellerSql = '', sellerArgs = [];
+  if (Number.isFinite(traderId)) { sellerSql = ' AND trader_id = ?'; sellerArgs = [traderId]; }
+  else if (userId) { sellerSql = " AND TRIM(COALESCE(user_id,'')) = ?"; sellerArgs = [userId]; }
+
   // A lot qualifies for a Purchase Invoice if it has a GSTIN-bearing seller —
   // i.e. cr is either "GSTIN.<15-char>" (legacy UI format) or a bare 15-char
   // GSTIN starting with 2 digits (Excel import format). We accept both.
   const lots = db.all(
     `SELECT * FROM lots
-     WHERE auction_id = ? AND name = ? AND amount > 0
+     WHERE auction_id = ? AND name = ? AND amount > 0${sellerSql}
        AND (reserved IS NULL OR reserved = 0)
        AND ${hasValidGstinSql('cr')}
      ORDER BY lot_no`,
-    [auctionId, sellerName]
+    [auctionId, sellerName, ...sellerArgs]
   );
   
   if (!lots.length) return null;
@@ -651,8 +670,12 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg) {
   const invoiceAmount = grandTotal - tdsAmount;
 
   return {
+    // trader_id travels with the seller so the caller can stamp it on the
+    // purchases row — that is what lets a reprint find the right master
+    // later instead of re-guessing from a shared name.
     seller: { name: firstLot.name, address: firstLot.padd, place: firstLot.ppla,
-              cr: firstLot.cr, pan: firstLot.pan, state: firstLot.pstate },
+              cr: firstLot.cr, pan: firstLot.pan, state: firstLot.pstate,
+              trader_id: firstLot.trader_id != null ? firstLot.trader_id : null },
     auctionNo: _auc ? _auc.ano : '',
     lineItems,
     summary: {
@@ -665,6 +688,24 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg) {
 /**
  * Generate payment summary for sellers (PAYCHECK.PRG equivalent)
  */
+// ── Seller identity in SQL ───────────────────────────────────────────────
+// Which seller a lot belongs to, in order of how much the key can be trusted:
+//
+//   1. trader_id — the real foreign key into `traders`. Unique per master row,
+//      so it is the only thing that separates two sellers who share a name.
+//   2. user_id   — the Sellers-screen User ID, for lots that carry one.
+//      NOTE the 'import' guard: the bulk lot importer defaults this column to
+//      the literal string 'import' when the file has no USER_ID, and on a real
+//      database that is EVERY row. Treating it as an identity would key every
+//      such lot alike, so it is explicitly discarded.
+//   3. name      — last resort, for legacy lots with neither. Same grouping
+//      these installs have always had.
+const SELLER_KEY_SQL = (a) => `COALESCE(
+    CASE WHEN ${a}.trader_id IS NOT NULL THEN 'id:' || ${a}.trader_id END,
+    CASE WHEN UPPER(TRIM(COALESCE(${a}.user_id,''))) IN ('', 'IMPORT')
+         THEN NULL ELSE 'uid:' || TRIM(${a}.user_id) END,
+    'name:' || UPPER(TRIM(${a}.name)))`;
+
 function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
   // Per-seller, per-auction payment roll-up for the Payments tab (and the
   // lot-selection modal + payment statement, which must agree with it).
@@ -678,7 +719,16 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
   // change the Payments payable (see the note before the settlement-discount
   // block below). The query also pulls per-seller GST sums so the tab can
   // show a "GST 18% (CGST+SGST+IGST)" column.
+  // Sellers are identified by USER ID — two masters can share a name (two
+  // "BASKARAN S", user ids P0002613 / P0003011) and grouping on the name
+  // alone rolled them into one row, hiding that they are different people
+  // with different bank accounts. Falls back to the name for legacy lots
+  // imported before `lots.user_id` was captured, so those group as before.
+  const sellerKeySql = SELLER_KEY_SQL('l');
   let query = `SELECT l.name, l.cr, MAX(l.aadhar) AS aadhar,
+    ${sellerKeySql} AS seller_key,
+    MAX(l.trader_id) AS trader_id,
+    TRIM(COALESCE(l.user_id,'')) AS user_id,
     SUM(l.qty) as total_qty, SUM(l.amount) as total_amount,
     SUM(l.pqty) as total_pqty, SUM(l.prate) as avg_prate,
     SUM(l.puramt) as total_puramt,
@@ -703,17 +753,26 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
   if (!includeUnpriced) query += ' AND l.amount > 0';
   const params = [auctionId];
   if (state) { query += ' AND l.state = ?'; params.push(state); }
-  query += ' GROUP BY l.name, l.cr ORDER BY l.state, l.name';
+  query += ` GROUP BY ${sellerKeySql}, l.name, l.cr ORDER BY l.state, l.name`;
   const sellers = db.all(query, params);
 
   // TDS (u/s 194Q) is held on the purchase invoice — one row per seller per
   // auction in `purchases` — not on the lots. Pull it per seller name so the
   // Payments tab can show a "TDS" column alongside the lot-derived figures.
+  // Keyed by trader_id where the purchase carries one, so two same-named
+  // dealers get their own TDS instead of one seeing the other's. Falls back to
+  // the name for purchases raised before purchases.trader_id existed.
   const tdsRows = db.all(
-    'SELECT name, SUM(COALESCE(tds,0)) AS tds FROM purchases WHERE auction_id = ? GROUP BY name',
+    `SELECT name, trader_id, SUM(COALESCE(tds,0)) AS tds
+       FROM purchases WHERE auction_id = ? GROUP BY trader_id, name`,
     [auctionId]) || [];
-  const tdsByName = {};
-  tdsRows.forEach(r => { tdsByName[String(r.name || '').trim().toUpperCase()] = Number(r.tds) || 0; });
+  const tdsByName = {}, tdsByTrader = {};
+  tdsRows.forEach(r => {
+    const v = Number(r.tds) || 0;
+    if (r.trader_id != null) tdsByTrader[r.trader_id] = (tdsByTrader[r.trader_id] || 0) + v;
+    const k = String(r.name || '').trim().toUpperCase();
+    tdsByName[k] = (tdsByName[k] || 0) + v;
+  });
 
   // Per-seller advance already paid (Payments tab "Advance" column). Deducted
   // from the payable: Payable = Net Amount − Advance. Keyed case-insensitively
@@ -726,6 +785,8 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
       [auctionId]) || [];
     advRows.forEach(r => {
       const k = String(r.name_key || '').trim().toUpperCase();
+      // `name_key` is the seller identity: 'id:<trader_id>' for rows written
+      // since advances became id-keyed, the bare uppercase name before that.
       advByName[k] = Number(r.advance) || 0;
       advAtByName[k] = r.updated_at || '';   // when the advance was recorded
     });
@@ -776,7 +837,9 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
       ? Math.round(netAmount / 1000 * days * discPct)
       : 0;
     // Advance already paid to this seller (deducted from Payable below).
-    const advance = advByName[String(s.name || '').trim().toUpperCase()] || 0;
+    const advKey = (s.trader_id != null && advByName[`ID:${s.trader_id}`] != null)
+      ? `ID:${s.trader_id}` : String(s.name || '').trim().toUpperCase();
+    const advance = advByName[advKey] || 0;
     // Unpriced = this seller has no priced lots yet (all amounts still 0),
     // i.e. price import hasn't run. Only possible when includeUnpriced is set.
     // The UI shows "—" for the money columns and keeps just Advance editable.
@@ -790,7 +853,9 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
       total_tax: cgst + sgst + igst,
       // TDS deducted on this seller's purchase invoice (194Q). Display-only —
       // does not alter net/payable here.
-      tds: tdsByName[String(s.name || '').trim().toUpperCase()] || 0,
+      tds: (s.trader_id != null && tdsByTrader[s.trader_id] != null)
+        ? tdsByTrader[s.trader_id]
+        : (tdsByName[String(s.name || '').trim().toUpperCase()] || 0),
       // Purchase = sale amount + sample-bag refund (the base commission is
       // charged on), summed per seller.
       purchase_value: (Number(s.total_amount) || 0) + lotDisc,
@@ -806,7 +871,7 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
       advance,
       // When the advance was recorded (payment_advances.updated_at) — drives
       // the "Advance paid on {date}" badge in the Advance column.
-      advance_at: advAtByName[String(s.name || '').trim().toUpperCase()] || '',
+      advance_at: advAtByName[advKey] || '',
       // True when this seller's lots point at more than one bank account
       // (or a mix of tagged + untagged). Drives the "multiple banks" badge
       // on the Payments table so the user knows to export each account's
@@ -844,6 +909,12 @@ function formatLotList(raw) {
 function getBankPaymentData(db, auctionId, cfg, opts) {
   opts = opts || {};
   const useBefore = !!opts.before;
+  // Identity keys ('id:<trader_id>') from the Payments tab's tracked export.
+  // When present they take precedence over the name filter — ticking one of
+  // two same-named sellers must export only that one.
+  const sellerKeyFilter = (Array.isArray(opts.sellerKeys) && opts.sellerKeys.length)
+    ? new Set(opts.sellerKeys.map(k => String(k).trim().toUpperCase()))
+    : null;
   const sellersFilter = (Array.isArray(opts.sellers) && opts.sellers.length)
     ? new Set(opts.sellers.map(s => String(s).trim().toUpperCase()))
     : null;
@@ -881,22 +952,74 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
   // `trader_banks` (multi-bank). The LEFT JOIN to traders pulls
   // address/IFSC; we then COALESCE with trader_banks default for
   // sellers who maintain multiple bank accounts.
+  // The seller is identified by USER ID, not by name. Two different sellers
+  // can carry the same name (real case: two "BASKARAN S", user ids P0002613
+  // and P0003011, different phones and different bank accounts) and keying on
+  // the name conflated them in two separate ways:
+  //
+  //   • the LEFT JOIN matched BOTH master rows, so every lot fanned out into
+  //     two result rows and the SUMs came out DOUBLED — a two-lot ₹20,000
+  //     trade exported as a single ₹40,000 payment;
+  //   • whichever master row the join happened to land on supplied the
+  //     phone / IFSC / account for BOTH sellers, so one seller's money was
+  //     routed into the other's account.
+  //
+  // Fix: aggregate with NO join (nothing to fan out), grouped by the lot's
+  // own seller identity, then resolve the master row per group in JS. The
+  // identity falls back to the name for legacy lots imported before
+  // `lots.user_id` was captured, so those installs group exactly as before.
+  const sellerKeySql = SELLER_KEY_SQL('l');
   let payments = db.all(
     `SELECT l.state, l.name, l.cr,
+      ${sellerKeySql} AS seller_key,
+      MAX(l.trader_id) AS lot_trader_id,
+      TRIM(COALESCE(l.user_id,'')) AS user_id,
       SUM(l.puramt) as puramt, SUM(l.refund) as advance, SUM(l.balance) as payable,
-      t.id AS trader_id,
-      t.ifsc AS t_ifsc, t.acctnum AS t_acctnum, t.holder_name AS t_holder,
-      t.padd, t.ppla, t.pin, t.tel AS t_tel,
       GROUP_CONCAT(l.lot_no) AS lot_nos
     FROM lots l
-    LEFT JOIN traders t ON UPPER(TRIM(t.name)) = UPPER(TRIM(l.name))
     WHERE l.auction_id = ? AND l.amount > 0
       AND (l.paid IS NULL OR l.paid = '')
-    GROUP BY l.name, l.cr
+    GROUP BY ${sellerKeySql}, l.name, l.cr
     ORDER BY l.state, l.name`,
     [auctionId]
   );
-  if (sellersFilter) {
+
+  // Resolve each group's master row: by user id first, then by name for lots
+  // that predate user-id capture. Name lookup keeps the lowest id so it stays
+  // deterministic when the name IS duplicated (there is nothing better to go
+  // on for such a lot — but it no longer corrupts the other seller's row).
+  const traderById = {}, traderByUserId = {}, traderByName = {};
+  for (const t of db.all(
+    `SELECT id, name, user_id, ifsc, acctnum, holder_name, padd, ppla, pin, tel
+       FROM traders ORDER BY id`)) {
+    traderById[t.id] = t;
+    const uid = String(t.user_id || '').trim().toUpperCase();
+    const nm  = String(t.name    || '').trim().toUpperCase();
+    if (uid && traderByUserId[uid] == null) traderByUserId[uid] = t;
+    if (nm  && traderByName[nm]    == null) traderByName[nm]    = t;
+  }
+  payments.forEach(p => {
+    // trader_id FIRST — it is the only key that separates two sellers who
+    // share a name. user_id is a fallback for lots with no FK ('import' is the
+    // importer's placeholder, not a key), and the name is the last resort.
+    const rawUid = String(p.user_id || '').trim().toUpperCase();
+    const uid = rawUid === 'IMPORT' ? '' : rawUid;
+    const t = (p.lot_trader_id != null && traderById[p.lot_trader_id])
+           || (uid && traderByUserId[uid])
+           || traderByName[String(p.name || '').trim().toUpperCase()]
+           || null;
+    p.trader_id = t ? t.id : null;
+    p.t_ifsc    = t ? t.ifsc        : '';
+    p.t_acctnum = t ? t.acctnum     : '';
+    p.t_holder  = t ? t.holder_name : '';
+    p.t_tel     = t ? t.tel         : '';
+    p.padd      = t ? t.padd        : '';
+    p.ppla      = t ? t.ppla        : '';
+    p.pin       = t ? t.pin         : '';
+  });
+  if (sellerKeyFilter) {
+    payments = payments.filter(p => sellerKeyFilter.has(String(p.seller_key || '').trim().toUpperCase()));
+  } else if (sellersFilter) {
     payments = payments.filter(p => sellersFilter.has(String(p.name || '').trim().toUpperCase()));
   }
 
@@ -927,6 +1050,7 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
   try {
     const advRows = db.all('SELECT name_key, advance FROM payment_advances WHERE auction_id = ?', [auctionId]) || [];
     advRows.forEach(r => { advanceByName[String(r.name_key || '').trim().toUpperCase()] = Number(r.advance) || 0; });
+    // 'ID:<trader_id>' keys are exact — no same-name ambiguity to guard against.
   } catch (_) { /* table missing on old DBs — no advances */ }
 
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [auctionId]);
@@ -970,19 +1094,47 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
     };
   };
 
+  // `payment_advances` is keyed by NAME, so when one name covers two sellers
+  // the advance cannot be attributed to either. Deducting it from both would
+  // pay out less than is owed, so it is applied to the first group only —
+  // the trade still settles exactly Payable − Advance in total.
+  const groupsPerName = {};
+  payments.forEach(p => {
+    const n = String(p.name || '').trim().toUpperCase();
+    groupsPerName[n] = (groupsPerName[n] || 0) + 1;
+  });
+  const advanceTaken = {};
+
   let result = payments.flatMap(p => {
     // 'before' uses puramt — pre-discount, useful when paying suppliers
     // before the deduction policy is applied. 'after' (default) uses
     // payable = puramt − discount − GST.
     const nameUpper = String(p.name || '').trim().toUpperCase();
-    const picksArr   = lotPicks    ? lotPicks[nameUpper]    : null;
-    const excludeArr = excludeLots ? excludeLots[nameUpper] : null;
+    // Picks/exclusions arrive keyed by seller identity from the Payments tab,
+    // or by name from older callers. Identity wins so a same-named seller's
+    // picks are never applied to this one.
+    const skUpper    = String(p.seller_key || '').trim().toUpperCase();
+    const picksArr   = lotPicks    ? (lotPicks[skUpper]    || lotPicks[nameUpper])    : null;
+    const excludeArr = excludeLots ? (excludeLots[skUpper] || excludeLots[nameUpper]) : null;
     if (!((picksArr && picksArr.length) || (excludeArr && excludeArr.length))) {
       // No lot filter for this seller → one seller-level row, default bank.
       // Deduct any advance already paid so the payout equals the on-screen
       // Payable (Net − Advance). Clamp at 0 so an advance ≥ payable never
       // produces a negative bank line.
-      const adv = advanceByName[nameUpper] || 0;
+      // An id-keyed advance belongs to exactly this seller — take it as is.
+      // Only the legacy name-keyed fallback needs the once-only guard, because
+      // one such row cannot be attributed between two same-named sellers.
+      const idKey = (p.lot_trader_id != null) ? `ID:${p.lot_trader_id}` : null;
+      let adv = 0;
+      if (idKey && advanceByName[idKey] != null) {
+        adv = advanceByName[idKey];
+      } else {
+        adv = advanceByName[nameUpper] || 0;
+        if (adv && groupsPerName[nameUpper] > 1) {
+          if (advanceTaken[nameUpper]) adv = 0;
+          else advanceTaken[nameUpper] = true;
+        }
+      }
       const base = Math.max(0, (useBefore ? (p.puramt || 0) : (p.payable || 0)) - adv);
       return [buildRow(p, base, '', null)];
     }
@@ -991,7 +1143,10 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
     // covered lots BY bank account so a selection that spans multiple banks
     // produces one payment line per bank (NULL bank_id = untagged lots,
     // grouped together and routed to the seller-default account).
-    const params = [auctionId, nameUpper];
+    // Scope to THIS seller by the same identity the aggregate grouped on —
+    // matching on the name alone would pull a same-named seller's lots into
+    // this row (and into theirs), paying both lots twice over.
+    const params = [auctionId, p.seller_key];
     let extra = '';
     if (picksArr && picksArr.length)    { extra += ` AND l.lot_no IN (${picksArr.map(() => '?').join(',')})`;     for (const x of picksArr)   params.push(String(x)); }
     if (excludeArr && excludeArr.length){ extra += ` AND l.lot_no NOT IN (${excludeArr.map(() => '?').join(',')})`; for (const x of excludeArr) params.push(String(x)); }
@@ -1000,7 +1155,7 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
               COALESCE(SUM(l.balance),0) AS payable, COALESCE(SUM(l.puramt),0) AS puramt,
               GROUP_CONCAT(l.lot_no) AS lot_nos
          FROM lots l WHERE l.auction_id = ? AND l.amount > 0
-          AND (l.paid IS NULL OR l.paid = '') AND UPPER(TRIM(l.name)) = ?${extra}
+          AND (l.paid IS NULL OR l.paid = '') AND ${sellerKeySql} = ?${extra}
         GROUP BY l.bank_id`,
       params
     ) || [];
@@ -1072,14 +1227,27 @@ function getTDSReturnData(db, fromDate, toDate, orderBy) {
  * Returns: { seller, lineItems, summary } if successful
  *          { error, detail } object if no data (to help debug)
  */
-function buildAgriBill(db, auctionId, sellerName, cfg) {
+// `opts.traderId` / `opts.userId` pick ONE seller when the name is shared —
+// see the note on buildPurchaseInvoice. Without it two same-named planters
+// were billed on a single Bill of Supply.
+function buildAgriBill(db, auctionId, sellerName, cfg, opts) {
   const trimmedName = String(sellerName || '').trim();
   if (!trimmedName) return { error: 'Seller name is empty' };
+  opts = opts || {};
+  const traderId = (opts.traderId != null && String(opts.traderId).trim() !== '')
+    ? Number(opts.traderId) : null;
+  // 'import' is the bulk importer's placeholder for "no USER_ID in the file",
+  // not a seller key — narrowing on it would match every imported lot.
+  const rawUid = String(opts.userId || '').trim();
+  const userId = rawUid.toUpperCase() === 'IMPORT' ? '' : rawUid;
+  let sellerSql = '', sellerArgs = [];
+  if (Number.isFinite(traderId)) { sellerSql = ' AND trader_id = ?'; sellerArgs = [traderId]; }
+  else if (userId) { sellerSql = " AND TRIM(COALESCE(user_id,'')) = ?"; sellerArgs = [userId]; }
 
   // First check: any lots at all for this seller (case-insensitive)?
   const allLots = db.all(
-    `SELECT * FROM lots WHERE auction_id = ? AND UPPER(TRIM(name)) = UPPER(?) ORDER BY lot_no`,
-    [auctionId, trimmedName]
+    `SELECT * FROM lots WHERE auction_id = ? AND UPPER(TRIM(name)) = UPPER(?)${sellerSql} ORDER BY lot_no`,
+    [auctionId, trimmedName, ...sellerArgs]
   );
   
   if (!allLots.length) {
@@ -1151,6 +1319,8 @@ function buildAgriBill(db, auctionId, sellerName, cfg) {
       pan: firstLot.pan,
       aadhar: firstLot.aadhar,
       tel: firstLot.tel,
+      // See the note in buildPurchaseInvoice — stamped onto bills.trader_id.
+      trader_id: firstLot.trader_id != null ? firstLot.trader_id : null,
     },
     lineItems,
     summary: {
@@ -1170,13 +1340,22 @@ function listAgriSellers(db, auctionId) {
   // An "agri seller" is a planter — i.e. a seller WITHOUT a valid GSTIN in
   // `cr` (previous rule; SBL/aadhar not considered). CR-coded and blank-cr
   // sellers qualify; any GSTIN-bearing seller does not.
+  // Grouped by the seller's identity, not just the name: two planters can
+  // share a name, and grouping on the name alone put both on ONE Bill of
+  // Supply. trader_id is the real key; user_id covers lots imported before
+  // the FK existed; the name is the last resort so legacy rows still group
+  // exactly as before. The id/user id travel back so the caller can bill the
+  // right one.
   return db.all(
-    `SELECT name, COUNT(*) as lot_count, SUM(qty) as total_qty, SUM(amount) as total_amount
+    `SELECT name, MAX(trader_id) AS trader_id,
+            CASE WHEN UPPER(TRIM(COALESCE(MAX(user_id),''))) IN ('','IMPORT')
+                 THEN '' ELSE TRIM(MAX(user_id)) END AS user_id,
+            COUNT(*) as lot_count, SUM(qty) as total_qty, SUM(amount) as total_amount
      FROM lots
      WHERE auction_id = ?
        AND NOT ${hasValidGstinSql('cr')}
        AND amount > 0
-     GROUP BY name
+     GROUP BY COALESCE(trader_id, -1), UPPER(TRIM(name))
      -- Case-insensitive alphabetical. A plain ORDER BY name uses SQLite's
      -- binary collation, which files every lowercase name after every
      -- uppercase one ("Anil" landing below "ZZZ"). This order is also the
@@ -1539,8 +1718,14 @@ function _groupRegister(rows, summaryFn) {
   let cur = null;
   for (const r of rows) {
     const name = r.party || '';
-    if (!cur || cur.name !== name) {
-      cur = { name, gstin: '', phone: '', rows: [] };
+    // Break on the seller's identity where the query supplies one: two
+    // poolers can share a name, and grouping on the name alone merged their
+    // lots — and their bill totals — into a single party (and a single
+    // certificate). Registers whose query selects no trader_id behave exactly
+    // as before, grouping on the name.
+    const tid = (r.trader_id === undefined) ? null : r.trader_id;
+    if (!cur || cur.name !== name || cur.trader_id !== tid) {
+      cur = { name, trader_id: tid, gstin: '', phone: '', rows: [] };
       parties.push(cur);
     }
     if (!cur.gstin && r.gstin) cur.gstin = String(r.gstin).trim();
@@ -1549,7 +1734,7 @@ function _groupRegister(rows, summaryFn) {
     // First non-empty wins.
     if (!cur.phone && r.phone) cur.phone = String(r.phone).trim();
     // The party + gstin + phone live on the group, not on each row.
-    const { party, gstin, phone, ...rest } = r;
+    const { party, gstin, phone, trader_id, ...rest } = r;
     cur.rows.push(rest);
   }
   for (const p of parties) p.summary = summaryFn(p.rows);
@@ -1564,6 +1749,7 @@ const _sum = (rows, k) => rows.reduce((s, r) => s + _num(r[k]), 0);
 // full lot list; the summary breaks the totals into Sold vs Withdrawn.
 function getPoolerRegister(db, opts = {}) {
   let q = `SELECT a.ano AS tno, a.date AS date, l.lot_no AS lot, l.name AS party,
+      l.trader_id AS trader_id,
       l.cr AS gstin, l.tel AS phone, l.qty AS qty, l.price AS rate, l.amount AS value,
       l.refund AS refund, l.com AS commission,
       (COALESCE(l.cgst,0) + COALESCE(l.sgst,0) + COALESCE(l.igst,0)) AS gst,
@@ -1577,7 +1763,11 @@ function getPoolerRegister(db, opts = {}) {
   const params = [];
   if (opts.from && opts.to) { q += ' AND a.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
   if (opts.party) { q += ' AND UPPER(TRIM(l.name)) = UPPER(?)'; params.push(String(opts.party).trim()); }
-  q += ' ORDER BY l.name, a.date, a.ano, CAST(l.lot_no AS INTEGER), l.lot_no';
+  // Narrow to ONE pooler when the caller knows which — the name alone can
+  // match two masters (the Certificate must not certify a namesake's lots).
+  const _tid = Number(opts.traderId);
+  if (Number.isFinite(_tid) && _tid > 0) { q += ' AND l.trader_id = ?'; params.push(_tid); }
+  q += ' ORDER BY l.name, l.trader_id, a.date, a.ano, CAST(l.lot_no AS INTEGER), l.lot_no';
   const rows = db.all(q, params).map(r => ({ ...r, date: _ddmmyyyy(r.date) }));
   const parties = _groupRegister(rows, (rs) => {
     const isWd = (r) => String(r.code || '').trim().toUpperCase() === 'WD';
@@ -1610,7 +1800,7 @@ function getSellerRegister(db, opts = {}) {
   const params = [];
   if (opts.from && opts.to) { q += ' AND p.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
   if (opts.party) { q += ' AND UPPER(TRIM(p.name)) = UPPER(?)'; params.push(String(opts.party).trim()); }
-  q += ' GROUP BY p.name, p.ano, p.date ORDER BY p.name, p.date, p.ano';
+  q += ' GROUP BY p.trader_id, p.name, p.ano, p.date ORDER BY p.name, p.date, p.ano';
   const rows = db.all(q, params).map(r => ({ ...r, date: _ddmmyyyy(r.date) }));
   const parties = _groupRegister(rows, (rs) => {
     const invoice = _sum(rs, 'invoice');
@@ -1658,20 +1848,35 @@ function listRegisterParties(db, opts = {}) {
     if (opts.from && opts.to) { q += ' AND i.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
     q += ' GROUP BY i.buyer1 ORDER BY i.buyer1';
   } else if (kind === 'seller') {
+    // Joined on the purchase's seller FK, falling back to a single-row name
+    // match. The old bare name join matched EVERY same-named master, so two
+    // dealers collapsed into one contact carrying a namesake's number.
     q = `SELECT p.name AS name, MAX(NULLIF(TRIM(t.tel),'')) AS phone
          FROM purchases p
-         LEFT JOIN traders t ON UPPER(TRIM(t.name)) = UPPER(TRIM(p.name))
+         LEFT JOIN traders t
+           ON t.id = COALESCE(p.trader_id,
+                (SELECT t2.id FROM traders t2
+                  WHERE UPPER(TRIM(t2.name)) = UPPER(TRIM(p.name))
+                  ORDER BY t2.id LIMIT 1))
          WHERE COALESCE(p.name,'') != ''`;
     if (opts.from && opts.to) { q += ' AND p.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
-    q += ' GROUP BY p.name ORDER BY p.name';
+    q += ' GROUP BY p.trader_id, p.name ORDER BY p.name';
   } else {
-    q = `SELECT l.name AS name, MAX(NULLIF(TRIM(l.tel),'')) AS phone
+    // One entry per seller IDENTITY, not per name: two poolers can share a
+    // name, and merging them here meant the picker offered a single entry
+    // whose register (and Certificate) covered both people's lots. trader_id
+    // travels back so the caller can name exactly one of them.
+    q = `SELECT l.name AS name, l.trader_id AS trader_id,
+                MAX(NULLIF(TRIM(l.tel),'')) AS phone
          FROM lots l JOIN auctions a ON a.id = l.auction_id
          WHERE COALESCE(l.name,'') != ''`;
     if (opts.from && opts.to) { q += ' AND a.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
-    q += ' GROUP BY l.name ORDER BY l.name';
+    q += ' GROUP BY l.name, l.trader_id ORDER BY l.name';
   }
-  return db.all(q, params).map(r => ({ name: r.name, phone: r.phone || '' }));
+  return db.all(q, params).map(r => ({
+    name: r.name, phone: r.phone || '',
+    trader_id: (r.trader_id == null ? null : r.trader_id),
+  }));
 }
 
 module.exports = {
