@@ -30346,7 +30346,7 @@ function renderTallyPartyVoucherList(){
       // JSON order the voucher cards use, minus the Preview these rows lack.
       let btns='';
       if(vkind.pdf){
-        btns+=`<button class="btn btn-orange" onclick="tallyPartyAction('${kind}','${jsName}','pdf')" title="Print this party's ${esc(vkind.nouns||'documents')} — one merged PDF" style="padding:5px 8px;font-size:11px;flex:0 0 auto">🖨</button>`;
+        btns+=`<button class="btn btn-orange" onclick="tallyPartyAction('${kind}','${jsName}','pdf')" title="Print this party's ${esc(vkind.nouns||'documents')} — one merged PDF" style="padding:5px 8px;font-size:11px;flex:0 0 auto">🖨 Print</button>`;
       }
       btns+=`<button class="btn btn-g" onclick="tallyPartyAction('${kind}','${jsName}','xml')" title="Tally import XML for this party's ${esc(vkind.nouns||'vouchers')}" style="padding:5px 8px;font-size:11px;flex:0 0 auto">XML</button>`;
       if(vkind.irp){
@@ -30554,7 +30554,7 @@ function renderTallyVoucherList(){
       : `<input type="checkbox" disabled title="No source document linked" style="flex:0 0 auto;width:15px;height:15px">`;
     // Print leads, then XML / JSON — same order as the voucher cards above
     // (Preview | Print | XML | JSON; these rows have no Preview).
-    let btns=`<button class="btn btn-orange" onclick="tallyPrintVoucherPdfs('${type}',['${esc(String(v.id))}'])" style="padding:5px 10px;font-size:11px;flex:0 0 auto" title="Print this ${esc(kind.noun||'document')} PDF">🖨</button>`;
+    let btns=`<button class="btn btn-orange" onclick="tallyPrintVoucherPdfs('${type}',['${esc(String(v.id))}'])" style="padding:5px 10px;font-size:11px;flex:0 0 auto" title="Print this ${esc(kind.noun||'document')} PDF">🖨 Print</button>`;
     btns+=`<button class="btn btn-g" onclick="tallyDownloadVoucher('${esc(String(v.id))}','${safeLabel}','xml')" style="padding:5px 10px;font-size:11px;flex:0 0 auto">XML</button>`;
     if(kind.irp){
       btns+=`<button class="btn btn-g" onclick="tallyDownloadVoucher('${esc(String(v.id))}','${safeLabel}','irp')" style="padding:5px 10px;font-size:11px;flex:0 0 auto" title="GST e-Invoice (IRP / NIC) JSON — ready for the trade portal">JSON</button>`;
