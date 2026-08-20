@@ -13714,6 +13714,149 @@ app.get('/api/tally/invoice-voucher/:auctionId', requireExport, (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════
+// MULTI-VOUCHER SELECT — list, export the ticked subset, print PDFs
+// ══════════════════════════════════════════════════════════════
+// The To Tally tab lets the operator tick individual vouchers of any
+// printable type and then (a) pull XML / e-Invoice JSON for just those,
+// or (b) print the underlying document PDFs. Both hang off the SAME
+// builder rows the bulk export uses, so what you tick is byte-for-byte
+// what the full export would have contained for those vouchers.
+//
+// `pdf` is the existing bulk-PDF endpoint for the source document; the
+// ids we hand back ARE that table's primary keys (invoices.id,
+// purchases.id, bills.id, debit_notes.id, debit_notes_planter.id), so
+// the client posts them straight through — no second resolution step.
+const TALLY_VOUCHER_KINDS = {
+  sales_isp:          { pdf: '/api/invoices/pdf-bulk',            docType: 'sales-invoice',    irp: true  },
+  sales:              { pdf: '/api/invoices/pdf-bulk',            docType: 'sales-invoice',    irp: true  },
+  rd_purchase:        { pdf: '/api/purchases/pdf-bulk',           docType: 'purchase-invoice', irp: false },
+  urd_purchase:       { pdf: '/api/bills/pdf-bulk',               docType: 'agri-bill',        irp: false },
+  debit_note:         { pdf: '/api/debit-notes/pdf-bulk',         docType: 'debit-note',       irp: true  },
+  debit_note_planter: { pdf: '/api/debit-notes-planter/pdf-bulk', docType: 'debit-note',       irp: false },
+};
+
+// Flatten one builder row into the shape the picker renders.
+function tallyVoucherSummary(row) {
+  return {
+    id: row.id != null ? row.id : null,
+    voucherNum: row.voucherNum || row.invo || (row.id != null ? String(row.id) : ''),
+    sale: row.sale || '',
+    partyName: row.partyName || row.name || '',
+    gstin: row.partyGstin || row.gstin || '',
+    date: row.date || '',
+    total: row.totalRounded != null ? row.totalRounded : row.total,
+    lotCount: Array.isArray(row.lots) ? row.lots.length : 0,
+  };
+}
+
+// List every voucher of one type for the auction, so the picker can show
+// them with checkboxes. ?sale=L|I|E narrows sales vouchers.
+app.get('/api/tally/vouchers/:type/:auctionId', requireExport, (req, res) => {
+  const { type, auctionId } = req.params;
+  const def  = TALLY_EXPORTS[type];
+  const kind = TALLY_VOUCHER_KINDS[type];
+  if (!def || !kind || def.isLedger) {
+    return res.status(400).json({
+      error: 'Unknown or unsupported voucher type',
+      supported: Object.keys(TALLY_VOUCHER_KINDS),
+    });
+  }
+  try {
+    const db = getDb();
+    const cfg = getSettingsFlat(db);
+    const saleFilter = parseSaleFilter(type, req.query.sale);
+    if (saleFilter.error) return res.status(400).json({ error: saleFilter.error });
+    const rows = filterRowsBySale(def.builder(db, auctionId, cfg), saleFilter.sale);
+    const vouchers = rows.map(tallyVoucherSummary);
+    res.json({
+      type, auctionId,
+      sale: saleFilter.sale,
+      label: def.label,
+      targetCompany: resolveTallyCompanyName(cfg, def.company),
+      // Tells the UI which buttons to render for this type.
+      supportsIrp: !!kind.irp,
+      pdfEndpoint: kind.pdf,
+      docType: kind.docType,
+      total: vouchers.length,
+      vouchers,
+    });
+  } catch (e) {
+    console.error('tally vouchers list error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Export just the ticked vouchers. Body: { ids: [...], format?: 'xml'|'json'|'irp' }
+// Same generators as the full export — we only narrow the row set.
+app.post('/api/tally/export-selected/:type/:auctionId', requireExport, (req, res) => {
+  const { type, auctionId } = req.params;
+  const def  = TALLY_EXPORTS[type];
+  const kind = TALLY_VOUCHER_KINDS[type];
+  if (!def || !kind || def.isLedger) {
+    return res.status(400).json({
+      error: 'Unknown or unsupported voucher type',
+      supported: Object.keys(TALLY_VOUCHER_KINDS),
+    });
+  }
+  const wanted = Array.isArray(req.body && req.body.ids)
+    ? req.body.ids.map(x => String(x)).filter(Boolean)
+    : [];
+  if (!wanted.length) return res.status(400).json({ error: 'ids[] required — tick one or more vouchers' });
+  try {
+    const db = getDb();
+    const cfg = getSettingsFlat(db);
+    if (def.flag && String(cfg[def.flag] || '').toLowerCase() !== 'true') {
+      return res.status(403).json({ error: `${def.label} is disabled — enable "${def.flag}" in Settings → Flags` });
+    }
+    const want = new Set(wanted);
+    const allRows = def.builder(db, auctionId, cfg);
+    // Keep the builder's own ordering — the XML then matches what a full
+    // export would have produced for these vouchers.
+    const rows = allRows.filter(r => r.id != null && want.has(String(r.id)));
+    if (rows.length === 0) {
+      return res.status(404).json({ error: `None of the selected vouchers were found in ${def.label} for auction ${auctionId}` });
+    }
+    const targetCompany = resolveTallyCompanyName(cfg, def.company);
+    const fmt = String((req.body && req.body.format) || 'xml').toLowerCase();
+    const stamp = `${anoForFilename(db, auctionId)}_${rows.length}`;
+    if (fmt === 'irp') {
+      if (!kind.irp) {
+        return res.status(400).json({ error: `IRP e-invoice JSON is not available for ${def.label}.` });
+      }
+      const irp = (def.builder === buildDebitNoteRows)
+        ? buildDebitNoteIrpJson(rows, cfg, { companyName: targetCompany })
+        : buildIrpJson(rows, cfg, { companyName: targetCompany });
+      // The IRP builders drop vouchers the portal can't accept (no buyer
+      // GSTIN). On a hand-picked selection that would download an empty
+      // file with no explanation — say so instead.
+      if (Array.isArray(irp) && irp.length === 0) {
+        return res.status(400).json({
+          error: `None of the selected ${def.label} can be e-invoiced — the party has no GSTIN. e-Invoice JSON covers registered parties only.`,
+        });
+      }
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="EInvoice_${def.name}_Selected_${stamp}.json"`);
+      return res.send(JSON.stringify(irp, null, 2));
+    }
+    if (fmt === 'json') {
+      const json = tallyJson(rows, auctionId, targetCompany, {
+        type, label: `${def.label} — ${rows.length} selected`,
+      });
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${def.name}_Selected_${stamp}.json"`);
+      return res.send(json);
+    }
+    const xml = def.generator(rows, cfg, { companyName: targetCompany });
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${def.name}_Selected_${stamp}.xml"`);
+    res.send(xml);
+  } catch (e) {
+    console.error('tally export-selected error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // XML download endpoint — the main thing.
 // Lorry / vehicle no on sales vouchers comes straight from invoices.lorry_no
 // (set via the Sales tab's "Set Lorry No" bulk action). The Tally row

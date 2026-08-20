@@ -748,8 +748,58 @@ function getCollectionRows(db, auctionId) {
       qty:         i.qty,
       value:       i.tot,
       buyer_state: (b && b.state) || '',
+      // Not printed — keys the pending-draft filter below.
+      buyer_key:   buyerKey,
     };
   });
+
+  // ── Drop drafts that have ALREADY been shipped ──────────────────────────
+  // A draft belongs in this register only while nothing has been raised from
+  // it. The SQL above decides that on `invoices.raised_invo` alone, and that
+  // flag is written by the generate path only where it can still match the
+  // draft: same auction, same draft number, not yet stamped
+  // (`UPDATE invoices SET raised_invo=? WHERE auction_id=? AND is_proforma=1
+  //   AND COALESCE(raised_invo,'')='' AND invo=?` in server.js — note it is
+  // scoped by neither buyer nor sale type). Two everyday sequences leave it
+  // empty on a draft that HAS been raised:
+  //   • two drafts share a number across sale series — the un-scoped UPDATE
+  //     stamps whichever rows it reaches, so the buyer's own draft can be
+  //     left unstamped while another buyer's is marked raised;
+  //   • the draft was re-issued after its original was raised, so the flag
+  //     went to the row that got deleted.
+  // In both, the ORIGINAL is already in this register printing the SAME PI
+  // number, quantity and value (its label comes from the lot stamps, which
+  // never went away) — the draft printed a duplicate line right beside it and
+  // doubled the section and grand totals.
+  //
+  // Two passes, neither of which can drop a draft that is genuinely pending:
+  //
+  //  1. LOTS — a lot still carrying the draft's number that also carries a
+  //     real original number has been shipped. "Real" excludes an ASP-only
+  //     stamp: in Kerala the ASP step writes invo AND asp_invo to the same
+  //     number and the lot is still awaiting its ISP original, which is why
+  //     the generate path counts `invo = asp_invo` as UN-invoiced
+  //     (uninvoicedExpr in server.js). Treating that as shipped would delete
+  //     a draft the buyer is still holding — and its value with it.
+  //  2. LABELS — whatever an original in this very register already prints as
+  //     its PI number cannot also print as a pending draft. This is what
+  //     closes the Kerala case pass 1 leaves open: there the ASP invoice IS
+  //     the original, and it prints the draft's number (proformaByLots
+  //     indexes asp_invo too), so the collision is caught here instead.
+  const shipped = new Set();
+  for (const l of lotStamps) {
+    if (!l.invo || l.invo === l.asp_invo) continue;
+    shipped.add(`${String(l.buyer || '').trim().toUpperCase()}|${l.pf}`);
+  }
+  for (const r of out) {
+    if (r.is_proforma) continue;
+    for (const n of String(r.proforma_invo || '').split(',')) {
+      const t = n.trim();
+      if (t) shipped.add(`${r.buyer_key}|${t}`);
+    }
+  }
+  const rowsOut = out.filter(r =>
+    !(r.is_proforma && shipped.has(`${r.buyer_key}|${String(r.invo || '').trim()}`)));
 
   // Order by the invoice number the report actually PRINTS. The SQL above
   // sorts on `invoices.invo`, but the INVO cell shows the proforma number
@@ -759,14 +809,14 @@ function getCollectionRows(db, auctionId) {
   // original number as tiebreak so rows without a proforma stay stable.
   const printedNo = (r) => String(r.proforma_invo || '').split(',')[0].trim() || String(r.invo || '').trim();
   const numOf = (s) => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : Number.MAX_SAFE_INTEGER; };
-  out.sort((a, b) => {
+  rowsOut.sort((a, b) => {
     const pa = printedNo(a), pb = printedNo(b);
     return (numOf(pa) - numOf(pb))
         || pa.localeCompare(pb)
         || (numOf(a.invo) - numOf(b.invo))
         || String(a.invo || '').localeCompare(String(b.invo || ''));
   });
-  return out;
+  return rowsOut;
 }
 
 function classifyByState(rows, auctionState) {
@@ -826,7 +876,7 @@ async function collectionXlsx(db, auctionId) {
   // the same writer every other XLSX uses, so all exports look the
   // same and the Trade Name set in Settings flows through correctly.
   const companyHeader = getCompanyHeader(db);
-  const headerStartRow = writeXlsxCompanyHeader(wb, ws, companyHeader, {
+  writeXlsxCompanyHeader(wb, ws, companyHeader, {
     colCount: 5,
     title: 'COLLECTION',
     metaLines: [
@@ -835,17 +885,18 @@ async function collectionXlsx(db, auctionId) {
     ],
   });
 
-  // Column-header row sits where the brand band reserved space.
-  const head = ws.getRow(headerStartRow);
-  ['INVO', 'TRADE NAME', 'NAME', 'QUANTITY', 'VALUE']
-    .forEach((label, i) => { head.getCell(i + 1).value = label; });
-  head.font = { bold: true };
-  head.height = 20;
-  head.eachCell(c => {
-    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E4DD' } };
-    c.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
-    c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-  });
+  // Column titles sit UNDER the sale-type strip, once per section — the strip
+  // is the section's heading, so it leads (same order as the PDF).
+  function addColHeaderRow() {
+    const head = ws.addRow(['INVO', 'TRADE NAME', 'NAME', 'QUANTITY', 'VALUE']);
+    head.font = { bold: true };
+    head.height = 20;
+    head.eachCell(c => {
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E4DD' } };
+      c.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
+      c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    });
+  }
 
   let gQty = 0, gValue = 0;
   groups.forEach(([state, items]) => {
@@ -854,6 +905,7 @@ async function collectionXlsx(db, auctionId) {
     sec.font = { bold: true, size: 10 };
     sec.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } };
     sec.alignment = { horizontal: 'left' };
+    addColHeaderRow();
 
     let sQty = 0, sValue = 0;
     items.forEach(it => {
@@ -933,6 +985,14 @@ async function collectionPdf(db, auctionId) {
   const SECT_H = 16;
   let y;
   let pageStartY;
+  // Own page counter. `doc.bufferedPageRange().count` was used here and always
+  // read 1: the document is not created with `bufferPages`, so addPage()
+  // flushes (and empties) the page buffer before pushing the new page — every
+  // page printed "Page: 1". Same counter the Trade Report uses.
+  let pageNum = 0;
+  // Sale-type section currently being printed, repeated at the top of every
+  // page it spills onto. null while nothing is open (grand total).
+  let curSection = null;
 
   // Segment tracking — verticals only inside data segments, never through
   // full-width section header strips or the Total row strip.
@@ -953,6 +1013,7 @@ async function collectionPdf(db, auctionId) {
   const companyHeader = getCompanyHeader(db);
 
   function drawTopHeader() {
+    pageNum += 1;
     // Three-column brand band: company on left, "Collection" centered,
     // trade meta right-aligned. The page number changes per page.
     const afterY = drawCompanyHeader(doc, companyHeader, {
@@ -961,7 +1022,7 @@ async function collectionPdf(db, auctionId) {
       metaLines: [
         `e-AUCTION No: ${auction.ano}`,
         `Date: ${fmtDateDMY(auction.date)}`,
-        `Page: ${doc.bufferedPageRange().count}`,
+        `Page: ${pageNum}`,
       ],
     });
     y = afterY;
@@ -984,10 +1045,10 @@ async function collectionPdf(db, auctionId) {
     curSegStart = headTop;  // header strip + following data rows = one segment
   }
 
-  function drawSectionRow(label) {
-    if (y + SECT_H > pageH - m - 12) {
-      finishPage(); doc.addPage(); drawTopHeader(); drawColHeader();
-    }
+  // Sale-type strip. It is the section's title, so it leads and the column
+  // titles sit UNDER it: brand band → "INTER-STATE (I)" → INVO / TRADE NAME /
+  // … → rows. Draws at the current y — callers guarantee the room.
+  function drawSectionStrip(label) {
     closeSegment();  // section header is NOT in a data segment
     doc.rect(m, y, usableW, SECT_H).fillAndStroke('#FFF3CD', '#9A6700');
     doc.fillColor('#000').font('Helvetica-Bold').fontSize(10);
@@ -995,14 +1056,35 @@ async function collectionPdf(db, auctionId) {
     y += SECT_H;
   }
 
+  // The page break every row writer uses. Re-lays the running heads in print
+  // order, repeating the section strip so a section continued onto the next
+  // page still carries its own heading above the column titles.
+  function newPage() {
+    finishPage();
+    doc.addPage();
+    drawTopHeader();
+    if (curSection) drawSectionStrip(curSection);
+    drawColHeader();
+  }
+
+  // Open a sale-type section. Needs room for the strip, the column titles and
+  // at least one row, otherwise the two heads would strand at the page foot.
+  function beginSection(label) {
+    curSection = null;  // a break here must not repeat the section just closed
+    if (y + SECT_H + HEAD_H + ROW_H > pageH - m - 12) {
+      finishPage(); doc.addPage(); drawTopHeader();
+    }
+    curSection = label;
+    drawSectionStrip(label);
+    drawColHeader();
+  }
+
   // Totals strip — full-width band used for both the per-state subtotal and
   // the closing grand total. Closes the current data segment first so the
   // column verticals never run through it (same rule as section headers).
   function drawTotalRow(label, qty, value, opts) {
     const strong = !!(opts && opts.strong);
-    if (y + ROW_H + 4 > pageH - m - 12) {
-      finishPage(); doc.addPage(); drawTopHeader(); drawColHeader();
-    }
+    if (y + ROW_H + 4 > pageH - m - 12) newPage();
     closeSegment();
     doc.rect(m, y, usableW, ROW_H + 4)
        .fillAndStroke(strong ? '#FFF3CD' : '#F3F0EA', strong ? '#E0B020' : '#BBB');
@@ -1026,9 +1108,7 @@ async function collectionPdf(db, auctionId) {
     const maxLines = Math.max(1, ...wrapped.map(ls => ls.length));
     const rowH = maxLines * LINE_H + PAD_TOP + PAD_BOT;
 
-    if (y + rowH > pageH - m - 12) {
-      finishPage(); doc.addPage(); drawTopHeader(); drawColHeader();
-    }
+    if (y + rowH > pageH - m - 12) newPage();
     startSegment();
     if (idx % 2 === 1) doc.rect(m, y, usableW, rowH).fill('#F7F5F2');
     doc.fillColor('#000').font('Helvetica').fontSize(9);
@@ -1064,12 +1144,11 @@ async function collectionPdf(db, auctionId) {
   }
 
   drawTopHeader();
-  drawColHeader();
 
   let gQty = 0, gValue = 0;
   let rowIdx = 0;
   groups.forEach(([state, items]) => {
-    drawSectionRow(state || 'OTHER');
+    beginSection(state || 'OTHER');
     let sQty = 0, sValue = 0;
     items.forEach(it => {
       drawDataRow(it, rowIdx++);
@@ -1081,6 +1160,8 @@ async function collectionPdf(db, auctionId) {
     gValue += sValue;
   });
 
+  // Grand total belongs to no section — a break here must not reprint one.
+  curSection = null;
   drawTotalRow('GRAND TOTAL', gQty, gValue, { strong: true });
 
   finishPage();

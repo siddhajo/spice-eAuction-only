@@ -293,11 +293,39 @@ function getReportFilters(db, auctionId) {
 // ════════════════════════════════════════════════════════════
 function buildBuyersStatement(ctx) {
   const { auction, rows, auctionState } = ctx;
-  // Group by unique buyer (code falls back to full name) so each buyer
-  // appears once with their consolidated kilos/amount.
+  // Group by (buyer, sale type, DOCUMENT) so every invoice is its own row
+  // carrying its own kilos/amount. A buyer with two invoices in the trade
+  // used to collapse into a single row whose INVOICE cell read
+  // "PI/I-11, PI/I-12" against one combined quantity and value — the two
+  // documents were no longer individually reconcilable.
+  //
+  // This is the granularity the Merchants (Tally) XML already bills at:
+  // generMerchantsXML walks one row per invoice and emits a separate
+  // <LEDGERENTRIES.LIST> per document, each with its own bill reference and
+  // its own amount. The statement now agrees with it document for document.
+  //
+  // Key parts:
+  //  • buyer   — code, falling back to the full name.
+  //  • sale    — invoice numbers restart per sale type, so "I 15" and "L 15"
+  //              are different documents. Also decides the section below.
+  //  • docKey  — the PROFORMA number when the lots carry one (that's the
+  //              document the buyer actually holds, and what the INVOICE
+  //              column prints), otherwise the original invoice number.
+  //              Lots not yet invoiced share the 'NONE' bucket and surface
+  //              as one row with a blank INVOICE cell, instead of silently
+  //              inflating an invoiced row's quantity.
   const groups = new Map();
   for (const r of rows) {
-    const key = (r.buyer_code || r.buyer_full || 'UNKNOWN').toUpperCase();
+    // The DOCUMENT's own sale type (stamped on the lot by the invoice flow)
+    // decides the row. Previously the buyers-master default won, which is
+    // fine while a buyer only ever transacts one way — but now that each
+    // invoice is its own row, a buyer with both an L and an I invoice must
+    // have those rows land in different sections.
+    const rowSale = String(r.lot_sale || r.buyer_sale || 'L').toUpperCase();
+    const inv = String(r.invo == null ? '' : r.invo).trim();
+    const pf  = String(r.proforma_invo == null ? '' : r.proforma_invo).trim();
+    const docKey = pf ? `P${pf}` : (inv ? `O${inv}` : 'NONE');
+    const key = `${(r.buyer_code || r.buyer_full || 'UNKNOWN').toUpperCase()}|${rowSale}|${docKey}`;
     if (!groups.has(key)) {
       groups.set(key, {
         code:    r.buyer_code,
@@ -306,19 +334,17 @@ function buildBuyersStatement(ctx) {
         gstin:   r.buyer_gstin || '',
         sbl:     r.buyer_sbl || '',
         state:   r.buyer_state || '',
-        sale:    String(r.buyer_sale || r.lot_sale || 'L').toUpperCase(),
+        sale:    rowSale,
         kilos:   0,
         amount:  0,
-        invos:   new Set(),   // real invoice number(s) for this buyer
-        pfInvos: new Set(),   // proforma number(s) stamped on this buyer's lots
+        invos:   new Set(),   // real invoice number for this document
+        pfInvos: new Set(),   // proforma number stamped on this document's lots
       });
     }
     const g = groups.get(key);
     g.kilos  += Number(r.qty)    || 0;
     g.amount += Number(r.amount) || 0;
-    const inv = String(r.invo == null ? '' : r.invo).trim();
     if (inv) g.invos.add(inv);
-    const pf = String(r.proforma_invo == null ? '' : r.proforma_invo).trim();
     if (pf) g.pfInvos.add(pf);
   }
 

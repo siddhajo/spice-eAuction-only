@@ -3817,11 +3817,17 @@ function buildRDPurchaseRows(db, auctionId, cfg) {
     const refundtot  = lots.reduce((s, l) => s + Number(l.refund || 0), 0);
     const comhandtot = lots.reduce((s, l) => s + Number(l.com || 0) + Number(l.sertax || 0), 0);
     return {
+      // purchases.id — carried through so callers can filter to exactly the
+      // vouchers the user ticked, and so the To Tally picker can print the
+      // matching purchase invoice PDF. Generators ignore unknown fields.
+      id: p.id,
       ano: p.ano,
       date: p.date,
       // Suffix "-PURCHASE" so the voucher's PARTYLEDGERNAME matches
       // the suffixed RD party ledger emitted by buildRDPartyLedgerRows.
       name: _rdPurchaseLedgerName(p.name, cfg),
+      // Raw dealer name (no ledger suffix) — display only.
+      partyName: String(p.name || '').trim(),
       address: p.add_line,
       place: p.place,
       pin: '',
@@ -3968,11 +3974,16 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
     const refundtot  = lots.reduce((s, l) => s + Number(l.refund || 0), 0);
     const comhandtot = lots.reduce((s, l) => s + Number(l.com || 0) + Number(l.sertax || 0), 0);
     return {
+      // bills.id — lets callers filter to the ticked vouchers and print the
+      // matching bill of supply PDF. Generators ignore unknown fields.
+      id: b.id,
       ano: b.ano,
       date: b.date,
       // Name "<name>-[<PAN>]" so the voucher's PARTYLEDGERNAME matches
       // the URD agriculturist ledger emitted by buildURDPartyLedgerRows.
       name: _urdPurchaseLedgerName(b.name, panForBill, cfg),
+      // Raw agriculturist name (no ledger suffix) — display only.
+      partyName: String(b.name || '').trim(),
       address: b.add_line,
       place: b.pla,
       pin: '',
@@ -4063,6 +4074,9 @@ function buildDebitNoteRows(db, auctionId, cfg) {
     const _pin6 = (s) => { const m = String(s || '').match(/[1-9]\d{5}/g); return m ? m[m.length - 1] : ''; };
     const pin = _pin6(dealer.pin) || _pin6(dealer.ppla) || _pin6(dealer.padd) || '';
     return {
+      // debit_notes.id — lets callers filter to the ticked vouchers and
+      // print the matching debit note PDF. Generators ignore unknown fields.
+      id: d.id,
       ano: d.ano,
       date: d.date,
       // Suffix "-PURCHASE" so the DN's PARTYLEDGERNAME matches the
@@ -4140,9 +4154,13 @@ function buildDebitNotePlanterRows(db, auctionId, cfg) {
   return raw.map((d) => {
     const planter = planters[String(d.name || '').trim()] || {};
     return {
+      // debit_notes_planter.id — see buildDebitNoteRows.
+      id: d.id,
       ano: d.ano,
       date: d.date,
       name: _urdPurchaseLedgerName(d.name, planter.pan, cfg),
+      // Raw planter name (no ledger suffix) — display only.
+      partyName: String(d.name || '').trim(),
       address: planter.add_line || '',
       place:   planter.pla || '',
       pin:     '',
