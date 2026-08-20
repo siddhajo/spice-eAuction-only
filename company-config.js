@@ -312,6 +312,29 @@ const DEFAULTS = [
   // out-of-the-box behaviour; admins switch to commission bills explicitly.
   { key: 'flag_bos_purchase_bill', value: 'true', category: 'flags', label: 'Bills of Supply: Purchase Bill (off = Commission Bill)', type: 'boolean' },
 
+  // ── LOT-WISE DOCUMENT MODE ────────────────────────────────────────
+  // Chooses the GRANULARITY of a generated document, per module:
+  //
+  //   OFF (default) — SELLER-WISE. One document per seller per trade,
+  //                   carrying every one of that seller's lots as line
+  //                   items. This is the historical behaviour and is what
+  //                   every already-generated document is.
+  //   ON            — LOT-WISE. One document per LOT, each taking its own
+  //                   number from the trade's series. The Generate modal
+  //                   lists lots instead of sellers.
+  //
+  // These are generation-time switches only: flipping one never rewrites,
+  // renumbers or reinterprets an existing document. Each row records the
+  // mode it was created in (a non-empty `lot_no` column), so reprints and
+  // reports stay correct across a toggle in either direction — a trade
+  // invoiced seller-wise last month still reprints seller-wise after the
+  // flag goes on.
+  //
+  // Deliberately four independent flags rather than one master switch, so
+  // a site can adopt lot-wise one module at a time and roll a single
+  // module back without disturbing the other three.
+  { key: 'flag_lotwise_purchase',   value: 'false', category: 'flags', label: 'Lot-wise Purchase Invoices (off = Seller-wise)',   type: 'boolean' },
+
   // Price Check tab + transaction gate. When ON the operator gets the
   // Reports → Price Check tab, the gate banner, and a hard server-side
   // block on Calculate / Invoice / Purchase / Bill / Debit-Note

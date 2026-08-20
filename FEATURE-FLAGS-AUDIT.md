@@ -44,10 +44,43 @@ The app consumes flags two ways:
 | `flag_reserved_price` | Reserved Price input in Lot Entry (desktop + mobile) | `index.html:6942`, `app.html:596` |
 | `flag_proforma_invoice` | **Full gate**: Document Type selectors in both Generate modals + Original/Proforma/All list filter + ⬆ Raise Original action; server 403s proforma writes, 404s raise-original, pins `/api/invoices` to originals, ignores `?type=proforma`. OFF = the pre-proforma flow. Default OFF. | `server.js` `proformaFeatureOn()`, `index.html` `featProformaOn()`/`.feat-proforma` |
 
+| `flag_lotwise_purchase` | **Generation-mode switch**: OFF = one purchase invoice per dealer (seller-wise, historical). ON = one purchase invoice per LOT, each with its own number. Swaps the Generate modal's seller picker for a lot picker, adds `/eligible-lots`, changes `generate-all` to walk lots, adds a per-lot duplicate guard (409), and re-keys the generation gate on the lot. Default OFF. | `server.js` `lotwisePurchaseOn()`/`purchaseRebuildOpts()`, `calculations.js` `buildPurchaseInvoice(opts.lotNo/lotId/docNo)`, `index.html` `featLotwisePurchaseOn()` |
+
 > Added 2026-08-18. Note the `COALESCE(is_proforma,0) = 0` filters in the
 > statutory/analytical readers are deliberately **not** flag-gated — drafts
 > written while the flag was on must stay out of GST/Tally/reports after it is
 > switched off.
+
+## Lot-wise document mode (added 2026-08-20)
+
+`flag_lotwise_purchase` is the first of a planned family of four
+(`_purchase`, then `_bills`, `_dn`, `_dn_planter`) that choose the
+GRANULARITY of a generated document. They are deliberately **not** a single
+master switch, so a site can adopt lot-wise one module at a time.
+
+The property that makes them safe to toggle in either direction mid-season:
+**the flag is read at GENERATION time only.** How an existing document is
+read, reprinted or reported is decided per row by whether it carries a
+`purchases.lot_no`, never by the flag. Empty `lot_no` = seller-wise (which is
+what every row written before this feature is, hence the `DEFAULT ''`
+migration with no backfill). Every reprint path routes through
+`purchaseRebuildOpts(stored)` — the single place that reads the mode off the
+row. A reprint path that skips it will render a one-lot invoice with the
+seller's entire lot list.
+
+Two things needed fixing to make lot-wise correct, both covered by
+`tests/lotwise-purchase.*.js`:
+
+- **194Q TDS ordering.** The prior-purchases accumulation in
+  `calculations.js` orders a dealer's trades by `(date, auction_id)`. That
+  totally orders them only while there is at most one row per dealer per
+  auction — true seller-wise, false lot-wise, where every sibling shares both
+  keys and each would independently believe it crossed the 50 L threshold.
+  Lot-wise adds `CAST(invo AS INTEGER)` as a third key. Seller-wise keeps the
+  original two-key rule untouched.
+- **Generation gate.** The "remaining parties" join marked a dealer done once
+  ANY purchase row existed for them. Lot-wise joins on the lot as well, or
+  Generate disables itself after a dealer's first lot.
 
 ---
 

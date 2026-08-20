@@ -1377,6 +1377,20 @@ body:not([data-feat-price-list-mapping="1"]) .feat-price-list-mapping{display:no
    screen knows about the other; the sidebar stays a single entry. */
 body:not([data-feat-lotwise-payments="1"]) .feat-pay-lotwise{display:none !important}
 body[data-feat-lotwise-payments="1"] .feat-pay-classic{display:none !important}
+/* ── Lot-wise vs Seller-wise mode banner (flag_lotwise_* family) ────────
+   Shown at the top of every Generate modal for a module that has a
+   lot-wise mode, in BOTH states — the point is that the operator can
+   always see which granularity they are about to generate at, rather
+   than inferring it from what the dropdown happens to contain.
+   Colour-coded: neutral for the familiar seller-wise default, amber for
+   lot-wise so the non-default mode is unmistakable at a glance. */
+.gen-mode-banner{font-size:12px;line-height:1.5;padding:8px 10px;border-radius:6px;
+  margin-bottom:10px;border:1px solid var(--border);background:var(--card);color:var(--text2)}
+.gen-mode-banner .gmb-title{font-weight:700;letter-spacing:.02em}
+.gen-mode-banner .gmb-detail{display:block;margin-top:2px;color:var(--text3)}
+.gen-mode-banner.gmb-lot{border-color:var(--amber);
+  background:color-mix(in srgb, var(--amber) 12%, transparent)}
+.gen-mode-banner.gmb-lot .gmb-title{color:var(--amber)}
 /* Print Selected Purchase — Sales tab toolbar button, hidden when
    flag_print_selected_purchase is OFF. The ASP-context check (Kerala +
    e-Auction) in applyAspContextVisibility() runs on top of this rule
@@ -6900,8 +6914,17 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
 <div class="modal-bg" id="gen-pur-modal"><div class="modal">
   <h2>Generate Purchase Invoice</h2>
   <p style="font-size:12px;color:var(--text2);margin-bottom:10px">Only for sellers <strong>with GSTIN</strong> (registered dealers).</p>
-  <div class="fg"><label>Seller</label>
+  <!-- Mode banner (flag_lotwise_purchase). Always visible — in BOTH modes —
+       so the operator never has to remember or guess which granularity the
+       site is set to. Filled by setGenModeBanner(). -->
+  <div id="gp-mode-banner" class="gen-mode-banner"></div>
+  <!-- Seller picker — SELLER-WISE mode. -->
+  <div class="fg" id="gp-seller-wrap"><label>Seller</label>
     <select id="gp-seller"><option value="">— Select seller —</option></select>
+  </div>
+  <!-- Lot picker — LOT-WISE mode. Exactly one of these two is ever shown. -->
+  <div class="fg" id="gp-lot-wrap" style="display:none"><label>Lot</label>
+    <select id="gp-lot"><option value="">— Select lot —</option></select>
   </div>
   <div id="gp-hint" style="font-size:11px;color:var(--text3);padding:4px 0"></div>
   <div class="fg"><label>Invoice No</label><input id="gp-invno" type="number"></div>
@@ -6935,7 +6958,12 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     <div style="font-size:11px;color:var(--text3);margin-top:4px">When set, only buyers whose default sale type matches are included.</div>
   </div>
   <div class="fg"><label>Starting Number</label>
-    <input id="ga-start" type="number" placeholder="e.g. 100">
+    <!-- oninput re-renders the preview so the lot-wise number RANGE
+         ("#5–#21") tracks what was typed — the operator can see how much of
+         the series a lot-wise run will consume before committing. Debounced,
+         and a no-op outside lot-wise purchases, where the number does not
+         change the preview at all. -->
+    <input id="ga-start" type="number" placeholder="e.g. 100" oninput="onGaStartInput()">
     <div style="font-size:11px;color:var(--text3);margin-top:4px">Each generated invoice increments by 1 from here</div>
   </div>
   <!-- Invoice date source — today's (ship) date by default, or the auction's
@@ -8642,6 +8670,14 @@ async function applyFeatureFlags() {
   // ON = the lot-wise screen. Only the visible one is ever loaded; see
   // loadPayAuctions(), which routes on this same attribute.
   document.body.setAttribute('data-feat-lotwise-payments', cfg && on(cfg.flag_lotwise_payments) ? '1' : '0');
+  // ── Lot-wise DOCUMENT mode (flag_lotwise_purchase) ──────────────────
+  // Distinct from flag_lotwise_payments above: that one picks a Payments
+  // SCREEN, this one changes the granularity of a generated DOCUMENT.
+  // Mirrored onto window so the Generate paths can read it synchronously;
+  // default OFF (seller-wise) whenever settings haven't loaded, so a slow
+  // or failed settings fetch can never silently flip a site into lot-wise.
+  window._FEAT_LOTWISE_PURCHASE = !!(cfg && on(cfg.flag_lotwise_purchase));
+  document.body.setAttribute('data-feat-lotwise-purchase', window._FEAT_LOTWISE_PURCHASE ? '1' : '0');
   // Debit Note — Planter gated by flag_debit_note_planter (Settings → Flags).
   document.body.setAttribute('data-feat-debit-note-planter', cfg && on(cfg.flag_debit_note_planter) ? '1' : '0');
   // Price List Mapping — sidebar entry + Lots toolbar button. Default
@@ -18879,6 +18915,7 @@ const FIELD_HELP = {
   tcs_tds:         'TDS / TCS percentage applied on eligible invoices for tax compliance.',
   bill_of_supply_prefix: 'Leads the stored bill number on the Bill of Supply PDF, the Commission Bill PDF and the URD purchase voucher in the Tally XML. Blank = bare number, as before. {season} and {ano} expand — e.g. "BOS-" prints bill 1748 as "BOS-1748". It only prepends: the Tally voucher still appends the season ("BOS-1748/26-27"), so avoid {season} in the prefix unless you want it twice there.',
   bill_of_supply_suffix: 'Trails the stored bill number on the same three documents as the prefix (BoS PDF, Commission Bill PDF, URD Tally XML). Blank = bare number, as before. {season} and {ano} expand — e.g. "-A" prints bill 1748 as "1748-A". It only appends: the Tally voucher still adds its "/season" after your suffix, and a multi-lot commission bill still adds its per-page "/1", "/2".',
+  flag_lotwise_purchase: 'OFF (default) = SELLER-WISE: one purchase invoice per dealer, listing all their lots. ON = LOT-WISE: one purchase invoice per LOT, each taking its own number — so a dealer with 5 lots gets 5 invoices and 5 numbers. This only affects invoices generated from now on: documents already raised keep the form they were raised in and reprint exactly as issued, so it is safe to switch either way mid-season.',
 };
 function fld(f){
   // Logo Code: plain textbox in this e-Auction-only build (was an ISP/ASP
@@ -22241,6 +22278,59 @@ async function generateInvoiceSplit(aid,saleType,startInvNo,noTI,buyerCode,dateS
   }catch(e){showError(e)}
 }
 
+// ── Lot-wise document mode (flag_lotwise_purchase) ───────────────────────
+// Mirrored by applyFeatureFlags(). Every Generate path funnels through this
+// helper, so with the flag OFF the app behaves exactly like the pre-lot-wise
+// build: no lot is ever sent and the server takes the seller-wise branch.
+function featLotwisePurchaseOn(){ return window._FEAT_LOTWISE_PURCHASE === true; }
+
+// Paint the mode banner at the top of a Generate modal. Shown in BOTH modes
+// on purpose — the operator should be able to read the current granularity
+// off the screen rather than remember a Settings toggle. `counts` is optional
+// and describes what a generate-all would produce.
+function setGenModeBanner(elId, lotWise, counts){
+  const el=document.getElementById(elId); if(!el)return;
+  el.className='gen-mode-banner'+(lotWise?' gmb-lot':'');
+  const detail=counts?`<span class="gmb-detail">${esc(counts)}</span>`:'';
+  el.innerHTML=lotWise
+    ? `<span class="gmb-title">⬛ LOT-WISE MODE</span> — one invoice per <strong>lot</strong>, each with its own number.${detail}`
+    : `<span class="gmb-title">▦ SELLER-WISE MODE</span> — one invoice per <strong>dealer</strong>, covering all their lots.${detail}`;
+}
+
+// Lot picker for LOT-WISE mode. The counterpart of loadPurEligibleSellers();
+// openGenPurModal() calls exactly one of the two.
+async function loadPurEligibleLots(){
+  const aid=document.getElementById('pur-auction').value;
+  const dd=document.getElementById('gp-lot');if(!dd)return;
+  const h=document.getElementById('gp-hint');
+  if(!aid){dd.innerHTML='<option value="">— Select lot —</option>';return}
+  try{
+    const lots=await j(`/api/purchases/eligible-lots/${aid}`);
+    if(!lots.length){
+      dd.innerHTML='<option value="">— No eligible lots —</option>';
+      if(h)h.innerHTML='<span style="color:var(--amber)">⚠ No lots with a GSTIN-bearing seller in this auction. Use Bills of Supply for agriculturists.</span>';
+      return;
+    }
+    // Already-invoiced lots stay in the list but are marked and disabled, so
+    // the operator can SEE that the lot is done rather than wonder why it
+    // vanished. The server refuses them anyway (409).
+    const done=lots.filter(l=>l.already_invoiced).length;
+    dd.innerHTML='<option value="">— Select lot —</option>'+lots.map(l=>{
+      const tag=l.already_invoiced?` ✓ already invoiced #${l.already_invoiced}`:'';
+      return `<option value="${esc(l.lot_no)}"${l.already_invoiced?' disabled':''}`+
+             ` data-lot-id="${esc(l.lot_id==null?'':l.lot_id)}"`+
+             ` data-seller="${esc(l.name)}"`+
+             ` data-trader-id="${esc(l.trader_id==null?'':l.trader_id)}"`+
+             ` data-user-id="${esc(l.user_id||'')}">`+
+             `Lot ${esc(l.lot_no)} — ${esc(l.name)} — ${l.bags||0} bag(s), `+
+             `${(l.qty||0)} kg, ₹${(l.amount||0).toFixed(2)}${esc(tag)}</option>`;
+    }).join('');
+    if(h)h.textContent=`${lots.length} eligible lot(s)`+
+      (done?` — ${done} already invoiced`:'')+
+      ` · each generates its OWN invoice number`;
+  }catch(e){console.warn(e)}
+}
+
 async function loadPurEligibleSellers(){
   const aid=document.getElementById('pur-auction').value;
   const dd=document.getElementById('gp-seller');if(!dd)return;
@@ -22339,7 +22429,17 @@ function openGenInvModal(){
 }
 function openGenPurModal(){
   if(!document.getElementById('pur-auction').value){alert('Select an auction first');return}
-  loadPurEligibleSellers();showModal('gen-pur-modal');
+  // Show exactly one picker, and say which mode is active. Read the flag once
+  // per open so a Settings change mid-session takes effect on the next open.
+  const lotWise=featLotwisePurchaseOn();
+  const sw=document.getElementById('gp-seller-wrap');if(sw)sw.style.display=lotWise?'none':'';
+  const lw=document.getElementById('gp-lot-wrap');  if(lw)lw.style.display=lotWise?'':'none';
+  setGenModeBanner('gp-mode-banner',lotWise,
+    lotWise?'Pick the lot to invoice. Generate All will raise one invoice for every eligible lot.'
+           :'Pick the dealer to invoice. Generate All will raise one invoice per dealer.');
+  const h=document.getElementById('gp-hint');if(h)h.textContent='';
+  if(lotWise)loadPurEligibleLots(); else loadPurEligibleSellers();
+  showModal('gen-pur-modal');
   suggestDocNo(document.getElementById('pur-auction').value,'purchases','gp-invno','',true);
 }
 function openGenBillModal(){
@@ -22355,10 +22455,18 @@ async function openGenAllModal(kind){
   const aidMap={invoices:'inv-auction',purchases:'pur-auction',bills:'bill-auction'};
   const aid=document.getElementById(aidMap[kind])?.value;
   if(!aid){alert('Select an auction first');return}
-  const titles={invoices:'Generate Sales Invoices for All Buyers',purchases:'Generate Purchase Invoices for All Dealers',bills:'Generate Bills of Supply for All Agriculturists'};
+  // Purchases has two modes (flag_lotwise_purchase); the title + description
+  // must describe the one that will actually run, so the operator can see
+  // BEFORE pressing Generate how many documents this will create.
+  const purLotWise=(kind==='purchases')&&featLotwisePurchaseOn();
+  const titles={invoices:'Generate Sales Invoices for All Buyers',
+                purchases:purLotWise?'Generate Purchase Invoices for All Lots':'Generate Purchase Invoices for All Dealers',
+                bills:'Generate Bills of Supply for All Agriculturists'};
   const descs={
     invoices:'Creates one invoice per unique buyer with lots in this auction. Already-invoiced lots are skipped.',
-    purchases:'Creates one purchase invoice per unique dealer (GSTIN holder) with lots in this auction.',
+    purchases:purLotWise
+      ?'LOT-WISE: creates one purchase invoice per eligible LOT (GSTIN holder), each taking the next number in the series. Lots already invoiced in this trade are skipped.'
+      :'Creates one purchase invoice per unique dealer (GSTIN holder) with lots in this auction.',
     bills:'Creates one bill of supply per unique agriculturist (no GSTIN) with lots in this auction.'
   };
   document.getElementById('gen-all-title').textContent=titles[kind];
@@ -22383,14 +22491,29 @@ async function openGenAllModal(kind){
   await refreshGenAllPreview();
 }
 
+// Starting-Number keystrokes only change the PREVIEW in lot-wise purchases,
+// where it drives the "#5–#21" number range. Everywhere else the preview is
+// independent of the number, so re-fetching the eligible list on each
+// keystroke would be pure waste.
+let _gaStartTimer=null;
+function onGaStartInput(){
+  if(_genAllKind!=='purchases'||!featLotwisePurchaseOn())return;
+  clearTimeout(_gaStartTimer);
+  _gaStartTimer=setTimeout(refreshGenAllPreview,250);
+}
+
 async function refreshGenAllPreview(){
   const kind=_genAllKind;
   if(!kind)return;
   const aidMap={invoices:'inv-auction',purchases:'pur-auction',bills:'bill-auction'};
   const aid=document.getElementById(aidMap[kind])?.value;
   if(!aid)return;
-  const endpointMap={invoices:'invoices/eligible-buyers',purchases:'purchases/eligible-sellers',bills:'bills/eligible-sellers'};
-  const labelMap={invoices:'buyer',purchases:'dealer',bills:'agriculturist seller'};
+  // Lot-wise purchases read a different list and count a different unit.
+  const purLotWise=(kind==='purchases')&&featLotwisePurchaseOn();
+  const endpointMap={invoices:'invoices/eligible-buyers',
+                     purchases:purLotWise?'purchases/eligible-lots':'purchases/eligible-sellers',
+                     bills:'bills/eligible-sellers'};
+  const labelMap={invoices:'buyer',purchases:purLotWise?'lot':'dealer',bills:'agriculturist seller'};
   const preview=document.getElementById('ga-preview');
   preview.style.display='block';
   preview.style.background='var(--green-bg)';
@@ -22403,7 +22526,34 @@ async function refreshGenAllPreview(){
       if(st)url+=`?saleType=${encodeURIComponent(st)}`;
     }
     const list=await j(url);
-    if(list.length){
+    if(purLotWise&&list.length){
+      // Spell out the consequences the operator most needs to see before
+      // committing: how many NEW documents, which lots are already done and
+      // will be skipped, and exactly which invoice numbers get consumed.
+      const pending=list.filter(x=>!x.already_invoiced);
+      const done=list.length-pending.length;
+      const start=parseInt((document.getElementById('ga-start')?.value||'').trim(),10);
+      const range=(Number.isFinite(start)&&start>0&&pending.length)
+        ? ` numbered <strong>#${start}</strong>–<strong>#${start+pending.length-1}</strong>`:'';
+      if(!pending.length){
+        preview.style.background='var(--spice-turmeric-lt)';
+        preview.style.borderColor='var(--spice-turmeric-lt)';
+        preview.innerHTML=`<strong>Nothing to generate.</strong><br>`+
+          `<span style="font-size:11px;color:var(--text3)">All ${list.length} eligible lot(s) in this trade already have a purchase invoice.</span>`;
+        return;
+      }
+      const bySeller={};
+      pending.forEach(x=>{const k=String(x.name||'').trim();(bySeller[k]=bySeller[k]||[]).push(x.lot_no)});
+      const sellerN=Object.keys(bySeller).length;
+      preview.innerHTML=
+        `<strong>${pending.length}</strong> purchase invoice(s) will be created — one per lot${range}.<br>`+
+        `<span style="font-size:11px;color:var(--text3)">Covering ${sellerN} dealer(s)`+
+        (done?` · ${done} lot(s) already invoiced will be skipped`:'')+
+        `</span><br>`+
+        Object.entries(bySeller).slice(0,6).map(([n,ls])=>
+          `• ${esc(n)} — ${ls.length} lot(s): ${esc(ls.slice(0,10).join(', '))}${ls.length>10?'…':''}`).join('<br>')+
+        (sellerN>6?`<br>…and ${sellerN-6} more dealer(s)`:'');
+    }else if(list.length){
       preview.innerHTML=`<strong>${list.length}</strong> ${labelMap[kind]}(s) eligible:<br>`+
         list.slice(0,8).map(x=>`• ${esc(x.name||x.buyer1||x.buyer)}${x.total_amount?` — ₹${x.total_amount.toFixed(2)}`:''}${x.default_sale?` <span style="color:var(--text3)">[${x.default_sale}]</span>`:''}`).join('<br>')+
         (list.length>8?`<br>…and ${list.length-8} more`:'');
@@ -22471,9 +22621,16 @@ async function doGenerateAll(){
     const d=await r.json();
     if(!r.ok)throw new Error(d.error||'Batch failed');
     let msg=`Generated ${d.generated} record(s)`;
-    if(d.errors&&d.errors.length)msg+=` · ${d.errors.length} skipped`;
+    // `skipped` (lot-wise) is a NORMAL outcome — lots already invoiced in this
+    // trade — and is reported separately from `errors`, which are failures.
+    // Collapsing them into one "skipped" count would tell the operator a
+    // successful top-up run had gone wrong.
+    if(d.skipped&&d.skipped.length)msg+=` · ${d.skipped.length} already invoiced`;
+    if(d.errors&&d.errors.length)msg+=` · ${d.errors.length} failed`;
+    if(d.mode==='lot')msg+=' (lot-wise)';
     toast(msg);
     if(d.errors&&d.errors.length)console.warn('Batch errors:',d.errors);
+    if(d.skipped&&d.skipped.length)console.info('Skipped (already invoiced):',d.skipped);
     hideModal('gen-all-modal');
     // Reload the right tab
     if(kind==='invoices')loadInvoices();
@@ -25778,19 +25935,37 @@ async function delInvoice(id){if(!confirm('Delete this invoice? Related lots wil
 async function generatePurchase(){
   const aid=document.getElementById('pur-auction').value;
   if(!aid){alert('Please select an auction first');return}
-  const sellerName=document.getElementById('gp-seller').value.trim();
+  const lotWise=featLotwisePurchaseOn();
   const invoiceNo=document.getElementById('gp-invno').value.trim();
-  if(!sellerName){alert('Enter seller name');return}
+  // In lot-wise mode the SELLER is derived from the chosen lot — the operator
+  // picks a lot, never a seller, so the two can never disagree.
+  let sellerName='', body={};
+  if(lotWise){
+    const sel=document.getElementById('gp-lot');
+    const opt=sel&&sel.selectedOptions&&sel.selectedOptions[0];
+    const lotNo=sel?sel.value.trim():'';
+    if(!lotNo){alert('Select a lot');return}
+    sellerName=(opt&&opt.dataset.seller||'').trim();
+    body={sellerName,invoiceNo,lotNo,
+          lotId:(opt&&opt.dataset.lotId)||null,
+          traderId:(opt&&opt.dataset.traderId)||null,
+          userId:(opt&&opt.dataset.userId)||''};
+  }else{
+    sellerName=document.getElementById('gp-seller').value.trim();
+    if(!sellerName){alert('Enter seller name');return}
+    body={sellerName,invoiceNo,..._sellerIdentityFrom('gp-seller',sellerName)};
+  }
   if(!invoiceNo){alert('Enter invoice number');return}
   try{
     const r=await fetch(B+`/api/purchases/generate/${aid}`,{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},
-      body:JSON.stringify({sellerName,invoiceNo,..._sellerIdentityFrom('gp-seller',sellerName)})});
+      body:JSON.stringify(body)});
     const d=await r.json();
     if(!r.ok)throw new Error(d.error||'Failed to generate purchase invoice');
     hideModal('gen-pur-modal');
-    toast('Purchase invoice generated — Total: ₹'+Number(d.invoice.grandTotal).toFixed(2));
+    toast((lotWise?`Lot ${body.lotNo} invoiced (#${invoiceNo}) — Total: ₹`:'Purchase invoice generated — Total: ₹')
+          +Number(d.invoice.grandTotal).toFixed(2));
     loadPurchases();
     refreshGenGate('purchases');
   }catch(e){showError(e)}}
@@ -25877,6 +26052,13 @@ async function loadPurchases(opts){
     }
   }
 
+  // Show the Lot column when it carries information: either this site is
+  // generating lot-wise now, or some visible row was raised lot-wise (which
+  // stays true forever once a trade has been run that way, even if the flag
+  // is later switched back off). A site that has never used lot-wise never
+  // sees the column.
+  const _showLotCol = featLotwisePurchaseOn() ||
+    d.some(p => String(p.lot_no || '').trim() !== '');
   DataTable.mount('purchases-list', d, {
     noSearch: true,
     emptyState: { icon: 'invoices', title: "No purchase invoices yet", body: "Once lots are calculated, generate purchase invoices for sellers using + Generate Purchase or the Generate for All Dealers button." },
@@ -25887,6 +26069,15 @@ async function loadPurchases(opts){
         render:(p)=>`<input type="checkbox" class="pur-select-cb" value="${p.id}" data-aid="${p.auction_id}" data-name="${esc(p.name||'')}" data-invo="${esc(p.invo||'')}" data-total="${Number(p.total)||0}" data-ano="${esc(p.ano||'')}" onclick="event.stopPropagation()" style="cursor:pointer">` },
       { key:'invo', label:'Inv#', sort:'text' },
       { key:'name', label:'Name', sort:'text' },
+      // Blank lot_no is a seller-wise row — spelled out as "All lots" rather
+      // than left empty, so the two kinds are never confused with missing data.
+      ...(_showLotCol ? [{ key:'lot_no', label:'Lot', sort:'text',
+        render:(p)=>{
+          const ln=String(p.lot_no||'').trim();
+          return ln
+            ? `<span title="Lot-wise: this invoice covers only lot ${esc(ln)}">${esc(ln)}</span>`
+            : `<span style="color:var(--text3)" title="Seller-wise: this invoice covers every lot this dealer sold in the trade">All lots</span>`;
+        } }] : []),
       { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:(n)=>fmtI(n,3) },
       { key:'amount', label:'Amount', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
       { key:'cgst', label:'CGST', sort:'number', numeric:true, fmt:(n)=>fmtI(n,2) },
@@ -31722,8 +31913,19 @@ async function previewInvoice(type){
     }
   }else if(type==='purchase'){
     aid=document.getElementById('pur-auction').value;
-    body={buyerCode:document.getElementById('gp-seller').value.trim(),type:'purchase'};
-    if(!body.buyerCode){alert('Enter seller name');return}
+    if(featLotwisePurchaseOn()){
+      // Preview the single lot that is about to be invoiced, so what the
+      // operator sees is the document that will actually be raised.
+      const sel=document.getElementById('gp-lot');
+      const opt=sel&&sel.selectedOptions&&sel.selectedOptions[0];
+      if(!sel||!sel.value.trim()){alert('Select a lot');return}
+      body={buyerCode:(opt&&opt.dataset.seller||'').trim(),type:'purchase',
+            lotNo:sel.value.trim(),lotId:(opt&&opt.dataset.lotId)||null,
+            invoiceNo:document.getElementById('gp-invno').value.trim()};
+    }else{
+      body={buyerCode:document.getElementById('gp-seller').value.trim(),type:'purchase'};
+      if(!body.buyerCode){alert('Enter seller name');return}
+    }
   }else{
     aid=document.getElementById('bill-auction').value;
     body={buyerCode:document.getElementById('gb-seller').value.trim(),type:'agri'};

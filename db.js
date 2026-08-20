@@ -421,6 +421,21 @@ async function initDb() {
     rund REAL DEFAULT 0,
     total REAL DEFAULT 0,
     tds REAL DEFAULT 0,
+    -- ── Lot-wise document marker (flag_lotwise_purchase) ─────────────
+    -- Empty/NULL lot_no = the classic SELLER-WISE row: one purchase
+    -- invoice covering EVERY lot that dealer sold in the trade. That is
+    -- what every row written before this feature is, and what rows keep
+    -- being when the flag is off — so readers that don't care about the
+    -- mode can ignore both columns and behave exactly as before.
+    --
+    -- Non-empty lot_no = a LOT-WISE row: this invoice covers exactly ONE
+    -- lot, named here. lot_id pins the precise lots row so a reprint
+    -- rebuilds the right single line even after a lot number is reused
+    -- in a later trade (lot numbers are only unique within an auction).
+    -- lot_id is nullable because a trade can be deleted and re-imported
+    -- under fresh lot ids; lot_no + auction_id is the durable fallback.
+    lot_no TEXT DEFAULT '',
+    lot_id INTEGER DEFAULT NULL,
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
@@ -1080,6 +1095,13 @@ async function initDb() {
               WHERE TRIM(a.ano) = TRIM(debit_notes_planter.ano)
                 AND UPPER(TRIM(l.name)) = UPPER(TRIM(debit_notes_planter.name))
                 AND l.trader_id IS NOT NULL) = 1`,
+    // ── Lot-wise document columns (flag_lotwise_* family) ─────────────
+    // See the CREATE TABLE comment above for semantics. The important
+    // property for upgrades: the DEFAULT is '' / NULL, so every existing
+    // row is automatically stamped "seller-wise" — which is what it is.
+    // No backfill runs and no historical document changes meaning.
+    "ALTER TABLE purchases ADD COLUMN lot_no TEXT DEFAULT ''",
+    'ALTER TABLE purchases ADD COLUMN lot_id INTEGER',
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }

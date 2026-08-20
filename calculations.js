@@ -540,6 +540,20 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg, opts) {
 // single ₹21,000 invoice against one GSTIN, wrong for GST input and for 194Q
 // TDS on both sides. The name stays the primary argument so existing callers
 // keep working; when they can supply an id, the invoice narrows to that seller.
+// ── Lot-wise mode (flag_lotwise_purchase) ────────────────────────────────
+// `opts.lotId` / `opts.lotNo` narrow the invoice to a SINGLE lot. Supplying
+// either switches this builder from "every lot this dealer sold in the trade"
+// (seller-wise, the default and the historical behaviour) to "exactly this one
+// lot" (lot-wise). Neither supplied → identical behaviour to before, so every
+// existing caller is unaffected.
+//
+// lotId is preferred because it is exact; lotNo is the fallback for documents
+// whose trade was deleted and re-imported under fresh lot ids. lotNo alone is
+// only unique WITHIN an auction, which is fine — auctionId is already pinned.
+//
+// `opts.docNo` is the invoice number this document carries (or is about to be
+// assigned). It is used solely to order the 194Q TDS accumulation below; see
+// the comment there for why lot-wise mode needs it.
 function buildPurchaseInvoice(db, auctionId, sellerName, cfg, opts) {
   opts = opts || {};
   const traderId = (opts.traderId != null && String(opts.traderId).trim() !== '')
@@ -552,18 +566,46 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg, opts) {
   if (Number.isFinite(traderId)) { sellerSql = ' AND trader_id = ?'; sellerArgs = [traderId]; }
   else if (userId) { sellerSql = " AND TRIM(COALESCE(user_id,'')) = ?"; sellerArgs = [userId]; }
 
+  // Lot narrowing — appended to (not replacing) the seller filter, so a
+  // lot-wise invoice still verifies the lot really belongs to the named
+  // seller rather than trusting the lot id alone.
+  const lotId = (opts.lotId != null && String(opts.lotId).trim() !== '')
+    ? Number(opts.lotId) : null;
+  const lotNo = String(opts.lotNo == null ? '' : opts.lotNo).trim();
+  let lotSql = '', lotArgs = [];
+  if (Number.isFinite(lotId) && lotId > 0) { lotSql = ' AND id = ?'; lotArgs = [lotId]; }
+  else if (lotNo) { lotSql = ' AND TRIM(lot_no) = ?'; lotArgs = [lotNo]; }
+  const isLotWise = !!lotSql;
+
   // A lot qualifies for a Purchase Invoice if it has a GSTIN-bearing seller —
   // i.e. cr is either "GSTIN.<15-char>" (legacy UI format) or a bare 15-char
   // GSTIN starting with 2 digits (Excel import format). We accept both.
-  const lots = db.all(
+  let lots = db.all(
     `SELECT * FROM lots
-     WHERE auction_id = ? AND name = ? AND amount > 0${sellerSql}
+     WHERE auction_id = ? AND name = ? AND amount > 0${sellerSql}${lotSql}
        AND (reserved IS NULL OR reserved = 0)
        AND ${hasValidGstinSql('cr')}
      ORDER BY lot_no`,
-    [auctionId, sellerName, ...sellerArgs]
+    [auctionId, sellerName, ...sellerArgs, ...lotArgs]
   );
-  
+
+  // Re-import recovery: a lot-wise document pinned by lot_id whose trade was
+  // deleted and re-imported has a dangling id. Fall back to the lot NUMBER
+  // within the same auction+seller, which survives re-import. Without this a
+  // reprint would silently drop to the stored-summary path and lose the lot
+  // detail — the same failure recoverAgriBillByAno() guards against on bills.
+  if (!lots.length && Number.isFinite(lotId) && lotNo) {
+    lots = db.all(
+      `SELECT * FROM lots
+       WHERE auction_id = ? AND name = ? AND amount > 0${sellerSql}
+         AND TRIM(lot_no) = ?
+         AND (reserved IS NULL OR reserved = 0)
+         AND ${hasValidGstinSql('cr')}
+       ORDER BY lot_no`,
+      [auctionId, sellerName, ...sellerArgs, lotNo]
+    );
+  }
+
   if (!lots.length) return null;
 
   const gstGoods = cfg.gst_goods || 5;
@@ -652,17 +694,46 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg, opts) {
   //    `purchases.tds` shown on screen by exactly threshold × rate
   //    (₹5,000 at 50 L / 0.1%). Ordering by (date, auction_id) is stable
   //    on re-render and matches how 194Q actually accumulates.
+  //
+  // 4) LOT-WISE mode needs a third ordering key. Seller-wise generation puts
+  //    at most ONE purchase row per (dealer, auction), so ordering by
+  //    (date, auction_id) totally orders a dealer's trades and "prior" is
+  //    unambiguous. Lot-wise generation puts N rows there — one per lot —
+  //    all sharing the same date AND the same auction_id. Under the
+  //    two-key rule every one of those rows excludes all of its siblings,
+  //    so each lot computes the same `prior` and each independently
+  //    concludes it is the trade that crossed the 50 L threshold. A dealer
+  //    crossing on a 5-lot trade would be charged the crossing-trade
+  //    calculation five times over.
+  //
+  //    Within one auction the invoice NUMBER is the sequence in which the
+  //    documents were raised, so it is the correct third key: a lot-wise
+  //    row counts its same-auction siblings with a SMALLER invoice number
+  //    as prior. That ordering is stable on re-render (the number is
+  //    stored on the row) and is exactly how the numbers were handed out.
+  //
+  //    Applied ONLY in lot-wise mode. Seller-wise rows keep the original
+  //    two-key rule untouched — the flag must not move a single rupee of
+  //    TDS on documents raised the old way.
   const _auc = db.get('SELECT ano, date FROM auctions WHERE id = ?', [auctionId]);
   const aucId   = Number(auctionId);
   const aucDate = _auc ? _auc.date : '';
   const priorAmountCol = cfg.flag_wgst ? 'total' : 'amount';
+  const docSeq = parseInt(String(opts.docNo == null ? '' : opts.docNo).trim(), 10);
+  const useLotSeq = isLotWise && Number.isFinite(docSeq);
+  const siblingSql = useLotSeq
+    ? ` OR (date = ? AND COALESCE(auction_id, -1) = ?
+            AND TRIM(COALESCE(lot_no,'')) <> ''
+            AND CAST(invo AS INTEGER) < ?)`
+    : '';
   const priorPurchases = db.get(
     `SELECT COALESCE(SUM(${priorAmountCol}),0) as total
        FROM purchases
       WHERE (gstin = ? OR gstin = ?) AND date >= ?
-        AND (date < ? OR (date = ? AND COALESCE(auction_id, -1) < ?))`,
+        AND (date < ? OR (date = ? AND COALESCE(auction_id, -1) < ?)${siblingSql})`,
     [gstinPrefixed, gstinBare, cfg.season_start || '2026-04-01',
-     aucDate, aucDate, aucId]
+     aucDate, aucDate, aucId,
+     ...(useLotSeq ? [aucDate, aucId, docSeq] : [])]
   );
   const tdsAmount = cfg.flag_tds_purchase 
     ? calculateTDS(cfg.flag_wgst ? grandTotal : totalPuramt, priorPurchases ? priorPurchases.total : 0, cfg)
@@ -677,6 +748,12 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg, opts) {
               cr: firstLot.cr, pan: firstLot.pan, state: firstLot.pstate,
               trader_id: firstLot.trader_id != null ? firstLot.trader_id : null },
     auctionNo: _auc ? _auc.ano : '',
+    // Lot-wise identity, echoed back so the caller can stamp purchases.lot_no
+    // / lot_id without re-querying. Both null on a seller-wise build, which is
+    // precisely what marks the stored row as seller-wise.
+    lotWise: isLotWise,
+    lotNo: isLotWise ? String(firstLot.lot_no || '') : '',
+    lotId: isLotWise ? (firstLot.id != null ? firstLot.id : null) : null,
     lineItems,
     summary: {
       totalQty, totalRefundQty, totalBags, totalPuramt, totalCgst, totalSgst, totalIgst,

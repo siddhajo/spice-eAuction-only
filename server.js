@@ -4036,6 +4036,31 @@ function _remainingPartiesSql(db, docType, auctionId) {
   }
   if (docType === 'purchases') {
     // Mirrors /api/purchases/generate-all (dual-format GSTIN filter).
+    //
+    // The "already done" join has to match the mode, or the Generate button
+    // lies. Seller-wise: a dealer is done once ANY purchase row exists for
+    // them — one row is the whole dealer. Lot-wise: that same rule would
+    // mark every one of a dealer's remaining lots ineligible the moment
+    // their FIRST lot was invoiced, disabling Generate with real work left
+    // to do. Lot-wise therefore joins on the lot as well, and counts LOTS.
+    if (lotwisePurchaseOn(db)) {
+      return {
+        sql: `SELECT l.id
+                FROM lots l
+                LEFT JOIN purchases p
+                  ON p.auction_id = l.auction_id
+                 AND UPPER(TRIM(p.name)) = UPPER(TRIM(l.name))
+                 AND TRIM(COALESCE(p.lot_no,'')) = TRIM(l.lot_no)
+               WHERE l.auction_id = ?
+                 AND l.amount > 0
+                 AND l.name IS NOT NULL AND l.name != ''
+                 AND (l.reserved IS NULL OR l.reserved = 0)
+                 AND ${notWD}
+                 AND ${hasValidGstinSql('l.cr')}
+                 AND p.id IS NULL`,
+        params: [auctionId],
+      };
+    }
     return {
       sql: `SELECT DISTINCT l.name
               FROM lots l
@@ -5427,6 +5452,52 @@ function wantsProformaDoc(req) {
   return String((req && req.body && req.body.docType) || 'original').trim().toLowerCase() === 'proforma';
 }
 const PROFORMA_OFF_MSG = 'Proforma invoices are disabled. Enable flag_proforma_invoice in Settings → Flags.';
+
+// ── LOT-WISE DOCUMENT MODE (flag_lotwise_* family) ─────────────
+// OFF (default) = the historical SELLER-WISE flow: one document per seller
+// per trade, carrying all of that seller's lots as line items.
+// ON = LOT-WISE: one document per LOT, each with its own number.
+//
+// This gate applies at GENERATION time only. It never changes how an
+// already-stored document is read, rendered or reported — that is decided
+// per row by whether the row carries a lot_no (see below), not by the flag.
+// So an operator can switch the flag on Monday and every document raised
+// last week still reprints exactly as it was raised.
+function lotwiseOn(db, key) {
+  try {
+    const cfg = getSettingsFlat(db || getDb());
+    return String(cfg[key] || '').toLowerCase() === 'true' || cfg[key] === true;
+  } catch (_) { return false; }
+}
+function lotwisePurchaseOn(db) { return lotwiseOn(db, 'flag_lotwise_purchase'); }
+
+// Builder options that reproduce a STORED purchase row exactly.
+//
+// This is the single place that decides "was this document raised lot-wise
+// or seller-wise?", and it answers from the ROW, never from the flag. A
+// non-empty lot_no means the row was raised lot-wise, so its reprint must
+// be narrowed to that one lot; an empty lot_no means seller-wise, so the
+// opts come back without any lot narrowing and buildPurchaseInvoice behaves
+// exactly as it always has.
+//
+// Every reprint / re-render path must route through this. Passing only
+// { traderId } — as the reprint paths used to — would rebuild a lot-wise
+// invoice from ALL of the seller's lots, printing a document that does not
+// match the one that was issued.
+function purchaseRebuildOpts(stored) {
+  if (!stored) return {};
+  const lotNo = String(stored.lot_no == null ? '' : stored.lot_no).trim();
+  const opts = { traderId: stored.trader_id };
+  if (lotNo) {
+    opts.lotNo = lotNo;
+    opts.lotId = stored.lot_id != null ? stored.lot_id : null;
+    // Ordering key for the 194Q TDS accumulation — see calculations.js.
+    // Must be the number the document actually carries so a reprint lands
+    // on the same TDS figure that was stored at generation time.
+    opts.docNo = stored.invo;
+  }
+  return opts;
+}
 
 const DOC_NO_MODULES = {
   invoices:  { table: 'invoices',  col: 'invo', perSale: true, global: true, excludeProforma: true },
@@ -8861,18 +8932,72 @@ app.post('/api/purchases/generate/:auctionId',
   const db = getDb(); const cfg = getSettingsFlat(db);
   // traderId / userId identify WHICH dealer when the name is shared.
   const { sellerName, invoiceNo, traderId, userId } = req.body;
-  const invoice = buildPurchaseInvoice(db, req.params.auctionId, sellerName, cfg, { traderId, userId });
-  if (!invoice) return res.status(404).json({ error: 'No data for this seller' });
-  
+
+  // ── Mode resolution (flag_lotwise_purchase) ──────────────────────────
+  // A lot identifier in the body means "raise a LOT-WISE invoice for this one
+  // lot". Absent means the classic seller-wise invoice. The two are validated
+  // against the flag so a stale browser tab can never write a document in the
+  // mode the site is not configured for — the operator would have no way to
+  // tell from the list which rows came out which way.
+  const reqLotNo = String(req.body.lotNo == null ? '' : req.body.lotNo).trim();
+  const reqLotId = req.body.lotId;
+  const wantsLotWise = reqLotNo !== '' || (reqLotId != null && String(reqLotId).trim() !== '');
+  const lotWiseCfg = lotwisePurchaseOn(db);
+  if (wantsLotWise && !lotWiseCfg) {
+    return res.status(403).json({
+      error: 'Lot-wise purchase invoices are disabled. Enable "Lot-wise Purchase Invoices" in Settings → Flags.',
+      mode: 'seller',
+    });
+  }
+  if (!wantsLotWise && lotWiseCfg) {
+    return res.status(400).json({
+      error: 'This site is set to LOT-WISE purchase invoices, but no lot was selected. Reload the page and pick a lot.',
+      mode: 'lot',
+    });
+  }
+
+  // Duplicate guard — lot-wise only. Seller-wise generation keeps its existing
+  // behaviour (no guard) so nothing about the current flow changes. Lot-wise
+  // needs one because the operator is now working through a list of many lots
+  // and re-running is far easier to do by accident.
+  if (wantsLotWise) {
+    const dupe = db.get(
+      `SELECT invo FROM purchases
+        WHERE auction_id = ? AND UPPER(TRIM(name)) = UPPER(TRIM(?))
+          AND TRIM(COALESCE(lot_no,'')) = ? LIMIT 1`,
+      [req.params.auctionId, String(sellerName || ''), reqLotNo]
+    );
+    if (dupe) {
+      return res.status(409).json({
+        error: `Lot ${reqLotNo} already has purchase invoice #${dupe.invo} for ${sellerName} in this trade.`,
+        existingInvoiceNo: dupe.invo,
+      });
+    }
+  }
+
+  const invoice = buildPurchaseInvoice(db, req.params.auctionId, sellerName, cfg, {
+    traderId, userId,
+    lotNo: reqLotNo, lotId: reqLotId, docNo: invoiceNo,
+  });
+  if (!invoice) {
+    return res.status(404).json({
+      error: wantsLotWise
+        ? `No eligible data for lot ${reqLotNo} under ${sellerName}.`
+        : 'No data for this seller',
+    });
+  }
+
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [req.params.auctionId]);
   const s = invoice.summary;
-  db.run(`INSERT INTO purchases (auction_id,ano,date,state,br,name,add_line,place,gstin,invo,qty,amount,cgst,sgst,igst,rund,total,tds,trader_id)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  db.run(`INSERT INTO purchases (auction_id,ano,date,state,br,name,add_line,place,gstin,invo,qty,amount,cgst,sgst,igst,rund,total,tds,trader_id,lot_no,lot_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [req.params.auctionId,auction.ano,auction.date,auction.state||'','',invoice.seller.name,invoice.seller.address||'',
      invoice.seller.place||'',invoice.seller.cr||'',String(invoiceNo),s.totalQty,s.totalPuramt,
      s.totalCgst,s.totalSgst,s.totalIgst,s.roundDiff,s.grandTotal,s.tdsAmount,
-     invoice.seller.trader_id || null]);
-  res.json({ success: true, invoice: s });
+     invoice.seller.trader_id || null,
+     // Empty lot_no is what marks this row seller-wise, for every future reader.
+     invoice.lotNo || '', invoice.lotId]);
+  res.json({ success: true, invoice: s, mode: wantsLotWise ? 'lot' : 'seller', lotNo: invoice.lotNo || '' });
 });
 
 // List eligible sellers for purchase invoices (with GSTIN, amount > 0)
@@ -8916,6 +9041,47 @@ app.get('/api/purchases/eligible-sellers/:auctionId', requireView, (req, res) =>
   ));
 });
 
+// ── LOT-WISE eligible list (flag_lotwise_purchase) ───────────────────────
+// The lot-wise counterpart of /eligible-sellers: one row per LOT rather than
+// one row per dealer. Same eligibility rule (GSTIN-bearing seller, amount > 0,
+// not reserved) so the two lists always cover exactly the same lots — only
+// the grouping differs. The client shows this list when the flag is on.
+//
+// `already_invoiced` is advisory, for the UI: it flags lots that already have
+// a lot-wise purchase row in this trade so the operator can see at a glance
+// what a re-run would duplicate. Generation enforces this properly.
+//
+// ORDER BY is the numbering scheme in lot-wise mode exactly as it is in
+// seller-wise mode: invoice numbers are handed out in this order. Sorted by
+// seller first, then lot, so one dealer's lots take consecutive numbers
+// instead of being scattered through the trade's series.
+app.get('/api/purchases/eligible-lots/:auctionId', requireView, (req, res) => {
+  const db = getDb();
+  const aid = req.params.auctionId;
+  res.json(db.all(
+    `SELECT l.id AS lot_id, l.lot_no, l.name, l.trader_id,
+            CASE WHEN UPPER(TRIM(COALESCE(l.user_id,''))) IN ('','IMPORT')
+                 THEN '' ELSE TRIM(l.user_id) END AS user_id,
+            l.grade, l.bags, l.qty, l.price, l.amount, l.cr,
+            (SELECT p.invo FROM purchases p
+              WHERE p.auction_id = l.auction_id
+                AND TRIM(COALESCE(p.lot_no,'')) = TRIM(l.lot_no)
+                AND UPPER(TRIM(p.name)) = UPPER(TRIM(l.name))
+              LIMIT 1) AS already_invoiced
+       FROM lots l
+      WHERE l.auction_id = ? AND l.name IS NOT NULL AND l.name != ''
+        AND l.amount > 0
+        AND (l.reserved IS NULL OR l.reserved = 0)
+        -- Withdrawn / N-A lots are not purchaseable. The generation GATE
+        -- already excludes them, so this list must too — otherwise the
+        -- gate reports "done" while the picker still offers the lot.
+        AND UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')
+        AND ${hasValidGstinSql('l.cr')}
+      ORDER BY UPPER(TRIM(l.name)), CAST(l.lot_no AS INTEGER), l.lot_no`,
+    [aid]
+  ));
+});
+
 // Batch: generate purchase invoice for ALL registered dealers in an auction
 app.post('/api/purchases/generate-all/:auctionId',
   requireInvoiceWrite,
@@ -8943,41 +9109,94 @@ app.post('/api/purchases/generate-all/:auctionId',
   // was no ORDER BY at all, leaving it to whatever order SQLite happened to
   // return rows in. UPPER(TRIM(..)) for the same case-insensitivity reason as
   // the eligible-sellers endpoint above, whose order this mirrors.
-  const sellers = db.all(
-    `SELECT DISTINCT name FROM lots
-     WHERE auction_id = ?
-       AND amount > 0
-       AND name IS NOT NULL AND name != ''
-       AND ${hasValidGstinSql('cr')}
-     ORDER BY UPPER(TRIM(name))`,
-    [req.params.auctionId]
-  );
+  // ── Mode resolution (flag_lotwise_purchase) ──────────────────────────
+  // Seller-wise (flag off) walks one row per dealer, exactly as before.
+  // Lot-wise (flag on) walks one row per LOT. Both use the same eligibility
+  // rule and the same ORDER BY, so the two modes cover identical lots and
+  // differ only in how many documents that becomes.
+  const lotWise = lotwisePurchaseOn(db);
 
-  if (!sellers.length) return res.status(404).json({ error: 'No registered dealers (with GSTIN) in this auction' });
-  
+  const sellers = lotWise
+    ? db.all(
+        `SELECT l.id AS lot_id, l.lot_no, l.name, l.trader_id,
+                CASE WHEN UPPER(TRIM(COALESCE(l.user_id,''))) IN ('','IMPORT')
+                     THEN '' ELSE TRIM(l.user_id) END AS user_id
+           FROM lots l
+          WHERE l.auction_id = ?
+            AND l.amount > 0
+            AND l.name IS NOT NULL AND l.name != ''
+            AND (l.reserved IS NULL OR l.reserved = 0)
+            -- Same WD/NA exclusion as /eligible-lots and the gate, so the
+            -- preview count, the batch run and the gate all agree.
+            AND UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')
+            AND ${hasValidGstinSql('l.cr')}
+          ORDER BY UPPER(TRIM(l.name)), CAST(l.lot_no AS INTEGER), l.lot_no`,
+        [req.params.auctionId]
+      )
+    : db.all(
+        `SELECT DISTINCT name FROM lots
+         WHERE auction_id = ?
+           AND amount > 0
+           AND name IS NOT NULL AND name != ''
+           AND ${hasValidGstinSql('cr')}
+         ORDER BY UPPER(TRIM(name))`,
+        [req.params.auctionId]
+      );
+
+  if (!sellers.length) return res.status(404).json({
+    error: lotWise
+      ? 'No eligible lots (GSTIN-bearing seller) in this auction'
+      : 'No registered dealers (with GSTIN) in this auction'
+  });
+
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [req.params.auctionId]);
   const results = [];
   const errors = [];
-  
+  const skipped = [];
+
+  // Lots already carrying a lot-wise purchase invoice in this trade, so a
+  // re-run tops up the missing ones instead of double-invoicing the lot.
+  // Seller-wise runs skip this entirely and behave exactly as before.
+  const alreadyDone = new Set();
+  if (lotWise) {
+    for (const r of db.all(
+      `SELECT name, lot_no, invo FROM purchases
+        WHERE auction_id = ? AND TRIM(COALESCE(lot_no,'')) <> ''`,
+      [req.params.auctionId]
+    )) alreadyDone.add(`${String(r.name || '').trim().toUpperCase()}|${String(r.lot_no || '').trim()}`);
+  }
+
   for (const row of sellers) {
+    const label = lotWise ? `${row.name} — lot ${row.lot_no}` : row.name;
     try {
-      const invoice = buildPurchaseInvoice(db, req.params.auctionId, row.name, cfg,
-        { traderId: row.trader_id, userId: row.user_id });
-      if (!invoice) { errors.push({ seller: row.name, error: 'Build failed' }); continue; }
-      const s = invoice.summary;
+      if (lotWise) {
+        const key = `${String(row.name || '').trim().toUpperCase()}|${String(row.lot_no || '').trim()}`;
+        if (alreadyDone.has(key)) {
+          skipped.push({ seller: row.name, lotNo: row.lot_no, reason: 'Already invoiced' });
+          continue;
+        }
+      }
       const invoNo = String(nextNo);
-      db.run(`INSERT INTO purchases (auction_id,ano,date,state,br,name,add_line,place,gstin,invo,qty,amount,cgst,sgst,igst,rund,total,tds,trader_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      const invoice = buildPurchaseInvoice(db, req.params.auctionId, row.name, cfg,
+        { traderId: row.trader_id, userId: row.user_id,
+          lotNo: lotWise ? row.lot_no : '', lotId: lotWise ? row.lot_id : null,
+          docNo: invoNo });
+      if (!invoice) { errors.push({ seller: label, error: 'Build failed' }); continue; }
+      const s = invoice.summary;
+      db.run(`INSERT INTO purchases (auction_id,ano,date,state,br,name,add_line,place,gstin,invo,qty,amount,cgst,sgst,igst,rund,total,tds,trader_id,lot_no,lot_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [req.params.auctionId,auction.ano,auction.date,auction.state||'','',invoice.seller.name,invoice.seller.address||'',
          invoice.seller.place||'',invoice.seller.cr||'',invoNo,s.totalQty,s.totalPuramt,
          s.totalCgst,s.totalSgst,s.totalIgst,s.roundDiff,s.grandTotal,s.tdsAmount,
-     invoice.seller.trader_id || null]);
-      results.push({ seller: row.name, invoiceNo: invoNo, grandTotal: s.grandTotal });
+     invoice.seller.trader_id || null,
+     invoice.lotNo || '', invoice.lotId]);
+      results.push({ seller: row.name, lotNo: lotWise ? row.lot_no : '', invoiceNo: invoNo, grandTotal: s.grandTotal });
       nextNo++;
-    } catch (e) { errors.push({ seller: row.name, error: e.message }); }
+    } catch (e) { errors.push({ seller: label, error: e.message }); }
   }
-  
-  res.json({ success: true, generated: results.length, results, errors });
+
+  res.json({ success: true, mode: lotWise ? 'lot' : 'seller',
+             generated: results.length, results, errors, skipped });
 });
 
 // Update purchase (edit)
@@ -9031,9 +9250,11 @@ app.get('/api/purchases/pdf/:auctionId/:sellerName', requireView, async (req, re
       [sellerName, String(invoiceNo)]
     );
 
-    // Try to build fresh invoice from lots
+    // Try to build fresh invoice from lots. Scoped by purchaseRebuildOpts so a
+    // lot-wise document rebuilds to its ONE lot rather than to every lot the
+    // seller sold in the trade.
     let invoice = buildPurchaseInvoice(db, auctionId, sellerName, cfg,
-      { traderId: stored && stored.trader_id });
+      purchaseRebuildOpts(stored));
 
     // Fallback: if lots data missing, rebuild from stored purchase record
     if (!invoice) {
@@ -9188,7 +9409,7 @@ app.post('/api/purchases/pdf-bulk', requireView, async (req, res) => {
       // its name — purchases.trader_id records which of two same-named
       // dealers this invoice belongs to.
       let invoice = stored.auction_id
-        ? buildPurchaseInvoice(db, stored.auction_id, stored.name, cfg, { traderId: stored.trader_id })
+        ? buildPurchaseInvoice(db, stored.auction_id, stored.name, cfg, purchaseRebuildOpts(stored))
         : null;
       if (!invoice) {
         // Fallback: stored summary only (one line item)
@@ -11977,7 +12198,14 @@ app.post('/api/invoices/preview/:auctionId', requireView, (req, res) => {
   
   let invoice;
   if (type === 'purchase') {
-    invoice = buildPurchaseInvoice(db, req.params.auctionId, buyerCode, cfg); // buyerCode = sellerName for purchase
+    // buyerCode = sellerName for purchase. In lot-wise mode the modal sends the
+    // single lot it is previewing, so the preview shows the document that will
+    // actually be raised rather than the whole seller.
+    invoice = buildPurchaseInvoice(db, req.params.auctionId, buyerCode, cfg, {
+      lotNo: req.body.lotNo || (lotNos && lotNos.length === 1 ? lotNos[0] : ''),
+      lotId: req.body.lotId,
+      docNo: req.body.invoiceNo,
+    });
   } else if (type === 'agri') {
     invoice = buildAgriBill(db, req.params.auctionId, buyerCode, cfg);
     if (invoice && invoice.error) return res.status(404).json({ error: invoice.error });
