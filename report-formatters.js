@@ -189,6 +189,41 @@ function formatDebitNoteNo(cfg, noteNo, opts) {
   return expand(prefix) + num + expand(suffix);
 }
 
+// ── Bill-of-supply number ───────────────────────────────────
+//
+// A bill of supply is stored as a bare integer (bills.bil). Three documents
+// quote it and must agree: the Bill of Supply PDF, the Commission Bill PDF,
+// and the URD (agriculturist) purchase voucher in the Tally XML. This wraps
+// the stored number in the configured affixes:
+//
+//     <bill_of_supply_prefix><bills.bil><bill_of_supply_suffix>
+//
+// BOTH BLANK (the default) returns the number untouched, so existing installs
+// print and export exactly what they do today. Either one alone is fine — the
+// other contributes nothing. The same {season} / {ano} tokens the debit-note
+// affixes support are expanded here, so a format survives the season rollover
+// without retyping:
+//   {season} → season_short (falls back to tally_season / season_code)
+//   {ano}    → the trade number, when the caller supplies one
+//
+// Unlike formatDebitNoteNo, setting an affix here does NOT suppress the tail
+// each caller builds for itself (the URD voucher's "/<season>", the commission
+// bill's per-page "/1", "/2"). This only wraps the number; see the notes on
+// the two settings in company-config.js.
+function formatBillOfSupplyNo(cfg, billNo, opts) {
+  opts = opts || {};
+  const num = String(billNo == null ? '' : billNo).trim();
+  const prefix = String((cfg && cfg.bill_of_supply_prefix) || '').trim();
+  const suffix = String((cfg && cfg.bill_of_supply_suffix) || '').trim();
+  if ((!prefix && !suffix) || !num) return num;
+  const season = debitNoteSeason(cfg);
+  const ano = String(opts.ano == null ? '' : opts.ano).trim();
+  const expand = (t) => String(t)
+    .replace(/\{season\}/gi, season)
+    .replace(/\{ano\}/gi, ano);
+  return expand(prefix) + num + expand(suffix);
+}
+
 // ── Company header (logo + name + address) ──────────────────
 
 // Resolve the active company branding from company_settings. Falls back to
@@ -696,7 +731,7 @@ function writeXlsxCompanyHeader(wb, ws, header, opts) {
 
 module.exports = {
   fmtMoney, fmtQty, fmtPrice, fmtIndian,
-  formatInvoiceNo, formatDebitNoteNo, debitNoteSeason,
+  formatInvoiceNo, formatDebitNoteNo, debitNoteSeason, formatBillOfSupplyNo,
   formatDateForDisplay, DATE_FORMATS,
   getCompanyHeader, getCompanyIdentity, drawCompanyHeader,
   xlsxNumFmtForHeader, writeXlsxCompanyHeader,

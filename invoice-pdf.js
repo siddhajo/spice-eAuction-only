@@ -1060,7 +1060,10 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   const hasConsignee = !!(buyer.cbuyer1 || buyer.cadd1 || buyer.cpla || buyer.cgstin);
   const ship = hasConsignee ? {
     name: buyer.cbuyer1 || buyer.buyer1 || buyer.buyer || '',
-    addr: buyer.cadd1 || '',
+    // Both consignee address lines, same as the bill-to fallback below —
+    // Consignee Address 2 was dropped here, so anything typed into it never
+    // reached the printed Ship-To block.
+    addr: [buyer.cadd1, buyer.cadd2].filter(Boolean).join(','),
     pla:  buyer.cpla  || '',
     pin:  buyer.cpin  || '',
     state: buyer.cstate || '',

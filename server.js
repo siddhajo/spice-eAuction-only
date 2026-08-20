@@ -12,7 +12,7 @@ const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, bu
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 const { amountToWords } = require('./amount-words');
 const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx } = require('./exports');
-const { getCompanyHeader, writeXlsxCompanyHeader, formatDateForDisplay, formatDebitNoteNo, formatInvoiceNo } = require('./report-formatters');
+const { getCompanyHeader, writeXlsxCompanyHeader, formatDateForDisplay, formatDebitNoteNo, formatInvoiceNo, formatBillOfSupplyNo } = require('./report-formatters');
 const { exportPdf: exportAnyPdf, renderTablePdf, renderPoolerCertificatePdf } = require('./exports-pdf');
 const { DBF_EXPORTS } = require('./dbf-exports');
 // Per-install time-bombed licensing — see license.js for the model.
@@ -1974,14 +1974,22 @@ app.get('/api/gst-lookup/:gstin', requireView, async (req, res) => {
     if (body && body.flag && body.data) {
       const d = body.data;
       const addr = (d.pradr && d.pradr.addr) || {};
+      // The portal returns mixed case ("Bodinayakanur", "M/s. Ram Exports").
+      // Party master data in this app is held upper-case throughout — the
+      // built-in state table, the seller/buyer forms, every report and the
+      // Tally ledgers — so normalise here, at the single point the portal's
+      // values enter the system, rather than in each caller. Applies to the
+      // text fields that get stored on the party record; pin/status/regDate
+      // are left alone (no case to normalise / not party text).
+      const up = (v) => String(v == null ? '' : v).toUpperCase();
       return res.json({
         valid: true, gstin, pan, st_code: stCode,
-        name:     d.lgnm || d.tradeNam || '',
-        tradeName:d.tradeNam || d.lgnm || '',
-        address:  _gstBuildAddress(d.pradr),
-        place:    addr.dst || addr.loc || '',
+        name:     up(d.lgnm || d.tradeNam || ''),
+        tradeName:up(d.tradeNam || d.lgnm || ''),
+        address:  up(_gstBuildAddress(d.pradr)),
+        place:    up(addr.dst || addr.loc || ''),
         pin:      addr.pncd || '',
-        state:    addr.stcd || state,
+        state:    up(addr.stcd || state),
         status:   d.sts || '',
         regDate:  d.rgdt || '',
         source:   'live',
@@ -9379,11 +9387,15 @@ app.get('/api/bills/pdf/:auctionId/:sellerName', requireView, async (req, res) =
     const tplChoice = String((req.query.template) || (req.body && req.body.template) || '').trim();
     const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
       engineKey: 'agri_bill_engine', templateKey: 'agri_bill_template', tplChoice });
+    // The printed number carries the configured bill-of-supply prefix; the raw
+    // `billNo` above stays untouched because the bills lookup and the download
+    // filename both key off the stored integer.
+    const printedBillNo = formatBillOfSupplyNo(cfg, billNo, { ano: storedRow ? storedRow.ano : '' });
     if (useHtml) {
       const cfg2 = tplChoice ? { ...cfg, agri_bill_template: tplChoice } : cfg;
-      pdf = await require('./pdf/render-agri-html').generateAgriBillHtmlPDF(bill, cfg2, billNo);
+      pdf = await require('./pdf/render-agri-html').generateAgriBillHtmlPDF(bill, cfg2, printedBillNo);
     } else {
-      pdf = await generateAgriBillPDF(bill, cfg, billNo);
+      pdf = await generateAgriBillPDF(bill, cfg, printedBillNo);
     }
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="BillOfSupply_${sellerName.replace(/[^\w]/g,'_')}_${billNo}.pdf"`);
@@ -9632,7 +9644,7 @@ app.post('/api/bills/pdf-bulk', requireView, async (req, res) => {
       }
       if (!bill.billDate) bill.billDate = formatDateForDisplay(new Date(), dateFmt2);
       bill.eTradeNo = stored.auction_id || '';
-      payloads.push({ billData: bill, billNo: stored.bil });
+      payloads.push({ billData: bill, billNo: formatBillOfSupplyNo(cfg, stored.bil, { ano: stored.ano }) });
     }
 
     let pdf;
@@ -9903,9 +9915,13 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
       // One payload (→ one A4 page) per lot. When a bill spans more than one
       // lot, suffix the Bill No per page (billno/1, billno/2, …) so each lot's
       // page carries a distinct number; a single-lot bill keeps the plain number.
+      // The configured bill-of-supply prefix leads the stored number, so the
+      // memorandum quotes the same bill number the Bill of Supply PDF prints;
+      // the per-page /1, /2 tail still trails it.
+      const bosNo = formatBillOfSupplyNo(cfg, b.bil, { ano: b.ano });
       perLot.forEach((pl, _lotIdx) => {
         payloads.push({
-          billNo: perLot.length > 1 ? `${b.bil}/${_lotIdx + 1}` : String(b.bil),
+          billNo: perLot.length > 1 ? `${bosNo}/${_lotIdx + 1}` : String(bosNo),
           billData: {
             crpt: b.crpt || pl.crpt || (first.crpt || ''),
             auction: { ano: auction ? auction.ano : (b.ano || ''), date: billDate },
@@ -12082,6 +12098,73 @@ app.get('/api/payments/:auctionId', requireView, (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // LOT-WISE PAYMENTS (Settings → Flags → "Lot-wise Payments Screen")
 // ══════════════════════════════════════════════════════════════
+// Why isn't the lot I typed in the results?
+//
+// An empty table after typing "001" is a dead end — the operator can't tell
+// a withdrawn lot from a typo. For every lot number asked for that did NOT
+// come back, look it up in the trade ignoring the search's own filters and
+// name the actual reason. Only runs when lot numbers were typed.
+//
+// Reasons, in the order they're tested (first match wins, because they can
+// overlap — a withdrawn lot is also unpriced):
+//   missing        no lot with that number in this trade at all
+//   withdrawn      lots.code = 'WD' — pulled before the sale
+//   not_auctioned  lots.code = 'NA' or blank — never went under the hammer
+//   unpriced       sold but amount is still 0 (price import not run)
+//   paid           already marked paid, so out of the payable set
+//   seller_filter  payable, but the Seller name box excluded it
+//   link_filter    payable, but the Show-unlinked toggle excluded it
+function explainMissingLots(db, auctionId, lotTokens, ctx) {
+  if (!lotTokens || !lotTokens.length) return [];
+  const { seller, link, finalIds } = ctx;
+  // Does an account resolve for this lot? Asked directly rather than through
+  // the caller's prebuilt bank map — that map only covers sellers who made it
+  // into the results, and the lots being explained here did not.
+  const lotIsLinked = (l) => {
+    if (l.bank_id != null) return true;
+    if (l.trader_id == null) return false;
+    const has = db.get('SELECT 1 AS x FROM trader_banks WHERE trader_id = ? LIMIT 1', [l.trader_id]);
+    if (has) return true;
+    const t = db.get('SELECT acctnum, ifsc FROM traders WHERE id = ?', [l.trader_id]);
+    return !!(t && (String(t.acctnum || '').trim() || String(t.ifsc || '').trim()));
+  };
+  const out = [];
+  for (const token of lotTokens) {
+    // Same verbatim-or-numeric match the main query uses, so a token can't
+    // be reported missing merely because of leading-zero spelling.
+    const isNum = /^\d+$/.test(token);
+    const rows = db.all(
+      `SELECT id, lot_no, name, code, amount, paid, bank_id, trader_id
+         FROM lots
+        WHERE auction_id = ?
+          AND (TRIM(lot_no) = ?${isNum ? ' OR CAST(lot_no AS INTEGER) = ?' : ''})
+        ORDER BY CAST(lot_no AS INTEGER), lot_no`,
+      isNum ? [auctionId, token, parseInt(token, 10)] : [auctionId, token]
+    ) || [];
+    if (!rows.length) { out.push({ lot: token, reason: 'missing' }); continue; }
+    // A lot number is unique within a trade, but stay tolerant: if ANY row
+    // for this token made it into the results, the token is answered.
+    if (rows.some(r => finalIds.has(r.id))) continue;
+    const l = rows[0];
+    const code = String(l.code || '').trim().toUpperCase();
+    let reason;
+    if (code === 'WD') reason = 'withdrawn';
+    else if (code === 'NA' || code === '') reason = 'not_auctioned';
+    else if (!(Number(l.amount) > 0)) reason = 'unpriced';
+    else if (String(l.paid || '').trim() !== '') reason = 'paid';
+    else if (seller && !String(l.name || '').toUpperCase().includes(seller.toUpperCase())) reason = 'seller_filter';
+    else reason = 'link_filter';
+    const entry = { lot: String(l.lot_no || token).trim(), reason, seller: l.name || '' };
+    // For the toggle case, say which side it is on so the fix is obvious.
+    if (reason === 'link_filter') {
+      entry.linked = lotIsLinked(l);
+      entry.wanted = link;
+    }
+    out.push(entry);
+  }
+  return out;
+}
+
 // Lot-level counterpart to /api/payments/:auctionId. The classic screen
 // rolls a trade up per seller; this one answers "these specific lots —
 // where does each one get paid, and how much?".
@@ -12211,6 +12294,7 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
     const unlinkedCount = out.filter(l => !l.linked).length;
     if (link === 'linked')   out = out.filter(l => l.linked);
     if (link === 'unlinked') out = out.filter(l => !l.linked);
+    const finalIds = new Set(out.map(l => l.id));
 
     res.json({
       auctionId,
@@ -12221,6 +12305,9 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
       lots: out,
       banksByTrader,
       legacyByTrader,
+      // Per-token explanation for lot numbers that were asked for but are
+      // not in `lots` — "001 is withdrawn" beats an empty table.
+      missing: explainMissingLots(db, auctionId, lotTokens, { seller, link, finalIds }),
     });
   } catch (e) {
     console.error('lot-wise payments search error:', e);

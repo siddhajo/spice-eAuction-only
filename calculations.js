@@ -619,19 +619,37 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg) {
   const cr = String(firstLot.cr || '').trim();
   const gstinPrefixed = cr.toUpperCase().startsWith('GSTIN.') ? cr : ('GSTIN.' + cr);
   const gstinBare     = cr.toUpperCase().startsWith('GSTIN.') ? cr.substring(6) : cr;
+  //
+  // 3) "Prior" means trades that come BEFORE this one, chronologically —
+  //    it must NOT include this trade itself, nor any later one. This
+  //    function runs twice per invoice: once at generate time (before the
+  //    purchases row exists) and again on every PDF re-render (after it
+  //    exists, and after later auctions have been invoiced). A plain
+  //    "sum everything for this seller this FY" therefore gave a different
+  //    answer each time. On a seller's first threshold-crossing trade the
+  //    re-render counted the trade in its own `prior`, flipped to the
+  //    already-crossed branch and charged TDS on the FULL amount instead
+  //    of only the excess — so the PDF disagreed with the stored
+  //    `purchases.tds` shown on screen by exactly threshold × rate
+  //    (₹5,000 at 50 L / 0.1%). Ordering by (date, auction_id) is stable
+  //    on re-render and matches how 194Q actually accumulates.
+  const _auc = db.get('SELECT ano, date FROM auctions WHERE id = ?', [auctionId]);
+  const aucId   = Number(auctionId);
+  const aucDate = _auc ? _auc.date : '';
   const priorAmountCol = cfg.flag_wgst ? 'total' : 'amount';
   const priorPurchases = db.get(
     `SELECT COALESCE(SUM(${priorAmountCol}),0) as total
        FROM purchases
-      WHERE (gstin = ? OR gstin = ?) AND date >= ?`,
-    [gstinPrefixed, gstinBare, cfg.season_start || '2026-04-01']
+      WHERE (gstin = ? OR gstin = ?) AND date >= ?
+        AND (date < ? OR (date = ? AND COALESCE(auction_id, -1) < ?))`,
+    [gstinPrefixed, gstinBare, cfg.season_start || '2026-04-01',
+     aucDate, aucDate, aucId]
   );
   const tdsAmount = cfg.flag_tds_purchase 
     ? calculateTDS(cfg.flag_wgst ? grandTotal : totalPuramt, priorPurchases ? priorPurchases.total : 0, cfg)
     : 0;
   const invoiceAmount = grandTotal - tdsAmount;
 
-  const _auc = db.get('SELECT ano FROM auctions WHERE id = ?', [auctionId]);
   return {
     seller: { name: firstLot.name, address: firstLot.padd, place: firstLot.ppla,
               cr: firstLot.cr, pan: firstLot.pan, state: firstLot.pstate },

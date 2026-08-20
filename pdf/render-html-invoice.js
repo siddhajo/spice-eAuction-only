@@ -101,7 +101,10 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
   const hasConsignee = !!(buyer.cbuyer1 || buyer.cadd1 || buyer.cpla);
   const ship = hasConsignee ? {
     name: buyer.cbuyer1 || buyer.buyer1 || buyer.buyer || '',
-    addr: buyer.cadd1 || '',
+    // Both consignee address lines, same as billTo above — Consignee
+    // Address 2 was dropped here, so anything typed into it never reached
+    // the printed Shipped-To block.
+    addr: [buyer.cadd1, buyer.cadd2].filter(Boolean).join(', '),
     place: [buyer.cpla, buyer.cpin].filter(Boolean).join(' - '),
     gstin: buyer.cgstin || '', state: buyer.cstate || '', stCode: buyer.cst_code || '',
     pan: buyer.cpan || '', sbl: '',

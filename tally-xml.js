@@ -68,6 +68,28 @@ const formatDebitNoteNo = (() => {
   };
 })();
 
+// Bill-of-supply number formatter — resolved the same defensive way, so an
+// older report-formatters.js on a partial deploy degrades to the bare number
+// instead of blowing up the URD purchase export.
+const formatBillOfSupplyNo = (() => {
+  try {
+    const f = require('./report-formatters').formatBillOfSupplyNo;
+    if (typeof f === 'function') return f;
+  } catch (_) {}
+  return (cfg, billNo, opts) => {
+    opts = opts || {};
+    const num = String(billNo == null ? '' : billNo).trim();
+    const prefix = String((cfg && cfg.bill_of_supply_prefix) || '').trim();
+    const suffix = String((cfg && cfg.bill_of_supply_suffix) || '').trim();
+    if ((!prefix && !suffix) || !num) return num;
+    const g = (key) => String((cfg && cfg[key]) || '').trim();
+    const season = g('season_short') || g('tally_season') || g('season_code') || '';
+    const ano = String(opts.ano == null ? '' : opts.ano).trim();
+    const ex = (t) => String(t).replace(/\{season\}/gi, season).replace(/\{ano\}/gi, ano);
+    return ex(prefix) + num + ex(suffix);
+  };
+})();
+
 const STATES = {
   '01': 'Jammu & Kashmir', '02': 'Himachal Pradesh', '03': 'Punjab',
   '04': 'Chandigarh', '05': 'Uttarakhand', '06': 'Haryana',
@@ -1673,6 +1695,9 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
   const detailed   = cfgBool(cfg, 'tally_purchase_detailed', true);
   const tlyrnd     = cfgBool(cfg, 'tally_round_enabled', true);
   const opt        = cfgBool(cfg, 'tally_optional', false);
+  // Blank <VOUCHERNUMBER> / <REFERENCE> so they're typed in Tally after the
+  // import (Settings → Flags). OFF = today's generated numbers.
+  const manualVchNo = cfgBool(cfg, 'tally_purchase_manual_voucherno', false);
   // Single-company build: intra/inter test uses the configured home state
   // code (cfg.tally_state_code, default 33 = Tamil Nadu).
   const intra      = cfgGet(cfg, 'tally_state_code', '33');
@@ -1726,7 +1751,12 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
     // The purchase-inv-no comes from `purchases.invo` (the dealer's
     // own invoice number entered when the purchase was recorded). Per-lot
     // bill allocations stay in their own <ano>/<lot>/<season> format.
-    const voucherRef = `${row.ano}/${taxNm}/${season}`;
+    //
+    // `manualVchNo` (Settings → Flags) blanks the two tags that carry this
+    // number so the operator types them in Tally after the import. Only
+    // <VOUCHERNUMBER> and <REFERENCE> read it, so the bill allocations are
+    // untouched either way.
+    const voucherRef = manualVchNo ? '' : `${row.ano}/${taxNm}/${season}`;
 
     const startVoucher = `<VOUCHER VCHTYPE="${xe(vchType)}" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
     const cgst        = r2(row.cgst || 0);   // goods GST (purchases header)
@@ -2104,6 +2134,10 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
   const detailed  = cfgBool(cfg, 'tally_purchase_detailed', true);
   const tlyrnd    = cfgBool(cfg, 'tally_round_enabled', true);
   const opt       = cfgBool(cfg, 'tally_optional', false);
+  // Blank <VOUCHERNUMBER> / <REFERENCE> so they're typed in Tally after the
+  // import (Settings → Flags). Same flag as the RD purchase voucher, so the
+  // two purchase exports stay in lock-step. OFF = today's generated numbers.
+  const manualVchNo = cfgBool(cfg, 'tally_purchase_manual_voucherno', false);
   // amazing/ainvPrefix kept as locals so dead ASP branches below still
   // parse; `amazing` is force-disabled in this e-Auction-only build.
   const amazing   = false;
@@ -2153,7 +2187,9 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
     // Off ledger emitted below.
     const rnd        = tlyrnd ? r2(partyAmt - grossGoods) : 0;
     // URD voucher number = {invno}/{season-short} (e.g. "799/26-27").
-    const voucherRef = `${taxNm}/${seasonShort}`;
+    // Blanked when `manualVchNo` is on — only <VOUCHERNUMBER> and
+    // <REFERENCE> read this, so bill allocations are unaffected.
+    const voucherRef = manualVchNo ? '' : `${taxNm}/${seasonShort}`;
     const startVoucher = `<VOUCHER VCHTYPE="${xe(vchType)}" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
 
     // Bill allocations (mirror the RD-purchase voucher):
@@ -3998,7 +4034,10 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
       // and deducts commission+handling to get the planter's net payable,
       // emitting each as its own balancing ledger entry.
       total: r2(amounttot),
-      voucherNum: String(b.bil),
+      // VOUCHERNUMBER carries the configured bill-of-supply prefix so the Tally
+      // voucher reads the same as the printed bill of supply / commission bill.
+      // Blank prefix (the default) → the bare stored number, unchanged.
+      voucherNum: formatBillOfSupplyNo(cfg, b.bil, { ano: b.ano }),
     };
   }).filter(v => v.lots.length > 0); // duplicate bills net to zero lots → omit
 

@@ -176,6 +176,21 @@ const DEFAULTS = [
   { key: 'debit_note_suffix',          value: '', category: 'invoice', label: 'Debit Note No Suffix — Dealer (PDF / Tally XML)',  type: 'text' },
   { key: 'debit_note_planter_prefix',  value: '', category: 'invoice', label: 'Debit Note No Prefix — Planter (PDF / Tally XML)', type: 'text' },
   { key: 'debit_note_planter_suffix',  value: '', category: 'invoice', label: 'Debit Note No Suffix — Planter (PDF / Tally XML)', type: 'text' },
+  // Bill-of-supply numbering — wraps the stored bill number (bills.bil) on the
+  // three surfaces that quote it: the Bill of Supply PDF, the Commission Bill
+  // PDF, and the URD (agriculturist) purchase voucher in the Tally XML:
+  //     <prefix><bills.bil><suffix>
+  // Both blank (the default) prints the bare number exactly as today. {season}
+  // and {ano} expand the same way they do in the debit-note affixes, so a
+  // prefix of "BOS/{season}/" renders bill 1748 as "BOS/26-27/1748".
+  //
+  // Unlike the debit-note affixes these ONLY wrap — each surface keeps the tail
+  // it already builds. In particular the URD voucher still appends the season
+  // AFTER the suffix ("1748/26-27" → "BOS-1748-A/26-27"), so putting {season}
+  // in either affix makes the Tally number carry it twice. Multi-lot commission
+  // bills likewise keep their per-page /1, /2 tail after the suffix.
+  { key: 'bill_of_supply_prefix',      value: '', category: 'invoice', label: 'Bill of Supply No Prefix (BoS PDF / Commission Bill / URD Tally XML)', type: 'text' },
+  { key: 'bill_of_supply_suffix',      value: '', category: 'invoice', label: 'Bill of Supply No Suffix (BoS PDF / Commission Bill / URD Tally XML)', type: 'text' },
   { key: 'sales_invoice_engine',      value: 'pdfkit',  category: 'invoice', label: 'Sales Invoice Engine (pdfkit/html)',    type: 'select' },
   { key: 'purchase_invoice_engine',   value: 'pdfkit',  category: 'invoice', label: 'Purchase Invoice Engine (pdfkit/html)', type: 'select' },
   { key: 'agri_bill_engine',          value: 'pdfkit',  category: 'invoice', label: 'Bill of Supply Engine (pdfkit/html)',   type: 'select' },
@@ -270,6 +285,12 @@ const DEFAULTS = [
   // AND a single aggregate inventory entry. Same flag covers RD
   // purchase, URD purchase, and Debit Note vouchers.
   { key: 'tally_purchase_detailed', value: 'true', category: 'flags', label: 'Tally Purchase XML — Detailed (per-lot)', type: 'boolean' },
+  // Purchase XML — leave <VOUCHERNUMBER> and <REFERENCE> EMPTY on the RD and
+  // URD purchase vouchers so the operator types them in Tally after the
+  // import. Everything else about the voucher is unchanged, and the per-lot
+  // bill allocations keep their own <ano>/<lot>/<season> refs. OFF (default)
+  // keeps the generated numbers exactly as they are today.
+  { key: 'tally_purchase_manual_voucherno', value: 'false', category: 'flags', label: 'Purchase XML — Blank Voucher No / Reference (type in Tally)', type: 'boolean' },
   // Set Buyer Code bulk action on the Lots tab — when ON, a "👤 Set
   // Buyer Code" button appears next to "🗑 Delete Selected" once a
   // lot is ticked, opening a modal where the operator picks a buyer

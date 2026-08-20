@@ -2122,6 +2122,20 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 .tally-search-clear:hover{background:var(--border);color:var(--text)}
 .tally-search.has-text .tally-search-clear{display:inline-flex}
 
+/* Inline clear (✕) for a plain full-height input — same idea as
+   .tally-search-clear above but sized for the 38px toolbar inputs and with
+   no leading icon. The ✕ only appears once the field has text. */
+.inp-clear-wrap{position:relative}
+.inp-clear-wrap > input{padding-right:32px !important;box-sizing:border-box}
+.inp-clear{
+  position:absolute;right:8px;top:50%;transform:translateY(-50%);
+  width:20px;height:20px;border:none;background:var(--bg);
+  border-radius:50%;cursor:pointer;font-size:11px;color:var(--text3);
+  display:none;align-items:center;justify-content:center;padding:0;line-height:1;
+}
+.inp-clear:hover{background:var(--border);color:var(--text)}
+.inp-clear-wrap.has-text .inp-clear{display:inline-flex}
+
 
 /* ── Loading spinner + button-busy state ──────────────── */
 @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
@@ -5262,11 +5276,17 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           </div>
           <div style="flex:1;min-width:200px">
             <label style="display:block;font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px">Seller name</label>
-            <input type="text" id="paylw-seller" placeholder="Part of the seller's name…" onkeydown="if(event.key==='Enter')payLwSearch()" style="width:100%;padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px">
+            <div class="inp-clear-wrap" id="paylw-seller-wrap">
+              <input type="text" id="paylw-seller" placeholder="Part of the seller's name…" oninput="payLwSyncClear('paylw-seller')" onkeydown="if(event.key==='Enter')payLwSearch()" style="width:100%;padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px">
+              <button type="button" class="inp-clear" title="Clear the seller name" onclick="payLwClearField('paylw-seller')">✕</button>
+            </div>
           </div>
           <div style="flex:1;min-width:200px">
             <label style="display:block;font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px">Lots <span style="font-weight:400;color:var(--text3)">(comma separated)</span></label>
-            <input type="text" id="paylw-lots" placeholder="e.g. 12, 24, 108" onkeydown="if(event.key==='Enter')payLwSearch()" style="width:100%;padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;font-family:monospace">
+            <div class="inp-clear-wrap" id="paylw-lots-wrap">
+              <input type="text" id="paylw-lots" placeholder="e.g. 12, 24, 108" oninput="payLwSyncClear('paylw-lots')" onkeydown="if(event.key==='Enter')payLwSearch()" style="width:100%;padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;font-family:monospace">
+              <button type="button" class="inp-clear" title="Clear the lot numbers" onclick="payLwClearField('paylw-lots')">✕</button>
+            </div>
           </div>
           <button class="btn btn-g" style="height:38px;padding:0 22px;font-weight:600" onclick="payLwSearch()">🔍 Search</button>
           <button class="btn btn-o" style="height:38px;padding:0 14px;font-weight:600" onclick="payLwClear()" title="Clear the filters and the results">✕ Clear</button>
@@ -5281,6 +5301,9 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           </label>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
+            <!-- Clears the ticks only — the search results stay on screen.
+                 (The ✕ Clear button above wipes the filters and the results.) -->
+            <button class="btn btn-o" id="paylw-clearsel-btn" style="height:38px;padding:0 14px;font-weight:600" onclick="payLwClearSelection()" title="Untick every lot — the results stay on screen">☐ Clear selection</button>
             <button class="btn btn-a" id="paylw-export-btn" style="height:38px;padding:0 16px;font-weight:600" onclick="payLwExportBank()" title="Export the RTGS/NEFT file for the ticked lots. A fresh search ticks them all — untick any you don't want to pay yet.">📤 Export Bank Payment</button>
           </div>
         </div>
@@ -5895,9 +5918,9 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             </label>
             <span id="tally-sv-count" style="font-size:12px;color:var(--text2)">None selected</span>
             <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+              <button class="btn btn-orange" id="tally-sv-bulk-pdf" onclick="tallyBulkPrintSelected()" style="padding:6px 12px;font-size:12px" title="Print the invoice PDFs for the ticked rows — one merged PDF">🖨 Print</button>
               <button class="btn btn-g" id="tally-sv-bulk-xml" onclick="tallyBulkExportSelected('xml')" style="padding:6px 12px;font-size:12px" title="Tally import XML for the ticked rows only">XML</button>
               <button class="btn btn-g" id="tally-sv-bulk-json" onclick="tallyBulkExportSelected('irp')" style="padding:6px 12px;font-size:12px" title="GST e-Invoice (IRP / NIC) JSON for the ticked rows only">JSON</button>
-              <button class="btn btn-orange" id="tally-sv-bulk-pdf" onclick="tallyBulkPrintSelected()" style="padding:6px 12px;font-size:12px" title="Print the invoice PDFs for the ticked rows — one merged PDF">🖨 Print</button>
             </div>
           </div>
           <div id="tally-sv-list" style="margin-top:10px;max-height:380px;overflow:auto;border:1px solid var(--border);border-radius:6px;background:var(--bg)">
@@ -5939,9 +5962,9 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <div id="tally-preview-sales_isp" style="font-size:11px;color:var(--text3);min-height:18px;margin:6px 0"></div>
             <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
               <button class="btn btn-a" onclick="tallyPreview('sales_isp')" style="flex:1;min-width:64px;padding:7px;font-size:12px">Preview</button>
+              <button class="btn btn-orange" onclick="tallyPrintAll('sales_isp')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the sales invoice PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
               <button class="btn btn-g" onclick="tallyDownload('sales_isp')" style="flex:1;min-width:64px;padding:7px;font-size:12px">XML</button>
               <button class="btn btn-g" onclick="tallyDownload('sales_isp','irp')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="GST e-Invoice (IRP / NIC) JSON — ready for the trade portal">JSON</button>
-              <button class="btn btn-orange" onclick="tallyPrintAll('sales_isp')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the sales invoice PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
             </div>
           </div>
 
@@ -5956,8 +5979,8 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <div id="tally-preview-rd_purchase" style="font-size:11px;color:var(--text3);min-height:18px;margin:6px 0"></div>
             <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
               <button class="btn btn-a" onclick="tallyPreview('rd_purchase')" style="flex:1;min-width:64px;padding:7px;font-size:12px">Preview</button>
-              <button class="btn btn-g" onclick="tallyDownload('rd_purchase')" style="flex:1;min-width:64px;padding:7px;font-size:12px">XML</button>
               <button class="btn btn-orange" onclick="tallyPrintAll('rd_purchase')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the purchase invoice PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
+              <button class="btn btn-g" onclick="tallyDownload('rd_purchase')" style="flex:1;min-width:64px;padding:7px;font-size:12px">XML</button>
             </div>
           </div>
 
@@ -5972,8 +5995,8 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <div id="tally-preview-urd_purchase" style="font-size:11px;color:var(--text3);min-height:18px;margin:6px 0"></div>
             <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
               <button class="btn btn-a" onclick="tallyPreview('urd_purchase')" style="flex:1;min-width:64px;padding:7px;font-size:12px">Preview</button>
-              <button class="btn btn-g" onclick="tallyDownload('urd_purchase')" style="flex:1;min-width:64px;padding:7px;font-size:12px">XML</button>
               <button class="btn btn-orange" onclick="tallyPrintAll('urd_purchase')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the bill-of-supply PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
+              <button class="btn btn-g" onclick="tallyDownload('urd_purchase')" style="flex:1;min-width:64px;padding:7px;font-size:12px">XML</button>
             </div>
           </div>
 
@@ -5988,9 +6011,9 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <div id="tally-preview-debit_note" style="font-size:11px;color:var(--text3);min-height:18px;margin:6px 0"></div>
             <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
               <button class="btn btn-a" onclick="tallyPreview('debit_note')" style="flex:1;min-width:64px;padding:7px;font-size:12px">Preview</button>
+              <button class="btn btn-orange" onclick="tallyPrintAll('debit_note')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the debit note PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
               <button class="btn btn-g" onclick="tallyDownload('debit_note')" style="flex:1;min-width:64px;padding:7px;font-size:12px">XML</button>
               <button class="btn btn-g" onclick="tallyDownload('debit_note','irp')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="GST e-Invoice (IRP / NIC) JSON — commission billed to registered dealers, ready for the trade portal">JSON</button>
-              <button class="btn btn-orange" onclick="tallyPrintAll('debit_note')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the debit note PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
             </div>
           </div>
 
@@ -6005,8 +6028,8 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <div id="tally-preview-debit_note_planter" style="font-size:11px;color:var(--text3);min-height:18px;margin:6px 0"></div>
             <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
               <button class="btn btn-a" onclick="tallyPreview('debit_note_planter')" style="flex:1;min-width:64px;padding:7px;font-size:12px">Preview</button>
-              <button class="btn btn-g" onclick="tallyDownload('debit_note_planter')" style="flex:1;min-width:64px;padding:7px;font-size:12px">XML</button>
               <button class="btn btn-orange" onclick="tallyPrintAll('debit_note_planter')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the planter debit note PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
+              <button class="btn btn-g" onclick="tallyDownload('debit_note_planter')" style="flex:1;min-width:64px;padding:7px;font-size:12px">XML</button>
             </div>
           </div>
 
@@ -18841,6 +18864,8 @@ const FIELD_HELP = {
   business_mode:   'This build is e-Auction only.',
   business_state:  'Tamil Nadu uses TN office details, GSTIN, and bank. Kerala uses KL details. Invoices and exports adapt to the selected state.',
   tcs_tds:         'TDS / TCS percentage applied on eligible invoices for tax compliance.',
+  bill_of_supply_prefix: 'Leads the stored bill number on the Bill of Supply PDF, the Commission Bill PDF and the URD purchase voucher in the Tally XML. Blank = bare number, as before. {season} and {ano} expand — e.g. "BOS-" prints bill 1748 as "BOS-1748". It only prepends: the Tally voucher still appends the season ("BOS-1748/26-27"), so avoid {season} in the prefix unless you want it twice there.',
+  bill_of_supply_suffix: 'Trails the stored bill number on the same three documents as the prefix (BoS PDF, Commission Bill PDF, URD Tally XML). Blank = bare number, as before. {season} and {ano} expand — e.g. "-A" prints bill 1748 as "1748-A". It only appends: the Tally voucher still adds its "/season" after your suffix, and a multi-lot commission bill still adds its per-page "/1", "/2".',
 };
 function fld(f){
   // Logo Code: plain textbox in this e-Auction-only build (was an ISP/ASP
@@ -20500,7 +20525,7 @@ function viewBuyerDetails(b){
   const section=(title,rows)=>{const filtered=rows.filter(Boolean).join('');return filtered?`<div style="margin-bottom:16px"><h3 style="font-size:13px;color:var(--green);margin:0 0 6px 0;padding-bottom:4px;border-bottom:1.5px solid var(--green-border)">${title}</h3><table style="width:100%">${filtered}</table></div>`:''};
   const saleMap={L:'Local',I:'Inter-state',E:'Export'};
   const fullAddress=[b.add1,b.add2].filter(Boolean).join(', ');
-  const consigneeAddress=[b.cadd1].filter(Boolean).join(', ');
+  const consigneeAddress=[b.cadd1,b.cadd2].filter(Boolean).join(', ');
   let html='';
   html+=section('Identity',[kv('Buyer Code',b.buyer),kv('Code (short alias)',b.code),kv('Trade Name',b.buyer1),kv('PAN',b.pan)]);
   html+=section('Registration',[kv('GSTIN',b.gstin),kv('TI',b.ti),kv('Sale Type',saleMap[b.sale]||b.sale)]);
@@ -27532,6 +27557,7 @@ const _payLwState = {
   legacyByTrader: {},
   addTraderId: null,     // seller the Add-account modal is currently for
   addBranch: '',         // branch resolved by the IFSC lookup
+  missing: [],           // per-token "why isn't this lot here?" from the server
   // Ticked lot ids — what Export Bank Payment actually pays. Held in state
   // rather than read off the DOM so a re-render (adding an account, say)
   // doesn't silently throw the operator's selection away. A fresh search
@@ -27545,6 +27571,7 @@ function payLwOnAuctionChange() {
   _payLwState.aid = Number(document.getElementById('paylw-auction')?.value || 0);
   _payLwState.lots = [];
   _payLwState.selected = new Set();
+  _payLwState.missing = [];
   _payLwState.searched = false;
   _payLwRender();
 }
@@ -27554,18 +27581,37 @@ function loadPayLotwise() {
     _payLwState.aid = Number(document.getElementById('paylw-auction')?.value || 0);
     _payLwState.lots = [];
     _payLwState.selected = new Set();
+    _payLwState.missing = [];
     _payLwState.searched = false;
     _payLwRender();
   });
 }
 
 function payLwClear() {
-  ['paylw-seller', 'paylw-lots'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  ['paylw-seller', 'paylw-lots'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; payLwSyncClear(id); });
   const u = document.getElementById('paylw-unlinked'); if (u) u.checked = false;
   _payLwState.lots = [];
   _payLwState.selected = new Set();
+  _payLwState.missing = [];
   _payLwState.searched = false;
   _payLwRender();
+}
+
+// ── Inline ✕ on the Seller name / Lots boxes ─────────────────────
+// Show the ✕ only while the field has text, and clear the field (not the
+// results) when it's pressed — the operator usually wants to retype, not
+// start over, so this deliberately does NOT re-run the search.
+function payLwSyncClear(inputId) {
+  const el = document.getElementById(inputId);
+  const wrap = el && el.closest('.inp-clear-wrap');
+  if (wrap) wrap.classList.toggle('has-text', !!String(el.value || '').trim());
+}
+function payLwClearField(inputId) {
+  const el = document.getElementById(inputId);
+  if (!el) return;
+  el.value = '';
+  payLwSyncClear(inputId);
+  el.focus();
 }
 
 async function payLwSearch() {
@@ -27589,6 +27635,7 @@ async function payLwSearch() {
     _payLwState.legacyByTrader = d.legacyByTrader || {};
     _payLwState.totalMatched = d.totalMatched || 0;
     _payLwState.unlinkedCount = d.unlinkedCount || 0;
+    _payLwState.missing = d.missing || [];
     _payLwState.searched = true;
     // A new result set starts fully ticked — the common case is "export what
     // I just searched for", and unticking a few is less work than ticking all.
@@ -27622,6 +27669,41 @@ function _payLwBankOptions(lot) {
     h += `<option value="${esc(sel)}" selected>⚠ account removed (id ${esc(sel)})</option>`;
   }
   return h;
+}
+
+// ── "Why isn't lot 001 here?" ────────────────────────────────────
+// The server explains every lot number that was typed but didn't come back.
+// Without this an operator typing a withdrawn lot just gets an empty table
+// and no way to tell that from a typo.
+function _payLwMissingHtml() {
+  const miss = _payLwState.missing || [];
+  if (!miss.length) return '';
+  const say = (m) => {
+    switch (m.reason) {
+      case 'missing':       return ['No such lot in this trade', 'Check the number — it may belong to another trade.', '#B91C1C'];
+      case 'withdrawn':     return ['Withdrawn (WD)', 'Pulled before the sale, so there is nothing to pay.', '#B91C1C'];
+      case 'not_auctioned': return ['Not auctioned', 'Booked but never sold, so there is nothing to pay.', '#B45309'];
+      case 'unpriced':      return ['Not priced yet', 'Sold, but the price import has not run — it will appear once it has.', '#B45309'];
+      case 'paid':          return ['Already marked paid', 'Out of the payable set.', '#0e7490'];
+      case 'seller_filter': return ['Excluded by the Seller name box', `This lot belongs to ${m.seller || 'another seller'} — clear the seller box to see it.`, '#0e7490'];
+      case 'link_filter':   return m.linked
+        ? ['Hidden by “Show unlinked”', 'This lot HAS a bank account — turn the toggle off to see it.', '#0e7490']
+        : ['Hidden by “Show unlinked”', 'This lot has NO bank account — turn the toggle on to see it.', '#0e7490'];
+      default:              return ['Not in the results', '', 'var(--text3)'];
+    }
+  };
+  const rows = miss.map(m => {
+    const [title, detail, colour] = say(m);
+    return `<div style="display:flex;gap:10px;align-items:baseline;padding:4px 0">
+      <span style="font-family:monospace;font-weight:700;min-width:52px;color:var(--text)">${esc(String(m.lot))}</span>
+      <span style="font-weight:600;color:${colour}">${esc(title)}</span>
+      <span style="color:var(--text3);font-size:11.5px">${esc(detail)}</span>
+    </div>`;
+  }).join('');
+  return `<div style="margin-bottom:10px;padding:10px 14px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;font-size:12.5px">
+    <div style="font-weight:700;color:#92400E;margin-bottom:4px">${miss.length} lot${miss.length === 1 ? '' : 's'} you asked for ${miss.length === 1 ? 'is' : 'are'} not in the results</div>
+    ${rows}
+  </div>`;
 }
 
 function _payLwRender() {
@@ -27667,11 +27749,18 @@ function _payLwRender() {
       // Live selection line — what Export Bank Payment will actually pay.
       + `<div id="paylw-selinfo" style="margin-top:5px;font-size:12px"></div>`;
   }
+  // Lot numbers that were asked for but aren't in the result, each with the
+  // reason from the server. Shown whether or not other lots matched — asking
+  // for "12, 24" and getting one row should still say what happened to 24.
+  const missingHtml = _payLwMissingHtml();
   if (!lots.length) {
-    body.innerHTML = `<div style="padding:30px;text-align:center;color:var(--text3);font-size:13px">`
-      + (showingUnlinked
-          ? `No unlinked lots — every matching lot has a bank account. ✓`
-          : `No lots matched. Check the seller name / lot numbers, or turn on <strong>Show unlinked</strong> to see lots with no bank account.`)
+    body.innerHTML = missingHtml
+      + `<div style="padding:${missingHtml ? '18px' : '30px'};text-align:center;color:var(--text3);font-size:13px">`
+      + (missingHtml
+          ? `Nothing to pay from this search.`
+          : (showingUnlinked
+              ? `No unlinked lots — every matching lot has a bank account. ✓`
+              : `No lots matched. Check the seller name / lot numbers, or turn on <strong>Show unlinked</strong> to see lots with no bank account.`))
       + `</div>`;
     _payLwRefreshSelection();
     return;
@@ -27723,7 +27812,7 @@ function _payLwRender() {
       <td style="text-align:right;font-weight:700;color:var(--spice-cardamom-dk)">${fmtI(Number(l.payable) || 0, 2)}</td>
     </tr>`;
   }).join('');
-  body.innerHTML = `
+  body.innerHTML = missingHtml + `
     <div style="overflow-x:auto">
       <table style="width:100%">
         <thead><tr>
@@ -27747,6 +27836,16 @@ function payLwTickAll(checked) {
   _payLwState.selected = checked ? new Set(_payLwState.lots.map(l => l.id)) : new Set();
   document.querySelectorAll('#paylw-body .paylw-cb').forEach(cb => { cb.checked = !!checked; });
   _payLwRefreshSelection();
+}
+// Toolbar "Clear selection" — unticks everything but leaves the results up,
+// so the operator can pick a few lots without re-running the search.
+function payLwClearSelection() {
+  if (!_payLwState.selected.size) { toast('Nothing is selected'); return; }
+  const n = _payLwState.selected.size;
+  payLwTickAll(false);
+  const all = document.getElementById('paylw-cb-all');
+  if (all) { all.checked = false; all.indeterminate = false; }
+  toast(`Cleared ${n} selected lot${n === 1 ? '' : 's'}`);
 }
 // Repaint the selection line, the header box's tri-state, and the export
 // button's count — the three places that answer "what will I be paying?".
@@ -27779,6 +27878,12 @@ function _payLwRefreshSelection() {
     btn.disabled = !sel.length;
     btn.style.opacity = sel.length ? '' : '.55';
     btn.style.cursor = sel.length ? '' : 'not-allowed';
+  }
+  const clr = document.getElementById('paylw-clearsel-btn');
+  if (clr) {
+    clr.disabled = !sel.length;
+    clr.style.opacity = sel.length ? '' : '.55';
+    clr.style.cursor = sel.length ? '' : 'not-allowed';
   }
 }
 
@@ -30236,15 +30341,16 @@ function renderTallyPartyVoucherList(){
       // into the onclick strings, so it needs both JS-string and attribute
       // escaping.
       const jsName=(p.name||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
-      // XML for every kind; JSON only where the type has an e-Invoice
-      // generator (sales today); Print for every kind that has a bulk-PDF
-      // endpoint — the same rule the By Voucher rows follow.
-      let btns=`<button class="btn btn-g" onclick="tallyPartyAction('${kind}','${jsName}','xml')" title="Tally import XML for this party's ${esc(vkind.nouns||'vouchers')}" style="padding:5px 8px;font-size:11px;flex:0 0 auto">XML</button>`;
-      if(vkind.irp){
-        btns+=`<button class="btn btn-g" onclick="tallyPartyAction('${kind}','${jsName}','irp')" title="GST e-Invoice (IRP / NIC) JSON for this party's ${esc(vkind.nouns||'vouchers')}" style="padding:5px 8px;font-size:11px;flex:0 0 auto">JSON</button>`;
-      }
+      // Print leads, then XML for every kind, then JSON only where the type
+      // has an e-Invoice generator (sales today) — the Preview | Print | XML |
+      // JSON order the voucher cards use, minus the Preview these rows lack.
+      let btns='';
       if(vkind.pdf){
         btns+=`<button class="btn btn-orange" onclick="tallyPartyAction('${kind}','${jsName}','pdf')" title="Print this party's ${esc(vkind.nouns||'documents')} — one merged PDF" style="padding:5px 8px;font-size:11px;flex:0 0 auto">🖨</button>`;
+      }
+      btns+=`<button class="btn btn-g" onclick="tallyPartyAction('${kind}','${jsName}','xml')" title="Tally import XML for this party's ${esc(vkind.nouns||'vouchers')}" style="padding:5px 8px;font-size:11px;flex:0 0 auto">XML</button>`;
+      if(vkind.irp){
+        btns+=`<button class="btn btn-g" onclick="tallyPartyAction('${kind}','${jsName}','irp')" title="GST e-Invoice (IRP / NIC) JSON for this party's ${esc(vkind.nouns||'vouchers')}" style="padding:5px 8px;font-size:11px;flex:0 0 auto">JSON</button>`;
       }
       html+=`<div style="padding:8px 12px;border-bottom:1px solid var(--border);background:#fff;display:flex;align-items:center;gap:8px">
         <input type="checkbox" class="tv-party-cb" data-kind="${esc(kind)}" value="${esc(p.name||'')}" onchange="updateTallyVoucherBulk()" style="flex:0 0 auto;width:15px;height:15px;cursor:pointer">
@@ -30446,11 +30552,13 @@ function renderTallyVoucherList(){
     const cb=(v.id!=null)
       ? `<input type="checkbox" class="tv-select-cb" value="${esc(String(v.id))}" onchange="updateTallyVoucherBulk()" style="flex:0 0 auto;width:15px;height:15px;cursor:pointer">`
       : `<input type="checkbox" disabled title="No source document linked" style="flex:0 0 auto;width:15px;height:15px">`;
-    let btns=`<button class="btn btn-g" onclick="tallyDownloadVoucher('${esc(String(v.id))}','${safeLabel}','xml')" style="padding:5px 10px;font-size:11px;flex:0 0 auto">XML</button>`;
+    // Print leads, then XML / JSON — same order as the voucher cards above
+    // (Preview | Print | XML | JSON; these rows have no Preview).
+    let btns=`<button class="btn btn-orange" onclick="tallyPrintVoucherPdfs('${type}',['${esc(String(v.id))}'])" style="padding:5px 10px;font-size:11px;flex:0 0 auto" title="Print this ${esc(kind.noun||'document')} PDF">🖨</button>`;
+    btns+=`<button class="btn btn-g" onclick="tallyDownloadVoucher('${esc(String(v.id))}','${safeLabel}','xml')" style="padding:5px 10px;font-size:11px;flex:0 0 auto">XML</button>`;
     if(kind.irp){
       btns+=`<button class="btn btn-g" onclick="tallyDownloadVoucher('${esc(String(v.id))}','${safeLabel}','irp')" style="padding:5px 10px;font-size:11px;flex:0 0 auto" title="GST e-Invoice (IRP / NIC) JSON — ready for the trade portal">JSON</button>`;
     }
-    btns+=`<button class="btn btn-orange" onclick="tallyPrintVoucherPdfs('${type}',['${esc(String(v.id))}'])" style="padding:5px 10px;font-size:11px;flex:0 0 auto" title="Print this ${esc(kind.noun||'document')} PDF">🖨</button>`;
     html+=`<div style="padding:8px 12px;border-bottom:1px solid var(--border);background:#fff;display:flex;align-items:center;gap:10px">
       ${cb}
       <div style="flex:1;min-width:0">
