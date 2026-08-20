@@ -4127,7 +4127,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           </div>
         </div>
         <div style="font-size:12.5px;color:var(--text2);margin-top:8px;line-height:1.5">
-          Type a price and press <b>Enter</b> (or Tab) to save it and jump to the next lot. Only the <b>Price</b> column is editable — every other field is read-only, so there's no risk of changing the wrong thing. When you're done, click <b>Save &amp; Calculate All</b> to compute commission, tax and payable for the whole trade.
+          Type a price and press <b>Enter</b> (or Tab) to save it and jump to the next lot. Only <b>Price</b>, <b>Dummy Code</b> and <b>Split</b> are editable — every other field is read-only, so there's no risk of changing the wrong thing. <b>Dummy Code</b> is a free-text tag saved as soon as you leave the box; use the <b>Dummy code</b> filter above to pull up every lot carrying it. When you're done, click <b>Save &amp; Calculate All</b> to compute commission, tax and payable for the whole trade.
           <span id="pe-pc-note" style="display:none;color:#a16207"> Price Check is ON for this install — you'll need to re-verify prices before generating invoices.</span>
         </div>
         <div id="pe-summary" style="font-size:12px;color:var(--text3);margin-top:6px"></div>
@@ -4150,6 +4150,10 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <span style="position:relative;display:inline-flex;align-items:center">
             <input id="pe-filter-lot" placeholder="Lot no" oninput="peSetFilter('lot',this.value)" style="width:110px;padding:6px 26px 6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box">
             <button type="button" id="pe-filter-lot-clear" onclick="peClearFilterField('lot')" title="Clear" aria-label="Clear" style="display:none;position:absolute;right:5px;top:50%;transform:translateY(-50%);width:18px;height:18px;border:none;background:var(--bg);border-radius:50%;cursor:pointer;font-size:10px;color:var(--text3);align-items:center;justify-content:center;padding:0;line-height:1">✕</button>
+          </span>
+          <span style="position:relative;display:inline-flex;align-items:center">
+            <input id="pe-filter-dummy" placeholder="Dummy code" title="Filter by the dummy code typed in the grid — leave blank to show all" oninput="peSetFilter('dummy',this.value)" style="width:130px;padding:6px 26px 6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box">
+            <button type="button" id="pe-filter-dummy-clear" onclick="peClearFilterField('dummy')" title="Clear" aria-label="Clear" style="display:none;position:absolute;right:5px;top:50%;transform:translateY(-50%);width:18px;height:18px;border:none;background:var(--bg);border-radius:50%;cursor:pointer;font-size:10px;color:var(--text3);align-items:center;justify-content:center;padding:0;line-height:1">✕</button>
           </span>
           <select id="pe-filter-branch" onchange="peSetFilter('branch',this.value)" style="min-width:130px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px"><option value="">All branches</option></select>
           <span style="position:relative;display:inline-flex;align-items:center">
@@ -5005,6 +5009,12 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <button class="btn btn-g" onclick="loadPreInvoiceBuyers()" style="height:38px;padding:0 16px;font-weight:600">Reload</button>
           <span id="pi-count" style="font-size:12px;color:var(--text3);margin-left:auto"></span>
         </div>
+        <!-- Withdrawn / not-auctioned lots for the whole trade. These never
+             reach an invoice, so the buyer previews below can't show them —
+             this panel accounts for the rest of the trade before anything is
+             generated. Trade-level: the Buyer / Sale Type filters above do
+             not narrow it. Hidden entirely when the trade has none. -->
+        <div id="pi-excluded" style="display:none;margin-bottom:12px"></div>
         <div id="pi-list"><div style="color:var(--text3);font-size:13px;padding:16px;text-align:center">Select an auction and a buyer to preview the sales invoice.</div></div>
       </div>
     </div>
@@ -5885,9 +5895,9 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             </label>
             <span id="tally-sv-count" style="font-size:12px;color:var(--text2)">None selected</span>
             <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
-              <button class="btn btn-g" id="tally-sv-bulk-xml" onclick="tallyExportSelectedVouchers('xml')" style="padding:6px 12px;font-size:12px" title="Tally import XML for the ticked vouchers only">XML</button>
-              <button class="btn btn-g" id="tally-sv-bulk-json" onclick="tallyExportSelectedVouchers('irp')" style="padding:6px 12px;font-size:12px" title="GST e-Invoice (IRP / NIC) JSON for the ticked vouchers only">JSON</button>
-              <button class="btn" id="tally-sv-bulk-pdf" onclick="tallyPrintSelectedVouchers()" style="padding:6px 12px;font-size:12px" title="Print the invoice PDFs for the ticked vouchers — one merged PDF">🖨 Print</button>
+              <button class="btn btn-g" id="tally-sv-bulk-xml" onclick="tallyBulkExportSelected('xml')" style="padding:6px 12px;font-size:12px" title="Tally import XML for the ticked rows only">XML</button>
+              <button class="btn btn-g" id="tally-sv-bulk-json" onclick="tallyBulkExportSelected('irp')" style="padding:6px 12px;font-size:12px" title="GST e-Invoice (IRP / NIC) JSON for the ticked rows only">JSON</button>
+              <button class="btn btn-orange" id="tally-sv-bulk-pdf" onclick="tallyBulkPrintSelected()" style="padding:6px 12px;font-size:12px" title="Print the invoice PDFs for the ticked rows — one merged PDF">🖨 Print</button>
             </div>
           </div>
           <div id="tally-sv-list" style="margin-top:10px;max-height:380px;overflow:auto;border:1px solid var(--border);border-radius:6px;background:var(--bg)">
@@ -5931,7 +5941,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
               <button class="btn btn-a" onclick="tallyPreview('sales_isp')" style="flex:1;min-width:64px;padding:7px;font-size:12px">Preview</button>
               <button class="btn btn-g" onclick="tallyDownload('sales_isp')" style="flex:1;min-width:64px;padding:7px;font-size:12px">XML</button>
               <button class="btn btn-g" onclick="tallyDownload('sales_isp','irp')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="GST e-Invoice (IRP / NIC) JSON — ready for the trade portal">JSON</button>
-              <button class="btn" onclick="tallyPrintAll('sales_isp')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the sales invoice PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
+              <button class="btn btn-orange" onclick="tallyPrintAll('sales_isp')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the sales invoice PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
             </div>
           </div>
 
@@ -5947,7 +5957,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
               <button class="btn btn-a" onclick="tallyPreview('rd_purchase')" style="flex:1;min-width:64px;padding:7px;font-size:12px">Preview</button>
               <button class="btn btn-g" onclick="tallyDownload('rd_purchase')" style="flex:1;min-width:64px;padding:7px;font-size:12px">XML</button>
-              <button class="btn" onclick="tallyPrintAll('rd_purchase')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the purchase invoice PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
+              <button class="btn btn-orange" onclick="tallyPrintAll('rd_purchase')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the purchase invoice PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
             </div>
           </div>
 
@@ -5963,7 +5973,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
               <button class="btn btn-a" onclick="tallyPreview('urd_purchase')" style="flex:1;min-width:64px;padding:7px;font-size:12px">Preview</button>
               <button class="btn btn-g" onclick="tallyDownload('urd_purchase')" style="flex:1;min-width:64px;padding:7px;font-size:12px">XML</button>
-              <button class="btn" onclick="tallyPrintAll('urd_purchase')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the bill-of-supply PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
+              <button class="btn btn-orange" onclick="tallyPrintAll('urd_purchase')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the bill-of-supply PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
             </div>
           </div>
 
@@ -5980,7 +5990,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
               <button class="btn btn-a" onclick="tallyPreview('debit_note')" style="flex:1;min-width:64px;padding:7px;font-size:12px">Preview</button>
               <button class="btn btn-g" onclick="tallyDownload('debit_note')" style="flex:1;min-width:64px;padding:7px;font-size:12px">XML</button>
               <button class="btn btn-g" onclick="tallyDownload('debit_note','irp')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="GST e-Invoice (IRP / NIC) JSON — commission billed to registered dealers, ready for the trade portal">JSON</button>
-              <button class="btn" onclick="tallyPrintAll('debit_note')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the debit note PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
+              <button class="btn btn-orange" onclick="tallyPrintAll('debit_note')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the debit note PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
             </div>
           </div>
 
@@ -5996,7 +6006,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
               <button class="btn btn-a" onclick="tallyPreview('debit_note_planter')" style="flex:1;min-width:64px;padding:7px;font-size:12px">Preview</button>
               <button class="btn btn-g" onclick="tallyDownload('debit_note_planter')" style="flex:1;min-width:64px;padding:7px;font-size:12px">XML</button>
-              <button class="btn" onclick="tallyPrintAll('debit_note_planter')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the planter debit note PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
+              <button class="btn btn-orange" onclick="tallyPrintAll('debit_note_planter')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the planter debit note PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
             </div>
           </div>
 
@@ -23851,7 +23861,7 @@ async function validateLots(){
 // bring-to-front), so clearing the selection restores every lot's place.
 // dirty/sel/front are keyed by lot id (stable across re-render/reorder).
 let _pe = { aid: null, lots: [], byId: new Map(), view: [], dirty: new Set(), sel: new Set(),
-            front: [], sort: { col: null, dir: 1 }, filter: { lot: '', branch: '', seller: '', buyer: '' },
+            front: [], sort: { col: null, dir: 1 }, filter: { lot: '', dummy: '', branch: '', seller: '', buyer: '' },
             showAll: false };
 // A row is "complete" (needs no more work) when it's priced AND has a buyer
 // code, OR it's a WD/NA lot (withdrawn / not-auctioned → no pricing needed).
@@ -23885,7 +23895,7 @@ async function loadPriceEntryGrid(){
   const tradeChanged = aid !== _pe.aid;
   _pe.aid = aid; _pe.dirty = new Set(); _pe.sel = new Set(); _pe.front = [];
   // A fresh trade starts with no sort/filter; a same-trade refresh keeps them.
-  if (tradeChanged) { _pe.sort = { col: null, dir: 1 }; _pe.filter = { lot: '', branch: '', seller: '', buyer: '' }; }
+  if (tradeChanged) { _pe.sort = { col: null, dir: 1 }; _pe.filter = { lot: '', dummy: '', branch: '', seller: '', buyer: '' }; }
   const grid = document.getElementById('pe-grid');
   const sumEl = document.getElementById('pe-summary');
   const fbar = document.getElementById('pe-filter-bar');
@@ -23925,6 +23935,8 @@ function _peSortCmp(a, b){
 function _pePasses(l){
   const f = _pe.filter;
   if (f.lot    && !String(l.lot_no || '').toLowerCase().includes(f.lot.toLowerCase()))    return false;
+  // Dummy code is a free-text tag — substring match, same as Lot / Seller.
+  if (f.dummy  && !String(l.dummy_code || '').toLowerCase().includes(f.dummy.toLowerCase())) return false;
   if (f.branch && String(l.branch || '') !== f.branch)                                    return false;
   if (f.seller && !String(l.name   || '').toLowerCase().includes(f.seller.toLowerCase())) return false;
   // Buyer filter matches the short alias CODE (l.code), the buyer CODE
@@ -24020,6 +24032,7 @@ function renderPriceEntryGrid(){
     return `<tr data-lotid="${l.id}"${rowStyle ? ` style="${rowStyle}"` : ''}${gstClash ? ' title="⚠ Seller and Buyer have the same GSTIN"' : ''}>
       <td style="padding:6px 4px;width:28px;text-align:center"><input type="checkbox" class="pe-cb" data-pesel="${l.id}" ${locked ? 'disabled' : ''} ${ticked ? 'checked' : ''} onchange="peToggleSel(${l.id}, this.checked)" style="width:15px;height:15px;cursor:pointer"></td>
       <td style="padding:6px 8px;white-space:nowrap;font-weight:600">${esc(l.lot_no)}</td>
+      <td style="padding:6px 8px"><input type="text" maxlength="40" data-pedummy="${l.id}" value="${esc(l.dummy_code||'')}" placeholder="—" ${locked ? 'disabled title="Locked lot — edit via the Lots tab"' : ''} title="Dummy code — free-text tag for this lot; filter by it above" onchange="peDummySave(${l.id}, this.value)" style="width:96px;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px${locked ? ';background:#f3f4f6;color:var(--text3)' : ''}"></td>
       <td style="padding:6px 8px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis">${esc(l.name||'')}</td>
       <td style="padding:6px 8px;text-align:right">${esc(l.branch||'')}</td>
       <td style="padding:6px 8px;text-align:right">${_peBags(l.bags)}</td>
@@ -24038,7 +24051,7 @@ function renderPriceEntryGrid(){
   const _anyHiddenComplete = !_pe.showAll && _pe.lots.some(l => _peIsComplete(l) && !_pe.front.includes(l.id));
   const bodyHtml = view.length
     ? rows
-    : `<tr><td colspan="14" style="padding:20px;text-align:center;color:var(--text3);font-size:13px">No incomplete lots to show.${_anyHiddenComplete ? ' Completed rows are hidden — <a href="#" onclick="document.getElementById(\'pe-show-all\').checked=true;peToggleShowAll(true);return false" style="color:var(--green)">Show all</a>.' : ''} <a href="#" onclick="peClearFilters();return false" style="color:var(--green)">Clear filters</a></td></tr>`;
+    : `<tr><td colspan="15" style="padding:20px;text-align:center;color:var(--text3);font-size:13px">No incomplete lots to show.${_anyHiddenComplete ? ' Completed rows are hidden — <a href="#" onclick="document.getElementById(\'pe-show-all\').checked=true;peToggleShowAll(true);return false" style="color:var(--green)">Show all</a>.' : ''} <a href="#" onclick="peClearFilters();return false" style="color:var(--green)">Clear filters</a></td></tr>`;
   // Totals row — computed over the CURRENTLY VISIBLE (filtered) lots, so when
   // any filter is active this reads as a subtotal for the shown rows. WD/NA
   // lots carry no sale value, so they add to the lot count and Qty but not to
@@ -24056,7 +24069,7 @@ function renderPriceEntryGrid(){
     ` · ${view.length} lot${view.length === 1 ? '' : 's'}`;
   const footHtml = view.length ? `<tfoot><tr style="border-top:2px solid var(--border);font-weight:700;background:var(--bg)">
       <td></td>
-      <td colspan="3" style="padding:8px;text-align:left">${totLabel}</td>
+      <td colspan="4" style="padding:8px;text-align:left">${totLabel}</td>
       <td style="padding:8px;text-align:right;font-variant-numeric:tabular-nums">${_peBags(totBags)}</td>
       <td style="padding:8px;text-align:right;font-variant-numeric:tabular-nums">${_peFmt(totQty)}</td>
       <td></td>
@@ -24067,6 +24080,7 @@ function renderPriceEntryGrid(){
     <thead><tr>
       <th style="border-top-left-radius:6px;width:28px;text-align:center"><input type="checkbox" id="pe-selall" onchange="peToggleSelectAll(this.checked)" title="Select all priceable lots" style="width:15px;height:15px;cursor:pointer"></th>
       <th style="${thStyle}" onclick="peSort('lot_no')" title="Sort by lot number">Lot ${_peSortArrow('lot_no')}</th>
+      <th style="${thStyle}" onclick="peSort('dummy_code')" title="Dummy code — free-text tag typed per lot. Click to sort; filter by it in the bar above.">Dummy Code ${_peSortArrow('dummy_code')}</th>
       <th style="${thStyle}" onclick="peSort('name')" title="Sort by seller">Seller ${_peSortArrow('name')}</th>
       <th style="text-align:right;${thStyle}" onclick="peSort('branch')" title="Sort by branch">Branch ${_peSortArrow('branch')}</th>
       <th style="text-align:right">Bags</th><th style="text-align:right">Qty</th>
@@ -24124,6 +24138,26 @@ function pePriceKey(e, id){
 // Save a lot's invoice split group (Price Entry "Split" column). Uses the
 // dedicated endpoint so it never invalidates the price-check stamp. Blank/0
 // clears the split (the lot rejoins the buyer's single invoice).
+// Save a lot's dummy code (Price Entry "Dummy Code" column). Its own endpoint,
+// so tagging a lot never touches price/qty and never invalidates the
+// price-check stamp. Fires on change (blur / Enter), not per keystroke.
+// On failure the cell is reverted to the stored value so the grid never shows
+// a code the server didn't accept.
+async function peDummySave(id, val){
+  const l = _pe.byId.get(id); if (!l) return;
+  const next = String(val == null ? '' : val).trim().slice(0, 40);
+  if (next === String(l.dummy_code || '')) return;   // nothing changed
+  try {
+    const r = await j(`/api/lots/${id}/dummy-code`, { method: 'POST', body: JSON.stringify({ value: next }) });
+    l.dummy_code = (r && r.dummy_code != null) ? r.dummy_code : next;
+    const inp = document.querySelector(`[data-pedummy="${id}"]`);
+    if (inp && inp.value !== l.dummy_code) inp.value = l.dummy_code;
+  } catch (e) {
+    toast((e && e.message) || 'Save failed');
+    const inp = document.querySelector(`[data-pedummy="${id}"]`);
+    if (inp) inp.value = l.dummy_code || '';
+  }
+}
 async function peSplitSave(id, val){
   const l = _pe.byId.get(id); if (!l) return;
   let g = parseInt(val, 10);
@@ -24228,12 +24262,13 @@ function peClearFilterField(key){
   if (inp) inp.focus();
 }
 function peClearFilters(){
-  _pe.filter = { lot: '', branch: '', seller: '', buyer: '' };
+  _pe.filter = { lot: '', dummy: '', branch: '', seller: '', buyer: '' };
   const lf = document.getElementById('pe-filter-lot');    if (lf) lf.value = '';
+  const df = document.getElementById('pe-filter-dummy');  if (df) df.value = '';
   const bf = document.getElementById('pe-filter-branch'); if (bf) bf.value = '';
   const sf = document.getElementById('pe-filter-seller'); if (sf) sf.value = '';
   const yf = document.getElementById('pe-filter-buyer');  if (yf) yf.value = '';
-  ['lot','seller','buyer'].forEach(k => { const c = document.getElementById('pe-filter-' + k + '-clear'); if (c) c.style.display = 'none'; });
+  ['lot','dummy','seller','buyer'].forEach(k => { const c = document.getElementById('pe-filter-' + k + '-clear'); if (c) c.style.display = 'none'; });
   renderPriceEntryGrid();
 }
 // Refresh the filter bar for the loaded trade: show it, and rebuild the
@@ -24243,9 +24278,10 @@ function _pePopulateFilterUI(reset){
   if (fbar) fbar.style.display = _pe.lots.length ? 'flex' : 'none';
   if (reset) {
     const lf = document.getElementById('pe-filter-lot');    if (lf) lf.value = '';
+    const df = document.getElementById('pe-filter-dummy');  if (df) df.value = '';
     const sf = document.getElementById('pe-filter-seller'); if (sf) sf.value = '';
     const yf = document.getElementById('pe-filter-buyer');  if (yf) yf.value = '';
-    ['lot','seller','buyer'].forEach(k => { const c = document.getElementById('pe-filter-' + k + '-clear'); if (c) c.style.display = 'none'; });
+    ['lot','dummy','seller','buyer'].forEach(k => { const c = document.getElementById('pe-filter-' + k + '-clear'); if (c) c.style.display = 'none'; });
   }
   const bf = document.getElementById('pe-filter-branch');
   if (bf) {
@@ -29820,6 +29856,8 @@ function loadTallyAuctions(){
       _tallyParties=null;
       _tallyVouchers=null;
       _tallyVouchersType='';
+      // …and the party→voucher-id lookup, which is keyed by auction.
+      if(typeof clearTallyPartyVoucherCache==='function')clearTallyPartyVoucherCache();
       const resetMsg='<div style="padding:14px;color:var(--text3);font-size:12px;text-align:center">Auction changed — click <strong>Refresh List</strong> to reload.</div>';
       const list=document.getElementById('tally-party-list');
       if(list)list.innerHTML=resetMsg;
@@ -29960,6 +29998,9 @@ const TALLY_PARTY_KIND_CO={sales:'isp',rd_purchase:'asp',urd_purchase:'asp'};
 async function loadTallyParties(){
   const aid=document.getElementById('tally-auction')?.value;
   if(!aid){alert('Select an auction first');return}
+  // Refresh means refresh: drop the party→voucher-id lookup so the By Party
+  // actions re-read the vouchers instead of replaying a pre-edit snapshot.
+  if(typeof clearTallyPartyVoucherCache==='function')clearTallyPartyVoucherCache();
   const list=document.getElementById('tally-party-list');
   const pvList=(_tallyVoucherMode==='party')?document.getElementById('tally-sv-list'):null;
   const loadingHtml='<div style="padding:14px;color:var(--text3);font-size:12px;text-align:center">Loading parties…</div>';
@@ -30090,13 +30131,19 @@ function clearTallySearch(inputId,renderFn){
 }
 
 // ── Single Party Voucher list ────────────────────────────────────
-// Per party, render a row with the applicable voucher-type buttons:
-//   - Sales (buyer)        → ISP Sale + ASP Sale (two buttons)
-//   - RD Purchase (dealer) → RD Purchase (one button)
-//   - URD (agriculturist)  → URD Purchase (one button)
-// Each button hits /api/tally/party-voucher/<type>/<auctionId>?name=...
-// which filters the full builder output by party name and emits XML for
-// that one voucher only.
+// Per party, one row carrying the same three actions the By Voucher side
+// has — XML / JSON / 🖨 Print — for that party's vouchers of the kind's
+// voucher type. Rows are tickable, so the actions also run over several
+// parties at once from the shared toolbar (see tallyBulkExportSelected).
+//
+// All three route through the id-based endpoints
+// (/api/tally/export-selected, and the document's own bulk-PDF endpoint)
+// rather than /api/tally/party-voucher: one party and ten parties then
+// produce the same shape of file, and Print gets the ids it needs. The
+// party name is resolved to voucher ids client-side against the same
+// voucher list the By Voucher tab loads — its `partyName` comes from the
+// identical builder field the server's own party filter uses, so the two
+// always agree on which vouchers belong to a party.
 const TALLY_PV_TYPES_BY_KIND={
   sales:[
     {type:'sales_isp',label:'Sale',co:'isp',title:'Generate the sale voucher for this party'},
@@ -30108,6 +30155,13 @@ const TALLY_PV_TYPES_BY_KIND={
     {type:'urd_purchase',label:'URD Purchase',co:'isp',title:'Generate the agriculturist purchase voucher (Bill of Supply)'},
   ],
 };
+// The one voucher type a party kind exports as. TALLY_PV_TYPES_BY_KIND
+// carries a list for historical reasons (ISP + ASP sale) but each kind has
+// resolved to a single type since the single-company build.
+function tallyPartyType(kind){
+  const types=TALLY_PV_TYPES_BY_KIND[kind]||[];
+  return types.length?types[0].type:'';
+}
 // ── Combined Single Voucher picker (By Invoice / By Party) ────────
 // Both modes share one search box, one filter slot, one list, and one
 // Refresh button to save vertical space. `_tallyVoucherMode` decides which
@@ -30126,7 +30180,7 @@ function switchVoucherMode(mode){
   const hint=document.getElementById('sv-hint');
   if(hint)hint.textContent=(_tallyVoucherMode==='invoice')
     ?'Tick vouchers to export or print them together.'
-    :'Pick a buyer / dealer / agriculturist and download just their voucher.';
+    :'Tick one or many buyers / dealers / agriculturists to export or print all their vouchers.';
   renderSingleVoucher();
   updateTallyVoucherBulk();
 }
@@ -30158,6 +30212,7 @@ function renderTallyPartyVoucherList(){
   });
   if(filtered.length===0){
     list.innerHTML='<div style="padding:14px;color:var(--text3);font-size:12px;text-align:center">No parties match.</div>';
+    updateTallyVoucherBulk();
     return;
   }
   const byKind={sales:[],rd_purchase:[],urd_purchase:[]};
@@ -30172,17 +30227,27 @@ function renderTallyPartyVoucherList(){
     // filtered EVERY button out and made the entire list look empty.
     // The TYPES dictionary above is already pruned to the relevant
     // voucher set — no further filtering needed.
-    const types=TALLY_PV_TYPES_BY_KIND[kind]||[];
-    if (types.length === 0) continue;
-    const co=TALLY_PARTY_KIND_CO[kind]||'isp';
+    const type=tallyPartyType(kind);
+    if(!type)continue;
+    const vkind=TALLY_VOUCHER_KINDS[type]||{};
     html+=`<div style="padding:6px 12px;background:${TALLY_PARTY_KIND_BG[kind]};font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.5px">${TALLY_PARTY_KIND_LABEL[kind]} · ${arr.length}</div>`;
     for(const p of arr){
-      const safeName=(p.name||'').replace(/'/g,"\\'");
-      let btns='';
-      for(const t of types){
-        btns+=`<button class="btn btn-g" onclick="tallyDownloadPartyVoucher('${t.type}','${safeName.replace(/"/g,'&quot;')}')" title="${esc(t.title)}" style="padding:5px 8px;font-size:11px;flex:0 0 auto">${esc(t.label)}</button>`;
+      // Party name is the identity here — it goes in the checkbox value and
+      // into the onclick strings, so it needs both JS-string and attribute
+      // escaping.
+      const jsName=(p.name||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+      // XML for every kind; JSON only where the type has an e-Invoice
+      // generator (sales today); Print for every kind that has a bulk-PDF
+      // endpoint — the same rule the By Voucher rows follow.
+      let btns=`<button class="btn btn-g" onclick="tallyPartyAction('${kind}','${jsName}','xml')" title="Tally import XML for this party's ${esc(vkind.nouns||'vouchers')}" style="padding:5px 8px;font-size:11px;flex:0 0 auto">XML</button>`;
+      if(vkind.irp){
+        btns+=`<button class="btn btn-g" onclick="tallyPartyAction('${kind}','${jsName}','irp')" title="GST e-Invoice (IRP / NIC) JSON for this party's ${esc(vkind.nouns||'vouchers')}" style="padding:5px 8px;font-size:11px;flex:0 0 auto">JSON</button>`;
+      }
+      if(vkind.pdf){
+        btns+=`<button class="btn btn-orange" onclick="tallyPartyAction('${kind}','${jsName}','pdf')" title="Print this party's ${esc(vkind.nouns||'documents')} — one merged PDF" style="padding:5px 8px;font-size:11px;flex:0 0 auto">🖨</button>`;
       }
       html+=`<div style="padding:8px 12px;border-bottom:1px solid var(--border);background:#fff;display:flex;align-items:center;gap:8px">
+        <input type="checkbox" class="tv-party-cb" data-kind="${esc(kind)}" value="${esc(p.name||'')}" onchange="updateTallyVoucherBulk()" style="flex:0 0 auto;width:15px;height:15px;cursor:pointer">
         <div style="flex:1;min-width:0">
           <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.name)}</div>
           <div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.gstin?esc(p.gstin):'<em>No GSTIN</em>'}${p.place?' · '+esc(p.place):''}</div>
@@ -30192,26 +30257,86 @@ function renderTallyPartyVoucherList(){
     }
   }
   list.innerHTML=html;
+  updateTallyVoucherBulk();
 }
-async function tallyDownloadPartyVoucher(type,partyName){
+
+// ── Party → voucher ids ──────────────────────────────────────────
+// Resolves party names to the voucher ids of one type by matching against
+// the type's voucher list. Mirrors the server's own party filter in
+// /api/tally/party-voucher: exact case-insensitive name first, falling
+// back to a contains match so minor whitespace/case drift between the
+// party master and the voucher rows still finds the vouchers.
+//
+// The list is fetched once per (type, auction) and cached for the session,
+// so ticking twenty parties is still one round-trip.
+// Cleared on auction change and on Refresh List — the cache is keyed by
+// (type, auction) and would otherwise serve stale vouchers after an edit.
+let _tallyPartyVoucherCache={};
+function clearTallyPartyVoucherCache(){_tallyPartyVoucherCache={}}
+async function tallyVoucherRowsForType(type,aid){
+  const key=`${type}|${aid}`;
+  if(_tallyPartyVoucherCache[key])return _tallyPartyVoucherCache[key];
+  const r=await fetch(B+`/api/tally/vouchers/${type}/${aid}`,{headers:{'Authorization':'Bearer '+T}});
+  if(!r.ok){
+    let msg='Failed to load vouchers for this party';
+    try{const e=await r.json();if(e.error)msg=e.error}catch(x){}
+    throw new Error(msg);
+  }
+  const data=await r.json();
+  const rows=data.vouchers||[];
+  _tallyPartyVoucherCache[key]=rows;
+  return rows;
+}
+async function tallyPartyVoucherIds(type,aid,names){
+  const rows=(await tallyVoucherRowsForType(type,aid)).filter(v=>v.id!=null);
+  const wanted=names.map(n=>String(n||'').trim().toUpperCase()).filter(Boolean);
+  // Exact match wins outright, PER NAME — the contains fallback only runs for
+  // a name that matched nothing exactly. Applying both at once would let
+  // "MAR TRADERS" drag in "MAR TRADERS EXPORTS", i.e. put another party's
+  // invoice in this party's Tally import.
+  const ids=new Set();
+  for(const w of wanted){
+    const exact=rows.filter(v=>String(v.partyName||'').trim().toUpperCase()===w);
+    const hits=exact.length?exact:rows.filter(v=>String(v.partyName||'').toUpperCase().includes(w));
+    hits.forEach(v=>ids.add(String(v.id)));
+  }
+  // Keep the server's row order so the XML matches a full export's ordering.
+  return rows.filter(v=>ids.has(String(v.id))).map(v=>String(v.id));
+}
+// One party row's XML / JSON / Print button.
+async function tallyPartyAction(kind,partyName,action){
+  await tallyPartyBulkAction(kind,[partyName],action);
+}
+// Runs one action over any number of parties of the SAME kind.
+async function tallyPartyBulkAction(kind,names,action){
   const aid=document.getElementById('tally-auction')?.value;
   if(!aid){alert('Select an auction first');return}
-  await withOverlay(`Generating ${TALLY_LABELS[type]||type} voucher for ${partyName}…`, async () => {
-    const url=B+`/api/tally/party-voucher/${type}/${aid}?name=${encodeURIComponent(partyName)}`;
-    const r=await fetch(url,{headers:{'Authorization':'Bearer '+T}});
-    if(!r.ok){
-      let msg='Voucher export failed';
-      try{const e=await r.json();if(e.error)msg=e.error}catch(x){}
-      toast(msg);return;
-    }
-    const blob=await r.blob();
-    const a=document.createElement('a');a.href=URL.createObjectURL(blob);
-    const safeName=partyName.replace(/[^a-zA-Z0-9]/g,'_').slice(0,40);
-    a.download=`Tally_${type}_${safeName}_${aid}.xml`;a.click();
-    setTimeout(()=>URL.revokeObjectURL(a.href),5000);
-    toast(`Downloaded ${TALLY_LABELS[type]||type} voucher for ${partyName}`);
-  });
+  const type=tallyPartyType(kind);
+  const vkind=TALLY_VOUCHER_KINDS[type]||{};
+  if(!type){toast('No voucher type for this party kind');return}
+  if(action==='irp'&&!vkind.irp){toast(`e-Invoice JSON is not available for ${TALLY_PARTY_KIND_LABEL[kind]||kind}`);return}
+  if(action==='pdf'&&!vkind.pdf){toast(`Printing is not available for ${TALLY_PARTY_KIND_LABEL[kind]||kind}`);return}
+  let ids=[];
+  try{
+    await withOverlay(`Finding ${names.length===1?names[0]+'’s':names.length+' parties’'} ${vkind.nouns||'vouchers'}…`,
+      async () => { ids=await tallyPartyVoucherIds(type,aid,names) });
+  }catch(e){showError(e);return}
+  if(!ids.length){
+    toast(`No ${vkind.nouns||'vouchers'} found for ${names.length===1?names[0]:'the ticked parties'} in this auction`);
+    return;
+  }
+  if(action==='pdf'){await tallyPrintVoucherPdfs(type,ids);return}
+  // Single party keeps its name in the filename; a multi-party pull is
+  // labelled by the party count instead.
+  const label=names.length===1?names[0]:null;
+  await tallyExportVouchers(type,ids,action,label);
 }
+// NOTE: the per-party XML download used to call
+// /api/tally/party-voucher/<type>/<auctionId>?name=… directly. The party
+// buttons now go through tallyPartyAction → /api/tally/export-selected so
+// that XML, JSON and Print share one path and one filename convention, and
+// so ticking several parties works. That endpoint is untouched and still
+// serves API callers.
 
 // ── Voucher list (any type) — pick one or many ───────────────────
 // One list serves all five printable voucher types. The rows come from
@@ -30325,7 +30450,7 @@ function renderTallyVoucherList(){
     if(kind.irp){
       btns+=`<button class="btn btn-g" onclick="tallyDownloadVoucher('${esc(String(v.id))}','${safeLabel}','irp')" style="padding:5px 10px;font-size:11px;flex:0 0 auto" title="GST e-Invoice (IRP / NIC) JSON — ready for the trade portal">JSON</button>`;
     }
-    btns+=`<button class="btn" onclick="tallyPrintVoucherPdfs('${type}',['${esc(String(v.id))}'])" style="padding:5px 10px;font-size:11px;flex:0 0 auto" title="Print this ${esc(kind.noun||'document')} PDF">🖨</button>`;
+    btns+=`<button class="btn btn-orange" onclick="tallyPrintVoucherPdfs('${type}',['${esc(String(v.id))}'])" style="padding:5px 10px;font-size:11px;flex:0 0 auto" title="Print this ${esc(kind.noun||'document')} PDF">🖨</button>`;
     html+=`<div style="padding:8px 12px;border-bottom:1px solid var(--border);background:#fff;display:flex;align-items:center;gap:10px">
       ${cb}
       <div style="flex:1;min-width:0">
@@ -30340,23 +30465,42 @@ function renderTallyVoucherList(){
 }
 
 // ── Multi-select plumbing ────────────────────────────────────────
+// The toolbar serves BOTH modes: in By Voucher the ticked rows are voucher
+// ids, in By Party they are party names. tallyBulkCheckboxes() returns
+// whichever set the current mode is showing, so select-all, the counter and
+// the three actions need no mode branch of their own.
 function tallyVoucherCheckboxes(){
   return Array.from(document.querySelectorAll('#tally-sv-list .tv-select-cb'));
+}
+function tallyPartyCheckboxes(){
+  return Array.from(document.querySelectorAll('#tally-sv-list .tv-party-cb'));
+}
+function tallyBulkCheckboxes(){
+  return (_tallyVoucherMode==='invoice')?tallyVoucherCheckboxes():tallyPartyCheckboxes();
 }
 function selectedTallyVoucherIds(){
   return tallyVoucherCheckboxes().filter(cb=>cb.checked).map(cb=>cb.value);
 }
+// Ticked parties grouped by kind — each kind exports as its own voucher
+// type, so the actions run once per kind (one file each).
+function selectedTallyPartiesByKind(){
+  const byKind={};
+  tallyPartyCheckboxes().filter(cb=>cb.checked).forEach(cb=>{
+    const k=cb.getAttribute('data-kind')||'';
+    (byKind[k]||(byKind[k]=[])).push(cb.value);
+  });
+  return byKind;
+}
 function toggleAllTallyVouchers(state){
-  tallyVoucherCheckboxes().forEach(cb=>{cb.checked=!!state});
+  tallyBulkCheckboxes().forEach(cb=>{cb.checked=!!state});
   updateTallyVoucherBulk();
 }
-// Keeps the toolbar in sync: hide it entirely outside By Voucher mode or
-// when nothing is listed, and disable the three actions until something
-// is ticked.
+// Keeps the toolbar in sync: hide it when nothing is listed, and disable
+// the three actions until something is ticked.
 function updateTallyVoucherBulk(){
   const bar=document.getElementById('tally-sv-bulkbar');
   if(!bar)return;
-  const boxes=(_tallyVoucherMode==='invoice')?tallyVoucherCheckboxes():[];
+  const boxes=tallyBulkCheckboxes();
   if(boxes.length===0){bar.style.display='none';return}
   bar.style.display='flex';
   const ticked=boxes.filter(cb=>cb.checked).length;
@@ -30365,13 +30509,21 @@ function updateTallyVoucherBulk(){
     master.indeterminate=ticked>0&&ticked<boxes.length;
     master.checked=ticked===boxes.length;
   }
+  const byParty=(_tallyVoucherMode==='party');
   const counter=document.getElementById('tally-sv-count');
   if(counter)counter.textContent=ticked
-    ? `${ticked} of ${boxes.length} selected`
-    : `None selected · ${boxes.length} listed`;
-  const kind=TALLY_VOUCHER_KINDS[tallyVoucherType()]||{};
+    ? `${ticked} of ${boxes.length} ${byParty?(boxes.length===1?'party':'parties'):'vouchers'} selected`
+    : `None selected · ${boxes.length} ${byParty?(boxes.length===1?'party':'parties'):'vouchers'} listed`;
+  // JSON only shows where an e-Invoice generator exists: the ticked voucher
+  // type in By Voucher mode, or any ticked party whose kind has one.
   const jsonBtn=document.getElementById('tally-sv-bulk-json');
-  if(jsonBtn)jsonBtn.style.display=kind.irp?'':'none';
+  if(jsonBtn){
+    const hasIrp=byParty
+      ? Object.keys(selectedTallyPartiesByKind())
+          .some(k=>(TALLY_VOUCHER_KINDS[tallyPartyType(k)]||{}).irp)
+      : !!(TALLY_VOUCHER_KINDS[tallyVoucherType()]||{}).irp;
+    jsonBtn.style.display=hasIrp?'':'none';
+  }
   ['tally-sv-bulk-xml','tally-sv-bulk-json','tally-sv-bulk-pdf'].forEach(id=>{
     const b=document.getElementById(id);
     if(!b)return;
@@ -30381,13 +30533,46 @@ function updateTallyVoucherBulk(){
   });
 }
 
-// ── Export the ticked vouchers (XML / e-Invoice JSON) ────────────
-async function tallyExportSelectedVouchers(format){
-  const ids=selectedTallyVoucherIds();
-  if(!ids.length){toast('Tick one or more vouchers first');return}
-  await tallyExportVouchers(tallyVoucherType(),ids,format);
+// ── Toolbar actions — dispatch on the active mode ────────────────
+// By Voucher runs once over the ticked ids. By Party runs once per ticked
+// KIND, because each kind is a different voucher type with its own
+// generator and PDF endpoint — ticking only buyers (the usual case) is
+// therefore still a single file.
+async function tallyBulkExportSelected(format){
+  if(_tallyVoucherMode==='invoice'){
+    const ids=selectedTallyVoucherIds();
+    if(!ids.length){toast('Tick one or more vouchers first');return}
+    await tallyExportVouchers(tallyVoucherType(),ids,format);
+    return;
+  }
+  const byKind=selectedTallyPartiesByKind();
+  const kinds=Object.keys(byKind);
+  if(!kinds.length){toast('Tick one or more parties first');return}
+  const usable=(format==='irp')
+    ? kinds.filter(k=>(TALLY_VOUCHER_KINDS[tallyPartyType(k)]||{}).irp)
+    : kinds;
+  if(!usable.length){toast('e-Invoice JSON is not available for the ticked parties');return}
+  if(usable.length<kinds.length)toast('e-Invoice JSON covers only the sales parties in your selection');
+  for(const k of usable)await tallyPartyBulkAction(k,byKind[k],format);
 }
-// One id → the single-voucher row buttons; many → the toolbar.
+async function tallyBulkPrintSelected(){
+  if(_tallyVoucherMode==='invoice'){
+    const ids=selectedTallyVoucherIds();
+    if(!ids.length){toast('Tick one or more vouchers first');return}
+    await tallyPrintVoucherPdfs(tallyVoucherType(),ids);
+    return;
+  }
+  const byKind=selectedTallyPartiesByKind();
+  const kinds=Object.keys(byKind);
+  if(!kinds.length){toast('Tick one or more parties first');return}
+  // Kinds print through different document endpoints, so a mixed selection
+  // yields one merged PDF per kind rather than one across all of them.
+  if(kinds.length>1)toast(`Printing ${kinds.length} separate PDFs — one per party type`);
+  for(const k of kinds)await tallyPartyBulkAction(k,byKind[k],'pdf');
+}
+
+// One id → the single-voucher row buttons; many → the toolbar
+// (tallyBulkExportSelected).
 async function tallyDownloadVoucher(id,label,format){
   await tallyExportVouchers(tallyVoucherType(),[String(id)],format,label);
 }
@@ -30428,11 +30613,6 @@ async function tallyExportVouchers(type,ids,format,label){
 // output is identical to printing the same rows from the Sales /
 // Purchases / Bills / Debit Notes tabs — same renderer, same layout
 // override, one merged PDF in selection order.
-async function tallyPrintSelectedVouchers(){
-  const ids=selectedTallyVoucherIds();
-  if(!ids.length){toast('Tick one or more vouchers first');return}
-  await tallyPrintVoucherPdfs(tallyVoucherType(),ids);
-}
 async function tallyPrintVoucherPdfs(type,ids){
   const kind=TALLY_VOUCHER_KINDS[type];
   if(!kind){toast('Printing is not available for this voucher type');return}
@@ -31299,6 +31479,9 @@ async function loadPreInvoiceBuyers(){
   const countEl = document.getElementById('pi-count');
   const sel = document.getElementById('pi-buyer');
   if (countEl) countEl.textContent = '';
+  // Clear the trade-level panel on every entry — otherwise the previous
+  // trade's withdrawn / not-auctioned lots linger under a new trade.
+  renderPreInvoiceExcluded(null);
   if (!aid) { if(list) list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px;text-align:center">Select an auction.</div>'; if(sel) sel.innerHTML=''; return; }
   const sale = document.getElementById('pi-sale')?.value || '';
   const noTI = document.getElementById('pi-no-ti')?.checked ? '1' : '0';
@@ -31310,6 +31493,11 @@ async function loadPreInvoiceBuyers(){
     return;
   }
   const buyers = (data && data.buyers) || [];
+  // Withdrawn / not-auctioned lots are a property of the TRADE, not of the
+  // selected buyer — paint them before the buyer branch below, so a trade
+  // whose lots are all withdrawn still accounts for itself instead of
+  // showing only "no buyers to preview".
+  renderPreInvoiceExcluded(data && data.excluded);
   // Pre-Invoice buyer picker is ordered by trade name (A→Z) so the operator
   // can scan it alphabetically. (The generation picker orders by sale type.)
   buyers.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true }));
@@ -31328,6 +31516,74 @@ async function loadPreInvoiceBuyers(){
   }
   renderPreInvoiceSelected();
 }
+// ── Withdrawn / not-auctioned lots ───────────────────────────────
+// Neither state ever reaches a sales invoice, so they can't show up in the
+// buyer previews — which made them invisible on the one screen meant for
+// checking a trade before generating. Rendered as a collapsed summary bar
+// that opens into the lot list. State comes from the server, classified on
+// lots.code ('WD' = withdrawn, 'NA'/blank = not auctioned) — the same
+// marker the invoice gate and carry-forward already use.
+let _piExcludedOpen = false;
+function togglePreInvoiceExcluded(){
+  _piExcludedOpen = !_piExcludedOpen;
+  const body = document.getElementById('pi-excluded-body');
+  const chev = document.getElementById('pi-excluded-chev');
+  if (body) body.style.display = _piExcludedOpen ? '' : 'none';
+  if (chev) chev.textContent = _piExcludedOpen ? '▼' : '▶';
+}
+function renderPreInvoiceExcluded(ex){
+  const host = document.getElementById('pi-excluded');
+  if (!host) return;
+  const t = (ex && ex.totals) || null;
+  const wd = (ex && ex.withdrawn) || [];
+  const na = (ex && ex.notAuctioned) || [];
+  if (!t || (!wd.length && !na.length)) { host.style.display = 'none'; host.innerHTML = ''; return; }
+  const chip = (label, lots, bags, qty, colour) =>
+    `<span style="display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:20px;background:${colour.bg};color:${colour.fg};font-size:11.5px;font-weight:700">
+       ${label} <strong>${lots}</strong> lot${lots === 1 ? '' : 's'}
+       <span style="font-weight:400;opacity:.85">· ${bags} bag${bags === 1 ? '' : 's'} · ${fmtI(qty, 3)} kg</span>
+     </span>`;
+  const chips =
+    (t.withdrawnLots ? chip('Withdrawn', t.withdrawnLots, t.withdrawnBags, t.withdrawnQty,
+        { bg: '#FEE2E2', fg: '#B91C1C' }) : '')
+    + (t.notAuctionedLots ? chip('Not auctioned', t.notAuctionedLots, t.notAuctionedBags, t.notAuctionedQty,
+        { bg: '#FEF3C7', fg: '#B45309' }) : '');
+  const rowsFor = (arr, label, colour) => arr.map(l => `
+    <tr>
+      <td style="font-family:monospace;font-weight:600">${esc(String(l.lot_no || ''))}</td>
+      <td>${esc(l.seller || '')}</td>
+      <td>${esc(l.branch || '')}</td>
+      <td style="text-align:right">${Number(l.bags) || 0}</td>
+      <td style="text-align:right">${fmtI(Number(l.qty) || 0, 3)}</td>
+      <td><span style="font-size:10.5px;font-weight:700;padding:1px 8px;border-radius:10px;background:${colour.bg};color:${colour.fg}">${label}</span>${
+        Number(l.reserved) ? ` <span style="font-size:10.5px;padding:1px 7px;border-radius:10px;background:var(--spice-cream);color:var(--text3);font-weight:600" title="Held / reserved lot">held</span>` : ''}</td>
+      <td style="text-align:right;color:var(--text3)">${(Number(l.amount) || 0) > 0 ? fmtI(Number(l.amount), 2) : '—'}</td>
+    </tr>`).join('');
+  host.style.display = '';
+  host.innerHTML = `
+    <div style="border:1px solid var(--border);border-radius:10px;background:#fff;overflow:hidden">
+      <div onclick="togglePreInvoiceExcluded()" style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:var(--spice-cream);flex-wrap:wrap">
+        <span id="pi-excluded-chev" style="color:var(--text3);font-size:11px">${_piExcludedOpen ? '▼' : '▶'}</span>
+        <strong style="font-size:13px;color:var(--text)">Not on any invoice</strong>
+        ${chips}
+        <span style="margin-left:auto;font-size:11px;color:var(--text3)">whole trade — not narrowed by the Buyer / Sale Type filters</span>
+      </div>
+      <div id="pi-excluded-body" style="display:${_piExcludedOpen ? '' : 'none'};max-height:340px;overflow:auto">
+        <table style="width:100%;font-size:12.5px">
+          <thead><tr>
+            <th>Lot</th><th>Seller</th><th>Branch</th>
+            <th style="text-align:right">Bags</th><th style="text-align:right">Qty</th>
+            <th>State</th><th style="text-align:right">Amount</th>
+          </tr></thead>
+          <tbody>
+            ${rowsFor(wd, 'WITHDRAWN', { bg: '#FEE2E2', fg: '#B91C1C' })}
+            ${rowsFor(na, 'NOT AUCTIONED', { bg: '#FEF3C7', fg: '#B45309' })}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
 // Step 2 — build + render the full pre-invoice card(s) for the selected buyer
 // (or every buyer when "View all buyers" is chosen).
 async function renderPreInvoiceSelected(){

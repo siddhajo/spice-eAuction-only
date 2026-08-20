@@ -300,6 +300,11 @@ async function initDb() {
     reserved_price REAL DEFAULT 0,
     amount REAL DEFAULT 0,
     code TEXT DEFAULT '',
+    -- Operator-facing dummy code, typed per lot in Price Entry. Used only
+    -- to tag / filter lots while pricing; never reaches an invoice,
+    -- voucher or statutory export. Also added via ALTER for older DBs in
+    -- the migrations block below.
+    dummy_code TEXT DEFAULT '',
     buyer TEXT DEFAULT '',
     buyer1 TEXT DEFAULT '',
     sale TEXT DEFAULT '',
@@ -998,6 +1003,10 @@ async function initDb() {
     // losing the LOT NO / RATE columns. Mirrors bills.line_items, which has
     // carried the same snapshot for Bills of Supply.
     "ALTER TABLE invoices ADD COLUMN line_items TEXT DEFAULT ''",
+    // Free-text dummy code entered per lot in Price Entry. Purely an
+    // operator-facing tag used to group / find lots while pricing — it is
+    // not part of any invoice, voucher or statutory export.
+    "ALTER TABLE lots ADD COLUMN dummy_code TEXT DEFAULT ''",
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }

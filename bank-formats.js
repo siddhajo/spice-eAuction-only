@@ -25,6 +25,11 @@
 //     title:     string,          // brand-band title (after variant)
 //     includeMeta?: boolean,      // default true — false drops the auction
 //                                 // meta lines (some bank portals reject them)
+//     banner?: (ctx) => [{ text, span?, align? }],
+//                                 // optional bordered letterhead row placed
+//                                 // ABOVE the column headers. ctx carries
+//                                 // { cfg, debitAccount, exportDate,
+//                                 //   columnCount }; spans are table columns.
 //     columns:   [ Column ],      // the "after discount" layout (bank_payment)
 //     before?: {                  // optional "before discount" layout
 //       sheetName, title, includeMeta?, columns
@@ -99,6 +104,19 @@ const BANK_FORMATS = {
     title: 'HDFC BANK A/C:',
     total: true,
     signatures: ['Prepared By', 'Checked By', 'Approved By'],
+    // Letterhead line printed in a bordered row ABOVE the column headers:
+    //   | HDFC BANK | A/C: <firm's debit a/c> |  | Dt: <export date> |
+    // Spans are in table columns (6 of them below). The date is the day the
+    // file is exported — the sheet is signed off by hand, so it has to say
+    // when this batch was raised. Written dd-mm-yyyy to match the bank's own
+    // sheet rather than the app-wide `date_format` setting: this row is a
+    // reproduction of the customer's bank stationery, not an app report.
+    banner: (ctx) => [
+      { text: 'HDFC BANK',                span: 1 },
+      { text: `A/C: ${ctx.debitAccount}`, span: 3 },
+      { text: '',                         span: 1 },
+      { text: `Dt: ${ctx.exportDate}`,    span: 1 },
+    ],
     columns: [
       // Particulars is "<ano> <lots>"; this format shows the auction no as
       // "A<ano>" (e.g. "A10 024"), so prefix an "A" to the whole value.

@@ -5934,6 +5934,23 @@ app.post('/api/lots/:id/invoice-group', requireLotWrite, (req, res) => {
   res.json({ success: true, invoice_group: g });
 });
 
+// Save a lot's Price Entry dummy code. Deliberately its OWN endpoint (like
+// invoice-group above) rather than a general lot update: it must never touch
+// price/qty, so it can't invalidate a price-check stamp. Free text, trimmed,
+// capped so a paste accident can't stuff the column; blank clears it.
+app.post('/api/lots/:id/dummy-code', requireLotWrite, (req, res) => {
+  const db = getDb();
+  const id = parseInt(req.params.id, 10);
+  const lot = db.get('SELECT id, locked_at FROM lots WHERE id = ?', [id]);
+  if (!lot) return res.status(404).json({ error: 'Lot not found' });
+  if (lot.locked_at && lockFeatureOn(db) && !isAdmin(req)) {
+    return res.status(423).json({ error: 'This lot is locked — only an admin can change it.' });
+  }
+  const value = String(req.body.value == null ? '' : req.body.value).trim().slice(0, 40);
+  db.run('UPDATE lots SET dummy_code = ? WHERE id = ?', [value, id]);
+  res.json({ success: true, dummy_code: value });
+});
+
 // Bulk-set the invoice split group on many lots at once — powers the Price
 // Entry "select lots → Set Split #" action, so the operator marks a whole
 // group of lots for one invoice in a single click instead of per-lot typing.
@@ -11906,6 +11923,53 @@ app.post('/api/invoices/preview-pdf/:auctionId', requireView, async (req, res) =
   }
 });
 
+// Lots in a trade that will NOT appear on any sales invoice, so the
+// Pre-Invoice screen can account for the whole trade before anything is
+// generated. State lives in `lots.code` — the same marker the invoice
+// gate (`notWD`) and the carry-forward flow already read:
+//
+//   'WD'          → WITHDRAWN, pulled before the sale
+//   'NA' or blank → NOT AUCTIONED (booked but never went under the hammer)
+//
+// `code` is checked BEFORE `amount`: a withdrawn lot can still carry its
+// pre-withdrawal amount (real trades hold both shapes), so an amount-based
+// test would file those under "sold". Equally, "not auctioned" is decided
+// by the code and NOT by amount <= 0 — before a price import every lot has
+// amount 0, and calling the whole trade "not auctioned" would be nonsense.
+function excludedLots(db, auctionId) {
+  const rows = db.all(
+    `SELECT lot_no,
+            COALESCE(name,'')   AS seller,
+            COALESCE(branch,'') AS branch,
+            COALESCE(bags,0)    AS bags,
+            COALESCE(qty,0)     AS qty,
+            COALESCE(amount,0)  AS amount,
+            COALESCE(reserved,0) AS reserved,
+            UPPER(TRIM(COALESCE(code,''))) AS code
+       FROM lots
+      WHERE auction_id = ?
+        AND (UPPER(TRIM(COALESCE(code,''))) IN ('WD','NA')
+             OR TRIM(COALESCE(code,'')) = '')
+      ORDER BY CAST(lot_no AS INTEGER), lot_no`,
+    [auctionId]
+  ) || [];
+  const withdrawn = [], notAuctioned = [];
+  for (const l of rows) (l.code === 'WD' ? withdrawn : notAuctioned).push(l);
+  const sum = (arr, k) => arr.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+  return {
+    withdrawn,
+    notAuctioned,
+    totals: {
+      withdrawnLots:    withdrawn.length,
+      withdrawnBags:    sum(withdrawn, 'bags'),
+      withdrawnQty:     sum(withdrawn, 'qty'),
+      notAuctionedLots: notAuctioned.length,
+      notAuctionedBags: sum(notAuctioned, 'bags'),
+      notAuctionedQty:  sum(notAuctioned, 'qty'),
+    },
+  };
+}
+
 // PRE-INVOICE — powers the Pre-Invoice screen. Always returns the lightweight
 // `buyers` list (one entry per party, with its effective sale type) so the
 // screen can offer a party selector. `previews` (the full bill-to/ship-to/
@@ -11990,7 +12054,7 @@ app.get('/api/invoices/preview-all/:auctionId', requireView, (req, res) => {
     // (classic) embeds the actual PDF so both show the identical layout.
     const salesEngine = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
       engineKey: 'sales_invoice_engine', templateKey: 'sales_invoice_template' }) ? 'html' : 'pdfkit';
-    res.json({ buyers, previews, salesEngine });
+    res.json({ buyers, previews, salesEngine, excluded: excludedLots(db, aid) });
   } catch (e) {
     console.error('Pre-invoice preview-all error:', e);
     res.status(500).json({ error: e.message });

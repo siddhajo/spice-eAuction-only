@@ -36,6 +36,7 @@ const getCompanyIdentity = require('./_company-identity-fallback').resolve();
 //
 // opts shape:
 //   { db, companyHeader, title, metaLines,    // existing
+//     bannerRow: [{ text, span, align }],      // optional row above the headers
 //     grandTotal: { label, values, fillArgb }, // optional footer row
 //     sections:   [{ title, rows }],           // optional grouped layout
 //     spacerBetween: true,                      // blank row between groups
@@ -90,9 +91,43 @@ async function createExcelBuffer(sheetName, columns, rows, opts) {
     metaLines: opts.metaLines || [],
   });
 
+  // ── Banner row (optional) ──
+  // A single bordered row placed directly ABOVE the column headers, laid out
+  // as merged spans across the sheet width. Used by sheets that carry their
+  // own letterhead line rather than the brand band — e.g. the HDFC payment
+  // authorization sheet's "HDFC BANK | A/C: … | Dt: …".
+  //
+  //   opts.bannerRow: [{ text, span?, align? }]
+  //
+  // Spans are clamped to the column count, so a profile can never merge past
+  // the edge of the table and corrupt the sheet.
+  let headerRowNum = startRow;
+  if (Array.isArray(opts.bannerRow) && opts.bannerRow.length) {
+    const bRow = ws.getRow(headerRowNum);
+    let ci = 1;
+    for (const seg of opts.bannerRow) {
+      if (ci > columns.length) break;
+      const span = Math.max(1, Math.min(Number(seg.span) || 1, columns.length - ci + 1));
+      const cell = bRow.getCell(ci);
+      cell.value = seg.text == null ? '' : seg.text;
+      if (span > 1) {
+        ws.mergeCells(`${colLetter(ci)}${bRow.number}:${colLetter(ci + span - 1)}${bRow.number}`);
+      }
+      cell.alignment = { horizontal: seg.align || 'left', vertical: 'middle' };
+      ci += span;
+    }
+    bRow.font = { bold: true, size: 12 };
+    bRow.height = 24;
+    const thinAll = { style: 'thin' };
+    for (let c = 1; c <= columns.length; c++) {
+      bRow.getCell(c).border = { top: thinAll, bottom: thinAll, left: thinAll, right: thinAll };
+    }
+    headerRowNum += 1;
+  }
+
   // Column-header row — explicit per-cell alignment 'center' overrides
   // the column-level left/right cascade.
-  const headerRow = ws.getRow(startRow);
+  const headerRow = ws.getRow(headerRowNum);
   columns.forEach((c, i) => {
     headerRow.getCell(i + 1).value = c.header;
   });
@@ -597,7 +632,7 @@ async function exportPriceListBefore(db, auctionId) {
 // columns are emitted (and any per-cell transform) differs. `view` is the
 // resolved profile face (the profile itself for the after variant, or its
 // `.before` face for the pre-discount variant).
-function renderBankPaymentView(db, auctionId, view, payments) {
+function renderBankPaymentView(db, auctionId, view, payments, cfg) {
   const cols = view.columns;
   // Apply optional per-column value transforms (e.g. amount → "1234.00" text
   // for banks that want a fixed-decimal string). Only clone rows when needed.
@@ -620,6 +655,21 @@ function renderBankPaymentView(db, auctionId, view, payments) {
   }
   if (Array.isArray(view.signatures) && view.signatures.length) {
     extra.signatures = view.signatures;
+  }
+  // Optional letterhead line above the column headers. The profile owns the
+  // wording; we supply the values it can't know: the firm's own debit account
+  // (identical on every row of a batch) and TODAY — this sheet is a payment
+  // authorization raised and signed on the day it is exported, so it carries
+  // the export date, not the auction date.
+  if (typeof view.banner === 'function') {
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    extra.bannerRow = view.banner({
+      cfg: cfg || {},
+      debitAccount: (cfg && cfg.bank_kl_acct) || (payments[0] && payments[0].debitAccount) || '',
+      exportDate: `${pad(now.getDate())}-${pad(now.getMonth() + 1)}-${now.getFullYear()}`,
+      columnCount: cols.length,
+    });
   }
   return createExcelBuffer(view.sheetName, cleanCols, rows, {
     db,
@@ -648,7 +698,7 @@ async function exportBankPayment(db, auctionId, cfg, _state, extra) {
     excludeLots: extra && extra.excludeLots,
   });
   const fmt = getBankFormat(cfg && cfg.bank_format);
-  return renderBankPaymentView(db, auctionId, fmt, payments);
+  return renderBankPaymentView(db, auctionId, fmt, payments, cfg);
 }
 
 // ── Export Type 4b: Bank Payment (Before discount) ───────────
@@ -667,7 +717,7 @@ async function exportBankPaymentBefore(db, auctionId, cfg, _state, extra) {
   });
   const fmt = getBankFormat(cfg && cfg.bank_format);
   const view = fmt.before || BANK_FORMATS[DEFAULT_BANK_FORMAT].before;
-  return renderBankPaymentView(db, auctionId, view, payments);
+  return renderBankPaymentView(db, auctionId, view, payments, cfg);
 }
 
 // ── Export Type 5: Pooler-wise Register ───────────────────────
