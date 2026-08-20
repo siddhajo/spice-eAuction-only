@@ -334,6 +334,7 @@ const DEFAULTS = [
   // a site can adopt lot-wise one module at a time and roll a single
   // module back without disturbing the other three.
   { key: 'flag_lotwise_purchase',   value: 'false', category: 'flags', label: 'Lot-wise Purchase Invoices (off = Seller-wise)',   type: 'boolean' },
+  { key: 'flag_lotwise_bills',      value: 'false', category: 'flags', label: 'Lot-wise Bills of Supply (off = Seller-wise)',     type: 'boolean' },
 
   // Price Check tab + transaction gate. When ON the operator gets the
   // Reports → Price Check tab, the gate banner, and a hard server-side

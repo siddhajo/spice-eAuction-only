@@ -4078,6 +4078,29 @@ function _remainingPartiesSql(db, docType, auctionId) {
   if (docType === 'bills') {
     // Mirrors listAgriSellers (calculations.js) + LEFT JOIN bills. bills
     // is keyed by ano (text), not auction_id.
+    //
+    // Same mode-sensitivity as purchases above: seller-wise treats a planter
+    // as done once ANY bill exists for them, which lot-wise would read as
+    // "all their remaining lots are done" and disable Generate early. So
+    // lot-wise joins on the lot as well, and counts LOTS.
+    if (lotwiseBillsOn(db)) {
+      return {
+        sql: `SELECT l.id
+                FROM lots l
+                LEFT JOIN bills b
+                  ON TRIM(b.ano) = TRIM(?)
+                 AND UPPER(TRIM(b.name)) = UPPER(TRIM(l.name))
+                 AND TRIM(COALESCE(b.lot_no,'')) = TRIM(l.lot_no)
+               WHERE l.auction_id = ?
+                 AND l.amount > 0
+                 AND l.name IS NOT NULL AND l.name != ''
+                 AND (l.reserved IS NULL OR l.reserved = 0)
+                 AND ${notWD}
+                 AND NOT ${hasValidGstinSql('l.cr')}
+                 AND b.id IS NULL`,
+        params: [ano, auctionId],
+      };
+    }
     return {
       sql: `SELECT DISTINCT l.name
               FROM lots l
@@ -5470,6 +5493,7 @@ function lotwiseOn(db, key) {
   } catch (_) { return false; }
 }
 function lotwisePurchaseOn(db) { return lotwiseOn(db, 'flag_lotwise_purchase'); }
+function lotwiseBillsOn(db)    { return lotwiseOn(db, 'flag_lotwise_bills'); }
 
 // Builder options that reproduce a STORED purchase row exactly.
 //
@@ -5495,6 +5519,19 @@ function purchaseRebuildOpts(stored) {
     // Must be the number the document actually carries so a reprint lands
     // on the same TDS figure that was stored at generation time.
     opts.docNo = stored.invo;
+  }
+  return opts;
+}
+
+// Same contract for a stored BILL OF SUPPLY row (flag_lotwise_bills). Bills
+// carry no TDS, so there is no docNo ordering key to reproduce.
+function billRebuildOpts(stored) {
+  if (!stored) return {};
+  const lotNo = String(stored.lot_no == null ? '' : stored.lot_no).trim();
+  const opts = { traderId: stored.trader_id };
+  if (lotNo) {
+    opts.lotNo = lotNo;
+    opts.lotId = stored.lot_id != null ? stored.lot_id : null;
   }
   return opts;
 }
@@ -9524,29 +9561,107 @@ app.post('/api/bills/generate/:auctionId',
       [c.pqty,c.prate,c.puramt,c.com,c.sertax,c.cgst,c.sgst,c.igst,c.advance,c.balance,c.bilamt,c.refund||0,c.refud||0,c.isp_pqty||0,c.isp_prate||0,c.isp_puramt||0,c.asp_pqty||0,c.asp_prate||0,c.asp_puramt||0,lot.id]);
   }
   
+  // ── Mode resolution (flag_lotwise_bills) ─────────────────────────────
+  // Mirrors the purchase contract: a lot identifier in the body means a
+  // LOT-WISE bill for that one lot; its absence means the classic
+  // seller-wise bill. Both are validated against the flag so a stale tab
+  // cannot write a document in the mode the site isn't configured for.
+  const reqLotNo = String(req.body.lotNo == null ? '' : req.body.lotNo).trim();
+  const reqLotId = req.body.lotId;
+  const wantsLotWise = reqLotNo !== '' || (reqLotId != null && String(reqLotId).trim() !== '');
+  const lotWiseCfg = lotwiseBillsOn(db);
+  if (wantsLotWise && !lotWiseCfg) {
+    return res.status(403).json({
+      error: 'Lot-wise bills of supply are disabled. Enable "Lot-wise Bills of Supply" in Settings → Flags.',
+      mode: 'seller',
+    });
+  }
+  if (!wantsLotWise && lotWiseCfg) {
+    return res.status(400).json({
+      error: 'This site is set to LOT-WISE bills of supply, but no lot was selected. Reload the page and pick a lot.',
+      mode: 'lot',
+    });
+  }
+
+  const auction = db.get('SELECT * FROM auctions WHERE id = ?', [req.params.auctionId]);
+
+  // Duplicate guard — lot-wise only, so seller-wise generation is unchanged.
+  // Scoped by trade number because that is how bills are keyed.
+  if (wantsLotWise) {
+    const dupe = db.get(
+      `SELECT bil FROM bills
+        WHERE TRIM(ano) = TRIM(?) AND UPPER(TRIM(name)) = UPPER(TRIM(?))
+          AND TRIM(COALESCE(lot_no,'')) = ? LIMIT 1`,
+      [String(auction.ano), String(sellerName || ''), reqLotNo]
+    );
+    if (dupe) {
+      return res.status(409).json({
+        error: `Lot ${reqLotNo} already has bill of supply #${dupe.bil} for ${sellerName} in this trade.`,
+        existingBillNo: dupe.bil,
+      });
+    }
+  }
+
   // traderId / userId identify WHICH planter when the name is shared.
   const bill = buildAgriBill(db, req.params.auctionId, sellerName, cfg,
-    { traderId: req.body.traderId, userId: req.body.userId });
+    { traderId: req.body.traderId, userId: req.body.userId,
+      lotNo: reqLotNo, lotId: reqLotId });
   if (!bill || bill.error) {
     return res.status(404).json({ error: bill?.error || 'No eligible lots found' });
   }
-  
-  const auction = db.get('SELECT * FROM auctions WHERE id = ?', [req.params.auctionId]);
+
   const s = bill.summary;
-  db.run(`INSERT INTO bills (auction_id,ano,date,state,br,crpt,bil,name,add_line,pla,pstate,st_code,crr,pan,qty,cost,igst,net,line_items,trader_id)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  db.run(`INSERT INTO bills (auction_id,ano,date,state,br,crpt,bil,name,add_line,pla,pstate,st_code,crr,pan,qty,cost,igst,net,line_items,trader_id,lot_no,lot_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [req.params.auctionId,auction.ano,auction.date,auction.state||'','',auction.crop_type||(getSetting(getDb(),'default_crop_type')||'VST'),
      parseInt(billNo),bill.seller.name,bill.seller.address||'',bill.seller.place||'',
      bill.seller.state||'',bill.seller.st_code||'',bill.seller.cr||'',bill.seller.pan||'',
      s.totalQty,s.totalPuramt,0,s.netAmount,JSON.stringify(bill.lineItems||[]),
-         bill.seller.trader_id || null]);
+         bill.seller.trader_id || null,
+     // Empty lot_no is what marks this row seller-wise, for every future reader.
+     bill.lotNo || '', bill.lotId]);
 
-  res.json({ success: true, bill: s });
+  res.json({ success: true, bill: s, mode: wantsLotWise ? 'lot' : 'seller', lotNo: bill.lotNo || '' });
 });
 
 // List eligible agri sellers for an auction (no GSTIN + amount > 0)
 app.get('/api/bills/eligible-sellers/:auctionId', requireView, (req, res) => {
   res.json(listAgriSellers(getDb(), req.params.auctionId));
+});
+
+// ── LOT-WISE eligible list (flag_lotwise_bills) ──────────────────────────
+// Lot-wise counterpart of /eligible-sellers: one row per LOT rather than one
+// per planter. Same eligibility rule as listAgriSellers (NO valid GSTIN,
+// amount > 0), so both lists cover exactly the same lots.
+//
+// `already_billed` is advisory for the UI — it surfaces lots that already
+// carry a lot-wise bill in this trade. Bills are keyed by trade NUMBER (ano),
+// not auction_id, so the existence check joins through the auction the same
+// way the generation gate does.
+app.get('/api/bills/eligible-lots/:auctionId', requireView, (req, res) => {
+  const db = getDb();
+  const aid = req.params.auctionId;
+  const auction = db.get('SELECT ano FROM auctions WHERE id = ?', [aid]);
+  if (!auction) return res.status(404).json({ error: 'Auction not found' });
+  res.json(db.all(
+    `SELECT l.id AS lot_id, l.lot_no, l.name, l.trader_id,
+            CASE WHEN UPPER(TRIM(COALESCE(l.user_id,''))) IN ('','IMPORT')
+                 THEN '' ELSE TRIM(l.user_id) END AS user_id,
+            l.grade, l.bags, l.qty, l.price, l.amount, l.cr,
+            (SELECT b.bil FROM bills b
+              WHERE TRIM(b.ano) = TRIM(?)
+                AND TRIM(COALESCE(b.lot_no,'')) = TRIM(l.lot_no)
+                AND UPPER(TRIM(b.name)) = UPPER(TRIM(l.name))
+              LIMIT 1) AS already_billed
+       FROM lots l
+      WHERE l.auction_id = ? AND l.name IS NOT NULL AND l.name != ''
+        AND l.amount > 0
+        AND (l.reserved IS NULL OR l.reserved = 0)
+        AND UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')
+        AND NOT ${hasValidGstinSql('l.cr')}
+      ORDER BY UPPER(TRIM(l.name)), CAST(l.lot_no AS INTEGER), l.lot_no`,
+    [String(auction.ano), aid]
+  ));
 });
 
 // Batch: generate bill of supply for ALL agriculturists (no GSTIN) in an auction
@@ -9568,32 +9683,82 @@ app.post('/api/bills/generate-all/:auctionId',
       [c.pqty,c.prate,c.puramt,c.com,c.sertax,c.cgst,c.sgst,c.igst,c.advance,c.balance,c.bilamt,c.refund||0,c.refud||0,c.isp_pqty||0,c.isp_prate||0,c.isp_puramt||0,c.asp_pqty||0,c.asp_prate||0,c.asp_puramt||0,lot.id]);
   }
   
-  const sellers = listAgriSellers(db, req.params.auctionId);
-  if (!sellers.length) return res.status(404).json({ error: 'No agriculturist sellers (without GSTIN) with lots in this auction' });
-  
+  // ── Mode resolution (flag_lotwise_bills) ─────────────────────────────
+  // Seller-wise walks listAgriSellers exactly as before. Lot-wise walks one
+  // row per LOT, using the same eligibility rule so both modes cover an
+  // identical set of lots and differ only in document count.
+  const lotWise = lotwiseBillsOn(db);
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [req.params.auctionId]);
+
+  const sellers = lotWise
+    ? db.all(
+        `SELECT l.id AS lot_id, l.lot_no, l.name, l.trader_id,
+                CASE WHEN UPPER(TRIM(COALESCE(l.user_id,''))) IN ('','IMPORT')
+                     THEN '' ELSE TRIM(l.user_id) END AS user_id
+           FROM lots l
+          WHERE l.auction_id = ?
+            AND l.amount > 0
+            AND l.name IS NOT NULL AND l.name != ''
+            AND (l.reserved IS NULL OR l.reserved = 0)
+            AND UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')
+            AND NOT ${hasValidGstinSql('l.cr')}
+          ORDER BY UPPER(TRIM(l.name)), CAST(l.lot_no AS INTEGER), l.lot_no`,
+        [req.params.auctionId]
+      )
+    : listAgriSellers(db, req.params.auctionId);
+
+  if (!sellers.length) return res.status(404).json({
+    error: lotWise
+      ? 'No eligible lots (non-GSTIN planter) in this auction'
+      : 'No agriculturist sellers (without GSTIN) with lots in this auction'
+  });
+
   const results = [];
   const errors = [];
-  
+  const skipped = [];
+
+  // Lots already carrying a lot-wise bill in this trade, so a re-run tops up
+  // the missing ones instead of double-billing. Seller-wise runs skip this
+  // entirely and behave exactly as before.
+  const alreadyDone = new Set();
+  if (lotWise) {
+    for (const r of db.all(
+      `SELECT name, lot_no FROM bills
+        WHERE TRIM(ano) = TRIM(?) AND TRIM(COALESCE(lot_no,'')) <> ''`,
+      [String(auction.ano)]
+    )) alreadyDone.add(`${String(r.name || '').trim().toUpperCase()}|${String(r.lot_no || '').trim()}`);
+  }
+
   for (const row of sellers) {
+    const label = lotWise ? `${row.name} — lot ${row.lot_no}` : row.name;
     try {
+      if (lotWise) {
+        const key = `${String(row.name || '').trim().toUpperCase()}|${String(row.lot_no || '').trim()}`;
+        if (alreadyDone.has(key)) {
+          skipped.push({ seller: row.name, lotNo: row.lot_no, reason: 'Already billed' });
+          continue;
+        }
+      }
       const bill = buildAgriBill(db, req.params.auctionId, row.name, cfg,
-        { traderId: row.trader_id, userId: row.user_id });
-      if (!bill || bill.error) { errors.push({ seller: row.name, error: bill?.error || 'Build failed' }); continue; }
+        { traderId: row.trader_id, userId: row.user_id,
+          lotNo: lotWise ? row.lot_no : '', lotId: lotWise ? row.lot_id : null });
+      if (!bill || bill.error) { errors.push({ seller: label, error: bill?.error || 'Build failed' }); continue; }
       const s = bill.summary;
-      db.run(`INSERT INTO bills (auction_id,ano,date,state,br,crpt,bil,name,add_line,pla,pstate,st_code,crr,pan,qty,cost,igst,net,line_items,trader_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      db.run(`INSERT INTO bills (auction_id,ano,date,state,br,crpt,bil,name,add_line,pla,pstate,st_code,crr,pan,qty,cost,igst,net,line_items,trader_id,lot_no,lot_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [req.params.auctionId,auction.ano,auction.date,auction.state||'','',auction.crop_type||(getSetting(getDb(),'default_crop_type')||'VST'),
          nextNo,bill.seller.name,bill.seller.address||'',bill.seller.place||'',
          bill.seller.state||'',bill.seller.st_code||'',bill.seller.cr||'',bill.seller.pan||'',
          s.totalQty,s.totalPuramt,0,s.netAmount,JSON.stringify(bill.lineItems||[]),
-         bill.seller.trader_id || null]);
-      results.push({ seller: row.name, billNo: nextNo, netAmount: s.netAmount });
+         bill.seller.trader_id || null,
+         bill.lotNo || '', bill.lotId]);
+      results.push({ seller: row.name, lotNo: lotWise ? row.lot_no : '', billNo: nextNo, netAmount: s.netAmount });
       nextNo++;
-    } catch (e) { errors.push({ seller: row.name, error: e.message }); }
+    } catch (e) { errors.push({ seller: label, error: e.message }); }
   }
-  
-  res.json({ success: true, generated: results.length, results, errors });
+
+  res.json({ success: true, mode: lotWise ? 'lot' : 'seller',
+             generated: results.length, results, errors, skipped });
 });
 
 // Bill-of-Supply PDFs render per-lot rows from the live `lots` table via
@@ -9616,7 +9781,11 @@ function recoverAgriBillByAno(db, stored, cfg, triedAuctionId) {
   let firstHit = null;
   for (const a of cands) {
     if (triedAuctionId != null && String(a.id) === String(triedAuctionId)) continue;
-    const b = buildAgriBill(db, a.id, stored.name, cfg, { traderId: stored.trader_id });
+    // Lot scope must travel into the recovery rebuild too. Rebuilding a
+    // lot-wise bill for the whole seller would produce a net that cannot
+    // match stored.net, so recovery would reject every candidate and the
+    // PDF would silently fall back to the stored snapshot.
+    const b = buildAgriBill(db, a.id, stored.name, cfg, billRebuildOpts(stored));
     if (b && !b.error) {
       if (!firstHit) firstHit = b;
       const net = Number(b.summary && b.summary.netAmount) || 0;
@@ -9679,9 +9848,11 @@ app.get('/api/bills/pdf/:auctionId/:sellerName', requireView, async (req, res) =
 
     const storedRow = db.get('SELECT * FROM bills WHERE name = ? AND bil = ? LIMIT 1', [sellerName, parseInt(billNo)]);
     // storedRow.trader_id pins which planter this bill was raised for; without
-    // it a duplicated name rebuilds from BOTH planters' lots.
+    // it a duplicated name rebuilds from BOTH planters' lots. billRebuildOpts
+    // adds the lot scope for lot-wise rows, so a one-lot bill does not reprint
+    // carrying the planter's entire lot list.
     let bill = buildAgriBill(db, req.params.auctionId, sellerName, cfg,
-      { traderId: storedRow && storedRow.trader_id });
+      billRebuildOpts(storedRow));
     let live = bill && !bill.error;
     if (!live) {
       if (!storedRow) return res.status(404).json({ error: bill?.error || `No bill data found for "${sellerName}"` });
@@ -9946,9 +10117,10 @@ app.post('/api/bills/pdf-bulk', requireView, async (req, res) => {
 
     const payloads = [];
     for (const stored of ordered) {
-      // See the purchase reprint above — bills.trader_id pins the planter.
+      // See the purchase reprint above — bills.trader_id pins the planter,
+      // and billRebuildOpts adds the lot scope for lot-wise rows.
       let bill = stored.auction_id
-        ? buildAgriBill(db, stored.auction_id, stored.name, cfg, { traderId: stored.trader_id })
+        ? buildAgriBill(db, stored.auction_id, stored.name, cfg, billRebuildOpts(stored))
         : null;
       let live = bill && !bill.error;
       if (!live) {
@@ -12207,7 +12379,12 @@ app.post('/api/invoices/preview/:auctionId', requireView, (req, res) => {
       docNo: req.body.invoiceNo,
     });
   } else if (type === 'agri') {
-    invoice = buildAgriBill(db, req.params.auctionId, buyerCode, cfg);
+    // In lot-wise mode the modal previews the single lot it is about to bill,
+    // so the preview matches the document that will actually be raised.
+    invoice = buildAgriBill(db, req.params.auctionId, buyerCode, cfg, {
+      lotNo: req.body.lotNo || (lotNos && lotNos.length === 1 ? lotNos[0] : ''),
+      lotId: req.body.lotId,
+    });
     if (invoice && invoice.error) return res.status(404).json({ error: invoice.error });
   } else {
     // "All sale types" reaches here as a blank saleType. A single-buyer

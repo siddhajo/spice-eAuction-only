@@ -45,6 +45,7 @@ The app consumes flags two ways:
 | `flag_proforma_invoice` | **Full gate**: Document Type selectors in both Generate modals + Original/Proforma/All list filter + ⬆ Raise Original action; server 403s proforma writes, 404s raise-original, pins `/api/invoices` to originals, ignores `?type=proforma`. OFF = the pre-proforma flow. Default OFF. | `server.js` `proformaFeatureOn()`, `index.html` `featProformaOn()`/`.feat-proforma` |
 
 | `flag_lotwise_purchase` | **Generation-mode switch**: OFF = one purchase invoice per dealer (seller-wise, historical). ON = one purchase invoice per LOT, each with its own number. Swaps the Generate modal's seller picker for a lot picker, adds `/eligible-lots`, changes `generate-all` to walk lots, adds a per-lot duplicate guard (409), and re-keys the generation gate on the lot. Default OFF. | `server.js` `lotwisePurchaseOn()`/`purchaseRebuildOpts()`, `calculations.js` `buildPurchaseInvoice(opts.lotNo/lotId/docNo)`, `index.html` `featLotwisePurchaseOn()` |
+| `flag_lotwise_bills` | Same switch for **Bills of Supply**: OFF = one bill per planter, ON = one bill per LOT with its own bill number. Adds `/api/bills/eligible-lots`, lot-walking `generate-all`, per-lot 409 guard, lot-keyed gate, and lot scope in both PDF paths *and* in `recoverAgriBillByAno`. Default OFF. | `server.js` `lotwiseBillsOn()`/`billRebuildOpts()`, `calculations.js` `buildAgriBill(opts.lotNo/lotId)`, `index.html` `featLotwiseBillsOn()` |
 
 > Added 2026-08-18. Note the `COALESCE(is_proforma,0) = 0` filters in the
 > statutory/analytical readers are deliberately **not** flag-gated — drafts
@@ -68,19 +69,30 @@ migration with no backfill). Every reprint path routes through
 row. A reprint path that skips it will render a one-lot invoice with the
 seller's entire lot list.
 
-Two things needed fixing to make lot-wise correct, both covered by
-`tests/lotwise-purchase.*.js`:
+Things that needed fixing to make lot-wise correct — all covered by
+`tests/` (run `sh tests/run-lotwise.sh`):
 
-- **194Q TDS ordering.** The prior-purchases accumulation in
+- **194Q TDS ordering** (purchase). The prior-purchases accumulation in
   `calculations.js` orders a dealer's trades by `(date, auction_id)`. That
   totally orders them only while there is at most one row per dealer per
   auction — true seller-wise, false lot-wise, where every sibling shares both
   keys and each would independently believe it crossed the 50 L threshold.
   Lot-wise adds `CAST(invo AS INTEGER)` as a third key. Seller-wise keeps the
   original two-key rule untouched.
-- **Generation gate.** The "remaining parties" join marked a dealer done once
-  ANY purchase row existed for them. Lot-wise joins on the lot as well, or
-  Generate disables itself after a dealer's first lot.
+- **Generation gate** (both). The "remaining parties" join marked a party done
+  once ANY document row existed for them. Lot-wise joins on the lot as well,
+  or Generate disables itself after the party's first lot.
+- **`recoverAgriBillByAno`** (bills). This rebuilds a bill from a re-resolved
+  trade and accepts the candidate only when the recomputed net matches the
+  stored net. Rebuilt seller-wise, a lot-wise bill's net can never match, so
+  recovery would reject every candidate and the PDF would silently drop to the
+  stored snapshot. It now takes the lot scope via `billRebuildOpts()`.
+
+**Already correct, no change needed:** the Tally URD purchase voucher builder
+(`tally-xml.js buildURDPurchaseRows`) scopes each bill to its own lots through
+the `line_items` snapshot plus a per-auction claimed-lot set. A lot-wise bill's
+snapshot holds exactly one lot, so lot-wise yields one voucher per lot with no
+double-counting. Asserted in `tests/lotwise-bills.http.js` [D].
 
 ---
 

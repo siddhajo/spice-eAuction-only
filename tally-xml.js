@@ -2205,6 +2205,7 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
     const lotPayable = (lot) => r2(
       Number(lot.amount || 0) + Number(lot.refund || 0)
       - Number(lot.com || 0) - Number(lot.sertax || 0)
+      - Number(lot.cgst || 0) - Number(lot.sgst || 0) - Number(lot.igst || 0)
     );
     let lotPayableSum = 0;
     const lotPayRows = (Array.isArray(row.lots) ? row.lots : []).map((lot) => {
@@ -4457,9 +4458,18 @@ function _rdLedgerSuffix(cfg) {
   const v = cfg && cfg.tally_rd_ledger_suffix;
   return (v != null && String(v).trim() !== '') ? String(v) : '-PURCHASE';
 }
+// Returns the configured URD suffix template, or null for "no suffix".
+//
+// An EMPTY setting means exactly that — no suffix — so clearing the field in
+// Settings removes it. A MISSING key is different: it only happens before
+// company-config seeds the defaults, and treating that as "no suffix" would
+// silently rename every existing planter ledger on the first run after an
+// upgrade. So missing → the historical default, empty → nothing.
 function _urdLedgerTemplate(cfg) {
-  const v = cfg && cfg.tally_urd_ledger_suffix;
-  return (v != null && String(v).trim() !== '') ? String(v) : '-[{PAN}]';
+  const v = cfg ? cfg.tally_urd_ledger_suffix : undefined;
+  if (v == null) return '-[{PAN}]';          // key absent — pre-seed default
+  const t = String(v).trim();
+  return t === '' ? null : String(v);        // explicitly cleared — no suffix
 }
 function _rdPurchaseLedgerName(n, cfg) {
   const s = String(n || '').trim();
@@ -4468,12 +4478,17 @@ function _rdPurchaseLedgerName(n, cfg) {
 function _urdPurchaseLedgerName(n, pan, cfg) {
   const s = String(n || '').trim();
   if (!s) return s;
-  const p = String(pan || '').trim();
   const tmpl = _urdLedgerTemplate(cfg);
+  // Suffix cleared in Settings → the bare name.
+  if (tmpl == null) return s;
+  const p = String(pan || '').trim();
   if (tmpl.includes('{PAN}')) {
-    // PAN-templated suffix: substitute the PAN when present; with no PAN on
-    // file, fall back to the RD suffix (matches the old "-PURCHASE" fallback).
-    return p ? s + tmpl.replace(/\{PAN\}/g, p) : s + _rdLedgerSuffix(cfg);
+    // PAN-templated suffix. No PAN on file → NO SUFFIX, the bare name.
+    //
+    // This used to fall back to the RD suffix, which meant whatever was typed
+    // into "RD Party Ledger Suffix" turned up on URD vouchers for any planter
+    // missing a PAN — a dealer setting leaking onto an agriculturist ledger.
+    return p ? s + tmpl.replace(/\{PAN\}/g, p) : s;
   }
   // Plain suffix (no placeholder) — always appended, PAN or not.
   return s + tmpl;

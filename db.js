@@ -463,6 +463,15 @@ async function initDb() {
     -- Supply PDF can always render the LOT NO / PRICE / VALUE columns even
     -- if the underlying lots are later edited, deleted, or re-imported.
     line_items TEXT DEFAULT '',
+    -- ── Lot-wise document marker (flag_lotwise_bills) ────────────────
+    -- Same contract as purchases.lot_no / lot_id: empty lot_no = the
+    -- classic SELLER-WISE bill covering every lot that planter sold in
+    -- the trade (what all pre-existing rows are); non-empty = a LOT-WISE
+    -- bill covering exactly the one lot named here. Note this is about
+    -- how many DOCUMENTS exist, not how many lines they carry —
+    -- line_items above has always been per-lot within one bill.
+    lot_no TEXT DEFAULT '',
+    lot_id INTEGER DEFAULT NULL,
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
@@ -1102,6 +1111,8 @@ async function initDb() {
     // No backfill runs and no historical document changes meaning.
     "ALTER TABLE purchases ADD COLUMN lot_no TEXT DEFAULT ''",
     'ALTER TABLE purchases ADD COLUMN lot_id INTEGER',
+    "ALTER TABLE bills ADD COLUMN lot_no TEXT DEFAULT ''",
+    'ALTER TABLE bills ADD COLUMN lot_id INTEGER',
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }

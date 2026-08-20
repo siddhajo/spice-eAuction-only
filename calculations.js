@@ -1321,14 +1321,39 @@ function buildAgriBill(db, auctionId, sellerName, cfg, opts) {
   if (Number.isFinite(traderId)) { sellerSql = ' AND trader_id = ?'; sellerArgs = [traderId]; }
   else if (userId) { sellerSql = " AND TRIM(COALESCE(user_id,'')) = ?"; sellerArgs = [userId]; }
 
+  // ── Lot-wise mode (flag_lotwise_bills) ─────────────────────────────
+  // opts.lotId / opts.lotNo narrow the bill to a SINGLE lot. Neither supplied
+  // → unchanged seller-wise behaviour, so existing callers are unaffected.
+  // See buildPurchaseInvoice for why lotId is preferred and lotNo is the
+  // re-import fallback.
+  const lotId = (opts.lotId != null && String(opts.lotId).trim() !== '')
+    ? Number(opts.lotId) : null;
+  const lotNo = String(opts.lotNo == null ? '' : opts.lotNo).trim();
+  let lotSql = '', lotArgs = [];
+  if (Number.isFinite(lotId) && lotId > 0) { lotSql = ' AND id = ?'; lotArgs = [lotId]; }
+  else if (lotNo) { lotSql = ' AND TRIM(lot_no) = ?'; lotArgs = [lotNo]; }
+  const isLotWise = !!lotSql;
+
   // First check: any lots at all for this seller (case-insensitive)?
-  const allLots = db.all(
-    `SELECT * FROM lots WHERE auction_id = ? AND UPPER(TRIM(name)) = UPPER(?)${sellerSql} ORDER BY lot_no`,
-    [auctionId, trimmedName, ...sellerArgs]
+  let allLots = db.all(
+    `SELECT * FROM lots WHERE auction_id = ? AND UPPER(TRIM(name)) = UPPER(?)${sellerSql}${lotSql} ORDER BY lot_no`,
+    [auctionId, trimmedName, ...sellerArgs, ...lotArgs]
   );
-  
+
+  // Re-import recovery — a stale lot_id falls back to the lot NUMBER, which
+  // survives a delete-and-reimport of the trade. Without this a lot-wise
+  // bill's PDF would drop to the stored snapshot and lose live pricing.
+  if (!allLots.length && Number.isFinite(lotId) && lotNo) {
+    allLots = db.all(
+      `SELECT * FROM lots WHERE auction_id = ? AND UPPER(TRIM(name)) = UPPER(?)${sellerSql} AND TRIM(lot_no) = ? ORDER BY lot_no`,
+      [auctionId, trimmedName, ...sellerArgs, lotNo]
+    );
+  }
+
   if (!allLots.length) {
-    return { error: `No lots found for seller "${trimmedName}" in this auction. Check the exact spelling.` };
+    return { error: isLotWise
+      ? `Lot ${lotNo || lotId} not found for seller "${trimmedName}" in this auction.`
+      : `No lots found for seller "${trimmedName}" in this auction. Check the exact spelling.` };
   }
 
   // Registered-dealer lots aren't eligible for a Bill of Supply; planter lots
@@ -1399,6 +1424,12 @@ function buildAgriBill(db, auctionId, sellerName, cfg, opts) {
       // See the note in buildPurchaseInvoice — stamped onto bills.trader_id.
       trader_id: firstLot.trader_id != null ? firstLot.trader_id : null,
     },
+    // Lot-wise identity, echoed back so the caller can stamp bills.lot_no /
+    // lot_id. Both blank on a seller-wise build — which is what marks the
+    // stored row seller-wise.
+    lotWise: isLotWise,
+    lotNo: isLotWise ? String(firstLot.lot_no || '') : '',
+    lotId: isLotWise ? (firstLot.id != null ? firstLot.id : null) : null,
     lineItems,
     summary: {
       totalQty, totalRefundQty, totalPuramt,
