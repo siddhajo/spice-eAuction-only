@@ -108,25 +108,75 @@ async function resolveChromium() {
   return null;
 }
 
-async function renderViaPuppeteer(html) {
-  const pptr = getPuppeteer();
-  if (!pptr) return null;
-  if (!_pptrBrowserPromise) {
-    const chrome = await resolveChromium();
-    if (!chrome) return null; // no browser binary anywhere — let caller throw
-    _pptrBrowserPromise = pptr.launch({
-      executablePath: chrome.executablePath,
-      args: chrome.args,
-      headless: chrome.headless,
-    });
+// The launched Chromium is cached and reused across requests (launching costs
+// ~1s), but it is a separate OS process that can die under us: an out-of-memory
+// kill on a big batch, a crash, a laptop sleep, or the operator quitting the
+// browser. Caching the promise alone meant one death poisoned the cache for the
+// lifetime of the server — every later print failed with Puppeteer's
+// "Connection closed." until someone restarted the app. So: drop the cache on
+// disconnect (and on a failed launch, which would otherwise cache a rejected
+// promise), and let the caller retry with a freshly launched browser.
+function forgetBrowser(p) {
+  if (_pptrBrowserPromise === p || p === undefined) _pptrBrowserPromise = null;
+}
+
+async function getBrowser(pptr) {
+  if (_pptrBrowserPromise) {
+    try {
+      const b = await _pptrBrowserPromise;
+      if (b && b.connected) return b;
+    } catch (_) { /* previous launch failed — fall through and relaunch */ }
+    _pptrBrowserPromise = null;
   }
-  const browser = await _pptrBrowserPromise;
+  const chrome = await resolveChromium();
+  if (!chrome) return null; // no browser binary anywhere — let caller throw
+  const p = pptr.launch({
+    executablePath: chrome.executablePath,
+    args: chrome.args,
+    headless: chrome.headless,
+  });
+  _pptrBrowserPromise = p;
+  let browser;
+  try {
+    browser = await p;
+  } catch (e) {
+    forgetBrowser(p);         // never keep a rejected launch in the cache
+    throw e;
+  }
+  browser.once('disconnected', () => forgetBrowser(p));
+  return browser;
+}
+
+// True for the errors that mean "the browser went away", as opposed to a real
+// problem with the HTML. Only these are worth a relaunch-and-retry.
+function isDeadBrowserError(e) {
+  const m = String((e && e.message) || e || '');
+  return /Connection closed|Target closed|Session closed|Protocol error|browser has disconnected|Navigating frame was detached/i.test(m);
+}
+
+async function renderOnce(pptr, html) {
+  const browser = await getBrowser(pptr);
+  if (!browser) return null;
   const page = await browser.newPage();
   try {
     await page.setContent(html, { waitUntil: 'networkidle0' });
     return await page.pdf({ format: 'A4', printBackground: true, preferCSSPageSize: true });
   } finally {
-    await page.close();
+    try { await page.close(); } catch (_) { /* browser already gone */ }
+  }
+}
+
+async function renderViaPuppeteer(html) {
+  const pptr = getPuppeteer();
+  if (!pptr) return null;
+  try {
+    return await renderOnce(pptr, html);
+  } catch (e) {
+    if (!isDeadBrowserError(e)) throw e;
+    // The cached Chromium had died. Relaunch once and try again, so an OOM on
+    // one batch doesn't break every print until the server restarts.
+    _pptrBrowserPromise = null;
+    return await renderOnce(pptr, html);
   }
 }
 

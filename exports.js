@@ -516,35 +516,28 @@ async function exportLotName(db, auctionId) {
 // columns are intentionally dropped — bills carry the post-purchase
 // numbers; this is the per-lot cost view only.
 async function exportLotPayment(db, auctionId) {
+  // Flat, LOT-ordered sheet: one row per lot in lot-number order, carrying the
+  // branch (BR), seller name, quantity, rate and bill amount. `lot2` repeats
+  // the lot number in the trailing column as a reading aid for the wide row —
+  // the same lot marker appears on both the left and right edges. Matches the
+  // attached "Lot | BR | Name | Qty | Rate | Bill Amt | Lot" layout.
   const rows = db.all(
-    `SELECT lot_no AS lot, qty, price AS rate, amount AS cost,
-            name AS seller_name, ppla AS place
+    `SELECT lot_no AS lot, branch AS br, name, qty, price AS rate,
+            amount AS cost, lot_no AS lot2
        FROM lots WHERE auction_id = ?
-       ORDER BY ppla, name, lot_no`, [auctionId]
+       ORDER BY CAST(lot_no AS INTEGER), lot_no`, [auctionId]
   );
   const cols = [
-    { header: 'LOT',         key: 'lot',         width: 8  },
-    { header: 'QTY',         key: 'qty',         width: 12 },
-    { header: 'RATE',        key: 'rate',        width: 10 },
-    { header: 'COST',        key: 'cost',        width: 14 },
-    { header: 'SELLER NAME', key: 'seller_name', width: 28 },
+    { header: 'LOT',      key: 'lot',  width: 8  },
+    { header: 'BR',       key: 'br',   width: 6  },
+    { header: 'NAME',     key: 'name', width: 28 },
+    { header: 'QTY',      key: 'qty',  width: 12 },
+    { header: 'RATE',     key: 'rate', width: 10 },
+    { header: 'BILL AMT', key: 'cost', width: 16 },
+    { header: 'LOT',      key: 'lot2', width: 8  },
   ];
-  // Split into sections by seller place so the XLSX shows
-  // PAMPUPARA / BODI / etc. as inline section headers — mirrors
-  // the PDF's grouping behaviour.
-  const sections = [];
-  let cur = null;
-  rows.forEach(r => {
-    const key = r.place || '(no place)';
-    if (!cur || cur.title !== key) {
-      cur = { title: key, rows: [] };
-      sections.push(cur);
-    }
-    cur.rows.push(r);
-  });
   return createExcelBuffer('LotPayment', cols, rows, {
     db, title: 'Lot Payment', metaLines: auctionMeta(db, auctionId),
-    sections,
     grandTotal: {
       label: 'TOTAL',
       values: {

@@ -185,6 +185,31 @@ function cleanup() {
   check('and returns a real PDF', pdfBuf.slice(0, 4).toString() === '%PDF',
         `starts with ${JSON.stringify(pdfBuf.slice(0, 20).toString())}`);
 
+  // ── Commission Bill (Bill of Supply) — the same lot scoping ──
+  // /api/bills/commission-bos-bulk emits one A4 page per lot and names the
+  // download CommissionBoS_Batch_<pages>.pdf, so the page count is readable
+  // straight off the Content-Disposition. It used to pull every lot of the
+  // seller regardless of the row's lot_no: RAMU's two one-lot bills each came
+  // back as 2 pages (his other lot printed on both), and the whole-trade
+  // "Commission Bill Selected" squared to 5 pages instead of 3.
+  console.log('\n[C2] Commission BoS honours the row\'s lot');
+  const commPages = async (ids) => {
+    const r = await fetch(`${B}/api/bills/commission-bos-bulk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + TOKEN },
+      body: JSON.stringify({ ids }),
+    });
+    if (!r.ok) return 'HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200);
+    const m = /Batch_(\d+)\.pdf/.exec(r.headers.get('content-disposition') || '');
+    return m ? Number(m[1]) : 'no page count in ' + r.headers.get('content-disposition');
+  };
+  for (const row of rows) {
+    const n = await commPages([row.id]);
+    check(`commission BoS for bill ${row.bil} (lot ${row.lot_no}) is 1 page`, n === 1, `got ${n}`);
+  }
+  const nAll = await commPages(rows.map(r => r.id));
+  check('commission BoS over all 3 lot-wise bills is 3 pages, not 5', nAll === 3, `got ${nAll}`);
+
   // ── Downstream: Tally URD purchase vouchers ──
   // buildURDPurchaseRows scopes each bill to its own lots via the
   // line_items snapshot, with a per-auction claimed-lot set so no lot is

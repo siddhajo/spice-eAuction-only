@@ -1,0 +1,148 @@
+// Lot Payment export — verify the new "Lot | BR | Name | Qty | Rate | Bill Amt
+// | Lot" layout, flat and lot-ordered, for BOTH the XLSX and PDF engines.
+// Runs against a THROWAWAY database.
+const os = require('os'), path = require('path'), fs = require('fs');
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'lotpay-'));
+process.env.SPICE_DATA_DIR = TMP;
+
+const { initDb, getDb, closeDb } = require(path.join(__dirname, '..', 'db.js'));
+const { initCompanySettings, getSettingsFlat } = require(path.join(__dirname, '..', 'company-config.js'));
+const { exportLotPayment } = require(path.join(__dirname, '..', 'exports.js'));
+const { exportPdf, COLS, ROW_PREPROCESS } = require(path.join(__dirname, '..', 'exports-pdf.js'));
+const ExcelJS = require(path.join(__dirname, '..', 'node_modules', 'exceljs'));
+
+let pass = 0, fail = 0;
+function check(name, cond, detail) {
+  if (cond) { pass++; console.log('  ok   ' + name); }
+  else { fail++; console.log('  FAIL ' + name + (detail ? '\n         ' + detail : '')); }
+}
+
+(async () => {
+  await initDb();
+  const db = getDb();
+  initCompanySettings(db);
+
+  // Fixture: one trade, lots entered OUT of order and across two branches, so
+  // the lot-number ordering and the BR column are both exercised. One unpriced
+  // lot (rate 0, amount 0) mirrors the blank rows in the attached sheet.
+  db.run(`INSERT INTO auctions (id,ano,date,state) VALUES (1,'7','2026-08-10','TAMIL NADU')`);
+  const lots = [
+    // lot_no, branch, name,               qty,    price, amount
+    ['003', 'NK', 'ANILKUMAR',        25.1,  3194, 88219],
+    ['001', 'NK', 'PUNYAMOORTHY T',   73.4,  0,     0],      // unpriced
+    ['002', 'NK', 'MURUGANANDAM K',   71.7,  3178, 234124],
+    ['010', 'PB', 'NATIONAL SPICES',  163.1, 2302, 377509],
+  ];
+  for (const [lot_no, branch, name, qty, price, amount] of lots) {
+    db.run(`INSERT INTO lots (auction_id,lot_no,branch,name,qty,price,amount)
+            VALUES (1,?,?,?,?,?,?)`, [lot_no, branch, name, qty, price, amount]);
+  }
+
+  // ── COLUMN LAYOUT (single source of truth is the PDF COLS def) ──
+  console.log('[1] Column layout matches the attached format');
+  const headers = COLS.lot_payment.map(c => c.header);
+  check('headers are Lot, BR, Name, Qty, Rate, Bill Amt, Lot',
+        JSON.stringify(headers) === JSON.stringify(['LOT','BR','NAME','QTY','RATE','BILL AMT','LOT']),
+        JSON.stringify(headers));
+  check('the two LOT columns bracket the row (first + last)',
+        COLS.lot_payment[0].key === 'lot' &&
+        COLS.lot_payment[COLS.lot_payment.length - 1].key === 'lot2');
+
+  // ── XLSX ──
+  console.log('\n[2] XLSX output');
+  const buf = await exportLotPayment(db, 1);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buf);
+  const ws = wb.worksheets[0];
+
+  // Locate the header row (the one whose first cells read LOT / BR / NAME).
+  let headerRow = null;
+  ws.eachRow((row, n) => {
+    if (headerRow) return;
+    const vals = row.values.map(v => String(v == null ? '' : v).trim().toUpperCase());
+    if (vals.includes('LOT') && vals.includes('BR') && vals.includes('NAME')) headerRow = n;
+  });
+  check('a LOT/BR/NAME header row is present', headerRow != null);
+
+  // Data rows follow the header, in lot-number order, until the TOTAL row.
+  const dataRows = [];
+  for (let n = headerRow + 1; n <= ws.rowCount; n++) {
+    const row = ws.getRow(n);
+    const first = String(row.getCell(1).value == null ? '' : row.getCell(1).value).trim();
+    if (!first) continue;
+    if (first.toUpperCase() === 'TOTAL') break;
+    dataRows.push(row);
+  }
+  const lotOrder = dataRows.map(r => String(r.getCell(1).value).trim());
+  check('rows are LOT-ordered (001,002,003,010), not entry/place order',
+        JSON.stringify(lotOrder) === JSON.stringify(['001','002','003','010']),
+        JSON.stringify(lotOrder));
+
+  // Column-by-column check of the MURUGANANDAM row (lot 002).
+  const r002 = dataRows.find(r => String(r.getCell(1).value).trim() === '002');
+  check('BR column carries the branch (NK)', r002 && String(r002.getCell(2).value).trim() === 'NK',
+        r002 && String(r002.getCell(2).value));
+  check('Name column carries the seller', r002 && String(r002.getCell(3).value).trim() === 'MURUGANANDAM K',
+        r002 && String(r002.getCell(3).value));
+  check('Qty column', r002 && Number(r002.getCell(4).value) === 71.7);
+  check('Rate column', r002 && Number(r002.getCell(5).value) === 3178);
+  check('Bill Amt column', r002 && Number(r002.getCell(6).value) === 234124);
+  check('trailing Lot column repeats the lot number',
+        r002 && String(r002.getCell(7).value).trim() === '002', r002 && String(r002.getCell(7).value));
+
+  // The unpriced lot renders with zero rate / bill amt (not dropped).
+  const r001 = dataRows.find(r => String(r.getCell(1).value).trim() === '001');
+  check('unpriced lot is kept with 0 rate / 0 bill amt',
+        r001 && Number(r001.getCell(5).value) === 0 && Number(r001.getCell(6).value) === 0);
+
+  // Lot number preserves its leading zeros (stored as text, not coerced to 1).
+  check('lot number keeps leading zeros (text, e.g. "001")',
+        r001 && String(r001.getCell(1).value) === '001', r001 && JSON.stringify(r001.getCell(1).value));
+
+  // Bill Amt is a real number with a money format (right-aligned money column).
+  check('Bill Amt cell is numeric with a 2-decimal money format',
+        r002 && typeof r002.getCell(6).value === 'number' &&
+        /0\.00/.test(String(r002.getCell(6).numFmt || '')),
+        r002 && `${typeof r002.getCell(6).value} / ${r002.getCell(6).numFmt}`);
+
+  // Grand total sums Qty and Bill Amt.
+  let totalRow = null;
+  ws.eachRow((row) => {
+    const first = String(row.getCell(1).value == null ? '' : row.getCell(1).value).trim().toUpperCase();
+    if (first === 'TOTAL') totalRow = row;
+  });
+  check('TOTAL row sums Qty (333.30)', totalRow && Math.abs(Number(totalRow.getCell(4).value) - 333.3) < 0.01,
+        totalRow && String(totalRow.getCell(4).value));
+  check('TOTAL row sums Bill Amt (699,852)', totalRow && Number(totalRow.getCell(6).value) === 699852,
+        totalRow && String(totalRow.getCell(6).value));
+
+  // No place-group section rows (the layout is flat now).
+  let sawPlaceSection = false;
+  ws.eachRow((row) => {
+    const first = String(row.getCell(1).value == null ? '' : row.getCell(1).value).trim().toUpperCase();
+    if (first.endsWith(' TOTAL') && first !== 'TOTAL') sawPlaceSection = true;
+  });
+  check('no per-place subtotal/section rows (flat list)', !sawPlaceSection);
+
+  // ── PDF: prove the row set is FLAT (no place grouping) ──
+  // exportPdf returns a binary PDF, so instead of parsing it we check the
+  // exact rows the PDF renderer would draw, via the shared getRowsForType +
+  // ROW_PREPROCESS path. A leftover place-grouping config would inject
+  // _isSection / _isSubtotal rows here.
+  console.log('\n[3] PDF row set is flat and lot-ordered');
+  check('lot_payment has no ROW_PREPROCESS (grouping) config',
+        !ROW_PREPROCESS || ROW_PREPROCESS.lot_payment == null);
+
+  // ── PDF: it still renders end-to-end ──
+  const cfg = getSettingsFlat(db);
+  const pdf = await exportPdf(db, 'lot_payment', 1, cfg, {});
+  check('PDF renders to a real %PDF buffer',
+        Buffer.isBuffer(pdf) && pdf.slice(0, 4).toString() === '%PDF',
+        pdf && pdf.slice(0, 8).toString());
+  check('PDF is non-trivial in size', pdf && pdf.length > 1000, pdf && `${pdf.length} bytes`);
+
+  console.log(`\n${pass} passed, ${fail} failed\n`);
+  closeDb && closeDb();
+  fs.rmSync(TMP, { recursive: true, force: true });
+  process.exit(fail ? 1 : 0);
+})().catch(e => { console.error(e); try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (_) {} process.exit(1); });

@@ -223,7 +223,7 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
 
   function isNumericCol(col) {
     const h = (col.header || '').toUpperCase();
-    return /^(QTY|GROSS QTY|BAG|BAGS|PRICE|RATE|AMOUNT|BILL AMOUNT|PURCHASE|PQTY|PRATE|PURAMT|CGST|SGST|IGST|GST|TCS|TOTAL|DISCOUNT|PAYABLE|ADVANCE|BALANCE|LITRE|LOTS|TDS|ASSESS_VALUE|VALUE|COST|NET|GUNNY|TRANSPORT|INSURANCE|CARDAMOM|CARDAMOM_COST|GUNNY_COST|ROUND|BILAMT|BILLAMOUNT|REFUND|COM|COMMISSION)$/.test(h);
+    return /^(QTY|GROSS QTY|BAG|BAGS|PRICE|RATE|AMOUNT|BILL AMOUNT|BILL AMT|PURCHASE|PQTY|PRATE|PURAMT|CGST|SGST|IGST|GST|TCS|TOTAL|DISCOUNT|PAYABLE|ADVANCE|BALANCE|LITRE|LOTS|TDS|ASSESS_VALUE|VALUE|COST|NET|GUNNY|TRANSPORT|INSURANCE|CARDAMOM|CARDAMOM_COST|GUNNY_COST|ROUND|BILAMT|BILLAMOUNT|REFUND|COM|COMMISSION)$/.test(h);
   }
 
   function fmtCell(val, col) {
@@ -661,13 +661,16 @@ const COLS = {
     { header: 'CONTROL', key: 'control', width: 14 },
   ],
   lot_payment: [
-    // Grouped by seller place via ROW_PREPROCESS — each place gets a
-    // subtotal row labelled "{PLACE} TOTAL" with summed QTY / COST.
-    { header: 'LOT',         key: 'lot',         width: 8  },
-    { header: 'QTY',         key: 'qty',         width: 12 },
-    { header: 'RATE',        key: 'rate',        width: 10 },
-    { header: 'COST',        key: 'cost',        width: 16 },
-    { header: 'SELLER NAME', key: 'seller_name', width: 28 },
+    // Flat, LOT-ordered list. `lot2` repeats the lot number in the trailing
+    // column so the wide row carries its lot marker on both edges. Matches the
+    // attached "Lot | BR | Name | Qty | Rate | Bill Amt | Lot" layout.
+    { header: 'LOT',      key: 'lot',  width: 8  },
+    { header: 'BR',       key: 'br',   width: 6  },
+    { header: 'NAME',     key: 'name', width: 28 },
+    { header: 'QTY',      key: 'qty',  width: 12 },
+    { header: 'RATE',     key: 'rate', width: 10 },
+    { header: 'BILL AMT', key: 'cost', width: 16 },
+    { header: 'LOT',      key: 'lot2', width: 8  },
   ],
   price_list: [
     { header: 'LOT', key: 'lot', width: 8 },
@@ -1061,13 +1064,9 @@ const ROW_PREPROCESS = {
     subtotalKeys: ['bag', 'qty', 'amount', 'pqty', 'puramt', 'discount', 'payable', 'advance'],
     subtotalLabelKey: 'poolername',
   },
-  // Lot Payment — group by seller place (PAMPUPARA / BODI / etc.) and
-  // emit a subtotal row at the end of each place section.
-  lot_payment: {
-    groupByKey: 'place',
-    subtotalKeys: ['qty', 'cost'],
-    subtotalLabelKey: 'seller_name',
-  },
+  // Lot Payment is a FLAT, lot-ordered list (no place grouping) — it has no
+  // ROW_PREPROCESS entry, so its rows render straight through with just the
+  // grand-total row from TOTAL_KEYS.lot_payment.
 };
 
 async function getRowsForType(db, type, auctionId, cfg, extra) {
@@ -1118,11 +1117,14 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
     }
 
     case 'lot_payment':
+      // Must stay in lock-step with exportLotPayment's query in exports.js so
+      // the PDF and the XLSX list the same lots, in the same lot-number order,
+      // with the same columns (incl. the trailing repeated lot as `lot2`).
       return db.all(
-        `SELECT lot_no AS lot, qty, price AS rate, amount AS cost,
-                name AS seller_name, ppla AS place
+        `SELECT lot_no AS lot, branch AS br, name, qty, price AS rate,
+                amount AS cost, lot_no AS lot2
            FROM lots WHERE auction_id = ?
-           ORDER BY ppla, name, lot_no`, [auctionId]);
+           ORDER BY CAST(lot_no AS INTEGER), lot_no`, [auctionId]);
 
     case 'price_list':
       return db.all(
@@ -1788,4 +1790,4 @@ function _poolerPan(db, name, traderId) {
   } catch (e) { return ''; }
 }
 
-module.exports = { exportPdf, TITLES, COLS, renderTablePdf, renderPoolerCertificatePdf };
+module.exports = { exportPdf, TITLES, COLS, ROW_PREPROCESS, renderTablePdf, renderPoolerCertificatePdf };

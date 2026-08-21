@@ -789,13 +789,30 @@ function buildFormD(ctx, db, opts) {
   // branch-tagged, so the buyer figures are whole-auction even when the report
   // is branch-filtered. If no invoices exist yet for the auction, fall back to
   // lot-derived figures (also pre-tax) so the report still renders.
+  // Which invoice stream feeds the top-buyers table.
+  //
+  // Form D is the ADVANCE Auction Report — produced at the advance stage,
+  // before the original tax invoices are raised. When the proforma flow is
+  // ON (flag_proforma_invoice), buyers are shipped against proforma drafts
+  // first and the originals may not exist yet, so the advance figures live on
+  // the PROFORMA rows (is_proforma = 1). A raised proforma keeps its row
+  // (is_proforma stays 1, raised_invo stamped), so this stream stays complete
+  // after raising and never double-counts against the new original row.
+  //
+  // When the flow is OFF (default) there are no proforma rows, so we read the
+  // originals (is_proforma = 0) exactly as before — this branch is unchanged
+  // for every install that doesn't use proformas.
+  const proformaOn = db
+    ? String(readSetting(db, 'flag_proforma_invoice', '')).toLowerCase() === 'true'
+    : false;
+  const isProformaFilter = proformaOn ? 1 : 0;
   let buyersAll = [];
   const invRows = db ? db.all(
     `SELECT MAX(TRIM(buyer1)) AS name, MAX(TRIM(buyer)) AS code,
             SUM(COALESCE(qty,0)) AS kilos, SUM(COALESCE(amount,0)) AS value
-       FROM invoices WHERE ano = ? AND COALESCE(is_proforma,0) = 0
+       FROM invoices WHERE ano = ? AND COALESCE(is_proforma,0) = ?
        GROUP BY UPPER(TRIM(COALESCE(NULLIF(TRIM(buyer1),''), buyer)))`,
-    [auction.ano]) || [] : [];
+    [auction.ano, isProformaFilter]) || [] : [];
   if (invRows.length) {
     buyersAll = invRows.map(r => ({
       name: r.name || r.code || 'UNKNOWN',
@@ -1871,6 +1888,243 @@ async function eauctionCsv(db, opts) {
 }
 
 // ════════════════════════════════════════════════════════════
+// REPORT — LITRE WEIGHT (per-lot listing)
+// ════════════════════════════════════════════════════════════
+//
+// One row per lot in the trade, in lot-number order:
+//   LOT | QTY | LITRE(GM) | RATE | CARDAMOM COST | TRADE NAME
+//
+// Unsold / not-auctioned lots are KEPT and print with 0.00 rate, 0.00 cost
+// and a blank trade name — the sheet doubles as the arrival list, so a gap in
+// the lot sequence would read as a missing lot rather than an unsold one.
+// That is why the context is built with `includeUnpriced`: the default price
+// gate drops `amount = 0` rows.
+function buildLitreWeight(ctx) {
+  const rows = ctx.rows.slice().sort((a, b) => {
+    const na = parseInt(a.lot, 10), nb = parseInt(b.lot, 10);
+    if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na - nb;
+    return String(a.lot || '').localeCompare(String(b.lot || ''), undefined, { numeric: true });
+  }).map(r => ({
+    lot:   String(r.lot == null ? '' : r.lot),
+    qty:   Number(r.qty) || 0,
+    // `litre` is TEXT in the schema (litre weight in grams, e.g. "400").
+    litre: String(r.litre == null ? '' : r.litre).trim(),
+    rate:  Number(r.price) || 0,
+    cost:  Number(r.amount) || 0,
+    // Trade name of the winning bidder; blank for an unsold lot.
+    trade: String(r.buyer1 || r.lot_buyer1 || '').trim(),
+  }));
+  const totals = rows.reduce((t, r) => {
+    t.qty += r.qty; t.cost += r.cost; return t;
+  }, { qty: 0, cost: 0 });
+  return { rows, totals };
+}
+
+// Shared context options — see the note on buildLitreWeight about unsold lots.
+const _lwCtx = (opts) => Object.assign({}, opts, { includeUnpriced: true });
+
+function litreWeightJson(db, opts) {
+  const ctx = getReportContext(db, _lwCtx(opts));
+  const d = buildLitreWeight(ctx);
+  return {
+    title: 'Litre Weight',
+    auction: { ano: ctx.auction.ano, date: fmtDateDMY(ctx.auction.date), state: ctx.auction.state },
+    columns: [
+      { key: 'lot',   header: 'LOT' },
+      { key: 'qty',   header: 'QTY',            numeric: true, fmt: 'qty' },
+      { key: 'litre', header: 'LITRE(GM)',      numeric: true },
+      { key: 'rate',  header: 'RATE',           numeric: true, fmt: 'price' },
+      { key: 'cost',  header: 'CARDAMOM COST',  numeric: true, fmt: 'money' },
+      { key: 'trade', header: 'TRADE NAME' },
+    ],
+    sections: [{ title: '', rows: d.rows,
+                 totals: { label: 'TOTAL', qty: d.totals.qty, cost: d.totals.cost } }],
+    grand: { label: 'TOTAL', qty: d.totals.qty, cost: d.totals.cost },
+  };
+}
+
+async function litreWeightXlsx(db, opts) {
+  _loadDateFormat(db);
+  const ctx = getReportContext(db, _lwCtx(opts));
+  const d = buildLitreWeight(ctx);
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('LitreWeight');
+  ws.columns = [
+    { width: 10 }, { width: 14 }, { width: 12 }, { width: 14 }, { width: 18 }, { width: 34 },
+  ];
+  // No metaLines here — the auction/date live in the green band below, and
+  // printing them in both places just repeats the same line twice.
+  writeXlsxCompanyHeader(wb, ws, getCompanyHeader(db), { colCount: 6, title: 'Litre Weight' });
+
+  // Meta band — mirrors the PDF's green strip so both formats read alike.
+  const band = ws.addRow([`Auction No: ${ctx.auction.ano}`, null, null,
+                          `Date: ${fmtDateDMY(ctx.auction.date)}`, null, 'Page: 1']);
+  ws.mergeCells(`A${band.number}:C${band.number}`);
+  ws.mergeCells(`D${band.number}:E${band.number}`);
+  band.height = 20;
+  band.font = { bold: true, size: 11 };
+  band.eachCell(c => {
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFA9D08E' } };
+    c.alignment = { horizontal: 'center', vertical: 'middle' };
+    c.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+  });
+  // Excel paginates on its own, so "Page: 1" would be a lie past the first
+  // sheet page — the header row is repeated instead via printTitles below.
+  band.getCell(6).value = '';
+
+  const head = ws.addRow(['LOT', 'QTY', 'LITRE(GM)', 'RATE', 'CARDAMOM COST', 'TRADE NAME']);
+  head.font = { bold: true, size: 10 };
+  head.height = 18;
+  head.eachCell(c => {
+    c.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+    c.alignment = { horizontal: 'center', vertical: 'middle' };
+  });
+
+  const thin = { style: 'thin' };
+  for (const r of d.rows) {
+    const row = ws.addRow([r.lot, r.qty, r.litre === '' ? '' : Number(r.litre) || r.litre,
+                           r.rate, r.cost, r.trade]);
+    row.getCell(1).alignment = { horizontal: 'left' };
+    row.getCell(2).numFmt = '#,##0.000';
+    row.getCell(3).alignment = { horizontal: 'right' };
+    row.getCell(4).numFmt = '#,##0.00';
+    row.getCell(5).numFmt = '#,##,##0.00';
+    row.getCell(6).alignment = { horizontal: 'left' };
+    row.eachCell(c => { c.border = { top: thin, bottom: thin, left: thin, right: thin }; });
+  }
+
+  const tot = ws.addRow(['TOTAL', d.totals.qty, '', '', d.totals.cost, '']);
+  tot.font = { bold: true };
+  tot.getCell(2).numFmt = '#,##0.000';
+  tot.getCell(5).numFmt = '#,##,##0.00';
+  tot.eachCell(c => {
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F0EA' } };
+    c.border = { top: thin, bottom: { style: 'double' }, left: thin, right: thin };
+  });
+
+  // Repeat the column headers on every printed page.
+  ws.pageSetup = Object.assign({}, ws.pageSetup, { printTitlesRow: `${head.number}:${head.number}` });
+  return wb.xlsx.writeBuffer();
+}
+
+async function litreWeightPdf(db, opts) {
+  _loadDateFormat(db);
+  const ctx = getReportContext(db, _lwCtx(opts));
+  const d = buildLitreWeight(ctx);
+  const header = getCompanyHeader(db);
+
+  const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 24 });
+  const buffers = []; doc.on('data', b => buffers.push(b));
+  const m = 24;
+  const pageW = doc.page.width, pageH = doc.page.height;
+  const usableW = pageW - m * 2;
+
+  // LOT | QTY | LITRE(GM) | RATE | CARDAMOM COST | TRADE NAME
+  const cw = [
+    Math.floor(usableW * 0.07),   // LOT
+    Math.floor(usableW * 0.14),   // QTY
+    Math.floor(usableW * 0.11),   // LITRE(GM) — wide enough for the header text
+    Math.floor(usableW * 0.13),   // RATE
+    Math.floor(usableW * 0.17),   // CARDAMOM COST
+    0,                            // TRADE NAME absorbs the remainder
+  ];
+  cw[5] = usableW - cw.slice(0, 5).reduce((a, b) => a + b, 0);
+  const cx = [m]; for (let i = 0; i < cw.length - 1; i++) cx.push(cx[i] + cw[i]);
+  const aligns = ['left', 'right', 'right', 'right', 'right', 'left'];
+  const heads  = ['LOT', 'QTY', 'LITRE(GM)', 'RATE', 'CARDAMOM COST', 'TRADE NAME'];
+
+  const ROW_H = 15, HEAD_H = 17, BAND_H = 20;
+  const BAND_FILL = '#A9D08E';          // Spice-Board green band
+  let y = 0, pageNum = 0, bodyTop = 0;
+
+  const cell = (txt, i, top, opts2) => {
+    const o = opts2 || {};
+    doc.fillColor('#000').font(o.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(o.size || 8.5);
+    doc.text(String(txt == null ? '' : txt), cx[i] + 3, top + (o.dy == null ? 4 : o.dy), {
+      width: cw[i] - 6, align: o.align || aligns[i], lineBreak: false, ellipsis: true,
+    });
+  };
+
+  function drawTopHeader() {
+    pageNum += 1;
+    y = m;
+    // Logo top-left; company name + address centred across the full width so
+    // a long legal name stays balanced (same treatment as the Form C header).
+    if (header && header.logoPath) {
+      try { doc.image(header.logoPath, m, y, { fit: [46, 46] }); } catch (_) { /* decorative */ }
+    }
+    doc.fillColor('#000').font('Helvetica-Bold').fontSize(15)
+       .text(String(header && header.name || ''), m, y + 6, { width: usableW, align: 'center', lineBreak: false });
+    const addr = [header && header.address1, header && header.address2]
+      .map(x => String(x || '').trim()).filter(Boolean).join(', ');
+    doc.font('Helvetica-Bold').fontSize(10.5)
+       .text(addr, m, y + 26, { width: usableW, align: 'center', lineBreak: false });
+    y += 52;
+
+    // Green meta band: Auction No | Date | Page, three equal cells.
+    doc.rect(m, y, usableW, BAND_H).fillAndStroke(BAND_FILL, '#000');
+    const third = usableW / 3;
+    doc.fillColor('#000').font('Helvetica-Bold').fontSize(10.5);
+    [`Auction No: ${ctx.auction.ano}`,
+     `Date: ${fmtDateDMY(ctx.auction.date)}`,
+     `Page: ${pageNum}`].forEach((t, i) => {
+      doc.text(t, m + third * i, y + 5, { width: third, align: 'center', lineBreak: false });
+    });
+    for (let i = 1; i < 3; i++) {
+      doc.moveTo(m + third * i, y).lineTo(m + third * i, y + BAND_H).lineWidth(0.5).strokeColor('#000').stroke();
+    }
+    y += BAND_H;
+
+    // Column headers.
+    doc.rect(m, y, usableW, HEAD_H).stroke('#000');
+    // Header font a touch smaller than the body so "CARDAMOM COST" and
+    // "LITRE(GM)" fit their columns on one line — a wrapped header spills into
+    // the first data row.
+    heads.forEach((h, i) => cell(h, i, y, { bold: true, align: 'center', dy: 5, size: 7.5 }));
+    for (let i = 1; i < cw.length; i++) {
+      doc.moveTo(cx[i], y).lineTo(cx[i], y + HEAD_H).lineWidth(0.4).strokeColor('#000').stroke();
+    }
+    y += HEAD_H;
+    bodyTop = y;
+  }
+
+  // Close the current page's outer box + column rules.
+  function finishPage() {
+    if (!bodyTop) return;
+    doc.rect(m, bodyTop, usableW, y - bodyTop).lineWidth(0.5).strokeColor('#000').stroke();
+    for (let i = 1; i < cw.length; i++) {
+      doc.moveTo(cx[i], bodyTop).lineTo(cx[i], y).lineWidth(0.4).strokeColor('#000').stroke();
+    }
+    bodyTop = 0;
+  }
+
+  drawTopHeader();
+  for (const r of d.rows) {
+    if (y + ROW_H > pageH - m - 14) { finishPage(); doc.addPage(); drawTopHeader(); }
+    cell(r.lot,               0, y);
+    cell(fmtQty(r.qty),       1, y);
+    cell(r.litre,             2, y);
+    cell(fmtPrice(r.rate),    3, y);
+    cell(fmtMoney(r.cost),    4, y);
+    cell(r.trade,             5, y);
+    y += ROW_H;
+    doc.moveTo(m, y).lineTo(m + usableW, y).lineWidth(0.25).strokeColor('#999').stroke();
+  }
+
+  if (y + ROW_H + 4 > pageH - m - 14) { finishPage(); doc.addPage(); drawTopHeader(); }
+  doc.rect(m, y, usableW, ROW_H + 3).fillAndStroke('#F3F0EA', '#000');
+  cell('TOTAL',                  0, y, { bold: true });
+  cell(fmtQty(d.totals.qty),     1, y, { bold: true });
+  cell(fmtMoney(d.totals.cost),  4, y, { bold: true });
+  y += ROW_H + 3;
+  finishPage();
+
+  doc.end();
+  return new Promise(resolve => doc.on('end', () => resolve(Buffer.concat(buffers))));
+}
+
+// ════════════════════════════════════════════════════════════
 // Dispatcher
 // ════════════════════════════════════════════════════════════
 const REPORTS = {
@@ -1882,6 +2136,8 @@ const REPORTS = {
                       json: formCJson, xlsx: formCXlsx, pdf: formCPdf },
   eauction_csv:     { label: 'e-Auction (Spices Board) CSV', name: 'EAuctionCSV',
                       csv: eauctionCsv },
+  litre_weight:     { label: 'Litre Weight', name: 'LitreWeight',
+                      json: litreWeightJson, xlsx: litreWeightXlsx, pdf: litreWeightPdf },
 };
 
 module.exports = { REPORTS, getReportFilters };

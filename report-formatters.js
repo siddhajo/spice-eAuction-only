@@ -631,7 +631,7 @@ function xlsxNumFmtForHeader(header) {
     h === 'BALANCE' || h === 'ADVANCE'|| h === 'VALUE' ||
     h === 'INV.AMOUNT' || h === 'TOTAL' || h === 'COMMISSION' ||
     h === 'CGST'    || h === 'SGST'   || h === 'IGST' ||
-    h === 'REFUND'  ||
+    h === 'REFUND'  || h === 'BILL AMT' ||
     // Sales-journal column headers — were previously unformatted, now
     // grouped Indian-style for readability across the wide journal.
     h === 'CARDAMOM' || h === 'GUNNY'  || h === 'TRANSPORT' ||

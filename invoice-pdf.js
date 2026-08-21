@@ -1011,7 +1011,18 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   // in Invoice settings. When the user clears it, NO prefix is added — we do
   // NOT fall back to the Logo Code / short name. So a blank setting yields a
   // prefix-less invoice number (e.g. "L-9/26-27" instead of "ISP/L-9/26-27").
-  const primaryPrefix = String(cfg.inv_prefix || '').trim();
+  //
+  // Proforma documents use the dedicated "Proforma Invoice No Prefix"
+  // (`proforma_invoice_prefix`) instead, so a draft prints under its own
+  // series marker (e.g. "PI/L-9/26-27") and is never mistaken for the
+  // original tax invoice. Falls back to inv_prefix when that setting is blank,
+  // so turning the proforma flow on without configuring a proforma prefix
+  // leaves the number looking exactly as it did before.
+  const _invPrefix = String(cfg.inv_prefix || '').trim();
+  const _pfPrefix  = String(cfg.proforma_invoice_prefix || '').trim();
+  const primaryPrefix = (invoiceData && invoiceData.isProforma)
+    ? (_pfPrefix || _invPrefix)
+    : _invPrefix;
   const otherPrefix   = primaryPrefix; // dead — kept for the few downstream sites that still read it
   const primaryCfg    = { ...cfg, inv_prefix: primaryPrefix };
   // ASP invoices always use the "I" segment irrespective of local/interstate

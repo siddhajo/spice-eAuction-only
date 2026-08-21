@@ -10,7 +10,9 @@ fail=0
 for t in \
   tests/lotwise-purchase.unit.js \
   tests/lotwise-purchase.http.js \
-  tests/lotwise-bills.http.js
+  tests/lotwise-bills.http.js \
+  tests/proforma-prefix-and-formd.js \
+  tests/lot-payment-format.js
 do
   printf '\n=== %s\n' "$t"
   if node "$t" 2>&1 | grep -E '  (ok|FAIL) |passed,'; then :; fi

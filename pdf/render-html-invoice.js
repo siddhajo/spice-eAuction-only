@@ -37,8 +37,14 @@ function readFlag(val, defaultOn) {
 }
 
 // {inv_prefix}/{saleType}-{invoiceNo}/{season_short} — mirrors invoice-pdf.js.
-function formatInvoiceNo(cfg, saleType, invoiceNo) {
-  const prefix = cfg.inv_prefix || '';
+// Proforma documents use `proforma_invoice_prefix` in place of `inv_prefix`
+// (falling back to inv_prefix when it is blank), so a draft prints under its
+// own series marker and is never mistaken for the original tax invoice. Same
+// rule as the PDFKit engine in invoice-pdf.js.
+function formatInvoiceNo(cfg, saleType, invoiceNo, isProforma) {
+  const invPrefix = String(cfg.inv_prefix || '').trim();
+  const pfPrefix  = String(cfg.proforma_invoice_prefix || '').trim();
+  const prefix = isProforma ? (pfPrefix || invPrefix) : invPrefix;
   const season = cfg.season_short || '';
   const middle = saleType ? `${saleType}-${invoiceNo}` : String(invoiceNo);
   return [prefix, middle, season].filter((p) => p !== '' && p != null).join('/');
@@ -200,7 +206,7 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
     // exposed so templates can add a watermark / "not a valid tax invoice" note.
     title: invoiceData.isProforma ? 'Proforma Invoice' : 'Tax Invoice',
     isProforma: !!invoiceData.isProforma,
-    invoiceNo: formatInvoiceNo(cfg, saleType, invoiceNo),
+    invoiceNo: formatInvoiceNo(cfg, saleType, invoiceNo, !!invoiceData.isProforma),
     invoiceDate: invoiceDate || null,
     // Operator's configured date format (Settings → date_format). Templates
     // render the invoice date with {{date invoiceDate dateFormat}} so it honors

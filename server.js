@@ -10214,14 +10214,35 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
       // id first, then every auction carrying this trade number) and keep
       // the first that actually has lots for this seller. The cr-field /
       // amount filter mirrors buildAgriBill: skip GSTIN-registered sellers.
-      const lotsForAuction = (aid) => db.all(
-        `SELECT * FROM lots
-           WHERE auction_id = ?
-             AND UPPER(TRIM(name)) = UPPER(TRIM(?))
-             AND (amount > 0 OR puramt > 0)
-         ORDER BY lot_no`,
-        [aid, b.name]
-      );
+      //
+      // A LOT-WISE bill (flag_lotwise_bills) covers exactly one lot, and the
+      // row records which one. Narrow to it — the same contract billRebuildOpts
+      // enforces for every other reprint path. Without the narrowing, a grower
+      // with three lot-wise bills got all three lots on EACH of them: three
+      // near-identical 3-page memoranda instead of one page apiece, with the
+      // page count squaring on a "Commission Bill Selected" over a whole trade
+      // (which is enough to OOM-kill the PDF renderer on a real auction).
+      // A blank lot_no means the row was raised seller-wise, so it keeps
+      // spanning every lot, exactly as before.
+      const billLotNo = String(b.lot_no == null ? '' : b.lot_no).trim();
+      const lotsForAuction = (aid) => (billLotNo
+        ? db.all(
+            `SELECT * FROM lots
+               WHERE auction_id = ?
+                 AND UPPER(TRIM(name)) = UPPER(TRIM(?))
+                 AND (amount > 0 OR puramt > 0)
+                 AND (${b.lot_id != null ? 'id = ? OR ' : ''}TRIM(CAST(lot_no AS TEXT)) = TRIM(CAST(? AS TEXT)))
+             ORDER BY lot_no`,
+            b.lot_id != null ? [aid, b.name, b.lot_id, billLotNo] : [aid, b.name, billLotNo]
+          )
+        : db.all(
+            `SELECT * FROM lots
+               WHERE auction_id = ?
+                 AND UPPER(TRIM(name)) = UPPER(TRIM(?))
+                 AND (amount > 0 OR puramt > 0)
+             ORDER BY lot_no`,
+            [aid, b.name]
+          ));
       const auctionCands = [];
       if (b.auction_id) {
         const a = db.get('SELECT id, ano, date FROM auctions WHERE id = ?', [b.auction_id]);
