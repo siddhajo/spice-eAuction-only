@@ -2670,6 +2670,20 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
   margin:0   /* override any margins from parent contexts */
 }
 
+/* Journals — autofit columns to their content.
+   The Sales register carries 15 columns and its money columns run to eight
+   figures, so the width:100% above squeezed them: values wrapped mid-number
+   and headers like "TRANSPORT" broke onto two lines. width:max-content lets
+   each column hug its widest cell, and nowrap on the body cells stops the
+   wrapping (.dt-head th is already nowrap). min-width:100% keeps a narrow
+   journal — few rows after a sale-type filter — filling the panel instead of
+   hugging the left edge. .dt-scroll is already overflow:auto, so anything
+   wider than the panel scrolls sideways rather than being compressed.
+   Specificity: #jr-table (1,0,0) beats .dt-scroll table (0,1,1), so this wins
+   regardless of source order. */
+#jr-table{width:max-content;min-width:100%}
+#jr-table tbody td{white-space:nowrap}
+
 /* Sticky header */
 .dt-head th{
   position:sticky;top:0;z-index:3;
@@ -23343,9 +23357,11 @@ async function loadLots(opts){
       fmt:(n)=>fmtI(n,2) },
     { key:'igst', label:'IGST', sort:'number', numeric:true,
       fmt:(n)=>fmtI(n,2) },
+    // Payable is calculated to the nearest whole rupee (see calculateLot),
+    // so it prints without paise — a ".00" tail on every row would be noise.
     { key:'balance', label:'Payable', sort:'number', numeric:true,
-      fmt:(n)=>fmtI(n,2),
-      render:(l)=>`<strong>${fmtI(l.balance||0,2)}</strong>` },
+      fmt:(n)=>fmtI(n,0),
+      render:(l)=>`<strong>${fmtI(l.balance||0,0)}</strong>` },
     { key:'_actions', label:'Actions', sortable:false, searchable:false, render:(l)=>{
         // Lock state — drives row visuals + which action buttons render.
         // Locked rows show a small amber "🔒 Locked" pill on the left of

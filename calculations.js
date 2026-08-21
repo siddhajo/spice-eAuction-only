@@ -235,11 +235,22 @@ function calculateLot(lot, cfg) {
   result.advance = result.cgst + result.sgst + result.igst;
 
   // ── Payable ──────────────────────────────────────────────
-  //   Payable = Amount + Refund − Commission − Handling − (CGST+SGST+IGST)
+  //   Payable = round( Amount + Refund − Commission − Handling − (CGST+SGST+IGST) )
+  //
+  // Rounded to the NEAREST WHOLE RUPEE — the seller is settled in whole
+  // rupees, and this is the figure every downstream consumer pays out on
+  // (Payments screen, bank payment file, DBF exports, Tally, the PDFs). The
+  // paise are dropped here rather than at each of those, so they all agree
+  // on one number instead of each rounding its own way. Half-up via
+  // Math.round: …124.50 → 125.
+  //
+  // `payableExact` keeps the unrounded figure for anything that needs to
+  // show or reconcile the paise (e.g. a Round Off line on a voucher).
   // `balance` is kept as the legacy alias so existing queries don't
   // break, and `payable` is exposed as the canonical key for new code.
   const totalDeductions = result.com + result.sertax + result.cgst + result.sgst + result.igst;
-  result.payable = Math.round((amount + result.refund - totalDeductions) * 100) / 100;
+  result.payableExact = Math.round((amount + result.refund - totalDeductions) * 100) / 100;
+  result.payable = Math.round(result.payableExact);
   result.balance = result.payable;
 
   // ── Discount ─────────────────────────────────────────────

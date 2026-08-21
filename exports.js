@@ -47,6 +47,42 @@ const getCompanyIdentity = require('./_company-identity-fallback').resolve();
 // column key — only the listed columns get numbers, the rest are blank.
 // Set `label` to put a string in any one column (defaults to 'GRAND TOTAL'
 // in the first non-numeric column).
+// ── XLSX column autofit ──────────────────────────────────────────────────
+// Size every column to its widest CONTENT instead of a hand-guessed constant,
+// so nothing is truncated and no money cell renders as "####".
+//
+// Width is measured on the string Excel will SHOW, not the stored value: the
+// numeric columns carry an Indian-grouping numFmt, so 1399354 occupies
+// "13,99,354.00" — 12 characters, not 7. Decimals come from the same
+// xlsxNumFmtForHeader() the writer uses to set the cell format, so the two can
+// never disagree about how wide a value renders.
+//
+// Per column: `minWidth` (default 6) keeps short columns clickable, `maxWidth`
+// (default 40) stops one long trade name from blowing the sheet out sideways.
+// Mutates and returns `columns`.
+function autofitXlsxColumns(columns, rows, opts = {}) {
+  const pad = opts.pad == null ? 2 : opts.pad;
+  const shown = (row, col) => {
+    const v = row[col.key];
+    if (v == null || v === '') return '';
+    if (typeof v !== 'number' && !(typeof v === 'string' && v !== '' && isFinite(Number(v)))) {
+      return String(v);
+    }
+    const fmt = col.numFmt || xlsxNumFmtForHeader(col.header) || '';
+    // Decimal count straight off the numFmt pattern ("#,##0.000" → 3).
+    const dot = fmt.indexOf('.');
+    const decimals = dot === -1 ? (fmt ? 0 : null) : (fmt.slice(dot + 1).match(/0+/) || [''])[0].length;
+    return decimals == null ? String(v) : fmtIndian(Number(v), decimals);
+  };
+  for (const c of columns) {
+    let widest = String(c.header || '').length;
+    for (const r of rows) widest = Math.max(widest, shown(r, c).length);
+    c.width = Math.min(c.maxWidth || opts.maxWidth || 40,
+                       Math.max(c.minWidth || opts.minWidth || 6, widest + pad));
+  }
+  return columns;
+}
+
 async function createExcelBuffer(sheetName, columns, rows, opts) {
   opts = opts || {};
   const wb = new ExcelJS.Workbook();
@@ -527,35 +563,21 @@ async function exportLotPayment(db, auctionId) {
        FROM lots WHERE auction_id = ?
        ORDER BY CAST(lot_no AS INTEGER), lot_no`, [auctionId]
   );
-  const cols = [
-    { header: 'LOT',      key: 'lot',  width: 8  },
-    { header: 'BR',       key: 'br',   width: 6  },
-    { header: 'NAME',     key: 'name', width: 28 },
-    { header: 'QTY',      key: 'qty',  width: 12 },
-    { header: 'RATE',     key: 'rate', width: 10 },
-    { header: 'BILL AMT', key: 'cost', width: 16 },
-    { header: 'LOT',      key: 'lot2', width: 8  },
-  ];
   // Autofit each column to its content so nothing is truncated and the branch
-  // (BR) sits on one line: width = the widest of the header and the rendered
-  // cell values, plus a little padding, clamped to a sensible band. Money /
-  // qty widths account for Indian grouping + 2–3 decimals via the formatted
-  // string length. Scoped to this export so no other sheet's layout shifts.
-  const _isNum = k => k === 'qty' || k === 'rate' || k === 'cost';
-  const _shown = (r, k) => {
-    const v = r[k];
-    if (v == null || v === '') return '';
-    if (k === 'qty')  return fmtIndian(Number(v) || 0, 3);
-    if (_isNum(k))    return fmtIndian(Number(v) || 0, 2);
-    return String(v);
-  };
-  for (const c of cols) {
-    let widest = String(c.header || '').length;
-    for (const r of rows) widest = Math.max(widest, _shown(r, c.key).length);
-    // +2 padding; floor keeps short columns readable, cap stops a very long
-    // seller name from blowing the sheet width out.
-    c.width = Math.min(40, Math.max(c.key === 'name' ? 16 : 6, widest + 2));
-  }
+  // (BR) sits on one line, instead of the fixed width:6 that cut it off.
+  // `minWidth` on NAME keeps the column readable even for a sheet of short
+  // seller names; the shared helper caps every column at 40 so one very long
+  // name can't blow the sheet width out.
+  const cols = [
+    { header: 'LOT',      key: 'lot'  },
+    { header: 'BR',       key: 'br'   },
+    { header: 'NAME',     key: 'name', minWidth: 16 },
+    { header: 'QTY',      key: 'qty'  },
+    { header: 'RATE',     key: 'rate' },
+    { header: 'BILL AMT', key: 'cost' },
+    { header: 'LOT',      key: 'lot2' },
+  ];
+  autofitXlsxColumns(cols, rows);
   return createExcelBuffer('LotPayment', cols, rows, {
     db, title: 'Lot Payment', metaLines: auctionMeta(db, auctionId),
     grandTotal: {
@@ -1260,27 +1282,35 @@ async function exportSalesJournal(db, auctionId, saleType) {
   const rows = calc.getSalesJournal(db, auctionId, saleType, cfg);
   // Date / Buyer / GSTIN / Place columns dropped per request — the register
   // keeps the sale/invoice/trade-name identity and the money columns.
+  // Widths below are only the FLOOR — autofitXlsxColumns() sizes each column to
+  // its content just before the buffer is built. The register is wide and its
+  // money columns run to eight figures, so fixed widths pushed the rupee cells
+  // into "####".
   const cols = [
-    { header: 'SALE', key: 'sale', width: 6 },
-    { header: 'INV#', key: 'invo', width: 8 },
-    { header: 'TRADE NAME', key: 'buyer1', width: 30 },
-    { header: 'BAGS', key: 'bag', width: 6 },
-    { header: 'QTY', key: 'qty', width: 12 },
-    { header: 'CARDAMOM', key: 'cardamom', width: 14 },
-    { header: 'GUNNY', key: 'gunny', width: 10 },
-    { header: 'TRANSPORT', key: 'transport', width: 10 },
-    { header: 'INSURANCE', key: 'insurance', width: 10 },
-    { header: 'CGST', key: 'cgst', width: 10 },
-    { header: 'SGST', key: 'sgst', width: 10 },
-    { header: 'IGST', key: 'igst', width: 10 },
-    { header: 'TCS', key: 'tcs', width: 10 },
-    { header: 'ROUND', key: 'rund', width: 8 },
-    { header: 'TOTAL', key: 'total', width: 14 },
+    { header: 'SALE', key: 'sale', minWidth: 6 },
+    { header: 'INV#', key: 'invo', minWidth: 8 },
+    // No maxWidth override — the helper's 40 cap comfortably fits the longest
+    // real trade names ("PANIKULANGARA SPICES TRADING COMPANY", 36 chars).
+    { header: 'TRADE NAME', key: 'buyer1', minWidth: 16 },
+    { header: 'BAGS', key: 'bag', minWidth: 6 },
+    { header: 'QTY', key: 'qty', minWidth: 10 },
+    { header: 'CARDAMOM', key: 'cardamom', minWidth: 12 },
+    { header: 'GUNNY', key: 'gunny', minWidth: 9 },
+    { header: 'TRANSPORT', key: 'transport', minWidth: 11 },
+    { header: 'INSURANCE', key: 'insurance', minWidth: 11 },
+    { header: 'CGST', key: 'cgst', minWidth: 9 },
+    { header: 'SGST', key: 'sgst', minWidth: 9 },
+    { header: 'IGST', key: 'igst', minWidth: 9 },
+    { header: 'TCS', key: 'tcs', minWidth: 8 },
+    { header: 'ROUND', key: 'rund', minWidth: 8 },
+    { header: 'TOTAL', key: 'total', minWidth: 12 },
   ];
   // Column-sum "Total" row.
   const sumKeys = ['bag','qty','cardamom','gunny','transport','insurance','cgst','sgst','igst','tcs','rund','total'];
   const totalRow = { buyer1: 'Total' };
   for (const k of sumKeys) totalRow[k] = rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+  // Measure the totals row too — its sums are the widest numbers on the sheet.
+  autofitXlsxColumns(cols, [...rows, totalRow]);
   // Sale-type ledger summary (as in the COLLECTION reference). Rendered as its
   // OWN merged-cell container (Particulars | Qty | Amount) below the invoice
   // register, so each value — including the smaller gunny-sales lines — stays
