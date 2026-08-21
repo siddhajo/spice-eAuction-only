@@ -1277,11 +1277,6 @@ async function exportSalesJournal(db, auctionId, saleType) {
     { header: 'ROUND', key: 'rund', width: 8 },
     { header: 'TOTAL', key: 'total', width: 14 },
   ];
-  // Pending proformas join the register in proforma mode and count toward the
-  // totals below, so tag them here too — the same "(DRAFT)" mark the on-screen
-  // table and the PDF carry. Without it a draft reads as a raised invoice
-  // whenever no proforma prefix is configured.
-  const body = rows.map(r => Number(r.is_proforma) ? { ...r, invo: `${r.invo || ''} (DRAFT)` } : r);
   // Column-sum "Total" row.
   const sumKeys = ['bag','qty','cardamom','gunny','transport','insurance','cgst','sgst','igst','tcs','rund','total'];
   const totalRow = { buyer1: 'Total' };
@@ -1291,7 +1286,7 @@ async function exportSalesJournal(db, auctionId, saleType) {
   // register, so each value — including the smaller gunny-sales lines — stays
   // legible instead of being stretched across the wide invoice columns.
   const summary = calc.getSalesJournalSummary(db, auctionId, saleType, cfg);
-  const sections = [{ title: 'SALES INVOICES', rows: [...body, totalRow] }];
+  const sections = [{ title: 'SALES INVOICES', rows: [...rows, totalRow] }];
   return createExcelBuffer('SalesJournal', cols, [], {
     db, title: 'Sales Journal',
     metaLines: [...auctionMeta(db, auctionId), saleType ? `Type: ${saleType}` : ''].filter(Boolean),

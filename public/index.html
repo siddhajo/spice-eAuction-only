@@ -31662,13 +31662,9 @@ async function loadJournal(){
       // With the proforma flow on, `invo` arrives ready-to-print: the PROFORMA
       // number the buyer holds ("PI/L-8"), or the bare original for invoices
       // billed with no draft behind them. Pending drafts join the register as
-      // rows of their own, so tag them — the proforma prefix already sets them
-      // apart, but it is optional and a blank one would leave a draft looking
-      // exactly like a raised invoice.
-      { key:'invo',   label:'Inv#',     sort:'text',
-        render:(r)=>esc(r.invo||'—')+(Number(r.is_proforma)
-          ? ' <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:var(--warn-bg,#fff3cd);color:var(--warn-fg,#8a6d3b)">DRAFT</span>'
-          : '') },
+      // rows of their own and print the same way as any other row — the
+      // proforma prefix is what tells them apart.
+      { key:'invo',   label:'Inv#',     sort:'text' },
       { key:'buyer1', label:'Trade Name', sort:'text' },
       { key:'bag',    label:'Bags',     sort:'number', numeric:true, fmt:fmtNumWithDecimals(0) },
       { key:'qty',    label:'Qty',      sort:'number', numeric:true, fmt:fmtNumWithDecimals(3) },
@@ -31762,10 +31758,6 @@ async function exportJournalPdf(){
   const cell = (c, row) => {
     if (c.key === 'date') return fmtD(row.date);
     const v = row[c.key];
-    // The table's `render` is HTML, so the PDF can't reuse it — but the Sales
-    // journal's DRAFT tag has to survive into the export, or a pending proforma
-    // prints as an ordinary invoice while still counting toward the totals.
-    if (c.key === 'invo' && Number(row.is_proforma)) return `${v == null ? '' : v} (DRAFT)`;
     if (c.fmt) return c.fmt(v);
     return v == null ? '' : v;
   };
