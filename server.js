@@ -9659,7 +9659,9 @@ app.get('/api/bills/eligible-lots/:auctionId', requireView, (req, res) => {
         AND (l.reserved IS NULL OR l.reserved = 0)
         AND UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')
         AND NOT ${hasValidGstinSql('l.cr')}
-      ORDER BY UPPER(TRIM(l.name)), CAST(l.lot_no AS INTEGER), l.lot_no`,
+      -- Lot-wise bills are numbered in LOT order, not seller order, so the
+      -- picker lists lots the same way the batch run will bill them.
+      ORDER BY CAST(l.lot_no AS INTEGER), l.lot_no`,
     [String(auction.ano), aid]
   ));
 });
@@ -9702,7 +9704,9 @@ app.post('/api/bills/generate-all/:auctionId',
             AND (l.reserved IS NULL OR l.reserved = 0)
             AND UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')
             AND NOT ${hasValidGstinSql('l.cr')}
-          ORDER BY UPPER(TRIM(l.name)), CAST(l.lot_no AS INTEGER), l.lot_no`,
+          -- Bill numbers are handed out in the order this list is walked, so
+          -- lot-wise runs number ASCENDING BY LOT NO (not grouped by seller).
+          ORDER BY CAST(l.lot_no AS INTEGER), l.lot_no`,
         [req.params.auctionId]
       )
     : listAgriSellers(db, req.params.auctionId);

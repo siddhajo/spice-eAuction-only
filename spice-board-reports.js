@@ -777,6 +777,52 @@ function buildFormD(ctx, db, opts) {
   if (!isFinite(minRate)) minRate = 0;
   const avgRate = totalKilos > 0 ? (totalValue / totalKilos) : 0;
 
+  // ── Quantity reconciliation rows (w … cc) ────────────────────────────
+  // These used to be hard-coded — arrivals = quantity SOLD, withdrawn and
+  // returned = 0 — so every trade that had withdrawn or unsold lots
+  // under-reported its arrivals and hid the withdrawal entirely.
+  //
+  // Derive them from lot state instead. `lots.code` is the marker the whole
+  // app reads (invoice gate, Form C, carry-forward, excludedLots()):
+  //   real buyer code → SOLD
+  //   'WD'            → WITHDRAWN — pulled before the sale, goods go back
+  //   'NA' or blank   → NOT AUCTIONED — booked, never went under the hammer
+  // Reserved lots are held entries kept out of every total, so they are not
+  // arrivals either.
+  //
+  // Withdrawn goods are handed back, so they are the "returned to planter"
+  // figure. Not-auctioned goods stay with the auctioneer — that is exactly
+  // what POST /api/auctions/:id/carry-forward moves into the next trade — so
+  // they are the "balance with the auctioneer", and lots carried IN from a
+  // previous trade (carried_from_auction_id) are this trade's "carried over".
+  // The block therefore reconciles: put = sold + not auctioned + withdrawn.
+  //
+  // Filters: branch and seller narrow the figures the same way they narrow
+  // the rest of the report. A buyer filter is not applied here — unsold and
+  // withdrawn lots have no buyer, so it would zero the arrivals rows.
+  const qWhere = ['l.auction_id = ?'];
+  const qParams = [auction.id];
+  if (opts.branch)   { qWhere.push('UPPER(TRIM(l.branch)) = UPPER(TRIM(?))'); qParams.push(opts.branch); }
+  if (opts.sellerId) { qWhere.push('l.trader_id = ?'); qParams.push(parseInt(opts.sellerId, 10)); }
+  const qAgg = db ? db.get(`
+    SELECT
+      COALESCE(SUM(l.qty), 0) AS put,
+      COALESCE(SUM(CASE WHEN l.carried_from_auction_id IS NOT NULL THEN l.qty ELSE 0 END), 0) AS carried,
+      COALESCE(SUM(CASE WHEN UPPER(TRIM(COALESCE(l.code,''))) = 'WD'        THEN l.qty ELSE 0 END), 0) AS withdrawn,
+      COALESCE(SUM(CASE WHEN UPPER(TRIM(COALESCE(l.code,''))) IN ('', 'NA') THEN l.qty ELSE 0 END), 0) AS notAuctioned
+      FROM lots l
+     WHERE ${qWhere.join(' AND ')}
+       AND COALESCE(l.reserved, 0) = 0`, qParams) : null;
+  // Without a db handle there is nothing to derive from, so fall back to the
+  // old behaviour (arrivals = sold) rather than reporting zero arrivals.
+  const totalPut     = qAgg ? Number(qAgg.put) || 0 : totalKilos;
+  const carriedOver  = qAgg ? Number(qAgg.carried) || 0 : 0;
+  const withdrawn    = qAgg ? Number(qAgg.withdrawn) || 0 : 0;
+  const notAuctioned = qAgg ? Number(qAgg.notAuctioned) || 0 : 0;
+  const freshArrivals = Math.max(0, totalPut - carriedOver);
+  const returnedToPlanter = withdrawn;
+  const balance = notAuctioned;
+
   // Top buyers — built from the invoices table so each buyer appears exactly
   // ONCE with their CUMULATIVE sales value. The value is the goods amount
   // WITHOUT TAX (invoices.amount = price × qty), NOT the invoice grand total
@@ -886,8 +932,17 @@ function buildFormD(ctx, db, opts) {
   return {
     auction, season, licence, place, placeCity, company, address,
     totalKilos, totalValue, maxRate, minRate, avgRate, maxKg, minKg,
+    carriedOver, freshArrivals, totalPut, notAuctioned, withdrawn,
+    returnedToPlanter, balance,
     top5, top5Totals,
   };
+}
+
+// Form-D quantity rows print the figure when there is one and the Board's
+// "NIL" when there isn't — the form uses NIL, not 0.000, for an empty row.
+function qtyOrNil(n) {
+  const v = Number(n) || 0;
+  return v > 0 ? fmtQty(v) : 'NIL';
 }
 
 function formDJson(db, opts) {
@@ -899,9 +954,11 @@ function formDJson(db, opts) {
     summary: {
       auctioneer: d.company, address: d.address, licence: d.licence, season: d.season, place: d.place,
       auctionNo: ctx.auction.ano, auctionDate: fmtDateDMY(ctx.auction.date),
-      carriedOver: 'NIL',
-      freshArrivals: d.totalKilos, totalForAuction: d.totalKilos, totalSold: d.totalKilos,
-      notAuctioned: 'NIL', withdrawn: 0, returnedToPlanter: 0, balance: 'NIL',
+      // Numeric quantities (the PDF/Excel apply the NIL-when-zero rendering).
+      carriedOver: d.carriedOver,
+      freshArrivals: d.freshArrivals, totalForAuction: d.totalPut, totalSold: d.totalKilos,
+      notAuctioned: d.notAuctioned, withdrawn: d.withdrawn,
+      returnedToPlanter: d.returnedToPlanter, balance: d.balance,
       totalValue: d.totalValue,
       maxRate: d.maxRate, maxKg: d.maxKg, minRate: d.minRate, minKg: d.minKg, avgRate: d.avgRate,
     },
@@ -933,14 +990,14 @@ async function formDXlsx(db, opts) {
   meta('Auction Number', ctx.auction.ano);
   meta('Date of auction', fmtDateDMY(ctx.auction.date));
   meta('Place of auction', d.place);
-  meta('Quantity carried over from previous auction (kgs)', 'NIL');
-  meta('Fresh arrivals (kgs)', d.totalKilos);
-  meta('Total quantity put for auction (kgs)', d.totalKilos);
-  meta('Total quantity sold (kgs)', d.totalKilos);
-  meta('Quantity Not Auctioned (kgs)', 'NIL');
-  meta('Quantity withdrawn (kgs)', 0);
-  meta('Quantity returned to planter (kgs)', 0);
-  meta('Balance with the auctioneer (kgs)', 'NIL');
+  meta('Quantity carried over from previous auction (kgs)', qtyOrNil(d.carriedOver));
+  meta('Fresh arrivals (kgs)', qtyOrNil(d.freshArrivals));
+  meta('Total quantity put for auction (kgs)', qtyOrNil(d.totalPut));
+  meta('Total quantity sold (kgs)', qtyOrNil(d.totalKilos));
+  meta('Quantity Not Auctioned (kgs)', qtyOrNil(d.notAuctioned));
+  meta('Quantity withdrawn (kgs)', qtyOrNil(d.withdrawn));
+  meta('Quantity returned to planter (kgs)', qtyOrNil(d.returnedToPlanter));
+  meta('Balance with the auctioneer (kgs)', qtyOrNil(d.balance));
   meta('Total value of the sales (Rs)', d.totalValue);
   meta('Maximum price (Rs/kg)', `${fmtPrice(d.maxRate)} / kgs ${fmtQty(d.maxKg)}`);
   meta('Minimum price (Rs/kg)', `${fmtPrice(d.minRate)} / kgs ${fmtQty(d.minKg)}`);
@@ -1095,16 +1152,16 @@ async function formDPdf(db, opts) {
   row('(t) Auction Number',    ctx.auction.ano);
   row('(u) Date of auction',   fmtDateDMY(ctx.auction.date));
   row('(v) Place of auction',  d.place);
-  row('(w) Quantity carried over from',   'NIL');
+  row('(w) Quantity carried over from',   qtyOrNil(d.carriedOver));
   cont('     previous auction (kgs)');
-  row('(x) Fresh arrivals (kgs)',         fmtQty(d.totalKilos));
-  row('(y) Total quantity put for auction (kgs)', fmtQty(d.totalKilos));
+  row('(x) Fresh arrivals (kgs)',         qtyOrNil(d.freshArrivals));
+  row('(y) Total quantity put for auction (kgs)', qtyOrNil(d.totalPut));
   cont('     [Total of Sl.No. 5 and 6]');
-  row('(z) Total quantity sold (kgs)',    fmtQty(d.totalKilos));
-  row('(zz) Quantity Not Auctioned (Kgs.)', 'NIL');
-  row('(aa) Quantity withdrawn (kgs)',    '0.000');
-  row('(bb) Quantity returned to planter (kgs)',  '0.000');
-  row('(cc) Balance with the auctioneer (kgs)',   'NIL');
+  row('(z) Total quantity sold (kgs)',    qtyOrNil(d.totalKilos));
+  row('(zz) Quantity Not Auctioned (Kgs.)', qtyOrNil(d.notAuctioned));
+  row('(aa) Quantity withdrawn (kgs)',    qtyOrNil(d.withdrawn));
+  row('(bb) Quantity returned to planter (kgs)',  qtyOrNil(d.returnedToPlanter));
+  row('(cc) Balance with the auctioneer (kgs)',   qtyOrNil(d.balance));
   row('(dd) Total value of the sales (Rs)',       fmtMoney(d.totalValue));
   row('(ee) Maximum price (Rs/kg)',  `${fmtPrice(d.maxRate)}  /kgs ${fmtQty(d.maxKg)}`);
   row('(ff) Minimum price (Rs/kg)',  `${fmtPrice(d.minRate)}  /kgs ${fmtQty(d.minKg)}`);
