@@ -8,7 +8,7 @@ const { collectionXlsx: newCollectionXlsx, tradeReportXlsx } = require('./auctio
 const {
   getCompanyHeader,
   writeXlsxCompanyHeader, xlsxNumFmtForHeader,
-  formatDateForDisplay,
+  formatDateForDisplay, fmtIndian,
 } = require('./report-formatters');
 // Defensive identity resolver — see _company-identity-fallback.js.
 // Avoids "getCompanyIdentity is not a function" on partial deploys.
@@ -536,6 +536,26 @@ async function exportLotPayment(db, auctionId) {
     { header: 'BILL AMT', key: 'cost', width: 16 },
     { header: 'LOT',      key: 'lot2', width: 8  },
   ];
+  // Autofit each column to its content so nothing is truncated and the branch
+  // (BR) sits on one line: width = the widest of the header and the rendered
+  // cell values, plus a little padding, clamped to a sensible band. Money /
+  // qty widths account for Indian grouping + 2–3 decimals via the formatted
+  // string length. Scoped to this export so no other sheet's layout shifts.
+  const _isNum = k => k === 'qty' || k === 'rate' || k === 'cost';
+  const _shown = (r, k) => {
+    const v = r[k];
+    if (v == null || v === '') return '';
+    if (k === 'qty')  return fmtIndian(Number(v) || 0, 3);
+    if (_isNum(k))    return fmtIndian(Number(v) || 0, 2);
+    return String(v);
+  };
+  for (const c of cols) {
+    let widest = String(c.header || '').length;
+    for (const r of rows) widest = Math.max(widest, _shown(r, c.key).length);
+    // +2 padding; floor keeps short columns readable, cap stops a very long
+    // seller name from blowing the sheet width out.
+    c.width = Math.min(40, Math.max(c.key === 'name' ? 16 : 6, widest + 2));
+  }
   return createExcelBuffer('LotPayment', cols, rows, {
     db, title: 'Lot Payment', metaLines: auctionMeta(db, auctionId),
     grandTotal: {

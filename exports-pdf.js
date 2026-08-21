@@ -429,6 +429,14 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
         doc.text(lines[0], colX[ci] + 3, y + PAD_TOP, {
           width: cellW, align: 'right', lineBreak: false,
         });
+      } else if (c.nowrap && lines.length === 1) {
+        // Non-numeric but single-line (e.g. branch code): auto-shrink to fit
+        // on one line, left-aligned like other text.
+        const size = fitNumericFontSize(lines[0], cellW, BASE, false);
+        doc.fillColor('#000').font('Helvetica').fontSize(size);
+        doc.text(lines[0], colX[ci] + 3, y + PAD_TOP, {
+          width: cellW, align: 'left', lineBreak: false,
+        });
       } else {
         doc.fillColor('#000').font('Helvetica').fontSize(BASE);
         lines.forEach((line, li) => {
@@ -460,8 +468,10 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
     const wrapped = columns.map((c, ci) => {
       const cellW = colWidths[ci] - 6;
       const text = fmtCell(row[c.key], c);
-      if (isNumericCol(c)) {
-        // Single-line; auto-shrink handled at draw time.
+      // Numeric cells, and any column flagged `nowrap` (e.g. a short branch
+      // code), stay on ONE line — the font auto-shrinks at draw time instead
+      // of wrapping. Only genuinely long free text (names) word-wraps.
+      if (isNumericCol(c) || c.nowrap) {
         return [String(text)];
       }
       return wrapText(doc, text, cellW);
@@ -665,7 +675,9 @@ const COLS = {
     // column so the wide row carries its lot marker on both edges. Matches the
     // attached "Lot | BR | Name | Qty | Rate | Bill Amt | Lot" layout.
     { header: 'LOT',      key: 'lot',  width: 8  },
-    { header: 'BR',       key: 'br',   width: 6  },
+    // Branch code — kept on ONE line (auto-shrinks instead of wrapping) even
+    // when a branch name is longer than a short code like "NK".
+    { header: 'BR',       key: 'br',   width: 6, nowrap: true },
     { header: 'NAME',     key: 'name', width: 28 },
     { header: 'QTY',      key: 'qty',  width: 12 },
     { header: 'RATE',     key: 'rate', width: 10 },
@@ -1008,6 +1020,13 @@ const PDF_LAYOUT = {
   // portrait squeezes the money columns until values truncate. Go landscape.
   pooler_individual: 'landscape',
 };
+
+// Per-type content-aware autofit. Listed types size each column to its widest
+// value (header + sampled cells) and scale to fill the page width, instead of
+// the fixed `width` weights. Use it where the values vary a lot in width and a
+// tidy, content-fitted table reads better — e.g. Lot Payment, whose branch /
+// name / amount widths differ per trade.
+const PDF_AUTOFIT = new Set(['lot_payment']);
 
 // Per-type row preprocessing: add a serial-number column, optionally group
 // rows by a name field with a subtotal row inserted after each group. Keys
@@ -1502,6 +1521,7 @@ async function exportPdf(db, type, auctionId, cfg, extra = {}) {
     rows,
     totals,
     layout: PDF_LAYOUT[type],
+    autofit: PDF_AUTOFIT.has(type),
     companyHeader: getCompanyHeader(db),
   });
 }
@@ -1790,4 +1810,4 @@ function _poolerPan(db, name, traderId) {
   } catch (e) { return ''; }
 }
 
-module.exports = { exportPdf, TITLES, COLS, ROW_PREPROCESS, renderTablePdf, renderPoolerCertificatePdf };
+module.exports = { exportPdf, TITLES, COLS, ROW_PREPROCESS, PDF_AUTOFIT, renderTablePdf, renderPoolerCertificatePdf };

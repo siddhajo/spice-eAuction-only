@@ -8,7 +8,7 @@ process.env.SPICE_DATA_DIR = TMP;
 const { initDb, getDb, closeDb } = require(path.join(__dirname, '..', 'db.js'));
 const { initCompanySettings, getSettingsFlat } = require(path.join(__dirname, '..', 'company-config.js'));
 const { exportLotPayment } = require(path.join(__dirname, '..', 'exports.js'));
-const { exportPdf, COLS, ROW_PREPROCESS } = require(path.join(__dirname, '..', 'exports-pdf.js'));
+const { exportPdf, COLS, ROW_PREPROCESS, PDF_AUTOFIT } = require(path.join(__dirname, '..', 'exports-pdf.js'));
 const ExcelJS = require(path.join(__dirname, '..', 'node_modules', 'exceljs'));
 
 let pass = 0, fail = 0;
@@ -27,11 +27,12 @@ function check(name, cond, detail) {
   // lot (rate 0, amount 0) mirrors the blank rows in the attached sheet.
   db.run(`INSERT INTO auctions (id,ano,date,state) VALUES (1,'7','2026-08-10','TAMIL NADU')`);
   const lots = [
-    // lot_no, branch, name,               qty,    price, amount
-    ['003', 'NK', 'ANILKUMAR',        25.1,  3194, 88219],
-    ['001', 'NK', 'PUNYAMOORTHY T',   73.4,  0,     0],      // unpriced
-    ['002', 'NK', 'MURUGANANDAM K',   71.7,  3178, 234124],
-    ['010', 'PB', 'NATIONAL SPICES',  163.1, 2302, 377509],
+    // lot_no, branch,          name,             qty,    price, amount
+    ['003', 'NK',           'ANILKUMAR',      25.1,  3194, 88219],
+    ['001', 'NK',           'PUNYAMOORTHY T', 73.4,  0,     0],      // unpriced
+    ['002', 'NK',           'MURUGANANDAM K', 71.7,  3178, 234124],
+    // A branch name far longer than a "NK" code — this is the one that wrapped.
+    ['010', 'MUNDAKAYAM-B', 'NATIONAL SPICES',163.1, 2302, 377509],
   ];
   for (const [lot_no, branch, name, qty, price, amount] of lots) {
     db.run(`INSERT INTO lots (auction_id,lot_no,branch,name,qty,price,amount)
@@ -47,6 +48,12 @@ function check(name, cond, detail) {
   check('the two LOT columns bracket the row (first + last)',
         COLS.lot_payment[0].key === 'lot' &&
         COLS.lot_payment[COLS.lot_payment.length - 1].key === 'lot2');
+  // Branch stays on one line (auto-shrinks) instead of wrapping.
+  const brCol = COLS.lot_payment.find(c => c.key === 'br');
+  check('BR column is flagged nowrap (single line)', brCol && brCol.nowrap === true,
+        JSON.stringify(brCol));
+  check('lot_payment PDF is set to autofit column widths',
+        PDF_AUTOFIT && PDF_AUTOFIT.has('lot_payment'));
 
   // ── XLSX ──
   console.log('\n[2] XLSX output');
@@ -82,6 +89,17 @@ function check(name, cond, detail) {
   const r002 = dataRows.find(r => String(r.getCell(1).value).trim() === '002');
   check('BR column carries the branch (NK)', r002 && String(r002.getCell(2).value).trim() === 'NK',
         r002 && String(r002.getCell(2).value));
+
+  // Autofit: the BR column width must be wide enough for the LONGEST branch
+  // value ("MUNDAKAYAM-B", 12 chars) so Excel shows it on one line, not the
+  // fixed width:6 that truncated it before.
+  const brColWidth = ws.getColumn(2).width || 0;
+  check('BR column is autofit to the longest branch (>= 12)', brColWidth >= 12,
+        `width ${brColWidth}`);
+  // The long branch value is intact (not truncated in the data).
+  const r010 = dataRows.find(r => String(r.getCell(1).value).trim() === '010');
+  check('long branch name is stored in full', r010 && String(r010.getCell(2).value).trim() === 'MUNDAKAYAM-B',
+        r010 && String(r010.getCell(2).value));
   check('Name column carries the seller', r002 && String(r002.getCell(3).value).trim() === 'MURUGANANDAM K',
         r002 && String(r002.getCell(3).value));
   check('Qty column', r002 && Number(r002.getCell(4).value) === 71.7);
