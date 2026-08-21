@@ -1819,11 +1819,20 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
     // bills sum EXACTLY to the party AMOUNT — no On Account. Commission is not
     // a voucher ledger (it lives on the Commission Bill / Debit Note); here it
     // only reclassifies the bill ageing.
-    const lotPayable = (lot) => r2(
-      Number(lot.amount || 0) + Number(lot.refund || 0)
-      - Number(lot.com || 0) - Number(lot.sertax || 0)
-      - Number(lot.cgst || 0) - Number(lot.sgst || 0) - Number(lot.igst || 0)
-    );
+    // REUSE the whole-rupee payable calculateLot() already rounded and stored
+    // (lots.balance = result.payable) so each lot's "New Ref" matches the Lots
+    // table and the amount actually paid — rather than re-deriving it at 2
+    // decimals and drifting by the paise. The SE back-charge (seAmt = grossGoods
+    // − Σ payables) absorbs any delta, so the voucher still balances exactly.
+    // Fallback (legacy rows with no stored balance) recomputes AND rounds the
+    // SAME way calculateLot does — r2 then r0. Mirrors the URD purchase voucher.
+    const lotPayable = (lot) => (lot.balance != null)
+      ? r2(Number(lot.balance))
+      : r0(r2(
+          Number(lot.amount || 0) + Number(lot.refund || 0)
+          - Number(lot.com || 0) - Number(lot.sertax || 0)
+          - Number(lot.cgst || 0) - Number(lot.sgst || 0) - Number(lot.igst || 0)
+        ));
     let lotPayableSum = 0;
     const lotRows = (Array.isArray(row.lots) ? row.lots : []).map((lot) => {
       const pay = lotPayable(lot);
@@ -3904,7 +3913,11 @@ function buildRDPurchaseRows(db, auctionId, cfg) {
   // header, p.cgst/p.sgst/p.igst, and is emitted as the voucher tax ledgers.)
   const lotsStmt = db.prepare(`
     SELECT lot_no AS lot, bags AS bag, pqty AS qty, prate AS rate,
-           puramt AS amount, bilamt, refund, com, sertax, cgst, sgst, igst
+           puramt AS amount, bilamt, refund, com, sertax, cgst, sgst, igst,
+           -- Whole-rupee payable calculateLot() already rounded (lots.balance
+           -- = result.payable). The voucher reuses this so the per-lot "New Ref"
+           -- matches the Lots table instead of a separately 2-decimal figure.
+           balance
     FROM lots
     WHERE auction_id = ? AND name = ? AND puramt > 0
     ORDER BY lot_no
@@ -3916,6 +3929,8 @@ function buildRDPurchaseRows(db, auctionId, cfg) {
       amount: l.amount, bilamt: l.bilamt || l.amount,
       refund: l.refund || 0, com: l.com || 0, sertax: l.sertax || 0,
       cgst: l.cgst || 0, sgst: l.sgst || 0, igst: l.igst || 0,
+      // Whole-rupee payable calculateLot() already rounded (lots.balance).
+      balance: l.balance != null ? Number(l.balance) : null,
     }));
     const qtytot = lots.reduce((s, l) => s + Number(l.qty || 0), 0);
     const amounttot = lots.reduce((s, l) => s + Number(l.amount || 0), 0);
