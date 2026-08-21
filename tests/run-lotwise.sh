@@ -15,7 +15,9 @@ for t in \
   tests/proforma-prefix-and-formd.js \
   tests/journal-proforma.js \
   tests/tally-ref-suffix.unit.js \
-  tests/lot-payment-format.js
+  tests/lot-payment-format.js \
+  tests/sales-journal-proforma.js \
+  tests/dn-planter-tally-bos-name.js
 do
   printf '\n=== %s\n' "$t"
   if node "$t" 2>&1 | grep -E '  (ok|FAIL) |passed,'; then :; fi

@@ -10674,7 +10674,12 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
         payloads.push({
           billNo: perLot.length > 1 ? `${bosNo}/${_lotIdx + 1}` : String(bosNo),
           billData: {
-            crpt: b.crpt || pl.crpt || (first.crpt || ''),
+            // Crop Receipt No = the LOT's own crop-receipt number (lots.crpt —
+            // the auto-incremented "crop receipt book" value, e.g. 1293), per
+            // page. NOT bills.crpt, which was stamped with the crop TYPE at
+            // generation (e.g. "RNS") and would otherwise shadow the real
+            // receipt number. Matches the purchase-commission path above.
+            crpt: pl.crpt || first.crpt || '',
             auction: { ano: auction ? auction.ano : (b.ano || ''), date: billDate },
             seller,
             purchaser: pl.purchaser,

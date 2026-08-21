@@ -1515,6 +1515,10 @@ tr:hover td{background:var(--spice-cream)}
   background:var(--spice-cardamom);color:#fff;
   font-size:11px;letter-spacing:.5px;border-bottom:none
 }
+/* Click-to-sort columns (Seller / Lot / Branch) — same affordance as the
+   DataTable header, tuned for this table's dark header band. */
+.paylw-table thead th.paylw-sortable{transition:background .15s}
+.paylw-table thead th.paylw-sortable:hover{background:var(--spice-cardamom-dk)}
 
 /* Seller Bank Account rows (Add/Edit Seller) — a 2×2 grid that always fits
    inside the modal, with larger, clearly legible inputs + labels. */
@@ -5331,14 +5335,19 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <button class="btn btn-g" style="height:38px;padding:0 22px;font-weight:600" onclick="payLwSearch()">🔍 Search</button>
           <button class="btn btn-o" style="height:38px;padding:0 14px;font-weight:600" onclick="payLwClear()" title="Clear the filters and the results">✕ Clear</button>
 
-          <!-- Show unlinked — "unlinked" means NO account resolves for the lot:
-               no account picked on the lot and the seller has none on file, so
+          <!-- Bank account filter. "Unlinked" means NO account resolves for the
+               lot: none picked on the lot and the seller has none on file, so
                the payment cannot go out. Lots riding the seller's default
-               account are linked. -->
-          <label style="flex:0 0 auto;height:38px;display:inline-flex;align-items:center;gap:8px;padding:0 12px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer" title="ON = only lots with no bank account at all (these cannot be paid). OFF = only lots that do have one.">
-            <span style="font-size:12.5px;font-weight:600;color:var(--text2)">Show unlinked</span>
-            <input type="checkbox" id="paylw-unlinked" onchange="payLwSearch()" style="cursor:pointer;width:16px;height:16px">
-          </label>
+               account are linked. "All" lists both together — the whole
+               payable set for the trade, paid and unpayable side by side. -->
+          <div>
+            <label style="display:block;font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px">Bank account</label>
+            <select id="paylw-link" onchange="payLwSearch()" title="Which lots to list: only those that CAN be paid, only those that cannot, or both together." style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:170px">
+              <option value="linked" selected>Linked (payable)</option>
+              <option value="unlinked">Unlinked (no account)</option>
+              <option value="all">All lots</option>
+            </select>
+          </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <!-- Clears the ticks only — the search results stay on screen.
@@ -8424,6 +8433,11 @@ const DataTable = (function(){
     // fresh — used by loaders that need to clear retained sort/search
     // direction when the underlying dataset changes shape entirely.
     _reset(tbodyId){ delete state[tbodyId]; },
+    // The natural-order comparator ("2" before "10"), shared with screens that
+    // hand-render their own table but still want DataTable's sort behaviour
+    // (Payments — Lot-wise). Same function the columns above sort with, so the
+    // two agree instead of drifting apart.
+    _natCompare(a, b){ return naturalCompare(a, b); },
     _sort(tbodyId, colKey){
       const s = state[tbodyId]; if (!s) return;
       if (!s.sort || s.sort.col !== colKey) s.sort = { col: colKey, dir: 'asc' };
@@ -26004,17 +26018,25 @@ async function pickCommissionTemplate(){
 let _commInvoNoLast = 'original';
 async function pickCommissionInvoiceNo(){
   if(!featProformaOn()) return 'original';
+  // With the proforma flow ON, the commission bill quotes the PROFORMA number:
+  // it is the default and the only selectable option — "Original tax invoice"
+  // is disabled — so the memorandum never mixes the two series. (Consistent
+  // with the rest of the app: when proforma is enabled, reports look at the
+  // proforma invoice, not the original.)
   return new Promise(resolve=>{
     const bg=document.createElement('div');
     bg.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;z-index:9999';
-    const row=(val,title,sub)=>`<label style="display:flex;gap:10px;align-items:flex-start;padding:11px 12px;border:1px solid var(--border);border-radius:10px;cursor:pointer;margin-top:8px">
-      <input type="radio" name="civn" value="${val}" ${_commInvoNoLast===val?'checked':''} style="margin-top:3px">
+    const row=(val,title,sub,opts)=>{
+      opts=opts||{};
+      return `<label style="display:flex;gap:10px;align-items:flex-start;padding:11px 12px;border:1px solid var(--border);border-radius:10px;margin-top:8px;cursor:${opts.disabled?'not-allowed':'pointer'};opacity:${opts.disabled?'.5':'1'}">
+      <input type="radio" name="civn" value="${val}" ${opts.checked?'checked':''} ${opts.disabled?'disabled':''} style="margin-top:3px">
       <span><b>${title}</b><br><span style="font-size:12px;color:var(--text3)">${sub}</span></span></label>`;
+    };
     bg.innerHTML=`<div style="background:var(--card,#fff);color:var(--text,#111);border-radius:14px;padding:22px;max-width:460px;width:92%;box-shadow:0 20px 60px -15px rgba(0,0,0,.4)">
       <strong style="font-size:16px">Which invoice number for the commission bill?</strong>
       <div style="margin-top:6px;font-size:13px;color:var(--text3)">Printed in the purchaser block as <b>INV:</b> …</div>
-      ${row('original','Original tax invoice','The number on the buyer&rsquo;s tax invoice.')}
-      ${row('proforma','Proforma invoice','The draft number the buyer was shipped against. Lots without a draft fall back to the original.')}
+      ${row('proforma','Proforma invoice','The draft number the buyer was shipped against. Lots without a draft fall back to the original.',{checked:true})}
+      ${row('original','Original tax invoice','Disabled while the Proforma Sales Invoice flow is on.',{disabled:true})}
       <div style="margin-top:18px;display:flex;gap:8px;justify-content:flex-end">
         <button class="btn" data-x="0">Cancel</button>
         <button class="btn btn-g" data-x="1">Print</button>
@@ -26024,8 +26046,10 @@ async function pickCommissionInvoiceNo(){
     bg.addEventListener('click',e=>{if(e.target===bg)done(null)});
     bg.querySelector('[data-x="0"]').onclick=()=>done(null);
     bg.querySelector('[data-x="1"]').onclick=()=>{
+      // Original is disabled, so a checked radio is always 'proforma'; default
+      // to 'proforma' regardless.
       const sel=bg.querySelector('input[name="civn"]:checked');
-      _commInvoNoLast=(sel&&sel.value)||'original';
+      _commInvoNoLast=(sel&&sel.value)||'proforma';
       done(_commInvoNoLast);
     };
     setTimeout(()=>{const b=bg.querySelector('[data-x="1"]');if(b)b.focus()},30);
@@ -28015,6 +28039,11 @@ const _payLwState = {
   // doesn't silently throw the operator's selection away. A fresh search
   // ticks everything, so "search then export" needs no extra clicks.
   selected: new Set(),
+  // Column sort for the on-screen table: { col:'seller'|'lot'|'branch', dir }
+  // or null for the server's own order (lot number ascending). Display only —
+  // see _payLwSortedLots(). Kept across re-renders so adding a bank account
+  // doesn't bounce the rows back to lot order under the operator's cursor.
+  sort: null,
 };
 
 function payLwOnAuctionChange() {
@@ -28041,7 +28070,8 @@ function loadPayLotwise() {
 
 function payLwClear() {
   ['paylw-seller', 'paylw-lots'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; payLwSyncClear(id); });
-  const u = document.getElementById('paylw-unlinked'); if (u) u.checked = false;
+  const u = document.getElementById('paylw-link'); if (u) u.value = 'linked';
+  _payLwState.sort = null;
   _payLwState.lots = [];
   _payLwState.selected = new Set();
   _payLwState.missing = [];
@@ -28072,9 +28102,8 @@ async function payLwSearch() {
   _payLwState.aid = aid;
   const seller = (document.getElementById('paylw-seller')?.value || '').trim();
   const lots   = (document.getElementById('paylw-lots')?.value || '').trim();
-  // The toggle is a two-way filter, never "all": ON = only lots with no
-  // account, OFF = only lots that have one.
-  const link = document.getElementById('paylw-unlinked')?.checked ? 'unlinked' : 'linked';
+  // linked (default) · unlinked · all — the server takes all three.
+  const link = document.getElementById('paylw-link')?.value || 'linked';
   const qs = new URLSearchParams({ link });
   if (seller) qs.set('seller', seller);
   if (lots)   qs.set('lots', lots);
@@ -28091,7 +28120,12 @@ async function payLwSearch() {
     _payLwState.searched = true;
     // A new result set starts fully ticked — the common case is "export what
     // I just searched for", and unticking a few is less work than ticking all.
-    _payLwState.selected = new Set(_payLwState.lots.map(l => l.id));
+    // EXCEPT in "All", where the list deliberately mixes payable and unpayable
+    // lots: ticking the unlinked ones there would make every export stop on the
+    // "…have no bank account" confirm. They stay visible, just unticked, and
+    // the header checkbox still selects the lot.
+    _payLwState.selected = new Set(
+      _payLwState.lots.filter(l => link !== 'all' || l.linked).map(l => l.id));
     _payLwRender();
   } catch (e) {
     if (body) body.innerHTML = `<div style="padding:30px;text-align:center;color:var(--spice-chili)">Search failed: ${esc(e.message || String(e))}</div>`;
@@ -28158,6 +28192,54 @@ function _payLwMissingHtml() {
   </div>`;
 }
 
+// ── Column sorting (Seller / Lot / Branch) ───────────────────────────────
+// Display-only: it reorders the rows on screen and never touches the result
+// set, the ticked ids (held by lot id) or the bank export, which orders itself
+// server-side. Clicking a header cycles asc → desc → back to the server's own
+// order (lot number ascending), the same three-step cycle DataTable uses.
+//
+// Values compare naturally, so lot "9" precedes "10" and a seller's "Estate 2"
+// precedes "Estate 10". Blank sellers/branches sort last in either direction —
+// a lot with no branch is missing data, not the alphabetically-first branch.
+// `dir` is applied INSIDE the comparator, not by negating its result, so the
+// blanks-last rule survives a descending sort instead of being flipped to
+// blanks-first with it.
+function _payLwCompare(a, b, col, dir) {
+  const val = (l) => col === 'lot' ? String(l.lot_no == null ? '' : l.lot_no)
+                   : col === 'seller' ? String(l.name || '')
+                   : String(l.branch || '');
+  const va = val(a).trim(), vb = val(b).trim();
+  if (!va && !vb) return 0;
+  if (!va) return 1;                       // blanks last, both directions
+  if (!vb) return -1;
+  const c = DataTable._natCompare(va, vb);
+  return dir === 'desc' ? -c : c;
+}
+function payLwSort(col) {
+  const s = _payLwState.sort;
+  if (!s || s.col !== col)      _payLwState.sort = { col, dir: 'asc' };
+  else if (s.dir === 'asc')     _payLwState.sort = { col, dir: 'desc' };
+  else                          _payLwState.sort = null;   // back to lot order
+  _payLwRender();
+}
+function _payLwSortedLots() {
+  const s = _payLwState.sort;
+  if (!s || !s.col) return _payLwState.lots;   // server order: lot no ascending
+  return _payLwState.lots.slice().sort((a, b) => _payLwCompare(a, b, s.col, s.dir));
+}
+// Header cell for a sortable column, with the active arrow.
+function _payLwTh(col, label, extraStyle) {
+  const s = _payLwState.sort;
+  const on = s && s.col === col;
+  const arrow = on ? (s.dir === 'asc' ? ' ▲' : ' ▼') : '';
+  return `<th class="paylw-sortable" onclick="payLwSort('${col}')"`
+    + ` title="Sort by ${esc(label)} — click again to reverse, once more for lot order"`
+    + ` style="cursor:pointer;user-select:none${extraStyle || ''}">${esc(label)}`
+    // Arrow sits on the dark header band, so it is white rather than the
+    // accent green the light DataTable header uses.
+    + `<span style="color:#fff;font-weight:700">${arrow}</span></th>`;
+}
+
 function _payLwRender() {
   const body = document.getElementById('paylw-body');
   const summary = document.getElementById('paylw-summary');
@@ -28167,13 +28249,15 @@ function _payLwRender() {
     body.innerHTML = `
       <div style="padding:34px;text-align:center;color:var(--text3);font-size:13px;line-height:1.7">
         Search by <strong>seller name</strong>, <strong>lot numbers</strong>, or both — then press <strong>Search</strong>.<br>
-        <span style="font-size:12px">Searching with both boxes empty lists every payable lot in the trade. Turn on <strong>Show unlinked</strong> for the lots that have no bank account yet.</span>
+        <span style="font-size:12px">Searching with both boxes empty lists every payable lot in the trade. Use the <strong>Bank account</strong> filter for the lots that have no account yet, or for all of them together.</span>
       </div>`;
     _payLwRefreshSelection();
     return;
   }
   const lots = _payLwState.lots;
-  const showingUnlinked = !!document.getElementById('paylw-unlinked')?.checked;
+  const linkMode = document.getElementById('paylw-link')?.value || 'linked';
+  const showingUnlinked = linkMode === 'unlinked';
+  const showingAll = linkMode === 'all';
   // Drop ids that are no longer in the result (a re-search narrowed it).
   _payLwState.selected = new Set([..._payLwState.selected].filter(id => lots.some(l => l.id === id)));
   if (summary) {
@@ -28190,11 +28274,21 @@ function _payLwRender() {
       + `<strong>${sellers}</strong> seller${sellers === 1 ? '' : 's'} · `
       + `Qty <strong>${fmtI(qty, 3)}</strong> · `
       + `Payable <strong style="color:var(--spice-cardamom-dk)">₹${fmtI(payable, 2)}</strong>`
+      // What the Bank account filter is currently showing. In "All" the two
+      // kinds sit in one list, so the unlinked ones are counted here (they are
+      // also tinted red per row) rather than pointed at another filter.
       + (showingUnlinked
           ? ` <span style="color:var(--spice-chili);font-weight:600">· showing lots with NO bank account</span>`
-          : (_payLwState.unlinkedCount
-              ? ` <span style="color:var(--spice-chili)">· ${_payLwState.unlinkedCount} more matching lot${_payLwState.unlinkedCount === 1 ? ' has' : 's have'} no bank account — turn on “Show unlinked”</span>`
-              : ''))
+          : showingAll
+            ? (() => {
+                const nUnlinked = lots.filter(l => !l.linked).length;
+                return nUnlinked
+                  ? ` <span style="color:var(--spice-chili)">· including <strong>${nUnlinked}</strong> with no bank account (shaded), which the export skips</span>`
+                  : ` <span style="color:var(--text3)">· every lot has a bank account ✓</span>`;
+              })()
+            : (_payLwState.unlinkedCount
+                ? ` <span style="color:var(--spice-chili)">· ${_payLwState.unlinkedCount} more matching lot${_payLwState.unlinkedCount === 1 ? ' has' : 's have'} no bank account — switch <strong>Bank account</strong> to Unlinked or All</span>`
+                : ''))
       + (noSeller
           ? `<div style="margin-top:5px;font-size:11.5px;color:var(--text3)">${noSeller} lot${noSeller === 1 ? '' : 's'} ${noSeller === 1 ? 'has' : 'have'} no seller master record — link the seller in Lot Entry before an account can be attached.</div>`
           : '')
@@ -28212,7 +28306,7 @@ function _payLwRender() {
           ? `Nothing to pay from this search.`
           : (showingUnlinked
               ? `No unlinked lots — every matching lot has a bank account. ✓`
-              : `No lots matched. Check the seller name / lot numbers, or turn on <strong>Show unlinked</strong> to see lots with no bank account.`))
+              : `No lots matched. Check the seller name / lot numbers, or set <strong>Bank account</strong> to Unlinked or All to see lots with no account.`))
       + `</div>`;
     _payLwRefreshSelection();
     return;
@@ -28220,7 +28314,8 @@ function _payLwRender() {
   // Re-routing a lot writes lots.bank_id, which needs lot_write. Without it
   // the picker renders as plain text rather than a control that 403s on use.
   const canWrite = document.body.getAttribute('data-perm-lot-write') === '1';
-  const rows = lots.map(l => {
+  // Sorting is display-only — `lots` (and the ticked ids) stay as they came.
+  const rows = _payLwSortedLots().map(l => {
     const banks = _payLwState.banksByTrader[l.trader_id] || [];
     const legacy = _payLwState.legacyByTrader[l.trader_id];
     let bankCell;
@@ -28269,7 +28364,7 @@ function _payLwRender() {
       <table class="paylw-table" style="width:100%">
         <thead><tr>
           <th style="width:36px;text-align:center"><input type="checkbox" id="paylw-cb-all" onchange="payLwTickAll(this.checked)" title="Select / clear every listed lot" style="cursor:pointer;width:15px;height:15px"></th>
-          <th>Seller</th><th>Lot</th><th style="text-align:right">Qty</th><th>Branch</th>
+          ${_payLwTh('seller', 'Seller')}${_payLwTh('lot', 'Lot')}<th style="text-align:right">Qty</th>${_payLwTh('branch', 'Branch')}
           <th style="min-width:320px">Bank</th><th style="text-align:right">Payable</th>
         </tr></thead>
         <tbody>${rows}</tbody>

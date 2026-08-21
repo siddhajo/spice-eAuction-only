@@ -2279,7 +2279,7 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
     const urdAlloc  = urdRefAmt !== 0 ? `
 <BILLALLOCATIONS.LIST>
 <NAME>${xe(refTail(`${taxNm}/${seasonShort}`))}</NAME>
-<BILLTYPE>Agst Ref</BILLTYPE>
+<BILLTYPE>New Ref</BILLTYPE>
 <AMOUNT>${urdRefAmt}</AMOUNT>
 </BILLALLOCATIONS.LIST>` : '';
 
@@ -2617,6 +2617,13 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
     // Dealer DN: interstate → Commission Ledger InterState, local → local
     // commission ledger. Planter DN: always its own planter commission ledger.
     const discountLdr = isPlanter ? DiscountP_LDR : (isIntra ? Discount_LDR : DiscountInter_LDR);
+    // Bill-reference NAME inside BILLALLOCATIONS (the party ledger's "Agst Ref").
+    // PLANTER DNs quote the number under the BILL-OF-SUPPLY affixes
+    // (bill_of_supply_prefix/suffix) so the reference matches the planter's
+    // bill-of-supply series in Tally; dealer DNs keep their own voucher number.
+    const billAllocName = isPlanter
+      ? formatBillOfSupplyNo(cfg, taxNm, { ano: row.ano })
+      : voucherNo;
     // GST "stored nature" for the commission/discount ledger — same
     // intra/inter classification as the Sales invoice (no export case here).
     const dnNature    = isIntra ? 'Local Sales - Taxable' : 'Interstate Sales - Taxable';
@@ -2666,8 +2673,8 @@ ${TAGS.DEEMYES}
 <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
 <AMOUNT>${-totalRound}</AMOUNT>
 <BILLALLOCATIONS.LIST>
-<NAME>${xe(voucherNo)}</NAME>
-<BILLTYPE>New Ref</BILLTYPE>
+<NAME>${xe(billAllocName)}</NAME>
+<BILLTYPE>Agst Ref</BILLTYPE>
 <AMOUNT>${-totalRound}</AMOUNT>
 </BILLALLOCATIONS.LIST>
 </LEDGERENTRIES.LIST>
@@ -4832,7 +4839,7 @@ function generMerchantsXML(rows, cfg, opts = {}) {
   const first = rows[0];
   // Voucher number / narration identify the auction (ano/season) — mirrors the
   // reference VBA's `auction` value.
-  const voucherNo = `${invPrefix}${xe(String(first.ano || '').trim())}/${season}`;
+  const voucherNo = `${xe(String(first.ano || '').trim())}/${season}`;
 
   xml += `
 <VOUCHER OBJVIEW="Invoice Voucher View">
@@ -4859,7 +4866,7 @@ function generMerchantsXML(rows, cfg, opts = {}) {
     const billRef   = proformaNo
       ? formatInvoiceNo(proformaPrefix, proformaSale, proformaNo)
       : `${sale}${separator}${invoNo}`;
-    const billName  = `${invPrefix}${billRef}/${season}`;
+    const billName  = `${billRef}/${season}`;
     // Merchants journal debits the BUYER (row.buyer, e.g. "ARUL"), not the
     // trade name (row.partyName / buyer1, e.g. "KAVISH TRADING COMPANY").
     // Fall back to the trade name only if the buyer key is somehow blank.

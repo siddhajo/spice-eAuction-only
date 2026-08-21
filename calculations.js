@@ -1562,10 +1562,20 @@ function _proformaMode(db, cfg) {
 
 // Row filter shared by the journal and its ledger summary, so the summary
 // always totals exactly the rows the journal printed.
+//
+// When the proforma flow is ON, the journal looks at PROFORMA invoices ONLY —
+// never originals. A raised proforma keeps its row (is_proforma=1), so this is
+// the complete picture of what was sold, and it never mixes the two streams.
+// Mixing them was the source of the duplicate lines: a draft billed directly
+// (rather than via "Raise Original") left both a pending draft AND its original
+// in the journal, both printing under the same "PI/L-nn" number. Reading only
+// is_proforma=1 removes that class of duplicate outright.
+//
+// When the flow is OFF (default) there are no proforma rows, so the journal
+// reads the originals (is_proforma=0), exactly as before.
 function _journalProformaSql(on) {
   return on
-    ? `(COALESCE(is_proforma,0) = 0
-        OR (COALESCE(is_proforma,0) = 1 AND TRIM(COALESCE(raised_invo,'')) = ''))`
+    ? `COALESCE(is_proforma,0) = 1`
     : `COALESCE(is_proforma,0) = 0`;
 }
 
@@ -1610,8 +1620,9 @@ function _byInvoCell(cellOf) {
  * (resolved via auctions.ano so old invoices with a NULL auction_id
  * still match by ano). Dates rendered dd/mm/yyyy.
  *
- * With flag_proforma_invoice on, `invo` carries the proforma number the buyer
- * holds and pending drafts join the register — see the note above.
+ * With flag_proforma_invoice on, the register lists PROFORMA invoices only —
+ * `invo` prints the draft number under the proforma prefix ("PI/L-8"), and
+ * originals are not included at all (see _journalProformaSql).
  *
  * Rows come out in printed-invoice-number order — see _invoCellSortKey().
  */
