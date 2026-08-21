@@ -17,7 +17,8 @@ for t in \
   tests/tally-ref-suffix.unit.js \
   tests/lot-payment-format.js \
   tests/sales-journal-proforma.js \
-  tests/dn-planter-tally-bos-name.js
+  tests/dn-planter-tally-bos-name.js \
+  tests/urd-purchase-payable-rounding.js
 do
   printf '\n=== %s\n' "$t"
   if node "$t" 2>&1 | grep -E '  (ok|FAIL) |passed,'; then :; fi

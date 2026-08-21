@@ -80,7 +80,7 @@ const formatBillOfSupplyNo = (() => {
     opts = opts || {};
     const num = String(billNo == null ? '' : billNo).trim();
     const prefix = String((cfg && cfg.bill_of_supply_prefix) || '').trim();
-    const suffix = String((cfg && cfg.bill_of_supply_suffix) || '').trim();
+    const suffix = String((cfg && cfg.debit_note_planter_suffix) || '').trim();
     if ((!prefix && !suffix) || !num) return num;
     const g = (key) => String((cfg && cfg[key]) || '').trim();
     const season = g('season_short') || g('tally_season') || g('season_code') || '';
@@ -2240,11 +2240,21 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
     // Driven by tally_purchase_detailed: detailed → one New Ref per lot
     // (keyed by lot number, matching the per-lot inventory); consolidated →
     // a single New Ref keyed by bill no, summed across the voucher's lots.
-    const lotPayable = (lot) => r2(
-      Number(lot.amount || 0) + Number(lot.refund || 0)
-      - Number(lot.com || 0) - Number(lot.sertax || 0)
-      - Number(lot.cgst || 0) - Number(lot.sgst || 0) - Number(lot.igst || 0)
-    );
+    // Per-lot payable to the planter. REUSE the whole-rupee figure calculateLot()
+    // already rounded and stored (lots.balance = result.payable) so the voucher's
+    // "New Ref" matches the Lots table and the amount actually paid — rather than
+    // re-deriving it here at 2 decimals and drifting by the paise. The commission
+    // back-charge (urdRefAmt = partyAmt − Σ payables) absorbs any delta, so the
+    // voucher still balances exactly. Fallback (legacy rows with no stored
+    // balance) recomputes AND rounds the SAME way calculateLot does — r2 then r0 —
+    // so even the fallback stays consistent.
+    const lotPayable = (lot) => (lot.balance != null)
+      ? r2(Number(lot.balance))
+      : r0(r2(
+          Number(lot.amount || 0) + Number(lot.refund || 0)
+          - Number(lot.com || 0) - Number(lot.sertax || 0)
+          - Number(lot.cgst || 0) - Number(lot.sgst || 0) - Number(lot.igst || 0)
+        ));
     let lotPayableSum = 0;
     const lotPayRows = (Array.isArray(row.lots) ? row.lots : []).map((lot) => {
       const pay = lotPayable(lot);
@@ -4009,7 +4019,12 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
            -- undefined and the deduction silently resolves to zero, which is
            -- how the URD "New Ref" came out gross of tax while the RD voucher
            -- (whose builder always selected them) came out net.
-           cgst, sgst, igst
+           cgst, sgst, igst,
+           -- The whole-rupee payable calculateLot() already rounded and stored
+           -- (lots.balance = result.payable). The voucher reuses this so the
+           -- per-lot "New Ref" matches the Lots table / the sum actually paid,
+           -- instead of re-deriving it at 2 decimals.
+           balance
     FROM lots
     WHERE auction_id = ? AND name = ?
       AND (isp_puramt > 0 OR puramt > 0)
@@ -4066,6 +4081,9 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
         refund: l.refund || 0, com: l.com || 0, sertax: l.sertax || 0,
         // Mirrors the RD builder — lotPayable() subtracts these.
         cgst: l.cgst || 0, sgst: l.sgst || 0, igst: l.igst || 0,
+        // Whole-rupee payable calculateLot() already rounded (lots.balance).
+        // lotPayable() reuses this so the voucher agrees with the Lots table.
+        balance: l.balance != null ? Number(l.balance) : null,
       });
     }
     const qtytot = lots.reduce((s, l) => s + Number(l.qty || 0), 0);
