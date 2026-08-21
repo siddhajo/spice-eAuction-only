@@ -46,6 +46,7 @@ The app consumes flags two ways:
 
 | `flag_lotwise_purchase` | **Generation-mode switch**: OFF = one purchase invoice per dealer (seller-wise, historical). ON = one purchase invoice per LOT, each with its own number. Swaps the Generate modal's seller picker for a lot picker, adds `/eligible-lots`, changes `generate-all` to walk lots, adds a per-lot duplicate guard (409), and re-keys the generation gate on the lot. Default OFF. | `server.js` `lotwisePurchaseOn()`/`purchaseRebuildOpts()`, `calculations.js` `buildPurchaseInvoice(opts.lotNo/lotId/docNo)`, `index.html` `featLotwisePurchaseOn()` |
 | `flag_lotwise_bills` | Same switch for **Bills of Supply**: OFF = one bill per planter, ON = one bill per LOT with its own bill number. Adds `/api/bills/eligible-lots`, lot-walking `generate-all`, per-lot 409 guard, lot-keyed gate, and lot scope in both PDF paths *and* in `recoverAgriBillByAno`. Default OFF. | `server.js` `lotwiseBillsOn()`/`billRebuildOpts()`, `calculations.js` `buildAgriBill(opts.lotNo/lotId)`, `index.html` `featLotwiseBillsOn()` |
+| `flag_lotwise_dn_planter` | Same switch for **Debit Note — Planter**: OFF = one DN per planter (whole grade-1 service charge); ON = one DN per grade-1 LOT (amount = that lot's commission + handling), **numbered by lot-number ascending**. Adds `/api/debit-notes-planter/eligible-lots`; the single-generate is driven by a lot (not a bill) and `generate-bulk` takes a lot-wise early-return branch; per-(trade,lot) 409 guard; lot-keyed gate. The DN PDF renders stored row amounts, so there is **no** reprint-scoping path to fix. Default OFF. | `server.js` `lotwiseDnPlanterOn()`, `index.html` `featLotwiseDnPlanterOn()` |
 
 > Added 2026-08-18. Note the `COALESCE(is_proforma,0) = 0` filters in the
 > statutory/analytical readers are deliberately **not** flag-gated — drafts
@@ -93,6 +94,16 @@ Things that needed fixing to make lot-wise correct — all covered by
 the `line_items` snapshot plus a per-auction claimed-lot set. A lot-wise bill's
 snapshot holds exactly one lot, so lot-wise yields one voucher per lot with no
 double-counting. Asserted in `tests/lotwise-bills.http.js` [D].
+
+**Debit Note — Planter specifics:** unlike purchase/bills, the DN PDF renders
+the amounts stored on the row (no live rebuild from lots), so there is no
+reprint-scoping defect — the `lot_no`/`lot_id` columns are just the mode stamp.
+Of the three defect classes, only #2 (the generation gate) applies; there is no
+cross-trade cumulative like 194Q TDS (#1) and no total-validated recovery (#3).
+The requested numbering is **lot-number ascending**: both `eligible-lots` and
+the `generate-bulk` lot-wise branch `ORDER BY CAST(lot_no AS INTEGER), lot_no`,
+so a planter's non-adjacent lots receive non-consecutive note numbers. Covered
+by `tests/lotwise-dn-planter.http.js`.
 
 ---
 

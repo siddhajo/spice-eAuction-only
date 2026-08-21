@@ -285,12 +285,18 @@ const DEFAULTS = [
   // AND a single aggregate inventory entry. Same flag covers RD
   // purchase, URD purchase, and Debit Note vouchers.
   { key: 'tally_purchase_detailed', value: 'true', category: 'flags', label: 'Tally Purchase XML — Detailed (per-lot)', type: 'boolean' },
-  // Purchase XML — leave <VOUCHERNUMBER> and <REFERENCE> EMPTY on the RD and
-  // URD purchase vouchers so the operator types them in Tally after the
-  // import. Everything else about the voucher is unchanged, and the per-lot
-  // bill allocations keep their own <ano>/<lot>/<season> refs. OFF (default)
-  // keeps the generated numbers exactly as they are today.
-  { key: 'tally_purchase_manual_voucherno', value: 'false', category: 'flags', label: 'Purchase XML — Blank Voucher No / Reference (type in Tally)', type: 'boolean' },
+  // Purchase XML — leave <VOUCHERNUMBER> and <REFERENCE> EMPTY on the purchase
+  // vouchers so the operator types them in Tally after the import. Everything
+  // else about the voucher is unchanged, and the per-lot bill allocations keep
+  // their own <ano>/<lot>/<season> refs. OFF (default) keeps the generated
+  // numbers exactly as they are today.
+  //
+  // RD (registered dealer) and URD (agriculturist) are SEPARATE toggles: the
+  // two vouchers post to different books and a site commonly hand-numbers one
+  // series while keeping the other generated. They were a single flag until
+  // this revision — see the carry-over migration in initCompanySettings().
+  { key: 'tally_purchase_manual_voucherno_rd',  value: 'false', category: 'flags', label: 'Purchase XML (RD / Dealer) — Blank Voucher No / Reference (type in Tally)',      type: 'boolean' },
+  { key: 'tally_purchase_manual_voucherno_urd', value: 'false', category: 'flags', label: 'Purchase XML (URD / Planter) — Blank Voucher No / Reference (type in Tally)',    type: 'boolean' },
   // Set Buyer Code bulk action on the Lots tab — when ON, a "👤 Set
   // Buyer Code" button appears next to "🗑 Delete Selected" once a
   // lot is ticked, opening a modal where the operator picks a buyer
@@ -335,6 +341,7 @@ const DEFAULTS = [
   // module back without disturbing the other three.
   { key: 'flag_lotwise_purchase',   value: 'false', category: 'flags', label: 'Lot-wise Purchase Invoices (off = Seller-wise)',   type: 'boolean' },
   { key: 'flag_lotwise_bills',      value: 'false', category: 'flags', label: 'Lot-wise Bills of Supply (off = Seller-wise)',     type: 'boolean' },
+  { key: 'flag_lotwise_dn_planter', value: 'false', category: 'flags', label: 'Lot-wise Debit Notes — Planter (off = Seller-wise)', type: 'boolean' },
 
   // Price Check tab + transaction gate. When ON the operator gets the
   // Reports → Price Check tab, the gate banner, and a hard server-side
@@ -604,6 +611,13 @@ const DEFAULTS = [
 
   // Agriculturist & TDS-on-sales
   { key: 'tally_purchase_auction', value: '', category: 'tally', label: 'Purchase From Agriculturist (URD ledger)', type: 'text' },
+  // Tally GROUP every agriculturist party ledger is created under. Distinct
+  // from `tally_purchase_auction` above, which is the accounting ledger posted
+  // INSIDE the URD voucher — this one is the party's parent group. The RD side
+  // picks its parent per dealer (intra vs inter, from the GSTIN); planters are
+  // flat, so one value covers them all. Blank → 'Planters', the value this
+  // was hardcoded to before it became configurable.
+  { key: 'tally_purchase_planter_parent', value: '', category: 'tally', label: 'Planter Party Ledger Parent (URD)', type: 'text' },
   { key: 'tally_tds_paid_sales',   value: '', category: 'tally', label: 'TDS Paid on Sales',                         type: 'text' },
 
   // Tax Ledger Names
@@ -842,6 +856,20 @@ function initCompanySettings(db) {
     ).run(String(_oldPfx.value).trim());
   }
   db.prepare("DELETE FROM company_settings WHERE key = 'interstate_invoice_prefix'").run();
+
+  // `tally_purchase_manual_voucherno` (one switch over BOTH purchase vouchers)
+  // → `_rd` + `_urd`. An install that had the single flag ON was blanking the
+  // voucher number on both exports, so carry the value onto both new keys —
+  // never clobbering one an operator has already set — then drop the stale row
+  // so Settings shows only the two new toggles.
+  const _oldMvn = db.prepare("SELECT value FROM company_settings WHERE key = 'tally_purchase_manual_voucherno'").get();
+  if (_oldMvn && String(_oldMvn.value).toLowerCase() === 'true') {
+    db.prepare(
+      "UPDATE company_settings SET value = 'true' WHERE value = 'false' AND key IN " +
+      "('tally_purchase_manual_voucherno_rd','tally_purchase_manual_voucherno_urd')"
+    ).run();
+  }
+  db.prepare("DELETE FROM company_settings WHERE key = 'tally_purchase_manual_voucherno'").run();
 
   console.log('Company settings ready (%d defaults)', DEFAULTS.length);
 }

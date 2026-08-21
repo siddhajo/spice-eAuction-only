@@ -508,6 +508,15 @@ async function initDb() {
     sgst REAL DEFAULT 0,
     igst REAL DEFAULT 0,
     total REAL DEFAULT 0,
+    -- ── Lot-wise document marker (flag_lotwise_dn_planter) ───────────
+    -- Same contract as purchases/bills: empty lot_no = the classic
+    -- SELLER-WISE planter DN covering the planter's whole grade-1 service
+    -- charge for the trade (what all pre-existing rows are); non-empty =
+    -- a LOT-WISE DN whose amount is the commission + handling on the ONE
+    -- grade-1 lot named here. The DN PDF renders stored amounts, so this
+    -- marker never changes how an existing row prints.
+    lot_no TEXT DEFAULT '',
+    lot_id INTEGER DEFAULT NULL,
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
@@ -1113,6 +1122,8 @@ async function initDb() {
     'ALTER TABLE purchases ADD COLUMN lot_id INTEGER',
     "ALTER TABLE bills ADD COLUMN lot_no TEXT DEFAULT ''",
     'ALTER TABLE bills ADD COLUMN lot_id INTEGER',
+    "ALTER TABLE debit_notes_planter ADD COLUMN lot_no TEXT DEFAULT ''",
+    'ALTER TABLE debit_notes_planter ADD COLUMN lot_id INTEGER',
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }

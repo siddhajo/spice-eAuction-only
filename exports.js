@@ -706,11 +706,14 @@ async function exportBankPayment(db, auctionId, cfg, _state, extra) {
   // they take precedence so ticking one of two same-named sellers exports only
   // that one. lots / excludeLots flow through to getBankPaymentData, which
   // recomputes each affected seller's payable over only the relevant lots.
+  // orderByLot is set by the Lot-wise Payments screen so the sheet comes out
+  // in the same lot order the operator ticked the rows in.
   const payments = getBankPaymentData(db, auctionId, cfg, {
     sellers,
     sellerKeys: (extra && extra.sellerKeys) || null,
     lots:        extra && extra.lots,
     excludeLots: extra && extra.excludeLots,
+    orderByLot:  !!(extra && extra.orderByLot),
   });
   const fmt = getBankFormat(cfg && cfg.bank_format);
   return renderBankPaymentView(db, auctionId, fmt, payments, cfg);
@@ -730,6 +733,7 @@ async function exportBankPaymentBefore(db, auctionId, cfg, _state, extra) {
     sellerKeys: (extra && extra.sellerKeys) || null,
     lots:        extra && extra.lots,
     excludeLots: extra && extra.excludeLots,
+    orderByLot:  !!(extra && extra.orderByLot),
   });
   const fmt = getBankFormat(cfg && cfg.bank_format);
   const view = fmt.before || BANK_FORMATS[DEFAULT_BANK_FORMAT].before;
@@ -1250,8 +1254,10 @@ async function exportTallyPurchase(db, auctionId, cfg) {
 // Trade-based: filters by auction_id; dates rendered dd/mm/yyyy.
 async function exportSalesJournal(db, auctionId, saleType) {
   const calc = require('./calculations');
-  const rows = calc.getSalesJournal(db, auctionId, saleType);
   const cfg = require('./company-config').getSettingsFlat(db);
+  // Same cfg the summary uses, so the XLSX register and its ledger block agree
+  // on whether proforma mode is on (see the note over getSalesJournal).
+  const rows = calc.getSalesJournal(db, auctionId, saleType, cfg);
   // Date / Buyer / GSTIN / Place columns dropped per request — the register
   // keeps the sale/invoice/trade-name identity and the money columns.
   const cols = [
@@ -1271,6 +1277,11 @@ async function exportSalesJournal(db, auctionId, saleType) {
     { header: 'ROUND', key: 'rund', width: 8 },
     { header: 'TOTAL', key: 'total', width: 14 },
   ];
+  // Pending proformas join the register in proforma mode and count toward the
+  // totals below, so tag them here too — the same "(DRAFT)" mark the on-screen
+  // table and the PDF carry. Without it a draft reads as a raised invoice
+  // whenever no proforma prefix is configured.
+  const body = rows.map(r => Number(r.is_proforma) ? { ...r, invo: `${r.invo || ''} (DRAFT)` } : r);
   // Column-sum "Total" row.
   const sumKeys = ['bag','qty','cardamom','gunny','transport','insurance','cgst','sgst','igst','tcs','rund','total'];
   const totalRow = { buyer1: 'Total' };
@@ -1280,7 +1291,7 @@ async function exportSalesJournal(db, auctionId, saleType) {
   // register, so each value — including the smaller gunny-sales lines — stays
   // legible instead of being stretched across the wide invoice columns.
   const summary = calc.getSalesJournalSummary(db, auctionId, saleType, cfg);
-  const sections = [{ title: 'SALES INVOICES', rows: [...rows, totalRow] }];
+  const sections = [{ title: 'SALES INVOICES', rows: [...body, totalRow] }];
   return createExcelBuffer('SalesJournal', cols, [], {
     db, title: 'Sales Journal',
     metaLines: [...auctionMeta(db, auctionId), saleType ? `Type: ${saleType}` : ''].filter(Boolean),

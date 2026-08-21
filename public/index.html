@@ -1508,6 +1508,14 @@ tr:hover td{background:var(--spice-cream)}
 #pe-grid{max-height:calc(100vh - 300px);overflow:auto}
 #pe-grid .pe-grid-table thead th{position:sticky;top:0;z-index:2}
 
+/* Lot-wise Payments results — coloured header, same treatment as the Price
+   Entry grid above. Overrides the element-level th{} cream/hint-grey so the
+   column names read as a header band rather than as another table row. */
+.paylw-table thead th{
+  background:var(--spice-cardamom);color:#fff;
+  font-size:11px;letter-spacing:.5px;border-bottom:none
+}
+
 /* Seller Bank Account rows (Add/Edit Seller) — a 2×2 grid that always fits
    inside the modal, with larger, clearly legible inputs + labels. */
 .bank-row .fg label{font-size:12.5px;font-weight:600;color:var(--text2);margin-bottom:4px;display:block}
@@ -5115,6 +5123,10 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <button class="btn" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="printSelectedPurchases()" title="Print all ticked purchase invoices">🖨 Print Selected</button>
+            <!-- Lot-wise print of seller-wise purchases: one Payment Voucher
+                 (commission memorandum) page per lot. Nothing is generated or
+                 numbered — see POST /api/purchases/commission-bulk. -->
+            <button class="btn btn-o" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 16px;font-weight:600" onclick="printSelectedPurchaseVouchers()" title="Print Payment Voucher (Memorandum) for all ticked purchase invoices — ONE A4 page PER LOT, even for seller-wise invoices">🧾 Payment Voucher (Lot-wise)</button>
             <button class="btn feat-whatsapp" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedPurchases()" title="Send merged PDF of ticked purchase invoices via WhatsApp">📱 WhatsApp Selected</button>
             <button id="pur-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedPurchases()" title="Delete all ticked purchase invoices">🗑 Delete Selected <span id="pur-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           </div>
@@ -6820,7 +6832,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
   </div>
 </div></div>
 
-<div class="modal-bg" id="gen-inv-modal"><div class="modal" style="max-width:580px">
+<div class="modal-bg" id="gen-inv-modal"><div class="modal" style="max-width:760px">
   <h2>Generate Sales Invoice(s)</h2>
   <!-- Proforma vs Original. Proforma = a saved DRAFT (own number series, kept
        out of GST/Tally/reports, leaves lots un-shipped so they can be raised
@@ -6857,7 +6869,13 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         <a href="#" onclick="toggleAllBuyers(false);return false" style="color:var(--text3);text-decoration:none">Clear</a>
       </span>
     </label>
-    <div id="gi-buyer-list" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px;background:var(--bg)">
+    <!-- Filters the buyer list below by code, buyer code, or buyer (trade)
+         name. Client-side show/hide, so ticked buyers keep their selection
+         while you narrow the list. -->
+    <input id="gi-buyer-search" type="search" autocomplete="off" placeholder="🔎 Search code, buyer code, or name…"
+      oninput="filterBuyerList()"
+      style="width:100%;height:34px;padding:0 12px;margin-bottom:6px;border:1px solid var(--border);border-radius:6px;background:#fff;font-size:13px;box-sizing:border-box">
+    <div id="gi-buyer-list" style="max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px;background:var(--bg)">
       <div style="color:var(--text3);font-size:12px;padding:10px;text-align:center">Select an auction first</div>
     </div>
   </div>
@@ -7385,9 +7403,16 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     The bill must belong to the selected auction.
   </p>
   <div id="gd1p-trade-info" style="padding:8px 12px;background:var(--green-bg);border-radius:6px;font-size:13px;margin-bottom:14px;font-weight:600">—</div>
-  <div class="fg">
+  <!-- Mode banner (flag_lotwise_dn_planter) — shown in both modes. -->
+  <div id="gd1p-mode-banner" class="gen-mode-banner"></div>
+  <!-- Bill-of-Supply input — SELLER-WISE mode. -->
+  <div class="fg" id="gd1p-bill-wrap">
     <label>Bill of Supply #</label>
     <input id="gd1p-bilno" autocomplete="off" placeholder="e.g. 100">
+  </div>
+  <!-- Lot picker — LOT-WISE mode. -->
+  <div class="fg" id="gd1p-lot-wrap" style="display:none"><label>Lot</label>
+    <select id="gd1p-lot"><option value="">— Select lot —</option></select>
   </div>
   <div class="fg">
     <label>Debit Note # <span style="color:var(--text3);font-weight:400">(numeric)</span></label>
@@ -7409,9 +7434,13 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     automatically. <strong>No cross-auction data</strong>.
   </p>
   <div id="gdap-trade-info" style="padding:8px 12px;background:var(--green-bg);border-radius:6px;font-size:13px;margin-bottom:10px;font-weight:600">—</div>
+  <!-- Mode banner (flag_lotwise_dn_planter) — shown in both modes. -->
+  <div id="gdap-mode-banner" class="gen-mode-banner"></div>
   <div class="fg">
     <label>Starting Debit Note # <span style="color:var(--text3);font-weight:400">(numeric — increments by 1 per DN)</span></label>
-    <input id="gdap-startno" type="number" min="1" autocomplete="off" placeholder="e.g. 100">
+    <!-- oninput refreshes the preview so the lot-wise number range tracks what
+         is typed; the seller-wise preview ignores the number. -->
+    <input id="gdap-startno" type="number" min="1" autocomplete="off" placeholder="e.g. 100" oninput="onGdapStartInput()">
   </div>
   <div id="gdap-preview" style="font-size:12px;color:var(--text2);max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:10px;background:#fafafa">
     <em>Loading eligible bills…</em>
@@ -8692,6 +8721,8 @@ async function applyFeatureFlags() {
   document.body.setAttribute('data-feat-lotwise-purchase', window._FEAT_LOTWISE_PURCHASE ? '1' : '0');
   window._FEAT_LOTWISE_BILLS = !!(cfg && on(cfg.flag_lotwise_bills));
   document.body.setAttribute('data-feat-lotwise-bills', window._FEAT_LOTWISE_BILLS ? '1' : '0');
+  window._FEAT_LOTWISE_DN_PLANTER = !!(cfg && on(cfg.flag_lotwise_dn_planter));
+  document.body.setAttribute('data-feat-lotwise-dn-planter', window._FEAT_LOTWISE_DN_PLANTER ? '1' : '0');
   // Debit Note — Planter gated by flag_debit_note_planter (Settings → Flags).
   document.body.setAttribute('data-feat-debit-note-planter', cfg && on(cfg.flag_debit_note_planter) ? '1' : '0');
   // Price List Mapping — sidebar entry + Lots toolbar button. Default
@@ -18931,6 +18962,7 @@ const FIELD_HELP = {
   bill_of_supply_suffix: 'Trails the stored bill number on the same three documents as the prefix (BoS PDF, Commission Bill PDF, URD Tally XML). Blank = bare number, as before. {season} and {ano} expand — e.g. "-A" prints bill 1748 as "1748-A". It only appends: the Tally voucher still adds its "/season" after your suffix, and a multi-lot commission bill still adds its per-page "/1", "/2".',
   flag_lotwise_purchase: 'OFF (default) = SELLER-WISE: one purchase invoice per dealer, listing all their lots. ON = LOT-WISE: one purchase invoice per LOT, each taking its own number — so a dealer with 5 lots gets 5 invoices and 5 numbers. This only affects invoices generated from now on: documents already raised keep the form they were raised in and reprint exactly as issued, so it is safe to switch either way mid-season.',
   flag_lotwise_bills: 'OFF (default) = SELLER-WISE: one bill of supply per planter, listing all their lots. ON = LOT-WISE: one bill of supply per LOT, each taking its own bill number — so a planter with 5 lots gets 5 bills and 5 numbers. Like the purchase flag, this affects only bills generated from now on; bills already raised keep their form and reprint exactly as issued.',
+  flag_lotwise_dn_planter: 'OFF (default) = SELLER-WISE: one planter debit note per planter, for their whole grade-1 service charge (commission + handling) in the trade. ON = LOT-WISE: one debit note per grade-1 LOT, its amount being that lot\'s commission + handling. Generate All numbers them by LOT NUMBER ascending. Only affects debit notes generated from now on; existing ones keep their form.',
 };
 function fld(f){
   // Logo Code: plain textbox in this e-Auction-only build (was an ISP/ASP
@@ -22051,26 +22083,59 @@ async function loadInvEligibleBuyers(){
       // lots and value, so the operator sees the split before generating.
       const parts=(b.groups&&b.groups.length>1)
         ? b.groups.map((g,i)=>({
-            lots:Number(g.lot_count||0), amount:Number(g.total_amount||0),
+            lots:Number(g.lot_count||0), bags:Number(g.total_bags||0), amount:Number(g.total_amount||0),
             lotNos:(g.lotNos||[]).join(','),
             badge:`<span style="font-size:10px;font-weight:700;color:#8B6508;background:var(--spice-turmeric-lt,#fef3c7);padding:1px 6px;border-radius:8px;margin-left:4px" title="Invoice split set in Price Entry (group #${Number(g.group)||0}) — this becomes its own invoice">Split ${i+1}/${b.groups.length}</span>`
           }))
-        : [{ lots:Number(b.lot_count||0), amount:Number(b.total_amount||0), lotNos:'', badge:'' }];
-      return parts.map(p=>`<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:4px;cursor:pointer;font-size:13px" class="gi-row" onmouseover="this.style.background='var(--green-bg)'" onmouseout="this.style.background='transparent'">
+        : [{ lots:Number(b.lot_count||0), bags:Number(b.total_bags||0), amount:Number(b.total_amount||0), lotNos:'', badge:'' }];
+      // Search key — matched by the buyer search box against code, buyer code
+      // and buyer (trade) name.
+      const searchKey=`${b.code||''} ${b.buyer||''} ${b.buyer1||''}`.toLowerCase();
+      return parts.map(p=>`<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:4px;cursor:pointer;font-size:13px" class="gi-row" data-search="${esc(searchKey)}" onmouseover="this.style.background='var(--green-bg)'" onmouseout="this.style.background='transparent'">
         <input type="checkbox" class="gi-cb" value="${esc(b.buyer)}" data-sale="${esc(bSale)}" data-lots="${esc(p.lotNos)}" style="margin:0">
         <span style="flex:1">${codePill}<strong>${esc(b.buyer)}</strong> &middot; ${esc(b.buyer1||'')}${saleBadge}${p.badge}</span>
-        <span style="color:var(--text2);font-size:12px;white-space:nowrap">${p.lots} lot(s) &middot; ₹${fmtI(p.amount,2)}</span>
+        <span style="color:var(--text2);font-size:12px;white-space:nowrap">${p.lots} lot(s) &middot; ${p.bags} bag(s) &middot; ₹${fmtI(p.amount,2)}</span>
       </label>`).join('');
     }).join('');
     list.innerHTML=rows;
     updateBuyerSelectionHint();
     // Attach change listeners
     list.querySelectorAll('.gi-cb').forEach(cb=>cb.addEventListener('change',updateBuyerSelectionHint));
+    // Re-apply any active search term so a Sale-Type switch (which reloads the
+    // list) keeps the filter the operator already typed.
+    filterBuyerList();
   }catch(e){console.warn(e);list.innerHTML=`<div style="color:var(--spice-chili);font-size:12px;padding:10px;text-align:center">Failed to load: ${esc(e.message||e)}</div>`}
+}
+// Filter the buyer checkbox list by the search box (code / buyer code / buyer
+// name). Pure show/hide — never touches checkbox state, so a buyer stays
+// selected even while filtered out of view.
+function filterBuyerList(){
+  const list=document.getElementById('gi-buyer-list');if(!list)return;
+  const q=(document.getElementById('gi-buyer-search')?.value||'').trim().toLowerCase();
+  let visible=0;
+  list.querySelectorAll('.gi-row').forEach(row=>{
+    const hit=!q||(row.getAttribute('data-search')||'').includes(q);
+    row.style.display=hit?'':'none';
+    if(hit)visible++;
+  });
+  // "No matches" hint when a search hides everything (only when rows exist).
+  let nm=document.getElementById('gi-buyer-nomatch');
+  const hasRows=list.querySelector('.gi-row');
+  if(q && hasRows && visible===0){
+    if(!nm){nm=document.createElement('div');nm.id='gi-buyer-nomatch';nm.style.cssText='color:var(--text3);font-size:12px;padding:10px;text-align:center';list.appendChild(nm)}
+    nm.textContent=`No buyers match “${q}”`;
+    nm.style.display='';
+  }else if(nm){nm.style.display='none'}
 }
 function toggleAllBuyers(state){
   const list=document.getElementById('gi-buyer-list');if(!list)return;
-  list.querySelectorAll('.gi-cb').forEach(cb=>{cb.checked=state});
+  // Only toggle rows currently VISIBLE under the search filter, so "Select all"
+  // means "all matches" when a search is active (and all buyers when it isn't).
+  list.querySelectorAll('.gi-cb').forEach(cb=>{
+    const row=cb.closest('.gi-row');
+    if(row && row.style.display==='none') return;
+    cb.checked=state;
+  });
   updateBuyerSelectionHint();
 }
 function updateBuyerSelectionHint(){
@@ -22299,6 +22364,7 @@ async function generateInvoiceSplit(aid,saleType,startInvNo,noTI,buyerCode,dateS
 // build: no lot is ever sent and the server takes the seller-wise branch.
 function featLotwisePurchaseOn(){ return window._FEAT_LOTWISE_PURCHASE === true; }
 function featLotwiseBillsOn(){ return window._FEAT_LOTWISE_BILLS === true; }
+function featLotwiseDnPlanterOn(){ return window._FEAT_LOTWISE_DN_PLANTER === true; }
 
 // Paint the mode banner at the top of a Generate modal. Shown in BOTH modes
 // on purpose — the operator should be able to read the current granularity
@@ -22440,6 +22506,8 @@ function openGenInvModal(){
   const st=document.getElementById('gi-split-toggle'); if(st){st.checked=false;st.disabled=true;}
   const sp=document.getElementById('gi-split-panel'); if(sp)sp.style.display='none';
   _splitLots=[]; _splitBuyer=''; _splitActive=1;
+  // Fresh open starts with an empty buyer search.
+  const bs=document.getElementById('gi-buyer-search'); if(bs)bs.value='';
   loadInvEligibleBuyers();showModal('gen-inv-modal');
   suggestDocNo(document.getElementById('inv-auction').value,'invoices','gi-invno',document.getElementById('gi-sale')?.value||'',true);
 }
@@ -25750,6 +25818,37 @@ async function deleteSelectedPurchases(){
   toast(`${ok} deleted${fail?` · ${fail} failed`:''}`);
   if (typeof loadPurchases === 'function') loadPurchases();
 }
+// ── Payment Voucher (Memorandum) for purchase invoices ────────────────
+// Lot-wise print of SELLER-WISE purchases: the server emits one A4 page per
+// lot ("PAYMENT VOUCHER — MEMORANDUM OF CARDAMOM SOLD THROUGH …"), numbered
+// <invoice>/1, <invoice>/2 … when an invoice spans several lots. Purely a
+// print — no document is generated, numbered or stored.
+// Shared by the toolbar button and the per-row 🧾 icon.
+async function _purchaseVoucherPdf(ids){
+  if(!ids.length){alert('Tick one or more purchase invoices first');return}
+  // Same layout + invoice-number questions the Bill-of-Supply memorandum asks:
+  // both print through the commission-bill renderer.
+  const template=await pickCommissionTemplate();
+  if(template===null) return;             // operator cancelled
+  const invoiceNo=await pickCommissionInvoiceNo();
+  if(invoiceNo===null) return;            // operator cancelled
+  await fetchPdfWithOverlay(
+    `Building Payment Voucher for ${ids.length} purchase invoice${ids.length===1?'':'s'}…`,
+    '/api/purchases/commission-bulk',
+    `PaymentVouchers_${ids.length}.pdf`,
+    withCommInvoiceNo(template ? { ids, template } : { ids }, invoiceNo)
+  );
+}
+async function printSelectedPurchaseVouchers(){
+  const body=document.getElementById('purchases-list');
+  if(!body){alert('No purchases list found');return}
+  const ids=Array.from(body.querySelectorAll('.pur-select-cb:checked')).map(cb=>Number(cb.value)).filter(Boolean);
+  await _purchaseVoucherPdf(ids);
+}
+async function downloadPurchaseVoucher(id){
+  await _purchaseVoucherPdf([Number(id)].filter(Boolean));
+}
+
 async function printSelectedPurchases(){
   const body=document.getElementById('purchases-list');
   if(!body){alert('No purchases list found');return}
@@ -26134,6 +26233,9 @@ async function loadPurchases(opts){
         render:(p)=>`<strong>${fmtI((Number(p.total)||0)-(Number(p.tds)||0),2)}</strong>` },
       { key:'_actions', label:'Actions', sortable:false, searchable:false, render:(p)=>
           iconBtn('pdf','View PDF',`viewPurchasePDF(${p.auction_id},'${encodeURIComponent(p.name)}','${encodeURIComponent(p.invo)}')`)
+          // Payment Voucher (Memorandum) — one A4 page PER LOT, so a
+          // seller-wise invoice prints lot-wise without generating anything.
+          + iconBtn('commission','Download Payment Voucher (one page per lot)',`downloadPurchaseVoucher(${p.id})`)
           + iconBtn('whatsapp','Send via WhatsApp',`whatsappPurchase(${p.auction_id},'${encodeURIComponent(p.name)}','${encodeURIComponent(p.invo)}',${Number(p.total)||0},'${esc(p.ano||'')}')`)
           + iconBtn('edit','Edit purchase',`openPurchaseEdit(${JSON.stringify(p).replace(/"/g,'&quot;')})`)
           + iconBtn('del','Delete purchase',`delPurchase(${p.id})`) }
@@ -28146,7 +28248,7 @@ function _payLwRender() {
   }).join('');
   body.innerHTML = missingHtml + `
     <div style="overflow-x:auto">
-      <table style="width:100%">
+      <table class="paylw-table" style="width:100%">
         <thead><tr>
           <th style="width:36px;text-align:center"><input type="checkbox" id="paylw-cb-all" onchange="payLwTickAll(this.checked)" title="Select / clear every listed lot" style="cursor:pointer;width:15px;height:15px"></th>
           <th>Seller</th><th>Lot</th><th style="text-align:right">Qty</th><th>Branch</th>
@@ -28362,7 +28464,9 @@ async function payLwExportBank() {
     const r = await fetch(B + `/api/exports/bank_payment/${aid}`, {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ names, lots: byS, format: 'xlsx' }),
+      // orderBy:'lot' — the sheet comes out in the same lot order as the rows
+      // on screen, so an operator can read the two side by side.
+      body: JSON.stringify({ names, lots: byS, format: 'xlsx', orderBy: 'lot' }),
     });
     if (!r.ok) {
       const e = await r.json().catch(() => ({}));
@@ -30101,6 +30205,16 @@ async function loadDebitNotesPlanter(opts){
       { key:'date', label:'Date', sort:'date', render:(n)=>fmtD(n.date) },
       { key:'ano', label:'Auction', sort:'text', render:(n)=>n.ano?('#'+esc(n.ano)):'—' },
       { key:'name', label:'Name', sort:'text' },
+      // Lot column — shown only once the site has (or is generating) lot-wise
+      // planter DNs. Blank lot_no is a seller-wise DN, labelled "All lots".
+      ...((featLotwiseDnPlanterOn() || d.some(n => String(n.lot_no||'').trim() !== ''))
+        ? [{ key:'lot_no', label:'Lot', sort:'text',
+             render:(n)=>{
+               const ln = String(n.lot_no||'').trim();
+               return ln
+                 ? `<span title="Lot-wise: this debit note covers only lot ${esc(ln)}">${esc(ln)}</span>`
+                 : `<span style="color:var(--text3)" title="Seller-wise: covers the planter's whole grade-1 service for the trade">All lots</span>`;
+             } }] : []),
       { key:'amount', label:'Amount', sort:'number', numeric:true, fmt:(v)=>fmtI(v,2) },
       { key:'cgst', label:'CGST', sort:'number', numeric:true, fmt:(v)=>fmtI(v,2) },
       { key:'sgst', label:'SGST', sort:'number', numeric:true, fmt:(v)=>fmtI(v,2) },
@@ -30151,42 +30265,89 @@ function _resolveDnpTrade() {
   return ano ? { auctionId: aid, ano, label } : null;
 }
 
+// Lot picker for LOT-WISE planter DN. Lists grade-1 lots (com+sertax > 0) in
+// lot-number ascending order — the order note numbers are handed out.
+async function loadDnpEligibleLots(auctionId){
+  const dd = document.getElementById('gd1p-lot'); if(!dd) return;
+  if(!auctionId){ dd.innerHTML = '<option value="">— Select lot —</option>'; return; }
+  try{
+    const lots = await j(`/api/debit-notes-planter/eligible-lots/${auctionId}`);
+    if(!lots.length){
+      dd.innerHTML = '<option value="">— No eligible grade-1 lots —</option>';
+      return;
+    }
+    const done = lots.filter(l => l.already_dn != null).length;
+    dd.innerHTML = '<option value="">— Select lot —</option>' + lots.map(l => {
+      const tag = (l.already_dn != null) ? ` ✓ DN #${l.already_dn}` : '';
+      return `<option value="${esc(l.lot_no)}"${l.already_dn != null ? ' disabled' : ''}`+
+             ` data-lot-id="${esc(l.lot_id==null?'':l.lot_id)}"`+
+             ` data-name="${esc(l.name||'')}">`+
+             `Lot ${esc(l.lot_no)} — ${esc(l.name||'')} — ₹${fmtI(l.amount||0,2)}${esc(tag)}</option>`;
+    }).join('');
+  }catch(e){ console.warn(e); }
+}
+
 async function openGenDebitPlanterSingleModal(){
   const t = _resolveDnpTrade();
   if (!t) { alert('Select a auction first'); return; }
   document.getElementById('gd1p-trade-info').textContent = `Auction: ${t.label}`;
+  const lotWise = featLotwiseDnPlanterOn();
+  const bw = document.getElementById('gd1p-bill-wrap'); if(bw) bw.style.display = lotWise ? 'none' : '';
+  const lw = document.getElementById('gd1p-lot-wrap');  if(lw) lw.style.display = lotWise ? '' : 'none';
+  setGenModeBanner('gd1p-mode-banner', lotWise,
+    lotWise ? 'One debit note per grade-1 LOT. Generate All numbers them by lot-number ascending.'
+            : 'One debit note per planter bill of supply.');
   document.getElementById('gd1p-bilno').value = '';
   document.getElementById('gd1p-startno').value = '';
   document.getElementById('gd1p-err').style.display = 'none';
   showModal('gen-debitp-single-modal');
+  if (lotWise) loadDnpEligibleLots(t.auctionId);
   try {
     const r = await j(`/api/debit-notes-planter/next-note-no?ano=${encodeURIComponent(t.ano)}`);
     document.getElementById('gd1p-startno').value = r && r.next ? r.next : '';
   } catch (_) {}
-  setTimeout(() => document.getElementById('gd1p-bilno').focus(), 50);
+  if (!lotWise) setTimeout(() => document.getElementById('gd1p-bilno').focus(), 50);
 }
 
 async function generateDebitNotePlanterSingle(){
   const t = _resolveDnpTrade();
   if (!t) { alert('Select a auction first'); return; }
-  const bilno = (document.getElementById('gd1p-bilno').value || '').trim();
+  const lotWise = featLotwiseDnPlanterOn();
   const startNoVal = (document.getElementById('gd1p-startno').value || '').trim();
   const errEl = document.getElementById('gd1p-err');
   const showErr = (m) => { errEl.textContent = m; errEl.style.display = 'block'; };
   errEl.style.display = 'none';
-  if (!bilno) return showErr('Enter a bill of supply number');
+  // In lot-wise mode the planter is derived from the chosen lot; in seller-wise
+  // mode the source is a bill-of-supply number.
+  let body = { ano: t.ano };
+  let sourceLabel = '';
+  if (lotWise) {
+    const sel = document.getElementById('gd1p-lot');
+    const opt = sel && sel.selectedOptions && sel.selectedOptions[0];
+    const lotNo = sel ? sel.value.trim() : '';
+    if (!lotNo) return showErr('Select a lot');
+    body.lotNo = lotNo;
+    body.lotId = (opt && opt.dataset.lotId) || null;
+    sourceLabel = `lot ${lotNo}`;
+  } else {
+    const bilno = (document.getElementById('gd1p-bilno').value || '').trim();
+    if (!bilno) return showErr('Enter a bill of supply number');
+    body.bilno = bilno;
+    sourceLabel = `bill ${bilno}`;
+  }
   if (!startNoVal) return showErr('Enter the debit note number');
   const startNo = parseInt(startNoVal, 10);
   if (!Number.isFinite(startNo) || startNo < 1) return showErr('Debit note number must be a positive integer');
+  body.startNoteNo = startNo;
   const btn = document.getElementById('gd1p-save');
   btn.disabled = true; btn.textContent = 'Generating…';
   try {
     const d = await j('/api/debit-notes-planter/generate', {
       method: 'POST',
-      body: JSON.stringify({ bilno, ano: t.ano, startNoteNo: startNo })
+      body: JSON.stringify(body)
     });
     hideModal('gen-debitp-single-modal');
-    if (d.created) toast(`Debit note #${d.note_no} generated for bill ${bilno}`);
+    if (d.created) toast(`Debit note #${d.note_no} generated for ${sourceLabel}`);
     else if (d.note) toast(d.note);
     else toast('Generated');
     loadDebitNotesPlanter();
@@ -30204,7 +30365,11 @@ async function openGenDebitPlanterAllModal(){
   document.getElementById('gdap-trade-info').textContent = `Auction: ${t.label}`;
   document.getElementById('gdap-err').style.display = 'none';
   document.getElementById('gdap-startno').value = '';
-  document.getElementById('gdap-preview').innerHTML = '<em>Loading eligible bills…</em>';
+  document.getElementById('gdap-preview').innerHTML = '<em>Loading…</em>';
+  const lotWise = featLotwiseDnPlanterOn();
+  setGenModeBanner('gdap-mode-banner', lotWise,
+    lotWise ? 'One debit note per grade-1 LOT, numbered by lot-number ascending.'
+            : 'One debit note per planter bill of supply.');
   showModal('gen-debitp-all-modal');
   try {
     const r = await j(`/api/debit-notes-planter/next-note-no?ano=${encodeURIComponent(t.ano)}`);
@@ -30213,9 +30378,54 @@ async function openGenDebitPlanterAllModal(){
   loadGenDebitPlanterAllPreview(t.auctionId);
 }
 
+// Debounced re-render of the Generate-All preview when the start number is
+// edited — only lot-wise mode uses the number (for the #a–#b range).
+let _gdapStartTimer = null;
+function onGdapStartInput(){
+  if (!featLotwiseDnPlanterOn()) return;
+  const t = _resolveDnpTrade(); if (!t) return;
+  clearTimeout(_gdapStartTimer);
+  _gdapStartTimer = setTimeout(() => loadGenDebitPlanterAllPreview(t.auctionId), 250);
+}
+
 async function loadGenDebitPlanterAllPreview(auctionId) {
   const host = document.getElementById('gdap-preview');
+  const lotWise = featLotwiseDnPlanterOn();
   try {
+    if (lotWise) {
+      // LOT-WISE: one DN per grade-1 lot, listed in lot-number ascending order
+      // — the exact order note numbers are assigned. Spell out the number
+      // range so the operator sees how much of the series this consumes.
+      const data = await j(`/api/debit-notes-planter/eligible-lots/${auctionId}`);
+      const pending = (data || []).filter(l => l.already_dn == null);
+      const done = (data || []).length - pending.length;
+      if (!pending.length) {
+        host.innerHTML = '<div style="color:var(--amber);text-align:center;padding:14px">No eligible lots. Every grade-1 lot in this auction already has a debit note.</div>';
+        document.getElementById('gdap-save').disabled = true;
+        return;
+      }
+      document.getElementById('gdap-save').disabled = false;
+      const totalAmt = pending.reduce((s, r) => s + Number(r.amount || 0), 0);
+      const start = parseInt((document.getElementById('gdap-startno')?.value || '').trim(), 10);
+      const range = (Number.isFinite(start) && start > 0)
+        ? ` · numbered #${start}–#${start + pending.length - 1}` : '';
+      host.innerHTML = `
+        <div style="font-weight:600;margin-bottom:6px;color:var(--text1)">${pending.length} lot${pending.length === 1 ? '' : 's'} · ₹${fmtI(totalAmt, 2)} total${range}${done ? ` · ${done} already done` : ''}</div>
+        <table style="width:100%;font-size:11px;border-collapse:collapse">
+          <thead><tr style="border-bottom:1px solid var(--border);text-align:left">
+            <th style="padding:4px 6px">Lot</th><th style="padding:4px 6px">Planter</th>
+            <th style="padding:4px 6px;text-align:right">Amount</th>
+          </tr></thead>
+          <tbody>
+          ${pending.map(r => `<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:4px 6px;font-family:monospace">${esc(r.lot_no)}</td>
+            <td style="padding:4px 6px">${esc(r.name || '—')}</td>
+            <td style="padding:4px 6px;text-align:right;font-family:monospace">${fmtI(r.amount || 0, 2)}</td>
+          </tr>`).join('')}
+          </tbody>
+        </table>`;
+      return;
+    }
     const data = await j(`/api/debit-notes-planter/eligible-bills/${auctionId}`);
     if (!data || !data.length) {
       host.innerHTML = '<div style="color:var(--amber);text-align:center;padding:14px">No eligible bills. All planter bills in this auction already have a debit note, or no bills exist for this auction.</div>';
@@ -31447,7 +31657,16 @@ async function loadJournal(){
     url=`/api/journals/sales?auctionId=${auctionId}${saleType?'&saleType='+saleType:''}`;
     cols=[
       { key:'sale',   label:'Sale',     sort:'text' },
-      { key:'invo',   label:'Inv#',     sort:'text' },
+      // With the proforma flow on, `invo` arrives ready-to-print: the PROFORMA
+      // number the buyer holds ("PI/L-8"), or the bare original for invoices
+      // billed with no draft behind them. Pending drafts join the register as
+      // rows of their own, so tag them — the proforma prefix already sets them
+      // apart, but it is optional and a blank one would leave a draft looking
+      // exactly like a raised invoice.
+      { key:'invo',   label:'Inv#',     sort:'text',
+        render:(r)=>esc(r.invo||'—')+(Number(r.is_proforma)
+          ? ' <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:var(--warn-bg,#fff3cd);color:var(--warn-fg,#8a6d3b)">DRAFT</span>'
+          : '') },
       { key:'buyer1', label:'Trade Name', sort:'text' },
       { key:'bag',    label:'Bags',     sort:'number', numeric:true, fmt:fmtNumWithDecimals(0) },
       { key:'qty',    label:'Qty',      sort:'number', numeric:true, fmt:fmtNumWithDecimals(3) },
@@ -31541,6 +31760,10 @@ async function exportJournalPdf(){
   const cell = (c, row) => {
     if (c.key === 'date') return fmtD(row.date);
     const v = row[c.key];
+    // The table's `render` is HTML, so the PDF can't reuse it — but the Sales
+    // journal's DRAFT tag has to survive into the export, or a pending proforma
+    // prints as an ordinary invoice while still counting toward the totals.
+    if (c.key === 'invo' && Number(row.is_proforma)) return `${v == null ? '' : v} (DRAFT)`;
     if (c.fmt) return c.fmt(v);
     return v == null ? '' : v;
   };

@@ -34,7 +34,12 @@ function buildCommissionView(billData, cfg, billNo, first) {
   if (seller.address) sellerLines.push(seller.address);
   if (seller.place) sellerLines.push(String(seller.place).toUpperCase());
   if (seller.state) sellerLines.push(String(seller.state).toUpperCase() + ' CODE:' + (seller.st_code || ''));
-  sellerLines.push('CR.' + String(seller.cr || '').replace(/^\s*CR\.?\s*/i, '') + (seller.pan ? ' [PAN:' + seller.pan + ']' : ''));
+  // Registration line: a dealer voucher (raised off a purchase invoice) carries
+  // a GSTIN; a planter's carries the CR code.
+  sellerLines.push((seller.gstin
+      ? 'GSTIN:' + seller.gstin
+      : 'CR.' + String(seller.cr || '').replace(/^\s*CR\.?\s*/i, ''))
+    + (seller.pan ? ' [PAN:' + seller.pan + ']' : ''));
 
   const purchaserLines = [];
   purchaserLines.push('M/s.' + (purchaser.name || '') + (purchaser.invo ? ' [INV:' + purchaser.invo + ']' : ''));

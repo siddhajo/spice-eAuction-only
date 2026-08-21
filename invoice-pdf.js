@@ -2593,7 +2593,11 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
   // stored as "CR.32ABC…"); strip it before prepending so we don't render the
   // doubled "CR.CR." label.
   const _crText = String(seller.cr || '').trim().replace(/^cr[.\s]+/i, '');
-  sellerLines.push('CR.' + _crText + (seller.pan ? '   PAN:' + seller.pan : ''));
+  // A voucher raised off a PURCHASE invoice is for a registered dealer, whose
+  // registration is a GSTIN rather than a CR code (planters keep the CR line).
+  const _sellerGstin = String(seller.gstin || '').trim();
+  sellerLines.push((_sellerGstin ? 'GSTIN:' + _sellerGstin : 'CR.' + _crText)
+    + (seller.pan ? '   PAN:' + seller.pan : ''));
 
   const purLines = [];
   if (pur.name) purLines.push('M/s.' + pur.name + (pur.invo ? '   INV:' + pur.invo : ''));

@@ -4137,6 +4137,27 @@ function _remainingPartiesSql(db, docType, auctionId) {
     };
   }
   if (docType === 'debit_notes_planter') {
+    // Same mode-sensitivity as purchases/bills: seller-wise treats a planter
+    // as done once ANY DN exists for them; lot-wise would read that as "all
+    // their remaining lots are done" and disable Generate early. So lot-wise
+    // counts remaining grade-1 LOTS (not yet DN'd on ano+lot_no) instead.
+    if (lotwiseDnPlanterOn(db)) {
+      return {
+        sql: `SELECT l.id
+                FROM lots l JOIN auctions a ON a.id = l.auction_id
+               WHERE TRIM(a.ano) = ?
+                 AND l.name IS NOT NULL AND l.name != ''
+                 AND TRIM(COALESCE(l.grade,'')) = '1'
+                 AND (COALESCE(l.com,0) + COALESCE(l.sertax,0)) > 0
+                 AND NOT EXISTS (
+                   SELECT 1 FROM debit_notes_planter dn
+                    WHERE TRIM(dn.ano) = TRIM(?)
+                      AND TRIM(COALESCE(dn.lot_no,'')) = TRIM(l.lot_no)
+                      AND UPPER(TRIM(dn.name)) = UPPER(TRIM(l.name))
+                 )`,
+        params: [String(ano).trim(), ano],
+      };
+    }
     // Mirrors /api/debit-notes-planter/eligible-bills — distinct planter
     // names on bills of supply in this trade that have GRADE-1 commission/
     // handling and don't yet have a matching debit_notes_planter row.
@@ -5494,6 +5515,7 @@ function lotwiseOn(db, key) {
 }
 function lotwisePurchaseOn(db) { return lotwiseOn(db, 'flag_lotwise_purchase'); }
 function lotwiseBillsOn(db)    { return lotwiseOn(db, 'flag_lotwise_bills'); }
+function lotwiseDnPlanterOn(db){ return lotwiseOn(db, 'flag_lotwise_dn_planter'); }
 
 // Builder options that reproduce a STORED purchase row exactly.
 //
@@ -7755,6 +7777,7 @@ app.get('/api/invoices/eligible-buyers/:auctionId', requireView, (req, res) => {
     `SELECT l.buyer, COALESCE(b.buyer1, MAX(l.buyer1), l.buyer) as buyer1,
         b.code as code,
         COUNT(*) as lot_count, SUM(l.qty) as total_qty, SUM(l.amount) as total_amount,
+        SUM(COALESCE(l.bags,0)) as total_bags,
         b.gstin, b.sale as stored_sale
      FROM lots l
      LEFT JOIN buyers b ON b.buyer = l.buyer
@@ -7774,7 +7797,7 @@ app.get('/api/invoices/eligible-buyers/:auctionId', requireView, (req, res) => {
   // order generate-all numbers them in.
   const splitLots = db.all(
     `SELECT l.buyer AS buyer, COALESCE(l.invoice_group, 0) AS g, l.lot_no AS lot_no,
-            l.qty AS qty, l.amount AS amount
+            l.qty AS qty, l.amount AS amount, COALESCE(l.bags,0) AS bags
        FROM lots l
       WHERE l.auction_id = ?
         AND l.buyer IS NOT NULL AND l.buyer != ''
@@ -7789,11 +7812,12 @@ app.get('/api/invoices/eligible-buyers/:auctionId', requireView, (req, res) => {
     if (!splitsByBuyer.has(lr.buyer)) splitsByBuyer.set(lr.buyer, new Map());
     const byGroup = splitsByBuyer.get(lr.buyer);
     const g = Number(lr.g) || 0;
-    if (!byGroup.has(g)) byGroup.set(g, { group: g, lot_count: 0, total_qty: 0, total_amount: 0, lotNos: [] });
+    if (!byGroup.has(g)) byGroup.set(g, { group: g, lot_count: 0, total_qty: 0, total_amount: 0, total_bags: 0, lotNos: [] });
     const e = byGroup.get(g);
     e.lot_count++;
     e.total_qty += Number(lr.qty) || 0;
     e.total_amount += Number(lr.amount) || 0;
+    e.total_bags += Number(lr.bags) || 0;
     e.lotNos.push(String(lr.lot_no));
   }
 
@@ -9491,6 +9515,189 @@ app.post('/api/purchases/pdf-bulk', requireView, async (req, res) => {
   }
 });
 
+// ── PAYMENT VOUCHER (Commission Memorandum) for purchase invoices ────────
+// "PAYMENT VOUCHER — MEMORANDUM OF CARDAMOM SOLD THROUGH <company>": the
+// dealer-side twin of /api/bills/commission-bos-bulk. One A4 page PER LOT,
+// each showing that lot's cardamom cost, sample refund, trader sample,
+// commission and GST-on-commission, and the net payable to the dealer.
+//
+// This is what makes SELLER-WISE purchases printable lot-wise. A seller-wise
+// purchase invoice (the default — flag_lotwise_purchase off) covers every lot
+// the dealer sold in the trade on ONE document; ticking it here prints one
+// voucher page per lot without generating, numbering or storing anything new.
+// A lot-wise purchase row (lot_no stamped) already covers a single lot, so it
+// simply prints that one page.
+//
+// Numbering: the stored invoice number leads every page, with a per-page
+// suffix (123/1, 123/2 …) when the invoice spans more than one lot — the same
+// convention the multi-lot commission bill uses. A single-lot invoice keeps
+// the plain number.
+//
+// Body: { ids: [purchase row ids], template?, invoiceNo? }
+app.post('/api/purchases/commission-bulk', requireView, async (req, res) => {
+  try {
+    const db = getDb();
+    const cfg = getSettingsFlat(db);
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(Boolean) : [];
+    if (!ids.length) return res.status(400).json({ error: 'No purchase IDs provided' });
+
+    const invoOpts = commissionInvoiceNoOpts(db, cfg, req);
+
+    const placeholders = ids.map(() => '?').join(',');
+    const stored = db.all(`SELECT * FROM purchases WHERE id IN (${placeholders})`, ids);
+    if (!stored.length) return res.status(404).json({ error: 'No matching purchase invoices found' });
+    const byId = new Map(stored.map(r => [r.id, r]));
+    const ordered = ids.map(id => byId.get(Number(id))).filter(Boolean);
+
+    const dateFmt = (cfg && cfg.date_format) || 'dd/mm/yyyy';
+    const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    const payloads = [];
+
+    for (const p of ordered) {
+      // Lot scope mirrors buildPurchaseInvoice: the dealer's lots in this
+      // trade, narrowed to the ONE lot when the row was raised lot-wise.
+      const lotNo = String(p.lot_no == null ? '' : p.lot_no).trim();
+      const lotsForAuction = (aid) => {
+        const where = [
+          'auction_id = ?',
+          'UPPER(TRIM(name)) = UPPER(TRIM(?))',
+          '(amount > 0 OR puramt > 0)',
+          '(reserved IS NULL OR reserved = 0)',
+          hasValidGstinSql('cr'),
+        ];
+        const args = [aid, p.name];
+        // trader_id says WHICH dealer when two are registered under one name.
+        if (p.trader_id != null) { where.push('trader_id = ?'); args.push(p.trader_id); }
+        if (lotNo) {
+          // lot_id is exact; lot_no survives a delete + re-import of the trade.
+          where.push(`(${p.lot_id != null ? 'id = ? OR ' : ''}TRIM(CAST(lot_no AS TEXT)) = TRIM(CAST(? AS TEXT)))`);
+          if (p.lot_id != null) args.push(p.lot_id);
+          args.push(lotNo);
+        }
+        return db.all(
+          `SELECT * FROM lots WHERE ${where.join(' AND ')}
+            ORDER BY CAST(lot_no AS INTEGER), lot_no`, args);
+      };
+      // A stored auction_id goes stale when the trade is deleted and
+      // re-imported under a new id, so fall back to every auction carrying
+      // this trade number and keep the first that actually has lots.
+      const auctionCands = [];
+      if (p.auction_id) {
+        const a = db.get('SELECT id, ano, date FROM auctions WHERE id = ?', [p.auction_id]);
+        if (a) auctionCands.push(a);
+      }
+      if (p.ano != null && String(p.ano).trim() !== '') {
+        for (const a of db.all(
+          'SELECT id, ano, date FROM auctions WHERE CAST(ano AS TEXT) = CAST(? AS TEXT) ORDER BY id',
+          [String(p.ano)]
+        )) if (!auctionCands.some(c => c.id === a.id)) auctionCands.push(a);
+      }
+      let auction = auctionCands[0] || null;
+      let lots = [];
+      for (const a of auctionCands) {
+        const ls = lotsForAuction(a.id);
+        if (ls.length) { auction = a; lots = ls; break; }
+      }
+
+      const first = lots[0] || {};
+      // The dealer's registration prints as GSTIN (the planter memorandum
+      // prints AADHAR / CR instead) — strip any stored "GSTIN."/"CR." label so
+      // the template doesn't double it.
+      const gstinRaw = String(p.gstin || first.cr || '').trim();
+      const gstin = gstinRaw.replace(/^\s*(GSTIN|CR)[.\s]+/i, '');
+      const seller = {
+        name:    p.name || first.name || '',
+        address: p.add_line || first.padd || '',
+        place:   p.place    || first.ppla || '',
+        pin:     first.ppin || '',
+        state:   p.state    || first.pstate || '',
+        st_code: first.pst_code || gstin.slice(0, 2),
+        // `cr` stays blank for a dealer: the GSTIN line carries the id.
+        cr:      '',
+        gstin,
+        pan:     first.pan || '',
+        aadhar:  '',
+      };
+      // Phone + bank account (shown when flag_commission_bank is on) — trader
+      // master first, then the denormalised lot value; account prefers the
+      // trader's default bank over the legacy single-account column.
+      try {
+        let t = null;
+        if (p.trader_id) t = db.get('SELECT id, tel, acctnum, pan FROM traders WHERE id = ? LIMIT 1', [p.trader_id]);
+        if (!t && first.trader_id) t = db.get('SELECT id, tel, acctnum, pan FROM traders WHERE id = ? LIMIT 1', [first.trader_id]);
+        if (!t) t = db.get('SELECT id, tel, acctnum, pan FROM traders WHERE UPPER(TRIM(name)) = UPPER(TRIM(?)) LIMIT 1', [seller.name]);
+        seller.phone = (t && t.tel) || first.tel || '';
+        if (!seller.pan && t && t.pan) seller.pan = t.pan;
+        let acct = (t && t.acctnum) || '';
+        if (t && t.id) {
+          const tb = db.get('SELECT acctnum FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id LIMIT 1', [t.id]);
+          if (tb && tb.acctnum) acct = tb.acctnum;
+        }
+        seller.account = acct;
+      } catch (_) { seller.phone = first.tel || ''; seller.account = ''; }
+
+      const perLot = commissionPagesFromLots(db, cfg, lots, invoOpts);
+      // No live lots (deleted after generation, or an imported row with no
+      // lot lineage). Purchases carry no per-lot snapshot, so emit ONE
+      // consolidated page from the stored totals rather than nothing —
+      // commission/GST are unknown there and print as zero.
+      if (!perLot.length) {
+        perLot.push({
+          line: { lot: '—', qty: p.qty, bags: 0, rate: 0, cardamomCost: p.amount,
+                  refundQty: 0, refundRate: 0, refundAmount: 0 },
+          purchaser: { ...EMPTY_COMMISSION_PURCHASER },
+          commission: 0, cgst: 0, sgst: 0, igst: 0, interState: false,
+          nett: round2(p.amount),
+          crpt: '',
+        });
+      }
+
+      let docDate = '';
+      if (auction && auction.date) docDate = formatDateForDisplay(auction.date, dateFmt);
+      if (!docDate && p.date) docDate = formatDateForDisplay(p.date, dateFmt);
+
+      const invoNo = String(p.invo == null ? '' : p.invo).trim();
+      perLot.forEach((pl, i) => {
+        payloads.push({
+          billNo: perLot.length > 1 ? `${invoNo}/${i + 1}` : invoNo,
+          billData: {
+            crpt: pl.crpt || first.crpt || '',
+            auction: { ano: auction ? auction.ano : (p.ano || ''), date: docDate },
+            seller,
+            purchaser: pl.purchaser,
+            lineItems: [pl.line],
+            commission: pl.commission,
+            cgst: pl.cgst, sgst: pl.sgst, igst: pl.igst,
+            interState: pl.interState,
+            gstRate: Number(cfg.commission_gst_rate) || 9.0,
+            nett: pl.nett,
+          },
+        });
+      });
+    }
+
+    // Same renderer as the Bill-of-Supply memorandum — the page is identical
+    // for both seller kinds, so the operator's commission-bill layout choice
+    // (saved default or per-print override) applies here too.
+    const tplChoice = String((req.body && req.body.template) || (req.query && req.query.template) || '').trim();
+    let pdf;
+    const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
+      engineKey: 'commission_bill_engine', templateKey: 'commission_bill_template', tplChoice });
+    if (useHtml) {
+      const cfg2 = tplChoice ? { ...cfg, commission_bill_template: tplChoice } : cfg;
+      pdf = await require('./pdf/render-commission-html').generateCommissionBoSHtmlPDF(payloads, cfg2);
+    } else {
+      pdf = await generateCommissionBoSBatchPDF(payloads, cfg);
+    }
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="PaymentVouchers_${payloads.length}.pdf"`);
+    res.send(pdf);
+  } catch (e) {
+    console.error('Purchase payment voucher PDF error:', e);
+    res.status(500).json({ error: 'Payment voucher PDF generation failed: ' + e.message });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════
 // BILLS — Agriculturist Bills of Supply (GSTKBILP/GSTBILP)
 // ══════════════════════════════════════════════════════════════
@@ -10169,6 +10376,111 @@ app.post('/api/bills/pdf-bulk', requireView, async (req, res) => {
   }
 });
 
+// ── Commission Bill / Payment Voucher — shared per-lot builders ──────────
+// The memorandum ("PAYMENT VOUCHER — MEMORANDUM OF CARDAMOM SOLD THROUGH …")
+// is one A4 page PER LOT, and the page is identical whether the seller was
+// billed on a Bill of Supply (agriculturist, no GSTIN) or on a Purchase
+// Invoice (registered dealer): same cardamom / sample-refund / trader-sample
+// / commission rows, same GST-on-commission split, same NETT. Only the source
+// document row differs. Both routes therefore share these two builders —
+// /api/bills/commission-bos-bulk and /api/purchases/commission-bulk.
+
+// Resolve the purchaser block for a SINGLE lot. The `buyers` master carries
+// the full address (add1/add2, place, pin, state, GSTIN, PAN, SBL) — join on
+// buyer CODE first, then buyer1/buyer name.
+const EMPTY_COMMISSION_PURCHASER = Object.freeze({
+  name: '', invo: '', address: '', place: '', pin: '', state: '', st_code: '',
+  sbl: '', gstin: '', pan: '',
+});
+function commissionPurchaserForLot(db, cfg, l, opts) {
+  l = l || {}; opts = opts || {};
+  let buyerRow = null;
+  if (l.code) buyerRow = db.get('SELECT * FROM buyers WHERE code = ? LIMIT 1', [l.code]);
+  if (!buyerRow && (l.buyer1 || l.buyer)) {
+    buyerRow = db.get(
+      'SELECT * FROM buyers WHERE UPPER(TRIM(buyer1)) = UPPER(TRIM(?)) OR UPPER(TRIM(buyer)) = UPPER(TRIM(?)) LIMIT 1',
+      [l.buyer1 || l.buyer, l.buyer1 || l.buyer]
+    );
+  }
+  // The lot carries both stamps: `invo` (original tax invoice) and
+  // `proforma_invo` (the draft the buyer was shipped against). A lot with no
+  // draft stamp falls back to the original rather than printing an empty INV —
+  // a blank there reads as "not yet invoiced".
+  const pfNo = String(l.proforma_invo || '').trim();
+  const invoLabel = (opts.invoiceNoSrc === 'proforma' && pfNo)
+    ? formatInvoiceNo(opts.pfPrefix, l.sale, pfNo)
+    : (l.invo || '');
+  return {
+    name:    (buyerRow && (buyerRow.buyer1 || buyerRow.buyer)) || l.buyer1 || l.buyer || '',
+    invo:    invoLabel,
+    address: buyerRow ? [buyerRow.add1, buyerRow.add2].filter(Boolean).join(', ') : '',
+    place:   buyerRow ? (buyerRow.pla || '') : '',
+    pin:     buyerRow ? (buyerRow.pin || '') : '',
+    state:   buyerRow ? (buyerRow.state || '') : (l.sale === 'L' ? (cfg.state || '') : ''),
+    st_code: buyerRow ? (buyerRow.st_code || '') : '',
+    sbl:     buyerRow ? (buyerRow.sbl || '') : '',
+    gstin:   buyerRow ? (buyerRow.gstin || '') : '',
+    pan:     buyerRow ? (buyerRow.pan || '') : '',
+  };
+}
+
+// One page-spec per lot. Each carries a single line item, that lot's own
+// commission/GST split, its purchaser, and its NETT (cardamom cost + refund −
+// commission − GST, matching the renderer's own fallback so the printed
+// deduction rows add up on every page).
+//
+// Sample refund quantity is the company-wide "SB Sample Refund (Kgs)" setting
+// (Settings → Rates & Charges → `sb_refund`); the rupee value stored on the lot
+// (`refund`) was already calculated as sb_refund × rate during lot entry.
+//
+// Trader sample (`sb_trader_sample`, Kgs) is DISPLAY-ONLY: it's folded into the
+// SAMPLE REFUND line (+ts) and shown again as a TRADER SAMPLE deduction (−ts),
+// so it nets to zero. It must NOT be subtracted from NETT — doing so
+// double-counts it and drops the Grand Total below the sum of the printed rows.
+//
+// Lots from one seller can go to different buyers, so the purchaser is
+// resolved per lot rather than once per document.
+function commissionPagesFromLots(db, cfg, lots, opts) {
+  opts = opts || {};
+  const sbRefundKg      = Number(cfg.sb_refund) || 0;
+  const sbTraderSampleKg = Number(cfg.sb_trader_sample) || 0;
+  const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  return (lots || []).map(l => {
+    const qty  = Number(l.pqty || l.qty || 0);
+    const rate = Number(l.prate || l.price || 0);
+    const cardamomCost = Number(l.puramt || l.amount || (qty * rate));
+    const refundAmount = Number(l.refund || 0);
+    const com = Number(l.com || 0), cg = Number(l.cgst || 0), sg = Number(l.sgst || 0), ig = Number(l.igst || 0);
+    const traderSampleAmount = round2(sbTraderSampleKg * rate);
+    return {
+      line: { lot: l.lot_no, qty, bags: l.bags || 0, rate, cardamomCost,
+              refundQty: sbRefundKg, refundRate: rate, refundAmount,
+              traderSampleQty: sbTraderSampleKg, traderSampleAmount },
+      purchaser: commissionPurchaserForLot(db, cfg, l, opts),
+      commission: com, cgst: cg, sgst: sg, igst: ig,
+      interState: !!(l.sale && l.sale !== 'L'),
+      nett: round2(cardamomCost + refundAmount - com - cg - sg - ig),
+      crpt: l.crpt || '',
+    };
+  });
+}
+
+// Which sales-invoice number the memorandum quotes in the PURCHASER block
+// ("INV: …"). Only meaningful once flag_proforma_invoice is on: the buyer may
+// have been shipped against a proforma draft and billed later under a
+// different original number, so the print UI asks the operator which one to
+// use. Anything else — and every request from a build with the flag off —
+// stays on the original number.
+function commissionInvoiceNoOpts(db, cfg, req) {
+  const invoiceNoSrc = (proformaFeatureOn(db)
+    && String(req.body?.invoiceNo || '').trim().toLowerCase() === 'proforma')
+    ? 'proforma' : 'original';
+  // Draft numbers print in their document form ("PI/L-5"), the same prefix +
+  // sale-letter shape Collection and the Buyer Statement use — a bare "5"
+  // would be unreadable next to the original series.
+  return { invoiceNoSrc, pfPrefix: String(cfg.proforma_invoice_prefix || '').trim() };
+}
+
 // Bulk Commission Bill (Bill of Supply variant) for selected bills.
 // One A4 page per bill: layout modeled on the IMCPC commission-bill
 // reference — seller + purchaser block, per-lot cardamom cost + sample
@@ -10185,18 +10497,7 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
     if (!ids.length) return res.status(400).json({ error: 'No bill IDs provided' });
 
     // Which sales-invoice number goes in the PURCHASER block ("INV: …").
-    // Only meaningful once flag_proforma_invoice is on: the buyer may have been
-    // shipped against a proforma draft and billed later under a different
-    // original number, so the print UI asks the operator which one this
-    // memorandum should quote. Anything else — and every request from a build
-    // with the flag off — stays on the original number, i.e. today's output.
-    const invoiceNoSrc = (proformaFeatureOn(db)
-      && String(req.body?.invoiceNo || '').trim().toLowerCase() === 'proforma')
-      ? 'proforma' : 'original';
-    // Draft numbers print in their document form ("PI/L-5"), the same
-    // prefix + sale-letter shape Collection and the Buyer Statement use — a
-    // bare "5" would be unreadable next to the original series.
-    const pfPrefix = String(cfg.proforma_invoice_prefix || '').trim();
+    const invoOpts = commissionInvoiceNoOpts(db, cfg, req);
 
     const placeholders = ids.map(() => '?').join(',');
     const stored = db.all(`SELECT * FROM bills WHERE id IN (${placeholders})`, ids);
@@ -10302,88 +10603,14 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
       // ── One Commission Bill page PER LOT ──────────────────────
       // A grower with two lots gets TWO commission bills, each showing
       // only that lot's cardamom cost / sample-refund / commission / GST
-      // / NETT — and its OWN purchaser. Lots from the same seller can be
-      // sold to different buyers, so the previous "first buyer for the
-      // whole bill" approach printed the wrong purchaser whenever a
-      // seller's lots were split across buyers.
-      //
-      // Sample refund quantity is the company-wide "SB Sample Refund
-      // (Kgs)" setting (Settings → Rates & Charges → `sb_refund`). The
-      // rupee value stored on the lot (`refund`) was already calculated
-      // as sb_refund × rate during lot entry.
+      // / NETT — and its OWN purchaser. See commissionPagesFromLots().
       const sbRefundKg = Number(cfg.sb_refund) || 0;
-      // Trader-sample deduction (Settings → Rates & Charges → `sb_trader_sample`,
-      // Kgs). Some customers deduct a trader-sample quantity from the
-      // seller's payout: it shows as its own row and reduces NETT. 0 (default)
-      // = no trader-sample row, no effect — keeps every other install unchanged.
       const sbTraderSampleKg = Number(cfg.sb_trader_sample) || 0;
-
-      // Resolve the purchaser block for a SINGLE lot. The `buyers` master
-      // carries the full address (add1/add2, place, pin, state, GSTIN,
-      // PAN, SBL) — join on buyer CODE first, then buyer1/buyer name.
-      const purchaserForLot = (l) => {
-        l = l || {};
-        let buyerRow = null;
-        if (l.code) buyerRow = db.get('SELECT * FROM buyers WHERE code = ? LIMIT 1', [l.code]);
-        if (!buyerRow && (l.buyer1 || l.buyer)) {
-          buyerRow = db.get(
-            'SELECT * FROM buyers WHERE UPPER(TRIM(buyer1)) = UPPER(TRIM(?)) OR UPPER(TRIM(buyer)) = UPPER(TRIM(?)) LIMIT 1',
-            [l.buyer1 || l.buyer, l.buyer1 || l.buyer]
-          );
-        }
-        // The lot carries both stamps: `invo` (original tax invoice) and
-        // `proforma_invo` (the draft the buyer was shipped against). A lot
-        // with no draft stamp falls back to the original rather than printing
-        // an empty INV — a blank there reads as "not yet invoiced".
-        const pfNo = String(l.proforma_invo || '').trim();
-        const invoLabel = (invoiceNoSrc === 'proforma' && pfNo)
-          ? formatInvoiceNo(pfPrefix, l.sale, pfNo)
-          : (l.invo || '');
-        return {
-          name:    (buyerRow && (buyerRow.buyer1 || buyerRow.buyer)) || l.buyer1 || l.buyer || '',
-          invo:    invoLabel,
-          address: buyerRow ? [buyerRow.add1, buyerRow.add2].filter(Boolean).join(', ') : '',
-          place:   buyerRow ? (buyerRow.pla || '') : '',
-          pin:     buyerRow ? (buyerRow.pin || '') : '',
-          state:   buyerRow ? (buyerRow.state || '') : (l.sale === 'L' ? (cfg.state || '') : ''),
-          st_code: buyerRow ? (buyerRow.st_code || '') : '',
-          sbl:     buyerRow ? (buyerRow.sbl || '') : '',
-          gstin:   buyerRow ? (buyerRow.gstin || '') : '',
-          pan:     buyerRow ? (buyerRow.pan || '') : '',
-        };
-      };
-      const emptyPurchaser = { name: '', invo: '', address: '', place: '', pin: '', state: '', st_code: '', sbl: '', gstin: '', pan: '' };
+      const emptyPurchaser = { ...EMPTY_COMMISSION_PURCHASER };
       const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
-      // Build one page-spec per lot. Each carries a single line item, that
-      // lot's own commission/GST split, its purchaser, and its NETT
-      // (cardamom cost + refund − commission − GST, matching the renderer's
-      // own fallback so the printed deduction rows add up on every page).
-      // Trader sample is DISPLAY-ONLY: it's folded into the SAMPLE REFUND line
-      // (+ts) and shown again as a TRADER SAMPLE deduction (−ts), so it nets to
-      // zero. It must NOT be subtracted from NETT — doing so double-counts it
-      // and drops the Grand Total below the sum of the printed rows.
-      const perLot = [];
-      if (lots.length) {
-        for (const l of lots) {
-          const qty = Number(l.pqty || l.qty || 0);
-          const rate = Number(l.prate || l.price || 0);
-          const cardamomCost = Number(l.puramt || l.amount || (qty * rate));
-          const refundAmount = Number(l.refund || 0);
-          const com = Number(l.com || 0), cg = Number(l.cgst || 0), sg = Number(l.sgst || 0), ig = Number(l.igst || 0);
-          const traderSampleAmount = round2(sbTraderSampleKg * rate);
-          perLot.push({
-            line: { lot: l.lot_no, qty, bags: l.bags || 0, rate, cardamomCost,
-                    refundQty: sbRefundKg, refundRate: rate, refundAmount,
-                    traderSampleQty: sbTraderSampleKg, traderSampleAmount },
-            purchaser: purchaserForLot(l),
-            commission: com, cgst: cg, sgst: sg, igst: ig,
-            interState: !!(l.sale && l.sale !== 'L'),
-            nett: round2(cardamomCost + refundAmount - com - cg - sg - ig),
-            crpt: l.crpt || '',
-          });
-        }
-      } else {
+      const perLot = commissionPagesFromLots(db, cfg, lots, invoOpts);
+      if (!lots.length) {
         // Live lots are gone (e.g. deleted after generation). Rebuild from
         // the per-lot snapshot stored on the bill row at generation time
         // (bills.line_items JSON, written by buildAgriBill). Snapshot amounts
@@ -11777,6 +12004,41 @@ app.get('/api/debit-notes-planter/eligible-bills/:auctionId', requireView, (req,
   res.json(rows);
 });
 
+// ── LOT-WISE eligible list (flag_lotwise_dn_planter) ─────────────────────
+// The lot-wise counterpart of /eligible-bills: one row per grade-1 LOT that
+// carries a service charge (com + sertax > 0) rather than one row per planter.
+// A lot-wise planter DN's amount IS that lot's com + sertax, so summing the
+// lot rows for a planter reproduces the seller-wise DN amount exactly.
+//
+// Ordered by lot number ASCENDING — that is the order Generate All hands out
+// note numbers, per the requested numbering scheme.
+//
+// `already_dn` is advisory for the UI: it surfaces the note number of any lot
+// that already has a lot-wise planter DN in this trade (matched on ano+lot_no).
+app.get('/api/debit-notes-planter/eligible-lots/:auctionId', requireView, (req, res) => {
+  const db = getDb();
+  const auction = db.get('SELECT ano FROM auctions WHERE id = ?', [req.params.auctionId]);
+  if (!auction) return res.status(404).json({ error: 'Auction not found' });
+  const ano = auction.ano;
+  const rows = db.all(
+    `SELECT l.id AS lot_id, l.lot_no, l.name, l.trader_id, l.pst_code,
+            (COALESCE(l.com,0) + COALESCE(l.sertax,0)) AS amount,
+            (SELECT dn.note_no FROM debit_notes_planter dn
+              WHERE TRIM(dn.ano) = TRIM(?)
+                AND TRIM(COALESCE(dn.lot_no,'')) = TRIM(l.lot_no)
+                AND UPPER(TRIM(dn.name)) = UPPER(TRIM(l.name))
+              LIMIT 1) AS already_dn
+       FROM lots l
+      WHERE l.auction_id = ?
+        AND l.name IS NOT NULL AND l.name != ''
+        AND TRIM(COALESCE(l.grade,'')) = '1'
+        AND (COALESCE(l.com,0) + COALESCE(l.sertax,0)) > 0
+      ORDER BY CAST(l.lot_no AS INTEGER), l.lot_no`,
+    [String(ano).trim(), req.params.auctionId]
+  );
+  res.json(rows);
+});
+
 // Next-available planter DN number for a trade (trade-wise sequence).
 app.get('/api/debit-notes-planter/next-note-no', requireView, (req, res) => {
   const db = getDb();
@@ -11792,10 +12054,33 @@ app.get('/api/debit-notes-planter/next-note-no', requireView, (req, res) => {
 app.post('/api/debit-notes-planter/generate', requireInvoiceWrite, requireDebitNotePlanterEnabled, (req, res) => {
   const db = getDb();
   const cfg = getSettingsFlat(db);
-  const bilno = String(req.body.bilno != null ? req.body.bilno : req.body.billNo || '').trim();
   const ano   = String(req.body.ano || '').trim();
-  if (!bilno) return res.status(400).json({ error: 'bilno (bill of supply number) is required' });
   if (!ano)   return res.status(400).json({ error: 'ano (trade number) is required' });
+
+  // ── Mode resolution (flag_lotwise_dn_planter) ────────────────────────
+  // A lot identifier in the body means a LOT-WISE planter DN for that one
+  // grade-1 lot; its absence means the classic seller-wise DN driven from a
+  // bill-of-supply number. Both are validated against the flag so a stale tab
+  // cannot write a document in the mode the site isn't configured for.
+  const reqLotNo = String(req.body.lotNo == null ? '' : req.body.lotNo).trim();
+  const reqLotId = req.body.lotId;
+  const wantsLotWise = reqLotNo !== '' || (reqLotId != null && String(reqLotId).trim() !== '');
+  const lotWiseCfg = lotwiseDnPlanterOn(db);
+  if (wantsLotWise && !lotWiseCfg) {
+    return res.status(403).json({
+      error: 'Lot-wise planter debit notes are disabled. Enable "Lot-wise Debit Notes — Planter" in Settings → Flags.',
+      mode: 'seller',
+    });
+  }
+  if (!wantsLotWise && lotWiseCfg) {
+    return res.status(400).json({
+      error: 'This site is set to LOT-WISE planter debit notes, but no lot was selected. Reload the page and pick a lot.',
+      mode: 'lot',
+    });
+  }
+
+  const bilno = String(req.body.bilno != null ? req.body.bilno : req.body.billNo || '').trim();
+  if (!wantsLotWise && !bilno) return res.status(400).json({ error: 'bilno (bill of supply number) is required' });
 
   if (pcFlagOn(db)) {
     const gateAuction = db.get('SELECT id, price_checked_at FROM auctions WHERE ano = ? ORDER BY date DESC LIMIT 1', [ano]);
@@ -11809,35 +12094,76 @@ app.post('/api/debit-notes-planter/generate', requireInvoiceWrite, requireDebitN
     }
   }
 
-  const bill = db.get(
-    `SELECT * FROM bills WHERE TRIM(ano) = ? AND CAST(bil AS TEXT) = ? ORDER BY id DESC LIMIT 1`,
-    [String(ano).trim(), bilno]
-  );
-  if (!bill) return res.status(404).json({ error: `Bill of supply ${bilno} not found in trade #${ano}` });
-
-  const planterName = bill.name || '';
-  const dupe = db.get(
-    `SELECT id, note_no FROM debit_notes_planter WHERE ano = ? AND name = ? LIMIT 1`,
-    [ano, planterName]
-  );
-  if (dupe) {
-    return res.status(409).json({
-      error: `Planter debit note #${dupe.note_no} already exists for ${planterName} in trade #${ano}`,
-      existingId: dupe.id, existingNoteNo: dupe.note_no,
-    });
+  // ── Resolve the DN's source, amount and inter/intra split, per mode ──
+  // Both modes charge the company's service fee (commission + handling) back
+  // to the planter. Seller-wise sums it across the planter's whole grade-1
+  // holding for the trade; lot-wise takes it from the ONE lot — so the
+  // lot-wise DNs for a planter sum to the seller-wise DN for that planter.
+  let planterName, dnAmount, isInter, stateForRow, traderIdForRow;
+  let stampLotNo = '', stampLotId = null, sourceInfo = {};
+  if (wantsLotWise) {
+    let lot = null;
+    if (reqLotId != null && String(reqLotId).trim() !== '' && Number.isFinite(Number(reqLotId))) {
+      lot = db.get('SELECT * FROM lots WHERE id = ?', [Number(reqLotId)]);
+    }
+    // Fall back to (trade, lot_no) when the id is absent or stale (re-import).
+    if (!lot && reqLotNo) {
+      lot = db.get(
+        `SELECT l.* FROM lots l JOIN auctions a ON a.id = l.auction_id
+          WHERE TRIM(a.ano) = TRIM(?) AND TRIM(l.lot_no) = ? ORDER BY l.id DESC LIMIT 1`,
+        [ano, reqLotNo]);
+    }
+    if (!lot) return res.status(404).json({ error: `Lot ${reqLotNo || reqLotId} not found in trade #${ano}` });
+    if (String(lot.grade || '').trim() !== '1') {
+      return res.status(400).json({ error: `Lot ${lot.lot_no} is not a grade-1 (planter) lot — planter debit notes apply to grade-1 lots only.` });
+    }
+    const svc = Math.round(((Number(lot.com) || 0) + (Number(lot.sertax) || 0)) * 100) / 100;
+    if (svc <= 0) return res.status(400).json({ error: `No grade-1 commission/handling on lot ${lot.lot_no} — nothing to debit` });
+    // Duplicate guard — one lot-wise planter DN per (trade, lot).
+    const dupe = db.get(
+      `SELECT id, note_no FROM debit_notes_planter WHERE TRIM(ano) = TRIM(?) AND TRIM(COALESCE(lot_no,'')) = ? LIMIT 1`,
+      [ano, lot.lot_no]);
+    if (dupe) {
+      return res.status(409).json({
+        error: `Lot ${lot.lot_no} already has planter debit note #${dupe.note_no} in trade #${ano}.`,
+        existingId: dupe.id, existingNoteNo: dupe.note_no,
+      });
+    }
+    planterName    = lot.name || '';
+    dnAmount       = svc;
+    isInter        = derivePlanterSaleType({ st_code: lot.pst_code }, cfg) === 'I';
+    stateForRow    = lot.pstate || lot.state || '';
+    traderIdForRow = lot.trader_id || null;
+    stampLotNo     = lot.lot_no || '';
+    stampLotId     = lot.id != null ? lot.id : null;
+    sourceInfo     = { lotNo: lot.lot_no };
+  } else {
+    const bill = db.get(
+      `SELECT * FROM bills WHERE TRIM(ano) = ? AND CAST(bil AS TEXT) = ? ORDER BY id DESC LIMIT 1`,
+      [String(ano).trim(), bilno]
+    );
+    if (!bill) return res.status(404).json({ error: `Bill of supply ${bilno} not found in trade #${ano}` });
+    planterName = bill.name || '';
+    const dupe = db.get(
+      `SELECT id, note_no FROM debit_notes_planter WHERE ano = ? AND name = ? LIMIT 1`,
+      [ano, planterName]
+    );
+    if (dupe) {
+      return res.status(409).json({
+        error: `Planter debit note #${dupe.note_no} already exists for ${planterName} in trade #${ano}`,
+        existingId: dupe.id, existingNoteNo: dupe.note_no,
+      });
+    }
+    // Base = sum(commission + handling) on the planter's GRADE-1 lots.
+    const baseAmt = gradedServiceBase(db, bill.auction_id, planterName, '1');
+    if (baseAmt <= 0) return res.status(400).json({ error: `No grade-1 commission/handling found for ${planterName} in trade #${ano} — nothing to debit` });
+    dnAmount       = baseAmt;
+    isInter        = derivePlanterSaleType(bill, cfg) === 'I';
+    stateForRow    = bill.pstate || bill.state || '';
+    traderIdForRow = bill.trader_id || null;
+    sourceInfo     = { bilno };
   }
 
-  // Base = sum(commission + handling) on the planter's GRADE-1 lots.
-  const baseAmt = gradedServiceBase(db, bill.auction_id, planterName, '1');
-  if (baseAmt <= 0) return res.status(400).json({ error: `No grade-1 commission/handling found for ${planterName} in trade #${ano} — nothing to debit` });
-  // Debit Note — Planter charges the company's service fee back to the
-  // planter: the taxable amount IS commission + handling on the grade-1
-  // lots (baseAmt). GST is charged on that amount and total = amount + GST.
-  // This is NOT a Formula-5D cash discount — that math is for the
-  // registered-dealer flow only.
-  const dnAmount = baseAmt;
-
-  const isInter = derivePlanterSaleType(bill, cfg) === 'I';
   const dnGstRate = Number(cfg.discount_gst) || Number(cfg.gst_service) || 18;
   let cgst = 0, sgst = 0, igst = 0;
   if (isInter) {
@@ -11874,13 +12200,17 @@ app.post('/api/debit-notes-planter/generate', requireInvoiceWrite, requireDebitN
   }
 
   db.run(
-    `INSERT INTO debit_notes_planter (ano,date,state,name,note_no,amount,cgst,sgst,igst,total,trader_id)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-    [ano, dnDate, bill.pstate || bill.state || '', planterName, noteNo, dnAmount, cgst, sgst, igst, total,
-     // Seller FK inherited from the bill of supply this DN is raised against.
-     bill.trader_id || null]
+    `INSERT INTO debit_notes_planter (ano,date,state,name,note_no,amount,cgst,sgst,igst,total,trader_id,lot_no,lot_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [ano, dnDate, stateForRow, planterName, noteNo, dnAmount, cgst, sgst, igst, total,
+     // Seller FK inherited from the source (bill of supply, or lot in lot-wise).
+     traderIdForRow,
+     // Empty lot_no marks this row seller-wise for every future reader.
+     stampLotNo, stampLotId]
   );
-  res.json({ success: true, created: 1, note_no: noteNo, bilno, ano, planter: planterName, amount: dnAmount, cgst, sgst, igst, total });
+  res.json({ success: true, created: 1, note_no: noteNo, ano, planter: planterName,
+             amount: dnAmount, cgst, sgst, igst, total,
+             mode: wantsLotWise ? 'lot' : 'seller', ...sourceInfo });
 });
 
 // Trade-wide planter DN generation — one DN per eligible bill of supply.
@@ -11899,6 +12229,99 @@ app.post('/api/debit-notes-planter/generate-bulk', requireInvoiceWrite, requireD
         auctionId: ga.id, gate: 'price_check',
       });
     }
+  }
+
+  // ── LOT-WISE branch (flag_lotwise_dn_planter) ────────────────────────
+  // One planter DN per grade-1 LOT that carries a service charge, numbered in
+  // LOT-NUMBER ASCENDING order (the requested numbering scheme). Returns early
+  // so the seller-wise path below stays exactly as it was.
+  if (lotwiseDnPlanterOn(db)) {
+    const lots = db.all(
+      `SELECT l.id AS lot_id, l.lot_no, l.name, l.trader_id, l.pst_code, l.pstate, l.state,
+              (COALESCE(l.com,0) + COALESCE(l.sertax,0)) AS svc
+         FROM lots l JOIN auctions a ON a.id = l.auction_id
+        WHERE TRIM(a.ano) = TRIM(?)
+          AND l.name IS NOT NULL AND l.name != ''
+          AND TRIM(COALESCE(l.grade,'')) = '1'
+          AND (COALESCE(l.com,0) + COALESCE(l.sertax,0)) > 0
+        ORDER BY CAST(l.lot_no AS INTEGER), l.lot_no`,
+      [String(ano).trim()]);
+    if (!lots.length) {
+      return res.json({ success: true, mode: 'lot', created: 0, skipped: 0, generated: [], skippedDetails: [], note: `No eligible grade-1 lots in trade #${ano}` });
+    }
+    // Lots already carrying a lot-wise DN in this trade (matched on lot_no) —
+    // a re-run tops up the rest instead of duplicating.
+    const doneLots = new Set(
+      db.all(`SELECT lot_no FROM debit_notes_planter WHERE TRIM(ano) = TRIM(?) AND TRIM(COALESCE(lot_no,'')) <> ''`, [String(ano).trim()])
+        .map(r => String(r.lot_no || '').trim())
+    );
+    const tradeL = db.get('SELECT date FROM auctions WHERE ano = ? LIMIT 1', [ano]);
+    const dnDateL = tradeL && tradeL.date ? normalizeDate(tradeL.date) : new Date().toISOString().slice(0, 10);
+    const dnGstRateL = Number(cfg.discount_gst) || Number(cfg.gst_service) || 0;
+    const pendingCount = lots.filter(l => !doneLots.has(String(l.lot_no || '').trim())).length;
+
+    // Note numbering — same contract as the seller-wise path below.
+    let nextNoteNo;
+    const rawStartL = req.body.startNoteNo != null ? req.body.startNoteNo : req.body.startInvoiceNo;
+    if (rawStartL != null && String(rawStartL).trim() !== '') {
+      const n = parseInt(String(rawStartL).trim(), 10);
+      if (!Number.isFinite(n) || n < 1) return res.status(400).json({ error: 'Starting Number must be a positive integer' });
+      nextNoteNo = n;
+      if (pendingCount > 0) {
+        const upper = nextNoteNo + pendingCount - 1;
+        const collisions = db.all(
+          `SELECT CAST(note_no AS INTEGER) AS n FROM debit_notes_planter
+            WHERE ano = ? AND CAST(note_no AS INTEGER) BETWEEN ? AND ? ORDER BY n`,
+          [ano, nextNoteNo, upper]);
+        if (collisions.length) {
+          const row = db.get('SELECT MAX(CAST(note_no AS INTEGER)) AS mx FROM debit_notes_planter WHERE ano = ?', [ano]);
+          const mx = parseInt(row && row.mx, 10);
+          const safe = Number.isFinite(mx) && mx > 0 ? mx + 1 : 1;
+          return res.status(409).json({
+            error: `Starting Number ${nextNoteNo} would overlap existing planter debit note(s) in trade #${ano}. Try ${safe} or higher.`,
+            collisions: collisions.map(c => c.n), suggested: safe,
+          });
+        }
+      }
+    } else {
+      const row = db.get('SELECT MAX(CAST(note_no AS INTEGER)) AS mx FROM debit_notes_planter WHERE ano = ?', [ano]);
+      const mx = parseInt(row && row.mx, 10);
+      nextNoteNo = Number.isFinite(mx) && mx > 0 ? mx + 1 : 1;
+    }
+
+    const generatedL = [];
+    const skippedL = [];
+    for (const l of lots) {
+      const key = String(l.lot_no || '').trim();
+      if (doneLots.has(key)) {
+        skippedL.push({ lotNo: l.lot_no, ano, buyer: l.name || '', reason: 'duplicate (lot already has a planter DN in this trade)' });
+        continue;
+      }
+      const dnAmount = Math.round((Number(l.svc) || 0) * 100) / 100;
+      const isInter = derivePlanterSaleType({ st_code: l.pst_code }, cfg) === 'I';
+      let cgst = 0, sgst = 0, igst = 0;
+      if (isInter) {
+        igst = Math.round(dnAmount * dnGstRateL / 100 * 100) / 100;
+      } else {
+        const half = Math.round(dnAmount * (dnGstRateL / 2) / 100 * 100) / 100;
+        cgst = half; sgst = half;
+      }
+      const total = Math.round((dnAmount + cgst + sgst + igst) * 100) / 100;
+      db.run(
+        `INSERT INTO debit_notes_planter (ano,date,state,name,note_no,amount,cgst,sgst,igst,total,trader_id,lot_no,lot_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [ano, dnDateL, l.pstate || l.state || '', l.name || '', String(nextNoteNo), dnAmount, cgst, sgst, igst, total,
+         l.trader_id || null, l.lot_no || '', l.lot_id != null ? l.lot_id : null]);
+      generatedL.push({ note_no: nextNoteNo, lotNo: l.lot_no, planter: l.name || '', total });
+      doneLots.add(key);
+      nextNoteNo++;
+    }
+    return res.json({
+      success: true, mode: 'lot',
+      created: generatedL.length, skipped: skippedL.length,
+      generated: generatedL, skippedDetails: skippedL,
+      note: generatedL.length === 0 && skippedL.length === 0 ? `No eligible grade-1 lots in trade #${ano}` : undefined,
+    });
   }
 
   // Ordered by planter name (case-insensitively) rather than insertion id —
@@ -12093,7 +12516,8 @@ app.post('/api/debit-notes-planter/pdf-bulk', requireView, async (req, res) => {
 app.get('/api/journals/sales', requireView, (req, res) => {
   const { auctionId, saleType } = req.query;
   if (!auctionId) return res.status(400).json({ error: 'auctionId required' });
-  res.json(getSalesJournal(getDb(), auctionId, saleType));
+  const db = getDb();
+  res.json(getSalesJournal(db, auctionId, saleType, getSettingsFlat(db)));
 });
 
 // Sale-type ledger summary printed under the Sales journal / PDF (Cardamom &
@@ -12762,13 +13186,18 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
       where.push(`(${clause})`);
     }
 
+    // Ordered by LOT NUMBER, not by seller — the operator reads this screen
+    // against a lot list. The bank export mirrors it (orderByLot below), so
+    // the exported sheet comes out in the same order as the rows on screen.
+    // Numeric cast first so "9" precedes "10"; the raw lot_no breaks ties for
+    // non-numeric lot numbers, which all cast to 0.
     const lots = db.all(
       `SELECT l.id, l.lot_no, l.name, l.trader_id, l.branch, l.qty,
               l.balance AS payable, l.amount, l.bank_id, l.immediate_payment,
               l.locked_at
          FROM lots l
         WHERE ${where.join(' AND ')}
-        ORDER BY UPPER(l.name), CAST(l.lot_no AS INTEGER), l.lot_no`,
+        ORDER BY CAST(l.lot_no AS INTEGER), l.lot_no`,
       params
     ) || [];
 
@@ -13408,7 +13837,7 @@ app.get('/api/exports/:type/:auctionId', requireExport, async (req, res) => {
 
 // POST variant — powers the Payments tab's tracked "Export Selected" flow.
 // Body { names:[...], lots:{seller:[lot_no,…]}, excludeLots:{seller:[lot_no,…]},
-// format, state }. names → seller filter; lots → per-seller picked subset;
+// format, state, orderBy }. names → seller filter; lots → per-seller picked subset;
 // excludeLots → lots already shipped in a prior export (skipped so re-export
 // doesn't double-pay them). XLSX/CSV only (the GET route handles PDF).
 app.post('/api/exports/:type/:auctionId', requireExport, async (req, res) => {
@@ -13443,6 +13872,10 @@ app.post('/api/exports/:type/:auctionId', requireExport, async (req, res) => {
       sellerKeys: sellerKeys.length ? sellerKeys : null,
       lots:        cleanMap(body.lots),
       excludeLots: cleanMap(body.excludeLots),
+      // 'lot' → order the rows by lot number instead of by seller. Sent by the
+      // Lot-wise Payments screen, which itself lists lots in that order; the
+      // classic seller-wise screen sends nothing and keeps its own ordering.
+      orderByLot: String(body.orderBy || '').toLowerCase() === 'lot',
     };
     let buffer;
     if (exportDef.needsCfg) {

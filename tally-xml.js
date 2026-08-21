@@ -1696,8 +1696,11 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
   const tlyrnd     = cfgBool(cfg, 'tally_round_enabled', true);
   const opt        = cfgBool(cfg, 'tally_optional', false);
   // Blank <VOUCHERNUMBER> / <REFERENCE> so they're typed in Tally after the
-  // import (Settings → Flags). OFF = today's generated numbers.
-  const manualVchNo = cfgBool(cfg, 'tally_purchase_manual_voucherno', false);
+  // import (Settings → Feature Flags). OFF = today's generated numbers.
+  // RD-only toggle; the URD voucher has its own. The legacy single flag is
+  // honoured as the fallback for a cfg captured before the settings migration.
+  const manualVchNo = cfgBool(cfg, 'tally_purchase_manual_voucherno_rd',
+                        cfgBool(cfg, 'tally_purchase_manual_voucherno', false));
   // Single-company build: intra/inter test uses the configured home state
   // code (cfg.tally_state_code, default 33 = Tamil Nadu).
   const intra      = cfgGet(cfg, 'tally_state_code', '33');
@@ -2135,9 +2138,11 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
   const tlyrnd    = cfgBool(cfg, 'tally_round_enabled', true);
   const opt       = cfgBool(cfg, 'tally_optional', false);
   // Blank <VOUCHERNUMBER> / <REFERENCE> so they're typed in Tally after the
-  // import (Settings → Flags). Same flag as the RD purchase voucher, so the
-  // two purchase exports stay in lock-step. OFF = today's generated numbers.
-  const manualVchNo = cfgBool(cfg, 'tally_purchase_manual_voucherno', false);
+  // import (Settings → Feature Flags). URD-only toggle — independent of the RD
+  // purchase voucher, which has its own. The legacy single flag is honoured as
+  // the fallback for a cfg captured before the settings migration.
+  const manualVchNo = cfgBool(cfg, 'tally_purchase_manual_voucherno_urd',
+                        cfgBool(cfg, 'tally_purchase_manual_voucherno', false));
   // amazing/ainvPrefix kept as locals so dead ASP branches below still
   // parse; `amazing` is force-disabled in this e-Auction-only build.
   const amazing   = false;
@@ -3945,7 +3950,14 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
            CASE WHEN isp_puramt > 0 THEN isp_pqty   ELSE pqty   END AS qty,
            CASE WHEN isp_puramt > 0 THEN isp_prate  ELSE prate  END AS rate,
            CASE WHEN isp_puramt > 0 THEN isp_puramt ELSE puramt END AS amount,
-           bilamt, pan, refund, com, sertax
+           bilamt, pan, refund, com, sertax,
+           -- SERVICE GST (on commission + handling), deducted from what the
+           -- planter is actually paid. Selected here so the voucher's bill
+           -- allocations can net it off — without these columns lot.cgst is
+           -- undefined and the deduction silently resolves to zero, which is
+           -- how the URD "New Ref" came out gross of tax while the RD voucher
+           -- (whose builder always selected them) came out net.
+           cgst, sgst, igst
     FROM lots
     WHERE auction_id = ? AND name = ?
       AND (isp_puramt > 0 OR puramt > 0)
@@ -4000,6 +4012,8 @@ function buildURDPurchaseRows(db, auctionId, cfg) {
         qty: r2(l.qty), rate: r2(l.rate), amount: r2(l.amount),
         bilamt: r2(l.bilamt || l.amount),
         refund: l.refund || 0, com: l.com || 0, sertax: l.sertax || 0,
+        // Mirrors the RD builder — lotPayable() subtracts these.
+        cgst: l.cgst || 0, sgst: l.sgst || 0, igst: l.igst || 0,
       });
     }
     const qtytot = lots.reduce((s, l) => s + Number(l.qty || 0), 0);

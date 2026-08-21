@@ -983,6 +983,21 @@ function formatLotList(raw) {
   return uniq.join(',');
 }
 
+// Sort key for `opts.orderByLot` — a bank row covers one or more lots, so it
+// sorts on the SMALLEST lot it pays for. Numeric lot numbers order numerically
+// and ahead of non-numeric ones, which fall to the end ordered as text; a row
+// with no lots at all sorts last. Returns [number, text] compared in order.
+function lotSortKey(lotList) {
+  let num = Infinity, txt = null;
+  for (const x of String(lotList || '').split(',')) {
+    const t = x.trim();
+    if (!t) continue;
+    if (/^\d+$/.test(t)) { const n = Number(t); if (n < num) num = n; }
+    else if (txt === null || t < txt) txt = t;
+  }
+  return [num, txt === null ? '' : txt];
+}
+
 function getBankPaymentData(db, auctionId, cfg, opts) {
   opts = opts || {};
   const useBefore = !!opts.before;
@@ -1138,6 +1153,9 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
   // `routedBank` (or null → seller-default fallback chain) the destination.
   const buildRow = (p, rawAmount, lotList, routedBank) => {
     const amount = roundAmounts ? Math.round(rawAmount) : rawAmount;
+    // The lots this row actually pays for: the picked subset when the caller
+    // filtered, otherwise every lot the seller has in this trade.
+    const rowLots = lotList || formatLotList(p.lot_nos || '');
     const tb = p.trader_id != null ? bankByTraderId[p.trader_id] : null;
     const ifsc      = (routedBank && routedBank.ifsc)        || (tb && tb.ifsc)        || p.t_ifsc    || '';
     const acctnum   = (routedBank && routedBank.acctnum)     || (tb && tb.acctnum)     || p.t_acctnum || '';
@@ -1167,7 +1185,10 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
       // Particulars — Auction No + space + lot no(s) (e.g. "A10 024"). Uses the
       // picked lots when this is a lot-filtered export, otherwise all of the
       // seller's lots for this auction.
-      particulars: `${auction ? auction.ano : ''} ${lotList || formatLotList(p.lot_nos || '')}`.trim(),
+      particulars: `${auction ? auction.ano : ''} ${rowLots}`.trim(),
+      // Internal only — the orderByLot sort reads it and it is stripped before
+      // the rows are returned, so no bank format can accidentally print it.
+      _lotList: rowLots,
     };
   };
 
@@ -1267,6 +1288,21 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
   // When lot-filtering is active, drop rows that net to zero — a seller
   // whose remaining (un-exported) lots all net to zero shouldn't appear.
   if (hasLotFilter) result = result.filter(r => Number(r.amount) > 0);
+  // Lot-wise Payments exports what the operator sees, in the order they see it:
+  // that screen lists lots ascending, so the bank sheet does too. Every other
+  // caller keeps the seller-wise `ORDER BY l.state, l.name` above untouched.
+  // A row can cover several lots, so it sorts on its smallest one; the original
+  // index breaks ties so equal keys stay in their seller-wise order.
+  if (opts.orderByLot) {
+    result = result
+      .map((r, i) => ({ r, i, k: lotSortKey(r._lotList) }))
+      .sort((a, b) =>
+        (a.k[0] - b.k[0]) ||
+        (a.k[1] < b.k[1] ? -1 : a.k[1] > b.k[1] ? 1 : 0) ||
+        (a.i - b.i))
+      .map(x => x.r);
+  }
+  result.forEach(r => { delete r._lotList; });
   return result;
 }
 
@@ -1484,24 +1520,83 @@ function _ddmmyyyy(d) {
   return s;
 }
 
+// ── PROFORMA MODE for the Sales Journal (flag_proforma_invoice) ──────────
+//
+// OFF (the default) — the journal is the ORIGINAL tax-invoice register it has
+// always been: raised originals only, bare "I 2009" numbers, drafts excluded.
+//
+// ON — the journal follows the document the BUYER holds, matching Collection,
+// the Buyer Statement and the Merchants XML:
+//   • the invoice-number cell quotes the PROFORMA number ("PI/L-8"), falling
+//     back to the bare original for invoices billed with no draft behind them;
+//   • PENDING drafts (nothing raised from them yet) are listed as rows of their
+//     own. Once a draft is raised, the original it became is already in the row
+//     set, so counting both would double the buyer.
+//
+// NOTE the consequence of that second rule: unbilled drafts carry their value —
+// and their GST — into the register, so the journal and its ledger summary no
+// longer foot to the GST returns for the trade. That is intentional here (a
+// register of what the buyers hold), and it is exactly why the SALES VOUCHERS
+// Tally export does NOT do this — posting a draft there would create output-tax
+// entries for a tax invoice that was never issued. Keep the two apart.
+//
+// `_proformaMode` resolves the flag + prefix once. Callers may pass a cfg they
+// already loaded; otherwise it reads settings itself.
+function _proformaMode(db, cfg) {
+  const c = cfg || getSettingsFlat(db);
+  const on = String((c && c.flag_proforma_invoice) || '').toLowerCase() === 'true'
+    || (c && c.flag_proforma_invoice) === true;
+  return { on, prefix: String((c && c.proforma_invoice_prefix) || '').trim() };
+}
+
+// Row filter shared by the journal and its ledger summary, so the summary
+// always totals exactly the rows the journal printed.
+function _journalProformaSql(on) {
+  return on
+    ? `(COALESCE(is_proforma,0) = 0
+        OR (COALESCE(is_proforma,0) = 1 AND TRIM(COALESCE(raised_invo,'')) = ''))`
+    : `COALESCE(is_proforma,0) = 0`;
+}
+
 /**
  * Sales Journal (JOUR.PRG)
  * Trade-wise sales invoice register. Filters invoices by auction id
  * (resolved via auctions.ano so old invoices with a NULL auction_id
  * still match by ano). Dates rendered dd/mm/yyyy.
+ *
+ * With flag_proforma_invoice on, `invo` carries the proforma number the buyer
+ * holds and pending drafts join the register — see the note above.
  */
-function getSalesJournal(db, auctionId, saleType) {
+function getSalesJournal(db, auctionId, saleType, cfg) {
   const auction = db.get('SELECT id, ano FROM auctions WHERE id = ?', [auctionId]);
   if (!auction) return [];
+  const pf = _proformaMode(db, cfg);
   let query = `SELECT date, sale, invo, buyer, buyer1, gstin, place,
       bag, qty, amount as cardamom, gunny, pava_hc as transport, ins as insurance,
-      cgst, sgst, igst, tcs, rund, tot as total
-    FROM invoices WHERE (auction_id = ? OR ano = ?) AND COALESCE(is_proforma,0) = 0`;
+      cgst, sgst, igst, tcs, rund, tot as total,
+      COALESCE(is_proforma,0) AS is_proforma
+    FROM invoices WHERE (auction_id = ? OR ano = ?) AND ${_journalProformaSql(pf.on)}`;
   const params = [auction.id, auction.ano];
   if (saleType) { query += ' AND sale = ?'; params.push(saleType); }
   query += ' ORDER BY date, sale, invo';
   const rows = db.all(query, params);
-  return rows.map(r => ({ ...r, date: _ddmmyyyy(r.date) }));
+  if (!pf.on) {
+    // Untouched legacy shape — no is_proforma column leaks into the response.
+    return rows.map(({ is_proforma, ...r }) => ({ ...r, date: _ddmmyyyy(r.date) }));
+  }
+  const idx = require('./proforma-refs').buildProformaIndex(db, auction.id);
+  return rows.map(r => {
+    const { is_proforma, ...rest } = r;
+    return {
+      ...rest,
+      date: _ddmmyyyy(r.date),
+      // The printed cell. `invo_raw` keeps the stored number for anything that
+      // still needs to key off it (drill-through, reconciliation).
+      invo: idx.labelFor(r, pf.prefix),
+      invo_raw: r.invo,
+      is_proforma: Number(is_proforma) ? 1 : 0,
+    };
+  });
 }
 
 /**
@@ -1519,9 +1614,13 @@ function getSalesJournal(db, auctionId, saleType) {
 function getSalesJournalSummary(db, auctionId, saleType, cfg) {
   const auction = db.get('SELECT id, ano FROM auctions WHERE id = ?', [auctionId]);
   if (!auction) return null;
+  // Same row filter as getSalesJournal — with flag_proforma_invoice on, the
+  // pending drafts printed above are totalled here too, so the ledger summary
+  // foots to the register it sits under.
   let q = `SELECT sale, bag, qty, amount AS cardamom, gunny, pava_hc AS transport,
              ins AS insurance, cgst, sgst, igst, tcs, tot AS total
-           FROM invoices WHERE (auction_id = ? OR ano = ?) AND COALESCE(is_proforma,0) = 0`;
+           FROM invoices WHERE (auction_id = ? OR ano = ?)
+             AND ${_journalProformaSql(_proformaMode(db, cfg).on)}`;
   const params = [auction.id, auction.ano];
   if (saleType) { q += ' AND sale = ?'; params.push(saleType); }
   const rows = db.all(q, params);

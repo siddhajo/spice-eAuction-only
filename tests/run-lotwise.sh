@@ -11,7 +11,9 @@ for t in \
   tests/lotwise-purchase.unit.js \
   tests/lotwise-purchase.http.js \
   tests/lotwise-bills.http.js \
+  tests/lotwise-dn-planter.http.js \
   tests/proforma-prefix-and-formd.js \
+  tests/journal-proforma.js \
   tests/lot-payment-format.js
 do
   printf '\n=== %s\n' "$t"
