@@ -218,6 +218,30 @@ const cfgNum = (cfg, key, def = 0) => {
   return isFinite(v) ? v : def;
 };
 
+// ── Voucher-reference series tail ────────────────────────────────────────
+// The token welded onto a voucher number / bill reference after the season —
+// the "URD" in "1748/26-27/URD", the "SE" on a dealer debit note. These were
+// hardcoded string literals; each is now a setting (see the tally_*_ref_suffix
+// block in company-config.js) so an install can change or drop one without a
+// code edit.
+//
+// Returns the tail READY TO CONCATENATE, i.e. with its leading separator, or
+// '' when the setting is blank. Operators type the bare token ("URD"), so the
+// separator is supplied here — but a value that already leads with one of the
+// usual separators is passed through untouched, so someone who types "/URD"
+// or "-URD" gets what they typed rather than "//URD".
+// NOTE this reads cfg directly rather than through cfgGet: cfgGet folds '' into
+// "missing" and returns the default, which would make the URD / SE tails
+// impossible to switch OFF — an operator who cleared the field would keep
+// getting the default token back. Here an empty string is a real answer
+// ("no tail") and only an absent key falls back to `def`.
+function refSuffix(cfg, key, def = '') {
+  const stored = cfg ? cfg[key] : undefined;
+  const raw = String((stored === undefined || stored === null) ? def : stored).trim();
+  if (!raw) return '';
+  return /^[/\-_.]/.test(raw) ? raw : '/' + raw;
+}
+
 // SQL fragments for filtering lot rows by whether the seller has a GSTIN.
 // The `cr` column may carry either format:
 //   • Legacy UI:  "GSTIN.<15-char-gstin>"  → starts with "GSTIN" (uppercase)
@@ -2162,6 +2186,13 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
   // Short-form season identifier (e.g. "26-27") for the commission bill ref;
   // falls back to the full season so the ref is never empty.
   const seasonShort = String(cfgGet(cfg, 'season_short', '')).trim() || season;
+  // Series tail appended after the season — "1748/26-27/URD". Configurable
+  // (Settings → To Tally → "URD Purchase Ref Tail"); blank (the default) stops
+  // the ref at the season, which is this build's existing output. `refTail`
+  // builds every ref in this voucher so the VOUCHERNUMBER, the REFERENCE and
+  // the commission Agst Ref can never drift apart.
+  const urdRefTail = refSuffix(cfg, 'tally_urd_purchase_ref_suffix');
+  const refTail = (base) => `${base}${urdRefTail}`;
 
   const rates = rateDetails(cfgNum(cfg, 'gst_goods', 5));
 
@@ -2191,19 +2222,21 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
     // Round-off delta (party rounded vs exact goods); balanced by the Round
     // Off ledger emitted below.
     const rnd        = tlyrnd ? r2(partyAmt - grossGoods) : 0;
-    // URD voucher number = {invno}/{season-short} (e.g. "799/26-27").
+    // URD voucher number = {invno}/{season-short}{tail} — "799/26-27", or
+    // "799/26-27/URD" once the URD Purchase Ref Tail setting is filled in.
     // Blanked when `manualVchNo` is on — only <VOUCHERNUMBER> and
     // <REFERENCE> read this, so bill allocations are unaffected.
-    const voucherRef = manualVchNo ? '' : `${taxNm}/${seasonShort}`;
+    const voucherRef = manualVchNo ? '' : refTail(`${taxNm}/${seasonShort}`);
     const startVoucher = `<VOUCHER VCHTYPE="${xe(vchType)}" ACTION="Create" OBJVIEW="Invoice Voucher View">`;
 
     // Bill allocations (mirror the RD-purchase voucher):
     //   • Each lot's "New Ref" = its NET payable to the planter
     //       = goods + sample refund − commission − handling.
     //   • Commission + handling is added back as ONE positive "Agst Ref"
-    //       "<invo>/<season-short>/URD" so (Σ lot payables + URD ref) equals
+    //       "<invo>/<season-short><tail>" so (Σ lot payables + URD ref) equals
     //       the gross goods = party AMOUNT (no On Account). Any round-off
-    //       delta folds into that same URD ref.
+    //       delta folds into that same URD ref. `<tail>` is the configurable
+    //       URD Purchase Ref Tail — blank by default, "/URD" when set.
     // Driven by tally_purchase_detailed: detailed → one New Ref per lot
     // (keyed by lot number, matching the per-lot inventory); consolidated →
     // a single New Ref keyed by bill no, summed across the voucher's lots.
@@ -2237,13 +2270,15 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
 </BILLALLOCATIONS.LIST>`;
     }
     // Commission + handling charged back to the planter, aged as a positive
-    // "Agst Ref" against the planter's "<invo>/<season-short>/URD" provisional
+    // "Agst Ref" against the planter's "<invo>/<season-short><tail>" provisional
     // bill. = party AMOUNT − Σ lot payables, so all bills sum EXACTLY to the
     // party AMOUNT (this also absorbs any round-off delta).
+    // Shares `refTail` with the voucher number above — the Agst Ref has to
+    // spell the bill the same way or Tally ages it as a new one.
     const urdRefAmt = r2(partyAmt - lotPayableSum);
     const urdAlloc  = urdRefAmt !== 0 ? `
 <BILLALLOCATIONS.LIST>
-<NAME>${xe(`${taxNm}/${seasonShort}/URD`)}</NAME>
+<NAME>${xe(refTail(`${taxNm}/${seasonShort}`))}</NAME>
 <BILLTYPE>Agst Ref</BILLTYPE>
 <AMOUNT>${urdRefAmt}</AMOUNT>
 </BILLALLOCATIONS.LIST>` : '';
@@ -2431,7 +2466,7 @@ ${TAGS.DEEMYES}
     }
 
     // Commission + handling is intentionally NOT a voucher ledger here — it
-    // only reclassifies the bill ageing via the "<invo>/<season-short>/URD"
+    // only reclassifies the bill ageing via the "<invo>/<season-short><tail>"
     // Agst Ref above (the commission income is booked on the planter Debit
     // Note). This mirrors the RD-purchase voucher.
 
@@ -2565,13 +2600,19 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
     //   regular DN → {debitnoteno}/{season-short}/SE
     //   planter DN → {debitnoteno}/{season-short}/URD
     // and planter DNs post their commission to the planter commission ledger.
+    // The SE / URD tails are settings (Debit Note Ref Tail — Dealer/Planter),
+    // defaulted to those historical tokens so this shape is unchanged; blank
+    // either one to stop the ref at the season.
     // The debit_note_[planter_]prefix/suffix settings override that shape
     // entirely — see formatDebitNoteNo().
     const isPlanter   = !!row.planter;
+    const dnRefTail   = isPlanter
+      ? refSuffix(cfg, 'tally_dn_planter_ref_suffix', 'URD')
+      : refSuffix(cfg, 'tally_dn_dealer_ref_suffix',  'SE');
     const voucherNo   = formatDebitNoteNo(cfg, taxNm, {
       planter: isPlanter,
       ano: row.ano,
-      legacy: `${taxNm}/${seasonShort}/${isPlanter ? 'URD' : 'SE'}`,
+      legacy: `${taxNm}/${seasonShort}${dnRefTail}`,
     });
     // Dealer DN: interstate → Commission Ledger InterState, local → local
     // commission ledger. Planter DN: always its own planter commission ledger.
@@ -3518,8 +3559,12 @@ function buildDebitNoteIrpJson(rows, cfg, opts = {}) {
         Typ: 'INV',
         No: (() => {
           const raw = String(row.voucherNum || row.note_no || row.id || '').trim();
+          // Only DEALER notes reach here, so this is always the dealer tail —
+          // and it must be the SAME setting the Tally voucher above reads, or
+          // the IRP would register the note under a number the books don't use.
           return formatDebitNoteNo(cfg, raw, {
-            planter: false, ano: row.ano, legacy: `${raw}/${seasonShort}/SE`,
+            planter: false, ano: row.ano,
+            legacy: `${raw}/${seasonShort}${refSuffix(cfg, 'tally_dn_dealer_ref_suffix', 'SE')}`,
           });
         })(),
         Dt: toIrpDate(row.date),

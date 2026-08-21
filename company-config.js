@@ -581,6 +581,27 @@ const DEFAULTS = [
   { key: 'tally_rd_ledger_suffix',  value: '-PURCHASE', category: 'tally', label: 'RD Party Ledger Suffix',           type: 'text' },
   { key: 'tally_urd_ledger_suffix', value: '-[{PAN}]',  category: 'tally', label: 'URD Party Ledger Suffix ({PAN})',  type: 'text' },
 
+  // ── Voucher-REFERENCE tails ──────────────────────────────────────────
+  // The trailing token welded onto a Tally voucher number / bill reference
+  // AFTER the season, marking which series the document belongs to:
+  //
+  //     <doc no>/<season-short>/<tail>        e.g. "1748/26-27/URD"
+  //
+  // These used to be literals in tally-xml.js. Blank = no tail at all, so the
+  // ref stops at the season ("1748/26-27"). A leading "/" is added for you —
+  // enter just the token ("URD"), not "/URD".
+  //
+  // IMPORTANT: the value is part of the bill reference Tally ages against, so
+  // changing it mid-season orphans every reference already sitting in Tally
+  // under the old spelling. Change it at a season boundary.
+  //
+  // Defaults reproduce this build's existing output exactly: the URD PURCHASE
+  // voucher carries no tail, while the debit notes keep their historical
+  // URD (planter) / SE (dealer) tokens.
+  { key: 'tally_urd_purchase_ref_suffix', value: '',    category: 'tally', label: 'URD Purchase Ref Tail (after season, e.g. "URD" — blank = none)', type: 'text' },
+  { key: 'tally_dn_planter_ref_suffix',   value: 'URD', category: 'tally', label: 'Debit Note Ref Tail — Planter (after season)', type: 'text' },
+  { key: 'tally_dn_dealer_ref_suffix',    value: 'SE',  category: 'tally', label: 'Debit Note Ref Tail — Dealer (after season)',  type: 'text' },
+
   // Mode toggles
   { key: 'tally_detailed',        value: 'false', category: 'tally', label: 'Detailed Inv (one inventory entry per lot)', type: 'boolean' },
   { key: 'tally_round_enabled',   value: 'false', category: 'tally', label: 'Round (Round On/Off ledger)',                 type: 'boolean' },

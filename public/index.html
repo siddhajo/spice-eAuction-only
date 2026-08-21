@@ -19043,8 +19043,10 @@ function renderTallyPanel(fields){
     fields: pick(k => /^tally_(round|detailed|optional|sample|amazing|ainv)/.test(k)) });
 
   groups.push({ title: 'Numbering &amp; Prefixes',
-    hint: 'Voucher number prefixes and separator characters.',
-    fields: pick(k => /^tally_(inv_prefix|separator|note_prefix)/.test(k) || k === 'tally_prefix') });
+    hint: 'Voucher number prefixes, separator characters, and the series tail appended after the season ' +
+          '(the "URD" in "1748/26-27/URD"). Enter a bare token — the "/" is added for you, and blank means no tail. ' +
+          'A tail is part of the bill reference Tally ages against, so change it at a season boundary, not mid-season.',
+    fields: pick(k => /^tally_(inv_prefix|separator|note_prefix)/.test(k) || /_ref_suffix$/.test(k) || k === 'tally_prefix') });
 
   groups.push({ title: 'Toggles',
     hint: 'Per-voucher feature flags — emit e-way bill block, dispatch-from address, TCS line, etc.',

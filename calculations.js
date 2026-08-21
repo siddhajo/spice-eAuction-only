@@ -1558,6 +1558,41 @@ function _journalProformaSql(on) {
     : `COALESCE(is_proforma,0) = 0`;
 }
 
+// ── Register order ───────────────────────────────────────────────────────
+// The journal is ordered by the invoice number it PRINTS: sale letter first,
+// then the number NUMERICALLY —
+//     PI/I-1, PI/I-2, PI/I-20, PI/L-1, PI/L-10
+// Two things were wrong with ordering on the stored `invo` text in SQL:
+//   • TEXT collation puts "10" ahead of "2", so PI/I-10 printed above PI/I-2;
+//   • in proforma mode the printed cell is the DRAFT's number, which is
+//     numbered independently of the original behind it — so the register was
+//     sorted on a number it never shows.
+// The draft also carries its OWN sale letter (a lot can be drafted Local and
+// billed Inter-state), which is why the letter is read off the printed cell
+// rather than off `row.sale`.
+//
+// Splits print as "PI/L-8, PI/L-9" — the first number positions the row.
+// A cell with no number at all sorts last rather than jumping to the top.
+function _invoCellSortKey(cell) {
+  const first = String(cell == null ? '' : cell).split(',')[0].trim();
+  const digits = (first.match(/(\d+)\s*$/) || [])[1];
+  const letter = (first.match(/([A-Za-z])\s*[-\s]\s*\d+\s*$/) || [])[1] || '';
+  return {
+    letter: letter.toUpperCase(),
+    num: digits ? parseInt(digits, 10) : Number.MAX_SAFE_INTEGER,
+    raw: first.toUpperCase(),
+  };
+}
+// Stable: rows whose keys tie keep the SQL order (date, sale, invo).
+function _byInvoCell(cellOf) {
+  return (a, b) => {
+    const ka = _invoCellSortKey(cellOf(a)), kb = _invoCellSortKey(cellOf(b));
+    if (ka.letter !== kb.letter) return ka.letter < kb.letter ? -1 : 1;
+    if (ka.num !== kb.num) return ka.num - kb.num;
+    return ka.raw.localeCompare(kb.raw);
+  };
+}
+
 /**
  * Sales Journal (JOUR.PRG)
  * Trade-wise sales invoice register. Filters invoices by auction id
@@ -1566,6 +1601,8 @@ function _journalProformaSql(on) {
  *
  * With flag_proforma_invoice on, `invo` carries the proforma number the buyer
  * holds and pending drafts join the register — see the note above.
+ *
+ * Rows come out in printed-invoice-number order — see _invoCellSortKey().
  */
 function getSalesJournal(db, auctionId, saleType, cfg) {
   const auction = db.get('SELECT id, ano FROM auctions WHERE id = ?', [auctionId]);
@@ -1582,21 +1619,28 @@ function getSalesJournal(db, auctionId, saleType, cfg) {
   const rows = db.all(query, params);
   if (!pf.on) {
     // Untouched legacy shape — no is_proforma column leaks into the response.
-    return rows.map(({ is_proforma, ...r }) => ({ ...r, date: _ddmmyyyy(r.date) }));
+    // The number prints in its own cell with the sale letter beside it, so the
+    // sort key is built from the two together.
+    return rows
+      .map(({ is_proforma, ...r }) => ({ ...r, date: _ddmmyyyy(r.date) }))
+      .sort(_byInvoCell(r => `${r.sale || ''} ${r.invo || ''}`));
   }
   const idx = require('./proforma-refs').buildProformaIndex(db, auction.id);
-  return rows.map(r => {
-    const { is_proforma, ...rest } = r;
-    return {
-      ...rest,
-      date: _ddmmyyyy(r.date),
-      // The printed cell. `invo_raw` keeps the stored number for anything that
-      // still needs to key off it (drill-through, reconciliation).
-      invo: idx.labelFor(r, pf.prefix),
-      invo_raw: r.invo,
-      is_proforma: Number(is_proforma) ? 1 : 0,
-    };
-  });
+  return rows
+    .map(r => {
+      const { is_proforma, ...rest } = r;
+      return {
+        ...rest,
+        date: _ddmmyyyy(r.date),
+        // The printed cell. `invo_raw` keeps the stored number for anything that
+        // still needs to key off it (drill-through, reconciliation).
+        invo: idx.labelFor(r, pf.prefix),
+        invo_raw: r.invo,
+        is_proforma: Number(is_proforma) ? 1 : 0,
+      };
+    })
+    // Ordered on the proforma cell the register prints, not on invo_raw.
+    .sort(_byInvoCell(r => r.invo));
 }
 
 /**
