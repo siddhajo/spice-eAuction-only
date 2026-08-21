@@ -80,7 +80,7 @@ const formatBillOfSupplyNo = (() => {
     opts = opts || {};
     const num = String(billNo == null ? '' : billNo).trim();
     const prefix = String((cfg && cfg.bill_of_supply_prefix) || '').trim();
-    const suffix = String((cfg && cfg.debit_note_planter_suffix) || '').trim();
+    const suffix = String((cfg && cfg.bill_of_supply_suffix) || '').trim();
     if ((!prefix && !suffix) || !num) return num;
     const g = (key) => String((cfg && cfg[key]) || '').trim();
     const season = g('season_short') || g('tally_season') || g('season_code') || '';
@@ -2628,11 +2628,16 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
     // commission ledger. Planter DN: always its own planter commission ledger.
     const discountLdr = isPlanter ? DiscountP_LDR : (isIntra ? Discount_LDR : DiscountInter_LDR);
     // Bill-reference NAME inside BILLALLOCATIONS (the party ledger's "Agst Ref").
-    // PLANTER DNs quote the number under the BILL-OF-SUPPLY affixes
-    // (bill_of_supply_prefix/suffix) so the reference matches the planter's
-    // bill-of-supply series in Tally; dealer DNs keep their own voucher number.
+    // PLANTER DNs quote the number under the BILL-OF-SUPPLY PREFIX but the
+    // PLANTER-DN SUFFIX: bill_of_supply_prefix + note + debit_note_planter_suffix
+    // (e.g. "SIP/5/26-27"). Reuse formatBillOfSupplyNo (which handles the
+    // {season}/{ano} token expansion) with the suffix key swapped to
+    // debit_note_planter_suffix for this one call. Dealer DNs keep their own
+    // voucher number.
     const billAllocName = isPlanter
-      ? formatBillOfSupplyNo(cfg, taxNm, { ano: row.ano })
+      ? formatBillOfSupplyNo(
+          { ...cfg, bill_of_supply_suffix: cfgGet(cfg, 'debit_note_planter_suffix', '') },
+          taxNm, { ano: row.ano })
       : voucherNo;
     // GST "stored nature" for the commission/discount ledger — same
     // intra/inter classification as the Sales invoice (no export case here).
@@ -2679,7 +2684,7 @@ ${String(d_add).split(/\r?\n/).map(l => `<DISPATCHFROMADDRESS>${xe(l)}</DISPATCH
 
 <LEDGERENTRIES.LIST>
 <LEDGERNAME>${name}</LEDGERNAME>
-${TAGS.DEEMYES}
+${TAGS.DEEMNO}
 <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
 <AMOUNT>${-totalRound}</AMOUNT>
 <BILLALLOCATIONS.LIST>

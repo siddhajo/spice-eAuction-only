@@ -47,11 +47,12 @@ const vs = vouchers(xml);
 const planterV = vs.find(v => /RAMU PLANTER/.test(v));
 const dealerV  = vs.find(v => /DEALER X/.test(v));
 
-console.log('[1] Planter DN — BILLALLOCATIONS NAME uses the Bill-of-Supply prefix');
+console.log('[1] Planter DN — BILLALLOCATIONS NAME = BoS PREFIX + planter-DN SUFFIX');
 check('two vouchers emitted', vs.length === 2, `got ${vs.length}`);
 check('planter + dealer vouchers found', !!planterV && !!dealerV);
-check('planter BILLALLOCATIONS NAME = "SIP/5" (BoS prefix on the number)',
-      billAllocName(planterV) === 'SIP/5', `got ${JSON.stringify(billAllocName(planterV))}`);
+// bill_of_supply_prefix ("SIP/") + note ("5") + debit_note_planter_suffix ("/26-27")
+check('planter BILLALLOCATIONS NAME = "SIP/5/26-27" (BoS prefix, planter-DN suffix)',
+      billAllocName(planterV) === 'SIP/5/26-27', `got ${JSON.stringify(billAllocName(planterV))}`);
 
 console.log('\n[2] Planter VOUCHERNUMBER / REFERENCE are NOT changed');
 check('planter VOUCHERNUMBER keeps the DN format ("SIS/5/26-27")',
@@ -68,13 +69,21 @@ check('dealer BILLALLOCATIONS NAME equals its own voucher number',
       billAllocName(dealerV) === field(dealerV, 'VOUCHERNUMBER'),
       `name=${JSON.stringify(billAllocName(dealerV))} vch=${JSON.stringify(field(dealerV, 'VOUCHERNUMBER'))}`);
 
-// Blank-prefix guard: with no BoS affixes, the planter NAME degrades to the
-// bare number (documented behaviour) — worth pinning so it's a conscious choice.
-console.log('\n[4] With no BoS prefix configured, planter NAME is the bare number');
-const xml2 = generDebitNoteXML([planterRow], { ...cfg, bill_of_supply_prefix: '', bill_of_supply_suffix: '' });
-const pv2 = vouchers(xml2)[0];
-check('planter BILLALLOCATIONS NAME = bare "5" when BoS affixes are blank',
-      billAllocName(pv2) === '5', `got ${JSON.stringify(billAllocName(pv2))}`);
+// The SUFFIX comes from debit_note_planter_suffix (NOT bill_of_supply_suffix):
+// with the BoS suffix set to something else, the planter NAME must ignore it.
+console.log('\n[4] NAME suffix comes from debit_note_planter_suffix, not bill_of_supply_suffix');
+const xml4 = generDebitNoteXML([planterRow], { ...cfg, bill_of_supply_suffix: '/IGNORED' });
+const pv4 = vouchers(xml4)[0];
+check('planter NAME ignores bill_of_supply_suffix and uses the planter-DN suffix',
+      billAllocName(pv4) === 'SIP/5/26-27', `got ${JSON.stringify(billAllocName(pv4))}`);
+
+// Bare-number guard: only when BoS prefix AND the planter-DN suffix are both
+// blank does the NAME collapse to the bare number.
+console.log('\n[5] Bare number only when BoS prefix AND planter-DN suffix are both blank');
+const xml5 = generDebitNoteXML([planterRow], { ...cfg, bill_of_supply_prefix: '', debit_note_planter_suffix: '' });
+const pv5 = vouchers(xml5)[0];
+check('planter BILLALLOCATIONS NAME = bare "5"', billAllocName(pv5) === '5',
+      `got ${JSON.stringify(billAllocName(pv5))}`);
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
