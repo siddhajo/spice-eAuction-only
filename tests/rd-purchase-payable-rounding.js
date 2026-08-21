@@ -74,5 +74,30 @@ const alloc2 = billAllocs(xml2).find(a => a.name.includes('/201/'));
 check('fallback still yields the whole-rupee 125 (r2→r0, matching calculateLot)',
       alloc2 && alloc2.amount === 125, alloc2 && `got ${alloc2.amount}`);
 
+// ── [4] seAmt is rounded to a whole rupee, and the voucher still balances ──
+// Goods carry paise here (amount 1000.30), so the exact SE back-charge has
+// paise; after rounding it must be whole, with the remainder absorbed by the
+// GST ref so the allocations still sum to the party AMOUNT.
+console.log('\n[4] seAmt rounds to a whole rupee (remainder folds into the GST ref)');
+const rowPaise = {
+  date: '2026-08-10', ano: '14', voucherNum: '800', name: 'DEALER Y',
+  gstin: '33ABCDE1234F1Z5', address: 'A', place: 'P', pin: '',
+  amounttot: 1000.30, qtytot: 10, rate: 100.03, refundtot: 0,
+  cgst: 25.01, sgst: 25.01, igst: 0,                 // goods GST 50.02
+  lots: [{ lot: '301', bag: 5, qty: 10, rate: 100.03, amount: 1000.30, bilamt: 1000.30,
+           refund: 0, com: 100, sertax: 0, cgst: 0, sgst: 0, igst: 0, balance: 900 }],
+};
+const xml4 = generRDPurchaseXML([rowPaise], cfg);
+const a4 = billAllocs(xml4);
+const se = a4.find(x => /\/SE$/.test(x.name));
+check('SE bill ref is present', !!se, JSON.stringify(a4));
+check('seAmt is a whole rupee (100, not the exact 100.30)',
+      se && se.amount === 100 && Number.isInteger(se.amount), se && `got ${se.amount}`);
+const p4 = partyAmount(xml4);
+const sum4 = Math.round(a4.reduce((s, x) => s + x.amount, 0) * 100) / 100;
+check('party AMOUNT = 1050 (round of 1000.30 + 50.02)', p4 === 1050, `got ${p4}`);
+check('allocations STILL sum to the party AMOUNT after rounding seAmt',
+      sum4 === p4, `Σallocs ${sum4} vs party ${p4}`);
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

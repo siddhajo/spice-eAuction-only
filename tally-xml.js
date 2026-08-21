@@ -1858,16 +1858,22 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
 </BILLALLOCATIONS.LIST>`;
     }
     // SE = commission + handling + service GST, added back (positive Cr).
-    const seAmt   = r2(grossGoods - lotPayableSum);
+    // Rounded to the whole rupee (when tally rounding is on) so the SE bill
+    // reference is a clean figure; its fractional remainder folds into the GST
+    // ref below (this voucher's round-off sink), so the bill allocations still
+    // sum EXACTLY to the party AMOUNT.
+    const seAmtExact = r2(grossGoods - lotPayableSum);
+    const seAmt   = tlyrnd ? r0(seAmtExact) : seAmtExact;
     const seAlloc = seAmt !== 0 ? `
 <BILLALLOCATIONS.LIST>
 <NAME>${xe(`${taxNm}/${season}/SE`)}</NAME>
 <BILLTYPE>New Ref</BILLTYPE>
 <AMOUNT>${seAmt}</AMOUNT>
 </BILLALLOCATIONS.LIST>` : '';
-    // Goods GST as an "Agst Ref" bill (any round-off delta folds in here so
-    // the bill total still equals the party AMOUNT).
-    const gstRefAmt = r2(goodsGst + rnd);
+    // Goods GST as an "Agst Ref" bill. Any round-off delta folds in here so the
+    // bill total still equals the party AMOUNT — both the party-rounding delta
+    // (`rnd`) AND the seAmt-rounding remainder (seAmtExact − seAmt).
+    const gstRefAmt = r2(goodsGst + rnd + (seAmtExact - seAmt));
     const gstAlloc  = gstRefAmt !== 0 ? `
 <BILLALLOCATIONS.LIST>
 <NAME>${xe(`${row.ano}/GST/${season}`)}</NAME>
