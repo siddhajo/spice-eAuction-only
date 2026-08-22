@@ -74,5 +74,12 @@ const alloc2 = billAllocs(xml2).find(a => a.name.includes('/201/'));
 check('fallback still yields the whole-rupee 125 (r2→r0, matching calculateLot)',
       alloc2 && alloc2.amount === 125, alloc2 && `got ${alloc2.amount}`);
 
+// ── [4] Configurable "A" prefix on the per-lot bill reference NAME ──
+console.log('\n[4] tally_purchase_bill_ref_prefix leads the per-lot bill ref');
+const uNo = (billAllocs(generURDPurchaseXML([row(125)], cfg)).find(x => x.name.includes('/201/')) || {}).name;
+check('default (blank) → "14/201/2026-27" (unchanged)', uNo === '14/201/2026-27', `got ${uNo}`);
+const uA = (billAllocs(generURDPurchaseXML([row(125)], { ...cfg, tally_purchase_bill_ref_prefix: 'A' })).find(x => x.name.includes('/201/')) || {}).name;
+check('prefix "A" → "A14/201/2026-27"', uA === 'A14/201/2026-27', `got ${uA}`);
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

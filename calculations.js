@@ -1082,6 +1082,10 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
     FROM lots l
     WHERE l.auction_id = ? AND l.amount > 0
       AND (l.paid IS NULL OR l.paid = '')
+      -- Already paid out via the lot-wise Payments export → never include it in
+      -- ANY bank-payment file again (guards against a double payment from
+      -- either the seller-wise or the lot-wise screen).
+      AND l.paid_at IS NULL
     GROUP BY ${sellerKeySql}, l.name, l.cr
     ORDER BY l.state, l.name`,
     [auctionId]

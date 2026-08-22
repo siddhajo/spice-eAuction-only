@@ -103,35 +103,40 @@ function cleanup() { try { fs.rmSync(TMP, { recursive: true, force: true }); } c
         `got ${JSON.stringify(byBuyer(off)['ARUL'].invo)}`);
   check('MURUGAN\'s pending draft is absent', !byBuyer(off)['MURUGAN']);
 
-  // ── Flag ON ────────────────────────────────────────────────────────
-  console.log('\n[2] Flag ON — proforma numbers + pending drafts');
+  // ── Flag ON — PROFORMA-ONLY register ───────────────────────────────
+  // The journal now reads PROFORMA invoices ONLY (is_proforma = 1), never
+  // originals — the fix for the duplicate rows a buyer got when a draft AND its
+  // directly-billed original both appeared. So each draft shows once, and a
+  // directly-billed original with no draft (SELVAM) does not appear at all.
+  console.log('\n[2] Flag ON — proforma rows only (no originals, no duplicates)');
   const on = calc.getSalesJournal(db, AID, null, CFG_ON);
   const B = byBuyer(on);
-  check('pending draft joins the register (6 rows)', on.length === 6, `got ${on.length}`);
-  check('ARUL prints his draft number, not the original',
+  check('only the 4 proforma drafts appear (5,6,7,8) — no originals', on.length === 4, `got ${on.length}`);
+  check('every row is a proforma', on.every(r => Number(r.is_proforma) === 1));
+  check('ARUL prints his draft number PI/L-5',
         B['ARUL'].invo === 'PI/L-5', `got ${JSON.stringify(B['ARUL'].invo)}`);
-  check('the stored original is still available as invo_raw',
-        B['ARUL'].invo_raw === '101', `got ${JSON.stringify(B['ARUL'].invo_raw)}`);
+  check('invo_raw is the DRAFT number (5), not the original',
+        B['ARUL'].invo_raw === '5', `got ${JSON.stringify(B['ARUL'].invo_raw)}`);
 
-  // SPLIT — both originals must resolve back to the one draft. Before the lot
-  // stamps were consulted, 103 fell through to the bare "L 103".
-  const hanifa = on.filter(r => r.buyer === 'HANIFA').map(r => r.invo).sort();
-  check('SPLIT: both originals resolve to the same draft PI/L-6',
-        JSON.stringify(hanifa) === JSON.stringify(['PI/L-6', 'PI/L-6']),
-        JSON.stringify(hanifa));
+  // SPLIT — the single draft appears ONCE; its two originals (102/103) are not
+  // in the register, so the old double-row duplicate can no longer occur.
+  const hanifa = on.filter(r => r.buyer === 'HANIFA').map(r => r.invo);
+  check('SPLIT: the draft appears exactly once (PI/L-6), no duplicate',
+        JSON.stringify(hanifa) === JSON.stringify(['PI/L-6']), JSON.stringify(hanifa));
 
-  // SALE CHANGE — the letter is the draft's, the row's own sale stays 'I'.
-  check('SALE CHANGE: prints the DRAFT\'s letter (PI/L-7, not PI/I-7)',
+  // SALE CHANGE — the row IS the draft, so it carries the DRAFT's own sale (L),
+  // and prints under the draft's letter.
+  check('SALE CHANGE: prints the draft PI/L-7',
         B['RAJA'].invo === 'PI/L-7', `got ${JSON.stringify(B['RAJA'].invo)}`);
-  check('SALE CHANGE: the row still reports its own sale type (I)',
-        B['RAJA'].sale === 'I', `got ${JSON.stringify(B['RAJA'].sale)}`);
+  check('SALE CHANGE: the row carries the DRAFT sale type (L)',
+        B['RAJA'].sale === 'L', `got ${JSON.stringify(B['RAJA'].sale)}`);
 
   check('PENDING draft prints its own number under the prefix',
         B['MURUGAN'].invo === 'PI/L-8', `got ${JSON.stringify(B['MURUGAN'].invo)}`);
   check('PENDING draft is flagged so the UI/exports can tag it',
         B['MURUGAN'].is_proforma === 1);
-  check('DIRECT-billed invoice falls back to the bare original number',
-        B['SELVAM'].invo === 'I 105', `got ${JSON.stringify(B['SELVAM'].invo)}`);
+  check('DIRECT-billed original with no draft is ABSENT (proforma-only)',
+        !B['SELVAM']);
   check('no phantom numbers: every cell is a single number',
         on.every(r => !String(r.invo).includes(',')),
         JSON.stringify(on.map(r => r.invo)));
@@ -141,22 +146,18 @@ function cleanup() { try { fs.rmSync(TMP, { recursive: true, force: true }); } c
   const sumOff = calc.getSalesJournalSummary(db, AID, null, CFG_OFF);
   const sumOn  = calc.getSalesJournalSummary(db, AID, null, CFG_ON);
   const rowTot = (rows) => Math.round(rows.reduce((a, r) => a + (Number(r.total) || 0), 0) * 100) / 100;
-  check('flag OFF: summary total == sum of the OFF rows',
+  check('flag OFF: summary total == sum of the OFF (original) rows',
         sumOff.stateTotal === rowTot(off), `${sumOff.stateTotal} vs ${rowTot(off)}`);
-  check('flag ON: summary total == sum of the ON rows (draft included)',
+  check('flag ON: summary total == sum of the ON (proforma) rows',
         sumOn.stateTotal === rowTot(on), `${sumOn.stateTotal} vs ${rowTot(on)}`);
-  check('flag ON total exceeds OFF by exactly the pending draft (67500)',
-        Math.round((sumOn.stateTotal - sumOff.stateTotal) * 100) / 100 === 67500,
-        `diff ${sumOn.stateTotal - sumOff.stateTotal}`);
 
-  // ── Sale-type filter still applies to both row kinds ────────────────
-  console.log('\n[4] The sale-type filter still applies');
+  // ── Sale-type filter applies to the proforma rows ──────────────────
+  console.log('\n[4] The sale-type filter applies to the proforma rows');
   const onI = calc.getSalesJournal(db, AID, 'I', CFG_ON);
-  check('filtering sale=I keeps RAJA and SELVAM only',
-        onI.length === 2 && onI.every(r => r.sale === 'I'),
-        JSON.stringify(onI.map(r => ({ b: r.buyer, s: r.sale }))));
-  check('a draft is filtered by its OWN sale type, not the original\'s',
-        !calc.getSalesJournal(db, AID, 'I', CFG_ON).some(r => r.buyer === 'MURUGAN'));
+  // Every draft here was drafted Local, so an Inter-state filter returns none —
+  // a draft is filtered by its OWN sale type, not the original it became.
+  check('filtering sale=I returns no drafts (all were drafted Local)',
+        onI.length === 0, JSON.stringify(onI.map(r => ({ b: r.buyer, s: r.sale }))));
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
   cleanup();

@@ -599,6 +599,10 @@ const DEFAULTS = [
   // voucher carries no tail, while the debit notes keep their historical
   // URD (planter) / SE (dealer) tokens.
   { key: 'tally_urd_purchase_ref_suffix', value: '',    category: 'tally', label: 'URD Purchase Ref Tail (after season, e.g. "URD" — blank = none)', type: 'text' },
+  // Leads the per-lot bill reference on the RD + URD purchase vouchers
+  // (BILLALLOCATIONS NAME): blank → "14/093/26-27" (existing output); "A" →
+  // "A14/093/26-27". Literal text, prepended as-is.
+  { key: 'tally_purchase_bill_ref_prefix', value: '',   category: 'tally', label: 'Purchase Bill Ref Prefix — RD/URD (before the trade no, e.g. "A")', type: 'text' },
   { key: 'tally_dn_planter_ref_suffix',   value: 'URD', category: 'tally', label: 'Debit Note Ref Tail — Planter (after season)', type: 'text' },
   { key: 'tally_dn_dealer_ref_suffix',    value: 'SE',  category: 'tally', label: 'Debit Note Ref Tail — Dealer (after season)',  type: 'text' },
 

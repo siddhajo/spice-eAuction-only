@@ -1839,12 +1839,14 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
       lotPayableSum = r2(lotPayableSum + pay);
       return { lot, pay };
     });
+    // Optional lead on the per-lot goods bill reference ("A" → "A14/093/26-27").
+    const billRefPrefix = cfgGet(cfg, 'tally_purchase_bill_ref_prefix', '');
     let billAlloc1 = '';
     if (detailed && lotRows.length) {
       for (const { lot, pay } of lotRows) {
         billAlloc1 += `
 <BILLALLOCATIONS.LIST>
-<NAME>${xe(`${row.ano}/${lot.lot}/${season}`)}</NAME>
+<NAME>${xe(`${billRefPrefix}${row.ano}/${lot.lot}/${season}`)}</NAME>
 <BILLTYPE>New Ref</BILLTYPE>
 <AMOUNT>${pay}</AMOUNT>
 </BILLALLOCATIONS.LIST>`;
@@ -1852,7 +1854,7 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
     } else {
       billAlloc1 = `
 <BILLALLOCATIONS.LIST>
-<NAME>${xe(`${row.ano}/${taxNm}/${season}`)}</NAME>
+<NAME>${xe(`${billRefPrefix}${row.ano}/${taxNm}/${season}`)}</NAME>
 <BILLTYPE>New Ref</BILLTYPE>
 <AMOUNT>${lotPayableSum}</AMOUNT>
 </BILLALLOCATIONS.LIST>`;
@@ -2276,12 +2278,14 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
       lotPayableSum = r2(lotPayableSum + pay);
       return { lot, pay };
     });
+    // Optional lead on the per-lot goods bill reference ("A" → "A14/093/26-27").
+    const billRefPrefix = cfgGet(cfg, 'tally_purchase_bill_ref_prefix', '');
     let billAlloc = '';
     if (detailed && lotPayRows.length) {
       for (const { lot, pay } of lotPayRows) {
         billAlloc += `
 <BILLALLOCATIONS.LIST>
-<NAME>${xe(`${row.ano}/${lot.lot}/${season}`)}</NAME>
+<NAME>${xe(`${billRefPrefix}${row.ano}/${lot.lot}/${season}`)}</NAME>
 <BILLTYPE>New Ref</BILLTYPE>
 <AMOUNT>${pay}</AMOUNT>
 </BILLALLOCATIONS.LIST>`;
@@ -2289,7 +2293,7 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
     } else {
       billAlloc = `
 <BILLALLOCATIONS.LIST>
-<NAME>${xe(`${row.ano}/${taxNm}/${season}`)}</NAME>
+<NAME>${xe(`${billRefPrefix}${row.ano}/${taxNm}/${season}`)}</NAME>
 <BILLTYPE>New Ref</BILLTYPE>
 <AMOUNT>${lotPayableSum}</AMOUNT>
 </BILLALLOCATIONS.LIST>`;

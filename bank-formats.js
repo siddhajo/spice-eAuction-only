@@ -103,6 +103,10 @@ const BANK_FORMATS = {
     sheetName: 'Payments',
     title: 'HDFC BANK A/C:',
     total: true,
+    // The Amount DATA cells carry no thousands separator (banks reject commas
+    // in upload values); the TOTAL row is a human-readable footer, so it keeps
+    // the comma via this override. See renderBankPaymentView.
+    totalAmountFmt: '#,##0',
     signatures: ['Prepared By', 'Checked By', 'Approved By'],
     // Letterhead line printed in a bordered row ABOVE the column headers:
     //   | HDFC BANK | A/C: <firm's debit a/c> |  | Dt: <export date> |
@@ -123,7 +127,7 @@ const BANK_FORMATS = {
       { header: 'Particulars',    key: 'particulars',    width: 14,
         format: (v) => v ? 'A' + v : '' },
       { header: 'Customer Name',  key: 'beneficiaryName', width: 30 },
-      { header: 'Amount',         key: 'amount',          width: 14, numFmt: '#,##0' },
+      { header: 'Amount',         key: 'amount',          width: 14, numFmt: '0' },
       { header: 'Account Number', key: 'accountNo',       width: 20 },
       { header: 'IFSC',           key: 'ifsc',            width: 14 },
       { header: 'Phone',          key: 'phone',           width: 16 },

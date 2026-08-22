@@ -16,6 +16,7 @@ for t in \
   tests/journal-proforma.js \
   tests/tally-ref-suffix.unit.js \
   tests/lot-payment-format.js \
+  tests/bank-payment-amount-nocomma.js \
   tests/sales-journal-proforma.js \
   tests/dn-planter-tally-bos-name.js \
   tests/urd-purchase-payable-rounding.js

@@ -2159,7 +2159,16 @@ async function whatsappLotReceipt(l, btn){
       fd.append('filename',fname);
       var sr=await fetch(B+'/api/whatsapp/send-template-document',{method:'POST',headers:{'Authorization':'Bearer '+token},body:fd});
       if(sr.ok){toast('WhatsApp sent (+'+norm+')',false);return}
-      /* 501 not-configured / 400 no-template → fall through to manual share */
+      // Only 501 (not configured) / 400 {fallback:true} (no approved template)
+      // mean "the API can't be used here" — those fall through to the manual
+      // share. Anything else is Meta REFUSING this message (bad number, token
+      // expired, template error); report it instead of silently opening a
+      // wa.me tab, which looks like the integration is simply not working.
+      var sd={}; try{sd=await sr.json()}catch(e){}
+      if(!(sr.status===501||(sr.status===400&&sd.fallback))){
+        toast('WhatsApp (+'+norm+'): '+(sd.error||('failed, HTTP '+sr.status)),true);
+        return;
+      }
     }
     // (2) Native share sheet with the PDF attached (mobile).
     try{

@@ -7369,6 +7369,10 @@ app.get('/api/invoices', requireView, (req, res) => {
   // flow has no drafts to show, and any legacy rows stay hidden.
   const _dt = proformaFeatureOn(db) ? String(docType || '').trim().toLowerCase() : '';
   if (_dt === 'proforma')      where += ' AND COALESCE(is_proforma,0) = 1';
+  // 'pending' → proforma drafts whose original has NOT been raised yet
+  // (is_proforma = 1 and raised_invo still blank). A raised draft carries the
+  // original number in raised_invo, so it drops out of this view.
+  else if (_dt === 'pending')  where += " AND COALESCE(is_proforma,0) = 1 AND TRIM(COALESCE(raised_invo,'')) = ''";
   else if (_dt === 'all')      { /* no is_proforma filter */ }
   else                         where += ' AND COALESCE(is_proforma,0) = 0';
   if (auction_id) { where += ' AND auction_id = ?'; p.push(parseInt(auction_id)); }
@@ -13199,7 +13203,11 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
     const lots = db.all(
       `SELECT l.id, l.lot_no, l.name, l.trader_id, l.branch, l.qty,
               l.balance AS payable, l.amount, l.bank_id, l.immediate_payment,
-              l.locked_at
+              l.locked_at,
+              -- Paid-out marker (lot-wise Payments export). Non-NULL rows stay
+              -- in the list but are badged "Paid on …", tinted, and locked out
+              -- of selection / re-export on the client.
+              l.paid_at
          FROM lots l
         WHERE ${where.join(' AND ')}
         ORDER BY CAST(l.lot_no AS INTEGER), l.lot_no`,
@@ -13291,6 +13299,71 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
   } catch (e) {
     console.error('lot-wise payments search error:', e);
     res.status(500).json({ error: 'Lot search failed: ' + (e.message || e) });
+  }
+});
+
+// Mark lots PAID (lot-wise Payments screen) — called right after their bank
+// payment file is exported. Stamps lots.paid_at with the local datetime, once:
+// a lot already paid keeps its original date (never re-stamped, so a re-export
+// of a mixed selection can't move a paid lot's date). Body: { lotIds:[...] }.
+// Scoped to the auction so a stray id from another trade is ignored. Returns
+// the number newly marked and the date used, so the client can badge them.
+app.post('/api/payments/lots/:auctionId/mark-paid', requireLotWrite, (req, res) => {
+  try {
+    const db = getDb();
+    const auctionId = Number(req.params.auctionId);
+    if (!auctionId) return res.status(400).json({ error: 'auctionId is required' });
+    const ids = Array.isArray(req.body && req.body.lotIds)
+      ? [...new Set(req.body.lotIds.map(n => parseInt(n, 10)).filter(Number.isFinite))]
+      : [];
+    if (!ids.length) return res.status(400).json({ error: 'lotIds (array) is required' });
+    const paidAt = db.get(`SELECT datetime('now','localtime') AS d`).d;
+    const ph = ids.map(() => '?').join(',');
+    db.run(
+      `UPDATE lots SET paid_at = ?
+        WHERE auction_id = ? AND id IN (${ph}) AND paid_at IS NULL`,
+      [paidAt, auctionId, ...ids]
+    );
+    // Report the count actually marked (already-paid ids are left untouched).
+    const marked = db.get(
+      `SELECT COUNT(*) AS c FROM lots WHERE auction_id = ? AND id IN (${ph}) AND paid_at = ?`,
+      [auctionId, ...ids, paidAt]
+    ).c;
+    res.json({ success: true, marked, paidAt });
+  } catch (e) {
+    console.error('mark-paid error:', e);
+    res.status(500).json({ error: 'Mark paid failed: ' + (e.message || e) });
+  }
+});
+
+// Undo mark-paid — clears paid_at so the lots become selectable/exportable
+// again. Admin only: reversing a settled payment is a supervisory action, not
+// part of the normal export flow. Body: { lotIds: [...] }.
+app.post('/api/payments/lots/:auctionId/unmark-paid', requireAdmin, (req, res) => {
+  try {
+    const db = getDb();
+    const auctionId = Number(req.params.auctionId);
+    if (!auctionId) return res.status(400).json({ error: 'auctionId is required' });
+    const ids = Array.isArray(req.body && req.body.lotIds)
+      ? [...new Set(req.body.lotIds.map(n => parseInt(n, 10)).filter(Number.isFinite))]
+      : [];
+    if (!ids.length) return res.status(400).json({ error: 'lotIds (array) is required' });
+    const ph = ids.map(() => '?').join(',');
+    // Count what was actually paid BEFORE clearing, so the caller learns how
+    // many rows the undo touched (unpaid ids are no-ops).
+    const cleared = db.get(
+      `SELECT COUNT(*) AS c FROM lots WHERE auction_id = ? AND id IN (${ph}) AND paid_at IS NOT NULL`,
+      [auctionId, ...ids]
+    ).c;
+    db.run(
+      `UPDATE lots SET paid_at = NULL
+        WHERE auction_id = ? AND id IN (${ph}) AND paid_at IS NOT NULL`,
+      [auctionId, ...ids]
+    );
+    res.json({ success: true, cleared });
+  } catch (e) {
+    console.error('unmark-paid error:', e);
+    res.status(500).json({ error: 'Unmark paid failed: ' + (e.message || e) });
   }
 });
 

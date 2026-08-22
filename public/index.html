@@ -2798,6 +2798,11 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
    as a locked record (faded + 🚫). Inert until export-tracking is enabled. */
 .pay-lot-cb-exported{opacity:.5;cursor:not-allowed}
 .pay-lot-exported-tag{color:#b91c1c;font-size:11px;margin-left:4px;cursor:help}
+/* Lot-wise Payments — a PAID lot (already exported): green tint, its checkbox
+   disabled, and a "Paid on …" badge. Distinct from the red "no bank account"
+   row tint so the two states never read the same. */
+.paylw-table tbody tr.paylw-row-paid > td{background:#f0fdf4;color:#4b5563}
+.paylw-paid-badge{display:inline-flex;align-items:center;gap:3px;background:#dcfce7;color:#166534;border:1px solid #86efac;border-radius:9px;padding:1px 7px;font-size:10.5px;font-weight:700;margin-left:6px;vertical-align:middle;white-space:nowrap}
 /* Bank-routing bar above the per-seller lot picker, and the per-lot account
    dropdown in its Bank column. `display` is toggled from JS, so the flex
    layout lives here rather than in a style attribute an inline
@@ -4990,9 +4995,10 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           </select>
           <!-- Original / Proforma / All. Defaults to Original so the list, KPIs
                and totals show real tax invoices unless drafts are requested. -->
-          <select id="inv-doctype-filter" class="feat-proforma" onchange="loadInvoices()" title="Show original tax invoices or proforma drafts" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:140px">
+          <select id="inv-doctype-filter" class="feat-proforma" onchange="loadInvoices()" title="Original tax invoices · Proforma drafts · Pending = proforma with no original raised yet · All" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:140px">
             <option value="original">Original (Tax)</option>
             <option value="proforma">Proforma</option>
+            <option value="pending">Pending</option>
             <option value="all">All (both)</option>
           </select>
           <!-- Within-trade search across invoice no, buyer name, GSTIN. -->
@@ -25216,7 +25222,7 @@ async function loadInvoices(opts){
     emptyState: { icon: 'invoices', title: "No invoices yet", body: "Once you have calculated lots for a buyer, use Generate Invoice to create one." }, 
     columns: [
       { key:'_select', label:'', labelHTML:'<input type="checkbox" id="inv-select-all" onclick="event.stopPropagation();toggleAllInvoices(this.checked)" title="Select / clear all visible" style="cursor:pointer;width:16px;height:16px;vertical-align:middle;accent-color:var(--green)">', sortable:false, searchable:false,
-        render:(i)=>`<input type="checkbox" class="inv-select-cb" value="${i.id}" data-name="${esc(i.buyer1||i.buyer||'')}" data-invo="${esc(i.invo||'')}" data-sale="${esc(i.sale||'')}" data-total="${Number(i.tot)||0}" data-ano="${esc(i.ano||'')}" onclick="event.stopPropagation()" style="cursor:pointer">` },
+        render:(i)=>`<input type="checkbox" class="inv-select-cb" value="${i.id}" data-name="${esc(i.buyer1||i.buyer||'')}" data-code="${esc(i.buyer||'')}" data-invo="${esc(i.invo||'')}" data-sale="${esc(i.sale||'')}" data-total="${Number(i.tot)||0}" data-ano="${esc(i.ano||'')}" onclick="event.stopPropagation()" style="cursor:pointer">` },
       { key:'sale', label:'Sale', sort:'text', totalKind:'count',
         // Color-coded pills for sale type so dad can scan the column visually:
         //   L (Local)        → cardamom green
@@ -25375,7 +25381,9 @@ async function loadInvoices(opts){
             + tiBtn
             + iconBtn('edit','Edit invoice',`openInvoiceEdit(${JSON.stringify(i).replace(/"/g,'&quot;')})`)
             + iconBtn('revert','Revert \u2014 delete invoice & re-enable lots for re-invoicing',`revertInvoice(${i.id},'${esc(i.buyer1||i.buyer)}','${esc(i.sale)}-${esc(i.invo)}')`)
-            + iconBtn('whatsapp','Send via WhatsApp',`whatsappInvoice(${i.id},'${encodeURIComponent(i.buyer1||i.buyer||'')}','${encodeURIComponent(i.invo||'')}','${encodeURIComponent(i.sale||'')}',${Number(i.tot)||0},'${esc(i.ano||'')}')`)
+            // i.buyer is the buyer-code string — an exact key into the buyers
+            // master, unlike the trade name which two buyer codes can share.
+            + iconBtn('whatsapp','Send via WhatsApp',`whatsappInvoice(${i.id},'${encodeURIComponent(i.buyer1||i.buyer||'')}','${encodeURIComponent(i.invo||'')}','${encodeURIComponent(i.sale||'')}',${Number(i.tot)||0},'${esc(i.ano||'')}','${encodeURIComponent(i.buyer||'')}')`)
             + iconBtn('del','Delete invoice',`delInvoice(${i.id})`);
         } }
     ]
@@ -26249,7 +26257,7 @@ async function loadPurchases(opts){
       { key:'_select', label:'',
         labelHTML:'<input type="checkbox" id="pur-select-all" onclick="event.stopPropagation();toggleAllPurchases(this.checked)" title="Select / clear all visible" style="cursor:pointer;width:16px;height:16px;vertical-align:middle;accent-color:var(--green)">',
         sortable:false, searchable:false,
-        render:(p)=>`<input type="checkbox" class="pur-select-cb" value="${p.id}" data-aid="${p.auction_id}" data-name="${esc(p.name||'')}" data-invo="${esc(p.invo||'')}" data-total="${Number(p.total)||0}" data-ano="${esc(p.ano||'')}" onclick="event.stopPropagation()" style="cursor:pointer">` },
+        render:(p)=>`<input type="checkbox" class="pur-select-cb" value="${p.id}" data-aid="${p.auction_id}" data-tid="${p.trader_id != null ? esc(String(p.trader_id)) : ''}" data-name="${esc(p.name||'')}" data-invo="${esc(p.invo||'')}" data-total="${Number(p.total)||0}" data-ano="${esc(p.ano||'')}" onclick="event.stopPropagation()" style="cursor:pointer">` },
       { key:'invo', label:'Inv#', sort:'text' },
       { key:'name', label:'Name', sort:'text' },
       // Blank lot_no is a seller-wise row — spelled out as "All lots" rather
@@ -26278,7 +26286,10 @@ async function loadPurchases(opts){
           // Payment Voucher (Memorandum) — one A4 page PER LOT, so a
           // seller-wise invoice prints lot-wise without generating anything.
           + iconBtn('commission','Download Payment Voucher (one page per lot)',`downloadPurchaseVoucher(${p.id})`)
-          + iconBtn('whatsapp','Send via WhatsApp',`whatsappPurchase(${p.auction_id},'${encodeURIComponent(p.name)}','${encodeURIComponent(p.invo)}',${Number(p.total)||0},'${esc(p.ano||'')}')`)
+          // p.trader_id is the UNIQUE seller key the WhatsApp phone lookup
+          // needs — seller names repeat, and a name-only lookup returns no
+          // number at all for a shared name (see _lookupSellerPhone).
+          + iconBtn('whatsapp','Send via WhatsApp',`whatsappPurchase(${p.auction_id},'${encodeURIComponent(p.name)}','${encodeURIComponent(p.invo)}',${Number(p.total)||0},'${esc(p.ano||'')}',${p.trader_id != null ? Number(p.trader_id) : 'null'})`)
           + iconBtn('edit','Edit purchase',`openPurchaseEdit(${JSON.stringify(p).replace(/"/g,'&quot;')})`)
           + iconBtn('del','Delete purchase',`delPurchase(${p.id})`) }
     ]
@@ -26387,7 +26398,18 @@ async function _lookupSellerPhone(seller) {
   return d.phone || '';
 }
 // Buyer phone for SALES invoices — buyers master is keyed by trade name.
-async function _lookupBuyerPhone(name) {
+// `code` (invoices.buyer, the buyer-code string) is tried FIRST when the
+// caller has one: /api/buyers/by-tradename matches on buyer1 OR buyer, and
+// the code is unique where a trade name can be shared by two buyer codes.
+async function _lookupBuyerPhone(name, code) {
+  for (const key of [code, name]) {
+    if (!String(key || '').trim()) continue;
+    const tel = await _buyerTelByKey(key);
+    if (tel) return tel;
+  }
+  return '';
+}
+async function _buyerTelByKey(name) {
   try {
     const r = await fetch(B + '/api/buyers/by-tradename?name=' + encodeURIComponent(name), { headers: { 'Authorization': 'Bearer ' + T } });
     if (!r.ok) return '';
@@ -26417,9 +26439,18 @@ async function _getAuctionAno(auctionId) {
 function _invalidateWaCaches() { _CCFG = null; _AUCTIONS = null; }
 
 // Cloud API — server-side automated send via Meta-approved templates.
-// Returns true on success; false when the server can't send via the API
-// (501 not-configured, or 400 with {fallback:true} when no template is
-// set) so the caller drops to the manual web.whatsapp.com flow.
+// Both helpers resolve to a RESULT object, never a bare boolean, because the
+// two ways a send can fail need opposite handling:
+//   { ok:true }                       → delivered by Meta, nothing else to do
+//   { ok:false, fallback:true, … }    → the API can't be used at all here
+//                                       (501 not configured / no template set)
+//                                       → the caller drops to WhatsApp Web
+//   { ok:false, fallback:false, error} → the API WAS used and Meta refused
+//                                       this specific message (bad number,
+//                                       template error, token expired).
+// The last case used to be squashed into "false" alongside the first, so a
+// Meta rejection silently opened a WhatsApp Web tab and the operator could
+// not tell a working integration from a broken one. Now it surfaces.
 //   _waCloudSendText(phone, params)                      → text template
 //   _waCloudSendDocument(phone, params, blob, filename)  → document-header template
 // params is the positional template body: [name, summary, company].
@@ -26429,12 +26460,16 @@ async function _waCloudSendText(phone, params) {
       method: 'POST', headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone, params: params || [] }),
     });
-    if (r.status === 501) return false; // not configured → fallback
+    if (r.status === 501) return { ok:false, fallback:true, error:'WhatsApp Cloud API not configured' };
     const d = await r.json().catch(()=>({}));
-    if (r.status === 400 && d.fallback) return false; // no text template → fallback
-    if (!r.ok) { throw new Error(d.error || 'Send failed'); }
-    return true;
-  } catch (e) { showError(e); return false; }
+    if (r.status === 400 && d.fallback) return { ok:false, fallback:true, error:d.error || 'No text template configured' };
+    if (!r.ok) return { ok:false, fallback:false, error:d.error || `Send failed (HTTP ${r.status})` };
+    return { ok:true };
+  } catch (e) {
+    // Network-level failure — the server was never reached, so this is not a
+    // "the API refused" verdict; let the caller fall back.
+    return { ok:false, fallback:true, error:(e && e.message) || String(e) };
+  }
 }
 async function _waCloudSendDocument(phone, params, blob, filename) {
   try {
@@ -26447,23 +26482,43 @@ async function _waCloudSendDocument(phone, params, blob, filename) {
     const r = await fetch(B + '/api/whatsapp/send-template-document', {
       method: 'POST', headers: { 'Authorization': 'Bearer ' + T }, body: fd,
     });
-    if (r.status === 501) return false; // not configured → manual fallback
+    if (r.status === 501) return { ok:false, fallback:true, error:'WhatsApp Cloud API not configured' };
     const d = await r.json().catch(()=>({}));
-    if (r.status === 400 && d.fallback) return false; // no document template → fallback
-    if (!r.ok) { throw new Error(d.error || 'Send failed'); }
-    return true;
-  } catch (e) { showError(e); return false; }
+    if (r.status === 400 && d.fallback) return { ok:false, fallback:true, error:d.error || 'No document template configured' };
+    if (!r.ok) return { ok:false, fallback:false, error:d.error || `Send failed (HTTP ${r.status})` };
+    return { ok:true };
+  } catch (e) {
+    return { ok:false, fallback:true, error:(e && e.message) || String(e) };
+  }
 }
-// Document dispatcher: Cloud API template send first (true automation —
-// the PDF is uploaded to Meta and delivered), else the manual Web Share /
-// download + WhatsApp Web flow.
+// Document dispatcher: Cloud API template send (true automation — the PDF is
+// uploaded to Meta and delivered on one click). WhatsApp Web is opened ONLY
+// when the API genuinely cannot be used: no number on file, not configured,
+// or no approved template. A Meta rejection reports the reason instead of
+// opening a tab the operator did not ask for.
 async function _waSendDocument({ blob, filename, phone, params, message }) {
   if (phone && await _waCloudApiAvailable()) {
     const norm = _normalizePhoneForWa(phone);
-    const ok = await _waCloudSendDocument(norm, params, blob, filename);
-    if (ok) { if (typeof toast === 'function') toast(`WhatsApp sent (+${norm})`); return true; }
+    const res = await _waCloudSendDocument(norm, params, blob, filename);
+    if (res.ok) { if (typeof toast === 'function') toast(`WhatsApp sent (+${norm})`); return true; }
+    if (!res.fallback) { showError(new Error(`WhatsApp (+${norm}): ${res.error}`)); return false; }
   }
+  if (!phone) toast('No WhatsApp number on file — opening WhatsApp to pick a contact');
   await _waOpenDocument({ blob, filename, phone, message });
+  return false;
+}
+// Text dispatcher — the TEXT-template twin of _waSendDocument, with the same
+// one-click-then-report contract. Payments (and any other PDF-less message)
+// go through here rather than hand-rolling the API/manual choice.
+async function _waSendText({ phone, params, message }) {
+  if (phone && await _waCloudApiAvailable()) {
+    const norm = _normalizePhoneForWa(phone);
+    const res = await _waCloudSendText(norm, params);
+    if (res.ok) { if (typeof toast === 'function') toast(`WhatsApp sent (+${norm})`); return true; }
+    if (!res.fallback) { showError(new Error(`WhatsApp (+${norm}): ${res.error}`)); return false; }
+  }
+  if (!phone) toast('No WhatsApp number on file — opening WhatsApp to pick a contact');
+  _waOpenText(phone, message);
   return false;
 }
 
@@ -26501,12 +26556,16 @@ async function _waOpenDocument({ blob, filename, phone, message }) {
 //   1. AUTO — when the Cloud API is configured, every record that has a
 //      phone number is sent straight through with no clicking. The modal
 //      just reports progress and offers Stop.
-//   2. MANUAL — only for what pass 1 couldn't do (no number on file, or the
-//      API rejected it) and for every record when the Cloud API isn't set
-//      up at all. These need a click because the operator has to press Send
-//      inside WhatsApp Web themselves.
-// Nothing is dropped silently: whatever pass 1 skips is offered in pass 2,
-// and the closing toast breaks down sent / manual / skipped.
+//   2. MANUAL — WhatsApp Web, one record per click ("Send & Next"). This
+//      pass runs automatically ONLY when the Cloud API cannot be used at
+//      all (not configured / no approved template) — that is the one case
+//      where clicking through is the only way to get the messages out.
+//      When the API IS live, leftovers (no number on file, Meta rejected
+//      the recipient) are listed in a summary instead and the operator
+//      decides whether to click through them; the bulk action never
+//      degrades into a click-per-row queue behind their back.
+// Nothing is dropped silently: whatever pass 1 skips is reported with the
+// reason, and the closing toast breaks down sent / manual / skipped.
 function _ensureWaQueueModal() {
   let m = document.getElementById('wa-queue-modal');
   if (m) return m;
@@ -26561,6 +26620,24 @@ function _waQueueButtons(mode) {
   show(skip, mode === 'manual');
   show(send, mode === 'manual');
 }
+// Walk `list` through the manual WhatsApp Web pass, one click per record.
+// Returns {sent, skipped} — `sent` counts records whose chat was opened.
+async function _waManualPass(list, note) {
+  let sent = 0, skipped = 0;
+  _waQueueButtons('manual');
+  for (let i = 0; i < list.length; i++) {
+    const it = list[i];
+    _waQueueShow(it, i, list.length, note);
+    const action = await new Promise(res => { _waQueueState = { resolve: res }; });
+    _waQueueState = null;
+    if (action === 'stop') break;
+    if (action === 'skip') { skipped++; continue; }
+    if (it.blob) await _waOpenDocument(it);
+    else _waOpenText(it.phone, it.message);
+    sent++;
+  }
+  return { sent, skipped };
+}
 async function _runWaQueue(items, opts) {
   // items: [{name, phone, message, params?, blob?, filename?}]
   const useApi = await _waCloudApiAvailable();
@@ -26568,66 +26645,90 @@ async function _runWaQueue(items, opts) {
   showModal('wa-queue-modal');
   _waQueueStopped = false;
   let sent = 0, skipped = 0;
-  // Anything the auto pass can't deliver lands here and is offered to the
-  // operator in the manual pass rather than being quietly dropped.
+  // Anything the auto pass can't deliver lands here, each carrying the reason
+  // it was left behind, so the summary can explain itself.
   let pending = items;
 
   if (useApi) {
     _waQueueButtons('auto');
     pending = [];
     for (let i = 0; i < items.length; i++) {
-      if (_waQueueStopped) { pending = pending.concat(items.slice(i)); break; }
+      if (_waQueueStopped) {
+        items.slice(i).forEach(x => pending.push(Object.assign({ _waReason: 'Stopped' }, x)));
+        break;
+      }
       const it = items[i];
-      // No number on file → the Cloud API has nowhere to send it; hand it to
-      // the manual pass, which can still open a blank WhatsApp Web compose.
-      if (!it.phone) { pending.push(it); continue; }
+      // No number on file → the Cloud API has nowhere to send it.
+      if (!it.phone) { pending.push(Object.assign({ _waReason: 'No WhatsApp number on file' }, it)); continue; }
       _waQueueShow(it, i, items.length, `Sending automatically via WhatsApp Cloud API… (${sent} sent)`);
       const params = it.params || [it.name || '', it.message || '', ''];
-      let ok = false;
+      let res;
       try {
-        ok = it.blob
+        res = it.blob
           ? await _waCloudSendDocument(_normalizePhoneForWa(it.phone), params, it.blob, it.filename)
           : await _waCloudSendText(_normalizePhoneForWa(it.phone), params);
-      } catch (_) { ok = false; }
-      if (ok) sent++; else pending.push(it);
+      } catch (e) { res = { ok:false, fallback:true, error:(e && e.message) || String(e) }; }
+      if (res.ok) sent++;
+      else pending.push(Object.assign({ _waReason: res.error || 'Send failed' }, it));
     }
   }
 
-  // Manual pass — everything when the Cloud API isn't configured, otherwise
-  // just the leftovers. Each record waits for a click because the operator
-  // has to press Send inside WhatsApp Web themselves.
-  if (pending.length && !_waQueueStopped) {
-    _waQueueButtons('manual');
-    const manualNote = useApi
-      ? 'No WhatsApp number on file (or the API refused) — opens WhatsApp Web; click Send inside WhatsApp, then come back and hit "Send & Next"'
-      : 'Manual mode — opens WhatsApp Web; click Send inside WhatsApp, then come back and hit "Send & Next"';
-    for (let i = 0; i < pending.length; i++) {
-      const it = pending[i];
-      _waQueueShow(it, i, pending.length, manualNote);
-      const action = await new Promise(res => { _waQueueState = { resolve: res }; });
-      _waQueueState = null;
-      if (action === 'stop') break;
-      if (action === 'skip') { skipped++; continue; }
-      if (it.blob) await _waOpenDocument(it);
-      else _waOpenText(it.phone, it.message);
-      sent++;
-    }
+  if (!useApi && pending.length) {
+    // The API is not usable at all — clicking through WhatsApp Web is the
+    // only way to send, so run the manual pass directly.
+    const r = await _waManualPass(pending,
+      'WhatsApp Cloud API is not set up — opens WhatsApp Web; click Send inside WhatsApp, then come back and hit "Send & Next"');
+    sent += r.sent; skipped += r.skipped;
+    pending = [];
   }
 
   _waQueueButtons('manual');   // restore for the next run
   hideModal('wa-queue-modal');
+
+  // API was live but some records could not be delivered: report them with
+  // the reason and let the operator CHOOSE the click-through fallback,
+  // instead of dropping them into it unannounced. Skipped entirely when the
+  // operator hit Stop — they asked for the run to end, not for a follow-up
+  // prompt about the records they just cancelled.
+  if (pending.length && !_waQueueStopped) {
+    const lines = pending.slice(0, 12)
+      .map(p => `• ${p.name || '—'}${p.phone ? ' (+' + _normalizePhoneForWa(p.phone) + ')' : ''} — ${p._waReason}`)
+      .join('\n');
+    const more = pending.length > 12 ? `\n…and ${pending.length - 12} more` : '';
+    const go = confirm(
+      `WhatsApp — ${sent} sent, ${pending.length} could not be sent automatically:\n\n${lines}${more}\n\n` +
+      `Open these ${pending.length} in WhatsApp Web one at a time instead?`
+    );
+    if (go) {
+      _waQueueStopped = false;
+      showModal('wa-queue-modal');
+      const r = await _waManualPass(pending,
+        'Opens WhatsApp Web; click Send inside WhatsApp, then come back and hit "Send & Next"');
+      sent += r.sent; skipped += r.skipped;
+      _waQueueButtons('manual');
+      hideModal('wa-queue-modal');
+    }
+  }
+
   const left = items.length - sent - skipped;
   toast(`WhatsApp — ${sent} sent${skipped ? `, ${skipped} skipped` : ''}${left > 0 ? `, ${left} not sent` : ''}`);
 }
+// Cached "is the Cloud API usable?" probe. Only a POSITIVE answer is cached
+// for the page's lifetime — a negative is re-probed after a short window, so
+// one hiccup (a moment offline, a token refresh, credentials saved in another
+// tab) can't pin every later send on this page to the WhatsApp Web fallback.
 let _waApiCheck = null;
+let _waApiCheckAt = 0;
+const _WA_NEGATIVE_TTL_MS = 60000;
 async function _waCloudApiAvailable() {
-  if (_waApiCheck !== null) return _waApiCheck;
+  if (_waApiCheck === true) return true;
+  if (_waApiCheck === false && (Date.now() - _waApiCheckAt) < _WA_NEGATIVE_TTL_MS) return false;
   try {
     const r = await fetch(B + '/api/whatsapp/status', { headers: { 'Authorization': 'Bearer ' + T } });
-    if (!r.ok) { _waApiCheck = false; return false; }
-    const d = await r.json().catch(() => ({}));
+    const d = r.ok ? await r.json().catch(() => ({})) : {};
     _waApiCheck = !!d.configured;
   } catch (_) { _waApiCheck = false; }
+  _waApiCheckAt = Date.now();
   return _waApiCheck;
 }
 
@@ -26639,7 +26740,7 @@ async function _waCloudApiAvailable() {
 // recipient is the supplier whose discount we're claiming), composes a
 // one-line summary, and routes through _waOpenDocument's standard
 // chain (Cloud API → Web Share → wa.me fallback).
-async function whatsappDebitNote(id, dealerName, noteNo, totalAmt, ano) {
+async function whatsappDebitNote(id, dealerName, noteNo, totalAmt, ano, traderId) {
   try {
     const decoded = decodeURIComponent(dealerName || '');
     const decNote = decodeURIComponent(noteNo || '');
@@ -26647,7 +26748,7 @@ async function whatsappDebitNote(id, dealerName, noteNo, totalAmt, ano) {
       () => _fetchPdfBlob(`/api/debit-notes/${id}/pdf`)
     );
     const [phone, company] = await Promise.all([
-      _lookupSellerPhone(decoded),
+      _lookupSellerPhone({ traderId, name: decoded }),
       _getCompanyName(),
     ]);
     const amt = `\u20B9${Number(totalAmt||0).toLocaleString('en-IN')}`;
@@ -26664,7 +26765,7 @@ async function whatsappDebitNote(id, dealerName, noteNo, totalAmt, ano) {
 }
 
 // Single PLANTER debit note — same flow, different source route.
-async function whatsappDebitNotePlanter(id, planterName, noteNo, totalAmt, ano) {
+async function whatsappDebitNotePlanter(id, planterName, noteNo, totalAmt, ano, traderId) {
   try {
     const decoded = decodeURIComponent(planterName || '');
     const decNote = decodeURIComponent(noteNo || '');
@@ -26672,7 +26773,7 @@ async function whatsappDebitNotePlanter(id, planterName, noteNo, totalAmt, ano) 
       () => _fetchPdfBlob(`/api/debit-notes-planter/${id}/pdf`)
     );
     const [phone, company] = await Promise.all([
-      _lookupSellerPhone(decoded),
+      _lookupSellerPhone({ traderId, name: decoded }),
       _getCompanyName(),
     ]);
     const amt = `₹${Number(totalAmt||0).toLocaleString('en-IN')}`;
@@ -26702,6 +26803,7 @@ async function _whatsappSelectedDebitNotes({ listId, cbClass, pdfPath }) {
   if (!checked.length) { alert('Tick one or more debit notes first'); return; }
   const rows = checked.map(cb => ({
     id: Number(cb.value),
+    traderId: cb.dataset.tid || '',
     name: cb.dataset.name || '',
     note: cb.dataset.note || '',
     total: Number(cb.dataset.total || 0),
@@ -26712,7 +26814,7 @@ async function _whatsappSelectedDebitNotes({ listId, cbClass, pdfPath }) {
   for (const r of rows) {
     try {
       const blob = await _fetchPdfBlob(`${pdfPath}/${r.id}/pdf`);
-      const phone = await _lookupSellerPhone(r.name);
+      const phone = await _lookupSellerPhone({ traderId: r.traderId, name: r.name });
       const amt = `₹${Number(r.total||0).toLocaleString('en-IN')}`;
       items.push({
         name: r.name, phone, blob,
@@ -26736,7 +26838,7 @@ function whatsappSelectedDebitNotesPlanter() {
   });
 }
 
-async function whatsappPurchase(auctionId, sellerName, invNo, totalAmt, ano) {
+async function whatsappPurchase(auctionId, sellerName, invNo, totalAmt, ano, traderId) {
   try {
     const decoded = decodeURIComponent(sellerName);
     const decInv = decodeURIComponent(invNo);
@@ -26744,7 +26846,7 @@ async function whatsappPurchase(auctionId, sellerName, invNo, totalAmt, ano) {
       () => _fetchPdfBlob(`/api/purchases/pdf/${auctionId}/${sellerName}?invoiceNo=${invNo}`)
     );
     const [phone, company, anoVal] = await Promise.all([
-      _lookupSellerPhone(decoded), _getCompanyName(),
+      _lookupSellerPhone({ traderId, name: decoded }), _getCompanyName(),
       ano ? Promise.resolve(ano) : _getAuctionAno(auctionId),
     ]);
     const amt = `₹${Number(totalAmt||0).toLocaleString('en-IN')}`;
@@ -26757,7 +26859,7 @@ async function whatsappPurchase(auctionId, sellerName, invNo, totalAmt, ano) {
 // ── Sales Invoice: WhatsApp ───────────────────────────────────
 // Recipient is the BUYER (buyers master, keyed by trade name). Mirrors
 // the purchase-invoice document flow but looks the phone up buyer-side.
-async function whatsappInvoice(id, buyerName, invNo, saleType, totalAmt, ano) {
+async function whatsappInvoice(id, buyerName, invNo, saleType, totalAmt, ano, buyerCode) {
   try {
     const decoded = decodeURIComponent(buyerName || '');
     const decInv  = decodeURIComponent(invNo || '');
@@ -26768,7 +26870,7 @@ async function whatsappInvoice(id, buyerName, invNo, saleType, totalAmt, ano) {
       () => _fetchPdfBlob(`/api/invoices/pdf/${id}`)
     );
     const [phone, company] = await Promise.all([
-      _lookupBuyerPhone(decoded), _getCompanyName(),
+      _lookupBuyerPhone(decoded, decodeURIComponent(buyerCode || '')), _getCompanyName(),
     ]);
     const amt = `₹${Number(totalAmt||0).toLocaleString('en-IN')}`;
     const msg = `${ano || ''} ${decoded} ${company} SALES INVOICE ${invLabel} ${amt}`.trim();
@@ -26786,6 +26888,7 @@ async function whatsappSelectedPurchases() {
   const rows = checked.map(cb => ({
     id: Number(cb.value),
     auction_id: Number(cb.dataset.aid || 0),
+    traderId: cb.dataset.tid || '',
     name: cb.dataset.name || '',
     invo: cb.dataset.invo || '',
     total: Number(cb.dataset.total || 0),
@@ -26796,7 +26899,7 @@ async function whatsappSelectedPurchases() {
   for (const r of rows) {
     try {
       const blob = await _fetchPdfBlob(`/api/purchases/pdf/${r.auction_id}/${encodeURIComponent(r.name)}?invoiceNo=${encodeURIComponent(r.invo)}`);
-      const phone = await _lookupSellerPhone(r.name);
+      const phone = await _lookupSellerPhone({ traderId: r.traderId, name: r.name });
       const amt = `₹${Number(r.total||0).toLocaleString('en-IN')}`;
       items.push({
         name: r.name, phone, blob,
@@ -26821,21 +26924,23 @@ async function printPayment(auctionId, sellerName, userId) {
     `Payment_${sellerName}_${auctionId}.pdf`
   );
 }
-// Single Payment — TEXT ONLY, no PDF attachment.
-// Format: "{ano} {seller} {company} PAYMENT {amount} CREDITED"
-async function whatsappPayment(auctionId, sellerName, payable, userId) {
+// Single Payment — attaches the PAYMENT STATEMENT PDF (same document the
+// 🖨 Print action produces), matching the other transaction modules. Document
+// sends also succeed on this account where the text template historically did
+// not. `userId` narrows the statement to the right seller when a name repeats.
+async function whatsappPayment(auctionId, sellerName, payable, userId, traderId) {
   try {
+    const q = userId ? `?userId=${encodeURIComponent(userId)}` : '';
+    const blob = await withOverlay('Building payment statement…',
+      () => _fetchPdfBlob(`/api/payments/pdf/${auctionId}/${encodeURIComponent(sellerName)}${q}`)
+    );
     const [phone, company, ano] = await Promise.all([
-      _lookupSellerPhone({ name: sellerName, userId }), _getCompanyName(), _getAuctionAno(auctionId),
+      _lookupSellerPhone({ traderId, userId, name: sellerName }), _getCompanyName(), _getAuctionAno(auctionId),
     ]);
     const amt = Number(payable||0).toLocaleString('en-IN');
     const msg = `${ano} ${sellerName} ${company} PAYMENT ${amt} CREDITED`;
-    const summary = `your PAYMENT of ₹${amt} has been CREDITED (Auction ${ano}).`;
-    if (phone && await _waCloudApiAvailable()) {
-      const ok = await _waCloudSendText(phone, [sellerName, summary, company]);
-      if (ok) { toast(`WhatsApp sent to ${sellerName}`); return; }
-    }
-    _waOpenText(phone, msg);
+    const summary = `your PAYMENT STATEMENT of ₹${amt} (Auction ${ano}) is attached.`;
+    await _waSendDocument({ blob, filename: `Payment_${sellerName}_${auctionId}.pdf`, phone, params: [sellerName, summary, company], message: msg });
   } catch (e) { showError(e); }
 }
 function _collectSelectedPaymentNames() {
@@ -26894,12 +26999,25 @@ async function whatsappSelectedPayments() {
   const items = [];
   for (const sel of names) {
     const nm = sel.name;
-    const phone = await _lookupSellerPhone({ name: nm, userId: sel.user_id });
+    // trader_id first — it's already collected on the checkbox and is the only
+    // key that survives two sellers sharing a name.
+    const phone = await _lookupSellerPhone({ traderId: sel.trader_id, userId: sel.user_id, name: nm });
     const amt = Number(rowMap[nm + '|' + (sel.user_id || '')]||0).toLocaleString('en-IN');
+    // Attach the PAYMENT STATEMENT PDF, one per seller. If the statement can't
+    // be built the item still queues with no blob and the queue falls back to
+    // text — the run isn't aborted for one bad seller.
+    let blob = null;
+    try {
+      const q = sel.user_id ? `?userId=${encodeURIComponent(sel.user_id)}` : '';
+      blob = await _fetchPdfBlob(`/api/payments/pdf/${aid}/${encodeURIComponent(nm)}${q}`);
+    } catch (e) { console.warn('Payment statement PDF failed for', nm, e); }
     items.push({
-      name: nm, phone,
+      name: nm, phone, blob, filename: `Payment_${nm}_${aid}.pdf`,
       message: `${ano} ${nm} ${company} PAYMENT ${amt} CREDITED`,
-      params: [nm, `your PAYMENT of ₹${amt} has been CREDITED (Auction ${ano}).`, company],
+      params: [nm,
+        blob ? `your PAYMENT STATEMENT of ₹${amt} (Auction ${ano}) is attached.`
+             : `your PAYMENT of ₹${amt} has been CREDITED (Auction ${ano}).`,
+        company],
     });
   }
   await _runWaQueue(items);
@@ -26908,7 +27026,7 @@ async function whatsappSelectedPayments() {
 // ── Bill of Supply (agriculturist purchase bill): WhatsApp ────
 // Recipient is the seller/agriculturist (traders master). Mirrors the
 // purchase-invoice document flow.
-async function whatsappBillOfSupply(auctionId, sellerName, billNo, totalAmt) {
+async function whatsappBillOfSupply(auctionId, sellerName, billNo, totalAmt, traderId) {
   try {
     const decoded = decodeURIComponent(sellerName || '');
     const decBill = decodeURIComponent(billNo || '');
@@ -26916,7 +27034,7 @@ async function whatsappBillOfSupply(auctionId, sellerName, billNo, totalAmt) {
       () => _fetchPdfBlob(`/api/bills/pdf/${auctionId}/${encodeURIComponent(decoded)}?billNo=${encodeURIComponent(decBill)}`)
     );
     const [phone, company, ano] = await Promise.all([
-      _lookupSellerPhone(decoded), _getCompanyName(), _getAuctionAno(auctionId),
+      _lookupSellerPhone({ traderId, name: decoded }), _getCompanyName(), _getAuctionAno(auctionId),
     ]);
     const amt = `₹${Number(totalAmt||0).toLocaleString('en-IN')}`;
     const msg = `${ano || ''} ${decoded} ${company} BILL OF SUPPLY ${decBill} ${amt}`.trim();
@@ -26932,6 +27050,7 @@ async function whatsappSelectedBills() {
   if (!checked.length) { alert('Tick one or more bills first'); return; }
   const rows = checked.map(cb => ({
     auction_id: Number(cb.dataset.aid || 1),
+    traderId: cb.dataset.tid || '',
     name: cb.dataset.name || '',
     bil: cb.dataset.bil || '',
     net: Number(cb.dataset.net || 0),
@@ -26942,7 +27061,7 @@ async function whatsappSelectedBills() {
     try {
       const ano = await _getAuctionAno(r.auction_id);
       const blob = await _fetchPdfBlob(`/api/bills/pdf/${r.auction_id}/${encodeURIComponent(r.name)}?billNo=${encodeURIComponent(r.bil)}`);
-      const phone = await _lookupSellerPhone(r.name);
+      const phone = await _lookupSellerPhone({ traderId: r.traderId, name: r.name });
       const amt = `₹${Number(r.net||0).toLocaleString('en-IN')}`;
       items.push({
         name: r.name, phone, blob,
@@ -26965,6 +27084,7 @@ async function whatsappSelectedInvoices() {
   const rows = checked.map(cb => ({
     id: Number(cb.value),
     name: cb.dataset.name || '',
+    code: cb.dataset.code || '',
     invo: cb.dataset.invo || '',
     sale: cb.dataset.sale || '',
     total: Number(cb.dataset.total || 0),
@@ -26976,7 +27096,7 @@ async function whatsappSelectedInvoices() {
     try {
       const invLabel = r.sale ? `${r.sale}-${r.invo}` : r.invo;
       const blob = await _fetchPdfBlob(`/api/invoices/pdf/${r.id}`);
-      const phone = await _lookupBuyerPhone(r.name);
+      const phone = await _lookupBuyerPhone(r.name, r.code);
       const amt = `₹${Number(r.total||0).toLocaleString('en-IN')}`;
       items.push({
         name: r.name, phone, blob,
@@ -27080,15 +27200,10 @@ async function leWhatsappReceipt() {
       continue;
     }
 
-    // No PDF — original text-only path.
-    if (useApi && phone) {
-      // The multi-line receipt is flattened to one line server-side
-      // (template body params can't contain newlines).
-      const ok = await _waCloudSendText(phone, [grp.traderName, msg, company]);
-      if (ok) { sent++; continue; }
-    }
-    _waOpenText(phone, msg);
-    opened++;
+    // No PDF — original text-only path. The multi-line receipt is flattened
+    // to one line server-side (template body params can't contain newlines).
+    if (await _waSendText({ phone, params: [grp.traderName, msg, company], message: msg })) sent++;
+    else opened++;
   }
   toast(useApi && sent
     ? `WhatsApp sent to ${sent} seller${sent===1?'':'s'}${opened?` · ${opened} opened in browser`:''}`
@@ -28124,8 +28239,9 @@ async function payLwSearch() {
     // lots: ticking the unlinked ones there would make every export stop on the
     // "…have no bank account" confirm. They stay visible, just unticked, and
     // the header checkbox still selects the lot.
+    // Paid lots are never auto-ticked — they're done and locked out.
     _payLwState.selected = new Set(
-      _payLwState.lots.filter(l => link !== 'all' || l.linked).map(l => l.id));
+      _payLwState.lots.filter(l => !l.paid_at && (link !== 'all' || l.linked)).map(l => l.id));
     _payLwRender();
   } catch (e) {
     if (body) body.innerHTML = `<div style="padding:30px;text-align:center;color:var(--spice-chili)">Search failed: ${esc(e.message || String(e))}</div>`;
@@ -28347,15 +28463,31 @@ function _payLwRender() {
            onclick="payLwOpenBankAdd(${l.trader_id}, ${esc(JSON.stringify(String(l.name || '')))})"
            title="Add a bank account to this seller">+ Add</button>`
       : '';
-    const rowStyle = l.linked ? '' : ' style="background:#FEF2F2"';
-    const ticked = _payLwState.selected.has(l.id) ? ' checked' : '';
-    return `<tr${rowStyle}>
-      <td style="text-align:center"><input type="checkbox" class="paylw-cb" data-id="${l.id}"${ticked} onchange="payLwTick(${l.id}, this.checked)" style="cursor:pointer;width:15px;height:15px"></td>
-      <td>${esc(l.name || '')}</td>
+    // A PAID lot (already exported): green row, disabled checkbox, "Paid on …"
+    // badge, and it never counts toward the selection. The paid tint wins over
+    // the red "no account" tint — a paid lot needs no account any more.
+    const isPaid = !!(l.paid_at && String(l.paid_at).trim());
+    const rowCls = isPaid ? ' class="paylw-row-paid"' : '';
+    const rowStyle = (!isPaid && !l.linked) ? ' style="background:#FEF2F2"' : '';
+    const paidBadge = isPaid
+      ? ` <span class="paylw-paid-badge" title="Paid out via bank export on ${esc(fmtD(l.paid_at))}. Kept for the record — it can't be selected or re-exported.">✓ Paid on ${esc(fmtD(l.paid_at))}</span>`
+      : '';
+    // Admin-only escape hatch: clear the paid stamp so the lot becomes
+    // selectable and exportable again (e.g. an export that had to be redone).
+    const undoBtn = (isPaid && window._userRole === 'admin')
+      ? ` <button class="btn btn-o" style="padding:1px 7px;font-size:10.5px;font-weight:600;margin-left:4px" onclick="payLwUnmarkPaid(${l.id}, ${esc(JSON.stringify(String(l.name || '')))})" title="Admin: undo the paid stamp so this lot can be selected and exported again">↩ Undo</button>`
+      : '';
+    const ticked = (!isPaid && _payLwState.selected.has(l.id)) ? ' checked' : '';
+    const cb = isPaid
+      ? `<input type="checkbox" disabled title="Already paid — locked out of selection" style="width:15px;height:15px;cursor:not-allowed;opacity:.5">`
+      : `<input type="checkbox" class="paylw-cb" data-id="${l.id}"${ticked} onchange="payLwTick(${l.id}, this.checked)" style="cursor:pointer;width:15px;height:15px">`;
+    return `<tr${rowCls}${rowStyle}>
+      <td style="text-align:center">${cb}</td>
+      <td>${esc(l.name || '')}${paidBadge}${undoBtn}</td>
       <td style="font-family:monospace;font-weight:600">${esc(String(l.lot_no || ''))}</td>
       <td style="text-align:right">${fmtI(Number(l.qty) || 0, 3)}</td>
       <td>${esc(l.branch || '')}</td>
-      <td><div style="display:flex;gap:6px;align-items:center">${bankCell}${addBtn}</div></td>
+      <td><div style="display:flex;gap:6px;align-items:center">${isPaid ? '<span style="color:var(--text3);font-size:11.5px">—</span>' : (bankCell + addBtn)}</div></td>
       <td style="text-align:right;font-weight:700;color:var(--spice-cardamom-dk)">${fmtI(Number(l.payable) || 0, 2)}</td>
     </tr>`;
   }).join('');
@@ -28378,9 +28510,12 @@ function payLwTick(lotId, checked) {
   if (checked) _payLwState.selected.add(lotId); else _payLwState.selected.delete(lotId);
   _payLwRefreshSelection();
 }
-// Header box — applies to every listed lot.
+// Header box — applies to every listed lot EXCEPT already-paid ones (they're
+// locked out and have no live checkbox to toggle).
 function payLwTickAll(checked) {
-  _payLwState.selected = checked ? new Set(_payLwState.lots.map(l => l.id)) : new Set();
+  _payLwState.selected = checked
+    ? new Set(_payLwState.lots.filter(l => !l.paid_at).map(l => l.id))
+    : new Set();
   document.querySelectorAll('#paylw-body .paylw-cb').forEach(cb => { cb.checked = !!checked; });
   _payLwRefreshSelection();
 }
@@ -28557,7 +28692,8 @@ async function payLwExportBank() {
   const aid = _payLwState.aid || Number(document.getElementById('paylw-auction')?.value || 0);
   if (!aid) { alert('Select a trade first'); return; }
   if (!_payLwState.lots.length) { alert('Search for the lots you want to pay first.'); return; }
-  const lots = _payLwState.lots.filter(l => _payLwState.selected.has(l.id));
+  // Never export an already-paid lot, even if a stale tick lingers.
+  const lots = _payLwState.lots.filter(l => _payLwState.selected.has(l.id) && !l.paid_at);
   if (!lots.length) { alert('Tick at least one lot to export — use the header checkbox to select them all.'); return; }
   const unlinked = lots.filter(l => !l.linked);
   if (unlinked.length && !confirm(
@@ -28596,8 +28732,52 @@ async function payLwExportBank() {
     a.download = filename;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    toast(`Exported ${lots.length} lot${lots.length === 1 ? '' : 's'} across ${names.length} seller${names.length === 1 ? '' : 's'}`);
+    // Mark the exported lots PAID so they badge "Paid on <today>", turn green,
+    // and can't be selected or exported again. Best-effort: the file already
+    // downloaded, so a marking hiccup only means the operator can re-export —
+    // never a lost payment.
+    try {
+      const paidIds = lots.map(l => l.id);
+      const mk = await fetch(B + `/api/payments/lots/${aid}/mark-paid`, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lotIds: paidIds }),
+      });
+      if (mk.ok) {
+        toast(`Exported ${lots.length} lot${lots.length === 1 ? '' : 's'} across ${names.length} seller${names.length === 1 ? '' : 's'} — marked paid`);
+        await payLwSearch();   // re-pull so the rows show as paid
+      } else {
+        toast(`Exported ${lots.length} lot${lots.length === 1 ? '' : 's'} — could NOT mark them paid (re-export is still possible)`);
+      }
+    } catch (_) {
+      toast(`Exported ${lots.length} lot${lots.length === 1 ? '' : 's'} — could NOT mark them paid (re-export is still possible)`);
+    }
   });
+}
+
+// Admin-only: undo a lot's paid stamp. Reversing a settled payment is a
+// supervisory action, so the server gates it with requireAdmin too — this
+// button just won't render for non-admins.
+async function payLwUnmarkPaid(lotId, name) {
+  const aid = _payLwState.aid || Number(document.getElementById('paylw-auction')?.value || 0);
+  if (!aid || !lotId) return;
+  if (!confirm(`Undo the "paid" stamp on ${name || 'this lot'}?\n\nIt will become selectable and appear in bank-payment exports again.`)) return;
+  try {
+    const r = await fetch(B + `/api/payments/lots/${aid}/unmark-paid`, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lotIds: [lotId] }),
+    });
+    if (r.ok) {
+      toast(`Unmarked — ${name || 'lot'} is payable again`);
+      await payLwSearch();   // re-pull so the row drops its paid badge/lock
+    } else {
+      const e = await r.json().catch(() => ({}));
+      alert(`Could not unmark: ${e.error || ('HTTP ' + r.status)}`);
+    }
+  } catch (err) {
+    alert('Could not unmark: ' + (err.message || err));
+  }
 }
 
 // Enable/disable a row's Advance input from its ✎ checkbox. Advance is
@@ -29029,7 +29209,9 @@ async function loadPayments(){
             const uid = encodeURIComponent(p.user_id||'');
             return undoBtn + lotsBtn
                  + iconBtn('print','Print payment statement',`printPayment(${aid},decodeURIComponent('${nm}'),decodeURIComponent('${uid}'))`)
-                 + iconBtn('whatsapp','Send via WhatsApp',`whatsappPayment(${aid},decodeURIComponent('${nm}'),${pay},decodeURIComponent('${uid}'))`);
+                 // trader_id outranks the User ID as the seller key — pass both
+                 // so the WhatsApp number resolves even for namesake sellers.
+                 + iconBtn('whatsapp','Send via WhatsApp',`whatsappPayment(${aid},decodeURIComponent('${nm}'),${pay},decodeURIComponent('${uid}'),${p.trader_id==null?'null':Number(p.trader_id)})`);
           } }
       ]
     });
@@ -29519,7 +29701,7 @@ async function loadBills(opts){
       { key:'_select', label:'',
         labelHTML:'<input type="checkbox" id="bill-select-all" onclick="event.stopPropagation();toggleAllBills(this.checked)" title="Select / clear all visible" style="cursor:pointer;width:16px;height:16px;vertical-align:middle;accent-color:var(--green)">',
         sortable:false, searchable:false,
-        render:(b)=>`<input type="checkbox" class="bill-select-cb" value="${b.id}" data-aid="${b.auction_id||1}" data-name="${esc(b.name||'')}" data-bil="${esc(b.bil||'')}" data-net="${Number(b.net)||0}" onclick="event.stopPropagation()" style="cursor:pointer">` },
+        render:(b)=>`<input type="checkbox" class="bill-select-cb" value="${b.id}" data-aid="${b.auction_id||1}" data-tid="${b.trader_id != null ? esc(String(b.trader_id)) : ''}" data-name="${esc(b.name||'')}" data-bil="${esc(b.bil||'')}" data-net="${Number(b.net)||0}" onclick="event.stopPropagation()" style="cursor:pointer">` },
       { key:'bil', label:'Bill#', sort:'text',
         render:(b)=>`<strong style="color:var(--spice-cardamom-dk);font-weight:700">${esc(b.bil)}</strong>` },
       { key:'date', label:'Date', sort:'date', render:(b)=>fmtD(b.date) },
@@ -29548,7 +29730,8 @@ async function loadBills(opts){
           // Commission Bill mode (flag OFF): download the Commission Bill (BoS).
           + iconBtn('commission','Download Commission Bill',`downloadBillCommissionBoS(${b.id},'${encodeURIComponent(b.name||'')}','${encodeURIComponent(b.bil||'')}')`,'feat-bos-commission')
           + iconBtn('edit','Edit bill',`openBillEdit(${JSON.stringify(b).replace(/"/g,'&quot;')})`)
-          + iconBtn('whatsapp','Send via WhatsApp',`whatsappBillOfSupply('${b.auction_id||1}','${encodeURIComponent(b.name||'')}','${encodeURIComponent(b.bil||'')}',${Number(b.net)||0})`)
+          // b.trader_id disambiguates namesake sellers for the phone lookup.
+          + iconBtn('whatsapp','Send via WhatsApp',`whatsappBillOfSupply('${b.auction_id||1}','${encodeURIComponent(b.name||'')}','${encodeURIComponent(b.bil||'')}',${Number(b.net)||0},${b.trader_id != null ? Number(b.trader_id) : 'null'})`)
           + iconBtn('del','Delete bill',`delBill(${b.id})`) }
     ]
   });
@@ -29745,7 +29928,7 @@ async function loadDebitNotes(opts){
       { key:'_select', label:'',
         labelHTML:'<input type="checkbox" id="dn-select-all" onclick="event.stopPropagation();toggleAllDn(this.checked)" title="Select / clear all visible" style="cursor:pointer;width:16px;height:16px;vertical-align:middle;accent-color:var(--green)">',
         sortable:false, searchable:false,
-        render:(n)=>`<input type="checkbox" class="dn-select-cb" value="${n.id}" data-name="${esc(n.name||'')}" data-note="${esc(n.note_no||'')}" data-total="${Number(n.total)||0}" data-ano="${esc(n.ano||'')}" onclick="event.stopPropagation();updateDnBulkButtons()" style="cursor:pointer">` },
+        render:(n)=>`<input type="checkbox" class="dn-select-cb" value="${n.id}" data-tid="${n.trader_id != null ? esc(String(n.trader_id)) : ''}" data-name="${esc(n.name||'')}" data-note="${esc(n.note_no||'')}" data-total="${Number(n.total)||0}" data-ano="${esc(n.ano||'')}" onclick="event.stopPropagation();updateDnBulkButtons()" style="cursor:pointer">` },
       { key:'note_no', label:'Note#', sort:'text' },
       { key:'date', label:'Date', sort:'date', render:(n)=>fmtD(n.date) },
       { key:'ano', label:'Auction', sort:'text', render:(n)=>n.ano?('#'+esc(n.ano)):'—' },
@@ -29769,7 +29952,8 @@ async function loadDebitNotes(opts){
           // WhatsApp — mirrors the Purchase Invoice WhatsApp flow.
           // Sends the DN PDF + a one-line summary message to the
           // dealer's stored phone (resolves via traders.tel).
-          + iconBtn('whatsapp','Send via WhatsApp',`whatsappDebitNote(${n.id},'${encodeURIComponent(n.name||'')}','${encodeURIComponent(n.note_no||'')}',${Number(n.total)||0},'${esc(n.ano||'')}')`)
+          // n.trader_id disambiguates namesake dealers for the phone lookup.
+          + iconBtn('whatsapp','Send via WhatsApp',`whatsappDebitNote(${n.id},'${encodeURIComponent(n.name||'')}','${encodeURIComponent(n.note_no||'')}',${Number(n.total)||0},'${esc(n.ano||'')}',${n.trader_id != null ? Number(n.trader_id) : 'null'})`)
           + iconBtn('edit','Edit debit note',`openDebitEdit(${JSON.stringify(n).replace(/"/g,'&quot;')})`)
           + iconBtn('del','Delete debit note',`delDebitNote(${n.id})`) }
     ]
@@ -30313,7 +30497,7 @@ async function loadDebitNotesPlanter(opts){
       { key:'_select', label:'',
         labelHTML:'<input type="checkbox" id="dnp-select-all" onclick="event.stopPropagation();toggleAllDnp(this.checked)" title="Select / clear all visible" style="cursor:pointer;width:16px;height:16px;vertical-align:middle;accent-color:var(--green)">',
         sortable:false, searchable:false,
-        render:(n)=>`<input type="checkbox" class="dnp-select-cb" value="${n.id}" data-name="${esc(n.name||'')}" data-note="${esc(n.note_no||'')}" data-total="${Number(n.total)||0}" data-ano="${esc(n.ano||'')}" onclick="event.stopPropagation();updateDnpBulkButtons()" style="cursor:pointer">` },
+        render:(n)=>`<input type="checkbox" class="dnp-select-cb" value="${n.id}" data-tid="${n.trader_id != null ? esc(String(n.trader_id)) : ''}" data-name="${esc(n.name||'')}" data-note="${esc(n.note_no||'')}" data-total="${Number(n.total)||0}" data-ano="${esc(n.ano||'')}" onclick="event.stopPropagation();updateDnpBulkButtons()" style="cursor:pointer">` },
       { key:'note_no', label:'Note#', sort:'text' },
       { key:'date', label:'Date', sort:'date', render:(n)=>fmtD(n.date) },
       { key:'ano', label:'Auction', sort:'text', render:(n)=>n.ano?('#'+esc(n.ano)):'—' },
@@ -30338,7 +30522,8 @@ async function loadDebitNotesPlanter(opts){
           iconBtn('print','Print debit note',`printDebitNotePlanter(${n.id})`)
           // WhatsApp — mirrors the dealer DN row action; the planter is a
           // trader row too, so the phone resolves via traders.tel.
-          + iconBtn('whatsapp','Send via WhatsApp',`whatsappDebitNotePlanter(${n.id},'${encodeURIComponent(n.name||'')}','${encodeURIComponent(n.note_no||'')}',${Number(n.total)||0},'${esc(n.ano||'')}')`)
+          // n.trader_id disambiguates namesake planters for the phone lookup.
+          + iconBtn('whatsapp','Send via WhatsApp',`whatsappDebitNotePlanter(${n.id},'${encodeURIComponent(n.name||'')}','${encodeURIComponent(n.note_no||'')}',${Number(n.total)||0},'${esc(n.ano||'')}',${n.trader_id != null ? Number(n.trader_id) : 'null'})`)
           + iconBtn('edit','Edit debit note',`openDebitPlanterEdit(${JSON.stringify(n).replace(/"/g,'&quot;')})`)
           + iconBtn('del','Delete debit note',`delDebitNotePlanter(${n.id})`) }
     ]
@@ -32447,31 +32632,32 @@ async function loadPreInvoiceBuyers(){
 // that opens into the lot list. State comes from the server, classified on
 // lots.code ('WD' = withdrawn, 'NA'/blank = not auctioned) — the same
 // marker the invoice gate and carry-forward already use.
-let _piExcludedOpen = false;
-function togglePreInvoiceExcluded(){
-  _piExcludedOpen = !_piExcludedOpen;
-  const body = document.getElementById('pi-excluded-body');
-  const chev = document.getElementById('pi-excluded-chev');
-  if (body) body.style.display = _piExcludedOpen ? '' : 'none';
-  if (chev) chev.textContent = _piExcludedOpen ? '▼' : '▶';
+// Per-section open state — the Withdrawn and Not-Auctioned panels collapse
+// independently now that they're shown separately.
+let _piExcludedOpen = { wd: false, na: false };
+function togglePreInvoiceExcluded(kind){
+  _piExcludedOpen[kind] = !_piExcludedOpen[kind];
+  const body = document.getElementById('pi-excluded-body-' + kind);
+  const chev = document.getElementById('pi-excluded-chev-' + kind);
+  if (body) body.style.display = _piExcludedOpen[kind] ? '' : 'none';
+  if (chev) chev.textContent = _piExcludedOpen[kind] ? '▼' : '▶';
 }
 function renderPreInvoiceExcluded(ex){
   const host = document.getElementById('pi-excluded');
   if (!host) return;
-  const t = (ex && ex.totals) || null;
-  const wd = (ex && ex.withdrawn) || [];
-  const na = (ex && ex.notAuctioned) || [];
-  if (!t || (!wd.length && !na.length)) { host.style.display = 'none'; host.innerHTML = ''; return; }
-  const chip = (label, lots, bags, qty, colour) =>
-    `<span style="display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:20px;background:${colour.bg};color:${colour.fg};font-size:11.5px;font-weight:700">
-       ${label} <strong>${lots}</strong> lot${lots === 1 ? '' : 's'}
-       <span style="font-weight:400;opacity:.85">· ${bags} bag${bags === 1 ? '' : 's'} · ${fmtI(qty, 3)} kg</span>
-     </span>`;
-  const chips =
-    (t.withdrawnLots ? chip('Withdrawn', t.withdrawnLots, t.withdrawnBags, t.withdrawnQty,
-        { bg: '#FEE2E2', fg: '#B91C1C' }) : '')
-    + (t.notAuctionedLots ? chip('Not auctioned', t.notAuctionedLots, t.notAuctionedBags, t.notAuctionedQty,
-        { bg: '#FEF3C7', fg: '#B45309' }) : '');
+  // Only relevant when the operator is filtering the WITHDRAWN (W) or the
+  // NOT-AUCTIONED (N) sale types — hidden entirely for L / I / E / All.
+  //   • Sale Type = Withdrawn (W) → show BOTH the Withdrawn and the
+  //     Not-Auctioned lots, each in its OWN section.
+  //   • Sale Type = N/A (N)       → show the Not-Auctioned lots only.
+  // Both are whole-trade panels — the server returns every withdrawn /
+  // not-auctioned lot; this just chooses which to display for the filter.
+  const sale = document.getElementById('pi-sale')?.value || '';
+  const showWd = sale === 'W';
+  const showNa = sale === 'W' || sale === 'N';
+  const wd = (showWd && ex && ex.withdrawn) || [];
+  const na = (showNa && ex && ex.notAuctioned) || [];
+  if (!wd.length && !na.length) { host.style.display = 'none'; host.innerHTML = ''; return; }
   const rowsFor = (arr, label, colour) => arr.map(l => `
     <tr>
       <td style="font-family:monospace;font-weight:600">${esc(String(l.lot_no || ''))}</td>
@@ -32483,29 +32669,39 @@ function renderPreInvoiceExcluded(ex){
         Number(l.reserved) ? ` <span style="font-size:10.5px;padding:1px 7px;border-radius:10px;background:var(--spice-cream);color:var(--text3);font-weight:600" title="Held / reserved lot">held</span>` : ''}</td>
       <td style="text-align:right;color:var(--text3)">${(Number(l.amount) || 0) > 0 ? fmtI(Number(l.amount), 2) : '—'}</td>
     </tr>`).join('');
-  host.style.display = '';
-  host.innerHTML = `
-    <div style="border:1px solid var(--border);border-radius:10px;background:#fff;overflow:hidden">
-      <div onclick="togglePreInvoiceExcluded()" style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:var(--spice-cream);flex-wrap:wrap">
-        <span id="pi-excluded-chev" style="color:var(--text3);font-size:11px">${_piExcludedOpen ? '▼' : '▶'}</span>
-        <strong style="font-size:13px;color:var(--text)">Not on any invoice</strong>
-        ${chips}
-        <span style="margin-left:auto;font-size:11px;color:var(--text3)">whole trade — not narrowed by the Buyer / Sale Type filters</span>
+  // One self-contained collapsible section per kind (Withdrawn / Not Auctioned).
+  const panel = (kind, title, arr, label, colour) => {
+    if (!arr.length) return '';
+    const open = _piExcludedOpen[kind];
+    const bags = arr.reduce((s, l) => s + (Number(l.bags) || 0), 0);
+    const qty  = arr.reduce((s, l) => s + (Number(l.qty)  || 0), 0);
+    return `
+    <div style="border:1px solid var(--border);border-radius:10px;background:#fff;overflow:hidden;margin-bottom:10px">
+      <div onclick="togglePreInvoiceExcluded('${kind}')" style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:var(--spice-cream);flex-wrap:wrap">
+        <span id="pi-excluded-chev-${kind}" style="color:var(--text3);font-size:11px">${open ? '▼' : '▶'}</span>
+        <strong style="font-size:13px;color:var(--text)">${title}</strong>
+        <span style="display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:20px;background:${colour.bg};color:${colour.fg};font-size:11.5px;font-weight:700">
+          <strong>${arr.length}</strong> lot${arr.length === 1 ? '' : 's'}
+          <span style="font-weight:400;opacity:.85">· ${bags} bag${bags === 1 ? '' : 's'} · ${fmtI(qty, 3)} kg</span>
+        </span>
+        <span style="margin-left:auto;font-size:11px;color:var(--text3)">whole trade — not narrowed by the Buyer filter</span>
       </div>
-      <div id="pi-excluded-body" style="display:${_piExcludedOpen ? '' : 'none'};max-height:340px;overflow:auto">
+      <div id="pi-excluded-body-${kind}" style="display:${open ? '' : 'none'};max-height:340px;overflow:auto">
         <table style="width:100%;font-size:12.5px">
           <thead><tr>
             <th>Lot</th><th>Seller</th><th>Branch</th>
             <th style="text-align:right">Bags</th><th style="text-align:right">Qty</th>
             <th>State</th><th style="text-align:right">Amount</th>
           </tr></thead>
-          <tbody>
-            ${rowsFor(wd, 'WITHDRAWN', { bg: '#FEE2E2', fg: '#B91C1C' })}
-            ${rowsFor(na, 'NOT AUCTIONED', { bg: '#FEF3C7', fg: '#B45309' })}
-          </tbody>
+          <tbody>${rowsFor(arr, label, colour)}</tbody>
         </table>
       </div>
     </div>`;
+  };
+  host.style.display = '';
+  host.innerHTML =
+    panel('wd', 'Withdrawn',     wd, 'WITHDRAWN',     { bg: '#FEE2E2', fg: '#B91C1C' })
+  + panel('na', 'Not Auctioned', na, 'NOT AUCTIONED', { bg: '#FEF3C7', fg: '#B45309' });
 }
 
 // Step 2 — build + render the full pre-invoice card(s) for the selected buyer

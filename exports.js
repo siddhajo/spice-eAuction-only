@@ -246,8 +246,14 @@ async function createExcelBuffer(sheetName, columns, rows, opts) {
     gRow.eachCell((cell, ci) => {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
       cell.border = { top: { style: 'thin' }, bottom: { style: 'double' } };
+      const col = columns[ci - 1];
       const m = colMeta[ci - 1];
-      if (m && m.fmt)   cell.numFmt = m.fmt;
+      // Per-column total-row format override (`gt.numFmts[key]`) — lets the
+      // TOTAL carry a different number format from its data cells (e.g. keep
+      // thousands commas on the total while the column itself shows none).
+      const ovr = col && gt.numFmts && gt.numFmts[col.key];
+      if (ovr)          cell.numFmt = ovr;
+      else if (m && m.fmt) cell.numFmt = m.fmt;
       cell.alignment = { horizontal: (m && m.align) || 'left', vertical: 'middle' };
     });
   }
@@ -687,6 +693,10 @@ function renderBankPaymentView(db, auctionId, view, payments, cfg) {
   if (view.total) {
     const sum = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
     extra.grandTotal = { label: 'Total', values: { amount: sum } };
+    // Let the profile give the TOTAL a different amount format from the data
+    // cells (e.g. keep the thousands comma on the total while the column shows
+    // plain digits for a bank upload).
+    if (view.totalAmountFmt) extra.grandTotal.numFmts = { amount: view.totalAmountFmt };
   }
   if (Array.isArray(view.signatures) && view.signatures.length) {
     extra.signatures = view.signatures;

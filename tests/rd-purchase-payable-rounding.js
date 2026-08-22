@@ -99,5 +99,14 @@ check('party AMOUNT = 1050 (round of 1000.30 + 50.02)', p4 === 1050, `got ${p4}`
 check('allocations STILL sum to the party AMOUNT after rounding seAmt',
       sum4 === p4, `Σallocs ${sum4} vs party ${p4}`);
 
+// ── [5] Configurable "A" prefix on the per-lot bill reference NAME ──
+console.log('\n[5] tally_purchase_bill_ref_prefix leads the per-lot bill ref');
+const xmlNo = generRDPurchaseXML([row(125)], cfg);
+const nameNo = (billAllocs(xmlNo).find(x => x.name.includes('/201/')) || {}).name;
+check('default (blank) → "14/201/2026-27" (unchanged)', nameNo === '14/201/2026-27', `got ${nameNo}`);
+const xmlA = generRDPurchaseXML([row(125)], { ...cfg, tally_purchase_bill_ref_prefix: 'A' });
+const nameA = (billAllocs(xmlA).find(x => x.name.includes('/201/')) || {}).name;
+check('prefix "A" → "A14/201/2026-27"', nameA === 'A14/201/2026-27', `got ${nameA}`);
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

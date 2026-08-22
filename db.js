@@ -351,6 +351,12 @@ async function initDb() {
     -- lots. Used for reporting + to make carry-forward idempotent (a lot
     -- number already present in the destination is skipped on re-run).
     carried_from_auction_id INTEGER DEFAULT NULL,
+    -- Set when the lot is paid out via the lot-wise Payments screen's bank
+    -- export (also added via ALTER for older DBs below). Local datetime string.
+    -- A non-NULL value means "already paid": the row is badged "Paid on <date>",
+    -- shown in a distinct colour, made non-selectable, and kept out of any
+    -- further bank export so a lot can never be paid twice.
+    paid_at TEXT DEFAULT NULL,
     created_at TEXT DEFAULT (datetime('now','localtime')),
     FOREIGN KEY (auction_id) REFERENCES auctions(id),
     FOREIGN KEY (trader_id) REFERENCES traders(id)
@@ -982,6 +988,8 @@ async function initDb() {
     // The whole feature collapses to a no-op when flag_lot_lock is off.
     'ALTER TABLE lots ADD COLUMN locked_at TEXT DEFAULT NULL',
     'ALTER TABLE lots ADD COLUMN locked_by TEXT DEFAULT NULL',
+    // Paid-out marker for the lot-wise Payments screen (see CREATE comment).
+    'ALTER TABLE lots ADD COLUMN paid_at TEXT DEFAULT NULL',
     // Immediate-payment flag — drives whether the per-lot early-payment
     // discount is calculated (only computed for lots flagged 1).
     'ALTER TABLE lots ADD COLUMN immediate_payment INTEGER DEFAULT 0',
