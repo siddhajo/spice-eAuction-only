@@ -27024,50 +27024,98 @@ async function whatsappSelectedPayments() {
 }
 
 // ── Bill of Supply (agriculturist purchase bill): WhatsApp ────
-// Recipient is the seller/agriculturist (traders master). Mirrors the
-// purchase-invoice document flow.
-async function whatsappBillOfSupply(auctionId, sellerName, billNo, totalAmt, traderId) {
+// Recipient is the seller/agriculturist (traders master).
+//
+// WHICH DOCUMENT gets attached follows the same flag the row icons obey,
+// flag_bos_purchase_bill (mirrored onto <body data-feat-bos-purchase-bill>):
+//   ON  → Bill of Supply PDF     (the 'pdf' row icon is the visible one)
+//   OFF → Commission Bill (BoS)  (the 'commission' row icon is the visible one)
+// In commission mode the Bill of Supply PDF is not the document this site
+// issues, so WhatsApp must not send it — the operator would be messaging
+// sellers a paper they never print.
+//
+// Neither of the two dialogs the manual download shows is raised here: the
+// layout comes from Settings → Invoice Settings (no `template` in the body,
+// so the server applies commission_bill_template), and the invoice-number
+// choice resolves silently — with the proforma flow on, 'Proforma' is the
+// only selectable option in that dialog anyway, so asking adds a click and
+// no decision. One click sends.
+// Deliberately the same predicate as the CSS that shows/hides the row icons
+// (`body:not([data-feat-bos-purchase-bill="1"]) .feat-bos-purchase-bill`), so
+// WhatsApp always attaches whatever document the screen is currently offering
+// to download — including before the flag has been applied, where CSS is
+// already showing the commission icon.
+function _bosCommissionMode() {
+  return document.body.getAttribute('data-feat-bos-purchase-bill') !== '1';
+}
+// The commission bill's purchaser block quotes a sales-invoice number. Same
+// answer pickCommissionInvoiceNo() would return, minus the dialog.
+function _commInvoiceNoAuto() {
+  return (typeof featProformaOn === 'function' && featProformaOn()) ? 'proforma' : 'original';
+}
+// Build the Commission Bill (BoS) PDF for ONE bill id. Reuses the bulk
+// endpoint with a single id so the output matches the "🧾 Commission Bill
+// Selected" toolbar button and the row download byte for byte.
+function _fetchCommissionBosBlob(billId) {
+  const body = { ids: [Number(billId)] };
+  const choice = _commInvoiceNoAuto();
+  return _fetchPdfBlob('/api/bills/commission-bos-bulk',
+    choice === 'proforma' ? Object.assign({}, body, { invoiceNo: 'proforma' }) : body);
+}
+async function whatsappBillOfSupply(auctionId, sellerName, billNo, totalAmt, traderId, billId) {
   try {
     const decoded = decodeURIComponent(sellerName || '');
     const decBill = decodeURIComponent(billNo || '');
-    const blob = await withOverlay('Building bill of supply…',
-      () => _fetchPdfBlob(`/api/bills/pdf/${auctionId}/${encodeURIComponent(decoded)}?billNo=${encodeURIComponent(decBill)}`)
+    const commission = _bosCommissionMode();
+    if (commission && !billId) { showError(new Error('This bill row carries no id — reload the Bills tab and try again.')); return; }
+    const label = commission ? 'COMMISSION BILL' : 'BILL OF SUPPLY';
+    const blob = await withOverlay(commission ? 'Building commission bill…' : 'Building bill of supply…',
+      () => (commission
+        ? _fetchCommissionBosBlob(billId)
+        : _fetchPdfBlob(`/api/bills/pdf/${auctionId}/${encodeURIComponent(decoded)}?billNo=${encodeURIComponent(decBill)}`))
     );
     const [phone, company, ano] = await Promise.all([
       _lookupSellerPhone({ traderId, name: decoded }), _getCompanyName(), _getAuctionAno(auctionId),
     ]);
     const amt = `₹${Number(totalAmt||0).toLocaleString('en-IN')}`;
-    const msg = `${ano || ''} ${decoded} ${company} BILL OF SUPPLY ${decBill} ${amt}`.trim();
-    const summary = `your BILL OF SUPPLY ${decBill} for ${amt} is attached.`;
-    await _waSendDocument({ blob, filename: `BillOfSupply_${decoded}_${decBill}.pdf`, phone, params: [decoded, summary, company], message: msg });
+    const msg = `${ano || ''} ${decoded} ${company} ${label} ${decBill} ${amt}`.trim();
+    const summary = `your ${label} ${decBill} for ${amt} is attached.`;
+    const filename = `${commission ? 'CommissionBoS' : 'BillOfSupply'}_${decoded}_${decBill}.pdf`;
+    await _waSendDocument({ blob, filename, phone, params: [decoded, summary, company], message: msg });
   } catch (e) { showError(e); }
 }
-// Bulk Bills of Supply — queue, one PDF per seller.
+// Bulk Bills of Supply — queue, one PDF per bill. Same document choice as the
+// single-row send above.
 async function whatsappSelectedBills() {
   const body = document.getElementById('bills-list');
   if (!body) { alert('No bills list'); return; }
   const checked = Array.from(body.querySelectorAll('.bill-select-cb:checked'));
   if (!checked.length) { alert('Tick one or more bills first'); return; }
   const rows = checked.map(cb => ({
+    id: Number(cb.value),
     auction_id: Number(cb.dataset.aid || 1),
     traderId: cb.dataset.tid || '',
     name: cb.dataset.name || '',
     bil: cb.dataset.bil || '',
     net: Number(cb.dataset.net || 0),
   }));
+  const commission = _bosCommissionMode();
+  const label = commission ? 'COMMISSION BILL' : 'BILL OF SUPPLY';
   const company = await _getCompanyName();
   const items = [];
   for (const r of rows) {
     try {
       const ano = await _getAuctionAno(r.auction_id);
-      const blob = await _fetchPdfBlob(`/api/bills/pdf/${r.auction_id}/${encodeURIComponent(r.name)}?billNo=${encodeURIComponent(r.bil)}`);
+      const blob = commission
+        ? await _fetchCommissionBosBlob(r.id)
+        : await _fetchPdfBlob(`/api/bills/pdf/${r.auction_id}/${encodeURIComponent(r.name)}?billNo=${encodeURIComponent(r.bil)}`);
       const phone = await _lookupSellerPhone({ traderId: r.traderId, name: r.name });
       const amt = `₹${Number(r.net||0).toLocaleString('en-IN')}`;
       items.push({
         name: r.name, phone, blob,
-        filename: `BillOfSupply_${r.name}_${r.bil}.pdf`,
-        message: `${ano || ''} ${r.name} ${company} BILL OF SUPPLY ${r.bil} ${amt}`.trim(),
-        params: [r.name, `your BILL OF SUPPLY ${r.bil} for ${amt} is attached.`, company],
+        filename: `${commission ? 'CommissionBoS' : 'BillOfSupply'}_${r.name}_${r.bil}.pdf`,
+        message: `${ano || ''} ${r.name} ${company} ${label} ${r.bil} ${amt}`.trim(),
+        params: [r.name, `your ${label} ${r.bil} for ${amt} is attached.`, company],
       });
     } catch (e) { console.warn('Skipping', r.name, e); }
   }
@@ -29731,7 +29779,9 @@ async function loadBills(opts){
           + iconBtn('commission','Download Commission Bill',`downloadBillCommissionBoS(${b.id},'${encodeURIComponent(b.name||'')}','${encodeURIComponent(b.bil||'')}')`,'feat-bos-commission')
           + iconBtn('edit','Edit bill',`openBillEdit(${JSON.stringify(b).replace(/"/g,'&quot;')})`)
           // b.trader_id disambiguates namesake sellers for the phone lookup.
-          + iconBtn('whatsapp','Send via WhatsApp',`whatsappBillOfSupply('${b.auction_id||1}','${encodeURIComponent(b.name||'')}','${encodeURIComponent(b.bil||'')}',${Number(b.net)||0},${b.trader_id != null ? Number(b.trader_id) : 'null'})`)
+          // b.id is needed for the Commission Bill render (keyed by bill id,
+          // not seller+bill no) — the document this sends in commission mode.
+          + iconBtn('whatsapp','Send via WhatsApp',`whatsappBillOfSupply('${b.auction_id||1}','${encodeURIComponent(b.name||'')}','${encodeURIComponent(b.bil||'')}',${Number(b.net)||0},${b.trader_id != null ? Number(b.trader_id) : 'null'},${Number(b.id)||0})`)
           + iconBtn('del','Delete bill',`delBill(${b.id})`) }
     ]
   });
