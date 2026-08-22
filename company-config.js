@@ -630,7 +630,11 @@ const DEFAULTS = [
   { key: 'tally_dealer_sale_intra', value: '', category: 'tally', label: 'Local Dealer (sales-side)',     type: 'text' },
 
   // RD Purchase ledgers
-  { key: 'tally_purchase_dealer',       value: '', category: 'tally', label: 'Trade Purchase From Dealer (base)',   type: 'text' },
+  { key: 'tally_purchase_dealer',            value: '', category: 'tally', label: 'Trade Purchase From Dealer (base)',            type: 'text' },
+  // Interstate counterpart of the base purchase ledger above. Used in the RD
+  // purchase voucher when the party GSTIN's state ≠ the company state; blank
+  // falls back to the local base ledger.
+  { key: 'tally_purchase_dealer_interstate', value: '', category: 'tally', label: 'Interstate Trade Purchase From Dealer (base)', type: 'text' },
   { key: 'tally_purchase_dealer_inter', value: '', category: 'tally', label: 'Interstate Dealer-Pur (purchase-side)',   type: 'text' },
   { key: 'tally_purchase_dealer_intra', value: '', category: 'tally', label: 'Local Dealer-Pur (purchase-side)',         type: 'text' },
 

@@ -5332,9 +5332,9 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             </div>
           </div>
           <div style="flex:1;min-width:200px">
-            <label style="display:block;font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px">Lots <span style="font-weight:400;color:var(--text3)">(comma separated)</span></label>
+            <label style="display:block;font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px">Lots <span style="font-weight:400;color:var(--text3)">(comma separated / ranges)</span></label>
             <div class="inp-clear-wrap" id="paylw-lots-wrap">
-              <input type="text" id="paylw-lots" placeholder="e.g. 12, 24, 108" oninput="payLwSyncClear('paylw-lots')" onkeydown="if(event.key==='Enter')payLwSearch()" style="width:100%;padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;font-family:monospace">
+              <input type="text" id="paylw-lots" placeholder="e.g. 010-020, 021, 022" title="Single lots and ranges: 010-020, 021, 022" oninput="payLwSyncClear('paylw-lots')" onkeydown="if(event.key==='Enter')payLwSearch()" style="width:100%;padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;font-family:monospace">
               <button type="button" class="inp-clear" title="Clear the lot numbers" onclick="payLwClearField('paylw-lots')">✕</button>
             </div>
           </div>

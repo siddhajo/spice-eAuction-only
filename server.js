@@ -13092,6 +13092,33 @@ app.get('/api/payments/:auctionId', requireView, (req, res) => {
 //   paid           already marked paid, so out of the payable set
 //   seller_filter  payable, but the Seller name box excluded it
 //   link_filter    payable, but the Show-unlinked toggle excluded it
+// Parse the lot-search box into match tokens. Accepts a comma/whitespace list
+// mixing single lots and ranges — e.g. "010-020, 021,022" → lots 10..20 plus
+// 21 and 22. Ranges are numeric and inclusive; "020-010" is normalised. A very
+// wide range is capped so a typo like "1-999999" can't blow up the query.
+//   • tokens   — every lot to match (ranges expanded), for the WHERE clause.
+//   • explicit — only the individually-typed lots, for the "why isn't lot X
+//     here?" report. Range-expanded numbers are left out so a gap inside a
+//     range isn't flagged as a missing lot.
+function parseLotSearch(raw) {
+  const RANGE_CAP = 10000;
+  const tokens = new Set();
+  const explicit = new Set();
+  for (const piece of String(raw || '').split(/[,\s]+/).map(s => s.trim()).filter(Boolean)) {
+    const m = /^(\d+)\s*-\s*(\d+)$/.exec(piece);
+    if (m) {
+      let lo = parseInt(m[1], 10), hi = parseInt(m[2], 10);
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      if (hi - lo > RANGE_CAP) hi = lo + RANGE_CAP;       // guard against typos
+      for (let n = lo; n <= hi; n++) tokens.add(String(n));
+    } else {
+      tokens.add(piece);
+      explicit.add(piece);
+    }
+  }
+  return { tokens: [...tokens], explicit: [...explicit] };
+}
+
 function explainMissingLots(db, auctionId, lotTokens, ctx) {
   if (!lotTokens || !lotTokens.length) return [];
   const { seller, link, finalIds } = ctx;
@@ -13172,11 +13199,10 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
     if (!['all', 'linked', 'unlinked'].includes(link)) {
       return res.status(400).json({ error: 'link must be one of: all, linked, unlinked' });
     }
-    // Lot tokens: split on comma/whitespace so a pasted list works whether
-    // the operator typed "12,13" or "12 13".
-    const lotTokens = [...new Set(
-      String(req.query.lots || '').split(/[,\s]+/).map(s => s.trim()).filter(Boolean)
-    )];
+    // Lot tokens: a comma/whitespace list that may mix single lots and ranges,
+    // e.g. "010-020, 021,022". Ranges are expanded for matching; only the
+    // individually-typed lots feed the missing-lot report.
+    const { tokens: lotTokens, explicit: explicitTokens } = parseLotSearch(req.query.lots);
 
     const where = [`l.auction_id = ?`, `l.amount > 0`, `(l.paid IS NULL OR l.paid = '')`];
     const params = [auctionId];
@@ -13293,8 +13319,10 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
       banksByTrader,
       legacyByTrader,
       // Per-token explanation for lot numbers that were asked for but are
-      // not in `lots` — "001 is withdrawn" beats an empty table.
-      missing: explainMissingLots(db, auctionId, lotTokens, { seller, link, finalIds }),
+      // not in `lots` — "001 is withdrawn" beats an empty table. Only the
+      // individually-typed lots are explained; gaps inside a range are not
+      // flagged as missing.
+      missing: explainMissingLots(db, auctionId, explicitTokens, { seller, link, finalIds }),
     });
   } catch (e) {
     console.error('lot-wise payments search error:', e);

@@ -1735,7 +1735,12 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
   const ainvPrefix = /[/\-]$/.test(_rdLogoCode) ? _rdLogoCode : (_rdLogoCode + '/');
   const sStateName = cfgGet(cfg, 'tally_home_state', 'Tamil Nadu');
 
-  const Purchase_LDR    = cfgGet(cfg, 'tally_purchase_dealer', 'Trade Purchase From Dealer');
+  // Purchase accounting ledger — LOCAL (base) vs INTERSTATE. The interstate
+  // variant is picked per row when the party GSTIN's state ≠ the company state
+  // (isIntra false); a blank interstate value falls back to the base ledger so
+  // a company that only set the single base key is unaffected.
+  const PurchaseLocal_LDR = cfgGet(cfg, 'tally_purchase_dealer', 'Trade Purchase From Dealer');
+  const PurchaseInter_LDR = cfgGet(cfg, 'tally_purchase_dealer_interstate', '') || PurchaseLocal_LDR;
   const Tax_CGST_IN     = cfgGet(cfg, 'tally_cgst_input', 'INPUT CGST 2.5%');
   const Tax_SGST_IN     = cfgGet(cfg, 'tally_sgst_input', 'INPUT SGST 2.5%');
   const Tax_IGST_IN     = cfgGet(cfg, 'tally_igst_input', 'INPUT IGST 5%');
@@ -1773,6 +1778,8 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
     const partyGstin = _hasGstinPrefix ? _g.slice(6, 21).toUpperCase() : _g.slice(0, 15).toUpperCase();
     const state      = xe(findState(partyGstin));
     const isIntra    = String(partyGstin).slice(0, 2) === String(intra);
+    // Local dealer → base ledger; interstate dealer → interstate ledger.
+    const Purchase_LDR = isIntra ? PurchaseLocal_LDR : PurchaseInter_LDR;
     const rates      = rateDetails(cfgNum(cfg, 'gst_goods', 5));
     // Voucher number / reference = <tradeno>/<purchase-inv-no>/<season>.
     // The purchase-inv-no comes from `purchases.invo` (the dealer's
