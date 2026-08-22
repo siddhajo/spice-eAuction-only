@@ -32646,15 +32646,15 @@ function renderPreInvoiceExcluded(ex){
   const host = document.getElementById('pi-excluded');
   if (!host) return;
   // Only relevant when the operator is filtering the WITHDRAWN (W) or the
-  // NOT-AUCTIONED (N) sale types — hidden entirely for L / I / E / All.
-  //   • Sale Type = Withdrawn (W) → show BOTH the Withdrawn and the
-  //     Not-Auctioned lots, each in its OWN section.
+  // NOT-AUCTIONED (N) sale types — hidden entirely for L / I / E / All. Each
+  // sale type shows ONLY its own section:
+  //   • Sale Type = Withdrawn (W) → show the Withdrawn lots only.
   //   • Sale Type = N/A (N)       → show the Not-Auctioned lots only.
   // Both are whole-trade panels — the server returns every withdrawn /
   // not-auctioned lot; this just chooses which to display for the filter.
   const sale = document.getElementById('pi-sale')?.value || '';
   const showWd = sale === 'W';
-  const showNa = sale === 'W' || sale === 'N';
+  const showNa = sale === 'N';
   const wd = (showWd && ex && ex.withdrawn) || [];
   const na = (showNa && ex && ex.notAuctioned) || [];
   if (!wd.length && !na.length) { host.style.display = 'none'; host.innerHTML = ''; return; }
