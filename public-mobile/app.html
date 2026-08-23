@@ -2,21 +2,69 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<!-- Pinch-to-zoom is deliberately ALLOWED. This used to carry
+     `maximum-scale=1.0, user-scalable=no`, which meant a user who found
+     the text small had no way at all to magnify it — not even the OS
+     gesture every other app gives them. The in-app Text Size control
+     below is the primary answer; this is the safety net. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#1D9E75">
 <link rel="manifest" href="/mobile/manifest.json">
 <title>Spice Auction</title>
+<!-- Text size — applied pre-paint so the app never flashes at one scale
+     and jumps to another. See the --zf block in the stylesheet. -->
+<script>
+(function(){
+  try{
+    var s = localStorage.getItem('sa_textsize');
+    if (s && s !== 'md') document.documentElement.setAttribute('data-textsize', s);
+  }catch(e){}
+})();
+</script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
+
+/* ══════════════════════════════════════════════════════════════════
+   TEXT SIZE — whole-UI scale for readability
+   ══════════════════════════════════════════════════════════════════
+   This screen has ~190 hardcoded px sizes, some as small as 8-9px, and
+   most of them inline in style="" attributes or JS template strings.
+   Rather than edit each one, the whole document is zoomed: `zoom`
+   multiplies every px length (text, icons, row heights, padding), so
+   proportions hold and nothing clips.
+
+   Viewport units must be compensated. Under zoom a `dvh` still resolves
+   against the REAL viewport and is then multiplied by the zoom, so the
+   full-height `.screen` at 145% would paint 1.45x taller than the phone
+   and the bottom nav would fall off the display. Every viewport length
+   here is written `calc(<n>dvh / var(--zf))`, which cancels it exactly.
+
+   At the default --zf:1 the division is a no-op, so an install that
+   never touches the setting looks exactly as it did before.
+   ══════════════════════════════════════════════════════════════════ */
+:root{ --zf: 1; }
+html[data-textsize="lg"]  { --zf: 1.15; }
+html[data-textsize="xl"]  { --zf: 1.30; }
+html[data-textsize="xxl"] { --zf: 1.45; }
+html{ zoom: var(--zf); }
+
 html,body{height:100%;overflow:hidden}
-:root{--bg:#f6f5f1;--bg2:#fff;--text:#1a1a18;--text2:#555;--text3:#999;--border:#e8e6e1;--border2:#d5d2cb;--green:#0d7c5f;--green2:#0a6a50;--green-light:#e8f5f0;--red:#c0392b;--orange:#d4820a;--gold:#c9950c;--card-even:#f2f8f5;--input-bg:#fff;--modal-bg:#f6f5f1;--stat-bg:linear-gradient(135deg,#0d7c5f 0%,#0a6a50 50%,#085540 100%);--shadow:0 1px 3px rgba(0,0,0,.06),0 2px 8px rgba(0,0,0,.04);--shadow-lg:0 8px 30px rgba(0,0,0,.12);--radius:10px;--appbar:linear-gradient(135deg,#0d7c5f 0%,#0a6a50 40%,#085540 100%)}
-[data-theme="dark"]{--bg:#141413;--bg2:#1e1e1c;--text:#e8e6e1;--text2:#aaa;--text3:#666;--border:#2e2e2a;--border2:#3a3a35;--green:#1dab82;--green2:#18946f;--green-light:#162e25;--card-even:#1a2420;--input-bg:#262624;--modal-bg:#1a1a18;--stat-bg:linear-gradient(135deg,#0d5c48 0%,#094a3a 100%);--shadow:0 2px 8px rgba(0,0,0,.25);--shadow-lg:0 8px 30px rgba(0,0,0,.4);--appbar:linear-gradient(135deg,#0a5c48 0%,#084a3a 100%)}
+/* Text colour ramp: --text (primary) > --text2 (secondary) > --text3 (hint).
+   --text3 was #999 light / #666 dark, both ~2.9:1 against their card — under
+   the 4.5:1 minimum for readable text, and the main reason small print looked
+   washed out. It is also the most-used text colour here (61 uses), so the one
+   token fixes the whole app. The replacements clear 4.5:1 on BOTH the card
+   (--bg2) and the page tint (--bg), and stay a clear step lighter than
+   --text2, so the hierarchy still reads. --text and --text2 are untouched:
+   at 13-17:1 and 7.2-7.5:1 they had no legibility problem to solve. */
+:root{--bg:#f6f5f1;--bg2:#fff;--text:#1a1a18;--text2:#555;--text3:#707070;--border:#e8e6e1;--border2:#d5d2cb;--green:#0d7c5f;--green2:#0a6a50;--green-light:#e8f5f0;--red:#c0392b;--orange:#d4820a;--gold:#c9950c;--card-even:#f2f8f5;--input-bg:#fff;--modal-bg:#f6f5f1;--stat-bg:linear-gradient(135deg,#0d7c5f 0%,#0a6a50 50%,#085540 100%);--shadow:0 1px 3px rgba(0,0,0,.06),0 2px 8px rgba(0,0,0,.04);--shadow-lg:0 8px 30px rgba(0,0,0,.12);--radius:10px;--appbar:linear-gradient(135deg,#0d7c5f 0%,#0a6a50 40%,#085540 100%)}
+[data-theme="dark"]{--bg:#141413;--bg2:#1e1e1c;--text:#e8e6e1;--text2:#aaa;--text3:#8a8a8a;--border:#2e2e2a;--border2:#3a3a35;--green:#1dab82;--green2:#18946f;--green-light:#162e25;--card-even:#1a2420;--input-bg:#262624;--modal-bg:#1a1a18;--stat-bg:linear-gradient(135deg,#0d5c48 0%,#094a3a 100%);--shadow:0 2px 8px rgba(0,0,0,.25);--shadow-lg:0 8px 30px rgba(0,0,0,.4);--appbar:linear-gradient(135deg,#0a5c48 0%,#084a3a 100%)}
 body{font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,sans-serif;background:var(--bg);color:var(--text);-webkit-tap-highlight-color:transparent;letter-spacing:-.01em}
-.screen{display:none;flex-direction:column;height:100dvh;position:absolute;top:0;left:0;right:0;bottom:0}
+.screen{display:none;flex-direction:column;height:calc(100dvh / var(--zf));position:absolute;top:0;left:0;right:0;bottom:0}
 .screen.active{display:flex}
-#s-lots,#s-mylots{height:calc(100dvh - 56px)}
+#s-lots,#s-mylots{height:calc(calc(100dvh / var(--zf)) - 56px)}
 
 /* ── APPBAR ── */
 .appbar{background:var(--appbar);padding:10px 16px;display:flex;align-items:center;gap:8px;flex-shrink:0;min-height:50px;box-shadow:0 4px 20px rgba(13,124,95,.3);position:relative;z-index:2}
@@ -116,15 +164,22 @@ select:focus{border-color:var(--green)}
 .sr{background:var(--bg2);border-radius:var(--radius);border:1px solid var(--border);box-shadow:var(--shadow-lg);margin-top:4px;max-height:240px;overflow-y:auto}
 .si{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;transition:all .15s}.si:active{background:var(--green-light);padding-left:16px}.si:last-child{border-bottom:none}
 .si.add-new{color:var(--green);font-weight:700;font-size:12px;display:flex;align-items:center;gap:6px}
-.sn{font-size:13px;font-weight:600}.sn mark{background:none;color:var(--green);font-weight:800}
-.sd{font-size:11px;color:var(--text3);margin-top:2px}
+.sn{font-size:14px;font-weight:700}.sn mark{background:none;color:var(--green);font-weight:800}
+/* Seller identity line (PHONE / PAN / GSTIN / PLACE). Was 11px in --text3,
+   which is the smallest, faintest combination on the screen and sat on the
+   one row an operator has to read carefully before picking a seller — pick
+   the wrong row here and the lot is booked against the wrong person.
+   12.5px in --text2 for the frame; the values themselves are --text. */
+.sd{font-size:12.5px;color:var(--text2);margin-top:2px}
 /* Seller search result detail: PHONE + PAN are always on show, GSTIN + PLACE
    sit behind the row's "+ MORE" chip. State is per results-list (flipping one
    chip flips them all) and remembered in localStorage, so an operator who
    wants the full line every time only says so once. */
 .sr .sd-x{display:none}
 .sr.sd-open .sd-x{display:inline}
-.sd-tog{background:var(--bg);border:1px solid var(--border2);border-radius:9px;color:var(--text2);font-family:inherit;font-size:9px;font-weight:800;letter-spacing:.4px;padding:2px 8px;margin-left:6px;cursor:pointer;vertical-align:middle}
+/* 9px was below the readable floor for a tappable control; 10.5px with a
+   taller hit area keeps it compact without being a squint-and-guess. */
+.sd-tog{background:var(--bg);border:1px solid var(--border2);border-radius:9px;color:var(--text2);font-family:inherit;font-size:10.5px;font-weight:800;letter-spacing:.4px;padding:3px 9px;margin-left:6px;cursor:pointer;vertical-align:middle}
 .sd-tog::after{content:'+ MORE'}
 .sr.sd-open .sd-tog::after{content:'\2212 LESS'}
 .toast{position:fixed;bottom:110px;left:14px;right:14px;background:var(--green);color:#fff;padding:12px 16px;border-radius:var(--radius);font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px;transform:translateY(100px);opacity:0;transition:all .35s cubic-bezier(.34,1.56,.64,1);z-index:100;box-shadow:0 8px 28px rgba(0,0,0,.18);backdrop-filter:blur(4px)}
@@ -191,7 +246,7 @@ select:focus{border-color:var(--green)}
 .br-filter:focus{outline:none;border-color:var(--green)}
 /* Rows scroll inside the card so a big depot doesn't stretch the page. The
    opaque background is what the sticky header sits on as rows pass under it. */
-.br-rows{max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;background:var(--bg2)}
+.br-rows{max-height:calc(46vh / var(--zf));overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;background:var(--bg2)}
 .br-count{font-size:9px;color:var(--text3);font-weight:700;text-align:right;padding-top:5px;letter-spacing:.3px}
 .br-empty{font-size:11px;color:var(--text3);padding:6px 0;font-style:italic}
 .lot-card{background:var(--bg2);border-radius:var(--radius);border:1px solid var(--border);padding:12px;margin-bottom:6px;box-shadow:var(--shadow);transition:all .25s}
@@ -237,7 +292,7 @@ select:focus{border-color:var(--green)}
 /* ── MODALS ── */
 .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.45);z-index:1000;display:none;align-items:center;justify-content:center;backdrop-filter:blur(3px);padding:20px}
 .modal-overlay.show{display:flex}
-.modal{background:var(--bg);border-radius:16px;width:100%;max-width:480px;max-height:80vh;display:flex;flex-direction:column;animation:modalUp .3s ease-out;overflow:hidden}
+.modal{background:var(--bg);border-radius:16px;width:100%;max-width:480px;max-height:calc(80vh / var(--zf));display:flex;flex-direction:column;animation:modalUp .3s ease-out;overflow:hidden}
 @keyframes modalUp{from{transform:translateY(30px);opacity:0}to{transform:translateY(0);opacity:1}}
 .modal-hdr{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--bg2);border-radius:16px 16px 0 0;flex-shrink:0}
 .modal-hdr h2{font-size:15px;font-weight:700}
@@ -268,7 +323,7 @@ select:focus{border-color:var(--green)}
 
 /* ── RESPONSIVE ── */
 @media(max-width:360px){.scroll{padding:10px}.ml-fixed{padding:10px 10px 0}.ml-scroll{padding:0 10px 10px}input[type=text],input[type=password],input[type=tel],input[type=email],input[type=number]{height:38px;font-size:13px}select{height:38px;font-size:13px}.btn{height:40px;font-size:13px}.lot-stat{padding:6px 2px}.lot-stat .val{font-size:12px}.lot-stat .lbl{font-size:8px}.fr{gap:6px}.lot-chip{min-width:36px;height:26px;font-size:10px}}
-@media(max-height:500px){.sb{display:none}.bnav{display:none!important}#s-lots,#s-mylots{height:100dvh}}
+@media(max-height:500px){.sb{display:none}.bnav{display:none!important}#s-lots,#s-mylots{height:calc(100dvh / var(--zf))}}
 @media(min-width:600px){.screen{max-width:480px;margin:0 auto;left:0;right:0;border-left:1px solid var(--border);border-right:1px solid var(--border)}.bnav{max-width:480px;margin:0 auto;left:0;right:0}}
 </style>
 </head>
@@ -355,7 +410,7 @@ select:focus{border-color:var(--green)}
         <div id="le-bank" style="display:none;margin-bottom:6px">
           <div style="display:flex;gap:4px;align-items:center">
             <select id="le-bank-select" style="flex:1;height:32px;border-radius:6px;border:1px solid var(--border2);padding:0 6px;font-size:11px;font-family:inherit;background:var(--input-bg);color:var(--text)" onchange="onBankSelect(this)">
-              <option value="">No bank</option>
+              <option value="">Select your bank</option>
             </select>
             <button onclick="editSelectedBank()" style="background:none;border:none;color:var(--green);cursor:pointer;font-size:13px" title="Edit bank">✎</button>
             <button onclick="deleteSelectedBank()" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px" title="Delete bank">✕</button>
@@ -510,6 +565,10 @@ select:focus{border-color:var(--green)}
 
 <div class="mo" id="menu" onclick="toggleMenu()"><div class="md" onclick="event.stopPropagation()">
     <div class="mi" onclick="toggleDarkMode()"><span id="dm-icon">🌙</span> <span id="dm-label">Dark Mode</span></div>
+    <!-- Cycles 100 → 115 → 130 → 145 → 100. Scales the whole UI; see the
+         --zf block in the stylesheet. Sits at the top of the menu with
+         Dark Mode because it's a display preference, not a lot action. -->
+    <div class="mi" onclick="cycleTextSize()">🔠 Text size: <span id="ts-label">Normal</span></div>
     <div class="mi" id="menu-undo" style="display:none" onclick="showUndoHistory()">↩ Undo History</div>
     <div class="mi" onclick="openReassign()">🔀 Reassign Lots<span id="menu-reassign-badge" style="display:none;margin-left:6px;background:var(--red);color:#fff;font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px"></span></div>
     <div class="mi" onclick="closeDepotMobile()">⏏ Close Depot</div>
@@ -528,14 +587,14 @@ select:focus{border-color:var(--green)}
 <div class="mo" id="bt-picker" onclick="btPickerCancel()">
   <div onclick="event.stopPropagation()" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:86%;max-width:340px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-lg);overflow:hidden">
     <div style="padding:13px 16px;font-weight:700;border-bottom:1px solid var(--border)">Select printer</div>
-    <div id="bt-picker-list" style="max-height:50vh;overflow-y:auto"></div>
+    <div id="bt-picker-list" style="max-height:calc(50vh / var(--zf));overflow-y:auto"></div>
     <div class="mi dg" style="text-align:center" onclick="btPickerCancel()">Cancel</div>
   </div>
 </div>
 
 <div class="screen" id="s-mylots">
   <div class="appbar"><h1 id="ml-title"><img class="appbar-logo" src="" style="display:none"><span id="ml-title-text">My Lots</span></h1><span class="badge" id="ml-user"></span><button class="btn-icon" onclick="refreshConfig();loadMyLots();toast('Refreshed',false)" title="Refresh">🔄</button><button class="btn-icon" onclick="toggleMenu()" title="Open menu">&#x22EE;</button></div>
-  <div id="ml-alloc-bar" style="display:none;background:var(--bg2);border-bottom:1px solid var(--border);padding:8px 16px;max-height:40vh;overflow-y:auto;-webkit-overflow-scrolling:touch"></div>
+  <div id="ml-alloc-bar" style="display:none;background:var(--bg2);border-bottom:1px solid var(--border);padding:8px 16px;max-height:calc(40vh / var(--zf));overflow-y:auto;-webkit-overflow-scrolling:touch"></div>
   <div class="ml-fixed">
     <div class="lot-stats">
       <div class="lot-stat"><div class="val" id="ml-cnt">0</div><div class="lbl">Lots</div></div>
@@ -614,7 +673,7 @@ select:focus{border-color:var(--green)}
         </div>
         <div style="display:flex;gap:6px;align-items:center">
           <select id="ed-bank-select" style="flex:1;height:36px;border-radius:6px;border:1px solid var(--border2);padding:0 8px;font-size:12px;font-family:inherit;background:var(--input-bg);color:var(--text)" onchange="onEditBankSelect(this)">
-            <option value="">No bank account</option>
+            <option value="">Select your bank</option>
           </select>
           <button onclick="editSelectedEditBank()" style="background:none;border:none;color:var(--green);cursor:pointer;font-size:15px" title="Edit selected bank account">✎</button>
           <button onclick="deleteSelectedEditBank()" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px" title="Delete selected bank account">✕</button>
@@ -872,7 +931,13 @@ setInterval(function(){if(document.getElementById('s-lots').classList.contains('
 // when a pending request has been approved/denied.
 setInterval(function(){if(token&&aid&&(document.getElementById('s-lots').classList.contains('active')||document.getElementById('s-mylots').classList.contains('active')))pollReassignDecisions()},10000);
 
-async function doLogin(forceLogin){const u=document.getElementById('l-user').value.trim(),p=document.getElementById('l-pass').value,er=document.getElementById('l-err');er.innerHTML='';if(!u||!p){er.innerHTML='<div class="eb">Enter username and password</div>';return}document.getElementById('l-btn').disabled=true;try{const r=await fetch(B+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p,force:forceLogin||false})});const d=await r.json();if(r.status===409&&d.error==='already_logged_in'){er.innerHTML='<div class="eb" style="text-align:center">'+d.message+'<br><button onclick="doLogin(true)" style="margin-top:8px;background:#1D9E75;color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Yes, switch to this device</button></div>';return}if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Login failed')+'</div>';return}token=d.token;user=d.user.username;userBranch=d.user.branch||'';userRole=d.user.role||'user';localStorage.setItem('sa_token',token);goSession()}catch(e){er.innerHTML='<div class="eb">Could not connect</div>'}finally{document.getElementById('l-btn').disabled=false}}
+// A 409 means that username is already signed in somewhere. There is no
+// "switch to this device" override — the block is deliberate. The server's
+// message names the device and how long ago it was active; the way out is
+// to sign out there, or have an admin clear it from Users → Sign out.
+// `prev_token` lets this phone re-authenticate against its OWN live
+// session (app reinstalled, storage cleared) without tripping the block.
+async function doLogin(){const u=document.getElementById('l-user').value.trim(),p=document.getElementById('l-pass').value,er=document.getElementById('l-err');er.innerHTML='';if(!u||!p){er.innerHTML='<div class="eb">Enter username and password</div>';return}document.getElementById('l-btn').disabled=true;try{const r=await fetch(B+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p,prev_token:localStorage.getItem('sa_token')||''})});const d=await r.json();if(r.status===409&&d.error==='already_logged_in'){er.innerHTML='<div class="eb">'+_esc(d.message||('Already '+u+' is logged in'))+'</div>';return}if(!r.ok){er.innerHTML='<div class="eb">'+_esc(d.error||'Login failed')+'</div>';return}token=d.token;user=d.user.username;userBranch=d.user.branch||'';userRole=d.user.role||'user';localStorage.setItem('sa_token',token);goSession();if(d.notice)toast(d.notice)}catch(e){er.innerHTML='<div class="eb">Could not connect</div>'}finally{document.getElementById('l-btn').disabled=false}}
 function doLogout(){fetch(B+'/api/auth/logout',{method:'POST',headers:ah()}).catch(()=>{});token='';user='';localStorage.removeItem('sa_token');toggleMenu(true);show('s-login')}
 async function tryAutoLogin(){if(!token){loadTitle();return}try{const r=await fetch(B+'/api/auth/me',{headers:ah()});if(r.ok){const d=await r.json();user=d.user.username;userBranch=d.user.branch||'';userRole=d.user.role||'user';goSession()}else{token='';localStorage.removeItem('sa_token');loadTitle()}}catch(e){loadTitle()}}
 var cfgSampleWeight=0,cfgShowMoisture=false,cfgShowReservedPrice=false,cfgDefaultGunny=0,cfgImmediateReserve=false,cfgUserGunny=false,cfgShowCropReceipt=false,cfgCropReceiptStart='',cfgWhatsapp=false,cfgSellerAtBottom=false,cfgShowSample=true,cfgShowGross=true;
@@ -1456,8 +1521,14 @@ function updProgress(){
 // see .sd-x / .sd-tog in the stylesheet and toggleSellerDetail() below.
 function fmtSellerDetail(t){
   var esc=function(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');};
-  var lab=function(l,v){return '<span style="color:var(--text3);font-weight:600">'+l+'</span> <b style="color:var(--text)">'+esc(v)+'</b>';};
-  var SEP=' <span style="opacity:.35">|</span> ';
+  // Labels are --text2, NOT --text3. On this white card --text3 (#999) gives
+  // 2.9:1 against the background — under the 4.5:1 minimum for text this
+  // size, which is why PHONE/PAN read as washed out. --text2 (#555) is
+  // 7.5:1 and still clearly subordinate to the value beside it.
+  var lab=function(l,v){return '<span style="color:var(--text2);font-weight:700">'+l+'</span> <b style="color:var(--text);font-weight:700">'+esc(v)+'</b>';};
+  // The divider was opacity .35 over already-faint text, which made it
+  // near-invisible and let PHONE and PAN run together as one string.
+  var SEP=' <span style="color:var(--border2)">|</span> ';
   var vis=[], extra=[];
   if(t.tel) vis.push(lab('PHONE', t.tel));
   if(t.pan) vis.push(lab('PAN', t.pan));
@@ -1491,7 +1562,7 @@ function searchTrader(q){clearTimeout(stm);const el=document.getElementById('le-
 // Try online first, fall back to cache
 var ts=[];
 try{const r=await fetch(B+'/api/traders?q='+encodeURIComponent(q),{headers:ah()});const d=await r.json();ts=Array.isArray(d)?d:(d.traders||[]);ts.forEach(cacheTrader)}catch(e){ts=searchTraderCache(q)}
-const qu=q.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');let html=ts.map((t,i)=>{const h=(t.name||'').replace(new RegExp('('+qu+')','gi'),'<mark>$1</mark>');const loc=[t.ppla,t.pin].filter(Boolean).join(', ');const info=[t.cr,(t.pan?'PAN - '+t.pan:''),t.tel].filter(Boolean).join(' | ');return'<div class="si" data-idx="'+i+'"><div class="sn">'+h+'</div><div class="sd" style="margin-top:3px;padding:4px 7px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;line-height:1.7;word-break:break-word">'+fmtSellerDetail(t)+'</div></div>'}).join('');const isPhone=/^\d{4,}$/.test(q.trim());if(!ts.length){html+='<div class="si add-new" onclick="openSellerModal(\''+(isPhone?'':q.toUpperCase().replace(/'/g,"\\'"))+'\',\''+(isPhone?q.trim():'')+'\')">&#43; Add new seller'+(isPhone?'':' &quot;'+q.toUpperCase()+'&quot;')+'</div>'}else if(!isPhone){html+='<div class="si add-new" onclick="openSellerModal(\''+q.toUpperCase().replace(/'/g,"\\'")+'\',\'\')">&#43; Add new seller &quot;'+q.toUpperCase()+'&quot;</div>'}el.innerHTML=html;applySellerDetailPref(el);el.style.display='block';el._traders=ts;el.querySelectorAll('.si:not(.add-new)').forEach(item=>{item.onclick=function(){pickTrader(el._traders[parseInt(this.dataset.idx)])}})},200)}
+const qu=q.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');let html=ts.map((t,i)=>{const h=(t.name||'').replace(new RegExp('('+qu+')','gi'),'<mark>$1</mark>');const loc=[t.ppla,t.pin].filter(Boolean).join(', ');const info=[t.cr,(t.pan?'PAN - '+t.pan:''),t.tel].filter(Boolean).join(' | ');return'<div class="si" data-idx="'+i+'"><div class="sn">'+h+'</div><div class="sd" style="margin-top:3px;padding:5px 9px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;line-height:1.7;word-break:break-word">'+fmtSellerDetail(t)+'</div></div>'}).join('');const isPhone=/^\d{4,}$/.test(q.trim());if(!ts.length){html+='<div class="si add-new" onclick="openSellerModal(\''+(isPhone?'':q.toUpperCase().replace(/'/g,"\\'"))+'\',\''+(isPhone?q.trim():'')+'\')">&#43; Add new seller'+(isPhone?'':' &quot;'+q.toUpperCase()+'&quot;')+'</div>'}else if(!isPhone){html+='<div class="si add-new" onclick="openSellerModal(\''+q.toUpperCase().replace(/'/g,"\\'")+'\',\'\')">&#43; Add new seller &quot;'+q.toUpperCase()+'&quot;</div>'}el.innerHTML=html;applySellerDetailPref(el);el.style.display='block';el._traders=ts;el.querySelectorAll('.si:not(.add-new)').forEach(item=>{item.onclick=function(){pickTrader(el._traders[parseInt(this.dataset.idx)])}})},200)}
 
 function pickTrader(t){selT=t;document.getElementById('le-res').style.display='none';document.getElementById('le-sw').style.display='none';
 var loc=[t.ppla,t.pin].filter(Boolean).join(', ');
@@ -2265,7 +2336,7 @@ var edCrptOpen=document.getElementById('ed-crpt');if(edCrptOpen)edCrptOpen.value
 function closeEdit(){document.getElementById('edit-modal').classList.remove('show');editId=null;editTraderId=null}
 function editSellerMode(){document.getElementById('ed-seller-card').style.display='none';document.getElementById('ed-seller-search').style.display='block';document.getElementById('ed-seller-input').value='';document.getElementById('ed-seller-input').focus()}
 let edStm;
-function searchEditSeller(q){clearTimeout(edStm);var el=document.getElementById('ed-seller-res');if(q.length<2){el.style.display='none';return}edStm=setTimeout(async function(){try{var r=await fetch(B+'/api/traders?q='+encodeURIComponent(q),{headers:ah()});var d=await r.json();var ts=Array.isArray(d)?d:(d.traders||[]);var qu=q.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');el.innerHTML=ts.map(function(t,i){var h=(t.name||'').replace(new RegExp('('+qu+')','gi'),'<mark>$1</mark>');var loc=[t.ppla,t.pin].filter(Boolean).join(', ');var info=[t.cr,(t.pan?'PAN - '+t.pan:''),t.tel].filter(Boolean).join(' | ');return'<div class="si" data-idx="'+i+'"><div class="sn">'+h+'</div><div class="sd" style="margin-top:3px;padding:4px 7px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;line-height:1.7;word-break:break-word">'+fmtSellerDetail(t)+'</div></div>'}).join('')||'<div style="padding:10px;color:var(--text3);font-size:12px">No sellers found</div>';applySellerDetailPref(el);el.style.display='block';el._traders=ts;el.querySelectorAll('.si').forEach(function(item){item.onclick=function(){pickEditSeller(el._traders[parseInt(this.dataset.idx)])}})}catch(e){}},200)}
+function searchEditSeller(q){clearTimeout(edStm);var el=document.getElementById('ed-seller-res');if(q.length<2){el.style.display='none';return}edStm=setTimeout(async function(){try{var r=await fetch(B+'/api/traders?q='+encodeURIComponent(q),{headers:ah()});var d=await r.json();var ts=Array.isArray(d)?d:(d.traders||[]);var qu=q.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');el.innerHTML=ts.map(function(t,i){var h=(t.name||'').replace(new RegExp('('+qu+')','gi'),'<mark>$1</mark>');var loc=[t.ppla,t.pin].filter(Boolean).join(', ');var info=[t.cr,(t.pan?'PAN - '+t.pan:''),t.tel].filter(Boolean).join(' | ');return'<div class="si" data-idx="'+i+'"><div class="sn">'+h+'</div><div class="sd" style="margin-top:3px;padding:5px 9px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;line-height:1.7;word-break:break-word">'+fmtSellerDetail(t)+'</div></div>'}).join('')||'<div style="padding:10px;color:var(--text3);font-size:12px">No sellers found</div>';applySellerDetailPref(el);el.style.display='block';el._traders=ts;el.querySelectorAll('.si').forEach(function(item){item.onclick=function(){pickEditSeller(el._traders[parseInt(this.dataset.idx)])}})}catch(e){}},200)}
 function pickEditSeller(t){editTraderId=t.id;editLotBankId=null;document.getElementById('ed-seller-name').textContent=t.name;document.getElementById('ed-seller-card').style.display='flex';document.getElementById('ed-seller-search').style.display='none';document.getElementById('ed-seller-res').style.display='none';var cr=(t.cr||'').trim();var grade=(cr.toUpperCase().startsWith('GSTIN') && String(t.aadhar||'').trim()!=='')?'2':'1';document.getElementById('ed-grade').value=grade;loadEditBanks(t.id)}
 
 async function loadEditBanks(traderId){
@@ -2282,7 +2353,7 @@ async function loadEditBanks(traderId){
 function renderEditBankList(){
   var sel=document.getElementById('ed-bank-select');
   var info=document.getElementById('ed-bank-info');
-  sel.innerHTML='<option value="">No bank account</option>';
+  sel.innerHTML='<option value="">Select your bank</option>';
   editBanks.forEach(function(b){
     var label=b.label?' ('+b.label+')':'';
     var opt=document.createElement('option');
@@ -2290,7 +2361,11 @@ function renderEditBankList(){
     // Match the desktop format: "<acctnum> · <bank name> · <account type>"
     // (label appended when set).
     opt.textContent=[b.acctnum,b.bank_name,b.account_type].filter(Boolean).join(' · ')+label;
-    if(editLotBankId?b.id==editLotBankId:b.is_default)opt.selected=true;
+    // Only the account the lot was actually SAVED with is pre-selected. A lot
+    // with no bank_id stays on "Select your bank" — it must not inherit the
+    // seller's default, or editing an unrelated field would quietly attach a
+    // payout account nobody chose. Same rule as the entry form.
+    if(editLotBankId&&b.id==editLotBankId)opt.selected=true;
     sel.appendChild(opt);
   });
   onEditBankSelect(sel);
@@ -2486,6 +2561,33 @@ function toggleDarkMode(){
 }
 if(localStorage.getItem('sa_dark')==='dark'){document.documentElement.setAttribute('data-theme','dark')}
 
+// ── TEXT SIZE ──────────────────────────────────────────────────────
+// Four steps applied by zooming the document, so every px length grows
+// — including the 8-10px labels that inline styles set directly and no
+// class-based rule could reach. Per-phone, remembered in localStorage.
+var _TEXT_SIZES=[{id:'md',pct:100,name:'Normal'},{id:'lg',pct:115,name:'Large'},
+                 {id:'xl',pct:130,name:'Larger'},{id:'xxl',pct:145,name:'Largest'}];
+function applyTextSize(id,silent){
+  var step=_TEXT_SIZES.filter(function(s){return s.id===id})[0]||_TEXT_SIZES[0];
+  // 'md' carries no attribute at all, so --zf stays 1 and the app renders
+  // exactly as it did before this existed.
+  if(step.id==='md') document.documentElement.removeAttribute('data-textsize');
+  else document.documentElement.setAttribute('data-textsize',step.id);
+  try{localStorage.setItem('sa_textsize',step.id)}catch(e){}
+  var lbl=document.getElementById('ts-label');
+  if(lbl) lbl.textContent=step.name+(step.pct===100?'':' ('+step.pct+'%)');
+  if(!silent&&typeof toast==='function') toast('Text size: '+step.name);
+}
+function cycleTextSize(){
+  var cur=document.documentElement.getAttribute('data-textsize')||'md';
+  var i=0; for(var k=0;k<_TEXT_SIZES.length;k++){if(_TEXT_SIZES[k].id===cur){i=k;break}}
+  applyTextSize(_TEXT_SIZES[(i+1)%_TEXT_SIZES.length].id);
+  toggleMenu(true);
+}
+// The <head> script already set the attribute pre-paint; this only syncs
+// the menu label once the DOM exists.
+applyTextSize(localStorage.getItem('sa_textsize')||'md',true);
+
 // ── TRADER CACHE (for offline search) ──
 function cacheTrader(t) {
   var cache = JSON.parse(localStorage.getItem('sa_trader_cache') || '{}');
@@ -2524,11 +2626,13 @@ async function fetchSellerTemplate(traderId) {
 function renderBankList() {
   var sel = document.getElementById('le-bank-select');
   var info = document.getElementById('le-bank-info');
-  sel.innerHTML = '<option value="">No bank account</option>';
-  // Auto-select the seller's bank when they have one: prefer the flagged
-  // default, else the first account — so a seller with a bank never lands on
-  // "No bank account" and force the operator to pick it manually.
-  var defaultBank = sellerBanks.find(function(b){ return b.is_default; }) || sellerBanks[0];
+  // The picker ALWAYS opens on "Select your bank" — never pre-armed with the
+  // seller's default, and never reading "No bank account". Sellers routinely
+  // hold several accounts and a silently pre-selected default is how a lot
+  // ends up paid into the wrong one, so the operator has to choose
+  // deliberately. Empty value → bank_id saves as null and the seller's stored
+  // default is left untouched. Matches the desktop Lot Entry picker.
+  sel.innerHTML = '<option value="">Select your bank</option>';
   sellerBanks.forEach(function(b) {
     var label = b.label ? ' (' + b.label + ')' : '';
     var opt = document.createElement('option');
@@ -2536,7 +2640,6 @@ function renderBankList() {
     // Match the desktop format: "<acctnum> · <bank name> · <account type>"
     // (label appended when set).
     opt.textContent = [b.acctnum, b.bank_name, b.account_type].filter(Boolean).join(' · ') + label;
-    if (defaultBank && b.id === defaultBank.id) opt.selected = true;
     sel.appendChild(opt);
   });
   onBankSelect(sel);

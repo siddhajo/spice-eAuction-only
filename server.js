@@ -22,6 +22,7 @@ const { DBF_EXPORTS } = require('./dbf-exports');
 const license = require('./license');
 const { REPORTS: LORRY_REPORTS } = require('./lorry-reports');
 const { REPORTS: SPICE_BOARD_REPORTS, getReportFilters: getSpiceBoardFilters } = require('./spice-board-reports');
+const { DOCUMENTS: DOC_CATALOG, GROUPS: DOC_GROUPS } = require('./document-catalog');
 const { mountMobile } = require('./mobile-bridge');
 const { syncLotsFromTrader } = require('./trader-lot-sync');
 // Defensive resolution — see _company-identity-fallback.js. Uses the
@@ -521,6 +522,159 @@ const requireUserManage    = requirePermission('user_manage');
 const requireExport        = requirePermission('export');
 
 // ══════════════════════════════════════════════════════════════
+// SESSION POLICY — concurrent-login control
+// ══════════════════════════════════════════════════════════════
+// Two rules, both configurable under Settings → Logins & Sessions:
+//
+//   1. single_session — one active sign-in per username. A second person
+//      typing the same username is refused with 409 `already_logged_in`
+//      and told who holds it. There is no override button: an admin
+//      clears a stuck session from Users → Sign out.
+//
+//   2. admin_login_alert — when an admin signs in while another admin is
+//      already online, BOTH are told. The one signing in gets the notice
+//      inline in the login response; the one already online gets a row in
+//      session_alerts, drained by the /api/session-alerts poll.
+//
+// "Active" is deliberately not "a session row exists". Browsers get
+// closed without logging out and those rows survive for 30 days, so a
+// literal check would lock a user out of their own account until an
+// admin intervened. A session only counts while its last request is
+// inside the idle window (session_idle_minutes, default 15).
+//
+// Both login handlers — /api/login here and /api/auth/login in
+// mobile-bridge.js — run these same helpers, so the desktop and the
+// mobile PWA enforce one shared policy rather than two drifting copies.
+
+const SESSION_IDLE_DEFAULT_MIN = 15;
+
+// Idle window in minutes, clamped to 1 min .. 24 h. A zero/blank/garbage
+// setting falls back to the default rather than disabling the window
+// (a 0-minute window would make every session instantly stale, which
+// silently turns the whole feature off).
+function sessionIdleMinutes(db) {
+  let n = parseInt(getSetting(db, 'session_idle_minutes'), 10);
+  if (!Number.isFinite(n) || n <= 0) n = SESSION_IDLE_DEFAULT_MIN;
+  return Math.min(n, 1440);
+}
+
+// SQLite modifier for the idle cutoff, e.g. '-15 minutes'. Compared
+// against last_used_at, which requireAuth touches on every request.
+function _idleCutoff(db) { return `-${sessionIdleMinutes(db)} minutes`; }
+
+// Sessions of `userId` that are still inside the idle window, newest
+// first. `excludeToken` drops one token from the result — used so a
+// browser re-authenticating with its own still-valid token isn't
+// treated as a stranger locking itself out.
+function activeSessionsForUser(db, userId, excludeToken) {
+  const rows = db.all(
+    `SELECT token, device_label, created_at, last_used_at,
+            CAST((julianday('now','localtime') - julianday(last_used_at)) * 1440 AS INTEGER) AS idle_min
+       FROM sessions
+      WHERE user_id = ?
+        AND last_used_at > datetime('now','localtime', ?)
+      ORDER BY last_used_at DESC`,
+    [userId, _idleCutoff(db)]
+  );
+  return excludeToken ? rows.filter(r => r.token !== excludeToken) : rows;
+}
+
+// "Desktop" / "Mobile" from a user-agent — the same coarse split
+// login_history already stores, so both surfaces read consistently.
+function deviceKindFromUA(ua) {
+  return /Mobile|Android|iPhone|iPad|iPod/i.test(String(ua || '')) ? 'Mobile' : 'Desktop';
+}
+
+// Human phrasing for how long ago a session last did something.
+function _agoLabel(idleMin) {
+  const m = Math.max(0, Number(idleMin) || 0);
+  if (m < 1) return 'just now';
+  if (m === 1) return '1 minute ago';
+  if (m < 60) return `${m} minutes ago`;
+  const h = Math.floor(m / 60);
+  return h === 1 ? '1 hour ago' : `${h} hours ago`;
+}
+
+// Duplicate-login gate. Returns null when the login may proceed, or a
+// { error, message, ... } body to send with 409 when it may not.
+// `prevToken` is the caller's existing token, if it still holds one —
+// re-authenticating from the same browser is always allowed.
+function checkDuplicateLogin(db, user, prevToken) {
+  if (String(getSetting(db, 'single_session') || 'true').toLowerCase() !== 'true') return null;
+  // A presented token only excuses the login when it really belongs to
+  // this user — otherwise anyone could paste a token to bypass the gate.
+  let mine = '';
+  if (prevToken) {
+    const s = db.get('SELECT token, user_id FROM sessions WHERE token = ?', [String(prevToken)]);
+    if (s && s.user_id === user.id) mine = s.token;
+  }
+  const active = activeSessionsForUser(db, user.id, mine);
+  if (!active.length) return null;
+  const s = active[0];
+  const where = s.device_label ? deviceKindFromUA(s.device_label) : 'another device';
+  return {
+    error: 'already_logged_in',
+    message: `Already ${user.username} is logged in (${where}, last active ${_agoLabel(s.idle_min)}). `
+           + `Sign out there first, or ask an admin to sign that session out from Users.`,
+    username: user.username,
+    device: where,
+    last_active: s.last_used_at || '',
+  };
+}
+
+// Cross-notify concurrent admins. Writes one session_alerts row per
+// other admin who is currently online, and returns the notice for the
+// admin who just signed in ('' when there is nothing to say).
+// Never throws — a failed notice must not fail the login.
+function notifyConcurrentAdmins(db, user, ua) {
+  try {
+    if (String(getSetting(db, 'admin_login_alert') || 'true').toLowerCase() !== 'true') return '';
+    if (String(user.role || '').toLowerCase() !== 'admin') return '';
+    const others = db.all(
+      `SELECT u.id, u.username, MAX(s.last_used_at) AS last_used_at
+         FROM users u
+         JOIN sessions s ON s.user_id = u.id
+        WHERE LOWER(u.role) = 'admin'
+          AND u.id != ?
+          AND s.last_used_at > datetime('now','localtime', ?)
+        GROUP BY u.id, u.username
+        ORDER BY u.username`,
+      [user.id, _idleCutoff(db)]
+    );
+    if (!others.length) return '';
+    const device = deviceKindFromUA(ua);
+    for (const o of others) {
+      // Don't stack duplicates. Sign-in/sign-out cycles are common (a
+      // dropped connection, a reload after a force sign-out), and three
+      // identical "admin X signed in" banners say nothing the first one
+      // didn't. One unacked notice per actor per recipient is enough.
+      const pending = db.get(
+        `SELECT id FROM session_alerts
+          WHERE user_id = ? AND acked = 0 AND kind = 'admin_login' AND actor_username = ?`,
+        [o.id, user.username]
+      );
+      if (pending) continue;
+      db.run(
+        `INSERT INTO session_alerts (user_id, kind, actor_username, actor_role, message, device)
+         VALUES (?, 'admin_login', ?, 'admin', ?, ?)`,
+        [
+          o.id,
+          user.username,
+          `Another admin — "${user.username}" — just signed in on ${device}. You are both working on the same data.`,
+          device,
+        ]
+      );
+    }
+    const names = others.map(o => `"${o.username}"`).join(', ');
+    return others.length === 1
+      ? `Another admin — ${names} — is already signed in. You are both working on the same data.`
+      : `Other admins are already signed in: ${names}. You are all working on the same data.`;
+  } catch (_) {
+    return '';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
 // MOBILE PWA BRIDGE — must mount BEFORE any /api routes below.
 // ══════════════════════════════════════════════════════════════
 // All PWA-compat routes (/api/auth/*, /api/config, /api/status, /api/logo,
@@ -535,6 +689,10 @@ mountMobile(app, {
   requireAuth,
   hash,
   ROLE_PERMISSIONS,
+  // Concurrent-login policy — shared with /api/login so the desktop and
+  // the mobile PWA can't drift apart on who is allowed to sign in.
+  checkDuplicateLogin,
+  notifyConcurrentAdmins,
   // Fire-and-forget WhatsApp notification when an operator raises a
   // lot-reassign request. Defined later in the file (hoisted); safe to
   // reference here. Never throws into the mobile handler.
@@ -1179,17 +1337,28 @@ app.post('/api/login', (req, res) => {
       });
     }
   } catch (_) { /* license check failed → let login through; fail-open is friendlier than a brick */ }
-  const { username, password, device_label } = req.body;
+  const { username, password, device_label, prev_token } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
   const db = getDb();
   const user = db.get('SELECT * FROM users WHERE username = ?', [username]);
   if (!user || user.password_hash !== hash(password)) return res.status(401).json({ error: 'Invalid credentials' });
+  // One active sign-in per username. Runs AFTER the credential check so a
+  // wrong password can't be used to probe who is currently online.
+  const dup = checkDuplicateLogin(db, user, prev_token);
+  if (dup) return res.status(409).json(dup);
   const token = crypto.randomBytes(32).toString('hex');
   // Create a new session row WITHOUT deleting any existing sessions —
-  // this lets the same user stay logged in on multiple devices simultaneously.
-  db.run('INSERT INTO sessions (token, user_id, device_label) VALUES (?, ?, ?)', [token, user.id, device_label || '']);
+  // this lets the same user stay logged in on multiple devices when the
+  // single_session setting is off. When it's on, checkDuplicateLogin
+  // above has already refused the second sign-in.
+  db.run('INSERT INTO sessions (token, user_id, device_label) VALUES (?, ?, ?)',
+    [token, user.id, device_label || (req.headers['user-agent'] || '').slice(0, 80)]);
   // Clean up very old sessions (> 30 days) so the table doesn't grow forever
   db.run(`DELETE FROM sessions WHERE last_used_at < datetime('now','-30 days')`);
+  // Tell every other admin currently online, and collect the reciprocal
+  // notice for this admin. Fires before the response so `notice` is
+  // accurate; never throws.
+  const notice = notifyConcurrentAdmins(db, user, req.headers['user-agent']);
   // Return the user's capabilities array so the client can hide buttons
   // they're not allowed to use. Server still validates every request.
   const permissions = Array.from(ROLE_PERMISSIONS[user.role] || ROLE_PERMISSIONS.viewer);
@@ -1198,7 +1367,13 @@ app.post('/api/login', (req, res) => {
   // so future password-strength rules can extend this without a
   // schema change.
   const mustChangePassword = isDefaultPassword(username, password);
-  res.json({ token, role: user.role, username: user.username, permissions, mustChangePassword });
+  res.json({
+    token, role: user.role, username: user.username, permissions, mustChangePassword,
+    // Home branch — blank for admins and for anyone not assigned one.
+    // The Lot Entry screen locks its branch dropdown to this value.
+    branch: user.branch || '',
+    notice,
+  });
 });
 app.post('/api/logout', (req, res) => {
   const t = (req.headers.authorization||'').replace('Bearer ','');
@@ -1207,25 +1382,70 @@ app.post('/api/logout', (req, res) => {
 });
 app.get('/api/me', requireAnyPermission('view', 'lot_entry_view', 'self_password'), (req, res) => {
   const permissions = Array.from(ROLE_PERMISSIONS[req.user.role] || ROLE_PERMISSIONS.viewer);
-  res.json({ username: req.user.username, role: req.user.role, permissions });
+  res.json({
+    username: req.user.username, role: req.user.role, permissions,
+    branch: req.user.branch || '',
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// SESSION ALERTS — "another admin just signed in" inbox
+// ══════════════════════════════════════════════════════════════
+// Polled by the desktop UI (see pollSessionAlerts in index.html) on the
+// same cadence as the grade-2 alert poll. Only ever returns the calling
+// user's own unacked rows, so there's no permission tier beyond "signed
+// in" — a lot_entry user has no `view` permission but still needs to see
+// a notice addressed to them.
+app.get('/api/session-alerts', requireAnyPermission('view', 'lot_entry_view', 'self_password'), (req, res) => {
+  const db = getDb();
+  const alerts = db.all(
+    `SELECT id, kind, actor_username, actor_role, message, device, created_at
+       FROM session_alerts
+      WHERE user_id = ? AND acked = 0
+      ORDER BY id DESC LIMIT 20`,
+    [req.user.id]
+  );
+  res.json({ alerts });
+});
+
+app.post('/api/session-alerts/:id/ack', requireAnyPermission('view', 'lot_entry_view', 'self_password'), (req, res) => {
+  const db = getDb();
+  // Scoped to the caller — you can only dismiss your own notices.
+  db.run('UPDATE session_alerts SET acked = 1 WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
+  res.json({ success: true });
 });
 
 // ══════════════════════════════════════════════════════════════
 // USER MANAGEMENT (admin-only)
 // ══════════════════════════════════════════════════════════════
+// The branch values an admin may assign to a user — exactly the br1..br9
+// entries configured under Settings → Branches & Contacts, uppercased and
+// blank-filtered. Assigning anything else would produce a lock nobody can
+// satisfy (lots.branch only ever holds one of these).
+function configuredBranches(db) {
+  const rows = db.all(
+    `SELECT value FROM company_settings
+      WHERE category = 'branches' AND key LIKE 'br_'
+      ORDER BY key`
+  );
+  return rows.map(r => String(r.value || '').trim().toUpperCase()).filter(Boolean);
+}
+
 app.get('/api/users', requireUserManage, (req, res) => {
   const db = getDb();
   const users = db.all(`
-    SELECT u.id, u.username, u.role, u.created_at,
+    SELECT u.id, u.username, u.role, u.branch, u.created_at,
       (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id) as active_sessions,
       (SELECT MAX(last_used_at) FROM sessions s WHERE s.user_id = u.id) as last_active
     FROM users u ORDER BY u.id ASC
   `);
-  res.json(users);
+  // Ship the branch list alongside so the Users screen can render the
+  // assign-branch dropdown without a second round-trip to settings.
+  res.json({ users, branches: configuredBranches(db) });
 });
 
 app.post('/api/users', requireUserManage, (req, res) => {
-  const { username, password, role } = req.body || {};
+  const { username, password, role, branch } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'username and password are required' });
   if (password.length < 4) return res.status(400).json({ error: 'Password must be at least 4 characters' });
   if (!/^[a-zA-Z0-9_.-]{3,30}$/.test(username)) return res.status(400).json({ error: 'Username: 3–30 chars, letters/digits/._- only' });
@@ -1239,12 +1459,50 @@ app.post('/api/users', requireUserManage, (req, res) => {
   const db = getDb();
   const existing = db.get('SELECT id FROM users WHERE username = ?', [username]);
   if (existing) return res.status(400).json({ error: 'Username already exists' });
+  // Home branch. Admins are never branch-locked — they oversee every
+  // depot — so any branch sent with an admin role is dropped rather than
+  // rejected (the UI hides the field for admins anyway).
+  let finalBranch = String(branch || '').trim().toUpperCase();
+  if (finalRole === 'admin') finalBranch = '';
+  if (finalBranch && !configuredBranches(db).includes(finalBranch)) {
+    return res.status(400).json({ error: `"${finalBranch}" is not a configured branch — add it under Settings → Branches & Contacts first` });
+  }
   db.run(
-    'INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)',
-    [username, hash(password), finalRole]
+    'INSERT INTO users (username, password_hash, role, branch) VALUES (?, ?, ?, ?)',
+    [username, hash(password), finalRole, finalBranch]
   );
-  const created = db.get('SELECT id, username, role FROM users WHERE username = ?', [username]);
-  res.json({ success: true, id: created ? created.id : null, username, role: finalRole });
+  const created = db.get('SELECT id, username, role, branch FROM users WHERE username = ?', [username]);
+  res.json({ success: true, id: created ? created.id : null, username, role: finalRole, branch: finalBranch });
+});
+
+// Assign / clear a user's home branch. Admin-only. Passing an empty
+// branch removes the lock (the user can pick any branch again).
+app.put('/api/users/:id/branch', requireUserManage, (req, res) => {
+  const db = getDb();
+  const target = db.get('SELECT id, username, role FROM users WHERE id = ?', [req.params.id]);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  if (String(target.role || '').toLowerCase() === 'admin') {
+    return res.status(400).json({ error: 'Admins are not branch-locked — they need access to every branch' });
+  }
+  const wanted = String((req.body || {}).branch || '').trim().toUpperCase();
+  if (wanted && !configuredBranches(db).includes(wanted)) {
+    return res.status(400).json({ error: `"${wanted}" is not a configured branch — add it under Settings → Branches & Contacts first` });
+  }
+  db.run('UPDATE users SET branch = ? WHERE id = ?', [wanted, target.id]);
+  res.json({ success: true, username: target.username, branch: wanted });
+});
+
+// Force-sign-out every session of a user. The escape hatch for the
+// single_session block: when someone's browser died mid-session and the
+// idle window hasn't elapsed yet, an admin clears it here instead of
+// making them wait it out.
+app.post('/api/users/:id/revoke-sessions', requireUserManage, (req, res) => {
+  const db = getDb();
+  const target = db.get('SELECT id, username FROM users WHERE id = ?', [req.params.id]);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  const n = (db.get('SELECT COUNT(*) as c FROM sessions WHERE user_id = ?', [target.id]) || {}).c || 0;
+  db.run('DELETE FROM sessions WHERE user_id = ?', [target.id]);
+  res.json({ success: true, username: target.username, revoked: n });
 });
 
 // Update an existing user's role (for promoting/demoting users without
@@ -1269,6 +1527,10 @@ app.put('/api/users/:id/role', requireUserManage, (req, res) => {
     }
   }
   db.run('UPDATE users SET role = ? WHERE id = ?', [finalRole, target.id]);
+  // Promoting to admin drops any branch lock — admins oversee every depot,
+  // and leaving a stale branch on the row would silently re-apply if they
+  // were later demoted back to operator.
+  if (finalRole === 'admin') db.run("UPDATE users SET branch = '' WHERE id = ?", [target.id]);
   res.json({ success: true, username: target.username, role: finalRole });
 });
 
@@ -2012,6 +2274,90 @@ app.get('/api/gst-lookup/:gstin', requireView, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// SMART LIST SEARCH — phone numbers + lot-number specs
+// ══════════════════════════════════════════════════════════════
+// Every list screen has ONE free-text search box. Besides the plain LIKE the
+// endpoint already runs, the same text is also read as:
+//
+//   • a PHONE NUMBER in any style — "98765 43210", "+91-98765-43210",
+//     "(0483) 2712345". Matched digits-only on both sides so punctuation, the
+//     country code and spacing can never hide a hit.
+//
+//   • a LOT-NUMBER SPEC — "12", "12,15,18", "10-20", "10-20, 25, 31-33".
+//     Commas / semicolons / spaces separate; `a-b` is an inclusive range.
+//     Matched with leading zeros collapsed, so "7" finds a lot stored "007".
+//
+// Both interpretations are ADDITIVE — they are OR-ed onto the endpoint's
+// existing LIKE clause. A search that matched before still matches; these
+// only find MORE. When the text isn't a phone / lot spec the corresponding
+// parser returns empty and the endpoint behaves exactly as it always did.
+//
+// (parseLotSearch further down does the same expansion for the Lot-wise
+// Payments screen, which additionally reports which typed lots went
+// unmatched. This pair is the read-only variant used by plain list search.)
+
+// Digits of a would-be phone number, or '' when there aren't enough to be
+// one. 4 is the shortest useful tail ("…4444"); below that every row holding
+// any number at all would match and the search would look broken.
+//
+// Anything past 10 digits is dropped from the FRONT: numbers are stored
+// however they were typed — some with "+91", most without — so comparing the
+// full string would make "+91 98765 43210" miss a master holding plain
+// "9876543210". The last 10 digits are the subscriber number either way, and
+// a substring match on them still finds a stored "+91…" too.
+const SMART_PHONE_MIN_DIGITS = 4;
+const SMART_PHONE_MAX_DIGITS = 10;
+function smartPhoneDigits(raw) {
+  const d = String(raw || '').replace(/\D+/g, '');
+  if (d.length < SMART_PHONE_MIN_DIGITS) return '';
+  return d.length > SMART_PHONE_MAX_DIGITS ? d.slice(-SMART_PHONE_MAX_DIGITS) : d;
+}
+
+// SQL expression that strips the usual phone punctuation from `col` so it can
+// be LIKE-compared against smartPhoneDigits(). SQLite has no regex, so the
+// separators are peeled off with nested REPLACEs — the same set people
+// actually type into a phone field.
+function smartPhoneSql(col) {
+  const strip = ["' '", "'-'", "'('", "')'", "'+'", "'.'", "'/'", "','"];
+  return strip.reduce((acc, ch) => `REPLACE(${acc}, ${ch}, '')`, `COALESCE(${col},'')`);
+}
+
+// Expand a lot spec into canonical INTEGER lot numbers, or [] when the text
+// isn't one. Returns integers (not strings) because lot numbers are stored as
+// TEXT with inconsistent zero-padding, so every comparison casts.
+//
+// Deliberately strict: if ANY token fails to parse the whole thing is not a
+// lot spec and we return [] — otherwise a normal word search like
+// "RAMU-2" would silently turn into a lot filter.
+const SMART_LOT_RANGE_CAP = 5000;      // guard a fat-fingered "1-999999"
+function smartLotNumbers(raw) {
+  const parts = String(raw || '').split(/[,;\s]+/).filter(Boolean);
+  if (!parts.length) return [];
+  const out = new Set();
+  for (const part of parts) {
+    const range = /^0*(\d+)\s*-\s*0*(\d+)$/.exec(part);
+    if (range) {
+      let lo = parseInt(range[1], 10), hi = parseInt(range[2], 10);
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      if (hi - lo > SMART_LOT_RANGE_CAP) return [];
+      for (let n = lo; n <= hi; n++) out.add(n);
+      continue;
+    }
+    const single = /^0*(\d+)$/.exec(part);
+    if (!single) return [];                     // not a lot spec at all
+    out.add(parseInt(single[1], 10));
+  }
+  return [...out];
+}
+
+// `CAST(col AS INTEGER) IN (?,?,…)` fragment + its params, or null when the
+// text isn't a lot spec. CAST is what makes "007" and "7" the same lot.
+function smartLotSql(col, nums) {
+  if (!nums || !nums.length) return null;
+  return { sql: `CAST(TRIM(COALESCE(${col},'')) AS INTEGER) IN (${nums.map(() => '?').join(',')})`, params: nums };
+}
+
+// ══════════════════════════════════════════════════════════════
 // TRADERS (NAM.DBF — sellers/poolers)
 // ══════════════════════════════════════════════════════════════
 app.get('/api/traders', requireViewOrLotEntry, (req, res) => {
@@ -2064,8 +2410,16 @@ app.get('/api/traders', requireViewOrLotEntry, (req, res) => {
   let where = '', params = [];
   if (search) {
     const like = `%${search}%`;
-    where = 'WHERE name LIKE ? OR tel LIKE ? OR cr LIKE ? OR pan LIKE ? OR ppla LIKE ? OR aadhar LIKE ? OR user_id LIKE ?';
+    const ors = ['name LIKE ?', 'tel LIKE ?', 'cr LIKE ?', 'pan LIKE ?', 'ppla LIKE ?', 'aadhar LIKE ?', 'user_id LIKE ?'];
     params = [like, like, like, like, like, like, like];
+    // Phone typed with spaces / dashes / +91 — compare digits-only against
+    // BOTH numbers on file, so "+91 98765 43210" finds "9876543210".
+    const phone = smartPhoneDigits(search);
+    if (phone) {
+      ors.push(`${smartPhoneSql('tel')} LIKE ?`, `${smartPhoneSql('whatsapp')} LIKE ?`);
+      params.push(`%${phone}%`, `%${phone}%`);
+    }
+    where = 'WHERE ' + ors.join(' OR ');
   }
   const total = db.get(`SELECT COUNT(*) AS c FROM traders ${where}`, params).c;
 
@@ -3209,8 +3563,12 @@ app.get('/api/buyers', requireView, (req, res) => {
   let where = '', params = [];
   if (search) {
     const q = `%${search}%`;
-    where = 'WHERE buyer LIKE ? OR buyer1 LIKE ? OR tel LIKE ? OR gstin LIKE ? OR pan LIKE ? OR pla LIKE ? OR ti LIKE ? OR code LIKE ?';
+    const ors = ['buyer LIKE ?', 'buyer1 LIKE ?', 'tel LIKE ?', 'gstin LIKE ?', 'pan LIKE ?', 'pla LIKE ?', 'ti LIKE ?', 'code LIKE ?'];
     params = [q, q, q, q, q, q, q, q];
+    // Phone typed with spaces / dashes / +91 — digits-only comparison.
+    const phone = smartPhoneDigits(search);
+    if (phone) { ors.push(`${smartPhoneSql('tel')} LIKE ?`); params.push(`%${phone}%`); }
+    where = 'WHERE ' + ors.join(' OR ');
   }
 
   if (wantPaged) {
@@ -4250,12 +4608,13 @@ app.get('/api/auctions/:id/generation-status', requireView, (req, res) => {
 // hard gate on actual invoice/purchase/bill GENERATION still applies
 // server-side (requirePriceChecked); this stage only controls sidebar
 // VISIBILITY of the Transactions module.
-app.get('/api/auctions/:id/stage', requireView, (req, res) => {
-  const db = getDb();
-  const aid = parseInt(req.params.id, 10);
-  if (!aid) return res.status(400).json({ error: 'Invalid auction id' });
+// Stage computation, extracted so the Trade Desk catalog
+// (/api/documents/catalog) gates its tiles on exactly the same numbers the
+// sidebar does. Returns null when the trade doesn't exist. The route below
+// is a thin wrapper — its response is byte-for-byte what it always was.
+function computeTradeStage(db, aid) {
   const auction = db.get('SELECT id, ano FROM auctions WHERE id = ?', [aid]);
-  if (!auction) return res.status(404).json({ error: 'Auction not found' });
+  if (!auction) return null;
 
   const lotCount = db.get('SELECT COUNT(*) AS c FROM lots WHERE auction_id = ?', [aid]).c;
   const priceCheckedEver = pcGateEverChecked(db, aid);
@@ -4278,11 +4637,382 @@ app.get('/api/auctions/:id/stage', requireView, (req, res) => {
   if (stage >= 2 && hasPricedLot)         stage = 3;
   if (stage >= 3 && hasDocs)              stage = 4;
 
-  res.json({
+  return {
     auctionId: aid,
     ano: auction.ano,
     stage,
     signals: { lotCount, lotsValidated, priceCheckedEver, hasPricedLot, hasDocs },
+  };
+}
+
+app.get('/api/auctions/:id/stage', requireView, (req, res) => {
+  const aid = parseInt(req.params.id, 10);
+  if (!aid) return res.status(400).json({ error: 'Invalid auction id' });
+  const out = computeTradeStage(getDb(), aid);
+  if (!out) return res.status(404).json({ error: 'Auction not found' });
+  res.json(out);
+});
+
+// ══════════════════════════════════════════════════════════════
+// DOCUMENT CATALOG — the Trade Desk's single manifest endpoint
+// ══════════════════════════════════════════════════════════════
+// See TRADE-DESK.md. Returns document-catalog.js already RESOLVED for this
+// user and this trade: feature flags applied, guided-stage applied, role
+// permissions applied, generation status attached, URLs pre-built. The
+// client renders the result verbatim and makes no gating decision of its
+// own, which is what lets the same manifest drive the desktop hub and (in
+// a later phase) the mobile PWA.
+//
+// Nothing here computes an export. Every `href` points at a route that
+// already existed and is unchanged.
+
+// KPI strip for the Trade Desk header. Deliberately NOT extracted from
+// /api/reports/trade-summary: that route runs seven aggregate queries to
+// build branch/seller/user/hourly/grade breakdowns the header never shows.
+// This is one query using the same predicates trade-summary uses for its
+// aggregates (`amount > 0` = sold, `COALESCE(amount,0) <= 0` = withdrawn),
+// so the two always agree on the numbers they share.
+function computeTradeKpi(db, aid) {
+  const r = db.get(
+    `SELECT COUNT(*)                                            AS allocated_lots,
+            COALESCE(SUM(CASE WHEN amount > 0 THEN 1 ELSE 0 END), 0)          AS sold_lots,
+            COALESCE(SUM(CASE WHEN COALESCE(amount,0) <= 0 THEN 1 ELSE 0 END), 0) AS withdrawn_lots,
+            COALESCE(SUM(CASE WHEN amount > 0 THEN qty ELSE 0 END), 0)        AS sold_weight,
+            COALESCE(SUM(qty), 0)                               AS total_qty,
+            COALESCE(SUM(bags), 0)                              AS total_bags,
+            COALESCE(SUM(amount), 0)                            AS total_value,
+            -- Sellers by trader_id, falling back to the denormalised name —
+            -- the same COALESCE trade-summary's per-seller breakdown groups
+            -- by. A plain COUNT(DISTINCT trader_id) reports zero sellers on
+            -- any trade whose lots carry names but no master link yet.
+            COUNT(DISTINCT COALESCE(trader_id, NULLIF(name, '')))  AS sellers,
+            -- NULLIF keeps un-set buyers out of the count; without it every
+            -- unsold trade reports one buyer (the empty string).
+            COUNT(DISTINCT CASE WHEN amount > 0 THEN NULLIF(buyer, '') END) AS buyers
+       FROM lots WHERE auction_id = ?`, [aid]
+  ) || {};
+  return {
+    allocatedLots:  Number(r.allocated_lots)  || 0,
+    soldLots:       Number(r.sold_lots)       || 0,
+    withdrawnLots:  Number(r.withdrawn_lots)  || 0,
+    soldWeight:     Number(r.sold_weight)     || 0,
+    totalQty:       Number(r.total_qty)       || 0,
+    totalBags:      Number(r.total_bags)      || 0,
+    totalValue:     Number(r.total_value)     || 0,
+    sellers:        Number(r.sellers)         || 0,
+    buyers:         Number(r.buyers)          || 0,
+  };
+}
+
+// Why a tile can't be used right now. Order matters — the first failing
+// gate is the one reported, most-fundamental first, so an operator is
+// never told "needs prices" when the real problem is their role.
+const DOC_STAGE_MSG = {
+  2: 'Import lots into this auction first',
+  3: 'Import prices first — no lot in this auction carries a price yet',
+  4: 'Generate a transaction document (invoice / purchase / bill) first',
+};
+
+// Tiny query-string builder for the catalog's own URLs (document-catalog.js
+// has its own for the href builders it owns).
+const q2 = (params) => {
+  const parts = [];
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null || v === '') continue;
+    parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
+  }
+  return parts.length ? '?' + parts.join('&') : '';
+};
+
+// Resolve the whole manifest for one user + one trade. Shared by the GET
+// below and by the bundle endpoint, so a ZIP can never contain a document
+// the same user would have been refused on screen.
+function buildDocumentCatalog(db, role, query) {
+    const cfg = getSettingsFlat(db);
+    const on  = (v) => String(v == null ? '' : v).toLowerCase() === 'true';
+    const canExport = userHas(role, 'export');
+
+    const aid = parseInt(query.auctionId, 10) || 0;
+    let stageInfo = null, kpi = null, genStatus = null;
+    if (aid) {
+      stageInfo = computeTradeStage(db, aid);
+      if (!stageInfo) return null;               // caller turns this into a 404
+      kpi = computeTradeKpi(db, aid);
+      genStatus = {};
+      for (const kind of ['invoices', 'purchases', 'bills', 'debit_notes', 'debit_notes_planter']) {
+        const generated = _generatedCount(db, kind, aid, stageInfo.ano);
+        const pending   = _countRemainingParties(db, kind, aid);
+        genStatus[kind] = { generated, pending, done: generated > 0 && pending === 0 };
+      }
+    }
+    const stage = stageInfo ? stageInfo.stage : 0;
+
+    // Context every href() builder reads from. Extra filter values pass
+    // straight through from the query string so a tile that offers e.g. a
+    // branch picker can round-trip its selection without a special case.
+    const ctx = {
+      auctionId: aid || '', ano: stageInfo ? stageInfo.ano : '',
+      from: query.from || '', to: query.to || '',
+      branch: query.branch || '', sellerId: query.sellerId || '',
+      buyerCode: query.buyerCode || '', saleType: query.saleType || '',
+      sale: query.sale || '', party: query.party || '',
+      traderId: query.traderId || '', state: query.state || '',
+    };
+
+    const groups = [];
+    for (const g of DOC_GROUPS) {
+      const items = [];
+      for (const d of DOC_CATALOG) {
+        if (d.group !== g.id || d.hidden) continue;
+        // Flag-off documents are omitted entirely rather than shown locked:
+        // a feature the site has switched off should not advertise itself.
+        // Stage/permission locks DO render, with a reason — that visibility
+        // is the point of the hub.
+        if (d.flag && !on(cfg[d.flag])) continue;
+
+        let lockedBy = null, lockReason = '';
+        if (d.perm === 'export' && !canExport) {
+          lockedBy = 'permission';
+          lockReason = `Your role (${role}) cannot run exports`;
+        } else if (d.scope === 'trade' && !aid) {
+          lockedBy = 'trade';
+          lockReason = 'Select an auction first';
+        } else if (d.minStage && aid && stage < d.minStage) {
+          lockedBy = 'stage';
+          lockReason = DOC_STAGE_MSG[d.minStage] || 'Not available yet';
+        }
+
+        // Date-range documents stay unlocked but advertise what they still
+        // need, so the tile can prompt for from/to instead of failing.
+        const needs = [];
+        if (d.scope === 'dateRange') {
+          if (!ctx.from) needs.push('from');
+          if (!ctx.to)   needs.push('to');
+        }
+
+        const item = {
+          id: d.id, label: d.label, kind: d.kind, scope: d.scope,
+          formats: d.formats || [], family: d.family,
+          available: !lockedBy && !needs.length,
+        };
+        if (lockedBy)   { item.lockedBy = lockedBy; item.lockReason = lockReason; }
+        if (needs.length) item.needs = needs;
+        if (d.filters)  item.filters = d.filters;
+        if (d.note)     item.note = d.note;
+        if (d.deepLink) item.deepLink = d.deepLink;
+
+        // A tile offering 'pdf' implicitly offers Preview and Print — both
+        // just open the same PDF (see exportPreview/exportPrint), so they
+        // are not separate formats and get no separate URL.
+        if (item.available && typeof d.href === 'function') {
+          item.href = {};
+          for (const fmt of item.formats) item.href[fmt] = d.href(ctx, fmt);
+        }
+        // Bulk PDF needs both halves — the route that renders it and the
+        // route the ids come from — so they travel together or not at all.
+        if (item.available && d.bulkRoute && d.listRoute) {
+          item.bulkRoute = d.bulkRoute;
+          item.listUrl = `${d.listRoute}${q2({ [d.listParam]: d.listParam === 'ano' ? stageInfo.ano : aid })}`;
+        }
+        if (d.statusKey && genStatus)      item.status = genStatus[d.statusKey] || null;
+
+        items.push(item);
+      }
+      if (items.length) {
+        groups.push({ id: g.id, label: g.label, hint: g.hint || '',
+                      collapsed: !!g.collapsed, items });
+      }
+    }
+
+    return {
+      auctionId: aid || null,
+      ano: stageInfo ? stageInfo.ano : null,
+      stage,
+      signals: stageInfo ? stageInfo.signals : null,
+      kpi,
+      groups,
+    };
+}
+
+app.get('/api/documents/catalog', requireView, (req, res) => {
+  try {
+    const out = buildDocumentCatalog(getDb(), req.user.role, req.query);
+    if (!out) return res.status(404).json({ error: 'Auction not found' });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// DOCUMENT BUNDLE — tick N documents, get one ZIP
+// ══════════════════════════════════════════════════════════════
+// The bundler knows nothing about any document type. It takes the URLs the
+// catalog already resolved, fetches each through the server's own HTTP
+// front door, and zips what comes back — so a document added to the
+// manifest is bundleable the same day, and a document the user could not
+// download on screen cannot appear in a ZIP either.
+//
+// It runs as a JOB rather than one long request: PDFs go through Puppeteer,
+// and a 20-item bundle comfortably outlives any sane request timeout.
+//   POST /api/documents/bundle            → { jobId, total }
+//   GET  /api/documents/bundle/:id        → { status, done, total, current }
+//   GET  /api/documents/bundle/:id/file   → the ZIP (then discarded)
+
+const BUNDLE_JOBS = new Map();
+const BUNDLE_TTL_MS = 60 * 60 * 1000;   // an hour to collect your download
+const BUNDLE_MAX_ITEMS = 60;
+
+function bundleDir() {
+  const d = path.join(process.env.SPICE_DATA_DIR || path.join(__dirname, 'data'), 'tmp-bundles');
+  try { fs.mkdirSync(d, { recursive: true }); } catch (_) {}
+  return d;
+}
+// Drop expired jobs and any zip left behind by a download that never came.
+function sweepBundles() {
+  const now = Date.now();
+  for (const [id, job] of BUNDLE_JOBS) {
+    if (now - job.createdAt < BUNDLE_TTL_MS) continue;
+    try { if (job.zipPath) fs.unlinkSync(job.zipPath); } catch (_) {}
+    BUNDLE_JOBS.delete(id);
+  }
+  // Belt and braces: a restart loses the job map but not the files.
+  try {
+    for (const f of fs.readdirSync(bundleDir())) {
+      const p = path.join(bundleDir(), f);
+      if (now - fs.statSync(p).mtimeMs > BUNDLE_TTL_MS) fs.unlinkSync(p);
+    }
+  } catch (_) {}
+}
+
+// Fetch every item in turn and stream it into the archive. Sequential on
+// purpose: several of these render through Puppeteer, and running those
+// concurrently is how you turn a slow bundle into an out-of-memory one.
+async function runBundleJob(job, baseUrl, authHeader) {
+  const archiver = require('archiver');
+  const out = fs.createWriteStream(job.zipPath);
+  const zip = archiver('zip', { zlib: { level: 9 } });
+  const finished = new Promise((resolve, reject) => {
+    out.on('close', resolve); out.on('error', reject); zip.on('error', reject);
+  });
+  zip.pipe(out);
+
+  const used = new Set();
+  for (const it of job.items) {
+    job.current = it.label;
+    try {
+      const r = await fetch(baseUrl + it.url, { headers: { Authorization: authHeader } });
+      if (!r.ok) {
+        // One document having nothing to report must not sink the bundle —
+        // it is recorded in _skipped.txt and the rest still ships.
+        let msg = `HTTP ${r.status}`;
+        try { const e = await r.json(); if (e && e.error) msg = e.error; } catch (_) {}
+        job.skipped.push(`${it.label} (${it.format}) — ${msg}`);
+      } else {
+        const cd = r.headers.get('content-disposition') || '';
+        const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+        let name = (m && m[1]) ? decodeURIComponent(m[1].trim()) : `${it.id}.${it.format}`;
+        // Two documents can legitimately produce the same filename; keep
+        // both rather than letting the archive silently hold one.
+        if (used.has(name)) {
+          const dot = name.lastIndexOf('.');
+          name = dot > 0 ? `${name.slice(0, dot)} (${it.id})${name.slice(dot)}` : `${name} (${it.id})`;
+        }
+        used.add(name);
+        zip.append(Buffer.from(await r.arrayBuffer()), { name });
+        job.files++;
+      }
+    } catch (e) {
+      job.skipped.push(`${it.label} (${it.format}) — ${e.message}`);
+    }
+    job.done++;
+  }
+
+  if (job.skipped.length) {
+    zip.append(
+      'These documents were requested but produced nothing:\n\n'
+      + job.skipped.map(s => '  · ' + s).join('\n')
+      + '\n\nUsually this means the trade holds no rows of that kind.\n',
+      { name: '_skipped.txt' });
+  }
+  await zip.finalize();
+  await finished;
+  job.current = '';
+  job.status = job.files ? 'done' : 'empty';
+}
+
+app.post('/api/documents/bundle', requireView, (req, res) => {
+  try {
+    sweepBundles();
+    const wanted = Array.isArray(req.body && req.body.items) ? req.body.items : [];
+    if (!wanted.length) return res.status(400).json({ error: 'items[] required' });
+    if (wanted.length > BUNDLE_MAX_ITEMS) {
+      return res.status(400).json({ error: `Too many documents — ${BUNDLE_MAX_ITEMS} at a time is the limit` });
+    }
+
+    // Re-resolve the catalog server-side rather than trusting the URLs the
+    // client sent. This is the security boundary: a caller cannot bundle a
+    // document their role, the trade's stage, or a feature flag denies them.
+    const cat = buildDocumentCatalog(getDb(), req.user.role, req.body || {});
+    if (!cat) return res.status(404).json({ error: 'Auction not found' });
+    const byId = new Map();
+    for (const g of cat.groups) for (const it of g.items) byId.set(it.id, it);
+
+    const items = [];
+    for (const w of wanted) {
+      const it = byId.get(String(w && w.id));
+      if (!it) return res.status(400).json({ error: `Unknown document: ${w && w.id}` });
+      if (!it.available) return res.status(403).json({ error: `${it.label} — ${it.lockReason || 'not available'}` });
+      const format = String(w.format || (it.formats || [])[0] || '');
+      if (!it.href || !it.href[format]) {
+        return res.status(400).json({ error: `${it.label} has no ${format || 'downloadable'} form` });
+      }
+      items.push({ id: it.id, label: it.label, format, url: it.href[format] });
+    }
+
+    const jobId = `b${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+    const ano = cat.ano ? String(cat.ano).replace(/[^\w.-]/g, '') : 'documents';
+    const job = {
+      id: jobId, status: 'running', items, total: items.length, done: 0, files: 0,
+      skipped: [], current: '', createdAt: Date.now(),
+      zipPath: path.join(bundleDir(), `${jobId}.zip`),
+      downloadName: `Auction_${ano}_Documents.zip`,
+    };
+    BUNDLE_JOBS.set(jobId, job);
+
+    // Self-request over the loopback interface: the bundler reuses the very
+    // routes the browser would have called, so there is no second code path
+    // that could drift from what a single download produces.
+    const baseUrl = `http://127.0.0.1:${PORT}`;
+    runBundleJob(job, baseUrl, req.headers.authorization || '')
+      .catch(e => { job.status = 'error'; job.error = e.message; });
+
+    res.json({ jobId, total: job.total });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/documents/bundle/:id', requireView, (req, res) => {
+  const job = BUNDLE_JOBS.get(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Unknown or expired bundle' });
+  res.json({
+    jobId: job.id, status: job.status, done: job.done, total: job.total,
+    files: job.files, current: job.current, skipped: job.skipped,
+    error: job.error || null,
+  });
+});
+
+app.get('/api/documents/bundle/:id/file', requireView, (req, res) => {
+  const job = BUNDLE_JOBS.get(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Unknown or expired bundle' });
+  if (job.status === 'running') return res.status(409).json({ error: 'Still building' });
+  if (job.status === 'error')   return res.status(500).json({ error: job.error || 'Bundle failed' });
+  if (!fs.existsSync(job.zipPath)) return res.status(410).json({ error: 'Bundle already collected' });
+  res.download(job.zipPath, job.downloadName, () => {
+    // One collection per bundle — the zip is a temp artefact, not storage.
+    try { fs.unlinkSync(job.zipPath); } catch (_) {}
+    BUNDLE_JOBS.delete(job.id);
   });
 });
 
@@ -6226,18 +6956,33 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
   // Free-text search within the trade — lot no, seller name, buyer
   // code/trade name, invoice no, branch. Wired to the #lot-search
   // input on the Lots tab via searchLotsDebounced().
+  //
+  // On top of the plain LIKE the same box also accepts a LOT SPEC
+  // ("10-20, 25") and a PHONE NUMBER in any punctuation — see
+  // smartLotNumbers / smartPhoneDigits. Both OR onto the clause, so the
+  // original keyword behaviour is untouched.
   const searchTerm = String(search || '').trim();
+  // Built as one string + params so the summary/count queries below can reuse
+  // it verbatim — the two must stay in lockstep or the totals row lies.
+  let searchSql = '', searchParams = [];
   if (searchTerm) {
     const wild = `%${searchTerm}%`;
-    q += ` AND (
-            COALESCE(lots.lot_no,'')  LIKE ?
-            OR COALESCE(lots.name,'')   LIKE ?
-            OR COALESCE(lots.buyer,'')  LIKE ?
-            OR COALESCE(lots.buyer1,'') LIKE ?
-            OR COALESCE(lots.invo,'')   LIKE ?
-            OR COALESCE(lots.branch,'') LIKE ?
-          )`;
-    p.push(wild, wild, wild, wild, wild, wild);
+    const ors = [
+      `COALESCE(lots.lot_no,'')  LIKE ?`,
+      `COALESCE(lots.name,'')   LIKE ?`,
+      `COALESCE(lots.buyer,'')  LIKE ?`,
+      `COALESCE(lots.buyer1,'') LIKE ?`,
+      `COALESCE(lots.invo,'')   LIKE ?`,
+      `COALESCE(lots.branch,'') LIKE ?`,
+    ];
+    searchParams = [wild, wild, wild, wild, wild, wild];
+    const lotSql = smartLotSql('lots.lot_no', smartLotNumbers(searchTerm));
+    if (lotSql) { ors.push(lotSql.sql); searchParams.push(...lotSql.params); }
+    const phone = smartPhoneDigits(searchTerm);
+    if (phone) { ors.push(`${smartPhoneSql('lots.tel')} LIKE ?`); searchParams.push(`%${phone}%`); }
+    searchSql = ' AND (' + ors.join(' OR ') + ')';
+    q += searchSql;
+    p.push(...searchParams);
   }
 
   // Summary mode — returns aggregate counts only (cheap, no row data).
@@ -6257,7 +7002,12 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
       // Mirror the grade clause (and its param position) from the main query
       // above so the reused `p` array stays aligned.
       + (gradeFilter === '__none__' ? ` AND TRIM(COALESCE(lots.grade,'')) = ''`
-         : gradeFilter ? ` AND TRIM(COALESCE(lots.grade,'')) = ?` : '');
+         : gradeFilter ? ` AND TRIM(COALESCE(lots.grade,'')) = ?` : '')
+      // Mirror the free-text/lot/phone clause too — the totals row must count
+      // the SAME set the list shows. (It also keeps `p` and the placeholder
+      // count aligned; without it a summary=1 request that also carried
+      // search= would pass more params than the statement has slots.)
+      + searchSql;
     const row = db.get(aggSql, p) || { n:0, bags:0, qty:0, priced:0 };
     return res.json({ n: row.n, bags: row.bags, qty: row.qty, priced: row.priced });
   }
@@ -7390,8 +8140,29 @@ app.get('/api/invoices', requireView, (req, res) => {
   const q = String(search || '').trim();
   if (q) {
     const like = `%${q}%`;
-    where += ' AND (CAST(invo AS TEXT) LIKE ? OR buyer LIKE ? OR buyer1 LIKE ? OR gstin LIKE ? OR place LIKE ? OR CAST(ano AS TEXT) LIKE ? OR lorry_no LIKE ?)';
+    const ors = ['CAST(invo AS TEXT) LIKE ?', 'buyer LIKE ?', 'buyer1 LIKE ?', 'gstin LIKE ?',
+                 'place LIKE ?', 'CAST(ano AS TEXT) LIKE ?', 'lorry_no LIKE ?'];
     p.push(like, like, like, like, like, like, like);
+    // Lot spec ("10-20, 25") → the invoice(s) those lots were billed on.
+    // An invoice owns a lot when the lot carries its number: originals stamp
+    // lots.invo, proformas stamp lots.proforma_invo (see invoiceLotNos).
+    const lotSql = smartLotSql('l.lot_no', smartLotNumbers(q));
+    if (lotSql) {
+      ors.push(`EXISTS (SELECT 1 FROM lots l
+                         WHERE l.auction_id = invoices.auction_id
+                           AND l.buyer = invoices.buyer
+                           AND TRIM(COALESCE(CASE WHEN COALESCE(invoices.is_proforma,0) = 1
+                                                  THEN l.proforma_invo ELSE l.invo END,'')) = TRIM(CAST(invoices.invo AS TEXT))
+                           AND ${lotSql.sql})`);
+      p.push(...lotSql.params);
+    }
+    // Phone number → the buyer master's number, digits-only.
+    const phone = smartPhoneDigits(q);
+    if (phone) {
+      ors.push(`EXISTS (SELECT 1 FROM buyers b WHERE b.buyer = invoices.buyer AND ${smartPhoneSql('b.tel')} LIKE ?)`);
+      p.push(`%${phone}%`);
+    }
+    where += ' AND (' + ors.join(' OR ') + ')';
   }
 
   // Pagination — same contract as traders / buyers / auctions.
@@ -8940,8 +9711,34 @@ app.get('/api/purchases', requireView, (req, res) => {
   const qstr = String(search || '').trim();
   if (qstr) {
     const like = `%${qstr}%`;
-    where += ' AND (CAST(invo AS TEXT) LIKE ? OR name LIKE ? OR gstin LIKE ? OR place LIKE ? OR CAST(ano AS TEXT) LIKE ?)';
+    const ors = ['CAST(invo AS TEXT) LIKE ?', 'name LIKE ?', 'gstin LIKE ?', 'place LIKE ?', 'CAST(ano AS TEXT) LIKE ?'];
     p.push(like, like, like, like, like);
+    // Lot spec ("10-20, 25"). Matches a LOT-WISE row directly on its own
+    // purchases.lot_no, and a classic SELLER-WISE row (blank lot_no, one
+    // invoice covering every lot that dealer sold) through its lots — the
+    // same (auction_id, name) link the sale-type filter below uses.
+    const lotNums = smartLotNumbers(qstr);
+    const ownLot = smartLotSql('purchases.lot_no', lotNums);
+    if (ownLot) {
+      ors.push(`(TRIM(COALESCE(purchases.lot_no,'')) != '' AND ${ownLot.sql})`);
+      p.push(...ownLot.params);
+      const viaLots = smartLotSql('l.lot_no', lotNums);
+      ors.push(`(TRIM(COALESCE(purchases.lot_no,'')) = '' AND EXISTS (
+                   SELECT 1 FROM lots l
+                    WHERE l.auction_id = purchases.auction_id
+                      AND UPPER(TRIM(COALESCE(l.name,''))) = UPPER(TRIM(COALESCE(purchases.name,'')))
+                      AND ${viaLots.sql}))`);
+      p.push(...viaLots.params);
+    }
+    // Phone number → the seller master's number, digits-only.
+    const phone = smartPhoneDigits(qstr);
+    if (phone) {
+      ors.push(`EXISTS (SELECT 1 FROM traders t
+                         WHERE UPPER(TRIM(COALESCE(t.name,''))) = UPPER(TRIM(COALESCE(purchases.name,'')))
+                           AND (${smartPhoneSql('t.tel')} LIKE ? OR ${smartPhoneSql('t.whatsapp')} LIKE ?))`);
+      p.push(`%${phone}%`, `%${phone}%`);
+    }
+    where += ' AND (' + ors.join(' OR ') + ')';
   }
   // Sale-type filter (L / I / E). Purchases don't carry sale type, but
   // the GST split on each row is deterministic:
@@ -9736,8 +10533,35 @@ app.get('/api/bills', requireView, (req, res) => {
   const qstr = String(search || '').trim();
   if (qstr) {
     const like = `%${qstr}%`;
-    where += ' AND (CAST(bil AS TEXT) LIKE ? OR name LIKE ? OR pla LIKE ? OR CAST(ano AS TEXT) LIKE ? OR br LIKE ?)';
+    const ors = ['CAST(bil AS TEXT) LIKE ?', 'name LIKE ?', 'pla LIKE ?', 'CAST(ano AS TEXT) LIKE ?', 'br LIKE ?'];
     p.push(like, like, like, like, like);
+    // Lot spec ("10-20, 25") — a LOT-WISE bill carries its own bills.lot_no;
+    // a classic SELLER-WISE bill resolves through the planter's lots on the
+    // same trade (identical join to the branch filter above).
+    const lotNums = smartLotNumbers(qstr);
+    const ownLot = smartLotSql('bills.lot_no', lotNums);
+    if (ownLot) {
+      ors.push(`(TRIM(COALESCE(bills.lot_no,'')) != '' AND ${ownLot.sql})`);
+      p.push(...ownLot.params);
+      const viaLots = smartLotSql('l.lot_no', lotNums);
+      ors.push(`(TRIM(COALESCE(bills.lot_no,'')) = '' AND EXISTS (
+                   SELECT 1 FROM lots l
+                    WHERE l.auction_id = COALESCE(
+                            bills.auction_id,
+                            (SELECT a.id FROM auctions a WHERE a.ano = bills.ano LIMIT 1))
+                      AND UPPER(TRIM(COALESCE(l.name,''))) = UPPER(TRIM(COALESCE(bills.name,'')))
+                      AND ${viaLots.sql}))`);
+      p.push(...viaLots.params);
+    }
+    // Phone number → the planter's number on the seller master.
+    const phone = smartPhoneDigits(qstr);
+    if (phone) {
+      ors.push(`EXISTS (SELECT 1 FROM traders t
+                         WHERE UPPER(TRIM(COALESCE(t.name,''))) = UPPER(TRIM(COALESCE(bills.name,'')))
+                           AND (${smartPhoneSql('t.tel')} LIKE ? OR ${smartPhoneSql('t.whatsapp')} LIKE ?))`);
+      p.push(`%${phone}%`, `%${phone}%`);
+    }
+    where += ' AND (' + ors.join(' OR ') + ')';
   }
   const page     = Math.max(1, parseInt(req.query.page, 10) || 1);
   const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 50));
@@ -10872,8 +11696,28 @@ app.get('/api/debit-notes', requireView, (req, res) => {
   const qstr = String(search || '').trim();
   if (qstr) {
     const like = `%${qstr}%`;
-    where += ' AND (CAST(note_no AS TEXT) LIKE ? OR name LIKE ? OR CAST(ano AS TEXT) LIKE ?)';
+    const ors = ['CAST(note_no AS TEXT) LIKE ?', 'name LIKE ?', 'CAST(ano AS TEXT) LIKE ?'];
     p.push(like, like, like);
+    // A dealer DN has no lot column of its own — it covers the dealer's whole
+    // trade — so a lot spec resolves through that dealer's lots.
+    const viaLots = smartLotSql('l.lot_no', smartLotNumbers(qstr));
+    if (viaLots) {
+      ors.push(`EXISTS (SELECT 1 FROM lots l
+                         WHERE l.auction_id = COALESCE(
+                                 debit_notes.auction_id,
+                                 (SELECT a.id FROM auctions a WHERE a.ano = debit_notes.ano LIMIT 1))
+                           AND UPPER(TRIM(COALESCE(l.name,''))) = UPPER(TRIM(COALESCE(debit_notes.name,'')))
+                           AND ${viaLots.sql})`);
+      p.push(...viaLots.params);
+    }
+    const phone = smartPhoneDigits(qstr);
+    if (phone) {
+      ors.push(`EXISTS (SELECT 1 FROM traders t
+                         WHERE UPPER(TRIM(COALESCE(t.name,''))) = UPPER(TRIM(COALESCE(debit_notes.name,'')))
+                           AND (${smartPhoneSql('t.tel')} LIKE ? OR ${smartPhoneSql('t.whatsapp')} LIKE ?))`);
+      p.push(`%${phone}%`, `%${phone}%`);
+    }
+    where += ' AND (' + ors.join(' OR ') + ')';
   }
   const page     = Math.max(1, parseInt(req.query.page, 10) || 1);
   const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 50));
@@ -11960,8 +12804,31 @@ app.get('/api/debit-notes-planter', requireView, (req, res) => {
   const qstr = String(search || '').trim();
   if (qstr) {
     const like = `%${qstr}%`;
-    where += ' AND (CAST(note_no AS TEXT) LIKE ? OR name LIKE ? OR CAST(ano AS TEXT) LIKE ?)';
+    const ors = ['CAST(note_no AS TEXT) LIKE ?', 'name LIKE ?', 'CAST(ano AS TEXT) LIKE ?'];
     p.push(like, like, like);
+    // Lot-wise planter DNs name their lot directly; seller-wise ones resolve
+    // through the planter's lots on that trade.
+    const lotNums = smartLotNumbers(qstr);
+    const ownLot = smartLotSql('debit_notes_planter.lot_no', lotNums);
+    if (ownLot) {
+      ors.push(`(TRIM(COALESCE(debit_notes_planter.lot_no,'')) != '' AND ${ownLot.sql})`);
+      p.push(...ownLot.params);
+      const viaLots = smartLotSql('l.lot_no', lotNums);
+      ors.push(`(TRIM(COALESCE(debit_notes_planter.lot_no,'')) = '' AND EXISTS (
+                   SELECT 1 FROM lots l
+                    WHERE l.auction_id = (SELECT a.id FROM auctions a WHERE a.ano = debit_notes_planter.ano LIMIT 1)
+                      AND UPPER(TRIM(COALESCE(l.name,''))) = UPPER(TRIM(COALESCE(debit_notes_planter.name,'')))
+                      AND ${viaLots.sql}))`);
+      p.push(...viaLots.params);
+    }
+    const phone = smartPhoneDigits(qstr);
+    if (phone) {
+      ors.push(`EXISTS (SELECT 1 FROM traders t
+                         WHERE UPPER(TRIM(COALESCE(t.name,''))) = UPPER(TRIM(COALESCE(debit_notes_planter.name,'')))
+                           AND (${smartPhoneSql('t.tel')} LIKE ? OR ${smartPhoneSql('t.whatsapp')} LIKE ?))`);
+      p.push(`%${phone}%`, `%${phone}%`);
+    }
+    where += ' AND (' + ors.join(' OR ') + ')';
   }
   const page     = Math.max(1, parseInt(req.query.page, 10) || 1);
   const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 50));

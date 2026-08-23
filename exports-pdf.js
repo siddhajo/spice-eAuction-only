@@ -1295,7 +1295,9 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
 
     case 'sales_taxes':
       return db.all(
-        `SELECT state, sale, invo, buyer1 as tradername, bags as bag, qty,
+        // `bag`, not `bags` — invoices spells it singular (db.js:386). Same
+        // fix as the XLSX path in exports.js; the two queries are duplicates.
+        `SELECT state, sale, invo, buyer1 as tradername, bag, qty,
           amount as cardamom_cost, gunny as gunny_cost,
           cgst, sgst, igst, tcs, pava_hc as transport, ins as insurance, tot as total
          FROM invoices WHERE ano = (SELECT ano FROM auctions WHERE id = ?)
@@ -1353,7 +1355,9 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
       const mode = (cfg && cfg.business_mode || 'e-Auction').toLowerCase();
       const discountCol = (mode === 'auction') ? 'advance' : 'refund';
       return db.all(
-        `SELECT name, padd as add, ppla as place, cr as gstin, tel,
+        // ADD is a SQLite keyword — the alias must be quoted. Same fix as
+        // the XLSX path in exports.js; the two queries are duplicates.
+        `SELECT name, padd as "add", ppla as place, cr as gstin, tel,
           lot_no as lot, bags as bag, pqty as qty, prate as price, puramt as amount,
           cgst, sgst, igst, ${discountCol} as discount, puramt as bilamt
          FROM lots WHERE auction_id = ? AND amount > 0

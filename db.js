@@ -141,6 +141,13 @@ async function initDb() {
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'user',
+    -- Home branch/depot for non-admin users. When set, the mobile app and
+    -- the desktop Lot Entry screen pre-select it and lock the branch
+    -- dropdown so that operator can only book against their own depot.
+    -- Always blank for admins (they work across every branch). Free text
+    -- matching a br1..br9 value in company_settings — same convention as
+    -- lots.branch and lot_allocations.branch.
+    branch TEXT DEFAULT '',
     token TEXT,
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
@@ -601,6 +608,29 @@ async function initDb() {
     FOREIGN KEY (user_id) REFERENCES users(id)
   )`);
 
+  // ── SESSION ALERTS (concurrent-login notices) ─────────────
+  // One row per "someone else signed in" notice, addressed to a user who
+  // was ALREADY signed in at the time. Written by both login handlers
+  // (/api/login and the mobile bridge's /api/auth/login), drained by the
+  // /api/session-alerts poll on the desktop UI. Rows are per-recipient:
+  // two admins online when a third signs in produce two rows.
+  //
+  // `kind` is 'admin_login' today; kept open so future notice types
+  // (forced sign-out, licence change) can share the same poll+banner.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS session_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'admin_login',
+    actor_username TEXT NOT NULL DEFAULT '',
+    actor_role TEXT NOT NULL DEFAULT '',
+    message TEXT NOT NULL DEFAULT '',
+    device TEXT DEFAULT '',
+    ip TEXT DEFAULT '',
+    acked INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  )`);
+
   // ── IMPORT LOG (Task 8 — "Import Old Data") ───────────────
   // One row per import run (preview, dry-run, or actual import). Used
   // by the Import Old Data → History panel so the admin can audit
@@ -824,6 +854,11 @@ async function initDb() {
     'CREATE INDEX IF NOT EXISTS idx_lot_alloc_auction ON lot_allocations(auction_id)',
     'CREATE INDEX IF NOT EXISTS idx_login_history_user ON login_history(user_id)',
     'CREATE INDEX IF NOT EXISTS idx_login_history_created ON login_history(created_at DESC)',
+    // The session-alert poll runs every 15s per signed-in admin and only
+    // ever asks for one user's unacked rows — index that exact predicate.
+    'CREATE INDEX IF NOT EXISTS idx_session_alerts_inbox ON session_alerts(user_id, acked, id)',
+    // Duplicate-login checks hit sessions by user on every login attempt.
+    'CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)',
     // Fast lookup for seller uniqueness checks (cr / tel / pan are the
     // de-dup keys used by the unified create-seller path).
     'CREATE INDEX IF NOT EXISTS idx_traders_cr  ON traders(cr)',
@@ -844,6 +879,10 @@ async function initDb() {
 
   // ── MIGRATIONS (for existing databases created before schema changes) ──
   const migrations = [
+    // Per-user home branch. Existing installs get the column blank, which
+    // means "no branch lock" — behaviour is unchanged until an admin
+    // assigns one from Users → Branch.
+    "ALTER TABLE users ADD COLUMN branch TEXT DEFAULT ''",
     // Per-import undo: existing DBs need the two new columns added so
     // the Undo button on the History panel can find inserted rows and
     // mark the entry as rolled back.

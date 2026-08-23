@@ -814,6 +814,10 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
   // imported before `lots.user_id` was captured, so those group as before.
   const sellerKeySql = SELLER_KEY_SQL('l');
   let query = `SELECT l.name, l.cr, MAX(l.aadhar) AS aadhar,
+    -- Seller phone as stamped on the lot. Carried so the Payments tab's
+    -- search box can find a seller by phone number (the rollup has no other
+    -- link to the seller master). Display-only; nothing computes from it.
+    MAX(l.tel) AS tel,
     ${sellerKeySql} AS seller_key,
     MAX(l.trader_id) AS trader_id,
     TRIM(COALESCE(l.user_id,'')) AS user_id,

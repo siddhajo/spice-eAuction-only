@@ -4,6 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Admin Console</title>
+<!-- Text size — applied BEFORE the stylesheet paints so the page never
+     flashes at one scale and then jumps to another. Deliberately tiny and
+     dependency-free; the rest of the feature lives in applyTextSize(). -->
+<script>
+(function(){
+  try{
+    var s = localStorage.getItem('spice_textsize');
+    if (s && s !== 'md') document.documentElement.setAttribute('data-textsize', s);
+  }catch(e){}
+})();
+</script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 /* Per-tenant fonts — loaded once, picked via body[data-font] below.
@@ -194,6 +205,41 @@ body[data-bg="mesh"]{
 .role-badge{display:none;margin-left:8px;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;line-height:1.6;background:#f1f5f9;color:#64748b;vertical-align:middle}
 
 *{margin:0;padding:0;box-sizing:border-box}
+
+/* ══════════════════════════════════════════════════════════════════
+   TEXT SIZE — whole-UI scale for readability
+   ══════════════════════════════════════════════════════════════════
+   This screen carries ~1,360 hardcoded px sizes, most of them inline
+   in style="" attributes and JS template strings. Scaling type by
+   editing them one by one is neither safe nor maintainable, so the
+   whole document is zoomed instead: `zoom` multiplies every px length
+   (text, icons, row heights, padding) so proportions are preserved and
+   nothing clips — the same thing browser zoom does, but persisted and
+   under app control.
+
+   `--zf` is the single source of truth. It is read by:
+     • html{zoom:...}                     — the scale itself
+     • every viewport length in this file — see below
+
+   Viewport units need compensating. Under zoom a `vh`/`vw` still
+   resolves against the REAL viewport and is then multiplied by the
+   zoom, so `height:100vh` at 145% paints 1.45x taller than the screen.
+   Every viewport length in this file is therefore written as
+   `calc(<n>vh / var(--zf))`, which cancels the zoom exactly.
+
+   At the default --zf:1 the division is arithmetically a no-op, so an
+   install that never touches the setting renders pixel-identically to
+   before this existed.
+
+   Set at boot (pre-paint) and on change by applyTextSize(); the step
+   lives in localStorage under 'spice_textsize'.
+   ══════════════════════════════════════════════════════════════════ */
+:root{ --zf: 1; }
+html[data-textsize="lg"]  { --zf: 1.15; }
+html[data-textsize="xl"]  { --zf: 1.30; }
+html[data-textsize="xxl"] { --zf: 1.45; }
+html{ zoom: var(--zf); }
+
 :root{
   /* ═══ DEFAULT (Emerald) — overridden by body[data-theme] rules below ═══ */
   --spice-saffron: #10B981;
@@ -238,7 +284,16 @@ body[data-bg="mesh"]{
   --spice-line-strong: #CBD5E1;
   --spice-text-main: #0F172A;
   --spice-text-mute: #475569;
-  --spice-text-hint: #94A3B8;
+  /* Hint / tertiary text. Was #94A3B8 (slate-400), which is only 2.56:1 on
+     white — under the 4.5:1 minimum for readable text, and the single
+     biggest reason small print looked washed out: this token feeds --text3,
+     the most-used text colour in the file (355 uses).
+     #64748B (slate-500) is 4.76:1 on white and 4.55:1 on the page tint, so
+     it passes on both surfaces while staying a clear step lighter than
+     --spice-text-mute (7.58:1) — the hierarchy survives, it just stops
+     being unreadable. Dark theme keeps #94A3B8; on the dark ground that
+     same colour is already 6.51:1. */
+  --spice-text-hint: #64748B;
 
   /* ── Legacy aliases (keep old class names working) ──── */
   --bg:            var(--spice-cream);
@@ -530,7 +585,7 @@ body{
 .login-layout-opt .diagram{display:flex;width:48px;height:31px;border-radius:5px;overflow:hidden;border:1px solid var(--border)}
 .login-layout-opt .lo-name{font-size:11px;font-weight:600;color:var(--text)}
 .login-layout-opt .lo-pane-c{background:linear-gradient(135deg,var(--spice-saffron),var(--spice-turmeric,var(--spice-saffron)))}
-body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
+body{background:var(--bg);color:var(--text);min-height:calc(100vh / var(--zf));font-size:14px}
 
 /* ── Login — light split "Aurora" ─────────────────────────────
    Two panes centered on a light aurora backdrop: LEFT = a bold
@@ -566,7 +621,7 @@ body{background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
   --spice-turmeric:   var(--lg-3);
   --spice-turmeric-lt:color-mix(in srgb,var(--lg-3) 10%,white);
   position:relative;display:flex;align-items:center;justify-content:center;
-  min-height:100vh;width:100%;padding:40px 28px;overflow:hidden;
+  min-height:calc(100vh / var(--zf));width:100%;padding:40px 28px;overflow:hidden;
   background:
     radial-gradient(1200px 700px at 8% -8%, color-mix(in srgb,var(--lg-1) 22%,transparent) 0%, transparent 60%),
     radial-gradient(1000px 640px at 100% 0%, color-mix(in srgb,var(--lg-2) 20%,transparent) 0%, transparent 58%),
@@ -611,9 +666,9 @@ body[data-login="midnight"] #login .login-card .fg input:focus{background:rgba(2
 /* Aurora backdrop — soft drifting color blobs over a faint grid */
 .login-aurora{position:absolute;inset:0;z-index:0;overflow:hidden}
 .login-aurora .blob{position:absolute;border-radius:50%;filter:blur(90px);will-change:transform,opacity}
-.login-aurora .b1{width:min(60vw,620px);aspect-ratio:1;background:radial-gradient(circle at 30% 30%,color-mix(in srgb,var(--lg-1) 85%,white),var(--lg-1-dk));opacity:.42;top:-16%;left:-10%;animation:auroraA 19s ease-in-out infinite}
-.login-aurora .b2{width:min(55vw,560px);aspect-ratio:1;background:radial-gradient(circle at 30% 30%,color-mix(in srgb,var(--lg-2) 88%,white),color-mix(in srgb,var(--lg-2) 72%,black));opacity:.4;bottom:-20%;right:-8%;animation:auroraB 23s ease-in-out infinite}
-.login-aurora .b3{width:min(45vw,460px);aspect-ratio:1;background:radial-gradient(circle at 30% 30%,color-mix(in srgb,var(--lg-3) 85%,white),color-mix(in srgb,var(--lg-3) 70%,black));opacity:.34;top:30%;left:48%;animation:auroraC 27s ease-in-out infinite}
+.login-aurora .b1{width:min(calc(60vw / var(--zf)),620px);aspect-ratio:1;background:radial-gradient(circle at 30% 30%,color-mix(in srgb,var(--lg-1) 85%,white),var(--lg-1-dk));opacity:.42;top:-16%;left:-10%;animation:auroraA 19s ease-in-out infinite}
+.login-aurora .b2{width:min(calc(55vw / var(--zf)),560px);aspect-ratio:1;background:radial-gradient(circle at 30% 30%,color-mix(in srgb,var(--lg-2) 88%,white),color-mix(in srgb,var(--lg-2) 72%,black));opacity:.4;bottom:-20%;right:-8%;animation:auroraB 23s ease-in-out infinite}
+.login-aurora .b3{width:min(calc(45vw / var(--zf)),460px);aspect-ratio:1;background:radial-gradient(circle at 30% 30%,color-mix(in srgb,var(--lg-3) 85%,white),color-mix(in srgb,var(--lg-3) 70%,black));opacity:.34;top:30%;left:48%;animation:auroraC 27s ease-in-out infinite}
 .login-aurora .grid{
   position:absolute;inset:0;
   background-image:radial-gradient(color-mix(in srgb,var(--spice-saffron-dk) 5%,transparent) 1px,transparent 1px);background-size:26px 26px;
@@ -631,7 +686,7 @@ body[data-login="midnight"] #login .login-card .fg input:focus{background:rgba(2
 .login-hero{max-width:520px}
 .login-eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:11.5px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:var(--spice-saffron-dk);background:color-mix(in srgb,var(--spice-saffron) 10%,transparent);border:1px solid color-mix(in srgb,var(--spice-saffron) 22%,transparent);padding:7px 14px;border-radius:999px;margin-bottom:24px}
 .login-eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--spice-saffron);box-shadow:0 0 8px color-mix(in srgb,var(--spice-saffron) 80%,transparent);animation:loginPulse 2s ease-in-out infinite}
-.login-hero-title{font-size:clamp(34px,4.2vw,50px);font-weight:800;line-height:1.05;letter-spacing:-1px;color:var(--spice-saffron-dk);margin:0 0 20px}
+.login-hero-title{font-size:clamp(34px,calc(4.2vw / var(--zf)),50px);font-weight:800;line-height:1.05;letter-spacing:-1px;color:var(--spice-saffron-dk);margin:0 0 20px}
 .login-hero-title em{font-style:normal;background:linear-gradient(100deg,var(--lg-2) 0%,var(--lg-1) 40%,color-mix(in srgb,var(--lg-1) 45%,var(--lg-3)) 72%,var(--lg-3) 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
 .login-hero-sub{font-size:15.5px;line-height:1.6;color:#475569;margin:0 0 30px;max-width:460px}
 .login-feats{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
@@ -783,23 +838,23 @@ body[data-login-layout="showcase"] .login-hero::before{content:'';position:absol
 /* ── split (default) — two full-height panels, form flush (no card) ───── */
 body[data-login-layout="split"] #login{padding:0}
 body[data-login-layout="split"] .login-aurora{display:none}
-body[data-login-layout="split"] .login-stage{max-width:none;width:100%;gap:0;grid-template-columns:1.04fr .96fr;align-items:stretch;min-height:100vh}
-body[data-login-layout="split"] .login-hero{margin:0;padding:clamp(48px,6vw,88px);display:flex;flex-direction:column;justify-content:center}
+body[data-login-layout="split"] .login-stage{max-width:none;width:100%;gap:0;grid-template-columns:1.04fr .96fr;align-items:stretch;min-height:calc(100vh / var(--zf))}
+body[data-login-layout="split"] .login-hero{margin:0;padding:clamp(48px,calc(6vw / var(--zf)),88px);display:flex;flex-direction:column;justify-content:center}
 body[data-login-layout="split"] .login-card{
   max-width:none;width:100%;justify-self:stretch;left:0;margin:0;
   background:#fff;border:none;border-radius:0;box-shadow:none;
   -webkit-backdrop-filter:none;backdrop-filter:none;animation:none;
   display:flex;flex-direction:column;justify-content:center;
-  padding:clamp(40px,5vw,72px) clamp(30px,6vw,96px);
+  padding:clamp(40px,calc(5vw / var(--zf)),72px) clamp(30px,calc(6vw / var(--zf)),96px);
 }
 body[data-login-layout="split"] .login-card > *{width:100%;max-width:452px;margin-left:auto;margin-right:auto}
 
 /* ── topbar — slim brand nav bar on top, one centered card below ─────── */
 body[data-login-layout="topbar"] #login{padding:0;align-items:stretch;justify-content:flex-start;background:linear-gradient(180deg,#fff 0%,color-mix(in srgb,var(--lg-1) 6%,white) 100%)}
 body[data-login-layout="topbar"] .login-aurora{display:none}
-body[data-login-layout="topbar"] .login-stage{grid-template-columns:1fr;grid-template-rows:auto 1fr;max-width:none;width:100%;gap:0;align-items:start;min-height:100vh}
+body[data-login-layout="topbar"] .login-stage{grid-template-columns:1fr;grid-template-rows:auto 1fr;max-width:none;width:100%;gap:0;align-items:start;min-height:calc(100vh / var(--zf))}
 /* the hero row becomes the top bar */
-body[data-login-layout="topbar"] .login-hero{grid-row:1;max-width:none;justify-self:stretch;display:flex;flex-direction:row;align-items:center;justify-content:space-between;gap:16px;padding:15px clamp(20px,4vw,46px);background:rgba(255,255,255,.85);border-bottom:1px solid color-mix(in srgb,var(--lg-1) 14%,#E4E9F0);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+body[data-login-layout="topbar"] .login-hero{grid-row:1;max-width:none;justify-self:stretch;display:flex;flex-direction:row;align-items:center;justify-content:space-between;gap:16px;padding:15px clamp(20px,calc(4vw / var(--zf)),46px);background:rgba(255,255,255,.85);border-bottom:1px solid color-mix(in srgb,var(--lg-1) 14%,#E4E9F0);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
 body[data-login-layout="topbar"] .login-hero-title,
 body[data-login-layout="topbar"] .login-hero-sub,
 body[data-login-layout="topbar"] .login-feats{display:none}
@@ -812,21 +867,21 @@ body[data-login-layout="topbar"] .login-card{grid-row:2;justify-self:center;alig
 
 /* ── minimal — bare form on near-white, top logo, maximum air ─────────── */
 /* ── aside — oversized brand headline left, compact form card offset right */
-body[data-login-layout="aside"] #login{padding:clamp(32px,5vw,64px);background:linear-gradient(140deg,#fff 0%,color-mix(in srgb,var(--lg-1) 7%,white) 58%,color-mix(in srgb,var(--lg-3) 6%,white) 100%)}
+body[data-login-layout="aside"] #login{padding:clamp(32px,calc(5vw / var(--zf)),64px);background:linear-gradient(140deg,#fff 0%,color-mix(in srgb,var(--lg-1) 7%,white) 58%,color-mix(in srgb,var(--lg-3) 6%,white) 100%)}
 body[data-login-layout="aside"] .login-aurora{opacity:.55}
-body[data-login-layout="aside"] .login-stage{grid-template-columns:1.15fr .85fr;gap:clamp(40px,6vw,88px);max-width:1080px;align-items:center}
+body[data-login-layout="aside"] .login-stage{grid-template-columns:1.15fr .85fr;gap:clamp(40px,calc(6vw / var(--zf)),88px);max-width:1080px;align-items:center}
 body[data-login-layout="aside"] .login-hero{max-width:none}
-body[data-login-layout="aside"] .login-hero-title{font-size:clamp(40px,5.2vw,62px);letter-spacing:-1.5px;line-height:1.02;margin-bottom:22px}
+body[data-login-layout="aside"] .login-hero-title{font-size:clamp(40px,calc(5.2vw / var(--zf)),62px);letter-spacing:-1.5px;line-height:1.02;margin-bottom:22px}
 body[data-login-layout="aside"] .login-hero-sub{font-size:17px;line-height:1.55;max-width:440px;display:block}
 body[data-login-layout="aside"] .login-feats{display:none}
 body[data-login-layout="aside"] .login-card{max-width:396px;justify-self:end;left:0}
 
 /* ── showcase — form left, product panel right ────────────────────────── */
-body[data-login-layout="showcase"] #login{padding:clamp(24px,4vw,48px)}
+body[data-login-layout="showcase"] #login{padding:clamp(24px,calc(4vw / var(--zf)),48px)}
 body[data-login-layout="showcase"] .login-aurora{opacity:.5}
 body[data-login-layout="showcase"] .login-stage{grid-template-columns:.9fr 1.1fr;gap:44px;max-width:1120px;align-items:stretch}
 body[data-login-layout="showcase"] .login-card{order:1;left:0;justify-self:stretch;align-self:center;max-width:440px;margin:0 auto}
-body[data-login-layout="showcase"] .login-hero{order:2;max-width:none;align-self:stretch;display:flex;flex-direction:column;justify-content:center;border-radius:28px;padding:clamp(40px,4vw,60px);box-shadow:0 40px 90px -46px color-mix(in srgb,var(--lg-1-dk) 65%,transparent)}
+body[data-login-layout="showcase"] .login-hero{order:2;max-width:none;align-self:stretch;display:flex;flex-direction:column;justify-content:center;border-radius:28px;padding:clamp(40px,calc(4vw / var(--zf)),60px);box-shadow:0 40px 90px -46px color-mix(in srgb,var(--lg-1-dk) 65%,transparent)}
 
 @media (max-width:900px){
   body[data-login-layout="split"] .login-stage,
@@ -1128,9 +1183,22 @@ body[data-login-layout="showcase"] .login-hero{order:2;max-width:none;align-self
 .topbar{
   background:var(--spice-paper);border-bottom:1px solid var(--spice-line);
   padding:14px 28px;display:flex;justify-content:space-between;align-items:center;
-  position:sticky;top:0;z-index:30
+  position:sticky;top:0;z-index:30;
+  /* The bar is one long flex row (brand + trade selector on the left, six
+     controls on the right). Without wrapping it just runs off the screen —
+     which it did at the larger text-size steps, and on narrow laptops at
+     100% too. Let it stack instead of overflowing the page. */
+  flex-wrap:wrap;row-gap:8px
 }
-.topbar-left{display:flex;align-items:center;gap:14px}
+/* Both halves must be allowed to shrink. A flex item defaults to
+   min-width:auto, which refuses to go below its content width and is what
+   actually pushes the bar past the viewport. */
+.topbar>*{min-width:0}
+.topbar-left{display:flex;align-items:center;gap:14px;flex-wrap:wrap;row-gap:8px;min-width:0}
+/* The trade selector is the one genuinely wide control (min-width:220px).
+   Let it give ground before anything spills. */
+#topbar-trade{max-width:100%}
+#topbar-trade-wrap{min-width:0;flex-shrink:1}
 .hamburger{
   display:none;width:44px;height:44px;border:none;background:none;cursor:pointer;
   align-items:center;justify-content:center;border-radius:10px;padding:0
@@ -1178,7 +1246,7 @@ body[data-login-layout="showcase"] .login-hero{order:2;max-width:none;align-self
 @media (max-width: 640px){ .sync-pill{font-size:11px;padding:4px 8px} }
 
 /* ── Layout: Sidebar + Content ──────────────────────────── */
-.layout{display:flex;min-height:calc(100vh - 64px)}
+.layout{display:flex;min-height:calc(calc(100vh / var(--zf)) - 64px)}
 /* ── Sidebar — brand-matched, derived from the active theme ──────
    Colours come from the --side-* tokens (set in :root from the theme
    primary) so the rail re-skins with the theme instead of staying a
@@ -1194,7 +1262,7 @@ body[data-login-layout="showcase"] .login-hero{order:2;max-width:none;align-self
   color:var(--side-text);
   border-right:none;
   padding:20px 12px;flex-shrink:0;position:sticky;top:64px;
-  height:calc(100vh - 64px);overflow-y:auto
+  height:calc(calc(100vh / var(--zf)) - 64px);overflow-y:auto
 }
 .sidebar::-webkit-scrollbar{width:6px}
 .sidebar::-webkit-scrollbar-thumb{background:color-mix(in srgb, var(--side-glow) 20%, transparent);border-radius:3px}
@@ -1336,6 +1404,10 @@ html.sidebar-collapsed .sidebar .sb-collapse-btn svg{transform:rotate(180deg)}
   transition:all .15s;margin-right:2px;vertical-align:middle
 }
 .icon-btn:hover{transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,.08)}
+/* Compact variant for icon buttons that sit INLINE inside a data cell
+   (e.g. ⬆ Raise Original beside the buyer name on the Sales list) rather
+   than in the row's ⋯ actions menu — keeps the row height unchanged. */
+.icon-btn.icon-btn-inline{width:22px;height:22px;border-radius:5px;margin-right:0;font-size:12px;line-height:1}
 .icon-btn svg{width:15px;height:15px;stroke-width:2;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}
 .icon-btn.i-edit{color:var(--text2);border-color:var(--spice-line-strong)}
 .icon-btn.i-edit:hover{color:var(--green);border-color:var(--green)}
@@ -1505,7 +1577,7 @@ tr:hover td{background:var(--spice-cream)}
 }
 /* Price Entry list scrolls within a fixed viewport so the toolbar/actions
    stay put and only the rows scroll; the coloured header sticks on top. */
-#pe-grid{max-height:calc(100vh - 300px);overflow:auto}
+#pe-grid{max-height:calc(calc(100vh / var(--zf)) - 300px);overflow:auto}
 #pe-grid .pe-grid-table thead th{position:sticky;top:0;z-index:2}
 
 /* Lot-wise Payments results — coloured header, same treatment as the Price
@@ -1942,6 +2014,261 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 .stat .n{font-size:30px;font-weight:700;color:var(--spice-text-main);line-height:1.1}
 .stat .l{font-size:11px;color:var(--spice-text-hint);text-transform:uppercase;letter-spacing:.6px;font-weight:700;margin-top:6px}
 
+/* ── Auction Desk (the document hub) ─────────────────────────
+   Every tile is painted from /api/documents/catalog — no tile markup is
+   authored by hand, so these classes are the whole visual vocabulary.
+   Compact KPI variant of .stat: the hub shows nine figures above a long
+   grid, so the dashboard's 30px numerals would push the tiles off-screen. */
+.hub-kpi{grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:10px;margin-bottom:16px}
+.hub-kpi .stat{
+  padding:13px 12px;border-radius:12px;position:relative;overflow:hidden;
+  background:linear-gradient(160deg, color-mix(in srgb, var(--kpi) 12%, var(--card)), var(--card));
+  border:1px solid color-mix(in srgb, var(--kpi) 26%, var(--border));
+  border-top:3px solid var(--kpi);--kpi:var(--spice-cardamom)
+}
+.hub-kpi .stat .n{white-space:nowrap;letter-spacing:-.4px;color:var(--kpi)}
+.hub-kpi .stat .l{font-size:10px;margin-top:3px}
+/* Numbers grow with the auction — 285 lots today, ₹20,70,44,630 at close.
+   The renderer tags each figure by character count so a long one steps
+   down a size instead of spilling out of its tile. */
+.hub-kpi .stat .n.n-1{font-size:22px}
+.hub-kpi .stat .n.n-2{font-size:19px}
+.hub-kpi .stat .n.n-3{font-size:16px}
+.hub-kpi .stat .n.n-4{font-size:13.5px}
+/* Semantic colour: sold reads green, withdrawn amber, value the brand
+   tone. A KPI row you can read by hue beats eight identical numerals. */
+.hub-kpi .stat.k-sold {--kpi:#059669}
+.hub-kpi .stat.k-wd   {--kpi:#D97706}
+.hub-kpi .stat.k-value{--kpi:var(--spice-cardamom-dk)}
+.hub-kpi .stat.k-neutral{--kpi:#475569}
+/* Total Value runs to ~12 characters at auction scale and cannot share a
+   lot-count-sized column. Two columns wide, tinted so it reads as the
+   headline figure rather than the eighth number in a row. */
+.hub-kpi .stat-value{
+  grid-column:span 2;
+  background:linear-gradient(135deg, var(--green-bg), var(--card));
+  border-top-color:var(--spice-cardamom)
+}
+.hub-kpi .stat-value .n{color:var(--spice-cardamom-dk)}
+
+/* Each group carries an accent colour, used on its rail, icon chip, count
+   pill and its tiles' hover edge. Ten flat hues rather than ten tints of
+   the theme green — the point is to make a long scroll navigable at a
+   glance, which needs actual hue difference. */
+.hub-sec{margin:0 0 14px 0;--acc:var(--spice-cardamom)}
+.hub-sec[data-g="preauction"]{--acc:#0EA5E9}
+.hub-sec[data-g="documents"] {--acc:#8B5CF6}
+.hub-sec[data-g="reports"]   {--acc:#10B981}
+.hub-sec[data-g="statutory"] {--acc:#F59E0B}
+.hub-sec[data-g="banking"]   {--acc:#14B8A6}
+.hub-sec[data-g="logistics"] {--acc:#F97316}
+.hub-sec[data-g="tally"]     {--acc:#6366F1}
+.hub-sec[data-g="dbf"]       {--acc:#64748B}
+.hub-sec[data-g="books"]     {--acc:#EC4899}
+.hub-sec[data-g="masters"]   {--acc:#0891B2}
+/* File-type grouping gets its own hues — one per format. */
+.hub-sec[data-g="fmt-pdf"]      {--acc:#DC2626}
+.hub-sec[data-g="fmt-xlsx"]     {--acc:#059669}
+.hub-sec[data-g="fmt-csv"]      {--acc:#0EA5E9}
+.hub-sec[data-g="fmt-xml"]      {--acc:#6366F1}
+.hub-sec[data-g="fmt-json"]     {--acc:#8B5CF6}
+.hub-sec[data-g="fmt-irp"]      {--acc:#F59E0B}
+.hub-sec[data-g="fmt-dbf"]      {--acc:#64748B}
+.hub-sec[data-g="fmt-generated"]{--acc:#EC4899}
+/* The quick-links strip on the Lots tab borrows the brand tone. */
+.hub-quick{--acc:var(--spice-cardamom)}
+
+.hub-sec-head{
+  display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;
+  padding:11px 14px;border-radius:10px;font-size:14px;font-weight:700;
+  color:var(--text);border:1px solid color-mix(in srgb, var(--acc) 22%, var(--border));
+  border-left:4px solid var(--acc);
+  background:linear-gradient(100deg, color-mix(in srgb, var(--acc) 13%, var(--card)),
+                                     color-mix(in srgb, var(--acc) 3%, var(--card)))
+}
+.hub-sec-head:hover{
+  background:linear-gradient(100deg, color-mix(in srgb, var(--acc) 20%, var(--card)),
+                                     color-mix(in srgb, var(--acc) 6%, var(--card)))
+}
+.hub-sec-ico{
+  width:28px;height:28px;flex:none;border-radius:8px;display:flex;
+  align-items:center;justify-content:center;
+  background:color-mix(in srgb, var(--acc) 15%, transparent);color:var(--acc)
+}
+.hub-sec-ico svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round}
+.hub-sec-chev{font-size:10px;color:var(--text3);transition:transform .18s}
+.hub-sec.is-collapsed .hub-sec-chev{transform:rotate(-90deg)}
+.hub-sec.is-collapsed .hub-sec-body{display:none}
+.hub-sec-hint{font-weight:400;font-size:11.5px;color:var(--text3)}
+.hub-sec-count{
+  margin-left:auto;font-weight:700;font-size:11px;
+  color:var(--acc);background:color-mix(in srgb, var(--acc) 12%, transparent);
+  border:1px solid color-mix(in srgb, var(--acc) 28%, transparent);
+  border-radius:20px;padding:2px 10px;white-space:nowrap
+}
+/* Each group scrolls on its own. With ten groups open, a single page
+   scroll buried the later headings; this keeps every group's heading
+   reachable and lets you scan one group without losing the others. */
+.hub-sec-body{padding:12px 2px 2px;max-height:min(46vh,440px);overflow-y:auto;overflow-x:hidden}
+.hub-sec-body::-webkit-scrollbar{width:8px}
+.hub-sec-body::-webkit-scrollbar-thumb{
+  background:color-mix(in srgb, var(--acc) 30%, transparent);border-radius:4px}
+.hub-sec-body::-webkit-scrollbar-thumb:hover{
+  background:color-mix(in srgb, var(--acc) 55%, transparent)}
+
+.hub-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(238px,1fr));gap:10px}
+.hub-tile{
+  display:flex;flex-direction:column;gap:6px;
+  border:1px solid color-mix(in srgb, var(--acc) 20%, var(--border));
+  border-radius:12px;padding:12px 13px;
+  background:linear-gradient(165deg, color-mix(in srgb, var(--acc) 7%, var(--card)), var(--card));
+  transition:box-shadow .15s,border-color .15s,transform .15s;
+  border-left:3px solid color-mix(in srgb, var(--acc) 55%, transparent)
+}
+.hub-tile:hover{
+  border-color:var(--acc);border-left-color:var(--acc);
+  transform:translateY(-1px);
+  box-shadow:0 6px 18px color-mix(in srgb, var(--acc) 22%, transparent)
+}
+/* A locked tile stays visible and explains itself — the sidebar's habit of
+   hiding un-earned items is exactly what made documents hard to find. */
+.hub-tile.is-locked{background:var(--bg);border-style:dashed;border-left-color:var(--border)}
+.hub-tile.is-locked:hover{box-shadow:none;border-color:var(--border);transform:none}
+.hub-tile.is-locked .hub-tile-l{color:var(--text3)}
+.hub-tile-l{font-size:13px;font-weight:700;color:var(--text);line-height:1.3}
+.hub-note{font-size:11px;color:var(--text3);line-height:1.45}
+.hub-lock{font-size:11px;color:var(--amber);line-height:1.45;display:flex;gap:5px}
+.hub-acts{display:flex;flex-wrap:wrap;gap:5px;margin-top:auto;padding-top:6px}
+.hub-btn{
+  height:27px;padding:0 10px;border-radius:7px;font-size:11.5px;font-weight:700;
+  font-family:inherit;cursor:pointer;border:1px solid var(--border);
+  background:var(--card);color:var(--text2);transition:all .13s
+}
+.hub-btn:hover{
+  background:color-mix(in srgb, var(--acc) 10%, transparent);
+  border-color:var(--acc);color:var(--acc)
+}
+/* Preview and Print, icon-only — see hubTileHtml for why. */
+.hub-btn-i{width:27px;padding:0;display:inline-flex;align-items:center;justify-content:center}
+.hub-btn-i svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round}
+/* The primary format sits in the group's own colour, so a scan down the
+   page reads as one system rather than a wall of identical grey chips. */
+.hub-btn-p{background:var(--acc);border-color:var(--acc);color:#fff}
+.hub-btn-p:hover{
+  background:color-mix(in srgb, var(--acc) 82%, black);
+  border-color:color-mix(in srgb, var(--acc) 82%, black);color:#fff
+}
+.hub-chip{
+  align-self:flex-start;font-size:10.5px;font-weight:700;border-radius:20px;
+  padding:2px 9px;letter-spacing:.2px
+}
+.hub-chip-ok{background:var(--green-bg);color:var(--green)}
+.hub-chip-part{background:var(--spice-turmeric-lt);color:#92400E}
+.hub-chip-none{background:var(--bg);color:var(--text3)}
+.hub-toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
+.hub-empty{padding:26px;text-align:center;color:var(--text3);font-size:13px}
+
+/* Find-a-document combobox — a searchable list of every document, so you
+   can go straight to one by name instead of knowing which group it lives
+   in. Free text still narrows the whole grid. */
+.hub-combo-list{
+  position:absolute;z-index:60;top:calc(100% + 4px);left:0;right:0;
+  max-height:320px;overflow-y:auto;background:var(--card);
+  border:1px solid var(--border);border-radius:10px;
+  box-shadow:0 12px 32px rgba(15,23,42,.16)
+}
+.hub-combo-grp{
+  padding:6px 11px;font-size:10px;font-weight:800;letter-spacing:.5px;
+  text-transform:uppercase;color:var(--text3);background:var(--bg);
+  position:sticky;top:0
+}
+.hub-combo-opt{
+  display:flex;align-items:center;gap:8px;padding:7px 11px;cursor:pointer;
+  font-size:12.5px;color:var(--text);border:none;background:none;width:100%;
+  text-align:left;font-family:inherit
+}
+.hub-combo-opt:hover,.hub-combo-opt.is-active{background:var(--green-bg)}
+.hub-combo-opt .f{margin-left:auto;font-size:10px;color:var(--text3);
+  text-transform:uppercase;letter-spacing:.3px;flex:none}
+.hub-combo-opt.is-locked{color:var(--text3)}
+.hub-combo-none{padding:14px;text-align:center;color:var(--text3);font-size:12px}
+
+/* ── Lots view ─────────────────────────────────────────────
+   Segmented control over the two things an auction is: the lots that
+   make it up, and the documents it produces. */
+.hub-seg{
+  display:inline-flex;gap:2px;padding:3px;margin-bottom:14px;
+  background:var(--bg);border:1px solid var(--border);border-radius:10px
+}
+.hub-seg-btn{
+  padding:7px 20px;border:none;border-radius:8px;background:none;cursor:pointer;
+  font-family:inherit;font-size:13px;font-weight:700;color:var(--text3);transition:all .14s
+}
+.hub-seg-btn:hover{color:var(--text)}
+.hub-seg-btn.is-on{
+  background:var(--spice-cardamom);color:#fff;
+  box-shadow:0 2px 8px color-mix(in srgb, var(--spice-cardamom) 40%, transparent)
+}
+
+/* The lot table scrolls inside a fixed box rather than growing the page,
+   so the pager and the toolbar stay put while you read down a page of
+   lots. Horizontal scroll rides along for narrow screens. */
+.hub-lot-scroll{max-height:min(62vh,660px);overflow:auto}
+.hub-lot-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.hub-lot-table th{
+  text-align:left;padding:11px 12px;font-size:10.5px;font-weight:800;
+  letter-spacing:.5px;text-transform:uppercase;white-space:nowrap;
+  color:#fff;background:linear-gradient(100deg, var(--spice-cardamom-dk), var(--spice-cardamom));
+  border-bottom:1px solid var(--spice-cardamom-dk);
+  position:sticky;top:0;z-index:1
+}
+.hub-lot-table th.num,.hub-lot-table td.num{text-align:right}
+.hub-lot-table td{padding:9px 12px;border-bottom:1px solid var(--border);color:var(--text)}
+.hub-lot-table tbody tr:nth-child(even){background:color-mix(in srgb, var(--spice-cardamom) 3%, transparent)}
+.hub-lot-table tbody tr{cursor:pointer;transition:background .12s}
+.hub-lot-table tbody tr:hover{background:var(--green-bg)}
+.hub-lot-table tbody tr.is-open{background:var(--green-bg);
+  box-shadow:inset 3px 0 0 var(--spice-cardamom)}
+.hub-lot-no{font-weight:800;color:var(--spice-cardamom-dk)}
+.hub-lot-mute{color:var(--text3);font-size:11.5px}
+/* Withdrawn / not-auctioned lots carry no sale — greyed so a scan down
+   the Amount column doesn't read them as zero-value sales. */
+.hub-lot-table tbody tr.is-wd td{color:var(--text3)}
+.hub-lot-badge{
+  display:inline-block;font-size:9.5px;font-weight:800;letter-spacing:.3px;
+  padding:1px 6px;border-radius:10px;background:var(--bg);
+  color:var(--text3);border:1px solid var(--border);margin-left:6px
+}
+
+/* ── Lot detail drawer ─────────────────────────────────────── */
+/* Below .modal-bg (z-index 50) on purpose: the lot-edit modal opens ON TOP
+   of the drawer, so closing the modal returns you to the lot you were
+   looking at rather than to an empty list. */
+.hub-scrim{position:fixed;inset:0;background:rgba(15,23,42,.32);z-index:38}
+.hub-drawer{
+  position:fixed;top:0;right:0;bottom:0;width:min(430px,92vw);z-index:40;
+  background:var(--card);border-left:1px solid var(--border);
+  box-shadow:-14px 0 40px rgba(15,23,42,.18);
+  display:flex;flex-direction:column;animation:hubSlideIn .2s ease-out
+}
+@keyframes hubSlideIn{from{transform:translateX(24px);opacity:.4}to{transform:none;opacity:1}}
+.hub-drawer-head{
+  padding:16px 18px;border-bottom:1px solid var(--border);
+  display:flex;align-items:flex-start;gap:10px
+}
+.hub-drawer-body{padding:6px 18px 18px;overflow-y:auto;flex:1}
+.hub-drawer-foot{padding:14px 18px;border-top:1px solid var(--border);display:flex;gap:8px}
+.hub-dl{display:grid;grid-template-columns:38% 1fr;gap:0;font-size:12.5px}
+.hub-dl dt{padding:7px 0;color:var(--text3);border-bottom:1px solid var(--border)}
+.hub-dl dd{padding:7px 0;margin:0;color:var(--text);font-weight:600;
+  border-bottom:1px solid var(--border);word-break:break-word}
+.hub-dl-sec{
+  margin:16px 0 2px;font-size:10.5px;font-weight:800;letter-spacing:.5px;
+  text-transform:uppercase;color:var(--spice-cardamom)
+}
+
 /* ── Accordion (Settings) ────────────────────────────────── */
 .cat{
   border:1.5px solid var(--border);border-radius:12px;margin-bottom:10px;
@@ -1964,7 +2291,7 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 .set-wrap{display:grid;grid-template-columns:220px 1fr;gap:18px;align-items:start}
 .set-nav{
   background:var(--card);border:1.5px solid var(--border);border-radius:12px;
-  padding:10px 8px;position:sticky;top:76px;max-height:calc(100vh - 100px);overflow-y:auto
+  padding:10px 8px;position:sticky;top:76px;max-height:calc(calc(100vh / var(--zf)) - 100px);overflow-y:auto
 }
 .set-search{
   width:100%;height:38px;padding:0 12px 0 34px;border:1.5px solid var(--border);border-radius:8px;
@@ -2397,9 +2724,11 @@ body[data-perm-user-manage="1"]    div.needs-user-manage{display:block !importan
    navigate to other tabs through the URL — buttons are gone, deep
    links are protected by the server's permission gates anyway. */
 body[data-role="lot_entry"] .side-item:not([data-tab="lotentry"]):not(.sb-collapse-btn):not(.side-help),
-body[data-role="lot_entry"] .side-group-lbl:not(.side-help-lbl),
-body[data-role="lot_entry"] .topbar-comfort,
-body[data-role="lot_entry"] #comfort-toggle{display:none !important}
+body[data-role="lot_entry"] .side-group-lbl:not(.side-help-lbl){display:none !important}
+/* NB: the text-size button (#comfort-toggle) is deliberately NOT hidden for
+   lot_entry. It used to be, back when it was Comfort Mode. Lot entry is the
+   most detail-dense screen in the app and its users are in the field on
+   small laptops — they need the size control more than anyone. */
 
 /* ── Guided flow: stage-locked sidebar items ───────────────────
    Menus tagged with data-min-stage are revealed as the CURRENT trade
@@ -2419,35 +2748,15 @@ body[data-role="lot_entry"] #comfort-toggle{display:none !important}
 html:not(.sidebar-collapsed) .sidebar:not(.collapsed) .side-item.locked::after{
   content:"🔒";margin-left:auto;font-size:11px;opacity:.75;padding-left:8px}
 
-/* ── Comfort Mode ──────────────────────────────────────
-   Toggleable larger-text mode for older / vision-impaired users.
-   Activated via the topbar A↑ button; persisted in localStorage.
-   Bumps base font-size, button heights, table row spacing, and
-   form control sizing so dad doesn't squint. */
-body[data-comfort="1"]{font-size:15.5px}
-body[data-comfort="1"] .btn{padding:10px 18px;font-size:14px;min-height:44px}
-body[data-comfort="1"] .btn-a,
-body[data-comfort="1"] .btn-g,
-body[data-comfort="1"] .btn-o{padding:10px 20px;font-size:14px;min-height:44px}
-body[data-comfort="1"] table{font-size:14.5px}
-body[data-comfort="1"] td,
-body[data-comfort="1"] th{padding:14px 16px}
-body[data-comfort="1"] th{font-size:12px}
-body[data-comfort="1"] input[type="text"],
-body[data-comfort="1"] input[type="number"],
-body[data-comfort="1"] input[type="date"],
-body[data-comfort="1"] input[type="email"],
-body[data-comfort="1"] input[type="password"],
-body[data-comfort="1"] select,
-body[data-comfort="1"] textarea{font-size:15px;padding:10px 12px}
-body[data-comfort="1"] .kpi-value{font-size:36px}
-body[data-comfort="1"] .kpi-label{font-size:13px}
-body[data-comfort="1"] .icon-btn{width:36px;height:36px}
-body[data-comfort="1"] .card h2{font-size:19px}
-body[data-comfort="1"] .side-item{font-size:15px;padding:12px 16px}
-/* Active-state pill on the toggle when comfort mode is ON */
-body[data-comfort="1"] #comfort-toggle{background:var(--spice-saffron-lt);color:var(--spice-saffron-dk);border-color:var(--spice-saffron)}
-body[data-comfort="1"] #comfort-toggle-label::after{content:'\2191';margin-left:1px}
+/* ── Text size ─────────────────────────────────────────
+   Replaces the old Comfort Mode. That mode restyled a handful of
+   class-based elements (.btn, table, .kpi-value, …), which left every
+   inline-styled detail — table cells, pills, hint text — at its
+   original 10-12px. The scale now comes from `html{zoom:var(--zf)}`
+   at the top of this file, which multiplies EVERY px length in the
+   document, so nothing is left behind and proportions are preserved.
+   All that's left here is the toggle's active state. */
+html[data-textsize] #comfort-toggle{background:var(--spice-saffron-lt);color:var(--spice-saffron-dk);border-color:var(--spice-saffron)}
 
 /* ── Lot Selection grid (Lot Entry alloc card) ──────────────────
    Per-lot chips showing every lot number in the user's branch
@@ -2487,7 +2796,6 @@ body[data-comfort="1"] #comfort-toggle-label::after{content:'\2191';margin-left:
 .le-lot-grid-empty{
   padding:14px;text-align:center;font-size:11px;color:var(--text3);
 }
-body[data-comfort="1"] .le-lot-chip{min-width:48px;height:34px;font-size:13px}
 
 /* ── Split-invoice chips ──────────────────────────────────────────
    Same chip language as Lot Entry, reused in the Generate Sales
@@ -2501,7 +2809,6 @@ body[data-comfort="1"] .le-lot-chip{min-width:48px;height:34px;font-size:13px}
   cursor:pointer;user-select:none;border:1px solid transparent;transition:all .12s;
 }
 .gi-split-chip:hover{transform:translateY(-1px);box-shadow:0 1px 3px rgba(0,0,0,.18);filter:brightness(.97)}
-body[data-comfort="1"] .gi-split-chip{min-width:50px;height:34px;font-size:13px}
 /* Bucket pills — one per split invoice; the active one takes new clicks. */
 .gi-split-bucket{
   display:inline-flex;align-items:center;gap:6px;padding:5px 11px;
@@ -2660,7 +2967,7 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
    sticky header/footer work because overflow:auto establishes the
    scroll context. */
 .dt-scroll{
-  max-height:calc(100vh - 260px);
+  max-height:calc(calc(100vh / var(--zf)) - 260px);
   min-height:240px;
   overflow:auto;
   border:1px solid var(--spice-line);
@@ -2822,7 +3129,7 @@ select.pay-lot-bank.is-default{color:var(--text3);font-style:italic}
 select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-allowed}
 .modal{
   background:var(--card);border-radius:16px;padding:28px;
-  width:100%;max-width:520px;max-height:90vh;overflow-y:auto;
+  width:100%;max-width:520px;max-height:calc(90vh / var(--zf));overflow-y:auto;
   box-shadow:0 12px 40px rgba(0,0,0,.2)
 }
 .modal h2{font-size:19px;font-weight:700;margin-bottom:18px;color:var(--text)}
@@ -2832,7 +3139,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
 @media(max-width:900px){
   .hamburger{display:inline-flex}
   .sidebar{
-    position:fixed;top:0;left:0;height:100vh;width:250px;z-index:40;
+    position:fixed;top:0;left:0;height:calc(100vh / var(--zf));width:250px;z-index:40;
     transform:translateX(-100%);transition:transform .25s;box-shadow:2px 0 16px rgba(0,0,0,.15)
   }
   .sidebar.open{transform:none}
@@ -2908,7 +3215,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
 
 .change-nudge{
   display:none;position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(8px);
-  z-index:9998;width:min(560px,calc(100vw - 32px));
+  z-index:9998;width:min(560px,calc(calc(100vw / var(--zf)) - 32px));
   background:var(--spice-text-main);color:#fff;
   border-radius:12px;padding:12px 14px;
   box-shadow:0 8px 28px rgba(15,23,42,.32);
@@ -3049,7 +3356,9 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         </label>
       </div>
     </div>
-    <div style="display:flex;gap:10px;align-items:center">
+    <!-- Right-hand controls. Wraps rather than overflowing — at the larger
+         text-size steps this row is wider than a 1440px window. -->
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;row-gap:8px;justify-content:flex-end;min-width:0">
       <span id="sync-indicator" class="sync-pill sync-ok" title="Last successful sync"></span>
       <!-- Licence countdown pill — hidden by default; shown by
            _refreshLicenseBadge when ≤ 7 days remain (or already expired).
@@ -3062,7 +3371,12 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         <svg id="refresh-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.5-6.36L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.36L3 16"/><path d="M3 21v-5h5"/></svg>
         <span>Refresh</span>
       </button>
-      <button class="btn btn-o" id="comfort-toggle" onclick="toggleComfort()" title="Comfort Mode — bigger text and buttons for easier reading" style="padding:6px 10px;display:flex;align-items:center;gap:6px;font-weight:700">
+      <!-- Text size — cycles 100 → 115 → 130 → 145 → 100. Scales the whole
+           UI (see the --zf block at the top of this file). Replaces the old
+           binary Comfort Mode, which only restyled class-based elements and
+           so left every inline-styled detail (table cells, pills, hints) at
+           its original size — exactly the text that was hard to read. -->
+      <button class="btn btn-o" id="comfort-toggle" onclick="cycleTextSize()" title="Text size — click to make everything bigger" style="padding:6px 10px;display:flex;align-items:center;gap:6px;font-weight:700">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
         <span id="comfort-toggle-label">A</span>
       </button>
@@ -3081,7 +3395,15 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       </button>
       <div class="side-group">
         <div class="side-group-lbl">Overview</div>
-        <button class="side-item active" data-tab="dash" onclick="go('dash')">
+        <!-- Auction Desk — every document for the selected auction in one place.
+             Deliberately first: it is the default landing screen, and the
+             12 tabs below it are where you go to CREATE things, not to find
+             them. See TRADE-DESK.md. -->
+        <button class="side-item active" data-tab="hub" onclick="go('hub')">
+          <svg viewBox="0 0 24 24"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 12l9 4 9-4"/><path d="M3 17l9 4 9-4"/></svg>
+          Auction Desk
+        </button>
+        <button class="side-item" data-tab="dash" onclick="go('dash')">
           <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
           Dashboard
         </button>
@@ -3294,7 +3616,22 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     </div>
     <!-- Grade-2 booking alerts: fixed stack of dismissible banners, fed by
          the pollGrade2Alerts() poll. Empty until an alert fires. -->
-    <div id="g2-alert-stack" style="position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;width:min(680px,94vw);display:flex;flex-direction:column;gap:8px;pointer-events:none"></div>
+    <!-- One fixed column holding every top-of-screen banner stack. Each
+         stack owns its own innerHTML (their polls rebuild them wholesale),
+         so they must be SIBLINGS inside this wrapper rather than two
+         independently-positioned overlays that would stack on top of each
+         other when both have content. -->
+    <!-- `top` is set from JS to clear the topbar (see positionAlertStacks).
+         It used to be a flat 10px, which parked these banners directly on
+         top of the topbar's Refresh / text-size / Logout buttons — and the
+         taller the text size, the more of the bar they swallowed. -->
+    <div id="alert-stacks" style="position:fixed;top:var(--alert-top,10px);left:50%;transform:translateX(-50%);z-index:9999;width:min(680px,calc(94vw / var(--zf)));display:flex;flex-direction:column;gap:8px;pointer-events:none">
+      <div id="g2-alert-stack" style="display:flex;flex-direction:column;gap:8px"></div>
+      <!-- Concurrent-login notices ("another admin just signed in"), fed by
+           the pollSessionAlerts() poll and by the `notice` on the login
+           response. -->
+      <div id="sa-alert-stack" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
 
     <!-- Per-screen guide banner. Lives here (inside .content, OUTSIDE every
          .tc panel) so loader innerHTML rebuilds never wipe it. Repainted by
@@ -3312,7 +3649,154 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     </div>
 
     <!-- DASHBOARD -->
-    <div class="tc active" id="tc-dash"><div class="stats" id="stats"></div></div>
+    <!-- ── AUCTION DESK ──────────────────────────────────────────────
+         The whole screen below the picker is painted by renderHub() from
+         /api/documents/catalog. No document is named in this markup: add a
+         row to document-catalog.js and it appears here, correctly gated,
+         with no change to this file. -->
+    <div class="tc active" id="tc-hub">
+      <div class="card" style="padding:14px 18px">
+        <div class="hub-toolbar" style="margin-bottom:0">
+          <div class="fg" style="max-width:320px;margin:0;flex:1 1 240px">
+            <label>Auction</label>
+            <select id="hub-auction" onchange="hubOnAuctionChange()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></select>
+          </div>
+          <button class="btn btn-o" onclick="hubRefresh()" style="height:38px;padding:0 14px;align-self:flex-end">Refresh</button>
+        </div>
+      </div>
+      <div class="stats hub-kpi" id="hub-kpi"></div>
+
+      <!-- Two views over one auction: the lots that make it up, and the
+           documents it produces. Lots leads because that is what an
+           operator wants to see the moment they pick an auction. -->
+      <div class="hub-seg" role="tablist">
+        <button id="hub-seg-lots" class="hub-seg-btn is-on" role="tab" onclick="hubSetView('lots')">Lots</button>
+        <button id="hub-seg-docs" class="hub-seg-btn"       role="tab" onclick="hubSetView('docs')">Documents</button>
+      </div>
+
+      <!-- ── LOTS VIEW ───────────────────────────────────────────── -->
+      <div id="hub-view-lots">
+        <div class="card" style="padding:12px 16px">
+          <div class="hub-toolbar" style="margin-bottom:0">
+            <div class="fg" style="max-width:320px;margin:0;flex:1 1 240px">
+              <label>Search lots</label>
+              <div style="position:relative">
+                <input id="hub-lot-search" type="text" placeholder="Lot no, planter, buyer, bill no…"
+                       oninput="hubLotSearchDebounced()" autocomplete="off"
+                       style="width:100%;padding:8px 30px 8px 8px;border:1px solid var(--border);border-radius:6px">
+                <button type="button" id="hub-lot-clear" onclick="hubLotSearchClear()" title="Clear search"
+                        style="display:none;position:absolute;right:6px;top:50%;transform:translateY(-50%);border:none;background:none;cursor:pointer;color:var(--text3);font-size:16px;line-height:1;padding:2px 5px">×</button>
+              </div>
+            </div>
+            <div class="fg" style="max-width:200px;margin:0">
+              <label>Branch</label>
+              <select id="hub-lot-branch" onchange="hubLoadLots()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"><option value="">All branches</option></select>
+            </div>
+            <!-- Straight to the paperwork for this auction, without the
+                 Lots toolbar carrying a row of document buttons. -->
+            <button type="button" class="btn btn-o hub-docs-jump" onclick="hubSetView('docs')"
+                    title="Documents for this auction" aria-label="Documents for this auction"
+                    style="height:38px;padding:0 12px;align-self:flex-end;display:inline-flex;align-items:center;gap:7px">
+              <svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M9 15h6"/></svg>
+              Documents
+            </button>
+            <span id="hub-lot-count" style="font-size:12px;color:var(--text3);margin-left:auto"></span>
+          </div>
+        </div>
+        <div class="card" style="padding:0;overflow:hidden">
+          <!-- Fixed-height scroller: a 90-lot page used to make the whole
+               screen scroll, pushing the pager off the bottom. The header
+               row stays pinned inside it. -->
+          <div class="hub-lot-scroll">
+            <table class="hub-lot-table">
+              <thead><tr>
+                <th style="width:64px">Lot</th><th>Planter</th><th>CR / GST</th>
+                <th class="num">Bags</th><th class="num">Qty</th><th class="num">Price</th>
+                <th class="num">Amount</th><th>Buyer</th><th>Bill No</th>
+              </tr></thead>
+              <tbody id="hub-lot-rows"></tbody>
+            </table>
+          </div>
+          <div id="hub-lot-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;font-size:12.5px;color:var(--text2);flex-wrap:wrap;border-top:1px solid var(--border)"></div>
+        </div>
+      </div>
+
+      <!-- ── DOCUMENTS VIEW ──────────────────────────────────────── -->
+      <div id="hub-view-docs" style="display:none">
+      <div class="card" style="padding:14px 18px">
+        <div class="hub-toolbar" style="margin-bottom:0">
+          <!-- Two ways to slice the same documents. By purpose is the
+               default; by file type answers "give me every PDF". A
+               document with two formats appears under both headings —
+               that is the point, not a bug. -->
+          <div class="fg" style="margin:0">
+            <label>Group by</label>
+            <div class="hub-seg" style="margin:0">
+              <button id="hub-grp-purpose" class="hub-seg-btn is-on" onclick="hubSetGrouping('purpose')" style="padding:6px 14px;font-size:12px">Purpose</button>
+              <button id="hub-grp-format"  class="hub-seg-btn"       onclick="hubSetGrouping('format')"  style="padding:6px 14px;font-size:12px">File type</button>
+            </div>
+          </div>
+          <!-- Find a document: type to narrow, or open the caret for the
+               full list. Picking one shows just that document; typing
+               free text narrows the whole grid as before. -->
+          <div class="fg hub-combo" style="max-width:300px;margin:0;flex:1 1 240px">
+            <label>Find a document</label>
+            <div style="position:relative">
+              <input id="hub-filter" type="text" autocomplete="off"
+                     placeholder="Search all documents…"
+                     oninput="hubComboInput()" onfocus="hubComboOpen()"
+                     onkeydown="hubComboKey(event)"
+                     style="width:100%;padding:8px 56px 8px 8px;border:1px solid var(--border);border-radius:6px">
+              <button type="button" id="hub-combo-clear" onclick="hubComboClear()" title="Clear"
+                      style="display:none;position:absolute;right:28px;top:50%;transform:translateY(-50%);border:none;background:none;cursor:pointer;color:var(--text3);font-size:15px;line-height:1;padding:2px 4px">×</button>
+              <button type="button" onclick="hubComboToggle()" title="Show all documents" aria-label="Show all documents"
+                      style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:none;background:none;cursor:pointer;color:var(--text3);font-size:10px;padding:4px">▼</button>
+              <div id="hub-combo-list" class="hub-combo-list" style="display:none"></div>
+            </div>
+          </div>
+          <!-- Date range is only consulted by the date-range documents
+               (registers, TDS, pooler certificate). Trade-scoped tiles
+               ignore it entirely. -->
+          <div class="fg" style="margin:0">
+            <label>Date range <span style="font-weight:400;color:var(--text3)">(registers &amp; TDS)</span></label>
+            <div style="display:flex;gap:6px">
+              <input id="hub-from" type="date" onchange="loadHubCatalog()" style="padding:8px;border:1px solid var(--border);border-radius:6px">
+              <input id="hub-to"   type="date" onchange="loadHubCatalog()" style="padding:8px;border:1px solid var(--border);border-radius:6px">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Selection bar — only appears once something is ticked, so the
+           screen stays quiet for the common case of one download. -->
+      <div class="card hub-selbar" id="hub-selbar" style="display:none;padding:12px 16px">
+        <div class="hub-toolbar" style="margin-bottom:0">
+          <strong id="hub-selcount" style="font-size:13px"></strong>
+          <label style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:6px">
+            Bundle as
+            <select id="hub-selfmt" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">
+              <option value="auto">Each document's usual format</option>
+              <option value="pdf">PDF where available</option>
+              <option value="xlsx">Excel where available</option>
+            </select>
+          </label>
+          <button class="btn btn-g" id="hub-selgo" onclick="hubBundle()" style="height:34px;padding:0 14px;font-size:13px">Download as ZIP</button>
+          <button class="btn btn-o" onclick="hubClearSel()" style="height:34px;padding:0 12px;font-size:13px">Clear</button>
+          <span id="hub-selprog" style="font-size:12px;color:var(--text3)"></span>
+        </div>
+      </div>
+
+      <div id="hub-groups"></div>
+      </div><!-- /hub-view-docs -->
+
+      <!-- Lot detail drawer — slides over the list, which stays visible
+           behind it. Edit hands off to the app's existing lot-edit modal
+           rather than growing a second editor. -->
+      <div id="hub-lot-scrim" class="hub-scrim" style="display:none" onclick="hubLotClose()"></div>
+      <aside id="hub-lot-drawer" class="hub-drawer" style="display:none" aria-label="Lot detail"></aside>
+    </div>
+
+    <div class="tc" id="tc-dash"><div class="stats" id="stats"></div></div>
 
     <!-- INSIGHTS — detailed per-trade × per-branch analytics. Driven
          entirely by loadInsights() which renders into #insights-host
@@ -3636,7 +4120,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
               <option value="500">500 / page</option>
             </select>
           </div>
-          <div style="overflow:auto;max-height:56vh">
+          <div style="overflow:auto;max-height:calc(56vh / var(--zf))">
             <table class="act-table" id="bk-act-table">
               <thead><tr>
                 <th data-k="created_at" onclick="bkActSort('created_at')">When<span class="act-arrow">▼</span></th>
@@ -3672,7 +4156,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           </div>
           <div class="user-table-scroll">
             <table>
-              <thead><tr><th>Username</th><th>Role</th><th>Active Sessions</th><th>Last Active</th><th>Created</th><th>Actions</th></tr></thead>
+              <thead><tr><th>Username</th><th>Role</th><th>Branch</th><th>Active Sessions</th><th>Last Active</th><th>Created</th><th>Actions</th></tr></thead>
               <tbody id="users-list"></tbody>
             </table>
           </div>
@@ -3858,23 +4342,23 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
          can pick which lots to settle right now ("Print Payment for
          Selected"). Remaining lots stay payable for a later visit. -->
     <!-- Dashboard snapshot: Grade 1 / Grade 2 breakdown for a status -->
-    <div class="modal-bg" id="dash-grade-modal"><div class="modal has-x" style="max-width:920px;width:94vw">
+    <div class="modal-bg" id="dash-grade-modal"><div class="modal has-x" style="max-width:920px;width:calc(94vw / var(--zf))">
       <button class="modal-x" onclick="hideModal('dash-grade-modal')" title="Close" aria-label="Close">&times;</button>
       <h2 id="dash-grade-title">Breakdown</h2>
       <div id="dash-grade-tabs" class="gm-tabs"></div>
-      <div id="dash-grade-body" style="margin-top:12px;overflow:auto;max-height:64vh;min-height:320px"></div>
+      <div id="dash-grade-body" style="margin-top:12px;overflow:auto;max-height:calc(64vh / var(--zf));min-height:320px"></div>
       <div class="actions" style="margin-top:14px">
         <button class="btn btn-o" onclick="hideModal('dash-grade-modal')">Close</button>
       </div>
     </div></div>
 
     <!-- Dashboard "Current Auction": lot-wise details for a clicked branch/depot -->
-    <div class="modal-bg" id="depot-lots-modal"><div class="modal has-x" style="max-width:1200px;width:96vw">
+    <div class="modal-bg" id="depot-lots-modal"><div class="modal has-x" style="max-width:1200px;width:calc(96vw / var(--zf))">
       <button class="modal-x" onclick="hideModal('depot-lots-modal')" title="Close" aria-label="Close">&times;</button>
       <h2 id="depot-lots-title">Lot-wise details</h2>
       <div id="depot-lots-meta" style="font-size:12px;color:var(--spice-text-mute);margin:2px 0 10px"></div>
       <div id="depot-lots-filters" class="dl-filters" style="display:none"></div>
-      <div id="depot-lots-body" style="max-height:56vh;overflow:auto"></div>
+      <div id="depot-lots-body" style="max-height:calc(56vh / var(--zf));overflow:auto"></div>
       <div class="actions" style="margin-top:14px">
         <button class="btn btn-o" onclick="hideModal('depot-lots-modal')">Close</button>
       </div>
@@ -3891,7 +4375,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       <div style="font-size:12px;color:var(--spice-text-mute);margin:2px 0 10px">
         The e-Auction portal upload covers one auction at a time — pick which one to download.
       </div>
-      <div id="sb-csv-body" style="max-height:56vh;overflow:auto"></div>
+      <div id="sb-csv-body" style="max-height:calc(56vh / var(--zf));overflow:auto"></div>
       <div class="actions" style="margin-top:14px">
         <button class="btn btn-o" onclick="hideModal('sb-csv-modal')">Close</button>
       </div>
@@ -3918,7 +4402,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         <span style="flex:1"></span>
         <button class="btn btn-o" type="button" onclick="openPayBankAdd()" title="Add a new bank account — it is saved to this seller's master record too">+ Add account</button>
       </div>
-      <div id="pay-lots-body" style="margin-top:10px;max-height:60vh;overflow:auto"></div>
+      <div id="pay-lots-body" style="margin-top:10px;max-height:calc(60vh / var(--zf));overflow:auto"></div>
       <div id="pay-lots-totals" style="margin-top:10px;padding:10px 14px;background:var(--spice-cream);border:1px solid var(--spice-line);border-radius:8px;font-size:13px"></div>
       <div id="pay-lots-pick-state" style="margin-top:8px;font-size:12px;color:var(--text2);display:none"></div>
       <div class="actions" style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
@@ -3977,7 +4461,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         <div style="font-size:11px;color:var(--spice-text-hint);margin-top:4px">Share this with the person — they can change it later from their account.</div>
       </div>
       <div class="fg"><label>Role</label>
-        <select id="nu-role" onchange="updateRoleDescription()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:#fff">
+        <select id="nu-role" onchange="updateRoleDescription();updateNewUserBranchVis()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:#fff">
           <option value="operator" selected>Operator — daily auction work</option>
           <option value="manager">Manager — branch oversight</option>
           <option value="admin">Admin — full control</option>
@@ -3989,9 +4473,33 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           Can create/edit lots, generate invoices, and manage buyers/traders. Cannot delete records or change settings.
         </div>
       </div>
+      <!-- Home branch. Hidden for Admin — admins oversee every depot, so a
+           branch lock would only get in their way. -->
+      <div class="fg" id="nu-branch-wrap"><label>Branch</label>
+        <select id="nu-branch" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:#fff"></select>
+        <div style="font-size:11px;color:var(--spice-text-hint);margin-top:4px">
+          Locks this user to one depot. On the mobile app and in Lot Entry the branch is pre-selected and can't be changed. Leave as "Any branch" to let them pick.
+        </div>
+      </div>
       <div class="actions">
         <button class="btn btn-o" onclick="hideModal('add-user-modal')">Cancel</button>
         <button class="btn btn-g" onclick="createUser()">Create User</button>
+      </div>
+    </div></div>
+
+    <!-- Assign Branch Modal — sets/clears an existing user's home branch. -->
+    <div class="modal-bg" id="user-branch-modal"><div class="modal">
+      <h2>Branch for <span id="ub-username"></span></h2>
+      <p style="font-size:12px;color:var(--spice-text-mute);margin-bottom:14px">
+        A user with a branch set can only book lots against that depot — the branch is pre-selected and locked in both the mobile app and Lot Entry. Choose "Any branch" to remove the lock.
+      </p>
+      <input type="hidden" id="ub-id">
+      <div class="fg"><label>Branch</label>
+        <select id="ub-branch" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:#fff"></select>
+      </div>
+      <div class="actions">
+        <button class="btn btn-o" onclick="hideModal('user-branch-modal')">Cancel</button>
+        <button class="btn btn-g" onclick="saveUserBranch()">Save</button>
       </div>
     </div></div>
 
@@ -4323,7 +4831,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           </select>
           <!-- Within-trade search across lot no, seller name, buyer code,
                invoice no and branch. Wires to server-side `search` param. -->
-          <input type="search" id="lot-search" placeholder="Search lot no, seller, buyer…" oninput="searchLotsDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
+          <input type="search" id="lot-search" placeholder="Search lot no (1,5,10-20), seller, phone, buyer…" oninput="searchLotsDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
           <!-- Bulk tick lots by typing numbers / ranges (Enter to commit).
                Re-fetches the trade's full lot list so a lot that's been
                filtered out by the search above or hidden by DataTable's
@@ -4432,7 +4940,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
            but trimmed to essentials. Lot allocations are skipped here;
            admin can still edit them later from the Auctions tab if needed. -->
       <div class="modal-overlay" id="le-newtrade-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
-        <div style="background:#fff;border-radius:14px;width:min(440px,92vw);padding:20px 22px;box-shadow:0 20px 60px rgba(0,0,0,.3)">
+        <div style="background:#fff;border-radius:14px;width:min(440px,calc(92vw / var(--zf)));padding:20px 22px;box-shadow:0 20px 60px rgba(0,0,0,.3)">
           <h3 style="margin:0 0 14px;font-size:16px;display:flex;align-items:center;gap:8px">
             <span style="width:6px;height:18px;background:var(--green);border-radius:3px;display:inline-block"></span>
             Create New Auction
@@ -4538,9 +5046,11 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
               </div>
               <button class="btn btn-o" onclick="leClearSeller()" style="padding:4px 10px;font-size:12px;height:32px">Change</button>
             </div>
-            <!-- Bank picker — only shown when seller has 1+ bank accounts.
-                 Selecting a bank here makes it the seller's default for
-                 next time (saved when the lot is saved). -->
+            <!-- Bank picker — shown for every selected seller, and always
+                 opening on "Select your bank" so the account is a deliberate
+                 choice rather than an inherited default. Picking one here
+                 makes it the seller's default for next time (saved when the
+                 lot is saved). -->
             <div id="le-bank-row" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed rgba(22,101,52,.25)">
               <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Bank Account</div>
               <select id="le-bank-select" style="width:100%;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;background:#fff;font-family:monospace"></select>
@@ -4772,7 +5282,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           </div>
           <span id="le-select-by-number-status" style="font-size:11.5px;color:var(--text3)"></span>
         </div>
-        <div id="le-recent-list" style="font-size:13px;max-height:62vh;overflow:auto"></div>
+        <div id="le-recent-list" style="font-size:13px;max-height:calc(62vh / var(--zf));overflow:auto"></div>
         </div>
       </div>
 
@@ -4809,7 +5319,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
               <option value="500">500 / page</option>
             </select>
           </div>
-          <div style="max-height:52vh;overflow:auto">
+          <div style="max-height:calc(52vh / var(--zf));overflow:auto">
             <table class="act-table" id="le-act-table">
               <thead><tr>
                 <th data-k="at" onclick="leActSort('at')">When<span class="act-arrow"></span></th>
@@ -4832,7 +5342,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
            auction-hall workflow. Admin can fill out missing details
            later from the Sellers tab. Mirrors PWA app.html's flow. -->
       <div class="modal-overlay" id="le-newseller-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
-        <div style="background:#fff;border-radius:14px;width:min(480px,92vw);padding:22px 24px;box-shadow:0 20px 60px rgba(0,0,0,.3)">
+        <div style="background:#fff;border-radius:14px;width:min(480px,calc(92vw / var(--zf)));padding:22px 24px;box-shadow:0 20px 60px rgba(0,0,0,.3)">
           <h3 style="margin:0 0 14px;font-size:16px;display:flex;align-items:center;gap:8px">
             <span style="width:6px;height:18px;background:var(--green);border-radius:3px;display:inline-block"></span>
             Add New Seller
@@ -5002,7 +5512,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <option value="all">All (both)</option>
           </select>
           <!-- Within-trade search across invoice no, buyer name, GSTIN. -->
-          <input type="search" id="inv-search" placeholder="Search invoice no, buyer, GSTIN, lorry…" oninput="searchInvoicesDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
+          <input type="search" id="inv-search" placeholder="Search invoice no, buyer, phone, lot no (1,5,10-20), GSTIN, lorry…" oninput="searchInvoicesDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
 
           <!-- Create group -->
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
@@ -5138,7 +5648,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <option value="N">N/A (N)</option>
           </select>
           <!-- Within-trade search across purchase invoice no, seller name, GSTIN. -->
-          <input type="search" id="pur-search" placeholder="Search invoice no, seller, GSTIN…" oninput="searchPurchasesDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
+          <input type="search" id="pur-search" placeholder="Search invoice no, seller, phone, lot no (1,5,10-20), GSTIN…" oninput="searchPurchasesDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
             <button class="needs-invoice-write btn btn-g needs-price-check" id="btn-gen-pur-one" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenPurModal()">+ Generate Purchase</button>
@@ -5223,7 +5733,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <!-- Within-trade seller search. /api/payments returns aggregated
                seller rollups, so this filter is applied client-side in
                loadPayments() — see _paySearch handling there. -->
-          <input type="search" id="pay-search" placeholder="Search seller…" oninput="searchPaymentsDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
+          <input type="search" id="pay-search" placeholder="Search seller or phone no…" oninput="searchPaymentsDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
 
           <!-- Immediate-payment filter. Applied client-side in loadPayments()
                on each seller's any_immediate flag — see _payImmediateFilter.
@@ -5650,7 +6160,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <option value="">All Branches</option>
           </select>
           <!-- Within-trade search across bill no, seller name -->
-          <input type="search" id="bill-search" placeholder="Search bill no, seller…" oninput="searchBillsDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
+          <input type="search" id="bill-search" placeholder="Search bill no, seller, phone, lot no (1,5,10-20)…" oninput="searchBillsDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line);margin-left:4px">
             <button class="btn btn-g needs-price-check" id="btn-gen-bill-one" style="height:38px;padding:0 16px;font-weight:600" onclick="openGenBillModal()">+ Generate Bill</button>
@@ -5687,7 +6197,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                so neither action can ever cross trade boundaries. -->
           <select id="dn-auction" onchange="loadDebitNotes();refreshGenGate('debit_notes')" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
           <!-- Within-trade search across note no, seller name -->
-          <input type="search" id="dn-search" placeholder="Search note no, seller…" oninput="searchDebitNotesDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
+          <input type="search" id="dn-search" placeholder="Search note no, seller, phone, lot no (1,5,10-20)…" oninput="searchDebitNotesDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
 
           <!-- Generate Debit Note (single): inputs = trade (dropdown) +
                purchase invoice number (modal). Generates ONE DN for the
@@ -5755,7 +6265,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         <h2>Debit Notes - Planter <span style="font-weight:400;font-size:12px;color:var(--text3)">For discounts/adjustments on planter bills of supply</span></h2>
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
           <select id="dnp-auction" onchange="loadDebitNotesPlanter();refreshGenGate('debit_notes_planter')" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
-          <input type="search" id="dnp-search" placeholder="Search note no, planter…" oninput="searchDebitNotesPlanterDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
+          <input type="search" id="dnp-search" placeholder="Search note no, planter, phone, lot no (1,5,10-20)…" oninput="searchDebitNotesPlanterDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
           <button class="needs-invoice-write btn btn-g needs-price-check" id="btn-gen-dnp-one" onclick="openGenDebitPlanterSingleModal()">+ Generate Debit Note</button>
           <button class="needs-invoice-write btn btn-a needs-price-check" id="btn-gen-dnp-all" onclick="openGenDebitPlanterAllModal()">⚡ Generate All</button>
           <button id="dnp-bulk-print" class="btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedDebitNotesPlanter()" title="Print all ticked debit notes as one combined PDF">🖨 Print Selected <span id="dnp-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
@@ -6412,7 +6922,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
   </div>
 </div></div>
 
-<div class="modal-bg" id="trader-modal"><div class="modal" style="max-width:780px;width:96vw">
+<div class="modal-bg" id="trader-modal"><div class="modal" style="max-width:780px;width:calc(96vw / var(--zf))">
   <h2 id="trader-modal-title">Add Seller</h2>
   <input type="hidden" id="t-id">
   <div class="sgrid">
@@ -6685,7 +7195,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
      the recent list; 'form' invokes an onConfirm(trader) callback so the
      caller can update its own form fields. -->
 <div class="modal-overlay" id="le-changeseller-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
-  <div style="background:#fff;border-radius:14px;width:min(480px,92vw);padding:22px 24px;box-shadow:0 20px 60px rgba(0,0,0,.3)">
+  <div style="background:#fff;border-radius:14px;width:min(480px,calc(92vw / var(--zf)));padding:22px 24px;box-shadow:0 20px 60px rgba(0,0,0,.3)">
     <h3 style="margin:0 0 6px;font-size:16px;display:flex;align-items:center;gap:8px">
       <span style="width:6px;height:18px;background:var(--green);border-radius:3px;display:inline-block"></span>
       Change Seller
@@ -7157,12 +7667,12 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
      trade, and the reason the invoice was skipped (duplicate / zero
      amount / unconfigured discount / unresolvable). Reasons are grouped
      server-side and surfaced verbatim — no transformation. -->
-<div class="modal-bg" id="dn-skipped-modal"><div class="modal" style="max-width:780px;max-height:85vh">
+<div class="modal-bg" id="dn-skipped-modal"><div class="modal" style="max-width:780px;max-height:calc(85vh / var(--zf))">
   <h2>Skipped Debit Notes <span id="dn-skipped-count" style="font-weight:400;font-size:12px;color:var(--text3)"></span></h2>
   <p style="font-size:12px;color:var(--text2);margin-bottom:10px">These invoices did not produce a debit note. Click a row's reason to filter, or use the search box.</p>
   <input type="search" id="dn-skipped-search" placeholder="Filter by invoice, buyer, or reason…" oninput="renderSkippedDnRows()" style="width:100%;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;margin-bottom:10px">
   <div id="dn-skipped-summary" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
-  <div style="max-height:50vh;overflow-y:auto;border:1px solid var(--border);border-radius:6px">
+  <div style="max-height:calc(50vh / var(--zf));overflow-y:auto;border:1px solid var(--border);border-radius:6px">
     <table style="width:100%;font-size:12.5px"><thead style="position:sticky;top:0;background:var(--bg);z-index:1">
       <tr><th style="text-align:left;padding:8px 10px">Invoice</th><th style="text-align:left;padding:8px 10px">Sale</th><th style="text-align:left;padding:8px 10px">Auction</th><th style="text-align:left;padding:8px 10px">Buyer</th><th style="text-align:left;padding:8px 10px">Reason</th></tr>
     </thead><tbody id="dn-skipped-rows"></tbody></table>
@@ -7175,18 +7685,18 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
 
 <!-- Import Old Data → skipped-duplicate detail. Opened from the History
      panel's Skipped count; body is filled by impViewSkipped(). -->
-<div class="modal-bg" id="imp-skipped-modal"><div class="modal" style="max-width:860px;max-height:85vh">
+<div class="modal-bg" id="imp-skipped-modal"><div class="modal" style="max-width:860px;max-height:calc(85vh / var(--zf))">
   <h2 id="imp-skipped-title" style="font-size:16px">Skipped rows</h2>
-  <div id="imp-skipped-body" style="max-height:65vh;overflow-y:auto"></div>
+  <div id="imp-skipped-body" style="max-height:calc(65vh / var(--zf));overflow-y:auto"></div>
   <div class="actions">
     <button class="btn btn-o" onclick="impCloseSkipped()">Close</button>
   </div>
 </div></div>
 
 <!-- Preview modal (shared across sales/purchase/agri) -->
-<div class="modal-bg" id="preview-modal"><div class="modal" style="max-width:750px;max-height:85vh">
+<div class="modal-bg" id="preview-modal"><div class="modal" style="max-width:750px;max-height:calc(85vh / var(--zf))">
   <h2>Invoice Preview <span style="font-weight:400;font-size:12px;color:var(--text3)">— not yet saved</span></h2>
-  <div id="preview-body" style="max-height:60vh;overflow-y:auto"></div>
+  <div id="preview-body" style="max-height:calc(60vh / var(--zf));overflow-y:auto"></div>
   <div class="actions">
     <button class="btn btn-o" onclick="hideModal('preview-modal')">Close</button>
   </div>
@@ -7287,7 +7797,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
      with no seller) that block import, and acknowledge-able warnings
      (sellers missing GSTIN / bank / PAN / phone). Confirming stamps the
      gate that doPriceImport() checks. -->
-<div class="modal-bg" id="lot-validate-modal"><div class="modal" style="max-width:760px;display:flex;flex-direction:column;max-height:90vh;overflow:hidden;padding:0">
+<div class="modal-bg" id="lot-validate-modal"><div class="modal" style="max-width:760px;display:flex;flex-direction:column;max-height:calc(90vh / var(--zf));overflow:hidden;padding:0">
   <!-- Flex column: fixed header, scrolling body, fixed footer. This keeps
        the action buttons pinned at the bottom and stops the lot list from
        overflowing past them. -->
@@ -7658,6 +8168,77 @@ async function ackGrade2Alert(id){
 setInterval(pollGrade2Alerts, 15000);
 setTimeout(pollGrade2Alerts, 1500);
 
+// ── Concurrent-login notices ──────────────────────────────────────────
+// Server-side counterpart: GET /api/session-alerts. Rows are written when
+// an admin signs in while this admin is already online. The admin doing
+// the signing-in gets the same news inline on the login response (see
+// login()'s `d.notice`), so both sides learn about each other.
+//
+// Two sources feed one stack:
+//   • _saServer — unacked rows from the poll, dismissed with a server ack
+//     so they don't come back on the next tick or the next page load.
+//   • _saLocal  — the login-time notice, which has no row to ack.
+let _saServer = [];
+let _saLocal  = [];
+let _saDismissed = new Set();   // server ids hidden locally this session
+let _saLocalSeq = 0;
+
+// Show a one-off notice that has no server row behind it.
+function showSessionNotice(msg){
+  _saLocal.push({ lid: ++_saLocalSeq, message: msg });
+  renderSessionAlerts();
+}
+function dismissSessionNotice(lid){
+  _saLocal = _saLocal.filter(a => a.lid !== lid);
+  renderSessionAlerts();
+}
+
+function renderSessionAlerts(){
+  const stack = document.getElementById('sa-alert-stack');
+  if (!stack) return;
+  // Re-measure right before anything becomes visible. The boot-time call
+  // can land while the login screen is still up, when there's no topbar to
+  // measure yet.
+  try { positionAlertStacks(); } catch(_) {}
+  const rows = [
+    ..._saLocal.map(a => ({ key: `l${a.lid}`, msg: a.message, onClose: `dismissSessionNotice(${a.lid})` })),
+    ..._saServer.filter(a => !_saDismissed.has(a.id))
+                .map(a => ({ key: `s${a.id}`, msg: a.message, onClose: `ackSessionAlert(${a.id})` })),
+  ];
+  stack.innerHTML = rows.map(r => `
+    <div style="pointer-events:auto;background:#1e40af;color:#fff;border-radius:8px;padding:10px 12px;box-shadow:0 4px 14px rgba(0,0,0,.25);font-size:13px;line-height:1.45">
+      <div style="display:flex;align-items:flex-start;gap:8px">
+        <span style="font-size:16px">👥</span>
+        <div style="flex:1">
+          <div style="font-weight:700;margin-bottom:2px">Another admin is signed in</div>
+          <div>${esc(r.msg || '')}</div>
+        </div>
+        <button onclick="${r.onClose}" title="Dismiss" style="background:rgba(255,255,255,.2);color:#fff;border:0;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:600;white-space:nowrap">Dismiss</button>
+      </div>
+    </div>`).join('');
+}
+
+async function pollSessionAlerts(){
+  if (typeof T === 'undefined' || !T) return;
+  try {
+    const r = await h('/api/session-alerts');
+    if (!r.ok) return;              // 401/403 etc. — stay quiet
+    _saServer = (await r.json()).alerts || [];
+  } catch(e){ return; }
+  renderSessionAlerts();
+}
+
+async function ackSessionAlert(id){
+  _saDismissed.add(id);
+  renderSessionAlerts();            // optimistic hide
+  try { await h('/api/session-alerts/' + id + '/ack', { method:'POST' }); } catch(e){}
+}
+
+// Same cadence as the grade-2 poll. Cheap: one indexed lookup on the
+// caller's own unacked rows, and normally an empty array.
+setInterval(pollSessionAlerts, 15000);
+setTimeout(pollSessionAlerts, 2500);
+
 // Show a user-friendly error. Uses the friendlyErr() mapping for HTTP/network
 // errors; falls back to the message string. Non-blocking — shows a red toast.
 function showError(err){
@@ -7766,22 +8347,83 @@ function toggleDark(){
   try { if (localStorage.getItem('dark') === '1') document.body.setAttribute('data-dark','1'); } catch(e){}
 })();
 
-// ── Comfort Mode (larger fonts/buttons for dad) ─────────
-// Activated via topbar A button; persisted across sessions in localStorage.
-// CSS rules under body[data-comfort="1"] do the heavy lifting.
-function toggleComfort(){
-  const cur = document.body.getAttribute('data-comfort') === '1';
-  const next = cur ? '0' : '1';
-  document.body.setAttribute('data-comfort', next);
-  try { localStorage.setItem('comfort', next); } catch(e){}
-  if (typeof toast === 'function') {
-    toast(next === '1' ? 'Comfort Mode: bigger text & buttons' : 'Comfort Mode: off');
+// ── TEXT SIZE ──────────────────────────────────────────────────────
+// Four steps, applied by zooming the whole document (the --zf block at
+// the top of this file explains why, and how viewport units are
+// compensated). Per-device, remembered in localStorage.
+//
+// This replaces Comfort Mode. That toggle only restyled elements with
+// CSS classes, so the ~1,090 inline `style="font-size:11px"` sizes —
+// table cells, pills, hint text, the actual detail people squint at —
+// never grew. Zoom scales every one of them.
+const _TEXT_SIZES = [
+  { id:'md',  pct:100 },
+  { id:'lg',  pct:115 },
+  { id:'xl',  pct:130 },
+  { id:'xxl', pct:145 },
+];
+function _textSizeStep(){
+  const cur = document.documentElement.getAttribute('data-textsize') || 'md';
+  const i = _TEXT_SIZES.findIndex(s => s.id === cur);
+  return i < 0 ? 0 : i;
+}
+function applyTextSize(id, opts){
+  const step = _TEXT_SIZES.find(s => s.id === id) || _TEXT_SIZES[0];
+  // 'md' is the default — carry no attribute at all so the CSS falls back
+  // to --zf:1 and the DOM looks exactly as it did before this feature.
+  if (step.id === 'md') document.documentElement.removeAttribute('data-textsize');
+  else document.documentElement.setAttribute('data-textsize', step.id);
+  try { localStorage.setItem('spice_textsize', step.id); } catch(e){}
+  const lbl = document.getElementById('comfort-toggle-label');
+  if (lbl) lbl.textContent = step.pct === 100 ? 'A' : step.pct + '%';
+  const btn = document.getElementById('comfort-toggle');
+  if (btn) btn.title = `Text size ${step.pct}% — click to make everything bigger`;
+  if (!(opts && opts.silent) && typeof toast === 'function') {
+    toast(step.pct === 100 ? 'Text size: normal' : `Text size: ${step.pct}%`);
+  }
+  // The topbar grows with the scale, so the banner offset has to follow it.
+  // Deferred a frame so the re-layout has happened before we measure.
+  if (typeof positionAlertStacks === 'function') {
+    requestAnimationFrame(() => { try { positionAlertStacks(); } catch(_) {} });
   }
 }
-// Apply on load
+function cycleTextSize(){
+  applyTextSize(_TEXT_SIZES[(_textSizeStep() + 1) % _TEXT_SIZES.length].id);
+}
+
+// Park the notification stacks just under the topbar instead of on top of
+// it. The bar's height isn't a constant — it grows with the text size and
+// can wrap to two rows on a narrow window — so measure it rather than
+// guessing. Values are in the zoomed coordinate space (the stack is inside
+// the same zoomed document), so divide the measured pixels back out.
+function positionAlertStacks(){
+  const bar = document.querySelector('.topbar');
+  const host = document.getElementById('alert-stacks');
+  if (!bar || !host) return;
+  const zf = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--zf')) || 1;
+  const h = bar.getBoundingClientRect().height / zf;
+  document.documentElement.style.setProperty('--alert-top', (h + 10) + 'px');
+}
+window.addEventListener('resize', positionAlertStacks);
+// The topbar is only laid out once the app shell is visible, and it changes
+// height whenever the text size does — re-measure on both.
+setTimeout(positionAlertStacks, 300);
+// Apply on load. The <head> script already set the attribute pre-paint so
+// there's no flash; this call only syncs the button label.
 (function(){
-  try { if (localStorage.getItem('comfort') === '1') document.body.setAttribute('data-comfort','1'); } catch(e){}
+  try {
+    let saved = localStorage.getItem('spice_textsize');
+    // Migrate anyone who had the old Comfort Mode switched on: land them on
+    // the first step up, which is the nearest equivalent — except now the
+    // detail text scales too. Runs once; the old key is then cleared.
+    if (!saved && localStorage.getItem('comfort') === '1') saved = 'lg';
+    if (localStorage.getItem('comfort') !== null) localStorage.removeItem('comfort');
+    applyTextSize(saved || 'md', { silent:true });
+  } catch(e){}
 })();
+// Back-compat: anything still calling toggleComfort() steps the size instead
+// of setting the now-unused data-comfort attribute.
+function toggleComfort(){ cycleTextSize(); }
 
 // ── Summary panel: collapsible KPI strips + charts ──────
 // Each KPI strip and (where applicable) its companion chart card on a tab
@@ -8179,6 +8821,22 @@ const DataTable = (function(){
   const PAGE_SIZE = 100;       // rows shown per load
   const state = {}; // keyed by tbodyId: { data, cols, sort, search, visible }
 
+  // How many rows to reveal per "chunk". Normally PAGE_SIZE (100) with a
+  // "Load N more" button underneath, BUT when the operator picks the largest
+  // rows-per-page option (500 / page, the global pager preference) they've
+  // explicitly asked to see everything — so every row renders at once and the
+  // Load-more button never appears. Applies to every DataTable screen because
+  // this is the single code path all of them render through.
+  // getPageSize() is defined further down the file; guarded so DataTable keeps
+  // working if it is ever loaded on its own.
+  const ALL_ROWS_AT = 500;
+  function chunkSize(){
+    try {
+      if (typeof getPageSize === 'function' && getPageSize() >= ALL_ROWS_AT) return Infinity;
+    } catch (_) { /* fall through to the default */ }
+    return PAGE_SIZE;
+  }
+
   function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
   function getValue(row, col){
@@ -8248,14 +8906,82 @@ const DataTable = (function(){
     return dir === 'desc' ? -cmp : cmp;
   }
 
+  // ── Smart search ───────────────────────────────────────────────
+  // One box, three readings of what the user typed, OR-ed together:
+  //   1. plain substring across every searchable column (original behaviour)
+  //   2. a PHONE NUMBER in any style — "98765 43210", "+91-98765-43210" —
+  //      compared digits-only against phone columns, so punctuation, spacing
+  //      and the country code can never hide a hit
+  //   3. a LOT-NUMBER SPEC — "12", "12,15,18", "10-20", "10-20, 25" — matched
+  //      against lot columns with leading zeros collapsed ("007" ≡ "7")
+  // Because the three are OR-ed, this can only ever find MORE rows than the
+  // plain substring did; nothing that matched before stops matching. Column
+  // roles are sniffed from the column KEY so every screen gets this for free.
+  // Mirrors smartLotNumbers / smartPhoneDigits on the server, which do the
+  // same job for the server-paged lists.
+  const LOT_COL_RE   = /^(lot|lot_no|lotno|lot_nos)$/i;
+  const PHONE_COL_RE = /^(tel|tel1|tel2|phone|phone_no|mobile|whatsapp|contact|contact_no)$/i;
+  const PHONE_MIN_DIGITS = 4;       // shorter tails match almost every row
+  const PHONE_MAX_DIGITS = 10;      // compare on the subscriber number only
+  const LOT_RANGE_CAP = 5000;       // guard a fat-fingered "1-999999"
+  const onlyDigits = (v) => String(v == null ? '' : v).replace(/\D+/g, '');
+  // Digits to compare a typed phone number on, or '' when it's too short to
+  // be one. Anything past 10 digits is dropped from the FRONT: numbers are
+  // stored however they were typed — some with "+91", most without — so
+  // comparing the whole string would make "+91 98765 43210" miss a master
+  // holding plain "9876543210".
+  function phoneNeedle(q){
+    const d = onlyDigits(q);
+    if (d.length < PHONE_MIN_DIGITS) return '';
+    return d.length > PHONE_MAX_DIGITS ? d.slice(-PHONE_MAX_DIGITS) : d;
+  }
+  // "007" / "7" / "a007" → "7" / "A7". Same rule as leCanonLot() used by the
+  // Lot Entry "tick lots by typing" box, so the two agree on lot identity.
+  function canonLot(v){
+    const m = String(v == null ? '' : v).trim().match(/^([A-Za-z]*)0*(\d+)$/);
+    return m ? (m[1] || '').toUpperCase() + parseInt(m[2], 10) : '';
+  }
+  // Expand "1,3,5-8" → Set{'1','3','5','6','7','8'}. Returns null when the
+  // text isn't a lot spec — strict on purpose, so an ordinary search like
+  // "RAMU-2" is never silently reinterpreted as a range.
+  function parseLotSpec(q){
+    const parts = String(q||'').split(/[,;\s]+/).filter(Boolean);
+    if (!parts.length) return null;
+    const out = new Set();
+    for (const part of parts) {
+      const range = part.match(/^([A-Za-z]*)0*(\d+)\s*-\s*([A-Za-z]*)0*(\d+)$/);
+      if (range) {
+        const p1 = (range[1]||'').toUpperCase(), p2 = (range[3]||'').toUpperCase();
+        if (p1 !== p2) return null;                      // "A1-B5" — a typo, not a range
+        let lo = parseInt(range[2],10), hi = parseInt(range[4],10);
+        if (lo > hi) { const t = lo; lo = hi; hi = t; }
+        if (hi - lo > LOT_RANGE_CAP) return null;
+        for (let n = lo; n <= hi; n++) out.add(p1 + n);
+        continue;
+      }
+      const single = part.match(/^([A-Za-z]*)0*(\d+)$/);
+      if (!single) return null;                          // any non-lot token → not a spec
+      out.add((single[1]||'').toUpperCase() + parseInt(single[2],10));
+    }
+    return out.size ? out : null;
+  }
+
   function applyFilters(s){
     let rows = s.data.slice();
     if (s.search) {
       const q = s.search.toLowerCase();
+      const lotSet = parseLotSpec(s.search);
+      const phoneQ = phoneNeedle(s.search);
       rows = rows.filter(r => s.cols.some(c => {
         if (c.searchable === false) return false;
         const v = getValue(r, c);
-        return v != null && String(v).toLowerCase().includes(q);
+        if (v == null) return false;
+        const sv = String(v);
+        if (sv.toLowerCase().includes(q)) return true;
+        const key = c.key || '';
+        if (lotSet && LOT_COL_RE.test(key) && lotSet.has(canonLot(sv))) return true;
+        if (phoneQ && PHONE_COL_RE.test(key) && onlyDigits(sv).includes(phoneQ)) return true;
+        return false;
       }));
     }
     if (s.sort && s.sort.col) {
@@ -8304,7 +9030,13 @@ const DataTable = (function(){
     if (!table) return;
 
     const filtered = applyFilters(s);
-    const visible = filtered.slice(0, s.visible);
+    // Re-read the chunk size on every render so switching the pager to
+    // "500 / page" reveals everything on already-mounted tables too, without
+    // waiting for a re-mount.
+    const chunk = chunkSize();
+    if (chunk === Infinity) s.visible = Infinity;
+    else if (s.visible === Infinity) s.visible = chunk;
+    const visible = s.visible === Infinity ? filtered : filtered.slice(0, s.visible);
 
     // Header row with click-to-sort indicators
     const headCells = s.cols.map(c => {
@@ -8362,7 +9094,7 @@ const DataTable = (function(){
     const searchBlock = s.noSearch
       ? ''
       : `<div class="dt-search-wrap">
-           <input type="text" class="dt-search" placeholder="Search all columns…" value="${esc(s.search||'')}" oninput="DataTable._search('${tbodyId}',this.value)">
+           <input type="text" class="dt-search" placeholder="Search — name, phone, lot no (1,5,10-20)…" value="${esc(s.search||'')}" oninput="DataTable._search('${tbodyId}',this.value)">
            ${hasSearch ? `<button class="dt-search-clear" title="Clear search" onclick="DataTable._clear('${tbodyId}')" aria-label="Clear">&times;</button>` : ''}
          </div>`;
     const toolbar = `
@@ -8372,7 +9104,7 @@ const DataTable = (function(){
       </div>`;
 
     const loadMore = visible.length < filtered.length
-      ? `<div class="dt-loadmore"><button onclick="DataTable._loadMore('${tbodyId}')">Load ${Math.min(PAGE_SIZE, filtered.length-visible.length)} more (${visible.length} of ${filtered.length} shown)</button></div>`
+      ? `<div class="dt-loadmore"><button onclick="DataTable._loadMore('${tbodyId}')">Load ${Math.min(chunk, filtered.length-visible.length)} more (${visible.length} of ${filtered.length} shown)</button></div>`
       : '';
 
     // Replace table content. Structure:
@@ -8420,7 +9152,7 @@ const DataTable = (function(){
         rowClass: config.rowClass,
         sort: state[tbodyId] && state[tbodyId].sort || (config.defaultSort || null),
         search: state[tbodyId] && state[tbodyId].search || '',
-        visible: PAGE_SIZE,
+        visible: chunkSize(),
         // noSearch hides the built-in `.dt-search` input — used when
         // the page already has a more capable per-tab search above
         // the table (lots / invoices / purchases / bills / debit-notes /
@@ -8453,7 +9185,7 @@ const DataTable = (function(){
     },
     _search(tbodyId, q){
       const s = state[tbodyId]; if (!s) return;
-      s.search = q; s.visible = PAGE_SIZE;
+      s.search = q; s.visible = chunkSize();
       render(tbodyId);
       // Restore focus to the search input (innerHTML replacement loses it)
       const el = document.querySelector(`#${tbodyId}`)?.closest('.dt-wrap')?.querySelector('.dt-search');
@@ -8461,15 +9193,22 @@ const DataTable = (function(){
     },
     _clear(tbodyId){
       const s = state[tbodyId]; if (!s) return;
-      s.search = ''; s.visible = PAGE_SIZE;
+      s.search = ''; s.visible = chunkSize();
       render(tbodyId);
       const el = document.querySelector(`#${tbodyId}`)?.closest('.dt-wrap')?.querySelector('.dt-search');
       if (el) el.focus();
     },
     _loadMore(tbodyId){
       const s = state[tbodyId]; if (!s) return;
-      s.visible += PAGE_SIZE;
+      s.visible += chunkSize();
       render(tbodyId);
+    },
+    // Re-render every mounted table — used by setGlobalPageSize() so a switch
+    // to (or away from) "500 / page" takes effect on tabs that aren't reloaded.
+    _refreshAll(){
+      for (const id of Object.keys(state)) {
+        if (document.getElementById(id)) { try { render(id); } catch (_) {} }
+      }
     },
     // Toggle a row's ⋯ action popover. Positioned with position:fixed at the
     // toggle's rect so it escapes the scroll-overflow clip, and flips up /
@@ -8660,11 +9399,19 @@ async function login(){
   try{
   const submittedPw = document.getElementById('inp-p').value;
   const submittedUn = document.getElementById('inp-u').value;
-  const d=await j('/api/login',{method:'POST',body:JSON.stringify({username:submittedUn,password:submittedPw})});
+  // Pass any token this browser still holds. If it belongs to the same
+  // user the server lets the login through instead of refusing it as a
+  // duplicate — a reopened tab shouldn't lock you out of your own account.
+  const d=await j('/api/login',{method:'POST',body:JSON.stringify({
+    username:submittedUn, password:submittedPw,
+    prev_token: (typeof localStorage!=='undefined' ? (localStorage.getItem('t')||'') : '')
+  })});
   T=d.token;localStorage.setItem('t',T);document.getElementById('user-lbl').textContent=d.username;
   // Cache role + permissions for client-side button visibility
   window._userRole  = d.role || 'viewer';
   window._userPerms = new Set(d.permissions || []);
+  // Home branch — locks the Lot Entry branch dropdown for non-admins.
+  window._userBranch = d.branch || '';
   applyPermissionAttributes();
   document.getElementById('login').style.display='none';document.getElementById('app').style.display='block';
   // Await loadSettings so _sdata (and the topbar badge that depends on it)
@@ -8681,7 +9428,7 @@ async function login(){
   try { _refreshLicenseBadge(); } catch(_) {}
   // lot_entry users land directly on the Lot Entry tab — they can't see
   // dash/anything else anyway, so this saves a click.
-  go(window._userRole === 'lot_entry' ? 'lotentry' : 'dash');
+  go(_landingTab());
   // Force-prompt a password change when the user just logged in with
   // a default / well-known password. The server flags this via
   // `mustChangePassword` so the client doesn't have to repeat the
@@ -8691,6 +9438,9 @@ async function login(){
     window._forcePwCurrent = submittedPw;
     openForceChangePwModal();
   }
+  // "Another admin is already signed in" — the reciprocal of the banner
+  // the other admin gets from pollSessionAlerts(). Shown once, on arrival.
+  if (d.notice) { try { showSessionNotice(d.notice); } catch(_) {} }
   }
   catch(x){
     // The server returns 451 (RFC 7725 — Unavailable For Legal Reasons,
@@ -8704,9 +9454,27 @@ async function login(){
       window.location.href = '/renew.html?install_id=' + iid + '&expired=' + exp;
       return;
     }
+    // 409 — that username is already signed in somewhere. Deliberately no
+    // override: the server names the device and last-active time, and the
+    // way in is to sign out there or have an admin clear the session from
+    // Users → Sign out. Show the server's message verbatim.
+    if (x && x.status === 409 && x.body && x.body.error === 'already_logged_in') {
+      // NB: submittedUn is scoped to the try block above — re-read the input.
+      if(e){e.textContent = x.body.message
+              || `Already ${document.getElementById('inp-u').value} is logged in`;
+            e.style.display='block'; e.classList.add('active');}
+      return;
+    }
     if(e){e.textContent='Invalid credentials';e.style.display='block';e.classList.add('active');}}}
 function logout(){h('/api/logout',{method:'POST'});T='';localStorage.removeItem('t');
   window._userRole=null;window._userPerms=new Set();
+  // Drop the branch lock with the rest of the identity — the next user on
+  // this browser must not inherit the previous one's depot.
+  window._userBranch = '';
+  // Clear any concurrent-login banners still on screen; they belonged to
+  // the session that just ended.
+  _saServer = []; _saLocal = []; _saDismissed = new Set();
+  try { renderSessionAlerts(); } catch(_) {}
   window._forcePwCurrent = null;
   const fpw = document.getElementById('force-pw-modal'); if (fpw) fpw.style.display = 'none';
   // Clear the shared trade selection so the next user (or this user on
@@ -8895,6 +9663,9 @@ applyBranding();
   document.getElementById('user-lbl').textContent=d.username;
   window._userRole  = d.role || 'viewer';
   window._userPerms = new Set(d.permissions || []);
+  // Home branch — must be restored here too, not just on fresh login, or
+  // a page reload would silently unlock the Lot Entry branch dropdown.
+  window._userBranch = d.branch || '';
   applyPermissionAttributes();
   document.getElementById('login').style.display='none';
   document.getElementById('app').style.display='block';
@@ -8903,7 +9674,7 @@ applyBranding();
   try { await loadSettings(); } catch(_) {}
   try { await applyFeatureFlags(); } catch(_) {}
   try { loadTopbarTradeSelector(); } catch(_) {}
-  go(window._userRole === 'lot_entry' ? 'lotentry' : 'dash');}catch(e){T='';localStorage.removeItem('t')}})();
+  go(_landingTab());}catch(e){T='';localStorage.removeItem('t')}})();
 
 // ── Navigation ────────────────────────────────────────────
 // Track the most recently activated tab so the topbar Refresh button
@@ -8971,7 +9742,7 @@ async function loadFixData(){
       .fd-switch input{width:17px;height:17px}
       .fd-switch:has(input:checked){background:#dcfce7;border-color:#16a34a;color:#15803d}
       .fd-btn-add{background:var(--fdc);color:#fff;border:0;border-radius:10px;padding:8px 16px;font-size:14px;font-weight:700;cursor:pointer}
-      .fd-scroll{overflow:auto;max-height:62vh;border:1px solid var(--line,#e5e7eb);border-radius:12px}
+      .fd-scroll{overflow:auto;max-height:calc(62vh / var(--zf));border:1px solid var(--line,#e5e7eb);border-radius:12px}
       table.fd-grid{border-collapse:separate;border-spacing:0;width:100%;font-size:14px}
       table.fd-grid th,table.fd-grid td{border-bottom:1px solid var(--line,#e9edf2);border-right:1px solid var(--line,#eef1f5);padding:9px 12px;text-align:left;white-space:nowrap;max-width:340px;overflow:hidden;text-overflow:ellipsis}
       tr.fd-hrow th{position:sticky;top:0;z-index:3;background:var(--fdc);color:#fff;font-weight:700;font-size:13.5px}
@@ -9865,7 +10636,7 @@ function go(tab){
   if (typeof applyLogoBadge === 'function') {
     try { applyLogoBadge(); } catch(_) {}
   }
-  const loaders={dash:loadStats,insights:loadInsights,pertrade:loadPerTradeBreakdown,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>searchTraders(''),buyers:()=>searchBuyers(''),
+  const loaders={hub:loadHub,dash:loadStats,insights:loadInsights,pertrade:loadPerTradeBreakdown,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>searchTraders(''),buyers:()=>searchBuyers(''),
     auctions:loadAuctions,reassignreqs:loadReassignRequests,lotalloc:loadLotAllocation,lots:loadLotAuctions,invoices:loadInvAuctions,preinvoice:loadPreInvoice,purchases:loadPurAuctions,
     payments:loadPayAuctions,exports:loadExpAuctions,tds:()=>{},lorry:loadLorryAuctions,
     bills:loadBillAuctions,debit:loadDnAuctions,debitplanter:loadDnpAuctions,journals:loadJournalDefault,registers:loadRegisterDefault,tally:loadTallyAuctions,
@@ -10005,6 +10776,950 @@ document.addEventListener('click', function(e){
     if(typeof toast === 'function') toast('🔒 ' + msg);
   }
 }, true);
+
+// ══════════════════════════════════════════════════════════════════
+// AUCTION DESK — every document for one auction, on one screen
+// ══════════════════════════════════════════════════════════════════
+// The screen owns no knowledge of any individual document. It renders
+// whatever /api/documents/catalog returns: labels, groups, formats, URLs,
+// lock reasons and status all arrive pre-resolved, because the same
+// manifest has to drive the mobile PWA later without a second copy of the
+// gating rules. Adding a document means adding a row to
+// document-catalog.js — nothing here changes. See TRADE-DESK.md.
+
+// Last catalog response, kept so the per-tile buttons can look their entry
+// up by id instead of re-encoding URLs into onclick attributes.
+window._hubCat = null;
+
+// Which screen a session lands on. The hub is the default; anyone who
+// preferred the old Dashboard can pin it from the hub's own footer, and
+// lot_entry users keep going straight to Lot Entry as they always have.
+function _landingTab(){
+  if (window._userRole === 'lot_entry') return 'lotentry';
+  try { if (localStorage.getItem('spice.home') === 'dash') return 'dash'; } catch(_) {}
+  return 'hub';
+}
+function hubSetHome(tab){
+  try { localStorage.setItem('spice.home', tab); } catch(_) {}
+  toast(tab === 'dash' ? 'Dashboard is now your home screen'
+                       : 'Auction Desk is now your home screen');
+  renderHubFooter();
+}
+
+function loadHub(){
+  // Same wiring every other screen uses, so picking an auction here updates
+  // the topbar and every other tab's selector (and vice versa).
+  fillAucSelect('hub-auction').then(() => { hubApplyView(); hubRefresh(); })
+    .catch(e => showError(e));
+}
+
+// ── The two views ────────────────────────────────────────────────
+// Lots is the default: picking an auction should show what is in it. The
+// choice sticks per browser so anyone who lives in Documents stays there.
+function hubView(){
+  try { return localStorage.getItem('hubView') === 'docs' ? 'docs' : 'lots'; } catch(_) { return 'lots'; }
+}
+function hubSetView(v){
+  try { localStorage.setItem('hubView', v === 'docs' ? 'docs' : 'lots'); } catch(_) {}
+  hubApplyView();
+  // Load whichever side has not been fetched yet for this auction.
+  if (v === 'docs' && !window._hubCat)  loadHubCatalog();
+  if (v === 'lots' && !window._hubLots) hubLoadLots();
+}
+function hubApplyView(){
+  const v = hubView();
+  const lots = document.getElementById('hub-view-lots');
+  const docs = document.getElementById('hub-view-docs');
+  if (lots) lots.style.display = v === 'lots' ? '' : 'none';
+  if (docs) docs.style.display = v === 'docs' ? '' : 'none';
+  document.getElementById('hub-seg-lots')?.classList.toggle('is-on', v === 'lots');
+  document.getElementById('hub-seg-docs')?.classList.toggle('is-on', v === 'docs');
+}
+// Both views share the auction, so a change reloads whichever is showing and
+// drops the other's cache so it refetches when next opened.
+function hubOnAuctionChange(){
+  window._hubCat = null; window._hubLots = null;
+  hubLotClose();
+  const b = document.getElementById('hub-lot-branch'); if (b) b.value = '';
+  hubRefresh();
+}
+function hubRefresh(){
+  if (hubView() === 'lots') { hubLoadLots(); loadHubKpiOnly(); }
+  else loadHubCatalog();
+}
+// The KPI strip is part of the catalog response, and the Lots view wants it
+// too. Fetch the catalog quietly rather than duplicating that aggregate in
+// a second endpoint; it also warms the Documents view.
+async function loadHubKpiOnly(){
+  if (window._hubCat) { renderHubKpi(window._hubCat.kpi); return; }
+  try { await loadHubCatalog(); } catch(_) {}
+}
+
+// ── Lots ─────────────────────────────────────────────────────────
+window._hubLots = null;          // every lot for the auction, as fetched
+let _hubLotTimer = null;
+// Paged with the app's shared pager (renderPager / setGlobalPageSize), so
+// "50 / page" here means the same as it does on Lots, Invoices and the
+// masters — one page-size setting for the whole app, not a local one.
+// pageSize is filled on first render, NOT here: this block is evaluated
+// earlier in the script than _PAGE_SIZE_KEY, so calling getPageSize() at
+// declaration time hits its temporal dead zone.
+const _hubLotPager = { page: 1, pageSize: 50, total: 0, totalPages: 0, _init: false };
+function gotoHubLotPage(p){
+  const max = _hubLotPager.totalPages || 1;
+  _hubLotPager.page = Math.max(1, Math.min(max, parseInt(p, 10) || 1));
+  hubRenderLots();
+  // Keep the top of the table in view when stepping through pages.
+  document.getElementById('hub-lot-rows')?.closest('.card')
+    ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+
+function hubLotSearchDebounced(){
+  const inp = document.getElementById('hub-lot-search');
+  const clr = document.getElementById('hub-lot-clear');
+  if (clr) clr.style.display = (inp && inp.value) ? '' : 'none';
+  clearTimeout(_hubLotTimer);
+  _hubLotTimer = setTimeout(hubLoadLots, 260);
+}
+function hubLotSearchClear(){
+  const inp = document.getElementById('hub-lot-search');
+  if (inp) { inp.value = ''; inp.focus(); }
+  hubLotSearchDebounced();
+}
+
+async function hubLoadLots(){
+  const body = document.getElementById('hub-lot-rows');
+  if (!body) return;
+  const aid = document.getElementById('hub-auction')?.value || '';
+  if (!aid) { body.innerHTML = '<tr><td colspan="9" class="hub-empty">Select an auction.</td></tr>'; return; }
+  const term   = (document.getElementById('hub-lot-search')?.value || '').trim();
+  const branch = (document.getElementById('hub-lot-branch')?.value || '').trim();
+  body.innerHTML = '<tr><td colspan="9" class="hub-empty">Loading lots…</td></tr>';
+  try {
+    const qs = new URLSearchParams();
+    if (term)   qs.set('search', term);
+    if (branch) qs.set('branch', branch);
+    // The un-paginated path returns the whole auction in ASCENDING lot
+    // order, which is how the office reads a lot list. The paginated one
+    // sorts descending, so we page in the browser instead.
+    const rows = await j(`/api/lots/${encodeURIComponent(aid)}?${qs.toString()}`);
+    window._hubLots = Array.isArray(rows) ? rows : [];
+    _hubLotPager.page = 1;
+    hubFillBranchFilter();
+    hubRenderLots();
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="9" class="hub-empty">Could not load lots — ${esc(e.message || e)}</td></tr>`;
+  }
+}
+
+// Branch options come from the lots actually in this auction, so the filter
+// never offers a branch with nothing behind it. Not rebuilt while a branch
+// is selected — that would leave the chosen one as the only option.
+function hubFillBranchFilter(){
+  const sel = document.getElementById('hub-lot-branch');
+  if (!sel || sel.value) return;
+  const seen = Array.from(new Set((window._hubLots || [])
+    .map(l => (l.branch || '').trim()).filter(Boolean))).sort();
+  sel.innerHTML = '<option value="">All branches</option>'
+    + seen.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
+}
+
+function hubRenderLots(){
+  const body = document.getElementById('hub-lot-rows');
+  const all  = window._hubLots || [];
+  if (!body) return;
+  const count = document.getElementById('hub-lot-count');
+  const term  = (document.getElementById('hub-lot-search')?.value || '').trim();
+  if (!all.length) {
+    body.innerHTML = '<tr><td colspan="9" class="hub-empty">No lots match.</td></tr>';
+    Object.assign(_hubLotPager, { page: 1, total: 0, totalPages: 0 });
+    renderPager('hub-lot-pager', _hubLotPager, gotoHubLotPage, term);
+    if (count) count.textContent = '';
+    return;
+  }
+  if (!_hubLotPager._init) {
+    _hubLotPager._init = true;
+    try { _hubLotPager.pageSize = getPageSize(); } catch (_) {}
+  }
+  _hubLotPager.total = all.length;
+  _hubLotPager.totalPages = Math.max(1, Math.ceil(all.length / _hubLotPager.pageSize));
+  if (_hubLotPager.page > _hubLotPager.totalPages) _hubLotPager.page = _hubLotPager.totalPages;
+  const off = (_hubLotPager.page - 1) * _hubLotPager.pageSize;
+  const slice = all.slice(off, off + _hubLotPager.pageSize);
+  body.innerHTML = slice.map(l => {
+    const wd = !(Number(l.amount) > 0);
+    const code = (l.code || '').trim().toUpperCase();
+    const buyer = esc(l.buyer1 || l.buyer || '') || '<span class="hub-lot-mute">—</span>';
+    const marker = code === 'WD' ? 'WD' : code === 'NA' ? 'NA' : '—';
+    return `<tr class="${wd ? 'is-wd' : ''}" data-lot-id="${l.id}" onclick="hubLotOpen(${l.id})">
+      <td class="hub-lot-no">${esc(l.lot_no)}</td>
+      <td>${esc(l.name || '')}${l.has_bank ? '' : '<span class="hub-lot-badge" title="This seller has no bank account on file">no bank</span>'}</td>
+      <td class="hub-lot-mute">${esc(l.cr || '')}</td>
+      <td class="num">${fmtI(l.bags)}</td>
+      <td class="num">${fmtI(l.qty, 3)}</td>
+      <td class="num">${Number(l.price) ? fmtI(l.price, 2) : '<span class="hub-lot-mute">—</span>'}</td>
+      <td class="num">${Number(l.amount) ? fmtI(l.amount, 2) : `<span class="hub-lot-mute">${marker}</span>`}</td>
+      <td>${buyer}${code && code !== 'WD' && code !== 'NA' ? `<span class="hub-lot-badge">${esc(code)}</span>` : ''}</td>
+      <td class="hub-lot-mute">${esc(l.invo || '')}</td>
+    </tr>`;
+  }).join('');
+
+  renderPager('hub-lot-pager', _hubLotPager, gotoHubLotPage, term);
+
+  // The header count stays whole-auction — the pager already says which
+  // slice you are looking at, and "193 sold" is the figure that matters.
+  const sold = all.filter(l => Number(l.amount) > 0).length;
+  if (count) count.textContent = `${fmtI(all.length)} lots · ${fmtI(sold)} sold`;
+}
+
+// ── Lot detail drawer ────────────────────────────────────────────
+window._hubLotOpenId = null;
+
+function hubLotOpen(id){
+  const l = (window._hubLots || []).find(x => Number(x.id) === Number(id));
+  if (!l) return;
+  window._hubLotOpenId = Number(id);
+  const dash  = '<span class="hub-lot-mute">—</span>';
+  const row   = (v, label) => `<dt>${esc(label)}</dt><dd>${v || dash}</dd>`;
+  const money = (v) => Number(v) ? '₹' + fmtI(v, 2) : '';
+  const sec   = (t) => `<div class="hub-dl-sec">${esc(t)}</div><dl class="hub-dl">`;
+  const wd    = !(Number(l.amount) > 0);
+
+  document.getElementById('hub-lot-drawer').innerHTML =
+    `<div class="hub-drawer-head">
+       <div style="flex:1">
+         <div style="font-size:17px;font-weight:800;color:var(--text)">Lot ${esc(l.lot_no)}</div>
+         <div style="font-size:12px;color:var(--text3);margin-top:2px">${esc(l.name || '')}</div>
+       </div>
+       <button class="hub-btn" onclick="hubLotClose()" title="Close" aria-label="Close"
+               style="width:28px;padding:0;font-size:14px">×</button>
+     </div>
+     <div class="hub-drawer-body">
+       ${wd ? '<div class="hub-lock" style="margin:10px 0 0"><span>⚠</span><span>Not sold — this lot carries no price or amount.</span></div>' : ''}
+       ${sec('Seller')}
+         ${row(esc(l.name || ''), 'Planter')}
+         ${row(esc(l.cr || ''), 'CR / GSTIN')}
+         ${row(esc(l.ppla || l.padd || ''), 'Place')}
+         ${row(esc(l.tel || ''), 'Phone')}
+         ${row(l.has_bank ? 'On file' : '<span style="color:var(--amber)">None on file</span>', 'Bank account')}
+       </dl>
+       ${sec('Lot')}
+         ${row(esc(l.branch || ''), 'Branch')}
+         ${row(esc(l.grade || ''), 'Grade')}
+         ${row(esc(l.crop || ''), 'Crop')}
+         ${row(fmtI(l.bags), 'Bags')}
+         ${row(fmtI(l.qty, 3), 'Quantity (kg)')}
+         ${row(esc(l.litre || ''), 'Litre')}
+         ${row(money(l.reserved_price), 'Reserve price')}
+       </dl>
+       ${sec('Sale')}
+         ${row(money(l.price), 'Price')}
+         ${row(money(l.amount), 'Amount')}
+         ${row(esc(l.buyer1 || l.buyer || ''), 'Buyer')}
+         ${row(esc((l.code || '').toUpperCase()), 'Buyer code')}
+         ${row(esc(l.sale || ''), 'Sale type')}
+         ${row(esc(l.invo || ''), 'Bill / Invoice no')}
+       </dl>
+       ${sec('Computed')}
+         ${row(money(l.com), 'Commission')}
+         ${row(money(l.cgst), 'CGST')}
+         ${row(money(l.sgst), 'SGST')}
+         ${row(money(l.igst), 'IGST')}
+         ${row(money(l.refund), 'Discount / refund')}
+         ${row(money(l.bilamt), 'Bill amount')}
+         ${row(money(l.balance), 'Payable')}
+       </dl>
+       <div class="hub-lot-mute" style="margin-top:14px">
+         Computed figures come from the last <b>Calculate All</b> — they stay
+         stale until it is re-run after an edit.
+       </div>
+     </div>
+     <div class="hub-drawer-foot" style="flex-wrap:wrap">
+       <button class="btn btn-g needs-lot-write" onclick="hubLotEdit()" style="height:36px;padding:0 16px;font-size:13px;flex:1 1 130px">Edit lot</button>
+       <button class="btn btn-a needs-lot-write" onclick="hubLotPriceEntry()" style="height:36px;padding:0 14px;font-size:13px;flex:1 1 130px" title="Open Price Entry filtered to this lot">Price Entry →</button>
+       <button class="btn btn-o" onclick="hubLotOpenInLots()" style="height:36px;padding:0 14px;font-size:13px;flex:1 1 100%">Open in Lots →</button>
+     </div>`;
+
+  document.getElementById('hub-lot-drawer').style.display = 'flex';
+  document.getElementById('hub-lot-scrim').style.display = '';
+  for (const tr of document.querySelectorAll('#hub-lot-rows tr'))
+    tr.classList.toggle('is-open', Number(tr.dataset.lotId) === Number(id));
+}
+
+function hubLotClose(){
+  window._hubLotOpenId = null;
+  const dr = document.getElementById('hub-lot-drawer');
+  if (dr) { dr.style.display = 'none'; dr.innerHTML = ''; }
+  const sc = document.getElementById('hub-lot-scrim');
+  if (sc) sc.style.display = 'none';
+  for (const tr of document.querySelectorAll('#hub-lot-rows tr.is-open')) tr.classList.remove('is-open');
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && window._hubLotOpenId) hubLotClose();
+});
+
+// Hand off to the app's existing lot-edit modal — one editor in the
+// codebase, not two. saveLot() refreshes this list via its hub hook.
+function hubLotEdit(){
+  const l = (window._hubLots || []).find(x => Number(x.id) === Number(window._hubLotOpenId));
+  if (!l) return;
+  // The drawer deliberately STAYS OPEN behind the modal (see the z-index
+  // note in .hub-scrim). Closing the modal — saved or cancelled — puts you
+  // back on the same lot instead of an empty list you have to search again.
+  if (typeof openLotEdit === 'function') openLotEdit(l);   // it shows the modal itself
+}
+// Escape hatch to the full Lots screen (price import, bulk actions, calc).
+function hubLotOpenInLots(){ hubLotClose(); hubOpen('lots'); }
+
+// Price Entry is the other place a lot gets edited — the fast grid for
+// typing prices and buyer codes. Jump there filtered to this one lot so
+// it is the row you land on, not one of ninety.
+async function hubLotPriceEntry(){
+  const l = (window._hubLots || []).find(x => Number(x.id) === Number(window._hubLotOpenId));
+  if (!l) return;
+  const lotNo = String(l.lot_no || '');
+  hubLotClose();
+  hubOpen('priceentry');
+  // Price Entry loads its grid asynchronously; apply the filter once the
+  // lots are in rather than reaching into its loader.
+  for (let i = 0; i < 40; i++) {
+    // _pe is a top-level `let`, so it is in scope here but NOT on window.
+    if (typeof _pe !== 'undefined' && Array.isArray(_pe.lots) && _pe.lots.length) break;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  const inp = document.getElementById('pe-filter-lot');
+  if (inp) inp.value = lotNo;
+  if (typeof peSetFilter === 'function') peSetFilter('lot', lotNo);
+  const clr = document.getElementById('pe-filter-lot-clear');
+  if (clr) clr.style.display = 'flex';
+}
+
+async function loadHubCatalog(){
+  const host = document.getElementById('hub-groups');
+  if (!host) return;
+  const aid  = document.getElementById('hub-auction')?.value || '';
+  const from = document.getElementById('hub-from')?.value || '';
+  const to   = document.getElementById('hub-to')?.value || '';
+  host.innerHTML = '<div class="hub-empty">Loading documents…</div>';
+  try {
+    const qs = new URLSearchParams();
+    if (aid)  qs.set('auctionId', aid);
+    if (from) qs.set('from', from);
+    if (to)   qs.set('to', to);
+    const d = await j('/api/documents/catalog?' + qs.toString());
+    window._hubCat = d;
+    // A selection is only meaningful against the catalog it was made from —
+    // switching trade or date range re-gates every tile, so start clean.
+    if (window._hubSel) window._hubSel.clear();
+    window._hubPick = '';
+    renderHubKpi(d.kpi);
+    renderHubGroups(d.groups || []);
+    renderHubFooter();
+    hubRenderSelbar();
+    hubApplyFilter();
+  } catch (e) {
+    host.innerHTML = `<div class="hub-empty">Could not load documents — ${esc(e.message || e)}</div>`;
+  }
+}
+
+function renderHubKpi(kpi){
+  const el = document.getElementById('hub-kpi');
+  if (!el) return;
+  if (!kpi) { el.innerHTML = ''; el.style.display = 'none'; return; }
+  el.style.display = '';
+  // Step the type size down as a figure gets longer, so an auction that
+  // grows from ₹1,20,000 to ₹20,70,44,630 never spills its tile.
+  const sizeClass = (txt) => {
+    const n = String(txt).replace(/<[^>]*>/g, '').length;
+    return n <= 6 ? 'n-1' : n <= 9 ? 'n-2' : n <= 12 ? 'n-3' : 'n-4';
+  };
+  const cell = (n, l, cls) =>
+    `<div class="stat ${cls || 'k-neutral'}"><div class="n ${sizeClass(n)}">${n}</div>`
+    + `<div class="l">${esc(l)}</div></div>`;
+  // Total Value runs to twelve characters at auction scale
+  // (₹20,70,44,630) and will not fit a lot-count-sized tile. It gets a
+  // double-width cell, and the paise are dropped: nobody reads a trade
+  // total to two decimals, and ".00" is what tipped it over the edge.
+  el.innerHTML =
+    cell(fmtI(kpi.allocatedLots), 'Allocated Lots') +
+    cell(fmtI(kpi.soldLots),      'Sold Lots',   'k-sold') +
+    cell(fmtI(kpi.withdrawnLots), 'WD Lots',     'k-wd') +
+    cell(fmtI(kpi.soldWeight, 3), 'Sold Weight') +
+    cell(fmtI(kpi.totalBags),     'Bags') +
+    cell(fmtI(kpi.sellers),       'Sellers') +
+    cell(fmtI(kpi.buyers),        'Buyers') +
+    cell('₹' + fmtI(Math.round(kpi.totalValue)), 'Total Value', 'stat-value k-value');
+}
+
+// Button text per format. Mostly the format shouted, except IRP — "IRP" is
+// the portal's name for it, not something an operator would search for.
+const HUB_FMT_LABEL = {
+  xlsx: 'XLSX', pdf: 'PDF', csv: 'CSV', xml: 'XML', dbf: 'DBF',
+  json: 'JSON', irp: 'e-Invoice JSON',
+};
+
+// Status chip for a generated-document tile. Three states, because "no
+// documents yet" and "some still pending" call for different actions.
+function _hubChip(st){
+  if (!st) return '';
+  if (st.done)          return '<span class="hub-chip hub-chip-ok">✓ All generated</span>';
+  if (st.generated > 0) return `<span class="hub-chip hub-chip-part">${fmtI(st.generated)} done · ${fmtI(st.pending)} pending</span>`;
+  return `<span class="hub-chip hub-chip-none">None yet${st.pending ? ' · ' + fmtI(st.pending) + ' to make' : ''}</span>`;
+}
+
+function hubTileHtml(it){
+  const btn = (label, onclick, primary) =>
+    `<button class="hub-btn${primary ? ' hub-btn-p' : ''}" onclick="${onclick}">${esc(label)}</button>`;
+  const iconBtn = (label, onclick, glyph) =>
+    `<button class="hub-btn hub-btn-i" onclick="${onclick}" title="${esc(label)}" aria-label="${esc(label)}">`
+    + `<svg viewBox="0 0 24 24">${glyph}</svg></button>`;
+  // Only downloadable tiles are selectable. A generated-document tile has
+  // no href of its own (its PDFs come from the bulk route), so it cannot
+  // join a bundle — it deep-links instead.
+  const pick = (it.available && it.href)
+    ? `<input type="checkbox" class="hub-cb" data-id="${esc(it.id)}"${it._only ? ` data-fmt="${esc(it._only)}"` : ''}
+              onchange="hubToggleSel(this)"
+              title="Add to bundle" style="width:15px;height:15px;cursor:pointer;flex:none">`
+    : '';
+  const parts = [`<div style="display:flex;align-items:flex-start;gap:8px">${pick}<div class="hub-tile-l">${esc(it.label)}</div></div>`];
+
+  // Under a file-type heading the tile is that one format, so the purpose
+  // group it came from becomes its subtitle — otherwise "Form D" filed
+  // under "PDF" tells you nothing about what it is for.
+  if (it._group) parts.push(`<div class="hub-note" style="margin-top:-3px">${esc(it._group)}</div>`);
+  if (it.status) parts.push(_hubChip(it.status));
+  if (it.note)   parts.push(`<div class="hub-note">${esc(it.note)}</div>`);
+
+  if (it.lockReason) {
+    parts.push(`<div class="hub-lock"><span>🔒</span><span>${esc(it.lockReason)}</span></div>`);
+  } else if (it.needs && it.needs.length) {
+    parts.push(`<div class="hub-lock"><span>📅</span><span>Pick a date range above</span></div>`);
+  }
+
+  const acts = [];
+  if (it.available && it.href) {
+    // The FIRST declared format is the document's natural one — it gets the
+    // filled button, and it is also what a bundle picks when "Bundle as" is
+    // left on "each document's usual format". One rule, two places.
+    const shown = it._only ? [it._only] : it.formats;
+    shown.forEach((fmt, i) => {
+      acts.push(btn(HUB_FMT_LABEL[fmt] || fmt.toUpperCase(), `hubDownload('${it.id}','${fmt}')`,
+                    it._only ? true : i === 0));
+    });
+    // A tile offering PDF also offers Preview and Print — both open the very
+    // same PDF, so they are actions on a format, not formats of their own.
+    // Icon-only: spelled out, the four buttons wrapped onto a second line
+    // and made every tile in the grid taller for no added clarity.
+    if ((it._only ? it._only === 'pdf' : it.formats.includes('pdf'))) {
+      acts.push(iconBtn('Preview', `hubPdfOpen('${it.id}',0)`,
+        '<circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/>'));
+      acts.push(iconBtn('Print', `hubPdfOpen('${it.id}',1)`,
+        '<path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><path d="M6 14h12v8H6z"/>'));
+    }
+  }
+  if (it.available && it.bulkRoute && it.status && it.status.generated > 0) {
+    acts.push(btn('All PDFs', `hubBulkPdf('${it.id}')`, true));
+  }
+  if (it.deepLink) acts.push(btn('Open →', `hubOpen('${it.deepLink}')`));
+  if (acts.length) parts.push(`<div class="hub-acts">${acts.join('')}</div>`);
+
+  const cls = it.available ? 'hub-tile' : 'hub-tile is-locked';
+  // data-search carries the haystack the filter box matches against, so
+  // filtering never has to re-read the DOM's rendered text.
+  return `<div class="${cls}" data-hub-id="${esc(it.id)}" `
+       + `data-search="${esc((it.label + ' ' + it.id + ' ' + (it.family || '')).toLowerCase())}">`
+       + parts.join('') + '</div>';
+}
+
+// One glyph per group. Paired with the accent colour in CSS, these are what
+// make a 65-tile page scannable — you learn "orange is logistics" once and
+// stop reading headings.
+const HUB_ICONS = {
+  preauction: '<path d="M9 11H3v10h6V11z"/><path d="M15 3H9v18h6V3z"/><path d="M21 7h-6v14h6V7z"/>',
+  documents:  '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M9 15h6"/>',
+  reports:    '<path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/>',
+  statutory:  '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>',
+  banking:    '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/>',
+  logistics:  '<path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>',
+  tally:      '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M8 10h8M8 14h4"/>',
+  dbf:        '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/>',
+  books:      '<path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>',
+  masters:    '<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/>',
+};
+Object.assign(HUB_ICONS, {
+  'fmt-pdf':  HUB_ICONS.documents,
+  'fmt-xlsx': '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/>',
+  'fmt-csv':  '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18"/>',
+  'fmt-xml':  '<path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/>',
+  'fmt-json': '<path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/>',
+  'fmt-irp':  HUB_ICONS.statutory,
+  'fmt-dbf':  HUB_ICONS.dbf,
+  'fmt-generated': HUB_ICONS.documents,
+});
+const hubIcon = (gid) =>
+  `<span class="hub-sec-ico"><svg viewBox="0 0 24 24">${HUB_ICONS[gid] || HUB_ICONS.documents}</svg></span>`;
+
+// How the Documents view is sliced. 'purpose' uses the manifest's own
+// groups; 'format' rebuilds them by file type. Sticks per browser.
+function hubGrouping(){
+  try { return localStorage.getItem('hubGrouping') === 'format' ? 'format' : 'purpose'; }
+  catch(_) { return 'purpose'; }
+}
+function hubSetGrouping(mode){
+  try { localStorage.setItem('hubGrouping', mode === 'format' ? 'format' : 'purpose'); } catch(_) {}
+  document.getElementById('hub-grp-purpose')?.classList.toggle('is-on', mode !== 'format');
+  document.getElementById('hub-grp-format')?.classList.toggle('is-on', mode === 'format');
+  if (window._hubCat) { renderHubGroups(window._hubCat.groups || []); renderHubFooter(); hubApplyFilter(); }
+}
+
+// Order file-type groups by how the office actually files things, not
+// alphabetically. Anything unlisted falls to the end in encounter order.
+const HUB_FMT_ORDER = ['pdf', 'xlsx', 'csv', 'xml', 'json', 'irp', 'dbf'];
+const HUB_FMT_GROUP = {
+  pdf:  { label: 'PDF',            hint: 'Print-ready documents' },
+  xlsx: { label: 'Excel (XLSX)',   hint: 'Spreadsheets' },
+  csv:  { label: 'CSV',            hint: 'Portal uploads' },
+  xml:  { label: 'XML',            hint: 'Tally import' },
+  json: { label: 'JSON',           hint: 'Machine-readable rows' },
+  irp:  { label: 'e-Invoice JSON', hint: 'GST portal (IRP / NIC)' },
+  dbf:  { label: 'DBF',            hint: 'Legacy database files' },
+};
+
+// Rebuild the catalog's groups as file-type groups. A document offering
+// both XLSX and PDF appears under both — that is what "show me every PDF"
+// means. Generated-document tiles have no downloadable href, so they keep
+// their own heading rather than being filed under a format they don't have.
+function hubGroupsByFormat(groups){
+  const byFmt = new Map();
+  const docsOnly = [];
+  for (const g of groups) {
+    for (const it of g.items) {
+      const fmts = (it.formats || []).filter(f => it.kind !== 'document');
+      if (!fmts.length) { docsOnly.push({ ...it, _group: g.label }); continue; }
+      for (const f of fmts) {
+        if (!byFmt.has(f)) byFmt.set(f, []);
+        // Carry the purpose group along so a tile still says where it
+        // belongs once the headings no longer tell you.
+        byFmt.get(f).push({ ...it, _group: g.label, _only: f });
+      }
+    }
+  }
+  const ordered = [...HUB_FMT_ORDER.filter(f => byFmt.has(f)),
+                   ...[...byFmt.keys()].filter(f => !HUB_FMT_ORDER.includes(f))];
+  const out = ordered.map(f => ({
+    id: 'fmt-' + f,
+    label: (HUB_FMT_GROUP[f] || {}).label || f.toUpperCase(),
+    hint: (HUB_FMT_GROUP[f] || {}).hint || '',
+    collapsed: false,
+    items: byFmt.get(f),
+  }));
+  if (docsOnly.length) {
+    out.push({ id: 'fmt-generated', label: 'Generated documents',
+               hint: 'Numbered and stored — no single file to download',
+               collapsed: false, items: docsOnly });
+  }
+  return out;
+}
+
+function renderHubGroups(groups){
+  const host = document.getElementById('hub-groups');
+  if (!host) return;
+  const mode = hubGrouping();
+  document.getElementById('hub-grp-purpose')?.classList.toggle('is-on', mode !== 'format');
+  document.getElementById('hub-grp-format')?.classList.toggle('is-on', mode === 'format');
+  if (mode === 'format') groups = hubGroupsByFormat(groups);
+  if (!groups.length) { host.innerHTML = '<div class="hub-empty">No documents available.</div>'; return; }
+  let collapsed = [];
+  try { collapsed = JSON.parse(localStorage.getItem('hubCollapsed') || 'null') || null; } catch(_) {}
+  host.innerHTML = groups.map(g => {
+    // First visit honours the manifest's `collapsed` hint (Accounting and
+    // Masters start shut); after that the user's own choice wins.
+    const isShut = collapsed ? collapsed.includes(g.id) : !!g.collapsed;
+    const live = g.items.filter(i => i.available).length;
+    // "Pick all" counts what is actually SELECTABLE, not what is ready —
+    // the Trade Documents group is entirely ready and entirely un-tickable,
+    // and a button there would do nothing. stopPropagation keeps the click
+    // off the header, which would otherwise collapse the group just filled.
+    const pickable = g.items.filter(i => i.available && i.href).length;
+    const pickAll = pickable > 1
+      ? `<button class="hub-btn" onclick="event.stopPropagation();hubSelectGroup('${esc(g.id)}')"
+                 style="margin-left:8px">Pick all ${pickable}</button>`
+      : '';
+    return `<div class="card hub-sec${isShut ? ' is-collapsed' : ''}" id="hub-sec-${esc(g.id)}"
+                 data-g="${esc(g.id)}" style="padding:14px">
+      <div class="hub-sec-head" onclick="hubToggleSec('${esc(g.id)}')">
+        <span class="hub-sec-chev">▼</span>
+        ${hubIcon(g.id)}
+        <span class="hub-sec-name">${esc(g.label)}</span>
+        ${g.hint ? `<span class="hub-sec-hint">${esc(g.hint)}</span>` : ''}
+        <span class="hub-sec-count">${live} of ${g.items.length} ready</span>
+        ${pickAll}
+      </div>
+      <div class="hub-sec-body"><div class="hub-grid">${g.items.map(hubTileHtml).join('')}</div></div>
+    </div>`;
+  }).join('');
+}
+
+// ── Bundle selection ─────────────────────────────────────────────
+// Ids only; the format is decided at submit time from the toolbar's
+// "Bundle as" choice, so changing it doesn't mean re-ticking anything.
+// id → format. An empty format means "use the Bundle as preference"; a
+// set one comes from a tile that was showing exactly that format.
+window._hubSel = new Map();
+
+function hubToggleSel(cb){
+  if (cb.checked) window._hubSel.set(cb.dataset.id, cb.dataset.fmt || '');
+  else            window._hubSel.delete(cb.dataset.id);
+  hubRenderSelbar();
+}
+function hubSelectGroup(gid){
+  const sec = document.getElementById('hub-sec-' + gid);
+  if (!sec) return;
+  // Only what is actually on screen — if a filter is active, "Pick all"
+  // means "pick all of these", not "pick all of the ones I hid".
+  for (const cb of sec.querySelectorAll('.hub-cb')) {
+    if (cb.closest('.hub-tile').style.display === 'none') continue;
+    cb.checked = true; window._hubSel.set(cb.dataset.id, cb.dataset.fmt || '');
+  }
+  sec.classList.remove('is-collapsed');
+  hubRenderSelbar();
+}
+function hubClearSel(){
+  window._hubSel.clear();
+  for (const cb of document.querySelectorAll('.hub-cb')) cb.checked = false;
+  hubRenderSelbar();
+}
+function hubRenderSelbar(){
+  const bar = document.getElementById('hub-selbar');
+  const n   = window._hubSel.size;
+  if (!bar) return;
+  bar.style.display = n ? '' : 'none';
+  const c = document.getElementById('hub-selcount');
+  if (c) c.textContent = `${n} document${n === 1 ? '' : 's'} selected`;
+}
+
+// Resolve a tile's format for the bundle from the "Bundle as" preference,
+// falling back to the document's own first format when it has no such form.
+function _hubBundleFmt(it, pref){
+  if (pref !== 'auto' && it.formats.includes(pref)) return pref;
+  return it.formats[0];
+}
+
+// Build the ZIP. This is a JOB, not a download: several documents render
+// through Puppeteer and a big bundle would outlive any request timeout, so
+// we start it, poll, then collect.
+async function hubBundle(){
+  const picked = Array.from(window._hubSel.entries());
+  if (!picked.length) return;
+  const pref = document.getElementById('hub-selfmt')?.value || 'auto';
+  const items = [];
+  for (const [id, fmt] of picked) {
+    const it = _hubItem(id);
+    // A format captured at tick time wins over the toolbar preference —
+    // ticking a tile under "PDF" must mean the PDF.
+    if (it && it.href) items.push({ id, format: fmt || _hubBundleFmt(it, pref) });
+  }
+  if (!items.length) { toast('Nothing selectable in that selection'); return; }
+
+  const btn  = document.getElementById('hub-selgo');
+  const prog = document.getElementById('hub-selprog');
+  const setProg = (t) => { if (prog) prog.textContent = t; };
+  if (btn) btn.disabled = true;
+  try {
+    const aid  = document.getElementById('hub-auction')?.value || '';
+    const from = document.getElementById('hub-from')?.value || '';
+    const to   = document.getElementById('hub-to')?.value || '';
+    setProg('Starting…');
+    const start = await j('/api/documents/bundle', {
+      method: 'POST',
+      body: JSON.stringify({ auctionId: aid, from, to, items }),
+    });
+
+    // Poll until the server stops saying "running". No client-side timeout:
+    // the job owns its own lifetime, and a slow bundle is still a good one.
+    let st = null;
+    for (;;) {
+      await new Promise(r => setTimeout(r, 800));
+      st = await j('/api/documents/bundle/' + encodeURIComponent(start.jobId));
+      if (st.status !== 'running') break;
+      setProg(`Building ${st.done} of ${st.total}${st.current ? ' — ' + st.current : ''}…`);
+    }
+    if (st.status === 'error') { setProg(''); alert('Bundle failed: ' + (st.error || 'unknown error')); return; }
+    if (st.status === 'empty') {
+      setProg('');
+      alert('Nothing to bundle — none of the selected documents had any rows for this auction.');
+      return;
+    }
+
+    setProg('Downloading…');
+    const r = await fetch(B + '/api/documents/bundle/' + encodeURIComponent(start.jobId) + '/file',
+      { headers: { 'Authorization': 'Bearer ' + T } });
+    if (!r.ok) { const e = await r.json().catch(() => ({})); alert('Download failed: ' + (e.error || r.status)); return; }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(await r.blob());
+    a.download = filenameFromResponse(r, 'Documents.zip');
+    a.click();
+
+    // Say plainly when the ZIP holds fewer files than were ticked — the
+    // archive's own _skipped.txt lists which and why.
+    setProg('');
+    if (st.skipped && st.skipped.length) {
+      toast(`${st.files} of ${st.total} bundled — see _skipped.txt in the ZIP`);
+    } else {
+      toast(`${st.files} document${st.files === 1 ? '' : 's'} bundled`);
+    }
+    hubClearSel();
+  } catch (e) {
+    setProg('');
+    showError(e);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function renderHubFooter(){
+  const host = document.getElementById('hub-groups');
+  if (!host || !window._hubCat) return;
+  const isHome = _landingTab() === 'hub';
+  const other  = isHome ? 'dash' : 'hub';
+  const label  = isHome ? 'Prefer the Dashboard on sign-in? Make it my home screen'
+                        : 'Make Auction Desk my home screen';
+  host.insertAdjacentHTML('beforeend',
+    `<div style="text-align:center;padding:4px 0 18px;font-size:12px;color:var(--text3)">
+       <a href="javascript:void(0)" onclick="hubSetHome('${other}')"
+          style="color:var(--text3);text-decoration:underline">${esc(label)}</a>
+     </div>`);
+}
+
+function hubToggleSec(id){
+  const el = document.getElementById('hub-sec-' + id);
+  if (!el) return;
+  el.classList.toggle('is-collapsed');
+  try {
+    const shut = Array.from(document.querySelectorAll('.hub-sec.is-collapsed'))
+      .map(e => e.id.replace(/^hub-sec-/, ''));
+    localStorage.setItem('hubCollapsed', JSON.stringify(shut));
+  } catch(_) {}
+}
+
+// ── Find a document (combobox) ───────────────────────────────────
+// Two ways to narrow 58 tiles: type free text and the whole grid filters,
+// or pick a name from the list and the grid shows that one document. The
+// list is the part that matters — it answers "what can I even get?"
+// without making you open ten collapsed groups to find out.
+window._hubPick = '';           // id of the picked document, '' = free-text mode
+let _hubComboIdx = -1;          // keyboard cursor into the visible options
+
+function hubComboOptions(term){
+  const out = [];
+  for (const g of (window._hubCat?.groups || [])) {
+    for (const it of g.items) {
+      const hay = (it.label + ' ' + it.id + ' ' + g.label + ' ' + (it.formats || []).join(' ')).toLowerCase();
+      if (term && !hay.includes(term)) continue;
+      out.push({ id: it.id, label: it.label, group: g.label,
+                 formats: it.formats || [], available: it.available });
+    }
+  }
+  return out;
+}
+
+function hubComboRender(term){
+  const box = document.getElementById('hub-combo-list');
+  if (!box) return;
+  const opts = hubComboOptions(term);
+  if (!opts.length) { box.innerHTML = '<div class="hub-combo-none">No document matches that.</div>'; return; }
+  let html = '', lastGroup = '';
+  opts.forEach((o, i) => {
+    if (o.group !== lastGroup) { html += `<div class="hub-combo-grp">${esc(o.group)}</div>`; lastGroup = o.group; }
+    // A locked document still lists — knowing it exists (and why it is not
+    // ready) beats it being invisible, same rule the tiles follow.
+    html += `<button type="button" class="hub-combo-opt${o.available ? '' : ' is-locked'}"
+               data-i="${i}" data-id="${esc(o.id)}" onclick="hubComboPick('${esc(o.id)}')">
+               <span>${o.available ? '' : '🔒 '}${esc(o.label)}</span>
+               <span class="f">${esc(o.formats.join(' · '))}</span></button>`;
+  });
+  box.innerHTML = html;
+  _hubComboIdx = -1;
+}
+
+function hubComboOpen(){
+  const box = document.getElementById('hub-combo-list');
+  if (!box) return;
+  hubComboRender((document.getElementById('hub-filter')?.value || '').trim().toLowerCase());
+  box.style.display = '';
+}
+function hubComboClose(){
+  const box = document.getElementById('hub-combo-list');
+  if (box) box.style.display = 'none';
+  _hubComboIdx = -1;
+}
+function hubComboToggle(){
+  const box = document.getElementById('hub-combo-list');
+  if (!box) return;
+  if (box.style.display === 'none') { document.getElementById('hub-filter')?.focus(); hubComboOpen(); }
+  else hubComboClose();
+}
+function hubComboInput(){
+  // Typing abandons any picked document and goes back to filtering the grid.
+  window._hubPick = '';
+  hubComboOpen();
+  hubApplyFilter();
+}
+function hubComboClear(){
+  const inp = document.getElementById('hub-filter');
+  if (inp) inp.value = '';
+  window._hubPick = '';
+  hubComboClose();
+  hubApplyFilter();
+}
+function hubComboPick(id){
+  const it = _hubItem(id);
+  const inp = document.getElementById('hub-filter');
+  if (inp) inp.value = it ? it.label : '';
+  window._hubPick = id;
+  hubComboClose();
+  hubApplyFilter();
+  // Open the group it lives in and bring it into view — picking a name
+  // should land you on the document, not just narrow the page.
+  const tile = document.querySelector(`[data-hub-id="${CSS.escape(id)}"]`);
+  if (tile) {
+    tile.closest('.hub-sec')?.classList.remove('is-collapsed');
+    tile.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+}
+// ↑/↓ to walk the list, Enter to take the highlighted one (or the first
+// match when nothing is highlighted), Escape to give up.
+function hubComboKey(e){
+  const box = document.getElementById('hub-combo-list');
+  const opts = box && box.style.display !== 'none'
+    ? Array.from(box.querySelectorAll('.hub-combo-opt')) : [];
+  if (e.key === 'Escape') { hubComboClose(); return; }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (!opts.length) { hubComboOpen(); return; }
+    e.preventDefault();
+    _hubComboIdx += (e.key === 'ArrowDown' ? 1 : -1);
+    if (_hubComboIdx < 0) _hubComboIdx = opts.length - 1;
+    if (_hubComboIdx >= opts.length) _hubComboIdx = 0;
+    opts.forEach((o, i) => o.classList.toggle('is-active', i === _hubComboIdx));
+    opts[_hubComboIdx].scrollIntoView({ block: 'nearest' });
+    return;
+  }
+  if (e.key === 'Enter') {
+    const pick = opts[_hubComboIdx >= 0 ? _hubComboIdx : 0];
+    if (pick) { e.preventDefault(); hubComboPick(pick.dataset.id); }
+  }
+}
+// Any click outside the combobox dismisses it.
+document.addEventListener('click', (e) => {
+  if (!e.target.closest || !e.target.closest('.hub-combo')) hubComboClose();
+});
+
+// Narrow the grid: to one document when the list picked one, otherwise by
+// free text. A group whose tiles all filter out hides itself too, so the
+// screen doesn't fill with empty headings.
+function hubApplyFilter(){
+  const term = (document.getElementById('hub-filter')?.value || '').trim().toLowerCase();
+  const pick = window._hubPick;
+  const clr  = document.getElementById('hub-combo-clear');
+  if (clr) clr.style.display = (term || pick) ? '' : 'none';
+  for (const sec of document.querySelectorAll('.hub-sec')) {
+    let shown = 0;
+    for (const tile of sec.querySelectorAll('.hub-tile')) {
+      const hit = pick ? tile.dataset.hubId === pick
+                       : (!term || (tile.dataset.search || '').includes(term));
+      tile.style.display = hit ? '' : 'none';
+      if (hit) shown++;
+    }
+    sec.style.display = shown ? '' : 'none';
+    // A search should surface what it found, not leave it inside a shut
+    // accordion — so matching groups open while a filter is active.
+    if ((term || pick) && shown) sec.classList.remove('is-collapsed');
+  }
+}
+
+// Look an item up in the last catalog response.
+function _hubItem(id){
+  for (const g of (window._hubCat?.groups || [])) {
+    const hit = g.items.find(i => i.id === id);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+async function hubDownload(id, fmt){
+  const it = _hubItem(id);
+  if (!it || !it.href || !it.href[fmt]) { toast('That document is not available right now'); return; }
+  await withOverlay(`Preparing ${it.label} (${fmt.toUpperCase()})…`, async () => {
+    const r = await fetch(B + it.href[fmt], { headers: { 'Authorization': 'Bearer ' + T } });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      // A 404 here is usually "this auction has no rows of that kind" rather
+      // than a broken link — say so plainly instead of "not found".
+      alert(r.status === 404 ? (e.error || 'Nothing to export for this auction')
+                             : `Export failed: ${e.error || 'HTTP ' + r.status}`);
+      return;
+    }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filenameFromResponse(r, `${id}.${fmt}`);
+    a.click();
+  });
+}
+
+// Preview (print=0) and Print (print=1) share one fetch — the difference is
+// only what we do with the blob once it lands.
+async function hubPdfOpen(id, print){
+  const it = _hubItem(id);
+  if (!it || !it.href || !it.href.pdf) { toast('No PDF available for that document'); return; }
+  await withOverlay(`Preparing ${it.label}…`, async () => {
+    const r = await fetch(B + it.href.pdf, { headers: { 'Authorization': 'Bearer ' + T } });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      alert(`Failed: ${e.error || 'HTTP ' + r.status}`);
+      return;
+    }
+    const url = URL.createObjectURL(await r.blob());
+    const w = window.open(url);
+    if (print && w) w.addEventListener('load', () => { try { w.focus(); w.print(); } catch(_) {} });
+  });
+}
+
+// Merge every generated document of one family into a single PDF. The ids
+// come from the family's own list route, which the catalog supplies —
+// including the fact that planter debit notes list by `ano` while the rest
+// list by `auction_id`.
+async function hubBulkPdf(id){
+  const it = _hubItem(id);
+  if (!it || !it.bulkRoute || !it.listUrl) return;
+  let rows;
+  try { rows = await j(it.listUrl); }
+  catch (e) { showError(e); return; }
+  rows = Array.isArray(rows) ? rows : (rows.rows || []);
+  const ids = rows.map(r => Number(r.id)).filter(Boolean);
+  if (!ids.length) { toast(`No ${it.label.toLowerCase()} to print yet`); return; }
+  // The list routes cap at 500 rows. Rather than hand over a silently
+  // partial PDF, say what is missing and point at the screen that can
+  // page through the rest.
+  const total = it.status && it.status.generated;
+  if (total && ids.length < total) {
+    if (!confirm(`This auction has ${total} ${it.label.toLowerCase()}, but only the first `
+               + `${ids.length} can be merged in one go.\n\nPrint those ${ids.length}? `
+               + `(Open the ${it.label} screen to select the rest.)`)) return;
+  }
+  await fetchPdfWithOverlay(
+    `Building merged PDF for ${ids.length} ${it.label.toLowerCase()}…`,
+    it.bulkRoute, `${id}_${ids.length}.pdf`, { ids });
+}
+
+// Jump to the screen that owns a document family, carrying the trade with
+// us. setSharedAucId broadcasts to every wired selector, so the target tab
+// is already pointed at the right trade before its loader runs.
+function hubOpen(tab){
+  const aid = document.getElementById('hub-auction')?.value || '';
+  if (aid && typeof setSharedAucId === 'function') setSharedAucId(aid);
+  go(tab);
+}
 
 // ── LOT REASSIGNMENT REQUESTS (admin review of operator requests) ──
 var _rrFilter='pending';
@@ -12545,7 +14260,12 @@ async function loadUsers(){
   const lbl = document.getElementById('my-uname-label'); if(lbl) lbl.textContent = uname;
   // Load users list
   try{
-    const users = await j('/api/users');
+    // /api/users returns { users, branches }. Tolerate the older bare-array
+    // shape so a stale cached page against a new server still renders.
+    const payload = await j('/api/users');
+    const users = Array.isArray(payload) ? payload : (payload.users || []);
+    // Branch list for the assign-branch dropdown, cached for the modal.
+    window._branchOptions = Array.isArray(payload) ? [] : (payload.branches || []);
     DataTable.mount('users-list', users, {
       columns: [
         { key:'username', label:'Username', sort:'text', render:(u)=>{
@@ -12567,6 +14287,15 @@ async function loadUsers(){
             const r = ROLE_PILL[String(u.role||'').toLowerCase()] || ROLE_PILL.viewer;
             return `<span style="display:inline-block;padding:3px 10px;border-radius:10px;background:${r.bg};color:${r.fg};font-weight:700;font-size:11.5px;letter-spacing:.3px">${r.label}</span>`;
           } },
+        { key:'branch', label:'Branch', sort:'text', render:(u)=>{
+            // Admins are never branch-locked — show a dash, not an empty
+            // cell, so it reads as "deliberately none" rather than "unset".
+            if (String(u.role||'').toLowerCase()==='admin')
+              return `<span style="color:var(--spice-text-hint);font-size:12px">all branches</span>`;
+            return u.branch
+              ? `<span style="display:inline-block;padding:3px 10px;border-radius:10px;background:var(--spice-cardamom-lt);color:var(--spice-cardamom-dk);font-weight:700;font-size:11.5px">${esc(u.branch)}</span>`
+              : `<span style="color:var(--spice-text-hint);font-size:12px">not set</span>`;
+          } },
         { key:'active_sessions', label:'Status', sort:'number', render:(u)=>
             u.active_sessions>0
               ? `<span class="pill pill-local"><span class="pill-dot"></span>${u.active_sessions} online</span>`
@@ -12575,16 +14304,23 @@ async function loadUsers(){
         { key:'created_at',  label:'Created', sort:'date', render:(u)=>u.created_at?fmtD(u.created_at.substring(0,10)):'—' },
         { key:'_actions', label:'Actions', sortable:false, searchable:false, render:(u)=>{
             const isMe = u.username === uname;
-            // Three actions: Change Role, Reset PW, Delete (delete hidden for self).
+            const isAdmin = String(u.role||'').toLowerCase()==='admin';
+            // Actions: Change Role, Branch (non-admins only), Reset PW,
+            // Sign out (only when they hold sessions), Delete (not self).
             // Compact buttons sized 32px tall for tight vertical density.
             return `<button class="btn btn-o" style="height:32px;font-size:12px;padding:0 10px" onclick="openChangeRoleModal(${u.id},'${esc(u.username)}','${esc(u.role||'viewer')}')" title="Promote or demote this user">Role</button>`
+              + (isAdmin ? '' : ` <button class="btn btn-o" style="height:32px;font-size:12px;padding:0 10px;margin-left:4px" onclick="openUserBranchModal(${u.id},'${esc(u.username)}','${esc(u.branch||'')}')" title="Lock this user to one branch">Branch</button>`)
               + ` <button class="btn btn-o" style="height:32px;font-size:12px;padding:0 10px;margin-left:4px" onclick="openResetPwModal(${u.id},'${esc(u.username)}')">Reset PW</button>`
+              // Escape hatch for the one-login-per-username block: clears a
+              // session left behind by a browser that closed without
+              // logging out, so the user can sign in again immediately.
+              + (u.active_sessions>0 ? ` <button class="btn btn-o" style="height:32px;font-size:12px;padding:0 10px;margin-left:4px" onclick="forceSignOutUser(${u.id},'${esc(u.username)}')" title="End every session this user has, so they can sign in again">Sign out</button>` : '')
               + (isMe ? '' : ` <button class="btn btn-r" style="height:32px;font-size:12px;padding:0 10px;margin-left:4px" onclick="deleteUser(${u.id},'${esc(u.username)}')">Delete</button>`);
           } }
       ]
     });
   }catch(e){
-    document.getElementById('users-list').innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--spice-chili);padding:20px">Failed to load users: ${esc(e.message)}</td></tr>`;
+    document.getElementById('users-list').innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--spice-chili);padding:20px">Failed to load users: ${esc(e.message)}</td></tr>`;
   }
   // Load my sessions
   try{
@@ -12618,8 +14354,71 @@ function openAddUserModal(){
   document.getElementById('nu-pw').value='';
   document.getElementById('nu-role').value='operator'; // sensible default
   updateRoleDescription();
+  fillBranchSelect('nu-branch','');
+  updateNewUserBranchVis();
   showModal('add-user-modal');
   setTimeout(()=>document.getElementById('nu-user').focus(),100);
+}
+
+// ── Per-user branch lock ──────────────────────────────────────────
+// The option list is whatever br1..br9 hold in Settings → Branches &
+// Contacts (server-validated on save, so a stale list here can't create
+// a lock nobody can satisfy). Empty value = no lock.
+function fillBranchSelect(selId, current){
+  const sel = document.getElementById(selId);
+  if (!sel) return;
+  const branches = window._branchOptions || [];
+  const cur = String(current || '').toUpperCase();
+  sel.innerHTML = '<option value="">Any branch (no lock)</option>' +
+    branches.map(b => `<option value="${esc(b)}"${b===cur?' selected':''}>${esc(b)}</option>`).join('');
+  // A branch removed from Settings after it was assigned would otherwise
+  // vanish from the dropdown and silently reset the user to "no lock" on
+  // the next save. Keep it visible and flagged instead.
+  if (cur && !branches.includes(cur)) {
+    sel.insertAdjacentHTML('beforeend', `<option value="${esc(cur)}" selected>${esc(cur)} — no longer in Settings</option>`);
+  }
+  if (!branches.length) {
+    sel.insertAdjacentHTML('beforeend', '<option value="" disabled>⚠ Configure branches in Settings first</option>');
+  }
+}
+
+// Admins are never branch-locked; hide the field rather than let someone
+// set a value the server would drop anyway.
+function updateNewUserBranchVis(){
+  const wrap = document.getElementById('nu-branch-wrap');
+  if (!wrap) return;
+  const isAdmin = (document.getElementById('nu-role')?.value || '') === 'admin';
+  wrap.style.display = isAdmin ? 'none' : '';
+}
+
+function openUserBranchModal(id, username, branch){
+  document.getElementById('ub-id').value = id;
+  document.getElementById('ub-username').textContent = username;
+  fillBranchSelect('ub-branch', branch);
+  showModal('user-branch-modal');
+}
+
+async function saveUserBranch(){
+  const id = document.getElementById('ub-id').value;
+  const branch = document.getElementById('ub-branch').value;
+  try{
+    await j(`/api/users/${id}/branch`, { method:'PUT', body:JSON.stringify({ branch }) });
+    toast(branch ? `Branch set to ${branch}` : 'Branch lock removed');
+    hideModal('user-branch-modal');
+    loadUsers();
+  }catch(e){ showError(e) }
+}
+
+// Clear every session a user holds. The way out when someone's browser
+// died mid-session and the one-login-per-username block won't let them
+// back in until the idle window elapses.
+async function forceSignOutUser(id, username){
+  if(!confirm(`Sign "${username}" out of every device?\n\nAny work they have unsaved on screen will be lost, and they'll need to sign in again.`)) return;
+  try{
+    const r = await j(`/api/users/${id}/revoke-sessions`, { method:'POST' });
+    toast(`Signed "${username}" out of ${r.revoked} session${r.revoked===1?'':'s'}`);
+    loadUsers();
+  }catch(e){ showError(e) }
 }
 
 // ── Role descriptions ─────────────────────────────────────
@@ -12643,10 +14442,13 @@ async function createUser(){
   const username=document.getElementById('nu-user').value.trim();
   const password=document.getElementById('nu-pw').value;
   const role=document.getElementById('nu-role')?.value || 'operator';
+  // Admins are never branch-locked — the field is hidden for them and the
+  // server drops any branch sent with an admin role.
+  const branch=(role==='admin') ? '' : (document.getElementById('nu-branch')?.value || '');
   if(!username||!password){alert('Username and password are required');return}
   try{
-    await j('/api/users',{method:'POST',body:JSON.stringify({username,password,role})});
-    toast(`User "${username}" created with role: ${role}`);
+    await j('/api/users',{method:'POST',body:JSON.stringify({username,password,role,branch})});
+    toast(`User "${username}" created with role: ${role}${branch?` · branch: ${branch}`:''}`);
     hideModal('add-user-modal');
     loadUsers();
   }catch(e){showError(e)}
@@ -13813,7 +15615,25 @@ async function loadLotEntry(){
     // are configured yet — the field user can't proceed without one
     // because lot save requires a branch.
     const branchSel = document.getElementById('le-branch');
-    if (branches.length) {
+    // Branch-locked user (admins are never locked — the server keeps their
+    // branch blank). Their dropdown holds exactly their own depot and is
+    // disabled, so there's no "All branches" sentinel and no localStorage
+    // restore: the lock always wins. A disabled <select> still reports
+    // .value, which is what the save path reads.
+    const lockedBranch = (String(window._userRole||'').toLowerCase() !== 'admin')
+      ? String(window._userBranch || '').trim().toUpperCase()
+      : '';
+    if (lockedBranch) {
+      branchSel.innerHTML = `<option value="${esc(lockedBranch)}">${esc(lockedBranch)}</option>`;
+      branchSel.value = lockedBranch;
+      branchSel.disabled = true;
+      branchSel.title = 'You are assigned to this branch — ask an admin to change it';
+      // Keep the persisted value in step so any other reader of
+      // le_branch (allocation chips, filters) agrees with the lock.
+      try { localStorage.setItem('le_branch', lockedBranch); } catch(_) {}
+    } else if (branches.length) {
+      branchSel.disabled = false;
+      branchSel.title = '';
       // First option is the "All branches" sentinel — view every branch's
       // allocation chips at once. Picking a chip auto-sets the branch
       // dropdown so the entry / save flow continues normally.
@@ -13828,6 +15648,7 @@ async function loadLotEntry(){
         branchSel.value = 'ALL';
       }
     } else {
+      branchSel.disabled = false;
       branchSel.innerHTML = '<option value="">⚠ Configure branches in Settings first</option>';
     }
   } catch (e) {
@@ -14014,14 +15835,21 @@ const LE_SELLER_SEARCH_MAX = 50;
 // Seller detail line for lot-entry search results — fixed, easy-to-scan
 // order with labelled bold values: PHONE | PAN | GSTIN | PLACE. (cr = GSTIN.)
 function leFmtSellerDetail(t){
-  const lab = (l, v) => `<span style="color:var(--text3);font-weight:600">${l}</span> <b style="color:var(--text)">${esc(v)}</b>`;
+  // Labels are --text2, NOT --text3. In the light themes --text3 (#94A3B8)
+  // is only 2.6:1 against this card — under the 4.5:1 minimum for text this
+  // size, and the reason PHONE/PAN read as washed out. --text2 is 7.6:1 and
+  // still clearly subordinate to the value beside it. Mirrors the mobile
+  // fmtSellerDetail(); the two are twins and should stay in step.
+  const lab = (l, v) => `<span style="color:var(--text2);font-weight:700">${l}</span> <b style="color:var(--text);font-weight:700">${esc(v)}</b>`;
   const seg = [];
   if (t.tel) seg.push(lab('PHONE', t.tel));
   if (t.pan) seg.push(lab('PAN', t.pan));
   if (t.cr)  seg.push(lab('GSTIN', t.cr));
   const place = [t.ppla, t.pin].filter(Boolean).join(' ');
   if (place) seg.push(lab('PLACE', place));
-  return seg.join(' <span style="opacity:.35">|</span> ');
+  // opacity .35 over already-faint text made the divider near-invisible and
+  // let PHONE and PAN run together as one string.
+  return seg.join(' <span style="color:var(--border)">|</span> ');
 }
 async function leSearchSeller(q){
   clearTimeout(_le.searchTimer);
@@ -14052,8 +15880,11 @@ async function leSearchSeller(q){
           // Fixed, easy-to-scan detail order with labelled bold values,
           // highlighted in its own band: PHONE | PAN | GSTIN | PLACE.
           return `<div class="le-seller-result" data-idx="${i}" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s">
-            <div style="font-weight:600;color:var(--text)">${esc(t.name||'')}</div>
-            <div style="font-size:11px;margin-top:3px;padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;line-height:1.7;word-break:break-word">${leFmtSellerDetail(t)}</div>
+            <div style="font-weight:700;color:var(--text);font-size:14px">${esc(t.name||'')}</div>
+            <!-- 12.5px, not 11px: this is the line an operator reads before
+                 committing a lot to a seller, so it shouldn't be the
+                 smallest text on screen. Matches the mobile .sd rule. -->
+            <div style="font-size:12.5px;margin-top:3px;padding:5px 9px;background:var(--bg);border:1px solid var(--border);border-radius:6px;line-height:1.7;word-break:break-word">${leFmtSellerDetail(t)}</div>
           </div>`;
         }).join('');
       } else {
@@ -14113,33 +15944,37 @@ function lePickSeller(t){
   setTimeout(() => document.getElementById('le-lotno').focus(), 50);
 }
 
-// Render the bank-account picker inside the selected-seller card. Visible
-// when the seller has 1+ bank rows; hidden otherwise. Selection updates
-// _le.selectedBankId. The save flow then PUTs the choice as the seller's
-// new default if it changed.
+// The unselected first option of the Lot Entry bank picker. Its value is ''
+// so `parseInt` yields NaN and _le.selectedBankId stays null — the lot then
+// saves with bank_id null and the seller's stored default is left alone.
+// Same wording as the mobile app's picker.
+const LE_BANK_PLACEHOLDER = '<option value="">Select your bank</option>';
+
+// Render the bank-account picker inside the selected-seller card. Always
+// visible once a seller is chosen, always opening on "Select your bank".
+// Selection updates _le.selectedBankId; the save flow then PUTs that choice
+// as the seller's new default if it differs from the stored one.
 function leRenderBankPicker(t){
   const wrap = document.getElementById('le-bank-row');
   const sel  = document.getElementById('le-bank-select');
   const banks = Array.isArray(t.banks) ? t.banks : [];
   _le.banks = banks;   // remembered so leRenderBankInfo() can resolve the selection
-  if (!banks.length) {
-    wrap.style.display = 'none';
-    sel.innerHTML = '';
-    _le.selectedBankId = null;
-    leRenderBankInfo();
-    return;
-  }
-  // Pick a default: first is_default=1 bank, else the first bank in the list
-  const defaultBank = banks.find(b => b.is_default) || banks[0];
-  _le.selectedBankId = defaultBank ? defaultBank.id : null;
-  sel.innerHTML = banks.map(b => {
+  // The picker ALWAYS opens on "Select your bank" — never pre-armed with the
+  // seller's default and never sitting on "No bank account". Sellers routinely
+  // hold several accounts and a silently pre-selected default is how a lot
+  // ends up paid into the wrong one; the operator has to make the call
+  // deliberately. The row therefore stays visible even for a seller with no
+  // accounts on file, so the prompt (and the Add-bank control beside it) is
+  // there instead of the whole block vanishing.
+  _le.selectedBankId = null;
+  sel.innerHTML = LE_BANK_PLACEHOLDER + banks.map(b => {
     const labelParts = [b.acctnum];
     if (b.bank_name) labelParts.push(b.bank_name);
     // Account type rides the option text so the operator can tell a Savings
     // from a Current account without opening the seller master.
     if (b.account_type) labelParts.push(b.account_type);
     if (b.is_default) labelParts.push('★ default');
-    return `<option value="${b.id}" ${b.id === _le.selectedBankId ? 'selected' : ''}>${esc(labelParts.join(' · '))}</option>`;
+    return `<option value="${b.id}">${esc(labelParts.join(' · '))}</option>`;
   }).join('');
   sel.onchange = () => {
     const v = parseInt(sel.value, 10);
@@ -14971,8 +16806,9 @@ async function leEditLot(lotId){
     }
   }
   // Pre-select the bank this lot was saved with so editing keeps (and can
-  // re-confirm) the same payout account. Falls back to the seller's
-  // default — set by leRenderBankPicker — when the lot has no bank_id.
+  // re-confirm) the same payout account. A lot saved WITHOUT one stays on
+  // "Select your bank" — leRenderBankPicker never pre-arms a default, so an
+  // edit can't quietly attach an account the operator never chose.
   if (lot.bank_id != null) leSelectBank(lot.bank_id);
   // Scroll the form into view so the user sees what they're editing
   setTimeout(() => {
@@ -17105,7 +18941,10 @@ function lePickLot(lotNo, branch) {
   // that branch (and the chip we just picked re-highlights as selected).
   if (branch) {
     const branchEl = document.getElementById('le-branch');
-    if (branchEl && branchEl.value !== branch) {
+    // Never move a branch-locked operator off their own depot. Their
+    // dropdown holds only that one option, so assigning another branch
+    // would blank the select and save a lot with no branch at all.
+    if (branchEl && !branchEl.disabled && branchEl.value !== branch) {
       branchEl.value = branch;
       branchEl.dispatchEvent(new Event('change'));
     }
@@ -17753,7 +19592,10 @@ function leBuildReceiptHtml(format, lots, ctx) {
   if (format === 'compact') {
     return leBuildCompactHtml({ groups, co, dateStr, ano, printedAt, escapeHtml, paperWidthMm, fields });
   }
-  return leBuildDetailedHtml({ groups, co, dateStr, ano, printedAt, traderInfo, escapeHtml, paperWidthMm, fields });
+  // `totalsStacked` MUST be handed over: leBuildDetailedHtml reads it when it
+  // lays out the footer figures, and it is scoped to this function. Without it
+  // in the bag the detailed slip threw ReferenceError and never rendered.
+  return leBuildDetailedHtml({ groups, co, dateStr, ano, printedAt, traderInfo, escapeHtml, paperWidthMm, fields, totalsStacked });
 }
 
 // Lot-receipt columns the operator turned on (Settings → Lot Entry Defaults),
@@ -17847,6 +19689,10 @@ function leBuildCompactHtml(p) {
   // wrapping. Capped at 1 so a wide roll keeps the default size.
   const sc = Math.min(1, recMm / 74);
   const fpx = (b) => (b * sc).toFixed(1);
+  // ONE body size for the whole stub — the size the totals line already used.
+  // Only the company-name heading prints larger. Same rule as the detailed
+  // slip so the two formats look like the same document family.
+  const BODY = fpx(12);
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Receipt</title>
 <style>
@@ -17856,16 +19702,16 @@ function leBuildCompactHtml(p) {
   .receipt { width: ${recMm}mm; background:#fff; padding:6mm 4mm; box-sizing:border-box; box-shadow:0 2px 6px rgba(0,0,0,.15); page-break-after: always; }
   .receipt:last-child { page-break-after: auto; }
   .hdr { text-align:center; font-weight:700; font-size:${fpx(14)}px; letter-spacing:.5px }
-  .sub { text-align:center; font-size:${fpx(11)}px; margin-top:1px }
+  .sub { text-align:center; font-size:${BODY}px; margin-top:1px }
   hr.dashed { border:none; border-top:1px dashed #000; margin:6px 0 }
-  .meta { display:flex; justify-content:space-between; gap:8px; font-size:${fpx(11)}px }
+  .meta { display:flex; justify-content:space-between; gap:8px; font-size:${BODY}px }
   .meta span { white-space:nowrap }
-  .planter { margin-top:6px; font-size:${fpx(12)}px }
-  table.rows { width:100%; border-collapse:collapse; margin-top:6px; font-size:${fpx(11)}px }
+  .planter { margin-top:6px; font-size:${BODY}px }
+  table.rows { width:100%; border-collapse:collapse; margin-top:6px; font-size:${BODY}px }
   table.rows th { text-align:right; border-bottom:1px solid #000; padding:2px 1px; font-weight:700; white-space:nowrap }
   table.rows th:first-child { text-align:left }
   table.rows td { padding:2px 1px; white-space:nowrap }
-  .total { text-align:center; font-weight:700; margin-top:8px; padding-top:4px; border-top:1px solid #000; font-size:${fpx(12)}px; line-height:1.5 }
+  .total { text-align:center; font-weight:700; margin-top:8px; padding-top:4px; border-top:1px solid #000; font-size:${BODY}px; line-height:1.5 }
   @media print {
     body { background:#fff; padding:0; gap:0 }
     .receipt { box-shadow:none; padding:0 }
@@ -17877,7 +19723,7 @@ function leBuildCompactHtml(p) {
 // Mirrors the modern ASPPL Spice e-Auction format reviewed by dad,
 // with Grade / Litre / Sample Wt columns DROPPED per his red marks.
 function leBuildDetailedHtml(p) {
-  const { groups, co, dateStr, ano, printedAt, traderInfo, escapeHtml, fields } = p;
+  const { groups, co, dateStr, ano, printedAt, traderInfo, escapeHtml, fields, totalsStacked } = p;
   // Detailed slip header is a compact letterhead: logo to the side with the
   // company name, branch, phone and GSTIN beside it. PAN / FSSAI / SBL and the
   // full address stay off the slip — those live on the tax invoice PDFs.
@@ -17965,6 +19811,12 @@ function leBuildDetailedHtml(p) {
   // a narrow 58mm roll so columns fit without wrapping. Capped at 1.
   const sc = Math.min(1, recMmD / 60);
   const fpx = (b) => (b * sc).toFixed(1);
+  // ONE body size for the whole slip. The slip used to mix 8.5 / 9 / 9.5px
+  // across the header lines, meta table, lot table and footer, which read as
+  // sloppy on paper. Everything except the company-name heading now prints at
+  // BODY — the size the totals line already used — so the only deliberate
+  // size change on the slip is the title.
+  const BODY = fpx(9);
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Receipt</title>
 <style>
@@ -17984,21 +19836,21 @@ function leBuildDetailedHtml(p) {
   .logo-img { max-height:38px; max-width:44px; object-fit:contain; flex:none }
   .brand-text { text-align:left }
   .brand-title { font-size:${fpx(13)}px; font-weight:700; line-height:1.1 }
-  .brand-branch { font-size:${fpx(9)}px; font-weight:700; color:#444; margin-top:1px; letter-spacing:.3px }
-  .brand-addr { font-size:${fpx(8.5)}px; color:#444; margin-top:2px; line-height:1.25 }
-  .dateline { display:flex; justify-content:space-between; align-items:baseline; gap:8px; font-size:${fpx(9.5)}px; padding:0 2px; margin-top:4px }
+  .brand-branch { font-size:${BODY}px; font-weight:700; color:#444; margin-top:1px; letter-spacing:.3px }
+  .brand-addr { font-size:${BODY}px; color:#444; margin-top:2px; line-height:1.25 }
+  .dateline { display:flex; justify-content:space-between; align-items:baseline; gap:8px; font-size:${BODY}px; padding:0 2px; margin-top:4px }
   /* Keep "Date: 12/08/2026" together on one line — never break the label off
      from its value. */
   .dateline span { white-space:nowrap }
   hr.dashed { border:none; border-top:1px dashed #888; margin:4px 0 6px }
-  table.meta-table { width:100%; border-collapse:collapse; font-size:${fpx(9.5)}px; margin-bottom:6px }
+  table.meta-table { width:100%; border-collapse:collapse; font-size:${BODY}px; margin-bottom:6px }
   table.meta-table td { padding:1px 0; vertical-align:top; line-height:1.3 }
   table.meta-table td.lbl { width:48px; font-weight:700 }
-  table.lot-table { width:100%; border-collapse:collapse; font-size:${fpx(9.5)}px; margin-top:4px }
-  table.lot-table th { background:#f6f6f6; padding:3px 3px; border-top:1px solid #ccc; border-bottom:1px solid #ccc; text-align:left; font-weight:700; font-size:${fpx(9)}px; white-space:nowrap }
+  table.lot-table { width:100%; border-collapse:collapse; font-size:${BODY}px; margin-top:4px }
+  table.lot-table th { background:#f6f6f6; padding:3px 3px; border-top:1px solid #ccc; border-bottom:1px solid #ccc; text-align:left; font-weight:700; font-size:${BODY}px; white-space:nowrap }
   table.lot-table td { padding:3px 3px; border-bottom:1px solid #eee; white-space:nowrap }
-  table.lot-table tfoot td.summary { background:#fafafa; padding:4px 3px; text-align:center; font-size:${fpx(9)}px; border-top:1.5px solid #ccc; border-bottom:none; line-height:1.4; white-space:normal }
-  .thanks { text-align:center; font-weight:700; margin-top:6px; letter-spacing:.4px; font-size:${fpx(9.5)}px }
+  table.lot-table tfoot td.summary { background:#fafafa; padding:4px 3px; text-align:center; font-size:${BODY}px; border-top:1.5px solid #ccc; border-bottom:none; line-height:1.4; white-space:normal }
+  .thanks { text-align:center; font-weight:700; margin-top:6px; letter-spacing:.4px; font-size:${BODY}px }
   @media print {
     body { background:#fff; padding:0; gap:0 }
     .receipt { box-shadow:none; padding:3mm 4mm }
@@ -19410,12 +21262,17 @@ function setGlobalPageSize(n){
     buyers:  () => searchBuyers(document.getElementById('buyers-search')?.value || ''),
     auctions: () => (typeof loadAuctions === 'function') && loadAuctions(),
     lots:    () => (typeof gotoLotsPage === 'function') && gotoLotsPage(1),
+    hub:     () => (typeof gotoHubLotPage === 'function') && gotoHubLotPage(1),
     invoices: () => (typeof gotoInvoicesPage === 'function') && gotoInvoicesPage(1),
     purchases: () => (typeof gotoPurchasesPage === 'function') && gotoPurchasesPage(1),
     bills:   () => (typeof gotoBillsPage === 'function') && gotoBillsPage(1),
     debit:   () => (typeof gotoDebitNotesPage === 'function') && gotoDebitNotesPage(1),
   };
   try { reloadByTab[tab] && reloadByTab[tab](); } catch (_) {}
+  // Tables that aren't server-paged (or sit on another tab) still need to
+  // re-evaluate their "Load more" chunk: at 500 / page every row renders and
+  // the button disappears. Cheap — re-renders only mounted tbodies.
+  try { DataTable._refreshAll(); } catch (_) {}
 }
 
 function renderPager(hostId, state, gotoFn, query){
@@ -24156,6 +26013,13 @@ async function saveLot(){
     if(!r.ok){const d=await r.json().catch(()=>({}));const err=new Error(d.error||'Save failed');err.status=r.status;throw err;}
     toast('Lot updated ✓');
     loadLots();
+    // The edit may have come from the Auction Desk's lot list, which has
+    // its own copy of the rows — refresh it so the change is visible there
+    // too rather than only on the Lots screen.
+    if (typeof hubLoadLots === 'function' && window._hubLots) {
+      const reopen = window._hubLotOpenId;
+      hubLoadLots().then(() => { if (reopen) hubLotOpen(reopen); });
+    }
     // Saving a lot does NOT re-run the server-side calc — Commission, Tax &
     // Payable stay stale until "Calculate All". Nudge the user to do it.
     if (typeof showNudge === 'function') showNudge('lotCalc', NUDGE_COPY.lotCalc.msg, NUDGE_COPY.lotCalc.action,
@@ -24168,7 +26032,10 @@ async function saveLot(){
   }
 }
 async function delLot(id){if(!confirm('Delete this lot?'))return;
-  try{await j(`/api/lots/${id}`,{method:'DELETE'});loadLots();toast('Lot deleted')}
+  try{await j(`/api/lots/${id}`,{method:'DELETE'});loadLots();
+    if (typeof hubLotClose === 'function') hubLotClose();
+    if (typeof hubLoadLots === 'function' && window._hubLots) hubLoadLots();
+    toast('Lot deleted')}
   catch(e){showError(e)}
 }
 
@@ -25288,11 +27155,21 @@ async function loadInvoices(opts){
       // "Buyer" overloaded with the code field; renamed to make both
       // columns self-explanatory and let the user filter/sort each
       // independently.
+      // Raise Original (⬆) sits INLINE next to the buyer name rather than in
+      // the ⋯ actions menu: raising the original off a proforma is the one
+      // action operators repeat down the whole list, and having it beside the
+      // name means no menu-open per row. Only proforma rows render it; the
+      // same button (identical handler + disabled-once-raised state) is
+      // therefore no longer duplicated in `_actions`.
       { key:'_trade_name', label:'Trade Name', sort:'text',
         value:(i)=> i.buyer1 || '',
-        render:(i)=> i.buyer1
-          ? esc(i.buyer1)
-          : '<span style="color:var(--text3)">—</span>' },
+        render:(i)=>{
+          const nm = i.buyer1
+            ? esc(i.buyer1)
+            : '<span style="color:var(--text3)">—</span>';
+          if (Number(i.is_proforma) !== 1) return nm;
+          return `<span style="display:inline-flex;align-items:center;gap:4px">${raiseOriginalBtn(i)}${nm}</span>`;
+        } },
       // Bags — total bags on the invoice (invoices.bag). Sits before Qty
       // to mirror the Lots table column order; whole-number format.
       { key:'bag', label:'Bags', sort:'number', numeric:true, fmt:(n)=>fmtI(n,0) },
@@ -25329,9 +27206,6 @@ async function loadInvoices(opts){
           // action is tax-invoice-only and doesn't apply to a draft.
           if (Number(i.is_proforma) === 1) {
             const isRaised = !!(i.raised_invo && String(i.raised_invo).trim() !== '');
-            const raiseBtn = isRaised
-              ? `<button class="icon-btn" title="Already raised as ${esc(i.raised_invo)}" style="opacity:.35;cursor:not-allowed" disabled>&#11014;</button>`
-              : `<button class="icon-btn needs-invoice-write" title="Raise the original tax invoice for this proforma" onclick="raiseOriginal(${i.id},'${esc(i.buyer1||i.buyer)}','${esc(i.sale)}-${esc(i.invo)}')" style="color:#0e7490;font-weight:700">&#11014;</button>`;
             // A raised draft is the record of how a live tax invoice came to
             // be, so revert is disabled (the server refuses it too, 409).
             // Reverting invoice `raised_invo` un-raises this draft and the
@@ -25349,8 +27223,9 @@ async function loadInvoices(opts){
               : `<button class="icon-btn needs-invoice-write" title="${pfTiOff
                   ? 'No Transport & Insurance is ON for this proforma — click to add T&I back and recompute totals'
                   : 'Remove Transport & Insurance from this proforma (recomputes totals)'}" onclick="toggleInvoiceNoTI(${i.id},${pfTiOff?0:1},1)" style="${pfTiOff?'color:#0e7490;font-weight:700':'opacity:.5'}">🚫</button>`;
+            // NB: Raise Original is deliberately absent here — it renders
+            // inline beside the buyer name (see the `_trade_name` column).
             return iconBtn('pdf','View / download proforma PDF',`viewInvoicePDF(${i.id})`)
-              + raiseBtn
               + pfTiBtn
               + iconBtn('edit','Edit proforma',`openInvoiceEdit(${JSON.stringify(i).replace(/"/g,'&quot;')})`)
               + pfRevertBtn
@@ -25391,6 +27266,16 @@ async function loadInvoices(opts){
   if (typeof syncInvoiceMaster === 'function') syncInvoiceMaster();
 }
 
+// The ⬆ Raise-Original control, rendered inline beside the buyer name on
+// proforma rows of the Sales Invoice list. Kept as one function so the live
+// and already-raised states can never drift apart.
+function raiseOriginalBtn(i){
+  const isRaised = !!(i.raised_invo && String(i.raised_invo).trim() !== '');
+  if (isRaised) {
+    return `<button class="icon-btn icon-btn-inline" title="Already raised as ${esc(i.raised_invo)}" style="opacity:.35;cursor:not-allowed;flex:none" disabled>&#11014;</button>`;
+  }
+  return `<button class="icon-btn icon-btn-inline needs-invoice-write" title="Raise the original tax invoice for this proforma" onclick="raiseOriginal(${i.id},'${esc(i.buyer1||i.buyer)}','${esc(i.sale)}-${esc(i.invo)}')" style="color:#0e7490;font-weight:700;flex:none">&#11014;</button>`;
+}
 async function raiseOriginal(id, buyerName, pfLabel){
   if(!featProformaOn()){alert('Proforma invoices are disabled. Enable "Proforma Sales Invoice" in Settings → Flags.');return}
   if(!confirm(`Raise the ORIGINAL tax invoice for proforma ${pfLabel} (${buyerName})?\n\nThis assigns the next invoice number, marks the lots invoiced, and keeps the proforma marked as raised.\n\nContinue?`))return;
@@ -25977,7 +27862,7 @@ function chooseInvoiceFormat(templates, title){
     const ov=document.createElement('div');
     ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;display:flex;align-items:center;justify-content:center';
     const box=document.createElement('div');
-    box.style.cssText='background:#fff;border-radius:10px;padding:22px;min-width:290px;max-width:92vw;box-shadow:0 12px 44px rgba(0,0,0,.32)';
+    box.style.cssText='background:#fff;border-radius:10px;padding:22px;min-width:290px;max-width:calc(92vw / var(--zf));box-shadow:0 12px 44px rgba(0,0,0,.32)';
     const h=document.createElement('h3'); h.textContent=title||'Choose format'; h.style.cssText='margin:0 0 14px;font-size:16px'; box.appendChild(h);
     const wrap=document.createElement('div'); wrap.style.cssText='display:flex;flex-direction:column;gap:8px';
     const done=(v)=>{ if(ov.parentNode) document.body.removeChild(ov); resolve(v); };
@@ -28964,9 +30849,19 @@ async function loadPayments(){
       .filter(Boolean);
     // Within-trade search — /api/payments returns aggregated seller
     // rollups, so the filter is applied client-side on the seller name.
+    // Matches the seller NAME, or — when the text is a phone number — the
+    // seller's number as stamped on their lots (rollup carries `tel`),
+    // compared digits-only so "+91 98765 43210" finds "9876543210".
     const _paySearch = (document.getElementById('pay-search')?.value || '').trim().toLowerCase();
+    // Same normalisation the table search uses: ≥4 digits to count as a phone
+    // number, and only the last 10 compared so a typed "+91" still matches a
+    // master stored without one.
+    const _payDigits = _paySearch.replace(/\D+/g, '');
+    const _payPhone = _payDigits.length >= 4 ? _payDigits.slice(-10) : '';
     let arr = _paySearch
-      ? allArr.filter(r => String(r.name || '').toLowerCase().includes(_paySearch))
+      ? allArr.filter(r =>
+          String(r.name || '').toLowerCase().includes(_paySearch)
+          || (_payPhone && String(r.tel || '').replace(/\D+/g, '').includes(_payPhone)))
       : allArr;
     // Immediate-payment filter — "immediate" keeps only sellers with at
     // least one lot flagged immediate; "due" keeps only sellers with NO
@@ -30366,7 +32261,7 @@ function showDnGenerateResult(created, skipped, prefix){
     // toast() supports plain text; we extend by writing a custom node
     // that mimics the same visual style.
     const wrap = document.createElement('div');
-    wrap.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--text);color:#fff;padding:12px 18px;border-radius:8px;font-size:13px;z-index:9999;box-shadow:0 4px 14px rgba(0,0,0,.2);display:flex;gap:14px;align-items:center;max-width:90vw';
+    wrap.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--text);color:#fff;padding:12px 18px;border-radius:8px;font-size:13px;z-index:9999;box-shadow:0 4px 14px rgba(0,0,0,.2);display:flex;gap:14px;align-items:center;max-width:calc(90vw / var(--zf))';
     wrap.innerHTML = `<span>${esc(baseMsg)}</span>
       <button onclick="openSkippedDnModal();this.parentElement.remove()" style="background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.35);padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer">View skipped</button>`;
     document.body.appendChild(wrap);

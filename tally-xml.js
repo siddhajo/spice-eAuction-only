@@ -4969,6 +4969,12 @@ function generMerchantsXML(rows, cfg, opts = {}) {
 module.exports = {
   generSalesXML,
   generSalesIspXML,
+  // The ASP→ISP transfer trio. All three were defined here but never
+  // exported, so server.js destructured `undefined` for each and both the
+  // Sales-ASP and ISP-Purchase Tally exports failed with "def.builder is not
+  // a function" for every trade. Found by the document-catalog coverage test.
+  generSalesAspXML,
+  generIspPurchaseXML,
   generMerchantsXML,
   generRDPurchaseXML,
   generURDPurchaseXML,
@@ -4976,6 +4982,7 @@ module.exports = {
   generLedgerXML,
   buildSalesRows,
   buildSalesIspRows,
+  buildSalesAspRows,
   buildIrpJson,
   buildDebitNoteIrpJson,
   buildRDPurchaseRows,

@@ -179,6 +179,10 @@ function addReceiptHeader(doc, appTitle, branch, dateFmt, tradeNo, pageW, compan
   const w = pw - 2 * m;
   const sc = w / 300;                         // 1 at the default 340pt roll
   const fs = (b) => Math.max(6, b * sc);      // shrink header text on a narrow roll
+  // ONE body size for everything under the company name — matches the totals
+  // line in renderSellerReceipt(), so the whole slip prints at one size and
+  // only the title is deliberately larger.
+  const BODY = 8;
   // Letterhead header: logo pinned to the LEFT, company block (name / branch /
   // phone / GSTIN) set beside it and left-aligned so the lines stack cleanly.
   const startY = doc.y;
@@ -193,9 +197,9 @@ function addReceiptHeader(doc, appTitle, branch, dateFmt, tradeNo, pageW, compan
     } catch (e) { logoSz = 0; textX = m; textW = w; }
   }
   doc.font('Helvetica-Bold').fontSize(fs(14)).text(appTitle, textX, startY, { width: textW });
-  doc.font('Helvetica').fontSize(fs(9.5)).text((branch || '') + ' BRANCH', textX, doc.y, { width: textW });
-  if (companyPhone) doc.fontSize(fs(9)).text('Ph: ' + companyPhone, textX, doc.y, { width: textW });
-  if (companyGstin) doc.fontSize(fs(9)).text('GSTIN: ' + companyGstin, textX, doc.y, { width: textW });
+  doc.font('Helvetica').fontSize(fs(BODY)).text((branch || '') + ' BRANCH', textX, doc.y, { width: textW });
+  if (companyPhone) doc.fontSize(fs(BODY)).text('Ph: ' + companyPhone, textX, doc.y, { width: textW });
+  if (companyGstin) doc.fontSize(fs(BODY)).text('GSTIN: ' + companyGstin, textX, doc.y, { width: textW });
   // Make sure the header clears the logo before drawing the divider.
   if (logoSz && doc.y < startY + logoSz) doc.y = startY + logoSz;
   doc.moveDown(0.4);
@@ -204,7 +208,7 @@ function addReceiptHeader(doc, appTitle, branch, dateFmt, tradeNo, pageW, compan
   // Auction # on the LEFT, Date on the RIGHT. Smaller font, a wider Date
   // column and lineBreak:false keep "Date: dd/mm/yyyy" on ONE line even on a
   // narrow thermal roll (it used to wrap when w/2 was too small for the value).
-  doc.font('Helvetica').fontSize(fs(8));
+  doc.font('Helvetica').fontSize(fs(BODY));
   const y0 = doc.y;
   doc.text('Auction #' + tradeNo, m, y0, { width: w * 0.45, lineBreak: false });
   doc.text('Date: ' + dateFmt, m + w * 0.45, y0, { width: w * 0.55, align: 'right', lineBreak: false });
@@ -221,20 +225,24 @@ function addReceiptHeaderCompact(doc, appTitle, branch, dateFmt, tradeNo, pageW)
   const w = pw - 2 * m;
   const sc = w / 160;                        // 1 at the default 180pt roll
   const fs = (b) => Math.max(5, b * sc);     // shrink header text on a 58mm roll
+  // One body size under the title — matches renderSellerReceiptCompact().
+  const BODY = 8;
   // Compact stub: no logo — a lean thermal receipt keeps only the name/branch.
   doc.font('Helvetica-Bold').fontSize(fs(10)).text(appTitle, m, doc.y, { width: w, align: 'center' });
-  doc.fontSize(fs(7.5)).text((branch || '') + ' BRANCH', m, doc.y, { width: w, align: 'center' });
+  doc.fontSize(fs(BODY)).text((branch || '') + ' BRANCH', m, doc.y, { width: w, align: 'center' });
   doc.moveDown(0.2);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.4).stroke(); doc.moveDown(0.2);
   // Auction # on the LEFT, Date on the RIGHT (matches the detailed slip).
   // Smaller font + wider Date column + no wrap keeps it on one line.
-  doc.font('Helvetica').fontSize(fs(6.5));
+  doc.font('Helvetica').fontSize(fs(BODY));
   const y0 = doc.y;
   doc.text('Auction #' + tradeNo, m, y0, { width: w * 0.45, lineBreak: false });
   doc.text('Date: ' + dateFmt, m + w * 0.45, y0, { width: w * 0.55, align: 'right', lineBreak: false });
-  doc.y = y0 + Math.max(9, 10 * sc);
+  // 12, not 10: the Auction/Date line now prints at BODY (8pt) like the rest
+  // of the stub, and the old advance dropped the dashed rule onto it.
+  doc.y = y0 + Math.max(11, 12 * sc);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).dash(2, { space: 2 }).lineWidth(0.4).stroke().undash();
-  doc.moveDown(0.2);
+  doc.moveDown(0.3);
 }
 
 // Ordered lot-receipt columns the operator turned on (cfg.receiptCols).
@@ -275,6 +283,11 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
   const sc = w / 300;
   const fs = (b) => Math.max(5.5, b * sc);
   const vs = Math.max(0.78, Math.min(1, sc));
+  // Seller block, column headers, lot rows, totals and the sign-off all print
+  // at ONE size — the size the totals line already used. Only the company
+  // name in the header is larger. Keeps the printed slip from looking like
+  // three different documents stacked together.
+  const BODY = 8;
   const lot = sellerLots[0];
   const dateFmt = formatDateForDisplay(lot.date, cfg.dateFormat);
   const L = cfg.labels || {};
@@ -291,7 +304,7 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
     [lb('acct_no','A/C No'), maskedAcct || '--NIL--'],
     [lb('ifsc',   'IFSC'),   lot.ifsc || '--NIL--'],
   ];
-  doc.fontSize(fs(9));
+  doc.fontSize(fs(BODY));
   sellerFields.forEach(([label, value]) => {
     if (!value) return;
     const y = doc.y;
@@ -311,13 +324,13 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
   const hdrs = fields.map(f => f.hdr);
 
   const hdrY = doc.y;
-  doc.font('Helvetica-Bold').fontSize(fs(7.5));
+  doc.font('Helvetica-Bold').fontSize(fs(BODY));
   let cx = m;
   hdrs.forEach((h, i) => { doc.text(h, cx, hdrY, { width: cols[i], align: 'center', lineBreak: false, ellipsis: true }); cx += cols[i]; });
   doc.y = hdrY + 11 * vs;
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.3).stroke(); doc.moveDown(0.2);
 
-  doc.font('Helvetica').fontSize(fs(8));
+  doc.font('Helvetica').fontSize(fs(BODY));
   let totalQty = 0, totalGross = 0, totalBags = 0, totalSample = 0;
   sellerLots.forEach(l => {
     const ry = doc.y;
@@ -333,7 +346,7 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
   });
 
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.5).stroke(); doc.moveDown(0.3);
-  doc.font('Helvetica-Bold').fontSize(fs(8));
+  doc.font('Helvetica-Bold').fontSize(fs(BODY));
   // Totals line mirrors whichever weight columns the operator kept on. Each
   // "Label: value unit" segment uses NON-BREAKING spaces ( ) so a number
   // never gets split from its unit; the slip may wrap only at the "  |  "
@@ -370,11 +383,11 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
   doc.moveDown(0.4);
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.5).stroke(); doc.moveDown(0.2);
   if (cfg.showUser) {
-    doc.font('Helvetica').fontSize(fs(8)).fillColor('#888')
+    doc.font('Helvetica').fontSize(fs(BODY)).fillColor('#888')
        .text('Entered by: ' + (lot.user_id || ''), m, doc.y, { width: w });
     doc.moveDown(0.2);
   }
-  doc.fillColor('#000').font('Helvetica-Bold').fontSize(fs(10))
+  doc.fillColor('#000').font('Helvetica-Bold').fontSize(fs(BODY))
      .text('** THANK YOU **', m, doc.y, { width: w, align: 'center' });
 }
 
@@ -661,6 +674,9 @@ function renderSellerReceiptCompact(doc, sellerLots, cfg) {
   const sc = w / 160;
   const fs = (b) => Math.max(5, b * sc);        // shrink text to fit a 58mm roll
   const vs = Math.max(0.7, Math.min(1, sc));    // shrink row heights in step
+  // One body size for the whole stub — the size the totals block already
+  // used. Only the company name (in addReceiptHeaderCompact) is larger.
+  const BODY = 8;
   const NB = String.fromCharCode(160);          // non-breaking space
   const lot = sellerLots[0];
   const dateFmt = formatDateForDisplay(lot.date, cfg.dateFormat);
@@ -672,7 +688,7 @@ function renderSellerReceiptCompact(doc, sellerLots, cfg) {
 
   // Lean stub — seller NAME only. Bank (A/C, IFSC), place and GSTIN are
   // intentionally dropped; those live on the detailed receipt.
-  doc.font('Helvetica-Bold').fontSize(fs(7.5))
+  doc.font('Helvetica-Bold').fontSize(fs(BODY))
      .text(lb('seller','Seller') + ': ' + (lot.trader_name || ''), m, doc.y, { width: w });
 
   doc.moveDown(0.2);
@@ -686,13 +702,15 @@ function renderSellerReceiptCompact(doc, sellerLots, cfg) {
   const hdrs = fields.map(f => f.hdr);
 
   const hdrY = doc.y;
-  doc.font('Helvetica-Bold').fontSize(fs(6.5));
+  doc.font('Helvetica-Bold').fontSize(fs(BODY));
   let cx = m;
   hdrs.forEach((h, i) => { doc.text(h, cx, hdrY, { width: cols[i], align: 'center', lineBreak: false, ellipsis: true }); cx += cols[i]; });
-  doc.y = hdrY + 9 * vs;
+  // 11, not 9: the header row now prints at BODY (8pt) like the rest of the
+  // stub, and a 9pt advance left the underline sitting on its descenders.
+  doc.y = hdrY + 11 * vs;
   doc.moveTo(m, doc.y).lineTo(m + w, doc.y).lineWidth(0.3).stroke(); doc.moveDown(0.15);
 
-  doc.font('Helvetica').fontSize(fs(7));
+  doc.font('Helvetica').fontSize(fs(BODY));
   let totalQty = 0, totalGross = 0, totalBags = 0;
   sellerLots.forEach(l => {
     const ry = doc.y;
@@ -714,7 +732,7 @@ function renderSellerReceiptCompact(doc, sellerLots, cfg) {
   if (onKeys.has('net'))   seg2.push(lb('net_wt','Net') + NB + totalQty.toFixed(3) + NB + 'kg');
   if (onKeys.has('gross') && totalGross) seg2.push(lb('gross_wt','Grs') + NB + totalGross.toFixed(3) + NB + 'kg');
   const line2 = seg2.join('   |   ');
-  doc.fillColor('#000').font('Helvetica-Bold').fontSize(fs(8))
+  doc.fillColor('#000').font('Helvetica-Bold').fontSize(fs(BODY))
      .text(line1 + (line2 ? '\n' + line2 : ''), m, doc.y, { width: w, align: 'center' });
 }
 
@@ -820,7 +838,14 @@ const LOT_SELECT_SQL = `
 `;
 
 function mountMobile(app, deps) {
-  const { getDb, requireAuth, hash, ROLE_PERMISSIONS, onReassignRequest } = deps;
+  const {
+    getDb, requireAuth, hash, ROLE_PERMISSIONS, onReassignRequest,
+    // Concurrent-login policy, owned by server.js so the desktop and the
+    // PWA enforce one shared rule. Defaulted to no-ops purely so this
+    // module stays mountable in isolation (tests / a trimmed host).
+    checkDuplicateLogin = () => null,
+    notifyConcurrentAdmins = () => '',
+  } = deps;
 
   // ── 0. LAZY SELF-HEAL SCHEMA ──────────────────────────────────────
   // The bridge owns these tables/columns — declare them here so the
@@ -846,6 +871,24 @@ function mountMobile(app, deps) {
       // there (each ALTER wrapped in its own try/catch).
       try { db.exec("ALTER TABLE traders ADD COLUMN whatsapp TEXT DEFAULT ''"); } catch (_) {}
       try { db.exec("ALTER TABLE traders ADD COLUMN email TEXT DEFAULT ''"); } catch (_) {}
+      // Per-user home branch — /api/auth/login and /api/auth/me both read
+      // it, and the PWA locks its branch dropdown to it.
+      try { db.exec("ALTER TABLE users ADD COLUMN branch TEXT DEFAULT ''"); } catch (_) {}
+      // Concurrent-login notices. Written by notifyConcurrentAdmins on
+      // this route too, so the table must exist even on an install whose
+      // db.js predates it.
+      db.exec(`CREATE TABLE IF NOT EXISTS session_alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'admin_login',
+        actor_username TEXT NOT NULL DEFAULT '',
+        actor_role TEXT NOT NULL DEFAULT '',
+        message TEXT NOT NULL DEFAULT '',
+        device TEXT DEFAULT '',
+        ip TEXT DEFAULT '',
+        acked INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+      )`);
       _healed = true;
     } catch (e) {
       // Not fatal — log and continue; the handler will surface the
@@ -895,7 +938,7 @@ function mountMobile(app, deps) {
   // ({user: {...}, token} rather than {token, role, username}).
 
   app.post('/api/auth/login', (req, res) => {
-    const { username, password } = req.body || {};
+    const { username, password, prev_token } = req.body || {};
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password required' });
     }
@@ -904,9 +947,15 @@ function mountMobile(app, deps) {
     if (!user || user.password_hash !== hash(password)) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
+    // Same one-session-per-username gate the desktop login runs. Checked
+    // after the password so a wrong guess can't reveal who is online.
+    const dup = checkDuplicateLogin(db, user, prev_token);
+    if (dup) return res.status(409).json(dup);
     const token = crypto.randomBytes(32).toString('hex');
     // Multi-device sessions — DON'T delete existing sessions. Field staff
-    // can keep the desktop admin UI logged in while using the phone too.
+    // can keep the desktop admin UI logged in while using the phone too
+    // (only possible when single_session is off; otherwise the gate above
+    // has already refused this login).
     db.run(
       'INSERT INTO sessions (token, user_id, device_label) VALUES (?, ?, ?)',
       [token, user.id, (req.headers['user-agent'] || '').slice(0, 80)]
@@ -920,6 +969,7 @@ function mountMobile(app, deps) {
         /Mobile|Android|iPhone/i.test(req.headers['user-agent'] || '') ? 'Mobile' : 'Desktop',
       ]
     );
+    const notice = notifyConcurrentAdmins(db, user, req.headers['user-agent']);
     res.json({
       user: {
         id: user.id,
@@ -928,6 +978,7 @@ function mountMobile(app, deps) {
         branch: user.branch || '',
       },
       token,
+      notice,
     });
   });
 

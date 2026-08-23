@@ -524,6 +524,21 @@ const DEFAULTS = [
   { key: 'reassign_alert_tpl',         value: 'lot_reassign_approval', category: 'alerts', label: 'Reassign Requests — WhatsApp template name', type: 'text' },
   { key: 'reassign_alert_tpl_lang',    value: 'en',    category: 'alerts', label: 'Reassign Requests — WhatsApp template language code', type: 'text' },
 
+  // ── LOGINS & SESSIONS ──────────────────────────────────────
+  // `single_session` blocks a second sign-in while the same username is
+  // already active anywhere (desktop or mobile). "Active" is judged by
+  // `session_idle_minutes` — a session whose last request is older than
+  // that no longer blocks, so a browser closed without logging out never
+  // locks its own user out permanently. Admins can always clear a stuck
+  // session immediately from Users → Sign out.
+  { key: 'single_session',        value: 'true', category: 'security', label: 'Block a second login with the same username', type: 'boolean' },
+  { key: 'session_idle_minutes',  value: '15',   category: 'security', label: 'Treat a session as inactive after (minutes)', type: 'number'  },
+  // Cross-notify concurrent admins: when an admin signs in while another
+  // admin is already online, both are told. The one signing in sees it on
+  // the login screen; the one already online gets a banner from the
+  // /api/session-alerts poll.
+  { key: 'admin_login_alert',     value: 'true', category: 'security', label: 'Notify admins when another admin signs in', type: 'boolean' },
+
   // ── SPICE BOARD REPORTS ────────────────────────────────────
   // Newline-separated list of Form-D "Place of auction" options. The
   // operator picks one from a dropdown when generating Form-D in the
@@ -726,6 +741,7 @@ const CATEGORIES = {
   flags:        { order: 11,   title: 'Feature Flags',           icon: '🔧' },
   lot_entry:    { order: 11.5, title: 'Lot Entry Defaults',      icon: '📝' },
   alerts:       { order: 11.7, title: 'Booking Alerts',          icon: '🚨', description: 'Soft alerts when grade-2 bookings dominate an auction. When grade-2 weight exceeds the threshold percentage of the total weight booked so far, the depot manager is notified (in-app + WhatsApp); any further grade-2 booking after that escalates to the immediate superior. Each level fires once per auction.' },
+  security:     { order: 11.8, title: 'Logins & Sessions',       icon: '🔐', description: 'Controls concurrent sign-ins. With the block on, a username that is already active anywhere cannot be signed in again — the second person is told who holds the session. A session counts as active only while it has made a request within the idle window, so a browser closed without logging out frees the username by itself. Admins can also clear a stuck session at once from Users → Sign out.' },
   integrations: { order: 12,   title: 'Integrations',            icon: '🔌', description: 'Optional third-party services. The GST API key enables auto-fetching trade name and address when you enter a GSTIN (get a free key at gstincheck.co.in). The WhatsApp Business card lets you send invoices/notices straight from the app via Meta’s Cloud API.' },
   tally:        { order: 13,   title: 'To Tally',                icon: '📤' },
 };
