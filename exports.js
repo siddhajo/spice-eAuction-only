@@ -9,6 +9,7 @@ const {
   getCompanyHeader,
   writeXlsxCompanyHeader, xlsxNumFmtForHeader,
   formatDateForDisplay, fmtIndian,
+  autofitColumns,
 } = require('./report-formatters');
 // Defensive identity resolver — see _company-identity-fallback.js.
 // Avoids "getCompanyIdentity is not a function" on partial deploys.
@@ -360,6 +361,15 @@ async function createExcelBuffer(sheetName, columns, rows, opts) {
     sigRow.eachCell((cell) => {
       cell.alignment = { horizontal: 'left', vertical: 'middle' };
     });
+  }
+
+  // Size every column to what was actually written. Runs LAST so it sees
+  // the header band, the data, the totals and the signature row. Declared
+  // `width`s stay as the seed above but no longer decide the outcome —
+  // they were guesses made before anyone knew how long a seller's name
+  // would be. Opt out per report with { autofit: false }.
+  if (opts.autofit !== false) {
+    try { autofitColumns(ws, opts.autofitOpts); } catch (_) {}
   }
 
   return wb.xlsx.writeBuffer();

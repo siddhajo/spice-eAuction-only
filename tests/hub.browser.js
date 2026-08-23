@@ -66,14 +66,17 @@ const cleanup = () => {
     ['201', 'RAMU PLANTER',  100, 400],
     ['202', 'SELVI PLANTER', 300, 400],
   ]) {
-    const r = await api('POST', '/api/lots', { auction_id: aid9, lot_no, name, qty, grade: '1', bags: 8, crop: 'CARDAMOM' });
+    const r = await api('POST', '/api/lots', { auction_id: aid9, lot_no, name, qty, grade: '1',
+      bags: 8, crop: 'CARDAMOM', branch: lot_no === '201' ? 'BODINAYAKANUR' : 'VANDANMEDU',
+      tel: lot_no === '201' ? '+91 98765 43210' : '9000011111' });
     const id = r.d && (r.d.id || (r.d.lot && r.d.lot.id));
     await api('PUT', `/api/lots/${id}`, { price, amount: qty * price });
   }
   // …plus enough filler to span more than one page at the smallest size.
   for (let i = 1; i <= 30; i++) {
     await api('POST', '/api/lots', { auction_id: aid9, lot_no: String(300 + i),
-      name: 'FILLER ' + i, qty: 10, grade: '1', bags: 1, crop: 'CARDAMOM' });
+      name: 'FILLER ' + i, qty: 10, grade: '1', bags: 1, crop: 'CARDAMOM',
+      branch: i % 2 ? 'BODINAYAKANUR' : 'VANDANMEDU' });
   }
 
   let chrome = null;
@@ -260,53 +263,159 @@ const cleanup = () => {
   await page.evaluate(() => { peSetFilter('lot', ''); go('hub'); });
   await page.waitForFunction(() => document.querySelectorAll('#hub-lot-rows tr[data-lot-id]').length > 0,
                              { timeout: 20000 });
+  // Returning to the hub refetches the lots, so the first render can be
+  // replaced moments after the wait resolves. Let it settle before clicking.
+  await new Promise(r => setTimeout(r, 700));
 
   // Escape closes the drawer.
-  await page.evaluate(() => document.querySelector('#hub-lot-rows tr[data-lot-id]').click());
+  await page.evaluate(() => document.querySelector('#hub-lot-rows tr[data-lot-id]')?.click());
   await page.keyboard.press('Escape');
   check('Escape closes the drawer',
         await page.evaluate(() => document.getElementById('hub-lot-drawer').style.display === 'none'));
 
   // ── Switch to Documents ──────────────────────────────────────────
   await page.evaluate(() => hubSetView('docs'));
-  await page.waitForFunction(() => document.querySelectorAll('#hub-groups .hub-tile').length > 0, { timeout: 20000 });
-  check('the Documents tab shows the document grid',
+  await page.waitForFunction(() => document.querySelectorAll('#hub-groups .hub-w').length > 0, { timeout: 20000 });
+  check('the Documents tab shows the widget grid',
         await page.evaluate(() => document.getElementById('hub-view-docs').style.display !== 'none'
           && document.getElementById('hub-view-lots').style.display === 'none'));
 
-  // ── [B] Tiles come from the catalog ──────────────────────────────
-  console.log('\n[B] tiles painted from the catalog');
+  // ── [B] Widgets, then drill into one ─────────────────────────────
+  // The documents live one level down: a grid of group widgets that fits a
+  // screen, and one group's rows at a time. Nine stacked accordions did
+  // not fit, which is what made the page long before anything was opened.
+  console.log('\n[B] widget grid and drill-down');
   const shape = await page.evaluate(() => ({
-    tiles:   document.querySelectorAll('#hub-groups .hub-tile').length,
-    groups:  document.querySelectorAll('#hub-groups .hub-sec').length,
-    locked:  document.querySelectorAll('#hub-groups .hub-tile.is-locked').length,
+    widgets: document.querySelectorAll('#hub-groups .hub-w').length,
+    apiGroups: (window._hubCat?.groups || []).length,
     apiTiles: (window._hubCat?.groups || []).reduce((n, g) => n + g.items.length, 0),
-    kpis:    document.querySelectorAll('#hub-kpi .stat').length,
+    tilesAtTop: document.querySelectorAll('#hub-groups .hub-tile').length,
+    kpis: document.querySelectorAll('#hub-kpi .stat').length,
+    firstName: document.querySelector('.hub-w .hub-w-name')?.textContent.trim(),
+    firstCount: document.querySelector('.hub-w .hub-w-n')?.textContent.trim(),
   }));
-  check('every catalog item became a tile',
-        shape.tiles === shape.apiTiles && shape.tiles > 50,
-        `${shape.tiles} tiles vs ${shape.apiTiles} from the API`);
-  check('tiles are grouped', shape.groups >= 8, `${shape.groups} groups`);
+  check('one widget per group', shape.widgets === shape.apiGroups && shape.widgets >= 8,
+        `${shape.widgets} widgets vs ${shape.apiGroups} groups`);
+  check('and no document rows until one is opened', shape.tilesAtTop === 0,
+        `${shape.tilesAtTop} rows`);
+  check('each widget says how much of it is ready', /\d+ of \d+ ready/.test(shape.firstCount || ''),
+        shape.firstCount);
   check('the KPI strip is populated', shape.kpis === 8, `${shape.kpis} figures`);
   check('KPI reads the lot count from the auction',
         await page.evaluate(() => (document.querySelector('#hub-kpi .stat .n')?.textContent || '').trim() === '32'),
         await page.evaluate(() => document.querySelector('#hub-kpi .stat .n')?.textContent));
 
-  // Locked tiles must be VISIBLE and self-explaining — the point of the hub.
-  check('stage-locked tiles are rendered, not hidden', shape.locked > 0, `${shape.locked} locked`);
-  const lock = await page.evaluate(() => {
-    const t = document.querySelector('.hub-tile.is-locked');
-    return { shown: !!(t && t.offsetParent !== null), reason: t?.querySelector('.hub-lock')?.textContent || '' };
+  // Three levels: groups → subgroups → documents. Statutory has two
+  // subgroups, so opening it shows those rather than jumping to cards.
+  const drill = await page.evaluate(() => {
+    document.querySelector('.hub-w[data-g="statutory"]').click();
+    return {
+      rows: document.querySelectorAll('#hub-groups .hub-tile').length,
+      subs: document.querySelectorAll('#hub-groups .hub-w-sub').length,
+      names: Array.from(document.querySelectorAll('.hub-w-sub .hub-w-name')).map(x => x.textContent.trim()),
+      name: document.querySelector('.hub-open-name')?.textContent.trim(),
+      back: !!Array.from(document.querySelectorAll('.hub-open-head .hub-btn'))
+                   .find(b => /All documents/.test(b.textContent)),
+    };
   });
-  check('a locked tile is on screen', lock.shown);
-  check('a locked tile states its reason', lock.reason.trim().length > 8, lock.reason);
+  check('clicking a group widget opens its subgroups',
+        drill.subs === 2 && drill.rows === 0, JSON.stringify(drill));
+  // Regression: the filter pass hid any container whose tiles all matched
+  // out — and a subgroup-widget view has no tiles at all, so it blanked
+  // the entire screen.
+  check('and the subgroup widgets are actually visible',
+        await page.evaluate(() => {
+          const w = document.querySelector('.hub-w-sub');
+          const box = document.querySelector('.hub-open');
+          return !!w && w.offsetParent !== null && getComputedStyle(box).display !== 'none';
+        }));
+  check('named for the subgroups',
+        drill.names.includes('Spices Board') && drill.names.includes('Tax'),
+        drill.names.join(', '));
+  check('headed with the group name and a way back',
+        /Statutory/.test(drill.name || '') && drill.back, JSON.stringify(drill));
+
+  const drill2 = await page.evaluate(() => {
+    document.querySelector('.hub-w-sub[data-sub="Spices Board"]').click();
+    return {
+      rows: document.querySelectorAll('#hub-groups .hub-tile').length,
+      subs: document.querySelectorAll('.hub-w-sub').length,
+      name: document.querySelector('.hub-open-name')?.textContent.trim(),
+      backToGroup: !!Array.from(document.querySelectorAll('.hub-open-head .hub-btn'))
+                          .find(b => /Statutory/.test(b.textContent)),
+      apiCount: (window._hubCat.groups.find(g => g.id === 'statutory') || { items: [] })
+                  .items.filter(i => i.sub === 'Spices Board').length,
+    };
+  });
+  check('clicking a subgroup opens its documents',
+        drill2.rows === drill2.apiCount && drill2.subs === 0, JSON.stringify(drill2));
+  check('with a crumb back to the group',
+        /Spices Board/.test(drill2.name || '') && drill2.backToGroup, JSON.stringify(drill2));
+  check('and that crumb returns to the subgroups',
+        await page.evaluate(() => { hubCloseSub();
+          return document.querySelectorAll('.hub-w-sub').length === 2; }));
+
+  // A group with only ONE subgroup must not cost an extra click.
+  const single = await page.evaluate(() => {
+    hubOpenGroup('logistics');
+    return { subs: document.querySelectorAll('.hub-w-sub').length,
+             rows: document.querySelectorAll('.hub-tile').length };
+  });
+  check('a single-subgroup group goes straight to its documents',
+        single.subs === 0 && single.rows === 3, JSON.stringify(single));
+  await page.evaluate(() => { hubOpenGroup('statutory'); hubOpenSub('Spices Board'); });
+
+  // The cards scroll in place and the group header stays put above them.
+  // Safe here in a way it was not for the old accordion: only ONE group is
+  // open, so this is the page's only scroll rather than a nested one.
+  const cardScroll = await page.evaluate(() => {
+    hubOpenGroup('reports'); hubOpenSub('Trade & value');
+    const b = document.querySelector('.hub-open-body');
+    const h = document.querySelector('.hub-open-head');
+    return { box: !!b, scrolls: b && getComputedStyle(b).overflowY === 'auto',
+             headerOutside: !!h && !!b && !b.contains(h),
+             // A subgroup often fits without overflowing — which is the
+             // point. What matters is that a cap EXISTS, so a big group
+             // scrolls instead of growing the page.
+             capped: b && getComputedStyle(b).maxHeight !== 'none' };
+  });
+  check('the cards scroll in their own box', cardScroll.box && cardScroll.scrolls,
+        JSON.stringify(cardScroll));
+  check('with the group header outside it', cardScroll.headerOutside);
+  check('and the box caps its height', cardScroll.capped, JSON.stringify(cardScroll));
+  await page.evaluate(() => { hubOpenGroup('statutory'); hubOpenSub('Spices Board'); });
+
+  // Locked rows must be VISIBLE and self-explaining — the point of the hub.
+  const lock = await page.evaluate(() => {
+    // Buyers Statement sits under Statutory → Spices Board and is stage-
+    // locked until a transaction document exists.
+    hubOpenGroup('statutory'); hubOpenSub('Spices Board');
+    const t = document.querySelector('.hub-tile.is-locked');
+    return { any: !!t, shown: !!(t && t.offsetParent !== null),
+             reason: t?.querySelector('.hub-lock')?.textContent || '' };
+  });
+  check('stage-locked rows are rendered, not hidden', lock.any && lock.shown, JSON.stringify(lock));
+  check('a locked row states its reason', lock.reason.trim().length > 8, lock.reason);
   check('nothing flagged off is rendered',
         await page.evaluate(() => !document.querySelector('[data-hub-id="debit_notes"]')));
+
+  // Search reaches every document without opening a widget first.
+  const searchAll = await page.evaluate(() => {
+    hubCloseGroup();
+    const inp = document.getElementById('hub-filter');
+    inp.value = 'lot'; hubComboInput(); hubApplyFilter();
+    return { rows: document.querySelectorAll('#hub-groups .hub-tile').length,
+             widgets: document.querySelectorAll('.hub-w').length };
+  });
+  check('searching cuts straight past the grid to the matches',
+        searchAll.rows > 0 && searchAll.widgets === 0, JSON.stringify(searchAll));
+  await page.evaluate(() => { hubComboClear(); hubOpenGroup('preauction'); });
 
   // Preview/Print are icon-only, so they are identified by aria-label. The
   // action row must also fit on ONE line — spelled out it wrapped and made
   // every tile in the grid taller.
   const acts = await page.evaluate(() => {
+    hubOpenGroup('preauction'); hubOpenSub('Lot lists');
     const t = document.querySelector('[data-hub-id="lot_slip"]');
     const btns = Array.from(t?.querySelectorAll('.hub-btn') || []);
     const rows = new Set(btns.map(b => b.getBoundingClientRect().top));
@@ -315,31 +424,131 @@ const cleanup = () => {
       rows: rows.size,
     };
   });
-  check('an available tile offers its formats plus Preview/Print',
+  check('an available document offers its formats plus Preview/Print',
         ['XLSX', 'PDF', 'Preview', 'Print'].every(l => acts.labels.includes(l)),
         acts.labels.join(', '));
-  check('and the action row fits on one line', acts.rows === 1, `${acts.rows} rows`);
+  // Cards, not rows: the actions may take two lines, but no more — beyond
+  // that the card is taller than its neighbours for no reason.
+  check('and its actions take at most two lines', acts.rows <= 2, `${acts.rows} lines`);
+  // Regression: a greedy CSS cleanup removed the .hub-tile base rule and
+  // the cards silently lost their shell — no test noticed. Pin the shape.
+  const shell = await page.evaluate(() => {
+    const t = document.querySelector('.hub-tile');
+    const cs = getComputedStyle(t);
+    const bar = getComputedStyle(t, '::before');
+    return { radius: parseFloat(cs.borderRadius), pad: parseFloat(cs.paddingLeft),
+             border: cs.borderTopWidth, bg: cs.backgroundImage,
+             barH: bar.height, barBg: bar.backgroundImage };
+  });
+  check('a document card carries its card shell',
+        shell.radius >= 12 && shell.pad >= 12 && parseFloat(shell.border) >= 1,
+        JSON.stringify(shell));
+  check('tinted, with a gradient bar across the top',
+        parseFloat(shell.barH) >= 3 && /gradient/.test(shell.barBg)
+          && /gradient/.test(shell.bg), JSON.stringify(shell));
 
-  // ── [C] Filter ───────────────────────────────────────────────────
-  console.log('\n[C] filter');
-  await page.evaluate(() => { document.getElementById('hub-filter').value = 'tally'; hubApplyFilter(); });
-  const filtered = await page.evaluate(() => ({
-    visible: Array.from(document.querySelectorAll('.hub-tile')).filter(t => t.style.display !== 'none').length,
-    emptyGroupsShown: Array.from(document.querySelectorAll('.hub-sec'))
-      .filter(s => s.style.display !== 'none'
-        && !Array.from(s.querySelectorAll('.hub-tile')).some(t => t.style.display !== 'none')).length,
-    tallyOpen: !document.getElementById('hub-sec-tally')?.classList.contains('is-collapsed'),
-  }));
-  check('filtering narrows the tiles', filtered.visible > 0 && filtered.visible < shape.tiles,
-        `${filtered.visible} of ${shape.tiles}`);
-  check('groups with no match hide themselves', filtered.emptyGroupsShown === 0);
-  check('a collapsed group opens to reveal its matches', filtered.tallyOpen);
+  // The widgets and KPI figures are the Insights gradient card: saturated
+  // ground, white text, translucent icon chip.
+  const grad = await page.evaluate(() => {
+    hubCloseGroup();
+    const w = document.querySelector('.hub-w');
+    const k = document.querySelector('#hub-kpi .stat');
+    const g = (el) => { const cs = getComputedStyle(el);
+      return { bg: cs.backgroundImage, colour: cs.color, shadow: cs.boxShadow,
+               ico: !!el.querySelector('.hub-ico') }; };
+    return { w: g(w), k: g(k) };
+  });
+  // Regression: the widget's parts are <span>s. Without an explicit
+  // display they flowed inline and the name, count and hint ran together
+  // as one sentence. And a KPI value must never be cut off by its card.
+  const legible = await page.evaluate(() => {
+    const w = document.querySelector('.hub-w');
+    const name = w.querySelector('.hub-w-name').getBoundingClientRect();
+    const n = w.querySelector('.hub-w-n').getBoundingClientRect();
+    const cut = Array.from(document.querySelectorAll('#hub-kpi .stat')).filter(st => {
+      const v = st.querySelector('.n');
+      // Cut off OR broken onto a second line — "4,950.000" wrapping to
+      // "4,950.00 / 0" reads as a different number entirely.
+      const oneLine = v.getClientRects().length <= 1;
+      return v.scrollWidth > v.clientWidth + 1 || !oneLine;
+    }).map(st => st.querySelector('.l').textContent.trim());
+    return { stacked: n.top >= name.bottom - 1, cut };
+  });
+  check('a widget stacks its name above its count', legible.stacked, JSON.stringify(legible));
+  check('and every KPI value fits on one line, uncut', legible.cut.length === 0,
+        legible.cut.join(', '));
+
+  for (const [what, v] of [['widget', grad.w], ['KPI figure', grad.k]]) {
+    check(`a ${what} is a gradient card`, /gradient/.test(v.bg), v.bg.slice(0, 60));
+    check(`with white text and an icon chip`,
+          /255, 255, 255/.test(v.colour) && v.ico, JSON.stringify(v).slice(0, 120));
+    check(`and a coloured glow`, v.shadow !== 'none', v.shadow.slice(0, 60));
+  }
+  // Regression: the icon buttons were styled white-on-white for a build,
+  // because the colour rule counted BUTTONS while only icon buttons got
+  // the white text. Every action must contrast with its own background.
+  const contrast = await page.evaluate(() => {
+    const rgb = (v) => (v.match(/\d+/g) || []).map(Number);
+    const lum = ([r, g, b]) => (0.299 * r + 0.587 * g + 0.114 * b);
+    return Array.from(document.querySelectorAll('.hub-tile .hub-btn')).map(b => {
+      const cs = getComputedStyle(b);
+      const fg = rgb(cs.color), bg = rgb(cs.backgroundColor);
+      const solid = bg.length >= 3 && !/rgba\(0, 0, 0, 0\)/.test(cs.backgroundColor);
+      return { label: b.textContent.trim() || b.getAttribute('aria-label'),
+               d: solid ? Math.abs(lum(fg) - lum(bg)) : 999 };
+    }).filter(x => x.d < 60);
+  });
+  check('no action is styled invisibly against its own background',
+        contrast.length === 0, JSON.stringify(contrast));
+  // Every action on a card belongs to that card's colour family — a
+  // violet card with a red badge and two green buttons read as three
+  // unrelated things stapled together.
+  const family = await page.evaluate(() => {
+    // Auction Documents is the group that exposed this — a violet card
+    // carrying a red badge and two green buttons.
+    hubOpenGroup('documents'); hubOpenSub('Purchase side');
+    const t = document.querySelector('.hub-tile');
+    if (!t) return [{ label: 'no card on screen' }];
+    const to = getComputedStyle(t).getPropertyValue('--to').trim();
+    const from = getComputedStyle(t).getPropertyValue('--from').trim();
+    const hex = (h) => { const m = h.replace('#','');
+      return [0,2,4].map(i => parseInt(m.slice(i,i+2),16)); };
+    const rgb = (v) => (v.match(/\d+/g) || []).map(Number);
+    const near = (a, b) => a.length === 3 && b.length === 3
+      && a.every((x, i) => Math.abs(x - b[i]) <= 24);
+    const fam = [hex(to), hex(from)];
+    return Array.from(t.querySelectorAll('.hub-btn')).map(b => {
+      const bg = rgb(getComputedStyle(b).backgroundColor);
+      return { label: b.textContent.trim() || b.getAttribute('aria-label'),
+               ok: fam.some(f => near(bg, f))
+                   || getComputedStyle(b).color.includes(rgb(to).join(', ')) };
+    }).filter(x => !x.ok);
+  });
+  check('every action takes its card\'s colour family',
+        family.length === 0, JSON.stringify(family));
+  await page.evaluate(() => { hubOpenGroup('preauction'); hubOpenSub('Lot lists'); });
+
+  // ── [C] Find a document ──────────────────────────────────────────
+  console.log('\n[C] find a document');
+  const total = await page.evaluate(() => (window._hubCat?.groups || [])
+    .reduce((n, g) => n + g.items.length, 0));
+
+  const filtered = await page.evaluate(() => {
+    hubCloseGroup();
+    const inp = document.getElementById('hub-filter');
+    inp.value = 'tally'; hubComboInput(); hubApplyFilter();
+    return Array.from(document.querySelectorAll('.hub-tile'))
+      .filter(t => t.style.display !== 'none').length;
+  });
+  check('typing narrows to the matches', filtered > 0 && filtered < total,
+        `${filtered} of ${total}`);
   await page.evaluate(() => hubComboClear());
-  check('clearing the filter restores every tile',
-        await page.evaluate(() => Array.from(document.querySelectorAll('.hub-tile')).filter(t => t.style.display !== 'none').length) === shape.tiles);
+  check('clearing it returns to the widget grid',
+        await page.evaluate(() => document.querySelectorAll('.hub-w').length >= 8
+          && document.querySelectorAll('.hub-tile').length === 0));
 
-  // The dropdown half: every document listed by name, grouped, and picking
-  // one shows just that document.
+  // The dropdown lists every document regardless of what is on screen —
+  // it reads the catalog, not the DOM.
   const combo = await page.evaluate(() => {
     hubComboOpen();
     const box = document.getElementById('hub-combo-list');
@@ -350,8 +559,8 @@ const cleanup = () => {
       locked: box.querySelectorAll('.hub-combo-opt.is-locked').length,
     };
   });
-  check('the dropdown lists every document', combo.open && combo.opts === shape.tiles,
-        `${combo.opts} options vs ${shape.tiles} tiles`);
+  check('the dropdown lists every document', combo.open && combo.opts === total,
+        `${combo.opts} options vs ${total} documents`);
   check('grouped, and locked ones still listed', combo.groups >= 8 && combo.locked > 0,
         `${combo.groups} groups, ${combo.locked} locked`);
   const typed = await page.evaluate(() => {
@@ -363,71 +572,268 @@ const cleanup = () => {
   const combopick = await page.evaluate(() => {
     hubComboPick('form_d');
     const vis = Array.from(document.querySelectorAll('.hub-tile')).filter(t => t.style.display !== 'none');
-    return {
-      count: vis.length, id: vis[0]?.dataset.hubId,
-      value: document.getElementById('hub-filter').value,
-      closed: document.getElementById('hub-combo-list').style.display === 'none',
-      sectionOpen: !document.getElementById('hub-sec-statutory')?.classList.contains('is-collapsed'),
-    };
+    return { count: vis.length, id: vis[0]?.dataset.hubId,
+             value: document.getElementById('hub-filter').value,
+             closed: document.getElementById('hub-combo-list').style.display === 'none' };
   });
   check('picking a document shows only that one',
         combopick.count === 1 && combopick.id === 'form_d', JSON.stringify(combopick));
   check('its name lands in the box and the list closes',
         /FORM-D/.test(combopick.value) && combopick.closed, JSON.stringify(combopick));
-  check('and its group is opened to reveal it', combopick.sectionOpen);
   await page.evaluate(() => hubComboClear());
-  check('clearing the pick restores every tile',
-        await page.evaluate(() => Array.from(document.querySelectorAll('.hub-tile')).filter(t => t.style.display !== 'none').length) === shape.tiles);
+  check('clearing the pick returns to the grid',
+        await page.evaluate(() => document.querySelectorAll('.hub-w').length >= 8));
 
   // ── [G] Group the documents by file type ─────────────────────────
   console.log('\n[G] grouping by file type');
   const byFmt = await page.evaluate(() => {
     hubSetGrouping('format');
-    const secs = Array.from(document.querySelectorAll('#hub-groups .hub-sec'));
+    const ws = Array.from(document.querySelectorAll('.hub-w'));
+    return { widgets: ws.map(w => w.dataset.g),
+             names: ws.map(w => w.querySelector('.hub-w-name')?.textContent.trim()) };
+  });
+  check('the widgets regroup by file type',
+        byFmt.widgets.includes('fmt-pdf') && byFmt.widgets.includes('fmt-xlsx')
+          && byFmt.widgets.includes('fmt-xml'), byFmt.widgets.join(', '));
+  check('named for the format', byFmt.names.includes('PDF'), byFmt.names.join(', '));
+  check('no DBF widget', !byFmt.widgets.includes('fmt-dbf'), byFmt.widgets.join(', '));
+
+  const pdfGroup = await page.evaluate(() => {
+    hubOpenGroup('fmt-pdf');
+    const btns = Array.from(document.querySelectorAll('.hub-tile'))
+      .find(t => t.dataset.hubId === 'form_d')
+      ?.querySelectorAll('.hub-btn');
     return {
-      groups: secs.map(x => x.dataset.g),
-      heads:  secs.map(x => x.querySelector('.hub-sec-name')?.textContent.trim()),
-      pdfTiles: document.querySelectorAll('#hub-sec-fmt-pdf .hub-tile').length,
-      // A tile under a format heading offers that ONE format.
-      firstPdfBtns: Array.from(document.querySelectorAll('#hub-sec-fmt-pdf .hub-tile .hub-btn'))
-        .slice(0, 3).map(b => b.textContent.trim() || b.getAttribute('aria-label')),
-      // Form D exists as both PDF and XLSX, so it must appear under both.
-      formDTwice: document.querySelectorAll('[data-hub-id="form_d"]').length,
+      rows: document.querySelectorAll('.hub-tile').length,
+      formDbtns: Array.from(btns || []).map(b => b.textContent.trim() || b.getAttribute('aria-label')),
+      formDeverywhere: document.querySelectorAll('[data-hub-id="form_d"]').length,
     };
   });
-  check('the documents regroup by file type',
-        byFmt.groups.includes('fmt-pdf') && byFmt.groups.includes('fmt-xlsx')
-          && byFmt.groups.includes('fmt-xml'), byFmt.groups.join(', '));
-  check('headings are named for the format', byFmt.heads.includes('PDF'), byFmt.heads.join(', '));
-  check('a two-format document appears under both', byFmt.formDTwice === 2, String(byFmt.formDTwice));
-  check('and each tile offers only that heading\'s format',
-        byFmt.firstPdfBtns[0] === 'PDF' && !byFmt.firstPdfBtns.includes('XLSX'),
-        byFmt.firstPdfBtns.join(', '));
-  // Ticking under a format heading must bundle THAT format.
+  check('a format group lists its documents', pdfGroup.rows > 5, String(pdfGroup.rows));
+  // Under a format heading the chip names the format, so the button says
+  // "Download" — and the other format's button must not be there.
+  check('and each offers only that format',
+        pdfGroup.formDbtns.includes('Download') && !pdfGroup.formDbtns.includes('XLSX'),
+        pdfGroup.formDbtns.join(', '));
+  // Ticking under a format heading captures THAT format for the bundle.
   const fmtSel = await page.evaluate(() => {
-    const cb = document.querySelector('#hub-sec-fmt-pdf .hub-tile .hub-cb');
+    const cb = document.querySelector('.hub-tile .hub-cb');
     cb.checked = true; cb.dispatchEvent(new Event('change'));
     return { id: cb.dataset.id, fmt: window._hubSel.get(cb.dataset.id) };
   });
-  check('ticking a tile there captures that format for the bundle',
-        fmtSel.fmt === 'pdf', JSON.stringify(fmtSel));
-  await page.evaluate(() => { hubClearSel(); hubSetGrouping('purpose'); });
-  check('switching back restores the purpose groups',
-        await page.evaluate(() => !!document.getElementById('hub-sec-preauction')));
-  check('no DBF section in either grouping',
-        await page.evaluate(() => {
-          const none = () => !document.getElementById('hub-sec-dbf')
-                           && !document.getElementById('hub-sec-fmt-dbf');
-          if (!none()) return false;
-          hubSetGrouping('format'); const ok = none(); hubSetGrouping('purpose');
-          return ok;
-        }));
-  // Each group scrolls on its own so ten open groups stay navigable.
-  check('each document group has its own scroll box',
-        await page.evaluate(() => {
-          const b = document.querySelector('.hub-sec-body');
-          return b && getComputedStyle(b).overflowY === 'auto';
-        }));
+  check('ticking there captures that format', fmtSel.fmt === 'pdf', JSON.stringify(fmtSel));
+  // …and the tick survives the re-render that drilling around causes.
+  const stuck = await page.evaluate((id) => {
+    hubCloseGroup(); hubOpenGroup('fmt-pdf');
+    return document.querySelector(`.hub-tile[data-hub-id="${id}"] .hub-cb`)?.checked;
+  }, fmtSel.id);
+  check('and survives navigating away and back', stuck === true, String(stuck));
+  await page.evaluate(() => { hubClearSel(); hubSetGrouping('purpose'); hubCloseGroup(); });
+  check('switching back restores the purpose widgets',
+        await page.evaluate(() => !!document.querySelector('.hub-w[data-g="preauction"]')));
+
+  // ── [H] Sub-grouping and per-document filters ────────────────────
+  console.log('\n[H] subgroups + filters');
+  const subs = await page.evaluate(() => {
+    hubOpenGroup('tally');
+    return Array.from(document.querySelectorAll('.hub-w-sub .hub-w-name'))
+      .map(x => x.textContent.trim());
+  });
+  check('a group splits into subgroup widgets',
+        subs.includes('Ledger masters') && subs.includes('Vouchers'), subs.join(', '));
+
+  // The filter panel is offered only where the endpoint reads filters.
+  const fBtn = await page.evaluate(() => {
+    hubOpenGroup('statutory'); hubOpenSub('Spices Board');
+    const onFiltered = !!document.querySelector('[data-hub-id="form_d"] .hub-f-btn');
+    hubOpenGroup('reports'); hubOpenSub('Trade & value');
+    const onPlain = !!document.querySelector('[data-hub-id="trade_report"] .hub-f-btn');
+    hubOpenGroup('statutory'); hubOpenSub('Spices Board');
+    return { onFiltered, onPlain };
+  });
+  check('tiles that accept filters show a filter button', fBtn.onFiltered);
+  check('tiles that do not, do not', !fBtn.onPlain);
+
+  const fPanel = await page.evaluate(async () => {
+    await hubFilterOpen('form_d');
+    const pop = document.getElementById('hub-f-body');
+    return { open: document.getElementById('hub-filter-modal').classList.contains('show'),
+             keys: Array.from(pop.querySelectorAll('[data-fk]')).map(e => e.dataset.fk) };
+  });
+  check('the panel offers exactly the declared filters',
+        fPanel.open && fPanel.keys.join() === 'branch,sellerId,buyerCode', JSON.stringify(fPanel));
+
+  // Regression: a picked branch chip vanished. --acc was set on the old
+  // popover element and the modal conversion dropped it, so the chip's
+  // `background:var(--acc)` resolved to nothing while `color:#fff` still
+  // applied. Assert the accent is defined AND that a picked chip contrasts.
+  const chipVis = await page.evaluate(() => {
+    const modal = document.getElementById('hub-filter-modal');
+    const acc = getComputedStyle(modal).getPropertyValue('--acc').trim();
+    const chip = modal.querySelector('.hub-f-c');
+    if (!chip) return { acc, none: true };
+    chip.click();
+    const cs = getComputedStyle(chip);
+    const rgb = (v) => (v.match(/\d+/g) || []).map(Number);
+    const lum = ([r, g, b]) => (0.299 * r + 0.587 * g + 0.114 * b);
+    const fg = rgb(cs.color), bg = rgb(cs.backgroundColor);
+    const transparent = /rgba\(0, 0, 0, 0\)/.test(cs.backgroundColor);
+    chip.click();
+    return { acc, transparent, delta: Math.abs(lum(fg) - lum(bg)),
+             bg: cs.backgroundColor, fg: cs.color };
+  });
+  check('the filter dialog has a defined accent', !!chipVis.acc, JSON.stringify(chipVis));
+  check('and a picked chip is actually visible',
+        !chipVis.transparent && chipVis.delta > 60, JSON.stringify(chipVis));
+
+  // It is a real .modal-bg dialog now, not a floating popover. That
+  // removed the placing / clipping / scroll-tracking / dismissal code that
+  // produced the flicker, the overlap and the self-closing bug — so those
+  // regressions are checked here as "it is a modal" instead.
+  const geom = await page.evaluate(() => {
+    const bg = document.getElementById('hub-filter-modal');
+    const box = bg.querySelector('.modal');
+    const r = box.getBoundingClientRect();
+    return {
+      shown: bg.classList.contains('show'),
+      fixed: getComputedStyle(bg).position === 'fixed',
+      width: Math.round(r.width),
+      inView: r.top >= 0 && r.bottom <= window.innerHeight + 1,
+      onTop: (() => {
+        const el = document.elementFromPoint(r.left + r.width / 2, r.top + 12);
+        return !!el && (el === box || box.contains(el));
+      })(),
+    };
+  });
+  check('the filter opens as a real modal', geom.shown && geom.fixed, JSON.stringify(geom));
+  check('roomy enough to work in', geom.width >= 480, `${geom.width}px`);
+  check('fully in view and unobstructed', geom.inView && geom.onTop, JSON.stringify(geom));
+
+  // Party fields are type-to-search, not a 193-entry <select>. Run against
+  // `payment`, whose seller filter matches on NAME — form_d's sellerId
+  // filters on trader_id, which these fixture lots have no master link to.
+  await page.evaluate(() => { hubFilterClose(); });
+  const picker = await page.evaluate(async () => {
+    await hubFilterOpen('payment');
+    const wrap = document.querySelector('#hub-f-body .hub-f-pick');
+    if (!wrap) return { found: false };
+    const q = wrap.querySelector('.hub-f-q');
+    const total = JSON.parse(wrap.dataset.opts || '[]').length;
+    q.value = 'SELVI'; hubPickFilter(q);
+    const hits = wrap.querySelectorAll('.hub-f-opt');
+    return {
+      found: true, total, isSelect: !!wrap.querySelector('select'),
+      multi: wrap.classList.contains('is-multi'),
+      shown: hits.length, first: hits[0]?.textContent.trim(),
+    };
+  });
+  check('the seller field is a search box, not a dropdown',
+        picker.found && !picker.isSelect && picker.total > 0, JSON.stringify(picker));
+  check('typing narrows the candidates',
+        picker.shown > 0 && picker.shown < picker.total && /SELVI/.test(picker.first || ''),
+        JSON.stringify(picker));
+
+  // Names repeat; the phone number is often what the office has to hand.
+  // Digits are compared digits-only, so punctuation on either side is
+  // irrelevant — "98765 43210" finds a seller stored as "+91 98765 43210".
+  const byPhone = await page.evaluate(() => {
+    const wrap = document.querySelector('#hub-f-body .hub-f-pick');
+    const q = wrap.querySelector('.hub-f-q');
+    q.value = '9876543210'; hubPickFilter(q);
+    const hits = Array.from(wrap.querySelectorAll('.hub-f-opt'));
+    q.value = '98765-43210'; hubPickFilter(q);
+    const punct = wrap.querySelectorAll('.hub-f-opt').length;
+    return { hits: hits.length, first: hits[0]?.dataset.t,
+             tel: hits[0]?.querySelector('.hub-f-tel')?.textContent, punct };
+  });
+  check('a seller can be found by phone number',
+        byPhone.hits === 1 && /RAMU/.test(byPhone.first || ''), JSON.stringify(byPhone));
+  check('and the number is shown on the option',
+        /98765/.test(byPhone.tel || ''), byPhone.tel);
+  check('punctuation in the typed number is ignored', byPhone.punct === 1, String(byPhone.punct));
+  await page.evaluate(() => {
+    const q = document.querySelector('#hub-f-body .hub-f-q');
+    q.value = 'SELVI'; hubPickFilter(q);
+  });
+
+  // Multi field: picking accumulates tokens and keeps the list open, so a
+  // run of sellers can be ticked in one pass.
+  const tokens = await page.evaluate(() => {
+    const wrap = document.querySelector('#hub-f-body .hub-f-pick');
+    wrap.querySelector('.hub-f-opt').click();
+    const afterFirst = wrap.querySelectorAll('.hub-f-tok').length;
+    const stillOpen = wrap.querySelector('.hub-f-opts').style.display !== 'none';
+    const q = wrap.querySelector('.hub-f-q');
+    q.value = 'RAMU'; hubPickFilter(q);
+    wrap.querySelector('.hub-f-opt')?.click();
+    const val = wrap.querySelector('[data-fk]').value;
+    wrap.querySelector('.hub-f-tok button').click();      // remove the first
+    const afterRemove = wrap.querySelector('[data-fk]').value;
+    // Half-typed text must never leak into the value — only a real pick
+    // writes to [data-fk]. Checked here rather than in a second evaluate:
+    // the panel is anchored to its tile and may close between calls.
+    wrap.querySelectorAll('.hub-f-tok button').forEach(b => b.click());
+    wrap.querySelector('.hub-f-q').value = 'RAM';         // typed, not chosen
+    const halfTyped = wrap.querySelector('[data-fk]').value;
+    return { multi: wrap.classList.contains('is-multi'), afterFirst, stillOpen,
+             val, afterRemove, halfTyped };
+  });
+  check('the seller field takes several values', tokens.multi, JSON.stringify(tokens));
+  check('picking adds a token and leaves the list open',
+        tokens.afterFirst === 1 && tokens.stillOpen, JSON.stringify(tokens));
+  check('picking again adds a second, comma-joined',
+        (tokens.val || '').split(',').filter(Boolean).length === 2, tokens.val);
+  check('removing one drops it from the value',
+        (tokens.afterRemove || '').split(',').filter(Boolean).length === 1, tokens.afterRemove);
+
+  check('typing without choosing sets no value', tokens.halfTyped === '', tokens.halfTyped);
+  await page.evaluate(async () => { hubFilterClose(); await hubFilterOpen('form_d'); });
+
+  // Regression: the panel used to close itself, because opening it scrolled
+  // its tile into view and the dismiss-on-scroll handler caught that.
+  // A modal is anchored to nothing, so scrolling the page behind it can
+  // neither move it nor close it.
+  const survived = await page.evaluate(async () => {
+    const before = document.querySelector('#hub-filter-modal .modal').getBoundingClientRect().top;
+    window.dispatchEvent(new Event('scroll'));
+    await new Promise(r => setTimeout(r, 150));
+    const box = document.querySelector('#hub-filter-modal .modal');
+    return { open: document.getElementById('hub-filter-modal').classList.contains('show'),
+             moved: box ? Math.abs(box.getBoundingClientRect().top - before) : -1 };
+  });
+  check('scrolling behind it neither closes nor moves it',
+        survived.open && survived.moved === 0, JSON.stringify(survived));
+
+  const applied = await page.evaluate(() => {
+    const pop = document.getElementById('hub-f-body');
+    // Branch is a multi field here, so tick two chips.
+    const chips = pop.querySelectorAll('.hub-f-c');
+    chips[0]?.click(); chips[1]?.click();
+    hubFilterApply('form_d');
+    const tile = document.querySelector('[data-hub-id="form_d"]');
+    return {
+      closed: !document.getElementById('hub-filter-modal').classList.contains('show'),
+      chip: tile.querySelector('.hub-f-chip')?.textContent.trim(),
+      badge: tile.querySelector('.hub-f-n')?.textContent,
+      url: hubHref(_hubItem('form_d'), 'pdf'),
+      chipCount: chips.length,
+    };
+  });
+  check('applying a filter closes the panel and marks the tile',
+        applied.closed && /Branch/.test(applied.chip || '') && applied.badge === '1',
+        JSON.stringify(applied));
+  // Two branches chosen → the chip counts rather than listing, and the URL
+  // carries both, comma-joined, which is what the endpoint parses.
+  check('several values show as a count', /2 selected/.test(applied.chip || ''), applied.chip);
+  check('and reach the URL comma-joined',
+        /[?&]branch=[^&]+%2C/.test(applied.url || ''), applied.url);
+  const reset = await page.evaluate(() => {
+    hubFilterReset('form_d');
+    return { chip: !!document.querySelector('[data-hub-id="form_d"] .hub-f-chip'),
+             url: hubHref(_hubItem('form_d'), 'pdf') };
+  });
+  check('reset clears the chip and the URL',
+        !reset.chip && !/branch/.test(reset.url), JSON.stringify(reset));
 
   // ── [D] Shared trade context ─────────────────────────────────────
   console.log('\n[D] shared trade context');
@@ -443,10 +849,13 @@ const cleanup = () => {
   check('and moves the topbar selector with it',
         !synced.topbar || synced.topbar === synced.hub, JSON.stringify(synced));
 
-  // Switching to the empty trade must re-gate the tiles.
-  const emptied = await page.evaluate(() => document.querySelectorAll('.hub-tile.is-locked').length);
-  check('switching to an empty trade locks more tiles', emptied > shape.locked,
-        `${emptied} locked vs ${shape.locked} on the priced trade`);
+  // Switching to the empty auction must re-gate the documents. Counted
+  // from the catalog rather than the DOM: with drill-down only one group
+  // is rendered at a time.
+  const emptied = await page.evaluate(() => (window._hubCat?.groups || [])
+    .reduce((n, g) => n + g.items.filter(i => !i.available).length, 0));
+  check('switching to an empty auction locks more documents', emptied > 0,
+        `${emptied} locked`);
 
   // Back to the priced trade, then follow a deep link.
   await page.evaluate(async (id) => {
@@ -455,11 +864,40 @@ const cleanup = () => {
     await new Promise(r => setTimeout(r, 900));
   }, aid9);
   const deep = await page.evaluate(async () => {
+    hubOpenGroup('documents'); hubOpenSub('Purchase side');
     document.querySelector('[data-hub-id="bills"] .hub-btn:last-child').click();
     await new Promise(r => setTimeout(r, 700));
     return { tab: window._currentTab, billAuction: document.getElementById('bill-auction')?.value, shared: getSharedAucId() };
   });
   check('Open → navigates to the owning screen', deep.tab === 'bills', deep.tab);
+
+  // Deep-linking out used to be one-way. A pill now offers the way home.
+  const back = await page.evaluate(() => {
+    const p = document.getElementById('hub-return');
+    return { shown: !!p && p.style.display !== 'none', text: p?.textContent.trim() };
+  });
+  check('and a way back to the Auction Desk appears',
+        back.shown && /Back to Auction Desk/.test(back.text || ''), JSON.stringify(back));
+  const wentBack = await page.evaluate(() => {
+    document.getElementById('hub-return').click();
+    return { tab: window._currentTab,
+             pill: document.getElementById('hub-return')?.style.display };
+  });
+  check('clicking it returns to the desk', wentBack.tab === 'hub', JSON.stringify(wentBack));
+  check('and the pill retires once you are home', wentBack.pill === 'none', wentBack.pill);
+  // It must not linger on screens you navigated to yourself.
+  const elsewhere = await page.evaluate(() => {
+    hubOpen('bills');                       // arms the pill
+    go('traders');                          // …then wander off on your own
+    return document.getElementById('hub-return')?.style.display;
+  });
+  check('and does not follow you elsewhere', elsewhere === 'none', elsewhere);
+  await page.evaluate(() => go('hub'));
+  await page.waitForFunction(() => document.querySelectorAll('#hub-lot-rows tr[data-lot-id]').length > 0,
+                             { timeout: 20000 });
+  await page.evaluate(() => hubSetView('docs'));
+  await page.waitForFunction(() => document.querySelectorAll('#hub-groups .hub-tile').length > 0,
+                             { timeout: 20000 });
   check('and that screen is already pointed at the same trade',
         deep.billAuction === deep.shared, JSON.stringify(deep));
 
@@ -484,10 +922,12 @@ const cleanup = () => {
   console.log('\n[F] ZIP bundle');
   check('the selection bar is hidden until something is ticked',
         await page.evaluate(() => document.getElementById('hub-selbar').style.display === 'none'));
-  check('generated-document tiles are not selectable',
-        await page.evaluate(() => !document.querySelector('[data-hub-id="bills"] .hub-cb')));
+  check('generated documents are not selectable',
+        await page.evaluate(() => { hubOpenGroup('documents'); hubOpenSub('Purchase side');
+          return !document.querySelector('[data-hub-id="bills"] .hub-cb'); }));
 
   const sel = await page.evaluate(() => {
+    hubOpenGroup('preauction'); hubOpenSub('Lot lists');
     for (const id of ['lot_slip', 'lot_name']) {
       const cb = document.querySelector(`[data-hub-id="${id}"] .hub-cb`);
       cb.checked = true; cb.dispatchEvent(new Event('change'));
@@ -500,16 +940,18 @@ const cleanup = () => {
   check('ticking tiles reveals the selection bar', sel.shown);
   check('and it counts them', /2 documents selected/.test(sel.count), sel.count);
 
+  // Pick-all acts on what is on screen — one subgroup, not the whole group.
   const picked = await page.evaluate(() => {
     hubSelectGroup('preauction');
     return window._hubSel.size;
   });
-  check('"Pick all" selects every ready tile in the group', picked === 7, String(picked));
-  // Trade Documents is fully "ready" but nothing in it is bundleable, so
+  check('"Pick all" selects every ready document on screen', picked === 3, String(picked));
+  // Auction Documents is fully "ready" but nothing in it is bundleable, so
   // offering a Pick-all there would be a button that does nothing.
-  check('no Pick-all on a group with nothing selectable',
-        await page.evaluate(() =>
-          !/Pick all/.test(document.querySelector('#hub-sec-documents .hub-sec-head')?.textContent || '')));
+  check('no Pick-all where nothing is selectable',
+        await page.evaluate(() => { hubOpenGroup('documents'); hubOpenSub('Sales side');
+          const ok = !/Pick all/.test(document.querySelector('.hub-open-head')?.textContent || '');
+          hubOpenGroup('preauction'); hubOpenSub('Lot lists'); return ok; }));
 
   await page.evaluate(() => hubClearSel());
   check('Clear empties the selection and hides the bar',
@@ -519,7 +961,15 @@ const cleanup = () => {
   // Build a real ZIP through the job + poll flow.
   for (const f of fs.readdirSync(DL)) fs.rmSync(path.join(DL, f), { force: true });
   await page.evaluate(() => {
-    for (const id of ['lot_slip', 'lot_name', 'dealer_list']) {
+    // dealer_list is a Party list, so tick across two subgroups to prove a
+    // selection survives moving between them.
+    hubOpenGroup('preauction'); hubOpenSub('Lot lists');
+    for (const id of ['lot_slip', 'lot_name']) {
+      const cb = document.querySelector(`[data-hub-id="${id}"] .hub-cb`);
+      cb.checked = true; cb.dispatchEvent(new Event('change'));
+    }
+    hubOpenSub('Party lists');
+    for (const id of ['dealer_list']) {
       const cb = document.querySelector(`[data-hub-id="${id}"] .hub-cb`);
       cb.checked = true; cb.dispatchEvent(new Event('change'));
     }

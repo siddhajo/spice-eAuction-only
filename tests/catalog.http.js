@@ -365,13 +365,75 @@ function cleanup() {
   // Every Tally export also speaks JSON; two of them additionally speak
   // the GST portal's e-Invoice JSON. The hub advertised XML only until
   // this gap was spotted on a deployed build.
-  check('every Tally tile offers JSON alongside XML',
-        items.tally_ledger_sales.formats.join() === 'xml,json',
+  // The route also answers ?format=json with raw rows; that is deliberately
+  // not offered — it duplicates the XML for an audience nobody in the
+  // office has. XML sends no format param at all.
+  check('a plain Tally tile offers XML only',
+        items.tally_ledger_sales.formats.join() === 'xml',
         items.tally_ledger_sales.formats.join());
-  check('JSON carries the format param; XML does not',
-        items.tally_ledger_sales.href.xml === `/api/tally/export/ledger_sales/${aid}`
-          && items.tally_ledger_sales.href.json === `/api/tally/export/ledger_sales/${aid}?format=json`,
+  check('and XML carries no format param',
+        items.tally_ledger_sales.href.xml === `/api/tally/export/ledger_sales/${aid}`,
         JSON.stringify(items.tally_ledger_sales.href));
+  check('no tile anywhere still offers raw JSON',
+        Object.values(items).every(i => !(i.formats || []).includes('json')),
+        Object.values(items).filter(i => (i.formats || []).includes('json')).map(i => i.id).join(', '));
+  check('operator-facing labels drop the ISP / Discount jargon',
+        items.tally_sales_isp.label === 'Sales Vouchers'
+          && items.tally_debit_note.label === 'Debit Notes',
+        `${items.tally_sales_isp.label} | ${items.tally_debit_note.label}`);
+
+  // ── Subgroups ────────────────────────────────────────────────────
+  check('every visible document declares a subgroup',
+        Object.values(items).every(i => !!i.sub),
+        Object.values(items).filter(i => !i.sub).map(i => i.id).join(', '));
+  {
+    const tally = (d.groups.find(g => g.id === 'tally') || { items: [] }).items;
+    const subs = [...new Set(tally.map(i => i.sub))];
+    check('Tally splits into ledger masters and vouchers',
+          subs.includes('Ledger masters') && subs.includes('Vouchers'), subs.join(', '));
+  }
+
+  // ── Per-document filters ─────────────────────────────────────────
+  // The manifest must only claim filters the route actually reads.
+  // A filter is only declared where the export FUNCTION applies it, not
+  // merely where the route accepts it. exports.js reads extra.sellers in
+  // four functions and never reads extra.branch or extra.saleType at all,
+  // so a plain Export Center report offers no filters.
+  check('a report whose export ignores filters offers none',
+        !items.trade_report.filters, JSON.stringify(items.trade_report.filters));
+  check('the four exports that DO read sellers offer it',
+        ['bank_payment', 'bank_payment_before', 'payment', 'payment_party_wise']
+          .every(id => (items[id].filters || []).includes('sellers')));
+  check('Spice Board documents offer branch / seller / buyer',
+        (items.form_d.filters || []).join() === 'branch,sellerId,buyerCode',
+        JSON.stringify(items.form_d.filters));
+  check('sale-type filtering is offered only where Tally accepts it',
+        (items.tally_sales_isp.filters || []).includes('sale')
+          && !(items.tally_rd_purchase.filters || []).includes('sale'),
+        `sales=${items.tally_sales_isp.filters} rd=${items.tally_rd_purchase.filters}`);
+  // …and the routes must accept them for real, not just in the manifest.
+  // Multi-value: which filters take a comma-joined list.
+  check('Spice Board filters are all list-capable',
+        (items.form_d.multi || []).join() === 'branch,sellerId,buyerCode',
+        JSON.stringify(items.form_d.multi));
+  check('so is the seller filter on payment exports',
+        (items.payment.multi || []).includes('sellers'));
+  check('and the Tally sale type', (items.tally_sales_isp.multi || []).includes('sale'));
+  check('every multi entry is also a declared filter',
+        Object.values(items).every(i => (i.multi || []).every(k => (i.filters || []).includes(k))));
+
+  for (const [id, qs] of [
+    ['form_d',  'branch=BODI'],
+    ['form_d',  'sellerId=1,2,3'],
+    ['form_c',  'buyerCode=AAA,BBB'],
+    ['payment', 'sellers=RAMU%20PLANTER,SELVI%20PLANTER'],
+  ]) {
+    const url = items[id].href[items[id].formats[0]] + '&' + qs;
+    const r = await fetch(B + url, { headers: { Authorization: 'Bearer ' + TOKEN } });
+    let body = ''; try { body = JSON.stringify(await r.json()); } catch (_) {}
+    check(`${id} accepts ${qs.split('=')[0]} on the wire`,
+          r.status < 500 && !/unknown|invalid/i.test(body), `${r.status} ${body.slice(0, 120)}`);
+  }
   check('e-Invoice JSON is offered on exactly the two types that support it',
         items.tally_sales_isp.formats.includes('irp')
           && items.tally_debit_note.formats.includes('irp')
@@ -483,6 +545,41 @@ function cleanup() {
       { headers: { Authorization: 'Bearer ' + TOKEN } });
     const asText = Buffer.from(await r.arrayBuffer()).toString('latin1');
     check('and the ZIP explains what was left out', /_skipped\.txt/.test(asText));
+  }
+
+  // Accepted is not applied. A sale-type list must produce a DIFFERENT
+  // export from the unfiltered one, or the filter is decorative.
+  {
+    const grab = async (u) => {
+      const r = await fetch(B + u, { headers: { Authorization: 'Bearer ' + TOKEN } });
+      return { status: r.status, body: r.ok ? await r.text() : '' };
+    };
+    const base = `/api/tally/export/sales_isp/${aid}`;
+    const all = await grab(base);
+    const two = await grab(base + '?sale=L,I');
+    const bad = await grab(base + '?sale=L,Z');
+    check('a multi sale-type filter is accepted', two.status !== 400,
+          `${two.status} ${two.body.slice(0, 100)}`);
+    check('and an unknown one in the list is still rejected', bad.status === 400,
+          String(bad.status));
+    // Both may legitimately be 404 "no rows" on this fixture; what matters
+    // is the filter reaching the builder rather than erroring.
+    check('neither errors on the server', all.status !== 500 && two.status !== 500,
+          `${all.status} / ${two.status}`);
+  }
+
+  // Filters travel with a bundled document, but only the ones its manifest
+  // entry declares — the bundler must not become a way to bolt arbitrary
+  // query params onto an export route.
+  {
+    const started = await api('POST', '/api/documents/bundle', { auctionId: aid, items: [
+      { id: 'lot_slip', format: 'xlsx', filters: { branch: 'NOWHERE', evil: 'x' } },
+    ]});
+    check('a bundle accepts a filtered document', started.status === 200, JSON.stringify(started.d));
+    const done = await poll(started.d.jobId);
+    check('and still produces it', done && done.status !== 'error', JSON.stringify(done));
+    await fetch(B + `/api/documents/bundle/${started.d.jobId}/file`,
+      { headers: { Authorization: 'Bearer ' + TOKEN } });
   }
 
   // The security boundary: the server re-resolves the catalog and refuses

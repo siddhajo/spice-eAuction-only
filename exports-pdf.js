@@ -142,7 +142,10 @@ function preprocessRows(rows, opts) {
 }
 
 // ── Generic table-to-PDF renderer ───────────────────────────
-function renderTablePdf({ title, subtitle, columns, rows, totals, layout, companyHeader, summary, autofit }) {
+// `autofit` defaults ON — see PDF_NO_AUTOFIT. Pass `false` explicitly for a
+// table whose column widths are prescribed rather than chosen.
+function renderTablePdf({ title, subtitle, columns, rows, totals, layout, companyHeader, summary,
+                          autofit = true }) {
   // layout: 'portrait' (default) or 'landscape'. All exports default to
   // portrait per user preference. Override per-type via PDF_LAYOUT below
   // if a specific report ever needs landscape (e.g. very wide column sets).
@@ -1021,12 +1024,19 @@ const PDF_LAYOUT = {
   pooler_individual: 'landscape',
 };
 
-// Per-type content-aware autofit. Listed types size each column to its widest
-// value (header + sampled cells) and scale to fill the page width, instead of
-// the fixed `width` weights. Use it where the values vary a lot in width and a
-// tidy, content-fitted table reads better — e.g. Lot Payment, whose branch /
-// name / amount widths differ per trade.
-const PDF_AUTOFIT = new Set(['lot_payment']);
+// Content-aware autofit is now the DEFAULT for every table PDF: each column
+// is sized to its widest value (header + up to 400 sampled cells), clamped
+// so no column takes more than 35% of the page, then scaled to fill the
+// width exactly. It began as an opt-in for Lot Payment alone, which left
+// every other report on fixed `width` weights that were guesses made before
+// anyone knew how long a real seller's name would be — so long values wrapped
+// or clipped while neighbouring columns sat half empty.
+//
+// Anything listed here opts back OUT and keeps its declared weights. Use it
+// for a report whose column widths are prescribed by a form layout rather
+// than chosen for readability.
+const PDF_NO_AUTOFIT = new Set([]);
+const PDF_AUTOFIT = { has: (type) => !PDF_NO_AUTOFIT.has(type) };
 
 // Per-type row preprocessing: add a serial-number column, optionally group
 // rows by a name field with a subtotal row inserted after each group. Keys
@@ -1814,4 +1824,5 @@ function _poolerPan(db, name, traderId) {
   } catch (e) { return ''; }
 }
 
-module.exports = { exportPdf, TITLES, COLS, ROW_PREPROCESS, PDF_AUTOFIT, renderTablePdf, renderPoolerCertificatePdf };
+module.exports = { exportPdf, TITLES, COLS, ROW_PREPROCESS, PDF_AUTOFIT, PDF_NO_AUTOFIT,
+                   renderTablePdf, renderPoolerCertificatePdf };

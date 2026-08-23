@@ -552,6 +552,49 @@ screen's, since each keeps its own copy of the rows. The drawer also offers
 "Open in Lots →" for the things that screen owns — price import, bulk
 actions, Calculate All.
 
+## 7d. Third round of feedback
+
+**Raw Tally JSON dropped.** `?format=json` returns the same vouchers the XML
+carries, in a form nobody in the office imports — and it manufactured a
+whole "JSON" heading in the file-type view. Tally tiles now offer XML, plus
+**e-Invoice JSON** on the two types the GST portal schema supports.
+
+**Jargon removed from labels.** "Sales Vouchers — ISP" → Sales Vouchers;
+"Debit Notes (Discount)" → Debit Notes; likewise the planter one. The ISP/ASP
+distinction is meaningless in a single-company build (§7b) and "Discount"
+described the accounting treatment, not the document.
+
+**Subgroups.** Ten groups of a dozen tiles is still a wall. Every entry now
+carries a `sub`, so Journals & Registers reads as Journals / Registers /
+Individual registers / Certificates, Tally as Ledger masters / Vouchers, and
+so on. Order follows first appearance in the manifest. A group with one
+subgroup renders as a plain grid — no heading that just repeats the group
+name. The file-type view suppresses subgroups: there, format *is* the split.
+
+**Per-document filters.** The manifest's `filters` field finally does
+something. A funnel button on each tile that supports them opens a panel
+with real pickers — branches, sellers and buyers sourced from
+`/api/spice-board-reports/filters`, sale types L/I/E — and the chosen values
+append to the URL the server built. Applied filters show on the tile in
+words, so a narrowed document can't be mistaken for the whole one. Download,
+Preview, Print and the ZIP bundle all honour them.
+
+Two things this deliberately does NOT do:
+
+- **It does not invent filters.** The declarations were rewritten against
+  the routes: every `EXPORT_TYPES` export reads `branch` / `saleType` /
+  `sellers` (server.js:14782); Spice Board reads `branch` / `sellerId` /
+  `buyerCode`; Tally reads `sale` but only for `SALE_FILTERABLE_TYPES`. A
+  test asserts each declared filter is accepted on the wire.
+- **The bundler will not forward an undeclared key.** Filters sent with a
+  bundle item are intersected with that document's declared set, so the
+  bundle endpoint cannot become a way to bolt arbitrary query params onto
+  an export route.
+
+Row-level selection — tick these six invoices, print those — stays on the
+owning screens, which have the tick columns and the context for it. The hub
+scopes a document by attribute, not by hand-picked rows.
+
 ## 8. Risks
 
 | Risk | Mitigation |

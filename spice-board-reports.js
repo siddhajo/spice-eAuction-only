@@ -15,6 +15,7 @@
  */
 
 const ExcelJS    = require('exceljs');
+const { autofitColumns } = require('./report-formatters');
 const PDFDocument = require('pdfkit');
 // Seller classification helpers:
 //   • isDealerSeller — newer rule (cr starts with GSTIN AND SBL set); used by
@@ -159,9 +160,11 @@ function getReportContext(db, opts) {
 
   const where = ['l.auction_id = ?'];
   const params = [auctionId];
-  if (opts.branch) { where.push('UPPER(TRIM(l.branch)) = UPPER(TRIM(?))'); params.push(opts.branch); }
-  if (opts.sellerId) { where.push('l.trader_id = ?'); params.push(parseInt(opts.sellerId, 10)); }
-  if (opts.buyerCode) { where.push('UPPER(TRIM(COALESCE(b.code,l.code))) = UPPER(TRIM(?))'); params.push(opts.buyerCode); }
+  for (const c of [
+    _inClause('l.branch', opts.branch, { ci: true }),
+    _inClause('l.trader_id', opts.sellerId, { numeric: true }),
+    _inClause('COALESCE(b.code,l.code)', opts.buyerCode, { ci: true }),
+  ]) { if (c) { where.push(c.sql); params.push(...c.params); } }
   if (opts.dateFrom) { where.push('a.date >= ?'); params.push(opts.dateFrom); }
   if (opts.dateTo)   { where.push('a.date <= ?'); params.push(opts.dateTo); }
 
@@ -264,6 +267,24 @@ function getReportContext(db, opts) {
 
 // Distinct branches/sellers/buyers seen in an auction — populates the
 // filter dropdowns on the client.
+// Build a WHERE clause that accepts either one value or several.
+// `raw` may be "BODI" or "BODI,VANDAN" — the comma form comes from the
+// Auction Desk's multi-select filters. One value still emits `= ?` so the
+// query plan for the common case is unchanged.
+function _inClause(expr, raw, { numeric = false, ci = false } = {}) {
+  const vals = String(raw == null ? '' : raw)
+    .split(',').map(v => v.trim()).filter(Boolean);
+  if (!vals.length) return null;
+  const lhs = ci ? `UPPER(TRIM(${expr}))` : expr;
+  const one = (ph) => (ci ? `UPPER(TRIM(${ph}))` : ph);
+  const cast = (v) => (numeric ? parseInt(v, 10) : v);
+  if (vals.length === 1) return { sql: `${lhs} = ${one('?')}`, params: [cast(vals[0])] };
+  return {
+    sql: `${lhs} IN (${vals.map(() => one('?')).join(', ')})`,
+    params: vals.map(cast),
+  };
+}
+
 function getReportFilters(db, auctionId) {
   if (!auctionId) return { branches: [], sellers: [], buyers: [] };
   const aid = parseInt(auctionId, 10);
@@ -271,19 +292,28 @@ function getReportFilters(db, auctionId) {
     `SELECT DISTINCT TRIM(branch) AS branch FROM lots
       WHERE auction_id = ? AND TRIM(COALESCE(branch,'')) <> ''
       ORDER BY branch`, [aid]).map(r => r.branch);
+  // `tel` rides along so a picker can be searched by phone as well as by
+  // name — the number is often what the office has to hand. GROUP BY
+  // rather than DISTINCT: adding a column to a DISTINCT would split one
+  // party into two rows if their tel were recorded differently.
   const sellers = db.all(
-    `SELECT DISTINCT l.trader_id AS id, COALESCE(t.name, l.name) AS name
+    `SELECT l.trader_id AS id, COALESCE(t.name, l.name) AS name,
+            MAX(COALESCE(NULLIF(TRIM(t.tel),''), TRIM(l.tel), '')) AS tel
        FROM lots l LEFT JOIN traders t ON t.id = l.trader_id
       WHERE l.auction_id = ? AND COALESCE(t.name, l.name) <> ''
+      GROUP BY l.trader_id, COALESCE(t.name, l.name)
       ORDER BY name`, [aid]);
   const buyers = db.all(
-    `SELECT DISTINCT COALESCE(b.code, l.code) AS code,
-            COALESCE(b.buyer1, b.buyer, l.buyer1, l.buyer) AS name
+    `SELECT COALESCE(b.code, l.code) AS code,
+            COALESCE(b.buyer1, b.buyer, l.buyer1, l.buyer) AS name,
+            MAX(COALESCE(NULLIF(TRIM(b.tel),''), '')) AS tel
        FROM lots l LEFT JOIN buyers b
          ON UPPER(TRIM(b.code))  = UPPER(TRIM(l.code))
          OR UPPER(TRIM(b.buyer)) = UPPER(TRIM(l.buyer))
       WHERE l.auction_id = ? AND l.amount > 0
         AND COALESCE(b.code, l.code) <> ''
+      GROUP BY COALESCE(b.code, l.code),
+               COALESCE(b.buyer1, b.buyer, l.buyer1, l.buyer)
       ORDER BY name`, [aid]);
   return { branches, sellers, buyers };
 }
@@ -523,6 +553,9 @@ async function buyersStatementXlsx(db, opts) {
   g.getCell(5).numFmt = '#,##,##0.00';
   g.eachCell(c => { c.border = { top: { style: 'double' }, bottom: { style: 'double' } };
                     c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } }; });
+  // Widths were never set on these sheets — ExcelJS defaults to 8.43,
+  // which truncated names and dates. Size to content instead.
+  try { autofitColumns(ws); } catch (_) {}
   return wb.xlsx.writeBuffer();
 }
 
@@ -802,8 +835,10 @@ function buildFormD(ctx, db, opts) {
   // withdrawn lots have no buyer, so it would zero the arrivals rows.
   const qWhere = ['l.auction_id = ?'];
   const qParams = [auction.id];
-  if (opts.branch)   { qWhere.push('UPPER(TRIM(l.branch)) = UPPER(TRIM(?))'); qParams.push(opts.branch); }
-  if (opts.sellerId) { qWhere.push('l.trader_id = ?'); qParams.push(parseInt(opts.sellerId, 10)); }
+  for (const c of [
+    _inClause('l.branch', opts.branch, { ci: true }),
+    _inClause('l.trader_id', opts.sellerId, { numeric: true }),
+  ]) { if (c) { qWhere.push(c.sql); qParams.push(...c.params); } }
   const qAgg = db ? db.get(`
     SELECT
       COALESCE(SUM(l.qty), 0) AS put,
@@ -1034,6 +1069,9 @@ async function formDXlsx(db, opts) {
   t.getCell(4).numFmt = '#,##,##0.00';
   t.eachCell(c => { c.border = { top: { style: 'thin' }, bottom: { style: 'double' } };
                     c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } }; });
+  // Widths were never set on these sheets — ExcelJS defaults to 8.43,
+  // which truncated names and dates. Size to content instead.
+  try { autofitColumns(ws); } catch (_) {}
   return wb.xlsx.writeBuffer();
 }
 
@@ -1461,6 +1499,9 @@ async function formCXlsx(db, opts) {
   g.getCell(4).numFmt = '#,##0.000'; g.getCell(5).numFmt = '#,##0.000'; g.getCell(7).numFmt = '#,##,##0.00';
   g.eachCell(c => { c.border = { top: { style: 'double' }, bottom: { style: 'double' } };
                     c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } }; });
+  // Widths were never set on these sheets — ExcelJS defaults to 8.43,
+  // which truncated names and dates. Size to content instead.
+  try { autofitColumns(ws); } catch (_) {}
   return wb.xlsx.writeBuffer();
 }
 
@@ -2062,6 +2103,9 @@ async function litreWeightXlsx(db, opts) {
 
   // Repeat the column headers on every printed page.
   ws.pageSetup = Object.assign({}, ws.pageSetup, { printTitlesRow: `${head.number}:${head.number}` });
+  // Widths were never set on these sheets — ExcelJS defaults to 8.43,
+  // which truncated names and dates. Size to content instead.
+  try { autofitColumns(ws); } catch (_) {}
   return wb.xlsx.writeBuffer();
 }
 

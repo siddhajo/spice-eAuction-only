@@ -729,10 +729,67 @@ function writeXlsxCompanyHeader(wb, ws, header, opts) {
   return 4;  // first row available for callers (column-header row)
 }
 
+
+// ── XLSX column autofit ───────────────────────────────────────
+// ExcelJS has no equivalent of Excel's "autofit", so every sheet either
+// carried hand-set widths (which go stale the moment a seller has a long
+// name) or fell back to the 8.43 default and truncated. This measures the
+// widest cell actually written in each column and sizes to that.
+//
+// Width is in Excel's own unit — roughly "characters at the default font"
+// — so a character count plus padding is the right measure. Digits and
+// capitals run wider than lowercase, hence the small weighting.
+//
+// `opts.min` / `opts.max` clamp the result: a column of empty strings
+// should still be clickable, and one holding a 300-character note must not
+// push every other column off the screen.
+function autofitColumns(ws, opts) {
+  opts = opts || {};
+  const min = opts.min == null ? 8  : opts.min;
+  const max = opts.max == null ? 52 : opts.max;
+  const pad = opts.pad == null ? 2  : opts.pad;
+  ws.columns.forEach((col) => {
+    if (!col) return;
+    let widest = 0;
+    // eachCell({includeEmpty:false}) walks only cells that were written,
+    // so an unused column costs nothing to measure.
+    if (typeof col.eachCell === 'function') {
+      col.eachCell({ includeEmpty: false }, (cell) => {
+        const v = cell && cell.value;
+        if (v == null) return;
+        let text;
+        if (typeof v === 'object') {
+          // Rich text, formulas and hyperlinks all keep their display
+          // string somewhere other than the value itself.
+          text = v.richText ? v.richText.map(t => t.text).join('')
+               : (v.text != null ? v.text
+               : (v.result != null ? v.result
+               : (v instanceof Date ? 'DD/MM/YYYY' : '')));
+        } else {
+          text = String(v);
+        }
+        // Merged cells report their whole span in the anchor cell; letting
+        // that drive the width would blow out column A on every report
+        // carrying a merged company banner.
+        if (cell.isMerged && cell.master && cell.master.address !== cell.address) return;
+        if (cell.isMerged) return;
+        for (const line of String(text).split('\n')) {
+          const w = line.length + (line.match(/[A-Z0-9]/g) || []).length * 0.12;
+          if (w > widest) widest = w;
+        }
+      });
+    }
+    const fitted = Math.ceil(widest + pad);
+    col.width = Math.max(min, Math.min(max, fitted || min));
+  });
+  return ws;
+}
+
 module.exports = {
   fmtMoney, fmtQty, fmtPrice, fmtIndian,
   formatInvoiceNo, formatDebitNoteNo, debitNoteSeason, formatBillOfSupplyNo,
   formatDateForDisplay, DATE_FORMATS,
   getCompanyHeader, getCompanyIdentity, drawCompanyHeader,
   xlsxNumFmtForHeader, writeXlsxCompanyHeader,
+  autofitColumns,
 };

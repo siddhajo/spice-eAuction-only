@@ -2019,77 +2019,98 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
    authored by hand, so these classes are the whole visual vocabulary.
    Compact KPI variant of .stat: the hub shows nine figures above a long
    grid, so the dashboard's 30px numerals would push the tiles off-screen. */
-.hub-kpi{grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:10px;margin-bottom:16px}
-.hub-kpi .stat{
-  padding:13px 12px;border-radius:12px;position:relative;overflow:hidden;
-  background:linear-gradient(160deg, color-mix(in srgb, var(--kpi) 12%, var(--card)), var(--card));
-  border:1px solid color-mix(in srgb, var(--kpi) 26%, var(--border));
-  border-top:3px solid var(--kpi);--kpi:var(--spice-cardamom)
+/* ── Insights card language ───────────────────────────────────
+   Nine gradient themes, matching _INS_THEMES. --from/--to drive the
+   gradient, --glow the shadow. Any element taking .hub-grad becomes one
+   of those cards. */
+.hub-grad{
+  position:relative;overflow:hidden;color:#fff;
+  background:linear-gradient(135deg, var(--from) 0%, var(--to) 100%);
+  box-shadow:0 6px 16px var(--glow);
+  transition:transform .15s ease, box-shadow .15s ease;
+  --from:#10B981;--to:#047857;--glow:rgba(16,185,129,.28)
 }
-.hub-kpi .stat .n{white-space:nowrap;letter-spacing:-.4px;color:var(--kpi)}
-.hub-kpi .stat .l{font-size:10px;margin-top:3px}
+.hub-grad:hover{transform:translateY(-2px);box-shadow:0 10px 24px var(--glow)}
+.hub-grad::before{
+  content:'';position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(circle at 110% -10%, rgba(255,255,255,.22), transparent 55%)}
+.hub-grad::after{
+  content:'';position:absolute;right:-30px;bottom:-30px;width:120px;height:120px;
+  border-radius:50%;background:rgba(255,255,255,.08);pointer-events:none}
+.hub-grad > *{position:relative;z-index:1}
+.t-emerald{--from:#10B981;--to:#047857;--glow:rgba(16,185,129,.28)}
+.t-sky    {--from:#0EA5E9;--to:#0369A1;--glow:rgba(14,165,233,.28)}
+.t-violet {--from:#A855F7;--to:#6B21A8;--glow:rgba(168,85,247,.28)}
+.t-amber  {--from:#F59E0B;--to:#B45309;--glow:rgba(245,158,11,.28)}
+.t-teal   {--from:#14B8A6;--to:#0F766E;--glow:rgba(20,184,166,.28)}
+.t-orange {--from:#FB923C;--to:#C2410C;--glow:rgba(251,146,60,.28)}
+.t-indigo {--from:#6366F1;--to:#3730A3;--glow:rgba(99,102,241,.28)}
+.t-pink   {--from:#EC4899;--to:#9D174D;--glow:rgba(236,72,153,.28)}
+.t-rose   {--from:#F43F5E;--to:#9F1239;--glow:rgba(244,63,94,.28)}
+.hub-ico{
+  width:44px;height:44px;border-radius:12px;flex-shrink:0;
+  background:rgba(255,255,255,.22);backdrop-filter:blur(6px);
+  display:flex;align-items:center;justify-content:center;font-size:22px}
+.hub-ico svg{width:22px;height:22px;fill:none;stroke:#fff;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round}
+
+/* KPI strip — the Insights headline card at strip density. */
+.hub-kpi{grid-template-columns:repeat(auto-fit,minmax(196px,1fr));gap:14px;margin-bottom:20px}
+.hub-kpi .stat{
+  display:flex;gap:11px;align-items:center;text-align:left;
+  padding:14px 15px;border-radius:14px;border:none;min-width:0}
+.hub-kpi .stat-b{min-width:0;flex:1}
+.hub-kpi .stat .l{
+  font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;
+  opacity:.92;color:#fff;margin:0;line-height:1.25}
+/* A number must never break mid-digit — "4,950.000" wrapping to
+   "4,950.00 / 0" reads as a different figure. Keep it on one line and let
+   the size step down instead (see the .n-* classes). */
+.hub-kpi .stat .n{
+  letter-spacing:-.5px;line-height:1.15;margin-top:2px;white-space:nowrap;
+  color:#fff;font-weight:800}
 /* Numbers grow with the auction — 285 lots today, ₹20,70,44,630 at close.
    The renderer tags each figure by character count so a long one steps
    down a size instead of spilling out of its tile. */
-.hub-kpi .stat .n.n-1{font-size:22px}
-.hub-kpi .stat .n.n-2{font-size:19px}
-.hub-kpi .stat .n.n-3{font-size:16px}
-.hub-kpi .stat .n.n-4{font-size:13.5px}
+.hub-kpi .stat .n.n-1{font-size:24px}
+.hub-kpi .stat .n.n-2{font-size:20px}
+.hub-kpi .stat .n.n-3{font-size:16.5px}
+.hub-kpi .stat .n.n-4{font-size:14px}
 /* Semantic colour: sold reads green, withdrawn amber, value the brand
    tone. A KPI row you can read by hue beats eight identical numerals. */
-.hub-kpi .stat.k-sold {--kpi:#059669}
-.hub-kpi .stat.k-wd   {--kpi:#D97706}
+.hub-kpi .stat.k-sold {--kpi:var(--spice-cardamom)}
+.hub-kpi .stat.k-wd   {--kpi:var(--spice-turmeric)}
 .hub-kpi .stat.k-value{--kpi:var(--spice-cardamom-dk)}
-.hub-kpi .stat.k-neutral{--kpi:#475569}
+.hub-kpi .stat.k-neutral{--kpi:var(--spice-saffron)}
+.hub-kpi .stat.k-value .n{color:var(--spice-cardamom-dk)}
 /* Total Value runs to ~12 characters at auction scale and cannot share a
    lot-count-sized column. Two columns wide, tinted so it reads as the
    headline figure rather than the eighth number in a row. */
-.hub-kpi .stat-value{
-  grid-column:span 2;
-  background:linear-gradient(135deg, var(--green-bg), var(--card));
-  border-top-color:var(--spice-cardamom)
-}
+.hub-kpi .stat-value{grid-column:span 2;border-color:var(--spice-cardamom)}
 .hub-kpi .stat-value .n{color:var(--spice-cardamom-dk)}
 
-/* Each group carries an accent colour, used on its rail, icon chip, count
-   pill and its tiles' hover edge. Ten flat hues rather than ten tints of
-   the theme green — the point is to make a long scroll navigable at a
-   glance, which needs actual hue difference. */
-.hub-sec{margin:0 0 14px 0;--acc:var(--spice-cardamom)}
+/* One accent, not ten. The per-group hues made a utility screen read as
+   noise once the tiles became rows; colour is now carried by the group
+   icon alone, and everything else is structure. --acc stays as the token
+   so the icon, focus rings and the filter dialog can tint per group. */
+.hub-sec{margin:0 0 10px 0;--acc:var(--spice-cardamom)}
 .hub-sec[data-g="preauction"]{--acc:#0EA5E9}
 .hub-sec[data-g="documents"] {--acc:#8B5CF6}
-.hub-sec[data-g="reports"]   {--acc:#10B981}
-.hub-sec[data-g="statutory"] {--acc:#F59E0B}
-.hub-sec[data-g="banking"]   {--acc:#14B8A6}
-.hub-sec[data-g="logistics"] {--acc:#F97316}
-.hub-sec[data-g="tally"]     {--acc:#6366F1}
-.hub-sec[data-g="dbf"]       {--acc:#64748B}
-.hub-sec[data-g="books"]     {--acc:#EC4899}
+.hub-sec[data-g="reports"]   {--acc:#059669}
+.hub-sec[data-g="statutory"] {--acc:#D97706}
+.hub-sec[data-g="banking"]   {--acc:#0D9488}
+.hub-sec[data-g="logistics"] {--acc:#EA580C}
+.hub-sec[data-g="tally"]     {--acc:#4F46E5}
+.hub-sec[data-g="books"]     {--acc:#DB2777}
 .hub-sec[data-g="masters"]   {--acc:#0891B2}
-/* File-type grouping gets its own hues — one per format. */
-.hub-sec[data-g="fmt-pdf"]      {--acc:#DC2626}
-.hub-sec[data-g="fmt-xlsx"]     {--acc:#059669}
-.hub-sec[data-g="fmt-csv"]      {--acc:#0EA5E9}
-.hub-sec[data-g="fmt-xml"]      {--acc:#6366F1}
-.hub-sec[data-g="fmt-json"]     {--acc:#8B5CF6}
-.hub-sec[data-g="fmt-irp"]      {--acc:#F59E0B}
-.hub-sec[data-g="fmt-dbf"]      {--acc:#64748B}
-.hub-sec[data-g="fmt-generated"]{--acc:#EC4899}
-/* The quick-links strip on the Lots tab borrows the brand tone. */
-.hub-quick{--acc:var(--spice-cardamom)}
 
 .hub-sec-head{
-  display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;
-  padding:11px 14px;border-radius:10px;font-size:14px;font-weight:700;
-  color:var(--text);border:1px solid color-mix(in srgb, var(--acc) 22%, var(--border));
-  border-left:4px solid var(--acc);
-  background:linear-gradient(100deg, color-mix(in srgb, var(--acc) 13%, var(--card)),
-                                     color-mix(in srgb, var(--acc) 3%, var(--card)))
+  display:flex;align-items:center;gap:11px;cursor:pointer;user-select:none;
+  padding:13px 4px;font-size:15px;font-weight:700;color:var(--text);
+  background:none;border:none;border-bottom:1px solid var(--border)
 }
-.hub-sec-head:hover{
-  background:linear-gradient(100deg, color-mix(in srgb, var(--acc) 20%, var(--card)),
-                                     color-mix(in srgb, var(--acc) 6%, var(--card)))
-}
+.hub-sec.is-collapsed .hub-sec-head{border-bottom-color:transparent}
+.hub-sec-head:hover{color:var(--acc)}
 .hub-sec-ico{
   width:28px;height:28px;flex:none;border-radius:8px;display:flex;
   align-items:center;justify-content:center;
@@ -2101,72 +2122,228 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 .hub-sec.is-collapsed .hub-sec-chev{transform:rotate(-90deg)}
 .hub-sec.is-collapsed .hub-sec-body{display:none}
 .hub-sec-hint{font-weight:400;font-size:11.5px;color:var(--text3)}
-.hub-sec-count{
-  margin-left:auto;font-weight:700;font-size:11px;
-  color:var(--acc);background:color-mix(in srgb, var(--acc) 12%, transparent);
-  border:1px solid color-mix(in srgb, var(--acc) 28%, transparent);
-  border-radius:20px;padding:2px 10px;white-space:nowrap
-}
-/* Each group scrolls on its own. With ten groups open, a single page
-   scroll buried the later headings; this keeps every group's heading
-   reachable and lets you scan one group without losing the others. */
-.hub-sec-body{padding:12px 2px 2px;max-height:min(46vh,440px);overflow-y:auto;overflow-x:hidden}
-.hub-sec-body::-webkit-scrollbar{width:8px}
-.hub-sec-body::-webkit-scrollbar-thumb{
-  background:color-mix(in srgb, var(--acc) 30%, transparent);border-radius:4px}
-.hub-sec-body::-webkit-scrollbar-thumb:hover{
-  background:color-mix(in srgb, var(--acc) 55%, transparent)}
-
-.hub-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(238px,1fr));gap:10px}
+.hub-sec-count{margin-left:auto;font-weight:600;font-size:12.5px;color:var(--text3);white-space:nowrap}
+/* Document cards. Same shell as the Insights .kpi card — white ground,
+   16px radius, a 4px colour bar down the left edge, lift on hover — so
+   the Auction Desk reads as part of the app rather than its own dialect.
+   The bar's colour is the document's SOURCE GROUP. */
+.hub-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(216px,1fr));gap:14px;
+  padding:6px 2px 10px}
 .hub-tile{
-  display:flex;flex-direction:column;gap:6px;
-  border:1px solid color-mix(in srgb, var(--acc) 20%, var(--border));
-  border-radius:12px;padding:12px 13px;
-  background:linear-gradient(165deg, color-mix(in srgb, var(--acc) 7%, var(--card)), var(--card));
-  transition:box-shadow .15s,border-color .15s,transform .15s;
-  border-left:3px solid color-mix(in srgb, var(--acc) 55%, transparent)
+  position:relative;overflow:hidden;display:flex;flex-direction:column;gap:7px;
+  padding:16px 16px 14px;border-radius:14px;
+  background:linear-gradient(180deg, var(--lt) 0%, #fff 60%);
+  border:1px solid var(--md);
+  transition:transform .15s ease, box-shadow .15s ease;
+  --from:#10B981;--to:#047857;--lt:#ECFDF5;--md:#A7F3D0
 }
-.hub-tile:hover{
-  border-color:var(--acc);border-left-color:var(--acc);
-  transform:translateY(-1px);
-  box-shadow:0 6px 18px color-mix(in srgb, var(--acc) 22%, transparent)
-}
+.hub-tile::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:4px;
+  background:linear-gradient(90deg, var(--from), var(--to))}
+.hub-tile:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(15,23,42,.08)}
+.hub-tile-main{display:flex;align-items:center;gap:9px;min-width:0}
+
+/* Format chip — one glance tells you what comes out. */
+.hub-fmt{
+  flex:none;padding:2px 8px;border-radius:6px;display:inline-flex;
+  align-items:center;justify-content:center;
+  font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--to);
+  background:rgba(255,255,255,.8);border:1px solid var(--md)}
+.hub-tile.is-locked .hub-fmt{filter:grayscale(1);opacity:.55}
+
+/* The left edge takes the SOURCE group's colour. In a purpose group every
+   row matches and it reads as one band; in a file-type group it is the
+   only thing telling you a PDF is a pre-auction snapshot rather than a
+   statutory return. */
+
+.hub-tile[data-src="preauction"]{--src:#0EA5E9} .hub-tile[data-src="documents"]{--src:#8B5CF6}
+.hub-tile[data-src="reports"]{--src:#059669}    .hub-tile[data-src="statutory"]{--src:#D97706}
+.hub-tile[data-src="banking"]{--src:#0D9488}    .hub-tile[data-src="logistics"]{--src:#EA580C}
+.hub-tile[data-src="tally"]{--src:#4F46E5}      .hub-tile[data-src="books"]{--src:#DB2777}
+.hub-tile[data-src="masters"]{--src:#0891B2}
+.hub-src{font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;
+  padding:3px 10px;border-radius:999px;align-self:flex-start;
+  background:rgba(255,255,255,.7);color:var(--to);border:1px solid var(--md)}
+.hub-tile-meta{display:flex;flex-direction:column;align-items:flex-start;gap:5px}
 /* A locked tile stays visible and explains itself — the sidebar's habit of
    hiding un-earned items is exactly what made documents hard to find. */
-.hub-tile.is-locked{background:var(--bg);border-style:dashed;border-left-color:var(--border)}
-.hub-tile.is-locked:hover{box-shadow:none;border-color:var(--border);transform:none}
+.hub-tile.is-locked{opacity:.7;--lt:#F8FAFC;--md:var(--spice-line)}
+.hub-tile.is-locked:hover{transform:none;box-shadow:none}
+.hub-tile.is-locked::before{background:var(--spice-line-strong)}
+.hub-tile.is-locked .hub-tile-l{color:var(--text2)}
 .hub-tile.is-locked .hub-tile-l{color:var(--text3)}
-.hub-tile-l{font-size:13px;font-weight:700;color:var(--text);line-height:1.3}
-.hub-note{font-size:11px;color:var(--text3);line-height:1.45}
-.hub-lock{font-size:11px;color:var(--amber);line-height:1.45;display:flex;gap:5px}
-.hub-acts{display:flex;flex-wrap:wrap;gap:5px;margin-top:auto;padding-top:6px}
+/* Night legibility: this screen is read at 2am under a desk lamp, so the
+   name is a size up from the old tile and the muted text is a real grey
+   rather than a hint. Nothing here relies on colour alone. */
+.hub-tile-l{font-size:15px;font-weight:800;color:var(--to);
+  line-height:1.3;letter-spacing:-.2px}
+.hub-tile.is-locked .hub-tile-l{font-weight:600}
+.hub-note{font-size:11px;color:var(--text2);line-height:1.4}
+.hub-lock{font-size:12px;font-weight:600;color:#B45309;line-height:1.4}
+.hub-acts{display:flex;flex-wrap:wrap;gap:5px;margin-top:auto;padding-top:3px}
+/* 32px, not 27. These get clicked hundreds of times a night by someone
+   who is tired; a bigger target and a darker label cost nothing now that
+   the rows are compact. */
 .hub-btn{
-  height:27px;padding:0 10px;border-radius:7px;font-size:11.5px;font-weight:700;
-  font-family:inherit;cursor:pointer;border:1px solid var(--border);
-  background:var(--card);color:var(--text2);transition:all .13s
+  height:29px;padding:0 11px;border-radius:8px;font-size:12px;font-weight:700;
+  font-family:inherit;cursor:pointer;border:1.5px solid var(--border);
+  background:var(--card);color:var(--text);transition:all .13s
 }
-.hub-btn:hover{
-  background:color-mix(in srgb, var(--acc) 10%, transparent);
-  border-color:var(--acc);color:var(--acc)
-}
+.hub-btn:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.hub-btn:hover{background:var(--green-bg);border-color:var(--spice-cardamom);color:var(--spice-cardamom-dk)}
+
+/* ── No white buttons on this screen ──────────────────────────
+   Every action carries a colour, and the colour means something: a
+   format button is the colour of its file type, the icon actions have
+   one each so a card stops reading as three grey squares. */
+/* Every action on a card belongs to that card: the primary ones in its
+   deep tone, the icon actions in its lighter one. One hue family per
+   card instead of a red badge and two green buttons on a violet ground. */
+.hub-tile .hub-btn{color:#fff;border-color:transparent;background:var(--to)}
+.hub-tile .hub-btn:hover{color:#fff;filter:brightness(1.12);
+  box-shadow:0 3px 10px color-mix(in srgb, var(--from) 45%, transparent)}
+.hub-tile .hub-btn-i{background:var(--from)}
+.hub-tile .hub-f-btn{
+  background:rgba(255,255,255,.75);color:var(--to);border:1.5px solid var(--md)}
+.hub-tile .hub-f-btn:hover{background:#fff;color:var(--to)}
+.hub-tile .hub-f-btn.is-on{background:var(--to);color:#fff;border-color:transparent}
+.hub-open-head .hub-btn{background:var(--green-bg);border-color:var(--spice-saffron-md);
+  color:var(--spice-cardamom-dk)}
+.hub-open-head .hub-btn:hover{background:var(--spice-cardamom);color:#fff;
+  border-color:var(--spice-cardamom)}
+.hub-btn-p{box-shadow:0 1px 2px rgba(15,23,42,.10)}
+.hub-btn-p:hover{box-shadow:0 3px 10px color-mix(in srgb, var(--spice-cardamom) 40%, transparent)}
 /* Preview and Print, icon-only — see hubTileHtml for why. */
-.hub-btn-i{width:27px;padding:0;display:inline-flex;align-items:center;justify-content:center}
-.hub-btn-i svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;
+.hub-btn-i{width:29px;padding:0;display:inline-flex;align-items:center;justify-content:center}
+.hub-btn-i svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;
   stroke-linecap:round;stroke-linejoin:round}
 /* The primary format sits in the group's own colour, so a scan down the
    page reads as one system rather than a wall of identical grey chips. */
-.hub-btn-p{background:var(--acc);border-color:var(--acc);color:#fff}
-.hub-btn-p:hover{
-  background:color-mix(in srgb, var(--acc) 82%, black);
-  border-color:color-mix(in srgb, var(--acc) 82%, black);color:#fff
-}
+.hub-btn-p{background:var(--spice-cardamom);border-color:var(--spice-cardamom);color:#fff}
+.hub-btn-p:hover{background:var(--spice-cardamom-dk);border-color:var(--spice-cardamom-dk)}
 .hub-chip{
   align-self:flex-start;font-size:10.5px;font-weight:700;border-radius:20px;
   padding:2px 9px;letter-spacing:.2px
 }
+.hub-tile .hub-chip{
+  background:rgba(255,255,255,.75);color:var(--to);border:1px solid var(--md)}
 .hub-chip-ok{background:var(--green-bg);color:var(--green)}
 .hub-chip-part{background:var(--spice-turmeric-lt);color:#92400E}
 .hub-chip-none{background:var(--bg);color:var(--text3)}
+.hub-f-btn{position:relative}
+.hub-f-btn.is-on{background:var(--acc);border-color:var(--acc);color:#fff}
+.hub-f-n{
+  position:absolute;top:-5px;right:-5px;min-width:14px;height:14px;border-radius:8px;
+  background:var(--acc);color:#fff;font-size:9px;font-weight:800;line-height:14px;
+  text-align:center;border:1.5px solid var(--card);padding:0 2px
+}
+.hub-f-chip{
+  font-size:10.5px;line-height:1.5;color:var(--to);
+  background:rgba(255,255,255,.75);border:1px solid var(--md);
+  border-radius:8px;padding:3px 8px;align-self:flex-start
+}
+#hub-filter-modal{--acc:var(--spice-cardamom)}
+.hub-f-title{font-size:13px;font-weight:800;color:var(--acc);margin-bottom:12px}
+.hub-f-row{display:flex;flex-direction:column;gap:5px;margin-bottom:13px}
+.hub-f-row span{font-size:12px;font-weight:700;color:var(--text2)}
+.hub-f-row select,.hub-f-row input{
+  padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;
+  font-size:13.5px;font-family:inherit;background:var(--card);color:var(--text);max-width:100%}
+.hub-f-row select:focus,.hub-f-row input:focus{outline:none;border-color:var(--acc)}
+.hub-f-pick{position:relative}
+.hub-f-pick-in{position:relative;display:flex;align-items:center}
+.hub-f-q{
+  width:100%;padding:9px 30px 9px 10px;border:1.5px solid var(--border);border-radius:8px;
+  font-size:13.5px;font-family:inherit;background:var(--card);color:var(--text)}
+.hub-f-q:focus{outline:none;border-color:var(--acc)}
+.hub-f-clear{
+  display:none;position:absolute;right:5px;border:none;background:none;cursor:pointer;
+  color:var(--text3);font-size:14px;line-height:1;padding:2px 4px}
+.hub-f-opts{
+  margin-top:5px;max-height:230px;overflow-y:auto;
+  border:1.5px solid var(--border);border-radius:8px;background:var(--bg)}
+.hub-f-opt{
+  display:block;width:100%;text-align:left;padding:10px 11px;border:none;background:none;
+  font-family:inherit;font-size:13.5px;color:var(--text);cursor:pointer}
+.hub-f-opt:hover{background:color-mix(in srgb, var(--acc) 14%, transparent);color:var(--acc)}
+.hub-f-opt{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.hub-f-tel{font-size:12px;color:var(--text3);font-variant-numeric:tabular-nums;flex:none}
+.hub-f-opt-none{padding:9px 11px;font-size:12.5px;color:var(--text3)}
+.hub-f-hint{font-style:normal;font-weight:600;color:var(--acc);margin-left:6px;text-transform:none;letter-spacing:0}
+.hub-f-chips{display:flex;flex-wrap:wrap;gap:4px}
+.hub-f-c{
+  padding:8px 14px;border:1.5px solid var(--border);border-radius:20px;background:var(--card);
+  font-family:inherit;font-size:13px;font-weight:600;color:var(--text);cursor:pointer}
+.hub-f-c:hover{border-color:var(--acc);color:var(--acc)}
+.hub-f-c.is-on{background:var(--acc);border-color:var(--acc);color:#fff}
+.hub-f-tokens{display:flex;flex-wrap:wrap;gap:4px}
+.hub-f-tokens:not(:empty){margin-bottom:5px}
+.hub-f-tok{
+  display:inline-flex;align-items:center;gap:5px;padding:6px 6px 6px 12px;border-radius:20px;
+  background:color-mix(in srgb, var(--acc) 14%, transparent);
+  border:1px solid color-mix(in srgb, var(--acc) 30%, transparent);
+  font-size:12.5px;font-weight:700;color:var(--acc);max-width:100%}
+.hub-f-tok button{
+  border:none;background:none;cursor:pointer;color:inherit;font-size:13px;line-height:1;padding:0 2px}
+.hub-f-acts{display:flex;gap:5px;margin-top:10px}
+.hub-return{
+  position:fixed;left:50%;transform:translateX(-50%);bottom:22px;z-index:1100;
+  display:inline-flex;align-items:center;gap:9px;
+  height:44px;padding:0 20px;border:none;border-radius:24px;cursor:pointer;
+  font-family:inherit;font-size:14px;font-weight:700;color:#fff;
+  background:var(--spice-cardamom);
+  box-shadow:0 8px 26px rgba(15,23,42,.30)
+}
+.hub-return:hover{background:var(--spice-cardamom-dk)}
+.hub-return:focus-visible{outline:3px solid var(--spice-saffron-md);outline-offset:3px}
+.hub-return svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2.5;
+  stroke-linecap:round;stroke-linejoin:round}
+/* The widget grid. Nine of these fit one screen; the previous stack of
+   accordion headers did not, which is what made the page feel long before
+   anything had even been opened. */
+.hub-wgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(236px,1fr));gap:16px}
+.hub-w{
+  display:flex;gap:12px;align-items:flex-start;
+  padding:16px 16px 16px 18px;border-radius:14px;border:none;
+  cursor:pointer;font-family:inherit;text-align:left;min-width:0}
+.hub-w:focus-visible{outline:3px solid var(--from);outline-offset:3px}
+.hub-w-b{flex:1;min-width:0}
+.hub-w[data-g="preauction"]{--acc:#0EA5E9} .hub-w[data-g="documents"]{--acc:#8B5CF6}
+.hub-w[data-g="reports"]{--acc:#059669}    .hub-w[data-g="statutory"]{--acc:#D97706}
+.hub-w[data-g="banking"]{--acc:#0D9488}    .hub-w[data-g="logistics"]{--acc:#EA580C}
+.hub-w[data-g="tally"]{--acc:#4F46E5}      .hub-w[data-g="books"]{--acc:#DB2777}
+.hub-w[data-g="masters"]{--acc:#0891B2}
+.hub-w-b{display:block}
+.hub-w-name{
+  display:block;font-size:11px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.6px;opacity:.92;color:#fff;line-height:1.3}
+.hub-w-hint{display:block;font-size:11px;color:#fff;opacity:.8;line-height:1.35;margin-top:5px}
+.hub-w-n{
+  display:block;font-size:20px;font-weight:800;letter-spacing:-.5px;line-height:1.15;
+  color:#fff;margin-top:3px}
+.hub-w-sel{
+  display:inline-flex;align-items:center;margin-top:8px;
+  font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;
+  background:rgba(255,255,255,.22);color:#fff}
+
+/* Header of an opened group. */
+.hub-open-head{
+  display:flex;align-items:center;gap:11px;flex-wrap:wrap;
+  padding-bottom:12px;margin-bottom:4px;border-bottom:1px solid var(--border)}
+.hub-open-name{font-size:17px;font-weight:800;color:var(--text)}
+/* The cards scroll; the group's header stays put above them. */
+.hub-open-body{max-height:min(58vh,600px);overflow-y:auto;overflow-x:hidden;padding-right:4px}
+.hub-open-body::-webkit-scrollbar{width:9px}
+.hub-open-body::-webkit-scrollbar-thumb{
+  background:color-mix(in srgb, var(--acc) 32%, transparent);border-radius:5px}
+.hub-open-body::-webkit-scrollbar-thumb:hover{
+  background:color-mix(in srgb, var(--acc) 60%, transparent)}
+.hub-open{--acc:var(--spice-cardamom)}
+.hub-open[data-g="preauction"]{--acc:#0EA5E9} .hub-open[data-g="documents"]{--acc:#8B5CF6}
+.hub-open[data-g="reports"]{--acc:#059669}    .hub-open[data-g="statutory"]{--acc:#D97706}
+.hub-open[data-g="banking"]{--acc:#0D9488}    .hub-open[data-g="logistics"]{--acc:#EA580C}
+.hub-open[data-g="tally"]{--acc:#4F46E5}      .hub-open[data-g="books"]{--acc:#DB2777}
+.hub-open[data-g="masters"]{--acc:#0891B2}
 .hub-toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
 .hub-empty{padding:26px;text-align:center;color:var(--text3);font-size:13px}
 
@@ -3793,6 +3970,22 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
            behind it. Edit hands off to the app's existing lot-edit modal
            rather than growing a second editor. -->
       <div id="hub-lot-scrim" class="hub-scrim" style="display:none" onclick="hubLotClose()"></div>
+      <!-- Filter dialog. A real .modal-bg/.modal like every other dialog in
+           the app: centred, dimmed behind, roomy — and nothing to position.
+           It replaced a floating popover that was too small twice over and
+           carried its own placing, clipping, scroll-tracking and dismissal
+           code, every one of which had a bug. -->
+      <div class="modal-bg" id="hub-filter-modal">
+        <div class="modal" style="max-width:560px">
+          <h2 id="hub-f-heading">Filter</h2>
+          <div id="hub-f-body"></div>
+          <div style="display:flex;gap:8px;margin-top:20px">
+            <button class="btn btn-g" id="hub-f-apply" style="flex:1">Apply filters</button>
+            <button class="btn btn-o" onclick="hubFilterReset(window._hubFilterId)">Reset</button>
+            <button class="btn btn-o" onclick="hubFilterClose()">Cancel</button>
+          </div>
+        </div>
+      </div>
       <aside id="hub-lot-drawer" class="hub-drawer" style="display:none" aria-label="Lot detail"></aside>
     </div>
 
@@ -10618,6 +10811,8 @@ function go(tab){
   // Repaint the per-screen guide banner. Lives outside .tc panels, so it
   // survives every loader's innerHTML rebuild — we just refresh its copy.
   if(typeof renderScreenGuide==='function'){try{renderScreenGuide(tab);}catch(_){}}
+  // Show/retire the "Back to Auction Desk" pill for this tab.
+  if(typeof renderHubReturn==='function'){try{renderHubReturn();}catch(_){}}
   // Drop any screen-local filter nudge when leaving its screen; keep the
   // cross-screen reminders (unsaved settings, un-recalculated lots).
   if(typeof clearScreenLocalNudge==='function'){try{clearScreenLocalNudge();}catch(_){}}
@@ -11055,7 +11250,9 @@ function hubLotClose(){
   for (const tr of document.querySelectorAll('#hub-lot-rows tr.is-open')) tr.classList.remove('is-open');
 }
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && window._hubLotOpenId) hubLotClose();
+  if (e.key !== 'Escape') return;
+  if (window._hubFilterId) { hubFilterClose(); return; }
+  if (window._hubLotOpenId) hubLotClose();
 });
 
 // Hand off to the app's existing lot-edit modal — one editor in the
@@ -11112,6 +11309,8 @@ async function loadHubCatalog(){
     // switching trade or date range re-gates every tile, so start clean.
     if (window._hubSel) window._hubSel.clear();
     window._hubPick = '';
+    window._hubFilters = {};
+    _hubFilterOptions = null;
     renderHubKpi(d.kpi);
     renderHubGroups(d.groups || []);
     renderHubFooter();
@@ -11131,28 +11330,51 @@ function renderHubKpi(kpi){
   // grows from ₹1,20,000 to ₹20,70,44,630 never spills its tile.
   const sizeClass = (txt) => {
     const n = String(txt).replace(/<[^>]*>/g, '').length;
-    return n <= 6 ? 'n-1' : n <= 9 ? 'n-2' : n <= 12 ? 'n-3' : 'n-4';
+    return n <= 5 ? 'n-1' : n <= 8 ? 'n-2' : n <= 11 ? 'n-3' : 'n-4';
   };
-  const cell = (n, l, cls) =>
-    `<div class="stat ${cls || 'k-neutral'}"><div class="n ${sizeClass(n)}">${n}</div>`
-    + `<div class="l">${esc(l)}</div></div>`;
+  // icon + theme per figure — the Insights headline card, verbatim.
+  const cell = (n, l, icon, theme) =>
+    `<div class="stat hub-grad t-${theme}">`
+    + `<div class="hub-ico">${icon}</div>`
+    + `<div class="stat-b"><div class="l">${esc(l)}</div>`
+    + `<div class="n ${sizeClass(n)}">${n}</div></div></div>`;
   // Total Value runs to twelve characters at auction scale
   // (₹20,70,44,630) and will not fit a lot-count-sized tile. It gets a
   // double-width cell, and the paise are dropped: nobody reads a trade
   // total to two decimals, and ".00" is what tipped it over the edge.
   el.innerHTML =
-    cell(fmtI(kpi.allocatedLots), 'Allocated Lots') +
-    cell(fmtI(kpi.soldLots),      'Sold Lots',   'k-sold') +
-    cell(fmtI(kpi.withdrawnLots), 'WD Lots',     'k-wd') +
-    cell(fmtI(kpi.soldWeight, 3), 'Sold Weight') +
-    cell(fmtI(kpi.totalBags),     'Bags') +
-    cell(fmtI(kpi.sellers),       'Sellers') +
-    cell(fmtI(kpi.buyers),        'Buyers') +
-    cell('₹' + fmtI(Math.round(kpi.totalValue)), 'Total Value', 'stat-value k-value');
+    cell(fmtI(kpi.allocatedLots), 'Allocated Lots', '🌾', 'indigo') +
+    cell(fmtI(kpi.soldLots),      'Sold Lots',      '✅', 'emerald') +
+    cell(fmtI(kpi.withdrawnLots), 'WD Lots',        '↩️', 'amber') +
+    cell(fmtI(kpi.soldWeight, 3), 'Sold Weight',    '⚖️', 'teal') +
+    cell(fmtI(kpi.totalBags),     'Bags',           '📦', 'sky') +
+    cell(fmtI(kpi.sellers),       'Sellers',        '🧑‍🌾', 'violet') +
+    cell(fmtI(kpi.buyers),        'Buyers',         '🛒', 'orange') +
+    cell('₹' + fmtI(Math.round(kpi.totalValue)), 'Total Value', '💰', 'rose');
 }
 
 // Button text per format. Mostly the format shouted, except IRP — "IRP" is
 // the portal's name for it, not something an operator would search for.
+// Group → Insights gradient theme. Same nine the branch cards cycle
+// through, assigned rather than cycled so a group keeps its colour.
+const HUB_THEME = {
+  preauction:'sky', documents:'violet', reports:'emerald', statutory:'amber',
+  banking:'teal', logistics:'orange', tally:'indigo', books:'pink', masters:'rose',
+  'fmt-pdf':'rose', 'fmt-xlsx':'emerald', 'fmt-csv':'sky', 'fmt-xml':'indigo',
+  'fmt-json':'violet', 'fmt-irp':'amber', 'fmt-dbf':'teal', 'fmt-generated':'pink',
+};
+// Light/mid tints for the document cards, mirroring the Insights branch card.
+const HUB_TINT = {
+  emerald:['#ECFDF5','#A7F3D0','#10B981','#047857'], orange:['#FFF7ED','#FED7AA','#FB923C','#C2410C'],
+  indigo :['#EEF2FF','#C7D2FE','#6366F1','#3730A3'], pink  :['#FDF2F8','#FBCFE8','#EC4899','#9D174D'],
+  teal   :['#F0FDFA','#99F6E4','#14B8A6','#0F766E'], violet:['#FAF5FF','#E9D5FF','#A855F7','#6B21A8'],
+  amber  :['#FFFBEB','#FDE68A','#F59E0B','#B45309'], sky   :['#F0F9FF','#BAE6FD','#0EA5E9','#0369A1'],
+  rose   :['#FFF1F2','#FECDD3','#F43F5E','#9F1239'],
+};
+const hubTheme = (gid) => HUB_THEME[gid] || 'emerald';
+
+const HUB_FMT_SHORT = { xlsx: 'XLS', pdf: 'PDF', csv: 'CSV', xml: 'XML',
+                        dbf: 'DBF', json: 'JSON', irp: 'GST' };
 const HUB_FMT_LABEL = {
   xlsx: 'XLSX', pdf: 'PDF', csv: 'CSV', xml: 'XML', dbf: 'DBF',
   json: 'JSON', irp: 'e-Invoice JSON',
@@ -11170,30 +11392,54 @@ function _hubChip(st){
 function hubTileHtml(it){
   const btn = (label, onclick, primary) =>
     `<button class="hub-btn${primary ? ' hub-btn-p' : ''}" onclick="${onclick}">${esc(label)}</button>`;
-  const iconBtn = (label, onclick, glyph) =>
-    `<button class="hub-btn hub-btn-i" onclick="${onclick}" title="${esc(label)}" aria-label="${esc(label)}">`
+  const iconBtn = (label, onclick, glyph, tone) =>
+    `<button class="hub-btn hub-btn-i hub-bi-${esc(tone)}" onclick="${onclick}"`
+    + ` title="${esc(label)}" aria-label="${esc(label)}">`
     + `<svg viewBox="0 0 24 24">${glyph}</svg></button>`;
   // Only downloadable tiles are selectable. A generated-document tile has
   // no href of its own (its PDFs come from the bulk route), so it cannot
   // join a bundle — it deep-links instead.
   const pick = (it.available && it.href)
     ? `<input type="checkbox" class="hub-cb" data-id="${esc(it.id)}"${it._only ? ` data-fmt="${esc(it._only)}"` : ''}
+              ${window._hubSel.has(it.id) ? 'checked' : ''}
               onchange="hubToggleSel(this)"
-              title="Add to bundle" style="width:15px;height:15px;cursor:pointer;flex:none">`
+              title="Add to bundle"
+              style="width:18px;height:18px;cursor:pointer;flex:none;margin-left:auto">`
     : '';
-  const parts = [`<div style="display:flex;align-items:flex-start;gap:8px">${pick}<div class="hub-tile-l">${esc(it.label)}</div></div>`];
+  // The chip is the row's anchor: colour by FILE TYPE, which is
+  // information you can scan for, not decoration. In a format-grouped
+  // list they all match — which is why the row also takes its source
+  // group's colour on the left edge, so a PDF list still shows at a
+  // glance which are pre-auction and which are reports.
+  const primary = (it._only || (it.formats || [])[0] || '').toLowerCase();
+  const chip = primary
+    ? `<span class="hub-fmt hub-fmt-${esc(primary)}">${esc(HUB_FMT_SHORT[primary] || primary.toUpperCase())}</span>`
+    : `<span class="hub-fmt hub-fmt-doc">DOC</span>`;
+
+  const parts = [];
 
   // Under a file-type heading the tile is that one format, so the purpose
   // group it came from becomes its subtitle — otherwise "Form D" filed
   // under "PDF" tells you nothing about what it is for.
-  if (it._group) parts.push(`<div class="hub-note" style="margin-top:-3px">${esc(it._group)}</div>`);
+  if (it._group) parts.push(`<span class="hub-src">${esc(it._group)}</span>`);
+  const fApplied = window._hubFilters[it.id] || {};
+  const fKeys = Object.keys(fApplied);
+  if (fKeys.length) {
+    parts.push('<div class="hub-f-chip">'
+      + fKeys.map(k => {
+          const vals = String(fApplied[k]).split(',').filter(Boolean);
+          const shown = vals.length > 1 ? `${vals.length} selected` : vals[0];
+          return `${esc(HUB_FILTER_LABEL[k] || k)}: <b>${esc(shown)}</b>`;
+        }).join(' · ')
+      + '</div>');
+  }
   if (it.status) parts.push(_hubChip(it.status));
-  if (it.note)   parts.push(`<div class="hub-note">${esc(it.note)}</div>`);
+  if (it.note)   parts.push(`<span class="hub-note" title="${esc(it.note)}">${esc(it.note)}</span>`);
 
   if (it.lockReason) {
-    parts.push(`<div class="hub-lock"><span>🔒</span><span>${esc(it.lockReason)}</span></div>`);
+    parts.push(`<span class="hub-lock">🔒 ${esc(it.lockReason)}</span>`);
   } else if (it.needs && it.needs.length) {
-    parts.push(`<div class="hub-lock"><span>📅</span><span>Pick a date range above</span></div>`);
+    parts.push(`<span class="hub-lock">📅 Pick a date range above</span>`);
   }
 
   const acts = [];
@@ -11203,8 +11449,11 @@ function hubTileHtml(it){
     // left on "each document's usual format". One rule, two places.
     const shown = it._only ? [it._only] : it.formats;
     shown.forEach((fmt, i) => {
-      acts.push(btn(HUB_FMT_LABEL[fmt] || fmt.toUpperCase(), `hubDownload('${it.id}','${fmt}')`,
-                    it._only ? true : i === 0));
+      // Under a file-type heading the chip on the left already names the
+      // format, so the button says what it DOES rather than repeating it.
+      const label = it._only ? 'Download' : (HUB_FMT_LABEL[fmt] || fmt.toUpperCase());
+      acts.push(`<button class="hub-btn hub-btn-f hub-bf-${esc(fmt)}"`
+              + ` onclick="hubDownload('${it.id}','${fmt}')">${esc(label)}</button>`);
     });
     // A tile offering PDF also offers Preview and Print — both open the very
     // same PDF, so they are actions on a format, not formats of their own.
@@ -11212,23 +11461,38 @@ function hubTileHtml(it){
     // and made every tile in the grid taller for no added clarity.
     if ((it._only ? it._only === 'pdf' : it.formats.includes('pdf'))) {
       acts.push(iconBtn('Preview', `hubPdfOpen('${it.id}',0)`,
-        '<circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/>'));
+        '<circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/>', 'view'));
       acts.push(iconBtn('Print', `hubPdfOpen('${it.id}',1)`,
-        '<path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><path d="M6 14h12v8H6z"/>'));
+        '<path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><path d="M6 14h12v8H6z"/>', 'print'));
     }
   }
   if (it.available && it.bulkRoute && it.status && it.status.generated > 0) {
     acts.push(btn('All PDFs', `hubBulkPdf('${it.id}')`, true));
   }
+  // Only offered where the manifest says the endpoint reads filters.
+  if (it.available && it.filters && it.filters.length) {
+    const n = hubFilterCount(it.id);
+    acts.push(`<button class="hub-btn hub-btn-i hub-f-btn${n ? ' is-on' : ''}"`
+      + ` onclick="event.stopPropagation();hubFilterOpen('${it.id}')"`
+      + ` title="Filter this document" aria-label="Filter this document">`
+      + `<svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.46V19l4 2v-8.54z"/></svg>`
+      + (n ? `<span class="hub-f-n">${n}</span>` : '') + `</button>`);
+  }
   if (it.deepLink) acts.push(btn('Open →', `hubOpen('${it.deepLink}')`));
-  if (acts.length) parts.push(`<div class="hub-acts">${acts.join('')}</div>`);
 
   const cls = it.available ? 'hub-tile' : 'hub-tile is-locked';
   // data-search carries the haystack the filter box matches against, so
   // filtering never has to re-read the DOM's rendered text.
-  return `<div class="${cls}" data-hub-id="${esc(it.id)}" `
-       + `data-search="${esc((it.label + ' ' + it.id + ' ' + (it.family || '')).toLowerCase())}">`
-       + parts.join('') + '</div>';
+  const tint = HUB_TINT[hubTheme(it._groupId)] || HUB_TINT.emerald;
+  const tintStyle = ` style="--lt:${tint[0]};--md:${tint[1]};--from:${tint[2]};--to:${tint[3]}"`;
+  return `<div class="${cls}" data-hub-id="${esc(it.id)}"${tintStyle}`
+       + (it._groupId ? ` data-src="${esc(it._groupId)}"` : '')
+       + ` data-search="${esc((it.label + ' ' + it.id + ' ' + (it.family || '')).toLowerCase())}">`
+       + `<div class="hub-tile-main">${chip}${pick}</div>`
+       + `<div class="hub-tile-l">${esc(it.label)}</div>`
+       + (parts.length ? `<div class="hub-tile-meta">${parts.join('')}</div>` : '')
+       + (acts.length ? `<div class="hub-acts">${acts.join('')}</div>` : '')
+       + '</div>';
 }
 
 // One glyph per group. Paired with the accent colour in CSS, these are what
@@ -11295,12 +11559,12 @@ function hubGroupsByFormat(groups){
   for (const g of groups) {
     for (const it of g.items) {
       const fmts = (it.formats || []).filter(f => it.kind !== 'document');
-      if (!fmts.length) { docsOnly.push({ ...it, _group: g.label }); continue; }
+      if (!fmts.length) { docsOnly.push({ ...it, _group: g.label, _groupId: g.id, sub: '' }); continue; }
       for (const f of fmts) {
         if (!byFmt.has(f)) byFmt.set(f, []);
         // Carry the purpose group along so a tile still says where it
         // belongs once the headings no longer tell you.
-        byFmt.get(f).push({ ...it, _group: g.label, _only: f });
+        byFmt.get(f).push({ ...it, _group: g.label, _groupId: g.id, _only: f, sub: '' });
       }
     }
   }
@@ -11321,6 +11585,83 @@ function hubGroupsByFormat(groups){
   return out;
 }
 
+// Which group is open, and which subgroup within it. null = one level up.
+// Three levels — groups → subgroups → documents — each of which fits a
+// screen, rather than one long page you scroll through.
+window._hubOpenGroup = null;
+window._hubOpenSub = null;
+
+function hubOpenGroup(id){
+  window._hubOpenGroup = id;
+  window._hubOpenSub = null;
+  renderHubGroups(window._hubCat?.groups || []);
+  renderHubFooter();
+  hubApplyFilter();
+  document.getElementById('hub-groups')?.scrollIntoView({ block: 'nearest' });
+}
+function hubOpenSub(name){
+  window._hubOpenSub = name;
+  renderHubGroups(window._hubCat?.groups || []);
+  renderHubFooter();
+  hubApplyFilter();
+  document.getElementById('hub-groups')?.scrollIntoView({ block: 'nearest' });
+}
+function hubCloseSub(){
+  window._hubOpenSub = null;
+  renderHubGroups(window._hubCat?.groups || []);
+  renderHubFooter();
+  hubApplyFilter();
+}
+function hubCloseGroup(){
+  window._hubOpenGroup = null;
+  window._hubOpenSub = null;
+  renderHubGroups(window._hubCat?.groups || []);
+  renderHubFooter();
+  hubApplyFilter();
+}
+
+// One widget per group: icon, name, and how much of it is ready.
+function hubWidgetHtml(g){
+  const live = g.items.filter(i => i.available).length;
+  const sel  = g.items.filter(i => window._hubSel.has(i.id)).length;
+  return `<button type="button" class="hub-w hub-grad t-${hubTheme(g.id)}" data-g="${esc(g.id)}"
+            onclick="hubOpenGroup('${esc(g.id)}')">
+    <span class="hub-ico">${hubIcon(g.id).replace(/^<span class="hub-sec-ico">|<\/span>$/g, '')}</span>
+    <span class="hub-w-b">
+      <span class="hub-w-name">${esc(g.label)}</span>
+      <span class="hub-w-n">${live} of ${g.items.length} ready</span>
+      ${g.hint ? `<span class="hub-w-hint">${esc(g.hint)}</span>` : ''}
+      ${sel ? `<span class="hub-w-sel">${sel} picked</span>` : ''}
+    </span>
+  </button>`;
+}
+
+// Split a group's items by subgroup, in manifest order.
+function hubSubsOf(g){
+  const order = [], by = new Map();
+  for (const it of g.items) {
+    const k = it.sub || '';
+    if (!by.has(k)) { by.set(k, []); order.push(k); }
+    by.get(k).push(it);
+  }
+  return order.map(k => ({ name: k, items: by.get(k) }));
+}
+
+function hubSubWidgetHtml(g, sub){
+  const live = sub.items.filter(i => i.available).length;
+  const sel  = sub.items.filter(i => window._hubSel.has(i.id)).length;
+  return `<button type="button" class="hub-w hub-w-sub hub-grad t-${hubTheme(g.id)}"
+            data-g="${esc(g.id)}" data-sub="${esc(sub.name)}"
+            onclick="hubOpenSub('${esc(sub.name).replace(/'/g, "\\'")}')">
+    <span class="hub-ico">${hubIcon(g.id).replace(/^<span class="hub-sec-ico">|<\/span>$/g, '')}</span>
+    <span class="hub-w-b">
+      <span class="hub-w-name">${esc(sub.name)}</span>
+      <span class="hub-w-n">${live} of ${sub.items.length} ready</span>
+      ${sel ? `<span class="hub-w-sel">${sel} picked</span>` : ''}
+    </span>
+  </button>`;
+}
+
 function renderHubGroups(groups){
   const host = document.getElementById('hub-groups');
   if (!host) return;
@@ -11329,35 +11670,65 @@ function renderHubGroups(groups){
   document.getElementById('hub-grp-format')?.classList.toggle('is-on', mode === 'format');
   if (mode === 'format') groups = hubGroupsByFormat(groups);
   if (!groups.length) { host.innerHTML = '<div class="hub-empty">No documents available.</div>'; return; }
-  let collapsed = [];
-  try { collapsed = JSON.parse(localStorage.getItem('hubCollapsed') || 'null') || null; } catch(_) {}
-  host.innerHTML = groups.map(g => {
-    // First visit honours the manifest's `collapsed` hint (Accounting and
-    // Masters start shut); after that the user's own choice wins.
-    const isShut = collapsed ? collapsed.includes(g.id) : !!g.collapsed;
-    const live = g.items.filter(i => i.available).length;
-    // "Pick all" counts what is actually SELECTABLE, not what is ready —
-    // the Trade Documents group is entirely ready and entirely un-tickable,
-    // and a button there would do nothing. stopPropagation keeps the click
-    // off the header, which would otherwise collapse the group just filled.
-    const pickable = g.items.filter(i => i.available && i.href).length;
-    const pickAll = pickable > 1
-      ? `<button class="hub-btn" onclick="event.stopPropagation();hubSelectGroup('${esc(g.id)}')"
-                 style="margin-left:8px">Pick all ${pickable}</button>`
-      : '';
-    return `<div class="card hub-sec${isShut ? ' is-collapsed' : ''}" id="hub-sec-${esc(g.id)}"
-                 data-g="${esc(g.id)}" style="padding:14px">
-      <div class="hub-sec-head" onclick="hubToggleSec('${esc(g.id)}')">
-        <span class="hub-sec-chev">▼</span>
-        ${hubIcon(g.id)}
-        <span class="hub-sec-name">${esc(g.label)}</span>
-        ${g.hint ? `<span class="hub-sec-hint">${esc(g.hint)}</span>` : ''}
-        <span class="hub-sec-count">${live} of ${g.items.length} ready</span>
-        ${pickAll}
-      </div>
-      <div class="hub-sec-body"><div class="hub-grid">${g.items.map(hubTileHtml).join('')}</div></div>
-    </div>`;
-  }).join('');
+
+  // Searching cuts straight past the grid to the matches themselves —
+  // typing a name should never mean opening a widget first.
+  const term = (document.getElementById('hub-filter')?.value || '').trim();
+  const searching = !!term || !!window._hubPick;
+  if (searching) {
+    const all = groups.flatMap(g => g.items.map(i =>
+      ({ ...i, _group: i._group || g.label, _groupId: i._groupId || g.id })));
+    host.innerHTML = `<div class="hub-open">
+        <div class="hub-open-head"><span class="hub-open-name">Search results</span>
+          <span class="hub-sec-count">${all.length} document${all.length === 1 ? '' : 's'}</span></div>
+        <div class="hub-open-body"><div class="hub-grid">${all.map(hubTileHtml).join('')}</div></div>
+      </div>`;
+    return;
+  }
+
+  // One group open → just that group. Nothing else on screen to scroll past.
+  const openId = window._hubOpenGroup;
+  const open = openId && groups.find(g => g.id === openId);
+  if (open) {
+    // Stamp the source group onto every card so its edge and caption take
+    // the group's colour here as well as in the format view.
+    open.items = open.items.map(i => ({ ...i, _groupId: i._groupId || open.id }));
+    const subs = hubSubsOf(open);
+    // One subgroup is not a choice — go straight to the documents rather
+    // than making someone click through a grid of one.
+    const single = subs.length <= 1;
+    const openSub = single ? subs[0]
+                           : subs.find(x => x.name === window._hubOpenSub);
+    const shown = openSub ? openSub.items : open.items;
+    const live = shown.filter(i => i.available).length;
+    const pickable = shown.filter(i => i.available && i.href).length;
+    const atDocs = !!openSub;
+
+    const crumbs = atDocs && !single
+      ? `<button type="button" class="hub-btn" onclick="hubCloseSub()">← ${esc(open.label)}</button>
+         <span class="hub-open-name">${esc(openSub.name)}</span>`
+      : `${hubIcon(open.id)}<span class="hub-open-name">${esc(open.label)}</span>`;
+
+    host.innerHTML = `<div class="hub-open" data-g="${esc(open.id)}">
+        <div class="hub-open-head">
+          <button type="button" class="hub-btn" onclick="hubCloseGroup()">← All documents</button>
+          ${crumbs}
+          <span class="hub-sec-count">${live} of ${shown.length} ready</span>
+          ${atDocs && pickable > 1
+            ? `<button class="hub-btn" onclick="hubSelectGroup('${esc(open.id)}')">Pick all ${pickable}</button>` : ''}
+        </div>
+        <div class="hub-open-body">${
+          atDocs
+            ? `<div class="hub-grid">${shown.map(hubTileHtml).join('')}</div>`
+            : `<div class="hub-wgrid">${subs.map(sb => hubSubWidgetHtml(open, sb)).join('')}</div>`
+        }</div>
+      </div>`;
+    return;
+  }
+
+  // Otherwise the grid of widgets.
+  host.innerHTML = `<div class="hub-wgrid">${groups.map(hubWidgetHtml).join('')}</div>`;
+  return;
 }
 
 // ── Bundle selection ─────────────────────────────────────────────
@@ -11373,7 +11744,8 @@ function hubToggleSel(cb){
   hubRenderSelbar();
 }
 function hubSelectGroup(gid){
-  const sec = document.getElementById('hub-sec-' + gid);
+  const sec = document.querySelector(`.hub-open[data-g="${CSS.escape(gid)}"]`)
+           || document.getElementById('hub-sec-' + gid);
   if (!sec) return;
   // Only what is actually on screen — if a filter is active, "Pick all"
   // means "pick all of these", not "pick all of the ones I hid".
@@ -11381,7 +11753,6 @@ function hubSelectGroup(gid){
     if (cb.closest('.hub-tile').style.display === 'none') continue;
     cb.checked = true; window._hubSel.set(cb.dataset.id, cb.dataset.fmt || '');
   }
-  sec.classList.remove('is-collapsed');
   hubRenderSelbar();
 }
 function hubClearSel(){
@@ -11390,6 +11761,10 @@ function hubClearSel(){
   hubRenderSelbar();
 }
 function hubRenderSelbar(){
+  // Keep the widget grid's per-group "picked" counts honest.
+  if (!window._hubOpenGroup && window._hubCat && document.querySelector('.hub-wgrid')) {
+    try { renderHubGroups(window._hubCat.groups || []); } catch (_) {}
+  }
   const bar = document.getElementById('hub-selbar');
   const n   = window._hubSel.size;
   if (!bar) return;
@@ -11417,7 +11792,12 @@ async function hubBundle(){
     const it = _hubItem(id);
     // A format captured at tick time wins over the toolbar preference —
     // ticking a tile under "PDF" must mean the PDF.
-    if (it && it.href) items.push({ id, format: fmt || _hubBundleFmt(it, pref) });
+    if (it && it.href) {
+      const entry = { id, format: fmt || _hubBundleFmt(it, pref) };
+      const f = window._hubFilters[id];
+      if (f && Object.keys(f).length) entry.filters = f;
+      items.push(entry);
+    }
   }
   if (!items.length) { toast('Nothing selectable in that selection'); return; }
 
@@ -11579,13 +11959,10 @@ function hubComboPick(id){
   window._hubPick = id;
   hubComboClose();
   hubApplyFilter();
-  // Open the group it lives in and bring it into view — picking a name
-  // should land you on the document, not just narrow the page.
+  // Picking a name lands you on the document itself — the search view
+  // already shows matches across every group, so just bring it into view.
   const tile = document.querySelector(`[data-hub-id="${CSS.escape(id)}"]`);
-  if (tile) {
-    tile.closest('.hub-sec')?.classList.remove('is-collapsed');
-    tile.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }
+  if (tile) tile.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 // ↑/↓ to walk the list, Enter to take the highlighted one (or the first
 // match when nothing is highlighted), Escape to give up.
@@ -11617,26 +11994,333 @@ document.addEventListener('click', (e) => {
 // Narrow the grid: to one document when the list picked one, otherwise by
 // free text. A group whose tiles all filter out hides itself too, so the
 // screen doesn't fill with empty headings.
+let _hubWasSearching = false;
 function hubApplyFilter(){
   const term = (document.getElementById('hub-filter')?.value || '').trim().toLowerCase();
   const pick = window._hubPick;
+  // Entering or leaving search swaps the whole view (grid ⇄ flat results),
+  // so re-render on the transition rather than filtering a stale layout.
+  const searching = !!term || !!pick;
+  if (searching !== _hubWasSearching) {
+    _hubWasSearching = searching;
+    if (window._hubCat) { renderHubGroups(window._hubCat.groups || []); renderHubFooter(); }
+  }
   const clr  = document.getElementById('hub-combo-clear');
   if (clr) clr.style.display = (term || pick) ? '' : 'none';
-  for (const sec of document.querySelectorAll('.hub-sec')) {
+  for (const sec of document.querySelectorAll('.hub-sec, .hub-open')) {
+    // A container showing WIDGETS holds no .hub-tile at all. Without this
+    // guard it counted zero matches and hid itself — which blanked the
+    // whole screen the moment subgroups became a widget level.
+    const tiles = sec.querySelectorAll('.hub-tile');
+    if (!tiles.length) { sec.style.display = ''; continue; }
     let shown = 0;
-    for (const tile of sec.querySelectorAll('.hub-tile')) {
+    for (const tile of tiles) {
       const hit = pick ? tile.dataset.hubId === pick
                        : (!term || (tile.dataset.search || '').includes(term));
       tile.style.display = hit ? '' : 'none';
       if (hit) shown++;
     }
     sec.style.display = shown ? '' : 'none';
-    // A search should surface what it found, not leave it inside a shut
-    // accordion — so matching groups open while a filter is active.
-    if ((term || pick) && shown) sec.classList.remove('is-collapsed');
   }
 }
 
+// ── Per-document filters ─────────────────────────────────────────
+// A document is rarely wanted whole. The manifest says which filters each
+// endpoint actually reads (branch / seller / buyer / sale type / party),
+// and this turns that declaration into a small panel on the tile. Values
+// are appended to the URL the server already built — the client refines a
+// document's scope, it never invents an endpoint.
+window._hubFilters = {};          // id → { key: value }
+let _hubFilterOptions = null;     // branches / sellers / buyers for this auction
+
+const HUB_FILTER_LABEL = {
+  branch: 'Branch', sellerId: 'Seller', sellers: 'Seller', buyerCode: 'Buyer',
+  saleType: 'Sale type', sale: 'Sale type', party: 'Party', traderId: 'Seller',
+};
+const HUB_SALE_TYPES = [['L', 'Local'], ['I', 'Inter-state'], ['E', 'Export']];
+
+async function hubLoadFilterOptions(){
+  const aid = document.getElementById('hub-auction')?.value || '';
+  if (!aid) { _hubFilterOptions = { branches: [], sellers: [], buyers: [] }; return _hubFilterOptions; }
+  if (_hubFilterOptions && _hubFilterOptions._aid === aid) return _hubFilterOptions;
+  try {
+    // Same endpoint the Spice Board screen uses for its own pickers, so the
+    // names and codes on offer are exactly the ones in this auction.
+    const d = await j('/api/spice-board-reports/filters?auctionId=' + encodeURIComponent(aid));
+    _hubFilterOptions = { _aid: aid, branches: d.branches || [], sellers: d.sellers || [], buyers: d.buyers || [] };
+  } catch (_) {
+    _hubFilterOptions = { _aid: aid, branches: [], sellers: [], buyers: [] };
+  }
+  return _hubFilterOptions;
+}
+
+const hubFilterCount = (id) => Object.values(window._hubFilters[id] || {}).filter(v => v !== '').length;
+
+// Append the tile's filters to the URL the catalog already built.
+function hubHref(it, fmt){
+  const base = it.href && it.href[fmt];
+  if (!base) return '';
+  const f = window._hubFilters[it.id] || {};
+  const parts = [];
+  for (const key of (it.filters || [])) {
+    const v = f[key];
+    if (v !== undefined && v !== '') parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(v)}`);
+  }
+  if (!parts.length) return base;
+  return base + (base.includes('?') ? '&' : '?') + parts.join('&');
+}
+
+async function hubFilterOpen(id){
+  const it = _hubItem(id);
+  if (!it || !it.filters) return;
+  const opts = await hubLoadFilterOptions();
+  const cur = window._hubFilters[id] || {};
+  // Which filters this document takes several values for. Everything else
+  // stays single — a multi-select on a field the export reads once would
+  // quietly drop all but the first choice.
+  const isMulti = (key) => (it.multi || []).includes(key);
+  const curList = (key) => String(cur[key] || '').split(',').map(v => v.trim()).filter(Boolean);
+
+  // A plain <select> is fine for a handful of branches or three sale
+  // types. It is not fine for 193 sellers — hence two renderers, picked
+  // by how long the list is.
+  const sel = (key, options, placeholder) =>
+    `<label class="hub-f-row"><span>${esc(HUB_FILTER_LABEL[key] || key)}</span>`
+    + `<select data-fk="${esc(key)}"><option value="">${esc(placeholder)}</option>`
+    + options.map(o => `<option value="${esc(o.v)}"${cur[key] === o.v ? ' selected' : ''}>${esc(o.t)}</option>`).join('')
+    + `</select></label>`;
+
+  // Type-to-search picker. The options live on the element as JSON so the
+  // filtering never needs to re-hit the network or re-read the catalog.
+  // Short + multi → tick-able chips. Nothing to search through, and the
+  // whole set is visible at once.
+  const chips = (key, options) => {
+    const on = new Set(curList(key));
+    return `<div class="hub-f-row"><span>${esc(HUB_FILTER_LABEL[key] || key)}`
+      + `<em class="hub-f-hint">pick any</em></span>`
+      + `<input type="hidden" data-fk="${esc(key)}" value="${esc(curList(key).join(','))}">`
+      + `<div class="hub-f-chips">`
+      + options.map(o => `<button type="button" class="hub-f-c${on.has(o.v) ? ' is-on' : ''}"`
+          + ` data-v="${esc(o.v)}" onclick="hubChipToggle(this)">${esc(o.t)}</button>`).join('')
+      + `</div></div>`;
+  };
+
+  const pick = (key, options, placeholder) => {
+    const multi = isMulti(key);
+    if (multi) return pickMulti(key, options, placeholder);
+    const chosen = options.find(o => o.v === cur[key]);
+    return `<div class="hub-f-row"><span>${esc(HUB_FILTER_LABEL[key] || key)}</span>`
+      + `<div class="hub-f-pick" data-opts="${esc(JSON.stringify(options))}">`
+      +   `<input type="hidden" data-fk="${esc(key)}" value="${esc(cur[key] || '')}">`
+      +   `<div class="hub-f-pick-in">`
+      +     `<input type="text" class="hub-f-q" autocomplete="off" placeholder="${esc(placeholder)}"`
+      +          ` value="${esc(chosen ? chosen.t : '')}"`
+      +          ` oninput="hubPickFilter(this)" onfocus="hubPickFilter(this)"`
+      +          ` onkeydown="hubPickKey(event,this)">`
+      +     `<button type="button" class="hub-f-clear" onclick="hubPickClear(this)" title="Clear">×</button>`
+      +   `</div>`
+      +   `<div class="hub-f-opts" style="display:none"></div>`
+      + `</div></div>`;
+  };
+
+  // Long + multi → search to find, click to add, each choice becomes a
+  // removable token. The hidden field holds them comma-joined, which is
+  // exactly what the endpoint parses.
+  const pickMulti = (key, options, placeholder) => {
+    const on = curList(key);
+    const label = (v) => (options.find(o => o.v === v) || { t: v }).t;
+    return `<div class="hub-f-row"><span>${esc(HUB_FILTER_LABEL[key] || key)}`
+      + `<em class="hub-f-hint">pick any</em></span>`
+      + `<div class="hub-f-pick is-multi" data-opts="${esc(JSON.stringify(options))}">`
+      +   `<input type="hidden" data-fk="${esc(key)}" value="${esc(on.join(','))}">`
+      +   `<div class="hub-f-tokens">`
+      +     on.map(v => `<span class="hub-f-tok" data-v="${esc(v)}">${esc(label(v))}`
+              + `<button type="button" onclick="hubTokRemove(this)" aria-label="Remove">×</button></span>`).join('')
+      +   `</div>`
+      +   `<div class="hub-f-pick-in">`
+      +     `<input type="text" class="hub-f-q" autocomplete="off" placeholder="${esc(placeholder)}"`
+      +          ` oninput="hubPickFilter(this)" onfocus="hubPickFilter(this)"`
+      +          ` onkeydown="hubPickKey(event,this)">`
+      +   `</div>`
+      +   `<div class="hub-f-opts" style="display:none"></div>`
+      + `</div></div>`;
+  };
+  const txt = (key, placeholder) =>
+    `<label class="hub-f-row"><span>${esc(HUB_FILTER_LABEL[key] || key)}</span>`
+    + `<input type="text" data-fk="${esc(key)}" value="${esc(cur[key] || '')}" placeholder="${esc(placeholder)}"></label>`;
+
+  const rows = [];
+  for (const key of it.filters) {
+    // Branch and sale type stay as selects — a short, fixed list is faster
+    // to pick from than it is to type. Everything party-shaped is searched.
+    if (key === 'branch') {
+      const o = opts.branches.map(b => ({ v: b, t: b }));
+      rows.push(isMulti(key) ? chips(key, o) : sel(key, o, 'All branches'));
+    }
+    else if (key === 'sale' || key === 'saleType') {
+      const o = HUB_SALE_TYPES.map(([v, t]) => ({ v, t: `${t} (${v})` }));
+      rows.push(isMulti(key) ? chips(key, o) : sel(key, o, 'All sale types'));
+    }
+    // `p` is the phone. Names repeat — two RAMUs in one auction is normal —
+    // and the number is often what the office actually has to hand, so it
+    // is both searchable and shown on the option.
+    else if (key === 'sellerId' || key === 'traderId')
+      rows.push(pick(key, opts.sellers.filter(x => x.id)
+                  .map(x => ({ v: String(x.id), t: x.name, p: x.tel || '' })),
+                'Search sellers by name or phone…'));
+    // `sellers` is a comma-separated list of NAMES, not ids — the export
+    // routes match on name (server.js:14787).
+    else if (key === 'sellers')
+      rows.push(pick(key, opts.sellers.map(x => ({ v: x.name, t: x.name, p: x.tel || '' })),
+                'Search sellers by name or phone…'));
+    else if (key === 'buyerCode')
+      rows.push(pick(key, opts.buyers.map(x => ({ v: x.code, t: `${x.name} (${x.code})`, p: x.tel || '' })),
+                'Search buyers by name or phone…'));
+    else rows.push(txt(key, 'Any'));
+  }
+
+  window._hubFilterId = id;
+  // Tint the dialog with the group the document belongs to, and — the
+  // part that matters — guarantee --acc is DEFINED, so nothing inside can
+  // end up white-on-white.
+  const srcTile = document.querySelector(`[data-hub-id="${CSS.escape(id)}"]`);
+  const acc = (srcTile && getComputedStyle(srcTile).getPropertyValue('--src').trim())
+           || getComputedStyle(document.body).getPropertyValue('--spice-cardamom').trim()
+           || '#166534';
+  document.getElementById('hub-filter-modal').style.setProperty('--acc', acc);
+  document.getElementById('hub-f-heading').textContent = 'Filter — ' + it.label;
+  document.getElementById('hub-f-body').innerHTML = rows.join('');
+  document.getElementById('hub-f-apply').onclick = () => hubFilterApply(id);
+  showModal('hub-filter-modal');
+  document.querySelector('#hub-f-body select,#hub-f-body input:not([type=hidden])')?.focus();
+}
+
+function hubFilterClose(){
+  hideModal('hub-filter-modal');
+  window._hubFilterId = null;
+}
+
+// Toggle one chip in a short multi-select and rewrite the hidden value.
+function hubChipToggle(btn){
+  btn.classList.toggle('is-on');
+  const row = btn.closest('.hub-f-row');
+  const on = Array.from(row.querySelectorAll('.hub-f-c.is-on')).map(b => b.dataset.v);
+  row.querySelector('[data-fk]').value = on.join(',');
+}
+// Drop one token from a long multi-select.
+function hubTokRemove(btn){
+  const tok = btn.closest('.hub-f-tok');
+  const wrap = tok.closest('.hub-f-pick');
+  tok.remove();
+  _hubTokSync(wrap);
+}
+function _hubTokSync(wrap){
+  const vals = Array.from(wrap.querySelectorAll('.hub-f-tok')).map(t => t.dataset.v);
+  wrap.querySelector('[data-fk]').value = vals.join(',');
+}
+
+const HUB_PICK_MAX = 40;
+function hubPickFilter(input){
+  const wrap = input.closest('.hub-f-pick');
+  const list = wrap.querySelector('.hub-f-opts');
+  let opts = [];
+  try { opts = JSON.parse(wrap.dataset.opts || '[]'); } catch (_) {}
+  const raw = (input.value || '').trim();
+  const q = raw.toLowerCase();
+  const qDigits = raw.replace(/\D+/g, '');
+  const hits = !q ? opts : opts.filter(o =>
+    o.t.toLowerCase().includes(q)
+    || (qDigits.length >= 3 && String(o.p || '').replace(/\D+/g, '').includes(qDigits)));
+  if (!hits.length) {
+    // "No match" only makes sense against something typed. With nothing
+    // typed and nothing to offer, say what is actually true.
+    list.innerHTML = q
+      ? '<div class="hub-f-opt-none">No match for “' + esc(input.value.trim()) + '”</div>'
+      : '<div class="hub-f-opt-none">Nothing to pick from in this auction</div>';
+  } else {
+    list.innerHTML = hits.slice(0, HUB_PICK_MAX)
+      .map(o => `<button type="button" class="hub-f-opt" data-v="${esc(o.v)}"`
+              + ` data-t="${esc(o.t)}" onclick="hubPickChoose(this)">${esc(o.t)}`
+              + (o.p ? `<span class="hub-f-tel">${esc(o.p)}</span>` : '')
+              + `</button>`).join('')
+      + (hits.length > HUB_PICK_MAX
+          ? `<div class="hub-f-opt-none">${hits.length - HUB_PICK_MAX} more — keep typing</div>` : '');
+  }
+  list.style.display = '';
+  const clr = wrap.querySelector('.hub-f-clear');
+  if (clr) clr.style.display = input.value ? '' : 'none';
+}
+function hubPickChoose(btn){
+  const wrap = btn.closest('.hub-f-pick');
+  const q = wrap.querySelector('.hub-f-q');
+  if (wrap.classList.contains('is-multi')) {
+    // Already picked → ignore rather than adding a duplicate.
+    if (!wrap.querySelector(`.hub-f-tok[data-v="${CSS.escape(btn.dataset.v)}"]`)) {
+      const tok = document.createElement('span');
+      tok.className = 'hub-f-tok';
+      tok.dataset.v = btn.dataset.v;
+      tok.innerHTML = `${esc(btn.dataset.t || btn.textContent)}<button type="button" onclick="hubTokRemove(this)" aria-label="Remove">×</button>`;
+      wrap.querySelector('.hub-f-tokens').appendChild(tok);
+      _hubTokSync(wrap);
+    }
+    // Stay open and clear the box — picking several in a row is the point.
+    q.value = '';
+    hubPickFilter(q);
+    q.focus();
+    return;
+  }
+  wrap.querySelector('[data-fk]').value = btn.dataset.v;
+  q.value = btn.dataset.t || btn.textContent;
+  wrap.querySelector('.hub-f-opts').style.display = 'none';
+  wrap.querySelector('.hub-f-clear').style.display = '';
+}
+function hubPickClear(btn){
+  const wrap = btn.closest('.hub-f-pick');
+  wrap.querySelector('[data-fk]').value = '';
+  const q = wrap.querySelector('.hub-f-q');
+  q.value = '';
+  wrap.querySelector('.hub-f-opts').style.display = 'none';
+  btn.style.display = 'none';
+  q.focus();
+}
+// Enter takes the first match; Escape shuts the list without shutting the
+// whole panel.
+function hubPickKey(e, input){
+  const wrap = input.closest('.hub-f-pick');
+  if (e.key === 'Escape') {
+    e.stopPropagation();
+    wrap.querySelector('.hub-f-opts').style.display = 'none';
+    return;
+  }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const first = wrap.querySelector('.hub-f-opt');
+    if (first) hubPickChoose(first);
+  }
+}
+
+function hubFilterApply(id){
+  const pop = document.getElementById('hub-f-body');
+  if (!pop) return;
+  // Only [data-fk] carries a real value — the visible search box is a
+  // typing surface, so half-typed text can never reach the URL.
+  const f = {};
+  for (const el of pop.querySelectorAll('[data-fk]')) {
+    const v = (el.value || '').trim();
+    if (v) f[el.dataset.fk] = v;
+  }
+  window._hubFilters[id] = f;
+  hubFilterClose();
+  if (window._hubCat) { renderHubGroups(window._hubCat.groups || []); renderHubFooter(); hubApplyFilter(); }
+  const n = hubFilterCount(id);
+  toast(n ? `${n} filter${n === 1 ? '' : 's'} applied` : 'Filters cleared');
+}
+function hubFilterReset(id){
+  if (!id) return;
+  delete window._hubFilters[id];
+  hubFilterClose();
+  if (window._hubCat) { renderHubGroups(window._hubCat.groups || []); renderHubFooter(); hubApplyFilter(); }
+}
 // Look an item up in the last catalog response.
 function _hubItem(id){
   for (const g of (window._hubCat?.groups || [])) {
@@ -11650,7 +12334,7 @@ async function hubDownload(id, fmt){
   const it = _hubItem(id);
   if (!it || !it.href || !it.href[fmt]) { toast('That document is not available right now'); return; }
   await withOverlay(`Preparing ${it.label} (${fmt.toUpperCase()})…`, async () => {
-    const r = await fetch(B + it.href[fmt], { headers: { 'Authorization': 'Bearer ' + T } });
+    const r = await fetch(B + hubHref(it, fmt), { headers: { 'Authorization': 'Bearer ' + T } });
     if (!r.ok) {
       const e = await r.json().catch(() => ({}));
       // A 404 here is usually "this auction has no rows of that kind" rather
@@ -11673,7 +12357,7 @@ async function hubPdfOpen(id, print){
   const it = _hubItem(id);
   if (!it || !it.href || !it.href.pdf) { toast('No PDF available for that document'); return; }
   await withOverlay(`Preparing ${it.label}…`, async () => {
-    const r = await fetch(B + it.href.pdf, { headers: { 'Authorization': 'Bearer ' + T } });
+    const r = await fetch(B + hubHref(it, 'pdf'), { headers: { 'Authorization': 'Bearer ' + T } });
     if (!r.ok) {
       const e = await r.json().catch(() => ({}));
       alert(`Failed: ${e.error || 'HTTP ' + r.status}`);
@@ -11718,7 +12402,39 @@ async function hubBulkPdf(id){
 function hubOpen(tab){
   const aid = document.getElementById('hub-auction')?.value || '';
   if (aid && typeof setSharedAucId === 'function') setSharedAucId(aid);
+  window._hubReturn = { tab, view: hubView() };
   go(tab);
+}
+
+// The pill lives outside every .tc panel so no loader's innerHTML rebuild
+// can wipe it. It shows only while you are on the screen the desk sent you
+// to; navigate anywhere else yourself and it retires.
+function renderHubReturn(){
+  let el = document.getElementById('hub-return');
+  const r = window._hubReturn;
+  const here = window._currentTab;
+  if (!r || here !== r.tab) {
+    if (r && here !== r.tab && here !== 'hub') window._hubReturn = null;
+    if (el) el.style.display = 'none';
+    return;
+  }
+  if (!el) {
+    el = document.createElement('button');
+    el.id = 'hub-return';
+    el.className = 'hub-return';
+    el.onclick = hubGoBack;
+    el.innerHTML = '<svg viewBox="0 0 24 24"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>'
+                 + '<span>Back to Auction Desk</span>';
+    document.body.appendChild(el);
+  }
+  el.style.display = '';
+}
+function hubGoBack(){
+  const r = window._hubReturn;
+  window._hubReturn = null;
+  renderHubReturn();
+  if (r && r.view) { try { localStorage.setItem('hubView', r.view); } catch(_) {} }
+  go('hub');
 }
 
 // ── LOT REASSIGNMENT REQUESTS (admin review of operator requests) ──

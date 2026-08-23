@@ -17,6 +17,10 @@
 //   label     human name — the single source of truth, replacing the
 //             client-side EXP_LABELS / LORRY_LABELS tables
 //   group     which UI section the tile lands in (see GROUPS below)
+//   sub       heading WITHIN that section. Ten groups of a dozen tiles each
+//             is still a wall; the subheading is what turns "Journals &
+//             Registers" into Journals / Registers / Individual registers /
+//             Certificates. Declaration order sets the order they appear.
 //   family    which registry/subsystem it came from — diagnostics only
 //   kind      'export'   stateless, computed on demand
 //             'document' generated, numbered and stored; has status + a
@@ -52,7 +56,11 @@
 //             bare array (capped at 500) or { rows, total } when paged.
 //   listParam which query param that route filters by — NOT uniform:
 //             debit_notes_planter keys off `ano`, the rest off `auction_id`
-//   filters   optional extra inputs the tile can offer
+//   filters   extra inputs this document's endpoint genuinely APPLIES —
+//             not merely accepts. Declaring a filter the export ignores
+//             produces a control that silently does nothing, which is
+//             worse than no control.
+//   multi     which of those take several values at once (comma-joined)
 //   hidden    kept callable for compatibility but never rendered as a tile
 //   alsoCovers registry keys this tile serves through a different route, so
 //             the catalog test doesn't flag them as orphaned exports
@@ -85,10 +93,13 @@ const hrefLorry = (type) => (ctx, format) =>
 
 // Tally speaks three formats off one route:
 //   xml   Tally import XML — the default, sent with no format param at all
-//   json  the same voucher rows as JSON
 //   irp   GST e-Invoice (IRP / NIC) JSON for the portal. Only sales_isp and
 //         debit_note carry the buyer GSTIN/address that schema needs; the
 //         route rejects every other type, so only those two declare it.
+// The route also answers ?format=json with the raw voucher rows. It is not
+// offered here: it duplicates the XML's content in a form nobody in the
+// office imports, and it cluttered the file-type view with a JSON section
+// that was really "the same thing again".
 const hrefTally = (type) => (ctx, format) =>
   `/api/tally/export/${type}/${ctx.auctionId}${q({
     format: format === 'xml' ? '' : format, sale: ctx.sale })}`;
@@ -115,7 +126,7 @@ const GROUPS = [
   { id: 'banking',    label: 'Banking & Payments' },
   { id: 'logistics',  label: 'Logistics' },
   { id: 'tally',      label: 'Accounting — Tally',      collapsed: true,
-    hint: 'XML to import · JSON rows · e-Invoice JSON for the GST portal' },
+    hint: 'XML to import · e-Invoice JSON for the GST portal' },
   { id: 'dbf',        label: 'Accounting — DBF',        collapsed: true },
   { id: 'books',      label: 'Journals & Registers',    collapsed: true },
   { id: 'masters',    label: 'Masters',                 collapsed: true,
@@ -129,15 +140,15 @@ const DOCUMENTS = [
   // Available from stage 2 (lots imported) — these are the pre-import
   // safety net, so they must NOT wait for prices. Mirrors EXP_PREAUCTION
   // in public/index.html, same declared order.
-  { id: 'lot_slip', label: 'Lot Slip', group: 'preauction', family: 'exports',
+  { id: 'lot_slip', label: 'Lot Slip', group: 'preauction', sub: 'Lot lists', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 2, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('lot_slip') },
 
-  { id: 'lot_buyer', label: 'Lot Buyer', group: 'preauction', family: 'exports',
+  { id: 'lot_buyer', label: 'Lot Buyer', group: 'preauction', sub: 'Lot lists', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 2, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('lot_buyer') },
 
-  { id: 'lot_name', label: 'Lot Name', group: 'preauction', family: 'exports',
+  { id: 'lot_name', label: 'Lot Name', group: 'preauction', sub: 'Lot lists', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 2, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('lot_name') },
 
@@ -145,46 +156,48 @@ const DOCUMENTS = [
   // but has always been surfaced in the Export Center too. Today that
   // costs a special case in exportType() — index.html:29992. One entry
   // here, one endpoint, and that special case goes away.
-  { id: 'eauction_csv', label: 'e-Auction (Spices Board) CSV', group: 'preauction',
+  { id: 'eauction_csv', label: 'e-Auction (Spices Board) CSV', group: 'preauction', sub: 'Portal upload',
     family: 'spiceboard', kind: 'export', scope: 'trade', formats: ['csv'],
     minStage: 2, perm: 'export',
+    filters: ['branch', 'sellerId', 'buyerCode'],
+    multi: ['branch', 'sellerId', 'buyerCode'],
     route: '/api/spice-board-reports/:type/export', href: hrefSpiceBoard('eauction_csv'),
     note: 'Fixed Spices Board portal schema — CSV only' },
 
-  { id: 'price_list_before', label: 'Price List (Before)', group: 'preauction', family: 'exports',
+  { id: 'price_list_before', label: 'Price List (Before)', group: 'preauction', sub: 'Prices', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 2, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('price_list_before') },
 
-  { id: 'dealer_list', label: 'Dealer List', group: 'preauction', family: 'exports',
+  { id: 'dealer_list', label: 'Dealer List', group: 'preauction', sub: 'Party lists', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 2, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('dealer_list') },
 
-  { id: 'planter_list', label: 'Planter List (Grade 1)', group: 'preauction', family: 'exports',
+  { id: 'planter_list', label: 'Planter List (Grade 1)', group: 'preauction', sub: 'Party lists', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 2, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('planter_list') },
 
   // ══ Trade Documents (generated + numbered) ═══════════════
   // kind:'document' — the hub shows live status and offers bulk PDF, but
   // generation stays on the owning screen (deepLink). See TRADE-DESK.md §2.
-  { id: 'invoices', label: 'Sales Invoices', group: 'documents', family: 'invoices',
+  { id: 'invoices', label: 'Sales Invoices', group: 'documents', sub: 'Sales side', family: 'invoices',
     kind: 'document', scope: 'trade', formats: ['pdf'], minStage: 3, perm: 'view',
     statusKey: 'invoices', deepLink: 'invoices',
     route: '/api/invoices/pdf-bulk', bulkRoute: '/api/invoices/pdf-bulk',
     listRoute: '/api/invoices', listParam: 'auction_id' },
 
-  { id: 'purchases', label: 'Purchase Invoices', group: 'documents', family: 'purchases',
+  { id: 'purchases', label: 'Purchase Invoices', group: 'documents', sub: 'Purchase side', family: 'purchases',
     kind: 'document', scope: 'trade', formats: ['pdf'], minStage: 3, perm: 'view',
     statusKey: 'purchases', deepLink: 'purchases',
     route: '/api/invoices/purchase-pdf-bulk', bulkRoute: '/api/invoices/purchase-pdf-bulk',
     listRoute: '/api/purchases', listParam: 'auction_id' },
 
-  { id: 'bills', label: 'Bills of Supply', group: 'documents', family: 'bills',
+  { id: 'bills', label: 'Bills of Supply', group: 'documents', sub: 'Purchase side', family: 'bills',
     kind: 'document', scope: 'trade', formats: ['pdf'], minStage: 3, perm: 'view',
     statusKey: 'bills', deepLink: 'bills',
     route: '/api/bills/pdf-bulk', bulkRoute: '/api/bills/pdf-bulk',
     listRoute: '/api/bills', listParam: 'auction_id' },
 
-  { id: 'debit_notes', label: 'Debit Notes', group: 'documents', family: 'debit_notes',
+  { id: 'debit_notes', label: 'Debit Notes', group: 'documents', sub: 'Sales side', family: 'debit_notes',
     kind: 'document', scope: 'trade', formats: ['pdf'], minStage: 3, perm: 'view',
     flag: 'flag_debit_note', statusKey: 'debit_notes', deepLink: 'debit',
     route: '/api/debit-notes/pdf-bulk', bulkRoute: '/api/debit-notes/pdf-bulk',
@@ -193,7 +206,7 @@ const DOCUMENTS = [
   // The one family whose list route does NOT accept auction_id — planter
   // debit notes are keyed by `ano` (server.js:12597). The catalog carries
   // the difference so the hub doesn't have to special-case it.
-  { id: 'debit_notes_planter', label: 'Debit Notes — Planter', group: 'documents',
+  { id: 'debit_notes_planter', label: 'Debit Notes — Planter', group: 'documents', sub: 'Purchase side',
     family: 'debit_notes_planter', kind: 'document', scope: 'trade', formats: ['pdf'],
     minStage: 3, perm: 'view', flag: 'flag_debit_note_planter',
     statusKey: 'debit_notes_planter', deepLink: 'debitplanter',
@@ -208,7 +221,7 @@ const DOCUMENTS = [
   //     and choosing those names is the Payments screen's whole job. A hub
   //     button could only ever send an arbitrary subset, so the tile
   //     deep-links instead.
-  { id: 'payments', label: 'Payment Advice', group: 'documents', family: 'payments',
+  { id: 'payments', label: 'Payment Advice', group: 'documents', sub: 'Payments', family: 'payments',
     kind: 'document', scope: 'trade', formats: ['pdf'], minStage: 2, perm: 'view',
     deepLink: 'payments',
     route: '/api/payments/pdf-bulk' },
@@ -218,83 +231,88 @@ const DOCUMENTS = [
   // hidden until at least one lot carries a price (see
   // updateExportCenterVisibility, index.html:29906). The sidebar's Exports
   // item says stage 2, but at stage 2 only the pre-auction group is live.
-  { id: 'trade_report', label: 'Auction Report', group: 'reports', family: 'exports',
+  { id: 'trade_report', label: 'Auction Report', group: 'reports', sub: 'Trade & value', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 3, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('trade_report') },
 
-  { id: 'collection', label: 'Collection', group: 'reports', family: 'exports',
+  { id: 'collection', label: 'Collection', group: 'reports', sub: 'Trade & value', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 3, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('collection') },
 
-  { id: 'checklist', label: 'Checklist', group: 'reports', family: 'exports',
+  { id: 'checklist', label: 'Checklist', group: 'reports', sub: 'Lot-wise', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 3, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('checklist') },
 
-  { id: 'full_file', label: 'Full File', group: 'reports', family: 'exports',
+  { id: 'full_file', label: 'Full File', group: 'reports', sub: 'Lot-wise', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx'], minStage: 3, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('full_file'),
     note: 'Too many columns for any printable page — XLSX only' },
 
-  { id: 'pooler_register', label: 'Pooler Register', group: 'reports', family: 'exports',
+  { id: 'pooler_register', label: 'Pooler Register', group: 'reports', sub: 'Party-wise', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 3, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('pooler_register') },
 
-  { id: 'price_list', label: 'Price List', group: 'reports', family: 'exports',
+  { id: 'price_list', label: 'Price List', group: 'reports', sub: 'Trade & value', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 3, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('price_list') },
 
-  { id: 'lot_payment', label: 'Lot Payment', group: 'reports', family: 'exports',
+  { id: 'lot_payment', label: 'Lot Payment', group: 'reports', sub: 'Lot-wise', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 3, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('lot_payment') },
 
-  { id: 'lot_slip_after', label: 'Lot Slip (After)', group: 'reports', family: 'exports',
+  { id: 'lot_slip_after', label: 'Lot Slip (After)', group: 'reports', sub: 'Lot-wise', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 3, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('lot_slip_after') },
 
-  { id: 'sales_taxes', label: 'Sales Taxes', group: 'reports', family: 'exports',
+  { id: 'sales_taxes', label: 'Sales Taxes', group: 'reports', sub: 'Trade & value', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 3, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('sales_taxes') },
 
-  { id: 'dealer_list_party_wise', label: 'Dealer List (Party-wise)', group: 'reports',
+  { id: 'dealer_list_party_wise', label: 'Dealer List (Party-wise)', group: 'reports', sub: 'Party-wise',
     family: 'exports', kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'],
     minStage: 3, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('dealer_list_party_wise') },
 
   { id: 'pooler_list_consolidated', label: 'Pooler List consolidated (Party-wise)',
-    group: 'reports', family: 'exports', kind: 'export', scope: 'trade',
+    group: 'reports', sub: 'Party-wise', family: 'exports', kind: 'export', scope: 'trade',
     formats: ['xlsx', 'pdf'], minStage: 3, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('pooler_list_consolidated') },
 
-  { id: 'tally_purchase', label: 'Tally Purchase (spreadsheet)', group: 'reports',
+  { id: 'tally_purchase', label: 'Tally Purchase (spreadsheet)', group: 'reports', sub: 'Trade & value',
     family: 'exports', kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'],
     minStage: 4, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('tally_purchase'),
     note: 'Spreadsheet form — the XML import lives under Accounting — Tally' },
 
   // ══ Statutory & Spices Board ═════════════════════════════
-  { id: 'form_c', label: 'FORM-C (Auction Report)', group: 'statutory', family: 'spiceboard',
+  { id: 'form_c', label: 'FORM-C (Auction Report)', group: 'statutory', sub: 'Spices Board', family: 'spiceboard',
     kind: 'export', scope: 'trade', formats: ['pdf', 'xlsx'], minStage: 3, perm: 'export',
     filters: ['branch', 'sellerId', 'buyerCode'],
+    multi: ['branch', 'sellerId', 'buyerCode'],
     route: '/api/spice-board-reports/:type/export', href: hrefSpiceBoard('form_c') },
 
-  { id: 'form_d', label: 'FORM-D (Advance Auction Report)', group: 'statutory',
+  { id: 'form_d', label: 'FORM-D (Advance Auction Report)', group: 'statutory', sub: 'Spices Board',
     family: 'spiceboard', kind: 'export', scope: 'trade', formats: ['pdf', 'xlsx'],
-    minStage: 3, perm: 'export', filters: ['branch', 'sellerId', 'buyerCode'],
+    minStage: 3, perm: 'export',
+    filters: ['branch', 'sellerId', 'buyerCode'],
+    multi: ['branch', 'sellerId', 'buyerCode'], filters: ['branch', 'sellerId', 'buyerCode'],
     route: '/api/spice-board-reports/:type/export', href: hrefSpiceBoard('form_d'),
     note: 'With flag_proforma_invoice ON this reads proforma rows only — never mixed with originals' },
 
-  { id: 'buyers_statement', label: 'Buyers Statement', group: 'statutory', family: 'spiceboard',
+  { id: 'buyers_statement', label: 'Buyers Statement', group: 'statutory', sub: 'Spices Board', family: 'spiceboard',
     kind: 'export', scope: 'trade', formats: ['pdf', 'xlsx'], minStage: 4, perm: 'export',
-    filters: ['branch', 'buyerCode'],
+    filters: ['branch', 'sellerId', 'buyerCode'],
+    multi: ['branch', 'sellerId', 'buyerCode'],
     route: '/api/spice-board-reports/:type/export', href: hrefSpiceBoard('buyers_statement') },
 
-  { id: 'litre_weight', label: 'Litre Weight', group: 'statutory', family: 'spiceboard',
+  { id: 'litre_weight', label: 'Litre Weight', group: 'statutory', sub: 'Spices Board', family: 'spiceboard',
     kind: 'export', scope: 'trade', formats: ['pdf', 'xlsx'], minStage: 2, perm: 'export',
-    filters: ['branch', 'sellerId'],
+    filters: ['branch', 'sellerId', 'buyerCode'],
+    multi: ['branch', 'sellerId', 'buyerCode'],
     route: '/api/spice-board-reports/:type/export', href: hrefSpiceBoard('litre_weight') },
 
   // Date-range scoped, not trade scoped — the tile asks for from/to.
-  { id: 'tds_return', label: 'TDS Return', group: 'statutory', family: 'exports',
+  { id: 'tds_return', label: 'TDS Return', group: 'statutory', sub: 'Tax', family: 'exports',
     kind: 'export', scope: 'dateRange', formats: ['xlsx', 'pdf'], minStage: 4, perm: 'export',
     route: '/api/exports/tds-return',
     href: (ctx, format) => `/api/exports/tds-return${q({ format, from: ctx.from, to: ctx.to })}` },
@@ -302,60 +320,69 @@ const DOCUMENTS = [
   // ══ Banking & Payments ═══════════════════════════════════
   // XLSX only — exports-pdf.js carries no COLS entry for this type, so
   // ?format=pdf 500s. The sibling bank_payment does have one.
-  { id: 'bank_payment_before', label: 'Bank Payment (Before)', group: 'banking',
+  { id: 'bank_payment_before', label: 'Bank Payment (Before)', group: 'banking', sub: 'Bank files',
     family: 'exports', kind: 'export', scope: 'trade', formats: ['xlsx'],
     minStage: 2, perm: 'export',
+    filters: ['sellers'],
+    multi: ['sellers'],
     route: '/api/exports/:type/:auctionId', href: hrefExport('bank_payment_before') },
 
-  { id: 'bank_payment', label: 'Bank Payment (RTGS/NEFT)', group: 'banking', family: 'exports',
+  { id: 'bank_payment', label: 'Bank Payment (RTGS/NEFT)', group: 'banking', sub: 'Bank files', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 3, perm: 'export',
+    filters: ['sellers'],
+    multi: ['sellers'],
     route: '/api/exports/:type/:auctionId', href: hrefExport('bank_payment') },
 
-  { id: 'payment', label: 'Payment Summary', group: 'banking', family: 'exports',
+  { id: 'payment', label: 'Payment Summary', group: 'banking', sub: 'Summaries', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 3, perm: 'export',
+    filters: ['sellers'],
+    multi: ['sellers'],
     route: '/api/exports/:type/:auctionId', href: hrefExport('payment') },
 
-  { id: 'payment_party_wise', label: 'Payment Summary — Party-wise', group: 'banking',
+  { id: 'payment_party_wise', label: 'Payment Summary — Party-wise', group: 'banking', sub: 'Summaries',
     family: 'exports', kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'],
     minStage: 3, perm: 'export',
+    filters: ['sellers'],
+    multi: ['sellers'],
     route: '/api/exports/:type/:auctionId', href: hrefExport('payment_party_wise') },
 
   // ══ Logistics ════════════════════════════════════════════
-  { id: 'lot_slip_code', label: 'Lot Slip (Code)', group: 'logistics', family: 'lorry',
+  { id: 'lot_slip_code', label: 'Lot Slip (Code)', group: 'logistics', sub: 'Lorry', family: 'lorry',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 4, perm: 'export',
     route: '/api/lorry-reports/:type/:auctionId', href: hrefLorry('lot_slip_code') },
 
-  { id: 'truck_list', label: 'Truck List', group: 'logistics', family: 'lorry',
+  { id: 'truck_list', label: 'Truck List', group: 'logistics', sub: 'Lorry', family: 'lorry',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 4, perm: 'export',
     route: '/api/lorry-reports/:type/:auctionId', href: hrefLorry('truck_list') },
 
-  { id: 'buyer_lot_lorry', label: 'Buyer Lot Lorry', group: 'logistics', family: 'lorry',
+  { id: 'buyer_lot_lorry', label: 'Buyer Lot Lorry', group: 'logistics', sub: 'Lorry', family: 'lorry',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 4, perm: 'export',
     route: '/api/lorry-reports/:type/:auctionId', href: hrefLorry('buyer_lot_lorry') },
 
   // ══ Accounting — Tally XML ═══════════════════════════════
   // Labels copied verbatim from TALLY_EXPORTS (server.js:14845).
-  { id: 'tally_ledger_sales', label: 'Sales Party Ledgers', group: 'tally', family: 'tally',
-    kind: 'export', scope: 'trade', formats: ['xml', 'json'], minStage: 4, perm: 'export',
+  { id: 'tally_ledger_sales', label: 'Sales Party Ledgers', group: 'tally', sub: 'Ledger masters', family: 'tally',
+    kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4, perm: 'export',
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('ledger_sales') },
 
-  { id: 'tally_ledger_rd_purchase', label: 'RD Purchase Party Ledgers', group: 'tally',
-    family: 'tally', kind: 'export', scope: 'trade', formats: ['xml', 'json'], minStage: 4, perm: 'export',
+  { id: 'tally_ledger_rd_purchase', label: 'RD Purchase Party Ledgers', group: 'tally', sub: 'Ledger masters',
+    family: 'tally', kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4, perm: 'export',
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('ledger_rd_purchase') },
 
   { id: 'tally_ledger_urd_purchase', label: 'URD Purchase Party Ledgers (Agriculturist)',
-    group: 'tally', family: 'tally', kind: 'export', scope: 'trade', formats: ['xml', 'json'],
+    group: 'tally', sub: 'Ledger masters', family: 'tally', kind: 'export', scope: 'trade', formats: ['xml'],
     minStage: 4, perm: 'export',
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('ledger_urd_purchase') },
 
   { id: 'tally_ledger', label: 'All Ledger Masters (parties + tax + sales + purchase)',
-    group: 'tally', family: 'tally', kind: 'export', scope: 'trade', formats: ['xml', 'json'],
+    group: 'tally', sub: 'Ledger masters', family: 'tally', kind: 'export', scope: 'trade', formats: ['xml'],
     minStage: 4, perm: 'export',
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('ledger') },
 
-  { id: 'tally_sales_isp', label: 'Sales Vouchers — ISP', group: 'tally', family: 'tally',
-    kind: 'export', scope: 'trade', formats: ['xml', 'json', 'irp'], minStage: 4, perm: 'export',
+  { id: 'tally_sales_isp', label: 'Sales Vouchers', group: 'tally', sub: 'Vouchers', family: 'tally',
+    kind: 'export', scope: 'trade', formats: ['xml', 'irp'], minStage: 4, perm: 'export',
     filters: ['sale'],
+    multi: ['sale'],
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('sales_isp'),
     note: 'Filter by sale type (Local / Inter-state / Export) to import one batch at a time' },
 
@@ -367,44 +394,45 @@ const DOCUMENTS = [
   // removed from the settings schema (company-config.js:227). They stay
   // callable over the API for anyone still running that flow, but the hub
   // must not advertise exports the app itself no longer offers.
-  { id: 'tally_sales_asp', label: 'Sales Vouchers — ASP', group: 'tally', family: 'tally',
-    kind: 'export', scope: 'trade', formats: ['xml', 'json'], minStage: 4, perm: 'export',
-    filters: ['sale'], hidden: true,
+  { id: 'tally_sales_asp', label: 'Sales Vouchers — ASP', group: 'tally', sub: 'Vouchers', family: 'tally',
+    kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4, perm: 'export', hidden: true,
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('sales_asp') },
 
   // Legacy alias for sales_isp. Kept callable so old bookmarks and API
   // callers keep working; never rendered as a tile.
-  { id: 'tally_sales', label: 'Sales Vouchers (legacy alias for ISP)', group: 'tally',
-    family: 'tally', kind: 'export', scope: 'trade', formats: ['xml', 'json'], minStage: 4,
+  { id: 'tally_sales', label: 'Sales Vouchers (legacy alias for ISP)', group: 'tally', sub: 'Vouchers',
+    family: 'tally', kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4,
     perm: 'export', hidden: true,
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('sales') },
 
-  { id: 'tally_isp_purchase', label: 'ISP Purchase Vouchers (mirror of ASP→ISP)', group: 'tally',
-    family: 'tally', kind: 'export', scope: 'trade', formats: ['xml', 'json'], minStage: 4,
+  { id: 'tally_isp_purchase', label: 'ISP Purchase Vouchers (mirror of ASP→ISP)', group: 'tally', sub: 'Vouchers',
+    family: 'tally', kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4,
     perm: 'export', hidden: true,
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('isp_purchase') },
 
-  { id: 'tally_rd_purchase', label: 'RD Purchase Vouchers', group: 'tally', family: 'tally',
-    kind: 'export', scope: 'trade', formats: ['xml', 'json'], minStage: 4, perm: 'export',
+  { id: 'tally_rd_purchase', label: 'RD Purchase Vouchers', group: 'tally', sub: 'Vouchers', family: 'tally',
+    kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4, perm: 'export',
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('rd_purchase') },
 
-  { id: 'tally_urd_purchase', label: 'URD Purchase Vouchers (Agriculturist)', group: 'tally',
-    family: 'tally', kind: 'export', scope: 'trade', formats: ['xml', 'json'], minStage: 4, perm: 'export',
+  { id: 'tally_urd_purchase', label: 'URD Purchase Vouchers (Agriculturist)', group: 'tally', sub: 'Vouchers',
+    family: 'tally', kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4, perm: 'export',
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('urd_purchase') },
 
-  { id: 'tally_debit_note', label: 'Debit Notes (Discount)', group: 'tally', family: 'tally',
-    kind: 'export', scope: 'trade', formats: ['xml', 'json', 'irp'], minStage: 4, perm: 'export',
+  { id: 'tally_debit_note', label: 'Debit Notes', group: 'tally', sub: 'Vouchers', family: 'tally',
+    kind: 'export', scope: 'trade', formats: ['xml', 'irp'], minStage: 4, perm: 'export',
     flag: 'flag_debit_note',
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('debit_note') },
 
-  { id: 'tally_debit_note_planter', label: 'Debit Notes — Planter (Discount)', group: 'tally',
-    family: 'tally', kind: 'export', scope: 'trade', formats: ['xml', 'json'], minStage: 4, perm: 'export',
+  { id: 'tally_debit_note_planter', label: 'Debit Notes — Planter', group: 'tally', sub: 'Vouchers',
+    family: 'tally', kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4, perm: 'export',
     flag: 'flag_debit_note_planter',
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('debit_note_planter') },
 
-  { id: 'tally_merchants', label: 'Merchants (Consolidated Journal)', group: 'tally',
-    family: 'tally', kind: 'export', scope: 'trade', formats: ['xml', 'json'], minStage: 4,
-    perm: 'export', flag: 'flag_merchants',
+  { id: 'tally_merchants', label: 'Merchants (Consolidated Journal)', group: 'tally', sub: 'Vouchers',
+    family: 'tally', kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4,
+    perm: 'export',
+    filters: ['sale'],
+    multi: ['sale'], flag: 'flag_merchants',
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('merchants'),
     note: 'Includes pending proformas — stays consistent with Collection and the Buyers Statement' },
 
@@ -418,85 +446,84 @@ const DOCUMENTS = [
   // Transactional modules only; the two master modules (NAM/SBL) live in
   // the Masters group, reached through /api/master-exports so one tile
   // covers both the DBF and the XLSX form.
-  { id: 'dbf_lots', label: 'Lots (CPA1.DBF)', group: 'dbf', family: 'dbf',
+  { id: 'dbf_lots', label: 'Lots (CPA1.DBF)', group: 'dbf', sub: 'Transactions', family: 'dbf',
     kind: 'export', scope: 'trade', formats: ['dbf', 'xlsx'], minStage: 4, perm: 'export', hidden: true,
-    filters: ['dateRange'],
     route: '/api/dbf-exports/:type', href: hrefDbf('lots') },
 
-  { id: 'dbf_invoices', label: 'Sales Invoices (INV.DBF)', group: 'dbf', family: 'dbf',
+  { id: 'dbf_invoices', label: 'Sales Invoices (INV.DBF)', group: 'dbf', sub: 'Transactions', family: 'dbf',
     kind: 'export', scope: 'trade', formats: ['dbf', 'xlsx'], minStage: 4, perm: 'export', hidden: true,
-    filters: ['dateRange'],
     route: '/api/dbf-exports/:type', href: hrefDbf('invoices') },
 
-  { id: 'dbf_purchases', label: 'Purchases (PURCHASE.DBF)', group: 'dbf', family: 'dbf',
+  { id: 'dbf_purchases', label: 'Purchases (PURCHASE.DBF)', group: 'dbf', sub: 'Transactions', family: 'dbf',
     kind: 'export', scope: 'trade', formats: ['dbf', 'xlsx'], minStage: 4, perm: 'export', hidden: true,
-    filters: ['dateRange'],
     route: '/api/dbf-exports/:type', href: hrefDbf('purchases') },
 
-  { id: 'dbf_bills', label: 'Bills of Supply (BILL.DBF)', group: 'dbf', family: 'dbf',
+  { id: 'dbf_bills', label: 'Bills of Supply (BILL.DBF)', group: 'dbf', sub: 'Transactions', family: 'dbf',
     kind: 'export', scope: 'trade', formats: ['dbf', 'xlsx'], minStage: 4, perm: 'export', hidden: true,
-    filters: ['dateRange'],
     route: '/api/dbf-exports/:type', href: hrefDbf('bills') },
 
-  { id: 'dbf_debit_notes', label: 'Debit Notes (DEBIT.DBF)', group: 'dbf', family: 'dbf',
+  { id: 'dbf_debit_notes', label: 'Debit Notes (DEBIT.DBF)', group: 'dbf', sub: 'Transactions', family: 'dbf',
     kind: 'export', scope: 'trade', formats: ['dbf', 'xlsx'], minStage: 4, perm: 'export', hidden: true,
     flag: 'flag_debit_note', filters: ['dateRange'],
     route: '/api/dbf-exports/:type', href: hrefDbf('debit_notes') },
 
   // ══ Journals & Registers ═════════════════════════════════
-  { id: 'sales_journal', label: 'Sales Journal', group: 'books', family: 'journals',
+  { id: 'sales_journal', label: 'Sales Journal', group: 'books', sub: 'Journals', family: 'journals',
     kind: 'export', scope: 'trade', formats: ['xlsx'], minStage: 4, perm: 'export',
     filters: ['saleType'],
     route: '/api/exports/sales-journal',
     href: (ctx) => `/api/exports/sales-journal${q({ auctionId: ctx.auctionId, saleType: ctx.saleType })}` },
 
-  { id: 'purchase_journal_dealer', label: 'Purchase Journal (Dealer)', group: 'books',
+  { id: 'purchase_journal_dealer', label: 'Purchase Journal (Dealer)', group: 'books', sub: 'Journals',
     family: 'journals', kind: 'export', scope: 'trade', formats: ['xlsx'],
     minStage: 4, perm: 'export',
     route: '/api/exports/purchase-journal',
     href: (ctx) => `/api/exports/purchase-journal${q({ auctionId: ctx.auctionId, type: 'dealer' })}` },
 
-  { id: 'purchase_journal_agri', label: 'Agri Bill Journal (Agriculturist)', group: 'books',
+  { id: 'purchase_journal_agri', label: 'Agri Bill Journal (Agriculturist)', group: 'books', sub: 'Journals',
     family: 'journals', kind: 'export', scope: 'trade', formats: ['xlsx'],
     minStage: 4, perm: 'export',
     route: '/api/exports/purchase-journal',
     href: (ctx) => `/api/exports/purchase-journal${q({ auctionId: ctx.auctionId, type: 'agri' })}` },
 
-  { id: 'purchase_register', label: 'Purchase Register', group: 'books', family: 'registers',
+  { id: 'purchase_register', label: 'Purchase Register', group: 'books', sub: 'Registers', family: 'registers',
     kind: 'export', scope: 'dateRange', formats: ['xlsx', 'pdf'], minStage: 4, perm: 'export',
     route: '/api/exports/purchase-register',
     href: (ctx, format) => `/api/exports/purchase-register${q({
       format, auctionId: ctx.auctionId, from: ctx.from, to: ctx.to })}` },
 
-  { id: 'sales_register', label: 'Sales Register', group: 'books', family: 'registers',
+  { id: 'sales_register', label: 'Sales Register', group: 'books', sub: 'Registers', family: 'registers',
     kind: 'export', scope: 'dateRange', formats: ['xlsx', 'pdf'], minStage: 4, perm: 'export',
     filters: ['saleType'],
     route: '/api/exports/sales-register',
     href: (ctx, format) => `/api/exports/sales-register${q({
       format, auctionId: ctx.auctionId, from: ctx.from, to: ctx.to, saleType: ctx.saleType })}` },
 
-  { id: 'register_pooler', label: 'Pooler Register (individual)', group: 'books',
+  { id: 'register_pooler', label: 'Pooler Register (individual)', group: 'books', sub: 'Individual registers',
     family: 'registers', kind: 'export', scope: 'dateRange', formats: ['xlsx', 'pdf'],
-    minStage: 4, perm: 'export', filters: ['party'],
+    minStage: 4, perm: 'export',
+    filters: ['party'], filters: ['party'],
     route: '/api/exports/individual-register',
     href: (ctx, format) => `/api/exports/individual-register${q({
       kind: 'pooler', format, from: ctx.from, to: ctx.to, party: ctx.party })}` },
 
-  { id: 'register_seller', label: 'Seller Register (individual)', group: 'books',
+  { id: 'register_seller', label: 'Seller Register (individual)', group: 'books', sub: 'Individual registers',
     family: 'registers', kind: 'export', scope: 'dateRange', formats: ['xlsx', 'pdf'],
-    minStage: 4, perm: 'export', filters: ['party'],
+    minStage: 4, perm: 'export',
+    filters: ['party'], filters: ['party'],
     route: '/api/exports/individual-register',
     href: (ctx, format) => `/api/exports/individual-register${q({
       kind: 'seller', format, from: ctx.from, to: ctx.to, party: ctx.party })}` },
 
-  { id: 'register_merchant', label: 'Merchant Register (individual)', group: 'books',
+  { id: 'register_merchant', label: 'Merchant Register (individual)', group: 'books', sub: 'Individual registers',
     family: 'registers', kind: 'export', scope: 'dateRange', formats: ['xlsx', 'pdf'],
-    minStage: 4, perm: 'export', filters: ['party'],
+    minStage: 4, perm: 'export',
+    filters: ['party'], filters: ['party'],
     route: '/api/exports/individual-register',
     href: (ctx, format) => `/api/exports/individual-register${q({
       kind: 'merchant', format, from: ctx.from, to: ctx.to, party: ctx.party })}` },
 
-  { id: 'pooler_certificate', label: 'Pooler Certificate', group: 'books', family: 'registers',
+  { id: 'pooler_certificate', label: 'Pooler Certificate', group: 'books', sub: 'Certificates', family: 'registers',
     kind: 'export', scope: 'dateRange', formats: ['pdf'], minStage: 4, perm: 'export',
     filters: ['party', 'traderId'],
     route: '/api/exports/pooler-certificate',
@@ -517,12 +544,12 @@ const DOCUMENTS = [
   // section in the file-type view. `alsoCovers` still keeps the two DBF
   // master modules accounted for, so the coverage test stays honest —
   // they remain reachable from the Exports tab.
-  { id: 'master_sellers', label: 'Sellers', group: 'masters', family: 'masters',
+  { id: 'master_sellers', label: 'Sellers', group: 'masters', sub: 'Parties', family: 'masters',
     kind: 'export', scope: 'master', formats: ['xlsx'], perm: 'export',
     route: '/api/master-exports/:type', href: hrefMaster('sellers'),
     alsoCovers: ['/api/dbf-exports/traders'] },
 
-  { id: 'master_buyers', label: 'Buyers', group: 'masters', family: 'masters',
+  { id: 'master_buyers', label: 'Buyers', group: 'masters', sub: 'Parties', family: 'masters',
     kind: 'export', scope: 'master', formats: ['xlsx'], perm: 'export',
     route: '/api/master-exports/:type', href: hrefMaster('buyers'),
     alsoCovers: ['/api/dbf-exports/buyers'] },

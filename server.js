@@ -4797,7 +4797,9 @@ function buildDocumentCatalog(db, role, query) {
         };
         if (lockedBy)   { item.lockedBy = lockedBy; item.lockReason = lockReason; }
         if (needs.length) item.needs = needs;
+        if (d.sub)      item.sub = d.sub;
         if (d.filters)  item.filters = d.filters;
+        if (d.multi)    item.multi = d.multi;
         if (d.note)     item.note = d.note;
         if (d.deepLink) item.deepLink = d.deepLink;
 
@@ -4967,7 +4969,19 @@ app.post('/api/documents/bundle', requireView, (req, res) => {
       if (!it.href || !it.href[format]) {
         return res.status(400).json({ error: `${it.label} has no ${format || 'downloadable'} form` });
       }
-      items.push({ id: it.id, label: it.label, format, url: it.href[format] });
+      // Per-document filters, appended the same way the tile appends them
+      // for a single download — but only keys the manifest declared for
+      // this document, so a caller cannot smuggle arbitrary query params
+      // onto an export route through the bundler.
+      let url = it.href[format];
+      const allowed = new Set(it.filters || []);
+      const extra = [];
+      for (const [k, v] of Object.entries((w && w.filters) || {})) {
+        if (!allowed.has(k) || v === '' || v == null) continue;
+        extra.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
+      }
+      if (extra.length) url += (url.includes('?') ? '&' : '?') + extra.join('&');
+      items.push({ id: it.id, label: it.label, format, url });
     }
 
     const jobId = `b${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
@@ -14978,7 +14992,9 @@ app.post('/api/report-pdf', requireView, async (req, res) => {
     }
     const buf = await renderTablePdf({
       title, subtitle, columns, rows, totals, layout, summary,
-      autofit: !!b.autofit,
+      // Autofit unless the caller explicitly turns it off — the same
+      // default renderTablePdf now applies everywhere else.
+      autofit: b.autofit !== false,
       companyHeader: getCompanyHeader(getDb()),
     });
     const safe = title.replace(/[^\w]+/g, '_').slice(0, 60) || 'report';
@@ -15262,20 +15278,30 @@ const SALE_TYPE_LABELS = { L: 'Local', I: 'Inter-state', E: 'Export' };
 const SALE_FILTERABLE_TYPES = new Set(['sales_isp', 'sales_asp', 'sales', 'isp_purchase', 'merchants']);
 
 // Returns { sale } ('' = no filter) or { error }.
+// Accepts one sale type ("L") or several ("L,I") — the multi form comes
+// from the Auction Desk, so Local and Inter-state can go to Tally in one
+// file instead of two.
 function parseSaleFilter(type, raw) {
-  const sale = String(raw || '').trim().toUpperCase();
-  if (!sale || sale === 'ALL') return { sale: '' };
+  const list = String(raw || '').trim().toUpperCase()
+    .split(',').map(v => v.trim()).filter(Boolean);
+  if (!list.length || list.includes('ALL')) return { sale: '' };
   if (!SALE_FILTERABLE_TYPES.has(type)) {
     return { error: `Sale-type filter is only available for sales vouchers (${[...SALE_FILTERABLE_TYPES].join(', ')}).` };
   }
-  if (!SALE_TYPE_LABELS[sale]) {
-    return { error: `Unknown sale type "${raw}" — expected L (Local), I (Inter-state) or E (Export).` };
+  const bad = list.find(v => !SALE_TYPE_LABELS[v]);
+  if (bad) {
+    return { error: `Unknown sale type "${bad}" — expected L (Local), I (Inter-state) or E (Export).` };
   }
-  return { sale };
+  // Single value stays a plain string so filename suffixes and labels
+  // downstream read the same as they always have.
+  return { sale: list.length === 1 ? list[0] : list.join(',') };
 }
 
-const filterRowsBySale = (rows, sale) =>
-  sale ? rows.filter(r => String(r.sale || '').trim().toUpperCase() === sale) : rows;
+const filterRowsBySale = (rows, sale) => {
+  if (!sale) return rows;
+  const want = new Set(String(sale).split(',').map(v => v.trim().toUpperCase()).filter(Boolean));
+  return rows.filter(r => want.has(String(r.sale || '').trim().toUpperCase()));
+};
 
 // Resolve the Tally company name for a given export type.
 // 'isp' → tally_company_name; 'asp' → tally_asp_company_name (falls
@@ -16029,7 +16055,8 @@ app.get('/api/tally/export/:type/:auctionId', requireExport, (req, res) => {
     if (rows.length === 0) {
       const what = def.isLedger ? def.label.toLowerCase() : `${def.label.toLowerCase()}`;
       const forSale = saleFilter.sale
-        ? ` — sale type ${saleFilter.sale} (${SALE_TYPE_LABELS[saleFilter.sale]})`
+        ? ` — sale type ${saleFilter.sale}` + (SALE_TYPE_LABELS[saleFilter.sale]
+            ? ` (${SALE_TYPE_LABELS[saleFilter.sale]})` : '')
         : '';
       return res.status(404).json({ error: `No ${what} found for auction ${auctionId}${forSale}` });
     }
@@ -16060,7 +16087,8 @@ app.get('/api/tally/export/:type/:auctionId', requireExport, (req, res) => {
     if (fmt === 'json') {
       const json = tallyJson(rows, auctionId, targetCompany, {
         type,
-        label: def.label + (saleFilter.sale ? ` — ${SALE_TYPE_LABELS[saleFilter.sale]} (${saleFilter.sale})` : ''),
+        label: def.label + (saleFilter.sale
+          ? ` — ${SALE_TYPE_LABELS[saleFilter.sale] || 'sale types'} (${saleFilter.sale})` : ''),
         sale: saleFilter.sale,
       });
       const filename = `${def.name}${saleSuffix}_${anoForFilename(db, auctionId)}.json`;
