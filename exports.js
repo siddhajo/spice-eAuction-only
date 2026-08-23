@@ -487,8 +487,13 @@ async function exportLotBuyer(db, auctionId) {
 }
 
 // ── Checklist: post-auction lot/buyer/sale verification sheet ─
-// LOT | BUYER | BAGS | QTY | SALE — the sheet the desk reads down after the
-// trade to confirm each lot went to the right buyer under the right sale type.
+// LOT | DUMMY | BUYER | BAGS | QTY | SALE — the sheet the desk reads down after
+// the trade to confirm each lot went to the right buyer under the right sale
+// type.
+//
+// DUMMY is lots.dummy_code, the free-text tag the operator types per lot in
+// Price Entry. It sits next to LOT because that is the pair the desk checks
+// against its own pricing notes; blank for lots that were never tagged.
 //
 // BUYER is the short buyer CODE (TS, AG, MM…), not the trade name: the whole
 // point is a narrow sheet you can scan a column of, and the full name already
@@ -504,6 +509,7 @@ async function exportLotBuyer(db, auctionId) {
 async function exportChecklist(db, auctionId) {
   const rows = db.all(
     `SELECT lot_no AS lot,
+            COALESCE(dummy_code,'') AS dummy,
             code AS buyer,
             bags AS bag,
             qty,
@@ -513,6 +519,7 @@ async function exportChecklist(db, auctionId) {
   );
   const cols = [
     { header: 'LOT',   key: 'lot',   width: 8  },
+    { header: 'DUMMY', key: 'dummy', width: 12 },
     { header: 'BUYER', key: 'buyer', width: 12 },
     { header: 'BAGS',  key: 'bag',   width: 7  },
     { header: 'QTY',   key: 'qty',   width: 12, numFmt: '#,##0.000', align: 'right' },
@@ -939,12 +946,18 @@ async function exportPlanterList(db, auctionId) {
       GROUP BY name, cr
       ORDER BY name`, [auctionId]
   );
+  // Gross Qty = net qty + SB Sample Refund × lot count (one sample refund per
+  // lot) — the same rule the Dealer List and the pooler lists use, so the
+  // party lists all agree on what "gross" means.
+  const sbRefund = Number((require('./company-config').getSettingsFlat(db) || {}).sb_refund) || 0;
+  for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
   const cols = [
     { header: 'NAME', key: 'name', width: 30 },
     { header: 'CR',   key: 'cr',   width: 25 },
     { header: 'LOTS', key: 'lots', width: 6 },
     { header: 'BAGS', key: 'bags', width: 6 },
-    { header: 'QTY',  key: 'qty',  width: 12 },
+    { header: 'QTY',  key: 'qty',  width: 12, numFmt: '#,##0.000' },
+    { header: 'GROSS QTY', key: 'gross_qty', width: 12, numFmt: '#,##0.000', align: 'right' },
   ];
   return createExcelBuffer('PlanterList', cols, rows, {
     db, title: 'Planter List (Grade 1)', metaLines: auctionMeta(db, auctionId),

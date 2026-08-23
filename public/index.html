@@ -2055,11 +2055,18 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
   stroke-linecap:round;stroke-linejoin:round}
 
 /* KPI strip — the Insights headline card at strip density. */
-.hub-kpi{grid-template-columns:repeat(auto-fit,minmax(196px,1fr));gap:14px;margin-bottom:20px}
+.hub-kpi{grid-template-columns:repeat(auto-fit,minmax(228px,1fr));gap:14px;margin-bottom:20px}
 .hub-kpi .stat{
   display:flex;gap:11px;align-items:center;text-align:left;
   padding:14px 15px;border-radius:14px;border:none;min-width:0}
 .hub-kpi .stat-b{min-width:0;flex:1}
+.hub-kpi .stat.is-tall{align-items:flex-start}
+.hub-meta{
+  margin-top:9px;padding-top:8px;border-top:1px solid rgba(255,255,255,.28);
+  display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:11px;line-height:1.35}
+.hub-meta .lbl{opacity:.85;font-weight:600}
+.hub-meta .val{text-align:right;font-weight:700;font-variant-numeric:tabular-nums;
+  overflow-wrap:anywhere}
 .hub-kpi .stat .l{
   font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;
   opacity:.92;color:#fff;margin:0;line-height:1.25}
@@ -2344,6 +2351,117 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 .hub-open[data-g="banking"]{--acc:#0D9488}    .hub-open[data-g="logistics"]{--acc:#EA580C}
 .hub-open[data-g="tally"]{--acc:#4F46E5}      .hub-open[data-g="books"]{--acc:#DB2777}
 .hub-open[data-g="masters"]{--acc:#0891B2}
+/* ── Plain mode ───────────────────────────────────────────────
+   Not the colour scheme desaturated — that reads as broken. A neutral
+   scheme in its own right: white cards, one graphite accent, and the
+   hierarchy carried by weight, spacing and rules instead of hue.
+   Per-browser, and only ever affects the Auction Desk.
+
+   The greys are TINTED, not raw slate. Every value below mixes a small
+   share of the live theme primary (--spice-saffron, the one token each
+   theme overrides) into a light-slate base, so the desk reads as the same
+   application whichever theme is on — a fixed slate palette sat cold and
+   foreign next to a coral or violet rail. The share stays low (4–22%)
+   precisely so the result is still a neutral: enough hue to belong,
+   never enough to become a second colour scheme.
+
+   The bases are also a step lighter than the original slate-700/800
+   family, which made the desk read heavier than the rest of the app. */
+body[data-hub-plain="1"]{
+  /* Ink — primary action fills and strong text. White text sits on the
+     first two, so both stay well past 4.5:1 after the mix. */
+  --hub-p-ink:      color-mix(in srgb, var(--spice-saffron) 10%, #4A5A72);
+  --hub-p-ink-dk:   color-mix(in srgb, var(--spice-saffron) 10%, #37455C);
+  --hub-p-ink-soft: color-mix(in srgb, var(--spice-saffron) 10%, #6B7C96);
+  /* Edges — hairlines, the tile's top rule, the toggle dot. */
+  --hub-p-edge:     color-mix(in srgb, var(--spice-saffron) 14%, #AFBBCB);
+  /* The KPI card's 3px accent bar is pure accent, so it carries the most
+     theme of anything here. */
+  --hub-p-bar:      color-mix(in srgb, var(--spice-saffron) 22%, #64748B);
+  /* Surfaces — table head, hover, chips, zebra. Barely-there tints; any
+     more and large fills start to look like a colour wash. */
+  --hub-p-fill:     color-mix(in srgb, var(--spice-saffron)  7%, #F3F7FB);
+  --hub-p-fill-2:   color-mix(in srgb, var(--spice-saffron)  5%, #FAFCFE);
+  --hub-p-row:      color-mix(in srgb, var(--spice-saffron)  4%, #FCFDFE);
+}
+body[data-hub-plain="1"] .hub-grad{
+  background:var(--card);color:var(--spice-text-main);
+  border:1px solid var(--spice-line);box-shadow:0 1px 2px rgba(15,23,42,.05)}
+body[data-hub-plain="1"] .hub-grad:hover{
+  box-shadow:0 6px 18px rgba(15,23,42,.09);border-color:var(--hub-p-edge)}
+body[data-hub-plain="1"] .hub-grad::before{
+  inset:auto;top:0;left:0;width:100%;height:3px;background:var(--hub-p-bar);border-radius:0}
+body[data-hub-plain="1"] .hub-grad::after{display:none}
+body[data-hub-plain="1"] .hub-ico{
+  background:var(--hub-p-fill);color:var(--hub-p-ink);border:1px solid var(--spice-line)}
+body[data-hub-plain="1"] .hub-ico svg{stroke:var(--hub-p-ink)}
+/* Emoji carry colour of their own, so plain mode drains MOST of it —
+   fully grey emoji looked switched-off rather than neutral. A trace left
+   in keeps the tiles alive without reintroducing five competing hues. */
+body[data-hub-plain="1"] .hub-kpi .hub-ico{filter:grayscale(.8)}
+body[data-hub-plain="1"] .hub-kpi .stat .l,
+body[data-hub-plain="1"] .hub-w-name{color:var(--spice-text-hint);opacity:1}
+body[data-hub-plain="1"] .hub-kpi .stat .n,
+body[data-hub-plain="1"] .hub-w-n{color:var(--spice-text-main)}
+body[data-hub-plain="1"] .hub-w-hint{color:var(--spice-text-hint);opacity:1}
+body[data-hub-plain="1"] .hub-meta{border-top-color:var(--spice-line)}
+body[data-hub-plain="1"] .hub-meta .lbl{color:var(--spice-text-hint);opacity:1}
+body[data-hub-plain="1"] .hub-meta .val{color:var(--spice-text-main)}
+body[data-hub-plain="1"] .hub-w-sel{background:var(--hub-p-fill);color:var(--hub-p-ink)}
+
+/* Document cards: white, one rule at the top, no tint. */
+body[data-hub-plain="1"] .hub-tile{background:var(--card);border-color:var(--spice-line)}
+body[data-hub-plain="1"] .hub-tile::before{background:var(--hub-p-edge)}
+body[data-hub-plain="1"] .hub-tile-l{color:var(--spice-text-main)}
+body[data-hub-plain="1"] .hub-src,
+body[data-hub-plain="1"] .hub-fmt,
+body[data-hub-plain="1"] .hub-tile .hub-chip,
+body[data-hub-plain="1"] .hub-f-chip{
+  background:var(--hub-p-fill-2);color:var(--hub-p-ink);border-color:var(--spice-line)}
+/* One graphite for every action; the icon buttons a step lighter so the
+   row still has a primary. */
+body[data-hub-plain="1"] .hub-tile .hub-btn{background:var(--hub-p-ink);color:#fff}
+body[data-hub-plain="1"] .hub-tile .hub-btn:hover{background:var(--hub-p-ink-dk);box-shadow:none}
+body[data-hub-plain="1"] .hub-tile .hub-btn-i{background:var(--hub-p-ink-soft)}
+body[data-hub-plain="1"] .hub-tile .hub-f-btn{
+  background:#fff;color:var(--hub-p-ink);border:1.5px solid var(--spice-line)}
+body[data-hub-plain="1"] .hub-tile .hub-f-btn.is-on{background:var(--hub-p-ink);color:#fff}
+body[data-hub-plain="1"] .hub-lot-table th{
+  background:var(--hub-p-fill);color:var(--hub-p-ink);border-bottom:1px solid var(--spice-line-strong)}
+body[data-hub-plain="1"] .hub-lot-table tbody tr:nth-child(even){background:var(--hub-p-row)}
+body[data-hub-plain="1"] .hub-lot-table tbody tr:hover{background:var(--hub-p-fill)}
+body[data-hub-plain="1"] .hub-lot-table tfoot td{
+  background:var(--hub-p-fill);color:var(--hub-p-ink-dk);border-top-color:var(--hub-p-edge)}
+body[data-hub-plain="1"] .hub-lot-no{color:var(--hub-p-ink)}
+body[data-hub-plain="1"] .hub-seg-btn.is-on{background:var(--hub-p-ink);box-shadow:none}
+body[data-hub-plain="1"] .hub-open-head .hub-btn{
+  background:#fff;color:var(--hub-p-ink);border:1.5px solid var(--spice-line)}
+body[data-hub-plain="1"] .hub-open-head .hub-btn:hover{background:var(--hub-p-ink);color:#fff}
+body[data-hub-plain="1"] #hub-filter-modal{--acc:var(--hub-p-ink)}
+body[data-hub-plain="1"] .hub-f-c.is-on{background:var(--hub-p-ink);border-color:var(--hub-p-ink)}
+body[data-hub-plain="1"] .hub-lock{color:#B45309}
+/* The desk borrows the app's outline button for Refresh and the Documents
+   shortcut. Those are emerald everywhere else in the app and must stay so —
+   only the copies living inside the desk go graphite. */
+body[data-hub-plain="1"] #tc-hub .btn-o{
+  border-color:var(--spice-line);color:var(--hub-p-ink);background:var(--card)}
+body[data-hub-plain="1"] #tc-hub .btn-o:hover{
+  border-color:var(--hub-p-ink);background:var(--hub-p-ink);color:#fff}
+body[data-hub-plain="1"] .hub-plain-btn:hover{border-color:var(--hub-p-ink);color:var(--hub-p-ink-dk)}
+
+.hub-plain-btn{
+  height:38px;padding:0 13px;border-radius:8px;cursor:pointer;font-family:inherit;
+  font-size:12.5px;font-weight:700;align-self:flex-end;
+  border:1.5px solid var(--border);background:var(--card);color:var(--text2);
+  display:inline-flex;align-items:center;gap:7px}
+.hub-plain-btn:hover{border-color:var(--spice-cardamom);color:var(--spice-cardamom-dk)}
+/* The toggle's dot previews what you'd switch TO. Its first stop is the
+   live theme primary rather than a fixed emerald, so on a coral or violet
+   theme the swatch shows that theme's colour instead of another app's. */
+.hub-plain-dot{width:12px;height:12px;border-radius:50%;
+  background:linear-gradient(135deg,var(--spice-saffron),#6366F1,var(--spice-turmeric))}
+body[data-hub-plain="1"] .hub-plain-dot{background:var(--hub-p-edge)}
+
 .hub-toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
 .hub-empty{padding:26px;text-align:center;color:var(--text3);font-size:13px}
 
@@ -2404,19 +2522,36 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 .hub-lot-table th.num,.hub-lot-table td.num{text-align:right}
 .hub-lot-table td{padding:9px 12px;border-bottom:1px solid var(--border);color:var(--text)}
 .hub-lot-table tbody tr:nth-child(even){background:color-mix(in srgb, var(--spice-cardamom) 3%, transparent)}
+/* Totals pinned to the bottom of the scroller so they stay in view while
+   you read down a page of lots. */
+.hub-lot-table tfoot tr{position:sticky;bottom:0}
+.hub-lot-table tfoot td{
+  padding:10px 12px;font-weight:800;font-size:12.5px;
+  background:var(--green-bg);color:var(--spice-cardamom-dk);
+  border-top:2px solid var(--spice-cardamom)}
+.hub-lot-table tfoot tr.is-page td{
+  background:var(--bg);color:var(--text2);font-weight:700;
+  border-top:1px solid var(--border)}
 .hub-lot-table tbody tr{cursor:pointer;transition:background .12s}
 .hub-lot-table tbody tr:hover{background:var(--green-bg)}
 .hub-lot-table tbody tr.is-open{background:var(--green-bg);
   box-shadow:inset 3px 0 0 var(--spice-cardamom)}
 .hub-lot-no{font-weight:800;color:var(--spice-cardamom-dk)}
 .hub-lot-mute{color:var(--text3);font-size:11.5px}
-/* Withdrawn / not-auctioned lots carry no sale — greyed so a scan down
-   the Amount column doesn't read them as zero-value sales. */
+/* Withdrawn / not-auctioned lots carry no sale — the whole row greys out so a
+   scan down the Amount column reads their 0.00 as "did not sell" rather than
+   as a zero-value sale. The WD / NA badge on the Buyer cell names which. */
 .hub-lot-table tbody tr.is-wd td{color:var(--text3)}
 .hub-lot-badge{
   display:inline-block;font-size:9.5px;font-weight:800;letter-spacing:.3px;
   padding:1px 6px;border-radius:10px;background:var(--bg);
   color:var(--text3);border:1px solid var(--border);margin-left:6px
+}
+/* WD / NA — a settled "did not sell" outcome, not just another buyer code.
+   Amber (the app's warning pair) so it reads as a state marker against the
+   neutral code badges sitting beside it. */
+.hub-lot-badge.is-nil{
+  background:var(--amber-bg);color:#B45309;border-color:var(--amber)
 }
 
 /* ── Lot detail drawer ─────────────────────────────────────── */
@@ -2852,7 +2987,8 @@ input.dt-search{
 .needs-delete-all,
 .needs-user-manage,
 .needs-export,
-.needs-lot-entry-view{display:none !important}
+.needs-lot-entry-view,
+.needs-auction-desk{display:none !important}
 body[data-perm-lot-write="1"]      .needs-lot-write,
 body[data-perm-invoice-write="1"]  .needs-invoice-write,
 body[data-perm-invoice-revert="1"] .needs-invoice-revert,
@@ -2865,7 +3001,8 @@ body[data-perm-delete="1"]         .needs-delete,
 body[data-perm-delete-all="1"]     .needs-delete-all,
 body[data-perm-user-manage="1"]    .needs-user-manage,
 body[data-perm-lot-entry-view="1"] .needs-lot-entry-view,
-body[data-perm-export="1"]         .needs-export{display:initial !important}
+body[data-perm-export="1"]         .needs-export,
+body[data-perm-auction-desk="1"]   .needs-auction-desk{display:initial !important}
 /* Restore inline-flex for buttons since `display:initial` reverts to inline */
 body[data-perm-lot-write="1"]      .btn.needs-lot-write,
 body[data-perm-invoice-write="1"]  .btn.needs-invoice-write,
@@ -2873,6 +3010,7 @@ body[data-perm-invoice-revert="1"] .btn.needs-invoice-revert,
 body[data-perm-trader-write="1"]   .btn.needs-trader-write,
 body[data-perm-buyer-write="1"]    .btn.needs-buyer-write,
 body[data-perm-auction-write="1"]  .btn.needs-auction-write,
+body[data-perm-auction-desk="1"]   .side-item.needs-auction-desk{display:flex !important}
 body[data-perm-settings-write="1"] .btn.needs-settings-write,
 body[data-perm-state-toggle="1"]   .btn.needs-state-toggle,
 body[data-perm-delete="1"]         .btn.needs-delete,
@@ -3576,7 +3714,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
              Deliberately first: it is the default landing screen, and the
              12 tabs below it are where you go to CREATE things, not to find
              them. See TRADE-DESK.md. -->
-        <button class="side-item active" data-tab="hub" onclick="go('hub')">
+        <button class="side-item needs-auction-desk active" data-tab="hub" onclick="go('hub')">
           <svg viewBox="0 0 24 24"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 12l9 4 9-4"/><path d="M3 17l9 4 9-4"/></svg>
           Auction Desk
         </button>
@@ -3839,6 +3977,10 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <select id="hub-auction" onchange="hubOnAuctionChange()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></select>
           </div>
           <button class="btn btn-o" onclick="hubRefresh()" style="height:38px;padding:0 14px;align-self:flex-end">Refresh</button>
+          <button type="button" class="hub-plain-btn" id="hub-plain-toggle" onclick="hubTogglePlain()"
+                  title="Switch between the colour and plain schemes">
+            <span class="hub-plain-dot"></span><span id="hub-plain-label">Plain</span>
+          </button>
         </div>
       </div>
       <div class="stats hub-kpi" id="hub-kpi"></div>
@@ -3892,6 +4034,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                 <th class="num">Amount</th><th>Buyer</th><th>Bill No</th>
               </tr></thead>
               <tbody id="hub-lot-rows"></tbody>
+              <tfoot id="hub-lot-foot"></tfoot>
             </table>
           </div>
           <div id="hub-lot-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;font-size:12.5px;color:var(--text2);flex-wrap:wrap;border-top:1px solid var(--border)"></div>
@@ -9658,6 +9801,16 @@ async function login(){
             e.style.display='block'; e.classList.add('active');}
       return;
     }
+    // 403 — an admin has locked this username. Nothing the user can do from
+    // here (the password is still correct, which is exactly why a generic
+    // "Invalid credentials" would send them round in circles), so show the
+    // server's message telling them who to ask.
+    if (x && x.status === 403 && x.body && x.body.error === 'account_locked') {
+      if(e){e.textContent = x.body.message
+              || 'This account is locked. Contact your administrator.';
+            e.style.display='block'; e.classList.add('active');}
+      return;
+    }
     if(e){e.textContent='Invalid credentials';e.style.display='block';e.classList.add('active');}}}
 function logout(){h('/api/logout',{method:'POST'});T='';localStorage.removeItem('t');
   window._userRole=null;window._userPerms=new Set();
@@ -10804,6 +10957,10 @@ function nudgeSpiceBoard(){
 }
 
 function go(tab){
+  if (tab === 'hub' && typeof hubAllowed === 'function' && !hubAllowed()) {
+    if (typeof toast === 'function') toast('🔒 The Auction Desk is for managers and admins');
+    tab = 'dash';
+  }
   window._currentTab = tab;
   document.querySelectorAll('.side-item').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
   document.querySelectorAll('.tc').forEach(t=>t.classList.remove('active'));
@@ -10991,9 +11148,13 @@ window._hubCat = null;
 // lot_entry users keep going straight to Lot Entry as they always have.
 function _landingTab(){
   if (window._userRole === 'lot_entry') return 'lotentry';
+  // Hiding the sidebar item is not the same as the screen being
+  // unreachable — a role without the capability lands on the Dashboard.
+  if (!hubAllowed()) return 'dash';
   try { if (localStorage.getItem('spice.home') === 'dash') return 'dash'; } catch(_) {}
   return 'hub';
 }
+const hubAllowed = () => !!(window._userPerms && window._userPerms.has('auction_desk'));
 function hubSetHome(tab){
   try { localStorage.setItem('spice.home', tab); } catch(_) {}
   toast(tab === 'dash' ? 'Dashboard is now your home screen'
@@ -11001,9 +11162,33 @@ function hubSetHome(tab){
   renderHubFooter();
 }
 
+// Colour vs plain, remembered per browser. Some people read a dense
+// screen better without hue; this gives them a neutral scheme rather than
+// a washed-out version of the coloured one.
+function hubPlain(){
+  try { return localStorage.getItem('hubPlain') === '1'; } catch(_) { return false; }
+}
+function hubApplyPlain(){
+  const on = hubPlain();
+  document.body.setAttribute('data-hub-plain', on ? '1' : '0');
+  const lbl = document.getElementById('hub-plain-label');
+  if (lbl) lbl.textContent = on ? 'Colour' : 'Plain';
+  const btn = document.getElementById('hub-plain-toggle');
+  if (btn) btn.title = on ? 'Switch back to the colour scheme'
+                          : 'Switch to the plain, grey scheme';
+}
+function hubTogglePlain(){
+  try { localStorage.setItem('hubPlain', hubPlain() ? '0' : '1'); } catch(_) {}
+  hubApplyPlain();
+}
+// Applied before first paint so the screen never flashes the other scheme.
+try { document.body.setAttribute('data-hub-plain',
+        localStorage.getItem('hubPlain') === '1' ? '1' : '0'); } catch(_) {}
+
 function loadHub(){
   // Same wiring every other screen uses, so picking an auction here updates
   // the topbar and every other tab's selector (and vice versa).
+  hubApplyPlain();
   fillAucSelect('hub-auction').then(() => { hubApplyView(); hubRefresh(); })
     .catch(e => showError(e));
 }
@@ -11023,6 +11208,10 @@ function hubSetView(v){
 }
 function hubApplyView(){
   const v = hubView();
+  // The Lots view's strip is filter-aware; the Documents view describes
+  // the whole auction. Repaint whichever is being shown.
+  if (v === 'docs' && window._hubCat) { try { renderHubKpi(window._hubCat.kpi); } catch(_) {} }
+  if (v === 'lots' && window._hubLots) { try { renderHubKpi(hubKpiFromLots(window._hubLots)); } catch(_) {} }
   const lots = document.getElementById('hub-view-lots');
   const docs = document.getElementById('hub-view-docs');
   if (lots) lots.style.display = v === 'lots' ? '' : 'none';
@@ -11119,6 +11308,37 @@ function hubFillBranchFilter(){
     + seen.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
 }
 
+// KPI figures computed from the lots CURRENTLY LOADED — which is the
+// server-filtered set, so searching or picking a branch narrows the strip
+// and the totals row with the table. Mirrors computeTradeKpi's rules
+// exactly: sold = amount > 0, withdrawn = everything else, average price
+// is value ÷ weight rather than the mean of per-lot prices.
+function hubKpiFromLots(rows){
+  const k = { allocatedLots: rows.length, soldLots: 0, withdrawnLots: 0,
+              soldWeight: 0, wdWeight: 0, soldBags: 0, wdBags: 0,
+              totalQty: 0, totalBags: 0, totalValue: 0,
+              sellers: 0, buyers: 0, minPrice: 0, maxPrice: 0, avgPrice: 0 };
+  const sellers = new Set(), buyers = new Set();
+  let min = null, max = null;
+  for (const l of rows) {
+    const qty = Number(l.qty) || 0, amt = Number(l.amount) || 0, price = Number(l.price) || 0;
+    k.totalQty += qty; k.totalBags += Number(l.bags) || 0; k.totalValue += amt;
+    if (amt > 0) {
+      k.soldLots++; k.soldWeight += qty; k.soldBags += Number(l.bags) || 0;
+      if (String(l.buyer || '').trim()) buyers.add(String(l.buyer).trim());
+      if (price > 0) { min = min === null ? price : Math.min(min, price);
+                       max = max === null ? price : Math.max(max, price); }
+    } else { k.withdrawnLots++; k.wdWeight += qty; k.wdBags += Number(l.bags) || 0; }
+    const sid = l.trader_id != null && l.trader_id !== '' ? 't' + l.trader_id
+                                                          : String(l.name || '').trim();
+    if (sid) sellers.add(sid);
+  }
+  k.sellers = sellers.size; k.buyers = buyers.size;
+  k.minPrice = min || 0; k.maxPrice = max || 0;
+  k.avgPrice = k.soldWeight > 0 ? k.totalValue / k.soldWeight : 0;
+  return k;
+}
+
 function hubRenderLots(){
   const body = document.getElementById('hub-lot-rows');
   const all  = window._hubLots || [];
@@ -11129,6 +11349,10 @@ function hubRenderLots(){
     body.innerHTML = '<tr><td colspan="9" class="hub-empty">No lots match.</td></tr>';
     Object.assign(_hubLotPager, { page: 1, total: 0, totalPages: 0 });
     renderPager('hub-lot-pager', _hubLotPager, gotoHubLotPage, term);
+    // Nothing matched — the figures must say so rather than keep showing
+    // the last set.
+    renderHubKpi(hubKpiFromLots([]));
+    hubRenderLotTotals([], []);
     if (count) count.textContent = '';
     return;
   }
@@ -11145,7 +11369,14 @@ function hubRenderLots(){
     const wd = !(Number(l.amount) > 0);
     const code = (l.code || '').trim().toUpperCase();
     const buyer = esc(l.buyer1 || l.buyer || '') || '<span class="hub-lot-mute">—</span>';
-    const marker = code === 'WD' ? 'WD' : code === 'NA' ? 'NA' : '—';
+    // WD (withdrawn) and NA (not auctioned) are SETTLED outcomes — the lot did
+    // not sell, so its amount is a real 0.00 and prints as one. Every other
+    // unpriced lot is still PENDING (price import hasn't run), where a "0.00"
+    // would read as "sold for nothing"; those keep the em dash.
+    const settledNil = code === 'WD' || code === 'NA';
+    const amountCell = Number(l.amount) ? fmtI(l.amount, 2)
+      : settledNil ? fmtI(0, 2)
+      : '<span class="hub-lot-mute">—</span>';
     return `<tr class="${wd ? 'is-wd' : ''}" data-lot-id="${l.id}" onclick="hubLotOpen(${l.id})">
       <td class="hub-lot-no">${esc(l.lot_no)}</td>
       <td>${esc(l.name || '')}${l.has_bank ? '' : '<span class="hub-lot-badge" title="This seller has no bank account on file">no bank</span>'}</td>
@@ -11153,18 +11384,46 @@ function hubRenderLots(){
       <td class="num">${fmtI(l.bags)}</td>
       <td class="num">${fmtI(l.qty, 3)}</td>
       <td class="num">${Number(l.price) ? fmtI(l.price, 2) : '<span class="hub-lot-mute">—</span>'}</td>
-      <td class="num">${Number(l.amount) ? fmtI(l.amount, 2) : `<span class="hub-lot-mute">${marker}</span>`}</td>
-      <td>${buyer}${code && code !== 'WD' && code !== 'NA' ? `<span class="hub-lot-badge">${esc(code)}</span>` : ''}</td>
+      <td class="num">${amountCell}</td>
+      <td>${buyer}${code ? `<span class="hub-lot-badge${settledNil ? ' is-nil' : ''}"${settledNil ? ` title="${code === 'WD' ? 'Withdrawn' : 'Not auctioned'} — this lot did not sell"` : ''}>${esc(code)}</span>` : ''}</td>
       <td class="hub-lot-mute">${esc(l.invo || '')}</td>
     </tr>`;
   }).join('');
 
   renderPager('hub-lot-pager', _hubLotPager, gotoHubLotPage, term);
 
+  // The strip and the totals describe what is ON SCREEN, not the whole
+  // auction — so a branch filter or a search narrows them with the table.
+  renderHubKpi(hubKpiFromLots(all));
+  hubRenderLotTotals(all, slice);
+
   // The header count stays whole-auction — the pager already says which
   // slice you are looking at, and "193 sold" is the figure that matters.
   const sold = all.filter(l => Number(l.amount) > 0).length;
-  if (count) count.textContent = `${fmtI(all.length)} lots · ${fmtI(sold)} sold`;
+  if (count) count.textContent = term || (document.getElementById('hub-lot-branch')?.value || '')
+    ? `${fmtI(all.length)} matching · ${fmtI(sold)} sold`
+    : `${fmtI(all.length)} lots · ${fmtI(sold)} sold`;
+}
+
+// Totals under the table. Two rows when a page is only part of the set —
+// the page's own sums, then the whole filtered set — because a subtotal
+// that silently means "this page" is how people mis-read a report.
+function hubRenderLotTotals(all, slice){
+  const foot = document.getElementById('hub-lot-foot');
+  if (!foot) return;
+  const sum = (rows, k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+  const row = (label, rows, cls) => `<tr class="${cls}">
+      <td colspan="3">${esc(label)}</td>
+      <td class="num">${fmtI(sum(rows, 'bags'))}</td>
+      <td class="num">${fmtI(sum(rows, 'qty'), 3)}</td>
+      <td class="num"></td>
+      <td class="num">${fmtI(sum(rows, 'amount'), 2)}</td>
+      <td colspan="2"></td>
+    </tr>`;
+  const partial = slice.length < all.length;
+  foot.innerHTML =
+    (partial ? row(`This page — ${fmtI(slice.length)} lots`, slice, 'is-page') : '')
+    + row(`${partial ? 'All ' : ''}${fmtI(all.length)} lots`, all, 'is-all');
 }
 
 // ── Lot detail drawer ────────────────────────────────────────────
@@ -11332,25 +11591,47 @@ function renderHubKpi(kpi){
     const n = String(txt).replace(/<[^>]*>/g, '').length;
     return n <= 5 ? 'n-1' : n <= 8 ? 'n-2' : n <= 11 ? 'n-3' : 'n-4';
   };
-  // icon + theme per figure — the Insights headline card, verbatim.
-  const cell = (n, l, icon, theme) =>
-    `<div class="stat hub-grad t-${theme}">`
+  // The Insights headline card, including its `meta` breakdown — one card
+  // per thing being measured, with its detail underneath, rather than a
+  // dozen bare figures in a row.
+  const cell = (n, l, icon, theme, meta) =>
+    `<div class="stat hub-grad t-${theme}${meta ? ' is-tall' : ''}">`
     + `<div class="hub-ico">${icon}</div>`
     + `<div class="stat-b"><div class="l">${esc(l)}</div>`
-    + `<div class="n ${sizeClass(n)}">${n}</div></div></div>`;
+    + `<div class="n ${sizeClass(n)}">${n}</div>`
+    + (meta ? `<div class="hub-meta">${meta.map(([k, v]) =>
+        `<span class="lbl">${esc(k)}</span><span class="val">${v}</span>`).join('')}</div>` : '')
+    + `</div></div>`;
   // Total Value runs to twelve characters at auction scale
   // (₹20,70,44,630) and will not fit a lot-count-sized tile. It gets a
   // double-width cell, and the paise are dropped: nobody reads a trade
   // total to two decimals, and ".00" is what tipped it over the edge.
+  const rs = (v) => '₹' + fmtI(v || 0, 2);
   el.innerHTML =
-    cell(fmtI(kpi.allocatedLots), 'Allocated Lots', '🌾', 'indigo') +
-    cell(fmtI(kpi.soldLots),      'Sold Lots',      '✅', 'emerald') +
-    cell(fmtI(kpi.withdrawnLots), 'WD Lots',        '↩️', 'amber') +
-    cell(fmtI(kpi.soldWeight, 3), 'Sold Weight',    '⚖️', 'teal') +
-    cell(fmtI(kpi.totalBags),     'Bags',           '📦', 'sky') +
-    cell(fmtI(kpi.sellers),       'Sellers',        '🧑‍🌾', 'violet') +
-    cell(fmtI(kpi.buyers),        'Buyers',         '🛒', 'orange') +
-    cell('₹' + fmtI(Math.round(kpi.totalValue)), 'Total Value', '💰', 'rose');
+    cell(fmtI(kpi.allocatedLots), 'Lots', '🌾', 'indigo', [
+      ['Bags',     fmtI(kpi.totalBags)],
+      ['Qty (kg)', fmtI(kpi.totalQty, 3)],
+      ['Amount',   rs(kpi.totalValue)],
+    ]) +
+    cell(fmtI(kpi.soldLots), 'Sold', '✅', 'emerald', [
+      ['Bags',     fmtI(kpi.soldBags)],
+      ['Qty (kg)', fmtI(kpi.soldWeight, 3)],
+      ['Amount',   rs(kpi.totalValue)],
+    ]) +
+    cell(fmtI(kpi.withdrawnLots), 'Withdrawn', '↩️', 'amber', [
+      ['Bags',     fmtI(kpi.wdBags)],
+      ['Qty (kg)', fmtI(kpi.wdWeight, 3)],
+      ['Amount',   rs(0)],
+    ]) +
+    cell(rs(kpi.totalValue), 'Value', '💰', 'rose', [
+      ['Min ₹', fmtI(kpi.minPrice, 2)],
+      ['Max ₹', fmtI(kpi.maxPrice, 2)],
+      ['Avg ₹', fmtI(kpi.avgPrice, 2)],
+    ]) +
+    cell(fmtI(kpi.sellers + kpi.buyers), 'Parties', '🧑‍🌾', 'violet', [
+      ['Sellers', fmtI(kpi.sellers)],
+      ['Buyers',  fmtI(kpi.buyers)],
+    ]);
 }
 
 // Button text per format. Mostly the format shouted, except IRP — "IRP" is
@@ -11358,7 +11639,7 @@ function renderHubKpi(kpi){
 // Group → Insights gradient theme. Same nine the branch cards cycle
 // through, assigned rather than cycled so a group keeps its colour.
 const HUB_THEME = {
-  preauction:'sky', documents:'violet', reports:'emerald', statutory:'amber',
+  preauction:'sky', documents:'violet', payments:'rose', reports:'emerald', statutory:'amber',
   banking:'teal', logistics:'orange', tally:'indigo', books:'pink', masters:'rose',
   'fmt-pdf':'rose', 'fmt-xlsx':'emerald', 'fmt-csv':'sky', 'fmt-xml':'indigo',
   'fmt-json':'violet', 'fmt-irp':'amber', 'fmt-dbf':'teal', 'fmt-generated':'pink',
@@ -11509,6 +11790,7 @@ const HUB_ICONS = {
   dbf:        '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/>',
   books:      '<path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>',
   masters:    '<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/>',
+  payments:   '<rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="12" cy="12" r="3"/><path d="M6 12h.01M18 12h.01"/>',
 };
 Object.assign(HUB_ICONS, {
   'fmt-pdf':  HUB_ICONS.documents,
@@ -11720,14 +12002,18 @@ function renderHubGroups(groups){
         <div class="hub-open-body">${
           atDocs
             ? `<div class="hub-grid">${shown.map(hubTileHtml).join('')}</div>`
-            : `<div class="hub-wgrid">${subs.map(sb => hubSubWidgetHtml(open, sb)).join('')}</div>`
+            : `<div class="hub-wgrid">${subs.slice()
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map(sb => hubSubWidgetHtml(open, sb)).join('')}</div>`
         }</div>
       </div>`;
     return;
   }
 
-  // Otherwise the grid of widgets.
-  host.innerHTML = `<div class="hub-wgrid">${groups.map(hubWidgetHtml).join('')}</div>`;
+  // Otherwise the grid of widgets, A-Z. Declaration order is a build-time
+  // concern; on screen a predictable alphabet is faster to find things in.
+  const sorted = groups.slice().sort((a, b) => a.label.localeCompare(b.label));
+  host.innerHTML = `<div class="hub-wgrid">${sorted.map(hubWidgetHtml).join('')}</div>`;
   return;
 }
 
@@ -12036,6 +12322,10 @@ let _hubFilterOptions = null;     // branches / sellers / buyers for this auctio
 const HUB_FILTER_LABEL = {
   branch: 'Branch', sellerId: 'Seller', sellers: 'Seller', buyerCode: 'Buyer',
   saleType: 'Sale type', sale: 'Sale type', party: 'Party', traderId: 'Seller',
+  // Tally's `invoice` filter matches `invo` on sales/purchases and
+  // `note_no` on debit notes (server.js filterRowsByDoc), so it is named
+  // for what it actually covers rather than just "Invoice".
+  invoice: 'Invoice / Note no',
 };
 const HUB_SALE_TYPES = [['L', 'Local'], ['I', 'Inter-state'], ['E', 'Export']];
 
@@ -12052,6 +12342,65 @@ async function hubLoadFilterOptions(){
     _hubFilterOptions = { _aid: aid, branches: [], sellers: [], buyers: [] };
   }
   return _hubFilterOptions;
+}
+
+let _hubParties = { seller: null, buyer: null };
+// PAGE through the master rather than taking the unpaged list. That list
+// is capped at 500 rows (server.js), so on a book with more sellers the
+// picker would silently miss everyone past the 500th alphabetically — and
+// the register matches an exact name, so the operator would get an empty
+// report with no clue why. Fetched once per session and cached.
+async function hubLoadParties(kind){
+  if (_hubParties[kind]) return _hubParties[kind];
+  const url = kind === 'buyer' ? '/api/buyers' : '/api/traders';
+  const map = kind === 'buyer'
+    ? (b) => ({ v: (b.buyer1 || b.buyer || '').trim(),
+                t: (b.buyer1 || b.buyer || '').trim(), p: b.tel || '' })
+    : (t) => ({ v: (t.name || '').trim(), t: (t.name || '').trim(), p: t.tel || '' });
+  const out = [];
+  try {
+    const SIZE = 500;
+    for (let page = 1; page <= 40; page++) {     // 20k parties is the ceiling
+      const d = await j(`${url}?page=${page}&pageSize=${SIZE}`);
+      const rows = Array.isArray(d) ? d : (d.rows || []);
+      out.push(...rows.map(map).filter(x => x.v));
+      const total = Array.isArray(d) ? rows.length : Number(d.total) || out.length;
+      if (rows.length < SIZE || out.length >= total) break;
+    }
+  } catch (_) {}
+  // De-duplicate: two sellers can share a name, and the register matches
+  // on name, so a second identical entry would be a meaningless choice.
+  const seen = new Set();
+  _hubParties[kind] = out.filter(x => {
+    const k = x.v.toUpperCase();
+    if (seen.has(k)) return false;
+    seen.add(k); return true;
+  });
+  return _hubParties[kind];
+}
+
+// The parties and document numbers actually inside one Tally export.
+// Unlike the register pickers, these do NOT come from a master: a Tally
+// filter matches the built voucher rows, so offering a name the export
+// does not contain would produce an empty file with no explanation.
+// Cached per (type, auction, sale) — changing the sale type changes the
+// answer, since the sale filter is applied before the lists are gathered.
+let _hubTallyOpts = {};
+async function hubLoadTallyOptions(type, sale){
+  const aid = document.getElementById('hub-auction')?.value || '';
+  if (!type || !aid) return { parties: [], invoices: [] };
+  const key = `${type}|${aid}|${sale || ''}`;
+  if (_hubTallyOpts[key]) return _hubTallyOpts[key];
+  try {
+    const d = await j(`/api/tally/filter-options/${encodeURIComponent(type)}/${encodeURIComponent(aid)}`
+                      + (sale ? '?sale=' + encodeURIComponent(sale) : ''));
+    _hubTallyOpts[key] = { parties: d.parties || [], invoices: d.invoices || [] };
+  } catch (_) {
+    // A disabled flag or a not-yet-generated document answers 403/404.
+    // Fall back to the free-text box rather than showing an empty picker.
+    _hubTallyOpts[key] = null;
+  }
+  return _hubTallyOpts[key];
 }
 
 const hubFilterCount = (id) => Object.values(window._hubFilters[id] || {}).filter(v => v !== '').length;
@@ -12074,7 +12423,15 @@ async function hubFilterOpen(id){
   const it = _hubItem(id);
   if (!it || !it.filters) return;
   const opts = await hubLoadFilterOptions();
-  const cur = window._hubFilters[id] || {};
+  // A `party` filter reads from a master, not from this auction's lots.
+  const partyOpts = it.partyKind ? await hubLoadParties(it.partyKind) : [];
+  // A re-open triggered by changing the sale type carries the half-filled
+  // form forward, so the operator does not lose the rest of their choices.
+  const cur = _hubFilterDraft || window._hubFilters[id] || {};
+  _hubFilterDraft = null;
+  // …except on a Tally export, where the party reads from the built
+  // vouchers — narrowed by whichever sale type is selected right now.
+  const tallyOpts = it.tallyType ? await hubLoadTallyOptions(it.tallyType, cur.sale) : null;
   // Which filters this document takes several values for. Everything else
   // stays single — a multi-select on a field the export reads once would
   // quietly drop all but the first choice.
@@ -12086,7 +12443,9 @@ async function hubFilterOpen(id){
   // by how long the list is.
   const sel = (key, options, placeholder) =>
     `<label class="hub-f-row"><span>${esc(HUB_FILTER_LABEL[key] || key)}</span>`
-    + `<select data-fk="${esc(key)}"><option value="">${esc(placeholder)}</option>`
+    + `<select data-fk="${esc(key)}"`
+    +   (key === 'sale' || key === 'saleType' ? ' onchange="hubFilterSaleChanged()"' : '')
+    +   `><option value="">${esc(placeholder)}</option>`
     + options.map(o => `<option value="${esc(o.v)}"${cur[key] === o.v ? ' selected' : ''}>${esc(o.t)}</option>`).join('')
     + `</select></label>`;
 
@@ -12176,6 +12535,24 @@ async function hubFilterOpen(id){
     else if (key === 'buyerCode')
       rows.push(pick(key, opts.buyers.map(x => ({ v: x.code, t: `${x.name} (${x.code})`, p: x.tel || '' })),
                 'Search buyers by name or phone…'));
+    // `party` matches an EXACT name server-side, so a typed value that is
+    // one space or one letter out returns an empty register with no hint
+    // why. Pick it from the master instead; the picker searches name or
+    // phone, same as the seller/buyer filters elsewhere.
+    else if (key === 'party' && it.partyKind)
+      rows.push(pick(key, partyOpts,
+        it.partyKind === 'buyer' ? 'Search buyers by name or phone…'
+                                 : 'Search sellers by name or phone…'));
+    // Tally's party and document number are searched the same way, but the
+    // options are the export's own rows — see hubLoadTallyOptions. An empty
+    // list means the export has nothing to offer, so fall back to free text
+    // rather than showing a picker that can only disappoint.
+    else if (key === 'party' && tallyOpts && tallyOpts.parties.length)
+      rows.push(pick(key, tallyOpts.parties.map(p => ({ v: p, t: p })),
+                'Search parties in this export…'));
+    else if (key === 'invoice' && tallyOpts && tallyOpts.invoices.length)
+      rows.push(pick(key, tallyOpts.invoices.map(n => ({ v: n, t: n })),
+                'Search document numbers…'));
     else rows.push(txt(key, 'Any'));
   }
 
@@ -12205,7 +12582,32 @@ function hubChipToggle(btn){
   btn.classList.toggle('is-on');
   const row = btn.closest('.hub-f-row');
   const on = Array.from(row.querySelectorAll('.hub-f-c.is-on')).map(b => b.dataset.v);
-  row.querySelector('[data-fk]').value = on.join(',');
+  const fk = row.querySelector('[data-fk]');
+  fk.value = on.join(',');
+  if (fk.dataset.fk === 'sale') hubFilterSaleChanged();
+}
+
+// Tally's party and document-number lists are gathered AFTER the sale
+// filter runs, so changing the sale type changes what they should offer.
+// Re-open the dialog on the current draft rather than leaving stale names
+// on screen — picking one of those would download an empty file.
+let _hubFilterDraft = null;
+function hubFilterSaleChanged(){
+  const id = window._hubFilterId;
+  const it = id ? _hubItem(id) : null;
+  if (!it || !it.tallyType) return;
+  const pop = document.getElementById('hub-f-body');
+  if (!pop) return;
+  const f = {};
+  for (const el of pop.querySelectorAll('[data-fk]')) {
+    const v = (el.value || '').trim();
+    if (v) f[el.dataset.fk] = v;
+  }
+  // The party/invoice choices are dropped on purpose: they were picked
+  // from the previous sale type's list and may no longer be in the export.
+  delete f.party; delete f.invoice;
+  _hubFilterDraft = f;
+  hubFilterOpen(id);
 }
 // Drop one token from a long multi-select.
 function hubTokRemove(btn){
@@ -12223,6 +12625,12 @@ const HUB_PICK_MAX = 40;
 function hubPickFilter(input){
   const wrap = input.closest('.hub-f-pick');
   const list = wrap.querySelector('.hub-f-opts');
+  // Only one list at a time. A dialog with two pickers — Tally's party and
+  // document number — showed both stacked, the upper one covering the very
+  // field the operator had just clicked into.
+  for (const other of document.querySelectorAll('#hub-f-body .hub-f-pick')) {
+    if (other !== wrap) other.querySelector('.hub-f-opts').style.display = 'none';
+  }
   let opts = [];
   try { opts = JSON.parse(wrap.dataset.opts || '[]'); } catch (_) {}
   const raw = (input.value || '').trim();
@@ -15012,25 +15420,43 @@ async function loadUsers(){
               ? `<span style="display:inline-block;padding:3px 10px;border-radius:10px;background:var(--spice-cardamom-lt);color:var(--spice-cardamom-dk);font-weight:700;font-size:11.5px">${esc(u.branch)}</span>`
               : `<span style="color:var(--spice-text-hint);font-size:12px">not set</span>`;
           } },
-        { key:'active_sessions', label:'Status', sort:'number', render:(u)=>
-            u.active_sessions>0
+        { key:'active_sessions', label:'Status', sort:'number', render:(u)=>{
+            // Locked outranks online/offline: a locked account has had its
+            // sessions revoked, so "signed out" would understate what is
+            // actually going on with it.
+            if (u.locked_at) {
+              const by = u.locked_by ? ` by ${u.locked_by}` : '';
+              return `<span class="pill" style="background:var(--spice-chili-lt);color:var(--spice-chili-dk)" title="Locked${esc(by)} on ${esc(String(u.locked_at).substring(0,16))} — cannot sign in on desktop or mobile">🔒 locked</span>`;
+            }
+            return u.active_sessions>0
               ? `<span class="pill pill-local"><span class="pill-dot"></span>${u.active_sessions} online</span>`
-              : `<span class="pill" style="background:var(--tab-bg);color:var(--spice-text-mute)"><span class="pill-dot"></span>signed out</span>` },
+              : `<span class="pill" style="background:var(--tab-bg);color:var(--spice-text-mute)"><span class="pill-dot"></span>signed out</span>`;
+          } },
         { key:'last_active', label:'Last Active', sort:'date', render:(u)=>u.last_active?fmtD(u.last_active.substring(0,10)):'—' },
         { key:'created_at',  label:'Created', sort:'date', render:(u)=>u.created_at?fmtD(u.created_at.substring(0,10)):'—' },
         { key:'_actions', label:'Actions', sortable:false, searchable:false, render:(u)=>{
             const isMe = u.username === uname;
             const isAdmin = String(u.role||'').toLowerCase()==='admin';
+            const isLocked = !!u.locked_at;
+            // Lock / Unlock — the reversible alternative to Delete. Hidden on
+            // your own row: locking yourself would throw you out of this very
+            // screen (the server refuses it too).
+            const lockBtn = isMe ? '' :
+              (isLocked
+                ? ` <button class="btn btn-g" style="height:32px;font-size:12px;padding:0 10px;margin-left:4px" onclick="setUserLocked(${u.id},'${esc(u.username)}',false)" title="Unlock — let this user sign in again">Unlock</button>`
+                : ` <button class="btn btn-o" style="height:32px;font-size:12px;padding:0 10px;margin-left:4px" onclick="setUserLocked(${u.id},'${esc(u.username)}',true)" title="Lock — block this user from signing in on desktop and mobile, and end any session they have open">Lock</button>`);
             // Actions: Change Role, Branch (non-admins only), Reset PW,
-            // Sign out (only when they hold sessions), Delete (not self).
-            // Compact buttons sized 32px tall for tight vertical density.
+            // Lock/Unlock, Sign out (only when they hold sessions), Delete
+            // (not self). Compact buttons sized 32px tall for tight density.
             return `<button class="btn btn-o" style="height:32px;font-size:12px;padding:0 10px" onclick="openChangeRoleModal(${u.id},'${esc(u.username)}','${esc(u.role||'viewer')}')" title="Promote or demote this user">Role</button>`
               + (isAdmin ? '' : ` <button class="btn btn-o" style="height:32px;font-size:12px;padding:0 10px;margin-left:4px" onclick="openUserBranchModal(${u.id},'${esc(u.username)}','${esc(u.branch||'')}')" title="Lock this user to one branch">Branch</button>`)
               + ` <button class="btn btn-o" style="height:32px;font-size:12px;padding:0 10px;margin-left:4px" onclick="openResetPwModal(${u.id},'${esc(u.username)}')">Reset PW</button>`
+              + lockBtn
               // Escape hatch for the one-login-per-username block: clears a
               // session left behind by a browser that closed without
               // logging out, so the user can sign in again immediately.
-              + (u.active_sessions>0 ? ` <button class="btn btn-o" style="height:32px;font-size:12px;padding:0 10px;margin-left:4px" onclick="forceSignOutUser(${u.id},'${esc(u.username)}')" title="End every session this user has, so they can sign in again">Sign out</button>` : '')
+              // Pointless on a locked account — the lock already revoked them.
+              + (u.active_sessions>0 && !isLocked ? ` <button class="btn btn-o" style="height:32px;font-size:12px;padding:0 10px;margin-left:4px" onclick="forceSignOutUser(${u.id},'${esc(u.username)}')" title="End every session this user has, so they can sign in again">Sign out</button>` : '')
               + (isMe ? '' : ` <button class="btn btn-r" style="height:32px;font-size:12px;padding:0 10px;margin-left:4px" onclick="deleteUser(${u.id},'${esc(u.username)}')">Delete</button>`);
           } }
       ]
@@ -15133,6 +15559,22 @@ async function forceSignOutUser(id, username){
   try{
     const r = await j(`/api/users/${id}/revoke-sessions`, { method:'POST' });
     toast(`Signed "${username}" out of ${r.revoked} session${r.revoked===1?'':'s'}`);
+    loadUsers();
+  }catch(e){ showError(e) }
+}
+
+// Lock / unlock a username. A locked account keeps its password and every
+// row it ever entered, but cannot sign in on desktop OR mobile, and any
+// session it holds is revoked on the spot. The reversible alternative to
+// deleting someone who has left or is being suspended.
+async function setUserLocked(id, username, locked){
+  const msg = locked
+    ? `Lock "${username}"?\n\nThey will be signed out of every device immediately and will NOT be able to sign in again — on the desktop app or the mobile app — until you unlock them.\n\nNothing they have entered is deleted.`
+    : `Unlock "${username}"?\n\nThey will be able to sign in again straight away.`;
+  if(!confirm(msg)) return;
+  try{
+    await j(`/api/users/${id}/lock`, { method:'PUT', body: JSON.stringify({ locked: !!locked }) });
+    toast(locked ? `"${username}" is locked — sign-in blocked on both apps` : `"${username}" unlocked`);
     loadUsers();
   }catch(e){ showError(e) }
 }

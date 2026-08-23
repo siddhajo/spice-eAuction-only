@@ -61,6 +61,9 @@
 //             produces a control that silently does nothing, which is
 //             worse than no control.
 //   multi     which of those take several values at once (comma-joined)
+//   partyKind which master a `party` filter picks from — 'seller' or
+//             'buyer'. The registers match an exact name, so the value has
+//             to come from a list rather than being typed.
 //   hidden    kept callable for compatibility but never rendered as a tile
 //   alsoCovers registry keys this tile serves through a different route, so
 //             the catalog test doesn't flag them as orphaned exports
@@ -100,9 +103,17 @@ const hrefLorry = (type) => (ctx, format) =>
 // offered here: it duplicates the XML's content in a form nobody in the
 // office imports, and it cluttered the file-type view with a JSON section
 // that was really "the same thing again".
-const hrefTally = (type) => (ctx, format) =>
-  `/api/tally/export/${type}/${ctx.auctionId}${q({
-    format: format === 'xml' ? '' : format, sale: ctx.sale })}`;
+// The builder carries its own type, so the catalog can hand it to the
+// client without every Tally entry repeating the string. The desk uses it
+// to ask /api/tally/filter-options which parties and document numbers this
+// particular export actually contains.
+const hrefTally = (type) => {
+  const fn = (ctx, format) =>
+    `/api/tally/export/${type}/${ctx.auctionId}${q({
+      format: format === 'xml' ? '' : format, sale: ctx.sale })}`;
+  fn.tallyType = type;
+  return fn;
+};
 
 const hrefDbf = (type) => (ctx, format) =>
   `/api/dbf-exports/${type}${q({ format, auctionId: ctx.auctionId, from: ctx.from, to: ctx.to })}`;
@@ -118,6 +129,8 @@ const hrefMaster = (type) => (ctx, format) =>
 const GROUPS = [
   { id: 'preauction', label: 'Pre-auction',
     hint: 'Snapshots of the lot list before prices land' },
+  { id: 'payments',   label: 'Payment Advice',
+    hint: 'What each seller is paid — open the Payments screen to issue' },
   { id: 'documents',  label: 'Auction Documents',
     hint: 'Generated and numbered — open the owning screen to create them' },
   { id: 'reports',    label: 'Auction Reports',
@@ -159,8 +172,6 @@ const DOCUMENTS = [
   { id: 'eauction_csv', label: 'e-Auction (Spices Board) CSV', group: 'preauction', sub: 'Portal upload',
     family: 'spiceboard', kind: 'export', scope: 'trade', formats: ['csv'],
     minStage: 2, perm: 'export',
-    filters: ['branch', 'sellerId', 'buyerCode'],
-    multi: ['branch', 'sellerId', 'buyerCode'],
     route: '/api/spice-board-reports/:type/export', href: hrefSpiceBoard('eauction_csv'),
     note: 'Fixed Spices Board portal schema — CSV only' },
 
@@ -221,7 +232,7 @@ const DOCUMENTS = [
   //     and choosing those names is the Payments screen's whole job. A hub
   //     button could only ever send an arbitrary subset, so the tile
   //     deep-links instead.
-  { id: 'payments', label: 'Payment Advice', group: 'documents', sub: 'Payments', family: 'payments',
+  { id: 'payments', label: 'Payment Advice', group: 'payments', sub: 'Payment Advice', family: 'payments',
     kind: 'document', scope: 'trade', formats: ['pdf'], minStage: 2, perm: 'view',
     deepLink: 'payments',
     route: '/api/payments/pdf-bulk' },
@@ -363,26 +374,34 @@ const DOCUMENTS = [
   // Labels copied verbatim from TALLY_EXPORTS (server.js:14845).
   { id: 'tally_ledger_sales', label: 'Sales Party Ledgers', group: 'tally', sub: 'Ledger masters', family: 'tally',
     kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4, perm: 'export',
+    filters: ['party'],
+    multi: ['party'],
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('ledger_sales') },
 
   { id: 'tally_ledger_rd_purchase', label: 'RD Purchase Party Ledgers', group: 'tally', sub: 'Ledger masters',
     family: 'tally', kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4, perm: 'export',
+    filters: ['party'],
+    multi: ['party'],
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('ledger_rd_purchase') },
 
   { id: 'tally_ledger_urd_purchase', label: 'URD Purchase Party Ledgers (Agriculturist)',
     group: 'tally', sub: 'Ledger masters', family: 'tally', kind: 'export', scope: 'trade', formats: ['xml'],
     minStage: 4, perm: 'export',
+    filters: ['party'],
+    multi: ['party'],
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('ledger_urd_purchase') },
 
   { id: 'tally_ledger', label: 'All Ledger Masters (parties + tax + sales + purchase)',
     group: 'tally', sub: 'Ledger masters', family: 'tally', kind: 'export', scope: 'trade', formats: ['xml'],
     minStage: 4, perm: 'export',
+    filters: ['party'],
+    multi: ['party'],
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('ledger') },
 
   { id: 'tally_sales_isp', label: 'Sales Vouchers', group: 'tally', sub: 'Vouchers', family: 'tally',
     kind: 'export', scope: 'trade', formats: ['xml', 'irp'], minStage: 4, perm: 'export',
-    filters: ['sale'],
-    multi: ['sale'],
+    filters: ['sale', 'party', 'invoice'],
+    multi: ['sale', 'party', 'invoice'],
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('sales_isp'),
     note: 'Filter by sale type (Local / Inter-state / Export) to import one batch at a time' },
 
@@ -395,7 +414,9 @@ const DOCUMENTS = [
   // callable over the API for anyone still running that flow, but the hub
   // must not advertise exports the app itself no longer offers.
   { id: 'tally_sales_asp', label: 'Sales Vouchers — ASP', group: 'tally', sub: 'Vouchers', family: 'tally',
-    kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4, perm: 'export', hidden: true,
+    kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4, perm: 'export',
+    filters: ['party', 'invoice'],
+    multi: ['party', 'invoice'], hidden: true,
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('sales_asp') },
 
   // Legacy alias for sales_isp. Kept callable so old bookmarks and API
@@ -407,32 +428,40 @@ const DOCUMENTS = [
 
   { id: 'tally_isp_purchase', label: 'ISP Purchase Vouchers (mirror of ASP→ISP)', group: 'tally', sub: 'Vouchers',
     family: 'tally', kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4,
-    perm: 'export', hidden: true,
+    perm: 'export',
+    filters: ['party', 'invoice'],
+    multi: ['party', 'invoice'], hidden: true,
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('isp_purchase') },
 
   { id: 'tally_rd_purchase', label: 'RD Purchase Vouchers', group: 'tally', sub: 'Vouchers', family: 'tally',
     kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4, perm: 'export',
+    filters: ['party', 'invoice'],
+    multi: ['party', 'invoice'],
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('rd_purchase') },
 
   { id: 'tally_urd_purchase', label: 'URD Purchase Vouchers (Agriculturist)', group: 'tally', sub: 'Vouchers',
     family: 'tally', kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4, perm: 'export',
+    filters: ['party', 'invoice'],
+    multi: ['party', 'invoice'],
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('urd_purchase') },
 
   { id: 'tally_debit_note', label: 'Debit Notes', group: 'tally', sub: 'Vouchers', family: 'tally',
     kind: 'export', scope: 'trade', formats: ['xml', 'irp'], minStage: 4, perm: 'export',
+    filters: ['party', 'invoice'],
+    multi: ['party', 'invoice'],
     flag: 'flag_debit_note',
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('debit_note') },
 
   { id: 'tally_debit_note_planter', label: 'Debit Notes — Planter', group: 'tally', sub: 'Vouchers',
     family: 'tally', kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4, perm: 'export',
+    filters: ['party', 'invoice'],
+    multi: ['party', 'invoice'],
     flag: 'flag_debit_note_planter',
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('debit_note_planter') },
 
   { id: 'tally_merchants', label: 'Merchants (Consolidated Journal)', group: 'tally', sub: 'Vouchers',
     family: 'tally', kind: 'export', scope: 'trade', formats: ['xml'], minStage: 4,
-    perm: 'export',
-    filters: ['sale'],
-    multi: ['sale'], flag: 'flag_merchants',
+    perm: 'export', flag: 'flag_merchants',
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('merchants'),
     note: 'Includes pending proformas — stays consistent with Collection and the Buyers Statement' },
 
@@ -502,7 +531,8 @@ const DOCUMENTS = [
   { id: 'register_pooler', label: 'Pooler Register (individual)', group: 'books', sub: 'Individual registers',
     family: 'registers', kind: 'export', scope: 'dateRange', formats: ['xlsx', 'pdf'],
     minStage: 4, perm: 'export',
-    filters: ['party'], filters: ['party'],
+    filters: ['party'],
+    partyKind: 'seller', filters: ['party'],
     route: '/api/exports/individual-register',
     href: (ctx, format) => `/api/exports/individual-register${q({
       kind: 'pooler', format, from: ctx.from, to: ctx.to, party: ctx.party })}` },
@@ -510,7 +540,8 @@ const DOCUMENTS = [
   { id: 'register_seller', label: 'Seller Register (individual)', group: 'books', sub: 'Individual registers',
     family: 'registers', kind: 'export', scope: 'dateRange', formats: ['xlsx', 'pdf'],
     minStage: 4, perm: 'export',
-    filters: ['party'], filters: ['party'],
+    filters: ['party'],
+    partyKind: 'seller', filters: ['party'],
     route: '/api/exports/individual-register',
     href: (ctx, format) => `/api/exports/individual-register${q({
       kind: 'seller', format, from: ctx.from, to: ctx.to, party: ctx.party })}` },
@@ -518,17 +549,28 @@ const DOCUMENTS = [
   { id: 'register_merchant', label: 'Merchant Register (individual)', group: 'books', sub: 'Individual registers',
     family: 'registers', kind: 'export', scope: 'dateRange', formats: ['xlsx', 'pdf'],
     minStage: 4, perm: 'export',
-    filters: ['party'], filters: ['party'],
+    partyKind: 'buyer', filters: ['party'],
     route: '/api/exports/individual-register',
     href: (ctx, format) => `/api/exports/individual-register${q({
       kind: 'merchant', format, from: ctx.from, to: ctx.to, party: ctx.party })}` },
 
+  // No `party` filter. It and `traderId` both resolved to a seller picker, so
+  // the filter dialog showed two near-identical "search sellers" rows for the
+  // same choice. Worse, they disagree: `party` matches on NAME, and poolers
+  // share names — the exact case this document's note warns about. `traderId`
+  // names one person and is the only correct way to scope a certificate, so
+  // it is now the only way offered.
+  //
+  // The endpoint still accepts `party` (the Registers screen's own Generate
+  // Certificate button sends it), so this narrows the filter dialog without
+  // changing what the route can do.
   { id: 'pooler_certificate', label: 'Pooler Certificate', group: 'books', sub: 'Certificates', family: 'registers',
     kind: 'export', scope: 'dateRange', formats: ['pdf'], minStage: 4, perm: 'export',
-    filters: ['party', 'traderId'],
+    filters: ['traderId'],
+    partyKind: 'seller',
     route: '/api/exports/pooler-certificate',
     href: (ctx) => `/api/exports/pooler-certificate${q({
-      from: ctx.from, to: ctx.to, party: ctx.party, traderId: ctx.traderId })}`,
+      from: ctx.from, to: ctx.to, traderId: ctx.traderId })}`,
     note: 'Names repeat — pick the pooler by id so a namesake\'s lots are never certified' },
 
   // ══ Masters ══════════════════════════════════════════════

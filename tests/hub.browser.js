@@ -72,6 +72,14 @@ const cleanup = () => {
     const id = r.d && (r.d.id || (r.d.lot && r.d.lot.id));
     await api('PUT', `/api/lots/${id}`, { price, amount: qty * price });
   }
+  // Sellers in the MASTER (not just names on lots) so the register's party
+  // picker has something to offer.
+  for (const [name, tel] of [['RAMU PLANTER', '+91 98765 43210'],
+                             ['SELVI PLANTER', '9000011111'],
+                             ['THOMAS KURIAN', '9000022222']]) {
+    await api('POST', '/api/traders', { name, tel });
+  }
+
   // …plus enough filler to span more than one page at the smallest size.
   for (let i = 1; i <= 30; i++) {
     await api('POST', '/api/lots', { auction_id: aid9, lot_no: String(300 + i),
@@ -154,10 +162,10 @@ const cleanup = () => {
         /32 lots · 2 sold/.test(lotsView.count), lotsView.count);
   // The KPI strip rides on the catalog fetch, which is a separate request
   // from the lots one — it lands a moment after the rows.
-  await page.waitForFunction(() => document.querySelectorAll('#hub-kpi .stat').length === 8,
+  await page.waitForFunction(() => document.querySelectorAll('#hub-kpi .stat').length === 5,
                              { timeout: 20000 }).catch(() => {});
   check('and the KPI strip is populated on this view too',
-        await page.evaluate(() => document.querySelectorAll('#hub-kpi .stat').length) === 8);
+        await page.evaluate(() => document.querySelectorAll('#hub-kpi .stat').length) === 5);
 
   // Search runs server-side; give the debounce and the round trip time.
   await page.evaluate(() => {
@@ -171,6 +179,16 @@ const cleanup = () => {
   }));
   check('searching narrows the lot list', searched.rows === 1 && /SELVI/.test(searched.who || ''),
         JSON.stringify(searched));
+  // …and the figures follow the filter, rather than still describing the
+  // whole auction while the table shows one lot.
+  const narrowed = await page.evaluate(() => ({
+    kpiLots: document.querySelector('#hub-kpi .stat .n')?.textContent.trim(),
+    totals: document.querySelector('#hub-lot-foot tr.is-all td')?.textContent.trim(),
+  }));
+  check('the KPI cards narrow with the filter', narrowed.kpiLots === '1',
+        JSON.stringify(narrowed));
+  check('and so does the totals row', /1 lots?/.test(narrowed.totals || ''),
+        JSON.stringify(narrowed));
   check('and a clear button appears', await page.evaluate(
         () => document.getElementById('hub-lot-clear').style.display !== 'none'));
   await page.evaluate(() => hubLotSearchClear());
@@ -198,6 +216,38 @@ const cleanup = () => {
              sticky: el && getComputedStyle(el.querySelector('th')).position === 'sticky' };
   });
   check('the lot table scrolls in a fixed box', scroll.has && scroll.capped, JSON.stringify(scroll));
+
+  // Totals under the table, and a KPI strip that describes what is on
+  // screen rather than the whole auction.
+  const totals = await page.evaluate(() => {
+    const foot = document.getElementById('hub-lot-foot');
+    const all = foot.querySelector('tr.is-all');
+    const cells = Array.from(all.querySelectorAll('td')).map(td => td.textContent.trim());
+    return { rows: foot.querySelectorAll('tr').length, cells,
+             lots: window._hubLots.length,
+             qty: window._hubLots.reduce((a, l) => a + (Number(l.qty) || 0), 0) };
+  });
+  check('the lots table carries a totals row',
+        totals.rows >= 1 && /32 lots/.test(totals.cells[0] || ''), JSON.stringify(totals.cells));
+  // The per-page subtotal only appears when a page IS part of the set —
+  // with everything on one page a second row would say the same thing twice.
+  const paged = await page.evaluate(() => {
+    setGlobalPageSize(20);
+    const foot = document.getElementById('hub-lot-foot');
+    const out = { paged: foot.querySelectorAll('tr').length,
+                  pageLabel: foot.querySelector('tr.is-page td')?.textContent.trim() };
+    setGlobalPageSize(50);
+    out.whole = foot.querySelectorAll('tr').length;
+    return out;
+  });
+  check('a per-page subtotal appears once the set spans pages',
+        paged.paged === 2 && /This page — 20 lots/.test(paged.pageLabel || ''),
+        JSON.stringify(paged));
+  check('and disappears when everything fits one page', paged.whole === 1,
+        `${paged.whole} rows`);
+  check('the total quantity matches the loaded lots',
+        totals.cells[2] === totals.qty.toLocaleString('en-IN', { minimumFractionDigits: 3 }),
+        `${totals.cells[2]} vs ${totals.qty}`);
   check('with its header pinned', scroll.sticky);
 
   // Row click → drawer with the lot's detail, and an Edit that hands off to
@@ -300,7 +350,17 @@ const cleanup = () => {
         `${shape.tilesAtTop} rows`);
   check('each widget says how much of it is ready', /\d+ of \d+ ready/.test(shape.firstCount || ''),
         shape.firstCount);
-  check('the KPI strip is populated', shape.kpis === 8, `${shape.kpis} figures`);
+  check('the KPI strip is populated', shape.kpis === 5, `${shape.kpis} cards`);
+  // Combined cards: each carries its own breakdown rather than the figure
+  // alone — Lots/Sold/Withdrawn by bags-qty-amount, Value by min-max-avg.
+  const meta = await page.evaluate(() => Array.from(document.querySelectorAll('#hub-kpi .stat'))
+    .map(st => ({ label: st.querySelector('.l').textContent.trim(),
+                  rows: st.querySelectorAll('.hub-meta .lbl').length })));
+  check('every KPI card shows its breakdown',
+        meta.length === 5 && meta.every(m => m.rows >= 2), JSON.stringify(meta));
+  check('with Value broken down by min / max / avg',
+        /Min ₹/.test(await page.evaluate(() =>
+          document.querySelector('#hub-kpi .stat.t-rose .hub-meta')?.textContent || '')));
   check('KPI reads the lot count from the auction',
         await page.evaluate(() => (document.querySelector('#hub-kpi .stat .n')?.textContent || '').trim() === '32'),
         await page.evaluate(() => document.querySelector('#hub-kpi .stat .n')?.textContent));
@@ -663,6 +723,36 @@ const cleanup = () => {
   check('the panel offers exactly the declared filters',
         fPanel.open && fPanel.keys.join() === 'branch,sellerId,buyerCode', JSON.stringify(fPanel));
 
+  // The Individual registers' `party` filter matches an exact name
+  // server-side, so it must be picked from the master rather than typed.
+  const partyPick = await page.evaluate(async () => {
+    hubFilterClose();
+    hubOpenGroup('books'); hubOpenSub('Individual registers');
+    await hubFilterOpen('register_pooler');
+    const body = document.getElementById('hub-f-body');
+    const wrap = body.querySelector('.hub-f-pick');
+    const opts = wrap ? JSON.parse(wrap.dataset.opts || '[]') : [];
+    const out = { isText: !!body.querySelector('input[type=text][data-fk="party"]'),
+                  isPick: !!wrap, count: opts.length, first: opts[0]?.t };
+    if (wrap) {
+      const q = wrap.querySelector('.hub-f-q');
+      q.value = 'RAMU'; hubPickFilter(q);
+      out.hits = wrap.querySelectorAll('.hub-f-opt').length;
+    }
+    hubFilterClose();
+    return out;
+  });
+  check('the register party field is a picker, not a text box',
+        partyPick.isPick && !partyPick.isText, JSON.stringify(partyPick));
+  check('populated from the seller master', partyPick.count > 0,
+        `${partyPick.count} sellers, first ${partyPick.first}`);
+  check('and searchable', partyPick.hits > 0 && partyPick.hits <= partyPick.count,
+        `${partyPick.hits} of ${partyPick.count}`);
+  await page.evaluate(async () => {
+    hubOpenGroup('statutory'); hubOpenSub('Spices Board');
+    await hubFilterOpen('form_d');
+  });
+
   // Regression: a picked branch chip vanished. --acc was set on the old
   // popover element and the modal conversion dropped it, so the chip's
   // `background:var(--acc)` resolved to nothing while `color:#fff` still
@@ -990,6 +1080,214 @@ const cleanup = () => {
         `${zbuf.length} bytes`);
   check('and the selection clears once it lands',
         await page.evaluate(() => window._hubSel.size === 0));
+
+  // ── [T] Tally party / document-number pickers ────────────────────
+  // A Tally filter matches the BUILT voucher rows, not a master — so the
+  // picker's options come from the export itself and only exist once the
+  // documents have been generated. Generated here, at the end, so every
+  // check above still runs against the ungenerated fixture.
+  console.log('\n[T] Tally pickers');
+  await api('POST', `/api/bills/generate-all/${aid9}`, { startBillNo: 1 });
+  await page.evaluate(() => hubRefresh());
+  await page.waitForFunction(() => !!window._hubCat, { timeout: 15000 });
+  await new Promise(r => setTimeout(r, 600));
+
+  const tallyPick = await page.evaluate(async () => {
+    hubOpenGroup('tally'); hubOpenSub('Vouchers');
+    await hubFilterOpen('tally_urd_purchase');
+    const body = document.getElementById('hub-f-body');
+    const read = (fk) => {
+      const hidden = body.querySelector(`[data-fk="${fk}"]`);
+      const wrap = hidden ? hidden.closest('.hub-f-pick') : null;
+      return {
+        isText: !!body.querySelector(`input[type=text][data-fk="${fk}"]`),
+        isPick: !!wrap,
+        multi: !!(wrap && wrap.classList.contains('is-multi')),
+        opts: wrap ? JSON.parse(wrap.dataset.opts || '[]') : [],
+      };
+    };
+    const party = read('party'), invoice = read('invoice');
+    // Type into the party box and count what survives the search.
+    let hits = 0;
+    const hidden = body.querySelector('[data-fk="party"]');
+    const wrap = hidden && hidden.closest('.hub-f-pick');
+    if (wrap) {
+      const q = wrap.querySelector('.hub-f-q');
+      q.value = 'RAMU'; hubPickFilter(q);
+      hits = wrap.querySelectorAll('.hub-f-opt').length;
+    }
+    const labels = Array.from(body.querySelectorAll('.hub-f-row > span'))
+      .map(s => s.firstChild.textContent.trim());
+    hubFilterClose();
+    return { party, invoice, hits, labels };
+  });
+  check('the Tally party field is a picker, not a text box',
+        tallyPick.party.isPick && !tallyPick.party.isText, JSON.stringify(tallyPick.party).slice(0, 200));
+  check('offering the parties in this export',
+        tallyPick.party.opts.length > 0, `${tallyPick.party.opts.length} parties`);
+  check('and searchable',
+        tallyPick.hits > 0 && tallyPick.hits <= tallyPick.party.opts.length,
+        `${tallyPick.hits} of ${tallyPick.party.opts.length}`);
+  check('the invoice field is a picker too',
+        tallyPick.invoice.isPick && !tallyPick.invoice.isText, JSON.stringify(tallyPick.invoice).slice(0, 200));
+  check('offering real document numbers',
+        tallyPick.invoice.opts.length > 0, JSON.stringify(tallyPick.invoice.opts.slice(0, 4)));
+  check('both stay multi-select', tallyPick.party.multi && tallyPick.invoice.multi);
+  check('and the number field is named for what it covers',
+        tallyPick.labels.includes('Invoice / Note no'), tallyPick.labels.join(' | '));
+
+  // The options are gathered AFTER the sale filter runs, so changing the
+  // sale type has to rebuild them — otherwise the list offers parties the
+  // export just dropped, and picking one downloads nothing.
+  const saleRefresh = await page.evaluate(async () => {
+    hubOpenGroup('tally'); hubOpenSub('Vouchers');
+    await hubFilterOpen('tally_sales_isp');
+    const body = document.getElementById('hub-f-body');
+    const before = (body.querySelector('[data-fk="party"]') || {}).dataset ? 1 : 0;
+    // Tick a sale-type chip; the dialog must re-open with fresh lists.
+    const chip = body.querySelector('.hub-f-c');
+    const had = !!chip;
+    if (chip) { chip.click(); await new Promise(r => setTimeout(r, 700)); }
+    const after = document.getElementById('hub-f-body');
+    const saleVal = (after.querySelector('[data-fk="sale"]') || {}).value;
+    const partyVal = (after.querySelector('[data-fk="party"]') || {}).value;
+    const open = document.getElementById('hub-filter-modal').classList.contains('show');
+    hubFilterClose();
+    return { before, had, saleVal, partyVal, open };
+  });
+  check('picking a sale type keeps the dialog open', saleRefresh.open, JSON.stringify(saleRefresh));
+  check('and carries the sale choice forward',
+        !saleRefresh.had || !!saleRefresh.saleVal, JSON.stringify(saleRefresh));
+  check('while dropping party picks made against the old list',
+        !saleRefresh.partyVal, JSON.stringify(saleRefresh));
+
+  // ── [P] Plain mode, and who may open the desk at all ─────────────
+  console.log('\n[P] plain mode + access');
+  const plain = await page.evaluate(() => {
+    const grab = () => {
+      const w = document.querySelector('.hub-w');
+      const cs = getComputedStyle(w);
+      return { bg: cs.backgroundImage, colour: cs.color,
+               border: cs.borderTopWidth,
+               bar: getComputedStyle(w, '::before').backgroundImage };
+    };
+    hubCloseGroup();
+    const before = grab();
+    hubTogglePlain();
+    const after = grab();
+    const label = document.getElementById('hub-plain-label').textContent.trim();
+    return { before, after, label, attr: document.body.getAttribute('data-hub-plain') };
+  });
+  check('plain mode drops the gradients',
+        /gradient/.test(plain.before.bg) && !/gradient/.test(plain.after.bg),
+        JSON.stringify(plain).slice(0, 200));
+  check('and gives the cards a border and dark text instead of white on colour',
+        parseFloat(plain.after.border) >= 1 && !/255, 255, 255/.test(plain.after.colour),
+        JSON.stringify(plain.after));
+  check('the toggle offers the way back', plain.label === 'Colour' && plain.attr === '1',
+        JSON.stringify(plain));
+
+  // Every action must still be legible against its own background — the
+  // whole point of plain mode is that it reads well, not that it is grey.
+  const plainContrast = await page.evaluate(() => {
+    hubOpenGroup('preauction'); hubOpenSub('Lot lists');
+    const rgb = (v) => (v.match(/\d+/g) || []).map(Number);
+    const lum = ([r, g, b]) => (0.299 * r + 0.587 * g + 0.114 * b);
+    return Array.from(document.querySelectorAll('.hub-tile .hub-btn')).map(b => {
+      const cs = getComputedStyle(b);
+      const fg = rgb(cs.color), bg = rgb(cs.backgroundColor);
+      const solid = !/rgba\(0, 0, 0, 0\)/.test(cs.backgroundColor);
+      return { label: b.textContent.trim() || b.getAttribute('aria-label'),
+               d: solid ? Math.abs(lum(fg) - lum(bg)) : 999 };
+    }).filter(x => x.d < 60);
+  });
+  check('and nothing goes invisible in plain mode',
+        plainContrast.length === 0, JSON.stringify(plainContrast));
+
+  // Plain mode's greys are TINTED with the live theme primary, so its
+  // contrast is no longer a single fixed pair — a light primary (sunshine,
+  // ocean) mixed into the ink lifts its luminance. Re-run the same check on
+  // every theme rather than trusting the default one to speak for all 13.
+  const themeContrast = await page.evaluate(() => {
+    const rgb = (v) => (v.match(/\d+/g) || []).map(Number);
+    const lum = ([r, g, b]) => (0.299 * r + 0.587 * g + 0.114 * b);
+    const bad = [];
+    const themes = (typeof _THEMES !== 'undefined' && _THEMES.length)
+      ? _THEMES
+      : ['emerald','coral','violet','sunshine','electric','ocean','tech','minimal','trust','rose','indigo','teal','slate'];
+    const was = document.body.getAttribute('data-theme') || 'emerald';
+    for (const t of themes) {
+      document.body.setAttribute('data-theme', t);
+      for (const b of document.querySelectorAll('.hub-tile .hub-btn')) {
+        const cs = getComputedStyle(b);
+        if (/rgba\(0, 0, 0, 0\)/.test(cs.backgroundColor)) continue;
+        const d = Math.abs(lum(rgb(cs.color)) - lum(rgb(cs.backgroundColor)));
+        if (d < 60) bad.push({ theme: t, label: (b.textContent || '').trim().slice(0, 20), d: Math.round(d) });
+      }
+      // The one place plain mode deliberately shows the most theme: the KPI
+      // card's accent bar. It must still read as a rule against the card.
+      const w = document.querySelector('.hub-w');
+      if (w) {
+        const bar = rgb(getComputedStyle(w, '::before').backgroundColor);
+        const card = rgb(getComputedStyle(w).backgroundColor);
+        if (bar.length === 3 && card.length === 3 && Math.abs(lum(bar) - lum(card)) < 40) {
+          bad.push({ theme: t, label: 'kpi accent bar', d: Math.round(Math.abs(lum(bar) - lum(card))) });
+        }
+      }
+    }
+    document.body.setAttribute('data-theme', was);
+    return bad;
+  });
+  check('plain mode stays legible on EVERY theme, not just the default',
+        themeContrast.length === 0, JSON.stringify(themeContrast).slice(0, 400));
+
+  // The tint has to actually track the theme — a palette that ignored
+  // --spice-saffron would pass the contrast check above while still looking
+  // foreign next to a coral or violet rail.
+  const tintTracks = await page.evaluate(() => {
+    const read = () => getComputedStyle(document.body).getPropertyValue('--hub-p-ink').trim();
+    const was = document.body.getAttribute('data-theme') || 'emerald';
+    document.body.setAttribute('data-theme', 'emerald'); const a = read();
+    document.body.setAttribute('data-theme', 'coral');   const b = read();
+    document.body.setAttribute('data-theme', 'violet');  const c = read();
+    document.body.setAttribute('data-theme', was);
+    return { a, b, c };
+  });
+  check('the plain greys re-tint when the theme changes',
+        tintTracks.a && tintTracks.a !== tintTracks.b && tintTracks.b !== tintTracks.c,
+        JSON.stringify(tintTracks));
+
+  const restored = await page.evaluate(() => {
+    hubTogglePlain();
+    return { attr: document.body.getAttribute('data-hub-plain'),
+             bg: getComputedStyle(document.querySelector('.hub-tile')).backgroundImage };
+  });
+  check('toggling back restores the colour scheme',
+        restored.attr === '0' && /gradient/.test(restored.bg), JSON.stringify(restored));
+
+  // Access: the desk is for managers and admins. A viewer must not reach
+  // it — the sidebar item hidden is not the same as the screen unreachable.
+  const denied = await page.evaluate(() => {
+    const realPerms = window._userPerms;
+    window._userPerms = new Set(['view', 'export']);   // a viewer
+    applyPermissionAttributes();
+    const sidebar = document.querySelector('.side-item[data-tab="hub"]');
+    const hidden = getComputedStyle(sidebar).display === 'none';
+    go('hub');
+    const landedOn = window._currentTab;
+    const landing = _landingTab();
+    window._userPerms = realPerms;                     // put it back
+    applyPermissionAttributes();
+    return { hidden, landedOn, landing };
+  });
+  check('a viewer does not see the Auction Desk in the sidebar', denied.hidden,
+        JSON.stringify(denied));
+  check('and cannot open it even by calling go()', denied.landedOn === 'dash',
+        JSON.stringify(denied));
+  check('nor land on it at sign-in', denied.landing === 'dash', JSON.stringify(denied));
+  await page.evaluate(() => go('hub'));
+  await page.waitForFunction(() => document.querySelectorAll('.hub-w').length > 0
+    || document.querySelectorAll('#hub-lot-rows tr').length > 0, { timeout: 20000 });
 
   // ── [A2] The home-screen preference ──────────────────────────────
   // Checked on BOTH paths into the app, because each calls _landingTab()

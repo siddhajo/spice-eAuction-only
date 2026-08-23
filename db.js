@@ -148,6 +148,16 @@ async function initDb() {
     -- matching a br1..br9 value in company_settings — same convention as
     -- lots.branch and lot_allocations.branch.
     branch TEXT DEFAULT '',
+    -- ── Account lock (admin toggle on the Users screen) ──────────────
+    -- NULL = active. A timestamp = LOCKED: the account is refused at both
+    -- login doors (desktop /api/login and the PWA's /api/auth/login) and
+    -- any session token it still holds stops authenticating, so a lock
+    -- takes effect immediately rather than at next sign-in. The password
+    -- and every row the user created are untouched — this is the
+    -- reversible alternative to deleting an account.
+    -- locked_by records WHICH admin threw the switch, for the audit trail.
+    locked_at TEXT DEFAULT NULL,
+    locked_by TEXT DEFAULT '',
     token TEXT,
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
@@ -883,6 +893,11 @@ async function initDb() {
     // means "no branch lock" — behaviour is unchanged until an admin
     // assigns one from Users → Branch.
     "ALTER TABLE users ADD COLUMN branch TEXT DEFAULT ''",
+    // Account lock. Existing installs get NULL / '' — i.e. every account
+    // stays active, so behaviour is unchanged until an admin locks someone
+    // from Users → Lock.
+    "ALTER TABLE users ADD COLUMN locked_at TEXT DEFAULT NULL",
+    "ALTER TABLE users ADD COLUMN locked_by TEXT DEFAULT ''",
     // Per-import undo: existing DBs need the two new columns added so
     // the Undo button on the History panel can find inserted rows and
     // mark the entry as rolled back.

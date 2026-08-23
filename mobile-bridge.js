@@ -845,6 +845,18 @@ function mountMobile(app, deps) {
     // module stays mountable in isolation (tests / a trimmed host).
     checkDuplicateLogin = () => null,
     notifyConcurrentAdmins = () => '',
+    // Account-lock policy, also owned by server.js so both login doors
+    // enforce ONE rule. Unlike the two above, the fallback here is a real
+    // implementation rather than a no-op: defaulting a security gate to
+    // "allow" would silently leave the mobile door open on any host that
+    // forgot to inject it.
+    lockedAccountError = (user) => (user && user.locked_at) ? {
+      error: 'account_locked',
+      message: `This account is locked. Contact your administrator to unlock ${user.username}.`,
+      username: user.username,
+      locked_at: user.locked_at,
+    } : null,
+    LOCKED_ACCOUNT_STATUS = 403,
   } = deps;
 
   // ── 0. LAZY SELF-HEAL SCHEMA ──────────────────────────────────────
@@ -916,6 +928,11 @@ function mountMobile(app, deps) {
     if (!session) return res.status(403).json({ error: 'Session expired — please sign in again' });
     const user = db.get('SELECT * FROM users WHERE id = ?', [session.user_id]);
     if (!user) return res.status(403).json({ error: 'Unauthorized' });
+    // Locked accounts stop authenticating here too — otherwise the print
+    // routes (the only ones on this middleware) would stay reachable with a
+    // query-string token after the admin locked the account.
+    const locked = lockedAccountError(user);
+    if (locked) return res.status(LOCKED_ACCOUNT_STATUS).json(locked);
     db.run(`UPDATE sessions SET last_used_at = datetime('now','localtime') WHERE token = ?`, [tok]);
     req.user = user;
     req.session = session;
@@ -947,6 +964,11 @@ function mountMobile(app, deps) {
     if (!user || user.password_hash !== hash(password)) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
+    // Locked account — the SAME gate the desktop login runs, from the same
+    // helper, so an admin's lock closes both doors and not just one.
+    // Checked after the password so a wrong guess can't enumerate accounts.
+    const locked = lockedAccountError(user);
+    if (locked) return res.status(LOCKED_ACCOUNT_STATUS).json(locked);
     // Same one-session-per-username gate the desktop login runs. Checked
     // after the password so a wrong guess can't reveal who is online.
     const dup = checkDuplicateLogin(db, user, prev_token);

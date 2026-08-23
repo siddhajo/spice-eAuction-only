@@ -346,6 +346,26 @@ function withFmtDate(rows, field = 'date') {
   return rows.map(r => ({ ...r, date_fmt: fmtDate(r[field]) }));
 }
 
+// ── Account lock ─────────────────────────────────────────────────
+// An admin can lock a username from Users → Lock. A locked account is
+// refused at BOTH login doors (desktop /api/login and the PWA's
+// /api/auth/login) and its existing session tokens stop authenticating,
+// so the lock bites immediately rather than at next sign-in.
+//
+// Returns the 403 body to send, or null when the account is active.
+// One function so every door agrees on what "locked" means and says the
+// same thing — a second copy of this rule is how one door ends up open.
+const LOCKED_ACCOUNT_STATUS = 403;
+function lockedAccountError(user) {
+  if (!user || !user.locked_at) return null;
+  return {
+    error: 'account_locked',
+    message: `This account is locked. Contact your administrator to unlock ${user.username}.`,
+    username: user.username,
+    locked_at: user.locked_at,
+  };
+}
+
 // Auth middleware: verify a valid session, attach req.user/req.session.
 // DOES NOT check role — use this for endpoints that any logged-in user
 // (admin OR regular user) should be able to hit (GET list endpoints mostly).
@@ -357,6 +377,12 @@ function requireAuth(req, res, next) {
   if (!session) return res.status(403).json({ error: 'Session expired — please sign in again' });
   const user = db.get('SELECT * FROM users WHERE id = ?', [session.user_id]);
   if (!user) return res.status(403).json({ error: 'Unauthorized' });
+  // Locking revokes sessions, so this normally never fires — it is the
+  // backstop that makes the lock hold even if a token survives (a request
+  // already in flight, a restored tab, a session row written by a path
+  // that didn't clean up).
+  const locked = lockedAccountError(user);
+  if (locked) return res.status(LOCKED_ACCOUNT_STATUS).json(locked);
   // Touch last_used_at for cleanup / activity display
   db.run(`UPDATE sessions SET last_used_at = datetime('now','localtime') WHERE token = ?`, [token]);
   req.user = user;
@@ -436,12 +462,15 @@ const ROLE_PERMISSIONS = {
     'auction_write',  // create/edit auctions (trades)
     'invoice_revert', // revert sales/purchase/bills (undo invoice)
     'settings_write', // edit company settings (rates, addresses, flags)
-    'state_toggle'    // toggle business state TN ↔ KL
+    'state_toggle',   // toggle business state TN ↔ KL
+    'auction_desk'    // the Auction Desk — every document for a trade in
+                      // one place. Manager and admin only.
   ]),
   admin: new Set([
     'view', 'export', 'self_password', 'lot_entry_view',
     'lot_write', 'invoice_write', 'trader_write', 'buyer_write',
     'auction_write', 'invoice_revert', 'settings_write', 'state_toggle',
+    'auction_desk',
     'delete',       // delete any individual record
     'delete_all',   // bulk Delete All (sales, purchases, lots, etc.)
     'user_manage'   // create/delete users, reset passwords, revoke sessions
@@ -520,6 +549,7 @@ const requireDelete        = requirePermission('delete');
 const requireDeleteAll     = requirePermission('delete_all');
 const requireUserManage    = requirePermission('user_manage');
 const requireExport        = requirePermission('export');
+const requireAuctionDesk   = requirePermission('auction_desk');
 
 // ══════════════════════════════════════════════════════════════
 // SESSION POLICY — concurrent-login control
@@ -693,6 +723,10 @@ mountMobile(app, {
   // the mobile PWA can't drift apart on who is allowed to sign in.
   checkDuplicateLogin,
   notifyConcurrentAdmins,
+  // Account-lock policy — same reason: one rule, both login doors, so a
+  // username an admin locked cannot sign in from the phone either.
+  lockedAccountError,
+  LOCKED_ACCOUNT_STATUS,
   // Fire-and-forget WhatsApp notification when an operator raises a
   // lot-reassign request. Defined later in the file (hoisted); safe to
   // reference here. Never throws into the mobile handler.
@@ -1342,6 +1376,11 @@ app.post('/api/login', (req, res) => {
   const db = getDb();
   const user = db.get('SELECT * FROM users WHERE username = ?', [username]);
   if (!user || user.password_hash !== hash(password)) return res.status(401).json({ error: 'Invalid credentials' });
+  // Locked account. Checked AFTER the credential check, like the duplicate
+  // gate below, so a wrong password can't be used to enumerate which
+  // usernames exist or which are locked.
+  const locked = lockedAccountError(user);
+  if (locked) return res.status(LOCKED_ACCOUNT_STATUS).json(locked);
   // One active sign-in per username. Runs AFTER the credential check so a
   // wrong password can't be used to probe who is currently online.
   const dup = checkDuplicateLogin(db, user, prev_token);
@@ -1435,6 +1474,7 @@ app.get('/api/users', requireUserManage, (req, res) => {
   const db = getDb();
   const users = db.all(`
     SELECT u.id, u.username, u.role, u.branch, u.created_at,
+      u.locked_at, u.locked_by,
       (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id) as active_sessions,
       (SELECT MAX(last_used_at) FROM sessions s WHERE s.user_id = u.id) as last_active
     FROM users u ORDER BY u.id ASC
@@ -1490,6 +1530,52 @@ app.put('/api/users/:id/branch', requireUserManage, (req, res) => {
   }
   db.run('UPDATE users SET branch = ? WHERE id = ?', [wanted, target.id]);
   res.json({ success: true, username: target.username, branch: wanted });
+});
+
+// ── Lock / unlock a user account ─────────────────────────────────
+// Body { locked: true|false }. Locking is the reversible alternative to
+// deleting an account: the password and everything the user ever entered
+// stay put, but they cannot sign in on desktop OR mobile, and any session
+// they still hold is revoked so the lock bites immediately.
+//
+// Two rails, both about not painting yourself into a corner:
+//   • you cannot lock your OWN account — the next page load would throw
+//     you out of the very screen that undoes it
+//   • you cannot lock the LAST unlocked admin — nobody would be left who
+//     could unlock anyone, and the install would need a DB edit to recover
+app.put('/api/users/:id/lock', requireUserManage, (req, res) => {
+  const db = getDb();
+  const target = db.get('SELECT id, username, role, locked_at FROM users WHERE id = ?', [req.params.id]);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  const wantLocked = !!(req.body || {}).locked;
+
+  if (wantLocked) {
+    if (target.id === req.user.id) {
+      return res.status(400).json({ error: 'You cannot lock your own account while signed in' });
+    }
+    if (String(target.role || '').toLowerCase() === 'admin' && !target.locked_at) {
+      const otherAdmins = db.get(
+        `SELECT COUNT(*) AS n FROM users
+          WHERE LOWER(role) = 'admin' AND id != ? AND locked_at IS NULL`, [target.id]).n;
+      if (otherAdmins < 1) {
+        return res.status(400).json({ error: 'Cannot lock the last active admin — nobody would be left to unlock accounts' });
+      }
+    }
+  }
+
+  if (wantLocked) {
+    db.run(`UPDATE users SET locked_at = datetime('now','localtime'), locked_by = ? WHERE id = ?`,
+      [req.user.username, target.id]);
+    // Revoke every session so the lock applies NOW. Without this the user
+    // keeps working from an open tab until their token happens to expire,
+    // which is not what "locked" means to the admin who just clicked it.
+    db.run('DELETE FROM sessions WHERE user_id = ?', [target.id]);
+  } else {
+    db.run(`UPDATE users SET locked_at = NULL, locked_by = '' WHERE id = ?`, [target.id]);
+  }
+  const after = db.get('SELECT id, username, locked_at, locked_by FROM users WHERE id = ?', [target.id]);
+  res.json({ success: true, username: after.username, locked: !!after.locked_at,
+             locked_at: after.locked_at || '', locked_by: after.locked_by || '' });
 });
 
 // Force-sign-out every session of a user. The escape hatch for the
@@ -4381,12 +4467,19 @@ function _remainingPartiesSql(db, docType, auctionId) {
     const uninvoicedExpr = isASPState
       ? `(l.invo IS NULL OR l.invo = '')`
       : `(l.invo IS NULL OR l.invo = '' OR (l.asp_invo IS NOT NULL AND l.asp_invo != '' AND l.invo = l.asp_invo))`;
+    // One row per INVOICE still to make, not per buyer. Generation splits
+    // a buyer's eligible lots by `invoice_group` (see eligible-buyers and
+    // generate-all), so a buyer with three groups bills as three invoices —
+    // counting distinct buyers under-reported those as one. Reserved lots
+    // are excluded here too, matching the eligibility query; without that
+    // a buyer holding only reserved lots was counted as pending forever.
     return {
-      sql: `SELECT DISTINCT l.buyer
+      sql: `SELECT DISTINCT l.buyer, COALESCE(l.invoice_group, 0) AS g
               FROM lots l
              WHERE l.auction_id = ?
                AND l.buyer IS NOT NULL AND l.buyer != ''
                AND l.amount > 0
+               AND (l.reserved IS NULL OR l.reserved = 0)
                AND ${notWD}
                AND ${uninvoicedExpr}`,
       params: [auctionId],
@@ -4678,7 +4771,14 @@ function computeTradeKpi(db, aid) {
             COALESCE(SUM(CASE WHEN amount > 0 THEN 1 ELSE 0 END), 0)          AS sold_lots,
             COALESCE(SUM(CASE WHEN COALESCE(amount,0) <= 0 THEN 1 ELSE 0 END), 0) AS withdrawn_lots,
             COALESCE(SUM(CASE WHEN amount > 0 THEN qty ELSE 0 END), 0)        AS sold_weight,
+            COALESCE(SUM(CASE WHEN COALESCE(amount,0) <= 0 THEN qty ELSE 0 END), 0) AS wd_weight,
+            COALESCE(SUM(CASE WHEN amount > 0 THEN bags ELSE 0 END), 0)             AS sold_bags,
+            COALESCE(SUM(CASE WHEN COALESCE(amount,0) <= 0 THEN bags ELSE 0 END), 0) AS wd_bags,
             COALESCE(SUM(qty), 0)                               AS total_qty,
+            -- Price spread across SOLD lots only: an unsold lot has price 0
+            -- and would drag the minimum to nothing.
+            MIN(CASE WHEN amount > 0 THEN price END)            AS min_price,
+            MAX(CASE WHEN amount > 0 THEN price END)            AS max_price,
             COALESCE(SUM(bags), 0)                              AS total_bags,
             COALESCE(SUM(amount), 0)                            AS total_value,
             -- Sellers by trader_id, falling back to the denormalised name —
@@ -4691,16 +4791,30 @@ function computeTradeKpi(db, aid) {
             COUNT(DISTINCT CASE WHEN amount > 0 THEN NULLIF(buyer, '') END) AS buyers
        FROM lots WHERE auction_id = ?`, [aid]
   ) || {};
+  const soldWeight = Number(r.sold_weight) || 0;
+  const totalValue = Number(r.total_value) || 0;
   return {
     allocatedLots:  Number(r.allocated_lots)  || 0,
     soldLots:       Number(r.sold_lots)       || 0,
     withdrawnLots:  Number(r.withdrawn_lots)  || 0,
-    soldWeight:     Number(r.sold_weight)     || 0,
+    soldWeight,
+    wdWeight:       Number(r.wd_weight)       || 0,
     totalQty:       Number(r.total_qty)       || 0,
     totalBags:      Number(r.total_bags)      || 0,
-    totalValue:     Number(r.total_value)     || 0,
+    totalValue,
     sellers:        Number(r.sellers)         || 0,
     buyers:         Number(r.buyers)          || 0,
+    soldBags:       Number(r.sold_bags)       || 0,
+    wdBags:         Number(r.wd_bags)         || 0,
+    // Withdrawn lots carry no amount by definition — kept explicit so the
+    // breakdown reads ₹0.00 rather than a blank.
+    wdValue:        0,
+    minPrice:       Number(r.min_price)       || 0,
+    maxPrice:       Number(r.max_price)       || 0,
+    // Average REALISED price = value ÷ weight, the figure the office
+    // quotes. Not the mean of the per-lot prices, which would weight a
+    // 30 kg lot the same as a 300 kg one.
+    avgPrice:       soldWeight > 0 ? totalValue / soldWeight : 0,
   };
 }
 
@@ -4800,6 +4914,10 @@ function buildDocumentCatalog(db, role, query) {
         if (d.sub)      item.sub = d.sub;
         if (d.filters)  item.filters = d.filters;
         if (d.multi)    item.multi = d.multi;
+        if (d.partyKind) item.partyKind = d.partyKind;
+        // Tally exports name their own type (set by hrefTally). The desk
+        // needs it to fetch the real party / document-number lists.
+        if (typeof d.href === 'function' && d.href.tallyType) item.tallyType = d.href.tallyType;
         if (d.note)     item.note = d.note;
         if (d.deepLink) item.deepLink = d.deepLink;
 
@@ -4836,7 +4954,7 @@ function buildDocumentCatalog(db, role, query) {
     };
 }
 
-app.get('/api/documents/catalog', requireView, (req, res) => {
+app.get('/api/documents/catalog', requireAuctionDesk, (req, res) => {
   try {
     const out = buildDocumentCatalog(getDb(), req.user.role, req.query);
     if (!out) return res.status(404).json({ error: 'Auction not found' });
@@ -4943,7 +5061,7 @@ async function runBundleJob(job, baseUrl, authHeader) {
   job.status = job.files ? 'done' : 'empty';
 }
 
-app.post('/api/documents/bundle', requireView, (req, res) => {
+app.post('/api/documents/bundle', requireAuctionDesk, (req, res) => {
   try {
     sweepBundles();
     const wanted = Array.isArray(req.body && req.body.items) ? req.body.items : [];
@@ -5007,7 +5125,7 @@ app.post('/api/documents/bundle', requireView, (req, res) => {
   }
 });
 
-app.get('/api/documents/bundle/:id', requireView, (req, res) => {
+app.get('/api/documents/bundle/:id', requireAuctionDesk, (req, res) => {
   const job = BUNDLE_JOBS.get(req.params.id);
   if (!job) return res.status(404).json({ error: 'Unknown or expired bundle' });
   res.json({
@@ -5017,7 +5135,7 @@ app.get('/api/documents/bundle/:id', requireView, (req, res) => {
   });
 });
 
-app.get('/api/documents/bundle/:id/file', requireView, (req, res) => {
+app.get('/api/documents/bundle/:id/file', requireAuctionDesk, (req, res) => {
   const job = BUNDLE_JOBS.get(req.params.id);
   if (!job) return res.status(404).json({ error: 'Unknown or expired bundle' });
   if (job.status === 'running') return res.status(409).json({ error: 'Still building' });
@@ -15297,6 +15415,37 @@ function parseSaleFilter(type, raw) {
   return { sale: list.length === 1 ? list[0] : list.join(',') };
 }
 
+// Narrow built voucher rows by party name and/or document number. Both
+// accept a comma-joined list. Matching is case- and space-insensitive on
+// the party, exact on the number — the row shape differs per voucher type
+// (`invo` on sales/purchases, `note_no` on debit notes), so both are read.
+const _listSet = (raw) => {
+  const v = String(raw == null ? '' : raw).split(',').map(x => x.trim()).filter(Boolean);
+  return v.length ? new Set(v.map(x => x.toUpperCase().replace(/\s+/g, ' '))) : null;
+};
+const filterRowsByParty = (rows, party) => {
+  const want = _listSet(party);
+  if (!want) return rows;
+  return rows.filter(r => want.has(String(r.name || '').trim().toUpperCase().replace(/\s+/g, ' ')));
+};
+// The document number as the office knows it. Every voucher builder
+// normalises to `voucherNum` — and on Bills of Supply that is the FORMATTED
+// number (formatBillOfSupplyNo), which is the only form that appears on the
+// document or the Bills screen. Reading `invo`/`note_no` first would match
+// the raw column instead, so URD purchases never matched at all. `invo` and
+// `note_no` stay as fallbacks for the sales builder, which emits neither.
+const tallyDocNo = (r) => {
+  for (const v of [r.voucherNum, r.invo, r.note_no]) {
+    if (v != null && String(v).trim() !== '') return String(v).trim();
+  }
+  return '';
+};
+const filterRowsByDoc = (rows, doc) => {
+  const want = _listSet(doc);
+  if (!want) return rows;
+  return rows.filter(r => want.has(tallyDocNo(r).toUpperCase()));
+};
+
 const filterRowsBySale = (rows, sale) => {
   if (!sale) return rows;
   const want = new Set(String(sale).split(',').map(v => v.trim().toUpperCase()).filter(Boolean));
@@ -15941,7 +16090,9 @@ app.get('/api/tally/vouchers/:type/:auctionId', requireExport, (req, res) => {
     const cfg = getSettingsFlat(db);
     const saleFilter = parseSaleFilter(type, req.query.sale);
     if (saleFilter.error) return res.status(400).json({ error: saleFilter.error });
-    const rows = filterRowsBySale(def.builder(db, auctionId, cfg), saleFilter.sale);
+    let rows = filterRowsBySale(def.builder(db, auctionId, cfg), saleFilter.sale);
+    rows = filterRowsByParty(rows, req.query.party);
+    rows = filterRowsByDoc(rows, req.query.invoice);
     const vouchers = rows.map(tallyVoucherSummary);
     res.json({
       type, auctionId,
@@ -15957,6 +16108,48 @@ app.get('/api/tally/vouchers/:type/:auctionId', requireExport, (req, res) => {
     });
   } catch (e) {
     console.error('tally vouchers list error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// The distinct parties and document numbers one Tally export actually
+// contains, so the Auction Desk's filter can offer them in a picker.
+//
+// Deliberately built from `def.builder` — the SAME rows the export builds —
+// and read through the same fields filterRowsByParty/filterRowsByDoc match
+// on. Sourcing the list from a master instead would offer parties that
+// aren't in this auction's vouchers and silently return an empty file.
+// Works for ledgers too (they have parties but no document numbers).
+app.get('/api/tally/filter-options/:type/:auctionId', requireExport, (req, res) => {
+  const { type, auctionId } = req.params;
+  const def = TALLY_EXPORTS[type];
+  if (!def) return res.status(400).json({ error: 'Unknown Tally export', available: Object.keys(TALLY_EXPORTS) });
+  try {
+    const db = getDb();
+    const cfg = getSettingsFlat(db);
+    if (def.flag && String(cfg[def.flag] || '').toLowerCase() !== 'true') {
+      return res.status(403).json({ error: `${def.label} is disabled — enable "${def.flag}" in Settings → Flags` });
+    }
+    // ?sale=L|I|E narrows first, so picking Local then opening the party
+    // list does not offer inter-state buyers that the export just dropped.
+    const saleFilter = parseSaleFilter(type, req.query.sale);
+    const rows = filterRowsBySale(def.builder(db, auctionId, cfg) || [],
+                                  saleFilter.error ? '' : saleFilter.sale);
+    const parties = new Map(), invoices = new Map();
+    for (const r of rows) {
+      const p = String(r.name == null ? '' : r.name).trim();
+      if (p && !parties.has(p.toUpperCase())) parties.set(p.toUpperCase(), p);
+      const d = tallyDocNo(r);          // same accessor filterRowsByDoc uses
+      if (d && !invoices.has(d.toUpperCase())) invoices.set(d.toUpperCase(), d);
+    }
+    const byLabel = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+    res.json({
+      type, auctionId, label: def.label, sale: saleFilter.error ? '' : saleFilter.sale,
+      parties:  [...parties.values()].sort(byLabel),
+      invoices: [...invoices.values()].sort(byLabel),
+    });
+  } catch (e) {
+    console.error('tally filter-options error:', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -16051,7 +16244,9 @@ app.get('/api/tally/export/:type/:auctionId', requireExport, (req, res) => {
     // Inter-state and Export batches can be imported into Tally separately.
     const saleFilter = parseSaleFilter(type, req.query.sale);
     if (saleFilter.error) return res.status(400).json({ error: saleFilter.error });
-    const rows = filterRowsBySale(def.builder(db, auctionId, cfg), saleFilter.sale);
+    let rows = filterRowsBySale(def.builder(db, auctionId, cfg), saleFilter.sale);
+    rows = filterRowsByParty(rows, req.query.party);
+    rows = filterRowsByDoc(rows, req.query.invoice);
     if (rows.length === 0) {
       const what = def.isLedger ? def.label.toLowerCase() : `${def.label.toLowerCase()}`;
       const forSale = saleFilter.sale

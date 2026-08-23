@@ -412,6 +412,23 @@ function cleanup() {
           && !(items.tally_rd_purchase.filters || []).includes('sale'),
         `sales=${items.tally_sales_isp.filters} rd=${items.tally_rd_purchase.filters}`);
   // …and the routes must accept them for real, not just in the manifest.
+  // ── Filters that were asked for, and ones that were removed ──────
+  check('the Spices Board CSV offers no filter',
+        !items.eauction_csv.filters, JSON.stringify(items.eauction_csv.filters));
+  // Merchants is gated by flag_merchants (off by default), so it is not in
+  // the resolved catalog here — assert it from the manifest.
+  check('nor does the consolidated Merchants journal',
+        !DOCUMENTS.find(d => d.id === 'tally_merchants').filters);
+  check('vouchers filter by party and invoice as well as sale type',
+        ['sale', 'party', 'invoice'].every(k => (items.tally_sales_isp.filters || []).includes(k)),
+        JSON.stringify(items.tally_sales_isp.filters));
+  check('and the e-Invoice JSON rides the same invoice filter',
+        items.tally_sales_isp.formats.includes('irp')
+          && (items.tally_sales_isp.filters || []).includes('invoice'));
+  check('party ledgers filter by party',
+        (items.tally_ledger_sales.filters || []).includes('party')
+          && (items.tally_ledger.filters || []).includes('party'));
+
   // Multi-value: which filters take a comma-joined list.
   check('Spice Board filters are all list-capable',
         (items.form_d.multi || []).join() === 'branch,sellerId,buyerCode',
@@ -568,6 +585,122 @@ function cleanup() {
           `${all.status} / ${two.status}`);
   }
 
+  // A party filter must APPLY, not merely be accepted: filtering to a
+  // party that has no vouchers must differ from the unfiltered export.
+  {
+    const grab = async (u) => {
+      const r = await fetch(B + u, { headers: { Authorization: 'Bearer ' + TOKEN } });
+      return { status: r.status, len: r.ok ? (await r.text()).length : 0 };
+    };
+    const base = `/api/tally/export/urd_purchase/${aid}`;
+    const all  = await grab(base);
+    const none = await grab(base + '?party=NO%20SUCH%20SELLER');
+    const doc  = await grab(base + '?invoice=NO-SUCH-DOC');
+    check('a party filter reaches the builder', none.status !== 500, String(none.status));
+    check('an invoice filter does too', doc.status !== 500, String(doc.status));
+    // Only meaningful when the unfiltered export HAS rows — otherwise both
+    // sides are the same "no rows" answer and prove nothing either way.
+    if (all.status === 200) {
+      check('and filtering to an absent party yields nothing',
+            none.status !== 200 || none.len < all.len,
+            `all=${all.status}/${all.len} none=${none.status}/${none.len}`);
+    } else {
+      console.log('         (unfiltered export has no rows here — party narrowing not comparable)');
+    }
+  }
+
+  // ── Tally filter options ─────────────────────────────────────────
+  // The desk's party / document-number pickers are only trustworthy if
+  // every value they offer actually selects something. That means the
+  // options must come from the SAME rows the export builds — so the test
+  // is not "does it return a list" but "does each listed value survive
+  // the filter it feeds".
+  {
+    console.log('\n[live] Tally filter options');
+    const o = await api('GET', `/api/tally/filter-options/urd_purchase/${aid}`);
+    check('a Tally export lists its own parties and document numbers',
+          o.status === 200 && Array.isArray(o.d.parties) && Array.isArray(o.d.invoices),
+          `${o.status} ${JSON.stringify(o.d).slice(0, 200)}`);
+    check('the fixture put parties in it', (o.d.parties || []).length > 0,
+          JSON.stringify(o.d.parties));
+    check('and document numbers too', (o.d.invoices || []).length > 0,
+          JSON.stringify(o.d.invoices));
+    check('the lists are de-duplicated',
+          new Set(o.d.parties || []).size === (o.d.parties || []).length
+          && new Set(o.d.invoices || []).size === (o.d.invoices || []).length);
+
+    // Every offered value must narrow the export to a non-empty result.
+    const grab = async (u) => {
+      const r = await fetch(B + u, { headers: { Authorization: 'Bearer ' + TOKEN } });
+      return { status: r.status, body: r.ok ? await r.text() : '' };
+    };
+    const base = `/api/tally/export/urd_purchase/${aid}`;
+    const p0 = (o.d.parties || [])[0];
+    const i0 = (o.d.invoices || [])[0];
+    if (p0) {
+      const r = await grab(base + '?party=' + encodeURIComponent(p0));
+      check(`an offered party ("${p0}") really selects rows`, r.status === 200, String(r.status));
+    }
+    if (i0) {
+      const r = await grab(base + '?invoice=' + encodeURIComponent(i0));
+      check(`an offered document no ("${i0}") really selects rows`, r.status === 200, String(r.status));
+    }
+    // And the whole list at once must be the same as no filter at all —
+    // proof the options are exhaustive, not a sample.
+    if ((o.d.parties || []).length) {
+      const all  = await grab(base);
+      const evry = await grab(base + '?party=' + encodeURIComponent(o.d.parties.join(',')));
+      check('selecting every offered party equals the unfiltered export',
+            all.status === 200 && evry.status === 200 && evry.body.length === all.body.length,
+            `all=${all.status}/${all.body.length} every=${evry.status}/${evry.body.length}`);
+    }
+
+    // Ledgers have parties but no document numbers — the endpoint must
+    // still answer rather than 400, so the picker degrades to a party-only
+    // dialog instead of a free-text box.
+    const led = await api('GET', `/api/tally/filter-options/ledger_urd_purchase/${aid}`);
+    check('a ledger export answers too', led.status === 200, String(led.status));
+    check('and offers parties', (led.d.parties || []).length > 0, JSON.stringify(led.d.parties));
+
+    const bad = await api('GET', `/api/tally/filter-options/not_a_type/${aid}`);
+    check('an unknown Tally type is refused', bad.status === 400, String(bad.status));
+
+    // The catalog must name the type, or the client cannot ask at all.
+    // Keyed on family, not on the id prefix: `tally_purchase` is a
+    // spreadsheet under Reports and has no XML export type at all.
+    const tallyTiles = Object.entries(items).filter(([, v]) => v.family === 'tally');
+    const untyped = tallyTiles.filter(([, v]) => !(typeof v.tallyType === 'string' && v.tallyType))
+      .map(([k]) => k);
+    check('every Tally tile carries its export type',
+          tallyTiles.length >= 8 && untyped.length === 0,
+          `${tallyTiles.length} tiles; missing on: ${untyped.join(', ') || 'none'}`);
+    check('and no non-Tally tile claims one',
+          Object.entries(items).filter(([, v]) => v.family !== 'tally' && v.tallyType).length === 0);
+  }
+
+  // ── Pending counts ───────────────────────────────────────────────
+  // Generation splits a buyer's lots by invoice_group, so a buyer with
+  // three groups is three invoices to make — counting distinct buyers
+  // reported that as one.
+  {
+    const rows = await api('GET', `/api/lots/${aid}`);
+    const lot = (rows.d || [])[0];
+    if (lot) {
+      const before = (await api('GET', `/api/auctions/${aid}/generation-status`)).d.invoices.pending;
+      await api('PUT', `/api/lots/${lot.id}`, { buyer: 'ONE BUYER', buyer1: 'ONE BUYER',
+        amount: 1000, price: 10, invoice_group: 0 });
+      const rows2 = (await api('GET', `/api/lots/${aid}`)).d || [];
+      const other = rows2.find(r => r.id !== lot.id);
+      if (other) {
+        await api('PUT', `/api/lots/${other.id}`, { buyer: 'ONE BUYER', buyer1: 'ONE BUYER',
+          amount: 1000, price: 10, invoice_group: 2 });
+        const after = (await api('GET', `/api/auctions/${aid}/generation-status`)).d.invoices.pending;
+        check('one buyer split across two invoice groups counts as two invoices',
+              after >= 2, `before ${before}, after ${after}`);
+      }
+    }
+  }
+
   // Filters travel with a bundled document, but only the ones its manifest
   // entry declares — the bundler must not become a way to bolt arbitrary
   // query params onto an export route.
@@ -599,6 +732,49 @@ function cleanup() {
     check('an oversized selection is refused', huge.status === 400, String(huge.status));
     const gone = await api('GET', '/api/documents/bundle/b-nope');
     check('an unknown job id is a 404', gone.status === 404, String(gone.status));
+  }
+
+  // ── Role gate: the desk belongs to managers and admins ───────────
+  // Every /api/documents/* route sits behind the auction_desk capability,
+  // so a role without it cannot read the catalog, let alone bundle from it.
+  {
+    console.log('\n[live] role gate');
+    const ADMIN = TOKEN;
+    const mkUser = (username, role) =>
+      api('POST', '/api/users', { username, password: 'passw0rd', role });
+    const tokenFor = async (username) => {
+      const saved = TOKEN; TOKEN = null;
+      const r = await api('POST', '/api/login', { username, password: 'passw0rd' });
+      TOKEN = saved;
+      return r.d && (r.d.token || r.d.accessToken);
+    };
+
+    for (const role of ['viewer', 'operator', 'lot_entry']) {
+      const made = await mkUser('desk_' + role, role);
+      check(`a ${role} account can be created`, made.status === 200 || made.status === 201,
+            `${made.status} ${JSON.stringify(made.d)}`);
+      const tok = await tokenFor('desk_' + role);
+      check(`the ${role} can sign in`, !!tok);
+      TOKEN = tok;
+      const cat = await api('GET', '/api/documents/catalog?auctionId=' + aid);
+      check(`a ${role} cannot read the document catalog`, cat.status === 403,
+            `${cat.status} ${JSON.stringify(cat.d).slice(0, 200)}`);
+      const bun = await api('POST', '/api/documents/bundle',
+        { auctionId: aid, items: [{ id: 'lot_slip', format: 'xlsx' }] });
+      check(`nor bundle documents`, bun.status === 403, String(bun.status));
+      TOKEN = ADMIN;
+    }
+
+    const mgr = await mkUser('desk_manager', 'manager');
+    check('a manager account can be created', mgr.status === 200 || mgr.status === 201,
+          `${mgr.status} ${JSON.stringify(mgr.d)}`);
+    TOKEN = await tokenFor('desk_manager');
+    const mcat = await api('GET', '/api/documents/catalog?auctionId=' + aid);
+    check('but a manager reads the catalog fine', mcat.status === 200, String(mcat.status));
+    check('and sees documents in it', flatten(mcat.d).lot_slip !== undefined);
+    TOKEN = ADMIN;
+    const acat = await api('GET', '/api/documents/catalog?auctionId=' + aid);
+    check('and so does an admin', acat.status === 200, String(acat.status));
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

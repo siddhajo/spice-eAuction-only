@@ -595,6 +595,80 @@ Row-level selection — tick these six invoices, print those — stays on the
 owning screens, which have the tick columns and the context for it. The hub
 scopes a document by attribute, not by hand-picked rows.
 
+## 7e. Plain mode and the role gate
+
+**Plain mode.** One user reads the colour as noise. `body[data-hub-plain="1"]`
+re-skins the desk in neutrals — white cards with a `#E2E8F0` border, a
+`#334155` graphite action colour, `#94A3B8` accent bars, greyscale icon
+chips, and no gradients or glows. It is a pure CSS override layered on top
+of the coloured build, not a second stylesheet: every tile, KPI card, widget
+and modal keeps its markup and its class names, so the two modes cannot drift
+apart. The preference is per-browser (`localStorage`), toggled from a button
+beside the auction picker, and scoped strictly to the desk — no other screen
+changes. Legibility, not blandness, is the target: contrast is *higher* in
+plain mode than in colour, and a test asserts nothing renders same-on-same.
+
+Note this is **not** the dark-mode fix. The app-wide dark defect — derived
+tokens baked at `:root` while the overrides land on `body` — is untouched, by
+explicit decision.
+
+**Role gate.** The desk is a manager-and-admin tool: it puts every document
+in the business, for every party, one click from a ZIP. Access is a real
+capability, `auction_desk`, granted to `manager` and `admin` in
+`ROLE_PERMISSIONS`, and enforced in both places that matter:
+
+- **Server.** `requireAuctionDesk` guards all four `/api/documents/*` routes
+  — catalog, bundle create, bundle poll, bundle download. This is the actual
+  boundary. `catalog.http.js` signs in as viewer, operator and lot_entry and
+  asserts 403 on catalog *and* bundle for each, then 200 for manager and
+  admin.
+- **Client.** The sidebar button carries `.needs-auction-desk`, hidden unless
+  `body[data-perm-auction-desk="1"]`. `go('hub')` refuses and falls back to
+  the dashboard with a toast, and `_landingTab()` returns `dash` so a user
+  whose saved home is the desk still lands somewhere they can use. This is
+  courtesy, not security — it stops a stale preference or a bookmarked hash
+  from dropping someone on an empty screen.
+
+## 7f. Tally party & document-number pickers
+
+The Tally filter asked the operator to **type** a party name and an invoice
+number. Both match exactly server-side, so one extra space or a raw bill
+number instead of the formatted one returned an empty file with no
+explanation. Both are now search-and-pick, same control as everywhere else.
+
+**Where the options come from is the point.** The register pickers read a
+master (`/api/traders`, `/api/buyers`). Tally must not: its filter runs over
+the *built voucher rows*, so a master would offer parties that aren't in this
+auction's vouchers. `GET /api/tally/filter-options/:type/:auctionId` runs the
+export's own `def.builder` and returns the distinct parties and document
+numbers actually present — every value offered is guaranteed to select
+something. A test asserts the strong form: picking **every** offered party
+reproduces the unfiltered export byte-for-byte.
+
+The client learns which export a tile is via `tallyType`, stamped onto the
+catalog item from `hrefTally`'s closure (`fn.tallyType = type`) rather than
+repeated on thirteen entries where it could drift.
+
+**Sale type feeds the lists.** Options are gathered *after* `filterRowsBySale`,
+so choosing Local and then opening the party list must not offer inter-state
+buyers. Changing the sale type re-opens the dialog on the current draft —
+carrying the other choices forward, dropping the party/invoice picks that
+were made against the previous list.
+
+**A pre-existing bug fell out of this.** `filterRowsByDoc` read `invo` then
+`note_no`. Every voucher builder normalises to `voucherNum`, and on Bills of
+Supply that is the *formatted* number (`formatBillOfSupplyNo`) — the only
+form that appears on the document or the Bills screen. So the `invoice`
+filter on URD Purchase Vouchers matched nothing and always 404'd. Both the
+filter and the options endpoint now read one shared `tallyDocNo()` accessor,
+so they cannot drift apart.
+
+Two smaller fixes alongside: the number field is labelled **Invoice / Note
+no** (it covers `invo` on sales/purchases and `note_no` on debit notes, so
+calling it "Invoice" was half true), and opening one picker now closes the
+others — with two pickers in one dialog, the upper list covered the field
+the operator had just clicked into.
+
 ## 8. Risks
 
 | Risk | Mitigation |

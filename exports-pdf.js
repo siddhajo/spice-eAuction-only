@@ -656,9 +656,11 @@ const COLS = {
     { header: 'QTY',   key: 'qty',   width: 12 },
   ],
   // Post-auction verification sheet — see exportChecklist in exports.js for
-  // what BUYER (short code) and SALE (L / I / WD) hold.
+  // what DUMMY (per-lot Price Entry tag), BUYER (short code) and SALE
+  // (L / I / WD) hold.
   checklist: [
     { header: 'LOT',   key: 'lot',   width: 8  },
+    { header: 'DUMMY', key: 'dummy', width: 12 },
     { header: 'BUYER', key: 'buyer', width: 12 },
     { header: 'BAGS',  key: 'bag',   width: 7  },
     { header: 'QTY',   key: 'qty',   width: 12 },
@@ -805,6 +807,7 @@ const COLS = {
     { header: 'LOTS',  key: 'lots', width: 6  },
     { header: 'BAGS',  key: 'bags', width: 6  },
     { header: 'QTY',   key: 'qty',  width: 12 },
+    { header: 'GROSS QTY', key: 'gross_qty', width: 12 },
   ],
   sales_taxes: [
     { header: 'STATE', key: 'state', width: 10 }, { header: 'SALE', key: 'sale', width: 6 },
@@ -960,7 +963,7 @@ const TOTAL_KEYS = {
   dealer_list:     ['lots', 'bags', 'qty', 'gross_qty'],
   dealer_list_party_wise:   ['lots', 'bags', 'qty', 'gross_qty', 'amount'],
   pooler_list_consolidated: ['lots', 'bags', 'qty', 'gross_qty', 'value', 'billamount'],
-  planter_list:    ['lots', 'bags', 'qty'],
+  planter_list:    ['lots', 'bags', 'qty', 'gross_qty'],
   sales_taxes:     ['bag', 'qty', 'cardamom_cost', 'gunny_cost', 'cgst', 'sgst', 'igst', 'tcs', 'transport', 'insurance', 'total'],
   payment:         ['bag', 'qty', 'amount', 'commission', 'payable', 'advance', 'discount'],
   payment_party_wise: ['lots', 'qty', 'amount', 'purchase', 'commission', 'gst', 'tds', 'net', 'advance', 'payable', 'discount'],
@@ -1129,6 +1132,7 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
     case 'checklist':
       return db.all(
         `SELECT lot_no AS lot,
+                COALESCE(dummy_code,'') AS dummy,
                 code AS buyer,
                 bags AS bag,
                 qty,
@@ -1286,10 +1290,10 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
       return rows;
     }
 
-    case 'planter_list':
+    case 'planter_list': {
       // Grade-1 planter list — pre-trade, so NO amount>0 gate. CR prefix
       // stripped to mirror the Dealer List's cleaned GSTIN column.
-      return db.all(
+      const rows = db.all(
         `WITH cleaned AS (
            SELECT name, bags, qty, lot_no,
                   TRIM(CASE
@@ -1302,6 +1306,11 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
          )
          SELECT name, cr, COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty
            FROM cleaned GROUP BY name, cr ORDER BY name`, [auctionId]);
+      // Same gross rule as the XLSX form (exports.js exportPlanterList) and
+      // as the Dealer List above — net qty + one SB Sample Refund per lot.
+      for (const r of rows) r.gross_qty = (Number(r.qty) || 0) + (Number(r.lots) || 0) * sbRefund;
+      return rows;
+    }
 
     case 'sales_taxes':
       return db.all(
