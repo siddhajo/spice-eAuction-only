@@ -128,6 +128,52 @@ const cleanup = () => {
         COLS.checklist.find(c => c.header === 'DUMMY')?.key === 'dummy',
         JSON.stringify(COLS.checklist.find(c => c.header === 'DUMMY')));
 
+  // ── [1b] Bulk dummy code ─────────────────────────────────────
+  // Price Entry's "Set Buyer Code & Split" modal tags a whole selection at
+  // once. The route is separate from bulk-set-buyer on purpose: a tag must
+  // never touch price or qty, so it can't invalidate a price-check stamp.
+  console.log('\n[1b] Bulk dummy code over a selection');
+  {
+    const before = (await api('GET', `/api/lots/${aid}`)).d;
+    const pick = before.filter(l => ['002', '003', '004'].includes(String(l.lot_no)));
+    const r = await api('POST', '/api/lots/dummy-code/bulk',
+                        { ids: pick.map(l => l.id), value: 'BATCH-9' });
+    check('the bulk route tags every selected lot', r.status === 200 && r.d.updated === 3,
+          JSON.stringify(r.d));
+    const after = (await api('GET', `/api/lots/${aid}`)).d;
+    const dc = n => (after.find(l => String(l.lot_no).replace(/^0+/, '') === String(n)) || {}).dummy_code;
+    check('all three carry the new tag', dc(2) === 'BATCH-9' && dc(3) === 'BATCH-9' && dc(4) === 'BATCH-9',
+          JSON.stringify([dc(2), dc(3), dc(4)]));
+    // WD/NA lots are excluded from the invoice split because they can't be
+    // invoiced; a tag has no such constraint, so they must be tagged too.
+    check('a WD and an NA lot are tagged like any other', dc(2) === 'BATCH-9' && dc(3) === 'BATCH-9',
+          JSON.stringify([dc(2), dc(3)]));
+    check('an unselected lot keeps its own tag untouched', dc(1) === 'AX7', String(dc(1)));
+
+    // Price / qty must be exactly as they were — this is the whole reason the
+    // tag does not go through the general lot update.
+    const p = n => { const l = after.find(x => String(x.lot_no).replace(/^0+/, '') === String(n)); return [l.price, l.qty, l.amount]; };
+    const pb = n => { const l = before.find(x => String(x.lot_no).replace(/^0+/, '') === String(n)); return [l.price, l.qty, l.amount]; };
+    check('tagging changed no price, qty or amount',
+          JSON.stringify([p(1), p(2), p(3), p(4)]) === JSON.stringify([pb(1), pb(2), pb(3), pb(4)]),
+          JSON.stringify([p(1), p(2), p(3), p(4)]));
+
+    const over = await api('POST', '/api/lots/dummy-code/bulk',
+                           { ids: [pick[0].id], value: '  ' + 'X'.repeat(60) + '  ' });
+    check('the value is trimmed and capped at 40 chars like the per-lot route',
+          over.status === 200 && over.d.value === 'X'.repeat(40), JSON.stringify(over.d.value));
+
+    const none = await api('POST', '/api/lots/dummy-code/bulk', { ids: [], value: 'Z' });
+    check('an empty id list is refused with 400', none.status === 400, String(none.status));
+
+    // Put lot 002 back so [2]'s row-rendering assertions see the fixture they
+    // were written against.
+    await api('POST', '/api/lots/dummy-code/bulk', { ids: pick.map(l => l.id), value: '' });
+    const reset = (await api('GET', `/api/lots/${aid}`)).d;
+    check('blank clears the tag again', reset.filter(l => ['002', '003', '004'].includes(String(l.lot_no)))
+            .every(l => !String(l.dummy_code || '')), 'still tagged');
+  }
+
   // ── [2] Auction Desk row rendering ───────────────────────────
   console.log('\n[2] Auction Desk → Lots: 0.00 + WD / NA badge');
   let pptr = null, chrome = null;

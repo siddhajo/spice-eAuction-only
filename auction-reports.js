@@ -1205,6 +1205,11 @@ function getTradeReportData(db, auctionId, opts) {
   //                                "SALIM ASA", "TOMY AJT"). NOT b.sbl — that
   //                                column holds a spice-board / licence number
   //                                ("CS/M179/274/23-24") — and NOT the short code.
+  //
+  // Rows are ordered by BIDDER ascending — the ORDER BY repeats the same
+  // COALESCE chain as the `bidder` alias so the printed column and the sort
+  // key can never drift apart. Falls back to l.code so blank bidders keep a
+  // stable place instead of clumping at the top.
   const rows = db.all(`
     SELECT
       l.code                                                  AS code,
@@ -1226,7 +1231,7 @@ function getTradeReportData(db, auctionId, opts) {
       AND l.amount > 0
       ${branchFilter ? 'AND UPPER(TRIM(l.branch)) = UPPER(TRIM(?))' : ''}
     GROUP BY l.code, b.buyer, b.buyer1, b.state, b.gstin, l.sale
-    ORDER BY UPPER(COALESCE(b.buyer1, l.buyer1, l.code)), l.code
+    ORDER BY UPPER(COALESCE(NULLIF(b.buyer, ''), NULLIF(l.buyer, ''), l.code)), l.code
   `, branchFilter ? [auctionId, branchFilter] : [auctionId]);
 
   // INV.AMOUNT is derived per buyer-row from the same components the sales

@@ -4931,7 +4931,11 @@ function buildDocumentCatalog(db, role, query) {
         // Bulk PDF needs both halves — the route that renders it and the
         // route the ids come from — so they travel together or not at all.
         if (item.available && d.bulkRoute && d.listRoute) {
-          item.bulkRoute = d.bulkRoute;
+          // A family whose document swaps entirely on a flag (Bills of
+          // Supply: Purchase Bill vs Commission Bill) names the off-side
+          // route here rather than making the desk special-case it.
+          const alt = d.bulkRouteWhenOff;
+          item.bulkRoute = (alt && !on(cfg[alt.flag])) ? alt.route : d.bulkRoute;
           item.listUrl = `${d.listRoute}${q2({ [d.listParam]: d.listParam === 'ano' ? stageInfo.ano : aid })}`;
         }
         if (d.statusKey && genStatus)      item.status = genStatus[d.statusKey] || null;
@@ -4939,6 +4943,14 @@ function buildDocumentCatalog(db, role, query) {
         items.push(item);
       }
       if (items.length) {
+        // Tiles go out A-Z by name. Manifest order is a build-time concern —
+        // it groups related entries for whoever edits the catalog — but on
+        // screen an operator hunting for one document wants the alphabet.
+        // Sorting here rather than in the desk covers every path that reads
+        // this list at once: the tile grid, the subgroup split, the search
+        // flatten and the find-a-document combobox. The sort is *within* a
+        // group, so the combobox's run-length group headers still hold.
+        items.sort((a, b) => a.label.localeCompare(b.label));
         groups.push({ id: g.id, label: g.label, hint: g.hint || '',
                       collapsed: !!g.collapsed, items });
       }
@@ -7050,6 +7062,32 @@ app.post('/api/lots/invoice-group/bulk', requireLotWrite, (req, res) => {
     updated++;
   }
   res.json({ success: true, updated, skippedLocked, value: g });
+});
+
+// Bulk-set the Price Entry dummy code on many lots at once — powers the
+// "Set Buyer Code & Split" modal's Dummy Code field, so a whole selection can
+// be tagged in the same action that assigns their buyer.
+//
+// Its own endpoint for the same reason the per-lot one is (above): the dummy
+// code is an operator tag that must never touch price or qty, so it cannot
+// invalidate a price-check stamp and does not clear the price-check / lot-
+// verify gates the way bulk-set-buyer does. Same trim + 40-char cap as the
+// per-lot endpoint, and locked lots are skipped rather than failing the batch.
+app.post('/api/lots/dummy-code/bulk', requireLotWrite, (req, res) => {
+  const db = getDb();
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.map(x => parseInt(x, 10)).filter(Number.isFinite) : [];
+  if (!ids.length) return res.status(400).json({ error: 'No lot ids provided' });
+  const value = String(req.body.value == null ? '' : req.body.value).trim().slice(0, 40);
+  const lockOn = lockFeatureOn(db), admin = isAdmin(req);
+  let updated = 0, skippedLocked = 0;
+  for (const id of ids) {
+    const lot = db.get('SELECT id, locked_at FROM lots WHERE id = ?', [id]);
+    if (!lot) continue;
+    if (lot.locked_at && lockOn && !admin) { skippedLocked++; continue; }
+    db.run('UPDATE lots SET dummy_code = ? WHERE id = ?', [value, id]);
+    updated++;
+  }
+  res.json({ success: true, updated, skippedLocked, value });
 });
 
 app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
@@ -9910,7 +9948,11 @@ app.get('/api/purchases', requireView, (req, res) => {
   const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 50));
   const offset   = (page - 1) * pageSize;
   const wantPaged = req.query.page != null || req.query.pageSize != null;
-  const baseQuery = 'SELECT * FROM purchases ' + where + ' ORDER BY date DESC';
+  // Default order: invoice number ascending. `invo` is TEXT holding a numeric
+  // string, so it needs the CAST or "10" would sort before "2"; the bare
+  // column then breaks ties for any non-numeric value, and date last keeps
+  // the order stable when the same number appears under two auctions.
+  const baseQuery = 'SELECT * FROM purchases ' + where + ' ORDER BY CAST(invo AS INTEGER), invo, date';
   if (wantPaged) {
     const total = db.get('SELECT COUNT(*) AS c FROM purchases ' + where, p).c;
     const rows = db.all(baseQuery + ' LIMIT ? OFFSET ?', [...p, pageSize, offset]);
@@ -10699,7 +10741,9 @@ app.get('/api/bills', requireView, (req, res) => {
   const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 50));
   const offset   = (page - 1) * pageSize;
   const wantPaged = req.query.page != null || req.query.pageSize != null;
-  const baseQuery = 'SELECT * FROM bills ' + where + ' ORDER BY date DESC, bil DESC';
+  // Default order: bill number ascending. `bil` is a real INTEGER column, so
+  // no CAST is needed here (unlike purchases.invo / debit_notes.note_no).
+  const baseQuery = 'SELECT * FROM bills ' + where + ' ORDER BY bil, date';
   if (wantPaged) {
     const total = db.get('SELECT COUNT(*) AS c FROM bills ' + where, p).c;
     const rows = db.all(baseQuery + ' LIMIT ? OFFSET ?', [...p, pageSize, offset]);
@@ -11429,11 +11473,16 @@ function commissionPagesFromLots(db, cfg, lots, opts) {
 // ("INV: …"). Only meaningful once flag_proforma_invoice is on: the buyer may
 // have been shipped against a proforma draft and billed later under a
 // different original number, so the print UI asks the operator which one to
-// use. Anything else — and every request from a build with the flag off —
-// stays on the original number.
+// use. Every request from a build with the flag off stays on the original
+// number.
+//
+// With the flag ON and no invoiceNo sent — the Auction Desk tile and the
+// WhatsApp send both post bare { ids } — the default is 'proforma', matching
+// what the Bills screen's picker offers as its only live option. Callers that
+// genuinely want the original series say so explicitly.
 function commissionInvoiceNoOpts(db, cfg, req) {
-  const invoiceNoSrc = (proformaFeatureOn(db)
-    && String(req.body?.invoiceNo || '').trim().toLowerCase() === 'proforma')
+  const asked = String(req.body?.invoiceNo || '').trim().toLowerCase();
+  const invoiceNoSrc = (proformaFeatureOn(db) && asked !== 'original')
     ? 'proforma' : 'original';
   // Draft numbers print in their document form ("PI/L-5"), the same prefix +
   // sale-letter shape Collection and the Buyer Statement use — a bare "5"
@@ -11855,7 +11904,9 @@ app.get('/api/debit-notes', requireView, (req, res) => {
   const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 50));
   const offset   = (page - 1) * pageSize;
   const wantPaged = req.query.page != null || req.query.pageSize != null;
-  const baseQuery = 'SELECT * FROM debit_notes ' + where + ' ORDER BY date DESC, note_no DESC';
+  // Default order: note number ascending. `note_no` is TEXT holding a numeric
+  // string (allocated via MAX(CAST(note_no AS INTEGER))), hence the CAST.
+  const baseQuery = 'SELECT * FROM debit_notes ' + where + ' ORDER BY CAST(note_no AS INTEGER), note_no, date';
   if (wantPaged) {
     const total = db.get('SELECT COUNT(*) AS c FROM debit_notes ' + where, p).c;
     const rows = db.all(baseQuery + ' LIMIT ? OFFSET ?', [...p, pageSize, offset]);
@@ -12966,7 +13017,9 @@ app.get('/api/debit-notes-planter', requireView, (req, res) => {
   const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 50));
   const offset   = (page - 1) * pageSize;
   const wantPaged = req.query.page != null || req.query.pageSize != null;
-  const baseQuery = 'SELECT * FROM debit_notes_planter ' + where + ' ORDER BY date DESC, note_no DESC';
+  // Default order: note number ascending — same TEXT-numeric CAST as the
+  // dealer debit notes above.
+  const baseQuery = 'SELECT * FROM debit_notes_planter ' + where + ' ORDER BY CAST(note_no AS INTEGER), note_no, date';
   if (wantPaged) {
     const total = db.get('SELECT COUNT(*) AS c FROM debit_notes_planter ' + where, p).c;
     const rows = db.all(baseQuery + ' LIMIT ? OFFSET ?', [...p, pageSize, offset]);
@@ -15371,7 +15424,7 @@ const TALLY_EXPORTS = {
   isp_purchase:        { label: 'ISP Purchase Vouchers (mirror of ASP→ISP)',        name: 'ISPPurchase',        builder: buildSalesAspRows,         generator: generIspPurchaseXML,  company: 'isp' },
   rd_purchase:         { label: 'RD Purchase Vouchers',                             name: 'RDPurchase',         builder: buildRDPurchaseRows,       generator: generRDPurchaseXML,   company: 'isp' },
   urd_purchase:        { label: 'URD Purchase Vouchers (Agriculturist)',            name: 'URDPurchase',        builder: buildURDPurchaseRows,      generator: generURDPurchaseXML,  company: 'isp' },
-  debit_note:          { label: 'Debit Notes (Discount)',                           name: 'DebitNote',          builder: buildDebitNoteRows,        generator: generDebitNoteXML,    company: 'isp' },
+  debit_note:          { label: 'Debit Notes (Service)',                            name: 'DebitNote',          builder: buildDebitNoteRows,        generator: generDebitNoteXML,    company: 'isp' },
   debit_note_planter:  { label: 'Debit Notes — Planter (Discount)',                 name: 'DebitNotePlanter',   builder: buildDebitNotePlanterRows, generator: generDebitNoteXML,    company: 'isp' },
   // Merchants = consolidated Journal that debits every buyer by their invoice
   // total and credits the "Merchants" control ledger. Reuses the Sales rows so

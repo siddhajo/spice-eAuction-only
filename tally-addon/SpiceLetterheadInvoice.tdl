@@ -1,0 +1,721 @@
+;;=============================================================================
+;; Spice Letterhead Sales Invoice — TallyPrime add-on
+;;=============================================================================
+;;
+;; Reproduces the app's "Letterhead" sales-invoice layout
+;; (templates/sales-invoice/letterhead.hbs) as a Tally print format, so an
+;; invoice printed from TallyPrime looks like one printed from the app.
+;;
+;; PAIRED WITH tally-xml.js. Four values on the printed invoice have no native
+;; Tally field and travel from the app as UDFs. They are declared in
+;; [System: UDF] below and MUST be declared BEFORE the XML is imported —
+;; Tally silently discards UDF tags it does not recognise. Load this TDL
+;; first, then import.
+;;
+;;   SpiceLotNo      per inventory line   lot number
+;;   SpiceBags       per inventory line   bag count
+;;   SpiceAuctionNo  per voucher          auction number
+;;   SpiceBuyerSBL   per voucher          buyer's Spices Board licence
+;;
+;; The company's own identity block (name, address, FSSAI, SBL, PAN, bank) is
+;; NOT read from the voucher — Tally's company master has no FSSAI/SBL fields.
+;; It is set once in [System: Formula] below. EDIT THAT BLOCK before use.
+;;
+;; Install: see tally-addon/README.md
+;;-----------------------------------------------------------------------------
+
+
+;;=============================================================================
+;; 1. COMPANY IDENTITY — EDIT THIS BLOCK, THEN NOTHING ELSE
+;;=============================================================================
+;; These mirror the `co.*` values the .hbs letterhead renders. Keep the
+;; quotes. Leave a value as "" to drop that line from the printed header.
+
+[System: Formula]
+
+    SpiceCoName      : "IDEAL SPICES PRIVATE LIMITED"
+    SpiceCoIdLabel   : "CIN"
+    SpiceCoIdValue   : ""
+    SpiceCoAddr1     : ""
+    SpiceCoAddr2     : ""
+    SpiceCoPlace     : ""
+    SpiceCoPin       : ""
+    SpiceCoStateName : "Tamil Nadu"
+    SpiceCoStateCode : "33"
+    SpiceCoPhone     : ""
+    SpiceCoEmail     : ""
+    SpiceCoFSSAI     : ""
+    SpiceCoGSTIN     : ""
+    SpiceCoSBL       : ""
+    SpiceCoPAN       : ""
+
+    ;; Bank block printed in the footer. Blank SpiceBankName hides all three.
+    SpiceBankName    : ""
+    SpiceBankAcct    : ""
+    SpiceBankIFSC    : ""
+
+    ;; Goods description band + tax rate. SpiceGSTRate is the FULL rate (IGST);
+    ;; the CGST/SGST columns each print half of it.
+    SpiceHSNCard     : "09083120"
+    SpiceGSTRate     : 5
+    SpiceGSTHalf     : ##SpiceGSTRate / 2
+
+    ;; Optional logo. Tally prints JPEG only, and only in Print / Preview —
+    ;; never on screen. Put the file in the TallyPrime program folder and name
+    ;; it here (e.g. "logo.jpg"). Leave "" for no logo.
+    SpiceLogoFile    : ""
+
+
+;;=============================================================================
+;; 2. UDF DECLARATIONS — must match UDF_NAMES in tally-xml.js exactly
+;;=============================================================================
+;; Indices are in Tally's user-definable range (20000+) and are per-datatype,
+;; so a String and a Number may share a number. They are given distinct values
+;; anyway to keep future additions unambiguous.
+
+[System: UDF]
+
+    SpiceLotNo     : String : 20001
+    SpiceBags      : Number : 20002
+    SpiceAuctionNo : String : 20003
+    SpiceBuyerSBL  : String : 20004
+
+
+;;=============================================================================
+;; 3. DERIVED VALUES
+;;=============================================================================
+
+[System: Formula]
+
+    ;; Intra-state when the buyer's GSTIN opens with our own state code. Drives
+    ;; the CGST+SGST vs IGST split, exactly as the .hbs template does.
+    SpiceIsIntra   : $$StringPart:$PartyGSTIN:0:2 = ##SpiceCoStateCode
+
+    ;; Header lines, pre-assembled so a blank component never leaves a stray
+    ;; comma or dash behind.
+    SpiceAddrLine  : if $$IsEmpty:##SpiceCoAddr2 then ##SpiceCoAddr1 else ##SpiceCoAddr1 + ", " + ##SpiceCoAddr2
+    SpicePlaceLine : (if $$IsEmpty:##SpiceCoPin then ##SpiceCoPlace else ##SpiceCoPlace + " - " + ##SpiceCoPin) + ", " + ##SpiceCoStateName + ", CODE: " + ##SpiceCoStateCode
+    SpicePhoneLine : "Ph: " + ##SpiceCoPhone + (if $$IsEmpty:##SpiceCoEmail then "" else "  E-mail: " + ##SpiceCoEmail)
+
+    ;; The two statutory-ID rows. Pipe-separated, blanks collapse away.
+    SpiceIdRow1    : $$Table:SpiceJoinPipe:("FSSAI: " + ##SpiceCoFSSAI):("GSTIN: " + ##SpiceCoGSTIN):$$IsEmpty:##SpiceCoFSSAI:$$IsEmpty:##SpiceCoGSTIN
+    SpiceIdRow2    : $$Table:SpiceJoinPipe:("SBL: " + ##SpiceCoSBL):("PAN: " + ##SpiceCoPAN):$$IsEmpty:##SpiceCoSBL:$$IsEmpty:##SpiceCoPAN
+
+    ;; Title strip. A voucher flagged proforma in the app arrives in Tally as an
+    ;; ordinary sales voucher, so this always reads TAX INVOICE — see README.
+    SpiceDocTitle  : "TAX INVOICE"
+
+;; Two-value pipe join that tolerates either side being empty.
+[Function: SpiceJoinPipe]
+
+    Parameter : pLeft    : String
+    Parameter : pRight   : String
+    Parameter : pLBlank  : Logical
+    Parameter : pRBlank  : Logical
+    Returns   : String
+
+    01 : If   : ##pLBlank AND ##pRBlank
+    02 :   Return : ""
+    03 : EndIf
+    04 : If   : ##pLBlank
+    05 :   Return : ##pRight
+    06 : EndIf
+    07 : If   : ##pRBlank
+    08 :   Return : ##pLeft
+    09 : EndIf
+    10 : Return : ##pLeft + "  |  " + ##pRight
+
+
+;;=============================================================================
+;; 4. STYLES
+;;=============================================================================
+;; Point sizes track the .hbs stylesheet: 13pt company name, 10.5pt title,
+;; 8pt body, 7.5pt fine print, 12pt grand total.
+
+[Style: SpiceCoName]     : Font : "Arial" : Height : 13 : Bold : Yes
+[Style: SpiceHeadLine]   : Font : "Arial" : Height :  8
+[Style: SpiceHeadBold]   : Font : "Arial" : Height :  8 : Bold : Yes
+[Style: SpiceTitle]      : Font : "Arial" : Height : 11 : Bold : Yes
+[Style: SpiceBody]       : Font : "Arial" : Height :  8
+[Style: SpiceBodyBold]   : Font : "Arial" : Height :  8 : Bold : Yes
+[Style: SpiceFine]       : Font : "Arial" : Height :  7 : Bold : Yes
+[Style: SpiceColHead]    : Font : "Arial" : Height :  7 : Bold : Yes
+[Style: SpiceGrand]      : Font : "Arial" : Height : 12 : Bold : Yes
+
+
+;;=============================================================================
+;; 5. REPORT + FORM
+;;=============================================================================
+
+[Report: SpiceLHSalesInvoice]
+
+    Form        : SpiceLHSalesInvoice
+    Title       : "Auction Sales Invoice"
+    ;; Printed in the context of the voucher the user has open.
+    Object      : Voucher
+    Set         : SVPrintFormat : "Neat"
+
+[Form: SpiceLHSalesInvoice]
+
+    Parts       : SpiceLHHead, SpiceLHTitle, SpiceLHParties, SpiceLHCommodity
+    Parts       : SpiceLHItems, SpiceLHTotals, SpiceLHFoot
+    Width       : 100% Page
+    Height      : 100% Page
+    Space Top   : 0.25 inches
+    Space Bottom: 0.25 inches
+    Space Left  : 0.25 inches
+    Space Right : 0.25 inches
+    Border      : Thin Box
+
+
+;;=============================================================================
+;; 6. LETTERHEAD BLOCK
+;;=============================================================================
+
+[Part: SpiceLHHead]
+
+    Lines  : SpiceLHLogoCoLine, SpiceLHIdLine, SpiceLHAddrLine, SpiceLHPlaceLine
+    Lines  : SpiceLHPhoneLine, SpiceLHIdRow1, SpiceLHIdRow2
+    Border : Thin Bottom
+
+;; Logo sits at the left, company name centred across the rest. When no logo is
+;; configured the logo field collapses and the name centres on the full width.
+[Line: SpiceLHLogoCoLine]
+
+    Fields    : SpiceFldLogo, SpiceFldCoName
+    Space Top : 0.05 inches
+
+[Field: SpiceFldLogo]
+
+    Type    : Logo
+    Set as  : ##SpiceLogoFile
+    Width   : if $$IsEmpty:##SpiceLogoFile then 0 else 0.85 inches
+    Height  : if $$IsEmpty:##SpiceLogoFile then 0 else 0.85 inches
+    Invisible: $$IsEmpty:##SpiceLogoFile
+
+[Field: SpiceFldCoName]
+
+    Set as  : ##SpiceCoName
+    Style   : SpiceCoName
+    Align   : Centre
+    Full Width : Yes
+
+;; The remaining header lines are all full-width centred single fields. Each
+;; hides itself when its source value is blank, so the header shrinks cleanly
+;; on a company that has, say, no FSSAI.
+[Line: SpiceLHIdLine]    : Field : SpiceFldIdLine
+[Line: SpiceLHAddrLine]  : Field : SpiceFldAddrLine
+[Line: SpiceLHPlaceLine] : Field : SpiceFldPlaceLine
+[Line: SpiceLHPhoneLine] : Field : SpiceFldPhoneLine
+[Line: SpiceLHIdRow1]    : Field : SpiceFldIdRow1
+[Line: SpiceLHIdRow2]    : Field : SpiceFldIdRow2
+
+[Field: SpiceFldIdLine]
+    Set as    : ##SpiceCoIdLabel + ": " + ##SpiceCoIdValue
+    Style     : SpiceHeadBold
+    Align     : Centre
+    Full Width: Yes
+    Invisible : $$IsEmpty:##SpiceCoIdValue
+
+[Field: SpiceFldAddrLine]
+    Set as    : ##SpiceAddrLine
+    Style     : SpiceHeadLine
+    Align     : Centre
+    Full Width: Yes
+    Invisible : $$IsEmpty:##SpiceCoAddr1
+
+[Field: SpiceFldPlaceLine]
+    Set as    : ##SpicePlaceLine
+    Style     : SpiceHeadLine
+    Align     : Centre
+    Full Width: Yes
+    Invisible : $$IsEmpty:##SpiceCoPlace
+
+[Field: SpiceFldPhoneLine]
+    Set as    : ##SpicePhoneLine
+    Style     : SpiceHeadLine
+    Align     : Centre
+    Full Width: Yes
+    Invisible : $$IsEmpty:##SpiceCoPhone
+
+[Field: SpiceFldIdRow1]
+    Set as    : ##SpiceIdRow1
+    Style     : SpiceHeadBold
+    Align     : Centre
+    Full Width: Yes
+    Invisible : $$IsEmpty:##SpiceIdRow1
+
+[Field: SpiceFldIdRow2]
+    Set as    : ##SpiceIdRow2
+    Style     : SpiceHeadBold
+    Align     : Centre
+    Full Width: Yes
+    Invisible : $$IsEmpty:##SpiceIdRow2
+
+
+;;=============================================================================
+;; 7. TITLE STRIP
+;;=============================================================================
+;; Row 1: "AUCTION SALES INVOICE" centred, Sl.NO right.
+;; Row 2: Auction No | TAX INVOICE | Date.
+
+[Part: SpiceLHTitle]
+
+    Lines  : SpiceLHTitleRow, SpiceLHSubRow
+    Border : Thin Bottom
+
+[Line: SpiceLHTitleRow]
+
+    Fields       : SpiceFldDocHead
+    Right Fields : SpiceFldSlNo
+    Border       : Thin Bottom
+
+[Field: SpiceFldDocHead]
+    Set as    : "AUCTION SALES INVOICE"
+    Style     : SpiceTitle
+    Align     : Centre
+    Full Width: Yes
+
+[Field: SpiceFldSlNo]
+    Set as : "Sl.NO: " + $VoucherNumber
+    Style  : SpiceBodyBold
+    Align  : Right
+    Width  : 22% Page
+
+[Line: SpiceLHSubRow]
+
+    Fields : SpiceFldAuctionNo, SpiceFldTaxInv, SpiceFldDate
+
+[Field: SpiceFldAuctionNo]
+    ;; Auction number arrives from the app as a voucher UDF.
+    Set as : "Auction No: " + $SpiceAuctionNo
+    Style  : SpiceBodyBold
+    Align  : Left
+    Width  : 35% Page
+
+[Field: SpiceFldTaxInv]
+    Set as : ##SpiceDocTitle
+    Style  : SpiceBodyBold
+    Align  : Centre
+    Width  : 30% Page
+
+[Field: SpiceFldDate]
+    Set as : "Date: " + $$String:$Date:UniversalDate
+    Format : "Short Date"
+    Style  : SpiceBodyBold
+    Align  : Right
+    Width  : 35% Page
+
+
+;;=============================================================================
+;; 8. PARTIES — Billed To (left) / Shipped To (right)
+;;=============================================================================
+;; The app mirrors Billed-To into Shipped-To when a row has no separate
+;; consignee. Tally already does the same via ConsigneeMailingName defaulting
+;; to the party, so both columns always render a full block.
+
+[Part: SpiceLHParties]
+
+    Lines  : SpiceLHPartyHead, SpiceLHPartyBody
+    Border : Thin Bottom
+
+[Line: SpiceLHPartyHead]
+
+    Fields : SpiceFldBillHead, SpiceFldShipHead
+    Border : Thin Bottom
+
+[Field: SpiceFldBillHead]
+    Set as : "Details of the Receiver (Billed To)"
+    Style  : SpiceBodyBold
+    Align  : Centre
+    Width  : 50% Page
+
+[Field: SpiceFldShipHead]
+    Set as : "Details of the Consignee (Shipped To)"
+    Style  : SpiceBodyBold
+    Align  : Centre
+    Width  : 50% Page
+
+[Line: SpiceLHPartyBody]
+
+    Fields : SpiceFldBillBlock, SpiceFldShipBlock
+
+;; Each side is one multi-line field. A single field (rather than a grid of
+;; label/value cells) is what keeps the two columns the same height when one
+;; party has a longer address than the other.
+[Field: SpiceFldBillBlock]
+    Set as : "M/s. " + $PartyLedgerName + $$NewLine + $$FullList:Address:$Address + $$NewLine +
+           : "STATE: " + $StateName + "   CODE: " + $$StringPart:$PartyGSTIN:0:2 + $$NewLine +
+           : "GST: " + $PartyGSTIN + $$NewLine +
+           : "PAN: " + $$StringPart:$PartyGSTIN:2:10 + "   SBL: " + $SpiceBuyerSBL
+    Style  : SpiceBody
+    Align  : Left
+    Width  : 50% Page
+    Lines  : 6
+
+[Field: SpiceFldShipBlock]
+    Set as : "M/s. " + $ConsigneeMailingName + $$NewLine + $$FullList:BasicBuyerAddress:$BasicBuyerAddress + $$NewLine +
+           : "STATE: " + $StateName + "   CODE: " + $$StringPart:$ConsigneeGSTIN:0:2 + $$NewLine +
+           : "GST: " + $ConsigneeGSTIN + $$NewLine +
+           : "PAN: " + $$StringPart:$ConsigneeGSTIN:2:10 + "   SBL: " + $SpiceBuyerSBL
+    Style  : SpiceBody
+    Align  : Left
+    Width  : 50% Page
+    Lines  : 6
+
+
+;;=============================================================================
+;; 9. COMMODITY BAND
+;;=============================================================================
+
+[Part: SpiceLHCommodity]
+
+    Line   : SpiceLHCommodityLine
+    Border : Thin Bottom
+
+[Line: SpiceLHCommodityLine]
+
+    Field : SpiceFldCommodity
+
+[Field: SpiceFldCommodity]
+    Set as    : "Commodity: Cardamom  |  HSN: " + ##SpiceHSNCard
+    Style     : SpiceBodyBold
+    Align     : Centre
+    Full Width: Yes
+
+
+;;=============================================================================
+;; 10. LINE ITEMS
+;;=============================================================================
+;; Two repeats, in the order the .hbs template lists them:
+;;   a) goods  — over InventoryEntries (Cardamom lots, then Gunny)
+;;   b) charges— over LedgerEntries, for Transport / Insurance and any other
+;;               non-tax, non-party, non-round-off charge ledger
+;;
+;; The 11 columns below sum to 100% Page and mirror the template's column
+;; order: Lot / Item / Qty / Bags / Rate / Value / Taxable / CGST / SGST /
+;; IGST / Total.
+
+[Part: SpiceLHItems]
+
+    Lines  : SpiceLHItemHead
+    Repeat : SpiceLHItemRow   : InventoryEntries
+    Repeat : SpiceLHChargeRow : LedgerEntries
+    Total  : SpiceFldITaxable, SpiceFldICGST, SpiceFldISGST, SpiceFldIIGST, SpiceFldITotal
+    Border : Thin Bottom
+
+[Line: SpiceLHItemHead]
+
+    Fields : SpiceFldHLot, SpiceFldHItem, SpiceFldHQty, SpiceFldHBags, SpiceFldHRate
+    Fields : SpiceFldHValue, SpiceFldHTaxable, SpiceFldHCGST, SpiceFldHSGST
+    Fields : SpiceFldHIGST, SpiceFldHTotal
+    Border : Thin Bottom
+
+[Field: SpiceFldHLot]     : Set as : "Lot No"        : Style : SpiceColHead : Align : Centre : Width :  6% Page
+[Field: SpiceFldHItem]    : Set as : "Item"          : Style : SpiceColHead : Align : Centre : Width : 12% Page
+[Field: SpiceFldHQty]     : Set as : "Qty (kg.gr)"   : Style : SpiceColHead : Align : Centre : Width : 10% Page
+[Field: SpiceFldHBags]    : Set as : "Bags"          : Style : SpiceColHead : Align : Centre : Width :  5% Page
+[Field: SpiceFldHRate]    : Set as : "Rate"          : Style : SpiceColHead : Align : Centre : Width :  9% Page
+[Field: SpiceFldHValue]   : Set as : "Value"         : Style : SpiceColHead : Align : Centre : Width : 10% Page
+[Field: SpiceFldHTaxable] : Set as : "Taxable Value" : Style : SpiceColHead : Align : Centre : Width : 10% Page
+[Field: SpiceFldHCGST]    : Set as : "CGST " + $$String:##SpiceGSTHalf + "%" : Style : SpiceColHead : Align : Centre : Width :  9% Page
+[Field: SpiceFldHSGST]    : Set as : "SGST " + $$String:##SpiceGSTHalf + "%" : Style : SpiceColHead : Align : Centre : Width :  9% Page
+[Field: SpiceFldHIGST]    : Set as : "IGST " + $$String:##SpiceGSTRate + "%" : Style : SpiceColHead : Align : Centre : Width :  9% Page
+[Field: SpiceFldHTotal]   : Set as : "Total"         : Style : SpiceColHead : Align : Centre : Width : 11% Page
+
+;;-----------------------------------------------------------------------------
+;; (a) Goods rows — one per inventory entry
+;;-----------------------------------------------------------------------------
+
+[Line: SpiceLHItemRow]
+
+    Fields : SpiceFldILot, SpiceFldIItem, SpiceFldIQty, SpiceFldIBags, SpiceFldIRate
+    Fields : SpiceFldIValue, SpiceFldITaxable, SpiceFldICGST, SpiceFldISGST
+    Fields : SpiceFldIIGST, SpiceFldITotal
+
+[Field: SpiceFldILot]
+    ;; Lot number rides in as a per-line UDF from the app. Gunny has none, so
+    ;; the cell prints blank exactly as the template does.
+    Set as : $SpiceLotNo
+    Style  : SpiceBodyBold
+    Align  : Centre
+    Width  : 6% Page
+
+[Field: SpiceFldIItem]
+    Set as : $StockItemName
+    Style  : SpiceBody
+    Align  : Left
+    Width  : 12% Page
+
+[Field: SpiceFldIQty]
+    Set as : $BilledQty
+    Style  : SpiceBody
+    Align  : Right
+    Width  : 10% Page
+
+[Field: SpiceFldIBags]
+    Set as : if $SpiceBags = 0 then "" else $$String:$SpiceBags
+    Style  : SpiceBody
+    Align  : Centre
+    Width  : 5% Page
+
+[Field: SpiceFldIRate]
+    Set as : $Rate
+    Style  : SpiceBody
+    Align  : Right
+    Width  : 9% Page
+
+[Field: SpiceFldIValue]
+    Set as : $$Abs:$Amount
+    Style  : SpiceBody
+    Align  : Right
+    Width  : 10% Page
+
+;; Taxable value equals the line value — the app bills tax-exclusive.
+[Field: SpiceFldITaxable]
+    Set as : $$Abs:$Amount
+    Style  : SpiceBody
+    Align  : Right
+    Width  : 10% Page
+
+;; Per-line tax, split by supply type. Computed from the line value rather than
+;; read from the voucher's tax ledgers, which only carry invoice-level totals.
+[Field: SpiceFldICGST]
+    Set as : if ##SpiceIsIntra then ($$Abs:$Amount * ##SpiceGSTHalf / 100) else 0
+    Style  : SpiceBody
+    Align  : Right
+    Width  : 9% Page
+
+[Field: SpiceFldISGST]
+    Set as : if ##SpiceIsIntra then ($$Abs:$Amount * ##SpiceGSTHalf / 100) else 0
+    Style  : SpiceBody
+    Align  : Right
+    Width  : 9% Page
+
+[Field: SpiceFldIIGST]
+    Set as : if ##SpiceIsIntra then 0 else ($$Abs:$Amount * ##SpiceGSTRate / 100)
+    Style  : SpiceBody
+    Align  : Right
+    Width  : 9% Page
+
+[Field: SpiceFldITotal]
+    Set as : $$Abs:$Amount + (if ##SpiceIsIntra then ($$Abs:$Amount * ##SpiceGSTRate / 100) else ($$Abs:$Amount * ##SpiceGSTRate / 100))
+    Style  : SpiceBody
+    Align  : Right
+    Width  : 11% Page
+
+;;-----------------------------------------------------------------------------
+;; (b) Charge rows — Transport / Insurance and similar service ledgers
+;;-----------------------------------------------------------------------------
+;; These are LEDGER entries in Tally, not inventory, so they need their own
+;; repeat. Everything that is a tax ledger, the party ledger, or round-off is
+;; filtered out — those belong in the totals block below, not as line items.
+
+[Line: SpiceLHChargeRow]
+
+    Fields : SpiceFldILot, SpiceFldCItem, SpiceFldCBlankQty, SpiceFldCBlankBags, SpiceFldCBlankRate
+    Fields : SpiceFldCValue, SpiceFldCTaxable, SpiceFldCCGST, SpiceFldCSGST
+    Fields : SpiceFldCIGST, SpiceFldCTotal
+    Invisible : NOT @@SpiceIsChargeLedger
+
+[System: Formula]
+
+    ;; A ledger entry is a printable CHARGE when it is not the party, not a GST
+    ;; ledger, and not the round-off ledger. Matching on the ledger's PARENT
+    ;; group rather than its name keeps this working when the ledger names are
+    ;; renamed in Settings → To Tally.
+    SpiceIsChargeLedger : NOT $$IsLedOfGrp:$LedgerName:$$GroupSundryDebtors AND +
+                          NOT $$IsLedOfGrp:$LedgerName:$$GroupSundryCreditors AND +
+                          NOT $$IsLedOfGrp:$LedgerName:"Duties & Taxes" AND +
+                          NOT $$IsLedOfGrp:$LedgerName:"Sales Accounts" AND +
+                          $$Abs:$Amount > 0
+
+[Field: SpiceFldCItem]
+    Set as : $LedgerName
+    Style  : SpiceBody
+    Align  : Left
+    Width  : 12% Page
+
+[Field: SpiceFldCBlankQty]  : Set as : "" : Width : 10% Page
+[Field: SpiceFldCBlankBags] : Set as : "" : Width :  5% Page
+[Field: SpiceFldCBlankRate] : Set as : "" : Width :  9% Page
+
+[Field: SpiceFldCValue]   : Use : SpiceFldIValue
+[Field: SpiceFldCTaxable] : Use : SpiceFldITaxable
+[Field: SpiceFldCCGST]    : Use : SpiceFldICGST
+[Field: SpiceFldCSGST]    : Use : SpiceFldISGST
+[Field: SpiceFldCIGST]    : Use : SpiceFldIIGST
+[Field: SpiceFldCTotal]   : Use : SpiceFldITotal
+
+
+;;=============================================================================
+;; 11. TOTALS
+;;=============================================================================
+;; Taxable / CGST / SGST / IGST come from the Part's Total: declaration above.
+;; Round-off and grand total are derived from them, so the printed figure can
+;; never disagree with the columns it sits under.
+
+[System: Formula]
+
+    SpiceSubTotal : $$Total:SpiceFldITaxable + $$Total:SpiceFldICGST + $$Total:SpiceFldISGST + $$Total:SpiceFldIIGST
+    SpiceGrand    : $$Round:##SpiceSubTotal:0
+    SpiceRoundOff : ##SpiceGrand - ##SpiceSubTotal
+
+[Part: SpiceLHTotals]
+
+    Lines  : SpiceLHTotalRow, SpiceLHRoundRow, SpiceLHGrandRow, SpiceLHWordsRow
+    Border : Thin Bottom
+
+[Line: SpiceLHTotalRow]
+
+    Fields : SpiceFldTotLabel, SpiceFldTotTaxable, SpiceFldTotCGST, SpiceFldTotSGST
+    Fields : SpiceFldTotIGST, SpiceFldTotAll
+    Border : Thin Top
+
+[Field: SpiceFldTotLabel]
+    Set as : "Total Taxable Value & Tax"
+    Style  : SpiceBodyBold
+    Align  : Right
+    Width  : 52% Page
+
+[Field: SpiceFldTotTaxable] : Set as : $$Total:SpiceFldITaxable : Style : SpiceBodyBold : Align : Right : Width : 10% Page
+[Field: SpiceFldTotCGST]    : Set as : $$Total:SpiceFldICGST    : Style : SpiceBodyBold : Align : Right : Width :  9% Page
+[Field: SpiceFldTotSGST]    : Set as : $$Total:SpiceFldISGST    : Style : SpiceBodyBold : Align : Right : Width :  9% Page
+[Field: SpiceFldTotIGST]    : Set as : $$Total:SpiceFldIIGST    : Style : SpiceBodyBold : Align : Right : Width :  9% Page
+[Field: SpiceFldTotAll]     : Set as : ##SpiceSubTotal          : Style : SpiceBodyBold : Align : Right : Width : 11% Page
+
+[Line: SpiceLHRoundRow]
+
+    Fields : SpiceFldRoundLabel, SpiceFldRoundVal
+
+[Field: SpiceFldRoundLabel]
+    Set as : "Round Off"
+    Style  : SpiceBody
+    Align  : Right
+    Width  : 89% Page
+
+[Field: SpiceFldRoundVal]
+    Set as : ##SpiceRoundOff
+    Style  : SpiceBody
+    Align  : Right
+    Width  : 11% Page
+
+[Line: SpiceLHGrandRow]
+
+    Fields : SpiceFldGrandLabel, SpiceFldGrandVal
+    Border : Thin Top
+
+[Field: SpiceFldGrandLabel]
+    Set as : "Grand Total"
+    Style  : SpiceGrand
+    Align  : Right
+    Width  : 70% Page
+
+[Field: SpiceFldGrandVal]
+    Set as : ##SpiceGrand
+    Style  : SpiceGrand
+    Align  : Right
+    Width  : 30% Page
+
+[Line: SpiceLHWordsRow]
+
+    Field  : SpiceFldWords
+    Border : Thin Top
+
+[Field: SpiceFldWords]
+    Set as    : "Amount in Words: INR " + $$InWords:##SpiceGrand + " Only"
+    Style     : SpiceBodyBold
+    Align     : Left
+    Full Width: Yes
+
+
+;;=============================================================================
+;; 12. FOOTER
+;;=============================================================================
+
+[Part: SpiceLHFoot]
+
+    Lines : SpiceLHERN, SpiceLHEOE, SpiceLHBankRow, SpiceLHSignRow
+
+[Line: SpiceLHERN]  : Field : SpiceFldERN
+[Line: SpiceLHEOE]  : Field : SpiceFldEOE
+
+[Field: SpiceFldERN]
+    Set as    : "Electronic Reference Number: " + $IRN
+    Style     : SpiceFine
+    Align     : Left
+    Full Width: Yes
+
+[Field: SpiceFldEOE]
+    Set as    : "E & O.E certified that the particulars given above are true and correct"
+    Style     : SpiceFine
+    Align     : Left
+    Full Width: Yes
+
+;; Bank block centred, "For <company>" pinned right on the same band.
+[Line: SpiceLHBankRow]
+
+    Fields       : SpiceFldBank
+    Right Fields : SpiceFldForCo
+    Space Top    : 0.05 inches
+
+[Field: SpiceFldBank]
+    Set as    : "Bank Details" + $$NewLine + ##SpiceBankName + $$NewLine +
+              : "A/C# " + ##SpiceBankAcct + $$NewLine + "IFSC: " + ##SpiceBankIFSC
+    Style     : SpiceBody
+    Align     : Centre
+    Full Width: Yes
+    Lines     : 4
+    Invisible : $$IsEmpty:##SpiceBankName
+
+[Field: SpiceFldForCo]
+    Set as : "For " + ##SpiceCoName
+    Style  : SpiceBodyBold
+    Align  : Right
+    Width  : 35% Page
+
+[Line: SpiceLHSignRow]
+
+    Fields       : SpiceFldSignBuyer
+    Right Fields : SpiceFldSignAuth
+    Space Top    : 0.45 inches
+
+[Field: SpiceFldSignBuyer]
+    Set as : "Signature of the authorized buyer"
+    Style  : SpiceBodyBold
+    Align  : Left
+    Width  : 50% Page
+
+[Field: SpiceFldSignAuth]
+    Set as : "Authorised Signatory"
+    Style  : SpiceBodyBold
+    Align  : Right
+    Width  : 35% Page
+
+
+;;=============================================================================
+;; 13. ATTACH POINT — how the user reaches this layout
+;;=============================================================================
+;; Adds Alt+L to an open voucher: from a sales invoice in display or alter
+;; mode, Alt+L prints the letterhead layout.
+;;
+;; `Form: Voucher` is the long-stable object name for the voucher entry/display
+;; form and is the safest hook across TallyPrime releases. See README for the
+;; alternative — replacing Tally's default sales print format outright — which
+;; depends on internal report names that shift between releases.
+
+[#Form: Voucher]
+
+    Add : Button : SpiceLHPrintButton
+
+[Button: SpiceLHPrintButton]
+
+    Key    : Alt + L
+    Action : Print Report : SpiceLHSalesInvoice
+    Title  : "Letterhead Print"
+    ;; Sales vouchers only — the layout assumes a sales invoice.
+    Inactive : NOT ($$VchTypeIsSales:$VoucherTypeName)
+
+;;=============================================================================
+;; end of file
+;;=============================================================================

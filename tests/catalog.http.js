@@ -79,6 +79,18 @@ const listMissing = DOCUMENTS.filter(d => d.listRoute && !REGISTERED.has(d.listR
 check('every listRoute is registered in server.js', listMissing.length === 0,
       listMissing.map(d => `${d.id} → ${d.listRoute}`).join('\n         '));
 
+// A family whose document swaps wholesale on a flag names its off-side route
+// here. Same guarantee as bulkRoute: the route must exist and the flag must be
+// a real setting, or the desk would post to a 404 for half the sites.
+const altBulkMissing = DOCUMENTS.filter(d => d.bulkRouteWhenOff
+  && !REGISTERED.has(d.bulkRouteWhenOff.route));
+check('every bulkRouteWhenOff route is registered in server.js', altBulkMissing.length === 0,
+      altBulkMissing.map(d => `${d.id} → ${d.bulkRouteWhenOff.route}`).join('\n         '));
+
+const altBulkOrphan = DOCUMENTS.filter(d => d.bulkRouteWhenOff && !d.bulkRoute);
+check('bulkRouteWhenOff never appears without a bulkRoute to fall back to',
+      altBulkOrphan.length === 0, altBulkOrphan.map(d => d.id).join(', '));
+
 const halfBulk = DOCUMENTS.filter(d => !!d.bulkRoute !== !!d.listRoute);
 check('bulkRoute and listRoute are declared together or not at all',
       halfBulk.length === 0,
@@ -93,6 +105,11 @@ const SETTING_KEYS = new Set(DEFAULTS.map(d => d.key));
 const badFlags = DOCUMENTS.filter(d => d.flag && !SETTING_KEYS.has(d.flag));
 check('every flag is a real company setting', badFlags.length === 0,
       badFlags.map(d => `${d.id} → ${d.flag}`).join('\n         '));
+
+const badAltFlags = DOCUMENTS.filter(d => d.bulkRouteWhenOff
+  && !SETTING_KEYS.has(d.bulkRouteWhenOff.flag));
+check('every bulkRouteWhenOff flag is a real company setting', badAltFlags.length === 0,
+      badAltFlags.map(d => `${d.id} → ${d.bulkRouteWhenOff.flag}`).join('\n         '));
 
 const ids = DOCUMENTS.map(d => d.id);
 const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
@@ -276,6 +293,23 @@ function cleanup() {
   check('planter debit notes list by ano, not auction_id',
         dnp && dnp.listUrl === '/api/debit-notes-planter?ano=9',
         dnp && dnp.listUrl);
+  // Bills of Supply are two different documents on one tile. The desk must
+  // hand out whichever one flag_bos_purchase_bill has the site issuing —
+  // printing the Purchase Bill on a commission site would be a wrong document,
+  // not merely a wrong layout.
+  check('with flag_bos_purchase_bill ON the bills tile bulk-prints the Purchase Bill',
+        items.bills && items.bills.bulkRoute === '/api/bills/pdf-bulk',
+        items.bills && items.bills.bulkRoute);
+  await setFlag('flag_bos_purchase_bill', 'false');
+  const bosOff = flatten((await api('GET', `/api/documents/catalog?auctionId=${aid}`)).d).bills;
+  check('with it OFF the same tile bulk-prints the Commission Bill instead',
+        bosOff && bosOff.bulkRoute === '/api/bills/commission-bos-bulk',
+        bosOff && bosOff.bulkRoute);
+  check('and the list URL it draws ids from is unchanged either way',
+        bosOff && bosOff.listUrl === `/api/bills?auction_id=${aid}`,
+        bosOff && bosOff.listUrl);
+  await setFlag('flag_bos_purchase_bill', 'true');
+
   check('payments offers no bulk button — its bulk needs the seller picker',
         items.payments && !items.payments.bulkRoute && items.payments.deepLink === 'payments',
         JSON.stringify(items.payments));
@@ -379,7 +413,7 @@ function cleanup() {
         Object.values(items).filter(i => (i.formats || []).includes('json')).map(i => i.id).join(', '));
   check('operator-facing labels drop the ISP / Discount jargon',
         items.tally_sales_isp.label === 'Sales Vouchers'
-          && items.tally_debit_note.label === 'Debit Notes',
+          && items.tally_debit_note.label === 'Debit Notes (Service)',
         `${items.tally_sales_isp.label} | ${items.tally_debit_note.label}`);
 
   // ── Subgroups ────────────────────────────────────────────────────
@@ -391,6 +425,16 @@ function cleanup() {
     const subs = [...new Set(tally.map(i => i.sub))];
     check('Tally splits into ledger masters and vouchers',
           subs.includes('Ledger masters') && subs.includes('Vouchers'), subs.join(', '));
+  }
+  // Tile order is a contract, not an accident: the desk renders items in the
+  // order the catalog hands them over, so the alphabet has to be settled here.
+  {
+    const unsorted = d.groups.filter(g => {
+      const labels = g.items.map(i => i.label);
+      return String(labels) !== String(labels.slice().sort((a, b) => a.localeCompare(b)));
+    });
+    check('every group hands its documents over A-Z by name', unsorted.length === 0,
+          unsorted.map(g => `${g.id}: ${g.items.map(i => i.label).join(' | ')}`).join('\n         '));
   }
 
   // ── Per-document filters ─────────────────────────────────────────

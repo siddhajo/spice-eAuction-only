@@ -3894,7 +3894,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         </button>
         <button class="side-item feat-debit-note" data-tab="debit" data-min-stage="3" onclick="go('debit')">
           <svg viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 15h2M12 15h2"/></svg>
-          Debit Notes
+          Debit Notes (Service)
         </button>
         <button class="side-item feat-debit-note-planter" data-tab="debitplanter" data-min-stage="3" onclick="go('debitplanter')">
           <svg viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 15h2M12 15h2"/><path d="M12 2v3"/></svg>
@@ -6860,7 +6860,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                 <option value="sales_isp">💰 Sales</option>
                 <option value="rd_purchase">📥 RD Purchase</option>
                 <option value="urd_purchase">🌾 URD Purchase</option>
-                <option value="debit_note">📝 Debit Note</option>
+                <option value="debit_note">📝 Debit Note (Service)</option>
                 <option value="debit_note_planter">🌱 Debit Note - Planter</option>
               </select>
             </div>
@@ -6984,7 +6984,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
               <span style="width:32px;height:32px;border-radius:8px;background:#FCEBEB;display:inline-flex;align-items:center;justify-content:center;font-size:18px">📝</span>
               <div>
-                <div style="font-weight:700;color:var(--text);font-size:14px">Debit Notes</div>
+                <div style="font-weight:700;color:var(--text);font-size:14px">Debit Notes (Service)</div>
                 <div style="font-size:11px;color:var(--text3)">Discount received from suppliers — 18% GST credit</div>
               </div>
             </div>
@@ -7732,6 +7732,16 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       <span style="margin-left:6px;font-weight:400;font-size:11px;color:var(--text3)">optional — same number = same invoice · blank = leave unchanged · 0 = no split</span>
     </label>
     <input id="bsb-split" type="number" min="0" step="1" placeholder="#" style="width:110px">
+  </div>
+  <!-- Dummy code — Price Entry only, same blank-means-unchanged rule as the
+       split above. Purely an operator tag for grouping / finding lots while
+       pricing; it never reaches an invoice, voucher or statutory export, so
+       it is applied by its own endpoint that cannot touch price or qty. -->
+  <div id="bsb-dummy-row" class="fg" style="display:none;margin-top:12px">
+    <label>Dummy Code
+      <span style="margin-left:6px;font-weight:400;font-size:11px;color:var(--text3)">optional — blank = leave unchanged · tag only, never printed</span>
+    </label>
+    <input id="bsb-dummy" maxlength="40" autocomplete="off" placeholder="e.g. AX7" style="width:180px">
   </div>
   <div class="actions">
     <button class="btn btn-o" onclick="hideModal('bulk-setbuyer-modal')">Cancel</button>
@@ -27235,8 +27245,9 @@ async function openBulkSetBuyerModal(){
   _bsbSelected = null;
   const codeEl = document.getElementById('bsb-code');
   if (codeEl) codeEl.value = '';
-  // Split field is a Price-Entry concept — hide it on the Lots tab.
+  // Split and dummy code are Price-Entry concepts — hide them on the Lots tab.
   const splitRow = document.getElementById('bsb-split-row'); if (splitRow) splitRow.style.display = 'none';
+  const dummyRow = document.getElementById('bsb-dummy-row'); if (dummyRow) dummyRow.style.display = 'none';
   _bsbRenderPreview();
   // Refresh the buyer master so newly-added codes show up.
   try {
@@ -27421,8 +27432,24 @@ async function applyBulkSetBuyer(){
         }
       }
     }
+    // Price Entry only: same shape as the split above. The dummy code is a
+    // free-text operator tag, so unlike the split it goes to WD/NA lots too —
+    // there is nothing about it that an uninvoiceable lot can't carry. Blank
+    // leaves every selected lot's existing tag alone.
+    let dummyMsg = '';
+    if (_bsbContext === 'pe') {
+      const dummyEl = document.getElementById('bsb-dummy');
+      const rawDummy = dummyEl ? String(dummyEl.value).trim().slice(0, 40) : '';
+      if (rawDummy !== '') {
+        try {
+          const dr = await j('/api/lots/dummy-code/bulk', {
+            method: 'POST', body: JSON.stringify({ ids: _bsbLotIds, value: rawDummy }) });
+          dummyMsg = ` · dummy ${(dr && dr.value != null) ? dr.value : rawDummy}`;
+        } catch (e) { /* non-fatal — buyer already applied */ }
+      }
+    }
     if (typeof toast === 'function') {
-      toast('Updated ' + (d.updated || 0) + ' lot(s) with code ' + _bsbSelected.code + splitMsg);
+      toast('Updated ' + (d.updated || 0) + ' lot(s) with code ' + _bsbSelected.code + splitMsg + dummyMsg);
     }
     hideModal('bulk-setbuyer-modal');
     if (_bsbContext === 'pe') {
@@ -28111,9 +28138,13 @@ async function openPeSetBuyerModal(){
   _bsbSelected = null;
   const countEl = document.getElementById('bsb-count'); if (countEl) countEl.textContent = ids.length;
   const codeEl = document.getElementById('bsb-code'); if (codeEl) codeEl.value = '';
-  // Show the split field (Price Entry only) and clear any prior value.
+  // Show the split + dummy-code fields (Price Entry only) and clear any prior
+  // values — both are blank-means-unchanged, so a stale value would silently
+  // rewrite the next batch of lots.
   const splitRow = document.getElementById('bsb-split-row'); if (splitRow) splitRow.style.display = 'block';
   const splitEl = document.getElementById('bsb-split'); if (splitEl) splitEl.value = '';
+  const dummyRow = document.getElementById('bsb-dummy-row'); if (dummyRow) dummyRow.style.display = 'block';
+  const dummyEl = document.getElementById('bsb-dummy'); if (dummyEl) dummyEl.value = '';
   _bsbRenderPreview();
   // Refresh the buyer master so newly-added codes show up (same as the
   // Lots-tab opener).
@@ -29624,6 +29655,10 @@ async function loadPurchases(opts){
     d.some(p => String(p.lot_no || '').trim() !== '');
   DataTable.mount('purchases-list', d, {
     noSearch: true,
+    // Invoice number ascending is the default view. The API already returns
+    // rows in that order (so it holds across pages too); this makes the
+    // header show the arrow and keeps the on-screen page in step.
+    defaultSort: { col:'invo', dir:'asc' },
     emptyState: { icon: 'invoices', title: "No purchase invoices yet", body: "Once lots are calculated, generate purchase invoices for sellers using + Generate Purchase or the Generate for All Dealers button." },
     columns: [
       { key:'_select', label:'',
@@ -33126,6 +33161,7 @@ async function loadBills(opts){
 
   DataTable.mount('bills-list', d, {
     noSearch: true,
+    defaultSort: { col:'bil', dir:'asc' },      // bill no ascending — matches /api/bills
     emptyState: { icon: 'invoices', title: "No agri bills yet", body: "Generate agriculturist purchase bills for eligible sellers using the form above." }, 
     columns: [
       { key:'_select', label:'',
@@ -33356,6 +33392,7 @@ async function loadDebitNotes(opts){
 
   DataTable.mount('debit-list', d, {
     noSearch: true,
+    defaultSort: { col:'note_no', dir:'asc' },  // note no ascending — matches /api/debit-notes
     columns: [
       { key:'_select', label:'',
         labelHTML:'<input type="checkbox" id="dn-select-all" onclick="event.stopPropagation();toggleAllDn(this.checked)" title="Select / clear all visible" style="cursor:pointer;width:16px;height:16px;vertical-align:middle;accent-color:var(--green)">',
@@ -33925,6 +33962,7 @@ async function loadDebitNotesPlanter(opts){
 
   DataTable.mount('debitp-list', d, {
     noSearch: true,
+    defaultSort: { col:'note_no', dir:'asc' },  // note no ascending — matches /api/debit-notes-planter
     columns: [
       { key:'_select', label:'',
         labelHTML:'<input type="checkbox" id="dnp-select-all" onclick="event.stopPropagation();toggleAllDnp(this.checked)" title="Select / clear all visible" style="cursor:pointer;width:16px;height:16px;vertical-align:middle;accent-color:var(--green)">',
@@ -34317,7 +34355,7 @@ const TALLY_LABELS={
   sales:'Sales',
   rd_purchase:'RD Purchase',
   urd_purchase:'URD Purchase',
-  debit_note:'Debit Note',
+  debit_note:'Debit Note (Service)',
   debit_note_planter:'Debit Note - Planter',
   merchants:'Merchants'
 };
@@ -34835,7 +34873,7 @@ const TALLY_VOUCHER_KINDS={
   sales_isp:         {label:'Sales',              pdf:'/api/invoices/pdf-bulk',            docType:'sales-invoice',    irp:true,  file:'Invoices',          noun:'sales invoice',      nouns:'sales invoices',      group:'Sales Vouchers',        bg:'var(--green-bg)'},
   rd_purchase:       {label:'RD Purchase',        pdf:'/api/purchases/pdf-bulk',           docType:'purchase-invoice', irp:false, file:'Purchases',         noun:'purchase invoice',   nouns:'purchase invoices',   group:'RD Purchase Vouchers',  bg:'var(--spice-saffron-lt)'},
   urd_purchase:      {label:'URD Purchase',       pdf:'/api/bills/pdf-bulk',               docType:'agri-bill',        irp:false, file:'BillsOfSupply',     noun:'bill of supply',     nouns:'bills of supply',     group:'URD Purchase Vouchers', bg:'var(--spice-cardamom-lt)'},
-  debit_note:        {label:'Debit Note',         pdf:'/api/debit-notes/pdf-bulk',         docType:'debit-note',       irp:true,  file:'DebitNotes',        noun:'debit note',         nouns:'debit notes',         group:'Debit Notes',           bg:'#FCEBEB'},
+  debit_note:        {label:'Debit Note (Service)', pdf:'/api/debit-notes/pdf-bulk',       docType:'debit-note',       irp:true,  file:'DebitNotes',        noun:'debit note',         nouns:'debit notes',         group:'Debit Notes (Service)', bg:'#FCEBEB'},
   debit_note_planter:{label:'Debit Note - Planter',pdf:'/api/debit-notes-planter/pdf-bulk',docType:'debit-note',       irp:false, file:'DebitNotesPlanter', noun:'planter debit note', nouns:'planter debit notes', group:'Debit Notes — Planter', bg:'#EAF7EE'},
 };
 let _tallyVouchers=null;     // rows for the currently loaded type

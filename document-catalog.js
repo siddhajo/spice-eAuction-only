@@ -202,13 +202,21 @@ const DOCUMENTS = [
     route: '/api/invoices/purchase-pdf-bulk', bulkRoute: '/api/invoices/purchase-pdf-bulk',
     listRoute: '/api/purchases', listParam: 'auction_id' },
 
+  // Bills of Supply are two different documents, not two layouts of one, and
+  // flag_bos_purchase_bill picks between them (the Bills screen shows one of
+  // two toolbar buttons on the same switch):
+  //   ON  → Purchase Bill   /api/bills/pdf-bulk           (agri-bill)
+  //   OFF → Commission Bill /api/bills/commission-bos-bulk (commission-bill)
+  // The desk follows the same switch via bulkRouteWhenOff, so it can never
+  // hand out the document the site has turned off.
   { id: 'bills', label: 'Bills of Supply', group: 'documents', sub: 'Purchase side', family: 'bills',
     kind: 'document', scope: 'trade', formats: ['pdf'], minStage: 3, perm: 'view',
     statusKey: 'bills', deepLink: 'bills',
     route: '/api/bills/pdf-bulk', bulkRoute: '/api/bills/pdf-bulk',
+    bulkRouteWhenOff: { flag: 'flag_bos_purchase_bill', route: '/api/bills/commission-bos-bulk' },
     listRoute: '/api/bills', listParam: 'auction_id' },
 
-  { id: 'debit_notes', label: 'Debit Notes', group: 'documents', sub: 'Sales side', family: 'debit_notes',
+  { id: 'debit_notes', label: 'Debit Notes (Service)', group: 'documents', sub: 'Sales side', family: 'debit_notes',
     kind: 'document', scope: 'trade', formats: ['pdf'], minStage: 3, perm: 'view',
     flag: 'flag_debit_note', statusKey: 'debit_notes', deepLink: 'debit',
     route: '/api/debit-notes/pdf-bulk', bulkRoute: '/api/debit-notes/pdf-bulk',
@@ -445,7 +453,7 @@ const DOCUMENTS = [
     multi: ['party', 'invoice'],
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('urd_purchase') },
 
-  { id: 'tally_debit_note', label: 'Debit Notes', group: 'tally', sub: 'Vouchers', family: 'tally',
+  { id: 'tally_debit_note', label: 'Debit Notes (Service)', group: 'tally', sub: 'Vouchers', family: 'tally',
     kind: 'export', scope: 'trade', formats: ['xml', 'irp'], minStage: 4, perm: 'export',
     filters: ['party', 'invoice'],
     multi: ['party', 'invoice'],

@@ -127,6 +127,46 @@ const xe = (v) => {
 const r2 = (n) => Math.round(Number(n || 0) * 100) / 100;
 const r0 = (n) => Math.round(Number(n || 0));
 
+// ── Tally UDF (user-defined field) emission ────────────────────
+//
+// The letterhead print layout needs values Tally has no native home for —
+// the auction number, the buyer's Spices Board licence, and the per-lot
+// lot-no / bag-count on each inventory line. These travel as UDFs.
+//
+// Two halves have to agree or the value is silently dropped on import:
+//
+//   1. The UDF must be DECLARED in a loaded TDL (`[System: UDF]` in
+//      tally-addon/SpiceLetterheadInvoice.tdl) BEFORE the XML is imported.
+//      Tally discards UDF tags it doesn't recognise — no error, no value.
+//   2. The name here must match the TDL declaration EXACTLY (case-insensitive
+//      but spelling-exact), and the backticked DESC is what Tally keys on.
+//
+// Names are prefixed `Spice` so they can never collide with another add-on's
+// UDFs in the same company.
+const UDF_NAMES = {
+  lotNo:     'SpiceLotNo',
+  bags:      'SpiceBags',
+  auctionNo: 'SpiceAuctionNo',
+  buyerSbl:  'SpiceBuyerSBL',
+};
+
+// One UDF value as Tally's import expects it. `type` is 'String' or 'Number'.
+// Blank/absent values emit nothing at all — an empty UDF tag makes Tally store
+// a blank that then prints as a stray colon in the layout.
+const udf = (name, value, type = 'String') => {
+  const v = type === 'Number' ? r0(value) : String(value === null || value === undefined ? '' : value).trim();
+  if (type === 'Number' ? !Number.isFinite(Number(v)) : v === '') return '';
+  const TAG = String(name).toUpperCase();
+  const desc = `DESC="\`${name}\`"`;
+  return `<UDF:${TAG}.LIST ${desc} ISLIST="YES" TYPE="${type.toUpperCase()}">
+<UDF:${TAG} ${desc}>${type === 'Number' ? v : xe(v)}</UDF:${TAG}>
+</UDF:${TAG}.LIST>`;
+};
+
+// Join several udf() results, dropping the blanks, into a newline-separated
+// block ready to splice into a voucher or inventory entry.
+const udfBlock = (...parts) => parts.filter(Boolean).join('\n');
+
 // yyyymmdd from any date-ish string ("2026-04-28", "28/04/2026", or Date)
 const toTallyDate = (d) => {
   if (!d) return '';
@@ -297,7 +337,9 @@ const _saleLabel = (s) => {
 //   rows = [{
 //     ano, date, sale ('L'|'I'|'E'), invo, aspInvo (optional, used in
 //     BASICORDERREF if present), partyName, address, place, pin,
-//     partyGstin, lots: [{lot, bag, qty, rate, amount}, ...],
+//     partyGstin, sbl (optional, buyer's Spices Board licence — emitted as
+//     the SpiceBuyerSBL UDF for the letterhead print layout),
+//     lots: [{lot, bag, qty, rate, amount}, ...],
 //     amounttot, gunnyAmt, gunnyBags (optional, count of gunny bags
 //     across all lots), cgst, sgst, igst, tcsamt, total, totalRounded,
 //     vehicleNo (optional), shippedBy (optional), distance (optional),
@@ -744,6 +786,16 @@ ${TAGS.DEEMNO}
 <GSTHSNDESCRIPTION>${xe(Item_Card)}</GSTHSNDESCRIPTION>
 <BASICPACKAGEMARKS>${xe(lot.lot || '')}</BASICPACKAGEMARKS>
 <BASICNUMPACKAGES>${r0(lot.bag)}</BASICNUMPACKAGES>
+${udfBlock(
+  // Per-line lot no + bag count for the letterhead print layout. The two
+  // BASIC* tags above sit inside the inventory entry, but in Tally's schema
+  // "Marks" / "No. & Kind of Packages" are VOUCHER-level despatch fields —
+  // Tally is expected to ignore them here. They stay as-is (the reference
+  // export carried them, and removing them risks an unrelated regression);
+  // these UDFs are the per-line copy the TDL layout actually reads.
+  udf(UDF_NAMES.lotNo, lot.lot),
+  udf(UDF_NAMES.bags,  lot.bag, 'Number'),
+)}
 ${TAGS.DEEMNO}
 <RATE>${r2(lot.rate)}/${unitCard}</RATE>
 <AMOUNT>${r2(lot.amount)}</AMOUNT>
@@ -848,6 +900,17 @@ ${isIntra && !isExport ? `${rates.cgst}\n${rates.sgst}` : (isExport ? '' : rates
 ${rates.cess}
 </ALLINVENTORYENTRIES.LIST>`;
     }
+
+    // Voucher-level UDFs for the letterhead print layout. The auction number
+    // and the buyer's Spices Board licence appear on the printed invoice but
+    // have no native Tally field, so they ride along as UDFs read by
+    // tally-addon/SpiceLetterheadInvoice.tdl. Emitted last, at voucher level \u2014
+    // NOT inside any *.LIST \u2014 so Tally binds them to the voucher object.
+    const vchUdfs = udfBlock(
+      udf(UDF_NAMES.auctionNo, row.ano),
+      udf(UDF_NAMES.buyerSbl,  row.sbl),
+    );
+    if (vchUdfs) xml += `\n${vchUdfs}`;
 
     xml += `\n${TAGS.ENDVOUCHER}`;
   }
@@ -2857,6 +2920,10 @@ function buildSalesIspRows(db, auctionId, cfg, opts) {
            (SELECT b.pla     FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS buyer_pla,
            (SELECT COALESCE(NULLIF(TRIM(b.cpin), ''), TRIM(b.pin))
               FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS buyer_pin,
+           -- Spices Board licence. Printed in the Billed-To / Shipped-To block
+           -- of the letterhead layout; Tally has no field for it, so it rides
+           -- to Tally as the SpiceBuyerSBL UDF.
+           (SELECT b.sbl     FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS buyer_sbl,
            (SELECT b.cgstin  FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cgstin,
            (SELECT b.cbuyer1 FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cbuyer1,
            (SELECT b.cadd1   FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cadd1,
@@ -3097,6 +3164,9 @@ function buildSalesIspRows(db, auctionId, cfg, opts) {
       address: [r.add1, r.add2].filter(Boolean).join(', '),
       place: r.place || r.buyer_pla || '',
       pin: r.buyer_pin || '',
+      // Buyer's Spices Board licence — consumed only by the SpiceBuyerSBL UDF
+      // on the sales voucher. Every other generator ignores unknown fields.
+      sbl: r.buyer_sbl || '',
       partyGstin: r.gstin || '',
       // Ship-to (consignee) — a SEPARATE delivery party kept on the buyer
       // master (cbuyer1 / cadd1 / cgstin / …). Surfaced as `shipTo` so the
