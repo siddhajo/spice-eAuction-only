@@ -956,24 +956,47 @@ body[data-login-layout="showcase"] .login-hero{order:2;max-width:none;align-self
 .rep-section-scroll thead{position:sticky;top:0;background:#fff;z-index:1}
 .rep-section-scroll thead th{background:var(--bg)}
 
-/* ── To Tally — grouped classic settings panel ─────────────── */
-.tally-group{
-  margin-bottom:22px;border:1px solid var(--spice-line);
+/* ── Grouped settings panel — collapsible section cards ──────
+   Every settings category that defines sections (To Tally, Feature
+   Flags, Rates, Invoice, Lot Entry, Booking Alerts) renders through
+   sectionCard(), so the cards look and behave identically everywhere.
+
+   Collapsing hides the body with display:none rather than removing it.
+   That matters: captureCurrentPanel() harvests pending edits by
+   querying `#settings-root [data-key]`, and a removed field would be
+   dropped from the next save without any error. */
+.set-group{
+  margin-bottom:14px;border:1px solid var(--spice-line);
   border-radius:12px;overflow:hidden;background:#fff;
 }
-.tally-group-head{
+.set-group-head{
+  display:flex;align-items:flex-start;gap:10px;
   padding:12px 16px;background:linear-gradient(180deg,#F8FAFC 0%,#F1F5F9 100%);
-  border-bottom:1px solid var(--spice-line);
+  cursor:pointer;user-select:none;transition:background .15s;
 }
-.tally-group-head h3{
+.set-group.open>.set-group-head{border-bottom:1px solid var(--spice-line)}
+.set-group-head:hover{background:linear-gradient(180deg,#F1F5F9 0%,#E6EDF5 100%)}
+.set-group-head h3{
   margin:0;font-size:14px;font-weight:700;color:var(--spice-text-main);
   letter-spacing:-.2px;
 }
-.tally-group-hint{
+.set-group-hint{
   display:block;margin-top:3px;font-size:12px;color:var(--spice-text-mute);
   line-height:1.4;
 }
-.tally-group .sgrid{padding:16px}
+.set-group-head .g-arr{
+  font-size:10px;color:var(--spice-text-mute);flex:0 0 auto;margin-top:3px;
+  transition:transform .18s;
+}
+.set-group.open>.set-group-head .g-arr{transform:rotate(90deg)}
+.set-group-head .g-txt{flex:1 1 auto;min-width:0}
+.set-group-head .g-n{
+  flex:0 0 auto;font-size:11px;font-weight:700;color:var(--spice-text-mute);
+  background:#fff;border:1px solid var(--spice-line);border-radius:10px;padding:1px 8px;
+}
+.set-group-body{display:none}
+.set-group.open>.set-group-body{display:block}
+.set-group .sgrid{padding:16px}
 
 /* ── Reports tab — quick-access tile grid ─────────────────── */
 .reports-hub{
@@ -2600,10 +2623,18 @@ body[data-hub-plain="1"] .hub-plain-dot{background:var(--hub-p-edge)}
 .cat-b.open{display:block}
 
 /* ── Settings layout ─────────────────────────────────────── */
+/* Both columns pin below the sticky Save bar, and each scrolls its own
+   body — so the Save button, the category list and the panel title stay
+   put while only the fields move. --set-sticky-top is measured from the
+   Save bar at render time (syncSetStickyOffset) because that bar wraps
+   to two rows on a narrow window; the literal is just a first-paint
+   fallback. */
+:root{--set-sticky-top:157px}
 .set-wrap{display:grid;grid-template-columns:220px 1fr;gap:18px;align-items:start}
 .set-nav{
   background:var(--card);border:1.5px solid var(--border);border-radius:12px;
-  padding:10px 8px;position:sticky;top:76px;max-height:calc(calc(100vh / var(--zf)) - 100px);overflow-y:auto
+  padding:10px 8px;position:sticky;top:var(--set-sticky-top);
+  max-height:calc(calc(100vh / var(--zf)) - var(--set-sticky-top) - 24px);overflow-y:auto
 }
 .set-search{
   width:100%;height:38px;padding:0 12px 0 34px;border:1.5px solid var(--border);border-radius:8px;
@@ -2612,6 +2643,28 @@ body[data-hub-plain="1"] .hub-plain-dot{background:var(--hub-p-edge)}
   background-repeat:no-repeat;background-position:12px center
 }
 .set-search:focus{border-color:var(--green)}
+/* Sidebar sections — the 17 categories are bucketed into a handful of
+   collapsible groups (see SET_NAV_GROUPS) so the nav is a short list of
+   themes rather than one long flat column. Only the group holding the
+   active category is open by default. */
+.set-nav-group{margin-bottom:4px}
+.set-nav-group-head{
+  display:flex;align-items:center;gap:6px;width:100%;
+  padding:7px 10px;border:none;background:none;font-family:inherit;cursor:pointer;
+  font-size:10.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;
+  color:var(--text3);border-radius:6px;text-align:left;transition:all .15s
+}
+.set-nav-group-head:hover{background:var(--bg);color:var(--text2)}
+.set-nav-group-head .arr{font-size:9px;transition:transform .18s;flex:0 0 auto}
+.set-nav-group-head.open .arr{transform:rotate(90deg)}
+.set-nav-group-head.has-active{color:var(--green)}
+.set-nav-group-head .gcount{
+  margin-left:auto;font-size:10px;font-weight:700;color:var(--text3);
+  background:var(--bg);padding:1px 6px;border-radius:9px
+}
+.set-nav-group-head.open .gcount{visibility:hidden}
+.set-nav-group-body{display:none;margin:2px 0 6px 12px;padding-left:4px;border-left:1.5px solid var(--border)}
+.set-nav-group-body.open{display:block}
 .set-nav-item{
   display:flex;justify-content:space-between;align-items:center;gap:8px;
   padding:9px 12px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;
@@ -2625,14 +2678,33 @@ body[data-hub-plain="1"] .hub-plain-dot{background:var(--hub-p-edge)}
   padding:1px 7px;border-radius:10px;font-weight:700
 }
 .set-nav-item.active .count{background:#fff;color:var(--green)}
+/* The panel is capped to one screen and scrolls its own body, so the
+   category title and the Expand/Collapse control stay put while a long
+   category (To Tally is 83 fields) scrolls underneath. */
 .set-panel{
   background:var(--card);border:1.5px solid var(--border);border-radius:14px;
-  padding:22px;min-height:400px
+  padding:22px;min-height:400px;
+  display:flex;flex-direction:column;
+  position:sticky;top:var(--set-sticky-top);
+  max-height:calc(calc(100vh / var(--zf)) - var(--set-sticky-top) - 24px)
 }
 .set-panel-hdr{
   display:flex;align-items:center;justify-content:space-between;gap:12px;
-  margin-bottom:16px;padding-bottom:14px;border-bottom:1.5px solid var(--border)
+  margin-bottom:16px;padding-bottom:14px;border-bottom:1.5px solid var(--border);
+  flex:0 0 auto
 }
+/* flex child needs min-height:0 or it refuses to shrink below its content
+   and the overflow never engages. */
+#settings-root{flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:10px;margin-right:-6px}
+#settings-root::-webkit-scrollbar{width:10px}
+#settings-root::-webkit-scrollbar-thumb{background:var(--border);border-radius:6px;border:3px solid var(--card)}
+#settings-root::-webkit-scrollbar-thumb:hover{background:var(--text3)}
+.set-hdr-btn{
+  flex:0 0 auto;padding:6px 12px;border:1.5px solid var(--border);border-radius:7px;
+  background:var(--card);font-family:inherit;font-size:12px;font-weight:700;
+  color:var(--text2);cursor:pointer;transition:all .15s;white-space:nowrap
+}
+.set-hdr-btn:hover{background:var(--bg);color:var(--text);border-color:var(--text3)}
 .set-panel-hdr h3{font-size:16px;font-weight:700;color:var(--text);margin:0}
 .set-panel-hdr .desc{font-size:12px;color:var(--text3);margin-top:2px}
 .set-actions-bar{
@@ -2646,6 +2718,10 @@ body[data-hub-plain="1"] .hub-plain-dot{background:var(--hub-p-edge)}
   .set-wrap{grid-template-columns:1fr}
   .set-nav{position:static;max-height:none}
   .set-actions-bar{position:static}
+  /* Narrow screens scroll the page instead — an inner scroll region on a
+     one-column layout traps the touch scroll. */
+  .set-panel{max-height:none;display:block;position:static}
+  #settings-root{overflow:visible;padding-right:0;margin-right:0}
 }
 
 /* ── Grids ───────────────────────────────────────────────── */
@@ -4287,6 +4363,9 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
               <h3 id="set-panel-title">Loading…</h3>
               <div class="desc" id="set-panel-desc"></div>
             </div>
+            <!-- Shown only for categories that render section cards; the
+                 label flips between Collapse/Expand in syncSetGroupToggle(). -->
+            <button class="set-hdr-btn" id="set-group-toggle" style="display:none" onclick="toggleAllSetGroups()">Collapse all</button>
           </div>
           <div id="settings-root"></div>
         </div>
@@ -21338,11 +21417,53 @@ async function applyStateToCompanyProfile(state){
   }
 }
 
+// ── Settings sidebar — category grouping ──────────────────
+// The category list grew to 17 entries, which reads as one long
+// undifferentiated column. Bucket them into a few themes so the
+// operator navigates "where does this belong?" instead of scanning
+// every title. Categories NOT named here still render — they fall
+// into a trailing "Other" group — so adding a category to
+// company-config.js CATEGORIES can never make it disappear.
+const SET_NAV_GROUPS = [
+  { id:'identity',  title:'Company & Identity',   cats:['mode','company','address_tn','address_kl','branches','bank'] },
+  { id:'trade',     title:'Trade & Rates',        cats:['season','rates','hsn','lot_entry'] },
+  { id:'documents', title:'Documents & Printing', cats:['invoice','spice_board'] },
+  { id:'behaviour', title:'Features & Access',    cats:['flags','alerts','security'] },
+  { id:'external',  title:'Integrations & Export',cats:['integrations','tally'] },
+];
+
+// Which sidebar group is expanded — accordion, so at most one. Keeping
+// it to one is the whole point: the nav stays a short list of five
+// themes plus the handful of categories inside the open one, instead of
+// creeping back to a 17-item column as the operator browses around.
+// Searching overrides this and opens every group that has a hit (see
+// renderSettingsNav) — collapsing a group would hide the results.
+// null = not yet seeded; renderSettingsNav opens the active category's
+// group on first paint.
+let _setNavOpen = null;
+
+function setNavGroupOf(ck){
+  const g = SET_NAV_GROUPS.find(g => g.cats.includes(ck));
+  return g ? g.id : 'other';
+}
+
+function openSetNavGroup(id){
+  _setNavOpen = {}; _setNavOpen[id] = true;
+}
+
+function toggleSetNavGroup(id){
+  const wasOpen = !!(_setNavOpen && _setNavOpen[id]);
+  _setNavOpen = {};
+  if(!wasOpen) _setNavOpen[id] = true;   // clicking the open one collapses it
+  renderSettingsNav();
+}
+
 function renderSettingsNav(){
-  const keys=Object.keys(_cats).sort((a,b)=>_cats[a].order-_cats[b].order);
   const q=_setFilter.toLowerCase().trim();
-  let html='';
-  for(const ck of keys){
+
+  // Resolve each visible category to {ck, cat, count} once, then bucket.
+  const entries=[];
+  for(const ck of Object.keys(_cats).sort((a,b)=>_cats[a].order-_cats[b].order)){
     const cat=_cats[ck],fields=_sdata[ck]||[];
     if(!fields.length)continue;
     // Hide entire categories that don't apply to the current business mode
@@ -21355,8 +21476,37 @@ function renderSettingsNav(){
       count=matches.length;
       if(!count)continue;
     }
-    const active=ck===_activeCat?' active':'';
-    html+=`<button class="set-nav-item${active}" onclick="selectCat('${ck}')"><span>${cat.icon||''} ${esc(cat.title)}</span><span class="count">${count}</span></button>`;
+    entries.push({ck,cat,count});
+  }
+
+  // First render seeds the open state: active category's group only.
+  if(!_setNavOpen) openSetNavGroup(setNavGroupOf(_activeCat));
+
+  const buckets=[...SET_NAV_GROUPS.map(g=>({...g,items:[]})),
+                 {id:'other',title:'Other',cats:[],items:[]}];
+  for(const e of entries){
+    const b=buckets.find(b=>b.cats.includes(e.ck))||buckets[buckets.length-1];
+    b.items.push(e);
+  }
+
+  let html='';
+  for(const b of buckets){
+    if(!b.items.length)continue;
+    const hasActive=b.items.some(e=>e.ck===_activeCat);
+    // While searching, show everything that matched — collapsing a group
+    // would hide the very results the operator is looking for.
+    const open=q?true:!!_setNavOpen[b.id];
+    const fieldCount=b.items.reduce((n,e)=>n+e.count,0);
+    html+=`<div class="set-nav-group">`
+       +  `<button class="set-nav-group-head${open?' open':''}${hasActive?' has-active':''}" onclick="toggleSetNavGroup('${b.id}')">`
+       +    `<span class="arr">▶</span><span>${esc(b.title)}</span><span class="gcount">${fieldCount}</span>`
+       +  `</button>`
+       +  `<div class="set-nav-group-body${open?' open':''}">`;
+    for(const e of b.items){
+      const active=e.ck===_activeCat?' active':'';
+      html+=`<button class="set-nav-item${active}" onclick="selectCat('${e.ck}')"><span>${e.cat.icon||''} ${esc(e.cat.title)}</span><span class="count">${e.count}</span></button>`;
+    }
+    html+=`</div></div>`;
   }
   const nav=document.getElementById('set-nav-items');
   nav.innerHTML=html||'<div class="set-no-match" style="padding:20px;font-size:12px">No matches</div>';
@@ -21365,6 +21515,10 @@ function selectCat(ck){
   // Capture any pending edits in the currently-displayed panel first
   captureCurrentPanel();
   _activeCat=ck;
+  // Make sure the new category is reachable in the sidebar — matters when
+  // the switch is programmatic (deep link, or the mode-hidden redirect in
+  // renderSettingsPanel) rather than a click inside an open group.
+  if(_setNavOpen) openSetNavGroup(setNavGroupOf(ck));
   renderSettingsNav();
   renderSettingsPanel();
 }
@@ -21385,11 +21539,192 @@ function captureCurrentPanel(){
     if(f)f.value=val;
   });
 }
+// ── Settings panel — in-category field grouping ───────────
+// The big categories (Feature Flags 38, Lot Entry 27, Invoice 24,
+// Rates 21, Alerts 12) rendered as one flat column of inputs, so
+// finding a single setting meant scanning the whole list. Each entry
+// below splits one category into titled section cards — the same
+// treatment "To Tally" has always had, now shared (see
+// renderGroupedFields + the .set-group CSS).
+//
+// A section claims fields by explicit `keys` and/or a `match` regex.
+// Order matters: the first section to claim a key wins. Anything
+// unclaimed lands in a trailing "Other Settings" card, so a new key in
+// company-config.js still shows up without being listed here.
+const SET_FIELD_GROUPS = {
+  flags: [
+    { title:'Invoice Content & Layout', hint:'What prints on the invoice itself — address blocks, HSN, bank line, row striping, rounding.',
+      keys:['flag_dispatch','flag_ship','flag_hsn','flag_bank','flag_commission_bank','flag_invoice_stripe','flag_round','flag_dummy'] },
+    { title:'Tax, TDS & Export', hint:'TDS deduction on purchase/sales and the export-invoice flow.',
+      keys:['flag_tds_purchase','flag_tds_sales','flag_wgst','flag_export'] },
+    { title:'Discounts & Debit Notes', hint:'Whether the discount appears inside the invoice or as a separate debit note, per seller type.',
+      keys:['flag_sample','flag_debit_note','flag_debit_note_planter'] },
+    { title:'Charges & Pooling', hint:'Optional charge lines — pooling, local transport/insurance, and the extra ad-hoc charge.',
+      keys:['flag_pooling','flag_local_ti','flag_addl_charges'] },
+    { title:'Document Mode', hint:'One document per lot or one per seller, and whether sales invoices start life as a proforma draft.',
+      keys:['flag_lotwise_purchase','flag_lotwise_bills','flag_lotwise_dn_planter','flag_bos_purchase_bill','flag_proforma_invoice'] },
+    { title:'Lots, Trade & Screens', hint:'Controls on the lot/trade screens — locks, validation, price checks, and optional screens or buttons.',
+      keys:['flag_price_check','flag_lot_lock','flag_reserved_price','flag_immediate_reserve','flag_lot_validation',
+            'flag_bulk_set_buyer_code','flag_price_list_mapping','flag_print_selected_purchase','flag_lotwise_payments'] },
+    { title:'Tally & Accounts Export', hint:'How purchase vouchers and journals are written into the Tally XML.',
+      keys:['flag_merchants'], match:/^tally_purchase_/ },
+    { title:'Masters & Sharing', hint:'Extra master fields and the WhatsApp share buttons.',
+      keys:['flag_tan','flag_whatsapp'] },
+  ],
+  lot_entry: [
+    { title:'Default Weights & Crop', hint:'Values pre-filled on a new lot — sample, gunny and litre weights, crop type.',
+      keys:['sample_weight','sample_collection','free_sample','default_gunny_weight','user_gunny_weight','default_litre','default_crop_type'] },
+    { title:'Lot Entry Screen', hint:'Which fields and columns the Lot Entry screen shows, on desktop and mobile.',
+      keys:['show_moisture','show_crop_receipt','crop_receipt_start_no','lot_entry_seller_at_bottom',
+            'mobile_show_sample_field','mobile_show_gross_field','default_auction_id'] },
+    { title:'Lot Receipt Print', hint:'Columns, paper width and totals layout for the printed lot receipt.',
+      match:/^lot_receipt_/ },
+    { title:'Edit & Delete Permissions', hint:'What a non-admin may change after a lot is saved, and for how long.',
+      keys:['edit_enabled','delete_enabled','edit_timeout_sec'] },
+  ],
+  invoice: [
+    { title:'Numbering — Prefix & Suffix', hint:'Number series for each document type. These feed the PDF and the Tally XML alike.',
+      keys:['inv_prefix','separator','proforma_invoice_prefix'], match:/(_prefix|_suffix)$/ },
+    { title:'Print Layouts', hint:'Default layout per document. "Classic (Legacy)" is the original PDFKit format; other layouts render from HTML templates. Still overridable per print.',
+      match:/_template$/ },
+    { title:'Dispatch Details', hint:'Transport lines printed on the sales invoice.',
+      keys:['dispatched_through_isp','dispatch_destination','dispatch_from'] },
+    { title:'Invoice Text', hint:'Fixed wording stamped on the document.',
+      keys:['duplicate_text','signature_text'] },
+  ],
+  rates: [
+    { title:'Commission & Handling', hint:'The auctioneer’s own charges.',
+      keys:['commission','hpc'] },
+    { title:'GST & Tax', hint:'GST percentages plus the TDS/TCS rates and annual threshold.',
+      keys:['gst_goods','gst_service','discount_gst','tcs_tds','tds_purchase_rate','tds_threshold'] },
+    { title:'Freight, Insurance & Packing', hint:'Per-kg and per-bag charges added to the buyer’s invoice.',
+      keys:['gunny_rate','transport','insurance','local_transport','local_insurance'] },
+    { title:'Discount & Credit Terms', hint:'Cash-discount percentage and the credit windows it depends on.',
+      keys:['discount_pct','discount_days','dealer_days'] },
+    { title:'Samples', hint:'Sample quantities refunded to the seller and drawn for traders.',
+      keys:['sb_refund','sb_trader_sample','sb_refund_actual_extra_g'] },
+    { title:'Additional Charges', hint:'The optional ad-hoc charge line (needs the Additional Charges flag on).',
+      keys:['addl_charge_name','addl_charge_value'] },
+  ],
+  alerts: [
+    { title:'Grade-2 Thresholds', hint:'When the alert fires — share of booked weight and the minimum lots before it can trigger.',
+      keys:['grade2_alert_enabled','grade2_alert_threshold_pct','grade2_alert_min_lots'] },
+    { title:'Level 1 — Depot Manager', hint:'Notified the first time the threshold is crossed.',
+      match:/^grade2_manager_/ },
+    { title:'Level 2 — Immediate Superior', hint:'Escalation target for any grade-2 booking made after the threshold was crossed.',
+      match:/^grade2_superior_/ },
+    { title:'Reassign Requests', hint:'Who is notified when a lot reassignment is requested, and which WhatsApp template is used.',
+      match:/^reassign_alert_/ },
+  ],
+};
+
+// ── Section cards: collapse state ─────────────────────────
+// Keyed "<category>::<section title>". Only CLOSED sections are
+// recorded, so a section added later defaults to open. State survives
+// re-renders — flipping a feature flag repaints the whole panel, and
+// re-opening everything the operator had just collapsed would undo the
+// point of collapsing.
+const _setGroupClosed = {};
+const setGroupKey = (ck, title) => ck + '::' + title;
+
+// One collapsible section card. `inner` is the already-rendered field
+// markup; `count` is what the header badge shows.
+function sectionCard(ck, title, hint, count, inner){
+  const key  = setGroupKey(ck, title);
+  // While a search is active every section opens — collapsing one would
+  // hide the very matches the operator is hunting for.
+  const open = (_setFilter.trim() || !_setGroupClosed[key]) ? ' open' : '';
+  return '<div class="set-group'+open+'" data-gkey="'+esc(key)+'">'
+    + '<div class="set-group-head" onclick="toggleSetGroup(this)">'
+    +   '<span class="g-arr">▶</span>'
+    +   '<span class="g-txt"><h3>'+esc(title)+'</h3>'
+    +     (hint ? '<span class="set-group-hint">'+esc(hint)+'</span>' : '')
+    +   '</span>'
+    +   '<span class="g-n">'+count+'</span>'
+    + '</div>'
+    + '<div class="set-group-body"><div class="sgrid">'+inner+'</div></div>'
+    + '</div>';
+}
+
+// Toggling flips classes in place — no re-render, so nothing the
+// operator has typed but not yet saved is disturbed.
+function toggleSetGroup(headEl){
+  const card = headEl.closest('.set-group');
+  if(!card) return;
+  const nowOpen = !card.classList.contains('open');
+  card.classList.toggle('open', nowOpen);
+  if(nowOpen) delete _setGroupClosed[card.dataset.gkey];
+  else _setGroupClosed[card.dataset.gkey] = true;
+  syncSetGroupToggle();
+}
+
+// Header button: collapse everything if anything is open, else expand all.
+function toggleAllSetGroups(){
+  const cards=[...document.querySelectorAll('#settings-root .set-group')];
+  if(!cards.length) return;
+  const collapse = cards.some(c => c.classList.contains('open'));
+  for(const c of cards){
+    c.classList.toggle('open', !collapse);
+    if(collapse) _setGroupClosed[c.dataset.gkey] = true;
+    else delete _setGroupClosed[c.dataset.gkey];
+  }
+  document.getElementById('settings-root').scrollTop = 0;
+  syncSetGroupToggle();
+}
+
+// The nav and the panel pin below the sticky Save bar. Its height isn't
+// fixed — the buttons wrap to a second row on a narrow window — so
+// measure it instead of hard-coding, and publish the result as
+// --set-sticky-top for the CSS above. 76px is the app header; 14px is
+// the bar's own margin-bottom.
+function syncSetStickyOffset(){
+  const bar = document.querySelector('.set-actions-bar');
+  if(!bar) return;
+  const h = bar.getBoundingClientRect().height;
+  if(!h) return;                                  // settings tab not visible yet
+  document.documentElement.style.setProperty('--set-sticky-top', Math.round(76 + h + 14) + 'px');
+}
+window.addEventListener('resize', () => { try{ syncSetStickyOffset(); }catch(_){} });
+
+// Show the header button only for categories that actually have section
+// cards, and keep its label matching what the click will do.
+function syncSetGroupToggle(){
+  const btn = document.getElementById('set-group-toggle');
+  if(!btn) return;
+  const cards=[...document.querySelectorAll('#settings-root .set-group')];
+  btn.style.display = cards.length ? '' : 'none';
+  btn.textContent = cards.some(c=>c.classList.contains('open')) ? 'Collapse all' : 'Expand all';
+}
+
+// Render `fields` as titled section cards per SET_FIELD_GROUPS[ck], or
+// as the plain flat grid when the category has no grouping defined.
+// `renderFn(f)` produces the markup for one field so each caller keeps
+// its own special-cased inputs (bank_format, layout pickers, …).
+function renderGroupedFields(ck, fields, renderFn){
+  const groups = SET_FIELD_GROUPS[ck];
+  if(!groups) return '<div class="sgrid">'+fields.map(renderFn).join('')+'</div>';
+  const consumed=new Set();
+  const out=[];
+  for(const g of groups){
+    const picked=fields.filter(f=>{
+      if(consumed.has(f.key))return false;
+      return (g.keys && g.keys.includes(f.key)) || (g.match && g.match.test(f.key));
+    });
+    picked.forEach(f=>consumed.add(f.key));
+    if(picked.length) out.push({title:g.title,hint:g.hint,fields:picked});
+  }
+  const rest=fields.filter(f=>!consumed.has(f.key));
+  if(rest.length) out.push({title:'Other Settings',hint:'',fields:rest});
+  return out.map(g =>
+    sectionCard(ck, g.title, g.hint, g.fields.length, g.fields.map(renderFn).join(''))
+  ).join('');
+}
+
 function renderSettingsPanel(){
   const ck=_activeCat;
   if(!ck||!_cats[ck]){document.getElementById('settings-root').innerHTML='<div class="set-no-match">Select a category</div>';return}
   // If user lands on a mode-hidden category (via deep link or stale state), redirect to 'mode'
-  if(isCategoryHiddenByMode(ck)){ _activeCat='mode'; renderSettingsNav(); return renderSettingsPanel(); }
+  if(isCategoryHiddenByMode(ck)){ _activeCat='mode'; if(_setNavOpen) openSetNavGroup(setNavGroupOf('mode')); renderSettingsNav(); return renderSettingsPanel(); }
   const cat=_cats[ck];
   document.getElementById('set-panel-title').textContent=`${cat.icon||''} ${cat.title}`;
   document.getElementById('set-panel-desc').textContent=cat.description||'';
@@ -21407,10 +21742,8 @@ function renderSettingsPanel(){
   if(ck==='flags'){
     // Flags render via the standard fld() boolean branch so the row style
     // (bordered card, compact padding) and toggle size match the Lot
-    // Entry Defaults panel exactly.
-    html+='<div class="sgrid">';
-    for(const f of fields) html+=fld(f);
-    html+='</div>';
+    // Entry Defaults panel exactly, grouped into themed section cards.
+    html+=renderGroupedFields(ck,fields,fld);
   }else if(ck==='branches'){
     html+='<div class="bgrid">';
     const brs=fields.filter(f=>!f.key.includes('_tel')),tels=fields.filter(f=>f.key.includes('_tel'));
@@ -21471,13 +21804,13 @@ function renderSettingsPanel(){
     if (ck === 'integrations') {
       html += '<div id="gst-api-status-host" style="margin-bottom:14px"></div>';
     }
-    html+='<div class="sgrid">';
-    for(const f of fields){
-      // Per-print renderer ENGINE settings (sales_invoice_engine, …) are no
-      // longer user-facing — the Layout dropdown below now drives the engine
-      // (Classic ⇒ legacy PDFKit, any HTML layout ⇒ html). The keys are kept
-      // in company-config.js only as an env/back-compat fallback, so hide them.
-      if(/_engine$/.test(f.key)) continue;
+    // Per-print renderer ENGINE settings (sales_invoice_engine, …) are no
+    // longer user-facing — the Layout dropdown below now drives the engine
+    // (Classic ⇒ legacy PDFKit, any HTML layout ⇒ html). The keys are kept
+    // in company-config.js only as an env/back-compat fallback, so drop them
+    // before grouping (an all-engine section would otherwise render empty).
+    const visible=fields.filter(f=>!/_engine$/.test(f.key));
+    html+=renderGroupedFields(ck,visible,function(f){
       if(f.key==='bank_format'){
         // Bank Payment layout picker. Keep these options in sync with the
         // profile keys in bank-formats.js (BANK_FORMATS) — each option value
@@ -21489,9 +21822,9 @@ function renderSettingsPanel(){
         ];
         const sel=f.value||'rtgs_neft';
         const opts=BANK_FORMAT_OPTIONS.map(o=>`<option value="${o.value}"${sel===o.value?' selected':''}>${esc(o.label)}</option>`).join('');
-        html+=`<div class="fg"><label>${esc(f.label)}${helpTip('Column layout for the Bank Payment export — pick the format your bank expects for its bulk-upload template. New formats are added in bank-formats.js.')}</label><select data-key="${f.key}">${opts}</select></div>`;
+        return `<div class="fg"><label>${esc(f.label)}${helpTip('Column layout for the Bank Payment export — pick the format your bank expects for its bulk-upload template. New formats are added in bank-formats.js.')}</label><select data-key="${f.key}">${opts}</select></div>`;
       }
-      else if(TEMPLATE_SETTING_MAP[f.key]){
+      if(TEMPLATE_SETTING_MAP[f.key]){
         // Per-module DEFAULT layout picker. Options come from the layouts on
         // disk for this document type (templates/<docType>/*.hbs), fetched into
         // window._invoiceLayouts. Picking "Classic (Legacy)" uses PDFKit; any
@@ -21503,11 +21836,10 @@ function renderSettingsPanel(){
         // Keep the saved value selectable even if its .hbs was removed.
         if(!ids.includes(sel)) ids.push(sel);
         const opts=ids.map(id=>`<option value="${esc(id)}"${sel===id?' selected':''}>${esc(layoutLabel(id))}</option>`).join('');
-        html+=`<div class="fg"><label>${esc(f.label)}${helpTip('Default print layout for this document. "Classic (Legacy)" is the original PDFKit format; other layouts (Modern, Letterhead) render from HTML templates. You can still override the layout per print from the document screen’s Print Layout selector.')}</label><select data-key="${f.key}">${opts}</select></div>`;
+        return `<div class="fg"><label>${esc(f.label)}${helpTip('Default print layout for this document. "Classic (Legacy)" is the original PDFKit format; other layouts (Modern, Letterhead) render from HTML templates. You can still override the layout per print from the document screen’s Print Layout selector.')}</label><select data-key="${f.key}">${opts}</select></div>`;
       }
-      else html+=fld(f);
-    }
-    html+='</div>';
+      return fld(f);
+    });
     // Rates & Charges: a history panel below the grid. Stays empty until the
     // operator hovers/focuses one of the tracked rate fields (see
     // wireRateHistory), then shows that field's recent value changes.
@@ -21522,6 +21854,11 @@ function renderSettingsPanel(){
     }
   }
   document.getElementById('settings-root').innerHTML=html;
+  // Section cards just landed — show/hide the Expand/Collapse-all button
+  // and set its label, then start the scroll region at the top.
+  syncSetGroupToggle();
+  syncSetStickyOffset();
+  document.getElementById('settings-root').scrollTop=0;
   // Rates & Charges: wire hover/focus → per-field history once the panel lands.
   if (ck === 'rates') { try { wireRateHistory(); } catch(_){} }
   // Hydrate the Integrations cards after the panel HTML has landed.
@@ -22062,7 +22399,7 @@ function renderTallyPanel(fields){
   // renderer (which respects field_type for date / number / text).
   const groups = [];
 
-  groups.push({ title: 'Company &amp; Identity',
+  groups.push({ title: 'Company & Identity',
     hint: 'Tally company name, state, and season prefixes used in voucher numbers.',
     fields: pick(k => /^tally_(company_name|state_code|home_state|season|prefix|consignor_type|tally_state_code)$/.test(k)) });
 
@@ -22079,14 +22416,14 @@ function renderTallyPanel(fields){
     fields: pick(k => /^tally_(gst_rate|service_rate|tcs_rate|dn_gst_rate)$/.test(k)) });
 
   groups.push({ title: 'Services (Transport / Insurance / Handling)',
-    hint: 'Service ledger names + SAC codes for the freight + insurance line items, plus commission &amp; cash-handling ledgers.',
+    hint: 'Service ledger names + SAC codes for the freight + insurance line items, plus commission & cash-handling ledgers.',
     fields: pick(k => /^tally_(transport|insurance|local_transport|local_insurance|hsn_transport|hsn_insurance|hsn_service|service|commission|cash_handling)/.test(k)) });
 
-  groups.push({ title: 'Round Off &amp; Misc',
+  groups.push({ title: 'Round Off & Misc',
     hint: 'Round-off ledger, detailed-invoice flag, sample weight, and other voucher tweaks.',
     fields: pick(k => /^tally_(round|detailed|optional|sample|amazing|ainv)/.test(k)) });
 
-  groups.push({ title: 'Numbering &amp; Prefixes',
+  groups.push({ title: 'Numbering & Prefixes',
     hint: 'Voucher number prefixes, separator characters, and the series tail appended after the season ' +
           '(the "URD" in "1748/26-27/URD"). Enter a bare token — the "/" is added for you, and blank means no tail. ' +
           'A tail is part of the bill reference Tally ages against, so change it at a season boundary, not mid-season.',
@@ -22112,20 +22449,12 @@ function renderTallyPanel(fields){
     return fld(f);
   }
 
-  let html = '';
-  for (const g of groups) {
-    if (!g.fields.length) continue;
-    html += '<div class="tally-group">'
-      + '<div class="tally-group-head">'
-      + '<h3>' + g.title + '</h3>'
-      + (g.hint ? '<span class="tally-group-hint">' + g.hint + '</span>' : '')
-      + '</div>'
-      + '<div class="sgrid">'
-      + g.fields.map(renderField).join('')
-      + '</div>'
-      + '</div>';
-  }
-  return html;
+  // Same collapsible card as every other grouped category (sectionCard
+  // escapes, so the titles/hints above are plain text, not pre-escaped).
+  return groups
+    .filter(g => g.fields.length)
+    .map(g => sectionCard('tally', g.title, g.hint, g.fields.length, g.fields.map(renderField).join('')))
+    .join('');
 }
 
 // Read the global settings flat map so the Tally panel can echo company,
