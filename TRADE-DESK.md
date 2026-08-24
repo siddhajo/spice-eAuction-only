@@ -655,13 +655,25 @@ buyers. Changing the sale type re-opens the dialog on the current draft —
 carrying the other choices forward, dropping the party/invoice picks that
 were made against the previous list.
 
-**A pre-existing bug fell out of this.** `filterRowsByDoc` read `invo` then
-`note_no`. Every voucher builder normalises to `voucherNum`, and on Bills of
-Supply that is the *formatted* number (`formatBillOfSupplyNo`) — the only
-form that appears on the document or the Bills screen. So the `invoice`
-filter on URD Purchase Vouchers matched nothing and always 404'd. Both the
-filter and the options endpoint now read one shared `tallyDocNo()` accessor,
-so they cannot drift apart.
+**Two pre-existing bugs fell out of this**, both the same shape: the filter
+read one row field, but the row shape differs per voucher type, so it
+matched nothing and the route answered 404 — an empty download with no
+explanation. In the desk this showed up as the field silently staying a text
+box, because the options list came back empty.
+
+| Filter | Read | Should read | Broken on |
+|---|---|---|---|
+| `filterRowsByDoc` | `invo`, `note_no` | `voucherNum` first | URD Purchase Vouchers — `voucherNum` is the *formatted* Bill of Supply no (`formatBillOfSupplyNo`), the only form on the document or the Bills screen |
+| `filterRowsByParty` | `name` | `partyName` first | **Sales Vouchers** — the party is the BUYER, held as `partyName`/`buyer`; only purchases, debit notes and ledgers use `name` |
+
+Both now go through one accessor each — `tallyDocNo()` and
+`tallyPartyName()` — shared by the filter and the options endpoint, so the
+two cannot drift apart. `partyName` leads because it is the trading name
+(`buyer1`) where the two differ, and it is what the voucher itself prints.
+
+The tests assert the failure mode, not just the fix: filtering to an offered
+party must still return **200**, and reverting either accessor reproduces the
+404.
 
 Two smaller fixes alongside: the number field is labelled **Invoice / Note
 no** (it covers `invo` on sales/purchases and `note_no` on debit notes, so

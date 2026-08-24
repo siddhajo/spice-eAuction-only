@@ -1088,6 +1088,18 @@ const cleanup = () => {
   // check above still runs against the ungenerated fixture.
   console.log('\n[T] Tally pickers');
   await api('POST', `/api/bills/generate-all/${aid9}`, { startBillNo: 1 });
+  // Sales vouchers need buyers on the lots — and their party is the BUYER,
+  // not the planter, which is the whole reason that field needed its own
+  // accessor server-side.
+  {
+    const lots = (await api('GET', `/api/lots/${aid9}`)).d || [];
+    const priced = lots.filter(l => Number(l.price) > 0).slice(0, 2);
+    for (const [i, l] of priced.entries()) {
+      const b = i === 0 ? 'ARJUN TRADERS' : 'KUMAR EXPORTS';
+      await api('PUT', `/api/lots/${l.id}`, { buyer: b, buyer1: b, invoice_group: 0 });
+    }
+    await api('POST', `/api/invoices/generate-all/${aid9}`, { startInvoiceNo: 1 });
+  }
   await page.evaluate(() => hubRefresh());
   await page.waitForFunction(() => !!window._hubCat, { timeout: 15000 });
   await new Promise(r => setTimeout(r, 600));
@@ -1135,6 +1147,32 @@ const cleanup = () => {
   check('both stay multi-select', tallyPick.party.multi && tallyPick.invoice.multi);
   check('and the number field is named for what it covers',
         tallyPick.labels.includes('Invoice / Note no'), tallyPick.labels.join(' | '));
+
+  // Sales Vouchers separately: its party is the buyer, held on a different
+  // row field, so it is the one that silently fell back to a text box.
+  const salesPick = await page.evaluate(async () => {
+    hubFilterClose();
+    hubOpenGroup('tally'); hubOpenSub('Vouchers');
+    await hubFilterOpen('tally_sales_isp');
+    const body = document.getElementById('hub-f-body');
+    const hidden = body.querySelector('[data-fk="party"]');
+    const wrap = hidden && hidden.closest('.hub-f-pick');
+    const out = {
+      isText: !!body.querySelector('input[type=text][data-fk="party"]'),
+      isPick: !!wrap,
+      opts: wrap ? JSON.parse(wrap.dataset.opts || '[]') : [],
+      keys: Array.from(body.querySelectorAll('[data-fk]')).map(e => e.dataset.fk),
+    };
+    hubFilterClose();
+    return out;
+  });
+  check('the Sales Vouchers party field is a picker, not a text box',
+        salesPick.isPick && !salesPick.isText, JSON.stringify(salesPick).slice(0, 240));
+  check('offering the buyers it actually invoices',
+        salesPick.opts.length > 0 && salesPick.opts.some(o => /ARJUN|KUMAR/.test(o.t)),
+        JSON.stringify(salesPick.opts.map(o => o.t)));
+  check('alongside sale type and invoice',
+        salesPick.keys.join() === 'sale,party,invoice', salesPick.keys.join());
 
   // The options are gathered AFTER the sale filter runs, so changing the
   // sale type has to rebuild them — otherwise the list offers parties the

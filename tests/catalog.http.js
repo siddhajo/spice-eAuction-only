@@ -701,6 +701,58 @@ function cleanup() {
     }
   }
 
+  // ── Sales Vouchers: the party is the BUYER ───────────────────────
+  // Sales rows name that field `partyName`/`buyer`; every other builder
+  // uses `name`. filterRowsByParty read `name` alone, so the party filter
+  // on Sales Vouchers matched nothing and the picker had nothing to offer.
+  // Runs after the pending-count block, which is what puts buyers on lots.
+  {
+    console.log('\n[live] Sales Vouchers party');
+    const gen = await api('POST', `/api/invoices/generate-all/${aid}`, { startInvoiceNo: 1 });
+    check('sales invoices generate (needed for these checks)',
+          gen.status === 200 || gen.status === 201, `${gen.status} ${JSON.stringify(gen.d).slice(0, 200)}`);
+
+    const o = await api('GET', `/api/tally/filter-options/sales_isp/${aid}`);
+    check('Sales Vouchers offer their buyers as parties',
+          o.status === 200 && (o.d.parties || []).length > 0,
+          `${o.status} ${JSON.stringify(o.d).slice(0, 200)}`);
+    check('and their invoice numbers', (o.d.invoices || []).length > 0,
+          JSON.stringify(o.d.invoices));
+
+    const grab = async (u) => {
+      const r = await fetch(B + u, { headers: { Authorization: 'Bearer ' + TOKEN } });
+      return { status: r.status, body: r.ok ? await r.text() : '' };
+    };
+    const base = `/api/tally/export/sales_isp/${aid}`;
+    const all = await grab(base);
+    const p0 = (o.d.parties || [])[0];
+    if (p0 && all.status === 200) {
+      const one = await grab(base + '?party=' + encodeURIComponent(p0));
+      // The regression this guards: `name` is absent on sales rows, so the
+      // old filter dropped EVERY row and the route answered 404.
+      check(`filtering to an offered buyer ("${p0}") still returns the export`,
+            one.status === 200, `${one.status} — party filter dropped every row`);
+      const none = await grab(base + '?party=NO%20SUCH%20BUYER');
+      check('while an absent buyer returns nothing',
+            none.status !== 200 || none.body.length < all.body.length,
+            `none=${none.status}/${none.body.length} all=${all.body.length}`);
+      const evry = await grab(base + '?party=' + encodeURIComponent(o.d.parties.join(',')));
+      check('and every offered buyer equals the unfiltered export',
+            evry.status === 200 && evry.body.length === all.body.length,
+            `every=${evry.status}/${evry.body.length} all=${all.body.length}`);
+    } else {
+      check('the sales export has rows to filter', false,
+            `unfiltered export answered ${all.status}`);
+    }
+
+    // Same for the document number, which had the mirrored defect.
+    const i0 = (o.d.invoices || [])[0];
+    if (i0) {
+      const r = await grab(base + '?invoice=' + encodeURIComponent(i0));
+      check(`an offered invoice no ("${i0}") selects rows`, r.status === 200, String(r.status));
+    }
+  }
+
   // Filters travel with a bundled document, but only the ones its manifest
   // entry declares — the bundler must not become a way to bolt arbitrary
   // query params onto an export route.

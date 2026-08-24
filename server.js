@@ -15417,16 +15417,30 @@ function parseSaleFilter(type, raw) {
 
 // Narrow built voucher rows by party name and/or document number. Both
 // accept a comma-joined list. Matching is case- and space-insensitive on
-// the party, exact on the number — the row shape differs per voucher type
-// (`invo` on sales/purchases, `note_no` on debit notes), so both are read.
+// the party, exact on the number. The row shape differs per voucher type,
+// so each field is read through one accessor rather than inline — see
+// tallyPartyName / tallyDocNo below.
 const _listSet = (raw) => {
   const v = String(raw == null ? '' : raw).split(',').map(x => x.trim()).filter(Boolean);
   return v.length ? new Set(v.map(x => x.toUpperCase().replace(/\s+/g, ' '))) : null;
 };
+// The party as the office knows it. Sales vouchers carry the BUYER and name
+// the field `partyName`/`buyer`; purchases, debit notes and every ledger use
+// `name`. Reading `name` alone — as this did — matched nothing at all on
+// sales vouchers, so that filter always 404'd. `partyName` leads because it
+// is the trading name (buyer1) where the two differ, and it is what the
+// voucher itself prints.
+const tallyPartyName = (r) => {
+  for (const v of [r.partyName, r.name, r.buyer]) {
+    if (v != null && String(v).trim() !== '') return String(v).trim();
+  }
+  return '';
+};
+const _partyKey = (v) => v.toUpperCase().replace(/\s+/g, ' ');
 const filterRowsByParty = (rows, party) => {
   const want = _listSet(party);
   if (!want) return rows;
-  return rows.filter(r => want.has(String(r.name || '').trim().toUpperCase().replace(/\s+/g, ' ')));
+  return rows.filter(r => want.has(_partyKey(tallyPartyName(r))));
 };
 // The document number as the office knows it. Every voucher builder
 // normalises to `voucherNum` — and on Bills of Supply that is the FORMATTED
@@ -16137,8 +16151,8 @@ app.get('/api/tally/filter-options/:type/:auctionId', requireExport, (req, res) 
                                   saleFilter.error ? '' : saleFilter.sale);
     const parties = new Map(), invoices = new Map();
     for (const r of rows) {
-      const p = String(r.name == null ? '' : r.name).trim();
-      if (p && !parties.has(p.toUpperCase())) parties.set(p.toUpperCase(), p);
+      const p = tallyPartyName(r);      // same accessor filterRowsByParty uses
+      if (p && !parties.has(_partyKey(p))) parties.set(_partyKey(p), p);
       const d = tallyDocNo(r);          // same accessor filterRowsByDoc uses
       if (d && !invoices.has(d.toUpperCase())) invoices.set(d.toUpperCase(), d);
     }
