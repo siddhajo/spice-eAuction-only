@@ -26,17 +26,22 @@ function check(name, cond, detail) {
   // the lot-number ordering and the BR column are both exercised. One unpriced
   // lot (rate 0, amount 0) mirrors the blank rows in the attached sheet.
   db.run(`INSERT INTO auctions (id,ano,date,state) VALUES (1,'7','2026-08-10','TAMIL NADU')`);
+  //
+  // `balance` is deliberately DIFFERENT from `amount` on every priced lot.
+  // BILL AMT must show the seller's payable (`balance`), not the gross
+  // qty × price (`amount`) — if the two were equal the test could not tell
+  // which column the report actually read.
   const lots = [
-    // lot_no, branch,          name,             qty,    price, amount
-    ['003', 'NK',           'ANILKUMAR',      25.1,  3194, 88219],
-    ['001', 'NK',           'PUNYAMOORTHY T', 73.4,  0,     0],      // unpriced
-    ['002', 'NK',           'MURUGANANDAM K', 71.7,  3178, 234124],
+    // lot_no, branch,          name,             qty,    price, amount,  balance
+    ['003', 'NK',           'ANILKUMAR',      25.1,  3194, 88219,  87153],
+    ['001', 'NK',           'PUNYAMOORTHY T', 73.4,  0,     0,         0],  // unpriced
+    ['002', 'NK',           'MURUGANANDAM K', 71.7,  3178, 234124, 231361],
     // A branch name far longer than a "NK" code — this is the one that wrapped.
-    ['010', 'MUNDAKAYAM-B', 'NATIONAL SPICES',163.1, 2302, 377509],
+    ['010', 'MUNDAKAYAM-B', 'NATIONAL SPICES',163.1, 2302, 377509, 372949],
   ];
-  for (const [lot_no, branch, name, qty, price, amount] of lots) {
-    db.run(`INSERT INTO lots (auction_id,lot_no,branch,name,qty,price,amount)
-            VALUES (1,?,?,?,?,?,?)`, [lot_no, branch, name, qty, price, amount]);
+  for (const [lot_no, branch, name, qty, price, amount, balance] of lots) {
+    db.run(`INSERT INTO lots (auction_id,lot_no,branch,name,qty,price,amount,balance)
+            VALUES (1,?,?,?,?,?,?,?)`, [lot_no, branch, name, qty, price, amount, balance]);
   }
 
   // ── COLUMN LAYOUT (single source of truth is the PDF COLS def) ──
@@ -104,7 +109,15 @@ function check(name, cond, detail) {
         r002 && String(r002.getCell(3).value));
   check('Qty column', r002 && Number(r002.getCell(4).value) === 71.7);
   check('Rate column', r002 && Number(r002.getCell(5).value) === 3178);
-  check('Bill Amt column', r002 && Number(r002.getCell(6).value) === 234124);
+  // BILL AMT is the PAYABLE (lots.balance), not the gross qty × price.
+  // `balance` is where calculateLot stores `payable`:
+  //   payable = round(amount + refund − commission − handling − GST)
+  // There is no column literally called `payable` on `lots`.
+  check('Bill Amt column shows the PAYABLE (balance), not gross amount',
+        r002 && Number(r002.getCell(6).value) === 231361,
+        r002 && `got ${r002.getCell(6).value}, gross amount is 234124`);
+  check('Bill Amt is NOT the gross amount',
+        r002 && Number(r002.getCell(6).value) !== 234124);
   check('trailing Lot column repeats the lot number',
         r002 && String(r002.getCell(7).value).trim() === '002', r002 && String(r002.getCell(7).value));
 
@@ -131,7 +144,9 @@ function check(name, cond, detail) {
   });
   check('TOTAL row sums Qty (333.30)', totalRow && Math.abs(Number(totalRow.getCell(4).value) - 333.3) < 0.01,
         totalRow && String(totalRow.getCell(4).value));
-  check('TOTAL row sums Bill Amt (699,852)', totalRow && Number(totalRow.getCell(6).value) === 699852,
+  // 87,153 + 0 + 231,361 + 372,949 = 691,463 (payables, not the 699,852 gross).
+  check('TOTAL row sums the PAYABLE column (691,463)',
+        totalRow && Number(totalRow.getCell(6).value) === 691463,
         totalRow && String(totalRow.getCell(6).value));
 
   // No place-group section rows (the layout is flat now).
@@ -150,6 +165,19 @@ function check(name, cond, detail) {
   console.log('\n[3] PDF row set is flat and lot-ordered');
   check('lot_payment has no ROW_PREPROCESS (grouping) config',
         !ROW_PREPROCESS || ROW_PREPROCESS.lot_payment == null);
+
+  // The XLSX and PDF each run their OWN copy of the lot_payment query, in
+  // different files. They must stay in lock-step or the two formats of the same
+  // report quietly disagree on money. Pin that both read `balance AS cost`.
+  const srcXlsx = fs.readFileSync(path.join(__dirname, '..', 'exports.js'), 'utf8');
+  const srcPdf  = fs.readFileSync(path.join(__dirname, '..', 'exports-pdf.js'), 'utf8');
+  // Window has to reach past the explanatory comment to the query itself.
+  const xlsxQ = srcXlsx.slice(srcXlsx.indexOf('async function exportLotPayment'), srcXlsx.indexOf('async function exportLotPayment') + 2000);
+  const pdfQ  = srcPdf.slice(srcPdf.indexOf("case 'lot_payment':"), srcPdf.indexOf("case 'lot_payment':") + 1200);
+  check('XLSX query reads balance AS cost', /balance AS cost/.test(xlsxQ));
+  check('PDF query reads balance AS cost',  /balance AS cost/.test(pdfQ));
+  check('neither query still reads amount AS cost',
+        !/amount AS cost/.test(xlsxQ) && !/amount AS cost/.test(pdfQ));
 
   // ── PDF: it still renders end-to-end ──
   const cfg = getSettingsFlat(db);

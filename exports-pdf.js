@@ -1153,9 +1153,13 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
       // Must stay in lock-step with exportLotPayment's query in exports.js so
       // the PDF and the XLSX list the same lots, in the same lot-number order,
       // with the same columns (incl. the trailing repeated lot as `lot2`).
+      //
+      // BILL AMT = `lots.balance`, the seller's PAYABLE (amount + refund less
+      // commission, handling and GST) — NOT `amount`, which is the gross
+      // qty × price. See the note on exportLotPayment for the full formula.
       return db.all(
         `SELECT lot_no AS lot, branch AS br, name, qty, price AS rate,
-                amount AS cost, lot_no AS lot2
+                balance AS cost, lot_no AS lot2
            FROM lots WHERE auction_id = ?
            ORDER BY CAST(lot_no AS INTEGER), lot_no`, [auctionId]);
 

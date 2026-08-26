@@ -580,9 +580,20 @@ async function exportLotPayment(db, auctionId) {
   // the lot number in the trailing column as a reading aid for the wide row —
   // the same lot marker appears on both the left and right edges. Matches the
   // attached "Lot | BR | Name | Qty | Rate | Bill Amt | Lot" layout.
+  //
+  // BILL AMT is the seller's PAYABLE, not the gross sale value. It reads
+  // `lots.balance`, which is where calculateLot stores the payable:
+  //
+  //     payable = round( amount + refund − commission − handling − GST )
+  //     result.balance = result.payable            (calculations.js)
+  //
+  // There is no column literally named `payable` on `lots` — `balance` is it.
+  // This used to read `amount` (qty × price), which is the figure BEFORE
+  // commission, handling and GST come off, so the sheet overstated what each
+  // seller was actually paid.
   const rows = db.all(
     `SELECT lot_no AS lot, branch AS br, name, qty, price AS rate,
-            amount AS cost, lot_no AS lot2
+            balance AS cost, lot_no AS lot2
        FROM lots WHERE auction_id = ?
        ORDER BY CAST(lot_no AS INTEGER), lot_no`, [auctionId]
   );
