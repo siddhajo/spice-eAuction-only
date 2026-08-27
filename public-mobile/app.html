@@ -409,7 +409,7 @@ select:focus{border-color:var(--green)}
         <!-- Bank row -->
         <div id="le-bank" style="display:none;margin-bottom:6px">
           <div style="display:flex;gap:4px;align-items:center">
-            <select id="le-bank-select" style="flex:1;height:32px;border-radius:6px;border:1px solid var(--border2);padding:0 6px;font-size:11px;font-family:inherit;background:var(--input-bg);color:var(--text)" onchange="onBankSelect(this)">
+            <select id="le-bank-select" style="flex:1;height:32px;border-radius:6px;border:1px solid var(--border2);padding:0 6px;font-size:11px;font-family:inherit;background:var(--input-bg);color:var(--text)" onchange="onBankSelect(this,true)">
               <option value="">Select your bank</option>
             </select>
             <button onclick="editSelectedBank()" style="background:none;border:none;color:var(--green);cursor:pointer;font-size:13px" title="Edit bank">✎</button>
@@ -437,6 +437,11 @@ select:focus{border-color:var(--green)}
             <div><div class="elb">LABEL</div><input type="text" id="le-bank-label" placeholder="e.g. SBI Main" class="ein"></div>
             <div><div class="elb">ACCOUNT TYPE</div><select id="le-acct-type" class="ein" style="-webkit-appearance:menulist;appearance:menulist"><option value="">—</option><option value="Savings">Savings</option><option value="Current">Current</option><option value="O D">O D</option><option value="O C C">O C C</option></select></div>
           </div>
+          <label style="display:flex;align-items:center;gap:6px;margin-top:6px;cursor:pointer">
+            <input type="checkbox" id="le-bank-default" style="width:14px;height:14px;cursor:pointer;accent-color:var(--green)">
+            <span class="elb" style="margin:0">DEFAULT — PAY TO THIS ACCOUNT</span>
+          </label>
+          <div id="le-default-hint" style="display:none;font-size:9px;color:var(--text3);margin-top:1px"></div>
           <input type="hidden" id="le-bank-edit-id" value="">
           <div style="display:flex;gap:6px;margin-top:6px">
             <button style="background:var(--green);color:#fff;border:none;border-radius:5px;padding:4px 12px;font-size:11px;font-weight:600;cursor:pointer" onclick="saveBankAccount()">Save</button>
@@ -672,7 +677,7 @@ select:focus{border-color:var(--green)}
           <span style="font-weight:700;color:var(--text2);font-size:11px">BANK ACCOUNT</span>
         </div>
         <div style="display:flex;gap:6px;align-items:center">
-          <select id="ed-bank-select" style="flex:1;height:36px;border-radius:6px;border:1px solid var(--border2);padding:0 8px;font-size:12px;font-family:inherit;background:var(--input-bg);color:var(--text)" onchange="onEditBankSelect(this)">
+          <select id="ed-bank-select" style="flex:1;height:36px;border-radius:6px;border:1px solid var(--border2);padding:0 8px;font-size:12px;font-family:inherit;background:var(--input-bg);color:var(--text)" onchange="onEditBankSelect(this,true)">
             <option value="">Select your bank</option>
           </select>
           <button onclick="editSelectedEditBank()" style="background:none;border:none;color:var(--green);cursor:pointer;font-size:15px" title="Edit selected bank account">✎</button>
@@ -689,6 +694,11 @@ select:focus{border-color:var(--green)}
         <div class="fr" style="margin-top:6px"><div><div class="lb">IFSC CODE</div><input type="text" id="ed-ifsc" placeholder="IFSC code" style="text-transform:uppercase" oninput="lookupIFSC(this,'ed-ifsc-info')"></div><div><div class="lb">HOLDER NAME</div><input type="text" id="ed-holder" placeholder="Account holder name"></div></div>
         <div id="ed-ifsc-info" style="display:none;font-size:10px;margin-top:2px;color:var(--green);font-weight:600"></div>
         <div class="fr" style="margin-top:6px"><div><div class="lb">LABEL (optional)</div><input type="text" id="ed-bank-label" placeholder="e.g. SBI Main"></div><div><div class="lb">ACCOUNT TYPE</div><select id="ed-acct-type" style="width:100%;height:44px;border-radius:8px;border:1.5px solid var(--border);padding:0 10px;font-size:15px;background:var(--input-bg);color:var(--text)"><option value="">—</option><option value="Savings">Savings</option><option value="Current">Current</option><option value="O D">O D</option><option value="O C C">O C C</option></select></div></div>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px;cursor:pointer">
+          <input type="checkbox" id="ed-bank-default" style="width:16px;height:16px;cursor:pointer;accent-color:var(--green)">
+          <span class="lb" style="margin:0">DEFAULT — PAY TO THIS ACCOUNT</span>
+        </label>
+        <div id="ed-default-hint" style="display:none;font-size:10px;color:var(--text3);margin-top:2px"></div>
         <input type="hidden" id="ed-bank-edit-id" value="">
         <div style="display:flex;gap:8px;margin-top:8px">
           <button style="background:var(--green);color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="saveEditBankAccount()">Save</button>
@@ -1739,12 +1749,29 @@ function nsAddBankRow(){
     // file with a blank BENEFICIARY ACCOUNT TYPE column.
     +'<div class="lb">ACCOUNT TYPE</div>'
     +'<select class="ns-bk-type" style="width:100%;height:44px;border-radius:8px;border:1.5px solid var(--border);padding:0 10px;font-size:15px;background:var(--input-bg);color:var(--text);-webkit-appearance:menulist;appearance:menulist">'
-    +'<option value="">—</option><option value="Savings">Savings</option><option value="Current">Current</option><option value="O D">O D</option><option value="O C C">O C C</option></select>';
+    +'<option value="">—</option><option value="Savings">Savings</option><option value="Current">Current</option><option value="O D">O D</option><option value="O C C">O C C</option></select>'
+    // "Pay to this account" — the seller's default payout account, same flag
+    // the desktop seller form exposes as a per-bank radio. Radio (not
+    // checkbox) because exactly one account carries it.
+    +'<label style="display:flex;align-items:center;gap:8px;margin-top:10px;cursor:pointer">'
+    +'<input type="radio" name="ns-bk-default" class="ns-bk-default" style="width:16px;height:16px;cursor:pointer;accent-color:var(--green)">'
+    +'<span class="lb" style="margin:0">DEFAULT — PAY TO THIS ACCOUNT</span>'
+    +'</label>';
   host.appendChild(row);
+  nsEnsureOneDefault();
 }
 function nsRemoveBankRow(btn){
   var row=btn.closest('.ns-bank-row');
   if(row) row.remove();
+  nsEnsureOneDefault();
+}
+// Exactly one account must be flagged. If none is — fresh rows, or the row
+// holding it was just removed — the first takes it, which is the same fallback
+// syncTraderBanks() applies server-side on save. Mirrors the desktop seller
+// form's ensureOneDefaultBank().
+function nsEnsureOneDefault(){
+  var radios=Array.prototype.slice.call(document.querySelectorAll('#ns-bank-rows .ns-bk-default'));
+  if(radios.length&&!radios.some(function(r){return r.checked})) radios[0].checked=true;
 }
 function nsRenderBankRows(){
   var host=document.getElementById('ns-bank-rows');
@@ -1793,9 +1820,11 @@ function nsCollectBanks(){
     var v=function(sel){return (row.querySelector(sel).value||'').trim()};
     var acct=v('.ns-bk-acct'), ifsc=v('.ns-bk-ifsc').toUpperCase();
     if(!acct&&!ifsc) return;
+    var defRadio=row.querySelector('.ns-bk-default');
     out.push({bank_name:v('.ns-bk-name'),branch:ifscBranchCache[ifsc]||'',
               acctnum:acct,ifsc:ifsc,holder_name:v('.ns-bk-holder'),
-              account_type:v('.ns-bk-type')});
+              account_type:v('.ns-bk-type'),
+              is_default:(defRadio&&defRadio.checked)?1:0});
   });
   return out;
 }
@@ -2384,9 +2413,18 @@ function renderEditBankList(){
   onEditBankSelect(sel);
 }
 
-function onEditBankSelect(sel){
+// `fromUser` is set only by the picker's onchange. renderEditBankList() calls
+// this programmatically after pre-selecting the lot's saved bank, and that must
+// NOT promote — opening a lot for edit would otherwise re-point the seller's
+// default to whatever that lot happened to be paid into.
+function onEditBankSelect(sel,fromUser){
   var b=editBanks.find(function(x){return x.id==sel.value});
   renderBankInfoLine('ed-bank-info','ed-bank-select',b);
+  if(fromUser&&b&&editTraderId){
+    promoteBankDefault(editTraderId,editBanks,b).then(function(changed){
+      if(changed) toast('Default bank updated',false);
+    });
+  }
 }
 
 function editSelectedEditBank(){
@@ -2412,12 +2450,14 @@ async function deleteSelectedEditBank(){
 
 function showEditBankAdd(){
   document.getElementById('ed-acct').value='';document.getElementById('ed-acct').dataset.original='';document.getElementById('ed-acct-confirm').value='';document.getElementById('ed-acct-confirm-lbl').style.display='block';document.getElementById('ed-acct-confirm').style.display='block';document.getElementById('ed-acct-match').style.display='none';document.getElementById('ed-ifsc').value='';document.getElementById('ed-holder').value='';document.getElementById('ed-bank-label').value='';var edat=document.getElementById('ed-acct-type');if(edat)edat.value='';document.getElementById('ed-bank-edit-id').value='';
+  applyBankDefaultBox('ed',editBanks,null);
   document.getElementById('ed-bank-form').style.display='block';document.getElementById('ed-acct').focus();
 }
 
 function editEditBank(bankId){
   var b=editBanks.find(function(x){return x.id===bankId});if(!b)return;
   document.getElementById('ed-acct').value=b.acctnum||'';document.getElementById('ed-acct').dataset.original=b.acctnum||'';document.getElementById('ed-acct-confirm').value='';document.getElementById('ed-acct-confirm-lbl').style.display='none';document.getElementById('ed-acct-confirm').style.display='none';document.getElementById('ed-acct-match').style.display='none';document.getElementById('ed-ifsc').value=b.ifsc||'';document.getElementById('ed-holder').value=b.holder_name||'';document.getElementById('ed-bank-label').value=b.label||'';var edat2=document.getElementById('ed-acct-type');if(edat2)edat2.value=b.account_type||'';document.getElementById('ed-bank-edit-id').value=bankId;
+  applyBankDefaultBox('ed',editBanks,b);
   document.getElementById('ed-bank-form').style.display='block';document.getElementById('ed-acct').focus();
 }
 
@@ -2444,12 +2484,18 @@ async function saveEditBankAccount(){
   if(needConfirm&&acct!==confirmVal){toast('Account numbers do not match',true);return}
   if(ifsc&&!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)){toast('Invalid IFSC (e.g., ICIC0003816)',true);return}
   try{
+    var wantDefault=!!(document.getElementById('ed-bank-default')||{}).checked;
     var r;var body={acctnum:acct,ifsc:ifsc,label:label,holder_name:holder,account_type:(document.getElementById('ed-acct-type')||{}).value||''};
     if(ifscBranchCache[ifsc])body.branch=ifscBranchCache[ifsc];
     if(needConfirm)body.confirm_acctnum=confirmVal;
     if(eid){r=await fetch(B+'/api/traders/'+editTraderId+'/banks/'+eid,{method:'PUT',headers:ah(),body:JSON.stringify(body)})}
-    else{r=await fetch(B+'/api/traders/'+editTraderId+'/banks',{method:'POST',headers:ah(),body:JSON.stringify(body)})}
+    // POST promotes when is_default is set (and always for the first account).
+    else{body.is_default=wantDefault?1:0;r=await fetch(B+'/api/traders/'+editTraderId+'/banks',{method:'POST',headers:ah(),body:JSON.stringify(body)})}
     var d=await r.json();if(!r.ok){toast(d.error||'Failed',true);return}
+    // PUT only edits the account's own fields — promoting is a separate call.
+    if(eid&&wantDefault){
+      await promoteBankDefault(editTraderId,editBanks,editBanks.find(function(x){return String(x.id)===String(eid)}));
+    }
     toast(eid?'Bank updated':'Bank added',false);document.getElementById('ed-bank-form').style.display='none';loadEditBanks(editTraderId);
   }catch(e){toast('Failed',true)}
 }
@@ -2639,12 +2685,17 @@ async function fetchSellerTemplate(traderId) {
 function renderBankList() {
   var sel = document.getElementById('le-bank-select');
   var info = document.getElementById('le-bank-info');
-  // The picker ALWAYS opens on "Select your bank" — never pre-armed with the
-  // seller's default, and never reading "No bank account". Sellers routinely
-  // hold several accounts and a silently pre-selected default is how a lot
-  // ends up paid into the wrong one, so the operator has to choose
-  // deliberately. Empty value → bank_id saves as null and the seller's stored
-  // default is left untouched. Matches the desktop Lot Entry picker.
+  // The picker opens on the seller's DEFAULT account when they have one, so a
+  // second lot for the same seller inherits the account chosen on the first
+  // (picking one promotes it to the default — see onBankSelect). Sellers who
+  // have no default yet still open on "Select your bank", and the list never
+  // reads "No bank account".
+  //
+  // This is a deliberate departure from the desktop Lot Entry picker, which
+  // still opens blank. The risk the desktop rule guards against is real — a
+  // silently pre-armed account is how a lot ends up paid into the wrong one —
+  // so the pre-selection is flagged with a green tint, the same cue the trade
+  // picker uses for an admin-designated default.
   sel.innerHTML = '<option value="">Select your bank</option>';
   sellerBanks.forEach(function(b) {
     var label = b.label ? ' (' + b.label + ')' : '';
@@ -2655,12 +2706,29 @@ function renderBankList() {
     opt.textContent = [b.acctnum, b.bank_name, b.account_type].filter(Boolean).join(' · ') + label;
     sel.appendChild(opt);
   });
+  var def = sellerBanks.find(function(b) { return Number(b.is_default) === 1; });
+  sel.value = def ? String(def.id) : '';
+  sel.style.borderColor = def ? 'var(--green)' : '';
+  sel.style.background  = def ? 'var(--green-bg, #ECFDF5)' : 'var(--input-bg)';
+  // No `fromUser` — a pre-selection must not re-POST the default it just read.
   onBankSelect(sel);
 }
 
-function onBankSelect(sel) {
+// `fromUser` is set only by the picker's onchange — the programmatic call at the
+// end of renderBankList() must never promote, or merely loading a seller would
+// re-point their payouts.
+function onBankSelect(sel, fromUser) {
   var b = sellerBanks.find(function(x) { return x.id == sel.value; });
   renderLeBankInfo(b);
+  // Green = "this is the seller's default". Still true after an operator pick,
+  // since picking promotes; clearing back to "Select your bank" drops the tint.
+  sel.style.borderColor = b ? 'var(--green)' : '';
+  sel.style.background  = b ? 'var(--green-bg, #ECFDF5)' : 'var(--input-bg)';
+  if (fromUser && b && selT) {
+    promoteBankDefault(selT.id, sellerBanks, b).then(function(changed) {
+      if (changed) toast('Default bank updated for ' + selT.name, false);
+    });
+  }
 }
 // Render the bank info line for the selected bank. Shows the branch from the
 // stored value when present; otherwise derives it live from the IFSC (same
@@ -2698,6 +2766,44 @@ function renderBankInfoLine(infoElId, selectElId, b) {
   }
 }
 
+// ── DEFAULT ("PAY TO THIS ACCOUNT") ──
+// Seeds the bank form's default checkbox. A seller must always have exactly
+// one default, so the box is checked AND locked in the two cases where the
+// operator has no real choice: editing the account that already holds it (you
+// move the default by promoting another account, not by unticking this one),
+// and adding a seller's very first account (the server promotes it either way).
+function applyBankDefaultBox(prefix, banks, bank) {
+  var box = document.getElementById(prefix + '-bank-default');
+  if (!box) return;
+  var isDefault = !!(bank && Number(bank.is_default) === 1);
+  var isFirst   = !bank && !(banks || []).length;
+  box.checked  = isDefault || isFirst;
+  box.disabled = isDefault || isFirst;
+  var hint = document.getElementById(prefix + '-default-hint');
+  if (!hint) return;
+  hint.textContent = isDefault ? 'Already the default — promote another account to move it.'
+                   : isFirst   ? 'First account — always the default.'
+                   : '';
+  hint.style.display = hint.textContent ? 'block' : 'none';
+}
+
+// Make `bank` the seller's default payout account. The endpoint flips
+// is_default in trader_banks AND syncs traders.acctnum/ifsc/holder_name, so the
+// seller master and every `ORDER BY is_default DESC` reader (bank payment file,
+// DBF/XLSX exports) follow. `banks` is patched in place so a repeat pick of the
+// same account doesn't re-POST.
+async function promoteBankDefault(traderId, banks, bank) {
+  if (!traderId || !bank) return false;
+  if (Number(bank.is_default) === 1) return false;   // already there
+  try {
+    var r = await fetch(B + '/api/traders/' + traderId + '/banks/' + bank.id + '/default',
+                        { method: 'POST', headers: ah() });
+    if (!r.ok) { toast('Could not set default bank', true); return false; }
+    (banks || []).forEach(function(x) { x.is_default = (x.id === bank.id) ? 1 : 0; });
+    return true;
+  } catch (e) { toast('Could not set default bank', true); return false; }
+}
+
 function editSelectedBank() {
   var sel = document.getElementById('le-bank-select');
   if (!sel.value) { showAddBank(); return; }
@@ -2730,6 +2836,7 @@ function showAddBank() {
   document.getElementById('le-bank-label').value = '';
   var lat=document.getElementById('le-acct-type');if(lat)lat.value='';
   document.getElementById('le-bank-edit-id').value = '';
+  applyBankDefaultBox('le', sellerBanks, null);
   document.getElementById('le-bank-form').style.display = 'block';
   document.getElementById('le-acct').focus();
 }
@@ -2747,6 +2854,7 @@ function editBankAccount(bankId) {
   document.getElementById('le-bank-label').value = b.label || '';
   var lat2=document.getElementById('le-acct-type');if(lat2)lat2.value=b.account_type || '';
   document.getElementById('le-bank-edit-id').value = bankId;
+  applyBankDefaultBox('le', sellerBanks, b);
   document.getElementById('le-bank-form').style.display = 'block';
   document.getElementById('le-acct').focus();
 }
@@ -2788,16 +2896,24 @@ async function saveBankAccount() {
   if (ifsc && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) { toast('Invalid IFSC (e.g., ICIC0003816)', true); return; }
   try {
     var r;
+    var wantDefault = !!(document.getElementById('le-bank-default') || {}).checked;
     var body = { acctnum: acct, ifsc: ifsc, label: label, holder_name: holder, account_type: (document.getElementById('le-acct-type')||{}).value || '' };
     if (ifscBranchCache[ifsc]) body.branch = ifscBranchCache[ifsc];
     if (needConfirm) body.confirm_acctnum = confirmVal;
     if (editId) {
       r = await fetch(B + '/api/traders/' + selT.id + '/banks/' + editId, { method: 'PUT', headers: ah(), body: JSON.stringify(body) });
     } else {
+      // POST promotes when is_default is set (and always for the first account).
+      body.is_default = wantDefault ? 1 : 0;
       r = await fetch(B + '/api/traders/' + selT.id + '/banks', { method: 'POST', headers: ah(), body: JSON.stringify(body) });
     }
     var d = await r.json();
     if (!r.ok) { toast(d.error || 'Failed', true); return; }
+    // PUT only edits the account's own fields — promoting is a separate call.
+    if (editId && wantDefault) {
+      await promoteBankDefault(selT.id, sellerBanks,
+        sellerBanks.find(function(x) { return String(x.id) === String(editId); }));
+    }
     toast(editId ? 'Bank updated' : 'Bank added', false);
     hideBankForm();
     fetchSellerTemplate(selT.id);
