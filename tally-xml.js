@@ -129,9 +129,9 @@ const r0 = (n) => Math.round(Number(n || 0));
 
 // ── Tally UDF (user-defined field) emission ────────────────────
 //
-// The letterhead print layout needs values Tally has no native home for —
-// the auction number, the buyer's Spices Board licence, and the per-lot
-// lot-no / bag-count on each inventory line. These travel as UDFs.
+// The letterhead print layout needs two values Tally has no native home for —
+// the auction number and the buyer's Spices Board licence. These travel as
+// UDFs read by tally-addon/SpiceLetterheadInvoice.tdl.
 //
 // Two halves have to agree or the value is silently dropped on import:
 //
@@ -143,9 +143,16 @@ const r0 = (n) => Math.round(Number(n || 0));
 //
 // Names are prefixed `Spice` so they can never collide with another add-on's
 // UDFs in the same company.
+//
+// NOT here on purpose: the per-lot lot-no and bag count. Those are NATIVE
+// per-inventory-entry fields — <BASICPACKAGEMARKS> and <BASICNUMPACKAGES>,
+// already emitted inside each <ALLINVENTORYENTRIES.LIST> below. The customer's
+// own BagLot.txt add-on reads them per entry
+// (`$$CollNumTotal:InventoryEntries:$$Number:$BasicNumPackages`), which is
+// direct proof they survive the import and bind to the inventory entry. The
+// TDL layout reads $BasicPackageMarks / $BasicNumPackages, so no UDF is needed
+// and vouchers ALREADY in Tally print their lots without a re-import.
 const UDF_NAMES = {
-  lotNo:     'SpiceLotNo',
-  bags:      'SpiceBags',
   auctionNo: 'SpiceAuctionNo',
   buyerSbl:  'SpiceBuyerSBL',
 };
@@ -786,16 +793,6 @@ ${TAGS.DEEMNO}
 <GSTHSNDESCRIPTION>${xe(Item_Card)}</GSTHSNDESCRIPTION>
 <BASICPACKAGEMARKS>${xe(lot.lot || '')}</BASICPACKAGEMARKS>
 <BASICNUMPACKAGES>${r0(lot.bag)}</BASICNUMPACKAGES>
-${udfBlock(
-  // Per-line lot no + bag count for the letterhead print layout. The two
-  // BASIC* tags above sit inside the inventory entry, but in Tally's schema
-  // "Marks" / "No. & Kind of Packages" are VOUCHER-level despatch fields —
-  // Tally is expected to ignore them here. They stay as-is (the reference
-  // export carried them, and removing them risks an unrelated regression);
-  // these UDFs are the per-line copy the TDL layout actually reads.
-  udf(UDF_NAMES.lotNo, lot.lot),
-  udf(UDF_NAMES.bags,  lot.bag, 'Number'),
-)}
 ${TAGS.DEEMNO}
 <RATE>${r2(lot.rate)}/${unitCard}</RATE>
 <AMOUNT>${r2(lot.amount)}</AMOUNT>
@@ -5067,4 +5064,7 @@ module.exports = {
   // helpers (exported for tests)
   toTallyDate,
   findState,
+  // Shared so the Dealer Invoice CSV register quotes debit notes under the
+  // SAME ref tail the Tally voucher and IRP JSON use — one setting, one shape.
+  refSuffix,
 };

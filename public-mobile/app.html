@@ -422,8 +422,8 @@ select:focus{border-color:var(--green)}
         <!-- Bank form (hidden) -->
         <div id="le-bank-form" style="display:none;margin-bottom:6px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:8px">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
-            <div><div class="elb">A/C NUMBER</div><input type="text" id="le-acct" placeholder="9-18 digits" oninput="sanitizeInt(this);checkAcctMatch('le');checkLeAcctChanged()" class="ein"></div>
-            <div id="le-confirm-col" style="display:none"><div class="elb">RE-ENTER A/C</div><input type="text" id="le-acct-confirm" placeholder="Confirm" oninput="sanitizeInt(this);checkAcctMatch('le')" class="ein"></div>
+            <div><div class="elb">A/C NUMBER</div><input type="text" id="le-acct" placeholder="9-18 characters" autocapitalize="characters" oninput="sanitizeAcct(this);checkAcctMatch('le');checkLeAcctChanged()" class="ein"></div>
+            <div id="le-confirm-col" style="display:none"><div class="elb">RE-ENTER A/C</div><input type="text" id="le-acct-confirm" placeholder="Confirm" autocapitalize="characters" oninput="sanitizeAcct(this);checkAcctMatch('le')" class="ein"></div>
           </div>
           <div id="le-acct-err" style="display:none;font-size:9px;font-weight:600;color:var(--red)"></div>
           <div id="le-acct-match" style="display:none;font-size:9px;font-weight:600"></div>
@@ -682,9 +682,9 @@ select:focus{border-color:var(--green)}
         <div id="ed-bank-info" style="margin-top:4px;font-size:11px;color:var(--text3)"></div>
       </div>
       <div id="ed-bank-form" style="display:none;margin-top:6px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px">
-        <div class="lb">A/C NUMBER</div><input type="text" id="ed-acct" placeholder="Account number (9-18 digits)" oninput="sanitizeInt(this);checkAcctMatch('ed');checkEdAcctChanged()">
+        <div class="lb">A/C NUMBER</div><input type="text" id="ed-acct" placeholder="Account number (9-18 characters)" autocapitalize="characters" oninput="sanitizeAcct(this);checkAcctMatch('ed');checkEdAcctChanged()">
         <div id="ed-acct-err" style="display:none;font-size:10px;font-weight:600;margin-top:2px;color:var(--red)"></div>
-        <div class="lb" id="ed-acct-confirm-lbl" style="margin-top:6px;display:none">RE-ENTER A/C NUMBER</div><input type="text" id="ed-acct-confirm" placeholder="Re-enter account number" style="display:none" oninput="sanitizeInt(this);checkAcctMatch('ed')">
+        <div class="lb" id="ed-acct-confirm-lbl" style="margin-top:6px;display:none">RE-ENTER A/C NUMBER</div><input type="text" id="ed-acct-confirm" placeholder="Re-enter account number" style="display:none" autocapitalize="characters" oninput="sanitizeAcct(this);checkAcctMatch('ed')">
         <div id="ed-acct-match" style="display:none;font-size:10px;font-weight:600;margin-top:2px"></div>
         <div class="fr" style="margin-top:6px"><div><div class="lb">IFSC CODE</div><input type="text" id="ed-ifsc" placeholder="IFSC code" style="text-transform:uppercase" oninput="lookupIFSC(this,'ed-ifsc-info')"></div><div><div class="lb">HOLDER NAME</div><input type="text" id="ed-holder" placeholder="Account holder name"></div></div>
         <div id="ed-ifsc-info" style="display:none;font-size:10px;margin-top:2px;color:var(--green);font-weight:600"></div>
@@ -1728,7 +1728,7 @@ function nsAddBankRow(){
     +'<button type="button" onclick="nsRemoveBankRow(this)" style="margin-left:auto;background:none;border:none;color:var(--red);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">✕ Remove</button>'
     +'</div>'
     +'<div class="lb" style="margin-top:6px">ACCOUNT NO</div>'
-    +'<input type="text" class="ns-bk-acct" inputmode="numeric" autocomplete="off" maxlength="18" oninput="this.value=this.value.replace(/[^0-9]/g,\'\')">'
+    +'<input type="text" class="ns-bk-acct" autocomplete="off" autocapitalize="characters" maxlength="18" oninput="sanitizeAcct(this)">'
     +'<div class="lb">IFSC</div>'
     +'<input type="text" class="ns-bk-ifsc" autocomplete="off" maxlength="11" placeholder="e.g. ICIC0003816" oninput="nsLookupIFSC(this)">'
     +'<div class="ns-bk-info" style="display:none;font-size:11px;margin-top:4px"></div>'
@@ -1806,7 +1806,7 @@ function nsValidateBanks(banks){
   for(var i=0;i<banks.length;i++){
     var b=banks[i],n='Bank '+(i+1)+': ';
     if(!b.acctnum||!b.ifsc) return n+'enter BOTH account number and IFSC (or clear the row).';
-    if(!/^\d{9,18}$/.test(b.acctnum)) return n+'account number must be 9–18 digits.';
+    if(!/^[A-Za-z0-9]{9,18}$/.test(b.acctnum)) return n+'account number must be 9–18 letters/digits.';
     if(!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(b.ifsc)) return n+'invalid IFSC (e.g. ICIC0003816).';
   }
   return '';
@@ -1856,6 +1856,14 @@ function sanitizeInt(inp) {
   if (v !== inp.value) inp.value = v;
 }
 
+// Bank account numbers are not always numeric — some banks issue codes with
+// letters — so keep letters and digits and strip only spaces/punctuation.
+// Case is left as typed (the re-enter check compares the raw strings).
+function sanitizeAcct(inp) {
+  var v = inp.value.replace(/[^A-Za-z0-9]/g, '');
+  if (v !== inp.value) inp.value = v;
+}
+
 function sanitizeDec(inp) {
   // Allow only digits and one decimal point
   var v = inp.value.replace(/[^0-9.]/g, '');
@@ -1879,11 +1887,11 @@ function checkAcctMatch(prefix) {
   var confirmEl = document.getElementById(prefix + '-acct-confirm');
   var matchEl = document.getElementById(prefix + '-acct-match');
   // Validate format
-  if (acct && !/^\d*$/.test(acct)) {
-    errEl.textContent = 'Only digits allowed';
+  if (acct && !/^[A-Za-z0-9]*$/.test(acct)) {
+    errEl.textContent = 'Only letters and digits allowed';
     errEl.style.display = 'block';
   } else if (acct && acct.length > 0 && (acct.length < 9 || acct.length > 18)) {
-    errEl.textContent = 'Must be 9-18 digits (' + acct.length + ' entered)';
+    errEl.textContent = 'Must be 9-18 characters (' + acct.length + ' entered)';
     errEl.style.display = 'block';
   } else {
     errEl.style.display = 'none';
@@ -2431,7 +2439,7 @@ async function saveEditBankAccount(){
   var acct=document.getElementById('ed-acct').value.trim();var ifsc=document.getElementById('ed-ifsc').value.trim().toUpperCase();var label=document.getElementById('ed-bank-label').value.trim();var holder=document.getElementById('ed-holder').value.trim();var eid=document.getElementById('ed-bank-edit-id').value;var confirmVal=document.getElementById('ed-acct-confirm').value.trim();
   var orig=(document.getElementById('ed-acct').dataset.original||'').trim();
   if(!acct){toast('Enter account number',true);return}
-  if(!/^\d{9,18}$/.test(acct)){toast('Account number must be 9-18 digits',true);return}
+  if(!/^[A-Za-z0-9]{9,18}$/.test(acct)){toast('Account number must be 9-18 letters/digits',true);return}
   var needConfirm=!eid||(eid&&acct!==orig);
   if(needConfirm&&acct!==confirmVal){toast('Account numbers do not match',true);return}
   if(ifsc&&!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)){toast('Invalid IFSC (e.g., ICIC0003816)',true);return}
@@ -2769,7 +2777,7 @@ async function saveBankAccount() {
   var confirmVal = document.getElementById('le-acct-confirm').value.trim();
   var orig = (document.getElementById('le-acct').dataset.original || '').trim();
   if (!acct) { toast('Enter account number', true); return; }
-  if (!/^\d{9,18}$/.test(acct)) { toast('Account number must be 9-18 digits', true); return; }
+  if (!/^[A-Za-z0-9]{9,18}$/.test(acct)) { toast('Account number must be 9-18 letters/digits', true); return; }
   var needConfirm = !editId || (editId && acct !== orig);
   if (needConfirm && acct !== confirmVal) {
     var matchEl = document.getElementById('le-acct-match');

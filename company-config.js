@@ -304,6 +304,14 @@ const DEFAULTS = [
   // sale auto-filled from the buyers master). Default OFF so the
   // button only appears when an admin explicitly enables it.
   { key: 'flag_bulk_set_buyer_code', value: 'false', category: 'flags', label: 'Bulk Set Buyer Code (Lots tab)', type: 'boolean' },
+  // Auction Manager — an optional screen of its own, surfaced in the sidebar
+  // when ON and hidden entirely (via .feat-auction-manager) when OFF.
+  // Default OFF so it only appears where an admin asks for it.
+  //
+  // NOT the Auction Desk. The desk is the document hub and is gated by the
+  // `auction_desk` ROLE capability in ROLE_PERMISSIONS (manager/admin), which
+  // this flag does not touch — the two screens are independent.
+  { key: 'flag_auction_manager', value: 'false', category: 'flags', label: 'Auction Manager (screen)', type: 'boolean' },
 
   // Bills of Supply — which document the tab works with: the agriculturist
   // Purchase Bill (Bill of Supply) or the Commission Bill. Picks the bulk +

@@ -11,7 +11,7 @@ const grade2Alerts = require('./grade2-alerts');
 const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 const { amountToWords } = require('./amount-words');
-const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx } = require('./exports');
+const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx, xlsxToCsvBuffer } = require('./exports');
 const { getCompanyHeader, writeXlsxCompanyHeader, formatDateForDisplay, formatDebitNoteNo, formatInvoiceNo, formatBillOfSupplyNo } = require('./report-formatters');
 const { exportPdf: exportAnyPdf, renderTablePdf, renderPoolerCertificatePdf } = require('./exports-pdf');
 const { DBF_EXPORTS } = require('./dbf-exports');
@@ -6391,6 +6391,17 @@ function lotwisePurchaseOn(db) { return lotwiseOn(db, 'flag_lotwise_purchase'); 
 function lotwiseBillsOn(db)    { return lotwiseOn(db, 'flag_lotwise_bills'); }
 function lotwiseDnPlanterOn(db){ return lotwiseOn(db, 'flag_lotwise_dn_planter'); }
 
+// ── AUCTION MANAGER (flag_auction_manager) ─────────────────────
+// The Auction Manager screen. OFF (default) = the screen does not exist:
+// the sidebar entry is hidden client-side and the summary endpoint 404s, the
+// same "the feature isn't here" shape flag_lot_lock uses (rather than 403,
+// which would imply the route exists but you're not allowed).
+//
+// Not to be confused with the Auction DESK, which is gated by the
+// `auction_desk` ROLE capability. Both screens can be on at once; neither
+// flag has any bearing on the other.
+function auctionManagerOn(db) { return lotwiseOn(db, 'flag_auction_manager'); }
+
 // Builder options that reproduce a STORED purchase row exactly.
 //
 // This is the single place that decides "was this document raised lot-wise
@@ -7098,6 +7109,10 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
   let q = `SELECT lots.*,
              (SELECT b.code  FROM buyers b WHERE b.buyer = lots.buyer LIMIT 1) AS buyer_code,
              (SELECT b.gstin FROM buyers b WHERE b.buyer = lots.buyer LIMIT 1) AS buyer_gstin,
+             -- Buyer's place, for the Auction Manager's "Billing Address"
+             -- column ("<trade name> - <place>"). Additive: existing callers
+             -- ignore the extra field.
+             (SELECT b.pla   FROM buyers b WHERE b.buyer = lots.buyer LIMIT 1) AS buyer_pla,
              -- Does the lot's seller have ANY bank account on file? Feeds the
              -- "No bank account" badge on the lot-wise drill-down (the one
              -- warning from validateAuctionLots the client can't derive from
@@ -13603,6 +13618,15 @@ app.get('/api/exports/sales-journal', requireExport, async (req, res) => {
   if (!auctionId) return res.status(400).json({ error: 'auctionId required' });
   const { exportSalesJournal } = require('./exports');
   const buffer = await exportSalesJournal(getDb(), auctionId, saleType);
+  // ?format=csv serves the Auction Downloads screen's "Sales CSV" tile; the
+  // default stays XLSX so every existing caller is untouched.
+  if (String(req.query.format || '').toLowerCase() === 'csv') {
+    const csv = await xlsxToCsvBuffer(Buffer.from(buffer));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="SalesJournal.csv"');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+    return res.send(Buffer.from(csv));
+  }
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename="SalesJournal.xlsx"');
   res.send(Buffer.from(buffer));
@@ -14983,10 +15007,23 @@ app.get('/api/exports/:type/:auctionId', requireExport, async (req, res) => {
     }
     // Per-export-type content-type/extension override (defaults to xlsx).
     // CSV exports like Praman use ext:'csv', mime:'text/csv'.
-    const ext  = exportDef.ext  || 'xlsx';
-    const mime = exportDef.mime || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    let ext  = exportDef.ext  || 'xlsx';
+    let mime = exportDef.mime || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    // ?format=csv on an export that natively emits XLSX — convert the
+    // workbook we just built. Drives the Auction Downloads screen's "CSV
+    // Downloads" section, where the operator wants the same report as a
+    // flat file. An export that is ALREADY csv (Praman) falls straight
+    // through; converting it would be a no-op round trip.
+    if (format === 'csv' && ext !== 'csv') {
+      buffer = await xlsxToCsvBuffer(Buffer.from(buffer));
+      ext = 'csv';
+      mime = 'text/csv; charset=utf-8';
+    }
     res.setHeader('Content-Type', mime);
     res.setHeader('Content-Disposition', `attachment; filename="${exportDef.name}_${anoForFilename(db, auctionId)}.${ext}"`);
+    // The PWA can run off a different origin; without this the browser hides
+    // Content-Disposition and the client can't name the blob it downloads.
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
     res.send(Buffer.from(buffer));
   } catch(e) {
     res.status(500).json({ error: e.message });
@@ -15261,8 +15298,14 @@ app.get('/api/spice-board-reports/:type/export', requireExport, async (req, res)
       return res.send(buf);
     }
     if (format === 'csv') {
-      if (!def.csv) return res.status(400).json({ error: 'CSV not supported for this report' });
-      const buf = await def.csv(db, opts);
+      // A report with no native CSV builder still answers here by converting
+      // its own XLSX (single-sheet by construction — see xlsxToCsvBuffer).
+      // This is what lets Form C and Litre Weight appear under the Auction
+      // Downloads screen's "CSV Downloads" section without each report
+      // growing a second, drift-prone output path.
+      if (!def.csv && !def.xlsx) return res.status(400).json({ error: 'CSV not supported for this report' });
+      const buf = def.csv ? await def.csv(db, opts)
+                          : await xlsxToCsvBuffer(Buffer.from(await def.xlsx(db, opts)));
       // e-Auction CSVs get a "_<company short name>" suffix — several sister
       // concerns upload from the same machine and the portal files were
       // otherwise indistinguishable in the downloads folder.
@@ -16383,6 +16426,87 @@ app.get('/api/receipt/:lotId', requireView, async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // SUMMARY STATS
 // ══════════════════════════════════════════════════════════════
+// ── AUCTION MANAGER — header + stat band for one trade ─────────
+// Feeds the Auction Manager screen's top block: the date/auction line, the
+// Total Cardamom Value, and the eight-cell stat band. The lot/planter/trader
+// tables underneath come from the existing /api/lots/:auctionId, which
+// already supports the free-text `search` the screen's filter box uses —
+// this route deliberately returns aggregates ONLY, so switching sub-tabs or
+// typing in the filter never re-fetches the header.
+//
+// 404s when flag_auction_manager is OFF: the screen doesn't exist on this
+// install, so neither does its endpoint.
+//
+// "Sold" uses the predicate the rest of the app already agrees on — a buyer
+// code that is present and is neither WD (withdrawn) nor NA. Keeping that
+// identical to /api/stats and the depot panel is the point: the Auction
+// Manager must not invent a second definition of a sold lot.
+app.get('/api/auction-manager/:auctionId', requireView, (req, res) => {
+  const db = getDb();
+  if (!auctionManagerOn(db)) {
+    return res.status(404).json({ error: 'Auction Manager is not enabled on this install' });
+  }
+  res.set('Cache-Control', 'no-store');
+
+  const auctionId = req.params.auctionId;
+  const auction = db.get('SELECT id, ano, date, crop_type FROM auctions WHERE id = ?', [auctionId]);
+  if (!auction) return res.status(404).json({ error: 'Auction not found' });
+
+  const SOLD = `UPPER(COALESCE(code,'')) NOT IN ('', 'WD', 'NA')`;
+  const agg = db.get(
+    `SELECT COUNT(*)                                                        AS booked_lots,
+            COALESCE(SUM(CASE WHEN ${SOLD} THEN 1 ELSE 0 END),0)            AS sold_lots,
+            COALESCE(SUM(CASE WHEN ${SOLD} THEN qty    ELSE 0 END),0)       AS sold_weight,
+            COALESCE(SUM(CASE WHEN ${SOLD} THEN amount ELSE 0 END),0)       AS total_value,
+            COALESCE(SUM(CASE WHEN UPPER(COALESCE(code,'')) = 'NA' THEN 1 ELSE 0 END),0) AS na_lots,
+            COALESCE(SUM(CASE WHEN UPPER(COALESCE(code,'')) = 'WD' THEN 1 ELSE 0 END),0) AS wd_lots,
+            -- Sellers are counted by trader_id where the lot carries one and
+            -- by name otherwise, so lots keyed only by a typed seller name
+            -- (older imports) still count exactly once.
+            COUNT(DISTINCT COALESCE(NULLIF(CAST(trader_id AS TEXT),''), 'n:'||UPPER(TRIM(COALESCE(name,''))))) AS total_planters,
+            -- Buyers counted over SOLD lots only: a WD lot can still carry a
+            -- stale buyer name, and counting it would overstate the band.
+            COUNT(DISTINCT CASE WHEN ${SOLD} THEN UPPER(TRIM(COALESCE(buyer,''))) END) AS total_buyers
+       FROM lots WHERE auction_id = ?`, [auctionId]) || {};
+
+  // Allocated lots = the size of the lot-number ranges handed to branches on
+  // the Lot Allocation screen, NOT a count of rows. Ranges are stored as TEXT
+  // (they can carry a branch prefix), so each is summed in JS after pulling
+  // the leading digits; a range whose ends don't parse contributes 0 rather
+  // than NaN-ing the whole band.
+  const allocRows = db.all(
+    'SELECT start_lot, end_lot FROM lot_allocations WHERE auction_id = ?', [auctionId]);
+  const lotNum = (v) => {
+    const m = String(v == null ? '' : v).match(/\d+/);
+    return m ? parseInt(m[0], 10) : null;
+  };
+  const allocatedLots = allocRows.reduce((sum, r) => {
+    const a = lotNum(r.start_lot), b = lotNum(r.end_lot);
+    if (a == null || b == null) return sum;
+    return sum + Math.abs(b - a) + 1;
+  }, 0);
+
+  res.json({
+    auction: {
+      id:   auction.id,
+      ano:  auction.ano,
+      date: auction.date,
+      crop_type: auction.crop_type || '',
+    },
+    summary: {
+      totalValue:    Number(agg.total_value)    || 0,
+      allocatedLots: allocatedLots,
+      bookedLots:    Number(agg.booked_lots)    || 0,
+      soldLots:      Number(agg.sold_lots)      || 0,
+      soldWeight:    Number(agg.sold_weight)    || 0,
+      totalPlanters: Number(agg.total_planters) || 0,
+      totalBuyers:   Number(agg.total_buyers)   || 0,
+      naLots:        Number(agg.na_lots)        || 0,
+      wdLots:        Number(agg.wd_lots)        || 0,
+    },
+  });
+});
+
 app.get('/api/stats', requireView, (req, res) => {
   // Branch tiles + per-trade breakdown depend on data the user can edit
   // (Settings → Branches, lots, invoices). Disable HTTP caching outright

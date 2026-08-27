@@ -5,12 +5,28 @@
 
 const ExcelJS = require('exceljs');
 const { collectionXlsx: newCollectionXlsx, tradeReportXlsx } = require('./auction-reports');
+// Planter-vs-dealer discrimination for the Commission Bill CSV. Imported
+// rather than reimplemented so this file agrees with the calculator about
+// which sellers carry a real GSTIN. calculations.js does not require this
+// module, so the dependency stays one-way.
+const { gstinStateCode } = require('./calculations');
 const {
   getCompanyHeader,
   writeXlsxCompanyHeader, xlsxNumFmtForHeader,
   formatDateForDisplay, fmtIndian,
   autofitColumns,
+  formatDebitNoteNo, debitNoteSeason,
 } = require('./report-formatters');
+
+// Escape one CSV field: wrap in quotes if it contains comma/quote/newline,
+// and double-up any embedded quotes. Undefined/null → empty. Shared by every
+// export here that writes CSV text directly rather than converting a workbook.
+function csvEscape(v) {
+  if (v === null || v === undefined) return '';
+  const s = String(v);
+  if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
 // Defensive identity resolver — see _company-identity-fallback.js.
 // Avoids "getCompanyIdentity is not a function" on partial deploys.
 const getCompanyIdentity = require('./_company-identity-fallback').resolve();
@@ -1652,15 +1668,6 @@ async function exportPramanCSV(db, auctionId, cfg, state) {
     'Youtube Video Link'
   ];
 
-  // Escape a CSV field: wrap in quotes if it contains comma/quote/newline,
-  // and double-up any embedded quotes. Undefined/null → empty.
-  const csvEscape = (v) => {
-    if (v === null || v === undefined) return '';
-    const s = String(v);
-    if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
-    return s;
-  };
-
   // GSTIN extractor — `cr` may be stored as "GSTIN.<15>", "gstin.<15>",
   // bare 15-char, or empty. Strip the prefix if present.
   const stripGstinPrefix = (raw) => {
@@ -1723,6 +1730,114 @@ async function exportPramanCSV(db, auctionId, cfg, state) {
   // CSV text → Buffer. Prefix with BOM so Excel on Windows opens with
   // UTF-8 correctly (otherwise accented characters break).
   return Buffer.from('\uFEFF' + lines.join('\r\n'), 'utf8');
+}
+
+// ── Export: Dealer Invoice CSV (dealer debit-note register) ──────────────
+// One flat row per DEALER debit note in the trade — the "Tax Invoice On
+// Commission" raised to each registered (Grade 2) seller. CSV only, and
+// deliberately WITHOUT the brand band every XLSX export carries: this is a
+// data feed whose column set and order are fixed by the layout it replaces,
+// so extra rows above the headers would break the consumer.
+//
+// Every derived figure comes from buildDebitNoteView() — the SAME view model
+// the printed debit note renders from — so a line in this register can never
+// disagree with the document it summarises. Two consequences worth knowing
+// before changing either side:
+//
+//   • LOT_COUNT / TOTAL_QUANTITY / CARDAMOM_VALUE cover ALL of the dealer's
+//     priced lots in the trade, because that is the set the DN body prints —
+//     even though COMMISSION itself is the GRADE-2 commission the DN was
+//     generated from (see /api/debit-notes/generate). A seller holding both
+//     grades therefore shows a commission that is not 1:1 with the cardamom
+//     value on the same row. That is the document, not a bug in the register.
+//   • INCIDENT_CHARGES is always 0 — the DN carries no incidental line today.
+//     The column exists so SUB TOTAL stays reconcilable as
+//     COMMISSION + INCIDENT_CHARGES rather than being a bare restatement.
+//
+// INVOICE NO is the DEALER ref form ("150/26-27/SE") — the number Tally and
+// the IRP JSON already use for these notes, not the shorter form printed on
+// the PDF ("150/26-27"). Both come from formatDebitNoteNo, so a site that has
+// set debit_note_prefix/_suffix gets its own format here too.
+async function exportDealerInvoiceCsv(db, auctionId, cfg) {
+  const { buildDebitNoteView } = require('./pdf/render-debit-note-html');
+  const { refSuffix } = require('./tally-xml');
+
+  const header = [
+    'ANO', 'DATE', 'INVOICE NO', 'DEALER NAME', 'STATE', 'STATECODE', 'CR/GST',
+    'LOT_COUNT', 'TOTAL_QUANTITY', 'CARDAMOM_VALUE', 'COMMISSION',
+    'INCIDENT_CHARGES', 'SUB TOTAL', 'IGST', 'CGST', 'SGST',
+    'ROUND OFF', 'GRAND TOTAL',
+  ];
+  const lines = [header.join(',')];
+  const toBuffer = () => Buffer.from('﻿' + lines.join('\r\n'), 'utf8');
+
+  const auction = db.get('SELECT id, ano FROM auctions WHERE id = ?', [auctionId]);
+  if (!auction) return toBuffer();
+
+  // Matched on auction_id OR ano: debit_notes gained auction_id in a later
+  // migration, so notes raised before it key off the trade number alone
+  // (same pattern as the Sales Journal). Ordered by note number ascending —
+  // note_no is TEXT holding a numeric string, hence the CAST.
+  const notes = db.all(
+    `SELECT * FROM debit_notes WHERE (auction_id = ? OR ano = ?)
+      ORDER BY CAST(note_no AS INTEGER), note_no, date`,
+    [auction.id, auction.ano]
+  );
+
+  const dateFmt = (cfg && cfg.date_format) || 'dd/mm/yyyy';
+  const season  = debitNoteSeason(cfg);
+  const refTail = refSuffix(cfg, 'tally_dn_dealer_ref_suffix', 'SE');
+  const n2 = (v) => (Math.round((Number(v) || 0) * 100) / 100).toFixed(2);
+  const n3 = (v) => (Math.round((Number(v) || 0) * 1000) / 1000).toFixed(3);
+
+  for (const dn of notes) {
+    const view  = buildDebitNoteView(dn, db, cfg, { planter: false });
+    const rawNo = String(dn.note_no || dn.id || '').trim();
+
+    // A dealer with no priced lots leaves buildDebitNoteView with one
+    // PLACEHOLDER row (lot '—') so the printed note still shows its amount.
+    // It is not a lot, so it must not be counted as one here.
+    const lotCount = view.rows.filter(r => r.lot && r.lot !== '—').length;
+
+    // The paise the stored total absorbs — recomputed rather than read off
+    // view.taxRows so this can't break if that array is reordered.
+    const roundOff = Math.round((Number(dn.total || 0)
+      - (Number(dn.amount || 0) + Number(dn.cgst || 0)
+       + Number(dn.sgst || 0) + Number(dn.igst || 0))) * 100) / 100;
+
+    // `traders.cr` is stored either as "GSTIN.<15>" or bare, depending on
+    // whether the seller was typed in or bulk-imported. The view hands back
+    // the bare form; re-prefixing normalises both storage shapes to the one
+    // this layout expects, and a seller with no GSTIN stays blank rather than
+    // emitting a lone "GSTIN.".
+    const gstin = view.receiver.gstin ? 'GSTIN.' + view.receiver.gstin : '';
+
+    lines.push([
+      dn.ano || '',
+      formatDateForDisplay(dn.date, dateFmt),
+      formatDebitNoteNo(cfg, rawNo, {
+        planter: false, ano: dn.ano,
+        legacy: season ? `${rawNo}/${season}${refTail}` : `${rawNo}${refTail}`,
+      }),
+      dn.name || '',
+      view.receiver.state || dn.state || '',
+      view.receiver.stCode || '',
+      gstin,
+      lotCount,
+      n3(view.totals.qty),
+      n2(view.totals.value),
+      n2(view.totals.commission),
+      n2(view.totals.incidental),
+      n2(view.totals.taxable),
+      n2(dn.igst),
+      n2(dn.cgst),
+      n2(dn.sgst),
+      n2(roundOff),
+      n2(dn.total),
+    ].map(csvEscape).join(','));
+  }
+
+  return toBuffer();
 }
 
 // ── Export Type 12: Trade Report (BUYERS LIST FOR VERIFICATION) ──
@@ -1797,6 +1912,10 @@ const EXPORT_TYPES = {
   bank_payment:       { fn: exportBankPayment,       name: 'BankPayment',       needsCfg: true },
   pooler_register:    { fn: exportPoolerRegister,    name: 'PoolerRegister' },
   full_file:          { fn: exportFullFile,          name: 'FullFile' },
+  // Writes CSV directly (bespoke 22-column layout), so ext/mime are set
+  // here and the route's generic xlsx→csv conversion is skipped.
+  commission_bill_csv:{ fn: exportCommissionBillCsv, name: 'CommissionBill', needsCfg: true,
+                        ext: 'csv', mime: 'text/csv; charset=utf-8' },
   collection:         { fn: exportCollection,        name: 'Collection' },
   trade_report:       { fn: exportTradeReport,       name: 'AuctionReport' },
   dealer_list:        { fn: exportDealerList,        name: 'DealerList' },
@@ -1804,13 +1923,170 @@ const EXPORT_TYPES = {
   pooler_list_consolidated: { fn: exportPoolerListConsolidated, name: 'PoolerListConsolidated' },
   planter_list:       { fn: exportPlanterList,       name: 'PlanterList' },
   sales_taxes:        { fn: exportSalesTaxes,        name: 'SalesTaxes' },
+  // Emits CSV text directly (ext/mime override the xlsx default). The generic
+  // route sees ext:'csv' and skips the workbook→CSV conversion, so ?format=csv
+  // and no format at all both serve the same bytes.
+  dealer_invoice_csv: { fn: exportDealerInvoiceCsv,  name: 'DealerInvoice',     needsCfg: true,
+                        ext: 'csv', mime: 'text/csv; charset=utf-8' },
   payment:            { fn: exportPaymentSummary,    name: 'Payment',           needsCfg: true },
   payment_party_wise: { fn: exportPaymentPartyWise,  name: 'PaymentPartyWise',  needsCfg: true },
   tally_purchase:     { fn: exportTallyPurchase,     name: 'TallyPurchase',     needsCfg: true },
 };
 
+// ── COMMISSION BILL CSV ──────────────────────────────────────────────
+// One row per LOT, in the 22-column layout the customer supplied. Not an
+// XLSX-turned-CSV: the column set is bespoke, so this writes CSV directly.
+//
+// ── Where the numbers come from ────────────────────────────────────
+// Every figure is READ from the lot, not recomputed. calculateLot() has
+// already written com / sertax / cgst / sgst / igst when the operator ran
+// Calculate, and those same stored values are what the commission bill PDF
+// and the Tally vouchers render. Deriving them a second time here would let
+// this file disagree with the documents it is supposed to describe.
+//
+// The reference layout decomposes the app's own formula rather than using a
+// different one. calculateLot computes:
+//     refund     = sb_refund kg x rate
+//     commission = (amount + refund) x commission%
+// and the layout splits `refund` into its two constituent parts:
+//     SAMPLE KG        = sb_refund + sb_trader_sample
+//     TRADER SAMPLE KG = sb_trader_sample
+// so that (SAMPLE PRICE - TRADER SAMPLE PRICE) == refund exactly. That
+// identity is what makes COMMISSION reconcile against the printed bill;
+// tests/commission-bill-csv.unit.js pins it.
+//
+// ── Precision ──────────────────────────────────────────────────────
+// The layout carries ONE decimal on the money columns while the lot stores
+// two. Rounding the stored 2dp value to 1dp reproduces the reference
+// exactly — verified against the supplied sample — so the presentation is
+// narrowed here and nowhere else. TOTAL is a whole number; ROUND OFF is the
+// difference, and is the only column computed rather than read.
+const CBC_COLUMNS = [
+  'ANO', 'DATE', 'INVOICE NO', 'QUANTITY KG', 'RATE', 'CARDAMOM_VALUE',
+  'PLANTER NAME', 'CR/GST', 'PLANTER/TRADER', 'SAMPLE KG', 'SAMPLE PRICE',
+  'TRADER SAMPLE KG', 'TRADER SAMPLE PRICE', 'COMMISSION', 'INCL. CHARGES',
+  'IGST', 'CGST', 'SGST', 'ROUND OFF', 'TOTAL', 'STATE', 'STATECODE',
+];
+
+// RFC-4180 quoting: only when the value needs it, so the common case stays
+// readable in a text editor.
+const csvCell = (v) => {
+  const s = v == null ? '' : String(v);
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+};
+
+async function exportCommissionBillCsv(db, auctionId, cfg, _state, _extra) {
+  cfg = cfg || {};
+  const auction = db.get('SELECT ano, date FROM auctions WHERE id = ?', [auctionId]) || {};
+  const lots = db.all(
+    `SELECT * FROM lots WHERE auction_id = ? ORDER BY CAST(lot_no AS INTEGER), lot_no`,
+    [auctionId]);
+
+  // Commission-bill number per lot. Bills are keyed by lot_no when the trade
+  // was raised lot-wise (flag_lotwise_bills) and by seller name when it was
+  // raised seller-wise, so build both lookups and prefer the more specific.
+  // A lot with no bill yet leaves the column blank rather than inventing a
+  // number.
+  const bills = db.all('SELECT bil, name, lot_no FROM bills WHERE ano = ?', [String(auction.ano || '')]);
+  const billByLot = new Map(), billByName = new Map();
+  for (const b of bills) {
+    const no = b.bil == null || b.bil === '' ? '' : String(b.bil);
+    if (!no) continue;
+    const lotKey = String(b.lot_no || '').trim();
+    if (lotKey) billByLot.set(lotKey, no);
+    else billByName.set(String(b.name || '').trim().toUpperCase(), no);
+  }
+
+  const r1 = (v) => Math.round((Number(v) || 0) * 10) / 10;
+  const r2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
+  // The two sample weights. sb_refund is their DIFFERENCE (it is what the
+  // commission is actually computed on), so the planter's sample is the sum.
+  const traderSampleKg = Number(cfg.sb_trader_sample) || 0;
+  const sampleKg       = r2((Number(cfg.sb_refund) || 0) + traderSampleKg);
+  const stateCodeFor = (name) => {
+    const s = String(name || '').trim().toUpperCase();
+    if (s === 'KERALA') return '32';
+    if (s === 'TAMIL NADU' || s === 'TAMILNADU') return '33';
+    // Fall back to the configured Tally state code rather than guessing.
+    return String(cfg.tally_state_code || '');
+  };
+  // d/m/yy, as in the supplied sample.
+  const dmy = (iso) => {
+    const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return String(iso || '');
+    return `${Number(m[3])}/${Number(m[2])}/${m[1].slice(2)}`;
+  };
+
+  const rows = [CBC_COLUMNS.join(',')];
+  for (const l of lots) {
+    const rate   = Number(l.price)  || 0;
+    const value  = Number(l.amount) || 0;
+    const sp     = r1(sampleKg * rate);
+    const tsp    = r1(traderSampleKg * rate);
+    const com    = r1(l.com);
+    const charge = r1(l.sertax);
+    const igst   = r1(l.igst);
+    const cgst   = r1(l.cgst);
+    const sgst   = r1(l.sgst);
+    // Net payable to the seller: the cardamom plus the sample they are
+    // credited for, less the trader's sample and everything the auctioneer
+    // deducts (commission, handling, and the GST charged on both).
+    const net    = value + sp - tsp - com - charge - igst - cgst - sgst;
+    const total  = Math.round(net);
+    const lotKey = String(l.lot_no || '').trim();
+    rows.push([
+      auction.ano == null ? '' : auction.ano,
+      dmy(auction.date),
+      billByLot.get(lotKey) || billByName.get(String(l.name || '').trim().toUpperCase()) || '',
+      r2(l.qty), rate, r2(value),
+      l.name || '', l.cr || '',
+      // T when the seller carries a real GSTIN, P otherwise — the same
+      // planter/dealer split hasValidGstin() makes everywhere else.
+      gstinStateCode(l.cr) ? 'T' : 'P',
+      sampleKg, sp, traderSampleKg, tsp,
+      com, charge, igst, cgst, sgst,
+      r2(total - net), total,
+      l.pstate || l.state || '',
+      l.pst_code || stateCodeFor(l.pstate || l.state),
+    ].map(csvCell).join(','));
+  }
+  // BOM so Excel opens the file as UTF-8 rather than mangling seller names.
+  return Buffer.from('﻿' + rows.join('\r\n') + '\r\n', 'utf8');
+}
+
+// ── XLSX → CSV ───────────────────────────────────────────────────────
+// Every export here builds its workbook through createExcelBuffer, which
+// makes exactly ONE worksheet. That is what makes this conversion safe: a
+// CSV can only ever represent one sheet, so re-reading the workbook and
+// writing its single sheet loses nothing.
+//
+// Re-parsing the buffer rather than teaching each export to emit both
+// formats is deliberate — there are 40-odd of them, and a second output
+// path per export is 40 chances for the CSV to drift from the XLSX. This
+// way the two are the same data by construction.
+//
+// Note the CSV carries the brand band (the company header rows written
+// above the column headers) exactly as the spreadsheet does — it is a
+// faithful conversion, not a re-shaped data dump.
+//
+// Throws on a workbook with more than one sheet rather than silently
+// serving the first: that would be quiet data loss, and no current export
+// produces one.
+async function xlsxToCsvBuffer(buffer) {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer);
+  if (wb.worksheets.length === 0) throw new Error('Workbook has no worksheet to convert to CSV');
+  if (wb.worksheets.length > 1) {
+    throw new Error(`Cannot convert a ${wb.worksheets.length}-sheet workbook to CSV — `
+                  + `download the XLSX instead`);
+  }
+  return await wb.csv.writeBuffer({ sheetName: wb.worksheets[0].name });
+}
+
 module.exports = {
   EXPORT_TYPES,
+  xlsxToCsvBuffer,
+  exportCommissionBillCsv, CBC_COLUMNS,
   // Reusable XLSX builder — exposed so other modules (lorry-reports.js etc.)
   // can route through the same standardized brand band + column-header
   // styling instead of building their own ExcelJS workbook.
@@ -1826,4 +2102,5 @@ module.exports = {
   exportSalesJournal, exportPurchaseJournal,
   exportPurchaseRegister, exportSalesRegister, exportIndividualRegister,
   exportSellersXlsx, exportBuyersXlsx,
+  exportDealerInvoiceCsv,
 };

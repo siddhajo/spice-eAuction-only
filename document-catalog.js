@@ -523,6 +523,30 @@ const DOCUMENTS = [
     route: '/api/exports/purchase-journal',
     href: (ctx) => `/api/exports/purchase-journal${q({ auctionId: ctx.auctionId, type: 'agri' })}` },
 
+  // One row per dealer debit note, in the fixed column layout the office's
+  // books consume. CSV only — the layout is a data feed, so the XLSX brand
+  // band would corrupt it (see exportDealerInvoiceCsv). Flagged off with the
+  // notes themselves: with flag_debit_note OFF there is nothing to register.
+  { id: 'dealer_invoice_csv', label: 'Dealer Invoice CSV', group: 'books', sub: 'Registers',
+    family: 'exports', kind: 'export', scope: 'trade', formats: ['csv'],
+    minStage: 4, perm: 'export', flag: 'flag_debit_note',
+    route: '/api/exports/:type/:auctionId', href: hrefExport('dealer_invoice_csv'),
+    note: 'Fixed 18-column layout — CSV only' },
+
+  // One row per LOT, in the 22-column layout the customer's books consume.
+  // CSV only, for the same reason as dealer_invoice_csv above: it is a data
+  // feed, and the XLSX brand band would corrupt it. Every money column is
+  // READ from the lot (com / sertax / cgst / sgst / igst), so the file
+  // reconciles against the commission-bill PDF and the Tally vouchers rather
+  // than re-deriving figures that could drift from them.
+  // Stage 3: the lots need prices — commission is computed from the amount —
+  // but no document has to have been generated, unlike the dealer register.
+  { id: 'commission_bill_csv', label: 'Commission Bill CSV', group: 'books', sub: 'Registers',
+    family: 'exports', kind: 'export', scope: 'trade', formats: ['csv'],
+    minStage: 3, perm: 'export',
+    route: '/api/exports/:type/:auctionId', href: hrefExport('commission_bill_csv'),
+    note: 'Fixed 22-column layout — CSV only' },
+
   { id: 'purchase_register', label: 'Purchase Register', group: 'books', sub: 'Registers', family: 'registers',
     kind: 'export', scope: 'dateRange', formats: ['xlsx', 'pdf'], minStage: 4, perm: 'export',
     route: '/api/exports/purchase-register',

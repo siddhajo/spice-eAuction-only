@@ -98,10 +98,16 @@ check('TDL reads the native lot/bag fields',
 // Every charge money-field must be guarded by @@SpiceIsChargeLedger. A hidden
 // line can still accumulate into Total:, and unguarded these would feed the
 // PARTY ledger's amount — the whole invoice value — into the column totals.
+// The guard must be PRESENT in the expression; it need not lead it. The tax
+// columns now nest it inside an all-zero-column test, which is why this checks
+// for the guard anywhere in the Set as rather than at the start.
 for (const f of ['CValue', 'CTaxable', 'CCGST', 'CSGST', 'CIGST', 'CTotal']) {
   const blk = tdl.slice(tdl.indexOf(`[Field: SpiceFld${f}]`));
+  const setAs = (blk.match(/Set as\s*:.*/) || [''])[0];
   check(`SpiceFld${f} is guarded against non-charge ledgers`,
-    /Set as\s*:\s*if @@SpiceIsChargeLedger/.test(blk.slice(0, 260)));
+    setAs.includes('@@SpiceIsChargeLedger'), setAs.trim());
+  check(`SpiceFld${f} has balanced parentheses`,
+    (setAs.match(/\(/g) || []).length === (setAs.match(/\)/g) || []).length, setAs.trim());
 }
 
 // The party ledger must be excluded from charge line items by name.
@@ -127,11 +133,28 @@ check('no compact [Definition] : attr : value forms remain',
   compact.length === 0,
   compact.join('\n         '));
 
-// RULE 2 — `Border` is not a valid Form attribute (T0014). It belongs on a
-// Part, Line or Field.
-const formBlocks = tdl.match(/^\[#?Form:[\s\S]*?(?=^\[|\Z)/gm) || [];
-check('no Border attribute on a Form',
-  !formBlocks.some(b => /^\s*Border\s*:/m.test(b)));
+// RULE 2 — attribute placement (T0014 "Incorrect attribute X for definition Y").
+// Each entry is an attribute that is valid SOMEWHERE but not on the listed
+// definition type. Both of these cost a failed load:
+//   Border on a Form  — belongs on Part / Line / Field
+//   Height on a Field — belongs on Style / Form; a Field uses `Lines`
+const MISPLACED = [
+  { def: 'Form',  attr: 'Border', hint: 'use Border on a Part/Line/Field' },
+  { def: 'Field', attr: 'Height', hint: 'a Field sizes vertically with Lines' },
+];
+for (const { def, attr, hint } of MISPLACED) {
+  const bad = [];
+  let cur = null;
+  tdlLines.forEach((ln, i) => {
+    const m = ln.match(/^\[#?([A-Za-z]+):\s*([^\]]+)\]/);
+    if (m) { cur = { type: m[1], name: m[2].trim() }; return; }
+    if (/^\s*;;/.test(ln)) return;
+    if (cur && cur.type === def && new RegExp(`^\\s+${attr}\\s*:`).test(ln)) {
+      bad.push(`${i + 1}: ${def} ${cur.name} — ${hint}`);
+    }
+  });
+  check(`no ${attr} attribute on a ${def}`, bad.length === 0, bad.join('\n         '));
+}
 
 // RULE 3 — a line named in `Repeat` must also appear in that part's `Lines`,
 // and a Part may carry only ONE `Repeat` (two do not stack). Breaking either
@@ -180,6 +203,8 @@ for (const m of tdl.matchAll(/^\s*(?:Lines?|Fields?|Right Fields?|Parts?|Use|Fie
     const n = raw.trim();
     // skip numeric (Lines : 3), quoted literals, and expressions
     if (!n || /^[0-9]/.test(n) || /["#$@%()+]/.test(n)) continue;
+    // Tally built-ins referenced by name rather than defined here.
+    if (['Info Field', 'Simple Field', 'Name Field', 'Default'].includes(n)) continue;
     if (!referenced.has(n)) referenced.set(n, true);
   }
 }
@@ -245,6 +270,45 @@ check('no unparenthesised chained $$ calls', chained.length === 0,
 const codeOnly = tdlLines.filter(l => !/^\s*;;/.test(l)).join('\n');
 check('no Part declares a Total: list', !/^\s*Total\s*:/m.test(codeOnly));
 check('no $$Total: reference remains in code', !codeOnly.includes('$$Total:'));
+
+// The Sample row is a display-only deduction derived from the CARDAMOM lots
+// only. Summing raw InventoryEntries would fold in the Gunny line's 200/Nos
+// rate and overstate the sample — a wrong figure on a tax document, and one
+// that would look plausible.
+check('sample qty and amount derive from the cardamom-only collection',
+  /SpiceLotCount\s*:\s*\$\$CollNumTotal:SpiceCardLots:/.test(tdl) &&
+  /SpiceSampleAmt\s*:\s*\$\$CollNumTotal:SpiceCardLots:/.test(tdl));
+check('sample never feeds the taxable total',
+  !/SpiceTotTaxable[\s\S]{0,120}SpiceSample/.test(tdl));
+check('cardamom collection filters on the stock item',
+  /SpiceIsCardLot\s*:\s*\$StockItemName\s*=\s*@@SpiceItemCard/.test(tdl));
+
+// The bands the .hbs tints must carry a print background — and it must sit on
+// the PART. `Print BG` directly on a Part is the only form the working
+// reference uses ([#Part: EXPINV Column] Print BG:Black); the Line-level
+// `Local : Field : Default : Print BG` form was tried first and never
+// rendered. Band lines that live inside a larger part therefore get a part of
+// their own, which is why SpiceLHPartyHeadPart / SpiceLHItemHeadPart exist.
+for (const part of ['SpiceLHTitle', 'SpiceLHPartyHeadPart',
+                    'SpiceLHCommodity', 'SpiceLHItemHeadPart']) {
+  const blk = tdl.slice(tdl.indexOf(`[Part: ${part}]`));
+  const end = blk.indexOf('\n[', 1);
+  // Literal colour token, not a formula: the reference always writes
+  // `Print BG:Black`, and a formula returning the quoted string "Light Green"
+  // is not the same thing.
+  check(`${part} is tinted at part level`,
+    /^\s*Print BG\s*:\s*[A-Za-z]/m.test(blk.slice(0, end > 0 ? end : 600)));
+}
+
+// And no Line-level tint may creep back in (comments excluded).
+check('no Line-level Print BG remains',
+  !tdlLines.some(l => !/^\s*;;/.test(l) && /Local\s*:\s*Field\s*:\s*Default\s*:\s*Print BG/.test(l)));
+
+// The QR part's inner field MUST stay empty — the image is drawn by the Part,
+// and putting content in that field is what stopped the QR rendering.
+const qrFld = tdl.slice(tdl.indexOf('[Field: SpiceFldQrEmpty]'));
+check('QR inner field is empty',
+  /Set as\s*:\s*""/.test(qrFld.slice(0, 400)));
 
 // Totals must still cover goods AND charges — the two live in separate
 // collections, and dropping either prints an invoice whose columns do not add

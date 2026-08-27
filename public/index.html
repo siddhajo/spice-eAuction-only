@@ -966,37 +966,67 @@ body[data-login-layout="showcase"] .login-hero{order:2;max-width:none;align-self
    querying `#settings-root [data-key]`, and a removed field would be
    dropped from the next save without any error. */
 .set-group{
+  position:relative;
   margin-bottom:14px;border:1px solid var(--spice-line);
-  border-radius:12px;overflow:hidden;background:#fff;
+  border-radius:14px;overflow:hidden;background:#fff;
+  box-shadow:0 1px 2px rgba(31,25,21,.05);transition:box-shadow .2s;
 }
+/* Cardamom rib down the left edge — a run of collapsed cards still reads
+   as a list of sections rather than a stack of grey bars. */
+.set-group::before{
+  content:'';position:absolute;top:0;left:0;width:4px;height:100%;
+  background:var(--spice-cardamom);z-index:1;
+}
+.set-group:hover{box-shadow:0 6px 18px rgba(31,25,21,.08)}
 .set-group-head{
   display:flex;align-items:flex-start;gap:10px;
-  padding:12px 16px;background:linear-gradient(180deg,#F8FAFC 0%,#F1F5F9 100%);
+  padding:12px 16px 12px 20px;background:#fff;
   cursor:pointer;user-select:none;transition:background .15s;
 }
 .set-group.open>.set-group-head{border-bottom:1px solid var(--spice-line)}
-.set-group-head:hover{background:linear-gradient(180deg,#F1F5F9 0%,#E6EDF5 100%)}
+.set-group-head:hover{background:var(--spice-cardamom-lt)}
 .set-group-head h3{
-  margin:0;font-size:14px;font-weight:700;color:var(--spice-text-main);
-  letter-spacing:-.2px;
+  margin:0;font-size:14px;font-weight:700;color:var(--spice-cardamom-dk);
+  letter-spacing:-.2px;display:flex;align-items:center;gap:8px;
 }
+.set-group-head h3 .g-ico{font-size:15px;line-height:1;flex:0 0 auto}
 .set-group-hint{
   display:block;margin-top:3px;font-size:12px;color:var(--spice-text-mute);
   line-height:1.4;
 }
 .set-group-head .g-arr{
-  font-size:10px;color:var(--spice-text-mute);flex:0 0 auto;margin-top:3px;
+  font-size:10px;color:var(--spice-cardamom);flex:0 0 auto;margin-top:5px;
   transition:transform .18s;
 }
 .set-group.open>.set-group-head .g-arr{transform:rotate(90deg)}
 .set-group-head .g-txt{flex:1 1 auto;min-width:0}
 .set-group-head .g-n{
-  flex:0 0 auto;font-size:11px;font-weight:700;color:var(--spice-text-mute);
-  background:#fff;border:1px solid var(--spice-line);border-radius:10px;padding:1px 8px;
+  flex:0 0 auto;font-size:11px;font-weight:700;color:var(--spice-cardamom-dk);
+  background:var(--spice-cardamom-lt);border:none;border-radius:999px;
+  padding:3px 10px;margin-top:1px;
 }
 .set-group-body{display:none}
 .set-group.open>.set-group-body{display:block}
-.set-group .sgrid{padding:16px}
+.set-group .sgrid{padding:8px 16px 12px}
+/* Dark mode: cards take the panel's paper tone rather than glaring
+   white, and the tints that read as "cardamom, very pale" on the light
+   ground become slate — the cardamom-lt token is a saffron/white mix and
+   would come back as a bright band here. */
+body[data-dark="1"] .set-group,
+body[data-dark="1"] .set-group-head{background:var(--spice-paper)}
+body[data-dark="1"] .set-group-head:hover,
+body[data-dark="1"] #settings-root .fg:hover{background:var(--spice-line)}
+body[data-dark="1"] .set-group-head h3,
+body[data-dark="1"] #settings-root .fg>label:not(.sw){color:var(--spice-text-main)}
+body[data-dark="1"] .set-group-head .g-n{background:var(--spice-line);color:var(--spice-text-main)}
+/* `.fg input` hard-codes a white field, which beats the app-wide dark
+   input rule on specificity. Restate it for the settings rows so a card
+   full of inputs isn't a wall of white on the dark ground. */
+body[data-dark="1"] #settings-root .fg>input:not([type="checkbox"]):not([type="radio"]),
+body[data-dark="1"] #settings-root .fg>select,
+body[data-dark="1"] #settings-root .fg>textarea{
+  background:var(--spice-cream);color:var(--spice-text-main);border-color:var(--spice-line-strong);
+}
 
 /* ── Reports tab — quick-access tile grid ─────────────────── */
 .reports-hub{
@@ -1158,6 +1188,11 @@ body[data-login-layout="showcase"] .login-hero{order:2;max-width:none;align-self
 }
 .fg{margin-bottom:14px}
 .fg label{display:block;font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px}
+/* Boolean field — label left, toggle right. Defined globally (not only
+   under #settings-root) so the row keeps its shape wherever fld() is
+   reused; the Settings rules below refine the spacing. */
+.fg-bool{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.fg-bool>label:not(.sw){margin:0;cursor:pointer}
 /* Settings panel: field labels take the theme colour (themed dark variant
    for readable contrast on the light card). Used directly on the label
    element, so var() resolves against the inherited *themed* --spice-saffron-dk
@@ -1466,6 +1501,165 @@ body:not([data-feat-debit-note-planter="1"]) .feat-debit-note-planter{display:no
    toolbar are tagged .feat-price-list-mapping so this single rule hides
    both when flag_price_list_mapping is OFF. */
 body:not([data-feat-price-list-mapping="1"]) .feat-price-list-mapping{display:none !important}
+/* Auction Manager — gated by flag_auction_manager. Separate from the
+   Auction Desk, which is gated by the auction_desk ROLE capability and is
+   untouched by this flag; both screens can be on at once.
+   Only ever ADDS a hide, so the sidebar entry keeps .side-item's own
+   display:flex when the flag is on — no companion rule needed (unlike
+   .needs-auction-desk, whose base rule hides by default). */
+body:not([data-feat-auction-manager="1"]) .feat-auction-manager{display:none !important}
+
+/* ── Auction Manager screen ──────────────────────────────────────────
+   Flat by design — hairline rules and tinted bands, no cards or shadows,
+   because the screen is read at a glance across a hall rather than browsed.
+   The LAYOUT is fixed; the PALETTE is not. Every colour derives from
+   --spice-saffron (the token every theme overrides) or from the neutral
+   --spice-* scale, so the screen re-skins with the rest of the app instead
+   of staying a fixed grey island. Same technique the sidebar rail uses. */
+#tc-auctionmgr{
+  /* Two band tints, one step apart, mixed from the theme primary over the
+     page ground. Kept low (6% / 13%) so the band reads as a surface, not as
+     a coloured callout — the numbers on it are the content. */
+  --am-band-1: color-mix(in srgb, var(--spice-saffron)  6%, var(--spice-cream));
+  --am-band-2: color-mix(in srgb, var(--spice-saffron) 13%, var(--spice-cream));
+  /* Zebra striping for the table, a half-step lighter than the bands so the
+     two systems stay visually distinct. */
+  --am-row:    color-mix(in srgb, var(--spice-saffron)  5%, var(--spice-cream));
+  --am-hover:  color-mix(in srgb, var(--spice-saffron) 10%, var(--spice-paper));
+  /* Input hairline: the theme colour at low saturation, so the filter box
+     reads as "focusable" without shouting before it has focus. */
+  --am-edge:   color-mix(in srgb, var(--spice-saffron) 42%, var(--spice-paper));
+}
+#tc-auctionmgr .am-head{display:flex;align-items:flex-start;gap:24px;padding:14px 4px 12px;flex-wrap:wrap}
+#tc-auctionmgr .am-head-l{min-width:180px}
+#tc-auctionmgr .am-date{font-size:12px;color:var(--spice-text-mute);margin-bottom:6px}
+#tc-auctionmgr .am-ano{font-size:20px;font-weight:600;color:var(--spice-text-main);letter-spacing:-.2px}
+/* The value block sits at ~half the width in the reference, not hard right,
+   so it lines up with the second stat column below it. */
+#tc-auctionmgr .am-head-r{flex:1;min-width:220px;display:flex;flex-direction:column;align-items:flex-start;padding-left:50%}
+#tc-auctionmgr .am-val-lbl{font-size:12px;color:var(--spice-text-mute);margin-bottom:6px;white-space:nowrap}
+/* The headline figure takes the theme colour — it is the one number on the
+   screen worth finding without reading a label. */
+#tc-auctionmgr .am-val{font-size:20px;font-weight:700;color:var(--spice-cardamom);white-space:nowrap}
+
+/* Stat band — two columns, alternating tinted rows. Fixed 2-col grid so the
+   left/right pairs stay aligned with the header above them. */
+#tc-auctionmgr .am-stats{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--spice-line-strong)}
+#tc-auctionmgr .am-stat{font-size:12.5px;color:var(--spice-text-main);padding:9px 12px;background:var(--am-band-1)}
+#tc-auctionmgr .am-stat.am-dark{background:var(--am-band-2)}
+#tc-auctionmgr .am-stat b{font-weight:600}
+
+/* Action row — equal icon+label buttons and the collapse chevron. */
+#tc-auctionmgr .am-acts{display:flex;align-items:center;padding:10px 4px;border-bottom:1px solid var(--spice-line);gap:4px}
+#tc-auctionmgr .am-act{flex:1;display:flex;align-items:center;justify-content:center;gap:9px;
+  background:none;border:none;font-family:inherit;font-size:13px;color:var(--spice-text-main);cursor:pointer;
+  padding:8px 6px;border-radius:6px;transition:background .12s,color .12s}
+#tc-auctionmgr .am-act:hover{background:var(--am-hover);color:var(--spice-cardamom-dk)}
+#tc-auctionmgr .am-act svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+#tc-auctionmgr .am-collapse{background:none;border:none;cursor:pointer;color:var(--spice-text-hint);padding:6px 10px;
+  font-size:13px;line-height:1;flex-shrink:0}
+#tc-auctionmgr .am-collapse svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round;transition:transform .18s}
+/* Collapsed: the action row's labels fold away and the chevron flips. */
+#tc-auctionmgr[data-am-collapsed="1"] .am-acts .am-act{display:none}
+#tc-auctionmgr[data-am-collapsed="1"] .am-collapse svg{transform:rotate(180deg)}
+
+/* Sub-tabs — the active one is underlined in the theme colour, which is also
+   the filter box's focus ring, so "what is live" reads the same both places. */
+#tc-auctionmgr .am-subtabs{display:flex;border-bottom:1px solid var(--spice-line)}
+#tc-auctionmgr .am-subtab{flex:1;background:none;border:none;font-family:inherit;font-size:13px;
+  color:var(--spice-text-mute);cursor:pointer;padding:12px 6px;border-bottom:2px solid transparent;
+  margin-bottom:-1px;transition:color .12s,border-color .12s}
+#tc-auctionmgr .am-subtab:hover{color:var(--spice-text-main)}
+#tc-auctionmgr .am-subtab.active{color:var(--spice-cardamom-dk);font-weight:600;border-bottom-color:var(--spice-saffron)}
+
+/* Filter box — full width, theme hairline, clear button inside on the right. */
+#tc-auctionmgr .am-filter-wrap{position:relative;padding:14px 4px 10px}
+#tc-auctionmgr .am-filter{width:100%;box-sizing:border-box;font-family:inherit;font-size:13.5px;
+  color:var(--spice-text-main);padding:12px 42px 12px 14px;border:1px solid var(--am-edge);
+  border-radius:8px;background:var(--spice-paper)}
+#tc-auctionmgr .am-filter::placeholder{color:var(--spice-text-hint)}
+#tc-auctionmgr .am-filter:focus{outline:none;border-color:var(--spice-saffron);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--spice-saffron) 22%, transparent)}
+#tc-auctionmgr .am-filter-clr{position:absolute;right:14px;top:50%;transform:translateY(-25%);
+  background:none;border:none;cursor:pointer;color:var(--spice-text-mute);padding:4px;line-height:0}
+#tc-auctionmgr .am-filter-clr:hover{color:var(--spice-cardamom-dk)}
+#tc-auctionmgr .am-filter-clr svg{width:18px;height:18px}
+
+/* Result table. Header is a plain label row (no fill); body rows alternate
+   the paper ground with a faint theme tint, and the whole table scrolls
+   sideways on narrow windows rather than squashing the address column. */
+#tc-auctionmgr .am-panel{border:1px solid var(--spice-line);border-radius:10px;background:var(--spice-paper);overflow:hidden}
+#tc-auctionmgr .am-panel-hd{font-size:15px;font-weight:700;color:var(--spice-text-main);padding:16px 18px 14px}
+#tc-auctionmgr .am-scroll{overflow-x:auto}
+#tc-auctionmgr table.am-tbl{width:100%;border-collapse:collapse;font-size:12.5px;color:var(--spice-text-main)}
+/* text-transform/letter-spacing are reset explicitly: the app's global
+   `th` rule uppercases and tracks out every table header, and this screen's
+   headers are sentence-case. */
+#tc-auctionmgr table.am-tbl th{font-weight:600;color:var(--spice-text-mute);text-align:left;padding:9px 14px;
+  white-space:nowrap;border:none;background:var(--am-band-1);
+  text-transform:none;letter-spacing:normal;font-size:12px}
+#tc-auctionmgr table.am-tbl td{padding:11px 14px;white-space:nowrap;border:none}
+#tc-auctionmgr table.am-tbl tbody tr:nth-child(odd){background:var(--am-row)}
+#tc-auctionmgr table.am-tbl tbody tr:nth-child(even){background:var(--spice-paper)}
+#tc-auctionmgr table.am-tbl tbody tr:hover{background:var(--am-hover)}
+#tc-auctionmgr table.am-tbl .am-ck{width:34px;padding-left:18px}
+#tc-auctionmgr table.am-tbl .am-num{text-align:left}
+#tc-auctionmgr .am-sort{cursor:pointer;user-select:none}
+#tc-auctionmgr .am-sort:hover{color:var(--spice-cardamom-dk)}
+#tc-auctionmgr .am-empty{padding:26px 18px;color:var(--spice-text-hint);font-size:13px}
+
+/* ── Auction Downloads (tc-amreports) ────────────────────────────────
+   A wall of ~35 tiles in four format sections. The grid is the whole
+   design: five to a row on a wide screen, reflowing down to one on a
+   phone, so the operator scans by position rather than reading every
+   label. Tiles are uniform on purpose — an available one and a
+   not-yet-wired one differ only in ink, never in size or place. */
+#tc-amreports .amr-close{display:flex;align-items:center;gap:14px;padding:6px 4px 18px}
+#tc-amreports .amr-close button{background:none;border:none;cursor:pointer;color:var(--spice-text-mute);
+  padding:4px;line-height:0;border-radius:6px}
+#tc-amreports .amr-close button:hover{background:var(--am-hover);color:var(--spice-cardamom-dk)}
+#tc-amreports .amr-close svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+#tc-amreports .amr-title{font-size:17px;font-weight:700;color:var(--spice-text-main);letter-spacing:-.2px}
+#tc-amreports .amr-sub{font-size:12px;color:var(--spice-text-hint);margin-left:auto}
+
+#tc-amreports .amr-sec{font-size:15px;font-weight:700;color:var(--spice-text-main);
+  margin:26px 0 12px;padding:0 4px}
+#tc-amreports .amr-sec:first-of-type{margin-top:4px}
+#tc-amreports .amr-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;padding:0 4px}
+@media (max-width:1500px){#tc-amreports .amr-grid{grid-template-columns:repeat(4,1fr)}}
+@media (max-width:1180px){#tc-amreports .amr-grid{grid-template-columns:repeat(3,1fr)}}
+@media (max-width:860px) {#tc-amreports .amr-grid{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:600px) {#tc-amreports .amr-grid{grid-template-columns:1fr}}
+
+#tc-amreports .amr-tile{display:flex;align-items:center;gap:14px;text-align:left;width:100%;
+  font-family:inherit;padding:14px 16px;border-radius:10px;
+  background:var(--am-band-1);border:1px solid transparent;cursor:pointer;
+  transition:background .12s,border-color .12s,transform .08s}
+#tc-amreports .amr-tile:hover{background:var(--am-hover);border-color:var(--am-edge)}
+#tc-amreports .amr-tile:active{transform:translateY(1px)}
+/* Not-yet-wired tiles stay in place and keep their shape — only the ink
+   drops and the cursor stops promising a download. */
+#tc-amreports .amr-tile.is-todo{cursor:not-allowed;background:var(--spice-cream);opacity:.62}
+#tc-amreports .amr-tile.is-todo:hover{background:var(--spice-cream);border-color:transparent}
+
+/* The file glyph. One icon for every tile, by request — the section
+   heading already says which format the file is, so repeating it per
+   tile would be noise. */
+#tc-amreports .amr-ico{width:38px;height:38px;flex-shrink:0;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--spice-text-main);color:var(--spice-paper)}
+#tc-amreports .amr-tile.is-todo .amr-ico{background:var(--spice-text-hint)}
+#tc-amreports .amr-ico svg{width:22px;height:22px}
+#tc-amreports .amr-txt{min-width:0}
+#tc-amreports .amr-lbl{font-size:13px;font-weight:500;color:var(--spice-text-main);
+  line-height:1.25;margin-bottom:4px;
+  /* Two lines then ellipsis — "Pooler List consolidated (Party-wise)" must
+     not push a tile taller than its row-mates. */
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#tc-amreports .amr-hint{font-size:12px;font-weight:600;color:var(--spice-text-mute)}
+#tc-amreports .amr-tile.is-todo .amr-hint{font-weight:500;font-style:italic}
 /* Payments screen chooser — flag_lotwise_payments. The Payments tab holds
    BOTH screens and these two rules show exactly one: OFF (default) keeps
    the classic seller-wise screen, ON swaps in the lot-wise one. Neither
@@ -2728,6 +2922,76 @@ body[data-hub-plain="1"] .hub-plain-dot{background:var(--hub-p-edge)}
 .sgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
 .bgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px 18px}
 
+/* ── Settings field rows ──────────────────────────────────
+   Inside the Settings panel a field is a ROW — label on the left, its
+   control on the right — laid out two rows per line while the panel is
+   wide enough. That is roughly twice the density of the label-above-
+   input card it replaces, which is what makes an 83-field category like
+   To Tally readable, and it stacks the values into a column the eye can
+   run straight down.
+
+   Every rule here is scoped to #settings-root, so the same `.fg` markup
+   keeps its stacked shape everywhere else in the app (login card, lot
+   modals, trader forms). The ID also keeps these rules ahead of the
+   body[data-density] sizing overrides, which would otherwise re-inflate
+   the inputs to 44px and break the row. */
+/* Cells stretch (the grid default) rather than sizing to their own
+   content, so a two-line label on the left doesn't leave the row
+   separator beside it sitting higher than its neighbour's. */
+#settings-root .sgrid,
+#settings-root .bgrid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));
+  gap:0 26px;
+}
+/* wrap is on so an extra element in the row (a note under the control)
+   drops to its own line instead of being squeezed on top of the label.
+   Safe because the label's flex-basis is 0 — a long label therefore
+   never contributes enough width to push the control onto line two. */
+#settings-root .fg{
+  display:flex;flex-wrap:wrap;align-items:center;align-content:flex-start;
+  gap:12px;margin:0;min-width:0;
+  padding:8px 10px;border-bottom:1px solid var(--spice-line);
+  border-radius:8px;transition:background .12s;
+}
+#settings-root .fg:hover{background:var(--spice-cardamom-lt)}
+#settings-root .fg>label:not(.sw){
+  flex:1 1 0;min-width:0;margin:0;
+  font-size:12px;font-weight:600;text-transform:none;letter-spacing:0;
+  line-height:1.35;color:var(--spice-cardamom-dk);
+}
+#settings-root .fg>label.sw{flex:0 0 auto;margin:0}
+#settings-root .fg>input:not([type="checkbox"]):not([type="radio"]),
+#settings-root .fg>select,
+#settings-root .fg>textarea{
+  flex:0 0 46%;max-width:46%;width:auto;
+  height:34px;padding:0 10px;font-size:13px;border-radius:8px;
+}
+#settings-root .fg>select{padding-right:26px;background-position:right 10px center}
+#settings-root .fg>input:not([type="checkbox"]):not([type="radio"]):focus,
+#settings-root .fg>select:focus,
+#settings-root .fg>textarea:focus{
+  border-color:var(--spice-cardamom);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--spice-cardamom) 20%, transparent);
+}
+/* A note printed under a control (e.g. the 🔒 lock explanation on
+   Business State) takes its own full-width line below the row. */
+#settings-root .fg .fg-note{
+  flex:1 0 100%;margin:0;font-size:11px;line-height:1.45;color:var(--text3);
+}
+/* Long-form values can't live in a 46% column: the field claims the
+   whole line and reverts to label-above-control. */
+#settings-root .fg.fg-wide{grid-column:1/-1;flex-wrap:wrap}
+#settings-root .fg.fg-wide>label:not(.sw){flex:1 0 100%;margin-bottom:6px}
+#settings-root .fg.fg-wide>textarea{
+  flex:1 0 100%;max-width:100%;height:auto;min-height:90px;padding:10px 12px;
+  line-height:1.5;resize:vertical;
+}
+@media(max-width:900px){
+  #settings-root .sgrid,#settings-root .bgrid{grid-template-columns:1fr}
+  #settings-root .fg>input:not([type="checkbox"]):not([type="radio"]),
+  #settings-root .fg>select,#settings-root .fg>textarea{flex:0 0 44%;max-width:44%}
+}
+
 /* ── Toggle Switch ───────────────────────────────────────── */
 .flag-row{
   display:flex;align-items:center;justify-content:space-between;
@@ -3794,6 +4058,14 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <svg viewBox="0 0 24 24"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 12l9 4 9-4"/><path d="M3 17l9 4 9-4"/></svg>
           Auction Desk
         </button>
+        <!-- Auction Manager — one trade's stat band plus its lots / planters /
+             traders, gated by flag_auction_manager (Settings → Flags). A
+             different screen from the Auction Desk above, on a different
+             gate; see the .feat-auction-manager rule. -->
+        <button class="side-item feat-auction-manager" data-tab="auctionmgr" onclick="go('auctionmgr')">
+          <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/><circle cx="7" cy="15" r="1.4"/><circle cx="19" cy="6" r="1.4"/></svg>
+          Auction Manager
+        </button>
         <button class="side-item" data-tab="dash" onclick="go('dash')">
           <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
           Dashboard
@@ -4224,6 +4496,30 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     <div class="tc" id="tc-pertrade">
       <div id="pertrade-host">
         <div style="padding:32px;text-align:center;color:var(--text3)">Loading…</div>
+      </div>
+    </div>
+
+    <!-- AUCTION MANAGER — gated by flag_auction_manager. One trade at a
+         time: header + stat band from /api/auction-manager/:id, and the
+         Lots / Planters / Traders tables from /api/lots/:id.
+         Built by loadAuctionManager(); the shell below is only the
+         scaffolding those functions fill. -->
+    <div class="tc feat-auction-manager" id="tc-auctionmgr" data-am-collapsed="0">
+      <div id="am-host">
+        <div class="am-empty">Loading…</div>
+      </div>
+    </div>
+
+    <!-- AUCTION REPORTS — the Auction Manager's Reports action opens this.
+         A screen of its own rather than a panel inside the manager, so it
+         can grow without crowding the lots table. Deliberately NOT in the
+         sidebar: it is reached from the Auction Manager and carries that
+         screen's selected trade, so arriving without one makes no sense.
+         Contents are still to be designed; the shell, the trade context and
+         the way back are what exist today. -->
+    <div class="tc feat-auction-manager" id="tc-amreports">
+      <div id="amr-host">
+        <div class="am-empty">Loading…</div>
       </div>
     </div>
 
@@ -4844,7 +5140,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <input id="pay-bank-ifsc" style="text-transform:uppercase" placeholder="e.g. HDFC0001234" oninput="payBankIfscInput()" onblur="payBankIfscLookup()">
           <div id="pay-bank-branch-hint" style="font-size:11px;color:var(--text3);margin-top:2px;min-height:14px"></div>
         </div>
-        <div class="fg" style="margin:0"><label>Account No <span style="color:var(--spice-chili)">*</span></label><input id="pay-bank-acctnum" inputmode="numeric" autocomplete="off" placeholder="required"></div>
+        <div class="fg" style="margin:0"><label>Account No <span style="color:var(--spice-chili)">*</span></label><input id="pay-bank-acctnum" inputmode="text" autocomplete="off" autocapitalize="characters" placeholder="required" oninput="sanitizeAcctInput(this)"></div>
         <div class="fg" style="margin:0"><label>Bank Name</label><input id="pay-bank-name" placeholder="e.g. HDFC"></div>
         <div class="fg" style="margin:0"><label>Holder Name</label><input id="pay-bank-holder"></div>
         <div class="fg" style="margin:0"><label>Account Type</label>
@@ -5944,7 +6240,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <button id="inv-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedInvoices()" title="Delete all ticked invoices">🗑 Delete Selected <span id="inv-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <!-- ASP-only: Print Selected Purchase. Hidden outside ASP context.
                  Visibility toggled by applyAspContextVisibility() at load + state switch. -->
-            <button id="btn-print-asp-purchase" class="btn feat-print-selected-purchase" style="display:none;height:38px;padding:0 16px;background:var(--spice-cardamom);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(22,101,52,.22)" onclick="printSelectedPurchaseFromInvoices()" title="Print purchase-side mirror PDF for all ticked invoices (ASP context only)">🖨 Print Selected Purchase</button>
+            <button id="btn-print-asp-purchase" class="btn feat-print-selected-purchase" style="display:none;height:38px;padding:0 16px;background:var(--spice-cardamom);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(22,101,52,.22)" onclick="printSelectedPurchaseFromInvoices()" title="Print purchase-side mirror PDF for all ticked invoices (Kerala setups only)">🖨 Print Selected Purchase</button>
             <!-- Lorry no: bulk-set vehicle number on ticked invoices.
                  Stored in invoices.lorry_no, picked up by the Tally
                  sales voucher generator as e-way bill VehicleNo. -->
@@ -6313,7 +6609,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <input id="paylw-bank-ifsc" style="text-transform:uppercase" placeholder="e.g. HDFC0001234" oninput="payLwBankIfscInput()" onblur="payLwBankIfscLookup()">
           <div id="paylw-bank-branch-hint" style="font-size:11px;color:var(--text3);margin-top:2px;min-height:14px"></div>
         </div>
-        <div class="fg" style="margin:0"><label>Account No <span style="color:var(--spice-chili)">*</span></label><input id="paylw-bank-acctnum" inputmode="numeric" autocomplete="off" placeholder="required"></div>
+        <div class="fg" style="margin:0"><label>Account No <span style="color:var(--spice-chili)">*</span></label><input id="paylw-bank-acctnum" inputmode="text" autocomplete="off" autocapitalize="characters" placeholder="required" oninput="sanitizeAcctInput(this)"></div>
         <div class="fg" style="margin:0"><label>Bank Name</label><input id="paylw-bank-name" placeholder="e.g. HDFC"></div>
         <div class="fg" style="margin:0"><label>Holder Name</label><input id="paylw-bank-holder"></div>
         <div class="fg" style="margin:0"><label>Account Type</label>
@@ -6741,10 +7037,12 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         </div>
 
         <div style="margin-top:12px;padding:10px 14px;background:var(--green-bg);border-radius:8px;border:1px solid var(--green);font-size:12px;color:var(--text2);line-height:1.5">
-          <strong style="color:var(--green)">Two Tally companies for ledgers:</strong>
-          <strong>Sales Party Ledgers</strong> import buyer-side parties into the Tally company.
-          <strong>RD &amp; URD Purchase Party Ledgers</strong> import into the Tally company (since suppliers are ASP's).
-          All vouchers currently import into ISP — open the matching company in Tally before importing.
+          <strong style="color:var(--green)">One Tally company:</strong>
+          every file on this screen — <strong>Sales Party Ledgers</strong> (buyer-side parties),
+          <strong>RD &amp; URD Purchase Party Ledgers</strong> (supplier-side parties) and all vouchers —
+          imports into the company named in
+          <a href="javascript:go('settings');setTimeout(()=>selectCat('tally'),100)" style="color:var(--green)">Settings → To Tally → Company &amp; State</a>.
+          Open that company in Tally before importing.
           <br><strong style="color:var(--green)">Workflow:</strong> Import party ledgers first, then matching vouchers — Tally rejects imports if any referenced ledger is missing.
         </div>
 
@@ -7037,7 +7335,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         <!-- E-way bill <DISTANCE> — Per-invoice manual override.
              The user looks up the actual distance on the NIC portal's free
              Pin-to-Pin Distance Search page (or Google Maps for a sanity
-             check) and types it in here. The value lands on the next ISP
+             check) and types it in here. The value lands on the next
              sales voucher's <DISTANCE> field verbatim. -->
         <div class="tally-section is-collapsed" id="tally-sec-distance">
         <h3 class="tally-section-head" onclick="toggleTallySection('tally-sec-distance')">
@@ -7048,7 +7346,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         <div class="tally-section-body">
         <div style="padding:14px;border:1px solid var(--border);border-radius:10px;background:#fff">
           <div style="font-size:11px;color:var(--text3);margin-bottom:10px;line-height:1.5">
-            ISP sales vouchers carry a <code style="background:var(--bg);padding:1px 4px;border-radius:3px">&lt;DISTANCE&gt;</code> field used by the e-way bill portal. Click <strong>NIC</strong> to look up the distance on the official portal (captcha-gated; one route at a time), paste the result, click <strong>Save</strong>. <strong>The value is saved per route</strong>, so every other invoice between the same two PINs — this auction and all future ones — picks it up automatically. The <span style="font-size:9px;padding:1px 5px;background:var(--green-bg);color:var(--green);border-radius:8px;font-weight:700">auto</span> badge marks rows that resolved via the saved route table.
+            Sales vouchers carry a <code style="background:var(--bg);padding:1px 4px;border-radius:3px">&lt;DISTANCE&gt;</code> field used by the e-way bill portal. Click <strong>NIC</strong> to look up the distance on the official portal (captcha-gated; one route at a time), paste the result, click <strong>Save</strong>. <strong>The value is saved per route</strong>, so every other invoice between the same two PINs — this auction and all future ones — picks it up automatically. The <span style="font-size:9px;padding:1px 5px;background:var(--green-bg);color:var(--green);border-radius:8px;font-weight:700">auto</span> badge marks rows that resolved via the saved route table.
           </div>
 
           <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
@@ -7056,7 +7354,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <label style="font-size:11px;color:var(--text2);font-weight:600">Auction:</label>
             <select id="dist-inv-auction" style="padding:5px;border:1px solid var(--border);border-radius:4px;font-size:12px"></select>
             <span id="dist-inv-count" style="font-size:11px;color:var(--text3)"></span>
-            <button class="btn" onclick="clearAllDistanceOverrides()" title="Wipe all per-invoice manual distances so every ISP invoice resolves via the route table" style="padding:6px 12px;font-size:11px;background:#FEF3C7;color:#B45309;border:1px solid #F59E0B;margin-left:auto">Clear all overrides</button>
+            <button class="btn" onclick="clearAllDistanceOverrides()" title="Wipe all per-invoice manual distances so every sales invoice resolves via the route table" style="padding:6px 12px;font-size:11px;background:#FEF3C7;color:#B45309;border:1px solid #F59E0B;margin-left:auto">Clear all overrides</button>
           </div>
           <div id="dist-inv-list" style="max-height:420px;overflow:auto;border:1px solid var(--border);border-radius:6px;background:var(--bg)">
             <div style="padding:14px;color:var(--text3);font-size:12px;text-align:center">Pick an auction and click <strong>Refresh</strong>.</div>
@@ -9968,6 +10266,10 @@ async function applyFeatureFlags() {
   const plmRaw = cfg ? cfg.flag_price_list_mapping : undefined;
   const plmOn = (plmRaw === undefined || plmRaw === null) ? true : on(plmRaw);
   document.body.setAttribute('data-feat-price-list-mapping', plmOn ? '1' : '0');
+  // Auction Manager — its own screen, gated by flag_auction_manager.
+  // Default OFF: installs opt in. Deliberately independent of the Auction
+  // Desk, which stays on its auction_desk role capability.
+  document.body.setAttribute('data-feat-auction-manager', cfg && on(cfg.flag_auction_manager) ? '1' : '0');
   // Print Selected Purchase (Sales tab toolbar). Default OFF — admins
   // explicitly enable. Still subject to the ASP context check applied
   // by applyAspContextVisibility() (Kerala + e-Auction), so the button
@@ -10113,8 +10415,17 @@ applyBranding();
 
 // ── Navigation ────────────────────────────────────────────
 // Track the most recently activated tab so the topbar Refresh button
-// knows what to re-load. Updated on every go() call.
-window._currentTab = 'dash';
+// knows what to re-load. go() is the ONLY writer.
+//
+// null — not 'dash' — until the first navigation. This statement runs while
+// the session-restore IIFE above is still awaiting /api/me, so seeding it
+// with a tab name would announce a navigation that has not happened: for the
+// whole of loadSettings + applyFeatureFlags, `_currentTab` would read 'dash'
+// even when the restore is about to land on the Auction Desk. Anything
+// sampling it in that window (the browser tests do) got the wrong answer.
+// Every reader either guards on falsy or compares for equality, so an
+// explicit "nowhere yet" is both honest and safe.
+window._currentTab = null;
 // Dev-only menu items (Formulas) — hidden by default for everyone.
 // Toggle for the current browser:
 //   spiceDev(true)   → show the Formulas item and persist the flag
@@ -11077,7 +11388,7 @@ function go(tab){
   if (typeof applyLogoBadge === 'function') {
     try { applyLogoBadge(); } catch(_) {}
   }
-  const loaders={hub:loadHub,dash:loadStats,insights:loadInsights,pertrade:loadPerTradeBreakdown,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>searchTraders(''),buyers:()=>searchBuyers(''),
+  const loaders={hub:loadHub,dash:loadStats,insights:loadInsights,pertrade:loadPerTradeBreakdown,auctionmgr:loadAuctionManager,amreports:loadAmReports,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>searchTraders(''),buyers:()=>searchBuyers(''),
     auctions:loadAuctions,reassignreqs:loadReassignRequests,lotalloc:loadLotAllocation,lots:loadLotAuctions,invoices:loadInvAuctions,preinvoice:loadPreInvoice,purchases:loadPurAuctions,
     payments:loadPayAuctions,exports:loadExpAuctions,tds:()=>{},lorry:loadLorryAuctions,
     bills:loadBillAuctions,debit:loadDnAuctions,debitplanter:loadDnpAuctions,journals:loadJournalDefault,registers:loadRegisterDefault,tally:loadTallyAuctions,
@@ -13397,6 +13708,537 @@ function reportBtns(key, small){
 // Number coercion for report cells (rows carry raw numbers so the server-side
 // numeric formatter kicks in for money/qty columns).
 function _rn(v){ const n = Number(v); return isFinite(n) ? n : 0; }
+
+// ══ AUCTION MANAGER (tc-auctionmgr, flag_auction_manager) ═══════════
+// One trade at a glance: a stat band over its lots, then the lots
+// themselves grouped three ways. Distinct from the Auction Desk, which
+// is a DOCUMENT hub on a role gate — this screen never generates or
+// downloads anything, it only reads.
+//
+// Data comes from two places and only one of them is re-fetched on
+// interaction: /api/auction-manager/:id for the header band, and the
+// existing /api/lots/:id for the rows. Filtering and sub-tab switching
+// are pure client-side transforms of the already-loaded rows, so typing
+// in the filter box costs nothing and never re-hits the server.
+let _amRows = [];        // lots for the current trade, as loaded
+let _amSummary = null;   // stat band payload
+let _amAuction = null;   // { id, ano, date, crop_type }
+let _amTab = 'lots';     // lots | planters | traders
+let _amFilter = '';
+let _amSort = { key: 'lot', dir: 1 };
+const _amSel = new Set(); // checked lot ids, keyed by lot.id
+
+// Seller is a DEALER when its cr carries a real GSTIN. This mirrors
+// calculations.gstinStateCode()'s FULL-format test, not the older
+// leading-two-digits check in _crIsDealer() further down this file:
+// that looser rule tags a planter whose CR number happens to start with
+// two digits ("CR.21472/19") as a dealer, which would put them on the
+// wrong sub-tab here. _crIsDealer is left alone — other screens depend
+// on its current behaviour; this screen just doesn't use it.
+function _amIsDealer(cr){
+  if (!cr) return false;
+  let s = String(cr).trim().toUpperCase();
+  if      (s.startsWith('GSTIN.')) s = s.slice(6);
+  else if (s.startsWith('GSTIN '))  s = s.slice(6);
+  else if (s.startsWith('GSTIN'))   s = s.slice(5);
+  else if (s.startsWith('CR.'))     s = s.slice(3);
+  else if (s.startsWith('CR '))     s = s.slice(3);
+  return /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(s.trim());
+}
+// A lot counts as SOLD on the same terms the server uses: a buyer code
+// that is present and is neither WD nor NA.
+function _amIsSold(l){
+  const c = String(l.code || '').trim().toUpperCase();
+  return c !== '' && c !== 'WD' && c !== 'NA';
+}
+const _amQty  = n => (Number(n) || 0).toFixed(3);
+// Money in the stat band is lakh-grouped (₹ 12,84,60,834.20) because it is
+// read as a magnitude. A per-lot PRICE is not — it is read as a rate and
+// compared down the column, so it stays ungrouped (3756.00) and the digits
+// line up. Two formatters, deliberately.
+const _amMny  = n => (Number(n) || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+const _amRate = n => (Number(n) || 0).toFixed(2);
+const _amInt  = n => (Number(n) || 0).toLocaleString('en-IN');
+// Lot numbers sort numerically where they are numeric and alphabetically
+// otherwise, so 2 lands before 10 rather than after it.
+function _amLotCmp(a, b){
+  const na = parseInt(String(a).match(/\d+/)?.[0] ?? '', 10);
+  const nb = parseInt(String(b).match(/\d+/)?.[0] ?? '', 10);
+  if (isFinite(na) && isFinite(nb) && na !== nb) return na - nb;
+  return String(a).localeCompare(String(b), undefined, {numeric:true});
+}
+
+async function loadAuctionManager(){
+  const host = document.getElementById('am-host');
+  if (!host) return;
+  // Shell is built once; every later render only swaps the header, the
+  // stat band and the table body, so the filter box keeps focus and its
+  // caret position while the user types.
+  if (!host._amBuilt) {
+    host.innerHTML = _amShell();
+    host._amBuilt = true;
+    // The hidden <select> is this screen's channel into the app-wide
+    // trade selection (topbar + every other tab). fillAucSelect() wires
+    // it via _wireAuctionSync, and setSharedAucId() broadcasts a real
+    // `change` to it — so picking a trade anywhere repaints this screen
+    // without the Auction Manager knowing about the topbar at all.
+    // It stays hidden because the reference screen shows the trade as a
+    // heading, not as a control.
+    const sel = document.getElementById('am-auction');
+    if (sel) sel.addEventListener('change', () => { _amSel.clear(); amReload(); });
+    const f = document.getElementById('am-filter');
+    if (f) f.addEventListener('input', () => { _amFilter = f.value; _amRenderBody(); });
+  }
+  try {
+    await fillAucSelect('am-auction');
+  } catch(e) {
+    host.innerHTML = `<div class="am-empty">Failed to load trades: ${esc(e.message||'error')}</div>`;
+    host._amBuilt = false;
+    return;
+  }
+  await amReload();
+}
+
+function _amShell(){
+  const act = (icon, label, fn) =>
+    `<button class="am-act" onclick="${fn}"><svg viewBox="0 0 24 24">${icon}</svg><span>${label}</span></button>`;
+  return `
+    <select id="am-auction" style="display:none"></select>
+    <div class="am-head">
+      <div class="am-head-l">
+        <div class="am-date" id="am-date">Date: —</div>
+        <div class="am-ano"  id="am-ano">Auction —</div>
+      </div>
+      <div class="am-head-r">
+        <div class="am-val-lbl">Total Cardamom Value</div>
+        <div class="am-val" id="am-value">₹ 0.00</div>
+      </div>
+    </div>
+    <div class="am-stats" id="am-stats"></div>
+    <div class="am-acts">
+      ${act('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>', 'Reports', "go('amreports')")}
+      ${act('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>', 'Sales Invoices', "go('invoices')")}
+      ${act('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/>', 'Purchase Invoices', "go('purchases')")}
+      ${act('<rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><line x1="6" y1="15" x2="10" y2="15"/>', 'Payments', "go('payments')")}
+      <button class="am-collapse" onclick="amToggleActions()" title="Collapse actions" aria-label="Collapse actions">
+        <svg viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg>
+      </button>
+    </div>
+    <div class="am-subtabs">
+      <button class="am-subtab active" data-am-tab="lots"     onclick="amSubTab('lots')">Lots</button>
+      <button class="am-subtab"        data-am-tab="planters" onclick="amSubTab('planters')">Planters</button>
+      <button class="am-subtab"        data-am-tab="traders"  onclick="amSubTab('traders')">Traders</button>
+    </div>
+    <div class="am-filter-wrap">
+      <input id="am-filter" class="am-filter" type="text" placeholder="Filter Lot/buyer/Planter" autocomplete="off">
+      <button class="am-filter-clr" onclick="amClearFilter()" title="Clear filter" aria-label="Clear filter">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm3.7 12.3-1.4 1.4L12 13.4l-2.3 2.3-1.4-1.4L10.6 12 8.3 9.7l1.4-1.4L12 10.6l2.3-2.3 1.4 1.4L13.4 12z"/></svg>
+      </button>
+    </div>
+    <div id="am-body"></div>`;
+}
+
+async function amReload(){
+  const sel = document.getElementById('am-auction');
+  const aid = sel && sel.value;
+  const body = document.getElementById('am-body');
+  if (!aid) {
+    if (body) body.innerHTML = `<div class="am-panel"><div class="am-empty">No trades yet.</div></div>`;
+    return;
+  }
+  if (body) body.innerHTML = `<div class="am-panel"><div class="am-empty">Loading…</div></div>`;
+  try {
+    // Header band and rows in parallel — neither depends on the other.
+    const [meta, lots] = await Promise.all([
+      j(`/api/auction-manager/${aid}?_=${Date.now()}`),
+      j(`/api/lots/${aid}`),
+    ]);
+    _amAuction = meta.auction || null;
+    _amSummary = meta.summary || null;
+    _amRows = Array.isArray(lots) ? lots : (lots && Array.isArray(lots.rows) ? lots.rows : []);
+  } catch(e) {
+    // A 404 here means the flag was switched off in another tab/session
+    // while this screen was open — say so plainly rather than showing an
+    // empty table that looks like "this trade has no lots".
+    const msg = /not enabled/i.test(e.message || '')
+      ? 'Auction Manager is switched off in Settings → Flags.'
+      : `Failed to load: ${esc(e.message || 'error')}`;
+    if (body) body.innerHTML = `<div class="am-panel"><div class="am-empty">${msg}</div></div>`;
+    return;
+  }
+  _amRenderHead();
+  _amRenderBody();
+}
+
+function _amRenderHead(){
+  const a = _amAuction || {}, s = _amSummary || {};
+  const d = document.getElementById('am-date');
+  const n = document.getElementById('am-ano');
+  const v = document.getElementById('am-value');
+  if (d) d.textContent = 'Date: ' + (a.date ? fmtD(a.date) : '—');
+  if (n) n.textContent = 'Auction ' + (a.ano != null && a.ano !== '' ? a.ano : '—');
+  if (v) v.textContent = '₹ ' + _amMny(s.totalValue);
+  const band = document.getElementById('am-stats');
+  if (!band) return;
+  // Left/right pairs, dark/light alternating by ROW — so the grid reads as
+  // four bands rather than eight separate cells.
+  const rows = [
+    ['Allocated Lots: ' + _amInt(s.allocatedLots), 'Sold Lots: '   + _amInt(s.soldLots)],
+    ['Booked Lots: '    + _amInt(s.bookedLots),    'Sold Weight: ' + _amQty(s.soldWeight)],
+    ['Total planters: ' + _amInt(s.totalPlanters), 'Total Buyers: '+ _amInt(s.totalBuyers)],
+    ['NA Lots: '        + _amInt(s.naLots),        'WD Lots: '     + _amInt(s.wdLots)],
+  ];
+  band.innerHTML = rows.map((pair, i) =>
+    pair.map(cell => `<div class="am-stat${i % 2 === 0 ? ' am-dark' : ''}">${esc(cell)}</div>`).join('')
+  ).join('');
+}
+
+// One filter box serves all three sub-tabs; it matches the fields the
+// placeholder advertises (lot, buyer, planter) plus the CR/GST value,
+// which operators search by more often than the label suggests.
+function _amMatch(l){
+  const q = _amFilter.trim().toLowerCase();
+  if (!q) return true;
+  return [l.lot_no, l.name, l.buyer, l.buyer1, l.cr]
+    .some(f => String(f == null ? '' : f).toLowerCase().includes(q));
+}
+
+function amSubTab(tab){
+  _amTab = tab;
+  document.querySelectorAll('#tc-auctionmgr .am-subtab')
+    .forEach(b => b.classList.toggle('active', b.dataset.amTab === tab));
+  _amRenderBody();
+}
+function amClearFilter(){
+  const f = document.getElementById('am-filter');
+  if (f) { f.value = ''; f.focus(); }
+  _amFilter = '';
+  _amRenderBody();
+}
+function amToggleActions(){
+  const p = document.getElementById('tc-auctionmgr');
+  if (p) p.setAttribute('data-am-collapsed', p.getAttribute('data-am-collapsed') === '1' ? '0' : '1');
+}
+function amSort(key){
+  _amSort = (_amSort.key === key) ? { key, dir: -_amSort.dir } : { key, dir: 1 };
+  _amRenderBody();
+}
+function amToggleAll(cb){
+  const ids = _amRows.filter(_amMatch).map(l => l.id);
+  if (cb.checked) ids.forEach(id => _amSel.add(id)); else ids.forEach(id => _amSel.delete(id));
+  _amRenderBody();
+}
+function amToggleOne(id, cb){
+  if (cb.checked) _amSel.add(Number(id)); else _amSel.delete(Number(id));
+}
+function _amRenderBody(){
+  const host = document.getElementById('am-body');
+  if (!host) return;
+  const ano = _amAuction && _amAuction.ano != null ? _amAuction.ano : '—';
+  const hd = `<div class="am-panel-hd">Auction No: ${esc(String(ano))}</div>`;
+  const rows = _amRows.filter(_amMatch);
+  if (!rows.length) {
+    host.innerHTML = `<div class="am-panel">${hd}<div class="am-empty">${
+      _amFilter.trim() ? 'No rows match this filter.' : 'No lots in this trade yet.'
+    }</div></div>`;
+    return;
+  }
+  const table = _amTab === 'lots'     ? _amLotsTable(rows)
+              : _amTab === 'planters' ? _amSellersTable(rows, false)
+              :                         _amSellersTable(rows, true);
+  host.innerHTML = `<div class="am-panel">${hd}<div class="am-scroll">${table}</div></div>`;
+}
+
+function _amLotsTable(rows){
+  const dir = _amSort.dir;
+  const key = _amSort.key;
+  const val = (l) => ({
+    lot: l.lot_no, planter: l.name, cr: l.cr, qty: Number(l.qty)||0,
+    bags: Number(l.bags)||0, price: Number(l.price)||0,
+    buyer: l.buyer1 || l.buyer, bill: l.invo,
+  }[key]);
+  const sorted = rows.slice().sort((a, b) => {
+    if (key === 'lot') return _amLotCmp(a.lot_no, b.lot_no) * dir;
+    const x = val(a), y = val(b);
+    if (typeof x === 'number' && typeof y === 'number') return (x - y) * dir;
+    return String(x == null ? '' : x).localeCompare(String(y == null ? '' : y)) * dir;
+  });
+  const arrow = k => _amSort.key === k ? (dir > 0 ? ' ↑' : ' ↓') : '';
+  const th = (k, label, extra = '') =>
+    `<th class="am-sort ${extra}" onclick="amSort('${k}')">${label}${arrow(k)}</th>`;
+  const allOn = sorted.length > 0 && sorted.every(l => _amSel.has(l.id));
+  return `
+    <table class="am-tbl">
+      <thead><tr>
+        <th class="am-ck"><input type="checkbox" onclick="amToggleAll(this)" ${allOn ? 'checked' : ''}
+            aria-label="Select all lots"></th>
+        ${th('lot','Lot')}${th('planter','Planter')}${th('cr','CR/GST')}
+        ${th('qty','Quantity','am-num')}${th('bags','Bags','am-num')}${th('price','Price','am-num')}
+        ${th('buyer','Buyer')}${th('bill','Bill No','am-num')}
+        <th>Billing Address</th>
+      </tr></thead>
+      <tbody>${sorted.map(l => {
+        const buyer = l.buyer1 || l.buyer || '';
+        // Billing address = the buyer's trade name and place, the pair the
+        // invoice header carries. The name is on the lot (buyer1); the place
+        // is not, so /api/lots/:auctionId resolves it from the buyers master
+        // as buyer_pla. When the buyer isn't in the master the name is shown
+        // alone rather than with a dangling separator.
+        const place = String(l.buyer_pla || '').trim();
+        const addr  = buyer ? (place ? `${buyer} - ${place}` : buyer) : '';
+        return `<tr>
+          <td class="am-ck"><input type="checkbox" ${_amSel.has(l.id) ? 'checked' : ''}
+              onclick="amToggleOne(${l.id}, this)" aria-label="Select lot ${esc(String(l.lot_no||''))}"></td>
+          <td>${esc(String(l.lot_no == null ? '' : l.lot_no))}</td>
+          <td>${esc(l.name || '')}</td>
+          <td>${esc(l.cr || '')}</td>
+          <td class="am-num">${_amQty(l.qty)}</td>
+          <td class="am-num">${_amInt(l.bags)}</td>
+          <td class="am-num">${_amRate(l.price)}</td>
+          <td>${esc(buyer)}</td>
+          <td class="am-num">${esc(String(l.invo == null ? '' : l.invo))}</td>
+          <td>${esc(addr)}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+}
+
+// Planters and Traders are the same table over the same lots, split by
+// whether the seller's cr carries a real GSTIN — the app's own
+// planter/dealer discriminator (see _amIsDealer). One row per seller,
+// with their lots rolled up.
+function _amSellersTable(rows, dealers){
+  const by = new Map();
+  for (const l of rows) {
+    if (_amIsDealer(l.cr) !== dealers) continue;
+    const k = l.trader_id != null && l.trader_id !== '' ? 't:' + l.trader_id
+            : 'n:' + String(l.name || '').trim().toUpperCase();
+    let g = by.get(k);
+    if (!g) { g = { name: l.name || '', cr: l.cr || '', lots: [], bags: 0, qty: 0, amount: 0, sold: 0 }; by.set(k, g); }
+    g.lots.push(l.lot_no);
+    g.bags   += Number(l.bags)   || 0;
+    g.qty    += Number(l.qty)    || 0;
+    g.amount += Number(l.amount) || 0;
+    if (_amIsSold(l)) g.sold++;
+  }
+  const groups = Array.from(by.values()).sort((a, b) => a.name.localeCompare(b.name));
+  if (!groups.length) {
+    return `<div class="am-empty">No ${dealers ? 'traders' : 'planters'} match.</div>`;
+  }
+  return `
+    <table class="am-tbl">
+      <thead><tr>
+        <th>${dealers ? 'Trader' : 'Planter'}</th><th>CR/GST</th>
+        <th class="am-num">Lots</th><th>Lot Nos</th>
+        <th class="am-num">Bags</th><th class="am-num">Quantity</th>
+        <th class="am-num">Sold Lots</th><th class="am-num">Value</th>
+      </tr></thead>
+      <tbody>${groups.map(g => `<tr>
+        <td>${esc(g.name)}</td>
+        <td>${esc(g.cr)}</td>
+        <td class="am-num">${_amInt(g.lots.length)}</td>
+        <td>${esc(g.lots.slice().sort(_amLotCmp).join(', '))}</td>
+        <td class="am-num">${_amInt(g.bags)}</td>
+        <td class="am-num">${_amQty(g.qty)}</td>
+        <td class="am-num">${_amInt(g.sold)}</td>
+        <td class="am-num">${_amMny(g.amount)}</td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+}
+
+// ══ AUCTION DOWNLOADS (tc-amreports) ════════════════════════════════
+// Opened by the Auction Manager's Reports action. Reads the SAME trade the
+// manager is showing — no picker of its own — so the two screens can never
+// disagree about which auction is on screen.
+//
+// ── Why a second manifest, when document-catalog.js exists ──────────
+// The catalog is richer and is the Auction Desk's source of truth, but its
+// endpoint (/api/documents/catalog) is gated on the `auction_desk` ROLE
+// capability — manager and admin only. This screen rides a per-install
+// FLAG and is reachable by an operator, so reading the catalog would lock
+// out exactly the people the screen is for. The routes below are the same
+// ones the catalog describes; tests/auction-downloads.http.js asserts every
+// one of them is still registered, so this list cannot rot silently.
+//
+// ── Entry shape ────────────────────────────────────────────────────
+//   label  what the tile says — taken verbatim from the supplied design
+//   href   (auctionId) => url for a plain GET download. Absent on `bulk`.
+//   bulk   { list, param, post } for the three GENERATED families
+//          (invoices / purchases / bills). Those have no single URL: the
+//          ids come from the family's list route and go to a bulk POST
+//          that merges them into one PDF.
+//   flag   feature flag that must be on for the tile to work
+//   todo   true = the report does not exist yet. Rendered in place, greyed,
+//          non-clickable. Kept VISIBLE rather than hidden so the screen
+//          matches the agreed layout and the gaps are obvious.
+const AMR_SECTIONS = [
+  { title: 'CSV Downloads', items: [
+    // Not in the mapping list supplied with the design — flagged as todo
+    // until told which report backs it.
+    { label: 'Crop Receipts CSV',        todo: true },
+    { label: 'Auction Report CSV',       href: id => `/api/exports/full_file/${id}?format=csv` },
+    { label: 'Commission Bill CSV',      href: id => `/api/exports/commission_bill_csv/${id}?format=csv` },
+    // The dealer debit-note register — one row per "Tax Invoice On
+    // Commission" raised to a registered seller, in the fixed 18-column
+    // layout the office's books read. Flagged with the notes themselves:
+    // with flag_debit_note off there is nothing to register.
+    { label: 'Dealer Invoice CSV',       href: id => `/api/exports/dealer_invoice_csv/${id}?format=csv`,
+                                         flag: 'flag_debit_note' },
+    { label: 'Purchase Invoice CSV',     todo: true },
+    { label: 'Litre Weight CSV',         href: id => `/api/spice-board-reports/litre_weight/export?format=csv&auctionId=${id}` },
+    { label: 'Collection Report CSV',    href: id => `/api/exports/collection/${id}?format=csv` },
+    { label: 'Form C CSV',               href: id => `/api/spice-board-reports/form_c/export?format=csv&auctionId=${id}` },
+    { label: 'Sales CSV',                href: id => `/api/exports/sales-journal?auctionId=${id}&format=csv` },
+    { label: 'Planter Disbursement CSV', todo: true },
+    { label: 'Dealer Disbursement CSV',  todo: true },
+    { label: 'Lot Verification CSV',     todo: true },
+    { label: 'Lot Verification II CSV',  todo: true },
+  ]},
+  { title: 'PDF Downloads', items: [
+    { label: 'Arrivals Report',          todo: true },
+    // The three generated families: merged from every stored document in
+    // the trade, not computed on the fly.
+    { label: 'Commission Bill - Planter', bulk: { list: '/api/bills',     param: 'auction_id', post: '/api/bills/pdf-bulk' } },
+    { label: 'Commission Bill - Dealer', todo: true },
+    { label: 'Dealer Invoice',           bulk: { list: '/api/invoices',  param: 'auction_id', post: '/api/invoices/pdf-bulk' } },
+    { label: 'Purchase Invoice',         bulk: { list: '/api/purchases', param: 'auction_id', post: '/api/invoices/purchase-pdf-bulk' } },
+    { label: 'Form C',                   href: id => `/api/spice-board-reports/form_c/export?format=pdf&auctionId=${id}` },
+    { label: 'Form D',                   href: id => `/api/spice-board-reports/form_d/export?format=pdf&auctionId=${id}` },
+    { label: 'Form D1',                  todo: true },
+    { label: 'Auction Report',           href: id => `/api/exports/trade_report/${id}?format=pdf` },
+    { label: 'Collection Report',        href: id => `/api/exports/collection/${id}?format=pdf` },
+    { label: 'Dealer Disbursement',      todo: true },
+    { label: 'Planter Disbursement',     todo: true },
+    // "Journal" is the Sales Journal, which is an XLSX export — there is no
+    // PDF builder for it, so the tile serves the spreadsheet. Flagged here
+    // rather than silently mislabelled.
+    { label: 'Journal',                  href: id => `/api/exports/sales-journal?auctionId=${id}`, note: 'xlsx' },
+    { label: 'Litre Weight Report',      href: id => `/api/spice-board-reports/litre_weight/export?format=pdf&auctionId=${id}` },
+    { label: 'Traders List',             href: id => `/api/spice-board-reports/buyers_statement/export?format=pdf&auctionId=${id}` },
+  ]},
+  { title: 'XML Downloads', items: [
+    { label: 'Service XML',      href: id => `/api/tally/export/debit_note/${id}`,               flag: 'flag_debit_note' },
+    { label: 'Merchant XML',     href: id => `/api/tally/export/merchants/${id}`,                flag: 'flag_merchants' },
+    { label: 'Purchase XML',     href: id => `/api/tally/export/rd_purchase/${id}` },
+    { label: 'URD Ledger XML',   href: id => `/api/tally/export/ledger_urd_purchase/${id}` },
+    { label: 'URD Purchase XML', href: id => `/api/tally/export/urd_purchase/${id}` },
+    { label: 'URD Service XML',  href: id => `/api/tally/export/debit_note_planter/${id}`,       flag: 'flag_debit_note_planter' },
+  ]},
+  { title: 'JSON Downloads', items: [
+    // The Tally debit-note export's `irp` format is the e-invoice JSON
+    // payload — same builder, different serialisation.
+    { label: 'Service JSON', href: id => `/api/tally/export/debit_note/${id}?format=irp`, flag: 'flag_debit_note' },
+  ]},
+];
+
+// The one file glyph every tile uses (supplied with the design).
+const AMR_FILE_ICON =
+  '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+  + '<path d="M14.5 2H7a2.5 2.5 0 0 0-2.5 2.5v15A2.5 2.5 0 0 0 7 22h10a2.5 2.5 0 0 0 2.5-2.5V7L14.5 2z"'
+  + ' opacity=".28"/>'
+  + '<path d="M14.5 2 19.5 7H16a1.5 1.5 0 0 1-1.5-1.5V2z"/>'
+  + '<path d="M14.1 10.05a.85.85 0 0 0-1.2 0l-3.75 3.75a2.4 2.4 0 0 0 3.4 3.4l3.3-3.3a.85.85 0 1 0-1.2-1.2l-3.3 3.3a.7.7 0 1 1-1-1l3.75-3.75a2.15 2.15 0 0 1 3.05 3.05l-3.4 3.4a.85.85 0 1 0 1.2 1.2l3.4-3.4a3.85 3.85 0 0 0-5.45-5.45z"/>'
+  + '</svg>';
+
+function loadAmReports(){
+  const host = document.getElementById('amr-host');
+  if (!host) return;
+  const a = _amAuction || {};
+  // Arriving with no trade means the Auction Manager was never opened (a
+  // stale hash, say). Send the user there rather than showing 35 tiles that
+  // would all download the wrong thing — or nothing.
+  if (!a.id) {
+    host.innerHTML = `<div class="am-panel"><div class="am-empty">
+      No trade selected. <a href="#" onclick="go('auctionmgr');return false"
+      style="color:var(--spice-cardamom-dk);font-weight:600">Open the Auction Manager</a> first.
+    </div></div>`;
+    return;
+  }
+  const cfg = window._CCFG || {};
+  const on  = v => String(v == null ? '' : v).toLowerCase() === 'true' || v === true;
+
+  let ready = 0, total = 0;
+  const sections = AMR_SECTIONS.map((sec, si) => {
+    const tiles = sec.items.map((it, ii) => {
+      // A flagged-off document behaves as not-available here rather than
+      // vanishing: the layout is fixed by the design, and a hole would read
+      // as a bug. The hint says WHY.
+      const flaggedOff = it.flag && !on(cfg[it.flag]);
+      const todo = !!it.todo || flaggedOff;
+      total++;
+      if (!todo) ready++;
+      const hint = it.todo        ? 'Not available yet'
+                 : flaggedOff     ? 'Turned off in Settings'
+                 : it.note==='xlsx' ? 'Click to view (XLSX)'
+                 : 'Click to view';
+      return `<button type="button" class="amr-tile${todo ? ' is-todo' : ''}"
+                ${todo ? 'disabled aria-disabled="true"' : `onclick="amrGet(${si},${ii})"`}
+                title="${esc(it.label)}">
+          <span class="amr-ico">${AMR_FILE_ICON}</span>
+          <span class="amr-txt">
+            <span class="amr-lbl">${esc(it.label)}</span>
+            <span class="amr-hint">${hint}</span>
+          </span>
+        </button>`;
+    }).join('');
+    return `<div class="amr-sec">${esc(sec.title)}</div><div class="amr-grid">${tiles}</div>`;
+  }).join('');
+
+  host.innerHTML = `
+    <div class="amr-close">
+      <button onclick="go('auctionmgr')" title="Back to Auction Manager" aria-label="Back to Auction Manager">
+        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+      <span class="amr-title">Auction Downloads</span>
+      <span class="amr-sub">Auction ${esc(String(a.ano == null ? '—' : a.ano))}
+        ${a.date ? '· ' + esc(fmtD(a.date)) : ''} · ${ready} of ${total} available</span>
+    </div>
+    ${sections}`;
+}
+
+// Download one tile. Plain-GET tiles stream straight through the existing
+// authenticated download helper; the three generated families collect their
+// ids first and POST them to the merge route.
+async function amrGet(si, ii){
+  const it = ((AMR_SECTIONS[si] || {}).items || [])[ii];
+  const a = _amAuction || {};
+  if (!it || !a.id) return;
+  if (it.bulk) return amrBulkPdf(it, a.id);
+  // Same shape as hubDownload(): the routes need a bearer token, so the
+  // file is fetched and turned into a blob rather than being navigated to.
+  // The server's Content-Disposition names it; the fallback only fires if
+  // that header is missing.
+  await withOverlay(`Preparing ${it.label}…`, async () => {
+    const r = await fetch(B + it.href(a.id), { headers: { 'Authorization': 'Bearer ' + T } });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      // A 404 is nearly always "this trade has no rows of that kind"
+      // rather than a broken link — say that instead of "not found".
+      alert(r.status === 404 ? (e.error || 'Nothing to export for this auction')
+                             : `Download failed: ${e.error || 'HTTP ' + r.status}`);
+      return;
+    }
+    const el = document.createElement('a');
+    el.href = URL.createObjectURL(await r.blob());
+    el.download = filenameFromResponse(r, it.label.replace(/\W+/g, '_'));
+    el.click();
+  });
+}
+
+// Merge every stored document of one family into a single PDF. Mirrors
+// hubBulkPdf(), but reads its routes from AMR_SECTIONS rather than from the
+// role-gated catalog — see the note on AMR_SECTIONS.
+async function amrBulkPdf(it, auctionId){
+  let rows;
+  try { rows = await j(`${it.bulk.list}?${it.bulk.param}=${encodeURIComponent(auctionId)}`); }
+  catch (e) { showError(e); return; }
+  rows = Array.isArray(rows) ? rows : (rows.rows || []);
+  const ids = rows.map(r => Number(r.id)).filter(Boolean);
+  if (!ids.length) { toast(`No ${it.label.toLowerCase()} generated for this trade yet`); return; }
+  await fetchPdfWithOverlay(
+    `Building merged PDF for ${ids.length} document${ids.length === 1 ? '' : 's'}…`,
+    it.bulk.post, `${it.label.replace(/\W+/g, '_')}_${ids.length}.pdf`, { ids });
+}
 
 // Per-Auction Breakdown — lives on its own screen (tc-pertrade), moved off
 // the dashboard. Always shows all auctions (lifetime), reusing the same
@@ -21111,6 +21953,14 @@ function maskAcct(acct) {
   return '*'.repeat(s.length - 4) + s.slice(-4);
 }
 
+// Bank account numbers are not always numeric — some banks issue codes with
+// letters — so keep letters and digits and strip only spaces/punctuation.
+// Case is left as typed. Mirrors sanitizeAcct() in the mobile app.
+function sanitizeAcctInput(inp) {
+  const v = inp.value.replace(/[^A-Za-z0-9]/g, '');
+  if (v !== inp.value) inp.value = v;
+}
+
 // Press Enter in the lot-form fields to save (skip from textareas/selects).
 // Listener attached at module level so dynamically-rendered inputs still
 // trigger Save without per-input bindings.
@@ -21562,68 +22412,135 @@ function captureCurrentPanel(){
 // unclaimed lands in a trailing "Other Settings" card, so a new key in
 // company-config.js still shows up without being listed here.
 const SET_FIELD_GROUPS = {
+  mode: [
+    { title:'Business Mode & State', icon:'⚙', hint:'What this install trades and which state it operates from. The state picks the address, GSTIN, bank and Spice Board details used everywhere else.',
+      keys:['business_mode','business_state'] },
+    { title:'Display', icon:'🗓', hint:'How dates read across the app, its exports and its PDFs. Storage stays ISO yyyy-mm-dd either way.',
+      keys:['date_format'] },
+  ],
+  company: [
+    { title:'Name & Identity', icon:'🏢', hint:'What the company is called on every document — the trade name, its legal suffix, and the short code used in file names.',
+      keys:['trade_name','legal_name','short_name','logo'] },
+    { title:'Constitution', icon:'🤝', hint:'Partnership firms print the firm name / registration number under the company name.',
+      keys:['is_partnership','partnership_name'] },
+    { title:'Statutory Registrations', icon:'📜', hint:'Numbers printed in the invoice header and quoted in the Spice Board returns.',
+      keys:['pan','cin','fssai','sbl','msme'] },
+  ],
+  address_tn: [
+    { title:'Registered Address', icon:'📍', hint:'The Tamil Nadu office address block printed on documents.',
+      keys:['tn_address1','tn_address2','tn_place','tn_pin','tn_state','tn_branch'] },
+    { title:'Contact', icon:'📞', hint:'Phone and email printed under the address.',
+      keys:['tn_phone','tn_email'] },
+    { title:'Tax Registration', icon:'🧾', hint:'The GSTIN this state bills under.',
+      keys:['tn_gstin'] },
+    { title:'Dispatch Origin', icon:'🚚', hint:'Where goods actually leave from, when that differs from the registered address.',
+      keys:['tn_dispatch'] },
+  ],
+  address_kl: [
+    { title:'Registered Address', icon:'📍', hint:'The Kerala office address block printed on documents.',
+      keys:['kl_address1','kl_address2','kl_place','kl_pin','kl_state','kl_branch'] },
+    { title:'Contact', icon:'📞', hint:'Phone and email printed under the address.',
+      keys:['kl_phone','kl_email'] },
+    { title:'Tax Registration', icon:'🧾', hint:'The GSTIN this state bills under.',
+      keys:['kl_gstin'] },
+    { title:'Dispatch Origin', icon:'🚚', hint:'Consignor details for the e-invoice / e-way bill DISPATCHFROM block. Kept separate from the registered address so goods can ship from a different godown.',
+      keys:['kl_dispatch','kl_dispatch_place','kl_dispatch_pin','kl_dispatch_state'] },
+  ],
+  bank: [
+    { title:'Tamil Nadu Account', icon:'🏦', hint:'Printed on invoices raised from Tamil Nadu.',
+      keys:['bank_tn_name','bank_tn_acct','bank_tn_ifsc'] },
+    { title:'Kerala Account', icon:'🏦', hint:'Printed on invoices raised from Kerala.',
+      keys:['bank_kl_name','bank_kl_acct','bank_kl_ifsc'] },
+    { title:'Payment File Format', icon:'📤', hint:'Column layout of the Bank Payment export — pick the format your bank expects for its bulk-upload template.',
+      keys:['bank_format'] },
+  ],
+  hsn: [
+    { title:'Goods — HSN', icon:'🏷', hint:'HSN codes for the goods lines on the invoice.',
+      keys:['hsn_cardamom','hsn_gunny'] },
+    { title:'Services — SAC', icon:'🧰', hint:'SAC codes for the service lines — freight, insurance and the commission/handling charge.',
+      keys:['sac_transport','sac_insurance','sac_service'] },
+  ],
+  season: [
+    { title:'Season', icon:'📅', hint:'The season name and its short form. The short form is what gets welded onto voucher numbers ("1748/26-27").',
+      keys:['season','season_short'] },
+    { title:'Financial Year', icon:'📆', hint:'Start and end dates of the accounting year this season posts into.',
+      keys:['season_start','season_end'] },
+  ],
+  security: [
+    { title:'Concurrent Sign-ins', icon:'🔐', hint:'Whether one username may be signed in twice, and how long a quiet session keeps holding the name.',
+      keys:['single_session','session_idle_minutes'] },
+    { title:'Admin Notifications', icon:'🔔', hint:'Tell admins when another admin signs in.',
+      keys:['admin_login_alert'] },
+  ],
+  integrations: [
+    { title:'GST Lookup', icon:'🔍', hint:'API key for gstincheck.co.in — auto-fills trade name and address when a GSTIN is typed.',
+      keys:['gst_api_key'] },
+    { title:'Screen Links', icon:'🔗', hint:'Optional top-right link buttons on the Lots and To Tally screens. A button only appears once its URL has a value.',
+      match:/^link_/ },
+  ],
   flags: [
-    { title:'Invoice Content & Layout', hint:'What prints on the invoice itself — address blocks, HSN, bank line, row striping, rounding.',
+    { title:'Invoice Content & Layout', icon:'📄', hint:'What prints on the invoice itself — address blocks, HSN, bank line, row striping, rounding.',
       keys:['flag_dispatch','flag_ship','flag_hsn','flag_bank','flag_commission_bank','flag_invoice_stripe','flag_round','flag_dummy'] },
-    { title:'Tax, TDS & Export', hint:'TDS deduction on purchase/sales and the export-invoice flow.',
+    { title:'Tax, TDS & Export', icon:'🧾', hint:'TDS deduction on purchase/sales and the export-invoice flow.',
       keys:['flag_tds_purchase','flag_tds_sales','flag_wgst','flag_export'] },
-    { title:'Discounts & Debit Notes', hint:'Whether the discount appears inside the invoice or as a separate debit note, per seller type.',
+    { title:'Discounts & Debit Notes', icon:'📝', hint:'Whether the discount appears inside the invoice or as a separate debit note, per seller type.',
       keys:['flag_sample','flag_debit_note','flag_debit_note_planter'] },
-    { title:'Charges & Pooling', hint:'Optional charge lines — pooling, local transport/insurance, and the extra ad-hoc charge.',
+    { title:'Charges & Pooling', icon:'💰', hint:'Optional charge lines — pooling, local transport/insurance, and the extra ad-hoc charge.',
       keys:['flag_pooling','flag_local_ti','flag_addl_charges'] },
-    { title:'Document Mode', hint:'One document per lot or one per seller, and whether sales invoices start life as a proforma draft.',
+    { title:'Document Mode', icon:'🗂', hint:'One document per lot or one per seller, and whether sales invoices start life as a proforma draft.',
       keys:['flag_lotwise_purchase','flag_lotwise_bills','flag_lotwise_dn_planter','flag_bos_purchase_bill','flag_proforma_invoice'] },
-    { title:'Lots, Trade & Screens', hint:'Controls on the lot/trade screens — locks, validation, price checks, and optional screens or buttons.',
+    { title:'Lots, Trade & Screens', icon:'📦', hint:'Controls on the lot/trade screens — locks, validation, price checks, and optional screens or buttons.',
       keys:['flag_price_check','flag_lot_lock','flag_reserved_price','flag_immediate_reserve','flag_lot_validation',
-            'flag_bulk_set_buyer_code','flag_price_list_mapping','flag_print_selected_purchase','flag_lotwise_payments'] },
-    { title:'Tally & Accounts Export', hint:'How purchase vouchers and journals are written into the Tally XML.',
+            'flag_bulk_set_buyer_code','flag_price_list_mapping','flag_print_selected_purchase','flag_lotwise_payments',
+            'flag_auction_manager'] },
+    { title:'Tally & Accounts Export', icon:'📤', hint:'How purchase vouchers and journals are written into the Tally XML.',
       keys:['flag_merchants'], match:/^tally_purchase_/ },
-    { title:'Masters & Sharing', hint:'Extra master fields and the WhatsApp share buttons.',
+    { title:'Masters & Sharing', icon:'👥', hint:'Extra master fields and the WhatsApp share buttons.',
       keys:['flag_tan','flag_whatsapp'] },
   ],
   lot_entry: [
-    { title:'Default Weights & Crop', hint:'Values pre-filled on a new lot — sample, gunny and litre weights, crop type.',
+    { title:'Default Weights & Crop', icon:'⚖', hint:'Values pre-filled on a new lot — sample, gunny and litre weights, crop type.',
       keys:['sample_weight','sample_collection','free_sample','default_gunny_weight','user_gunny_weight','default_litre','default_crop_type'] },
-    { title:'Lot Entry Screen', hint:'Which fields and columns the Lot Entry screen shows, on desktop and mobile.',
+    { title:'Lot Entry Screen', icon:'📝', hint:'Which fields and columns the Lot Entry screen shows, on desktop and mobile.',
       keys:['show_moisture','show_crop_receipt','crop_receipt_start_no','lot_entry_seller_at_bottom',
             'mobile_show_sample_field','mobile_show_gross_field','default_auction_id'] },
-    { title:'Lot Receipt Print', hint:'Columns, paper width and totals layout for the printed lot receipt.',
+    { title:'Lot Receipt Print', icon:'🧾', hint:'Columns, paper width and totals layout for the printed lot receipt.',
       match:/^lot_receipt_/ },
-    { title:'Edit & Delete Permissions', hint:'What a non-admin may change after a lot is saved, and for how long.',
+    { title:'Edit & Delete Permissions', icon:'🔐', hint:'What a non-admin may change after a lot is saved, and for how long.',
       keys:['edit_enabled','delete_enabled','edit_timeout_sec'] },
   ],
   invoice: [
-    { title:'Numbering — Prefix & Suffix', hint:'Number series for each document type. These feed the PDF and the Tally XML alike.',
+    { title:'Numbering — Prefix & Suffix', icon:'🔢', hint:'Number series for each document type. These feed the PDF and the Tally XML alike.',
       keys:['inv_prefix','separator','proforma_invoice_prefix'], match:/(_prefix|_suffix)$/ },
-    { title:'Print Layouts', hint:'Default layout per document. "Classic (Legacy)" is the original PDFKit format; other layouts render from HTML templates. Still overridable per print.',
+    { title:'Print Layouts', icon:'🖨', hint:'Default layout per document. "Classic (Legacy)" is the original PDFKit format; other layouts render from HTML templates. Still overridable per print.',
       match:/_template$/ },
-    { title:'Dispatch Details', hint:'Transport lines printed on the sales invoice.',
+    { title:'Dispatch Details', icon:'🚚', hint:'Transport lines printed on the sales invoice.',
       keys:['dispatched_through_isp','dispatch_destination','dispatch_from'] },
-    { title:'Invoice Text', hint:'Fixed wording stamped on the document.',
+    { title:'Invoice Text', icon:'✍', hint:'Fixed wording stamped on the document.',
       keys:['duplicate_text','signature_text'] },
   ],
   rates: [
-    { title:'Commission & Handling', hint:'The auctioneer’s own charges.',
+    { title:'Commission & Handling', icon:'💼', hint:'The auctioneer’s own charges.',
       keys:['commission','hpc'] },
-    { title:'GST & Tax', hint:'GST percentages plus the TDS/TCS rates and annual threshold.',
+    { title:'GST & Tax', icon:'🧾', hint:'GST percentages plus the TDS/TCS rates and annual threshold.',
       keys:['gst_goods','gst_service','discount_gst','tcs_tds','tds_purchase_rate','tds_threshold'] },
-    { title:'Freight, Insurance & Packing', hint:'Per-kg and per-bag charges added to the buyer’s invoice.',
+    { title:'Freight, Insurance & Packing', icon:'🚚', hint:'Per-kg and per-bag charges added to the buyer’s invoice.',
       keys:['gunny_rate','transport','insurance','local_transport','local_insurance'] },
-    { title:'Discount & Credit Terms', hint:'Cash-discount percentage and the credit windows it depends on.',
+    { title:'Discount & Credit Terms', icon:'📉', hint:'Cash-discount percentage and the credit windows it depends on.',
       keys:['discount_pct','discount_days','dealer_days'] },
-    { title:'Samples', hint:'Sample quantities refunded to the seller and drawn for traders.',
+    { title:'Samples', icon:'🧪', hint:'Sample quantities refunded to the seller and drawn for traders.',
       keys:['sb_refund','sb_trader_sample','sb_refund_actual_extra_g'] },
-    { title:'Additional Charges', hint:'The optional ad-hoc charge line (needs the Additional Charges flag on).',
+    { title:'Additional Charges', icon:'➕', hint:'The optional ad-hoc charge line (needs the Additional Charges flag on).',
       keys:['addl_charge_name','addl_charge_value'] },
   ],
   alerts: [
-    { title:'Grade-2 Thresholds', hint:'When the alert fires — share of booked weight and the minimum lots before it can trigger.',
+    { title:'Grade-2 Thresholds', icon:'🚨', hint:'When the alert fires — share of booked weight and the minimum lots before it can trigger.',
       keys:['grade2_alert_enabled','grade2_alert_threshold_pct','grade2_alert_min_lots'] },
-    { title:'Level 1 — Depot Manager', hint:'Notified the first time the threshold is crossed.',
+    { title:'Level 1 — Depot Manager', icon:'👤', hint:'Notified the first time the threshold is crossed.',
       match:/^grade2_manager_/ },
-    { title:'Level 2 — Immediate Superior', hint:'Escalation target for any grade-2 booking made after the threshold was crossed.',
+    { title:'Level 2 — Immediate Superior', icon:'👔', hint:'Escalation target for any grade-2 booking made after the threshold was crossed.',
       match:/^grade2_superior_/ },
-    { title:'Reassign Requests', hint:'Who is notified when a lot reassignment is requested, and which WhatsApp template is used.',
+    { title:'Reassign Requests', icon:'🔄', hint:'Who is notified when a lot reassignment is requested, and which WhatsApp template is used.',
       match:/^reassign_alert_/ },
   ],
 };
@@ -21638,8 +22555,9 @@ const _setGroupClosed = {};
 const setGroupKey = (ck, title) => ck + '::' + title;
 
 // One collapsible section card. `inner` is the already-rendered field
-// markup; `count` is what the header badge shows.
-function sectionCard(ck, title, hint, count, inner){
+// markup; `count` is what the header badge shows; `icon` is the emoji
+// that leads the title (optional — omit it and the title starts flush).
+function sectionCard(ck, title, hint, count, inner, icon){
   const key  = setGroupKey(ck, title);
   // While a search is active every section opens — collapsing one would
   // hide the very matches the operator is hunting for.
@@ -21647,7 +22565,9 @@ function sectionCard(ck, title, hint, count, inner){
   return '<div class="set-group'+open+'" data-gkey="'+esc(key)+'">'
     + '<div class="set-group-head" onclick="toggleSetGroup(this)">'
     +   '<span class="g-arr">▶</span>'
-    +   '<span class="g-txt"><h3>'+esc(title)+'</h3>'
+    +   '<span class="g-txt"><h3>'
+    +     (icon ? '<span class="g-ico">'+esc(icon)+'</span>' : '')
+    +     '<span>'+esc(title)+'</span></h3>'
     +     (hint ? '<span class="set-group-hint">'+esc(hint)+'</span>' : '')
     +   '</span>'
     +   '<span class="g-n">'+count+'</span>'
@@ -21713,20 +22633,31 @@ function syncSetGroupToggle(){
 function renderGroupedFields(ck, fields, renderFn){
   const groups = SET_FIELD_GROUPS[ck];
   if(!groups) return '<div class="sgrid">'+fields.map(renderFn).join('')+'</div>';
+  const byKey=new Map(fields.map(f=>[f.key,f]));
   const consumed=new Set();
   const out=[];
   for(const g of groups){
-    const picked=fields.filter(f=>{
-      if(consumed.has(f.key))return false;
-      return (g.keys && g.keys.includes(f.key)) || (g.match && g.match.test(f.key));
-    });
-    picked.forEach(f=>consumed.add(f.key));
-    if(picked.length) out.push({title:g.title,hint:g.hint,fields:picked});
+    // Explicit `keys` are laid out in the order they're listed here, not
+    // in company-config.js order — the listing IS the intended reading
+    // order of the card (e.g. name before code before state). Regex
+    // matches follow, keeping their config order.
+    const picked=[];
+    for(const k of (g.keys||[])){
+      const f=byKey.get(k);
+      if(f && !consumed.has(k)){ consumed.add(k); picked.push(f); }
+    }
+    if(g.match){
+      for(const f of fields){
+        if(consumed.has(f.key) || !g.match.test(f.key)) continue;
+        consumed.add(f.key); picked.push(f);
+      }
+    }
+    if(picked.length) out.push({title:g.title,hint:g.hint,icon:g.icon,fields:picked});
   }
   const rest=fields.filter(f=>!consumed.has(f.key));
-  if(rest.length) out.push({title:'Other Settings',hint:'',fields:rest});
+  if(rest.length) out.push({title:'Other Settings',hint:'',icon:'•',fields:rest});
   return out.map(g =>
-    sectionCard(ck, g.title, g.hint, g.fields.length, g.fields.map(renderFn).join(''))
+    sectionCard(ck, g.title, g.hint, g.fields.length, g.fields.map(renderFn).join(''), g.icon)
   ).join('');
 }
 
@@ -21755,26 +22686,30 @@ function renderSettingsPanel(){
     // Entry Defaults panel exactly, grouped into themed section cards.
     html+=renderGroupedFields(ck,fields,fld);
   }else if(ck==='branches'){
-    html+='<div class="bgrid">';
+    // Branch name and the mobile that reaches it are interleaved, so each
+    // line of the two-column grid reads "Branch 3 | Branch 3 Mobile".
     const brs=fields.filter(f=>!f.key.includes('_tel')),tels=fields.filter(f=>f.key.includes('_tel'));
-    for(let i=0;i<brs.length;i++){html+=fld(brs[i]);if(tels[i])html+=fld(tels[i])}
-    html+='</div>';
+    let inner='';
+    for(let i=0;i<brs.length;i++){inner+=fld(brs[i]);if(tels[i])inner+=fld(tels[i])}
+    html+=sectionCard(ck,'Branch Offices','Each branch name sits beside the mobile number that reaches it.',fields.length,inner,'🏪');
   }else if(ck==='mode'){
-    html+='<div class="sgrid">';
-    for(const f of fields){
-      if(f.key==='business_mode')html+=`<div class="fg"><label>${f.label}${helpTip(FIELD_HELP.business_mode)}</label><input type="text" data-key="${f.key}" value="e-Auction" readonly style="background:#f1f5f9;color:#475569;cursor:not-allowed" title="This build is e-Auction only"></div>`;
+    // Three fields, all custom-rendered (locked text, guarded dropdown,
+    // date sampler) — but they still go through renderGroupedFields so
+    // the panel wears the same section cards as every other category.
+    html+=renderGroupedFields(ck,fields,function(f){
+      if(f.key==='business_mode')return `<div class="fg"><label>${f.label}${helpTip(FIELD_HELP.business_mode)}</label><input type="text" data-key="${f.key}" value="e-Auction" readonly style="background:#f1f5f9;color:#475569;cursor:not-allowed" title="This build is e-Auction only"></div>`;
       // Business State is a dropdown ONLY while it reads TAMIL NADU. Once it
-      // is set to KERALA the field locks: a Kerala setup drives the ASP
-      // company identity, GSTIN, invoice series and Spice Board reports, so
-      // flipping it back mid-trade silently re-points every one of those. It
-      // still renders with data-key so captureCurrentPanel() saves the same
-      // value straight back instead of dropping the key.
-      else if(f.key==='business_state'){
-        html += f.value==='KERALA'
-          ? `<div class="fg"><label>${f.label}${helpTip(FIELD_HELP.business_state)}</label><input type="text" data-key="${f.key}" value="KERALA" readonly style="background:#f1f5f9;color:#475569;cursor:not-allowed" title="Locked — this is a Kerala (ASP) setup. Changing the business state would re-point the company identity, GSTIN, invoice series and Spice Board reports."><div style="font-size:11px;color:var(--text3);margin-top:4px">🔒 Locked for Kerala setups — company identity, GSTIN and Spice Board reports are keyed to this.</div></div>`
+      // is set to KERALA the field locks: a Kerala setup drives the company
+      // identity, GSTIN, invoice series and Spice Board reports, so flipping
+      // it back mid-trade silently re-points every one of those. It still
+      // renders with data-key so captureCurrentPanel() saves the same value
+      // straight back instead of dropping the key.
+      if(f.key==='business_state'){
+        return f.value==='KERALA'
+          ? `<div class="fg"><label>${f.label}${helpTip(FIELD_HELP.business_state)}</label><input type="text" data-key="${f.key}" value="KERALA" readonly style="background:#f1f5f9;color:#475569;cursor:not-allowed" title="Locked — this is a Kerala setup. Changing the business state would re-point the company identity, GSTIN, invoice series and Spice Board reports."><div class="fg-note">🔒 Locked for Kerala setups — company identity, GSTIN and Spice Board reports are keyed to this.</div></div>`
           : `<div class="fg"><label>${f.label}${helpTip(FIELD_HELP.business_state)}</label><select data-key="${f.key}" onchange="onBusinessStateChanged(this.value)"><option${f.value==='TAMIL NADU'?' selected':''}>TAMIL NADU</option><option${f.value==='KERALA'?' selected':''}>KERALA</option></select></div>`;
       }
-      else if(f.key==='date_format'){
+      if(f.key==='date_format'){
         // Sample today's date in each format so the operator can see
         // exactly what they're picking — easier than parsing the labels.
         const now = new Date();
@@ -21793,11 +22728,10 @@ function renderSettingsPanel(){
         const opts = Object.entries(sample)
           .map(([k,v]) => `<option value="${k}"${f.value===k?' selected':''}>${k} &nbsp; (e.g. ${v})</option>`)
           .join('');
-        html += `<div class="fg"><label>${f.label}${helpTip('How dates are displayed everywhere in the app — list views, PDFs, XLSX. The database keeps storing ISO yyyy-mm-dd regardless.')}</label><select data-key="${f.key}">${opts}</select></div>`;
+        return `<div class="fg"><label>${f.label}${helpTip('How dates are displayed everywhere in the app — list views, PDFs, XLSX. The database keeps storing ISO yyyy-mm-dd regardless.')}</label><select data-key="${f.key}">${opts}</select></div>`;
       }
-      else html+=fld(f);
-    }
-    html+='</div>';
+      return fld(f);
+    });
   }else if(ck==='tally'){
     html+=renderTallyPanel(fields);
   }else{
@@ -22363,7 +23297,7 @@ function fld(f){
   // payload still contains it, fall through to the generic renderer.
   if (f.key === 'logo') {
     const tip = FIELD_HELP[f.key] ? helpTip(FIELD_HELP[f.key]) : '';
-    return `<div class="fg"><label>${esc(f.label)}${tip}</label><input type="text" data-key="${f.key}" value="${esc(f.value || '')}" placeholder="e.g. ISP, ABC, MYCO"></div>`;
+    return `<div class="fg"><label>${esc(f.label)}${tip}</label><input type="text" data-key="${f.key}" value="${esc(f.value || '')}" placeholder="e.g. ABC, MYCO"></div>`;
   }
   // Boolean → toggle switch. Same markup as the Tally Classic view so
   // the captureCurrentPanel() data-key reader picks it up via the
@@ -22372,14 +23306,14 @@ function fld(f){
   if (f.field_type === 'boolean') {
     const ck = (String(f.value).toLowerCase() === 'true') ? 'checked' : '';
     const tip = FIELD_HELP[f.key] ? helpTip(FIELD_HELP[f.key]) : '';
-    return `<div class="fg" style="display:flex;align-items:center;justify-content:space-between;border:1px solid var(--border);border-radius:6px;padding:8px 12px"><label style="margin:0">${esc(f.label)}${tip}</label><label class="sw"><input type="checkbox" data-key="${f.key}" data-type="boolean" ${ck}><span class="sl"></span></label></div>`;
+    return `<div class="fg fg-bool"><label>${esc(f.label)}${tip}</label><label class="sw"><input type="checkbox" data-key="${f.key}" data-type="boolean" ${ck}><span class="sl"></span></label></div>`;
   }
   // Textarea → multi-line value (used by formd_places for the Form-D
   // place dropdown). captureCurrentPanel() reads el.value, which works
   // identically for textarea and input.
   if (f.field_type === 'textarea') {
     const tip = FIELD_HELP[f.key] ? helpTip(FIELD_HELP[f.key]) : '';
-    return `<div class="fg"><label>${esc(f.label)}${tip}</label><textarea data-key="${f.key}" rows="5" style="width:100%;padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;resize:vertical">${esc(f.value || '')}</textarea></div>`;
+    return `<div class="fg fg-wide"><label>${esc(f.label)}${tip}</label><textarea data-key="${f.key}" rows="5" style="width:100%;padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;resize:vertical">${esc(f.value || '')}</textarea></div>`;
   }
   const t = f.field_type === 'number' ? 'number' : f.field_type === 'date' ? 'date' : 'text';
   const tip = FIELD_HELP[f.key] ? helpTip(FIELD_HELP[f.key]) : '';
@@ -22387,83 +23321,111 @@ function fld(f){
 }
 
 // ── To Tally settings panel ───────────────────────────────
-// Single grouped view (classic-style). Fields are partitioned into
-// logical sections — Identity, Sales/Purchase Ledgers, Tax Ledgers,
-// Tax Rates, Services, Bank, Numbering, and Toggles — so the user
-// doesn't scroll through a flat 60-field column hunting for a key.
-// Booleans render with the same `flag-row + sw/sl` markup as Feature
-// Flags so the toggles look and behave identically.
-function renderTallyPanel(fields){
-  // Filter helpers — pick fields matching a predicate, mark consumed
-  // so we can flush "everything else" into a trailing group.
-  const consumed = new Set();
-  const pick = (predicate) => fields.filter(f => {
-    if (consumed.has(f.key)) return false;
-    if (!predicate(f.key, f)) return false;
-    consumed.add(f.key);
-    return true;
-  });
+// The largest category by a distance (83 keys), so it is partitioned by
+// EXPLICIT key lists rather than by regex. A regex over `tally_*` can't
+// tell "Cardamom Local Sales" (a sales ledger) from "Local Transport" (a
+// voucher toggle) — the patterns this replaced put both in the same
+// bucket and let whichever section ran first win, which is how the
+// Toggles section ended up empty while ledger cards held the switches.
+//
+// Order inside each `keys` list is the render order, so related fields
+// (intra / inter / export) line up down the column. A key not listed
+// here still appears — in a trailing "Other Tally Keys" card — so adding
+// a setting to company-config.js can never make it invisible.
+const TALLY_GROUPS = [
+  { title:'Company & State', icon:'🏢',
+    hint:'Must match the company in Tally exactly — the import is rejected otherwise. The state code decides whether a voucher takes the intra or inter-state tax ledgers.',
+    keys:['tally_company_name','tally_state_code','tally_home_state','tally_urd_state'] },
 
-  // Each group is { title, hint, fields[] }. Booleans get the flag-row
-  // toggle layout; everything else falls back to the standard fld()
-  // renderer (which respects field_type for date / number / text).
+  { title:'Voucher Numbering & References', icon:'🔢',
+    hint:'Voucher prefixes, the separator, and the series tail welded on after the season (the "URD" in "1748/26-27/URD"). Enter a bare token — the "/" is added for you, and blank means no tail. A tail is part of the bill reference Tally ages against, so change it at a season boundary, not mid-season.',
+    keys:['tally_inv_prefix','tally_separator','tally_season',
+          'tally_purchase_bill_ref_prefix','tally_urd_purchase_ref_suffix',
+          'tally_dn_planter_ref_suffix','tally_dn_dealer_ref_suffix'] },
+
+  { title:'Voucher Types & Party Ledgers', icon:'📇',
+    hint:'The VCHTYPE each purchase voucher imports under, and how a party ledger name is built. The URD suffix supports {PAN}; a planter with no PAN on file falls back to the RD suffix.',
+    keys:['tally_rd_purchase_vchtype','tally_urd_purchase_vchtype',
+          'tally_rd_ledger_suffix','tally_urd_ledger_suffix','tally_purchase_planter_parent'] },
+
+  { title:'Voucher Behaviour', icon:'⚙',
+    hint:'Per-voucher switches — inventory detail, round-off, TCS / TDS lines, exempted debit notes, and which transport / insurance rate the voucher picks up.',
+    keys:['tally_detailed','tally_round_enabled','tally_tcs_enabled','tally_tds_enabled',
+          'tally_dn_exempt','tally_local_transport','tally_local_insurance','tally_sample_stock'] },
+
+  { title:'Sales Ledgers', icon:'📈',
+    hint:'Cardamom and gunny sales ledgers per supply type, plus the dealer-side sales ledgers.',
+    keys:['tally_sales_intra','tally_sales_inter','tally_sales_export',
+          'tally_gunny_intra','tally_gunny_inter','tally_gunny_export',
+          'tally_dealer_sale_intra','tally_dealer_sale_inter'] },
+
+  { title:'Purchase Ledgers', icon:'📥',
+    hint:'Where an RD (dealer) or URD (agriculturist) purchase posts. The interstate base ledger is used when the party GSTIN state differs from the company state; blank falls back to the local one.',
+    keys:['tally_purchase_dealer','tally_purchase_dealer_interstate',
+          'tally_purchase_dealer_intra','tally_purchase_dealer_inter',
+          'tally_purchase_auction','tally_tds_paid_sales'] },
+
+  { title:'Tax Ledgers', icon:'💰',
+    hint:'Output GST on sales, input GST on purchases, and the TCS / TDS ledgers.',
+    keys:['tally_cgst','tally_sgst','tally_igst',
+          'tally_cgst_input','tally_sgst_input','tally_igst_input',
+          'tally_tcs','tally_tds_ledger'] },
+
+  { title:'Debit Note Ledgers', icon:'📝',
+    hint:'Ledgers used by the discount-as-debit-note flow, dealer and planter series alike.',
+    keys:['tally_dn_discount','tally_dnp_discount',
+          'tally_dn_cgst','tally_dn_sgst','tally_dn_igst','tally_dn_gst_rate'] },
+
+  { title:'Service & Charge Ledgers', icon:'🚚',
+    hint:'Commission, cash handling, freight, insurance, round-off and the sample-refund ledgers.',
+    keys:['tally_commission','tally_commission_interstate','tally_commission_planter',
+          'tally_cash_handling','tally_cash_handling_planter',
+          'tally_transport','tally_insurance','tally_round',
+          'tally_sample_planter','tally_sample_dealer'] },
+
+  { title:'Rates', icon:'📊',
+    hint:'Percentages and per-unit rates stamped into the XML. These are the Tally-side copies — the invoice itself is priced from Rates & Charges.',
+    keys:['tally_gst_rate','tally_service_rate','tally_tcs_rate','tally_export_rate',
+          'tally_gunny_rate','tally_transport_rate','tally_local_trans_rate',
+          'tally_insurance_rate','tally_local_ins_rate','tally_sample_kgs'] },
+
+  { title:'Stock Items, Units & HSN / SAC', icon:'🏷',
+    hint:'Stock item names must match Tally exactly, and each unit symbol must match the unit defined on that item. Blank units default to Kgs. (cardamom) and Nos. (gunny).',
+    keys:['tally_item_cardamom','tally_item_gunny',
+          'tally_unit_cardamom','tally_unit_gunny',
+          'tally_hsn_cardamom','tally_hsn_gunny',
+          'tally_hsn_service','tally_hsn_transport','tally_hsn_insurance'] },
+
+  { title:'E-way Bill Distance', icon:'🛣',
+    hint:'Auto-fills <DISTANCE> from the two PIN codes; the multiplier converts straight-line distance to road distance.',
+    keys:['distance_auto_enabled','distance_road_multiplier'] },
+];
+
+function renderTallyPanel(fields){
+  const byKey = new Map(fields.map(f => [f.key, f]));
+  const consumed = new Set();
   const groups = [];
 
-  groups.push({ title: 'Company & Identity',
-    hint: 'Tally company name, state, and season prefixes used in voucher numbers.',
-    fields: pick(k => /^tally_(company_name|state_code|home_state|season|prefix|consignor_type|tally_state_code)$/.test(k)) });
-
-  groups.push({ title: 'Sales / Purchase Ledgers',
-    hint: 'Cardamom + gunny ledger names for inter, intra, and export sales, plus the dealer sales/purchase ledgers.',
-    fields: pick(k => /^tally_(sales|gunny|item|hsn|stock|purchase|dealer_sale|prim_unit|sec_unit|sample|unit_rate|rd_ledger|urd_ledger)/.test(k)) });
-
-  groups.push({ title: 'Tax Ledgers',
-    hint: 'CGST / SGST / IGST / TCS / TDS output ledger names. Debit-note variants for the discount-as-DN flow.',
-    fields: pick(k => /^tally_(cgst|sgst|igst|tcs|tds|dn_cgst|dn_sgst|dn_igst|dn_discount)/.test(k)) });
-
-  groups.push({ title: 'Tax Rates',
-    hint: 'Rates used when generating ledger names + the actual GST percentage stamped into the XML.',
-    fields: pick(k => /^tally_(gst_rate|service_rate|tcs_rate|dn_gst_rate)$/.test(k)) });
-
-  groups.push({ title: 'Services (Transport / Insurance / Handling)',
-    hint: 'Service ledger names + SAC codes for the freight + insurance line items, plus commission & cash-handling ledgers.',
-    fields: pick(k => /^tally_(transport|insurance|local_transport|local_insurance|hsn_transport|hsn_insurance|hsn_service|service|commission|cash_handling)/.test(k)) });
-
-  groups.push({ title: 'Round Off & Misc',
-    hint: 'Round-off ledger, detailed-invoice flag, sample weight, and other voucher tweaks.',
-    fields: pick(k => /^tally_(round|detailed|optional|sample|amazing|ainv)/.test(k)) });
-
-  groups.push({ title: 'Numbering & Prefixes',
-    hint: 'Voucher number prefixes, separator characters, and the series tail appended after the season ' +
-          '(the "URD" in "1748/26-27/URD"). Enter a bare token — the "/" is added for you, and blank means no tail. ' +
-          'A tail is part of the bill reference Tally ages against, so change it at a season boundary, not mid-season.',
-    fields: pick(k => /^tally_(inv_prefix|separator|note_prefix)/.test(k) || /_ref_suffix$/.test(k) || k === 'tally_prefix') });
-
-  groups.push({ title: 'Toggles',
-    hint: 'Per-voucher feature flags — emit e-way bill block, dispatch-from address, TCS line, etc.',
-    fields: pick(k => /^tally_/.test(k) && fields.find(f => f.key === k && f.field_type === 'boolean')) });
-
-  // Anything else (legacy / new keys that don't fit a bucket) ends up
-  // in a trailing "Other Tally Keys" group so nothing is hidden.
-  const rest = fields.filter(f => !consumed.has(f.key));
-  if (rest.length) groups.push({ title: 'Other Tally Keys', hint: '', fields: rest });
-
-  // Render. Boolean fields use the same .flag-row markup as Feature
-  // Flags; non-boolean uses the standard fld() (which respects
-  // field_type for date / number / text inputs).
-  // Booleans use the EXACT same bordered-card row that fld() produces
-  // under the Flags / Lot Entry Defaults panels so the toggle pill
-  // sizes match across the app. Non-booleans fall back to fld() (text
-  // / number / date) directly.
-  function renderField(f){
-    return fld(f);
+  for (const g of TALLY_GROUPS) {
+    const picked = [];
+    for (const k of g.keys) {
+      const f = byKey.get(k);
+      if (f && !consumed.has(k)) { consumed.add(k); picked.push(f); }
+    }
+    if (picked.length) groups.push({ title:g.title, hint:g.hint, icon:g.icon, fields:picked });
   }
 
-  // Same collapsible card as every other grouped category (sectionCard
+  // Anything not named above (a key added to company-config.js since, or
+  // a legacy row carried in by a settings import) still renders.
+  const rest = fields.filter(f => !consumed.has(f.key));
+  if (rest.length) groups.push({ title: 'Other Tally Keys', hint: '', icon: '•', fields: rest });
+
+  // Booleans and text / number / date fields alike go through fld(), so
+  // a Tally toggle is exactly the row a Feature Flags toggle is. Same
+  // collapsible card as every other grouped category too (sectionCard
   // escapes, so the titles/hints above are plain text, not pre-escaped).
   return groups
-    .filter(g => g.fields.length)
-    .map(g => sectionCard('tally', g.title, g.hint, g.fields.length, g.fields.map(renderField).join('')))
+    .map(g => sectionCard('tally', g.title, g.hint, g.fields.length, g.fields.map(fld).join(''), g.icon))
     .join('');
 }
 
@@ -23196,7 +24158,7 @@ function appendBankRow(b){
       <div class="bank-branch-hint" style="color:var(--text3);margin-top:2px;min-height:14px">${b.branch ? 'Branch: '+esc(b.branch) : ''}</div>
       <input type="hidden" class="bank-branch" value="${esc(b.branch||'')}">
     </div>
-    <div class="fg" style="margin:0"><label>Account No</label><input class="bank-acctnum" value="${esc(b.acctnum||'')}"></div>
+    <div class="fg" style="margin:0"><label>Account No</label><input class="bank-acctnum" value="${esc(b.acctnum||'')}" autocapitalize="characters" oninput="sanitizeAcctInput(this)"></div>
     <div class="fg" style="margin:0"><label>IFSC</label><input class="bank-ifsc" value="${esc(b.ifsc||'')}" style="text-transform:uppercase" oninput="onBankIfscInput(this)" onblur="lookupBankByIfsc(this)"></div>
     <div class="fg" style="margin:0"><label>Holder Name</label><input class="bank-holder" value="${esc(b.holder_name||'')}"></div>
     <div class="fg" style="margin:0"><label>Account Type</label>
@@ -32769,10 +33731,12 @@ const EXP_LABELS={lot_slip:'Lot Slip',lot_slip_after:'Lot Slip (After)',
   pooler_register:'Pooler Register',full_file:'Full File',collection:'Collection',trade_report:'Auction Report',dealer_list:'Dealer List',
   dealer_list_party_wise:'Dealer List (Party-wise)',pooler_list_consolidated:'Pooler List consolidated (Party-wise)',planter_list:'Planter List (Grade 1)',
   payment:'Payment Summary',payment_party_wise:'Payment Summary - Party-wise',
+  dealer_invoice_csv:'Dealer Invoice CSV',
   eauction_csv:'e-Auction (Spices Board) CSV'};
 // Export types that only support a specific format (no XLSX/PDF choice).
-// eauction_csv → fixed Spices Board portal schema, CSV only.
-const EXP_CSV_ONLY = new Set(['eauction_csv']);
+// eauction_csv        → fixed Spices Board portal schema, CSV only.
+// dealer_invoice_csv  → fixed 18-column debit-note register, CSV only.
+const EXP_CSV_ONLY = new Set(['eauction_csv', 'dealer_invoice_csv']);
 // Full File has too many columns to fit any printable PDF page — only XLSX.
 const EXP_XLSX_ONLY = new Set(['full_file']);
 // Reports that capture the pre-auction lot state. Rendered into the
@@ -35237,7 +36201,7 @@ async function loadInvoiceDistances(){
     const r=await fetch(B+`/api/invoices/distances/${aid}`,{headers:{'Authorization':'Bearer '+T}});
     if(!r.ok){list.innerHTML='<div style="padding:14px;color:#C62828;font-size:12px;text-align:center">Failed to load</div>';return}
     const data=await r.json();
-    if(cnt)cnt.textContent=`${data.count} ISP invoice${data.count===1?'':'s'}`;
+    if(cnt)cnt.textContent=`${data.count} sales invoice${data.count===1?'':'s'}`;
     if(data.count===0){list.innerHTML='<div style="padding:14px;color:var(--text3);font-size:12px;text-align:center">No invoices in this auction.</div>';return}
 
     // Dispatch PIN comes from the server response — same fallback chain
@@ -35385,7 +36349,7 @@ async function saveRouteDistance(fromPin, toPin, invoiceId){
 // saved for its PIN pair. Confirmed before firing because the action
 // touches potentially every ISP invoice in the system.
 async function clearAllDistanceOverrides(){
-  if(!confirm('Wipe ALL per-invoice distance overrides?\n\nEvery ISP invoice will revert to its route value (or blank if no route is saved for its buyer PIN).\n\nThis cannot be undone.'))return;
+  if(!confirm('Wipe ALL per-invoice distance overrides?\n\nEvery sales invoice will revert to its route value (or blank if no route is saved for its buyer PIN).\n\nThis cannot be undone.'))return;
   try{
     const r=await fetch(B+'/api/distance-overrides',{
       method:'DELETE',
