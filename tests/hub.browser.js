@@ -503,6 +503,52 @@ const cleanup = () => {
   check('a document card carries its card shell',
         shell.radius >= 12 && shell.pad >= 12 && parseFloat(shell.border) >= 1,
         JSON.stringify(shell));
+
+  // The card head adopted the Auction Downloads screen's arrangement —
+  // file glyph, then name over formats. The point of the change was that
+  // NOTHING was given up for it, so assert the head and the actions
+  // together: a future "simplification" that drops the format buttons or
+  // the bundle tick to match that screen more literally must fail here.
+  const head = await page.evaluate(() => {
+    const tiles = Array.from(document.querySelectorAll('.hub-tile'));
+    const t = tiles[0];
+    return {
+      tiles: tiles.length,
+      glyphs: tiles.filter(x => x.querySelector('.hub-file-ico svg')).length,
+      fmtLines: tiles.filter(x => x.querySelector('.hub-tile-fmt')).length,
+      // The old colour-coded chip is gone; its information moved into the
+      // second line, which names EVERY format rather than just the first.
+      oldChips: document.querySelectorAll('.hub-tile .hub-fmt').length,
+      fmtText: t.querySelector('.hub-tile-fmt')?.textContent.trim(),
+      label: t.querySelector('.hub-tile-l')?.textContent.trim(),
+      // Glyph sits before the text, as on the reference.
+      glyphFirst: t.querySelector('.hub-tile-main')?.firstElementChild?.classList.contains('hub-file-ico'),
+      // …and everything this screen adds is still on the card.
+      withActions: tiles.filter(x => x.querySelector('.hub-acts .hub-btn')).length,
+      withPicks:   tiles.filter(x => x.querySelector('.hub-cb')).length,
+    };
+  });
+  check('every card leads with the file glyph', head.tiles > 0 && head.glyphs === head.tiles,
+        `${head.glyphs}/${head.tiles}`);
+  check('the glyph comes before the name', head.glyphFirst === true);
+  check('every card names its formats on a second line',
+        head.fmtLines === head.tiles, `${head.fmtLines}/${head.tiles}`);
+  check('the old colour-coded format chip is gone', head.oldChips === 0, `${head.oldChips} left`);
+  check('the format line lists formats, not one', /^[A-Z]{3,4}( · [A-Z]{3,4})*$/.test(head.fmtText || ''),
+        String(head.fmtText));
+  check('cards kept their download actions', head.withActions > 0, `${head.withActions} of ${head.tiles}`);
+  check('cards kept the bundle checkbox', head.withPicks > 0, `${head.withPicks} of ${head.tiles}`);
+
+  // A locked card greys its glyph, the way a not-yet-available tile does on
+  // the Auction Downloads screen — same signal, same place.
+  const lockedGlyph = await page.evaluate(() => {
+    const t = document.querySelector('.hub-tile.is-locked');
+    if (!t) return 'none';
+    const a = document.querySelector('.hub-tile:not(.is-locked) .hub-file-ico');
+    const b = t.querySelector('.hub-file-ico');
+    return a && b ? (getComputedStyle(a).backgroundColor !== getComputedStyle(b).backgroundColor) : 'none';
+  });
+  if (lockedGlyph !== 'none') check('a locked card greys its glyph', lockedGlyph === true);
   check('tinted, with a gradient bar across the top',
         parseFloat(shell.barH) >= 3 && /gradient/.test(shell.barBg)
           && /gradient/.test(shell.bg), JSON.stringify(shell));

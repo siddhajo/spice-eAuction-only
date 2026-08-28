@@ -1089,6 +1089,165 @@ function lotSortKey(lotList) {
   return [num, txt === null ? '' : txt];
 }
 
+// ── Shared money-routing helpers ─────────────────────────────────────
+// Two bank files are produced from the same sellers: the payable one
+// (getBankPaymentData) and the advance one (getAdvanceBankPaymentData). They
+// must agree about WHO a seller is and WHICH account their money lands in —
+// a divergence there does not produce a wrong-looking sheet, it pays the
+// right money into the wrong account. So both go through the helpers below
+// rather than each carrying its own copy of the rules.
+
+// Stamp each aggregate row with its seller's master record: trader_id, the
+// bank columns held on `traders` (legacy single-bank installs) and the
+// address/phone the bank file prints.
+//
+// Resolution order is trader_id → user_id → name, and it matters: two sellers
+// can share a name (two "BASKARAN S", user ids P0002613 / P0003011, different
+// accounts), so the name is the last resort and never the first. 'IMPORT' is
+// the importer's placeholder in user_id, not a key. A name lookup keeps the
+// lowest id so it stays deterministic when the name IS duplicated.
+function attachSellerMaster(db, rows) {
+  const traderById = {}, traderByUserId = {}, traderByName = {};
+  for (const t of db.all(
+    `SELECT id, name, user_id, ifsc, acctnum, holder_name, padd, ppla, pin, tel
+       FROM traders ORDER BY id`)) {
+    traderById[t.id] = t;
+    const uid = String(t.user_id || '').trim().toUpperCase();
+    const nm  = String(t.name    || '').trim().toUpperCase();
+    if (uid && traderByUserId[uid] == null) traderByUserId[uid] = t;
+    if (nm  && traderByName[nm]    == null) traderByName[nm]    = t;
+  }
+  rows.forEach(p => {
+    const rawUid = String(p.user_id || '').trim().toUpperCase();
+    const uid = rawUid === 'IMPORT' ? '' : rawUid;
+    const t = (p.lot_trader_id != null && traderById[p.lot_trader_id])
+           || (uid && traderByUserId[uid])
+           || traderByName[String(p.name || '').trim().toUpperCase()]
+           || null;
+    p.trader_id = t ? t.id : null;
+    p.t_ifsc    = t ? t.ifsc        : '';
+    p.t_acctnum = t ? t.acctnum     : '';
+    p.t_holder  = t ? t.holder_name : '';
+    p.t_tel     = t ? t.tel         : '';
+    p.padd      = t ? t.padd        : '';
+    p.ppla      = t ? t.ppla        : '';
+    p.pin       = t ? t.pin         : '';
+  });
+  return rows;
+}
+
+// Where a seller's money actually lands.
+//
+//   bankFor(p, bankId)      the account a pinned bank_id ACTUALLY authorises,
+//                           or null meaning "follow the seller's default"
+//   resolveDest(p, bank)    the ifsc / acctnum / holder finally written
+//
+// The ownership test in bankFor is the point. `trader_banks` ids are RECYCLED:
+// syncTraderBanks (server.js) deletes and re-inserts a seller's bank rows on
+// every save, so a bank_id stamped at lot-entry (or advance) time can now name
+// a row that has been handed to a DIFFERENT seller. Trusting it paid one
+// seller's lots into another's account — a real case: three lots of
+// ELAICHIROYAL PRIVATE LIMITED (₹17.5L) carried bank_id 38, which by then
+// belonged to THAMARASSERIYIL SPICES POINT. An id the seller does not own is
+// therefore treated as no pin at all, so the money falls back to their own
+// default. Same guard the mobile receipt query carries (mobile-bridge.js,
+// "AND tb.trader_id = t.id") and the Payments screen's bank-status check.
+//
+// The per-seller fallback chain when there is no usable pin:
+//   1. trader_banks default (is_default = 1)
+//   2. trader_banks first row
+//   3. traders.ifsc/acctnum — legacy single-bank
+function bankDestinations(db) {
+  const bankByTraderId = {};
+  try {
+    for (const b of db.all(`
+      SELECT trader_id, ifsc, acctnum, holder_name, is_default, id
+        FROM trader_banks
+       ORDER BY trader_id, is_default DESC, id ASC
+    `)) {
+      // First row per trader_id wins (already sorted by is_default DESC).
+      if (bankByTraderId[b.trader_id] == null) bankByTraderId[b.trader_id] = b;
+    }
+  } catch (_) { /* trader_banks may not exist on partial migrations */ }
+
+  // Loaded on first use — a whole-seller export never pins an account and
+  // shouldn't pay for the scan.
+  let bankById = null;
+  const loadBanks = () => {
+    if (bankById) return bankById;
+    bankById = {};
+    try {
+      for (const b of db.all('SELECT id, trader_id, ifsc, acctnum, holder_name FROM trader_banks')) {
+        bankById[b.id] = b;
+      }
+    } catch (_) { /* leave empty — every pin then falls back to the default */ }
+    return bankById;
+  };
+
+  return {
+    bankFor(p, bankId) {
+      if (bankId == null) return null;
+      const b = loadBanks()[bankId];
+      if (!b) return null;                                  // row since deleted
+      if (p.trader_id == null || b.trader_id !== p.trader_id) return null;
+      return b;
+    },
+    resolveDest(p, routedBank) {
+      const tb = p.trader_id != null ? bankByTraderId[p.trader_id] : null;
+      return {
+        ifsc:     (routedBank && routedBank.ifsc)        || (tb && tb.ifsc)        || p.t_ifsc    || '',
+        acctnum:  (routedBank && routedBank.acctnum)     || (tb && tb.acctnum)     || p.t_acctnum || '',
+        holderNm: (routedBank && routedBank.holder_name) || (tb && tb.holder_name) || p.t_holder  || p.name,
+      };
+    },
+  };
+}
+
+// One output row of a bank file, in the shape every bank-format profile's
+// columns read (see bank-formats.js).
+//
+//   rawAmount  pre-round; `flag_round` decides whether whole rupees are written
+//   lotList    the lots this row pays for, or '' for a whole-seller row. Blank
+//              keeps the REMARKS free of a "for lots …" clause, as it always
+//              has been on unfiltered exports.
+//   rowLots    what PARTICULARS prints — the picked lots, or all of them
+//   kind       the word in REMARKS: 'PAYMENT' for the payable file, 'ADVANCE'
+//              for the advance one, so a bank statement says which is which
+function buildBankPaymentRow(p, rawAmount, o) {
+  const amount = o.roundAmounts ? Math.round(rawAmount) : rawAmount;
+  const ano = o.auction ? o.auction.ano : '';
+  const kind = o.kind || 'PAYMENT';
+  return {
+    transactionType: rawAmount >= 200000 ? 'RTGS' : 'NEFT',
+    // Firm's own account that funds are debited from. Kerala account per
+    // config; same value on every row (single debit account for the batch).
+    debitAccount: (o.cfg && o.cfg.bank_kl_acct) || '',
+    // Beneficiary account type (SB/CA) is not stored per seller — left
+    // blank for the user to fill before upload.
+    accountType: '',
+    ifsc: o.dest.ifsc,
+    accountNo: o.dest.acctnum,
+    beneficiaryName: o.dest.holderNm,
+    address1: p.padd || '',
+    address2: p.ppla || '',
+    pin: p.pin || '',
+    amount,
+    remarks: `${ano} ${p.name} ${kind} ${rawAmount.toFixed(2)} Credited`
+      + (o.lotList ? ` for lot${o.lotList.includes(',') ? 's' : ''} ${o.lotList}` : ''),
+    holderName: o.dest.holderNm,
+    // Seller phone + CR carried for presentation-only bank formats (e.g. the
+    // HDFC A/C sheet's Phone column). `cr` is the leading candidate for that
+    // format's "Particulars" column.
+    phone: p.t_tel || '',
+    cr: p.cr || '',
+    // Particulars — Auction No + space + lot no(s) (e.g. "A10 024").
+    particulars: `${ano} ${o.rowLots}`.trim(),
+    // Internal only — the orderByLot sort reads it and it is stripped before
+    // the rows are returned, so no bank format can accidentally print it.
+    _lotList: o.rowLots,
+  };
+}
+
 function getBankPaymentData(db, auctionId, cfg, opts) {
   opts = opts || {};
   const useBefore = !!opts.before;
@@ -1117,12 +1276,9 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
   const lotPicks    = _upMap(opts.lots);
   const excludeLots = _upMap(opts.excludeLots);
   const hasLotFilter = !!(lotPicks || excludeLots);
-  // trader_id is selected so a lot's pinned bank can be checked against the
-  // seller who is being paid — see `bankFor` below.
-  let bankById = {};
-  if (hasLotFilter) {
-    try { for (const b of db.all('SELECT id, trader_id, ifsc, acctnum, holder_name FROM trader_banks')) bankById[b.id] = b; } catch (_) {}
-  }
+  // Seller identity and account routing — shared with the advance bank file so
+  // the two can never disagree about where a seller's money goes.
+  const dests = bankDestinations(db);
   // Bank Payment lists every seller in the trade with a non-zero
   // payable (or non-zero pre-discount amount in 'before' mode) — both
   // registered dealers AND unregistered (URD/agriculturist) farmers.
@@ -1173,63 +1329,14 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
     [auctionId]
   );
 
-  // Resolve each group's master row: by user id first, then by name for lots
-  // that predate user-id capture. Name lookup keeps the lowest id so it stays
-  // deterministic when the name IS duplicated (there is nothing better to go
-  // on for such a lot — but it no longer corrupts the other seller's row).
-  const traderById = {}, traderByUserId = {}, traderByName = {};
-  for (const t of db.all(
-    `SELECT id, name, user_id, ifsc, acctnum, holder_name, padd, ppla, pin, tel
-       FROM traders ORDER BY id`)) {
-    traderById[t.id] = t;
-    const uid = String(t.user_id || '').trim().toUpperCase();
-    const nm  = String(t.name    || '').trim().toUpperCase();
-    if (uid && traderByUserId[uid] == null) traderByUserId[uid] = t;
-    if (nm  && traderByName[nm]    == null) traderByName[nm]    = t;
-  }
-  payments.forEach(p => {
-    // trader_id FIRST — it is the only key that separates two sellers who
-    // share a name. user_id is a fallback for lots with no FK ('import' is the
-    // importer's placeholder, not a key), and the name is the last resort.
-    const rawUid = String(p.user_id || '').trim().toUpperCase();
-    const uid = rawUid === 'IMPORT' ? '' : rawUid;
-    const t = (p.lot_trader_id != null && traderById[p.lot_trader_id])
-           || (uid && traderByUserId[uid])
-           || traderByName[String(p.name || '').trim().toUpperCase()]
-           || null;
-    p.trader_id = t ? t.id : null;
-    p.t_ifsc    = t ? t.ifsc        : '';
-    p.t_acctnum = t ? t.acctnum     : '';
-    p.t_holder  = t ? t.holder_name : '';
-    p.t_tel     = t ? t.tel         : '';
-    p.padd      = t ? t.padd        : '';
-    p.ppla      = t ? t.ppla        : '';
-    p.pin       = t ? t.pin         : '';
-  });
+  // Resolve each group's master row — see attachSellerMaster for why the
+  // trader_id → user_id → name order is not negotiable.
+  attachSellerMaster(db, payments);
   if (sellerKeyFilter) {
     payments = payments.filter(p => sellerKeyFilter.has(String(p.seller_key || '').trim().toUpperCase()));
   } else if (sellersFilter) {
     payments = payments.filter(p => sellersFilter.has(String(p.name || '').trim().toUpperCase()));
   }
-
-  // Per-seller bank-details fallback chain:
-  //   1. trader_banks default (is_default=1) — picks the explicitly
-  //      flagged primary account when the seller has multiple banks
-  //   2. trader_banks first row — when no default flagged
-  //   3. traders.ifsc/acctnum — legacy single-bank
-  // Pre-fetch all default banks once (cheaper than per-seller query).
-  const bankByTraderId = {};
-  try {
-    const banks = db.all(`
-      SELECT trader_id, ifsc, acctnum, holder_name, is_default, id
-        FROM trader_banks
-       ORDER BY trader_id, is_default DESC, id ASC
-    `);
-    for (const b of banks) {
-      // First row per trader_id wins (already sorted by is_default DESC).
-      if (bankByTraderId[b.trader_id] == null) bankByTraderId[b.trader_id] = b;
-    }
-  } catch (_) { /* trader_banks may not exist on partial migrations */ }
 
   // Per-seller advance already paid — deducted from the bank payout so the
   // exported amount matches the Payments tab's Payable (Net − Advance). Applied
@@ -1253,60 +1360,18 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [auctionId]);
   const roundAmounts = cfg.flag_round;
 
-  // Where seller `p`'s money actually lands. `routedBank` is the lot's pinned
-  // account (already ownership-checked by `bankFor`); null falls back through
-  // the seller's default bank to the legacy single-bank columns on `traders`.
-  // Shared with the lot-filtered split below so the "do these lots pay into
-  // the same account?" test and the cells finally written can never disagree.
-  const resolveDest = (p, routedBank) => {
-    const tb = p.trader_id != null ? bankByTraderId[p.trader_id] : null;
-    return {
-      ifsc:     (routedBank && routedBank.ifsc)        || (tb && tb.ifsc)        || p.t_ifsc    || '',
-      acctnum:  (routedBank && routedBank.acctnum)     || (tb && tb.acctnum)     || p.t_acctnum || '',
-      holderNm: (routedBank && routedBank.holder_name) || (tb && tb.holder_name) || p.t_holder  || p.name,
-    };
-  };
-
   // Build one bank-payment output row for seller `p`. `rawAmount` is the
   // pre-round amount, `lotList` the formatted lot numbers for REMARKS, and
   // `routedBank` (or null → seller-default fallback chain) the destination.
-  const buildRow = (p, rawAmount, lotList, routedBank) => {
-    const amount = roundAmounts ? Math.round(rawAmount) : rawAmount;
-    // The lots this row actually pays for: the picked subset when the caller
-    // filtered, otherwise every lot the seller has in this trade.
-    const rowLots = lotList || formatLotList(p.lot_nos || '');
-    const { ifsc, acctnum, holderNm } = resolveDest(p, routedBank);
-    return {
-      transactionType: rawAmount >= 200000 ? 'RTGS' : 'NEFT',
-      // Firm's own account that funds are debited from. Kerala account per
-      // config; same value on every row (single debit account for the batch).
-      debitAccount: (cfg && cfg.bank_kl_acct) || '',
-      // Beneficiary account type (SB/CA) is not stored per seller — left
-      // blank for the user to fill before upload.
-      accountType: '',
-      ifsc,
-      accountNo: acctnum,
-      beneficiaryName: holderNm,
-      address1: p.padd || '',
-      address2: p.ppla || '',
-      pin: p.pin || '',
-      amount,
-      remarks: `${auction ? auction.ano : ''} ${p.name} PAYMENT ${rawAmount.toFixed(2)} Credited${lotList ? ` for lot${lotList.includes(',') ? 's' : ''} ${lotList}` : ''}`,
-      holderName: holderNm,
-      // Seller phone + CR carried for presentation-only bank formats (e.g. the
-      // HDFC A/C sheet's Phone column). `cr` is the leading candidate for that
-      // format's "Particulars" column.
-      phone: p.t_tel || '',
-      cr: p.cr || '',
-      // Particulars — Auction No + space + lot no(s) (e.g. "A10 024"). Uses the
-      // picked lots when this is a lot-filtered export, otherwise all of the
-      // seller's lots for this auction.
-      particulars: `${auction ? auction.ano : ''} ${rowLots}`.trim(),
-      // Internal only — the orderByLot sort reads it and it is stripped before
-      // the rows are returned, so no bank format can accidentally print it.
-      _lotList: rowLots,
-    };
-  };
+  // The lots the row pays for are the picked subset when the caller filtered,
+  // otherwise every lot the seller has in this trade.
+  const buildRow = (p, rawAmount, lotList, routedBank) =>
+    buildBankPaymentRow(p, rawAmount, {
+      lotList: lotList || '',
+      rowLots: lotList || formatLotList(p.lot_nos || ''),
+      dest: dests.resolveDest(p, routedBank),
+      auction, cfg, roundAmounts, kind: 'PAYMENT',
+    });
 
   // `payment_advances` is keyed by NAME, so when one name covers two sellers
   // the advance cannot be attributed to either. Deducting it from both would
@@ -1389,28 +1454,6 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
     const amtOf = g => Math.max(0,
       (useBefore ? (Number(g.puramt) || 0) : (Number(g.payable) || 0)) - (Number(g.lot_advance) || 0));
 
-    // The account a lot's pin actually authorises — or null, meaning "follow
-    // the seller's default" rather than "pay this id".
-    //
-    // The ownership test is the point. `trader_banks` ids are RECYCLED:
-    // syncTraderBanks (server.js) deletes and re-inserts a seller's bank rows
-    // on every save, so a `lots.bank_id` stamped at lot entry can now name a
-    // row that has been handed to a DIFFERENT seller. Trusting it paid this
-    // seller's lots into that seller's account — a real case: three lots of
-    // ELAICHIROYAL PRIVATE LIMITED (₹17.5L) carried bank_id 38, which by then
-    // belonged to THAMARASSERIYIL SPICES POINT. An id the seller does not own
-    // is therefore treated as no pin at all, so the money falls back to their
-    // own default instead of leaving for someone else's account. Same guard
-    // the mobile receipt query already carries (mobile-bridge.js, "AND
-    // tb.trader_id = t.id") and the Payments screen's bank-status check.
-    const bankFor = (bankId) => {
-      if (bankId == null) return null;
-      const b = bankById[bankId];
-      if (!b) return null;                                  // row since deleted
-      if (p.trader_id == null || b.trader_id !== p.trader_id) return null;
-      return b;
-    };
-
     // Bucket the covered lots by the account they will ACTUALLY be paid into,
     // not by the raw bank_id they carry. Several distinct bank_ids routinely
     // resolve to ONE destination — a stale id, an untagged lot, and a lot
@@ -1422,8 +1465,10 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
     // still splitting genuinely different accounts.
     const buckets = new Map();
     for (const g of groups) {
-      const bank = bankFor(g.bank_id);
-      const d = resolveDest(p, bank);
+      // bankFor applies the ownership test — a pin naming an account this
+      // seller does not own is treated as no pin at all.
+      const bank = dests.bankFor(p, g.bank_id);
+      const d = dests.resolveDest(p, bank);
       const key = `${String(d.ifsc).trim().toUpperCase()}|${String(d.acctnum).trim()}`;
       let b = buckets.get(key);
       if (!b) { b = { bank, amount: 0, lots: [] }; buckets.set(key, b); }
@@ -1447,6 +1492,151 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
   // caller keeps the seller-wise `ORDER BY l.state, l.name` above untouched.
   // A row can cover several lots, so it sorts on its smallest one; the original
   // index breaks ties so equal keys stay in their seller-wise order.
+  if (opts.orderByLot) {
+    result = result
+      .map((r, i) => ({ r, i, k: lotSortKey(r._lotList) }))
+      .sort((a, b) =>
+        (a.k[0] - b.k[0]) ||
+        (a.k[1] < b.k[1] ? -1 : a.k[1] > b.k[1] ? 1 : 0) ||
+        (a.i - b.i))
+      .map(x => x.r);
+  }
+  result.forEach(r => { delete r._lotList; });
+  return result;
+}
+
+/**
+ * Bank file for the ADVANCES recorded against individual lots (lot_advances,
+ * written by the lot-wise Payments screen's Pay Advance). Same row shape and
+ * same bank-format profile as getBankPaymentData — this is the sheet you send
+ * the bank to actually MOVE the advance money, so it has to be uploadable
+ * exactly like the payable one.
+ *
+ * ── What it pays ───────────────────────────────────────────────────
+ * The advance itself, not the payable: one line per seller per destination
+ * account, amounting to the sum of the advances on the lots it covers.
+ * Nothing is netted or deducted — the payable file already deducts these
+ * same advances, which is what stops the money going out twice.
+ *
+ * ── Which lots ─────────────────────────────────────────────────────
+ * Only lots that carry an advance, and only while they are unpaid. Once a lot
+ * is settled its advance has already come off that payment, so re-exporting
+ * it here would pay the advance a second time.
+ *
+ * ── Where the money goes ───────────────────────────────────────────
+ * `lot_advances.bank_id` is the account the operator said the advance was
+ * paid into, so it routes the line — subject to the same ownership test as
+ * every other payment (see bankDestinations). A lot with no account recorded,
+ * or one naming an account its seller does not own, falls back to the
+ * seller's default. Lines are then bucketed by the RESOLVED destination, so
+ * several lots landing in one account produce one line rather than several.
+ *
+ * opts: { sellers, sellerKeys, lots, orderByLot } — the same filters the
+ * payable export takes, so the screen can hand both the identical selection.
+ */
+function getAdvanceBankPaymentData(db, auctionId, cfg, opts) {
+  opts = opts || {};
+  cfg = cfg || {};
+  if (!hasLotAdvances(db)) return [];
+
+  const sellerKeyFilter = (Array.isArray(opts.sellerKeys) && opts.sellerKeys.length)
+    ? new Set(opts.sellerKeys.map(k => String(k).trim().toUpperCase()))
+    : null;
+  const sellersFilter = (Array.isArray(opts.sellers) && opts.sellers.length)
+    ? new Set(opts.sellers.map(s => String(s).trim().toUpperCase()))
+    : null;
+  // { sellerName|sellerKey: ['lot_no', …] } — keep ONLY these lots.
+  const lotPicks = (() => {
+    const m = opts.lots;
+    if (!m || typeof m !== 'object' || Array.isArray(m)) return null;
+    const o = {}; let any = false;
+    for (const k of Object.keys(m)) {
+      const arr = Array.isArray(m[k]) ? m[k].map(x => String(x).trim()).filter(Boolean) : [];
+      if (arr.length) { o[String(k).trim().toUpperCase()] = new Set(arr); any = true; }
+    }
+    return any ? o : null;
+  })();
+
+  const sellerKeySql = SELLER_KEY_SQL('l');
+  // One row per advanced lot — the grouping is done in JS because it keys on
+  // the RESOLVED destination account, which SQL cannot see.
+  let rows = db.all(
+    `SELECT ${sellerKeySql} AS seller_key, l.name, l.cr,
+            l.trader_id AS lot_trader_id, TRIM(COALESCE(l.user_id,'')) AS user_id,
+            l.lot_no, la.advance AS advance, la.bank_id AS adv_bank_id
+       FROM lot_advances la JOIN lots l ON l.id = la.lot_id
+      WHERE la.auction_id = ? AND l.auction_id = ?
+        AND la.advance > 0
+        AND (l.paid IS NULL OR l.paid = '')
+        AND l.paid_at IS NULL
+      ORDER BY l.name, CAST(l.lot_no AS INTEGER), l.lot_no`,
+    [auctionId, auctionId]) || [];
+
+  if (sellerKeyFilter) {
+    rows = rows.filter(r => sellerKeyFilter.has(String(r.seller_key || '').trim().toUpperCase()));
+  } else if (sellersFilter) {
+    rows = rows.filter(r => sellersFilter.has(String(r.name || '').trim().toUpperCase()));
+  }
+  if (lotPicks) {
+    rows = rows.filter(r => {
+      const picks = lotPicks[String(r.seller_key || '').trim().toUpperCase()]
+                 || lotPicks[String(r.name || '').trim().toUpperCase()];
+      // A seller with no picks at all is not part of this export — the caller
+      // named the lots, so anything unnamed is deliberately out.
+      return picks ? picks.has(String(r.lot_no || '').trim()) : false;
+    });
+  }
+  if (!rows.length) return [];
+
+  // The master row carries the account details and the address the file
+  // prints, and it is per SELLER — resolve it once per seller, not per lot.
+  const bySeller = new Map();
+  for (const r of rows) {
+    const key = String(r.seller_key || '');
+    let s = bySeller.get(key);
+    if (!s) {
+      s = { seller_key: key, name: r.name, cr: r.cr,
+            lot_trader_id: r.lot_trader_id, user_id: r.user_id, lots: [] };
+      bySeller.set(key, s);
+    }
+    // The first lot's trader_id stands in for the seller, matching how the
+    // payable export takes MAX(l.trader_id) over the group.
+    if (s.lot_trader_id == null && r.lot_trader_id != null) s.lot_trader_id = r.lot_trader_id;
+    s.lots.push(r);
+  }
+  const sellers = [...bySeller.values()];
+  attachSellerMaster(db, sellers);
+
+  const dests = bankDestinations(db);
+  const auction = db.get('SELECT * FROM auctions WHERE id = ?', [auctionId]);
+  const roundAmounts = cfg.flag_round;
+
+  let result = sellers.flatMap(p => {
+    // Bucket this seller's advanced lots by the account they actually land in.
+    const buckets = new Map();
+    for (const r of p.lots) {
+      const bank = dests.bankFor(p, r.adv_bank_id);
+      const d = dests.resolveDest(p, bank);
+      const key = `${String(d.ifsc).trim().toUpperCase()}|${String(d.acctnum).trim()}`;
+      let b = buckets.get(key);
+      if (!b) { b = { bank, dest: d, amount: 0, lots: [] }; buckets.set(key, b); }
+      else if (b.bank == null && bank != null) { b.bank = bank; b.dest = dests.resolveDest(p, bank); }
+      b.amount += Number(r.advance) || 0;
+      b.lots.push(String(r.lot_no || ''));
+    }
+    return [...buckets.values()]
+      .filter(b => b.amount > 0)
+      .map(b => {
+        const lotList = formatLotList(b.lots.join(','));
+        return buildBankPaymentRow(p, b.amount, {
+          // Always name the lots: an advance file is always about specific
+          // lots, never a whole seller's trade.
+          lotList, rowLots: lotList,
+          dest: b.dest, auction, cfg, roundAmounts, kind: 'ADVANCE',
+        });
+      });
+  });
+
   if (opts.orderByLot) {
     result = result
       .map((r, i) => ({ r, i, k: lotSortKey(r._lotList) }))
@@ -2306,6 +2496,7 @@ module.exports = {
   listAgriSellers,
   getPaymentSummary,
   getBankPaymentData,
+  getAdvanceBankPaymentData,
   formatLotList,
   getTDSReturnData,
   getSalesJournal,

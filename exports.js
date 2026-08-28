@@ -553,6 +553,197 @@ async function exportChecklist(db, auctionId) {
   });
 }
 
+// Resolve a lot's short buyer CODE from the BUYERS MASTER rather than from
+// lots.code: the lot carries a copy stamped at price-entry time, and if the
+// buyer's code was corrected in the master afterwards the two disagree. A code
+// match against the master wins, a trade-name match is the fallback, and
+// lots.code stands only when neither matches — a buyer who was never added to
+// the master, and the non-sale markers ('WD' withdrawn, 'NA' not auctioned)
+// that have no master row by design.
+//
+// Built in JS rather than as a SQL join: matching a lot on "code OR name"
+// inside a JOIN fans the row out once per duplicate buyer record, and
+// duplicates in the master are common. Two maps, first-write-wins over an
+// id-ordered scan, give the lowest-id row per key — the same tie-break the
+// Spice Board reports use.
+//
+// Returns a `(lot) => code` closure; the caller pays for the master scan once.
+// Shared by both verification sheets so they can never disagree about which
+// code a lot belongs under.
+function buyerCodeResolver(db) {
+  const byCode = new Map(), byName = new Map();
+  for (const b of db.all(`SELECT code, buyer FROM buyers ORDER BY id`)) {
+    const code = String(b.code || '').trim();
+    if (!code) continue;
+    const ck = code.toUpperCase();
+    if (!byCode.has(ck)) byCode.set(ck, code);
+    const nk = String(b.buyer || '').trim().toUpperCase();
+    if (nk && !byName.has(nk)) byName.set(nk, code);
+  }
+  return (l) => {
+    const c = String(l.code || '').trim();
+    if (c && byCode.has(c.toUpperCase())) return byCode.get(c.toUpperCase());
+    const n = String(l.buyer || '').trim().toUpperCase();
+    if (n && byName.has(n)) return byName.get(n);
+    return c;   // unknown to the master — show what the lot carries
+  };
+}
+
+// ── Lot Verification: two-up LOT | BAG | QTY | BUYER sheet ───
+// The hall's read-down verification sheet, in the customer-supplied layout:
+// the four columns LOT | BAG | QTY | BUYER repeated TWICE across the page,
+// so a trade of 200 lots prints on half the paper it otherwise would.
+//
+// Fill order is column-major ("down then across"): the first half of the
+// lots runs down the LEFT block, the second half down the RIGHT one. That
+// keeps each block in unbroken lot order, which is the whole point — you
+// read one column top to bottom against the tags in your hand. Row-major
+// would interleave (1,2 / 3,4) and force you to zig-zag.
+//
+// With an odd lot count the left block carries the extra row and the right
+// block's last row is blank — never a half-populated row.
+//
+// BUYER is the short buyer CODE, resolved from the BUYERS MASTER — see
+// buyerCodeResolver above for why the lot's own copy is not trusted.
+//
+// Every lot is listed in lot-number order, withdrawn and unsold included —
+// a verification sheet that silently dropped rows would defeat its purpose.
+async function exportLotVerification(db, auctionId) {
+  const lots = db.all(
+    `SELECT lot_no AS lot, bags AS bag, qty,
+            COALESCE(code,'')  AS code,
+            COALESCE(buyer,'') AS buyer
+       FROM lots WHERE auction_id = ?
+      ORDER BY CAST(lot_no AS INTEGER), lot_no`, [auctionId]
+  );
+
+  const buyerCode = buyerCodeResolver(db);
+
+  // Deal the lots into two blocks, then pair them off row by row.
+  const split = Math.ceil(lots.length / 2);
+  const left = lots.slice(0, split), right = lots.slice(split);
+  const rows = left.map((l, i) => {
+    const r = right[i];
+    return {
+      lot:  l.lot, bag:  l.bag, qty:  l.qty, buyer:  buyerCode(l),
+      lot2: r ? r.lot   : '', bag2: r ? r.bag : '',
+      qty2: r ? r.qty   : '', buyer2: r ? buyerCode(r) : '',
+    };
+  });
+
+  const cols = [
+    { header: 'LOT',   key: 'lot',    width: 8  },
+    { header: 'BAG',   key: 'bag',    width: 7  },
+    { header: 'QTY',   key: 'qty',    width: 12 },
+    { header: 'BUYER', key: 'buyer',  width: 12 },
+    { header: 'LOT',   key: 'lot2',   width: 8  },
+    { header: 'BAG',   key: 'bag2',   width: 7  },
+    { header: 'QTY',   key: 'qty2',   width: 12 },
+    { header: 'BUYER', key: 'buyer2', width: 12 },
+  ];
+  const sum = (arr, k) => arr.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+  return createExcelBuffer('LotVerification', cols, rows, {
+    db, title: 'Lot Verification', metaLines: auctionMeta(db, auctionId),
+    // Each block totals ITSELF. A single combined figure spanning both would
+    // sit under one block's columns and read as that block's total.
+    grandTotal: {
+      label: 'TOTAL',
+      values: {
+        bag:  sum(left,  'bag'), qty:  sum(left,  'qty'),
+        lot2: left.length && right.length ? 'TOTAL' : '',
+        bag2: sum(right, 'bag'), qty2: sum(right, 'qty'),
+      },
+    },
+  });
+}
+
+// ── Lot Verification II: the same sheet, buyer-code-wise ─────
+// CODE | LOT | BAG | QTY, in the customer-supplied layout: one block per
+// buyer code, closed by a "<CODE> Total" row carrying that buyer's bag
+// count. Lot Verification (above) is read down by lot; this one is read
+// block by block, so the bags handed over under one code can be counted
+// against a single figure.
+//
+// ── Ordering ───────────────────────────────────────────────────────
+// Groups appear in the order their FIRST lot was auctioned, not
+// alphabetically — the reference sheet opens TSJ (earliest lot 1), AGA
+// (10), MM (11), SMS (14), KC (16). Inside a group the lots run
+// ascending. Both fall out of the lot-ordered query plus first-seen Map
+// insertion order, so there is no second sort to keep in step.
+//
+// ── Which lots ─────────────────────────────────────────────────────
+// Every lot, including the non-sale markers 'WD' (withdrawn) and 'NA'
+// (not auctioned) — those are real codes on the lot and they get their
+// own block, for the same reason the Checklist keeps them: a
+// verification sheet that silently dropped rows would defeat its
+// purpose. A lot with NO code at all has not been allotted to anyone;
+// those sort last and their block reads "(NO CODE) Total" so the gap is
+// visible instead of blending into a real buyer's block.
+//
+// CODE is resolved through buyerCodeResolver, the same rule Lot
+// Verification uses, so a code corrected in the master after price entry
+// moves the lot in BOTH sheets or neither.
+//
+// ── Why the group rows carry BAG only ──────────────────────────────
+// QTY is deliberately blank on them, exactly as on the reference: the
+// block total is a bag count, the figure the hall actually counts
+// against. The grand total at the foot carries both, being the sheet's
+// bottom line rather than a per-block check.
+async function exportLotVerification2(db, auctionId) {
+  const lots = db.all(
+    `SELECT lot_no AS lot, bags AS bag, qty,
+            COALESCE(code,'')  AS code,
+            COALESCE(buyer,'') AS buyer
+       FROM lots WHERE auction_id = ?
+      ORDER BY CAST(lot_no AS INTEGER), lot_no`, [auctionId]
+  );
+  const buyerCode = buyerCodeResolver(db);
+
+  // Bucket by resolved code. The query is already lot-ordered, so the Map's
+  // insertion order IS "earliest lot first" and each bucket is already
+  // ascending — no re-sorting.
+  const groups = new Map();
+  for (const l of lots) {
+    const code = buyerCode(l);
+    if (!groups.has(code)) groups.set(code, []);
+    groups.get(code).push(l);
+  }
+  // Un-allotted lots trail the coded blocks whatever lot number they carry.
+  const codes = [...groups.keys()].filter(c => c !== '');
+  if (groups.has('')) codes.push('');
+
+  const rows = [];
+  for (const code of codes) {
+    const block = groups.get(code);
+    for (const l of block) rows.push({ code, lot: l.lot, bag: l.bag, qty: l.qty });
+    rows.push({
+      code: `${code || '(NO CODE)'} Total`,
+      bag: block.reduce((s, l) => s + (Number(l.bag) || 0), 0),
+      _isSubtotal: true,
+    });
+  }
+
+  const cols = [
+    { header: 'CODE', key: 'code', width: 12 },
+    { header: 'LOT',  key: 'lot',  width: 8  },
+    { header: 'BAG',  key: 'bag',  width: 7  },
+    { header: 'QTY',  key: 'qty',  width: 12 },
+  ];
+  return createExcelBuffer('LotVerificationII', cols, rows, {
+    db, title: 'Lot Verification II', metaLines: auctionMeta(db, auctionId),
+    grandTotal: {
+      label: 'TOTAL',
+      values: {
+        bag: lots.reduce((s, l) => s + (Number(l.bag) || 0), 0),
+        // Summing kilos in binary floating point leaves 3261.1000000000004.
+        // Excel's numFmt would hide it, but ?format=csv writes the raw value
+        // out — so round to the 3 decimals the column shows.
+        qty: Math.round(lots.reduce((s, l) => s + (Number(l.qty) || 0), 0) * 1000) / 1000,
+      },
+    },
+  });
+}
+
 // ── Lot Name: per-lot seller name + price + blank control ─────
 // LOT | NAME (seller) | PLACE (KL/TN) | BAG | QTY | PRICE | CONTROL
 // PRICE auto-fills from lot.price when set; CONTROL is left blank
@@ -789,6 +980,30 @@ async function exportBankPayment(db, auctionId, cfg, _state, extra) {
     sellerKeys: (extra && extra.sellerKeys) || null,
     lots:        extra && extra.lots,
     excludeLots: extra && extra.excludeLots,
+    orderByLot:  !!(extra && extra.orderByLot),
+  });
+  const fmt = getBankFormat(cfg && cfg.bank_format);
+  return renderBankPaymentView(db, auctionId, fmt, payments, cfg);
+}
+
+// ── Export Type 4c: Bank Payment — ADVANCES ──────────────────
+// The bank file that MOVES the advance money, in the same profile layout as
+// the payable file above so it uploads to the bank portal identically. One
+// line per seller per destination account, amounting to the advances recorded
+// against the lots (lot_advances) — see getAdvanceBankPaymentData.
+//
+// Raised from the lot-wise Payments screen's Pay Advance dialog, which posts
+// the picked lots the same way the payable export does. Nothing is stamped by
+// this export: an advance is already recorded when it is saved, and the
+// payable file deducts it from then on, so the file is a transport of money
+// already on the books rather than an event of its own.
+async function exportBankPaymentAdvance(db, auctionId, cfg, _state, extra) {
+  const { getAdvanceBankPaymentData } = require('./calculations');
+  const { getBankFormat } = require('./bank-formats');
+  const payments = getAdvanceBankPaymentData(db, auctionId, cfg, {
+    sellers:    (extra && extra.sellers) || null,
+    sellerKeys: (extra && extra.sellerKeys) || null,
+    lots:        extra && extra.lots,
     orderByLot:  !!(extra && extra.orderByLot),
   });
   const fmt = getBankFormat(cfg && cfg.bank_format);
@@ -1908,11 +2123,25 @@ const EXPORT_TYPES = {
   lot_name:           { fn: exportLotName,           name: 'LotName' },
   lot_payment:        { fn: exportLotPayment,        name: 'LotPayment' },
   checklist:          { fn: exportChecklist,         name: 'Checklist' },
+  // Two-up LOT/BAG/QTY/BUYER verification sheet. Native XLSX — the Auction
+  // Downloads tile asks for xlsx, not the generic ?format=csv conversion,
+  // because flattening a two-block sheet to CSV loses the layout that is
+  // the whole reason it exists.
+  lot_verification:   { fn: exportLotVerification,   name: 'LotVerification' },
+  // The same sheet grouped by buyer code, with a per-code bag subtotal. Also
+  // served as xlsx: the "<CODE> Total" rows are what make it readable, and a
+  // flat CSV drops the banding that separates one buyer's block from the next.
+  // ?format=csv still works on the route for anyone who wants the raw rows.
+  lot_verification_2: { fn: exportLotVerification2,  name: 'LotVerificationII' },
   // praman_csv removed in this build (e-Auction(Praman) export disabled).
   price_list:         { fn: exportPriceList,         name: 'PriceList' },
   price_list_before:  { fn: exportPriceListBefore,   name: 'PriceListBefore' },
   bank_payment_before:{ fn: exportBankPaymentBefore, name: 'BankPaymentBefore', needsCfg: true },
   bank_payment:       { fn: exportBankPayment,       name: 'BankPayment',       needsCfg: true },
+  // The advances file — same bank profile, but it pays the advances recorded
+  // against lots instead of the payable. Raised from Pay Advance on the
+  // lot-wise Payments screen; the POST route carries the picked lots.
+  bank_payment_advance:{ fn: exportBankPaymentAdvance, name: 'BankPaymentAdvance', needsCfg: true },
   pooler_register:    { fn: exportPoolerRegister,    name: 'PoolerRegister' },
   full_file:          { fn: exportFullFile,          name: 'FullFile' },
   // Writes CSV directly (bespoke 22-column layout), so ext/mime are set
@@ -2095,9 +2324,9 @@ module.exports = {
   // styling instead of building their own ExcelJS workbook.
   createExcelBuffer,
   exportLotSlip, exportLotSlipAfter, exportLotBuyer, exportLotName, exportLotPayment,
-  exportChecklist,
+  exportChecklist, exportLotVerification, exportLotVerification2,
   exportPriceList, exportPriceListBefore,
-  exportBankPayment, exportBankPaymentBefore,
+  exportBankPayment, exportBankPaymentBefore, exportBankPaymentAdvance,
   exportPoolerRegister, exportFullFile, exportCollection, exportTradeReport, exportDealerList,
   exportDealerListPartyWise, exportPoolerListConsolidated,
   exportPlanterList,

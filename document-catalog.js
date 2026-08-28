@@ -165,6 +165,25 @@ const DOCUMENTS = [
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 2, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('lot_name') },
 
+  // The hall's verification sheets. XLSX only, both of them: the first is the
+  // four columns LOT|BAG|QTY|BUYER repeated two-up across the page, the second
+  // is banded into one block per buyer code with a subtotal row closing each.
+  // Flattening either to CSV throws away the layout that is the reason the
+  // hall reads it, and neither has a PDF builder.
+  { id: 'lot_verification', label: 'Lot Verification', group: 'preauction', sub: 'Lot lists',
+    family: 'exports', kind: 'export', scope: 'trade', formats: ['xlsx'],
+    minStage: 2, perm: 'export',
+    route: '/api/exports/:type/:auctionId', href: hrefExport('lot_verification'),
+    note: 'Two-up layout — XLSX only' },
+
+  // Stage 3, unlike the sheet above: a lot has no buyer code until price entry
+  // allots one, so before that this sheet would be one "(NO CODE)" block.
+  { id: 'lot_verification_2', label: 'Lot Verification II', group: 'preauction', sub: 'Lot lists',
+    family: 'exports', kind: 'export', scope: 'trade', formats: ['xlsx'],
+    minStage: 3, perm: 'export',
+    route: '/api/exports/:type/:auctionId', href: hrefExport('lot_verification_2'),
+    note: 'One block per buyer code — XLSX only' },
+
   // Lives in the Spice Board registry (fixed portal schema, per-lot rows)
   // but has always been surfaced in the Export Center too. Today that
   // costs a special case in exportType() — index.html:29992. One entry
@@ -351,6 +370,19 @@ const DOCUMENTS = [
     filters: ['sellers'],
     multi: ['sellers'],
     route: '/api/exports/:type/:auctionId', href: hrefExport('bank_payment') },
+
+  // The advances file: same bank layout, but it pays the advances recorded
+  // against lots rather than the payable. XLSX only — exports-pdf.js has no
+  // COLS entry for it, and it is a bank upload, not a desk report. Normally
+  // raised from Pay Advance on the lot-wise Payments screen (which POSTs the
+  // picked lots); the tile here exports every unpaid advance in the trade.
+  { id: 'bank_payment_advance', label: 'Bank Payment (Advances)', group: 'banking', sub: 'Bank files',
+    family: 'exports', kind: 'export', scope: 'trade', formats: ['xlsx'],
+    minStage: 3, perm: 'export',
+    filters: ['sellers'],
+    multi: ['sellers'],
+    route: '/api/exports/:type/:auctionId', href: hrefExport('bank_payment_advance'),
+    note: 'Pays the recorded lot advances — XLSX only' },
 
   { id: 'payment', label: 'Payment Summary', group: 'banking', sub: 'Summaries', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 3, perm: 'export',

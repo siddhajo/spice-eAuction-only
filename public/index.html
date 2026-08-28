@@ -2395,15 +2395,28 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
   content:'';position:absolute;top:0;left:0;right:0;height:4px;
   background:linear-gradient(90deg, var(--from), var(--to))}
 .hub-tile:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(15,23,42,.08)}
-.hub-tile-main{display:flex;align-items:center;gap:9px;min-width:0}
+/* Tile head — file glyph, then name over format, then the bundle tick.
+   Same arrangement as the Auction Downloads screen's tiles, so the two
+   screens read as one app; the actions below are what this screen adds. */
+.hub-tile-main{display:flex;align-items:flex-start;gap:12px;min-width:0}
+.hub-tile-txt{min-width:0;flex:1;display:flex;flex-direction:column}
 
-/* Format chip — one glance tells you what comes out. */
-.hub-fmt{
-  flex:none;padding:2px 8px;border-radius:6px;display:inline-flex;
-  align-items:center;justify-content:center;
-  font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--to);
-  background:rgba(255,255,255,.8);border:1px solid var(--md)}
-.hub-tile.is-locked .hub-fmt{filter:grayscale(1);opacity:.55}
+/* The glyph square. Group colour rather than the flat dark of the
+   Auction Downloads screen — see the note in hubTileHtml(). */
+.hub-file-ico{
+  width:38px;height:38px;flex:none;border-radius:9px;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:var(--to);color:#fff}
+.hub-file-ico svg{width:22px;height:22px}
+.hub-tile.is-locked .hub-file-ico{background:var(--spice-text-hint)}
+
+/* Second line: every format the tile offers. Replaces the old colour-coded
+   chip — the chip named only the primary format and leaned on hue to do it,
+   which failed for anyone who cannot separate the two greens. */
+.hub-tile-fmt{
+  font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--text2);
+  margin-top:3px}
+.hub-tile.is-locked .hub-tile-fmt{font-weight:500;font-style:italic;color:var(--text3)}
 
 /* The left edge takes the SOURCE group's colour. In a purpose group every
    row matches and it reads as one band; in a file-type group it is the
@@ -2661,10 +2674,14 @@ body[data-hub-plain="1"] .hub-tile{background:var(--card);border-color:var(--spi
 body[data-hub-plain="1"] .hub-tile::before{background:var(--hub-p-edge)}
 body[data-hub-plain="1"] .hub-tile-l{color:var(--spice-text-main)}
 body[data-hub-plain="1"] .hub-src,
-body[data-hub-plain="1"] .hub-fmt,
 body[data-hub-plain="1"] .hub-tile .hub-chip,
 body[data-hub-plain="1"] .hub-f-chip{
   background:var(--hub-p-fill-2);color:var(--hub-p-ink);border-color:var(--spice-line)}
+/* The glyph square takes the group colour in colour mode; in plain mode it
+   becomes the one graphite, like every other filled element here. */
+body[data-hub-plain="1"] .hub-file-ico{background:var(--hub-p-ink);color:#fff}
+body[data-hub-plain="1"] .hub-tile.is-locked .hub-file-ico{background:var(--hub-p-ink-soft)}
+body[data-hub-plain="1"] .hub-tile-fmt{color:var(--hub-p-ink)}
 /* One graphite for every action; the icon buttons a step lighter so the
    row still has a primary. */
 body[data-hub-plain="1"] .hub-tile .hub-btn{background:var(--hub-p-ink);color:#fff}
@@ -6639,6 +6656,12 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                  moves: advance first, balance after. Needs lot_write, the same
                  permission the advance endpoint enforces. -->
             <button class="btn btn-o needs-lot-write" id="paylw-adv-btn" style="height:38px;padding:0 14px;font-weight:600;color:#B45309;border-color:#FDE68A;background:#FFFBEB" onclick="payLwOpenAdvance()" title="Record an advance paid against these lots. Each lot's Payable drops by its advance, and so does its line in the bank-payment export.">💰 Pay Advance</button>
+            <!-- Bulk reverse of the ADVANCE — the twin of the per-row "↩ Undo
+                 advance", for a batch recorded against the wrong lots. Hidden
+                 unless the results actually carry advances. Not admin-gated:
+                 clearing an advance is what Pay Advance itself does with a
+                 blank box, so it needs the same lot_write and no more. -->
+            <button class="btn btn-o needs-lot-write" id="paylw-undoadv-btn" style="display:none;height:38px;padding:0 14px;font-weight:600;color:#B45309;border-color:#FDE68A" onclick="payLwUndoAdvanceSelected()" title="Remove the advance recorded against the ticked lots. Each lot's Payable goes back up by its advance.">↩ Undo advance</button>
             <button class="btn btn-a" id="paylw-export-btn" style="height:38px;padding:0 16px;font-weight:600" onclick="payLwExportBank()" title="Export the RTGS/NEFT file for the ticked lots. A fresh search ticks them all — untick any you don't want to pay yet.">📤 Export Bank Payment</button>
           </div>
         </div>
@@ -6720,6 +6743,11 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
 
       <div class="actions" style="align-items:center">
         <div id="paylw-adv-total" style="margin-right:auto;font-size:12.5px;color:var(--text2)"></div>
+        <!-- The bank file for the advances themselves — same RTGS/NEFT layout
+             as Export Bank Payment, but paying the recorded advances instead
+             of the balance. Exports what is SAVED, so it sits beside Pay
+             rather than replacing it: record first, then send to the bank. -->
+        <button class="btn btn-o" type="button" id="paylw-adv-export" onclick="payLwExportAdvance()" style="font-weight:600;color:#B45309;border-color:#FDE68A;background:#FFFBEB" title="Download the RTGS/NEFT file that pays the advances recorded on the ticked lots">📤 Export advance</button>
         <button class="btn btn-o" type="button" onclick="hideModal('paylw-adv-modal')">Cancel</button>
         <button class="btn btn-a" type="button" id="paylw-adv-save" onclick="payLwSaveAdvance()">Pay</button>
       </div>
@@ -12219,15 +12247,20 @@ function hubTileHtml(it){
               title="Add to bundle"
               style="width:18px;height:18px;cursor:pointer;flex:none;margin-left:auto">`
     : '';
-  // The chip is the row's anchor: colour by FILE TYPE, which is
-  // information you can scan for, not decoration. In a format-grouped
-  // list they all match — which is why the row also takes its source
-  // group's colour on the left edge, so a PDF list still shows at a
-  // glance which are pre-auction and which are reports.
-  const primary = (it._only || (it.formats || [])[0] || '').toLowerCase();
-  const chip = primary
-    ? `<span class="hub-fmt hub-fmt-${esc(primary)}">${esc(HUB_FMT_SHORT[primary] || primary.toUpperCase())}</span>`
-    : `<span class="hub-fmt hub-fmt-doc">DOC</span>`;
+  // The tile leads with the same file glyph the Auction Downloads screen
+  // uses, so the two screens read as one app. The square is NOT the flat
+  // near-black of that screen: it takes the tile's group colour (--to), which
+  // is what makes a 60-tile page scannable — you learn "indigo is Tally" once
+  // and stop reading headings. Locked tiles grey it, matching the greyed
+  // "Not available yet" tile there.
+  const icoSq = `<span class="hub-file-ico">${AMR_FILE_ICON}</span>`;
+  // The format used to be a colour-coded chip. It is now the tile's second
+  // line, which says MORE than the chip did: the chip named only the primary
+  // format, this names every format the tile offers. Under a file-type
+  // heading (_only) that is the single format the tile was filed under.
+  const fmts = (it._only ? [it._only] : (it.formats || []))
+    .map(f => HUB_FMT_SHORT[f] || String(f).toUpperCase());
+  const sub = fmts.length ? fmts.join(' · ') : 'DOC';
 
   const parts = [];
 
@@ -12301,8 +12334,11 @@ function hubTileHtml(it){
   return `<div class="${cls}" data-hub-id="${esc(it.id)}"${tintStyle}`
        + (it._groupId ? ` data-src="${esc(it._groupId)}"` : '')
        + ` data-search="${esc((it.label + ' ' + it.id + ' ' + (it.family || '')).toLowerCase())}">`
-       + `<div class="hub-tile-main">${chip}${pick}</div>`
-       + `<div class="hub-tile-l">${esc(it.label)}</div>`
+       + `<div class="hub-tile-main">${icoSq}`
+       +   `<span class="hub-tile-txt">`
+       +     `<span class="hub-tile-l">${esc(it.label)}</span>`
+       +     `<span class="hub-tile-fmt">${esc(sub)}</span>`
+       +   `</span>${pick}</div>`
        + (parts.length ? `<div class="hub-tile-meta">${parts.join('')}</div>` : '')
        + (acts.length ? `<div class="hub-acts">${acts.join('')}</div>` : '')
        + '</div>';
@@ -14223,8 +14259,17 @@ const AMR_SECTIONS = [
     { label: 'Sales CSV',                href: id => `/api/exports/sales-journal?auctionId=${id}&format=csv` },
     { label: 'Planter Disbursement CSV', todo: true },
     { label: 'Dealer Disbursement CSV',  todo: true },
-    { label: 'Lot Verification CSV',     todo: true },
-    { label: 'Lot Verification II CSV',  todo: true },
+    // Served as XLSX, not CSV. The sheet is the four columns LOT/BAG/QTY/
+    // BUYER repeated twice across the page; flattening that to CSV throws
+    // away the two-up layout the hall reads it for. Label kept verbatim from
+    // the supplied design — `note:'xlsx'` makes the tile say what it hands you.
+    { label: 'Lot Verification CSV',     href: id => `/api/exports/lot_verification/${id}?format=xlsx`,
+                                         note: 'xlsx' },
+    // Same sheet, grouped into one block per buyer code with a "<CODE> Total"
+    // bag row closing each block. XLSX for the same reason: the banding is
+    // what makes the blocks readable, and CSV drops it.
+    { label: 'Lot Verification II CSV',  href: id => `/api/exports/lot_verification_2/${id}?format=xlsx`,
+                                         note: 'xlsx' },
   ]},
   { title: 'PDF Downloads', items: [
     { label: 'Arrivals Report',          todo: true },
@@ -33327,6 +33372,14 @@ function _payLwRender() {
     const undoBtn = (isPaid && window._userRole === 'admin')
       ? ` <button class="btn btn-o" style="padding:1px 7px;font-size:10.5px;font-weight:600;margin-left:4px" onclick="payLwUnmarkPaid(${l.id}, ${esc(JSON.stringify(String(l.name || '')))})" title="Admin: undo the paid stamp so this lot can be selected and exported again">↩ Undo</button>`
       : '';
+    // Remove this lot's advance in one click, rather than opening Pay Advance
+    // and blanking the box. Only on UNPAID rows: a settled lot has already had
+    // its advance netted off the payment that went out, so the server refuses
+    // to clear it until the paid stamp is undone — offering the button there
+    // would only produce that error.
+    const undoAdvBtn = (advance > 0 && !isPaid)
+      ? ` <button class="btn btn-o needs-lot-write" style="padding:1px 7px;font-size:10.5px;font-weight:600;margin-left:4px;color:#B45309;border-color:#FDE68A" onclick="payLwUndoAdvance(${l.id}, ${esc(JSON.stringify(String(l.name || '')))})" title="Remove this lot's advance. Its Payable goes back up by ₹${esc(fmtI(advance, 2))}.">↩ Undo advance</button>`
+      : '';
     const ticked = (!isPaid && _payLwState.selected.has(l.id)) ? ' checked' : '';
     // A paid row's box means something different from an unpaid one's: it picks
     // the lot for "↩ Undo selected", not for the export. It feeds its own set
@@ -33349,7 +33402,7 @@ function _payLwRender() {
       : fmtI(Number(l.payable) || 0, 2);
     return `<tr${rowCls}${rowStyle}>
       <td style="text-align:center">${cb}</td>
-      <td>${esc(l.name || '')}${paidBadge}${advBadge}${undoBtn}</td>
+      <td>${esc(l.name || '')}${paidBadge}${advBadge}${undoBtn}${undoAdvBtn}</td>
       <td style="font-family:monospace;font-weight:600">${esc(String(l.lot_no || ''))}</td>
       <td style="text-align:right">${fmtI(Number(l.qty) || 0, 3)}</td>
       <td>${esc(l.branch || '')}</td>
@@ -33543,6 +33596,28 @@ function _payLwRefreshSelection() {
       : (_payLwState.lots.length
           ? 'Every listed lot is already paid out — there is nothing to pay an advance against'
           : 'Search for the lots you want to pay an advance on first');
+  }
+  // "↩ Undo advance" appears only once the results actually carry advances,
+  // and acts on the ORDINARY tick set — advances live on unpaid lots, which
+  // are the rows that set governs. Its count is the ticked lots that carry
+  // one, so a mixed selection reads honestly instead of promising to clear
+  // rows that have nothing to clear.
+  const undoAdvSel = sel.filter(l => !l.paid_at && (Number(l.advance) || 0) > 0);
+  const advCount = _payLwState.lots.filter(l => !l.paid_at && (Number(l.advance) || 0) > 0).length;
+  const undoAdvBtn = document.getElementById('paylw-undoadv-btn');
+  if (undoAdvBtn) {
+    undoAdvBtn.style.display = advCount ? '' : 'none';
+    undoAdvBtn.textContent = undoAdvSel.length
+      ? `↩ Undo advance (${undoAdvSel.length})`
+      : '↩ Undo advance';
+    undoAdvBtn.disabled = !undoAdvSel.length;
+    undoAdvBtn.style.opacity = undoAdvSel.length ? '' : '.55';
+    undoAdvBtn.style.cursor = undoAdvSel.length ? '' : 'not-allowed';
+    undoAdvBtn.title = undoAdvSel.length
+      ? `Remove the advance on ${undoAdvSel.length} ticked lot${undoAdvSel.length === 1 ? '' : 's'}`
+        + ` (₹${fmtI(undoAdvSel.reduce((s, l) => s + (Number(l.advance) || 0), 0), 2)}).`
+        + ` Their Payable goes back up by that amount.`
+      : `Tick a lot that carries an advance — ${advCount} of the listed lot${advCount === 1 ? ' does' : 's do'}.`;
   }
   const clr = document.getElementById('paylw-clearsel-btn');
   if (clr) {
@@ -33809,6 +33884,74 @@ async function payLwUndoSelected() {
   }
 }
 
+// ── Undo ADVANCE ─────────────────────────────────────────────────
+// Removes the advance recorded against a lot. This is the same write Pay
+// Advance makes with a blank amount box (advance: 0 clears the row), reached
+// in one click instead of through the dialog — so it needs no new endpoint
+// and no permission the dialog doesn't already have.
+//
+// Reversing it puts the money BACK on the payable: the lot's Payable returns
+// to its gross, and its line in the bank-payment export goes up by the same
+// figure. Both confirms below say so, because that is the consequence the
+// operator is agreeing to.
+async function payLwUndoAdvance(lotId, name) {
+  const aid = _payLwState.aid || Number(document.getElementById('paylw-auction')?.value || 0);
+  const lot = _payLwState.lots.find(l => l.id === lotId);
+  if (!aid || !lot) return;
+  const adv = Number(lot.advance) || 0;
+  if (!(adv > 0)) { toast('That lot carries no advance'); return; }
+  if (!confirm(
+      `Remove the advance of ₹${fmtI(adv, 2)} on lot ${lot.lot_no}`
+      + `${name ? ` (${name})` : ''}?\n\n`
+      + `Its Payable goes back up to ₹${fmtI(_payLwGross(lot), 2)}, here and in the bank-payment export.`)) return;
+  try {
+    await j(`/api/payments/lots/${aid}/advance`, {
+      method: 'POST',
+      body: JSON.stringify({ items: [{ lotId, advance: 0 }] }),
+    });
+    toast(`Advance removed from lot ${lot.lot_no}`);
+    await payLwSearch();   // re-pull so Payable, the badge and the totals agree
+  } catch (e) {
+    alert('Could not remove the advance: ' + (e.message || e));
+  }
+}
+
+// The same reversal for every TICKED lot that carries an advance, in one call.
+// Rows without an advance are ignored rather than rejected — a selection made
+// for an export routinely spans both, and making the operator untick the rest
+// to use this would defeat the point.
+//
+// The whole batch goes in a single request: the endpoint validates all of it
+// before writing anything, so the advances come off together or not at all.
+async function payLwUndoAdvanceSelected() {
+  const aid = _payLwState.aid || Number(document.getElementById('paylw-auction')?.value || 0);
+  const lots = _payLwState.lots.filter(l =>
+    _payLwState.selected.has(l.id) && !l.paid_at && (Number(l.advance) || 0) > 0);
+  if (!aid || !lots.length) { toast('No ticked lot carries an advance'); return; }
+  const total = lots.reduce((s, l) => s + (Number(l.advance) || 0), 0);
+  const sellers = new Set(lots.map(l => String(l.name || '').trim().toUpperCase())).size;
+  const ok = confirm(
+    `Remove the advance on ${lots.length} lot${lots.length === 1 ? '' : 's'}`
+    + ` across ${sellers} seller${sellers === 1 ? '' : 's'}?\n\n`
+    + `Lots: ${lots.map(l => l.lot_no).join(', ')}\n`
+    + `Advance removed: ₹${fmtI(total, 2)}\n\n`
+    + `Their Payable goes back up by that amount, here and in the bank-payment export.`);
+  if (!ok) return;
+  try {
+    const d = await j(`/api/payments/lots/${aid}/advance`, {
+      method: 'POST',
+      body: JSON.stringify({ items: lots.map(l => ({ lotId: l.id, advance: 0 })) }),
+    });
+    const n = Number(d && d.cleared);
+    const shown = Number.isFinite(n) ? n : lots.length;
+    toast(`Advance removed from ${shown} lot${shown === 1 ? '' : 's'} (₹${fmtI(total, 2)})`);
+    await payLwSearch();
+  } catch (e) {
+    // Nothing was written — the endpoint rejects the batch as a whole.
+    alert('Nothing was removed: ' + (e.message || e));
+  }
+}
+
 // ══ PAY ADVANCE (lot-wise) ═══════════════════════════════════════════════
 // Records money paid to a seller AHEAD of settlement, lot by lot. Distinct
 // from the classic screen's per-seller Advance column in every way that
@@ -33996,6 +34139,21 @@ function payLwAdvSync() {
     btn.style.cursor = ok ? '' : 'not-allowed';
     btn.textContent = changes ? `Pay (${changes})` : 'Pay';
   }
+  // The export ships SAVED advances, so it counts the ticked lots that already
+  // carry one — not what is typed. It stays live while there are unsaved edits
+  // (payLwExportAdvance explains why it won't ship them) so the operator is
+  // told what to do rather than facing a dead button with no reason on it.
+  const xbtn = document.getElementById('paylw-adv-export');
+  if (xbtn) {
+    const savedTicked = rows.filter(r => r.ticked && (Number(r.lot.advance) || 0) > 0).length;
+    xbtn.disabled = !savedTicked;
+    xbtn.style.opacity = savedTicked ? '' : '.55';
+    xbtn.style.cursor = savedTicked ? '' : 'not-allowed';
+    xbtn.textContent = savedTicked ? `📤 Export advance (${savedTicked})` : '📤 Export advance';
+    xbtn.title = savedTicked
+      ? `Download the RTGS/NEFT file paying the advances recorded on ${savedTicked} ticked lot${savedTicked === 1 ? '' : 's'}`
+      : 'No ticked lot carries a saved advance yet — enter the amounts and press Pay first';
+  }
 }
 
 // Put one amount on every ticked lot. Capped per row at that lot's own
@@ -34037,6 +34195,95 @@ function payLwAdvClearAmounts() {
   if (!rows.length) { toast('Tick the lots to clear first'); return; }
   for (const r of rows) if (r.amtEl) r.amtEl.value = '';
   payLwAdvSync();
+}
+
+// ── Export the ADVANCES as a bank file ───────────────────────────
+// The RTGS/NEFT sheet that actually MOVES the advance money, in the same bank
+// profile as Export Bank Payment: one line per seller per destination account,
+// amounting to the advances on the lots it covers. The money goes to the
+// account the advance was recorded against, falling back to the seller's
+// default (server-side — see getAdvanceBankPaymentData).
+//
+// It exports what is SAVED, never what is merely typed. A row whose box has
+// been edited but not paid is money that is not on the books yet, and a bank
+// file for it would move money the app has no record of. So an unsaved edit
+// stops the export and says to press Pay first, rather than quietly exporting
+// the old figure.
+//
+// Unlike the payable export this stamps nothing: the advance was recorded when
+// it was saved and the payable file has been netting it off ever since, so the
+// file is a transport of money already on the books. That also means it can be
+// re-downloaded safely if the first one is lost.
+async function payLwExportAdvance() {
+  const aid = _payLwState.aid || Number(document.getElementById('paylw-auction')?.value || 0);
+  if (!aid) { alert('Select a trade first'); return; }
+  const rows = _payLwAdvReadRows().filter(r => r.ticked);
+  if (!rows.length) { alert('Tick the lots whose advance you want to export.'); return; }
+
+  const unsaved = rows.filter(_payLwAdvChanged);
+  if (unsaved.length) {
+    alert(
+      `${unsaved.length} ticked lot${unsaved.length === 1 ? ' has an amount that has' : 's have amounts that have'} not been saved`
+      + ` (${unsaved.map(r => r.lot.lot_no).join(', ')}).\n\n`
+      + `The export pays the advances on record, so press Pay first — otherwise the bank file`
+      + ` and the books would disagree.`);
+    return;
+  }
+  // Only lots that actually carry a saved advance. A ticked row with none is
+  // simply not part of this file.
+  const withAdv = rows.filter(r => (Number(r.lot.advance) || 0) > 0);
+  if (!withAdv.length) {
+    alert('None of the ticked lots carries a saved advance yet. Enter the amounts and press Pay first.');
+    return;
+  }
+  const total = withAdv.reduce((s, r) => s + (Number(r.lot.advance) || 0), 0);
+  // { SELLER NAME: [lot_no, …] } — the same shape the payable export posts.
+  const byS = {};
+  for (const r of withAdv) {
+    const n = String(r.lot.name || '').trim();
+    if (!n) continue;
+    (byS[n] = byS[n] || []).push(String(r.lot.lot_no || ''));
+  }
+  const names = Object.keys(byS);
+  if (!names.length) { alert('Those lots carry no seller name, so there is nobody to pay.'); return; }
+  // No account on file → the row still exports, with blank IFSC/account cells
+  // the bank will reject. Same warning the payable export gives.
+  const unlinked = withAdv.filter(r => !r.lot.linked).length;
+  if (unlinked && !confirm(
+      `${unlinked} of the ${withAdv.length} lot${withAdv.length === 1 ? '' : 's'} ${unlinked === 1 ? 'has' : 'have'} no bank account.\n\n`
+    + `Those rows export with a blank account number and IFSC, which the bank will reject.\n\n`
+    + `Export anyway?`)) return;
+
+  const btn = document.getElementById('paylw-adv-export');
+  if (btn) btn.disabled = true;
+  try {
+    await withOverlay(`Exporting advance payment — ₹${fmtI(total, 2)} on ${withAdv.length} lot${withAdv.length === 1 ? '' : 's'}…`, async () => {
+      const r = await fetch(B + `/api/exports/bank_payment_advance/${aid}`, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
+        // orderBy:'lot' — the sheet comes out in the lot order the modal lists.
+        body: JSON.stringify({ names, lots: byS, format: 'xlsx', orderBy: 'lot' }),
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        alert(`Export failed: ${e.error || ('HTTP ' + r.status)}`);
+        return;
+      }
+      const blob = await r.blob();
+      let filename = `bank_payment_advance_${aid}.xlsx`;
+      const cd = r.headers.get('Content-Disposition') || '';
+      const fm = /filename="?([^";]+)"?/i.exec(cd);
+      if (fm) filename = fm[1];
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      toast(`Exported ₹${fmtI(total, 2)} of advances across ${withAdv.length} lot${withAdv.length === 1 ? '' : 's'} and ${names.length} seller${names.length === 1 ? '' : 's'}`);
+    });
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function payLwSaveAdvance() {

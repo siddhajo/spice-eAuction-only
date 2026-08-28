@@ -271,7 +271,13 @@ const cleanup = () => {
   check('tile counts per section are 13 / 15 / 6 / 1',
         JSON.stringify(dl.counts) === JSON.stringify([13, 15, 6, 1]), JSON.stringify(dl.counts));
   check('every tile carries the file icon', dl.icons === dl.tiles, `${dl.icons} icons on ${dl.tiles} tiles`);
-  check('24 wired, 11 not-yet-wired', dl.ready === 24 && dl.todo === 11, `${dl.ready} ready / ${dl.todo} todo`);
+  // A floor, not an exact count: placeholders get wired as the customer
+  // supplies reference files, and an exact number would fail on every one of
+  // those. What must hold is that the grid stays complete (nothing silently
+  // dropped) and that wiring only ever moves tiles from todo to ready.
+  check('every tile is either wired or explicitly not-yet-wired',
+        dl.ready + dl.todo === dl.tiles, `${dl.ready} + ${dl.todo} ≠ ${dl.tiles}`);
+  check('at least 25 tiles are wired', dl.ready >= 25, `${dl.ready} ready / ${dl.todo} todo`);
   check('first tile is Crop Receipts CSV', dl.firstLabel === 'Crop Receipts CSV', String(dl.firstLabel));
   // A not-yet-wired tile must be inert, not a dead link that appears to work.
   check('not-yet-wired tiles are disabled',
