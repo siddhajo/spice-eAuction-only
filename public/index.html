@@ -1512,6 +1512,9 @@ body:not([data-feat-auction-manager="1"]) .feat-auction-manager{display:none !im
    shape as the rule above, so the sidebar entry keeps .side-item's own
    display:flex while the flag is on. Defaults ON; see company-config.js. */
 body:not([data-feat-insights="1"]) .feat-insights{display:none !important}
+/* Per-Auction Breakdown — gated by flag_pertrade_breakdown. Same shape
+   again; defaults ON, see company-config.js. */
+body:not([data-feat-pertrade-breakdown="1"]) .feat-pertrade-breakdown{display:none !important}
 
 /* ── Auction Manager screen ──────────────────────────────────────────
    Flat by design — hairline rules and tinted bands, no cards or shadows,
@@ -4137,7 +4140,8 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           Insights
         </button>
-        <button class="side-item" data-tab="pertrade" onclick="go('pertrade')">
+        <!-- Per-Auction Breakdown — gated by flag_pertrade_breakdown (Settings → Flags). -->
+        <button class="side-item feat-pertrade-breakdown" data-tab="pertrade" onclick="go('pertrade')">
           <svg viewBox="0 0 24 24"><line x1="3" y1="3" x2="3" y2="21"/><line x1="3" y1="21" x2="21" y2="21"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="4" width="3" height="14"/></svg>
           Per-Auction Breakdown
         </button>
@@ -4556,7 +4560,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
 
     <!-- Per-Auction Breakdown — moved off the dashboard to its own screen.
          Rendered by loadPerTradeBreakdown() into #pertrade-host. -->
-    <div class="tc" id="tc-pertrade">
+    <div class="tc feat-pertrade-breakdown" id="tc-pertrade">
       <div id="pertrade-host">
         <div style="padding:32px;text-align:center;color:var(--text3)">Loading…</div>
       </div>
@@ -6639,6 +6643,22 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             </select>
           </div>
 
+          <!-- Where each lot stands in the payment run. The three states
+               partition the list — a paid lot counts as paid even if an
+               advance was taken first, because that advance came off the
+               payment that settled it — so the counts always add up and no
+               lot can hide between two options. Option labels are rewritten
+               with live counts after each search (see _payLwRender). -->
+          <div>
+            <label style="display:block;font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px">Payment status</label>
+            <select id="paylw-status" onchange="payLwSearch()" title="Filter by how far each lot has been paid: fully paid out, part-paid by an advance, or nothing paid yet." style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:170px">
+              <option value="all" selected>Any status</option>
+              <option value="unpaid">Unpaid</option>
+              <option value="advance">Advance paid</option>
+              <option value="paid">Paid</option>
+            </select>
+          </div>
+
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <!-- Clears the ticks only — the search results stay on screen.
                  (The ✕ Clear button above wipes the filters and the results.) -->
@@ -6748,7 +6768,10 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
              of the balance. Exports what is SAVED, so it sits beside Pay
              rather than replacing it: record first, then send to the bank. -->
         <button class="btn btn-o" type="button" id="paylw-adv-export" onclick="payLwExportAdvance()" style="font-weight:600;color:#B45309;border-color:#FDE68A;background:#FFFBEB" title="Download the RTGS/NEFT file that pays the advances recorded on the ticked lots">📤 Export advance</button>
-        <button class="btn btn-o" type="button" onclick="hideModal('paylw-adv-modal')">Cancel</button>
+        <!-- Reads "Cancel" only while there is unsaved typing to discard;
+             payLwAdvSync() flips it to "Close" once everything is saved, which
+             is the state the dialog sits in after Pay. -->
+        <button class="btn btn-o" type="button" id="paylw-adv-cancel" onclick="hideModal('paylw-adv-modal')">Cancel</button>
         <button class="btn btn-a" type="button" id="paylw-adv-save" onclick="payLwSaveAdvance()">Pay</button>
       </div>
     </div></div>
@@ -10419,6 +10442,11 @@ async function applyFeatureFlags() {
   const insRaw = cfg ? cfg.flag_insights : undefined;
   const insOn = (insRaw === undefined || insRaw === null || insRaw === '') ? true : on(insRaw);
   document.body.setAttribute('data-feat-insights', insOn ? '1' : '0');
+  // Per-Auction Breakdown — same undefined-means-on treatment, for the same
+  // reason: an install that hasn't reseeded its settings must not lose it.
+  const ptRaw = cfg ? cfg.flag_pertrade_breakdown : undefined;
+  const ptOn = (ptRaw === undefined || ptRaw === null || ptRaw === '') ? true : on(ptRaw);
+  document.body.setAttribute('data-feat-pertrade-breakdown', ptOn ? '1' : '0');
   // Parked on Insights when it gets switched off? Move to the Dashboard
   // rather than leaving the user on a screen with no way back to it.
   if (!insOn && window._currentTab === 'insights' && typeof go === 'function') go('dash');
@@ -11516,6 +11544,8 @@ function go(tab){
   // Insights is off for this install — catches the restore-last-tab path,
   // which would otherwise reopen a screen whose sidebar entry is hidden.
   if (tab === 'insights' && document.body.getAttribute('data-feat-insights') === '0') tab = 'dash';
+  // Same catch for Per-Auction Breakdown.
+  if (tab === 'pertrade' && document.body.getAttribute('data-feat-pertrade-breakdown') === '0') tab = 'dash';
   window._currentTab = tab;
   document.querySelectorAll('.side-item').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
   document.querySelectorAll('.tc').forEach(t=>t.classList.remove('active'));
@@ -22859,7 +22889,7 @@ const SET_FIELD_GROUPS = {
     { title:'Lots, Trade & Screens', icon:'📦', hint:'Controls on the lot/trade screens — locks, validation, price checks, and optional screens or buttons.',
       keys:['flag_price_check','flag_lot_lock','flag_reserved_price','flag_immediate_reserve','flag_lot_validation',
             'flag_bulk_set_buyer_code','flag_price_list_mapping','flag_print_selected_purchase','flag_lotwise_payments',
-            'flag_auction_manager','flag_insights'] },
+            'flag_auction_manager','flag_insights','flag_pertrade_breakdown'] },
     { title:'Tally & Accounts Export', icon:'📤', hint:'How purchase vouchers and journals are written into the Tally XML.',
       keys:['flag_merchants'], match:/^tally_purchase_/ },
     { title:'Masters & Sharing', icon:'👥', hint:'Extra master fields and the WhatsApp share buttons.',
@@ -33008,6 +33038,11 @@ const _payLwState = {
   addTraderId: null,     // seller the Add-account modal is currently for
   addBranch: '',         // branch resolved by the IFSC lookup
   missing: [],           // per-token "why isn't this lot here?" from the server
+  // { paid, advance, unpaid } over the whole match, BEFORE the filters narrow
+  // it — the numbers the status options are labelled with. Null until a search
+  // has run, which is what tells the labels to stay plain.
+  statusCounts: null,
+  status: 'all',         // the payment-status filter the results were fetched under
   // Ticked lot ids — what Export Bank Payment actually pays. Held in state
   // rather than read off the DOM so a re-render (adding an account, say)
   // doesn't silently throw the operator's selection away. A fresh search
@@ -33040,6 +33075,9 @@ function payLwOnAuctionChange() {
   _payLwState.selected = new Set();
   _payLwState.selectedPaid = new Set();
   _payLwState.missing = [];
+  // The previous trade's counts say nothing about this one — drop them so the
+  // status options go back to plain labels until a search fills them again.
+  _payLwState.statusCounts = null;
   _payLwState.searched = false;
   _payLwRender();
 }
@@ -33058,6 +33096,11 @@ function loadPayLotwise() {
 function payLwClear() {
   ['paylw-seller', 'paylw-lots'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; payLwSyncClear(id); });
   const u = document.getElementById('paylw-link'); if (u) u.value = 'linked';
+  // "Clear" means every filter, this one included — a status left armed behind
+  // an apparently-clean screen is how an operator concludes lots are missing.
+  const st = document.getElementById('paylw-status'); if (st) st.value = 'all';
+  _payLwState.statusCounts = null;
+  _payLwState.status = 'all';
   _payLwState.sort = null;
   _payLwState.lots = [];
   _payLwState.selected = new Set();
@@ -33092,7 +33135,9 @@ async function payLwSearch() {
   const lots   = (document.getElementById('paylw-lots')?.value || '').trim();
   // linked (default) · unlinked · all — the server takes all three.
   const link = document.getElementById('paylw-link')?.value || 'linked';
-  const qs = new URLSearchParams({ link });
+  // all (default) · unpaid · advance · paid — the payment-run filter.
+  const status = document.getElementById('paylw-status')?.value || 'all';
+  const qs = new URLSearchParams({ link, status });
   if (seller) qs.set('seller', seller);
   if (lots)   qs.set('lots', lots);
   const body = document.getElementById('paylw-body');
@@ -33104,6 +33149,10 @@ async function payLwSearch() {
     _payLwState.legacyByTrader = d.legacyByTrader || {};
     _payLwState.totalMatched = d.totalMatched || 0;
     _payLwState.unlinkedCount = d.unlinkedCount || 0;
+    // Counts per payment status over the WHOLE match, so the status options
+    // can say what each one would show even while one of them is selected.
+    _payLwState.statusCounts = d.statusCounts || null;
+    _payLwState.status = d.status || 'all';
     _payLwState.missing = d.missing || [];
     _payLwState.searched = true;
     // A new result set starts fully ticked — the common case is "export what
@@ -33148,6 +33197,31 @@ function _payLwBankOptions(lot) {
   return h;
 }
 
+// ── Payment-status filter ────────────────────────────────────────
+// Put the live counts on the status options, so the operator can see there
+// are (say) 12 unpaid lots without having to pick the option to find out —
+// and can tell "none match" from "none exist". The counts come from the
+// server and cover the WHOLE match, so they don't shrink to the filtered
+// list the moment one is chosen.
+//
+// The option VALUES are never touched — only their text — so the control's
+// state survives a re-render and the selected option cannot drift.
+function _payLwLabelStatusOptions() {
+  const sel = document.getElementById('paylw-status');
+  if (!sel) return;
+  const c = _payLwState.statusCounts;
+  const base = { all: 'Any status', unpaid: 'Unpaid', advance: 'Advance paid', paid: 'Paid' };
+  const total = c ? (c.paid + c.advance + c.unpaid) : 0;
+  for (const opt of sel.options) {
+    const label = base[opt.value] || opt.value;
+    // No search yet → plain labels. A count of zero is still shown: "Paid (0)"
+    // is the answer to "has anything gone out yet?", and hiding it would read
+    // as though the option had not been considered.
+    if (!c) { opt.textContent = label; continue; }
+    opt.textContent = `${label} (${opt.value === 'all' ? total : (c[opt.value] || 0)})`;
+  }
+}
+
 // ── "Why isn't lot 001 here?" ────────────────────────────────────
 // The server explains every lot number that was typed but didn't come back.
 // Without this an operator typing a withdrawn lot just gets an empty table
@@ -33166,6 +33240,12 @@ function _payLwMissingHtml() {
       case 'link_filter':   return m.linked
         ? ['Hidden by “Show unlinked”', 'This lot HAS a bank account — turn the toggle off to see it.', '#0e7490']
         : ['Hidden by “Show unlinked”', 'This lot has NO bank account — turn the toggle on to see it.', '#0e7490'];
+      case 'status_filter': {
+        const is = { paid: 'is already PAID', advance: 'is part-paid by an ADVANCE', unpaid: 'has had nothing paid yet' }[m.status]
+                 || 'is in another payment state';
+        return ['Hidden by the Payment status filter',
+                `This lot ${is} — set Payment status to “Any status” to see it.`, '#0e7490'];
+      }
       default:              return ['Not in the results', '', 'var(--text3)'];
     }
   };
@@ -33235,6 +33315,10 @@ function _payLwRender() {
   const body = document.getElementById('paylw-body');
   const summary = document.getElementById('paylw-summary');
   if (!body) return;
+  // Before the empty-state return, not after: clearing the screen drops the
+  // counts, and labels still promising "Paid (3)" over an empty table would
+  // describe a result set that is no longer there.
+  _payLwLabelStatusOptions();
   if (!_payLwState.searched) {
     if (summary) summary.style.display = 'none';
     body.innerHTML = `
@@ -33249,6 +33333,7 @@ function _payLwRender() {
   const linkMode = document.getElementById('paylw-link')?.value || 'linked';
   const showingUnlinked = linkMode === 'unlinked';
   const showingAll = linkMode === 'all';
+  const statusMode = _payLwState.status || 'all';
   // Drop ids that are no longer in the result (a re-search narrowed it).
   // Undo ticks are pruned to lots that are BOTH still listed and still paid —
   // one undone elsewhere must not stay ticked for a second, no-op undo.
@@ -33293,6 +33378,22 @@ function _payLwRender() {
             : (_payLwState.unlinkedCount
                 ? ` <span style="color:var(--spice-chili)">· ${_payLwState.unlinkedCount} more matching lot${_payLwState.unlinkedCount === 1 ? ' has' : 's have'} no bank account — switch <strong>Bank account</strong> to Unlinked or All</span>`
                 : ''))
+      // Say plainly when a payment-status filter is narrowing the list, and by
+      // how much. A filtered list that doesn't announce itself is read as the
+      // whole trade, and "where did my lots go?" follows.
+      + (statusMode !== 'all'
+          ? (() => {
+              const c = _payLwState.statusCounts || {};
+              const hidden = (c.paid + c.advance + c.unpaid) - (c[statusMode] || 0);
+              const word = { paid: 'PAID', advance: 'part-paid by an ADVANCE', unpaid: 'not paid at all' }[statusMode];
+              return `<div style="margin-top:5px;font-size:11.5px;color:#B45309;font-weight:600">`
+                + `Showing only lots ${word}`
+                + (hidden > 0
+                    ? ` — ${hidden} other matching lot${hidden === 1 ? ' is' : 's are'} hidden by this filter.`
+                    : ` — every matching lot is in this state.`)
+                + `</div>`;
+            })()
+          : '')
       + (noSeller
           ? `<div style="margin-top:5px;font-size:11.5px;color:var(--text3)">${noSeller} lot${noSeller === 1 ? '' : 's'} ${noSeller === 1 ? 'has' : 'have'} no seller master record — link the seller in Lot Entry before an account can be attached.</div>`
           : '')
@@ -33308,9 +33409,14 @@ function _payLwRender() {
       + `<div style="padding:${missingHtml ? '18px' : '30px'};text-align:center;color:var(--text3);font-size:13px">`
       + (missingHtml
           ? `Nothing to pay from this search.`
-          : (showingUnlinked
-              ? `No unlinked lots — every matching lot has a bank account. ✓`
-              : `No lots matched. Check the seller name / lot numbers, or set <strong>Bank account</strong> to Unlinked or All to see lots with no account.`))
+          // A status filter that matched nothing is almost always the reason
+          // an otherwise-normal search came back empty, so it is named first.
+          : (statusMode !== 'all'
+              ? `No lot in this search is ${({ paid: 'paid', advance: 'part-paid by an advance', unpaid: 'still unpaid' })[statusMode]}.`
+                + ` Set <strong>Payment status</strong> to “Any status” to see the rest.`
+              : (showingUnlinked
+                  ? `No unlinked lots — every matching lot has a bank account. ✓`
+                  : `No lots matched. Check the seller name / lot numbers, or set <strong>Bank account</strong> to Unlinked or All to see lots with no account.`)))
       + `</div>`;
     _payLwRefreshSelection();
     return;
@@ -34012,10 +34118,15 @@ function payLwOpenAdvance() {
   showModal('paylw-adv-modal');
 }
 
-// Rendered ONCE per open. The amount boxes are live inputs, so a re-render on
-// every keystroke would take the cursor with it — payLwAdvSync() updates the
-// totals and the validation in place instead.
-function _payLwAdvRender() {
+// Rendered once per open, and again after a save. The amount boxes are live
+// inputs, so a re-render on every keystroke would take the cursor with it —
+// payLwAdvSync() updates the totals and the validation in place instead.
+//
+// `tickIds` (a Set of lot ids) pins the ticks explicitly. Only the post-save
+// redraw passes it: payLwSearch() has just reset the screen's selection to
+// "everything payable", so deriving the ticks from it there would silently
+// re-tick every lot and throw away the operator's narrowing.
+function _payLwAdvRender(tickIds) {
   const body = document.getElementById('paylw-adv-body');
   if (!body) return;
   const err = document.getElementById('paylw-adv-err');
@@ -34026,10 +34137,13 @@ function _payLwAdvRender() {
   // usually already narrowed to the lots they mean. If nothing is ticked there,
   // tick everything: a search then "advance the lot" is the common path.
   const anySel = rows.some(l => _payLwState.selected.has(l.id));
+  const isTicked = tickIds
+    ? (l => tickIds.has(l.id))
+    : (l => !anySel || _payLwState.selected.has(l.id));
   const html = rows.map(l => {
     const gross = _payLwGross(l);
     const cur = Number(l.advance) || 0;
-    const tick = (!anySel || _payLwState.selected.has(l.id)) ? ' checked' : '';
+    const tick = isTicked(l) ? ' checked' : '';
     const opts = _payLwAdvBankOptions(l);
     const bankCell = opts
       ? `<select class="paylw-adv-bank" data-id="${l.id}" style="width:100%;max-width:300px;padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:11.5px;background:#fff">${opts}</select>`
@@ -34057,6 +34171,22 @@ function _payLwAdvRender() {
       </table>
     </div>`;
   payLwAdvSync();
+}
+
+// Re-point the open modal at freshly-reloaded lots and redraw it, keeping
+// `tickIds` ticked. Called after a save.
+//
+// The re-point is not cosmetic. payLwSearch() replaces every object in
+// _payLwState.lots, so without this the modal's advRows would still hold the
+// PRE-save copies: _payLwAdvChanged() would go on comparing the boxes against
+// the old advance figures, leaving Pay armed for a save already made and
+// letting Export advance believe the lots carry amounts they no longer do.
+function _payLwAdvRefresh(tickIds) {
+  _payLwState.advRows = _payLwSortedLots().filter(l => !l.paid_at);
+  _payLwAdvRender(tickIds);
+  // Nothing left to advance against — every remaining lot is paid out, or the
+  // search no longer matches any. There is nothing to hold the dialog open for.
+  if (!_payLwState.advRows.length) hideModal('paylw-adv-modal');
 }
 
 // Every modal row, paired with its live control values.
@@ -34154,6 +34284,12 @@ function payLwAdvSync() {
       ? `Download the RTGS/NEFT file paying the advances recorded on ${savedTicked} ticked lot${savedTicked === 1 ? '' : 's'}`
       : 'No ticked lot carries a saved advance yet — enter the amounts and press Pay first';
   }
+  // "Cancel" only means something while there is unsaved typing to throw away.
+  // The dialog now stays open after Pay so the advance can be exported without
+  // reopening it, and in that state the button is a plain Close — calling it
+  // Cancel there reads as "undo what I just saved", which it does not do.
+  const cbtn = document.getElementById('paylw-adv-cancel');
+  if (cbtn) cbtn.textContent = changes ? 'Cancel' : 'Close';
 }
 
 // Put one amount on every ticked lot. Capped per row at that lot's own
@@ -34329,13 +34465,23 @@ async function payLwSaveAdvance() {
         items: changed.map(r => ({ lotId: r.lot.id, advance: r.amount, bankId: r.amount > 0 ? r.bankId : null })),
       }),
     });
-    hideModal('paylw-adv-modal');
+    // Which rows were ticked, captured BEFORE the reload — payLwSearch() resets
+    // the screen's selection to "everything payable", so the ticks have to be
+    // carried across by hand or the operator's narrowing is lost.
+    const tickedIds = new Set(rows.map(r => r.lot.id));
     const saved = Number(d && d.saved) || 0, cleared = Number(d && d.cleared) || 0;
     const bits = [];
     if (saved)   bits.push(`advance recorded on ${saved} lot${saved === 1 ? '' : 's'} (₹${fmtI(total, 2)})`);
     if (cleared) bits.push(`removed from ${cleared} lot${cleared === 1 ? '' : 's'}`);
     toast(bits.join(' · ') || 'Advance saved');
     await payLwSearch();   // re-pull so Payable, the badge and the totals agree
+    // The dialog STAYS OPEN. Recording an advance and sending it to the bank
+    // are two halves of one job, and Export advance lives in this dialog —
+    // closing here made the operator reopen Pay Advance and re-tick the same
+    // lots just to reach it. Redrawing against the reloaded lots is what makes
+    // that safe: the boxes now hold the SAVED figures, so Pay disarms itself
+    // and Export lights up with the count it will actually ship.
+    _payLwAdvRefresh(tickedIds);
   } catch (e) {
     // The endpoint validates the whole batch before writing anything, so a
     // rejection means NOTHING was saved — say so rather than leaving the

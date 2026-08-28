@@ -169,9 +169,15 @@ function cleanup() {
     });
     payLwAdvSync();
   }, lots);
-  const savedAndClosed = () => page.waitForFunction(
-    () => !document.getElementById('paylw-adv-modal')?.classList.contains('show')
-          && document.querySelector('#paylw-body tbody tr'),
+  // After Pay the dialog deliberately STAYS OPEN: Export advance lives inside
+  // it, and closing here forced the operator to reopen Pay Advance and re-tick
+  // the same lots just to reach that button. The save has fully landed once the
+  // dialog has been redrawn against the reloaded lots, which shows up as Pay
+  // disarming itself — there is nothing unsaved left for it to send.
+  const savedAndStillOpen = () => page.waitForFunction(
+    () => document.getElementById('paylw-adv-modal')?.classList.contains('show')
+          && document.querySelector('#paylw-body tbody tr')
+          && document.getElementById('paylw-adv-save')?.disabled,
     { timeout: 10000 });
 
   console.log('[1] The dialog opens on the search results');
@@ -213,7 +219,7 @@ function cleanup() {
         }));
 
   await page.evaluate(() => payLwSaveAdvance());
-  await savedAndClosed();
+  await savedAndStillOpen();
   rows = await resultRows();
   const byLot = Object.fromEntries(rows.map(r => [r.lot, r]));
   check('lots 1 and 2 show the advance in its own column',
@@ -238,6 +244,48 @@ function cleanup() {
         /Advance paid ₹10,000\.00/.test(summary) && /net of advance/.test(summary),
         JSON.stringify(summary.slice(0, 260)));
 
+  // ── The dialog survives the save so the advance can be exported ──────
+  // Recording the advance and sending it to the bank are two halves of one
+  // job. The dialog used to close on Pay, which meant reopening Pay Advance
+  // and re-ticking the same lots purely to reach Export advance.
+  console.log('\n[2b] Pay leaves the dialog open, ready to export');
+  check('the dialog is still open', await page.evaluate(
+    () => document.getElementById('paylw-adv-modal').classList.contains('show')));
+  meta = await advRowMeta();
+  check('the ticks survive the reload — still lots 1 and 2, not all three',
+        meta.filter(r => r.ticked).map(r => r.lot).join(',') === '1,2', JSON.stringify(meta));
+  check('the boxes now hold the SAVED figures (redrawn from the reload)',
+        meta.find(r => r.lot === '1').amount === '5000'
+        && meta.find(r => r.lot === '2').amount === '5000'
+        && meta.find(r => r.lot === '3').amount === '', JSON.stringify(meta));
+  // The rows are re-pointed at the reloaded lot objects, so nothing reads as
+  // unsaved any more. A stale advRows would leave Pay armed for a save
+  // already made.
+  check('Pay has disarmed itself — nothing is unsaved',
+        await page.evaluate(() => {
+          const b = document.getElementById('paylw-adv-save');
+          return b.disabled && b.textContent.trim() === 'Pay';
+        }));
+  check('Export advance is live and counts the 2 saved lots',
+        await page.evaluate(() => {
+          const b = document.getElementById('paylw-adv-export');
+          return !b.disabled && /\(2\)/.test(b.textContent);
+        }), await page.evaluate(() => document.getElementById('paylw-adv-export').textContent));
+  check('the dismiss button now reads Close, not Cancel',
+        await page.evaluate(() => document.getElementById('paylw-adv-cancel').textContent.trim()) === 'Close');
+  // The whole point: Export advance works straight off the open dialog, with
+  // no reopen and no re-ticking in between.
+  const xdl = await page.evaluate(async () => {
+    const r = await fetch(B + `/api/exports/bank_payment_advance/${_payLwState.aid}`, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names: ['ANNAMALAI'], lots: { ANNAMALAI: ['1', '2'] }, format: 'xlsx', orderBy: 'lot' }),
+    });
+    return { status: r.status, len: (await r.arrayBuffer()).byteLength };
+  });
+  check('the advance bank file the open dialog would post is served', xdl.status === 200 && xdl.len > 0,
+        JSON.stringify(xdl));
+
   console.log('\n[3] An untouched pre-ticked row does NOT lose its advance');
   // Re-open and immediately press Pay on lot 3 only. Lots 1 and 2 keep their
   // 5000 even though the dialog re-opened with their boxes pre-filled.
@@ -253,7 +301,7 @@ function cleanup() {
     el.value = '800'; el.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await page.evaluate(() => payLwSaveAdvance());
-  await savedAndClosed();
+  await savedAndStillOpen();
   rows = await resultRows();
   const b2 = Object.fromEntries(rows.map(r => [r.lot, r]));
   check('lot 3 now carries 800', b2['3'].advance === '800.00', JSON.stringify(b2['3']));
@@ -292,7 +340,7 @@ function cleanup() {
   check('the footer warns that an existing advance will be removed',
         /will be removed/.test(await page.evaluate(() => document.getElementById('paylw-adv-total').textContent)));
   await page.evaluate(() => payLwSaveAdvance());
-  await savedAndClosed();
+  await savedAndStillOpen();
   rows = await resultRows();
   const b3 = Object.fromEntries(rows.map(r => [r.lot, r]));
   check('lot 1 is back to its full Payable with no badge',

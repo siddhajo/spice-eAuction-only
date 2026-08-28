@@ -1077,11 +1077,18 @@ const cleanup = () => {
   check('and it counts them', /2 documents selected/.test(sel.count), sel.count);
 
   // Pick-all acts on what is on screen — one subgroup, not the whole group.
+  // Expected count is DERIVED from the tiles rendered, not hardcoded: the
+  // subgroup grows whenever a document is added to the catalog, and a fixed
+  // number turns that into a false failure. What must hold is the contract —
+  // every selectable tile on screen ends up selected, and nothing else does.
   const picked = await page.evaluate(() => {
+    const selectable = document.querySelectorAll('#hub-groups .hub-tile .hub-cb').length;
     hubSelectGroup('preauction');
-    return window._hubSel.size;
+    return { selectable, size: window._hubSel.size };
   });
-  check('"Pick all" selects every ready document on screen', picked === 3, String(picked));
+  check('"Pick all" selects every ready document on screen',
+        picked.selectable > 0 && picked.size === picked.selectable,
+        `${picked.size} selected of ${picked.selectable} selectable`);
   // Auction Documents is fully "ready" but nothing in it is bundleable, so
   // offering a Pick-all there would be a button that does nothing.
   check('no Pick-all where nothing is selectable',

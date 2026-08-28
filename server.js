@@ -14266,7 +14266,20 @@ function parseLotSearch(raw) {
 
 function explainMissingLots(db, auctionId, lotTokens, ctx) {
   if (!lotTokens || !lotTokens.length) return [];
-  const { seller, link, finalIds } = ctx;
+  const { seller, link, status, finalIds } = ctx;
+  // Which status bucket a lot that did NOT come back falls in — the same rule
+  // the search itself applies, asked directly because these lots are not in
+  // the caller's result set to read it off. Only consulted when the status
+  // filter is narrowed, so the ordinary search pays nothing for it.
+  const lotStatus = (l) => {
+    if (l.paid_at) return 'paid';
+    let adv = 0;
+    try {
+      const a = db.get('SELECT advance FROM lot_advances WHERE lot_id = ?', [l.id]);
+      adv = a ? Number(a.advance) || 0 : 0;
+    } catch (_) { /* table missing on an old DB — no advances */ }
+    return adv > 0 ? 'advance' : 'unpaid';
+  };
   // Does an account resolve for this lot? Asked directly rather than through
   // the caller's prebuilt bank map — that map only covers sellers who made it
   // into the results, and the lots being explained here did not.
@@ -14287,7 +14300,7 @@ function explainMissingLots(db, auctionId, lotTokens, ctx) {
     // be reported missing merely because of leading-zero spelling.
     const isNum = /^\d+$/.test(token);
     const rows = db.all(
-      `SELECT id, lot_no, name, code, amount, paid, bank_id, trader_id
+      `SELECT id, lot_no, name, code, amount, paid, paid_at, bank_id, trader_id
          FROM lots
         WHERE auction_id = ?
           AND (TRIM(lot_no) = ?${isNum ? ' OR CAST(lot_no AS INTEGER) = ?' : ''})
@@ -14306,12 +14319,19 @@ function explainMissingLots(db, auctionId, lotTokens, ctx) {
     else if (!(Number(l.amount) > 0)) reason = 'unpriced';
     else if (String(l.paid || '').trim() !== '') reason = 'paid';
     else if (seller && !String(l.name || '').toUpperCase().includes(seller.toUpperCase())) reason = 'seller_filter';
+    // Checked BEFORE the link fallback: with a status filter on, that fallback
+    // would blame the bank-account toggle for an exclusion it had no part in.
+    else if (status && status !== 'all' && lotStatus(l) !== status) reason = 'status_filter';
     else reason = 'link_filter';
     const entry = { lot: String(l.lot_no || token).trim(), reason, seller: l.name || '' };
-    // For the toggle case, say which side it is on so the fix is obvious.
+    // For either toggle, say which side the lot is on so the fix is obvious.
     if (reason === 'link_filter') {
       entry.linked = lotIsLinked(l);
       entry.wanted = link;
+    }
+    if (reason === 'status_filter') {
+      entry.status = lotStatus(l);
+      entry.wanted = status;
     }
     out.push(entry);
   }
@@ -14333,6 +14353,14 @@ function explainMissingLots(db, auctionId, lotTokens, ctx) {
 //   lots    comma-separated lot numbers. Matched both verbatim and
 //           numerically, so "24" finds lot "024" and vice versa.
 //   link    all (default) | linked | unlinked — see routeOfLot below.
+//   status  all (default) | paid | advance | unpaid — where the lot stands in
+//           the payment run. The three buckets PARTITION the result: a lot is
+//           `paid` once it carries a paid stamp (whether or not an advance was
+//           taken against it first — the advance came off that payment, so the
+//           lot is done either way), `advance` when it is still owed but part
+//           of it has already gone out, and `unpaid` when nothing has moved.
+//           Counted that way too, so the three counts always add up to the
+//           number of matching lots.
 //
 // The lot set matches the bank-payment export's (amount > 0, not marked
 // paid) so what is listed here is exactly what an export of it would pay.
@@ -14346,6 +14374,10 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
     const link = String(req.query.link || 'all').trim().toLowerCase();
     if (!['all', 'linked', 'unlinked'].includes(link)) {
       return res.status(400).json({ error: 'link must be one of: all, linked, unlinked' });
+    }
+    const status = String(req.query.status || 'all').trim().toLowerCase();
+    if (!['all', 'paid', 'advance', 'unpaid'].includes(status)) {
+      return res.status(400).json({ error: 'status must be one of: all, paid, advance, unpaid' });
     }
     // Lot tokens: a comma/whitespace list that may mix single lots and ranges,
     // e.g. "010-020, 021,022". Ranges are expanded for matching; only the
@@ -14474,20 +14506,31 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
       };
     });
 
-    // Counts over the whole match, taken BEFORE the link filter narrows it,
-    // so the client can say "12 of 40 matching lots have no account".
+    // Counts over the whole match, taken BEFORE either filter narrows it, so
+    // the client can say "12 of 40 matching lots have no account" and label
+    // each status option with what picking it would show.
     const totalMatched = out.length;
     const unlinkedCount = out.filter(l => !l.linked).length;
+    // Where each lot stands in the payment run. Written once here so the
+    // filter, the counts and the missing-lot explanation all read the same
+    // rule; see the route doc above for why a paid lot is `paid` even when an
+    // advance was taken against it first.
+    const statusOf = (l) => l.paid_at ? 'paid' : (Number(l.advance) > 0 ? 'advance' : 'unpaid');
+    const statusCounts = { paid: 0, advance: 0, unpaid: 0 };
+    for (const l of out) statusCounts[statusOf(l)]++;
     if (link === 'linked')   out = out.filter(l => l.linked);
     if (link === 'unlinked') out = out.filter(l => !l.linked);
+    if (status !== 'all')    out = out.filter(l => statusOf(l) === status);
     const finalIds = new Set(out.map(l => l.id));
 
     res.json({
       auctionId,
       link,
+      status,
       count: out.length,
       totalMatched,
       unlinkedCount,
+      statusCounts,
       lots: out,
       banksByTrader,
       legacyByTrader,
@@ -14495,7 +14538,7 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
       // not in `lots` — "001 is withdrawn" beats an empty table. Only the
       // individually-typed lots are explained; gaps inside a range are not
       // flagged as missing.
-      missing: explainMissingLots(db, auctionId, explicitTokens, { seller, link, finalIds }),
+      missing: explainMissingLots(db, auctionId, explicitTokens, { seller, link, status, finalIds }),
     });
   } catch (e) {
     console.error('lot-wise payments search error:', e);

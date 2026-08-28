@@ -317,6 +317,11 @@ const DEFAULTS = [
   // don't use it turn it off here. (Contrast flag_auction_manager above,
   // a NEW screen that defaults off and is opted into.)
   { key: 'flag_insights',        value: 'true',  category: 'flags', label: 'Insights (screen)',        type: 'boolean' },
+  // Per-Auction Breakdown — same story as flag_insights: an existing screen
+  // put behind a switch, so it defaults ON. Hides only the SCREEN; the
+  // /api/stats payload it reads is shared with the Dashboard and is
+  // deliberately NOT gated, or turning this off would empty the dashboard too.
+  { key: 'flag_pertrade_breakdown', value: 'true', category: 'flags', label: 'Per-Auction Breakdown (screen)', type: 'boolean' },
 
   // Bills of Supply — which document the tab works with: the agriculturist
   // Purchase Bill (Bill of Supply) or the Commission Bill. Picks the bulk +
