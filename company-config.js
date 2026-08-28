@@ -312,6 +312,11 @@ const DEFAULTS = [
   // `auction_desk` ROLE capability in ROLE_PERMISSIONS (manager/admin), which
   // this flag does not touch — the two screens are independent.
   { key: 'flag_auction_manager', value: 'false', category: 'flags', label: 'Auction Manager (screen)', type: 'boolean' },
+  // Insights is an EXISTING screen being put behind a switch, so it defaults
+  // ON — an upgrade must not silently take a screen away. Operators who
+  // don't use it turn it off here. (Contrast flag_auction_manager above,
+  // a NEW screen that defaults off and is opted into.)
+  { key: 'flag_insights',        value: 'true',  category: 'flags', label: 'Insights (screen)',        type: 'boolean' },
 
   // Bills of Supply — which document the tab works with: the agriculturist
   // Purchase Bill (Bill of Supply) or the Commission Bill. Picks the bulk +
@@ -466,6 +471,12 @@ const DEFAULTS = [
   { key: 'lot_receipt_show_sample', value: 'true',  category: 'lot_entry', label: 'Lot Receipt: Sample Wt column', type: 'boolean' },
   { key: 'lot_receipt_show_gross',  value: 'true',  category: 'lot_entry', label: 'Lot Receipt: Gross Wt column',  type: 'boolean' },
   { key: 'lot_receipt_show_crpt',   value: 'false', category: 'lot_entry', label: 'Lot Receipt: Crop Receipt column', type: 'boolean' },
+  // Moisture on the receipt used to piggyback on `show_moisture`, the Lot
+  // Entry FIELD toggle — so an operator who captured moisture was forced to
+  // print it. Now its own column switch like every sibling above. Seeded
+  // from show_moisture on upgrade (see initCompanySettings) so no install
+  // silently gains or loses the column.
+  { key: 'lot_receipt_show_moisture', value: 'false', category: 'lot_entry', label: 'Lot Receipt: Moisture column', type: 'boolean' },
   // How the receipt's footer totals are laid out. Both styles carry exactly
   // the same figures — only the arrangement differs, and which one reads
   // better depends on the roll width and on the operator's eye:
@@ -788,6 +799,16 @@ function initCompanySettings(db) {
   // `edit_enabled` BEFORE the defaults land, so an install that already
   // allowed edits keeps allowing deletes exactly as it did — the split
   // changes what the operator can configure, not what they can do today.
+  // Same split, same reason: the lot receipt's moisture column used to be
+  // driven by `show_moisture` (the Lot Entry field toggle). Seed the new
+  // column switch from it so an install that printed moisture yesterday
+  // still prints it today, and one that didn't still doesn't.
+  const _mstRow    = db.prepare("SELECT value FROM company_settings WHERE key = 'lot_receipt_show_moisture'").get();
+  const _showMstRow = db.prepare("SELECT value FROM company_settings WHERE key = 'show_moisture'").get();
+  if (!_mstRow && _showMstRow) {
+    insert.run('lot_receipt_show_moisture', String(_showMstRow.value || 'false'), 'lot_entry',
+      'Lot Receipt: Moisture column', 'boolean');
+  }
   const _delRow  = db.prepare("SELECT value FROM company_settings WHERE key = 'delete_enabled'").get();
   const _editRow = db.prepare("SELECT value FROM company_settings WHERE key = 'edit_enabled'").get();
   if (!_delRow && _editRow) {

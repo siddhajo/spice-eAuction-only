@@ -1353,8 +1353,11 @@ async function exportSalesJournal(db, auctionId, saleType) {
   // its content just before the buffer is built. The register is wide and its
   // money columns run to eight figures, so fixed widths pushed the rupee cells
   // into "####".
+  // No SALE column — the sheet is already scoped by the Sale Type filter (and
+  // says so in metaLines below), and the sale-type breakdown is what the
+  // ledger summary block is for. `sale` still arrives on every row and still
+  // drives the register's ORDER (see getSalesJournal); it just isn't printed.
   const cols = [
-    { header: 'SALE', key: 'sale', minWidth: 6 },
     { header: 'INV#', key: 'invo', minWidth: 8 },
     // No maxWidth override — the helper's 40 cap comfortably fits the longest
     // real trade names ("PANIKULANGARA SPICES TRADING COMPANY", 36 chars).

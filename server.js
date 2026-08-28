@@ -25,6 +25,8 @@ const { REPORTS: SPICE_BOARD_REPORTS, getReportFilters: getSpiceBoardFilters } =
 const { DOCUMENTS: DOC_CATALOG, GROUPS: DOC_GROUPS } = require('./document-catalog');
 const { mountMobile } = require('./mobile-bridge');
 const { syncLotsFromTrader, syncTraderBanks } = require('./trader-lot-sync');
+// Seller / buyer master details are stored UPPER CASE — see party-case.js.
+const { normalizeTrader, normalizeBuyer, backfillPartyCase } = require('./party-case');
 // Defensive resolution — see _company-identity-fallback.js. Uses the
 // real getCompanyIdentity from report-formatters.js when available,
 // falls through to an inline fallback otherwise. Fixes
@@ -3266,7 +3268,7 @@ function _duplicateConfirmed(t) {
   return v === true || v === 1 || v === '1' || v === 'true';
 }
 app.post('/api/traders', requireTraderWrite, (req, res) => {
-  const t = req.body;
+  const t = normalizeTrader(req.body);
   const db = getDb();
   // USER ID is the one hard-unique field — a repeat is an operator slip, not
   // "the same person", so there is no confirm path out of it.
@@ -3300,7 +3302,7 @@ app.post('/api/traders', requireTraderWrite, (req, res) => {
   res.json({ success: true, id: info.lastInsertRowid });
 });
 app.put('/api/traders/:id', requireTraderWrite, (req, res) => {
-  const t = req.body;
+  const t = normalizeTrader(req.body);
   const db = getDb();
   const _selfId = parseInt(req.params.id, 10);
   // Same rules as POST, excluding this row's own id so re-saving an unchanged
@@ -3404,7 +3406,7 @@ app.post('/api/traders/bulk-delete', requireDelete, (req, res) => {
 // Validates only the minimum required fields — admins can fill out
 // missing details later from the Sellers tab.
 app.post('/api/traders/quick', requireAnyPermission('trader_write', 'lot_write'), (req, res) => {
-  const t = req.body || {};
+  const t = normalizeTrader(req.body || {});
   if (!t.name || !String(t.name).trim()) {
     return res.status(400).json({ error: 'Name is required' });
   }
@@ -3607,6 +3609,11 @@ app.post('/api/traders/import', requireTraderWrite, upload.single('file'), async
     }
 
     fs.unlink(req.file.path, () => {});
+    // The importers build their INSERT parameters column-by-column from the
+    // spreadsheet rather than from one object, so they can't go through
+    // normalizeTrader/normalizeBuyer. Normalise the freshly-written rows
+    // instead — same rule, and it only rewrites rows that actually differ.
+    try { backfillPartyCase(db); } catch (_) {}
     res.json({ success: true, imported, skipped, total: rows.length });
   } catch (e) {
     if (req.file) fs.unlink(req.file.path, () => {});
@@ -3710,7 +3717,7 @@ app.get('/api/buyers', requireView, (req, res) => {
   res.json(db.all('SELECT * FROM buyers ORDER BY buyer1 LIMIT 500'));
 });
 app.post('/api/buyers', requireBuyerWrite, (req, res) => {
-  const b = req.body;
+  const b = normalizeBuyer(req.body);
   const db = getDb();
   // Hard-block duplicate buyers by Buyer Code (`buyer`) and Short Alias
   // (`code`). Schema doesn't enforce uniqueness but the UIs expect both
@@ -3740,7 +3747,7 @@ app.post('/api/buyers', requireBuyerWrite, (req, res) => {
   res.json({ success: true });
 });
 app.put('/api/buyers/:id', requireBuyerWrite, (req, res) => {
-  const b = req.body;
+  const b = normalizeBuyer(req.body);
   const db = getDb();
   // Same uniqueness guards as POST, with the row's own id excluded so
   // re-saving an unchanged buyer still works.
@@ -3873,6 +3880,11 @@ app.post('/api/buyers/import', requireBuyerWrite, upload.single('file'), async (
     }
 
     fs.unlink(req.file.path, () => {});
+    // The importers build their INSERT parameters column-by-column from the
+    // spreadsheet rather than from one object, so they can't go through
+    // normalizeTrader/normalizeBuyer. Normalise the freshly-written rows
+    // instead — same rule, and it only rewrites rows that actually differ.
+    try { backfillPartyCase(db); } catch (_) {}
     res.json({ success: true, imported, skipped, total: rows.length });
   } catch (e) {
     if (req.file) fs.unlink(req.file.path, () => {});
@@ -5338,6 +5350,9 @@ app.post('/api/auctions/:id/set-default', requireAuctionWrite, (req, res) => {
 app.delete('/api/auctions/:id', requireDelete, (req, res) => {
   const db = getDb();
   db.run('DELETE FROM lot_allocations WHERE auction_id = ?', [req.params.id]);
+  // Per-lot advances are keyed by lot id — drop them with the lots they
+  // belong to, or they linger as rows pointing at nothing.
+  db.run('DELETE FROM lot_advances WHERE auction_id = ?', [req.params.id]);
   db.run('DELETE FROM lots WHERE auction_id = ?', [req.params.id]);
   db.run('DELETE FROM auctions WHERE id = ?', [req.params.id]);
   // If the deleted trade was the default, clear the pointer so the mobile
@@ -7763,6 +7778,9 @@ app.delete('/api/lots/:id', requireDelete, (req, res) => {
   if (cur && cur.locked_at && lockFeatureOn(db) && !isAdmin(req)) {
     return res.status(423).json({ error: 'This lot is locked — only an admin can delete it.' });
   }
+  // Any advance recorded against this lot goes with it — see the auction
+  // delete above.
+  db.run('DELETE FROM lot_advances WHERE lot_id = ?', [req.params.id]);
   db.run('DELETE FROM lots WHERE id = ?', [req.params.id]);
   if (cur && cur.auction_id) { pcClearGate(db, cur.auction_id); lvClearGate(db, cur.auction_id); }
   logLotActivity(db, req, 'delete', {
@@ -8409,7 +8427,12 @@ app.get('/api/invoices', requireView, (req, res) => {
   // state filter here; anything for the requested auction_id ships
   // back. (`businessState` is left unused but kept above so future
   // callers can reintroduce a filter without restructuring.)
-  const baseQuery = 'SELECT * FROM invoices ' + where + ' ORDER BY date DESC, invo DESC';
+  // Ordered by invoice NUMBER, ascending — the register order the office
+  // reads, and the same ordering purchases / debit notes / DN-planter already
+  // use. CAST first because `invo` is TEXT (numbers may carry a prefix and
+  // inconsistent zero-padding), so a plain text sort would file 10 before 9;
+  // the raw `invo` then breaks ties between numbers sharing a CAST value.
+  const baseQuery = 'SELECT * FROM invoices ' + where + ' ORDER BY CAST(invo AS INTEGER), invo, date';
   const total = wantPaged
     ? db.get('SELECT COUNT(*) AS c FROM invoices ' + where, p).c
     : null;
@@ -14365,6 +14388,18 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
       params
     ) || [];
 
+    // Advances already paid against these lots ("Pay Advance" on this screen).
+    // Read separately rather than joined so a DB that predates the table
+    // degrades to "no advances" instead of failing the whole search.
+    const advByLot = {};
+    try {
+      for (const a of db.all(
+        `SELECT lot_id, advance, bank_id, paid_at FROM lot_advances WHERE auction_id = ?`,
+        [auctionId]) || []) {
+        advByLot[a.lot_id] = a;
+      }
+    } catch (_) { /* table missing on an old DB — no advances to net off */ }
+
     // Every account of every seller in the result — the client renders one
     // dropdown per row from this, and re-renders after adding an account.
     const traderIds = [...new Set(lots.map(l => l.trader_id).filter(id => id != null))];
@@ -14413,10 +14448,23 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
       const effective = (route === 'explicit')
         ? banks.find(b => b.id === l.bank_id)
         : (route === 'default' ? (banks.find(b => b.is_default) || banks[0]) : null);
+      // Advance already paid against THIS lot. `payable` is reported net of it
+      // — it is what still has to go out — with the pre-advance figure kept as
+      // `payable_gross` so the row can show both. Clamped at 0: an advance can
+      // never be written above the lot's balance (the endpoint rejects that),
+      // but a re-price afterwards could lower the balance under it, and a
+      // negative payable is not a thing the bank can pay.
+      const adv = advByLot[l.id] || null;
+      const gross = Number(l.payable) || 0;
+      const advance = adv ? Math.max(0, Number(adv.advance) || 0) : 0;
       return {
         ...l,
         qty: Number(l.qty) || 0,
-        payable: Number(l.payable) || 0,
+        payable: Math.max(0, gross - advance),
+        payable_gross: gross,
+        advance,
+        advance_at: adv ? (adv.paid_at || '') : '',
+        advance_bank_id: adv && adv.bank_id != null ? Number(adv.bank_id) : null,
         route,
         linked: route !== 'none',
         effectiveBankId: effective ? effective.id : null,
@@ -14517,6 +14565,109 @@ app.post('/api/payments/lots/:auctionId/unmark-paid', requireAdmin, (req, res) =
   } catch (e) {
     console.error('unmark-paid error:', e);
     res.status(500).json({ error: 'Unmark paid failed: ' + (e.message || e) });
+  }
+});
+
+// ── Pay Advance, lot-wise ────────────────────────────────────────────────
+// Records an advance already paid against individual LOTS, from the lot-wise
+// Payments screen. Each item is { lotId, advance, bankId? }:
+//
+//   advance > 0  upsert the lot's advance (one row per lot) and stamp when it
+//                was paid. Re-paying a lot that already carries an advance
+//                REPLACES the figure rather than adding to it — the modal
+//                pre-fills the current value, so what the operator sees in the
+//                box is what the lot ends up with.
+//   advance = 0  clear the lot's advance entirely.
+//
+// `bankId` is the account the money actually went to. It is optional (a seller
+// with no accounts on file can still have an advance recorded against them),
+// but when supplied it must belong to the LOT'S OWN seller: trader_banks ids
+// are recycled as sellers are re-saved, so an id from another seller would
+// record this lot's money against a stranger's account.
+//
+// The whole batch is validated before anything is written — a half-applied
+// "pay advance on 40 lots" is far worse than an outright rejection.
+app.post('/api/payments/lots/:auctionId/advance', requireLotWrite, (req, res) => {
+  try {
+    const db = getDb();
+    const auctionId = Number(req.params.auctionId);
+    if (!auctionId) return res.status(400).json({ error: 'auctionId is required' });
+    const items = Array.isArray(req.body && req.body.items) ? req.body.items : [];
+    if (!items.length) return res.status(400).json({ error: 'items (array) is required' });
+
+    // Collapse duplicate lotIds — last one typed wins, matching the modal,
+    // where a lot appears on exactly one row.
+    const wanted = new Map();
+    for (const it of items) {
+      const lotId = parseInt(it && it.lotId, 10);
+      if (!Number.isFinite(lotId)) continue;
+      const advance = Math.round((Number(it.advance) || 0) * 100) / 100;
+      if (!(advance >= 0)) return res.status(400).json({ error: `Advance for lot id ${lotId} is not a number` });
+      const rawBank = (it.bankId === '' || it.bankId == null) ? null : parseInt(it.bankId, 10);
+      wanted.set(lotId, { lotId, advance, bankId: Number.isFinite(rawBank) ? rawBank : null });
+    }
+    if (!wanted.size) return res.status(400).json({ error: 'No valid lot ids in items' });
+
+    const ids = [...wanted.keys()];
+    const ph = ids.map(() => '?').join(',');
+    const rows = db.all(
+      `SELECT id, lot_no, name, trader_id, balance, amount, paid_at
+         FROM lots WHERE auction_id = ? AND id IN (${ph})`,
+      [auctionId, ...ids]) || [];
+    const lotById = new Map(rows.map(r => [r.id, r]));
+
+    // Which trader_banks rows each affected seller actually owns.
+    const traderIds = [...new Set(rows.map(r => r.trader_id).filter(t => t != null))];
+    const ownedBanks = new Set();
+    if (traderIds.length) {
+      const tph = traderIds.map(() => '?').join(',');
+      for (const b of db.all(
+        `SELECT id, trader_id FROM trader_banks WHERE trader_id IN (${tph})`, traderIds) || []) {
+        ownedBanks.add(`${b.trader_id}:${b.id}`);
+      }
+    }
+
+    const problems = [];
+    for (const w of wanted.values()) {
+      const lot = lotById.get(w.lotId);
+      if (!lot) { problems.push(`Lot id ${w.lotId} is not in this trade`); continue; }
+      const where = `lot ${String(lot.lot_no || w.lotId)}`;
+      if (lot.paid_at) { problems.push(`${where} is already marked paid — undo the paid stamp first`); continue; }
+      if (w.advance === 0) continue;                     // clearing needs no further checks
+      const balance = Math.round((Number(lot.balance) || 0) * 100) / 100;
+      if (!(balance > 0)) { problems.push(`${where} has nothing payable yet — price it before paying an advance`); continue; }
+      if (w.advance > balance) {
+        problems.push(`${where}: advance ${w.advance.toFixed(2)} is more than its payable ${balance.toFixed(2)}`);
+        continue;
+      }
+      if (w.bankId != null && !ownedBanks.has(`${lot.trader_id}:${w.bankId}`)) {
+        problems.push(`${where}: the chosen bank account does not belong to ${lot.name || 'this seller'}`);
+      }
+    }
+    if (problems.length) return res.status(400).json({ error: problems.join('; '), problems });
+
+    const paidAt = db.get(`SELECT datetime('now','localtime') AS d`).d;
+    let saved = 0, cleared = 0;
+    for (const w of wanted.values()) {
+      if (w.advance > 0) {
+        db.run(
+          `INSERT INTO lot_advances (lot_id, auction_id, advance, bank_id, paid_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(lot_id)
+           DO UPDATE SET auction_id = excluded.auction_id, advance = excluded.advance,
+                         bank_id = excluded.bank_id, paid_at = excluded.paid_at,
+                         updated_at = excluded.updated_at`,
+          [w.lotId, auctionId, w.advance, w.bankId, paidAt, paidAt]);
+        saved++;
+      } else {
+        const had = db.get('SELECT lot_id FROM lot_advances WHERE lot_id = ?', [w.lotId]);
+        if (had) { db.run('DELETE FROM lot_advances WHERE lot_id = ?', [w.lotId]); cleared++; }
+      }
+    }
+    res.json({ success: true, saved, cleared, paidAt });
+  } catch (e) {
+    console.error('lot advance save error:', e);
+    res.status(500).json({ error: 'Advance save failed: ' + (e.message || e) });
   }
 });
 
@@ -14625,6 +14776,15 @@ app.post('/api/payments/:auctionId/delete-sellers', requireDelete, (req, res) =>
             AND UPPER(COALESCE(name,'')) IN (${placeholders})`,
         [auctionId, ...upperBatch]
       ).c;
+      // Advances against those lots first — they are keyed by lot id, so once
+      // the lots are gone there is nothing left to match them on.
+      db.run(
+        `DELETE FROM lot_advances
+          WHERE lot_id IN (SELECT id FROM lots
+                            WHERE auction_id = ?
+                              AND UPPER(COALESCE(name,'')) IN (${placeholders}))`,
+        [auctionId, ...upperBatch]
+      );
       db.run(
         `DELETE FROM lots
           WHERE auction_id = ?
@@ -20059,6 +20219,14 @@ const PORT = process.env.PORT || 3001;
   assertSchemaSanity(db);
   backfillAuctionIds(db);
   backfillSaleTypes(db);
+  // Seller / buyer master details are stored UPPER CASE (party-case.js).
+  // One-time normalisation of rows written before that rule existed,
+  // including the denormalised name copies on lots / purchases / bills /
+  // debit notes / invoices. Idempotent, and a no-op once converged.
+  try {
+    const _pc = backfillPartyCase(db);
+    if (_pc) console.log(`[backfill] party case: ${_pc} row(s) upper-cased`);
+  } catch (e) { console.warn(`[backfill] party case: ${e.message}`); }
   // Bootstrap the per-install license row on first boot. This generates
   // the install_id, starts the trial window, and logs the current
   // status so the operator can spot expiry-soon at deploy time.

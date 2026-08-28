@@ -845,6 +845,33 @@ async function initDb() {
     PRIMARY KEY (auction_id, name_key)
   )`);
 
+  // ── LOT ADVANCES ───────────────────────────────────────────
+  // Per-LOT advance already paid out, recorded by "Pay Advance" on the
+  // lot-wise Payments screen. Deliberately NOT the same store as
+  // payment_advances above, which is the classic screen's per-SELLER figure:
+  //
+  //   • a lot-wise advance has to stay attributable to ONE lot, or the row
+  //     cannot badge it and the lot's payable cannot be netted off;
+  //   • the two screens would otherwise overwrite each other's number, and
+  //     getBankPaymentData already skips the seller-level advance on
+  //     lot-picked exports precisely because it can't be split across lots.
+  //
+  // lot_id is the PRIMARY KEY — one advance per lot, so every reader can join
+  // 1:1 without fanning the lot rows out and doubling the sums. auction_id is
+  // carried (denormalised from lots) so the per-trade reads never need a join.
+  // bank_id names the account the advance actually WENT to, which need not be
+  // the account the remaining balance will later be paid into; it is validated
+  // against the lot's own trader on write (a trader_banks id belonging to
+  // another seller would misroute money — see the bank-pin ownership rule).
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS lot_advances (
+    lot_id INTEGER PRIMARY KEY,
+    auction_id INTEGER NOT NULL,
+    advance REAL DEFAULT 0,
+    bank_id INTEGER,
+    paid_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_at TEXT DEFAULT (datetime('now','localtime'))
+  )`);
+
   // ── INDEXES ────────────────────────────────────────────────
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_traders_name ON traders(name)',
@@ -884,6 +911,10 @@ async function initDb() {
     'CREATE INDEX IF NOT EXISTS idx_wa_messages_wamid ON whatsapp_messages(wamid)',
     'CREATE INDEX IF NOT EXISTS idx_wa_messages_phone ON whatsapp_messages(phone)',
     'CREATE INDEX IF NOT EXISTS idx_payment_advances_auction ON payment_advances(auction_id)',
+    // Every lot-advance read is "all advances in this trade" — the lot-wise
+    // search, the bank export's deduction and the payments roll-up all scan
+    // by auction_id, never by lot_id alone.
+    'CREATE INDEX IF NOT EXISTS idx_lot_advances_auction ON lot_advances(auction_id)',
   ];
   for (const idx of indexes) { try { wrapped.exec(idx); } catch (e) {} }
 

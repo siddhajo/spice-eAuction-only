@@ -28,6 +28,9 @@ const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const { formatDateForDisplay } = require('./report-formatters');
 const { syncLotsFromTrader, syncTraderBanks } = require('./trader-lot-sync');
+// Seller master details are stored UPPER CASE — see party-case.js. Applied
+// here as well as in server.js because BOTH files own a /api/traders writer.
+const { normalizeTrader } = require('./party-case');
 
 // ════════════════════════════════════════════════════════════════════
 // RECEIPT-PRINT HELPERS — ported from PWA server.js's renderer code.
@@ -109,7 +112,9 @@ function getReceiptConfig(db) {
       sample:   getBool('lot_receipt_show_sample', true),
       gross:    getBool('lot_receipt_show_gross',  true),
       crpt:     getBool('lot_receipt_show_crpt',   false),
-      moisture: getBool('show_moisture',           false),
+      // Its own column switch — capturing moisture on the Lot Entry form
+      // (show_moisture, above) no longer forces it onto the printed slip.
+      moisture: getBool('lot_receipt_show_moisture', false),
     },
     // Thermal paper width (Settings → Lot Entry Defaults → "Lot Receipt
     // Paper Width"). Same key the desktop print path reads, so a 58mm
@@ -1482,7 +1487,7 @@ function mountMobile(app, deps) {
   // These checks run BEFORE insert so neither app can race two creates
   // for the same person.
   app.post('/api/traders', requireAuth, (req, res) => {
-    const t = req.body || {};
+    const t = normalizeTrader(req.body || {});
     if (!t.name || !String(t.name).trim()) {
       return res.status(400).json({ error: 'Seller name is required' });
     }
@@ -1578,7 +1583,7 @@ function mountMobile(app, deps) {
     const id = parseInt(req.params.id, 10);
     const trader = db.get('SELECT * FROM traders WHERE id = ?', [id]);
     if (!trader) return res.status(404).json({ error: 'Seller not found' });
-    const t = req.body || {};
+    const t = normalizeTrader(req.body || {});
     const emailClean = t.email != null ? String(t.email).trim() : null;
     if (emailClean && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailClean)) {
       return res.status(400).json({ error: 'Invalid email format' });

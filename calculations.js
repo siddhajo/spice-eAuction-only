@@ -794,12 +794,61 @@ const SELLER_KEY_SQL = (a) => `COALESCE(
          THEN NULL ELSE 'uid:' || TRIM(${a}.user_id) END,
     'name:' || UPPER(TRIM(${a}.name)))`;
 
+// Does this DB carry the per-lot advance store? `lot_advances` is created by
+// initDb, so on any current install the answer is yes — but the money readers
+// below must not blow up on a partially-migrated one, and a table check is far
+// cheaper than wrapping every query in a fallback. Result is per-db, cached on
+// the handle so a report that calls several of these pays for it once.
+function hasLotAdvances(db) {
+  if (db.__hasLotAdvances === undefined) {
+    try {
+      db.__hasLotAdvances = !!db.get(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'lot_advances'");
+    } catch (_) { db.__hasLotAdvances = false; }
+  }
+  return db.__hasLotAdvances;
+}
+
+// Per-seller total of the advances paid against individual lots ("Pay Advance"
+// on the lot-wise Payments screen). Keyed by the same seller identity the
+// payment roll-ups group on, so the figure it returns can be subtracted from
+// their payable.
+//
+// The scope MUST match the caller's own lot set or the deduction over- or
+// under-states: getBankPaymentData drops lots already paid out (`onlyUnpaid`),
+// getPaymentSummary counts them, and both can be narrowed to one state.
+//
+// The join is 1:1 (lot_advances.lot_id is the PRIMARY KEY), so nothing fans out
+// and no SUM is doubled — the same trap the seller-wise aggregate above hit.
+function lotAdvancesBySeller(db, auctionId, opts) {
+  if (!hasLotAdvances(db)) return {};
+  opts = opts || {};
+  const out = {};
+  try {
+    // amount > 0 mirrors every caller's own filter. It never drops a real row:
+    // an advance can only be recorded on a lot with a positive balance, which
+    // an unpriced lot does not have.
+    let sql = `SELECT ${SELLER_KEY_SQL('l')} AS seller_key, COALESCE(SUM(la.advance), 0) AS adv
+                 FROM lot_advances la JOIN lots l ON l.id = la.lot_id
+                WHERE la.auction_id = ? AND l.auction_id = ? AND l.amount > 0
+                  AND (l.paid IS NULL OR l.paid = '')`;
+    const params = [auctionId, auctionId];
+    if (opts.onlyUnpaid) sql += ' AND l.paid_at IS NULL';
+    if (opts.state) { sql += ' AND l.state = ?'; params.push(opts.state); }
+    sql += ` GROUP BY ${SELLER_KEY_SQL('l')}`;
+    for (const r of db.all(sql, params) || []) out[String(r.seller_key || '')] = Number(r.adv) || 0;
+  } catch (_) { /* treat as no advances rather than failing the export */ }
+  return out;
+}
+
 function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
   // Per-seller, per-auction payment roll-up for the Payments tab (and the
   // lot-selection modal + payment statement, which must agree with it).
   //   Net Amount = Σ lots.balance  (Amount + Refund − Commission − Handling − GST)
   //   Advance    = per-seller advance already paid (payment_advances table)
-  //   Payable    = Net − Advance
+  //   LotAdvance = advances paid against individual lots (lot_advances table,
+  //                written by the lot-wise screen's Pay Advance)
+  //   Payable    = Net − Advance − LotAdvance
   //   Discount   = early-payment settlement discount on immediate-payment lots;
   //                DISPLAY-ONLY (opt-in via auctions.discount_applied) — it does
   //                NOT change Payable.
@@ -832,8 +881,27 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
     SUM(l.balance) as total_payable,
     SUM(CASE WHEN COALESCE(l.immediate_payment,0)=1 THEN l.balance ELSE 0 END) as immediate_payable,
     COUNT(*) as lot_count,
-    GROUP_CONCAT(DISTINCT l.bank_id) AS bank_ids,
-    COUNT(l.bank_id) AS bank_lot_count,
+    -- How many DESTINATION accounts this seller's lots resolve to — which is
+    -- what the "multiple banks" badge is really asking, and it must agree with
+    -- the bank export or the badge sends the operator off to split a file that
+    -- comes out as one line anyway.
+    --
+    -- Counting raw bank_ids got this wrong twice over. A pin is not proof of a
+    -- destination: the row it names can have been deleted, or left behind by a
+    -- seller correction and so belong to somebody else — both fall back to the
+    -- default. And a pin naming the seller's OWN default is the same
+    -- destination as no pin at all, not a second account.
+    --
+    -- So resolve each lot the way getBankPaymentData's resolveDest does —
+    -- owned pin, else the seller's default account, else the legacy
+    -- traders.acctnum — and count the distinct answers.
+    COUNT(DISTINCT COALESCE(
+      (SELECT tb.acctnum FROM trader_banks tb
+        WHERE tb.id = l.bank_id AND tb.trader_id = l.trader_id),
+      (SELECT tb.acctnum FROM trader_banks tb
+        WHERE tb.trader_id = l.trader_id ORDER BY tb.is_default DESC, tb.id LIMIT 1),
+      (SELECT tr.acctnum FROM traders tr WHERE tr.id = l.trader_id),
+      '')) AS bank_dest_count,
     MAX(COALESCE(l.immediate_payment,0)) AS any_immediate,
     SUM(COALESCE(l.immediate_payment,0)) AS immediate_lot_count
     FROM lots l WHERE l.auction_id = ?`;
@@ -884,6 +952,13 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
     });
   } catch (_) { /* table missing on very old DBs — treat as no advances */ }
 
+  // Advances paid against INDIVIDUAL lots, from the lot-wise Payments screen.
+  // A separate store from the per-seller column above (see db.js) and reported
+  // as its own field, so the editable "Advance" cell keeps showing exactly the
+  // number that was typed into it — but both come off the payable, or this
+  // screen would ask for money that has already gone out.
+  const lotAdvBySellerKey = lotAdvancesBySeller(db, auctionId, { state });
+
   // Settlement discount is display-only and opt-in per auction: it stays 0
   // until the operator clicks "Calculate All Discounts" (auctions.discount_applied
   // = 1). When off, every seller's Discount reads 0 on-screen and in exports.
@@ -932,6 +1007,8 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
     const advKey = (s.trader_id != null && advByName[`ID:${s.trader_id}`] != null)
       ? `ID:${s.trader_id}` : String(s.name || '').trim().toUpperCase();
     const advance = advByName[advKey] || 0;
+    // Advance paid lot-by-lot on the lot-wise screen for this same seller.
+    const lotAdvance = lotAdvBySellerKey[String(s.seller_key || '')] || 0;
     // Unpriced = this seller has no priced lots yet (all amounts still 0),
     // i.e. price import hasn't run. Only possible when includeUnpriced is set.
     // The UI shows "—" for the money columns and keeps just Advance editable.
@@ -964,20 +1041,19 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
       // When the advance was recorded (payment_advances.updated_at) — drives
       // the "Advance paid on {date}" badge in the Advance column.
       advance_at: advAtByName[advKey] || '',
+      // Advance recorded per LOT (lot-wise Payments → Pay Advance). Reported
+      // separately from `advance` above so the editable per-seller cell is not
+      // silently inflated by it; both are netted off total_payable below.
+      lot_advance: lotAdvance,
       // True when this seller's lots point at more than one bank account
       // (or a mix of tagged + untagged). Drives the "multiple banks" badge
       // on the Payments table so the user knows to export each account's
       // lots separately via the per-seller lot picker.
-      multipleBanks: (() => {
-        const ids = String(s.bank_ids || '').split(',')
-          .map(x => x.trim()).filter(x => x !== '' && x !== 'null');
-        const untagged = Number(s.lot_count || 0) > Number(s.bank_lot_count || 0);
-        const distinct = new Set(ids).size;
-        return distinct > 1 || (distinct >= 1 && untagged);
-      })(),
-      // Final payable = net amount − advance already paid. The settlement
-      // discount is display-only and intentionally NOT subtracted here.
-      total_payable: netAmount - advance,
+      multipleBanks: Number(s.bank_dest_count || 0) > 1,
+      // Final payable = net amount − every advance already paid, per-seller
+      // and per-lot alike. The settlement discount is display-only and
+      // intentionally NOT subtracted here.
+      total_payable: netAmount - advance - lotAdvance,
     };
   });
 }
@@ -1041,9 +1117,11 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
   const lotPicks    = _upMap(opts.lots);
   const excludeLots = _upMap(opts.excludeLots);
   const hasLotFilter = !!(lotPicks || excludeLots);
+  // trader_id is selected so a lot's pinned bank can be checked against the
+  // seller who is being paid — see `bankFor` below.
   let bankById = {};
   if (hasLotFilter) {
-    try { for (const b of db.all('SELECT id, ifsc, acctnum, holder_name FROM trader_banks')) bankById[b.id] = b; } catch (_) {}
+    try { for (const b of db.all('SELECT id, trader_id, ifsc, acctnum, holder_name FROM trader_banks')) bankById[b.id] = b; } catch (_) {}
   }
   // Bank Payment lists every seller in the trade with a non-zero
   // payable (or non-zero pre-discount amount in 'before' mode) — both
@@ -1164,8 +1242,30 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
     // 'ID:<trader_id>' keys are exact — no same-name ambiguity to guard against.
   } catch (_) { /* table missing on old DBs — no advances */ }
 
+  // Advances paid against INDIVIDUAL lots (lot-wise Payments → Pay Advance).
+  // Unlike the per-seller advance above these CAN be split across lots — that
+  // is the whole point of them — so they come off lot-picked exports too, and
+  // the lot-picked branch below re-reads them per bank group rather than using
+  // this per-seller roll-up. Scoped to the unpaid lots this export covers.
+  const lotAdvBySellerKey = lotAdvancesBySeller(db, auctionId, { onlyUnpaid: true });
+  const useLotAdv = hasLotAdvances(db);
+
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [auctionId]);
   const roundAmounts = cfg.flag_round;
+
+  // Where seller `p`'s money actually lands. `routedBank` is the lot's pinned
+  // account (already ownership-checked by `bankFor`); null falls back through
+  // the seller's default bank to the legacy single-bank columns on `traders`.
+  // Shared with the lot-filtered split below so the "do these lots pay into
+  // the same account?" test and the cells finally written can never disagree.
+  const resolveDest = (p, routedBank) => {
+    const tb = p.trader_id != null ? bankByTraderId[p.trader_id] : null;
+    return {
+      ifsc:     (routedBank && routedBank.ifsc)        || (tb && tb.ifsc)        || p.t_ifsc    || '',
+      acctnum:  (routedBank && routedBank.acctnum)     || (tb && tb.acctnum)     || p.t_acctnum || '',
+      holderNm: (routedBank && routedBank.holder_name) || (tb && tb.holder_name) || p.t_holder  || p.name,
+    };
+  };
 
   // Build one bank-payment output row for seller `p`. `rawAmount` is the
   // pre-round amount, `lotList` the formatted lot numbers for REMARKS, and
@@ -1175,10 +1275,7 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
     // The lots this row actually pays for: the picked subset when the caller
     // filtered, otherwise every lot the seller has in this trade.
     const rowLots = lotList || formatLotList(p.lot_nos || '');
-    const tb = p.trader_id != null ? bankByTraderId[p.trader_id] : null;
-    const ifsc      = (routedBank && routedBank.ifsc)        || (tb && tb.ifsc)        || p.t_ifsc    || '';
-    const acctnum   = (routedBank && routedBank.acctnum)     || (tb && tb.acctnum)     || p.t_acctnum || '';
-    const holderNm  = (routedBank && routedBank.holder_name) || (tb && tb.holder_name) || p.t_holder  || p.name;
+    const { ifsc, acctnum, holderNm } = resolveDest(p, routedBank);
     return {
       transactionType: rawAmount >= 200000 ? 'RTGS' : 'NEFT',
       // Firm's own account that funds are debited from. Kerala account per
@@ -1252,7 +1349,10 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
           else advanceTaken[nameUpper] = true;
         }
       }
-      const base = Math.max(0, (useBefore ? (p.puramt || 0) : (p.payable || 0)) - adv);
+      // Lot advances are attributable to exactly one seller, so unlike the
+      // legacy name-keyed row above there is no same-name guard to apply.
+      const lotAdv = lotAdvBySellerKey[String(p.seller_key || '')] || 0;
+      const base = Math.max(0, (useBefore ? (p.puramt || 0) : (p.payable || 0)) - adv - lotAdv);
       return [buildRow(p, base, '', null)];
     }
     // Re-sum balance/puramt over ONLY the picked (and not-excluded) lots
@@ -1267,42 +1367,77 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
     let extra = '';
     if (picksArr && picksArr.length)    { extra += ` AND l.lot_no IN (${picksArr.map(() => '?').join(',')})`;     for (const x of picksArr)   params.push(String(x)); }
     if (excludeArr && excludeArr.length){ extra += ` AND l.lot_no NOT IN (${excludeArr.map(() => '?').join(',')})`; for (const x of excludeArr) params.push(String(x)); }
+    // Advance already paid against the picked lots, summed alongside them.
+    // The join is 1:1 on lot_advances' PRIMARY KEY, so it cannot fan the lot
+    // rows out and double the payable — the failure this aggregate was
+    // rewritten to avoid. Omitted entirely on a DB without the table.
     const groups = db.all(
       `SELECT l.bank_id AS bank_id,
               COALESCE(SUM(l.balance),0) AS payable, COALESCE(SUM(l.puramt),0) AS puramt,
+              ${useLotAdv ? 'COALESCE(SUM(la.advance),0)' : '0'} AS lot_advance,
               GROUP_CONCAT(l.lot_no) AS lot_nos
-         FROM lots l WHERE l.auction_id = ? AND l.amount > 0
+         FROM lots l${useLotAdv ? ' LEFT JOIN lot_advances la ON la.lot_id = l.id' : ''}
+        WHERE l.auction_id = ? AND l.amount > 0
           AND (l.paid IS NULL OR l.paid = '') AND ${sellerKeySql} = ?${extra}
         GROUP BY l.bank_id`,
       params
     ) || [];
-    // Only banks we can actually route to count toward "spans multiple banks".
-    const taggedBanks = groups.filter(g => g.bank_id != null && bankById[g.bank_id]);
-    const hasUntagged = groups.some(g => g.bank_id == null || !bankById[g.bank_id]);
-    const amtOf = g => useBefore ? (Number(g.puramt) || 0) : (Number(g.payable) || 0);
+    // Net of the advance in both modes: the money is out of the door either
+    // way, so paying the full figure again would pay it twice. Clamped per
+    // group so an advance larger than its own group's total never eats into
+    // another bank account's line.
+    const amtOf = g => Math.max(0,
+      (useBefore ? (Number(g.puramt) || 0) : (Number(g.payable) || 0)) - (Number(g.lot_advance) || 0));
 
-    // Split into one row per destination whenever the covered lots don't all
-    // pay into the same place — either several tagged banks, or one tagged
-    // bank alongside untagged lots that follow the seller's default.
+    // The account a lot's pin actually authorises — or null, meaning "follow
+    // the seller's default" rather than "pay this id".
     //
-    // That second case used to fall through to the merged row below, which
-    // paid the tagged lot into the DEFAULT account — silently discarding an
-    // explicit per-lot choice the operator had made. Splitting here routes
-    // each group where it was told to go (untagged group → null → default).
-    if (taggedBanks.length >= 2 || (taggedBanks.length === 1 && hasUntagged)) {
-      return groups.map(g => buildRow(
-        p, amtOf(g), formatLotList(g.lot_nos || ''),
-        (g.bank_id != null && bankById[g.bank_id]) || null
-      ));
+    // The ownership test is the point. `trader_banks` ids are RECYCLED:
+    // syncTraderBanks (server.js) deletes and re-inserts a seller's bank rows
+    // on every save, so a `lots.bank_id` stamped at lot entry can now name a
+    // row that has been handed to a DIFFERENT seller. Trusting it paid this
+    // seller's lots into that seller's account — a real case: three lots of
+    // ELAICHIROYAL PRIVATE LIMITED (₹17.5L) carried bank_id 38, which by then
+    // belonged to THAMARASSERIYIL SPICES POINT. An id the seller does not own
+    // is therefore treated as no pin at all, so the money falls back to their
+    // own default instead of leaving for someone else's account. Same guard
+    // the mobile receipt query already carries (mobile-bridge.js, "AND
+    // tb.trader_id = t.id") and the Payments screen's bank-status check.
+    const bankFor = (bankId) => {
+      if (bankId == null) return null;
+      const b = bankById[bankId];
+      if (!b) return null;                                  // row since deleted
+      if (p.trader_id == null || b.trader_id !== p.trader_id) return null;
+      return b;
+    };
+
+    // Bucket the covered lots by the account they will ACTUALLY be paid into,
+    // not by the raw bank_id they carry. Several distinct bank_ids routinely
+    // resolve to ONE destination — a stale id, an untagged lot, and a lot
+    // pinned to the seller's own default account all end up at that default —
+    // and keying the split on the raw id emitted a separate line for each, so
+    // the same account appeared several times in one payment file (the same
+    // seller above exported as 4 lines, 3 of them into the identical account).
+    // Keying on the resolved destination merges those back into one line while
+    // still splitting genuinely different accounts.
+    const buckets = new Map();
+    for (const g of groups) {
+      const bank = bankFor(g.bank_id);
+      const d = resolveDest(p, bank);
+      const key = `${String(d.ifsc).trim().toUpperCase()}|${String(d.acctnum).trim()}`;
+      let b = buckets.get(key);
+      if (!b) { b = { bank, amount: 0, lots: [] }; buckets.set(key, b); }
+      // A bucket first reached by fallback carries a null router; adopt the
+      // first explicit pin that lands in it. Both resolve to this same
+      // account, so this only preserves the operator's stated intent.
+      else if (b.bank == null && bank != null) b.bank = bank;
+      b.amount += amtOf(g);
+      if (g.lot_nos) b.lots.push(g.lot_nos);
     }
-    // Everything lands in one account — all lots untagged (→ seller default),
-    // or all tagged to the same bank. One merged row, as before.
-    const rawAmount = groups.reduce((s, g) => s + amtOf(g), 0);
-    const lotList = formatLotList(groups.map(g => g.lot_nos || '').filter(Boolean).join(','));
-    const routedBank = (taggedBanks.length === 1 && !hasUntagged)
-      ? bankById[taggedBanks[0].bank_id]
-      : null;
-    return [buildRow(p, rawAmount, lotList, routedBank)];
+    // One row per destination. A single bucket means every covered lot pays
+    // into one account — the merged row, exactly as before.
+    return [...buckets.values()].map(b =>
+      buildRow(p, b.amount, formatLotList(b.lots.join(',')), b.bank));
   });
   // When lot-filtering is active, drop rows that net to zero — a seller
   // whose remaining (un-exported) lots all net to zero shouldn't appear.

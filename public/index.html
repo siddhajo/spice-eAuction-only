@@ -1508,6 +1508,10 @@ body:not([data-feat-price-list-mapping="1"]) .feat-price-list-mapping{display:no
    display:flex when the flag is on — no companion rule needed (unlike
    .needs-auction-desk, whose base rule hides by default). */
 body:not([data-feat-auction-manager="1"]) .feat-auction-manager{display:none !important}
+/* Insights — gated by flag_insights (Settings → Flags). Same ADD-a-hide
+   shape as the rule above, so the sidebar entry keeps .side-item's own
+   display:flex while the flag is on. Defaults ON; see company-config.js. */
+body:not([data-feat-insights="1"]) .feat-insights{display:none !important}
 
 /* ── Auction Manager screen ──────────────────────────────────────────
    Flat by design — hairline rules and tinted bands, no cards or shadows,
@@ -2101,6 +2105,17 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 .dl-issue-err{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5}
 .dl-issue:hover{filter:brightness(.95)}
 .dl-issue-on{box-shadow:0 0 0 2px var(--spice-cardamom-lt,#d1fae5)}
+/* Collapsible KPI band header (Debit Notes / Debit Notes — Planter). Sits
+   above the tile grid as a quiet caret + "Summary" label rather than another
+   card, so collapsing the band leaves a single line rather than a gap. */
+.kpi-collapse-head{
+  align-items:center;gap:6px;margin:0 0 10px;padding:4px 8px;cursor:pointer;user-select:none;
+  font-size:12px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;
+  color:var(--text3);border-radius:6px
+}
+.kpi-collapse-head:hover{background:var(--bg);color:var(--spice-text-main)}
+.kpi-collapse-head:focus-visible{outline:2px solid var(--spice-cardamom);outline-offset:1px}
+.kpi-collapse-caret{display:inline-block;transition:transform .15s;font-size:13px}
 /* Dashboard modal (×) close button — top-right corner */
 .modal.has-x{position:relative}
 .modal.has-x h2{padding-right:34px}
@@ -3780,6 +3795,21 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
    row tint so the two states never read the same. */
 .paylw-table tbody tr.paylw-row-paid > td{background:#f0fdf4;color:#4b5563}
 .paylw-paid-badge{display:inline-flex;align-items:center;gap:3px;background:#dcfce7;color:#166534;border:1px solid #86efac;border-radius:9px;padding:1px 7px;font-size:10.5px;font-weight:700;margin-left:6px;vertical-align:middle;white-space:nowrap}
+/* Lot-wise Payments — a lot carrying an ADVANCE. Amber, deliberately unlike
+   the green "Paid on …" badge above: an advance is part-settled, not settled,
+   and the row stays fully selectable and exportable for the remainder. */
+.paylw-adv-badge{display:inline-flex;align-items:center;gap:3px;background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;border-radius:9px;padding:1px 7px;font-size:10.5px;font-weight:700;margin-left:6px;vertical-align:middle;white-space:nowrap}
+/* Pay Advance modal — the lot grid scrolls inside the dialog so the running
+   total and the Pay button stay on screen for a trade with hundreds of lots. */
+.paylw-adv-scroll{max-height:min(48vh,520px);overflow:auto;border:1px solid var(--spice-line);border-radius:8px}
+.paylw-adv-scroll table{width:100%;margin:0;border-collapse:collapse}
+.paylw-adv-scroll thead th{position:sticky;top:-1px;z-index:2;background:var(--spice-cardamom);color:#fff;
+  font-size:11px;letter-spacing:.5px;text-align:left;padding:7px 8px;white-space:nowrap}
+.paylw-adv-scroll tbody td{padding:5px 8px;border-bottom:1px solid var(--spice-line);font-size:12.5px}
+.paylw-adv-scroll tbody tr.paylw-adv-off > td{opacity:.5}
+.paylw-adv-scroll input.paylw-adv-amt{width:110px;padding:4px 7px;border:1px solid var(--border);border-radius:6px;
+  font-size:12.5px;text-align:right;font-family:monospace}
+.paylw-adv-scroll input.paylw-adv-amt.over{border-color:var(--spice-chili);background:#FEF2F2}
 /* Bank-routing bar above the per-seller lot picker, and the per-lot account
    dropdown in its Bank column. `display` is toggled from JS, so the flex
    layout lives here rather than in a style attribute an inline
@@ -4085,7 +4115,8 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
           Dashboard
         </button>
-        <button class="side-item" data-tab="insights" onclick="go('insights')">
+        <!-- Insights — gated by flag_insights (Settings → Flags). -->
+        <button class="side-item feat-insights" data-tab="insights" onclick="go('insights')">
           <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           Insights
         </button>
@@ -5450,7 +5481,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           </span>
           <select id="pe-filter-branch" onchange="peSetFilter('branch',this.value)" style="min-width:130px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px"><option value="">All branches</option></select>
           <span style="position:relative;display:inline-flex;align-items:center">
-            <input id="pe-filter-seller" placeholder="Seller" oninput="peSetFilter('seller',this.value)" style="width:180px;padding:6px 26px 6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box">
+            <input id="pe-filter-seller" placeholder="Seller / phone" oninput="peSetFilter('seller',this.value)" style="width:180px;padding:6px 26px 6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box">
             <button type="button" id="pe-filter-seller-clear" onclick="peClearFilterField('seller')" title="Clear" aria-label="Clear" style="display:none;position:absolute;right:5px;top:50%;transform:translateY(-50%);width:18px;height:18px;border:none;background:var(--bg);border-radius:50%;cursor:pointer;font-size:10px;color:var(--text3);align-items:center;justify-content:center;padding:0;line-height:1">✕</button>
           </span>
           <span style="position:relative;display:inline-flex;align-items:center">
@@ -6603,6 +6634,11 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                  a big export means clicking every paid row by hand. -->
             <button class="btn btn-o" id="paylw-tickallpaid-btn" style="display:none;height:38px;padding:0 12px;font-weight:600" onclick="payLwTickAllPaid()" title="Admin: tick every paid lot in the results, ready for Undo selected">☑ Tick all paid</button>
             <button class="btn btn-o" id="paylw-undosel-btn" style="display:none;height:38px;padding:0 14px;font-weight:600;color:var(--spice-chili);border-color:var(--spice-chili)" onclick="payLwUndoSelected()" title="Admin: clear the paid stamp on the ticked paid lots so they become selectable and exportable again">↩ Undo selected</button>
+            <!-- Records money already paid ahead of settlement, lot by lot.
+                 Sits before Export so the toolbar reads in the order the money
+                 moves: advance first, balance after. Needs lot_write, the same
+                 permission the advance endpoint enforces. -->
+            <button class="btn btn-o needs-lot-write" id="paylw-adv-btn" style="height:38px;padding:0 14px;font-weight:600;color:#B45309;border-color:#FDE68A;background:#FFFBEB" onclick="payLwOpenAdvance()" title="Record an advance paid against these lots. Each lot's Payable drops by its advance, and so does its line in the bank-payment export.">💰 Pay Advance</button>
             <button class="btn btn-a" id="paylw-export-btn" style="height:38px;padding:0 16px;font-weight:600" onclick="payLwExportBank()" title="Export the RTGS/NEFT file for the ticked lots. A fresh search ticks them all — untick any you don't want to pay yet.">📤 Export Bank Payment</button>
           </div>
         </div>
@@ -6647,6 +6683,45 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       <div class="actions">
         <button class="btn btn-o" type="button" onclick="hideModal('paylw-bank-add-modal')">Cancel</button>
         <button class="btn btn-a" type="button" id="paylw-bank-add-save" onclick="payLwSaveBankAdd()">Save account</button>
+      </div>
+    </div></div>
+
+    <!-- Pay Advance — record money paid against individual lots, from the
+         lot-wise Payments screen. Opens on the CURRENT search results (paid
+         lots excluded — they are settled), one row per lot, so the operator
+         works against exactly what they filtered for. -->
+    <div class="modal-bg" id="paylw-adv-modal" style="z-index:60"><div class="modal" style="max-width:1060px;width:96vw">
+      <h2>💰 Pay Advance</h2>
+      <p style="font-size:12.5px;color:var(--spice-text-mute);margin-bottom:12px;line-height:1.6">
+        Records an advance <strong>already paid</strong> against these lots. Each lot's <strong>Payable</strong>
+        drops by its advance on screen and in the bank-payment export, so the balance is never paid twice.
+        Only <strong>ticked</strong> rows are saved — leave a row unticked to keep whatever it already carries.
+      </p>
+
+      <!-- Bulk helpers. A trade is paid an advance a hundred lots at a time,
+           so typing into every box is not a realistic flow; these fill the
+           ticked rows in one action and the operator adjusts the exceptions. -->
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;padding:9px 12px;background:var(--spice-cream);border:1px solid var(--spice-line);border-radius:8px">
+        <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600">
+          <input type="checkbox" id="paylw-adv-cb-all" onchange="payLwAdvTickAll(this.checked)" style="width:15px;height:15px;cursor:pointer">
+          Select all
+        </label>
+        <span style="width:1px;height:22px;background:var(--spice-line)"></span>
+        <span style="font-size:12.5px;color:var(--text2)">Set</span>
+        <input type="number" id="paylw-adv-bulk" min="0" step="0.01" placeholder="e.g. 50000" style="width:130px;padding:0 10px;height:34px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;text-align:right;font-family:monospace" onkeydown="if(event.key==='Enter'){event.preventDefault();payLwAdvApplyBulk()}">
+        <button class="btn btn-o" type="button" style="height:34px;padding:0 12px;font-weight:600" onclick="payLwAdvApplyBulk()" title="Put this amount on every ticked lot. A lot whose Payable is lower gets its full Payable instead — an advance can never exceed it.">Apply to ticked</button>
+        <button class="btn btn-o" type="button" style="height:34px;padding:0 12px;font-weight:600" onclick="payLwAdvApplyFull()" title="Set every ticked lot's advance to its own full Payable">Full payable</button>
+        <button class="btn btn-o" type="button" style="height:34px;padding:0 12px;font-weight:600" onclick="payLwAdvClearAmounts()" title="Blank the amount on every ticked lot. Saving then REMOVES any advance those lots already carry.">Clear amounts</button>
+      </div>
+
+      <div id="paylw-adv-body"></div>
+
+      <div id="paylw-adv-err" style="display:none;margin-top:10px;padding:8px 12px;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;font-size:12px;color:var(--spice-chili);white-space:pre-line"></div>
+
+      <div class="actions" style="align-items:center">
+        <div id="paylw-adv-total" style="margin-right:auto;font-size:12.5px;color:var(--text2)"></div>
+        <button class="btn btn-o" type="button" onclick="hideModal('paylw-adv-modal')">Cancel</button>
+        <button class="btn btn-a" type="button" id="paylw-adv-save" onclick="payLwSaveAdvance()">Pay</button>
       </div>
     </div></div>
 
@@ -6951,7 +7026,13 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <button id="dn-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotes()" title="Delete all ticked debit notes">🗑 Delete Selected</button>
           <!-- Print-layout override for this screen (populated by renderLayoutSelector) -->
           <span id="dn-layout-host" style="display:inline-flex;align-items:center;margin-left:8px"></span></div>
-        <!-- KPI strip -->
+        <!-- KPI strip — collapsible (showKpiStrip / toggleKpiStrip). -->
+        <div id="debit-kpis-head" class="kpi-collapse-head" style="display:none" role="button" tabindex="0"
+             onclick="toggleKpiStrip('debit-kpis')"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleKpiStrip('debit-kpis')}"
+             title="Show or hide the summary tiles">
+          <span id="debit-kpis-caret" class="kpi-collapse-caret">▾</span> Summary
+        </div>
         <div id="debit-kpis" class="kpi-grid kpi-grid-rich" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;display:none">
           <div class="kpi cardamom">
             <div class="kpi-label">Debit Notes</div>
@@ -7007,7 +7088,13 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <button id="dnp-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotesPlanter()" title="Delete all ticked debit notes">🗑 Delete Selected</button>
           <!-- Print-layout override for this screen (populated by renderLayoutSelector) -->
           <span id="dnp-layout-host" style="display:inline-flex;align-items:center;margin-left:8px"></span></div>
-        <!-- KPI strip -->
+        <!-- KPI strip — collapsible (showKpiStrip / toggleKpiStrip). -->
+        <div id="debitp-kpis-head" class="kpi-collapse-head" style="display:none" role="button" tabindex="0"
+             onclick="toggleKpiStrip('debitp-kpis')"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleKpiStrip('debitp-kpis')}"
+             title="Show or hide the summary tiles">
+          <span id="debitp-kpis-caret" class="kpi-collapse-caret">▾</span> Summary
+        </div>
         <div id="debitp-kpis" class="kpi-grid kpi-grid-rich" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;display:none">
           <div class="kpi cardamom">
             <div class="kpi-label">Debit Notes</div>
@@ -10297,6 +10384,16 @@ async function applyFeatureFlags() {
   // Default OFF: installs opt in. Deliberately independent of the Auction
   // Desk, which stays on its auction_desk role capability.
   document.body.setAttribute('data-feat-auction-manager', cfg && on(cfg.flag_auction_manager) ? '1' : '0');
+  // Insights — an existing screen, so a MISSING key reads as ON (same
+  // undefined-means-on treatment as Price List Mapping above). Only an
+  // explicit "false" hides it, which keeps an install that hasn't reseeded
+  // its settings from losing the screen.
+  const insRaw = cfg ? cfg.flag_insights : undefined;
+  const insOn = (insRaw === undefined || insRaw === null || insRaw === '') ? true : on(insRaw);
+  document.body.setAttribute('data-feat-insights', insOn ? '1' : '0');
+  // Parked on Insights when it gets switched off? Move to the Dashboard
+  // rather than leaving the user on a screen with no way back to it.
+  if (!insOn && window._currentTab === 'insights' && typeof go === 'function') go('dash');
   // Print Selected Purchase (Sales tab toolbar). Default OFF — admins
   // explicitly enable. Still subject to the ASP context check applied
   // by applyAspContextVisibility() (Kerala + e-Auction), so the button
@@ -11388,6 +11485,9 @@ function go(tab){
     if (typeof toast === 'function') toast('🔒 The Auction Desk is for managers and admins');
     tab = 'dash';
   }
+  // Insights is off for this install — catches the restore-last-tab path,
+  // which would otherwise reopen a screen whose sidebar entry is hidden.
+  if (tab === 'insights' && document.body.getAttribute('data-feat-insights') === '0') tab = 'dash';
   window._currentTab = tab;
   document.querySelectorAll('.side-item').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
   document.querySelectorAll('.tc').forEach(t=>t.classList.remove('active'));
@@ -15113,6 +15213,28 @@ async function loadDepotSummary(auctionId){
 // is blank/null, matching how the depot-summary rollup buckets them server-side.
 let _dl = { rows: [], sort: { col: 'lot_no', dir: 1 }, filt: { lot: '', seller: '', buyer: '', badge: '' } };
 
+// ── Seller matching (name OR phone) ─────────────────────────────
+// One rule for every in-browser seller filter, mirroring the server's
+// smartPhoneDigits / smartPhoneSql pair so a search behaves the same whether
+// it runs in SQL or here: the term matches the seller's NAME as a substring,
+// or their PHONE compared digits-only — "+91 97907 44444", "97907-44444" and
+// "9790744444" are all the same query.
+//
+// ≥4 digits to count as a phone number (SMART_PHONE_MIN_DIGITS server-side),
+// and only the last 10 are compared, so a typed +91 still finds a master
+// stored without one. The digit rule is inlined rather than shared with the
+// table-search helper of the same shape — that one is scoped inside its own
+// search function, and a second global `phoneNeedle` would read as the same
+// thing while being independently editable.
+function sellerMatches(term, name, tel){
+  const t = String(term == null ? '' : term).trim().toLowerCase();
+  if (!t) return true;
+  if (String(name || '').toLowerCase().includes(t)) return true;
+  const d = t.replace(/\D+/g, '');
+  const needle = d.length >= 4 ? d.slice(-10) : '';
+  return !!needle && String(tel || '').replace(/\D+/g, '').includes(needle);
+}
+
 // ── Seller data-hygiene badges for the lot-wise drill-down ──────
 // Same checks the Validate Lots screen raises (server: validateAuctionLots),
 // evaluated per lot from the seller snapshot the lot already carries, plus
@@ -15237,6 +15359,8 @@ function showLotList(titleText, lots, reload){
       return {
         lot_no: String(l.lot_no || ''),
         seller: String(l.name || ''),
+        // Carried so the seller filter can match on phone as well as name.
+        tel:    String(l.tel || ''),
         // Seller master id — makes the name a link to that seller's record.
         // Null on legacy lots entered before trader linking; those fall back
         // to a by-name lookup (see dlOpenSeller).
@@ -15262,7 +15386,7 @@ function showLotList(titleText, lots, reload){
     filtEl.style.display = '';
     filtEl.innerHTML =
       `<input class="dl-filter" type="text" placeholder="Filter lot…"    oninput="depotLotsFilter('lot', this.value)">`
-    + `<input class="dl-filter" type="text" placeholder="Filter seller…" oninput="depotLotsFilter('seller', this.value)">`
+    + `<input class="dl-filter" type="text" placeholder="Filter seller / phone…" oninput="depotLotsFilter('seller', this.value)">`
     + `<input class="dl-filter" type="text" placeholder="Filter buyer…"  oninput="depotLotsFilter('buyer', this.value)">`
     + dlBadgeFilterHtml();
   }
@@ -15361,7 +15485,7 @@ function renderDepotLotsTable(){
   };
   let rows = _dl.rows.filter(r =>
     (!f.lot    || r.lot_no.toLowerCase().includes(f.lot)) &&
-    (!f.seller || r.seller.toLowerCase().includes(f.seller)) &&
+    sellerMatches(f.seller, r.seller, r.tel) &&
     (!f.buyer  || r.buyer.toLowerCase().includes(f.buyer)) &&
     badgeOk(r)
   );
@@ -15484,6 +15608,39 @@ function dlResumeAfterSellerEdit(){
 
 // Collapse/expand the dashboard "Current Auction" panel. The state persists
 // across reloads so an operator who keeps it closed isn't re-opened each visit.
+// ── Collapsible KPI strips ──────────────────────────────────────
+// The Debit Note screens open on a 4-tile summary band that pushes the
+// register itself below the fold. The band now collapses to its header, and
+// the choice sticks per browser — the same treatment the dashboard's Current
+// Auction panel has.
+//
+// A screen's loader calls showKpiStrip(id, hasRows) instead of poking
+// strip.style.display, so "no rows" and "collapsed" can't fight each other:
+// an empty screen hides the header too, and a populated one honours the
+// saved preference.
+function kpiStripCollapsed(id){ return localStorage.getItem('kpiCollapsed:' + id) === '1'; }
+function _kpiSetCaret(id, collapsed){
+  const caret = document.getElementById(id + '-caret');
+  if (caret) caret.style.transform = collapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+}
+function toggleKpiStrip(id){
+  const strip = document.getElementById(id);
+  if (!strip) return;
+  const willCollapse = strip.style.display !== 'none';
+  strip.style.display = willCollapse ? 'none' : 'grid';
+  _kpiSetCaret(id, willCollapse);
+  localStorage.setItem('kpiCollapsed:' + id, willCollapse ? '1' : '0');
+}
+function showKpiStrip(id, hasRows){
+  const strip = document.getElementById(id);
+  const head  = document.getElementById(id + '-head');
+  if (!strip) return;
+  const collapsed = kpiStripCollapsed(id);
+  if (head) head.style.display = hasRows ? 'inline-flex' : 'none';
+  strip.style.display = (hasRows && !collapsed) ? 'grid' : 'none';
+  _kpiSetCaret(id, collapsed);
+}
+
 function toggleCurrentAuction(){
   const body = document.getElementById('ca-body');
   const caret = document.getElementById('ca-caret');
@@ -21830,7 +21987,9 @@ function _leReceiptFields(cfg){
     { key:'net',     hdr:'Net',      on:on('lot_receipt_show_net',true),    align:'right', val:l=>Number(l.qty||0).toFixed(3) },
     { key:'sample',  hdr:'Smp',      on:on('lot_receipt_show_sample',true), align:'right', val:l=>{const sw=Number(l.sample_wt||l.sample_weight||0);return sw?sw.toFixed(3):'';} },
     { key:'gross',   hdr:'Gross',    on:on('lot_receipt_show_gross',true),  align:'right', val:l=>Number(l.gross_wt||0).toFixed(3) },
-    { key:'moisture',hdr:'Mst%',     on:on('show_moisture',false),          align:'right', val:l=>l.moisture?Number(l.moisture).toFixed(1):'' },
+    // Its own column switch — capturing moisture on the Lot Entry form
+    // (show_moisture) no longer forces it onto the printed receipt.
+    { key:'moisture',hdr:'Mst%',     on:on('lot_receipt_show_moisture',false), align:'right', val:l=>l.moisture?Number(l.moisture).toFixed(1):'' },
     { key:'crpt',    hdr:'CropRcpt', on:on('lot_receipt_show_crpt',false),  align:'right', val:l=>esc(String(l.crpt||'')) },
   ];
   const sel = all.filter(f=>f.on);
@@ -22655,7 +22814,7 @@ const SET_FIELD_GROUPS = {
     { title:'Lots, Trade & Screens', icon:'📦', hint:'Controls on the lot/trade screens — locks, validation, price checks, and optional screens or buttons.',
       keys:['flag_price_check','flag_lot_lock','flag_reserved_price','flag_immediate_reserve','flag_lot_validation',
             'flag_bulk_set_buyer_code','flag_price_list_mapping','flag_print_selected_purchase','flag_lotwise_payments',
-            'flag_auction_manager'] },
+            'flag_auction_manager','flag_insights'] },
     { title:'Tally & Accounts Export', icon:'📤', hint:'How purchase vouchers and journals are written into the Tally XML.',
       keys:['flag_merchants'], match:/^tally_purchase_/ },
     { title:'Masters & Sharing', icon:'👥', hint:'Extra master fields and the WhatsApp share buttons.',
@@ -28870,7 +29029,7 @@ function _pePasses(l){
   // Dummy code is a free-text tag — substring match, same as Lot / Seller.
   if (f.dummy  && !String(l.dummy_code || '').toLowerCase().includes(f.dummy.toLowerCase())) return false;
   if (f.branch && String(l.branch || '') !== f.branch)                                    return false;
-  if (f.seller && !String(l.name   || '').toLowerCase().includes(f.seller.toLowerCase())) return false;
+  if (!sellerMatches(f.seller, l.name, l.tel)) return false;
   // Buyer filter matches the short alias CODE (l.code), the buyer CODE
   // (l.buyer) or the buyer NAME (l.buyer1) — a single box that hits any of the
   // three is the least surprising (same fields as the Set-Buyer search).
@@ -32822,6 +32981,10 @@ const _payLwState = {
   // see _payLwSortedLots(). Kept across re-renders so adding a bank account
   // doesn't bounce the rows back to lot order under the operator's cursor.
   sort: null,
+  // Lots currently listed in the Pay Advance modal — a snapshot of the
+  // results (minus the paid ones) taken when it opens, so a background
+  // re-render can't shuffle rows out from under the amounts being typed.
+  advRows: [],
 };
 
 function payLwOnAuctionChange() {
@@ -33048,7 +33211,11 @@ function _payLwRender() {
   _payLwState.selectedPaid = new Set([..._payLwState.selectedPaid]
     .filter(id => lots.some(l => l.id === id && l.paid_at)));
   if (summary) {
+    // Payable is already net of any advance, so these two add up to the trade's
+    // gross for the matched lots — no double counting.
     const payable = lots.reduce((s, l) => s + (Number(l.payable) || 0), 0);
+    const advTotal = lots.reduce((s, l) => s + (Number(l.advance) || 0), 0);
+    const advLots = lots.filter(l => (Number(l.advance) || 0) > 0).length;
     const qty = lots.reduce((s, l) => s + (Number(l.qty) || 0), 0);
     const sellers = new Set(lots.map(l => String(l.name || '').trim().toUpperCase())).size;
     // Lots whose seller isn't linked to a master record can't be given an
@@ -33060,7 +33227,12 @@ function _payLwRender() {
       `<strong>${lots.length}</strong> lot${lots.length === 1 ? '' : 's'} · `
       + `<strong>${sellers}</strong> seller${sellers === 1 ? '' : 's'} · `
       + `Qty <strong>${fmtI(qty, 3)}</strong> · `
+      + (advTotal > 0
+          ? `Advance paid <strong style="color:#B45309">₹${fmtI(advTotal, 2)}</strong>`
+            + ` <span style="color:var(--text3)">on ${advLots} lot${advLots === 1 ? '' : 's'}</span> · `
+          : '')
       + `Payable <strong style="color:var(--spice-cardamom-dk)">₹${fmtI(payable, 2)}</strong>`
+      + (advTotal > 0 ? ` <span style="color:var(--text3)">(net of advance)</span>` : '')
       // What the Bank account filter is currently showing. In "All" the two
       // kinds sit in one list, so the unlinked ones are counted here (they are
       // also tinted red per row) rather than pointed at another filter.
@@ -33143,6 +33315,13 @@ function _payLwRender() {
     const paidBadge = isPaid
       ? ` <span class="paylw-paid-badge" title="Paid out via bank export on ${esc(fmtD(l.paid_at))}. Kept for the record — it can't be selected or re-exported.">✓ Paid on ${esc(fmtD(l.paid_at))}</span>`
       : '';
+    // An advance already paid against this lot. Unlike the paid stamp it does
+    // NOT lock the row: the remainder is still owed, still selectable and
+    // still exportable — the Payable column simply already shows it net.
+    const advance = Number(l.advance) || 0;
+    const advBadge = advance > 0
+      ? ` <span class="paylw-adv-badge" title="Advance of ₹${esc(fmtI(advance, 2))} paid on ${esc(fmtD(l.advance_at))}. It is already deducted from this lot's Payable and from its line in the bank-payment export.">💰 Advance ₹${esc(fmtI(advance, 2))} on ${esc(fmtD(l.advance_at))}</span>`
+      : '';
     // Admin-only escape hatch: clear the paid stamp so the lot becomes
     // selectable and exportable again (e.g. an export that had to be redone).
     const undoBtn = (isPaid && window._userRole === 'admin')
@@ -33160,14 +33339,23 @@ function _payLwRender() {
           ? `<input type="checkbox" class="paylw-cb-paid" data-id="${l.id}"${paidTicked} onchange="payLwTickPaid(${l.id}, this.checked)" title="Admin: tick to undo this lot's paid stamp with &quot;Undo selected&quot;" style="cursor:pointer;width:15px;height:15px;accent-color:var(--spice-chili)">`
           : `<input type="checkbox" disabled title="Already paid — locked out of selection" style="width:15px;height:15px;cursor:not-allowed;opacity:.5">`)
       : `<input type="checkbox" class="paylw-cb" data-id="${l.id}"${ticked} onchange="payLwTick(${l.id}, this.checked)" style="cursor:pointer;width:15px;height:15px">`;
+    // Payable is reported NET of the advance. When there is one, the gross it
+    // was taken off is shown underneath — a bare net figure that no longer
+    // matches the lot's amount reads as an error rather than as a part payment.
+    const gross = _payLwGross(l);
+    const payableCell = advance > 0
+      ? `${fmtI(Number(l.payable) || 0, 2)}`
+        + `<div style="font-weight:400;font-size:10.5px;color:var(--text3)">of ₹${fmtI(gross, 2)}</div>`
+      : fmtI(Number(l.payable) || 0, 2);
     return `<tr${rowCls}${rowStyle}>
       <td style="text-align:center">${cb}</td>
-      <td>${esc(l.name || '')}${paidBadge}${undoBtn}</td>
+      <td>${esc(l.name || '')}${paidBadge}${advBadge}${undoBtn}</td>
       <td style="font-family:monospace;font-weight:600">${esc(String(l.lot_no || ''))}</td>
       <td style="text-align:right">${fmtI(Number(l.qty) || 0, 3)}</td>
       <td>${esc(l.branch || '')}</td>
       <td><div style="display:flex;gap:6px;align-items:center">${isPaid ? '<span style="color:var(--text3);font-size:11.5px">—</span>' : (bankCell + addBtn)}</div></td>
-      <td style="text-align:right;font-weight:700;color:var(--spice-cardamom-dk)">${fmtI(Number(l.payable) || 0, 2)}</td>
+      <td style="text-align:right;font-weight:600;color:#B45309">${advance > 0 ? fmtI(advance, 2) : '<span style="color:var(--text3);font-weight:400">—</span>'}</td>
+      <td style="text-align:right;font-weight:700;color:var(--spice-cardamom-dk)">${payableCell}</td>
     </tr>`;
   }).join('');
   body.innerHTML = missingHtml + `
@@ -33176,7 +33364,9 @@ function _payLwRender() {
         <thead><tr>
           <th style="width:36px;text-align:center"><input type="checkbox" id="paylw-cb-all" onchange="payLwTickAll(this.checked)" title="Select / clear every payable lot" style="cursor:pointer;width:15px;height:15px"></th>
           ${_payLwTh('seller', 'Seller')}${_payLwTh('lot', 'Lot')}<th style="text-align:right">Qty</th>${_payLwTh('branch', 'Branch')}
-          <th style="min-width:320px">Bank</th><th style="text-align:right">Payable</th>
+          <th style="min-width:320px">Bank</th>
+          <th style="text-align:right" title="Advance already paid against this lot — already deducted from the Payable beside it">Advance</th>
+          <th style="text-align:right">Payable</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -33338,6 +33528,21 @@ function _payLwRefreshSelection() {
     btn.disabled = !sel.length;
     btn.style.opacity = sel.length ? '' : '.55';
     btn.style.cursor = sel.length ? '' : 'not-allowed';
+  }
+  // Pay Advance works on the whole result set, not on the export selection, so
+  // it stays live whatever is ticked — it only needs at least one lot that is
+  // not already paid out to have something to record against.
+  const advBtn = document.getElementById('paylw-adv-btn');
+  if (advBtn) {
+    const advisable = selectable > 0;
+    advBtn.disabled = !advisable;
+    advBtn.style.opacity = advisable ? '' : '.55';
+    advBtn.style.cursor = advisable ? '' : 'not-allowed';
+    advBtn.title = advisable
+      ? 'Record an advance paid against these lots. Each lot\'s Payable drops by its advance, and so does its line in the bank-payment export.'
+      : (_payLwState.lots.length
+          ? 'Every listed lot is already paid out — there is nothing to pay an advance against'
+          : 'Search for the lots you want to pay an advance on first');
   }
   const clr = document.getElementById('paylw-clearsel-btn');
   if (clr) {
@@ -33604,6 +33809,297 @@ async function payLwUndoSelected() {
   }
 }
 
+// ══ PAY ADVANCE (lot-wise) ═══════════════════════════════════════════════
+// Records money paid to a seller AHEAD of settlement, lot by lot. Distinct
+// from the classic screen's per-seller Advance column in every way that
+// matters: it is stored per lot (lot_advances), so a row can badge its own
+// advance, its Payable can be netted off individually, and the bank-payment
+// export — which pays lot by lot from this screen — can deduct it. A
+// seller-level figure cannot be split across lots, which is exactly why
+// getBankPaymentData has always skipped it on lot-picked exports.
+//
+// The modal opens on the CURRENT search results, minus the lots already paid
+// out: those are settled, and an advance against them would be money with
+// nothing left to come off.
+
+// <option> list for the account an advance was paid into. Null when the seller
+// has no accounts on file — the advance is still recordable, it just has no
+// destination to name.
+function _payLwAdvBankOptions(lot) {
+  const banks = _payLwState.banksByTrader[lot.trader_id] || [];
+  if (!banks.length) return null;
+  // Pre-select the account a previous advance went to; failing that, the one
+  // this lot's balance routes to today — "pay the advance where the rest is
+  // going" is the ordinary case and should need no interaction.
+  const pre = (lot.advance_bank_id != null && banks.some(b => b.id === lot.advance_bank_id))
+    ? lot.advance_bank_id
+    : lot.effectiveBankId;
+  let h = `<option value=""${pre == null ? ' selected' : ''}>— not recorded —</option>`;
+  for (const b of banks) {
+    h += `<option value="${b.id}"${String(pre) === String(b.id) ? ' selected' : ''}>${esc(_payLwBankLabel(b))}</option>`;
+  }
+  return h;
+}
+
+// A lot's payable BEFORE its advance — what an advance is measured against.
+// `payable` comes back already netted, so the gross has to be read from
+// payable_gross (falling back to net + advance for an older response).
+function _payLwGross(l) {
+  const g = Number(l.payable_gross);
+  return Number.isFinite(g) ? g : ((Number(l.payable) || 0) + (Number(l.advance) || 0));
+}
+
+function payLwOpenAdvance() {
+  const aid = _payLwState.aid || Number(document.getElementById('paylw-auction')?.value || 0);
+  if (!aid) { alert('Select a trade first'); return; }
+  if (!_payLwState.searched || !_payLwState.lots.length) {
+    alert('Search for the lots you want to pay an advance on first.');
+    return;
+  }
+  // Paid-out lots are settled — there is no payable left for an advance to
+  // come off, and the server rejects them anyway.
+  const rows = _payLwState.lots.filter(l => !l.paid_at);
+  if (!rows.length) {
+    alert('Every lot in these results is already paid out — there is nothing to pay an advance against.');
+    return;
+  }
+  // Same order the operator is reading on screen.
+  _payLwState.advRows = _payLwSortedLots().filter(l => !l.paid_at);
+  _payLwAdvRender();
+  showModal('paylw-adv-modal');
+}
+
+// Rendered ONCE per open. The amount boxes are live inputs, so a re-render on
+// every keystroke would take the cursor with it — payLwAdvSync() updates the
+// totals and the validation in place instead.
+function _payLwAdvRender() {
+  const body = document.getElementById('paylw-adv-body');
+  if (!body) return;
+  const err = document.getElementById('paylw-adv-err');
+  if (err) { err.style.display = 'none'; err.textContent = ''; }
+  const bulk = document.getElementById('paylw-adv-bulk'); if (bulk) bulk.value = '';
+  const rows = _payLwState.advRows || [];
+  // Start ticked on whatever is ticked on the screen behind — the operator has
+  // usually already narrowed to the lots they mean. If nothing is ticked there,
+  // tick everything: a search then "advance the lot" is the common path.
+  const anySel = rows.some(l => _payLwState.selected.has(l.id));
+  const html = rows.map(l => {
+    const gross = _payLwGross(l);
+    const cur = Number(l.advance) || 0;
+    const tick = (!anySel || _payLwState.selected.has(l.id)) ? ' checked' : '';
+    const opts = _payLwAdvBankOptions(l);
+    const bankCell = opts
+      ? `<select class="paylw-adv-bank" data-id="${l.id}" style="width:100%;max-width:300px;padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:11.5px;background:#fff">${opts}</select>`
+      : `<span style="color:var(--text3);font-size:11.5px;font-style:italic" title="This seller has no bank account on file, so the advance is recorded without a destination. Add one from the Bank column behind this dialog.">no account on file</span>`;
+    return `<tr data-lot="${l.id}">
+      <td style="text-align:center"><input type="checkbox" class="paylw-adv-cb" data-id="${l.id}"${tick} onchange="payLwAdvSync()" style="cursor:pointer;width:15px;height:15px"></td>
+      <td>${esc(l.name || '')}</td>
+      <td style="font-family:monospace;font-weight:600">${esc(String(l.lot_no || ''))}</td>
+      <td style="text-align:right;font-family:monospace">${fmtI(gross, 2)}</td>
+      <td style="text-align:right"><input type="number" class="paylw-adv-amt" data-id="${l.id}" min="0" step="0.01" max="${gross}" value="${cur > 0 ? cur : ''}" placeholder="0.00" oninput="payLwAdvSync()"></td>
+      <td>${bankCell}</td>
+    </tr>`;
+  }).join('');
+  body.innerHTML = `
+    <div class="paylw-adv-scroll">
+      <table>
+        <thead><tr>
+          <th style="width:36px;text-align:center"></th>
+          <th>Seller</th><th>Lot</th>
+          <th style="text-align:right">Payable</th>
+          <th style="text-align:right">Advance ₹</th>
+          <th style="min-width:280px">Paid into</th>
+        </tr></thead>
+        <tbody>${html}</tbody>
+      </table>
+    </div>`;
+  payLwAdvSync();
+}
+
+// Every modal row, paired with its live control values.
+function _payLwAdvReadRows() {
+  const byId = new Map((_payLwState.advRows || []).map(l => [l.id, l]));
+  return [...document.querySelectorAll('#paylw-adv-body tbody tr')].map(tr => {
+    const id = Number(tr.getAttribute('data-lot'));
+    const lot = byId.get(id);
+    if (!lot) return null;
+    const cb = tr.querySelector('.paylw-adv-cb');
+    const amtEl = tr.querySelector('.paylw-adv-amt');
+    const bankEl = tr.querySelector('.paylw-adv-bank');
+    const raw = String(amtEl && amtEl.value || '').trim();
+    // Blank means zero — "no advance on this lot" — not "leave it alone".
+    // Ticking the row is what says the operator meant to act on it.
+    const amount = raw === '' ? 0 : Math.round((Number(raw) || 0) * 100) / 100;
+    const bankId = bankEl ? (bankEl.value === '' ? null : Number(bankEl.value)) : null;
+    return { tr, lot, amtEl, ticked: !!(cb && cb.checked), amount, bankId, gross: _payLwGross(lot) };
+  }).filter(Boolean);
+}
+
+// Has this row's advance actually changed? Only changed rows are sent, so a
+// pre-ticked row the operator never touched is a no-op rather than a rewrite —
+// and, crucially, a blank box on an untouched row can't silently wipe an
+// advance the lot already carries.
+function _payLwAdvChanged(r) {
+  const was = Math.round((Number(r.lot.advance) || 0) * 100) / 100;
+  if (r.amount !== was) return true;
+  if (r.amount > 0) {
+    const wasBank = r.lot.advance_bank_id == null ? null : Number(r.lot.advance_bank_id);
+    if ((r.bankId == null ? null : r.bankId) !== wasBank) return true;
+  }
+  return false;
+}
+
+function payLwAdvTickAll(checked) {
+  document.querySelectorAll('#paylw-adv-body .paylw-adv-cb').forEach(cb => { cb.checked = !!checked; });
+  payLwAdvSync();
+}
+
+// Recompute the running total, the over-payable flags and the Pay button.
+function payLwAdvSync() {
+  const rows = _payLwAdvReadRows();
+  let total = 0, changes = 0, over = 0, clears = 0;
+  for (const r of rows) {
+    r.tr.classList.toggle('paylw-adv-off', !r.ticked);
+    const isOver = r.ticked && r.amount > r.gross + 0.005;
+    if (r.amtEl) {
+      r.amtEl.classList.toggle('over', isOver);
+      r.amtEl.title = isOver
+        ? `An advance cannot exceed this lot's Payable of ₹${fmtI(r.gross, 2)}.`
+        : '';
+    }
+    if (!r.ticked) continue;
+    if (isOver) over++;
+    total += r.amount;
+    if (_payLwAdvChanged(r)) { changes++; if (r.amount === 0) clears++; }
+  }
+  const ticked = rows.filter(r => r.ticked).length;
+  const all = document.getElementById('paylw-adv-cb-all');
+  if (all) {
+    all.checked = ticked > 0 && ticked === rows.length;
+    all.indeterminate = ticked > 0 && ticked < rows.length;
+  }
+  const totalEl = document.getElementById('paylw-adv-total');
+  if (totalEl) {
+    totalEl.innerHTML = over
+      ? `<span style="color:var(--spice-chili);font-weight:700">${over} lot${over === 1 ? '' : 's'} exceed${over === 1 ? 's' : ''} its Payable</span>`
+        + ` <span style="color:var(--text3)">— lower the amount to continue.</span>`
+      : `<strong>${ticked}</strong> lot${ticked === 1 ? '' : 's'} ticked · `
+        + `Advance total <strong style="color:#B45309">₹${fmtI(total, 2)}</strong>`
+        + (clears ? ` <span style="color:var(--spice-chili)">· ${clears} existing advance${clears === 1 ? '' : 's'} will be removed</span>` : '')
+        + (changes ? '' : ` <span style="color:var(--text3)">· nothing changed yet</span>`);
+  }
+  const btn = document.getElementById('paylw-adv-save');
+  if (btn) {
+    const ok = changes > 0 && !over;
+    btn.disabled = !ok;
+    btn.style.opacity = ok ? '' : '.55';
+    btn.style.cursor = ok ? '' : 'not-allowed';
+    btn.textContent = changes ? `Pay (${changes})` : 'Pay';
+  }
+}
+
+// Put one amount on every ticked lot. Capped per row at that lot's own
+// Payable — the server rejects an advance above it, and silently sending 40
+// rows to be bounced by one over-limit lot is worse than clamping and saying so.
+function payLwAdvApplyBulk() {
+  const el = document.getElementById('paylw-adv-bulk');
+  const raw = String(el && el.value || '').trim();
+  if (raw === '') { toast('Type the amount to apply first'); return; }
+  const v = Math.round((Number(raw) || 0) * 100) / 100;
+  if (!(v >= 0)) { toast('That is not a valid amount'); return; }
+  const rows = _payLwAdvReadRows().filter(r => r.ticked);
+  if (!rows.length) { toast('Tick the lots to apply it to'); return; }
+  let capped = 0;
+  for (const r of rows) {
+    const use = Math.min(v, r.gross);
+    if (use < v) capped++;
+    if (r.amtEl) r.amtEl.value = use > 0 ? String(use) : '';
+  }
+  payLwAdvSync();
+  toast(capped
+    ? `Applied to ${rows.length} lot${rows.length === 1 ? '' : 's'} — ${capped} capped at their own Payable`
+    : `Applied ₹${fmtI(v, 2)} to ${rows.length} lot${rows.length === 1 ? '' : 's'}`);
+}
+
+// Each ticked lot's advance = its own full Payable.
+function payLwAdvApplyFull() {
+  const rows = _payLwAdvReadRows().filter(r => r.ticked);
+  if (!rows.length) { toast('Tick the lots to fill first'); return; }
+  for (const r of rows) if (r.amtEl) r.amtEl.value = r.gross > 0 ? String(Math.round(r.gross * 100) / 100) : '';
+  payLwAdvSync();
+  toast(`Filled ${rows.length} lot${rows.length === 1 ? '' : 's'} with their full Payable`);
+}
+
+// Blank the ticked rows. Saving afterwards REMOVES the advance those lots
+// carry — that is the only way to undo one, so it is deliberately explicit.
+function payLwAdvClearAmounts() {
+  const rows = _payLwAdvReadRows().filter(r => r.ticked);
+  if (!rows.length) { toast('Tick the lots to clear first'); return; }
+  for (const r of rows) if (r.amtEl) r.amtEl.value = '';
+  payLwAdvSync();
+}
+
+async function payLwSaveAdvance() {
+  const aid = _payLwState.aid || Number(document.getElementById('paylw-auction')?.value || 0);
+  if (!aid) { alert('Select a trade first'); return; }
+  const err = document.getElementById('paylw-adv-err');
+  const showErr = (m) => { if (err) { err.textContent = m; err.style.display = 'block'; } };
+  if (err) { err.style.display = 'none'; err.textContent = ''; }
+
+  const rows = _payLwAdvReadRows().filter(r => r.ticked);
+  if (rows.some(r => r.amount > r.gross + 0.005)) {
+    showErr('Some lots carry an advance above their Payable. Lower those amounts first.');
+    return;
+  }
+  const changed = rows.filter(_payLwAdvChanged);
+  if (!changed.length) { toast('Nothing changed — no advance to save'); return; }
+  const paying = changed.filter(r => r.amount > 0);
+  const clearing = changed.filter(r => r.amount === 0);
+  const total = paying.reduce((s, r) => s + r.amount, 0);
+  const sellers = new Set(changed.map(r => String(r.lot.name || '').trim().toUpperCase())).size;
+
+  // Money is moving out — name the amount, the lots and the sellers, the same
+  // way the export and undo confirms do.
+  const ok = confirm(
+    (paying.length
+      ? `Record an advance of ₹${fmtI(total, 2)} across ${paying.length} lot${paying.length === 1 ? '' : 's'}`
+        + ` and ${sellers} seller${sellers === 1 ? '' : 's'}?\n\n`
+        + `Lots: ${paying.map(r => r.lot.lot_no).join(', ')}\n`
+      : '')
+    + (clearing.length
+      ? `${paying.length ? '\n' : ''}Remove the existing advance on ${clearing.length} lot${clearing.length === 1 ? '' : 's'}`
+        + ` (${clearing.map(r => r.lot.lot_no).join(', ')}).\n`
+      : '')
+    + `\nEach lot's Payable drops by its advance, here and in the bank-payment export.`);
+  if (!ok) return;
+
+  const btn = document.getElementById('paylw-adv-save');
+  if (btn) btn.disabled = true;
+  try {
+    const d = await j(`/api/payments/lots/${aid}/advance`, {
+      method: 'POST',
+      body: JSON.stringify({
+        items: changed.map(r => ({ lotId: r.lot.id, advance: r.amount, bankId: r.amount > 0 ? r.bankId : null })),
+      }),
+    });
+    hideModal('paylw-adv-modal');
+    const saved = Number(d && d.saved) || 0, cleared = Number(d && d.cleared) || 0;
+    const bits = [];
+    if (saved)   bits.push(`advance recorded on ${saved} lot${saved === 1 ? '' : 's'} (₹${fmtI(total, 2)})`);
+    if (cleared) bits.push(`removed from ${cleared} lot${cleared === 1 ? '' : 's'}`);
+    toast(bits.join(' · ') || 'Advance saved');
+    await payLwSearch();   // re-pull so Payable, the badge and the totals agree
+  } catch (e) {
+    // The endpoint validates the whole batch before writing anything, so a
+    // rejection means NOTHING was saved — say so rather than leaving the
+    // operator wondering which half went through.
+    showErr(`Nothing was saved: ${e.message || e}`);
+  } finally {
+    if (btn) btn.disabled = false;
+    payLwAdvSync();
+  }
+}
+
 // Enable/disable a row's Advance input from its ✎ checkbox. Advance is
 // read-only by default; ticking the box unlocks the field for editing and
 // focuses it. Unticking re-locks it. Saving (or reloading) re-renders the row,
@@ -33743,17 +34239,9 @@ async function loadPayments(){
     // Matches the seller NAME, or — when the text is a phone number — the
     // seller's number as stamped on their lots (rollup carries `tel`),
     // compared digits-only so "+91 98765 43210" finds "9876543210".
-    const _paySearch = (document.getElementById('pay-search')?.value || '').trim().toLowerCase();
-    // Same normalisation the table search uses: ≥4 digits to count as a phone
-    // number, and only the last 10 compared so a typed "+91" still matches a
-    // master stored without one.
-    const _payDigits = _paySearch.replace(/\D+/g, '');
-    const _payPhone = _payDigits.length >= 4 ? _payDigits.slice(-10) : '';
-    let arr = _paySearch
-      ? allArr.filter(r =>
-          String(r.name || '').toLowerCase().includes(_paySearch)
-          || (_payPhone && String(r.tel || '').replace(/\D+/g, '').includes(_payPhone)))
-      : allArr;
+    const _paySearch = (document.getElementById('pay-search')?.value || '').trim();
+    // Shared with every other in-browser seller filter — see sellerMatches().
+    let arr = _paySearch ? allArr.filter(r => sellerMatches(_paySearch, r.name, r.tel)) : allArr;
     // Immediate-payment filter — "immediate" keeps only sellers with at
     // least one lot flagged immediate; "due" keeps only sellers with NO
     // immediate lots (payments entirely non-immediate / still due); "all"
@@ -34730,9 +35218,9 @@ async function loadDebitNotes(opts){
   const dnKpiStrip = document.getElementById('debit-kpis');
   if (dnKpiStrip) {
     if (d.length === 0) {
-      dnKpiStrip.style.display = 'none';
+      showKpiStrip('debit-kpis', false);
     } else {
-      dnKpiStrip.style.display = 'grid';
+      showKpiStrip('debit-kpis', true);
       const totalAmount = d.reduce((a,i) => a + (Number(i.amount) || 0), 0);
       const totalCgst   = d.reduce((a,i) => a + (Number(i.cgst) || 0), 0);
       const totalSgst   = d.reduce((a,i) => a + (Number(i.sgst) || 0), 0);
@@ -35304,9 +35792,9 @@ async function loadDebitNotesPlanter(opts){
   const strip = document.getElementById('debitp-kpis');
   if (strip) {
     if (d.length === 0) {
-      strip.style.display = 'none';
+      showKpiStrip('debitp-kpis', false);
     } else {
-      strip.style.display = 'grid';
+      showKpiStrip('debitp-kpis', true);
       const totalAmount = d.reduce((a,i) => a + (Number(i.amount) || 0), 0);
       const totalCgst   = d.reduce((a,i) => a + (Number(i.cgst) || 0), 0);
       const totalSgst   = d.reduce((a,i) => a + (Number(i.sgst) || 0), 0);
@@ -36794,8 +37282,11 @@ async function loadJournal(){
   if(type==='sales'){
     const saleType=document.getElementById('jr-sale').value;
     url=`/api/journals/sales?auctionId=${auctionId}${saleType?'&saleType='+saleType:''}`;
+    // No Sale column — the register is already scoped by the Sale Type filter
+    // above it, and the sale-type breakdown is what the ledger summary under
+    // the table is for. The `sale` field still arrives on every row and still
+    // drives the register's ORDER (see getSalesJournal); it just isn't printed.
     cols=[
-      { key:'sale',   label:'Sale',     sort:'text' },
       // With the proforma flow on, `invo` arrives ready-to-print: the PROFORMA
       // number the buyer holds ("PI/L-8"), or the bare original for invoices
       // billed with no draft behind them. Pending drafts join the register as
