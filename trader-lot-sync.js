@@ -70,4 +70,110 @@ function syncLotsFromTrader(db, traderId) {
   }
 }
 
-module.exports = { syncLotsFromTrader };
+/*
+ * Persist a seller's bank accounts, KEEPING each account's trader_banks id.
+ *
+ * This used to live as two near-identical copies (server.js + mobile-bridge.js)
+ * whose comments each record a bug caused by the pair drifting apart — one copy
+ * forgot `account_type`, the other forgot `branch`, and each wiped the other's
+ * column on the next save. One implementation, called from both.
+ *
+ * The ids matter. `lots.bank_id` pins a lot to the account it should be paid
+ * into, and the old implementation deleted every one of a seller's rows and
+ * re-inserted them on each save. trader_banks is AUTOINCREMENT, so the rebuilt
+ * rows came back with NEW ids and every existing pin was silently orphaned —
+ * 35 lots in this install point at bank rows that no longer exist. Matching
+ * incoming accounts to the rows already on file keeps the ids stable, so a pin
+ * survives an unrelated edit to the seller's name or address.
+ *
+ * Accounts are matched on (acctnum, ifsc) — what actually identifies a bank
+ * account. Anything else about the row (bank name, branch, holder, type) is
+ * editable detail and gets updated in place. Duplicate entries are queued so
+ * two rows holding the same account each keep their own id rather than
+ * collapsing onto one.
+ *
+ * Also mirrors the DEFAULT account back into traders.ifsc/acctnum/holder_name
+ * so legacy single-bank code paths (older exports, invoice generators) still
+ * see a primary account.
+ */
+function syncTraderBanks(db, traderId, banks) {
+  const arr = Array.isArray(banks) ? banks.filter(b => b && (b.acctnum || b.ifsc)) : [];
+  const bankKey = b => `${String(b.acctnum || '').trim()}|${String(b.ifsc || '').trim().toUpperCase()}`;
+
+  // Which account was default BEFORE this save? A save from a client that
+  // doesn't send the flag (the mobile app, an older desktop build) would
+  // otherwise demote the operator's choice back to whichever account happens
+  // to be first — and is_default decides which account actually gets paid
+  // (calculations.js getBankPaymentData, and every `ORDER BY is_default DESC`
+  // reader).
+  const prev = db.get(
+    'SELECT acctnum, ifsc FROM trader_banks WHERE trader_id = ? AND is_default = 1 LIMIT 1', [traderId]);
+  const prevKey = prev ? bankKey(prev) : '';
+
+  // Rows already on file, queued per account so each incoming entry claims at
+  // most one. Whatever is left unclaimed is an account the operator removed.
+  const unclaimed = new Map();
+  for (const row of db.all(
+    'SELECT id, acctnum, ifsc FROM trader_banks WHERE trader_id = ? ORDER BY id', [traderId]) || []) {
+    const k = bankKey(row);
+    if (!unclaimed.has(k)) unclaimed.set(k, []);
+    unclaimed.get(k).push(row.id);
+  }
+
+  const rowIds = [];
+  for (const b of arr) {
+    const queue = unclaimed.get(bankKey(b));
+    const existingId = (queue && queue.length) ? queue.shift() : null;
+    if (existingId != null) {
+      // Same account, same id — every lot pinned to it stays pinned to it.
+      db.run(
+        `UPDATE trader_banks
+            SET bank_name = ?, branch = ?, acctnum = ?, ifsc = ?, holder_name = ?, account_type = ?
+          WHERE id = ?`,
+        [b.bank_name || '', b.branch || '', String(b.acctnum || ''), String(b.ifsc || ''),
+         b.holder_name || '', b.account_type || '', existingId]
+      );
+      rowIds.push(existingId);
+    } else {
+      const info = db.run(
+        'INSERT INTO trader_banks (trader_id, bank_name, branch, acctnum, ifsc, holder_name, account_type) VALUES (?,?,?,?,?,?,?)',
+        [traderId, b.bank_name || '', b.branch || '', String(b.acctnum || ''), String(b.ifsc || ''),
+         b.holder_name || '', b.account_type || '']
+      );
+      rowIds.push(info ? info.lastInsertRowid : null);
+    }
+  }
+
+  // Accounts the operator actually removed. Lots still pinned to one are left
+  // alone: the pin is now unresolvable, and every reader treats an
+  // unresolvable pin as "no pin", falling back to the seller's default.
+  const dropped = [];
+  for (const ids of unclaimed.values()) dropped.push(...ids);
+  if (dropped.length) {
+    db.run(`DELETE FROM trader_banks WHERE id IN (${dropped.map(() => '?').join(',')})`, dropped);
+  }
+
+  // Land on exactly one default, in priority order: the row the client
+  // flagged, else whichever surviving row still matches the previous default,
+  // else the first. A trader holding banks but no default leaves every
+  // `ORDER BY is_default DESC` reader picking an arbitrary account.
+  let defIdx = arr.findIndex(b => Number(b.is_default) === 1);
+  if (defIdx < 0 && prevKey) defIdx = arr.findIndex(b => bankKey(b) === prevKey);
+  if (defIdx < 0 && arr.length) defIdx = 0;
+  if (defIdx >= 0 && rowIds[defIdx] != null) {
+    db.run('UPDATE trader_banks SET is_default = 0 WHERE trader_id = ?', [traderId]);
+    db.run('UPDATE trader_banks SET is_default = 1 WHERE id = ?', [rowIds[defIdx]]);
+  }
+
+  // Mirror the DEFAULT bank — not merely the first — into the legacy
+  // traders.ifsc/acctnum/holder_name columns that older exports still read.
+  // This is what the set-default endpoints already do, so both ways of
+  // choosing a default leave the trader row in the same state.
+  const primary = (defIdx >= 0 ? arr[defIdx] : null) || {};
+  db.run(
+    'UPDATE traders SET ifsc=?, acctnum=?, holder_name=? WHERE id=?',
+    [primary.ifsc || '', primary.acctnum || '', primary.holder_name || '', traderId]
+  );
+}
+
+module.exports = { syncLotsFromTrader, syncTraderBanks };
