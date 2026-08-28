@@ -35,6 +35,35 @@ COPY . .
 RUN rm -rf data/ electron/ *.zip BUILD.md RELEASE.md MIGRATION.md \
     && rm -f recover-isp.js
 
+# Verify the image is INTERNALLY CONSISTENT before it ships.
+#
+# A partial deploy is invisible at build time and brutal at runtime: on
+# 2026-08-28 an image went out with a current server.js and a trader-lot-sync.js
+# from before syncTraderBanks() moved into it. require() succeeded (the file
+# existed), the destructure yielded undefined, and every seller edit saved the
+# record and then failed on the bank sync — reported to the operator as an
+# error on a save that had actually landed.
+#
+# server.js degrades rather than dying if this ever slips through, but the
+# right place to stop it is HERE: a bad image never ships, and the running
+# service is untouched. Same shape as the sql.js check above.
+#
+# Add a line whenever a cross-file contract is worth guaranteeing at build time.
+RUN node -e "\
+  const req = { './trader-lot-sync': ['syncLotsFromTrader', 'syncTraderBanks'] }; \
+  const bad = []; \
+  for (const [mod, names] of Object.entries(req)) { \
+    const m = require(mod); \
+    for (const n of names) if (typeof m[n] !== 'function') bad.push(mod + ' → ' + n); \
+  } \
+  if (bad.length) { \
+    console.error('INCONSISTENT BUILD — missing exports:\\n  ' + bad.join('\\n  ')); \
+    console.error('A stale copy of one of these files is in the build context.'); \
+    process.exit(1); \
+  } \
+  console.log('module contracts OK'); \
+"
+
 EXPOSE 3001
 
 CMD ["node", "server.js"]
