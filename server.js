@@ -24,25 +24,42 @@ const { REPORTS: LORRY_REPORTS } = require('./lorry-reports');
 const { REPORTS: SPICE_BOARD_REPORTS, getReportFilters: getSpiceBoardFilters } = require('./spice-board-reports');
 const { DOCUMENTS: DOC_CATALOG, GROUPS: DOC_GROUPS } = require('./document-catalog');
 const { mountMobile } = require('./mobile-bridge');
-const { syncLotsFromTrader, syncTraderBanks } = require('./trader-lot-sync');
-// Fail at BOOT, not at the first seller edit.
-//
+let { syncLotsFromTrader, syncTraderBanks } = require('./trader-lot-sync');
+// ── Inconsistent-build guard ─────────────────────────────────────────
 // These two moved out of server.js/mobile-bridge.js into trader-lot-sync.js.
-// A process that started while the module still exported only the old name
-// keeps that broken import for its entire lifetime — require() caches on
-// first load, so editing the file changes nothing until a restart. The
-// symptom is nasty and misleading: PUT /api/traders/:id updates the seller
-// row FIRST and calls these AFTER, so the edit saves and the operator still
-// gets a red "syncTraderBanks is not a function" banner, which reads like
-// the save failed when it did not.
+// A build whose trader-lot-sync.js predates that move still satisfies the
+// require (the file exists) but hands back an object missing the export, so
+// the call sites blow up with "syncTraderBanks is not a function". The
+// symptom is misleading: PUT /api/traders/:id updates the seller row FIRST
+// and calls these AFTER, so the edit saves and the operator still gets a red
+// error, which reads like the save failed when it did not.
 //
-// Refusing to start turns a silent half-broken deploy into one obvious line.
-for (const [name, fn] of Object.entries({ syncLotsFromTrader, syncTraderBanks })) {
-  if (typeof fn !== 'function') {
-    throw new Error(
-      `trader-lot-sync.js did not export ${name}() — this build is inconsistent. `
-      + `If the file looks right on disk, the running process is stale: restart it.`);
-  }
+// This SHOUTS but does not refuse to boot. An earlier revision threw here,
+// which was the wrong trade: a missing bank-sync helper breaks one feature,
+// while failing to start takes down invoicing, exports and every other screen
+// with it. Degrade the one thing, keep the app up. Substituting stubs also
+// means no call site can throw the bare TypeError — a seller save reports a
+// precise warning instead (see the try/catch around syncTraderBanks below).
+const _tlsMissing = [];
+if (typeof syncLotsFromTrader !== 'function') {
+  _tlsMissing.push('syncLotsFromTrader');
+  syncLotsFromTrader = () => ({ updated: 0, skipped: 0, error: 'trader-lot-sync.js is out of date in this build' });
+}
+if (typeof syncTraderBanks !== 'function') {
+  _tlsMissing.push('syncTraderBanks');
+  syncTraderBanks = () => {
+    throw new Error('trader-lot-sync.js in this build does not export syncTraderBanks() — '
+                  + 'bank accounts cannot be saved until the deployment is updated.');
+  };
+}
+if (_tlsMissing.length) {
+  console.error('\n' + '='.repeat(72));
+  console.error('  INCONSISTENT BUILD — trader-lot-sync.js is out of date');
+  console.error('  Missing export(s): ' + _tlsMissing.join(', '));
+  console.error('  Seller edits still save, but bank accounts will NOT be updated');
+  console.error('  and the operator is warned on every save. Redeploy with the');
+  console.error('  current trader-lot-sync.js to clear this.');
+  console.error('='.repeat(72) + '\n');
 }
 // Seller / buyer master details are stored UPPER CASE — see party-case.js.
 const { normalizeTrader, normalizeBuyer, backfillPartyCase } = require('./party-case');

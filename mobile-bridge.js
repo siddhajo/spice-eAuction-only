@@ -27,7 +27,23 @@ const crypto = require('crypto');
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const { formatDateForDisplay } = require('./report-formatters');
-const { syncLotsFromTrader, syncTraderBanks } = require('./trader-lot-sync');
+let { syncLotsFromTrader, syncTraderBanks } = require('./trader-lot-sync');
+// Same inconsistent-build guard as server.js — this file owns the
+// /api/traders writer that actually serves the desktop, so it needs its own
+// stubs. See the long note there; short version: a build whose
+// trader-lot-sync.js predates the move satisfies the require but omits the
+// export, and a bare TypeError at the call site would report a SAVED seller
+// edit as a failure. server.js prints the startup banner; this stays quiet to
+// avoid a duplicate.
+if (typeof syncLotsFromTrader !== 'function') {
+  syncLotsFromTrader = () => ({ updated: 0, skipped: 0, error: 'trader-lot-sync.js is out of date in this build' });
+}
+if (typeof syncTraderBanks !== 'function') {
+  syncTraderBanks = () => {
+    throw new Error('trader-lot-sync.js in this build does not export syncTraderBanks() — '
+                  + 'bank accounts cannot be saved until the deployment is updated.');
+  };
+}
 // Seller master details are stored UPPER CASE — see party-case.js. Applied
 // here as well as in server.js because BOTH files own a /api/traders writer.
 const { normalizeTrader } = require('./party-case');

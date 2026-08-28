@@ -13,12 +13,15 @@
 // kept the broken import for its whole lifetime.
 //
 // Two guarantees:
-//   [boot]  the import is checked at startup, so a build where the module
-//           does not export both helpers refuses to run instead of failing
-//           at the first seller edit, months later.
-//   [save]  when the bank sync throws anyway, the seller edit is still
-//           reported as saved, with a warning naming what actually failed —
-//           never a 500 that contradicts the committed row.
+//   [boot]  a build whose trader-lot-sync.js predates the move still STARTS.
+//           An earlier revision threw at import time; that was worse than the
+//           bug — a missing bank-sync helper breaks one feature, refusing to
+//           boot takes down invoicing, exports and every other screen. It now
+//           shouts on stderr, substitutes stubs, and serves.
+//   [save]  when the bank sync throws — whether from the stub or for real —
+//           the seller edit is still reported as saved, with a warning naming
+//           what actually failed, never a 500 that contradicts the committed
+//           row.
 const os = require('os'), path = require('path'), fs = require('fs');
 const { spawn } = require('child_process');
 
@@ -40,10 +43,12 @@ async function api(method, url, body) {
   return { status: r.status, d };
 }
 
-// ══ [boot] the startup guard ═════════════════════════════════════
-// Run server.js with a stub module that exports only the OLD name — exactly
-// the half-refactored state the live install was in. It must refuse to boot
-// and say why, rather than starting and failing on the first seller edit.
+// ══ [boot] a build with the old module still serves ══════════════
+// Run server.js with a stub that exports only the OLD name — exactly the
+// state the live deployment was in. It must START, warn on stderr, and still
+// answer requests; and a seller edit against it must save and warn rather
+// than 500. Booting a real server on a spare port and driving it is the only
+// way to prove "degrades" rather than "dies".
 function bootWithBrokenModule() {
   const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-'));
   // A shim directory that resolves ./trader-lot-sync to a crippled copy while
@@ -64,19 +69,50 @@ function bootWithBrokenModule() {
     };
     require(path.join(ROOT, 'server.js'));
   `);
-  return new Promise((resolve) => {
+  const SPARE = 47373, SB = `http://127.0.0.1:${SPARE}`;
+  return new Promise(async (resolve) => {
     const p = spawn('node', [shim], {
       cwd: ROOT,
-      env: Object.assign({}, process.env, { SPICE_DATA_DIR: SANDBOX, PORT: '47373', NODE_ENV: 'test' }),
+      env: Object.assign({}, process.env, { SPICE_DATA_DIR: SANDBOX, PORT: String(SPARE), NODE_ENV: 'test' }),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    let out = '';
+    let out = '', exited = null;
     p.stdout.on('data', b => out += b); p.stderr.on('data', b => out += b);
-    p.on('exit', (code) => {
+    p.on('exit', (code) => { exited = code; });
+
+    let alive = false;
+    for (let i = 0; i < 100 && exited === null; i++) {
+      try { const r = await fetch(SB + '/api/health'); if (r.status < 500) { alive = true; break; } } catch (_) {}
+      await new Promise(r => setTimeout(r, 250));
+    }
+    // Drive a seller edit against the crippled build.
+    let edit = null, saved = null;
+    if (alive) {
+      const call = async (m, u, b, tok) => {
+        const r = await fetch(SB + u, { method: m,
+          headers: Object.assign({ 'Content-Type': 'application/json' }, tok ? { Authorization: 'Bearer ' + tok } : {}),
+          body: b ? JSON.stringify(b) : undefined });
+        let d = null; try { d = await r.json(); } catch (_) {}
+        return { status: r.status, d };
+      };
+      const li = await call('POST', '/api/login', { username: 'admin', password: 'admin123' });
+      const tok = li.d && li.d.token;
+      const mk = await call('POST', '/api/traders',
+        { name: 'STALE SELLER', cr: 'CR.', pan: 'ABCDE1234F', tel: '9790744444' }, tok);
+      const tid = mk.d && mk.d.trader && mk.d.trader.id;
+      if (tid) {
+        edit = await call('PUT', `/api/traders/${tid}`, {
+          name: 'STALE SELLER EDITED', cr: 'CR.', pan: 'ABCDE1234F', tel: '9790744444',
+          banks: [{ bank_name: 'SBI', acctnum: '1', ifsc: 'SBIN0001234', is_default: 1 }],
+        }, tok);
+        saved = await call('GET', `/api/traders/${tid}`, null, tok);
+      }
+    }
+    try { p.kill('SIGKILL'); } catch (_) {}
+    setTimeout(() => {
       try { fs.rmSync(SANDBOX, { recursive: true, force: true }); } catch (_) {}
-      resolve({ code, out });
-    });
-    setTimeout(() => { try { p.kill('SIGKILL'); } catch (_) {} }, 25000);
+      resolve({ exited, out, alive, edit, saved });
+    }, 300);
   });
 }
 
@@ -91,14 +127,24 @@ const cleanup = () => {
 };
 
 (async () => {
-  console.log('[boot] a build missing the export refuses to start');
+  console.log('[boot] a build missing the export still serves');
   const boot = await bootWithBrokenModule();
-  check('server exits instead of starting', boot.code !== 0, `exit ${boot.code}`);
-  check('…naming the module and the missing export',
-        /trader-lot-sync\.js did not export syncTraderBanks/.test(boot.out),
-        boot.out.split('\n').filter(l => l.trim()).slice(-4).join(' | '));
-  check('…and pointing at the stale-process cause',
-        /restart/i.test(boot.out), 'no restart hint in the message');
+  // The whole point of the revision: it must NOT die. An exit here means the
+  // app is down for every screen because one helper is missing.
+  check('the server starts and answers', boot.alive === true && boot.exited === null,
+        `alive=${boot.alive} exit=${boot.exited} :: ` + boot.out.split('\n').filter(l => l.trim()).slice(-4).join(' | '));
+  check('…shouting about the inconsistent build on stderr',
+        /INCONSISTENT BUILD/.test(boot.out) && /syncTraderBanks/.test(boot.out),
+        boot.out.split('\n').filter(l => /INCONSIST|Missing/.test(l)).join(' | ') || '(no banner)');
+  check('a seller edit against it is NOT reported as failed',
+        !!boot.edit && boot.edit.status === 200,
+        boot.edit ? `HTTP ${boot.edit.status}` : 'edit never ran');
+  check('…the edit actually saved',
+        !!boot.saved && (boot.saved.d || {}).name === 'STALE SELLER EDITED',
+        boot.saved ? String((boot.saved.d || {}).name) : 'no read-back');
+  check('…and the operator is told the BANKS are what failed',
+        !!boot.edit && /bank/i.test(boot.edit.d.warning || ''),
+        boot.edit ? String(boot.edit.d.warning) : 'n/a');
 
   // ══ [save] the normal path, then the failing one ═══════════════
   for (let i = 0; i < 120; i++) { try { const r = await fetch(B + '/api/health'); if (r.status < 500) break; } catch (_) {} await new Promise(r => setTimeout(r, 250)); }
