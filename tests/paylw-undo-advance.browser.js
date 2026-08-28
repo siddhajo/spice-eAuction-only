@@ -277,16 +277,16 @@ function cleanup() {
         said.some(d => d.type === 'alert' && /not been saved/i.test(d.msg) && /\b1\b/.test(d.msg)),
         JSON.stringify(said.map(d => d.msg)));
 
-  // Save it, and the button turns into a live "(1)".
+  // Save it. The dialog deliberately STAYS OPEN — recording the advance and
+  // sending it to the bank are two halves of one job — and redraws against the
+  // reloaded lots, which disarms Pay and lights up Export.
   await page.evaluate(() => payLwSaveAdvance());
   await page.waitForFunction(
-    () => !document.getElementById('paylw-adv-modal')?.classList.contains('show'),
-    { timeout: 10000 });
-  await page.evaluate(() => payLwOpenAdvance());
-  await page.waitForFunction(
     () => document.getElementById('paylw-adv-modal')?.classList.contains('show')
-          && document.querySelectorAll('#paylw-adv-body tbody tr').length > 0,
-    { timeout: 8000 });
+          && document.getElementById('paylw-adv-save')?.disabled
+          && !document.getElementById('paylw-adv-export')?.disabled,
+    { timeout: 10000 });
+  check('the dialog stays open after Pay, with Export now armed', true);
   await page.evaluate(() => {
     document.querySelectorAll('#paylw-adv-body tbody tr').forEach(tr => {
       const cb = tr.querySelector('.paylw-adv-cb');

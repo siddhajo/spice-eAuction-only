@@ -24796,7 +24796,11 @@ async function saveTrader(){
     let msg=id?'Seller updated':'Seller added';
     if(ls.updated) msg+=' — '+ls.updated+' lot'+(ls.updated>1?'s':'')+' updated';
     if(ls.skipped) msg+=(ls.updated?' · ':' — ')+ls.skipped+' invoiced/locked lot'+(ls.skipped>1?'s':'')+' left unchanged';
-    toast(msg);
+    // The save succeeded but the bank accounts didn't follow. Say so loudly —
+    // the operator has to know before they trust a payment to reach the right
+    // account — but as an error ABOUT THE BANKS, not about the save, which did
+    // land. showError styles it red; the message names what actually failed.
+    if(d.warning) showError(d.warning); else toast(msg);
     searchTraders('');
     lvResumeAfterSellerEdit();
     dlResumeAfterSellerEdit();

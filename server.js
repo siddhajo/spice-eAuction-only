@@ -25,6 +25,25 @@ const { REPORTS: SPICE_BOARD_REPORTS, getReportFilters: getSpiceBoardFilters } =
 const { DOCUMENTS: DOC_CATALOG, GROUPS: DOC_GROUPS } = require('./document-catalog');
 const { mountMobile } = require('./mobile-bridge');
 const { syncLotsFromTrader, syncTraderBanks } = require('./trader-lot-sync');
+// Fail at BOOT, not at the first seller edit.
+//
+// These two moved out of server.js/mobile-bridge.js into trader-lot-sync.js.
+// A process that started while the module still exported only the old name
+// keeps that broken import for its entire lifetime — require() caches on
+// first load, so editing the file changes nothing until a restart. The
+// symptom is nasty and misleading: PUT /api/traders/:id updates the seller
+// row FIRST and calls these AFTER, so the edit saves and the operator still
+// gets a red "syncTraderBanks is not a function" banner, which reads like
+// the save failed when it did not.
+//
+// Refusing to start turns a silent half-broken deploy into one obvious line.
+for (const [name, fn] of Object.entries({ syncLotsFromTrader, syncTraderBanks })) {
+  if (typeof fn !== 'function') {
+    throw new Error(
+      `trader-lot-sync.js did not export ${name}() — this build is inconsistent. `
+      + `If the file looks right on disk, the running process is stale: restart it.`);
+  }
+}
 // Seller / buyer master details are stored UPPER CASE — see party-case.js.
 const { normalizeTrader, normalizeBuyer, backfillPartyCase } = require('./party-case');
 // Defensive resolution — see _company-identity-fallback.js. Uses the
@@ -3346,13 +3365,24 @@ app.put('/api/traders/:id', requireTraderWrite, (req, res) => {
       req.params.id,
     ]
   );
+  // Same stance as the bridge's copy (which normally serves this path): the
+  // seller row is already committed, so a bank-sync failure is reported as a
+  // warning on a successful save, never as a 500 on an edit that landed.
+  let bankWarning = null;
   if (Array.isArray(t.banks)) {
-    syncTraderBanks(db, parseInt(req.params.id), t.banks);
+    try {
+      syncTraderBanks(db, parseInt(req.params.id), t.banks);
+    } catch (e) {
+      console.error('syncTraderBanks failed for trader', req.params.id, e);
+      const why = (e && e.message) || String(e && e.stack || e || '').split('\n')[0]
+               || 'unknown error';
+      bankWarning = `Seller saved, but the bank accounts could not be updated: ${why}`;
+    }
   }
   // Keep the seller's lots in step with the master record — see the matching
   // call in mobile-bridge.js (which normally serves this path).
   const lotSync = syncLotsFromTrader(db, parseInt(req.params.id, 10));
-  res.json({ success: true, lots: lotSync });
+  res.json({ success: true, lots: lotSync, warning: bankWarning || undefined });
 });
 app.delete('/api/traders/:id', requireDelete, (req, res) => {
   const db = getDb();

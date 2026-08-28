@@ -1634,8 +1634,30 @@ function mountMobile(app, deps) {
     // Persist banks when the desktop UI sends them. PWA/mobile typically
     // omits the banks array (it uses /api/traders/:id/banks instead);
     // the array-check means absent payload = leave existing banks alone.
+    // A bank-sync failure must not be reported as a failed SAVE. The seller
+    // row is already committed by the UPDATE above, so throwing here answers
+    // 500 for an edit that did land — the operator sees a red error, reopens
+    // the seller, and finds their change applied. That contradiction is worse
+    // than the underlying fault.
+    //
+    // So: keep the save, and say plainly that the accounts did not follow.
+    // Deliberately NOT silent — the banks really did fail to save, and the
+    // operator has to know before they rely on a payment going to the right
+    // account. syncLotsFromTrader below takes the same stance (it swallows and
+    // reports rather than throwing); this brings the two into line.
+    let bankWarning = null;
     if (Array.isArray(t.banks)) {
-      syncTraderBanks(db, id, t.banks);
+      try {
+        syncTraderBanks(db, id, t.banks);
+      } catch (e) {
+        console.error('syncTraderBanks failed for trader', id, e);
+        // Not every throw carries a .message (a driver can reject a bad bind
+        // with a bare value), and "…could not be updated: undefined" tells the
+        // operator nothing. Fall back to the value itself, then to the type.
+        const why = (e && e.message) || String(e && e.stack || e || '').split('\n')[0]
+                 || 'unknown error';
+        bankWarning = `Seller saved, but the bank accounts could not be updated: ${why}`;
+      }
     }
     // Push the corrected master record onto this seller's lots — the lot rows
     // carry their own copy of name/GSTIN/PAN/phone/address. Invoiced and
@@ -1646,7 +1668,8 @@ function mountMobile(app, deps) {
     updated.banks = db.all(
       'SELECT * FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id', [id]
     );
-    res.json({ success: true, trader: updated, lots: lotSync });
+    res.json({ success: true, trader: updated, lots: lotSync,
+               warning: bankWarning || undefined });
   });
 
   // ── 8c. TRADER GET BY ID — ensures fresh fetch ──────────────────
