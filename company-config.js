@@ -568,6 +568,21 @@ const DEFAULTS = [
   // different value re-renders every date in the UI, exports, and PDFs.
   { key: 'date_format',    value: 'dd/mm/yyyy', category: 'mode', label: 'Date Format',    type: 'select'   },
 
+  // ── SENSITIVE-FIELD MASKING (Business Mode → Privacy & Masking) ──
+  // Mask bank account no., IFSC and phone wherever they're shown on
+  // screen and on receipt/slip PDFs. Functional outputs — the bank
+  // payment file, DBF, Tally XML and WhatsApp send targets — are NEVER
+  // masked (they need the real values). Modes: none / last4 / last6 /
+  // first4 / first6 / full (phone also offers first2last2).
+  // mask_acct defaults to 'last4' because the lot-receipt renderer
+  // already masked the seller account to last-4 unconditionally before
+  // this setting existed; defaulting to 'none' would silently expose
+  // full account numbers on upgrade. IFSC and phone were never masked,
+  // so they default to 'none' (no change on upgrade — operator opts in).
+  { key: 'mask_acct',  value: 'last4', category: 'mode', label: 'Mask Bank Account No.', type: 'select' },
+  { key: 'mask_ifsc',  value: 'none',  category: 'mode', label: 'Mask IFSC Code',        type: 'select' },
+  { key: 'mask_phone', value: 'none',  category: 'mode', label: 'Mask Phone Number',     type: 'select' },
+
   // ── INTEGRATIONS ───────────────────────────────────────────
   { key: 'gst_api_key',    value: '', category: 'integrations', label: 'GST Lookup API Key (gstincheck.co.in)',   type: 'text' },
   // Config-driven external link buttons shown in the top-right of the Lots

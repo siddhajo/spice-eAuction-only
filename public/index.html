@@ -1808,6 +1808,16 @@ tr:hover td{background:var(--spice-cream)}
    DataTable header, tuned for this table's dark header band. */
 .paylw-table thead th.paylw-sortable{transition:background .15s}
 .paylw-table thead th.paylw-sortable:hover{background:var(--spice-cardamom-dk)}
+/* The results scroll inside their own box instead of running the page on for
+   hundreds of rows. A trade's lot list is long, and the toolbar above it —
+   select-all, the export button, the running total — has to stay reachable
+   while the operator works down the table; scrolling the page pushed all of
+   it off screen. Same pattern as .rep-section-scroll.
+   The header band sticks so the columns stay named while scrolling. `top:-1px`
+   hides the seam a fractional scroll offset otherwise leaves above it. */
+.paylw-scroll{max-height:min(62vh,720px);overflow:auto;border:1px solid var(--spice-line);border-radius:8px}
+.paylw-scroll .paylw-table{margin:0}
+.paylw-scroll .paylw-table thead th{position:sticky;top:-1px;z-index:2}
 
 /* Seller Bank Account rows (Add/Edit Seller) — a 2×2 grid that always fits
    inside the modal, with larger, clearly legible inputs + labels. */
@@ -2081,11 +2091,16 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 .dl-seller:hover{text-decoration:underline}
 /* Seller data-hygiene badges beside that name (No GSTIN / No PAN / …).
    Amber = warning (fixable, blocks nothing), red = error. Same red/amber
-   split the Validate Lots screen uses so the two read the same way. */
+   split the Validate Lots screen uses so the two read the same way.
+   Each badge is clickable — it opens that seller's edit form so the missing
+   detail can be filled in — so the cursor is a pointer. Badges matching the
+   active badge filter are ringed. */
 .dl-issue{display:inline-flex;align-items:center;border-radius:9px;padding:0 5px;font-size:9.5px;
-  font-weight:700;margin-left:4px;cursor:help;vertical-align:middle;white-space:nowrap;line-height:15px}
+  font-weight:700;margin-left:4px;cursor:pointer;vertical-align:middle;white-space:nowrap;line-height:15px}
 .dl-issue-warn{background:#fef3c7;color:#92400e;border:1px solid #fcd34d}
 .dl-issue-err{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5}
+.dl-issue:hover{filter:brightness(.95)}
+.dl-issue-on{box-shadow:0 0 0 2px var(--spice-cardamom-lt,#d1fae5)}
 /* Dashboard modal (×) close button — top-right corner */
 .modal.has-x{position:relative}
 .modal.has-x h2{padding-right:34px}
@@ -6580,6 +6595,14 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <!-- Clears the ticks only — the search results stay on screen.
                  (The ✕ Clear button above wipes the filters and the results.) -->
             <button class="btn btn-o" id="paylw-clearsel-btn" style="height:38px;padding:0 14px;font-weight:600" onclick="payLwClearSelection()" title="Untick every lot — the results stay on screen">☐ Clear selection</button>
+            <!-- Admin-only bulk reverse of the paid stamp. Hidden unless the
+                 results actually contain paid lots, so it never clutters the
+                 ordinary search → export flow. Tick paid rows to arm it. -->
+            <!-- The header checkbox governs the EXPORT selection, so it can't
+                 tick paid rows. This is their equivalent — without it, undoing
+                 a big export means clicking every paid row by hand. -->
+            <button class="btn btn-o" id="paylw-tickallpaid-btn" style="display:none;height:38px;padding:0 12px;font-weight:600" onclick="payLwTickAllPaid()" title="Admin: tick every paid lot in the results, ready for Undo selected">☑ Tick all paid</button>
+            <button class="btn btn-o" id="paylw-undosel-btn" style="display:none;height:38px;padding:0 14px;font-weight:600;color:var(--spice-chili);border-color:var(--spice-chili)" onclick="payLwUndoSelected()" title="Admin: clear the paid stamp on the ticked paid lots so they become selectable and exportable again">↩ Undo selected</button>
             <button class="btn btn-a" id="paylw-export-btn" style="height:38px;padding:0 16px;font-weight:600" onclick="payLwExportBank()" title="Export the RTGS/NEFT file for the ticked lots. A fresh search ticks them all — untick any you don't want to pay yet.">📤 Export Bank Payment</button>
           </div>
         </div>
@@ -7651,7 +7674,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     <div class="fg"><label>State Code</label><input id="t-pstcode"></div>
     <div class="fg"><label>PIN</label><input id="t-pin"></div>
     <div class="fg"><label>Date of Birth</label><input id="t-dob" type="date"></div>
-    <div class="fg"><label>User ID</label><input id="t-userid" autocomplete="off"></div>
+    <div class="fg"><label>User ID</label><input id="t-userid" autocomplete="off" onblur="tCheckUserIdDup()"><div id="t-userid-warn" style="display:none"></div></div>
   </div>
   <div style="margin-top:14px;border:1px solid var(--spice-line);border-radius:8px;padding:10px 14px;background:var(--spice-cream)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -10233,6 +10256,10 @@ async function applyFeatureFlags() {
   // setting-driven UI bits) see the current date_format on first paint
   // instead of waiting for the first invoice render to populate it.
   if (cfg) window._CCFG = cfg;
+  // Same trip refreshes the sensitive-field masking policy, so every
+  // screen that shows an A/C no. / IFSC / phone is masked from first
+  // paint rather than only after a receipt render has fetched settings.
+  if (cfg) { try { refreshMaskCfg(cfg); } catch (_) {} }
   const on = (v) => String(v == null ? '' : v).toLowerCase() === 'true' || v === true;
   // Default OFF when settings haven't loaded yet — safer than showing
   // dead controls. Re-runs after login + after save to reconcile.
@@ -15079,7 +15106,7 @@ async function loadDepotSummary(auctionId){
 // Fetches the trade's lots, keeps them (+ the current sort/filter) in _dl, and
 // renders a sortable/filterable table. '(unspecified)' covers lots whose branch
 // is blank/null, matching how the depot-summary rollup buckets them server-side.
-let _dl = { rows: [], sort: { col: 'lot_no', dir: 1 }, filt: { lot: '', seller: '', buyer: '' } };
+let _dl = { rows: [], sort: { col: 'lot_no', dir: 1 }, filt: { lot: '', seller: '', buyer: '', badge: '' } };
 
 // ── Seller data-hygiene badges for the lot-wise drill-down ──────
 // Same checks the Validate Lots screen raises (server: validateAuctionLots),
@@ -15125,12 +15152,55 @@ function lotSellerIssues(l){
   if (!isG2 && isDealer) out.push({ label:'Dealer, not G2',   sev:'warn', tip:'Seller has GSTIN + SBL but the lot is not Grade 2 — it is missing from the 25% cap figure.' });
   return out.sort((a,b) => (a.sev === b.sev ? 0 : a.sev === 'error' ? -1 : 1));
 }
-function lotIssueBadgesHtml(issues){
+// The two badges raised against the LOT's link to a seller rather than
+// against the seller's own record — see lotSellerIssues above.
+const DL_LINK_ISSUES = new Set(['No seller', 'Not linked']);
+// `row` supplies the seller identity so each badge can open that seller's
+// edit form — the badge names what's missing, clicking it goes to fix it.
+function lotIssueBadgesHtml(issues, row){
   if (!issues || !issues.length) return '';
-  return issues.map(i =>
-    `<span class="dl-issue ${i.sev === 'error' ? 'dl-issue-err' : 'dl-issue-warn'}" title="${esc(i.tip)}">${esc(i.label)}</span>`
-  ).join('');
+  const r = row || {};
+  return issues.map(i => {
+    // The linkage errors are fixed on the LOT, not on the seller master —
+    // opening an edit form there would be a dead end, so those badges just
+    // repeat their guidance.
+    const fixable = !DL_LINK_ISSUES.has(i.label);
+    return `<span class="dl-issue ${i.sev === 'error' ? 'dl-issue-err' : 'dl-issue-warn'}${_dl.filt.badge === i.label ? ' dl-issue-on' : ''}"`
+    + ` data-tid="${esc(r.traderId || '')}" data-name="${esc(r.seller || '')}" data-tip="${esc(i.tip)}"`
+    + ` onclick="${fixable ? 'dlEditSeller(this)' : 'toast(this.dataset.tip)'}"`
+    + ` title="${esc(i.tip)}${fixable ? '&#10;&#10;Click to edit this seller and fix it.' : ''}">${esc(i.label)}</span>`;
+  }).join('');
 }
+
+// ── Badge filter ────────────────────────────────────────────────
+// Dropdown built from the warnings ACTUALLY present in the loaded list, with
+// per-warning lot counts, plus the two roll-ups. Offering the full catalogue
+// of possible warnings would mostly list empty options; offering only what's
+// there doubles as a summary of what this depot/grade needs fixing.
+function dlBadgeFilterHtml(){
+  const counts = new Map();
+  let clean = 0;
+  for (const r of _dl.rows) {
+    const labels = new Set((r.issues || []).map(i => i.label));
+    if (!labels.size) { clean++; continue; }
+    labels.forEach(lbl => counts.set(lbl, (counts.get(lbl) || 0) + 1));
+  }
+  const flagged = _dl.rows.length - clean;
+  // Every seller in this list is clean — the dropdown would have nothing to
+  // choose between, so it isn't drawn at all.
+  if (!flagged) return '';
+  const sel = _dl.filt.badge;
+  const opt = (v, lbl) => `<option value="${esc(v)}"${sel === v ? ' selected' : ''}>${esc(lbl)}</option>`;
+  const opts = [opt('', 'All sellers'), opt('__any', `⚠ Any warning (${flagged})`)];
+  if (clean) opts.push(opt('__none', `✓ No warnings (${clean})`));
+  [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .forEach(([lbl, n]) => opts.push(opt(lbl, `${lbl} (${n})`)));
+  return `<select class="dl-filter" id="dl-badge-filter"`
+    + ` onchange="depotLotsFilter('badge', this.value)"`
+    + ` title="Show only lots whose seller carries this warning">${opts.join('')}</select>`;
+}
+
 
 // Populate + render the lot-wise modal from a raw lot array. Shared by the
 // Current-Auction branch drill (openDepotLots) and the snapshot's grade drill
@@ -15169,15 +15239,18 @@ function showLotList(titleText, lots, reload){
       };
     }),
     sort: { col: 'lot_no', dir: 1 },
-    filt: { lot: '', seller: '', buyer: '' },
+    filt: { lot: '', seller: '', buyer: '', badge: '' },
   };
   // Filter bar sits above the scroll area so it stays put while the table scrolls.
+  // The badge dropdown is rebuilt with the rows (its options and counts are
+  // derived from them) and is omitted entirely when no seller is flagged.
   if (filtEl) {
     filtEl.style.display = '';
     filtEl.innerHTML =
       `<input class="dl-filter" type="text" placeholder="Filter lot…"    oninput="depotLotsFilter('lot', this.value)">`
     + `<input class="dl-filter" type="text" placeholder="Filter seller…" oninput="depotLotsFilter('seller', this.value)">`
-    + `<input class="dl-filter" type="text" placeholder="Filter buyer…"  oninput="depotLotsFilter('buyer', this.value)">`;
+    + `<input class="dl-filter" type="text" placeholder="Filter buyer…"  oninput="depotLotsFilter('buyer', this.value)">`
+    + dlBadgeFilterHtml();
   }
   renderDepotLotsTable();
 }
@@ -15240,7 +15313,10 @@ async function openGradeLots(status, branch, grade){
 
 // Update one filter and re-render just the table (inputs keep focus).
 function depotLotsFilter(key, val){
-  _dl.filt[key] = String(val || '').toLowerCase();
+  // The badge filter is an exact pick from a fixed list, not a typed
+  // substring — keep its value verbatim so labels carrying punctuation
+  // ("G2, not a dealer") still match the badge they came from.
+  _dl.filt[key] = key === 'badge' ? String(val || '') : String(val || '').toLowerCase();
   renderDepotLotsTable();
 }
 
@@ -15260,10 +15336,20 @@ function renderDepotLotsTable(){
   const qf   = n => (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const intf = n => (Number(n) || 0).toLocaleString('en-IN');
   const f = _dl.filt;
+  // '' = every lot, '__any'/'__none' = has / hasn't any warning, anything
+  // else = that exact badge label.
+  const badgeOk = (r) => {
+    if (!f.badge) return true;
+    const issues = r.issues || [];
+    if (f.badge === '__any')  return issues.length > 0;
+    if (f.badge === '__none') return issues.length === 0;
+    return issues.some(i => i.label === f.badge);
+  };
   let rows = _dl.rows.filter(r =>
     (!f.lot    || r.lot_no.toLowerCase().includes(f.lot)) &&
     (!f.seller || r.seller.toLowerCase().includes(f.seller)) &&
-    (!f.buyer  || r.buyer.toLowerCase().includes(f.buyer))
+    (!f.buyer  || r.buyer.toLowerCase().includes(f.buyer)) &&
+    badgeOk(r)
   );
   const { col, dir } = _dl.sort;
   const numCols = { bags: 1, qty: 1, price: 1, amount: 1 };
@@ -15286,7 +15372,7 @@ function renderDepotLotsTable(){
     // …with the seller's outstanding data warnings (No GSTIN / No PAN / …)
     // badged right beside it, so the operator sees what needs fixing before
     // they click through.
-    const issueBadges = lotIssueBadgesHtml(r.issues);
+    const issueBadges = lotIssueBadgesHtml(r.issues, r);
     const sellerCell = (r.seller
       ? `<a href="#" class="dl-seller" data-tid="${esc(r.traderId)}" data-name="${esc(r.seller)}"
            onclick="dlOpenSeller(this);return false" title="View / edit seller details">${esc(r.seller)}</a>`
@@ -15317,33 +15403,57 @@ function renderDepotLotsTable(){
 
 // Seller drill-down from the lot-wise modal. Resolves the lot's seller to a
 // master record — by `lots.trader_id` when it's set, else by name for legacy
-// lots that pre-date trader linking — and opens the same read-only Seller
-// card the Sellers tab uses, whose Edit button leads into the normal edit
-// form (so any correction is saved to the master and re-stamped on the lots).
+// lots that pre-date trader linking. Returns the master id, or null after
+// having already explained (via toast) why it couldn't be resolved.
 let _dlSellerOpen = false;
+async function dlResolveSellerId(tid, name){
+  const id = String(tid || '').trim();
+  if (id) return id;
+  // No link on the lot — match the master on the stored seller name.
+  // A miss (404) means this lot's seller was never added to the master.
+  let hit = null;
+  try { hit = await j(`/api/traders/by-name/${encodeURIComponent(name)}`); } catch (_) {}
+  if (!hit || !hit.id) { toast(`"${name}" is not in the seller master`); return null; }
+  // Several masters share this name and the lot has no trader_id to pick
+  // between them — opening one at random would show the wrong person's
+  // bank details. Say so instead.
+  if (hit.ambiguous) {
+    toast(`${hit.candidates} sellers are named "${name}" and this lot isn't linked to one — open the right seller from the Sellers screen.`);
+    return null;
+  }
+  return hit.id;
+}
+// Click the seller NAME → the read-only Seller card the Sellers tab uses,
+// whose Edit button leads into the normal edit form.
 async function dlOpenSeller(el){
   const tid  = String((el && el.dataset.tid) || '').trim();
   const name = String((el && el.dataset.name) || '').trim();
   try {
-    let id = tid;
-    if (!id) {
-      // No link on the lot — match the master on the stored seller name.
-      // A miss (404) means this lot's seller was never added to the master.
-      let hit = null;
-      try { hit = await j(`/api/traders/by-name/${encodeURIComponent(name)}`); } catch (_) {}
-      if (!hit || !hit.id) { toast(`"${name}" is not in the seller master`); return; }
-      // Several masters share this name and the lot has no trader_id to pick
-      // between them — opening one at random would show the wrong person's
-      // bank details. Say so instead.
-      if (hit.ambiguous) {
-        toast(`${hit.candidates} sellers are named "${name}" and this lot isn't linked to one — open the right seller from the Sellers screen.`);
-        return;
-      }
-      id = hit.id;
-    }
+    const id = await dlResolveSellerId(tid, name);
+    if (!id) return;
     const t = await j(`/api/traders/${id}`);
     _dlSellerOpen = true;          // so a save from here repaints this list
     viewTraderDetails(t);
+  } catch (e) {
+    toast(`Could not open seller${name ? ' "' + name + '"' : ''}: ${e.message || e}`);
+  }
+}
+// Click a WARNING BADGE → straight into the seller's edit form, skipping the
+// read-only card. The badge already names what's missing, so the only useful
+// next step is the field that fixes it; saving re-stamps the seller's lots and
+// repaints this list, so the badge disappears without a manual refresh.
+async function dlEditSeller(el){
+  const tid  = String((el && el.dataset.tid) || '').trim();
+  const name = String((el && el.dataset.name) || '').trim();
+  if (!tid && !name) {
+    toast('This lot has no seller on it — open it in Lot Entry and pick one.');
+    return;
+  }
+  try {
+    const id = await dlResolveSellerId(tid, name);
+    if (!id) return;
+    _dlSellerOpen = true;          // so a save from here repaints this list
+    await openTraderEdit(id);
   } catch (e) {
     toast(`Could not open seller${name ? ' "' + name + '"' : ''}: ${e.message || e}`);
   }
@@ -19047,20 +19157,25 @@ async function leSaveNewSeller(){
     const name = (document.getElementById('le-ns-name').value || '').trim();
     if (!name) { showErr('Name is required.'); return; }
 
-    // Client-side PAN dedup — surfaces a clear message before the
-    // round trip. Server-side dedup on /api/traders/quick still runs
-    // as the source of truth.
+    // A matching PAN usually means the seller is already on file — but not
+    // always (family members share one PAN, poolers are split across rows).
+    // Name who it collides with and let the operator decide: cancel and
+    // search, or confirm and register a genuinely separate seller.
     const _panRaw = (document.getElementById('le-ns-pan').value || '').trim();
+    let _confirmDup = false;
     if (_panRaw) {
       const _dups = await findExactDuplicates('/api/traders', 'pan', _panRaw);
       if (_dups.length) {
-        showErr(`PAN ${_panRaw.toUpperCase()} is already on seller: ${_dups.map(t => t.name).join(', ')}. Cancel this dialog and search for the existing seller instead.`);
-        return;
+        const _who = _dups.map(t => `  • ${t.name}${t.tel ? ' · ' + t.tel : ''}`).join('\n');
+        const _ok = confirm(`PAN ${_panRaw.toUpperCase()} is already on:\n${_who}\n\nCancel to close this dialog and pick the existing seller, or OK to add this as a separate seller with the same PAN.`);
+        if (!_ok) return;
+        _confirmDup = true;
       }
     }
 
     const payload = {
       name,
+      confirm_duplicate: _confirmDup,
       cr:     (document.getElementById('le-ns-cr').value   || '').trim(),
       pan:    _panRaw,
       tel:    (document.getElementById('le-ns-tel').value  || '').trim(),
@@ -21547,7 +21662,7 @@ async function leConfirmPrint() {
 
   // Gather context: company settings, current auction, branches.
   let cfg = {};
-  try { cfg = await j('/api/company-settings/flat'); }
+  try { cfg = await j('/api/company-settings/flat'); refreshMaskCfg(cfg); }
   catch (e) { /* fall back to empty cfg — receipt still renders */ }
 
   // Look up the selected auction's metadata so the receipt header has
@@ -21825,7 +21940,7 @@ function leBuildDetailedHtml(p) {
     const ti = (g.trader_id != null ? traderInfo[g.trader_id] : null) || {};
     const bank = ti.defaultBank || {};
     const acctMasked = bank.acctnum ? maskAcct(bank.acctnum) : '';
-    const ifsc = bank.ifsc || '';
+    const ifsc = bank.ifsc ? maskIfsc(bank.ifsc) : '';
     const place = [g.ppla, g.ppin].filter(Boolean).join(', ');
     const cr = g.cr || '';
     const lotRows = g.lots.map(l =>
@@ -21947,11 +22062,43 @@ function leBuildDetailedHtml(p) {
 </style></head><body>${sections}</body></html>`;
 }
 
-function maskAcct(acct) {
-  const s = String(acct || '');
-  if (s.length <= 4) return s;
-  return '*'.repeat(s.length - 4) + s.slice(-4);
+// ── Sensitive-field masking ──────────────────────────────────────
+// Bank account no., IFSC and phone are masked on-screen and on receipt
+// previews per the policy set in Settings → Business Mode → Privacy &
+// Masking. Modes: none | last4 | last6 | first4 | first6 | first2last2
+// | full. Policy is cached in _maskCfg, refreshed whenever the flat
+// company settings are (re)loaded. Functional outputs (bank file, DBF,
+// Tally, WhatsApp targets) are produced server-side and never masked.
+// Mirrors mask-fields.js on the server EXACTLY so the value on screen
+// matches the value printed.
+let _maskCfg = { acct: 'last4', ifsc: 'none', phone: 'none' }; // defaults match company-config seed
+function refreshMaskCfg(cfg) {
+  if (!cfg) return;
+  _maskCfg = {
+    acct:  cfg.mask_acct  || 'none',
+    ifsc:  cfg.mask_ifsc  || 'none',
+    phone: cfg.mask_phone || 'none',
+  };
 }
+function maskField(value, mode) {
+  const s = value == null ? '' : String(value);
+  if (!s || !mode || mode === 'none') return s;
+  if (mode === 'full') return '*'.repeat(s.length);
+  if (mode === 'first2last2') {
+    if (s.length <= 4) return s; // nothing left to hide between first/last 2
+    return s.slice(0, 2) + '*'.repeat(s.length - 4) + s.slice(-2);
+  }
+  const show = (mode === 'last4' || mode === 'first4') ? 4
+             : (mode === 'last6' || mode === 'first6') ? 6 : 0;
+  if (!show || s.length <= show) return s;
+  const stars = '*'.repeat(s.length - show);
+  return (mode === 'last4' || mode === 'last6')
+    ? stars + s.slice(-show)
+    : s.slice(0, show) + stars;
+}
+function maskAcct(v)  { return maskField(v, _maskCfg.acct); }
+function maskIfsc(v)  { return maskField(v, _maskCfg.ifsc); }
+function maskPhone(v) { return maskField(v, _maskCfg.phone); }
 
 // Bank account numbers are not always numeric — some banks issue codes with
 // letters — so keep letters and digits and strip only spaces/punctuation.
@@ -22417,6 +22564,8 @@ const SET_FIELD_GROUPS = {
       keys:['business_mode','business_state'] },
     { title:'Display', icon:'🗓', hint:'How dates read across the app, its exports and its PDFs. Storage stays ISO yyyy-mm-dd either way.',
       keys:['date_format'] },
+    { title:'Privacy & Masking', icon:'🙈', hint:'Hides bank account no., IFSC and phone on receipts and on-screen lists/panels — pick how many digits stay visible. The bank payment file, DBF, Tally and WhatsApp targets always keep the real numbers.',
+      keys:['mask_acct','mask_ifsc','mask_phone'] },
   ],
   company: [
     { title:'Name & Identity', icon:'🏢', hint:'What the company is called on every document — the trade name, its legal suffix, and the short code used in file names.',
@@ -22729,6 +22878,28 @@ function renderSettingsPanel(){
           .map(([k,v]) => `<option value="${k}"${f.value===k?' selected':''}>${k} &nbsp; (e.g. ${v})</option>`)
           .join('');
         return `<div class="fg"><label>${f.label}${helpTip('How dates are displayed everywhere in the app — list views, PDFs, XLSX. The database keeps storing ISO yyyy-mm-dd regardless.')}</label><select data-key="${f.key}">${opts}</select></div>`;
+      }
+      // Sensitive-field masking → fixed dropdown of masking modes.
+      // mask_acct / mask_ifsc share the same set; mask_phone adds a
+      // first-2-and-last-2 option (e.g. 98******10). The options aren't
+      // stored in the DB — the masking logic lives in maskField().
+      if(f.key==='mask_acct'||f.key==='mask_ifsc'||f.key==='mask_phone'){
+        const cur = String(f.value||'none');
+        const base = [
+          ['none',   'Show full (no masking)'],
+          ['last4',  'Show last 4 digits'],
+          ['last6',  'Show last 6 digits'],
+          ['first4', 'Show first 4 digits'],
+          ['first6', 'Show first 6 digits'],
+        ];
+        const modes = f.key==='mask_phone'
+          ? [...base, ['first2last2','Show first 2 and last 2 digits'], ['full','Hide all (full mask)']]
+          : [...base, ['full','Hide all (full mask)']];
+        const opts = modes
+          .map(([v,lbl]) => `<option value="${v}"${cur===v?' selected':''}>${lbl}</option>`)
+          .join('');
+        const tip = FIELD_HELP[f.key] ? helpTip(FIELD_HELP[f.key]) : '';
+        return `<div class="fg"><label>${f.label}${tip}</label><select data-key="${f.key}">${opts}</select></div>`;
       }
       return fld(f);
     });
@@ -23282,6 +23453,9 @@ const FIELD_HELP = {
   discount_days:   'Number of days the trade credit is extended.',
   business_mode:   'This build is e-Auction only.',
   business_state:  'Tamil Nadu uses TN office details, GSTIN, and bank. Kerala uses KL details. Invoices and exports adapt to the selected state.',
+  mask_acct:       'Hides the seller bank account no. on lot receipts and on-screen panels. The bank payment file, DBF, Tally XML and the company\'s own account on invoices always print in full.',
+  mask_ifsc:       'Hides the seller IFSC code on lot receipts and on-screen panels. The bank payment file, DBF and Tally XML always keep the real code.',
+  mask_phone:      'Hides phone numbers on printed/shared documents. WhatsApp send targets and call links always use the real number.',
   tcs_tds:         'TDS / TCS percentage applied on eligible invoices for tax compliance.',
   bill_of_supply_prefix: 'Leads the stored bill number on the Bill of Supply PDF, the Commission Bill PDF and the URD purchase voucher in the Tally XML. Blank = bare number, as before. {season} and {ano} expand — e.g. "BOS-" prints bill 1748 as "BOS-1748". It only prepends: the Tally voucher still appends the season ("BOS-1748/26-27"), so avoid {season} in the prefix unless you want it twice there.',
   bill_of_supply_suffix: 'Trails the stored bill number on the same three documents as the prefix (BoS PDF, Commission Bill PDF, URD Tally XML). Blank = bare number, as before. {season} and {ano} expand — e.g. "-A" prints bill 1748 as "1748-A". It only appends: the Tally voucher still adds its "/season" after your suffix, and a multi-lot commission bill still adds its per-page "/1", "/2".',
@@ -24078,6 +24252,8 @@ function openTraderAdd(){
   document.getElementById('t-pstcode').value='32';
   const _w = document.getElementById('t-pan-warn');
   if (_w) { _w.style.display = 'none'; _w.innerHTML = ''; }
+  const _wu = document.getElementById('t-userid-warn');
+  if (_wu) { _wu.style.display = 'none'; _wu.innerHTML = ''; }
   // Start with a single blank bank row so the user sees the shape of the
   // input without having to click "+ Add Bank" first. If they leave it
   // empty, saveTrader() just drops it.
@@ -24116,6 +24292,8 @@ async function openTraderEdit(tOrId){
   T_FIELDS.forEach(f=>{const el=document.getElementById(T_IDS[f]);if(el)el.value=t[f]||''});
   const _w = document.getElementById('t-pan-warn');
   if (_w) { _w.style.display = 'none'; _w.innerHTML = ''; }
+  const _wu = document.getElementById('t-userid-warn');
+  if (_wu) { _wu.style.display = 'none'; _wu.innerHTML = ''; }
   // Prefer `banks` from the hydrated trader row; fall back to the legacy
   // flat ifsc/acctnum (older records predate trader_banks).
   const banks = (t.banks && t.banks.length)
@@ -24152,6 +24330,7 @@ function appendBankRow(b){
   // The bank-branch hint sits under Bank Name and is populated by the IFSC
   // auto-lookup (Razorpay public API) when the IFSC field changes.
   row.innerHTML = `
+    <div class="fg" style="margin:0"><label>IFSC</label><input class="bank-ifsc" value="${esc(b.ifsc||'')}" style="text-transform:uppercase" oninput="onBankIfscInput(this)" onblur="lookupBankByIfsc(this)"></div>
     <div class="fg" style="margin:0">
       <label>Bank Name</label>
       <input class="bank-name" value="${esc(b.bank_name||'')}" data-ifsc-auto="${esc(b.bank_name||'')}" placeholder="e.g. HDFC">
@@ -24159,7 +24338,6 @@ function appendBankRow(b){
       <input type="hidden" class="bank-branch" value="${esc(b.branch||'')}">
     </div>
     <div class="fg" style="margin:0"><label>Account No</label><input class="bank-acctnum" value="${esc(b.acctnum||'')}" autocapitalize="characters" oninput="sanitizeAcctInput(this)"></div>
-    <div class="fg" style="margin:0"><label>IFSC</label><input class="bank-ifsc" value="${esc(b.ifsc||'')}" style="text-transform:uppercase" oninput="onBankIfscInput(this)" onblur="lookupBankByIfsc(this)"></div>
     <div class="fg" style="margin:0"><label>Holder Name</label><input class="bank-holder" value="${esc(b.holder_name||'')}"></div>
     <div class="fg" style="margin:0"><label>Account Type</label>
       <select class="bank-acct-type">
@@ -24283,7 +24461,19 @@ async function tCheckPanDup() {
   const warnEl = document.getElementById('t-pan-warn');
   if (!pan) { if (warnEl) warnEl.style.display = 'none'; return; }
   const dups = await findExactDuplicates('/api/traders', 'pan', pan, excludeId);
-  renderDuplicateWarning(warnEl, `PAN ${pan.toUpperCase()} already on seller`,
+  renderDuplicateWarning(warnEl, `PAN ${pan.toUpperCase()} already on seller (allowed — you'll be asked to confirm)`,
+    dups, t => `${t.name}${t.tel ? ` · ${t.tel}` : ''}`);
+}
+
+// User ID is the one field that CAN'T repeat, so flag a clash while the
+// operator is still in the field rather than at save time.
+async function tCheckUserIdDup() {
+  const uid = (document.getElementById('t-userid').value || '').trim();
+  const excludeId = document.getElementById('t-id').value;
+  const warnEl = document.getElementById('t-userid-warn');
+  if (!uid) { if (warnEl) warnEl.style.display = 'none'; return; }
+  const dups = await findExactDuplicates('/api/traders', 'user_id', uid, excludeId);
+  renderDuplicateWarning(warnEl, `User ID ${uid} is already taken — must be unique`,
     dups, t => `${t.name}${t.tel ? ` · ${t.tel}` : ''}`);
 }
 
@@ -24292,14 +24482,30 @@ async function saveTrader(){
   const body={};
   T_FIELDS.forEach(f=>{const el=document.getElementById(T_IDS[f]);body[f]=el?el.value:''});
   if(!body.name){alert('Name is required');return}
-  // Hard-block duplicates by PAN — schema doesn't enforce uniqueness,
-  // so we guard at save time. Edit mode excludes the row itself via id.
+  // User ID is the only seller field that must be unique — two sellers on one
+  // id means lots (and their payments) can land on the wrong master. No
+  // confirm path out of this one; the server rejects it too.
+  const _uid = (body.user_id || '').trim();
+  if (_uid) {
+    const _uidDups = await findExactDuplicates('/api/traders', 'user_id', _uid, id);
+    if (_uidDups.length) {
+      alert(`Cannot save: User ID ${_uid} is already used by ${_uidDups.map(t => t.name).join(', ')}.\n\nUser ID must be unique — give this seller a different one.`);
+      return;
+    }
+  }
+  // A shared PAN is legitimate — family members on one PAN, a pooler split
+  // across several seller rows. Only the User ID has to be unique (enforced
+  // server-side). So this is a confirmation, not a block: name who the PAN
+  // collides with, and save on the operator's say-so. Blocking it outright
+  // used to make ANY edit to either seller unsavable.
+  let confirmedDup = false;
   const _pan = (body.pan || '').trim();
   if (_pan) {
     const _dups = await findExactDuplicates('/api/traders', 'pan', _pan, id);
     if (_dups.length) {
-      alert(`Cannot save: PAN ${_pan.toUpperCase()} is already on seller: ${_dups.map(t => t.name).join(', ')}`);
-      return;
+      const _who = _dups.map(t => `  • ${t.name}${t.tel ? ' · ' + t.tel : ''}`).join('\n');
+      if (!confirm(`PAN ${_pan.toUpperCase()} is already on:\n${_who}\n\nSellers may share a PAN. Save this one with the same PAN?`)) return;
+      confirmedDup = true;
     }
   }
   // Banks: collect from the repeating section. The server persists these
@@ -24316,9 +24522,23 @@ async function saveTrader(){
     }
   }
   try{
-    const r=await fetch(B+(id?`/api/traders/${id}`:'/api/traders'),{method:id?'PUT':'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},body:JSON.stringify(body)});
-    const d=await r.json().catch(()=>({}));
+    // The server runs its own duplicate check (GSTIN, PAN, name+phone) and
+    // answers 409 + confirmable:true the first time. Show WHO it clashed with
+    // and re-send with the confirmation flag if the operator says go ahead.
+    // A duplicate User ID comes back WITHOUT confirmable — that one is final.
+    const post=async(confirmDup)=>{
+      const payload=confirmDup?Object.assign({},body,{confirm_duplicate:true}):body;
+      const r=await fetch(B+(id?`/api/traders/${id}`:'/api/traders'),{method:id?'PUT':'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},body:JSON.stringify(payload)});
+      return {r, d: await r.json().catch(()=>({}))};
+    };
+    let {r,d}=await post(confirmedDup);
+    if(r.status===409&&d&&d.duplicate&&d.confirmable){
+      const _ex=d.existing||{};
+      const _ok=confirm(`Another seller already has this ${d.field}: "${_ex.name||'(unnamed)'}".\n\nOnly the User ID has to be unique — sellers may share a ${d.field}.\n\nSave anyway?`);
+      if(!_ok) return;
+      ({r,d}=await post(true));
+    }
     if(!r.ok){throw new Error(d.error||'Save failed')}
     hideModal('trader-modal');
     // An edit re-stamps the seller's lots server-side (lots carry their own
@@ -31562,7 +31782,7 @@ async function leWhatsappReceipt() {
   if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
 
   let cfg = {};
-  try { cfg = await j('/api/company-settings/flat'); } catch (_) {}
+  try { cfg = await j('/api/company-settings/flat'); refreshMaskCfg(cfg); } catch (_) {}
   const aid = document.getElementById('le-auction').value;
   let auction = null;
   try {
@@ -32571,6 +32791,14 @@ const _payLwState = {
   // doesn't silently throw the operator's selection away. A fresh search
   // ticks everything, so "search then export" needs no extra clicks.
   selected: new Set(),
+  // Ticked PAID lot ids — what "↩ Undo selected" will unmark. Deliberately a
+  // second set rather than a flag on `selected`: that one answers "what am I
+  // paying?" and a paid lot must never be able to leak into an export. The two
+  // never mix, so the header box, the export count and the undo count each
+  // stay unambiguous. Admin-only, and never auto-ticked — a fresh search fills
+  // `selected` for convenience, but reversing a settled payment is always a
+  // deliberate act.
+  selectedPaid: new Set(),
   // Column sort for the on-screen table: { col:'seller'|'lot'|'branch', dir }
   // or null for the server's own order (lot number ascending). Display only —
   // see _payLwSortedLots(). Kept across re-renders so adding a bank account
@@ -32584,6 +32812,7 @@ function payLwOnAuctionChange() {
   _payLwState.aid = Number(document.getElementById('paylw-auction')?.value || 0);
   _payLwState.lots = [];
   _payLwState.selected = new Set();
+  _payLwState.selectedPaid = new Set();
   _payLwState.missing = [];
   _payLwState.searched = false;
   _payLwRender();
@@ -32606,6 +32835,7 @@ function payLwClear() {
   _payLwState.sort = null;
   _payLwState.lots = [];
   _payLwState.selected = new Set();
+  _payLwState.selectedPaid = new Set();
   _payLwState.missing = [];
   _payLwState.searched = false;
   _payLwRender();
@@ -32659,6 +32889,8 @@ async function payLwSearch() {
     // Paid lots are never auto-ticked — they're done and locked out.
     _payLwState.selected = new Set(
       _payLwState.lots.filter(l => !l.paid_at && (link !== 'all' || l.linked)).map(l => l.id));
+    // Undo ticks never carry across a search, and are never pre-filled.
+    _payLwState.selectedPaid = new Set();
     _payLwRender();
   } catch (e) {
     if (body) body.innerHTML = `<div style="padding:30px;text-align:center;color:var(--spice-chili)">Search failed: ${esc(e.message || String(e))}</div>`;
@@ -32792,7 +33024,11 @@ function _payLwRender() {
   const showingUnlinked = linkMode === 'unlinked';
   const showingAll = linkMode === 'all';
   // Drop ids that are no longer in the result (a re-search narrowed it).
+  // Undo ticks are pruned to lots that are BOTH still listed and still paid —
+  // one undone elsewhere must not stay ticked for a second, no-op undo.
   _payLwState.selected = new Set([..._payLwState.selected].filter(id => lots.some(l => l.id === id)));
+  _payLwState.selectedPaid = new Set([..._payLwState.selectedPaid]
+    .filter(id => lots.some(l => l.id === id && l.paid_at)));
   if (summary) {
     const payable = lots.reduce((s, l) => s + (Number(l.payable) || 0), 0);
     const qty = lots.reduce((s, l) => s + (Number(l.qty) || 0), 0);
@@ -32895,8 +33131,16 @@ function _payLwRender() {
       ? ` <button class="btn btn-o" style="padding:1px 7px;font-size:10.5px;font-weight:600;margin-left:4px" onclick="payLwUnmarkPaid(${l.id}, ${esc(JSON.stringify(String(l.name || '')))})" title="Admin: undo the paid stamp so this lot can be selected and exported again">↩ Undo</button>`
       : '';
     const ticked = (!isPaid && _payLwState.selected.has(l.id)) ? ' checked' : '';
+    // A paid row's box means something different from an unpaid one's: it picks
+    // the lot for "↩ Undo selected", not for the export. It feeds its own set
+    // (selectedPaid) and only admins get it, matching the per-row Undo button
+    // and the server's requireAdmin on unmark-paid. For everyone else the box
+    // stays the disabled "already paid" lock it has always been.
+    const paidTicked = _payLwState.selectedPaid.has(l.id) ? ' checked' : '';
     const cb = isPaid
-      ? `<input type="checkbox" disabled title="Already paid — locked out of selection" style="width:15px;height:15px;cursor:not-allowed;opacity:.5">`
+      ? (window._userRole === 'admin'
+          ? `<input type="checkbox" class="paylw-cb-paid" data-id="${l.id}"${paidTicked} onchange="payLwTickPaid(${l.id}, this.checked)" title="Admin: tick to undo this lot's paid stamp with &quot;Undo selected&quot;" style="cursor:pointer;width:15px;height:15px;accent-color:var(--spice-chili)">`
+          : `<input type="checkbox" disabled title="Already paid — locked out of selection" style="width:15px;height:15px;cursor:not-allowed;opacity:.5">`)
       : `<input type="checkbox" class="paylw-cb" data-id="${l.id}"${ticked} onchange="payLwTick(${l.id}, this.checked)" style="cursor:pointer;width:15px;height:15px">`;
     return `<tr${rowCls}${rowStyle}>
       <td style="text-align:center">${cb}</td>
@@ -32909,10 +33153,10 @@ function _payLwRender() {
     </tr>`;
   }).join('');
   body.innerHTML = missingHtml + `
-    <div style="overflow-x:auto">
+    <div class="paylw-scroll">
       <table class="paylw-table" style="width:100%">
         <thead><tr>
-          <th style="width:36px;text-align:center"><input type="checkbox" id="paylw-cb-all" onchange="payLwTickAll(this.checked)" title="Select / clear every listed lot" style="cursor:pointer;width:15px;height:15px"></th>
+          <th style="width:36px;text-align:center"><input type="checkbox" id="paylw-cb-all" onchange="payLwTickAll(this.checked)" title="Select / clear every payable lot" style="cursor:pointer;width:15px;height:15px"></th>
           ${_payLwTh('seller', 'Seller')}${_payLwTh('lot', 'Lot')}<th style="text-align:right">Qty</th>${_payLwTh('branch', 'Branch')}
           <th style="min-width:320px">Bank</th><th style="text-align:right">Payable</th>
         </tr></thead>
@@ -32927,9 +33171,42 @@ function payLwTick(lotId, checked) {
   if (checked) _payLwState.selected.add(lotId); else _payLwState.selected.delete(lotId);
   _payLwRefreshSelection();
 }
-// Header box — applies to every listed lot EXCEPT already-paid ones (they're
-// locked out and have no live checkbox to toggle).
+// Tick / untick one PAID lot for undo. Separate set, separate button — see
+// _payLwState.selectedPaid.
+function payLwTickPaid(lotId, checked) {
+  if (checked) _payLwState.selectedPaid.add(lotId); else _payLwState.selectedPaid.delete(lotId);
+  _payLwRefreshSelection();
+}
+// Tick (or untick) every PAID lot in the results, ready for "Undo selected".
+// The header box can't do this — it owns the export selection — so this is the
+// paid column's own select-all. Toggles: a second press clears them.
+function payLwTickAllPaid() {
+  const paid = _payLwState.lots.filter(l => l.paid_at);
+  if (!paid.length) { toast('No paid lots are listed'); return; }
+  const allTicked = paid.every(l => _payLwState.selectedPaid.has(l.id));
+  _payLwState.selectedPaid = allTicked ? new Set() : new Set(paid.map(l => l.id));
+  document.querySelectorAll('#paylw-body .paylw-cb-paid').forEach(cb => { cb.checked = !allTicked; });
+  _payLwRefreshSelection();
+}
+// Header box. Normally it governs the EXPORT selection and leaves undo ticks
+// alone — one box cannot mean both "pay these" and "un-pay those" while both
+// kinds of row are on screen.
+//
+// The exception is a result set where EVERY lot is already paid (an exported
+// trade, the usual case for an admin who wants to reverse one). There is no
+// export selection to make, the only live boxes in the table are the undo
+// ones, so the header ticks those instead: select all → Undo selected works
+// the way it reads. Nothing is ambiguous, because there is no other kind of
+// row present to mean.
 function payLwTickAll(checked) {
+  const paid = _payLwState.lots.filter(l => l.paid_at);
+  const anyPayable = _payLwState.lots.some(l => !l.paid_at);
+  if (!anyPayable && paid.length && window._userRole === 'admin') {
+    _payLwState.selectedPaid = checked ? new Set(paid.map(l => l.id)) : new Set();
+    document.querySelectorAll('#paylw-body .paylw-cb-paid').forEach(cb => { cb.checked = !!checked; });
+    _payLwRefreshSelection();
+    return;
+  }
   _payLwState.selected = checked
     ? new Set(_payLwState.lots.filter(l => !l.paid_at).map(l => l.id))
     : new Set();
@@ -32937,37 +33214,103 @@ function payLwTickAll(checked) {
   _payLwRefreshSelection();
 }
 // Toolbar "Clear selection" — unticks everything but leaves the results up,
-// so the operator can pick a few lots without re-running the search.
+// so the operator can pick a few lots without re-running the search. Clears
+// undo ticks too: the button says "every lot", and leaving a hidden undo
+// selection armed behind an apparently-clean screen is how accidents happen.
 function payLwClearSelection() {
-  if (!_payLwState.selected.size) { toast('Nothing is selected'); return; }
-  const n = _payLwState.selected.size;
+  const n = _payLwState.selected.size, p = _payLwState.selectedPaid.size;
+  if (!n && !p) { toast('Nothing is selected'); return; }
+  _payLwState.selectedPaid = new Set();
+  document.querySelectorAll('#paylw-body .paylw-cb-paid').forEach(cb => { cb.checked = false; });
   payLwTickAll(false);
   const all = document.getElementById('paylw-cb-all');
   if (all) { all.checked = false; all.indeterminate = false; }
-  toast(`Cleared ${n} selected lot${n === 1 ? '' : 's'}`);
+  const bits = [];
+  if (n) bits.push(`${n} selected lot${n === 1 ? '' : 's'}`);
+  if (p) bits.push(`${p} undo tick${p === 1 ? '' : 's'}`);
+  toast(`Cleared ${bits.join(' and ')}`);
 }
 // Repaint the selection line, the header box's tri-state, and the export
 // button's count — the three places that answer "what will I be paying?".
 function _payLwRefreshSelection() {
   const sel = _payLwState.lots.filter(l => _payLwState.selected.has(l.id));
+  const undoSel = _payLwState.lots.filter(l => _payLwState.selectedPaid.has(l.id));
+  // The header box governs the export selection, so its tri-state is measured
+  // against the lots it can actually tick — the unpaid ones. Comparing against
+  // every listed lot meant one paid row in the results left it stuck on
+  // indeterminate even with everything selectable already selected.
+  const selectable = _payLwState.lots.filter(l => !l.paid_at).length;
+  // Both undo controls are admin-only and appear only once the results
+  // actually contain paid lots, so they stay out of the ordinary
+  // search → export flow.
+  const paidCount = _payLwState.lots.filter(l => l.paid_at).length;
+  const canUndo = window._userRole === 'admin' && paidCount > 0;
+  // When every listed lot is already paid there is no export selection to
+  // make, and the only live boxes in the table are the undo ones — so the
+  // header box drives THOSE. It is unambiguous precisely because there is
+  // nothing else it could mean; the moment one payable lot is in the results
+  // it goes back to meaning the export selection and nothing else.
+  const undoMode = selectable === 0 && canUndo;
   const all = document.getElementById('paylw-cb-all');
   if (all) {
-    all.checked = sel.length > 0 && sel.length === _payLwState.lots.length;
-    all.indeterminate = sel.length > 0 && sel.length < _payLwState.lots.length;
+    if (undoMode) {
+      all.checked = undoSel.length > 0 && undoSel.length === paidCount;
+      all.indeterminate = undoSel.length > 0 && undoSel.length < paidCount;
+      all.disabled = false;
+      all.style.cursor = 'pointer';
+      all.style.opacity = '';
+      all.title = 'Select / clear every paid lot, ready for Undo selected';
+    } else {
+      all.checked = sel.length > 0 && sel.length === selectable;
+      all.indeterminate = sel.length > 0 && sel.length < selectable;
+      // With nothing selectable and no undo to offer, the box clicks into
+      // nothing: it ticks, the refresh finds no unpaid lot to select, and it
+      // un-ticks itself — which reads as "select all is broken". Disable it so
+      // it is visibly inert, and say why.
+      all.disabled = !selectable;
+      all.style.cursor = selectable ? 'pointer' : 'not-allowed';
+      all.style.opacity = selectable ? '' : '.45';
+      all.title = selectable
+        ? 'Select / clear every payable lot'
+        : 'Every listed lot is already paid — nothing here can be selected for export';
+    }
   }
+  const undoInfo = undoSel.length
+    ? ` <span style="color:var(--spice-chili);font-weight:600">· ${undoSel.length} paid lot${undoSel.length === 1 ? '' : 's'} ticked to undo</span>`
+    : '';
   const info = document.getElementById('paylw-selinfo');
   if (info) {
     if (!_payLwState.lots.length) {
       info.innerHTML = '';   // nothing matched — the empty state already says so
     } else if (!sel.length) {
-      info.innerHTML = `<span style="color:var(--spice-chili);font-weight:600">No lots selected</span> <span style="color:var(--text3)">— tick the lots to pay, or use the header box to select all.</span>`;
+      info.innerHTML = `<span style="color:var(--spice-chili);font-weight:600">No lots selected</span> <span style="color:var(--text3)">— tick the lots to pay, or use the header box to select all.</span>`
+        + undoInfo;
     } else {
       const amt = sel.reduce((s, l) => s + (Number(l.payable) || 0), 0);
       const unl = sel.filter(l => !l.linked).length;
-      info.innerHTML = `<span style="color:var(--green);font-weight:600">${sel.length} of ${_payLwState.lots.length} lot${_payLwState.lots.length === 1 ? '' : 's'} selected</span>`
+      info.innerHTML = `<span style="color:var(--green);font-weight:600">${sel.length} of ${selectable} payable lot${selectable === 1 ? '' : 's'} selected</span>`
         + ` · Export total <strong style="color:var(--spice-cardamom-dk)">₹${fmtI(amt, 2)}</strong>`
-        + (unl ? ` <span style="color:var(--spice-chili)">· ${unl} of them ${unl === 1 ? 'has' : 'have'} no bank account</span>` : '');
+        + (unl ? ` <span style="color:var(--spice-chili)">· ${unl} of them ${unl === 1 ? 'has' : 'have'} no bank account</span>` : '')
+        + undoInfo;
     }
+  }
+  const tickPaidBtn = document.getElementById('paylw-tickallpaid-btn');
+  if (tickPaidBtn) {
+    tickPaidBtn.style.display = canUndo ? '' : 'none';
+    const allTicked = paidCount > 0 && undoSel.length === paidCount;
+    tickPaidBtn.textContent = allTicked
+      ? `☐ Untick ${paidCount} paid`
+      : `☑ Tick all ${paidCount} paid`;
+  }
+  const undoBtn = document.getElementById('paylw-undosel-btn');
+  if (undoBtn) {
+    undoBtn.style.display = canUndo ? '' : 'none';
+    undoBtn.textContent = undoSel.length
+      ? `↩ Undo selected (${undoSel.length})`
+      : '↩ Undo selected';
+    undoBtn.disabled = !undoSel.length;
+    undoBtn.style.opacity = undoSel.length ? '' : '.55';
+    undoBtn.style.cursor = undoSel.length ? '' : 'not-allowed';
   }
   const btn = document.getElementById('paylw-export-btn');
   if (btn) {
@@ -32980,9 +33323,11 @@ function _payLwRefreshSelection() {
   }
   const clr = document.getElementById('paylw-clearsel-btn');
   if (clr) {
-    clr.disabled = !sel.length;
-    clr.style.opacity = sel.length ? '' : '.55';
-    clr.style.cursor = sel.length ? '' : 'not-allowed';
+    // Undo ticks count as a selection here — the button clears them too.
+    const anyTicked = sel.length || undoSel.length;
+    clr.disabled = !anyTicked;
+    clr.style.opacity = anyTicked ? '' : '.55';
+    clr.style.cursor = anyTicked ? '' : 'not-allowed';
   }
 }
 
@@ -33194,6 +33539,50 @@ async function payLwUnmarkPaid(lotId, name) {
     }
   } catch (err) {
     alert('Could not unmark: ' + (err.message || err));
+  }
+}
+
+// Admin-only: undo the paid stamp on every ticked PAID lot in one call.
+// The per-row ↩ Undo above is the one-off; this is the same action for a whole
+// export that had to be redone, which otherwise meant clicking through dozens
+// of rows one confirm at a time.
+//
+// Sends every id in a single request — the endpoint already takes an array and
+// clears them in one UPDATE, so the lots come back payable together rather than
+// in a half-undone state if the run is interrupted.
+async function payLwUndoSelected() {
+  const aid = _payLwState.aid || Number(document.getElementById('paylw-auction')?.value || 0);
+  const lots = _payLwState.lots.filter(l => _payLwState.selectedPaid.has(l.id) && l.paid_at);
+  if (!aid || !lots.length) { toast('No paid lots are ticked'); return; }
+  const total = lots.reduce((s, l) => s + (Number(l.payable) || 0), 0);
+  const sellers = new Set(lots.map(l => String(l.name || '').trim().toUpperCase())).size;
+  // Name the money and the sellers, not just a count — this reopens payments
+  // that the operator has already sent to the bank.
+  const ok = confirm(
+    `Undo the "paid" stamp on ${lots.length} lot${lots.length === 1 ? '' : 's'}`
+    + ` across ${sellers} seller${sellers === 1 ? '' : 's'}?\n\n`
+    + `Lots: ${lots.map(l => l.lot_no).join(', ')}\n`
+    + `Total: ₹${fmtI(total, 2)}\n\n`
+    + `They become selectable and will appear in bank-payment exports again.`);
+  if (!ok) return;
+  try {
+    const r = await fetch(B + `/api/payments/lots/${aid}/unmark-paid`, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lotIds: lots.map(l => l.id) }),
+    });
+    if (r.ok) {
+      const d = await r.json().catch(() => ({}));
+      const n = Number(d.cleared);
+      toast(`Unmarked ${Number.isFinite(n) ? n : lots.length} lot${(Number.isFinite(n) ? n : lots.length) === 1 ? '' : 's'} — payable again`);
+      _payLwState.selectedPaid = new Set();
+      await payLwSearch();   // re-pull so the rows drop their paid badge/lock
+    } else {
+      const e = await r.json().catch(() => ({}));
+      alert(`Could not undo: ${e.error || ('HTTP ' + r.status)}`);
+    }
+  } catch (err) {
+    alert('Could not undo: ' + (err.message || err));
   }
 }
 
@@ -36768,8 +37157,11 @@ function regColumns(type){
     { key:'party', label:'Pooler', sort:'text', totalKind:'count', totalLabel:'Total' },
     // Phone comes from the party group (lots.tel), not the lot row — see
     // loadRegister's flattening below.
+    // Masked per Settings → Business Mode → Privacy & Masking. The
+    // register is a human-facing report; WhatsApp send targets and the
+    // party picker keep the real number so search and dispatch still work.
     { key:'phone', label:'Phone', sort:'text',
-      render:(r)=> r.phone ? esc(r.phone) : '<span style="color:var(--text3)">—</span>' },
+      render:(r)=> r.phone ? esc(maskPhone(r.phone)) : '<span style="color:var(--text3)">—</span>' },
     { key:'tno', label:'ANO', sort:'text' },
     { key:'date', label:'Date', sort:'text' },
     { key:'lot', label:'Lot', sort:'text' },

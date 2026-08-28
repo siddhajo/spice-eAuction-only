@@ -24,7 +24,7 @@ const { REPORTS: LORRY_REPORTS } = require('./lorry-reports');
 const { REPORTS: SPICE_BOARD_REPORTS, getReportFilters: getSpiceBoardFilters } = require('./spice-board-reports');
 const { DOCUMENTS: DOC_CATALOG, GROUPS: DOC_GROUPS } = require('./document-catalog');
 const { mountMobile } = require('./mobile-bridge');
-const { syncLotsFromTrader } = require('./trader-lot-sync');
+const { syncLotsFromTrader, syncTraderBanks } = require('./trader-lot-sync');
 // Defensive resolution — see _company-identity-fallback.js. Uses the
 // real getCompanyIdentity from report-formatters.js when available,
 // falls through to an inline fallback otherwise. Fixes
@@ -3198,55 +3198,23 @@ app.get('/api/traders/:id(\\d+)', requireViewOrLotEntry, (req, res) => {
 // Also mirrors the FIRST bank back into the parent traders.ifsc/acctnum/
 // holder_name columns so older code paths that haven't been migrated to
 // read trader_banks yet still see a valid primary account.
-function syncTraderBanks(db, traderId, banks) {
-  const arr = Array.isArray(banks) ? banks.filter(b => b && (b.acctnum || b.ifsc)) : [];
-  // Which account was default BEFORE this save? The rows are about to be
-  // deleted and re-inserted, so a save from a client that doesn't send the
-  // flag (the mobile app, an older desktop build) would otherwise demote the
-  // operator's choice back to whichever account happens to be first — and
-  // is_default decides which account actually gets paid (calculations.js
-  // getBankPaymentData, and every `ORDER BY is_default DESC` reader).
-  const bankKey = b => `${String(b.acctnum || '').trim()}|${String(b.ifsc || '').trim().toUpperCase()}`;
-  const prev = db.get(
-    'SELECT acctnum, ifsc FROM trader_banks WHERE trader_id = ? AND is_default = 1 LIMIT 1', [traderId]);
-  const prevKey = prev ? bankKey(prev) : '';
-
-  db.run('DELETE FROM trader_banks WHERE trader_id = ?', [traderId]);
-  const insertedIds = [];
-  for (const b of arr) {
-    // account_type must be listed here. The Add/Edit Seller form has offered a
-    // Savings/Current picker and POSTed it for some time, but this INSERT never
-    // named the column — so every desktop save silently dropped the operator's
-    // choice (and, since this helper deletes and re-inserts, wiped a type set
-    // from the mobile app on the next desktop edit). The mobile-bridge twin
-    // already persisted it; the two now match.
-    const info = db.run(
-      'INSERT INTO trader_banks (trader_id, bank_name, branch, acctnum, ifsc, holder_name, account_type) VALUES (?,?,?,?,?,?,?)',
-      [traderId, b.bank_name||'', b.branch||'', String(b.acctnum||''), String(b.ifsc||''), b.holder_name||'', b.account_type||'']
-    );
-    insertedIds.push(info ? info.lastInsertRowid : null);
-  }
-  // Land on exactly one default, in priority order: the row the client
-  // flagged, else whichever surviving row still matches the previous default,
-  // else the first. A trader holding banks but no default leaves every
-  // `ORDER BY is_default DESC` reader picking an arbitrary account.
-  let defIdx = arr.findIndex(b => Number(b.is_default) === 1);
-  if (defIdx < 0 && prevKey) defIdx = arr.findIndex(b => bankKey(b) === prevKey);
-  if (defIdx < 0 && arr.length) defIdx = 0;
-  if (defIdx >= 0 && insertedIds[defIdx] != null) {
-    db.run('UPDATE trader_banks SET is_default = 0 WHERE trader_id = ?', [traderId]);
-    db.run('UPDATE trader_banks SET is_default = 1 WHERE id = ?', [insertedIds[defIdx]]);
-  }
-  // Mirror the DEFAULT bank — not merely the first — into the legacy
-  // traders.ifsc/acctnum/holder_name columns that older exports still read.
-  // This is what PUT /api/traders/:id/bank-default/:bankId already does, so
-  // both ways of choosing a default leave the trader row in the same state.
-  const primary = (defIdx >= 0 ? arr[defIdx] : null) || {};
-  db.run(
-    'UPDATE traders SET ifsc=?, acctnum=?, holder_name=? WHERE id=?',
-    [primary.ifsc||'', primary.acctnum||'', primary.holder_name||'', traderId]
-  );
+// Does `bankId` name a trader_banks row owned by `traderId`?
+//
+// `lots.bank_id` is a pin the operator set, not a guarantee: the row it names
+// can have been deleted since (the seller dropped that account), or the lot
+// can have been reassigned to a different seller with the pin left behind. A
+// pin that fails this test must be treated as no pin at all — never followed,
+// because following it pays one seller's lots into another's account.
+function bankBelongsToTrader(db, bankId, traderId) {
+  if (bankId == null || String(bankId).trim() === '' || traderId == null) return false;
+  const id = parseInt(bankId, 10), tid = parseInt(traderId, 10);
+  if (!Number.isFinite(id) || !Number.isFinite(tid)) return false;
+  return !!db.get('SELECT 1 AS x FROM trader_banks WHERE id = ? AND trader_id = ?', [id, tid]);
 }
+
+// syncTraderBanks now lives in trader-lot-sync.js — see the import at the top
+// of this file. It was duplicated here and in mobile-bridge.js, and the two
+// copies had already drifted into losing each other's columns.
 
 // Find an existing seller that duplicates `t`, applying the same priority
 // as the mobile bridge + lot-entry quick-add: GSTIN (cr) > PAN >
@@ -3274,23 +3242,56 @@ function _findTraderDuplicate(db, t, excludeId) {
   }
   return null;
 }
+
+// USER ID is the only seller field that must be globally unique — it's the
+// operator-facing key the auction floor types in, and two sellers answering
+// to one id sends lots (and money) to the wrong person. Everything else
+// (GSTIN, PAN, name+phone) can legitimately repeat. Returns the clashing row
+// or null; `excludeId` skips the row being edited.
+function _findUserIdDuplicate(db, userId, excludeId) {
+  const uid = String(userId == null ? '' : userId).trim();
+  if (!uid) return null;
+  const ex = excludeId ? ' AND id <> ?' : '';
+  const tail = excludeId ? [excludeId] : [];
+  return db.get(
+    `SELECT id, name, user_id FROM traders WHERE UPPER(TRIM(COALESCE(user_id,''))) = UPPER(TRIM(?))${ex} LIMIT 1`,
+    [uid, ...tail]
+  ) || null;
+}
+
+// Did the client already show the operator the duplicate and get a yes?
+// Accepts the string 'true' too — form-encoded callers can't send a boolean.
+function _duplicateConfirmed(t) {
+  const v = t && (t.confirm_duplicate != null ? t.confirm_duplicate : t.force);
+  return v === true || v === 1 || v === '1' || v === 'true';
+}
 app.post('/api/traders', requireTraderWrite, (req, res) => {
   const t = req.body;
   const db = getDb();
-  // Hard-block duplicate sellers — same rules as the mobile bridge and the
-  // lot-entry quick-add so EVERY create path is consistent: GSTIN (cr) >
-  // PAN > (name + phone). Schema doesn't enforce uniqueness; the server
-  // check protects every code path (desktop, PWA, direct API callers).
-  const _dup = _findTraderDuplicate(db, t);
-  if (_dup) {
+  // USER ID is the one hard-unique field — a repeat is an operator slip, not
+  // "the same person", so there is no confirm path out of it.
+  const _uidDup = _findUserIdDuplicate(db, t.user_id);
+  if (_uidDup) {
     return res.status(409).json({
-      duplicate: true, field: _dup.field, existing: _dup.row,
-      error: `This seller already exists (${_dup.field} match): "${_dup.row.name || '(unnamed)'}". Edit that seller instead.`,
+      duplicate: true, field: 'User ID', existing: _uidDup,
+      error: `User ID "${String(t.user_id).trim()}" is already used by seller "${_uidDup.name || '(unnamed)'}".`,
     });
   }
-  const info = db.run(`INSERT INTO traders (name,cr,pan,tan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name,dob)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [t.name,t.cr||'',t.pan||'',t.tan||'',t.tel||'',t.aadhar||'',t.padd||'',t.ppla||'',t.pin||'',t.pstate||'',t.pst_code||'',t.ifsc||'',t.acctnum||'',t.holder_name||'',t.dob||'']);
+  // GSTIN / PAN / (name + phone) matches are only a WARNING: sellers
+  // legitimately share them (the shared "CR." placeholder, a pooler split
+  // across several seller rows, family members on one PAN). Blocked on the
+  // first attempt so the operator sees who they collide with, then allowed
+  // once the client re-sends with confirm_duplicate — see saveTrader().
+  const _dup = !_duplicateConfirmed(t) && _findTraderDuplicate(db, t);
+  if (_dup) {
+    return res.status(409).json({
+      duplicate: true, confirmable: true, field: _dup.field, existing: _dup.row,
+      error: `Another seller already has this ${_dup.field}: "${_dup.row.name || '(unnamed)'}".`,
+    });
+  }
+  const info = db.run(`INSERT INTO traders (name,cr,pan,tan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name,dob,user_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [t.name,t.cr||'',t.pan||'',t.tan||'',t.tel||'',t.aadhar||'',t.padd||'',t.ppla||'',t.pin||'',t.pstate||'',t.pst_code||'',t.ifsc||'',t.acctnum||'',t.holder_name||'',t.dob||'',String(t.user_id||'').trim()]);
   // If the client sent a banks array (new multi-bank UI), persist them.
   // Otherwise honor the legacy single-bank fields already inserted above.
   if (Array.isArray(t.banks)) {
@@ -3301,13 +3302,23 @@ app.post('/api/traders', requireTraderWrite, (req, res) => {
 app.put('/api/traders/:id', requireTraderWrite, (req, res) => {
   const t = req.body;
   const db = getDb();
-  // Same uniqueness guard as POST (GSTIN > PAN > name+phone), but exclude
-  // this row's own id so re-saving an unchanged seller still works.
-  const _dup = _findTraderDuplicate(db, t, parseInt(req.params.id, 10));
+  const _selfId = parseInt(req.params.id, 10);
+  // Same rules as POST, excluding this row's own id so re-saving an unchanged
+  // seller still works: User ID is hard-unique, everything else is a
+  // confirmable warning. Blocking edits outright on a shared PAN left
+  // operators unable to fix a phone number on either of the two rows.
+  const _uidDup = _findUserIdDuplicate(db, t.user_id, _selfId);
+  if (_uidDup) {
+    return res.status(409).json({
+      duplicate: true, field: 'User ID', existing: _uidDup,
+      error: `User ID "${String(t.user_id).trim()}" is already used by seller "${_uidDup.name || '(unnamed)'}".`,
+    });
+  }
+  const _dup = !_duplicateConfirmed(t) && _findTraderDuplicate(db, t, _selfId);
   if (_dup) {
     return res.status(409).json({
-      duplicate: true, field: _dup.field, existing: _dup.row,
-      error: `Another seller already exists (${_dup.field} match): "${_dup.row.name || '(unnamed)'}".`,
+      duplicate: true, confirmable: true, field: _dup.field, existing: _dup.row,
+      error: `Another seller already has this ${_dup.field}: "${_dup.row.name || '(unnamed)'}".`,
     });
   }
   // Unified seller schema — preserve whatsapp + email alongside the core
@@ -3320,7 +3331,8 @@ app.put('/api/traders/:id', requireTraderWrite, (req, res) => {
        SET name=?, cr=?, pan=?, tan=?, tel=?, aadhar=?, padd=?, ppla=?, pin=?,
            pstate=?, pst_code=?, ifsc=?, acctnum=?, holder_name=?, dob=?,
            whatsapp=COALESCE(?, whatsapp),
-           email=COALESCE(?, email)
+           email=COALESCE(?, email),
+           user_id=COALESCE(?, user_id)
      WHERE id=?`,
     [
       t.name, t.cr||'', t.pan||'', t.tan||'', t.tel||'', t.aadhar||'',
@@ -3328,6 +3340,7 @@ app.put('/api/traders/:id', requireTraderWrite, (req, res) => {
       t.ifsc||'', t.acctnum||'', t.holder_name||'', t.dob||'',
       t.whatsapp != null ? String(t.whatsapp).trim() : null,
       t.email    != null ? String(t.email).trim()    : null,
+      t.user_id  != null ? String(t.user_id).trim()  : null,
       req.params.id,
     ]
   );
@@ -3403,23 +3416,35 @@ app.post('/api/traders/quick', requireAnyPermission('trader_write', 'lot_write')
   const panTrim  = String(t.pan || '').trim().toUpperCase();
   const telTrim  = String(t.tel || '').trim();
   let existing = null;
+  // A confirmed duplicate skips the whole lookup: the operator has already
+  // been shown who the GSTIN/PAN collides with and chose to register a
+  // separate seller anyway (shared PAN across family members, a pooler split
+  // into several rows). Without the flag we still fold into the existing row.
+  const dupConfirmed = _duplicateConfirmed(t);
+  // USER ID stays hard-unique on this path too — see _findUserIdDuplicate.
+  const uidDup = _findUserIdDuplicate(db, t.user_id);
+  if (uidDup) {
+    return res.status(409).json({
+      error: `User ID "${String(t.user_id).trim()}" is already used by seller "${uidDup.name || '(unnamed)'}".`,
+    });
+  }
   // UPPER(TRIM(...)) on the stored side so legacy rows with stray
   // whitespace (common from XLSX imports) still match. The earlier
   // `pan = ? COLLATE NOCASE` form was whitespace-blind and let
   // duplicate sellers slip through this Lot Entry quick-add path.
-  if (crTrim) {
+  if (crTrim && !dupConfirmed) {
     existing = db.get(
       'SELECT * FROM traders WHERE UPPER(TRIM(cr)) = UPPER(?) LIMIT 1',
       [crTrim]
     );
   }
-  if (!existing && panTrim) {
+  if (!existing && panTrim && !dupConfirmed) {
     existing = db.get(
       'SELECT * FROM traders WHERE UPPER(TRIM(pan)) = UPPER(?) LIMIT 1',
       [panTrim]
     );
   }
-  if (!existing && telTrim) {
+  if (!existing && telTrim && !dupConfirmed) {
     existing = db.get(
       'SELECT * FROM traders WHERE UPPER(TRIM(name)) = UPPER(?) AND TRIM(tel) = ? LIMIT 1',
       [nameTrim, telTrim]
@@ -7662,6 +7687,17 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
       if (!l.pstate)   l.pstate   = t.pstate;
       if (!l.pst_code) l.pst_code = t.pst_code;
     }
+    // The pinned bank account (lots.bank_id) belongs to the OLD seller and
+    // cannot survive the swap — every other seller field is being rewritten,
+    // and leaving the pin behind addresses this lot's payment to the previous
+    // seller's account. Real case: four lots corrected to ELAICHIROYAL PRIVATE
+    // LIMITED kept bank_id 38, which is THAMARASSERIYIL SPICES POINT's, and
+    // the bank file duly wired ₹17.5L to the wrong company.
+    //
+    // Clearing puts the lot back on the NEW seller's default account. A
+    // bank_id sent in this same request survives only if the new seller owns
+    // it, so a deliberate "move the lot and pin its account" still works.
+    if (!bankBelongsToTrader(db, l.bank_id, l.trader_id)) l.bank_id = null;
   }
 
   // Withdrawn ('WD') and Not-Auctioned ('NA') lots carry no sale value, so
@@ -8061,7 +8097,16 @@ app.post('/api/lots/bulk-seller', requireLotWrite, (req, res) => {
            ppla      = ?,
            ppin      = ?,
            pstate    = ?,
-           pst_code  = ?
+           pst_code  = ?,
+           -- Drop a pinned bank account the incoming seller does not own.
+           -- Every other seller column is being rewritten here, so a pin left
+           -- behind from the previous seller would route this lot's payment
+           -- into THEIR account (see PUT /api/lots/:id for the case that
+           -- actually happened). A pin the new seller does own is kept, so
+           -- re-applying the same seller never wipes a deliberate choice.
+           bank_id   = CASE WHEN bank_id IN
+                              (SELECT id FROM trader_banks WHERE trader_id = ?)
+                            THEN bank_id ELSE NULL END
          WHERE id IN (${placeholders})`,
         [
           tid,
@@ -8075,6 +8120,7 @@ app.post('/api/lots/bulk-seller', requireLotWrite, (req, res) => {
           t.pin || '',
           t.pstate || '',
           t.pst_code || '',
+          tid,
           ...slice,
         ]
       );
@@ -14202,7 +14248,10 @@ function explainMissingLots(db, auctionId, lotTokens, ctx) {
   // the caller's prebuilt bank map — that map only covers sellers who made it
   // into the results, and the lots being explained here did not.
   const lotIsLinked = (l) => {
-    if (l.bank_id != null) return true;
+    // A pin only counts when it resolves to an account this lot's seller
+    // owns — a dead or inherited bank_id routes nowhere, so reporting the lot
+    // as "has an account" would explain away a genuinely unpayable lot.
+    if (bankBelongsToTrader(db, l.bank_id, l.trader_id)) return true;
     if (l.trader_id == null) return false;
     const has = db.get('SELECT 1 AS x FROM trader_banks WHERE trader_id = ? LIMIT 1', [l.trader_id]);
     if (has) return true;

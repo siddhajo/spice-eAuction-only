@@ -27,7 +27,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const { formatDateForDisplay } = require('./report-formatters');
-const { syncLotsFromTrader } = require('./trader-lot-sync');
+const { syncLotsFromTrader, syncTraderBanks } = require('./trader-lot-sync');
 
 // ════════════════════════════════════════════════════════════════════
 // RECEIPT-PRINT HELPERS — ported from PWA server.js's renderer code.
@@ -58,67 +58,14 @@ function getLogoPath() {
 // back into traders.ifsc/acctnum/holder_name so legacy single-bank
 // code paths (exports, older invoice generators) still see a primary
 // account.
-function syncTraderBanks(db, traderId, banks) {
-  const arr = Array.isArray(banks) ? banks.filter(b => b && (b.acctnum || b.ifsc)) : [];
-  // Which account was default BEFORE this save? The rows are about to be
-  // deleted and re-inserted, so a save from a client that doesn't send the
-  // flag (the mobile app, an older desktop build) would otherwise demote the
-  // operator's choice back to whichever account happens to be first — and
-  // is_default decides which account actually gets paid (calculations.js
-  // getBankPaymentData, and every `ORDER BY is_default DESC` reader).
-  const bankKey = b => `${String(b.acctnum || '').trim()}|${String(b.ifsc || '').trim().toUpperCase()}`;
-  const prev = db.get(
-    'SELECT acctnum, ifsc FROM trader_banks WHERE trader_id = ? AND is_default = 1 LIMIT 1', [traderId]);
-  const prevKey = prev ? bankKey(prev) : '';
+// syncTraderBanks now lives in trader-lot-sync.js (imported above), shared
+// with server.js instead of duplicated — the two copies had already drifted
+// into wiping each other's columns on alternate saves.
 
-  db.run('DELETE FROM trader_banks WHERE trader_id = ?', [traderId]);
-  const insertedIds = [];
-  for (const b of arr) {
-    // `branch` must be written here too. This helper deletes and re-inserts,
-    // so omitting the column wiped the branch that POST /api/traders/:id/banks
-    // had stored every time a seller was re-saved. (server.js's twin already
-    // persisted it — this copy is the one that actually runs.)
-    const info = db.run(
-      'INSERT INTO trader_banks (trader_id, bank_name, branch, acctnum, ifsc, holder_name, account_type) VALUES (?,?,?,?,?,?,?)',
-      [traderId, b.bank_name || '', b.branch || '', String(b.acctnum || ''), String(b.ifsc || ''), b.holder_name || '', b.account_type || '']
-    );
-    insertedIds.push(info ? info.lastInsertRowid : null);
-  }
-  // Land on exactly one default, in priority order: the row the client
-  // flagged, else whichever surviving row still matches the previous default,
-  // else the first. Keep in step with the twin in server.js.
-  let defIdx = arr.findIndex(b => Number(b.is_default) === 1);
-  if (defIdx < 0 && prevKey) defIdx = arr.findIndex(b => bankKey(b) === prevKey);
-  if (defIdx < 0 && arr.length) defIdx = 0;
-  if (defIdx >= 0 && insertedIds[defIdx] != null) {
-    db.run('UPDATE trader_banks SET is_default = 0 WHERE trader_id = ?', [traderId]);
-    db.run('UPDATE trader_banks SET is_default = 1 WHERE id = ?', [insertedIds[defIdx]]);
-  }
-  // Mirror the DEFAULT bank — not merely the first — into the legacy
-  // traders.ifsc/acctnum/holder_name columns that older exports still read,
-  // matching what the set-default endpoints do.
-  const primary = (defIdx >= 0 ? arr[defIdx] : null) || {};
-  db.run(
-    'UPDATE traders SET ifsc=?, acctnum=?, holder_name=? WHERE id=?',
-    [primary.ifsc || '', primary.acctnum || '', primary.holder_name || '', traderId]
-  );
-}
-
-// Mask an account number for the receipt according to admin-set policy.
-// Mirrors the PWA's privacy switch verbatim.
-function maskAcctForReceipt(acctnum, maskType) {
-  if (!acctnum || !maskType || maskType === 'none') return acctnum;
-  const a = String(acctnum);
-  if (maskType === 'show_last4' || maskType === 'show_last4_star') {
-    if (a.length <= 4) return a;
-    return '*'.repeat(a.length - 4) + a.slice(-4);
-  }
-  if (maskType === 'show_first4_last4') {
-    if (a.length <= 8) return a;
-    return a.slice(0, 4) + '*'.repeat(a.length - 8) + a.slice(-4);
-  }
-  return acctnum;
-}
+// Sensitive-field masking — shared with the rest of the app (screen +
+// receipt previews). Uses the real mask_acct / mask_ifsc / mask_phone
+// policy (modes: none/last4/last6/first4/first6/first2last2/full).
+const { makeMaskers } = require('./mask-fields');
 
 // Pull the receipt-relevant settings from spice-config's company_settings.
 // Field names match what the PWA renderer reads off cfg.
@@ -142,7 +89,13 @@ function getReceiptConfig(db) {
     companyPhone: get('kl_phone', '') || get('tn_phone', ''),
     companyGstin: get('kl_gstin', '') || get('tn_gstin', ''),
     showUser:     getBool('show_username', false),
-    acctMask:     get('acct_mask', 'none'),
+    // Masking policy (Settings → Business Mode → Privacy & Masking). The
+    // old code read a non-existent 'acct_mask' key with the wrong mode
+    // vocabulary, so masking never applied. Defaults match the
+    // company-config seed: acct → last4, ifsc/phone → none.
+    acctMask:     get('mask_acct',  'last4'),
+    ifscMask:     get('mask_ifsc',  'none'),
+    phoneMask:    get('mask_phone', 'none'),
     showMoisture: getBool('show_moisture', false),
     sampleWeight: parseFloat(get('sample_weight', '0')) || 0,
     // Operator-chosen lot-receipt columns (Settings → Lot Entry Defaults).
@@ -297,12 +250,14 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
   addReceiptHeader(doc, cfg.appTitle, headerBranch, dateFmt, lot.ano, pageW, cfg.companyPhone, cfg.companyGstin);
 
   const lw = 70 * sc;
-  const maskedAcct = maskAcctForReceipt(lot.acctnum, cfg.acctMask);
+  const { maskAcct, maskIfsc } = makeMaskers({ mask_acct: cfg.acctMask, mask_ifsc: cfg.ifscMask });
+  const maskedAcct = lot.acctnum ? maskAcct(lot.acctnum) : '';
+  const maskedIfsc = lot.ifsc    ? maskIfsc(lot.ifsc)    : '';
   const sellerFields = [
     [lb('seller', 'Seller'), lot.trader_name],
     [lb('gstin',  'GSTIN'),  lot.cr],
     [lb('acct_no','A/C No'), maskedAcct || '--NIL--'],
-    [lb('ifsc',   'IFSC'),   lot.ifsc || '--NIL--'],
+    [lb('ifsc',   'IFSC'),   maskedIfsc || '--NIL--'],
   ];
   doc.fontSize(fs(BODY));
   sellerFields.forEach(([label, value]) => {
@@ -552,9 +507,10 @@ function buildEscposReceipt(lots, cfg, opts) {
   for (const sl of _wrapWords('Seller: ' + (lot0.trader_name || ''), WIDTH)) line(sl);
   boldOff();
   if (lot0.cr) line('GSTIN: ' + lot0.cr);
-  const acct = maskAcctForReceipt(lot0.acctnum, cfg.acctMask);
+  const { maskAcct, maskIfsc } = makeMaskers({ mask_acct: cfg.acctMask, mask_ifsc: cfg.ifscMask });
+  const acct = lot0.acctnum ? maskAcct(lot0.acctnum) : '';
   if (acct) line('A/C: ' + acct);
-  if (lot0.ifsc) line('IFSC: ' + lot0.ifsc);
+  if (lot0.ifsc) line('IFSC: ' + maskIfsc(lot0.ifsc));
   rule();
 
   // ── Lots as an ALIGNED COLUMN TABLE (matches the printed PDF receipt) ──
@@ -816,9 +772,14 @@ const LOT_SELECT_SQL = `
     -- the hasLotFilter gate), so the ordinary whole-seller bank file pays the
     -- default regardless of the pin. The receipt now promises what will be paid.
     --
-    -- The pin subquery also gained "AND tb.trader_id = t.id": syncTraderBanks
-    -- deletes and re-inserts a seller's bank rows on every save, so ids get
-    -- recycled and an old bank_id could resolve to ANOTHER seller's account.
+    -- The pin subquery also gained "AND tb.trader_id = t.id", because an old
+    -- bank_id can resolve to ANOTHER seller's account. The mechanism named
+    -- here originally — syncTraderBanks recycling ids by delete+reinsert — was
+    -- wrong: trader_banks is AUTOINCREMENT, so a freed id is never handed out
+    -- again. Delete+reinsert ORPHANED pins (the new rows got new ids); the
+    -- pins that point at a live stranger's account came from the seller being
+    -- corrected on the lot while bank_id was left behind. Both paths are fixed
+    -- at the source now, but the guard stays: a pin is a request, not a fact.
     -- The old l.cr fallback is gone outright — it printed the GSTIN in the
     -- A/C No field whenever a seller had no bank at all.
     COALESCE(
@@ -1155,8 +1116,13 @@ function mountMobile(app, deps) {
       pageLimit:       20,
       showUsername:    false,
       tradeTileTitle:  'Active Trade',
-      acctMask:        'none',
       labels:          {},
+      // Real masking policy (Settings → Business Mode → Privacy &
+      // Masking), not the old hardcoded 'none'. Server-rendered receipts
+      // already apply it; sent here so the PWA can match on screen.
+      acctMask:        get('mask_acct',  'last4'),
+      ifscMask:        get('mask_ifsc',  'none'),
+      phoneMask:       get('mask_phone', 'none'),
     });
   });
 
@@ -1309,10 +1275,15 @@ function mountMobile(app, deps) {
                     COALESCE(t.ppla, l.ppla, '') AS ppla,
                     COALESCE(t.pin,  l.ppin, '') AS pin,
                     COALESCE(t.tel,  l.tel,  '') AS tel,
+                    -- "AND tb.trader_id = l.trader_id" is load-bearing: a pin
+                    -- left behind by a seller correction names the PREVIOUS
+                    -- seller's account, and without the check this listing
+                    -- showed that stranger's account number against the lot.
+                    -- An unowned pin is no pin — fall through to the default.
                     (SELECT tb.acctnum FROM trader_banks tb
-                       WHERE tb.id = l.bank_id) AS lot_bank_acctnum,
+                       WHERE tb.id = l.bank_id AND tb.trader_id = l.trader_id) AS lot_bank_acctnum,
                     (SELECT tb.ifsc FROM trader_banks tb
-                       WHERE tb.id = l.bank_id) AS lot_bank_ifsc,
+                       WHERE tb.id = l.bank_id AND tb.trader_id = l.trader_id) AS lot_bank_ifsc,
                     (SELECT tb.acctnum FROM trader_banks tb
                        WHERE tb.trader_id = l.trader_id
                        ORDER BY tb.is_default DESC, tb.id ASC LIMIT 1) AS def_acctnum,
@@ -1530,8 +1501,12 @@ function mountMobile(app, deps) {
     // legitimately recurs across seller rows (the shared "CR." placeholder,
     // poolers split into several seller records, etc.), so a new seller is
     // created even when its GSTIN/PAN matches an existing one.
-    // Soft dedup — same name + same phone is treated as a single person
-    if (telTrim) {
+    // Soft dedup — same name + same phone is treated as a single person,
+    // UNLESS the client already showed the operator the clash and got a yes
+    // (confirm_duplicate). Two different sellers can share a household phone.
+    const dupConfirmed = t.confirm_duplicate === true || t.confirm_duplicate === 1
+      || t.confirm_duplicate === '1' || t.confirm_duplicate === 'true';
+    if (telTrim && !dupConfirmed) {
       const dup = db.get('SELECT * FROM traders WHERE name = ? AND tel = ? LIMIT 1',
         [nameTrim, telTrim]);
       if (dup) {
