@@ -4363,7 +4363,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <div class="fg" style="max-width:320px;margin:0;flex:1 1 240px">
               <label>Search lots</label>
               <div style="position:relative">
-                <input id="hub-lot-search" type="text" placeholder="Lot no, planter, buyer, bill no…"
+                <input id="hub-lot-search" type="text" placeholder="Lot no, seller, phone, buyer, bill no…"
                        oninput="hubLotSearchDebounced()" autocomplete="off"
                        style="width:100%;padding:8px 30px 8px 8px;border:1px solid var(--border);border-radius:6px">
                 <button type="button" id="hub-lot-clear" onclick="hubLotSearchClear()" title="Clear search"
@@ -4392,7 +4392,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <div class="hub-lot-scroll">
             <table class="hub-lot-table">
               <thead><tr>
-                <th style="width:64px">Lot</th><th>Planter</th><th>CR / GST</th>
+                <th style="width:64px">Lot</th><th>Seller</th><th>CR / GST</th>
                 <th class="num">Bags</th><th class="num">Qty</th><th class="num">Price</th>
                 <th class="num">Amount</th><th>Buyer</th><th>Bill No</th>
               </tr></thead>
@@ -11804,9 +11804,14 @@ function hubRenderLots(){
     const amountCell = Number(l.amount) ? fmtI(l.amount, 2)
       : settledNil ? fmtI(0, 2)
       : '<span class="hub-lot-mute">—</span>';
+    // Seller data-hygiene warnings — the SAME badges (and colours, and
+    // click-to-edit) as the dashboard's lot-wise drill-down, replacing the
+    // lone grey "no bank" chip this list used to carry on its own.
+    const sellerBadges = lotIssueBadgesHtml(lotSellerIssues(l),
+      { traderId: l.trader_id != null ? String(l.trader_id) : '', seller: String(l.name || '') });
     return `<tr class="${wd ? 'is-wd' : ''}" data-lot-id="${l.id}" onclick="hubLotOpen(${l.id})">
       <td class="hub-lot-no">${esc(l.lot_no)}</td>
-      <td>${esc(l.name || '')}${l.has_bank ? '' : '<span class="hub-lot-badge" title="This seller has no bank account on file">no bank</span>'}</td>
+      <td>${esc(l.name || '')}${sellerBadges}</td>
       <td class="hub-lot-mute">${esc(l.cr || '')}</td>
       <td class="num">${fmtI(l.bags)}</td>
       <td class="num">${fmtI(l.qty, 3)}</td>
@@ -15155,19 +15160,28 @@ function lotSellerIssues(l){
 // The two badges raised against the LOT's link to a seller rather than
 // against the seller's own record — see lotSellerIssues above.
 const DL_LINK_ISSUES = new Set(['No seller', 'Not linked']);
-// `row` supplies the seller identity so each badge can open that seller's
-// edit form — the badge names what's missing, clicking it goes to fix it.
-function lotIssueBadgesHtml(issues, row){
+// `row` supplies the seller identity ({ traderId, seller }) so each badge can
+// open that seller's edit form — the badge names what's missing, clicking it
+// goes to fix it. `activeBadge` rings the badges matching a live badge filter;
+// callers with no such filter (the Auction Desk) leave it blank.
+//
+// Shared by the dashboard's lot-wise drill-down and the Auction Desk lot list,
+// so a warning looks and behaves the same on both.
+function lotIssueBadgesHtml(issues, row, activeBadge){
   if (!issues || !issues.length) return '';
   const r = row || {};
+  const active = activeBadge || '';
   return issues.map(i => {
     // The linkage errors are fixed on the LOT, not on the seller master —
     // opening an edit form there would be a dead end, so those badges just
     // repeat their guidance.
     const fixable = !DL_LINK_ISSUES.has(i.label);
-    return `<span class="dl-issue ${i.sev === 'error' ? 'dl-issue-err' : 'dl-issue-warn'}${_dl.filt.badge === i.label ? ' dl-issue-on' : ''}"`
+    // The Auction Desk's rows are themselves clickable (they open the lot
+    // drawer), so a badge click must not also count as a row click.
+    const act = fixable ? 'dlEditSeller(this)' : 'toast(this.dataset.tip)';
+    return `<span class="dl-issue ${i.sev === 'error' ? 'dl-issue-err' : 'dl-issue-warn'}${active === i.label ? ' dl-issue-on' : ''}"`
     + ` data-tid="${esc(r.traderId || '')}" data-name="${esc(r.seller || '')}" data-tip="${esc(i.tip)}"`
-    + ` onclick="${fixable ? 'dlEditSeller(this)' : 'toast(this.dataset.tip)'}"`
+    + ` onclick="event.stopPropagation();${act}"`
     + ` title="${esc(i.tip)}${fixable ? '&#10;&#10;Click to edit this seller and fix it.' : ''}">${esc(i.label)}</span>`;
   }).join('');
 }
@@ -15372,7 +15386,7 @@ function renderDepotLotsTable(){
     // …with the seller's outstanding data warnings (No GSTIN / No PAN / …)
     // badged right beside it, so the operator sees what needs fixing before
     // they click through.
-    const issueBadges = lotIssueBadgesHtml(r.issues, r);
+    const issueBadges = lotIssueBadgesHtml(r.issues, r, _dl.filt.badge);
     const sellerCell = (r.seller
       ? `<a href="#" class="dl-seller" data-tid="${esc(r.traderId)}" data-name="${esc(r.seller)}"
            onclick="dlOpenSeller(this);return false" title="View / edit seller details">${esc(r.seller)}</a>`
@@ -24552,6 +24566,10 @@ async function saveTrader(){
     searchTraders('');
     lvResumeAfterSellerEdit();
     dlResumeAfterSellerEdit();
+    // A seller edit re-stamps their un-invoiced lots server-side, so the
+    // Auction Desk's own copy of the rows is stale — refresh it whenever it
+    // is holding a list, so a warning badge clears as soon as it's fixed.
+    if (typeof hubLoadLots === 'function' && window._hubLots) hubLoadLots();
   }catch(e){showError(e)}
 }
 async function delTrader(id){if(!confirm('Delete?'))return;await j(`/api/traders/${id}`,{method:'DELETE'});searchTraders('')}
