@@ -349,6 +349,17 @@ const DOCUMENTS = [
     multi: ['branch', 'sellerId', 'buyerCode'],
     route: '/api/spice-board-reports/:type/export', href: hrefSpiceBoard('litre_weight') },
 
+  // Arrivals: one row per depot — lots, bags, weight — read against the
+  // physical count before bidding. Filed under Pre-auction rather than with
+  // the Spices Board returns above because that is when it is used, and it
+  // needs only stage 2 (lots entered): it counts EVERY booked lot, priced or
+  // not, so it works before a single price exists.
+  { id: 'arrivals', label: 'Arrivals Report', group: 'preauction', sub: 'Lot lists', family: 'spiceboard',
+    kind: 'export', scope: 'trade', formats: ['pdf', 'xlsx'], minStage: 2, perm: 'export',
+    filters: ['branch', 'sellerId', 'buyerCode'],
+    multi: ['branch', 'sellerId', 'buyerCode'],
+    route: '/api/spice-board-reports/:type/export', href: hrefSpiceBoard('arrivals') },
+
   // Date-range scoped, not trade scoped — the tile asks for from/to.
   { id: 'tds_return', label: 'TDS Return', group: 'statutory', sub: 'Tax', family: 'exports',
     kind: 'export', scope: 'dateRange', formats: ['xlsx', 'pdf'], minStage: 4, perm: 'export',
@@ -383,6 +394,15 @@ const DOCUMENTS = [
     multi: ['sellers'],
     route: '/api/exports/:type/:auctionId', href: hrefExport('bank_payment_advance'),
     note: 'Pays the recorded lot advances — XLSX only' },
+
+  // The office's record of what goes out to the PLANTERS for a trade: one row
+  // per planter lot (bill, commission, samples, GST, sale cost, balance) with
+  // a totals strip. Stage 3 — every column but the bill number comes off a
+  // priced lot, and a lot with no bill yet simply shows a blank there.
+  { id: 'planter_disbursement', label: 'Planter Disbursement', group: 'banking', sub: 'Summaries',
+    family: 'exports', kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'],
+    minStage: 3, perm: 'export',
+    route: '/api/exports/:type/:auctionId', href: hrefExport('planter_disbursement') },
 
   { id: 'payment', label: 'Payment Summary', group: 'banking', sub: 'Summaries', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 3, perm: 'export',

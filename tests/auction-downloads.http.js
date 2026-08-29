@@ -11,7 +11,7 @@
 //   [csv]      the CSV tiles return actual CSV — not an XLSX blob under a
 //              .csv name. Asserted on the bytes: a zip magic number (PK)
 //              means we shipped a spreadsheet and mislabelled it.
-//   [bulk]     the three generated families' list + merge routes exist.
+//   [bulk]     the four generated families' list + merge routes exist.
 //   [role]     an operator — who has no auction_desk — can use all of it.
 const os = require('os'), path = require('path'), fs = require('fs');
 const { spawn } = require('child_process');
@@ -104,7 +104,7 @@ const cleanup = () => {
   const bulks = MANIFEST.filter(m => m.bulk);
 
   console.log(`[manifest] ${hrefs.length} direct routes, ${bulks.length} bulk families, ${TODO.length} not-yet-wired`);
-  check('the manifest was harvested (not silently empty)', hrefs.length >= 15 && bulks.length === 3,
+  check('the manifest was harvested (not silently empty)', hrefs.length >= 15 && bulks.length === 4,
         `${hrefs.length} hrefs / ${bulks.length} bulk`);
 
   // ══ [manifest] every direct route answers ════════════════════════

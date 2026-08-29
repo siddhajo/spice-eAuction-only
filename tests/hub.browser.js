@@ -477,6 +477,9 @@ const cleanup = () => {
   const acts = await page.evaluate(() => {
     hubOpenGroup('preauction'); hubOpenSub('Lot lists');
     const t = document.querySelector('[data-hub-id="lot_slip"]');
+    // The row is behind the ⋮ now — the card itself is the download — so it
+    // has to be opened before its geometry means anything.
+    t?.querySelector('.hub-more')?.click();
     const btns = Array.from(t?.querySelectorAll('.hub-btn') || []);
     const rows = new Set(btns.map(b => b.getBoundingClientRect().top));
     return {
@@ -534,10 +537,54 @@ const cleanup = () => {
   check('every card names its formats on a second line',
         head.fmtLines === head.tiles, `${head.fmtLines}/${head.tiles}`);
   check('the old colour-coded format chip is gone', head.oldChips === 0, `${head.oldChips} left`);
-  check('the format line lists formats, not one', /^[A-Z]{3,4}( · [A-Z]{3,4})*$/.test(head.fmtText || ''),
+  // The hint reads like the Auction Downloads screen's, and still names what
+  // you get — the desk groups by purpose, so no heading above says the format.
+  check('the hint says "Click to view" and names the formats',
+        /^Click to view · [A-Z]{3,4}( · [A-Z]{3,4})*$/.test(head.fmtText || ''),
         String(head.fmtText));
   check('cards kept their download actions', head.withActions > 0, `${head.withActions} of ${head.tiles}`);
   check('cards kept the bundle checkbox', head.withPicks > 0, `${head.withPicks} of ${head.tiles}`);
+
+  // ── The card is the download ─────────────────────────────────────
+  // The point of the change: no separate button to aim at. Assert the whole
+  // card carries the affordance, that the action row is NOT the resting
+  // state, and that the tick still works without triggering a download.
+  const card = await page.evaluate(() => {
+    const t = document.querySelector('.hub-tile[role="button"]');
+    if (!t) return null;
+    // An earlier check opens a card via its ⋮; close everything so "at rest"
+    // means at rest rather than "whatever the last assertion left behind".
+    for (const o of document.querySelectorAll('.hub-tile[data-open="1"]')) o.removeAttribute('data-open');
+    const acts = t.querySelector('.hub-acts');
+    const restDisplay = acts ? getComputedStyle(acts).display : null;
+    t.querySelector('.hub-more')?.click();
+    return {
+      cursor: getComputedStyle(t).cursor,
+      tabbable: t.getAttribute('tabindex') === '0',
+      fmt: t.getAttribute('data-dl-fmt'),
+      hasActs: !!acts,
+      restDisplay,
+      actsShownWhenOpened: acts ? getComputedStyle(acts).display !== 'none' : null,
+      onlyOneOpen: document.querySelectorAll('.hub-tile[data-open="1"]').length <= 1,
+    };
+  });
+  check('the card itself is the download target',
+        !!card && card.cursor === 'pointer' && card.tabbable && !!card.fmt, JSON.stringify(card));
+  check('the action row is hidden at rest',
+        !!card && card.hasActs && card.restDisplay === 'none', JSON.stringify(card));
+  check('…and the ⋮ reveals it', !!card && card.actsShownWhenOpened === true, JSON.stringify(card));
+  check('…one card open at a time', !!card && card.onlyOneOpen === true, JSON.stringify(card));
+  // Ticking for the bundle must not also fire the card's download.
+  const tickIsolated = await page.evaluate(() => {
+    const t = document.querySelector('.hub-tile[role="button"] .hub-cb')?.closest('.hub-tile');
+    if (!t) return 'no card with a tick';
+    let fired = 0;
+    const real = window.hubDownload; window.hubDownload = () => { fired++; };
+    t.querySelector('.hub-cb').click();
+    window.hubDownload = real;
+    return fired === 0;
+  });
+  check('ticking for the bundle does not trigger a download', tickIsolated === true, String(tickIsolated));
 
   // A locked card greys its glyph, the way a not-yet-available tile does on
   // the Auction Downloads screen — same signal, same place.

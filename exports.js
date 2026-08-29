@@ -2160,6 +2160,14 @@ const EXPORT_TYPES = {
   // and no format at all both serve the same bytes.
   dealer_invoice_csv: { fn: exportDealerInvoiceCsv,  name: 'DealerInvoice',     needsCfg: true,
                         ext: 'csv', mime: 'text/csv; charset=utf-8' },
+  // Disbursement Register — dealer side. Needs cfg for the trader-sample kg
+  // that splits SAMP out of the stored refund. Has a PDF twin (same rows, see
+  // exports-pdf.js), so ?format=pdf on this type works too.
+  dealer_disbursement:{ fn: exportDealerDisbursement, name: 'DealerDisbursement', needsCfg: true },
+  // Disbursement register — one row per planter lot, in the customer's
+  // supplied layout. needsCfg: the two sample columns are cut from
+  // sb_refund / sb_trader_sample.
+  planter_disbursement:{ fn: exportPlanterDisbursement, name: 'PlanterDisbursement', needsCfg: true },
   payment:            { fn: exportPaymentSummary,    name: 'Payment',           needsCfg: true },
   payment_party_wise: { fn: exportPaymentPartyWise,  name: 'PaymentPartyWise',  needsCfg: true },
   tally_purchase:     { fn: exportTallyPurchase,     name: 'TallyPurchase',     needsCfg: true },
@@ -2286,6 +2294,253 @@ async function exportCommissionBillCsv(db, auctionId, cfg, _state, _extra) {
   return Buffer.from('﻿' + rows.join('\r\n') + '\r\n', 'utf8');
 }
 
+// ── PLANTER DISBURSEMENT REGISTER ────────────────────────────────────
+// BILL | NAME | LOT | COMMN | SAMP | CGST | SGST | IGST | INCL | REFUND |
+// SALE COST | BALANCE — one row per PLANTER lot, closed by a totals strip.
+// The office's record of what goes out to the planters for a trade, in the
+// customer-supplied layout.
+//
+// ── Who is on it ───────────────────────────────────────────────────
+// Planters only: `NOT hasValidGstin(cr)`, the same GSTIN-only rule that
+// decides who gets a commission bill rather than a dealer debit note (see
+// listAgriSellers). Priced lots only — a withdrawn or unpriced lot has no
+// disbursement to register — and reserved lots are excluded, as everywhere
+// else. Lot-number order, which is the order the bill numbers run in.
+//
+// ── Where the numbers come from ────────────────────────────────────
+// Every figure is READ from the lot, never recomputed: calculateLot has
+// already written com / sertax / cgst / sgst / igst, and those same stored
+// values are what the commission bill PDF and the Tally vouchers print.
+// Deriving them again here would let this register disagree with the
+// documents it is the record of.
+//
+// The two sample columns decompose `lots.refund` exactly as the Commission
+// Bill CSV does (see CBC_COLUMNS above), because the reference sheet does:
+//
+//     REFUND = (sb_refund + sb_trader_sample) x price    the planter's sample
+//     SAMP   =  sb_trader_sample             x price    the trader's cut
+//     REFUND - SAMP == lots.refund                      what the app credits
+//
+// so the register's own columns reconcile to the payable:
+//
+//     SALE COST + REFUND - SAMP - COMMN - INCL - CGST - SGST - IGST = BALANCE
+//
+// INCL is `lots.sertax`, the handling charge (cfg.hpc) — the CBC calls the
+// same column "INCL. CHARGES".
+//
+// ── Precision ──────────────────────────────────────────────────────
+// The money columns carry ONE decimal, matching the reference (COMMN 1,463.60
+// for a stored 1,463.61) and the Commission Bill CSV's own narrowing. SALE
+// COST keeps its two. BALANCE is whole rupees — that is what `lots.balance`
+// holds and what the seller is actually settled in (see calculateLot), and
+// rounding it here is what makes the column foot to the reference.
+//
+// Shared by the XLSX and the PDF (exports-pdf.js reads this same builder), so
+// the two cannot list different lots or different figures.
+function planterDisbursementRows(db, auctionId, cfg) {
+  cfg = cfg || {};
+  const { hasValidGstinSql } = require('./calculations');
+  const auction = db.get('SELECT ano, date FROM auctions WHERE id = ?', [auctionId]) || {};
+  const lots = db.all(
+    `SELECT lot_no, name, price, amount, com, sertax, cgst, sgst, igst, balance
+       FROM lots
+      WHERE auction_id = ? AND amount > 0 AND COALESCE(reserved,0) = 0
+        AND NOT ${hasValidGstinSql('cr')}
+      ORDER BY CAST(lot_no AS INTEGER), lot_no`, [auctionId]) || [];
+
+  // Commission-bill number per lot — the same lookup the Commission Bill CSV
+  // uses. Bills are keyed by lot_no when the trade was raised lot-wise
+  // (flag_lotwise_bills) and by seller name when it was raised seller-wise, so
+  // both lookups are built and the more specific wins. A lot with no bill yet
+  // leaves the column blank rather than inventing a number; in seller-wise
+  // mode one number legitimately repeats down a seller's lots.
+  const bills = db.all('SELECT bil, name, lot_no FROM bills WHERE ano = ?',
+                       [String(auction.ano || '')]) || [];
+  const billByLot = new Map(), billByName = new Map();
+  for (const b of bills) {
+    const no = b.bil == null || b.bil === '' ? '' : String(b.bil);
+    if (!no) continue;
+    const lotKey = String(b.lot_no || '').trim();
+    if (lotKey) billByLot.set(lotKey, no);
+    else billByName.set(String(b.name || '').trim().toUpperCase(), no);
+  }
+
+  const r1 = (v) => Math.round((Number(v) || 0) * 10) / 10;
+  const r2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
+  const traderSampleKg = Number(cfg.sb_trader_sample) || 0;
+  const sampleKg       = r2((Number(cfg.sb_refund) || 0) + traderSampleKg);
+
+  return lots.map(l => {
+    const rate   = Number(l.price) || 0;
+    const lotKey = String(l.lot_no || '').trim();
+    return {
+      bill: billByLot.get(lotKey)
+            || billByName.get(String(l.name || '').trim().toUpperCase()) || '',
+      name: l.name || '',
+      lot:  l.lot_no,
+      commn:  r1(l.com),
+      samp:   r1(traderSampleKg * rate),
+      cgst:   r1(l.cgst),
+      sgst:   r1(l.sgst),
+      igst:   r1(l.igst),
+      incl:   r1(l.sertax),
+      refund: r1(sampleKg * rate),
+      cost:   r2(l.amount),
+      // Whole rupees — the figure the seller is actually paid.
+      balance: Math.round(Number(l.balance) || 0),
+    };
+  });
+}
+
+// Column set, shared with the PDF twin so the two carry the same headers in
+// the same order. Money columns get an explicit numFmt: 'COMMN' / 'SAMP' /
+// 'INCL' / 'SALE COST' are not names xlsxNumFmtForHeader knows, and without
+// one they would land as unformatted, left-aligned cells.
+const PLANTER_DISB_COLS = [
+  { header: 'BILL',      key: 'bill',    width: 10 },
+  { header: 'NAME',      key: 'name',    width: 28 },
+  { header: 'LOT',       key: 'lot',     width: 8  },
+  { header: 'COMMN',     key: 'commn',   width: 13, numFmt: '#,##,##0.00', align: 'right' },
+  { header: 'SAMP',      key: 'samp',    width: 11, numFmt: '#,##,##0.00', align: 'right' },
+  { header: 'CGST',      key: 'cgst',    width: 12, numFmt: '#,##,##0.00', align: 'right' },
+  { header: 'SGST',      key: 'sgst',    width: 12, numFmt: '#,##,##0.00', align: 'right' },
+  { header: 'IGST',      key: 'igst',    width: 11, numFmt: '#,##,##0.00', align: 'right' },
+  { header: 'INCL',      key: 'incl',    width: 11, numFmt: '#,##,##0.00', align: 'right' },
+  { header: 'REFUND',    key: 'refund',  width: 13, numFmt: '#,##,##0.00', align: 'right' },
+  { header: 'SALE COST', key: 'cost',    width: 16, numFmt: '#,##,##0.00', align: 'right' },
+  { header: 'BALANCE',   key: 'balance', width: 16, numFmt: '#,##,##0.00', align: 'right' },
+];
+// The columns the totals strip foots. BILL / NAME / LOT are identifiers, so
+// nothing is summed there.
+const PLANTER_DISB_TOTAL_KEYS =
+  ['commn', 'samp', 'cgst', 'sgst', 'igst', 'incl', 'refund', 'cost', 'balance'];
+
+async function exportPlanterDisbursement(db, auctionId, cfg) {
+  const rows = planterDisbursementRows(db, auctionId, cfg);
+  const total = {};
+  for (const k of PLANTER_DISB_TOTAL_KEYS) {
+    total[k] = Math.round(rows.reduce((s, r) => s + (Number(r[k]) || 0), 0) * 100) / 100;
+  }
+  return createExcelBuffer('PlanterDisbursement', PLANTER_DISB_COLS, rows, {
+    db, title: 'Disbursement Register', metaLines: auctionMeta(db, auctionId),
+    // The label goes in NAME, not in the `label` option: that one drops the
+    // word in the first non-numeric column, which here is the 3-character BILL.
+    grandTotal: { values: { name: 'TOTAL', ...total } },
+  });
+}
+
+// ── DISBURSEMENT REGISTER — DEALER ───────────────────────────────────
+// The dealer half of the register above: one row per lot belonging to a
+// REGISTERED seller, showing what the lot sold for and what the dealer is
+// left with after commission and tax. Same twelve columns, same order, same
+// meaning — planters and dealers are the two complementary halves of the
+// trade, and the office reads the two sheets side by side.
+//
+// Dealer = hasValidGstinSql, `cr` holding a full 15-char GSTIN — the exact
+// complement of the planter builder's NOT, so between them the two registers
+// cover every priced lot in the trade once and only once. This is a payments
+// surface, so it takes that ordinary rule rather than the GSTIN+SBL rule kept
+// for the Dashboard / Lot Entry / e-Auction CSV.
+//
+// ── Where the numbers come from ────────────────────────────────────
+// Identical to the planter builder — see its note. Every figure is READ off
+// the lot, the two sample columns decompose `lots.refund` the same way, INCL
+// is `lots.sertax`, and BALANCE is the stored whole-rupee payable, so:
+//
+//     SALE COST + REFUND - SAMP - COMMN - INCL - CGST - SGST - IGST = BALANCE
+//
+// ── BILL ───────────────────────────────────────────────────────────
+// The dealer's debit note ("Tax Invoice On Commission") for the trade, which
+// is the dealer-side counterpart of the planter's commission bill.
+//
+// `debit_notes` carries no lot_no — per-lot dealer notes are not built yet
+// (the planter table has them, this one does not) — so ONE note covers all of
+// a dealer's lots and its number legitimately repeats down that dealer's
+// rows. Resolved by trader_id first, falling back to name only when the note
+// predates trader linking: two sellers can share a name, and matching on it
+// alone would put one dealer's note number on another's lot.
+//
+// ── Precision ──────────────────────────────────────────────────────
+// The money columns keep TWO decimals — the exact stored figures — where the
+// planter register narrows to one. These are the values the debit note, the
+// Tally voucher and the bank file already carry, so the register reconciles
+// against the documents rather than against the legacy sheet's 10-paise
+// rounding. BALANCE is whole rupees either way, so the two registers still
+// foot to the same payable.
+function dealerDisbursementRows(db, auctionId, cfg) {
+  cfg = cfg || {};
+  const { hasValidGstinSql } = require('./calculations');
+  const auction = db.get('SELECT id, ano FROM auctions WHERE id = ?', [auctionId]) || {};
+  const lots = db.all(
+    `SELECT lot_no, name, trader_id, price, amount, com, sertax, cgst, sgst, igst, balance
+       FROM lots
+      WHERE auction_id = ? AND amount > 0 AND COALESCE(reserved,0) = 0
+        AND ${hasValidGstinSql('cr')}
+      ORDER BY CAST(lot_no AS INTEGER), lot_no`, [auctionId]) || [];
+
+  // Matched on auction_id OR ano: debit_notes gained auction_id in a later
+  // migration, so notes raised before it key off the trade number alone (the
+  // same pattern the Dealer Invoice CSV uses). Ordered by note number so that
+  // when a dealer somehow holds two notes, the lower one is the first write
+  // and therefore shows consistently on every one of their rows.
+  const notes = db.all(
+    `SELECT note_no, name, trader_id FROM debit_notes
+      WHERE (auction_id = ? OR ano = ?)
+      ORDER BY CAST(note_no AS INTEGER), note_no`,
+    [auction.id, String(auction.ano || '')]) || [];
+  const noteByTrader = new Map(), noteByName = new Map();
+  for (const n of notes) {
+    const no = String(n.note_no == null ? '' : n.note_no).trim();
+    if (!no) continue;
+    if (n.trader_id != null && !noteByTrader.has(n.trader_id)) noteByTrader.set(n.trader_id, no);
+    const k = String(n.name || '').trim().toUpperCase();
+    if (k && !noteByName.has(k)) noteByName.set(k, no);
+  }
+
+  const r2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
+  const traderSampleKg = Number(cfg.sb_trader_sample) || 0;
+  const sampleKg       = r2((Number(cfg.sb_refund) || 0) + traderSampleKg);
+
+  return lots.map(l => {
+    const rate = Number(l.price) || 0;
+    return {
+      // Blank when the note has not been generated — the lot and its balance
+      // still belong in the register, so an ungenerated note must not drop it.
+      bill: (l.trader_id != null && noteByTrader.get(l.trader_id))
+            || noteByName.get(String(l.name || '').trim().toUpperCase()) || '',
+      name: l.name || '',
+      lot:  l.lot_no,
+      commn:  r2(l.com),
+      samp:   r2(traderSampleKg * rate),
+      cgst:   r2(l.cgst),
+      sgst:   r2(l.sgst),
+      igst:   r2(l.igst),
+      incl:   r2(l.sertax),
+      refund: r2(sampleKg * rate),
+      cost:   r2(l.amount),
+      // Whole rupees — the figure the dealer is actually paid.
+      balance: Math.round(Number(l.balance) || 0),
+    };
+  });
+}
+
+// Same twelve columns as the planter register — reused rather than restated
+// so the two sheets can never drift apart in header text, order or format.
+const DEALER_DISB_COLS       = PLANTER_DISB_COLS;
+const DEALER_DISB_TOTAL_KEYS = PLANTER_DISB_TOTAL_KEYS;
+
+async function exportDealerDisbursement(db, auctionId, cfg) {
+  const rows = dealerDisbursementRows(db, auctionId, cfg);
+  const total = {};
+  for (const k of DEALER_DISB_TOTAL_KEYS) {
+    total[k] = Math.round(rows.reduce((s, r) => s + (Number(r[k]) || 0), 0) * 100) / 100;
+  }
+  return createExcelBuffer('DealerDisbursement', DEALER_DISB_COLS, rows, {
+    db, title: 'Disbursement Register', metaLines: auctionMeta(db, auctionId),
+    grandTotal: { label: 'TOTAL', values: total },
+  });
+}
+
 // ── XLSX → CSV ───────────────────────────────────────────────────────
 // Every export here builds its workbook through createExcelBuffer, which
 // makes exactly ONE worksheet. That is what makes this conversion safe: a
@@ -2335,4 +2590,10 @@ module.exports = {
   exportPurchaseRegister, exportSalesRegister, exportIndividualRegister,
   exportSellersXlsx, exportBuyersXlsx,
   exportDealerInvoiceCsv,
+  // Shared with the PDF twin (exports-pdf.js) so the two renderings cannot
+  // list different lots, columns or figures.
+  exportPlanterDisbursement, planterDisbursementRows,
+  PLANTER_DISB_COLS, PLANTER_DISB_TOTAL_KEYS,
+  exportDealerDisbursement, dealerDisbursementRows,
+  DEALER_DISB_COLS, DEALER_DISB_TOTAL_KEYS,
 };

@@ -24,7 +24,7 @@ const PDFDocument = require('pdfkit');
 //     ignored); used by Form C, matching the other reports/exports.
 const { isDealerSeller, hasValidGstin } = require('./calculations');
 const {
-  fmtMoney, fmtQty, fmtPrice, formatInvoiceNo,
+  fmtMoney, fmtQty, fmtPrice, fmtIndian, formatInvoiceNo,
   getCompanyHeader, writeXlsxCompanyHeader,
   formatDateForDisplay,
 } = require('./report-formatters');
@@ -2226,13 +2226,423 @@ async function litreWeightPdf(db, opts) {
 }
 
 // ════════════════════════════════════════════════════════════
+// ARRIVALS REPORT — what each depot brought in
+// ════════════════════════════════════════════════════════════
+// One row per depot (lots.branch): how many lots, how many bags, how much
+// weight, plus a grand total. The depot manager reads it against the physical
+// count before bidding starts.
+//
+// Counts EVERY booked lot — includeUnpriced, so no price gate. This report is
+// about ARRIVALS, not sales: it is read before prices exist, and a withdrawn
+// or unsold lot still physically arrived and still has to be accounted for.
+// (The customer's reference file totals 202 lots, which is that trade's full
+// booked count, not its 187 sold.) Getting this wrong would make the sheet
+// disagree with the depot's own tally, which is the one thing it is for.
+function _arCtx(opts) {
+  return Object.assign({}, opts, { includeUnpriced: true });
+}
+
+function buildArrivals(ctx) {
+  const by = new Map();
+  for (const r of ctx.rows) {
+    // Lots entered before depots were configured carry no branch. They are
+    // shown rather than dropped — a silently missing lot is worse than an
+    // obviously unassigned one, and the total has to reconcile.
+    const depot = String(r.branch || '').trim() || '(no depot)';
+    let g = by.get(depot);
+    if (!g) { g = { depot, lots: 0, bags: 0, qty: 0 }; by.set(depot, g); }
+    g.lots += 1;
+    g.bags += Number(r.bags) || 0;
+    g.qty  += Number(r.qty)  || 0;
+  }
+  // Declaration order is arrival order in the reference file, which no query
+  // can reproduce; alphabetical would reorder a sheet the depot reads by
+  // position. Insertion order (first lot seen per depot) is the closest
+  // stable stand-in, and lots come back ordered by lot number.
+  const rows = Array.from(by.values());
+  const totals = rows.reduce((t, g) => ({
+    lots: t.lots + g.lots, bags: t.bags + g.bags, qty: t.qty + g.qty,
+  }), { lots: 0, bags: 0, qty: 0 });
+  return { rows, totals };
+}
+
+function arrivalsJson(db, opts) {
+  const ctx = getReportContext(db, _arCtx(opts));
+  const d = buildArrivals(ctx);
+  return {
+    title: 'Arrivals Report',
+    auction: { ano: ctx.auction.ano, date: fmtDateDMY(ctx.auction.date), state: ctx.auction.state },
+    columns: [
+      { key: 'depot', header: 'Depot' },
+      { key: 'lots',  header: 'Lots',     numeric: true },
+      { key: 'bags',  header: 'Bags',     numeric: true },
+      { key: 'qty',   header: 'Qty (kg)', numeric: true, fmt: 'qty' },
+    ],
+    sections: [{ title: '', rows: d.rows, totals: Object.assign({ label: 'Total' }, d.totals) }],
+    grand: Object.assign({ label: 'Total' }, d.totals),
+  };
+}
+
+async function arrivalsXlsx(db, opts) {
+  _loadDateFormat(db);
+  const ctx = getReportContext(db, _arCtx(opts));
+  const d = buildArrivals(ctx);
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Arrivals');
+  ws.columns = [{ width: 28 }, { width: 12 }, { width: 12 }, { width: 18 }];
+  const header = getCompanyHeader(db);
+  ws.addRow([String(header && header.name || '')]).font = { bold: true, size: 14 };
+  ws.addRow([String(header && header.branch || header && header.address1 || '')]).font = { bold: true, size: 10 };
+  ws.addRow([`Auction No:${ctx.auction.ano}`, '', '', `Date:${fmtDateDMY(ctx.auction.date)}`]).font = { bold: true };
+  ws.addRow([]);
+  const head = ws.addRow(['Depot', 'Lots', 'Bags', 'Qty (kg)']);
+  head.font = { bold: true };
+  for (const g of d.rows) ws.addRow([g.depot, g.lots, g.bags, Number(g.qty.toFixed(3))]);
+  const tot = ws.addRow(['Total', d.totals.lots, d.totals.bags, Number(d.totals.qty.toFixed(3))]);
+  tot.font = { bold: true };
+  ws.getColumn(4).numFmt = '#,##0.000';
+  return wb.xlsx.writeBuffer();
+}
+
+async function arrivalsPdf(db, opts) {
+  _loadDateFormat(db);
+  const ctx = getReportContext(db, _arCtx(opts));
+  const d = buildArrivals(ctx);
+  const header = getCompanyHeader(db);
+
+  const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 24 });
+  const buffers = []; doc.on('data', b => buffers.push(b));
+  const m = 24;
+  const pageW = doc.page.width, pageH = doc.page.height;
+  const usableW = pageW - m * 2;
+
+  // Depot takes the left third; the three numeric columns split the rest.
+  const cw = [
+    Math.floor(usableW * 0.25),
+    Math.floor(usableW * 0.25),
+    Math.floor(usableW * 0.25),
+    0,
+  ];
+  cw[3] = usableW - cw.slice(0, 3).reduce((a, b) => a + b, 0);
+  const cx = [m]; for (let i = 0; i < cw.length - 1; i++) cx.push(cx[i] + cw[i]);
+  const aligns = ['left', 'right', 'right', 'right'];
+  const heads  = ['Depot', 'Lots', 'Bags', 'Qty (kg)'];
+
+  const ROW_H = 20, HEAD_H = 24;
+  let y = 0, bodyTop = 0;
+
+  const cell = (txt, i, top, o) => {
+    o = o || {};
+    doc.fillColor('#000').font(o.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(o.size || 9.5);
+    doc.text(String(txt == null ? '' : txt), cx[i] + 5, top + (o.dy == null ? 6 : o.dy), {
+      width: cw[i] - 10, align: o.align || aligns[i], lineBreak: false, ellipsis: true,
+    });
+  };
+
+  function drawTopHeader() {
+    y = m;
+    doc.fillColor('#000').font('Helvetica-Bold').fontSize(14)
+       .text(String(header && header.name || ''), m, y, { width: usableW, align: 'center', lineBreak: false });
+    // Second line is the DEPOT/branch, not the postal address — this sheet is
+    // read at a depot and names which one it belongs to.
+    const sub = String((header && header.branch) || (header && header.address1) || '').trim();
+    if (sub) {
+      doc.font('Helvetica-Bold').fontSize(9)
+         .text(sub, m, y + 17, { width: usableW, align: 'center', lineBreak: false });
+    }
+    y += sub ? 40 : 26;
+
+    // Auction on the left, date hard right — the reference's meta line.
+    doc.font('Helvetica-Bold').fontSize(9);
+    doc.text(`Auction No:${ctx.auction.ano}`, m, y, { width: usableW / 2, align: 'left', lineBreak: false });
+    doc.text(`Date:${fmtDateDMY(ctx.auction.date)}`, m + usableW / 2, y,
+             { width: usableW / 2, align: 'right', lineBreak: false });
+    y += 20;
+
+    doc.rect(m, y, usableW, HEAD_H).stroke('#000');
+    heads.forEach((h, i) => cell(h, i, y, { bold: true, dy: 8, size: 10 }));
+    for (let i = 1; i < cw.length; i++) {
+      doc.moveTo(cx[i], y).lineTo(cx[i], y + HEAD_H).lineWidth(0.5).strokeColor('#000').stroke();
+    }
+    y += HEAD_H;
+    bodyTop = y;
+  }
+
+  function finishBlock() {
+    if (!bodyTop) return;
+    doc.rect(m, bodyTop, usableW, y - bodyTop).lineWidth(0.5).strokeColor('#000').stroke();
+    for (let i = 1; i < cw.length; i++) {
+      doc.moveTo(cx[i], bodyTop).lineTo(cx[i], y).lineWidth(0.5).strokeColor('#000').stroke();
+    }
+    bodyTop = 0;
+  }
+
+  drawTopHeader();
+  for (const g of d.rows) {
+    if (y + ROW_H > pageH - m - 14) { finishBlock(); doc.addPage(); drawTopHeader(); }
+    cell(g.depot,      0, y);
+    cell(fmtIndian(g.lots), 1, y);
+    cell(fmtIndian(g.bags), 2, y);
+    cell(fmtQty(g.qty),  3, y);
+    y += ROW_H;
+    doc.moveTo(m, y).lineTo(m + usableW, y).lineWidth(0.4).strokeColor('#000').stroke();
+  }
+
+  if (y + ROW_H > pageH - m - 14) { finishBlock(); doc.addPage(); drawTopHeader(); }
+  cell('Total',                 0, y, { bold: true });
+  cell(fmtIndian(d.totals.lots), 1, y, { bold: true });
+  cell(fmtIndian(d.totals.bags), 2, y, { bold: true });
+  cell(fmtQty(d.totals.qty),    3, y, { bold: true });
+  y += ROW_H;
+  finishBlock();
+
+  doc.end();
+  return new Promise(resolve => doc.on('end', () => resolve(Buffer.concat(buffers))));
+}
+
+// ════════════════════════════════════════════════════════════
+// FORM D1 — depot-wise quantity, Traders vs Growers
+// ════════════════════════════════════════════════════════════
+// Form D reports ONE set of totals for the whole auction. Form D1 is the
+// companion sheet that splits the same quantities two ways at once: by depot
+// (lots.branch) down the page, and by seller class across two numbered
+// sections —
+//
+//   1. TRADERS — sellers whose registration parses as a GSTIN (dealers)
+//   2. GROWERS — everyone else (planters, CR codes, blanks)
+//
+// The split rule is hasValidGstin(), the SAME one Form C buckets its
+// PLANTERS / DEALERS sections with, so the two forms can never disagree
+// about which side a seller falls on. (Not isDealerSeller — that stricter
+// GSTIN+SBL rule belongs to the e-Auction portal surfaces.)
+//
+// (a) and (b) are deliberately different measures:
+//   (a) Quantity put for sale — EVERY booked lot. includeUnpriced, so no
+//       price gate: a lot that went up and was withdrawn was still put for
+//       sale, and the depot's physical tally has to reconcile.
+//   (b) Quantity sold — only lots that actually fetched a price and were
+//       not marked WD.
+// On a trade where nothing was withdrawn the two coincide; on one with
+// withdrawals (b) is the smaller figure. Reporting (b) as the sum of the
+// (a) rows would overstate what the Board is told was sold.
+function _d1Ctx(opts) {
+  return Object.assign({}, opts, { includeUnpriced: true });
+}
+
+function buildFormD1(ctx) {
+  const by = new Map();
+  for (const r of ctx.rows) {
+    // Same fallback as the Arrivals report: a lot booked before depots were
+    // configured carries no branch and is shown rather than dropped, so the
+    // section totals still reconcile against the depot's own count.
+    const depot = String(r.branch || '').trim() || '(no depot)';
+    let g = by.get(depot);
+    if (!g) { g = { depot, traderPut: 0, traderSold: 0, growerPut: 0, growerSold: 0 }; by.set(depot, g); }
+    const qty  = Number(r.qty) || 0;
+    const isWD = String(r.lot_code || '').trim().toUpperCase() === 'WD';
+    const sold = (!isWD && (Number(r.amount) || 0) > 0) ? qty : 0;
+    if (hasValidGstin(r.trader_cr || r.seller_cr || '')) { g.traderPut += qty; g.traderSold += sold; }
+    else                                                 { g.growerPut += qty; g.growerSold += sold; }
+  }
+  // Insertion order = first lot seen per depot, and getReportContext returns
+  // lots ordered by lot number — so the depots read down the page in the same
+  // order the hall called them, which is how the reference sheet is laid out.
+  // Both sections use the ONE list, so a depot with no trader lots still
+  // prints a 0.000 row in section 1 rather than shifting section 2's rows.
+  const rows = Array.from(by.values());
+  const totals = rows.reduce((t, g) => ({
+    traderPut:  t.traderPut  + g.traderPut,  traderSold: t.traderSold + g.traderSold,
+    growerPut:  t.growerPut  + g.growerPut,  growerSold: t.growerSold + g.growerSold,
+  }), { traderPut: 0, traderSold: 0, growerPut: 0, growerSold: 0 });
+  return { rows, totals };
+}
+
+// Company identity for the Form D1 header/footer, resolved exactly the way
+// buildFormD does it: name from Trade Name, the header's second line from
+// "<office branch> - <PIN>" for the active business state, and the footer's
+// "Place :" from that state's Place / City.
+function _formD1Identity(db) {
+  const bizState = String(readSetting(db, 'business_state', '')).toUpperCase();
+  const isKL     = bizState === 'KERALA' || bizState === 'KL';
+  const branch   = readSetting(db, isKL ? 'kl_branch' : 'tn_branch', '');
+  const pin      = readSetting(db, isKL ? 'kl_pin'    : 'tn_pin',    '');
+  const placeCity = readSetting(db, isKL ? 'kl_place' : 'tn_place',
+                      readSetting(db, 'tn_place', readSetting(db, 'kl_place', branch)));
+  return {
+    company: readSetting(db, 'trade_name', readSetting(db, 'company_name', '')),
+    addressLine: [branch, pin].filter(Boolean).join(' - '),
+    placeCity,
+  };
+}
+
+function formD1Json(db, opts) {
+  _loadDateFormat(db);
+  const ctx = getReportContext(db, _d1Ctx(opts));
+  const d   = buildFormD1(ctx);
+  const id  = _formD1Identity(db);
+  return {
+    title: 'FORM - D1 (Depot-wise Auction Summary)',
+    auction: { ano: ctx.auction.ano, date: fmtDateDMY(ctx.auction.date), state: ctx.auction.state },
+    meta: { company: id.company, address: id.addressLine, place: id.placeCity },
+    columns: [
+      { key: 'depot', header: 'Depot' },
+      { key: 'qty',   header: 'Quantity (kgs)', numeric: true, fmt: 'qty' },
+    ],
+    sections: [
+      { title: '1. (a) Quantity put for sale by the Traders Depot Wise :',
+        rows: d.rows.map(g => ({ depot: g.depot, qty: g.traderPut })),
+        totals: { label: '(b) Quantity of Traders Cardamom sold in the auction', qty: d.totals.traderSold } },
+      { title: '2. (a) Quantity put for sale by the Growers Depot Wise :',
+        rows: d.rows.map(g => ({ depot: g.depot, qty: g.growerPut })),
+        totals: { label: '(b) Quantity of Growers Cardamom sold in the auction', qty: d.totals.growerSold } },
+    ],
+    grand: { label: 'Total put for sale', qty: d.totals.traderPut + d.totals.growerPut },
+  };
+}
+
+async function formD1Xlsx(db, opts) {
+  _loadDateFormat(db);
+  const ctx = getReportContext(db, _d1Ctx(opts));
+  const d   = buildFormD1(ctx);
+  const id  = _formD1Identity(db);
+  const wb  = new ExcelJS.Workbook();
+  const ws  = wb.addWorksheet('FormD1');
+  ws.columns = [{ width: 46 }, { width: 18 }];
+  ws.addRow([id.company]).font = { bold: true, size: 14 };
+  if (id.addressLine) ws.addRow([id.addressLine]).font = { bold: true, size: 10 };
+  ws.addRow([`Auction No: ${ctx.auction.ano}`, `Date: ${fmtDateDMY(ctx.auction.date)}`]).font = { bold: true };
+  ws.addRow([]);
+
+  // One block per section: heading, a row per depot, then the (b) sold line.
+  const block = (heading, pick, soldLabel, soldValue) => {
+    ws.addRow([heading]).font = { bold: true };
+    for (const g of d.rows) {
+      const r = ws.addRow([g.depot, Number(pick(g).toFixed(3))]);
+      r.getCell(2).numFmt = '#,##0.000';
+      r.getCell(2).alignment = { horizontal: 'right' };
+    }
+    const t = ws.addRow([soldLabel, Number(soldValue.toFixed(3))]);
+    t.font = { bold: true };
+    t.getCell(2).numFmt = '#,##0.000';
+    t.getCell(2).alignment = { horizontal: 'right' };
+    ws.addRow([]);
+  };
+  block('1. (a) Quantity put for sale by the Traders Depot Wise :', g => g.traderPut,
+        '(b) Quantity of Traders Cardamom sold in the auction :', d.totals.traderSold);
+  block('2. (a) Quantity put for sale by the Growers Depot Wise :', g => g.growerPut,
+        '(b) Quantity of Growers Cardamom sold in the auction :', d.totals.growerSold);
+
+  ws.addRow([`Place : ${id.placeCity || ''}`, `For ${id.company || ''}`]);
+  ws.addRow([`Date : ${fmtDateDMY(ctx.auction.date)}`, 'Authorised Signatory']);
+  return wb.xlsx.writeBuffer();
+}
+
+async function formD1Pdf(db, opts) {
+  _loadDateFormat(db);
+  const ctx    = getReportContext(db, _d1Ctx(opts));
+  const d      = buildFormD1(ctx);
+  const id     = _formD1Identity(db);
+  const header = getCompanyHeader(db);
+
+  const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 36 });
+  const buffers = []; doc.on('data', b => buffers.push(b));
+  const m = 36;
+  const pageH = doc.page.height;
+  const usableW = doc.page.width - m * 2;
+  // Depot name takes the left half; the quantity is right-aligned in the
+  // other half, as on the reference sheet.
+  const splitX = m + Math.floor(usableW * 0.5);
+  const ROW_H = 23, BOTTOM = pageH - m;
+
+  let y = m;
+  const ensure = (h) => { if (y + h > BOTTOM) { doc.addPage(); y = m; } };
+
+  // ── Letterhead: logo hard left, name + depot/PIN line centred ──
+  const LOGO_H = 52;
+  if (header && header.logoPath) {
+    try { doc.image(header.logoPath, m, y, { fit: [LOGO_H, LOGO_H] }); } catch (_) { /* ignore */ }
+  }
+  doc.fillColor('#000').font('Helvetica-Bold').fontSize(16)
+     .text(id.company || String((header && header.name) || ''), m, y + 8,
+           { width: usableW, align: 'center', lineBreak: false });
+  if (id.addressLine) {
+    doc.font('Helvetica-Bold').fontSize(10)
+       .text(id.addressLine, m, y + 30, { width: usableW, align: 'center', lineBreak: false });
+  }
+  y += Math.max(LOGO_H, id.addressLine ? 46 : 30) + 14;
+
+  // ── Auction / date band ──
+  // Tinted so the meta line reads as a band rather than another data row —
+  // the same visual break the reference sheet puts above section 1.
+  const BAND_H = 22;
+  doc.rect(m, y, usableW, BAND_H).fillAndStroke('#A9D08E', '#000');
+  doc.moveTo(splitX, y).lineTo(splitX, y + BAND_H).lineWidth(0.7).strokeColor('#000').stroke();
+  doc.fillColor('#000').font('Helvetica-Bold').fontSize(10);
+  doc.text(`Auction No: ${ctx.auction.ano}`, m, y + 6, { width: splitX - m, align: 'center', lineBreak: false });
+  doc.text(`Date: ${fmtDateDMY(ctx.auction.date)}`, splitX, y + 6,
+           { width: m + usableW - splitX, align: 'center', lineBreak: false });
+  y += BAND_H + 12;
+
+  // One numbered section: a full-width "(a)" heading row, a ruled row per
+  // depot, then the unboxed "(b)" sold line beneath the table.
+  const section = (heading, pick, soldLine) => {
+    ensure(ROW_H * 2);
+    doc.rect(m, y, usableW, ROW_H).lineWidth(0.7).strokeColor('#000').stroke();
+    doc.fillColor('#000').font('Helvetica-Bold').fontSize(10)
+       .text(heading, m + 6, y + 7, { width: usableW - 12, align: 'left', lineBreak: false, ellipsis: true });
+    y += ROW_H;
+
+    for (const g of d.rows) {
+      ensure(ROW_H);
+      doc.rect(m, y, usableW, ROW_H).lineWidth(0.5).strokeColor('#000').stroke();
+      doc.moveTo(splitX, y).lineTo(splitX, y + ROW_H).lineWidth(0.5).strokeColor('#000').stroke();
+      doc.font('Helvetica').fontSize(10)
+         .text(g.depot, m + 6, y + 7, { width: splitX - m - 12, align: 'left', lineBreak: false, ellipsis: true });
+      doc.text(fmtQty(pick(g)), splitX + 6, y + 7,
+               { width: m + usableW - splitX - 12, align: 'right', lineBreak: false });
+      y += ROW_H;
+    }
+
+    ensure(ROW_H + 8);
+    y += 8;
+    doc.font('Helvetica-Bold').fontSize(10)
+       .text(soldLine, m, y, { width: usableW, align: 'left', lineBreak: false });
+    y += ROW_H;
+  };
+
+  section('1. (a) Quantity put for sale by the Traders Depot Wise :', g => g.traderPut,
+          `(b) Quantity of Traders Cardamom sold in the auction : ${fmtQty(d.totals.traderSold)}`);
+  y += 6;
+  section('2. (a) Quantity put for sale by the Growers Depot Wise :', g => g.growerPut,
+          `(b) Quantity of Growers Cardamom sold in the auction : ${fmtQty(d.totals.growerSold)}`);
+
+  // ── Signature block ──
+  const halfW = usableW / 2;
+  ensure(86);
+  y += 42;
+  doc.font('Helvetica').fontSize(10);
+  doc.text(`Place : ${id.placeCity || ''}`, m, y, { width: halfW, align: 'left', lineBreak: false });
+  doc.text(`For ${id.company || ''}`, m + halfW, y, { width: halfW, align: 'right', lineBreak: false });
+  y += 26;
+  doc.text(`Date : ${fmtDateDMY(ctx.auction.date)}`, m, y, { width: halfW, align: 'left', lineBreak: false });
+  doc.text('Authorised Signatory', m + halfW, y, { width: halfW, align: 'right', lineBreak: false });
+
+  doc.end();
+  return new Promise(resolve => doc.on('end', () => resolve(Buffer.concat(buffers))));
+}
+
+// ════════════════════════════════════════════════════════════
 // Dispatcher
 // ════════════════════════════════════════════════════════════
 const REPORTS = {
+  arrivals:         { label: 'Arrivals Report', name: 'ArrivalsReport',
+                      json: arrivalsJson, xlsx: arrivalsXlsx, pdf: arrivalsPdf },
   buyers_statement: { label: 'Buyers Statement', name: 'BuyersStatement',
                       json: buyersStatementJson, xlsx: buyersStatementXlsx, pdf: buyersStatementPdf },
   form_d:           { label: 'FORM-D (Advance Auction Report)', name: 'FormD',
                       json: formDJson, xlsx: formDXlsx, pdf: formDPdf },
+  form_d1:          { label: 'FORM-D1 (Depot-wise Auction Summary)', name: 'FormD1',
+                      json: formD1Json, xlsx: formD1Xlsx, pdf: formD1Pdf },
   form_c:           { label: 'FORM-C (Auction Report)', name: 'FormC',
                       json: formCJson, xlsx: formCXlsx, pdf: formCPdf },
   eauction_csv:     { label: 'e-Auction (Spices Board) CSV', name: 'EAuctionCSV',

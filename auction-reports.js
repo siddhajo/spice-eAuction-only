@@ -569,21 +569,62 @@ function getCollectionRows(db, auctionId) {
   try { cfgFlat = require('./company-config').getSettingsFlat(db) || {}; } catch (_) {}
   const proformaOn = String(cfgFlat.flag_proforma_invoice || '').toLowerCase() === 'true'
                   || cfgFlat.flag_proforma_invoice === true;
-  const pendingDraftClause = proformaOn
-    ? `OR (COALESCE(is_proforma,0) = 1 AND TRIM(COALESCE(raised_invo,'')) = '')`
-    : '';
-  const invoices = db.all(
+  // A draft counts as superseded only when the original it claims to have
+  // become actually EXISTS, for the SAME BUYER. `raised_invo` alone is not
+  // proof: the stamp used to be written keyed on the draft number and the
+  // trade, so a buyer's draft could be marked raised by a DIFFERENT buyer's
+  // original that happened to share the number (trade 15: ERPL's drafts
+  // 33/34/35 stamped from S KUMAR / VADIVEL / VASU's originals 30/31/32).
+  // Dropping such a draft loses the quantity outright — no original replaces
+  // it, because none was ever raised for that buyer — which is exactly how
+  // 5,521.1 kg went missing from that register.
+  //
+  // The stamping is now buyer-scoped (see server.js), but rows written before
+  // that carry the bad reference, so the report has to stand on its own feet:
+  // it verifies the original rather than trusting the flag.
+  //
+  // The selection is made in JS rather than SQL: deciding it needs a
+  // correlated look at the other invoice rows, and sql.js (the SQLite WASM
+  // build used in production) raises "no such column: i.buyer" on outer-alias
+  // references inside a subquery — the same engine limit that forced the
+  // buyer join below into JavaScript.
+  const allInvoices = db.all(
     `SELECT id, sale, invo, buyer, buyer1, qty, tot,
-            COALESCE(is_proforma,0) AS is_proforma
+            COALESCE(is_proforma,0) AS is_proforma,
+            TRIM(COALESCE(raised_invo,'')) AS raised_invo
        FROM invoices
       WHERE auction_id = ?
-        AND (
-          COALESCE(is_proforma,0) = 0
-          ${pendingDraftClause}
-        )
       ORDER BY sale, CAST(invo AS INTEGER), invo`,
     [auctionId]
   );
+  // Every ORIGINAL in this trade, indexed on the identity of a document —
+  // INVOICE NO + BUYER + SALE TYPE — plus a number+buyer index beside it.
+  // A draft records the number it was raised as but NOT which series that
+  // number belongs to, and the two can legitimately differ (drafted Local,
+  // billed Inter-state). So the triple is tried first, and the pair answers
+  // the sale-changed case. Requiring the triple outright would report a
+  // genuinely-raised draft as still pending, and it would print beside its
+  // own original — the buyer counted twice, and the trade's total inflated.
+  const key3 = (sale, buyer, no) =>
+    `${String(sale || '').trim().toUpperCase()}|${String(buyer || '').trim().toUpperCase()}|${String(no || '').trim()}`;
+  const key2 = (buyer, no) =>
+    `${String(buyer || '').trim().toUpperCase()}|${String(no || '').trim()}`;
+  const originals3 = new Set(), originals2 = new Set();
+  for (const r of allInvoices) {
+    if (Number(r.is_proforma)) continue;
+    originals3.add(key3(r.sale, r.buyer, r.invo));
+    originals2.add(key2(r.buyer, r.invo));
+  }
+  const invoices = allInvoices.filter(r => {
+    if (!Number(r.is_proforma)) return true;          // originals always
+    if (!proformaOn) return false;                    // feature off → pinned to originals
+    if (!r.raised_invo) return true;                  // nothing raised from it yet
+    // Raised — but only believe it if that original is really here, under this
+    // buyer's own name. Same series first, then any series for the sale-change
+    // case. See the note above.
+    return !(originals3.has(key3(r.sale, r.buyer, r.raised_invo))
+          || originals2.has(key2(r.buyer, r.raised_invo)));
+  });
   if (!invoices.length) return [];
 
   // Pull every buyer in the master table once. The buyers master is
@@ -819,6 +860,74 @@ function getCollectionRows(db, auctionId) {
   return rowsOut;
 }
 
+// ── "Why is this shorter than the Auction Report?" ───────────────────────
+// Collection is an INVOICE register: it can only list documents that have
+// been issued. The Auction Report is computed from the LOTS, so it shows
+// every buyer the moment a lot is priced, invoice or no invoice. The two
+// therefore disagree by exactly the lots nobody has billed yet — and a
+// register that just prints fewer rows reads as lost records rather than as
+// work still to do.
+//
+// The gap is measured on QUANTITY, against the rows this register actually
+// prints — no key-matching between lots and invoices, so nothing can be
+// mis-attributed. Withdrawn / not-auctioned / reserved lots are not
+// invoiceable and are excluded, so they can never read as a phantom
+// shortfall.
+//
+// Two different things produce a gap, and they need different words:
+//
+//   WORK STILL TO DO   lots carrying no document number at all — nobody has
+//                      billed them yet. Ordinary mid-trade state.
+//   MISSING DOCUMENTS  lots stamped with an invoice or proforma number whose
+//                      document is NOT in the register. The stamp says the
+//                      buyer was billed; the register has nothing to show for
+//                      it. That is a deleted / never-imported invoice row, and
+//                      it is worth saying so plainly — the money is real and
+//                      the paperwork is gone.
+//
+// Returns null when the register covers everything sold: a complete register
+// says nothing, exactly as it always has.
+function getCollectionCoverage(db, auctionId, rows) {
+  let sold;
+  try {
+    sold = db.get(
+      `SELECT COUNT(*) AS lots, COALESCE(SUM(l.qty),0) AS qty,
+              COUNT(DISTINCT UPPER(TRIM(COALESCE(l.buyer,'')))) AS buyers,
+              SUM(CASE WHEN TRIM(COALESCE(l.invo,'')) = ''
+                        AND TRIM(COALESCE(l.proforma_invo,'')) = ''
+                       THEN 1 ELSE 0 END) AS unstamped
+         FROM lots l
+        WHERE l.auction_id = ? AND l.amount > 0
+          AND (l.reserved IS NULL OR l.reserved = 0)
+          AND UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')`,
+      [auctionId]);
+  } catch (_) { return null; }   // old DB without one of these columns
+  if (!sold || !Number(sold.lots)) return null;
+
+  const soldQty = Number(sold.qty) || 0;
+  const regQty  = (rows || []).reduce((s, r) => s + (Number(r.qty) || 0), 0);
+  // A kilo of slack: the register's quantities come off the invoices, which
+  // round per document.
+  if (regQty >= soldQty - 1) return null;
+
+  const missingQty = Math.max(0, soldQty - regQty);
+  const stamped = Number(sold.lots) - Number(sold.unstamped || 0);
+  const bits = [`NOT IN THIS REGISTER — ${fmtQty(missingQty)} kg of the ${fmtQty(soldQty)} kg sold in this trade`
+              + ` has no invoice here.`];
+  if (Number(sold.unstamped)) {
+    bits.push(`${sold.unstamped} lot${Number(sold.unstamped) === 1 ? ' has' : 's have'} not been invoiced yet.`);
+  }
+  // Only worth saying when the register is genuinely short of its own stamps —
+  // a fully-covered trade has stamped lots too.
+  if (stamped > 0 && !(rows || []).length) {
+    bits.push(`${stamped} lot${stamped === 1 ? '' : 's'} already carry an invoice or proforma number,`
+            + ` but this trade has NO rows in the invoice register — those documents were deleted or never imported.`);
+  }
+  bits.push(`The Auction Report is computed from the lots, so it still shows all of it.`);
+  return { qty: missingQty, soldQty, regQty, unstamped: Number(sold.unstamped) || 0, stamped,
+           text: bits.join(' ') };
+}
+
 function classifyByState(rows, auctionState) {
   // Group rows by buyer state. Auction's home state goes last (after any
   // out-of-state buyers — matches the FoxPro layout where TAMIL NADU comes
@@ -946,6 +1055,19 @@ async function collectionXlsx(db, auctionId) {
     c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } };
     c.border = { top: { style: 'thin' }, bottom: { style: 'double' } };
   });
+
+  // What this register does NOT cover, if anything — below the total, so the
+  // money above it stays exactly what was invoiced. See getCollectionCoverage.
+  const cover = getCollectionCoverage(db, auctionId, rows);
+  if (cover) {
+    ws.addRow([]);
+    const note = ws.addRow([cover.text]);
+    ws.mergeCells(`A${note.number}:E${note.number}`);
+    note.font = { bold: true, size: 10, color: { argb: 'FF92400E' } };
+    note.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+    note.height = 30;
+    note.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFBEB' } };
+  }
 
   return wb.xlsx.writeBuffer();
 }
@@ -1163,6 +1285,26 @@ async function collectionPdf(db, auctionId) {
   // Grand total belongs to no section — a break here must not reprint one.
   curSection = null;
   drawTotalRow('GRAND TOTAL', gQty, gValue, { strong: true });
+
+  // What this register does NOT cover, if anything. Below the total, so the
+  // money above it stays exactly what was invoiced, and outside any data
+  // segment so the column verticals do not run through it.
+  const cover = getCollectionCoverage(db, auctionId, rows);
+  if (cover) {
+    closeSegment();
+    doc.font('Helvetica-Bold').fontSize(8.5);
+    const lines = wrapText(doc, cover.text, usableW - 16);
+    const boxH = lines.length * 11 + 10;
+    if (y + boxH + 8 > pageH - m - 12) newPage();
+    y += 6;
+    doc.rect(m, y, usableW, boxH).fillAndStroke('#FFFBEB', '#FDE68A');
+    doc.fillColor('#92400E').font('Helvetica-Bold').fontSize(8.5);
+    lines.forEach((ln, i) => {
+      doc.text(ln, m + 8, y + 5 + i * 11, { width: usableW - 16, align: 'left', lineBreak: false });
+    });
+    doc.fillColor('#000');
+    y += boxH;
+  }
 
   finishPage();
 

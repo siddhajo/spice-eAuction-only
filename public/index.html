@@ -1599,7 +1599,19 @@ body:not([data-feat-pertrade-breakdown="1"]) .feat-pertrade-breakdown{display:no
    sideways on narrow windows rather than squashing the address column. */
 #tc-auctionmgr .am-panel{border:1px solid var(--spice-line);border-radius:10px;background:var(--spice-paper);overflow:hidden}
 #tc-auctionmgr .am-panel-hd{font-size:15px;font-weight:700;color:var(--spice-text-main);padding:16px 18px 14px}
-#tc-auctionmgr .am-scroll{overflow-x:auto}
+/* The list scrolls in BOTH directions inside the panel rather than growing
+   the page: a 200-lot trade otherwise pushes the stat band and the sub-tabs
+   off the top, and those are the two things the operator is switching
+   between. The height here is only the first-paint fallback — _amFitScroll()
+   replaces it with the space actually left below the panel, so the list ends
+   at the bottom of the window instead of running past it.
+   overscroll-behavior stops a flick at the end of the list from scrolling
+   the page underneath it. */
+#tc-auctionmgr .am-scroll{overflow:auto;max-height:min(58vh,640px);overscroll-behavior:contain}
+/* Header stays put while the body scrolls — a lot table read without its
+   column labels is unreadable past the first screenful. The th already
+   carries an opaque band fill, which is what stops rows showing through. */
+#tc-auctionmgr table.am-tbl thead th{position:sticky;top:0;z-index:2}
 #tc-auctionmgr table.am-tbl{width:100%;border-collapse:collapse;font-size:12.5px;color:var(--spice-text-main)}
 /* text-transform/letter-spacing are reset explicitly: the app's global
    `th` rule uppercases and tracks out every table header, and this screen's
@@ -1616,6 +1628,28 @@ body:not([data-feat-pertrade-breakdown="1"]) .feat-pertrade-breakdown{display:no
 #tc-auctionmgr .am-sort{cursor:pointer;user-select:none}
 #tc-auctionmgr .am-sort:hover{color:var(--spice-cardamom-dk)}
 #tc-auctionmgr .am-empty{padding:26px 18px;color:var(--spice-text-hint);font-size:13px}
+/* Every body row opens its detail drawer, so the whole row is the target.
+   The select checkbox is the one thing inside it that isn't — its own
+   handler stops the click from reaching the row. */
+#tc-auctionmgr table.am-tbl tbody tr{cursor:pointer}
+/* The open row keeps a marker while the drawer is up: with the drawer
+   covering the right of the screen, "which row am I looking at" is
+   otherwise a guess. Uses a left border rather than a fill so it survives
+   the zebra striping underneath. */
+#tc-auctionmgr table.am-tbl tbody tr.is-open{background:var(--am-hover)}
+#tc-auctionmgr table.am-tbl tbody tr.is-open td:first-child{box-shadow:inset 3px 0 0 var(--spice-saffron)}
+
+/* Lot list inside the seller drawer — the lot-wise breakdown behind a
+   Planters / Traders row. Compact because the drawer is 430px wide and the
+   point is to scan lot numbers, not to re-read the main table. */
+.am-dl-lots{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+.am-dl-lots th{text-align:left;font-weight:600;color:var(--text3);padding:6px 6px;
+  border-bottom:1px solid var(--border);text-transform:none;letter-spacing:normal;font-size:11px}
+.am-dl-lots td{padding:7px 6px;border-bottom:1px solid var(--border);color:var(--text)}
+.am-dl-lots tbody tr{cursor:pointer}
+.am-dl-lots tbody tr:hover{background:var(--am-hover)}
+.am-dl-lots .num{text-align:right}
+.am-dl-lots .am-dl-wd{color:var(--text3)}
 
 /* ── Auction Downloads (tc-amreports) ────────────────────────────────
    A wall of ~35 tiles in four format sections. The grid is the whole
@@ -2384,42 +2418,44 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
    16px radius, a 4px colour bar down the left edge, lift on hover — so
    the Auction Desk reads as part of the app rather than its own dialect.
    The bar's colour is the document's SOURCE GROUP. */
-.hub-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(216px,1fr));gap:14px;
+.hub-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(202px,1fr));gap:10px;
   padding:6px 2px 10px}
 .hub-tile{
-  position:relative;overflow:hidden;display:flex;flex-direction:column;gap:7px;
-  padding:16px 16px 14px;border-radius:14px;
+  position:relative;overflow:hidden;display:flex;flex-direction:column;gap:5px;
+  padding:11px 12px 12px;border-radius:12px;
   background:linear-gradient(180deg, var(--lt) 0%, #fff 60%);
   border:1px solid var(--md);
   transition:transform .15s ease, box-shadow .15s ease;
   --from:#10B981;--to:#047857;--lt:#ECFDF5;--md:#A7F3D0
 }
 .hub-tile::before{
-  content:'';position:absolute;top:0;left:0;right:0;height:4px;
+  content:'';position:absolute;top:0;left:0;right:0;height:3px;
   background:linear-gradient(90deg, var(--from), var(--to))}
 .hub-tile:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(15,23,42,.08)}
-/* Tile head — file glyph, then name over format, then the bundle tick.
-   Same arrangement as the Auction Downloads screen's tiles, so the two
-   screens read as one app; the actions below are what this screen adds. */
-.hub-tile-main{display:flex;align-items:flex-start;gap:12px;min-width:0}
-.hub-tile-txt{min-width:0;flex:1;display:flex;flex-direction:column}
+/* Tile head — file glyph and formats on the left, the ⋮ and the bundle tick
+   on the right. The NAME is no longer in this row (see hubTileHtml): sharing
+   a row with four other things left it a ~90px column, and a three-line name
+   set the height of every card in its grid row. */
+.hub-tile-top{display:flex;align-items:center;gap:8px;min-width:0}
 
 /* The glyph square. Group colour rather than the flat dark of the
    Auction Downloads screen — see the note in hubTileHtml(). */
 .hub-file-ico{
-  width:38px;height:38px;flex:none;border-radius:9px;
+  width:26px;height:26px;flex:none;border-radius:8px;
   display:inline-flex;align-items:center;justify-content:center;
   background:var(--to);color:#fff}
-.hub-file-ico svg{width:22px;height:22px}
+.hub-file-ico svg{width:16px;height:16px}
 .hub-tile.is-locked .hub-file-ico{background:var(--spice-text-hint)}
 
-/* Second line: every format the tile offers. Replaces the old colour-coded
-   chip — the chip named only the primary format and leaned on hue to do it,
-   which failed for anyone who cannot separate the two greens. */
+/* Every format the tile offers, beside the glyph. Replaces the old
+   colour-coded chip — the chip named only the primary format and leaned on
+   hue to do it, which failed for anyone who cannot separate the two greens.
+   Sized so three formats ("XLS · PDF · CSV", the widest real case) clear the
+   ⋮ and the tick on the narrowest column the grid produces. */
 .hub-tile-fmt{
-  font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--text2);
-  margin-top:3px}
-.hub-tile.is-locked .hub-tile-fmt{font-weight:500;font-style:italic;color:var(--text3)}
+  flex:1;min-width:0;font-size:10px;font-weight:800;letter-spacing:.2px;
+  color:var(--to);opacity:.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hub-tile.is-locked .hub-tile-fmt{font-weight:600;font-style:italic;color:var(--text3);opacity:1}
 
 /* The left edge takes the SOURCE group's colour. In a purpose group every
    row matches and it reads as one band; in a file-type group it is the
@@ -2431,10 +2467,18 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 .hub-tile[data-src="banking"]{--src:#0D9488}    .hub-tile[data-src="logistics"]{--src:#EA580C}
 .hub-tile[data-src="tally"]{--src:#4F46E5}      .hub-tile[data-src="books"]{--src:#DB2777}
 .hub-tile[data-src="masters"]{--src:#0891B2}
-.hub-src{font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;
-  padding:3px 10px;border-radius:999px;align-self:flex-start;
-  background:rgba(255,255,255,.7);color:var(--to);border:1px solid var(--md)}
-.hub-tile-meta{display:flex;flex-direction:column;align-items:flex-start;gap:5px}
+/* The source group. Was a bordered pill on a row of its own; it is a label,
+   not a status, and it now reads as one — small caps in the tile's own hue,
+   sharing the meta line with everything else. */
+.hub-src{font-size:10px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;
+  color:var(--to);opacity:.75}
+/* ONE wrapping line, not a stack. Source, filter, status and note used to be
+   four separate rows, each with its own pill, which is most of what made a
+   tile tall and busy. They are all secondary to the name — they belong on the
+   same line, separated by hairline dots. */
+.hub-tile-meta{
+  display:flex;flex-wrap:wrap;align-items:center;gap:4px 9px;margin-top:auto;
+  padding-top:2px;min-width:0}
 /* A locked tile stays visible and explains itself — the sidebar's habit of
    hiding un-earned items is exactly what made documents hard to find. */
 .hub-tile.is-locked{opacity:.7;--lt:#F8FAFC;--md:var(--spice-line)}
@@ -2443,14 +2487,52 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 .hub-tile.is-locked .hub-tile-l{color:var(--text2)}
 .hub-tile.is-locked .hub-tile-l{color:var(--text3)}
 /* Night legibility: this screen is read at 2am under a desk lamp, so the
-   name is a size up from the old tile and the muted text is a real grey
-   rather than a hint. Nothing here relies on colour alone. */
-.hub-tile-l{font-size:15px;font-weight:800;color:var(--to);
-  line-height:1.3;letter-spacing:-.2px}
+   muted text is a real grey rather than a hint. Nothing relies on colour
+   alone.
+
+   Clamped to two lines: without it "FORM-D (Advance Auction Report)" runs to
+   three and drags every card in its grid row up with it, which is what kept
+   the desk looking nothing like the Auction Downloads screen even after the
+   card head was rebuilt. The full name stays on the tile's tooltip.
+
+   Back to TWO lines, and this time they fit. The three-line cap existed
+   because the name shared its row with the glyph, the ⋮ and the tick and had
+   ~90px to work in; now it owns the full card width, so two lines at 13.5px
+   hold ~54 characters — more than the old three lines did, and every real
+   label lands inside it. The cap only ever catches a runaway, and the full
+   name is still on the tile's tooltip. */
+.hub-tile-l{font-size:13.5px;font-weight:800;color:var(--to);
+  line-height:1.32;letter-spacing:-.2px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .hub-tile.is-locked .hub-tile-l{font-weight:600}
-.hub-note{font-size:11px;color:var(--text2);line-height:1.4}
-.hub-lock{font-size:12px;font-weight:600;color:#B45309;line-height:1.4}
-.hub-acts{display:flex;flex-wrap:wrap;gap:5px;margin-top:auto;padding-top:3px}
+/* One line now that the note shares the meta row. It is a caveat, not the
+   document — the full text is on its own tooltip. */
+.hub-note{font-size:10.5px;color:var(--text2);line-height:1.4;min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.hub-lock{font-size:11px;font-weight:700;color:#B45309;line-height:1.35}
+/* The action row is NOT the resting state — the card itself is the download,
+   so at rest a tile is glyph + formats + name. The row appears only when the
+   ⋮ is pressed, which is what keeps the cards short enough to scan 60 of them. */
+.hub-acts{display:none;flex-wrap:wrap;gap:5px;margin-top:6px;padding-top:0}
+.hub-tile[data-open="1"] .hub-acts{display:flex}
+
+/* Whole-card affordance. The lift on hover already existed; the pointer and
+   the focus ring are what make it read as one big button. */
+.hub-tile[role="button"]{cursor:pointer}
+.hub-tile[role="button"]:focus-visible{
+  outline:2px solid var(--to);outline-offset:2px}
+
+/* The ⋮. Deliberately quiet — it is the exception, not the action. */
+.hub-more{
+  flex:none;width:22px;height:22px;margin-left:auto;padding:0;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:none;border:none;border-radius:7px;cursor:pointer;
+  color:var(--spice-text-hint)}
+.hub-more:hover{background:rgba(15,23,42,.06);color:var(--to)}
+.hub-more svg{width:15px;height:15px;fill:currentColor}
+.hub-tile[data-open="1"] .hub-more{background:rgba(15,23,42,.08);color:var(--to)}
+/* With a ⋮ present the tick no longer needs to claim the free space. */
+.hub-more + .hub-cb{margin-left:5px !important}
 /* 32px, not 27. These get clicked hundreds of times a night by someone
    who is tired; a bigger target and a darker label cost nothing now that
    the rows are compact. */
@@ -2492,8 +2574,8 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 .hub-btn-p{background:var(--spice-cardamom);border-color:var(--spice-cardamom);color:#fff}
 .hub-btn-p:hover{background:var(--spice-cardamom-dk);border-color:var(--spice-cardamom-dk)}
 .hub-chip{
-  align-self:flex-start;font-size:10.5px;font-weight:700;border-radius:20px;
-  padding:2px 9px;letter-spacing:.2px
+  align-self:center;font-size:10px;font-weight:800;border-radius:20px;
+  padding:1px 7px;letter-spacing:.2px;white-space:nowrap
 }
 .hub-tile .hub-chip{
   background:rgba(255,255,255,.75);color:var(--to);border:1px solid var(--md)}
@@ -2508,9 +2590,10 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
   text-align:center;border:1.5px solid var(--card);padding:0 2px
 }
 .hub-f-chip{
-  font-size:10.5px;line-height:1.5;color:var(--to);
+  font-size:10px;line-height:1.5;color:var(--to);white-space:nowrap;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;
   background:rgba(255,255,255,.75);border:1px solid var(--md);
-  border-radius:8px;padding:3px 8px;align-self:flex-start
+  border-radius:7px;padding:1px 7px;align-self:center
 }
 #hub-filter-modal{--acc:var(--spice-cardamom)}
 .hub-f-title{font-size:13px;font-weight:800;color:var(--acc);margin-bottom:12px}
@@ -2571,10 +2654,10 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 /* The widget grid. Nine of these fit one screen; the previous stack of
    accordion headers did not, which is what made the page feel long before
    anything had even been opened. */
-.hub-wgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(236px,1fr));gap:16px}
+.hub-wgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(224px,1fr));gap:12px}
 .hub-w{
   display:flex;gap:12px;align-items:flex-start;
-  padding:16px 16px 16px 18px;border-radius:14px;border:none;
+  padding:14px 14px 14px 16px;border-radius:14px;border:none;
   cursor:pointer;font-family:inherit;text-align:left;min-width:0}
 .hub-w:focus-visible{outline:3px solid var(--from);outline-offset:3px}
 .hub-w-b{flex:1;min-width:0}
@@ -2599,10 +2682,37 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 /* Header of an opened group. */
 .hub-open-head{
   display:flex;align-items:center;gap:11px;flex-wrap:wrap;
-  padding-bottom:12px;margin-bottom:4px;border-bottom:1px solid var(--border)}
+  padding-bottom:10px;border-bottom:1px solid var(--border)}
 .hub-open-name{font-size:17px;font-weight:800;color:var(--text)}
-/* The cards scroll; the group's header stays put above them. */
-.hub-open-body{max-height:min(58vh,600px);overflow-y:auto;overflow-x:hidden;padding-right:4px}
+/* The open subgroup, shown as a continuation of the group name rather than a
+   second heading — the chip row below already says which one is on. */
+.hub-open-sub{
+  font-size:13px;font-weight:700;color:var(--text3);
+  display:inline-flex;align-items:center;gap:8px}
+.hub-open-sub::before{content:'/';color:var(--border);font-weight:400}
+
+/* ── Group / section chips ────────────────────────────────────
+   Sideways navigation. The top row is every group, the second the sections
+   of the open one; both replace a click OUT and a click back IN. Wrapping,
+   not scrolling — a chip you cannot see is a chip you will not use. */
+.hub-navrow{display:flex;flex-wrap:wrap;gap:6px;padding:10px 0 0}
+.hub-navrow.is-sub{padding-top:6px}
+.hub-chipnav{
+  display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 12px;
+  border-radius:999px;cursor:pointer;font-family:inherit;
+  font-size:12px;font-weight:700;line-height:1;white-space:nowrap;
+  border:1.5px solid var(--border);background:var(--card);color:var(--text2);
+  transition:background .13s, border-color .13s, color .13s}
+.hub-chipnav:hover{border-color:var(--acc);color:var(--acc)}
+.hub-chipnav:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.hub-chipnav.is-on{background:var(--acc);border-color:var(--acc);color:#fff}
+.hub-chipnav-n{
+  font-size:10.5px;font-weight:800;opacity:.62;font-variant-numeric:tabular-nums}
+.hub-navrow.is-sub .hub-chipnav{height:25px;font-size:11.5px;padding:0 10px;font-weight:600}
+.hub-navrow.is-sub .hub-chipnav.is-on{font-weight:800}
+/* The cards scroll; the group's header and its chips stay put above them. */
+.hub-open-body{margin-top:10px;max-height:min(58vh,600px);
+  overflow-y:auto;overflow-x:hidden;padding-right:4px}
 .hub-open-body::-webkit-scrollbar{width:9px}
 .hub-open-body::-webkit-scrollbar-thumb{
   background:color-mix(in srgb, var(--acc) 32%, transparent);border-radius:5px}
@@ -2676,7 +2786,6 @@ body[data-hub-plain="1"] .hub-w-sel{background:var(--hub-p-fill);color:var(--hub
 body[data-hub-plain="1"] .hub-tile{background:var(--card);border-color:var(--spice-line)}
 body[data-hub-plain="1"] .hub-tile::before{background:var(--hub-p-edge)}
 body[data-hub-plain="1"] .hub-tile-l{color:var(--spice-text-main)}
-body[data-hub-plain="1"] .hub-src,
 body[data-hub-plain="1"] .hub-tile .hub-chip,
 body[data-hub-plain="1"] .hub-f-chip{
   background:var(--hub-p-fill-2);color:var(--hub-p-ink);border-color:var(--spice-line)}
@@ -2704,6 +2813,12 @@ body[data-hub-plain="1"] .hub-seg-btn.is-on{background:var(--hub-p-ink);box-shad
 body[data-hub-plain="1"] .hub-open-head .hub-btn{
   background:#fff;color:var(--hub-p-ink);border:1.5px solid var(--spice-line)}
 body[data-hub-plain="1"] .hub-open-head .hub-btn:hover{background:var(--hub-p-ink);color:#fff}
+body[data-hub-plain="1"] .hub-chipnav{border-color:var(--spice-line);color:var(--hub-p-ink-soft)}
+body[data-hub-plain="1"] .hub-chipnav:hover{border-color:var(--hub-p-ink);color:var(--hub-p-ink-dk)}
+body[data-hub-plain="1"] .hub-chipnav.is-on{
+  background:var(--hub-p-ink);border-color:var(--hub-p-ink);color:#fff}
+body[data-hub-plain="1"] .hub-src,
+body[data-hub-plain="1"] .hub-tile-fmt{color:var(--hub-p-ink);opacity:1}
 body[data-hub-plain="1"] #hub-filter-modal{--acc:var(--hub-p-ink)}
 body[data-hub-plain="1"] .hub-f-c.is-on{background:var(--hub-p-ink);border-color:var(--hub-p-ink)}
 body[data-hub-plain="1"] .hub-lock{color:#B45309}
@@ -2847,6 +2962,11 @@ body[data-hub-plain="1"] .hub-plain-dot{background:var(--hub-p-edge)}
   margin:16px 0 2px;font-size:10.5px;font-weight:800;letter-spacing:.5px;
   text-transform:uppercase;color:var(--spice-cardamom)
 }
+/* A row with no label is a note about the row above it — "Seller's default,
+   3 accounts on file", or the broken-pin warning. Give it the full width
+   instead of squeezing a sentence into the 62% value column. */
+.hub-dl dt:empty{display:none}
+.hub-dl dt:empty + dd{grid-column:1 / -1;font-weight:400;font-size:11.5px;line-height:1.45}
 
 /* ── Accordion (Settings) ────────────────────────────────── */
 .cat{
@@ -4575,6 +4695,15 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       <div id="am-host">
         <div class="am-empty">Loading…</div>
       </div>
+      <!-- Detail drawer for a clicked lot / planter / trader row. Deliberately
+           wears the Auction Desk's .hub-drawer + .hub-scrim styles rather than
+           growing a second set: it is the same slide-in panel doing the same
+           job, and two copies of that CSS would drift. It sits OUTSIDE
+           #am-host so _amRenderBody()'s innerHTML rebuild (which runs on every
+           sort, filter keystroke and sub-tab switch) can't wipe an open
+           drawer. -->
+      <div id="am-detail-scrim" class="hub-scrim" style="display:none" onclick="amDetailClose()"></div>
+      <aside id="am-detail" class="hub-drawer" style="display:none" aria-label="Auction Manager detail"></aside>
     </div>
 
     <!-- AUCTION REPORTS — the Auction Manager's Reports action opens this.
@@ -11555,6 +11684,9 @@ function go(tab){
   if(typeof renderScreenGuide==='function'){try{renderScreenGuide(tab);}catch(_){}}
   // Show/retire the "Back to Auction Desk" pill for this tab.
   if(typeof renderHubReturn==='function'){try{renderHubReturn();}catch(_){}}
+  // Same for the Auction Manager's own return pill. The two setters clear
+  // each other, so at most one of these ever renders.
+  if(typeof renderAmReturn==='function'){try{renderAmReturn();}catch(_){}}
   // Drop any screen-local filter nudge when leaving its screen; keep the
   // cross-screen reminders (unsaved settings, un-recalculated lots).
   if(typeof clearScreenLocalNudge==='function'){try{clearScreenLocalNudge();}catch(_){}}
@@ -12045,7 +12177,7 @@ function hubLotOpen(id){
          ${row(esc(l.cr || ''), 'CR / GSTIN')}
          ${row(esc(l.ppla || l.padd || ''), 'Place')}
          ${row(esc(l.tel || ''), 'Phone')}
-         ${row(l.has_bank ? 'On file' : '<span style="color:var(--amber)">None on file</span>', 'Bank account')}
+         ${bankDetailRows(l).map(([lbl, v]) => row(v, lbl)).join('')}
        </dl>
        ${sec('Lot')}
          ${row(esc(l.branch || ''), 'Branch')}
@@ -12253,11 +12385,46 @@ const HUB_FMT_LABEL = {
 
 // Status chip for a generated-document tile. Three states, because "no
 // documents yet" and "some still pending" call for different actions.
+//
+// Said in ONE figure rather than two. "8 done · 32 pending" made the reader
+// add up to learn the only thing they wanted (how far along is this?), and
+// the two numbers wrapped the chip onto a second line on every narrow tile.
+// "8 of 40" is the same fact in half the width.
 function _hubChip(st){
   if (!st) return '';
-  if (st.done)          return '<span class="hub-chip hub-chip-ok">✓ All generated</span>';
-  if (st.generated > 0) return `<span class="hub-chip hub-chip-part">${fmtI(st.generated)} done · ${fmtI(st.pending)} pending</span>`;
-  return `<span class="hub-chip hub-chip-none">None yet${st.pending ? ' · ' + fmtI(st.pending) + ' to make' : ''}</span>`;
+  const tot = (st.generated || 0) + (st.pending || 0);
+  if (st.done)          return `<span class="hub-chip hub-chip-ok">✓ ${fmtI(st.generated || tot)} ready</span>`;
+  if (st.generated > 0) return `<span class="hub-chip hub-chip-part">${fmtI(st.generated)} of ${fmtI(tot)} ready</span>`;
+  return `<span class="hub-chip hub-chip-none">${st.pending ? fmtI(st.pending) + ' to make' : 'None yet'}</span>`;
+}
+
+// The card IS the download. Anything interactive inside it (the bundle tick,
+// the ⋮, the actions it reveals) stops its own click, so this only ever fires
+// for a click on the card itself.
+function hubTileActivate(e, id, fmt){
+  if (e && e.target && e.target.closest('.hub-acts, .hub-cb, .hub-more')) return;
+  hubDownload(id, fmt);
+}
+// Enter/Space on a focused card, matching what a real <button> would do. The
+// card cannot BE a button: it contains a checkbox and other buttons, and
+// nesting those inside one is invalid and breaks keyboard order.
+function hubTileKey(e, id, fmt){
+  if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+  if (e.target !== e.currentTarget) return;   // let inner controls handle their own keys
+  e.preventDefault();
+  hubDownload(id, fmt);
+}
+// Reveal one card's extra actions. Only one card is ever open — two rows of
+// buttons in a grid is the wall this screen exists to avoid.
+function hubTileMore(btn){
+  const tile = btn.closest('.hub-tile');
+  if (!tile) return;
+  const open = tile.getAttribute('data-open') === '1';
+  for (const t of document.querySelectorAll('.hub-tile[data-open="1"]')) {
+    t.removeAttribute('data-open');
+    t.querySelector('.hub-more')?.setAttribute('aria-expanded', 'false');
+  }
+  if (!open) { tile.setAttribute('data-open', '1'); btn.setAttribute('aria-expanded', 'true'); }
 }
 
 function hubTileHtml(it){
@@ -12274,8 +12441,9 @@ function hubTileHtml(it){
     ? `<input type="checkbox" class="hub-cb" data-id="${esc(it.id)}"${it._only ? ` data-fmt="${esc(it._only)}"` : ''}
               ${window._hubSel.has(it.id) ? 'checked' : ''}
               onchange="hubToggleSel(this)"
+              onclick="event.stopPropagation()"
               title="Add to bundle"
-              style="width:18px;height:18px;cursor:pointer;flex:none;margin-left:auto">`
+              style="width:16px;height:16px;cursor:pointer;flex:none;margin-left:auto">`
     : '';
   // The tile leads with the same file glyph the Auction Downloads screen
   // uses, so the two screens read as one app. The square is NOT the flat
@@ -12290,6 +12458,18 @@ function hubTileHtml(it){
   // heading (_only) that is the single format the tile was filed under.
   const fmts = (it._only ? [it._only] : (it.formats || []))
     .map(f => HUB_FMT_SHORT[f] || String(f).toUpperCase());
+  // The WHOLE CARD is the download, exactly as on the Auction Downloads
+  // screen — no separate button to aim at.
+  // Clicking takes the FIRST format, which is the document's natural one
+  // (same rule the bundler uses); the rest live behind the ⋮.
+  //
+  // The line used to open with "Click to view". Sixty tiles each repeating
+  // the same four words taught nobody anything after the first one, and it
+  // pushed the formats — the part that differs per tile — off the end on a
+  // narrow card. The affordance is carried by the pointer, the hover lift
+  // and the tile's tooltip instead; the line now says only what you get.
+  const primaryFmt = it._only || (it.formats || [])[0] || '';
+  const clickable  = !!(it.available && it.href && primaryFmt);
   const sub = fmts.length ? fmts.join(' · ') : 'DOC';
 
   const parts = [];
@@ -12356,19 +12536,43 @@ function hubTileHtml(it){
   }
   if (it.deepLink) acts.push(btn('Open →', `hubOpen('${it.deepLink}')`));
 
+  // Everything else the card can do — other formats, Preview/Print, filters,
+  // the merged-PDF button, the deep link — moves behind one small control so
+  // the resting card matches the reference. Kept as a real focusable button
+  // rather than a hover-reveal: hover excludes touch and keyboard entirely,
+  // and these are the only route to a second format on 35 of the 60 tiles.
+  const extras = acts.length - (clickable ? 1 : 0);
+  const moreBtn = extras > 0
+    ? `<button class="hub-more" onclick="event.stopPropagation();hubTileMore(this)"
+               title="More actions" aria-label="More actions" aria-expanded="false">
+         <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+       </button>`
+    : '';
+
   const cls = it.available ? 'hub-tile' : 'hub-tile is-locked';
   // data-search carries the haystack the filter box matches against, so
   // filtering never has to re-read the DOM's rendered text.
   const tint = HUB_TINT[hubTheme(it._groupId)] || HUB_TINT.emerald;
   const tintStyle = ` style="--lt:${tint[0]};--md:${tint[1]};--from:${tint[2]};--to:${tint[3]}"`;
+  // The affordance the "Click to view" line used to spell out, moved to the
+  // tooltip where it costs no space on any of the sixty tiles.
+  const tip = it.label + (clickable ? ` — click to download (${(HUB_FMT_LABEL[primaryFmt] || primaryFmt).toUpperCase()})` : '');
+  // Two rows, not one. The glyph, formats and controls used to sit on the
+  // SAME row as the name, which left the name about 90px of a 230px card and
+  // wrapped nearly every document to three lines — that, not the padding, is
+  // what made these tiles tall. The name now owns the full card width and
+  // fits on one or two lines, and the row above carries the things that were
+  // squeezing it.
   return `<div class="${cls}" data-hub-id="${esc(it.id)}"${tintStyle}`
        + (it._groupId ? ` data-src="${esc(it._groupId)}"` : '')
+       + (clickable ? ` role="button" tabindex="0" data-dl-fmt="${esc(primaryFmt)}"`
+                    + ` onclick="hubTileActivate(event,'${it.id}','${primaryFmt}')"`
+                    + ` onkeydown="hubTileKey(event,'${it.id}','${primaryFmt}')"` : '')
+       + ` title="${esc(tip)}"`
        + ` data-search="${esc((it.label + ' ' + it.id + ' ' + (it.family || '')).toLowerCase())}">`
-       + `<div class="hub-tile-main">${icoSq}`
-       +   `<span class="hub-tile-txt">`
-       +     `<span class="hub-tile-l">${esc(it.label)}</span>`
-       +     `<span class="hub-tile-fmt">${esc(sub)}</span>`
-       +   `</span>${pick}</div>`
+       + `<div class="hub-tile-top">${icoSq}`
+       +   `<span class="hub-tile-fmt" title="${esc(sub)}">${esc(sub)}</span>${moreBtn}${pick}</div>`
+       + `<div class="hub-tile-l">${esc(it.label)}</div>`
        + (parts.length ? `<div class="hub-tile-meta">${parts.join('')}</div>` : '')
        + (acts.length ? `<div class="hub-acts">${acts.join('')}</div>` : '')
        + '</div>';
@@ -12411,6 +12615,11 @@ function hubGrouping(){
 }
 function hubSetGrouping(mode){
   try { localStorage.setItem('hubGrouping', mode === 'format' ? 'format' : 'purpose'); } catch(_) {}
+  // The two modes have different groups entirely ("Reports" has no counterpart
+  // among the file types), so an open group cannot survive the switch. Land on
+  // the grid rather than on whatever the stale id happens not to match.
+  window._hubOpenGroup = null;
+  window._hubOpenSub = null;
   document.getElementById('hub-grp-purpose')?.classList.toggle('is-on', mode !== 'format');
   document.getElementById('hub-grp-format')?.classList.toggle('is-on', mode === 'format');
   if (window._hubCat) { renderHubGroups(window._hubCat.groups || []); renderHubFooter(); hubApplyFilter(); }
@@ -12499,6 +12708,19 @@ function hubCloseGroup(){
   renderHubFooter();
   hubApplyFilter();
 }
+// Escape steps back one level — section, then group — the same way it closes
+// the lot drawer next door. Only when the Documents view is the thing on
+// screen and nothing else has a claim on the key.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !window._hubOpenGroup) return;
+  if (!document.getElementById('tc-hub')?.classList.contains('active')) return;
+  if (document.getElementById('hub-view-docs')?.style.display === 'none') return;
+  if (document.querySelector('.modal-bg.show')) return;
+  if (document.getElementById('hub-lot-drawer')?.style.display !== 'none') return;
+  const t = e.target;
+  if (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName || '')) return;
+  if (window._hubOpenSub) hubCloseSub(); else hubCloseGroup();
+});
 
 // One widget per group: icon, name, and how much of it is ready.
 function hubWidgetHtml(g){
@@ -12527,20 +12749,21 @@ function hubSubsOf(g){
   return order.map(k => ({ name: k, items: by.get(k) }));
 }
 
-function hubSubWidgetHtml(g, sub){
-  const live = sub.items.filter(i => i.available).length;
-  const sel  = sub.items.filter(i => window._hubSel.has(i.id)).length;
-  return `<button type="button" class="hub-w hub-w-sub hub-grad t-${hubTheme(g.id)}"
-            data-g="${esc(g.id)}" data-sub="${esc(sub.name)}"
-            onclick="hubOpenSub('${esc(sub.name).replace(/'/g, "\\'")}')">
-    <span class="hub-ico">${hubIcon(g.id).replace(/^<span class="hub-sec-ico">|<\/span>$/g, '')}</span>
-    <span class="hub-w-b">
-      <span class="hub-w-name">${esc(sub.name)}</span>
-      <span class="hub-w-n">${live} of ${sub.items.length} ready</span>
-      ${sel ? `<span class="hub-w-sel">${sel} picked</span>` : ''}
-    </span>
-  </button>`;
+// One navigation chip. Used for both rows in an opened group: the sibling
+// GROUPS (hop straight from Reports to Tally without going back out) and the
+// SUBGROUPS within the open one (which used to be a whole extra screen of
+// widgets you had to click through before seeing a single document).
+function hubNavChip(label, on, onclick, n){
+  return `<button type="button" class="hub-chipnav${on ? ' is-on' : ''}"`
+       + ` aria-current="${on ? 'true' : 'false'}" onclick="${onclick}">`
+       + `<span class="hub-chipnav-l">${esc(label)}</span>`
+       + (n == null ? '' : `<span class="hub-chipnav-n">${n}</span>`)
+       + `</button>`;
 }
+// JS string literal for an inline onclick attribute. Subgroup names come
+// from the manifest and carry apostrophes ("Buyer's statement"), which would
+// otherwise close the handler's quote.
+const hubJsStr = (s) => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
 function renderHubGroups(groups){
   const host = document.getElementById('hub-groups');
@@ -12567,43 +12790,53 @@ function renderHubGroups(groups){
   }
 
   // One group open → just that group. Nothing else on screen to scroll past.
+  //
+  // TWO levels now, not three. Opening a group used to land on a grid of
+  // subgroup widgets — a whole screen that showed no documents at all and
+  // cost a click before you could see one. The subgroups are chips above the
+  // documents instead: the group opens straight onto its papers, and the
+  // chips narrow them in place. A second chip row carries the sibling GROUPS,
+  // so moving from Reports to Tally is one click rather than back-then-in.
   const openId = window._hubOpenGroup;
   const open = openId && groups.find(g => g.id === openId);
   if (open) {
     // Stamp the source group onto every card so its edge and caption take
     // the group's colour here as well as in the format view.
     open.items = open.items.map(i => ({ ...i, _groupId: i._groupId || open.id }));
-    const subs = hubSubsOf(open);
-    // One subgroup is not a choice — go straight to the documents rather
-    // than making someone click through a grid of one.
-    const single = subs.length <= 1;
-    const openSub = single ? subs[0]
-                           : subs.find(x => x.name === window._hubOpenSub);
+    // A subgroup only earns a chip if it has a name — items filed directly
+    // under the group have none, and they live in "All" alone.
+    const subs = hubSubsOf(open).filter(s => s.name);
+    const hasSubs = subs.length > 1 || (subs.length === 1 && subs[0].items.length < open.items.length);
+    const openSub = hasSubs ? subs.find(x => x.name === window._hubOpenSub) : null;
     const shown = openSub ? openSub.items : open.items;
     const live = shown.filter(i => i.available).length;
     const pickable = shown.filter(i => i.available && i.href).length;
-    const atDocs = !!openSub;
 
-    const crumbs = atDocs && !single
-      ? `<button type="button" class="hub-btn" onclick="hubCloseSub()">← ${esc(open.label)}</button>
-         <span class="hub-open-name">${esc(openSub.name)}</span>`
-      : `${hubIcon(open.id)}<span class="hub-open-name">${esc(open.label)}</span>`;
+    const groupChips = groups.slice()
+      .sort((a, b) => a.label.localeCompare(b.label))
+      .map(g => hubNavChip(g.label, g.id === open.id, `hubOpenGroup('${esc(hubJsStr(g.id))}')`,
+                           g.items.filter(i => i.available).length))
+      .join('');
+    const subChips = hasSubs
+      ? hubNavChip('All', !openSub, 'hubCloseSub()', open.items.length)
+        + subs.slice().sort((a, b) => a.name.localeCompare(b.name))
+            .map(sb => hubNavChip(sb.name, openSub && openSub.name === sb.name,
+                                  `hubOpenSub('${esc(hubJsStr(sb.name))}')`, sb.items.length))
+            .join('')
+      : '';
 
     host.innerHTML = `<div class="hub-open" data-g="${esc(open.id)}">
         <div class="hub-open-head">
-          <button type="button" class="hub-btn" onclick="hubCloseGroup()">← All documents</button>
-          ${crumbs}
+          <button type="button" class="hub-btn hub-back" onclick="hubCloseGroup()">← All groups</button>
+          ${hubIcon(open.id)}<span class="hub-open-name">${esc(open.label)}</span>
+          ${openSub ? `<span class="hub-open-sub">${esc(openSub.name)}</span>` : ''}
           <span class="hub-sec-count">${live} of ${shown.length} ready</span>
-          ${atDocs && pickable > 1
-            ? `<button class="hub-btn" onclick="hubSelectGroup('${esc(open.id)}')">Pick all ${pickable}</button>` : ''}
+          ${pickable > 1
+            ? `<button class="hub-btn" onclick="hubSelectGroup('${esc(hubJsStr(open.id))}')">Pick all ${pickable}</button>` : ''}
         </div>
-        <div class="hub-open-body">${
-          atDocs
-            ? `<div class="hub-grid">${shown.map(hubTileHtml).join('')}</div>`
-            : `<div class="hub-wgrid">${subs.slice()
-                  .sort((a, b) => a.name.localeCompare(b.name))
-                  .map(sb => hubSubWidgetHtml(open, sb)).join('')}</div>`
-        }</div>
+        <nav class="hub-navrow" aria-label="Document groups">${groupChips}</nav>
+        ${subChips ? `<nav class="hub-navrow is-sub" aria-label="Sections of ${esc(open.label)}">${subChips}</nav>` : ''}
+        <div class="hub-open-body"><div class="hub-grid">${shown.map(hubTileHtml).join('')}</div></div>
       </div>`;
     return;
   }
@@ -13409,6 +13642,9 @@ function hubOpen(tab){
   const aid = document.getElementById('hub-auction')?.value || '';
   if (aid && typeof setSharedAucId === 'function') setSharedAucId(aid);
   window._hubReturn = { tab, view: hubView() };
+  // Only one return pill at a time — see amOpen() for the other half.
+  window._amReturn = null;
+  if (typeof renderAmReturn === 'function') { try { renderAmReturn(); } catch(_) {} }
   go(tab);
 }
 
@@ -13925,6 +14161,15 @@ let _amTab = 'lots';     // lots | planters | traders
 let _amFilter = '';
 let _amSort = { key: 'lot', dir: 1 };
 const _amSel = new Set(); // checked lot ids, keyed by lot.id
+// What the detail drawer is showing, as data rather than read back off the
+// DOM — a re-render (sort, filter, sub-tab, reload-after-save) restores from
+// it. Two shapes: { kind:'lot', id } and { kind:'seller', key }. See
+// amLotOpen / amSellerOpen further down.
+let _amDetail = null;
+// Seller groups for whichever of Planters / Traders is on screen, in the
+// order the table renders them. Rebuilt by _amSellersTable on every render
+// and read by amSellerOpen(i).
+let _amGroups = [];
 
 // Seller is a DEALER when its cr carries a real GSTIN. This mirrors
 // calculations.gstinStateCode()'s FULL-format test, not the older
@@ -14014,10 +14259,15 @@ function _amShell(){
     </div>
     <div class="am-stats" id="am-stats"></div>
     <div class="am-acts">
+      <!-- Reports goes through plain go(): the Auction Downloads screen already
+           carries its own ✕ back to this one in its header, and a return pill
+           on top of that would be two ways back on one screen. Every OTHER
+           destination is a full app screen with no idea it was opened from
+           here, so those go through amOpen() and get the pill. -->
       ${act('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>', 'Reports', "go('amreports')")}
-      ${act('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>', 'Sales Invoices', "go('invoices')")}
-      ${act('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/>', 'Purchase Invoices', "go('purchases')")}
-      ${act('<rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><line x1="6" y1="15" x2="10" y2="15"/>', 'Payments', "go('payments')")}
+      ${act('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>', 'Sales Invoices', "amOpen('invoices')")}
+      ${act('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/>', 'Purchase Invoices', "amOpen('purchases')")}
+      ${act('<rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><line x1="6" y1="15" x2="10" y2="15"/>', 'Payments', "amOpen('payments')")}
       <button class="am-collapse" onclick="amToggleActions()" title="Collapse actions" aria-label="Collapse actions">
         <svg viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg>
       </button>
@@ -14116,6 +14366,9 @@ function amClearFilter(){
 function amToggleActions(){
   const p = document.getElementById('tc-auctionmgr');
   if (p) p.setAttribute('data-am-collapsed', p.getAttribute('data-am-collapsed') === '1' ? '0' : '1');
+  // Folding the action row away gives the list another ~40px — hand it over
+  // rather than leaving a gap where the buttons were.
+  _amFitScroll();
 }
 function amSort(key){
   _amSort = (_amSort.key === key) ? { key, dir: -_amSort.dir } : { key, dir: 1 };
@@ -14145,7 +14398,24 @@ function _amRenderBody(){
               : _amTab === 'planters' ? _amSellersTable(rows, false)
               :                         _amSellersTable(rows, true);
   host.innerHTML = `<div class="am-panel">${hd}<div class="am-scroll">${table}</div></div>`;
+  _amFitScroll();
 }
+
+// Size the list to the space left below it, so it ends AT the bottom of the
+// window. A CSS vh cap can't do this on its own: how much is above the panel
+// depends on the stat band, on whether the action row is collapsed, and on
+// whatever chrome the browser is showing — a fixed fraction either wastes a
+// band of screen or spills past the fold, which puts the operator back to
+// scrolling the page as well as the list. Re-run on resize and on collapse.
+function _amFitScroll(){
+  const el = document.querySelector('#tc-auctionmgr .am-scroll');
+  if (!el) return;
+  const top = el.getBoundingClientRect().top;
+  // Floor at 220px: on a very short window it is better to keep a usable
+  // list and let the page scroll than to squeeze the table to two rows.
+  el.style.maxHeight = Math.max(220, Math.floor(window.innerHeight - top - 18)) + 'px';
+}
+window.addEventListener('resize', () => { if (window._currentTab === 'auctionmgr') _amFitScroll(); });
 
 function _amLotsTable(rows){
   const dir = _amSort.dir;
@@ -14184,9 +14454,13 @@ function _amLotsTable(rows){
         // alone rather than with a dangling separator.
         const place = String(l.buyer_pla || '').trim();
         const addr  = buyer ? (place ? `${buyer} - ${place}` : buyer) : '';
-        return `<tr>
+        // The row opens the detail drawer; the select checkbox inside it
+        // stops the click so ticking a lot never also opens it.
+        return `<tr data-am-row="lot:${l.id}" onclick="amLotOpen(${l.id})"
+            ${_amDetail && _amDetail.kind === 'lot' && _amDetail.id === l.id ? 'class="is-open"' : ''}>
           <td class="am-ck"><input type="checkbox" ${_amSel.has(l.id) ? 'checked' : ''}
-              onclick="amToggleOne(${l.id}, this)" aria-label="Select lot ${esc(String(l.lot_no||''))}"></td>
+              onclick="event.stopPropagation();amToggleOne(${l.id}, this)"
+              aria-label="Select lot ${esc(String(l.lot_no||''))}"></td>
           <td>${esc(String(l.lot_no == null ? '' : l.lot_no))}</td>
           <td>${esc(l.name || '')}</td>
           <td>${esc(l.cr || '')}</td>
@@ -14205,22 +14479,43 @@ function _amLotsTable(rows){
 // whether the seller's cr carries a real GSTIN — the app's own
 // planter/dealer discriminator (see _amIsDealer). One row per seller,
 // with their lots rolled up.
-function _amSellersTable(rows, dealers){
+// One group per seller. The row hands amSellerOpen its INDEX rather than the
+// seller's name, so a name carrying a quote or an apostrophe can't break the
+// onclick attribute; the drawer then remembers the group's stable `key`, so
+// it can find the same seller again after a reload rebuilds every group.
+function _amSellerGroups(rows, dealers){
   const by = new Map();
   for (const l of rows) {
     if (_amIsDealer(l.cr) !== dealers) continue;
     const k = l.trader_id != null && l.trader_id !== '' ? 't:' + l.trader_id
             : 'n:' + String(l.name || '').trim().toUpperCase();
     let g = by.get(k);
-    if (!g) { g = { name: l.name || '', cr: l.cr || '', lots: [], bags: 0, qty: 0, amount: 0, sold: 0 }; by.set(k, g); }
-    g.lots.push(l.lot_no);
+    if (!g) {
+      g = { key: k, name: l.name || '', cr: l.cr || '',
+            // trader_id is what "Edit seller" needs. Lots imported before the
+            // sellers master existed carry none; the drawer says so rather
+            // than opening an editor on an undefined id.
+            traderId: (l.trader_id != null && l.trader_id !== '') ? l.trader_id : null,
+            // The lot ROWS, not just their numbers — the drawer lists them
+            // lot-wise and each one has to be clickable through to its own
+            // detail. The summary table still only prints the numbers.
+            lots: [], bags: 0, qty: 0, amount: 0, sold: 0 };
+      by.set(k, g);
+    }
+    g.lots.push(l);
     g.bags   += Number(l.bags)   || 0;
     g.qty    += Number(l.qty)    || 0;
     g.amount += Number(l.amount) || 0;
     if (_amIsSold(l)) g.sold++;
   }
   const groups = Array.from(by.values()).sort((a, b) => a.name.localeCompare(b.name));
-  if (!groups.length) {
+  for (const g of groups) g.lots.sort((x, y) => _amLotCmp(x.lot_no, y.lot_no));
+  return groups;
+}
+
+function _amSellersTable(rows, dealers){
+  _amGroups = _amSellerGroups(rows, dealers);
+  if (!_amGroups.length) {
     return `<div class="am-empty">No ${dealers ? 'traders' : 'planters'} match.</div>`;
   }
   return `
@@ -14231,11 +14526,13 @@ function _amSellersTable(rows, dealers){
         <th class="am-num">Bags</th><th class="am-num">Quantity</th>
         <th class="am-num">Sold Lots</th><th class="am-num">Value</th>
       </tr></thead>
-      <tbody>${groups.map(g => `<tr>
+      <tbody>${_amGroups.map((g, i) => `<tr data-am-row="seller:${esc(g.key)}"
+          onclick="amSellerOpen(${i})"
+          ${_amDetail && _amDetail.kind === 'seller' && _amDetail.key === g.key ? 'class="is-open"' : ''}>
         <td>${esc(g.name)}</td>
         <td>${esc(g.cr)}</td>
         <td class="am-num">${_amInt(g.lots.length)}</td>
-        <td>${esc(g.lots.slice().sort(_amLotCmp).join(', '))}</td>
+        <td>${esc(g.lots.map(l => l.lot_no).join(', '))}</td>
         <td class="am-num">${_amInt(g.bags)}</td>
         <td class="am-num">${_amQty(g.qty)}</td>
         <td class="am-num">${_amInt(g.sold)}</td>
@@ -14243,6 +14540,272 @@ function _amSellersTable(rows, dealers){
       </tr>`).join('')}</tbody>
     </table>`;
 }
+
+// ── Detail drawer (lot / planter / trader) ──────────────────────────
+// Clicking any row opens the same slide-in panel on the right, in one of
+// two shapes (see _amDetail at the top of this section):
+//
+//   lot     — one lot, in full, with Edit lot / Edit seller
+//   seller  — one planter or trader, LOT-WISE: their lots listed one per
+//             row, each clicking through to its own lot drawer
+const _amDash = '<span class="hub-lot-mute">—</span>';
+const _amRow  = (v, label) => `<dt>${esc(label)}</dt><dd>${v || _amDash}</dd>`;
+const _amSec  = (t) => `<div class="hub-dl-sec">${esc(t)}</div><dl class="hub-dl">`;
+const _amMoney = (v) => Number(v) ? '₹' + _amMny(v) : '';
+
+// "Edit seller" needs a trader_id. Lots that predate the sellers master carry
+// none — the button is rendered disabled with the reason on it rather than
+// left live to fail on an undefined id.
+function _amSellerBtn(traderId){
+  return traderId
+    ? `<button class="btn btn-o needs-trader-write" onclick="amEditSeller(${Number(traderId)})"
+         style="height:36px;padding:0 14px;font-size:13px;flex:1 1 130px">Edit seller</button>`
+    : `<button class="btn btn-o" disabled title="This lot is not linked to a seller record — open it in Lots to link one"
+         style="height:36px;padding:0 14px;font-size:13px;flex:1 1 130px;opacity:.55;cursor:not-allowed">Edit seller</button>`;
+}
+
+function _amDetailShow(html){
+  const dr = document.getElementById('am-detail');
+  const sc = document.getElementById('am-detail-scrim');
+  if (!dr) return;
+  dr.innerHTML = html;
+  dr.style.display = 'flex';
+  if (sc) sc.style.display = '';
+  _amMarkOpenRow();
+}
+
+// Highlight whichever row the open drawer belongs to. Runs on open and again
+// after every re-render, because the rebuilt <tr> elements lose the class.
+function _amMarkOpenRow(){
+  const want = !_amDetail ? ''
+    : _amDetail.kind === 'lot' ? 'lot:' + _amDetail.id
+    : 'seller:' + _amDetail.key;
+  for (const tr of document.querySelectorAll('#am-body tr[data-am-row]'))
+    tr.classList.toggle('is-open', tr.dataset.amRow === want);
+}
+
+function amDetailClose(){
+  _amDetail = null;
+  const dr = document.getElementById('am-detail');
+  const sc = document.getElementById('am-detail-scrim');
+  if (dr) { dr.style.display = 'none'; dr.innerHTML = ''; }
+  if (sc) sc.style.display = 'none';
+  _amMarkOpenRow();
+}
+
+function amLotOpen(id){
+  const l = _amRows.find(x => Number(x.id) === Number(id));
+  if (!l) return;
+  _amDetail = { kind: 'lot', id: Number(id) };
+  const sold = _amIsSold(l);
+  const code = String(l.code || '').trim().toUpperCase();
+  // WD / NA are settled outcomes, not missing data — say which one rather
+  // than the generic "not sold" an unpriced-but-pending lot gets.
+  const note = code === 'WD' ? 'Withdrawn — this lot did not sell.'
+             : code === 'NA' ? 'Not auctioned — this lot did not go up.'
+             : !sold         ? 'Not sold yet — no buyer code on this lot.'
+             : '';
+  _amDetailShow(
+    `<div class="hub-drawer-head">
+       <div style="flex:1">
+         <div style="font-size:17px;font-weight:800;color:var(--text)">Lot ${esc(String(l.lot_no == null ? '' : l.lot_no))}</div>
+         <div style="font-size:12px;color:var(--text3);margin-top:2px">${esc(l.name || '')}</div>
+       </div>
+       <button class="hub-btn" onclick="amDetailClose()" title="Close" aria-label="Close"
+               style="width:28px;padding:0;font-size:14px">×</button>
+     </div>
+     <div class="hub-drawer-body">
+       ${note ? `<div class="hub-lock" style="margin:10px 0 0"><span>⚠</span><span>${esc(note)}</span></div>` : ''}
+       ${_amSec('Seller')}
+         ${_amRow(esc(l.name || ''), 'Name')}
+         ${_amRow(esc(l.cr || ''), 'CR / GSTIN')}
+         ${_amRow(esc(l.ppla || l.padd || ''), 'Place')}
+         ${_amRow(esc(l.tel || ''), 'Phone')}
+         ${_amRow(esc(l.pan || ''), 'PAN')}
+         ${bankDetailRows(l).map(([lbl, v]) => _amRow(v, lbl)).join('')}
+       </dl>
+       ${_amSec('Lot')}
+         ${_amRow(esc(l.branch || ''), 'Depot / branch')}
+         ${_amRow(esc(l.grade || ''), 'Grade')}
+         ${_amRow(esc(l.crop || ''), 'Crop')}
+         ${_amRow(_amInt(l.bags), 'Bags')}
+         ${_amRow(_amQty(l.qty), 'Quantity (kg)')}
+         ${_amRow(esc(l.litre || ''), 'Litre')}
+         ${_amRow(_amMoney(l.reserved_price), 'Reserve price')}
+       </dl>
+       ${_amSec('Sale')}
+         ${_amRow(_amMoney(l.price), 'Price')}
+         ${_amRow(_amMoney(l.amount), 'Amount')}
+         ${_amRow(esc(l.buyer1 || l.buyer || ''), 'Buyer')}
+         ${_amRow(esc(code), 'Buyer code')}
+         ${_amRow(esc(l.sale || ''), 'Sale type')}
+         ${_amRow(esc(String(l.invo == null ? '' : l.invo)), 'Bill / Invoice no')}
+       </dl>
+       ${_amSec('Computed')}
+         ${_amRow(_amMoney(l.com), 'Commission')}
+         ${_amRow(_amMoney(l.cgst), 'CGST')}
+         ${_amRow(_amMoney(l.sgst), 'SGST')}
+         ${_amRow(_amMoney(l.igst), 'IGST')}
+         ${_amRow(_amMoney(l.refund), 'Sample refund')}
+         ${_amRow(_amMoney(l.balance), 'Payable')}
+       </dl>
+       <div class="hub-lot-mute" style="margin-top:14px;font-size:12px;color:var(--text3)">
+         Computed figures come from the last <b>Calculate All</b> on the Lots
+         screen — they stay stale until it is re-run after an edit.
+       </div>
+     </div>
+     <div class="hub-drawer-foot" style="flex-wrap:wrap">
+       <button class="btn btn-g needs-lot-write" onclick="amEditLot(${Number(id)})"
+               style="height:36px;padding:0 16px;font-size:13px;flex:1 1 130px">Edit lot</button>
+       ${_amSellerBtn(l.trader_id)}
+       <button class="btn btn-o" onclick="amOpenIn('lots')"
+               style="height:36px;padding:0 14px;font-size:13px;flex:1 1 100%">Open in Lots →</button>
+     </div>`);
+}
+
+// A planter / trader, shown LOT-WISE: the seller's own details, then one row
+// per lot they brought to this trade. Clicking a lot row swaps the drawer to
+// that lot's detail, so the two views are one click apart in both directions.
+function amSellerOpen(i){
+  const g = _amGroups[i];
+  if (!g) return;
+  _amDetail = { kind: 'seller', key: g.key };
+  // Seller-level fields live on the lots (each lot carries its own copy), so
+  // the first lot is as good a source as any — they are re-stamped together.
+  const f = g.lots[0] || {};
+  const rows = g.lots.map(l => {
+    const settled = ['WD', 'NA'].includes(String(l.code || '').trim().toUpperCase());
+    const price = Number(l.price) ? _amRate(l.price) : (settled ? '0.00' : '—');
+    return `<tr onclick="amLotOpen(${Number(l.id)})" title="Open lot ${esc(String(l.lot_no || ''))}">
+      <td>${esc(String(l.lot_no == null ? '' : l.lot_no))}</td>
+      <td class="num">${_amQty(l.qty)}</td>
+      <td class="num${Number(l.price) ? '' : ' am-dl-wd'}">${price}</td>
+      <td class="num">${Number(l.amount) ? _amMny(l.amount) : '—'}</td>
+      <td>${esc(l.buyer1 || l.buyer || '') || '—'}</td>
+    </tr>`;
+  }).join('');
+  _amDetailShow(
+    `<div class="hub-drawer-head">
+       <div style="flex:1">
+         <div style="font-size:17px;font-weight:800;color:var(--text)">${esc(g.name || '(unnamed)')}</div>
+         <div style="font-size:12px;color:var(--text3);margin-top:2px">${
+           esc(_amIsDealer(g.cr) ? 'Trader' : 'Planter')} · ${_amInt(g.lots.length)} lot${g.lots.length === 1 ? '' : 's'}</div>
+       </div>
+       <button class="hub-btn" onclick="amDetailClose()" title="Close" aria-label="Close"
+               style="width:28px;padding:0;font-size:14px">×</button>
+     </div>
+     <div class="hub-drawer-body">
+       ${_amSec('Seller')}
+         ${_amRow(esc(g.cr || ''), 'CR / GSTIN')}
+         ${_amRow(esc(f.ppla || f.padd || ''), 'Place')}
+         ${_amRow(esc(f.tel || ''), 'Phone')}
+         ${_amRow(esc(f.pan || ''), 'PAN')}
+         ${bankDetailRows(f, { seller: true }).map(([lbl, v]) => _amRow(v, lbl)).join('')}
+       </dl>
+       ${_amSec('This trade')}
+         ${_amRow(_amInt(g.lots.length), 'Lots')}
+         ${_amRow(_amInt(g.sold), 'Sold lots')}
+         ${_amRow(_amInt(g.bags), 'Bags')}
+         ${_amRow(_amQty(g.qty), 'Quantity (kg)')}
+         ${_amRow(_amMoney(g.amount), 'Value')}
+       </dl>
+       ${_amSec('Lots')}</dl>
+       <table class="am-dl-lots">
+         <thead><tr><th>Lot</th><th class="num">Qty</th><th class="num">Price</th>
+           <th class="num">Amount</th><th>Buyer</th></tr></thead>
+         <tbody>${rows}</tbody>
+       </table>
+       <div class="hub-lot-mute" style="margin-top:12px;font-size:12px;color:var(--text3)">
+         Click a lot to open it — from there you can edit the lot itself.
+       </div>
+     </div>
+     <div class="hub-drawer-foot" style="flex-wrap:wrap">
+       ${_amSellerBtn(g.traderId)}
+       <button class="btn btn-o" onclick="amOpenIn('lots')"
+               style="height:36px;padding:0 14px;font-size:13px;flex:1 1 130px">Open in Lots →</button>
+     </div>`);
+}
+
+// Hand off to the app's existing editors — one lot editor and one seller
+// editor in the codebase, not three. Both modals live in the global MODALS
+// block, so they open over this screen exactly as they do over Lots.
+// The drawer deliberately stays open BEHIND the modal: closing the modal,
+// saved or cancelled, puts you back on the row you were reading.
+function amEditLot(id){
+  const l = _amRows.find(x => Number(x.id) === Number(id));
+  if (l && typeof openLotEdit === 'function') openLotEdit(l);
+}
+function amEditSeller(traderId){
+  if (typeof openTraderEdit === 'function') openTraderEdit(Number(traderId));
+}
+
+// Called by saveLot() / saveTrader() after a successful save. Re-pulls the
+// trade and puts the drawer back on whatever it was showing, so an edit
+// made from here lands in the table you are looking at instead of needing
+// a manual re-visit.
+function amRefreshAfterEdit(){
+  if (window._currentTab !== 'auctionmgr') return;
+  const open = _amDetail;
+  amReload().then(() => {
+    if (!open) return;
+    if (open.kind === 'lot') amLotOpen(open.id);
+    else {
+      const i = _amGroups.findIndex(g => g.key === open.key);
+      if (i >= 0) amSellerOpen(i); else amDetailClose();
+    }
+  }).catch(() => {});
+}
+
+// ── Leaving and coming back ─────────────────────────────────────────
+// Every jump OFF this screen goes through amOpen(), which remembers where
+// you came from and raises a return pill on the destination. Mirrors the
+// Auction Desk's own hubOpen/_hubReturn pair; the two are kept mutually
+// exclusive so a screen never grows two "back to …" pills at once.
+function amOpen(tab){
+  window._amReturn = { tab };
+  window._hubReturn = null;
+  if (typeof renderHubReturn === 'function') { try { renderHubReturn(); } catch(_) {} }
+  go(tab);
+}
+// The Lots-screen escape hatch from inside the drawer: close the drawer
+// first so it isn't left hanging over a screen it doesn't belong to.
+function amOpenIn(tab){ amDetailClose(); amOpen(tab); }
+
+// The pill lives on <body>, outside every .tc panel, so no loader's
+// innerHTML rebuild can wipe it. It shows only while you are on the screen
+// the manager sent you to; navigate anywhere else yourself and it retires.
+function renderAmReturn(){
+  let el = document.getElementById('am-return');
+  const r = window._amReturn;
+  const here = window._currentTab;
+  if (!r || here !== r.tab) {
+    if (r && here !== r.tab && here !== 'auctionmgr') window._amReturn = null;
+    if (el) el.style.display = 'none';
+    return;
+  }
+  if (!el) {
+    el = document.createElement('button');
+    el.id = 'am-return';
+    el.className = 'hub-return';
+    el.onclick = amGoBack;
+    el.innerHTML = '<svg viewBox="0 0 24 24"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>'
+                 + '<span>Back to Auction Manager</span>';
+    document.body.appendChild(el);
+  }
+  el.style.display = '';
+}
+function amGoBack(){
+  window._amReturn = null;
+  renderAmReturn();
+  go('auctionmgr');
+}
+
+// Escape closes the detail drawer, matching the Auction Desk's drawer. Only
+// fires when one is actually open, so it never swallows the key from a
+// modal stacked on top of it.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && _amDetail && !document.querySelector('.modal-bg.show')) amDetailClose();
+});
 
 // ══ AUCTION DOWNLOADS (tc-amreports) ════════════════════════════════
 // Opened by the Auction Manager's Reports action. Reads the SAME trade the
@@ -14261,10 +14824,12 @@ function _amSellersTable(rows, dealers){
 // ── Entry shape ────────────────────────────────────────────────────
 //   label  what the tile says — taken verbatim from the supplied design
 //   href   (auctionId) => url for a plain GET download. Absent on `bulk`.
-//   bulk   { list, param, post } for the three GENERATED families
-//          (invoices / purchases / bills). Those have no single URL: the
-//          ids come from the family's list route and go to a bulk POST
-//          that merges them into one PDF.
+//   bulk   { list, param, post } for the GENERATED families (invoices /
+//          purchases / bills). Those have no single URL: the ids come from
+//          the family's list route and go to a bulk POST that merges them
+//          into one PDF. One family can back two tiles — `purchases` feeds
+//          both the Purchase Invoice and the dealer commission memorandum,
+//          which differ only in the POST route they merge through.
 //   flag   feature flag that must be on for the tile to work
 //   todo   true = the report does not exist yet. Rendered in place, greyed,
 //          non-clickable. Kept VISIBLE rather than hidden so the screen
@@ -14282,13 +14847,28 @@ const AMR_SECTIONS = [
     // with flag_debit_note off there is nothing to register.
     { label: 'Dealer Invoice CSV',       href: id => `/api/exports/dealer_invoice_csv/${id}?format=csv`,
                                          flag: 'flag_debit_note' },
-    { label: 'Purchase Invoice CSV',     todo: true },
+    // Backed by the app's own Purchase Journal — `type=dealer`, the one the
+    // Reports screen calls "Dealer Purchase Journal": one row per purchase
+    // invoice raised to a registered dealer. (`type=agri` is the Agri Bill
+    // Journal, a different report, and is not what this tile is.) Served as
+    // XLSX — the route has no CSV branch, and the journal's money columns
+    // carry Indian-format numFmts that a flat file drops.
+    { label: 'Purchase Invoice CSV',     href: id => `/api/exports/purchase-journal?auctionId=${id}&type=dealer`,
+                                         note: 'xlsx' },
     { label: 'Litre Weight CSV',         href: id => `/api/spice-board-reports/litre_weight/export?format=csv&auctionId=${id}` },
     { label: 'Collection Report CSV',    href: id => `/api/exports/collection/${id}?format=csv` },
     { label: 'Form C CSV',               href: id => `/api/spice-board-reports/form_c/export?format=csv&auctionId=${id}` },
     { label: 'Sales CSV',                href: id => `/api/exports/sales-journal?auctionId=${id}&format=csv` },
-    { label: 'Planter Disbursement CSV', todo: true },
-    { label: 'Dealer Disbursement CSV',  todo: true },
+    // The disbursement register as a spreadsheet. Asked for as XLSX, not a
+    // flat CSV: it is the same report the PDF tile prints, read across a desk
+    // with its money columns formatted and its totals strip footing.
+    { label: 'Planter Disbursement CSV', href: id => `/api/exports/planter_disbursement/${id}?format=xlsx`,
+                                         note: 'xlsx' },
+    // The Disbursement Register for registered (GSTIN) sellers — same sheet
+    // the PDF tile renders, served as XLSX rather than CSV so the money
+    // columns keep their Indian-format numFmts and the TOTAL strip.
+    { label: 'Dealer Disbursement CSV',  href: id => `/api/exports/dealer_disbursement/${id}?format=xlsx`,
+                                         note: 'xlsx' },
     // Served as XLSX, not CSV. The sheet is the four columns LOT/BAG/QTY/
     // BUYER repeated twice across the page; flattening that to CSV throws
     // away the two-up layout the hall reads it for. Label kept verbatim from
@@ -14302,20 +14882,28 @@ const AMR_SECTIONS = [
                                          note: 'xlsx' },
   ]},
   { title: 'PDF Downloads', items: [
-    { label: 'Arrivals Report',          todo: true },
+    { label: 'Arrivals Report',          href: id => `/api/spice-board-reports/arrivals/export?format=pdf&auctionId=${id}` },
     // The three generated families: merged from every stored document in
     // the trade, not computed on the fly.
     { label: 'Commission Bill - Planter', bulk: { list: '/api/bills',     param: 'auction_id', post: '/api/bills/pdf-bulk' } },
-    { label: 'Commission Bill - Dealer', todo: true },
+    // The dealer-side twin of the planter commission bill: the PAYMENT
+    // VOUCHER / "MEMORANDUM OF CARDAMOM SOLD THROUGH …", one A4 page per LOT,
+    // built from the stored purchase invoices (every purchase row is a
+    // registered dealer by construction). Nothing is generated or numbered —
+    // it is purely a print of what the purchase invoices already say.
+    { label: 'Commission Bill - Dealer', bulk: { list: '/api/purchases', param: 'auction_id', post: '/api/purchases/commission-bulk' } },
     { label: 'Dealer Invoice',           bulk: { list: '/api/invoices',  param: 'auction_id', post: '/api/invoices/pdf-bulk' } },
     { label: 'Purchase Invoice',         bulk: { list: '/api/purchases', param: 'auction_id', post: '/api/invoices/purchase-pdf-bulk' } },
     { label: 'Form C',                   href: id => `/api/spice-board-reports/form_c/export?format=pdf&auctionId=${id}` },
     { label: 'Form D',                   href: id => `/api/spice-board-reports/form_d/export?format=pdf&auctionId=${id}` },
-    { label: 'Form D1',                  todo: true },
+    { label: 'Form D1',                  href: id => `/api/spice-board-reports/form_d1/export?format=pdf&auctionId=${id}` },
     { label: 'Auction Report',           href: id => `/api/exports/trade_report/${id}?format=pdf` },
     { label: 'Collection Report',        href: id => `/api/exports/collection/${id}?format=pdf` },
-    { label: 'Dealer Disbursement',      todo: true },
-    { label: 'Planter Disbursement',     todo: true },
+    // DISBURSEMENT REGISTER, dealer side — the printed sheet the office reads
+    // down. Same rows and figures as the CSV-section tile above; only the
+    // rendering differs.
+    { label: 'Dealer Disbursement',      href: id => `/api/exports/dealer_disbursement/${id}?format=pdf` },
+    { label: 'Planter Disbursement',     href: id => `/api/exports/planter_disbursement/${id}?format=pdf` },
     // "Journal" is the Sales Journal, which is an XLSX export — there is no
     // PDF builder for it, so the tile serves the spreadsheet. Flagged here
     // rather than silently mislabelled.
@@ -22348,6 +22936,59 @@ function maskAcct(v)  { return maskField(v, _maskCfg.acct); }
 function maskIfsc(v)  { return maskField(v, _maskCfg.ifsc); }
 function maskPhone(v) { return maskField(v, _maskCfg.phone); }
 
+// ── Bank rows for a lot / seller detail panel ───────────────────────
+// Returns [[label, valueHtml], …] for whichever <dl> row helper the caller
+// has, so the Auction Desk and the Auction Manager can't describe the same
+// account two different ways.
+//
+// The panel names the ACCOUNT, not merely its existence. The account number
+// and IFSC go through the same masking policy (Settings → Business Mode →
+// Privacy & Masking) that the lot receipt uses, so what an operator reads on
+// screen matches what gets printed — the unmasked values only ever leave the
+// server in functional outputs (the NEFT file, DBF, Tally).
+//
+// `row` is a lot row from /api/lots/:auctionId, carrying the resolved
+// bank / bank_source / bank_broken / bank_count / default_bank fields (see
+// attachLotBanks in server.js).
+//   opts.seller — describe the SELLER's default account rather than the one
+//                 this particular lot is pinned to.
+function bankDetailRows(row, opts) {
+  opts = opts || {};
+  const r = row || {};
+  const bank = opts.seller ? r.default_bank : r.bank;
+  const amber = (t) => `<span style="color:var(--amber)">${t}</span>`;
+  if (!bank) {
+    // Two different nothings, and the operator has to tell them apart: a lot
+    // with no seller link can't have an account looked up at all, whereas a
+    // linked seller with no account is a gap someone has to go and fill.
+    return [['Bank account', !r.trader_id
+      ? amber('Seller not linked — no account can be read')
+      : amber('None on file')]];
+  }
+  const out = [];
+  const where = [bank.bank_name, bank.branch].filter(Boolean).join(' · ');
+  out.push(['Bank', where ? esc(where) : '—']);
+  out.push(['Account no', bank.acctnum ? esc(maskAcct(bank.acctnum)) : amber('—')]);
+  out.push(['IFSC', bank.ifsc ? esc(maskIfsc(bank.ifsc)) : amber('—')]);
+  if (bank.holder_name) out.push(['Account holder', esc(bank.holder_name)]);
+  // Which of the seller's accounts this is, and why. Silent when the seller
+  // has exactly one — there is nothing to disambiguate.
+  const n = Number(r.bank_count) || 0;
+  if (n > 1) {
+    out.push(['', `<span style="color:var(--text3);font-weight:400">${
+      opts.seller || r.bank_source === 'seller'
+        ? `Seller's default — ${n} accounts on file`
+        : `Pinned to this lot — ${n} accounts on file`}</span>`]);
+  }
+  // The pin was set but unusable (deleted row, or another seller's account).
+  // Say so on the panel: the figure below it is the fallback, not the pin.
+  if (!opts.seller && Number(r.bank_broken) === 1) {
+    out.push(['', amber('This lot was pinned to an account that no longer exists — '
+                      + 'the seller\'s default is shown instead.')]);
+  }
+  return out;
+}
+
 // Bank account numbers are not always numeric — some banks issue codes with
 // letters — so keep letters and digits and strip only spaces/punctuation.
 // Case is left as typed. Mirrors sanitizeAcct() in the mobile app.
@@ -24808,6 +25449,9 @@ async function saveTrader(){
     // Auction Desk's own copy of the rows is stale — refresh it whenever it
     // is holding a list, so a warning badge clears as soon as it's fixed.
     if (typeof hubLoadLots === 'function' && window._hubLots) hubLoadLots();
+    // …and for the Auction Manager, whose Planters / Traders tabs are built
+    // straight off those re-stamped lot rows.
+    if (typeof amRefreshAfterEdit === 'function') amRefreshAfterEdit();
   }catch(e){showError(e)}
 }
 async function delTrader(id){if(!confirm('Delete?'))return;await j(`/api/traders/${id}`,{method:'DELETE'});searchTraders('')}
@@ -28972,6 +29616,10 @@ async function saveLot(){
       const reopen = window._hubLotOpenId;
       hubLoadLots().then(() => { if (reopen) hubLotOpen(reopen); });
     }
+    // Same for the Auction Manager, which holds its own copy of the rows and
+    // can be the screen the edit was launched from. It reopens whatever its
+    // detail drawer was showing.
+    if (typeof amRefreshAfterEdit === 'function') amRefreshAfterEdit();
     // Saving a lot does NOT re-run the server-side calc — Commission, Tax &
     // Payable stay stale until "Calculate All". Nudge the user to do it.
     if (typeof showNudge === 'function') showNudge('lotCalc', NUDGE_COPY.lotCalc.msg, NUDGE_COPY.lotCalc.action,

@@ -15,6 +15,14 @@
 
 const PDFDocument = require('pdfkit');
 const auctionReports = require('./auction-reports');
+// The Disbursement Register's rows and columns are built ONCE, in exports.js,
+// and used by both renderings — see planterDisbursementRows there for why the
+// figures are read off the lot rather than recomputed. Safe as a top-level
+// require: exports.js does not require this module back.
+const {
+  planterDisbursementRows, PLANTER_DISB_COLS, PLANTER_DISB_TOTAL_KEYS,
+  dealerDisbursementRows,  DEALER_DISB_COLS,  DEALER_DISB_TOTAL_KEYS,
+} = require('./exports');
 const {
   fmtMoney, fmtQty, fmtPrice, fmtIndian,
   getCompanyHeader, drawCompanyHeader,
@@ -226,7 +234,11 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
 
   function isNumericCol(col) {
     const h = (col.header || '').toUpperCase();
-    return /^(QTY|GROSS QTY|BAG|BAGS|PRICE|RATE|AMOUNT|BILL AMOUNT|BILL AMT|PURCHASE|PQTY|PRATE|PURAMT|CGST|SGST|IGST|GST|TCS|TOTAL|DISCOUNT|PAYABLE|ADVANCE|BALANCE|LITRE|LOTS|TDS|ASSESS_VALUE|VALUE|COST|NET|GUNNY|TRANSPORT|INSURANCE|CARDAMOM|CARDAMOM_COST|GUNNY_COST|ROUND|BILAMT|BILLAMOUNT|REFUND|COM|COMMISSION)$/.test(h);
+    // COMMN / SAMP / INCL / SALE COST are the Disbursement Register's money
+    // columns. Without them the cells still format as rupees (fmtCell treats
+    // any number that way) but would sit LEFT-aligned in a table of
+    // right-aligned figures.
+    return /^(QTY|GROSS QTY|BAG|BAGS|PRICE|RATE|AMOUNT|BILL AMOUNT|BILL AMT|PURCHASE|PQTY|PRATE|PURAMT|CGST|SGST|IGST|GST|TCS|TOTAL|DISCOUNT|PAYABLE|ADVANCE|BALANCE|LITRE|LOTS|TDS|ASSESS_VALUE|VALUE|COST|SALE COST|NET|GUNNY|TRANSPORT|INSURANCE|CARDAMOM|CARDAMOM_COST|GUNNY_COST|ROUND|BILAMT|BILLAMOUNT|REFUND|COM|COMMN|SAMP|INCL|COMMISSION)$/.test(h);
   }
 
   function fmtCell(val, col) {
@@ -821,6 +833,10 @@ const COLS = {
     { header: 'INSURANCE', key: 'insurance', width: 10 },
     { header: 'TOTAL', key: 'total', width: 12 },
   ],
+  // Disbursement Register — the column set is owned by exports.js so the two
+  // renderings can never carry different headers or a different order.
+  planter_disbursement: PLANTER_DISB_COLS,
+  dealer_disbursement:  DEALER_DISB_COLS,
   payment: [
     // Serial number resets per pooler; each pooler gets a subtotal row.
     // PQTY / PRATE / PURAMT removed — they belong on bills, not the
@@ -968,9 +984,18 @@ const TOTAL_KEYS = {
   payment:         ['bag', 'qty', 'amount', 'commission', 'payable', 'advance', 'discount'],
   payment_party_wise: ['lots', 'qty', 'amount', 'purchase', 'commission', 'gst', 'tds', 'net', 'advance', 'payable', 'discount'],
   tally_purchase:  ['bag', 'qty', 'amount', 'cgst', 'sgst', 'igst', 'discount', 'bilamt'],
+  planter_disbursement: PLANTER_DISB_TOTAL_KEYS,
+  dealer_disbursement:  DEALER_DISB_TOTAL_KEYS,
   tds_return:      ['assess_value', 'tds'],
   purchase_register: ['bag', 'qty', 'amount', 'refund', 'commission', 'cgst', 'sgst', 'igst', 'billamount'],
   sales_register:    ['bag', 'qty', 'amount', 'gunny', 'lorry', 'ins', 'cgst', 'sgst', 'igst', 'invamt'],
+};
+
+// Where the totals strip's "TOTAL" label goes, when the default — the first
+// non-serial column — is too narrow to show it. Autofit sizes a column to its
+// own values, so a 3-digit BILL column ellipsizes the label to "TO…".
+const TOTAL_LABEL_KEY = {
+  planter_disbursement: 'name',
 };
 
 const TITLES = {
@@ -994,6 +1019,8 @@ const TITLES = {
   payment:         'Payment Summary',
   payment_party_wise: 'Payment Summary — Party-wise',
   tally_purchase:  'Tally Purchase',
+  planter_disbursement: 'Disbursement Register',
+  dealer_disbursement:  'Disbursement Register',
   tds_return:      'TDS Return',
   pooler_individual:   'Pooler Register',
   seller_individual:   'Sellers Individual',
@@ -1388,6 +1415,14 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
          ORDER BY name`, [auctionId]);
     }
 
+    // Straight through to the shared builder — no query of its own, so the
+    // PDF cannot list a different set of lots from the spreadsheet.
+    case 'planter_disbursement':
+      return planterDisbursementRows(db, auctionId, cfg);
+
+    case 'dealer_disbursement':
+      return dealerDisbursementRows(db, auctionId, cfg);
+
     case 'tds_return': {
       const { getTDSReturnData } = require('./calculations');
       return getTDSReturnData(db, extra.from, extra.to, 'invoice');
@@ -1517,7 +1552,12 @@ async function exportPdf(db, type, auctionId, cfg, extra = {}) {
     const t = sumKeys(rows.filter(r => !r._isSubtotal), totalKeys);
     // Place "TOTAL" in the first non-serial column so the label is visible.
     // If column[0] is the SL.NO column, the label goes in column[1] instead.
-    const labelCol = (columns[0] && columns[0].key === '_sn') ? columns[1] : columns[0];
+    // TOTAL_LABEL_KEY overrides both for a report whose first column is too
+    // narrow to hold the word: autofit sizes that column to its own short
+    // values, and the label comes out ellipsized to "TO…".
+    const forced = TOTAL_LABEL_KEY[type];
+    const labelCol = forced ? columns.find(c => c.key === forced)
+                   : (columns[0] && columns[0].key === '_sn') ? columns[1] : columns[0];
     if (labelCol) t[labelCol.key] = 'TOTAL';
     return t;
   })() : null;
