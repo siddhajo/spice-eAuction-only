@@ -231,16 +231,28 @@ const cleanup = () => {
     btn.click();
     const openAfterExpand = cards().filter(c => c.classList.contains('open')).length;
     const labelWhenOpen = btn.textContent.trim();
-    selectCat('company');                                    // no sections here
+    // The button's rule is "hide when there are no section cards to collapse".
+    // It used to be checked by switching to a category that rendered a flat
+    // grid, but every category now paints at least one card — the grouped ones
+    // via SET_FIELD_GROUPS, the rest (Branches, Tally, …) through their own
+    // renderers — so naming a category tests nothing. Drive the rule itself.
+    const root = document.getElementById('settings-root');
+    const keep = root.innerHTML;
+    root.innerHTML = '';
+    syncSetGroupToggle();
     const hiddenOnFlatCat = document.getElementById('set-group-toggle').style.display === 'none';
-    return { shown, openAfterCollapse, openAfterExpand, labelWhenClosed, labelWhenOpen, total: cards().length, hiddenOnFlatCat };
+    root.innerHTML = keep;
+    syncSetGroupToggle();
+    return { shown, openAfterCollapse, openAfterExpand, labelWhenClosed, labelWhenOpen,
+             total: cards().length, hiddenOnFlatCat };
   });
   check('the Collapse/Expand-all button shows on a sectioned category', allBtn.shown, JSON.stringify(allBtn));
   check('it collapses every section', allBtn.openAfterCollapse === 0, JSON.stringify(allBtn));
   check('its label then reads "Expand all"', allBtn.labelWhenClosed === 'Expand all', allBtn.labelWhenClosed);
   check('it expands every section back', allBtn.openAfterExpand > 0, JSON.stringify(allBtn));
   check('its label then reads "Collapse all"', allBtn.labelWhenOpen === 'Collapse all', allBtn.labelWhenOpen);
-  check('it is hidden on a category with no sections', allBtn.hiddenOnFlatCat, JSON.stringify(allBtn));
+  check('it hides itself when there are no sections to collapse',
+        allBtn.hiddenOnFlatCat, JSON.stringify(allBtn));
 
   // Searching must override collapse, same as it overrides the nav accordion.
   const searchOpens = await page.evaluate(() => {
