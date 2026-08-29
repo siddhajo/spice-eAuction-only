@@ -2114,6 +2114,24 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
   text-decoration:line-through;text-decoration-color:#e59a9a}
 .act-diff .act-to{background:#e6f6ec;color:#15803d;padding:0 5px;border-radius:4px}
 .act-diff .act-arrow2{color:var(--text3)}
+/* App Activity log detail cell: a plain-English summary line on top, the
+   named fields it was built from underneath, and the per-document roll of a
+   bulk run behind a disclosure so a forty-invoice batch stays one row. */
+.act-sum{font-weight:600;color:var(--spice-text-main);display:block;margin-bottom:2px}
+.act-meta{display:flex;flex-wrap:wrap;gap:3px 10px;font-size:11.5px;color:var(--text3)}
+.act-meta .act-field{font-weight:600;color:var(--text3)}
+.act-meta b{color:var(--spice-text-main);font-weight:600}
+.act-more{margin-top:4px}
+.act-more>summary{cursor:pointer;font-size:11.5px;color:var(--spice-cardamom-dk,#0e7490);
+  font-weight:600;list-style:none;display:inline-block;user-select:none}
+.act-more>summary::-webkit-details-marker{display:none}
+.act-more>summary::before{content:'▸ ';font-size:10px}
+.act-more[open]>summary::before{content:'▾ '}
+.act-items{margin:5px 0 0;border-collapse:collapse;font-size:11.5px;width:auto}
+.act-items td{padding:2px 10px 2px 0;border:none;white-space:nowrap;vertical-align:top}
+.act-items td.act-doc{font-weight:700}
+.act-items td.act-amt{text-align:right;font-variant-numeric:tabular-nums}
+.act-items tr.act-skip td{color:var(--text3)}
 .act-toolbar{padding:12px 16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .act-toolbar select,.act-toolbar input{height:32px;font-size:12px;padding:0 10px;
   border:1px solid var(--border);border-radius:7px;background:#fff;font-family:inherit}
@@ -5015,7 +5033,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         </div>
         <div id="backup-activity-body" style="border-top:1px solid var(--border);display:none">
           <div class="act-toolbar">
-            <input type="search" id="bk-act-search" oninput="bkActDebouncedReload()" placeholder="Search user / entity / change…" style="flex:1;min-width:200px;max-width:320px">
+            <input type="search" id="bk-act-search" oninput="bkActDebouncedReload()" placeholder="Search invoice no / buyer / seller / user…" title="Searches the whole entry — document numbers, party names, trade numbers and A→B values" style="flex:1;min-width:230px;max-width:340px">
             <select id="bk-act-entity" onchange="bkActReload(true)" title="Filter by entity"><option value="">All entities</option></select>
             <select id="bk-act-action" onchange="bkActReload(true)" title="Filter by action"><option value="">All actions</option></select>
             <select id="bk-act-user" onchange="bkActReload(true)" title="Filter by user"><option value="">All users</option></select>
@@ -5034,8 +5052,8 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                 <th data-k="user_id" onclick="bkActSort('user_id')">User<span class="act-arrow"></span></th>
                 <th data-k="action" onclick="bkActSort('action')">Action<span class="act-arrow"></span></th>
                 <th data-k="entity" onclick="bkActSort('entity')">Entity<span class="act-arrow"></span></th>
-                <th data-k="item" onclick="bkActSort('item')">Item<span class="act-arrow"></span></th>
-                <th class="no-sort">Details (A → B)</th>
+                <th data-k="item" onclick="bkActSort('item')">Document<span class="act-arrow"></span></th>
+                <th class="no-sort">What happened</th>
               </tr></thead>
               <tbody id="bk-act-tbody"></tbody>
             </table>
@@ -17673,9 +17691,15 @@ async function loadAuditLog(){
       body.innerHTML='<tr><td colspan="5" style="text-align:center;padding:14px;color:var(--spice-text-hint)">No audit entries'+(action?` for action "${action}"`:'')+'.</td></tr>';
     }else{
       body.innerHTML=rows.map(r=>{
-        // Details column: pretty-print JSON if it parses, otherwise raw
+        // Details column: the server's own plain-English summary when there is
+        // one (every app-wide entry carries one), else the first few keys.
         let dt=r.details||'';
-        try{const parsed=JSON.parse(dt);dt=Object.keys(parsed).slice(0,5).map(k=>`${k}=${parsed[k]}`).join(' · ');}catch(_){}
+        try{
+          const parsed=JSON.parse(dt);
+          dt=parsed.summary ? String(parsed.summary)
+            : Object.keys(parsed).filter(k=>typeof parsed[k]!=='object').slice(0,5)
+                .map(k=>`${k}=${parsed[k]}`).join(' · ');
+        }catch(_){}
         const eid=r.entity_id!=null?'#'+r.entity_id:'';
         return `<tr><td style="font-family:monospace;font-size:12px;white-space:nowrap">${esc(r.created_at||'')}</td><td><strong>${esc(r.user_id||'')}</strong></td><td><span style="font-size:11px;padding:2px 7px;background:var(--bg2);border-radius:4px">${esc(r.action||'')}</span></td><td>${esc(r.entity||'')} <span style="color:var(--spice-text-mute);font-size:11px">${eid}</span></td><td style="font-size:11px;color:var(--spice-text-mute);max-width:340px">${esc(dt).slice(0,200)}</td></tr>`;
       }).join('');
@@ -19119,6 +19143,23 @@ const ACT_META = {
   export:  { label:'Exported',bg:'#e7f0f4', fg:'#0e7490' },
   import:  { label:'Imported',bg:'#e7f0f4', fg:'#0e7490' },
   login:   { label:'Login',   bg:'#eef2f7', fg:'#475569' },
+  // Finer-grained document + money + account actions. Documents raised are
+  // green (something now exists), pulled back is red, money is blue, account
+  // administration is purple — so a screenful reads by colour before text.
+  'generate':         { label:'Generated',   bg:'#e6f6ec', fg:'#15803d' },
+  'generate all':     { label:'Batch',       bg:'#d8f0e2', fg:'#166534' },
+  'raise original':   { label:'Raised',      bg:'#e6f6ec', fg:'#15803d' },
+  'revert':           { label:'Reverted',    bg:'#fdeaea', fg:'#b91c1c' },
+  'revert all':       { label:'Reverted all',bg:'#fdeaea', fg:'#b91c1c' },
+  'mark paid':        { label:'Paid',        bg:'#e7effe', fg:'#1d4ed8' },
+  'unmark paid':      { label:'Unpaid',      bg:'#fdeaea', fg:'#b91c1c' },
+  'pay advance':      { label:'Advance',     bg:'#e7effe', fg:'#1d4ed8' },
+  'discount':         { label:'Discount',    bg:'#e7effe', fg:'#1d4ed8' },
+  'lock':             { label:'Locked',      bg:'#f3e8ff', fg:'#7e22ce' },
+  'unlock':           { label:'Unlocked',    bg:'#f3e8ff', fg:'#7e22ce' },
+  'password reset':   { label:'Password',    bg:'#f3e8ff', fg:'#7e22ce' },
+  'role change':      { label:'Role',        bg:'#f3e8ff', fg:'#7e22ce' },
+  'revoke sessions':  { label:'Signed out',  bg:'#f3e8ff', fg:'#7e22ce' },
 };
 function actBadge(action){
   const m = ACT_META[String(action||'').toLowerCase()] || { label:action||'—', bg:'#eef2f7', fg:'#475569' };
@@ -25654,22 +25695,93 @@ function bkActSort(k){
   bkActRenderRows();
   actUpdateSortArrows('bk-act-table', _bkAct.sortK, _bkAct.sortDir);
 }
-// Readable summary of a details blob when there's no explicit A→B changes array.
+// Field labels for the chips under a row's summary. Anything not named here
+// falls back to its raw key with underscores opened up.
+const ACT_FIELD_LABELS = {
+  doc:'Document', party:'Party', trade:'Trade', lots:'Lots', lot_nos:'Lot no',
+  qty:'Qty', bags:'Bags', value:'Value', sale:'Sale', kind:'Type', mode:'Mode',
+  count:'Documents', numbers:'Numbers', skipped:'Skipped', errors:'Failed',
+  sellers:'Sellers', seller_count:'Sellers', lots_freed:'Lots freed',
+  account:'Account', role:'Role', branch:'Branch', place:'Place', gstin:'GSTIN',
+  code:'Code', doc_date:'Doc date', against:'Against', debit_notes:'Debit notes',
+  from_proforma:'From draft', cascade:'Also deleted', snapshot:'Rollback file',
+  no_ti:'Flag', state:'State', crop:'Crop', name:'Name', note:'Note',
+  saved:'Saved', cleared:'Cleared', ip:'From IP', route:'Endpoint',
+};
+// Keys that are structure, not chips — rendered separately or not at all.
+// `count` is always restated by the summary line, so it never earns a chip.
+const ACT_HIDDEN_FIELDS = new Set(['changes','summary','items','skipped_items','items_more','route','ip','count']);
+function actFieldLabel(k){ return ACT_FIELD_LABELS[k] || k.replace(/_/g,' '); }
+// The named fields behind a summary, as quiet "label: value" chips. A field
+// the summary already spells out is dropped rather than repeated. Long values
+// match on substring; a bare count only matches as "<n> <its own noun>", so
+// "Lots: 2" disappears against "2 lots" while "Bags: 12" survives "Trade #12".
+function actMetaChips(d){
+  const sum = String(d.summary || '');
+  const saidAlready = (k, v) => {
+    if (v.length >= 4 && sum.includes(v)) return true;
+    if (!/^\d+$/.test(v)) return false;
+    const noun = actFieldLabel(k).toLowerCase().replace(/s$/, '');
+    return new RegExp('\\b' + v + '\\s+' + noun + 's?\\b', 'i').test(sum);
+  };
+  const parts = Object.keys(d)
+    .filter(k => !ACT_HIDDEN_FIELDS.has(k) && d[k] !== '' && d[k] != null && typeof d[k] !== 'object')
+    .filter(k => !saidAlready(k, String(d[k])))
+    .map(k => `<span><span class="act-field">${esc(actFieldLabel(k))}:</span> <b>${esc(String(d[k]))}</b></span>`);
+  return parts.length ? `<span class="act-meta">${parts.join('')}</span>` : '';
+}
+// The per-document roll of a bulk run, behind a disclosure triangle: which
+// numbers went to whom, and what was skipped and why.
+function actItemsTable(d){
+  const made = Array.isArray(d.items) ? d.items : [];
+  const skip = Array.isArray(d.skipped_items) ? d.skipped_items : [];
+  if (!made.length && !skip.length) return '';
+  const money = n => (Number(n) ? '₹' + Math.round(Number(n)).toLocaleString('en-IN') : '');
+  const row = (it, isSkip) => `<tr class="${isSkip ? 'act-skip' : ''}">
+    <td class="act-doc">${esc(it.doc || (isSkip ? '—' : ''))}</td>
+    <td>${esc(it.party || '')}</td>
+    <td>${esc(it.lot ? 'lot ' + it.lot : (it.ref ? 'vs ' + it.ref : ''))}</td>
+    <td class="act-amt">${esc(isSkip ? (it.reason || '') : money(it.amount))}</td>
+  </tr>`;
+  const more = Number(d.items_more) > 0
+    ? `<tr><td colspan="4" style="color:var(--text3)">…and ${d.items_more} more</td></tr>` : '';
+  const label = [made.length ? `${made.length} document${made.length === 1 ? '' : 's'}` : '',
+                 skip.length ? `${skip.length} skipped` : ''].filter(Boolean).join(', ');
+  return `<details class="act-more"><summary>${esc(label)}</summary>
+    <table class="act-items">${made.map(i => row(i, false)).join('')}${more}${skip.map(i => row(i, true)).join('')}</table>
+  </details>`;
+}
+// Readable summary of a details blob: the plain-English line the server wrote,
+// then the fields behind it, then any A→B diff, then the bulk roll.
 function actDetailsSummary(d){
-  const parts = Object.keys(d).filter(k => k !== 'changes' && d[k] !== '' && d[k] != null)
-    .map(k => `<span class="act-field">${esc(k)}:</span> ${esc(String(d[k]))}`);
-  return parts.length ? parts.join(' · ') : '<span style="color:var(--text3)">—</span>';
+  const bits = [];
+  if (d.summary) bits.push(`<span class="act-sum">${esc(d.summary)}</span>`);
+  const meta = actMetaChips(d);
+  if (meta) bits.push(meta);
+  if (Array.isArray(d.changes) && d.changes.length) bits.push(actDiffChips(d.changes));
+  const items = actItemsTable(d);
+  if (items) bits.push(items);
+  return bits.length ? bits.join('') : '<span style="color:var(--text3)">—</span>';
 }
 function bkActRenderRows(){
   const tbody = document.getElementById('bk-act-tbody');
   if (!tbody) return;
   let mapped = _bkAct.rows.map(r => {
     let d = {}; try { d = JSON.parse(r.details || '{}'); } catch(_){}
-    const itemVal = (d.lot_no != null && d.lot_no !== '') ? String(d.lot_no)
-                  : (r.entity_id != null ? String(r.entity_id) : '');
-    const item = itemVal ? ('#' + itemVal) : '—';
-    const details = (Array.isArray(d.changes) && d.changes.length) ? actDiffChips(d.changes) : actDetailsSummary(d);
-    return { r, item, itemVal, details };
+    // Prefer the document's own number over the internal row id — "Invoice
+    // 1201" is what the operator is looking for, "#48" is not.
+    const docNo = String(d.doc || '').replace(/^(Invoice|Purchase|Bill|DN)\s+/i, '').trim();
+    const itemVal = docNo || (d.numbers ? String(d.numbers) : '')
+                  || (d.lot_no != null && d.lot_no !== '' ? String(d.lot_no) : '')
+                  || (r.entity_id != null ? String(r.entity_id) : '');
+    const item = docNo ? docNo
+               : d.numbers ? String(d.numbers)
+               : itemVal ? ('#' + itemVal) : '—';
+    // Where it came from, on hover — two people editing one trade from
+    // different devices is exactly when this log gets read.
+    const from = [d.ip ? 'IP ' + d.ip : '', d.route || ''].filter(Boolean).join(' · ');
+    const details = actDetailsSummary(d);
+    return { r, item, itemVal, details, from };
   });
   const k = _bkAct.sortK, dir = _bkAct.sortDir === 'asc' ? 1 : -1;
   if (k && k !== 'created_at'){
@@ -25685,7 +25797,7 @@ function bkActRenderRows(){
     tbody.innerHTML = '<tr><td colspan="6" style="padding:16px;text-align:center;color:var(--text3)">No activity found.</td></tr>';
     return;
   }
-  tbody.innerHTML = mapped.map(m => `<tr>
+  tbody.innerHTML = mapped.map(m => `<tr${m.from ? ` title="${escAttr(m.from)}"` : ''}>
     <td style="color:var(--text3)">${esc(actFmtTime(m.r.created_at))}</td>
     <td><b>${esc(m.r.user_id || '?')}</b></td>
     <td>${actBadge(m.r.action)}</td>

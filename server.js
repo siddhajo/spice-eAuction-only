@@ -135,6 +135,13 @@ app.use(express.static(path.join(__dirname, 'public')));
 //
 // Registered before the API routes so it can snapshot the pre-edit row on the
 // way IN; the actual log row is written on the way OUT (successful status only).
+//
+// Every row also carries a one-line human `summary` — WHICH document, for
+// WHOM, in which trade, for how much — because "generate · invoice" on its own
+// can't answer the question the log exists to answer. The summary is built
+// from the request body, the handler's own JSON response (captured below) and
+// one cheap lookup of the row that was just written; the structured fields it
+// was assembled from are stored alongside it so the UI can show them as chips.
 const AUDIT_RESOURCES = {
   traders:               { entity: 'seller',              table: 'traders' },
   buyers:                { entity: 'buyer',               table: 'buyers' },
@@ -144,9 +151,18 @@ const AUDIT_RESOURCES = {
   bills:                 { entity: 'bill',                table: 'bills' },
   'debit-notes':         { entity: 'debit note',          table: 'debit_notes' },
   'debit-notes-planter': { entity: 'planter debit note',  table: 'debit_notes_planter' },
+  // Money movement and account administration — no single table backs these
+  // routes (payments writes lots / payment_advances / lot_advances), so they
+  // are summarised from the request + response instead of an A→B row diff.
+  payments:              { entity: 'payment',             table: null },
+  users:                 { entity: 'user',                table: 'users' },
 };
-// Columns never surfaced in an A→B diff (derived / volatile / noisy).
-const AUDIT_SKIP_COLS = new Set(['id', 'created_at', 'updated_at']);
+// Columns never surfaced in an A→B diff (derived / volatile / noisy), plus
+// the credential columns that must never reach a log line.
+const AUDIT_SKIP_COLS = new Set([
+  'id', 'created_at', 'updated_at',
+  'password_hash', 'password', 'token', 'session_token', 'api_key',
+]);
 // POST sub-paths that don't mutate business data (PDF/print/preview/preflight)
 // — logging them would just be noise, so skip.
 const AUDIT_SKIP_POST = /\b(pdf|print|preview|preflight|export|download)\b/i;
@@ -196,6 +212,433 @@ function _auditRowLabel(key, row) {
     default:                     return pick('name', 'buyer', 'invo');
   }
 }
+
+// ── Activity-log context helpers ──────────────────────────────────────
+// People read this log asking "who raised THAT invoice, for whom, in which
+// trade?". These build the answer. All of it is best-effort — a lookup that
+// throws just leaves its field out of the summary.
+
+// How many per-document entries a bulk run records by name. A trade-wide
+// generate can touch hundreds of documents; the log names the first 100 and
+// says how many more there were, so the details blob stays a sane size.
+const AUDIT_MAX_ITEMS = 100;
+const AUDIT_SALE_LABEL = { L: 'Local', I: 'Inter-state', E: 'Export' };
+
+function _auditMoney(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v) || Math.round(v) === 0) return '';
+  return '₹' + Math.round(v).toLocaleString('en-IN');
+}
+function _auditQty(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v === 0) return '';
+  return (Math.round(v * 100) / 100).toLocaleString('en-IN') + ' kg';
+}
+function _auditDMY(d) {
+  const m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(d || '');
+}
+// The AUCTION id in a path, and only that. Matched against the routes that
+// actually take one (/generate/:auctionId, /payments/:auctionId/…) rather than
+// "any trailing number" — on /api/invoices/1201/revert the trailing number is
+// an invoice row id, and reading it as a trade would name the wrong trade.
+function _auditTailId(pathname) {
+  const p = String(pathname || '');
+  const m = p.match(/\/(?:generate|generate-all|generate-bulk|revert-all|preview)\/(\d+)/i)
+         || p.match(/^\/api\/payments\/(?:lots\/)?(\d+)(?:\/|$)/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+// "#15 (12/08/2026)" for a trade, resolved by auction id or by trade number.
+// Parenthesised rather than dot-separated so it stays one unit when it is
+// dropped into a summary line that is itself dot-separated.
+function _auditTrade(db, opts) {
+  const aid = opts && opts.auctionId;
+  const ano = opts && opts.ano != null ? String(opts.ano).trim() : '';
+  let a = null;
+  try {
+    if (aid) a = db.get('SELECT ano, date FROM auctions WHERE id = ?', [aid]);
+    if (!a && ano) a = db.get('SELECT ano, date FROM auctions WHERE ano = ? ORDER BY id DESC LIMIT 1', [ano]);
+  } catch (_) {}
+  if (a) return `#${a.ano}${a.date ? ` (${_auditDMY(a.date)})` : ''}`;
+  return ano ? `#${ano}` : '';
+}
+// "MURUGAN TRADERS (AK)" from a buyer code — the code alone means nothing to
+// whoever is reading the log a month later.
+function _auditBuyerName(db, code) {
+  const c = String(code == null ? '' : code).trim();
+  if (!c) return '';
+  try {
+    const b = db.get('SELECT buyer1 FROM buyers WHERE buyer = ? LIMIT 1', [c]);
+    const n = b && b.buyer1 ? String(b.buyer1).trim() : '';
+    if (n && n.toUpperCase() !== c.toUpperCase()) return `${n} (${c})`;
+  } catch (_) {}
+  return c;
+}
+// Join the non-empty pieces of a summary into one line.
+function _auditLine(parts) {
+  return parts.map(p => (p == null ? '' : String(p).trim())).filter(Boolean).join(' · ');
+}
+// One entry per document a bulk run produced (or skipped), flattened from the
+// per-route result shapes: invoices return invoiceNo/buyer, bills billNo/seller,
+// debit notes note_no/dealer, planter DNs note_no/planter.
+function _auditItems(arr, isSkip) {
+  const out = [];
+  for (const it of (Array.isArray(arr) ? arr : [])) {
+    if (!it || typeof it !== 'object') continue;
+    const pick = (...ks) => {
+      for (const k of ks) { const v = it[k]; if (v != null && String(v).trim() !== '') return String(v).trim(); }
+      return '';
+    };
+    const num = (...ks) => {
+      for (const k of ks) { const v = Number(it[k]); if (Number.isFinite(v) && v !== 0) return v; }
+      return 0;
+    };
+    const e = {};
+    const doc = pick('invoiceNo', 'billNo', 'note_no', 'invo', 'bil');
+    const party = pick('buyer1', 'seller', 'dealer', 'planter', 'name', 'buyer');
+    const lot = pick('lotNo', 'lot_no');
+    const ref = pick('purchno', 'bilno');
+    const amt = num('grandTotal', 'netAmount', 'total', 'amount');
+    if (doc) e.doc = doc;
+    if (party) e.party = party;
+    if (lot) e.lot = lot;
+    if (ref) e.ref = ref;
+    if (amt) e.amount = Math.round(amt * 100) / 100;
+    if (isSkip) { const r = pick('reason'); if (r) e.reason = r; }
+    if (Object.keys(e).length) out.push(e);
+    if (out.length >= AUDIT_MAX_ITEMS) break;
+  }
+  return out;
+}
+// "1201–1212" when a run's numbers are all numeric, else the first few with a
+// "+N more" tail. This is the single most useful thing on a bulk row.
+function _auditDocRange(items) {
+  const docs = items.map(i => i.doc).filter(Boolean);
+  if (!docs.length) return '';
+  if (docs.length === 1) return docs[0];
+  const nums = docs.map(Number).filter(Number.isFinite);
+  if (nums.length === docs.length) {
+    const lo = Math.min(...nums), hi = Math.max(...nums);
+    return lo === hi ? String(lo) : `${lo}–${hi}`;
+  }
+  return docs.length <= 4 ? docs.join(', ') : docs.slice(0, 4).join(', ') + ` +${docs.length - 4} more`;
+}
+// Sum a bulk run's document values, so a trade-wide generate reports what it
+// actually billed rather than just how many rows it wrote.
+function _auditItemsTotal(items) {
+  return items.reduce((t, i) => t + (Number(i.amount) || 0), 0);
+}
+// Finer-grained verb than method+path alone. Keeps the historic vocabulary
+// (create/update/delete/generate/import/revert) and adds the operations that
+// used to be indistinguishable from a plain "update".
+function _auditActionFor(method, p, resBody) {
+  if (/\/(generate-all|generate-bulk)\b/i.test(p)) return 'generate all';
+  if (/\/generate\b/i.test(p))                     return 'generate';
+  if (/\/raise-original\b/i.test(p))               return 'raise original';
+  if (/\/revert-all\b/i.test(p))                   return 'revert all';
+  if (/\/revert\b/i.test(p))                       return 'revert';
+  if (/\/unmark-paid\b/i.test(p))                  return 'unmark paid';
+  if (/\/mark-paid\b/i.test(p))                    return 'mark paid';
+  if (/\/advance\b/i.test(p))                      return 'pay advance';
+  if (/\/apply-discount\b/i.test(p))               return 'discount';
+  if (/\/(delete-sellers|delete-all|bulk-delete)\b/i.test(p)) return 'delete';
+  if (/\/revoke-sessions\b/i.test(p))              return 'revoke sessions';
+  if (/\/lock\b/i.test(p))  return (resBody && resBody.locked === false) ? 'unlock' : 'lock';
+  if (/\/password\b/i.test(p))                     return 'password reset';
+  if (/\/role\b/i.test(p))                         return 'role change';
+  if (/import/i.test(p))                           return 'import';
+  return null;   // caller falls back to method + presence of an /:id
+}
+// The document row a single-document generate just wrote. Gives the log the
+// real party name, quantity, value and row id (so the Item column links to
+// something) instead of just echoing what was posted.
+function _auditCreatedDoc(db, key, req, resBody) {
+  const b = (req.body && typeof req.body === 'object') ? req.body : {};
+  const aid = _auditTailId(req.path);
+  const g = (sql, params) => { try { return db.get(sql, params); } catch (_) { return null; } };
+  if (key === 'invoices') {
+    const no = String(b.invoiceNo == null ? '' : b.invoiceNo).trim();
+    if (!no) return null;
+    return g(`SELECT * FROM invoices WHERE invo = ? AND buyer = ?${aid ? ' AND auction_id = ?' : ''}
+              ORDER BY id DESC LIMIT 1`,
+      aid ? [no, String(b.buyerCode || ''), aid] : [no, String(b.buyerCode || '')]);
+  }
+  if (key === 'purchases') {
+    const no = String(b.invoiceNo == null ? '' : b.invoiceNo).trim();
+    if (!no) return null;
+    return g(`SELECT * FROM purchases WHERE invo = ?${aid ? ' AND auction_id = ?' : ''}
+              ORDER BY id DESC LIMIT 1`, aid ? [no, aid] : [no]);
+  }
+  if (key === 'bills') {
+    const no = String(b.billNo == null ? '' : b.billNo).trim();
+    if (!no) return null;
+    const auc = aid ? g('SELECT ano FROM auctions WHERE id = ?', [aid]) : null;
+    return g(`SELECT * FROM bills WHERE bil = ?${auc ? ' AND ano = ?' : ''} ORDER BY id DESC LIMIT 1`,
+      auc ? [no, String(auc.ano)] : [no]);
+  }
+  return null;
+}
+// Fields worth naming on a document row, in display order.
+function _auditDocFields(db, key, row, out) {
+  if (!row) return;
+  if (key === 'invoices') {
+    out.doc   = 'Invoice ' + (row.invo || '');
+    out.party = row.buyer1 ? `${row.buyer1}${row.buyer ? ` (${row.buyer})` : ''}` : (row.buyer || '');
+    out.trade = _auditTrade(db, { auctionId: row.auction_id, ano: row.ano });
+    if (row.bag)  out.bags = String(row.bag);
+    if (row.qty)  out.qty = _auditQty(row.qty);
+    if (row.tot)  out.value = _auditMoney(row.tot);
+    if (row.sale) out.sale = AUDIT_SALE_LABEL[String(row.sale).toUpperCase()] || row.sale;
+    if (Number(row.is_proforma) === 1) out.kind = 'Proforma';
+    if (Number(row.no_ti) === 1) out.no_ti = 'No transport/insurance';
+    if (row.date) out.doc_date = _auditDMY(row.date);
+    try {
+      const li = row.line_items ? JSON.parse(row.line_items) : null;
+      if (Array.isArray(li) && li.length) {
+        out.lots = String(li.length);
+        const nos = li.map(x => String(x && x.lot != null ? x.lot : '')).filter(Boolean);
+        if (nos.length) out.lot_nos = nos.length <= 12 ? nos.join(', ') : nos.slice(0, 12).join(', ') + ` +${nos.length - 12}`;
+      }
+    } catch (_) {}
+  } else if (key === 'purchases') {
+    out.doc   = 'Purchase ' + (row.invo || '');
+    out.party = row.name || '';
+    out.trade = _auditTrade(db, { auctionId: row.auction_id, ano: row.ano });
+    if (row.lot_no) out.lot_nos = String(row.lot_no);
+    if (row.qty)    out.qty = _auditQty(row.qty);
+    if (row.total)  out.value = _auditMoney(row.total);
+    if (row.date)   out.doc_date = _auditDMY(row.date);
+  } else if (key === 'bills') {
+    out.doc   = 'Bill ' + (row.bil || '');
+    out.party = row.name || '';
+    out.trade = _auditTrade(db, { ano: row.ano });
+    if (row.lot_no) out.lot_nos = String(row.lot_no);
+    if (row.qty)    out.qty = _auditQty(row.qty);
+    if (row.net)    out.value = _auditMoney(row.net);
+    if (row.date)   out.doc_date = _auditDMY(row.date);
+  } else if (key === 'debit-notes' || key === 'debit-notes-planter') {
+    out.doc   = 'DN ' + (row.note_no || '');
+    out.party = row.name || '';
+    out.trade = _auditTrade(db, { ano: row.ano });
+    if (row.lot_no) out.lot_nos = String(row.lot_no);
+    if (row.total)  out.value = _auditMoney(row.total);
+    if (row.date)   out.doc_date = _auditDMY(row.date);
+  } else if (key === 'traders' || key === 'buyers') {
+    out.party = _auditRowLabel(key, row);
+    const place = row.pla || row.place || '';
+    if (place) out.place = String(place);
+    if (row.gstin) out.gstin = String(row.gstin);
+    if (key === 'buyers' && row.buyer) out.code = String(row.buyer);
+  } else if (key === 'auctions') {
+    out.trade = `#${row.ano || ''}${row.date ? ' · ' + _auditDMY(row.date) : ''}`;
+    if (row.crop_type) out.crop = String(row.crop_type);
+  } else if (key === 'users') {
+    out.account = row.username || '';
+    if (row.role)   out.role = String(row.role);
+    if (row.branch) out.branch = String(row.branch);
+  }
+}
+// When no stored row can be located (the debit-note routes report everything
+// they did in their response, and hand-added masters echo the new row), read
+// the document's identity straight out of the JSON that went back to the
+// browser. Only known keys are read — a request body is never dumped wholesale,
+// since some carry passwords.
+function _auditDocFromResponse(db, rsrc, req, resBody, out) {
+  const r = (resBody && typeof resBody === 'object') ? resBody : {};
+  const b = (req.body && typeof req.body === 'object') ? req.body : {};
+  const pick = (src, ...ks) => {
+    for (const k of ks) { const v = src[k]; if (v != null && String(v).trim() !== '') return String(v).trim(); }
+    return '';
+  };
+  const docNo = pick(r, 'note_no', 'invoiceNo', 'billNo', 'invo') || pick(b, 'note_no', 'invoiceNo', 'billNo', 'invo');
+  if (docNo) {
+    const prefix = rsrc.key === 'debit-notes' || rsrc.key === 'debit-notes-planter' ? 'DN '
+                 : rsrc.key === 'bills' ? 'Bill '
+                 : rsrc.key === 'purchases' ? 'Purchase '
+                 : rsrc.key === 'invoices' ? 'Invoice ' : '';
+    out.doc = prefix + docNo;
+  }
+  const party = pick(r, 'dealer', 'planter', 'buyer1', 'name') || pick(b, 'sellerName', 'name', 'buyer1');
+  if (party) out.party = party;
+  if (!out.party && b.buyerCode) out.party = _auditBuyerName(db, b.buyerCode);
+  const trade = _auditTrade(db, { auctionId: _auditTailId(req.path), ano: r.ano || b.ano });
+  if (trade) out.trade = trade;
+  const ref = pick(r, 'purchno', 'bilno');
+  if (ref) out.against = ref;
+  const lot = pick(r, 'lot_no', 'lotNo') || pick(b, 'lotNo');
+  if (lot) out.lot_nos = lot;
+  if (r.mode) out.mode = r.mode === 'lot' ? 'Lot-wise' : 'Seller-wise';
+  const inv = (r.invoice && typeof r.invoice === 'object') ? r.invoice
+            : (r.bill && typeof r.bill === 'object') ? r.bill : null;
+  if (inv) {
+    if (inv.totalQty)  out.qty = _auditQty(inv.totalQty);
+    if (inv.totalBags) out.bags = String(inv.totalBags);
+    const v = inv.grandTotal != null ? inv.grandTotal : inv.netAmount;
+    if (v) out.value = _auditMoney(v);
+  }
+  if (!out.value && (r.total || r.amount)) out.value = _auditMoney(r.total || r.amount);
+  if (!out.kind && (r.proforma === true || Number(b.is_proforma) === 1)) out.kind = 'Proforma';
+}
+// Summarise a bulk run (generate-all / generate-bulk / revert-all) from the
+// handler's own response. This is the case the old log was worst at: it said
+// "generate · invoice · — · —" for a run that raised forty invoices.
+function _auditBulk(db, key, rsrc, req, resBody, out) {
+  const r = (resBody && typeof resBody === 'object') ? resBody : {};
+  const madeRaw = Array.isArray(r.results) ? r.results : (Array.isArray(r.generated) ? r.generated : []);
+  const made = _auditItems(madeRaw, false);
+  // `skipped` is an array on the invoice/purchase/bill runs and a plain count
+  // on the debit-note runs (which name their skips in `skippedDetails`).
+  const skipRaw = Array.isArray(r.skippedDetails) ? r.skippedDetails
+                : Array.isArray(r.skipped) ? r.skipped : [];
+  const skipped = _auditItems(skipRaw, true);
+  const skipCount = Array.isArray(r.skipped) ? r.skipped.length
+                  : Number.isFinite(Number(r.skipped)) ? Number(r.skipped)
+                  : skipRaw.length;
+  const total = Number.isFinite(Number(r.generated)) && !Array.isArray(r.generated) ? Number(r.generated)
+              : Number.isFinite(Number(r.created)) ? Number(r.created)
+              : madeRaw.length;
+  // Invoice runs report the buyer CODE; swap in the trading name (one query,
+  // the buyers master is small) so the log names people, not codes.
+  if (key === 'invoices' && made.length) {
+    try {
+      const names = new Map(db.all('SELECT buyer, buyer1 FROM buyers').map(b => [String(b.buyer).toUpperCase(), b.buyer1]));
+      for (const it of made) {
+        const n = it.party ? names.get(String(it.party).toUpperCase()) : '';
+        if (n && String(n).trim()) it.party = `${String(n).trim()} (${it.party})`;
+      }
+    } catch (_) {}
+  }
+  const noun = rsrc.entity + (total === 1 ? '' : 's');
+  const range = _auditDocRange(made);
+  const value = _auditMoney(_auditItemsTotal(made));
+  const trade = _auditTrade(db, { auctionId: _auditTailId(req.path), ano: (req.body && req.body.ano) || r.ano });
+
+  out.count = String(total);
+  if (range) out.numbers = range;
+  if (trade) out.trade = trade;
+  if (value) out.value = value;
+  if (r.mode) out.mode = r.mode === 'lot' ? 'Lot-wise' : 'Seller-wise';
+  if (skipCount > 0) out.skipped = String(skipCount);
+  if (Array.isArray(r.errors) && r.errors.length) out.errors = String(r.errors.length);
+  if (r.note) out.note = String(r.note);
+  // The per-document roll, so "which invoices?" is answerable from the row.
+  if (made.length) {
+    out.items = made;
+    if (madeRaw.length > made.length) out.items_more = madeRaw.length - made.length;
+  }
+  if (skipped.length) out.skipped_items = skipped;
+
+  out.summary = _auditLine([
+    total ? `${total} ${noun}` : `No ${rsrc.entity}s`,
+    range ? `no. ${range}` : '',
+    trade ? `Trade ${trade}` : '',
+    value,
+    out.skipped ? `${out.skipped} skipped` : '',
+    out.errors ? `${out.errors} failed` : '',
+  ]);
+}
+// Summarise the payments module's money movements — none of which are a row
+// edit, so each one is described from its own request + response.
+function _auditPayments(db, req, resBody, out) {
+  const p = String(req.path || '');
+  const b = (req.body && typeof req.body === 'object') ? req.body : {};
+  const r = (resBody && typeof resBody === 'object') ? resBody : {};
+  const aid = (p.match(/\/api\/payments\/(?:lots\/)?(\d+)/) || [])[1];
+  const trade = _auditTrade(db, { auctionId: aid ? parseInt(aid, 10) : null });
+  if (trade) out.trade = trade;
+  // Name the sellers behind a list of lot ids — a count of lot ids tells the
+  // reader nothing about whose money moved.
+  const sellersOf = ids => {
+    try {
+      const nums = ids.map(n => parseInt(n, 10)).filter(Number.isFinite).slice(0, 400);
+      if (!nums.length) return [];
+      return db.all(`SELECT DISTINCT name FROM lots WHERE id IN (${nums.map(() => '?').join(',')}) AND name <> ''`, nums)
+        .map(x => String(x.name)).filter(Boolean);
+    } catch (_) { return []; }
+  };
+  const nameList = ns => ns.length <= 6 ? ns.join(', ') : ns.slice(0, 6).join(', ') + ` +${ns.length - 6} more`;
+
+  if (/mark-paid\b/.test(p)) {
+    const undo = /unmark-paid\b/.test(p);
+    const n = Number(undo ? r.cleared : r.marked) || 0;
+    const sellers = sellersOf(Array.isArray(b.lotIds) ? b.lotIds : []);
+    out.lots = String(n);
+    if (sellers.length) out.sellers = nameList(sellers);
+    out.summary = _auditLine([
+      `${undo ? 'Un-marked' : 'Marked'} ${n} lot${n === 1 ? '' : 's'} ${undo ? 'unpaid' : 'paid'}`,
+      trade ? `Trade ${trade}` : '', sellers.length ? nameList(sellers) : '',
+    ]);
+    return;
+  }
+  if (/\/lots\/\d+\/advance\b/.test(p)) {
+    const items = Array.isArray(b.items) ? b.items : [];
+    const paid = items.filter(i => Number(i && i.advance) > 0);
+    const sum = paid.reduce((t, i) => t + (Number(i.advance) || 0), 0);
+    const sellers = sellersOf(items.map(i => i && i.lotId));
+    out.lots = String(items.length);
+    if (Number(r.saved)) out.saved = String(r.saved);
+    if (Number(r.cleared)) out.cleared = String(r.cleared);
+    if (sum) out.value = _auditMoney(sum);
+    if (sellers.length) out.sellers = nameList(sellers);
+    out.summary = _auditLine([
+      `Lot-wise advance on ${items.length} lot${items.length === 1 ? '' : 's'}`,
+      sum ? _auditMoney(sum) : '', trade ? `Trade ${trade}` : '',
+      sellers.length ? nameList(sellers) : '',
+    ]);
+    return;
+  }
+  if (/\/advance\b/.test(p)) {
+    const name = String(r.name || b.name || '').trim();
+    const amt = Number(r.advance != null ? r.advance : b.advance) || 0;
+    if (name) out.party = name;
+    out.value = _auditMoney(amt) || '₹0';
+    out.summary = _auditLine([
+      amt > 0 ? `Advance ${_auditMoney(amt)}` : 'Advance cleared',
+      name, trade ? `Trade ${trade}` : '',
+    ]);
+    return;
+  }
+  if (/apply-discount\b/.test(p)) {
+    const on = !!r.applied;
+    out.state = on ? 'Applied' : 'Removed';
+    out.summary = _auditLine([`Cash discount ${on ? 'applied to' : 'removed from'} the trade`, trade ? `Trade ${trade}` : '']);
+    return;
+  }
+  if (/delete-sellers\b/.test(p)) {
+    const names = (Array.isArray(b.sellerNames) ? b.sellerNames : []).map(String).filter(Boolean);
+    out.sellers = nameList(names);
+    out.lots = String(Number(r.lotsDeleted) || 0);
+    if (Number(r.dnsDeleted)) out.debit_notes = String(r.dnsDeleted);
+    out.summary = _auditLine([
+      `Deleted ${names.length} seller${names.length === 1 ? '' : 's'} — ${Number(r.lotsDeleted) || 0} lot${Number(r.lotsDeleted) === 1 ? '' : 's'}` +
+        (Number(r.dnsDeleted) ? `, ${r.dnsDeleted} DN` : ''),
+      trade ? `Trade ${trade}` : '', nameList(names),
+    ]);
+    return;
+  }
+  out.summary = _auditLine(['Payments update', trade ? `Trade ${trade}` : '']);
+}
+// Account administration: say WHICH account and WHAT changed, never anything
+// derived from the password itself.
+function _auditUsers(db, req, action, resBody, out) {
+  const r = (resBody && typeof resBody === 'object') ? resBody : {};
+  const b = (req.body && typeof req.body === 'object') ? req.body : {};
+  const who = String(r.username || b.username || (req._auditOld && req._auditOld.username) || '').trim();
+  if (who) out.account = who;
+  if (r.role || b.role) out.role = String(r.role || b.role);
+  if (b.branch != null && String(b.branch).trim() !== '') out.branch = String(b.branch).trim();
+  const verb = {
+    'role change':      `Role set to ${out.role || '?'}`,
+    'password reset':   'Password reset (all sessions signed out)',
+    'revoke sessions':  'Signed out of every device',
+    lock:               'Account locked',
+    unlock:             'Account unlocked',
+    create:             `Account created${out.role ? ` as ${out.role}` : ''}`,
+    delete:             'Account deleted',
+  }[action] || 'Account updated';
+  out.summary = _auditLine([verb, who ? `user ${who}` : '']);
+}
+
 function auditMutations(req, res, next) {
   try {
     const method = req.method;
@@ -205,43 +648,157 @@ function auditMutations(req, res, next) {
     if (!rsrc) return next();
     if (method === 'POST' && AUDIT_SKIP_POST.test(req.path)) return next();
     const id = _auditIdFromPath(req.path);
-    // Snapshot the pre-edit row for PUT/PATCH/DELETE on /:id of a known table.
-    if ((method === 'PUT' || method === 'PATCH' || method === 'DELETE') && id != null) {
+    // Snapshot the pre-edit row for anything addressing /:id of a known table.
+    // POST is included because the sub-action routes (/revert, /raise-original,
+    // /lock, /password …) are the ones whose "what did it act on?" answer is
+    // gone by the time the response is written.
+    if (rsrc.table && id != null && method !== 'GET') {
       try { req._auditOld = getDb().get(`SELECT * FROM ${rsrc.table} WHERE id = ?`, [id]); } catch (_) {}
     }
+    // Capture the handler's own JSON so the log can report what it actually
+    // produced — the invoice numbers a bulk run handed out, how many lots were
+    // marked paid — rather than only what was asked for.
+    const _json = res.json.bind(res);
+    res.json = body => { try { req._auditRes = body; } catch (_) {} return _json(body); };
+
     res.on('finish', () => {
       try {
         if (res.statusCode >= 400) return;   // only successful mutations
         const db = getDb();
-        // Derive a friendly action from method + path.
-        let action;
-        if (method === 'DELETE') action = 'delete';
-        else if (method === 'PUT' || method === 'PATCH') action = 'update';
-        else if (/bulk-delete/i.test(req.path)) action = 'delete';
-        else if (/import/i.test(req.path)) action = 'import';
-        else if (/revert/i.test(req.path)) action = 'revert';
-        else if (/generate/i.test(req.path)) action = 'generate';
-        else if (id != null) action = 'update';   // POST /api/<r>/:id/<sub-action>
-        else action = 'create';
+        const resBody = req._auditRes;
+        // Derive a friendly action from method + path + what came back.
+        let action = _auditActionFor(method, req.path, resBody);
+        if (!action) {
+          if (method === 'DELETE') action = 'delete';
+          else if (method === 'PUT' || method === 'PATCH') action = 'update';
+          else if (id != null) action = 'update';   // POST /api/<r>/:id/<sub-action>
+          else action = 'create';
+        }
+        // A run that is reported as a batch (results/generated arrays, or an
+        // explicit created count) is summarised per document, whatever verb
+        // the path implied.
+        const isBulk = !!resBody && typeof resBody === 'object' &&
+          (Array.isArray(resBody.results) || Array.isArray(resBody.generated) ||
+           (action === 'generate all' && resBody.created != null));
 
         const details = {};
         let changes = [];
-        if (action === 'update' && id != null) {
-          let fresh; try { fresh = db.get(`SELECT * FROM ${rsrc.table} WHERE id = ?`, [id]); } catch (_) {}
+        let entityId = id;
+
+        if (rsrc.key === 'payments') {
+          _auditPayments(db, req, resBody, details);
+          entityId = null;
+        } else if (rsrc.key === 'users') {
+          if (action === 'update' && id != null) {
+            let fresh; try { fresh = db.get('SELECT * FROM users WHERE id = ?', [id]); } catch (_) {}
+            changes = _auditDiff(req._auditOld, fresh);
+          }
+          _auditUsers(db, req, action, resBody, details);
+        } else if (isBulk) {
+          _auditBulk(db, rsrc.key, rsrc, req, resBody, details);
+          entityId = null;
+        } else if (action === 'generate' || action === 'raise original') {
+          // One document. Prefer the row that was just written (real party
+          // name, quantity, value, id); fall back to whatever the handler
+          // reported, which is all the debit-note routes give us.
+          const row = _auditCreatedDoc(db, rsrc.key, req, resBody);
+          if (row) { _auditDocFields(db, rsrc.key, row, details); if (row.id) entityId = row.id; }
+          else _auditDocFromResponse(db, rsrc, req, resBody, details);
+          // Raising an original works FROM a proforma: the draft is the only
+          // thing that knows the buyer and trade, and it was snapshotted on
+          // the way in.
+          if (action === 'raise original' && req._auditOld) {
+            const pf = req._auditOld;
+            if (!details.party && (pf.buyer1 || pf.buyer)) {
+              details.party = pf.buyer1 ? `${pf.buyer1}${pf.buyer ? ` (${pf.buyer})` : ''}` : pf.buyer;
+            }
+            if (!details.trade) details.trade = _auditTrade(db, { auctionId: pf.auction_id, ano: pf.ano });
+            if (pf.invo) details.from_proforma = String(pf.invo);
+          }
+          details.summary = _auditLine([
+            (action === 'raise original' ? 'Raised original ' : 'Generated ') + (details.doc || rsrc.entity),
+            details.from_proforma ? `from draft ${details.from_proforma}` : '',
+            details.party, details.trade ? `Trade ${details.trade}` : '',
+            details.lots ? `${details.lots} lot${details.lots === '1' ? '' : 's'}` : '',
+            details.qty, details.value, details.kind, details.mode,
+          ]);
+        } else if (action === 'update' && id != null) {
+          let fresh; try { fresh = rsrc.table ? db.get(`SELECT * FROM ${rsrc.table} WHERE id = ?`, [id]) : null; } catch (_) {}
           changes = _auditDiff(req._auditOld, fresh);
           if (!changes.length) return;       // nothing actually changed → skip
-          const label = _auditRowLabel(rsrc.key, fresh || req._auditOld);
-          if (label) details.name = label;
-        } else if (action === 'delete') {
-          const label = _auditRowLabel(rsrc.key, req._auditOld);
-          if (label) details.name = label;
+          _auditDocFields(db, rsrc.key, fresh || req._auditOld, details);
+          details.summary = _auditLine([
+            'Edited ' + (details.doc || details.party || details.account || rsrc.entity),
+            details.doc ? details.party : '', details.trade ? `Trade ${details.trade}` : '',
+            `${changes.length} field${changes.length === 1 ? '' : 's'} changed`,
+          ]);
+        } else if (action === 'delete' || action === 'revert' || action === 'revert all') {
+          // Describe what was removed from the pre-delete snapshot — after the
+          // fact the row is gone, so this is the only chance to name it.
+          if (req._auditOld) _auditDocFields(db, rsrc.key, req._auditOld, details);
+          const r = (resBody && typeof resBody === 'object') ? resBody : {};
+          if (/delete-all/i.test(req.path)) {
+            // A whole-table wipe. Say how many rows went, what it cascaded
+            // into, and where the rollback snapshot landed.
+            const n = Number(r.deleted) || 0;
+            details.count = String(n);
+            if (r.ano) details.trade = _auditTrade(db, { ano: r.ano });
+            const cascade = (r.cascadeCounts && typeof r.cascadeCounts === 'object') ? r.cascadeCounts : {};
+            const spill = Object.entries(cascade)
+              .filter(([t, c]) => Number(c) > 0 && t !== 'ano')
+              .map(([t, c]) => `${t}: ${c}`).join(', ');
+            if (spill) details.cascade = spill;
+            if (r.backupPath) details.snapshot = String(r.backupPath).split(/[\\/]/).pop();
+            details.summary = _auditLine([
+              `Wiped every ${rsrc.entity} — ${n} row${n === 1 ? '' : 's'} deleted`,
+              details.trade ? `Trade ${details.trade}` : '',
+              spill ? `cascade ${spill}` : '',
+              details.snapshot ? `rollback ${details.snapshot}` : '',
+            ]);
+          } else if (action === 'revert all') {
+            const n = Number(r.invoicesReverted) || 0;
+            details.count = String(n);
+            details.trade = _auditTrade(db, { auctionId: _auditTailId(req.path) });
+            if (Number(r.lotsFreed)) details.lots_freed = String(r.lotsFreed);
+            if (Number(r.skipped_locked)) details.skipped = String(r.skipped_locked);
+            details.summary = _auditLine([
+              `Reverted ${n} ${rsrc.entity}${n === 1 ? '' : 's'}`,
+              details.trade ? `Trade ${details.trade}` : '',
+              Number(r.lotsFreed) ? `${r.lotsFreed} lots freed` : '',
+              Number(r.skipped_locked) ? `${r.skipped_locked} locked, skipped` : '',
+            ]);
+          } else {
+            if (Number(r.lotsFreed)) details.lots_freed = String(r.lotsFreed);
+            details.summary = _auditLine([
+              (action === 'revert' ? 'Reverted ' : 'Deleted ') + (details.doc || details.party || details.account || rsrc.entity),
+              details.doc ? details.party : '', details.trade ? `Trade ${details.trade}` : '',
+              details.qty, details.value,
+              Number(r.lotsFreed) ? `${r.lotsFreed} lots freed` : '',
+            ]);
+          }
         } else {
+          // Plain create (master records, hand-added documents).
           const label = _auditRowLabel(rsrc.key, req.body || {});
-          if (label) details.name = label;
+          _auditDocFromResponse(db, rsrc, req, resBody, details);
+          // `name` is the fallback identity — skip it when the row already
+          // named the party, or the log shows the same value twice.
+          if (label && !details.party) details.name = label;
+          details.summary = _auditLine([
+            'Added ' + (details.doc || details.party || details.account || label || rsrc.entity),
+            details.doc ? details.party : '', details.trade ? `Trade ${details.trade}` : '',
+            details.qty, details.value,
+          ]);
         }
+
+        // Where it came from — two people editing the same trade from
+        // different devices is exactly when this log gets consulted.
+        const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+        if (ip) details.ip = ip.replace(/^::ffff:/, '');
+        details.route = `${method} ${req.path}`;
+
         db.run(
           `INSERT INTO audit_log (user_id, action, entity, entity_id, details) VALUES (?,?,?,?,?)`,
-          [(req.user && req.user.username) || 'system', action, rsrc.entity, id || null,
+          [(req.user && req.user.username) || 'system', action, rsrc.entity, entityId || null,
            JSON.stringify({ ...details, changes: changes.length ? changes : undefined })]
         );
       } catch (_) { /* never let logging break anything */ }
@@ -1756,10 +2313,17 @@ app.put('/api/company-settings', requireSettingsWrite, (req, res) => {
       if (ov !== nv) { changes.push({ field: k, label: k, from: trunc(before[k]), to: trunc(v) }); if (changes.length >= 60) break; }
     }
     if (changes.length) {
+      // Name the settings that moved in the summary line the activity log
+      // leads with — "3 settings changed" alone sends the reader digging.
+      const named = changes.slice(0, 4).map(c => c.field).join(', ')
+        + (changes.length > 4 ? ` +${changes.length - 4} more` : '');
       db.run(
         `INSERT INTO audit_log (user_id, action, entity, entity_id, details) VALUES (?,?,?,?,?)`,
         [(req.user && req.user.username) || 'system', 'update', 'settings', null,
-         JSON.stringify({ name: `${changes.length} setting${changes.length === 1 ? '' : 's'} changed`, changes })]
+         JSON.stringify({
+           summary: `${changes.length} setting${changes.length === 1 ? '' : 's'} changed · ${named}`,
+           changes,
+         })]
       );
     }
   } catch (_) {}
@@ -6453,6 +7017,43 @@ function proformaFeatureOn(db) {
   } catch (_) { return false; }
 }
 // True when the request body explicitly asks for a proforma document.
+// ── Marking a proforma draft as raised ───────────────────────────────────
+// A document is identified by INVOICE NO + BUYER + SALE TYPE. Never by the
+// number on its own: the draft series are numbered per sale type, so one trade
+// routinely holds two drafts with the same number — trade 15 had a Local 33
+// (ERPL) and an Inter-state 33 (S KUMAR). An UPDATE keyed on the number alone
+// stamped BOTH when either was raised, and the buyer whose draft was never
+// raised then dropped out of the Collection register entirely: the report read
+// the draft as superseded, and no original existed to take its place. That is
+// how 5,521.1 kg went missing from trade 15.
+//
+// So the draft is RESOLVED first, on all three parts, and then stamped by its
+// own id — an update that can only ever touch the row it identified.
+//
+// `saleType` is the sale type of the ORIGINAL being raised. Where it differs
+// from the draft's own — drafting Local and billing Inter-state is a supported
+// flow, the Generate modal offers the choice — an exact match finds nothing,
+// and the draft is identified by number + buyer alone PROVIDED that is
+// unambiguous (one candidate). If two drafts of the same buyer share a number
+// across series, nothing is stamped rather than guessing: a wrong stamp hides
+// a document the buyer is holding, which is the failure this exists to prevent.
+// Returns the id stamped, or null.
+function stampProformaRaised(db, auctionId, buyer, draftNo, saleType, originalNo) {
+  const cands = db.all(
+    `SELECT id, sale FROM invoices
+      WHERE auction_id = ? AND TRIM(COALESCE(buyer,'')) = ?
+        AND COALESCE(is_proforma,0) = 1 AND TRIM(COALESCE(raised_invo,'')) = ''
+        AND TRIM(COALESCE(invo,'')) = ?`,
+    [auctionId, String(buyer || '').trim(), String(draftNo || '').trim()]) || [];
+  if (!cands.length) return null;
+  const want = String(saleType || '').trim().toUpperCase();
+  const exact = cands.find(c => String(c.sale || '').trim().toUpperCase() === want);
+  const pick = exact || (cands.length === 1 ? cands[0] : null);
+  if (!pick) return null;
+  db.run('UPDATE invoices SET raised_invo = ? WHERE id = ?', [String(originalNo), pick.id]);
+  return pick.id;
+}
+
 function wantsProformaDoc(req) {
   return String((req && req.body && req.body.docType) || 'original').trim().toLowerCase() === 'proforma';
 }
@@ -7311,8 +7912,61 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
   // gives 1,10,11,2). The lot_no tie-breaker keeps any non-numeric/prefixed
   // lot numbers stable. Mirrors the paginated + depot-lots + report queries.
   q += ' ORDER BY CAST(lots.lot_no AS INTEGER), lots.lot_no';
-  res.json(db.all(q, p));
+  res.json(attachLotBanks(db, db.all(q, p)));
 });
+
+// ── Which account does this lot actually get paid into? ──────────────
+// `has_bank` above only answers "does the seller have ANY account", which is
+// what the hygiene badges need but is useless on a detail panel — an operator
+// looking at a lot wants to see the account, not the word "yes".
+//
+// Resolving it is not a plain join, because a lot carries its own bank_id and
+// that pin is not always trustworthy: it can point at a row that was since
+// deleted, or (when a lot number is reused across trades) at a bank belonging
+// to a DIFFERENT seller. Paying against either would send the money to the
+// wrong place, so the pin is honoured only when the row still exists AND
+// belongs to this lot's seller. Otherwise we fall back the way the payment
+// screens do — the seller's default account, then their lowest-id one.
+//
+// Each row gains:
+//   bank          — the account this lot would be paid into, or null
+//   bank_source   — 'lot' (its own pin) | 'seller' (the default) | ''
+//   bank_broken   — 1 when bank_id was set but had to be discarded
+//   bank_count    — how many accounts the seller has, so the client can say
+//                   "1 of 3" rather than implying it is the only one
+//   default_bank  — the seller's default account (what their UNPINNED lots
+//                   get). Usually the same object as `bank`; the seller-level
+//                   panels show this one.
+// Additive: every existing caller ignores the new fields.
+function attachLotBanks(db, rows) {
+  if (!Array.isArray(rows) || !rows.length) return rows;
+  const ids = [...new Set(rows.map(r => r.trader_id).filter(v => v != null && v !== ''))];
+  if (!ids.length) return rows;
+  const banks = db.all(
+    `SELECT id, trader_id, bank_name, branch, acctnum, ifsc, holder_name, is_default, account_type
+       FROM trader_banks WHERE trader_id IN (${ids.map(() => '?').join(',')})
+      ORDER BY is_default DESC, id`, ids);
+  const byTrader = new Map();   // trader_id → [banks], default first
+  const byId     = new Map();   // bank id    → bank
+  for (const b of banks) {
+    if (!byTrader.has(b.trader_id)) byTrader.set(b.trader_id, []);
+    byTrader.get(b.trader_id).push(b);
+    byId.set(b.id, b);
+  }
+  for (const r of rows) {
+    const mine = byTrader.get(r.trader_id) || [];
+    const pinned = (r.bank_id != null && r.bank_id !== '' && Number(r.bank_id) !== 0)
+      ? byId.get(Number(r.bank_id)) : null;
+    // A pin only counts when the row survives AND is this seller's.
+    const usable = pinned && pinned.trader_id === r.trader_id ? pinned : null;
+    r.bank        = usable || mine[0] || null;
+    r.bank_source = usable ? 'lot' : (mine[0] ? 'seller' : '');
+    r.bank_broken = (!usable && r.bank_id != null && r.bank_id !== '' && Number(r.bank_id) !== 0) ? 1 : 0;
+    r.bank_count  = mine.length;
+    r.default_bank = mine[0] || null;
+  }
+  return rows;
+}
 
 // ── lots.state is the TRADE's state, never the seller's ───────
 // `lots.state` records which state the TRADE was held in (auction/branch
@@ -8745,9 +9399,15 @@ app.post('/api/invoices/generate/:auctionId',
   if (isProforma) {
     // Replace any prior un-raised draft(s) covering these lots so regenerating
     // a proforma doesn't pile up rows. (Raised proformas are history — kept.)
+    //
+    // Scoped to THIS BUYER. Draft numbers are not unique across the sale
+    // series — trade 15 held two drafts numbered 33, one Local (ERPL) and one
+    // Inter-state (S KUMAR) — so a delete keyed on the number alone reaches
+    // into another buyer's register and destroys a draft they are still
+    // holding. The number belongs to a buyer, never to the trade.
     for (const pn of _priorProformaNos()) {
-      db.run("DELETE FROM invoices WHERE auction_id=? AND sale=? AND is_proforma=1 AND COALESCE(raised_invo,'')='' AND invo=?",
-        [req.params.auctionId, saleType, pn]);
+      db.run("DELETE FROM invoices WHERE auction_id=? AND sale=? AND buyer=? AND is_proforma=1 AND COALESCE(raised_invo,'')='' AND invo=?",
+        [req.params.auctionId, saleType, buyerCode, pn]);
     }
   }
 
@@ -8811,9 +9471,20 @@ app.post('/api/invoices/generate/:auctionId',
         [saleType, String(invoiceNo), req.params.auctionId, li.lot, buyerCode]);
     }
   }
+  // Scoped to THIS BUYER — see the note on the draft DELETE above. Without it
+  // the stamp lands on whichever draft happens to share the number, marking
+  // another buyer's draft as raised into an original that is not theirs. That
+  // draft then vanishes from the Collection register (it reads as superseded)
+  // while no original replaces it, and the buyer's quantity disappears from
+  // the trade's invoice register altogether. Real case: trade 15, ERPL drafts
+  // 33/34/35 stamped from S KUMAR / VADIVEL / VASU's originals 30/31/32, and
+  // 5,521.1 kg went missing from Collection.
+  //
+  // A document is identified by INVOICE NO + BUYER + SALE TYPE — all three,
+  // never the number alone. The draft is resolved on that triple and stamped
+  // by its own id, so the update can only ever touch the one row it identified.
   for (const pn of _proformaToRaise) {
-    db.run("UPDATE invoices SET raised_invo=? WHERE auction_id=? AND is_proforma=1 AND COALESCE(raised_invo,'')='' AND invo=?",
-      [String(invoiceNo), req.params.auctionId, pn]);
+    stampProformaRaised(db, req.params.auctionId, buyerCode, pn, saleType, String(invoiceNo));
   }
   res.json({ success: true, invoice: invoice.summary });
 });
@@ -9105,9 +9776,12 @@ app.post('/api/invoices/generate-all/:auctionId',
               [req.params.auctionId, li.lot, row.buyer]);
             if (r && r.proforma_invo) priorNos.add(String(r.proforma_invo));
           }
+          // Scoped to THIS BUYER — draft numbers repeat across the sale series,
+          // so a delete keyed on the number alone destroys another buyer's
+          // pending draft. See the single-invoice handler for the full note.
           for (const pn of priorNos) {
-            db.run("DELETE FROM invoices WHERE auction_id=? AND sale=? AND is_proforma=1 AND COALESCE(raised_invo,'')='' AND invo=?",
-              [req.params.auctionId, useSaleType, pn]);
+            db.run("DELETE FROM invoices WHERE auction_id=? AND sale=? AND buyer=? AND is_proforma=1 AND COALESCE(raised_invo,'')='' AND invo=?",
+              [req.params.auctionId, useSaleType, row.buyer, pn]);
           }
         }
         // line_items — see the single-invoice handler above.
@@ -9151,9 +9825,10 @@ app.post('/api/invoices/generate-all/:auctionId',
             }
           }
           // Mark any proforma draft that covered these lots as raised (kept).
+          // Identified on INVOICE NO + BUYER + SALE TYPE — see
+          // stampProformaRaised for why the number alone is never enough.
           for (const pn of raiseNos) {
-            db.run("UPDATE invoices SET raised_invo=? WHERE auction_id=? AND is_proforma=1 AND COALESCE(raised_invo,'')='' AND invo=?",
-              [invoNo, req.params.auctionId, pn]);
+            stampProformaRaised(db, req.params.auctionId, row.buyer, pn, useSaleType, invoNo);
           }
         }
         results.push({ buyer: row.buyer, group: gk, invoiceNo: invoNo, sale: useSaleType, grandTotal: s.grandTotal });
@@ -13752,11 +14427,26 @@ app.get('/api/exports/purchase-journal', requireExport, async (req, res) => {
   const { auctionId, type } = req.query;
   if (!auctionId) return res.status(400).json({ error: 'auctionId required' });
   const baseName = type === 'agri' ? 'AgriBillJournal' : 'PurchaseJournal';
-  const { exportPurchaseJournal } = require('./exports');
-  const buffer = await exportPurchaseJournal(getDb(), auctionId, type || 'dealer');
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename="${baseName}.xlsx"`);
-  res.send(Buffer.from(buffer));
+  // Was uncaught: this handler is async, so a throw inside it rejected with no
+  // response written and the request hung until the client timed out. Now that
+  // the Auction Downloads screen serves it as a tile, a builder error has to
+  // come back as a readable 500 like every other export.
+  try {
+    const db = getDb();
+    const { exportPurchaseJournal } = require('./exports');
+    const buffer = await exportPurchaseJournal(db, auctionId, type || 'dealer');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    // Trade number in the name — the tile is per-trade, and without it every
+    // trade's download lands as the same "PurchaseJournal.xlsx". The Reports
+    // screen is unaffected: exportJournal() names its own blob client-side and
+    // never reads this header.
+    res.setHeader('Content-Disposition',
+      `attachment; filename="${baseName}_${anoForFilename(db, auctionId)}.xlsx"`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+    res.send(Buffer.from(buffer));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ══════════════════════════════════════════════════════════════
