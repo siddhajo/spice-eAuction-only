@@ -365,64 +365,83 @@ const cleanup = () => {
         await page.evaluate(() => (document.querySelector('#hub-kpi .stat .n')?.textContent || '').trim() === '32'),
         await page.evaluate(() => document.querySelector('#hub-kpi .stat .n')?.textContent));
 
-  // Three levels: groups → subgroups → documents. Statutory has two
-  // subgroups, so opening it shows those rather than jumping to cards.
+  // TWO levels: groups → documents. Opening a group lands straight on its
+  // papers; its subgroups are CHIPS above them that narrow the set in place,
+  // not a screen of their own that shows no document at all. (This replaced
+  // an earlier three-level drill — see renderHubGroups.)
   const drill = await page.evaluate(() => {
     document.querySelector('.hub-w[data-g="statutory"]').click();
+    const chipRows = document.querySelectorAll('#hub-groups .hub-navrow');
     return {
       rows: document.querySelectorAll('#hub-groups .hub-tile').length,
-      subs: document.querySelectorAll('#hub-groups .hub-w-sub').length,
-      names: Array.from(document.querySelectorAll('.hub-w-sub .hub-w-name')).map(x => x.textContent.trim()),
+      apiCount: (window._hubCat.groups.find(g => g.id === 'statutory') || { items: [] }).items.length,
+      // No intermediate widget screen survives anywhere in the flow.
+      widgets: document.querySelectorAll('#hub-groups .hub-w').length,
+      chipRows: chipRows.length,
+      subChips: Array.from(document.querySelectorAll('.hub-navrow.is-sub .hub-chipnav-l')).map(x => x.textContent.trim()),
+      groupChipOn: document.querySelector('.hub-navrow:not(.is-sub) .hub-chipnav.is-on .hub-chipnav-l')?.textContent.trim(),
       name: document.querySelector('.hub-open-name')?.textContent.trim(),
       back: !!Array.from(document.querySelectorAll('.hub-open-head .hub-btn'))
-                   .find(b => /All documents/.test(b.textContent)),
+                   .find(b => /All groups/.test(b.textContent)),
     };
   });
-  check('clicking a group widget opens its subgroups',
-        drill.subs === 2 && drill.rows === 0, JSON.stringify(drill));
+  check('clicking a group widget opens its documents directly',
+        drill.rows === drill.apiCount && drill.rows > 0 && drill.widgets === 0, JSON.stringify(drill));
   // Regression: the filter pass hid any container whose tiles all matched
-  // out — and a subgroup-widget view has no tiles at all, so it blanked
-  // the entire screen.
-  check('and the subgroup widgets are actually visible',
+  // out, which could blank the whole opened group.
+  check('and the opened group is actually visible',
         await page.evaluate(() => {
-          const w = document.querySelector('.hub-w-sub');
+          const t = document.querySelector('.hub-tile');
           const box = document.querySelector('.hub-open');
-          return !!w && w.offsetParent !== null && getComputedStyle(box).display !== 'none';
+          return !!t && t.offsetParent !== null && getComputedStyle(box).display !== 'none';
         }));
-  check('named for the subgroups',
-        drill.names.includes('Spices Board') && drill.names.includes('Tax'),
-        drill.names.join(', '));
+  check('its subgroups are chips above the cards, not a screen',
+        drill.chipRows === 2 && drill.subChips.includes('All')
+          && drill.subChips.includes('Spices Board') && drill.subChips.includes('Tax'),
+        JSON.stringify(drill.subChips));
   check('headed with the group name and a way back',
         /Statutory/.test(drill.name || '') && drill.back, JSON.stringify(drill));
+  check('and the sibling-group chips mark the open one',
+        /Statutory/.test(drill.groupChipOn || ''), drill.groupChipOn);
 
   const drill2 = await page.evaluate(() => {
-    document.querySelector('.hub-w-sub[data-sub="Spices Board"]').click();
+    Array.from(document.querySelectorAll('.hub-navrow.is-sub .hub-chipnav'))
+      .find(c => c.textContent.trim().startsWith('Spices Board'))?.click();
     return {
       rows: document.querySelectorAll('#hub-groups .hub-tile').length,
-      subs: document.querySelectorAll('.hub-w-sub').length,
       name: document.querySelector('.hub-open-name')?.textContent.trim(),
-      backToGroup: !!Array.from(document.querySelectorAll('.hub-open-head .hub-btn'))
-                          .find(b => /Statutory/.test(b.textContent)),
+      sub: document.querySelector('.hub-open-sub')?.textContent.trim(),
       apiCount: (window._hubCat.groups.find(g => g.id === 'statutory') || { items: [] })
                   .items.filter(i => i.sub === 'Spices Board').length,
     };
   });
-  check('clicking a subgroup opens its documents',
-        drill2.rows === drill2.apiCount && drill2.subs === 0, JSON.stringify(drill2));
-  check('with a crumb back to the group',
-        /Spices Board/.test(drill2.name || '') && drill2.backToGroup, JSON.stringify(drill2));
-  check('and that crumb returns to the subgroups',
+  check('a subgroup chip narrows the cards in place',
+        drill2.rows === drill2.apiCount && drill2.rows > 0, JSON.stringify(drill2));
+  check('with the group and section both named in the header',
+        /Statutory/.test(drill2.name || '') && /Spices Board/.test(drill2.sub || ''), JSON.stringify(drill2));
+  check('and the All chip restores the whole group',
         await page.evaluate(() => { hubCloseSub();
-          return document.querySelectorAll('.hub-w-sub').length === 2; }));
+          return document.querySelectorAll('#hub-groups .hub-tile').length
+               === (window._hubCat.groups.find(g => g.id === 'statutory') || { items: [] }).items.length; }));
 
-  // A group with only ONE subgroup must not cost an extra click.
+  // A group whose items all sit under one section has nothing to narrow —
+  // it must not grow a chip row that offers a single choice.
   const single = await page.evaluate(() => {
     hubOpenGroup('logistics');
-    return { subs: document.querySelectorAll('.hub-w-sub').length,
+    return { subChipRows: document.querySelectorAll('.hub-navrow.is-sub').length,
              rows: document.querySelectorAll('.hub-tile').length };
   });
-  check('a single-subgroup group goes straight to its documents',
-        single.subs === 0 && single.rows === 3, JSON.stringify(single));
+  check('a single-section group carries no subgroup chips',
+        single.subChipRows === 0 && single.rows === 3, JSON.stringify(single));
+  // Hopping between groups is one click, without going back out to the grid.
+  const hop = await page.evaluate(() => {
+    Array.from(document.querySelectorAll('.hub-navrow:not(.is-sub) .hub-chipnav'))
+      .find(c => /Statutory/.test(c.textContent))?.click();
+    return { name: document.querySelector('.hub-open-name')?.textContent.trim(),
+             widgets: document.querySelectorAll('.hub-w').length };
+  });
+  check('a sibling chip hops straight to another group',
+        /Statutory/.test(hop.name || '') && hop.widgets === 0, JSON.stringify(hop));
   await page.evaluate(() => { hubOpenGroup('statutory'); hubOpenSub('Spices Board'); });
 
   // The cards scroll in place and the group header stays put above them.
@@ -524,8 +543,17 @@ const cleanup = () => {
       oldChips: document.querySelectorAll('.hub-tile .hub-fmt').length,
       fmtText: t.querySelector('.hub-tile-fmt')?.textContent.trim(),
       label: t.querySelector('.hub-tile-l')?.textContent.trim(),
-      // Glyph sits before the text, as on the reference.
-      glyphFirst: t.querySelector('.hub-tile-main')?.firstElementChild?.classList.contains('hub-file-ico'),
+      // Two rows: the glyph/format/controls strip, then the name on its own
+      // full-width line under it. The glyph leads that strip.
+      glyphFirst: t.querySelector('.hub-tile-top')?.firstElementChild?.classList.contains('hub-file-ico'),
+      // …and the strip really does sit above the name.
+      glyphAboveName: (() => {
+        const top = t.querySelector('.hub-tile-top'), name = t.querySelector('.hub-tile-l');
+        return !!top && !!name
+          && (top.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+      })(),
+      // The affordance the format line used to spell out lives in the tooltip.
+      tip: t.getAttribute('title') || '',
       // …and everything this screen adds is still on the card.
       withActions: tiles.filter(x => x.querySelector('.hub-acts .hub-btn')).length,
       withPicks:   tiles.filter(x => x.querySelector('.hub-cb')).length,
@@ -533,15 +561,19 @@ const cleanup = () => {
   });
   check('every card leads with the file glyph', head.tiles > 0 && head.glyphs === head.tiles,
         `${head.glyphs}/${head.tiles}`);
-  check('the glyph comes before the name', head.glyphFirst === true);
+  check('the glyph comes before the name',
+        head.glyphFirst === true && head.glyphAboveName === true, JSON.stringify(head.glyphFirst));
   check('every card names its formats on a second line',
         head.fmtLines === head.tiles, `${head.fmtLines}/${head.tiles}`);
   check('the old colour-coded format chip is gone', head.oldChips === 0, `${head.oldChips} left`);
-  // The hint reads like the Auction Downloads screen's, and still names what
-  // you get — the desk groups by purpose, so no heading above says the format.
-  check('the hint says "Click to view" and names the formats',
-        /^Click to view · [A-Z]{3,4}( · [A-Z]{3,4})*$/.test(head.fmtText || ''),
-        String(head.fmtText));
+  // The line names ONLY what you get. It used to open with "Click to view",
+  // which sixty tiles repeated to no one's benefit and which pushed the
+  // formats — the part that differs per tile — off a narrow card. That
+  // affordance moved to the card's tooltip; see hubTileHtml.
+  check('the format line names the formats and nothing else',
+        /^[A-Z]{3,4}( · [A-Z]{3,4})*$/.test(head.fmtText || ''), String(head.fmtText));
+  check('and the click affordance moved to the tooltip',
+        /click to download/i.test(head.tip || ''), String(head.tip));
   check('cards kept their download actions', head.withActions > 0, `${head.withActions} of ${head.tiles}`);
   check('cards kept the bundle checkbox', head.withPicks > 0, `${head.withPicks} of ${head.tiles}`);
 
@@ -787,12 +819,13 @@ const cleanup = () => {
 
   // ── [H] Sub-grouping and per-document filters ────────────────────
   console.log('\n[H] subgroups + filters');
+  // Subgroups are chips over the open group's cards (see the [B] drill).
   const subs = await page.evaluate(() => {
     hubOpenGroup('tally');
-    return Array.from(document.querySelectorAll('.hub-w-sub .hub-w-name'))
+    return Array.from(document.querySelectorAll('.hub-navrow.is-sub .hub-chipnav-l'))
       .map(x => x.textContent.trim());
   });
-  check('a group splits into subgroup widgets',
+  check('a group splits into subgroup chips',
         subs.includes('Ledger masters') && subs.includes('Vouchers'), subs.join(', '));
 
   // The filter panel is offered only where the endpoint reads filters.

@@ -1709,7 +1709,14 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
     // annexure. One row per lot the pooler put up in the period, with a bold
     // TOTAL. Paginates when a pooler has more lots than fit on the page.
     y = doc.y + 24;
-    const rows = Array.isArray(p.rows) ? p.rows : [];
+    // Lots that carry neither a price nor a bill amount (unsold, withdrawn,
+    // still unpriced) are left OUT of the certificate: it attests to payment
+    // received, and a row reading "0 / 0" attests to nothing. They contribute
+    // nothing to the bill total either, so the annexure still foots to the
+    // figure in the paragraph above. The Pooler Register itself keeps showing
+    // them — it has to reconcile the full lot list.
+    const rows = (Array.isArray(p.rows) ? p.rows : [])
+      .filter(r => (Number(r.rate) || 0) !== 0 || (Number(r.billamount) || 0) !== 0);
     // Column layout: proportional widths that sum to `width`.
     const annCols = [
       { key: 'tno',        label: 'ANO',         w: 0.11, align: 'right' },

@@ -863,10 +863,22 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
   // imported before `lots.user_id` was captured, so those group as before.
   const sellerKeySql = SELLER_KEY_SQL('l');
   let query = `SELECT l.name, l.cr, MAX(l.aadhar) AS aadhar,
-    -- Seller phone as stamped on the lot. Carried so the Payments tab's
-    -- search box can find a seller by phone number (the rollup has no other
-    -- link to the seller master). Display-only; nothing computes from it.
-    MAX(l.tel) AS tel,
+    -- Seller phone. Display-only; nothing computes from it.
+    --
+    -- lots.tel is a snapshot taken when the lot was BOOKED, so it is blank for
+    -- every lot imported without a phone and stale for any number added or
+    -- corrected in the master afterwards. Fall back to the seller master so
+    -- the number shown is the one the office actually has.
+    MAX(COALESCE(NULLIF(TRIM(COALESCE(l.tel,'')), ''),
+                 (SELECT NULLIF(TRIM(COALESCE(t.tel,'')), '') FROM traders t WHERE t.id = l.trader_id),
+                 '')) AS tel,
+    -- Every number this seller can be found BY, as one haystack for the
+    -- Payments search box: the lot snapshot, the master's phone and its
+    -- WhatsApp number. Searching had only the snapshot, so a seller whose
+    -- number lives on their master record but not on the lot was unfindable.
+    MAX(TRIM(COALESCE(l.tel,'')) || ' ' ||
+        COALESCE((SELECT TRIM(COALESCE(t.tel,'')) || ' ' || TRIM(COALESCE(t.whatsapp,''))
+                    FROM traders t WHERE t.id = l.trader_id), '')) AS tel_search,
     ${sellerKeySql} AS seller_key,
     MAX(l.trader_id) AS trader_id,
     TRIM(COALESCE(l.user_id,'')) AS user_id,

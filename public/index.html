@@ -1593,6 +1593,15 @@ body:not([data-feat-pertrade-breakdown="1"]) .feat-pertrade-breakdown{display:no
   background:none;border:none;cursor:pointer;color:var(--spice-text-mute);padding:4px;line-height:0}
 #tc-auctionmgr .am-filter-clr:hover{color:var(--spice-cardamom-dk)}
 #tc-auctionmgr .am-filter-clr svg{width:18px;height:18px}
+/* Filter row: the text box takes the space, the seller-warning select sits
+   beside it at its own width. Wraps to a second line on a narrow window. */
+#tc-auctionmgr .am-filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#tc-auctionmgr .am-filters .am-filter-wrap{flex:1 1 260px}
+#tc-auctionmgr .am-badge{font-family:inherit;font-size:13px;color:var(--spice-text-main);
+  padding:12px 12px;border:1px solid var(--am-edge);border-radius:8px;background:var(--spice-paper);
+  max-width:260px;cursor:pointer}
+#tc-auctionmgr .am-badge:focus{outline:none;border-color:var(--spice-saffron);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--spice-saffron) 22%, transparent)}
 
 /* Result table. Header is a plain label row (no fill); body rows alternate
    the paper ground with a faint theme tint, and the whole table scrolls
@@ -1870,7 +1879,13 @@ tr:hover td{background:var(--spice-cream)}
 
 /* ── Stat Cards ──────────────────────────────────────────── */
 /* ── Dashboard: KPI tiles + hero + quick actions ──────── */
-.greeting{margin-bottom:28px;display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap}
+/* Three columns rather than a flex row: the two 1fr side tracks are what put
+   the logo badge in the MIDDLE of the header, dead centre of the content
+   column, however wide the greeting text or the action buttons happen to be.
+   space-between would only centre it when those two matched. */
+.greeting{margin-bottom:28px;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
+  align-items:center;gap:24px}
+.greeting-acts{display:flex;gap:10px;justify-self:end}
 .greeting h1{
   font-size:30px;font-weight:700;margin:0 0 6px;letter-spacing:-.6px;
   color:var(--spice-text-main);display:flex;align-items:center;gap:10px
@@ -1975,8 +1990,8 @@ tr:hover td{background:var(--spice-cream)}
    a single column under 1100px (see media query below). Both columns stretch
    to equal height, and Quick Actions' tiles fill that height so the two cards
    always line up. */
-/* Vibrant centred company logo above the All-Auctions widget. */
-.dash-logo-hero{display:flex;justify-content:center;margin:2px 0 20px}
+/* Vibrant company logo, centred in the greeting header row. */
+.dash-logo-hero{display:flex;justify-content:center;margin:0}
 .dash-logo-badge{width:104px;height:104px;border-radius:50%;display:flex;align-items:center;justify-content:center;
   background:radial-gradient(circle at 32% 28%, var(--spice-cardamom-lt), var(--spice-cardamom) 78%);
   box-shadow:0 10px 30px rgba(22,101,52,.34), 0 0 0 7px rgba(22,101,52,.10), inset 0 2px 8px rgba(255,255,255,.35);
@@ -1985,8 +2000,21 @@ tr:hover td{background:var(--spice-cream)}
   box-shadow:0 2px 8px rgba(0,0,0,.12)}
 @keyframes dashLogoFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
 @media (prefers-reduced-motion:reduce){.dash-logo-badge{animation:none}}
+/* Bar that opens the trade snapshot, plus the auction picker while the card
+   that normally carries it is hidden. */
+.dash-snap-toggle{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 16px}
+.dash-snap-toggle-btn{display:inline-flex;align-items:center;gap:8px;font-family:inherit;
+  font-size:13px;font-weight:700;color:var(--spice-cardamom-dk);cursor:pointer;
+  background:var(--spice-cardamom-lt);border:1px solid var(--spice-line);border-radius:999px;
+  padding:8px 16px;transition:filter .15s}
+.dash-snap-toggle-btn:hover{filter:brightness(.97)}
+.dash-snap-toggle-btn .caret{font-size:11px;line-height:1}
 .dash-snap-row{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:20px;
   margin-bottom:20px;align-items:stretch}
+/* No snapshot in the row — Quick Actions takes the full width rather than
+   leaving a column-sized hole beside it. */
+.dash-snap-row.snap-hidden{grid-template-columns:1fr}
+.dash-snap-row.snap-hidden .qa-grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));grid-auto-rows:auto}
 .dash-snap-row .dash-snap{margin-bottom:0}
 .dash-snap-row > .card{margin-bottom:0}
 /* Make the Quick Actions card a flex column so its tile grid fills the height
@@ -2214,6 +2242,16 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 .auction-hero-number{
   font-size:38px;font-weight:700;letter-spacing:-1px;margin-bottom:4px;color:#fff
 }
+/* "Auction No 12" in the dashboard's Current Auction panel doubles as the way
+   into the Auction Manager. It keeps the heading's own colour (inherit) so it
+   doesn't read as a stray blue link; the underline appears on hover/focus,
+   which is where the affordance is needed. Focus-visible keeps it reachable
+   from the keyboard. */
+.ca-ano-link{color:inherit;text-decoration:none;cursor:pointer;border-radius:6px}
+.ca-ano-link:hover{text-decoration:underline;text-underline-offset:4px;color:var(--spice-cardamom-dk)}
+.ca-ano-link:focus-visible{outline:2px solid var(--spice-cardamom);outline-offset:3px}
+.ca-ano-link .ca-ano-go{font-size:12px;opacity:0;transition:opacity .12s;white-space:nowrap;font-weight:600}
+.ca-ano-link:hover .ca-ano-go,.ca-ano-link:focus-visible .ca-ano-go{opacity:.7}
 .auction-hero-date{font-size:14px;opacity:.9;margin-bottom:22px}
 .auction-hero-stats{display:flex;gap:28px;margin-bottom:20px;flex-wrap:wrap}
 .hero-stat{font-size:12px;opacity:.75}
@@ -4026,6 +4064,13 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
   table{font-size:12px}
   th,td{padding:10px 10px}
   .greeting h1{font-size:24px}
+  /* Too narrow for text + logo + button on one line: stack them, logo
+     centred between the greeting and the actions. */
+  .greeting{grid-template-columns:1fr;gap:16px;text-align:center}
+  .greeting h1{justify-content:center}
+  .greeting-acts{justify-self:center}
+  .dash-logo-badge{width:84px;height:84px}
+  .dash-logo-badge img{width:64px;height:64px}
   .kpi-value{font-size:28px}
   .auction-hero-number{font-size:30px}
   .qa-grid{grid-template-columns:1fr}
@@ -4563,6 +4608,16 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <div class="fg" style="max-width:200px;margin:0">
               <label>Branch</label>
               <select id="hub-lot-branch" onchange="hubLoadLots()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"><option value="">All branches</option></select>
+            </div>
+            <!-- Seller data-hygiene filter — the same warnings as the badges
+                 on each row (No PAN, No bank, …). Client-side over the loaded
+                 lots, so it narrows the table, the KPI strip and the totals
+                 together. Hidden whenever no seller in this auction is
+                 flagged: an empty dropdown is just noise in the toolbar. -->
+            <div class="fg" id="hub-lot-badge-wrap" style="max-width:220px;margin:0;display:none">
+              <label>Seller warnings</label>
+              <select id="hub-lot-badge" onchange="hubRenderLots()" title="Show only lots whose seller carries this warning"
+                      style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></select>
             </div>
             <!-- Straight to the paperwork for this auction, without the
                  Lots toolbar carrying a row of document buttons. -->
@@ -6760,10 +6815,10 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <select id="paylw-auction" onchange="payLwOnAuctionChange()" style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:180px"></select>
           </div>
           <div style="flex:1;min-width:200px">
-            <label style="display:block;font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px">Seller name</label>
+            <label style="display:block;font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px">Seller name or phone</label>
             <div class="inp-clear-wrap" id="paylw-seller-wrap">
-              <input type="text" id="paylw-seller" placeholder="Part of the seller's name…" oninput="payLwSyncClear('paylw-seller')" onkeydown="if(event.key==='Enter')payLwSearch()" style="width:100%;padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px">
-              <button type="button" class="inp-clear" title="Clear the seller name" onclick="payLwClearField('paylw-seller')">✕</button>
+              <input type="text" id="paylw-seller" placeholder="Part of the name, or a phone no…" title="Part of the seller's name, or their phone number — typed any way you like (+91 97907 44444, 97907-44444, 9790744444)" oninput="payLwSyncClear('paylw-seller')" onkeydown="if(event.key==='Enter')payLwSearch()" style="width:100%;padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px">
+              <button type="button" class="inp-clear" title="Clear the seller name or phone" onclick="payLwClearField('paylw-seller')">✕</button>
             </div>
           </div>
           <div style="flex:1;min-width:200px">
@@ -6837,7 +6892,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
 
         <div id="paylw-body">
           <div style="padding:34px;text-align:center;color:var(--text3);font-size:13px;line-height:1.7">
-            Search by <strong>seller name</strong>, <strong>lot numbers</strong>, or both — then press <strong>Search</strong>.<br>
+            Search by <strong>seller name or phone no</strong>, <strong>lot numbers</strong>, or both — then press <strong>Search</strong>.<br>
             <span style="font-size:12px">Searching with both boxes empty lists every payable lot in the trade. Turn on <strong>Show unlinked</strong> for the lots that have no bank account yet.</span>
           </div>
         </div>
@@ -11960,6 +12015,10 @@ function hubOnAuctionChange(){
   window._hubCat = null; window._hubLots = null;
   hubLotClose();
   const b = document.getElementById('hub-lot-branch'); if (b) b.value = '';
+  // The badge options are built from the lots of ONE auction, so they mean
+  // nothing against the next one — drop the pick with them.
+  const g = document.getElementById('hub-lot-badge');
+  if (g) { g.value = ''; g.innerHTML = ''; g._sig = null; }
   hubRefresh();
 }
 function hubRefresh(){
@@ -12074,10 +12133,38 @@ function hubKpiFromLots(rows){
   return k;
 }
 
+// Rebuild the seller-warning dropdown from the loaded lots. Options (and their
+// counts) describe the WHOLE loaded set, not the filtered one, so the list
+// doesn't collapse to a single choice the moment you pick something. The
+// signature check keeps the DOM untouched when nothing about the options
+// changed — rebuilding a <select> on every render would fight the user.
+function hubFillBadgeFilter(rowIssues){
+  const sel  = document.getElementById('hub-lot-badge');
+  const wrap = document.getElementById('hub-lot-badge-wrap');
+  if (!sel) return;
+  const opts = lotBadgeFilterOptions(rowIssues, sel.value);
+  if (!opts) {
+    if (wrap) wrap.style.display = 'none';
+    sel.innerHTML = ''; sel.value = ''; sel._sig = null;
+    return;
+  }
+  if (wrap) wrap.style.display = '';
+  if (sel._sig !== opts) { sel._sig = opts; sel.innerHTML = opts; }
+}
+
 function hubRenderLots(){
   const body = document.getElementById('hub-lot-rows');
-  const all  = window._hubLots || [];
+  const raw  = window._hubLots || [];
   if (!body) return;
+  // One pass of the seller-warning checks per render, shared by the dropdown's
+  // counts, the filtering below, and the chips on each row.
+  const issuesOf = new Map();
+  for (const l of raw) issuesOf.set(l, lotSellerIssues(l));
+  const badge = (document.getElementById('hub-lot-badge')?.value || '');
+  hubFillBadgeFilter(raw.map(l => issuesOf.get(l)));
+  // The badge filter is client-side (search and branch are server-side), so it
+  // narrows `all` here — which is what the KPI strip and totals read.
+  const all = badge ? raw.filter(l => lotBadgeMatch(issuesOf.get(l), badge)) : raw;
   const count = document.getElementById('hub-lot-count');
   const term  = (document.getElementById('hub-lot-search')?.value || '').trim();
   if (!all.length) {
@@ -12115,8 +12202,8 @@ function hubRenderLots(){
     // Seller data-hygiene warnings — the SAME badges (and colours, and
     // click-to-edit) as the dashboard's lot-wise drill-down, replacing the
     // lone grey "no bank" chip this list used to carry on its own.
-    const sellerBadges = lotIssueBadgesHtml(lotSellerIssues(l),
-      { traderId: l.trader_id != null ? String(l.trader_id) : '', seller: String(l.name || '') });
+    const sellerBadges = lotIssueBadgesHtml(issuesOf.get(l),
+      { traderId: l.trader_id != null ? String(l.trader_id) : '', seller: String(l.name || '') }, badge);
     return `<tr class="${wd ? 'is-wd' : ''}" data-lot-id="${l.id}" onclick="hubLotOpen(${l.id})">
       <td class="hub-lot-no">${esc(l.lot_no)}</td>
       <td>${esc(l.name || '')}${sellerBadges}</td>
@@ -12140,7 +12227,8 @@ function hubRenderLots(){
   // The header count stays whole-auction — the pager already says which
   // slice you are looking at, and "193 sold" is the figure that matters.
   const sold = all.filter(l => Number(l.amount) > 0).length;
-  if (count) count.textContent = term || (document.getElementById('hub-lot-branch')?.value || '')
+  const narrowed = term || badge || (document.getElementById('hub-lot-branch')?.value || '');
+  if (count) count.textContent = narrowed
     ? `${fmtI(all.length)} matching · ${fmtI(sold)} sold`
     : `${fmtI(all.length)} lots · ${fmtI(sold)} sold`;
 }
@@ -13934,6 +14022,12 @@ async function refreshCurrentTab(){
 //   null  => "All Trades" (cumulative view, default)
 //   <id>  => drilled into that specific auction
 let _dashSelectedAuctionId = null;
+// Whether the operator has picked a scope in the dashboard's OWN hero picker.
+// Until they do, the dashboard opens on the app-wide trade selection (topbar)
+// rather than on cumulative — landing on the dashboard should show the trade
+// you are working on. Changing the topbar afterwards always wins, explicit
+// pick or not: that is the operator saying "show me this trade" out loud.
+let _dashPickExplicit = false;
 
 // Grade breakdown for the trade-snapshot matrix, kept across re-renders so the
 // click-through modal can read it after loadStats() rebuilds the widget.
@@ -13955,6 +14049,18 @@ function toggleDashSnap() {
   const row = card.closest('.dash-snap-row');
   if (row) row.classList.toggle('snap-collapsed', willCollapse);
   localStorage.setItem('dashSnapCollapsed', willCollapse ? '1' : '0');
+}
+
+// Show / hide the trade snapshot card entirely. Distinct from toggleDashSnap
+// above, which folds an already-visible card down to its header: this one
+// decides whether the widget is on the dashboard at all. A full re-render
+// rather than a class flip, because the auction picker moves between the
+// toggle bar and the card header with it — and loadStats() with no argument
+// keeps the trade currently selected.
+function toggleDashSnapVisible(){
+  const visible = localStorage.getItem('dashSnapVisible') === '1';
+  localStorage.setItem('dashSnapVisible', visible ? '0' : '1');
+  loadStats();
 }
 
 // Shared money/count/qty formatters for the grade modals.
@@ -14177,6 +14283,24 @@ let _amSummary = null;   // stat band payload
 let _amAuction = null;   // { id, ano, date, crop_type }
 let _amTab = 'lots';     // lots | planters | traders
 let _amFilter = '';
+let _amBadge = '';       // seller-warning filter ('' | '__any' | '__none' | label)
+// Per-lot seller warnings, computed once per load rather than on every
+// filter/sort/sub-tab repaint. Keyed by the lot OBJECT, so a reload (which
+// replaces every row) drops the whole cache with it.
+let _amIssueCache = new WeakMap();
+function _amIssues(l){
+  let v = _amIssueCache.get(l);
+  if (!v) { v = lotSellerIssues(l); _amIssueCache.set(l, v); }
+  return v;
+}
+// A seller row (Planters / Traders) carries the union of its lots' warnings,
+// deduped by label and errors first — the same order lotSellerIssues returns.
+function _amSellerIssues(lots){
+  const by = new Map();
+  for (const l of (lots || []))
+    for (const i of _amIssues(l)) if (!by.has(i.label)) by.set(i.label, i);
+  return [...by.values()].sort((a, b) => (a.sev === b.sev ? 0 : a.sev === 'error' ? -1 : 1));
+}
 let _amSort = { key: 'lot', dir: 1 };
 const _amSel = new Set(); // checked lot ids, keyed by lot.id
 // What the detail drawer is showing, as data rather than read back off the
@@ -14246,7 +14370,9 @@ async function loadAuctionManager(){
     // It stays hidden because the reference screen shows the trade as a
     // heading, not as a control.
     const sel = document.getElementById('am-auction');
-    if (sel) sel.addEventListener('change', () => { _amSel.clear(); amReload(); });
+    // The badge options are built from ONE trade's lots, so they mean nothing
+    // against the next one — the pick is dropped with the selection.
+    if (sel) sel.addEventListener('change', () => { _amSel.clear(); _amBadge = ''; amReload(); });
     const f = document.getElementById('am-filter');
     if (f) f.addEventListener('input', () => { _amFilter = f.value; _amRenderBody(); });
   }
@@ -14295,11 +14421,18 @@ function _amShell(){
       <button class="am-subtab"        data-am-tab="planters" onclick="amSubTab('planters')">Planters</button>
       <button class="am-subtab"        data-am-tab="traders"  onclick="amSubTab('traders')">Traders</button>
     </div>
-    <div class="am-filter-wrap">
-      <input id="am-filter" class="am-filter" type="text" placeholder="Filter Lot/buyer/Planter" autocomplete="off">
-      <button class="am-filter-clr" onclick="amClearFilter()" title="Clear filter" aria-label="Clear filter">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm3.7 12.3-1.4 1.4L12 13.4l-2.3 2.3-1.4-1.4L10.6 12 8.3 9.7l1.4-1.4L12 10.6l2.3-2.3 1.4 1.4L13.4 12z"/></svg>
-      </button>
+    <div class="am-filters">
+      <div class="am-filter-wrap">
+        <input id="am-filter" class="am-filter" type="text" placeholder="Filter Lot/buyer/Planter" autocomplete="off">
+        <button class="am-filter-clr" onclick="amClearFilter()" title="Clear filter" aria-label="Clear filter">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm3.7 12.3-1.4 1.4L12 13.4l-2.3 2.3-1.4-1.4L10.6 12 8.3 9.7l1.4-1.4L12 10.6l2.3-2.3 1.4 1.4L13.4 12z"/></svg>
+        </button>
+      </div>
+      <!-- Seller data-hygiene filter, matching the badges on the rows. Hidden
+           while every seller in the trade is clean — see amFillBadgeFilter. -->
+      <select id="am-badge" class="am-badge" style="display:none"
+              onchange="amBadgeFilter(this.value)"
+              title="Show only rows whose seller carries this warning"></select>
     </div>
     <div id="am-body"></div>`;
 }
@@ -14362,11 +14495,18 @@ function _amRenderHead(){
 // One filter box serves all three sub-tabs; it matches the fields the
 // placeholder advertises (lot, buyer, planter) plus the CR/GST value,
 // which operators search by more often than the label suggests.
-function _amMatch(l){
+function _amTextMatch(l){
   const q = _amFilter.trim().toLowerCase();
   if (!q) return true;
   return [l.lot_no, l.name, l.buyer, l.buyer1, l.cr]
     .some(f => String(f == null ? '' : f).toLowerCase().includes(q));
+}
+// The LOTS predicate — text plus the seller-warning pick. Planters / Traders
+// apply the badge to the whole seller instead (see _amSellersTable), because
+// filtering their lots away first would leave a seller row whose lot numbers
+// and totals covered only part of what they booked.
+function _amMatch(l){
+  return _amTextMatch(l) && lotBadgeMatch(_amIssues(l), _amBadge);
 }
 
 function amSubTab(tab){
@@ -14380,6 +14520,24 @@ function amClearFilter(){
   if (f) { f.value = ''; f.focus(); }
   _amFilter = '';
   _amRenderBody();
+}
+function amBadgeFilter(v){
+  _amBadge = String(v || '');
+  _amRenderBody();
+}
+// Rebuild the seller-warning dropdown. Options (and their counts) describe the
+// WHOLE trade, not what the other filters have left, so the list doesn't
+// collapse to a single choice the moment you pick something. Counted in the
+// unit the sub-tab shows — lots on Lots, sellers on Planters / Traders.
+function amFillBadgeFilter(unitIssues){
+  const sel = document.getElementById('am-badge');
+  if (!sel) return;
+  const opts = lotBadgeFilterOptions(unitIssues, _amBadge);
+  // Nothing flagged in this trade — the dropdown would have nothing to choose
+  // between, so it isn't shown at all.
+  if (!opts) { sel.style.display = 'none'; sel.innerHTML = ''; sel._sig = null; return; }
+  sel.style.display = '';
+  if (sel._sig !== opts) { sel._sig = opts; sel.innerHTML = opts; }
 }
 function amToggleActions(){
   const p = document.getElementById('tc-auctionmgr');
@@ -14405,16 +14563,21 @@ function _amRenderBody(){
   if (!host) return;
   const ano = _amAuction && _amAuction.ano != null ? _amAuction.ano : '—';
   const hd = `<div class="am-panel-hd">Auction No: ${esc(String(ano))}</div>`;
-  const rows = _amRows.filter(_amMatch);
+  const onLots = _amTab === 'lots';
+  const dealers = _amTab === 'traders';
+  amFillBadgeFilter(onLots
+    ? _amRows.map(_amIssues)
+    : _amSellerGroups(_amRows, dealers).map(g => _amSellerIssues(g.lots)));
+  // Lots apply both filters here; the seller tabs get the text-filtered lots
+  // and apply the badge to the assembled seller rows.
+  const rows = onLots ? _amRows.filter(_amMatch) : _amRows.filter(_amTextMatch);
   if (!rows.length) {
     host.innerHTML = `<div class="am-panel">${hd}<div class="am-empty">${
-      _amFilter.trim() ? 'No rows match this filter.' : 'No lots in this trade yet.'
+      _amFilter.trim() || _amBadge ? 'No rows match this filter.' : 'No lots in this trade yet.'
     }</div></div>`;
     return;
   }
-  const table = _amTab === 'lots'     ? _amLotsTable(rows)
-              : _amTab === 'planters' ? _amSellersTable(rows, false)
-              :                         _amSellersTable(rows, true);
+  const table = onLots ? _amLotsTable(rows) : _amSellersTable(rows, dealers);
   host.innerHTML = `<div class="am-panel">${hd}<div class="am-scroll">${table}</div></div>`;
   _amFitScroll();
 }
@@ -14480,7 +14643,9 @@ function _amLotsTable(rows){
               onclick="event.stopPropagation();amToggleOne(${l.id}, this)"
               aria-label="Select lot ${esc(String(l.lot_no||''))}"></td>
           <td>${esc(String(l.lot_no == null ? '' : l.lot_no))}</td>
-          <td>${esc(l.name || '')}</td>
+          <td>${esc(l.name || '')}${lotIssueBadgesHtml(_amIssues(l),
+              { traderId: l.trader_id != null ? String(l.trader_id) : '', seller: String(l.name || '') },
+              _amBadge)}</td>
           <td>${esc(l.cr || '')}</td>
           <td class="am-num">${_amQty(l.qty)}</td>
           <td class="am-num">${_amInt(l.bags)}</td>
@@ -14532,7 +14697,10 @@ function _amSellerGroups(rows, dealers){
 }
 
 function _amSellersTable(rows, dealers){
-  _amGroups = _amSellerGroups(rows, dealers);
+  // The seller-warning pick is applied to the assembled group, so a matched
+  // seller still shows every lot they booked (see _amMatch).
+  _amGroups = _amSellerGroups(rows, dealers)
+    .filter(g => lotBadgeMatch(_amSellerIssues(g.lots), _amBadge));
   if (!_amGroups.length) {
     return `<div class="am-empty">No ${dealers ? 'traders' : 'planters'} match.</div>`;
   }
@@ -14547,7 +14715,8 @@ function _amSellersTable(rows, dealers){
       <tbody>${_amGroups.map((g, i) => `<tr data-am-row="seller:${esc(g.key)}"
           onclick="amSellerOpen(${i})"
           ${_amDetail && _amDetail.kind === 'seller' && _amDetail.key === g.key ? 'class="is-open"' : ''}>
-        <td>${esc(g.name)}</td>
+        <td>${esc(g.name)}${lotIssueBadgesHtml(_amSellerIssues(g.lots),
+            { traderId: g.traderId != null ? String(g.traderId) : '', seller: g.name }, _amBadge)}</td>
         <td>${esc(g.cr)}</td>
         <td class="am-num">${_amInt(g.lots.length)}</td>
         <td>${esc(g.lots.map(l => l.lot_no).join(', '))}</td>
@@ -15156,9 +15325,39 @@ async function loadPerTradeBreakdown(){
     </div>`;
 }
 
+// The dashboard hero's own scope picker. A specific trade is pushed out to the
+// app-wide selection (topbar + every other tab) so the two never disagree;
+// "All Auctions" is a dashboard-only view and is deliberately NOT broadcast —
+// there is no such thing as "all trades" on the screens that raise documents.
+function dashPickAuction(value){
+  _dashPickExplicit = true;
+  if (value === 'all') { loadStats(null); return; }
+  const id = parseInt(value, 10);
+  if (!Number.isFinite(id)) { loadStats(null); return; }
+  loadStats(id);
+  if (String(getSharedAucId()) !== String(id)) setSharedAucId(String(id));
+}
+// "Auction #12" in the hero → open that trade in the Auction Manager. Setting
+// the shared id first is what carries the trade across: the manager's hidden
+// #am-auction select picks it up on mount (see loadAuctionManager).
+function dashOpenAuctionManager(id){
+  const n = Number(id) || null;
+  // Set the dashboard's own scope first so setSharedAucId's dash-sync sees
+  // nothing to do — otherwise it repaints the screen we are leaving.
+  if (n) _dashSelectedAuctionId = n;
+  if (n && String(getSharedAucId()) !== String(n)) setSharedAucId(String(n));
+  go('auctionmgr');
+}
 async function loadStats(auctionId){
   // Allow explicit override; otherwise use the remembered selection
   if (auctionId !== undefined) _dashSelectedAuctionId = auctionId || null;
+  // Mounting the tab with nothing chosen here yet — open on the app-wide
+  // trade (topbar / whatever the last screen was working on) instead of the
+  // cumulative view, so the hero shows the trade the operator is actually in.
+  else if (!_dashPickExplicit) {
+    const _shared = Number(getSharedAucId()) || 0;
+    if (_shared) _dashSelectedAuctionId = _shared;
+  }
   // Cache-bust on every load. Branch tiles read configured branches
   // from settings (br1..br9) which can change between dashboard
   // visits — without the busted URL, the browser serves a stale
@@ -15221,7 +15420,7 @@ async function loadStats(auctionId){
       const sel = (!isAllMode && a.id === _dashSelectedAuctionId) ? ' selected' : '';
       return `<option value="${a.id}"${sel}>Auction #${esc(a.ano)} — ${fmtD(a.date)}</option>`;
     }).join('');
-  const picker = `<select onchange="loadStats(this.value === 'all' ? null : parseInt(this.value))" style="background:rgba(255,255,255,.85);border:1px solid rgba(22,101,52,.25);border-radius:8px;padding:6px 10px;font-size:13px;font-weight:600;color:var(--spice-cardamom-dk);cursor:pointer;font-family:inherit">${pickerOptions}</select>`;
+  const picker = `<select onchange="dashPickAuction(this.value)" style="background:rgba(255,255,255,.85);border:1px solid rgba(22,101,52,.25);border-radius:8px;padding:6px 10px;font-size:13px;font-weight:600;color:var(--spice-cardamom-dk);cursor:pointer;font-family:inherit">${pickerOptions}</select>`;
 
   // ── Trade snapshot widget: Booked / Sold / Withdrawn matrix + summary band ──
   // Every figure comes from /api/insights totals (T) so it stays in one source.
@@ -15256,6 +15455,9 @@ async function loadStats(auctionId){
     : (A ? { tag: '#'+esc(A.ano), t1: `Auction #${esc(A.ano)}${A.crop_type?' — '+esc(A.crop_type):''}`, t2: fmtD(A.date) }
          : { tag: '—', t1: 'No auction selected', t2: '' });
   const snapCollapsed = localStorage.getItem('dashSnapCollapsed') === '1';
+  // The whole card is off until asked for: '1' is the only value that shows
+  // it, so a browser that has never made the choice starts hidden.
+  const snapHidden = localStorage.getItem('dashSnapVisible') !== '1';
 
   // Grade-2 booking vs the Spices Board 25% cap. This is a PER-AUCTION rule
   // (grade 2 ≤ 25% of that auction's total booked weight), so the alert only
@@ -15592,18 +15794,33 @@ async function loadStats(auctionId){
         <h1>${greet}, ${esc(uname)} <span class="wave">👋</span></h1>
         <p>Here's what's happening today, ${today}</p>
       </div>
-      <div style="display:flex;gap:10px">
+      <!-- The logo rides IN the header row rather than under it, so it reads
+           as part of the greeting instead of pushing the first card down. -->
+      <div class="dash-logo-hero">
+        <div class="dash-logo-badge"><img src="${_dashLogo}" alt="" onerror="this.style.display='none'"></div>
+      </div>
+      <div class="greeting-acts">
         <button class="btn btn-a" onclick="go('auctions')">+ New Auction</button>
       </div>
     </div>
 
-    <!-- Top row: trade snapshot (left) + Quick Actions (right). Collapses to
-         a single column under 1100px. -->
-    <div class="dash-logo-hero">
-      <div class="dash-logo-badge"><img src="${_dashLogo}" alt="" onerror="this.style.display='none'"></div>
+    <!-- The trade snapshot is off by default and opened from here; the choice
+         persists per browser. While it is hidden the auction picker rides on
+         this bar instead of the card header, so switching trades (which the
+         Current Auction panel below follows) never needs the card open. -->
+    <div class="dash-snap-toggle">
+      <button type="button" class="dash-snap-toggle-btn" onclick="toggleDashSnapVisible()"
+              aria-expanded="${snapHidden ? 'false' : 'true'}" aria-controls="dash-snap-card">
+        <span class="caret">${snapHidden ? '▸' : '▾'}</span>
+        ${snapHidden ? 'Show' : 'Hide'} ${isAllMode ? 'All Auctions' : 'Trade Snapshot'}
+      </button>
+      ${snapHidden ? picker : ''}
     </div>
-    <div class="dash-snap-row${snapCollapsed?' snap-collapsed':''}">
-      ${snapHTML || '<div></div>'}
+
+    <!-- Top row: trade snapshot (left) + Quick Actions (right). Collapses to
+         a single column under 1100px, and whenever the snapshot is hidden. -->
+    <div class="dash-snap-row${snapCollapsed?' snap-collapsed':''}${snapHidden?' snap-hidden':''}">
+      ${snapHidden ? '' : (snapHTML || '<div></div>')}
       <div class="card" style="padding:0">
         <div style="padding:18px 22px 12px;border-bottom:1px solid var(--spice-line);display:flex;justify-content:space-between;align-items:center">
           <h2 style="font-size:17px;font-weight:700;margin:0;color:var(--spice-text-main)">Quick Actions</h2>
@@ -15876,7 +16093,17 @@ async function loadDepotSummary(auctionId){
       </div>
     </div>
     <div class="card" id="ca-body" style="padding:20px;display:${collapsed ? 'none' : 'block'}">
-      <div style="font-size:20px;font-weight:700;color:var(--spice-text-main);line-height:1.2">Auction No ${esc(a.ano)}</div>
+      <div style="font-size:20px;font-weight:700;color:var(--spice-text-main);line-height:1.2">${
+        // The trade number opens this trade in the Auction Manager — the screen
+        // that answers "what is going on in this trade?". Plain text when the
+        // manager is switched off (flag_auction_manager), so the link can never
+        // lead to a hidden tab.
+        document.body.getAttribute('data-feat-auction-manager') === '1'
+          ? `<a href="#" class="ca-ano-link" onclick="dashOpenAuctionManager(${Number(a.id) || 0});return false"
+                title="Open Auction No ${esc(a.ano)} in the Auction Manager"
+             >Auction No ${esc(a.ano)} <span class="ca-ano-go">↗ Auction Manager</span></a>`
+          : `Auction No ${esc(a.ano)}`
+      }</div>
       <div style="font-size:12px;color:var(--spice-text-mute);margin-bottom:16px">Auction Date: ${fmtD(a.date)}</div>
       <div class="dash-row" style="margin-bottom:0">
         <div style="overflow-x:auto">${tableHTML}</div>
@@ -15966,10 +16193,10 @@ const DL_LINK_ISSUES = new Set(['No seller', 'Not linked']);
 // `row` supplies the seller identity ({ traderId, seller }) so each badge can
 // open that seller's edit form — the badge names what's missing, clicking it
 // goes to fix it. `activeBadge` rings the badges matching a live badge filter;
-// callers with no such filter (the Auction Desk) leave it blank.
+// callers with no such filter leave it blank.
 //
-// Shared by the dashboard's lot-wise drill-down and the Auction Desk lot list,
-// so a warning looks and behaves the same on both.
+// Shared by the dashboard's lot-wise drill-down, the Auction Desk lot list and
+// the Auction Manager, so a warning looks and behaves the same on all three.
 function lotIssueBadgesHtml(issues, row, activeBadge){
   if (!issues || !issues.length) return '';
   const r = row || {};
@@ -15990,32 +16217,54 @@ function lotIssueBadgesHtml(issues, row, activeBadge){
 }
 
 // ── Badge filter ────────────────────────────────────────────────
-// Dropdown built from the warnings ACTUALLY present in the loaded list, with
+// Options built from the warnings ACTUALLY present in the loaded list, with
 // per-warning lot counts, plus the two roll-ups. Offering the full catalogue
 // of possible warnings would mostly list empty options; offering only what's
-// there doubles as a summary of what this depot/grade needs fixing.
-function dlBadgeFilterHtml(){
+// there doubles as a summary of what this list needs fixing.
+//
+// `rowIssues` is one issue array per row (the output of lotSellerIssues, or a
+// per-seller union of them). Returns '' when nothing is flagged, which every
+// caller reads as "don't draw the control at all". Shared by the dashboard's
+// lot-wise modal, the Auction Desk and the Auction Manager so one warning
+// means the same pick on all three.
+function lotBadgeFilterOptions(rowIssues, selected){
   const counts = new Map();
   let clean = 0;
-  for (const r of _dl.rows) {
-    const labels = new Set((r.issues || []).map(i => i.label));
+  for (const issues of rowIssues) {
+    const labels = new Set((issues || []).map(i => i.label));
     if (!labels.size) { clean++; continue; }
     labels.forEach(lbl => counts.set(lbl, (counts.get(lbl) || 0) + 1));
   }
-  const flagged = _dl.rows.length - clean;
-  // Every seller in this list is clean — the dropdown would have nothing to
-  // choose between, so it isn't drawn at all.
+  const flagged = rowIssues.length - clean;
   if (!flagged) return '';
-  const sel = _dl.filt.badge;
+  const sel = String(selected || '');
   const opt = (v, lbl) => `<option value="${esc(v)}"${sel === v ? ' selected' : ''}>${esc(lbl)}</option>`;
   const opts = [opt('', 'All sellers'), opt('__any', `⚠ Any warning (${flagged})`)];
   if (clean) opts.push(opt('__none', `✓ No warnings (${clean})`));
   [...counts.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .forEach(([lbl, n]) => opts.push(opt(lbl, `${lbl} (${n})`)));
+  return opts.join('');
+}
+
+// '' = every row, '__any'/'__none' = has / hasn't any warning, anything else
+// = that exact badge label.
+function lotBadgeMatch(issues, badge){
+  if (!badge) return true;
+  const list = issues || [];
+  if (badge === '__any')  return list.length > 0;
+  if (badge === '__none') return list.length === 0;
+  return list.some(i => i.label === badge);
+}
+
+function dlBadgeFilterHtml(){
+  const opts = lotBadgeFilterOptions(_dl.rows.map(r => r.issues), _dl.filt.badge);
+  // Every seller in this list is clean — the dropdown would have nothing to
+  // choose between, so it isn't drawn at all.
+  if (!opts) return '';
   return `<select class="dl-filter" id="dl-badge-filter"`
     + ` onchange="depotLotsFilter('badge', this.value)"`
-    + ` title="Show only lots whose seller carries this warning">${opts.join('')}</select>`;
+    + ` title="Show only lots whose seller carries this warning">${opts}</select>`;
 }
 
 
@@ -16155,20 +16404,11 @@ function renderDepotLotsTable(){
   const qf   = n => (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const intf = n => (Number(n) || 0).toLocaleString('en-IN');
   const f = _dl.filt;
-  // '' = every lot, '__any'/'__none' = has / hasn't any warning, anything
-  // else = that exact badge label.
-  const badgeOk = (r) => {
-    if (!f.badge) return true;
-    const issues = r.issues || [];
-    if (f.badge === '__any')  return issues.length > 0;
-    if (f.badge === '__none') return issues.length === 0;
-    return issues.some(i => i.label === f.badge);
-  };
   let rows = _dl.rows.filter(r =>
     (!f.lot    || r.lot_no.toLowerCase().includes(f.lot)) &&
     sellerMatches(f.seller, r.seller, r.tel) &&
     (!f.buyer  || r.buyer.toLowerCase().includes(f.buyer)) &&
-    badgeOk(r)
+    lotBadgeMatch(r.issues, f.badge)
   );
   const { col, dir } = _dl.sort;
   const numCols = { bags: 1, qty: 1, price: 1, amount: 1 };
@@ -27558,6 +27798,18 @@ function setSharedAucId(id, source) {
     sel.value = v;
     sel.dispatchEvent(new Event('change'));
   }
+  // The dashboard hero is not a wired <select> — it is rebuilt from
+  // _dashSelectedAuctionId on every render — so it can't be reached by the
+  // broadcast above. Point it at the new trade by hand, and repaint if the
+  // operator is looking at it right now. Without this, changing the trade in
+  // the topbar left "Current Auction" showing the previous one.
+  const _dashId = Number(v) || null;
+  if (_dashId && _dashSelectedAuctionId !== _dashId) {
+    _dashSelectedAuctionId = _dashId;
+    if (window._currentTab === 'dash' && typeof loadStats === 'function') {
+      try { loadStats(_dashId); } catch (_) {}
+    }
+  }
   // Guided-flow gate follows the shared trade — re-evaluate the sidebar
   // stage whenever the current trade changes (any tab, or the topbar).
   if (typeof refreshTradeStage === 'function') { try { refreshTradeStage(); } catch (_) {} }
@@ -35393,12 +35645,15 @@ async function loadPayments(){
       .filter(Boolean);
     // Within-trade search — /api/payments returns aggregated seller
     // rollups, so the filter is applied client-side on the seller name.
-    // Matches the seller NAME, or — when the text is a phone number — the
-    // seller's number as stamped on their lots (rollup carries `tel`),
-    // compared digits-only so "+91 98765 43210" finds "9876543210".
+    // Matches the seller NAME, or — when the text is a phone number — any
+    // number the seller can be reached on: the one stamped on their lots plus
+    // the phone and WhatsApp numbers on their master record (`tel_search`).
+    // Compared digits-only, so "+91 98765 43210" finds "9876543210".
     const _paySearch = (document.getElementById('pay-search')?.value || '').trim();
     // Shared with every other in-browser seller filter — see sellerMatches().
-    let arr = _paySearch ? allArr.filter(r => sellerMatches(_paySearch, r.name, r.tel)) : allArr;
+    let arr = _paySearch
+      ? allArr.filter(r => sellerMatches(_paySearch, r.name, r.tel_search || r.tel))
+      : allArr;
     // Immediate-payment filter — "immediate" keeps only sellers with at
     // least one lot flagged immediate; "due" keeps only sellers with NO
     // immediate lots (payments entirely non-immediate / still due); "all"

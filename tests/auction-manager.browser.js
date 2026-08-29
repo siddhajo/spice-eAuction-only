@@ -216,15 +216,20 @@ const cleanup = () => {
 
   // ── [D] Sub-tabs ─────────────────────────────────────────────────
   console.log('[D] sub-tabs');
+  // The name cell also carries the seller's data-hygiene badges (No PAN,
+  // No bank, …) — strip those chips so these assertions read the NAME.
+  const NAMES = `Array.from(document.querySelectorAll('#am-body table.am-tbl tbody tr td:first-child')).map(td => {
+    const c = td.cloneNode(true);
+    c.querySelectorAll('.dl-issue').forEach(n => n.remove());
+    return c.textContent.trim();
+  })`;
   await page.evaluate(() => amSubTab('traders'));
-  const traders = await page.evaluate(() =>
-    Array.from(document.querySelectorAll('#am-body table.am-tbl tbody tr td:first-child')).map(td => td.textContent.trim()));
+  const traders = await page.evaluate(NAMES);
   check('Traders holds only the GSTIN seller',
         traders.length === 1 && traders[0] === 'ELAICHIROYAL PRIVATE LIMITED', JSON.stringify(traders));
 
   await page.evaluate(() => amSubTab('planters'));
-  const planters = await page.evaluate(() =>
-    Array.from(document.querySelectorAll('#am-body table.am-tbl tbody tr td:first-child')).map(td => td.textContent.trim()));
+  const planters = await page.evaluate(NAMES);
   check('Planters holds the four non-GSTIN sellers, BINOY rolled into one row',
         planters.length === 4 && !planters.includes('ELAICHIROYAL PRIVATE LIMITED'), JSON.stringify(planters));
   check('CR number starting with digits is NOT treated as a GSTIN',

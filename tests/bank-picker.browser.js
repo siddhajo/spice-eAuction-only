@@ -160,7 +160,12 @@ const cleanup = () => {
         lot902 && lot902.bank_id === b1id, lot902 && JSON.stringify(lot902.bank_id));
 
   // ══ MOBILE ══════════════════════════════════════════════════════
-  console.log('\n[D] Mobile Lot Entry — picker opens unselected');
+  // Mobile DEPARTS from the desktop rule on purpose: it opens on the seller's
+  // default so a second lot for the same seller inherits the account chosen on
+  // the first (picking one promotes it). The risk a blank picker guards against
+  // is answered by tinting the pre-selection green instead. A seller with no
+  // default still opens on the placeholder. See renderBankList in app.html.
+  console.log('\n[D] Mobile Lot Entry — picker opens on the seller default');
   const mob = await browser.newPage();
   mob.on('pageerror', e => { fail++; console.log('  FAIL mobile page error: ' + e.message); });
   await mob.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
@@ -170,20 +175,38 @@ const cleanup = () => {
     sellerBanks = banks;
     renderBankList();
     const sel = document.getElementById('le-bank-select');
+    const tinted = sel.style.borderColor !== '';
+    // …and the same seller with NO default must still open blank.
+    const withDefault = { value: sel.value, tinted,
+      info: document.getElementById('le-bank-info').textContent };
+    sellerBanks = banks.map(function (b) { return Object.assign({}, b, { is_default: 0 }); });
+    renderBankList();
+    const sel2 = document.getElementById('le-bank-select');
     return {
-      value: sel.value,
+      value: withDefault.value,
+      tinted: withDefault.tinted,
       firstOption: sel.options[0]?.textContent || '',
       optionCount: sel.options.length,
-      info: document.getElementById('le-bank-info').textContent,
+      info: withDefault.info,
+      noDefaultValue: sel2.value,
+      noDefaultTinted: sel2.style.borderColor !== '',
+      noDefaultInfo: document.getElementById('le-bank-info').textContent,
     };
   }, [
     { id: b1id, bank_name: 'SBI',  acctnum: '111111111111', ifsc: 'SBIN0001234', account_type: 'Savings', is_default: 0 },
     { id: b2id, bank_name: 'HDFC', acctnum: '222222222222', ifsc: 'HDFC0004321', account_type: 'Current', is_default: 1 },
   ]);
   check('mobile first option reads "Select your bank"', mobPick.firstOption === 'Select your bank', JSON.stringify(mobPick.firstOption));
-  check('mobile pre-selects nothing despite a flagged default', mobPick.value === '', JSON.stringify(mobPick.value));
+  check('mobile opens on the seller\'s flagged default', String(mobPick.value) === String(b2id), JSON.stringify(mobPick.value));
+  check('…tinted, so the pre-selection is never silent', mobPick.tinted === true, JSON.stringify(mobPick.tinted));
+  check('…and its branch/IFSC line is shown with it',
+        /IFSC: HDFC0004321/.test(mobPick.info || ''), JSON.stringify(mobPick.info));
   check('mobile lists both accounts under the placeholder', mobPick.optionCount === 3, String(mobPick.optionCount));
-  check('mobile shows no branch/IFSC line while unselected', mobPick.info === '', JSON.stringify(mobPick.info));
+  check('a seller with no default still opens on the placeholder',
+        mobPick.noDefaultValue === '', JSON.stringify(mobPick.noDefaultValue));
+  check('…untinted, and with no branch/IFSC line',
+        mobPick.noDefaultTinted === false && mobPick.noDefaultInfo === '',
+        JSON.stringify([mobPick.noDefaultTinted, mobPick.noDefaultInfo]));
 
   console.log('\n[E] Mobile edit-lot — keeps the lot\'s own account, inherits none');
   const mobEdit = await mob.evaluate(async (args) => {

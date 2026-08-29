@@ -15123,7 +15123,29 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
 
     const where = [`l.auction_id = ?`, `l.amount > 0`, `(l.paid IS NULL OR l.paid = '')`];
     const params = [auctionId];
-    if (seller) { where.push(`UPPER(l.name) LIKE ?`); params.push(`%${seller.toUpperCase()}%`); }
+    if (seller) {
+      // Name substring, or — when the text reads as a phone number — the
+      // seller's number, digits-only (so "+91 97907 44444", "97907-44444" and
+      // "9790744444" are one query). Same rule as every other seller search on
+      // the app; see smartPhoneDigits.
+      //
+      // Both the lot's own copy AND the seller master are matched: lots.tel is
+      // a booking-time snapshot that trader-lot-sync refuses to refresh once
+      // the lot is invoiced, so a number added to the master afterwards lives
+      // only there — and this screen is where you go to pay that seller.
+      const ors = [`UPPER(l.name) LIKE ?`];
+      params.push(`%${seller.toUpperCase()}%`);
+      const phone = smartPhoneDigits(seller);
+      if (phone) {
+        ors.push(`${smartPhoneSql('l.tel')} LIKE ?`);
+        params.push(`%${phone}%`);
+        ors.push(`EXISTS (SELECT 1 FROM traders t
+                           WHERE t.id = l.trader_id
+                             AND (${smartPhoneSql('t.tel')} LIKE ? OR ${smartPhoneSql('t.whatsapp')} LIKE ?))`);
+        params.push(`%${phone}%`, `%${phone}%`);
+      }
+      where.push(`(${ors.join(' OR ')})`);
+    }
     if (lotTokens.length) {
       // Verbatim match OR numeric match — "024" and "24" are the same lot to
       // an operator, and both spellings exist across imported trades.
