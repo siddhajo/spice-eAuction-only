@@ -1945,7 +1945,7 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
     const gstRefAmt = r2(goodsGst + rnd + (seAmtExact - seAmt));
     const gstAlloc  = gstRefAmt !== 0 ? `
 <BILLALLOCATIONS.LIST>
-<NAME>${xe(`${row.ano}/GST/${season}`)}</NAME>
+<NAME>${xe(`${billRefPrefix}${row.ano}/GST/${season}`)}</NAME>
 <BILLTYPE>Agst Ref</BILLTYPE>
 <AMOUNT>${gstRefAmt}</AMOUNT>
 </BILLALLOCATIONS.LIST>` : '';
@@ -1953,7 +1953,7 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
     const tdsRefAmt = tlyrnd ? r0(tds) : r2(tds);
     const tdsAlloc  = tds > 0 ? `
 <BILLALLOCATIONS.LIST>
-<NAME>${xe(`${row.ano}/TDS/${season}`)}</NAME>
+<NAME>${xe(`${billRefPrefix}${row.ano}/TDS/${season}`)}</NAME>
 <BILLTYPE>Agst Ref</BILLTYPE>
 <AMOUNT>${r2(-tdsRefAmt)}</AMOUNT>
 </BILLALLOCATIONS.LIST>` : '';
