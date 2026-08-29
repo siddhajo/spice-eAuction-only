@@ -519,11 +519,19 @@ const cleanup = () => {
     const cs = getComputedStyle(t);
     const bar = getComputedStyle(t, '::before');
     return { radius: parseFloat(cs.borderRadius), pad: parseFloat(cs.paddingLeft),
-             border: cs.borderTopWidth, bg: cs.backgroundImage,
+             border: cs.borderTopWidth, bg: cs.backgroundImage, bgc: cs.backgroundColor,
+             // Null-guarded: a locked card can be first in the grid, and
+             // reading a glyph off it must not throw a pageerror.
+             glyph: (g => g ? getComputedStyle(g).backgroundColor : null)(t.querySelector('.hub-file-ico')),
              barH: bar.height, barBg: bar.backgroundImage };
   });
+  // Thresholds dropped with the card: it was compacted deliberately (10px
+  // radius, 9/11px padding, a 178px minimum track) because at 202px-wide
+  // and 12px-padded the cards were mostly empty space under a two-word
+  // name. Still a card — rounded, padded, with a border box — just a tidy
+  // one.
   check('a document card carries its card shell',
-        shell.radius >= 12 && shell.pad >= 12 && parseFloat(shell.border) >= 1,
+        shell.radius >= 8 && shell.pad >= 8 && parseFloat(shell.border) >= 1,
         JSON.stringify(shell));
 
   // The card head adopted the Auction Downloads screen's arrangement —
@@ -628,12 +636,28 @@ const cleanup = () => {
     return a && b ? (getComputedStyle(a).backgroundColor !== getComputedStyle(b).backgroundColor) : 'none';
   });
   if (lockedGlyph !== 'none') check('a locked card greys its glyph', lockedGlyph === true);
-  check('tinted, with a gradient bar across the top',
-        parseFloat(shell.barH) >= 3 && /gradient/.test(shell.barBg)
-          && /gradient/.test(shell.bg), JSON.stringify(shell));
+  // The card ground went FLAT — one band tint, no gradient wash and no
+  // coloured bar across the top. An opened group shows up to sixty of
+  // these at once; colour lives on the KPI strip and the group widgets
+  // instead, which is what makes those read as the focal point.
+  check('a document card is flat, not a tinted gradient card',
+        !/gradient/.test(shell.bg) && !/gradient/.test(shell.barBg),
+        JSON.stringify(shell).slice(0, 160));
+  check('…on a band tint rather than bare paper',
+        shell.bgc !== 'rgba(0, 0, 0, 0)' && !/^rgb\(255, 255, 255\)$/.test(shell.bgc),
+        shell.bgc);
+  // Flattening the GROUND must not have flattened the group signal: the
+  // glyph square still carries the source group's colour, which is what
+  // separates a statutory return from a pre-auction snapshot in a
+  // file-type grouping.
+  check('…while the glyph square keeps its group colour',
+        !!shell.glyph && shell.glyph !== 'rgba(0, 0, 0, 0)'
+          && !/^rgb\(255, 255, 255\)$/.test(shell.glyph), shell.glyph);
 
   // The widgets and KPI figures are the Insights gradient card: saturated
-  // ground, white text, translucent icon chip.
+  // ground, white text, translucent icon chip. These two layers are the
+  // only colour left on the screen — the document cards below them are
+  // flat now — which is what makes them the thing the eye lands on.
   const grad = await page.evaluate(() => {
     hubCloseGroup();
     const w = document.querySelector('.hub-w');
@@ -643,6 +667,17 @@ const cleanup = () => {
                ico: !!el.querySelector('.hub-ico') }; };
     return { w: g(w), k: g(k) };
   });
+  // Regression: five cards in a `repeat(auto-fit,minmax(228px,1fr))` grid
+  // silently drop to four just under ~1210px of content, stranding the
+  // last one on a row of its own beside a card-sized hole. The track count
+  // is explicit now, so all five share one row at desktop width.
+  const kpiRows = await page.evaluate(() => {
+    const tops = Array.from(document.querySelectorAll('#hub-kpi .stat'))
+      .map(s => Math.round(s.getBoundingClientRect().top));
+    return new Set(tops).size;
+  });
+  check('the five KPI cards sit on ONE row, not four-plus-one',
+        kpiRows === 1, `${kpiRows} rows`);
   // Regression: the widget's parts are <span>s. Without an explicit
   // display they flowed inline and the name, count and hint ran together
   // as one sentence. And a KPI value must never be cut off by its card.
@@ -694,19 +729,37 @@ const cleanup = () => {
     hubOpenGroup('documents'); hubOpenSub('Purchase side');
     const t = document.querySelector('.hub-tile');
     if (!t) return [{ label: 'no card on screen' }];
-    const to = getComputedStyle(t).getPropertyValue('--to').trim();
-    const from = getComputedStyle(t).getPropertyValue('--from').trim();
-    const hex = (h) => { const m = h.replace('#','');
-      return [0,2,4].map(i => parseInt(m.slice(i,i+2),16)); };
-    const rgb = (v) => (v.match(/\d+/g) || []).map(Number);
+    // --from/--to are theme-derived now (color-mix off --spice-saffron), so
+    // reading the custom property and parsing it as #RRGGBB — which is what
+    // this did while HUB_TINT wrote fixed hex inline — yields NaN. PAINT the
+    // tokens on a probe inside the card and read back what the browser
+    // actually computed. Chrome renders a color-mix result as
+    // "color(srgb r g b)" and a plain colour as "rgb(r, g, b)"; parse both.
+    const paint = (expr) => {
+      const p = document.createElement('span');
+      p.style.cssText = `position:absolute;width:0;height:0;background-color:${expr}`;
+      t.appendChild(p);
+      const v = getComputedStyle(p).backgroundColor;
+      p.remove();
+      return v;
+    };
+    const parse = (s) => {
+      const m = String(s).match(/^color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)/);
+      if (m) return [1, 2, 3].map(i => Math.round(parseFloat(m[i]) * 255));
+      const n = String(s).match(/[\d.]+/g);
+      return n ? n.slice(0, 3).map(Number) : [];
+    };
     const near = (a, b) => a.length === 3 && b.length === 3
       && a.every((x, i) => Math.abs(x - b[i]) <= 24);
-    const fam = [hex(to), hex(from)];
+    const fam = [parse(paint('var(--to)')), parse(paint('var(--from)'))];
     return Array.from(t.querySelectorAll('.hub-btn')).map(b => {
-      const bg = rgb(getComputedStyle(b).backgroundColor);
+      const cs = getComputedStyle(b);
+      const bg = parse(cs.backgroundColor);
+      const fg = parse(cs.color);
       return { label: b.textContent.trim() || b.getAttribute('aria-label'),
-               ok: fam.some(f => near(bg, f))
-                   || getComputedStyle(b).color.includes(rgb(to).join(', ')) };
+               // A button belongs to the family by its FILL, or — for the
+               // outline buttons — by its ink.
+               ok: fam.some(f => near(bg, f)) || fam.some(f => near(fg, f)) };
     }).filter(x => !x.ok);
   });
   check('every action takes its card\'s colour family',
@@ -1428,10 +1481,16 @@ const cleanup = () => {
         tintTracks.a && tintTracks.a !== tintTracks.b && tintTracks.b !== tintTracks.c,
         JSON.stringify(tintTracks));
 
+  // Witnessed on a KPI card, not a document card. The cards are flat in
+  // both schemes now — colour mode gives them a band tint, plain mode a
+  // white ground, and neither is a gradient — so a card can no longer
+  // tell the two schemes apart. The KPI strip still can (gradient in
+  // colour, bordered white in plain) and, unlike .hub-w, it is on screen
+  // here: a group is open at this point, so the widget grid is not.
   const restored = await page.evaluate(() => {
     hubTogglePlain();
     return { attr: document.body.getAttribute('data-hub-plain'),
-             bg: getComputedStyle(document.querySelector('.hub-tile')).backgroundImage };
+             bg: getComputedStyle(document.querySelector('#hub-kpi .stat')).backgroundImage };
   });
   check('toggling back restores the colour scheme',
         restored.attr === '0' && /gradient/.test(restored.bg), JSON.stringify(restored));

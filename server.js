@@ -11,7 +11,7 @@ const grade2Alerts = require('./grade2-alerts');
 const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 const { amountToWords } = require('./amount-words');
-const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx, xlsxToCsvBuffer } = require('./exports');
+const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx, xlsxToCsvBuffer, csvToXlsxBuffer } = require('./exports');
 const { getCompanyHeader, writeXlsxCompanyHeader, formatDateForDisplay, formatDebitNoteNo, formatInvoiceNo, formatBillOfSupplyNo } = require('./report-formatters');
 const { exportPdf: exportAnyPdf, renderTablePdf, renderPoolerCertificatePdf } = require('./exports-pdf');
 const { DBF_EXPORTS } = require('./dbf-exports');
@@ -16029,6 +16029,18 @@ app.get('/api/exports/:type/:auctionId', requireExport, async (req, res) => {
       buffer = await xlsxToCsvBuffer(Buffer.from(buffer));
       ext = 'csv';
       mime = 'text/csv; charset=utf-8';
+    }
+    // The mirror image: ?format=xlsx on an export that natively writes CSV
+    // text (Commission Bill, Dealer Invoice). The Auction Downloads screen
+    // now hands every tile a spreadsheet, and those two feeds build no
+    // workbook of their own — so the CSV they produced is re-read into one.
+    // Gated on the format being asked for EXPLICITLY, not on the route's
+    // `|| 'xlsx'` default: a caller that names no format still gets the
+    // native bytes, exactly as it did before.
+    else if (ext === 'csv' && String(req.query.format || '').toLowerCase() === 'xlsx') {
+      buffer = await csvToXlsxBuffer(Buffer.from(buffer), exportDef.name);
+      ext = 'xlsx';
+      mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     }
     res.setHeader('Content-Type', mime);
     res.setHeader('Content-Disposition', `attachment; filename="${exportDef.name}_${anoForFilename(db, auctionId)}.${ext}"`);

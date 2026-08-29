@@ -8,9 +8,11 @@
 //
 //   [manifest] every href in AMR_SECTIONS is extracted from index.html and
 //              called for real. Not one may 404 or 500.
-//   [csv]      the CSV tiles return actual CSV — not an XLSX blob under a
-//              .csv name. Asserted on the bytes: a zip magic number (PK)
-//              means we shipped a spreadsheet and mislabelled it.
+//   [xlsx]     the "CSV Downloads" section keeps its supplied name but every
+//              tile in it now hands out XLSX. Asserted on the bytes: the zip
+//              magic number (PK) must be there, and the two feeds that write
+//              CSV text directly must still serve CSV to the callers that
+//              ask for it.
 //   [bulk]     the four generated families' list + merge routes exist.
 //   [role]     an operator — who has no auction_desk — can use all of it.
 const os = require('os'), path = require('path'), fs = require('fs');
@@ -51,13 +53,23 @@ function harvestManifest() {
   if (end < 0) throw new Error('AMR_SECTIONS terminator not found');
   const body = html.slice(start, end + 3);
   const out = [];
-  // href: id => `...`
-  for (const m of body.matchAll(/label:\s*'([^']+)'[^\n]*?href:\s*id\s*=>\s*`([^`]+)`/g)) {
-    out.push({ label: m[1], url: m[2] });
-  }
-  // bulk: { list: '...', param: '...', post: '...' }
-  for (const m of body.matchAll(/label:\s*'([^']+)'[^\n]*?bulk:\s*\{\s*list:\s*'([^']+)',\s*param:\s*'([^']+)',\s*post:\s*'([^']+)'/g)) {
-    out.push({ label: m[1], bulk: { list: m[2], param: m[3], post: m[4] } });
+  // Walk the file section by section rather than in one sweep, so each tile
+  // carries the heading it renders under. The "CSV Downloads" assertions
+  // below need that: they are about a section, not about a URL pattern.
+  const heads = [...body.matchAll(/\{\s*title:\s*'([^']+)',\s*items:\s*\[/g)];
+  const chunks = heads.map((h, i) => ({
+    section: h[1],
+    text: body.slice(h.index, i + 1 < heads.length ? heads[i + 1].index : body.length),
+  }));
+  for (const { section, text } of chunks) {
+    // href: id => `...`
+    for (const m of text.matchAll(/label:\s*'([^']+)'[^\n]*?href:\s*id\s*=>\s*`([^`]+)`/g)) {
+      out.push({ section, label: m[1], url: m[2] });
+    }
+    // bulk: { list: '...', param: '...', post: '...' }
+    for (const m of text.matchAll(/label:\s*'([^']+)'[^\n]*?bulk:\s*\{\s*list:\s*'([^']+)',\s*param:\s*'([^']+)',\s*post:\s*'([^']+)'/g)) {
+      out.push({ section, label: m[1], bulk: { list: m[2], param: m[3], post: m[4] } });
+    }
   }
   const todo = [...body.matchAll(/label:\s*'([^']+)',\s*todo:\s*true/g)].map(m => m[1]);
   return { out, todo };
@@ -118,30 +130,52 @@ const cleanup = () => {
     check(`${m.label} → ${url.split('?')[0]}`, ok, `HTTP ${r.status} ${r.buf.slice(0, 160).toString()}`);
   }
 
-  // ══ [csv] CSV tiles return CSV, not a renamed spreadsheet ════════
-  console.log('\n[csv] CSV tiles emit real CSV');
-  const csvTiles = hrefs.filter(m => /format=csv/.test(m.url));
-  // Auction Report, Commission Bill, Dealer Invoice, Litre Weight,
-  // Collection Report, Form C, Sales.
-  check('seven CSV tiles are wired', csvTiles.length === 7, csvTiles.map(t => t.label).join(', '));
-  for (const m of csvTiles) {
+  // ══ [xlsx] the "CSV Downloads" section hands out spreadsheets ════
+  // The section keeps its supplied name and its "… CSV" labels — that is
+  // what the office calls these files — but every tile in it downloads
+  // XLSX. Asserted on the bytes, because a CSV served under an .xlsx name
+  // is exactly the failure the labels make easy to miss.
+  console.log('\n[xlsx] every "CSV Downloads" tile emits real XLSX');
+  const csvSection = MANIFEST.filter(m => m.url && m.section === 'CSV Downloads');
+  // Auction Report, Commission Bill, Dealer Invoice, Purchase Invoice, Litre
+  // Weight, Collection, Form C, Sales, Planter/Dealer Disbursement, Lot
+  // Verification I + II. (Crop Receipts is todo and carries no href.)
+  check('twelve download tiles are wired in the section', csvSection.length === 12,
+        csvSection.map(t => t.label).join(', '));
+  check('no tile in the section still asks for CSV',
+        !csvSection.some(m => /format=csv/i.test(m.url)),
+        csvSection.filter(m => /format=csv/i.test(m.url)).map(t => t.label).join(', '));
+  for (const m of csvSection) {
     const r = await raw(m.url.replace(/\$\{id\}/g, String(AID)));
     if (r.status !== 200) { check(`${m.label} downloads`, false, `HTTP ${r.status}`); continue; }
     // 'PK' is the zip magic number every .xlsx starts with.
     const isZip = r.buf[0] === 0x50 && r.buf[1] === 0x4B;
-    check(`${m.label} is CSV, not a renamed XLSX`, !isZip,
-          `first bytes ${r.buf.slice(0, 4).toString('hex')}`);
-    check(`${m.label} declares text/csv`, /text\/csv/.test(r.type), r.type);
-    check(`${m.label} is named .csv`, /\.csv"?$/.test(r.disp.trim()), r.disp);
-    check(`${m.label} has a comma-separated first line`,
-          r.buf.slice(0, 400).toString().split('\n')[0].includes(','),
-          JSON.stringify(r.buf.slice(0, 120).toString()));
+    check(`${m.label} is a real XLSX`, isZip, `first bytes ${r.buf.slice(0, 4).toString('hex')}`);
+    check(`${m.label} declares the spreadsheet mime`, /spreadsheetml/.test(r.type), r.type);
+    check(`${m.label} is named .xlsx`, /\.xlsx"?$/.test(r.disp.trim()), r.disp);
   }
-  // The XLSX default must be untouched by the csv branch.
-  const stillXlsx = await raw(`/api/exports/collection/${AID}?format=xlsx`);
-  check('the same export still returns XLSX by default',
-        stillXlsx.status === 200 && stillXlsx.buf[0] === 0x50 && stillXlsx.buf[1] === 0x4B,
-        `HTTP ${stillXlsx.status}, bytes ${stillXlsx.buf.slice(0, 4).toString('hex')}`);
+  // The two feeds that write CSV text directly are the ones the new
+  // csvToXlsxBuffer branch carries — and their native CSV must still be
+  // reachable, because the Export Center and the Auction Desk catalog both
+  // still ask for it.
+  for (const t of ['commission_bill_csv', 'dealer_invoice_csv']) {
+    const r = await raw(`/api/exports/${t}/${AID}?format=csv`);
+    check(`${t} still serves CSV when asked`,
+          r.status === 200 && !(r.buf[0] === 0x50 && r.buf[1] === 0x4B) && /text\/csv/.test(r.type),
+          `HTTP ${r.status}, ${r.type}, bytes ${r.buf.slice(0, 4).toString('hex')}`);
+    // No format at all → the native bytes, unchanged. The route's `|| 'xlsx'`
+    // default must NOT drag these two through the converter.
+    const bare = await raw(`/api/exports/${t}/${AID}`);
+    check(`${t} with no format is still CSV`,
+          bare.status === 200 && !(bare.buf[0] === 0x50 && bare.buf[1] === 0x4B),
+          `HTTP ${bare.status}, bytes ${bare.buf.slice(0, 4).toString('hex')}`);
+  }
+  // And the xlsx→csv branch the other tiles used is still there for callers
+  // that want it.
+  const stillCsv = await raw(`/api/exports/collection/${AID}?format=csv`);
+  check('an xlsx-native export still converts to CSV on request',
+        stillCsv.status === 200 && !(stillCsv.buf[0] === 0x50 && stillCsv.buf[1] === 0x4B),
+        `HTTP ${stillCsv.status}, bytes ${stillCsv.buf.slice(0, 4).toString('hex')}`);
 
   // ══ [bulk] the generated families ════════════════════════════════
   console.log('\n[bulk] generated-document families');
@@ -163,8 +197,8 @@ const cleanup = () => {
     const li = await api('POST', '/api/login', { username: 'op_dl', password: 'passw0rd' });
     if (li.status === 200 && li.d && li.d.token) {
       TOKEN = li.d.token;
-      const r = await raw(`/api/exports/collection/${AID}?format=csv`);
-      check('operator can download a CSV tile', r.status === 200, `HTTP ${r.status}`);
+      const r = await raw(`/api/exports/collection/${AID}?format=xlsx`);
+      check('operator can download a tile from the CSV section', r.status === 200, `HTTP ${r.status}`);
       const desk = await api('GET', `/api/documents/catalog?auctionId=${AID}`);
       check('…while still being denied the Auction Desk catalog', desk.status === 403, `HTTP ${desk.status}`);
     } else check('operator sign-in', false, JSON.stringify(li.d));
