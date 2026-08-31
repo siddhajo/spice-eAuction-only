@@ -1445,6 +1445,96 @@ html.sidebar-collapsed .sidebar .side-item:hover::after{
 html.sidebar-collapsed .sidebar .sb-collapse-btn svg{transform:rotate(180deg)}
 /* When collapsed, give the body a CSS variable hook for content offset */
 .sidebar{transition:width .2s ease}
+
+/* ── Nav shell: eight groups on the rail, screens as tabs ─────────
+   The rail's buttons carry `.side-item .nav-group`, so every look the
+   sidebar already owns — density presets, theme presets, the collapsed
+   icon-only rail with its hover tooltip, the active accent bar, the 🔒
+   badge — applies to them with no second copy of those rules. The one
+   place that had to learn about them is the lot_entry role rule, which
+   hides `.side-item:not([data-tab=…])` and would otherwise blank the
+   whole rail; renderNav() does that gate properly (a group shows when
+   any of its screens does).
+   #nav-src holds the original entries and is never displayed. */
+#nav-src{display:none}
+.nav-groups{display:flex;flex-direction:column;gap:2px}
+.nav-group{margin-bottom:3px}
+/* The collapsed rail's hover tooltip reads `attr(data-tab)`, which a group
+   button hasn't got — it isn't a screen. It carries its display label
+   instead. Same rule body, later in the cascade at equal specificity, so
+   it simply replaces the content for these buttons. */
+.sidebar.collapsed .nav-group:hover::after,
+html.sidebar-collapsed .sidebar .nav-group:hover::after{
+  content:attr(data-nav-label);text-transform:none
+}
+
+/* ── Tab strip ───────────────────────────────────────────────────
+   Sits above every screen and shows the selected group's members.
+   Two rows: `.tabrow-sub` is only painted for Transactions, whose
+   sheet has group headers (Sales Invoices / Purchases / Debitnotes /
+   Payments) over their screens; every other group leaves it empty and
+   it collapses to nothing. */
+.tabstrip{
+  margin:-4px 0 22px;border-bottom:1px solid var(--spice-line);
+  display:flex;flex-direction:column;gap:0
+}
+.tabrow{display:flex;gap:4px;overflow-x:auto;scrollbar-width:thin}
+.tabrow:empty{display:none}
+.tabrow::-webkit-scrollbar{height:5px}
+.tabrow::-webkit-scrollbar-thumb{background:var(--spice-line-strong);border-radius:3px}
+/* Row 1 (sub-groups) is the quieter of the two: it names the family, the
+   row below it names the screen you actually land on. Tinted band + a
+   filled pill for the active family, so the two rows never read as one
+   flat list of ten equal things. */
+.tabrow-sub{
+  background:var(--bg);border:1px solid var(--spice-line);border-bottom:none;
+  border-radius:10px 10px 0 0;padding:5px 6px;gap:5px;margin-bottom:-1px
+}
+.tabrow-sub:empty{display:none}
+.tabrow-items{padding:0 2px}
+.navtab{
+  flex:0 0 auto;display:inline-flex;align-items:center;gap:8px;
+  padding:10px 16px;border:none;background:none;cursor:pointer;
+  font-family:inherit;font-size:13.5px;font-weight:600;color:var(--text2);
+  border-bottom:2.5px solid transparent;margin-bottom:-1px;
+  white-space:nowrap;transition:color .15s,border-color .15s,background .15s;
+  position:relative;border-radius:8px 8px 0 0
+}
+.navtab:hover{color:var(--text);background:var(--bg)}
+.navtab.active{color:var(--spice-saffron-dk);border-bottom-color:var(--spice-saffron)}
+.navtab svg{
+  width:16px;height:16px;flex-shrink:0;fill:none;stroke:currentColor;
+  stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:.75
+}
+.navtab.active svg{opacity:1}
+/* Locked tabs mirror the rail exactly: visible but dimmed with a 🔒, and
+   the click explains what unlocks it instead of navigating. Same
+   treatment as .side-item.locked so the two nav surfaces can't disagree
+   about what is reachable. */
+.navtab.locked{opacity:.42;cursor:not-allowed}
+.navtab.locked:hover{background:transparent;color:var(--text2)}
+.navtab.locked::after{content:"🔒";font-size:10px;opacity:.8}
+/* Sub-group pills: no underline, a filled chip instead. */
+.tabrow-sub .navtab{
+  padding:6px 14px;border-radius:8px;border-bottom:none;margin-bottom:0;
+  font-size:12.5px;font-weight:700;letter-spacing:.3px;text-transform:uppercase
+}
+.tabrow-sub .navtab.active{
+  background:var(--spice-saffron);color:#fff;
+  box-shadow:0 1px 4px color-mix(in srgb, var(--spice-saffron) 35%, transparent)
+}
+.tabrow-sub .navtab.active svg{opacity:1}
+/* The badge the Reassign Requests entry carries in #nav-src is mirrored
+   onto its tab by renderNav(), so the count is visible from the strip
+   without opening the group. */
+.navtab-badge{
+  background:#c0392b;color:#fff;font-size:10px;font-weight:700;
+  padding:1px 7px;border-radius:20px;line-height:1.5
+}
+@media (max-width:900px){
+  .tabstrip{margin:0 0 16px}
+  .navtab{padding:9px 12px;font-size:13px}
+}
 .sidebar-overlay{
   display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:25
 }
@@ -3717,8 +3807,13 @@ body[data-perm-user-manage="1"]    div.needs-user-manage{display:block !importan
 /* Lot-entry-only role: hide every sidebar item except Lot Entry.
    Sidebar items get scoped this way so a lot_entry user can't even
    navigate to other tabs through the URL — buttons are gone, deep
-   links are protected by the server's permission gates anyway. */
-body[data-role="lot_entry"] .side-item:not([data-tab="lotentry"]):not(.sb-collapse-btn):not(.side-help),
+   links are protected by the server's permission gates anyway.
+   The rail's eight group buttons are exempt (:not(.nav-group)) — they are
+   not screens, and blanking them would leave a lot_entry user with no nav
+   at all. renderNav() applies the same gate to them properly: a group
+   shows only while at least one of its screens survives this rule, which
+   for lot_entry leaves exactly Auction Operation → Lot Entry. */
+body[data-role="lot_entry"] .side-item:not(.nav-group):not([data-tab="lotentry"]):not(.sb-collapse-btn):not(.side-help),
 body[data-role="lot_entry"] .side-group-lbl:not(.side-help-lbl){display:none !important}
 /* NB: the text-size button (#comfort-toggle) is deliberately NOT hidden for
    lot_entry. It used to be, back when it was Comfort Mode. Lot entry is the
@@ -4410,6 +4505,26 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       <button class="sb-collapse-btn" onclick="toggleSidebarCollapse()" title="Collapse / expand sidebar" aria-label="Toggle sidebar">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
       </button>
+      <!-- The rail carries the eight TOP-LEVEL destinations and nothing
+           else; the screens inside the chosen one are painted as a tab
+           strip at the top of the content area. Both are rendered by
+           renderNav() from the NAV_GROUPS model — see the "NAV SHELL"
+           block near go(). -->
+      <nav class="nav-groups" id="nav-groups"></nav>
+    </aside>
+
+    <!-- ── Nav source ────────────────────────────────────────────────
+         Every screen entry still lives here as the .side-item button it
+         has always been, with its original classes, data-tab, data-min-
+         stage and onclick. This subtree is display:none and is never
+         shown — it exists so that EVERY existing gate keeps working
+         untouched: the role/permission/feature-flag CSS rules that
+         hide `.side-item`s, applyTradeStageLocks()'s `.locked` pass,
+         hideEmptySideGroups(), renderHubActs(), the reassign badge.
+         renderNav() reads the computed state off these buttons and
+         mirrors it onto the rail and the tabs, so there is still exactly
+         one place where "can this user see this screen?" is decided. -->
+    <div id="nav-src" aria-hidden="true">
       <div class="side-group">
         <div class="side-group-lbl">Overview</div>
         <!-- Auction Desk — every document for the selected auction in one place.
@@ -4630,9 +4745,18 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           How-to Guide
         </button>
       </div>
-    </aside>
+    </div>
 
     <div class="content">
+    <!-- Tab strip for the group selected on the rail. Row 1 is the group's
+         screens; Transactions is the one group with a second level, so it
+         puts its four sub-groups on row 1 and their screens on row 2.
+         Painted by renderNav(); lives outside every .tc panel so no
+         loader's innerHTML rebuild can wipe it. -->
+    <div class="tabstrip" id="tabstrip" style="display:none">
+      <div class="tabrow tabrow-sub" id="tabrow-sub"></div>
+      <div class="tabrow tabrow-items" id="tabrow-items"></div>
+    </div>
     <div class="toast" id="toast"></div>
     <!-- Reassign-request notification banner (new operator requests) —
          slides in top-right with a sound; click to jump to the queue. -->
@@ -10544,6 +10668,9 @@ function hideEmptySideGroups(){
     if (wasCollapsed) group.classList.add('section-collapsed');
     group.style.display = anyVisible ? '' : 'none';
   });
+  // The rail and the tab strip are a mirror of these same items, so they
+  // have to be repainted wherever their visibility is recomputed.
+  if (typeof renderNav === 'function') { try { renderNav(); } catch(_) {} }
 }
 
 function applyPermissionAttributes(){
@@ -10898,6 +11025,10 @@ async function applyFeatureFlags() {
   };
   wireLink('.feat-lots-link',  'data-feat-lots-link',  cfg && cfg.link_lots_url,  cfg && cfg.link_lots_label);
   wireLink('.feat-tally-link', 'data-feat-tally-link', cfg && cfg.link_tally_url, cfg && cfg.link_tally_label);
+  // Flags decide which screens exist — repaint the rail and the tab strip
+  // now that they are applied (this is what reveals Auction Manager,
+  // Price Check, Debit Notes, the Proforma tabs, …).
+  if (typeof renderNav === 'function') { try { renderNav(); } catch(_) {} }
 }
 
 // Public branding (no auth) — drives the login + topbar from settings.
@@ -11910,6 +12041,317 @@ function nudgeSpiceBoard(){
     () => { if (typeof sbLoadPreview === 'function') sbLoadPreview(); });
 }
 
+// ══════════════════════════════════════════════════════════════════
+// NAV SHELL — eight groups on the rail, their screens as tabs
+// ──────────────────────────────────────────────────────────────────
+// The rail no longer lists screens. It lists the eight top-level groups
+// from the menu sheet; the screens inside the selected group are painted
+// as a tab strip above the content.
+//
+// This is a re-arrangement of the nav, NOT a second nav. Every entry
+// still exists as its original .side-item button inside #nav-src, and
+// that is where every gate is still decided — the role / permission /
+// feature-flag CSS rules hide those buttons, applyTradeStageLocks()
+// marks them .locked, hideEmptySideGroups() and renderHubActs() read
+// them. renderNav() only MIRRORS what those buttons already computed
+// onto the rail and the tabs, so there is no second copy of the rules
+// to drift out of step.
+//
+// Items may name the same screen more than once (the four Sales Invoice
+// views are one screen behind its doc-type filter, per the sheet), so a
+// nav item is identified by its own `key`, not by its tab.
+const NAV_GROUPS = [
+  { id:'dashboard', label:'Dash Board',
+    icon:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
+    items:[
+      { tab:'hub',        label:'Current Auction' },
+      { tab:'dash',       label:'Quick Actions' },
+      // Not on the sheet, but they have nowhere else to live and both are
+      // already flag-gated — off by default on most installs, in which
+      // case #nav-src hides them and they never reach the strip.
+      { tab:'auctionmgr', label:'Auction Manager' },
+      { tab:'insights',   label:'Insights' },
+      { tab:'pertrade',   label:'Per-Auction Breakdown' },
+    ]},
+  { id:'master', label:'Master Data',
+    icon:'<svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+    items:[
+      { tab:'traders', label:'Sellers' },
+      { tab:'buyers',  label:'Buyers' },
+    ]},
+  { id:'creation', label:'Auction Creation',
+    icon:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
+    items:[
+      { tab:'auctions',     label:'Auctions' },
+      { tab:'lotalloc',     label:'Lot Allocations' },
+      { tab:'reassignreqs', label:'Reassign Requests', badge:'reassignreqs-badge' },
+    ]},
+  { id:'operation', label:'Auction Operation',
+    icon:'<svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.96 12 12.01l8.73-5.05M12 22.08V12"/></svg>',
+    items:[
+      { tab:'lotentry',   label:'Lot Entry' },
+      { tab:'priceentry', label:'Price Entry' },
+      { tab:'lots',       label:'Lots' },
+      { tab:'preinvoice', label:'Pre-Invoice' },
+      // Both flag-gated; they belong to this stage of the trade.
+      { tab:'pricecheck', label:'Price Check' },
+      { tab:'plmap',      label:'Price List Mapping' },
+    ]},
+  { id:'transactions', label:'Transactions',
+    icon:'<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>',
+    subs:[
+      // One screen, four views of it. The Sales list already has the
+      // doc-type filter these four name, so the tabs drive that filter
+      // rather than duplicating the list four times.
+      { id:'sales', label:'Sales Invoices', items:[
+          { key:'inv-generated', tab:'invoices', label:'Generated', doctype:'all',      needsProforma:true },
+          { key:'inv-pending',   tab:'invoices', label:'Pending',   doctype:'pending',  needsProforma:true },
+          { key:'inv-proforma',  tab:'invoices', label:'Proforma',  doctype:'proforma', needsProforma:true },
+          // The only one that survives with proforma OFF — and then it is
+          // the whole screen, so it says so.
+          { key:'inv-original',  tab:'invoices', label:'Originals',  doctype:'original',
+            soloLabel:'Sales Invoices' },
+      ]},
+      // RD = registered dealer (has a GSTIN), URD = unregistered planter.
+      // That is the same Grade 2 / Grade 1 split the rest of the app makes,
+      // and it is what separates these two pairs of screens.
+      { id:'purchases', label:'Purchases', items:[
+          { tab:'purchases', label:'RD Purchase' },
+          { tab:'bills',     label:'URD Purchase' },
+      ]},
+      { id:'debitnotes', label:'Debit Notes', items:[
+          { tab:'debit',        label:'RD Service' },
+          { tab:'debitplanter', label:'URD Service' },
+      ]},
+      { id:'payments', label:'Payments', items:[
+          { key:'pay-main', tab:'payments', label:'Payments' },
+          // There is no separate advances screen: advances are recorded and
+          // listed on Payments itself. This tab opens Payments pre-filtered
+          // to the lots that carry one (lot-wise screen only — the classic
+          // seller-wise screen shows advances as a column, not a filter).
+          { key:'pay-adv',  tab:'payments', label:'Advances', advances:true },
+      ]},
+    ]},
+  { id:'reports', label:'Reports &amp; Exports',
+    icon:'<svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>',
+    items:[
+      { tab:'reports',     label:'Reports Hub' },
+      { tab:'exports',     label:'Exports' },
+      { tab:'lorry',       label:'Lorry' },
+      { tab:'journals',    label:'Journals' },
+      { tab:'registers',   label:'Registers' },
+      { tab:'spicesboard', label:'Spices Board' },
+      { tab:'tds',         label:'TDS Returns' },
+      { tab:'tally',       label:'To Tally' },
+    ]},
+  { id:'admin', label:'Administrator',
+    icon:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+    items:[
+      { tab:'settings',  label:'Settings' },
+      { tab:'users',     label:'Users' },
+      { tab:'backup',    label:'Backups' },
+      { tab:'importold', label:'Import Old Data' },
+      // Dev-only pair — hidden until spiceDev(true), which the source
+      // buttons already carry as an inline display:none.
+      { tab:'formulas',  label:'Formulas' },
+      { tab:'fixdata',   label:'Fix Data' },
+    ]},
+  // Help is not a routed tab — it opens the /help.html overlay iframe. It
+  // keeps a group of its own so the rail matches the sheet.
+  { id:'help', label:'Help',
+    icon:'<svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>',
+    items:[ { key:'help-guide', label:'How-to Guide', help:true } ]},
+];
+
+// The nav item the user is on. Not derivable from the tab alone — four
+// items share the `invoices` tab and two share `payments`.
+window._navKey = null;
+
+// ── Reading the gates off #nav-src ────────────────────────────────
+const navKeyOf   = it => it.key || it.tab;
+const navSrcOf   = it => it.tab ? document.querySelector('#nav-src .side-item[data-tab="'+it.tab+'"]') : null;
+const navLocked  = it => { const s = navSrcOf(it); return !!(s && s.classList.contains('locked')); };
+const navLockMsg = it => { const s = navSrcOf(it); return (s && s.getAttribute('title')) || 'Not available yet.'; };
+const navItemsOf = g  => g.subs ? g.subs.reduce((a,s)=>a.concat(s.items),[]) : g.items;
+// Proforma is a feature flag; the Sales doc-type filter is tagged
+// .feat-proforma and disappears with it, so ask the filter rather than
+// re-deriving the flag here.
+function navProformaOn(){
+  const f = document.getElementById('inv-doctype-filter');
+  return !!(f && getComputedStyle(f).display !== 'none');
+}
+// getComputedStyle reports an element's OWN computed display even inside a
+// display:none subtree, so #nav-src being hidden does not blind this.
+function navVisible(it){
+  if (it.help) return true;
+  if (it.needsProforma && !navProformaOn()) return false;
+  const s = navSrcOf(it);
+  return !!(s && getComputedStyle(s).display !== 'none');
+}
+function navFind(key){
+  for (const g of NAV_GROUPS){
+    if (g.subs){
+      for (const sub of g.subs){
+        const it = sub.items.find(i => navKeyOf(i) === key);
+        if (it) return { group:g, sub, item:it };
+      }
+    } else {
+      const it = g.items.find(i => navKeyOf(i) === key);
+      if (it) return { group:g, sub:null, item:it };
+    }
+  }
+  return null;
+}
+// First VISIBLE item naming this tab — how a go() that did not come from a
+// tab click (Auction Desk shortcut, report tile, restore-last-tab) is
+// mapped back onto the strip.
+function navKeyForTab(tab){
+  for (const g of NAV_GROUPS){
+    for (const it of navItemsOf(g)) if (it.tab === tab && navVisible(it)) return navKeyOf(it);
+  }
+  return null;
+}
+
+// ── Painting ──────────────────────────────────────────────────────
+function navTabHtml(it, active){
+  const locked = navLocked(it);
+  const src    = navSrcOf(it);
+  const svg    = (src && src.querySelector('svg')) ? src.querySelector('svg').outerHTML : '';
+  let label    = it.label;
+  // "Originals" is only a meaningful distinction while proforma is on;
+  // alone it is simply the Sales Invoices screen.
+  if (it.soloLabel && !navProformaOn()) label = it.soloLabel;
+  // Mirror the live count off the source entry's own badge.
+  let badge = '';
+  if (it.badge){
+    const b = document.getElementById(it.badge);
+    if (b && b.style.display !== 'none') badge = '<span class="navtab-badge">'+b.textContent+'</span>';
+  }
+  return '<button type="button" class="navtab'+(active?' active':'')+(locked?' locked':'')+'"'
+       + ' data-navkey="'+navKeyOf(it)+'"'
+       + (locked ? ' title="'+String(navLockMsg(it)).replace(/"/g,'&quot;')+'"' : '')
+       + ' onclick="navGo(\''+navKeyOf(it)+'\')">'+svg+label+badge+'</button>';
+}
+
+// Repaint the rail and the strip from the current gates + _navKey. Cheap
+// and idempotent: called on every go(), and again whenever a gate moves
+// (permissions applied, feature flags applied, trade stage re-evaluated).
+function renderNav(){
+  const rail = document.getElementById('nav-groups');
+  const strip = document.getElementById('tabstrip');
+  const rowSub = document.getElementById('tabrow-sub');
+  const rowItems = document.getElementById('tabrow-items');
+  if (!rail || !strip) return;
+  const found = window._navKey ? navFind(window._navKey) : null;
+  const activeGroup = found ? found.group : null;
+
+  rail.innerHTML = NAV_GROUPS.map(g => {
+    const vis = navItemsOf(g).filter(navVisible);
+    if (!vis.length) return '';
+    // A group is locked only when every screen in it is — otherwise there
+    // is something in there to reach and the rail must not say there isn't.
+    const locked = vis.every(navLocked);
+    const on = activeGroup && activeGroup.id === g.id;
+    return '<button type="button" class="side-item nav-group'+(on?' active':'')+(locked?' locked':'')+'"'
+         + ' data-navgroup="'+g.id+'" data-nav-label="'+g.label+'"'
+         + (locked ? ' title="'+String(navLockMsg(vis[0])).replace(/"/g,'&quot;')+'"' : '')
+         + ' onclick="navGoGroup(\''+g.id+'\')">'+g.icon+g.label+'</button>';
+  }).join('');
+
+  if (!activeGroup){ strip.style.display = 'none'; return; }
+  strip.style.display = '';
+  if (activeGroup.subs){
+    const activeSub = found.sub;
+    rowSub.innerHTML = activeGroup.subs
+      .filter(s => s.items.some(navVisible))
+      .map(s => {
+        const first = s.items.filter(navVisible)[0];
+        const on = activeSub && activeSub.id === s.id;
+        return '<button type="button" class="navtab'+(on?' active':'')+'"'
+             + ' onclick="navGo(\''+navKeyOf(first)+'\')">'+s.label+'</button>';
+      }).join('');
+    rowItems.innerHTML = (activeSub ? activeSub.items : [])
+      .filter(navVisible)
+      .map(it => navTabHtml(it, navKeyOf(it) === window._navKey)).join('');
+  } else {
+    rowSub.innerHTML = '';
+    rowItems.innerHTML = navItemsOf(activeGroup).filter(navVisible)
+      .map(it => navTabHtml(it, navKeyOf(it) === window._navKey)).join('');
+  }
+}
+
+// ── Navigating ───────────────────────────────────────────────────
+function navGo(key){
+  const f = navFind(key);
+  if (!f) return;
+  const it = f.item;
+  if (it.help){ openHelpOverlay(); return; }
+  // Same contract as the rail's locked entries: explain, don't navigate.
+  if (navLocked(it)){ if (typeof toast === 'function') toast('🔒 ' + navLockMsg(it)); return; }
+  window._navKey = key;
+  go(it.tab);
+  // Applied AFTER go() so the screen's own loader has already been kicked
+  // off and cannot overwrite the view the tab asked for.
+  if (it.doctype) navApplyDoctype(it.doctype);
+  if (it.advances) navApplyAdvances();
+  renderNav();
+}
+// Group click lands on its first reachable screen — first UNLOCKED one, so
+// a click doesn't dead-end on a stage-gated tab when a later one is open.
+function navGoGroup(id){
+  const g = NAV_GROUPS.find(x => x.id === id);
+  if (!g) return;
+  const vis = navItemsOf(g).filter(navVisible);
+  if (!vis.length) return;
+  navGo(navKeyOf(vis.find(i => !navLocked(i)) || vis[0]));
+}
+// Sales Invoices tabs drive the screen's existing doc-type filter. go()
+// has already called loadInvAuctions(), which fills the auction select and
+// then calls loadInvoices() — so setting the value here lands before that
+// list is painted, and the reload below is only for a tab switch made
+// while already on the screen.
+function navApplyDoctype(v){
+  const f = document.getElementById('inv-doctype-filter');
+  if (!f || f.value === v) return;
+  f.value = v;
+  if (typeof loadInvoices === 'function') loadInvoices();
+}
+// The Advances tab points the lot-wise payments screen at the lots that
+// carry an advance. The classic seller-wise screen has no such filter —
+// it shows advances as a column — so there it is a no-op and the tab is
+// just another way into Payments.
+function navApplyAdvances(){
+  const s = document.getElementById('paylw-status');
+  if (!s) return;
+  s.value = 'advance';
+  // Only run the search when there is a trade to run it against.
+  // payLwSearch() answers a missing one with a blocking alert(), which is
+  // the wrong greeting for a tab the user has merely clicked on — the
+  // filter is set, and the screen's own Search button does the rest.
+  const aid = Number(document.getElementById('paylw-auction')?.value || 0);
+  if (aid && typeof payLwSearch === 'function') payLwSearch();
+}
+function openHelpOverlay(){
+  const o = document.getElementById('help-ov');
+  if (!o) return;
+  const f = o.querySelector('iframe');
+  if (f && !f.getAttribute('src')) f.setAttribute('src','/help.html');
+  o.style.display = 'flex';
+}
+// Called at the end of go(). When the navigation did not come from a tab
+// click, _navKey still points at the previous screen — re-point it at this
+// tab's first visible item. Tabs with no nav entry at all (amreports, which
+// is reached from inside the Auction Manager) leave the strip as it is
+// rather than blanking it.
+function syncNavToTab(tab){
+  const f = window._navKey ? navFind(window._navKey) : null;
+  if (!f || f.item.tab !== tab){
+    const k = navKeyForTab(tab);
+    if (k) window._navKey = k;
+  }
+  renderNav();
+}
+
 function go(tab){
   if (tab === 'hub' && typeof hubAllowed === 'function' && !hubAllowed()) {
     if (typeof toast === 'function') toast('🔒 The Auction Desk is for managers and admins');
@@ -11992,6 +12434,9 @@ function go(tab){
   // query — so a menu unlocked by an action on the previous screen (first
   // lot saved, price check passed, invoice generated) reveals on arrival.
   if(typeof refreshTradeStage==='function'){try{refreshTradeStage(true);}catch(_){}}
+  // Point the rail + tab strip at this screen. Runs last so it sees the
+  // .active class go() has just set on the source entries.
+  if(typeof syncNavToTab==='function'){try{syncNavToTab(tab);}catch(_){}}
   // Auto-close sidebar on mobile after selection
   if(window.innerWidth<=900){const sb=document.getElementById('sidebar');const ov=document.getElementById('sb-overlay');if(sb)sb.classList.remove('open');if(ov)ov.classList.remove('open')}
 }
@@ -12073,6 +12518,9 @@ function applyTradeStageLocks(){
   // The Auction Desk's action row is a shortcut past these same entries, so
   // it re-reads them here — the one place the locks are known to be fresh.
   if(typeof renderHubActs==='function'){try{renderHubActs();}catch(_){}}
+  // Same for the tab strip and the rail, which mirror `.locked` onto their
+  // own buttons.
+  if(typeof renderNav==='function'){try{renderNav();}catch(_){}}
 }
 
 // Admin escape hatch — reveal every menu regardless of trade stage.
@@ -14113,6 +14561,9 @@ async function denyReassign(id){
 function updateReassignReqsBadge(n){
   const b=document.getElementById('reassignreqs-badge');
   if(b){if(n>0){b.textContent=n;b.style.display='inline-block'}else{b.style.display='none'}}
+  // The badge lives on the hidden source entry; the visible copy is on the
+  // Reassign Requests tab, which renderNav() reads off this one.
+  if(typeof renderNav==='function'){try{renderNav();}catch(_){}}
 }
 // Keep the sidebar badge live regardless of the current tab. Only polls
 // for users who can act on requests (auction-write) — checked each tick
@@ -15356,6 +15807,13 @@ const AMR_SECTIONS = [
     { label: 'Journal',                  href: id => `/api/exports/sales-journal?auctionId=${id}`, note: 'xlsx' },
     { label: 'Litre Weight Report',      href: id => `/api/spice-board-reports/litre_weight/export?format=pdf&auctionId=${id}` },
     { label: 'Traders List',             href: id => `/api/spice-board-reports/buyers_statement/export?format=pdf&auctionId=${id}` },
+    // The per-lot verification sheet (LOT / BUYER / BAGS / QTY / SALE). It
+    // was already in the Export Center and the Auction Desk but had no tile
+    // here, which is the one screen the auction-day operator works from.
+    { label: 'Checklist',                href: id => `/api/exports/checklist/${id}?format=pdf` },
+    // Buyer-wise bags and kilos, INTER beside LOCAL, with the bag
+    // reconciliation the sheet is checked by.
+    { label: 'Tharai List',              href: id => `/api/exports/tharai_list/${id}?format=pdf` },
   ]},
   { title: 'XML Downloads', items: [
     { label: 'Service XML',      href: id => `/api/tally/export/debit_note/${id}`,               flag: 'flag_debit_note' },
@@ -36010,6 +36468,7 @@ async function loadPayments(){
 // ── Exports ───────────────────────────────────────────────
 const EXP_LABELS={lot_slip:'Lot Slip',lot_slip_after:'Lot Slip (After)',
   lot_buyer:'Lot Buyer',lot_name:'Lot Name',lot_payment:'Lot Payment',checklist:'Checklist',
+  tharai_list:'Tharai List',
   price_list_before:'Price List (Before)',price_list:'Price List',bank_payment_before:'Bank Payment (Before)',bank_payment:'Bank Payment (RTGS/NEFT)',
   pooler_register:'Pooler Register',full_file:'Full File',collection:'Collection',trade_report:'Auction Report',dealer_list:'Dealer List',
   dealer_list_party_wise:'Dealer List (Party-wise)',pooler_list_consolidated:'Pooler List consolidated (Party-wise)',planter_list:'Planter List (Grade 1)',

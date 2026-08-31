@@ -553,6 +553,103 @@ async function exportChecklist(db, auctionId) {
   });
 }
 
+// ── THARAI LIST ──────────────────────────────────────────────────────
+// Buyer-wise bag and kilo totals for one trade, split by SALE TYPE: the
+// INTER-state buyers on one side, the LOCAL ones on the other. It is the
+// sheet the office reads to see who took how much, and it gets checked
+// against the Checklist's grand total — which is exactly why withdrawn
+// lots are carried as their own line rather than dropped:
+//
+//     INTER bags + LOCAL bags + WD bags  ==  the trade's bag count
+//
+// SALE is lots.sale, the same 'L' / 'I' / 'W' the Checklist prints (see
+// exportChecklist above). Any OTHER value — a lot with no sale type set
+// yet — lands in its own bucket and is reported, so bags can never
+// silently vanish between this sheet and the Checklist. The reference
+// trade had none; a mid-auction one will.
+//
+// The buyer is lots.code verbatim, deliberately NOT buyerCodeResolver's
+// master lookup (defined just below). The office's own sheet lists NS and
+// NS-1 as separate buyers, and the resolver would fold one into the other
+// wherever the master disagrees with what price entry stamped on the lot.
+//
+// Order: bags DESCENDING, then code A→Z to break ties. That is the order
+// the reference sheet is in, and it puts the biggest taker at the top of
+// each side, which is where the eye starts.
+function tharaiListData(db, auctionId) {
+  const rows = db.all(
+    `SELECT UPPER(TRIM(COALESCE(code,''))) AS code,
+            UPPER(TRIM(COALESCE(sale,''))) AS sale,
+            COALESCE(bags,0)               AS bags,
+            COALESCE(qty,0)                AS qty
+       FROM lots WHERE auction_id = ?`, [auctionId]
+  );
+  const sides = { I: new Map(), L: new Map() };
+  const tally = { I: { bags: 0, qty: 0 }, L: { bags: 0, qty: 0 },
+                  W: { bags: 0, qty: 0 }, other: { bags: 0, qty: 0 } };
+  for (const r of rows) {
+    const bags = Number(r.bags) || 0, qty = Number(r.qty) || 0;
+    const bucket = (r.sale === 'I' || r.sale === 'L') ? r.sale
+                 : (r.sale === 'W' ? 'W' : 'other');
+    tally[bucket].bags += bags;
+    tally[bucket].qty  += qty;
+    if (bucket !== 'I' && bucket !== 'L') continue;
+    const key = r.code || '—';
+    const g = sides[bucket].get(key) || { code: key, bags: 0, qty: 0 };
+    g.bags += bags; g.qty += qty;
+    sides[bucket].set(key, g);
+  }
+  const order = (m) => [...m.values()].sort(
+    (a, b) => (b.bags - a.bags) || String(a.code).localeCompare(String(b.code)));
+  const t = tally;
+  return {
+    inter: order(sides.I), local: order(sides.L), tally,
+    totalBags: t.I.bags + t.L.bags + t.W.bags + t.other.bags,
+    totalQty:  t.I.qty  + t.L.qty  + t.W.qty  + t.other.qty,
+  };
+}
+
+// The two sides sit SIDE BY SIDE, as they do on the office's sheet, rather
+// than stacked: the whole point of the layout is that one trade's buyers
+// fit on a single page you can take in at a glance. Column keys are
+// prefixed i_ / l_ so one flat row object can carry both sides.
+async function exportTharaiList(db, auctionId) {
+  const d = tharaiListData(db, auctionId);
+  const n = Math.max(d.inter.length, d.local.length);
+  const rows = [];
+  for (let i = 0; i < n; i++) {
+    const a = d.inter[i], b = d.local[i];
+    rows.push({
+      i_buyer: a ? a.code : '', i_qty: a ? a.qty : null, i_bags: a ? a.bags : null,
+      l_buyer: b ? b.code : '', l_qty: b ? b.qty : null, l_bags: b ? b.bags : null,
+    });
+  }
+  const cols = [
+    { header: 'INTER BUYER', key: 'i_buyer', width: 14 },
+    { header: 'QTY',         key: 'i_qty',   width: 13, numFmt: '#,##0.000', align: 'right' },
+    { header: 'BAGS',        key: 'i_bags',  width: 8,  numFmt: '#,##0',     align: 'right' },
+    { header: '',            key: '_gap',    width: 3 },
+    { header: 'LOCAL BUYER', key: 'l_buyer', width: 14 },
+    { header: 'QTY',         key: 'l_qty',   width: 13, numFmt: '#,##0.000', align: 'right' },
+    { header: 'BAGS',        key: 'l_bags',  width: 8,  numFmt: '#,##0',     align: 'right' },
+  ];
+  // The bag reconciliation rides in the brand band rather than as extra
+  // rows under the table: it is the figure the sheet is checked by, and it
+  // stays visible without scrolling to the bottom of a 40-row sheet.
+  const meta = auctionMeta(db, auctionId);
+  meta.push(`INTER ${d.tally.I.bags} · LOCAL ${d.tally.L.bags} · WD ${d.tally.W.bags}`
+          + (d.tally.other.bags ? ` · UNCLASSIFIED ${d.tally.other.bags}` : '')
+          + ` · TOTAL ${d.totalBags} bags`);
+  return createExcelBuffer('Tharai List', cols, rows, {
+    db, title: 'Tharai List', metaLines: meta,
+    grandTotal: {
+      label: 'TOTAL',
+      values: { i_qty: d.tally.I.qty, i_bags: d.tally.I.bags,
+                l_qty: d.tally.L.qty, l_bags: d.tally.L.bags },
+    },
+  });
+}
+
 // Resolve a lot's short buyer CODE from the BUYERS MASTER rather than from
 // lots.code: the lot carries a copy stamped at price-entry time, and if the
 // buyer's code was corrected in the master afterwards the two disagree. A code
@@ -2123,6 +2220,7 @@ const EXPORT_TYPES = {
   lot_name:           { fn: exportLotName,           name: 'LotName' },
   lot_payment:        { fn: exportLotPayment,        name: 'LotPayment' },
   checklist:          { fn: exportChecklist,         name: 'Checklist' },
+  tharai_list:        { fn: exportTharaiList,        name: 'TharaiList' },
   // Two-up LOT/BAG/QTY/BUYER verification sheet. Native XLSX — the Auction
   // Downloads tile asks for xlsx, not the generic ?format=csv conversion,
   // because flattening a two-block sheet to CSV loses the layout that is
@@ -2570,9 +2668,83 @@ async function xlsxToCsvBuffer(buffer) {
   return await wb.csv.writeBuffer({ sheetName: wb.worksheets[0].name });
 }
 
+// ── CSV → XLSX ───────────────────────────────────────────────────────
+// The mirror of xlsxToCsvBuffer, for the two exports that write CSV text
+// DIRECTLY (Commission Bill, Dealer Invoice). Their column sets are bespoke
+// data feeds, so they never build a workbook — which left them the only
+// members of the Auction Downloads screen that could not be served as a
+// spreadsheet.
+//
+// Re-parsing the CSV rather than teaching those two exports to also emit
+// XLSX is the same trade xlsxToCsvBuffer makes in the other direction: one
+// builder, one source of truth, no chance of the two renderings disagreeing
+// about a figure.
+//
+// Deliberately NOT routed through createExcelBuffer: these feeds carry their
+// own fixed header row, and the brand band that builder writes above the
+// columns would shift every row and break the layout the office's books read.
+// What this adds is only what a spreadsheet needs to be usable — a bold,
+// frozen header row, real numbers in the money columns, and fitted widths.
+
+// RFC-4180 reader. Handles quoted fields, embedded commas/quotes/newlines,
+// and both CRLF and LF line endings. Returns an array of string arrays.
+function parseCsvText(text) {
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }   // escaped quote
+        else inQuotes = false;
+      } else field += c;
+      continue;
+    }
+    if (c === '"') { inQuotes = true; continue; }
+    if (c === ',') { row.push(field); field = ''; continue; }
+    if (c === '\r') { if (text[i + 1] === '\n') i++; rows.push(row.concat(field)); row = []; field = ''; continue; }
+    if (c === '\n') { rows.push(row.concat(field)); row = []; field = ''; continue; }
+    field += c;
+  }
+  // A trailing newline leaves an empty pending row — don't emit it.
+  if (field !== '' || row.length) rows.push(row.concat(field));
+  return rows;
+}
+
+// Numbers must land as numbers or the sheet won't sum, but over-eager
+// coercion is worse than none: a lot number "007", a 15-digit phone or a
+// GSTIN turned into a float is silent data loss. So only plain decimals of
+// sane length, with no leading zero padding, become numeric.
+function csvCellValue(s) {
+  if (s === '') return null;
+  if (!/^-?(0|[1-9]\d*)(\.\d+)?$/.test(s)) return s;
+  if (s.replace(/[-.]/g, '').length > 12) return s;
+  return Number(s);
+}
+
+async function csvToXlsxBuffer(buffer, sheetName) {
+  // Strip the UTF-8 BOM the CSV exports write for Excel's benefit — it would
+  // otherwise become part of the first header cell's text.
+  const text = Buffer.from(buffer).toString('utf8').replace(/^﻿/, '');
+  const rows = parseCsvText(text);
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet(String(sheetName || 'Sheet1').slice(0, 31));
+  rows.forEach((r, i) => {
+    const cells = r.map(csvCellValue);
+    const added = ws.addRow(cells);
+    if (i === 0) added.font = { bold: true };
+  });
+  if (rows.length) {
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+    autofitColumns(ws);
+  }
+  return await wb.xlsx.writeBuffer();
+}
+
 module.exports = {
   EXPORT_TYPES,
   xlsxToCsvBuffer,
+  csvToXlsxBuffer,
   exportCommissionBillCsv, CBC_COLUMNS,
   // Reusable XLSX builder — exposed so other modules (lorry-reports.js etc.)
   // can route through the same standardized brand band + column-header
@@ -2580,6 +2752,10 @@ module.exports = {
   createExcelBuffer,
   exportLotSlip, exportLotSlipAfter, exportLotBuyer, exportLotName, exportLotPayment,
   exportChecklist, exportLotVerification, exportLotVerification2,
+  // tharaiListData is exported so the PDF renderer builds from the SAME
+  // grouping, split and ordering the spreadsheet does — the two must never
+  // disagree about who took how many bags.
+  exportTharaiList, tharaiListData,
   exportPriceList, exportPriceListBefore,
   exportBankPayment, exportBankPaymentBefore, exportBankPaymentAdvance,
   exportPoolerRegister, exportFullFile, exportCollection, exportTradeReport, exportDealerList,

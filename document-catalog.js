@@ -281,6 +281,13 @@ const DOCUMENTS = [
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 3, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('checklist') },
 
+  // Buyer-wise bags and kilos, INTER on one side and LOCAL on the other,
+  // with the bag reconciliation (INTER + LOCAL + WD = the trade) stated on
+  // the sheet. Party-wise, not Lot-wise: one row per buyer, not per lot.
+  { id: 'tharai_list', label: 'Tharai List', group: 'reports', sub: 'Party-wise', family: 'exports',
+    kind: 'export', scope: 'trade', formats: ['pdf', 'xlsx'], minStage: 3, perm: 'export',
+    route: '/api/exports/:type/:auctionId', href: hrefExport('tharai_list') },
+
   { id: 'full_file', label: 'Full File', group: 'reports', sub: 'Lot-wise', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx'], minStage: 3, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('full_file'),

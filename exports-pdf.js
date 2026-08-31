@@ -22,6 +22,7 @@ const auctionReports = require('./auction-reports');
 const {
   planterDisbursementRows, PLANTER_DISB_COLS, PLANTER_DISB_TOTAL_KEYS,
   dealerDisbursementRows,  DEALER_DISB_COLS,  DEALER_DISB_TOTAL_KEYS,
+  tharaiListData,
 } = require('./exports');
 const {
   fmtMoney, fmtQty, fmtPrice, fmtIndian,
@@ -1512,7 +1513,158 @@ async function renderIndividualRegisterPdf(db, type, extra) {
   });
 }
 
+// ── THARAI LIST ──────────────────────────────────────────────────────
+// Bespoke, not renderTablePdf: the two sides sit SIDE BY SIDE. Stacking
+// them as two sections would be less code, but the point of the office's
+// sheet is that a whole trade's buyers fit on one page you take in at a
+// glance — ~18 inter and ~33 local buyers stacked run past the bottom of
+// an A4 and lose exactly that.
+//
+// Both sides come from tharaiListData in exports.js, the same function the
+// spreadsheet uses, so the two renderings cannot disagree.
+async function renderTharaiListPdf(db, auctionId) {
+  const d = tharaiListData(db, auctionId);
+  const a = db.get('SELECT ano, date FROM auctions WHERE id = ?', [auctionId]) || {};
+  let dateFmt = 'dd/mm/yyyy';
+  try { dateFmt = require('./company-config').getSettingsFlat(db).date_format || dateFmt; }
+  catch (_) { /* settings unavailable — fall back to the default */ }
+
+  const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 24 });
+  const buffers = [];
+  doc.on('data', b => buffers.push(b));
+
+  const m = 24;
+  const usableW = doc.page.width - m * 2;
+  const pageBottom = doc.page.height - m;
+
+  let y = drawCompanyHeader(doc, getCompanyHeader(db) || {}, {
+    x: m, y: m, width: usableW,
+    title: 'Tharai List',
+    metaLines: [
+      a.ano ? `e-AUCTION No: ${a.ano}` : '',
+      a.date ? `Date: ${formatDateForDisplay(a.date, dateFmt)}` : '',
+    ].filter(Boolean),
+  });
+
+  // Two equal tables with a gutter between them. Each is BUYER / QTY / BAGS.
+  const GUT = 18;
+  const tableW = (usableW - GUT) / 2;
+  const COL = [0.34, 0.42, 0.24];               // buyer / qty / bags
+  const ROW_H = 13, HEAD_H = 16;
+
+  // One side, drawn from `top`, returning the y it finished at. Called once
+  // per side per page so both sides advance in step and the page break is
+  // taken on whichever side is longer.
+  const drawSide = (side, x, top, from, count) => {
+    // Each side stops at ITS OWN last buyer. The two lists are different
+    // lengths — 18 inter against 33 local on the reference trade — and
+    // padding the shorter one to match drew fifteen empty ruled rows under
+    // it, which the office's sheet does not have.
+    const n = Math.max(0, Math.min(count, side.rows.length - from));
+    if (n <= 0) return top;
+
+    const w = COL.map(f => tableW * f);
+    const cx = [x, x + w[0], x + w[0] + w[1]];
+    let yy = top;
+
+    doc.rect(x, yy, tableW, HEAD_H).fillAndStroke('#E8E4DD', '#999');
+    doc.font('Helvetica-Bold').fontSize(8).fillColor('#000');
+    ['Buyer', 'Qty', 'Bags'].forEach((h, i) => {
+      doc.text(h, cx[i] + 3, yy + 5,
+        { width: w[i] - 6, align: i === 0 ? 'left' : 'right', lineBreak: false });
+    });
+    yy += HEAD_H;
+
+    const tableTop = yy;
+    doc.font('Helvetica').fontSize(8);
+    for (let i = from; i < from + n; i++) {
+      const r = side.rows[i];
+      doc.fillColor('#000')
+         .text(String(r.code), cx[0] + 3, yy + 3.5, { width: w[0] - 6, lineBreak: false })
+         .text(fmtQty(r.qty),  cx[1] + 3, yy + 3.5, { width: w[1] - 6, align: 'right', lineBreak: false })
+         .text(String(r.bags), cx[2] + 3, yy + 3.5, { width: w[2] - 6, align: 'right', lineBreak: false });
+      doc.moveTo(x, yy + ROW_H).lineTo(x + tableW, yy + ROW_H)
+         .lineWidth(0.3).strokeColor('#CCC').stroke();
+      yy += ROW_H;
+    }
+
+    // The side's own total, on its last page only.
+    const last = from + n >= side.rows.length;
+    if (last) {
+      doc.rect(x, yy, tableW, ROW_H + 2).fillAndStroke('#F2EFE9', '#999');
+      doc.font('Helvetica-Bold').fontSize(8).fillColor('#000')
+         .text(side.label,             cx[0] + 3, yy + 4.5, { width: w[0] - 6, lineBreak: false })
+         .text(fmtQty(side.qty),       cx[1] + 3, yy + 4.5, { width: w[1] - 6, align: 'right', lineBreak: false })
+         .text(String(side.bags),      cx[2] + 3, yy + 4.5, { width: w[2] - 6, align: 'right', lineBreak: false });
+      yy += ROW_H + 2;
+    }
+
+    // Column verticals + outer border, drawn once the extent is known.
+    for (let i = 1; i < cx.length; i++) {
+      doc.moveTo(cx[i], tableTop - HEAD_H).lineTo(cx[i], yy).lineWidth(0.3).strokeColor('#888').stroke();
+    }
+    doc.rect(x, tableTop - HEAD_H, tableW, yy - tableTop + HEAD_H)
+       .lineWidth(0.6).strokeColor('#666').stroke();
+    return yy;
+  };
+
+  const inter = { rows: d.inter, label: 'INTER', bags: d.tally.I.bags, qty: d.tally.I.qty };
+  const local = { rows: d.local, label: 'LOCAL', bags: d.tally.L.bags, qty: d.tally.L.qty };
+
+  // Page the two sides together: however many rows fit below the header,
+  // both sides draw that many before we break.
+  const longest = Math.max(inter.rows.length, local.rows.length);
+  let drawn = 0;
+  while (drawn < longest || drawn === 0) {
+    const room = Math.floor((pageBottom - y - HEAD_H - (ROW_H + 2) - 4) / ROW_H);
+    const take = Math.max(1, Math.min(room, longest - drawn));
+    const yL = drawSide(inter, m,                    y, drawn, take);
+    const yR = drawSide(local, m + tableW + GUT,     y, drawn, take);
+    y = Math.max(yL, yR);
+    drawn += take;
+    if (drawn < longest) { doc.addPage(); y = m; }
+  }
+
+  // The reconciliation box: this sheet's reason for existing is that these
+  // three bag counts add up to the trade's own, so it is stated rather than
+  // left to be worked out. UNCLASSIFIED appears only when a lot has no sale
+  // type yet — otherwise the line would read "0" on every healthy trade.
+  const lines = [
+    ['INTER', inter.bags], ['LOCAL', local.bags], ['WD', d.tally.W.bags],
+  ];
+  if (d.tally.other.bags) lines.push(['UNCLASSIFIED', d.tally.other.bags]);
+
+  const boxH = 16 + lines.length * 14 + 16;
+  if (y + boxH + 8 > pageBottom) { doc.addPage(); y = m; }
+  y += 10;
+  const boxW = 190;
+  doc.rect(m, y, boxW, boxH).fillAndStroke('#FAF8F4', '#999');
+  doc.font('Helvetica-Bold').fontSize(8).fillColor('#000')
+     .text('BAGS', m + 8, y + 5, { width: boxW - 16, lineBreak: false });
+  let ly = y + 18;
+  doc.font('Helvetica').fontSize(8);
+  for (const [k, v] of lines) {
+    doc.fillColor('#000')
+       .text(k, m + 8, ly + 2, { width: boxW - 70, lineBreak: false })
+       .text(String(v), m + boxW - 62, ly + 2, { width: 54, align: 'right', lineBreak: false });
+    ly += 14;
+  }
+  doc.moveTo(m, ly).lineTo(m + boxW, ly).lineWidth(0.6).strokeColor('#999').stroke();
+  doc.font('Helvetica-Bold').fontSize(8)
+     .text('TOTAL', m + 8, ly + 3, { width: boxW - 70, lineBreak: false })
+     .text(String(d.totalBags), m + boxW - 62, ly + 3, { width: 54, align: 'right', lineBreak: false });
+
+  doc.end();
+  return new Promise((resolve, reject) => {
+    doc.on('end', () => resolve(Buffer.concat(buffers)));
+    doc.on('error', reject);
+  });
+}
+
 async function exportPdf(db, type, auctionId, cfg, extra = {}) {
+  if (type === 'tharai_list') {
+    return renderTharaiListPdf(db, auctionId);
+  }
   if (type === 'pooler_individual' || type === 'seller_individual' || type === 'merchant_individual') {
     return renderIndividualRegisterPdf(db, type, extra);
   }
