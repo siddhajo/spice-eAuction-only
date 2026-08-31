@@ -1478,6 +1478,10 @@ html.sidebar-collapsed .sidebar .nav-group:hover::after{
   margin:-4px 0 22px;border-bottom:1px solid var(--spice-line);
   display:flex;flex-direction:column;gap:0
 }
+/* Tabs share the full width of the content rather than huddling at the
+   left: each takes an equal share of the row and centres its label. They
+   stay a row (never wrap) and fall back to scrolling only when the labels
+   genuinely can't fit — which is what the narrow breakpoint below is for. */
 .tabrow{display:flex;gap:4px;overflow-x:auto;scrollbar-width:thin}
 .tabrow:empty{display:none}
 .tabrow::-webkit-scrollbar{height:5px}
@@ -1493,9 +1497,13 @@ html.sidebar-collapsed .sidebar .nav-group:hover::after{
 .tabrow-sub:empty{display:none}
 .tabrow-items{padding:0 2px}
 .navtab{
-  flex:0 0 auto;display:inline-flex;align-items:center;gap:8px;
-  padding:10px 16px;border:none;background:none;cursor:pointer;
-  font-family:inherit;font-size:13.5px;font-weight:600;color:var(--text2);
+  /* flex:1 — equal shares of the row, so the strip spans the content width.
+     min-width:0 lets a long label shrink instead of forcing the row to
+     overflow; basis 0 keeps the shares equal regardless of label length. */
+  flex:1 1 0;min-width:0;
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  padding:12px 14px;border:none;background:none;cursor:pointer;
+  font-family:inherit;font-size:14px;font-weight:600;color:var(--text2);
   border-bottom:2.5px solid transparent;margin-bottom:-1px;
   white-space:nowrap;transition:color .15s,border-color .15s,background .15s;
   position:relative;border-radius:8px 8px 0 0
@@ -1516,8 +1524,8 @@ html.sidebar-collapsed .sidebar .nav-group:hover::after{
 .navtab.locked::after{content:"🔒";font-size:10px;opacity:.8}
 /* Sub-group pills: no underline, a filled chip instead. */
 .tabrow-sub .navtab{
-  padding:6px 14px;border-radius:8px;border-bottom:none;margin-bottom:0;
-  font-size:12.5px;font-weight:700;letter-spacing:.3px;text-transform:uppercase
+  padding:8px 14px;border-radius:8px;border-bottom:none;margin-bottom:0;
+  font-size:13px;font-weight:700;letter-spacing:.3px;text-transform:uppercase
 }
 .tabrow-sub .navtab.active{
   background:var(--spice-saffron);color:#fff;
@@ -1531,9 +1539,11 @@ html.sidebar-collapsed .sidebar .nav-group:hover::after{
   background:#c0392b;color:#fff;font-size:10px;font-weight:700;
   padding:1px 7px;border-radius:20px;line-height:1.5
 }
+/* Narrow screens: stop stretching and let the row scroll instead. Equal
+   shares of 420px would squeeze eight labels into unreadable slivers. */
 @media (max-width:900px){
   .tabstrip{margin:0 0 16px}
-  .navtab{padding:9px 12px;font-size:13px}
+  .navtab{flex:0 0 auto;padding:10px 14px;font-size:13.5px}
 }
 .sidebar-overlay{
   display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:25
@@ -1598,6 +1608,20 @@ body:not([data-feat-price-list-mapping="1"]) .feat-price-list-mapping{display:no
    display:flex when the flag is on — no companion rule needed (unlike
    .needs-auction-desk, whose base rule hides by default). */
 body:not([data-feat-auction-manager="1"]) .feat-auction-manager{display:none !important}
+/* Auction Desk — gated by flag_auction_desk, ON TOP OF the `auction_desk`
+   role capability that .needs-auction-desk already enforces. The two gates
+   are deliberately separate: the flag says this install has the screen, the
+   capability says this user may see it, and both must hold.
+   Covers the screen panel and anything else tagged .feat-auction-desk. */
+body:not([data-feat-auction-desk="1"]) .feat-auction-desk{display:none !important}
+/* The rail entry needs its own rule. Unlike every other flag-gated entry,
+   this one is ALSO permission-gated, and that gate REVEALS it with
+   `body[data-perm-auction-desk="1"] .side-item.needs-auction-desk
+   {display:flex !important}` — specificity (0,3,1), same as the rule above,
+   and declared later in this file, so on a tie it would win and the entry
+   would survive the flag being off. Naming both classes takes this to
+   (0,4,1) so the flag reliably beats the reveal. */
+body:not([data-feat-auction-desk="1"]) .side-item.feat-auction-desk.needs-auction-desk{display:none !important}
 /* Insights — gated by flag_insights (Settings → Flags). Same ADD-a-hide
    shape as the rule above, so the sidebar entry keeps .side-item's own
    display:flex while the flag is on. Defaults ON; see company-config.js. */
@@ -2653,14 +2677,32 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
    set the height of every card in its grid row. */
 .hub-tile-top{display:flex;align-items:center;gap:8px;min-width:0}
 
-/* The glyph square. Group colour rather than the flat dark of the
-   Auction Downloads screen — see the note in hubTileHtml(). */
+/* The glyph square, coloured BY FILE TYPE.
+   It used to take the group colour (--to). That made sense when tiles from
+   every group shared one long page; now the groups are tabs, so every tile
+   on screen belongs to the same group and a group-coloured square said the
+   same thing sixty times. File type is the thing that varies within a
+   screen, so that is what the colour now carries.
+   It has to, because shape alone does not survive this size: at 14px the
+   spreadsheet grid and the CSV rows are the same speck. Colour is what makes
+   the glyph readable at a glance — the shape confirms it once you look. */
 .hub-file-ico{
-  width:22px;height:22px;flex:none;border-radius:7px;
+  width:24px;height:24px;flex:none;border-radius:7px;
   display:inline-flex;align-items:center;justify-content:center;
-  background:var(--to);color:#fff}
-.hub-file-ico svg{width:14px;height:14px}
+  background:var(--fmt-c,var(--to));color:#fff}
+.hub-file-ico svg{width:16px;height:16px}
+/* The conventional colour for each, so it is one less thing to learn. */
+.hub-file-ico[data-fmt="pdf"]  {--fmt-c:#DC2626}
+.hub-file-ico[data-fmt="xlsx"] {--fmt-c:#107C41}
+.hub-file-ico[data-fmt="csv"]  {--fmt-c:#0284C7}
+.hub-file-ico[data-fmt="xml"]  {--fmt-c:#4F46E5}
+.hub-file-ico[data-fmt="json"],
+.hub-file-ico[data-fmt="irp"]  {--fmt-c:#B45309}
+.hub-file-ico[data-fmt="dbf"]  {--fmt-c:#0F766E}
 .hub-tile.is-locked .hub-file-ico{background:var(--spice-text-hint)}
+/* The plain scheme drains these hues with everything else — its existing
+   `body[data-hub-plain="1"] .hub-file-ico` rule already out-specifies the
+   base above, so it needs no companion here. */
 
 /* Every format the tile offers, beside the glyph. Replaces the old
    colour-coded chip — the chip named only the primary format and leaned on
@@ -2870,33 +2912,50 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 .hub-return:focus-visible{outline:3px solid var(--spice-saffron-md);outline-offset:3px}
 .hub-return svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2.5;
   stroke-linecap:round;stroke-linejoin:round}
-/* The widget grid. Nine of these fit one screen; the previous stack of
-   accordion headers did not, which is what made the page feel long before
-   anything had even been opened. */
-.hub-wgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(224px,1fr));gap:12px}
-.hub-w{
-  display:flex;gap:12px;align-items:flex-start;
-  padding:14px 14px 14px 16px;border-radius:14px;border:none;
-  cursor:pointer;font-family:inherit;text-align:left;min-width:0}
-.hub-w:focus-visible{outline:3px solid var(--from);outline-offset:3px}
-.hub-w-b{flex:1;min-width:0}
-.hub-w[data-g="preauction"]{--acc:#0EA5E9} .hub-w[data-g="documents"]{--acc:#8B5CF6}
-.hub-w[data-g="reports"]{--acc:#059669}    .hub-w[data-g="statutory"]{--acc:#D97706}
-.hub-w[data-g="banking"]{--acc:#0D9488}    .hub-w[data-g="logistics"]{--acc:#EA580C}
-.hub-w[data-g="tally"]{--acc:#4F46E5}      .hub-w[data-g="books"]{--acc:#DB2777}
-.hub-w[data-g="masters"]{--acc:#0891B2}
-.hub-w-b{display:block}
-.hub-w-name{
-  display:block;font-size:11px;font-weight:700;text-transform:uppercase;
-  letter-spacing:.6px;opacity:.92;color:#fff;line-height:1.3}
-.hub-w-hint{display:block;font-size:11px;color:#fff;opacity:.8;line-height:1.35;margin-top:5px}
-.hub-w-n{
-  display:block;font-size:20px;font-weight:800;letter-spacing:-.5px;line-height:1.15;
-  color:#fff;margin-top:3px}
-.hub-w-sel{
-  display:inline-flex;align-items:center;margin-top:8px;
-  font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;
-  background:rgba(255,255,255,.22);color:#fff}
+/* ── Documents: group tabs + papers ───────────────────────────────
+   This replaces a landing grid of nine big gradient tiles. Those tiles
+   showed a group name and a count and nothing else — a whole screen with
+   no document on it, costing a click before you could see one. (The same
+   objection the subgroup level already answered by becoming chips.)
+
+   The groups are TABS across the top instead: always on screen, so any
+   group is one click from any other, and the papers are visible the whole
+   time. Same tab language as the screen nav above them, so the page reads
+   as one thing.
+
+   They WRAP rather than scroll — the file's own rule for the chip row
+   below: a tab you cannot see is a tab you will not use. Which is also why
+   each tab sizes to its label instead of taking an equal share: ten equal
+   shares would cut "Statutory & Spices Board" to an ellipsis. */
+.hub-gtabs{display:flex;flex-wrap:wrap;gap:2px;margin-bottom:2px}
+.hub-gtab{
+  display:inline-flex;align-items:center;gap:8px;
+  padding:9px 14px;border:none;border-bottom:2.5px solid transparent;
+  background:none;cursor:pointer;font-family:inherit;
+  font-size:13.5px;font-weight:600;color:var(--text2);white-space:nowrap;
+  border-radius:7px 7px 0 0;transition:background .13s,color .13s,border-color .13s}
+.hub-gtab:hover{background:var(--bg);color:var(--text)}
+.hub-gtab:focus-visible{outline:3px solid var(--acc);outline-offset:-3px}
+.hub-gtab.is-on{color:var(--acc);border-bottom-color:var(--acc);font-weight:800}
+/* "13 of 13" — the count the tile used to shout in 20px type. Tabular so the
+   numbers hold still as you move across, muted so the NAME stays the thing
+   you read. */
+.hub-gtab-n{
+  font-size:11px;font-weight:700;opacity:.62;
+  font-variant-numeric:tabular-nums;letter-spacing:-.2px}
+.hub-gtab.is-on .hub-gtab-n{opacity:.8}
+/* Ticked-for-bundle count, carried over from the tile's "n picked" pill. */
+.hub-gtab-sel{
+  font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;
+  background:var(--acc);color:#fff}
+/* Per-group accent, same palette the gradient tiles used — the learned
+   "indigo is Tally" cue survives without costing half the viewport. */
+.hub-gtab[data-g="preauction"]{--acc:#0EA5E9} .hub-gtab[data-g="documents"]{--acc:#8B5CF6}
+.hub-gtab[data-g="reports"]{--acc:#059669}    .hub-gtab[data-g="statutory"]{--acc:#D97706}
+.hub-gtab[data-g="banking"]{--acc:#0D9488}    .hub-gtab[data-g="logistics"]{--acc:#EA580C}
+.hub-gtab[data-g="tally"]{--acc:#4F46E5}      .hub-gtab[data-g="books"]{--acc:#DB2777}
+.hub-gtab[data-g="masters"]{--acc:#0891B2}
+@media (max-width:900px){ .hub-gtab{padding:8px 11px;font-size:13px} }
 
 /* Header of an opened group. */
 .hub-open-head{
@@ -2909,6 +2968,10 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
   font-size:13px;font-weight:700;color:var(--text3);
   display:inline-flex;align-items:center;gap:8px}
 .hub-open-sub::before{content:'/';color:var(--border);font-weight:400}
+/* The group's one-line description. It used to be the third line of the
+   gradient tile; with the tiles gone it belongs over the papers it
+   describes, where it is read once rather than nine times at once. */
+.hub-open-hint{font-size:12.5px;color:var(--text3);margin:7px 0 0;line-height:1.45}
 
 /* ── Group / section chips ────────────────────────────────────
    Sideways navigation. The top row is every group, the second the sections
@@ -2991,15 +3054,18 @@ body[data-hub-plain="1"] .hub-ico svg{stroke:var(--hub-p-ink)}
    fully grey emoji looked switched-off rather than neutral. A trace left
    in keeps the tiles alive without reintroducing five competing hues. */
 body[data-hub-plain="1"] .hub-kpi .hub-ico{filter:grayscale(.8)}
-body[data-hub-plain="1"] .hub-kpi .stat .l,
-body[data-hub-plain="1"] .hub-w-name{color:var(--spice-text-hint);opacity:1}
-body[data-hub-plain="1"] .hub-kpi .stat .n,
-body[data-hub-plain="1"] .hub-w-n{color:var(--spice-text-main)}
-body[data-hub-plain="1"] .hub-w-hint{color:var(--spice-text-hint);opacity:1}
+body[data-hub-plain="1"] .hub-kpi .stat .l{color:var(--spice-text-hint);opacity:1}
+body[data-hub-plain="1"] .hub-kpi .stat .n{color:var(--spice-text-main)}
 body[data-hub-plain="1"] .hub-meta{border-top-color:var(--spice-line)}
 body[data-hub-plain="1"] .hub-meta .lbl{color:var(--spice-text-hint);opacity:1}
 body[data-hub-plain="1"] .hub-meta .val{color:var(--spice-text-main)}
-body[data-hub-plain="1"] .hub-w-sel{background:var(--hub-p-fill);color:var(--hub-p-ink)}
+/* Index rail in the plain scheme: one ink, no per-group hue. The rail is
+   the one place the colour was still doing work (telling groups apart at a
+   glance), so plain mode keeps the ACTIVE marker and drops only the nine
+   competing accents. */
+body[data-hub-plain="1"] .hub-gtab{--acc:var(--hub-p-ink)}
+body[data-hub-plain="1"] .hub-gtab.is-on{color:var(--hub-p-ink-dk)}
+body[data-hub-plain="1"] .hub-gtab-sel{background:var(--hub-p-ink);color:#fff}
 
 /* Document cards: white, one rule at the top, no tint. */
 body[data-hub-plain="1"] .hub-tile{background:var(--card);border-color:var(--spice-line)}
@@ -4531,7 +4597,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
              Deliberately first: it is the default landing screen, and the
              12 tabs below it are where you go to CREATE things, not to find
              them. See TRADE-DESK.md. -->
-        <button class="side-item needs-auction-desk active" data-tab="hub" onclick="go('hub')">
+        <button class="side-item needs-auction-desk feat-auction-desk active" data-tab="hub" onclick="go('hub')">
           <svg viewBox="0 0 24 24"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 12l9 4 9-4"/><path d="M3 17l9 4 9-4"/></svg>
           Auction Desk
         </button>
@@ -4805,7 +4871,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
          /api/documents/catalog. No document is named in this markup: add a
          row to document-catalog.js and it appears here, correctly gated,
          with no change to this file. -->
-    <div class="tc active" id="tc-hub" data-am-collapsed="0">
+    <div class="tc feat-auction-desk active" id="tc-hub" data-am-collapsed="0">
       <!-- Trade picker and the two screen-level toggles. Out of its .card:
            the Auction Manager has no card chrome and this screen now
            matches it, so this is a plain row closed by the header's own
@@ -10936,6 +11002,29 @@ async function applyFeatureFlags() {
   // Default OFF: installs opt in. Deliberately independent of the Auction
   // Desk, which stays on its auction_desk role capability.
   document.body.setAttribute('data-feat-auction-manager', cfg && on(cfg.flag_auction_manager) ? '1' : '0');
+  // Auction Desk — an EXISTING screen put behind a switch, so a MISSING key
+  // reads as ON (same undefined-means-on treatment as Insights). It is the
+  // default landing screen; an install that hasn't reseeded its settings
+  // must not lose it.
+  const deskRaw = cfg ? cfg.flag_auction_desk : undefined;
+  const deskOn = (deskRaw === undefined || deskRaw === null || deskRaw === '') ? true : on(deskRaw);
+  document.body.setAttribute('data-feat-auction-desk', deskOn ? '1' : '0');
+  window._FEAT_AUCTION_DESK = deskOn;
+  // Parked on the Desk when it gets switched off? Move to the Dashboard,
+  // and retire the return pill with it so nothing still points at a screen
+  // this install no longer has.
+  if (!deskOn) {
+    window._hubReturn = null;
+    if (typeof renderHubReturn === 'function') { try { renderHubReturn(); } catch(_) {} }
+    if (window._currentTab === 'hub' && typeof go === 'function') go('dash');
+  }
+  // Same for the Auction Manager, whose pill had no such guard: switching
+  // the screen off left "Back to Auction Manager" able to route to it.
+  if (!(cfg && on(cfg.flag_auction_manager))) {
+    window._amReturn = null;
+    if (typeof renderAmReturn === 'function') { try { renderAmReturn(); } catch(_) {} }
+    if (window._currentTab === 'auctionmgr' && typeof go === 'function') go('dash');
+  }
   // Insights — an existing screen, so a MISSING key reads as ON (same
   // undefined-means-on treatment as Price List Mapping above). Only an
   // explicit "false" hides it, which keeps an install that hasn't reseeded
@@ -11934,13 +12023,26 @@ const SCREEN_GUIDE = {
 /* Repaint the banner for the given tab. Called from go(). Reads the
    collapsed/expanded choice from localStorage 'guide:<tab>' so each
    screen remembers its own state. Safe to call for tabs with no entry. */
+/* Is this screen's guide collapsed? Collapsed by DEFAULT, on every screen:
+   the steps are onboarding copy — useful once, then a band of text between
+   the operator and their work on every visit. An explicitly stored choice
+   still wins, so a screen someone opened on purpose ('0') stays open; only
+   the never-touched case (null) changed meaning.
+
+   Both the renderer and the Show/Hide toggle read the state through here.
+   They used to each inline `=== '1'`, and flipping the default in only one
+   of them would leave the first click on "Show" computing the opposite of
+   what is on screen — storing the state it already had, and appearing to
+   do nothing. */
+function screenGuideCollapsed(tab){
+  try { return localStorage.getItem('guide:' + tab) !== '0'; } catch(_) { return true; }
+}
 function renderScreenGuide(tab){
   const el = document.getElementById('screen-guide');
   if (!el) return;
   const g = SCREEN_GUIDE[tab];
   if (!g) { el.style.display = 'none'; return; }
-  let collapsed = false;
-  try { collapsed = localStorage.getItem('guide:' + tab) === '1'; } catch(_) {}
+  const collapsed = screenGuideCollapsed(tab);
   const stepsHtml = (g.steps || []).map(s => '<li>' + s + '</li>').join('');
   const warnHtml = g.warn
     ? '<div class="screen-guide-warn"><span class="sg-warn-ic" aria-hidden="true">⚠️</span><span>' + g.warn + '</span></div>'
@@ -11959,9 +12061,7 @@ function renderScreenGuide(tab){
 function toggleScreenGuide(){
   const tab = window._currentTab;
   if (!tab) return;
-  let collapsed = false;
-  try { collapsed = localStorage.getItem('guide:' + tab) === '1'; } catch(_) {}
-  const next = !collapsed;
+  const next = !screenGuideCollapsed(tab);
   try { localStorage.setItem('guide:' + tab, next ? '1' : '0'); } catch(_) {}
   renderScreenGuide(tab);
 }
@@ -12567,7 +12667,15 @@ function _landingTab(){
   try { if (localStorage.getItem('spice.home') === 'dash') return 'dash'; } catch(_) {}
   return 'hub';
 }
-const hubAllowed = () => !!(window._userPerms && window._userPerms.has('auction_desk'));
+// Two independent gates, both of which must hold: flag_auction_desk says
+// this INSTALL has the screen, the auction_desk capability says this USER
+// may see it. Read the flag off the body attribute rather than the cached
+// global so this is correct even before applyFeatureFlags has run once
+// (missing attribute → treated as on, matching the flag's default).
+const hubFeatOn  = () => document.body.getAttribute('data-feat-auction-desk') !== '0';
+const hubAllowed = () => hubFeatOn() && !!(window._userPerms && window._userPerms.has('auction_desk'));
+// The Auction Manager's equivalent, so its pill can ask the same way.
+const amFeatOn   = () => document.body.getAttribute('data-feat-auction-manager') === '1';
 function hubSetHome(tab){
   try { localStorage.setItem('spice.home', tab); } catch(_) {}
   toast(tab === 'dash' ? 'Dashboard is now your home screen'
@@ -12687,6 +12795,15 @@ function hubApplyView(){
   const docs = document.getElementById('hub-view-docs');
   if (lots) lots.style.display = v === 'lots' ? '' : 'none';
   if (docs) docs.style.display = v === 'docs' ? '' : 'none';
+  // Documents is a LIST you scan, not a screen you read figures off — the
+  // KPI band and the shortcut row belong to the Lots view's "how did this
+  // trade go?" question. Folding them away hands their height to the list,
+  // which is the same trade the chevron on the shortcut row already makes.
+  // The header line above stays: it names the trade you are looking at.
+  const kpi  = document.getElementById('hub-kpi');
+  const acts = document.getElementById('hub-acts');
+  if (kpi)  kpi.style.display  = v === 'docs' ? 'none' : '';
+  if (acts) acts.style.display = v === 'docs' ? 'none' : '';
   // `active`, not `is-on`: these are .am-subtab underline tabs now, sharing
   // the manager's markup contract rather than the old .hub-seg-btn pills.
   // The pills still exist — the Documents view's Group-by switch is one.
@@ -13107,7 +13224,11 @@ function renderHubKpi(kpi){
   // repaints from the same call rather than from a second read of the cache.
   try { renderHubHead(kpi); } catch(_) {}
   if (!kpi) { el.innerHTML = ''; el.style.display = 'none'; return; }
-  el.style.display = '';
+  // The band is hidden in the Documents view (see hubApplyView). This
+  // function is the other writer of that display — it runs whenever a
+  // catalog or lot load finishes — so it has to ask the same question, or
+  // an arriving fetch would pop the band back up under the document list.
+  el.style.display = (typeof hubView === 'function' && hubView() === 'docs') ? 'none' : '';
   // Step the type size down as a figure gets longer, so an auction that
   // grows from ₹1,20,000 to ₹20,70,44,630 never spills its tile.
   const sizeClass = (txt) => {
@@ -13160,14 +13281,13 @@ function renderHubKpi(kpi){
 
 // Button text per format. Mostly the format shouted, except IRP — "IRP" is
 // the portal's name for it, not something an operator would search for.
-// Group → Insights gradient theme. Same nine the branch cards cycle
-// through, assigned rather than cycled so a group keeps its colour.
-const HUB_THEME = {
-  preauction:'sky', documents:'violet', payments:'rose', reports:'emerald', statutory:'amber',
-  banking:'teal', logistics:'orange', tally:'indigo', books:'pink', masters:'rose',
-  'fmt-pdf':'rose', 'fmt-xlsx':'emerald', 'fmt-csv':'sky', 'fmt-xml':'indigo',
-  'fmt-json':'violet', 'fmt-irp':'amber', 'fmt-dbf':'teal', 'fmt-generated':'pink',
-};
+// HUB_THEME used to live here: group → Insights gradient theme, the nine
+// hues the widget cards were painted with. The widget cards are gone — the
+// landing grid of gradient tiles showed a name and a count and no document,
+// and is now a row of group TABS above the papers (see hubDocNavHtml). The
+// tabs keep the per-group colour, declared in CSS on .hub-gtab[data-g=…], so
+// nothing needs a JS lookup to know its hue.
+//
 // HUB_TINT used to live here: nine four-colour palettes in fixed hex, written
 // as an inline style onto every document card. That is exactly why the cards
 // clashed with the app — a card was crimson or sky-blue whatever theme was on,
@@ -13179,9 +13299,6 @@ const HUB_THEME = {
 // a section belongs to the same group, and the section names it; under a FILE
 // TYPE heading each card prints its group as text (.hub-src, "PRE-AUCTION").
 // The colour was saying a second time what the words already said.
-//
-// HUB_THEME still drives the WIDGET cards, which stay gradient.
-const hubTheme = (gid) => HUB_THEME[gid] || 'emerald';
 
 const HUB_FMT_SHORT = { xlsx: 'XLS', pdf: 'PDF', csv: 'CSV', xml: 'XML',
                         dbf: 'DBF', json: 'JSON', irp: 'GST' };
@@ -13189,6 +13306,76 @@ const HUB_FMT_LABEL = {
   xlsx: 'XLSX', pdf: 'PDF', csv: 'CSV', xml: 'XML', dbf: 'DBF',
   json: 'JSON', irp: 'e-Invoice JSON',
 };
+
+// ── Per-format glyphs ────────────────────────────────────────────
+// Every tile used to carry the same generic page glyph, which told you
+// nothing you could not already read off the tile. These say what KIND of
+// file the card hands you, at a glance, before any text is read.
+//
+// Drawn as SHAPES, not letters. The square renders the glyph at 14px, where
+// "PDF" set inside a 24-unit viewBox is about two screen pixels per letter —
+// unreadable, and worse than the generic page it replaced. A banded page, a
+// grid, split rows, angle brackets and braces stay legible at that size and
+// are distinct from each other, which is the whole job.
+const _hubPage =
+    '<path d="M13.8 2H7.2A2.2 2.2 0 0 0 5 4.2v15.6A2.2 2.2 0 0 0 7.2 22h9.6'
+  + 'a2.2 2.2 0 0 0 2.2-2.2V7.4L13.8 2z" opacity=".32"/>'
+  + '<path d="M13.8 2 19 7.4h-3.7a1.5 1.5 0 0 1-1.5-1.5V2z"/>';
+const HUB_FMT_ICON = {
+  // A page with a solid band across it — the shape of the badge every PDF
+  // reader in the world puts on its own icon.
+  pdf:  _hubPage + '<rect x="5" y="12.4" width="14" height="5.8" rx="1.3"/>',
+  // A spreadsheet: header row, then a 2×2 of cells.
+  xlsx: _hubPage + '<path d="M7.4 11.3h9.2v2H7.4zM7.4 14.4h4.1v2H7.4z'
+                 + 'M12.5 14.4h4.1v2h-4.1zM7.4 17.5h4.1v2H7.4zM12.5 17.5h4.1v2h-4.1z"/>',
+  // Rows split into two runs — values with a separator between them. Kept
+  // deliberately unlike the XLSX grid: these two are the pair most likely to
+  // be confused, so one is closed cells and the other is open rows.
+  csv:  _hubPage + '<path d="M7.4 12h3v1.8h-3zM11.7 12h4.9v1.8h-4.9z'
+                 + 'M7.4 15.3h4.9v1.8H7.4zM13.5 15.3h3.1v1.8h-3.1z'
+                 + 'M7.4 18.6h3v1.8h-3zM11.7 18.6h4.9v1.8h-4.9z"/>',
+  // Angle brackets — markup.
+  xml:  _hubPage + '<path d="M10.4 12.2 7.2 15.4a.9.9 0 0 0 0 1.3l3.2 3.2 1.3-1.3'
+                 + '-2.55-2.55L11.7 13.5l-1.3-1.3zM13.6 12.2l-1.3 1.3 2.55 2.55'
+                 + '-2.55 2.55 1.3 1.3 3.2-3.2a.9.9 0 0 0 0-1.3l-3.2-3.2z"/>',
+  // Curly braces — the one mark nobody mistakes for anything else.
+  json: _hubPage + '<path d="M10.8 12.1c-1.25 0-1.95.7-1.95 1.9v1.05c0 .5-.3.8-.8.8'
+                 + 'v1.5c.5 0 .8.3.8.8v1.05c0 1.2.7 1.9 1.95 1.9v-1.45c-.4 0-.6-.2-.6-.6'
+                 + 'v-1.15c0-.6-.2-1-.6-1.2.4-.2.6-.6.6-1.2V14.15c0-.4.2-.6.6-.6v-1.45z'
+                 + 'M13.2 12.1v1.45c.4 0 .6.2.6.6v1.05c0 .6.2 1 .6 1.2-.4.2-.6.6-.6 1.2'
+                 + 'v1.15c0 .4-.2.6-.6.6v1.45c1.25 0 1.95-.7 1.95-1.9v-1.05c0-.5.3-.8.8-.8'
+                 + 'v-1.5c-.5 0-.8-.3-.8-.8V14c0-1.2-.7-1.9-1.95-1.9z"/>',
+  // e-Invoice JSON is JSON — the portal's name for it is not a file format.
+  irp:  null,
+  // A database table, for the legacy DBF exports.
+  dbf:  '<ellipse cx="12" cy="6.4" rx="6.4" ry="2.8"/>'
+      + '<path d="M5.6 9.4v3.3c0 1.5 2.9 2.8 6.4 2.8s6.4-1.3 6.4-2.8V9.4'
+      + 'c-1.4 1.1-3.8 1.7-6.4 1.7s-5-.6-6.4-1.7z"/>'
+      + '<path d="M5.6 14.9v3.3c0 1.5 2.9 2.8 6.4 2.8s6.4-1.3 6.4-2.8v-3.3'
+      + 'c-1.4 1.1-3.8 1.7-6.4 1.7s-5-.6-6.4-1.7z" opacity=".55"/>',
+};
+HUB_FMT_ICON.irp = HUB_FMT_ICON.json;
+
+// Which format a tile is badged as. A GENERATED DOCUMENT reads as PDF
+// whatever formats it declares — it is a numbered, printed paper, and that is
+// what an operator is looking for when they scan for one. Everything else
+// follows the format the card actually hands you when clicked (`_only` under
+// a file-type heading, otherwise the document's natural first format), so the
+// badge can never promise a file the click does not deliver.
+function hubIconFmt(it){
+  if (it.kind === 'document') return 'pdf';
+  return it._only || (it.formats || [])[0] || '';
+}
+// The square: format colour from CSS via data-fmt, format glyph inside.
+// Unrecognised formats keep the generic page and fall back to the group
+// colour, so a new format added to the catalog degrades quietly.
+function hubFmtIcon(it){
+  const fmt = hubIconFmt(it);
+  const glyph = HUB_FMT_ICON[fmt];
+  return `<span class="hub-file-ico"${glyph ? ` data-fmt="${esc(fmt)}"` : ''}>`
+       + '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+       + (glyph || _hubPage) + '</svg></span>';
+}
 
 // Status chip for a generated-document tile. Three states, because "no
 // documents yet" and "some still pending" call for different actions.
@@ -13252,13 +13439,12 @@ function hubTileHtml(it){
               title="Add to bundle"
               style="width:16px;height:16px;cursor:pointer;flex:none;margin-left:auto">`
     : '';
-  // The tile leads with the same file glyph the Auction Downloads screen
-  // uses, so the two screens read as one app. The square is NOT the flat
-  // near-black of that screen: it takes the tile's group colour (--to), which
-  // is what makes a 60-tile page scannable — you learn "indigo is Tally" once
-  // and stop reading headings. Locked tiles grey it, matching the greyed
-  // "Not available yet" tile there.
-  const icoSq = `<span class="hub-file-ico">${AMR_FILE_ICON}</span>`;
+  // The tile leads with the square for ITS OWN format — glyph and colour both
+  // (see hubFmtIcon). The Auction Downloads screen still uses one generic
+  // page for everything, but that screen lists a couple of dozen tiles of one
+  // kind, not sixty of mixed kind. Locked tiles grey the square, matching the
+  // greyed "Not available yet" tile there.
+  const icoSq = hubFmtIcon(it);
   // The format used to be a colour-coded chip. It is now the tile's second
   // line, which says MORE than the chip did: the chip named only the primary
   // format, this names every format the tile offers. Under a file-type
@@ -13421,8 +13607,9 @@ function hubGrouping(){
 function hubSetGrouping(mode){
   try { localStorage.setItem('hubGrouping', mode === 'format' ? 'format' : 'purpose'); } catch(_) {}
   // The two modes have different groups entirely ("Reports" has no counterpart
-  // among the file types), so an open group cannot survive the switch. Land on
-  // the grid rather than on whatever the stale id happens not to match.
+  // among the file types), so the showing group cannot survive the switch.
+  // Clearing it hands the choice to hubResolveOpenGroup, which lands on
+  // whichever group this mode was last left on, or its first.
   window._hubOpenGroup = null;
   window._hubOpenSub = null;
   document.getElementById('hub-grp-purpose')?.classList.toggle('is-on', mode !== 'format');
@@ -13479,15 +13666,35 @@ function hubGroupsByFormat(groups){
   return out;
 }
 
-// Which group is open, and which subgroup within it. null = one level up.
-// Three levels — groups → subgroups → documents — each of which fits a
-// screen, rather than one long page you scroll through.
+// Which group is showing, and which subgroup within it. A group is ALWAYS
+// showing — there is no level above it any more, only the rail — so this is
+// never meaningfully null once a catalog has loaded. _hubOpenSub still is:
+// null means "All" within the group.
 window._hubOpenGroup = null;
 window._hubOpenSub = null;
+
+// Remember the group per grouping mode. Purpose and File type have entirely
+// different groups, so one shared memory would be stale half the time.
+const _hubGrpKey = () => 'hubGroup:' + hubGrouping();
+// Settle on the group to show: the live pick, else the remembered one, else
+// the first. Anything that no longer exists in `groups` falls through — this
+// is what absorbs a Purpose↔File-type switch without a stale-id blank screen.
+function hubResolveOpenGroup(groups){
+  const has = id => id && groups.some(g => g.id === id);
+  if (has(window._hubOpenGroup)) return window._hubOpenGroup;
+  let saved = null;
+  try { saved = localStorage.getItem(_hubGrpKey()); } catch(_) {}
+  const id = has(saved) ? saved : groups[0].id;
+  // The remembered group did not survive; the subgroup within it cannot either.
+  if (id !== window._hubOpenGroup) window._hubOpenSub = null;
+  window._hubOpenGroup = id;
+  return id;
+}
 
 function hubOpenGroup(id){
   window._hubOpenGroup = id;
   window._hubOpenSub = null;
+  try { localStorage.setItem(_hubGrpKey(), id); } catch(_) {}
   renderHubGroups(window._hubCat?.groups || []);
   renderHubFooter();
   hubApplyFilter();
@@ -13506,41 +13713,41 @@ function hubCloseSub(){
   renderHubFooter();
   hubApplyFilter();
 }
-function hubCloseGroup(){
-  window._hubOpenGroup = null;
-  window._hubOpenSub = null;
-  renderHubGroups(window._hubCat?.groups || []);
-  renderHubFooter();
-  hubApplyFilter();
-}
-// Escape steps back one level — section, then group — the same way it closes
-// the lot drawer next door. Only when the Documents view is the thing on
-// screen and nothing else has a claim on the key.
+// Escape widens the view back to the whole group, the same way it closes the
+// lot drawer next door. It no longer has a second step: there is no level
+// above the group to back out to, so with no subgroup narrowed the key is
+// left alone rather than blanking the papers. Only when the Documents view is
+// the thing on screen and nothing else has a claim on the key.
 document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape' || !window._hubOpenGroup) return;
+  if (e.key !== 'Escape' || !window._hubOpenSub) return;
   if (!document.getElementById('tc-hub')?.classList.contains('active')) return;
   if (document.getElementById('hub-view-docs')?.style.display === 'none') return;
   if (document.querySelector('.modal-bg.show')) return;
   if (document.getElementById('hub-lot-drawer')?.style.display !== 'none') return;
   const t = e.target;
   if (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName || '')) return;
-  if (window._hubOpenSub) hubCloseSub(); else hubCloseGroup();
+  hubCloseSub();
 });
 
-// One widget per group: icon, name, and how much of it is ready.
-function hubWidgetHtml(g){
-  const live = g.items.filter(i => i.available).length;
-  const sel  = g.items.filter(i => window._hubSel.has(i.id)).length;
-  return `<button type="button" class="hub-w hub-grad t-${hubTheme(g.id)}" data-g="${esc(g.id)}"
-            onclick="hubOpenGroup('${esc(g.id)}')">
-    <span class="hub-ico">${hubIcon(g.id).replace(/^<span class="hub-sec-ico">|<\/span>$/g, '')}</span>
-    <span class="hub-w-b">
-      <span class="hub-w-name">${esc(g.label)}</span>
-      <span class="hub-w-n">${live} of ${g.items.length} ready</span>
-      ${g.hint ? `<span class="hub-w-hint">${esc(g.hint)}</span>` : ''}
-      ${sel ? `<span class="hub-w-sel">${sel} picked</span>` : ''}
-    </span>
-  </button>`;
+// One tab per group, across the top of the papers. Name first (it is what
+// you are looking for), then how much of the group is ready, then a badge if
+// any of it is ticked for a bundle — the same three facts the gradient tile
+// carried, in a row instead of a grid you had to leave to see a document.
+function hubDocNavHtml(groups, openId){
+  const tabs = groups.map(g => {
+    const live = g.items.filter(i => i.available).length;
+    const sel  = g.items.filter(i => window._hubSel.has(i.id)).length;
+    const on   = g.id === openId;
+    return `<button type="button" class="hub-gtab${on ? ' is-on' : ''}" data-g="${esc(g.id)}"
+              aria-current="${on ? 'true' : 'false'}"
+              title="${esc(g.label)}${g.hint ? ' — ' + esc(g.hint) : ''}"
+              onclick="hubOpenGroup('${esc(hubJsStr(g.id))}')">
+      <span>${esc(g.label)}</span>
+      ${sel ? `<span class="hub-gtab-sel">${sel}</span>` : ''}
+      <span class="hub-gtab-n">${live} of ${g.items.length}</span>
+    </button>`;
+  }).join('');
+  return `<nav class="hub-gtabs" aria-label="Document groups">${tabs}</nav>`;
 }
 
 // Split a group's items by subgroup, in manifest order.
@@ -13579,14 +13786,21 @@ function renderHubGroups(groups){
   if (mode === 'format') groups = hubGroupsByFormat(groups);
   if (!groups.length) { host.innerHTML = '<div class="hub-empty">No documents available.</div>'; return; }
 
-  // Searching cuts straight past the grid to the matches themselves —
-  // typing a name should never mean opening a widget first.
+  // Groups run A-Z. Declaration order is a build-time concern; on screen a
+  // predictable alphabet is faster to find things in.
+  groups = groups.slice().sort((a, b) => a.label.localeCompare(b.label));
+
+  // Searching cuts straight past the groups to the matches themselves —
+  // typing a name should never mean picking a group first. The tabs stay
+  // above the results, with none of them on, so a search is somewhere you
+  // can leave from in one click.
   const term = (document.getElementById('hub-filter')?.value || '').trim();
   const searching = !!term || !!window._hubPick;
   if (searching) {
     const all = groups.flatMap(g => g.items.map(i =>
       ({ ...i, _group: i._group || g.label, _groupId: i._groupId || g.id })));
-    host.innerHTML = `<div class="hub-open">
+    host.innerHTML = `${hubDocNavHtml(groups, null)}
+      <div class="hub-open">
         <div class="hub-open-head"><span class="hub-open-name">Search results</span>
           <span class="hub-sec-count">${all.length} document${all.length === 1 ? '' : 's'}</span></div>
         <div class="hub-open-body"><div class="hub-grid">${all.map(hubTileHtml).join('')}</div></div>
@@ -13594,17 +13808,14 @@ function renderHubGroups(groups){
     return;
   }
 
-  // One group open → just that group. Nothing else on screen to scroll past.
-  //
-  // TWO levels now, not three. Opening a group used to land on a grid of
-  // subgroup widgets — a whole screen that showed no documents at all and
-  // cost a click before you could see one. The subgroups are chips above the
-  // documents instead: the group opens straight onto its papers, and the
-  // chips narrow them in place. A second chip row carries the sibling GROUPS,
-  // so moving from Reports to Tally is one click rather than back-then-in.
-  const openId = window._hubOpenGroup;
-  const open = openId && groups.find(g => g.id === openId);
-  if (open) {
+  // ONE level now, not two. There is no "all groups" screen any more: the
+  // tab row IS that screen, permanently, so the papers are on display from
+  // the moment the view opens. Land on the remembered group; fall back to
+  // the first when it is unset or stale (switching Purpose/File type
+  // replaces the groups wholesale, so a remembered id often will not match).
+  const openId = hubResolveOpenGroup(groups);
+  const open = groups.find(g => g.id === openId);
+  {
     // Stamp the source group onto every card so its edge and caption take
     // the group's colour here as well as in the format view.
     open.items = open.items.map(i => ({ ...i, _groupId: i._groupId || open.id }));
@@ -13617,11 +13828,8 @@ function renderHubGroups(groups){
     const live = shown.filter(i => i.available).length;
     const pickable = shown.filter(i => i.available && i.href).length;
 
-    const groupChips = groups.slice()
-      .sort((a, b) => a.label.localeCompare(b.label))
-      .map(g => hubNavChip(g.label, g.id === open.id, `hubOpenGroup('${esc(hubJsStr(g.id))}')`,
-                           g.items.filter(i => i.available).length))
-      .join('');
+    // Sibling groups used to be a chip row here, duplicating what the rail
+    // now shows permanently. Only the SUBGROUP row is left.
     const subChips = hasSubs
       ? hubNavChip('All', !openSub, 'hubCloseSub()', open.items.length)
         + subs.slice().sort((a, b) => a.name.localeCompare(b.name))
@@ -13630,27 +13838,21 @@ function renderHubGroups(groups){
             .join('')
       : '';
 
-    host.innerHTML = `<div class="hub-open" data-g="${esc(open.id)}">
+    host.innerHTML = `${hubDocNavHtml(groups, open.id)}
+      <div class="hub-open" data-g="${esc(open.id)}">
         <div class="hub-open-head">
-          <button type="button" class="hub-btn hub-back" onclick="hubCloseGroup()">← All groups</button>
           ${hubIcon(open.id)}<span class="hub-open-name">${esc(open.label)}</span>
           ${openSub ? `<span class="hub-open-sub">${esc(openSub.name)}</span>` : ''}
           <span class="hub-sec-count">${live} of ${shown.length} ready</span>
           ${pickable > 1
             ? `<button class="hub-btn" onclick="hubSelectGroup('${esc(hubJsStr(open.id))}')">Pick all ${pickable}</button>` : ''}
         </div>
-        <nav class="hub-navrow" aria-label="Document groups">${groupChips}</nav>
+        ${open.hint ? `<p class="hub-open-hint">${esc(open.hint)}</p>` : ''}
         ${subChips ? `<nav class="hub-navrow is-sub" aria-label="Sections of ${esc(open.label)}">${subChips}</nav>` : ''}
         <div class="hub-open-body"><div class="hub-grid">${shown.map(hubTileHtml).join('')}</div></div>
       </div>`;
     return;
   }
-
-  // Otherwise the grid of widgets, A-Z. Declaration order is a build-time
-  // concern; on screen a predictable alphabet is faster to find things in.
-  const sorted = groups.slice().sort((a, b) => a.label.localeCompare(b.label));
-  host.innerHTML = `<div class="hub-wgrid">${sorted.map(hubWidgetHtml).join('')}</div>`;
-  return;
 }
 
 // ── Bundle selection ─────────────────────────────────────────────
@@ -13683,9 +13885,20 @@ function hubClearSel(){
   hubRenderSelbar();
 }
 function hubRenderSelbar(){
-  // Keep the widget grid's per-group "picked" counts honest.
-  if (!window._hubOpenGroup && window._hubCat && document.querySelector('.hub-wgrid')) {
-    try { renderHubGroups(window._hubCat.groups || []); } catch (_) {}
+  // Keep the group tabs' "picked" badges honest. The tabs are on screen in
+  // every state now — including inside an open group, which the old
+  // widget-grid check deliberately skipped — so this repaints whenever they
+  // are present, and only then.
+  const rail = document.querySelector('.hub-gtabs');
+  if (rail && window._hubCat) {
+    const openId = window._hubOpenGroup;
+    let groups = window._hubCat.groups || [];
+    if (hubGrouping() === 'format') groups = hubGroupsByFormat(groups);
+    groups = groups.slice().sort((a, b) => a.label.localeCompare(b.label));
+    // Swap the tab row alone. Re-rendering the whole view here would rebuild
+    // the document grid under the checkbox the user just clicked, and the
+    // tick that triggered this would appear to bounce back off.
+    if (groups.length) rail.outerHTML = hubDocNavHtml(groups, openId);
   }
   const bar = document.getElementById('hub-selbar');
   const n   = window._hubSel.size;
@@ -14460,6 +14673,13 @@ function renderHubReturn(){
   let el = document.getElementById('hub-return');
   const r = window._hubReturn;
   const here = window._currentTab;
+  // No Desk on this install → no pill back to it. Checked first so the flag
+  // can be switched off from Settings mid-session and the pill goes with it.
+  if (!hubAllowed()) {
+    window._hubReturn = null;
+    if (el) el.style.display = 'none';
+    return;
+  }
   if (!r || here !== r.tab) {
     if (r && here !== r.tab && here !== 'hub') window._hubReturn = null;
     if (el) el.style.display = 'none';
@@ -15657,6 +15877,13 @@ function renderAmReturn(){
   let el = document.getElementById('am-return');
   const r = window._amReturn;
   const here = window._currentTab;
+  // Same guard as the Desk's pill: the manager is flag-gated, so when the
+  // flag is off there is no screen to go back to.
+  if (typeof amFeatOn === 'function' && !amFeatOn()) {
+    window._amReturn = null;
+    if (el) el.style.display = 'none';
+    return;
+  }
   if (!r || here !== r.tab) {
     if (r && here !== r.tab && here !== 'auctionmgr') window._amReturn = null;
     if (el) el.style.display = 'none';
@@ -24245,7 +24472,7 @@ const SET_FIELD_GROUPS = {
     { title:'Lots, Trade & Screens', icon:'📦', hint:'Controls on the lot/trade screens — locks, validation, price checks, and optional screens or buttons.',
       keys:['flag_price_check','flag_lot_lock','flag_reserved_price','flag_immediate_reserve','flag_lot_validation',
             'flag_bulk_set_buyer_code','flag_price_list_mapping','flag_print_selected_purchase','flag_lotwise_payments',
-            'flag_auction_manager','flag_insights','flag_pertrade_breakdown'] },
+            'flag_auction_desk','flag_auction_manager','flag_insights','flag_pertrade_breakdown'] },
     { title:'Tally & Accounts Export', icon:'📤', hint:'How purchase vouchers and journals are written into the Tally XML.',
       keys:['flag_merchants'], match:/^tally_purchase_/ },
     { title:'Masters & Sharing', icon:'👥', hint:'Extra master fields and the WhatsApp share buttons.',

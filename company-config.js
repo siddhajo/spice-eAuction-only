@@ -312,6 +312,18 @@ const DEFAULTS = [
   // `auction_desk` ROLE capability in ROLE_PERMISSIONS (manager/admin), which
   // this flag does not touch — the two screens are independent.
   { key: 'flag_auction_manager', value: 'false', category: 'flags', label: 'Auction Manager (screen)', type: 'boolean' },
+  // Auction Desk — the document hub, now on a switch of its own so the two
+  // "one trade, one screen" views can be turned on independently of each
+  // other. It is an EXISTING screen (and the default landing screen), so it
+  // defaults ON for the same reason flag_insights does: an upgrade must not
+  // silently take a screen away, least of all the one people land on.
+  //
+  // This flag is ON TOP OF the `auction_desk` ROLE capability in
+  // ROLE_PERMISSIONS (manager/admin), not a replacement for it — the flag
+  // says the install has the screen, the capability says this user may see
+  // it, and both must hold. Turning it off also retires the "Back to
+  // Auction Desk" pill, so nothing can route to a screen that isn't there.
+  { key: 'flag_auction_desk',    value: 'true',  category: 'flags', label: 'Auction Desk (screen)',    type: 'boolean' },
   // Insights is an EXISTING screen being put behind a switch, so it defaults
   // ON — an upgrade must not silently take a screen away. Operators who
   // don't use it turn it off here. (Contrast flag_auction_manager above,
