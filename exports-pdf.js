@@ -24,6 +24,8 @@ const {
   dealerDisbursementRows,  DEALER_DISB_COLS,  DEALER_DISB_TOTAL_KEYS,
   tharaiListData,
   checklistVisibleCols,
+  lotVerificationData,  LOT_VERIF_COLS,  LOT_VERIF_TOTAL_KEYS,
+  lotVerification2Data, LOT_VERIF2_COLS, LOT_VERIF2_TOTAL_KEYS,
 } = require('./exports');
 const {
   fmtMoney, fmtQty, fmtPrice, fmtIndian,
@@ -680,6 +682,11 @@ const COLS = {
     { header: 'QTY',   key: 'qty',   width: 12 },
     { header: 'SALE',  key: 'sale',  width: 8  },
   ],
+  // Both verification sheets take their columns straight from the spreadsheet
+  // — the two-up block pair and the buyer-code grouping ARE the layout, so
+  // the PDF reproduces them rather than flattening to a single column run.
+  lot_verification:   LOT_VERIF_COLS,
+  lot_verification_2: LOT_VERIF2_COLS,
   lot_name: [
     { header: 'LOT',     key: 'lot',     width: 8  },
     { header: 'NAME',    key: 'name',    width: 28 },
@@ -970,6 +977,8 @@ const TOTAL_KEYS = {
   lot_slip_after:  ['bag', 'qty', 'amount'],
   lot_buyer:       ['bag', 'qty'],
   checklist:       ['bag', 'qty'],
+  lot_verification:   LOT_VERIF_TOTAL_KEYS,
+  lot_verification_2: LOT_VERIF2_TOTAL_KEYS,
   lot_name:        ['bag', 'qty'],
   lot_payment:     ['qty', 'cost'],
   price_list:      ['bag', 'qty'],
@@ -1000,11 +1009,22 @@ const TOTAL_LABEL_KEY = {
   planter_disbursement: 'name',
 };
 
+// Extra columns that ALSO get a "TOTAL" label on the totals strip. Only the
+// two-up verification sheet needs one: its right-hand block totals itself, so
+// a single label on the far left would read as covering both halves. Matches
+// what the spreadsheet writes into lot2. A key is labelled only when its block
+// actually has rows — with an odd lot count the right block can be empty.
+const TOTAL_LABEL_EXTRA = {
+  lot_verification: ['lot2'],
+};
+
 const TITLES = {
   lot_slip:        'Lot Slip',
   lot_slip_after:  'Lot Slip (After Trade)',
   lot_buyer:       'Lot Buyer',
   checklist:       'Checklist',
+  lot_verification:   'Lot Verification',
+  lot_verification_2: 'Lot Verification II',
   lot_name:        'Lot Name',
   lot_payment:     'Lot Payment',
   price_list:      'Price List',
@@ -1168,6 +1188,17 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
                 CASE WHEN UPPER(TRIM(COALESCE(sale,''))) = 'W' THEN 'WD'
                      ELSE UPPER(TRIM(COALESCE(sale,''))) END AS sale
            FROM lots WHERE auction_id = ? ORDER BY lot_no`, [auctionId]);
+
+    // Built by exports.js so the PDF deals the lots into the same two blocks
+    // (and the same buyer codes) as the spreadsheet.
+    case 'lot_verification':
+      return lotVerificationData(db, auctionId).rows;
+
+    // Carries its per-code "<CODE> Total" rows through as _isSubtotal, which
+    // the renderer already draws as a strip — the same block structure the
+    // sheet is read by.
+    case 'lot_verification_2':
+      return lotVerification2Data(db, auctionId).rows;
 
     case 'lot_name': {
       const rows = db.all(
@@ -1724,6 +1755,9 @@ async function exportPdf(db, type, auctionId, cfg, extra = {}) {
     const labelCol = forced ? columns.find(c => c.key === forced)
                    : (columns[0] && columns[0].key === '_sn') ? columns[1] : columns[0];
     if (labelCol) t[labelCol.key] = 'TOTAL';
+    for (const k of TOTAL_LABEL_EXTRA[type] || []) {
+      if (rows.some(r => r[k] !== '' && r[k] != null)) t[k] = 'TOTAL';
+    }
     return t;
   })() : null;
 

@@ -116,7 +116,9 @@ const cleanup = () => {
   const bulks = MANIFEST.filter(m => m.bulk);
 
   console.log(`[manifest] ${hrefs.length} direct routes, ${bulks.length} bulk families, ${TODO.length} not-yet-wired`);
-  check('the manifest was harvested (not silently empty)', hrefs.length >= 15 && bulks.length === 4,
+  // Five bulk families: the two commission bills, Sales Invoice, Purchase
+  // Invoice and Debit Note (Service).
+  check('the manifest was harvested (not silently empty)', hrefs.length >= 15 && bulks.length === 5,
         `${hrefs.length} hrefs / ${bulks.length} bulk`);
 
   // ══ [manifest] every direct route answers ════════════════════════
@@ -138,10 +140,10 @@ const cleanup = () => {
   console.log('\n[xlsx] every "CSV Downloads" tile emits real XLSX');
   const csvSection = MANIFEST.filter(m => m.url && m.section === 'CSV Downloads');
   // Auction Report, Commission Bill, Dealer Invoice, Purchase Invoice, Litre
-  // Weight, Collection, Form C, Sales, Planter/Dealer Disbursement, Lot
-  // Verification I + II, Checklist, Tharai List. (Crop Receipts is todo and
-  // carries no href.)
-  check('fourteen download tiles are wired in the section', csvSection.length === 14,
+  // Weight, Collection, Form C, Form D, Form D1, Arrivals, Traders List,
+  // Sales, Planter/Dealer Disbursement, Lot Verification I + II, Checklist,
+  // Tharai List. (Crop Receipts is todo and carries no href.)
+  check('eighteen download tiles are wired in the section', csvSection.length === 18,
         csvSection.map(t => t.label).join(', '));
   check('no tile in the section still asks for CSV',
         !csvSection.some(m => /format=csv/i.test(m.url)),

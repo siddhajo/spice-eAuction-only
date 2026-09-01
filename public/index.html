@@ -15979,6 +15979,19 @@ const AMR_SECTIONS = [
                                          note: 'xlsx' },
     { label: 'Form C CSV',               href: id => `/api/spice-board-reports/form_c/export?format=xlsx&auctionId=${id}`,
                                          note: 'xlsx' },
+    // Form D / Form D1 / Arrivals / Traders List all had PDF tiles but no
+    // spreadsheet, though every one of them has a native XLSX builder in
+    // spice-board-reports.js. Added so each Spices Board report is available
+    // in both formats from this screen.
+    { label: 'Form D CSV',               href: id => `/api/spice-board-reports/form_d/export?format=xlsx&auctionId=${id}`,
+                                         note: 'xlsx' },
+    { label: 'Form D1 CSV',              href: id => `/api/spice-board-reports/form_d1/export?format=xlsx&auctionId=${id}`,
+                                         note: 'xlsx' },
+    { label: 'Arrivals Report CSV',      href: id => `/api/spice-board-reports/arrivals/export?format=xlsx&auctionId=${id}`,
+                                         note: 'xlsx' },
+    // The Buyers Statement — what the PDF section calls "Traders List".
+    { label: 'Traders List CSV',         href: id => `/api/spice-board-reports/buyers_statement/export?format=xlsx&auctionId=${id}`,
+                                         note: 'xlsx' },
     // The Sales Journal. Its route defaults to XLSX and only serves CSV when
     // asked, so the format param simply comes off.
     { label: 'Sales CSV',                href: id => `/api/exports/sales-journal?auctionId=${id}`,
@@ -16046,8 +16059,18 @@ const AMR_SECTIONS = [
     // registered dealer by construction). Nothing is generated or numbered —
     // it is purely a print of what the purchase invoices already say.
     { label: 'Commission Bill - Dealer', bulk: { list: '/api/purchases', param: 'auction_id', post: '/api/purchases/commission-bulk' } },
-    { label: 'Dealer Invoice',           bulk: { list: '/api/invoices',  param: 'auction_id', post: '/api/invoices/pdf-bulk' } },
+    // The sales invoices raised to buyers, merged into one PDF. Called
+    // "Dealer Invoice" until 2026-09-01; renamed because that is what the
+    // document is, and because the neighbouring "Dealer Invoice CSV" is a
+    // different document entirely (the debit-note register below).
+    { label: 'Sales Invoice',            bulk: { list: '/api/invoices',  param: 'auction_id', post: '/api/invoices/pdf-bulk' } },
     { label: 'Purchase Invoice',         bulk: { list: '/api/purchases', param: 'auction_id', post: '/api/invoices/purchase-pdf-bulk' } },
+    // "Tax Invoice On Commission" raised to registered sellers — the document
+    // the Auction Desk lists as Debit Notes (Service), and the one the
+    // "Dealer Invoice CSV" tile registers. Its Tally twins are already here as
+    // Service XML / Service JSON; this is the printable side.
+    { label: 'Debit Note (Service)',     bulk: { list: '/api/debit-notes', param: 'auction_id', post: '/api/debit-notes/pdf-bulk' },
+                                         flag: 'flag_debit_note' },
     { label: 'Form C',                   href: id => `/api/spice-board-reports/form_c/export?format=pdf&auctionId=${id}` },
     { label: 'Form D',                   href: id => `/api/spice-board-reports/form_d/export?format=pdf&auctionId=${id}` },
     { label: 'Form D1',                  href: id => `/api/spice-board-reports/form_d1/export?format=pdf&auctionId=${id}` },
@@ -16071,6 +16094,13 @@ const AMR_SECTIONS = [
     // Buyer-wise bags and kilos, INTER beside LOCAL, with the bag
     // reconciliation the sheet is checked by.
     { label: 'Tharai List',              href: id => `/api/exports/tharai_list/${id}?format=pdf` },
+    // The two verification sheets had spreadsheet tiles but no printable twin.
+    // Both PDFs keep their sheet's layout rather than flattening it — the
+    // two-up block pair here, the per-buyer-code blocks below — because that
+    // layout is what the sheet is read by. Columns and rows come from
+    // exports.js, so neither can drift from its spreadsheet.
+    { label: 'Lot Verification',         href: id => `/api/exports/lot_verification/${id}?format=pdf` },
+    { label: 'Lot Verification II',      href: id => `/api/exports/lot_verification_2/${id}?format=pdf` },
   ]},
   { title: 'XML Downloads', items: [
     { label: 'Service XML',      href: id => `/api/tally/export/debit_note/${id}`,               flag: 'flag_debit_note' },

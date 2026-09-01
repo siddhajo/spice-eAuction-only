@@ -740,7 +740,10 @@ function buyerCodeResolver(db) {
 //
 // Every lot is listed in lot-number order, withdrawn and unsold included —
 // a verification sheet that silently dropped rows would defeat its purpose.
-async function exportLotVerification(db, auctionId) {
+// Rows + the two block totals, built ONCE and shared with the PDF twin in
+// exports-pdf.js — the two renderings must never deal the lots differently or
+// resolve a buyer code by a different rule.
+function lotVerificationData(db, auctionId) {
   const lots = db.all(
     `SELECT lot_no AS lot, bags AS bag, qty,
             COALESCE(code,'')  AS code,
@@ -762,17 +765,27 @@ async function exportLotVerification(db, auctionId) {
       qty2: r ? r.qty   : '', buyer2: r ? buyerCode(r) : '',
     };
   });
+  return { rows, left, right };
+}
 
-  const cols = [
-    { header: 'LOT',   key: 'lot',    width: 8  },
-    { header: 'BAG',   key: 'bag',    width: 7  },
-    { header: 'QTY',   key: 'qty',    width: 12 },
-    { header: 'BUYER', key: 'buyer',  width: 12 },
-    { header: 'LOT',   key: 'lot2',   width: 8  },
-    { header: 'BAG',   key: 'bag2',   width: 7  },
-    { header: 'QTY',   key: 'qty2',   width: 12 },
-    { header: 'BUYER', key: 'buyer2', width: 12 },
-  ];
+const LOT_VERIF_COLS = [
+  { header: 'LOT',   key: 'lot',    width: 8  },
+  { header: 'BAG',   key: 'bag',    width: 7  },
+  { header: 'QTY',   key: 'qty',    width: 12 },
+  { header: 'BUYER', key: 'buyer',  width: 12 },
+  { header: 'LOT',   key: 'lot2',   width: 8  },
+  { header: 'BAG',   key: 'bag2',   width: 7  },
+  { header: 'QTY',   key: 'qty2',   width: 12 },
+  { header: 'BUYER', key: 'buyer2', width: 12 },
+];
+// Each block totals ITSELF, so the keys name both halves. Summing the paired
+// rows gives the same answer as summing each block on its own — every row
+// holds exactly one left lot and at most one right lot.
+const LOT_VERIF_TOTAL_KEYS = ['bag', 'qty', 'bag2', 'qty2'];
+
+async function exportLotVerification(db, auctionId) {
+  const { rows, left, right } = lotVerificationData(db, auctionId);
+  const cols = LOT_VERIF_COLS;
   const sum = (arr, k) => arr.reduce((s, r) => s + (Number(r[k]) || 0), 0);
   return createExcelBuffer('LotVerification', cols, rows, {
     db, title: 'Lot Verification', metaLines: auctionMeta(db, auctionId),
@@ -821,7 +834,8 @@ async function exportLotVerification(db, auctionId) {
 // block total is a bag count, the figure the hall actually counts
 // against. The grand total at the foot carries both, being the sheet's
 // bottom line rather than a per-block check.
-async function exportLotVerification2(db, auctionId) {
+// Same contract as lotVerificationData: one grouping, used by both renderings.
+function lotVerification2Data(db, auctionId) {
   const lots = db.all(
     `SELECT lot_no AS lot, bags AS bag, qty,
             COALESCE(code,'')  AS code,
@@ -854,13 +868,20 @@ async function exportLotVerification2(db, auctionId) {
       _isSubtotal: true,
     });
   }
+  return { rows, lots };
+}
 
-  const cols = [
-    { header: 'CODE', key: 'code', width: 12 },
-    { header: 'LOT',  key: 'lot',  width: 8  },
-    { header: 'BAG',  key: 'bag',  width: 7  },
-    { header: 'QTY',  key: 'qty',  width: 12 },
-  ];
+const LOT_VERIF2_COLS = [
+  { header: 'CODE', key: 'code', width: 12 },
+  { header: 'LOT',  key: 'lot',  width: 8  },
+  { header: 'BAG',  key: 'bag',  width: 7  },
+  { header: 'QTY',  key: 'qty',  width: 12 },
+];
+const LOT_VERIF2_TOTAL_KEYS = ['bag', 'qty'];
+
+async function exportLotVerification2(db, auctionId) {
+  const { rows, lots } = lotVerification2Data(db, auctionId);
+  const cols = LOT_VERIF2_COLS;
   return createExcelBuffer('LotVerificationII', cols, rows, {
     db, title: 'Lot Verification II', metaLines: auctionMeta(db, auctionId),
     grandTotal: {
@@ -2789,6 +2810,10 @@ module.exports = {
   createExcelBuffer,
   exportLotSlip, exportLotSlipAfter, exportLotBuyer, exportLotName, exportLotPayment,
   exportChecklist, exportLotVerification, exportLotVerification2,
+  // Shared with the PDF twins for the same reason as the Disbursement
+  // Registers below — one deal of the lots, one buyer-code rule, two renderings.
+  lotVerificationData,  LOT_VERIF_COLS,  LOT_VERIF_TOTAL_KEYS,
+  lotVerification2Data, LOT_VERIF2_COLS, LOT_VERIF2_TOTAL_KEYS,
   // Exported for the same reason as tharaiListData below: the PDF renderer must
   // apply the operator's column switches through the exact rule the spreadsheet
   // uses, not a second copy of it.

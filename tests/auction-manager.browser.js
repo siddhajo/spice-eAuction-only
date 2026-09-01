@@ -21,6 +21,27 @@ const PORT = 47366;
 const B = `http://127.0.0.1:${PORT}`;
 const SHOT = process.env.AM_SHOT || path.join(os.tmpdir(), 'auction-manager.png');
 
+// How many tiles the Auction Downloads screen should paint, per section.
+// Counted out of AMR_SECTIONS rather than hard-coded: the list grows whenever
+// a report gains a tile, and the literals here silently went stale — 35 total
+// and 13/15/6/1 per section while the screen actually rendered 39 as 15/17/6/1
+// — so the wait below timed out instead of checking anything. What these
+// assertions are really for is that the SCREEN renders every tile the manifest
+// declares, in the agreed four sections; that is what this compares.
+function amrSectionCounts() {
+  const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const start = html.indexOf('const AMR_SECTIONS = [');
+  if (start < 0) throw new Error('AMR_SECTIONS not found in index.html');
+  const body = html.slice(start, html.indexOf('\n];', start) + 3);
+  const heads = [...body.matchAll(/\{\s*title:\s*'([^']+)',\s*items:\s*\[/g)];
+  return heads.map((h, i) => {
+    const text = body.slice(h.index, i + 1 < heads.length ? heads[i + 1].index : body.length);
+    return [...text.matchAll(/^\s*\{\s*label:\s*'/gm)].length;
+  });
+}
+const AMR_SECTION_COUNTS = amrSectionCounts();
+const AMR_TILES = AMR_SECTION_COUNTS.reduce((s, n) => s + n, 0);
+
 let pass = 0, fail = 0;
 const check = (n, c, d) => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; console.log('  FAIL ' + n + (d ? '\n         ' + d : '')); } };
 
@@ -273,8 +294,9 @@ const cleanup = () => {
   check('four sections in order',
         JSON.stringify(dl.secs) === JSON.stringify(['CSV Downloads', 'PDF Downloads', 'XML Downloads', 'JSON Downloads']),
         JSON.stringify(dl.secs));
-  check('tile counts per section are 13 / 15 / 6 / 1',
-        JSON.stringify(dl.counts) === JSON.stringify([13, 15, 6, 1]), JSON.stringify(dl.counts));
+  check(`every section renders its whole manifest (${AMR_SECTION_COUNTS.join(' / ')})`,
+        JSON.stringify(dl.counts) === JSON.stringify(AMR_SECTION_COUNTS),
+        `screen ${JSON.stringify(dl.counts)} vs manifest ${JSON.stringify(AMR_SECTION_COUNTS)}`);
   check('every tile carries the file icon', dl.icons === dl.tiles, `${dl.icons} icons on ${dl.tiles} tiles`);
   // A floor, not an exact count: placeholders get wired as the customer
   // supplies reference files, and an exact number would fail on every one of
@@ -352,7 +374,10 @@ const cleanup = () => {
   console.log('\n  screenshot → ' + SHOT);
   // …and one of the downloads screen.
   await page.evaluate(() => go('amreports'));
-  await page.waitForFunction(() => document.querySelectorAll('#tc-amreports .amr-tile').length === 35, { timeout: 10000 });
+  await page.waitForFunction(
+    (n) => document.querySelectorAll('#tc-amreports .amr-tile').length === n,
+    { timeout: 10000 }, AMR_TILES);
+  check('the downloads screen paints every tile in the manifest', true, '');
   // .tc.active runs a 250ms fadeIn; screenshotting inside it captures a
   // washed-out page. Wait for the animation to actually finish.
   await page.evaluate(() => Promise.all(
