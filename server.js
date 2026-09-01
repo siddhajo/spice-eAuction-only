@@ -14408,6 +14408,17 @@ app.get('/api/exports/sales-journal', requireExport, async (req, res) => {
   const { auctionId, saleType } = req.query;
   if (!auctionId) return res.status(400).json({ error: 'auctionId required' });
   const { exportSalesJournal } = require('./exports');
+  // ?format=pdf — the printed register. Added 2026-09-01: the Auction
+  // Downloads screen carried a "Journal" tile under PDF Downloads that served
+  // the spreadsheet, because this route had no PDF branch at all.
+  if (String(req.query.format || '').toLowerCase() === 'pdf') {
+    const db = getDb();
+    const pdf = await exportAnyPdf(db, 'sales_journal', auctionId, getSettingsFlat(db), { saleType });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="SalesJournal.pdf"');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+    return res.send(pdf);
+  }
   const buffer = await exportSalesJournal(getDb(), auctionId, saleType);
   // ?format=csv serves the Auction Downloads screen's "Sales CSV" tile; the
   // default stays XLSX so every existing caller is untouched.

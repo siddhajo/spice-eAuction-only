@@ -1709,42 +1709,53 @@ async function exportTallyPurchase(db, auctionId, cfg) {
 
 // ── Export: Sales Journal (JOUR.PRG) ────────────────────────
 // Trade-based: filters by auction_id; dates rendered dd/mm/yyyy.
+// Date / Buyer / GSTIN / Place columns dropped per request — the register
+// keeps the sale/invoice/trade-name identity and the money columns.
+// Widths below are only the FLOOR — autofitXlsxColumns() sizes each column to
+// its content just before the buffer is built. The register is wide and its
+// money columns run to eight figures, so fixed widths pushed the rupee cells
+// into "####".
+// No SALE column — the sheet is already scoped by the Sale Type filter (and
+// says so in metaLines), and the sale-type breakdown is what the ledger
+// summary block is for. `sale` still arrives on every row and still drives the
+// register's ORDER (see getSalesJournal); it just isn't printed.
+//
+// Shared with the PDF twin in exports-pdf.js so the register cannot list one
+// set of columns on paper and another in the spreadsheet.
+const SALES_JOURNAL_COLS = [
+  { header: 'INV#', key: 'invo', minWidth: 8 },
+  // No maxWidth override — the helper's 40 cap comfortably fits the longest
+  // real trade names ("PANIKULANGARA SPICES TRADING COMPANY", 36 chars).
+  { header: 'TRADE NAME', key: 'buyer1', minWidth: 16 },
+  { header: 'BAGS', key: 'bag', minWidth: 6 },
+  { header: 'QTY', key: 'qty', minWidth: 10 },
+  { header: 'CARDAMOM', key: 'cardamom', minWidth: 12 },
+  { header: 'GUNNY', key: 'gunny', minWidth: 9 },
+  { header: 'TRANSPORT', key: 'transport', minWidth: 11 },
+  { header: 'INSURANCE', key: 'insurance', minWidth: 11 },
+  { header: 'CGST', key: 'cgst', minWidth: 9 },
+  { header: 'SGST', key: 'sgst', minWidth: 9 },
+  { header: 'IGST', key: 'igst', minWidth: 9 },
+  { header: 'TCS', key: 'tcs', minWidth: 8 },
+  { header: 'ROUND', key: 'rund', minWidth: 8 },
+  { header: 'TOTAL', key: 'total', minWidth: 12 },
+];
+const SALES_JOURNAL_TOTAL_KEYS =
+  ['bag','qty','cardamom','gunny','transport','insurance','cgst','sgst','igst','tcs','rund','total'];
+
 async function exportSalesJournal(db, auctionId, saleType) {
   const calc = require('./calculations');
   const cfg = require('./company-config').getSettingsFlat(db);
   // Same cfg the summary uses, so the XLSX register and its ledger block agree
   // on whether proforma mode is on (see the note over getSalesJournal).
   const rows = calc.getSalesJournal(db, auctionId, saleType, cfg);
-  // Date / Buyer / GSTIN / Place columns dropped per request — the register
-  // keeps the sale/invoice/trade-name identity and the money columns.
-  // Widths below are only the FLOOR — autofitXlsxColumns() sizes each column to
-  // its content just before the buffer is built. The register is wide and its
-  // money columns run to eight figures, so fixed widths pushed the rupee cells
-  // into "####".
-  // No SALE column — the sheet is already scoped by the Sale Type filter (and
-  // says so in metaLines below), and the sale-type breakdown is what the
-  // ledger summary block is for. `sale` still arrives on every row and still
-  // drives the register's ORDER (see getSalesJournal); it just isn't printed.
-  const cols = [
-    { header: 'INV#', key: 'invo', minWidth: 8 },
-    // No maxWidth override — the helper's 40 cap comfortably fits the longest
-    // real trade names ("PANIKULANGARA SPICES TRADING COMPANY", 36 chars).
-    { header: 'TRADE NAME', key: 'buyer1', minWidth: 16 },
-    { header: 'BAGS', key: 'bag', minWidth: 6 },
-    { header: 'QTY', key: 'qty', minWidth: 10 },
-    { header: 'CARDAMOM', key: 'cardamom', minWidth: 12 },
-    { header: 'GUNNY', key: 'gunny', minWidth: 9 },
-    { header: 'TRANSPORT', key: 'transport', minWidth: 11 },
-    { header: 'INSURANCE', key: 'insurance', minWidth: 11 },
-    { header: 'CGST', key: 'cgst', minWidth: 9 },
-    { header: 'SGST', key: 'sgst', minWidth: 9 },
-    { header: 'IGST', key: 'igst', minWidth: 9 },
-    { header: 'TCS', key: 'tcs', minWidth: 8 },
-    { header: 'ROUND', key: 'rund', minWidth: 8 },
-    { header: 'TOTAL', key: 'total', minWidth: 12 },
-  ];
+  // Shared with the PDF twin — see SALES_JOURNAL_COLS above. Copied into a
+  // fresh array because autofitXlsxColumns writes measured widths onto the
+  // column objects, and the shared spec must not accumulate one sheet's
+  // widths and hand them to the next caller.
+  const cols = SALES_JOURNAL_COLS.map(c => ({ ...c }));
   // Column-sum "Total" row.
-  const sumKeys = ['bag','qty','cardamom','gunny','transport','insurance','cgst','sgst','igst','tcs','rund','total'];
+  const sumKeys = SALES_JOURNAL_TOTAL_KEYS;
   const totalRow = { buyer1: 'Total' };
   for (const k of sumKeys) totalRow[k] = rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
   // Measure the totals row too — its sums are the widest numbers on the sheet.
@@ -2829,6 +2840,8 @@ module.exports = {
   exportPlanterList,
   exportSalesTaxes, exportPaymentSummary, exportPaymentPartyWise, exportTDSReturn, exportTallyPurchase,
   exportSalesJournal, exportPurchaseJournal,
+  // Shared with the PDF twin — one column spec, two renderings.
+  SALES_JOURNAL_COLS, SALES_JOURNAL_TOTAL_KEYS,
   exportPurchaseRegister, exportSalesRegister, exportIndividualRegister,
   exportSellersXlsx, exportBuyersXlsx,
   exportDealerInvoiceCsv,

@@ -15994,7 +15994,13 @@ const AMR_SECTIONS = [
                                          note: 'xlsx' },
     // The Sales Journal. Its route defaults to XLSX and only serves CSV when
     // asked, so the format param simply comes off.
-    { label: 'Sales CSV',                href: id => `/api/exports/sales-journal?auctionId=${id}`,
+    //
+    // Called "Sales CSV" until 2026-09-01. The PDF section carried a second
+    // tile, "Journal", pointing at this exact same URL — one file under two
+    // names in two sections, and the one in PDF Downloads handed out a
+    // spreadsheet. They are merged here under the report's real name; the PDF
+    // section now has a genuine Sales Journal PDF instead.
+    { label: 'Sales Journal',            href: id => `/api/exports/sales-journal?auctionId=${id}`,
                                          note: 'xlsx' },
     // The disbursement register as a spreadsheet — the same report the PDF
     // tile prints, read across a desk with its money columns formatted and
@@ -16081,10 +16087,11 @@ const AMR_SECTIONS = [
     // rendering differs.
     { label: 'Dealer Disbursement',      href: id => `/api/exports/dealer_disbursement/${id}?format=pdf` },
     { label: 'Planter Disbursement',     href: id => `/api/exports/planter_disbursement/${id}?format=pdf` },
-    // "Journal" is the Sales Journal, which is an XLSX export — there is no
-    // PDF builder for it, so the tile serves the spreadsheet. Flagged here
-    // rather than silently mislabelled.
-    { label: 'Journal',                  href: id => `/api/exports/sales-journal?auctionId=${id}`, note: 'xlsx' },
+    // Was "Journal", and served the XLSX because no PDF builder existed —
+    // the one spreadsheet left in a section of PDFs. The route now has a
+    // ?format=pdf branch (server.js) rendering the invoice register plus the
+    // sale-type ledger summary, so the tile finally hands out a PDF.
+    { label: 'Sales Journal',            href: id => `/api/exports/sales-journal?auctionId=${id}&format=pdf` },
     { label: 'Litre Weight Report',      href: id => `/api/spice-board-reports/litre_weight/export?format=pdf&auctionId=${id}` },
     { label: 'Traders List',             href: id => `/api/spice-board-reports/buyers_statement/export?format=pdf&auctionId=${id}` },
     // The per-lot verification sheet (LOT / BUYER / BAGS / QTY / SALE). It

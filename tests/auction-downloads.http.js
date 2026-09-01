@@ -180,6 +180,23 @@ const cleanup = () => {
         stillCsv.status === 200 && !(stillCsv.buf[0] === 0x50 && stillCsv.buf[1] === 0x4B),
         `HTTP ${stillCsv.status}, bytes ${stillCsv.buf.slice(0, 4).toString('hex')}`);
 
+  // ══ [pdf] the "PDF Downloads" section hands out PDFs ═════════════
+  // The mirror of the assertion above, and the one that was missing: a tile
+  // called "Journal" sat in this section serving XLSX because the route had
+  // no PDF branch, and nothing caught it. Bulk families are excluded — they
+  // have no single URL, and their merge routes are covered below.
+  console.log('\n[pdf] every "PDF Downloads" tile emits a real PDF');
+  const pdfSection = MANIFEST.filter(m => m.url && m.section === 'PDF Downloads');
+  check('the PDF section has its direct-download tiles', pdfSection.length >= 15,
+        pdfSection.map(t => t.label).join(', '));
+  for (const m of pdfSection) {
+    const r = await raw(m.url.replace(/\$\{id\}/g, String(AID)));
+    if (r.status !== 200) { check(`${m.label} downloads`, false, `HTTP ${r.status}`); continue; }
+    check(`${m.label} is a real PDF`, r.buf.slice(0, 4).toString() === '%PDF',
+          `first bytes ${r.buf.slice(0, 4).toString('hex')}`);
+    check(`${m.label} declares the pdf mime`, /application\/pdf/.test(r.type), r.type);
+  }
+
   // ══ [bulk] the generated families ════════════════════════════════
   console.log('\n[bulk] generated-document families');
   for (const m of bulks) {

@@ -26,6 +26,7 @@ const {
   checklistVisibleCols,
   lotVerificationData,  LOT_VERIF_COLS,  LOT_VERIF_TOTAL_KEYS,
   lotVerification2Data, LOT_VERIF2_COLS, LOT_VERIF2_TOTAL_KEYS,
+  SALES_JOURNAL_COLS,   SALES_JOURNAL_TOTAL_KEYS,
 } = require('./exports');
 const {
   fmtMoney, fmtQty, fmtPrice, fmtIndian,
@@ -687,6 +688,9 @@ const COLS = {
   // the PDF reproduces them rather than flattening to a single column run.
   lot_verification:   LOT_VERIF_COLS,
   lot_verification_2: LOT_VERIF2_COLS,
+  // Same 14 columns as the spreadsheet. The register's ledger summary rides
+  // along as banner + subtotal rows — see getRowsForType.
+  sales_journal:      SALES_JOURNAL_COLS,
   lot_name: [
     { header: 'LOT',     key: 'lot',     width: 8  },
     { header: 'NAME',    key: 'name',    width: 28 },
@@ -979,6 +983,7 @@ const TOTAL_KEYS = {
   checklist:       ['bag', 'qty'],
   lot_verification:   LOT_VERIF_TOTAL_KEYS,
   lot_verification_2: LOT_VERIF2_TOTAL_KEYS,
+  sales_journal:      SALES_JOURNAL_TOTAL_KEYS,
   lot_name:        ['bag', 'qty'],
   lot_payment:     ['qty', 'cost'],
   price_list:      ['bag', 'qty'],
@@ -1025,6 +1030,7 @@ const TITLES = {
   checklist:       'Checklist',
   lot_verification:   'Lot Verification',
   lot_verification_2: 'Lot Verification II',
+  sales_journal:      'Sales Journal',
   lot_name:        'Lot Name',
   lot_payment:     'Lot Payment',
   price_list:      'Price List',
@@ -1062,6 +1068,9 @@ const PDF_LAYOUT = {
   full_file: 'landscape',
   // 12 aggregated money columns — needs the wider landscape page.
   payment_party_wise: 'landscape',
+  // 14 columns, eleven of them money running to eight figures — portrait
+  // would shrink the rupee cells past readable.
+  sales_journal: 'landscape',
   // 8-column party rollups with money columns — landscape avoids truncation.
   dealer_list_party_wise: 'landscape',
   pooler_list_consolidated: 'landscape',
@@ -1199,6 +1208,25 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
     // sheet is read by.
     case 'lot_verification_2':
       return lotVerification2Data(db, auctionId).rows;
+
+    // The invoice register, then the sale-type ledger summary the spreadsheet
+    // prints as its own green block. A 3-column block can't sit inside a
+    // 14-column table, so it arrives as a banner row followed by one subtotal
+    // strip per particular — the row types the renderer already draws. Rows
+    // come from calculations.js, the same call the spreadsheet makes, and the
+    // same cfg goes to both so the two agree about proforma mode.
+    case 'sales_journal': {
+      const calc = require('./calculations');
+      const rows = calc.getSalesJournal(db, auctionId, extra.saleType, cfg);
+      const summary = calc.getSalesJournalSummary(db, auctionId, extra.saleType, cfg);
+      if (!summary || !summary.lines || !summary.lines.length) return rows;
+      return [
+        ...rows,
+        { _isSection: true, label: `${summary.stateLabel} — LEDGER SUMMARY` },
+        ...summary.lines.map(l => ({ _isSubtotal: true, buyer1: l.label, qty: l.qty, total: l.value })),
+        { _isSubtotal: true, buyer1: `${summary.stateLabel} TOTAL`, total: summary.stateTotal },
+      ];
+    }
 
     case 'lot_name': {
       const rows = db.all(
@@ -1777,6 +1805,10 @@ async function exportPdf(db, type, auctionId, cfg, extra = {}) {
       // company name in the brand block.
       subtitle = `e-AUCTION No: ${auction.ano} — Date: ${d}`;
       if (extra.state) subtitle += ` — State: ${extra.state}`;
+      // The register is scoped by the Sale Type filter and drops the SALE
+      // column because of it — so the scope has to be stated on the page,
+      // exactly as the spreadsheet says it in its meta lines.
+      if (type === 'sales_journal' && extra.saleType) subtitle += ` — Type: ${extra.saleType}`;
     }
   }
 
