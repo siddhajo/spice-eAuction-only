@@ -14525,6 +14525,15 @@ function individualRegOpts(req) {
     from: req.query.from || null,
     to: req.query.to || null,
     party: req.query.party || null,
+    // Names repeat — the picker sends the seller identity it committed so the
+    // register shows ONE party, not every namesake. Absent (undefined) means
+    // "no identity supplied, match on name"; an empty string is a real pick:
+    // the rows that carry no seller master.
+    traderId: (req.query.traderId === undefined ? null : req.query.traderId),
+    // The merchant register's identity is the trade name + GSTIN (invoices
+    // carry no buyer FK). Same rule: '' is a real pick (the unregistered
+    // buyers), undefined means no identity was supplied.
+    gstin: (req.query.gstin === undefined ? null : req.query.gstin),
   };
 }
 
@@ -14587,8 +14596,9 @@ app.get('/api/exports/pooler-certificate', requireExport, async (req, res) => {
       to:    req.query.to    || null,
       party: req.query.party || null,
       // Names repeat — traderId names ONE pooler so the certificate can't
-      // certify a namesake's lots and PAN.
-      traderId: req.query.traderId || null,
+      // certify a namesake's lots and PAN. Preserved as-is, not `|| null`:
+      // '' is the pooler with no seller master, who needs pinning too.
+      traderId: (req.query.traderId === undefined ? null : req.query.traderId),
     };
     const buffer = await renderPoolerCertificatePdf(db, cfg, opts);
     res.setHeader('Content-Type', 'application/pdf');

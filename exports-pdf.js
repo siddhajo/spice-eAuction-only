@@ -1480,7 +1480,14 @@ const INDIVIDUAL_PDF_GRANDKEYS = {
 
 async function renderIndividualRegisterPdf(db, type, extra) {
   const { getPoolerRegister, getSellerRegister, getMerchantRegister } = require('./calculations');
-  const opts = { from: extra.from || null, to: extra.to || null, party: extra.party || null };
+  // The party identity travels through so a shared name prints ONE person's
+  // rows, matching the on-screen register. Passed as-is, not `|| null`: ''
+  // is a real pick (no seller master / unregistered buyer), not "unspecified".
+  const opts = {
+    from: extra.from || null, to: extra.to || null, party: extra.party || null,
+    traderId: (extra.traderId === undefined ? null : extra.traderId),
+    gstin: (extra.gstin === undefined ? null : extra.gstin),
+  };
   const data = type === 'seller_individual' ? getSellerRegister(db, opts)
              : type === 'merchant_individual' ? getMerchantRegister(db, opts)
              : getPoolerRegister(db, opts);
@@ -1772,7 +1779,8 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
   const data = getPoolerRegister(db, {
     from: opts.from, to: opts.to,
     party: opts.party || null,
-    traderId: opts.traderId || null,
+    // As-is, not `|| null`: '' pins the pooler who has no seller master.
+    traderId: (opts.traderId === undefined ? null : opts.traderId),
   });
   const parties = (data.parties || []).filter(p => Number(p.summary && p.summary.billamount) !== 0 || (p.rows && p.rows.length));
   if (!parties.length) throw new Error('No poolers found for the selected period.');

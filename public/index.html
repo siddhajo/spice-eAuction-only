@@ -39602,30 +39602,59 @@ async function populateRegParties(){
   try { rows = await j('/api/registers/individual-parties?' + p.toString()) || []; }
   catch(e){ rows = []; }
   // Endpoint may return [string] (legacy) or [{name, phone}] — normalise.
-  // trader_id distinguishes two parties sharing a name (pooler kind supplies
-  // it; other kinds return null and the picker behaves exactly as before).
+  // The identity that distinguishes two parties sharing a name: trader_id for
+  // pooler and seller, gstin for merchant (invoices carry no buyer FK). A kind
+  // that supplies neither returns null for both and the picker behaves as
+  // before, matching on the name alone.
   _regParties = rows.map(x => (typeof x === 'string')
-    ? { name: x, phone: '', trader_id: null }
-    : { name: x.name || '', phone: x.phone || '', trader_id: x.trader_id == null ? null : x.trader_id });
+    ? { name: x, phone: '', trader_id: null, gstin: null }
+    : { name: x.name || '', phone: x.phone || '',
+        trader_id: x.trader_id == null ? null : x.trader_id,
+        gstin: x.gstin == null ? null : x.gstin });
   // Keep the previous pick only when it still exists for the new kind/range;
   // otherwise fall back to "All parties" rather than querying a stale name.
-  const keptTid = (document.getElementById('reg-party') || {}).dataset
-    ? (document.getElementById('reg-party').dataset.traderId || '') : '';
-  const stillThere = _regParties.find(x => x.name === keep
-    && String(x.trader_id == null ? '' : x.trader_id) === String(keptTid));
-  regPartySelect(stillThere ? keep : '', stillThere ? stillThere.trader_id : null);
+  const kept = regPartyIdentity();
+  const stillThere = _regParties.find(x => x.name === keep && regPartySameId(x, kept));
+  regPartySelect(stillThere ? keep : '', stillThere);
+}
+// Which field identifies a party, per register kind. Reading it off the kind
+// rather than off the row is what keeps "this party has no seller master"
+// (a real pick — the unlinked rows) distinct from "this kind has no such
+// column"; both arrive from the endpoint as null and are NOT the same thing.
+function regPartyIdField(type){ return (type === 'merchant') ? 'gstin' : 'trader_id'; }
+// The committed identity, read back off the hidden field. Values are always
+// strings here — '' is a party with no id, never "unspecified".
+function regPartyIdentity(){
+  const d = (document.getElementById('reg-party') || {}).dataset;
+  return {
+    trader_id: (d && d.traderId) || '',
+    gstin: (d && d.gstin) || '',
+  };
+}
+// Compare a picker row against a committed identity. Stringified because the
+// dataset only ever holds strings, and a null id normalises to '' on both
+// sides so the kind's unused column never breaks the match.
+function regPartySameId(row, id){
+  const s = (v) => (v == null ? '' : String(v));
+  return s(row.trader_id) === s(id.trader_id) && s(row.gstin) === s(id.gstin);
 }
 
 // Commit a pick: hidden input = the exact name the query uses, visible input
 // = what the operator reads. Empty name means "All parties".
-function regPartySelect(name, traderId){
+// `row` is the picked party ({trader_id, gstin}) or null for "All parties".
+function regPartySelect(name, row){
   const hidden = document.getElementById('reg-party');
   const inp = document.getElementById('reg-party-input');
   if (hidden) {
     hidden.value = name || '';
-    // Stashed on the hidden field so the Certificate request can name ONE
-    // pooler when two share this name.
-    hidden.dataset.traderId = (traderId == null ? '' : String(traderId));
+    // Stashed on the hidden field so the register, its exports and the
+    // Certificate can all name ONE party when two share this name. '' covers
+    // both "All parties" (no name either, so nothing is filtered) and a party
+    // with no seller master / no GSTIN — which of the two it is follows from
+    // hidden.value being empty or not.
+    const id = (v) => (v == null ? '' : String(v));
+    hidden.dataset.traderId = row ? id(row.trader_id) : '';
+    hidden.dataset.gstin = row ? id(row.gstin) : '';
   }
   if (inp) inp.value = name || '';
   regPartyClose();
@@ -39648,7 +39677,7 @@ function regPartyClear(){
 }
 function regPartyPick(i){
   const x = _regPartyMatches[i];
-  if (x) regPartySelect(x.name, x.trader_id);
+  if (x) regPartySelect(x.name, x);
 }
 function regPartyClose(){
   const host = document.getElementById('reg-party-list');
@@ -39706,21 +39735,22 @@ function renderRegPartyOptions(filter){
   const hits = f
     ? _regParties.filter(x => x.name.toLowerCase().includes(f) || String(x.phone || '').toLowerCase().includes(f))
     : _regParties.slice();
-  _regPartyMatches = [{ name: '', phone: '', trader_id: null }].concat(hits);
+  _regPartyMatches = [{ name: '', phone: '', trader_id: null, gstin: null }].concat(hits);
   if (_regPartyActive < 0 || _regPartyActive >= _regPartyMatches.length) _regPartyActive = 0;
-  // Two parties can share a name. Tag the duplicated ones with their seller id
-  // so the list offers a choice instead of two identical-looking rows.
+  // Two parties can share a name. Tag the duplicated ones with whatever tells
+  // them apart — the seller id for poolers and sellers, the GSTIN for
+  // merchants — so the list offers a choice instead of two identical rows.
   const nameCount = {};
   hits.forEach(x => { const k = String(x.name || '').toUpperCase(); nameCount[k] = (nameCount[k] || 0) + 1; });
-  const curTid = (document.getElementById('reg-party') || {}).dataset
-    ? ((document.getElementById('reg-party').dataset.traderId) || '') : '';
+  const curId = regPartyIdentity();
   let html = _regPartyMatches.map((x, i) => {
-    // Match on name AND id, else both duplicates would render as selected.
-    const isSel = !!x.name && x.name === cur
-      && String(x.trader_id == null ? '' : x.trader_id) === String(curTid);
+    // Match on name AND identity, else both duplicates would render selected.
+    const isSel = !!x.name && x.name === cur && regPartySameId(x, curId);
     const bg = (i === _regPartyActive) ? '#ecfdf5' : (isSel ? 'var(--green-bg)' : '');
-    const dupTag = (nameCount[String(x.name || '').toUpperCase()] > 1 && x.trader_id != null)
-      ? `<span style="font-family:monospace;color:var(--text3);font-size:11px">#${esc(String(x.trader_id))}</span>` : '';
+    const tag = x.trader_id != null ? '#' + x.trader_id
+              : (x.gstin ? x.gstin : '');
+    const dupTag = (nameCount[String(x.name || '').toUpperCase()] > 1 && tag)
+      ? `<span style="font-family:monospace;color:var(--text3);font-size:11px">${esc(tag)}</span>` : '';
     const body = x.name
       ? `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:${isSel ? '700' : '500'}">${esc(x.name)}</span>`
         + dupTag
@@ -39851,10 +39881,23 @@ function indivRegParams(){
   const type = document.getElementById('reg-type').value;
   const from = document.getElementById('reg-from').value;
   const to = document.getElementById('reg-to').value;
-  const party = document.getElementById('reg-party') ? document.getElementById('reg-party').value : '';
+  const partyEl = document.getElementById('reg-party');
+  const party = partyEl ? partyEl.value : '';
   const p = new URLSearchParams({ kind: type });
   if (from && to) { p.set('from', from); p.set('to', to); }
-  if (party) p.set('party', party);
+  if (party) {
+    p.set('party', party);
+    // Two parties can share a name, so the name alone selected both. The
+    // picker already committed WHICH one — pass its identity through so the
+    // register (and its Excel/PDF export) covers that party only. Only the
+    // field this kind identifies parties by is sent, and it is sent even when
+    // empty: `traderId=` means "the party with no seller master", a different
+    // row set from "any namesake".
+    const id = regPartyIdentity();
+    const field = regPartyIdField(type);
+    if (field === 'gstin') p.set('gstin', id.gstin);
+    else p.set('traderId', id.trader_id);
+  }
   return p;
 }
 async function loadRegister(){
@@ -39922,12 +39965,13 @@ async function generateCertificate(){
   if (!from || !to) { toast('Set a From and To date first'); return; }
   const partyEl = document.getElementById('reg-party');
   const party = partyEl ? partyEl.value : '';
-  const partyTid = (partyEl && partyEl.dataset) ? (partyEl.dataset.traderId || '') : '';
   const p = new URLSearchParams();
   p.set('from', from); p.set('to', to);
   if (party) p.set('party', party);
-  // Pins the certificate to one pooler when the name is shared.
-  if (partyTid) p.set('traderId', partyTid);
+  // Pins the certificate to one pooler when the name is shared. Sent even
+  // when empty — an unlinked pooler must not be certified for a namesake's
+  // lots either.
+  if (party) p.set('traderId', regPartyIdentity().trader_id);
   const name = 'PoolerCertificate.pdf';
   await withOverlay('Generating Certificate…', async () => {
     const r = await fetch(B + '/api/exports/pooler-certificate?' + p.toString(), { headers:{'Authorization':'Bearer '+T} });

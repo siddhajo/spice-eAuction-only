@@ -2342,8 +2342,13 @@ function _groupRegister(rows, summaryFn) {
     // certificate). Registers whose query selects no trader_id behave exactly
     // as before, grouping on the name.
     const tid = (r.trader_id === undefined) ? null : r.trader_id;
-    if (!cur || cur.name !== name || cur.trader_id !== tid) {
-      cur = { name, trader_id: tid, gstin: '', phone: '', rows: [] };
+    // Merchants have no seller FK on the invoice, so they supply their own
+    // identity column (trade name + GSTIN). party_key is whatever the query
+    // says identity is; it falls back to trader_id, which is what the pooler
+    // and seller registers select.
+    const key = (r.party_key === undefined) ? tid : r.party_key;
+    if (!cur || cur.name !== name || cur.party_key !== key) {
+      cur = { name, trader_id: tid, party_key: key, gstin: '', phone: '', rows: [] };
       parties.push(cur);
     }
     if (!cur.gstin && r.gstin) cur.gstin = String(r.gstin).trim();
@@ -2352,7 +2357,7 @@ function _groupRegister(rows, summaryFn) {
     // First non-empty wins.
     if (!cur.phone && r.phone) cur.phone = String(r.phone).trim();
     // The party + gstin + phone live on the group, not on each row.
-    const { party, gstin, phone, trader_id, ...rest } = r;
+    const { party, gstin, phone, trader_id, party_key, ...rest } = r;
     cur.rows.push(rest);
   }
   for (const p of parties) p.summary = summaryFn(p.rows);
@@ -2382,9 +2387,13 @@ function getPoolerRegister(db, opts = {}) {
   if (opts.from && opts.to) { q += ' AND a.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
   if (opts.party) { q += ' AND UPPER(TRIM(l.name)) = UPPER(?)'; params.push(String(opts.party).trim()); }
   // Narrow to ONE pooler when the caller knows which — the name alone can
-  // match two masters (the Certificate must not certify a namesake's lots).
+  // match two masters (the Certificate must not certify a namesake's lots,
+  // and the register must not list both people's lots under one heading).
   const _tid = Number(opts.traderId);
   if (Number.isFinite(_tid) && _tid > 0) { q += ' AND l.trader_id = ?'; params.push(_tid); }
+  // '' is an explicit pick of the entry with no seller master — narrowing to
+  // the unlinked lots, not to every namesake. null/undefined = no id given.
+  else if (opts.party && opts.traderId === '') { q += ' AND l.trader_id IS NULL'; }
   q += ' ORDER BY l.name, l.trader_id, a.date, a.ano, CAST(l.lot_no AS INTEGER), l.lot_no';
   const rows = db.all(q, params).map(r => ({ ...r, date: _ddmmyyyy(r.date) }));
   const parties = _groupRegister(rows, (rs) => {
@@ -2411,14 +2420,23 @@ function getPoolerRegister(db, opts = {}) {
 // Seller Register ("SELLERS INDIVIDUAL") — purchase invoices to the pooler,
 // summarised per auction. DATE | ANO | INVO(count) | QTY | INVOICE.
 function getSellerRegister(db, opts = {}) {
-  let q = `SELECT p.name AS party, MAX(p.gstin) AS gstin, p.ano AS ano, p.date AS date,
+  let q = `SELECT p.name AS party, p.trader_id AS trader_id, MAX(p.gstin) AS gstin,
+      p.ano AS ano, p.date AS date,
       COUNT(*) AS invo, SUM(p.qty) AS qty,
       SUM(CASE WHEN COALESCE(p.total,0) > 0 THEN p.total ELSE p.amount END) AS invoice
     FROM purchases p WHERE 1=1`;
   const params = [];
   if (opts.from && opts.to) { q += ' AND p.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
   if (opts.party) { q += ' AND UPPER(TRIM(p.name)) = UPPER(?)'; params.push(String(opts.party).trim()); }
-  q += ' GROUP BY p.trader_id, p.name, p.ano, p.date ORDER BY p.name, p.date, p.ano';
+  // Same namesake rule as the Pooler Register: two dealers can share a name,
+  // so the committed seller identity narrows to one of them.
+  const _tid = Number(opts.traderId);
+  if (Number.isFinite(_tid) && _tid > 0) { q += ' AND p.trader_id = ?'; params.push(_tid); }
+  else if (opts.party && opts.traderId === '') { q += ' AND p.trader_id IS NULL'; }
+  // trader_id leads the ORDER BY so each seller's rows arrive contiguously —
+  // _groupRegister breaks on a change of (name, trader_id), and interleaved
+  // rows would open a fresh group every time the two namesakes alternate.
+  q += ' GROUP BY p.trader_id, p.name, p.ano, p.date ORDER BY p.name, p.trader_id, p.date, p.ano';
   const rows = db.all(q, params).map(r => ({ ...r, date: _ddmmyyyy(r.date) }));
   const parties = _groupRegister(rows, (rs) => {
     const invoice = _sum(rs, 'invoice');
@@ -2430,13 +2448,25 @@ function getSellerRegister(db, opts = {}) {
 // Merchant Register ("MERCHANTS INDIVIDUAL") — sales invoices to the buyer,
 // one row per invoice. DATE | TNo | INVO | RECP | QTY | INVOICE | RECEIPT.
 function getMerchantRegister(db, opts = {}) {
-  let q = `SELECT i.buyer1 AS party, i.gstin AS gstin, i.ano AS tno, i.date AS date,
+  let q = `SELECT i.buyer1 AS party, i.gstin AS gstin,
+      UPPER(TRIM(COALESCE(i.gstin,''))) AS party_key,
+      i.ano AS tno, i.date AS date,
       i.invo AS invo, '' AS recp, i.qty AS qty, i.tot AS invoice, 0 AS receipt
     FROM invoices i WHERE 1=1 AND COALESCE(i.is_proforma,0) = 0`;
   const params = [];
   if (opts.from && opts.to) { q += ' AND i.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
   if (opts.party) { q += ' AND UPPER(TRIM(i.buyer1)) = UPPER(?)'; params.push(String(opts.party).trim()); }
-  q += " ORDER BY i.buyer1, i.date, i.ano, CAST(NULLIF(i.invo,'') AS INTEGER), i.invo";
+  // Merchants get the namesake treatment too, but invoices carry no buyer FK —
+  // the identity available on the row is the trade name + GSTIN, and two real
+  // merchants sharing a trade name are registered under different GSTINs.
+  // '' is a real key (the unregistered buyers), so only null/undefined means
+  // "no identity supplied". Two UNregistered namesakes stay merged — nothing
+  // on the invoice tells them apart.
+  if (opts.party && opts.gstin != null) {
+    q += " AND UPPER(TRIM(COALESCE(i.gstin,''))) = ?";
+    params.push(String(opts.gstin).trim().toUpperCase());
+  }
+  q += " ORDER BY i.buyer1, i.gstin, i.date, i.ano, CAST(NULLIF(i.invo,'') AS INTEGER), i.invo";
   const rows = db.all(q, params).map(r => ({ ...r, date: _ddmmyyyy(r.date) }));
   const parties = _groupRegister(rows, (rs) => {
     const invoice = _sum(rs, 'invoice');
@@ -2459,17 +2489,27 @@ function listRegisterParties(db, opts = {}) {
   const params = [];
   let q;
   if (kind === 'merchant') {
-    q = `SELECT i.buyer1 AS name, MAX(NULLIF(TRIM(b.tel),'')) AS phone
+    // One entry per trade name + GSTIN. The buyers join carries the GSTIN too:
+    // matching on the trade name alone pulled a namesake's phone in, the same
+    // way the seller join used to.
+    q = `SELECT i.buyer1 AS name, UPPER(TRIM(COALESCE(i.gstin,''))) AS gstin,
+                MAX(NULLIF(TRIM(b.tel),'')) AS phone
          FROM invoices i
-         LEFT JOIN buyers b ON UPPER(TRIM(b.buyer1)) = UPPER(TRIM(i.buyer1))
+         LEFT JOIN buyers b
+           ON UPPER(TRIM(b.buyer1)) = UPPER(TRIM(i.buyer1))
+          AND UPPER(TRIM(COALESCE(b.gstin,''))) = UPPER(TRIM(COALESCE(i.gstin,'')))
          WHERE COALESCE(i.buyer1,'') != '' AND COALESCE(i.is_proforma,0) = 0`;
     if (opts.from && opts.to) { q += ' AND i.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
-    q += ' GROUP BY i.buyer1 ORDER BY i.buyer1';
+    q += " GROUP BY i.buyer1, UPPER(TRIM(COALESCE(i.gstin,''))) ORDER BY i.buyer1, i.gstin";
   } else if (kind === 'seller') {
     // Joined on the purchase's seller FK, falling back to a single-row name
     // match. The old bare name join matched EVERY same-named master, so two
     // dealers collapsed into one contact carrying a namesake's number.
-    q = `SELECT p.name AS name, MAX(NULLIF(TRIM(t.tel),'')) AS phone
+    // trader_id travels back so the picker can offer the two namesakes as two
+    // choices and the register can honour the one that was picked — without
+    // it the dropdown showed two identical, interchangeable rows.
+    q = `SELECT p.name AS name, p.trader_id AS trader_id,
+                MAX(NULLIF(TRIM(t.tel),'')) AS phone
          FROM purchases p
          LEFT JOIN traders t
            ON t.id = COALESCE(p.trader_id,
@@ -2493,7 +2533,11 @@ function listRegisterParties(db, opts = {}) {
   }
   return db.all(q, params).map(r => ({
     name: r.name, phone: r.phone || '',
+    // Whichever identity this kind has: trader_id for pooler/seller, gstin for
+    // merchant. Both travel so the picker can commit one and the register can
+    // filter on it. null = this kind has no identity to offer.
     trader_id: (r.trader_id == null ? null : r.trader_id),
+    gstin: (r.gstin == null ? null : r.gstin),
   }));
 }
 
