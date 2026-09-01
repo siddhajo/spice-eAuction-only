@@ -139,8 +139,9 @@ const cleanup = () => {
   const csvSection = MANIFEST.filter(m => m.url && m.section === 'CSV Downloads');
   // Auction Report, Commission Bill, Dealer Invoice, Purchase Invoice, Litre
   // Weight, Collection, Form C, Sales, Planter/Dealer Disbursement, Lot
-  // Verification I + II. (Crop Receipts is todo and carries no href.)
-  check('twelve download tiles are wired in the section', csvSection.length === 12,
+  // Verification I + II, Checklist, Tharai List. (Crop Receipts is todo and
+  // carries no href.)
+  check('fourteen download tiles are wired in the section', csvSection.length === 14,
         csvSection.map(t => t.label).join(', '));
   check('no tile in the section still asks for CSV',
         !csvSection.some(m => /format=csv/i.test(m.url)),

@@ -23,6 +23,7 @@ const {
   planterDisbursementRows, PLANTER_DISB_COLS, PLANTER_DISB_TOTAL_KEYS,
   dealerDisbursementRows,  DEALER_DISB_COLS,  DEALER_DISB_TOTAL_KEYS,
   tharaiListData,
+  checklistVisibleCols,
 } = require('./exports');
 const {
   fmtMoney, fmtQty, fmtPrice, fmtIndian,
@@ -1688,8 +1689,13 @@ async function exportPdf(db, type, auctionId, cfg, extra = {}) {
     throw new Error('Full File is XLSX-only — PDF version is not supported (too many columns to fit on a page).');
   }
 
-  const columns = COLS[type];
+  let columns = COLS[type];
   if (!columns) throw new Error(`No PDF column def for type: ${type}`);
+  // The Checklist's DUMMY / BUYER columns are per-install switches. Narrow OUR
+  // spec through exports.js's shared rule — the same call the XLSX makes — so a
+  // site that hides a column hides it in both formats while each keeps its own
+  // widths. COLS.checklist stays the full six-column spec; this never mutates it.
+  if (type === 'checklist') columns = checklistVisibleCols(columns, cfg);
 
   let rows = await getRowsForType(db, type, auctionId, cfg, extra);
 

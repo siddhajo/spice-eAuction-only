@@ -433,6 +433,22 @@ const DEFAULTS = [
   // unaffected on upgrade.
   { key: 'flag_proforma_invoice', value: 'false', category: 'flags', label: 'Proforma Sales Invoice (draft → raise original)', type: 'boolean' },
 
+  // ── CHECKLIST COLUMNS ──────────────────────────────────────
+  // The post-auction verification sheet is LOT | DUMMY | BUYER | BAGS | QTY |
+  // SALE, but not every desk wants all six: some read it against their own
+  // pricing notes and need the DUMMY tag, others only care who took the lot
+  // and find the extra column noise. These two switches drop a column from the
+  // sheet, and BOTH formats honour them — the XLSX (exportChecklist) and the
+  // PDF (exports-pdf's COLS.checklist) read the same keys, so the printed sheet
+  // and the spreadsheet can never disagree about their columns.
+  //
+  // Default ON for both, because the sheet has always carried them: an existing
+  // install upgrades to exactly the Checklist it prints today. Turning both off
+  // still leaves LOT | BAGS | QTY | SALE — the lot and its figures are the
+  // point of the sheet and are never dropped.
+  { key: 'checklist_show_dummy', value: 'true', category: 'flags', label: 'Checklist: Dummy column', type: 'boolean' },
+  { key: 'checklist_show_buyer', value: 'true', category: 'flags', label: 'Checklist: Buyer column', type: 'boolean' },
+
   // ── BACKUPS ────────────────────────────────────────────────
   // Per-install database backup settings. The scheduler is driven by
   // backup_auto_enabled + backup_interval_hours; the keep-count caps

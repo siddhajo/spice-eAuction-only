@@ -16004,12 +16004,42 @@ const AMR_SECTIONS = [
     // what makes the blocks readable, and CSV drops it.
     { label: 'Lot Verification II CSV',  href: id => `/api/exports/lot_verification_2/${id}?format=xlsx`,
                                          note: 'xlsx' },
+    // The per-lot verification sheet and the buyer-wise bag/kilo summary. Both
+    // already had PDF tiles below; these serve the same reports as spreadsheets
+    // for the desks that reconcile them in Excel rather than on paper. XLSX for
+    // the usual reason — the money/qty columns keep their numFmts and the TOTAL
+    // strip foots, neither of which survives a flattening to CSV.
+    //
+    // The Checklist honours the per-install DUMMY / BUYER column switches
+    // (Settings → Feature Flags), exactly as its PDF tile does.
+    { label: 'Checklist CSV',            href: id => `/api/exports/checklist/${id}?format=xlsx`,
+                                         note: 'xlsx' },
+    // Two-sided sheet (INTER beside LOCAL) with the bag reconciliation in the
+    // brand band. The side-by-side layout is the point, so xlsx, not CSV.
+    { label: 'Tharai List CSV',          href: id => `/api/exports/tharai_list/${id}?format=xlsx`,
+                                         note: 'xlsx' },
   ]},
   { title: 'PDF Downloads', items: [
     { label: 'Arrivals Report',          href: id => `/api/spice-board-reports/arrivals/export?format=pdf&auctionId=${id}` },
     // The three generated families: merged from every stored document in
     // the trade, not computed on the fly.
-    { label: 'Commission Bill - Planter', bulk: { list: '/api/bills',     param: 'auction_id', post: '/api/bills/pdf-bulk' } },
+    //
+    // COMMISSION-BILL layout, not the Bill of Supply. This posted to
+    // /api/bills/pdf-bulk, which renders the agri-bill (Purchase Bill) —
+    // so a tile labelled "Commission Bill" handed out a different document.
+    // The commission-bos-bulk route is the one behind the Bills screen's
+    // "🧾 Commission Bill Selected" button and behind the dealer twin
+    // directly below, so all three now print the same layout.
+    //
+    // Unconditional, unlike the Auction Desk's "Bills of Supply" tile, which
+    // swings between the two routes on flag_bos_purchase_bill. That tile is
+    // named for the family and follows the site's choice; this one names the
+    // document, and so has to hand out the document it names.
+    //
+    // No invoiceNo in the body: commissionInvoiceNoOpts() on the server
+    // already reads the proforma number when the flag is on unless asked for
+    // 'original', which is exactly what the Bills screen's picker resolves to.
+    { label: 'Commission Bill - Planter', bulk: { list: '/api/bills',     param: 'auction_id', post: '/api/bills/commission-bos-bulk' } },
     // The dealer-side twin of the planter commission bill: the PAYMENT
     // VOUCHER / "MEMORANDUM OF CARDAMOM SOLD THROUGH …", one A4 page per LOT,
     // built from the stored purchase invoices (every purchase row is a

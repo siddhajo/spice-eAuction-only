@@ -522,7 +522,49 @@ async function exportLotBuyer(db, auctionId) {
 //
 // Every lot is listed, withdrawn ones included — a checklist that silently
 // dropped rows would defeat its purpose.
-async function exportChecklist(db, auctionId) {
+//
+// DUMMY and BUYER are each optional per install (Settings → Feature Flags →
+// "Checklist: Dummy column" / "Checklist: Buyer column"). Some desks read the
+// sheet against their own pricing notes and need the tag; others only want to
+// see who took the lot. See checklistColumns below — the PDF renderer applies
+// the SAME rule, so the two formats can't drift apart.
+const CHECKLIST_COLS = [
+  { header: 'LOT',   key: 'lot',   width: 8  },
+  { header: 'DUMMY', key: 'dummy', width: 12 },
+  { header: 'BUYER', key: 'buyer', width: 12 },
+  { header: 'BAGS',  key: 'bag',   width: 7  },
+  { header: 'QTY',   key: 'qty',   width: 12, numFmt: '#,##0.000', align: 'right' },
+  { header: 'SALE',  key: 'sale',  width: 8  },
+];
+
+// Which of the two optional Checklist columns this install prints.
+//
+// A MISSING key means the column SHOWS: the sheet has always carried both, so
+// an install that upgrades before anyone visits Settings keeps printing the
+// Checklist it printed yesterday. Only an explicit 'false' hides one.
+function checklistColumnsOn(cfg) {
+  const on = (k) => {
+    const v = String((cfg && cfg[k]) != null ? cfg[k] : '').trim().toLowerCase();
+    return v === '' ? true : (v === 'true' || v === '1');
+  };
+  return { dummy: on('checklist_show_dummy'), buyer: on('checklist_show_buyer') };
+}
+
+// Narrow a Checklist column spec to the columns this install prints. Takes the
+// spec rather than owning one, because the two renderers legitimately differ:
+// the XLSX carries numFmt/align on QTY, the PDF sizes its own widths. Sharing
+// the RULE (not the spec) is what keeps the formats in step without flattening
+// one onto the other.
+//
+// LOT / BAGS / QTY / SALE are never optional — the lot and its figures are what
+// the sheet is for. Returns a fresh array; the source spec is never mutated.
+function checklistVisibleCols(cols, cfg) {
+  const show = checklistColumnsOn(cfg);
+  return (cols || []).filter(c =>
+    (c.key !== 'dummy' || show.dummy) && (c.key !== 'buyer' || show.buyer));
+}
+
+async function exportChecklist(db, auctionId, cfg) {
   const rows = db.all(
     `SELECT lot_no AS lot,
             COALESCE(dummy_code,'') AS dummy,
@@ -533,14 +575,7 @@ async function exportChecklist(db, auctionId) {
                  ELSE UPPER(TRIM(COALESCE(sale,''))) END AS sale
        FROM lots WHERE auction_id = ? ORDER BY lot_no`, [auctionId]
   );
-  const cols = [
-    { header: 'LOT',   key: 'lot',   width: 8  },
-    { header: 'DUMMY', key: 'dummy', width: 12 },
-    { header: 'BUYER', key: 'buyer', width: 12 },
-    { header: 'BAGS',  key: 'bag',   width: 7  },
-    { header: 'QTY',   key: 'qty',   width: 12, numFmt: '#,##0.000', align: 'right' },
-    { header: 'SALE',  key: 'sale',  width: 8  },
-  ];
+  const cols = checklistVisibleCols(CHECKLIST_COLS, cfg);
   return createExcelBuffer('Checklist', cols, rows, {
     db, title: 'Checklist', metaLines: auctionMeta(db, auctionId),
     grandTotal: {
@@ -2219,7 +2254,9 @@ const EXPORT_TYPES = {
   lot_buyer:          { fn: exportLotBuyer,          name: 'LotBuyer' },
   lot_name:           { fn: exportLotName,           name: 'LotName' },
   lot_payment:        { fn: exportLotPayment,        name: 'LotPayment' },
-  checklist:          { fn: exportChecklist,         name: 'Checklist' },
+  // needsCfg so the route hands it the settings the DUMMY / BUYER column
+  // switches live in (see checklistColumns).
+  checklist:          { fn: exportChecklist,         name: 'Checklist', needsCfg: true },
   tharai_list:        { fn: exportTharaiList,        name: 'TharaiList' },
   // Two-up LOT/BAG/QTY/BUYER verification sheet. Native XLSX — the Auction
   // Downloads tile asks for xlsx, not the generic ?format=csv conversion,
@@ -2752,6 +2789,10 @@ module.exports = {
   createExcelBuffer,
   exportLotSlip, exportLotSlipAfter, exportLotBuyer, exportLotName, exportLotPayment,
   exportChecklist, exportLotVerification, exportLotVerification2,
+  // Exported for the same reason as tharaiListData below: the PDF renderer must
+  // apply the operator's column switches through the exact rule the spreadsheet
+  // uses, not a second copy of it.
+  checklistVisibleCols, checklistColumnsOn, CHECKLIST_COLS,
   // tharaiListData is exported so the PDF renderer builds from the SAME
   // grouping, split and ordering the spreadsheet does — the two must never
   // disagree about who took how many bags.
