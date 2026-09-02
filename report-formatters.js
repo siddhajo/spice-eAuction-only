@@ -380,6 +380,39 @@ function fitText(doc, text, maxWidth) {
   return lo > 0 ? s.slice(0, lo) + ELLIP : ELLIP;
 }
 
+// Draw ONE table cell on ONE line.
+//
+// No table in this app wraps a cell any more. A cell that spilled onto a
+// second line dragged its whole row taller, so a single long name left a
+// double-height band across an otherwise even grid — and a WRAPPED FIGURE was
+// worse than untidy: "3,97,086" above ".00" reads as two different numbers.
+//
+// So: shrink the type from `base` toward `floor` until the whole value fits,
+// and only ellipsize if it still doesn't. Pick the floor by what the cell
+// holds — figures get a lower one (5 or less) because they must not be cut,
+// text a higher one (6) because below that it is unreadable anyway and the
+// "…" says plainly that it was clipped. The ellipsis is not decoration: it is
+// what guarantees no wrap, since PDFKit 0.15 does not reliably honour
+// `lineBreak: false` on an over-wide string (the quirk fitText exists for).
+//
+// Leaves the font at the size it drew with — callers draw cell by cell, so
+// there is nothing to restore.
+function drawFittedCell(doc, text, x, y, width, opts = {}) {
+  const {
+    align = 'left', font = 'Helvetica', base = 8, floor = 6, step = 0.5,
+    color = '#000',
+  } = opts;
+  const s = String(text == null ? '' : text);
+  let size = base;
+  doc.font(font).fontSize(size);
+  while (size > floor && doc.widthOfString(s) > width) {
+    size = Math.max(floor, size - step);
+    doc.fontSize(size);
+  }
+  doc.fillColor(color).text(fitText(doc, s, width), x, y, { width, align, lineBreak: false });
+  return size;
+}
+
 // Draw a unified three-column header band on the current page:
 //
 //   ┌─────────────────────────────────────────────────────────────┐
@@ -743,6 +776,22 @@ function writeXlsxCompanyHeader(wb, ws, header, opts) {
 // `opts.min` / `opts.max` clamp the result: a column of empty strings
 // should still be clickable, and one holding a 300-character note must not
 // push every other column off the screen.
+// Render a number the way its numFmt will display it, purely so a column can
+// be sized to it. Only the two things that change the LENGTH matter: how many
+// decimals the pattern shows, and whether it groups Indian-style
+// ("#,##,##0.00" → 1,66,93,259.00) or Western ("#,##0.00" → 16,693,259.00).
+// A pattern with no comma is ungrouped.
+function numFmtWidthText(v, numFmt) {
+  const fmt = String(numFmt || '');
+  if (!fmt) return String(v);
+  const dot = fmt.indexOf('.');
+  const decimals = dot === -1 ? 0 : (fmt.slice(dot + 1).match(/0+/) || [''])[0].length;
+  const opt = { minimumFractionDigits: decimals, maximumFractionDigits: decimals };
+  if (fmt.includes('#,##,#')) return v.toLocaleString('en-IN', opt);
+  if (fmt.includes(',')) return v.toLocaleString('en-US', opt);
+  return v.toFixed(decimals);
+}
+
 function autofitColumns(ws, opts) {
   opts = opts || {};
   const min = opts.min == null ? 8  : opts.min;
@@ -765,6 +814,13 @@ function autofitColumns(ws, opts) {
                : (v.text != null ? v.text
                : (v.result != null ? v.result
                : (v instanceof Date ? 'DD/MM/YYYY' : '')));
+        } else if (typeof v === 'number') {
+          // Measure what Excel SHOWS, not what is stored. A money cell holds
+          // 16693259 (8 chars) but renders as "1,66,93,259.00" (14) under its
+          // numFmt, so measuring the raw number sized every money column
+          // several characters too narrow — which is what produced "####"
+          // and clipped figures across the app's spreadsheets.
+          text = numFmtWidthText(v, cell.numFmt);
         } else {
           text = String(v);
         }
@@ -792,4 +848,9 @@ module.exports = {
   getCompanyHeader, getCompanyIdentity, drawCompanyHeader,
   xlsxNumFmtForHeader, writeXlsxCompanyHeader,
   autofitColumns,
+  // Shared with every table renderer (exports-pdf, auction-reports,
+  // spice-board-reports) so a cell that cannot fit its column shrinks and
+  // then ellipsizes the same way everywhere, instead of wrapping onto a
+  // second line and pushing its row taller than the rest.
+  fitText, drawFittedCell,
 };

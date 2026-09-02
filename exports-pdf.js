@@ -34,27 +34,15 @@ const {
 const {
   fmtMoney, fmtQty, fmtPrice, fmtIndian,
   getCompanyHeader, drawCompanyHeader,
-  formatDateForDisplay,
+  formatDateForDisplay, fitText, drawFittedCell,
 } = require('./report-formatters');
 
-// Manually truncate `text` to fit `maxWidth` using doc.widthOfString. PDFKit
-// 0.15's `lineBreak: false` + `ellipsis: true` is unreliable for long single
-// tokens — we ellipsize ourselves so multi-word names don't wrap into next row.
-function fitText(doc, text, maxWidth) {
-  const s = String(text == null ? '' : text);
-  if (!s) return '';
-  if (doc.widthOfString(s) <= maxWidth) return s;
-  const ell = '…';
-  const ellW = doc.widthOfString(ell);
-  if (ellW >= maxWidth) return '';
-  let lo = 0, hi = s.length;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (doc.widthOfString(s.slice(0, mid)) + ellW <= maxWidth) lo = mid;
-    else hi = mid - 1;
-  }
-  return s.slice(0, lo).trimEnd() + ell;
-}
+// `fitText` — the ellipsizing truncator every table cell here draws through —
+// now lives in report-formatters.js and is imported above. A byte-identical
+// second copy used to sit at this spot; once the shared one was imported the
+// leftover made this file a duplicate `function fitText` declaration, which is
+// a SyntaxError in module scope and stopped server.js from booting at all.
+// Do not reintroduce a local copy.
 
 // Wrap `text` into one or more lines fitting maxWidth. Breaks on word
 // boundaries; falls back to character-level break for tokens wider than the
@@ -206,9 +194,30 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
       const slack = usableW - sum;
       colWidths = measured.map(w => w + slack * (w / sum));
     } else {
-      // Too wide to fit — scale down proportionally (MIN_COL enforced below).
-      const scale = usableW / sum;
-      colWidths = measured.map(w => w * scale);
+      // Too wide for the page. Since nothing wraps any more, the excess has
+      // to come out of some column — and it must not come out of the figures.
+      // A number can only shrink its type, never be ellipsized, so squeezing
+      // a money column just makes the figures unreadable. Text columns CAN
+      // ellipsize, so they give first, down to MIN_TEXT_COL. Only if that
+      // still isn't enough does the whole set scale.
+      const MIN_TEXT_COL = 46;
+      let excess = sum - usableW;
+      colWidths = measured.slice();
+      const givers = [];
+      columns.forEach((c, i) => {
+        if (!isNumericCol(c) && measured[i] > MIN_TEXT_COL) givers.push(i);
+      });
+      const pool = givers.reduce((s, i) => s + (measured[i] - MIN_TEXT_COL), 0);
+      if (pool > 0) {
+        const take = Math.min(excess, pool);
+        for (const i of givers) colWidths[i] -= take * ((measured[i] - MIN_TEXT_COL) / pool);
+        excess -= take;
+      }
+      if (excess > 0) {
+        const rest = colWidths.reduce((s, w) => s + w, 0);
+        const scale = usableW / rest;
+        colWidths = colWidths.map(w => w * scale);
+      }
     }
   } else {
     // Column widths proportional to exports.js width weights.
@@ -345,13 +354,14 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
       y = m + 18;
     }
 
-    // Compute header height by wrapping each header label
+    // Header labels sit on ONE line, like every other cell — the strip is a
+    // fixed height instead of growing to whichever label wrapped worst.
+    // Autofit already measures each header at this exact font and treats it
+    // as the column's floor, so a label only shrinks on a table whose widths
+    // are prescribed (PDF_NO_AUTOFIT) or one scaled down to fit the page.
     const HEAD_LINE_H = 10;
     const HEAD_PAD = 4;
-    doc.font('Helvetica-Bold').fontSize(8);
-    const headerWrapped = columns.map((c, i) => wrapText(doc, c.header, colWidths[i] - 6));
-    const headerLines = Math.max(1, ...headerWrapped.map(ls => ls.length));
-    const headH = headerLines * HEAD_LINE_H + HEAD_PAD * 2;
+    const headH = HEAD_LINE_H + HEAD_PAD * 2;
 
     pageTableTop = y;  // remember where this page's column-strip starts
     sectionBands = []; // section banners are per-page; reset on each header
@@ -363,35 +373,26 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
       doc.moveTo(colX[ci], y).lineTo(colX[ci], y + headH)
          .lineWidth(0.5).strokeColor('#999').stroke();
     }
-    doc.fillColor('#000').font('Helvetica-Bold').fontSize(8);
     columns.forEach((c, i) => {
-      const lines = headerWrapped[i];
-      lines.forEach((line, li) => {
-        doc.text(line, colX[i] + 3, y + HEAD_PAD + li * HEAD_LINE_H, {
-          width: colWidths[i] - 6,
-          align: isNumericCol(c) ? 'right' : 'left',
-          lineBreak: false,
-        });
-      });
+      drawCell(c.header, i, y + HEAD_PAD,
+               { bold: true, base: 8, align: isNumericCol(c) ? 'right' : 'left' });
     });
     y += headH;
   }
 
-  // For numeric cells: if the rendered string is wider than the column,
-  // shrink the font from BASE down to a minimum until it fits. Returns the
-  // size to use (the caller restores after). Non-numeric cells still wrap.
-  function fitNumericFontSize(text, maxWidth, baseSize, isBold) {
-    doc.font(isBold ? 'Helvetica-Bold' : 'Helvetica');
-    let size = baseSize;
-    doc.fontSize(size);
-    while (size > 5 && doc.widthOfString(text) > maxWidth) {
-      size -= 0.5;
-      doc.fontSize(size);
-    }
-    return size;
+  // One cell, one line — see drawFittedCell in report-formatters.js for why
+  // nothing here wraps. `figure` marks a cell holding a NUMBER: it gets the
+  // lower floor, because a figure must shrink a long way before it is allowed
+  // to lose digits. A column HEADER is a label even above a money column, so
+  // it right-aligns with the figures beneath it but takes the text floor.
+  function drawCell(text, ci, ty, { bold = false, base = 7.5, align = 'left', figure = false } = {}) {
+    drawFittedCell(doc, text, colX[ci] + 3, ty, colWidths[ci] - 6, {
+      align, base, floor: figure ? 4.5 : 6,
+      font: bold ? 'Helvetica-Bold' : 'Helvetica',
+    });
   }
 
-  function drawRow(row, i, rowH, wrapped) {
+  function drawRow(row, i, rowH, cells) {
     if (row._isSection) {
       // Full-width party banner (name + GSTIN + phone). Verticals skip this
       // band. Phone is what the office rings when a bill is queried, so it
@@ -411,27 +412,13 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
     if (row._isSubtotal) {
       // Subtotal row — full-width yellow strip styled like the grand total.
       doc.rect(m, y, usableW, rowH).fillAndStroke('#FFF3CD', '#E0B020');
-      const BASE = 7.5;
-      const LINE_H = 10;
-      const PAD_TOP = 3;
       columns.forEach((c, ci) => {
-        const lines = wrapped[ci];
-        const cellW = colWidths[ci] - 6;
-        if (isNumericCol(c) && lines.length === 1) {
-          // Numeric: auto-shrink to fit on one line.
-          const size = fitNumericFontSize(lines[0], cellW, BASE, true);
-          doc.fillColor('#000').font('Helvetica-Bold').fontSize(size);
-          doc.text(lines[0], colX[ci] + 3, y + PAD_TOP, {
-            width: cellW, align: 'right', lineBreak: false,
-          });
-        } else {
-          doc.fillColor('#000').font('Helvetica-Bold').fontSize(BASE);
-          lines.forEach((line, li) => {
-            doc.text(line, colX[ci] + 3, y + PAD_TOP + li * LINE_H, {
-              width: cellW, align: isNumericCol(c) ? 'right' : 'left', lineBreak: false,
-            });
-          });
-        }
+        // A subtotal's label ("Total", "KERALA TOTAL") often sits in a numeric
+        // column, so what makes a cell a figure here is the VALUE, not the
+        // column: a number right-aligns and is never clipped, a label does not.
+        const isFigure = isNumericCol(c) && typeof row[c.key] === 'number';
+        drawCell(cells[ci], ci, y + 3,
+                 { bold: true, align: isNumericCol(c) ? 'right' : 'left', figure: isFigure });
       });
       y += rowH;
       return;
@@ -439,35 +426,10 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
     // Inset the stripe fill 0.5pt from the top so it never paints over the
     // previous row's separator line — keeps every separator uniformly crisp.
     if (i % 2 === 1) doc.rect(m, y + 0.5, usableW, rowH - 0.5).fill('#F7F5F2');
-    const BASE = 7.5;
-    const LINE_H = 10;
-    const PAD_TOP = 3;
     columns.forEach((c, ci) => {
-      const lines = wrapped[ci];
-      const cellW = colWidths[ci] - 6;
-      if (isNumericCol(c) && lines.length === 1) {
-        // Numeric: auto-shrink to fit on one line — never wrap a number.
-        const size = fitNumericFontSize(lines[0], cellW, BASE, false);
-        doc.fillColor('#000').font('Helvetica').fontSize(size);
-        doc.text(lines[0], colX[ci] + 3, y + PAD_TOP, {
-          width: cellW, align: 'right', lineBreak: false,
-        });
-      } else if (c.nowrap && lines.length === 1) {
-        // Non-numeric but single-line (e.g. branch code): auto-shrink to fit
-        // on one line, left-aligned like other text.
-        const size = fitNumericFontSize(lines[0], cellW, BASE, false);
-        doc.fillColor('#000').font('Helvetica').fontSize(size);
-        doc.text(lines[0], colX[ci] + 3, y + PAD_TOP, {
-          width: cellW, align: 'left', lineBreak: false,
-        });
-      } else {
-        doc.fillColor('#000').font('Helvetica').fontSize(BASE);
-        lines.forEach((line, li) => {
-          doc.text(line, colX[ci] + 3, y + PAD_TOP + li * LINE_H, {
-            width: cellW, align: isNumericCol(c) ? 'right' : 'left', lineBreak: false,
-          });
-        });
-      }
+      const numeric = isNumericCol(c);
+      drawCell(cells[ci], ci, y + 3,
+               { align: numeric ? 'right' : 'left', figure: numeric });
     });
     // Visible horizontal separator after every row. Matches the vertical
     // grid colour (#888) so the table reads as a clean grid; 0.5pt stays
@@ -476,44 +438,31 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
     y += rowH;
   }
 
-  // Pre-measure a row's required height by wrapping each cell.
-  // Numeric cells are NOT wrapped — they're laid out single-line and the font
-  // shrinks if the value overflows, since wrapping a number across lines
-  // (e.g. "10,71,225." / "00") looks broken. Non-numeric cells word-wrap.
+  // Format each cell to its display string. Every row is the SAME height now
+  // that nothing wraps, which is what makes the grid read as a grid — the old
+  // measure grew a row to whichever cell wrapped worst, so one long name left
+  // a double-height band across the page.
+  const ROW_BODY_H = 16;   // one 10pt line + 3pt padding top and bottom
   function measureRow(row) {
     if (row._isSection) {
-      return { rowH: 17, wrapped: columns.map(() => ['']) };
+      return { rowH: 17, cells: columns.map(() => '') };
     }
-    doc.font('Helvetica').fontSize(7.5);
-    const LINE_H = 10;
-    const PAD_TOP = 3, PAD_BOT = 3;
-    const MIN_ROW = 14;
-    const wrapped = columns.map((c, ci) => {
-      const cellW = colWidths[ci] - 6;
-      const text = fmtCell(row[c.key], c);
-      // Numeric cells, and any column flagged `nowrap` (e.g. a short branch
-      // code), stay on ONE line — the font auto-shrinks at draw time instead
-      // of wrapping. Only genuinely long free text (names) word-wraps.
-      if (isNumericCol(c) || c.nowrap) {
-        return [String(text)];
-      }
-      return wrapText(doc, text, cellW);
-    });
-    const maxLines = Math.max(1, ...wrapped.map(ls => ls.length));
-    const rowH = Math.max(MIN_ROW, maxLines * LINE_H + PAD_TOP + PAD_BOT);
-    return { rowH, wrapped };
+    return {
+      rowH: ROW_BODY_H,
+      cells: columns.map((c) => String(fmtCell(row[c.key], c))),
+    };
   }
 
   drawHeader(true);
 
   rows.forEach((row, i) => {
-    const { rowH, wrapped } = measureRow(row);
+    const { rowH, cells } = measureRow(row);
     if (y + rowH > pageH - m - (totals ? 28 : 12)) {
       closePageBorders();
       doc.addPage();
       drawHeader(false);
     }
-    drawRow(row, i, rowH, wrapped);
+    drawRow(row, i, rowH, cells);
   });
 
   if (totals) {
@@ -526,24 +475,12 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
     columns.forEach((c, ci) => {
       const val = totals[c.key];
       if (val === undefined || val === null || val === '') return;
-      const cellW = colWidths[ci] - 6;
       const text = fmtCell(val, c);
-      if (isNumericCol(c)) {
-        // Auto-shrink numeric totals so they never get truncated with an
-        // ellipsis — losing digits in a total is much worse than a slightly
-        // smaller font.
-        const size = fitNumericFontSize(text, cellW, 8, true);
-        doc.fillColor('#000').font('Helvetica-Bold').fontSize(size);
-        doc.text(text, colX[ci] + 3, y + 4, {
-          width: cellW, align: 'right', lineBreak: false,
-        });
-      } else {
-        doc.fillColor('#000').font('Helvetica-Bold').fontSize(8);
-        const fitted = fitText(doc, text, cellW);
-        doc.text(fitted, colX[ci] + 3, y + 4, {
-          width: cellW, align: 'left', lineBreak: false,
-        });
-      }
+      // Same rule as the body: a figure shrinks rather than lose digits (a
+      // truncated total is a wrong total), a label ellipsizes.
+      const isFigure = isNumericCol(c) && typeof val === 'number';
+      drawCell(text, ci, y + 4,
+               { bold: true, base: 8, align: isNumericCol(c) ? 'right' : 'left', figure: isFigure });
     });
     y += ROW_H + 2;
     // Outer border now encloses data + totals; the verticals were drawn
@@ -714,6 +651,40 @@ const COLS = {
     { header: 'TCS',        key: 'tcs',       width: 12 },
     { header: 'Round',      key: 'rund',      width: 12 },
     { header: 'Total',      key: 'total',     width: 12 },
+  ],
+  // The other two Journals-screen registers, on the same terms as
+  // sales_journal above: these are the SCREEN's columns and labels, so the
+  // Journals screen, the Auction Desk tile and the Auction Manager tile all
+  // print one document rather than three variants of it. Widths follow the
+  // same spec convention — 12 for a figure column, 16 for text.
+  //
+  // `date` arrives from getPurchaseJournal already rendered dd/mm/yyyy, which
+  // is what the screen's fmtD() shows, so it needs no further formatting here.
+  purchase_journal_dealer: [
+    { header: 'Date',   key: 'date',       width: 16 },
+    { header: 'Inv#',   key: 'invoice_no', width: 16 },
+    { header: 'Name',   key: 'name',       width: 16 },
+    { header: 'Place',  key: 'place',      width: 16 },
+    { header: 'GSTIN',  key: 'gstin',      width: 16 },
+    { header: 'Qty',    key: 'qty',        width: 12 },
+    { header: 'Amount', key: 'amount',     width: 12 },
+    { header: 'CGST',   key: 'cgst',       width: 12 },
+    { header: 'SGST',   key: 'sgst',       width: 12 },
+    { header: 'IGST',   key: 'igst',       width: 12 },
+    { header: 'Total',  key: 'total',      width: 12 },
+    { header: 'TDS',    key: 'tds',        width: 12 },
+  ],
+  purchase_journal_agri: [
+    { header: 'Date',  key: 'date',    width: 16 },
+    { header: 'Bill#', key: 'bill_no', width: 16 },
+    { header: 'Name',  key: 'name',    width: 16 },
+    { header: 'Place', key: 'place',   width: 16 },
+    { header: 'State', key: 'state',   width: 16 },
+    { header: 'CR',    key: 'cr',      width: 16 },
+    { header: 'PAN',   key: 'pan',     width: 16 },
+    { header: 'Qty',   key: 'qty',     width: 12 },
+    { header: 'Cost',  key: 'cost',    width: 12 },
+    { header: 'Net',   key: 'net',     width: 12 },
   ],
   lot_name: [
     { header: 'LOT',     key: 'lot',     width: 8  },
@@ -1010,6 +981,12 @@ const TOTAL_KEYS = {
   // sales_journal is deliberately absent: the Journals screen prints its
   // "Total" as a highlighted row INSIDE the invoice table (see
   // getRowsForType) and suppresses the generic strip, so this matches it.
+  //
+  // The two purchase journals DO take the generic strip — that is what the
+  // screen's own Export PDF drew for them (it footed every numeric column and
+  // passed summary:null), unlike the Sales Journal's in-table Total row.
+  purchase_journal_dealer: ['qty', 'amount', 'cgst', 'sgst', 'igst', 'total', 'tds'],
+  purchase_journal_agri:   ['qty', 'cost', 'net'],
   lot_name:        ['bag', 'qty'],
   lot_payment:     ['qty', 'cost'],
   price_list:      ['bag', 'qty'],
@@ -1080,6 +1057,10 @@ const TITLES = {
   lot_verification:   'Lot Verification',
   lot_verification_2: 'Lot Verification II',
   sales_journal:      'Sales Journal',
+  // Verbatim from the Journals screen's own _jrTitles map, so the printed
+  // heading matches the screen the operator exported it from.
+  purchase_journal_dealer: 'Dealer Purchase Journal',
+  purchase_journal_agri:   'Agri Bill Journal',
   lot_name:        'Lot Name',
   lot_payment:     'Lot Payment',
   price_list:      'Price List',
@@ -1120,6 +1101,24 @@ const PDF_LAYOUT = {
   // 14 columns, eleven of them money running to eight figures — portrait
   // would shrink the rupee cells past readable.
   sales_journal: 'landscape',
+  // Promoted 2026-09-02, when cells stopped wrapping. Wrapping had been
+  // hiding how wide these three really are: a long name simply flowed onto a
+  // second line. With one line per cell the same page has to be paid for in
+  // clipped names instead, and in portrait these were the worst in the app —
+  // 19% of bank_payment's cells ellipsized, 12% of the other two. Landscape
+  // takes all three to none.
+  //   bank_payment  8 columns, but four are long strings (IFSC, A/C NO,
+  //                 NAME, ADDRESS) — an address does not fit a portrait share.
+  //   tally_purchase 15 columns, five of them free text.
+  //   sales_taxes    15 columns, TRADERNAME beside eleven money columns.
+  bank_payment:   'landscape',
+  tally_purchase: 'landscape',
+  sales_taxes:    'landscape',
+  // Both purchase journals carry wide text columns (name, place, GSTIN/PAN)
+  // beside their money columns, and the screen's own Export PDF asked for
+  // landscape for exactly that reason.
+  purchase_journal_dealer: 'landscape',
+  purchase_journal_agri:   'landscape',
   // 8-column party rollups with money columns — landscape avoids truncation.
   dealer_list_party_wise: 'landscape',
   pooler_list_consolidated: 'landscape',
@@ -1275,6 +1274,18 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
       }
       return [...rows, total];
     }
+
+    // The dealer and agriculturist purchase registers, from the same call the
+    // Journals screen's table is drawn from (/api/journals/purchase) and the
+    // same one exportPurchaseJournal builds its spreadsheet from — so the
+    // screen, the sheet and the print can never list different purchases.
+    // Totals come from the generic strip (see TOTAL_KEYS), not from a row
+    // appended here.
+    case 'purchase_journal_dealer':
+      return require('./calculations').getPurchaseJournal(db, auctionId, 'dealer');
+
+    case 'purchase_journal_agri':
+      return require('./calculations').getPurchaseJournal(db, auctionId, 'agri');
 
     case 'lot_name': {
       const rows = db.all(

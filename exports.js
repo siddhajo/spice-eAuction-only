@@ -106,6 +106,8 @@ async function createExcelBuffer(sheetName, columns, rows, opts) {
   const ws = wb.addWorksheet(sheetName);
 
   // Apply column widths up front (the brand band uses these widths too).
+  // These are only a seed — autofitColumns() at the end of this function
+  // sizes every column to what was actually written.
   ws.columns = columns.map(c => ({ key: c.key, width: c.width || 15 }));
 
   // Resolve per-column numFmt + alignment ONCE so we can apply them to
@@ -189,7 +191,10 @@ async function createExcelBuffer(sheetName, columns, rows, opts) {
   headerRow.height = 20;
   headerRow.eachCell((cell) => {
     cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
-    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    // wrapText OFF: the autofit above guarantees the column is at least as
+    // wide as this header, so a two-word label like "BILL AMOUNT" sits on one
+    // line instead of stacking and leaving a double-height header band.
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false };
   });
 
   // Helper to emit a single data row honouring numeric coercion + per-col align

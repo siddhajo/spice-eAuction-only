@@ -8835,12 +8835,23 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
   <div class="fg">
     <label>Sale Type — filters eligible buyers below</label>
     <select id="gi-sale" onchange="loadInvEligibleBuyers();suggestDocNo(document.getElementById('inv-auction').value,'invoices','gi-invno',this.value,true,selectedDocType('gi-doctype'))">
-      <!-- Default option: "All" — shows both local and interstate buyers
-           together. Users can narrow to a single type if needed. Earlier
-           the default was 'L' (Local), which silently hid every buyer
-           whose default_sale was 'I' (interstate) and made the picker
-           appear empty in audits/reports. -->
-      <option value="">All sale types</option>
+      <!-- No "All sale types" option: removed 2026-09-02 on request. An
+           invoice is always raised under ONE sale type, so the blank
+           sentinel only ever deferred the choice — it filtered nothing,
+           then made generateInvoice() either infer the type from a single
+           buyer's default or stop with an alert. The operator now picks it
+           up front, which is also what puts the document on the right
+           number series (suggestDocNo numbers per sale type when one is
+           set, and globally when it is not).
+
+           Note the trade-off this reinstates, and why it is acceptable:
+           with Local first, the picker below opens showing only 'L'
+           buyers, so an interstate buyer looks missing until the type is
+           switched. That ambiguity is what the "All" option was
+           originally added to cure. It is tolerable now because the
+           label says the field filters the list and the selected type is
+           always visible — whereas a blank select would say nothing at
+           all about why a buyer is absent. -->
       <option value="L">Local (L)</option>
       <option value="I">Inter-state (I)</option>
       <option value="E">Export (E)</option>
@@ -8952,16 +8963,25 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     </select>
     <div id="ga-doctype-hint" style="font-size:11px;color:var(--text3);margin-top:4px"></div>
   </div>
-  <div class="fg" id="gen-all-sale-wrap" style="display:none"><label>Sale Type — filter + fallback</label>
+  <div class="fg" id="gen-all-sale-wrap" style="display:none"><label>Sale Type — filters the buyers below</label>
     <select id="ga-sale" onchange="refreshGenAllPreview();suggestDocNo(document.getElementById('inv-auction').value,'invoices','ga-start',this.value,true,selectedDocType('ga-doctype'))">
-      <option value="">All sale types (use each buyer's default)</option>
+      <!-- "All sale types (use each buyer's default)" was removed 2026-09-02
+           on request. It was the only way to reach the server's per-buyer
+           fallback (`saleType || row.default_sale || 'L'`), so a batch run is
+           now always ONE sale type: the run covers the buyers listed in the
+           preview below and no others.
+
+           A trade with buyers of more than one type therefore needs one run
+           per type. That is the point — each run then draws its numbers from
+           that type's own series rather than from the global maximum, which
+           is what the blank sentinel used to do. -->
       <option value="L">Local (L) only</option>
       <option value="I">Inter-state (I) only</option>
       <option value="E">Export (E) only</option>
       <option value="W">Withdrawn (W) only</option>
       <option value="N">N/A (N) only</option>
     </select>
-    <div style="font-size:11px;color:var(--text3);margin-top:4px">When set, only buyers whose default sale type matches are included.</div>
+    <div style="font-size:11px;color:var(--text3);margin-top:4px">Only buyers whose default sale type matches are included — run once per sale type.</div>
   </div>
   <div class="fg"><label>Starting Number</label>
     <!-- oninput re-renders the preview so the lot-wise number RANGE
@@ -15957,7 +15977,20 @@ const AMR_SECTIONS = [
     // Not in the mapping list supplied with the design — flagged as todo
     // until told which report backs it.
     { label: 'Crop Receipts CSV',        todo: true },
-    { label: 'Auction Report CSV',       href: id => `/api/exports/full_file/${id}?format=xlsx`,
+    // The Auction Report — the SAME report the PDF section's "Auction Report"
+    // tile prints (`trade_report`, the buyers list for verification with its
+    // state subtotals), served as the spreadsheet its own builder already
+    // makes. Until 2026-09-02 this tile pointed at `full_file` instead, so
+    // the one tile named "Auction Report" handed out a different report from
+    // the one named "Auction Report" two sections down. Full File now has its
+    // own tile directly below and keeps its own route.
+    { label: 'Auction Report CSV',       href: id => `/api/exports/trade_report/${id}?format=xlsx`,
+                                         note: 'xlsx' },
+    // The 28-column lot-wise dump. XLSX-only by design — there is no printable
+    // page wide enough for it (exports-pdf.js returns null for full_file), so
+    // unlike its neighbours it has no PDF twin, and this is the only tile in
+    // the screen that serves it.
+    { label: 'Full File CSV',            href: id => `/api/exports/full_file/${id}?format=xlsx`,
                                          note: 'xlsx' },
     // Commission Bill and Dealer Invoice are the two exports that write CSV
     // text directly — bespoke column layouts, no workbook of their own. The
@@ -29143,7 +29176,13 @@ async function openGenAllModal(kind){
   var _dtWrap=document.getElementById('gen-all-doctype-wrap');if(_dtWrap)_dtWrap.style.display=kind==='invoices'?'block':'none';
   var _dtSel=document.getElementById('ga-doctype');if(_dtSel)_dtSel.value='original';
   if(kind==='invoices')onGaDocTypeChange();
-  if(document.getElementById('ga-sale'))document.getElementById('ga-sale').value='';
+  // Open on Local rather than on the old '' sentinel. That value no longer
+  // matches any option, and assigning an unmatched value to a <select> sets
+  // selectedIndex to -1 — the field would render EMPTY on every open while
+  // still submitting a blank saleType, which the backend reads as "every
+  // buyer, each on its own default". Naming the default keeps what the
+  // dropdown shows and what the run does in agreement.
+  if(document.getElementById('ga-sale'))document.getElementById('ga-sale').value='L';
   document.getElementById('ga-start').value='';
   // Suggest the starting number by continuing the previous trade's series.
   // kind (invoices|purchases|bills) matches the suggest-doc-no module names.
@@ -31598,12 +31637,14 @@ async function generateInvoice(){
   const rowLots=checked.map(cb=>(cb.dataset.lots||'').split(',').map(s=>s.trim()).filter(Boolean));
   const splitRows=rowLots.filter(l=>l.length).length;
 
-  // "All sale types" is only a picker filter — a single invoice needs one
-  // concrete type. For one buyer, fall back to its effective sale (the chip's
-  // data-sale). For several buyers, they may differ, so ask the user to pick.
+  // The picker no longer offers a blank "All sale types", so this is now a
+  // guard rather than the normal path — kept because the backend rejects a
+  // blank saleType with a bare 400, and a stale/restored form could still
+  // present one. Single buyer: take its effective sale off the chip. Several:
+  // they may differ, so the operator has to choose.
   if(!saleType){
     if(checked.length===1){ saleType=(checked[0].dataset.sale||'').trim(); }
-    if(!saleType){ alert('Choose a Sale Type (L/I/E) — "All sale types" only filters the buyer list.'); return; }
+    if(!saleType){ alert('Choose a Sale Type (L/I/E) before generating.'); return; }
   }
 
   // Split mode: one buyer → several invoices (see generateInvoiceSplit).
@@ -39536,51 +39577,31 @@ async function exportJournalPdf(){
   // /api/journals/sales with this auction + sale type, which is exactly what
   // the route re-reads. (The on-screen sort was never carried either — the
   // export always used the fetched order.)
-  if (lj.type === 'sales') {
-    const url = `/api/exports/sales-journal?auctionId=${encodeURIComponent(lj.auctionId)}`
-      + (lj.saleType ? `&saleType=${encodeURIComponent(lj.saleType)}` : '') + '&format=pdf';
-    try {
-      await withOverlay('Preparing journal PDF…', async () => {
-        const r = await fetch(B + url, { headers:{ 'Authorization':'Bearer '+T } });
-        if (!r.ok) { let msg='Export failed'; try { const e=await r.json(); if(e.error) msg=e.error; } catch(_){} throw new Error(msg); }
-        const blob = await r.blob();
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'SalesJournal.pdf';
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 60000);
-      });
-    } catch (e) { showError(e); }
-    return;
-  }
-  // Map the DataTable columns → report-pdf columns. Wider share for text.
-  const columns = lj.cols.map(c => ({ header: c.label || c.key, key: c.key, width: c.numeric ? 12 : 16 }));
-  // Format each cell the same way the table does: dates via fmtD, numbers via
-  // the column's fmt(), everything else as-is.
-  const cell = (c, row) => {
-    if (c.key === 'date') return fmtD(row.date);
-    const v = row[c.key];
-    if (c.fmt) return c.fmt(v);
-    return v == null ? '' : v;
-  };
-  const rows = lj.data.map(row => {
-    const o = {}; for (const c of lj.cols) o[c.key] = cell(c, row); return o;
-  });
-  // Purchase journals (dealer / agri) keep the plain totals strip. The Sales
-  // journal's own Total row + boxed ledger summary now live server-side and
-  // returned above — see the note there.
-  const totals = {};
-  for (const c of lj.cols) { if (!c.numeric) continue; const s = lj.data.reduce((a, r) => a + (Number(r[c.key]) || 0), 0); totals[c.key] = c.fmt ? c.fmt(s) : s; }
-  const summary = null;
-  const aucSel = document.getElementById('jr-auction');
-  const subtitle = aucSel && aucSel.selectedIndex >= 0 ? (aucSel.options[aucSel.selectedIndex].text || '') : '';
-  const spec = { title: lj.title, subtitle, layout: 'landscape', columns, rows, totals, summary, autofit: true };
+  // All three journals are rendered server-side now. The two purchase journals
+  // joined the Sales Journal on 2026-09-02, for the same reason and on the same
+  // terms: their rows, column labels and totals strip moved into exports-pdf.js
+  // (COLS/TITLES/TOTAL_KEYS/PDF_LAYOUT `purchase_journal_dealer` and
+  // `_agri`), so this screen, the Auction Desk tile and the Auction Manager
+  // tile print one document per journal instead of three variants.
+  //
+  // Do not reintroduce a client-built /api/report-pdf spec here — that is
+  // exactly the second-document problem this replaced.
+  const url = (lj.type === 'sales')
+    ? `/api/exports/sales-journal?auctionId=${encodeURIComponent(lj.auctionId)}`
+        + (lj.saleType ? `&saleType=${encodeURIComponent(lj.saleType)}` : '') + '&format=pdf'
+    : `/api/exports/purchase-journal?auctionId=${encodeURIComponent(lj.auctionId)}`
+        + `&type=${encodeURIComponent(lj.type)}&format=pdf`;
+  const name = (lj.type === 'sales') ? 'SalesJournal.pdf'
+             : (lj.type === 'agri')  ? 'AgriBillJournal.pdf'
+                                     : 'PurchaseJournal.pdf';
   try {
     await withOverlay('Preparing journal PDF…', async () => {
-      const blob = await _reportPdfBlob(spec);
+      const r = await fetch(B + url, { headers:{ 'Authorization':'Bearer '+T } });
+      if (!r.ok) { let msg='Export failed'; try { const e=await r.json(); if(e.error) msg=e.error; } catch(_){} throw new Error(msg); }
+      const blob = await r.blob();
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = (lj.title || 'Journal').replace(/[^\w]+/g, '_') + '.pdf';
+      a.download = name;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 60000);
     });

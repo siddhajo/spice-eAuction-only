@@ -16,7 +16,7 @@ const PDFDocument = require('pdfkit');
 const {
   fmtMoney, fmtQty, fmtPrice, formatInvoiceNo,
   getCompanyHeader, drawCompanyHeader,
-  writeXlsxCompanyHeader, formatDateForDisplay,
+  writeXlsxCompanyHeader, formatDateForDisplay, drawFittedCell, autofitColumns,
 } = require('./report-formatters');
 // Defensive identity resolver — see _company-identity-fallback.js for
 // rationale. Decoupled from the destructure above so a stale
@@ -345,20 +345,15 @@ function carbonCopySlipPdf({ auction, rows, columns, totalKeys, companyHeader, b
     return v == null ? '' : String(v);
   }
 
-  // Draw a cell value into width `w`, first shrinking the font from `baseFont`
-  // down to a 5.5pt floor to make the WHOLE value fit on one line. Only when it
-  // still overflows at the floor do we ellipsize (fitText). This keeps long
-  // seller names and large ₹ amounts intact on the narrow carbon-copy halves
-  // instead of cutting them off.
-  function drawFittedCell(fontName, text, x, y, w, align) {
-    const s = String(text == null ? '' : text);
-    let size = baseFont;
-    doc.font(fontName).fontSize(size);
-    while (size > 5.5 && doc.widthOfString(s) > w) {
-      size -= 0.25;
-      doc.fontSize(size);
-    }
-    doc.text(fitText(doc, s, w), x, y, { width: w, align, lineBreak: false });
+  // The slip's own wrapper around the shared cell renderer: it carries this
+  // report's baseFont, its finer 0.25pt steps and its 5.5pt floor (the
+  // carbon-copy halves are narrow, so values are worth shrinking harder for),
+  // and it restores baseFont afterwards because the slip draws chrome between
+  // cells. Named apart from the imported drawFittedCell so the two signatures
+  // can't be confused.
+  function drawSlipCell(fontName, text, x, y, w, align) {
+    drawFittedCell(doc, text, x, y, w,
+                   { align, font: fontName, base: baseFont, floor: 5.5, step: 0.25 });
     doc.fontSize(baseFont);
   }
 
@@ -379,7 +374,7 @@ function carbonCopySlipPdf({ auction, rows, columns, totalKeys, companyHeader, b
     doc.fillColor('#000');
     let cx = xOrigin;
     columns.forEach((col, i) => {
-      drawFittedCell('Helvetica-Bold', col.header, cx + 2, hy + 5, colW[i] - 4, 'center');
+      drawSlipCell('Helvetica-Bold', col.header, cx + 2, hy + 5, colW[i] - 4, 'center');
       cx += colW[i];
     });
   }
@@ -394,7 +389,7 @@ function carbonCopySlipPdf({ auction, rows, columns, totalKeys, companyHeader, b
       let cx = xOrigin;
       columns.forEach((col, ci) => {
         const w = colW[ci] - 4;
-        drawFittedCell('Helvetica', cellText(col, r), cx + 2, ry + 4, w, col.align || 'right');
+        drawSlipCell('Helvetica', cellText(col, r), cx + 2, ry + 4, w, col.align || 'right');
         cx += colW[ci];
       });
       ry += ROW_H;
@@ -435,7 +430,7 @@ function carbonCopySlipPdf({ auction, rows, columns, totalKeys, companyHeader, b
           const sum = rows.reduce((s, r) => s + (Number(r[col.key]) || 0), 0);
           txt = col.fmt ? col.fmt(sum) : String(sum);
         }
-        drawFittedCell('Helvetica-Bold', txt, cx + 2, ty + 5, w, col.align || 'right');
+        drawSlipCell('Helvetica-Bold', txt, cx + 2, ty + 5, w, col.align || 'right');
         cx += colW[ci];
       });
       let vx2 = xOrigin;
@@ -1003,7 +998,9 @@ async function collectionXlsx(db, auctionId) {
     head.eachCell(c => {
       c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E4DD' } };
       c.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
-      c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      // Single-line headers — autofitColumns() below sizes each column to at
+      // least its own label, so nothing needs to stack.
+      c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false };
     });
   }
 
@@ -1069,6 +1066,10 @@ async function collectionXlsx(db, auctionId) {
     note.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFBEB' } };
   }
 
+  // Size every column to what was written — these two sheets build their own
+  // worksheet rather than going through createExcelBuffer, so they were the
+  // only XLSX exports left with hand-guessed widths.
+  try { autofitColumns(ws); } catch (_) {}
   return wb.xlsx.writeBuffer();
 }
 
@@ -1224,23 +1225,23 @@ async function collectionPdf(db, auctionId) {
                    fmtQty(it.qty), fmtMoney(it.value)];
     const aligns = ['center', 'left', 'left', 'right', 'right'];
 
+    // One line per cell, so every row is the same height — see drawFittedCell
+    // in report-formatters.js. This used to grow the row to whichever cell
+    // wrapped worst, which left a taller band wherever one buyer had a long
+    // trade name.
     const LINE_H = 12;
     const PAD_TOP = 4, PAD_BOT = 4;
-    const wrapped = cells.map((v, ci) => wrapText(doc, v, colW[ci] - 8));
-    const maxLines = Math.max(1, ...wrapped.map(ls => ls.length));
-    const rowH = maxLines * LINE_H + PAD_TOP + PAD_BOT;
+    const rowH = LINE_H + PAD_TOP + PAD_BOT;
 
     if (y + rowH > pageH - m - 12) newPage();
     startSegment();
     if (idx % 2 === 1) doc.rect(m, y, usableW, rowH).fill('#F7F5F2');
-    doc.fillColor('#000').font('Helvetica').fontSize(9);
 
     cells.forEach((v, ci) => {
-      const lines = wrapped[ci];
-      lines.forEach((line, li) => {
-        doc.text(line, colX[ci] + 4, y + PAD_TOP + li * LINE_H, {
-          width: colW[ci] - 8, align: aligns[ci], lineBreak: false,
-        });
+      drawFittedCell(doc, v, colX[ci] + 4, y + PAD_TOP, colW[ci] - 8, {
+        align: aligns[ci], base: 9,
+        // Qty and value are the last two columns; they may not lose digits.
+        floor: ci >= 3 ? 5 : 6,
       });
     });
     doc.moveTo(m, y + rowH).lineTo(m + usableW, y + rowH)
@@ -1506,7 +1507,8 @@ async function tradeReportXlsx(db, auctionId, opts) {
   head.eachCell(c => {
     c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E4DD' } };
     c.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
-    c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    // Single-line headers — see the note on the Collection sheet above.
+    c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false };
   });
 
   function emitRow(r) {
@@ -1656,6 +1658,10 @@ async function tradeReportXlsx(db, auctionId, opts) {
     ws.mergeCells(`G${r.number}:H${r.number}`);
   }
 
+  // Size every column to what was written — these two sheets build their own
+  // worksheet rather than going through createExcelBuffer, so they were the
+  // only XLSX exports left with hand-guessed widths.
+  try { autofitColumns(ws); } catch (_) {}
   return wb.xlsx.writeBuffer();
 }
 
@@ -1798,25 +1804,22 @@ async function tradeReportPdf(db, auctionId, opts) {
     ];
     const aligns = ['center', 'center', 'left', 'left', 'center', 'right', 'right', 'right', 'center'];
 
-    // Wrap each cell text into lines that fit its column width. Use the
-    // tallest cell to set this row's height so nothing overflows.
+    // One line per cell — uniform row height, nothing wrapped. The font gives
+    // before the value does; see drawFittedCell in report-formatters.js.
     const LINE_H = 11;
     const PAD_TOP = 3, PAD_BOT = 3;
-    const wrapped = cells.map((v, ci) => wrapText(doc, v, colW[ci] - 8));
-    const maxLines = Math.max(1, ...wrapped.map(ls => ls.length));
-    const rowH = maxLines * LINE_H + PAD_TOP + PAD_BOT;
+    const rowH = LINE_H + PAD_TOP + PAD_BOT;
 
     ensureRoom(rowH);
     startSegment();
     if (idx % 2 === 1) doc.rect(m, y, usableW, rowH).fill('#F7F5F2');
-    doc.fillColor('#000').font('Helvetica').fontSize(8.5);
 
     cells.forEach((v, ci) => {
-      const lines = wrapped[ci];
-      lines.forEach((line, li) => {
-        doc.text(line, colX[ci] + 4, y + PAD_TOP + li * LINE_H, {
-          width: colW[ci] - 8, align: aligns[ci], lineBreak: false,
-        });
+      drawFittedCell(doc, v, colX[ci] + 4, y + PAD_TOP, colW[ci] - 8, {
+        align: aligns[ci], base: 8.5,
+        // Columns 4..7 are bag / qty / amount / inv amount — figures, which
+        // shrink further rather than lose digits.
+        floor: (ci >= 4 && ci <= 7) ? 5 : 6,
       });
     });
     doc.moveTo(m, y + rowH).lineTo(m + usableW, y + rowH)

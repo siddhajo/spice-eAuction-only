@@ -26,7 +26,7 @@ const { isDealerSeller, hasValidGstin } = require('./calculations');
 const {
   fmtMoney, fmtQty, fmtPrice, fmtIndian, formatInvoiceNo,
   getCompanyHeader, writeXlsxCompanyHeader,
-  formatDateForDisplay,
+  formatDateForDisplay, drawFittedCell,
 } = require('./report-formatters');
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -729,13 +729,13 @@ async function buyersStatementPdf(db, opts) {
   function subtotalRow(label, kilos, amount) {
     const top = y;
     const H = 18;
-    doc.font('Helvetica-Bold').fontSize(9.5).fillColor('#000');
+    // Same one-line rule as the data rows and the grand total below.
     const labelW = colW[1] + colW[2] - PADX * 2;
-    doc.text(label, colX[1] + PADX, vy(top, H, 10), {
-      width: labelW, align: 'left', lineBreak: false,
-    });
-    doc.text(fmtQty(kilos),    colX[3] + PADX, vy(top, H, 10), { width: colW[3] - PADX * 2, align: 'right', lineBreak: false });
-    doc.text(fmtMoney(amount), colX[4] + PADX, vy(top, H, 10), { width: colW[4] - PADX * 2, align: 'right', lineBreak: false });
+    const fit = (text, x, w, align) => drawFittedCell(doc, text, x, vy(top, H, 10), w,
+      { align, font: 'Helvetica-Bold', base: 9.5, floor: 5 });
+    fit(label,             colX[1] + PADX, labelW,             'left');
+    fit(fmtQty(kilos),     colX[3] + PADX, colW[3] - PADX * 2, 'right');
+    fit(fmtMoney(amount),  colX[4] + PADX, colW[4] - PADX * 2, 'right');
     y += H;
     doc.rect(m, top, usableW, y - top).lineWidth(0.7).strokeColor('#000').stroke();
     drawColSeparators(top, y, { skipFrom: 1, skipTo: 2 });
@@ -762,30 +762,22 @@ async function buyersStatementPdf(db, opts) {
   sectionLabel('SALE TYPE TOTALS');
   data.saleTypeTotals.forEach(t => subtotalRow(t.label, t.kilos, t.amount));
 
-  // Grand total — uses a font size close to the data rows so large values
-  // (e.g. "13,62,05,969.60") stay inside their column instead of overflowing
-  // into the merged-label area on the left. Cells pre-wrap and the row
-  // height grows to the tallest cell.
-  const gFont   = 9;
-  const gLineH  = gFont + 2;
-  doc.font('Helvetica-Bold').fontSize(gFont).fillColor('#000');
+  // Grand total — one line per cell, like every data row above it. A large
+  // value (e.g. "13,62,05,969.60") shrinks to stay inside its column instead
+  // of wrapping, which used to break the figure across two lines and grow
+  // the strip taller than the subtotal rows it sits under.
+  const gFont = 9;
   const gCells = [
-    { x: colX[1] + PADX, w: colW[1] + colW[2] - PADX * 2, text: 'GRAND TOTAL',                  align: 'center' },
-    { x: colX[3] + PADX, w: colW[3] - PADX * 2,           text: fmtQty(data.grand.kilos),       align: 'right'  },
-    { x: colX[4] + PADX, w: colW[4] - PADX * 2,           text: fmtMoney(data.grand.amount),    align: 'right'  },
+    { x: colX[1] + PADX, w: colW[1] + colW[2] - PADX * 2, text: 'GRAND TOTAL',               align: 'center' },
+    { x: colX[3] + PADX, w: colW[3] - PADX * 2,           text: fmtQty(data.grand.kilos),    align: 'right'  },
+    { x: colX[4] + PADX, w: colW[4] - PADX * 2,           text: fmtMoney(data.grand.amount), align: 'right'  },
   ];
-  const gWrapped  = gCells.map(c => wrapText(doc, c.text, c.w));
-  const gMaxLines = Math.max(...gWrapped.map(l => l.length));
-  const gH        = Math.max(20, gMaxLines * gLineH + 6);
+  const gH = 20;
   ensureRoom(gH + 2);
   const gTop = y;
-  gCells.forEach((c, i) => {
-    const lines = gWrapped[i];
-    let ty = gTop + (gH - lines.length * gLineH) / 2;
-    lines.forEach(line => {
-      doc.text(line, c.x, ty, { width: c.w, align: c.align, lineBreak: false });
-      ty += gLineH;
-    });
+  gCells.forEach((c) => {
+    drawFittedCell(doc, c.text, c.x, gTop + (gH - gFont) / 2 - 1, c.w,
+                   { align: c.align, font: 'Helvetica-Bold', base: gFont, floor: 5 });
   });
   y = gTop + gH;
   doc.rect(m, gTop, usableW, y - gTop).lineWidth(0.9).strokeColor('#000').stroke();
@@ -1463,7 +1455,9 @@ async function formCXlsx(db, opts) {
   head.font = { bold: true, size: 9 };
   head.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E4DD' } };
   head.eachCell(c => { c.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
-                       c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; });
+                       // Single line — autofitColumns() below widens each
+                       // column to at least its own label.
+                       c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false }; });
   function emitSection(title, rows, totals) {
     if (!rows.length) return;
     const sec = ws.addRow([title]);
@@ -1743,30 +1737,17 @@ async function formCPdf(db, opts) {
       r.buyer, normaliseRegId(r.sbl),
     ];
     const lineH = 8;
-    // For each cell: try to fit on ONE line by shrinking the font down
-    // to MIN_FONT. Only if it still doesn't fit at MIN_FONT do we wrap
-    // to multiple lines (at MIN_FONT) — so ID-like values such as
-    // "CS/55450/520/2324" always render on a single line.
-    const cellFontSizes = cells.map((v, ci) => {
-      const w = cw[ci] - PADX * 2;
-      const text = String(v || '');
-      return fitFontSize(text, w, BASE_FONT, MIN_FONT) || MIN_FONT;
-    });
-    const cellLines = cells.map((v, ci) => {
-      doc.fontSize(cellFontSizes[ci]);
-      return wrapText(doc, String(v || ''), cw[ci] - PADX * 2);
-    });
-    const rowH = Math.max(11, Math.max(...cellLines.map(l => l.length)) * lineH + 4);
+    // Every cell on ONE line: the font shrinks toward MIN_FONT to fit, and a
+    // value that still overflows there is ellipsized rather than wrapped. It
+    // used to wrap at MIN_FONT, which grew the row wherever a bidder had a
+    // long trade name and left this ruled grid with rows of three different
+    // heights down the page.
+    const rowH = Math.max(11, lineH + 4);
     ensureRoom(rowH);
     const top = y;
-    cellLines.forEach((lines, ci) => {
-      const w = cw[ci] - PADX * 2;
-      doc.fontSize(cellFontSizes[ci]);
-      let ty = top + (rowH - lines.length * lineH) / 2;
-      lines.forEach(line => {
-        doc.text(line, cx[ci] + PADX, ty, { width: w, align: aligns[ci], lineBreak: false });
-        ty += lineH;
-      });
+    cells.forEach((v, ci) => {
+      drawFittedCell(doc, String(v || ''), cx[ci] + PADX, top + (rowH - lineH) / 2, cw[ci] - PADX * 2,
+                     { align: aligns[ci], base: BASE_FONT, floor: MIN_FONT, step: 0.25 });
     });
     y = top + rowH;
     doc.moveTo(m, top).lineTo(m, y).moveTo(m + usableW, top).lineTo(m + usableW, y)
@@ -1796,28 +1777,17 @@ async function formCPdf(db, opts) {
       { x: cx[4] + PADX, w: cw[4] - PADX * 2,        text: fmtQty(totals.qtySold),  align: 'right' },
       { x: cx[6] + PADX, w: cw[6] - PADX * 2,        text: fmtMoney(totals.value),  align: 'right' },
     ];
-    // Auto-shrink each cell so the big totals numbers (e.g.
-    // "13,62,049.000") render on a single line. Only wrap to a second
-    // line if even MIN_FONT can't fit — previously 7pt + word-wrap split
-    // numbers across two lines, often with two digits dangling on the
-    // second line.
-    const cellFontSizes = cells.map(c => fitFontSize(c.text, c.w, baseFont, MIN_FONT) || MIN_FONT);
-    const wrapped = cells.map((c, i) => {
-      doc.fontSize(cellFontSizes[i]);
-      return wrapText(doc, c.text, c.w);
-    });
+    // Auto-shrink each cell so the big totals numbers (e.g. "13,62,049.000")
+    // render on a single line. A value that still overflows at MIN_FONT is
+    // ellipsized, never wrapped — word-wrap used to split a total across two
+    // lines with a couple of digits dangling on the second, which reads as a
+    // different figure.
     const lineH = baseFont + 2;
-    const maxLines = Math.max(...wrapped.map(l => l.length));
-    const H = Math.max(isGrand ? 18 : 16, maxLines * lineH + 4);
+    const H = Math.max(isGrand ? 18 : 16, lineH + 4);
     const top = y;
-    cells.forEach((c, i) => {
-      const lines = wrapped[i];
-      doc.fontSize(cellFontSizes[i]);
-      let ty = top + (H - lines.length * lineH) / 2;
-      lines.forEach(line => {
-        doc.text(line, c.x, ty, { width: c.w, align: c.align, lineBreak: false });
-        ty += lineH;
-      });
+    cells.forEach((c) => {
+      drawFittedCell(doc, c.text, c.x, top + (H - lineH) / 2, c.w,
+                     { align: c.align, font: 'Helvetica-Bold', base: baseFont, floor: MIN_FONT, step: 0.25 });
     });
     y = top + H;
     doc.rect(m, top, usableW, y - top).lineWidth(isGrand ? 0.9 : 0.7).strokeColor('#000').stroke();

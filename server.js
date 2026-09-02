@@ -14444,6 +14444,19 @@ app.get('/api/exports/purchase-journal', requireExport, async (req, res) => {
   // come back as a readable 500 like every other export.
   try {
     const db = getDb();
+    // ?format=pdf — the printed register, for the Journals screen's Export PDF
+    // and the Auction Desk / Auction Manager PDF tiles. Same arrangement the
+    // Sales Journal got above: one document per journal, served from here, so
+    // the three surfaces cannot drift into printing variants of each other.
+    if (String(req.query.format || '').toLowerCase() === 'pdf') {
+      const kind = type === 'agri' ? 'agri' : 'dealer';
+      const pdf = await exportAnyPdf(db, `purchase_journal_${kind}`, auctionId, getSettingsFlat(db), {});
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition',
+        `attachment; filename="${baseName}_${anoForFilename(db, auctionId)}.pdf"`);
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+      return res.send(pdf);
+    }
     const { exportPurchaseJournal } = require('./exports');
     const buffer = await exportPurchaseJournal(db, auctionId, type || 'dealer');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

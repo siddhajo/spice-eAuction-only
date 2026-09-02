@@ -72,7 +72,21 @@ function harvestManifest() {
     }
   }
   const todo = [...body.matchAll(/label:\s*'([^']+)',\s*todo:\s*true/g)].map(m => m[1]);
-  return { out, todo };
+  // Per-section tile census, straight off the source. The point is to catch a
+  // harvest that silently drops tiles: if a label is declared in a section but
+  // neither of the two patterns above matched it, `labels` outruns what `out`
+  // holds and the count assertion fails. Derived, never hard-coded — a literal
+  // count here rots the moment a tile is added, which is a test failing for
+  // bookkeeping rather than for a defect.
+  const census = {};
+  for (const { section, text } of chunks) {
+    const labels = [...text.matchAll(/label:\s*'([^']+)'/g)].map(m => m[1]);
+    census[section] = {
+      labels,
+      todo: labels.filter(l => todo.includes(l)),
+    };
+  }
+  return { out, todo, census };
 }
 
 const srv = spawn('node', [path.join(ROOT, 'server.js')], {
@@ -111,7 +125,7 @@ const cleanup = () => {
                                                   buyer: 'ANKIT SPICES', buyer1: 'ANKIT SPICES', sale: 'L' });
   }
 
-  const { out: MANIFEST, todo: TODO } = harvestManifest();
+  const { out: MANIFEST, todo: TODO, census: CENSUS } = harvestManifest();
   const hrefs = MANIFEST.filter(m => m.url);
   const bulks = MANIFEST.filter(m => m.bulk);
 
@@ -139,12 +153,18 @@ const cleanup = () => {
   // is exactly the failure the labels make easy to miss.
   console.log('\n[xlsx] every "CSV Downloads" tile emits real XLSX');
   const csvSection = MANIFEST.filter(m => m.url && m.section === 'CSV Downloads');
-  // Auction Report, Commission Bill, Dealer Invoice, Purchase Invoice, Litre
-  // Weight, Collection, Form C, Form D, Form D1, Arrivals, Traders List,
-  // Sales, Planter/Dealer Disbursement, Lot Verification I + II, Checklist,
-  // Tharai List. (Crop Receipts is todo and carries no href.)
-  check('eighteen download tiles are wired in the section', csvSection.length === 18,
-        csvSection.map(t => t.label).join(', '));
+  // Every tile declared in the section must have been harvested with a URL,
+  // except the todo ones (Crop Receipts), which carry no href by design. The
+  // expected number comes from the section itself rather than from a literal,
+  // so adding a tile does not fail this test — but a tile whose href the
+  // harvester cannot see still does, which is the regression worth catching.
+  const csvCensus = CENSUS['CSV Downloads'] || { labels: [], todo: [] };
+  const csvExpected = csvCensus.labels.length - csvCensus.todo.length;
+  check(`all ${csvExpected} download tiles in the section are wired`,
+        csvSection.length === csvExpected,
+        `harvested ${csvSection.length} of ${csvExpected}: `
+        + csvCensus.labels.filter(l => !csvCensus.todo.includes(l)
+                                    && !csvSection.some(t => t.label === l)).join(', '));
   check('no tile in the section still asks for CSV',
         !csvSection.some(m => /format=csv/i.test(m.url)),
         csvSection.filter(m => /format=csv/i.test(m.url)).map(t => t.label).join(', '));

@@ -574,17 +574,22 @@ const DOCUMENTS = [
     href: (ctx, format) =>
       `/api/exports/sales-journal${q({ auctionId: ctx.auctionId, saleType: ctx.saleType, format })}` },
 
+  // Same two formats, same reasoning as the Sales Journal above: the route's
+  // ?format=pdf branch prints the Journals screen's own register, so the desk
+  // tile and that screen hand out one document per journal.
   { id: 'purchase_journal_dealer', label: 'Purchase Journal (Dealer)', group: 'books', sub: 'Journals',
-    family: 'journals', kind: 'export', scope: 'trade', formats: ['xlsx'],
+    family: 'journals', kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'],
     minStage: 4, perm: 'export',
     route: '/api/exports/purchase-journal',
-    href: (ctx) => `/api/exports/purchase-journal${q({ auctionId: ctx.auctionId, type: 'dealer' })}` },
+    href: (ctx, format) =>
+      `/api/exports/purchase-journal${q({ auctionId: ctx.auctionId, type: 'dealer', format })}` },
 
   { id: 'purchase_journal_agri', label: 'Agri Bill Journal (Agriculturist)', group: 'books', sub: 'Journals',
-    family: 'journals', kind: 'export', scope: 'trade', formats: ['xlsx'],
+    family: 'journals', kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'],
     minStage: 4, perm: 'export',
     route: '/api/exports/purchase-journal',
-    href: (ctx) => `/api/exports/purchase-journal${q({ auctionId: ctx.auctionId, type: 'agri' })}` },
+    href: (ctx, format) =>
+      `/api/exports/purchase-journal${q({ auctionId: ctx.auctionId, type: 'agri', format })}` },
 
   // One row per dealer debit note, in the fixed column layout the office's
   // books consume. CSV only — the layout is a data feed, so the XLSX brand
