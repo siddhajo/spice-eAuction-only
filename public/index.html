@@ -5909,6 +5909,20 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       </div>
     </div></div>
 
+    <!-- Per-user Screens — which optional screens ONE user sees. The
+         install-wide switches in Settings → Flags remain the default;
+         each row here can follow that default or override it. -->
+    <div class="modal-bg" id="user-screens-modal"><div class="modal" style="max-width:560px">
+      <h2>Screens</h2>
+      <p style="font-size:13px;color:var(--spice-text-mute);margin-bottom:14px">Choose which optional screens <strong id="user-screens-username"></strong> sees. <em>Follow default</em> keeps the site-wide setting from Settings → Flags, so changing it there still reaches this user. The change takes effect the next time they sign in or refresh.</p>
+      <input type="hidden" id="user-screens-id">
+      <div id="user-screens-rows"></div>
+      <div class="actions">
+        <button class="btn btn-o" onclick="hideModal('user-screens-modal')">Cancel</button>
+        <button class="btn btn-g" onclick="doSaveUserScreens()">Save Screens</button>
+      </div>
+    </div></div>
+
     <!-- SELLERS -->
     <div class="tc" id="tc-traders">
       <div class="card">
@@ -10977,6 +10991,26 @@ async function applyFeatureFlags() {
       cfg = await j('/api/company-settings/flat');
     }
   } catch (_) {}
+  // ── Per-user screens ────────────────────────────────────────────────
+  // The install-wide flags above are the DEFAULT; an admin can override any
+  // SCREEN flag for one user (Users → Screens), so one operator can work
+  // from the Auction Manager while everyone else keeps the Auction Desk.
+  //
+  // Overlaid onto `cfg` rather than handled separately, so every
+  // data-feat-* line below — and every .feat-* CSS rule they drive — keeps
+  // working untouched: they simply read an effective value instead of the
+  // install one. Settings → Flags still edits the install defaults, which is
+  // why THAT screen reads /api/company-settings/flat directly.
+  //
+  // A failed fetch leaves cfg exactly as it was: the user falls back to the
+  // install defaults, which is the behaviour that existed before per-user
+  // screens and is the safe way to fail.
+  let myScreens = null;
+  try {
+    if (typeof T !== 'undefined' && T) myScreens = await j('/api/me/screens');
+  } catch (_) {}
+  if (cfg && myScreens && typeof myScreens === 'object') Object.assign(cfg, myScreens);
+  window._MY_SCREENS = myScreens || null;
   // Stash the freshly-fetched settings in _CCFG so fmtD() (and any other
   // setting-driven UI bits) see the current date_format on first paint
   // instead of waiting for the first invoice render to populate it.
@@ -18349,6 +18383,11 @@ async function loadUsers(){
             // (not self). Compact buttons sized 32px tall for tight density.
             return `<button class="btn btn-o" style="height:32px;font-size:12px;padding:0 10px" onclick="openChangeRoleModal(${u.id},'${esc(u.username)}','${esc(u.role||'viewer')}')" title="Promote or demote this user">Role</button>`
               + (isAdmin ? '' : ` <button class="btn btn-o" style="height:32px;font-size:12px;padding:0 10px;margin-left:4px" onclick="openUserBranchModal(${u.id},'${esc(u.username)}','${esc(u.branch||'')}')" title="Lock this user to one branch">Branch</button>`)
+              // Which optional screens this person gets. The install-wide
+              // switches in Settings → Flags are the default; this overrides
+              // them for one user, so one operator can work from the Auction
+              // Manager while everyone else keeps the Auction Desk.
+              + ` <button class="btn btn-o" style="height:32px;font-size:12px;padding:0 10px;margin-left:4px" onclick="openUserScreensModal(${u.id},'${esc(u.username)}')" title="Choose which optional screens this user sees">Screens</button>`
               + ` <button class="btn btn-o" style="height:32px;font-size:12px;padding:0 10px;margin-left:4px" onclick="openResetPwModal(${u.id},'${esc(u.username)}')">Reset PW</button>`
               + lockBtn
               // Escape hatch for the one-login-per-username block: clears a
@@ -18555,6 +18594,66 @@ async function doChangeRole(){
     toast(`Role updated to ${r.role || role}`);
     hideModal('change-role-modal');
     loadUsers();
+  }catch(e){showError(e)}
+}
+// ── Per-user Screens ──────────────────────────────────────
+// Three states per screen, not two. "Follow default" is the one that matters:
+// it is not a third way of saying off — it means this user has NO override,
+// so an admin who later flips the site-wide switch in Settings → Flags still
+// reaches them. A plain on/off checkbox would silently pin every user to
+// whatever the default happened to be the day their row was saved.
+async function openUserScreensModal(id, username){
+  document.getElementById('user-screens-id').value = id;
+  document.getElementById('user-screens-username').textContent = username;
+  const host = document.getElementById('user-screens-rows');
+  host.innerHTML = '<div style="color:var(--spice-text-hint);font-size:13px;padding:8px 0">Loading…</div>';
+  showModal('user-screens-modal');
+  let d = null;
+  try { d = await j(`/api/users/${id}/screens`); }
+  catch(e){ host.innerHTML = `<div style="color:var(--spice-chili);font-size:13px">Failed to load: ${esc(e.message)}</div>`; return; }
+  const radio = (key, val, checked, label) =>
+    `<label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;font-size:12.5px;white-space:nowrap">
+       <input type="radio" name="scr-${esc(key)}" value="${val}"${checked ? ' checked' : ''}> ${label}
+     </label>`;
+  host.innerHTML = (d.flags || []).map(f => {
+    const cur = f.override === null ? 'inherit' : (f.override ? 'on' : 'off');
+    // Name the default's value in the label, so "Follow default" says what
+    // it will actually do rather than making the admin go and look.
+    const inheritLabel = `Follow default (${f.installDefault ? 'on' : 'off'})`;
+    // The Auction Desk also needs the auction_desk role capability. Switching
+    // the screen on for a role that lacks it changes nothing, so say so here
+    // rather than leaving the admin to wonder why it didn't appear.
+    const capNote = (f.requiresCapability && !['manager','admin'].includes(String(d.user.role || '').toLowerCase()))
+      ? `<div style="font-size:11px;color:var(--spice-chili);margin-top:2px">Also needs the ${esc(f.requiresCapability)} capability — a ${esc(d.user.role || 'viewer')} will not see it whatever is set here.</div>`
+      : '';
+    return `<div style="padding:9px 0;border-bottom:1px solid var(--border)">
+      <div style="font-weight:600;font-size:13px;margin-bottom:4px">${esc(f.label)}</div>
+      <div>${radio(f.key, 'inherit', cur === 'inherit', inheritLabel)}${radio(f.key, 'on', cur === 'on', 'On')}${radio(f.key, 'off', cur === 'off', 'Off')}</div>
+      ${capNote}
+    </div>`;
+  }).join('') || '<div style="color:var(--spice-text-hint);font-size:13px">No optional screens.</div>';
+}
+async function doSaveUserScreens(){
+  const id = document.getElementById('user-screens-id').value;
+  const overrides = {};
+  document.querySelectorAll('#user-screens-rows input[type=radio]:checked').forEach(el => {
+    const key = el.name.replace(/^scr-/, '');
+    // null is the wire form of "no override" — the server DELETEs the row.
+    overrides[key] = el.value === 'inherit' ? null : (el.value === 'on');
+  });
+  try{
+    await j(`/api/users/${id}/screens`, { method:'PUT', body:JSON.stringify({ overrides }) });
+    toast('Screens updated');
+    hideModal('user-screens-modal');
+    // Repaint our OWN screens if the admin just edited their own row, so the
+    // sidebar matches what was saved without needing a refresh. `uname` in
+    // loadUsers() is function-scoped, so read the signed-in name off the
+    // topbar label the same way that function does.
+    const edited = document.getElementById('user-screens-username').textContent;
+    const signedIn = document.getElementById('user-lbl')?.textContent || '';
+    if (edited && edited === signedIn && typeof applyFeatureFlags === 'function') {
+      try { await applyFeatureFlags(); if (typeof renderNav === 'function') renderNav(); } catch(_) {}
+    }
   }catch(e){showError(e)}
 }
 async function deleteUser(id,username){

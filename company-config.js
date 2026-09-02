@@ -1079,4 +1079,42 @@ function getGSTRates(db) {
   return { cgst: g / 2, sgst: g / 2, igst: g, service: getSettingNum(db, 'gst_service'), tcs: getSettingNum(db, 'tcs_tds') };
 }
 
-module.exports = { DEFAULTS, CATEGORIES, initCompanySettings, getSetting, getSettingBool, getSettingNum, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates };
+// ── Screens that can be turned on or off PER USER ─────────────────────
+// Every entry is an existing install-wide flag above. The install value is
+// the DEFAULT; `user_screen_flags` may override any of these for one user in
+// either direction, so a site can keep the Auction Manager off by default and
+// still hand it to the one operator who works from it.
+//
+// Only SCREENS belong here. The other flag_* settings change how a document
+// is built or numbered (lot-wise vs seller-wise, Bill of Supply vs Commission
+// Bill) — those must stay uniform across the install, because two users
+// generating documents under different rules would produce an inconsistent
+// set of books. `label` is what the per-user panel shows; it deliberately
+// matches the wording in Settings → Flags so the two read as the same switch.
+const SCREEN_FLAGS = [
+  { key: 'flag_auction_desk',       label: 'Auction Desk' },
+  { key: 'flag_auction_manager',    label: 'Auction Manager' },
+  { key: 'flag_insights',           label: 'Insights' },
+  { key: 'flag_pertrade_breakdown', label: 'Per-Auction Breakdown' },
+  { key: 'flag_price_list_mapping', label: 'Price List Mapping' },
+  { key: 'flag_debit_note',         label: 'Debit Notes (Service)' },
+  { key: 'flag_debit_note_planter', label: 'Debit Notes — Planter' },
+  { key: 'flag_merchants',          label: 'Merchants' },
+];
+const SCREEN_FLAG_KEYS = new Set(SCREEN_FLAGS.map(f => f.key));
+
+// The install default for one screen flag, as a boolean. Mirrors how
+// applyFeatureFlags() reads these client-side: a MISSING key follows the
+// shipped DEFAULTS entry, so an install that has never reseeded its settings
+// doesn't silently lose a screen that ships on.
+function screenFlagDefault(cfg, key) {
+  const raw = cfg ? cfg[key] : undefined;
+  if (raw === undefined || raw === null || raw === '') {
+    const d = DEFAULTS.find(x => x.key === key);
+    return d ? String(d.value).toLowerCase() === 'true' : false;
+  }
+  return String(raw).toLowerCase() === 'true' || raw === true;
+}
+
+module.exports = { DEFAULTS, CATEGORIES, initCompanySettings, getSetting, getSettingBool, getSettingNum, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates,
+  SCREEN_FLAGS, SCREEN_FLAG_KEYS, screenFlagDefault };

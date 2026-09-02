@@ -162,6 +162,33 @@ async function initDb() {
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
+  // ── PER-USER SCREEN OVERRIDES ──────────────────────────────
+  // Which optional SCREENS a given user sees. The install-wide `flag_*`
+  // settings in company_settings stay the DEFAULT; a row here overrides one
+  // of them for one user, in either direction — so an install with the
+  // Auction Manager off can still hand it to the one operator who wants it,
+  // while everyone else keeps the Auction Desk.
+  //
+  // ABSENT means INHERIT. That is the whole reason overrides live in their
+  // own rows rather than as columns on `users`: a user who has never been
+  // configured follows the install, and keeps following it when an admin
+  // later changes the install default. A nullable column could not tell
+  // "never set" apart from "explicitly off".
+  //
+  // This is NOT a permission. Role capabilities (ROLE_PERMISSIONS) still
+  // decide what a user may DO — a `user` role is refused the Auction Desk's
+  // data by requireAuctionDesk no matter what is written here. This only
+  // decides which screens are worth showing them.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS user_screen_flags (
+    user_id INTEGER NOT NULL,
+    flag_key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_by TEXT DEFAULT '',
+    PRIMARY KEY (user_id, flag_key),
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  )`);
+
   // ── TRADERS (NAM.DBF — sellers/poolers) ────────────────────
   wrapped.exec(`CREATE TABLE IF NOT EXISTS traders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

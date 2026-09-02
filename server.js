@@ -6,7 +6,8 @@ const multer = require('multer');
 const ExcelJS = require('exceljs');
 const XLSX = require('xlsx');
 const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
-const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates } = require('./company-config');
+const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates,
+        SCREEN_FLAGS, SCREEN_FLAG_KEYS, screenFlagDefault } = require('./company-config');
 const grade2Alerts = require('./grade2-alerts');
 const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
@@ -2065,6 +2066,123 @@ function configuredBranches(db) {
   return rows.map(r => String(r.value || '').trim().toUpperCase()).filter(Boolean);
 }
 
+// ══════════════════════════════════════════════════════════════
+// PER-USER SCREENS
+// ══════════════════════════════════════════════════════════════
+// The install-wide flag_* settings are the DEFAULT for every screen; a row in
+// user_screen_flags overrides one of them for one user, in either direction.
+// That is what lets one operator work from the Auction Manager while everyone
+// else keeps the Auction Desk, without either screen having to be on for the
+// whole site.
+//
+// NOT a permission — see the note on the table in db.js. Role capabilities
+// still decide what a user may DO; this decides what is worth showing them.
+
+// Every screen's raw override for one user: { flag_key: 'true' | 'false' }.
+// A key that is absent means "inherit the install default".
+function screenOverrides(db, userId) {
+  const out = {};
+  try {
+    for (const r of db.all('SELECT flag_key, value FROM user_screen_flags WHERE user_id = ?', [userId])) {
+      if (SCREEN_FLAG_KEYS.has(r.flag_key)) out[r.flag_key] = String(r.value);
+    }
+  } catch (_) { /* table missing on a very old DB — everyone inherits */ }
+  return out;
+}
+
+// What this user should actually SEE: the install default for each screen,
+// with their own overrides laid on top. Returned as 'true'/'false' strings so
+// the client can overlay it straight onto the settings object it already
+// reads, and every existing data-feat-* rule keeps working untouched.
+function effectiveScreens(db, userId) {
+  const cfg = getSettingsFlat(db);
+  const over = screenOverrides(db, userId);
+  const out = {};
+  for (const f of SCREEN_FLAGS) {
+    const on = Object.prototype.hasOwnProperty.call(over, f.key)
+      ? over[f.key] === 'true'
+      : screenFlagDefault(cfg, f.key);
+    out[f.key] = on ? 'true' : 'false';
+  }
+  return out;
+}
+
+// One screen, for one user, as a boolean — the server-side gate. Routes that
+// belong to an optional screen must ask THIS rather than reading the install
+// flag, or a user who has been given a screen the install has off would be
+// handed the UI and then refused its data.
+function screenOnFor(db, userId, key) {
+  return effectiveScreens(db, userId)[key] === 'true';
+}
+
+// The signed-in user's own effective screens. Same permission tier as
+// /api/me: a lot_entry-only account has no `view` capability but still has a
+// sidebar, so it still needs to know which screens it has.
+app.get('/api/me/screens', requireAnyPermission('view', 'lot_entry_view', 'self_password'), (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(effectiveScreens(getDb(), req.user.id));
+});
+
+// Admin view of ONE user's screens: the install default, this user's override
+// (or null for inherit), and the resulting effective value — so the panel can
+// show "Inherit (on)" without the client re-deriving defaults.
+app.get('/api/users/:id/screens', requireUserManage, (req, res) => {
+  const db = getDb();
+  const user = db.get('SELECT id, username, role FROM users WHERE id = ?', [req.params.id]);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const cfg = getSettingsFlat(db);
+  const over = screenOverrides(db, user.id);
+  const eff = effectiveScreens(db, user.id);
+  res.json({
+    user: { id: user.id, username: user.username, role: user.role },
+    flags: SCREEN_FLAGS.map(f => ({
+      key: f.key,
+      label: f.label,
+      installDefault: screenFlagDefault(cfg, f.key),
+      override: Object.prototype.hasOwnProperty.call(over, f.key) ? (over[f.key] === 'true') : null,
+      effective: eff[f.key] === 'true',
+      // The Auction Desk needs the auction_desk ROLE capability on top of the
+      // screen being on. Saying so here stops an admin switching it on for a
+      // clerk and being puzzled that nothing appears.
+      requiresCapability: f.key === 'flag_auction_desk' ? 'auction_desk' : null,
+    })),
+  });
+});
+
+// Save one user's overrides. Body: { overrides: { flag_key: true|false|null } }
+// — null (or a key simply omitted from the map) CLEARS the override, putting
+// that screen back on the install default.
+app.put('/api/users/:id/screens', requireUserManage, (req, res) => {
+  const db = getDb();
+  const user = db.get('SELECT id, username FROM users WHERE id = ?', [req.params.id]);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const body = (req.body && req.body.overrides) || {};
+  if (typeof body !== 'object' || Array.isArray(body)) {
+    return res.status(400).json({ error: 'overrides must be an object of flag_key → true | false | null' });
+  }
+  const unknown = Object.keys(body).filter(k => !SCREEN_FLAG_KEYS.has(k));
+  if (unknown.length) {
+    return res.status(400).json({ error: `Not a per-user screen: ${unknown.join(', ')}` });
+  }
+  for (const [key, val] of Object.entries(body)) {
+    if (val === null || val === undefined || val === '') {
+      db.run('DELETE FROM user_screen_flags WHERE user_id = ? AND flag_key = ?', [user.id, key]);
+      continue;
+    }
+    const on = (val === true || String(val).toLowerCase() === 'true') ? 'true' : 'false';
+    db.run(
+      `INSERT INTO user_screen_flags (user_id, flag_key, value, updated_at, updated_by)
+            VALUES (?,?,?, datetime('now','localtime'), ?)
+       ON CONFLICT(user_id, flag_key) DO UPDATE
+            SET value = excluded.value,
+                updated_at = excluded.updated_at,
+                updated_by = excluded.updated_by`,
+      [user.id, key, on, req.user.username || ''],
+    );
+  }
+  res.json({ ok: true, screens: effectiveScreens(db, user.id) });
+});
+
 app.get('/api/users', requireUserManage, (req, res) => {
   const db = getDb();
   const users = db.all(`
@@ -2237,6 +2355,10 @@ app.delete('/api/users/:id', requireUserManage, (req, res) => {
   const total = db.get('SELECT COUNT(*) as c FROM users').c;
   if (total <= 1) return res.status(400).json({ error: 'Cannot delete the last remaining user' });
   db.run('DELETE FROM sessions WHERE user_id = ?', [target.id]);
+  // Screen overrides are keyed by user id, which SQLite reuses on the next
+  // AUTOINCREMENT-less insert — leaving them behind would silently hand a
+  // deleted operator's screen set to whoever took their id.
+  db.run('DELETE FROM user_screen_flags WHERE user_id = ?', [target.id]);
   db.run('DELETE FROM users WHERE id = ?', [target.id]);
   res.json({ success: true, username: target.username });
 });
@@ -7080,15 +7202,17 @@ function lotwiseBillsOn(db)    { return lotwiseOn(db, 'flag_lotwise_bills'); }
 function lotwiseDnPlanterOn(db){ return lotwiseOn(db, 'flag_lotwise_dn_planter'); }
 
 // ── AUCTION MANAGER (flag_auction_manager) ─────────────────────
-// The Auction Manager screen. OFF (default) = the screen does not exist:
-// the sidebar entry is hidden client-side and the summary endpoint 404s, the
-// same "the feature isn't here" shape flag_lot_lock uses (rather than 403,
-// which would imply the route exists but you're not allowed).
+// The Auction Manager screen. OFF = the screen does not exist for you: the
+// sidebar entry is hidden client-side and the summary endpoint 404s, the same
+// "the feature isn't here" shape flag_lot_lock uses (rather than 403, which
+// would imply the route exists but you're not allowed).
 //
-// Not to be confused with the Auction DESK, which is gated by the
+// The install flag is only the DEFAULT now — the route asks screenOnFor(),
+// which lays this user's own override on top. See PER-USER SCREENS above.
+//
+// Not to be confused with the Auction DESK, which additionally needs the
 // `auction_desk` ROLE capability. Both screens can be on at once; neither
 // flag has any bearing on the other.
-function auctionManagerOn(db) { return lotwiseOn(db, 'flag_auction_manager'); }
 
 // Builder options that reproduce a STORED purchase row exactly.
 //
@@ -17500,8 +17624,11 @@ app.get('/api/receipt/:lotId', requireView, async (req, res) => {
 // Manager must not invent a second definition of a sold lot.
 app.get('/api/auction-manager/:auctionId', requireView, (req, res) => {
   const db = getDb();
-  if (!auctionManagerOn(db)) {
-    return res.status(404).json({ error: 'Auction Manager is not enabled on this install' });
+  // Asked PER USER, not off the install flag. An admin can hand this screen
+  // to one operator on a site that has it off by default — reading the
+  // install flag here would give them the screen and then 404 its data.
+  if (!screenOnFor(db, req.user.id, 'flag_auction_manager')) {
+    return res.status(404).json({ error: 'Auction Manager is not enabled for this user' });
   }
   res.set('Cache-Control', 'no-store');
 
