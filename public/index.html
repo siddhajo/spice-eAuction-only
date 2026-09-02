@@ -12164,8 +12164,13 @@ const NAV_GROUPS = [
   { id:'dashboard', label:'Dash Board',
     icon:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
     items:[
-      { tab:'hub',        label:'Current Auction' },
-      { tab:'dash',       label:'Quick Actions' },
+      // Labelled for what each screen IS, rather than for what sits on it:
+      // 'hub' is the Auction Desk (the document hub), and 'dash' is the
+      // dashboard — "Quick Actions" is only one card on it, and "Current
+      // Auction" is a panel further down that same screen, which is what the
+      // old labels were naming.
+      { tab:'hub',        label:'Auction Desk' },
+      { tab:'dash',       label:'Dashboard' },
       // Not on the sheet, but they have nowhere else to live and both are
       // already flag-gated — off by default on most installs, in which
       // case #nav-src hides them and they never reach the strip.
@@ -39520,6 +39525,34 @@ async function exportJournalPdf(){
   if(!lj || !Array.isArray(lj.data) || !lj.data.length){
     toast('Load the journal first — nothing to export yet.'); return;
   }
+  // The SALES journal is rendered server-side, by the same route the Auction
+  // Desk and Auction Manager tiles download. It used to be built here as a
+  // report-pdf spec, which meant this screen and those tiles printed two
+  // different documents from the same figures. The route reproduces this
+  // spec — the screen's column labels, the in-table "Total" row, the boxed
+  // ledger summary — so there is one Sales Journal PDF, not two.
+  //
+  // Nothing is lost by not sending the loaded rows: they came from
+  // /api/journals/sales with this auction + sale type, which is exactly what
+  // the route re-reads. (The on-screen sort was never carried either — the
+  // export always used the fetched order.)
+  if (lj.type === 'sales') {
+    const url = `/api/exports/sales-journal?auctionId=${encodeURIComponent(lj.auctionId)}`
+      + (lj.saleType ? `&saleType=${encodeURIComponent(lj.saleType)}` : '') + '&format=pdf';
+    try {
+      await withOverlay('Preparing journal PDF…', async () => {
+        const r = await fetch(B + url, { headers:{ 'Authorization':'Bearer '+T } });
+        if (!r.ok) { let msg='Export failed'; try { const e=await r.json(); if(e.error) msg=e.error; } catch(_){} throw new Error(msg); }
+        const blob = await r.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'SalesJournal.pdf';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+      });
+    } catch (e) { showError(e); }
+    return;
+  }
   // Map the DataTable columns → report-pdf columns. Wider share for text.
   const columns = lj.cols.map(c => ({ header: c.label || c.key, key: c.key, width: c.numeric ? 12 : 16 }));
   // Format each cell the same way the table does: dates via fmtD, numbers via
@@ -39533,37 +39566,12 @@ async function exportJournalPdf(){
   const rows = lj.data.map(row => {
     const o = {}; for (const c of lj.cols) o[c.key] = cell(c, row); return o;
   });
-  // For the Sales journal, render a "Total" row + the sale-type ledger summary
-  // + the state grand total (as in the reference report), so the generic totals
-  // strip is suppressed there. Other journals keep the plain totals strip.
-  let totals = null;
-  let summary = null;
-  const inr = (v, d) => Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
-  if (lj.type === 'sales') {
-    // Highlighted column-sum Total row (stays in the invoice table).
-    const totalRow = { _isSubtotal: true, buyer1: 'Total' };
-    for (const c of lj.cols) if (c.numeric) totalRow[c.key] = c.fmt ? c.fmt(lj.data.reduce((a, r) => a + (Number(r[c.key]) || 0), 0)) : '';
-    rows.push(totalRow);
-    try {
-      const sum = await j(`/api/journals/sales-summary?auctionId=${lj.auctionId}${lj.saleType ? ('&saleType=' + encodeURIComponent(lj.saleType)) : ''}`);
-      if (sum && (sum.lines || []).length) {
-        // The sale-type ledger breakdown renders in its OWN boxed container
-        // below the invoice table (not stretched across the wide columns).
-        summary = {
-          title: `${sum.stateLabel || ''} — LEDGER SUMMARY`.trim(),
-          lines: sum.lines.map(ln => ({
-            label: ln.label,
-            qty: (ln.qty !== '' && ln.qty != null) ? inr(ln.qty, 3) : '',
-            value: inr(ln.value, 2),
-          })),
-          total: { label: `${sum.stateLabel || ''} TOTAL`.trim(), value: inr(sum.stateTotal, 2) },
-        };
-      }
-    } catch (e) { /* summary is best-effort */ }
-  } else {
-    totals = {};
-    for (const c of lj.cols) { if (!c.numeric) continue; const s = lj.data.reduce((a, r) => a + (Number(r[c.key]) || 0), 0); totals[c.key] = c.fmt ? c.fmt(s) : s; }
-  }
+  // Purchase journals (dealer / agri) keep the plain totals strip. The Sales
+  // journal's own Total row + boxed ledger summary now live server-side and
+  // returned above — see the note there.
+  const totals = {};
+  for (const c of lj.cols) { if (!c.numeric) continue; const s = lj.data.reduce((a, r) => a + (Number(r[c.key]) || 0), 0); totals[c.key] = c.fmt ? c.fmt(s) : s; }
+  const summary = null;
   const aucSel = document.getElementById('jr-auction');
   const subtitle = aucSel && aucSel.selectedIndex >= 0 ? (aucSel.options[aucSel.selectedIndex].text || '') : '';
   const spec = { title: lj.title, subtitle, layout: 'landscape', columns, rows, totals, summary, autofit: true };

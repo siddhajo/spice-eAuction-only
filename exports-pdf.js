@@ -26,7 +26,10 @@ const {
   checklistVisibleCols,
   lotVerificationData,  LOT_VERIF_COLS,  LOT_VERIF_TOTAL_KEYS,
   lotVerification2Data, LOT_VERIF2_COLS, LOT_VERIF2_TOTAL_KEYS,
-  SALES_JOURNAL_COLS,   SALES_JOURNAL_TOTAL_KEYS,
+  // Only the total keys are shared with the spreadsheet: the PDF prints the
+  // Journals screen's own column labels (see COLS.sales_journal), but the two
+  // must foot the same set of columns.
+  SALES_JOURNAL_TOTAL_KEYS,
 } = require('./exports');
 const {
   fmtMoney, fmtQty, fmtPrice, fmtIndian,
@@ -688,9 +691,30 @@ const COLS = {
   // the PDF reproduces them rather than flattening to a single column run.
   lot_verification:   LOT_VERIF_COLS,
   lot_verification_2: LOT_VERIF2_COLS,
-  // Same 14 columns as the spreadsheet. The register's ledger summary rides
-  // along as banner + subtotal rows — see getRowsForType.
-  sales_journal:      SALES_JOURNAL_COLS,
+  // The JOURNALS SCREEN's own column labels — title case, not the
+  // spreadsheet's caps headers. Both formats of this report are meant to be
+  // the ones that screen produces: its "Export XLSX" already calls
+  // /api/exports/sales-journal (SALES_JOURNAL_COLS), and its "Export PDF"
+  // printed these labels by POSTing a spec to /api/report-pdf. That rendering
+  // moved here so the Auction Desk and Auction Manager tiles hand out the
+  // same document instead of a second one — the widths are the spec's own
+  // (12 for numeric columns, 16 for text).
+  sales_journal: [
+    { header: 'Inv#',       key: 'invo',      width: 16 },
+    { header: 'Trade Name', key: 'buyer1',    width: 16 },
+    { header: 'Bags',       key: 'bag',       width: 12 },
+    { header: 'Qty',        key: 'qty',       width: 12 },
+    { header: 'Cardamom',   key: 'cardamom',  width: 12 },
+    { header: 'Gunny',      key: 'gunny',     width: 12 },
+    { header: 'Transport',  key: 'transport', width: 12 },
+    { header: 'Insurance',  key: 'insurance', width: 12 },
+    { header: 'CGST',       key: 'cgst',      width: 12 },
+    { header: 'SGST',       key: 'sgst',      width: 12 },
+    { header: 'IGST',       key: 'igst',      width: 12 },
+    { header: 'TCS',        key: 'tcs',       width: 12 },
+    { header: 'Round',      key: 'rund',      width: 12 },
+    { header: 'Total',      key: 'total',     width: 12 },
+  ],
   lot_name: [
     { header: 'LOT',     key: 'lot',     width: 8  },
     { header: 'NAME',    key: 'name',    width: 28 },
@@ -983,7 +1007,9 @@ const TOTAL_KEYS = {
   checklist:       ['bag', 'qty'],
   lot_verification:   LOT_VERIF_TOTAL_KEYS,
   lot_verification_2: LOT_VERIF2_TOTAL_KEYS,
-  sales_journal:      SALES_JOURNAL_TOTAL_KEYS,
+  // sales_journal is deliberately absent: the Journals screen prints its
+  // "Total" as a highlighted row INSIDE the invoice table (see
+  // getRowsForType) and suppresses the generic strip, so this matches it.
   lot_name:        ['bag', 'qty'],
   lot_payment:     ['qty', 'cost'],
   price_list:      ['bag', 'qty'],
@@ -1021,6 +1047,29 @@ const TOTAL_LABEL_KEY = {
 // actually has rows — with an odd lot count the right block can be empty.
 const TOTAL_LABEL_EXTRA = {
   lot_verification: ['lot2'],
+};
+
+// Per-type boxed summary block, drawn under the table by renderTablePdf.
+// Only the Sales Journal has one: the sale-type ledger breakdown the Journals
+// screen prints beneath its register. Values are pre-formatted here because
+// the renderer draws summary cells verbatim (it has no column headers to
+// infer a format from, unlike the table body).
+const PDF_SUMMARY = {
+  sales_journal: (db, auctionId, cfg, extra) => {
+    const { getSalesJournalSummary } = require('./calculations');
+    const s = getSalesJournalSummary(db, auctionId, extra.saleType, cfg);
+    if (!s || !(s.lines || []).length) return null;
+    const label = String(s.stateLabel || '').trim();
+    return {
+      title: `${label} — LEDGER SUMMARY`.trim(),
+      lines: s.lines.map(ln => ({
+        label: ln.label,
+        qty: (ln.qty !== '' && ln.qty != null) ? fmtQty(ln.qty) : '',
+        value: fmtMoney(ln.value),
+      })),
+      total: { label: `${label} TOTAL`.trim(), value: fmtMoney(s.stateTotal) },
+    };
+  },
 };
 
 const TITLES = {
@@ -1209,23 +1258,22 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
     case 'lot_verification_2':
       return lotVerification2Data(db, auctionId).rows;
 
-    // The invoice register, then the sale-type ledger summary the spreadsheet
-    // prints as its own green block. A 3-column block can't sit inside a
-    // 14-column table, so it arrives as a banner row followed by one subtotal
-    // strip per particular — the row types the renderer already draws. Rows
-    // come from calculations.js, the same call the spreadsheet makes, and the
-    // same cfg goes to both so the two agree about proforma mode.
+    // The invoice register, closed by a highlighted "Total" row — the same
+    // shape the Journals screen's Export PDF builds. The rows come from the
+    // very call that screen's table is drawn from (getSalesJournal, via
+    // /api/journals/sales) and that its spreadsheet is built from, with the
+    // same cfg, so all three agree about proforma mode. The sale-type ledger
+    // breakdown is NOT appended here — it is a boxed block below the table,
+    // supplied through PDF_SUMMARY.
     case 'sales_journal': {
       const calc = require('./calculations');
       const rows = calc.getSalesJournal(db, auctionId, extra.saleType, cfg);
-      const summary = calc.getSalesJournalSummary(db, auctionId, extra.saleType, cfg);
-      if (!summary || !summary.lines || !summary.lines.length) return rows;
-      return [
-        ...rows,
-        { _isSection: true, label: `${summary.stateLabel} — LEDGER SUMMARY` },
-        ...summary.lines.map(l => ({ _isSubtotal: true, buyer1: l.label, qty: l.qty, total: l.value })),
-        { _isSubtotal: true, buyer1: `${summary.stateLabel} TOTAL`, total: summary.stateTotal },
-      ];
+      if (!rows.length) return rows;
+      const total = { _isSubtotal: true, buyer1: 'Total' };
+      for (const k of SALES_JOURNAL_TOTAL_KEYS) {
+        total[k] = rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+      }
+      return [...rows, total];
     }
 
     case 'lot_name': {
@@ -1818,6 +1866,7 @@ async function exportPdf(db, type, auctionId, cfg, extra = {}) {
     columns,
     rows,
     totals,
+    summary: PDF_SUMMARY[type] ? PDF_SUMMARY[type](db, auctionId, cfg, extra) : null,
     layout: PDF_LAYOUT[type],
     autofit: PDF_AUTOFIT.has(type),
     companyHeader: getCompanyHeader(db),

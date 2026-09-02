@@ -564,11 +564,15 @@ const DOCUMENTS = [
     route: '/api/dbf-exports/:type', href: hrefDbf('debit_notes') },
 
   // ══ Journals & Registers ═════════════════════════════════
+  // Both formats are the ones the Journals screen produces: xlsx is the route
+  // its "Export XLSX" calls, and pdf is the route its "Export PDF" now calls
+  // too — one Sales Journal, wherever it is downloaded from.
   { id: 'sales_journal', label: 'Sales Journal', group: 'books', sub: 'Journals', family: 'journals',
-    kind: 'export', scope: 'trade', formats: ['xlsx'], minStage: 4, perm: 'export',
+    kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 4, perm: 'export',
     filters: ['saleType'],
     route: '/api/exports/sales-journal',
-    href: (ctx) => `/api/exports/sales-journal${q({ auctionId: ctx.auctionId, saleType: ctx.saleType })}` },
+    href: (ctx, format) =>
+      `/api/exports/sales-journal${q({ auctionId: ctx.auctionId, saleType: ctx.saleType, format })}` },
 
   { id: 'purchase_journal_dealer', label: 'Purchase Journal (Dealer)', group: 'books', sub: 'Journals',
     family: 'journals', kind: 'export', scope: 'trade', formats: ['xlsx'],
