@@ -81,15 +81,32 @@ function findChrome() {
     inheritLabel: (document.querySelector('#user-screens-rows label')?.textContent || '').trim(),
     checkedDefault: document.querySelector('#user-screens-rows input[name="scr-flag_auction_manager"]:checked')?.value,
   }));
-  check('one row per per-user screen', shape.rows >= 8, String(shape.rows));
+  // Counted off the server, not hard-coded — the list changes as screens are
+  // added or (as on 2026-09-03) removed, and a literal here would fail for
+  // bookkeeping rather than for a defect.
+  const expectedRows = (await api('GET', `/api/users/${aId}/screens`, null, ADMIN)).d.flags.length;
+  check('one row per per-user screen the server offers', shape.rows === expectedRows,
+        `${shape.rows} rendered vs ${expectedRows} offered`);
   check('three states offered per screen', shape.perRow === 3, String(shape.perRow));
   check('the inherit option names the default value', /Follow default \((on|off)\)/.test(shape.inheritLabel), shape.inheritLabel);
   check('an unconfigured screen starts on inherit', shape.checkedDefault === 'inherit', String(shape.checkedDefault));
 
-  // Give mgr_a the Auction Manager, take away the Desk, and save.
+  // The Payments row is a CHOOSER, not a hide/show — it must say so, or Off
+  // reads as "this user has no Payments screen".
+  const payNote = await page.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll('#user-screens-rows > div'));
+    const row = rows.find(r => /Payments/.test(r.textContent || ''));
+    return row ? row.textContent.replace(/\s+/g, ' ').trim() : null;
+  });
+  check('the Payments row explains that Off is the classic screen',
+        !!payNote && /seller-wise/i.test(payNote), String(payNote));
+
+  // Give mgr_a the Auction Manager and the lot-wise Payments screen, take
+  // away the Desk, and save.
   await page.evaluate(() => {
     document.querySelector('#user-screens-rows input[name="scr-flag_auction_manager"][value="on"]').checked = true;
     document.querySelector('#user-screens-rows input[name="scr-flag_auction_desk"][value="off"]').checked = true;
+    document.querySelector('#user-screens-rows input[name="scr-flag_lotwise_payments"][value="on"]').checked = true;
   });
   await page.evaluate(() => doSaveUserScreens());
   await page.waitForFunction(() => document.getElementById('user-screens-modal')?.style.display === 'none'
@@ -126,11 +143,19 @@ function findChrome() {
                             return b ? getComputedStyle(b).display !== 'none' : null; })(),
     sidebarHasDesk: (() => { const b = document.querySelector('.side-item[data-tab="hub"]');
                              return b ? getComputedStyle(b).display !== 'none' : null; })(),
+    pay: document.body.getAttribute('data-feat-lotwise-payments'),
+    lotwisePayVisible: (() => { const b = document.querySelector('.feat-pay-lotwise');
+                                return b ? getComputedStyle(b).display !== 'none' : null; })(),
+    classicPayVisible: (() => { const b = document.querySelector('.feat-pay-classic');
+                                return b ? getComputedStyle(b).display !== 'none' : null; })(),
   }));
   check('mgr_a gets the Auction Manager the install has OFF', aNav.mgr === '1', JSON.stringify(aNav));
   check('…and loses the Auction Desk the install has ON', aNav.desk === '0', JSON.stringify(aNav));
   check('the Auction Manager is actually visible in mgr_a\'s sidebar', aNav.sidebarHasMgr === true, JSON.stringify(aNav));
   check('…and the Auction Desk is actually hidden', aNav.sidebarHasDesk === false, JSON.stringify(aNav));
+  check('mgr_a gets the lot-wise Payments screen the install has OFF',
+        aNav.pay === '1' && aNav.lotwisePayVisible === true, JSON.stringify(aNav));
+  check('…and not the classic seller-wise one', aNav.classicPayVisible === false, JSON.stringify(aNav));
 
   const SHOT = process.env.SCREENS_SHOT || path.join(os.tmpdir(), 'user-screens.png');
   await page.evaluate((id) => openUserScreensModal(id, 'mgr_a'), aId);

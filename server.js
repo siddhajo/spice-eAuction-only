@@ -2138,6 +2138,7 @@ app.get('/api/users/:id/screens', requireUserManage, (req, res) => {
     flags: SCREEN_FLAGS.map(f => ({
       key: f.key,
       label: f.label,
+      note: f.note || null,
       installDefault: screenFlagDefault(cfg, f.key),
       override: Object.prototype.hasOwnProperty.call(over, f.key) ? (over[f.key] === 'true') : null,
       effective: eff[f.key] === 'true',
@@ -21186,6 +21187,15 @@ const PORT = process.env.PORT || 3001;
 (async () => {
   const db = await initDb();
   initCompanySettings(db);
+  // Drop per-user screen overrides for flags that are no longer per-user.
+  // They are already ignored on read, but leaving them would make an old
+  // setting spring back to life if that flag were ever re-added to
+  // SCREEN_FLAGS — a surprise nobody would connect to a change made months
+  // earlier. (Three flags were removed on 2026-09-03; see the note there.)
+  try {
+    const keep = [...SCREEN_FLAG_KEYS];
+    db.run(`DELETE FROM user_screen_flags WHERE flag_key NOT IN (${keep.map(() => '?').join(',')})`, keep);
+  } catch (_) { /* table may not exist yet on a very old DB */ }
   // Sync the persistent (data/) logo into public/ — and adopt an existing
   // public logo on first run — so uploads survive redeploys and a fresh
   // service doesn't inherit a committed logo.

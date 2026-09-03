@@ -1085,21 +1085,42 @@ function getGSTRates(db) {
 // either direction, so a site can keep the Auction Manager off by default and
 // still hand it to the one operator who works from it.
 //
-// Only SCREENS belong here. The other flag_* settings change how a document
-// is built or numbered (lot-wise vs seller-wise, Bill of Supply vs Commission
-// Bill) — those must stay uniform across the install, because two users
-// generating documents under different rules would produce an inconsistent
-// set of books. `label` is what the per-user panel shows; it deliberately
-// matches the wording in Settings → Flags so the two read as the same switch.
+// ── What may go in this list ─────────────────────────────────────────
+// ONLY a flag that decides SCREEN VISIBILITY and nothing else. The test is
+// whether any server route gates on it: if one does, a per-user "on" would
+// hand somebody the screen and then refuse its data, which is worse than not
+// offering the choice. Everything below is client-side only, except
+// flag_auction_manager, whose one route was changed to ask screenOnFor().
+//
+// Three flags were in this list on 2026-09-02 and were REMOVED on 09-03,
+// because each gates document/export ENDPOINTS on the install value:
+//   flag_merchants          — not a screen at all. It is one export card in
+//                             the To Tally menu (the consolidated Merchants
+//                             Journal); /api/tally/export/merchants 403s on
+//                             the install flag.
+//   flag_debit_note         — the Debit Notes screen, but ALSO the Tally
+//   flag_debit_note_planter   voucher exports and the Auction Desk catalog
+//                             entries, all gated on the install flag.
+// Beyond the broken plumbing, whether a business raises debit notes or files
+// the Merchants journal is an install-wide accounting decision, not a
+// per-person preference — two operators disagreeing about it would produce
+// an inconsistent set of books. Same reason the lot-wise DOCUMENT flags
+// (flag_lotwise_purchase / _bills / _dn_planter) are not here: they change
+// how a document is built and numbered, not who can see a screen.
+//
+// `label` is what the per-user panel shows. `note` is an optional line under
+// the radios, for a flag whose OFF state is not simply "hidden".
 const SCREEN_FLAGS = [
   { key: 'flag_auction_desk',       label: 'Auction Desk' },
   { key: 'flag_auction_manager',    label: 'Auction Manager' },
   { key: 'flag_insights',           label: 'Insights' },
   { key: 'flag_pertrade_breakdown', label: 'Per-Auction Breakdown' },
   { key: 'flag_price_list_mapping', label: 'Price List Mapping' },
-  { key: 'flag_debit_note',         label: 'Debit Notes (Service)' },
-  { key: 'flag_debit_note_planter', label: 'Debit Notes — Planter' },
-  { key: 'flag_merchants',          label: 'Merchants' },
+  // A CHOOSER, not a hide/show: the Payments tab is always there, this picks
+  // which of its two screens the user gets. Spelled out in `note` so "Off"
+  // is not read as "this user has no Payments screen".
+  { key: 'flag_lotwise_payments',   label: 'Payments — lot-wise',
+    note: 'On = the lot-wise worklist · Off = the classic seller-wise screen. The Payments tab is always present either way.' },
 ];
 const SCREEN_FLAG_KEYS = new Set(SCREEN_FLAGS.map(f => f.key));
 

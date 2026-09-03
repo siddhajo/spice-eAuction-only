@@ -115,13 +115,30 @@ const cleanup = () => {
   check('the admin view reports a cleared screen as inherit', desk.override === null && desk.effective === true,
         JSON.stringify(desk));
   check('…and an explicit one as an override', mgr.override === true, JSON.stringify(mgr));
-  check('every per-user screen is offered', detail.flags.length >= 8, String(detail.flags.length));
+  const keys = detail.flags.map(f => f.key);
+  check('every per-user screen is offered', detail.flags.length >= 6, keys.join(', '));
+  // The Payments row picks BETWEEN two screens rather than hiding one, so it
+  // carries a note saying what Off does.
+  const pay = detail.flags.find(f => f.key === 'flag_lotwise_payments');
+  check('lot-wise Payments is offered, with its chooser explained',
+        !!pay && /seller-wise/i.test(pay.note || ''), JSON.stringify(pay));
+  // A flag whose install value also gates a document or export ENDPOINT must
+  // NOT be here: a per-user "on" would show the surface and then 403 its
+  // data. Merchants is a Tally export card, not a screen at all.
+  for (const k of ['flag_merchants', 'flag_debit_note', 'flag_debit_note_planter']) {
+    check(`${k} is not offered per-user (it gates export endpoints)`, !keys.includes(k), keys.join(', '));
+    const r2 = await api('PUT', `/api/users/${A.id}/screens`, { overrides: { [k]: true } }, ADMIN);
+    check(`…and writing it is refused`, r2.status === 400, `HTTP ${r2.status}`);
+  }
 
   // ══ [guard] ═════════════════════════════════════════════════════
   const asMgr = await api('GET', `/api/users/${B_.id}/screens`, null, A.token);
   check('a manager cannot read another user\'s screens', asMgr.status === 403, `HTTP ${asMgr.status}`);
   const wrote = await api('PUT', `/api/users/${B_.id}/screens`, { overrides: { flag_insights: false } }, A.token);
   check('…nor write them', wrote.status === 403, `HTTP ${wrote.status}`);
+  // A lot-wise DOCUMENT flag changes how a document is built and numbered —
+  // it must stay uniform across the install, unlike the lot-wise PAYMENTS
+  // flag above, which only picks a screen.
   const bad = await api('PUT', `/api/users/${A.id}/screens`, { overrides: { flag_lotwise_purchase: true } }, ADMIN);
   check('a non-screen flag is refused', bad.status === 400, `HTTP ${bad.status} ${JSON.stringify(bad.d)}`);
   const missing = await api('GET', '/api/users/99999/screens', null, ADMIN);

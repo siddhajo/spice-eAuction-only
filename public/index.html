@@ -18626,10 +18626,14 @@ async function openUserScreensModal(id, username){
     const capNote = (f.requiresCapability && !['manager','admin'].includes(String(d.user.role || '').toLowerCase()))
       ? `<div style="font-size:11px;color:var(--spice-chili);margin-top:2px">Also needs the ${esc(f.requiresCapability)} capability — a ${esc(d.user.role || 'viewer')} will not see it whatever is set here.</div>`
       : '';
+    // Some rows aren't a plain hide/show — Payments picks BETWEEN two screens
+    // — so the server sends a line explaining what Off actually does.
+    const note = f.note
+      ? `<div style="font-size:11px;color:var(--spice-text-hint);margin-top:3px">${esc(f.note)}</div>` : '';
     return `<div style="padding:9px 0;border-bottom:1px solid var(--border)">
       <div style="font-weight:600;font-size:13px;margin-bottom:4px">${esc(f.label)}</div>
       <div>${radio(f.key, 'inherit', cur === 'inherit', inheritLabel)}${radio(f.key, 'on', cur === 'on', 'On')}${radio(f.key, 'off', cur === 'off', 'Off')}</div>
-      ${capNote}
+      ${note}${capNote}
     </div>`;
   }).join('') || '<div style="color:var(--spice-text-hint);font-size:13px">No optional screens.</div>';
 }
@@ -30925,6 +30929,32 @@ function _peIsComplete(l){
   return Number(l && l.price) > 0 && !!String(l && l.buyer || '').trim();
 }
 function _peFlagPriceCheck(){ return String(((window._CCFG)||{}).flag_price_check).toLowerCase() === 'true'; }
+// One line describing what a completed lot already holds — its price and its
+// buyer, the two things that decide whether it is worth reopening. WD and NA
+// count as complete but carry no price or buyer, so they say what they are
+// instead of reading as "0.00 · —".
+//
+// Buyer is shown the way the grid shows it: the short CODE, then the trade
+// name. Either can be blank on older rows, so the two are joined only when
+// both are there.
+function _peLotLine(l){
+  const codeUp = String(l.code || '').trim().toUpperCase();
+  const lot = String(l.lot_no == null ? '' : l.lot_no).padEnd(6);
+  if (codeUp === 'WD') return `${lot}withdrawn`;
+  if (codeUp === 'NA') return `${lot}not auctioned`;
+  const buyer = [String(l.code || '').trim(), String(l.buyer1 || l.buyer || '').trim()]
+    .filter(Boolean).join(' · ') || 'no buyer';
+  return `${lot}${_peFmt(l.price).padStart(11)} /kg   ${buyer}`;
+}
+// The list for the confirm() above. Capped: a quick-select of a 200-lot range
+// would otherwise produce a dialog taller than the screen, with the buttons
+// pushed off the bottom on some browsers.
+function _peCompletedList(lots){
+  const CAP = 12;
+  const lines = lots.slice(0, CAP).map(_peLotLine);
+  if (lots.length > CAP) lines.push(`…and ${lots.length - CAP} more`);
+  return lines.join('\n');
+}
 function _peFmt(n){ return (Number(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 // Bags are counts — always whole numbers, no decimals.
 function _peBags(n){ return (Number(n)||0).toLocaleString('en-IN',{maximumFractionDigits:0}); }
@@ -31396,15 +31426,17 @@ async function peSelectByLotNos(){
     else notFound.push(w.label);
   }
   // Some of the typed lots may already be complete (priced + buyer set). Ask
-  // before pulling those in for editing, so the operator can skip them.
+  // before pulling those in for editing, so the operator can skip them —
+  // showing WHAT each one already holds, since "include or skip?" is not a
+  // question anyone can answer from a bare list of lot numbers.
   let include = matchedLots;
   const completed = matchedLots.filter(_peIsComplete);
   let skippedComplete = 0;
   if (completed.length) {
-    const labels = completed.map(l => l.lot_no).join(', ');
     const ok = confirm(
-      `Lot(s) ${labels} are already complete (priced + buyer set).\n\n` +
-      `Include them for editing too?\n\nOK = include them   ·   Cancel = skip them`
+      `${completed.length} of the lots you typed ${completed.length === 1 ? 'is' : 'are'} already complete:\n\n` +
+      _peCompletedList(completed) +
+      `\n\nInclude them for editing too?\n\nOK = include them   ·   Cancel = skip them`
     );
     if (!ok) {
       const skip = new Set(completed.map(l => l.id));
