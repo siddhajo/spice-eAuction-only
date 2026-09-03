@@ -3274,6 +3274,29 @@ body[data-hub-plain="1"] .hub-plain-dot{background:var(--hub-p-edge)}
   display:flex;flex-direction:column;animation:hubSlideIn .2s ease-out
 }
 @keyframes hubSlideIn{from{transform:translateX(24px);opacity:.4}to{transform:none;opacity:1}}
+/* Centred variant — the Auction Manager's detail panel (#am-detail) only.
+   The Auction Desk keeps the right-edge drawer: there you click a lot to
+   check one field against the list still on screen beside it, so the panel
+   is deliberately off to one side. The manager's panel is read on its own,
+   and at 430px hard against the right edge it was easy to miss entirely.
+   A modifier rather than a change to .hub-drawer, because the two screens
+   share that base class on purpose (see the note by #am-detail). */
+.hub-drawer.is-centred{
+  top:50%;left:50%;right:auto;bottom:auto;
+  transform:translate(-50%,-50%);
+  width:min(760px,94vw);max-height:88vh;
+  border:1px solid var(--border);border-radius:14px;
+  box-shadow:0 24px 60px rgba(15,23,42,.28);
+  animation:hubPopIn .16s ease-out
+}
+/* Its own keyframes: hubSlideIn ends at `transform:none`, which would undo
+   the translate that does the centring. */
+@keyframes hubPopIn{
+  from{transform:translate(-50%,-50%) scale(.97);opacity:0}
+  to{transform:translate(-50%,-50%) scale(1);opacity:1}
+}
+/* Wider panel, so the label column no longer needs 38% of it. */
+.hub-drawer.is-centred .hub-dl{grid-template-columns:30% 1fr}
 .hub-drawer-head{
   padding:16px 18px;border-bottom:1px solid var(--border);
   display:flex;align-items:flex-start;gap:10px
@@ -5138,7 +5161,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
            sort, filter keystroke and sub-tab switch) can't wipe an open
            drawer. -->
       <div id="am-detail-scrim" class="hub-scrim" style="display:none" onclick="amDetailClose()"></div>
-      <aside id="am-detail" class="hub-drawer" style="display:none" aria-label="Auction Manager detail"></aside>
+      <aside id="am-detail" class="hub-drawer is-centred" style="display:none" aria-label="Auction Manager detail"></aside>
     </div>
 
     <!-- AUCTION REPORTS — the Auction Manager's Reports action opens this.
@@ -6107,6 +6130,31 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       </div>
       <div class="card"><div id="pe-grid"></div></div>
     </div>
+
+    <!-- Price Entry — "some of these lots are already priced" warning.
+         Was a native confirm(), whose plain black-on-grey text was hard to
+         pick out; a browser dialog cannot be styled, so the prompt is an
+         in-app modal wearing the app's amber warning colours, and the lots
+         render as a real table instead of padded monospace. -->
+    <div class="modal-bg" id="pe-complete-modal"><div class="modal has-x" style="max-width:620px">
+      <!-- Own ✕ rather than the one installModalCloseButtons() adds, because
+           that one only hides the panel — this prompt is awaited, so closing
+           it has to ANSWER (Skip: the reply that changes nothing). Shipping a
+           .modal-x here is what makes that helper leave the modal alone. -->
+      <button type="button" class="modal-x" title="Close" aria-label="Close" onclick="_peCompleteAnswer(false)">&times;</button>
+      <div style="display:flex;align-items:flex-start;gap:12px;background:#FEF3C7;border-left:4px solid #F59E0B;border-radius:8px;padding:12px 14px;margin-bottom:14px">
+        <span style="font-size:20px;line-height:1.1">⚠</span>
+        <div>
+          <div style="font-weight:800;font-size:15px;color:#7C2D12" id="pe-complete-title"></div>
+          <div style="font-size:12.5px;color:#7C2D12;margin-top:3px">These already carry a price and a buyer. Including them lets you overwrite what is shown below.</div>
+        </div>
+      </div>
+      <div id="pe-complete-list" style="max-height:46vh;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
+      <div class="actions">
+        <button class="btn btn-o" onclick="_peCompleteAnswer(false)">Skip them</button>
+        <button class="btn btn-g" onclick="_peCompleteAnswer(true)">Include them for editing</button>
+      </div>
+    </div></div>
 
     <!-- LOTS -->
     <div class="tc" id="tc-lots">
@@ -30929,31 +30977,59 @@ function _peIsComplete(l){
   return Number(l && l.price) > 0 && !!String(l && l.buyer || '').trim();
 }
 function _peFlagPriceCheck(){ return String(((window._CCFG)||{}).flag_price_check).toLowerCase() === 'true'; }
-// One line describing what a completed lot already holds — its price and its
-// buyer, the two things that decide whether it is worth reopening. WD and NA
-// count as complete but carry no price or buyer, so they say what they are
-// instead of reading as "0.00 · —".
+// What a completed lot already holds — its price and its buyer, the two
+// things that decide whether it is worth reopening. WD and NA count as
+// complete but carry no price or buyer, so they say what they are instead of
+// reading as "0.00 · no buyer".
 //
 // Buyer is shown the way the grid shows it: the short CODE, then the trade
 // name. Either can be blank on older rows, so the two are joined only when
 // both are there.
-function _peLotLine(l){
+function _peLotRow(l){
   const codeUp = String(l.code || '').trim().toUpperCase();
-  const lot = String(l.lot_no == null ? '' : l.lot_no).padEnd(6);
-  if (codeUp === 'WD') return `${lot}withdrawn`;
-  if (codeUp === 'NA') return `${lot}not auctioned`;
+  const lot = esc(String(l.lot_no == null ? '' : l.lot_no));
+  const td = 'padding:7px 10px;border-bottom:1px solid var(--border);font-size:12.5px';
+  if (codeUp === 'WD' || codeUp === 'NA') {
+    return `<tr><td style="${td};font-weight:700;white-space:nowrap">${lot}</td>
+      <td colspan="2" style="${td};color:#B45309;font-weight:600">${codeUp === 'WD' ? 'Withdrawn' : 'Not auctioned'}</td></tr>`;
+  }
   const buyer = [String(l.code || '').trim(), String(l.buyer1 || l.buyer || '').trim()]
-    .filter(Boolean).join(' · ') || 'no buyer';
-  return `${lot}${_peFmt(l.price).padStart(11)} /kg   ${buyer}`;
+    .filter(Boolean).join(' · ');
+  return `<tr><td style="${td};font-weight:700;white-space:nowrap">${lot}</td>
+    <td style="${td};text-align:right;font-variant-numeric:tabular-nums;font-weight:700;white-space:nowrap">${_peFmt(l.price)} <span style="color:var(--text3);font-weight:400">/kg</span></td>
+    <td style="${td};color:var(--text)">${buyer ? esc(buyer) : '<span style="color:var(--text3)">no buyer</span>'}</td></tr>`;
 }
-// The list for the confirm() above. Capped: a quick-select of a 200-lot range
-// would otherwise produce a dialog taller than the screen, with the buttons
-// pushed off the bottom on some browsers.
-function _peCompletedList(lots){
-  const CAP = 12;
-  const lines = lots.slice(0, CAP).map(_peLotLine);
-  if (lots.length > CAP) lines.push(`…and ${lots.length - CAP} more`);
-  return lines.join('\n');
+
+// The prompt itself. Returns a Promise<boolean> — true = include the completed
+// lots for editing, false = skip them — so the caller reads like the confirm()
+// it replaced. Resolved by the modal's two buttons or by closing it (which
+// counts as Skip: the safe answer is the one that changes nothing).
+let _peCompleteResolve = null;
+function _peConfirmComplete(lots){
+  const titleEl = document.getElementById('pe-complete-title');
+  const listEl  = document.getElementById('pe-complete-list');
+  if (!titleEl || !listEl) return Promise.resolve(confirm(`${lots.length} of the lots you typed are already complete. Include them for editing?`));
+  titleEl.textContent = `${lots.length} of the lots you typed ${lots.length === 1 ? 'is' : 'are'} already priced`;
+  // The panel scrolls, so the list needs no tight cap — but a quick-select can
+  // ask for thousands of lots, and rendering every row of that is wasted work
+  // nobody reads.
+  const CAP = 100;
+  const rows = lots.slice(0, CAP).map(_peLotRow).join('');
+  const more = lots.length > CAP
+    ? `<tr><td colspan="3" style="padding:8px 10px;color:var(--text3);font-size:12px">…and ${lots.length - CAP} more</td></tr>` : '';
+  listEl.innerHTML = `<table style="width:100%;border-collapse:collapse">
+    <thead><tr style="background:var(--bg)">
+      <th style="padding:6px 10px;text-align:left;font-size:11px;color:var(--text3)">Lot</th>
+      <th style="padding:6px 10px;text-align:right;font-size:11px;color:var(--text3)">Price</th>
+      <th style="padding:6px 10px;text-align:left;font-size:11px;color:var(--text3)">Buyer</th>
+    </tr></thead><tbody>${rows}${more}</tbody></table>`;
+  showModal('pe-complete-modal');
+  return new Promise(resolve => { _peCompleteResolve = resolve; });
+}
+function _peCompleteAnswer(include){
+  hideModal('pe-complete-modal');
+  const r = _peCompleteResolve; _peCompleteResolve = null;
+  if (r) r(!!include);
 }
 function _peFmt(n){ return (Number(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 // Bags are counts — always whole numbers, no decimals.
@@ -31433,11 +31509,7 @@ async function peSelectByLotNos(){
   const completed = matchedLots.filter(_peIsComplete);
   let skippedComplete = 0;
   if (completed.length) {
-    const ok = confirm(
-      `${completed.length} of the lots you typed ${completed.length === 1 ? 'is' : 'are'} already complete:\n\n` +
-      _peCompletedList(completed) +
-      `\n\nInclude them for editing too?\n\nOK = include them   ·   Cancel = skip them`
-    );
+    const ok = await _peConfirmComplete(completed);
     if (!ok) {
       const skip = new Set(completed.map(l => l.id));
       include = matchedLots.filter(l => !skip.has(l.id));

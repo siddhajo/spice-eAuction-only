@@ -370,6 +370,33 @@ const cleanup = () => {
   // Back to #13 for the screenshot.
   await page.evaluate((id) => setSharedAucId(String(id), 'topbar'), AID);
   await page.waitForFunction(() => document.querySelectorAll('#am-body table.am-tbl tbody tr').length === 6, { timeout: 15000 });
+
+  // ── [F] the lot detail panel opens CENTRED ───────────────────────
+  // It shares .hub-drawer with the Auction Desk, which is a right-edge
+  // slide-in. This screen carries .is-centred on top (2026-09-03: at 430px
+  // hard against the right edge it was easy to miss), and the two must not
+  // drift back together.
+  console.log('\n[F] lot detail panel');
+  await page.evaluate(() => document.querySelector('#am-body tr[data-am-row^="lot:"]').click());
+  await page.waitForFunction(() => document.getElementById('am-detail')?.style.display === 'flex', { timeout: 10000 });
+  const panel = await page.evaluate(() => {
+    const el = document.getElementById('am-detail');
+    const r = el.getBoundingClientRect();
+    return {
+      centred: Math.abs((r.left + r.right) / 2 - window.innerWidth / 2) < 3,
+      width: Math.round(r.width),
+      vw: window.innerWidth,
+      touchesRightEdge: Math.abs(r.right - window.innerWidth) < 2,
+      deskStillRight: getComputedStyle(document.getElementById('hub-lot-drawer')).right === '0px',
+    };
+  });
+  check('the lot panel is horizontally centred', panel.centred, JSON.stringify(panel));
+  check('…no longer pinned to the right edge', panel.touchesRightEdge === false, JSON.stringify(panel));
+  check('…and is wider than the 430px drawer it came from', panel.width > 430, `${panel.width}px`);
+  check('the Auction Desk drawer is untouched — still right-edge',
+        panel.deskStillRight === true, JSON.stringify(panel));
+  await page.evaluate(() => amDetailClose());
+  await page.waitForFunction(() => document.getElementById('am-detail')?.style.display === 'none', { timeout: 5000 });
   await page.screenshot({ path: SHOT, fullPage: true });
   console.log('\n  screenshot → ' + SHOT);
   // …and one of the downloads screen.

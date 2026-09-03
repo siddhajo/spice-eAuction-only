@@ -7,8 +7,13 @@
 // but carry neither, so they say what they are instead of reading as
 // "0.00 · no buyer".
 //
-// Driven through the real screen and the real confirm(), because the whole
-// point is the text an operator is shown.
+// It is an in-app modal, not a native confirm(): a browser dialog cannot be
+// styled, and its plain black text was hard to pick out (2026-09-03 feedback).
+// The prompt wears the app's amber warning colours and renders the lots as a
+// table.
+//
+// Driven through the real screen, because the whole point is what an operator
+// is shown.
 const os = require('os'), path = require('path'), fs = require('fs');
 const { spawn } = require('child_process');
 const pptr = require('puppeteer-core');
@@ -68,55 +73,105 @@ function findChrome(){ for (const p of [process.env.PUPPETEER_EXECUTABLE_PATH,'/
   // `_pe` is a top-level `let`, so it is script-scope, not window.
   await page.waitForFunction(() => (typeof _pe !== 'undefined' && _pe.lots || []).length > 0, { timeout: 15000 });
 
-  // Capture what confirm() is actually asked, then answer Cancel.
-  const msg = await page.evaluate(async () => {
-    let captured = null;
-    const real = window.confirm;
-    window.confirm = (m) => { captured = m; return false; };
+  // Open the prompt for a mix: two priced lots, one withdrawn, one still to
+  // price. Nothing is awaited on the caller's promise here — the modal is
+  // inspected while it is up, then answered.
+  await page.evaluate(() => {
     document.getElementById('pe-lotno-input').value = '1,2,3,4';
-    await peSelectByLotNos();
-    window.confirm = real;
-    return captured;
+    peSelectByLotNos();
   });
-  check('the prompt is shown for the completed lots only', !!msg && /3 of the lots you typed/.test(msg), String(msg));
-  // Lot 001 — priced, with a buyer code and trade name.
-  check('a priced lot shows its price', /001\s+3,756\.00 \/kg/.test(msg || ''), String(msg));
-  check('…and its buyer, code then trade name', /B2 · ANKIT SPICES/.test(msg || ''), String(msg));
-  // Lot 002 — a price with paise, and a long trade name.
-  check('paise are kept', /2,561\.50 \/kg/.test(msg || ''), String(msg));
-  check('the second lot names its own buyer', /ERPL · ELAICHIROYAL PRIVATE LIMITED-KL/.test(msg || ''), String(msg));
-  // Lot 003 — withdrawn: complete, but no price or buyer to report.
-  check('a withdrawn lot says so instead of showing 0.00', /003\s+withdrawn/.test(msg || ''), String(msg));
-  check('…and does not render a zero price', !/003\s+0\.00/.test(msg || ''), String(msg));
-  // Lot 004 is still unpriced, so it is not in the prompt at all.
-  check('an unpriced lot is not listed as complete', !/\n004/.test(msg || ''), String(msg));
-  check('the question and its two answers survive', /Include them for editing too\?/.test(msg || '')
-        && /OK = include them/.test(msg || ''), String(msg));
+  await page.waitForFunction(() => document.getElementById('pe-complete-modal')?.classList.contains('show'), { timeout: 10000 });
 
-  // A long range must not produce a dialog taller than the screen.
+  const seen = await page.evaluate(() => {
+    const wrap = document.getElementById('pe-complete-modal');
+    const banner = wrap.querySelector('div[style*="FEF3C7"]');
+    const cs = banner ? getComputedStyle(banner) : null;
+    const rows = Array.from(wrap.querySelectorAll('#pe-complete-list tbody tr'))
+      .map(tr => Array.from(tr.children).map(td => td.textContent.replace(/\s+/g, ' ').trim()));
+    return {
+      title: (document.getElementById('pe-complete-title').textContent || '').trim(),
+      bannerBg: cs ? cs.backgroundColor : null,
+      titleColor: cs ? getComputedStyle(document.getElementById('pe-complete-title')).color : null,
+      headers: Array.from(wrap.querySelectorAll('#pe-complete-list thead th')).map(th => th.textContent.trim()),
+      rows,
+      buttons: Array.from(wrap.querySelectorAll('.actions button')).map(b => b.textContent.trim()),
+    };
+  });
+
+  check('the prompt names how many lots are already priced',
+        /^3 of the lots you typed are already priced$/.test(seen.title), seen.title);
+  // The whole point of replacing confirm(): the warning is no longer black on
+  // grey. Amber banner (#FEF3C7) with dark amber text (#7C2D12).
+  check('the warning is on the amber banner, not plain black on grey',
+        seen.bannerBg === 'rgb(254, 243, 199)', String(seen.bannerBg));
+  check('…and its heading is the dark amber, not #000',
+        seen.titleColor === 'rgb(124, 45, 18)', String(seen.titleColor));
+  check('the lots are a table of Lot / Price / Buyer',
+        JSON.stringify(seen.headers) === JSON.stringify(['Lot', 'Price', 'Buyer']), JSON.stringify(seen.headers));
+
+  const flat = JSON.stringify(seen.rows);
+  check('a priced lot shows its price', /"001","3,756\.00 \/kg"/.test(flat), flat);
+  check('…and its buyer, code then trade name', /B2 · ANKIT SPICES/.test(flat), flat);
+  check('paise are kept', /2,561\.50 \/kg/.test(flat), flat);
+  check('the second lot names its own buyer', /ERPL · ELAICHIROYAL PRIVATE LIMITED-KL/.test(flat), flat);
+  // Withdrawn is complete but carries neither price nor buyer.
+  check('a withdrawn lot says so instead of showing 0.00',
+        /"003","Withdrawn"/.test(flat), flat);
+  check('…and does not render a zero price', !/"003","0\.00/.test(flat), flat);
+  check('an unpriced lot is not listed as complete', !/"004"/.test(flat), flat);
+  check('both answers are offered as buttons',
+        seen.buttons.includes('Skip them') && seen.buttons.includes('Include them for editing'),
+        JSON.stringify(seen.buttons));
+
+  // Skip must leave the completed lots out of the selection.
+  const after = await page.evaluate(async () => {
+    _peCompleteAnswer(false);
+    await new Promise(r => setTimeout(r, 50));
+    return { open: document.getElementById('pe-complete-modal').classList.contains('show'), sel: _pe.sel.size };
+  });
+  check('answering Skip closes the prompt', after.open === false);
+  check('…and selects only the lot that still needs pricing', after.sel === 1, String(after.sel));
+
+  // Closing with the ✕ must ANSWER (as Skip), not strand the caller — the
+  // click handler is awaited by peSelectByLotNos.
+  const viaX = await page.evaluate(async () => {
+    _pe.sel.clear();
+    document.getElementById('pe-lotno-input').value = '1,2,3,4';
+    const p = peSelectByLotNos();
+    await new Promise(r => setTimeout(r, 80));
+    document.querySelector('#pe-complete-modal .modal-x').click();
+    // Resolves only if the ✕ answered the promise.
+    await Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('hung')), 2000))]);
+    return { open: document.getElementById('pe-complete-modal').classList.contains('show'), sel: _pe.sel.size };
+  }).catch(e => ({ err: String(e.message || e) }));
+  check('closing with ✕ answers the prompt rather than hanging', !viaX.err, String(viaX.err));
+  check('…and counts as Skip', viaX.sel === 1, JSON.stringify(viaX));
+
+  // A long list is capped, with the remainder named.
   const capped = await page.evaluate(async () => {
-    let captured = null;
-    const real = window.confirm;
-    window.confirm = (m) => { captured = m; return false; };
-    // Pretend every lot in the trade is complete, then ask for a wide range.
-    const many = Array.from({ length: 40 }, (_, i) => ({
+    const many = Array.from({ length: 140 }, (_, i) => ({
       id: 10000 + i, lot_no: String(i + 1).padStart(3, '0'),
       price: 3000 + i, code: 'B2', buyer: 'ANKIT SPICES', buyer1: 'ANKIT SPICES',
     }));
     const saved = _pe.lots;
     _pe.lots = many;
-    document.getElementById('pe-lotno-input').value = '1-40';
-    await peSelectByLotNos();
+    document.getElementById('pe-lotno-input').value = '1-140';
+    peSelectByLotNos();
+    await new Promise(r => setTimeout(r, 120));
+    const body = document.getElementById('pe-complete-list');
+    const out = {
+      rows: body.querySelectorAll('tbody tr').length,
+      tail: (body.textContent.match(/…and \d+ more/) || [''])[0],
+      scrolls: getComputedStyle(body).overflowY,
+    };
+    _peCompleteAnswer(false);
     _pe.lots = saved;
-    window.confirm = real;
-    return captured;
+    return out;
   });
-  // Lot lines only. The header ("40 of the lots you typed…") also starts with
-  // a digit, so match on the padding that follows a lot number instead.
-  const lines = String(capped || '').split('\n').filter(l => /^\d+\s{2,}/.test(l));
-  check('a long list is capped rather than running off the dialog', lines.length <= 12,
-        `${lines.length} lot lines`);
-  check('…and says how many were not shown', /…and 28 more/.test(capped || ''), String(capped).slice(0, 300));
+  check('a long list is capped rather than rendering every row',
+        capped.rows <= 101, `${capped.rows} rows`);
+  check('…and says how many were not shown', /…and 40 more/.test(capped.tail), capped.tail);
+  check('…in a panel that scrolls', capped.scrolls === 'auto', capped.scrolls);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   await cleanup();
