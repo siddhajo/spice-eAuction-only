@@ -18392,16 +18392,17 @@ app.get('/api/insights', requireView, (req, res) => {
   totals.lots_wd_amount   = Number(lotsAmtRow.wd)    || 0;
 
   // Planter / Trader weight split + Grade-2 booked weight across the scope.
-  // "Trader" = registered dealer under the PREVIOUS rule — a `cr` that cleans
-  // to a valid 15-char GSTIN (SBL/aadhar ignored); everyone else is a Planter.
-  // (The Insights tab and these cumulative tiles use the previous GSTIN-only
-  // rule; the per-auction Current-Auction widget uses GSTIN + SBL.) Grade-2
-  // weight is DERIVED from the seller with the SAME ${DEALER_INS} rule as the
-  // Trader tile beside it — Grade 2 is the dealer class, so the two tiles must
-  // agree. It is deliberately NOT read from the stored lots.grade column, which
-  // is captured once at lot entry and never revisited. Feeds the snapshot's
-  // Planter/Trader/Total tiles and its 25%-cap band.
-  const DEALER_INS = hasValidGstinSql('l.cr');
+  // "Trader" = registered dealer under the shared Grade-2 rule — cr starts with
+  // GSTIN AND the SBL (aadhar) is set; everyone else is a Planter. This is the
+  // SAME dealerSql() the Current-Auction depot summary uses, so the Auction
+  // Snapshot and the Current Auction card report identical Planter/Trader/
+  // Grade-2 figures for the same auction. (It was the GSTIN-only rule until
+  // 2026-09-08; the two cards then disagreed by the weight of every GSTIN
+  // seller with no SBL, which read as a bug on the dashboard.)
+  // Grade-2 weight is DERIVED from the seller here, NOT read from the stored
+  // lots.grade column — grade is captured once at lot entry and never revisited.
+  // Feeds the snapshot's Planter/Trader/Total tiles and its 25%-cap band.
+  const DEALER_INS = dealerSql('l.cr', 'l.aadhar');
   const gwRow = db.get(
     `SELECT COALESCE(SUM(CASE WHEN ${DEALER_INS} THEN 0 ELSE l.qty END),0) AS planter_wt,
             COALESCE(SUM(CASE WHEN ${DEALER_INS} THEN l.qty ELSE 0 END),0) AS trader_wt,

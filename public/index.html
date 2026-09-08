@@ -3274,13 +3274,11 @@ body[data-hub-plain="1"] .hub-plain-dot{background:var(--hub-p-edge)}
   display:flex;flex-direction:column;animation:hubSlideIn .2s ease-out
 }
 @keyframes hubSlideIn{from{transform:translateX(24px);opacity:.4}to{transform:none;opacity:1}}
-/* Centred variant — the Auction Manager's detail panel (#am-detail) only.
-   The Auction Desk keeps the right-edge drawer: there you click a lot to
-   check one field against the list still on screen beside it, so the panel
-   is deliberately off to one side. The manager's panel is read on its own,
-   and at 430px hard against the right edge it was easy to miss entirely.
-   A modifier rather than a change to .hub-drawer, because the two screens
-   share that base class on purpose (see the note by #am-detail). */
+/* Centred variant — the Auction Manager's detail panel (#am-detail) and the
+   Auction Desk's lot detail (#hub-lot-drawer). Both are read on their own, and
+   at 430px hard against the right edge they were cramped and easy to miss.
+   Kept as a modifier rather than folded into .hub-drawer so the base right-edge
+   drawer stays available for any panel meant to be read beside the list. */
 .hub-drawer.is-centred{
   top:50%;left:50%;right:auto;bottom:auto;
   transform:translate(-50%,-50%);
@@ -5102,9 +5100,11 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       <div id="hub-groups"></div>
       </div><!-- /hub-view-docs -->
 
-      <!-- Lot detail drawer — slides over the list, which stays visible
-           behind it. Edit hands off to the app's existing lot-edit modal
-           rather than growing a second editor. -->
+      <!-- Lot detail drawer — a centred panel over the dimmed list. Edit hands
+           off to the app's existing lot-edit modal rather than growing a second
+           editor. It used to sit hard against the right edge at 430px; centred
+           and wider it is far easier to read, and it now matches the Auction
+           Manager's detail panel, which shares these styles. -->
       <div id="hub-lot-scrim" class="hub-scrim" style="display:none" onclick="hubLotClose()"></div>
       <!-- Filter dialog. A real .modal-bg/.modal like every other dialog in
            the app: centred, dimmed behind, roomy — and nothing to position.
@@ -5122,7 +5122,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           </div>
         </div>
       </div>
-      <aside id="hub-lot-drawer" class="hub-drawer" style="display:none" aria-label="Lot detail"></aside>
+      <aside id="hub-lot-drawer" class="hub-drawer is-centred" style="display:none" aria-label="Lot detail"></aside>
     </div>
 
     <div class="tc" id="tc-dash"><div class="stats" id="stats"></div></div>
@@ -16707,7 +16707,7 @@ async function loadStats(auctionId){
     ];
     if (_rn(T.total_weight) > 0) meta.push(`Planter ${fmtI(T.planter_weight,2)} / Trader ${fmtI(T.trader_weight,2)} / Total ${fmtI(T.total_weight,2)} kg`);
     if (_rn(T.min_price) > 0) meta.push(`Price ₹${fmtI(T.min_price,2)}–${fmtI(T.max_price,2)} · avg ₹${fmtI(T.avg_price,2)}`);
-    return { title:`Trade Snapshot — ${scope}`, subtitle: meta.join('   —   '), columns: cols, rows };
+    return { title:`Auction Snapshot — ${scope}`, subtitle: meta.join('   —   '), columns: cols, rows };
   };
   // REPORT_BUILDERS.dash_pertrade is defined in loadPerTradeBreakdown()
   // (the Per-Auction Breakdown widget now lives on its own screen).
@@ -16736,7 +16736,7 @@ async function loadStats(auctionId){
       <button type="button" class="dash-snap-toggle-btn" onclick="toggleDashSnapVisible()"
               aria-expanded="${snapHidden ? 'false' : 'true'}" aria-controls="dash-snap-card">
         <span class="caret">${snapHidden ? '▸' : '▾'}</span>
-        ${snapHidden ? 'Show' : 'Hide'} ${isAllMode ? 'All Auctions' : 'Trade Snapshot'}
+        ${snapHidden ? 'Show' : 'Hide'} ${isAllMode ? 'All Auctions' : 'Auction Snapshot'}
       </button>
       ${snapHidden ? picker : ''}
     </div>
