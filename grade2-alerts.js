@@ -11,9 +11,14 @@
 //     SUPERIOR.
 //   • Each level fires at most once per auction.
 //
-// "Grade-2 lot" = a lot whose `grade` column trims to '2' (the lot-entry
-// UI auto-assigns '2' for GSTIN sellers; '1' otherwise). Weight = lots.qty
-// in kilograms.
+// "Grade-2 lot" = a lot whose SELLER is a registered dealer under the shared
+// dealerSql(cr, aadhar) rule — cr starts with GSTIN and the SBL is set. This is
+// the same rule the dashboard's TRADER WT uses, so the alert always fires on
+// the number the operator can see. It deliberately does NOT read the stored
+// lots.grade column: grade is captured once at lot entry and never revisited
+// (trader-lot-sync re-stamps cr/aadhar onto lots but not grade), so a seller
+// whose GSTIN/SBL was filled in after booking would move Trader WT without
+// moving the alert. Weight = lots.qty in kilograms.
 //
 // State lives entirely in the `grade2_alerts` table (see db.js) — no
 // in-memory state — so it survives restarts and works across processes:
@@ -25,6 +30,7 @@
 // fire-and-forget (so a slow Meta API call never blocks lot entry).
 
 const { getSettingBool, getSettingNum, getSetting } = require('./company-config');
+const { dealerSql } = require('./calculations');
 
 // kg → "12,345 kg (12.35 MT)" for human-readable alert bodies.
 function fmtWeight(kg) {
@@ -39,7 +45,7 @@ function _summarise(db, auctionId) {
   const r = db.get(
     `SELECT COUNT(*) AS lot_count,
             COALESCE(SUM(qty), 0) AS total_weight,
-            COALESCE(SUM(CASE WHEN TRIM(grade) = '2' THEN qty ELSE 0 END), 0) AS grade2_weight
+            COALESCE(SUM(CASE WHEN ${dealerSql('cr', 'aadhar')} THEN qty ELSE 0 END), 0) AS grade2_weight
        FROM lots
       WHERE auction_id = ?`,
     [auctionId]

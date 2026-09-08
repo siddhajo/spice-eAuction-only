@@ -17031,8 +17031,10 @@ function lotSellerIssues(l){
   if (l.trader_id && Number(l.has_bank) === 0) {
     out.push({ label:'No bank', sev:'warn', tip:'Seller has no bank account on file — the payment cannot be routed.' });
   }
-  if (isG2 && !isDealer) out.push({ label:'G2, not a dealer', sev:'warn', tip:'Lot is Grade 2 but the seller has no GSTIN + SBL — it counts toward the Spices Board 25% cap anyway.' });
-  if (!isG2 && isDealer) out.push({ label:'Dealer, not G2',   sev:'warn', tip:'Seller has GSTIN + SBL but the lot is not Grade 2 — it is missing from the 25% cap figure.' });
+  // The 25% cap figure is derived from the seller, so it is always right. These
+  // two flag a stale lots.grade, which still drives the debit-note commission.
+  if (isG2 && !isDealer) out.push({ label:'G2, not a dealer', sev:'warn', tip:'Lot is Grade 2 but the seller has no GSTIN + SBL — its commission will still be debited.' });
+  if (!isG2 && isDealer) out.push({ label:'Dealer, not G2',   sev:'warn', tip:'Seller has GSTIN + SBL but the lot is not Grade 2 — its commission is missing from the debit note.' });
   return out.sort((a,b) => (a.sev === b.sev ? 0 : a.sev === 'error' ? -1 : 1));
 }
 // The two badges raised against the LOT's link to a seller rather than

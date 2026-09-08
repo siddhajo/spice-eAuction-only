@@ -5115,21 +5115,22 @@ function validateAuctionLots(db, auctionId) {
   pushWarn('no_phone', 'No phone',        'Seller has no phone number',                     l => !String(l.tel || '').trim());
 
   // ── Grade vs seller classification ────────────────────────────
-  // The dashboard reports these two from the SAME lots, by different means:
-  //   TRADER WT  — computed live, dealerSql(cr, aadhar) on the lot's seller snapshot
-  //   GRADE 2 kg — read from the stored lots.grade column
-  // They drift because `grade` is captured once at lot entry and never revisited:
-  // it is not in trader-lot-sync.js's FIELD_MAP, so filling in a seller's GSTIN
-  // or SBL afterwards re-stamps cr/aadhar on their lots while grade stays put.
-  // The operator can also just override the dropdown. Either way the Spices
-  // Board 25% figure and the depot Trader WT stop agreeing, with nothing saying
-  // so. Flag both directions before price import, while it is still cheap to fix.
+  // The dashboard's TRADER WT and its Grade-2 25%-cap figure are now BOTH
+  // derived live from dealerSql(cr, aadhar), so they can no longer disagree.
+  // The stored lots.grade column still drives real money, though: the debit
+  // note bills the commission on the dealer's grade-2 lots (see
+  // /api/debit-notes/eligible-purchases), and `grade` is captured once at lot
+  // entry and never revisited — it is not in trader-lot-sync.js's FIELD_MAP, so
+  // filling in a seller's GSTIN or SBL afterwards re-stamps cr/aadhar on their
+  // lots while grade stays put. The operator can also just override the
+  // dropdown. Flag both directions before price import, while it is still cheap
+  // to fix — a stale grade now shows up as a wrong debit note, not a wrong cap.
   const isG2 = (l) => String(l.grade == null ? '' : l.grade).trim() === '2';
   pushWarn('grade_not_dealer', 'Grade 2, not a dealer',
-    'Lot is Grade 2 but the seller has no GSTIN + SBL (counts toward the 25% cap anyway)',
+    'Lot is Grade 2 but the seller has no GSTIN + SBL — its commission will still be debited',
     l => isG2(l) && !isDealerSeller(l.cr, l.aadhar));
   pushWarn('dealer_not_grade2', 'Dealer, not Grade 2',
-    'Seller has GSTIN + SBL but the lot is not Grade 2 (missing from the 25% cap figure)',
+    'Seller has GSTIN + SBL but the lot is not Grade 2 — its commission is missing from the debit note',
     l => !isG2(l) && isDealerSeller(l.cr, l.aadhar));
 
   // ── Reconciliation (the "tally") ──────────────────────────────
@@ -6742,7 +6743,13 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
             COALESCE(SUM(CASE WHEN ${SOLD} THEN qty    ELSE 0 END),0) AS soldQty,
             -- Grade-2 booked weight — Spices Board caps grade 2 at 25% of the
             -- total booked qty, so the dashboard flags over/under booking.
-            COALESCE(SUM(CASE WHEN TRIM(COALESCE(grade,'')) = '2' THEN qty ELSE 0 END),0) AS grade2Qty
+            -- Derived from the SELLER (same ${DEALER} rule as TRADER WT above),
+            -- NOT the stored lots.grade column. Grade 2 IS the dealer class, so
+            -- the 25% figure and the depot Trader WT must be the same number;
+            -- reading the stored label let them drift whenever a seller's GSTIN
+            -- or SBL was filled in after the lot was booked (trader-lot-sync
+            -- re-stamps cr/aadhar but never grade).
+            COALESCE(SUM(CASE WHEN ${DEALER} THEN qty ELSE 0 END),0) AS grade2Qty
        FROM lots WHERE auction_id = ?`,
     [auctionId]
   ) || {};
@@ -18389,13 +18396,16 @@ app.get('/api/insights', requireView, (req, res) => {
   // to a valid 15-char GSTIN (SBL/aadhar ignored); everyone else is a Planter.
   // (The Insights tab and these cumulative tiles use the previous GSTIN-only
   // rule; the per-auction Current-Auction widget uses GSTIN + SBL.) Grade-2
-  // weight (grade='2') feeds the Grade-2 25%-cap alert. Feeds the snapshot's
-  // Planter/Trader/Total tiles.
+  // weight is DERIVED from the seller with the SAME ${DEALER_INS} rule as the
+  // Trader tile beside it — Grade 2 is the dealer class, so the two tiles must
+  // agree. It is deliberately NOT read from the stored lots.grade column, which
+  // is captured once at lot entry and never revisited. Feeds the snapshot's
+  // Planter/Trader/Total tiles and its 25%-cap band.
   const DEALER_INS = hasValidGstinSql('l.cr');
   const gwRow = db.get(
     `SELECT COALESCE(SUM(CASE WHEN ${DEALER_INS} THEN 0 ELSE l.qty END),0) AS planter_wt,
             COALESCE(SUM(CASE WHEN ${DEALER_INS} THEN l.qty ELSE 0 END),0) AS trader_wt,
-            COALESCE(SUM(CASE WHEN TRIM(COALESCE(l.grade,''))='2' THEN l.qty ELSE 0 END),0) AS grade2_qty
+            COALESCE(SUM(CASE WHEN ${DEALER_INS} THEN l.qty ELSE 0 END),0) AS grade2_qty
        FROM lots l JOIN auctions a ON a.id = l.auction_id
       WHERE date(a.date) BETWEEN date(?) AND date(?)${aidA}`,
     [from, to]
