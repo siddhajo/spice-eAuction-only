@@ -83,6 +83,11 @@ body{font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,sans-serif
 /* ── INPUTS ── */
 .ein{width:100%;height:34px;border-radius:8px;border:1.5px solid var(--border);padding:0 10px;font-size:14px;font-family:inherit;outline:none;background:var(--input-bg);color:var(--text);-webkit-appearance:none;transition:all .25s}
 .ein:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(13,124,95,.1);transform:translateY(-1px)}
+/* Litre Wt / Moisture become <select class="ein"> when Settings lists
+   their values. .ein's `background` shorthand wipes the arrow the global
+   select rule paints, so put it back — a dropdown with no chevron reads
+   as a dead text box. */
+select.ein{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23999' fill='none' stroke-width='1.5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center;padding-right:24px}
 /* Bank-detail fields (add/edit bank) — larger + clearer labels so account
    numbers, IFSC and holder name are easy to read and enter. */
 #le-bank-form .ein,#ed-bank-form .ein{height:44px;font-size:15px}
@@ -769,12 +774,12 @@ select:focus{border-color:var(--green)}
          needs attention. -->
     <div class="lb" style="margin-top:0">NAME *</div><input type="text" id="ns-name" autocapitalize="characters" autocomplete="off" name="ns-name">
     <div class="lb">PAN</div><input type="text" id="ns-pan" autocapitalize="characters" autocomplete="off" name="ns-pan">
-    <div class="lb">PHONE</div><input type="tel" id="ns-tel" inputmode="tel" autocomplete="off" name="ns-tel" maxlength="15" oninput="this.value=this.value.replace(/[^0-9+]/g,'');if(document.getElementById('ns-wa-same').checked)document.getElementById('ns-whatsapp').value=this.value">
+    <div class="lb">PHONE</div><input type="tel" id="ns-tel" inputmode="numeric" autocomplete="off" name="ns-tel" maxlength="10" placeholder="10-digit mobile" onpaste="pastePhoneInput(this,event)" oninput="limitPhoneInput(this);if(document.getElementById('ns-wa-same').checked)document.getElementById('ns-whatsapp').value=this.value">
     <button type="button" id="ns-more-btn" onclick="toggleSellerMore()" style="width:100%;margin-top:14px;background:var(--bg2);border:1px dashed var(--border2);border-radius:8px;padding:9px 10px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;font-family:inherit;text-align:left">+ More details</button>
     <div id="ns-more" style="display:none">
       <div class="lb">GSTIN / CR</div><input type="text" id="ns-cr" autocomplete="off" name="ns-cr">
       <div class="lb" style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>WHATSAPP</span><label style="font-size:11px;font-weight:600;color:var(--text2);display:inline-flex;align-items:center;gap:5px;cursor:pointer;text-transform:none;letter-spacing:0;margin:0"><input type="checkbox" id="ns-wa-same" onchange="onWaSameToggle()" style="width:14px;height:14px;cursor:pointer;margin:0"> Same as phone</label></div>
-      <input type="tel" id="ns-whatsapp" inputmode="tel" autocomplete="off" name="ns-whatsapp" maxlength="15" oninput="this.value=this.value.replace(/[^0-9+]/g,'')">
+      <input type="tel" id="ns-whatsapp" inputmode="numeric" autocomplete="off" name="ns-whatsapp" maxlength="10" placeholder="10-digit mobile" onpaste="pastePhoneInput(this,event)" oninput="limitPhoneInput(this)">
       <div class="lb">EMAIL</div><input type="email" id="ns-email" inputmode="email" autocapitalize="none" autocomplete="off" name="ns-email" spellcheck="false" oninput="validateEmailField(this)" onblur="validateEmailField(this,true)">
       <div id="ns-email-err" style="display:none;font-size:11px;color:#d93025;margin-top:4px;font-weight:600">Enter a valid email address</div>
       <div class="lb">ADDRESS</div><input type="text" id="ns-padd" autocomplete="off" name="ns-padd">
@@ -884,6 +889,10 @@ let appTitle='Spice Auction',lastSearchQuery='',editTimeoutMinutes=0;
 // "Delete Selected" bulk action below the list.
 let allMyLots=[],editEnabled=true,deleteEnabled=true;
 let cfgDefaultLitre='';
+// Raw pick-list settings (litre_options / moisture_options). Blank keeps
+// the field a typed box; non-blank turns it into a dropdown — see
+// applyChoiceFields() below.
+let cfgLitreOptions='',cfgMoistureOptions='';
 
 const ICO_EDIT='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>';
 const ICO_DEL='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>';
@@ -925,6 +934,10 @@ async function refreshConfig(){
     if(d.immediateReserve!=cfgImmediateReserve){cfgImmediateReserve=d.immediateReserve||false;changed=true}
     if(d.defaultGunny!=cfgDefaultGunny){cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;changed=true}
     if(d.defaultLitre!=cfgDefaultLitre){cfgDefaultLitre=d.defaultLitre||'';changed=true}
+    // Pick lists edited in Settings reach the phone on the next tab
+    // switch — the field flips between dropdown and typed box in place.
+    if((d.litreOptions||'')!=cfgLitreOptions||(d.moistureOptions||'')!=cfgMoistureOptions){
+      cfgLitreOptions=d.litreOptions||'';cfgMoistureOptions=d.moistureOptions||'';applyChoiceFields();changed=true}
     if(d.whatsapp!=cfgWhatsapp){cfgWhatsapp=!!d.whatsapp;applyWhatsappVis();changed=true}
     if((!!d.sellerAtBottom)!=cfgSellerAtBottom){cfgSellerAtBottom=!!d.sellerAtBottom;applySellerPosition();changed=true}
     if((d.showSampleField!==false)!=cfgShowSample||(d.showGrossField!==false)!=cfgShowGross){cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;applyCalcFieldVis();changed=true}
@@ -982,6 +995,107 @@ function applyCalcFieldVis(){
   if(gc)gc.style.display=cfgShowGross?'':'none';
   if(grid){var cols=1+(cfgShowSample?1:0)+(cfgShowGross?1:0);grid.style.gridTemplateColumns='repeat('+cols+',1fr)';}
 }
+// ── Pick-list fields (Litre Wt / Moisture) ────────────────────
+// Settings → Lot Entry Defaults can list the values Litre Wt and Moisture
+// accept; when a list is set, that field becomes a dropdown on the Lot
+// Entry form AND in the Edit Lot sheet. Blank (the default) leaves the
+// typed box exactly as it was.
+//
+// The list is comma/newline separated values and/or a range written
+// "min-max:step" — "310-600:10" is the litre range in use here, and
+// "6.1-7.5:0.1" the moisture one. Mirrors parseChoiceValues() in the
+// desktop console (public/index.html); keep the two in step.
+var CHOICE_MAX=2000;
+function choiceDecimals(str){var i=String(str).indexOf('.');return i<0?0:String(str).length-i-1}
+function parseChoiceValues(raw){
+  var out=[],seen={};
+  function push(v){var t=String(v).trim();if(t&&!seen[t]&&out.length<CHOICE_MAX){seen[t]=1;out.push(t)}}
+  String(raw||'').split(/[\n,;]+/).forEach(function(tok){
+    tok=tok.trim();if(!tok)return;
+    var m=tok.match(/^(\d+(?:\.\d+)?)\s*(?:-|to|\.\.)\s*(\d+(?:\.\d+)?)(?:\s*(?::|step|by)\s*(\d+(?:\.\d+)?))?$/i);
+    if(!m){push(tok);return}
+    var a=parseFloat(m[1]),b=parseFloat(m[2]),step=m[3]?parseFloat(m[3]):1;
+    if(!(step>0)||!isFinite(a)||!isFinite(b)){push(tok);return}
+    // Count the steps and format to the decimals that were typed — adding
+    // 0.1 repeatedly drifts into 6.300000000000001 territory.
+    var dp=Math.max(choiceDecimals(m[1]),choiceDecimals(m[2]),m[3]?choiceDecimals(m[3]):0);
+    var lo=Math.min(a,b),hi=Math.max(a,b),n=Math.floor((hi-lo)/step+1e-9);
+    for(var i=0;i<=n&&out.length<CHOICE_MAX;i++)push((lo+i*step).toFixed(dp));
+  });
+  return out;
+}
+// Markup of each field before it became a dropdown, so clearing the
+// setting hands the typed box back without a reinstall.
+var _choiceOrig={};
+// A <select> whose .value setter never drops a value it doesn't carry. A
+// lot saved with a litre weight outside the list (or captured before the
+// list existed) is loaded into the edit sheet by plain `el.value = ...`
+// assignments; without this it would land blank and Save would wipe it.
+function makeSelectTolerant(sel){
+  var desc=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value');
+  Object.defineProperty(sel,'value',{configurable:true,
+    get:function(){return desc.get.call(this)},
+    set:function(v){
+      var want=(v==null)?'':String(v);
+      Array.prototype.slice.call(this.options).forEach(function(o){if(o.dataset.adhoc==='1')o.remove()});
+      var has=Array.prototype.some.call(this.options,function(o){return o.value===want});
+      // A list written as 6.1-7.5:0.1 carries "7.0"; a lot recorded 7 is the
+      // same reading, so match on the number before calling it off-list.
+      if(want!==''&&!has&&isFinite(parseFloat(want))){
+        var same=Array.prototype.filter.call(this.options,function(o){return o.value!==''&&parseFloat(o.value)===parseFloat(want)})[0];
+        if(same){want=same.value;has=true}
+      }
+      if(want!==''&&!has){var o=document.createElement('option');o.value=want;o.textContent=want;o.dataset.adhoc='1';o.title='Recorded on this lot but not in the configured list';this.appendChild(o)}
+      desc.set.call(this,want);
+    }});
+}
+// Swap the field at `id` between a typed <input> and a <select> of
+// `values`, keeping its id, class, inline style and markup-wired handlers
+// so every existing `.value` reader carries on working.
+function applyChoiceField(id,values){
+  var el=document.getElementById(id);
+  if(!el)return;
+  if(!values.length){
+    if(el.tagName==='SELECT'&&_choiceOrig[id]){
+      var keep=el.value,box=document.createElement('div');
+      box.innerHTML=_choiceOrig[id];
+      el.replaceWith(box.firstElementChild);
+      var back=document.getElementById(id);
+      // attachFieldClear ran at DOMContentLoaded, so re-wire the ✕ on the
+      // box we just put back.
+      if(back){back.value=keep;if(typeof attachFieldClear==='function')attachFieldClear(back)}
+    }
+    return;
+  }
+  var prev=el.value;
+  if(el.tagName!=='SELECT'){
+    if(!_choiceOrig[id])_choiceOrig[id]=el.outerHTML;
+    var sel=document.createElement('select');
+    // Text-box-only attributes are dropped — a select has no placeholder,
+    // inputmode or step, and the oninput sanitisers have nothing to clean.
+    var skip=['type','placeholder','inputmode','step','min','max','pattern','oninput','value','readonly','maxlength'];
+    Array.prototype.forEach.call(el.attributes,function(a){
+      if(skip.indexOf(a.name.toLowerCase())<0)sel.setAttribute(a.name,a.value);
+    });
+    // attachFieldClear() wraps every input in a .fld-clear-wrap with a ✕
+    // that closes over the input. Replace the whole wrapper, or that ✕
+    // stays on screen wired to a node no longer in the document.
+    var host=(el.parentNode&&el.parentNode.classList&&el.parentNode.classList.contains('fld-clear-wrap'))?el.parentNode:el;
+    host.replaceWith(sel);
+    makeSelectTolerant(sel);
+  }
+  var s2=document.getElementById(id);
+  s2.innerHTML='<option value=""></option>'+values.map(function(v){return '<option value="'+_esc(v)+'">'+_esc(v)+'</option>'}).join('');
+  s2.value=prev;
+}
+// Lot Entry form + Edit Lot sheet, both fields.
+function applyChoiceFields(){
+  var litre=parseChoiceValues(cfgLitreOptions),mst=parseChoiceValues(cfgMoistureOptions);
+  applyChoiceField('le-litre',litre);
+  applyChoiceField('ed-litre',litre);
+  applyChoiceField('le-moisture',mst);
+  applyChoiceField('ed-moisture',mst);
+}
 // Show/hide the Immediate Payment + Reserve-this-Lot controls (Lot Entry form
 // and Edit modal) per the flag_immediate_reserve config (cfgImmediateReserve).
 function applyImmediateReserveVis(){var v=cfgImmediateReserve;var a=document.getElementById('le-immediate-reserve-wrap');if(a)a.style.display=v?'block':'none';var b=document.getElementById('ed-immediate-reserve-wrap');if(b)b.style.display=v?'block':'none';}
@@ -1009,9 +1123,9 @@ function applyLabels(){
   var map={'elb-seller':L.seller||'Seller','elb-grade':L.grade,'elb-bags':L.bags,'elb-litre':L.litre_wt,'elb-net':L.net_wt,'elb-sample':L.sample_wt,'elb-gross':L.gross_wt,'elb-moisture':L.moisture};
   Object.keys(map).forEach(function(id){var el=document.getElementById(id);if(el)el.textContent=map[id]});
 }
-async function loadTitle(){try{const r=await fetch(B+'/api/config');const d=await r.json();setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;deleteEnabled=d.deleteEnabled!==undefined?d.deleteEnabled!==false:editEnabled;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw=document.getElementById('le-reserved-price-wrap');if(rpw)rpw.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();loadAppLogo()}catch(e){}}
+async function loadTitle(){try{const r=await fetch(B+'/api/config');const d=await r.json();setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;deleteEnabled=d.deleteEnabled!==undefined?d.deleteEnabled!==false:editEnabled;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';cfgLitreOptions=d.litreOptions||'';cfgMoistureOptions=d.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw=document.getElementById('le-reserved-price-wrap');if(rpw)rpw.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();loadAppLogo()}catch(e){}}
 
-async function goSession(){document.getElementById('ss-user').textContent=user;const lb=localStorage.getItem('sa_branch');try{const r=await fetch(B+'/api/config');const d=await r.json();window._allBranches=(d.branches||[]).map(function(b){return b.value});setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;deleteEnabled=d.deleteEnabled!==undefined?d.deleteEnabled!==false:editEnabled;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw2=document.getElementById('le-reserved-price-wrap');if(rpw2)rpw2.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();var brSel=document.getElementById('ss-branch');if(userRole!=='admin'&&userBranch){brSel.innerHTML='<option value="'+userBranch+'">'+userBranch+'</option>';brSel.disabled=true}else{brSel.disabled=false;brSel.innerHTML=(d.branches||[]).map(b=>'<option value="'+b.value+'"'+(b.value===(userBranch||lb)?' selected':'')+'>'+b.value+'</option>').join('')}}catch(e){}
+async function goSession(){document.getElementById('ss-user').textContent=user;const lb=localStorage.getItem('sa_branch');try{const r=await fetch(B+'/api/config');const d=await r.json();window._allBranches=(d.branches||[]).map(function(b){return b.value});setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;deleteEnabled=d.deleteEnabled!==undefined?d.deleteEnabled!==false:editEnabled;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';cfgLitreOptions=d.litreOptions||'';cfgMoistureOptions=d.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw2=document.getElementById('le-reserved-price-wrap');if(rpw2)rpw2.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();var brSel=document.getElementById('ss-branch');if(userRole!=='admin'&&userBranch){brSel.innerHTML='<option value="'+userBranch+'">'+userBranch+'</option>';brSel.disabled=true}else{brSel.disabled=false;brSel.innerHTML=(d.branches||[]).map(b=>'<option value="'+b.value+'"'+(b.value===(userBranch||lb)?' selected':'')+'>'+b.value+'</option>').join('')}}catch(e){}
 await loadAvailableTrades();
 show('s-session')}
 
@@ -1057,7 +1171,7 @@ async function loadAvailableTrades(){
 
 async function startSession(){var sel=document.getElementById('ss-trade');var opt=sel.options[sel.selectedIndex];br=document.getElementById('ss-branch').value;var er=document.getElementById('ss-err');er.innerHTML='';if(!sel.value||!opt||!opt.value){er.innerHTML='<div class="eb">Select a trade</div>';return}if(!br){er.innerHTML='<div class="eb">Select branch</div>';return}aid=parseInt(sel.value);tno=parseInt(opt.getAttribute('data-ano'));sessionEnd=opt.getAttribute('data-end')||null;localStorage.setItem('sa_branch',br);
 // Reload config for sample weight + moisture
-try{var cr=await fetch(B+'/api/config');var cd=await cr.json();cfgSampleWeight=cd.sampleWeight||0;cfgShowMoisture=cd.showMoisture||false;cfgShowReservedPrice=cd.showReservedPrice||false;cfgImmediateReserve=cd.immediateReserve||false;cfgShowCropReceipt=cd.showCropReceipt||false;cfgCropReceiptStart=cd.cropReceiptStart||'';cfgDefaultGunny=cd.defaultGunny||0;cfgUserGunny=!!cd.userGunny;cfgWhatsapp=!!cd.whatsapp;cfgSellerAtBottom=!!cd.sellerAtBottom;cfgShowSample=cd.showSampleField!==false;cfgShowGross=cd.showGrossField!==false;document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw3=document.getElementById('le-reserved-price-wrap');if(rpw3)rpw3.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis()}catch(e){}
+try{var cr=await fetch(B+'/api/config');var cd=await cr.json();cfgSampleWeight=cd.sampleWeight||0;cfgShowMoisture=cd.showMoisture||false;cfgShowReservedPrice=cd.showReservedPrice||false;cfgImmediateReserve=cd.immediateReserve||false;cfgShowCropReceipt=cd.showCropReceipt||false;cfgCropReceiptStart=cd.cropReceiptStart||'';cfgDefaultGunny=cd.defaultGunny||0;cfgUserGunny=!!cd.userGunny;cfgWhatsapp=!!cd.whatsapp;cfgSellerAtBottom=!!cd.sellerAtBottom;cfgShowSample=cd.showSampleField!==false;cfgShowGross=cd.showGrossField!==false;cfgLitreOptions=cd.litreOptions||'';cfgMoistureOptions=cd.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw3=document.getElementById('le-reserved-price-wrap');if(rpw3)rpw3.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis()}catch(e){}
 await loadStats();goLots()}
 
 var allocStats=null;
@@ -1865,6 +1979,38 @@ function openSellerModalFromEntry(){
 // Pre-fill the New Seller "User ID" with the next auto-increment suggestion
 // (editable; server still enforces uniqueness). Best-effort.
 function _seedNextUserId(){var el=document.getElementById('ns-userid');if(!el||el.value.trim()!=='')return;fetch(B+'/api/traders/next-user-id',{headers:ah()}).then(function(r){return r.ok?r.json():null}).then(function(d){if(d&&d.next!=null&&el.value.trim()==='')el.value=d.next}).catch(function(){})}
+// Phone fields hold ten digits and nothing else — see limitPhoneInput in the
+// desktop console for why, and for the caret handling.
+// Ten digits, nothing else. Typing is hard-capped by maxlength; a country code
+// is stripped on PASTE only, and only when that leaves a whole ten-digit
+// number. See limitPhoneInput in the desktop console for the full reasoning.
+function limitPhoneInput(el){
+  if(!el)return;
+  var before=el.value;
+  var digits=String(before).replace(/\D/g,'').slice(0,10);
+  if(digits===before)return;
+  var caret=el.selectionStart;
+  var digitsBefore=String(before).slice(0,caret).replace(/\D/g,'').length;
+  el.value=digits;
+  if(el.setSelectionRange){var pos=Math.min(digitsBefore,digits.length);try{el.setSelectionRange(pos,pos)}catch(_){}}
+}
+function _phoneStripCountryCode(digits){
+  var prefixes=['0091','091','91','0'];
+  for(var i=0;i<prefixes.length;i++){
+    var p=prefixes[i];
+    if(digits.indexOf(p)===0&&digits.length-p.length===10)return digits.slice(p.length);
+  }
+  return digits;
+}
+function pastePhoneInput(el,ev){
+  if(!el||!ev||!ev.clipboardData)return;
+  ev.preventDefault();
+  var pasted=ev.clipboardData.getData('text')||'';
+  var merged=String(el.value).slice(0,el.selectionStart)+pasted+String(el.value).slice(el.selectionEnd);
+  var digits=_phoneStripCountryCode(String(merged).replace(/\D/g,'')).slice(0,10);
+  el.value=digits;
+  if(el.setSelectionRange){try{el.setSelectionRange(digits.length,digits.length)}catch(_){}}
+}
 function onWaSameToggle(){var same=document.getElementById('ns-wa-same').checked;var wa=document.getElementById('ns-whatsapp');if(same){wa.value=document.getElementById('ns-tel').value;wa.readOnly=true;wa.style.background='var(--bg)'}else{wa.readOnly=false;wa.style.background=''}}
 function validateEmailField(el,showErr){var v=(el.value||'').trim();var ok=!v||/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v);el.classList.toggle('invalid',!ok);var er=document.getElementById('ns-email-err');if(er)er.style.display=(!ok&&showErr)?'block':'none';return ok}
 function closeSellerModal(){document.getElementById('seller-modal').classList.remove('show')}

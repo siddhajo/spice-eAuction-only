@@ -6819,7 +6819,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
             <div>
               <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Phone</div>
-              <input type="text" id="le-ns-tel" inputmode="tel" style="width:100%;height:38px;padding:0 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px">
+              <input type="tel" id="le-ns-tel" inputmode="numeric" maxlength="10" oninput="limitPhoneInput(this)" onpaste="pastePhoneInput(this,event)" placeholder="10-digit mobile" style="width:100%;height:38px;padding:0 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px">
             </div>
             <div>
               <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Address</div>
@@ -8480,7 +8480,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     <div class="fg"><label>CR / GSTIN</label><div style="display:flex;gap:6px"><input id="t-cr" style="flex:1"><button class="btn btn-a" type="button" onclick="gstLookup('t')" style="white-space:nowrap;padding:6px 10px">Fetch from GST</button></div></div>
     <div class="fg"><label>PAN</label><input id="t-pan" onblur="tCheckPanDup()"><div id="t-pan-warn" style="display:none"></div></div>
     <div class="fg feat-tan"><label>TAN</label><input id="t-tan" maxlength="10" placeholder="e.g. BLRA12345C" style="text-transform:uppercase"></div>
-    <div class="fg"><label>Phone</label><input id="t-tel"></div>
+    <div class="fg"><label>Phone</label><input id="t-tel" type="tel" inputmode="numeric" maxlength="10" oninput="limitPhoneInput(this)" onpaste="pastePhoneInput(this,event)" placeholder="10-digit mobile"></div>
     <div class="fg"><label>Aadhar</label><input id="t-aadhar"></div>
     <div class="fg"><label>Address</label><input id="t-padd"></div>
     <div class="fg"><label>Place</label><input id="t-ppla"></div>
@@ -8536,7 +8536,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     <div class="fg"><label>State Code</label><input id="b-stcode"></div>
     <div class="fg"><label>PAN</label><input id="b-pan"></div>
     <div class="fg feat-tan"><label>TAN</label><input id="b-tan" maxlength="10" placeholder="e.g. BLRA12345C" style="text-transform:uppercase"></div>
-    <div class="fg"><label>Phone</label><input id="b-tel"></div>
+    <div class="fg"><label>Phone</label><input id="b-tel" type="tel" inputmode="numeric" maxlength="10" oninput="limitPhoneInput(this)" onpaste="pastePhoneInput(this,event)" placeholder="10-digit mobile"></div>
     <div class="fg"><label>AI (auction identifier)</label><input id="b-ti"></div>
     <div class="fg"><label>SBL</label><input id="b-sbl"></div>
     <div class="fg"><label>Email</label><input id="b-email" type="email"></div>
@@ -10198,6 +10198,72 @@ function _attachClearIcon(input){
   wrap.appendChild(btn);
 }
 // Wire the clear ✕ onto every editable text/number input inside `root`.
+// ── Phone fields: 10 digits, nothing else ────────────────────────
+// Seller and buyer phone numbers are Indian mobile numbers and the stored data
+// already says so — 4 591 of 4 593 sellers hold exactly ten digits, with no
+// punctuation anywhere. The handful that don't (a stray 1-digit and 11-digit
+// row) are typos this stops being made again.
+//
+// TYPING is hard-capped by maxlength="10": the eleventh keystroke does nothing,
+// which is the whole point. An earlier version dropped maxlength so that a
+// typed "+91…" could roll through to the right ten digits — that fixed a rare
+// case and broke the common one, because a fat-fingered eleventh digit then
+// pushed the leading digit out and left a plausible-looking wrong number.
+//
+// PASTING is where a country code actually shows up, and there the whole string
+// arrives at once so the intent is unambiguous: pastePhoneInput below strips a
+// leading 91 / 091 / 0091 when doing so leaves exactly ten digits. Guarding it
+// on "leaves exactly ten" is what stops it mangling 9198765432, a real mobile
+// number that happens to start with 91.
+//
+// Deliberately NOT applied to the Lorry-report WhatsApp box, which accepts a
+// full international number with its country code and says so.
+function limitPhoneInput(el){
+  if (!el) return;
+  const before = el.value;
+  const digits = String(before).replace(/\D/g, '').slice(0, 10);
+  if (digits === before) return;              // nothing to fix — leave the caret alone
+  // Keep the caret where the operator expects it: count the digits before it,
+  // then put it back after that many digits in the cleaned value. Without this,
+  // editing the middle of a number throws the caret to the end on every keypress.
+  const caret = el.selectionStart;
+  const digitsBefore = String(before).slice(0, caret).replace(/\D/g, '').length;
+  el.value = digits;
+  if (el.setSelectionRange) {
+    const pos = Math.min(digitsBefore, digits.length);
+    try { el.setSelectionRange(pos, pos); } catch (_) { /* type doesn't support it */ }
+  }
+}
+
+// Strip an Indian country code from a phone number, but only when what is left
+// is a whole ten-digit number. "919790744444" → "9790744444"; "9198765432" is
+// already ten digits and is left exactly as it is.
+function _phoneStripCountryCode(digits){
+  for (const prefix of ['0091', '091', '91', '0']) {
+    if (digits.startsWith(prefix) && digits.length - prefix.length === 10) {
+      return digits.slice(prefix.length);
+    }
+  }
+  return digits;
+}
+
+// Paste handler. maxlength would otherwise silently truncate a pasted
+// "+91 97907 44444" to its first ten characters — the country code plus seven
+// digits of the number, which belongs to nobody. Take the paste over: build
+// what the field would hold, normalise it, and write that instead.
+function pastePhoneInput(el, ev){
+  if (!el || !ev || !ev.clipboardData) return;      // no clipboard access: let the browser do its thing
+  ev.preventDefault();
+  const pasted = ev.clipboardData.getData('text') || '';
+  const start = el.selectionStart, end = el.selectionEnd;
+  const merged = String(el.value).slice(0, start) + pasted + String(el.value).slice(end);
+  const digits = _phoneStripCountryCode(String(merged).replace(/\D/g, '')).slice(0, 10);
+  el.value = digits;
+  if (el.setSelectionRange) {
+    try { el.setSelectionRange(digits.length, digits.length); } catch (_) {}
+  }
+}
+
 function attachClearIconsIn(root){
   if (!root) return;
   root.querySelectorAll('input').forEach(_attachClearIcon);
@@ -19727,6 +19793,8 @@ const _le = {
   defaultGunny: 0,         // from settings (default_gunny_weight) — per-bag empty gunny wt; > 0 enables the gunny-weight entry fields
   defaultLitre: '',        // from settings — pre-fills litre input on each new lot
   showMoisture: false,     // from settings — toggles the moisture column/input
+  litreOptions: '',        // from settings — non-blank turns Litre Wt into a dropdown of these values
+  moistureOptions: '',     // from settings — non-blank turns Moisture into a dropdown of these values
   editEnabled: true,       // from settings — when false, only admins can edit lots
   editTimeoutSec: 0,       // from settings — seconds after creation a non-admin can still edit (0 = no limit)
   editingLotId: null,      // when non-null, Save updates instead of inserts
@@ -19852,6 +19920,9 @@ async function loadLotEntry(){
       _le.defaultGunny = Number(cfg.default_gunny_weight ?? 0) || 0;
       _le.defaultLitre  = String(cfg.default_litre || '').trim();
       _le.showMoisture  = String(cfg.show_moisture || 'false') === 'true';
+      // Blank = the field stays a typed box (see leApplyChoiceFields).
+      _le.litreOptions    = String(cfg.litre_options    || '');
+      _le.moistureOptions = String(cfg.moisture_options || '');
       _le.editEnabled   = String(cfg.edit_enabled  || 'true')  === 'true';
       _le.editTimeoutSec = parseInt(cfg.edit_timeout_sec, 10) || 0;
       // Receipt format pre-selection. Defaults to "detailed" if the
@@ -19867,6 +19938,8 @@ async function loadLotEntry(){
       _le.defaultGunny = 0;
       _le.defaultLitre = '';
       _le.showMoisture = false;
+      _le.litreOptions = '';
+      _le.moistureOptions = '';
       _le.editEnabled  = true;
       _le.editTimeoutSec = 0;
       _le.receiptFormat = 'detailed';
@@ -19876,6 +19949,8 @@ async function loadLotEntry(){
     // workflow doesn't need moisture.
     const moistureWrap = document.getElementById('le-moisture-wrap');
     if (moistureWrap) moistureWrap.style.display = _le.showMoisture ? '' : 'none';
+    // Litre Wt / Moisture become dropdowns when Settings lists their values.
+    leApplyChoiceFields();
     // Show/hide the gunny-weight entry fields based on the configured
     // Default Gunny Weight, and flip Net Weight to computed/readonly.
     leApplyGunnyMode();
@@ -20607,6 +20682,126 @@ function leCalcGross(){
   const sample = parseFloat(document.getElementById('le-sample').value) || 0;
   const gross = qty + sample;
   document.getElementById('le-gross').value = gross > 0 ? gross.toFixed(3) : '';
+}
+
+// ── Pick-list fields (Litre Wt / Moisture) ────────────────────
+// Settings → Lot Entry Defaults can turn Litre Wt and Moisture from typed
+// boxes into dropdowns by listing the values each one accepts
+// (litre_options / moisture_options). Blank keeps the typed box, which is
+// what every install that never fills them in keeps getting.
+//
+// The list is written as comma/newline separated values and/or ranges in
+// "min-max:step" form — nobody should have to type 310, 320, … 600 by hand.
+// Shared by the desktop form here and mirrored in the mobile PWA
+// (public-mobile/app.html); keep the two parsers in step.
+const LE_CHOICE_MAX = 2000;   // guard against a fat-fingered "0-1000000:0.001"
+
+function leDecimals(str){ const i = String(str).indexOf('.'); return i < 0 ? 0 : String(str).length - i - 1; }
+
+function parseChoiceValues(raw){
+  const out = [], seen = new Set();
+  const push = v => { const t = String(v).trim(); if (t && !seen.has(t) && out.length < LE_CHOICE_MAX) { seen.add(t); out.push(t); } };
+  String(raw || '').split(/[\n,;]+/).forEach(tok => {
+    tok = tok.trim();
+    if (!tok) return;
+    // "310-600:10" / "6.1-7.5:0.1" / "310-600" (step defaults to 1).
+    const m = tok.match(/^(\d+(?:\.\d+)?)\s*(?:-|to|\.\.)\s*(\d+(?:\.\d+)?)(?:\s*(?::|step|by)\s*(\d+(?:\.\d+)?))?$/i);
+    if (!m) { push(tok); return; }
+    const a = parseFloat(m[1]), b = parseFloat(m[2]);
+    const step = m[3] ? parseFloat(m[3]) : 1;
+    if (!(step > 0) || !isFinite(a) || !isFinite(b)) { push(tok); return; }
+    // Decimal places come from what was typed, so "6.1-7.5:0.1" lists 6.1
+    // and not 6.100000000000001 — float addition drifts, so count steps.
+    const dp = Math.max(leDecimals(m[1]), leDecimals(m[2]), m[3] ? leDecimals(m[3]) : 0);
+    const lo = Math.min(a, b), hi = Math.max(a, b);
+    const n = Math.floor((hi - lo) / step + 1e-9);
+    for (let i = 0; i <= n && out.length < LE_CHOICE_MAX; i++) push((lo + i * step).toFixed(dp));
+  });
+  return out;
+}
+
+// Original markup of every field we converted, so clearing the setting
+// hands the typed box back without a page reload.
+const _leChoiceOrig = {};
+
+// A <select> whose .value setter never silently drops a value it doesn't
+// carry. Lots already saved with a litre weight outside the configured
+// list (or captured before the list existed) load into the edit form
+// through the same `el.value = lot.litre` assignments as before; without
+// this they would land as blank and the next Save would erase the figure.
+function leMakeSelectTolerant(sel){
+  const desc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+  Object.defineProperty(sel, 'value', {
+    configurable: true,
+    get(){ return desc.get.call(this); },
+    set(v){
+      let want = (v == null) ? '' : String(v);
+      // Drop the previous off-list entry — one stale value shouldn't
+      // accumulate into the list over an evening of edits.
+      Array.prototype.slice.call(this.options).forEach(o => { if (o.dataset.adhoc === '1') o.remove(); });
+      // A list written as 6.1-7.5:0.1 carries "7.0"; a lot recorded 7 is the
+      // same reading, so match on the number before calling it off-list.
+      if (want !== '' && !Array.prototype.some.call(this.options, o => o.value === want) && isFinite(parseFloat(want))) {
+        const same = Array.prototype.find.call(this.options,
+          o => o.value !== '' && parseFloat(o.value) === parseFloat(want));
+        if (same) want = same.value;
+      }
+      if (want !== '' && !Array.prototype.some.call(this.options, o => o.value === want)) {
+        const o = document.createElement('option');
+        o.value = want; o.textContent = want; o.dataset.adhoc = '1';
+        o.title = 'Recorded on this lot but not in the configured list';
+        this.appendChild(o);
+      }
+      desc.set.call(this, want);
+    },
+  });
+}
+
+// Swap the field at `id` between a typed <input> and a <select> of
+// `values`. The element keeps its id, classes, inline style and any
+// markup-wired handlers, so every existing reader (`.value`) and the
+// Enter-to-save listener carry on working untouched.
+function leApplyChoiceField(id, values){
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (!values.length) {
+    if (el.tagName === 'SELECT' && _leChoiceOrig[id]) {
+      const keep = el.value;
+      const box = document.createElement('div');
+      box.innerHTML = _leChoiceOrig[id];
+      el.replaceWith(box.firstElementChild);
+      const back = document.getElementById(id);
+      if (back) back.value = keep;
+    }
+    return;
+  }
+  const prev = el.value;
+  if (el.tagName !== 'SELECT') {
+    if (!_leChoiceOrig[id]) _leChoiceOrig[id] = el.outerHTML;
+    const sel = document.createElement('select');
+    // Everything that describes the field's identity and looks travels
+    // across; text-box-only attributes (placeholder, step, inputmode, the
+    // oninput sanitisers) have no meaning on a select and are dropped.
+    const skip = ['type','placeholder','inputmode','step','min','max','pattern','oninput','value','readonly','maxlength'];
+    Array.prototype.forEach.call(el.attributes, a => {
+      if (skip.indexOf(a.name.toLowerCase()) < 0) sel.setAttribute(a.name, a.value);
+    });
+    if (sel.style && !sel.style.background) sel.style.background = '#fff';
+    el.replaceWith(sel);
+    leMakeSelectTolerant(sel);
+  }
+  const sel = document.getElementById(id);
+  sel.innerHTML = '<option value=""></option>'
+    + values.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  sel.value = prev;   // tolerant setter re-adds an off-list value
+}
+
+// Apply both pick lists to the Lot Entry form. Called after settings load
+// so flipping a list on/off in Settings takes effect on the next visit to
+// the tab — no rebuild, no reload.
+function leApplyChoiceFields(){
+  leApplyChoiceField('le-litre',    parseChoiceValues(_le.litreOptions));
+  leApplyChoiceField('le-moisture', parseChoiceValues(_le.moistureOptions));
 }
 
 // Gunny-weight entry mode. Active when Settings → Lot Entry Defaults →
@@ -24885,7 +25080,7 @@ const SET_FIELD_GROUPS = {
     { title:'Default Weights & Crop', icon:'⚖', hint:'Values pre-filled on a new lot — sample, gunny and litre weights, crop type.',
       keys:['sample_weight','sample_collection','free_sample','default_gunny_weight','user_gunny_weight','default_litre','default_crop_type'] },
     { title:'Lot Entry Screen', icon:'📝', hint:'Which fields and columns the Lot Entry screen shows, on desktop and mobile.',
-      keys:['show_moisture','show_crop_receipt','crop_receipt_start_no','lot_entry_seller_at_bottom',
+      keys:['show_moisture','litre_options','moisture_options','show_crop_receipt','crop_receipt_start_no','lot_entry_seller_at_bottom',
             'mobile_show_sample_field','mobile_show_gross_field','default_auction_id'] },
     { title:'Lot Receipt Print', icon:'🧾', hint:'Columns, paper width and totals layout for the printed lot receipt.',
       match:/^lot_receipt_/ },
@@ -25160,6 +25355,17 @@ function renderSettingsPanel(){
     // before grouping (an all-engine section would otherwise render empty).
     const visible=fields.filter(f=>!/_engine$/.test(f.key));
     html+=renderGroupedFields(ck,visible,function(f){
+      // Litre / Moisture pick lists. The value is a plain string, but it is
+      // worth showing what it expands to — "310-600:10" says nothing about
+      // whether it produced 30 values or 3 — plus a one-click fill for the
+      // range this trade actually uses, so nobody types thirty numbers.
+      if(f.key==='litre_options'||f.key==='moisture_options'){
+        const rec=f.key==='litre_options'?'310-600:10':'6.1-7.5:0.1';
+        return `<div class="fg fg-wide"><label>${esc(f.label)}${helpTip(FIELD_HELP[f.key])}</label>`
+          + `<input type="text" data-key="${f.key}" value="${esc(f.value||'')}" placeholder="blank = typed box · e.g. ${rec}" oninput="renderChoicePreview('${f.key}',this.value)">`
+          + `<div class="fg-note"><span id="cho-note-${f.key}">${choicePreviewText(f.value)}</span> · `
+          + `<a href="#" onclick="fillChoiceRange('${f.key}','${rec}');return false">use ${rec}</a></div></div>`;
+      }
       if(f.key==='bank_format'){
         // Bank Payment layout picker. Keep these options in sync with the
         // profile keys in bank-formats.js (BANK_FORMATS) — each option value
@@ -25677,6 +25883,8 @@ function renderSettings(){renderSettingsNav();renderSettingsPanel()}
 // ── Settings field help text ───────────────────────────
 // Shown as a ? tooltip next to the label. Keep concise (1-2 lines).
 const FIELD_HELP = {
+  litre_options:   'Turns Litre Wt on Lot Entry (desktop + mobile) into a dropdown of exactly these values. Leave it BLANK to keep the field a typed box. Write values separated by commas, or a range as min-max:step — "310-600:10" lists 310, 320 … 600. A lot already saved with a value outside the list still shows that value when opened for edit.',
+  moisture_options:'Turns Moisture % on Lot Entry (desktop + mobile) into a dropdown of exactly these values. Leave it BLANK to keep the field a typed box. Commas or a range as min-max:step — "6.1-7.5:0.1" lists 6.1, 6.2 … 7.5. Only takes effect while "Show Moisture Column" is on.',
   commission:      'Commission % charged on PurAmt. Commission = round(PurAmt × Commission%).',
   hpc:             'Handling % applied on the commission. Handling = round(Commission × Handling%).',
   sb_refund:       'Sample Bag Refund (kg). Refund amount = round(SB Refund × Price).',
@@ -25697,6 +25905,27 @@ const FIELD_HELP = {
   flag_lotwise_bills: 'OFF (default) = SELLER-WISE: one bill of supply per planter, listing all their lots. ON = LOT-WISE: one bill of supply per LOT, each taking its own bill number — so a planter with 5 lots gets 5 bills and 5 numbers. Like the purchase flag, this affects only bills generated from now on; bills already raised keep their form and reprint exactly as issued.',
   flag_lotwise_dn_planter: 'OFF (default) = SELLER-WISE: one planter debit note per planter, for their whole grade-1 service charge (commission + handling) in the trade. ON = LOT-WISE: one debit note per grade-1 LOT, its amount being that lot\'s commission + handling. Generate All numbers them by LOT NUMBER ascending. Only affects debit notes generated from now on; existing ones keep their form.',
 };
+// Settings → Lot Entry: what the Litre / Moisture pick-list value expands
+// to, in words. Blank is a legitimate (and default) answer — it means the
+// field stays a typed box — so say that rather than showing nothing.
+function choicePreviewText(raw){
+  const v=parseChoiceValues(raw);
+  if(!v.length) return 'Blank — this field stays a typed box on Lot Entry.';
+  const head=v.slice(0,3).join(', ');
+  return `Dropdown of ${v.length} value${v.length===1?'':'s'}: ${esc(head)}${v.length>3?' … '+esc(v[v.length-1]):''}`;
+}
+function renderChoicePreview(key,val){
+  const el=document.getElementById('cho-note-'+key);
+  if(el) el.innerHTML=choicePreviewText(val);
+}
+function fillChoiceRange(key,range){
+  const inp=document.querySelector(`[data-key="${key}"]`);
+  if(!inp) return;
+  inp.value=range;
+  renderChoicePreview(key,range);
+  inp.focus();
+}
+
 function fld(f){
   // Logo Code: plain textbox in this e-Auction-only build (was an ISP/ASP
   // dropdown with auto-fill behavior in the original Spice Config app —
@@ -31697,13 +31926,52 @@ async function pePriceSave(id){
     toast((e && e.message) || 'Save failed');
   }
 }
+// Every row with an unsaved price, paired with its live controls. Read once so
+// the bulk save below can mark each cell after the single request returns.
+function _peCollectDirty(){
+  const out = [];
+  for (const id of Array.from(_pe.dirty)) {
+    const lot = _pe.byId.get(id);
+    const inp = document.querySelector(`[data-peprice="${id}"]`);
+    if (!lot || !inp) continue;                 // row scrolled out of the DOM
+    const raw = String(inp.value).trim();
+    const price = raw === '' ? 0 : parseFloat(raw);
+    const st = document.querySelector(`[data-pestatus="${id}"]`);
+    out.push({ id, lot, inp, st, raw, price, valid: Number.isFinite(price) && price >= 0 });
+  }
+  return out;
+}
+
 // Save any unsaved rows, then Calculate All for the whole trade.
 async function peSaveAndCalculate(){
   if (!_pe.aid) { toast('Select a trade first'); return; }
   const btn = document.getElementById('pe-save-calc');
   try {
     await withBusy(btn, async () => {
-      for (const id of Array.from(_pe.dirty)) { await pePriceSave(id); }
+      // One request for every typed price, not one per row. Typing prices down
+      // a 200-lot trade and then pressing this used to fire 200 sequential
+      // round trips before the calculate could even start.
+      const dirty = _peCollectDirty();
+      const good = dirty.filter(r => r.valid);
+      for (const r of dirty) {
+        if (r.valid) continue;
+        if (r.st) { r.st.textContent = '✕'; r.st.style.color = '#b91c1c'; }
+      }
+      if (good.length) {
+        await j(`/api/lots/bulk-price`, {
+          method: 'POST',
+          body: JSON.stringify({ items: good.map(r => ({ id: r.id, price: r.price })) }),
+        });
+        for (const r of good) {
+          r.lot.price = r.price;
+          r.lot.amount = (Number(r.lot.qty) || 0) * r.price;
+          _pe.dirty.delete(r.id);
+          // Normalise to 2 decimals once saved, leaving a cleared field blank
+          // rather than showing "0.00" — same as the per-cell save.
+          if (r.raw !== '' && r.price > 0) r.inp.value = r.price.toFixed(2);
+          if (r.st) { r.st.textContent = '✓'; r.st.style.color = 'var(--green)'; }
+        }
+      }
       const d = await j(`/api/lots/calculate/${_pe.aid}`, { method: 'POST' });
       toast(`Saved prices · calculated ${d.calculated} lots`);
       await loadPriceEntryGrid();
@@ -32080,8 +32348,10 @@ function peiRenderPreview(){
   }).join('');
   host.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
-// Match the mapped rows to the trade's loaded lots (by lot number) and save
-// each changed lot through the existing per-lot PUT.
+// Match the mapped rows to the trade's loaded lots (by lot number) and write
+// the whole file in ONE bulk request. This used to save each lot through the
+// per-lot PUT, awaited in turn — see /api/lots/bulk-price for why that was the
+// slow part even though no single request was slow.
 async function peiApply(){
   const lotCol = document.getElementById('pei-map-lot').value;
   const priceCol = document.getElementById('pei-map-price').value;
@@ -32121,18 +32391,38 @@ async function peiApply(){
   }
   const btn = document.getElementById('pei-apply');
   let ok = 0, failed = 0;
+  // ONE request for the whole file. This was a PUT per lot, awaited in turn:
+  // fast on the server (~1.6ms a lot) but N round trips of waiting for whoever
+  // is actually using it, which on a 150ms link is 25 seconds for a 169-lot
+  // trade. The server applies the batch under a single database save.
   await withBusy(btn, async () => {
-    for (const u of updates) {
-      const body = {};
-      if (u.price != null) { body.price = u.price; body.amount = (Number(u.lot.qty) || 0) * u.price; }
-      if (u.code != null) { body.code = u.code; }
-      try {
-        await j(`/api/lots/${u.lot.id}`, { method: 'PUT', body: JSON.stringify(body) });
-        // Keep the in-memory lot in step so a later Save & Calculate is accurate.
-        if (u.price != null) { u.lot.price = u.price; u.lot.amount = body.amount; }
+    try {
+      const d = await j(`/api/lots/bulk-price`, {
+        method: 'POST',
+        body: JSON.stringify({
+          items: updates.map(u => {
+            const it = { id: u.lot.id };
+            if (u.price != null) it.price = u.price;
+            if (u.code != null) it.code = u.code;
+            return it;
+          }),
+        }),
+      });
+      ok = Number(d && d.updated) || 0;
+      failed = updates.length - ok;
+      // Keep the in-memory lots in step so a later Save & Calculate is
+      // accurate. Amount is recomputed the way the server does it — off the
+      // lot's own qty — so the two copies cannot drift.
+      for (const u of updates) {
+        if (u.price != null) { u.lot.price = u.price; u.lot.amount = (Number(u.lot.qty) || 0) * u.price; }
         if (u.code != null) { u.lot.code = u.code; }
-        ok++;
-      } catch (_) { failed++; }
+      }
+    } catch (e) {
+      // The batch is applied server-side as a whole request, so a rejection
+      // means nothing landed — say so rather than leaving the operator to
+      // guess which half went in.
+      failed = updates.length;
+      alert('Nothing was imported: ' + ((e && e.message) || e));
     }
   });
   hideModal('pe-import-modal');

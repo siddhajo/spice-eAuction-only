@@ -477,6 +477,23 @@ const DEFAULTS = [
   { key: 'user_gunny_weight',  value: 'false', category: 'lot_entry', label: 'User-driven Gunny Wt/Bag (mobile)',   type: 'boolean' },
   { key: 'show_moisture',      value: 'false', category: 'lot_entry', label: 'Show Moisture Column',               type: 'boolean' },
   { key: 'default_litre',      value: '',      category: 'lot_entry', label: 'Default Litre Weight',               type: 'text'    },
+  // Litre Weight / Moisture as a PICK LIST instead of a free-typed box.
+  // Blank (the default) leaves both fields exactly as they were — a typed
+  // number — so no existing install changes behaviour on upgrade. Fill one
+  // in and that field turns into a dropdown on Lot Entry (desktop + mobile,
+  // including the mobile Edit Lot sheet).
+  //
+  // Value format, in either field: values separated by commas or newlines,
+  // and/or a RANGE written "min-max:step" (step optional, defaults to 1):
+  //   310-600:10            → 310, 320, … 600   (the litre range in use here)
+  //   6.1-7.5:0.1           → 6.1, 6.2, … 7.5   (the moisture range)
+  //   310-600:10, 620, 650  → a range plus loose extras
+  // Decimal places follow the numbers you type, so "6.1-7.5:0.1" lists one
+  // decimal. A value already saved on a lot but missing from the list is
+  // still shown when that lot is opened for edit — the list restricts what
+  // can be picked, it never rewrites what was recorded.
+  { key: 'litre_options',      value: '',      category: 'lot_entry', label: 'Litre Weight Dropdown Values',       type: 'text'    },
+  { key: 'moisture_options',   value: '',      category: 'lot_entry', label: 'Moisture Dropdown Values',           type: 'text'    },
   { key: 'default_crop_type',  value: '',      category: 'lot_entry', label: 'Default Crop Type',                  type: 'text'    },
   // Crop Receipt No on the mobile Lot Entry form. When ON the CROP RCPT field
   // is shown; the first lot seeds from "Starting Crop Receipt No" (or the next

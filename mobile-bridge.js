@@ -1035,6 +1035,8 @@ function mountMobile(app, deps) {
   //   sampleWeight    ← sample_weight (lot_entry category)
   //   showMoisture    ← show_moisture
   //   defaultLitre    ← default_litre
+  //   litreOptions    ← litre_options    (blank = typed box, else dropdown)
+  //   moistureOptions ← moisture_options (blank = typed box, else dropdown)
   //   editEnabled     ← edit_enabled (boolean)
   //   deleteEnabled   ← delete_enabled (boolean)
   //   editTimeout     ← edit_timeout_sec
@@ -1132,6 +1134,12 @@ function mountMobile(app, deps) {
       // pre-selects + highlights it in the trade picker. null = none set.
       defaultAuctionId: (parseInt(get('default_auction_id', ''), 10) || null),
       defaultLitre:    get('default_litre', ''),
+      // Pick-list values for the Litre Wt / Moisture fields. Blank = the
+      // field stays a typed box (the original behaviour); non-blank turns
+      // it into a dropdown on Lot Entry and the Edit Lot sheet. Raw string
+      // — the app parses the comma / range syntax (see company-config.js).
+      litreOptions:    get('litre_options', ''),
+      moistureOptions: get('moisture_options', ''),
       // PWA defaults — surfaced here for completeness; not currently
       // backed by spice-config settings, so static-ish values are fine.
       pageLimit:       20,
