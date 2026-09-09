@@ -8889,6 +8889,133 @@ app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
   res.json({ success: true, updated, requested: ids.length, skipped_locked: lockedIds.length });
 });
 
+// ── Bulk price write (Price Entry → Import Prices from Excel) ────────
+// A DIFFERENT price per lot, in one request. bulk-set-buyer next door already
+// carries an optional price, but it applies ONE value to every id, which is
+// what a price import never wants.
+//
+// Why this exists: the import used to issue one PUT /api/lots/:id per row and
+// await each before sending the next. On the server that is fast (~1.6 ms a
+// lot against the real database), but the wall-clock cost the operator sees is
+// N × the network round trip, which localhost testing hides completely — at a
+// 150 ms round trip a 169-lot trade took 25 seconds of pure waiting. It also
+// made the server export and rewrite the whole SQLite file once per lot, since
+// db.js's 200 ms save debounce only coalesces writes that arrive closer
+// together than that.
+//
+// Body: { items: [ { id, price?, code? }, … ] }. An item must carry at least
+// one of price / code; anything else is dropped. Locked lots are skipped, not
+// refused, so one locked row cannot fail a 300-row import.
+app.post('/api/lots/bulk-price', requireLotWrite, (req, res) => {
+  try {
+    const items = Array.isArray(req.body && req.body.items) ? req.body.items : [];
+    if (!items.length) return res.status(400).json({ error: 'items[] is required' });
+    // A cap, not a limit anyone should hit: the largest trade is a few hundred
+    // lots. It exists so a malformed caller cannot hand us an unbounded array.
+    if (items.length > 5000) return res.status(400).json({ error: 'Too many items in one request (max 5000)' });
+
+    // Collapse duplicate ids — last one wins, which is what the sequential
+    // loop this replaces did (each PUT overwrote the previous).
+    const wanted = new Map();
+    for (const it of items) {
+      const id = Number(it && it.id);
+      if (!Number.isFinite(id)) continue;
+      const hasPrice = it.price !== undefined && it.price !== null && it.price !== '';
+      const price = hasPrice ? Number(it.price) : null;
+      if (hasPrice && (!Number.isFinite(price) || price < 0)) {
+        return res.status(400).json({ error: `Price for lot id ${id} is not a valid number` });
+      }
+      const code = (it.code === undefined || it.code === null) ? null : String(it.code).trim();
+      if (!hasPrice && code === null) continue;      // nothing to write for this row
+      wanted.set(id, { id, hasPrice, price, code });
+    }
+    if (!wanted.size) return res.status(400).json({ error: 'No valid items to apply' });
+
+    const db = getDb();
+    const cfg = getSettingsFlat(db);
+    const { allowed, skipped: lockedIds } = filterLockedLotIds(db, [...wanted.keys()]);
+    const allowedSet = new Set(allowed);
+
+    // Read the stored rows once, chunked under SQLite's parameter cap.
+    const CHUNK = 500;
+    const current = new Map();
+    for (let i = 0; i < allowed.length; i += CHUNK) {
+      const slice = allowed.slice(i, i + CHUNK);
+      const ph = slice.map(() => '?').join(',');
+      for (const row of db.all(`SELECT * FROM lots WHERE id IN (${ph})`, slice) || []) {
+        current.set(Number(row.id), row);
+      }
+    }
+
+    let updated = 0, missing = 0;
+    const touchedAuctions = new Set();
+    for (const w of wanted.values()) {
+      if (!allowedSet.has(w.id)) continue;           // locked — counted below
+      const lot = current.get(w.id);
+      if (!lot) { missing++; continue; }             // id from another install / already deleted
+      if (lot.auction_id) touchedAuctions.add(lot.auction_id);
+
+      // Which code the lot ends up with decides whether it can carry a price
+      // at all — same rule as PUT /api/lots/:id and bulk-set-buyer.
+      const effCode = (w.code !== null) ? w.code : (lot.code || '');
+      const noSale = ['WD', 'NA'].includes(String(effCode || '').trim().toUpperCase());
+
+      // Amount is derived from the STORED qty, never from a figure the client
+      // computed off its own copy of the lot. The per-lot path took the
+      // client's `amount`, so a qty edited by someone else since the grid
+      // loaded would have been written as an amount that matched nothing.
+      const qty = Number(lot.qty) || 0;
+      const price = noSale ? 0 : (w.hasPrice ? w.price : (Number(lot.price) || 0));
+      const amount = noSale ? 0 : qty * price;
+
+      const sets = [], vals = [];
+      if (w.hasPrice || noSale) { sets.push('price = ?', 'amount = ?'); vals.push(price, amount); }
+      if (w.code !== null)      { sets.push('code = ?');                vals.push(w.code); }
+      if (!sets.length) continue;
+      db.run(`UPDATE lots SET ${sets.join(', ')} WHERE id = ?`, [...vals, w.id]);
+      updated++;
+
+      // A withdrawn / not-auctioned lot carries no value, so every derived
+      // figure — commission, GST, payable — has to zero out with it. Same
+      // recompute bulk-set-buyer does for the same reason.
+      if (noSale) {
+        const fresh = Object.assign({}, lot, { price: 0, amount: 0 });
+        const calc = calculateLot(fresh, cfg);
+        db.run(`UPDATE lots SET amount=?,pqty=?,prate=?,puramt=?,com=?,sertax=?,cgst=?,sgst=?,igst=?,advance=?,balance=?,bilamt=?,refund=?,refud=?,isp_pqty=?,isp_prate=?,isp_puramt=?,asp_pqty=?,asp_prate=?,asp_puramt=? WHERE id=?`,
+          [0,calc.pqty,calc.prate,calc.puramt,calc.com,calc.sertax,calc.cgst,calc.sgst,calc.igst,calc.advance,calc.balance,calc.bilamt,calc.refund||0,calc.refud||0,calc.isp_pqty||0,calc.isp_prate||0,calc.isp_puramt||0,calc.asp_pqty||0,calc.asp_prate||0,calc.asp_puramt||0,w.id]);
+      }
+
+      // One audit row per lot, with the same A→B diff the per-lot PUT wrote.
+      // Rolling the import into a single summary row would be quieter, but
+      // "who changed lot 42's price, and from what" is the question this log
+      // exists to answer, and the answer would be gone.
+      const next = { price, amount };
+      if (w.code !== null) next.code = w.code;
+      logLotActivity(db, req, 'edit', {
+        id: w.id, auction_id: lot.auction_id, lot_no: lot.lot_no,
+        branch: lot.branch, name: lot.name, qty: lot.qty,
+        changes: _lotEditChanges(lot, next),
+      });
+    }
+
+    // Prices just moved, so any earlier price-check / lot-validation pass is
+    // stale. Once per trade rather than once per lot.
+    for (const aid of touchedAuctions) {
+      try { pcClearGate(db, aid); lvClearGate(db, aid); } catch (_) { /* best-effort */ }
+    }
+    // Grade-2 alerts are deliberately NOT re-run here. That engine weighs
+    // grade-2 QTY against total qty; a price import changes neither, so
+    // evaluating it per lot (as the per-lot PUT did) could never fire an alert
+    // this import caused — it only re-scanned every lot in the trade to
+    // conclude nothing had changed.
+    res.json({ success: true, updated, requested: wanted.size,
+               skipped_locked: lockedIds.length, skipped_missing: missing });
+  } catch (e) {
+    console.error('bulk price write failed:', e);
+    res.status(500).json({ error: 'Bulk price update failed: ' + (e.message || e) });
+  }
+});
+
 // Bulk seller-reassign — paired with the Lot Entry "Change Seller"
 // action AND the Lots screen edit modal's "Change Seller…" link.
 // Body: { ids: [1, 2, …], trader_id: 42 }

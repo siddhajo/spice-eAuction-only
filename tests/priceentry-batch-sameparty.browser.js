@@ -123,7 +123,7 @@ const GSTIN_B = '33BBBBB1111B1Z5';    // an ordinary buyer
   }
   if (!chrome) {
     console.log('  skip no Chrome available — UI checks not run');
-    console.log(`\n${pass} passed, ${fail} failed\n`);
+  console.log(`\n${pass} passed, ${fail} failed\n`);
     cleanup(); process.exit(0);
   }
   browser = await pptr.launch({ executablePath: chrome.executablePath, args: chrome.args, headless: true });
@@ -267,6 +267,37 @@ const GSTIN_B = '33BBBBB1111B1Z5';    // an ordinary buyer
   check('…and asks for focus back', focusCalls.afterX.calls === 1, JSON.stringify(focusCalls.afterX));
   check('the automatic clear also empties it', focusCalls.afterAuto.value === '', JSON.stringify(focusCalls.afterAuto));
   check('…without stealing focus', focusCalls.afterAuto.calls === 1, JSON.stringify(focusCalls.afterAuto));
+
+  console.log('\n[9] The Excel import writes the whole file in ONE request');
+  // The guarantee that actually made the import fast, and the one that would
+  // regress silently: a PUT-per-lot loop is still correct, just slow, so only
+  // counting the requests catches a slide back to it.
+  await page.evaluate(() => {
+  // Feed the mapping step directly — the file picker and the server parse
+  // are already covered by the parse endpoint; what is under test here is
+  // what Apply does with the rows once they are in hand.
+  _pei.headers = ['Lot No', 'Price', 'Buyer Code'];
+  _pei.rows = _pe.lots.map(l => ({ 'Lot No': l.lot_no, 'Price': 1234, 'Buyer Code': '' }));
+  document.getElementById('pei-map-lot').innerHTML = '<option value="Lot No">Lot No</option>';
+  document.getElementById('pei-map-price').innerHTML = '<option value="Price">Price</option>';
+  document.getElementById('pei-map-code').innerHTML = '<option value=""></option>';
+  document.getElementById('pei-map-lot').value = 'Lot No';
+  document.getElementById('pei-map-price').value = 'Price';
+  document.getElementById('pei-map-code').value = '';
+  window.__calls = [];
+  const realFetch = window.fetch;
+  window.fetch = (u, o) => { window.__calls.push(`${(o && o.method) || 'GET'} ${String(u).replace(/^https?:\/\/[^/]+/, '')}`); return realFetch(u, o); };
+  });
+  await page.evaluate(() => peiApply());
+  await page.waitForFunction(() => _pe.lots.every(l => Number(l.price) === 1234), { timeout: 10000 });
+  const calls = await page.evaluate(() => { const c = window.__calls; window.fetch = window.fetch; return c; });
+  const writes = calls.filter(c => /^(PUT|POST) \/api\/lots/.test(c));
+  check('exactly one write call for the whole file', writes.length === 1, JSON.stringify(writes));
+  check('and it is the bulk endpoint', /POST \/api\/lots\/bulk-price/.test(writes[0] || ''), JSON.stringify(writes));
+  check('no per-lot PUTs at all', !calls.some(c => /^PUT \/api\/lots\/\d+/.test(c)), JSON.stringify(calls));
+  const priced = await page.evaluate(() => (_pe.lots || []).map(l => [l.lot_no, Number(l.price), Number(l.amount)]));
+  check('every lot took the imported price', priced.every(p => p[1] === 1234), JSON.stringify(priced));
+  check('with its amount recomputed', priced.every(p => p[2] > 0), JSON.stringify(priced));
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
   if (fail) console.log(srvLog.slice(-2000));
