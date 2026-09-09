@@ -655,7 +655,21 @@ select:focus{border-color:var(--green)}
 <div class="modal-overlay" id="edit-modal"><div class="modal">
   <div class="modal-hdr"><h2>Edit Lot #<span id="ed-lotno-display"></span></h2><button class="modal-close" onclick="closeEdit()">&#x2715;</button></div>
   <div class="modal-body">
-    <div class="lb">LOT NUMBER</div><input type="text" id="ed-lotno">
+    <!-- Lot number is PICKED, not typed. Typed, it is a blind edit: nothing on
+         the phone tells the operator whether the number is free or already
+         carries someone else's lot. Change opens the free-lot chips instead.
+         The box stays typeable only when this branch has no allocation at all
+         — then there are no chips to offer and locking it would strand the
+         operator with no way to correct a number. -->
+    <div class="lb">LOT NUMBER</div>
+    <div style="display:flex;gap:6px;align-items:center">
+      <input type="text" id="ed-lotno" readonly style="flex:1;background:var(--bg2);cursor:not-allowed">
+      <button type="button" id="ed-lotno-change" onclick="edToggleLotPicker()" style="height:40px;padding:0 12px;border:1.5px solid var(--green);background:#fff;color:var(--green);border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">Change</button>
+    </div>
+    <div id="ed-lot-picker" style="display:none;margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--bg2)">
+      <div style="font-size:10px;color:var(--text3);margin-bottom:6px" id="ed-lot-picker-help">Tap a free lot to move this lot there.</div>
+      <div id="ed-lot-picker-grid" style="display:flex;flex-wrap:wrap;gap:4px;max-height:150px;overflow:auto"></div>
+    </div>
     <div class="lb">SELLER</div>
     <div id="ed-seller-wrap">
       <div id="ed-seller-card" style="background:#e1f5ee;border-radius:6px;padding:8px 10px;font-size:12px;font-weight:600;color:#0F6E56;display:flex;align-items:center;gap:6px">
@@ -2370,7 +2384,74 @@ function printLot(id){routePrint(B+'/api/lots/'+id+'/receipt?branch='+encodeURIC
 
 var editBanks=[],editTraderId=null;
 var editLotBankId=null;
-function openEdit(id,lotNo,s,g,bags,litre,qty,traderId,bankId){editId=id;editTraderId=traderId||null;editLotBankId=bankId||null;document.getElementById('ed-lotno-display').textContent=lotNo;document.getElementById('ed-lotno').value=lotNo;document.getElementById('ed-seller-name').textContent=s;document.getElementById('ed-seller-card').style.display='flex';document.getElementById('ed-seller-search').style.display='none';document.getElementById('ed-seller-res').style.display='none';document.getElementById('ed-grade').value=g;document.getElementById('ed-bags').value=bags;document.getElementById('ed-litre').value=litre;document.getElementById('ed-qty').value=Number(qty).toFixed(3);document.getElementById('ed-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';/* Crop Receipt + Reserved Price — cleared on open, populated once
+// ── Edit Lot: pick the new number from the free chips ─────────────
+// Same allocation data the entry screen already holds (`allocStats`), filtered
+// to this operator's branch. The lot's OWN number is shown and highlighted so
+// the operator can see where they are moving from; every other used lot is
+// left out entirely — on a phone the free ones are what matters.
+//
+// When the branch has no allocation there is nothing to pick, so the box is
+// unlocked instead and the operator types, exactly as before.
+var edOrigLotNo='';
+function edLotPickerAvailable(){
+  var b=allocStats?allocStats.find(function(s){return s.branch===br}):null;
+  return !!(b&&b.ranges&&b.ranges.length);
+}
+function edApplyLotNoLock(){
+  var inp=document.getElementById('ed-lotno');
+  var btn=document.getElementById('ed-lotno-change');
+  if(!inp)return;
+  var pickable=edLotPickerAvailable();
+  inp.readOnly=pickable;
+  inp.style.background=pickable?'var(--bg2)':'';
+  inp.style.cursor=pickable?'not-allowed':'';
+  inp.title=pickable?'Tap Change to pick a free lot number':'';
+  if(btn)btn.style.display=pickable?'':'none';
+  if(!pickable){var pk=document.getElementById('ed-lot-picker');if(pk)pk.style.display='none';}
+}
+function edToggleLotPicker(){
+  var pk=document.getElementById('ed-lot-picker');
+  if(!pk)return;
+  var open=pk.style.display!=='none';
+  if(open){pk.style.display='none';return}
+  edRenderLotPicker();
+  pk.style.display='block';
+}
+function edRenderLotPicker(){
+  var host=document.getElementById('ed-lot-picker-grid');
+  var help=document.getElementById('ed-lot-picker-help');
+  if(!host)return;
+  var b=allocStats?allocStats.find(function(s){return s.branch===br}):null;
+  var cur=(document.getElementById('ed-lotno').value||'').trim();
+  var all=[];
+  if(b&&b.ranges)b.ranges.forEach(function(rng){if(rng.lots)rng.lots.forEach(function(l){all.push(l)})});
+  all.sort(function(a,c){return String(a.lot==null?'':a.lot).localeCompare(String(c.lot==null?'':c.lot),undefined,{numeric:true})});
+  var html='';
+  var freeCount=0;
+  all.forEach(function(l){
+    var isMine=String(l.lot)===String(edOrigLotNo);
+    // Someone else's booked lot: not offered at all. Keeping it visible would
+    // only invite taps that do nothing.
+    if(l.used&&!isMine)return;
+    if(!l.used)freeCount++;
+    var cls='lot-chip'+(String(l.lot)===cur?' selected':'')+(isMine&&l.used?' used':'');
+    var title=isMine?'This lot\'s current number':'Move this lot to '+l.lot;
+    html+='<span class="'+cls+'" data-lot="'+l.lot+'" title="'+title+'" onclick="edPickLot(\''+String(l.lot).replace(/'/g,"\\'")+'\')">'+l.lot+'</span>';
+  });
+  host.innerHTML=html||'<span style="font-size:10px;color:var(--text3)">No free lot numbers in this branch</span>';
+  if(help)help.textContent=freeCount?'Tap a free lot to move this lot there.':'Every lot number in this branch is taken.';
+}
+function edPickLot(lot){
+  var inp=document.getElementById('ed-lotno');
+  if(!inp)return;
+  inp.value=lot;
+  var disp=document.getElementById('ed-lotno-display');
+  // The heading keeps the ORIGINAL number — that is the lot's identity — and
+  // gains the destination once they differ. Nothing is saved until Save.
+  if(disp)disp.textContent=(edOrigLotNo&&String(lot)!==String(edOrigLotNo))?(edOrigLotNo+' \u2192 '+lot):String(lot);
+  edRenderLotPicker();
+}
+function openEdit(id,lotNo,s,g,bags,litre,qty,traderId,bankId){editId=id;editTraderId=traderId||null;editLotBankId=bankId||null;document.getElementById('ed-lotno-display').textContent=lotNo;document.getElementById('ed-lotno').value=lotNo;edOrigLotNo=String(lotNo||'');var edPk=document.getElementById('ed-lot-picker');if(edPk)edPk.style.display='none';edApplyLotNoLock();document.getElementById('ed-seller-name').textContent=s;document.getElementById('ed-seller-card').style.display='flex';document.getElementById('ed-seller-search').style.display='none';document.getElementById('ed-seller-res').style.display='none';document.getElementById('ed-grade').value=g;document.getElementById('ed-bags').value=bags;document.getElementById('ed-litre').value=litre;document.getElementById('ed-qty').value=Number(qty).toFixed(3);document.getElementById('ed-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';/* Crop Receipt + Reserved Price — cleared on open, populated once
    the /detail fetch returns. Visibility of the Reserved Price wrap
    mirrors the live cfgShowReservedPrice flag so toggling the feature
    in Settings reflects on the next modal open without a reload. */
