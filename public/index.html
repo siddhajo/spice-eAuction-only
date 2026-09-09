@@ -3962,6 +3962,12 @@ html[data-textsize] #comfort-toggle{background:var(--spice-saffron-lt);color:var
 /* Reserved (held) lots — bright orange instead of the booked green, so an
    operator can see at a glance which taken lots are reservations. */
 .le-lot-chip.used.reserved,.le-lot-chip.used.reserved:hover{background:linear-gradient(135deg,#f97316 0%,#ea580c 100%);border-color:#ea580c;box-shadow:0 1px 2px rgba(234,88,12,.3)}
+/* Lot Entry — the chip for the lot currently being EDITED. It is also a
+   `used` chip (it is saved), so it needs its own outline to be findable:
+   amber ring on the green fill, the "you are moving this one" marker. */
+.le-lot-chip.editing,.le-lot-chip.used.editing,.le-lot-chip.used.editing:hover{
+  outline:2px solid #F59E0B;outline-offset:1px;text-decoration:none;
+}
 .le-lot-chip.selected{
   background:#FEF3C7;color:#92400E;border-style:solid;border-color:#F59E0B;
   box-shadow:0 0 0 2px rgba(245,158,11,.25);
@@ -5370,19 +5376,25 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
              scheduled run to fire; closing the tab pauses the job.
              Persisted in localStorage so the schedule survives
              reloads. -->
-        <div style="padding:16px 18px;border:1.5px solid var(--spice-turmeric);border-radius:10px;background:linear-gradient(135deg,var(--spice-turmeric-lt),#fff 70%);margin-bottom:14px;box-shadow:0 1px 3px rgba(245,158,11,.18);border-left:4px solid var(--spice-turmeric)">
-          <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap">
+        <div style="border:1.5px solid var(--spice-turmeric);border-radius:10px;background:linear-gradient(135deg,var(--spice-turmeric-lt),#fff 70%);margin-bottom:14px;box-shadow:0 1px 3px rgba(245,158,11,.18);border-left:4px solid var(--spice-turmeric)">
+          <!-- Collapsible: once the schedule is set it is not touched again for
+               months, and it sat between Download and Restore taking up the
+               screen the whole time. Open state is remembered per browser. -->
+          <div style="padding:16px 18px;display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;cursor:pointer;user-select:none" onclick="toggleAutoBackupSection()" title="Show / hide the auto backup settings">
             <div style="flex:1;min-width:260px">
               <div style="font-weight:700;color:var(--text);font-size:14px;margin-bottom:4px;display:flex;align-items:center;gap:8px">
                 <span>🕒</span><span>Auto Backup Schedule</span>
                 <span style="font-size:10px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--spice-turmeric);background:var(--spice-turmeric-lt);border:1px solid var(--spice-turmeric);padding:2px 7px;border-radius:999px">Recommended</span>
+                <span id="autobackup-collapsed-status" style="font-size:11px;font-weight:600;color:var(--text3)"></span>
               </div>
               <div style="font-size:12px;color:var(--text3);line-height:1.5">
-                Automatically download a fresh backup at a fixed interval. Keep this browser tab open during business hours so the schedule can fire. Last run timestamp is shown below.
+                Automatically save a fresh backup at a fixed interval — one copy kept on the server (listed below, downloadable any time) and one sent to this browser's downloads folder. Keep this tab open during business hours so the schedule can fire.
               </div>
             </div>
+            <span id="autobackup-chev" style="font-size:13px;color:var(--spice-turmeric);font-weight:800;width:18px;text-align:center;padding-top:2px">▸</span>
           </div>
-          <div style="display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;margin-top:14px">
+          <div id="autobackup-body" style="display:none;padding:0 18px 16px">
+          <div style="display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center">
             <label class="sw" title="Enable / disable scheduled auto backup" style="display:inline-flex;align-items:center">
               <input type="checkbox" id="autobackup-enabled" data-type="boolean" onchange="autoBackupSave()">
               <span class="sl"></span>
@@ -5401,6 +5413,27 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             </div>
             <div id="autobackup-status" style="font-size:12px;color:var(--text3);text-align:right">Not scheduled</div>
           </div>
+          </div>
+        </div>
+
+        <!-- ── Saved snapshots ──────────────────────────────────
+             The .db copies sitting on the server: the scheduled ones, the
+             ones taken by hand, and the automatic ones taken before a wipe
+             or a Fix Data run. Listing them is not enough on its own — the
+             people who need a backup are the ones without file-system
+             access to the machine — so every row downloads. -->
+        <div style="padding:16px 18px;border:1px solid var(--border);border-radius:10px;background:#fff;margin-bottom:14px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+            <div style="font-weight:700;color:var(--text);font-size:14px">Saved Snapshots on the Server</div>
+            <span id="backup-files-count" style="font-size:12px;color:var(--text3)"></span>
+            <span style="flex:1"></span>
+            <button class="btn btn-o" onclick="backupSnapshotNow()" style="height:32px;padding:0 12px;font-size:12px;font-weight:600" title="Take a snapshot on the server right now">＋ Snapshot now</button>
+            <button class="btn btn-o" onclick="loadBackupFiles()" style="height:32px;padding:0 12px;font-size:12px;font-weight:600">↻ Refresh</button>
+          </div>
+          <div style="font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:10px">
+            Kept on the server next to the live database. Scheduled snapshots are pruned to the most recent few; snapshots taken by hand and the ones saved before a delete are kept until removed from the server.
+          </div>
+          <div id="backup-files-list" style="max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
         </div>
 
         <!-- ── Restore ────────────────────────────────────────── -->
@@ -6086,6 +6119,14 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <span id="pe-pc-note" style="display:none;color:#a16207"> Price Check is ON for this install — you'll need to re-verify prices before generating invoices.</span>
         </div>
         <div id="pe-summary" style="font-size:12px;color:var(--text3);margin-top:6px"></div>
+        <!-- Buyer-is-the-seller banner. A lot whose buyer is the same party as
+             its seller is nearly always a mis-keyed buyer code, and it is
+             invisible in a 300-row grid: both columns look perfectly normal on
+             their own, and only reading them side by side gives it away. The
+             banner does that reading, and clicking it narrows the grid to just
+             those lots. Rendered by _peRenderSamePartyBanner(); hidden when
+             the trade has none. -->
+        <div id="pe-sameparty-banner" style="display:none;margin-top:8px"></div>
         <!-- Quick-select by lot number — type lot numbers (or ranges like
              12-18); the matching lots are ticked and moved to the top of the
              grid. Leading zeros are ignored, so "1" finds "001". -->
@@ -12613,7 +12654,13 @@ function go(tab){
     payments:loadPayAuctions,exports:loadExpAuctions,tds:()=>{},lorry:loadLorryAuctions,
     bills:loadBillAuctions,debit:loadDnAuctions,debitplanter:loadDnpAuctions,journals:loadJournalDefault,registers:loadRegisterDefault,tally:loadTallyAuctions,
     spicesboard:loadSpiceBoard,pricecheck:loadPriceCheckAuctions,priceentry:loadPriceEntry,
-    backup:()=>{if(typeof initBackupActivity==='function')initBackupActivity();}};
+    backup:()=>{
+      if(typeof initBackupActivity==='function')initBackupActivity();
+      if(typeof initAutoBackupSection==='function')initAutoBackupSection();
+      // The snapshot list is the point of opening this tab in an emergency,
+      // so it loads with the tab rather than waiting for a Refresh click.
+      if(typeof loadBackupFiles==='function')loadBackupFiles();
+    }};
   if(loaders[tab]){
     try{
       const r=loaders[tab]();
@@ -20929,6 +20976,9 @@ function leResetForm(){
   document.getElementById('le-err').style.display = 'none';
   // Drop edit mode if active
   _le.editingLotId = null;
+  const editLotEl2 = document.getElementById('le-edit-lotno');
+  if (editLotEl2) editLotEl2.dataset.origLot = '';
+  leApplyLotNoLock();          // back to a typeable box for the next new lot
   document.getElementById('le-edit-banner').style.display = 'none';
   document.getElementById('le-save-btn-label').textContent = 'Save & Next';
 }
@@ -20961,10 +21011,13 @@ async function leEditLot(lotId){
     }
   }
   _le.editingLotId = lotId;
-  document.getElementById('le-edit-lotno').textContent = lot.lot_no || '?';
+  const editLotEl = document.getElementById('le-edit-lotno');
+  editLotEl.dataset.origLot = lot.lot_no || '';
+  editLotEl.textContent = lot.lot_no || '?';
   document.getElementById('le-edit-banner').style.display = 'flex';
   document.getElementById('le-save-btn-label').textContent = 'Update Lot';
   document.getElementById('le-lotno').value  = lot.lot_no || '';
+  leApplyLotNoLock();
   document.getElementById('le-grade').value  = lot.grade || '1';
   document.getElementById('le-bags').value   = lot.bags ?? '';
   document.getElementById('le-litre').value  = lot.litre ?? '';
@@ -21973,7 +22026,11 @@ let _raSelected = new Set();   // reassigned wholesale during drag-select, so `l
 const _allocMarked = new Set();
 // Per-range "Hide" toggle — keyed by `${branch}|${start}-${end}`.
 const _allocHidden = new Set();
-const _allocCardKey = (branch, range) => `${branch}|${range.start}-${range.end}`;
+// One card per BRANCH now, not per range — so the hide state is keyed on the
+// branch alone. A depot with a dozen ranges used to be a dozen cards to scroll
+// past, each with its own Hide / Mark-all buttons, which is what made this
+// screen unusable for the trades that need it most.
+const _allocCardKey = (branch) => String(branch);
 const _allocMarkKey = (branch, lot)   => `${branch}|${lot}`;
 
 // ── Close Depot (main/holding depot) ──────────────────────────────
@@ -22046,32 +22103,40 @@ function renderAllocEditCards(stats) {
     renderAllocMainBar();
     return;
   }
-  // Flatten into per-range cards so we render one card per allocation
-  // (matches the reference UX — each range is its own card with its
-  // own Mark-all-free / Clear / Hide actions).
-  const cards = [];
-  for (const s of stats) {
-    for (const r of (s.ranges || [])) {
-      cards.push({ branch: s.branch, range: r });
-    }
-  }
-  // Stable sort: by branch, then by numeric start lot.
-  cards.sort((a, b) => {
-    const bn = String(a.branch).localeCompare(String(b.branch));
-    if (bn) return bn;
-    const am = String(a.range.start).match(/(\d+)$/);
-    const bm = String(b.range.start).match(/(\d+)$/);
-    return (am ? +am[1] : 0) - (bm ? +bm[1] : 0);
-  });
+  // ONE card per branch, with every range's lots flowing together in lot
+  // order — the same shape the Reassign tab uses, and the reason it is
+  // readable. A branch whose allocation was built up over several sessions
+  // holds a dozen ranges; as a card each, the operator scrolled past a dozen
+  // headers and a dozen button pairs to see one depot's numbers.
+  //
+  // The ranges are still named in the header, because "which ranges does this
+  // branch hold" is a real question — it is just not worth a card each.
+  const cards = stats
+    .map(s => ({
+      branch: s.branch,
+      ranges: (s.ranges || []).slice().sort((a, b) => _allocLotNum(a.start) - _allocLotNum(b.start)),
+      // Flattened and sorted so the chips read 1, 2, 3 … across range
+      // boundaries rather than restarting at each one.
+      lots: (s.ranges || [])
+        .flatMap(r => r.lots || [])
+        .sort((a, b) => String(a.lot == null ? '' : a.lot)
+          .localeCompare(String(b.lot == null ? '' : b.lot), undefined, { numeric: true })),
+    }))
+    .sort((a, b) => String(a.branch).localeCompare(String(b.branch)));
 
-  host.innerHTML = cards.map(({ branch, range }) => {
-    const cardKey = _allocCardKey(branch, range);
+  host.innerHTML = cards.map(({ branch, ranges, lots }) => {
+    const cardKey = _allocCardKey(branch);
     const hidden = _allocHidden.has(cardKey);
-    const lots   = range.lots || [];
+    const rangeTxt = ranges.map(r => `${r.start}–${r.end}`).join(', ');
     const usedCt = lots.filter(l => l.used).length;
     const free   = lots.filter(l => !l.used);
     const marked = free.filter(l => _allocMarked.has(_allocMarkKey(branch, l.lot))).length;
-    const keeping = lots.length - usedCt - marked;
+    // What survives Save: the used lots (which can never be deleted) plus the
+    // free ones nobody marked. This read `lots.length - usedCt - marked`, which
+    // is the same arithmetic as the `free` figure printed next to it — so the
+    // header showed one number twice under two labels, and "keeping 0" next to
+    // 2 locked lots was simply untrue.
+    const keeping = lots.length - marked;
     const chips = lots.map(l => {
       const isUsed = !!l.used;
       const isCarried = !!l.carried;
@@ -22104,19 +22169,20 @@ function renderAllocEditCards(stats) {
 
     return `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${hidden ? '0' : '10px'};flex-wrap:wrap;gap:8px">
-        <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+        <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;min-width:0">
           <span style="font-size:13px;font-weight:700;color:var(--green);letter-spacing:.3px">${esc(branch)}</span>
-          <span style="font-family:monospace;font-size:13px;color:var(--text2);font-weight:600">${esc(range.start)}–${esc(range.end)}</span>
+          <span title="${escAttr(rangeTxt)}" style="font-family:monospace;font-size:12.5px;color:var(--text2);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px">${esc(rangeTxt)}</span>
+          ${ranges.length > 1 ? `<span style="font-size:10px;color:var(--text3)">${ranges.length} ranges</span>` : ''}
         </div>
         <div style="display:flex;align-items:center;gap:10px;font-size:11px;color:var(--text3)">
           <span>${usedCt} used · ${free.length - marked} free${marked ? ` · <b style="color:#16a34a">${marked} marked</b>` : ''} · keeping ${keeping}</span>
           <button type="button" class="btn btn-o" style="height:24px;padding:0 10px;font-size:11px;font-weight:600" onclick="_allocToggleHide('${esc(cardKey)}')">${hidden ? 'Show' : 'Hide'}</button>
         </div>
       </div>
-      ${hidden ? '' : `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">${chips || '<span style="font-size:11px;color:var(--text3)">empty range</span>'}</div>
+      ${hidden ? '' : `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;max-height:230px;overflow:auto">${chips || '<span style="font-size:11px;color:var(--text3)">empty range</span>'}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button type="button" class="btn btn-o" style="height:26px;padding:0 12px;font-size:11px;font-weight:600" onclick="_allocMarkAllFree('${esc(branch)}','${esc(range.start)}','${esc(range.end)}')">Mark all free for delete</button>
-        <button type="button" class="btn btn-o" style="height:26px;padding:0 12px;font-size:11px;font-weight:600" onclick="_allocClearMarks('${esc(branch)}','${esc(range.start)}','${esc(range.end)}')">Clear marks</button>
+        <button type="button" class="btn btn-o" style="height:26px;padding:0 12px;font-size:11px;font-weight:600" onclick="_allocMarkAllFree('${esc(branch)}')" title="Mark every free lot in ${escAttr(branch)} for delete">Mark all free for delete</button>
+        <button type="button" class="btn btn-o" style="height:26px;padding:0 12px;font-size:11px;font-weight:600" onclick="_allocClearMarks('${esc(branch)}')" title="Unmark every lot in ${escAttr(branch)}">Clear marks</button>
       </div>`}
     </div>`;
   }).join('');
@@ -22141,21 +22207,29 @@ function _allocToggleHide(cardKey) {
   else _allocHidden.add(cardKey);
   renderAllocEditCards(_raAllocStats);
 }
-function _allocMarkAllFree(branch, rStart, rEnd) {
+// Both act on the WHOLE branch now — the card is the branch, so a button on it
+// that only covered one of its ranges would be lying about its scope.
+function _allocMarkAllFree(branch) {
   const s = (_raAllocStats || []).find(x => x.branch === branch);
   if (!s) return;
-  const r = (s.ranges || []).find(x => x.start === rStart && x.end === rEnd);
-  if (!r) return;
-  for (const l of (r.lots || [])) if (!l.used) _allocMarked.add(_allocMarkKey(branch, l.lot));
+  for (const r of (s.ranges || [])) {
+    for (const l of (r.lots || [])) if (!l.used) _allocMarked.add(_allocMarkKey(branch, l.lot));
+  }
   renderAllocEditCards(_raAllocStats);
 }
-function _allocClearMarks(branch, rStart, rEnd) {
+function _allocClearMarks(branch) {
   const s = (_raAllocStats || []).find(x => x.branch === branch);
   if (!s) return;
-  const r = (s.ranges || []).find(x => x.start === rStart && x.end === rEnd);
-  if (!r) return;
-  for (const l of (r.lots || [])) _allocMarked.delete(_allocMarkKey(branch, l.lot));
+  for (const r of (s.ranges || [])) {
+    for (const l of (r.lots || [])) _allocMarked.delete(_allocMarkKey(branch, l.lot));
+  }
   renderAllocEditCards(_raAllocStats);
+}
+// Trailing digits of a lot number, for ordering ranges by where they start.
+// Non-numeric lot numbers fall to the front rather than throwing the sort.
+function _allocLotNum(lot) {
+  const m = String(lot == null ? '' : lot).match(/(\d+)$/);
+  return m ? parseInt(m[1], 10) : 0;
 }
 // Opens the same "+ Add Extra Lots" modal but in "add a fresh branch"
 // mode — the branch dropdown starts empty so the user explicitly picks
@@ -23088,17 +23162,20 @@ async function leLoadAllocBar() {
   gridSection.style.display = 'block';
   if (!myBr) {
     gridLabel.textContent = '—';
-    gridHelp.textContent = 'select your branch above to see available lots';
+    _leSetGridHelp('select your branch above to see available lots');
     gridHost.innerHTML = '<div class="le-lot-grid-empty">Pick your branch in the dropdown above to see your assigned lots.</div>';
     return;
   }
   const currentLotno = (document.getElementById('le-lotno').value || '').trim();
+  // While editing, the box holds the lot's CURRENT number — the chip to mark
+  // as "you are here". Blank in create mode, so the marker never appears there.
+  const editingLotNo = _le.editingLotId ? currentLotno : '';
   // "All branches" mode — render every branch's chips grouped under
   // a per-branch heading. Clicking a chip passes its owning branch to
   // lePickLot so the branch dropdown auto-switches before save.
   if (myBr === 'ALL') {
     gridLabel.textContent = 'All branches';
-    gridHelp.textContent = 'tap a free lot to select — branch sets automatically';
+    _leSetGridHelp('tap a free lot to select — branch sets automatically');
     const groups = sorted.map(s => {
       const branchSafe = String(s.branch || '').replace(/'/g, "\\'");
       const chips = [];
@@ -23108,6 +23185,9 @@ async function leLoadAllocBar() {
           let cls = 'le-lot-chip';
           if (l.used) cls += l.reserved ? ' used reserved' : ' used';
           else if (currentLotno && l.lot === currentLotno && sameBranch(s.branch, myBr)) cls += ' selected';
+          // In edit mode the lot's OWN chip is one of the used ones, so
+          // without this the operator cannot see where they are moving from.
+          if (editingLotNo && l.lot === editingLotNo && sameBranch(s.branch, myBr)) cls += ' editing';
           const onclick = l.used ? '' : ` onclick="lePickLot('${safe}','${branchSafe}')"`;
           const title = l.used ? `Lot ${l.lot} — ${l.reserved ? 'reserved (held)' : 'already saved'} (${s.branch})` : `Click to select lot ${l.lot} in ${s.branch}`;
           chips.push(`<span class="${cls}" data-lot="${esc(l.lot)}" data-branch="${esc(s.branch)}" title="${esc(title)}"${onclick}>${esc(l.lot)}</span>`);
@@ -23129,7 +23209,7 @@ async function leLoadAllocBar() {
   const myStats = stats.find(s => sameBranch(s.branch, myBr));
   if (!myStats) {
     gridLabel.textContent = myBr;
-    gridHelp.textContent = '';
+    _leSetGridHelp('');
     const adminCta = isAdminish
       ? ` <button type="button" class="btn btn-o" style="height:24px;padding:0 10px;font-size:11px;margin-left:6px" onclick="openAllocModal(${parseInt(aid,10)},${JSON.stringify(esc(auctionLabel)).replace(/"/g,'&quot;')})">Configure</button>`
       : '';
@@ -23139,7 +23219,7 @@ async function leLoadAllocBar() {
 
   // Render the chip grid for the user's branch.
   gridLabel.textContent = myBr;
-  gridHelp.textContent = 'tap a free lot to select';
+  _leSetGridHelp('tap a free lot to select');
   const chips = [];
   for (const rng of (myStats.ranges || [])) {
     for (const l of (rng.lots || [])) {
@@ -23147,6 +23227,7 @@ async function leLoadAllocBar() {
       let cls = 'le-lot-chip';
       if (l.used) cls += l.reserved ? ' used reserved' : ' used';
       else if (currentLotno && l.lot === currentLotno) cls += ' selected';
+      if (editingLotNo && l.lot === editingLotNo) cls += ' editing';
       const onclick = l.used ? '' : ` onclick="lePickLot('${safe}')"`;
       const title = l.used ? `Lot ${l.lot} — ${l.reserved ? 'reserved (held)' : 'already saved'}` : `Click to select lot ${l.lot}`;
       chips.push(`<span class="${cls}" data-lot="${esc(l.lot)}" title="${esc(title)}"${onclick}>${esc(l.lot)}</span>`);
@@ -23172,7 +23253,12 @@ function lePickLot(lotNo, branch) {
   const qtyEl   = document.getElementById('le-qty');
   const hasData = (bagsEl && bagsEl.value) || (qtyEl && qtyEl.value);
   const currentLot = (input.value || '').trim();
-  if (hasData && currentLot && currentLot !== lotNo) {
+  // EDIT mode is the opposite case: the weights on screen belong to the lot
+  // being MOVED and must travel with it to the new number. Clearing them here
+  // would empty the very lot the operator is renumbering.
+  if (_le.editingLotId) {
+    /* nothing to clear — the value is assigned below like any other pick */
+  } else if (hasData && currentLot && currentLot !== lotNo) {
     if (!confirm('Changing lot will clear bags and weight fields.\nProceed?')) return;
     bagsEl.value = '';
     document.getElementById('le-litre').value = _le.defaultLitre || '';
@@ -23197,6 +23283,7 @@ function lePickLot(lotNo, branch) {
     }
   }
   input.value = lotNo;
+  _leSyncEditBanner();          // no-op outside edit mode
   // Re-paint selected highlight without re-fetching stats from server
   const host = document.getElementById('le-lot-grid-host');
   if (host) {
@@ -23206,6 +23293,55 @@ function lePickLot(lotNo, branch) {
   }
   // Move focus to the next field so Tab-flow keeps working
   setTimeout(() => document.getElementById('le-bags')?.focus(), 30);
+}
+
+// ── Lot No: typed in CREATE, picked in EDIT ──────────────────────
+// Moving a saved lot to a different number is not the same act as choosing a
+// number for a new one. Typed, it is a blind edit: nothing tells the operator
+// whether the number they typed is free, or already carries someone else's
+// lot. The chip grid answers both before the click, so in edit mode the box
+// becomes a read-out of the grid rather than an input of its own.
+//
+// Create mode is deliberately left typeable — a branch with no allocation has
+// no chips to pick from, and locking the box there would make lot entry
+// impossible rather than safer.
+// The grid's own hint, remembered so edit mode can override it and create
+// mode can get it back. Every caller in the grid renderer goes through here.
+function _leSetGridHelp(text){
+  const help = document.getElementById('le-lot-grid-help');
+  if (!help) return;
+  help.dataset.freeText = text;
+  help.textContent = text;
+  leApplyLotNoLock();
+}
+function leApplyLotNoLock(){
+  const input = document.getElementById('le-lotno');
+  if (!input) return;
+  const editing = !!_le.editingLotId;
+  input.readOnly = editing;
+  input.style.background = editing ? 'var(--bg)' : '';
+  input.style.cursor = editing ? 'not-allowed' : '';
+  input.title = editing
+    ? 'Pick a free lot from the grid above to move this lot to another number'
+    : '';
+  input.placeholder = editing ? '' : 'auto';
+  const help = document.getElementById('le-lot-grid-help');
+  if (help && help.dataset.lockManaged !== '0') {
+    help.textContent = editing
+      ? 'tap a free lot to MOVE this lot there'
+      : (help.dataset.freeText || 'tap a free lot to select');
+  }
+}
+
+// Edit banner text. It names the lot being edited by its ORIGINAL number —
+// that is the lot's identity — and, once a different chip has been picked,
+// where it is moving to. Nothing is written until Update Lot.
+function _leSyncEditBanner(){
+  const el = document.getElementById('le-edit-lotno');
+  if (!el || !_le.editingLotId) return;
+  const from = String(el.dataset.origLot || '').trim();
+  const to   = (document.getElementById('le-lotno')?.value || '').trim();
+  el.textContent = (from && to && from !== to) ? `${from} → ${to}` : (from || to || '?');
 }
 
 // Sync chip highlight when user types/edits le-lotno directly. Wired
@@ -25841,6 +25977,7 @@ function autoBackupSave(){
   };
   localStorage.setItem('autobackup', JSON.stringify(cfg));
   autoBackupApply();
+  _autoBackupRenderCollapsedStatus();
 }
 function autoBackupApply(){
   const cfg = JSON.parse(localStorage.getItem('autobackup') || '{}');
@@ -25862,6 +25999,15 @@ function autoBackupApply(){
 async function autoBackupRun(){
   // Skip when offline or no token (logged out).
   if (!T) return;
+  // Snapshot on the SERVER first. A file in this browser's downloads folder is
+  // gone the moment the machine is reimaged or the operator moves desk, and it
+  // is invisible to everyone else — the copy that survives is the one next to
+  // the database. Non-fatal: a server that refuses (older build, disk full)
+  // must not stop the browser copy that used to be the only one.
+  try {
+    await j('/api/system/backup-now', { method: 'POST', body: JSON.stringify({ kind: 'auto' }) });
+    if (typeof loadBackupFiles === 'function' && document.getElementById('backup-files-list')) loadBackupFiles();
+  } catch (_) { /* fall through to the browser copy */ }
   try {
     await downloadDbBackup();
     const cfg = JSON.parse(localStorage.getItem('autobackup') || '{}');
@@ -25872,6 +26018,118 @@ async function autoBackupRun(){
 }
 function autoBackupRunNow(){
   autoBackupRun();
+}
+
+// ── Auto Backup section: collapsible ─────────────────────────────
+// Open state is remembered per browser, like the activity log below it.
+function initAutoBackupSection(){
+  let open = false;
+  try { open = localStorage.getItem('autobackup_open') === '1'; } catch(_){}
+  _autoBackupSetOpen(open);
+}
+function toggleAutoBackupSection(){
+  const body = document.getElementById('autobackup-body');
+  if (!body) return;
+  const open = body.style.display === 'none';
+  _autoBackupSetOpen(open);
+  try { localStorage.setItem('autobackup_open', open ? '1' : '0'); } catch(_){}
+}
+function _autoBackupSetOpen(open){
+  const body = document.getElementById('autobackup-body');
+  const chev = document.getElementById('autobackup-chev');
+  if (body) body.style.display = open ? '' : 'none';
+  if (chev) chev.textContent = open ? '▾' : '▸';
+  _autoBackupRenderCollapsedStatus();
+}
+// While the section is shut, its one-line state has to be readable from the
+// header — a collapsed schedule that says nothing reads as no schedule at all.
+function _autoBackupRenderCollapsedStatus(){
+  const el = document.getElementById('autobackup-collapsed-status');
+  if (!el) return;
+  let cfg = {};
+  try { cfg = JSON.parse(localStorage.getItem('autobackup') || '{}'); } catch(_){}
+  if (!cfg.enabled) { el.textContent = '· off'; el.style.color = 'var(--text3)'; return; }
+  const iv = parseInt(cfg.interval, 10) || 86400000;
+  const label = { 3600000:'hourly', 21600000:'every 6h', 43200000:'every 12h',
+                  86400000:'daily', 259200000:'every 3 days', 604800000:'weekly' }[iv] || 'on a schedule';
+  el.textContent = '· on, ' + label;
+  el.style.color = 'var(--green)';
+}
+
+// ── Saved server snapshots: list + download ──────────────────────
+function _bkFileSize(n){
+  const b = Number(n) || 0;
+  if (b >= 1024 * 1024) return (b / 1048576).toFixed(1) + ' MB';
+  if (b >= 1024) return Math.round(b / 1024) + ' KB';
+  return b + ' B';
+}
+// What made this snapshot — read off the filename prefix the server writes.
+// Worth spelling out: "before-delete-invoices-…" is the undo for a wipe and is
+// the one you would actually reach for in an emergency.
+function _bkFileKind(name){
+  const n = String(name || '');
+  if (n.startsWith('auto-'))          return { label: 'Scheduled', bg:'var(--spice-turmeric-lt)', fg:'#B45309' };
+  if (n.startsWith('manual-'))        return { label: 'By hand',   bg:'var(--green-bg)',          fg:'var(--green)' };
+  if (n.startsWith('before-delete-')) return { label: 'Before a delete', bg:'#FEE2E2',            fg:'#991B1B' };
+  if (n.startsWith('predev-'))        return { label: 'Before Fix Data', bg:'#EDE9FE',            fg:'#5B21B6' };
+  return { label: 'Snapshot', bg:'var(--bg)', fg:'var(--text2)' };
+}
+async function loadBackupFiles(){
+  const host = document.getElementById('backup-files-list');
+  const cnt = document.getElementById('backup-files-count');
+  if (!host) return;
+  host.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text3);font-size:12.5px">Loading…</div>';
+  let files = [];
+  try {
+    const d = await j('/api/system/backups');
+    files = Array.isArray(d && d.backups) ? d.backups : [];
+  } catch (e) {
+    host.innerHTML = '<div style="padding:16px;text-align:center;color:#b91c1c;font-size:12.5px">Could not read the snapshot folder.</div>';
+    if (cnt) cnt.textContent = '';
+    return;
+  }
+  if (cnt) cnt.textContent = files.length ? `${files.length} file${files.length === 1 ? '' : 's'}` : '';
+  if (!files.length) {
+    host.innerHTML = '<div style="padding:18px;text-align:center;color:var(--text3);font-size:12.5px">No snapshots on the server yet. Turn on the schedule above, or use <b>＋ Snapshot now</b>.</div>';
+    return;
+  }
+  host.innerHTML = files.map(f => {
+    const kind = _bkFileKind(f.name);
+    const when = f.mtime ? new Date(f.mtime).toLocaleString() : '';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:12.5px">
+      <span style="display:inline-block;padding:1px 8px;border-radius:999px;font-size:10px;font-weight:800;background:${kind.bg};color:${kind.fg};white-space:nowrap">${esc(kind.label)}</span>
+      <span style="flex:1;min-width:0;font-family:monospace;font-size:11.5px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escAttr(f.name)}">${esc(f.name)}</span>
+      <span style="color:var(--text3);white-space:nowrap">${esc(when)}</span>
+      <span style="color:var(--text3);white-space:nowrap;min-width:62px;text-align:right">${esc(_bkFileSize(f.size))}</span>
+      <button class="btn btn-o" style="height:26px;padding:0 10px;font-size:11px;font-weight:600;white-space:nowrap" onclick="downloadBackupFile('${escAttr(f.name)}')">⬇ Download</button>
+    </div>`;
+  }).join('');
+}
+// Same fetch+blob dance as downloadDbBackup — a plain anchor cannot carry the
+// bearer token, and these files are admin-only.
+async function downloadBackupFile(name){
+  try {
+    const r = await fetch(B + '/api/system/backups/' + encodeURIComponent(name), { headers: { 'Authorization': 'Bearer ' + T } });
+    if (!r.ok) {
+      let err = 'Download failed';
+      try { const d = await r.json(); err = d.error || err; } catch(_){}
+      toast(err); return;
+    }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toast('Downloaded ' + name);
+  } catch (e) { toast('Download failed: ' + (e.message || e)); }
+}
+async function backupSnapshotNow(){
+  try {
+    const d = await j('/api/system/backup-now', { method: 'POST', body: JSON.stringify({}) });
+    toast('Snapshot saved: ' + ((d && d.file) || 'ok'));
+    loadBackupFiles();
+  } catch (e) { toast('Snapshot failed: ' + (e.message || e)); }
 }
 function autoBackupRenderStatus(){
   const el = document.getElementById('autobackup-status');
@@ -30834,6 +31092,11 @@ async function applyBulkSetBuyer(){
     hideModal('bulk-setbuyer-modal');
     if (_bsbContext === 'pe') {
       _pe.sel = new Set();
+      // The lot numbers in the quick-select box named THIS batch, and the
+      // batch is now done. Leaving them behind means the next batch is typed
+      // after someone else's list, and "Select & bring to front" re-selects
+      // lots that were already dealt with.
+      if (typeof peClearLotNoInput === 'function') peClearLotNoInput({ keepFocus: false });
       if (typeof loadPriceEntryGrid === 'function') loadPriceEntryGrid();
     } else if (typeof loadLots === 'function') loadLots();
   } catch (e) {
@@ -30978,7 +31241,73 @@ async function validateLots(){
 // dirty/sel/front are keyed by lot id (stable across re-render/reorder).
 let _pe = { aid: null, lots: [], byId: new Map(), view: [], dirty: new Set(), sel: new Set(),
             front: [], sort: { col: null, dir: 1 }, filter: { lot: '', dummy: '', branch: '', seller: '', buyer: '' },
-            showAll: false };
+            showAll: false, sameOnly: false };
+// ── Buyer is the same party as the seller ────────────────────────
+// Same rule the lot modal's orange warning uses (lotCheckSellerBuyer), so one
+// lot cannot be flagged on one screen and clean on the other:
+//   • 'gstin' — the seller's CR and the buyer's GSTIN are the same registered
+//     party. The stronger signal: names can legitimately repeat, a GSTIN
+//     cannot, so this is reported first and in red.
+//   • 'name'  — the seller's name matches the buyer code's name or the buyer's
+//     trade name. Weaker (namesakes are real — see the register screens), so
+//     it is a prompt to check, not a verdict.
+// Returns '' when the lot has no buyer yet, which is most of a live trade.
+function _peSamePartyKind(l){
+  const norm = x => String(x == null ? '' : x).trim().toUpperCase();
+  if (sameGstin(l && l.cr, l && l.buyer_gstin)) return 'gstin';
+  const seller = norm(l && l.name);
+  if (!seller) return '';
+  if (seller === norm(l && l.buyer) || seller === norm(l && l.buyer1)) return 'name';
+  return '';
+}
+function _peSamePartyLots(){
+  return _pe.lots.filter(l => !!_peSamePartyKind(l));
+}
+// The banner over the grid. Click narrows the grid to exactly these lots;
+// click again (or Show all lots) restores the normal view.
+function _peRenderSamePartyBanner(){
+  const host = document.getElementById('pe-sameparty-banner');
+  if (!host) return;
+  const hits = _peSamePartyLots();
+  if (!hits.length) {
+    // Nothing to report — and if the filter was on, it has nothing left to
+    // show, so drop it rather than leaving the grid mysteriously empty.
+    if (_pe.sameOnly) _pe.sameOnly = false;
+    host.style.display = 'none';
+    host.innerHTML = '';
+    return;
+  }
+  const gstin = hits.filter(l => _peSamePartyKind(l) === 'gstin').length;
+  const on = !!_pe.sameOnly;
+  const n = hits.length;
+  const breakdown = gstin
+    ? `${gstin} by <b>GSTIN</b>${gstin < n ? `, ${n - gstin} by name` : ''}`
+    : 'matched by <b>name</b>';
+  host.style.display = 'block';
+  host.innerHTML = `<div role="button" tabindex="0"
+      onclick="peToggleSamePartyOnly()"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();peToggleSamePartyOnly();}"
+      title="${on ? 'Click to go back to all lots' : 'Click to show only these lots'}"
+      style="display:flex;align-items:center;gap:10px;padding:9px 13px;border-radius:8px;cursor:pointer;font-size:12.5px;
+             background:${on ? '#FEE2E2' : '#FFF7ED'};border:1px solid ${on ? '#FCA5A5' : '#FDBA74'};
+             border-left:4px solid ${on ? '#DC2626' : '#F97316'};color:#7C2D12">
+      <span style="font-size:15px;line-height:1">⚠</span>
+      <span style="flex:1">
+        <b>${n} lot${n === 1 ? '' : 's'}</b> ${n === 1 ? 'has' : 'have'} the <b>same party as buyer and seller</b>
+        <span style="color:#9A3412">— ${breakdown}.</span>
+      </span>
+      <span style="font-weight:700;white-space:nowrap;text-decoration:underline">${on ? 'Show all lots' : `Show ${n === 1 ? 'it' : 'them'}`}</span>
+    </div>`;
+}
+function peToggleSamePartyOnly(){
+  _pe.sameOnly = !_pe.sameOnly;
+  renderPriceEntryGrid();
+  if (_pe.sameOnly) {
+    const grid = document.getElementById('pe-grid');
+    if (grid && grid.scrollIntoView) grid.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+
 // A row is "complete" (needs no more work) when it's priced AND has a buyer
 // code, OR it's a WD/NA lot (withdrawn / not-auctioned → no pricing needed).
 // Completed rows are hidden unless "Show all" is on.
@@ -31065,7 +31394,7 @@ async function loadPriceEntryGrid(){
   const tradeChanged = aid !== _pe.aid;
   _pe.aid = aid; _pe.dirty = new Set(); _pe.sel = new Set(); _pe.front = [];
   // A fresh trade starts with no sort/filter; a same-trade refresh keeps them.
-  if (tradeChanged) { _pe.sort = { col: null, dir: 1 }; _pe.filter = { lot: '', dummy: '', branch: '', seller: '', buyer: '' }; }
+  if (tradeChanged) { _pe.sort = { col: null, dir: 1 }; _pe.filter = { lot: '', dummy: '', branch: '', seller: '', buyer: '' }; _pe.sameOnly = false; }
   const grid = document.getElementById('pe-grid');
   const sumEl = document.getElementById('pe-summary');
   const fbar = document.getElementById('pe-filter-bar');
@@ -31103,6 +31432,11 @@ function _peSortCmp(a, b){
 }
 // Does a lot pass the current column filters?
 function _pePasses(l){
+  // Buyer-is-the-seller view: these lots are almost always "complete" (priced
+  // with a buyer set), which is exactly the state the hide-completed rule
+  // below drops — so this both narrows AND overrides it, or clicking the
+  // banner would show an empty grid.
+  if (_pe.sameOnly) return !!_peSamePartyKind(l);
   const f = _pe.filter;
   if (f.lot    && !String(l.lot_no || '').toLowerCase().includes(f.lot.toLowerCase()))    return false;
   // Dummy code is a free-text tag — substring match, same as Lot / Seller.
@@ -31171,8 +31505,10 @@ function renderPriceEntryGrid(){
   if (!_pe.lots.length) {
     grid.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:13px">No lots to price in this trade yet. Enter lots first — reserved (held) lots are hidden here.</div>';
     if (sumEl) sumEl.textContent = '';
+    _peRenderSamePartyBanner();
     return;
   }
+  _peRenderSamePartyBanner();
   const view = _peViewLots();
   _pe.view = view;
   const rows = view.map((l) => {
@@ -31433,6 +31769,7 @@ function peClearFilterField(key){
 }
 function peClearFilters(){
   _pe.filter = { lot: '', dummy: '', branch: '', seller: '', buyer: '' };
+  _pe.sameOnly = false;      // the banner's view is a filter too
   const lf = document.getElementById('pe-filter-lot');    if (lf) lf.value = '';
   const df = document.getElementById('pe-filter-dummy');  if (df) df.value = '';
   const bf = document.getElementById('pe-filter-branch'); if (bf) bf.value = '';
@@ -31472,13 +31809,15 @@ function peToggleLotNoClear(){
   const btn = document.getElementById('pe-lotno-clear');
   if (inp && btn) btn.style.display = inp.value ? 'flex' : 'none';
 }
-// Clear the "Select lots" box and refocus it.
-function peClearLotNoInput(){
+// Clear the "Select lots" box. The ✕ button refocuses it (the operator is
+// mid-typing); the automatic clear after a batch does not, or the page would
+// scroll back up and steal focus from wherever they moved on to.
+function peClearLotNoInput(opts){
   const inp = document.getElementById('pe-lotno-input');
   if (!inp) return;
   inp.value = '';
   peToggleLotNoClear();
-  inp.focus();
+  if (!opts || opts.keepFocus !== false) inp.focus();
 }
 
 async function peSelectByLotNos(){
@@ -31625,6 +31964,7 @@ async function peClearBuyerCode(){
     if (!r.ok) throw new Error(d.error || 'Clear failed');
     toast('Cleared buyer code on ' + (d.updated || 0) + ' lot(s)');
     _pe.sel = new Set();
+    peClearLotNoInput({ keepFocus: false });   // that batch is finished too
     await loadPriceEntryGrid();
   } catch (e) { showError(e); }
 }

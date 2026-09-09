@@ -18089,20 +18089,80 @@ app.get('/api/system/backups', requireAdmin, (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Download ONE snapshot from the directory above. The list endpoint tells the
+// operator a backup exists; without this there was no way to get it off the
+// server short of file-system access, which is exactly what the people who
+// need a backup do not have.
+//
+// `name` is a bare filename, never a path: it is matched against a strict
+// pattern AND the resolved path is checked to still sit inside the backup
+// directory, so neither "../" nor a symlinked name can read anything else.
+app.get('/api/system/backups/:name', requireAdmin, (req, res) => {
+  try {
+    const bkDir = path.join(path.dirname(DB_PATH), 'backups');
+    const name = String(req.params.name || '');
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.db$/.test(name)) {
+      return res.status(400).json({ error: 'Bad backup name' });
+    }
+    const file = path.resolve(bkDir, name);
+    // path.resolve collapses any traversal the pattern let through; this is
+    // the check that actually confines the read.
+    if (path.dirname(file) !== path.resolve(bkDir)) {
+      return res.status(400).json({ error: 'Bad backup name' });
+    }
+    if (!fs.existsSync(file)) return res.status(404).json({ error: 'No such backup' });
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+    res.setHeader('Content-Length', String(fs.statSync(file).size));
+    fs.createReadStream(file).pipe(res);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// How many `auto-*` snapshots to keep. Only the scheduled ones are pruned:
+// `manual-*` was asked for by a person and `before-delete-*` is the undo for a
+// wipe, so neither is ours to throw away. Each snapshot is a full copy of the
+// database, so an hourly schedule with no cap fills the disk in days.
+const AUTO_BACKUP_KEEP_DEFAULT = 20;
+function _pruneAutoBackups(db, bkDir) {
+  let keep = AUTO_BACKUP_KEEP_DEFAULT;
+  try {
+    const cfg = getSettingsFlat(db);
+    const n = parseInt(cfg && cfg.backup_keep_count, 10);
+    if (Number.isFinite(n) && n > 0) keep = n;
+  } catch (_) { /* setting absent — use the default */ }
+  let removed = 0;
+  try {
+    const autos = fs.readdirSync(bkDir)
+      .filter(f => /^auto-.*\.db$/.test(f))
+      .map(f => ({ f, m: fs.statSync(path.join(bkDir, f)).mtimeMs }))
+      .sort((a, b) => b.m - a.m);
+    for (const old of autos.slice(keep)) {
+      try { fs.unlinkSync(path.join(bkDir, old.f)); removed++; } catch (_) {}
+    }
+  } catch (_) { /* pruning is best-effort; never fail the snapshot over it */ }
+  return { kept: keep, removed };
+}
+
 // Trigger a snapshot now (admin-only). Useful for "before a risky
 // import" or one-off snapshots without waiting for the auto-ticker.
 // Snapshot file is named `manual-<iso-stamp>.db` so it sorts next to
 // auto-* entries by mtime.
+//
+// `kind: 'auto'` is what the browser's Auto Backup Schedule sends. It names the
+// file `auto-…` and prunes older auto snapshots to the keep count — a schedule
+// that never prunes is a disk-full outage waiting for a quiet weekend.
 app.post('/api/system/backup-now', requireAdmin, (req, res) => {
   try {
     const bkDir = path.join(path.dirname(DB_PATH), 'backups');
     if (!fs.existsSync(bkDir)) fs.mkdirSync(bkDir, { recursive: true });
     try { require('./db').flushSave(); } catch (_) {}
+    const auto = String((req.body && req.body.kind) || '').toLowerCase() === 'auto';
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-    const out = path.join(bkDir, `manual-${stamp}.db`);
+    const out = path.join(bkDir, `${auto ? 'auto' : 'manual'}-${stamp}.db`);
     fs.copyFileSync(DB_PATH, out);
     const st = fs.statSync(out);
-    res.json({ success: true, file: path.basename(out), size: st.size, mtime: st.mtimeMs });
+    const pruned = auto ? _pruneAutoBackups(getDb(), bkDir) : { removed: 0 };
+    res.json({ success: true, file: path.basename(out), size: st.size, mtime: st.mtimeMs, pruned: pruned.removed });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

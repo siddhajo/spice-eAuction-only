@@ -294,7 +294,9 @@ check('cardamom collection filters on the stock item',
     const m = blk.slice(0, 200).match(/^\s*Option\s*:\s*(\w+)\s*:\s*Yes/m);
     check(`${band} switches on a tint option`, !!m);
     if (m) {
-      const opt = new RegExp(`\\[!Line:\\s*${m[1]}\\][\\s\\S]{0,160}Print BG\\s*:\\s*[A-Za-z]`);
+      // Value may be a palette NAME (LightGreen) or a quoted literal ("#D6F6D6"),
+      // since whether TDL accepts hex at all is exactly what is under test.
+      const opt = new RegExp(`\\[!Line:\\s*${m[1]}\\][\\s\\S]{0,220}Print BG\\s*:\\s*["A-Za-z#]`);
       check(`  its option ${m[1]} defines a Print BG`, opt.test(tdl));
     }
   }

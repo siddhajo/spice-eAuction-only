@@ -218,6 +218,57 @@ function cleanup() {
   check('it is still locked out of the export', a1.cbLocked);
   check('nothing is called over-advanced while there is no price', !a1.overBadge, JSON.stringify(a1.overBadge));
 
+  console.log('\n[4b] A lot with an AMOUNT but no payable is not capped at 0.00 either');
+  // The case from the field: lot priced (or coded) but with no balance computed
+  // yet, so it is NOT flagged unpriced and its Payable reads a bare 0.00. The
+  // dialog used to cap it at zero and refuse every amount with "1 lot exceeds
+  // its Payable" — a block that protected nothing.
+  await api('PUT', `/api/lots/${lotIds['2']}`, { price: 100, amount: 10000, balance: 0 });
+  await search();
+  rows = await resultRows();
+  const z2 = rows.find(r => r.lot === '2');
+  check('it is NOT flagged unpriced — it has an amount', !z2.unpriced, JSON.stringify(z2));
+  check('its checkbox stays live, as before', !z2.cbLocked, JSON.stringify(z2.cbLocked));
+  await page.evaluate(() => payLwOpenAdvance());
+  await page.waitForFunction(
+    () => document.getElementById('paylw-adv-modal')?.classList.contains('show')
+          && document.querySelectorAll('#paylw-adv-body tbody tr').length > 0,
+    { timeout: 8000 });
+  m = await advRows();
+  const z = m.find(r => r.lot === '2');
+  check('the dialog says "no payable yet" rather than 0.00', /no payable yet/i.test(z.payable),
+        JSON.stringify(z.payable));
+  check('its amount box carries no max', z.max === null, JSON.stringify(z.max));
+  await page.evaluate(() => {
+    document.querySelectorAll('#paylw-adv-body tbody tr').forEach(tr => {
+      const lot = (tr.children[2]?.textContent || '').trim();
+      const cb = tr.querySelector('.paylw-adv-cb');
+      if (cb) cb.checked = (lot === '2');
+      if (lot === '2') tr.querySelector('.paylw-adv-amt').value = '130000';
+    });
+    payLwAdvSync();
+  });
+  check('130000 is not flagged as exceeding a payable of 0.00',
+        !(await page.evaluate(() => Array.from(document.querySelectorAll('#paylw-adv-body .paylw-adv-amt'))
+            .some(el => el.classList.contains('over')))));
+  check('the footer does not say a lot exceeds its Payable',
+        !/exceeds its Payable/i.test(await page.evaluate(() => document.getElementById('paylw-adv-total')?.textContent || '')),
+        await page.evaluate(() => document.getElementById('paylw-adv-total')?.textContent));
+  check('the Pay button is armed',
+        !(await page.evaluate(() => document.getElementById('paylw-adv-save')?.disabled)));
+  await page.evaluate(() => payLwSaveAdvance());
+  await page.waitForFunction(
+    () => document.getElementById('paylw-adv-save')?.disabled && document.querySelector('#paylw-body tbody tr'),
+    { timeout: 10000 });
+  await page.evaluate(() => hideModal('paylw-adv-modal'));
+  rows = await resultRows();
+  // Indian digit grouping — the app renders 130000 as "1,30,000.00".
+  check('the advance landed on the row', /1,?30,?000/.test(rows.find(r => r.lot === '2').advance),
+        JSON.stringify(rows.find(r => r.lot === '2').advance));
+  // Put lot 2 back so the export-selection facts above stay true for later runs.
+  await api('POST', `/api/payments/lots/${aid}/advance`, { items: [{ lotId: lotIds['2'], advance: 0 }] });
+  await api('PUT', `/api/lots/${lotIds['2']}`, { price: 100, amount: 10000, balance: 9800 });
+
   console.log('\n[5] The price lands UNDER the advance — the excess is on the row');
   await api('PUT', `/api/lots/${lotIds['1']}`, { price: 100, amount: 10000, balance: 9800 });
   await search();
