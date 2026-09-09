@@ -4291,6 +4291,15 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
    the green "Paid on …" badge above: an advance is part-settled, not settled,
    and the row stays fully selectable and exportable for the remainder. */
 .paylw-adv-badge{display:inline-flex;align-items:center;gap:3px;background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;border-radius:9px;padding:1px 7px;font-size:10.5px;font-weight:700;margin-left:6px;vertical-align:middle;white-space:nowrap}
+/* Lot-wise Payments — a lot ENTERED but not priced yet. Listed only so the
+   advance paid right after lot entry can be recorded against it, so the badge
+   is deliberately grey/inert: nothing on this row can be exported or paid out
+   until the price arrives. */
+.paylw-unpriced-badge{display:inline-flex;align-items:center;gap:3px;background:var(--spice-cream);color:#4b5563;border:1px solid var(--spice-line);border-radius:9px;padding:1px 7px;font-size:10.5px;font-weight:700;margin-left:6px;vertical-align:middle;white-space:nowrap;cursor:help}
+/* Lot-wise Payments — an advance paid before the price was known that the
+   price then came in UNDER. Red, because unlike every other badge here it is
+   money to be RECOVERED, not money still to go out. */
+.paylw-over-badge{display:inline-flex;align-items:center;gap:3px;background:#FEF2F2;color:#991B1B;border:1px solid #FCA5A5;border-radius:9px;padding:1px 7px;font-size:10.5px;font-weight:700;margin-left:6px;vertical-align:middle;white-space:nowrap;cursor:help}
 /* Pay Advance modal — the lot grid scrolls inside the dialog so the running
    total and the Pay button stay on screen for a trade with hundreds of lots. */
 .paylw-adv-scroll{max-height:min(48vh,520px);overflow:auto;border:1px solid var(--spice-line);border-radius:8px}
@@ -35228,8 +35237,10 @@ function _payLwMissingHtml() {
     switch (m.reason) {
       case 'missing':       return ['No such lot in this trade', 'Check the number — it may belong to another trade.', '#B91C1C'];
       case 'withdrawn':     return ['Withdrawn (WD)', 'Pulled before the sale, so there is nothing to pay.', '#B91C1C'];
-      case 'not_auctioned': return ['Not auctioned', 'Booked but never sold, so there is nothing to pay.', '#B45309'];
-      case 'unpriced':      return ['Not priced yet', 'Sold, but the price import has not run — it will appear once it has.', '#B45309'];
+      case 'not_auctioned': return ['Not auctioned (NA)', 'Offered but never sold, so there is nothing to pay.', '#B45309'];
+      // No 'unpriced' case: a lot awaiting its price is now LISTED (with a
+      // zero payable) so the advance paid at lot entry can go against it, so
+      // the server never reports one as missing.
       case 'paid':          return ['Already marked paid', 'Out of the payable set.', '#0e7490'];
       case 'seller_filter': return ['Excluded by the Seller name box', `This lot belongs to ${m.seller || 'another seller'} — clear the seller box to see it.`, '#0e7490'];
       case 'link_filter':   return m.linked
@@ -35319,7 +35330,7 @@ function _payLwRender() {
     body.innerHTML = `
       <div style="padding:34px;text-align:center;color:var(--text3);font-size:13px;line-height:1.7">
         Search by <strong>seller name</strong>, <strong>lot numbers</strong>, or both — then press <strong>Search</strong>.<br>
-        <span style="font-size:12px">Searching with both boxes empty lists every payable lot in the trade. Use the <strong>Bank account</strong> filter for the lots that have no account yet, or for all of them together.</span>
+        <span style="font-size:12px">Searching with both boxes empty lists every lot in the trade that is still owed for — including lots with no price yet (⏳), so an advance can be paid right after lot entry. Use the <strong>Bank account</strong> filter for the lots that have no account yet, or for all of them together.</span>
       </div>`;
     _payLwRefreshSelection();
     return;
@@ -35332,7 +35343,11 @@ function _payLwRender() {
   // Drop ids that are no longer in the result (a re-search narrowed it).
   // Undo ticks are pruned to lots that are BOTH still listed and still paid —
   // one undone elsewhere must not stay ticked for a second, no-op undo.
-  _payLwState.selected = new Set([..._payLwState.selected].filter(id => lots.some(l => l.id === id)));
+  // Dropped ids also cover a lot that has LOST its price since it was ticked
+  // (a re-price back to zero): its box is disabled now, so a tick left behind
+  // would silently put a ₹0.00 line in the export.
+  _payLwState.selected = new Set([..._payLwState.selected]
+    .filter(id => lots.some(l => l.id === id && !_payLwUnpriced(l))));
   _payLwState.selectedPaid = new Set([..._payLwState.selectedPaid]
     .filter(id => lots.some(l => l.id === id && l.paid_at)));
   if (summary) {
@@ -35341,12 +35356,18 @@ function _payLwRender() {
     const payable = lots.reduce((s, l) => s + (Number(l.payable) || 0), 0);
     const advTotal = lots.reduce((s, l) => s + (Number(l.advance) || 0), 0);
     const advLots = lots.filter(l => (Number(l.advance) || 0) > 0).length;
+    const overTotal = lots.reduce((s, l) => s + (Number(l.over_advance) || 0), 0);
+    const overLots = lots.filter(l => (Number(l.over_advance) || 0) > 0).length;
     const qty = lots.reduce((s, l) => s + (Number(l.qty) || 0), 0);
     const sellers = new Set(lots.map(l => String(l.name || '').trim().toUpperCase())).size;
     // Lots whose seller isn't linked to a master record can't be given an
     // account from here at all — call that out rather than leaving it to the
     // per-row tooltip, since the fix lives on another screen.
     const noSeller = lots.filter(l => !l.trader_id).length;
+    // Lots listed only so an advance can go against them. Called out because
+    // the lot count above then exceeds what any export could pay, and that
+    // gap reads as a missing-money bug if nothing explains it.
+    const nUnpriced = lots.filter(l => !l.paid_at && _payLwUnpriced(l)).length;
     summary.style.display = '';
     summary.innerHTML =
       `<strong>${lots.length}</strong> lot${lots.length === 1 ? '' : 's'} · `
@@ -35358,6 +35379,12 @@ function _payLwRender() {
           : '')
       + `Payable <strong style="color:var(--spice-cardamom-dk)">₹${fmtI(payable, 2)}</strong>`
       + (advTotal > 0 ? ` <span style="color:var(--text3)">(net of advance)</span>` : '')
+      // Over-advance is NOT part of the payable — it is money to come back the
+      // other way — so it is stated separately rather than folded into a total.
+      + (overTotal > 0
+          ? ` · <span style="color:#991B1B;font-weight:700">₹${fmtI(overTotal, 2)} over-advanced</span>`
+            + ` <span style="color:var(--text3)">on ${overLots} lot${overLots === 1 ? '' : 's'} — to recover from the seller</span>`
+          : '')
       // What the Bank account filter is currently showing. In "All" the two
       // kinds sit in one list, so the unlinked ones are counted here (they are
       // also tinted red per row) rather than pointed at another filter.
@@ -35388,6 +35415,9 @@ function _payLwRender() {
                     : ` — every matching lot is in this state.`)
                 + `</div>`;
             })()
+          : '')
+      + (nUnpriced
+          ? `<div style="margin-top:5px;font-size:11.5px;color:#4b5563">${nUnpriced} lot${nUnpriced === 1 ? '' : 's'} ${nUnpriced === 1 ? 'has' : 'have'} no price yet (⏳), so ${nUnpriced === 1 ? 'it counts' : 'they count'} nothing toward the Payable above and can\u2019t be exported \u2014 but <strong>Pay Advance</strong> works on ${nUnpriced === 1 ? 'it' : 'them'} now.</div>`
           : '')
       + (noSeller
           ? `<div style="margin-top:5px;font-size:11.5px;color:var(--text3)">${noSeller} lot${noSeller === 1 ? '' : 's'} ${noSeller === 1 ? 'has' : 'have'} no seller master record — link the seller in Lot Entry before an account can be attached.</div>`
@@ -35456,6 +35486,7 @@ function _payLwRender() {
     // badge, and it never counts toward the selection. The paid tint wins over
     // the red "no account" tint — a paid lot needs no account any more.
     const isPaid = !!(l.paid_at && String(l.paid_at).trim());
+    const unpriced = _payLwUnpriced(l);
     const rowCls = isPaid ? ' class="paylw-row-paid"' : '';
     const rowStyle = (!isPaid && !l.linked) ? ' style="background:#FEF2F2"' : '';
     const paidBadge = isPaid
@@ -35465,8 +35496,24 @@ function _payLwRender() {
     // NOT lock the row: the remainder is still owed, still selectable and
     // still exportable — the Payable column simply already shows it net.
     const advance = Number(l.advance) || 0;
+    // This lot's payable BEFORE its advance — what the advance was measured
+    // against, and what the badges and the Payable cell both quote.
+    const gross = _payLwGross(l);
     const advBadge = advance > 0
       ? ` <span class="paylw-adv-badge" title="Advance of ₹${esc(fmtI(advance, 2))} paid on ${esc(fmtD(l.advance_at))}. It is already deducted from this lot's Payable and from its line in the bank-payment export.">💰 Advance ₹${esc(fmtI(advance, 2))} on ${esc(fmtD(l.advance_at))}</span>`
+      : '';
+    // Entered, not priced yet. Listed so the advance paid right after lot entry
+    // can be recorded against it; it has no payable, so it cannot be exported
+    // or marked paid until the price arrives.
+    const unpricedBadge = (unpriced && !isPaid)
+      ? ` <span class="paylw-unpriced-badge" title="This lot has no price yet, so there is nothing to pay out and it cannot be selected for a bank-payment export. An advance CAN be recorded against it — use Pay Advance. It becomes payable once the price import runs.">⏳ Not priced yet</span>`
+      : '';
+    // An advance that the price then came in UNDER. The payable is floored at
+    // 0, so without this the overpayment would be invisible — and it is money
+    // the office has to get back from the seller.
+    const over = Number(l.over_advance) || 0;
+    const overBadge = (over > 0 && !isPaid)
+      ? ` <span class="paylw-over-badge" title="The advance of ₹${esc(fmtI(advance, 2))} is more than this lot's final payable of ₹${esc(fmtI(gross, 2))} — ₹${esc(fmtI(over, 2))} was overpaid and has to be recovered from the seller.">⚠ Over-advanced ₹${esc(fmtI(over, 2))}</span>`
       : '';
     // Admin-only escape hatch: clear the paid stamp so the lot becomes
     // selectable and exportable again (e.g. an export that had to be redone).
@@ -35492,18 +35539,26 @@ function _payLwRender() {
       ? (window._userRole === 'admin'
           ? `<input type="checkbox" class="paylw-cb-paid" data-id="${l.id}"${paidTicked} onchange="payLwTickPaid(${l.id}, this.checked)" title="Admin: tick to undo this lot's paid stamp with &quot;Undo selected&quot;" style="cursor:pointer;width:15px;height:15px;accent-color:var(--spice-chili)">`
           : `<input type="checkbox" disabled title="Already paid — locked out of selection" style="width:15px;height:15px;cursor:not-allowed;opacity:.5">`)
-      : `<input type="checkbox" class="paylw-cb" data-id="${l.id}"${ticked} onchange="payLwTick(${l.id}, this.checked)" style="cursor:pointer;width:15px;height:15px">`;
+      // An unpriced lot has no payable, so the box would arm an export line of
+      // ₹0.00 and a paid stamp on an unsettled lot. Locked, and it says why —
+      // Pay Advance is the one thing this row IS for.
+      : unpriced
+        ? `<input type="checkbox" disabled title="Not priced yet — there is nothing to export or mark paid. Use Pay Advance to record an advance against it." style="width:15px;height:15px;cursor:not-allowed;opacity:.5">`
+        : `<input type="checkbox" class="paylw-cb" data-id="${l.id}"${ticked} onchange="payLwTick(${l.id}, this.checked)" style="cursor:pointer;width:15px;height:15px">`;
     // Payable is reported NET of the advance. When there is one, the gross it
     // was taken off is shown underneath — a bare net figure that no longer
     // matches the lot's amount reads as an error rather than as a part payment.
-    const gross = _payLwGross(l);
-    const payableCell = advance > 0
-      ? `${fmtI(Number(l.payable) || 0, 2)}`
-        + `<div style="font-weight:400;font-size:10.5px;color:var(--text3)">of ₹${fmtI(gross, 2)}</div>`
-      : fmtI(Number(l.payable) || 0, 2);
+    // An unpriced lot has no payable at all, and a 0.00 there would read as
+    // "settled" rather than "not known yet", so it says so in words.
+    const payableCell = unpriced
+      ? `<span style="font-weight:400;font-size:11px;color:var(--text3)">awaiting price</span>`
+      : advance > 0
+        ? `${fmtI(Number(l.payable) || 0, 2)}`
+          + `<div style="font-weight:400;font-size:10.5px;color:var(--text3)">of ₹${fmtI(gross, 2)}</div>`
+        : fmtI(Number(l.payable) || 0, 2);
     return `<tr${rowCls}${rowStyle}>
       <td style="text-align:center">${cb}</td>
-      <td>${esc(l.name || '')}${paidBadge}${advBadge}${undoBtn}${undoAdvBtn}</td>
+      <td>${esc(l.name || '')}${paidBadge}${unpricedBadge}${advBadge}${overBadge}${undoBtn}${undoAdvBtn}</td>
       <td style="font-family:monospace;font-weight:600">${esc(String(l.lot_no || ''))}</td>
       <td style="text-align:right">${fmtI(Number(l.qty) || 0, 3)}</td>
       <td>${esc(l.branch || '')}</td>
@@ -35562,7 +35617,10 @@ function payLwTickAllPaid() {
 // row present to mean.
 function payLwTickAll(checked) {
   const paid = _payLwState.lots.filter(l => l.paid_at);
-  const anyPayable = _payLwState.lots.some(l => !l.paid_at);
+  // "Payable" here means EXPORTABLE — unpaid AND priced. An unpriced lot is
+  // listed for Pay Advance only; its box is disabled, so ticking it would arm
+  // an export line of ₹0.00.
+  const anyPayable = _payLwState.lots.some(l => !l.paid_at && !_payLwUnpriced(l));
   if (!anyPayable && paid.length && window._userRole === 'admin') {
     _payLwState.selectedPaid = checked ? new Set(paid.map(l => l.id)) : new Set();
     document.querySelectorAll('#paylw-body .paylw-cb-paid').forEach(cb => { cb.checked = !!checked; });
@@ -35570,7 +35628,7 @@ function payLwTickAll(checked) {
     return;
   }
   _payLwState.selected = checked
-    ? new Set(_payLwState.lots.filter(l => !l.paid_at).map(l => l.id))
+    ? new Set(_payLwState.lots.filter(l => !l.paid_at && !_payLwUnpriced(l)).map(l => l.id))
     : new Set();
   document.querySelectorAll('#paylw-body .paylw-cb').forEach(cb => { cb.checked = !!checked; });
   _payLwRefreshSelection();
@@ -35601,7 +35659,10 @@ function _payLwRefreshSelection() {
   // against the lots it can actually tick — the unpaid ones. Comparing against
   // every listed lot meant one paid row in the results left it stuck on
   // indeterminate even with everything selectable already selected.
-  const selectable = _payLwState.lots.filter(l => !l.paid_at).length;
+  // Unpriced lots are excluded: they are listed so an advance can be recorded
+  // against them, but they carry no payable, so they are not part of any
+  // export selection and must not make the header box look half-ticked.
+  const selectable = _payLwState.lots.filter(l => !l.paid_at && !_payLwUnpriced(l)).length;
   // Both undo controls are admin-only and appear only once the results
   // actually contain paid lots, so they stay out of the ordinary
   // search → export flow.
@@ -35634,7 +35695,9 @@ function _payLwRefreshSelection() {
       all.style.opacity = selectable ? '' : '.45';
       all.title = selectable
         ? 'Select / clear every payable lot'
-        : 'Every listed lot is already paid — nothing here can be selected for export';
+        : (_payLwState.lots.some(l => !l.paid_at && _payLwUnpriced(l))
+            ? 'No listed lot has a price yet — nothing can be exported until the price import runs. Pay Advance still works.'
+            : 'Every listed lot is already paid — nothing here can be selected for export');
     }
   }
   const undoInfo = undoSel.length
@@ -35688,7 +35751,10 @@ function _payLwRefreshSelection() {
   // not already paid out to have something to record against.
   const advBtn = document.getElementById('paylw-adv-btn');
   if (advBtn) {
-    const advisable = selectable > 0;
+    // Not `selectable`: an advance is exactly what an UNPRICED lot is listed
+    // for, and those are out of the export selection by design. Anything not
+    // already paid out can carry one.
+    const advisable = _payLwState.lots.some(l => !l.paid_at);
     advBtn.disabled = !advisable;
     advBtn.style.opacity = advisable ? '' : '.55';
     advBtn.style.cursor = advisable ? '' : 'not-allowed';
@@ -36093,6 +36159,13 @@ function _payLwGross(l) {
   return Number.isFinite(g) ? g : ((Number(l.payable) || 0) + (Number(l.advance) || 0));
 }
 
+// Entered but not priced yet — listed so an advance can be paid on it right
+// after lot entry, but it has no payable, so it cannot be selected, marked
+// paid or put in a bank-payment file, and an advance on it has no ceiling.
+function _payLwUnpriced(l) {
+  return l.unpriced != null ? !!l.unpriced : !(Number(l.amount) > 0);
+}
+
 function payLwOpenAdvance() {
   const aid = _payLwState.aid || Number(document.getElementById('paylw-auction')?.value || 0);
   if (!aid) { alert('Select a trade first'); return; }
@@ -36138,6 +36211,15 @@ function _payLwAdvRender(tickIds) {
   const html = rows.map(l => {
     const gross = _payLwGross(l);
     const cur = Number(l.advance) || 0;
+    // Whether there is a CEILING to hold the advance under — which is a
+    // question about the payable, not about the amount. A lot with no price is
+    // the common case, but a lot that is priced and has no balance computed yet
+    // is the same situation: nothing to measure the advance against. A `max` of
+    // 0 could never protect anything, it could only block, so in both cases the
+    // box takes no `max` at all and the column says why rather than showing a
+    // misleading 0.00.
+    const unpriced = _payLwUnpriced(l);
+    const noCap = !(gross > 0);
     const tick = isTicked(l) ? ' checked' : '';
     const opts = _payLwAdvBankOptions(l);
     const bankCell = opts
@@ -36147,8 +36229,12 @@ function _payLwAdvRender(tickIds) {
       <td style="text-align:center"><input type="checkbox" class="paylw-adv-cb" data-id="${l.id}"${tick} onchange="payLwAdvSync()" style="cursor:pointer;width:15px;height:15px"></td>
       <td>${esc(l.name || '')}</td>
       <td style="font-family:monospace;font-weight:600">${esc(String(l.lot_no || ''))}</td>
-      <td style="text-align:right;font-family:monospace">${fmtI(gross, 2)}</td>
-      <td style="text-align:right"><input type="number" class="paylw-adv-amt" data-id="${l.id}" min="0" step="0.01" max="${gross}" value="${cur > 0 ? cur : ''}" placeholder="0.00" oninput="payLwAdvSync()"></td>
+      <td style="text-align:right;font-family:monospace">${noCap
+        ? `<span style="font-family:inherit;font-size:11px;color:var(--text3)" title="${unpriced
+            ? 'No price yet, so there is no payable to cap the advance against. Enter what was actually paid.'
+            : 'This lot has no payable figure yet, so there is nothing to cap the advance against. Enter what was actually paid.'}">${unpriced ? 'not priced yet' : 'no payable yet'}</span>`
+        : fmtI(gross, 2)}</td>
+      <td style="text-align:right"><input type="number" class="paylw-adv-amt" data-id="${l.id}" min="0" step="0.01"${noCap ? '' : ` max="${gross}"`} value="${cur > 0 ? cur : ''}" placeholder="0.00" oninput="payLwAdvSync()"></td>
       <td>${bankCell}</td>
     </tr>`;
   }).join('');
@@ -36199,7 +36285,11 @@ function _payLwAdvReadRows() {
     // Ticking the row is what says the operator meant to act on it.
     const amount = raw === '' ? 0 : Math.round((Number(raw) || 0) * 100) / 100;
     const bankId = bankEl ? (bankEl.value === '' ? null : Number(bankEl.value)) : null;
-    return { tr, lot, amtEl, ticked: !!(cb && cb.checked), amount, bankId, gross: _payLwGross(lot) };
+    const gross = _payLwGross(lot);
+    return { tr, lot, amtEl, ticked: !!(cb && cb.checked), amount, bankId,
+             gross, unpriced: _payLwUnpriced(lot),
+             // No payable to hold the advance under — see the render above.
+             noCap: !(gross > 0) };
   }).filter(Boolean);
 }
 
@@ -36228,7 +36318,10 @@ function payLwAdvSync() {
   let total = 0, changes = 0, over = 0, clears = 0;
   for (const r of rows) {
     r.tr.classList.toggle('paylw-adv-off', !r.ticked);
-    const isOver = r.ticked && r.amount > r.gross + 0.005;
+    // A lot with no payable has no ceiling to exceed — the whole point of
+    // paying an advance at lot entry. Only a lot that HAS a payable is capped
+    // at it; "cannot exceed ₹0.00" is a block, not a safeguard.
+    const isOver = r.ticked && !r.noCap && r.amount > r.gross + 0.005;
     if (r.amtEl) {
       r.amtEl.classList.toggle('over', isOver);
       r.amtEl.title = isOver
@@ -36300,7 +36393,10 @@ function payLwAdvApplyBulk() {
   if (!rows.length) { toast('Tick the lots to apply it to'); return; }
   let capped = 0;
   for (const r of rows) {
-    const use = Math.min(v, r.gross);
+    // Rows with no payable take the figure as typed — there is nothing to cap
+    // at, and clamping them to 0 would silently skip exactly the lots an
+    // advance at entry time is for.
+    const use = r.noCap ? v : Math.min(v, r.gross);
     if (use < v) capped++;
     if (r.amtEl) r.amtEl.value = use > 0 ? String(use) : '';
   }
@@ -36310,13 +36406,19 @@ function payLwAdvApplyBulk() {
     : `Applied ₹${fmtI(v, 2)} to ${rows.length} lot${rows.length === 1 ? '' : 's'}`);
 }
 
-// Each ticked lot's advance = its own full Payable.
+// Each ticked lot's advance = its own full Payable. A row with no payable has
+// nothing to fill FROM, so it is LEFT ALONE rather than blanked — writing ''
+// over it would wipe an advance the operator had just typed in, which is the
+// opposite of what a "fill" button should do.
 function payLwAdvApplyFull() {
   const rows = _payLwAdvReadRows().filter(r => r.ticked);
   if (!rows.length) { toast('Tick the lots to fill first'); return; }
-  for (const r of rows) if (r.amtEl) r.amtEl.value = r.gross > 0 ? String(Math.round(r.gross * 100) / 100) : '';
+  const filled = rows.filter(r => !r.noCap);
+  const skipped = rows.length - filled.length;
+  for (const r of filled) if (r.amtEl) r.amtEl.value = r.gross > 0 ? String(Math.round(r.gross * 100) / 100) : '';
   payLwAdvSync();
-  toast(`Filled ${rows.length} lot${rows.length === 1 ? '' : 's'} with their full Payable`);
+  toast(`Filled ${filled.length} lot${filled.length === 1 ? '' : 's'} with their full Payable`
+    + (skipped ? ` · ${skipped} with no payable yet — type ${skipped === 1 ? 'its' : 'their'} amount` : ''));
 }
 
 // Blank the ticked rows. Saving afterwards REMOVES the advance those lots
@@ -36425,7 +36527,7 @@ async function payLwSaveAdvance() {
   if (err) { err.style.display = 'none'; err.textContent = ''; }
 
   const rows = _payLwAdvReadRows().filter(r => r.ticked);
-  if (rows.some(r => r.amount > r.gross + 0.005)) {
+  if (rows.some(r => !r.noCap && r.amount > r.gross + 0.005)) {
     showErr('Some lots carry an advance above their Payable. Lower those amounts first.');
     return;
   }
@@ -36448,7 +36550,11 @@ async function payLwSaveAdvance() {
       ? `${paying.length ? '\n' : ''}Remove the existing advance on ${clearing.length} lot${clearing.length === 1 ? '' : 's'}`
         + ` (${clearing.map(r => r.lot.lot_no).join(', ')}).\n`
       : '')
-    + `\nEach lot's Payable drops by its advance, here and in the bank-payment export.`);
+    + `\nEach lot's Payable drops by its advance, here and in the bank-payment export.`
+    + (paying.some(r => r.noCap)
+        ? `\n\n${paying.filter(r => r.noCap).length} of them ${paying.filter(r => r.noCap).length === 1 ? 'has' : 'have'} no payable yet`
+          + ` — the advance is recorded now and comes off the payable as soon as the price arrives.`
+        : ''));
   if (!ok) return;
 
   const btn = document.getElementById('paylw-adv-save');
