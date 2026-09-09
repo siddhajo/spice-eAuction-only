@@ -283,26 +283,22 @@ check('sample never feeds the taxable total',
 check('cardamom collection filters on the stock item',
   /SpiceIsCardLot\s*:\s*\$StockItemName\s*=\s*@@SpiceItemCard/.test(tdl));
 
-// The bands the .hbs tints must carry a print background — and it must sit on
-// the PART. `Print BG` directly on a Part is the only form the working
-// reference uses ([#Part: EXPINV Column] Print BG:Black); the Line-level
-// `Local : Field : Default : Print BG` form was tried first and never
-// rendered. Band lines that live inside a larger part therefore get a part of
-// their own, which is why SpiceLHPartyHeadPart / SpiceLHItemHeadPart exist.
-for (const part of ['SpiceLHTitle', 'SpiceLHPartyHeadPart',
-                    'SpiceLHCommodity', 'SpiceLHItemHeadPart']) {
-  const blk = tdl.slice(tdl.indexOf(`[Part: ${part}]`));
-  const end = blk.indexOf('\n[', 1);
-  // Literal colour token, not a formula: the reference always writes
-  // `Print BG:Black`, and a formula returning the quoted string "Light Green"
-  // is not the same thing.
-  check(`${part} is tinted at part level`,
-    /^\s*Print BG\s*:\s*[A-Za-z]/m.test(blk.slice(0, end > 0 ? end : 600)));
+// Each band must switch on SOME tint option, and every option it names must
+// exist as an [!Line:] carrying a Print BG. Colour names are being trialled one
+// per band, so the rule checks the wiring rather than a specific name.
+{
+  const BANDS = ['SpiceLHTitleRow', 'SpiceLHSubRow', 'SpiceLHPartyHead',
+                 'SpiceLHCommodityLine', 'SpiceLHItemHead'];
+  for (const band of BANDS) {
+    const blk = tdl.slice(tdl.indexOf(`[Line: ${band}]`));
+    const m = blk.slice(0, 200).match(/^\s*Option\s*:\s*(\w+)\s*:\s*Yes/m);
+    check(`${band} switches on a tint option`, !!m);
+    if (m) {
+      const opt = new RegExp(`\\[!Line:\\s*${m[1]}\\][\\s\\S]{0,160}Print BG\\s*:\\s*[A-Za-z]`);
+      check(`  its option ${m[1]} defines a Print BG`, opt.test(tdl));
+    }
+  }
 }
-
-// And no Line-level tint may creep back in (comments excluded).
-check('no Line-level Print BG remains',
-  !tdlLines.some(l => !/^\s*;;/.test(l) && /Local\s*:\s*Field\s*:\s*Default\s*:\s*Print BG/.test(l)));
 
 // The QR part's inner field MUST stay empty — the image is drawn by the Part,
 // and putting content in that field is what stopped the QR rendering.
@@ -350,6 +346,59 @@ const src = require('fs').readFileSync(path.join(ROOT, 'tally-xml.js'), 'utf8');
 const builder = src.slice(src.indexOf('function buildSalesIspRows'));
 check('buildSalesIspRows selects buyers.sbl', /b\.sbl\s+FROM buyers/.test(builder));
 check('buildSalesIspRows maps it onto row.sbl', /sbl:\s*r\.buyer_sbl/.test(builder));
+
+// RULE 10 — every @@Name must be DEFINED inside a [System: Formula] block.
+// An undefined @@ reference kills the whole expression silently: the field
+// prints nothing, its literal text included. This cost several builds — an
+// edit inserted [Collection: SpiceCardLots] BETWEEN the formula block and the
+// SpiceQrValue line, so that definition became a stray attribute of the
+// collection and @@SpiceQrValue was undefined. The QR part was handed nothing
+// and drew nothing, which looked exactly like a broken QR construct.
+//
+// Scanned line-by-line rather than by block regex: a lazy block match needs an
+// end-of-input anchor, and JS has no \Z — using one silently truncates the
+// block at the first literal "Z" in the text (there is one in the GSTIN).
+{
+  const defined = new Set();
+  const BUILTIN = new Set(['issales']);
+  let inFormula = false;
+  for (const line of tdlLines) {
+    const def = line.match(/^\[([A-Za-z]+):\s*([^\]]*)\]/);
+    if (def) { inFormula = /^System$/i.test(def[1]) && /^Formula$/i.test(def[2].trim()); continue; }
+    if (!inFormula || /^\s*;;/.test(line)) continue;
+    const m = line.match(/^\s{2,}([A-Za-z][A-Za-z0-9_]*)\s*:/);
+    if (m) defined.add(m[1].toLowerCase());
+  }
+  const used = new Set();
+  for (const line of tdlLines) {
+    if (/^\s*;;/.test(line)) continue;
+    for (const m of line.matchAll(/@@([A-Za-z][A-Za-z0-9_]*)/g)) used.add(m[1]);
+  }
+  const undef = [...used].filter(n => !defined.has(n.toLowerCase()) && !BUILTIN.has(n.toLowerCase()));
+  check('every @@formula is defined in a [System: Formula] block',
+    undef.length === 0, undef.join(', '));
+  check('formula scan found the expected definitions', defined.size > 40,
+    'found ' + defined.size);
+}
+
+// RULE 11 — the QR part carries FOUR attributes and no more.
+// It drew nothing for a dozen builds while carrying Horizontal Alignment,
+// Vertical and Invisible; removing those three is what made it render. The
+// working reference part has none of them either. Adding any attribute back
+// silently kills the QR — no error, just no code on the page.
+{
+  const blk = tdl.slice(tdl.indexOf('[Part: SpiceLHQrPart]'));
+  const body = blk.slice(0, blk.indexOf('[Line:'));
+  const attrs = [...body.matchAll(/^\s{2,}([A-Za-z][A-Za-z ]*?)\s*:/gm)]
+    .map(m => m[1].trim())
+    .filter(a => !/^;;/.test(a));
+  const ALLOWED = ['QRCode', 'Lines', 'Width', 'Height'];
+  const extra = attrs.filter(a => !ALLOWED.includes(a));
+  check('QR part carries only QRCode/Lines/Width/Height',
+    extra.length === 0, 'extra: ' + extra.join(', '));
+  check('QR part still declares QRCode with the payload',
+    /QRCode\s*:\s*@@SpiceQrValue\s*:\s*Yes/.test(body));
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

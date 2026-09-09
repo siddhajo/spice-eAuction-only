@@ -15135,8 +15135,7 @@ app.get('/api/payments/:auctionId', requireView, (req, res) => {
 // overlap — a withdrawn lot is also unpriced):
 //   missing        no lot with that number in this trade at all
 //   withdrawn      lots.code = 'WD' — pulled before the sale
-//   not_auctioned  lots.code = 'NA' or blank — never went under the hammer
-//   unpriced       sold but amount is still 0 (price import not run)
+//   not_auctioned  lots.code = 'NA' — offered but never went under the hammer
 //   paid           already marked paid, so out of the payable set
 //   seller_filter  payable, but the Seller name box excluded it
 //   link_filter    payable, but the Show-unlinked toggle excluded it
@@ -15217,9 +15216,13 @@ function explainMissingLots(db, auctionId, lotTokens, ctx) {
     const l = rows[0];
     const code = String(l.code || '').trim().toUpperCase();
     let reason;
+    // A blank code is NOT 'NA'. It means the lot has been entered and the
+    // auction has not reached it yet — the state in which the first advance is
+    // paid — and such a lot is now listed, so it never gets here. Only the two
+    // explicit dead-end codes do. There is likewise no 'unpriced' reason any
+    // more: an unpriced lot that is neither WD nor NA is in the results.
     if (code === 'WD') reason = 'withdrawn';
-    else if (code === 'NA' || code === '') reason = 'not_auctioned';
-    else if (!(Number(l.amount) > 0)) reason = 'unpriced';
+    else if (code === 'NA') reason = 'not_auctioned';
     else if (String(l.paid || '').trim() !== '') reason = 'paid';
     else if (seller && !String(l.name || '').toUpperCase().includes(seller.toUpperCase())) reason = 'seller_filter';
     // Checked BEFORE the link fallback: with a status filter on, that fallback
@@ -15265,8 +15268,15 @@ function explainMissingLots(db, auctionId, lotTokens, ctx) {
 //           Counted that way too, so the three counts always add up to the
 //           number of matching lots.
 //
-// The lot set matches the bank-payment export's (amount > 0, not marked
-// paid) so what is listed here is exactly what an export of it would pay.
+// The lot set is every lot that is still owed for — PRICED or NOT. Advances
+// are handed to the seller right after lot entry, before the auction and long
+// before the price import, so a lot with no amount yet has to be listed or
+// there is nothing to record the advance against. Those rows carry
+// `unpriced: true`, a zero payable, and are locked out of selection and the
+// bank-payment export on the client — that export keeps its own amount > 0
+// filter, so what it pays is the priced subset of what is listed here.
+// Withdrawn ('WD') and not-auctioned ('NA') lots stay out either way: nothing
+// will ever be payable on them.
 app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
   try {
     const db = getDb();
@@ -15287,7 +15297,15 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
     // individually-typed lots feed the missing-lot report.
     const { tokens: lotTokens, explicit: explicitTokens } = parseLotSearch(req.query.lots);
 
-    const where = [`l.auction_id = ?`, `l.amount > 0`, `(l.paid IS NULL OR l.paid = '')`];
+    // Priced, or still awaiting its price — see the note above the route. A
+    // blank code means "entered, not auctioned yet", which is precisely when
+    // the first advance goes out; 'WD'/'NA' are the two codes that say the lot
+    // will never pay.
+    const where = [
+      `l.auction_id = ?`,
+      `(l.amount > 0 OR UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA'))`,
+      `(l.paid IS NULL OR l.paid = '')`,
+    ];
     const params = [auctionId];
     if (seller) {
       // Name substring, or — when the text reads as a phone number — the
@@ -15414,12 +15432,22 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
       const adv = advByLot[l.id] || null;
       const gross = Number(l.payable) || 0;
       const advance = adv ? Math.max(0, Number(adv.advance) || 0) : 0;
+      // Not priced yet: entered (and possibly advanced against) but with no
+      // amount, so no payable and nothing a bank-payment file could carry.
+      const unpriced = !(Number(l.amount) > 0);
       return {
         ...l,
         qty: Number(l.qty) || 0,
         payable: Math.max(0, gross - advance),
         payable_gross: gross,
         advance,
+        unpriced,
+        // Advance handed over BEFORE the price was known, that the price then
+        // came in under. The clamp above already floors the payable at 0, which
+        // on its own just hides the overpayment; this is the figure the office
+        // has to recover from the seller. Only meaningful once the lot is
+        // priced — an unpriced lot has no figure to be over.
+        over_advance: unpriced ? 0 : Math.round(Math.max(0, advance - gross) * 100) / 100,
         advance_at: adv ? (adv.paid_at || '') : '',
         advance_bank_id: adv && adv.bank_id != null ? Number(adv.bank_id) : null,
         route,
@@ -15486,8 +15514,22 @@ app.post('/api/payments/lots/:auctionId/mark-paid', requireLotWrite, (req, res) 
       ? [...new Set(req.body.lotIds.map(n => parseInt(n, 10)).filter(Number.isFinite))]
       : [];
     if (!ids.length) return res.status(400).json({ error: 'lotIds (array) is required' });
-    const paidAt = db.get(`SELECT datetime('now','localtime') AS d`).d;
     const ph = ids.map(() => '?').join(',');
+    // An unpriced lot can carry an ADVANCE but can never be paid OUT: there is
+    // no payable for a bank file to have carried, so a paid stamp would retire
+    // a lot that has yet to be settled. The screen locks those rows out of
+    // selection; this refuses them outright.
+    const unpriced = db.all(
+      `SELECT lot_no FROM lots
+        WHERE auction_id = ? AND id IN (${ph}) AND NOT (amount > 0)`,
+      [auctionId, ...ids]) || [];
+    if (unpriced.length) {
+      const list = unpriced.map(r => String(r.lot_no || '').trim() || '?').join(', ');
+      return res.status(400).json({
+        error: `Not priced yet, so ${unpriced.length === 1 ? 'it' : 'they'} cannot be marked paid: lot ${list}`,
+      });
+    }
+    const paidAt = db.get(`SELECT datetime('now','localtime') AS d`).d;
     db.run(
       `UPDATE lots SET paid_at = ?
         WHERE auction_id = ? AND id IN (${ph}) AND paid_at IS NULL`,
@@ -15547,6 +15589,12 @@ app.post('/api/payments/lots/:auctionId/unmark-paid', requireAdmin, (req, res) =
 //                box is what the lot ends up with.
 //   advance = 0  clear the lot's advance entirely.
 //
+// A lot that is NOT PRICED YET can be advanced against — that is the normal
+// case, since the seller is paid an advance right after lot entry. Only a
+// priced lot has its advance capped (at its balance); on an unpriced one there
+// is no figure to cap against, so the amount is taken as given. The two codes
+// that mean the lot will never pay, 'WD' and 'NA', are refused.
+//
 // `bankId` is the account the money actually went to. It is optional (a seller
 // with no accounts on file can still have an advance recorded against them),
 // but when supplied it must belong to the LOT'S OWN seller: trader_banks ids
@@ -15579,7 +15627,7 @@ app.post('/api/payments/lots/:auctionId/advance', requireLotWrite, (req, res) =>
     const ids = [...wanted.keys()];
     const ph = ids.map(() => '?').join(',');
     const rows = db.all(
-      `SELECT id, lot_no, name, trader_id, balance, amount, paid_at
+      `SELECT id, lot_no, name, trader_id, balance, amount, code, paid_at
          FROM lots WHERE auction_id = ? AND id IN (${ph})`,
       [auctionId, ...ids]) || [];
     const lotById = new Map(rows.map(r => [r.id, r]));
@@ -15603,11 +15651,25 @@ app.post('/api/payments/lots/:auctionId/advance', requireLotWrite, (req, res) =>
       if (lot.paid_at) { problems.push(`${where} is already marked paid — undo the paid stamp first`); continue; }
       if (w.advance === 0) continue;                     // clearing needs no further checks
       const balance = Math.round((Number(lot.balance) || 0) * 100) / 100;
-      if (!(balance > 0)) { problems.push(`${where} has nothing payable yet — price it before paying an advance`); continue; }
-      if (w.advance > balance) {
-        problems.push(`${where}: advance ${w.advance.toFixed(2)} is more than its payable ${balance.toFixed(2)}`);
+      const code = String(lot.code || '').trim().toUpperCase();
+      if (balance > 0) {
+        // Priced: the balance is the ceiling, as it always was.
+        if (w.advance > balance) {
+          problems.push(`${where}: advance ${w.advance.toFixed(2)} is more than its payable ${balance.toFixed(2)}`);
+          continue;
+        }
+      } else if (code === 'WD' || code === 'NA') {
+        // The two codes that mean nothing will ever be payable. Recording an
+        // advance here would be money with no settlement to come off.
+        problems.push(`${where} was ${code === 'WD' ? 'withdrawn' : 'not auctioned'} — nothing will ever be payable on it`);
         continue;
       }
+      // Otherwise the lot is simply not priced yet — the ordinary case, since
+      // the advance is handed over right after lot entry. There is no balance
+      // to cap against, so any positive amount is taken as given; if the price
+      // later comes in below it, the search reports the excess as
+      // `over_advance` rather than the write being blocked here.
+
       if (w.bankId != null && !ownedBanks.has(`${lot.trader_id}:${w.bankId}`)) {
         problems.push(`${where}: the chosen bank account does not belong to ${lot.name || 'this seller'}`);
       }

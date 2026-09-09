@@ -816,7 +816,8 @@ function hasLotAdvances(db) {
 //
 // The scope MUST match the caller's own lot set or the deduction over- or
 // under-states: getBankPaymentData drops lots already paid out (`onlyUnpaid`),
-// getPaymentSummary counts them, and both can be narrowed to one state.
+// getPaymentSummary counts them, both can be narrowed to one state, and
+// `includeUnpriced` says whether lots still awaiting a price are in the set.
 //
 // The join is 1:1 (lot_advances.lot_id is the PRIMARY KEY), so nothing fans out
 // and no SUM is doubled — the same trap the seller-wise aggregate above hit.
@@ -825,14 +826,19 @@ function lotAdvancesBySeller(db, auctionId, opts) {
   opts = opts || {};
   const out = {};
   try {
-    // amount > 0 mirrors every caller's own filter. It never drops a real row:
-    // an advance can only be recorded on a lot with a positive balance, which
-    // an unpriced lot does not have.
+    // The amount > 0 filter is no longer free. An advance CAN now be recorded
+    // on a lot that is not priced yet — that is when the seller is normally
+    // paid one, right after lot entry — so this has to follow the caller's own
+    // lot set exactly: including those rows against a priced-only roll-up would
+    // net an advance off a payable that does not contain the lot it was paid
+    // on, and excluding them from a roll-up that DOES list unpriced lots would
+    // hide money already out of the door.
     let sql = `SELECT ${SELLER_KEY_SQL('l')} AS seller_key, COALESCE(SUM(la.advance), 0) AS adv
                  FROM lot_advances la JOIN lots l ON l.id = la.lot_id
-                WHERE la.auction_id = ? AND l.auction_id = ? AND l.amount > 0
+                WHERE la.auction_id = ? AND l.auction_id = ?
                   AND (l.paid IS NULL OR l.paid = '')`;
     const params = [auctionId, auctionId];
+    if (!opts.includeUnpriced) sql += ' AND l.amount > 0';
     if (opts.onlyUnpaid) sql += ' AND l.paid_at IS NULL';
     if (opts.state) { sql += ' AND l.state = ?'; params.push(opts.state); }
     sql += ` GROUP BY ${SELLER_KEY_SQL('l')}`;
@@ -969,7 +975,7 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
   // as its own field, so the editable "Advance" cell keeps showing exactly the
   // number that was typed into it — but both come off the payable, or this
   // screen would ask for money that has already gone out.
-  const lotAdvBySellerKey = lotAdvancesBySeller(db, auctionId, { state });
+  const lotAdvBySellerKey = lotAdvancesBySeller(db, auctionId, { state, includeUnpriced });
 
   // Settlement discount is display-only and opt-in per auction: it stays 0
   // until the operator clicks "Calculate All Discounts" (auctions.discount_applied
