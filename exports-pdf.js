@@ -1677,10 +1677,18 @@ async function renderTharaiListPdf(db, auctionId, cfg, extra) {
   });
 
   // Two equal tables with a gutter between them. Each is BUYER / QTY / BAGS.
+  //
+  // FACE. The sheet was set in 8pt, which is a size you lean in to read. It
+  // is checked against the Checklist across a desk, often by someone holding
+  // the printout at arm's length, so it is set in 11pt with the row pitch
+  // opened to match. The reference trade's 33 local buyers still land on one
+  // page at this size — that one-page property is the whole point of the
+  // side-by-side layout, and it is what caps how far the face can go.
   const GUT = 18;
   const tableW = (usableW - GUT) / 2;
   const COL = [0.34, 0.42, 0.24];               // buyer / qty / bags
-  const ROW_H = 13, HEAD_H = 16;
+  const FS = 11;                                // body + header face
+  const ROW_H = 16, HEAD_H = 20;
 
   // One side, drawn from `top`, returning the y it finished at. Called once
   // per side per page so both sides advance in step and the page break is
@@ -1698,21 +1706,25 @@ async function renderTharaiListPdf(db, auctionId, cfg, extra) {
     let yy = top;
 
     doc.rect(x, yy, tableW, HEAD_H).fillAndStroke('#E8E4DD', '#999');
-    doc.font('Helvetica-Bold').fontSize(8).fillColor('#000');
-    [d.codeLabel, 'Qty', 'Bags'].forEach((h, i) => {
-      doc.text(h, cx[i] + 3, yy + 5,
+    doc.font('Helvetica-Bold').fontSize(FS).fillColor('#000');
+    // The side's name rides in its own header rather than only on its total
+    // row, so a page carrying one side's overflow still says which side it
+    // is. The spreadsheet heads its columns the same way.
+    [`${side.label} ${d.codeLabel.toUpperCase()}`, 'Qty', 'Bags'].forEach((h, i) => {
+      doc.text(h, cx[i] + 3, yy + (HEAD_H - FS) / 2,
         { width: w[i] - 6, align: i === 0 ? 'left' : 'right', lineBreak: false });
     });
     yy += HEAD_H;
 
     const tableTop = yy;
-    doc.font('Helvetica').fontSize(8);
+    doc.font('Helvetica').fontSize(FS);
     for (let i = from; i < from + n; i++) {
       const r = side.rows[i];
+      const ty = yy + (ROW_H - FS) / 2;
       doc.fillColor('#000')
-         .text(String(r.code), cx[0] + 3, yy + 3.5, { width: w[0] - 6, lineBreak: false })
-         .text(fmtQty(r.qty),  cx[1] + 3, yy + 3.5, { width: w[1] - 6, align: 'right', lineBreak: false })
-         .text(String(r.bags), cx[2] + 3, yy + 3.5, { width: w[2] - 6, align: 'right', lineBreak: false });
+         .text(String(r.code), cx[0] + 3, ty, { width: w[0] - 6, lineBreak: false })
+         .text(fmtQty(r.qty),  cx[1] + 3, ty, { width: w[1] - 6, align: 'right', lineBreak: false })
+         .text(String(r.bags), cx[2] + 3, ty, { width: w[2] - 6, align: 'right', lineBreak: false });
       doc.moveTo(x, yy + ROW_H).lineTo(x + tableW, yy + ROW_H)
          .lineWidth(0.3).strokeColor('#CCC').stroke();
       yy += ROW_H;
@@ -1722,10 +1734,11 @@ async function renderTharaiListPdf(db, auctionId, cfg, extra) {
     const last = from + n >= side.rows.length;
     if (last) {
       doc.rect(x, yy, tableW, ROW_H + 2).fillAndStroke('#F2EFE9', '#999');
-      doc.font('Helvetica-Bold').fontSize(8).fillColor('#000')
-         .text(side.label,             cx[0] + 3, yy + 4.5, { width: w[0] - 6, lineBreak: false })
-         .text(fmtQty(side.qty),       cx[1] + 3, yy + 4.5, { width: w[1] - 6, align: 'right', lineBreak: false })
-         .text(String(side.bags),      cx[2] + 3, yy + 4.5, { width: w[2] - 6, align: 'right', lineBreak: false });
+      const ty = yy + (ROW_H + 2 - FS) / 2;
+      doc.font('Helvetica-Bold').fontSize(FS).fillColor('#000')
+         .text(side.label,             cx[0] + 3, ty, { width: w[0] - 6, lineBreak: false })
+         .text(fmtQty(side.qty),       cx[1] + 3, ty, { width: w[1] - 6, align: 'right', lineBreak: false })
+         .text(String(side.bags),      cx[2] + 3, ty, { width: w[2] - 6, align: 'right', lineBreak: false });
       yy += ROW_H + 2;
     }
 
@@ -1764,25 +1777,26 @@ async function renderTharaiListPdf(db, auctionId, cfg, extra) {
   ];
   if (d.tally.other.bags) lines.push(['UNCLASSIFIED', d.tally.other.bags]);
 
-  const boxH = 16 + lines.length * 14 + 16;
+  const LINE_H = 18;
+  const boxH = 20 + lines.length * LINE_H + 22;
   if (y + boxH + 8 > pageBottom) { doc.addPage(); y = m; }
   y += 10;
-  const boxW = 190;
+  const boxW = 230, VALW = 62;
   doc.rect(m, y, boxW, boxH).fillAndStroke('#FAF8F4', '#999');
-  doc.font('Helvetica-Bold').fontSize(8).fillColor('#000')
+  doc.font('Helvetica-Bold').fontSize(FS).fillColor('#000')
      .text('BAGS', m + 8, y + 5, { width: boxW - 16, lineBreak: false });
-  let ly = y + 18;
-  doc.font('Helvetica').fontSize(8);
+  let ly = y + 22;
+  doc.font('Helvetica').fontSize(FS);
   for (const [k, v] of lines) {
     doc.fillColor('#000')
-       .text(k, m + 8, ly + 2, { width: boxW - 70, lineBreak: false })
-       .text(String(v), m + boxW - 62, ly + 2, { width: 54, align: 'right', lineBreak: false });
-    ly += 14;
+       .text(k, m + 8, ly + 3, { width: boxW - VALW - 16, lineBreak: false })
+       .text(String(v), m + boxW - VALW - 8, ly + 3, { width: VALW, align: 'right', lineBreak: false });
+    ly += LINE_H;
   }
   doc.moveTo(m, ly).lineTo(m + boxW, ly).lineWidth(0.6).strokeColor('#999').stroke();
-  doc.font('Helvetica-Bold').fontSize(8)
-     .text('TOTAL', m + 8, ly + 3, { width: boxW - 70, lineBreak: false })
-     .text(String(d.totalBags), m + boxW - 62, ly + 3, { width: 54, align: 'right', lineBreak: false });
+  doc.font('Helvetica-Bold').fontSize(FS)
+     .text('TOTAL', m + 8, ly + 4, { width: boxW - VALW - 16, lineBreak: false })
+     .text(String(d.totalBags), m + boxW - VALW - 8, ly + 4, { width: VALW, align: 'right', lineBreak: false });
 
   doc.end();
   return new Promise((resolve, reject) => {

@@ -776,6 +776,13 @@ function writeXlsxCompanyHeader(wb, ws, header, opts) {
 // `opts.min` / `opts.max` clamp the result: a column of empty strings
 // should still be clickable, and one holding a 300-character note must not
 // push every other column off the screen.
+//
+// `opts.scale` is for a sheet written in a LARGER face than the workbook
+// default. The measure above is a character count at the default font, so a
+// sheet set in 12pt needs every column widened in proportion or the text it
+// was fitted to no longer fits — the same "####" and clipped figures the
+// autofit exists to prevent. Callers pass fontSize / 11 (11pt being ExcelJS's
+// default Calibri); absent means the sheet uses the default face.
 // Render a number the way its numFmt will display it, purely so a column can
 // be sized to it. Only the two things that change the LENGTH matter: how many
 // decimals the pattern shows, and whether it groups Indian-style
@@ -797,6 +804,7 @@ function autofitColumns(ws, opts) {
   const min = opts.min == null ? 8  : opts.min;
   const max = opts.max == null ? 52 : opts.max;
   const pad = opts.pad == null ? 2  : opts.pad;
+  const scale = Number(opts.scale) > 0 ? Number(opts.scale) : 1;
   ws.columns.forEach((col) => {
     if (!col) return;
     let widest = 0;
@@ -835,7 +843,7 @@ function autofitColumns(ws, opts) {
         }
       });
     }
-    const fitted = Math.ceil(widest + pad);
+    const fitted = Math.ceil((widest + pad) * scale);
     col.width = Math.max(min, Math.min(max, fitted || min));
   });
   return ws;

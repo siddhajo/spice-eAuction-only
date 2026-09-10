@@ -88,25 +88,34 @@ async function readSheet(aid, query) {
   const hi = grid.findIndex(row => (row || []).some(c => /^INTER (BUYER|DUMMY)$/.test(String(c || '').trim())));
   if (hi < 0) return { status: 200, header: null, grid };
   const header = (grid[hi] || []).map(c => String(c == null ? '' : c).trim());
-  const body = [];
-  let totalRow = null;
-  for (let i = hi + 1; i < grid.length; i++) {
-    const row = grid[i] || [];
-    if (String(row[0] || '').trim().toUpperCase() === 'TOTAL') { totalRow = row; break; }
-    if (row.length) body.push(row);
-  }
+  // Laid out like the PDF: two side-by-side blocks, each closed by its own
+  // INTER / LOCAL total row, then a BAGS reconciliation box under the table.
+  const bi = grid.findIndex((row, n) => n > hi && String((row || [])[0] || '').trim() === 'BAGS');
+  const body = grid.slice(hi + 1, bi < 0 ? grid.length : bi);
   const num = v => Number(v) || 0;
-  const side = (bi, qi, gi) => body
-    .filter(row => String(row[bi] || '').trim() !== '')
-    .map(row => ({ code: String(row[bi]).trim(), qty: num(row[qi]), bags: num(row[gi]) }));
-  const meta = grid.slice(0, hi).flat()
-    .map(c => String(c == null ? '' : c)).find(s => /TOTAL \d+ bags/.test(s)) || '';
+  const readSide = (bidx, qidx, gidx, label) => {
+    const rows = []; let total = null;
+    for (const row of body) {
+      const code = String((row || [])[bidx] || '').trim();
+      if (!code) continue;
+      if (code === label) { total = { qty: num(row[qidx]), bags: num(row[gidx]) }; break; }
+      rows.push({ code, qty: num(row[qidx]), bags: num(row[gidx]) });
+    }
+    return { rows, total: total || { qty: 0, bags: 0 } };
+  };
+  const boxVal = label => {
+    for (let n = bi + 1; bi >= 0 && n < grid.length; n++) {
+      const row = grid[n] || [];
+      if (String(row[0] || '').trim() === label) return num(row[2]);
+    }
+    return 0;
+  };
+  const I = readSide(0, 1, 2, 'INTER'), L = readSide(4, 5, 6, 'LOCAL');
   return {
-    status: 200, header, meta,
-    inter: side(0, 1, 2), local: side(4, 5, 6),
-    interBags: num(totalRow && totalRow[2]), localBags: num(totalRow && totalRow[6]),
-    wdBags:    num((meta.match(/WD (\d+)/) || [])[1]),
-    totalBags: num((meta.match(/TOTAL (\d+) bags/) || [])[1]),
+    status: 200, header,
+    inter: I.rows, local: L.rows,
+    interBags: I.total.bags, localBags: L.total.bags,
+    wdBags: boxVal('WD'), totalBags: boxVal('TOTAL'),
   };
 }
 

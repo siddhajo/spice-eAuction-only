@@ -166,35 +166,48 @@ const check = (n, c, d) => { if (c) { pass++; console.log('  ok   ' + n); }
   const grid = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true });
   const hi = grid.findIndex(r => (r || []).some(c => String(c || '').trim() === 'INTER BUYER'));
   if (hi < 0) { console.error('no header row in sheet', JSON.stringify(grid.slice(0, 8))); cleanup(); process.exit(1); }
-  const body = [];
-  let totalRow = null;
-  for (let i = hi + 1; i < grid.length; i++) {
-    const r = grid[i] || [];
-    if (String(r[0] || '').trim().toUpperCase() === 'TOTAL') { totalRow = r; break; }
-    if (r.length) body.push(r);
-  }
+
+  // The sheet is laid out like the PDF: two side-by-side blocks, each ending
+  // at ITS OWN last buyer with its own INTER / LOCAL total row, then a BAGS
+  // reconciliation box below the table. So the table body is everything
+  // between the header row and that box.
+  const bi = grid.findIndex((r, i) => i > hi && String((r || [])[0] || '').trim() === 'BAGS');
+  if (bi < 0) { console.error('no BAGS box in sheet', JSON.stringify(grid.slice(hi, hi + 6))); cleanup(); process.exit(1); }
+  const body = grid.slice(hi + 1, bi);
   const num = (v) => Number(v) || 0;
-  const side = (bi, qi, gi) => body
-    .filter(r => String(r[bi] || '').trim() !== '')
-    .map(r => ({ code: String(r[bi]).trim(), qty: num(r[qi]), bags: num(r[gi]) }));
-  const d = {
-    inter: side(0, 1, 2),
-    local: side(4, 5, 6),
-    tally: {
-      I: { bags: num(totalRow && totalRow[2]), qty: num(totalRow && totalRow[1]) },
-      L: { bags: num(totalRow && totalRow[6]), qty: num(totalRow && totalRow[5]) },
-      // WD and UNCLASSIFIED are stated in the brand band's meta line.
-      W: { bags: 0 }, other: { bags: 0 },
-    },
+
+  // One side's buyers, stopping at the row that closes it. The two sides end
+  // on DIFFERENT rows — 18 inter against 33 local here — which is the whole
+  // reason each is read independently rather than row by row across.
+  const readSide = (bidx, qidx, gidx, label) => {
+    const rows = []; let total = null;
+    for (const r of body) {
+      const code = String((r || [])[bidx] || '').trim();
+      if (!code) continue;
+      if (code === label) { total = { qty: num(r[qidx]), bags: num(r[gidx]) }; break; }
+      rows.push({ code, qty: num(r[qidx]), bags: num(r[gidx]) });
+    }
+    return { rows, total: total || { qty: 0, bags: 0 } };
   };
-  const metaLine = grid.slice(0, hi).flat()
-    .map(c => String(c == null ? '' : c)).find(s => /TOTAL \d+ bags/.test(s)) || '';
-  d.tally.W.bags     = num((metaLine.match(/WD (\d+)/) || [])[1]);
-  d.tally.other.bags = num((metaLine.match(/UNCLASSIFIED (\d+)/) || [])[1]);
-  d.totalBags        = num((metaLine.match(/TOTAL (\d+) bags/) || [])[1]);
-  d.totalQty         = d.tally.I.qty + d.tally.L.qty
-                     + REF.filter(r => r.sale === 'WD').reduce((s, r) => s + r.qty, 0);
-  console.log('  meta:', metaLine);
+  const I = readSide(0, 1, 2, 'INTER'), L = readSide(4, 5, 6, 'LOCAL');
+
+  // The box carries label + count, the value in the third column.
+  const boxVal = (label) => {
+    for (let i = bi + 1; i < grid.length; i++) {
+      const r = grid[i] || [];
+      if (String(r[0] || '').trim() === label) return num(r[2]);
+    }
+    return 0;
+  };
+  const d = {
+    inter: I.rows, local: L.rows,
+    tally: { I: I.total, L: L.total,
+             W: { bags: boxVal('WD') }, other: { bags: boxVal('UNCLASSIFIED') } },
+    totalBags: boxVal('TOTAL'),
+  };
+  d.totalQty = d.tally.I.qty + d.tally.L.qty
+             + REF.filter(r => r.sale === 'WD').reduce((s, r) => s + r.qty, 0);
+  console.log('  box:', `INTER ${d.tally.I.bags} LOCAL ${d.tally.L.bags} WD ${d.tally.W.bags} TOTAL ${d.totalBags}`);
 
   console.log('\n[A] reconciliation against THARAI LIST.pdf');
   check('INTER bags = 378',  d.tally.I.bags === 378, String(d.tally.I.bags));
@@ -227,7 +240,34 @@ const check = (n, c, d) => { if (c) { pass++; console.log('  ok   ' + n); }
         d.local.some(r => r.code === 'NS') && d.local.some(r => r.code === 'NS-1'),
         d.local.map(r => r.code).join(','));
 
-  console.log('\n[C] the two files actually render');
+  console.log('\n[C] the PDF layout the spreadsheet is matched to');
+  // The face was raised from 8pt to 11pt. The one-page property is what caps
+  // how far it can go — the whole reason the two sides sit side by side is
+  // that a trade's buyers can be taken in at a glance — so it is asserted
+  // rather than left to be noticed when someone prints a 2-page sheet.
+  const { PDFDocument } = require('pdf-lib');
+  const p1 = await fetch(`${B}/api/exports/tharai_list/${aid}?format=pdf`,
+    { headers: { Authorization: 'Bearer ' + TOKEN } });
+  const pbuf = Buffer.from(await p1.arrayBuffer());
+  const pages = (await PDFDocument.load(pbuf)).getPageCount();
+  check('the reference trade still prints on ONE page at 11pt', pages === 1, `${pages} pages`);
+
+  console.log('\n[D] each side ends at its own last buyer — no padding');
+  // 18 inter against 33 local: the INTER block closes at its own total and
+  // the columns go quiet while LOCAL carries on. The old single TOTAL strip
+  // across the foot meant padding INTER with fifteen blank ruled rows.
+  const interEnd = body.findIndex(r => String((r || [])[0] || '').trim() === 'INTER');
+  const localEnd = body.findIndex(r => String((r || [])[4] || '').trim() === 'LOCAL');
+  check('the INTER block closes before the LOCAL one', interEnd > 0 && localEnd > interEnd,
+        `inter@${interEnd} local@${localEnd}`);
+  check('nothing is written in the INTER columns after its total',
+        body.slice(interEnd + 1).every(r => String((r || [])[0] || '').trim() === ''),
+        JSON.stringify(body.slice(interEnd + 1, interEnd + 4)));
+  check('…while the LOCAL side is still listing buyers there',
+        String((body[interEnd + 1] || [])[4] || '').trim() !== '',
+        JSON.stringify(body[interEnd + 1]));
+
+  console.log('\n[E] the two files actually render');
   for (const [fmt, ext] of [['pdf', 'pdf'], ['xlsx', 'xlsx']]) {
     const r = await fetch(`${B}/api/exports/tharai_list/${aid}?format=${fmt}`,
       { headers: { Authorization: 'Bearer ' + TOKEN } });

@@ -3779,12 +3779,47 @@ app.post('/api/whatsapp/send-template-document', requireView, upload.single('fil
 });
 
 // ── Send log ───────────────────────────────────────────────────
+// The status column is Meta's own verdict, written by the webhook:
+// sent → delivered → read, or failed with a reason. It is the ONLY place
+// that knows whether a message actually landed — the send routes above can
+// say no more than "Meta accepted it".
+//
+// Filters: ?limit (default 100, max 500), ?status=sent|delivered|read|failed,
+// ?q= substring of the phone or the caption, ?direction=out|in.
 app.get('/api/whatsapp/messages', requireView, (req, res) => {
   const db = getDb();
+  const where = [];
+  const args = [];
+  const status = String(req.query.status || '').trim();
+  if (status) { where.push('status = ?'); args.push(status); }
+  const dir = String(req.query.direction || '').trim();
+  if (dir) { where.push('direction = ?'); args.push(dir); }
+  const q = String(req.query.q || '').trim();
+  if (q) { where.push('(phone LIKE ? OR caption LIKE ?)'); args.push(`%${q}%`, `%${q}%`); }
+  let limit = parseInt(req.query.limit, 10);
+  if (!Number.isFinite(limit) || limit <= 0) limit = 100;
+  limit = Math.min(limit, 500);
   const rows = db.all(
     `SELECT id, wamid, direction, phone, msg_type, caption, status, error, ref_type, ref_id, created_at, updated_at
-     FROM whatsapp_messages ORDER BY id DESC LIMIT 100`
+     FROM whatsapp_messages ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+     ORDER BY id DESC LIMIT ${limit}`, args
   );
+  res.json(rows);
+});
+
+// Delivery status for a KNOWN set of message ids. The bulk-send queue keeps
+// the wamid of every message it sent and polls this while its summary is on
+// screen, so rows flip Sent → Delivered → Read (or Failed, with Meta's
+// reason) in front of the operator instead of them having to trust "sent".
+// POST, not GET: a run can carry hundreds of ids, which is no URL.
+app.post('/api/whatsapp/statuses', requireView, (req, res) => {
+  const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : [])
+    .map(x => String(x || '').trim()).filter(Boolean).slice(0, 500);
+  if (!ids.length) return res.json([]);
+  const db = getDb();
+  const rows = db.all(
+    `SELECT wamid, status, error, updated_at FROM whatsapp_messages
+      WHERE wamid IN (${ids.map(() => '?').join(',')})`, ids);
   res.json(rows);
 });
 

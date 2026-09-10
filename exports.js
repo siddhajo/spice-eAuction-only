@@ -105,6 +105,21 @@ async function createExcelBuffer(sheetName, columns, rows, opts) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet(sheetName);
 
+  // ── Sheet body font size ──
+  // ExcelJS's default face is 11pt Calibri and every sheet has been written
+  // in it. `opts.fontSize` sets a bigger one for sheets that are READ ACROSS
+  // A DESK rather than scrolled — the Tharai List, whose whole point is that
+  // a trade's buyers can be taken in at a glance. Absent → every row keeps
+  // the size it has always had, so no existing report moves.
+  //
+  // The header, subtotal and grand-total bands are stepped off this rather
+  // than pinned, so the hierarchy between them survives at any size, and the
+  // autofit below is scaled to match (see autofitColumns' `scale`) — widening
+  // the face without widening the columns is what produces "####".
+  const BODY_PT = Number(opts.fontSize) > 0 ? Number(opts.fontSize) : null;
+  const pt = (dflt) => (BODY_PT == null ? dflt : Math.round(BODY_PT * (dflt / 11)) || dflt);
+  const rowH = (dflt) => (BODY_PT == null ? dflt : Math.round(dflt * (BODY_PT / 11)));
+
   // Apply column widths up front (the brand band uses these widths too).
   // These are only a seed — autofitColumns() at the end of this function
   // sizes every column to what was actually written.
@@ -186,9 +201,9 @@ async function createExcelBuffer(sheetName, columns, rows, opts) {
   columns.forEach((c, i) => {
     headerRow.getCell(i + 1).value = c.header;
   });
-  headerRow.font = { bold: true, size: 10 };
+  headerRow.font = { bold: true, size: pt(10) };
   headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E4DD' } };
-  headerRow.height = 20;
+  headerRow.height = rowH(20);
   headerRow.eachCell((cell) => {
     cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
     // wrapText OFF: the autofit above guarantees the column is at least as
@@ -213,15 +228,34 @@ async function createExcelBuffer(sheetName, columns, rows, opts) {
       // so rows align consistently regardless of font size differences.
       cell.alignment = { horizontal: colMeta[i].align, vertical: 'middle' };
     });
+    if (BODY_PT != null) { dataRow.font = { size: BODY_PT }; dataRow.height = rowH(15); }
     // A row flagged `_isSubtotal` closes a group (e.g. one dealer's per-branch
     // rows in the Dealer List). Bold + a light band so it reads as a summary
     // without competing with the yellow grand-total footer below.
     if (rowObj && rowObj._isSubtotal) {
-      dataRow.font = { bold: true, size: 10 };
+      dataRow.font = { bold: true, size: pt(10) };
       dataRow.eachCell((cell) => {
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
         cell.border = { top: { style: 'thin' } };
       });
+    }
+    // `_subtotalKeys` is the same idea narrowed to NAMED COLUMNS. A sheet
+    // laid out as two independent blocks side by side (the Tharai List's
+    // INTER beside LOCAL) has each block ending on its own row, so the
+    // closing total belongs to three cells of a row whose other half is
+    // still listing buyers — banding the whole row would draw a total
+    // across the middle of the taller side's list.
+    const subKeys = rowObj && rowObj._subtotalKeys;
+    if (Array.isArray(subKeys) && subKeys.length) {
+      const wanted = new Set(subKeys);
+      columns.forEach((c, i) => {
+        if (!wanted.has(c.key)) return;
+        const cell = dataRow.getCell(i + 1);
+        cell.font = { bold: true, size: pt(10) };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2EFE9' } };
+        cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
+      });
+      dataRow.height = rowH(18);
     }
     return dataRow;
   }
@@ -235,7 +269,7 @@ async function createExcelBuffer(sheetName, columns, rows, opts) {
     opts.sections.forEach((sec, sIdx) => {
       const titleRow = ws.addRow([sec.title || '']);
       ws.mergeCells(`A${titleRow.number}:${colLetter(columns.length)}${titleRow.number}`);
-      titleRow.font = { bold: true, size: 10 };
+      titleRow.font = { bold: true, size: pt(10) };
       titleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } };
       titleRow.alignment = { horizontal: 'left', vertical: 'middle' };
       (sec.rows || []).forEach(emitDataRow);
@@ -262,8 +296,8 @@ async function createExcelBuffer(sheetName, columns, rows, opts) {
       if (cells[idx] === '') cells[idx] = gt.label;
     }
     const gRow = ws.addRow(cells);
-    gRow.font = { bold: true, size: 11 };
-    gRow.height = 22;
+    gRow.font = { bold: true, size: pt(11) };
+    gRow.height = rowH(22);
     const fill = gt.fillArgb || 'FFFFF3CD';
     gRow.eachCell((cell, ci) => {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
@@ -364,6 +398,50 @@ async function createExcelBuffer(sheetName, columns, rows, opts) {
     }
   }
 
+  // ── Footer box (optional) ──
+  // A small bordered label/value ledger under the table, spanning only the
+  // LEFT few columns rather than the sheet width — the spreadsheet twin of
+  // the PDF's reconciliation box. Unlike `summaryBlock` above (Particulars /
+  // Qty / Amount, money-formatted) this carries plain counts, which is what
+  // a bag reconciliation is.
+  //
+  //   opts.footerBox: { title, span?, numFmt?, lines: [[label, value]],
+  //                     total?: [label, value] }
+  //
+  // The box is what the sheet is CHECKED BY, so it is drawn rather than left
+  // as loose rows: the border is what separates it from the table it closes.
+  if (opts.footerBox && Array.isArray(opts.footerBox.lines) && opts.footerBox.lines.length) {
+    const fb = opts.footerBox;
+    const span = Math.max(2, Math.min(Number(fb.span) || 3, columns.length));
+    const valCol = span;                       // value sits in the last column of the box
+    const thin = { style: 'thin' };
+    const box = { top: thin, bottom: thin, left: thin, right: thin };
+    const boxRow = (label, value, opt) => {
+      const r = ws.addRow([]);
+      if (valCol > 2) ws.mergeCells(`A${r.number}:${colLetter(valCol - 1)}${r.number}`);
+      r.getCell(1).value = label == null ? '' : label;
+      r.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+      if (value != null && value !== '') {
+        r.getCell(valCol).value = Number(value);
+        if (fb.numFmt) r.getCell(valCol).numFmt = fb.numFmt;
+      }
+      r.getCell(valCol).alignment = { horizontal: 'right', vertical: 'middle' };
+      r.font = { bold: !!(opt && opt.bold), size: pt(opt && opt.bold ? 11 : 10) };
+      if (opt && opt.fill) {
+        for (const ci of [1, valCol]) {
+          r.getCell(ci).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: opt.fill } };
+        }
+      }
+      for (let c = 1; c <= valCol; c++) r.getCell(c).border = box;
+      r.height = rowH(opt && opt.bold ? 20 : 17);
+      return r;
+    };
+    ws.addRow([]);                                   // spacer off the table
+    boxRow(fb.title || '', null, { bold: true, fill: 'FFE8E4DD' });
+    for (const [label, value] of fb.lines) boxRow(label, value);
+    if (fb.total) boxRow(fb.total[0], fb.total[1], { bold: true, fill: 'FFF2EFE9' });
+  }
+
   // ── Signature / sign-off footer (optional) ──
   // A blank spacer then a bold row placing each label spread evenly across the
   // sheet width (e.g. "Prepared By" | "Checked By" | "Approved By"). Used by
@@ -390,7 +468,11 @@ async function createExcelBuffer(sheetName, columns, rows, opts) {
   // they were guesses made before anyone knew how long a seller's name
   // would be. Opt out per report with { autofit: false }.
   if (opts.autofit !== false) {
-    try { autofitColumns(ws, opts.autofitOpts); } catch (_) {}
+    // Scaled to the body face when one was set, or a 12pt sheet gets columns
+    // fitted for 11pt text and clips exactly what the autofit exists to save.
+    const afOpts = Object.assign({}, opts.autofitOpts);
+    if (BODY_PT != null && afOpts.scale == null) afOpts.scale = BODY_PT / 11;
+    try { autofitColumns(ws, afOpts); } catch (_) {}
   }
 
   return wb.xlsx.writeBuffer();
@@ -683,43 +765,73 @@ function resolveTharaiBasis(cfg, by) {
 // than stacked: the whole point of the layout is that one trade's buyers
 // fit on a single page you can take in at a glance. Column keys are
 // prefixed i_ / l_ so one flat row object can carry both sides.
+//
+// LAID OUT TO MATCH THE PDF, row for row (renderTharaiListPdf in
+// exports-pdf.js). The two are the same sheet in two media and the office
+// reads them against each other, so a difference between them is a question
+// somebody has to stop and answer. Three things follow from that:
+//
+//   1. Each side ENDS AT ITS OWN LAST BUYER and is closed by its own INTER /
+//      LOCAL total. The lists are different lengths — 18 inter against 33
+//      local on the reference trade — and the old single TOTAL strip across
+//      the foot of both meant padding the shorter side with blank rows all
+//      the way down to it. The PDF has never done that.
+//   2. The bag reconciliation is a BOX below the table, not a line in the
+//      brand band. It is what the sheet is checked by; the PDF draws it, so
+//      this draws it.
+//   3. The body is set larger than the app's other spreadsheets (see
+//      `fontSize`), because this one is read across a desk rather than
+//      scrolled — the same reason the PDF's own face was raised.
 async function exportTharaiList(db, auctionId, cfg, state, extra) {
   const d = tharaiListData(db, auctionId, { byDummy: resolveTharaiBasis(cfg, extra && extra.by) });
-  const n = Math.max(d.inter.length, d.local.length);
+  const inter = { rows: d.inter, label: 'INTER', bags: d.tally.I.bags, qty: d.tally.I.qty };
+  const local = { rows: d.local, label: 'LOCAL', bags: d.tally.L.bags, qty: d.tally.L.qty };
+
+  // One row object carries a slice of BOTH sides. A side contributes its
+  // buyer at index i, its total at index length (one past its last buyer),
+  // and nothing at all after that — which is how the shorter side simply
+  // stops while the longer one keeps listing.
   const rows = [];
+  const n = Math.max(inter.rows.length, local.rows.length) + 1;
   for (let i = 0; i < n; i++) {
-    const a = d.inter[i], b = d.local[i];
-    rows.push({
-      i_buyer: a ? a.code : '', i_qty: a ? a.qty : null, i_bags: a ? a.bags : null,
-      l_buyer: b ? b.code : '', l_qty: b ? b.qty : null, l_bags: b ? b.bags : null,
-    });
+    const row = {};
+    const subKeys = [];
+    for (const [side, p] of [[inter, 'i_'], [local, 'l_']]) {
+      if (i < side.rows.length) {
+        const r = side.rows[i];
+        row[p + 'buyer'] = r.code; row[p + 'qty'] = r.qty; row[p + 'bags'] = r.bags;
+      } else if (i === side.rows.length) {
+        row[p + 'buyer'] = side.label; row[p + 'qty'] = side.qty; row[p + 'bags'] = side.bags;
+        subKeys.push(p + 'buyer', p + 'qty', p + 'bags');
+      }
+    }
+    if (subKeys.length) row._subtotalKeys = subKeys;
+    rows.push(row);
   }
+
   // The two code columns are headed by whichever basis this run used, so a
   // sheet printed by dummy code can never be mistaken for one by buyer code.
   const CODE = d.byDummy ? 'DUMMY' : 'BUYER';
   const cols = [
     { header: `INTER ${CODE}`, key: 'i_buyer', width: 14 },
-    { header: 'QTY',         key: 'i_qty',   width: 13, numFmt: '#,##0.000', align: 'right' },
-    { header: 'BAGS',        key: 'i_bags',  width: 8,  numFmt: '#,##0',     align: 'right' },
-    { header: '',            key: '_gap',    width: 3 },
+    { header: 'QTY',           key: 'i_qty',   width: 13, numFmt: '#,##0.000', align: 'right' },
+    { header: 'BAGS',          key: 'i_bags',  width: 8,  numFmt: '#,##0',     align: 'right' },
+    { header: '',              key: '_gap',    width: 3 },
     { header: `LOCAL ${CODE}`, key: 'l_buyer', width: 14 },
-    { header: 'QTY',         key: 'l_qty',   width: 13, numFmt: '#,##0.000', align: 'right' },
-    { header: 'BAGS',        key: 'l_bags',  width: 8,  numFmt: '#,##0',     align: 'right' },
+    { header: 'QTY',           key: 'l_qty',   width: 13, numFmt: '#,##0.000', align: 'right' },
+    { header: 'BAGS',          key: 'l_bags',  width: 8,  numFmt: '#,##0',     align: 'right' },
   ];
-  // The bag reconciliation rides in the brand band rather than as extra
-  // rows under the table: it is the figure the sheet is checked by, and it
-  // stays visible without scrolling to the bottom of a 40-row sheet.
-  const meta = auctionMeta(db, auctionId);
-  meta.push(`INTER ${d.tally.I.bags} · LOCAL ${d.tally.L.bags} · WD ${d.tally.W.bags}`
-          + (d.tally.other.bags ? ` · UNCLASSIFIED ${d.tally.other.bags}` : '')
-          + ` · TOTAL ${d.totalBags} bags`);
+
+  // UNCLASSIFIED is listed only when a lot has no sale type yet — otherwise
+  // the line reads "0" on every healthy trade. Same rule as the PDF's box.
+  const lines = [['INTER', inter.bags], ['LOCAL', local.bags], ['WD', d.tally.W.bags]];
+  if (d.tally.other.bags) lines.push(['UNCLASSIFIED', d.tally.other.bags]);
+
   return createExcelBuffer('Tharai List', cols, rows, {
-    db, title: 'Tharai List', metaLines: meta,
-    grandTotal: {
-      label: 'TOTAL',
-      values: { i_qty: d.tally.I.qty, i_bags: d.tally.I.bags,
-                l_qty: d.tally.L.qty, l_bags: d.tally.L.bags },
-    },
+    db, title: 'Tharai List', metaLines: auctionMeta(db, auctionId),
+    fontSize: 12,
+    footerBox: { title: 'BAGS', span: 3, numFmt: '#,##0', lines,
+                 total: ['TOTAL', d.totalBags] },
   });
 }
 
