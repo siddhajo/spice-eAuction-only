@@ -8835,7 +8835,12 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
      with the resolved Buyer / Buyer Name / Sale Type so they can see
      exactly what will be written to every selected lot before
      committing. -->
-<div class="modal-bg feat-bulk-set-buyer-code" id="bulk-setbuyer-modal"><div class="modal" style="max-width:520px">
+<!-- Wider than the 520px default: the Code field drives an autocomplete whose
+     rows carry CODE / BUYER / TRADE NAME / PLACE, and at 520px the trade names
+     the operator is actually reading were the part that got clipped. Price
+     Entry also stacks the Invoice Split and Dummy Code rows underneath, so this
+     is the tallest modal of the pair too. -->
+<div class="modal-bg feat-bulk-set-buyer-code" id="bulk-setbuyer-modal"><div class="modal" style="max-width:760px">
   <h2>Set Buyer Code on <span id="bsb-count">0</span> lot(s)</h2>
   <p style="font-size:12px;color:var(--text2);margin:0 0 14px;line-height:1.5">
     Pick a buyer code below. The matching <b>Buyer</b>, <b>Buyer Name</b>, and <b>Sale Type</b> from the buyers master will be written to every selected lot.
@@ -16277,7 +16282,18 @@ const AMR_SECTIONS = [
                                          note: 'xlsx' },
     // Two-sided sheet (INTER beside LOCAL) with the bag reconciliation in the
     // brand band. The side-by-side layout is the point, so xlsx, not CSV.
-    { label: 'Tharai List CSV',          href: id => `/api/exports/tharai_list/${id}?format=xlsx`,
+    //
+    // Offered on BOTH bases rather than following the install's
+    // `tharai_dummy_code` default, because this is the screen the auction-day
+    // operator works from and either sheet can be wanted on the day: the buyer
+    // code stamped at price entry, or the Price Entry DUMMY tag for a desk
+    // checking the sheet against its own pricing notes. Same lots and the same
+    // reconciliation either way — only the name on each row changes. The
+    // explicit ?by= is what makes each tile hand out the sheet it names
+    // whichever way the flag is set.
+    { label: 'Tharai List CSV',          href: id => `/api/exports/tharai_list/${id}?format=xlsx&by=code`,
+                                         note: 'xlsx' },
+    { label: 'Tharai List (Dummy) CSV',  href: id => `/api/exports/tharai_list/${id}?format=xlsx&by=dummy`,
                                          note: 'xlsx' },
   ]},
   { title: 'PDF Downloads', items: [
@@ -16341,8 +16357,10 @@ const AMR_SECTIONS = [
     // here, which is the one screen the auction-day operator works from.
     { label: 'Checklist',                href: id => `/api/exports/checklist/${id}?format=pdf` },
     // Buyer-wise bags and kilos, INTER beside LOCAL, with the bag
-    // reconciliation the sheet is checked by.
-    { label: 'Tharai List',              href: id => `/api/exports/tharai_list/${id}?format=pdf` },
+    // reconciliation the sheet is checked by. Printed on either basis — see
+    // the spreadsheet pair in the CSV section above for why both are here.
+    { label: 'Tharai List',              href: id => `/api/exports/tharai_list/${id}?format=pdf&by=code` },
+    { label: 'Tharai List (Dummy)',      href: id => `/api/exports/tharai_list/${id}?format=pdf&by=dummy` },
     // The two verification sheets had spreadsheet tiles but no printable twin.
     // Both PDFs keep their sheet's layout rather than flattening it — the
     // two-up block pair here, the per-buyer-code blocks below — because that
@@ -25071,6 +25089,8 @@ const SET_FIELD_GROUPS = {
       keys:['flag_price_check','flag_lot_lock','flag_reserved_price','flag_immediate_reserve','flag_lot_validation',
             'flag_bulk_set_buyer_code','flag_price_list_mapping','flag_print_selected_purchase','flag_lotwise_payments',
             'flag_auction_desk','flag_auction_manager','flag_insights','flag_pertrade_breakdown'] },
+    { title:'Auction Sheets', icon:'📋', hint:'Optional columns and grouping on the post-auction verification sheets — which columns the Checklist prints, and which code the Tharai List totals its buyers by.',
+      keys:['checklist_show_dummy','checklist_show_buyer','tharai_dummy_code'] },
     { title:'Tally & Accounts Export', icon:'📤', hint:'How purchase vouchers and journals are written into the Tally XML.',
       keys:['flag_merchants'], match:/^tally_purchase_/ },
     { title:'Masters & Sharing', icon:'👥', hint:'Extra master fields and the WhatsApp share buttons.',
@@ -25893,6 +25913,7 @@ const FIELD_HELP = {
   discount_gst:    'GST rate applied on the discount-on-purchase amount (DN).',
   discount_pct:    'Auction credit discount percentage per 1000 rupees per day.',
   discount_days:   'Number of days the trade credit is extended.',
+  tharai_dummy_code: 'Groups the Tharai List\'s INTER and LOCAL sides by the Price Entry DUMMY CODE instead of the buyer code. Off = buyer code (the default). Both the spreadsheet and the PDF follow this, and the bag reconciliation holds either way — only the name on each row changes.',
   business_mode:   'This build is e-Auction only.',
   business_state:  'Tamil Nadu uses TN office details, GSTIN, and bank. Kerala uses KL details. Invoices and exports adapt to the selected state.',
   mask_acct:       'Hides the seller bank account no. on lot receipts and on-screen panels. The bank payment file, DBF, Tally XML and the company\'s own account on invoices always print in full.',
@@ -41007,7 +41028,10 @@ async function previewInvoice(type){
     // also blank the server derives it from the buyer's GSTIN.
     let _pvSale=document.getElementById('gi-sale').value;
     if(!_pvSale)_pvSale=(checked[0].dataset.sale||'').trim();
-    body={saleType:_pvSale,buyerCode:checked[0].value,type:'sales',noTI:!!document.getElementById('gi-no-ti')?.checked};
+    // docType rides along so the server previews the SAME document Generate
+    // would raise: an original inherits the dropped transport & insurance of
+    // any proforma already covering these lots, a proforma quotes afresh.
+    body={saleType:_pvSale,buyerCode:checked[0].value,type:'sales',noTI:!!document.getElementById('gi-no-ti')?.checked,docType:selectedDocType('gi-doctype')};
     // Price Entry split row: preview only that group's lots, so the preview
     // matches the invoice this row will generate.
     const _pvLots=(checked[0].dataset.lots||'').split(',').map(s=>s.trim()).filter(Boolean);

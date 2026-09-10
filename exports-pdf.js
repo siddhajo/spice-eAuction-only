@@ -23,6 +23,7 @@ const {
   planterDisbursementRows, PLANTER_DISB_COLS, PLANTER_DISB_TOTAL_KEYS,
   dealerDisbursementRows,  DEALER_DISB_COLS,  DEALER_DISB_TOTAL_KEYS,
   tharaiListData,
+  resolveTharaiBasis,
   checklistVisibleCols,
   lotVerificationData,  LOT_VERIF_COLS,  LOT_VERIF_TOTAL_KEYS,
   lotVerification2Data, LOT_VERIF2_COLS, LOT_VERIF2_TOTAL_KEYS,
@@ -1648,8 +1649,11 @@ async function renderIndividualRegisterPdf(db, type, extra) {
 //
 // Both sides come from tharaiListData in exports.js, the same function the
 // spreadsheet uses, so the two renderings cannot disagree.
-async function renderTharaiListPdf(db, auctionId) {
-  const d = tharaiListData(db, auctionId);
+async function renderTharaiListPdf(db, auctionId, cfg, extra) {
+  // Buyer code or dummy code — the install's default, overridable per
+  // download with ?by=. Same resolver the spreadsheet uses.
+  const d = tharaiListData(db, auctionId, {
+    byDummy: resolveTharaiBasis(cfg, extra && extra.by) });
   const a = db.get('SELECT ano, date FROM auctions WHERE id = ?', [auctionId]) || {};
   let dateFmt = 'dd/mm/yyyy';
   try { dateFmt = require('./company-config').getSettingsFlat(db).date_format || dateFmt; }
@@ -1695,7 +1699,7 @@ async function renderTharaiListPdf(db, auctionId) {
 
     doc.rect(x, yy, tableW, HEAD_H).fillAndStroke('#E8E4DD', '#999');
     doc.font('Helvetica-Bold').fontSize(8).fillColor('#000');
-    ['Buyer', 'Qty', 'Bags'].forEach((h, i) => {
+    [d.codeLabel, 'Qty', 'Bags'].forEach((h, i) => {
       doc.text(h, cx[i] + 3, yy + 5,
         { width: w[i] - 6, align: i === 0 ? 'left' : 'right', lineBreak: false });
     });
@@ -1789,7 +1793,7 @@ async function renderTharaiListPdf(db, auctionId) {
 
 async function exportPdf(db, type, auctionId, cfg, extra = {}) {
   if (type === 'tharai_list') {
-    return renderTharaiListPdf(db, auctionId);
+    return renderTharaiListPdf(db, auctionId, cfg, extra);
   }
   if (type === 'pooler_individual' || type === 'seller_individual' || type === 'merchant_individual') {
     return renderIndividualRegisterPdf(db, type, extra);

@@ -7187,6 +7187,55 @@ function stampProformaRaised(db, auctionId, buyer, draftNo, saleType, originalNo
 function wantsProformaDoc(req) {
   return String((req && req.body && req.body.docType) || 'original').trim().toLowerCase() === 'proforma';
 }
+
+// ── "No Transport & Insurance" INHERITED FROM THE DRAFT ────────
+// A proforma is what the buyer was QUOTED. If transport & insurance were
+// dropped from that quote (no_ti=1), the tax invoice raised for the same lots
+// must not put them back — the buyer would be billed for charges they never
+// agreed to, and the original would disagree with the draft it shipped.
+//
+// The dedicated raise-original endpoint already carries the draft's flag
+// across (it reads pf.no_ti). The two GENERATE endpoints did not: they take
+// noTI from the Generate modal, which defaults to unticked, so generating the
+// original over a draft's lots silently re-added transport & insurance. This
+// closes that gap for both of them.
+//
+// One-way on purpose. The draft's "no T&I" WINS, but a draft that carried the
+// charges never forces them onto an original the operator chose to drop them
+// from — so the flag can only ever remove charges here, never add them. An
+// operator who really does want the charges back on the original changes them
+// there afterwards with POST /api/invoices/:id/no-ti.
+//
+// Scoped to (auction, buyer) and, when the caller named a lot subset, to those
+// lot numbers — a split invoice must read the draft covering ITS OWN lots, not
+// every draft the buyer holds. Only UN-RAISED drafts count: a raised one has
+// already shipped its original and says nothing about this one.
+function proformaNoTIForLots(db, auctionId, buyer, lotNos) {
+  try {
+    const params = [auctionId, String(buyer || '')];
+    let lotClause = '';
+    if (Array.isArray(lotNos) && lotNos.length) {
+      lotClause = ` AND l.lot_no IN (${lotNos.map(() => '?').join(',')})`;
+      params.push(...lotNos.map(String));
+    }
+    const drafts = db.all(
+      `SELECT DISTINCT TRIM(l.proforma_invo) AS pn
+         FROM lots l
+        WHERE l.auction_id = ? AND l.buyer = ?
+          AND TRIM(COALESCE(l.proforma_invo,'')) <> ''${lotClause}`, params) || [];
+    for (const d of drafts) {
+      const hit = db.get(
+        `SELECT 1 AS x FROM invoices
+          WHERE auction_id = ? AND TRIM(COALESCE(buyer,'')) = ?
+            AND COALESCE(is_proforma,0) = 1 AND TRIM(COALESCE(raised_invo,'')) = ''
+            AND TRIM(COALESCE(invo,'')) = ? AND COALESCE(no_ti,0) = 1
+          LIMIT 1`,
+        [auctionId, String(buyer || '').trim(), String(d.pn)]);
+      if (hit) return 1;
+    }
+  } catch (_) { /* never block invoice generation on this lookup */ }
+  return 0;
+}
 const PROFORMA_OFF_MSG = 'Proforma invoices are disabled. Enable flag_proforma_invoice in Settings → Flags.';
 
 // ── LOT-WISE DOCUMENT MODE (flag_lotwise_* family) ─────────────
@@ -9626,7 +9675,11 @@ app.post('/api/invoices/generate/:auctionId',
       [c.pqty,c.prate,c.puramt,c.com,c.sertax,c.cgst,c.sgst,c.igst,c.advance,c.balance,c.bilamt,c.refund||0,c.refud||0,c.isp_pqty||0,c.isp_prate||0,c.isp_puramt||0,c.asp_pqty||0,c.asp_prate||0,c.asp_puramt||0,lot.id]);
   }
 
-  const invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, saleType, cfg, { noTI, lotNos, excludeInvoiced: true });
+  // Raising the ORIGINAL over lots a draft already covers inherits that
+  // draft's "no transport & insurance" — see proformaNoTIForLots().
+  const effNoTI = isProforma ? noTI
+    : (noTI || proformaNoTIForLots(db, req.params.auctionId, buyerCode, lotNos));
+  const invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, saleType, cfg, { noTI: effNoTI, lotNos, excludeInvoiced: true });
   if (!invoice) return res.status(404).json({ error: lotNos && lotNos.length
     ? `None of the selected lots are available for buyer "${buyerCode}" (already invoiced, reserved, or unpriced).`
     : `No lots found for buyer "${buyerCode}" in this auction. Make sure lots have this buyer code assigned.` });
@@ -9677,7 +9730,7 @@ app.post('/api/invoices/generate/:auctionId',
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [req.params.auctionId,auction.ano,invoiceDate,invoiceState,saleType,String(invoiceNo),buyerCode,invoice.buyer.buyer1||'',
      invoice.buyer.gstin||'',invoice.buyer.pla||'',s.totalBags,s.totalQty,s.totalAmount,s.gunnyCost,s.transportCost,s.insuranceCost,
-     s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',noTI,isProforma,
+     s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',effNoTI,isProforma,
      JSON.stringify(invoice.lineItems||[])]);
 
   if (isProforma) {
@@ -10020,7 +10073,12 @@ app.post('/api/invoices/generate-all/:auctionId',
     for (const gk of groupKeys) {
       const lotNos = groups.get(gk);
       try {
-        const invoice = buildSalesInvoice(db, req.params.auctionId, row.buyer, useSaleType, cfg, { noTI, excludeInvoiced: true, lotNos });
+        // Same draft inheritance as the single-invoice endpoint: this
+        // group's lots may already be quoted on a proforma that dropped
+        // transport & insurance. See proformaNoTIForLots().
+        const effNoTI = isProforma ? noTI
+          : (noTI || proformaNoTIForLots(db, req.params.auctionId, row.buyer, lotNos));
+        const invoice = buildSalesInvoice(db, req.params.auctionId, row.buyer, useSaleType, cfg, { noTI: effNoTI, excludeInvoiced: true, lotNos });
         if (!invoice) { errors.push({ buyer: row.buyer, group: gk, error: 'No matching lots' }); continue; }
         const s = invoice.summary;
         const invoNo = String(nextNo);
@@ -10048,7 +10106,7 @@ app.post('/api/invoices/generate-all/:auctionId',
           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [req.params.auctionId,auction.ano,invoiceDate,invoiceState,useSaleType,invoNo,row.buyer,invoice.buyer.buyer1||'',
            invoice.buyer.gstin||'',invoice.buyer.pla||'',s.totalBags,s.totalQty,s.totalAmount,s.gunnyCost,s.transportCost,s.insuranceCost,
-           s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',noTI,isProforma,
+           s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',effNoTI,isProforma,
            JSON.stringify(invoice.lineItems||[])]);
         if (isProforma) {
           // Proforma: stamp lots.proforma_invo ONLY (leave invo/asp_invo/sale).
@@ -15030,7 +15088,13 @@ app.post('/api/invoices/preview/:auctionId', requireView, (req, res) => {
       effSale = (b && b.sale) ? String(b.sale).trim().toUpperCase() : '';
       if (!effSale) effSale = deriveSaleType(b ? b.gstin : '', cfg);
     }
-    invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, effSale, cfg, { noTI, lotNos });
+    // Preview what GENERATE would actually produce: an original raised over
+    // lots a proforma already quoted inherits that draft's dropped transport
+    // & insurance (proformaNoTIForLots). A proforma preview does not — it is
+    // quoting afresh.
+    const effNoTI = wantsProformaDoc(req) ? noTI
+      : (noTI || proformaNoTIForLots(db, req.params.auctionId, buyerCode, lotNos));
+    invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, effSale, cfg, { noTI: effNoTI, lotNos });
   }
 
   if (!invoice) return res.status(404).json({ error: 'No data found' });
@@ -15062,7 +15126,10 @@ app.post('/api/invoices/preview-pdf/:auctionId', requireView, async (req, res) =
         [c.pqty,c.prate,c.puramt,c.com,c.sertax,c.cgst,c.sgst,c.igst,c.advance,c.balance,c.bilamt,c.refund||0,c.refud||0,c.isp_pqty||0,c.isp_prate||0,c.isp_puramt||0,c.asp_pqty||0,c.asp_prate||0,c.asp_puramt||0,lot.id]);
     }
 
-    const invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, saleType, cfg, { noTI, lotNos: (pdfLotNos && pdfLotNos.length) ? pdfLotNos : undefined });
+    // Same draft inheritance the JSON preview and Generate apply.
+    const effNoTI = wantsProformaDoc(req) ? noTI
+      : (noTI || proformaNoTIForLots(db, req.params.auctionId, buyerCode, pdfLotNos));
+    const invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, saleType, cfg, { noTI: effNoTI, lotNos: (pdfLotNos && pdfLotNos.length) ? pdfLotNos : undefined });
     if (!invoice) return res.status(404).json({ error: `No lots found for buyer "${buyerCode}" in this auction.` });
     const auction = db.get('SELECT * FROM auctions WHERE id = ?', [req.params.auctionId]);
     const invoiceDate = (auction && auction.date) || new Date().toISOString().slice(0, 10);
@@ -15209,7 +15276,11 @@ app.get('/api/invoices/preview-all/:auctionId', requireView, (req, res) => {
         const isMulti = gkeys.length > 1;
         for (const gk of gkeys) {
           const lotNos = gmap.get(gk);
-          const inv = buildSalesInvoice(db, aid, b.code, b.saleType, cfg, { noTI, lotNos });
+          // The Pre-Invoice screen previews ORIGINALS, so it inherits the
+          // dropped transport & insurance of any draft already covering these
+          // lots — same rule Generate applies. See proformaNoTIForLots().
+          const effNoTI = noTI || proformaNoTIForLots(db, aid, b.code, lotNos);
+          const inv = buildSalesInvoice(db, aid, b.code, b.saleType, cfg, { noTI: effNoTI, lotNos });
           if (!inv) continue;
           previews.push({ buyerCode: b.code, saleType: b.saleType, buyer: inv.buyer,
             summary: inv.summary, lineItems: inv.lineItems,
@@ -16334,7 +16405,9 @@ app.get('/api/exports/:type/:auctionId', requireExport, async (req, res) => {
     try {
       const db = getDb();
       const cfg = getSettingsFlat(db);
-      const buffer = await exportAnyPdf(db, type, auctionId, cfg, { state: req.query.state });
+      // `by` is the Tharai List's grouping basis (buyer code vs dummy code);
+      // absent means "use the install default". Harmless to every other type.
+      const buffer = await exportAnyPdf(db, type, auctionId, cfg, { state: req.query.state, by: req.query.by || '' });
       const niceName = (EXPORT_TYPES[type] && EXPORT_TYPES[type].name) || type;
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${niceName}_${anoForFilename(db, auctionId)}.pdf"`);
@@ -16361,6 +16434,10 @@ app.get('/api/exports/:type/:auctionId', requireExport, async (req, res) => {
       sellers:  req.query.sellers
         ? String(req.query.sellers).split(',').map(s => s.trim()).filter(Boolean)
         : [],
+      // Per-download grouping-basis override, currently read only by the
+      // Tharai List: 'code' (buyer code) or 'dummy' (the Price Entry dummy
+      // code). Absent → the install's tharai_dummy_code default.
+      by: req.query.by || '',
     };
     if (exportDef.needsCfg) {
       const cfg = getSettingsFlat(db);

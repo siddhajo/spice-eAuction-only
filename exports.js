@@ -613,15 +613,30 @@ async function exportChecklist(db, auctionId, cfg) {
 // NS-1 as separate buyers, and the resolver would fold one into the other
 // wherever the master disagrees with what price entry stamped on the lot.
 //
+// GROUPING BASIS — opts.byDummy. The rows can be keyed on the buyer code
+// (the default, and what the sheet has always been) or on the DUMMY CODE
+// price entry stamped on the lot (lots.dummy_code), for the desks that price
+// against their own tags and want the sheet to line up with those notes.
+// Chosen per install by the `tharai_dummy_code` flag and overridable per
+// download with ?by=code / ?by=dummy — see resolveTharaiBasis below.
+//
+// Only the KEY changes. Every lot is still counted, on the same side, into
+// the same tally, so the reconciliation the sheet is checked by holds under
+// either basis. A lot with no dummy code lands under '—' rather than being
+// dropped or silently folded into its buyer code: mixing the two identifier
+// spaces in one column would make a row that says neither thing.
+//
 // Order: bags DESCENDING, then code A→Z to break ties. That is the order
 // the reference sheet is in, and it puts the biggest taker at the top of
 // each side, which is where the eye starts.
-function tharaiListData(db, auctionId) {
+function tharaiListData(db, auctionId, opts) {
+  const byDummy = !!(opts && opts.byDummy);
   const rows = db.all(
-    `SELECT UPPER(TRIM(COALESCE(code,''))) AS code,
-            UPPER(TRIM(COALESCE(sale,''))) AS sale,
-            COALESCE(bags,0)               AS bags,
-            COALESCE(qty,0)                AS qty
+    `SELECT UPPER(TRIM(COALESCE(code,'')))       AS code,
+            UPPER(TRIM(COALESCE(dummy_code,''))) AS dummy,
+            UPPER(TRIM(COALESCE(sale,'')))       AS sale,
+            COALESCE(bags,0)                     AS bags,
+            COALESCE(qty,0)                      AS qty
        FROM lots WHERE auction_id = ?`, [auctionId]
   );
   const sides = { I: new Map(), L: new Map() };
@@ -634,7 +649,7 @@ function tharaiListData(db, auctionId) {
     tally[bucket].bags += bags;
     tally[bucket].qty  += qty;
     if (bucket !== 'I' && bucket !== 'L') continue;
-    const key = r.code || '—';
+    const key = (byDummy ? r.dummy : r.code) || '—';
     const g = sides[bucket].get(key) || { code: key, bags: 0, qty: 0 };
     g.bags += bags; g.qty += qty;
     sides[bucket].set(key, g);
@@ -644,17 +659,32 @@ function tharaiListData(db, auctionId) {
   const t = tally;
   return {
     inter: order(sides.I), local: order(sides.L), tally,
+    // What the code column is, so both renderers label it the same way and
+    // nobody has to guess which basis a printed sheet was built on.
+    byDummy, codeLabel: byDummy ? 'Dummy' : 'Buyer',
     totalBags: t.I.bags + t.L.bags + t.W.bags + t.other.bags,
     totalQty:  t.I.qty  + t.L.qty  + t.W.qty  + t.other.qty,
   };
+}
+
+// Which basis one Tharai List run uses. The per-install `tharai_dummy_code`
+// flag sets the default; an explicit ?by=dummy / ?by=code on the export route
+// overrides it for that download only, so both bases stay reachable without
+// anyone having to change a setting first.
+function resolveTharaiBasis(cfg, by) {
+  const asked = String(by || '').trim().toLowerCase();
+  if (asked === 'dummy' || asked === 'dummy_code') return true;
+  if (asked === 'code'  || asked === 'buyer')      return false;
+  const v = String((cfg && cfg.tharai_dummy_code) != null ? cfg.tharai_dummy_code : '').trim().toLowerCase();
+  return v === 'true' || v === '1';
 }
 
 // The two sides sit SIDE BY SIDE, as they do on the office's sheet, rather
 // than stacked: the whole point of the layout is that one trade's buyers
 // fit on a single page you can take in at a glance. Column keys are
 // prefixed i_ / l_ so one flat row object can carry both sides.
-async function exportTharaiList(db, auctionId) {
-  const d = tharaiListData(db, auctionId);
+async function exportTharaiList(db, auctionId, cfg, state, extra) {
+  const d = tharaiListData(db, auctionId, { byDummy: resolveTharaiBasis(cfg, extra && extra.by) });
   const n = Math.max(d.inter.length, d.local.length);
   const rows = [];
   for (let i = 0; i < n; i++) {
@@ -664,12 +694,15 @@ async function exportTharaiList(db, auctionId) {
       l_buyer: b ? b.code : '', l_qty: b ? b.qty : null, l_bags: b ? b.bags : null,
     });
   }
+  // The two code columns are headed by whichever basis this run used, so a
+  // sheet printed by dummy code can never be mistaken for one by buyer code.
+  const CODE = d.byDummy ? 'DUMMY' : 'BUYER';
   const cols = [
-    { header: 'INTER BUYER', key: 'i_buyer', width: 14 },
+    { header: `INTER ${CODE}`, key: 'i_buyer', width: 14 },
     { header: 'QTY',         key: 'i_qty',   width: 13, numFmt: '#,##0.000', align: 'right' },
     { header: 'BAGS',        key: 'i_bags',  width: 8,  numFmt: '#,##0',     align: 'right' },
     { header: '',            key: '_gap',    width: 3 },
-    { header: 'LOCAL BUYER', key: 'l_buyer', width: 14 },
+    { header: `LOCAL ${CODE}`, key: 'l_buyer', width: 14 },
     { header: 'QTY',         key: 'l_qty',   width: 13, numFmt: '#,##0.000', align: 'right' },
     { header: 'BAGS',        key: 'l_bags',  width: 8,  numFmt: '#,##0',     align: 'right' },
   ];
@@ -2294,7 +2327,9 @@ const EXPORT_TYPES = {
   // needsCfg so the route hands it the settings the DUMMY / BUYER column
   // switches live in (see checklistColumns).
   checklist:          { fn: exportChecklist,         name: 'Checklist', needsCfg: true },
-  tharai_list:        { fn: exportTharaiList,        name: 'TharaiList' },
+  // needsCfg so the route hands it the install's `tharai_dummy_code` default
+  // (which the route's ?by= can override) — see resolveTharaiBasis.
+  tharai_list:        { fn: exportTharaiList,        name: 'TharaiList', needsCfg: true },
   // Two-up LOT/BAG/QTY/BUYER verification sheet. Native XLSX — the Auction
   // Downloads tile asks for xlsx, not the generic ?format=csv conversion,
   // because flattening a two-block sheet to CSV loses the layout that is
@@ -2837,7 +2872,7 @@ module.exports = {
   // tharaiListData is exported so the PDF renderer builds from the SAME
   // grouping, split and ordering the spreadsheet does — the two must never
   // disagree about who took how many bags.
-  exportTharaiList, tharaiListData,
+  exportTharaiList, tharaiListData, resolveTharaiBasis,
   exportPriceList, exportPriceListBefore,
   exportBankPayment, exportBankPaymentBefore, exportBankPaymentAdvance,
   exportPoolerRegister, exportFullFile, exportCollection, exportTradeReport, exportDealerList,

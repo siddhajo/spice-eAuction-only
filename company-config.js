@@ -449,6 +449,24 @@ const DEFAULTS = [
   { key: 'checklist_show_dummy', value: 'true', category: 'flags', label: 'Checklist: Dummy column', type: 'boolean' },
   { key: 'checklist_show_buyer', value: 'true', category: 'flags', label: 'Checklist: Buyer column', type: 'boolean' },
 
+  // ── THARAI LIST: WHICH CODE THE BUYER COLUMN CARRIES ───────
+  // The Tharai List totals bags and kilos per BUYER — INTER on one side,
+  // LOCAL on the other. Which identifier names those rows is a house habit:
+  // most desks read it by the buyer code stamped at price entry, but a desk
+  // that prices against its own dummy tags wants the same totals grouped by
+  // DUMMY CODE (lots.dummy_code) instead, so the sheet lines up with the notes
+  // they are checking it against.
+  //
+  // Both bases are always available — this only picks the DEFAULT. A caller
+  // can override per download with ?by=code / ?by=dummy on the export route.
+  //
+  // Default OFF (buyer code), so an existing install prints the sheet it
+  // prints today. Both renderings come from the one tharaiListData(), so the
+  // XLSX and the PDF can never disagree about which basis they used, and the
+  // bag reconciliation (INTER + LOCAL + WD == the trade's bags) holds either
+  // way — the grouping key changes, the lots counted do not.
+  { key: 'tharai_dummy_code', value: 'false', category: 'flags', label: 'Tharai List: group by Dummy Code (not Buyer Code)', type: 'boolean' },
+
   // ── BACKUPS ────────────────────────────────────────────────
   // Per-install database backup settings. The scheduler is driven by
   // backup_auto_enabled + backup_interval_hours; the keep-count caps
