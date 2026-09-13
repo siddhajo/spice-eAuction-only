@@ -344,6 +344,16 @@ const DOCUMENTS = [
     route: '/api/spice-board-reports/:type/export', href: hrefSpiceBoard('form_d'),
     note: 'With flag_proforma_invoice ON this reads proforma rows only — never mixed with originals' },
 
+  // Depot-wise companion to Form D: per-depot quantity put for sale and sold,
+  // split Traders / Growers. No seller/buyer filters — it is a depot-level
+  // total that has to reconcile against the depot's own physical count, and
+  // narrowing it to one party produces a sheet that cannot be filed.
+  { id: 'form_d1', label: 'FORM-D1 (Depot-wise Auction Summary)', group: 'statutory',
+    sub: 'Spices Board', family: 'spiceboard', kind: 'export', scope: 'trade',
+    formats: ['pdf', 'xlsx'], minStage: 3, perm: 'export',
+    filters: ['branch'], multi: ['branch'],
+    route: '/api/spice-board-reports/:type/export', href: hrefSpiceBoard('form_d1') },
+
   { id: 'buyers_statement', label: 'Buyers Statement', group: 'statutory', sub: 'Spices Board', family: 'spiceboard',
     kind: 'export', scope: 'trade', formats: ['pdf', 'xlsx'], minStage: 4, perm: 'export',
     filters: ['branch', 'sellerId', 'buyerCode'],

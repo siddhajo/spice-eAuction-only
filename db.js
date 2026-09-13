@@ -268,6 +268,12 @@ async function initDb() {
     cstate TEXT DEFAULT '',
     cst_code TEXT DEFAULT '',
     cgstin TEXT DEFAULT '',
+    -- Consignee SBL + PAN. The ship-to party is often a different legal
+    -- entity from the buyer, so it carries its own statutory identifiers;
+    -- the sales invoice's "Details of the Consignee (Shipped To)" block
+    -- prints them alongside the consignee GSTIN.
+    csbl TEXT DEFAULT '',
+    cpan TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
@@ -981,6 +987,12 @@ async function initDb() {
     "ALTER TABLE buyers ADD COLUMN email TEXT DEFAULT ''",
     "ALTER TABLE buyers ADD COLUMN tdsq TEXT DEFAULT ''",
     "ALTER TABLE buyers ADD COLUMN sbl TEXT DEFAULT ''",
+    // Consignee SBL + PAN — added via ALTER so existing DBs gain them on
+    // upgrade. Blank on every existing row, which is exactly "not supplied":
+    // the invoice's Shipped-To block simply omits an identifier it has no
+    // value for, so behaviour is unchanged until someone fills them in.
+    "ALTER TABLE buyers ADD COLUMN csbl TEXT DEFAULT ''",
+    "ALTER TABLE buyers ADD COLUMN cpan TEXT DEFAULT ''",
     // TAN (optional, gated by flag_tan) on sellers + buyers. Added via ALTER
     // for existing DBs so the feature works on upgrade without a rebuild.
     "ALTER TABLE traders ADD COLUMN tan TEXT DEFAULT ''",

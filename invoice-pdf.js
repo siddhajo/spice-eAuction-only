@@ -14,6 +14,9 @@ const getCompanyIdentity = require('./_company-identity-fallback').resolve();
 // file uses it so the operator's `date_format` Setting is honored on
 // invoice/bill PDFs the same way as on lists and other reports.
 const { formatDateForDisplay } = require('./report-formatters');
+// Shared NAME / ADDRESS / PLACE / STATE+CODE / details-two-per-row layout
+// for the party boxes on the Bill of Supply and the Commission Bill.
+const { partyBlock } = require('./party-block');
 function _fallbackInvoiceDate(cfg) {
   return formatDateForDisplay(new Date(), (cfg && cfg.date_format) || 'dd/mm/yyyy');
 }
@@ -749,7 +752,9 @@ function generateCropReceiptPDF(lot, cfg) {
   });
 }
 
-module.exports = { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSPDF, generateCommissionBoSBatchPDF, effectiveCompany };
+module.exports = { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSPDF, generateCommissionBoSBatchPDF, effectiveCompany,
+  // Exported for tests: the shared party-box drawer and its line count.
+  drawPartyBox, partyBoxLayout, partyBoxLines };
 
 /**
  * Sales Invoice PDF (Tax Invoice)
@@ -1887,6 +1892,88 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
   });
 }
 
+// ── Party box (PDFKit) ────────────────────────────────────────────────────
+// Draws one "who" box in the shared format (see party-block.js): name,
+// address and place each on their own line, then the state paired with its
+// state code, then every remaining detail two per row.
+//
+// Paired cells are measured against HALF the column, so a long GSTIN can
+// never run under the value beside it. The font shrinks (8pt → 6pt floor)
+// until every line AND every cell fits, then the whole box draws at that one
+// size — the same trick the commission bill already used for its lines,
+// extended to the two-column rows.
+function partyBoxLines(blk) {
+  return [blk.name, blk.address, blk.place].filter(Boolean).length
+       + (blk.state ? 1 : 0) + blk.rows.length;
+}
+
+// Work out the type size, the lines and the height this box needs, WITHOUT
+// drawing. The callers size their border from it first (a box is drawn before
+// its content), then hand the same options to drawPartyBox.
+function partyBoxLayout(doc, blk, o) {
+  const pad = o.pad != null ? o.pad : 6;
+  const innerW = o.w - pad * 2;
+  const cellW = innerW / 2;
+  const nameText = (o.prefix || '') + (blk.name || '');
+  const pairs = [];
+  if (blk.state) pairs.push([blk.state, blk.codeText]);
+  for (const r of blk.rows) pairs.push([r.a.text, r.b ? r.b.text : '']);
+
+  let size = o.size != null ? o.size : 8;
+  const floor = o.minSize != null ? o.minSize : 6;
+  // The street is excluded from the fit test — it WRAPS (see below) rather
+  // than dragging the whole box down to 6pt. Everything else has to fit as
+  // one piece: a wrapped GSTIN or a broken name reads as an error.
+  const fits = (sz) => {
+    doc.font('Helvetica').fontSize(sz);
+    return doc.widthOfString(nameText) <= innerW
+        && doc.widthOfString(String(blk.place || '')) <= innerW
+        && pairs.every(pr => doc.widthOfString(String(pr[0])) <= cellW - 2
+                          && doc.widthOfString(String(pr[1] || '')) <= cellW - 2);
+  };
+  while (size > floor && !fits(size)) size -= 0.25;
+
+  // A street long enough to overrun the column breaks after the last comma
+  // (failing that, the last space) that still fits, onto at most two lines.
+  doc.font('Helvetica').fontSize(size);
+  const wide = [nameText];
+  const addr = String(blk.address || '');
+  if (addr) {
+    if (doc.widthOfString(addr) <= innerW) wide.push(addr);
+    else {
+      let cut = -1;
+      for (let i = 0; i < addr.length; i++) {
+        if (addr[i] !== ',' && addr[i] !== ' ') continue;
+        if (doc.widthOfString(addr.slice(0, i + 1)) > innerW) break;
+        cut = i + 1;
+      }
+      if (cut > 0) { wide.push(addr.slice(0, cut).replace(/[,\s]+$/, '')); wide.push(addr.slice(cut).trim()); }
+      else wide.push(addr);   // one unbreakable run — ellipsis handles it
+    }
+  }
+  if (blk.place) wide.push(blk.place);
+
+  return { size, wide, pairs, innerW, cellW, pad,
+           height: (wide.length + pairs.length) * o.lineH };
+}
+
+function drawPartyBox(doc, blk, o) {
+  const L = o.layout || partyBoxLayout(doc, blk, o);
+  const x = o.x, lineH = o.lineH;
+  doc.font('Helvetica').fontSize(L.size);
+  // lineBreak:false is critical — a long line that wrapped by itself would
+  // overprint the y-positioned line below it.
+  const put = (t, cx, cy, cw) => doc.text(String(t), cx, cy, { width: cw, lineBreak: false, ellipsis: true });
+  let y = o.top;
+  for (const t of L.wide) { put(t, x + L.pad, y, L.innerW); y += lineH; }
+  for (const pr of L.pairs) {
+    put(pr[0], x + L.pad, y, L.cellW - 2);
+    if (pr[1]) put(pr[1], x + L.pad + L.cellW, y, L.cellW - 2);
+    y += lineH;
+  }
+  return y - o.top;
+}
+
 /**
  * Agriculturist Bill of Supply PDF (GSTKBILP.PRG / GSTBILP.PRG equivalent)
  * For non-GSTIN sellers — no GST charged
@@ -2030,27 +2117,25 @@ function generateAgriBillPDF(billData, cfg, billNo, externalDoc) {
   doc.moveTo(x0, y + headH).lineTo(x1, y + headH).stroke();
   y += headH;
 
-  // Seller body (up to ~6 rows visible)
+  // Seller body (up to ~6 rows visible). Shared party format — name,
+  // address and place on their own lines, state paired with its code, the
+  // rest two per row (see party-block.js).
   const bodyLineH = 10;
-  const sellerLines = [];
   const seller = billData.seller || {};
-  if (seller.name) sellerLines.push('M/s.' + seller.name);
-  if (seller.address) sellerLines.push(seller.address);
-  if (seller.place) sellerLines.push((seller.place || '').toUpperCase() + (seller.pan ? '   PAN:' + seller.pan : ''));
-  if (seller.state) sellerLines.push('STATE:' + (seller.state || '').toUpperCase() + '   CODE:' + (seller.st_code || ''));
-  // Strip any existing "CR." / "CR " prefix so a stored "CR.32ABC…" doesn't
-  // render as the doubled "CR.CR." label.
-  const _crno = String(seller.crno || '').trim().replace(/^cr[.\s]+/i, '');
-  sellerLines.push('CR.' + _crno);
+  // Phone and bank account stay OFF a Bill of Supply, as they always have —
+  // it is a purchase document, not a payment advice.
+  const sellerBlk = partyBlock(seller, { omit: ['PH', 'A/C'] });
 
-  const bodyH = Math.max(6, sellerLines.length + 2) * bodyLineH;
+  // Measure before the border is stroked — a wrapped street adds a line, and
+  // the box has to be tall enough for what will be drawn inside it.
+  const sellerOpts = { x: x0, w: sellerW, top: y + 3, lineH: bodyLineH, prefix: 'M/s.' };
+  const sellerLay = partyBoxLayout(doc, sellerBlk, sellerOpts);
+  const bodyH = Math.max(6 * bodyLineH, sellerLay.height + 2 * bodyLineH);
   doc.moveTo(x0, y).lineTo(x0, y + bodyH).stroke();
   doc.moveTo(splitX, y).lineTo(splitX, y + bodyH).stroke();
   doc.moveTo(x1, y).lineTo(x1, y + bodyH).stroke();
   doc.moveTo(x0, y + bodyH).lineTo(x1, y + bodyH).stroke();
-  doc.font('Helvetica').fontSize(8);
-  let ly = y + 3;
-  for (const line of sellerLines) { doc.text(line, x0 + 6, ly, { width: sellerW - 12 }); ly += bodyLineH; }
+  drawPartyBox(doc, sellerBlk, { ...sellerOpts, layout: sellerLay });
   y += bodyH;
 
   // ── Description of Goods / HSN row ──
@@ -2581,71 +2666,37 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
   y += bandH;
 
   // ── Two-column seller / purchaser body ──
+  // Both sides use the shared party format (party-block.js): name, address
+  // and place each on their own line, the state paired with its state code,
+  // and every remaining detail — INV, GSTIN, CR, PAN, SBL, PIN — two per
+  // row. Nothing rides along on the end of the name or place line.
   const partyLineH = 10;
   const seller = billData.seller || {};
   const pur = billData.purchaser || {};
-  const sellerLines = [];
-  if (seller.name) sellerLines.push('Sri/M/s.' + seller.name);
-  if (seller.address) sellerLines.push(seller.address);
-  if (seller.place) sellerLines.push(String(seller.place || '').toUpperCase());
-  if (seller.state) sellerLines.push(String(seller.state || '').toUpperCase() + '   CODE:' + (seller.st_code || ''));
-  // The stored cr may already carry a "CR." / "CR " prefix (Kerala sellers are
-  // stored as "CR.32ABC…"); strip it before prepending so we don't render the
-  // doubled "CR.CR." label.
-  const _crText = String(seller.cr || '').trim().replace(/^cr[.\s]+/i, '');
-  // A voucher raised off a PURCHASE invoice is for a registered dealer, whose
-  // registration is a GSTIN rather than a CR code (planters keep the CR line).
-  const _sellerGstin = String(seller.gstin || '').trim();
-  sellerLines.push((_sellerGstin ? 'GSTIN:' + _sellerGstin : 'CR.' + _crText)
-    + (seller.pan ? '   PAN:' + seller.pan : ''));
+  // The seller's phone / bank account belong to the Letterhead layout's
+  // flag_commission_bank block, not to this one.
+  const sellerBlk = partyBlock(seller, { omit: ['PH', 'A/C'] });
+  const purBlk = partyBlock(pur, { omit: ['PH', 'A/C'] });
 
-  const purLines = [];
-  if (pur.name) purLines.push('M/s.' + pur.name + (pur.invo ? '   INV:' + pur.invo : ''));
-  if (pur.address) purLines.push(pur.address);
-  if (pur.place) purLines.push(String(pur.place || '').toUpperCase() + (pur.pin ? '   PIN:' + pur.pin : ''));
-  if (pur.state) purLines.push(String(pur.state || '').toUpperCase() + '   CODE:' + (pur.st_code || '') + (pur.sbl ? '   SBL:' + pur.sbl : ''));
-  if (pur.gstin) purLines.push('GSTIN:' + pur.gstin + (pur.pan ? '   PAN:' + pur.pan : ''));
-
-  // Height: tall enough for the longest side (purchaser block has up to
-  // 5 long lines: name, two address lines, state+SBL, GSTIN+PAN), plus
-  // a one-line margin at the bottom. Bumped from the previous "min 6
-  // lines" because purchaser address rows pushed past the reserved
-  // space and overlapped the line-item table header on dense bills.
-  const partyMaxLines = Math.max(sellerLines.length, purLines.length);
-  const partyH = (Math.max(6, partyMaxLines) + 1) * partyLineH;
+  // Height: tall enough for the longest side as it will actually be drawn
+  // (a wrapped street adds a line), plus a one-line margin at the bottom.
+  // The old fixed "6 lines" let purchaser rows push past the reserved space
+  // and overlap the line-item table header on dense bills.
+  const sellerOpts = { x: x0, w: headColW, top: y + 3, lineH: partyLineH, prefix: 'Sri/M/s.' };
+  const purOpts = { x: splitX, w: W - headColW, top: y + 3, lineH: partyLineH, prefix: 'M/s.' };
+  const sellerLay = partyBoxLayout(doc, sellerBlk, sellerOpts);
+  const purLay = partyBoxLayout(doc, purBlk, purOpts);
+  const partyH = Math.max(6 * partyLineH, sellerLay.height, purLay.height) + partyLineH;
   doc.moveTo(x0, y).lineTo(x0, y + partyH).stroke();
   doc.moveTo(splitX, y).lineTo(splitX, y + partyH).stroke();
   doc.moveTo(x1, y).lineTo(x1, y + partyH).stroke();
   doc.moveTo(x0, y + partyH).lineTo(x1, y + partyH).stroke();
-  // lineBreak:false is critical — without it, a long address line wraps
-  // back to x=0 and overprints the next y-positioned line, producing
-  // the "stacked text" / "overlapping" effect in the seller and
-  // purchaser blocks. To avoid losing the END of long names / the
-  // GSTIN+PAN line to an ellipsis, pick the largest font (8pt → 6pt floor)
-  // at which EVERY line on that side fits its column, then draw uniformly.
-  const fitPartySize = (lines, colW) => {
-    let size = 8;
-    while (size > 6) {
-      doc.font('Helvetica').fontSize(size);
-      if (lines.every(l => doc.widthOfString(String(l)) <= colW - 12)) break;
-      size -= 0.25;
-    }
-    return size;
-  };
-  const sellerSize = fitPartySize(sellerLines, headColW);
-  const purSize = fitPartySize(purLines, W - headColW);
-  let sy = y + 3;
-  doc.font('Helvetica').fontSize(sellerSize);
-  for (const line of sellerLines) {
-    doc.text(line, x0 + 6, sy, { width: headColW - 12, lineBreak: false, ellipsis: true });
-    sy += partyLineH;
-  }
-  let py = y + 3;
-  doc.font('Helvetica').fontSize(purSize);
-  for (const line of purLines) {
-    doc.text(line, splitX + 6, py, { width: W - headColW - 12, lineBreak: false, ellipsis: true });
-    py += partyLineH;
-  }
+  // drawPartyBox picks the largest font (8pt → 6pt floor) at which every
+  // line AND every paired cell fits its half-column, then draws the whole
+  // side at that one size — so a long GSTIN never runs under the value
+  // beside it and a long address never wraps back over the next line.
+  drawPartyBox(doc, sellerBlk, { ...sellerOpts, layout: sellerLay });
+  drawPartyBox(doc, purBlk, { ...purOpts, layout: purLay });
   y += partyH;
 
   // ── Line-item table column geometry ──

@@ -31,7 +31,7 @@ const TRADER_UPPER = [
 // consignee ("c" prefixed) mirror of the same fields.
 const BUYER_UPPER = [
   'buyer', 'buyer1', 'code', 'sbl', 'add1', 'add2', 'pla', 'state', 'gstin', 'pan', 'tan',
-  'cbuyer1', 'cadd1', 'cadd2', 'cpla', 'cstate', 'cgstin',
+  'cbuyer1', 'cadd1', 'cadd2', 'cpla', 'cstate', 'cgstin', 'csbl', 'cpan',
 ];
 
 function upper(v) {

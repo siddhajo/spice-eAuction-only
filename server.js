@@ -3171,6 +3171,80 @@ function smartLotSql(col, nums) {
 // ══════════════════════════════════════════════════════════════
 // TRADERS (NAM.DBF — sellers/poolers)
 // ══════════════════════════════════════════════════════════════
+// ── "Which masters are incomplete?" ───────────────────────────
+// The office needs to know how many sellers have no bank account on file,
+// how many buyers have no PAN, and so on — and then work through exactly
+// those rows. Both list routes accept `?missing=<key>` and return the
+// per-key counts alongside the page, so the screen can show a count strip
+// AND filter to any one of them without a second round-trip.
+//
+// A value counts as MISSING when it is NULL or trims to empty. Each entry is
+// a self-contained SQL predicate; callers must wrap it in parentheses before
+// combining, because several are themselves compound (an address is missing
+// only when BOTH the street and the place are blank).
+const TRADER_MISSING_SQL = {
+  // Legacy single account on the row OR any row in trader_banks. A seller
+  // with a bank row that carries no account number is still unpayable, so
+  // the sub-select tests the number, not merely the row's existence.
+  bank:    `TRIM(COALESCE(traders.acctnum,'')) = ''
+            AND NOT EXISTS (SELECT 1 FROM trader_banks b
+                             WHERE b.trader_id = traders.id
+                               AND TRIM(COALESCE(b.acctnum,'')) <> '')`,
+  pan:     `TRIM(COALESCE(traders.pan,'')) = ''`,
+  gstin:   `TRIM(COALESCE(traders.cr,'')) = ''`,
+  // Either number reaches them, so only a seller with neither is unreachable.
+  phone:   `TRIM(COALESCE(traders.tel,'')) = '' AND TRIM(COALESCE(traders.whatsapp,'')) = ''`,
+  address: `TRIM(COALESCE(traders.padd,'')) = '' AND TRIM(COALESCE(traders.ppla,'')) = ''`,
+  pin:     `TRIM(COALESCE(traders.pin,'')) = ''`,
+  aadhaar: `TRIM(COALESCE(traders.aadhar,'')) = ''`,
+};
+const BUYER_MISSING_SQL = {
+  pan:     `TRIM(COALESCE(pan,'')) = ''`,
+  gstin:   `TRIM(COALESCE(gstin,'')) = ''`,
+  phone:   `TRIM(COALESCE(tel,'')) = ''`,
+  address: `TRIM(COALESCE(add1,'')) = '' AND TRIM(COALESCE(pla,'')) = ''`,
+  pin:     `TRIM(COALESCE(pin,'')) = ''`,
+  sbl:     `TRIM(COALESCE(sbl,'')) = ''`,
+};
+
+// The WHERE fragment for `?missing=`. '' / unknown key → no filter, so a
+// stale or hand-typed value shows the normal list rather than an error.
+// 'any' means "incomplete in at least one of the tracked ways".
+function missingClause(map, key) {
+  const k = String(key || '').trim().toLowerCase();
+  if (!k) return '';
+  if (k === 'any') return '(' + Object.values(map).map(c => `(${c})`).join(' OR ') + ')';
+  return map[k] ? `(${map[k]})` : '';
+}
+
+// One pass over the searched set giving every count the strip shows. Counted
+// WITHOUT the missing filter applied, so the numbers stay stable as the
+// operator clicks between them — otherwise picking "No PAN" would zero every
+// other chip and there'd be no way back.
+function missingCounts(db, table, map, where, params) {
+  const cols = Object.entries(map)
+    .map(([k, c]) => `SUM(CASE WHEN ${c} THEN 1 ELSE 0 END) AS ${k}`)
+    .join(', ');
+  const anyExpr = Object.values(map).map(c => `(${c})`).join(' OR ');
+  try {
+    const row = db.get(
+      `SELECT COUNT(*) AS total, ${cols},
+              SUM(CASE WHEN ${anyExpr} THEN 1 ELSE 0 END) AS any
+         FROM ${table} ${where}`, params) || {};
+    // SUM over zero rows is NULL — hand the client numbers, never nulls.
+    const out = {};
+    for (const k of Object.keys(map)) out[k] = Number(row[k] || 0);
+    out.any = Number(row.any || 0);
+    out.total = Number(row.total || 0);
+    return out;
+  } catch (e) {
+    // A build missing one of these columns must not take the list down with
+    // it — the strip just doesn't render.
+    console.warn('[missing-counts] %s: %s', table, e && e.message);
+    return null;
+  }
+}
+
 app.get('/api/traders', requireViewOrLotEntry, (req, res) => {
   // Accept `?q=` (mobile PWA) as an alias for `?search=` (desktop UI).
   // Pagination: `?page=` (1-based) + `?pageSize=` cap page-window size.
@@ -3230,8 +3304,17 @@ app.get('/api/traders', requireViewOrLotEntry, (req, res) => {
       ors.push(`${smartPhoneSql('tel')} LIKE ?`, `${smartPhoneSql('whatsapp')} LIKE ?`);
       params.push(`%${phone}%`, `%${phone}%`);
     }
-    where = 'WHERE ' + ors.join(' OR ');
+    // Parenthesised: `?missing=` is ANDed onto this below, and AND binds
+    // tighter than OR — an unbracketed group would silently widen to
+    // "matched the first search column OR (matched the last AND incomplete)".
+    where = 'WHERE (' + ors.join(' OR ') + ')';
   }
+  // `?missing=` narrows to incomplete rows. Kept SEPARATE from the search
+  // WHERE so the count strip can be computed over the searched set without
+  // this filter folded in — see missingCounts().
+  const searchWhere = where, searchParams = params.slice();
+  const miss = missingClause(TRADER_MISSING_SQL, req.query.missing);
+  if (miss) where = where ? `${where} AND ${miss}` : `WHERE ${miss}`;
   const total = db.get(`SELECT COUNT(*) AS c FROM traders ${where}`, params).c;
 
   // Paginated mode: always return the rich response so the client can
@@ -3241,7 +3324,10 @@ app.get('/api/traders', requireViewOrLotEntry, (req, res) => {
       `SELECT * FROM traders ${where} ORDER BY name LIMIT ? OFFSET ?`,
       [...params, pageSize, offset]
     );
-    return res.json({ rows: hydrateBanks(rows), total, page, pageSize });
+    return res.json({
+      rows: hydrateBanks(rows), total, page, pageSize,
+      missing: missingCounts(db, 'traders', TRADER_MISSING_SQL, searchWhere, searchParams),
+    });
   }
 
   // Legacy / non-paged callers — return a bare array so existing code
@@ -3249,7 +3335,7 @@ app.get('/api/traders', requireViewOrLotEntry, (req, res) => {
   // For search: returns up to `pageSize` matches (default 50) but the
   // search itself ran across ALL rows, so it actually finds buyers that
   // sit past row 500 alphabetically.
-  if (search) {
+  if (search || miss) {
     const rows = db.all(
       `SELECT * FROM traders ${where} ORDER BY name LIMIT ?`,
       [...params, pageSize]
@@ -4455,8 +4541,12 @@ app.get('/api/buyers', requireView, (req, res) => {
     // Phone typed with spaces / dashes / +91 — digits-only comparison.
     const phone = smartPhoneDigits(search);
     if (phone) { ors.push(`${smartPhoneSql('tel')} LIKE ?`); params.push(`%${phone}%`); }
-    where = 'WHERE ' + ors.join(' OR ');
+    where = 'WHERE (' + ors.join(' OR ') + ')';   // see /api/traders — AND binds tighter than OR
   }
+  // Same contract as /api/traders — see missingClause / missingCounts.
+  const searchWhere = where, searchParams = params.slice();
+  const miss = missingClause(BUYER_MISSING_SQL, req.query.missing);
+  if (miss) where = where ? `${where} AND ${miss}` : `WHERE ${miss}`;
 
   if (wantPaged) {
     const total = db.get(`SELECT COUNT(*) AS c FROM buyers ${where}`, params).c;
@@ -4464,10 +4554,13 @@ app.get('/api/buyers', requireView, (req, res) => {
       `SELECT * FROM buyers ${where} ORDER BY buyer1 LIMIT ? OFFSET ?`,
       [...params, pageSize, offset]
     );
-    return res.json({ rows, total, page, pageSize });
+    return res.json({
+      rows, total, page, pageSize,
+      missing: missingCounts(db, 'buyers', BUYER_MISSING_SQL, searchWhere, searchParams),
+    });
   }
 
-  if (search) {
+  if (search || miss) {
     // Search now runs over the WHOLE table, not just the first 500.
     // Fixes the bug where codes alphabetically past the 500 boundary
     // (e.g. HRS0, HSR) were unreachable via typing in the lot edit.
@@ -4508,11 +4601,12 @@ app.post('/api/buyers', requireBuyerWrite, (req, res) => {
   db.run(`INSERT INTO buyers (
       buyer, buyer1, code, sbl, add1, add2, pla, pin, state, st_code,
       gstin, pan, tan, tel, ti, sale, email, tdsq,
-      cbuyer1, cadd1, cadd2, cpla, cpin, cstate, cst_code, cgstin
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      cbuyer1, cadd1, cadd2, cpla, cpin, cstate, cst_code, cgstin, csbl, cpan
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [b.buyer, b.buyer1||'', b.code||'', b.sbl||'', b.add1||'', b.add2||'', b.pla||'', b.pin||'', b.state||'', b.st_code||'',
      b.gstin||'', b.pan||'', b.tan||'', b.tel||'', b.ti||'', b.sale||'L', b.email||'', b.tdsq||'',
-     b.cbuyer1||'', b.cadd1||'', b.cadd2||'', b.cpla||'', b.cpin||'', b.cstate||'', b.cst_code||'', b.cgstin||'']);
+     b.cbuyer1||'', b.cadd1||'', b.cadd2||'', b.cpla||'', b.cpin||'', b.cstate||'', b.cst_code||'', b.cgstin||'',
+     b.csbl||'', b.cpan||'']);
   res.json({ success: true });
 });
 app.put('/api/buyers/:id', requireBuyerWrite, (req, res) => {
@@ -4543,11 +4637,12 @@ app.put('/api/buyers/:id', requireBuyerWrite, (req, res) => {
   db.run(`UPDATE buyers SET
       buyer=?, buyer1=?, code=?, sbl=?, add1=?, add2=?, pla=?, pin=?, state=?, st_code=?,
       gstin=?, pan=?, tan=?, tel=?, ti=?, sale=?, email=?, tdsq=?,
-      cbuyer1=?, cadd1=?, cadd2=?, cpla=?, cpin=?, cstate=?, cst_code=?, cgstin=?
+      cbuyer1=?, cadd1=?, cadd2=?, cpla=?, cpin=?, cstate=?, cst_code=?, cgstin=?, csbl=?, cpan=?
     WHERE id=?`,
     [b.buyer, b.buyer1||'', b.code||'', b.sbl||'', b.add1||'', b.add2||'', b.pla||'', b.pin||'', b.state||'', b.st_code||'',
      b.gstin||'', b.pan||'', b.tan||'', b.tel||'', b.ti||'', b.sale||'L', b.email||'', b.tdsq||'',
      b.cbuyer1||'', b.cadd1||'', b.cadd2||'', b.cpla||'', b.cpin||'', b.cstate||'', b.cst_code||'', b.cgstin||'',
+     b.csbl||'', b.cpan||'',
      req.params.id]);
   res.json({ success: true });
 });
@@ -4615,8 +4710,8 @@ app.post('/api/buyers/import', requireBuyerWrite, upload.single('file'), async (
       db.run(`INSERT INTO buyers (
         buyer, buyer1, code, sbl, add1, add2, pla, pin, state, st_code,
         gstin, pan, tan, tel, ti, sale, email, tdsq,
-        cbuyer1, cadd1, cadd2, cpla, cpin, cstate, cst_code, cgstin
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        cbuyer1, cadd1, cadd2, cpla, cpin, cstate, cst_code, cgstin, csbl, cpan
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [buyerVal,
          mapCol(row, 'BUYER1', 'TRADE_NAME', 'TRADENAME', 'NAME'),
          code,
@@ -4644,7 +4739,9 @@ app.post('/api/buyers/import', requireBuyerWrite, upload.single('file'), async (
          mapCol(row, 'CPIN', 'CONS_PIN', 'CONSIGNEE_PIN'),
          mapCol(row, 'CSTATE', 'CONS_STATE'),
          mapCol(row, 'CST_CODE', 'CONS_ST_CODE'),
-         mapCol(row, 'CGSTIN', 'CONS_GSTIN')]);
+         mapCol(row, 'CGSTIN', 'CONS_GSTIN'),
+         mapCol(row, 'CSBL', 'CONS_SBL', 'CONSIGNEE_SBL'),
+         mapCol(row, 'CPAN', 'CONS_PAN', 'CONSIGNEE_PAN')]);
       imported++;
     }
 
@@ -19619,6 +19716,7 @@ const DATA_COL_LABELS = {
   cbuyer1:'Consignee Name', cadd1:'Consignee Addr 1', cadd2:'Consignee Addr 2',
   cpla:'Consignee Place', cpin:'Consignee PIN', cstate:'Consignee State',
   cst_code:'Consignee State Code', cgstin:'Consignee GSTIN',
+  csbl:'Consignee SBL', cpan:'Consignee PAN',
   // Trades / invoices / lots / bills
   place:'Place', ano:'Trade No', invo:'Invoice No', date:'Date',
   qty:'Quantity', amount:'Amount', cgst:'CGST', sgst:'SGST', igst:'IGST',
