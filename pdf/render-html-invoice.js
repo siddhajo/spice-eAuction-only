@@ -22,6 +22,8 @@ const fs = require('fs');
 const path = require('path');
 const { effectiveCompany } = require('../invoice-pdf');
 const { getInvoiceTemplate } = require('./invoice-templates');
+// Shared NAME / STREET / TOWN-PIN / STATE+CODE / details-two-per-row party box.
+const { partyBlock } = require('../party-block');
 const { htmlToPdf } = require('./htmlToPdf');
 
 // Logos must be embedded as data: URIs — the renderer loads the HTML from a
@@ -98,6 +100,15 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
     place: [buyer.pla, buyer.pin].filter(Boolean).join(' - '),
     gstin: buyer.gstin || '', state: buyer.state || '', stCode: buyer.st_code || '',
     pan: buyer.pan || '', sbl: buyer.sbl || '',
+    // The printable block — every layout renders THIS, so the receiver box
+    // reads the same here as on the bill of supply and the commission bill.
+    block: partyBlock({
+      name: buyer.buyer1 || buyer.buyer || '',
+      address: [buyer.add1, buyer.add2].filter(Boolean).join(', '),
+      place: buyer.pla, pin: buyer.pin,
+      state: buyer.state, st_code: buyer.st_code,
+      gstin: buyer.gstin, pan: buyer.pan, sbl: buyer.sbl,
+    }),
   };
   // Consignee (ship-to) — a real consignee if the row carries one; otherwise
   // the goods ship to the buyer themselves, so Shipped-To mirrors Billed-To in
@@ -113,7 +124,17 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
     addr: [buyer.cadd1, buyer.cadd2].filter(Boolean).join(', '),
     place: [buyer.cpla, buyer.cpin].filter(Boolean).join(' - '),
     gstin: buyer.cgstin || '', state: buyer.cstate || '', stCode: buyer.cst_code || '',
-    pan: buyer.cpan || '', sbl: '',
+    // The consignee is often a different legal entity from the buyer, so it
+    // carries its OWN PAN and SBL — never fall back to the buyer's, which
+    // would print one party's statutory identifiers under another's name.
+    pan: buyer.cpan || '', sbl: buyer.csbl || '',
+    block: partyBlock({
+      name: buyer.cbuyer1 || buyer.buyer1 || buyer.buyer || '',
+      address: [buyer.cadd1, buyer.cadd2].filter(Boolean).join(', '),
+      place: buyer.cpla, pin: buyer.cpin,
+      state: buyer.cstate, st_code: buyer.cst_code,
+      gstin: buyer.cgstin, pan: buyer.cpan, sbl: buyer.csbl,
+    }),
   } : { ...billTo };
 
   // Line items — shipped == billed for e-Auction; rate/amount are the external

@@ -14,6 +14,8 @@
 const { effectiveCompany } = require('../invoice-pdf');
 const { amountToWords } = require('../amount-words');
 const { getInvoiceTemplate } = require('./invoice-templates');
+// Shared NAME / STREET / TOWN-PIN / STATE+CODE / details-two-per-row party box.
+const { partyBlock } = require('../party-block');
 const { htmlToPdf } = require('./htmlToPdf');
 const { logoDataUri } = require('./logo-data-uri');
 const { formatDebitNoteNo } = require('../report-formatters');
@@ -133,6 +135,15 @@ function buildDebitNoteView(dn, db, cfg, opts) {
       pan: String(rcv.pan || '').trim(),
       sbl,
       state, stCode,
+      // The printable block — the same shape every other document's party
+      // box uses (party-block.js).
+      block: partyBlock({
+        name: dealerName,
+        address: rcv.padd,
+        place: rcv.ppla, pin: rcv.pin,
+        state, st_code: stCode,
+        gstin: gstinClean, pan: rcv.pan, sbl,
+      }),
       placeOfSupply: (stCode ? stCode + ' ' : '') + state,
       aadhar: '', // aadhar column is repurposed for SBL on traders
       nature: cfg.commission_nature || 'Service of an Auctioneer/Commission Agent',

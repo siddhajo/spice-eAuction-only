@@ -9,6 +9,8 @@ const path = require('path');
 const { effectiveCompany } = require('../invoice-pdf');
 const { amountToWords } = require('../amount-words');
 const { getInvoiceTemplate } = require('./invoice-templates');
+// Shared NAME / ADDRESS / PLACE / STATE+CODE / details-two-per-row party box.
+const { partyBlock } = require('../party-block');
 const { htmlToPdf } = require('./htmlToPdf');
 
 // Shared, case/extension-tolerant logo resolver (see pdf/logo-data-uri.js).
@@ -29,24 +31,21 @@ function buildCommissionView(billData, cfg, billNo, first) {
   const nett = billData.nett != null ? billData.nett
     : (cardamomCost + refundAmount - commission - cgst - sgst - igst);
 
-  const sellerLines = [];
-  sellerLines.push('Sri/M/s.' + (seller.name || ''));
-  if (seller.address) sellerLines.push(seller.address);
-  if (seller.place) sellerLines.push(String(seller.place).toUpperCase());
-  if (seller.state) sellerLines.push(String(seller.state).toUpperCase() + ' CODE:' + (seller.st_code || ''));
-  // Registration line: a dealer voucher (raised off a purchase invoice) carries
-  // a GSTIN; a planter's carries the CR code.
-  sellerLines.push((seller.gstin
-      ? 'GSTIN:' + seller.gstin
-      : 'CR.' + String(seller.cr || '').replace(/^\s*CR\.?\s*/i, ''))
-    + (seller.pan ? ' [PAN:' + seller.pan + ']' : ''));
+  // Party boxes in the shared format: name, address and place each on their
+  // own line, the state paired with its state code, and the rest — INV,
+  // GSTIN, CR, PAN, SBL, PIN — two per row (see party-block.js). The phone
+  // and bank account are seller-side only and print behind
+  // flag_commission_bank, so they are appended to the block below rather
+  // than carried in the standard row order.
+  const showSellerBank = ['true', '1', 'yes', 'on']
+    .includes(String((cfg && cfg.flag_commission_bank) || '').trim().toLowerCase());
+  const sellerBlock = partyBlock(seller, { omit: showSellerBank ? [] : ['PH', 'A/C'] });
+  const purchaserBlock = partyBlock(purchaser, { omit: ['PH', 'A/C'] });
 
-  const purchaserLines = [];
-  purchaserLines.push('M/s.' + (purchaser.name || '') + (purchaser.invo ? ' [INV:' + purchaser.invo + ']' : ''));
-  if (purchaser.address) purchaserLines.push(purchaser.address);
-  if (purchaser.place) purchaserLines.push(String(purchaser.place).toUpperCase() + (purchaser.pin ? ' [PIN:' + purchaser.pin + ']' : ''));
-  if (purchaser.state) purchaserLines.push(String(purchaser.state).toUpperCase() + ' CODE:' + (purchaser.st_code || '') + (purchaser.sbl ? ' [SBL:' + purchaser.sbl + ']' : ''));
-  purchaserLines.push('GSTIN:' + (purchaser.gstin || '') + (purchaser.pan ? ' [PAN:' + purchaser.pan + ']' : ''));
+  // Legacy flat-string form, still read by the Classic layout's fallback and
+  // by anything outside this file that took the old shape.
+  const sellerLines = [('Sri/M/s.' + (seller.name || '')), ...sellerBlock.lines.slice(1)];
+  const purchaserLines = [('M/s.' + (purchaser.name || '')), ...purchaserBlock.lines.slice(1)];
 
   // Optional "trader sample" deduction (some customers show it as a
   // separate row and fold its weight into the SAMPLE REFUND line). Source, in
@@ -86,12 +85,12 @@ function buildCommissionView(billData, cfg, billNo, first) {
     // Show the seller's phone + bank account on the bill (Letterhead layout), gated by
     // the flag_commission_bank toggle. Coerced to a real boolean so Handlebars
     // {{#if}} works (a string "false" would otherwise read as truthy).
-    showSellerBank: ['true', '1', 'yes', 'on'].includes(String((cfg && cfg.flag_commission_bank) || '').trim().toLowerCase()),
+    showSellerBank,
     // Party objects — let alternate templates lay out seller/buyer freely.
     // `cr` is normalized to strip any stored "CR."/"CR " label prefix so a
     // template that prints "CR.{{seller.cr}}" doesn't double it to "CR.CR.…".
-    seller: { ...seller, cr: String(seller.cr || '').replace(/^\s*CR[.\s]+/i, ''), addressFull: addressFull(seller) },
-    purchaser: { ...purchaser, addressFull: addressFull(purchaser) },
+    seller: { ...seller, cr: String(seller.cr || '').replace(/^\s*CR[.\s]+/i, ''), addressFull: addressFull(seller), block: sellerBlock },
+    purchaser: { ...purchaser, addressFull: addressFull(purchaser), block: purchaserBlock },
     crpt: billData.crpt || '',
     billNo: String(billNo),
     lotNo: /^\d+$/.test(String(li.lot || '')) ? String(li.lot).padStart(3, '0') : (li.lot || ''),

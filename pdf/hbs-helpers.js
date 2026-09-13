@@ -85,6 +85,38 @@ function registerHelpers() {
   });
 
   // Equality + comparison for {{#if (eq a b)}} style conditionals.
+  // ── Party box ───────────────────────────────────────────────
+  // {{{partyBox seller.block prefix="Sri/M/s. "}}} renders one "who" box in
+  // the shared format (see party-block.js) — name, street and town-PIN each
+  // on their own line, the state paired with its state code, then every
+  // remaining detail two per row:
+  //
+  //     Sri/M/s. SABIRA BURVIN
+  //     3,NONDIMAGAN STREET
+  //     CUMBUM-625516
+  //     KERALA                 CODE: 32
+  //     Ph: 9443447332         A/C: 0603053000000871
+  //
+  // Every invoice that names a seller or a buyer calls this, so the boxes
+  // cannot drift apart layout by layout again. A fixed two-column table
+  // keeps the right-hand values aligned down the box; each template styles
+  // `.pb` / `.pb-nm` to match its own type.
+  Handlebars.registerHelper('partyBox', function (blk, options) {
+    if (!blk) return '';
+    const esc = Handlebars.escapeExpression;
+    const opts = (options && options.hash) || {};
+    const wide = t => `<tr><td colspan="2">${esc(t)}</td></tr>`;
+    let h = '<table class="pb"><tbody>';
+    h += `<tr><td colspan="2" class="pb-nm">${esc((opts.prefix || '') + (blk.name || ''))}</td></tr>`;
+    if (blk.address) h += wide(blk.address);
+    if (blk.place) h += wide(blk.place);
+    const pair = (l, r) => `<tr><td>${l}</td><td class="pb-r">${r}</td></tr>`;
+    const kv = c => c ? `${esc(c.k)}: <span class="pb-v">${esc(c.v)}</span>` : '';
+    if (blk.state) h += pair(esc(blk.state), 'CODE: <span class="pb-v">' + esc(blk.stCode || '') + '</span>');
+    for (const r of (blk.rows || [])) h += pair(kv(r.a), kv(r.b));
+    return new Handlebars.SafeString(h + '</tbody></table>');
+  });
+
   Handlebars.registerHelper('eq', (a, b) => a === b);
   Handlebars.registerHelper('gt', (a, b) => Number(a) > Number(b));
   Handlebars.registerHelper('and', (a, b) => !!a && !!b);

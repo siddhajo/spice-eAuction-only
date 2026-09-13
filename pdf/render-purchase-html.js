@@ -8,6 +8,8 @@ const { effectiveCompany } = require('../invoice-pdf');
 const { amountToWords } = require('../amount-words');
 const getCompanyIdentity = require('../_company-identity-fallback').resolve();
 const { getInvoiceTemplate } = require('./invoice-templates');
+// Shared NAME / STREET / TOWN-PIN / STATE+CODE / details-two-per-row party box.
+const { partyBlock } = require('../party-block');
 const { htmlToPdf } = require('./htmlToPdf');
 
 function readFlag(val, defaultOn) {
@@ -49,15 +51,23 @@ function buildPurchaseInvoiceView(invoiceData, cfg, invoiceNo) {
     ['REVERSE CHARGE', ''],
   ];
 
-  // Party (billed to / shipped to) — identical content both columns.
-  const plainLines = [(buyer.name || '').toUpperCase()];
-  const buyerAddr = [buyer.address, buyer.place ? 'DOOR No.650, ' + buyer.place : '']
-    .filter(Boolean).join(', ').toUpperCase();
-  if (buyerAddr) plainLines.push(buyerAddr);
-  const pairLines = [];
-  if (buyerGstin) pairLines.push(['GSTIN', buyerGstin]);
-  if (buyer.pan) pairLines.push(['PAN', buyer.pan]);
-  if (buyer.state) pairLines.push(['STATE', String(buyer.state).toUpperCase() + '     CODE:' + buyerStCode]);
+  // Party (billed to / shipped to) — identical content both columns, in the
+  // shared party format (party-block.js). The stored place keeps its
+  // "DOOR No.650, " prefix: that door number is part of the printed address
+  // here and nowhere else, so it travels with the town rather than being
+  // dropped by the reflow.
+  const buyerBlock = partyBlock({
+    name: String(buyer.name || '').toUpperCase(),
+    address: String(buyer.address || '').toUpperCase(),
+    place: buyer.place ? 'DOOR No.650, ' + buyer.place : '',
+    pin: buyer.pin,
+    state: buyer.state, st_code: buyerStCode,
+    gstin: buyerGstin, pan: buyer.pan,
+  });
+  // Legacy flat forms, still read by anything outside this file.
+  const plainLines = [buyerBlock.name, buyerBlock.address, buyerBlock.place].filter(Boolean);
+  const pairLines = buyerBlock.rest.map(r => [r.k, r.v]);
+  if (buyerBlock.state) pairLines.push(['STATE', buyerBlock.state + '     CODE:' + buyerStCode]);
 
   // Per-lot trader-sample quantity (Kgs), flat from settings — same value the
   // commission bill uses. 0 when the feature is off.
@@ -114,6 +124,7 @@ function buildPurchaseInvoiceView(invoiceData, cfg, invoiceNo) {
   }
 
   return {
+    buyerBlock,
     cfg, showHsn, stripe,
     padRows: Math.max(0, 14 - rows.length),
     seller: {

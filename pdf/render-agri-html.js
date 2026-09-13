@@ -8,6 +8,8 @@ const { amountToWords } = require('../amount-words');
 const getCompanyIdentity = require('../_company-identity-fallback').resolve();
 const { getInvoiceTemplate } = require('./invoice-templates');
 const { htmlToPdf } = require('./htmlToPdf');
+// Shared NAME / ADDRESS / PLACE / STATE+CODE / details-two-per-row party box.
+const { partyBlock } = require('../party-block');
 
 function readFlag(val, defaultOn) {
   if (val === undefined || val === null || val === '') return defaultOn;
@@ -52,36 +54,20 @@ function buildAgriBillView(billData, cfg, billNo) {
   const stripe = readFlag(cfg.flag_invoice_stripe, true);
   const co = agriCompany(cfg);
 
-  // Seller detail lines (legacy string form, kept for any consumer that still
-  // reads it).
-  const sellerLines = [];
-  sellerLines.push('M/s.' + (seller.name || ''));
-  if (seller.address) sellerLines.push(seller.address);
-  if (seller.place) sellerLines.push(String(seller.place).toUpperCase() + (seller.pan ? '   PAN:' + seller.pan : ''));
-  if (seller.state) sellerLines.push('STATE:' + String(seller.state).toUpperCase() + '   CODE:' + (seller.st_code || ''));
-  if (seller.cr) sellerLines.push('CR.' + String(seller.cr).replace(/^\s*CR\.?\s*/i, ''));
-
-  // Structured party — lets the template align every colon in a fixed grid.
-  const party = {
-    name: seller.name || '',
-    addr: seller.address || '',
-    place: seller.place ? String(seller.place).toUpperCase() : '',
-    pan: seller.pan || '',
-    state: seller.state ? String(seller.state).toUpperCase() : '',
-    stCode: seller.st_code || '',
-    cr: seller.cr ? String(seller.cr).replace(/^\s*CR\.?\s*/i, '') : '',
-    aadhar: seller.aadhar || '',
-  };
+  // Party box in the shared format: name, address and place each on their
+  // own line, the state paired with its state code, and the rest — CR, PAN,
+  // AADHAR, PIN — two per row (see party-block.js). Phone stays off the
+  // printed bill, as it always has.
+  const party = partyBlock(seller, { omit: ['PH', 'A/C'] });
   // A self-generated BoS usually has no separate consignee — the goods ship to
   // the seller themselves, so mirror Billed-For into Shipped-To rather than
   // leaving the column blank.
-  const consignee = billData.consignee ? {
-    name: billData.consignee.name || '', addr: billData.consignee.address || '',
-    place: billData.consignee.place ? String(billData.consignee.place).toUpperCase() : '',
-    pan: billData.consignee.pan || '',
-    state: billData.consignee.state ? String(billData.consignee.state).toUpperCase() : '',
-    stCode: billData.consignee.st_code || '', cr: '', aadhar: '',
-  } : { ...party };
+  const consignee = billData.consignee
+    ? partyBlock(billData.consignee, { omit: ['PH', 'A/C'] })
+    : party;
+
+  // Legacy flat-string form, kept for any consumer that still reads it.
+  const sellerLines = [('M/s.' + (seller.name || '')), ...party.lines.slice(1)];
 
   const rows = lineItems.map((li) => {
     const totalQty = (li.totalQty != null) ? li.totalQty : ((li.pqty || li.qty || 0) + (li.refundQty || 0));
