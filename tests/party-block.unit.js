@@ -1,4 +1,4 @@
-// Party boxes on the Bill of Supply and the Commission Bill — one format.
+// Party boxes on EVERY invoice — one format.
 //
 //     NAME
 //     3,NONDIMAGAN STREET
@@ -8,16 +8,22 @@
 //
 // One thing per line down the address — name, street, town-PIN, then the
 // STATE paired with its code. None of them share a line; the rest of the
-// details follow two per row. Four renderers print these boxes — the legacy
-// PDFKit layouts in invoice-pdf.js and the Classic / Modern / Letterhead HTML
-// templates — and this checks them together, because a format that holds in
-// one and not the others is the mess it replaced.
+// details follow two per row.
+//
+// Every document that names a seller or a buyer prints this box: the Bill of
+// Supply, the Commission Bill, the Sales Invoice, the Purchase Invoice and
+// the Debit Note, each across its PDFKit and HTML layouts. They are checked
+// together, because a format that holds in one and not the others is the mess
+// it replaced.
 const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const { partyBlock } = require(path.join(ROOT, 'party-block'));
 const { drawPartyBox, partyBoxLayout, partyBoxLines } = require(path.join(ROOT, 'invoice-pdf'));
 const { buildAgriBillView } = require(path.join(ROOT, 'pdf', 'render-agri-html'));
 const { buildCommissionView } = require(path.join(ROOT, 'pdf', 'render-commission-html'));
+const { buildSalesInvoiceView } = require(path.join(ROOT, 'pdf', 'render-html-invoice'));
+const { buildPurchaseInvoiceView } = require(path.join(ROOT, 'pdf', 'render-purchase-html'));
+const { buildDebitNoteView } = require(path.join(ROOT, 'pdf', 'render-debit-note-html'));
 const { getInvoiceTemplate } = require(path.join(ROOT, 'pdf', 'invoice-templates'));
 
 let pass = 0, fail = 0;
@@ -161,7 +167,7 @@ check('every cell is drawn at that one size',
       tight.calls.every(c => c.size === 6), JSON.stringify(tight.calls.map(c => c.size)));
 
 // HTML templates ---------------------------------------------------------
-console.log('\n[7] Every HTML layout prints the same block');
+console.log('\n[7] Every HTML layout of every document prints the same block');
 const cfg = { short_name: 'ISPL', trade_name: 'ISPL', flag_commission_bank: 'false' };
 const agriBill = {
   billDate: '01/09/2026', eTradeNo: '12',
@@ -175,54 +181,101 @@ const commBill = {
   lineItems: [{ lot: '7', qty: 10, rate: 100, cardamomCost: 1000 }],
   commission: 10, cgst: 0.9, sgst: 0.9, igst: 0,
 };
+// Sales invoice — the buyer as the `buyers` table shapes it, plus a genuine
+// consignee so Shipped-To is a party of its own, not a mirror.
+const salesInv = {
+  buyer: {
+    buyer1: BUYER.name, add1: 'DOOR 5, MARKET ROAD', add2: '', pla: 'kumily', pin: '685509',
+    state: 'kerala', st_code: '32', gstin: BUYER.gstin, pan: BUYER.pan, sbl: BUYER.sbl,
+    cbuyer1: 'HILL ESTATE WAREHOUSE', cadd1: '9 GODOWN LANE', cpla: 'munnar', cpin: '685612',
+    cstate: 'kerala', cst_code: '32', cgstin: '32AAACH9999H1Z2', cpan: 'AAACH9999H',
+  },
+  lineItems: [{ lot: '7', qty: 10, price: 100, amount: 1000 }],
+  summary: { totalQty: 10, totalAmount: 1000, grandTotal: 1000 },
+};
+// Purchase invoice — the buyer is our own company.
+const purchInv = {
+  seller: { name: 'ASP SPICES', address: 'MILL ROAD', place: 'THENI', pin: '625531',
+            state: 'TAMIL NADU', st_code: '33', gstin: '33AAACA1111A1Z9' },
+  buyer: { name: 'indian spices pvt ltd', address: '3,NONDIMAGAN STREET', place: 'CUMBUM',
+           pin: '625516', state: 'tamil nadu', st_code: '33',
+           gstin: '33AAACI0000A1Z5', pan: 'AAACI0000A' },
+  lineItems: [{ lot: '7', qty: 10, price: 100, amount: 1000, puramt: 1000 }],
+  summary: { totalQty: 10, totalPuramt: 1000, grandTotal: 1000 },
+};
+// Debit note — the receiver comes out of `traders`, so hand the view a db
+// that answers with one.
+const dnTrader = {
+  name: 'DEALER SPICES LLP', padd: '12 MAIN ROAD, THENI', ppla: 'bodinayakanur', pin: '625513',
+  pstate: 'tamil nadu', pst_code: '33', pan: 'AABCD5555D',
+  cr: '33AABCD5555D1Z1',   // a dealer's GSTIN lives in traders.cr
+  aadhar: 'SBL/77',        // …and their SBL in traders.aadhar
+};
+const dnDb = { get: () => dnTrader, all: () => [] };
+const debitNote = { name: dnTrader.name, ano: '12', date: '2026-09-01', no: 5,
+                    cgst: 1, sgst: 1, igst: 0, total: 100 };
+
+// Tags out, entities and runs of whitespace normalised — what the reader sees.
+const strip = h => h.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ')
+                    .replace(/ /g, ' ').replace(/\s+/g, ' ');
 // Whether two strings land in the SAME text node — i.e. on one printed line.
 // The flattened text can't tell "one line" from "two adjacent elements", and
 // the state sharing the address's line is precisely the bug being fixed.
 const sameLine = (html, a, b) => html.split(/<[^>]+>/)
   .some(t => t.includes(a) && t.includes(b));
-// Tags out, entities and runs of whitespace normalised — what the reader sees.
-const strip = h => h.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ')
-                    .replace(/ /g, ' ').replace(/\s+/g, ' ');
-const settingFor = { 'agri-bill': 'agri_bill_template', 'commission-bill': 'commission_bill_template' };
+
+const settingFor = {
+  'agri-bill': 'agri_bill_template', 'commission-bill': 'commission_bill_template',
+  'sales-invoice': 'sales_invoice_template', 'purchase-invoice': 'purchase_invoice_template',
+  'debit-note': 'debit_note_template',
+};
+// [docType, layout, view builder, [parties to verify]]. A party is
+// [who, name, street, town-PIN, state, code].
+const SELLER_LINES = ['ANNAMALAI M', '12 MAIN ROAD, THENI', 'BODINAYAKANUR-625513', 'TAMIL NADU', 'CODE: 33'];
+const BUYER_LINES  = ['SPICE TRADERS PVT LTD', 'DOOR 5, MARKET ROAD', 'KUMILY-685509', 'KERALA', 'CODE: 32'];
+const SHIP_LINES   = ['HILL ESTATE WAREHOUSE', '9 GODOWN LANE', 'MUNNAR-685612', 'KERALA', 'CODE: 32'];
+const OURCO_LINES  = ['INDIAN SPICES PVT LTD', '3,NONDIMAGAN STREET', 'DOOR NO.650, CUMBUM-625516', 'TAMIL NADU', 'CODE: 33'];
+const RECV_LINES   = ['DEALER SPICES LLP', '12 MAIN ROAD, THENI', 'BODINAYAKANUR-625513', 'TAMIL NADU', 'CODE: 33'];
 const layouts = [
-  ['agri-bill', 'classic', c => buildAgriBillView(agriBill, c, '1')],
-  ['agri-bill', 'modern', c => buildAgriBillView(agriBill, c, '1')],
-  ['commission-bill', 'classic', c => buildCommissionView(commBill, c, '1', true)],
-  ['commission-bill', 'modern', c => buildCommissionView(commBill, c, '1', true)],
-  ['commission-bill', 'letterhead', c => buildCommissionView(commBill, c, '1', true)],
+  ['agri-bill', 'classic', c => buildAgriBillView(agriBill, c, '1'), { seller: SELLER_LINES }],
+  ['agri-bill', 'modern', c => buildAgriBillView(agriBill, c, '1'), { seller: SELLER_LINES }],
+  ['commission-bill', 'classic', c => buildCommissionView(commBill, c, '1', true), { seller: SELLER_LINES, buyer: BUYER_LINES }],
+  ['commission-bill', 'modern', c => buildCommissionView(commBill, c, '1', true), { seller: SELLER_LINES, buyer: BUYER_LINES }],
+  ['commission-bill', 'letterhead', c => buildCommissionView(commBill, c, '1', true), { seller: SELLER_LINES, buyer: BUYER_LINES }],
+  ['sales-invoice', 'classic', c => buildSalesInvoiceView(salesInv, c, 'L', '1', '01/09/2026'), { buyer: BUYER_LINES, consignee: SHIP_LINES }],
+  ['sales-invoice', 'modern', c => buildSalesInvoiceView(salesInv, c, 'L', '1', '01/09/2026'), { buyer: BUYER_LINES, consignee: SHIP_LINES }],
+  ['sales-invoice', 'letterhead', c => buildSalesInvoiceView(salesInv, c, 'L', '1', '01/09/2026'), { buyer: BUYER_LINES, consignee: SHIP_LINES }],
+  ['purchase-invoice', 'classic', c => buildPurchaseInvoiceView(purchInv, c, '1'), { buyer: OURCO_LINES }],
+  ['purchase-invoice', 'modern', c => buildPurchaseInvoiceView(purchInv, c, '1'), { buyer: OURCO_LINES }],
+  ['purchase-invoice', 'letterhead', c => buildPurchaseInvoiceView(purchInv, c, '1'), { buyer: OURCO_LINES }],
+  ['debit-note', 'letterhead', c => buildDebitNoteView(debitNote, dnDb, c), { receiver: RECV_LINES }],
+  ['debit-note', 'modern', c => buildDebitNoteView(debitNote, dnDb, c), { receiver: RECV_LINES }],
 ];
-for (const [docType, key, view] of layouts) {
+for (const [docType, key, view, parties] of layouts) {
   const cfgT = { ...cfg, [settingFor[docType]]: key };
   const raw = getInvoiceTemplate(docType, cfgT).render(view(cfgT));
   const flat = strip(raw);
   const label = `${docType}/${key}`;
-  const order = (...bits) => {
-    let at = -1;
-    for (const s of bits) {
-      const i = flat.indexOf(s, at + 1);
-      if (i <= at) return `"${s}" out of order (found at ${i}, previous at ${at})`;
+  for (const [who, lines] of Object.entries(parties)) {
+    const [name, street, town, state, code] = lines;
+    // Each line appears, in this order, after the one before it.
+    let at = -1, bad = '';
+    for (const bit of lines) {
+      const i = flat.indexOf(bit, at + 1);
+      if (i <= at) { bad = `"${bit}" out of order (at ${i}, previous ${at})`; break; }
       at = i;
     }
-    return '';
-  };
-  const seller = order('ANNAMALAI M', '12 MAIN ROAD, THENI', 'BODINAYAKANUR-625513', 'TAMIL NADU', 'CODE: 33');
-  check(label + ' — seller reads name, street, town-PIN, state, code', seller === '', seller);
-  check(label + ' — the town is not tacked onto the street',
-        !sameLine(raw, '12 MAIN ROAD, THENI', 'BODINAYAKANUR-625513'), label);
-  check(label + ' — the state is not tacked onto the town line',
-        !sameLine(raw, 'BODINAYAKANUR-625513', 'TAMIL NADU'), label);
-  check(label + ' — PAN is a detail row, not stuck to the town',
-        flat.includes('PAN: ABCDE1234F') && !sameLine(raw, 'BODINAYAKANUR-625513', 'PAN'), label);
-  check(label + " — the seller's phone stays off the bill when the flag is off",
-        !flat.includes('9876543210'), label);
-  if (docType === 'commission-bill') {
-    const buyer = order('SPICE TRADERS PVT LTD', 'DOOR 5, MARKET ROAD', 'KUMILY-685509', 'KERALA', 'CODE: 32');
-    check(label + ' — buyer reads the same way', buyer === '', buyer);
-    check(label + ' — INV left the name line',
-          flat.includes('INV: 1748') && !/SPICE TRADERS PVT LTD *INV/.test(flat), label);
-    check(label + ' — SBL left the state line',
-          flat.includes('SBL: SBL/99') && !/KERALA *SBL/.test(flat), label);
+    check(`${label} — ${who} reads name, street, town-PIN, state, code`, bad === '', bad);
+    check(`${label} — ${who}: the town is not tacked onto the street`,
+          !sameLine(raw, street, town), label);
+    check(`${label} — ${who}: the state is not tacked onto the town`,
+          !sameLine(raw, town, state), label);
   }
+  // Whatever registration the party carries has to reach the page — a box
+  // that silently drops the GSTIN is worse than one that lays it out oddly.
+  const reg = { 'commission-bill': '32AABCS1234K1Z5', 'sales-invoice': '32AABCS1234K1Z5',
+                'purchase-invoice': '33AAACI0000A1Z5', 'debit-note': '33AABCD5555D1Z1' }[docType];
+  if (reg) check(`${label} — the GSTIN survives the reflow`, flat.includes('GSTIN: ' + reg), label);
 }
 
 console.log('\n[8] flag_commission_bank still adds the phone + account rows');

@@ -282,12 +282,6 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
     gstin: _ident.gstin,
     pan: _ident.pan,
   };
-  // Plain (full-width) lines: name + address. Colon-bearing identity lines
-  // (GSTIN / PAN / STATE) are rendered separately with aligned colons.
-  const plainLines = [];
-  plainLines.push((buyer.name || '').toUpperCase());
-  const buyerAddr = [buyer.address, buyer.place ? 'DOOR No.650, ' + buyer.place : ''].filter(Boolean).join(', ').toUpperCase();
-  if (buyerAddr) plainLines.push(buyerAddr);
   // The buyer on a purchase invoice IS our company. getCompanyIdentity only
   // reads tn_gstin/gstin, so a Kerala company's GSTIN (stored in kl_gstin)
   // comes back blank — fall back to the state-aware effectiveCompany() GSTIN
@@ -295,39 +289,36 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
   const _coEff = effectiveCompany(cfg);
   const buyerGstin = buyer.gstin || _coEff.gstin || '';
   const buyerStCode = buyer.st_code || _coEff.stateCode || '';
-  const pairLines = [];
-  if (buyerGstin) pairLines.push(['GSTIN', buyerGstin]);
-  if (buyer.pan)  pairLines.push(['PAN', buyer.pan]);
-  if (buyer.state) pairLines.push(['STATE', (buyer.state || '').toUpperCase() + '     CODE:' + buyerStCode]);
+  // Shared party format (party-block.js): name, street and town-PIN on their
+  // own lines, the state paired with its code, the rest two per row. The
+  // stored place keeps its "DOOR No.650, " prefix — that door number is part
+  // of the printed address here and nowhere else.
+  const buyerBlk = partyBlock({
+    name: String(buyer.name || '').toUpperCase(),
+    address: String(buyer.address || '').toUpperCase(),
+    place: buyer.place ? 'DOOR No.650, ' + buyer.place : '',
+    pin: buyer.pin,
+    state: buyer.state, st_code: buyerStCode,
+    gstin: buyerGstin, pan: buyer.pan,
+  });
 
   const bodyLineH = 10;
-  // Measure each plain line's ACTUAL rendered height so a long company name
-  // (or address) that wraps to 2+ lines pushes the following lines down
-  // instead of being overwritten by them. Set the body font BEFORE measuring
-  // so heightOfString uses the right metrics. Both columns are the same width
-  // (W/2 ±1px), so one measurement against the narrower column serves both and
-  // keeps the two columns vertically aligned.
-  doc.font('Helvetica').fontSize(8);
-  const measureW = Math.min(gridLeftW, gridRightW) - 12;
-  const plainHeights = plainLines.map(line =>
-    Math.max(bodyLineH, doc.heightOfString(line || ' ', { width: measureW })));
-  const plainBodyH = plainHeights.reduce((a, b) => a + b, 0);
-  const pairBodyH  = pairLines.length * bodyLineH;
+  // Measure before stroking the border — a long company name or street wraps
+  // onto a second line, and the box has to be tall enough for what lands in
+  // it. Both columns are the same width (W/2 ±1px), so one measurement serves
+  // both and keeps them vertically aligned.
+  const buyerOpts = { x: x0, w: Math.min(gridLeftW, gridRightW), top: y + 3, lineH: bodyLineH };
+  const buyerLay = partyBoxLayout(doc, buyerBlk, buyerOpts);
   // Content height + one line of padding, floored at 6 lines so the block
   // doesn't look cramped when there's little content (matches prior sizing).
-  const buyerBodyH = Math.max(6 * bodyLineH, plainBodyH + pairBodyH + bodyLineH);
+  const buyerBodyH = Math.max(6 * bodyLineH, buyerLay.height + bodyLineH);
   doc.moveTo(x0, y).lineTo(x0, y + buyerBodyH).stroke();
   doc.moveTo(gridSplitX, y).lineTo(gridSplitX, y + buyerBodyH).stroke();
   doc.moveTo(x1, y).lineTo(x1, y + buyerBodyH).stroke();
   doc.moveTo(x0, y + buyerBodyH).lineTo(x1, y + buyerBodyH).stroke();
-  // Render the same content in both BILLED TO and SHIPPED TO columns.
+  // The same content in both BILLED TO and SHIPPED TO columns.
   for (const [colX, colW] of [[x0, gridLeftW], [gridSplitX, gridRightW]]) {
-    let ly = y + 3;
-    plainLines.forEach((line, i) => {
-      doc.text(line, colX + 6, ly, { width: colW - 12 });
-      ly += plainHeights[i];
-    });
-    drawColonRows(doc, pairLines, colX, ly, bodyLineH, colW, { pad: 6 });
+    drawPartyBox(doc, buyerBlk, { x: colX, w: colW, top: y + 3, lineH: bodyLineH, layout: buyerLay });
   }
   y += buyerBodyH;
 
@@ -1095,36 +1086,16 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
     gstin: buyer.gstin || '',
   };
 
-  // Shared helper for left-column writing, advancing the anchor by the
-  // actual rendered height. PDFKit updates `doc.y` to the bottom of the
-  // last rendered line after every text() call — this is more reliable
-  // than `heightOfString`, which can under-report by a partial line and
-  // produce visible overlap on multi-line wraps (e.g. long company
-  // names spilling to 2+ lines collided with the next address line).
-  const lW = leftW - 6;
-  const writeLeft = (txt, anchor) => {
-    if (!txt) return;
-    doc.text(txt, leftX + 3, anchor.v, { width: lW });
-    anchor.v = doc.y + 1;
-  };
-
-  // Draw Consignee cell (skip when flag_ship is OFF — item 1)
+  // Draw Consignee cell (skip when flag_ship is OFF — item 1). Both party
+  // cells print the shared format (party-block.js): name, street and town-PIN
+  // on their own lines, the state paired with its code, then the remaining
+  // details two per row — the same box the bill of supply and the commission
+  // bill carry.
   if (showShipTo) {
     box(leftX, consigneeY, leftW, (midH / 2));
     let cy = consigneeY + 3;
     doc.font('Helvetica').fontSize(7).text('Consignee (Ship to)', leftX + 3, cy); cy += 9;
-    doc.font('Helvetica-Bold').fontSize(9).text(ship.name, leftX + 3, cy, { width: leftW - 6 });
-    // Advance via doc.y (post-text cursor) — heightOfString can under-
-    // report for wrapped strings and let subsequent lines overlap.
-    cy = doc.y + 2;
-    doc.font('Helvetica').fontSize(8);
-    const cAnchor = { v: cy };
-    writeLeft(ship.addr, cAnchor);
-    // Place + PIN on one line (e.g. "MUNNAR - 685612"). PIN was captured
-    // in `ship.pin` but previously never rendered.
-    writeLeft([ship.pla, ship.pin].filter(Boolean).join(' - '), cAnchor);
-    if (ship.gstin) writeLeft(`GSTIN/UIN      : ${ship.gstin}`, cAnchor);
-    if (ship.state) writeLeft(`State Name     : ${ship.state}, Code : ${ship.stCode || ''}`, cAnchor);
+    drawPartyBox(doc, partyBlock(ship), { x: leftX, w: leftW, top: cy, lineH: 9, pad: 3, size: 8 });
   }
 
   // Draw Buyer (Bill to) / Seller (Bill from) cell
@@ -1180,21 +1151,11 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
     };
   }
 
-  doc.font('Helvetica-Bold').fontSize(9).text(billTo.name, leftX + 3, by, { width: leftW - 6 });
-  // Advance via doc.y — PDFKit sets it to the bottom of the last
-  // rendered line. heightOfString sometimes under-reported the wrapped
-  // height by a partial line, causing the next address line to overlap
-  // the second line of long buyer names (e.g. "IDUKKI MAHILA CARDAMOM
-  // PRODUCER COMPANY LIMITED").
-  by = doc.y + 2;
-  doc.font('Helvetica').fontSize(8);
-  const bAddr = [billTo.add1, billTo.add2].filter(Boolean).join(',');
-  const bAnchor = { v: by };
-  writeLeft(bAddr, bAnchor);
-  // Place + PIN on one line (e.g. "BODINAYAKANUR - 625513").
-  writeLeft([billTo.pla, billTo.pin].filter(Boolean).join(' - '), bAnchor);
-  if (billTo.gstin) writeLeft(`GSTIN/UIN      : ${billTo.gstin}`, bAnchor);
-  if (billTo.state) writeLeft(`State Name     : ${billTo.state}, Code : ${billTo.stCode || ''}`, bAnchor);
+  drawPartyBox(doc, partyBlock({
+    ...billTo,
+    address: [billTo.add1, billTo.add2].filter(Boolean).join(', '),
+    place: billTo.pla, st_code: billTo.stCode,
+  }), { x: leftX, w: leftW, top: by, lineH: 9, pad: 3, size: 8 });
 
   // Right column: 2 rows now (Dispatched through | Destination, Dispatch From)
   const rSmall = 28;
