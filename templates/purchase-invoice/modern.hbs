@@ -24,6 +24,13 @@
   .meta .k { font-size: 7pt; text-transform: uppercase; color: #999; letter-spacing: .5pt; }
   .meta .v { font-size: 9pt; font-weight: bold; }
   .parties { display: flex; border: 1pt solid var(--line); border-top: none; }
+  /* Party box (the partyBox helper) — name, street, town-PIN, state+code,
+     then the remaining details two per row. Fixed columns so the right-hand
+     values line up down the box. */
+  .parties .pb { width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 2pt; }
+  .parties .pb td { height: auto; font-size: 8pt; color: #555; padding: 0; vertical-align: top; white-space: nowrap; }
+  .parties .pb td[colspan] { white-space: normal; }
+  .parties .pb .pb-nm { font-weight: bold; font-size: 9.5pt; color: #222; }
   .parties > div { flex: 1; padding: 9pt 12pt; }
   .parties > div:first-child { border-right: 1pt solid var(--line); }
   .parties .lbl { font-size: 7pt; text-transform: uppercase; color: var(--accent); font-weight: bold; letter-spacing: .5pt; }
@@ -67,13 +74,11 @@
   <div class="parties">
     <div>
       <div class="lbl">Billed To</div>
-      {{#each plainLines}}<div class="ln b">{{this}}</div>{{/each}}
-      {{#each pairLines}}<div class="ln">{{this.[0]}}: {{this.[1]}}</div>{{/each}}
+      {{{partyBox buyerBlock}}}
     </div>
     <div>
       <div class="lbl">Shipped To</div>
-      {{#each plainLines}}<div class="ln b">{{this}}</div>{{/each}}
-      {{#each pairLines}}<div class="ln">{{this.[0]}}: {{this.[1]}}</div>{{/each}}
+      {{{partyBox buyerBlock}}}
     </div>
   </div>
 

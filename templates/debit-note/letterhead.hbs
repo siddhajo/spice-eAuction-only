@@ -35,6 +35,13 @@
   .title-cell { font-size: 10.5pt; letter-spacing: .5pt; }
   /* Receiver block: fixed label/value grid so every colon lines up. */
   .recv td { vertical-align: top; }
+  /* Party box (the partyBox helper) — name, street, town-PIN, state+code,
+     then the remaining details two per row. Fixed columns so the right-hand
+     values line up down the box. */
+  .pb { width: 100%; table-layout: fixed; border-collapse: collapse; }
+  .pb td { height: auto; border: 0; padding: 0.4pt 0; font-size: 8.5pt; vertical-align: top; white-space: nowrap; }
+  .pb td[colspan] { white-space: normal; }
+  .pb .pb-nm, .pb .pb-v { font-weight: bold; }
   .recv .kv { width: 100%; table-layout: fixed; border-collapse: collapse; }
   .recv .kv td { border: none; padding: 0.4pt 0; font-size: 8pt; }
   .recv .kv .k { width: 60pt; white-space: nowrap; }
@@ -72,14 +79,7 @@
     <tr class="bar"><td colspan="2" style="width:66%">Name &amp; Address of the Receiver</td><td class="r nowrap" style="width:34%">Sl. No: {{noteNo}}</td></tr>
     <tr>
       <td colspan="2">
-        <div class="b">Sri/M/s. {{receiver.name}}</div>
-        {{#if receiver.addr}}<div>{{receiver.addr}}</div>{{/if}}
-        {{#if receiver.place}}<div>{{receiver.place}}{{#if receiver.state}}, {{receiver.state}}{{/if}}</div>{{else}}{{#if receiver.state}}<div>{{receiver.state}}</div>{{/if}}{{/if}}
-        <table class="kv">
-          <tr><td class="k">STATE CODE</td><td class="v">: <span class="b">{{receiver.stCode}}</span></td><td class="k">AADHAR</td><td class="v">{{#if receiver.aadhar}}: <span class="b">{{receiver.aadhar}}</span>{{/if}}</td></tr>
-          <tr><td class="k">GSTIN</td><td class="v">{{#if receiver.gstin}}: <span class="b">{{receiver.gstin}}</span>{{/if}}</td><td class="k">PAN</td><td class="v">{{#if receiver.pan}}: <span class="b">{{receiver.pan}}</span>{{/if}}</td></tr>
-          {{#if receiver.sbl}}<tr><td class="k">SBL</td><td class="v">: <span class="b">{{receiver.sbl}}</span></td><td class="k"></td><td class="v"></td></tr>{{/if}}
-        </table>
+        {{{partyBox receiver.block prefix="Sri/M/s. "}}}
         <div class="recv-rule"></div>
         <div>Nature of Service: <span class="b">{{receiver.nature}}</span></div>
         <div>Service Account Code: <span class="b">{{receiver.sac}}</span></div>

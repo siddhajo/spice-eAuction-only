@@ -43,6 +43,13 @@
      one x, right pair at another). `table-layout:fixed` keeps the columns put. */
   .parties td { vertical-align: top; }
   .parties .kv { width: 100%; table-layout: fixed; border-collapse: collapse; }
+  /* Party box (the partyBox helper) — name, street, town-PIN, state+code,
+     then the remaining details two per row. Fixed columns so the right-hand
+     values line up down the box. */
+  .parties .pb { width: 100%; table-layout: fixed; border-collapse: collapse; }
+  .parties .pb td { height: auto; border: 0; padding: 0; font-size: 8pt; vertical-align: top; white-space: nowrap; }
+  .parties .pb td[colspan] { white-space: normal; }
+  .parties .pb .pb-nm, .parties .pb .pb-v { font-weight: bold; }
   .parties .kv td { border: none; padding: 0.4pt 0; font-size: 7.5pt; vertical-align: top; width: 50%; white-space: nowrap; }
   /* Left-aligned labels in a fixed-width box so every colon lines up in a column. */
   .parties .kv .lbl { display: inline-block; width: 26pt; }
@@ -84,24 +91,8 @@
   <table class="parties">
     <tr class="bar c"><td style="width:50%">Details of the Receiver (Billed To)</td><td style="width:50%">Details of the Consignee (Shipped To)</td></tr>
     <tr>
-      <td>{{#with billTo}}
-        <div class="b">M/s.{{name}}</div>
-        {{#if addr}}<div class="muted">{{addr}}</div>{{/if}}
-        <table class="kv">
-          <tr><td>{{place}}</td><td><span class="lbl">PAN</span>{{#if pan}}: <span class="b">{{pan}}</span>{{/if}}</td></tr>
-          {{#if state}}<tr><td><span class="lbl">STATE</span>: <span class="b">{{state}}</span></td><td><span class="lbl">CODE</span>: <span class="b">{{stCode}}</span></td></tr>{{/if}}
-          {{#if gstin}}<tr><td><span class="lbl">GST</span>: <span class="b">{{gstin}}</span></td><td><span class="lbl">SBL</span>{{#if sbl}}: <span class="b">{{sbl}}</span>{{/if}}</td></tr>{{/if}}
-        </table>
-      {{/with}}</td>
-      <td>{{#with ship}}
-        <div class="b">M/s.{{name}}</div>
-        {{#if addr}}<div class="muted">{{addr}}</div>{{/if}}
-        <table class="kv">
-          <tr><td>{{place}}</td><td><span class="lbl">PAN</span>{{#if pan}}: <span class="b">{{pan}}</span>{{/if}}</td></tr>
-          {{#if state}}<tr><td><span class="lbl">STATE</span>: <span class="b">{{state}}</span></td><td><span class="lbl">CODE</span>: <span class="b">{{stCode}}</span></td></tr>{{/if}}
-          {{#if gstin}}<tr><td><span class="lbl">GST</span>: <span class="b">{{gstin}}</span></td><td><span class="lbl">SBL</span>{{#if sbl}}: <span class="b">{{sbl}}</span>{{/if}}</td></tr>{{/if}}
-        </table>
-      {{/with}}</td>
+      <td>{{{partyBox billTo.block prefix="M/s."}}}</td>
+      <td>{{{partyBox ship.block prefix="M/s."}}}</td>
     </tr>
   </table>
 

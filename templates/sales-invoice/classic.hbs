@@ -27,6 +27,13 @@
      horizontal line under the Invoice No. / e-Way Bill / Dated row). */
   .no-b td.b, .no-b th.b { border: 0.5pt solid #000; }
   .label { font-size: 7pt; }
+  /* Party box (the partyBox helper) — name, street, town-PIN, state+code,
+     then the remaining details two per row. Fixed columns so the right-hand
+     values line up down the box. */
+  .pb { width: 100%; table-layout: fixed; border-collapse: collapse; }
+  .pb td { height: auto; border: none; padding: 0; font-size: 7.5pt; color: #444; vertical-align: top; white-space: nowrap; }
+  .pb td[colspan] { white-space: normal; }
+  .pb .pb-nm { font-weight: bold; font-size: 9pt; color: #000; }
   .val   { font-weight: bold; font-size: 9pt; }
   .name  { font-weight: bold; font-size: 9pt; }
   .muted { font-size: 8pt; }
@@ -103,19 +110,11 @@
       <td style="width:50%; padding:0">
         <div class="b" style="padding:3pt">
           <div class="label">Consignee (Ship to)</div>
-          <div class="name">{{ship.name}}</div>
-          {{#if ship.addr}}<div class="muted">{{ship.addr}}</div>{{/if}}
-          {{#if ship.place}}<div class="muted">{{ship.place}}</div>{{/if}}
-          {{#if ship.gstin}}<div class="muted">GSTIN/UIN      : {{ship.gstin}}</div>{{/if}}
-          {{#if ship.state}}<div class="muted">State Name     : {{ship.state}}, Code : {{ship.stCode}}</div>{{/if}}
+          {{{partyBox ship.block}}}
         </div>
         <div class="b" style="padding:3pt">
           <div class="label">Buyer (Bill to)</div>
-          <div class="name">{{billTo.name}}</div>
-          {{#if billTo.addr}}<div class="muted">{{billTo.addr}}</div>{{/if}}
-          {{#if billTo.place}}<div class="muted">{{billTo.place}}</div>{{/if}}
-          {{#if billTo.gstin}}<div class="muted">GSTIN/UIN      : {{billTo.gstin}}</div>{{/if}}
-          {{#if billTo.state}}<div class="muted">State Name     : {{billTo.state}}, Code : {{billTo.stCode}}</div>{{/if}}
+          {{{partyBox billTo.block}}}
         </div>
       </td>
       <td style="width:50%; padding:0">

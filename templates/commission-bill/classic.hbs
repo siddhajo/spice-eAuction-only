@@ -22,6 +22,14 @@
   .cbos .items th { background: #e8e8e8; font-weight: bold; font-size: 7pt; text-align: center; }
   .cbos .items td { font-size: 7.5pt; white-space: nowrap; }
   .cbos .party td { font-size: 7.5pt; }
+  /* Party box (the partyBox helper) — name, street, town-PIN, state+code,
+     then the remaining details two per row. Fixed columns so the right-hand
+     values line up down the box. */
+  .cbos .party .pb { width: 100%; border: 0; table-layout: fixed; }
+  .cbos .party .pb td { height: auto; border: 0; padding: 0; font-size: 7.5pt; vertical-align: top; white-space: nowrap; }
+  .cbos .party .pb td[colspan] { white-space: normal; }
+  .cbos .party .pb td.pb-r { width: 46%; }
+  .cbos .party .pb .pb-nm { font-weight: bold; }
   .cbos .nett { text-align: right; font-weight: bold; font-size: 10pt; padding: 4pt 6pt; }
   .cbos .words { font-size: 9pt; padding: 2pt 6pt; }
   .cbos .forco { text-align: right; font-weight: bold; padding: 6pt 6pt 0; }
@@ -51,9 +59,12 @@
     <table>
       <tr><td class="grey center" style="width:50%">DETAILS OF SELLER [BILLED FOR]</td>
           <td class="grey center" style="width:50%">DETAILS OF PURCHASER [SOLD TO]</td></tr>
+      <!-- Shared party format: NAME / ADDRESS / PLACE each on their own line,
+           the state paired with its state code, then the remaining details
+           two per row (see party-block.js). -->
       <tr class="party">
-        <td style="width:50%">{{#each sellerLines}}<div>{{this}}</div>{{/each}}</td>
-        <td style="width:50%">{{#each purchaserLines}}<div>{{this}}</div>{{/each}}</td>
+        <td style="width:50%">{{{partyBox seller.block prefix="Sri/M/s."}}}</td>
+        <td style="width:50%">{{{partyBox purchaser.block prefix="M/s."}}}</td>
       </tr>
     </table>
 

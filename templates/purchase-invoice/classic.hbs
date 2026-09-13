@@ -23,6 +23,13 @@
   .no-b td, .no-b th { border: none; }
   .grey td, .grey th, td.grey { background: #e8e8e8; font-weight: bold; }
   .pair { font-size: 8pt; white-space: nowrap; }
+  /* Party box (the partyBox helper) — name, street, town-PIN, state+code,
+     then the remaining details two per row. Fixed columns so the right-hand
+     values line up down the box. */
+  .pb { width: 100%; table-layout: fixed; border-collapse: collapse; }
+  .pb td { height: auto; border: none; padding: 0.4pt 0; font-size: 8pt; vertical-align: top; white-space: nowrap; }
+  .pb td[colspan] { white-space: normal; }
+  .pb .pb-nm, .pb .pb-v { font-weight: bold; }
   .items th { background: #e8e8e8; font-weight: bold; font-size: 7.5pt; text-align: center; white-space: pre-line; }
   .items td { font-size: 9pt; }
   {{#if stripe}} .items tbody tr:nth-child(even) td { background: #ECECEC; } {{/if}}
@@ -62,14 +69,8 @@
   <table>
     <tr><td class="grey center" style="width:50%">BILLED TO</td><td class="grey center" style="width:50%">SHIPPED TO</td></tr>
     <tr>
-      <td style="width:50%">
-        {{#each plainLines}}<div>{{this}}</div>{{/each}}
-        {{#each pairLines}}<div class="pair">{{this.[0]}} : {{this.[1]}}</div>{{/each}}
-      </td>
-      <td style="width:50%">
-        {{#each plainLines}}<div>{{this}}</div>{{/each}}
-        {{#each pairLines}}<div class="pair">{{this.[0]}} : {{this.[1]}}</div>{{/each}}
-      </td>
+      <td style="width:50%">{{{partyBox buyerBlock}}}</td>
+      <td style="width:50%">{{{partyBox buyerBlock}}}</td>
     </tr>
   </table>
 

@@ -23,7 +23,16 @@
   /* Party cells: equal height so BILLED TO / SHIPPED TO read as two aligned
      columns even when one side has fewer lines. */
   .parties td { vertical-align: top; }
-  .parties tr:not(.bar) td { height: 58pt; }
+  /* Party box (the partyBox helper) — name, street, town-PIN, state+code,
+     then the remaining details two per row. Fixed columns so the right-hand
+     values line up down the box. */
+  .parties .pb { width: 100%; table-layout: fixed; border-collapse: collapse; }
+  .parties .pb td { height: auto; border: 0; padding: 0.4pt 0; font-size: 8pt; vertical-align: top; white-space: nowrap; }
+  .parties .pb td[colspan] { white-space: normal; }
+  .parties .pb .pb-nm, .parties .pb .pb-v { font-weight: bold; }
+  /* Only the OUTER party cells take the fixed height — without the child
+     combinator this also stretched every row of the nested party box. */
+  .parties > tbody > tr:not(.bar) > td { height: 58pt; }
   /* Soft-green header/band + column-header fill, matching the commission bill. */
   .bar td { font-weight: bold; background: #e8f1e0; }
   .items th { font-weight: bold; font-size: 7pt; text-align: center; background: #e8f1e0; }
@@ -58,14 +67,8 @@
   <table class="parties">
     <tr class="bar c b"><td style="width:50%">BILLED TO</td><td style="width:50%">SHIPPED TO</td></tr>
     <tr>
-      <td>
-        {{#each plainLines}}<div class="b">{{this}}</div>{{/each}}
-        {{#each pairLines}}<div class="muted"><span class="lbl2">{{this.[0]}}</span>: <span class="b">{{this.[1]}}</span></div>{{/each}}
-      </td>
-      <td>
-        {{#each plainLines}}<div class="b">{{this}}</div>{{/each}}
-        {{#each pairLines}}<div class="muted"><span class="lbl2">{{this.[0]}}</span>: <span class="b">{{this.[1]}}</span></div>{{/each}}
-      </td>
+      <td>{{{partyBox buyerBlock}}}</td>
+      <td>{{{partyBox buyerBlock}}}</td>
     </tr>
   </table>
 

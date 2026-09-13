@@ -40,6 +40,13 @@
   .parties .lbl { font-size: 7pt; text-transform: uppercase; color: var(--accent); font-weight: bold; letter-spacing: .5pt; }
   .parties .nm { font-weight: bold; font-size: 9.5pt; margin-top: 2pt; }
   .parties .ln { font-size: 8pt; color: #555; }
+  /* Party box (the partyBox helper) — name, street, town-PIN, state+code,
+     then the remaining details two per row. Fixed columns so the right-hand
+     values line up down the box. */
+  .parties .pb { width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 2pt; }
+  .parties .pb td { height: auto; font-size: 8pt; color: #555; padding: 0; vertical-align: top; white-space: nowrap; }
+  .parties .pb td[colspan] { white-space: normal; }
+  .parties .pb .pb-nm { font-weight: bold; font-size: 9.5pt; color: #222; }
   table.items { width: 100%; border-collapse: collapse; margin-top: 10pt; border: 1pt solid var(--line); }
   /* Pagination: when a long invoice spills onto a second page, repeat the
      column header there and never split a single row across the break. */
@@ -90,19 +97,11 @@
   <div class="parties">
     <div>
       <div class="lbl">Bill To</div>
-      <div class="nm">{{billTo.name}}</div>
-      {{#if billTo.addr}}<div class="ln">{{billTo.addr}}</div>{{/if}}
-      {{#if billTo.place}}<div class="ln">{{billTo.place}}</div>{{/if}}
-      {{#if billTo.gstin}}<div class="ln">GSTIN {{billTo.gstin}}</div>{{/if}}
-      {{#if billTo.state}}<div class="ln">{{billTo.state}} · Code {{billTo.stCode}}</div>{{/if}}
+      {{{partyBox billTo.block}}}
     </div>
     <div>
       <div class="lbl">Ship To</div>
-      <div class="nm">{{ship.name}}</div>
-      {{#if ship.addr}}<div class="ln">{{ship.addr}}</div>{{/if}}
-      {{#if ship.place}}<div class="ln">{{ship.place}}</div>{{/if}}
-      {{#if ship.gstin}}<div class="ln">GSTIN {{ship.gstin}}</div>{{/if}}
-      {{#if ship.state}}<div class="ln">{{ship.state}} · Code {{ship.stCode}}</div>{{/if}}
+      {{{partyBox ship.block}}}
     </div>
   </div>
 
