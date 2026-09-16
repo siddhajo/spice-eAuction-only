@@ -8639,7 +8639,9 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
          another (splits the source allocation around the moved range)
      Opened from the Auctions tab "🗂️" action button per row.
      ════════════════════════════════════════════════════════════ -->
-<div class="modal-bg" id="alloc-modal"><div class="modal" style="max-width:720px">
+<!-- Wider than a standard modal: both panels lay their lot chips out 15 to a
+     row (ALLOC_CHIPS_PER_ROW), and at 720px a 3-digit chip had no room left. -->
+<div class="modal-bg" id="alloc-modal"><div class="modal" style="max-width:min(1100px,96vw)">
   <h2 style="margin-bottom:6px">Lot Allocations — Auction #<span id="alloc-modal-ano"></span></h2>
 
   <div style="display:flex;gap:0;margin-bottom:14px;border-bottom:2px solid var(--border)">
@@ -22336,6 +22338,14 @@ async function closeDepot(branch) {
   }
 }
 
+// Lot chips per row, on BOTH allocation grids (Edit Allocations cards and the
+// Reassign Lots tiles). A fixed count — not "as many as fit" — is what makes
+// a lot number findable: the same column holds the same last digit on every
+// branch, so 047 sits under 032 sits under 017, and the eye counts rows
+// instead of scanning. Change it here and both grids follow.
+const ALLOC_CHIPS_PER_ROW = 15;
+const ALLOC_CHIP_GRID = `display:grid;grid-template-columns:repeat(${ALLOC_CHIPS_PER_ROW},minmax(0,1fr))`;
+
 function renderAllocEditCards(stats) {
   const host = document.getElementById('alloc-edit-cards');
   if (!host) return;
@@ -22406,7 +22416,9 @@ function renderAllocEditCards(stats) {
           ? `Lot ${l.lot} — already entered${l.seller ? ' by ' + l.seller : ''} (locked)`
           : (isMark ? `Lot ${l.lot} — marked for delete (click to unmark)` : `Lot ${l.lot} — free (click to mark for delete)`));
       const cf = isCarried ? '<span style="font-size:9px;margin-right:2px">↻</span>' : '';
-      return `<span data-lot="${esc(l.lot)}" title="${esc(title)}" style="${style};display:inline-flex;align-items:center;justify-content:center;min-width:46px;height:28px;padding:0 8px;border-radius:6px;font-size:12px;font-family:monospace;user-select:none"${click}>${cf}${esc(l.lot)}</span>`;
+      // The chip fills its grid cell — a min-width would push the 15th chip
+      // onto a row of its own on a narrow screen.
+      return `<span data-lot="${esc(l.lot)}" title="${esc(title)}" style="${style};display:flex;align-items:center;justify-content:center;min-width:0;height:28px;padding:0 4px;border-radius:6px;font-size:12px;font-family:monospace;user-select:none;box-sizing:border-box;overflow:hidden"${click}>${cf}${esc(l.lot)}</span>`;
     }).join('');
 
     return `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04)">
@@ -22421,7 +22433,7 @@ function renderAllocEditCards(stats) {
           <button type="button" class="btn btn-o" style="height:24px;padding:0 10px;font-size:11px;font-weight:600" onclick="_allocToggleHide('${esc(cardKey)}')">${hidden ? 'Show' : 'Hide'}</button>
         </div>
       </div>
-      ${hidden ? '' : `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;max-height:230px;overflow:auto">${chips || '<span style="font-size:11px;color:var(--text3)">empty range</span>'}</div>
+      ${hidden ? '' : `<div style="${ALLOC_CHIP_GRID};gap:6px;margin-bottom:10px;max-height:230px;overflow:auto">${chips || '<span style="font-size:11px;color:var(--text3)">empty range</span>'}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button type="button" class="btn btn-o" style="height:26px;padding:0 12px;font-size:11px;font-weight:600" onclick="_allocMarkAllFree('${esc(branch)}')" title="Mark every free lot in ${escAttr(branch)} for delete">Mark all free for delete</button>
         <button type="button" class="btn btn-o" style="height:26px;padding:0 12px;font-size:11px;font-weight:600" onclick="_allocClearMarks('${esc(branch)}')" title="Unmark every lot in ${escAttr(branch)}">Clear marks</button>
@@ -22642,7 +22654,7 @@ function renderReassignTiles() {
         <span>📍 ${esc(branch)}</span>
         <span style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0">${movableTxt} · ${s.used}/${s.total} used</span>
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:5px">`;
+      <div style="${ALLOC_CHIP_GRID};gap:5px">`;
     for (const r of (s.ranges || [])) {
       for (const t of (r.lots || [])) {
         const selected = _raSelected.has(t.lot);
@@ -22664,7 +22676,7 @@ function renderReassignTiles() {
         const gl = raTileStyle(t.state).glyph;
         const glyph = (gl && !selected) ? `<span style="opacity:.7;font-size:10px;margin-right:3px">${gl}</span>` : '';
         // Bigger, bolder type than the old 11px: this grid gets read at night.
-        html += `<div title="${esc(tip)}" data-lot="${esc(t.lot)}" data-branch="${esc(branch)}" data-state="${esc(t.state)}"${handlers} style="${raTileCss(t.state, selected)};padding:5px 7px;border-radius:5px;font-size:12.5px;font-weight:700;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-width:50px;text-align:center;cursor:${dis?'not-allowed':'pointer'};user-select:none;touch-action:none">${glyph}${esc(t.lot)}</div>`;
+        html += `<div title="${esc(tip)}" data-lot="${esc(t.lot)}" data-branch="${esc(branch)}" data-state="${esc(t.state)}"${handlers} style="${raTileCss(t.state, selected)};padding:5px 7px;border-radius:5px;font-size:12.5px;font-weight:700;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-width:0;box-sizing:border-box;overflow:hidden;text-align:center;cursor:${dis?'not-allowed':'pointer'};user-select:none;touch-action:none">${glyph}${esc(t.lot)}</div>`;
       }
     }
     html += `</div></div>`;
