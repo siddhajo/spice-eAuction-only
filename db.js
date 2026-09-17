@@ -811,6 +811,37 @@ async function initDb() {
     last_response_raw TEXT
   )`);
 
+  // ── GST LOOKUP API STATE, PER PROVIDER ─────────────────────
+  // Supersedes the single-row cache above. Two services can answer a GSTIN
+  // (gstincheck.co.in and gstinapi.in) and each sells its own credits, so
+  // one shared row made the Settings card show the OTHER provider's balance
+  // — and pointed "recharge" at a plan the operator had already topped up.
+  // One row per provider id; the selected provider decides which is read.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS gst_provider_state (
+    provider TEXT PRIMARY KEY,
+    credits_remaining INTEGER,
+    credits_total INTEGER,
+    plan_expires_at TEXT,
+    last_checked_at TEXT,
+    last_http_status INTEGER,
+    last_response_raw TEXT
+  )`);
+  // One-time carry-over: whatever the old single row holds was observed
+  // through gstincheck (the only provider that existed when it was written).
+  try {
+    const legacy = wrapped.get('SELECT * FROM gst_api_state WHERE id = 1');
+    const already = wrapped.get("SELECT provider FROM gst_provider_state WHERE provider = 'gstincheck'");
+    if (legacy && !already) {
+      wrapped.run(
+        `INSERT INTO gst_provider_state
+           (provider, credits_remaining, credits_total, plan_expires_at, last_checked_at, last_response_raw)
+         VALUES ('gstincheck', ?, ?, ?, ?, ?)`,
+        [legacy.credits_remaining, legacy.credits_total, legacy.plan_expires_at,
+         legacy.last_checked_at, legacy.last_response_raw]
+      );
+    }
+  } catch (_) { /* fresh DB — nothing to carry over */ }
+
   // ── WHATSAPP CLOUD API ─────────────────────────────────────
   // Single-row credential + template store (id pinned to 1). DB-side
   // fallback for the WhatsApp config; process.env values take priority at

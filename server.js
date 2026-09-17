@@ -2900,7 +2900,28 @@ function _gstExtractCredits(rawBody, rawHeaders) {
     expires:   expires   == null ? null : String(expires),
   };
 }
-function _gstSaveState(db, rawBody, rawHeaders) {
+// Did the provider just say "you have no credits"? The two say it in
+// completely different ways, and neither always ships a number:
+//   • gstincheck — HTTP 200, {"flag":false,"errorCode":"CREDIT_NOT_AVAILABLE"}
+//   • gstinapi   — HTTP 402, {"success":false,"error":"Insufficient credits"}
+// Both are read as "0 left", because the alternative — keeping the last
+// GOOD count on file — leaves the card advertising credits that are known
+// to be spent, which is the one reading that stops nobody recharging.
+function _gstLooksOutOfCredit(body, httpStatus) {
+  if (Number(httpStatus) === 402) return true;
+  const code = String((body && (body.errorCode || body.error_code)) || '').toUpperCase();
+  if (code === 'CREDIT_NOT_AVAILABLE') return true;
+  const msg = String((body && (body.message || body.error)) || '').toLowerCase();
+  return /credit\s*(expire|exhaust|not available|insufficient)/.test(msg)
+      || /(insufficient|no|out of|zero|exhausted|expired)\s+credits?/.test(msg);
+}
+
+// Credits are per PROVIDER — a lookup answered by gstinapi.in says nothing
+// about the gstincheck.co.in balance — so the observed envelope is filed
+// under the provider that produced it. `httpStatus` is kept too: gstinapi
+// reports "out of credits" as a 402 with no number anywhere, which is the
+// only evidence the card has that the plan is spent.
+function _gstSaveState(db, provId, rawBody, rawHeaders, httpStatus) {
   const headerObj = _headersToObj(rawHeaders);
   const credits = _gstExtractCredits(rawBody, headerObj);
   const meta = { _body: {}, _headers: {}, _extracted: credits };
@@ -2916,35 +2937,46 @@ function _gstSaveState(db, rawBody, rawHeaders) {
     }
   }
   const now = new Date().toISOString();
-  const exists = db.get('SELECT id FROM gst_api_state WHERE id = 1');
-  if (!exists) {
+  const provider = String(provId || 'gstincheck');
+  const status = Number.isFinite(Number(httpStatus)) ? Number(httpStatus) : null;
+  // A refusal with no number is still news: pin the balance at 0 instead of
+  // letting the last good count ride on as if nothing had happened.
+  if (credits.remaining == null && _gstLooksOutOfCredit(rawBody, status)) credits.remaining = 0;
+  const cur = db.get('SELECT * FROM gst_provider_state WHERE provider = ?', [provider]);
+  if (!cur) {
     db.run(
-      `INSERT INTO gst_api_state
-        (id, credits_remaining, credits_total, plan_expires_at, last_checked_at, last_response_raw)
-       VALUES (1, ?, ?, ?, ?, ?)`,
-      [credits.remaining, credits.total, credits.expires, now, JSON.stringify(meta)]
+      `INSERT INTO gst_provider_state
+        (provider, credits_remaining, credits_total, plan_expires_at, last_checked_at, last_http_status, last_response_raw)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [provider, credits.remaining, credits.total, credits.expires, now, status, JSON.stringify(meta)]
     );
   } else {
-    const cur = db.get('SELECT * FROM gst_api_state WHERE id = 1') || {};
     db.run(
-      `UPDATE gst_api_state SET
+      `UPDATE gst_provider_state SET
          credits_remaining = ?, credits_total = ?, plan_expires_at = ?,
-         last_checked_at = ?, last_response_raw = ?
-       WHERE id = 1`,
+         last_checked_at = ?, last_http_status = ?, last_response_raw = ?
+       WHERE provider = ?`,
       [
         credits.remaining ?? cur.credits_remaining ?? null,
         credits.total     ?? cur.credits_total     ?? null,
         credits.expires   ?? cur.plan_expires_at   ?? null,
         now,
+        status,
         JSON.stringify(meta),
+        provider,
       ]
     );
   }
   return credits;
 }
 function _gstStatusFor(db, cfg) {
-  const row = db.get('SELECT * FROM gst_api_state WHERE id = 1') || {};
   const cfgg = cfg || getSettingsFlat(db);
+  // Key, credits and recharge link ALL follow the SELECTED provider. With
+  // two providers configured, showing one's balance under the other's name
+  // is worse than showing none — and a recharge button aimed at the wrong
+  // site sends the operator to buy credits they already have.
+  const prov = _gstProvider(cfgg);
+  const row = db.get('SELECT * FROM gst_provider_state WHERE provider = ?', [prov.id]) || {};
   const warnBelow     = Number(cfgg.gst_warn_below)     || GST_WARN_BELOW_DEFAULT;
   const criticalBelow = Number(cfgg.gst_critical_below) || GST_CRITICAL_BELOW_DEFAULT;
   const remaining = row.credits_remaining == null ? null : Number(row.credits_remaining);
@@ -2954,28 +2986,21 @@ function _gstStatusFor(db, cfg) {
   else if (remaining <  criticalBelow) level = 'critical';
   else if (remaining <  warnBelow)     level = 'warning';
   else                                 level = 'ok';
-  // A provider that reports no credit COUNT can still say it has none left.
-  // gstincheck answers a dead account with {"flag":false,"errorCode":
-  // "CREDIT_NOT_AVAILABLE"} and no number anywhere, which used to leave the
-  // card reading "unknown" — the one state that tells the operator nothing,
-  // on the one occasion they need telling.
+  // A provider that reports no credit COUNT can still say it has none left,
+  // and the two say it in completely different ways:
+  //   • gstincheck — HTTP 200, {"flag":false,"errorCode":"CREDIT_NOT_AVAILABLE"}
+  //   • gstinapi   — HTTP 402, {"success":false,"error":"Insufficient credits"}
+  // Either used to leave the card reading "unknown" — the one state that
+  // tells the operator nothing, on the one occasion they need telling.
   if (level === 'unknown') {
     let lastBody = null;
     try { lastBody = (JSON.parse(row.last_response_raw || 'null') || {})._body || null; } catch (_) {}
-    const code = String((lastBody && (lastBody.errorCode || lastBody.error_code)) || '').toUpperCase();
-    const msg  = String((lastBody && (lastBody.message || lastBody.error)) || '').toLowerCase();
-    if (code === 'CREDIT_NOT_AVAILABLE' || /credit\s*(expire|exhaust|not available|insufficient)/.test(msg)) {
-      level = 'exhausted';
-    }
+    if (_gstLooksOutOfCredit(lastBody, row.last_http_status)) level = 'exhausted';
   }
   let lastEnvelope = null;
   if (row.last_response_raw) {
     try { lastEnvelope = JSON.parse(row.last_response_raw); } catch (_) { lastEnvelope = null; }
   }
-  // Key + recharge link follow the SELECTED provider — with two configured,
-  // pointing a "recharge" button at the other one's website is worse than
-  // showing none.
-  const prov = _gstProvider(cfgg);
   return {
     has_api_key:        !!String(cfgg[prov.keyField] || '').trim(),
     provider:           prov.id,
@@ -2984,10 +3009,12 @@ function _gstStatusFor(db, cfg) {
     credits_total:      row.credits_total == null ? null : Number(row.credits_total),
     plan_expires_at:    row.plan_expires_at || null,
     last_checked_at:    row.last_checked_at || null,
+    last_http_status:   row.last_http_status == null ? null : Number(row.last_http_status),
     warn_below:         warnBelow,
     critical_below:     criticalBelow,
     level,
     recharge_url:       prov.rechargeUrl,
+    dashboard_url:      prov.dashboardUrl || prov.rechargeUrl,
     last_envelope:      lastEnvelope,
   };
 }
@@ -3043,6 +3070,10 @@ const GST_PROVIDERS = {
     label: 'gstincheck.co.in',
     keyField: 'gst_api_key',
     rechargeUrl: 'https://gstincheck.co.in/pricing.html',
+    // Where the key itself is issued / topped up, as opposed to the price
+    // list. The Settings card links both so a spent plan can be refilled
+    // and the new key copied without anyone hunting for the login page.
+    dashboardUrl: 'https://gstincheck.co.in/login.html',
     request: (key, gstin) => ({
       // Key travels in the PATH for this one — never log this URL whole.
       url: `${GST_API_BASE || 'https://sheet.gstincheck.co.in'}/check/${encodeURIComponent(key)}/${encodeURIComponent(gstin)}`,
@@ -3074,6 +3105,7 @@ const GST_PROVIDERS = {
     label: 'gstinapi.in',
     keyField: 'gst_api_key_gstinapi',
     rechargeUrl: 'https://www.gstinapi.in/#pricing',
+    dashboardUrl: 'https://www.gstinapi.in/dashboard',
     request: (key, gstin) => ({
       url: `${GST_API_BASE || 'https://www.gstinapi.in'}/v1/gstin/${encodeURIComponent(gstin)}`,
       options: { headers: { 'x-api-key': key } },
@@ -3186,7 +3218,7 @@ app.get('/api/gst-lookup/:gstin', requireView, async (req, res) => {
     if (!body) throw new Error(`HTTP ${r.status} — no readable response`);
 
     const db = getDb();
-    try { _gstSaveState(db, body, r.headers); } catch (_) { /* best-effort */ }
+    try { _gstSaveState(db, prov.id, body, r.headers, r.status); } catch (_) { /* best-effort */ }
     const apiStatus = _gstStatusFor(db, cfg);
 
     const out = prov.parse(body);
@@ -3906,6 +3938,235 @@ app.get('/api/whatsapp/status', requireView, async (req, res) => {
     }
   }
   res.json(result);
+});
+
+// ── Usage, free-tier headroom and billing ─────────────────────
+// Answers the three questions the operator actually asks — "how many have I
+// sent?", "how many free ones are left?", "how do I top up?" — in one call.
+//
+// Two independent sources, and the panel says which is which:
+//   • the LOCAL send log (whatsapp_messages) — always available and exact for
+//     what THIS install sent: today, this month, and the unique recipients in
+//     the rolling 24h that Meta's messaging limit is actually measured over.
+//   • META (best-effort, never fatal) — the messaging-limit tier for the
+//     business phone number, and the month-to-date free-vs-paid split from
+//     pricing_analytics. Any failure here degrades to the local numbers plus
+//     the reason, it never fails the request.
+//
+// Meta exposes NO top-up/balance API, so "Recharge" can only ever be a deep
+// link into the Meta billing hub. The card says that out loud rather than
+// faking a balance.
+
+// pricing_analytics is a recent edge (the older conversation_analytics now
+// errors outright on v25.0+), so analytics calls run on their own, newer Graph
+// version — sends stay on the v18.0 path that is known to work on this account.
+const WA_ANALYTICS_GRAPH = (process.env.WHATSAPP_GRAPH_VERSION || 'v23.0').trim();
+// Meta reports the limit as a tier name; the numeric cap is not in the API.
+// Unknown/unlimited tiers map to 0 = "no cap to show".
+const WA_TIER_CAPS = {
+  TIER_50: 50, TIER_250: 250, TIER_1K: 1000, TIER_1000: 1000,
+  TIER_2K: 2000, TIER_2000: 2000, TIER_10K: 10000, TIER_10000: 10000,
+  TIER_100K: 100000, TIER_100000: 100000, TIER_UNLIMITED: 0, UNLIMITED: 0,
+};
+// Meta's free service-message allowance is per business phone number per
+// CALENDAR MONTH, so the counters below reset on the 1st.
+const WA_FREE_ALLOWANCE_DEFAULT = 1000;
+// Live Meta figures are cached briefly — the Settings panel re-renders on
+// every filter change and each miss is two round-trips to Graph.
+let _waUsageMetaCache = { at: 0, key: '', data: null };
+const WA_USAGE_CACHE_MS = 60 * 1000;
+
+// GET from Graph with the resolved creds. Returns { ok, json?, error? } and
+// never throws — every caller here is best-effort.
+async function _waGraphGet(cfg, url) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 7000);
+  try {
+    const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + cfg.token }, signal: ctrl.signal });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, error: (j.error && j.error.message) || `HTTP ${r.status}` };
+    return { ok: true, json: j };
+  } catch (e) {
+    return { ok: false, error: e.name === 'AbortError' ? 'Timed out contacting Meta' : e.message };
+  } finally { clearTimeout(to); }
+}
+// Graph nests analytics data points differently per edge and per version
+// (…data[0].data_points on some, …data_points on others). Walk the whole
+// response rather than betting on one shape.
+function _waDataPoints(node) {
+  const out = [];
+  const seen = new Set();
+  const walk = (v) => {
+    if (!v || typeof v !== 'object' || seen.has(v)) return;
+    seen.add(v);
+    if (Array.isArray(v)) return v.forEach(walk);
+    if (Array.isArray(v.data_points)) {
+      for (const p of v.data_points) if (p && typeof p === 'object') out.push(p);
+    }
+    Object.values(v).forEach(walk);
+  };
+  walk(node);
+  return out;
+}
+// Month-to-date free/paid split + spend, straight from Meta.
+async function _waPricingThisMonth(cfg, startUnix, endUnix) {
+  if (!cfg.wabaId) {
+    return { source: 'unavailable', error: 'Set the WhatsApp Business Account ID above to read free/paid usage from Meta.' };
+  }
+  const fields = `pricing_analytics.start(${startUnix}).end(${endUnix}).granularity(DAILY)`
+    + `.dimensions(PRICING_TYPE,PRICING_CATEGORY)`;
+  const url = `https://graph.facebook.com/${WA_ANALYTICS_GRAPH}/${encodeURIComponent(cfg.wabaId)}?fields=${fields}`;
+  const r = await _waGraphGet(cfg, url);
+  if (!r.ok) return { source: 'unavailable', error: r.error };
+  let free = 0, paid = 0, cost = 0;
+  const byCategory = {};
+  for (const p of _waDataPoints(r.json)) {
+    const vol = Number(p.volume) || 0;
+    const isFree = String(p.pricing_type || '').toUpperCase().includes('FREE');
+    if (isFree) free += vol; else { paid += vol; cost += Number(p.cost) || 0; }
+    const cat = String(p.pricing_category || 'other').toLowerCase();
+    if (!byCategory[cat]) byCategory[cat] = { free: 0, paid: 0, cost: 0 };
+    if (isFree) byCategory[cat].free += vol;
+    else { byCategory[cat].paid += vol; byCategory[cat].cost += Number(p.cost) || 0; }
+  }
+  return { source: 'meta', free, paid, cost: Math.round(cost * 100) / 100, byCategory };
+}
+// The 24h messaging limit, as Meta currently rates this phone number.
+// messaging_limit_tier is deprecated — whatsapp_business_manager_messaging_limit
+// replaces it — so ask for both and take whichever comes back.
+async function _waMessagingLimit(cfg) {
+  const url = `https://graph.facebook.com/${WA_ANALYTICS_GRAPH}/${encodeURIComponent(cfg.phoneId)}`
+    + `?fields=whatsapp_business_manager_messaging_limit,messaging_limit_tier,display_phone_number,quality_rating`;
+  const r = await _waGraphGet(cfg, url);
+  if (!r.ok) return { source: 'unavailable', error: r.error };
+  const j = r.json || {};
+  const tier = j.whatsapp_business_manager_messaging_limit || j.messaging_limit_tier || '';
+  return {
+    source: tier ? 'meta' : 'unavailable',
+    tier,
+    qualityRating: j.quality_rating || null,
+    displayPhone: j.display_phone_number || null,
+    error: tier ? '' : 'Meta did not report a messaging limit for this number.',
+  };
+}
+
+// One call behind the "Usage & billing" card in Settings → Integrations.
+// ?fresh=1 skips the 60s Meta cache (the Refresh button sends it).
+app.get('/api/whatsapp/usage', requireView, async (req, res) => {
+  const db = getDb();
+  const cfg = _waConfig(db);
+  const num = (v) => Number(v) || 0;
+  // Pass params only when there ARE params: db.get(sql, undefined) binds one
+  // value to a statement with no placeholders and throws. A swallowed throw
+  // here would quietly report "0 sent", so the failure is logged, not hidden.
+  const one = (sql, args) => {
+    try { return (args ? db.get(sql, args) : db.get(sql)) || {}; }
+    catch (e) { console.warn('[wa-usage] counter query failed:', e.message); return {}; }
+  };
+  const COUNTS = `COUNT(*) AS total,
+    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+    SUM(CASE WHEN status IN ('delivered','read') THEN 1 ELSE 0 END) AS delivered,
+    SUM(CASE WHEN status = 'read' THEN 1 ELSE 0 END) AS seen`;
+  const today = one(`SELECT ${COUNTS} FROM whatsapp_messages
+     WHERE direction = 'out' AND date(created_at) = date('now','localtime')`);
+  const month = one(`SELECT ${COUNTS} FROM whatsapp_messages
+     WHERE direction = 'out' AND strftime('%Y-%m', created_at) = strftime('%Y-%m','now','localtime')`);
+  const all = one(`SELECT ${COUNTS} FROM whatsapp_messages WHERE direction = 'out'`);
+  // The messaging limit counts UNIQUE RECIPIENTS in a moving 24h window, not
+  // messages — ten invoices to one buyer spend one of the 250.
+  const win = one(`SELECT COUNT(DISTINCT phone) AS n FROM whatsapp_messages
+     WHERE direction = 'out' AND phone <> '' AND status <> 'failed'
+       AND created_at >= datetime('now','localtime','-24 hours')`);
+  // A billing block shows up here first: Meta refuses the send and the reason
+  // lands in the log. Surfacing it turns "why is nothing going out?" into a
+  // one-line answer with the Recharge button right beside it.
+  let billingBlock = null;
+  try {
+    const fails = db.all(
+      `SELECT error, created_at FROM whatsapp_messages
+        WHERE direction = 'out' AND status = 'failed' AND error <> ''
+          AND created_at >= datetime('now','localtime','-7 days')
+        ORDER BY id DESC LIMIT 50`);
+    const hit = fails.find(f => /payment|billing|eligib|insufficient|fund|credit/i.test(f.error || ''));
+    if (hit) billingBlock = { error: hit.error, at: hit.created_at };
+  } catch (_) {}
+
+  const allowanceRaw = getSetting(db, 'wa_free_allowance');
+  const allowance = Number.isFinite(parseInt(allowanceRaw, 10)) ? parseInt(allowanceRaw, 10) : WA_FREE_ALLOWANCE_DEFAULT;
+  // The override is echoed back RAW as well as resolved: the card's input box
+  // has to show what was actually saved, not the Meta fallback.
+  const billingCustom = (getSetting(db, 'wa_billing_url') || '').trim();
+  const billingUrl = billingCustom || 'https://business.facebook.com/billing_hub/payment_settings';
+
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const out = {
+    configured: cfg.configured,
+    phoneId: cfg.phoneId,
+    wabaId: cfg.wabaId,
+    asOf: new Date().toISOString(),
+    monthLabel: `${monthStart.toLocaleString('en-US', { month: 'long' })} ${monthStart.getFullYear()}`,
+    sent: {
+      today: { total: num(today.total), delivered: num(today.delivered), read: num(today.seen), failed: num(today.failed) },
+      month: { total: num(month.total), delivered: num(month.delivered), read: num(month.seen), failed: num(month.failed) },
+      total: num(all.total),
+    },
+    limit: { tier: '', cap: 0, used: num(win.n), remaining: null, source: 'unavailable', error: '' },
+    free: { allowance, used: null, remaining: null, paid: null, cost: null, source: 'unavailable', error: '' },
+    billing: {
+      blocked: !!billingBlock,
+      blockError: billingBlock ? billingBlock.error : '',
+      blockAt: billingBlock ? billingBlock.at : '',
+      url: billingUrl,
+      customUrl: billingCustom,
+      insightsUrl: cfg.wabaId
+        ? `https://business.facebook.com/wa/manage/insights/?waba_id=${encodeURIComponent(cfg.wabaId)}`
+        : 'https://business.facebook.com/wa/manage/',
+    },
+  };
+  if (!cfg.configured) {
+    out.free.error = 'WhatsApp Cloud API is not configured.';
+    out.limit.error = 'WhatsApp Cloud API is not configured.';
+    return res.json(out);
+  }
+
+  const cacheKey = `${cfg.phoneId}|${cfg.wabaId}|${monthStart.getMonth()}`;
+  const fresh = String(req.query.fresh || '') === '1';
+  let meta = null;
+  if (!fresh && _waUsageMetaCache.data && _waUsageMetaCache.key === cacheKey
+      && (Date.now() - _waUsageMetaCache.at) < WA_USAGE_CACHE_MS) {
+    meta = _waUsageMetaCache.data;
+    out.cached = true;
+  } else {
+    const [limit, pricing] = await Promise.all([
+      _waMessagingLimit(cfg),
+      _waPricingThisMonth(cfg, Math.floor(monthStart.getTime() / 1000), Math.floor(Date.now() / 1000)),
+    ]);
+    meta = { limit, pricing };
+    _waUsageMetaCache = { at: Date.now(), key: cacheKey, data: meta };
+  }
+
+  const tier = meta.limit.tier || '';
+  const cap = WA_TIER_CAPS[String(tier).toUpperCase()] || 0;
+  out.limit.tier = tier;
+  out.limit.cap = cap;
+  out.limit.source = meta.limit.source;
+  out.limit.error = meta.limit.error || '';
+  out.limit.unlimited = !!tier && !cap;
+  out.limit.remaining = cap ? Math.max(0, cap - out.limit.used) : null;
+  if (meta.limit.qualityRating) out.qualityRating = meta.limit.qualityRating;
+  if (meta.limit.displayPhone) out.displayPhone = meta.limit.displayPhone;
+
+  out.free.source = meta.pricing.source;
+  out.free.error = meta.pricing.error || '';
+  if (meta.pricing.source === 'meta') {
+    out.free.used = meta.pricing.free;
+    out.free.remaining = Math.max(0, allowance - meta.pricing.free);
+    out.free.paid = meta.pricing.paid;
+    out.free.cost = meta.pricing.cost;
+    out.free.byCategory = meta.pricing.byCategory;
+  }
+  res.json(out);
 });
 
 // Upsert WhatsApp credentials + template config. Secrets (token, app secret,

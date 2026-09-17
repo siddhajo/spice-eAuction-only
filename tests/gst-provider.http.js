@@ -55,6 +55,8 @@ const stub = http.createServer((req, res) => {
   if (req.url.startsWith('/v1/gstin/')) {
     if (req.headers['x-api-key'] !== 'NEWKEY') return send(401, { success: false, error: 'Invalid API key' });
     if (mode === 'credit') return send(402, { success: false, error: 'Insufficient credits', credits_remaining: 0 });
+    // The same refusal with no number anywhere — some plans answer like this.
+    if (mode === 'credit_nonum') return send(402, { success: false, error: 'Insufficient credits' });
     return send(200, { success: true, gstin: GSTIN, credits_remaining: 487, data: {
       gstin: GSTIN, legal_name: 'Sabira Burvin Traders', trade_name: 'Sabira Spices',
       status: 'Active', registration_date: '2017-07-01', state_code: '33',
@@ -213,6 +215,33 @@ const setCfg = (settings) => api('PUT', '/api/company-settings', { settings });
   const bad = await api('GET', '/api/gst-lookup/NOTAGSTIN');
   check('refused with 400', bad.status === 400, String(bad.status));
   check('and no provider was called', hits.length === n0, `${hits.length} vs ${n0}`);
+
+  console.log('\n[11] Each provider keeps its OWN balance — switching never shows the other\'s');
+  mode = 'ok';
+  await setCfg({ gst_api_provider: 'gstinapi', gst_api_key_gstinapi: 'NEWKEY' });
+  await api('GET', '/api/gst-lookup/' + GSTIN);
+  st = (await api('GET', '/api/gst-lookup/status')).d;
+  check('gstinapi reports its own count', st.credits_remaining === 487 && st.level === 'ok', JSON.stringify(st));
+  await setCfg({ gst_api_provider: 'gstincheck' });
+  st = (await api('GET', '/api/gst-lookup/status')).d;
+  check('gstincheck still reads exhausted, not gstinapi\'s 487',
+        st.provider === 'gstincheck' && st.credits_remaining !== 487 && st.level === 'exhausted',
+        JSON.stringify(st));
+  check('and recharge points at gstincheck', /gstincheck/.test(st.recharge_url || ''), st.recharge_url);
+  await setCfg({ gst_api_provider: 'gstinapi' });
+  st = (await api('GET', '/api/gst-lookup/status')).d;
+  check('switching back restores gstinapi\'s count with no new lookup',
+        st.credits_remaining === 487 && st.level === 'ok', JSON.stringify(st));
+  check('and the dashboard link names the provider that sells the credits',
+        /gstinapi\.in/.test(st.dashboard_url || ''), st.dashboard_url);
+
+  console.log('\n[12] gstinapi out of credits with NO number — still EXHAUSTED, never "unknown"');
+  mode = 'credit_nonum';
+  d = (await api('GET', '/api/gst-lookup/' + GSTIN)).d;
+  check('the lookup falls back to structural', d.source === 'structural', d.source);
+  st = (await api('GET', '/api/gst-lookup/status')).d;
+  check('the card reads EXHAUSTED', st.level === 'exhausted', JSON.stringify(st));
+  check('the 402 is remembered as the evidence', st.last_http_status === 402, String(st.last_http_status));
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
   cleanup();

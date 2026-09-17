@@ -127,7 +127,7 @@ Everything lives in one file: **`data/config.db`**. Key tables:
 | **Masters** | `traders`, `trader_banks`, `buyers` | Sellers/poolers (+ bank accounts) and buyers. |
 | **Auction data** | `auctions`, `lots`, `lot_allocations` | Trade sessions, lot records, branch lot-number ranges. |
 | **Documents** | `invoices`, `purchases`, `bills`, `debit_notes` | Generated financial documents. |
-| **Integrations** | `whatsapp_config`, `whatsapp_messages`, `gst_api_state`, `route_distances` | External service state and caches. |
+| **Integrations** | `whatsapp_config`, `whatsapp_messages`, `gst_provider_state`, `route_distances` | External service state and caches. |
 | **Audit / safety** | `audit_log`, `import_log`, `reassign_log`, `delete_log` | Change history, import undo, deletion forensics. |
 
 ---

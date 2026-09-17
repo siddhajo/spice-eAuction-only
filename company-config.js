@@ -27,6 +27,11 @@ const HIDDEN_SETTING_KEYS = new Set([
   'flag_discount_in_prate',  // Flags: "Roll Discount into P_Rate (Grade 1 only)"
   'deduction1_inclusive',    // Rates: "Deduction (Pooler) — discount-inclusive (Grade 1 only)"
   'default_auction_id',      // Internal: the admin-chosen default trade (set via the Auctions tab ⭐, not a typed setting)
+  // WhatsApp usage/billing knobs — edited inline on the Usage & billing
+  // card in Settings → Integrations, so they must not ALSO appear as raw
+  // text boxes in the settings grid above it.
+  'wa_free_allowance',
+  'wa_billing_url',
 ]);
 
 const DEFAULTS = [
@@ -686,6 +691,13 @@ const DEFAULTS = [
   { key: 'link_lots_label',  value: '', category: 'integrations', label: 'Lots Screen — Link Button Label',         type: 'text' },
   { key: 'link_tally_url',   value: '', category: 'integrations', label: 'To Tally Screen — Top-right Link URL',    type: 'text' },
   { key: 'link_tally_label', value: '', category: 'integrations', label: 'To Tally Screen — Link Button Label',     type: 'text' },
+  // WhatsApp usage & billing. `wa_free_allowance` is Meta's free service-message
+  // allowance per business phone number per month (1,000 at the time of writing) —
+  // a SETTING, not a constant, because Meta has changed it before and nothing in
+  // the API reports it. `wa_billing_url` overrides the Meta billing-hub deep link
+  // the Recharge button opens (e.g. a reseller's own top-up page).
+  { key: 'wa_free_allowance', value: '1000', category: 'integrations', label: 'WhatsApp Free Messages / Month', type: 'text' },
+  { key: 'wa_billing_url',    value: '',     category: 'integrations', label: 'WhatsApp Recharge URL (override)', type: 'text' },
 
   // ── TALLY EXPORT ──────────────────────────────────────────
   // REMOVED tally toggles per spec: tally_optional, tally_dispatch_from,
@@ -859,7 +871,7 @@ const CATEGORIES = {
   lot_entry:    { order: 11.5, title: 'Lot Entry Defaults',      icon: '📝' },
   alerts:       { order: 11.7, title: 'Booking Alerts',          icon: '🚨', description: 'Soft alerts when grade-2 bookings dominate an auction. When grade-2 weight exceeds the threshold percentage of the total weight booked so far, the depot manager is notified (in-app + WhatsApp); any further grade-2 booking after that escalates to the immediate superior. Each level fires once per auction.' },
   security:     { order: 11.8, title: 'Logins & Sessions',       icon: '🔐', description: 'Controls concurrent sign-ins. With the block on, a username that is already active anywhere cannot be signed in again — the second person is told who holds the session. A session counts as active only while it has made a request within the idle window, so a browser closed without logging out frees the username by itself. Admins can also clear a stuck session at once from Users → Sign out.' },
-  integrations: { order: 12,   title: 'Integrations',            icon: '🔌', description: 'Optional third-party services. The GST API key enables auto-fetching trade name and address when you enter a GSTIN (get a free key at gstincheck.co.in). The WhatsApp Business card lets you send invoices/notices straight from the app via Meta’s Cloud API.' },
+  integrations: { order: 12,   title: 'Integrations',            icon: '🔌', description: 'Optional third-party services. A GST lookup key enables auto-fetching trade name and address when you enter a GSTIN — pick the provider (gstincheck.co.in or gstinapi.in) and paste its own key. The status card above the fields shows that provider’s credit balance and links straight to its recharge page, so a spent plan can be topped up without leaving the screen. The WhatsApp Business card lets you send invoices/notices straight from the app via Meta’s Cloud API.' },
   tally:        { order: 13,   title: 'To Tally',                icon: '📤' },
 };
 

@@ -1008,6 +1008,11 @@ body[data-login-layout="showcase"] .login-hero{order:2;max-width:none;align-self
 .set-group-body{display:none}
 .set-group.open>.set-group-body{display:block}
 .set-group .sgrid{padding:8px 16px 12px}
+/* Sections whose body is a rendered card rather than a field grid
+   (the GST status panel, the WhatsApp cards). Same inner gutter as
+   .sgrid so a run of mixed sections lines up down the panel. */
+.set-group .set-group-raw{padding:10px 16px 14px}
+.set-group .set-group-raw>*+*{margin-top:12px}
 /* Dark mode: cards take the panel's paper tone rather than glaring
    white, and the tints that read as "cardamom, very pale" on the light
    ground become slate — the cardamom-lt token is a saffron/white mix and
@@ -25196,7 +25201,7 @@ const setGroupKey = (ck, title) => ck + '::' + title;
 // One collapsible section card. `inner` is the already-rendered field
 // markup; `count` is what the header badge shows; `icon` is the emoji
 // that leads the title (optional — omit it and the title starts flush).
-function sectionCard(ck, title, hint, count, inner, icon){
+function sectionCard(ck, title, hint, count, inner, icon, preHtml){
   const key  = setGroupKey(ck, title);
   // While a search is active every section opens — collapsing one would
   // hide the very matches the operator is hunting for.
@@ -25211,7 +25216,30 @@ function sectionCard(ck, title, hint, count, inner, icon){
     +   '</span>'
     +   '<span class="g-n">'+count+'</span>'
     + '</div>'
-    + '<div class="set-group-body"><div class="sgrid">'+inner+'</div></div>'
+    + '<div class="set-group-body">'
+    +   (preHtml ? '<div class="set-group-raw">'+preHtml+'</div>' : '')
+    +   '<div class="sgrid">'+inner+'</div></div>'
+    + '</div>';
+}
+
+// A section whose body is NOT a field grid — a rendered card host, say.
+// Same collapsible shell as sectionCard(), so Expand/Collapse-all and the
+// remembered open/closed state cover it without knowing what's inside.
+// `badge` is optional: pass '' for sections that have nothing to count.
+function sectionShell(ck, title, hint, badge, inner, icon){
+  const key  = setGroupKey(ck, title);
+  const open = (_setFilter.trim() || !_setGroupClosed[key]) ? ' open' : '';
+  return '<div class="set-group'+open+'" data-gkey="'+esc(key)+'">'
+    + '<div class="set-group-head" onclick="toggleSetGroup(this)">'
+    +   '<span class="g-arr">▶</span>'
+    +   '<span class="g-txt"><h3>'
+    +     (icon ? '<span class="g-ico">'+esc(icon)+'</span>' : '')
+    +     '<span>'+esc(title)+'</span></h3>'
+    +     (hint ? '<span class="set-group-hint">'+esc(hint)+'</span>' : '')
+    +   '</span>'
+    +   (badge ? '<span class="g-n">'+esc(String(badge))+'</span>' : '')
+    + '</div>'
+    + '<div class="set-group-body"><div class="set-group-raw">'+inner+'</div></div>'
     + '</div>';
 }
 
@@ -25298,6 +25326,68 @@ function renderGroupedFields(ck, fields, renderFn){
   return out.map(g =>
     sectionCard(ck, g.title, g.hint, g.fields.length, g.fields.map(renderFn).join(''), g.icon)
   ).join('');
+}
+
+// ── Settings → Integrations: the panel's own section layout ───────
+// Every other category is a list of field groups, so renderGroupedFields()
+// suffices. Integrations is four live CARDS plus a handful of fields, and
+// bolting the cards on above and below the groups made one long scroll with
+// no way to put any of it away. Here each integration is one collapsible
+// section — GST first (it is the one operators open daily), then the three
+// WhatsApp cards, then the optional screen links.
+//
+// The WhatsApp cards hydrate asynchronously into the hosts below; they are
+// NOT removed when a section is collapsed (.set-group-body only hides), so a
+// closed section still holds live, already-fetched content when reopened.
+const _setGroupSeeded = new Set();
+function renderIntegrationSections(ck, fields, renderField){
+  const pick = (re) => fields.filter(f => re.test(f.key));
+  const gst   = pick(/^gst_api/);
+  const links = pick(/^link_/);
+  const rest  = fields.filter(f => !gst.includes(f) && !links.includes(f));
+  // First visit in this page load: the reference cards start closed so the
+  // tab opens on something readable instead of three screens of tables.
+  // Only seeded once — after that the operator's own collapsing wins.
+  const seedClosed = (title) => {
+    const k = setGroupKey(ck, title);
+    if (_setGroupSeeded.has(k)) return;
+    _setGroupSeeded.add(k);
+    _setGroupClosed[k] = true;
+  };
+  ['WhatsApp usage & billing', 'WhatsApp send log'].forEach(seedClosed);
+
+  // Titles the field groups already own (GST Lookup, Screen Links) keep their
+  // hint and icon from SET_FIELD_GROUPS, so the wording lives in one place.
+  const gmeta = (title, hint, icon) => {
+    const g = (SET_FIELD_GROUPS[ck] || []).find(x => x.title === title) || {};
+    return { hint: g.hint || hint, icon: g.icon || icon };
+  };
+
+  let out = '';
+  if (gst.length) {
+    const m = gmeta('GST Lookup', 'Which service answers a GSTIN, its key, and how many credits that plan has left.', '🔍');
+    out += sectionCard(ck, 'GST Lookup', m.hint, gst.length,
+      gst.map(renderField).join(''), m.icon,
+      '<div id="gst-api-status-host"></div>');
+  }
+  out += sectionShell(ck, 'WhatsApp Business',
+    'Meta Cloud API credentials and the approved template names. Secrets stay server-side.',
+    '', '<div id="whatsapp-config-host"></div>', '📱');
+  out += sectionShell(ck, 'WhatsApp usage & billing',
+    'Free messages left this month, what has been sent, and where to top up.',
+    '', '<div id="whatsapp-usage-host"></div>', '📊');
+  out += sectionShell(ck, 'WhatsApp send log',
+    'Every WhatsApp send with its delivery receipt.',
+    '', '<div id="whatsapp-log-host"></div>', '📨');
+  if (links.length) {
+    const m = gmeta('Screen Links', 'Optional top-right link buttons on the Lots and To Tally screens.', '🔗');
+    out += sectionCard(ck, 'Screen Links', m.hint, links.length,
+      links.map(renderField).join(''), m.icon);
+  }
+  if (rest.length) {
+    out += sectionCard(ck, 'Other Settings', '', rest.length, rest.map(renderField).join(''), '•');
+  }
+  return out;
 }
 
 function renderSettingsPanel(){
@@ -25402,20 +25492,13 @@ function renderSettingsPanel(){
     if (ck === 'company') {
       html += logoUploadWidget('ispl', 'Company Logo');
     }
-    // Integrations tab gets a live status card for the GST lookup API
-    // (credits left, plan expiry, last-checked) ABOVE the API-key input so
-    // the recharge nudge is visible before scrolling. Hydrated by
-    // _renderGstApiStatus() once the panel HTML lands in the DOM.
-    if (ck === 'integrations') {
-      html += '<div id="gst-api-status-host" style="margin-bottom:14px"></div>';
-    }
     // Per-print renderer ENGINE settings (sales_invoice_engine, …) are no
     // longer user-facing — the Layout dropdown below now drives the engine
     // (Classic ⇒ legacy PDFKit, any HTML layout ⇒ html). The keys are kept
     // in company-config.js only as an env/back-compat fallback, so drop them
     // before grouping (an all-engine section would otherwise render empty).
     const visible=fields.filter(f=>!/_engine$/.test(f.key));
-    html+=renderGroupedFields(ck,visible,function(f){
+    const renderField = function(f){
       // Litre / Moisture pick lists. The value is a plain string, but it is
       // worth showing what it expands to — "310-600:10" says nothing about
       // whether it produced 30 values or 3 — plus a one-click fill for the
@@ -25427,6 +25510,16 @@ function renderSettingsPanel(){
           + `<div class="fg-note"><span id="cho-note-${f.key}">${choicePreviewText(f.value)}</span> · `
           + `<a href="#" onclick="fillChoiceRange('${f.key}','${rec}');return false">use ${rec}</a></div></div>`;
       }
+      // The two key boxes look identical, and only the SELECTED provider's
+      // one is ever read. Say which is which right under the field — a key
+      // pasted into the idle box is silently ignored, which reads exactly
+      // like a key that does not work.
+      if(f.key==='gst_api_key'||f.key==='gst_api_key_gstinapi'){
+        const provOf = f.key==='gst_api_key' ? 'gstincheck' : 'gstinapi';
+        const sel = String((_sdata.integrations||[]).find(x=>x.key==='gst_api_provider')?.value || 'gstincheck');
+        const live = sel === provOf;
+        return `<div class="fg"><label>${esc(f.label)}</label><input type="text" data-key="${f.key}" value="${esc(f.value||'')}" autocomplete="off" spellcheck="false"><div class="fg-note" data-gst-key-note="${provOf}">${_gstKeyNote(live)}</div></div>`;
+      }
       if(f.key==='gst_api_provider'){
         // Which service the "Fetch from GSTIN" button calls. Each provider
         // keeps its own key field below, so switching is one click and
@@ -25437,7 +25530,7 @@ function renderSettingsPanel(){
         ];
         const sel=String(f.value||'gstincheck');
         const opts=GST_PROVIDER_OPTIONS.map(o=>`<option value="${o.value}"${sel===o.value?' selected':''}>${esc(o.label)}</option>`).join('');
-        return `<div class="fg fg-wide"><label>${esc(f.label)}${helpTip('Which GSTIN lookup service the Fetch button calls. Each provider needs its OWN key — a key issued by one is not accepted by the other — so both key fields are kept below and switching provider never loses the other key. The status card above always reports the provider selected here.')}</label><select data-key="${f.key}">${opts}</select></div>`;
+        return `<div class="fg fg-wide"><label>${esc(f.label)}${helpTip('Which GSTIN lookup service the Fetch button calls. Each provider needs its OWN key — a key issued by one is not accepted by the other — so both key fields are kept below and switching provider never loses the other key. The status card above always reports the provider selected here.')}</label><select data-key="${f.key}" onchange="_gstMarkActiveKeyField(this.value)">${opts}</select></div>`;
       }
       if(f.key==='bank_format'){
         // Bank Payment layout picker. Keep these options in sync with the
@@ -25467,19 +25560,18 @@ function renderSettingsPanel(){
         return `<div class="fg"><label>${esc(f.label)}${helpTip('Default print layout for this document. "Classic (Legacy)" is the original PDFKit format; other layouts (Modern, Letterhead) render from HTML templates. You can still override the layout per print from the document screen’s Print Layout selector.')}</label><select data-key="${f.key}">${opts}</select></div>`;
       }
       return fld(f);
-    });
+    };
+    // Integrations lays its own sections out — the GST status card and the
+    // three WhatsApp cards are section BODIES there, not loose blocks bolted
+    // above and below the field groups.
+    html += (ck === 'integrations')
+      ? renderIntegrationSections(ck, visible, renderField)
+      : renderGroupedFields(ck, visible, renderField);
     // Rates & Charges: a history panel below the grid. Stays empty until the
     // operator hovers/focuses one of the tracked rate fields (see
     // wireRateHistory), then shows that field's recent value changes.
     if (ck === 'rates') {
       html += '<div id="rate-history-host" style="margin-top:18px"></div>';
-    }
-    // WhatsApp Business config lives in a dedicated server-side table
-    // (secrets never reach the browser), so it renders as its own card
-    // below the standard integration fields rather than via fld().
-    if (ck === 'integrations') {
-      html += '<div id="whatsapp-config-host" style="margin-top:18px"></div>';
-      html += '<div id="whatsapp-log-host" style="margin-top:14px"></div>';
     }
   }
   document.getElementById('settings-root').innerHTML=html;
@@ -25496,6 +25588,7 @@ function renderSettingsPanel(){
   }
   if (ck === 'integrations' && typeof _renderWhatsappCard === 'function') {
     try { _renderWhatsappCard(); } catch(_){}
+    try { _renderWhatsappUsage(); } catch(_){}
     try { _renderWhatsappLog(); } catch(_){}
   }
   // Reset dirty flag on panel render so stale dirty state doesn't trigger
@@ -25584,6 +25677,19 @@ function wireRateHistory(){
   });
 }
 
+// The "which key box is live?" note, shared by the initial render and the
+// provider dropdown's onchange so both can never drift apart.
+const _gstKeyNote = (live) => live
+  ? '<span style="color:#065f46;font-weight:600">● In use</span> — the Fetch button calls this provider.'
+  : '<span style="color:var(--text3)">○ Not in use</span> — kept so switching provider costs no re-typing.';
+// Repaint the notes the moment the provider changes, without re-rendering
+// the panel: a re-render would throw away anything typed but not yet saved.
+function _gstMarkActiveKeyField(sel){
+  document.querySelectorAll('[data-gst-key-note]').forEach(el => {
+    el.innerHTML = _gstKeyNote(el.dataset.gstKeyNote === String(sel));
+  });
+}
+
 // ── Settings → Integrations: GST lookup API status card ───────────
 // Self-contained so it can be called from renderSettingsPanel() and from
 // gstLookup() (which refreshes it live when the operator is on the panel).
@@ -25623,6 +25729,12 @@ async function _renderGstApiStatus(){
     rows.push(['API key', '<span style="color:#065f46;font-weight:600">✓ configured</span>']);
   } else {
     rows.push(['API key', `<span style="color:#991b1b;font-weight:600">not set for ${esc(provName)}</span> — paste that provider's key into its field below to enable live lookups`]);
+  }
+  // Where the operator goes to buy more credits and copy the refreshed key.
+  // Both providers sell their own plans, so this link — like the recharge
+  // button above — always points at the SELECTED one.
+  if (s.dashboard_url) {
+    rows.push(['Account', `<a href="${s.dashboard_url}" target="_blank" rel="noopener" style="color:${tone.fg};font-weight:600">${esc(provName)} dashboard ↗</a> — buy credits, then copy the key into the field below`]);
   }
   if (s.credits_remaining != null) {
     const total = s.credits_total != null ? ` of ${fmtI(s.credits_total, 0)}` : '';
@@ -25664,6 +25776,8 @@ async function _renderGstApiStatus(){
         <span style="font-size:18px;line-height:1">${tone.icon}</span>
         <strong style="font-size:13.5px;min-width:0">${esc(tone.head)}</strong>
         <span style="flex:1;min-width:12px"></span>
+        ${s.has_api_key ? `<button type="button" onclick="_gstCheckBalanceNow()"
+           style="font-size:11.5px;font-weight:700;background:transparent;color:${tone.fg};border:1px solid ${tone.fg};padding:5px 12px;border-radius:6px;cursor:pointer">↻ Check balance now</button>` : ''}
         <a href="${rechargeHref}" target="_blank" rel="noopener"
            style="font-size:11.5px;font-weight:700;background:${tone.fg};color:#fff;padding:5px 12px;border-radius:6px;text-decoration:none">${esc(rechargeTxt)}</a>
       </div>
@@ -25672,10 +25786,48 @@ async function _renderGstApiStatus(){
       </div>
       <div style="margin-top:10px;font-size:11.5px;color:var(--text3);line-height:1.5">
         Credits refresh automatically every time someone runs a real GST lookup (from the Sellers or Buyers form).
-        ${s.has_api_key ? '' : 'Paste your key from the gstincheck.co.in dashboard into the field below to start tracking.'}
+        ${s.has_api_key
+          ? `Recharged at ${esc(provName)} just now? Neither provider publishes a free balance endpoint — press <strong>Check balance now</strong> to spend one lookup and see the new count.`
+          : `Paste your key from the ${esc(provName)} dashboard into the field below to start tracking.`}
       </div>
       ${envelopeHtml}
     </div>`;
+}
+
+// Spend ONE lookup to refresh the credit count. Neither provider offers a
+// free "what is my balance?" endpoint — both report credits only alongside
+// a real GSTIN lookup — so after recharging, the card would keep showing the
+// spent plan until the next seller/buyer fetch. This button closes that loop
+// without making the operator invent a GSTIN to look up: it reuses the
+// company's own, and says plainly what it costs before spending anything.
+const _GSTIN_RE_UI = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+async function _gstCheckBalanceNow(){
+  let gstin = '';
+  try {
+    const cfg = await j('/api/company-settings/flat') || {};
+    gstin = String(cfg.s_gstin || cfg.kl_gstin || cfg.tn_gstin || '').toUpperCase().replace(/\s+/g, '');
+  } catch (_) {}
+  if (!_GSTIN_RE_UI.test(gstin)) {
+    gstin = String(prompt('Type any valid GSTIN to look up — your own company GSTIN is the usual choice.\n\nThe lookup itself is only a vehicle for the credit count that comes back with it.') || '')
+      .toUpperCase().replace(/\s+/g, '');
+    if (!gstin) return;
+    if (!_GSTIN_RE_UI.test(gstin)) { alert('That is not a valid GSTIN — nothing was sent, no credit spent.'); return; }
+  }
+  if (!confirm(`Check the live balance now?\n\nThis runs ONE real lookup on ${gstin} and COSTS ONE CREDIT. The card then shows whatever the provider reports back.`)) return;
+  const host = document.getElementById('gst-api-status-host');
+  if (host) host.style.opacity = '.5';
+  try {
+    const d = await j('/api/gst-lookup/' + encodeURIComponent(gstin));
+    await _renderGstApiStatus();
+    // A refusal is the answer too — an empty plan is exactly what this
+    // button exists to reveal, so say so rather than leaving the operator
+    // to read it out of the card.
+    if (d && d.source !== 'live' && d.note) alert(`⚠ ${d.note}`);
+  } catch (e) {
+    alert('Could not reach the lookup service: ' + (e.message || e));
+  } finally {
+    if (host) host.style.opacity = '';
+  }
 }
 
 // ── Settings → Integrations: WhatsApp Business config card ────────
@@ -25708,10 +25860,7 @@ async function _renderWhatsappCard(){
   host.innerHTML = `
     <div style="border:1px solid ${tone.bd};border-radius:10px;background:#fff;overflow:hidden">
       <div style="padding:13px 16px;display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;border-bottom:1px solid ${tone.bd};background:#f9fafb">
-        <span style="font-size:18px;line-height:1">📱</span>
-        <strong style="font-size:13.5px;color:${tone.fg}">WhatsApp Business (Cloud API)</strong>
-        <span style="flex:1;min-width:12px"></span>
-        <span style="font-size:11.5px;font-weight:700;color:${tone.fg};min-width:0;max-width:100%;word-break:break-all;overflow-wrap:anywhere">${tone.icon} ${tone.head}</span>
+        <span style="font-size:12px;font-weight:700;color:${tone.fg};min-width:0;max-width:100%;word-break:break-all;overflow-wrap:anywhere">${tone.icon} ${tone.head}</span>
       </div>
       <div style="padding:14px 16px">
         <div style="font-size:11.5px;color:var(--text3);line-height:1.55;margin-bottom:13px">
@@ -25744,6 +25893,172 @@ async function _renderWhatsappCard(){
         </div>
       </div>
     </div>`;
+}
+// ── Settings → Integrations: WhatsApp usage & billing ─────────────
+// "How many are left, how many have I sent, and where do I top up?"
+//
+// Two numbers matter before a bulk run and they are NOT the same thing:
+//   • Free messages left this month — Meta's free service-message allowance
+//     (month-to-date free vs paid comes from Meta's pricing_analytics).
+//   • Recipients left in the next 24h — the messaging-limit tier (TIER_250 =
+//     250 UNIQUE recipients per rolling 24h). Ten invoices to one buyer spend
+//     one of those 250; this is what actually stops a big run partway.
+// Anything Meta declines to answer degrades to the local send-log figures
+// plus the reason — the card never invents a balance.
+//
+// Recharge: Meta has no top-up API. The button deep-links into the Meta
+// billing hub (overridable via the Recharge URL field below), which is the
+// only place funds can actually be added.
+async function _renderWhatsappUsage(fresh){
+  const host = document.getElementById('whatsapp-usage-host');
+  if (!host) return;
+  if (!host.innerHTML) host.innerHTML = '<div style="padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:#f9fafb;font-size:12.5px;color:var(--text2)">Loading WhatsApp usage…</div>';
+  let u;
+  try {
+    u = await j('/api/whatsapp/usage' + (fresh ? '?fresh=1' : ''));
+  } catch (e) {
+    host.innerHTML = `<div style="padding:14px 16px;border:1px solid #fecaca;border-radius:10px;background:#fef2f2;color:#991b1b;font-size:12.5px">Could not load WhatsApp usage: ${esc((e&&e.message)||String(e))}</div>`;
+    return;
+  }
+  const n = (v) => (v == null ? '—' : Number(v).toLocaleString('en-IN'));
+  const pct = (used, cap) => (!cap ? 0 : Math.max(0, Math.min(100, Math.round((used / cap) * 100))));
+  // Green while there is room, amber past 75%, red past 90% — the operator
+  // should see "top up / slow down" before a run starts failing.
+  const bar = (used, cap) => {
+    const p = pct(used, cap);
+    const col = p >= 90 ? '#dc2626' : p >= 75 ? '#d97706' : '#16a34a';
+    return `<div style="height:6px;border-radius:3px;background:#e5e7eb;overflow:hidden;margin-top:7px">
+      <div style="height:100%;width:${p}%;background:${col}"></div></div>`;
+  };
+  const tile = (label, value, sub, extra) => `
+    <div style="border:1px solid var(--border);border-radius:9px;padding:11px 13px;background:#fff;min-width:0">
+      <div style="font-size:10.5px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.35px">${label}</div>
+      <div style="font-size:23px;font-weight:800;color:var(--text);line-height:1.25;margin-top:3px;word-break:break-word">${value}</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px;line-height:1.45">${sub || ''}</div>
+      ${extra || ''}
+    </div>`;
+
+  // 1) Free allowance for the calendar month (Meta-sourced; falls back to a note).
+  //    Read this one carefully: "free" is NOT "invoices you can still send".
+  //    Invoice/utility templates are billable unless the contact messaged you
+  //    within the last 24h, so on a normal month this number barely moves
+  //    while the billable count climbs — hence the caveat under the tile.
+  const f = u.free || {};
+  const freeTile = f.source === 'meta'
+    ? tile('Free messages left', n(f.remaining),
+        `${n(f.used)} of ${n(f.allowance)} used · ${esc(u.monthLabel || 'this month')}`,
+        bar(f.used || 0, f.allowance || 0))
+    : tile('Free messages left', '—',
+        `Meta could not be read: ${esc(f.error || 'unavailable')}`);
+  // 2) What this month has actually COST — the number that empties the
+  //    balance, and the one to multiply when sizing the next bulk run.
+  const each = (f.paid && f.cost) ? (f.cost / f.paid) : 0;
+  const money = (v) => Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const billTile = f.source === 'meta'
+    ? tile('Billable this month', n(f.paid),
+        `${f.cost ? `≈ ${money(f.cost)} charged` : 'nothing charged yet'}${each ? ` · ~${each.toFixed(3)} each` : ''}
+         <br><span style="font-size:10.5px">in your Meta account's billing currency</span>`)
+    : tile('Billable this month', '—', 'Needs the WhatsApp Business Account ID + Meta access.');
+  // 3) The 24h messaging limit — the one that stops a bulk run dead.
+  const L = u.limit || {};
+  const limitTile = L.cap
+    ? tile('Recipients left (24h)', n(L.remaining),
+        `${n(L.used)} of ${n(L.cap)} used · ${esc(L.tier || '')}`,
+        bar(L.used || 0, L.cap))
+    : tile('Recipients left (24h)', L.unlimited ? 'Unlimited' : n(L.used) + ' sent',
+        L.unlimited ? `${esc(L.tier)} · ${n(L.used)} unique recipients in the last 24h`
+                    : `${n(L.used)} unique recipients in the last 24h${L.error ? ' · ' + esc(L.error) : ''}`);
+  // 4) + 5) Local send log — always exact, no API needed.
+  const st = (u.sent && u.sent.today) || {};
+  const sm = (u.sent && u.sent.month) || {};
+  const detail = (o) => [o.delivered ? `${n(o.delivered)} delivered` : '', o.failed ? `${n(o.failed)} failed` : '']
+    .filter(Boolean).join(' · ') || 'no receipts yet';
+  const todayTile = tile('Sent today', n(st.total), detail(st));
+  const monthTile = tile('Sent this month', n(sm.total), `${detail(sm)} · from this app's send log`);
+
+  const blocked = u.billing && u.billing.blocked;
+  const billUrl = (u.billing && u.billing.url) || '';
+  const insightsUrl = (u.billing && u.billing.insightsUrl) || '';
+  const btn = (href, label, primary) => `<a href="${esc(href)}" target="_blank" rel="noopener"
+      style="display:inline-block;padding:8px 16px;border-radius:6px;font-weight:${primary?'700':'600'};font-size:12.5px;text-decoration:none;white-space:nowrap;
+             ${primary ? 'background:#25D366;color:#fff;border:none' : 'background:#fff;color:#0f172a;border:1px solid #cbd5e1'}">${label}</a>`;
+
+  host.innerHTML = `
+    <div style="border:1px solid ${blocked ? '#fecaca' : 'var(--border)'};border-radius:10px;background:#fff;overflow:hidden">
+      <div style="padding:13px 16px;display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;border-bottom:1px solid var(--border);background:#f9fafb">
+        <span style="font-size:12px;font-weight:600;color:var(--text2)">${esc(u.monthLabel || '')}${u.displayPhone ? ' · ' + esc(u.displayPhone) : ''}${u.qualityRating ? ' · quality ' + esc(u.qualityRating) : ''}</span>
+        <span style="flex:1;min-width:12px"></span>
+        <button type="button" onclick="_renderWhatsappUsage(true)" style="padding:5px 11px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;font-size:12px;cursor:pointer">Refresh</button>
+      </div>
+      ${blocked ? `<div style="padding:11px 16px;background:#fef2f2;border-bottom:1px solid #fecaca;font-size:12.5px;color:#991b1b">
+        <strong>Sends are being refused for a billing reason.</strong> Meta said:
+        “${esc(u.billing.blockError)}”${u.billing.blockAt ? ` (${esc(String(u.billing.blockAt).slice(0,16))})` : ''}.
+        Top up below, then retry — nothing will go out until the account is funded.
+      </div>` : ''}
+      <div style="padding:14px 16px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:11px">
+          ${freeTile}${billTile}${limitTile}${todayTile}${monthTile}
+        </div>
+        <div style="font-size:11.5px;color:var(--text3);margin-top:10px;line-height:1.55;padding:9px 11px;background:#f9fafb;border:1px solid var(--border);border-radius:8px">
+          <strong>Free ≠ how many invoices you can still send.</strong> Invoice and payment templates are
+          <em>billable</em> — the free allowance only covers messages sent inside an open 24-hour window
+          (i.e. after that contact has messaged you). The number that actually stops a bulk run is
+          <strong>Recipients left (24h)</strong>: ${L.cap ? `this number is rated ${esc(L.tier||'')}, so ${n(L.cap)} unique recipients per rolling 24 hours` : 'the messaging-limit tier Meta has rated this number'}.
+        </div>
+        <div style="margin-top:13px;padding:11px 13px;border:1px solid var(--border);border-radius:9px;background:#f9fafb">
+          <div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Recharge</div>
+          <div style="font-size:11.5px;color:var(--text3);line-height:1.55;margin-bottom:10px">
+            WhatsApp is billed by Meta, and Meta provides no way to add funds from inside another app —
+            the card on file and the balance live in the Meta billing hub. The button below opens it directly;
+            after topping up, hit Refresh here.
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            ${btn(billUrl, 'Add funds / payment settings', true)}
+            ${btn(insightsUrl, 'Meta usage insights')}
+          </div>
+        </div>
+        <div style="margin-top:11px;display:flex;gap:9px;align-items:flex-end;flex-wrap:wrap">
+          <div style="min-width:150px">
+            <label style="display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:3px;text-transform:uppercase;letter-spacing:.3px">Free messages / month</label>
+            <input id="wa-free-allowance" type="number" min="0" step="1" value="${esc(f.allowance == null ? '' : f.allowance)}"
+              style="width:100%;padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px;font-size:12.5px;box-sizing:border-box">
+          </div>
+          <div style="flex:1;min-width:210px">
+            <label style="display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:3px;text-transform:uppercase;letter-spacing:.3px">Recharge URL (override)</label>
+            <input id="wa-billing-url" type="text" value="${esc(u.billing && u.billing.customUrl || '')}" placeholder="blank = Meta billing hub"
+              style="width:100%;padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px;font-size:12.5px;box-sizing:border-box">
+          </div>
+          <button type="button" onclick="_saveWhatsappUsageSettings()" style="padding:8px 14px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;font-weight:600;font-size:12.5px;cursor:pointer">Save</button>
+          <span id="wa-usage-msg" style="font-size:12px;color:var(--text3)"></span>
+        </div>
+        <div style="font-size:11px;color:var(--text3);margin-top:9px;line-height:1.55">
+          Meta does not publish the free allowance over the API, so the figure above is the number this account is
+          entitled to (1,000 service messages per month at the time of writing) — correct it here if Meta changes it.
+          Free / billable counts come from Meta; “sent today / this month” come from this app's own send log.
+        </div>
+      </div>
+    </div>`;
+}
+// Persist the two operator-editable knobs behind the card. They are ordinary
+// company settings (hidden from the settings grid so they live in one place).
+async function _saveWhatsappUsageSettings(){
+  const msg = document.getElementById('wa-usage-msg');
+  const allowance = (document.getElementById('wa-free-allowance') || {}).value;
+  const url = (document.getElementById('wa-billing-url') || {}).value;
+  if (msg) { msg.style.color = 'var(--text3)'; msg.textContent = 'Saving…'; }
+  try {
+    const r = await fetch(B + '/api/company-settings', {
+      method: 'PUT',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, T ? { 'Authorization': 'Bearer ' + T } : {}),
+      body: JSON.stringify({ settings: { wa_free_allowance: String(allowance == null ? '' : allowance).trim() || '0',
+                                         wa_billing_url: String(url || '').trim() } }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'HTTP ' + r.status);
+    if (msg) { msg.style.color = '#0d7a3e'; msg.textContent = 'Saved'; }
+    _renderWhatsappUsage(true);
+  } catch (e) {
+    if (msg) { msg.style.color = '#b02525'; msg.textContent = (e && e.message) || String(e); }
+  }
 }
 // ── Settings → Integrations: WhatsApp send log ────────────────────
 // The answer to "did it actually reach them?". A successful send only means
@@ -25817,9 +26132,7 @@ async function _renderWhatsappLog(){
   host.innerHTML = `
     <div style="border:1px solid var(--border);border-radius:10px;background:#fff;overflow:hidden">
       <div style="padding:13px 16px;display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;border-bottom:1px solid var(--border);background:#f9fafb">
-        <span style="font-size:18px;line-height:1">📨</span>
-        <strong style="font-size:13.5px">Send log</strong>
-        <span style="font-size:11.5px;color:var(--text3)">${esc(tallyBits || 'nothing sent yet')}</span>
+        <span style="font-size:12px;font-weight:600;color:var(--text2)">${esc(tallyBits || 'nothing sent yet')}</span>
         <span style="flex:1;min-width:12px"></span>
         <button type="button" onclick="_renderWhatsappLog()" style="padding:5px 11px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;font-size:12px;cursor:pointer">Refresh</button>
       </div>
