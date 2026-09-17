@@ -663,7 +663,22 @@ const DEFAULTS = [
   { key: 'mask_phone', value: 'none',  category: 'mode', label: 'Mask Phone Number',     type: 'select' },
 
   // ── INTEGRATIONS ───────────────────────────────────────────
+  // GSTIN lookup. TWO providers are supported; `gst_api_provider` picks the
+  // one the "Fetch from GSTIN" button calls, and each keeps its OWN key
+  // (a key is issued by one provider and is meaningless to the other), so
+  // switching back is just flipping this select — no re-typing.
+  //
+  //   gstincheck — sheet.gstincheck.co.in, key in the URL path. Credits carry
+  //                a 1-YEAR expiry and the minimum purchase is 1,000.
+  //   gstinapi   — www.gstinapi.in/v1, key in an x-api-key header. Credits do
+  //                NOT expire, reports credits_remaining on every call, and
+  //                answers with real HTTP codes (402 when out of credits).
+  //
+  // Default stays 'gstincheck' so an existing install keeps calling the
+  // provider its key belongs to until someone deliberately switches.
+  { key: 'gst_api_provider', value: 'gstincheck', category: 'integrations', label: 'GST Lookup Provider',        type: 'select' },
   { key: 'gst_api_key',    value: '', category: 'integrations', label: 'GST Lookup API Key (gstincheck.co.in)',   type: 'text' },
+  { key: 'gst_api_key_gstinapi', value: '', category: 'integrations', label: 'GST Lookup API Key (gstinapi.in)',  type: 'text' },
   // Config-driven external link buttons shown in the top-right of the Lots
   // and To Tally screens. The button only appears when its URL has a value;
   // the optional label overrides the default "Open Link" caption.
