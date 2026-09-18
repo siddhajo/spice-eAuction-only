@@ -1333,6 +1333,45 @@ async function initDb() {
     } catch (_) { /* column may not exist on this DB — ignore */ }
   }
 
+  // One-time data fix: debit-note totals stored to the PAISE on an install
+  // that issues documents in whole rupees (`flag_round`).
+  //
+  // Every DN renderer derives its "Round Off" row as
+  // `total − (amount + cgst + sgst + igst)`, so a total stored to the paise
+  // pinned that row at 0.00 for ever and left paise on the Grand Total —
+  // e.g. 73,116.96 printed where the note should read Round Off 0.04 and a
+  // Grand Total of 73,117. Generation now stores the ISSUED total
+  // (calculations.js → debitNoteTotal); this heals the rows written before
+  // that so the register, the CSV and the printed note agree.
+  //
+  // Guarded three ways: it runs only when flag_round is on, only on rows
+  // whose stored total is still exactly the paise-exact sum of their own
+  // components (anything hand-adjusted is left alone), and only where that
+  // sum actually has paise. Idempotent — after one pass nothing matches.
+  try {
+    const roundOn = wrapped.get(
+      "SELECT value FROM company_settings WHERE key = 'flag_round'");
+    if (roundOn && String(roundOn.value) === 'true') {
+      for (const tbl of ['debit_notes', 'debit_notes_planter']) {
+        const fix = wrapped.run(
+          `UPDATE ${tbl}
+              SET total = CAST(ROUND(COALESCE(amount,0) + COALESCE(cgst,0)
+                                   + COALESCE(sgst,0) + COALESCE(igst,0)) AS REAL)
+            WHERE ABS(COALESCE(total,0)
+                      - ROUND(COALESCE(amount,0) + COALESCE(cgst,0)
+                            + COALESCE(sgst,0) + COALESCE(igst,0), 2)) < 0.005
+              AND ABS(ROUND(COALESCE(amount,0) + COALESCE(cgst,0)
+                          + COALESCE(sgst,0) + COALESCE(igst,0), 2)
+                      - ROUND(COALESCE(amount,0) + COALESCE(cgst,0)
+                            + COALESCE(sgst,0) + COALESCE(igst,0))) >= 0.005`
+        );
+        if (fix && fix.changes > 0) {
+          console.log(`Migration: rounded ${fix.changes} ${tbl} total(s) to whole rupees (flag_round is on) — Round Off now prints`);
+        }
+      }
+    }
+  } catch (_) { /* table may not exist on a fresh DB — ignore */ }
+
   // One-time data fix: legacy ASP-only lots (where invo==asp_invo) had their
   // `sale` field set during the old ASP-generation logic. The current logic
   // doesn't set it (so ISP can pick the right sale type per buyer). Clear

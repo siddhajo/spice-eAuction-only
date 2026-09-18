@@ -2133,6 +2133,30 @@ function getPurchaseJournal(db, auctionId, type) {
  * type the way sales invoices do — but we accept it positionally so
  * legacy callers (e.g. older /api/debit-notes/generate) don't break.
  */
+/**
+ * Debit-note grand total, honouring "Round Invoice Amounts" (`flag_round`).
+ *
+ * `amount + GST` to the paise is the taxable truth; whether the DOCUMENT is
+ * ISSUED in whole rupees is a company setting. That distinction matters here
+ * because every DN renderer derives its "Round Off" row as
+ * `total − (amount + cgst + sgst + igst)` — so a total stored to the paise
+ * pins Round Off at 0.00 for ever and leaves paise on the Grand Total, which
+ * is exactly the bug this exists to prevent. Both DN tables store the ISSUED
+ * total, so the register, the CSV and the printed note always agree.
+ *
+ * Returns { preRound, total, roundOff }; roundOff is what the document shows.
+ */
+function debitNoteTotal(amount, cgst, sgst, igst, cfg) {
+  const preRound = Math.round(
+    (Number(amount || 0) + Number(cgst || 0) + Number(sgst || 0) + Number(igst || 0)) * 100) / 100;
+  // getSettingsFlat hands booleans back as real booleans, but callers that
+  // read the raw settings row get the string "true" — accept both.
+  const v = cfg ? cfg.flag_round : false;
+  const round = v === true || v === 1 || v === 'true' || v === '1';
+  const total = round ? Math.round(preRound) : preRound;
+  return { preRound, total, roundOff: Math.round((total - preRound) * 100) / 100 };
+}
+
 function buildDebitNote(db, invoiceNo, saleType, discount, cfg) {
   // Resolve by purchno (`purchases.invo`). Most-recent wins if duplicates
   // exist (legacy / re-used numbers across years) — matches /generate-bulk.
@@ -2221,7 +2245,7 @@ function buildDebitNote(db, invoiceNo, saleType, discount, cfg) {
     sgst = Math.round(amount * (gstRate / 2) / 100 * 100) / 100;
   }
 
-  const total = Math.round((amount + cgst + sgst + igst) * 100) / 100;
+  const { total } = debitNoteTotal(amount, cgst, sgst, igst, cfg);
 
   // Return shape mirrors the original (callers read `invoice.ano`,
   // `invoice.buyer`, etc.). Re-aliases so a purchase row works as the
@@ -2555,6 +2579,7 @@ module.exports = {
   buildPurchaseInvoice,
   buildAgriBill,
   buildDebitNote,
+  debitNoteTotal,
   listAgriSellers,
   getPaymentSummary,
   getBankPaymentData,

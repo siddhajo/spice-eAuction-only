@@ -9,7 +9,7 @@ const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
 const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates,
         SCREEN_FLAGS, SCREEN_FLAG_KEYS, screenFlagDefault } = require('./company-config');
 const grade2Alerts = require('./grade2-alerts');
-const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql } = require('./calculations');
+const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, debitNoteTotal, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 const { amountToWords } = require('./amount-words');
 const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx, xlsxToCsvBuffer, csvToXlsxBuffer } = require('./exports');
@@ -13738,7 +13738,7 @@ app.post('/api/debit-notes/generate', requireInvoiceWrite, requireDebitNoteEnabl
     const half = Math.round(discountAmt * (dnGstRate / 2) / 100 * 100) / 100;
     cgst = half; sgst = half;
   }
-  const total = Math.round((discountAmt + cgst + sgst + igst) * 100) / 100;
+  const { total } = debitNoteTotal(discountAmt, cgst, sgst, igst, cfg);
 
   // DN date = trade.date (same day as the auction / bill of supply)
   const trade = db.get('SELECT date FROM auctions WHERE ano = ? LIMIT 1', [ano]);
@@ -14031,7 +14031,7 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNote
       const half = Math.round(discountAmt * (dnGstRate / 2) / 100 * 100) / 100;
       cgst = half; sgst = half;
     }
-    const total = Math.round((discountAmt + cgst + sgst + igst) * 100) / 100;
+    const { total } = debitNoteTotal(discountAmt, cgst, sgst, igst, cfg);
 
     db.run(
       `INSERT INTO debit_notes (ano,date,state,name,note_no,amount,cgst,sgst,igst,total,trader_id)
@@ -14899,7 +14899,7 @@ app.post('/api/debit-notes-planter/generate', requireInvoiceWrite, requireDebitN
     const half = Math.round(dnAmount * (dnGstRate / 2) / 100 * 100) / 100;
     cgst = half; sgst = half;
   }
-  const total = Math.round((dnAmount + cgst + sgst + igst) * 100) / 100;
+  const { total } = debitNoteTotal(dnAmount, cgst, sgst, igst, cfg);
 
   // DN date = trade.date (same day as the auction / bill of supply).
   const trade = db.get('SELECT date FROM auctions WHERE ano = ? LIMIT 1', [ano]);
@@ -15033,7 +15033,7 @@ app.post('/api/debit-notes-planter/generate-bulk', requireInvoiceWrite, requireD
         const half = Math.round(dnAmount * (dnGstRateL / 2) / 100 * 100) / 100;
         cgst = half; sgst = half;
       }
-      const total = Math.round((dnAmount + cgst + sgst + igst) * 100) / 100;
+      const { total } = debitNoteTotal(dnAmount, cgst, sgst, igst, cfg);
       db.run(
         `INSERT INTO debit_notes_planter (ano,date,state,name,note_no,amount,cgst,sgst,igst,total,trader_id,lot_no,lot_id)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -15125,7 +15125,7 @@ app.post('/api/debit-notes-planter/generate-bulk', requireInvoiceWrite, requireD
       const half = Math.round(dnAmount * (dnGstRate / 2) / 100 * 100) / 100;
       cgst = half; sgst = half;
     }
-    const total = Math.round((dnAmount + cgst + sgst + igst) * 100) / 100;
+    const { total } = debitNoteTotal(dnAmount, cgst, sgst, igst, cfg);
 
     db.run(
       `INSERT INTO debit_notes_planter (ano,date,state,name,note_no,amount,cgst,sgst,igst,total,trader_id)
