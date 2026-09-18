@@ -53,6 +53,9 @@ check('the state is on neither of them',
       !/TAMIL NADU/.test(b.address) && !/TAMIL NADU/.test(b.place), b.address + ' | ' + b.place);
 check('state stands alone, upper-cased', b.state === 'TAMIL NADU', b.state);
 check('the code rides beside the state', b.codeText === 'CODE: 33', b.codeText);
+// Labelled like every other detail in the box: bare, the state name read as
+// one more line of the address rather than as the place of supply.
+check('the state prints under its own label', b.stateText === 'STATE: TAMIL NADU', b.stateText);
 check('the details come two per row',
       b.rows.every((r, i) => r.a && (r.b || i === b.rows.length - 1)),
       JSON.stringify(b.rows));
@@ -121,12 +124,12 @@ check('the name carries its prefix and nothing else',
       drawn[0] === 'M/s.SPICE TRADERS PVT LTD', drawn[0]);
 check('then the street', drawn[1] === 'DOOR 5, MARKET ROAD', drawn[1]);
 check('then the town with its PIN', drawn[2] === 'KUMILY-685509', drawn[2]);
-check('then the state, on its own line', drawn[3] === 'KERALA', drawn[3]);
+check('then the state, labelled, on its own line', drawn[3] === 'STATE: KERALA', drawn[3]);
 check('with the code beside it, not below', drawn[4] === 'CODE: 32', drawn[4]);
 check('the INV moved off the name line into the pairs',
       drawn.includes('INV: 1748') && !/INV/.test(drawn[0]), JSON.stringify(drawn));
 check('the SBL moved off the state line', drawn.includes('SBL: SBL/99') && !/SBL/.test(drawn[3]));
-const stateRow = doc.calls.filter(c => c.t === 'KERALA' || c.t === 'CODE: 32');
+const stateRow = doc.calls.filter(c => c.t === 'STATE: KERALA' || c.t === 'CODE: 32');
 check('a pair shares one line', stateRow[0].y === stateRow[1].y, JSON.stringify(stateRow));
 check('and the second cell starts at the half-column',
       stateRow[1].x === 100 + 6 + (260 - 12) / 2, String(stateRow[1].x));
@@ -152,7 +155,7 @@ check('which together are the whole street, nothing dropped',
 check('each fits the column', [wrapped[1], wrapped[2]].every(t => t.length * 3 <= 100 - 12),
       JSON.stringify([wrapped[1], wrapped[2]]));
 check('the town line survives the wrap', wrapped[3] === 'KUMILY-685509', JSON.stringify(wrapped.slice(3, 5)));
-check('the state still follows it', wrapped[4] === 'KERALA', JSON.stringify(wrapped.slice(4, 6)));
+check('the state still follows it', wrapped[4] === 'STATE: KERALA', JSON.stringify(wrapped.slice(4, 6)));
 check('and the measured height counts the extra line',
       wrapLay.height === (partyBoxLines(longBlk) + 1) * 10,
       wrapLay.height + ' vs ' + (partyBoxLines(longBlk) + 1) * 10);
@@ -270,6 +273,11 @@ for (const [docType, key, view, parties] of layouts) {
           !sameLine(raw, street, town), label);
     check(`${label} — ${who}: the state is not tacked onto the town`,
           !sameLine(raw, town, state), label);
+    // …and it carries its own label, so it cannot be read as one more line
+    // of the address. The label and the name may sit in separate elements,
+    // so this is checked against the flattened text.
+    check(`${label} — ${who}: the state prints under its own label`,
+          flat.includes('STATE: ' + state), label);
   }
   // Whatever registration the party carries has to reach the page — a box
   // that silently drops the GSTIN is worse than one that lays it out oddly.

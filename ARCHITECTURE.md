@@ -263,6 +263,7 @@ Legend: **✅ Complete** · **🟡 Optional (off by default, behind a feature fl
 | Onboard a new customer | [CUSTOMER-ONBOARDING.md](CUSTOMER-ONBOARDING.md) |
 | Understand licensing in depth | [LICENSING.md](LICENSING.md) |
 | Understand the DB engine change | [MIGRATION.md](MIGRATION.md) |
+| Recharge GST lookup credits or WhatsApp | [RECHARGE-GSTIN-WHATSAPP.md](RECHARGE-GSTIN-WHATSAPP.md) — also in-app: How-to Guide → Settings & admin |
 
 ---
 
