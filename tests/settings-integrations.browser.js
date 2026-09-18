@@ -1,9 +1,11 @@
-// SETTINGS → INTEGRATIONS — the panel that is four live cards, not a form.
+// SETTINGS → INTEGRATIONS — the panel that is live cards, not a form.
 //
 // Every other settings category is a list of field groups. Integrations is
-// the GST status card + three WhatsApp cards + a handful of fields, and it
-// now lays those out as collapsible sections of its own (see
-// renderIntegrationSections in public/index.html). Three things must hold:
+// the GST status card + the WhatsApp panel + a handful of fields, laid out as
+// collapsible sections of its own (see renderIntegrationSections in
+// public/index.html). WhatsApp used to own THREE of those sections — setup,
+// usage, send log — each drawing its own bordered card inside the section's
+// own header; they are now one section with three tabs. Four things must hold:
 //
 //   [A] the "which key box is live?" note follows the provider dropdown
 //       immediately — before any save — because a key pasted into the idle
@@ -11,7 +13,10 @@
 //   [B] collapsing hides a section, it does not REMOVE it: captureCurrentPanel
 //       harvests `#settings-root [data-key]`, so a removed field would be
 //       dropped from the next save with no error at all
-//   [C] the four card hosts are still hydrated after a collapse/expand round
+//   [C] the card hosts are still hydrated after a collapse/expand round — and
+//       the send log, deferred because most visits never open it, fills the
+//       first time its tab is clicked
+//   [D] exactly one tab pane is visible at a time
 //
 // Driven in a real headless Chrome; skips cleanly where no Chrome exists.
 const os = require('os'), path = require('path'), fs = require('fs');
@@ -136,13 +141,45 @@ ${pass} passed, ${fail} failed
   console.log('\n[C] expand-all brings them back, hosts still hydrated');
   await page.evaluate(() => toggleAllSetGroups());
   await new Promise(r => setTimeout(r, 800));
-  const hosts = await page.evaluate(() => ({
+  const sizes = () => page.evaluate(() => ({
     gst: (document.getElementById('gst-api-status-host') || {}).innerHTML?.length || 0,
     wa: (document.getElementById('whatsapp-config-host') || {}).innerHTML?.length || 0,
     usage: (document.getElementById('whatsapp-usage-host') || {}).innerHTML?.length || 0,
     logh: (document.getElementById('whatsapp-log-host') || {}).innerHTML?.length || 0,
   }));
-  check('all four cards are filled', Object.values(hosts).every(n => n > 200), JSON.stringify(hosts));
+  const hosts = await sizes();
+  check('GST, setup and overview cards are filled',
+    hosts.gst > 200 && hosts.wa > 200 && hosts.usage > 200, JSON.stringify(hosts));
+  // The log is a fetch of up to 500 rows that most visits never look at, so it
+  // waits for its tab. Filling it eagerly is the thing this pins against.
+  check('the send log waits for its tab', hosts.logh === 0, JSON.stringify(hosts));
+  await page.evaluate(() => _waSetTab('log'));
+  await new Promise(r => setTimeout(r, 1200));
+  check('opening the Send log tab fills it', (await sizes()).logh > 200, JSON.stringify(await sizes()));
+
+  console.log('\n[D] one WhatsApp section, three tabs, one pane at a time');
+  const tabs = await page.evaluate(() => ({
+    sections: [...document.querySelectorAll('#settings-root .set-group-head h3')].map(h => h.textContent.trim()),
+    count: document.querySelectorAll('#settings-root .wa-tab').length,
+    visible: [...document.querySelectorAll('#settings-root [data-wapane]')].filter(p => !p.hidden).map(p => p.dataset.wapane),
+    on: [...document.querySelectorAll('#settings-root .wa-tab.on')].map(b => b.dataset.watab),
+  }));
+  check('WhatsApp is one section, not three',
+    tabs.sections.filter(t => /WhatsApp/i.test(t)).length === 1, JSON.stringify(tabs.sections));
+  check('it carries three tabs', tabs.count === 3, String(tabs.count));
+  check('only the chosen pane is showing',
+    tabs.visible.length === 1 && tabs.visible[0] === 'log' && tabs.on.join() === 'log', JSON.stringify(tabs));
+
+  // Screenshots of each tab — the panel is judged by eye, so leave one behind.
+  const shots = [];
+  for (const t of ['overview', 'setup', 'log']) {
+    await page.evaluate((x) => _waSetTab(x), t);
+    await new Promise(r => setTimeout(r, 400));
+    const f = path.join(os.tmpdir(), `integrations-${t}.png`);
+    await page.screenshot({ path: f, fullPage: true });
+    shots.push(f);
+  }
+  console.log('  screenshots:\n    ' + shots.join('\n    '));
 
   console.log('\npage errors: ' + (errs.length ? errs.join(' | ') : 'none'));
   console.log(`\n${pass} passed, ${fail} failed\n`);

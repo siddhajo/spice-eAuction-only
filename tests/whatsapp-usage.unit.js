@@ -168,6 +168,49 @@ const render = async (usage, err) => {
   check('a missing WABA id says what to fill in, not "0 free"',
     noWaba.source === 'unavailable' && /Business Account ID/.test(noWaba.error), JSON.stringify(noWaba));
 
+  // [J] The Integrations panel used to give WhatsApp THREE sibling sections —
+  //     setup, usage, send log — each drawing its own bordered card inside the
+  //     section's own header. One tabbed section replaced them, so this pins
+  //     the tab contract: three tabs, one visible pane, and the send log (a
+  //     fetch of up to 500 rows most visits never open) loaded only on demand.
+  const tabBox = { console };
+  let logRenders = 0;
+  const tabEls = ['overview', 'setup', 'log'].map(id => ({ dataset: { watab: id }, on: false,
+    classList: { toggle(c, v) { tabEls.find(t => t.dataset.watab === id).on = v; } } }));
+  const paneEls = ['overview', 'setup', 'log'].map(id => ({ dataset: { wapane: id }, hidden: false }));
+  tabBox.document = { querySelectorAll: (sel) => (sel.includes('data-watab') ? tabEls : paneEls) };
+  tabBox._renderWhatsappLog = () => { logRenders++; };
+  vm.createContext(tabBox);
+  for (const m of [/^let _waTab = .*$/m, /^let _waLogHydrated = .*$/m]) {
+    const hit = m.exec(HTML);
+    assert.ok(hit, 'could not find the tab state declarations in index.html');
+    vm.runInContext(hit[0], tabBox);
+  }
+  vm.runInContext(extract('_waPanesHtml'), tabBox);
+  vm.runInContext(extract('_waSetTab'), tabBox);
+
+  const panes = tabBox._waPanesHtml();
+  check('one section now carries all three WhatsApp tabs',
+    (panes.match(/class="wa-tab["\s]/g) || []).length === 3 &&
+    /whatsapp-usage-host/.test(panes) && /whatsapp-config-host/.test(panes) && /whatsapp-log-host/.test(panes),
+    panes.slice(0, 300));
+  check('only the active pane is visible',
+    /data-wapane="overview"><div id="whatsapp-usage-host"/.test(panes) &&
+    /data-wapane="setup" hidden/.test(panes) && /data-wapane="log" hidden/.test(panes),
+    panes);
+  check('the active tab is the only one marked on',
+    (panes.match(/class="wa-tab on"/g) || []).length === 1, panes.slice(0, 200));
+
+  tabBox._waSetTab('log');
+  check('switching tabs swaps which pane is hidden',
+    paneEls.find(p => p.dataset.wapane === 'log').hidden === false &&
+    paneEls.find(p => p.dataset.wapane === 'overview').hidden === true,
+    JSON.stringify(paneEls.map(p => [p.dataset.wapane, p.hidden])));
+  check('the send log loads the first time its tab is opened', logRenders === 1, String(logRenders));
+  tabBox._waSetTab('overview');
+  tabBox._waSetTab('log');
+  check('reopening the tab reuses what was already fetched', logRenders === 1, String(logRenders));
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

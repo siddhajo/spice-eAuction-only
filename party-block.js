@@ -8,13 +8,16 @@
 //     NAME
 //     3,NONDIMAGAN STREET
 //     CUMBUM-625516
-//     KERALA                 CODE: 32
+//     STATE: KERALA          CODE: 32
 //     CR: 32ABCDE1234F1Z5    PAN: ABCDE1234F
 //     Ph: 9443447332         A/C: 0603053000000871
 //
 // One thing per line down the address: the name, the street, then the town
 // with its PIN, then the STATE paired with its state code. None of those
 // three ever share a line — that sharing is what this format exists to fix.
+// The state carries its own "STATE:" label, like every other detail in the
+// box: an unlabelled name sitting beside "CODE: 33" read as part of the
+// address rather than as the place of supply.
 // Every remaining detail follows TWO PER ROW in a fixed order, so PAN sits in
 // the same place on a planter's bill as on a dealer's.
 //
@@ -98,6 +101,7 @@ function partyBlock(party, opts) {
     // that needs them so.
     name, address, place, state, stCode,
     town, pin,
+    stateText: state ? 'STATE: ' + state : '',
     codeText: stCode ? 'CODE: ' + stCode : '',
     rest, rows,
     // Flat string form, for a renderer that draws plain lines. The pair is
@@ -107,7 +111,7 @@ function partyBlock(party, opts) {
       name,
       address,
       place,
-      state ? state + (stCode ? '    CODE: ' + stCode : '') : '',
+      state ? 'STATE: ' + state + (stCode ? '    CODE: ' + stCode : '') : '',
       ...rows.map(r => r.a.text + (r.b ? '    ' + r.b.text : '')),
     ].filter(Boolean),
   };

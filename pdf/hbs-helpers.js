@@ -112,7 +112,10 @@ function registerHelpers() {
     if (blk.place) h += wide(blk.place);
     const pair = (l, r) => `<tr><td>${l}</td><td class="pb-r">${r}</td></tr>`;
     const kv = c => c ? `${esc(c.k)}: <span class="pb-v">${esc(c.v)}</span>` : '';
-    if (blk.state) h += pair(esc(blk.state), 'CODE: <span class="pb-v">' + esc(blk.stCode || '') + '</span>');
+    // The state is labelled like every other detail in the box; bare, it read
+    // as another line of the address rather than the place of supply.
+    if (blk.state) h += pair('STATE: <span class="pb-v">' + esc(blk.state) + '</span>',
+                             'CODE: <span class="pb-v">' + esc(blk.stCode || '') + '</span>');
     for (const r of (blk.rows || [])) h += pair(kv(r.a), kv(r.b));
     return new Handlebars.SafeString(h + '</tbody></table>');
   });

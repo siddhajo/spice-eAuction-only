@@ -1877,7 +1877,7 @@ function partyBoxLayout(doc, blk, o) {
   const cellW = innerW / 2;
   const nameText = (o.prefix || '') + (blk.name || '');
   const pairs = [];
-  if (blk.state) pairs.push([blk.state, blk.codeText]);
+  if (blk.state) pairs.push([blk.stateText, blk.codeText]);
   for (const r of blk.rows) pairs.push([r.a.text, r.b ? r.b.text : '']);
 
   let size = o.size != null ? o.size : 8;

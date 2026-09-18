@@ -1013,6 +1013,77 @@ body[data-login-layout="showcase"] .login-hero{order:2;max-width:none;align-self
    .sgrid so a run of mixed sections lines up down the panel. */
 .set-group .set-group-raw{padding:10px 16px 14px}
 .set-group .set-group-raw>*+*{margin-top:12px}
+/* ── Settings → Integrations: the WhatsApp panel ──────────
+   One section, three tabs. Before this the integration owned three
+   sections and each one drew its own bordered card WITH its own header
+   inside the section header — a header in a header, three times over.
+   The section shell is the frame now; everything below rides on theme
+   tokens so the panel survives dark mode (the old cards hard-coded #fff
+   and #f9fafb and glared on the dark ground). */
+.wa-tabs{
+  display:flex;gap:2px;flex-wrap:wrap;
+  margin:-10px -16px 12px;padding:0 10px;
+  border-bottom:1px solid var(--spice-line);
+}
+.wa-tab{
+  appearance:none;background:none;border:none;border-bottom:2px solid transparent;
+  padding:9px 12px;font-size:12.5px;font-weight:600;color:var(--spice-text-mute);
+  cursor:pointer;white-space:nowrap;
+}
+.wa-tab:hover{color:var(--spice-text-main)}
+.wa-tab.on{color:var(--spice-cardamom-dk);border-bottom-color:var(--spice-cardamom)}
+.wa-pane[hidden]{display:none}
+.wa-pane>*+*{margin-top:12px}
+/* Status strip — the one line that says whether sends work at all. */
+.wa-status{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;color:var(--spice-text-mute)}
+.wa-status b{color:var(--spice-text-main)}
+.wa-dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+.wa-spacer{flex:1 1 auto;min-width:8px}
+/* Stat tiles */
+.wa-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px}
+.wa-tile{border:1px solid var(--spice-line);border-radius:10px;padding:10px 12px;background:var(--spice-cream);min-width:0}
+.wa-tile .k{font-size:10.5px;font-weight:700;color:var(--spice-text-hint);text-transform:uppercase;letter-spacing:.35px}
+.wa-tile .v{font-size:22px;font-weight:800;color:var(--spice-text-main);line-height:1.25;margin-top:2px;word-break:break-word}
+.wa-tile .s{font-size:11px;color:var(--spice-text-mute);margin-top:3px;line-height:1.45}
+.wa-bar{height:5px;border-radius:3px;background:var(--spice-line);overflow:hidden;margin-top:7px}
+.wa-bar>i{display:block;height:100%}
+/* Form bits, buttons, notes */
+.wa-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+.wa-lab{display:block;font-size:10.5px;font-weight:700;color:var(--spice-text-hint);margin-bottom:3px;text-transform:uppercase;letter-spacing:.3px}
+.wa-in{width:100%;padding:7px 9px;border:1px solid var(--spice-line);border-radius:7px;background:var(--spice-paper);color:var(--spice-text-main);font-size:12.5px;box-sizing:border-box}
+.wa-in[readonly]{background:var(--spice-cream);color:var(--spice-text-mute)}
+.wa-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.wa-btn{padding:7px 14px;border:1px solid var(--spice-line);border-radius:7px;background:var(--spice-paper);color:var(--spice-text-main);font-weight:600;font-size:12.5px;cursor:pointer;text-decoration:none;display:inline-block;white-space:nowrap}
+.wa-btn:hover:not(:disabled){border-color:var(--spice-line-strong)}
+.wa-btn.p{background:#25D366;border-color:#25D366;color:#fff;font-weight:700}
+.wa-btn.sm{padding:5px 11px;font-size:12px}
+.wa-btn:disabled{opacity:.5;cursor:not-allowed}
+.wa-note{font-size:11.5px;color:var(--spice-text-mute);line-height:1.55}
+.wa-sub{
+  display:flex;align-items:center;gap:9px;margin:2px 0 0;
+  font-size:11px;font-weight:800;color:var(--spice-cardamom-dk);
+  text-transform:uppercase;letter-spacing:.6px;
+}
+.wa-sub::after{content:'';flex:1 1 auto;height:1px;background:var(--spice-line)}
+.wa-box{border:1px solid var(--spice-line);border-radius:10px;padding:11px 13px;background:var(--spice-cream)}
+.wa-banner{border-radius:9px;padding:9px 12px;font-size:12.5px;line-height:1.5;border:1px solid}
+.wa-banner.bad{background:var(--spice-chili-lt);border-color:var(--spice-chili-lt);color:var(--spice-chili-dk)}
+.wa-banner.warn{background:var(--spice-turmeric-lt);border-color:var(--spice-turmeric-lt);color:#92400e}
+.wa-adv{font-size:11.5px;color:var(--spice-text-mute)}
+.wa-adv>summary{cursor:pointer;font-weight:600;color:var(--spice-cardamom-dk);list-style:revert}
+.wa-adv[open]>summary{margin-bottom:9px}
+/* Send log table */
+.wa-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.wa-tbl th{padding:7px 10px;font-size:10.5px;color:var(--spice-text-hint);text-transform:uppercase;letter-spacing:.3px;text-align:left;background:var(--spice-cream);white-space:nowrap}
+.wa-tbl td{padding:7px 10px;border-top:1px solid var(--spice-line);color:var(--spice-text-main)}
+.wa-chip{font-size:11px;padding:2px 8px;border-radius:10px;white-space:nowrap;display:inline-block}
+body[data-dark="1"] .wa-tile,
+body[data-dark="1"] .wa-box,
+body[data-dark="1"] .wa-tbl th,
+body[data-dark="1"] .wa-in[readonly]{background:var(--spice-line)}
+body[data-dark="1"] .wa-sub,
+body[data-dark="1"] .wa-adv>summary,
+body[data-dark="1"] .wa-tab.on{color:var(--spice-saffron-md)}
 /* Dark mode: cards take the panel's paper tone rather than glaring
    white, and the tints that read as "cardamom, very pale" on the light
    ground become slate — the cardamom-lt token is a saffron/white mix and
@@ -8510,9 +8581,9 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
   <div class="sgrid">
     <div class="fg"><label>Name *</label><input id="t-name"></div>
     <div class="fg"><label>CR / GSTIN</label><div style="display:flex;gap:6px"><input id="t-cr" style="flex:1"><button class="btn btn-a" type="button" onclick="gstLookup('t')" style="white-space:nowrap;padding:6px 10px">Fetch from GST</button></div></div>
-    <div class="fg"><label>PAN</label><input id="t-pan" onblur="tCheckPanDup()"><div id="t-pan-warn" style="display:none"></div></div>
     <div class="fg"><label>Phone</label><input id="t-tel" type="tel" inputmode="numeric" maxlength="10" oninput="limitPhoneInput(this)" onpaste="pastePhoneInput(this,event)" placeholder="10-digit mobile"></div>
     <div class="fg"><label>Aadhar / SBL</label><input id="t-aadhar"></div>
+    <div class="fg"><label>PAN</label><input id="t-pan" onblur="tCheckPanDup()"><div id="t-pan-warn" style="display:none"></div></div>
     <div class="fg"><label>Address</label><input id="t-padd"></div>
     <div class="fg"><label>Place</label><input id="t-ppla"></div>
     <div class="fg"><label>PIN</label><input id="t-pin"></div>
@@ -25339,22 +25410,11 @@ function renderGroupedFields(ck, fields, renderFn){
 // The WhatsApp cards hydrate asynchronously into the hosts below; they are
 // NOT removed when a section is collapsed (.set-group-body only hides), so a
 // closed section still holds live, already-fetched content when reopened.
-const _setGroupSeeded = new Set();
 function renderIntegrationSections(ck, fields, renderField){
   const pick = (re) => fields.filter(f => re.test(f.key));
   const gst   = pick(/^gst_api/);
   const links = pick(/^link_/);
   const rest  = fields.filter(f => !gst.includes(f) && !links.includes(f));
-  // First visit in this page load: the reference cards start closed so the
-  // tab opens on something readable instead of three screens of tables.
-  // Only seeded once — after that the operator's own collapsing wins.
-  const seedClosed = (title) => {
-    const k = setGroupKey(ck, title);
-    if (_setGroupSeeded.has(k)) return;
-    _setGroupSeeded.add(k);
-    _setGroupClosed[k] = true;
-  };
-  ['WhatsApp usage & billing', 'WhatsApp send log'].forEach(seedClosed);
 
   // Titles the field groups already own (GST Lookup, Screen Links) keep their
   // hint and icon from SET_FIELD_GROUPS, so the wording lives in one place.
@@ -25371,14 +25431,8 @@ function renderIntegrationSections(ck, fields, renderField){
       '<div id="gst-api-status-host"></div>');
   }
   out += sectionShell(ck, 'WhatsApp Business',
-    'Meta Cloud API credentials and the approved template names. Secrets stay server-side.',
-    '', '<div id="whatsapp-config-host"></div>', '📱');
-  out += sectionShell(ck, 'WhatsApp usage & billing',
-    'Free messages left this month, what has been sent, and where to top up.',
-    '', '<div id="whatsapp-usage-host"></div>', '📊');
-  out += sectionShell(ck, 'WhatsApp send log',
-    'Every WhatsApp send with its delivery receipt.',
-    '', '<div id="whatsapp-log-host"></div>', '📨');
+    'What is left to send, what it costs, the Meta credentials, and every message with its receipt.',
+    '', _waPanesHtml(), '📱');
   if (links.length) {
     const m = gmeta('Screen Links', 'Optional top-right link buttons on the Lots and To Tally screens.', '🔗');
     out += sectionCard(ck, 'Screen Links', m.hint, links.length,
@@ -25388,6 +25442,37 @@ function renderIntegrationSections(ck, fields, renderField){
     out += sectionCard(ck, 'Other Settings', '', rest.length, rest.map(renderField).join(''), '•');
   }
   return out;
+}
+
+// ── The WhatsApp section's three tabs ─────────────────────────────
+// Overview (what's left / what it cost / where to top up), Setup (Meta
+// credentials) and Send log (every message + receipt) were three sibling
+// sections; only one of them is ever the reason the operator opened this
+// tab, so the other two were pure scroll. Tabs keep all three one click
+// away while the panel shows one at a time.
+//
+// The panes are never rebuilt by a tab switch — each renderer owns only the
+// host div inside its pane, so switching away and back shows the content
+// already fetched rather than re-hitting Meta.
+let _waTab = 'overview';
+let _waLogHydrated = false;
+function _waPanesHtml(){
+  const tab = (id, label) =>
+    `<button type="button" class="wa-tab${_waTab === id ? ' on' : ''}" data-watab="${id}" onclick="_waSetTab('${id}')">${label}</button>`;
+  const pane = (id, inner) =>
+    `<div class="wa-pane" data-wapane="${id}"${_waTab === id ? '' : ' hidden'}>${inner}</div>`;
+  return `<div class="wa-tabs">${tab('overview', 'Overview')}${tab('setup', 'Setup')}${tab('log', 'Send log')}</div>`
+    + pane('overview', '<div id="whatsapp-usage-host"></div>')
+    + pane('setup', '<div id="whatsapp-config-host"></div>')
+    + pane('log', '<div id="whatsapp-log-host"></div>');
+}
+function _waSetTab(id){
+  _waTab = id;
+  document.querySelectorAll('#settings-root [data-watab]').forEach(b => b.classList.toggle('on', b.dataset.watab === id));
+  document.querySelectorAll('#settings-root [data-wapane]').forEach(p => { p.hidden = p.dataset.wapane !== id; });
+  // The log is the one pane worth deferring — it is a fetch of up to 500 rows
+  // that most visits never look at. Load it the first time it is opened.
+  if (id === 'log' && !_waLogHydrated) { _waLogHydrated = true; try { _renderWhatsappLog(); } catch(_){} }
 }
 
 function renderSettingsPanel(){
@@ -25589,7 +25674,10 @@ function renderSettingsPanel(){
   if (ck === 'integrations' && typeof _renderWhatsappCard === 'function') {
     try { _renderWhatsappCard(); } catch(_){}
     try { _renderWhatsappUsage(); } catch(_){}
-    try { _renderWhatsappLog(); } catch(_){}
+    // Panel repaint drops the log's markup with it, so re-fetch only when the
+    // log is the visible tab; otherwise _waSetTab() loads it on first open.
+    _waLogHydrated = (_waTab === 'log');
+    if (_waLogHydrated) { try { _renderWhatsappLog(); } catch(_){} }
   }
   // Reset dirty flag on panel render so stale dirty state doesn't trigger
   // a false "unsaved changes" warning when switching presets.
@@ -25830,71 +25918,76 @@ async function _gstCheckBalanceNow(){
   }
 }
 
-// ── Settings → Integrations: WhatsApp Business config card ────────
+// ── WhatsApp section → Setup tab: credentials + templates ─────────
 // Secrets live server-side in the whatsapp_config table and are NEVER
 // returned to the browser; /api/whatsapp/status hands back only booleans
 // (hasToken etc.) + non-secret identifiers + live health from Meta.
 async function _renderWhatsappCard(){
   const host = document.getElementById('whatsapp-config-host');
   if (!host) return;
-  host.innerHTML = '<div style="padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:#f9fafb;font-size:12.5px;color:var(--text2)">Loading WhatsApp status…</div>';
+  host.innerHTML = '<div class="wa-note">Loading WhatsApp status…</div>';
   let s;
   try {
     const r = await fetch(B + '/api/whatsapp/status', { headers: T ? { 'Authorization':'Bearer '+T } : {}, cache:'no-store' });
     if (!r.ok) throw new Error('HTTP '+r.status);
     s = await r.json();
   } catch (e) {
-    host.innerHTML = `<div style="padding:14px 16px;border:1px solid #fecaca;border-radius:10px;background:#fef2f2;color:#991b1b;font-size:12.5px">Could not load WhatsApp status: ${esc(e.message||String(e))}</div>`;
+    host.innerHTML = `<div class="wa-banner bad">Could not load WhatsApp status: ${esc(e.message||String(e))}</div>`;
     return;
   }
   const webhookUrl = `${location.origin}/api/whatsapp/webhook`;
+  // Same dot + headline as the Overview tab, so "is this working?" reads the
+  // same wherever the operator happens to be standing.
   const tone = s.configured
-    ? (s.live
-        ? {bd:'#a7f3d0',fg:'#065f46',icon:'✓',head:`Connected${s.displayPhone?(' · '+esc(s.displayPhone)):''}${s.qualityRating?(' · quality '+esc(s.qualityRating)):''}`}
-        : {bd:'#fde68a',fg:'#92400e',icon:'⚠',head:`Saved, but Meta check failed: ${esc(s.liveError||'unknown')}`})
-    : {bd:'#e5e7eb',fg:'#374151',icon:'ℹ',head:'Not configured — paste your Meta credentials below'};
-  const inStyle = 'width:100%;padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#0f172a;font-size:12.5px;box-sizing:border-box';
-  const lblStyle = 'display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:3px;text-transform:uppercase;letter-spacing:.3px';
-  const field = (id,label,val,ph,type) => `<div><label style="${lblStyle}">${esc(label)}</label><input id="${id}" type="${type||'text'}" value="${esc(val||'')}" placeholder="${esc(ph||'')}" autocomplete="off" spellcheck="false" style="${inStyle}"></div>`;
+    ? (s.live ? { dot:'#16a34a', head:'Connected', sub:[s.displayPhone, s.qualityRating ? 'quality ' + s.qualityRating : ''].filter(Boolean).join(' · ') }
+              : { dot:'#d97706', head:'Saved, but Meta check failed', sub:s.liveError || 'unknown' })
+    : { dot:'#94a3b8', head:'Not configured', sub:'paste your Meta credentials below' };
+  const field = (id,label,val,ph,type) =>
+    `<div><label class="wa-lab">${esc(label)}</label><input id="${id}" class="wa-in" type="${type||'text'}" value="${esc(val||'')}" placeholder="${esc(ph||'')}" autocomplete="off" spellcheck="false"></div>`;
   const secretPh = (has) => has ? '•••••••• configured — leave blank to keep' : 'not set';
   host.innerHTML = `
-    <div style="border:1px solid ${tone.bd};border-radius:10px;background:#fff;overflow:hidden">
-      <div style="padding:13px 16px;display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;border-bottom:1px solid ${tone.bd};background:#f9fafb">
-        <span style="font-size:12px;font-weight:700;color:${tone.fg};min-width:0;max-width:100%;word-break:break-all;overflow-wrap:anywhere">${tone.icon} ${tone.head}</span>
+    <div class="wa-status">
+      <span class="wa-dot" style="background:${tone.dot}"></span>
+      <b>${esc(tone.head)}</b><span>${esc(tone.sub)}</span>
+    </div>
+    ${s.source === 'env' ? '<div class="wa-banner warn"><strong>Heads up:</strong> some values come from environment variables and override what you save here.</div>' : ''}
+    <div class="wa-sub">Meta credentials</div>
+    <div class="wa-fields">
+      ${field('wa-token','Access token','',secretPh(s.hasToken),'password')}
+      ${field('wa-phone-id','Phone number ID',s.phoneId,'e.g. 123456789012345')}
+      ${field('wa-waba-id','WhatsApp Business Account ID',s.wabaId,'needed for usage figures')}
+      ${field('wa-app-secret','App secret','',secretPh(s.hasAppSecret),'password')}
+      ${field('wa-verify-token','Webhook verify token','',secretPh(s.hasVerifyToken),'password')}
+      ${field('wa-display-number','Display number (label)',s.displayNumber,'optional')}
+    </div>
+    <div class="wa-sub">Approved templates</div>
+    <div class="wa-note">
+      Every send goes through an approved <strong>template</strong>, so invoices reach anyone — even contacts who
+      never messaged you. Create two in Meta (a Document and a Text template, both with body
+      <code>Dear {{1}}, {{2}} Regards, {{3}}.</code>), get them approved, then name them here.
+    </div>
+    <div class="wa-fields">
+      ${field('wa-tpl-document','Document template name',s.tplDocument,'e.g. invoice_document')}
+      ${field('wa-tpl-document-lang','Document template language',s.tplDocumentLang||'en','en')}
+      ${field('wa-tpl-text','Text template name',s.tplText,'e.g. payment_notice')}
+      ${field('wa-tpl-text-lang','Text template language',s.tplTextLang||'en','en')}
+    </div>
+    <div class="wa-sub">Delivery receipts</div>
+    <div>
+      <label class="wa-lab">Webhook callback URL — paste into Meta → WhatsApp → Configuration</label>
+      <div class="wa-row" style="gap:6px;flex-wrap:nowrap">
+        <input id="wa-webhook-url" class="wa-in" type="text" readonly value="${esc(webhookUrl)}">
+        <button type="button" class="wa-btn sm" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(webhookUrl)}').then(()=>toast('Webhook URL copied'))">Copy</button>
       </div>
-      <div style="padding:14px 16px">
-        <div style="font-size:11.5px;color:var(--text3);line-height:1.55;margin-bottom:13px">
-          Every template send goes through an approved <strong>template</strong>, so invoices reach anyone — even contacts who never messaged you. Create two templates in Meta (a <strong>Document</strong> template + a <strong>Text</strong> template, both with body <code>Dear {{1}}, {{2}} Regards, {{3}}.</code>), get them approved, then paste their names below.${s.source==='env'?'<br><strong>Heads up:</strong> some values come from environment variables and override what you save here.':''}
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px">
-          ${field('wa-token','Access token','',secretPh(s.hasToken),'password')}
-          ${field('wa-phone-id','Phone number ID',s.phoneId,'e.g. 123456789012345')}
-          ${field('wa-waba-id','WhatsApp Business Account ID',s.wabaId,'optional')}
-          ${field('wa-app-secret','App secret','',secretPh(s.hasAppSecret),'password')}
-          ${field('wa-verify-token','Webhook verify token','',secretPh(s.hasVerifyToken),'password')}
-          ${field('wa-display-number','Display number (label)',s.displayNumber,'optional')}
-          ${field('wa-tpl-document','Document template name',s.tplDocument,'e.g. invoice_document')}
-          ${field('wa-tpl-document-lang','Document template language',s.tplDocumentLang||'en','en')}
-          ${field('wa-tpl-text','Text template name',s.tplText,'e.g. payment_notice')}
-          ${field('wa-tpl-text-lang','Text template language',s.tplTextLang||'en','en')}
-        </div>
-        <div style="margin-top:13px">
-          <label style="${lblStyle}">Webhook callback URL — paste into Meta → WhatsApp → Configuration</label>
-          <div style="display:flex;gap:6px">
-            <input id="wa-webhook-url" type="text" readonly value="${esc(webhookUrl)}" style="${inStyle};background:#f1f5f9;color:#475569">
-            <button type="button" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(webhookUrl)}').then(()=>toast('Webhook URL copied'))" style="white-space:nowrap;padding:7px 12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;font-size:12px;cursor:pointer">Copy</button>
-          </div>
-          <div style="font-size:11px;color:${s.webhookReady?'#065f46':'var(--text3)'};margin-top:4px">${s.webhookReady?'✓ Webhook ready (verify token + app secret set) — subscribe to the “messages” field in Meta to receive delivery receipts.':'Set the app secret + verify token to enable delivery tracking.'}</div>
-        </div>
-        <div style="margin-top:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button type="button" id="wa-save-btn" onclick="_saveWhatsappConfig()" style="padding:8px 16px;border:none;border-radius:6px;background:#25D366;color:#fff;font-weight:700;font-size:12.5px;cursor:pointer">Save</button>
-          <button type="button" id="wa-test-btn" onclick="_testWhatsapp()" ${s.configured?'':'disabled'} style="padding:8px 16px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#0f172a;font-weight:600;font-size:12.5px;cursor:${s.configured?'pointer':'not-allowed'};opacity:${s.configured?'1':'.5'}">Send test message</button>
-          <span id="wa-card-msg" style="font-size:12px;color:var(--text3)"></span>
-        </div>
-      </div>
+      <div class="wa-note" style="margin-top:4px;color:${s.webhookReady?'#0d7a3e':'var(--spice-text-hint)'}">${s.webhookReady?'✓ Webhook ready (verify token + app secret set) — subscribe to the “messages” field in Meta to receive delivery receipts.':'Set the app secret + verify token to enable delivery tracking.'}</div>
+    </div>
+    <div class="wa-row">
+      <button type="button" class="wa-btn p" id="wa-save-btn" onclick="_saveWhatsappConfig()">Save</button>
+      <button type="button" class="wa-btn" id="wa-test-btn" onclick="_testWhatsapp()" ${s.configured?'':'disabled'}>Send test message</button>
+      <span id="wa-card-msg" class="wa-note"></span>
     </div>`;
 }
-// ── Settings → Integrations: WhatsApp usage & billing ─────────────
+// ── WhatsApp section → Overview tab: usage & billing ──────────────
 // "How many are left, how many have I sent, and where do I top up?"
 //
 // Two numbers matter before a bulk run and they are NOT the same thing:
@@ -25912,12 +26005,12 @@ async function _renderWhatsappCard(){
 async function _renderWhatsappUsage(fresh){
   const host = document.getElementById('whatsapp-usage-host');
   if (!host) return;
-  if (!host.innerHTML) host.innerHTML = '<div style="padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:#f9fafb;font-size:12.5px;color:var(--text2)">Loading WhatsApp usage…</div>';
+  if (!host.innerHTML) host.innerHTML = '<div class="wa-note">Loading WhatsApp usage…</div>';
   let u;
   try {
     u = await j('/api/whatsapp/usage' + (fresh ? '?fresh=1' : ''));
   } catch (e) {
-    host.innerHTML = `<div style="padding:14px 16px;border:1px solid #fecaca;border-radius:10px;background:#fef2f2;color:#991b1b;font-size:12.5px">Could not load WhatsApp usage: ${esc((e&&e.message)||String(e))}</div>`;
+    host.innerHTML = `<div class="wa-banner bad">Could not load WhatsApp usage: ${esc((e&&e.message)||String(e))}</div>`;
     return;
   }
   const n = (v) => (v == null ? '—' : Number(v).toLocaleString('en-IN'));
@@ -25927,22 +26020,17 @@ async function _renderWhatsappUsage(fresh){
   const bar = (used, cap) => {
     const p = pct(used, cap);
     const col = p >= 90 ? '#dc2626' : p >= 75 ? '#d97706' : '#16a34a';
-    return `<div style="height:6px;border-radius:3px;background:#e5e7eb;overflow:hidden;margin-top:7px">
-      <div style="height:100%;width:${p}%;background:${col}"></div></div>`;
+    return `<div class="wa-bar"><i style="width:${p}%;background:${col}"></i></div>`;
   };
-  const tile = (label, value, sub, extra) => `
-    <div style="border:1px solid var(--border);border-radius:9px;padding:11px 13px;background:#fff;min-width:0">
-      <div style="font-size:10.5px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.35px">${label}</div>
-      <div style="font-size:23px;font-weight:800;color:var(--text);line-height:1.25;margin-top:3px;word-break:break-word">${value}</div>
-      <div style="font-size:11px;color:var(--text3);margin-top:2px;line-height:1.45">${sub || ''}</div>
-      ${extra || ''}
-    </div>`;
+  const tile = (label, value, sub, extra) =>
+    `<div class="wa-tile"><div class="k">${label}</div><div class="v">${value}</div>`
+    + `<div class="s">${sub || ''}</div>${extra || ''}</div>`;
 
   // 1) Free allowance for the calendar month (Meta-sourced; falls back to a note).
   //    Read this one carefully: "free" is NOT "invoices you can still send".
   //    Invoice/utility templates are billable unless the contact messaged you
   //    within the last 24h, so on a normal month this number barely moves
-  //    while the billable count climbs — hence the caveat under the tile.
+  //    while the billable count climbs — hence the caveat under the tiles.
   const f = u.free || {};
   const freeTile = f.source === 'meta'
     ? tile('Free messages left', n(f.remaining),
@@ -25956,8 +26044,8 @@ async function _renderWhatsappUsage(fresh){
   const money = (v) => Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const billTile = f.source === 'meta'
     ? tile('Billable this month', n(f.paid),
-        `${f.cost ? `≈ ${money(f.cost)} charged` : 'nothing charged yet'}${each ? ` · ~${each.toFixed(3)} each` : ''}
-         <br><span style="font-size:10.5px">in your Meta account's billing currency</span>`)
+        `${f.cost ? `≈ ${money(f.cost)} charged` : 'nothing charged yet'}${each ? ` · ~${each.toFixed(3)} each` : ''}`
+        + `<br>in your Meta account's billing currency`)
     : tile('Billable this month', '—', 'Needs the WhatsApp Business Account ID + Meta access.');
   // 3) The 24h messaging limit — the one that stops a bulk run dead.
   const L = u.limit || {};
@@ -25965,7 +26053,7 @@ async function _renderWhatsappUsage(fresh){
     ? tile('Recipients left (24h)', n(L.remaining),
         `${n(L.used)} of ${n(L.cap)} used · ${esc(L.tier || '')}`,
         bar(L.used || 0, L.cap))
-    : tile('Recipients left (24h)', L.unlimited ? 'Unlimited' : n(L.used) + ' sent',
+    : tile('Recipients left (24h)', L.unlimited ? 'Unlimited' : '—',
         L.unlimited ? `${esc(L.tier)} · ${n(L.used)} unique recipients in the last 24h`
                     : `${n(L.used)} unique recipients in the last 24h${L.error ? ' · ' + esc(L.error) : ''}`);
   // 4) + 5) Local send log — always exact, no API needed.
@@ -25976,68 +26064,67 @@ async function _renderWhatsappUsage(fresh){
   const todayTile = tile('Sent today', n(st.total), detail(st));
   const monthTile = tile('Sent this month', n(sm.total), `${detail(sm)} · from this app's send log`);
 
-  const blocked = u.billing && u.billing.blocked;
+  const blocked = !!(u.billing && u.billing.blocked);
   const billUrl = (u.billing && u.billing.url) || '';
   const insightsUrl = (u.billing && u.billing.insightsUrl) || '';
-  const btn = (href, label, primary) => `<a href="${esc(href)}" target="_blank" rel="noopener"
-      style="display:inline-block;padding:8px 16px;border-radius:6px;font-weight:${primary?'700':'600'};font-size:12.5px;text-decoration:none;white-space:nowrap;
-             ${primary ? 'background:#25D366;color:#fff;border:none' : 'background:#fff;color:#0f172a;border:1px solid #cbd5e1'}">${label}</a>`;
+  const link = (href, label, primary) =>
+    `<a class="wa-btn${primary ? ' p' : ''}" href="${esc(href)}" target="_blank" rel="noopener">${label}</a>`;
+  // One glance at the dot: sending, sending-but-Meta-is-quiet, or stopped.
+  const live = f.source === 'meta' || L.source === 'meta';
+  const dot = blocked ? '#dc2626' : !u.configured ? '#94a3b8' : live ? '#16a34a' : '#d97706';
+  const headline = blocked ? 'Sends are blocked'
+    : !u.configured ? 'Not configured'
+    : live ? 'Connected' : 'Connected · Meta figures unavailable';
 
   host.innerHTML = `
-    <div style="border:1px solid ${blocked ? '#fecaca' : 'var(--border)'};border-radius:10px;background:#fff;overflow:hidden">
-      <div style="padding:13px 16px;display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;border-bottom:1px solid var(--border);background:#f9fafb">
-        <span style="font-size:12px;font-weight:600;color:var(--text2)">${esc(u.monthLabel || '')}${u.displayPhone ? ' · ' + esc(u.displayPhone) : ''}${u.qualityRating ? ' · quality ' + esc(u.qualityRating) : ''}</span>
-        <span style="flex:1;min-width:12px"></span>
-        <button type="button" onclick="_renderWhatsappUsage(true)" style="padding:5px 11px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;font-size:12px;cursor:pointer">Refresh</button>
+    <div class="wa-status">
+      <span class="wa-dot" style="background:${dot}"></span>
+      <b>${esc(headline)}</b>
+      <span>${esc([u.displayPhone, u.qualityRating ? 'quality ' + u.qualityRating : '', u.monthLabel].filter(Boolean).join(' · '))}</span>
+      <span class="wa-spacer"></span>
+      <button type="button" class="wa-btn sm" onclick="_renderWhatsappUsage(true)">Refresh</button>
+    </div>
+    ${blocked ? `<div class="wa-banner bad">
+      <strong>Sends are being refused for a billing reason.</strong> Meta said:
+      “${esc(u.billing.blockError)}”${u.billing.blockAt ? ` (${esc(String(u.billing.blockAt).slice(0,16))})` : ''}.
+      Top up below, then retry — nothing will go out until the account is funded.
+    </div>` : ''}
+    <div class="wa-tiles">${freeTile}${billTile}${limitTile}${todayTile}${monthTile}</div>
+    <div class="wa-note">
+      <strong>Free ≠ how many invoices you can still send.</strong> Invoice and payment templates are
+      <em>billable</em> — the free allowance only covers messages sent inside an open 24-hour window
+      (i.e. after that contact has messaged you). The number that actually stops a bulk run is
+      <strong>Recipients left (24h)</strong>: ${L.cap ? `this number is rated ${esc(L.tier||'')}, so ${n(L.cap)} unique recipients per rolling 24 hours` : 'the messaging-limit tier Meta has rated this number'}.
+    </div>
+    <div class="wa-box wa-row">
+      <div class="wa-note" style="flex:1;min-width:230px">
+        <strong>Recharge.</strong> WhatsApp is billed by Meta, and Meta provides
+        no way to add funds from inside another app — the card on file and the balance live in the
+        Meta billing hub. Top up there, then hit Refresh here.
       </div>
-      ${blocked ? `<div style="padding:11px 16px;background:#fef2f2;border-bottom:1px solid #fecaca;font-size:12.5px;color:#991b1b">
-        <strong>Sends are being refused for a billing reason.</strong> Meta said:
-        “${esc(u.billing.blockError)}”${u.billing.blockAt ? ` (${esc(String(u.billing.blockAt).slice(0,16))})` : ''}.
-        Top up below, then retry — nothing will go out until the account is funded.
-      </div>` : ''}
-      <div style="padding:14px 16px">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:11px">
-          ${freeTile}${billTile}${limitTile}${todayTile}${monthTile}
+      ${link(billUrl, 'Add funds ↗', true)}
+      ${link(insightsUrl, 'Meta insights ↗')}
+    </div>
+    <details class="wa-adv">
+      <summary>Allowance &amp; recharge link</summary>
+      <div class="wa-row" style="align-items:flex-end">
+        <div style="min-width:150px">
+          <label class="wa-lab">Free messages / month</label>
+          <input id="wa-free-allowance" class="wa-in" type="number" min="0" step="1" value="${esc(f.allowance == null ? '' : f.allowance)}">
         </div>
-        <div style="font-size:11.5px;color:var(--text3);margin-top:10px;line-height:1.55;padding:9px 11px;background:#f9fafb;border:1px solid var(--border);border-radius:8px">
-          <strong>Free ≠ how many invoices you can still send.</strong> Invoice and payment templates are
-          <em>billable</em> — the free allowance only covers messages sent inside an open 24-hour window
-          (i.e. after that contact has messaged you). The number that actually stops a bulk run is
-          <strong>Recipients left (24h)</strong>: ${L.cap ? `this number is rated ${esc(L.tier||'')}, so ${n(L.cap)} unique recipients per rolling 24 hours` : 'the messaging-limit tier Meta has rated this number'}.
+        <div style="flex:1;min-width:210px">
+          <label class="wa-lab">Recharge URL (override)</label>
+          <input id="wa-billing-url" class="wa-in" type="text" value="${esc(u.billing && u.billing.customUrl || '')}" placeholder="blank = Meta billing hub">
         </div>
-        <div style="margin-top:13px;padding:11px 13px;border:1px solid var(--border);border-radius:9px;background:#f9fafb">
-          <div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Recharge</div>
-          <div style="font-size:11.5px;color:var(--text3);line-height:1.55;margin-bottom:10px">
-            WhatsApp is billed by Meta, and Meta provides no way to add funds from inside another app —
-            the card on file and the balance live in the Meta billing hub. The button below opens it directly;
-            after topping up, hit Refresh here.
-          </div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            ${btn(billUrl, 'Add funds / payment settings', true)}
-            ${btn(insightsUrl, 'Meta usage insights')}
-          </div>
-        </div>
-        <div style="margin-top:11px;display:flex;gap:9px;align-items:flex-end;flex-wrap:wrap">
-          <div style="min-width:150px">
-            <label style="display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:3px;text-transform:uppercase;letter-spacing:.3px">Free messages / month</label>
-            <input id="wa-free-allowance" type="number" min="0" step="1" value="${esc(f.allowance == null ? '' : f.allowance)}"
-              style="width:100%;padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px;font-size:12.5px;box-sizing:border-box">
-          </div>
-          <div style="flex:1;min-width:210px">
-            <label style="display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:3px;text-transform:uppercase;letter-spacing:.3px">Recharge URL (override)</label>
-            <input id="wa-billing-url" type="text" value="${esc(u.billing && u.billing.customUrl || '')}" placeholder="blank = Meta billing hub"
-              style="width:100%;padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px;font-size:12.5px;box-sizing:border-box">
-          </div>
-          <button type="button" onclick="_saveWhatsappUsageSettings()" style="padding:8px 14px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;font-weight:600;font-size:12.5px;cursor:pointer">Save</button>
-          <span id="wa-usage-msg" style="font-size:12px;color:var(--text3)"></span>
-        </div>
-        <div style="font-size:11px;color:var(--text3);margin-top:9px;line-height:1.55">
-          Meta does not publish the free allowance over the API, so the figure above is the number this account is
-          entitled to (1,000 service messages per month at the time of writing) — correct it here if Meta changes it.
-          Free / billable counts come from Meta; “sent today / this month” come from this app's own send log.
-        </div>
+        <button type="button" class="wa-btn" onclick="_saveWhatsappUsageSettings()">Save</button>
+        <span id="wa-usage-msg"></span>
       </div>
-    </div>`;
+      <div class="wa-note" style="margin-top:9px">
+        Meta does not publish the free allowance over the API, so the figure above is what this account is
+        entitled to (1,000 service messages per month at the time of writing) — correct it here if Meta changes it.
+        Free / billable counts come from Meta; “sent today / this month” come from this app's own send log.
+      </div>
+    </details>`;
 }
 // Persist the two operator-editable knobs behind the card. They are ordinary
 // company settings (hidden from the settings grid so they live in one place).
@@ -26060,7 +26147,7 @@ async function _saveWhatsappUsageSettings(){
     if (msg) { msg.style.color = '#b02525'; msg.textContent = (e && e.message) || String(e); }
   }
 }
-// ── Settings → Integrations: WhatsApp send log ────────────────────
+// ── WhatsApp section → Send log tab ───────────────────────────────
 // The answer to "did it actually reach them?". A successful send only means
 // Meta ACCEPTED the message; the real verdict arrives later on the webhook
 // (sent → delivered → read, or failed with a reason) and lands in
@@ -26096,7 +26183,7 @@ async function _renderWhatsappLog(){
   const when = (t) => String(t || '').slice(0, 16).replace('T', ' ');
   const chip = (st) => {
     const t = _WA_LOG_TONE[st] || { label: st || '—', bg: '#eee', fg: '#666' };
-    return `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:${t.bg};color:${t.fg};white-space:nowrap">${esc(t.label)}</span>`;
+    return `<span class="wa-chip" style="background:${t.bg};color:${t.fg}">${esc(t.label)}</span>`;
   };
   const opt = (v, label) => `<option value="${esc(v)}"${_waLogFilter.status === v ? ' selected' : ''}>${esc(label)}</option>`;
   // Counts across what is loaded — a quick read on whether the account is
@@ -26107,52 +26194,42 @@ async function _renderWhatsappLog(){
   const anyReceipts = !!(tally.delivered || tally.read || tally.failed);
 
   const body = loadErr
-    ? `<div style="padding:14px 16px;color:#991b1b;font-size:12.5px">Could not load the send log: ${esc(loadErr)}</div>`
+    ? `<div class="wa-banner bad">Could not load the send log: ${esc(loadErr)}</div>`
     : !rows.length
-      ? `<div style="padding:16px;font-size:12.5px;color:var(--text3)">No messages${_waLogFilter.status || _waLogFilter.q ? ' match this filter' : ' sent yet'}.</div>`
-      : `<div style="overflow-x:auto">
-          <table style="width:100%;border-collapse:collapse;font-size:12.5px">
-            <thead><tr style="background:#f9fafb;text-align:left">
-              <th style="padding:7px 10px;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;white-space:nowrap">When</th>
-              <th style="padding:7px 10px;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;white-space:nowrap">To</th>
-              <th style="padding:7px 10px;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px">Message</th>
-              <th style="padding:7px 10px;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;white-space:nowrap">Status</th>
-            </tr></thead>
+      ? `<div class="wa-note">No messages${_waLogFilter.status || _waLogFilter.q ? ' match this filter' : ' sent yet'}.</div>`
+      : `<div style="overflow-x:auto;border:1px solid var(--spice-line);border-radius:10px">
+          <table class="wa-tbl">
+            <thead><tr><th>When</th><th>To</th><th>Message</th><th>Status</th></tr></thead>
             <tbody>${rows.map(r => `
-              <tr style="border-top:1px solid var(--border)">
-                <td style="padding:7px 10px;white-space:nowrap;color:var(--text2)">${esc(when(r.updated_at || r.created_at))}</td>
-                <td style="padding:7px 10px;white-space:nowrap">${esc(maskPhone(r.phone) || '—')}</td>
-                <td style="padding:7px 10px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.caption)}">${esc(r.caption || r.msg_type || '—')}</td>
-                <td style="padding:7px 10px;white-space:nowrap">${chip(r.status)}${r.error ? `<div style="font-size:11px;color:#b02525;margin-top:2px;max-width:220px">${esc(r.error)}</div>` : ''}</td>
+              <tr>
+                <td style="white-space:nowrap;color:var(--spice-text-mute)">${esc(when(r.updated_at || r.created_at))}</td>
+                <td style="white-space:nowrap">${esc(maskPhone(r.phone) || '—')}</td>
+                <td style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.caption)}">${esc(r.caption || r.msg_type || '—')}</td>
+                <td style="white-space:nowrap">${chip(r.status)}${r.error ? `<div style="font-size:11px;color:#b02525;margin-top:2px;max-width:220px">${esc(r.error)}</div>` : ''}</td>
               </tr>`).join('')}
             </tbody>
           </table>
         </div>`;
 
   host.innerHTML = `
-    <div style="border:1px solid var(--border);border-radius:10px;background:#fff;overflow:hidden">
-      <div style="padding:13px 16px;display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;border-bottom:1px solid var(--border);background:#f9fafb">
-        <span style="font-size:12px;font-weight:600;color:var(--text2)">${esc(tallyBits || 'nothing sent yet')}</span>
-        <span style="flex:1;min-width:12px"></span>
-        <button type="button" onclick="_renderWhatsappLog()" style="padding:5px 11px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;font-size:12px;cursor:pointer">Refresh</button>
-      </div>
-      <div style="padding:11px 16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--border)">
-        <select id="wa-log-status" onchange="_waLogSet('status', this.value)" style="height:32px;padding:0 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12.5px">
-          ${opt('', 'All statuses')}${opt('sent', 'Sent (no receipt yet)')}${opt('delivered', 'Delivered')}${opt('read', 'Read')}${opt('failed', 'Failed')}
-        </select>
-        <input id="wa-log-q" type="search" value="${esc(_waLogFilter.q)}" placeholder="Search number or message…"
-          onkeydown="if(event.key==='Enter')_waLogSet('q', this.value)" onsearch="_waLogSet('q', this.value)"
-          style="flex:1;min-width:180px;height:32px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12.5px">
-        <select id="wa-log-limit" onchange="_waLogSet('limit', Number(this.value))" style="height:32px;padding:0 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12.5px">
-          ${[100,250,500].map(n => `<option value="${n}"${_waLogFilter.limit===n?' selected':''}>Last ${n}</option>`).join('')}
-        </select>
-      </div>
-      ${body}
-      ${rows.length && !anyReceipts ? `<div style="padding:10px 16px;border-top:1px solid var(--border);font-size:11.5px;color:var(--text3);background:#fffbeb">
-        Every row is stuck on <strong>Sent</strong> — that is Meta accepting the message, not the recipient receiving it.
-        Delivered / Read only appear once the webhook above is verified and the <strong>messages</strong> field is subscribed in Meta.
-      </div>` : ''}
-    </div>`;
+    <div class="wa-row">
+      <select id="wa-log-status" class="wa-in" style="width:auto" onchange="_waLogSet('status', this.value)">
+        ${opt('', 'All statuses')}${opt('sent', 'Sent (no receipt yet)')}${opt('delivered', 'Delivered')}${opt('read', 'Read')}${opt('failed', 'Failed')}
+      </select>
+      <input id="wa-log-q" class="wa-in" style="flex:1;min-width:170px;width:auto" type="search" value="${esc(_waLogFilter.q)}" placeholder="Search number or message…"
+        onkeydown="if(event.key==='Enter')_waLogSet('q', this.value)" onsearch="_waLogSet('q', this.value)">
+      <select id="wa-log-limit" class="wa-in" style="width:auto" onchange="_waLogSet('limit', Number(this.value))">
+        ${[100,250,500].map(n => `<option value="${n}"${_waLogFilter.limit===n?' selected':''}>Last ${n}</option>`).join('')}
+      </select>
+      <button type="button" class="wa-btn sm" onclick="_renderWhatsappLog()">Refresh</button>
+    </div>
+    ${rows.length ? `<div class="wa-note">${esc(tallyBits)}</div>` : ''}
+    ${body}
+    ${rows.length && !anyReceipts ? `<div class="wa-banner warn">
+      Every row is stuck on <strong>Sent</strong> — that is Meta accepting the message, not the recipient receiving it.
+      Delivered / Read only appear once the webhook on the <strong>Setup</strong> tab is verified and the
+      <strong>messages</strong> field is subscribed in Meta.
+    </div>` : ''}`;
 }
 function _waLogSet(key, value){
   _waLogFilter[key] = value;
