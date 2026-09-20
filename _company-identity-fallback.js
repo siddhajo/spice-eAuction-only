@@ -15,7 +15,7 @@
  *   address2  : tn_address2 → address2 → tn_branch → branch
  *   gstin     : gstin → tn_gstin → business_gstin
  *   pan       : pan → tn_pan → business_pan → derived (gstin[2..12])
- *   state     : tn_state → business_state → state (uppercased)
+ *   state     : business_state → tn_state → state (uppercased)
  *   stateCode : tally_state_code → derived (gstin[0..2]) → ''
  */
 
@@ -40,7 +40,9 @@ function inlineResolver(cfg) {
     gstin,
     pan: pick('pan', 'tn_pan', 'business_pan')
       || (gstin && gstin.length >= 12 ? gstin.slice(2, 12) : ''),
-    state: pick('tn_state', 'business_state', 'state').toUpperCase(),
+    // business_state FIRST — see the note in report-formatters.js; this
+    // mirror must stay in step with it.
+    state: pick('business_state', 'tn_state', 'state').toUpperCase(),
     stateCode: pick('tally_state_code') || (gstin && gstin.length >= 2 ? gstin.slice(0, 2) : ''),
     cin: pick('cin'),
     idLine: (() => {

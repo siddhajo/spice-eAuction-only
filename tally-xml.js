@@ -4431,6 +4431,26 @@ function buildDebitNotePlanterRows(db, auctionId, cfg) {
 //           name, parent (group), gstin, pan, address, place, pin,
 //           state, applicableFrom (yyyymmdd) }]
 //
+// Tally's <LEDGERMOBILE> / <PHONENUMBER> want a bare national number — the
+// ISD code lives in its own tag. Operators type all sorts of things into the
+// phone field ("+91 94477-28371", "0 9447728371"), so strip to digits and
+// drop a leading 91 / 0 when what's left would still be a 10-digit number.
+// Anything that doesn't look like a phone number at all is returned empty
+// rather than guessed at — a wrong number on a ledger is worse than none.
+//
+// The final digit test is a MOBILE test, not a length test: an STD landline
+// ("04554-222333") also reduces to ten digits, and emitting it here would
+// both fill <LEDGERMOBILE> with an undialable number and hand it to Tally as
+// the party's default WhatsApp number. Indian mobile numbers are the 6-9
+// series, so anything starting 0-5 after normalising is a landline and is
+// dropped.
+function _tallyMobile(v) {
+  let d = String(v || '').replace(/\D+/g, '');
+  if (d.length > 10 && d.startsWith('91')) d = d.slice(2);
+  while (d.length > 10 && d.startsWith('0')) d = d.slice(1);
+  return /^[6-9]\d{9}$/.test(d) ? d : '';
+}
+
 function generLedgerXML(rows, cfg, opts = {}) {
   const company = opts.companyName || cfgGet(cfg, 'tally_company_name', cfgGet(cfg, 'short_name', 'Ideal Spices Private Limited'));
   const today = toTallyDate(new Date());
@@ -4455,6 +4475,7 @@ function generLedgerXML(rows, cfg, opts = {}) {
     const address = xe(r.address || '');
     const place = xe(r.place || '');
     const pin = xe(r.pin || '');
+    const mobile = xe(_tallyMobile(r.mobile));
     const isParty = r.kind === 'party';
     const hasGst = isParty && gstin;
 
@@ -4472,28 +4493,48 @@ function generLedgerXML(rows, cfg, opts = {}) {
     const isUrdParty = isParty && partyKind === 'urd';
 
     // ── Build the LEDGER body in the exact order the target XMLs use ──
-    // Order: CURRENCYNAME, PRIORSTATENAME, INCOMETAXNUMBER, [VATDEALERTYPE],
-    //        PARENT, COUNTRYOFRESIDENCE, LEDGERCOUNTRYISDCODE,
-    //        ISBILLWISEON, ASORIGINAL, ISCHEQUEPRINTINGENABLED,
-    //        LANGUAGENAME.LIST, LEDGSTREGDETAILS.LIST, LEDMAILINGDETAILS.LIST.
+    // Order: CURRENCYNAME, PRIORSTATENAME, INCOMETAXNUMBER,
+    //        [GSTREGISTRATIONTYPE], [VATDEALERTYPE], PARENT,
+    //        COUNTRYOFRESIDENCE, [LEDGERMOBILE], LEDGERCOUNTRYISDCODE,
+    //        [PARTYGSTIN], ISBILLWISEON, ASORIGINAL, ISCHEQUEPRINTINGENABLED,
+    //        LANGUAGENAME.LIST, LEDGSTREGDETAILS.LIST, LEDMAILINGDETAILS.LIST,
+    //        [CONTACTDETAILS.LIST].
+    // The OLD* tags in a Tally-exported master (OLDMAILINGNAME.LIST,
+    // OLDADDRESS.LIST, OLDLEDSTATENAME, OLDCOUNTRYNAME, OLDAUDITENTRYIDS.LIST)
+    // and RESERVEDNAME are export-side history, not import schema — Tally
+    // ignores them on the way in and OLDAUDITENTRYIDS can confuse the audit
+    // trail, so we deliberately don't emit them.
     // The opening tag has just NAME="" — no top-level <NAME> child, no
     // RESERVEDNAME attribute (matches every sample we've seen).
     let block = `\n<LEDGER NAME="${name}">
 <CURRENCYNAME>₹</CURRENCYNAME>`;
 
     if (isParty) {
-      // For sales/RD parties we have state + PAN; for URD we still emit the
-      // tags but leave them empty (the target URD XML uses empty tags here,
-      // which is what Tally expects for unregistered parties).
+      // PRIORSTATENAME is the state of a PREVIOUS registration — an
+      // agriculturist has none, so it stays empty for URD.
+      //
+      // INCOMETAXNUMBER (PAN) is emitted for URD too. It used to be blanked,
+      // which dropped a PAN we already hold: it's the same lots.pan that
+      // builds the "-[PAN]" ledger-name suffix, and the customer's own
+      // exported planter master carries it. No PAN on file → an empty tag,
+      // exactly as before.
       if (isUrdParty) {
         block += `
 <PRIORSTATENAME></PRIORSTATENAME>
-<INCOMETAXNUMBER></INCOMETAXNUMBER>`;
+<INCOMETAXNUMBER>${pan}</INCOMETAXNUMBER>`;
       } else {
         block += `
 <PRIORSTATENAME>${state}</PRIORSTATENAME>
 <INCOMETAXNUMBER>${pan}</INCOMETAXNUMBER>`;
       }
+      // Ledger-level GSTREGISTRATIONTYPE. This is the CURRENT registration
+      // type; the copies inside LEDGSTREGDETAILS.LIST are the dated history.
+      // Tally's own exports carry both, and some builds read the flat one when
+      // deciding a party's registration on the ledger screen.
+      // Value spelling matters: at LEDGER level Tally's own export writes
+      // "Unregistered"; "Unregistered/Consumer" is the spelling it uses inside
+      // LEDGSTREGDETAILS.LIST below. Keep each where it belongs.
+      block += `\n<GSTREGISTRATIONTYPE>${hasGst ? 'Regular' : 'Unregistered'}</GSTREGISTRATIONTYPE>`;
       // VATDEALERTYPE: only RD and URD purchase parties carry this (matches
       // the schema in RD_LEDGER_MASTER and URD_LEDGER_MASTER; SALE doesn't).
       if (isRdParty) {
@@ -4505,8 +4546,37 @@ function generLedgerXML(rows, cfg, opts = {}) {
 
     block += `
 <PARENT>${parent}</PARENT>
-<COUNTRYOFRESIDENCE>India</COUNTRYOFRESIDENCE>
+<COUNTRYOFRESIDENCE>India</COUNTRYOFRESIDENCE>`;
+
+    // Only emit the phone tag when we actually have a usable number —
+    // an empty <LEDGERMOBILE> would blank out a number already on file.
+    if (isParty && mobile) {
+      block += `
+<LEDGERMOBILE>${mobile}</LEDGERMOBILE>`;
+    }
+
+    block += `
 <LEDGERCOUNTRYISDCODE>+91</LEDGERCOUNTRYISDCODE>`;
+
+    // PARTYGSTIN is the flat, current GSTIN — it is what the party screen,
+    // GSTR reports and e-invoicing read. LEDGSTREGDETAILS.LIST below is the
+    // dated history; having only the history leaves the party's GSTIN field
+    // looking empty in some Tally builds.
+    if (hasGst) {
+      block += `
+<PARTYGSTIN>${gstin}</PARTYGSTIN>`;
+    }
+
+    // Default supply type for the party. The auction's own outward supply is
+    // the commission SERVICE (the produce is the planter's, sold on their
+    // behalf) — which is why every service line in the vouchers carries
+    // <GSTOVRDNTYPEOFSUPPLY>Services</GSTOVRDNTYPEOFSUPPLY> and why the
+    // customer's own exported masters show "Services" here. Overridable for
+    // installs that bill goods on their own account.
+    if (isParty) {
+      block += `
+<GSTTYPEOFSUPPLY>${xe(cfgGet(cfg, 'tally_gst_type_of_supply', 'Services'))}</GSTTYPEOFSUPPLY>`;
+    }
 
     if (isParty) {
       block += `
@@ -4517,9 +4587,10 @@ function generLedgerXML(rows, cfg, opts = {}) {
 
     block += `
 <LANGUAGENAME.LIST>
-<NAME.LIST>
+<NAME.LIST TYPE="String">
 <NAME>${name}</NAME>
 </NAME.LIST>
+<LANGUAGEID> 1033</LANGUAGEID>
 </LANGUAGENAME.LIST>`;
 
     // GST registration block.
@@ -4532,6 +4603,7 @@ function generLedgerXML(rows, cfg, opts = {}) {
 <LEDGSTREGDETAILS.LIST>
 <APPLICABLEFROM>${dateval}</APPLICABLEFROM>
 <GSTREGISTRATIONTYPE>Regular</GSTREGISTRATIONTYPE>
+<STATE>${state}</STATE>
 <PLACEOFSUPPLY>${state}</PLACEOFSUPPLY>
 <GSTIN>${gstin}</GSTIN>
 </LEDGSTREGDETAILS.LIST>`;
@@ -4542,6 +4614,7 @@ function generLedgerXML(rows, cfg, opts = {}) {
 <LEDGSTREGDETAILS.LIST>
 <APPLICABLEFROM>${dateval}</APPLICABLEFROM>
 <GSTREGISTRATIONTYPE>Unregistered/Consumer</GSTREGISTRATIONTYPE>
+<STATE>${xe(placeOfSupply)}</STATE>
 <PLACEOFSUPPLY>${xe(placeOfSupply)}</PLACEOFSUPPLY>
 </LEDGSTREGDETAILS.LIST>`;
       }
@@ -4552,7 +4625,7 @@ function generLedgerXML(rows, cfg, opts = {}) {
       const mailingState = state || (isUrdParty ? xe(cfgGet(cfg, 'tally_urd_state', 'Kerala')) : '');
       block += `
 <LEDMAILINGDETAILS.LIST>
-<ADDRESS.LIST>
+<ADDRESS.LIST TYPE="String">
 <ADDRESS>${address}</ADDRESS>
 <ADDRESS>${place}</ADDRESS>
 </ADDRESS.LIST>
@@ -4562,6 +4635,19 @@ function generLedgerXML(rows, cfg, opts = {}) {
 <STATE>${mailingState}</STATE>
 <COUNTRY>India</COUNTRY>
 </LEDMAILINGDETAILS.LIST>`;
+    }
+
+    // Contact card. Same number as <LEDGERMOBILE>; Tally shows this one in
+    // the party's contact list and uses ISDEFAULTWHATSAPPNUM to decide which
+    // number its WhatsApp share picks up.
+    if (isParty && mobile) {
+      block += `
+<CONTACTDETAILS.LIST>
+<NAME>Primary Mobile No.</NAME>
+<PHONENUMBER>${mobile}</PHONENUMBER>
+<COUNTRYISDCODE>+91</COUNTRYISDCODE>
+<ISDEFAULTWHATSAPPNUM>Yes</ISDEFAULTWHATSAPPNUM>
+</CONTACTDETAILS.LIST>`;
     }
 
     // Tax ledgers: tag with the right rate-of-tax info (only used by the
@@ -4605,6 +4691,23 @@ function generLedgerXML(rows, cfg, opts = {}) {
 // shape that generLedgerXML already consumes — only the source-of-data
 // and the parent group differ.
 
+// The RD/URD builders read one row per LOT and rely on SELECT DISTINCT to
+// collapse them into one row per party. Every column in the select widens
+// that DISTINCT — `tel` especially, because a seller's phone is snapshotted
+// onto each lot and two lots of the same seller can easily carry different
+// (or stale) numbers. That would emit the same <LEDGER NAME="…"> twice.
+// The ledger NAME is the identity Tally imports on, so collapse on it here:
+// first row wins, matching the ORDER BY the query already applies.
+function _oneRowPerLedger(rows) {
+  const seen = new Set();
+  return rows.filter((r) => {
+    const key = String(r.name || '');
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function _buyerRow(b, todayDate, intra, interDealer, localDealer) {
   const isIntra = String(b.gstin || '').slice(0, 2) === String(intra);
   return {
@@ -4618,6 +4721,7 @@ function _buyerRow(b, todayDate, intra, interDealer, localDealer) {
     place: b.pla || '',
     pin: b.pin || '',
     state: b.state || '',
+    mobile: b.tel || '',
     applicableFrom: todayDate,
   };
 }
@@ -4698,6 +4802,7 @@ function _rdTraderRow(t, todayDate, intra, interDealPur, localDealPur, cfg) {
     place: t.ppla || '',
     pin: t.ppin || '',
     state: t.pstate || '',
+    mobile: t.tel || '',
     applicableFrom: todayDate,
   };
 }
@@ -4714,6 +4819,7 @@ function _urdTraderRow(t, todayDate, auctionLDR, cfg) {
     place: t.ppla || '',
     pin: t.ppin || '',
     state: t.pstate || '',
+    mobile: t.tel || '',
     applicableFrom: todayDate,
   };
 }
@@ -4760,7 +4866,10 @@ function buildRDPartyLedgerRows(db, auctionId, cfg, opts = {}) {
   const localDealPur = cfgGet(cfg, 'tally_purchase_dealer_intra', 'Local Dealer');
 
   let sql = `
-    SELECT DISTINCT name, padd, ppla, ppin, pstate, cr, pan
+    SELECT DISTINCT name, padd, ppla, ppin, pstate, cr, pan,
+           COALESCE(NULLIF(tel,''),
+                    (SELECT t.tel FROM traders t WHERE t.id = lots.trader_id),
+                    '') AS tel
     FROM lots
     WHERE auction_id = ? AND ${HAS_GSTIN_SQL}
   `;
@@ -4772,7 +4881,7 @@ function buildRDPartyLedgerRows(db, auctionId, cfg, opts = {}) {
   sql += ` ORDER BY name`;
 
   const traders = db.prepare(sql).all(...params);
-  return traders.map(t => _rdTraderRow(t, todayDate, intra, interDealPur, localDealPur, cfg));
+  return _oneRowPerLedger(traders.map(t => _rdTraderRow(t, todayDate, intra, interDealPur, localDealPur, cfg)));
 }
 
 /**
@@ -4788,7 +4897,10 @@ function buildURDPartyLedgerRows(db, auctionId, cfg, opts = {}) {
   const auctionLDR = cfgGet(cfg, 'tally_purchase_planter_parent', 'Planters');
 
   let sql = `
-    SELECT DISTINCT name, padd, ppla, ppin, pstate, pan
+    SELECT DISTINCT name, padd, ppla, ppin, pstate, pan,
+           COALESCE(NULLIF(tel,''),
+                    (SELECT t.tel FROM traders t WHERE t.id = lots.trader_id),
+                    '') AS tel
     FROM lots
     WHERE auction_id = ? AND ${NO_GSTIN_SQL}
       AND name != ''
@@ -4801,7 +4913,7 @@ function buildURDPartyLedgerRows(db, auctionId, cfg, opts = {}) {
   sql += ` ORDER BY name`;
 
   const traders = db.prepare(sql).all(...params);
-  return traders.map(t => _urdTraderRow(t, todayDate, auctionLDR, cfg));
+  return _oneRowPerLedger(traders.map(t => _urdTraderRow(t, todayDate, auctionLDR, cfg)));
 }
 
 /**

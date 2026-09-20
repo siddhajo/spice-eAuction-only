@@ -216,6 +216,17 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
   // Divider between seller block and details grid
   doc.moveTo(x0, y).lineTo(x1, y).stroke();
 
+  // Our own company. Needed by the PLACE OF SUPPLY row below as well as by
+  // the BILLED TO block further down, so it is resolved once, here.
+  const _ident = getCompanyIdentity(cfg);
+  // On a purchase invoice the goods land with US, so the place of supply is
+  // the company's own state. `s_place` / `s_state` used to feed this row —
+  // neither is a real setting (they exist in no defaults table and no DB), so
+  // the row printed empty on every install ever made.
+  const placeOfSupply = _ident.state
+    ? _ident.state + (_ident.stateCode ? '  [' + _ident.stateCode + ']' : '')
+    : '';
+
   // ── 4-field grid: 2 columns × 4 rows for supplier details + invoice details ──
   //  Left column:  TRANSPORT / VEHICLE NO / STATION / e-TRADE No
   //  Right column: INVOICE NO / DATE / PLACE OF SUPPLY / REVERSE CHARGE
@@ -237,7 +248,7 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
   const rightPairs = [
     ['INVOICE NO', ''], // value blank per reference
     ['DATE', invoiceData.invoiceDate || _fallbackInvoiceDate(cfg)],
-    ['PLACE OF SUPPLY', (cfg.s_place || '').toUpperCase() + (cfg.s_state ? '  [' + (cfg.s_state || '').toUpperCase() + ']' : '')],
+    ['PLACE OF SUPPLY', placeOfSupply],
     ['REVERSE CHARGE', ''],
   ];
   // Render each column with the colons aligned (labels in each column line up).
@@ -271,7 +282,6 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
   // configured company identity rather than a hardcoded sister-company
   // name. In practice the buyer is always passed in; this branch only
   // fires for malformed callers.
-  const _ident = getCompanyIdentity(cfg);
   const buyer = invoiceData.buyer || {
     name: _ident.name,
     address: _ident.address1,

@@ -342,7 +342,15 @@ function getCompanyIdentity(cfg) {
   const gstin     = pick('gstin', 'tn_gstin', 'business_gstin');
   const pan       = pick('pan', 'tn_pan', 'business_pan')
                   || (gstin && gstin.length >= 12 ? gstin.slice(2, 12) : '');
-  const state     = pick('tn_state', 'business_state', 'state').toUpperCase();
+  // `business_state` FIRST, always. `tn_state` used to lead here, but it
+  // carries a factory default of "Tamil Nadu" and lives in the `address_tn`
+  // settings category — which the UI HIDES on a Kerala install
+  // (_STATE_HIDE_CATS in public/index.html). So a Kerala company printed
+  // "TAMIL NADU" in its own party block, sourced from a field the operator
+  // could not even see to correct, next to a state CODE of 32 (Kerala).
+  // The branch address blocks still feed everything else; only the company's
+  // own state is authoritative from the one setting that names it.
+  const state     = pick('business_state', 'tn_state', 'state').toUpperCase();
   const stateCode = pick('tally_state_code')
                   || (gstin && gstin.length >= 2 ? gstin.slice(0, 2) : '');
   // Partnership / CIN identity line.

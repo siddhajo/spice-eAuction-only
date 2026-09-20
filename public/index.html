@@ -4287,6 +4287,27 @@ body[data-dark="1"] .dt-scroll tbody tr:hover{background:#334155}
 }
 .dt-foot td strong{color:#B45309}  /* amber-dark for the sum numbers */
 
+/* SELECTED-ROWS subtotal — a second footer row that sits directly above the
+   grand-total row and sums only the ticked rows. Green instead of the
+   grand total's amber so the two are never misread for one another, and
+   hidden entirely while nothing is ticked. Its `bottom` offset is set from
+   JS (the grand-total row's measured height) because both rows are sticky
+   and would otherwise pin on top of each other. */
+.dt-foot-sel td{
+  position:sticky;z-index:3;
+  background:var(--spice-cardamom-lt);
+  border-top:2px solid var(--spice-cardamom);
+  padding:10px 12px;font-size:13px;font-weight:700;
+  color:var(--spice-text-main)
+}
+.dt-foot-sel td strong{color:var(--spice-cardamom-dk)}
+.dt-sel-tag,.dt-all-tag{
+  display:inline-block;padding:2px 8px;border-radius:5px;color:#fff;
+  font-size:10px;font-weight:700;letter-spacing:.4px
+}
+.dt-sel-tag{background:var(--spice-cardamom)}
+.dt-all-tag{background:#B45309}   /* matches the amber the total figures use */
+
 /* Load more */
 .dt-loadmore{margin-top:10px;text-align:center}
 .dt-loadmore button{
@@ -10782,6 +10803,65 @@ const DataTable = (function(){
   window.addEventListener('resize', _closeAllActionMenus);
   window.addEventListener('scroll', _closeAllActionMenus, true);
 
+  // Build one footer row's cells for a given set of rows. Shared by the
+  // grand-total row (all filtered rows) and the selected-rows subtotal, so
+  // the two can never disagree about how a column is summed or formatted.
+  // Per-column overrides:
+  //   c.noTotal   → empty cell (no sum, no count)
+  //   c.totalKind → 'count' → row count instead of a sum
+  //   c.fmt       → formats the sum
+  // `labelCol` / `label` stamp a tag into one named column — used by the
+  // selected-rows row to say what it is; the grand-total row passes neither.
+  function footCells(cols, rows, labelCol, label, tagClass){
+    return cols.map(c => {
+      if (labelCol && c.key === labelCol) return `<td><span class="${tagClass || 'dt-sel-tag'}">${esc(label)}</span></td>`;
+      if (c.noTotal) return '<td></td>';
+      if (c.totalKind === 'count') {
+        const n = rows.length;
+        let out;
+        if (typeof c.totalLabel === 'function') out = c.totalLabel(n);
+        else if (typeof c.totalLabel === 'string') out = c.totalLabel;
+        else out = `${n} row${n===1?'':'s'}`;
+        return `<td><strong>${out}</strong></td>`;
+      }
+      if (!c.numeric) return '<td></td>';
+      const sum = rows.reduce((a,r) => a + (Number(getValue(r,c))||0), 0);
+      const fmt = c.fmt ? c.fmt(sum) : sum.toLocaleString('en-IN',{maximumFractionDigits:2});
+      return `<td class="num"><strong>${fmt}</strong></td>`;
+    }).join('');
+  }
+
+  // Recompute the selected-rows subtotal row from whatever is ticked right
+  // now. Rows are matched to their <tr> by POSITION, not by an id column, so
+  // this works on every table regardless of what the checkbox value carries.
+  // Called from the screen's own selection handler (the one that already runs
+  // on every tick) and once at the end of each render.
+  function renderSelectionTotals(tbodyId){
+    const s = state[tbodyId]; if (!s || !s.selectionTotals) return;
+    const tbody = document.getElementById(tbodyId); if (!tbody) return;
+    const table = tbody.closest('table'); if (!table) return;
+    const selRow = table.querySelector('tfoot .dt-foot-sel'); if (!selRow) return;
+
+    const cfg  = s.selectionTotals;
+    const rows = s.rendered || [];
+    const picked = [];
+    Array.from(tbody.rows).forEach((tr, i) => {
+      const cb = tr.querySelector('.' + cfg.cbClass);
+      if (cb && cb.checked && rows[i]) picked.push(rows[i]);
+    });
+
+    if (!picked.length) { selRow.hidden = true; return; }
+    selRow.innerHTML = footCells(s.cols, picked, cfg.labelCol, cfg.label || 'Selected');
+    selRow.hidden = false;
+    // Both footer rows are sticky at the bottom of the scroll box, so this
+    // one has to be lifted clear of the grand-total row below it. Measured
+    // rather than hard-coded — the grand-total row's height moves with the
+    // font size and with any column that wraps.
+    const allRow = table.querySelector('tfoot .dt-foot-all');
+    const lift = allRow ? allRow.offsetHeight : 0;
+    Array.from(selRow.cells).forEach(td => { td.style.bottom = lift + 'px'; });
+  }
+
   function render(tbodyId){
     const s = state[tbodyId]; if (!s) return;
     const table = document.getElementById(tbodyId).closest('table');
@@ -10828,21 +10908,13 @@ const DataTable = (function(){
     //   c.noTotal      → render an empty cell (no sum, no count)
     //   c.totalKind    → 'count'  → show row count (e.g. "27 lots") instead of sum
     //                  → 'sum'    → sum (default when numeric is true)
-    const totals = s.cols.map(c => {
-      if (c.noTotal) return '<td></td>';
-      if (c.totalKind === 'count') {
-        const n = filtered.length;
-        let label;
-        if (typeof c.totalLabel === 'function') label = c.totalLabel(n);
-        else if (typeof c.totalLabel === 'string') label = c.totalLabel;
-        else label = `${n} row${n===1?'':'s'}`;
-        return `<td><strong>${label}</strong></td>`;
-      }
-      if (!c.numeric) return '<td></td>';
-      const sum = filtered.reduce((a,r) => a + (Number(getValue(r,c))||0), 0);
-      const fmt = c.fmt ? c.fmt(sum) : sum.toLocaleString('en-IN',{maximumFractionDigits:2});
-      return `<td class="num"><strong>${fmt}</strong></td>`;
-    }).join('');
+    // On a table with a selected-rows subtotal the grand-total row gets an
+    // "ALL" tag in the same column, so the two rows are told apart by a word
+    // rather than only by colour. Tables without the subtotal keep the
+    // unlabelled total row they have always had.
+    const allLabel = s.selectionTotals && s.selectionTotals.labelCol
+      ? { col: s.selectionTotals.labelCol, text: 'ALL' } : null;
+    const totals = footCells(s.cols, filtered, allLabel && allLabel.col, allLabel && allLabel.text, 'dt-all-tag');
 
     // Toolbar: optional search box + clear (x) + row count.
     // When `noSearch` is set (per-tab pages that already have a more
@@ -10877,12 +10949,22 @@ const DataTable = (function(){
     const emptyRow = empty
       ? `<tr><td colspan="${s.cols.length}" style="padding:0">${emptyStateHTML(empty)}</td></tr>`
       : `<tr><td colspan="${s.cols.length}" style="text-align:center;padding:24px;color:var(--text3)">No rows</td></tr>`;
+    // The selected-rows subtotal row is rendered empty + hidden here and
+    // filled in by renderSelectionTotals() as rows are ticked. It sits ABOVE
+    // the grand total so the reading order is "these ones → everything".
+    const selFoot = s.selectionTotals
+      ? `<tr class="dt-foot-sel" hidden>${s.cols.map(()=>'<td></td>').join('')}</tr>`
+      : '';
     const newInner = `
       <thead class="dt-head"><tr>${headCells}</tr></thead>
       <tbody id="${tbodyId}">${bodyRows || emptyRow}</tbody>
-      <tfoot class="dt-foot"><tr>${totals}</tr></tfoot>
+      <tfoot class="dt-foot">${selFoot}<tr class="dt-foot-all">${totals}</tr></tfoot>
     `;
     table.innerHTML = newInner;
+    // Row objects in the order they were just written to the DOM — this is
+    // what renderSelectionTotals() indexes into to turn a ticked checkbox
+    // back into its row. Set after innerHTML so the two can't drift.
+    s.rendered = visible;
 
     // Wrap table in .dt-wrap + .dt-scroll (once)
     let wrap = table.closest('.dt-wrap');
@@ -10921,10 +11003,20 @@ const DataTable = (function(){
         // the page-level loaders to show a friendlier "no data" panel.
         // DataTable itself doesn't render it — it's stashed here so
         // callers can read state[tbodyId].emptyState if they want to.
-        emptyState: config.emptyState
+        emptyState: config.emptyState,
+        // Opt-in second footer row that subtotals only the ticked rows:
+        //   { cbClass, labelCol, label }
+        // cbClass  — class on the screen's row checkbox
+        // labelCol — column key the "Selected" tag is stamped into
+        // The screen keeps owning selection; it just calls
+        // DataTable.refreshSelection(tbodyId) whenever a tick changes.
+        selectionTotals: config.selectionTotals
       };
       render(tbodyId);
     },
+    // Recompute the selected-rows subtotal. Safe to call on tables that
+    // never opted in (no-op) and on ones that aren't mounted yet.
+    refreshSelection(tbodyId){ try { renderSelectionTotals(tbodyId); } catch (_) {} },
     // Wipe stored state for one tbodyId so the next .mount starts
     // fresh — used by loaders that need to clear retained sort/search
     // direction when the underlying dataset changes shape entirely.
@@ -12766,11 +12858,23 @@ function navApplyAdvances(){
   const aid = Number(document.getElementById('paylw-auction')?.value || 0);
   if (aid && typeof payLwSearch === 'function') payLwSearch();
 }
-function openHelpOverlay(){
+// `id` (optional) is a poster id inside /help.html — passing one jumps
+// straight to that walkthrough instead of the tile list, so a card can send
+// the operator from the question to the answer in one click. The iframe is
+// same-origin, so once it has loaded a fragment nav is enough; only the very
+// first open pays for the document load.
+function openHelpOverlay(id){
   const o = document.getElementById('help-ov');
   if (!o) return;
   const f = o.querySelector('iframe');
-  if (f && !f.getAttribute('src')) f.setAttribute('src','/help.html');
+  if (f) {
+    const want = '/help.html' + (id ? '#' + id : '');
+    if (!f.getAttribute('src')) f.setAttribute('src', want);
+    else if (id) {
+      try { f.contentWindow.location.replace(want); }
+      catch (_) { f.setAttribute('src', want); }
+    }
+  }
   o.style.display = 'flex';
 }
 // Called at the end of go(). When the navigation did not come from a tab
@@ -25868,6 +25972,8 @@ async function _renderGstApiStatus(){
            style="font-size:11.5px;font-weight:700;background:transparent;color:${tone.fg};border:1px solid ${tone.fg};padding:5px 12px;border-radius:6px;cursor:pointer">↻ Check balance now</button>` : ''}
         <a href="${rechargeHref}" target="_blank" rel="noopener"
            style="font-size:11.5px;font-weight:700;background:${tone.fg};color:#fff;padding:5px 12px;border-radius:6px;text-decoration:none">${esc(rechargeTxt)}</a>
+        <button type="button" onclick="openHelpOverlay('gstrecharge')" title="Step-by-step: buy credits and put the key back"
+           style="font-size:11.5px;font-weight:600;background:transparent;color:${tone.fg};border:none;padding:5px 2px;cursor:pointer;text-decoration:underline">How do I recharge?</button>
       </div>
       <div style="display:grid;grid-template-columns:140px 1fr;gap:4px 12px;font-size:12.5px">
         ${rows.map(([k, v]) => `<div style="color:var(--text2);font-weight:600">${esc(k)}</div><div>${v}</div>`).join('')}
@@ -26104,6 +26210,8 @@ async function _renderWhatsappUsage(fresh){
       </div>
       ${link(billUrl, 'Add funds ↗', true)}
       ${link(insightsUrl, 'Meta insights ↗')}
+      <button type="button" class="wa-btn" onclick="openHelpOverlay('warecharge')"
+              title="Step-by-step: which ceiling you hit, and how to clear it">How do I recharge?</button>
     </div>
     <details class="wa-adv">
       <summary>Allowance &amp; recharge link</summary>
@@ -33357,6 +33465,11 @@ async function loadInvoices(opts){
 
   DataTable.mount('invoices-list', d, {
     noSearch: true,
+    // Ticking rows adds a green subtotal row above the grand total, so the
+    // user can total an arbitrary set of invoices (one buyer, one lorry, the
+    // ones about to be printed) without filtering the list down to them.
+    // Kept live by syncInvoiceMaster(), which every tick already goes through.
+    selectionTotals: { cbClass: 'inv-select-cb', labelCol: 'invo', label: 'SELECTED' },
     emptyState: { icon: 'invoices', title: "No invoices yet", body: "Once you have calculated lots for a buyer, use Generate Invoice to create one." }, 
     columns: [
       { key:'_select', label:'', labelHTML:'<input type="checkbox" id="inv-select-all" onclick="event.stopPropagation();toggleAllInvoices(this.checked)" title="Select / clear all visible" style="cursor:pointer;width:16px;height:16px;vertical-align:middle;accent-color:var(--green)">', sortable:false, searchable:false,
@@ -33800,6 +33913,11 @@ function syncInvoiceMaster(){
   document.querySelectorAll('[data-sel-toolbar="inv"]').forEach(el => {
     (ticked > 0 ? _showBulkBtn : _hideBulkBtn)(el);
   });
+  // Selected-rows subtotal row in the table footer. This function is the
+  // single funnel every tick already passes through (row change delegate,
+  // the master checkbox, and the end of loadInvoices), so hooking it here
+  // keeps the subtotal in step with the ticks without extra callsites.
+  if (typeof DataTable !== 'undefined') DataTable.refreshSelection('invoices-list');
 }
 // Delete Selected for Invoices — parallel DELETE per ticked row, single
 // confirm dialog up front. Re-uses the existing inv-select-cb checkbox
