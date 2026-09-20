@@ -37,6 +37,15 @@ function buildPurchaseInvoiceView(invoiceData, cfg, invoiceNo) {
   const buyerGstin = buyer.gstin || coEff.gstin || '';
   const buyerStCode = buyer.st_code || coEff.stateCode || '';
 
+  // On a purchase invoice the goods land with US, so the place of supply is
+  // the company's own state (business_state, via getCompanyIdentity). The old
+  // `s_place` / `s_state` pair fed this row and is not a real setting — it
+  // exists in no defaults table and no DB — so the row printed empty on every
+  // install. Kept in step with the PDFKit renderer in invoice-pdf.js.
+  const placeOfSupply = ident.state
+    ? ident.state + (ident.stateCode ? '  [' + ident.stateCode + ']' : '')
+    : '';
+
   // Detail grid pairs (colon rows in the PDFKit version).
   const leftPairs = [
     ['TRANSPORT', invoiceData.transport || 'BY ROAD'],
@@ -47,7 +56,7 @@ function buildPurchaseInvoiceView(invoiceData, cfg, invoiceNo) {
   const rightPairs = [
     ['INVOICE NO', ''],  // blank in the reference layout
     ['DATE', invoiceData.invoiceDate || ''],
-    ['PLACE OF SUPPLY', (cfg.s_place || '').toUpperCase() + (cfg.s_state ? '  [' + String(cfg.s_state).toUpperCase() + ']' : '')],
+    ['PLACE OF SUPPLY', placeOfSupply],
     ['REVERSE CHARGE', ''],
   ];
 
