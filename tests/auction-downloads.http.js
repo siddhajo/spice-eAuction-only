@@ -13,7 +13,8 @@
 //              magic number (PK) must be there, and the two feeds that write
 //              CSV text directly must still serve CSV to the callers that
 //              ask for it.
-//   [bulk]     the four generated families' list + merge routes exist.
+//   [bulk]     the five generated families' list + merge routes exist, and
+//              each merge route reads the same table its tile lists ids from.
 //   [role]     an operator — who has no auction_desk — can use all of it.
 const os = require('os'), path = require('path'), fs = require('fs');
 const { spawn } = require('child_process');
@@ -227,6 +228,17 @@ const cleanup = () => {
     const post = await api('POST', m.bulk.post, { ids: [] });
     check(`${m.label} merge route is mounted`, post.status !== 404,
           `HTTP ${post.status} on ${m.bulk.post}`);
+    // …and reads the SAME table the ids came from. "Mounted" is not enough:
+    // the Purchase Invoice tile once listed ids out of `purchases` and posted
+    // them to /api/invoices/purchase-pdf-bulk — a different document (the ASP
+    // buyer-side purchase VIEW of a sales invoice) that looks those ids up in
+    // `invoices`. It 400s outside Kerala + e-Auction, and inside it would have
+    // merged whichever unrelated sales invoices shared those row ids. Both
+    // failures are invisible to a 404 check, so pin the family instead.
+    const family = m.bulk.list.replace(/^\/api\//, '');
+    check(`${m.label} merges from the table it lists`,
+          m.bulk.post.startsWith(`/api/${family}/`),
+          `lists ${m.bulk.list} but posts ${m.bulk.post}`);
   }
 
   // ══ [role] operator access ═══════════════════════════════════════

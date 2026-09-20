@@ -4708,13 +4708,51 @@ function _oneRowPerLedger(rows) {
   });
 }
 
-function _buyerRow(b, todayDate, intra, interDealer, localDealer) {
-  const isIntra = String(b.gstin || '').slice(0, 2) === String(intra);
+// ── PARTY LEDGER PARENT GROUPS ──────────────────────────────────────
+// <PARENT> on a LEDGER master is the Tally GROUP the party is filed under
+// — Sundry Debtors, Sundry Creditors, or a sub-group of one. It is not an
+// accounting ledger and nothing posts to it.
+//
+// Each of the three party families reads its own setting:
+//
+//   sales → tally_sales_party_parent_intra / _inter, chosen by the party
+//           GSTIN's state prefix against tally_state_code (32 = Kerala on
+//           the RNS install, so a 32… buyer takes the intra group)
+//   RD    → tally_rd_party_parent, one group for every dealer
+//   URD   → tally_purchase_planter_parent, one group for every planter
+//
+// Blank falls back to the legacy key the code used before these existed,
+// and then to the historical hardcoded value — so an install that never
+// touches Settings exports exactly what it exported yesterday.
+//
+// The RD fallback is the odd one: the legacy pair split intra / inter, the
+// new key does not. A blank new key therefore keeps the split; setting it
+// collapses both sides onto the one group, which is what was asked for.
+function _salesPartyParent(cfg, gstin) {
+  const isIntra = String(gstin || '').slice(0, 2) === String(cfgGet(cfg, 'tally_state_code', '33'));
+  return isIntra
+    ? cfgGet(cfg, 'tally_sales_party_parent_intra',
+             cfgGet(cfg, 'tally_dealer_sale_intra', 'Local Dealer-Purchase'))
+    : cfgGet(cfg, 'tally_sales_party_parent_inter',
+             cfgGet(cfg, 'tally_dealer_sale_inter', 'Interstate Dealer-Purchase'));
+}
+function _rdPartyParent(cfg, gstin) {
+  const flat = cfgGet(cfg, 'tally_rd_party_parent', '');
+  if (flat) return flat;
+  const isIntra = String(gstin || '').slice(0, 2) === String(cfgGet(cfg, 'tally_state_code', '33'));
+  return isIntra ? cfgGet(cfg, 'tally_purchase_dealer_intra', 'Local Dealer')
+                 : cfgGet(cfg, 'tally_purchase_dealer_inter', 'Interstate Dealer');
+}
+function _urdPartyParent(cfg) {
+  return cfgGet(cfg, 'tally_purchase_planter_parent', 'Planters');
+}
+
+function _buyerRow(b, todayDate, cfg) {
   return {
     kind: 'party',
     partyKind: 'sales',
     name: b.buyer1 || b.buyer || '',
-    parent: isIntra ? localDealer : interDealer,
+    parent: _salesPartyParent(cfg, b.gstin),
     gstin: b.gstin || '',
     pan: b.pan || '',
     address: [b.add1, b.add2].filter(Boolean).join(', '),
@@ -4786,16 +4824,15 @@ function _urdPurchaseLedgerName(n, pan, cfg) {
   return s + tmpl;
 }
 
-function _rdTraderRow(t, todayDate, intra, interDealPur, localDealPur, cfg) {
+function _rdTraderRow(t, todayDate, cfg) {
   // `cr` carries the GSTIN with a "GSTIN." prefix for registered dealers
   const fullGstin = String(t.cr || '');
   const partyGstin = fullGstin.toUpperCase().startsWith('GST') ? fullGstin.slice(6, 21) : fullGstin;
-  const isIntra = String(partyGstin).slice(0, 2) === String(intra);
   return {
     kind: 'party',
     partyKind: 'rd',
     name: _rdPurchaseLedgerName(t.name, cfg),
-    parent: isIntra ? localDealPur : interDealPur,
+    parent: _rdPartyParent(cfg, partyGstin),
     gstin: partyGstin,
     pan: t.pan || '',
     address: t.padd || '',
@@ -4807,12 +4844,12 @@ function _rdTraderRow(t, todayDate, intra, interDealPur, localDealPur, cfg) {
   };
 }
 
-function _urdTraderRow(t, todayDate, auctionLDR, cfg) {
+function _urdTraderRow(t, todayDate, cfg) {
   return {
     kind: 'party',
     partyKind: 'urd',
     name: _urdPurchaseLedgerName(t.name, t.pan, cfg),
-    parent: auctionLDR,           // Agriculturists go under the "Planters" parent group
+    parent: _urdPartyParent(cfg),
     gstin: '',
     pan: t.pan || '',
     address: t.padd || '',
@@ -4831,9 +4868,6 @@ function _urdTraderRow(t, todayDate, auctionLDR, cfg) {
  */
 function buildSalesPartyLedgerRows(db, auctionId, cfg, opts = {}) {
   const todayDate = toTallyDate(new Date());
-  const intra = cfgGet(cfg, 'tally_state_code', '33');
-  const interDealer = cfgGet(cfg, 'tally_dealer_sale_inter', 'Interstate Dealer-Purchase');
-  const localDealer = cfgGet(cfg, 'tally_dealer_sale_intra', 'Local Dealer-Purchase');
 
   let sql = `
     SELECT DISTINCT b.*
@@ -4849,7 +4883,7 @@ function buildSalesPartyLedgerRows(db, auctionId, cfg, opts = {}) {
   sql += ` ORDER BY b.buyer1`;
 
   const buyers = db.prepare(sql).all(...params);
-  return buyers.map(b => _buyerRow(b, todayDate, intra, interDealer, localDealer));
+  return buyers.map(b => _buyerRow(b, todayDate, cfg));
 }
 
 /**
@@ -4859,11 +4893,6 @@ function buildSalesPartyLedgerRows(db, auctionId, cfg, opts = {}) {
  */
 function buildRDPartyLedgerRows(db, auctionId, cfg, opts = {}) {
   const todayDate = toTallyDate(new Date());
-  // Single-company build: intra/local detection uses the configured home
-  // state code (default 33 = Tamil Nadu).
-  const intra = cfgGet(cfg, 'tally_state_code', '33');
-  const interDealPur = cfgGet(cfg, 'tally_purchase_dealer_inter', 'Interstate Dealer');
-  const localDealPur = cfgGet(cfg, 'tally_purchase_dealer_intra', 'Local Dealer');
 
   let sql = `
     SELECT DISTINCT name, padd, ppla, ppin, pstate, cr, pan,
@@ -4881,7 +4910,7 @@ function buildRDPartyLedgerRows(db, auctionId, cfg, opts = {}) {
   sql += ` ORDER BY name`;
 
   const traders = db.prepare(sql).all(...params);
-  return _oneRowPerLedger(traders.map(t => _rdTraderRow(t, todayDate, intra, interDealPur, localDealPur, cfg)));
+  return _oneRowPerLedger(traders.map(t => _rdTraderRow(t, todayDate, cfg)));
 }
 
 /**
@@ -4890,11 +4919,6 @@ function buildRDPartyLedgerRows(db, auctionId, cfg, opts = {}) {
  */
 function buildURDPartyLedgerRows(db, auctionId, cfg, opts = {}) {
   const todayDate = toTallyDate(new Date());
-  // URD agriculturist party ledgers sit under the "Planters" group in Tally.
-  // This is decoupled from `tally_purchase_auction` (which still drives the
-  // purchase ACCOUNTING ledger inside the voucher) — only the party-ledger
-  // PARENT changed. Overridable via `tally_purchase_planter_parent`.
-  const auctionLDR = cfgGet(cfg, 'tally_purchase_planter_parent', 'Planters');
 
   let sql = `
     SELECT DISTINCT name, padd, ppla, ppin, pstate, pan,
@@ -4913,7 +4937,7 @@ function buildURDPartyLedgerRows(db, auctionId, cfg, opts = {}) {
   sql += ` ORDER BY name`;
 
   const traders = db.prepare(sql).all(...params);
-  return _oneRowPerLedger(traders.map(t => _urdTraderRow(t, todayDate, auctionLDR, cfg)));
+  return _oneRowPerLedger(traders.map(t => _urdTraderRow(t, todayDate, cfg)));
 }
 
 /**

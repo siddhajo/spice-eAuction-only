@@ -26595,6 +26595,10 @@ const FIELD_HELP = {
   bill_of_supply_suffix: 'Trails the stored bill number on the same three documents as the prefix (BoS PDF, Commission Bill PDF, URD Tally XML). Blank = bare number, as before. {season} and {ano} expand — e.g. "-A" prints bill 1748 as "1748-A". It only appends: the Tally voucher still adds its "/season" after your suffix, and a multi-lot commission bill still adds its per-page "/1", "/2".',
   flag_lotwise_purchase: 'OFF (default) = SELLER-WISE: one purchase invoice per dealer, listing all their lots. ON = LOT-WISE: one purchase invoice per LOT, each taking its own number — so a dealer with 5 lots gets 5 invoices and 5 numbers. This only affects invoices generated from now on: documents already raised keep the form they were raised in and reprint exactly as issued, so it is safe to switch either way mid-season.',
   flag_lotwise_bills: 'OFF (default) = SELLER-WISE: one bill of supply per planter, listing all their lots. ON = LOT-WISE: one bill of supply per LOT, each taking its own bill number — so a planter with 5 lots gets 5 bills and 5 numbers. Like the purchase flag, this affects only bills generated from now on; bills already raised keep their form and reprint exactly as issued.',
+  tally_sales_party_parent_intra: 'Tally GROUP each BUYER ledger is created under when the buyer GSTIN starts with the State Code above (32 = Kerala, so a 32… buyer). This is the <PARENT> tag on the ledger master — a group such as "Sundry Debtors", not an accounting ledger; nothing is posted to it. Blank falls back to the legacy "Local Dealer (sales-side)" field, then to "Local Dealer-Purchase".',
+  tally_sales_party_parent_inter: 'Tally GROUP each BUYER ledger is created under when the buyer GSTIN does NOT start with the State Code above. Same kind of value as the field above — a group, not a ledger. Blank falls back to the legacy "Interstate Dealer (sales-side)" field, then to "Interstate Dealer-Purchase".',
+  tally_rd_party_parent: 'Tally GROUP every registered-DEALER purchase ledger is created under — one group for all of them, whatever state the dealer is in. A group such as "Sundry Creditors", not an accounting ledger (that is "Trade Purchase From Dealer" under Purchase Ledgers). Blank keeps the old behaviour: the two legacy Dealer-Pur fields, chosen by state.',
+  tally_purchase_planter_parent: 'Tally GROUP every agriculturist (URD) purchase ledger is created under. A group such as "Planters", not an accounting ledger — the ledger the URD voucher posts to is "Purchase From Agriculturist" under Purchase Ledgers. Blank = "Planters".',
   flag_lotwise_dn_planter: 'OFF (default) = SELLER-WISE: one planter debit note per planter, for their whole grade-1 service charge (commission + handling) in the trade. ON = LOT-WISE: one debit note per grade-1 LOT, its amount being that lot\'s commission + handling. Generate All numbers them by LOT NUMBER ascending. Only affects debit notes generated from now on; existing ones keep their form.',
 };
 // Settings → Lot Entry: what the Litre / Moisture pick-list value expands
@@ -26650,7 +26654,7 @@ function fld(f){
 }
 
 // ── To Tally settings panel ───────────────────────────────
-// The largest category by a distance (83 keys), so it is partitioned by
+// The largest category by a distance (86 keys), so it is partitioned by
 // EXPLICIT key lists rather than by regex. A regex over `tally_*` can't
 // tell "Cardamom Local Sales" (a sales ledger) from "Local Transport" (a
 // voucher toggle) — the patterns this replaced put both in the same
@@ -26675,7 +26679,19 @@ const TALLY_GROUPS = [
   { title:'Voucher Types & Party Ledgers', icon:'📇',
     hint:'The VCHTYPE each purchase voucher imports under, and how a party ledger name is built. The URD suffix supports {PAN}; a planter with no PAN on file falls back to the RD suffix.',
     keys:['tally_rd_purchase_vchtype','tally_urd_purchase_vchtype',
-          'tally_rd_ledger_suffix','tally_urd_ledger_suffix','tally_purchase_planter_parent'] },
+          'tally_rd_ledger_suffix','tally_urd_ledger_suffix'] },
+
+  // The <PARENT> tag on every party LEDGER master. Kept in its own card
+  // because the four legacy keys below it live under "Sales Ledgers" and
+  // "Purchase Ledgers", where they read as accounting ledgers — which is
+  // how they came to be filled in with ledger names on at least one
+  // install, filing party masters under a PARENT that is not a group.
+  { title:'Party Ledger Parent Groups', icon:'🗂',
+    hint:'The Tally GROUP each party ledger is filed under — the <PARENT> tag on the ledger master. These are groups (Sundry Debtors, Sundry Creditors, Planters…), NOT accounting ledgers: nothing is ever posted to them. Buyers split on the party GSTIN state against the State Code above; dealers and planters each take one group. Blank falls back to the legacy field beneath, so leaving these empty changes nothing.',
+    keys:['tally_sales_party_parent_intra','tally_sales_party_parent_inter',
+          'tally_rd_party_parent','tally_purchase_planter_parent',
+          'tally_dealer_sale_intra','tally_dealer_sale_inter',
+          'tally_purchase_dealer_intra','tally_purchase_dealer_inter'] },
 
   { title:'Voucher Behaviour', icon:'⚙',
     hint:'Per-voucher switches — inventory detail, round-off, TCS / TDS lines, exempted debit notes, and which transport / insurance rate the voucher picks up.',
@@ -26683,15 +26699,13 @@ const TALLY_GROUPS = [
           'tally_dn_exempt','tally_local_transport','tally_local_insurance','tally_sample_stock'] },
 
   { title:'Sales Ledgers', icon:'📈',
-    hint:'Cardamom and gunny sales ledgers per supply type, plus the dealer-side sales ledgers.',
+    hint:'Cardamom and gunny sales ledgers per supply type. The dealer-side party GROUPS moved to "Party Ledger Parent Groups" above — they were never ledgers.',
     keys:['tally_sales_intra','tally_sales_inter','tally_sales_export',
-          'tally_gunny_intra','tally_gunny_inter','tally_gunny_export',
-          'tally_dealer_sale_intra','tally_dealer_sale_inter'] },
+          'tally_gunny_intra','tally_gunny_inter','tally_gunny_export'] },
 
   { title:'Purchase Ledgers', icon:'📥',
-    hint:'Where an RD (dealer) or URD (agriculturist) purchase posts. The interstate base ledger is used when the party GSTIN state differs from the company state; blank falls back to the local one.',
+    hint:'Where an RD (dealer) or URD (agriculturist) purchase POSTS. The interstate base ledger is used when the party GSTIN state differs from the company state; blank falls back to the local one. The party GROUPS moved to "Party Ledger Parent Groups" above.',
     keys:['tally_purchase_dealer','tally_purchase_dealer_interstate',
-          'tally_purchase_dealer_intra','tally_purchase_dealer_inter',
           'tally_purchase_auction','tally_tds_paid_sales'] },
 
   { title:'Tax Ledgers', icon:'💰',

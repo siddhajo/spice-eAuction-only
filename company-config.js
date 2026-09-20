@@ -769,9 +769,30 @@ const DEFAULTS = [
   { key: 'tally_gunny_intra',  value: '', category: 'tally', label: 'Gunny Local Sales',      type: 'text' },
   { key: 'tally_gunny_export', value: '', category: 'tally', label: 'Gunny Export Sales',     type: 'text' },
 
-  // Dealer-Side Sales
-  { key: 'tally_dealer_sale_inter', value: '', category: 'tally', label: 'Interstate Dealer (sales-side)', type: 'text' },
-  { key: 'tally_dealer_sale_intra', value: '', category: 'tally', label: 'Local Dealer (sales-side)',     type: 'text' },
+  // ── PARTY LEDGER PARENT GROUPS ───────────────────────────────────────
+  // The Tally GROUP each party ledger master is created under — the
+  // <PARENT> tag in the LEDGER XML. NOT an accounting ledger: nothing is
+  // ever posted to these, they only say where the party files in Tally's
+  // chart of accounts (Sundry Debtors, Sundry Creditors, or a sub-group).
+  //
+  // Sales parties split on the party GSTIN's state vs `tally_state_code`:
+  // same state → intra, anything else → inter. Dealers (RD) and
+  // agriculturists (URD) each take one group regardless of state.
+  //
+  // These replace the four `tally_dealer_sale_*` / `tally_purchase_dealer_*`
+  // keys below, whose labels read like accounting ledgers ("Local Dealer
+  // (sales-side)") even though the code only ever used them as parents —
+  // so they got filled in with ledger names, and party masters imported
+  // under a PARENT that is not a group at all. Blank here still falls back
+  // to the old key, so an install that set them deliberately is unchanged.
+  { key: 'tally_sales_party_parent_intra', value: '', category: 'tally', label: 'Sales Party Parent Group — same state', type: 'text' },
+  { key: 'tally_sales_party_parent_inter', value: '', category: 'tally', label: 'Sales Party Parent Group — other states', type: 'text' },
+  { key: 'tally_rd_party_parent',          value: '', category: 'tally', label: 'RD Party Parent Group (dealers)',        type: 'text' },
+
+  // Dealer-Side Sales — LEGACY parent groups, superseded by the two
+  // `tally_sales_party_parent_*` keys above. Read only when those are blank.
+  { key: 'tally_dealer_sale_inter', value: '', category: 'tally', label: 'Interstate Dealer (sales-side, legacy parent)', type: 'text' },
+  { key: 'tally_dealer_sale_intra', value: '', category: 'tally', label: 'Local Dealer (sales-side, legacy parent)',     type: 'text' },
 
   // RD Purchase ledgers
   { key: 'tally_purchase_dealer',            value: '', category: 'tally', label: 'Trade Purchase From Dealer (base)',            type: 'text' },
@@ -779,8 +800,11 @@ const DEFAULTS = [
   // purchase voucher when the party GSTIN's state ≠ the company state; blank
   // falls back to the local base ledger.
   { key: 'tally_purchase_dealer_interstate', value: '', category: 'tally', label: 'Interstate Trade Purchase From Dealer (base)', type: 'text' },
-  { key: 'tally_purchase_dealer_inter', value: '', category: 'tally', label: 'Interstate Dealer-Pur (purchase-side)',   type: 'text' },
-  { key: 'tally_purchase_dealer_intra', value: '', category: 'tally', label: 'Local Dealer-Pur (purchase-side)',         type: 'text' },
+  // LEGACY RD parent groups, superseded by `tally_rd_party_parent` above.
+  // Read only when that is blank, and then still split intra / inter so an
+  // install that set this pair on purpose keeps the behaviour it had.
+  { key: 'tally_purchase_dealer_inter', value: '', category: 'tally', label: 'Interstate Dealer-Pur (legacy parent)',   type: 'text' },
+  { key: 'tally_purchase_dealer_intra', value: '', category: 'tally', label: 'Local Dealer-Pur (legacy parent)',         type: 'text' },
 
   // Agriculturist & TDS-on-sales
   { key: 'tally_purchase_auction', value: '', category: 'tally', label: 'Purchase From Agriculturist (URD ledger)', type: 'text' },
@@ -790,7 +814,7 @@ const DEFAULTS = [
   // picks its parent per dealer (intra vs inter, from the GSTIN); planters are
   // flat, so one value covers them all. Blank → 'Planters', the value this
   // was hardcoded to before it became configurable.
-  { key: 'tally_purchase_planter_parent', value: '', category: 'tally', label: 'Planter Party Ledger Parent (URD)', type: 'text' },
+  { key: 'tally_purchase_planter_parent', value: '', category: 'tally', label: 'URD Party Parent Group (planters)', type: 'text' },
   { key: 'tally_tds_paid_sales',   value: '', category: 'tally', label: 'TDS Paid on Sales',                         type: 'text' },
 
   // Tax Ledger Names
