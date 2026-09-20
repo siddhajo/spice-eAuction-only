@@ -16539,7 +16539,19 @@ const AMR_SECTIONS = [
     // document is, and because the neighbouring "Dealer Invoice CSV" is a
     // different document entirely (the debit-note register below).
     { label: 'Sales Invoice',            bulk: { list: '/api/invoices',  param: 'auction_id', post: '/api/invoices/pdf-bulk' } },
-    { label: 'Purchase Invoice',         bulk: { list: '/api/purchases', param: 'auction_id', post: '/api/invoices/purchase-pdf-bulk' } },
+    // The purchase invoices raised to SELLERS, merged into one PDF — the
+    // twin of the Sales Invoice tile above, and the same route the Purchases
+    // screen's "Print Selected" uses.
+    //
+    // This used to post to /api/invoices/purchase-pdf-bulk, which is a
+    // different document entirely: the ASP buyer-side PURCHASE VIEW of a
+    // SALES invoice, valid only in Kerala + e-Auction. Off that context the
+    // route 400s ("Purchase view is only available for ASP invoices"), and in
+    // it the tile would have been worse than useless — it lists ids out of
+    // `purchases` but that route looks them up in `invoices`, so it would
+    // have printed whichever unrelated sales invoices happened to share those
+    // row ids.
+    { label: 'Purchase Invoice',         bulk: { list: '/api/purchases', param: 'auction_id', post: '/api/purchases/pdf-bulk' } },
     // "Tax Invoice On Commission" raised to registered sellers — the document
     // the Auction Desk lists as Debit Notes (Service), and the one the
     // "Dealer Invoice CSV" tile registers. Its Tally twins are already here as
