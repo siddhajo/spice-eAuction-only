@@ -2065,6 +2065,31 @@ th{
 td{padding:12px 14px;border-bottom:1px solid var(--spice-line);font-size:13px;color:var(--spice-text-main)}
 tr:last-child td{border-bottom:none}
 tr:hover td{background:var(--spice-cream)}
+/* One-click transaction sheet — pin its own colours.
+   The sheet is a table inside a .modal, and .modal's background is
+   var(--card): an alias declared on :root, so it resolves there and stays
+   WHITE under body[data-dark="1"]. The element defaults this table would
+   otherwise inherit are written against the --spice-* tokens, which DO flip
+   (they are overridden on body) — so in dark mode td text goes near-white on
+   that white panel (measured 1.1:1) and the number inputs get dark text on a
+   dark ground (1.22:1). Both are invisible.
+   Pinning to the non-flipping aliases makes the sheet read identically in
+   both themes, which is how every other modal in this file behaves. The header
+   sidesteps it entirely by painting its own accent band. */
+#tx-run-modal table th{
+  /* Coloured header band, same treatment as the Price Entry grid and the
+     Lot-wise Payments table below — the sheet opens from Price Entry, so it
+     reads as part of that screen rather than as a stray plain table. The
+     cardamom accent is NOT one of the tokens dark mode overrides, so white on
+     it holds in both themes without a second rule. */
+  background:var(--spice-cardamom);color:#fff;
+  font-size:11px;letter-spacing:.4px;border-bottom:none
+}
+#tx-run-modal table td{color:var(--text)}
+#tx-run-modal input.tx-start{
+  background:var(--card);color:var(--text);border-color:var(--border)
+}
+
 /* Price Entry grid — coloured header (overrides the element-level th{}
    background/colour above, which would otherwise paint each cell cream). */
 .pe-grid-table thead th{
@@ -6235,6 +6260,12 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <button class="btn btn-o" style="height:38px;padding:0 14px;font-weight:600" onclick="loadPriceEntryGrid()" title="Reload lots from the server">🔄 Refresh</button>
             <button id="pe-import-btn" class="btn btn-o" style="height:38px;padding:0 14px;font-weight:600" onclick="openPeImport()" title="Import prices (and optionally buyer codes) from an Excel file — you choose which columns map to what">📥 Import Prices from Excel</button>
             <button id="pe-save-calc" class="btn btn-a" style="height:38px;padding:0 16px;font-weight:600" onclick="peSaveAndCalculate()">💾 Save &amp; Calculate All</button>
+            <!-- One-click transaction run. Opens a review sheet listing every
+                 document type this trade still owes, each with its OWN start
+                 number for the operator to confirm — the numbers are the one
+                 thing a batch must never guess. Same permission + price-check
+                 gates as the per-tab Generate All buttons it replaces. -->
+            <button id="pe-gen-all" class="needs-invoice-write needs-price-check btn btn-g" style="height:38px;padding:0 16px;font-weight:600" onclick="openTxRunModal()" title="Generate sales invoices, purchase invoices, bills of supply and debit notes for this trade in one run">⚡ Generate All Documents</button>
           </div>
         </div>
         <div style="font-size:12.5px;color:var(--text2);margin-top:8px;line-height:1.5">
@@ -9194,6 +9225,30 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     <button class="btn btn-o" onclick="hideModal('gen-pur-modal')">Cancel</button>
     <button class="btn btn-a" onclick="previewInvoice('purchase')">Preview</button>
     <button class="btn btn-g" onclick="generatePurchase()">Generate</button>
+  </div>
+</div></div>
+
+<!-- ══ ONE-CLICK TRANSACTION RUN ═════════════════════════════════
+     Opened from Price Entry. Lists every document type the trade still owes,
+     one row each, and asks the operator to confirm a starting number per
+     module before anything runs.
+
+     Two clicks, not one, and deliberately so: five numbered statutory series
+     are about to be consumed, and the sheet is the only place a wrong start
+     can be caught before 400 documents carry it. Reverting afterwards means
+     revert-all on each module in turn.
+
+     Sales invoices get a row PER SALE TYPE when the trade has buyers of more
+     than one — each series draws its own numbers rather than interleaving
+     through one counter (the same reason the Generate-All modal dropped its
+     "all sale types" option). -->
+<div class="modal-bg" id="tx-run-modal"><div class="modal has-x" style="max-width:760px">
+  <h2 style="margin-bottom:2px">⚡ Generate All Documents</h2>
+  <p id="tx-run-sub" style="font-size:12px;color:var(--text2);margin-bottom:12px"></p>
+  <div id="tx-run-body"></div>
+  <div class="actions" id="tx-run-actions">
+    <button class="btn btn-o" onclick="hideModal('tx-run-modal')">Cancel</button>
+    <button class="btn btn-g" id="tx-run-go" onclick="runTxPipeline()">Generate</button>
   </div>
 </div></div>
 
@@ -32798,6 +32853,263 @@ async function peSaveAndCalculate(){
       if (_peFlagPriceCheck()) toast('Prices changed — re-verify in Price Check before generating invoices.');
     });
   } catch (e) { showError(e); }
+}
+
+// ══ ONE-CLICK TRANSACTION RUN ═══════════════════════════════════
+// Price Entry's "⚡ Generate All Documents" — the review sheet, then the run.
+//
+// The sheet is built entirely from GET /api/auctions/:id/transaction-plan.
+// The client makes no gating decision of its own: which modules exist, how
+// many documents each owes, which start number is safe and what would stop
+// the run all come from the server, so this screen and the five per-tab
+// Generate All buttons can never disagree.
+//
+// COLOURS. This lives in a .modal, whose background is var(--card) — a generic
+// alias that resolves on :root and so never flips. There is no
+// body[data-dark="1"] .modal rule anywhere, meaning every modal in this app
+// stays on a light panel in dark mode. So modal content uses the generic
+// aliases (--text2/--border/--bg) like every other modal here; switching to
+// the --spice-* tokens, which DO flip, would put light text on a white panel.
+// The --spice-* rule applies to surfaces that actually go dark, not to these.
+//
+// ROWS, NOT STEPS. Sales invoices contribute one row per sale type when the
+// trade has buyers of more than one, because each sale type is its own global
+// series. Every other module is a single row. `_txRows` is that flattened
+// list; `stepId` says which pipeline step a row belongs to.
+let _txPlan = null, _txRows = [];
+
+async function openTxRunModal(){
+  const aid = _pe.aid || document.getElementById('pe-auction')?.value;
+  if (!aid) { toast('Select a trade first'); return; }
+  _txPlan = null; _txRows = [];
+  document.getElementById('tx-run-sub').textContent = 'Loading…';
+  document.getElementById('tx-run-body').innerHTML = '';
+  // Rebuild the action bar every time. The results view replaces it with
+  // Run again / Done, so reopening without this leaves _txRenderSheet with no
+  // #tx-run-go to reveal — and the sheet never appears.
+  document.getElementById('tx-run-actions').innerHTML =
+    `<button class="btn btn-o" onclick="hideModal('tx-run-modal')">Cancel</button>` +
+    `<button class="btn btn-g" id="tx-run-go" onclick="runTxPipeline()">Generate</button>`;
+  document.getElementById('tx-run-actions').style.display = 'none';
+  showModal('tx-run-modal');
+  try {
+    _txPlan = await j(`/api/auctions/${aid}/transaction-plan`);
+    _txRenderSheet();
+  } catch (e) {
+    document.getElementById('tx-run-sub').textContent = '';
+    document.getElementById('tx-run-body').innerHTML =
+      `<div style="padding:12px;background:var(--red-bg);border:1px solid var(--red);border-radius:8px">${esc(e.message)}</div>`;
+  }
+}
+
+// Flatten the plan's steps into sheet rows, splitting sales invoices per sale
+// type. A step with nothing pending still gets a row — seeing "0 — nothing to
+// generate" is how the operator confirms the trade is complete, rather than
+// wondering where the module went.
+function _txBuildRows(){
+  const rows = [];
+  for (const st of (_txPlan.steps || [])) {
+    // Sales invoices carry the document type in their label: a one-click run
+    // raises DRAFTS, and an operator who thinks they just issued tax invoices
+    // would be badly misled.
+    const kind = st.id === 'invoices' && st.docType === 'proforma' ? ' (proforma draft)' : '';
+    if (st.id === 'invoices' && (st.series_detail || []).length > 1) {
+      for (const d of st.series_detail) {
+        rows.push({ stepId: st.id, key: `invoices:${d.sale}`,
+                    label: `${st.label} — sale ${d.sale}${kind}`,
+                    saleType: d.sale, pending: d.count, start: d.nextSafe,
+                    enabled: st.enabled, disabledReason: st.disabledReason,
+                    generated: st.generated, basis: st.basis,
+                    docType: st.docType, refreshes: st.refreshes || 0, after: st.after });
+      }
+      continue;
+    }
+    rows.push({ stepId: st.id, key: st.id, label: st.label + kind,
+                saleType: (st.series_detail || [])[0]?.sale || '',
+                pending: st.pending, start: st.suggestedStart,
+                enabled: st.enabled, disabledReason: st.disabledReason,
+                generated: st.generated, basis: st.basis,
+                docType: st.docType, refreshes: st.refreshes || 0,
+                mode: st.mode, after: st.after });
+  }
+  return rows;
+}
+
+function _txRenderSheet(){
+  const p = _txPlan;
+  document.getElementById('tx-run-sub').textContent =
+    `Trade #${p.ano}${p.date ? ' · ' + fmtD(p.date) : ''}`;
+  const host = document.getElementById('tx-run-body');
+
+  // A trade-level blocker stops every module, so say so once and offer no
+  // numbers — five start-number boxes for a run that cannot begin is worse
+  // than no sheet at all.
+  if ((p.blockers || []).length) {
+    host.innerHTML = (p.blockers || []).map(b =>
+      `<div style="display:flex;gap:10px;align-items:flex-start;background:#FEF3C7;border-left:4px solid #F59E0B;border-radius:8px;padding:12px 14px;margin-bottom:10px">
+         <span style="font-size:18px;line-height:1.1">⚠</span>
+         <div><div style="font-weight:800;color:#7C2D12">${esc(b.message)}</div>
+              <div style="font-size:12.5px;color:#7C2D12;margin-top:3px">${esc(b.detail || '')}</div></div>
+       </div>`).join('');
+    document.getElementById('tx-run-actions').style.display = '';
+    document.getElementById('tx-run-go').style.display = 'none';
+    return;
+  }
+
+  _txRows = _txBuildRows();
+  const body = _txRows.map((r, i) => {
+    const off = !r.enabled;
+    // Ticked by default only where there is clean work to do. Every module now
+    // tops up — a re-run skips what the trade already has — with ONE exception:
+    // a proforma re-run replaces the buyer's un-raised draft at a new number.
+    // That row starts UNTICKED so a draft already sent out is never silently
+    // renumbered; the operator opts in.
+    const redraft = r.refreshes > 0;
+    const on = !off && r.pending > 0 && !redraft;
+    const note = off ? `<span style="color:var(--text3)">${esc(r.disabledReason || 'Unavailable')}</span>`
+      : r.pending === 0 ? '<span style="color:var(--text3)">Nothing to generate</span>'
+      : redraft ? `<span style="color:#9A3412">⚠ ${r.refreshes} buyer(s) already hold a draft — re-running replaces it with a new number</span>`
+      : r.basis === 'predicted' ? `<span style="color:var(--text3)">estimated — ${esc(r.after.join(', '))} runs first</span>`
+      : r.mode === 'lot' ? '<span style="color:var(--text3)">lot-wise</span>' : '';
+    const range = (!off && r.pending > 0 && r.start)
+      ? `#${r.start}–#${r.start + r.pending - 1}` : '';
+    return `<tr data-txrow="${i}" style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px 6px;text-align:center">
+        <input type="checkbox" class="tx-tick" data-txtick="${i}" ${on ? 'checked' : ''} ${off || r.pending === 0 ? 'disabled' : ''}
+               onchange="_txSyncGo()" style="width:16px;height:16px;cursor:pointer">
+      </td>
+      <td style="padding:8px 6px"><div style="font-weight:600">${esc(r.label)}</div>
+        <div style="font-size:11px;margin-top:2px">${note}</div></td>
+      <td style="padding:8px 6px;text-align:center;font-weight:700">${off ? '—' : r.pending}</td>
+      <td style="padding:8px 6px;text-align:center">
+        <input type="number" min="1" class="tx-start" data-txstart="${i}" value="${off ? '' : (r.start ?? '')}"
+               ${off || r.pending === 0 ? 'disabled' : ''} oninput="_txSyncRange(${i})"
+               style="width:96px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:center">
+      </td>
+      <td style="padding:8px 6px;font-size:12px;color:var(--text2);white-space:nowrap" id="tx-range-${i}">${range}</td>
+    </tr>`;
+  }).join('');
+
+  host.innerHTML =
+    `<div style="font-size:12.5px;color:var(--text2);line-height:1.5;margin-bottom:10px">
+       Confirm a <b>starting number</b> for each document type. Every number is checked against its own
+       series before anything is written — if one clashes, nothing is generated and you are told which to change.
+     </div>
+     <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+       <thead><tr style="text-align:left">
+         <th style="padding:8px 6px;width:34px"></th>
+         <th style="padding:8px 6px">Document</th>
+         <th style="padding:8px 6px;text-align:center;width:70px">Count</th>
+         <th style="padding:8px 6px;text-align:center;width:110px">Start #</th>
+         <th style="padding:8px 6px;width:120px">Will use</th>
+       </tr></thead><tbody>${body}</tbody></table></div>`;
+  document.getElementById('tx-run-actions').style.display = '';
+  document.getElementById('tx-run-go').style.display = '';
+  _txSyncGo();
+}
+
+// Keep the "Will use" column honest as the operator types.
+function _txSyncRange(i){
+  const r = _txRows[i];
+  const inp = document.querySelector(`[data-txstart="${i}"]`);
+  const n = parseInt((inp?.value || '').trim(), 10);
+  const cell = document.getElementById(`tx-range-${i}`);
+  if (!cell) return;
+  cell.textContent = (Number.isFinite(n) && n > 0 && r.pending > 0)
+    ? `#${n}–#${n + r.pending - 1}` : '';
+  _txSyncGo();
+}
+
+function _txSyncGo(){
+  const btn = document.getElementById('tx-run-go');
+  if (!btn) return;
+  const n = document.querySelectorAll('#tx-run-body .tx-tick:checked').length;
+  btn.disabled = n === 0;
+  btn.textContent = n ? `Generate ${n} document type${n === 1 ? '' : 's'}` : 'Generate';
+}
+
+async function runTxPipeline(){
+  const aid = _txPlan && _txPlan.auctionId;
+  if (!aid) return;
+  // Build the request from the ticked rows. Sales-invoice rows collapse back
+  // into an array under `steps.invoices` — one entry per sale type, which is
+  // what lets each series draw its own numbers.
+  const steps = {};
+  for (const cb of document.querySelectorAll('#tx-run-body .tx-tick:checked')) {
+    const i = Number(cb.getAttribute('data-txtick'));
+    const r = _txRows[i];
+    const start = parseInt((document.querySelector(`[data-txstart="${i}"]`)?.value || '').trim(), 10);
+    if (!Number.isFinite(start) || start < 1) {
+      toast(`${r.label}: enter a starting number`); return;
+    }
+    const entry = { start };
+    if (r.saleType) entry.saleType = r.saleType;
+    if (r.stepId === 'invoices') {
+      if (steps.invoices) steps.invoices.push(entry);
+      else steps.invoices = [entry];
+    } else {
+      steps[r.stepId] = entry;
+    }
+  }
+  const btn = document.getElementById('tx-run-go');
+  try {
+    await withBusy(btn, async () => {
+      const d = await j(`/api/auctions/${aid}/generate-transactions`,
+        { method: 'POST', body: JSON.stringify({ steps }) });
+      _txRenderResult(d);
+    });
+  } catch (e) { showError(e); }
+}
+
+// After the run: what each module actually produced, and — when something
+// failed — the safe start number the server handed back, so the fix is a
+// retype rather than a hunt.
+function _txRenderResult(d){
+  const ICON = { done: '✅', nothing_eligible: '➖', blocked: '⛔', disabled: '🚫', failed: '❌' };
+  const rows = (d.steps || []).map(s => {
+    const label = esc(s.label) + (s.saleType ? ` — sale ${esc(s.saleType)}` : '');
+    let detail;
+    if (s.status === 'done') {
+      detail = `<b>${s.generated}</b> created` +
+        (s.range ? ` · #${s.range[0]}–#${s.range[1]}` : '') +
+        (s.skipped ? ` · ${s.skipped} skipped` : '') +
+        (s.errors ? ` · <span style="color:var(--red)">${s.errors} failed</span>` : '');
+    } else if (s.status === 'nothing_eligible') {
+      detail = `<span style="color:var(--text3)">${esc(s.note || 'Nothing eligible')}</span>`;
+    } else {
+      detail = `<span style="color:var(--red)">${esc(s.error || 'Failed')}</span>` +
+        (s.suggested != null ? ` <span style="color:var(--text2)">— try #${s.suggested}</span>` : '');
+    }
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px 6px;width:30px">${ICON[s.status] || '•'}</td>
+      <td style="padding:8px 6px;font-weight:600">${label}</td>
+      <td style="padding:8px 6px">${detail}</td></tr>`;
+  }).join('');
+
+  const ok = d.ok;
+  document.getElementById('tx-run-body').innerHTML =
+    `<div style="display:flex;gap:10px;align-items:flex-start;background:${ok ? '#DCFCE7' : '#FEF3C7'};
+         border-left:4px solid ${ok ? '#16A34A' : '#F59E0B'};border-radius:8px;padding:12px 14px;margin-bottom:12px">
+       <div><div style="font-weight:800;color:${ok ? '#14532D' : '#7C2D12'}">
+         ${ok ? `Generated ${d.totalGenerated} document(s) for trade #${esc(d.ano)}`
+              : 'Some document types did not complete'}</div>
+         <div style="font-size:12.5px;color:${ok ? '#14532D' : '#7C2D12'};margin-top:3px">
+           ${ok ? 'Open each tab to view, print or export them.'
+                : 'What succeeded is listed below and has been written. Fix what failed and run again — the rest will be skipped as already done.'}</div>
+       </div></div>
+     <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px"><tbody>${rows}</tbody></table></div>`;
+
+  document.getElementById('tx-run-actions').innerHTML =
+    `<button class="btn btn-o" onclick="openTxRunModal()">Run again</button>` +
+    `<button class="btn btn-g" onclick="hideModal('tx-run-modal')">Done</button>`;
+
+  // The trade has moved on: its stage, the Price Entry grid and every
+  // generate-gate banner are now stale.
+  if (typeof refreshTradeStage === 'function') { try { refreshTradeStage(true); } catch (_) {} }
+  if (typeof loadPriceEntryGrid === 'function') { try { loadPriceEntryGrid(); } catch (_) {} }
+  for (const k of ['invoices', 'purchases', 'bills', 'debit_notes', 'debit_notes_planter']) {
+    if (typeof refreshGenGate === 'function') { try { refreshGenGate(k); } catch (_) {} }
+  }
 }
 
 // ── Price Entry — lot selection (tick) + bulk buyer-code assign ────

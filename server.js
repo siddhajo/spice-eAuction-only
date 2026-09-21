@@ -24,6 +24,8 @@ const license = require('./license');
 const { REPORTS: LORRY_REPORTS } = require('./lorry-reports');
 const { REPORTS: SPICE_BOARD_REPORTS, getReportFilters: getSpiceBoardFilters } = require('./spice-board-reports');
 const { DOCUMENTS: DOC_CATALOG, GROUPS: DOC_GROUPS } = require('./document-catalog');
+const docNo = require('./doc-numbering');
+const { PIPELINE } = require('./transaction-pipeline');
 const { mountMobile } = require('./mobile-bridge');
 let { syncLotsFromTrader, syncTraderBanks } = require('./trader-lot-sync');
 // ── Inconsistent-build guard ─────────────────────────────────────────
@@ -6001,6 +6003,413 @@ app.get('/api/auctions/:id/generation-status', requireView, (req, res) => {
   res.json({ auctionId: aid, ano, ...status });
 });
 
+// ══════════════════════════════════════════════════════════════
+// TRANSACTION PLAN — what a one-click run would do, before it does it
+// ══════════════════════════════════════════════════════════════
+// GET /api/auctions/:id/transaction-plan
+//
+// Answers, per pipeline step: is it available, how many documents does this
+// trade still owe, what start number is safe, and what would stop it. The
+// one-click flow on Price Entry renders this as a review sheet with one
+// editable start-number box per module — the operator supplies every number
+// themselves, which is the whole point: numbering is the part a batch run
+// cannot safely guess.
+//
+// Read-only. It writes nothing and reserves nothing: a number that is free
+// now can be taken by another operator a second later, so the RUN re-claims
+// through doc-numbering.js before it writes. `suggestedStart` is a
+// convenience, never a promise.
+//
+// ── PREDICTED vs ACTUAL COUNTS ───────────────────────────────
+// The debit-note steps read rows the earlier steps have not written yet, so
+// on a fresh trade their own source tables are empty and a naive count says
+// "nothing to do". Each step therefore reports `basis`:
+//
+//   'actual'     counted from the rows that exist now
+//   'predicted'  derived from `lots` — what the step WILL owe once its
+//                dependency has run
+//
+// A predicted count can move (a dealer whose commission nets to zero drops
+// out), which is why the run re-counts and re-claims rather than trusting
+// this. Saying which kind of number the operator is looking at is the honest
+// way to show it.
+function countDebitNoteTargets(db, aid, ano) {
+  const done = new Set(
+    db.all('SELECT name FROM debit_notes WHERE ano = ?', [String(ano)]).map(r => r.name || '')
+  );
+  const src = db.all('SELECT DISTINCT name FROM purchases WHERE ano = ?', [String(ano)]);
+  // One note per DEALER (the generator dedupes by name), and only where the
+  // grade-2 commission it bills is greater than zero.
+  const names = src.length
+    ? src.map(r => r.name || '')
+    : purchaseGenerationTargets(db, aid).rows.map(r => r.name || '');
+  const eligible = new Set(
+    names.filter(n => n && !done.has(n) && gradedCommission(db, aid, n, '2') > 0)
+  );
+  return { count: eligible.size, basis: src.length ? 'actual' : 'predicted' };
+}
+
+function countPlanterDebitNoteTargets(db, aid, ano) {
+  // Lot-wise planter DNs are raised straight off `lots` — one per grade-1 lot
+  // carrying a service charge — so they never depend on bills of supply and
+  // their count is always actual.
+  if (lotwiseDnPlanterOn(db)) {
+    const doneLots = new Set(
+      db.all(`SELECT lot_no FROM debit_notes_planter WHERE TRIM(ano) = TRIM(?) AND TRIM(COALESCE(lot_no,'')) <> ''`,
+        [String(ano)]).map(r => String(r.lot_no || '').trim())
+    );
+    const lots = db.all(
+      `SELECT l.lot_no
+         FROM lots l JOIN auctions a ON a.id = l.auction_id
+        WHERE TRIM(a.ano) = TRIM(?)
+          AND l.name IS NOT NULL AND l.name != ''
+          AND TRIM(COALESCE(l.grade,'')) = '1'
+          AND (COALESCE(l.com,0) + COALESCE(l.sertax,0)) > 0`,
+      [String(ano)]
+    );
+    return {
+      count: lots.filter(l => !doneLots.has(String(l.lot_no || '').trim())).length,
+      basis: 'actual',
+    };
+  }
+  const done = new Set(
+    db.all('SELECT name FROM debit_notes_planter WHERE ano = ?', [String(ano)]).map(r => r.name || '')
+  );
+  const src = db.all('SELECT DISTINCT name FROM bills WHERE TRIM(ano) = TRIM(?)', [String(ano)]);
+  const names = src.length
+    ? src.map(r => r.name || '')
+    : billGenerationTargets(db, aid, ano).rows.map(r => r.name || '');
+  const eligible = new Set(
+    names.filter(n => n && !done.has(n) && gradedServiceBase(db, aid, n, '1') > 0)
+  );
+  return { count: eligible.size, basis: src.length ? 'actual' : 'predicted' };
+}
+
+app.get('/api/auctions/:id/transaction-plan', requireView, (req, res) => {
+  const db = getDb();
+  const aid = parseInt(req.params.id, 10);
+  if (!aid) return res.status(400).json({ error: 'Invalid auction id' });
+  const auction = db.get('SELECT id, ano, date, price_checked_at FROM auctions WHERE id = ?', [aid]);
+  if (!auction) return res.status(404).json({ error: 'Auction not found' });
+  const ano = auction.ano;
+  const cfg = getSettingsFlat(db);
+
+  // Trade-level blockers stop the WHOLE run, so they are reported once rather
+  // than repeated onto all five steps. Price check is the live one: every
+  // generate route enforces it server-side (requirePriceChecked), so a plan
+  // that stayed silent about it would offer five start numbers for a run that
+  // cannot begin.
+  const blockers = [];
+  if (pcFlagOn(db) && !auction.price_checked_at) {
+    blockers.push({
+      gate: 'price_check',
+      message: 'Price check required',
+      detail: 'Run Reports → Price Check against this trade (and apply any code fixes) before generating documents.',
+    });
+  }
+  const hasPricedLot = db.get(
+    'SELECT COUNT(*) AS c FROM lots WHERE auction_id = ? AND COALESCE(price,0) > 0', [aid]).c > 0;
+  if (!hasPricedLot) {
+    blockers.push({
+      gate: 'no_prices',
+      message: 'No lot in this trade carries a price yet',
+      detail: 'Enter prices and run Save & Calculate before generating documents.',
+    });
+  }
+
+  const steps = PIPELINE.map(step => {
+    const enabled = !step.flag || String(cfg[step.flag] || '').toLowerCase() === 'true';
+    const out = {
+      id: step.id, label: step.label, series: step.series,
+      numberField: step.numberField, keyedBy: step.keyedBy,
+      after: step.after, deepLink: step.deepLink, route: step.route,
+      enabled,
+      // Why a step is unavailable is what the operator needs; "enabled:false"
+      // on its own sends them hunting through Settings.
+      disabledReason: enabled ? null
+        : `Turned off for this site — enable "${step.flag}" in Settings → Flags.`,
+      generated: _generatedCount(db, step.statusKey, aid, ano),
+    };
+    if (!enabled) { out.pending = 0; out.basis = 'actual'; out.suggestedStart = null; return out; }
+
+    if (step.id === 'invoices') {
+      // A one-click run raises the sales side as PROFORMA — the draft the buyer
+      // is quoted — and the original tax invoice is raised later, per buyer,
+      // once the goods ship (POST /api/invoices/:id/raise-original). When the
+      // proforma feature is off there is no draft series at all, so the run
+      // produces originals; the server decides this from the flag rather than
+      // taking the client's word, so the number offered here is drawn from the
+      // same series the run will actually write into.
+      const isProforma = proformaFeatureOn(db) ? 1 : 0;
+      out.docType = isProforma ? 'proforma' : 'original';
+      // One counter runs across every sale type in the batch while each sale
+      // type is its own global series, so a start is only safe if it clears
+      // the highest number in EVERY series the run will touch.
+      const plan = invoiceGenerationPlan(db, cfg, aid, { saleType: '', splitInvoices: true });
+      const sales = Array.from(new Set(plan.items.map(i => i.sale))).sort();
+      out.pending = plan.items.length;
+      out.basis = 'actual';
+      // Drafts do not top up: a proforma re-run DELETES the buyer's un-raised
+      // draft and writes a fresh one at the new number. Harmless on a first
+      // run, but it renumbers a draft the buyer may already be holding — so
+      // the count is reported and the sheet makes the operator opt in.
+      out.refreshes = isProforma ? plan.items.filter(i => i.hasDraft).length : 0;
+      out.series_detail = sales.map(sale => ({
+        sale,
+        count: plan.items.filter(i => i.sale === sale).length,
+        nextSafe: docNo.nextSafe(db, 'invoices', { sale, isProforma }),
+      }));
+      out.suggestedStart = out.series_detail.length
+        ? Math.max.apply(null, out.series_detail.map(d => d.nextSafe))
+        : docNo.nextSafe(db, 'invoices', { sale: 'L', isProforma });
+    } else if (step.id === 'purchases') {
+      const t = purchaseGenerationTargets(db, aid);
+      out.pending = t.pending.length;
+      out.basis = 'actual';
+      out.mode = t.lotWise ? 'lot' : 'seller';
+      out.suggestedStart = docNo.nextSafe(db, 'purchases', {});
+    } else if (step.id === 'bills') {
+      const t = billGenerationTargets(db, aid, ano);
+      out.pending = t.pending.length;
+      out.basis = 'actual';
+      out.mode = t.lotWise ? 'lot' : 'seller';
+      out.suggestedStart = docNo.nextSafe(db, 'bills', {});
+    } else if (step.id === 'debit_notes') {
+      const c = countDebitNoteTargets(db, aid, ano);
+      out.pending = c.count; out.basis = c.basis;
+      out.suggestedStart = docNo.nextSafe(db, 'debit_notes', { ano });
+    } else if (step.id === 'debit_notes_planter') {
+      const c = countPlanterDebitNoteTargets(db, aid, ano);
+      out.pending = c.count; out.basis = c.basis;
+      out.mode = lotwiseDnPlanterOn(db) ? 'lot' : 'seller';
+      out.suggestedStart = docNo.nextSafe(db, 'debit_notes_planter', { ano });
+    }
+    return out;
+  });
+
+  res.json({
+    auctionId: aid, ano, date: auction.date,
+    blockers,
+    // Nothing to raise is a legitimate answer, not an error — a trade whose
+    // documents are all done reaches here too.
+    //
+    // `pending` is what the trade still owes. Every module tops up — a re-run
+    // skips the parties and lots that already hold a document — so a fully
+    // generated trade reports zero and clicking Generate again is harmless.
+    totalPending: steps.reduce((a, st) => a + (st.pending || 0), 0),
+    steps,
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// TRANSACTION RUNNER — raise a trade's whole document set in one go
+// ══════════════════════════════════════════════════════════════
+// POST /api/auctions/:id/generate-transactions
+//   { steps: { invoices: { start: 101, saleType, splitInvoices, dateSource,
+//                          docType },
+//              purchases: { start: 23 }, bills: { start: 7 },
+//              debit_notes: { start: 4 }, debit_notes_planter: { start: 1 } } }
+//
+// A step left out of `steps` is not run. EVERY included step must carry its
+// own `start` — there is no fallback to MAX+1 here on purpose. A batch that
+// invents five numbering decisions on the operator's behalf is exactly the
+// failure this feature has to avoid; the review sheet asks for all five, and
+// this refuses any it was not given.
+//
+// ── HOW EACH STEP RUNS ───────────────────────────────────────
+// Through the server's OWN routes over loopback, not by calling the handlers
+// directly. It costs a local round trip per step and buys the thing that
+// matters: each step goes through its real middleware — permission check,
+// price-check gate, the feature-flag guard, and `auditMutations`, whose
+// per-document audit rows hang off res.on('finish') and would simply not
+// exist if the handler were invoked in-process. A one-click run must leave
+// the same audit trail as five manual clicks, because on a tax document that
+// trail is the record of who raised what.
+//
+// So this endpoint is, precisely, "click the five buttons for you".
+//
+// ── ORDER AND FAILURE ────────────────────────────────────────
+// PIPELINE order, honouring `after`: the debit-note steps read rows the
+// purchase and bill steps write. A step whose dependency was included and did
+// NOT succeed is reported `blocked`, never quietly skipped — "0 created" and
+// "could not be attempted" are different answers to the operator, and only
+// one of them means the trade still owes a document.
+//
+// There is no whole-run rollback. Each route is its own unit; rolling back
+// 400 successfully written documents because step 5 hit one bad GSTIN is
+// worse than a partial result reported honestly, which is what comes back.
+
+// One run per trade at a time. Every step is safe to re-run sequentially (the
+// range claim refuses a colliding start), but two runs racing would both read
+// the same MAX and hand out overlapping numbers.
+const _txRunsInFlight = new Set();
+
+app.post('/api/auctions/:id/generate-transactions', requireInvoiceWrite, async (req, res) => {
+  const db = getDb();
+  const aid = parseInt(req.params.id, 10);
+  if (!aid) return res.status(400).json({ error: 'Invalid auction id' });
+  const auction = db.get('SELECT id, ano, price_checked_at FROM auctions WHERE id = ?', [aid]);
+  if (!auction) return res.status(404).json({ error: 'Auction not found' });
+  const ano = String(auction.ano);
+  const cfg = getSettingsFlat(db);
+
+  const want = (req.body && req.body.steps) || {};
+  const chosen = PIPELINE.filter(st => want[st.id] != null);
+  if (!chosen.length) {
+    return res.status(400).json({ error: 'Select at least one document type to generate' });
+  }
+  // Validate every start number BEFORE running anything. Discovering at step 4
+  // that step 5's box was left empty, with three modules already committed, is
+  // the failure mode this whole feature exists to prevent.
+  // `steps.<id>` is normally one object. Sales invoices may be an ARRAY, one
+  // entry per sale type: a batch is always ONE sale type (the blank "all sale
+  // types" option was removed from the Generate-All modal on purpose), so a
+  // trade with local AND inter-state buyers needs a run per type, each drawing
+  // from its own series rather than from the global maximum. The sheet renders
+  // a row per type and sends them here together.
+  const runsFor = st => (Array.isArray(want[st.id]) ? want[st.id] : [want[st.id]]).filter(x => x != null);
+  for (const st of chosen) {
+    const runs = runsFor(st);
+    if (!runs.length) {
+      return res.status(400).json({ error: `${st.label}: nothing to run.`, step: st.id });
+    }
+    for (const opts of runs) {
+      const n = parseInt(String(opts.start ?? '').trim(), 10);
+      if (!Number.isFinite(n) || n < 1) {
+        return res.status(400).json({
+          error: `${st.label}: enter a starting number (a positive integer).`,
+          step: st.id,
+        });
+      }
+    }
+  }
+  // The price-check gate is enforced by every generate route individually.
+  // Letting it fire per step would report five identical failures after
+  // possibly writing nothing; asking once says the one true thing.
+  if (pcFlagOn(db) && !auction.price_checked_at) {
+    return res.status(412).json({
+      error: 'Price check required',
+      detail: 'Run Reports → Price Check against this trade (and apply any code fixes) before generating documents.',
+      auctionId: aid, gate: 'price_check',
+    });
+  }
+
+  if (_txRunsInFlight.has(aid)) {
+    return res.status(409).json({ error: 'A generation run is already in progress for this trade.' });
+  }
+  _txRunsInFlight.add(aid);
+
+  const base = `http://127.0.0.1:${PORT}`;
+  const auth = req.headers.authorization || '';
+  const call = async (url, body) => {
+    const r = await fetch(base + url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(auth ? { Authorization: auth } : {}) },
+      body: JSON.stringify(body),
+    });
+    let d = null; try { d = await r.json(); } catch (_) {}
+    return { status: r.status, d: d || {} };
+  };
+
+  const results = [];
+  const outcome = {};        // step id → 'done' | something else
+  try {
+    for (const st of PIPELINE) {
+      if (want[st.id] == null) { outcome[st.id] = 'not_selected'; continue; }
+
+      if (st.flag && String(cfg[st.flag] || '').toLowerCase() !== 'true') {
+        outcome[st.id] = 'disabled';
+        results.push({
+          id: st.id, label: st.label, status: 'disabled',
+          error: `Turned off for this site — enable "${st.flag}" in Settings → Flags.`,
+        });
+        continue;
+      }
+      // Only a dependency the operator actually included can block this step.
+      // A trade whose purchase invoices were raised yesterday, with only the
+      // debit notes ticked today, is a normal top-up run.
+      const blocker = st.after.find(dep => want[dep] != null && outcome[dep] !== 'done');
+      if (blocker) {
+        outcome[st.id] = 'blocked';
+        results.push({
+          id: st.id, label: st.label, status: 'blocked',
+          error: `Not attempted — ${(PIPELINE.find(x => x.id === blocker) || {}).label} did not complete.`,
+        });
+        continue;
+      }
+
+      let allOk = true;
+      for (const opts of runsFor(st)) {
+        const row = { id: st.id, label: st.label, start: parseInt(String(opts.start).trim(), 10) };
+
+        const body = { [st.numberField]: row.start };
+        if (st.keyedBy === 'ano') body.ano = ano;
+        if (st.id === 'invoices') {
+          if (opts.saleType) { body.saleType = opts.saleType; row.saleType = opts.saleType; }
+          body.splitInvoices = opts.splitInvoices !== false;
+          if (opts.dateSource) body.dateSource = opts.dateSource;
+          // Proforma when the feature is on, original when it is off — decided
+          // HERE, not taken from the request. The sheet drew its start number
+          // from whichever series this resolves to, and a client that sent the
+          // other one would write into a series it never checked. (The
+          // generate route refuses `proforma` outright when the flag is off,
+          // so guessing would also just 403.)
+          body.docType = proformaFeatureOn(db) ? 'proforma' : 'original';
+          row.docType = body.docType;
+        }
+        const url = st.route.replace(':auctionId', String(aid));
+
+        const r = await call(url, body);
+        if (r.status === 200) {
+          // The five routes disagree about how they report a count, in TYPE as
+          // well as name: invoices/purchases/bills return `generated` as a
+          // number, while both debit-note routes return `generated` as the ARRAY
+          // of notes they wrote and put the count in `created`. Taking
+          // `generated` at face value yields an array where a number belongs,
+          // which silently breaks the consumed-range report and the run total.
+          row.status = 'done';
+          const g = r.d.generated;
+          row.generated = Array.isArray(g) ? g.length
+                        : (typeof g === 'number' ? g : (Number(r.d.created) || 0));
+          const skip = r.d.skipped || r.d.skippedDetails;
+          row.skipped = Array.isArray(skip) ? skip.length : (Number(skip) || 0);
+          row.errors  = Array.isArray(r.d.errors) ? r.d.errors.length : 0;
+          if (r.d.mode) row.mode = r.d.mode;
+          if (row.generated > 0) row.range = [row.start, row.start + row.generated - 1];
+        } else if (r.status === 404) {
+          // How invoices/purchases/bills say "nothing eligible here". That is an
+          // outcome, not a failure, and must not block a dependent step.
+          row.status = 'nothing_eligible';
+          row.generated = 0;
+          row.note = r.d.error || 'Nothing eligible in this trade';
+        } else {
+          row.status = 'failed';
+          row.generated = 0;
+          row.httpStatus = r.status;
+          row.error = r.d.error || `Request failed (${r.status})`;
+          if (r.d.suggested != null) row.suggested = r.d.suggested;
+          if (r.d.collisions) row.collisions = r.d.collisions;
+        }
+        // `nothing_eligible` counts as complete for dependency purposes: the
+        // step ran, it simply had no work, so a dependant is free to run.
+        if (row.status !== 'done' && row.status !== 'nothing_eligible') allOk = false;
+        results.push(row);
+      }
+      outcome[st.id] = allOk ? 'done' : 'failed';
+    }
+  } finally {
+    _txRunsInFlight.delete(aid);
+  }
+
+  const failed = results.filter(r => r.status === 'failed' || r.status === 'blocked');
+  res.json({
+    ok: failed.length === 0,
+    auctionId: aid, ano,
+    totalGenerated: results.reduce((a, r) => a + (r.generated || 0), 0),
+    steps: results,
+  });
+});
+
 // ── Trade-stage gate (guided sidebar) ────────────────────────
 // Returns the workflow stage 0-4 the sidebar reveals menus by:
 //   0  trade selected/exists  → Lot Entry, Lots
@@ -10514,6 +10923,95 @@ app.get('/api/invoices/eligibility-debug/:auctionId', requireView, (req, res) =>
   });
 });
 
+// ── WHICH INVOICES A BATCH RUN WILL WRITE ────────────────────────
+// Returns the run's documents in the exact order invoice numbers are handed
+// out, so the range claim reserves precisely the numbers the write loop then
+// consumes. Two callers, one answer — a second copy of this fan-out would
+// drift from the loop and the claim would start protecting the wrong range.
+//
+//   buyerCount  distinct eligible buyers. The 404 ("no un-invoiced buyers")
+//               keys off THIS, not off items.length: buyers with no eligible
+//               lot rows have always produced a 200 with generated: 0, and
+//               that stays true.
+//   items       [{ buyer, sale, group, lotNos }] — one entry per invoice.
+//
+// Ordering IS the numbering scheme: buyers ascending by code, then each
+// buyer's Price-Entry split groups ascending. Both were already load-bearing
+// in the loop this was lifted from; they are load-bearing here for the same
+// reason.
+function invoiceGenerationPlan(db, cfg, auctionId, opts) {
+  opts = opts || {};
+  const saleType = opts.saleType || '';
+  const splitInvoices = opts.splitInvoices !== false;
+
+  // The "un-invoiced" check is state-aware:
+  //   - In Tamil Nadu (ISP): a lot is un-invoiced if `invo` is empty OR
+  //     if the only existing invoice is the ASP one (invo == asp_invo).
+  //   - In Kerala (ASP): un-invoiced means `invo` is empty.
+  const isASPState = String(cfg.business_state || '').toUpperCase() === 'KERALA';
+  const uninvoicedExpr = isASPState
+    ? `(l.invo IS NULL OR l.invo = '')`
+    : `(l.invo IS NULL OR l.invo = '' OR (l.asp_invo IS NOT NULL AND l.asp_invo != '' AND l.invo = l.asp_invo))`;
+
+  // When saleType is set, only buyers whose default sale matches (or whose
+  // lots already have that sale assigned) are included.
+  const params = [auctionId];
+  let saleClause = '';
+  if (saleType) {
+    saleClause = ` AND (COALESCE(NULLIF(l.sale,''), b.sale, 'L') = ?)`;
+    params.push(saleType);
+  }
+  const buyers = db.all(
+    `SELECT DISTINCT l.buyer, b.sale as default_sale
+     FROM lots l LEFT JOIN buyers b ON b.buyer = l.buyer
+     WHERE l.auction_id = ? AND l.buyer IS NOT NULL AND l.buyer != '' AND l.amount > 0
+       AND ${uninvoicedExpr}
+       ${saleClause}
+     ORDER BY l.buyer`,   /* invoice numbers run in buyer-code ascending order */
+    params
+  );
+
+  const items = [];
+  for (const row of buyers) {
+    const useSaleType = saleType || row.default_sale || 'L';
+    // Split by invoice_group set during Price Entry: a buyer's lots that carry
+    // different groups fan out into separate invoices; group 0 (the default)
+    // means "no split". Snapshot the buyer's eligible lots + their group using
+    // the same filters buildSalesInvoice applies, then bill one invoice per
+    // group. A buyer with a single group behaves exactly as before.
+    const lotRows = db.all(
+      `SELECT l.lot_no AS lot_no, COALESCE(l.invoice_group, 0) AS g,
+              COALESCE(l.proforma_invo,'') AS pf
+         FROM lots l
+        WHERE l.auction_id = ? AND l.buyer = ? AND l.amount > 0
+          AND (l.reserved IS NULL OR l.reserved = 0)
+          AND (l.sale IS NULL OR l.sale = '' OR l.sale = ?)
+          AND ${uninvoicedExpr}
+        ORDER BY l.lot_no`,
+      [auctionId, row.buyer, useSaleType]
+    );
+    const groups = new Map();
+    for (const lr of lotRows) {
+      // Split OFF → collapse every lot into group 0 → one invoice per buyer.
+      const g = splitInvoices ? (Number(lr.g) || 0) : 0;
+      if (!groups.has(g)) groups.set(g, { lotNos: [], draft: false });
+      groups.get(g).lotNos.push(String(lr.lot_no));
+      // Carries a proforma draft already. Read-only here — the write path's
+      // behaviour is unchanged (a proforma re-run REPLACES the prior draft).
+      // The plan surfaces it so the sheet can say a re-run renumbers a draft
+      // the buyer may already be holding, instead of doing it silently.
+      if (String(lr.pf || '').trim() !== '') groups.get(g).draft = true;
+    }
+    // Ascending group order → predictable, sequential invoice numbers.
+    for (const gk of Array.from(groups.keys()).sort((a, b) => a - b)) {
+      const grp = groups.get(gk);
+      items.push({ buyer: row.buyer, sale: useSaleType, group: gk,
+                   lotNos: grp.lotNos, hasDraft: grp.draft });
+    }
+  }
+  return { buyerCount: buyers.length, items };
+}
+
 // Batch: generate sales invoice for ALL buyers in an auction
 app.post('/api/invoices/generate-all/:auctionId',
   requireInvoiceWrite,
@@ -10551,34 +11049,32 @@ app.post('/api/invoices/generate-all/:auctionId',
       [c.pqty,c.prate,c.puramt,c.com,c.sertax,c.cgst,c.sgst,c.igst,c.advance,c.balance,c.bilamt,c.refund||0,c.refud||0,c.isp_pqty||0,c.isp_prate||0,c.isp_puramt||0,c.asp_pqty||0,c.asp_prate||0,c.asp_puramt||0,lot.id]);
   }
   
-  // Get distinct buyers. When saleType filter is set, only buyers whose
-  // default sale matches (or whose lots already have that sale assigned) are included.
-  // The "un-invoiced" check is state-aware:
-  //   - In Tamil Nadu (ISP): a lot is un-invoiced if `invo` is empty OR
-  //     if the only existing invoice is the ASP one (invo == asp_invo).
-  //   - In Kerala (ASP): un-invoiced means `invo` is empty.
-  const isASPState = String(cfg.business_state || '').toUpperCase() === 'KERALA';
-  const uninvoicedExpr = isASPState
-    ? `(l.invo IS NULL OR l.invo = '')`
-    : `(l.invo IS NULL OR l.invo = '' OR (l.asp_invo IS NOT NULL AND l.asp_invo != '' AND l.invo = l.asp_invo))`;
-  const params = [req.params.auctionId];
-  let saleClause = '';
-  if (saleType) {
-    saleClause = ` AND (COALESCE(NULLIF(l.sale,''), b.sale, 'L') = ?)`;
-    params.push(saleType);
-  }
-  const buyers = db.all(
-    `SELECT DISTINCT l.buyer, b.sale as default_sale
-     FROM lots l LEFT JOIN buyers b ON b.buyer = l.buyer
-     WHERE l.auction_id = ? AND l.buyer IS NOT NULL AND l.buyer != '' AND l.amount > 0
-       AND ${uninvoicedExpr}
-       ${saleClause}
-     ORDER BY l.buyer`,   /* invoice numbers run in buyer-code ascending order */
-    params
-  );
+  // Which invoices this run will write, in the order numbers are handed out.
+  // Shared with the range claim below, so the numbers reserved are the numbers
+  // the loop then walks. A build that fails consumes no number, which makes
+  // the claim an upper bound — conservative, never permissive.
+  const plan = invoiceGenerationPlan(db, cfg, req.params.auctionId, { saleType, splitInvoices });
 
-  if (!buyers.length) return res.status(404).json({ error: saleType ? `No un-invoiced buyers for sale type ${saleType}` : 'No un-invoiced buyers with lots in this auction' });
-  
+  if (!plan.buyerCount) return res.status(404).json({ error: saleType ? `No un-invoiced buyers for sale type ${saleType}` : 'No un-invoiced buyers with lots in this auction' });
+
+  // ── Claim the numbers BEFORE writing a single row ────────────────
+  // A batch spanning several sale types shares one counter, so buyer A (sale
+  // L) takes #101 and buyer B (sale I) takes #102 — but each SALE TYPE is its
+  // own global series, so the claim is per series, over the exact numbers that
+  // series will receive. See doc-numbering.js.
+  {
+    const bySeries = new Map();
+    plan.items.forEach((it, i) => {
+      if (!bySeries.has(it.sale)) bySeries.set(it.sale, []);
+      bySeries.get(it.sale).push(nextNo + i);   // the counter runs across series
+    });
+    for (const [sale, nos] of bySeries) {
+      const claim = docNo.claimNumbers(db, 'invoices', { sale, isProforma }, nos,
+        { start: nextNo, need: plan.items.length });
+      if (!docNo.sendRefusal(res, claim)) return;
+    }
+  }
+
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [req.params.auctionId]);
   const results = [];
   const errors = [];
@@ -10587,114 +11083,90 @@ app.post('/api/invoices/generate-all/:auctionId',
   const invoiceDate = resolveInvoiceDate(req.body.dateSource, auction.date);
 
   const isASPStateBulk = String(cfg.business_state || '').toUpperCase() === 'KERALA';
-  for (const row of buyers) {
-    const useSaleType = saleType || row.default_sale || 'L';
-    // Split by invoice_group set during Price Entry: a buyer's lots that carry
-    // different groups fan out into separate invoices; group 0 (the default)
-    // means "no split". Snapshot the buyer's eligible lots + their group using
-    // the same filters buildSalesInvoice applies, then bill one invoice per
-    // group. A buyer with a single group behaves exactly as before.
-    const lotRows = db.all(
-      `SELECT l.lot_no AS lot_no, COALESCE(l.invoice_group, 0) AS g
-         FROM lots l
-        WHERE l.auction_id = ? AND l.buyer = ? AND l.amount > 0
-          AND (l.reserved IS NULL OR l.reserved = 0)
-          AND (l.sale IS NULL OR l.sale = '' OR l.sale = ?)
-          AND ${uninvoicedExpr}
-        ORDER BY l.lot_no`,
-      [req.params.auctionId, row.buyer, useSaleType]
-    );
-    const groups = new Map();
-    for (const lr of lotRows) {
-      // Split OFF → collapse every lot into group 0 → one invoice per buyer.
-      const g = splitInvoices ? (Number(lr.g) || 0) : 0;
-      if (!groups.has(g)) groups.set(g, []);
-      groups.get(g).push(String(lr.lot_no));
-    }
-    // Ascending group order → predictable, sequential invoice numbers.
-    const groupKeys = Array.from(groups.keys()).sort((a, b) => a - b);
-    for (const gk of groupKeys) {
-      const lotNos = groups.get(gk);
-      try {
-        // Same draft inheritance as the single-invoice endpoint: this
-        // group's lots may already be quoted on a proforma that dropped
-        // transport & insurance. See proformaNoTIForLots().
-        const effNoTI = isProforma ? noTI
-          : (noTI || proformaNoTIForLots(db, req.params.auctionId, row.buyer, lotNos));
-        const invoice = buildSalesInvoice(db, req.params.auctionId, row.buyer, useSaleType, cfg, { noTI: effNoTI, excludeInvoiced: true, lotNos });
-        if (!invoice) { errors.push({ buyer: row.buyer, group: gk, error: 'No matching lots' }); continue; }
-        const s = invoice.summary;
-        const invoNo = String(nextNo);
-        // Store BUSINESS context state — see single-invoice handler for rationale
-        const invoiceState = cfg.business_state || auction.state || '';
-        // Proforma: clear this group's prior un-raised draft(s) so a re-run
-        // doesn't pile up rows (raised proformas are history — kept).
-        if (isProforma) {
-          const priorNos = new Set();
-          for (const li of invoice.lineItems) {
-            const r = db.get('SELECT proforma_invo FROM lots WHERE auction_id=? AND lot_no=? AND buyer=? LIMIT 1',
-              [req.params.auctionId, li.lot, row.buyer]);
-            if (r && r.proforma_invo) priorNos.add(String(r.proforma_invo));
-          }
-          // Scoped to THIS BUYER — draft numbers repeat across the sale series,
-          // so a delete keyed on the number alone destroys another buyer's
-          // pending draft. See the single-invoice handler for the full note.
-          for (const pn of priorNos) {
-            db.run("DELETE FROM invoices WHERE auction_id=? AND sale=? AND buyer=? AND is_proforma=1 AND COALESCE(raised_invo,'')='' AND invo=?",
-              [req.params.auctionId, useSaleType, row.buyer, pn]);
-          }
+  for (const item of plan.items) {
+    const row = item;              // `row.buyer` below reads the plan item
+    const useSaleType = item.sale;
+    const gk = item.group;
+    const lotNos = item.lotNos;
+    try {
+      // Same draft inheritance as the single-invoice endpoint: this
+      // group's lots may already be quoted on a proforma that dropped
+      // transport & insurance. See proformaNoTIForLots().
+      const effNoTI = isProforma ? noTI
+        : (noTI || proformaNoTIForLots(db, req.params.auctionId, row.buyer, lotNos));
+      const invoice = buildSalesInvoice(db, req.params.auctionId, row.buyer, useSaleType, cfg, { noTI: effNoTI, excludeInvoiced: true, lotNos });
+      if (!invoice) { errors.push({ buyer: row.buyer, group: gk, error: 'No matching lots' }); continue; }
+      const s = invoice.summary;
+      const invoNo = String(nextNo);
+      // Store BUSINESS context state — see single-invoice handler for rationale
+      const invoiceState = cfg.business_state || auction.state || '';
+      // Proforma: clear this group's prior un-raised draft(s) so a re-run
+      // doesn't pile up rows (raised proformas are history — kept).
+      if (isProforma) {
+        const priorNos = new Set();
+        for (const li of invoice.lineItems) {
+          const r = db.get('SELECT proforma_invo FROM lots WHERE auction_id=? AND lot_no=? AND buyer=? LIMIT 1',
+            [req.params.auctionId, li.lot, row.buyer]);
+          if (r && r.proforma_invo) priorNos.add(String(r.proforma_invo));
         }
-        // line_items — see the single-invoice handler above.
-        db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti,is_proforma,line_items)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          [req.params.auctionId,auction.ano,invoiceDate,invoiceState,useSaleType,invoNo,row.buyer,invoice.buyer.buyer1||'',
-           invoice.buyer.gstin||'',invoice.buyer.pla||'',s.totalBags,s.totalQty,s.totalAmount,s.gunnyCost,s.transportCost,s.insuranceCost,
-           s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',effNoTI,isProforma,
-           JSON.stringify(invoice.lineItems||[])]);
-        if (isProforma) {
-          // Proforma: stamp lots.proforma_invo ONLY (leave invo/asp_invo/sale).
-          for (const li of invoice.lineItems) {
-            db.run('UPDATE lots SET proforma_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
-              [invoNo, req.params.auctionId, li.lot, row.buyer]);
-          }
-        } else {
-          // ASP-aware lot update: see single-invoice handler above for rationale.
-          // Scoped to this invoice's line items, so only THIS group's lots get stamped.
-          const raiseNos = new Set();
-          for (const li of invoice.lineItems) {
-            const pr = db.get('SELECT proforma_invo FROM lots WHERE auction_id=? AND lot_no=? AND buyer=? LIMIT 1',
-              [req.params.auctionId, li.lot, row.buyer]);
-            if (pr && pr.proforma_invo) raiseNos.add(String(pr.proforma_invo));
-            if (isASPStateBulk) {
-              const existing = db.get(
-                'SELECT invo, asp_invo FROM lots WHERE auction_id=? AND lot_no=? AND buyer=? LIMIT 1',
-                [req.params.auctionId, li.lot, row.buyer]
-              );
-              const hasIspInvo = existing && existing.invo && existing.invo !== existing.asp_invo;
-              if (hasIspInvo) {
-                db.run('UPDATE lots SET asp_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
-                  [invoNo, req.params.auctionId, li.lot, row.buyer]);
-              } else {
-                // Don't set `sale` in ASP context — ISP step decides
-                db.run('UPDATE lots SET invo=?, asp_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
-                  [invoNo, invoNo, req.params.auctionId, li.lot, row.buyer]);
-              }
+        // Scoped to THIS BUYER — draft numbers repeat across the sale series,
+        // so a delete keyed on the number alone destroys another buyer's
+        // pending draft. See the single-invoice handler for the full note.
+        for (const pn of priorNos) {
+          db.run("DELETE FROM invoices WHERE auction_id=? AND sale=? AND buyer=? AND is_proforma=1 AND COALESCE(raised_invo,'')='' AND invo=?",
+            [req.params.auctionId, useSaleType, row.buyer, pn]);
+        }
+      }
+      // line_items — see the single-invoice handler above.
+      db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti,is_proforma,line_items)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [req.params.auctionId,auction.ano,invoiceDate,invoiceState,useSaleType,invoNo,row.buyer,invoice.buyer.buyer1||'',
+         invoice.buyer.gstin||'',invoice.buyer.pla||'',s.totalBags,s.totalQty,s.totalAmount,s.gunnyCost,s.transportCost,s.insuranceCost,
+         s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',effNoTI,isProforma,
+         JSON.stringify(invoice.lineItems||[])]);
+      if (isProforma) {
+        // Proforma: stamp lots.proforma_invo ONLY (leave invo/asp_invo/sale).
+        for (const li of invoice.lineItems) {
+          db.run('UPDATE lots SET proforma_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
+            [invoNo, req.params.auctionId, li.lot, row.buyer]);
+        }
+      } else {
+        // ASP-aware lot update: see single-invoice handler above for rationale.
+        // Scoped to this invoice's line items, so only THIS group's lots get stamped.
+        const raiseNos = new Set();
+        for (const li of invoice.lineItems) {
+          const pr = db.get('SELECT proforma_invo FROM lots WHERE auction_id=? AND lot_no=? AND buyer=? LIMIT 1',
+            [req.params.auctionId, li.lot, row.buyer]);
+          if (pr && pr.proforma_invo) raiseNos.add(String(pr.proforma_invo));
+          if (isASPStateBulk) {
+            const existing = db.get(
+              'SELECT invo, asp_invo FROM lots WHERE auction_id=? AND lot_no=? AND buyer=? LIMIT 1',
+              [req.params.auctionId, li.lot, row.buyer]
+            );
+            const hasIspInvo = existing && existing.invo && existing.invo !== existing.asp_invo;
+            if (hasIspInvo) {
+              db.run('UPDATE lots SET asp_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
+                [invoNo, req.params.auctionId, li.lot, row.buyer]);
             } else {
-              db.run('UPDATE lots SET sale=?, invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
-                [useSaleType, invoNo, req.params.auctionId, li.lot, row.buyer]);
+              // Don't set `sale` in ASP context — ISP step decides
+              db.run('UPDATE lots SET invo=?, asp_invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
+                [invoNo, invoNo, req.params.auctionId, li.lot, row.buyer]);
             }
-          }
-          // Mark any proforma draft that covered these lots as raised (kept).
-          // Identified on INVOICE NO + BUYER + SALE TYPE — see
-          // stampProformaRaised for why the number alone is never enough.
-          for (const pn of raiseNos) {
-            stampProformaRaised(db, req.params.auctionId, row.buyer, pn, useSaleType, invoNo);
+          } else {
+            db.run('UPDATE lots SET sale=?, invo=? WHERE auction_id=? AND lot_no=? AND buyer=?',
+              [useSaleType, invoNo, req.params.auctionId, li.lot, row.buyer]);
           }
         }
-        results.push({ buyer: row.buyer, group: gk, invoiceNo: invoNo, sale: useSaleType, grandTotal: s.grandTotal });
-        nextNo++;
-      } catch (e) { errors.push({ buyer: row.buyer, group: gk, error: e.message }); }
-    }
+        // Mark any proforma draft that covered these lots as raised (kept).
+        // Identified on INVOICE NO + BUYER + SALE TYPE — see
+        // stampProformaRaised for why the number alone is never enough.
+        for (const pn of raiseNos) {
+          stampProformaRaised(db, req.params.auctionId, row.buyer, pn, useSaleType, invoNo);
+        }
+      }
+      results.push({ buyer: row.buyer, group: gk, invoiceNo: invoNo, sale: useSaleType, grandTotal: s.grandTotal });
+      nextNo++;
+    } catch (e) { errors.push({ buyer: row.buyer, group: gk, error: e.message }); }
   }
 
   res.json({ success: true, generated: results.length, results, errors });
@@ -11785,6 +12257,110 @@ app.get('/api/purchases/eligible-lots/:auctionId', requireView, (req, res) => {
 });
 
 // Batch: generate purchase invoice for ALL registered dealers in an auction
+// ── WHAT A PURCHASE / BILL BATCH WILL WRITE ──────────────────────
+// The eligible rows, the ones already done, and therefore the PENDING count —
+// which is both the width of the number range to claim and the figure the
+// one-click plan shows the operator. One implementation, so the preview, the
+// claim and the run can never disagree about how many documents a trade owes.
+//
+//   lotWise      which mode the site is in (flag_lotwise_purchase / _bills)
+//   rows         every eligible target, in the order numbers are handed out
+//   alreadyDone  keys of the rows a re-run will skip (lot-wise only —
+//                seller-wise has never had a top-up guard)
+//   pending      rows minus alreadyDone; `pending.length` is the claim width
+function doneKey(name, lotNo) {
+  return `${String(name || '').trim().toUpperCase()}|${String(lotNo || '').trim()}`;
+}
+
+function purchaseGenerationTargets(db, auctionId) {
+  const lotWise = lotwisePurchaseOn(db);
+  const rows = lotWise
+    ? db.all(
+        `SELECT l.id AS lot_id, l.lot_no, l.name, l.trader_id,
+                CASE WHEN UPPER(TRIM(COALESCE(l.user_id,''))) IN ('','IMPORT')
+                     THEN '' ELSE TRIM(l.user_id) END AS user_id
+           FROM lots l
+          WHERE l.auction_id = ?
+            AND l.amount > 0
+            AND l.name IS NOT NULL AND l.name != ''
+            AND (l.reserved IS NULL OR l.reserved = 0)
+            -- Same WD/NA exclusion as /eligible-lots and the gate, so the
+            -- preview count, the batch run and the gate all agree.
+            AND UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')
+            AND ${hasValidGstinSql('l.cr')}
+          ORDER BY UPPER(TRIM(l.name)), CAST(l.lot_no AS INTEGER), l.lot_no`,
+        [auctionId]
+      )
+    : db.all(
+        `SELECT DISTINCT name FROM lots
+         WHERE auction_id = ?
+           AND amount > 0
+           AND name IS NOT NULL AND name != ''
+           AND ${hasValidGstinSql('cr')}
+         ORDER BY UPPER(TRIM(name))`,
+        [auctionId]
+      );
+
+  // What a re-run must SKIP, so it tops up the trade instead of writing a
+  // second document for work already done.
+  //
+  // Lot-wise keys on name + lot. Seller-wise keys on the party alone — one
+  // dealer, one purchase invoice per trade. Seller-wise had no guard at all
+  // until 2026-09-21: every run re-invoiced every dealer, so clicking Generate
+  // twice left AAA holding two invoices for the same lots under different
+  // numbers, with nothing to flag it. The number-collision claim does not
+  // catch that — the second run's numbers are genuinely free.
+  const alreadyDone = new Set();
+  for (const r of db.all(
+    lotWise
+      ? `SELECT name, lot_no FROM purchases
+          WHERE auction_id = ? AND TRIM(COALESCE(lot_no,'')) <> ''`
+      : `SELECT DISTINCT name, '' AS lot_no FROM purchases WHERE auction_id = ?`,
+    [auctionId]
+  )) alreadyDone.add(doneKey(r.name, lotWise ? r.lot_no : ''));
+
+  const pending = rows.filter(r => !alreadyDone.has(doneKey(r.name, lotWise ? r.lot_no : '')));
+  return { lotWise, rows, alreadyDone, pending };
+}
+
+// Same contract for bills of supply. The eligibility rule is the mirror image
+// (NO valid GSTIN = agriculturist), and lot-wise bills number ASCENDING BY LOT
+// NO rather than grouped by seller — that ordering IS the numbering scheme, so
+// it belongs here with the rows it orders.
+function billGenerationTargets(db, auctionId, ano) {
+  const lotWise = lotwiseBillsOn(db);
+  const rows = lotWise
+    ? db.all(
+        `SELECT l.id AS lot_id, l.lot_no, l.name, l.trader_id,
+                CASE WHEN UPPER(TRIM(COALESCE(l.user_id,''))) IN ('','IMPORT')
+                     THEN '' ELSE TRIM(l.user_id) END AS user_id
+           FROM lots l
+          WHERE l.auction_id = ?
+            AND l.amount > 0
+            AND l.name IS NOT NULL AND l.name != ''
+            AND (l.reserved IS NULL OR l.reserved = 0)
+            AND UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')
+            AND NOT ${hasValidGstinSql('l.cr')}
+          ORDER BY CAST(l.lot_no AS INTEGER), l.lot_no`,
+        [auctionId]
+      )
+    : listAgriSellers(db, auctionId);
+
+  // Same top-up contract as the purchase side above, keyed on `ano` because
+  // bills are stored by trade number rather than auction id.
+  const alreadyDone = new Set();
+  for (const r of db.all(
+    lotWise
+      ? `SELECT name, lot_no FROM bills
+          WHERE TRIM(ano) = TRIM(?) AND TRIM(COALESCE(lot_no,'')) <> ''`
+      : `SELECT DISTINCT name, '' AS lot_no FROM bills WHERE TRIM(ano) = TRIM(?)`,
+    [String(ano)]
+  )) alreadyDone.add(doneKey(r.name, lotWise ? r.lot_no : ''));
+
+  const pending = rows.filter(r => !alreadyDone.has(doneKey(r.name, lotWise ? r.lot_no : '')));
+  return { lotWise, rows, alreadyDone, pending };
+}
+
 app.post('/api/purchases/generate-all/:auctionId',
   requireInvoiceWrite,
   requirePriceChecked(req => parseInt(req.params.auctionId, 10)),
@@ -11816,34 +12392,9 @@ app.post('/api/purchases/generate-all/:auctionId',
   // Lot-wise (flag on) walks one row per LOT. Both use the same eligibility
   // rule and the same ORDER BY, so the two modes cover identical lots and
   // differ only in how many documents that becomes.
-  const lotWise = lotwisePurchaseOn(db);
-
-  const sellers = lotWise
-    ? db.all(
-        `SELECT l.id AS lot_id, l.lot_no, l.name, l.trader_id,
-                CASE WHEN UPPER(TRIM(COALESCE(l.user_id,''))) IN ('','IMPORT')
-                     THEN '' ELSE TRIM(l.user_id) END AS user_id
-           FROM lots l
-          WHERE l.auction_id = ?
-            AND l.amount > 0
-            AND l.name IS NOT NULL AND l.name != ''
-            AND (l.reserved IS NULL OR l.reserved = 0)
-            -- Same WD/NA exclusion as /eligible-lots and the gate, so the
-            -- preview count, the batch run and the gate all agree.
-            AND UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')
-            AND ${hasValidGstinSql('l.cr')}
-          ORDER BY UPPER(TRIM(l.name)), CAST(l.lot_no AS INTEGER), l.lot_no`,
-        [req.params.auctionId]
-      )
-    : db.all(
-        `SELECT DISTINCT name FROM lots
-         WHERE auction_id = ?
-           AND amount > 0
-           AND name IS NOT NULL AND name != ''
-           AND ${hasValidGstinSql('cr')}
-         ORDER BY UPPER(TRIM(name))`,
-        [req.params.auctionId]
-      );
+  const targets = purchaseGenerationTargets(db, req.params.auctionId);
+  const lotWise = targets.lotWise;
+  const sellers = targets.rows;
 
   if (!sellers.length) return res.status(404).json({
     error: lotWise
@@ -11856,27 +12407,25 @@ app.post('/api/purchases/generate-all/:auctionId',
   const errors = [];
   const skipped = [];
 
-  // Lots already carrying a lot-wise purchase invoice in this trade, so a
-  // re-run tops up the missing ones instead of double-invoicing the lot.
-  // Seller-wise runs skip this entirely and behave exactly as before.
-  const alreadyDone = new Set();
-  if (lotWise) {
-    for (const r of db.all(
-      `SELECT name, lot_no, invo FROM purchases
-        WHERE auction_id = ? AND TRIM(COALESCE(lot_no,'')) <> ''`,
-      [req.params.auctionId]
-    )) alreadyDone.add(`${String(r.name || '').trim().toUpperCase()}|${String(r.lot_no || '').trim()}`);
-  }
+  const alreadyDone = targets.alreadyDone;
+
+  // ── Claim the number range BEFORE writing a single row ───────────
+  // Purchase invoice numbers are ONE running series across every trade (see
+  // doc-numbering.js), so a start that lands inside another trade's block is
+  // a duplicate even though this trade looks empty. The width is the PENDING
+  // count — lot-wise runs top up rather than re-invoice. A build failure
+  // later consumes no number, which makes the claim an upper bound:
+  // conservative, never permissive.
+  if (!docNo.claimOrRefuse(res, db, 'purchases', {}, nextNo, targets.pending.length)) return;
 
   for (const row of sellers) {
     const label = lotWise ? `${row.name} — lot ${row.lot_no}` : row.name;
     try {
-      if (lotWise) {
-        const key = `${String(row.name || '').trim().toUpperCase()}|${String(row.lot_no || '').trim()}`;
-        if (alreadyDone.has(key)) {
-          skipped.push({ seller: row.name, lotNo: row.lot_no, reason: 'Already invoiced' });
-          continue;
-        }
+      // Top up: skip what this trade already has. Lot-wise skips the lot,
+      // seller-wise skips the dealer. See purchaseGenerationTargets().
+      if (alreadyDone.has(doneKey(row.name, lotWise ? row.lot_no : ''))) {
+        skipped.push({ seller: row.name, lotNo: lotWise ? row.lot_no : '', reason: 'Already invoiced' });
+        continue;
       }
       const invoNo = String(nextNo);
       const invoice = buildPurchaseInvoice(db, req.params.auctionId, row.name, cfg,
@@ -12566,27 +13115,10 @@ app.post('/api/bills/generate-all/:auctionId',
   // Seller-wise walks listAgriSellers exactly as before. Lot-wise walks one
   // row per LOT, using the same eligibility rule so both modes cover an
   // identical set of lots and differ only in document count.
-  const lotWise = lotwiseBillsOn(db);
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [req.params.auctionId]);
-
-  const sellers = lotWise
-    ? db.all(
-        `SELECT l.id AS lot_id, l.lot_no, l.name, l.trader_id,
-                CASE WHEN UPPER(TRIM(COALESCE(l.user_id,''))) IN ('','IMPORT')
-                     THEN '' ELSE TRIM(l.user_id) END AS user_id
-           FROM lots l
-          WHERE l.auction_id = ?
-            AND l.amount > 0
-            AND l.name IS NOT NULL AND l.name != ''
-            AND (l.reserved IS NULL OR l.reserved = 0)
-            AND UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')
-            AND NOT ${hasValidGstinSql('l.cr')}
-          -- Bill numbers are handed out in the order this list is walked, so
-          -- lot-wise runs number ASCENDING BY LOT NO (not grouped by seller).
-          ORDER BY CAST(l.lot_no AS INTEGER), l.lot_no`,
-        [req.params.auctionId]
-      )
-    : listAgriSellers(db, req.params.auctionId);
+  const targets = billGenerationTargets(db, req.params.auctionId, auction.ano);
+  const lotWise = targets.lotWise;
+  const sellers = targets.rows;
 
   if (!sellers.length) return res.status(404).json({
     error: lotWise
@@ -12598,27 +13130,21 @@ app.post('/api/bills/generate-all/:auctionId',
   const errors = [];
   const skipped = [];
 
-  // Lots already carrying a lot-wise bill in this trade, so a re-run tops up
-  // the missing ones instead of double-billing. Seller-wise runs skip this
-  // entirely and behave exactly as before.
-  const alreadyDone = new Set();
-  if (lotWise) {
-    for (const r of db.all(
-      `SELECT name, lot_no FROM bills
-        WHERE TRIM(ano) = TRIM(?) AND TRIM(COALESCE(lot_no,'')) <> ''`,
-      [String(auction.ano)]
-    )) alreadyDone.add(`${String(r.name || '').trim().toUpperCase()}|${String(r.lot_no || '').trim()}`);
-  }
+  const alreadyDone = targets.alreadyDone;
+
+  // ── Claim the number range BEFORE writing a single row ───────────
+  // Same contract as the purchase side: bill numbers are one running series
+  // across every trade, lot-wise runs top up rather than re-bill, and the
+  // claimed width is an upper bound. See doc-numbering.js.
+  if (!docNo.claimOrRefuse(res, db, 'bills', {}, nextNo, targets.pending.length)) return;
 
   for (const row of sellers) {
     const label = lotWise ? `${row.name} — lot ${row.lot_no}` : row.name;
     try {
-      if (lotWise) {
-        const key = `${String(row.name || '').trim().toUpperCase()}|${String(row.lot_no || '').trim()}`;
-        if (alreadyDone.has(key)) {
-          skipped.push({ seller: row.name, lotNo: row.lot_no, reason: 'Already billed' });
-          continue;
-        }
+      // Top up — see billGenerationTargets().
+      if (alreadyDone.has(doneKey(row.name, lotWise ? row.lot_no : ''))) {
+        skipped.push({ seller: row.name, lotNo: lotWise ? row.lot_no : '', reason: 'Already billed' });
+        continue;
       }
       const bill = buildAgriBill(db, req.params.auctionId, row.name, cfg,
         { traderId: row.trader_id, userId: row.user_id,
@@ -13934,60 +14460,32 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNote
   // collision exists → 409 with the next safe start so the user can
   // retry. The check + INSERTs all run inside the same JS turn (no
   // await), so a competing bulk can't slip in between.
-  const eligibleCount = purchases.filter(
-    p => !existingKeys.has(p.name || '') && gradedCommission(db, p.auction_id, p.name || '', '2') > 0
-  ).length;
+  // One DN per DEALER, not per purchase row: the loop below adds each name to
+  // `existingKeys` as it goes, so a dealer holding several purchase invoices
+  // (which is what lot-wise purchase mode produces) still yields a single
+  // note. Counting rows here would claim a wider number range than the run
+  // uses and could refuse a start that was in fact free.
+  const eligibleCount = new Set(
+    purchases
+      .filter(p => !existingKeys.has(p.name || '') && gradedCommission(db, p.auction_id, p.name || '', '2') > 0)
+      .map(p => p.name || '')
+  ).size;
 
   let nextNoteNo;
   const rawStart = req.body.startNoteNo != null ? req.body.startNoteNo : req.body.startInvoiceNo;
   if (rawStart != null && String(rawStart).trim() !== '') {
-    const n = parseInt(String(rawStart).trim(), 10);
-    if (!Number.isFinite(n) || n < 1) {
-      return res.status(400).json({ error: 'Starting Number must be a positive integer' });
-    }
-    nextNoteNo = n;
-    if (eligibleCount > 0) {
-      // Range claim — scoped to THIS TRADE only. Numbering is per-trade
-      // (trade #1's #5 doesn't conflict with trade #2's #5), so collision
-      // check has `WHERE ano = ?`. Without this filter, starting trade 2
-      // at #1 would falsely fail when trade 1 already has #1..N.
-      const upper = nextNoteNo + eligibleCount - 1;
-      const collisions = db.all(
-        `SELECT CAST(note_no AS INTEGER) AS n
-           FROM debit_notes
-          WHERE ano = ?
-            AND CAST(note_no AS INTEGER) BETWEEN ? AND ?
-          ORDER BY n`,
-        [ano, nextNoteNo, upper]
-      );
-      if (collisions.length) {
-        const safe = (() => {
-          const row = db.get(
-            'SELECT MAX(CAST(note_no AS INTEGER)) AS mx FROM debit_notes WHERE ano = ?',
-            [ano]
-          );
-          const mx = parseInt(row && row.mx, 10);
-          return Number.isFinite(mx) && mx > 0 ? mx + 1 : 1;
-        })();
-        return res.status(409).json({
-          error: `Starting Number ${nextNoteNo} would overlap existing debit note(s) in trade #${ano} ` +
-                 `(${collisions.slice(0, 5).map(c => '#' + c.n).join(', ')}` +
-                 `${collisions.length > 5 ? `, +${collisions.length - 5} more` : ''}). ` +
-                 `Try ${safe} or higher.`,
-          collisions: collisions.map(c => c.n),
-          suggested: safe,
-        });
-      }
-    }
+    // Range claim — scoped to THIS TRADE only. Numbering is per-trade
+    // (trade #1's #5 doesn't conflict with trade #2's #5), which is the
+    // `debit_notes` entry's series scope in doc-numbering.js. Without that
+    // scoping, starting trade 2 at #1 would falsely fail when trade 1
+    // already has #1..N.
+    const claim = docNo.claimOrRefuse(res, db, 'debit_notes', { ano }, rawStart, eligibleCount);
+    if (!claim) return;
+    nextNoteNo = claim.from;
   } else {
     // No explicit start → bump THIS TRADE's MAX. Each trade has its
     // own independent sequence.
-    const row = db.get(
-      'SELECT MAX(CAST(note_no AS INTEGER)) AS mx FROM debit_notes WHERE ano = ?',
-      [ano]
-    );
-    const mx = parseInt(row && row.mx, 10);
-    nextNoteNo = Number.isFinite(mx) && mx > 0 ? mx + 1 : 1;
+    nextNoteNo = docNo.nextSafe(db, 'debit_notes', { ano });
   }
 
   const generated = [];
@@ -14991,29 +15489,11 @@ app.post('/api/debit-notes-planter/generate-bulk', requireInvoiceWrite, requireD
     let nextNoteNo;
     const rawStartL = req.body.startNoteNo != null ? req.body.startNoteNo : req.body.startInvoiceNo;
     if (rawStartL != null && String(rawStartL).trim() !== '') {
-      const n = parseInt(String(rawStartL).trim(), 10);
-      if (!Number.isFinite(n) || n < 1) return res.status(400).json({ error: 'Starting Number must be a positive integer' });
-      nextNoteNo = n;
-      if (pendingCount > 0) {
-        const upper = nextNoteNo + pendingCount - 1;
-        const collisions = db.all(
-          `SELECT CAST(note_no AS INTEGER) AS n FROM debit_notes_planter
-            WHERE ano = ? AND CAST(note_no AS INTEGER) BETWEEN ? AND ? ORDER BY n`,
-          [ano, nextNoteNo, upper]);
-        if (collisions.length) {
-          const row = db.get('SELECT MAX(CAST(note_no AS INTEGER)) AS mx FROM debit_notes_planter WHERE ano = ?', [ano]);
-          const mx = parseInt(row && row.mx, 10);
-          const safe = Number.isFinite(mx) && mx > 0 ? mx + 1 : 1;
-          return res.status(409).json({
-            error: `Starting Number ${nextNoteNo} would overlap existing planter debit note(s) in trade #${ano}. Try ${safe} or higher.`,
-            collisions: collisions.map(c => c.n), suggested: safe,
-          });
-        }
-      }
+      const claim = docNo.claimOrRefuse(res, db, 'debit_notes_planter', { ano }, rawStartL, pendingCount);
+      if (!claim) return;
+      nextNoteNo = claim.from;
     } else {
-      const row = db.get('SELECT MAX(CAST(note_no AS INTEGER)) AS mx FROM debit_notes_planter WHERE ano = ?', [ano]);
-      const mx = parseInt(row && row.mx, 10);
-      nextNoteNo = Number.isFinite(mx) && mx > 0 ? mx + 1 : 1;
+      nextNoteNo = docNo.nextSafe(db, 'debit_notes_planter', { ano });
     }
 
     const generatedL = [];
@@ -15071,35 +15551,22 @@ app.post('/api/debit-notes-planter/generate-bulk', requireInvoiceWrite, requireD
 
   const dnGstRate = Number(cfg.discount_gst) || Number(cfg.gst_service) || 0;
 
-  const eligibleCount = bills.filter(b => !existingKeys.has(b.name || '') && gradedServiceBase(db, b.auction_id, b.name || '', '1') > 0).length;
+  // Per PLANTER, not per bill row — same reasoning as the dealer side above
+  // (lot-wise bills give one planter several rows; the loop dedupes by name).
+  const eligibleCount = new Set(
+    bills
+      .filter(b => !existingKeys.has(b.name || '') && gradedServiceBase(db, b.auction_id, b.name || '', '1') > 0)
+      .map(b => b.name || '')
+  ).size;
 
   let nextNoteNo;
   const rawStart = req.body.startNoteNo != null ? req.body.startNoteNo : req.body.startInvoiceNo;
   if (rawStart != null && String(rawStart).trim() !== '') {
-    const n = parseInt(String(rawStart).trim(), 10);
-    if (!Number.isFinite(n) || n < 1) return res.status(400).json({ error: 'Starting Number must be a positive integer' });
-    nextNoteNo = n;
-    if (eligibleCount > 0) {
-      const upper = nextNoteNo + eligibleCount - 1;
-      const collisions = db.all(
-        `SELECT CAST(note_no AS INTEGER) AS n FROM debit_notes_planter
-          WHERE ano = ? AND CAST(note_no AS INTEGER) BETWEEN ? AND ? ORDER BY n`,
-        [ano, nextNoteNo, upper]
-      );
-      if (collisions.length) {
-        const row = db.get('SELECT MAX(CAST(note_no AS INTEGER)) AS mx FROM debit_notes_planter WHERE ano = ?', [ano]);
-        const mx = parseInt(row && row.mx, 10);
-        const safe = Number.isFinite(mx) && mx > 0 ? mx + 1 : 1;
-        return res.status(409).json({
-          error: `Starting Number ${nextNoteNo} would overlap existing planter debit note(s) in trade #${ano}. Try ${safe} or higher.`,
-          collisions: collisions.map(c => c.n), suggested: safe,
-        });
-      }
-    }
+    const claim = docNo.claimOrRefuse(res, db, 'debit_notes_planter', { ano }, rawStart, eligibleCount);
+    if (!claim) return;
+    nextNoteNo = claim.from;
   } else {
-    const row = db.get('SELECT MAX(CAST(note_no AS INTEGER)) AS mx FROM debit_notes_planter WHERE ano = ?', [ano]);
-    const mx = parseInt(row && row.mx, 10);
-    nextNoteNo = Number.isFinite(mx) && mx > 0 ? mx + 1 : 1;
+    nextNoteNo = docNo.nextSafe(db, 'debit_notes_planter', { ano });
   }
 
   const generated = [];
