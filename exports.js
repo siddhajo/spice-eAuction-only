@@ -2377,6 +2377,13 @@ async function exportTradeReport(db, auctionId, _state, extra) {
   return tradeReportXlsx(db, auctionId, extra || {});
 }
 
+// Same report, one row per INVOICE instead of one row per buyer code. Shares
+// the renderer; only the row source differs. See getInvoiceTradeReportData in
+// auction-reports.js for what it lists and why it reuses Collection's rows.
+async function exportTradeReportInvoice(db, auctionId, _state, extra) {
+  return tradeReportXlsx(db, auctionId, { ...(extra || {}), invoiceWise: true });
+}
+
 // ── Export router ────────────────────────────────────────────
 // ── Master Data: Sellers (mirrors the NAM.DBF column set) ─────
 // Full, unfiltered seller master. Column order/names match exportTradersDbf
@@ -2469,6 +2476,9 @@ const EXPORT_TYPES = {
                         ext: 'csv', mime: 'text/csv; charset=utf-8' },
   collection:         { fn: exportCollection,        name: 'Collection' },
   trade_report:       { fn: exportTradeReport,       name: 'AuctionReport' },
+  // Invoice-wise twin of the above — the documents actually issued, in the
+  // Auction Report's layout. Has a PDF twin (see exports-pdf.js).
+  trade_report_invoice:{ fn: exportTradeReportInvoice, name: 'AuctionReportInvoiceWise' },
   dealer_list:        { fn: exportDealerList,        name: 'DealerList' },
   dealer_list_party_wise:   { fn: exportDealerListPartyWise,   name: 'DealerListPartyWise' },
   pooler_list_consolidated: { fn: exportPoolerListConsolidated, name: 'PoolerListConsolidated' },

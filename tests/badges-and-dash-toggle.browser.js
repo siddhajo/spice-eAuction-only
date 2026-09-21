@@ -59,19 +59,23 @@ const cleanup = () => {
 
   // Four sellers, each missing something different, so every branch of
   // lotSellerIssues is represented and the filter has more than one option:
-  //   CLEAN     — GSTIN + PAN + phone + a bank account   → no badges
-  //   NOPAN     — GSTIN + phone + bank, no PAN           → "No PAN"
-  //   NOBANK    — GSTIN + PAN + phone, no bank           → "No bank"
-  //   NOGSTIN   — PAN + phone + bank, no GSTIN           → "No GSTIN"
+  //   CLEAN     — GSTIN + SBL + PAN + phone + a bank account → no badges
+  //   NOPAN     — GSTIN + SBL + phone + bank, no PAN         → "No PAN"
+  //   NOBANK    — GSTIN + SBL + PAN + phone, no bank         → "No bank"
+  //   NOGSTIN   — PAN + phone + bank, no GSTIN               → "No GSTIN"
+  // Every GSTIN seller carries an SBL (stored in `aadhar`): a GSTIN with a
+  // blank SBL is itself a warning ("GSTIN, no SBL"), so without one CLEAN
+  // ESTATES would not be clean. NOGSTIN PLANTER holds no GSTIN, so that badge
+  // cannot fire on it and it stays blank — planters have no SBL.
   const sellers = [
-    { name: 'CLEAN ESTATES',   cr: 'GSTIN.32AAHCE4551A1Z8', pan: 'AAHCE4551A', tel: '9000010001', bank: true },
-    { name: 'NOPAN TRADERS',   cr: 'GSTIN.32AAHCE4552A1Z8', pan: '',           tel: '9000010002', bank: true },
-    { name: 'NOBANK TRADERS',  cr: 'GSTIN.32AAHCE4553A1Z8', pan: 'AAHCE4553A', tel: '9000010003', bank: false },
-    { name: 'NOGSTIN PLANTER', cr: '',                      pan: 'AAHCE4554A', tel: '9000010004', bank: true },
+    { name: 'CLEAN ESTATES',   cr: 'GSTIN.32AAHCE4551A1Z8', sbl: 'ML/REG/10001/2021', pan: 'AAHCE4551A', tel: '9000010001', bank: true },
+    { name: 'NOPAN TRADERS',   cr: 'GSTIN.32AAHCE4552A1Z8', sbl: 'ML/REG/10002/2021', pan: '',           tel: '9000010002', bank: true },
+    { name: 'NOBANK TRADERS',  cr: 'GSTIN.32AAHCE4553A1Z8', sbl: 'ML/REG/10003/2021', pan: 'AAHCE4553A', tel: '9000010003', bank: false },
+    { name: 'NOGSTIN PLANTER', cr: '',                      sbl: '',                  pan: 'AAHCE4554A', tel: '9000010004', bank: true },
   ];
   const ids = {};
   for (const s of sellers) {
-    const r = await api('POST', '/api/traders', { name: s.name, cr: s.cr, pan: s.pan, tel: s.tel });
+    const r = await api('POST', '/api/traders', { name: s.name, cr: s.cr, aadhar: s.sbl, pan: s.pan, tel: s.tel });
     ids[s.name] = r.d && (r.d.id || (r.d.trader && r.d.trader.id));
     if (s.bank) {
       await api('POST', `/api/traders/${ids[s.name]}/banks`, {
@@ -85,7 +89,12 @@ const cleanup = () => {
     for (let k = 0; k < 2; k++) {
       const r = await api('POST', '/api/lots', {
         auction_id: aid, lot_no: String(++lotNo), name: s.name, trader_id: ids[s.name],
-        cr: s.cr, pan: s.pan, tel: s.tel, qty: 100, bags: 4, grade: '1',
+        // Grade follows the seller, the way Lot Entry auto-fills it: GSTIN +
+        // SBL → Grade 2 (dealer), anything else → Grade 1. Hard-coding '1' put
+        // every dealer's lots on the wrong grade, which is itself a warning
+        // ("Dealer, not G2") and left no clean lot for the __none filter.
+        cr: s.cr, pan: s.pan, tel: s.tel, qty: 100, bags: 4,
+        grade: (s.cr && s.sbl) ? '2' : '1',
         crop: 'CARDAMOM', branch: 'BODINAYAKANUR' });
       const id = r.d && (r.d.id || (r.d.lot && r.d.lot.id));
       await api('PUT', `/api/lots/${id}`, { price: 2000, amount: 200000 });

@@ -584,7 +584,7 @@ function getCollectionRows(db, auctionId) {
   // references inside a subquery — the same engine limit that forced the
   // buyer join below into JavaScript.
   const allInvoices = db.all(
-    `SELECT id, sale, invo, buyer, buyer1, qty, tot,
+    `SELECT id, sale, invo, buyer, buyer1, bag, qty, amount, tot,
             COALESCE(is_proforma,0) AS is_proforma,
             TRIM(COALESCE(raised_invo,'')) AS raised_invo
        FROM invoices
@@ -624,7 +624,9 @@ function getCollectionRows(db, auctionId) {
 
   // Pull every buyer in the master table once. The buyers master is
   // typically <500 rows for a working set, so this is cheap.
-  const buyers = db.all(`SELECT id, buyer, buyer1, sbl, state FROM buyers ORDER BY id`);
+  // `code` is pulled for the invoice-wise Auction Report's CODE column
+  // (getInvoiceTradeReportData) — Collection itself does not print it.
+  const buyers = db.all(`SELECT id, buyer, buyer1, code, sbl, state FROM buyers ORDER BY id`);
 
   // Index buyers by uppercase-trimmed `buyer` (code) and `buyer1`
   // (trade name) for O(1) lookup. First write wins (lowest id),
@@ -783,6 +785,15 @@ function getCollectionRows(db, auctionId) {
       buyer_name:  buyerName,
       qty:         i.qty,
       value:       i.tot,
+      // Not printed by Collection (its five columns stop at VALUE). Carried
+      // for the invoice-wise Auction Report, which prints the same documents
+      // under the Auction Report's wider column set — BAG, the pre-tax
+      // cardamom AMOUNT, and the bidder CODE. Reading them off the same row
+      // Collection builds is what keeps the two registers agreeing on which
+      // documents exist and what each one is worth.
+      bag:         i.bag,
+      amount:      i.amount,
+      buyer_code:  (b && b.code) || '',
       buyer_state: (b && b.state) || '',
       // Not printed — keys the pending-draft filter below.
       buyer_key:   buyerKey,
@@ -882,7 +893,13 @@ function getCollectionRows(db, auctionId) {
 //
 // Returns null when the register covers everything sold: a complete register
 // says nothing, exactly as it always has.
-function getCollectionCoverage(db, auctionId, rows) {
+//
+// `opts.sibling` names the report that DOES show the missing quantity. It is
+// "The Auction Report" for Collection, but the invoice-wise Auction Report
+// carries this same note — and there the default sentence points the reader at
+// the very sheet in their hands, so it names the buyer-wise twin instead.
+function getCollectionCoverage(db, auctionId, rows, opts) {
+  const sibling = (opts && opts.sibling) || 'The Auction Report';
   let sold;
   try {
     sold = db.get(
@@ -918,7 +935,7 @@ function getCollectionCoverage(db, auctionId, rows) {
     bits.push(`${stamped} lot${stamped === 1 ? '' : 's'} already carry an invoice or proforma number,`
             + ` but this trade has NO rows in the invoice register — those documents were deleted or never imported.`);
   }
-  bits.push(`The Auction Report is computed from the lots, so it still shows all of it.`);
+  bits.push(`${sibling} is computed from the lots, so it still shows all of it.`);
   return { qty: missingQty, soldQty, regQty, unstamped: Number(sold.unstamped) || 0, stamped,
            text: bits.join(' ') };
 }
@@ -1429,6 +1446,22 @@ function getTradeReportData(db, auctionId, opts) {
   });
 
   // Statistics for the footer — same branch filter applies.
+  const stats = getTradeStats(db, auctionId, branchFilter);
+
+  return { auction, sortedStates, stats };
+}
+
+// The Auction Report's footer block — TOTAL ARRIVALS / WITHDRAWN / SOLD /
+// NOT e-AUCTIONED, plus MAX / MIN / AVERAGE price and COST OF CARDAMOM.
+//
+// Always computed from the LOTS, never from the rows above it. The footer
+// describes the TRADE — what arrived, what sold, what it fetched — and that
+// is the same answer whether the body of the report is listing buyers or
+// invoices. Deriving it from the printed rows instead would make the
+// invoice-wise variant under-report the trade for as long as any lot is
+// still unbilled, which is precisely the state the report is read in.
+function getTradeStats(db, auctionId, branchFilter) {
+  branchFilter = String(branchFilter || '').trim();
   const allLots = db.all(
     `SELECT bags, qty, price, amount, code FROM lots WHERE auction_id = ?` +
       (branchFilter ? ' AND UPPER(TRIM(branch)) = UPPER(TRIM(?))' : ''),
@@ -1463,18 +1496,112 @@ function getTradeReportData(db, auctionId, opts) {
     avg_price:     0,
   };
   if (stats.sold_qty > 0) stats.avg_price = stats.cost / stats.sold_qty;
+  return stats;
+}
 
-  return { auction, sortedStates, stats };
+// ── AUCTION REPORT, INVOICE-WISE ─────────────────────────────────────────
+// The same report, one row per INVOICE instead of one row per buyer code.
+//
+// Why it exists: the buyer-wise Auction Report is computed from the lots and
+// DERIVES its INV.AMOUNT from the sales-invoice formula, so it can be read
+// before a single invoice has been generated. That is its strength and its
+// limit — the figure is an estimate of what the buyer will be billed, and it
+// carries no invoice number, so it cannot be checked against the documents
+// actually issued. This variant answers the other question: what has been
+// BILLED, per document.
+//
+// Rows come from getCollectionRows — the Collection register's own row
+// builder, reused whole rather than reimplemented. That is the point of
+// "similar to Collection": the two reports list exactly the same set of
+// documents and print the same number for each, so they can never disagree
+// about what was invoiced. Everything Collection resolves comes with it —
+// originals plus proformas nothing has been raised from yet, drafts dropped
+// once shipped, and the proforma number substituted for the original wherever
+// the buyer holds a draft.
+//
+// What changes from the buyer-wise report:
+//   SALE column → INVO. The sale letter is already inside the printed invoice
+//     label ("I 2009", "PI/L-8"), so the column set stays eight wide and the
+//     renderer is shared rather than forked. The INTER/INTRA split still keys
+//     on the sale type, but takes it from the INVOICE — the document's own
+//     letter is what was billed, which is not always what the buyer's state
+//     would imply (an operator can bill a neighbouring-state buyer Local).
+//   AMOUNT / INV.AMOUNT are READ off the invoice (amount / tot) instead of
+//     being recomputed, so they are the printed document's own figures.
+//
+// `opts.branch` is deliberately NOT honoured here: invoices carry no branch,
+// so a branch filter could narrow the footer but not the rows, and the report
+// would quietly describe two different populations at once.
+function getInvoiceTradeReportData(db, auctionId, opts) {
+  opts = opts || {};
+  const auction = getAuctionHeader(db, auctionId);
+  const auctionState = String(auction.state || '').trim().toUpperCase();
+
+  const collRows = getCollectionRows(db, auctionId);
+  const rows = collRows.map(r => ({
+    // Printed in the first column, in place of the bare sale letter.
+    invo_label:  r.invo_label || '',
+    sale:        String(r.sale || '').trim().toUpperCase(),
+    bidder:      r.buyer_name || '',
+    trade_name:  r.trade_name || '',
+    state:       r.buyer_state || '',
+    bag:         Number(r.bag) || 0,
+    qty:         Number(r.qty) || 0,
+    amount:      Number(r.amount) || 0,
+    inv_amount:  Number(r.value) || 0,
+    code:        r.buyer_code || '',
+    is_proforma: r.is_proforma ? 1 : 0,
+  }));
+
+  // Group by buyer state exactly as the buyer-wise report does — home state
+  // first — then split each state into its inter- and intra-state documents.
+  const stateGroups = new Map();
+  for (const r of rows) {
+    const st = (r.state || '').trim().toUpperCase() || auctionState;
+    if (!stateGroups.has(st)) stateGroups.set(st, { inter: [], intra: [] });
+    if (r.sale === 'I') stateGroups.get(st).inter.push(r);
+    else                stateGroups.get(st).intra.push(r);
+  }
+  const sortedStates = [...stateGroups.entries()].sort(([a], [b]) => {
+    if (a === auctionState) return -1;
+    if (b === auctionState) return 1;
+    return a.localeCompare(b);
+  });
+
+  // Same shortfall note Collection carries, for the same reason: this report
+  // can only list documents that exist, while the footer beneath it counts
+  // every lot sold. Without the note the two read as a contradiction rather
+  // than as billing still to do. Measured on the rows actually printed.
+  const coverage = getCollectionCoverage(db, auctionId, rows,
+    { sibling: 'The buyer-wise Auction Report' });
+
+  return { auction, sortedStates, stats: getTradeStats(db, auctionId, ''), coverage };
 }
 
 async function tradeReportXlsx(db, auctionId, opts) {
   _loadDateFormat(db);
-  const { auction, sortedStates, stats } = getTradeReportData(db, auctionId, opts);
+  // Two row sources, one renderer. The invoice-wise variant lists documents
+  // instead of buyers, but the layout, grouping, subtotals and footer are the
+  // report's identity — forking the renderer would let the two drift apart.
+  // The only structural difference is the first column: SALE for the
+  // buyer-wise report, INVO for the invoice-wise one (the sale letter already
+  // rides inside the printed invoice label, so the column count is unchanged).
+  const invoiceWise = !!(opts && opts.invoiceWise);
+  const { auction, sortedStates, stats, coverage } = invoiceWise
+    ? getInvoiceTradeReportData(db, auctionId, opts)
+    : getTradeReportData(db, auctionId, opts);
+  const col1Head  = invoiceWise ? 'INVO' : 'SALE';
+  const col1Of    = r => (invoiceWise ? (r.invo_label || '') : r.sale);
+  const title     = invoiceWise
+    ? 'BUYERS LIST FOR VERIFICATION (INVOICE-WISE)'
+    : 'BUYERS LIST FOR VERIFICATION';
 
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('AuctionReport');
+  const ws = wb.addWorksheet(invoiceWise ? 'AuctionReportInvoice' : 'AuctionReport');
   ws.columns = [
-    { width: 6 },   // SALE
+    // Wide enough for a prefixed proforma number ("PI/I-2009") in the
+    // invoice-wise variant; autofitColumns() trims it back if nothing is.
+    { width: invoiceWise ? 14 : 6 },   // SALE / INVO
     { width: 22 },  // BIDDER
     { width: 26 },  // TRADE NAME
     { width: 6 },   // BAG
@@ -1491,7 +1618,7 @@ async function tradeReportXlsx(db, auctionId, opts) {
   const companyHeader = getCompanyHeader(db);
   const headerStartRow = writeXlsxCompanyHeader(wb, ws, companyHeader, {
     colCount: 8,
-    title: 'BUYERS LIST FOR VERIFICATION',
+    title,
     metaLines: [
       `e-AUCTION No: ${auction.ano}`,
       `DATE: ${fmtDateDMY(auction.date)}`,
@@ -1500,7 +1627,7 @@ async function tradeReportXlsx(db, auctionId, opts) {
 
   // Column-header row sits where the brand band reserved space.
   const head = ws.getRow(headerStartRow);
-  ['SALE', 'BIDDER', 'TRADE NAME', 'BAG', 'QUANTITY', 'AMOUNT', 'INV.AMOUNT', 'CODE']
+  [col1Head, 'BIDDER', 'TRADE NAME', 'BAG', 'QUANTITY', 'AMOUNT', 'INV.AMOUNT', 'CODE']
     .forEach((label, i) => { head.getCell(i + 1).value = label; });
   head.font = { bold: true };
   head.height = 20;
@@ -1513,7 +1640,7 @@ async function tradeReportXlsx(db, auctionId, opts) {
 
   function emitRow(r) {
     const row = ws.addRow([
-      r.sale,
+      col1Of(r),
       r.bidder || '',
       r.trade_name || '',
       Number(r.bag) || 0,
@@ -1591,6 +1718,20 @@ async function tradeReportXlsx(db, auctionId, opts) {
     c.border = { top: { style: 'double' }, bottom: { style: 'double' } };
   });
 
+  // What this register does NOT cover, if anything — invoice-wise only, and
+  // below the total so the money above it stays exactly what was invoiced.
+  // The footer that follows counts every lot sold, so without this the reader
+  // is left to guess why the two do not meet. See getCollectionCoverage.
+  if (coverage) {
+    ws.addRow([]);
+    const note = ws.addRow([coverage.text]);
+    ws.mergeCells(`A${note.number}:H${note.number}`);
+    note.font = { bold: true, size: 10, color: { argb: 'FF92400E' } };
+    note.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+    note.height = 30;
+    note.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFBEB' } };
+  }
+
   // ── Stats footer — two clean tabular blocks ──
   // Replaces the previous single-line prose rows ("TOTAL ARRIVALS Kgs. xxx
   // Bags. xxx Lot. xxx" packed into one merged cell) with proper tables
@@ -1667,7 +1808,16 @@ async function tradeReportXlsx(db, auctionId, opts) {
 
 async function tradeReportPdf(db, auctionId, opts) {
   _loadDateFormat(db);
-  const { auction, sortedStates, stats } = getTradeReportData(db, auctionId, opts);
+  // See the note in tradeReportXlsx — same two row sources, same one renderer.
+  const invoiceWise = !!(opts && opts.invoiceWise);
+  const { auction, sortedStates, stats, coverage } = invoiceWise
+    ? getInvoiceTradeReportData(db, auctionId, opts)
+    : getTradeReportData(db, auctionId, opts);
+  const col1Head = invoiceWise ? 'INVO' : 'SALE';
+  const col1Of   = r => (invoiceWise ? (r.invo_label || '') : r.sale);
+  const title    = invoiceWise
+    ? 'BUYERS LIST FOR VERIFICATION (INVOICE-WISE)'
+    : 'BUYERS LIST FOR VERIFICATION';
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 18 });
   const buffers = [];
@@ -1682,11 +1832,15 @@ async function tradeReportPdf(db, auctionId, opts) {
   // Portrait A4 → ~559pt usable. Long firm/person names wrap to multiple
   // lines via wrapText (drawDataRow grows the row height to fit). Numeric
   // columns are sized to fit Indian-format money values without truncation.
+  // A bare sale letter needs almost nothing; a prefixed proforma number
+  // ("PI/I-2009") needs real room, and drawFittedCell would otherwise shrink
+  // it to the point of illegibility. The extra width is borrowed from the two
+  // name columns, which wrap-free-fit rather than truncate at these sizes.
   const colW = [
-    Math.floor(usableW * 0.06),  // SL.NO
-    Math.floor(usableW * 0.06),  // SALE
-    Math.floor(usableW * 0.16),  // BIDDER
-    Math.floor(usableW * 0.18),  // TRADE NAME
+    Math.floor(usableW * 0.06),                       // SL.NO
+    Math.floor(usableW * (invoiceWise ? 0.11 : 0.06)),// SALE / INVO
+    Math.floor(usableW * (invoiceWise ? 0.14 : 0.16)),// BIDDER
+    Math.floor(usableW * (invoiceWise ? 0.15 : 0.18)),// TRADE NAME
     Math.floor(usableW * 0.05),  // BAG
     Math.floor(usableW * 0.11),  // QTY
     Math.floor(usableW * 0.16),  // AMOUNT
@@ -1729,7 +1883,7 @@ async function tradeReportPdf(db, auctionId, opts) {
     // centered, trade meta right-aligned. Page number updates per page.
     const afterY = drawCompanyHeader(doc, companyHeader, {
       x: m, y: m, width: usableW,
-      title: 'BUYERS LIST FOR VERIFICATION',
+      title,
       metaLines: [
         `e-AUCTION No: ${auction.ano}`,
         `Date: ${fmtDateDMY(auction.date)}`,
@@ -1745,7 +1899,7 @@ async function tradeReportPdf(db, auctionId, opts) {
     const headTop = y;
     doc.rect(m, y, usableW, HEAD_H).fillAndStroke('#E8E4DD', '#444');
     doc.fillColor('#000').font('Helvetica-Bold').fontSize(8.5);
-    const heads = ['S.NO', 'SALE', 'BIDDER', 'TRADE NAME', 'BAG', 'QUANTITY', 'AMOUNT', 'INV.AMOUNT', 'CODE'];
+    const heads = ['S.NO', col1Head, 'BIDDER', 'TRADE NAME', 'BAG', 'QUANTITY', 'AMOUNT', 'INV.AMOUNT', 'CODE'];
     const aligns = ['center', 'center', 'left', 'left', 'center', 'right', 'right', 'right', 'center'];
     heads.forEach((h, i) => {
       doc.text(fitText(doc, h, colW[i] - 8), colX[i] + 4, y + 5, {
@@ -1793,7 +1947,7 @@ async function tradeReportPdf(db, auctionId, opts) {
     doc.font('Helvetica').fontSize(8.5);
     const cells = [
       String(idx + 1),         // SL.NO
-      r.sale,
+      col1Of(r),               // SALE letter, or the printed invoice number
       r.bidder || '',
       r.trade_name || '',
       String(r.bag || 0),
@@ -1827,6 +1981,19 @@ async function tradeReportPdf(db, auctionId, opts) {
     y += rowH;
   }
 
+  // A figure on a TOTAL strip can be wider than the column that holds it: BAG
+  // is sized for a per-row bag count, and a four-digit trade total overflowed
+  // it and came out truncated to "1…" — a digit short of the real figure, with
+  // nothing to say so. Figures shrink to fit rather than lose digits, which is
+  // the rule the data rows already follow (drawFittedCell, and the app-wide
+  // export rule behind it). fitText stays for the LABELS, where ellipsizing a
+  // word is the right answer.
+  const totalFig = (v, ci, ty, size) =>
+    drawFittedCell(doc, v, colX[ci] + 4, ty, colW[ci] - 8, {
+      align: ci === 4 ? 'center' : 'right',
+      font: 'Helvetica-Bold', base: size, floor: 5,
+    });
+
   function drawSubtotal(label, items, color) {
     ensureRoom(ROW_H + 2);
     closeSegment();  // subtotal strip is NOT in a data segment
@@ -1838,9 +2005,9 @@ async function tradeReportPdf(db, auctionId, opts) {
     doc.text(fitText(doc, label, labelW), colX[0] + 4, y + 4, {
       width: labelW, align: 'left', lineBreak: false,
     });
-    doc.text(fitText(doc, String(sum('bag')),      colW[4] - 8), colX[4] + 4, y + 4, { width: colW[4] - 8, align: 'center', lineBreak: false });
-    doc.text(fitText(doc, fmtQty(sum('qty')),      colW[5] - 8), colX[5] + 4, y + 4, { width: colW[5] - 8, align: 'right',  lineBreak: false });
-    doc.text(fitText(doc, fmtMoney(sum('amount')), colW[6] - 8), colX[6] + 4, y + 4, { width: colW[6] - 8, align: 'right',  lineBreak: false });
+    totalFig(String(sum('bag')),      4, y + 4, 9);
+    totalFig(fmtQty(sum('qty')),      5, y + 4, 9);
+    totalFig(fmtMoney(sum('amount')), 6, y + 4, 9);
     y += ROW_H + 2;
     return { bag: sum('bag'), qty: sum('qty'), amount: sum('amount') };
   }
@@ -1875,9 +2042,9 @@ async function tradeReportPdf(db, auctionId, opts) {
     doc.text(fitText(doc, `${state} STATE TOTAL`, stLabelW), colX[0] + 4, y + 4, {
       width: stLabelW, align: 'left', lineBreak: false,
     });
-    doc.text(fitText(doc, String(stBag),       colW[4] - 8), colX[4] + 4, y + 4, { width: colW[4] - 8, align: 'center', lineBreak: false });
-    doc.text(fitText(doc, fmtQty(stQty),       colW[5] - 8), colX[5] + 4, y + 4, { width: colW[5] - 8, align: 'right',  lineBreak: false });
-    doc.text(fitText(doc, fmtMoney(stAmt),     colW[6] - 8), colX[6] + 4, y + 4, { width: colW[6] - 8, align: 'right',  lineBreak: false });
+    totalFig(String(stBag),   4, y + 4, 9);
+    totalFig(fmtQty(stQty),   5, y + 4, 9);
+    totalFig(fmtMoney(stAmt), 6, y + 4, 9);
     y += ROW_H + 2;
     gBag += stBag; gQty += stQty; gAmt += stAmt;
   });
@@ -1891,12 +2058,29 @@ async function tradeReportPdf(db, auctionId, opts) {
   doc.text(fitText(doc, 'GRAND TOTAL', gtLabelW), colX[0] + 4, y + 5, {
     width: gtLabelW, align: 'left', lineBreak: false,
   });
-  doc.text(fitText(doc, String(gBag),         colW[4] - 8), colX[4] + 4, y + 5, { width: colW[4] - 8, align: 'center', lineBreak: false });
-  doc.text(fitText(doc, fmtQty(gQty),         colW[5] - 8), colX[5] + 4, y + 5, { width: colW[5] - 8, align: 'right',  lineBreak: false });
-  doc.text(fitText(doc, fmtMoney(gAmt),       colW[6] - 8), colX[6] + 4, y + 5, { width: colW[6] - 8, align: 'right',  lineBreak: false });
+  totalFig(String(gBag),   4, y + 5, 10);
+  totalFig(fmtQty(gQty),   5, y + 5, 10);
+  totalFig(fmtMoney(gAmt), 6, y + 5, 10);
   y += ROW_H + 4;
 
   finishPage();
+
+  // ── What this register does NOT cover (invoice-wise only) ──────
+  // Sits between the grand total and the footer for a reason: the total above
+  // is what was invoiced, the footer below counts every lot sold, and this is
+  // the sentence that explains the gap between them. Collection carries the
+  // same note for the same reason — see getCollectionCoverage.
+  if (coverage) {
+    doc.font('Helvetica-Bold').fontSize(8.5);
+    const noteW = usableW - 16;
+    const noteH = doc.heightOfString(coverage.text, { width: noteW }) + 12;
+    if (y + 10 + noteH > pageH - m) { doc.addPage(); y = m; }
+    y += 10;
+    doc.rect(m, y, usableW, noteH).fillAndStroke('#FFFBEB', '#F59E0B');
+    doc.fillColor('#92400E')
+       .text(coverage.text, m + 8, y + 6, { width: noteW, align: 'left' });
+    y += noteH;
+  }
 
   // ── Footer: stats summary as two clean tables ──────────────────
   // Left  table — INVENTORY: STATUS | KGS | BAGS | LOTS  (4 rows)
@@ -2023,7 +2207,13 @@ module.exports = {
   // Collection — both formats
   collectionXlsx,
   collectionPdf,
-  // Trade report — both formats
+  // Trade report — both formats. `opts.invoiceWise` switches both renderers
+  // from the buyer-wise rows (from the lots) to the invoice-wise ones (the
+  // documents issued) — see getInvoiceTradeReportData.
   tradeReportXlsx,
   tradeReportPdf,
+  // Row builders, exposed so tests can assert the two registers agree without
+  // parsing a workbook back out again.
+  __test: { getCollectionRows, getCollectionCoverage, getTradeStats,
+            getTradeReportData, getInvoiceTradeReportData },
 };

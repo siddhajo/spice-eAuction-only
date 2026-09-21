@@ -1828,6 +1828,9 @@ async function exportPdf(db, type, auctionId, cfg, extra = {}) {
   if (type === 'trade_report') {
     return auctionReports.tradeReportPdf(db, auctionId, extra || {});
   }
+  if (type === 'trade_report_invoice') {
+    return auctionReports.tradeReportPdf(db, auctionId, { ...(extra || {}), invoiceWise: true });
+  }
   if (type === 'full_file') {
     throw new Error('Full File is XLSX-only — PDF version is not supported (too many columns to fit on a page).');
   }

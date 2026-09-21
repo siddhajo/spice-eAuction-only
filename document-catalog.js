@@ -273,6 +273,14 @@ const DOCUMENTS = [
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 3, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('trade_report') },
 
+  // Invoice-wise twin of the Auction Report: same layout and footer, but one
+  // row per invoice, read off the same documents the Collection register
+  // lists. Sits between the two it sits between conceptually.
+  { id: 'trade_report_invoice', label: 'Auction Report (Invoice-wise)',
+    group: 'reports', sub: 'Trade & value', family: 'exports',
+    kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 3, perm: 'export',
+    route: '/api/exports/:type/:auctionId', href: hrefExport('trade_report_invoice') },
+
   { id: 'collection', label: 'Collection', group: 'reports', sub: 'Trade & value', family: 'exports',
     kind: 'export', scope: 'trade', formats: ['xlsx', 'pdf'], minStage: 3, perm: 'export',
     route: '/api/exports/:type/:auctionId', href: hrefExport('collection') },

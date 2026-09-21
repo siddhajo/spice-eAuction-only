@@ -5670,13 +5670,31 @@ function validateAuctionLots(db, auctionId) {
   // lots while grade stays put. The operator can also just override the
   // dropdown. Flag both directions before price import, while it is still cheap
   // to fix — a stale grade now shows up as a wrong debit note, not a wrong cap.
+  // These two test hasValidGstin(), NOT isDealerSeller(), because that is the
+  // rule LOT ENTRY now grades on (2026-09-21): a seller whose cr holds a GSTIN
+  // is Grade 2, SBL or no SBL. Keying them to the GSTIN+SBL rule instead would
+  // flag every dealer with a blank SBL as a mismatch the moment their lot was
+  // entered — a warning raised against the app's own default. The GSTIN-only
+  // rule is also what the purchase invoice, bill of supply and debit-note
+  // eligibility already run on, so all four now agree on who a dealer is.
   const isG2 = (l) => String(l.grade == null ? '' : l.grade).trim() === '2';
   pushWarn('grade_not_dealer', 'Grade 2, not a dealer',
-    'Lot is Grade 2 but the seller has no GSTIN + SBL — its commission will still be debited',
-    l => isG2(l) && !isDealerSeller(l.cr, l.aadhar));
+    'Lot is Grade 2 but the seller has no GSTIN — its commission will still be debited',
+    l => isG2(l) && !hasValidGstin(l.cr));
   pushWarn('dealer_not_grade2', 'Dealer, not Grade 2',
-    'Seller has GSTIN + SBL but the lot is not Grade 2 — its commission is missing from the debit note',
-    l => !isG2(l) && isDealerSeller(l.cr, l.aadhar));
+    'Seller has a GSTIN but the lot is not Grade 2 — its commission is missing from the dealer debit note',
+    l => !isG2(l) && hasValidGstin(l.cr));
+  // The SBL is no longer what decides the grade, but it is still REQUIRED: the
+  // Spices Board e-Auction CSV emits it per dealer row and falls back to
+  // printing the GSTIN in the SBL column when it is blank (see sblFromAadhar in
+  // spice-board-reports.js), and the dashboard's Grade-2 / 25%-cap band still
+  // derives dealer status from dealerSql(cr, aadhar), so a blank SBL leaves that
+  // seller's weight out of the cap. Flag the master gap while it is one field to
+  // fill. Lots entered BEFORE the rule changed are caught by 'Dealer, not
+  // Grade 2' above — this names why they were graded that way.
+  pushWarn('gstin_no_sbl', 'GSTIN, no SBL',
+    'Seller has a GSTIN but no SBL — they are missing from the Spices Board return and from the Grade-2 / 25% cap. Fill the SBL on the seller master',
+    l => hasValidGstin(l.cr) && !String(l.aadhar || '').trim());
 
   // ── Reconciliation (the "tally") ──────────────────────────────
   const totalLots = lots.length;
