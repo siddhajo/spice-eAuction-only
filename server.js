@@ -6168,7 +6168,28 @@ app.get('/api/auctions/:id/transaction-plan', requireView, (req, res) => {
       // type is its own global series, so a start is only safe if it clears
       // the highest number in EVERY series the run will touch.
       const plan = invoiceGenerationPlan(db, cfg, aid, { saleType: '', splitInvoices: true });
-      const sales = Array.from(new Set(plan.items.map(i => i.sale))).sort();
+      // WHICH SERIES GET A ROW.
+      //
+      // Every sale type the trade has buyers for — not only the ones with work
+      // left. `plan.items` holds un-invoiced buyers only, so once the last
+      // Inter-state buyer was invoiced the I row simply VANISHED from the
+      // sheet, which reads as "Inter-state was forgotten" rather than
+      // "Inter-state is done". A series with nothing to do belongs on the
+      // sheet showing 0, exactly as the other modules do.
+      //
+      // Derived the way the run derives it: the buyer master's default sale
+      // (blank → 'L'), matching invoiceGenerationPlan's `row.default_sale ||
+      // 'L'`, so a row can never claim a series the run would not use.
+      const salesPresent = db.all(
+        `SELECT DISTINCT UPPER(TRIM(COALESCE(NULLIF(TRIM(b.sale),''), 'L'))) AS sale
+           FROM lots l LEFT JOIN buyers b ON b.buyer = l.buyer
+          WHERE l.auction_id = ?
+            AND l.buyer IS NOT NULL AND l.buyer != ''
+            AND l.amount > 0
+            AND (l.reserved IS NULL OR l.reserved = 0)`,
+        [aid]
+      ).map(r => r.sale).filter(Boolean);
+      const sales = Array.from(new Set([...salesPresent, ...plan.items.map(i => i.sale)])).sort();
       // WHAT COUNTS AS DONE ON THE SALES SIDE.
       //
       // A lot stays "un-invoiced" (lots.invo empty) until the ORIGINAL tax

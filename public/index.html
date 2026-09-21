@@ -33021,20 +33021,26 @@ function _txRenderSheet(){
     // That row starts UNTICKED so a draft already sent out is never silently
     // renumbered; the operator opts in.
     const redraft = r.refreshes > 0;
+    // What a run of this row would WRITE: the outstanding items plus any
+    // drafts it would replace on the way. Only meaningful while the row has
+    // outstanding work — see `idle`.
     const runSize = r.runSize != null ? r.runSize : r.pending;
-    // Runnable = it would write something. A row whose only work is replacing
-    // drafts has pending 0 but is still runnable, so it stays tickable (off by
-    // default) rather than being greyed out.
-    const idle = runSize === 0;
+    // This sheet raises what the trade is MISSING. A row with nothing
+    // outstanding is done, and a done row is not runnable here — greyed out,
+    // no number box, no range, exactly like every other finished module.
+    // Re-issuing drafts that already exist is a deliberate, per-buyer-series
+    // act and belongs on the Invoices tab, not one stray tick away from a
+    // batch that is otherwise topping the trade up.
+    const idle = r.pending === 0;
     const on = !off && r.pending > 0 && !redraft;
     const note = off ? `<span style="color:var(--text3)">${esc(r.disabledReason || 'Unavailable')}</span>`
+      : idle && redraft
+        ? `<span style="color:var(--text3)">Nothing outstanding — ${r.refreshes} draft${r.refreshes === 1 ? '' : 's'} already raised. To replace ${r.refreshes === 1 ? 'it' : 'them'} with new numbers, use Generate All on the Invoices tab.</span>`
       : idle ? '<span style="color:var(--text3)">Nothing to generate</span>'
-      : r.pending === 0 && redraft
-        ? `<span style="color:var(--text3)">Nothing outstanding — ${r.refreshes} draft${r.refreshes === 1 ? '' : 's'} already raised; ticking re-issues ${r.refreshes === 1 ? 'it' : 'them'}, and re-running replaces it with a new number.</span>`
       : redraft ? `<span style="color:#9A3412">⚠ ${r.refreshes} of these already hold a draft — re-running replaces it with a new number</span>`
       : r.basis === 'predicted' ? `<span style="color:var(--text3)">estimated — ${esc(r.after.join(', '))} runs first</span>`
       : r.mode === 'lot' ? '<span style="color:var(--text3)">lot-wise</span>' : '';
-    const range = (!off && runSize > 0 && r.start)
+    const range = (!off && !idle && r.start)
       ? `#${r.start}–#${r.start + runSize - 1}` : '';
     return `<tr data-txrow="${i}" style="border-bottom:1px solid var(--border)">
       <td style="padding:8px 6px;text-align:center">
@@ -33045,9 +33051,12 @@ function _txRenderSheet(){
         <div style="font-size:11px;margin-top:2px">${note}</div></td>
       <td style="padding:8px 6px;text-align:center;font-weight:700">${off ? '—' : r.pending}</td>
       <td style="padding:8px 6px;text-align:center">
-        <input type="number" min="1" class="tx-start" data-txstart="${i}" value="${off ? '' : (r.start ?? '')}"
+        <!-- A row with nothing to run carries no number to confirm: the box is
+             disabled AND emptied, so it reads as inert instead of looking like
+             an editable field that happens to be ignored. -->
+        <input type="number" min="1" class="tx-start" data-txstart="${i}" value="${off || idle ? '' : (r.start ?? '')}"
                ${off || idle ? 'disabled' : ''} oninput="_txSyncRange(${i})"
-               style="width:96px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:center">
+               style="width:96px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:center${off || idle ? ';background:var(--bg);opacity:.6' : ''}">
       </td>
       <td style="padding:8px 6px;font-size:12px;color:var(--text2);white-space:nowrap" id="tx-range-${i}">${range}</td>
     </tr>`;
@@ -33079,7 +33088,7 @@ function _txSyncRange(i){
   const cell = document.getElementById(`tx-range-${i}`);
   if (!cell) return;
   const runSize = r.runSize != null ? r.runSize : r.pending;
-  cell.textContent = (Number.isFinite(n) && n > 0 && runSize > 0)
+  cell.textContent = (Number.isFinite(n) && n > 0 && r.pending > 0 && runSize > 0)
     ? `#${n}–#${n + runSize - 1}` : '';
   _txSyncGo();
 }
