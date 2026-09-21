@@ -1828,26 +1828,161 @@ async function tradeReportPdf(db, auctionId, opts) {
   const pageH = doc.page.height;
   const usableW = pageW - m * 2;
 
-  // Cols: SL.NO | SALE | BIDDER | TRADE NAME | BAG | QTY | AMOUNT | INV.AMOUNT | CODE
-  // Portrait A4 → ~559pt usable. Long firm/person names wrap to multiple
-  // lines via wrapText (drawDataRow grows the row height to fit). Numeric
-  // columns are sized to fit Indian-format money values without truncation.
-  // A bare sale letter needs almost nothing; a prefixed proforma number
-  // ("PI/I-2009") needs real room, and drawFittedCell would otherwise shrink
-  // it to the point of illegibility. The extra width is borrowed from the two
-  // name columns, which wrap-free-fit rather than truncate at these sizes.
-  const colW = [
-    Math.floor(usableW * 0.06),                       // SL.NO
-    Math.floor(usableW * (invoiceWise ? 0.11 : 0.06)),// SALE / INVO
-    Math.floor(usableW * (invoiceWise ? 0.14 : 0.16)),// BIDDER
-    Math.floor(usableW * (invoiceWise ? 0.15 : 0.18)),// TRADE NAME
-    Math.floor(usableW * 0.05),  // BAG
-    Math.floor(usableW * 0.11),  // QTY
-    Math.floor(usableW * 0.16),  // AMOUNT
-    Math.floor(usableW * 0.16),  // INV.AMOUNT
-    0,                           // CODE absorbs rounding
+  // Cols: SL.NO | SALE/INVO | BIDDER | TRADE NAME | BAG | QTY | AMOUNT | INV.AMOUNT | CODE
+  //
+  // ── Widths are MEASURED, not guessed ──────────────────────────────────
+  // They used to be fixed fractions of the page, and they sized TRADE NAME
+  // for names shorter than the customer's: "SPICEMANNA EVERGREEN EXPORTS
+  // PRIVATE LIMITED" wants 228pt and was given 92, so it came out clipped to
+  // "SPICEMANNA EVERGREEN EX…" — while AMOUNT and INV.AMOUNT each sat on
+  // ~24pt of slack, sized for figures wider than any this trade prints.
+  //
+  // Every column is now measured once, over everything the report will
+  // actually print — its own header, every data row, and the figures on the
+  // subtotal / state-total / grand-total strips (which run wider than any
+  // single row: one trade's bags total 1,473 where no lot exceeds 243).
+  //
+  // The figure columns then take exactly what they need and the two NAME
+  // columns divide what is left. That is the priority rule renderTablePdf
+  // already applies app-wide: text gives first, because only text can
+  // ellipsize — a clipped figure is a wrong number, a shrunk name is still
+  // the name. With the customer's four trades this fits every bidder and
+  // every trade name in full, in both variants, with no ellipsis at all.
+  //
+  // Measured per report, not per page: a column that changed width from one
+  // page to the next would be worse than a narrow one.
+  const BASE = 8.5;           // the size drawDataRow starts at
+  const TEXT_FLOOR = 6;       // …and the size it will shrink to before cutting
+  const CELL_PAD = 8;         // 4pt each side, as every drawFittedCell call uses
+  const measure = (v, size, font) => {
+    doc.font(font || 'Helvetica').fontSize(size);
+    return doc.widthOfString(String(v == null ? '' : v));
+  };
+  const widest = (vals, size, font) =>
+    vals.reduce((mx, v) => Math.max(mx, measure(v, size, font)), 0);
+
+  const allRows = [];
+  sortedStates.forEach(([, g]) => { allRows.push(...g.inter, ...g.intra); });
+
+  // The figures the total strips will print, in the bold face they print in.
+  const totBag = [], totQty = [], totAmt = [];
+  const pushTotals = (items) => {
+    const sum = k => items.reduce((t, r) => t + (Number(r[k]) || 0), 0);
+    totBag.push(String(sum('bag')));
+    totQty.push(fmtQty(sum('qty')));
+    totAmt.push(fmtMoney(sum('amount')));
+  };
+  sortedStates.forEach(([, g]) => {
+    if (g.inter.length) pushTotals(g.inter);
+    if (g.intra.length) pushTotals(g.intra);
+    pushTotals([...g.inter, ...g.intra]);          // state total
+  });
+  pushTotals(allRows);                             // grand total
+
+  // A column is never narrower than its own (bold) title, nor than the widest
+  // value it holds. Total figures are measured at 10pt bold — the largest the
+  // strips use — so a grand total never has to shrink either.
+  // The +1 is not decoration: a column sized to EXACTLY its header width loses
+  // the fraction to rounding below and the header itself comes back ellipsized
+  // ("S.NO" → "S…."), which is a silly way to lose a title.
+  //
+  // Total figures are measured at BASE bold, not at the 10pt the grand-total
+  // strip starts from. The strips print ONE row each and shrink to fit
+  // (totalFig, floor 5pt); sizing a money column for its grand total at 10pt
+  // cost ~13pt that all 250 data rows below it did not need — and that width
+  // comes straight out of TRADE NAME, where it is the difference between a
+  // firm's full name and a cut one. A grand total set a half-point smaller
+  // than its heading is not a cost worth paying for that.
+  const figNeed = (head, rowVals, totVals) => {
+    const h = measure(head, BASE, 'Helvetica-Bold');
+    const v = Math.max(widest(rowVals, BASE), widest(totVals || [], BASE, 'Helvetica-Bold'));
+    // The +1 guards the HEADER only, and only where the header is what makes
+    // the column its width — spending it on every column would take points
+    // out of TRADE NAME for nothing.
+    return Math.max(h + 1, v) + CELL_PAD;
+  };
+  // Defensive cap: a malformed invoice label or buyer code must not be able to
+  // eat the page out from under the names.
+  const cap = (v) => Math.min(v, usableW * 0.16);
+
+  const figs = [
+    { head: 'S.NO',       w: figNeed('S.NO', allRows.map((_, i) => String(i + 1))) },
+    { head: col1Head,     w: cap(figNeed(col1Head, allRows.map(col1Of))) },
+    { head: 'BAG',        w: figNeed('BAG',        allRows.map(r => String(r.bag || 0)), totBag) },
+    { head: 'QUANTITY',   w: figNeed('QUANTITY',   allRows.map(r => fmtQty(r.qty)),      totQty) },
+    { head: 'AMOUNT',     w: figNeed('AMOUNT',     allRows.map(r => fmtMoney(r.amount)), totAmt) },
+    { head: 'INV.AMOUNT', w: figNeed('INV.AMOUNT', allRows.map(r => fmtMoney(r.inv_amount))) },
+    { head: 'CODE',       w: cap(figNeed('CODE',   allRows.map(r => r.code || ''))) },
   ];
-  colW[8] = usableW - colW.slice(0, 8).reduce((s, w) => s + w, 0);
+  // The width each figure column may never go below: its own header. The
+  // header strip draws with fitText, which TRUNCATES rather than shrinks, so a
+  // report that rescued the names by cutting "QUANTITY" to "QUANT…" would have
+  // fixed nothing.
+  figs.forEach(c => { c.min = measure(c.head, BASE, 'Helvetica-Bold') + 1 + CELL_PAD; });
+
+  const hdrB  = measure('BIDDER', BASE, 'Helvetica-Bold');
+  const rawB  = widest(allRows.map(r => r.bidder || ''), BASE);
+  const rawT  = widest(allRows.map(r => r.trade_name || ''), BASE);
+
+  // ── When the names are starved, the FIGURES give ──────────────────────
+  // What the two names need to show in FULL at their smallest readable size,
+  // plus a couple of points for the integer rounding below — without that
+  // allowance the arithmetic lands a half-point short and cuts a name that
+  // had all but fitted, which is exactly how the longest firm name in the
+  // customer's trade 17 was still being clipped.
+  const ROUND_ALLOW = 2;
+  const nameNeed = (rawB + rawT) * TEXT_FLOOR / BASE + CELL_PAD * 2 + ROUND_ALLOW;
+  let figSum = figs.reduce((t, c) => t + Math.ceil(c.w), 0);
+  if (usableW - figSum < nameNeed) {
+    // Take the shortfall from the figure columns, in proportion to the slack
+    // each holds above its own header. A figure column may shrink; what it may
+    // never do is drop a digit, and drawFittedCell takes figures down to 5pt
+    // before it would (drawDataRow passes floor 5 for columns 4..7). A money
+    // value set a point smaller is still exact — a firm name cut short is not.
+    // This is the app's "text gives first" priority, applied after text has
+    // already given everything it has.
+    const slack = figs.reduce((t, c) => t + Math.max(0, c.w - c.min), 0);
+    const take  = Math.min(slack, nameNeed - (usableW - figSum));
+    if (take > 0 && slack > 0) {
+      figs.forEach(c => { c.w -= take * Math.max(0, c.w - c.min) / slack; });
+      figSum = figs.reduce((t, c) => t + Math.ceil(c.w), 0);
+    }
+  }
+
+  // What the two name columns have to share, and what each wants at full size.
+  const rest = Math.max(120, usableW - figSum);
+  // The two name columns shrink TOGETHER, by one factor: `scale` is the
+  // fraction of BASE at which both longest names fit side by side in what is
+  // left. Capped at 1 — never set a name larger than the table around it —
+  // and floored where drawFittedCell would start ellipsizing anyway, since
+  // width bought below that buys nothing.
+  //
+  // Continuous on purpose. This started as three branches — both at full
+  // size, else both at the 6pt floor, else share out — and one trade missed
+  // the middle branch by a THIRD OF A POINT, fell into the last, and cut a
+  // firm name that had all but fitted. A cliff that steep in a layout rule is
+  // a bug waiting for the next customer's data.
+  const scale = Math.max(TEXT_FLOOR / BASE,
+                Math.min(1, (rest - CELL_PAD * 2) / Math.max(1, rawB + rawT)));
+  const wBidder = Math.max(rawB * scale, hdrB) + CELL_PAD;
+
+  // Round UP, never down: a column rounded down by a fraction of a point
+  // ellipsizes the very value it was measured to hold. TRADE NAME is then
+  // given what is genuinely LEFT, rather than its own rounded-up share minus
+  // everyone else's rounding — that arithmetic quietly charged it the other
+  // eight columns' round-ups (~4pt) on top of its own.
+  // Round UP, never down: a column rounded down by a fraction of a point
+  // ellipsizes the very value it was measured to hold. TRADE NAME then takes
+  // what is genuinely LEFT — it is the column with the most to gain, and the
+  // `rest` above was computed from these same integers, so it is not charged
+  // the other columns' round-ups a second time.
+  const f = figs.map(c => Math.max(1, Math.ceil(c.w)));
+  const bW = Math.max(1, Math.ceil(wBidder));
+  const colW = [
+    f[0], f[1], bW,
+    Math.max(40, usableW - figSum - bW),   // TRADE NAME
+    f[2], f[3], f[4], f[5], f[6],
+  ];
   const colX = [m];
   for (let i = 0; i < colW.length - 1; i++) colX.push(colX[i] + colW[i]);
 

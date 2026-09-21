@@ -1515,28 +1515,23 @@ async function formCPdf(db, opts) {
                     readSetting(db, 'kl_branch',
                       readSetting(db, 'business_place', ''))));
 
-  const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 18 });
+  // ── LANDSCAPE ────────────────────────────────────────────────────────
+  // Eleven columns, two of them full names and addresses, three of them money.
+  // Measured against the customer's own data, the form needs 740pt to print
+  // every value at its normal 6.5pt — and 579pt even with everything shrunk to
+  // the 5pt floor. Portrait A4 gives 559pt, so portrait could not show this
+  // form in full at ANY size: 310 cells were being clipped across four trades,
+  // nearly all of them bidder names ("ELAICHIROYAL PRIVATE LIMITE…").
+  //
+  // This is a Spices Board return. A cut name on a statutory filing is not a
+  // cosmetic problem, so the page turns rather than the name. Landscape gives
+  // 806pt, which fits all eleven columns at full size with room to spare.
+  // Same remedy, same reason, as bank_payment / tally_purchase / sales_taxes
+  // in exports-pdf's PDF_LAYOUT.
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 18 });
   const buffers = []; doc.on('data', b => buffers.push(b));
   const m = 18, usableW = doc.page.width - m * 2;
 
-  // ── 11-column geometry — proportions tuned for portrait A4
-  // (~559pt usable). Numeric cols stay narrow but readable at 7pt; the two
-  // free-text columns (planter/dealer + bidder) get the most width.
-  const cw = [
-    Math.floor(usableW * 0.04),   // 1  Sl.No
-    Math.floor(usableW * 0.16),   // 2  Name & address of planter/dealer
-    Math.floor(usableW * 0.10),   // 3  Estate Registration #/Board licence #
-    Math.floor(usableW * 0.07),   // 4  Qty put for auction
-    Math.floor(usableW * 0.07),   // 5  Qty sold (kgs)
-    Math.floor(usableW * 0.06),   // 6  Rate Rs./kg
-    Math.floor(usableW * 0.10),   // 7  Value (Rs.)
-    Math.floor(usableW * 0.07),   // 8  Sample Refund (Rs.)
-    Math.floor(usableW * 0.07),   // 9  Commission (Rs.)
-    Math.floor(usableW * 0.155),  // 10 Bidder name & address
-    0,                            // 11 Spices Board licence number
-  ];
-  cw[10] = usableW - cw.slice(0, 10).reduce((a, b) => a + b, 0);
-  const cx = [m]; for (let i = 0; i < cw.length - 1; i++) cx.push(cx[i] + cw[i]);
   // Reference alignment: Sl.No center, names + bidder + licence left, all
   // numeric columns right.  Headers always centered above their column.
   const aligns = ['center', 'left', 'left', 'right', 'right', 'right', 'right', 'right', 'right', 'left', 'left'];
@@ -1559,7 +1554,96 @@ async function formCPdf(db, opts) {
     'Name and full address of bidder',
     'Spices Board licence number',
   ];
-  const PADX = 2;          // tight padding for portrait
+  const PADX = 2;          // tight padding
+
+  // ── 11-column geometry — MEASURED, not fixed fractions ────────────────
+  // The old proportions were guesses, and they were wrong in both directions
+  // at once: "Name and full address of bidder" got 15.5% where its longest
+  // value wants 31%, while Sample Refund and Commission each got 7% for
+  // figures that need 5%. The widths are now measured over every value the
+  // form will print, which is also what keeps this honest as the data grows —
+  // a longer name widens its own column instead of being cut to fit a guess.
+  //
+  // Same method as tradeReportPdf in auction-reports.js; see the note there.
+  const BASE_FONT = 6.5;   // the size a data row starts at (see row())
+  const MIN_FONT  = 5.0;   // …and shrinks to before anything is ellipsized
+  const _m = (v, size, font) => {
+    doc.font(font || 'Helvetica').fontSize(size);
+    return doc.widthOfString(String(v == null ? '' : v));
+  };
+  const _widest = (vals, size, font) =>
+    vals.reduce((mx, v) => Math.max(mx, _m(v, size, font)), 0);
+
+  const _items = d.planters.concat(d.dealers);
+  const _totals = [
+    { qtyPut: d.plantersTotals.kilosPut, qtySold: d.plantersTotals.kilos, value: d.plantersTotals.value },
+    { qtyPut: d.dealersTotals.kilosPut,  qtySold: d.dealersTotals.kilos,  value: d.dealersTotals.value },
+    { qtyPut: d.grand.kilosPut,          qtySold: d.grand.kilos,          value: d.grand.value },
+  ];
+  const colVals = [
+    _items.map(r => String(r.lot == null ? '' : r.lot)),
+    _items.map(r => r.seller || ''),
+    _items.map(r => normaliseRegId(r.regId)),
+    _items.map(r => fmtQty(r.qtyPut)),
+    _items.map(r => fmtQty(r.qtySold)),
+    _items.map(r => fmtPrice(r.rate)),
+    _items.map(r => fmtMoney(r.value)),
+    _items.map(r => fmtMoney(r.sample)),
+    _items.map(r => fmtMoney(r.commission)),
+    _items.map(r => r.buyer || ''),
+    _items.map(r => normaliseRegId(r.sbl)),
+  ];
+  const need = colVals.map(vals => _widest(vals, BASE_FONT));
+  // Columns 4, 5 and 7 also carry the section and grand totals, which are set
+  // BOLD and larger than a data row — the GRAND TOTAL value is the widest
+  // figure anywhere on the form, and sizing its column off the data rows alone
+  // would leave it to shrink under every total.
+  const TOTAL_FONT = 7.5;
+  need[3] = Math.max(need[3], _widest(_totals.map(t => fmtQty(t.qtyPut)),   TOTAL_FONT, 'Helvetica-Bold'));
+  need[4] = Math.max(need[4], _widest(_totals.map(t => fmtQty(t.qtySold)),  TOTAL_FONT, 'Helvetica-Bold'));
+  need[6] = Math.max(need[6], _widest(_totals.map(t => fmtMoney(t.value)),  TOTAL_FONT, 'Helvetica-Bold'));
+
+  // A column may never be narrower than the longest WORD of its own title at
+  // the header's smallest size. Form C's titles are full statutory sentences
+  // and wrap onto several lines by design, so a column need not hold the whole
+  // title — but it must never be so narrow that a word breaks mid-letter.
+  const hardMin = headTitles.map(t => _widest(String(t).split(/\s+/), 5.5) + PADX * 2);
+
+  const NAME_COLS = [1, 9];          // planter/dealer, and bidder
+  let cw = need.map((n, i) => Math.max(hardMin[i], n + PADX * 2));
+  let cwSum = cw.reduce((a, b) => a + b, 0);
+  if (cwSum <= usableW) {
+    // Everything fits. The surplus goes to the two free-text columns, in
+    // proportion to what each wants — they are the ones that run long, and a
+    // name with air around it costs the figures nothing.
+    const extra = usableW - cwSum;
+    const wantSum = NAME_COLS.reduce((t, i) => t + need[i], 0) || 1;
+    NAME_COLS.forEach(i => { cw[i] += extra * need[i] / wantSum; });
+  } else {
+    // More content than page. Take the excess from every column in proportion
+    // to the slack it holds above its OWN floor — the width it needs with its
+    // text set at MIN_FONT. Nothing is cut while anything can still shrink.
+    const floorOf = i => Math.max(hardMin[i], need[i] * MIN_FONT / BASE_FONT + PADX * 2);
+    const slack = cw.reduce((t, v, i) => t + Math.max(0, v - floorOf(i)), 0);
+    const take  = Math.min(slack, cwSum - usableW);
+    if (slack > 0) cw = cw.map((v, i) => v - take * Math.max(0, v - floorOf(i)) / slack);
+    // Still over, so something must be cut. Only the two free-text columns
+    // can ellipsize; on a statutory return that is the last resort, and with
+    // the landscape page above it is not reached by any real trade.
+    cwSum = cw.reduce((a, b) => a + b, 0);
+    if (cwSum > usableW) {
+      const short = cwSum - usableW;
+      const nameSum = NAME_COLS.reduce((t, i) => t + cw[i], 0) || 1;
+      NAME_COLS.forEach(i => { cw[i] -= short * cw[i] / nameSum; });
+    }
+  }
+  // Floor every column, never ceil: flooring can only leave the row narrower
+  // than the page, and the remainder goes to the bidder column — the one the
+  // old geometry starved.
+  cw = cw.map(v => Math.max(12, Math.floor(v)));
+  cw[9] += usableW - cw.reduce((a, b) => a + b, 0);
+
+  const cx = [m]; for (let i = 0; i < cw.length - 1; i++) cx.push(cx[i] + cw[i]);
   let y;
 
   function vy(top, rowH, fontH) { return top + (rowH - fontH) / 2; }
