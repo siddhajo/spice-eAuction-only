@@ -6,17 +6,37 @@
 <style>
   /* A deliberately DIFFERENT look from classic.hbs — same data, new layout.
      Demonstrates per-customer template selection via sales_invoice_template. */
-  @page { size: A4; margin: 0; }
+  /* A multi-page invoice is printed with "Page x of y" / "Continued on next
+     page.." in the page margins (see generateSalesInvoiceHtmlPDF), and CSS page
+     margins are what actually reserve the room for them — Chromium lets them
+     override the ones the print call asks for. Single page: unchanged. */
+  @page { size: A4; margin: {{#if paged}}30pt 0{{else}}0{{/if}}; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   /* Green accent to match the other Letterhead invoice formats (commission bill etc.).
      --accent = solid green band/grand-total; --accent-soft = header/word fill. */
   :root { --accent: #4e8a3a; --accent-soft: #e8f1e0; --line: #d7e0d1; }
+  /* Only the SIDE gutters live on <body>: horizontal padding applies to every
+     page, but vertical padding is spent once — on page 1's top and the last
+     page's bottom — so a spilled-over page butted against the paper edge. The
+     top/bottom page margins are carried by the .sheet wrapper's repeating
+     header/footer groups instead (see below). */
   body {
     font-family: Helvetica, Arial, sans-serif; font-size: 8.5pt; color: #222;
-    line-height: 1.35; padding: 24pt;
+    line-height: 1.35; padding: 0 24pt;
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
+  /* Per-page vertical margins. The document sits in a borderless wrapper table
+     whose header group opens every page with 24pt of air and whose footer group
+     reserves the same at the foot — Chromium repeats both on every page the
+     table spans. Kept as layout rather than @page margins because the Electron
+     backend prints with marginType:'none', which discards CSS page margins. */
+  .sheet { width: 100%; border-collapse: collapse; }
+  .sheet > thead { display: table-header-group; }
+  .sheet > tfoot { display: table-footer-group; }
+  .sheet > thead > tr > td, .sheet > tbody > tr > td, .sheet > tfoot > tr > td {
+    border: 0; padding: 0; text-align: left; font-weight: normal; vertical-align: top; }
+  .sheet .pagepad { height: 24pt; line-height: 24pt; font-size: 1pt; }
   .band { background: var(--accent); color: #fff; padding: 14pt 16pt; border-radius: 6pt 6pt 0 0;
           display: flex; align-items: center; gap: 12pt; }
   .band img { width: 46pt; height: 46pt; object-fit: contain; background: #fff; border-radius: 4pt; padding: 2pt; }
@@ -77,6 +97,9 @@
 </style>
 </head>
 <body>
+<table class="sheet">
+<thead><tr><td class="pagepad"></td></tr></thead>
+<tbody><tr><td>
   <div class="band">
     {{#if co.logoDataUri}}<img src="{{co.logoDataUri}}">{{/if}}
     <div class="who">
@@ -150,5 +173,8 @@
     </div>
   </div>
   </div>
+</td></tr></tbody>
+<tfoot><tr><td class="pagepad"></td></tr></tfoot>
+</table>
 </body>
 </html>

@@ -5,7 +5,11 @@
 <title>{{title}} {{invoiceNo}}</title>
 <style>
   /* Units are pt to match the PDFKit layout (72pt = 1in). A4 = 595x842pt. */
-  @page { size: A4; margin: 0; }
+  /* A multi-page invoice is printed with "Page x of y" / "Continued on next
+     page.." in the page margins (see generateSalesInvoiceHtmlPDF), and CSS page
+     margins are what actually reserve the room for them — Chromium lets them
+     override the ones the print call asks for. Single page: unchanged. */
+  @page { size: A4; margin: {{#if paged}}30pt 0{{else}}0{{/if}}; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {

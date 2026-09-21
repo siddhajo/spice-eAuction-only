@@ -4,12 +4,20 @@
 <meta charset="utf-8">
 <title>{{title}} {{invoiceNo}}</title>
 <style>
-  @page { size: A4; margin: 0; }
+  /* `paged` — see the note by .sheet below: a multi-page invoice gives up
+     30pt top and bottom for the renderer's "Page x of y" / "Continued on next
+     page.." lines. This @page rule is what actually reserves them; Chromium
+     lets CSS page margins override the ones the print call asks for. */
+  @page { size: A4; margin: {{#if paged}}30pt 0{{else}}0{{/if}}; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
+  /* Only the SIDE gutters live on <body>: horizontal padding applies to every
+     page, but top/bottom padding is spent once — on page 1's top and the last
+     page's bottom — which left a spilled-over page butting against the paper
+     edge. The vertical page margins are carried by the .sheet header/footer
+     groups instead (see below), so every page gets the same 18pt frame. */
   body { font-family: Helvetica, Arial, sans-serif; font-size: 8pt; color: #000; line-height: 1.25;
-    padding: 18pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .doc { border: 0.7pt solid #000; }
+    padding: 0 18pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   table { border-collapse: collapse; width: 100%; }
   td, th { border: 0.6pt solid #000; padding: 2pt 4pt; vertical-align: top; }
   .no-b, .no-b td, .no-b th { border: none; }
@@ -57,10 +65,68 @@
   .items td { font-size: 8pt; }
   .grand td { font-size: 12pt; font-weight: bold; }
   .foot td { font-size: 8pt; }
+  /* ── Repeating page header ───────────────────────────────────────────────
+     The letterhead, the title strip and the two party boxes must appear at the
+     top of EVERY page, not just page 1. The document therefore sits in
+     borderless full-width wrapper tables whose <thead> carries that header:
+     Chromium repeats a table header group on each page the table spans, so a
+     long invoice that spills onto page 2+ reprints the company details and the
+     Billed-To / Shipped-To boxes above the continued line items.
+
+     Why TWO nested tables (.sheet holding .sheet2) rather than one: Chromium
+     silently STOPS repeating a header group once it is taller than 25% of the
+     page (210.5pt on A4). Letterhead + title strip + party boxes together run
+     ~193pt, so a single header sat a couple of address lines away from that
+     cliff — and past it the header would just vanish from page 2 with no other
+     sign. Splitting it in two (outer = letterhead + the page's top margin,
+     inner = title strip + parties) measures each group against the cap on its
+     own, which leaves both at less than half of it. Keep it that way: anything
+     added to one of these headers eats that company's margin, not both. */
+  .sheet, .sheet2 { width: 100%; border-collapse: collapse; }
+  .sheet > thead, .sheet2 > thead { display: table-header-group; }
+  .sheet > tfoot { display: table-footer-group; }
+  .sheet > thead > tr > td, .sheet > tbody > tr > td, .sheet > tfoot > tr > td,
+  .sheet2 > thead > tr > td, .sheet2 > tbody > tr > td {
+    border: 0; padding: 0; text-align: left; font-weight: normal; vertical-align: top; }
+  /* Vertical page margins, applied PER PAGE instead of once per document: the
+     header group opens every page with 18pt of air and the footer group's
+     spacer row closes it — Chromium reserves a repeated footer group's height
+     on every page the table spans, so no row can reach the paper edge. Kept as
+     layout (not @page margins) because the Electron backend prints with
+     marginType:'none', which discards CSS page margins. */
+  .sheet > thead > tr > td { padding-top: {{#if paged}}0{{else}}18pt{{/if}}; }
+  .sheet > tfoot > tr > td.pagefoot { padding-bottom: {{#if paged}}0{{else}}18pt{{/if}}; }
+{{#if paged}}
+  /* `paged` — this invoice runs to more than one page, so the renderer is
+     printing "Page x of y" / "Continued on next page.." into REAL page margins
+     (see generateSalesInvoiceHtmlPDF). Those margins now provide the per-page
+     gutter the two rules above normally carry; keeping both would double it. */
+{{/if}}
+  /* …and the document's outer box is drawn by those same groups, so it sits
+     INSIDE that margin on every page instead of running off the paper edge:
+     the header opens it (top + sides), the two body groups carry the sides,
+     and the repeated footer closes it at the foot of each page. */
+  .frame { border-left: 0.7pt solid #000; border-right: 0.7pt solid #000; }
+  .frame-top { border-top: 0.7pt solid #000; }
+  .frame-bot { height: 0; border-bottom: 0.7pt solid #000; }
+  /* Never split a line item (or a party box) across the page break. */
+  .items tr, .parties tr { page-break-inside: avoid; break-inside: avoid; }
+  /* The charge rows (Sample/Gunny/Transport/Insurance) and the two totals rows
+     are the table's closing cluster — they ride to the next page together
+     rather than leaving "Total Taxable Value & Tax" stranded without its
+     Round Off line. */
+  .items tbody.totals { page-break-inside: avoid; break-inside: avoid; }
+  /* The closing block — grand total, amount in words, the E&OE note, bank
+     details and the signature band — is ONE unit: when it doesn't fit under
+     the last line item it moves to the next page whole, instead of tearing
+     between "Bank Details" and the account number. */
+  .tail { page-break-inside: avoid; break-inside: avoid; }
 </style>
 </head>
 <body>
 <div class="doc">
+<table class="sheet">
+<thead><tr><td><div class="frame frame-top">
   <!-- Letterhead -->
   <div class="head{{#if co.logoDataUri}} has-logo{{/if}}">
     {{#if co.logoDataUri}}<img class="logo" src="{{co.logoDataUri}}">{{/if}}
@@ -74,6 +140,10 @@
     <div class="ln strong ids">{{#if co.fssai}}<span>FSSAI:&nbsp;{{co.fssai}}</span>{{/if}}{{#if co.gstin}}<span>GSTIN:&nbsp;{{co.gstin}}</span>{{/if}}</div>
     <div class="ln strong ids">{{#if co.sbl}}<span>SBL:&nbsp;{{co.sbl}}</span>{{/if}}{{#if co.pan}}<span>PAN:&nbsp;{{co.pan}}</span>{{/if}}</div>
   </div>
+</div></td></tr></thead>
+<tbody><tr><td>
+<table class="sheet2">
+<thead><tr><td><div class="frame">
 
   <!-- Title strip — the invoice title is centred across the FULL width (one
        cell spanning every column so the horizontal rule runs edge to edge),
@@ -95,6 +165,8 @@
       <td>{{{partyBox ship.block prefix="M/s."}}}</td>
     </tr>
   </table>
+</div></td></tr></thead>
+<tbody><tr><td><div class="frame">
 
   <table><tr class="bar c"><td>Commodity: Cardamom | HSN: {{hsnCardamom}}</td></tr></table>
 
@@ -129,6 +201,8 @@
         <td class="r">{{inr total}}</td>
       </tr>
       {{/each}}
+    </tbody>
+    <tbody class="totals">
       {{#if sample}}
       <tr>
         <td></td><td>Sample</td>
@@ -177,7 +251,9 @@
     </tbody>
   </table>
 
-  <!-- Grand total -->
+  <!-- Grand total, amount in words, footer and signatures — one unbreakable
+       block (.tail) so a page break can never land inside it. -->
+  <div class="tail">
   {{#with summary}}
   <table><tr class="grand"><td class="r" style="width:70%">Grand Total</td><td class="r">{{inr grandTotal}}</td></tr></table>
   <table><tr class="b"><td>Amount in Words: INR {{words grandTotal}} Only</td></tr></table>
@@ -209,6 +285,14 @@
       </td>
     </tr>
   </table>
+  </div>
+</div></td></tr></tbody>
+</table>
+</td></tr></tbody>
+<!-- Repeated page footer: a pure spacer that reserves the bottom margin on
+     EVERY page (see .pagefoot in the stylesheet). -->
+<tfoot><tr><td class="pagefoot"><div class="frame frame-bot"></div></td></tr></tfoot>
+</table>
 </div>
 </body>
 </html>

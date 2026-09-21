@@ -21,9 +21,40 @@
 //
 // A4 @ 0 margin — the template owns its own page padding via CSS, exactly like
 // the PDFKit layouts owned their 20pt margin.
+//
+// The optional second argument opens up Chromium's PRINT HEADER/FOOTER, the one
+// place a running "Page 2 of 3" can come from: page content can't know which
+// page it lands on, and Chromium implements neither `@page` margin boxes nor
+// `counter(page)` outside them. Templates are plain HTML drawn into the page
+// margins, with <span class="pageNumber"> / <span class="totalPages"> filled in
+// per page. See htmlToPdf() below for the option shape.
 
 let _electron = null;
 try { _electron = require('electron'); } catch (_) { /* not in Electron */ }
+
+const PT_PER_INCH = 72;
+const PX_PER_PT = 96 / 72;   // CSS px per pt — Puppeteer margins are px/in/cm
+
+// Normalize the caller's print options ONCE, so both backends are driven from
+// the same values and can't drift apart. Returns null when there's nothing to
+// apply (the common case), which keeps the default render byte-identical.
+// NOTE on margins: a template's own `@page { margin: … }` WINS over the values
+// passed here — Chromium treats CSS page margins as the authority, whatever
+// `preferCSSPageSize` says. So a caller that wants room for a header/footer has
+// to declare the same margin in its stylesheet; these values are sent too so
+// the two can't silently disagree, and so a template with no @page margin rule
+// still gets the space it asked for.
+function normalizePrint(opts) {
+  const o = opts || {};
+  const header = o.header ? String(o.header) : '';
+  const footer = o.footer ? String(o.footer) : '';
+  const top = Number(o.marginTop) || 0;
+  const bottom = Number(o.marginBottom) || 0;
+  const ranges = o.pageRanges ? String(o.pageRanges) : '';
+  if (!header && !footer && !top && !bottom && !ranges) return null;
+  // Chromium drops a header/footer template that has no margin to live in.
+  return { header, footer, top, bottom, ranges, wantsHF: !!(header || footer) };
+}
 
 const PRINT_OPTS_ELECTRON = {
   printBackground: true,
@@ -32,8 +63,50 @@ const PRINT_OPTS_ELECTRON = {
   preferCSSPageSize: true,
 };
 
+// Electron's printToPDF takes margins in INCHES; pageRanges/header/footer
+// mirror the CDP names.
+function electronOpts(print) {
+  if (!print) return PRINT_OPTS_ELECTRON;
+  const out = {
+    ...PRINT_OPTS_ELECTRON,
+    margins: {
+      marginType: 'custom',
+      top: print.top / PT_PER_INCH,
+      bottom: print.bottom / PT_PER_INCH,
+      left: 0,
+      right: 0,
+    },
+  };
+  if (print.wantsHF) {
+    out.displayHeaderFooter = true;
+    // An empty string makes Chromium fall back to its DEFAULT template (date /
+    // title / url), so a blank header must be sent as empty markup instead.
+    out.headerTemplate = print.header || '<span></span>';
+    out.footerTemplate = print.footer || '<span></span>';
+  }
+  if (print.ranges) out.pageRanges = print.ranges;
+  return out;
+}
+
+function puppeteerOpts(print) {
+  const base = { format: 'A4', printBackground: true, preferCSSPageSize: true };
+  if (!print) return base;
+  const px = (pt) => `${pt * PX_PER_PT}px`;
+  const out = {
+    ...base,
+    margin: { top: px(print.top), bottom: px(print.bottom), left: '0px', right: '0px' },
+  };
+  if (print.wantsHF) {
+    out.displayHeaderFooter = true;
+    out.headerTemplate = print.header || '<span></span>';
+    out.footerTemplate = print.footer || '<span></span>';
+  }
+  if (print.ranges) out.pageRanges = print.ranges;
+  return out;
+}
+
 // ── Backend 1: Electron main process ──────────────────────────────────────
-async function renderViaElectron(html) {
+async function renderViaElectron(html, print) {
   const { BrowserWindow, app } = _electron;
   if (!BrowserWindow || !app || typeof app.whenReady !== 'function') return null;
   await app.whenReady();
@@ -44,7 +117,7 @@ async function renderViaElectron(html) {
   try {
     await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
     // Give web fonts / images a tick to settle before printing.
-    return await win.webContents.printToPDF(PRINT_OPTS_ELECTRON);
+    return await win.webContents.printToPDF(electronOpts(print));
   } finally {
     win.destroy();
   }
@@ -154,43 +227,55 @@ function isDeadBrowserError(e) {
   return /Connection closed|Target closed|Session closed|Protocol error|browser has disconnected|Navigating frame was detached/i.test(m);
 }
 
-async function renderOnce(pptr, html) {
+async function renderOnce(pptr, html, print) {
   const browser = await getBrowser(pptr);
   if (!browser) return null;
   const page = await browser.newPage();
   try {
     await page.setContent(html, { waitUntil: 'networkidle0' });
-    return await page.pdf({ format: 'A4', printBackground: true, preferCSSPageSize: true });
+    return await page.pdf(puppeteerOpts(print));
   } finally {
     try { await page.close(); } catch (_) { /* browser already gone */ }
   }
 }
 
-async function renderViaPuppeteer(html) {
+async function renderViaPuppeteer(html, print) {
   const pptr = getPuppeteer();
   if (!pptr) return null;
   try {
-    return await renderOnce(pptr, html);
+    return await renderOnce(pptr, html, print);
   } catch (e) {
     if (!isDeadBrowserError(e)) throw e;
     // The cached Chromium had died. Relaunch once and try again, so an OOM on
     // one batch doesn't break every print until the server restarts.
     _pptrBrowserPromise = null;
-    return await renderOnce(pptr, html);
+    return await renderOnce(pptr, html, print);
   }
 }
 
 /**
- * htmlToPdf(html) → Promise<Buffer>
+ * htmlToPdf(html, opts) → Promise<Buffer>
  * @param {string} html  A COMPLETE html document (<!doctype html>…</html>).
+ * @param {object} [opts]  Print-engine extras. Omit for the plain full-bleed
+ *   render every document used before this existed.
+ *   @param {string} [opts.header]  HTML drawn into the TOP page margin of every
+ *     page. `<span class="pageNumber">` and `<span class="totalPages">` are
+ *     substituted per page. Needs opts.marginTop to have room to draw in.
+ *   @param {string} [opts.footer]  Same, into the bottom margin.
+ *   @param {number} [opts.marginTop]     Top page margin, in pt.
+ *   @param {number} [opts.marginBottom]  Bottom page margin, in pt.
+ *   @param {string} [opts.pageRanges]  e.g. '3' or '1-2'. Only those pages are
+ *     emitted, and each KEEPS its number in the whole document — which is what
+ *     lets a caller re-render just the last page with a different footer.
  */
-async function htmlToPdf(html) {
+async function htmlToPdf(html, opts) {
+  const print = normalizePrint(opts);
   // Prefer Electron when we're actually inside it.
   if (_electron && _electron.app) {
-    const out = await renderViaElectron(html);
+    const out = await renderViaElectron(html, print);
     if (out) return Buffer.from(out);
   }
-  const viaPptr = await renderViaPuppeteer(html);
+  const viaPptr = await renderViaPuppeteer(html, print);
   if (viaPptr) return Buffer.from(viaPptr);
 
   throw new Error(

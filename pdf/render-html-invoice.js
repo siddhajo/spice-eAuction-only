@@ -254,15 +254,65 @@ function buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDat
   };
 }
 
+// ── Multi-page furniture (page numbers + "continued" note) ───────────────
+// Only a long invoice gets these, and they can only come from Chromium's print
+// header/footer: the HTML has no way to know which page a row landed on.
+// They are drawn into page margins, which the layout gives up in return:
+// `view.paged` drops the template's own per-page gutter so the two don't stack.
+const PAGE_MARGIN_TOP_PT = 30;     // clears the "Page x of y" line (ends ~24pt down)
+const PAGE_MARGIN_BOTTOM_PT = 30;  // …and the "continued" line (starts ~22pt up)
+// Chromium anchors these to the paper itself (~17pt down from the top edge /
+// ~14pt up from the bottom), NOT inside the margin band, and ignores vertical
+// margins on them — the 30pt page margins above are simply what keeps the
+// invoice frame clear of them. Side padding matches the frame's 18pt gutter so
+// both lines sit flush with its right edge.
+const _hfStyle = 'width:100%; padding:0 18pt; font:7.5pt Helvetica, Arial, sans-serif; color:#000; text-align:right;';
+const PAGE_NO_HEADER =
+  `<div style="${_hfStyle}">Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>`;
+const CONTINUED_FOOTER =
+  `<div style="${_hfStyle} font-style:italic;">Continued on next page..</div>`;
+
 /**
  * Render a sales invoice to a PDF Buffer via the customer's HTML template.
  * Async (htmlToPdf is async) — the original PDFKit fn returned a Promise too.
+ *
+ * A one-page invoice — nearly all of them — is rendered exactly as it always
+ * was, in a single pass. When it spills over, the document is rendered again
+ * with page numbers and a "Continued on next page.." footer, and its LAST page
+ * once more without that footer (Chromium keeps the real page number when you
+ * ask it for one page range), so the note only ever promises a page that
+ * exists. Costs two extra renders, and only for invoices that need them.
  */
 async function generateSalesInvoiceHtmlPDF(invoiceData, cfg, saleType, invoiceNo, invoiceDate) {
   const view = buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDate);
   const tpl = getInvoiceTemplate('sales-invoice', cfg);
-  const html = tpl.render(view);
-  return htmlToPdf(html);
+  const plain = await htmlToPdf(tpl.render(view));
+
+  const { pdfPageCount, dropLastPage, mergePdfs } = require('./merge-pdf');
+  let pages;
+  try { pages = await pdfPageCount(plain); }
+  catch (_) { return plain; }        // unreadable page count — ship the plain render
+  if (pages <= 1) return plain;
+
+  // Paged layout: `paged` swaps the template's in-flow per-page gutter for a
+  // real @page margin of the same purpose — which is ALSO what reserves the
+  // header/footer space, since CSS page margins override the print call's (the
+  // matching marginTop/marginBottom below are sent so the two can't disagree).
+  const pagedHtml = tpl.render({ ...view, paged: true });
+  const printOpts = {
+    header: PAGE_NO_HEADER,
+    marginTop: PAGE_MARGIN_TOP_PT,
+    marginBottom: PAGE_MARGIN_BOTTOM_PT,
+  };
+  const withNote = await htmlToPdf(pagedHtml, { ...printOpts, footer: CONTINUED_FOOTER });
+  // Re-measure: the margins change how much fits per page, so the paged render
+  // can come out a page longer — or, for an invoice that only just spilled,
+  // back down to one page, in which case the plain render is the right answer.
+  const pagedCount = await pdfPageCount(withNote);
+  if (pagedCount <= 1) return plain;
+  const head = await dropLastPage(withNote);
+  const last = await htmlToPdf(pagedHtml, { ...printOpts, pageRanges: String(pagedCount) });
+  return head ? mergePdfs([head, last]) : last;
 }
 
 // Bulk: invoices = [{ invoiceData, saleType, invoiceNo, invoiceDate }].
