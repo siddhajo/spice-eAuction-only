@@ -1710,12 +1710,16 @@ const qu=q.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');let html=ts.map((
 function pickTrader(t){selT=t;document.getElementById('le-res').style.display='none';document.getElementById('le-sw').style.display='none';
 var loc=[t.ppla,t.pin].filter(Boolean).join(', ');
 var cr=(t.cr||'').trim();
-// Auto-grade (same rule as the dealer classification / isDealerSeller):
-// cr starts with GSTIN AND the SBL (aadhar) is present → Grade 2 (dealer);
-// anything else → Grade 1 (planter). Still overridable before saving.
-var grade=(cr.toUpperCase().startsWith('GSTIN') && String(t.aadhar||'').trim()!=='')?'2':'1';
+// Auto-grade: cr starts with GSTIN → Grade 2 (dealer), anything else →
+// Grade 1 (planter). Still overridable before saving. The SBL (aadhar) is NOT
+// part of the test — see the matching comment in public/index.html leSelectSeller:
+// grading on the GSTIN alone keeps lot entry on the same rule the purchase
+// invoice and debit-note eligibility use. A missing SBL is flagged separately
+// by the 'GSTIN, no SBL' validation warning.
+var grade=cr.toUpperCase().startsWith('GSTIN')?'2':'1';
 document.getElementById('le-tc').innerHTML='<div class="tc"><div class="ti"><div class="tn">'+t.name+'</div><div class="td">'+loc+(cr?' — '+cr:'')+'</div></div><button class="tx" onclick="clearTrader()">&#x2715;</button></div>';document.getElementById('le-tc').style.display='block';
 document.getElementById('le-grade').value=grade;
+document.getElementById('le-grade').dataset.ruleGrade=grade;
 cacheTrader(t);
 fetchSellerTemplate(t.id);
 loadSellerBookings(t.id);
@@ -2505,7 +2509,7 @@ function _incrementCrptStr(prev){
   var padded=next.length>=num.length?next:next.padStart(num.length,'0');
   return prefix+padded;
 }
-function resetForm(){selT=null;selectedLots=[];lastSavedLot=null;document.getElementById('le-recent').innerHTML='';document.getElementById('le-name').value='';document.getElementById('le-grade').value='1';document.getElementById('le-bags').value='';document.getElementById('le-litre').value=cfgDefaultLitre||'';document.getElementById('le-qty').value='';document.getElementById('le-gross').value='';var wgR=document.getElementById('le-weight-gunny');if(wgR)wgR.value='';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';if(document.getElementById('le-moisture'))document.getElementById('le-moisture').value='';var crptEl3=document.getElementById('le-crpt');if(crptEl3)crptEl3.value='';seedCropReceipt();var rpEl3=document.getElementById('le-reserved-price');if(rpEl3)rpEl3.value='';var immR=document.getElementById('le-immediate-payment');if(immR)immR.checked=false;var resR=document.getElementById('le-reserved');if(resR)resR.checked=false;reserveMulti=false;var rhR=document.getElementById('le-reserve-hint');if(rhR)rhR.style.display='none';document.getElementById('le-lot-err').style.display='none';document.getElementById('le-res').style.display='none';document.getElementById('le-tc').style.display='none';document.getElementById('le-bank').style.display='none';document.getElementById('le-bank-form').style.display='none';document.getElementById('le-sw').style.display='block';hideSellerBookings();showLotGrid();renderLotGrid();selectNextAvailableLot();document.getElementById('le-scroll').scrollTop=0}
+function resetForm(){selT=null;selectedLots=[];lastSavedLot=null;document.getElementById('le-recent').innerHTML='';document.getElementById('le-name').value='';document.getElementById('le-grade').value='1';delete document.getElementById('le-grade').dataset.ruleGrade;document.getElementById('le-bags').value='';document.getElementById('le-litre').value=cfgDefaultLitre||'';document.getElementById('le-qty').value='';document.getElementById('le-gross').value='';var wgR=document.getElementById('le-weight-gunny');if(wgR)wgR.value='';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';if(document.getElementById('le-moisture'))document.getElementById('le-moisture').value='';var crptEl3=document.getElementById('le-crpt');if(crptEl3)crptEl3.value='';seedCropReceipt();var rpEl3=document.getElementById('le-reserved-price');if(rpEl3)rpEl3.value='';var immR=document.getElementById('le-immediate-payment');if(immR)immR.checked=false;var resR=document.getElementById('le-reserved');if(resR)resR.checked=false;reserveMulti=false;var rhR=document.getElementById('le-reserve-hint');if(rhR)rhR.style.display='none';document.getElementById('le-lot-err').style.display='none';document.getElementById('le-res').style.display='none';document.getElementById('le-tc').style.display='none';document.getElementById('le-bank').style.display='none';document.getElementById('le-bank-form').style.display='none';document.getElementById('le-sw').style.display='block';hideSellerBookings();showLotGrid();renderLotGrid();selectNextAvailableLot();document.getElementById('le-scroll').scrollTop=0}
 
 // ── MY LOTS (by branch) ──
 async function loadMyLots(){if(!aid)return;try{const r=await fetch(B+'/api/lots?auction_id='+aid+'&branch='+encodeURIComponent(br),{headers:ah()});const d=await r.json();allMyLots=d.lots||[];const stats=d.stats||{};document.getElementById('ml-cnt').textContent=stats.lotCount||0;document.getElementById('ml-bags').textContent=stats.totalBags||0;document.getElementById('ml-qty').textContent=(stats.totalQty||0).toFixed(3);document.getElementById('ml-search').value='';renderMyLots(allMyLots)}catch(e){}}
@@ -2606,7 +2610,7 @@ function closeEdit(){document.getElementById('edit-modal').classList.remove('sho
 function editSellerMode(){document.getElementById('ed-seller-card').style.display='none';document.getElementById('ed-seller-search').style.display='block';document.getElementById('ed-seller-input').value='';document.getElementById('ed-seller-input').focus()}
 let edStm;
 function searchEditSeller(q){clearTimeout(edStm);var el=document.getElementById('ed-seller-res');if(q.length<2){el.style.display='none';return}edStm=setTimeout(async function(){try{var r=await fetch(B+'/api/traders?q='+encodeURIComponent(q),{headers:ah()});var d=await r.json();var ts=Array.isArray(d)?d:(d.traders||[]);var qu=q.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');el.innerHTML=ts.map(function(t,i){var h=(t.name||'').replace(new RegExp('('+qu+')','gi'),'<mark>$1</mark>');var loc=[t.ppla,t.pin].filter(Boolean).join(', ');var info=[t.cr,(t.pan?'PAN - '+t.pan:''),t.tel].filter(Boolean).join(' | ');return'<div class="si" data-idx="'+i+'"><div class="sn">'+h+'</div><div class="sd" style="margin-top:3px;padding:5px 9px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;line-height:1.7;word-break:break-word">'+fmtSellerDetail(t)+'</div></div>'}).join('')||'<div style="padding:10px;color:var(--text3);font-size:12px">No sellers found</div>';applySellerDetailPref(el);el.style.display='block';el._traders=ts;el.querySelectorAll('.si').forEach(function(item){item.onclick=function(){pickEditSeller(el._traders[parseInt(this.dataset.idx)])}})}catch(e){}},200)}
-function pickEditSeller(t){editTraderId=t.id;editLotBankId=null;document.getElementById('ed-seller-name').textContent=t.name;document.getElementById('ed-seller-card').style.display='flex';document.getElementById('ed-seller-search').style.display='none';document.getElementById('ed-seller-res').style.display='none';var cr=(t.cr||'').trim();var grade=(cr.toUpperCase().startsWith('GSTIN') && String(t.aadhar||'').trim()!=='')?'2':'1';document.getElementById('ed-grade').value=grade;loadEditBanks(t.id)}
+function pickEditSeller(t){editTraderId=t.id;editLotBankId=null;document.getElementById('ed-seller-name').textContent=t.name;document.getElementById('ed-seller-card').style.display='flex';document.getElementById('ed-seller-search').style.display='none';document.getElementById('ed-seller-res').style.display='none';var cr=(t.cr||'').trim();var grade=cr.toUpperCase().startsWith('GSTIN')?'2':'1';document.getElementById('ed-grade').value=grade;loadEditBanks(t.id)}
 
 async function loadEditBanks(traderId){
   try{
@@ -2793,6 +2797,7 @@ function clearEntryForm(){
   document.getElementById('le-lot-err').style.display='none';
   document.getElementById('le-name').value='';
   document.getElementById('le-grade').value='1';
+  delete document.getElementById('le-grade').dataset.ruleGrade;
   document.getElementById('le-bags').value='';
   document.getElementById('le-litre').value=cfgDefaultLitre||'';
   document.getElementById('le-qty').value='';
@@ -2900,7 +2905,19 @@ async function fetchSellerTemplate(traderId) {
     if (!r.ok) return;
     var d = await r.json();
     if (d.lastLot) {
-      if (d.lastLot.grade) document.getElementById('le-grade').value = d.lastLot.grade;
+      // Carry the seller's last grade forward, but ONLY as a refinement of what
+      // the seller's own CR field already settled: the grade box is free text
+      // here and the real scale is 1 / 1A / 2 / 2A, so recalling "1A" over a
+      // computed "1" saves retyping the letter. It must NOT flip the party
+      // digit — this fetch resolves after pickTrader has set the rule's answer,
+      // so an unguarded assignment silently overwrote it, and whatever grade a
+      // seller was first given then propagated to every later lot forever,
+      // regardless of their master record. That is what put two GSTIN sellers
+      // on Grade 1 and three on Grade 2 with identical master rows.
+      var el = document.getElementById('le-grade');
+      var last = String(d.lastLot.grade || '').trim();
+      var rule = String(el.dataset.ruleGrade || '').trim();
+      if (last && (!rule || last.charAt(0) === rule.charAt(0))) el.value = last;
       // Litre weight intentionally NOT auto-populated — same seller may bring different grades.
     }
     sellerBanks = d.banks || [];

@@ -16490,6 +16490,12 @@ const AMR_SECTIONS = [
                                          note: 'xlsx' },
     { label: 'Collection Report CSV',    href: id => `/api/exports/collection/${id}?format=xlsx`,
                                          note: 'xlsx' },
+    // The Auction Report over the same documents the Collection tile lists —
+    // one row per invoice instead of one per buyer code. Label and href stay
+    // on one line: the Auction Downloads harvester matches them together, and
+    // a wrapped tile reads to it as unwired (tests/auction-downloads.http.js).
+    { label: 'Auction Report (Invoice-wise) CSV', href: id => `/api/exports/trade_report_invoice/${id}?format=xlsx`,
+                                         note: 'xlsx' },
     { label: 'Form C CSV',               href: id => `/api/spice-board-reports/form_c/export?format=xlsx&auctionId=${id}`,
                                          note: 'xlsx' },
     // Form D / Form D1 / Arrivals / Traders List all had PDF tiles but no
@@ -16617,6 +16623,7 @@ const AMR_SECTIONS = [
     { label: 'Form D',                   href: id => `/api/spice-board-reports/form_d/export?format=pdf&auctionId=${id}` },
     { label: 'Form D1',                  href: id => `/api/spice-board-reports/form_d1/export?format=pdf&auctionId=${id}` },
     { label: 'Auction Report',           href: id => `/api/exports/trade_report/${id}?format=pdf` },
+    { label: 'Auction Report (Invoice-wise)', href: id => `/api/exports/trade_report_invoice/${id}?format=pdf` },
     { label: 'Collection Report',        href: id => `/api/exports/collection/${id}?format=pdf` },
     // DISBURSEMENT REGISTER, dealer side — the printed sheet the office reads
     // down. Same rows and figures as the CSV-section tile above; only the
@@ -17428,11 +17435,14 @@ function lotSellerIssues(l){
   const cleanedCr = (cr.slice(0,5).toUpperCase() === 'GSTIN')
     ? cr.slice(5).replace(/^[.\s:-]+/, '').trim()
     : cr;
-  // Dealer = GSTIN prefix AND an SBL (stored in aadhar) — the Dashboard /
-  // Current-Auction rule (calculations.isDealerSeller), which is also what
-  // validateAuctionLots uses for the two grade-mismatch warnings.
-  const isDealer = cr.toUpperCase().startsWith('GSTIN') && s(l.aadhar) !== '';
   const isG2 = s(l.grade) === '2';
+  // Does `cr` actually hold a valid GSTIN? Strips the storage prefixes and
+  // matches the whole 15-char shape, exactly as calculations.gstinStateCode()
+  // does — a partial "starts with two digits" test would read a CR number like
+  // "CR.21472/19" as a GSTIN. This is the GSTIN-only dealer rule (hasValidGstin)
+  // that the purchase invoice, bill of supply and dealer lists all run on.
+  const hasGstin = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(
+    cr.toUpperCase().replace(/^(GSTIN[.\s]?|CR[.\s])/, '').trim());
   const out = [];
   // The server calls this warning "No seller". Sitting right beside a seller
   // NAME, that label reads as a contradiction, so it is captioned by what it
@@ -17449,10 +17459,18 @@ function lotSellerIssues(l){
   if (l.trader_id && Number(l.has_bank) === 0) {
     out.push({ label:'No bank', sev:'warn', tip:'Seller has no bank account on file — the payment cannot be routed.' });
   }
-  // The 25% cap figure is derived from the seller, so it is always right. These
-  // two flag a stale lots.grade, which still drives the debit-note commission.
-  if (isG2 && !isDealer) out.push({ label:'G2, not a dealer', sev:'warn', tip:'Lot is Grade 2 but the seller has no GSTIN + SBL — its commission will still be debited.' });
-  if (!isG2 && isDealer) out.push({ label:'Dealer, not G2',   sev:'warn', tip:'Seller has GSTIN + SBL but the lot is not Grade 2 — its commission is missing from the debit note.' });
+  // These two flag a stale lots.grade, which drives the debit-note commission.
+  // Keyed to hasGstin, the rule Lot Entry grades on — see the matching pair in
+  // validateAuctionLots. The 25% cap figure is derived live from the seller, so
+  // it is unaffected either way.
+  if (isG2 && !hasGstin) out.push({ label:'G2, not a dealer', sev:'warn', tip:'Lot is Grade 2 but the seller has no GSTIN — its commission will still be debited.' });
+  if (!isG2 && hasGstin) out.push({ label:'Dealer, not G2',   sev:'warn', tip:'Seller has a GSTIN but the lot is not Grade 2 — its commission is missing from the dealer debit note.' });
+  // GSTIN on file but the SBL blank. The SBL no longer decides the grade, but
+  // it is still required by the Spices Board e-Auction CSV and by the
+  // dashboard's Grade-2 / 25%-cap band (which reads dealerSql(cr, aadhar)), so
+  // a blank one leaves this seller out of both. Mirrors the server's
+  // 'gstin_no_sbl' warning in validateAuctionLots.
+  if (hasGstin && !s(l.aadhar)) out.push({ label:'GSTIN, no SBL', sev:'warn', tip:'Seller has a GSTIN but no SBL on file — they are missing from the Spices Board return and from the Grade-2 / 25% cap. Fill the SBL on the seller master.' });
   return out.sort((a,b) => (a.sev === b.sev ? 0 : a.sev === 'error' ? -1 : 1));
 }
 // The two badges raised against the LOT's link to a seller rather than
@@ -20570,14 +20588,20 @@ function lePickSeller(t){
   // Render the bank picker — only shown if seller has 1+ bank rows.
   // Default selection: the bank flagged is_default, else first bank.
   leRenderBankPicker(t);
-  // Auto-select grade from the seller — SAME rule as the Grade-2/dealer
-  // classification used for invoices & reports (isDealerSeller): cr starts
-  // with GSTIN AND the SBL (stored in aadhar) is present → Grade 2 (dealer);
-  // anything else → Grade 1 (planter). Still overridable — the operator can
-  // change the dropdown before saving.
+  // Auto-select grade from the seller: cr starts with GSTIN → Grade 2
+  // (dealer), anything else → Grade 1 (planter). Still overridable — the
+  // operator can change the dropdown before saving.
+  //
+  // The SBL (stored in aadhar) is deliberately NOT part of this test. It used
+  // to be (the isDealerSeller rule), which left a GSTIN seller with a blank
+  // SBL stamped Grade 1 — so they drew an RD purchase invoice under the
+  // GSTIN-only rule, while the dealer debit note, which reads the stored
+  // grade, skipped them and the lot-wise planter DN billed them instead.
+  // Grading on the GSTIN alone puts lot entry on the SAME rule the purchase
+  // invoice, bill of supply and debit-note eligibility all already use.
+  // A missing SBL is still flagged, by the 'GSTIN, no SBL' warning.
   const cr  = String(t.cr || '').trim().toUpperCase();
-  const sbl = String(t.aadhar || '').trim();
-  const grade = (cr.startsWith('GSTIN') && sbl !== '') ? '2' : '1';
+  const grade = cr.startsWith('GSTIN') ? '2' : '1';
   document.getElementById('le-grade').value = grade;
   // Auto-suggest the next lot number for the current branch + auction.
   // Keeps fields blank in edit mode so we don't clobber an existing lot
@@ -39139,7 +39163,7 @@ const EXP_LABELS={lot_slip:'Lot Slip',lot_slip_after:'Lot Slip (After)',
   lot_buyer:'Lot Buyer',lot_name:'Lot Name',lot_payment:'Lot Payment',checklist:'Checklist',
   tharai_list:'Tharai List',
   price_list_before:'Price List (Before)',price_list:'Price List',bank_payment_before:'Bank Payment (Before)',bank_payment:'Bank Payment (RTGS/NEFT)',
-  pooler_register:'Pooler Register',full_file:'Full File',collection:'Collection',trade_report:'Auction Report',dealer_list:'Dealer List',
+  pooler_register:'Pooler Register',full_file:'Full File',collection:'Collection',trade_report:'Auction Report',trade_report_invoice:'Auction Report (Invoice-wise)',dealer_list:'Dealer List',
   dealer_list_party_wise:'Dealer List (Party-wise)',pooler_list_consolidated:'Pooler List consolidated (Party-wise)',planter_list:'Planter List (Grade 1)',
   payment:'Payment Summary',payment_party_wise:'Payment Summary - Party-wise',
   dealer_invoice_csv:'Dealer Invoice CSV',
