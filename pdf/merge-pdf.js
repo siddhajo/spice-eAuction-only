@@ -20,4 +20,27 @@ async function mergePdfs(buffers) {
   return Buffer.from(bytes);
 }
 
-module.exports = { mergePdfs };
+// How many pages a rendered PDF came out to. Used by the sales-invoice renderer
+// to tell a one-page invoice (print it as-is) from one that spilled over and
+// needs page numbers and a "continued" note.
+async function pdfPageCount(buf) {
+  if (!buf || !buf.length) return 0;
+  const doc = await PDFDocument.load(buf);
+  return doc.getPageCount();
+}
+
+// All pages of `buf` EXCEPT the last, as a new PDF Buffer. The last page of a
+// multi-page document is re-rendered on its own (without the "continued on next
+// page" footer) and appended to this — see generateSalesInvoiceHtmlPDF.
+// Returns null when there is nothing left after dropping the last page.
+async function dropLastPage(buf) {
+  const src = await PDFDocument.load(buf);
+  const keep = src.getPageIndices().slice(0, -1);
+  if (!keep.length) return null;
+  const out = await PDFDocument.create();
+  const pages = await out.copyPages(src, keep);
+  for (const pg of pages) out.addPage(pg);
+  return Buffer.from(await out.save());
+}
+
+module.exports = { mergePdfs, pdfPageCount, dropLastPage };
