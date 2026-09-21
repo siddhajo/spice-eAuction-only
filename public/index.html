@@ -32896,11 +32896,28 @@ async function peSaveAndCalculate(){
 // the --spice-* tokens, which DO flip, would put light text on a white panel.
 // The --spice-* rule applies to surfaces that actually go dark, not to these.
 //
-// ROWS, NOT STEPS. Sales invoices contribute one row per sale type when the
-// trade has buyers of more than one, because each sale type is its own global
-// series. Every other module is a single row. `_txRows` is that flattened
-// list; `stepId` says which pipeline step a row belongs to.
+// ROWS, NOT STEPS. Sales invoices contribute one row PER SALE TYPE — Local and
+// Inter-state are separate statutory series, each with its own running number,
+// so each gets its own tick, its own start number and its own range. Never one
+// merged "Sales Invoices" row: a single number box over two series is exactly
+// the ambiguity this sheet exists to remove. The split holds even when the
+// trade has buyers of only one type, so the row always names which series it
+// will consume rather than leaving the operator to infer it.
+// Every other module is a single row. `_txRows` is that flattened list;
+// `stepId` says which pipeline step a row belongs to.
 let _txPlan = null, _txRows = [];
+
+// Sale types, spelled out. The sheet shows "Local (L)" / "Inter-state (I)"
+// rather than the bare code — the code alone is a legend the operator has to
+// know by heart, on the one screen where picking the wrong series misnumbers a
+// tax document. Covers all five types the app stores (TALLY_SALE_LABELS is
+// deliberately Tally's three).
+const TX_SALE_NAMES = { L: 'Local', I: 'Inter-state', E: 'Export', W: 'Withdrawn', N: 'N/A' };
+const txSaleLabel = (s) => {
+  const code = String(s || '').trim().toUpperCase();
+  if (!code) return '';
+  return TX_SALE_NAMES[code] ? `${TX_SALE_NAMES[code]} (${code})` : `sale ${code}`;
+};
 
 async function openTxRunModal(){
   const aid = _pe.aid || document.getElementById('pe-auction')?.value;
@@ -32936,21 +32953,36 @@ function _txBuildRows(){
     // Sales invoices carry the document type in their label: a one-click run
     // raises DRAFTS, and an operator who thinks they just issued tax invoices
     // would be badly misled.
-    const kind = st.id === 'invoices' && st.docType === 'proforma' ? ' (proforma draft)' : '';
-    if (st.id === 'invoices' && (st.series_detail || []).length > 1) {
-      for (const d of st.series_detail) {
+    const kind = st.id === 'invoices' && st.docType === 'proforma' ? ' · proforma draft' : '';
+    // One row per series the run would touch — Local and Inter-state are
+    // separate options, ticked and numbered independently. `series_detail` is
+    // the server's own per-sale-type breakdown, so the counts and the safe
+    // start numbers on these rows are the ones that series will really use.
+    if (st.id === 'invoices' && (st.series_detail || []).length) {
+      // Listed in the app's usual sale-type order (Local first), not the
+      // server's alphabetical one, so the row the operator reaches for most
+      // is the row on top. Anything unrecognised sorts after the known five.
+      const ORDER = ['L', 'I', 'E', 'W', 'N'];
+      const rank = (x) => { const i = ORDER.indexOf(String(x || '').toUpperCase()); return i < 0 ? ORDER.length : i; };
+      const detail = st.series_detail.slice().sort((a, b) => rank(a.sale) - rank(b.sale));
+      for (const d of detail) {
         rows.push({ stepId: st.id, key: `invoices:${d.sale}`,
-                    label: `${st.label} — sale ${d.sale}${kind}`,
+                    label: `${st.label} — ${txSaleLabel(d.sale)}${kind}`,
                     saleType: d.sale, pending: d.count, start: d.nextSafe,
+                    // What a run of this row would actually write: the
+                    // outstanding items PLUS any drafts it would replace. The
+                    // Count column answers "what does the trade still owe";
+                    // this answers "how many numbers does ticking it consume".
+                    runSize: d.total != null ? d.total : (d.count || 0) + (d.refreshes || 0),
                     enabled: st.enabled, disabledReason: st.disabledReason,
                     generated: st.generated, basis: st.basis,
-                    docType: st.docType, refreshes: st.refreshes || 0, after: st.after });
+                    docType: st.docType, refreshes: d.refreshes || 0, after: st.after });
       }
       continue;
     }
     rows.push({ stepId: st.id, key: st.id, label: st.label + kind,
                 saleType: (st.series_detail || [])[0]?.sale || '',
-                pending: st.pending, start: st.suggestedStart,
+                pending: st.pending, runSize: st.pending, start: st.suggestedStart,
                 enabled: st.enabled, disabledReason: st.disabledReason,
                 generated: st.generated, basis: st.basis,
                 docType: st.docType, refreshes: st.refreshes || 0,
@@ -32989,17 +33021,24 @@ function _txRenderSheet(){
     // That row starts UNTICKED so a draft already sent out is never silently
     // renumbered; the operator opts in.
     const redraft = r.refreshes > 0;
+    const runSize = r.runSize != null ? r.runSize : r.pending;
+    // Runnable = it would write something. A row whose only work is replacing
+    // drafts has pending 0 but is still runnable, so it stays tickable (off by
+    // default) rather than being greyed out.
+    const idle = runSize === 0;
     const on = !off && r.pending > 0 && !redraft;
     const note = off ? `<span style="color:var(--text3)">${esc(r.disabledReason || 'Unavailable')}</span>`
-      : r.pending === 0 ? '<span style="color:var(--text3)">Nothing to generate</span>'
-      : redraft ? `<span style="color:#9A3412">⚠ ${r.refreshes} buyer(s) already hold a draft — re-running replaces it with a new number</span>`
+      : idle ? '<span style="color:var(--text3)">Nothing to generate</span>'
+      : r.pending === 0 && redraft
+        ? `<span style="color:var(--text3)">Nothing outstanding — ${r.refreshes} draft${r.refreshes === 1 ? '' : 's'} already raised; ticking re-issues ${r.refreshes === 1 ? 'it' : 'them'}, and re-running replaces it with a new number.</span>`
+      : redraft ? `<span style="color:#9A3412">⚠ ${r.refreshes} of these already hold a draft — re-running replaces it with a new number</span>`
       : r.basis === 'predicted' ? `<span style="color:var(--text3)">estimated — ${esc(r.after.join(', '))} runs first</span>`
       : r.mode === 'lot' ? '<span style="color:var(--text3)">lot-wise</span>' : '';
-    const range = (!off && r.pending > 0 && r.start)
-      ? `#${r.start}–#${r.start + r.pending - 1}` : '';
+    const range = (!off && runSize > 0 && r.start)
+      ? `#${r.start}–#${r.start + runSize - 1}` : '';
     return `<tr data-txrow="${i}" style="border-bottom:1px solid var(--border)">
       <td style="padding:8px 6px;text-align:center">
-        <input type="checkbox" class="tx-tick" data-txtick="${i}" ${on ? 'checked' : ''} ${off || r.pending === 0 ? 'disabled' : ''}
+        <input type="checkbox" class="tx-tick" data-txtick="${i}" ${on ? 'checked' : ''} ${off || idle ? 'disabled' : ''}
                onchange="_txSyncGo()" style="width:16px;height:16px;cursor:pointer">
       </td>
       <td style="padding:8px 6px"><div style="font-weight:600">${esc(r.label)}</div>
@@ -33007,7 +33046,7 @@ function _txRenderSheet(){
       <td style="padding:8px 6px;text-align:center;font-weight:700">${off ? '—' : r.pending}</td>
       <td style="padding:8px 6px;text-align:center">
         <input type="number" min="1" class="tx-start" data-txstart="${i}" value="${off ? '' : (r.start ?? '')}"
-               ${off || r.pending === 0 ? 'disabled' : ''} oninput="_txSyncRange(${i})"
+               ${off || idle ? 'disabled' : ''} oninput="_txSyncRange(${i})"
                style="width:96px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:center">
       </td>
       <td style="padding:8px 6px;font-size:12px;color:var(--text2);white-space:nowrap" id="tx-range-${i}">${range}</td>
@@ -33039,8 +33078,9 @@ function _txSyncRange(i){
   const n = parseInt((inp?.value || '').trim(), 10);
   const cell = document.getElementById(`tx-range-${i}`);
   if (!cell) return;
-  cell.textContent = (Number.isFinite(n) && n > 0 && r.pending > 0)
-    ? `#${n}–#${n + r.pending - 1}` : '';
+  const runSize = r.runSize != null ? r.runSize : r.pending;
+  cell.textContent = (Number.isFinite(n) && n > 0 && runSize > 0)
+    ? `#${n}–#${n + runSize - 1}` : '';
   _txSyncGo();
 }
 
@@ -33091,7 +33131,7 @@ async function runTxPipeline(){
 function _txRenderResult(d){
   const ICON = { done: '✅', nothing_eligible: '➖', blocked: '⛔', disabled: '🚫', failed: '❌' };
   const rows = (d.steps || []).map(s => {
-    const label = esc(s.label) + (s.saleType ? ` — sale ${esc(s.saleType)}` : '');
+    const label = esc(s.label) + (s.saleType ? ` — ${esc(txSaleLabel(s.saleType))}` : '');
     let detail;
     if (s.status === 'done') {
       detail = `<b>${s.generated}</b> created` +

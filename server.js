@@ -5835,7 +5835,9 @@ function _remainingPartiesSql(db, docType, auctionId) {
                 FROM lots l
                 LEFT JOIN purchases p
                   ON p.auction_id = l.auction_id
-                 AND UPPER(TRIM(p.name)) = UPPER(TRIM(l.name))
+                 -- Joined on the LOT ALONE: see doneKey(). A seller renamed
+                 -- after the invoice was raised must not make the lot pending
+                 -- again.
                  AND TRIM(COALESCE(p.lot_no,'')) = TRIM(l.lot_no)
                WHERE l.auction_id = ?
                  AND l.amount > 0
@@ -5875,7 +5877,9 @@ function _remainingPartiesSql(db, docType, auctionId) {
                 FROM lots l
                 LEFT JOIN bills b
                   ON TRIM(b.ano) = TRIM(?)
-                 AND UPPER(TRIM(b.name)) = UPPER(TRIM(l.name))
+                 -- Joined on the LOT ALONE: see doneKey(). A seller renamed
+                 -- after the bill was raised must not make the lot pending
+                 -- again.
                  AND TRIM(COALESCE(b.lot_no,'')) = TRIM(l.lot_no)
                WHERE l.auction_id = ?
                  AND l.amount > 0
@@ -6165,18 +6169,47 @@ app.get('/api/auctions/:id/transaction-plan', requireView, (req, res) => {
       // the highest number in EVERY series the run will touch.
       const plan = invoiceGenerationPlan(db, cfg, aid, { saleType: '', splitInvoices: true });
       const sales = Array.from(new Set(plan.items.map(i => i.sale))).sort();
-      out.pending = plan.items.length;
+      // WHAT COUNTS AS DONE ON THE SALES SIDE.
+      //
+      // A lot stays "un-invoiced" (lots.invo empty) until the ORIGINAL tax
+      // invoice is raised, because that is what `invo` means. But a one-click
+      // run in proforma mode raises DRAFTS — it stamps lots.proforma_invo and
+      // leaves `invo` alone. So a buyer whose draft was raised an hour ago was
+      // still being reported as pending work, and the sheet showed a full
+      // count on a trade where every draft already exists.
+      //
+      // Pending is therefore "items this run would raise a draft for that do
+      // NOT already hold one". The ones that do are counted separately as
+      // `refreshes`: a proforma re-run DELETES the buyer's un-raised draft and
+      // writes a fresh one at a new number, so they are re-issuable work the
+      // operator has to opt into, not work the trade still owes.
+      //
+      // In ORIGINAL mode nothing changes: an existing draft does not make the
+      // original any less outstanding, so every item is pending.
+      const isDone = (i) => isProforma && i.hasDraft;
+      out.pending = plan.items.filter(i => !isDone(i)).length;
       out.basis = 'actual';
-      // Drafts do not top up: a proforma re-run DELETES the buyer's un-raised
-      // draft and writes a fresh one at the new number. Harmless on a first
-      // run, but it renumbers a draft the buyer may already be holding — so
-      // the count is reported and the sheet makes the operator opt in.
-      out.refreshes = isProforma ? plan.items.filter(i => i.hasDraft).length : 0;
-      out.series_detail = sales.map(sale => ({
-        sale,
-        count: plan.items.filter(i => i.sale === sale).length,
-        nextSafe: docNo.nextSafe(db, 'invoices', { sale, isProforma }),
-      }));
+      out.refreshes = plan.items.filter(isDone).length;
+      // Per-series, not per-step: the sheet raises one row per sale type, and a
+      // draft warning that counted every series' drafts would make the
+      // Inter-state row cry wolf over drafts held only by Local buyers — and
+      // start it unticked for no reason. `out.refreshes` above stays the
+      // trade-wide total for any caller that wants the whole picture.
+      //
+      // `total` is what a run of that row would actually WRITE — the pending
+      // items plus the drafts it would replace — which is the span of numbers
+      // it consumes. Count and range are different questions and the sheet
+      // needs both: "2 still to raise" can still mean "#75–#83 consumed".
+      out.series_detail = sales.map(sale => {
+        const mine = plan.items.filter(i => i.sale === sale);
+        return {
+          sale,
+          count: mine.filter(i => !isDone(i)).length,
+          refreshes: mine.filter(isDone).length,
+          total: mine.length,
+          nextSafe: docNo.nextSafe(db, 'invoices', { sale, isProforma }),
+        };
+      });
       out.suggestedStart = out.series_detail.length
         ? Math.max.apply(null, out.series_detail.map(d => d.nextSafe))
         : docNo.nextSafe(db, 'invoices', { sale: 'L', isProforma });
@@ -12287,7 +12320,17 @@ app.get('/api/purchases/eligible-lots/:auctionId', requireView, (req, res) => {
 //                seller-wise has never had a top-up guard)
 //   pending      rows minus alreadyDone; `pending.length` is the claim width
 function doneKey(name, lotNo) {
-  return `${String(name || '').trim().toUpperCase()}|${String(lotNo || '').trim()}`;
+  const lot = String(lotNo || '').trim();
+  // LOT-WISE (a lot number is given): the LOT is the identity, not the seller
+  // whose name happens to sit on it today. Keying on the name as well meant a
+  // later correction to that name — "SIRAJUDEEN" → "SIRAJUDEEN S" — unmatched
+  // the bill from its lot: the run sheet kept offering an already-billed lot as
+  // pending, and a re-run would have written a SECOND document for it. A trade
+  // cannot hold the same lot number twice, so the number alone identifies the
+  // row, which settles namesake sellers in the same stroke.
+  if (lot) return `LOT|${lot}`;
+  // SELLER-WISE: one document per party, so the party IS the key.
+  return `NAME|${String(name || '').trim().toUpperCase()}`;
 }
 
 function purchaseGenerationTargets(db, auctionId) {
