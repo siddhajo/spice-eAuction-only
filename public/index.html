@@ -1968,6 +1968,15 @@ body:not([data-feat-print-selected-purchase="1"]) .feat-print-selected-purchase{
    modal. Both are tagged with .feat-bulk-set-buyer-code so this single
    rule hides them when flag_bulk_set_buyer_code is OFF. */
 body:not([data-feat-bulk-set-buyer-code="1"]) .feat-bulk-set-buyer-code{display:none !important}
+/* Dummy Seller Details — Lots tab toolbar button + the dummy-details
+   modal, both tagged .feat-lot-dummy-details, hidden when
+   flag_lot_dummy_details is OFF. */
+body:not([data-feat-lot-dummy-details="1"]) .feat-lot-dummy-details{display:none !important}
+/* Generate All Documents — Price Entry's one-click run: the toolbar button
+   and its review-sheet modal, both tagged .feat-generate-all-docs. Default
+   ON (see flag_generate_all_docs), so the attribute is only ever '0' when an
+   admin has deliberately switched the feature off. */
+body:not([data-feat-generate-all-docs="1"]) .feat-generate-all-docs{display:none !important}
 /* Bills of Supply — Purchase Bill vs Commission Bill (flag_bos_purchase_bill).
    When ON (Purchase Bill) the "🖨 Print Selected" toolbar button + the
    per-row PDF icon show, and the commission surfaces hide. When OFF
@@ -6265,7 +6274,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                  number for the operator to confirm — the numbers are the one
                  thing a batch must never guess. Same permission + price-check
                  gates as the per-tab Generate All buttons it replaces. -->
-            <button id="pe-gen-all" class="needs-invoice-write needs-price-check btn btn-g" style="height:38px;padding:0 16px;font-weight:600" onclick="openTxRunModal()" title="Generate sales invoices, purchase invoices, bills of supply and debit notes for this trade in one run">⚡ Generate All Documents</button>
+            <button id="pe-gen-all" class="needs-invoice-write needs-price-check feat-generate-all-docs btn btn-g" style="height:38px;padding:0 16px;font-weight:600" onclick="openTxRunModal()" title="Generate sales invoices, purchase invoices, bills of supply and debit notes for this trade in one run">⚡ Generate All Documents</button>
           </div>
         </div>
         <div style="font-size:12.5px;color:var(--text2);margin-top:8px;line-height:1.5">
@@ -6472,6 +6481,13 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                  the button to appear: .needs-admin (role) AND
                  .feat-lot-lock (flag) AND a non-empty selection. -->
             <button id="lot-bulk-unlock" class="needs-admin feat-lot-lock btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#1f2937;font-weight:600;border:1px solid #b8860b" onclick="lotBulkUnlock()" title="Unlock the ticked lots — admin only. Lots become editable again.">🔓 Unlock Selected <span id="lot-bulk-unlock-count" style="margin-left:4px;background:rgba(0,0,0,.18);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
+            <!-- Dummy Details: writes a stand-in seller name / phone / CR /
+                 grade onto the ticked lots. Those values print INSTEAD of
+                 the real ones on the e-Auction (Spices Board) CSV and Form C,
+                 and nowhere else — every invoice, bill, payment and other
+                 report keeps using the real seller. Gated by
+                 flag_lot_dummy_details (.feat-lot-dummy-details). -->
+            <button id="lot-bulk-dummy" data-bulk-action="lot" class="needs-lot-write feat-lot-dummy-details btn" style="display:none;height:38px;padding:0 14px;background:#7c3aed;color:#fff;font-weight:600" onclick="openLotDummyDetailsModal()" title="Set a dummy seller name / phone / CR / grade on the ticked lots — used only by the e-Auction (Spices Board) CSV and Form C">🎭 Dummy Details <span data-bulk-count="lot" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <button id="lot-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('lot')">🗑 Delete Selected <span id="lot-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <!-- Untick All: clears the current lot selection in one click.
                  Appears (via data-bulk-action) only while at least one lot is
@@ -9048,6 +9064,53 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
   </div>
 </div></div>
 
+<!-- Dummy Seller Details (Lots tab). Writes dummy_name / dummy_tel /
+     dummy_cr / dummy_grade onto the ticked lots. These substitute for the
+     real seller name, phone, CR/GSTIN and grade on the e-Auction (Spices
+     Board) CSV and on Form C, and on NOTHING else — invoices, bills,
+     purchases, debit notes, payments, Tally and every other report keep
+     reading the real columns.
+
+     Blank-means-unchanged: only the fields the operator actually typed are
+     sent, so filling in just the phone can't wipe a name set in an earlier
+     pass. "Clear All" is the explicit way to drop the dummy identity. -->
+<div class="modal-bg feat-lot-dummy-details" id="lot-dummy-modal"><div class="modal" style="max-width:560px">
+  <h2>Dummy Details on <span id="ldd-count">0</span> lot(s)</h2>
+  <p style="font-size:12px;color:var(--text2);margin:0 0 14px;line-height:1.5">
+    These stand-in values print <b>instead of</b> the lot's real seller name, phone, CR/GSTIN and grade on the
+    <b>e-Auction (Spices Board) CSV</b> and <b>Form C</b> only. Invoices, bills, payments and every other report
+    keep using the real seller.<br>
+    Leave a field <b>blank to leave it unchanged</b>. Use <b>Clear All</b> to remove the dummy identity entirely.
+  </p>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <div class="fg" style="margin:0">
+      <label>Dummy Name</label>
+      <input id="ldd-name" maxlength="100" autocomplete="off" placeholder="e.g. A KUMAR">
+    </div>
+    <div class="fg" style="margin:0">
+      <label>Dummy Phone</label>
+      <input id="ldd-tel" maxlength="100" autocomplete="off" placeholder="e.g. 9876543210">
+    </div>
+    <div class="fg" style="margin:0">
+      <label>Dummy CR / GSTIN</label>
+      <input id="ldd-cr" maxlength="100" autocomplete="off" placeholder="e.g. CR.1234">
+    </div>
+    <div class="fg" style="margin:0">
+      <label>Dummy Grade</label>
+      <input id="ldd-grade" maxlength="100" autocomplete="off" placeholder="e.g. 1" list="ldd-grade-options">
+      <datalist id="ldd-grade-options">
+        <option value="1"></option><option value="1A"></option>
+        <option value="2"></option><option value="2A"></option>
+      </datalist>
+    </div>
+  </div>
+  <div class="actions">
+    <button class="btn btn-o" onclick="hideModal('lot-dummy-modal')">Cancel</button>
+    <button class="btn btn-o" id="ldd-clear" style="color:#c0392b;border-color:#c0392b" onclick="clearLotDummyDetails()">Clear All</button>
+    <button class="btn btn-g" id="ldd-apply" onclick="applyLotDummyDetails()">Apply</button>
+  </div>
+</div></div>
+
 <!-- Price Entry → Import Prices from Excel. Two-step flow: (1) pick a file,
      which is parsed server-side into headers + rows; (2) map the sheet's
      columns onto the fields we need (Lot No + Price, optionally Buyer Code)
@@ -9242,7 +9305,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
      than one — each series draws its own numbers rather than interleaving
      through one counter (the same reason the Generate-All modal dropped its
      "all sale types" option). -->
-<div class="modal-bg" id="tx-run-modal"><div class="modal has-x" style="max-width:760px">
+<div class="modal-bg feat-generate-all-docs" id="tx-run-modal"><div class="modal has-x" style="max-width:760px">
   <h2 style="margin-bottom:2px">⚡ Generate All Documents</h2>
   <p id="tx-run-sub" style="font-size:12px;color:var(--text2);margin-bottom:12px"></p>
   <div id="tx-run-body"></div>
@@ -11526,6 +11589,15 @@ async function applyFeatureFlags() {
   // "👤 Set Buyer Code" button + its modal only when an admin
   // explicitly enables it.
   document.body.setAttribute('data-feat-bulk-set-buyer-code', cfg && on(cfg.flag_bulk_set_buyer_code) ? '1' : '0');
+  // Dummy Seller Details (Lots tab toolbar). Default OFF — surfaces the
+  // "🎭 Dummy Details" button + its modal only when an admin enables it.
+  document.body.setAttribute('data-feat-lot-dummy-details', cfg && on(cfg.flag_lot_dummy_details) ? '1' : '0');
+  // Generate All Documents (Price Entry). Default ON when the setting is
+  // missing — it pre-dates its own flag, so an older install that has never
+  // seen the key must keep the button it already had.
+  const genAllRaw = cfg ? cfg.flag_generate_all_docs : undefined;
+  document.body.setAttribute('data-feat-generate-all-docs',
+    (genAllRaw === undefined || genAllRaw === null) ? '1' : (on(genAllRaw) ? '1' : '0'));
   // Bills of Supply — Purchase Bill vs Commission Bill. Default ON
   // (Purchase Bill) when the setting is missing (older installs that
   // pre-date the flag) so the standard purchase-bill/PDF surfaces show out
@@ -25399,7 +25471,7 @@ const SET_FIELD_GROUPS = {
       keys:['flag_lotwise_purchase','flag_lotwise_bills','flag_lotwise_dn_planter','flag_bos_purchase_bill','flag_proforma_invoice'] },
     { title:'Lots, Trade & Screens', icon:'📦', hint:'Controls on the lot/trade screens — locks, validation, price checks, and optional screens or buttons.',
       keys:['flag_price_check','flag_lot_lock','flag_reserved_price','flag_immediate_reserve','flag_lot_validation',
-            'flag_bulk_set_buyer_code','flag_price_list_mapping','flag_print_selected_purchase','flag_lotwise_payments',
+            'flag_bulk_set_buyer_code','flag_lot_dummy_details','flag_generate_all_docs','flag_price_list_mapping','flag_print_selected_purchase','flag_lotwise_payments',
             'flag_auction_desk','flag_auction_manager','flag_insights','flag_pertrade_breakdown'] },
     { title:'Auction Sheets', icon:'📋', hint:'Optional columns and grouping on the post-auction verification sheets — which columns the Checklist prints, and which code the Tharai List totals its buyers by.',
       keys:['checklist_show_dummy','checklist_show_buyer','tharai_dummy_code'] },
@@ -28481,6 +28553,11 @@ const BulkActions = (function(){
         _hideBulkBtn(el);
         return;
       }
+      if (el.classList.contains('feat-lot-dummy-details') &&
+          document.body.getAttribute('data-feat-lot-dummy-details') !== '1') {
+        _hideBulkBtn(el);
+        return;
+      }
       (ticked > 0 ? _showBulkBtn : _hideBulkBtn)(el);
     });
     document.querySelectorAll(`[data-bulk-count="${id}"]`).forEach(el => {
@@ -31459,7 +31536,21 @@ async function loadLots(opts){
     // entry. Sits right after Lot so the two identifiers read together.
     { key:'crpt', label:'Crop Receipt', sort:'text',
       render:(l)=> l.crpt ? esc(l.crpt) : '<span style="color:var(--text3)">—</span>' },
-    { key:'name', label:'Name', sort:'text' },
+    // A 🎭 badge marks a lot carrying dummy seller details — without it
+    // there is no way to tell from the table that the e-Auction CSV and
+    // Form C will print something other than this Name. Only rendered
+    // while flag_lot_dummy_details is ON, matching the toolbar button.
+    { key:'name', label:'Name', sort:'text',
+      render:(l)=> {
+        const real = esc(l.name || '');
+        if (document.body.getAttribute('data-feat-lot-dummy-details') !== '1') return real;
+        const d = [l.dummy_name, l.dummy_tel, l.dummy_cr, l.dummy_grade]
+          .map(v => String(v == null ? '' : v).trim());
+        if (!d.some(Boolean)) return real;
+        const labels = ['Name', 'Phone', 'CR', 'Grade'];
+        const tip = d.map((v, i) => v ? `${labels[i]}: ${v}` : null).filter(Boolean).join(' · ');
+        return real + ` <span style="font-size:9px;font-weight:800;background:#7c3aed;color:#fff;padding:1px 5px;border-radius:8px;vertical-align:middle;letter-spacing:.3px" title="${esc('Dummy details (e-Auction CSV / Form C only) — ' + tip)}">\u{1F3AD} DUMMY</span>`;
+      } },
     { key:'buyer', label:'Buyer', sort:'text',
       render:(l)=> sameGstin(l.cr, l.buyer_gstin)
         ? `<span title="Seller and Buyer have the same GSTIN" style="color:#dc2626;font-weight:700">⚠ ${esc(l.buyer||'')}</span>`
@@ -31958,6 +32049,104 @@ async function lotBulkUnlock(){
     if (typeof loadLots === 'function') loadLots({ keepPage: true });
   } catch (e) { showError(e); }
 }
+// ── Dummy Seller Details (Lots tab) ──────────────────────────────────
+// Sets a stand-in name / phone / CR / grade on the ticked lots. The four
+// values are read by exactly two surfaces — the e-Auction (Spices Board)
+// CSV and Form C — where they print instead of the real seller's. Nothing
+// else in the app looks at them, so this can't move a rupee.
+//
+// Blank = leave that field as it is. The modal therefore sends ONLY the
+// fields the operator actually typed into, which is what lets a second
+// pass set (say) just the phone without erasing a name set in the first.
+// Clearing is a separate, explicit action (Clear All).
+const _lddFields = [
+  ['ldd-name',  'dummy_name'],
+  ['ldd-tel',   'dummy_tel'],
+  ['ldd-cr',    'dummy_cr'],
+  ['ldd-grade', 'dummy_grade'],
+];
+let _lddLotIds = [];   // lot ids captured at modal open
+
+async function openLotDummyDetailsModal(){
+  _lddLotIds = (typeof BulkActions !== 'undefined' && BulkActions.getTickedIds)
+    ? BulkActions.getTickedIds('lot')
+    : [];
+  if (!_lddLotIds.length) { toast('Tick one or more lots first'); return; }
+  document.getElementById('ldd-count').textContent = _lddLotIds.length;
+  for (const [elId] of _lddFields) {
+    const el = document.getElementById(elId);
+    if (!el) continue;
+    // Stash the authored placeholder on first open — the prefill below
+    // replaces it with "(mixed…)" for a mixed selection, and without this
+    // the next open would inherit that instead of the example value.
+    if (el.dataset.ph === undefined) el.dataset.ph = el.placeholder || '';
+    el.value = '';
+    el.placeholder = el.dataset.ph;
+  }
+  showModal('lot-dummy-modal');
+  setTimeout(() => { document.getElementById('ldd-name')?.focus(); }, 50);
+  // Prefill from the current rows so re-opening on the same selection shows
+  // what is already set rather than four empty boxes. Only a value shared by
+  // EVERY ticked lot is prefilled; a mixed selection leaves the box blank
+  // (and blank means "leave unchanged", so the mix survives untouched).
+  const aid = document.getElementById('lot-auction')?.value;
+  if (!aid) return;
+  try {
+    const all = await j(`/api/lots/${aid}?_=${Date.now()}`);
+    const picked = new Set(_lddLotIds);
+    const rows = (Array.isArray(all) ? all : []).filter(l => picked.has(Number(l.id)));
+    if (!rows.length) return;
+    // Selection may have changed while the fetch was in flight.
+    if (_lddLotIds.length !== picked.size) return;
+    for (const [elId, field] of _lddFields) {
+      const el = document.getElementById(elId);
+      if (!el || el.value) continue;   // don't clobber typing during the fetch
+      const vals = new Set(rows.map(l => String(l[field] == null ? '' : l[field]).trim()));
+      if (vals.size === 1) {
+        const only = [...vals][0];
+        if (only) el.value = only;
+      } else {
+        el.placeholder = '(mixed — blank leaves each lot as-is)';
+      }
+    }
+  } catch (_) { /* prefill is a convenience; the modal still works without it */ }
+}
+
+async function _lddSend(body, btn, doneMsg){
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Applying…'; }
+  try {
+    const r = await j('/api/lots/dummy-details/bulk', { method: 'POST', body: JSON.stringify(body) });
+    const skipped = Number(r.skippedLocked) || 0;
+    toast(`${doneMsg} on ${r.updated || 0} lot(s)` + (skipped ? ` · ${skipped} locked lot(s) skipped` : ''));
+    hideModal('lot-dummy-modal');
+    if (typeof loadLots === 'function') loadLots({ keepPage: true });
+  } catch (e) { showError(e); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = label; } }
+}
+
+async function applyLotDummyDetails(){
+  if (!_lddLotIds.length) { toast('No lots selected'); return; }
+  const body = { ids: _lddLotIds };
+  for (const [elId, field] of _lddFields) {
+    const v = (document.getElementById(elId)?.value || '').trim();
+    if (v) body[field] = v;        // blank → key omitted → field untouched
+  }
+  if (Object.keys(body).length === 1) {
+    toast('Type at least one dummy value, or use Clear All');
+    return;
+  }
+  await _lddSend(body, document.getElementById('ldd-apply'), 'Dummy details set');
+}
+
+async function clearLotDummyDetails(){
+  if (!_lddLotIds.length) { toast('No lots selected'); return; }
+  const n = _lddLotIds.length;
+  if (!confirm(`Clear the dummy name, phone, CR and grade on ${n} lot${n === 1 ? '' : 's'}?\n\nThe e-Auction CSV and Form C will go back to printing the real seller details.`)) return;
+  const btn = document.getElementById('ldd-clear');
+  await _lddSend({ ids: _lddLotIds, clear: true }, btn, 'Dummy details cleared');
+}
+
 // Per-row handlers — wired from the lock/unlock icons in the Lots-tab
 // Actions column. Each is a one-row variant of the bulk endpoint so
 // the audit trail and locking rules stay identical.
