@@ -2186,11 +2186,15 @@ async function litreWeightXlsx(db, opts) {
   ws.columns = [
     { width: 10 }, { width: 14 }, { width: 12 }, { width: 14 }, { width: 18 }, { width: 34 },
   ];
-  // No metaLines here — the auction/date live in the green band below, and
+  // No metaLines here — the auction/date live in the meta band below, and
   // printing them in both places just repeats the same line twice.
   writeXlsxCompanyHeader(wb, ws, getCompanyHeader(db), { colCount: 6, title: 'Litre Weight' });
 
-  // Meta band — mirrors the PDF's green strip so both formats read alike.
+  // Meta band — mirrors the PDF's strip so both formats read alike. Filled with
+  // the house header grey (E8E4DD), the same tint the Auction Report,
+  // Collection and the rest use for a header strip; this sheet was the only
+  // one wearing the Spice-Board green, which read as a different family of
+  // document rather than as this app's own report.
   const band = ws.addRow([`Auction No: ${ctx.auction.ano}`, null, null,
                           `Date: ${fmtDateDMY(ctx.auction.date)}`, null, 'Page: 1']);
   ws.mergeCells(`A${band.number}:C${band.number}`);
@@ -2198,7 +2202,7 @@ async function litreWeightXlsx(db, opts) {
   band.height = 20;
   band.font = { bold: true, size: 11 };
   band.eachCell(c => {
-    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFA9D08E' } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E4DD' } };
     c.alignment = { horizontal: 'center', vertical: 'middle' };
     c.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
   });
@@ -2271,7 +2275,11 @@ async function litreWeightPdf(db, opts) {
   const heads  = ['LOT', 'QTY', 'LITRE(GM)', 'RATE', 'CARDAMOM COST', 'TRADE NAME'];
 
   const ROW_H = 15, HEAD_H = 17, BAND_H = 20;
-  const BAND_FILL = '#A9D08E';          // Spice-Board green band
+  // House header grey — the same tint every other report strip uses (see the
+  // Auction Report / Collection headers in auction-reports.js). Was the
+  // Spice-Board green, which made this one sheet look like a different
+  // document family.
+  const BAND_FILL = '#E8E4DD';
   let y = 0, pageNum = 0, bodyTop = 0;
 
   const cell = (txt, i, top, opts2) => {
@@ -2298,7 +2306,7 @@ async function litreWeightPdf(db, opts) {
        .text(addr, m, y + 26, { width: usableW, align: 'center', lineBreak: false });
     y += 52;
 
-    // Green meta band: Auction No | Date | Page, three equal cells.
+    // Meta band: Auction No | Date | Page, three equal cells.
     doc.rect(m, y, usableW, BAND_H).fillAndStroke(BAND_FILL, '#000');
     const third = usableW / 3;
     doc.fillColor('#000').font('Helvetica-Bold').fontSize(10.5);

@@ -1968,15 +1968,13 @@ body:not([data-feat-print-selected-purchase="1"]) .feat-print-selected-purchase{
    modal. Both are tagged with .feat-bulk-set-buyer-code so this single
    rule hides them when flag_bulk_set_buyer_code is OFF. */
 body:not([data-feat-bulk-set-buyer-code="1"]) .feat-bulk-set-buyer-code{display:none !important}
-/* Dummy Seller Details — Lots tab toolbar button + the dummy-details
-   modal, both tagged .feat-lot-dummy-details, hidden when
-   flag_lot_dummy_details is OFF. */
-body:not([data-feat-lot-dummy-details="1"]) .feat-lot-dummy-details{display:none !important}
-/* Generate All Documents — Price Entry's one-click run: the toolbar button
-   and its review-sheet modal, both tagged .feat-generate-all-docs. Default
-   ON (see flag_generate_all_docs), so the attribute is only ever '0' when an
-   admin has deliberately switched the feature off. */
-body:not([data-feat-generate-all-docs="1"]) .feat-generate-all-docs{display:none !important}
+/* .feat-lot-dummy-details and .feat-generate-all-docs are NOT declared here
+   with their siblings above: both sit on buttons that also carry a
+   .needs-*-write permission class, and the permission rules further down
+   restore those to display:flex with !important at a HIGHER specificity
+   (body[data-perm-…] .btn.needs-…) — which would win, leaving a switched-off
+   feature's button on screen. Their rules live immediately after that block
+   instead; search "FEATURE GATES (after the permission rules)". */
 /* Bills of Supply — Purchase Bill vs Commission Bill (flag_bos_purchase_bill).
    When ON (Purchase Bill) the "🖨 Print Selected" toolbar button + the
    per-row PDF icon show, and the commission surfaces hide. When OFF
@@ -2650,6 +2648,9 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 .t-indigo {--from:#6366F1;--to:#3730A3;--glow:rgba(99,102,241,.28)}
 .t-pink   {--from:#EC4899;--to:#9D174D;--glow:rgba(236,72,153,.28)}
 .t-rose   {--from:#F43F5E;--to:#9F1239;--glow:rgba(244,63,94,.28)}
+/* Muted by design — the Not-Auctioned tile reports an absence (lots nobody
+   bid for), so it sits quieter than the outcomes around it. */
+.t-slate  {--from:#64748B;--to:#334155;--glow:rgba(100,116,139,.28)}
 .hub-ico{
   width:44px;height:44px;border-radius:12px;flex-shrink:0;
   background:rgba(255,255,255,.22);backdrop-filter:blur(6px);
@@ -2670,8 +2671,12 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
    stranding Parties alone on a second row with a card-sized hole beside
    it. An explicit track count cannot do that — it steps down at widths we
    choose instead. */
+/* Six tiles: Lots · Sold · Withdrawn · Not Auctioned · Value · Parties.
+   Three per row rather than six across — six 1fr columns squeeze Value
+   (₹20,70,44,630 at auction scale) past the point its own size-stepping can
+   rescue. */
 #hub-kpi{
-  display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:20px}
+  display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px}
 @media(max-width:1240px){#hub-kpi{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:820px) {#hub-kpi{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:560px) {#hub-kpi{grid-template-columns:1fr}}
@@ -4000,6 +4005,21 @@ body[data-perm-user-manage="1"] .topbar-showall{display:inline-flex !important}
    children overflow. Mirrors the .btn fix above but for plain divs. */
 body[data-perm-delete-all="1"]     div.needs-delete-all,
 body[data-perm-user-manage="1"]    div.needs-user-manage{display:block !important}
+
+/* ── FEATURE GATES (after the permission rules) ──────────────────────
+   A feature flag must be able to hide a button that a permission rule
+   above has just unhidden. Those rules are
+   `body[data-perm-x="1"] .btn.needs-x{display:flex!important}` —
+   specificity (0,3,1) — so a gate written as
+   `body:not([data-feat-y="1"]) .feat-y` (0,2,1) loses outright, and even an
+   equal-specificity gate loses on document order if it appears earlier in
+   the file. Declaring the gates HERE, below the permission block and with
+   the same .btn-qualified specificity, makes the flag win the tie. New
+   feature gates on permission-gated controls belong in this block. */
+body:not([data-feat-lot-dummy-details="1"]) .feat-lot-dummy-details,
+body:not([data-feat-lot-dummy-details="1"]) .btn.feat-lot-dummy-details,
+body:not([data-feat-generate-all-docs="1"]) .feat-generate-all-docs,
+body:not([data-feat-generate-all-docs="1"]) .btn.feat-generate-all-docs{display:none !important}
 
 /* Lot-entry-only role: hide every sidebar item except Lot Entry.
    Sidebar items get scoped this way so a lot_entry user can't even
@@ -13485,25 +13505,33 @@ function hubFillBranchFilter(){
 
 // KPI figures computed from the lots CURRENTLY LOADED — which is the
 // server-filtered set, so searching or picking a branch narrows the strip
-// and the totals row with the table. Mirrors computeTradeKpi's rules
-// exactly: sold = amount > 0, withdrawn = everything else, average price
-// is value ÷ weight rather than the mean of per-lot prices.
+// and the totals row with the table. Mirrors computeTradeKpi's rules exactly:
+// a lot is WITHDRAWN when its code is WD, SOLD when it is not withdrawn and
+// carries money, and NOT AUCTIONED otherwise — three outcomes, because a lot
+// nobody bid for and a lot the office pulled from the sale are different
+// facts. Average price is value ÷ weight, not the mean of per-lot prices.
 function hubKpiFromLots(rows){
-  const k = { allocatedLots: rows.length, soldLots: 0, withdrawnLots: 0,
-              soldWeight: 0, wdWeight: 0, soldBags: 0, wdBags: 0,
+  const k = { allocatedLots: rows.length, soldLots: 0, withdrawnLots: 0, notAuctionedLots: 0,
+              soldWeight: 0, wdWeight: 0, naWeight: 0, soldBags: 0, wdBags: 0, naBags: 0,
               totalQty: 0, totalBags: 0, totalValue: 0,
               sellers: 0, buyers: 0, minPrice: 0, maxPrice: 0, avgPrice: 0 };
   const sellers = new Set(), buyers = new Set();
   let min = null, max = null;
   for (const l of rows) {
     const qty = Number(l.qty) || 0, amt = Number(l.amount) || 0, price = Number(l.price) || 0;
+    // Withdrawal zeroes the amount, so WD has to be tested FIRST or every
+    // withdrawn lot lands in the not-auctioned bucket. Same order as
+    // getTradeStats() in auction-reports.js.
+    const isWD = String(l.code || '').trim().toUpperCase() === 'WD';
     k.totalQty += qty; k.totalBags += Number(l.bags) || 0; k.totalValue += amt;
-    if (amt > 0) {
+    if (isWD) {
+      k.withdrawnLots++; k.wdWeight += qty; k.wdBags += Number(l.bags) || 0;
+    } else if (amt > 0) {
       k.soldLots++; k.soldWeight += qty; k.soldBags += Number(l.bags) || 0;
       if (String(l.buyer || '').trim()) buyers.add(String(l.buyer).trim());
       if (price > 0) { min = min === null ? price : Math.min(min, price);
                        max = max === null ? price : Math.max(max, price); }
-    } else { k.withdrawnLots++; k.wdWeight += qty; k.wdBags += Number(l.bags) || 0; }
+    } else { k.notAuctionedLots++; k.naWeight += qty; k.naBags += Number(l.bags) || 0; }
     const sid = l.trader_id != null && l.trader_id !== '' ? 't' + l.trader_id
                                                           : String(l.name || '').trim();
     if (sid) sellers.add(sid);
@@ -13835,9 +13863,19 @@ function renderHubKpi(kpi){
       ['Qty (kg)', fmtI(kpi.soldWeight, 3)],
       ['Amount',   rs(kpi.totalValue)],
     ]) +
+    // Two tiles, not one. "Withdrawn" is a deliberate act — the lot was pulled
+    // from the sale — while "Not Auctioned" is a lot that simply never sold.
+    // They used to share a tile, which made every unsold lot read as a
+    // withdrawal and put the Auction Desk at odds with the Auction Report
+    // footer, where WITHDRAWN and NOT e-AUCTIONED have always been separate.
     cell(fmtI(kpi.withdrawnLots), 'Withdrawn', '↩️', 'amber', 'wd', [
       ['Bags',     fmtI(kpi.wdBags)],
       ['Qty (kg)', fmtI(kpi.wdWeight, 3)],
+      ['Amount',   rs(0)],
+    ]) +
+    cell(fmtI(kpi.notAuctionedLots || 0), 'Not Auctioned', '⏸️', 'slate', 'na', [
+      ['Bags',     fmtI(kpi.naBags || 0)],
+      ['Qty (kg)', fmtI(kpi.naWeight || 0, 3)],
       ['Amount',   rs(0)],
     ]) +
     cell(rs(kpi.totalValue), 'Value', '💰', 'rose', 'value', [

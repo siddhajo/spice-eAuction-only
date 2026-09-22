@@ -6325,6 +6325,19 @@ app.post('/api/auctions/:id/generate-transactions', requireInvoiceWrite, async (
   const ano = String(auction.ano);
   const cfg = getSettingsFlat(db);
 
+  // Feature switch (flag_generate_all_docs). The button is hidden client-side
+  // when it's off, but this run commits invoices, purchases, bills and debit
+  // notes across a whole trade — far too much to leave reachable behind a
+  // CSS rule. Absent key = ON: the feature pre-dates its own flag, so an
+  // install that has never seen the key keeps working as it always did.
+  const _genAllRaw = cfg.flag_generate_all_docs;
+  const genAllOn = (_genAllRaw === undefined || _genAllRaw === null || _genAllRaw === '')
+    ? true
+    : (String(_genAllRaw).toLowerCase() === 'true' || _genAllRaw === true);
+  if (!genAllOn) {
+    return res.status(403).json({ error: 'Generate All Documents is switched off for this install. Raise the documents from each tab instead, or enable it in Settings → Features & Access.' });
+  }
+
   const want = (req.body && req.body.steps) || {};
   const chosen = PIPELINE.filter(st => want[st.id] != null);
   if (!chosen.length) {
@@ -6559,22 +6572,34 @@ app.get('/api/auctions/:id/stage', requireView, (req, res) => {
 // /api/reports/trade-summary: that route runs seven aggregate queries to
 // build branch/seller/user/hourly/grade breakdowns the header never shows.
 // This is one query using the same predicates trade-summary uses for its
-// aggregates (`amount > 0` = sold, `COALESCE(amount,0) <= 0` = withdrawn),
-// so the two always agree on the numbers they share.
+// aggregates, so the two always agree on the numbers they share.
+//
+// THREE outcomes, not two. Lot state lives in `code`: 'WD' = withdrawn (pulled
+// before the sale), a real buyer code = sold, blank = never auctioned. This
+// used to call everything with no money "withdrawn", so a trade that simply
+// had lots left unsold reported them as withdrawals — two different facts, and
+// only one of them is something the office did on purpose. The split follows
+// getTradeStats() in auction-reports.js, which the Auction Report footer has
+// always printed as WITHDRAWN vs NOT e-AUCTIONED; withdrawal zeroes the
+// amount, so WD is pulled out FIRST and the rest falls to not-auctioned.
+const SQL_IS_WD = `UPPER(TRIM(COALESCE(code,''))) = 'WD'`;
 function computeTradeKpi(db, aid) {
   const r = db.get(
     `SELECT COUNT(*)                                            AS allocated_lots,
-            COALESCE(SUM(CASE WHEN amount > 0 THEN 1 ELSE 0 END), 0)          AS sold_lots,
-            COALESCE(SUM(CASE WHEN COALESCE(amount,0) <= 0 THEN 1 ELSE 0 END), 0) AS withdrawn_lots,
-            COALESCE(SUM(CASE WHEN amount > 0 THEN qty ELSE 0 END), 0)        AS sold_weight,
-            COALESCE(SUM(CASE WHEN COALESCE(amount,0) <= 0 THEN qty ELSE 0 END), 0) AS wd_weight,
-            COALESCE(SUM(CASE WHEN amount > 0 THEN bags ELSE 0 END), 0)             AS sold_bags,
-            COALESCE(SUM(CASE WHEN COALESCE(amount,0) <= 0 THEN bags ELSE 0 END), 0) AS wd_bags,
+            COALESCE(SUM(CASE WHEN NOT ${SQL_IS_WD} AND amount > 0 THEN 1 ELSE 0 END), 0) AS sold_lots,
+            COALESCE(SUM(CASE WHEN ${SQL_IS_WD} THEN 1 ELSE 0 END), 0)                    AS withdrawn_lots,
+            COALESCE(SUM(CASE WHEN NOT ${SQL_IS_WD} AND COALESCE(amount,0) <= 0 THEN 1 ELSE 0 END), 0) AS not_lots,
+            COALESCE(SUM(CASE WHEN NOT ${SQL_IS_WD} AND amount > 0 THEN qty ELSE 0 END), 0)  AS sold_weight,
+            COALESCE(SUM(CASE WHEN ${SQL_IS_WD} THEN qty ELSE 0 END), 0)                     AS wd_weight,
+            COALESCE(SUM(CASE WHEN NOT ${SQL_IS_WD} AND COALESCE(amount,0) <= 0 THEN qty ELSE 0 END), 0) AS na_weight,
+            COALESCE(SUM(CASE WHEN NOT ${SQL_IS_WD} AND amount > 0 THEN bags ELSE 0 END), 0) AS sold_bags,
+            COALESCE(SUM(CASE WHEN ${SQL_IS_WD} THEN bags ELSE 0 END), 0)                    AS wd_bags,
+            COALESCE(SUM(CASE WHEN NOT ${SQL_IS_WD} AND COALESCE(amount,0) <= 0 THEN bags ELSE 0 END), 0) AS na_bags,
             COALESCE(SUM(qty), 0)                               AS total_qty,
             -- Price spread across SOLD lots only: an unsold lot has price 0
             -- and would drag the minimum to nothing.
-            MIN(CASE WHEN amount > 0 THEN price END)            AS min_price,
-            MAX(CASE WHEN amount > 0 THEN price END)            AS max_price,
+            MIN(CASE WHEN NOT ${SQL_IS_WD} AND amount > 0 THEN price END) AS min_price,
+            MAX(CASE WHEN NOT ${SQL_IS_WD} AND amount > 0 THEN price END) AS max_price,
             COALESCE(SUM(bags), 0)                              AS total_bags,
             COALESCE(SUM(amount), 0)                            AS total_value,
             -- Sellers by trader_id, falling back to the denormalised name —
@@ -6584,7 +6609,7 @@ function computeTradeKpi(db, aid) {
             COUNT(DISTINCT COALESCE(trader_id, NULLIF(name, '')))  AS sellers,
             -- NULLIF keeps un-set buyers out of the count; without it every
             -- unsold trade reports one buyer (the empty string).
-            COUNT(DISTINCT CASE WHEN amount > 0 THEN NULLIF(buyer, '') END) AS buyers
+            COUNT(DISTINCT CASE WHEN NOT ${SQL_IS_WD} AND amount > 0 THEN NULLIF(buyer, '') END) AS buyers
        FROM lots WHERE auction_id = ?`, [aid]
   ) || {};
   const soldWeight = Number(r.sold_weight) || 0;
@@ -6602,6 +6627,11 @@ function computeTradeKpi(db, aid) {
     buyers:         Number(r.buyers)          || 0,
     soldBags:       Number(r.sold_bags)       || 0,
     wdBags:         Number(r.wd_bags)         || 0,
+    // Lots that were never auctioned — no buyer, no withdrawal. Reported
+    // apart from the withdrawals they used to be counted with.
+    notAuctionedLots: Number(r.not_lots)      || 0,
+    naWeight:       Number(r.na_weight)       || 0,
+    naBags:         Number(r.na_bags)         || 0,
     // Withdrawn lots carry no amount by definition — kept explicit so the
     // breakdown reads ₹0.00 rather than a blank.
     wdValue:        0,

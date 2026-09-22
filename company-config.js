@@ -315,6 +315,16 @@ const DEFAULTS = [
   // then prints INSTEAD of the real values on the e-Auction (Spices Board)
   // CSV and Form C — and on nothing else. Default OFF.
   { key: 'flag_lot_dummy_details', value: 'false', category: 'flags', label: 'Dummy Seller Details (Lots tab → e-Auction CSV / Form C)', type: 'boolean' },
+  // Price Entry's "⚡ Generate All Documents" — the one-click run that raises
+  // sales invoices, purchases, bills of supply and debit notes for a whole
+  // trade in a single pass. Default ON, unlike the other button flags here:
+  // this one is NOT a new surface being introduced behind a switch, it is
+  // existing behaviour being made optional, and defaulting it OFF would take
+  // a working button away from every install on upgrade. Sites that want
+  // documents raised per-tab instead turn it off. The switch also gates the
+  // POST that does the work — see generate-transactions in server.js —
+  // because a flag that only hides a button leaves the batch runner reachable.
+  { key: 'flag_generate_all_docs', value: 'true', category: 'flags', label: 'Generate All Documents (Price Entry one-click run)', type: 'boolean' },
   // Auction Manager — an optional screen of its own, surfaced in the sidebar
   // when ON and hidden entirely (via .feat-auction-manager) when OFF.
   // Default OFF so it only appears where an admin asks for it.

@@ -239,8 +239,12 @@ function cleanup() {
   let items = flatten(d);
   check('stage is 2 with lots but no prices', d.stage === 2, `stage ${d.stage}`);
   check('KPI counts the allocated lots', d.kpi && d.kpi.allocatedLots === 2, JSON.stringify(d.kpi));
-  check('KPI reports both lots withdrawn while unpriced',
-        d.kpi && d.kpi.soldLots === 0 && d.kpi.withdrawnLots === 2, JSON.stringify(d.kpi));
+  // Unpriced is NOT withdrawn. Withdrawn means the lot was pulled from the
+  // sale (code WD); a lot with no price yet was simply not auctioned, and the
+  // two are counted apart — the KPI used to call both "withdrawn".
+  check('KPI reports both unpriced lots as not auctioned, not withdrawn',
+        d.kpi && d.kpi.soldLots === 0 && d.kpi.withdrawnLots === 0
+             && d.kpi.notAuctionedLots === 2, JSON.stringify(d.kpi));
   // Both lots were created with a seller NAME and no trader_id — a plain
   // COUNT(DISTINCT trader_id) would call that zero sellers.
   check('KPI counts sellers that have no master link yet',
@@ -871,6 +875,38 @@ function cleanup() {
     TOKEN = ADMIN;
     const acat = await api('GET', '/api/documents/catalog?auctionId=' + aid);
     check('and so does an admin', acat.status === 200, String(acat.status));
+  }
+
+  // ── Withdrawn vs never auctioned ─────────────────────────────────
+  // Two different facts about a lot that made no money: the office PULLED it
+  // (code WD), or nobody bought it. The KPI counted both as withdrawn, so a
+  // trade with unsold lots reported withdrawals that never happened — and the
+  // Auction Desk disagreed with the Auction Report footer, which has always
+  // printed WITHDRAWN and NOT e-AUCTIONED as separate lines.
+  {
+    console.log('\n[kpi] withdrawn and not-auctioned are counted apart');
+    const a = await api('POST', '/api/auctions', { ano: '91', date: '2026-08-13', state: 'TAMIL NADU' });
+    const wid = a.d && (a.d.id || (a.d.auction && a.d.auction.id));
+    const mk = async (lot_no, name) => {
+      const r = await api('POST', '/api/lots',
+        { auction_id: wid, lot_no, name, qty: 100, grade: '1', bags: 8, crop: 'CARDAMOM' });
+      return r.d && (r.d.id || (r.d.lot && r.d.lot.id));
+    };
+    const pulled = await mk('401', 'PULLED PLANTER');
+    const unsold = await mk('402', 'UNSOLD PLANTER');
+    const soldId = await mk('403', 'SOLD PLANTER');
+    await api('PUT', `/api/lots/${pulled}`, { code: 'WD' });          // withdrawn
+    await api('PUT', `/api/lots/${soldId}`, { code: 'BX', buyer: 'BX', price: 400, amount: 40000 });
+    void unsold;                                                       // left as it is: never auctioned
+    const k = (await api('GET', `/api/documents/catalog?auctionId=${wid}`)).d.kpi;
+    check('the pulled lot is the only withdrawal',
+          k.withdrawnLots === 1 && k.wdBags === 8, JSON.stringify(k));
+    check('the lot nobody bought is not auctioned, not withdrawn',
+          k.notAuctionedLots === 1 && k.naBags === 8, JSON.stringify(k));
+    check('and the sold lot is untouched by either',
+          k.soldLots === 1 && k.totalValue === 40000, JSON.stringify(k));
+    check('the three buckets account for every lot',
+          k.soldLots + k.withdrawnLots + k.notAuctionedLots === k.allocatedLots, JSON.stringify(k));
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

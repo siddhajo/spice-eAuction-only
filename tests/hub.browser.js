@@ -162,10 +162,29 @@ const cleanup = () => {
         /32 lots · 2 sold/.test(lotsView.count), lotsView.count);
   // The KPI strip rides on the catalog fetch, which is a separate request
   // from the lots one — it lands a moment after the rows.
-  await page.waitForFunction(() => document.querySelectorAll('#hub-kpi .stat').length === 5,
+  await page.waitForFunction(() => document.querySelectorAll('#hub-kpi .stat').length === 6,
                              { timeout: 20000 }).catch(() => {});
   check('and the KPI strip is populated on this view too',
-        await page.evaluate(() => document.querySelectorAll('#hub-kpi .stat').length) === 5);
+        await page.evaluate(() => document.querySelectorAll('#hub-kpi .stat').length) === 6);
+  // WITHDRAWN and NOT AUCTIONED are separate tiles. This trade has 2 sold
+  // lots and 30 that were never auctioned, and NOTHING was withdrawn — the
+  // old strip counted all 30 as withdrawals, which is a different claim
+  // about what the office did.
+  const wdSplit = await page.evaluate(() => {
+    const pick = (kind) => {
+      const st = document.querySelector(`#hub-kpi .stat.k-${kind}`);
+      if (!st) return null;
+      return { label: st.querySelector('.l').textContent.trim(),
+               n: st.querySelector('.n').textContent.trim() };
+    };
+    return { wd: pick('wd'), na: pick('na') };
+  });
+  check('withdrawn counts only what was pulled from the sale — nothing here',
+        wdSplit.wd && wdSplit.wd.label === 'Withdrawn' && wdSplit.wd.n === '0',
+        JSON.stringify(wdSplit));
+  check('…and the 30 unsold lots are reported as Not Auctioned, apart from it',
+        wdSplit.na && wdSplit.na.label === 'Not Auctioned' && wdSplit.na.n === '30',
+        JSON.stringify(wdSplit));
 
   // Search runs server-side; give the debounce and the round trip time.
   await page.evaluate(() => {
@@ -350,14 +369,15 @@ const cleanup = () => {
         `${shape.tilesAtTop} rows`);
   check('each widget says how much of it is ready', /\d+ of \d+ ready/.test(shape.firstCount || ''),
         shape.firstCount);
-  check('the KPI strip is populated', shape.kpis === 5, `${shape.kpis} cards`);
+  check('the KPI strip is populated', shape.kpis === 6, `${shape.kpis} cards`);
   // Combined cards: each carries its own breakdown rather than the figure
-  // alone — Lots/Sold/Withdrawn by bags-qty-amount, Value by min-max-avg.
+  // alone — Lots/Sold/Withdrawn/Not Auctioned by bags-qty-amount, Value by
+  // min-max-avg.
   const meta = await page.evaluate(() => Array.from(document.querySelectorAll('#hub-kpi .stat'))
     .map(st => ({ label: st.querySelector('.l').textContent.trim(),
                   rows: st.querySelectorAll('.hub-meta .lbl').length })));
   check('every KPI card shows its breakdown',
-        meta.length === 5 && meta.every(m => m.rows >= 2), JSON.stringify(meta));
+        meta.length === 6 && meta.every(m => m.rows >= 2), JSON.stringify(meta));
   check('with Value broken down by min / max / avg',
         /Min ₹/.test(await page.evaluate(() =>
           document.querySelector('#hub-kpi .stat.t-rose .hub-meta')?.textContent || '')));
