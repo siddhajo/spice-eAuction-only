@@ -8994,6 +8994,50 @@ app.post('/api/lots/dummy-code/bulk', requireLotWrite, (req, res) => {
   res.json({ success: true, updated, skippedLocked, value });
 });
 
+// ── Bulk-set the DUMMY SELLER IDENTITY on many lots at once ──────────
+// Powers the Lots tab's "🎭 Dummy Details" modal. Writes up to four
+// fields — dummy_name / dummy_tel / dummy_cr / dummy_grade — which stand
+// in for the lot's real name / tel / cr / grade on exactly two surfaces:
+// the e-Auction (Spices Board) portal CSV and Form C. Nothing else in the
+// app reads them, so this can never disturb an invoice, a payment or a
+// tax figure — which is why, like the dummy-code endpoint above, it does
+// not clear the price-check / lot-verify gates.
+//
+// Field semantics (deliberately explicit rather than "blank = clear"):
+//   • a key ABSENT from the body     → that field is left untouched
+//   • a key present with a value     → written (trimmed, 100-char cap)
+//   • a key present with ''          → that one field is cleared
+//   • { clear: true }                → all four cleared, other keys ignored
+// The modal sends only the fields the operator actually typed in, so a
+// partial edit (e.g. phone only) can't silently wipe a name set earlier.
+const DUMMY_IDENTITY_FIELDS = ['dummy_name', 'dummy_tel', 'dummy_cr', 'dummy_grade'];
+app.post('/api/lots/dummy-details/bulk', requireLotWrite, (req, res) => {
+  const db = getDb();
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.map(x => parseInt(x, 10)).filter(Number.isFinite) : [];
+  if (!ids.length) return res.status(400).json({ error: 'No lot ids provided' });
+  const clearAll = req.body.clear === true || String(req.body.clear) === 'true';
+  const sets = [], vals = [], applied = {};
+  for (const f of DUMMY_IDENTITY_FIELDS) {
+    if (clearAll) {
+      sets.push(`${f} = ?`); vals.push(''); applied[f] = '';
+    } else if (req.body[f] !== undefined && req.body[f] !== null) {
+      const v = String(req.body[f]).trim().slice(0, 100);
+      sets.push(`${f} = ?`); vals.push(v); applied[f] = v;
+    }
+  }
+  if (!sets.length) return res.status(400).json({ error: 'Nothing to set — pass at least one dummy field, or clear:true' });
+  const lockOn = lockFeatureOn(db), admin = isAdmin(req);
+  let updated = 0, skippedLocked = 0;
+  for (const id of ids) {
+    const lot = db.get('SELECT id, locked_at FROM lots WHERE id = ?', [id]);
+    if (!lot) continue;
+    if (lot.locked_at && lockOn && !admin) { skippedLocked++; continue; }
+    db.run(`UPDATE lots SET ${sets.join(', ')} WHERE id = ?`, [...vals, id]);
+    updated++;
+  }
+  res.json({ success: true, updated, requested: ids.length, skippedLocked, applied, cleared: clearAll });
+});
+
 app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
   const { branch, name, buyer, grade, limit, offset, paginated, summary, search } = req.query;
   const db = getDb();

@@ -264,6 +264,110 @@ const stepOf = (d, id) => (d.steps || []).find(s => s.id === id);
         stepOf(p6, 'invoices').suggestedStart >= 1,
         JSON.stringify({ original: stepOf(p6, 'invoices').suggestedStart, draft: inv4.suggestedStart }));
 
+  // ══ "STILL PENDING" AFTER EVERYTHING WAS GENERATED ═════════════════
+  // Two ways the sheet used to claim outstanding work on a finished trade.
+  console.log('\n[H] A finished trade reports nothing pending');
+
+  // (1) PROFORMA. A draft stamps lots.proforma_invo and deliberately leaves
+  // lots.invo alone — `invo` means "the ORIGINAL was raised". The plan read
+  // `invo` to decide what was outstanding, so every buyer whose draft had
+  // just been written came back as pending, for ever.
+  await setFlag('flag_proforma_invoice', 'true');
+  const aid6 = await makeTrade('806', '2026-09-20');
+  await makeLot(aid6, '1', 'GGG TRADERS', 'BL', 100, 500, GST);
+  await makeLot(aid6, '2', 'HHH TRADERS', 'BL', 100, 500, GST);
+  await api('POST', `/api/lots/calculate/${aid6}`);
+  const p7 = (await api('GET', `/api/auctions/${aid6}/transaction-plan`)).d;
+  check('before the run the drafts are pending', stepOf(p7, 'invoices').pending === 1,
+        JSON.stringify(stepOf(p7, 'invoices')));
+  await api('POST', `/api/auctions/${aid6}/generate-transactions`, {
+    steps: { invoices: [{ start: stepOf(p7, 'invoices').suggestedStart, saleType: 'L' }] },
+  });
+  const p8 = (await api('GET', `/api/auctions/${aid6}/transaction-plan`)).d;
+  const inv8 = stepOf(p8, 'invoices');
+  check('once every draft is raised nothing is pending', inv8.pending === 0,
+        JSON.stringify(inv8));
+  check('…they are reported as re-issuable drafts instead', inv8.refreshes === 1,
+        JSON.stringify(inv8));
+  check('…per series too, so each row says it for itself',
+        (inv8.series_detail || []).every(d => d.count === 0 && d.refreshes > 0 && d.total === d.refreshes),
+        JSON.stringify(inv8.series_detail));
+  check('…so the sales side adds nothing to the trade\'s outstanding total',
+        p8.totalPending === p8.steps.filter(st => st.id !== 'invoices')
+                                    .reduce((a, st) => a + (st.pending || 0), 0),
+        JSON.stringify(p8.steps.map(st => ({ id: st.id, pending: st.pending }))));
+
+  // (2) LOT-WISE, RENAMED SELLER. Bills are matched back to their lot to
+  // decide what is left. Matching on the seller's NAME as well meant that
+  // correcting a planter's name after billing unmatched the bill from its
+  // lot: the lot read as un-billed for ever, and a re-run would have written
+  // a SECOND bill for it under a fresh number.
+  await setFlag('flag_lotwise_bills', 'true');
+  const aid7 = await makeTrade('807', '2026-09-20');
+  await makeLot(aid7, '1', 'SIRAJUDEEN', 'BL', 100, 500, '');   // no GSTIN = agriculturist
+  await api('POST', `/api/lots/calculate/${aid7}`);
+  const p9 = (await api('GET', `/api/auctions/${aid7}/transaction-plan`)).d;
+  check('the bill is pending before the run', stepOf(p9, 'bills').pending === 1,
+        JSON.stringify(stepOf(p9, 'bills')));
+  await api('POST', `/api/auctions/${aid7}/generate-transactions`, {
+    steps: { bills: { start: stepOf(p9, 'bills').suggestedStart } },
+  });
+  check('…and not pending after it',
+        stepOf((await api('GET', `/api/auctions/${aid7}/transaction-plan`)).d, 'bills').pending === 0);
+
+  // Now correct the seller's name on the lot, as an operator would.
+  const lot7 = (await api('GET', `/api/lots/${aid7}`)).d;
+  const lotRow = ((lot7 && (lot7.rows || lot7)) || [])[0];
+  await api('PUT', `/api/lots/${lotRow.id}`, { name: 'SIRAJUDEEN S' });
+  const p10 = (await api('GET', `/api/auctions/${aid7}/transaction-plan`)).d;
+  check('renaming the seller does NOT resurrect the billed lot',
+        stepOf(p10, 'bills').pending === 0, JSON.stringify(stepOf(p10, 'bills')));
+
+  // And the run itself must skip it, not write a duplicate.
+  const rerun = await api('POST', `/api/auctions/${aid7}/generate-transactions`, {
+    steps: { bills: { start: 900 } },
+  });
+  const billsAfter = (await api('GET', `/api/bills?ano=807`)).d;
+  check('…and a re-run writes no second bill for it',
+        (((billsAfter && (billsAfter.rows || billsAfter)) || []).length === 1),
+        JSON.stringify({ step: stepOf(rerun.d, 'bills'), bills: (billsAfter && (billsAfter.rows || billsAfter) || []).length }));
+
+  // ══ A FINISHED SERIES STILL GETS ITS ROW ═══════════════════════════
+  // The sheet lists one row per sale type. Those rows were built from the
+  // UN-INVOICED buyers alone, so the moment the last Inter-state buyer was
+  // invoiced the I row disappeared from the sheet altogether — which reads as
+  // "Inter-state was forgotten", not "Inter-state is done".
+  console.log('\n[I] Every sale type the trade has keeps its row');
+  await api('POST', '/api/buyers', { buyer: 'BI', buyer1: 'INTER BUYER', sale: 'I' });
+  const aid8 = await makeTrade('808', '2026-09-20');
+  await makeLot(aid8, '1', 'III TRADERS', 'BL', 100, 500, GST);
+  await makeLot(aid8, '2', 'JJJ TRADERS', 'BI', 100, 500, GST);
+  await api('POST', `/api/lots/calculate/${aid8}`);
+  const p11 = (await api('GET', `/api/auctions/${aid8}/transaction-plan`)).d;
+  const det11 = stepOf(p11, 'invoices').series_detail || [];
+  check('both series are listed before the run',
+        ['L', 'I'].every(x => det11.some(d => d.sale === x)), JSON.stringify(det11));
+
+  // Invoice the Inter-state buyer for REAL — an original stamps lots.invo, so
+  // that buyer leaves the un-invoiced set entirely. That is the state that
+  // used to make the whole I row disappear.
+  await setFlag('flag_proforma_invoice', 'false');
+  const detOrig = stepOf((await api('GET', `/api/auctions/${aid8}/transaction-plan`)).d,
+                         'invoices').series_detail || [];
+  await api('POST', `/api/auctions/${aid8}/generate-transactions`, {
+    steps: { invoices: [{ start: detOrig.find(d => d.sale === 'I').nextSafe, saleType: 'I' }] },
+  });
+  await setFlag('flag_proforma_invoice', 'true');
+
+  const det12 = stepOf((await api('GET', `/api/auctions/${aid8}/transaction-plan`)).d,
+                       'invoices').series_detail || [];
+  check('…and the finished series KEEPS its row after its invoices are raised',
+        det12.some(d => d.sale === 'I'), JSON.stringify(det12));
+  check('…reporting zero outstanding rather than vanishing',
+        (det12.find(d => d.sale === 'I') || {}).count === 0, JSON.stringify(det12));
+  check('…while the untouched series still reports its work',
+        (det12.find(d => d.sale === 'L') || {}).count === 1, JSON.stringify(det12));
+
   console.log(`\n${pass} passed, ${fail} failed`);
   cleanup();
   process.exit(fail ? 1 : 0);

@@ -1338,13 +1338,37 @@ async function collectionPdf(db, auctionId) {
 //
 // Mirrors TRADE_REPORT.pdf. Per buyer-code in the auction:
 //   SALE | BIDDER (short name) | TRADE NAME (firm) | BAG | QUANTITY | AMOUNT | INV.AMOUNT | CODE
-// Grouped by state, with subtotals:
+// Grouped by state — INTER-STATE states first (alphabetically), the auction's
+// own state and its local sales LAST — with subtotals:
 //   - INTER-STATE SALES (within state)
 //   - INTRA STATE SALES (within state)
 //   - <state> STATE TOTAL
 //   - GRAND TOTAL
 // Plus a footer block with TOTAL ARRIVALS / WITHDRAWN / SOLD / NOT e-AUCTIONED
 // counts and MAX/MIN/AVERAGE prices and COST OF CARDAMOM.
+
+// State-group order for the Auction Report — INTER-STATE first, home state
+// (the local sales) last, everything alphabetical inside each half.
+//
+// Grouping is by BUYER state, and the sale letter is derived from it: a buyer
+// outside the auction's own state is 'I', everyone else 'L'. So the home-state
+// group IS the local block and every other group is inter-state, which makes
+// "inter-state before local" a question of where the home state sorts. It used
+// to sort FIRST, so the report opened with the local block; the customer reads
+// it the other way round — inter-state first, then local (I before L, the
+// order the sale letters themselves fall in).
+//
+// Shared by the buyer-wise and invoice-wise builders so the two variants of
+// the same report can never disagree about their own running order.
+function sortReportStates(stateGroups, auctionState) {
+  return [...stateGroups.entries()].sort(([a], [b]) => {
+    // The home state is the local block: it goes last, whatever its name.
+    const homeA = a === auctionState ? 1 : 0;
+    const homeB = b === auctionState ? 1 : 0;
+    if (homeA !== homeB) return homeA - homeB;
+    return a.localeCompare(b);
+  });
+}
 
 function getTradeReportData(db, auctionId, opts) {
   opts = opts || {};
@@ -1438,12 +1462,8 @@ function getTradeReportData(db, auctionId, opts) {
     if (r.sale === 'I') stateGroups.get(st).inter.push(r);
     else                stateGroups.get(st).intra.push(r);
   }
-  // Sort: auction's home state first
-  const sortedStates = [...stateGroups.entries()].sort(([a], [b]) => {
-    if (a === auctionState) return -1;
-    if (b === auctionState) return 1;
-    return a.localeCompare(b);
-  });
+  // Inter-state states first, the home state's own local block last.
+  const sortedStates = sortReportStates(stateGroups, auctionState);
 
   // Statistics for the footer — same branch filter applies.
   const stats = getTradeStats(db, auctionId, branchFilter);
@@ -1553,8 +1573,9 @@ function getInvoiceTradeReportData(db, auctionId, opts) {
     is_proforma: r.is_proforma ? 1 : 0,
   }));
 
-  // Group by buyer state exactly as the buyer-wise report does — home state
-  // first — then split each state into its inter- and intra-state documents.
+  // Group by buyer state exactly as the buyer-wise report does — then split
+  // each state into its inter- and intra-state documents, and run the groups
+  // through the SAME order (inter-state first, home state last).
   const stateGroups = new Map();
   for (const r of rows) {
     const st = (r.state || '').trim().toUpperCase() || auctionState;
@@ -1562,11 +1583,7 @@ function getInvoiceTradeReportData(db, auctionId, opts) {
     if (r.sale === 'I') stateGroups.get(st).inter.push(r);
     else                stateGroups.get(st).intra.push(r);
   }
-  const sortedStates = [...stateGroups.entries()].sort(([a], [b]) => {
-    if (a === auctionState) return -1;
-    if (b === auctionState) return 1;
-    return a.localeCompare(b);
-  });
+  const sortedStates = sortReportStates(stateGroups, auctionState);
 
   // Same shortfall note Collection carries, for the same reason: this report
   // can only list documents that exist, while the footer beneath it counts

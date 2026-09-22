@@ -355,6 +355,17 @@ async function initDb() {
     -- voucher or statutory export. Also added via ALTER for older DBs in
     -- the migrations block below.
     dummy_code TEXT DEFAULT '',
+    -- Dummy SELLER IDENTITY, set in bulk from the Lots tab. Unlike
+    -- dummy_code (an internal tag) these four DO print — but only on the
+    -- two Spices Board surfaces that carry the seller's identity to the
+    -- regulator: the e-Auction portal CSV and Form C. Every other screen,
+    -- invoice, voucher and export keeps using the real name/tel/cr/grade.
+    -- Blank = "no dummy", so the real value is used. Also added via ALTER
+    -- for older DBs in the migrations block below.
+    dummy_name TEXT DEFAULT '',
+    dummy_tel TEXT DEFAULT '',
+    dummy_cr TEXT DEFAULT '',
+    dummy_grade TEXT DEFAULT '',
     buyer TEXT DEFAULT '',
     buyer1 TEXT DEFAULT '',
     sale TEXT DEFAULT '',
@@ -1203,6 +1214,15 @@ async function initDb() {
     // operator-facing tag used to group / find lots while pricing — it is
     // not part of any invoice, voucher or statutory export.
     "ALTER TABLE lots ADD COLUMN dummy_code TEXT DEFAULT ''",
+    // Dummy SELLER IDENTITY — substituted for the real name / phone /
+    // CR-GSTIN / grade on the e-Auction (Spices Board) CSV and Form C
+    // ONLY. Set in bulk from the Lots tab ("🎭 Dummy Details"). Blank on
+    // a lot means "no dummy" and the real column is used, so adding these
+    // changes nothing until an operator fills one in.
+    "ALTER TABLE lots ADD COLUMN dummy_name TEXT DEFAULT ''",
+    "ALTER TABLE lots ADD COLUMN dummy_tel TEXT DEFAULT ''",
+    "ALTER TABLE lots ADD COLUMN dummy_cr TEXT DEFAULT ''",
+    "ALTER TABLE lots ADD COLUMN dummy_grade TEXT DEFAULT ''",
     // ── Seller FK on the document tables ──────────────────────────────
     // These four tables identified their seller by NAME alone, and seller
     // names repeat: a real master holds 522 names shared by 2+ sellers

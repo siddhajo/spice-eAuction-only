@@ -57,6 +57,46 @@ function sblFromAadhar(aadhar) {
   return /[A-Za-z]/.test(a) ? a : '';
 }
 
+// ── Dummy seller identity ────────────────────────────────────────────
+// A lot can carry a stand-in name / phone / CR-GSTIN / grade, set in bulk
+// from the Lots tab. When present it REPLACES the real value, but only on
+// the two Spices Board surfaces — the e-Auction portal CSV and Form C.
+// Everywhere else in the app (invoices, bills, payments, Tally, the other
+// reports in this file) keeps reading the real columns, so this helper is
+// called from exactly those two builders and nowhere else.
+//
+// A blank dummy field means "no dummy for this field" and falls through to
+// the real value, so a lot can be masked on its name alone.
+//
+// `hasDummy` lets a caller tell "operator set a dummy" apart from "the
+// real value happens to be blank"; `real*` keeps the true values reachable
+// for the classification note in eauctionCsv().
+//
+// `on` is the install's flag_lot_dummy_details, carried on the context. With
+// the flag OFF the dummy columns are ignored outright rather than merely
+// hidden in the UI: otherwise switching the feature off would leave masked
+// values still going to the regulator, with no screen left to see or clear
+// them. Turning it back on restores whatever was stored.
+function sellerIdentity(r, on) {
+  const dummy = v => (on ? String(v == null ? '' : v).trim() : '');
+  const realName  = r.trader_name || r.seller_name || '';
+  // Real CR/GSTIN: the lot's own copy first, the trader master as fallback.
+  // (The e-Auction CSV reads the lot first, Form C the trader first — the
+  // two disagree only for a lot whose seller snapshot has gone stale, so
+  // each caller keeps its own order and passes the winner in as `realCr`.)
+  const dName  = dummy(r.dummy_name);
+  const dTel   = dummy(r.dummy_tel);
+  const dCr    = dummy(r.dummy_cr);
+  const dGrade = dummy(r.dummy_grade);
+  return {
+    name:  dName  || realName,
+    tel:   dTel   || String(r.seller_tel == null ? '' : r.seller_tel).trim(),
+    grade: dGrade || String(r.grade == null ? '' : r.grade).trim(),
+    dummyCr: dCr,
+    hasDummy: !!(dName || dTel || dCr || dGrade),
+  };
+}
+
 // Word-aware wrap: returns an array of lines where each line fits within
 // `maxWidth`. Falls back to character-level breaks for tokens longer than
 // the column (e.g. GSTIN/SBL strings with no whitespace). Caller must have
@@ -210,6 +250,13 @@ function getReportContext(db, opts) {
       l.aadhar          AS seller_aadhar,
       l.tel             AS seller_tel,
       l.grade           AS grade,
+      -- Dummy seller identity (Lots tab → "🎭 Dummy Details"). Read by
+      -- the e-Auction CSV and Form C ONLY, via sellerIdentity() below —
+      -- no other report in this file or elsewhere selects them.
+      l.dummy_name      AS dummy_name,
+      l.dummy_tel       AS dummy_tel,
+      l.dummy_cr        AS dummy_cr,
+      l.dummy_grade     AS dummy_grade,
       l.crpt            AS crpt,
       l.litre           AS litre,
       l.moisture        AS moisture,
@@ -262,7 +309,12 @@ function getReportContext(db, opts) {
   // Proforma invoice-number prefix (Buyer Statement prints it on every sale type).
   const _pref = db.get(`SELECT value FROM company_settings WHERE key = 'proforma_invoice_prefix'`);
   const proformaInvoicePrefix = String((_pref && _pref.value) || '').trim();
-  return { auction, rows, auctionState: String(auction.state || '').trim().toUpperCase(), proformaInvoicePrefix };
+  // Is the dummy seller identity feature switched on for this install? Read
+  // once here so the e-Auction CSV and Form C don't each re-query it per row.
+  // See sellerIdentity() for why the reports honour the flag and not just
+  // the Lots-tab button.
+  const dummyIdentityOn = /^(1|true|yes|on)$/i.test(readSetting(db, 'flag_lot_dummy_details', ''));
+  return { auction, rows, auctionState: String(auction.state || '').trim().toUpperCase(), proformaInvoicePrefix, dummyIdentityOn };
 }
 
 // Distinct branches/sellers/buyers seen in an auction — populates the
@@ -1322,8 +1374,17 @@ function buildFormC(ctx) {
   const planters = [], dealers = [];
   let maxRate = 0, minRate = Infinity, totalKilosPut = 0, totalKilos = 0, totalValue = 0;
   for (const r of rows) {
-    const seller = r.trader_name || r.seller_name || '';
-    const cr = r.trader_cr || r.seller_cr || '';
+    // Dummy seller identity — see sellerIdentity(). Form C prints only two
+    // of the four dummy fields: the name, and the CR in the registration
+    // column. There is no phone or grade column on this form, so those two
+    // are simply not reachable here (they surface on the e-Auction CSV).
+    const ident = sellerIdentity(r, ctx.dummyIdentityOn);
+    const seller = ident.name;
+    // A dummy CR stands in for the real CR/GSTIN throughout: it decides the
+    // registration column below AND which section the row files under, so a
+    // masked planter can't land in DEALERS on the strength of a GSTIN that
+    // isn't being printed.
+    const cr = ident.dummyCr || r.trader_cr || r.seller_cr || '';
     const place = r.trader_place || r.seller_place || '';
     // Estate Reg / Licence # — prefer the seller's Spices Board Licence (SBL)
     // number, falling back to the GSTIN held in the `cr` (CR / GSTIN) column.
@@ -1339,7 +1400,10 @@ function buildFormC(ctx) {
       lot:    r.lot,
       seller: seller,
       address: place,
-      regId:  sblNo || cr,
+      // A dummy CR outranks the real SBL for the same reason it does in
+      // column E of the e-Auction CSV — otherwise the seller's true licence
+      // number prints on the very row that was masked.
+      regId:  ident.dummyCr || sblNo || cr,
       qtyPut: qty,
       qtySold: isWD ? 0 : qty,
       rate:   isWD ? 0 : (Number(r.price) || 0),
@@ -1990,8 +2054,18 @@ async function eauctionCsv(db, opts) {
   const passText = v => (v == null ? '' : String(v).trim());
 
   for (const r of (ctx.rows || [])) {
+    // Dummy seller identity, when the operator set one on this lot — see
+    // sellerIdentity(). Name (D), CRNO/SBL (E), Grade (K) and Mobile (P)
+    // all read through it.
+    const ident = sellerIdentity(r, ctx.dummyIdentityOn);
     // Planter/Dealer code: 1 for planter, 2 for dealer.
-    const cr = r.seller_cr || r.trader_cr || '';
+    // A dummy CR replaces the real one for classification too, not just for
+    // display: emitting "2" (dealer, derived from a real GSTIN) next to a
+    // dummy "CR." number would be internally contradictory on the portal.
+    // So the whole column-C/E pair is decided from whichever CR actually
+    // prints. `aadhar` (the SBL) is never dummied, so it still drives the
+    // GSTIN+SBL dealer test.
+    const cr = ident.dummyCr || r.seller_cr || r.trader_cr || '';
     const aadhar = r.seller_aadhar || r.trader_aadhar;
     const planterOrDealer = isDealerSeller(cr, aadhar) ? '2' : '1';
 
@@ -2006,27 +2080,34 @@ async function eauctionCsv(db, opts) {
     //   • Planter (1) → the CRNO in `cr`. A planter whose `cr` actually holds
     //     a GSTIN (GSTIN on file, no CRNO) gets the literal "CR." placeholder
     //     rather than leaking that GSTIN into the planter's CRNO column.
-    const crnoSbl = planterOrDealer === '2'
-      ? (sblFromAadhar(aadhar) || cr)
-      : (hasValidGstin(cr) ? 'CR.' : cr);
+    //
+    // A dummy CR short-circuits both branches: the point of typing one is
+    // that THAT value goes up, so it must beat the real SBL a dealer row
+    // would otherwise pull out of `aadhar` (which would put the seller's
+    // true licence number back on the file the dummy exists to keep it off).
+    const crnoSbl = ident.dummyCr
+      ? ident.dummyCr
+      : (planterOrDealer === '2'
+          ? (sblFromAadhar(aadhar) || cr)
+          : (hasValidGstin(cr) ? 'CR.' : cr));
 
     lines.push([
       r.lot || '',                                       // A  Lot Number
       r.branch || '',                                    // B  Collection Centre (branch — VANDANMEDU, PARATHODU, …)
       planterOrDealer,                                   // C  Planter/Dealer (1 / 2)
-      r.trader_name || r.seller_name || '',              // D  Planter Name
+      ident.name,                                        // D  Planter Name  (dummy name wins)
       crnoSbl,                                           // E  CRNO/SBL No
       passText(r.crpt),                                  // F  Crop Receipt Number  ← Lot Entry
       fmt1(r.qty),                                       // G  Quantity(Kg)
       passText(r.litre),                                 // H  Litre Weight(Gms)
       r.bags != null ? String(r.bags) : '',              // I  Bags
       '',                                                // J  Grade Type
-      passText(r.grade),                                 // K  Grade
+      passText(ident.grade),                             // K  Grade  (dummy grade wins)
       fmtReserved(r.reserved_price),                     // L  Reserved Price  ← Lot Entry
       '',                                                // M  Auction Start Price(Rs)
       '',                                                // N  Immature Seeds(%)
       passText(r.moisture),                              // O  Moisture Content(%)
-      passText(r.seller_tel),                            // P  Planter Mobile Number
+      passText(ident.tel),                               // P  Planter Mobile Number  (dummy phone wins)
       '',                                                // Q  Special Lot (Yes/No)
       'green',                                           // R  Colour  (cardamom)
       '',                                                // S  Size

@@ -227,6 +227,8 @@ const GST = '33AAAAA0000A1Z5';
     note: tr.children[1].textContent.replace(/\s+/g, ' ').trim(),
     count: tr.children[2].textContent.trim(),
     ticked: !!tr.querySelector('.tx-tick')?.checked,
+    disabled: !!tr.querySelector('.tx-tick')?.disabled,
+    range: tr.children[4].textContent.trim(),
   })));
   // Purchases and bills now TOP UP: their parties already hold a document, so
   // nothing is left to do and the row cannot be run by accident. Before the
@@ -238,14 +240,21 @@ const GST = '33AAAAA0000A1Z5';
         JSON.stringify(pur));
   check('…and the row is not selectable', pur.ticked === false, JSON.stringify(pur));
 
-  // Drafts are the exception: a proforma re-run REPLACES the buyer's un-raised
-  // draft at a new number, renumbering something they may already be holding.
-  // The row stays available but starts unticked, so it is opt-in.
+  // Drafts count as DONE. A raised draft is not work the trade still owes, so
+  // the sales row reports zero and goes quiet like any other finished module —
+  // it must not keep offering a number box that would renumber a draft the
+  // buyer may already be holding. Replacing drafts is a deliberate act, and
+  // the row says where to do it.
   const draftRow = again.find(r => /Sales Invoices/.test(r.label));
-  check('the draft row warns it would replace an existing draft',
-        /replaces it with a new number/.test(draftRow.note), JSON.stringify(draftRow));
-  check('…and starts UNTICKED so a sent draft is never silently renumbered',
-        draftRow.ticked === false, JSON.stringify(draftRow));
+  check('the draft row reports nothing outstanding', draftRow.count === '0',
+        JSON.stringify(draftRow));
+  check('…and is not selectable, so a raised draft is never silently renumbered',
+        draftRow.ticked === false && draftRow.disabled === true, JSON.stringify(draftRow));
+  check('…and offers no number range to consume', draftRow.range === '',
+        JSON.stringify(draftRow));
+  check('…while saying the drafts exist and where to replace them',
+        /draft.*already raised/.test(draftRow.note) && /Invoices tab/.test(draftRow.note),
+        JSON.stringify(draftRow));
 
   // ── Dark mode ───────────────────────────────────────────────────
   // The sheet is a table inside a .modal, and .modal's background is

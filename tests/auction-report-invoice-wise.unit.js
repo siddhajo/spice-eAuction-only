@@ -138,8 +138,10 @@ async function sheet(buf) {
         s.headers.join('|') === 'INVO|BIDDER|TRADE NAME|BAG|QUANTITY|AMOUNT|INV.AMOUNT|CODE',
         s.headers.join('|'));
   check('one row per invoice, not per buyer', s.rows.length === 3, JSON.stringify(s.rows));
+  // Inter-state leads the report (see sortReportStates), so AWAY's I-20 prints
+  // above the two home-state L invoices.
   check('the INVO cell carries the sale letter with the number',
-        s.rows.map(r => r.col1).join(',') === 'L 10,L 11,I 20', s.rows.map(r => r.col1).join(','));
+        s.rows.map(r => r.col1).join(',') === 'I 20,L 10,L 11', s.rows.map(r => r.col1).join(','));
   const away = s.rows.find(r => r.bidder === 'AWAY');
   check('AMOUNT is the invoice\'s own pre-tax figure', near(away.amount, 400000), JSON.stringify(away));
   check('INV.AMOUNT is the invoice total, not a recomputed estimate',
@@ -174,7 +176,12 @@ async function sheet(buf) {
         near(coll.reduce((t, r) => t + r.value, 0), s.rows.reduce((t, r) => t + r.inv_amount, 0)));
 
   console.log('\n[grouping] states, then INTER / INTRA off the invoice\'s own sale letter');
-  check('the trade\'s own state leads', s.states[0] === 'KERALA', JSON.stringify(s.states));
+  // INTER-STATE first, the trade's own state (its local sales) last — the
+  // order the customer reads the report in, and the order the sale letters
+  // themselves fall in (I before L).
+  check('an inter-state state leads', s.states[0] === 'TAMIL NADU', JSON.stringify(s.states));
+  check('…and the trade\'s own state closes the report',
+        s.states[s.states.length - 1] === 'KERALA', JSON.stringify(s.states));
   check('the two local invoices subtotal together',
         near(s.totals['KERALA :: INTRA STATE SALES'].qty, 200), JSON.stringify(s.totals));
   check('the inter-state invoice subtotals apart',
@@ -244,6 +251,15 @@ async function sheet(buf) {
   check('it totals every lot sold — 530 kg, invoiced or not',
         near(b.totals['GRAND TOTAL'].qty, 530), JSON.stringify(b.totals['GRAND TOTAL']));
   check('and it never carries the shortfall note', !b.note, b.note);
+  // Both variants of the same report run in the same order — one comparator
+  // feeds both (sortReportStates), and this is what stops them drifting.
+  check('it runs inter-state first and the home state last, like the invoice-wise twin',
+        b.states[0] === 'TAMIL NADU' && b.states[b.states.length - 1] === 'KERALA',
+        JSON.stringify(b.states));
+  check('…with every row still under the state section it belongs to',
+        near(b.totals['KERALA :: INTRA STATE SALES'].qty, 280) &&
+        near(b.totals['TAMIL NADU :: INTER-STATE SALES'].qty, 250),
+        JSON.stringify(b.totals));
 
   console.log('\n[pdf] both variants render');
   const pdfInv = await ar.tradeReportPdf(db, aid, { invoiceWise: true });

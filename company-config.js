@@ -309,6 +309,12 @@ const DEFAULTS = [
   // sale auto-filled from the buyers master). Default OFF so the
   // button only appears when an admin explicitly enables it.
   { key: 'flag_bulk_set_buyer_code', value: 'false', category: 'flags', label: 'Bulk Set Buyer Code (Lots tab)', type: 'boolean' },
+  // Dummy seller details on the Lots tab — when ON, a "🎭 Dummy Details"
+  // button appears alongside the other bulk actions once a lot is ticked.
+  // It sets a stand-in name / phone / CR / grade on the selection, which
+  // then prints INSTEAD of the real values on the e-Auction (Spices Board)
+  // CSV and Form C — and on nothing else. Default OFF.
+  { key: 'flag_lot_dummy_details', value: 'false', category: 'flags', label: 'Dummy Seller Details (Lots tab → e-Auction CSV / Form C)', type: 'boolean' },
   // Auction Manager — an optional screen of its own, surfaced in the sidebar
   // when ON and hidden entirely (via .feat-auction-manager) when OFF.
   // Default OFF so it only appears where an admin asks for it.
