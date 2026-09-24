@@ -9094,7 +9094,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
      Blank-means-unchanged: only the fields the operator actually typed are
      sent, so filling in just the phone can't wipe a name set in an earlier
      pass. "Clear All" is the explicit way to drop the dummy identity. -->
-<div class="modal-bg feat-lot-dummy-details" id="lot-dummy-modal"><div class="modal" style="max-width:560px">
+<div class="modal-bg feat-lot-dummy-details" id="lot-dummy-modal"><div class="modal" style="max-width:620px">
   <h2>Dummy Details on <span id="ldd-count">0</span> lot(s)</h2>
   <p style="font-size:12px;color:var(--text2);margin:0 0 14px;line-height:1.5">
     These stand-in values print <b>instead of</b> the lot's real seller name, phone, CR/GSTIN and grade on the
@@ -9102,30 +9102,66 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     keep using the real seller.<br>
     Leave a field <b>blank to leave it unchanged</b>. Use <b>Clear All</b> to remove the dummy identity entirely.
   </p>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-    <div class="fg" style="margin:0">
-      <label>Dummy Name</label>
-      <input id="ldd-name" maxlength="100" autocomplete="off" placeholder="e.g. A KUMAR">
+  <!-- Dummy Name leads, on a row of its own: it doubles as a seller picker,
+       and choosing a hit fills the three boxes BELOW it. Laying it out that
+       way makes that relationship visible, and — the practical half — gives
+       the dropdown the full modal width with three rows of content beneath
+       it to open over, instead of opening at the modal's bottom edge where
+       `.modal { overflow-y:auto }` clipped it.
+
+       The whole identity is copied, not just the name: a mask stitched from
+       one seller's name and another's phone is not a mask, it is a person
+       who doesn't exist, going to the Spices Board as fact. Still free text —
+       an invented name nobody holds is a legitimate choice. -->
+  <div class="fg" style="margin:0 0 12px;position:relative">
+    <label>Dummy Name
+      <span style="margin-left:6px;font-weight:400;font-size:11px;color:var(--text3);text-transform:none;letter-spacing:0">search a seller, or type freely</span>
+    </label>
+    <!-- The input gets its own relative wrapper so the ✕ and the dropdown
+         are positioned against the BOX, not against the field group (which
+         includes the label, and would push both down by its height). -->
+    <div style="position:relative">
+      <input id="ldd-name" maxlength="100" autocomplete="off" placeholder="Type 2+ letters to find a seller — e.g. KUMAR"
+             style="padding-right:38px"
+             oninput="lddNameInput(this.value)" onfocus="lddSearchSellers(this.value)"
+             onkeydown="lddDropdownKey(event)">
+      <!-- Clears the whole dummy identity, not just this box — same rule as
+           emptying the name by hand. Shown only when there is something to
+           clear, so it never reads as a live control over an empty field. -->
+      <button type="button" id="ldd-name-clear" onclick="lddClearName()" tabindex="-1"
+              title="Clear the dummy name, phone, CR and grade"
+              aria-label="Clear the dummy identity"
+              style="display:none;position:absolute;right:10px;top:50%;transform:translateY(-50%);width:22px;height:22px;padding:0;border:none;border-radius:50%;background:var(--spice-line);color:var(--text2);font-size:14px;line-height:1;cursor:pointer;align-items:center;justify-content:center">✕</button>
+      <div id="ldd-name-dd" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:60;max-height:216px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:12.5px"></div>
     </div>
+  </div>
+  <!-- Uneven columns on purpose: a full GSTIN is 21 characters and gets
+       visually truncated in an even third, which makes an operator doubt
+       what was actually stored. Grade never needs more than two. -->
+  <div style="display:grid;grid-template-columns:1fr 1.5fr 0.6fr;gap:12px">
     <div class="fg" style="margin:0">
       <label>Dummy Phone</label>
-      <input id="ldd-tel" maxlength="100" autocomplete="off" placeholder="e.g. 9876543210">
+      <input id="ldd-tel" maxlength="100" autocomplete="off" placeholder="9876543210">
     </div>
     <div class="fg" style="margin:0">
       <label>Dummy CR / GSTIN</label>
-      <input id="ldd-cr" maxlength="100" autocomplete="off" placeholder="e.g. CR.1234">
+      <input id="ldd-cr" maxlength="100" autocomplete="off" placeholder="CR.1234">
     </div>
     <div class="fg" style="margin:0">
       <label>Dummy Grade</label>
-      <input id="ldd-grade" maxlength="100" autocomplete="off" placeholder="e.g. 1" list="ldd-grade-options">
+      <input id="ldd-grade" maxlength="100" autocomplete="off" placeholder="1" list="ldd-grade-options">
       <datalist id="ldd-grade-options">
         <option value="1"></option><option value="1A"></option>
         <option value="2"></option><option value="2A"></option>
       </datalist>
     </div>
   </div>
+  <!-- Which seller the four boxes were copied from. Shown only after a pick,
+       and cleared the moment any box is edited by hand, so it can never
+       describe values that are no longer on screen. -->
+  <div id="ldd-source" style="display:none;margin-top:10px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text2)"></div>
   <div class="actions">
-    <button class="btn btn-o" onclick="hideModal('lot-dummy-modal')">Cancel</button>
+    <button class="btn btn-o" onclick="lddCloseDropdown();hideModal('lot-dummy-modal')">Cancel</button>
     <button class="btn btn-o" id="ldd-clear" style="color:#c0392b;border-color:#c0392b" onclick="clearLotDummyDetails()">Clear All</button>
     <button class="btn btn-g" id="ldd-apply" onclick="applyLotDummyDetails()">Apply</button>
   </div>
@@ -32097,6 +32133,164 @@ async function lotBulkUnlock(){
 // fields the operator actually typed into, which is what lets a second
 // pass set (say) just the phone without erasing a name set in the first.
 // Clearing is a separate, explicit action (Clear All).
+// ── Dummy Name → seller picker ───────────────────────────────────────
+// Typing in the Dummy Name box searches the sellers master and offers hits;
+// choosing one copies that seller's name, phone, CR and grade into the four
+// boxes at once. Copying the WHOLE identity is the point: a mask stitched
+// from one seller's name and another's phone is not a mask, it's a new
+// person who doesn't exist — and it would go to the Spices Board as fact.
+//
+// So a pick overwrites all four boxes, blanks included: if the chosen seller
+// has no phone on file, the dummy phone is cleared rather than left holding
+// the previous seller's number.
+//
+// The box stays free text. Picking is the fast path, not a requirement —
+// an invented name is a legitimate dummy, and the server takes whatever
+// the four boxes hold.
+let _lddSearchTimer = null;
+let _lddHits = [];      // the seller rows currently listed
+let _lddActive = -1;    // keyboard cursor into _lddHits
+
+function _lddDd(){ return document.getElementById('ldd-name-dd'); }
+function lddCloseDropdown(){
+  const dd = _lddDd();
+  if (dd) { dd.style.display = 'none'; dd.innerHTML = ''; }
+  _lddHits = []; _lddActive = -1;
+}
+
+// Grade from the seller's registration: a `cr` starting with GSTIN is a
+// dealer (Grade 2), anything else a planter (Grade 1). Deliberately the
+// SAME test lePickSeller() applies at Lot Entry — see the long note there
+// for why the SBL is not part of it. Keeping the two identical means a
+// dummy identity grades the way the real seller would have.
+function _lddGradeFor(cr){
+  return String(cr || '').trim().toUpperCase().startsWith('GSTIN') ? '2' : '1';
+}
+
+// The four boxes are ONE identity, so the name governs the other three:
+// emptying it by hand clears the phone, CR and grade with it. Leaving them
+// behind would strand a phone number and a GSTIN under no name at all —
+// which is what would then print on the portal CSV, since each dummy field
+// substitutes independently.
+//
+// Only a transition TO empty clears. Select-all-and-retype replaces the
+// value in a single input event and never passes through empty, so editing
+// a name keeps the identity it belongs to.
+function lddNameInput(v){
+  const empty = !String(v || '').trim();
+  if (empty) {
+    lddClearName({ keepFocus: true });
+    return;
+  }
+  _lddSyncClearBtn();
+  lddSearchSellers(v);
+}
+
+// Show the ✕ only when there is something to clear.
+function _lddSyncClearBtn(){
+  const btn = document.getElementById('ldd-name-clear');
+  const el  = document.getElementById('ldd-name');
+  if (!btn || !el) return;
+  btn.style.display = String(el.value || '').trim() ? 'flex' : 'none';
+}
+
+// Clear the whole dummy identity in the modal. NOT the same as Clear All:
+// this only empties the boxes, so nothing is written until Apply — and with
+// all four blank Apply has nothing to send, which is exactly why removing a
+// stored dummy is Clear All's job, not this button's.
+function lddClearName(opts){
+  for (const [elId] of _lddFields) {
+    const el = document.getElementById(elId);
+    if (el) el.value = '';
+  }
+  lddCloseDropdown();
+  _lddSyncClearBtn();
+  const host = document.getElementById('ldd-source');
+  if (host) { host.style.display = 'none'; host.innerHTML = ''; }
+  if (!opts || opts.keepFocus !== false) document.getElementById('ldd-name')?.focus();
+}
+
+async function lddSearchSellers(q){
+  clearTimeout(_lddSearchTimer);
+  const query = String(q || '').trim();
+  if (query.length < 2) { lddCloseDropdown(); return; }
+  _lddSearchTimer = setTimeout(async () => {
+    try {
+      // Server-side search, like Lot Entry's seller box — the master runs to
+      // thousands of rows, so this is never a client-side filter over a
+      // cached list.
+      const resp = await j(`/api/traders?search=${encodeURIComponent(query)}&page=1&pageSize=20`);
+      const list = Array.isArray(resp) ? resp : (resp && resp.rows) || [];
+      const total = (resp && !Array.isArray(resp) && Number(resp.total)) || list.length;
+      const dd = _lddDd();
+      if (!dd) return;
+      // The box may have been cleared or changed while the request was out.
+      const live = String(document.getElementById('ldd-name')?.value || '').trim();
+      if (live !== query) return;
+      _lddHits = list; _lddActive = -1;
+      if (!list.length) {
+        dd.innerHTML = '<div style="padding:9px 12px;color:var(--text3)">No seller matches — the name will be used as typed.</div>';
+        dd.style.display = 'block';
+        return;
+      }
+      dd.innerHTML = list.map((t, i) => {
+        const bits = [t.tel ? `☎ ${esc(t.tel)}` : '', t.cr ? esc(t.cr) : '', t.ppla ? esc(t.ppla) : '']
+          .filter(Boolean).join(' · ');
+        return `<div class="ldd-row" data-idx="${i}" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border)">
+          <div style="font-weight:600;color:var(--text)">${esc(t.name || '')}</div>
+          <div style="color:var(--text3);font-size:11.5px;margin-top:2px">${bits || '—'} <span style="color:var(--text3)">· Grade ${_lddGradeFor(t.cr)}</span></div>
+        </div>`;
+      }).join('')
+        + (total > list.length
+            ? `<div style="padding:6px 12px;font-size:11px;color:var(--text3);background:var(--bg);border-top:1px solid var(--border);text-align:center">Showing ${list.length} of ${total} — type more to narrow it down.</div>`
+            : '');
+      dd.style.display = 'block';
+      dd.querySelectorAll('.ldd-row').forEach(el => {
+        el.onmouseenter = () => el.style.background = 'var(--bg)';
+        el.onmouseleave = () => el.style.background = '';
+        // mousedown, not click: the input's blur would close the dropdown
+        // before a click ever landed.
+        el.onmousedown = (e) => { e.preventDefault(); lddPickSeller(_lddHits[parseInt(el.dataset.idx, 10)]); };
+      });
+    } catch (e) { /* a failed lookup must never block typing a dummy by hand */ }
+  }, 200);
+}
+
+// Fill all four boxes from one seller. See the note above on why this
+// overwrites rather than merges.
+function lddPickSeller(t){
+  if (!t) return;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v == null ? '' : String(v).trim(); };
+  set('ldd-name',  t.name);
+  set('ldd-tel',   t.tel);
+  set('ldd-cr',    t.cr);
+  set('ldd-grade', _lddGradeFor(t.cr));
+  lddCloseDropdown();
+  _lddSyncClearBtn();
+  const host = document.getElementById('ldd-source');
+  if (host) {
+    const missing = [!t.tel && 'phone', !t.cr && 'CR'].filter(Boolean);
+    host.innerHTML = `Copied from seller <b>${esc(t.name || '')}</b>`
+      + (missing.length ? ` — no ${missing.join(' or ')} on file, so ${missing.length > 1 ? 'those boxes are' : 'that box is'} blank.` : '.');
+    host.style.display = '';
+  }
+  document.getElementById('ldd-tel')?.focus();
+}
+
+// Arrow keys / Enter / Escape over the dropdown. Enter with nothing
+// highlighted is left alone, so typing a name and pressing Enter still
+// behaves like an ordinary text box.
+function lddDropdownKey(e){
+  const dd = _lddDd();
+  if (!dd || dd.style.display === 'none' || !_lddHits.length) return;
+  const rows = dd.querySelectorAll('.ldd-row');
+  const paint = () => rows.forEach((el, i) => { el.style.background = i === _lddActive ? 'var(--bg)' : ''; });
+  if (e.key === 'ArrowDown')      { e.preventDefault(); _lddActive = Math.min(_lddActive + 1, _lddHits.length - 1); paint(); rows[_lddActive]?.scrollIntoView({ block: 'nearest' }); }
+  else if (e.key === 'ArrowUp')   { e.preventDefault(); _lddActive = Math.max(_lddActive - 1, 0); paint(); rows[_lddActive]?.scrollIntoView({ block: 'nearest' }); }
+  else if (e.key === 'Enter')     { if (_lddActive >= 0) { e.preventDefault(); lddPickSeller(_lddHits[_lddActive]); } }
+  else if (e.key === 'Escape')    { e.preventDefault(); lddCloseDropdown(); }
+}
+
 const _lddFields = [
   ['ldd-name',  'dummy_name'],
   ['ldd-tel',   'dummy_tel'],
@@ -32104,6 +32298,27 @@ const _lddFields = [
   ['ldd-grade', 'dummy_grade'],
 ];
 let _lddLotIds = [];   // lot ids captured at modal open
+let _lddWired  = false;
+
+// Handlers that must exist for the life of the modal, wired on first open:
+//   • any hand edit drops the "Copied from seller X" line, so it can never
+//     describe values that have since been typed over;
+//   • leaving the name box closes the dropdown (deferred, so a mousedown on
+//     a row still gets to fire first).
+function _lddWireOnce(){
+  if (_lddWired) return;
+  _lddWired = true;
+  const drop = () => {
+    const host = document.getElementById('ldd-source');
+    if (host && host.style.display !== 'none') { host.style.display = 'none'; host.innerHTML = ''; }
+  };
+  for (const [elId] of _lddFields) {
+    const el = document.getElementById(elId);
+    if (el) el.addEventListener('input', drop);
+  }
+  const nameEl = document.getElementById('ldd-name');
+  if (nameEl) nameEl.addEventListener('blur', () => setTimeout(lddCloseDropdown, 120));
+}
 
 async function openLotDummyDetailsModal(){
   _lddLotIds = (typeof BulkActions !== 'undefined' && BulkActions.getTickedIds)
@@ -32111,6 +32326,10 @@ async function openLotDummyDetailsModal(){
     : [];
   if (!_lddLotIds.length) { toast('Tick one or more lots first'); return; }
   document.getElementById('ldd-count').textContent = _lddLotIds.length;
+  lddCloseDropdown();
+  const src = document.getElementById('ldd-source');
+  if (src) { src.style.display = 'none'; src.innerHTML = ''; }
+  _lddWireOnce();
   for (const [elId] of _lddFields) {
     const el = document.getElementById(elId);
     if (!el) continue;
@@ -32121,6 +32340,7 @@ async function openLotDummyDetailsModal(){
     el.value = '';
     el.placeholder = el.dataset.ph;
   }
+  _lddSyncClearBtn();
   showModal('lot-dummy-modal');
   setTimeout(() => { document.getElementById('ldd-name')?.focus(); }, 50);
   // Prefill from the current rows so re-opening on the same selection shows
@@ -32147,6 +32367,8 @@ async function openLotDummyDetailsModal(){
         el.placeholder = '(mixed — blank leaves each lot as-is)';
       }
     }
+    // Prefill writes .value directly, which fires no input event.
+    _lddSyncClearBtn();
   } catch (_) { /* prefill is a convenience; the modal still works without it */ }
 }
 
