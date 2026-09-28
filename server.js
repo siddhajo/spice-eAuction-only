@@ -9,7 +9,7 @@ const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
 const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates,
         SCREEN_FLAGS, SCREEN_FLAG_KEYS, screenFlagDefault } = require('./company-config');
 const grade2Alerts = require('./grade2-alerts');
-const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, debitNoteTotal, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql } = require('./calculations');
+const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, debitNoteTotal, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql, effectiveGradeCrSql, dummyPlanterCrSql, lotGradeLabelSql } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 const { amountToWords } = require('./amount-words');
 const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx, xlsxToCsvBuffer, csvToXlsxBuffer } = require('./exports');
@@ -4018,8 +4018,20 @@ async function _waPricingThisMonth(cfg, startUnix, endUnix) {
   const fields = `pricing_analytics.start(${startUnix}).end(${endUnix}).granularity(DAILY)`
     + `.dimensions(PRICING_TYPE,PRICING_CATEGORY)`;
   const url = `https://graph.facebook.com/${WA_ANALYTICS_GRAPH}/${encodeURIComponent(cfg.wabaId)}?fields=${fields}`;
-  const r = await _waGraphGet(cfg, url);
-  if (!r.ok) return { source: 'unavailable', error: r.error };
+  // Billing currency, asked for SEPARATELY on purpose. `cost` in a pricing
+  // data point is a bare number with no unit, so without this the card can
+  // only print "104.08" and caveat it — which is exactly the question it
+  // provokes. The WABA node carries the account's billing currency, but it
+  // is a different permission from analytics: folding it into the `fields`
+  // list above would let a token that can read pricing but not the account
+  // fail the WHOLE request and lose the figures too. So it rides alongside,
+  // and a failure here costs the symbol, never the numbers.
+  const [r, cur] = await Promise.all([
+    _waGraphGet(cfg, url),
+    _waGraphGet(cfg, `https://graph.facebook.com/${WA_ANALYTICS_GRAPH}/${encodeURIComponent(cfg.wabaId)}?fields=currency`),
+  ]);
+  const currency = (cur.ok && cur.json && typeof cur.json.currency === 'string') ? cur.json.currency.trim() : '';
+  if (!r.ok) return { source: 'unavailable', error: r.error, currency };
   let free = 0, paid = 0, cost = 0;
   const byCategory = {};
   for (const p of _waDataPoints(r.json)) {
@@ -4031,7 +4043,7 @@ async function _waPricingThisMonth(cfg, startUnix, endUnix) {
     if (isFree) byCategory[cat].free += vol;
     else { byCategory[cat].paid += vol; byCategory[cat].cost += Number(p.cost) || 0; }
   }
-  return { source: 'meta', free, paid, cost: Math.round(cost * 100) / 100, byCategory };
+  return { source: 'meta', free, paid, cost: Math.round(cost * 100) / 100, byCategory, currency };
 }
 // The 24h messaging limit, as Meta currently rates this phone number.
 // messaging_limit_tier is deprecated — whatsapp_business_manager_messaging_limit
@@ -4161,6 +4173,10 @@ app.get('/api/whatsapp/usage', requireView, async (req, res) => {
 
   out.free.source = meta.pricing.source;
   out.free.error = meta.pricing.error || '';
+  // ISO code for `cost` (e.g. 'INR', 'USD'), when Meta would tell us. Blank
+  // means the card must keep saying "your Meta account's billing currency"
+  // rather than guessing a symbol onto someone's money.
+  out.free.currency = meta.pricing.currency || '';
   if (meta.pricing.source === 'meta') {
     out.free.used = meta.pricing.free;
     out.free.remaining = Math.max(0, allowance - meta.pricing.free);
@@ -7725,7 +7741,15 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
 
   // "Is this seller a registered dealer?" — shared Grade-2 rule (cr starts with
   // GSTIN AND SBL/aadhar set). See isDealerSeller()/dealerSql() in calculations.js.
-  const DEALER = dealerSql('cr', 'aadhar');
+  //
+  // The CR it tests is the one the SPICES BOARD will see: a lot masked with a
+  // dummy seller identity grades on its dummy CR, so a dealer's lot presented
+  // as a planter's counts in PLANTER WT and drops out of the Grade-2 25% cap —
+  // the same substitution the e-Auction CSV's Planter/Dealer column makes. See
+  // effectiveGradeCrSql() in calculations.js. `aadhar` (the SBL) is never
+  // dummied, so it still drives the GSTIN+SBL half of the test.
+  const GRADE_CR = dummySellerDetailsOn(db) ? effectiveGradeCrSql('cr', 'dummy_cr') : 'cr';
+  const DEALER = dealerSql(GRADE_CR, 'aadhar');
   // SOLD = a real hammer transaction. Blank code = no buyer, 'WD' = withdrawn,
   // 'NA' = the Not-Auctioned buyer dad assigns to booked-but-unsold lots — none
   // of these three are sold.
@@ -8311,6 +8335,19 @@ function lotwiseOn(db, key) {
 function lotwisePurchaseOn(db) { return lotwiseOn(db, 'flag_lotwise_purchase'); }
 function lotwiseBillsOn(db)    { return lotwiseOn(db, 'flag_lotwise_bills'); }
 function lotwiseDnPlanterOn(db){ return lotwiseOn(db, 'flag_lotwise_dn_planter'); }
+
+// ── DUMMY SELLER DETAILS (flag_lot_dummy_details) ──────────────
+// A lot can carry a stand-in seller (lots.dummy_name / dummy_tel / dummy_cr /
+// dummy_grade) that prints instead of the real one on the Spices Board
+// surfaces. OFF = the dummy columns are ignored outright, not merely hidden —
+// see sellerIdentity() in spice-board-reports.js for why.
+//
+// The DASHBOARD reads the flag for one thing only: its seller GRADE
+// classification. A lot masked as a planter grades as a planter there, so the
+// Planter/Trader split and the Grade-2 25%-cap band predict what the board
+// will actually see — see effectiveGradeCrSql() in calculations.js. Nothing
+// that moves money looks at these columns.
+function dummySellerDetailsOn(db) { return lotwiseOn(db, 'flag_lot_dummy_details'); }
 
 // ── AUCTION MANAGER (flag_auction_manager) ─────────────────────
 // The Auction Manager screen. OFF = the screen does not exist for you: the
@@ -19894,7 +19931,14 @@ app.get('/api/insights', requireView, (req, res) => {
   // Grade-2 weight is DERIVED from the seller here, NOT read from the stored
   // lots.grade column — grade is captured once at lot entry and never revisited.
   // Feeds the snapshot's Planter/Trader/Total tiles and its 25%-cap band.
-  const DEALER_INS = dealerSql('l.cr', 'l.aadhar');
+  // The CR tested is the one the Spices Board will see — a lot masked with a
+  // dummy seller identity grades on its dummy CR, so the snapshot's Planter/
+  // Trader tiles and its 25%-cap band agree with the e-Auction CSV and with
+  // the Current Auction card, which applies the same substitution. Flag-gated,
+  // like every other reader of those columns. See effectiveGradeCrSql().
+  const INS_GRADE_CR = dummySellerDetailsOn(db) ? effectiveGradeCrSql('l.cr', 'l.dummy_cr') : 'l.cr';
+  const INS_DUMMY_PLANTER = dummySellerDetailsOn(db) ? dummyPlanterCrSql('l.dummy_cr') : '(0=1)';
+  const DEALER_INS = dealerSql(INS_GRADE_CR, 'l.aadhar');
   const gwRow = db.get(
     `SELECT COALESCE(SUM(CASE WHEN ${DEALER_INS} THEN 0 ELSE l.qty END),0) AS planter_wt,
             COALESCE(SUM(CASE WHEN ${DEALER_INS} THEN l.qty ELSE 0 END),0) AS trader_wt,
@@ -19933,7 +19977,8 @@ app.get('/api/insights', requireView, (req, res) => {
   // single source of truth rather than an approximate SQL LENGTH() check.
   const gradeRows = db.all(
     `SELECT
-       COALESCE(l.cr, '') AS cr,
+       COALESCE(${INS_GRADE_CR}, '') AS cr,
+       CASE WHEN ${INS_DUMMY_PLANTER} THEN 1 ELSE 0 END AS dummy_planter,
        MAX(COALESCE(l.aadhar,'')) AS aadhar,
        COUNT(l.id) AS lots,
        SUM(CASE WHEN ${SOLD} THEN 1 ELSE 0 END) AS sold,
@@ -19945,13 +19990,17 @@ app.get('/api/insights', requireView, (req, res) => {
      FROM lots l
      JOIN auctions a ON a.id = l.auction_id
      WHERE date(a.date) BETWEEN date(?) AND date(?)${aidA}
-     GROUP BY COALESCE(l.cr, '')`,
+     GROUP BY 1, 2`,
     [from, to]
   );
   const _mkGrade = () => ({ lots: 0, sold: 0, qty: 0, bags: 0, value: 0, sold_value: 0, sold_qty: 0 });
   const gradeSplit = { grade1: _mkGrade(), grade2: _mkGrade() };
   for (const r of gradeRows) {
-    const g = hasValidGstin(r.cr) ? gradeSplit.grade2 : gradeSplit.grade1;
+    // A masked planter is Grade 1 outright — the dummy CR is not put through
+    // the GSTIN-shape test, so a registration number that happens to parse as
+    // one still grades as the planter the lot is presented as.
+    const dealer = !Number(r.dummy_planter) && hasValidGstin(r.cr);
+    const g = dealer ? gradeSplit.grade2 : gradeSplit.grade1;
     g.lots       += Number(r.lots)       || 0;
     g.sold       += Number(r.sold)       || 0;
     g.qty        += Number(r.qty)        || 0;
@@ -19967,16 +20016,24 @@ app.get('/api/insights', requireView, (req, res) => {
   // ── Grade breakdown per status — drives the click-through modal on the
   //    Dashboard snapshot matrix (Booked / Sold / Withdrawn → Grade 1 / 2).
   //    Grade here is the lot's own `grade` field ('1' / '2' / other), NOT the
-  //    GSTIN-based gradeSplit above — the two coexist for different screens. ──
+  //    GSTIN-based gradeSplit above — the two coexist for different screens.
+  //    One exception: a lot carrying a dummy seller identity is graded from
+  //    THAT identity, whatever the stored label says — otherwise the drill-down
+  //    would file weight under Grade 2 that the tiles above it, and the portal
+  //    file itself, count as a planter's — see lotGradeLabelSql(). ──
+  const GRADE_BR = lotGradeLabelSql({
+    gradeCol: 'l.grade', dummyCrCol: 'l.dummy_cr', aadharCol: 'l.aadhar',
+    dummyOn: dummySellerDetailsOn(db),
+  });
   const gradeBrRows = db.all(
-    `SELECT CASE WHEN TRIM(COALESCE(l.grade,'')) IN ('1','2') THEN TRIM(l.grade) ELSE 'other' END AS grade,
+    `SELECT ${GRADE_BR} AS grade,
             COUNT(*) AS b_lots, COALESCE(SUM(l.bags),0) AS b_bags, COALESCE(SUM(l.qty),0) AS b_qty, COALESCE(SUM(l.amount),0) AS b_amt,
             SUM(CASE WHEN ${SOLD} THEN 1 ELSE 0 END) AS s_lots, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.bags ELSE 0 END),0) AS s_bags, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.qty ELSE 0 END),0) AS s_qty, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.amount ELSE 0 END),0) AS s_amt,
             SUM(CASE WHEN ${WD} THEN 1 ELSE 0 END) AS w_lots, COALESCE(SUM(CASE WHEN ${WD} THEN l.bags ELSE 0 END),0) AS w_bags, COALESCE(SUM(CASE WHEN ${WD} THEN l.qty ELSE 0 END),0) AS w_qty, COALESCE(SUM(CASE WHEN ${WD} THEN l.amount ELSE 0 END),0) AS w_amt,
             SUM(CASE WHEN ${NA} THEN 1 ELSE 0 END) AS n_lots, COALESCE(SUM(CASE WHEN ${NA} THEN l.bags ELSE 0 END),0) AS n_bags, COALESCE(SUM(CASE WHEN ${NA} THEN l.qty ELSE 0 END),0) AS n_qty, COALESCE(SUM(CASE WHEN ${NA} THEN l.amount ELSE 0 END),0) AS n_amt
      FROM lots l JOIN auctions a ON a.id = l.auction_id
      WHERE date(a.date) BETWEEN date(?) AND date(?)${aidA}
-     GROUP BY CASE WHEN TRIM(COALESCE(l.grade,'')) IN ('1','2') THEN TRIM(l.grade) ELSE 'other' END`,
+     GROUP BY ${GRADE_BR}`,
     [from, to]
   );
   const gradeCell = (lots, bags, qty, amount) => ({
@@ -19995,7 +20052,7 @@ app.get('/api/insights', requireView, (req, res) => {
   //    branch-wise drill-down (status → branch list → that branch's grades). ──
   const gradeBrBranchRows = db.all(
     `SELECT COALESCE(NULLIF(TRIM(l.branch),''),'(unspecified)') AS branch,
-            CASE WHEN TRIM(COALESCE(l.grade,'')) IN ('1','2') THEN TRIM(l.grade) ELSE 'other' END AS grade,
+            ${GRADE_BR} AS grade,
             COUNT(*) AS b_lots, COALESCE(SUM(l.bags),0) AS b_bags, COALESCE(SUM(l.qty),0) AS b_qty, COALESCE(SUM(l.amount),0) AS b_amt,
             SUM(CASE WHEN ${SOLD} THEN 1 ELSE 0 END) AS s_lots, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.bags ELSE 0 END),0) AS s_bags, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.qty ELSE 0 END),0) AS s_qty, COALESCE(SUM(CASE WHEN ${SOLD} THEN l.amount ELSE 0 END),0) AS s_amt,
             SUM(CASE WHEN ${WD} THEN 1 ELSE 0 END) AS w_lots, COALESCE(SUM(CASE WHEN ${WD} THEN l.bags ELSE 0 END),0) AS w_bags, COALESCE(SUM(CASE WHEN ${WD} THEN l.qty ELSE 0 END),0) AS w_qty, COALESCE(SUM(CASE WHEN ${WD} THEN l.amount ELSE 0 END),0) AS w_amt,
@@ -20067,11 +20124,18 @@ app.get('/api/insights/lots', requireView, (req, res) => {
     params.push(String(branch));
   }
 
-  // Grade — '1' / '2' exact, or 'other' for everything else.
+  // Grade — '1' / '2' exact, or 'other' for everything else. The bucketing is
+  // the SAME expression /api/insights counts with (masked planters read Grade 1
+  // whatever their stored label says), or clicking a grade in the drill-down
+  // would list a different set of lots than the number that was clicked.
+  const GRADE_EXPR = lotGradeLabelSql({
+    gradeCol: 'l.grade', dummyCrCol: 'l.dummy_cr', aadharCol: 'l.aadhar',
+    dummyOn: dummySellerDetailsOn(db),
+  });
   let gradeFilter = '';
   const grade = String(req.query.grade || '').trim();
-  if (grade === '1' || grade === '2') { gradeFilter = ` AND TRIM(COALESCE(l.grade,'')) = ?`; params.push(grade); }
-  else if (grade === 'other') { gradeFilter = ` AND TRIM(COALESCE(l.grade,'')) NOT IN ('1','2')`; }
+  if (grade === '1' || grade === '2') { gradeFilter = ` AND ${GRADE_EXPR} = ?`; params.push(grade); }
+  else if (grade === 'other') { gradeFilter = ` AND ${GRADE_EXPR} = 'other'`; }
 
   const rows = db.all(
     `SELECT l.lot_no, l.name, l.branch, l.grade, l.bags, l.qty, l.price, l.amount,

@@ -1040,13 +1040,33 @@ body[data-login-layout="showcase"] .login-hero{order:2;max-width:none;align-self
 .wa-dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
 .wa-spacer{flex:1 1 auto;min-width:8px}
 /* Stat tiles */
-.wa-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px}
-.wa-tile{border:1px solid var(--spice-line);border-radius:10px;padding:10px 12px;background:var(--spice-cream);min-width:0}
+/* Usage tiles. The Overview tab answers two DIFFERENT questions and the
+   old single strip of five equal tiles blurred them into one: "what can I
+   still send right now" (a ceiling, from Meta) and "what has this month
+   cost / gone out" (history). They are now two labelled bands, and the
+   ceiling that actually stops a bulk run gets a tile of its own. */
+.wa-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:10px}
+.wa-tile{border:1px solid var(--spice-line);border-radius:10px;padding:11px 13px;background:var(--spice-cream);min-width:0;display:flex;flex-direction:column}
 .wa-tile .k{font-size:10.5px;font-weight:700;color:var(--spice-text-hint);text-transform:uppercase;letter-spacing:.35px}
 .wa-tile .v{font-size:22px;font-weight:800;color:var(--spice-text-main);line-height:1.25;margin-top:2px;word-break:break-word}
+.wa-tile .u{font-size:12px;font-weight:600;color:var(--spice-text-mute);margin-left:4px}
 .wa-tile .s{font-size:11px;color:var(--spice-text-mute);margin-top:3px;line-height:1.45}
+/* Bars align across a row whatever the subtitle height, instead of
+   floating at whatever height each tile's text happened to end. */
+.wa-tile .wa-bar{margin-top:auto}
+/* The gate. One tile, wider and louder than the rest, because "recipients
+   left in the next 24h" is the single number that stops a run partway and
+   it used to sit third of five at the same size as everything else. */
+.wa-gate{display:grid;grid-template-columns:minmax(210px,0.9fr) minmax(210px,1.1fr);gap:10px;align-items:stretch}
+.wa-gate .wa-tile.lead{background:var(--spice-cardamom-lt);border-color:var(--spice-cardamom)}
+.wa-gate .wa-tile.lead .v{font-size:34px;line-height:1.1}
+.wa-gate .wa-tile.lead .k{color:var(--spice-cardamom-dk)}
+@media (max-width:620px){.wa-gate{grid-template-columns:1fr}}
 .wa-bar{height:5px;border-radius:3px;background:var(--spice-line);overflow:hidden;margin-top:7px}
 .wa-bar>i{display:block;height:100%}
+/* Caption under a band — one line saying what the band's numbers mean,
+   so the tile labels don't have to carry a paragraph of caveat. */
+.wa-cap{font-size:11px;color:var(--spice-text-mute);line-height:1.5;margin-top:-2px}
 /* Form bits, buttons, notes */
 .wa-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
 .wa-lab{display:block;font-size:10.5px;font-weight:700;color:var(--spice-text-hint);margin-bottom:3px;text-transform:uppercase;letter-spacing:.3px}
@@ -1060,11 +1080,20 @@ body[data-login-layout="showcase"] .login-hero{order:2;max-width:none;align-self
 .wa-btn:disabled{opacity:.5;cursor:not-allowed}
 .wa-note{font-size:11.5px;color:var(--spice-text-mute);line-height:1.55}
 .wa-sub{
-  display:flex;align-items:center;gap:9px;margin:2px 0 0;
+  display:flex;align-items:center;gap:9px;margin:18px 0 0;
   font-size:11px;font-weight:800;color:var(--spice-cardamom-dk);
   text-transform:uppercase;letter-spacing:.6px;
 }
 .wa-sub::after{content:'';flex:1 1 auto;height:1px;background:var(--spice-line)}
+/* A band heading belongs to the content BELOW it: air above, tight below.
+   Keyed on the heading rather than on `.wa-pane > …` because each renderer
+   paints into a host div inside the pane, so these are grandchildren and a
+   child combinator silently matches nothing. The 18px lives on .wa-sub
+   itself, above. */
+.wa-sub:first-child{margin-top:0}
+.wa-sub+*{margin-top:6px}
+/* A caption explains the band it follows, so it stays with it. */
+.wa-cap+.wa-sub{margin-top:16px}
 .wa-box{border:1px solid var(--spice-line);border-radius:10px;padding:11px 13px;background:var(--spice-cream)}
 .wa-banner{border-radius:9px;padding:9px 12px;font-size:12.5px;line-height:1.5;border:1px solid}
 .wa-banner.bad{background:var(--spice-chili-lt);border-color:var(--spice-chili-lt);color:var(--spice-chili-dk)}
@@ -1081,6 +1110,10 @@ body[data-dark="1"] .wa-tile,
 body[data-dark="1"] .wa-box,
 body[data-dark="1"] .wa-tbl th,
 body[data-dark="1"] .wa-in[readonly]{background:var(--spice-line)}
+/* cardamom-lt is a saffron/white mix — on the dark ground it comes back as
+   a bright band, so the lead tile is marked by its border alone. */
+body[data-dark="1"] .wa-gate .wa-tile.lead{background:var(--spice-line);border-color:var(--spice-saffron-md)}
+body[data-dark="1"] .wa-gate .wa-tile.lead .k{color:var(--spice-saffron-md)}
 body[data-dark="1"] .wa-sub,
 body[data-dark="1"] .wa-adv>summary,
 body[data-dark="1"] .wa-tab.on{color:var(--spice-saffron-md)}
@@ -26365,8 +26398,12 @@ async function _renderWhatsappUsage(fresh){
     const col = p >= 90 ? '#dc2626' : p >= 75 ? '#d97706' : '#16a34a';
     return `<div class="wa-bar"><i style="width:${p}%;background:${col}"></i></div>`;
   };
-  const tile = (label, value, sub, extra) =>
-    `<div class="wa-tile"><div class="k">${label}</div><div class="v">${value}</div>`
+  // `unit` renders small and grey next to the number, so a tile never has to
+  // put its unit in the label (which is what made "Billable this month:
+  // 2,143" read as money when it is a message count).
+  const tile = (label, value, sub, extra, opts) =>
+    `<div class="wa-tile${(opts && opts.cls) ? ' ' + opts.cls : ''}"><div class="k">${label}</div>`
+    + `<div class="v">${value}${(opts && opts.unit) ? `<span class="u">${opts.unit}</span>` : ''}</div>`
     + `<div class="s">${sub || ''}</div>${extra || ''}</div>`;
 
   // 1) Free allowance for the calendar month (Meta-sourced; falls back to a note).
@@ -26376,36 +26413,86 @@ async function _renderWhatsappUsage(fresh){
   //    while the billable count climbs — hence the caveat under the tiles.
   const f = u.free || {};
   const freeTile = f.source === 'meta'
-    ? tile('Free messages left', n(f.remaining),
-        `${n(f.used)} of ${n(f.allowance)} used · ${esc(u.monthLabel || 'this month')}`,
-        bar(f.used || 0, f.allowance || 0))
-    : tile('Free messages left', '—',
+    ? tile('Free service messages left', n(f.remaining),
+        `${n(f.used)} of ${n(f.allowance)} used`,
+        bar(f.used || 0, f.allowance || 0), { unit: 'this month' })
+    : tile('Free service messages left', '—',
         `Meta could not be read: ${esc(f.error || 'unavailable')}`);
   // 2) What this month has actually COST — the number that empties the
   //    balance, and the one to multiply when sizing the next bulk run.
   const each = (f.paid && f.cost) ? (f.cost / f.paid) : 0;
-  const money = (v) => Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Meta's pricing data points carry a bare `cost` with no unit, so the card
+  // used to print "104.08" and footnote it — which just moved the question
+  // ("104.08 rupees?") into the subtitle. The billing currency comes from the
+  // WABA node instead; when we have it the number wears its own symbol and
+  // needs no footnote, and when we don't we say so plainly rather than
+  // guessing a symbol onto someone's money.
+  const ccy = String(f.currency || '').trim().toUpperCase();
+  const money = (v) => {
+    const num = Number(v) || 0;
+    if (ccy) {
+      try {
+        return num.toLocaleString('en-IN', { style: 'currency', currency: ccy,
+          minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      } catch (_) { /* unknown ISO code — fall through to the plain form */ }
+    }
+    return num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+  // The per-message rate needs 3dp to be worth multiplying (see below), which
+  // the currency formatter's 2dp would destroy — so it keeps the symbol but
+  // sets its own precision.
+  const rate = (v) => {
+    const num = Number(v) || 0;
+    if (ccy) {
+      try {
+        return num.toLocaleString('en-IN', { style: 'currency', currency: ccy,
+          minimumFractionDigits: 3, maximumFractionDigits: 3 });
+      } catch (_) {}
+    }
+    return num.toFixed(3);
+  };
+  // Two tiles, not one. This used to be a single "Billable this month" tile
+  // whose big number was a message COUNT while its subtitle carried the
+  // charge, the per-message rate and a currency caveat — three numbers in
+  // three different units crammed under one ambiguous label. Cost and count
+  // are separate questions, so they get separate tiles and the unit of each
+  // is visible without reading the subtitle.
+  // 3dp on the rate, not 2: it is ~0.115 a message, so rounding to 0.11
+  // under-states a 10,000-message run by about 4%. This figure exists to be
+  // multiplied.
+  const costSub = [
+    // The ISO code sits in the subtitle, not next to the number: the value
+    // already wears the symbol, and "₹104.08 INR" is noise. It earns its
+    // place for the symbols that are ambiguous ($, kr) rather than for ₹.
+    ccy ? esc(ccy) : "in your Meta account's billing currency",
+    each ? `~${rate(each)} per message` : '',
+  ].filter(Boolean).join(' · ');
+  const costTile = f.source === 'meta'
+    ? tile('Charged this month', money(f.cost || 0), costSub)
+    : tile('Charged this month', '—', 'Needs the WhatsApp Business Account ID + Meta access.');
   const billTile = f.source === 'meta'
-    ? tile('Billable this month', n(f.paid),
-        `${f.cost ? `≈ ${money(f.cost)} charged` : 'nothing charged yet'}${each ? ` · ~${each.toFixed(3)} each` : ''}`
-        + `<br>in your Meta account's billing currency`)
-    : tile('Billable this month', '—', 'Needs the WhatsApp Business Account ID + Meta access.');
+    ? tile('Billable messages', n(f.paid),
+        'templates sent outside an open 24h window', null, { unit: 'this month' })
+    : tile('Billable messages', '—', 'Needs the WhatsApp Business Account ID + Meta access.');
   // 3) The 24h messaging limit — the one that stops a bulk run dead.
   const L = u.limit || {};
   const limitTile = L.cap
-    ? tile('Recipients left (24h)', n(L.remaining),
-        `${n(L.used)} of ${n(L.cap)} used · ${esc(L.tier || '')}`,
-        bar(L.used || 0, L.cap))
-    : tile('Recipients left (24h)', L.unlimited ? 'Unlimited' : '—',
+    ? tile('Recipients left — next 24 hours', n(L.remaining),
+        `${n(L.used)} of ${n(L.cap)} used · rated ${esc(L.tier || '')}`,
+        bar(L.used || 0, L.cap), { cls: 'lead' })
+    : tile('Recipients left — next 24 hours', L.unlimited ? 'Unlimited' : '—',
         L.unlimited ? `${esc(L.tier)} · ${n(L.used)} unique recipients in the last 24h`
-                    : `${n(L.used)} unique recipients in the last 24h${L.error ? ' · ' + esc(L.error) : ''}`);
+                    : `${n(L.used)} unique recipients in the last 24h${L.error ? ' · ' + esc(L.error) : ''}`,
+        // Keep the lead position and width, but drop the tint when there is
+        // no figure — emphasis on an em dash just draws the eye to nothing.
+        null, { cls: L.unlimited ? 'lead' : '' });
   // 4) + 5) Local send log — always exact, no API needed.
   const st = (u.sent && u.sent.today) || {};
   const sm = (u.sent && u.sent.month) || {};
   const detail = (o) => [o.delivered ? `${n(o.delivered)} delivered` : '', o.failed ? `${n(o.failed)} failed` : '']
     .filter(Boolean).join(' · ') || 'no receipts yet';
   const todayTile = tile('Sent today', n(st.total), detail(st));
-  const monthTile = tile('Sent this month', n(sm.total), `${detail(sm)} · from this app's send log`);
+  const monthTile = tile('Sent this month', n(sm.total), detail(sm));
 
   const blocked = !!(u.billing && u.billing.blocked);
   const billUrl = (u.billing && u.billing.url) || '';
@@ -26427,17 +26514,39 @@ async function _renderWhatsappUsage(fresh){
       <span class="wa-spacer"></span>
       <button type="button" class="wa-btn sm" onclick="_renderWhatsappUsage(true)">Refresh</button>
     </div>
+    ${!u.configured && !blocked ? `<div class="wa-banner warn">
+      <strong>WhatsApp isn't set up yet,</strong> so the figures below stay empty and nothing can be sent.
+      Paste the Meta credentials in the <button type="button" class="wa-btn sm" onclick="_waSetTab('setup')">Setup</button> tab to start.
+    </div>` : ''}
     ${blocked ? `<div class="wa-banner bad">
       <strong>Sends are being refused for a billing reason.</strong> Meta said:
       “${esc(u.billing.blockError)}”${u.billing.blockAt ? ` (${esc(String(u.billing.blockAt).slice(0,16))})` : ''}.
       Top up below, then retry — nothing will go out until the account is funded.
     </div>` : ''}
-    <div class="wa-tiles">${freeTile}${billTile}${limitTile}${todayTile}${monthTile}</div>
-    <div class="wa-note">
-      <strong>Free ≠ how many invoices you can still send.</strong> Invoice and payment templates are
-      <em>billable</em> — the free allowance only covers messages sent inside an open 24-hour window
-      (i.e. after that contact has messaged you). The number that actually stops a bulk run is
-      <strong>Recipients left (24h)</strong>: ${L.cap ? `this number is rated ${esc(L.tier||'')}, so ${n(L.cap)} unique recipients per rolling 24 hours` : 'the messaging-limit tier Meta has rated this number'}.
+    <!-- Band 1 — the ceilings, from Meta: what CAN still go out.
+         The 24h recipient limit leads because it is the one that stops a
+         bulk run partway; the free allowance sits beside it, smaller,
+         because it is the number operators most often mistake for
+         "invoices I can still send" and it is not that at all. -->
+    <div class="wa-sub">Before you send</div>
+    <div class="wa-gate">${limitTile}${freeTile}</div>
+    <div class="wa-cap">
+      <strong>Recipients</strong> counts unique numbers, not messages — ten invoices to one buyer spend one.
+      ${L.cap ? `Meta has rated this number ${esc(L.tier||'')}: ${n(L.cap)} recipients per rolling 24 hours.` : ''}
+      <strong>Free</strong> covers only messages sent inside an open 24-hour window (after that contact has
+      messaged you) — invoice and payment templates are billable, so this number barely moves on a normal month.
+    </div>
+
+    <!-- Band 2 — history: what this month has cost and what has gone out.
+         Meta's figures and this app's own send log are different sources
+         with different guarantees, so the caption says which is which
+         instead of repeating it inside a tile subtitle. -->
+    <div class="wa-sub">Sent &amp; charged</div>
+    <div class="wa-tiles">${costTile}${billTile}${todayTile}${monthTile}</div>
+    <div class="wa-cap">
+      <strong>Charged</strong> and <strong>billable</strong> come from Meta and can lag by a few hours.
+      <strong>Sent today / this month</strong> come from this app's own send log, so they are exact
+      and count every message including the free ones.
     </div>
     <div class="wa-box wa-row">
       <div class="wa-note" style="flex:1;min-width:230px">

@@ -3,12 +3,14 @@
 //
 // The card answers three questions and it is the WORDING as much as the
 // numbers that has to be right:
-//   1. "Free messages left" is the allowance minus what Meta says was free —
-//      and the card must keep saying, out loud, that free ≠ invoices you can
-//      still send (invoice/utility templates are billable).
-//   2. "Recipients left (24h)" is the messaging-limit tier minus the unique
-//      recipients this install messaged in the rolling 24h. This is the number
-//      that actually stops a bulk run partway.
+//   1. "Free service messages left" is the allowance minus what Meta says was
+//      free — and the card must keep saying, out loud, that free ≠ invoices
+//      you can still send (invoice/utility templates are billable).
+//   2. "Recipients left — next 24 hours" is the messaging-limit tier minus the
+//      unique recipients this install messaged in the rolling 24h. This is the
+//      number that actually stops a bulk run partway, and it now LEADS the
+//      card (see tests/whatsapp-overview-layout.browser.js for the grouping;
+//      this file stays on the content).
 //   3. Recharge links at the Meta billing hub (or the configured override),
 //      because Meta has no top-up API — nothing in-app can add funds.
 // Plus: when Meta can't be read the tiles degrade to "—" and the REASON,
@@ -55,7 +57,7 @@ const USAGE = {
   sent: { today: { total: 104, delivered: 90, read: 12, failed: 2 },
           month: { total: 601, delivered: 540, read: 80, failed: 9 }, total: 4210 },
   limit: { tier: 'TIER_250', cap: 250, used: 180, remaining: 70, source: 'meta', error: '', unlimited: false },
-  free: { allowance: 1000, used: 1, remaining: 999, paid: 601, cost: 69.1, source: 'meta', error: '' },
+  free: { allowance: 1000, used: 1, remaining: 999, paid: 601, cost: 69.1, source: 'meta', error: '', currency: 'INR' },
   billing: { blocked: false, blockError: '', blockAt: '', url: 'https://business.facebook.com/billing_hub/payment_settings',
              customUrl: '', insightsUrl: 'https://business.facebook.com/wa/manage/insights/?waba_id=158' },
 };
@@ -71,17 +73,56 @@ const render = async (usage, err) => {
 
   // [A] The three headline numbers, each next to what it is out of.
   const h = await render(clone(USAGE));
-  check('free tile shows allowance headroom', /Free messages left/.test(h) && /999/.test(h) && /1 of 1,000 used/.test(h), h.slice(0, 400));
-  check('billable tile shows the month\'s count and spend',
-    /Billable this month/.test(h) && /601/.test(h) && /69\.1/.test(h), 'missing billable tile');
-  check('billable tile shows the per-message rate for sizing a run', /~0\.115 each/.test(h), 'no per-message rate');
-  check('24h tile shows the tier headroom', /Recipients left \(24h\)/.test(h) && /180 of 250 used/.test(h) && /TIER_250/.test(h), 'missing limit tile');
+  check('free tile shows allowance headroom',
+    /Free service messages left/.test(h) && /999/.test(h) && /1 of 1,000 used/.test(h), h.slice(0, 400));
+  // Cost and count were ONE tile whose value was the count and whose subtitle
+  // carried the money, the rate and a currency caveat. They are two tiles now,
+  // so each figure is asserted where it actually lives.
+  check('a tile shows the month\'s SPEND',
+    /Charged this month/.test(h) && /69\.10/.test(h), 'missing charged tile');
+  // "104.08 — rupees?" was a real question from the operator. Meta's pricing
+  // rows carry a bare number, so the currency is fetched from the WABA node
+  // and the figure wears its own symbol instead of a footnote.
+  check('the spend is shown in a real currency, not a bare number',
+    /₹\s?69\.10/.test(h), 'no currency symbol on the charge');
+  check('…and the ISO code confirms which currency', /INR/.test(h), 'no ISO code');
+  check('…so the "whatever currency Meta bills you in" hedge is gone',
+    !/in your Meta account's billing currency/.test(h), 'hedge still shown despite knowing the currency');
+  check('a separate tile shows the month\'s billable COUNT',
+    /Billable messages/.test(h) && /601/.test(h), 'missing billable tile');
+  // …but when Meta won't say, the hedge is the honest answer — never a
+  // guessed ₹ on somebody's money.
+  const noCcy = clone(USAGE); noCcy.free.currency = '';
+  const hnc = await render(noCcy);
+  check('an unknown currency falls back to the plain number',
+    /69\.10/.test(hnc) && !/₹/.test(hnc), 'guessed a symbol');
+  check('…and says so instead of guessing',
+    /in your Meta account's billing currency/.test(hnc), 'currency caveat lost');
+  // 3dp on purpose: at ~0.115 a message, 2dp under-states a 10,000-message
+  // run by about 4%, and this figure exists to be multiplied.
+  check('billable tile shows the per-message rate for sizing a run', /~₹\s?0\.115 per message/.test(h), 'no per-message rate');
+  check('…and the rate keeps 3dp even with a currency symbol on it',
+    /0\.115/.test(h) && !/~₹\s?0\.12\b/.test(h), 'the currency formatter flattened the rate to 2dp');
+  check('24h tile shows the tier headroom',
+    /Recipients left — next 24 hours/.test(h) && /180 of 250 used/.test(h) && /TIER_250/.test(h), 'missing limit tile');
+  // The regrouping's one structural claim this file is placed to guard: the
+  // ceiling must render BEFORE the free allowance, because operators read the
+  // first number as "what I can send" and only one of the two is that.
+  check('the 24h ceiling comes before the free allowance',
+    h.indexOf('Recipients left') < h.indexOf('Free service messages'),
+    `${h.indexOf('Recipients left')} vs ${h.indexOf('Free service messages')}`);
   check('local send log fills today + this month', /Sent today/.test(h) && /104/.test(h) && /Sent this month/.test(h) && /601/.test(h), 'missing sent tiles');
 
   // [B] The caveat that stops "999 free left" being read as "999 invoices".
+  // It used to be a paragraph under one flat strip of tiles; it is now the
+  // caption under the band those two tiles live in. Same claim, and it still
+  // has to be made in words — the number alone misleads.
   check('card says free ≠ invoices you can still send',
-    /Free ≠ how many invoices you can still send/.test(h) && /billable/.test(h), 'caveat missing');
-  check('card names the 24h limit as the real ceiling', /250 unique recipients per rolling 24 hours/.test(h), 'ceiling not spelled out');
+    /open 24-hour window/.test(h) && /templates are billable/.test(h), 'caveat missing');
+  check('card names the 24h limit as the real ceiling',
+    /250 recipients per rolling 24 hours/.test(h), 'ceiling not spelled out');
+  check('card says recipients are counted per NUMBER, not per message',
+    /unique numbers, not messages/.test(h), 'the unit of the ceiling is unexplained');
 
   // [C] Recharge — the only honest answer is a deep link, and the card says so.
   check('recharge opens the Meta billing hub in a new tab',
@@ -99,7 +140,7 @@ const render = async (usage, err) => {
   blind.limit = { tier: '', cap: 0, used: 43, remaining: null, source: 'unavailable', error: 'Session has expired', unlimited: false };
   const hb = await render(blind);
   check('unreadable free tier shows the reason, not a number',
-    /Free messages left/.test(hb) && /Session has expired/.test(hb) && !/999/.test(hb), 'invented a balance');
+    /Free service messages left/.test(hb) && /Session has expired/.test(hb) && !/999/.test(hb), 'invented a balance');
   check('unknown tier still reports the local 24h recipient count',
     /43 unique recipients in the last 24h/.test(hb), 'lost the local fallback');
 
@@ -151,15 +192,34 @@ const render = async (usage, err) => {
     { start: 1788978600, end: 1789065000, pricing_type: 'FREE_CUSTOMER_SERVICE', pricing_category: 'UTILITY', volume: 1, cost: 0 },
     { start: 1788978600, end: 1789065000, pricing_type: 'REGULAR', pricing_category: 'MARKETING', volume: 20, cost: 2.3 },
   ] }] } };
-  srvBox.fetch = async () => ({ ok: true, json: async () => META_BODY });
+  // Two calls go out now — pricing, and the WABA node for the billing
+  // currency — so the stub answers by URL.
+  const graph = (currencyReply) => async (url) =>
+    /fields=currency/.test(url)
+      ? currencyReply()
+      : ({ ok: true, json: async () => META_BODY });
+  srvBox.fetch = graph(() => ({ ok: true, json: async () => ({ id: '158', currency: 'INR' }) }));
   const priced = await srvBox._waPricingThisMonth({ token: 't', wabaId: '158' }, 1, 2);
   check('real Meta payload parses into a free/paid split',
     priced.source === 'meta' && priced.free === 1 && priced.paid === 126,
     JSON.stringify(priced));
+  check('the billing currency rides along with the figures',
+    priced.currency === 'INR', JSON.stringify(priced));
+  // The whole reason currency is a SEPARATE request: reading the account is a
+  // different permission from reading analytics, and a token that has one but
+  // not the other must still get its numbers. Folded into one `fields` list,
+  // this case would lose the pricing too.
+  srvBox.fetch = graph(() => ({ ok: false, status: 403, json: async () => ({ error: { message: 'Unsupported get request' } }) }));
+  const blindCcy = await srvBox._waPricingThisMonth({ token: 't', wabaId: '158' }, 1, 2);
+  check('a currency lookup that fails costs the SYMBOL, never the figures',
+    blindCcy.source === 'meta' && blindCcy.paid === 126
+      && Math.abs(blindCcy.cost - 14.49) < 0.001 && blindCcy.currency === '',
+    JSON.stringify(blindCcy));
   check('only billable rows accumulate spend', Math.abs(priced.cost - 14.49) < 0.001, String(priced.cost));
   check('spend is broken down per pricing category',
     priced.byCategory.utility.paid === 106 && priced.byCategory.marketing.paid === 20,
     JSON.stringify(priced.byCategory));
+  // Both calls fail — the pricing error is what must surface.
   srvBox.fetch = async () => ({ ok: false, status: 400, json: async () => ({ error: { message: 'Session has expired' } }) });
   const failed = await srvBox._waPricingThisMonth({ token: 't', wabaId: '158' }, 1, 2);
   check('a Meta error degrades to unavailable + the reason',

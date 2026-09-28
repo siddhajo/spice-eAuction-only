@@ -13,6 +13,12 @@
 //   [prefill]  re-opening shows what is set; a mixed selection says "mixed"
 //   [badge]    a masked lot is marked in the table, so it is visible at a glance
 //   [clear]    Clear All removes all four
+//   [picker]   Dummy Name searches the sellers master, and choosing a hit
+//              copies that seller's phone, CR and grade in one go — all four
+//              boxes or none, never a stitched-together half-identity
+//   [cascade]  emptying Dummy Name empties the other three with it, and the
+//              ✕ in the box does the same — a phone and a GSTIN left under
+//              no name would still print on the portal CSV
 const os = require('os'), path = require('path'), fs = require('fs');
 const { spawn } = require('child_process');
 const pptr = require('puppeteer-core');
@@ -78,6 +84,18 @@ function cleanup() {
     lotIds.push(r.d.id || (r.d.lot && r.d.lot.id));
   }
   check('two lots created', lotIds.every(Boolean), JSON.stringify(lotIds));
+
+  // Two sellers for the Dummy Name picker: a planter (CR → Grade 1) and a
+  // dealer (GSTIN → Grade 2), so the derived grade is actually discriminating
+  // rather than always answering '1'. The third has NO phone and NO CR, which
+  // is the case that proves a pick clears stale boxes instead of leaving the
+  // previous seller's number behind.
+  const SELLERS = [
+    { name: 'KUMARASAMY ESTATE', cr: 'CR.7001', tel: '9440000001', ppla: 'BODI' },
+    { name: 'KUMAR SPICES LLP',  cr: 'GSTIN.33AAMCM4500C1Z2', tel: '9440000002', ppla: 'THENI' },
+    { name: 'KUMARAN BARE',      cr: '', tel: '', ppla: 'VANDAN' },
+  ];
+  for (const sl of SELLERS) await api('POST', '/api/traders', sl);
 
   let chrome = null;
   const candidates = [
@@ -225,6 +243,175 @@ function cleanup() {
         cleared.every(l => !String(l.dummy_name || '') && !String(l.dummy_tel || '')
                         && !String(l.dummy_cr || '') && !String(l.dummy_grade || '')),
         JSON.stringify(cleared.map(l => [l.lot_no, l.dummy_name, l.dummy_cr])));
+
+  console.log('[picker] Dummy Name searches sellers and copies the whole identity');
+  await openLotsAndTick(lotIds);
+  await page.evaluate(() => openLotDummyDetailsModal());
+  await new Promise(r => setTimeout(r, 900));
+  // Type into the box the way a person does, so the debounce and the
+  // oninput wiring are both exercised.
+  await page.focus('#ldd-name');
+  await page.evaluate(() => { document.getElementById('ldd-name').value = ''; });
+  await page.type('#ldd-name', 'KUMAR', { delay: 30 });
+  await new Promise(r => setTimeout(r, 900));
+  const hits = await page.evaluate(() =>
+    [...document.querySelectorAll('#ldd-name-dd .ldd-row')].map(r => r.querySelector('div').textContent));
+  check('the dropdown lists matching sellers', hits.length === 3, JSON.stringify(hits));
+  check('…a single letter does NOT search', await page.evaluate(async () => {
+    const el = document.getElementById('ldd-name');
+    el.value = 'K'; el.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 500));
+    return document.getElementById('ldd-name-dd').style.display === 'none';
+  }));
+
+  // Re-open the list and pick the DEALER, whose grade must derive to 2.
+  await page.evaluate(() => { const el = document.getElementById('ldd-name'); el.value = ''; });
+  await page.type('#ldd-name', 'KUMAR SPICES', { delay: 30 });
+  await new Promise(r => setTimeout(r, 900));
+  await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('#ldd-name-dd .ldd-row')];
+    const row = rows.find(r => r.textContent.includes('KUMAR SPICES LLP'));
+    row.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  });
+  await new Promise(r => setTimeout(r, 300));
+  let boxes4 = await page.evaluate(() => ({
+    name: document.getElementById('ldd-name').value,
+    tel:  document.getElementById('ldd-tel').value,
+    cr:   document.getElementById('ldd-cr').value,
+    grade: document.getElementById('ldd-grade').value,
+    dd:   document.getElementById('ldd-name-dd').style.display,
+    src:  document.getElementById('ldd-source').style.display,
+  }));
+  check('picking fills the name', boxes4.name === 'KUMAR SPICES LLP', JSON.stringify(boxes4));
+  check('…the phone',             boxes4.tel === '9440000002',        JSON.stringify(boxes4));
+  check('…the CR',                boxes4.cr === 'GSTIN.33AAMCM4500C1Z2', JSON.stringify(boxes4));
+  check('…and a GSTIN seller derives Grade 2', boxes4.grade === '2',  JSON.stringify(boxes4));
+  check('the dropdown closes on pick',  boxes4.dd === 'none',         JSON.stringify(boxes4));
+  check('…and the source line appears', boxes4.src !== 'none',        JSON.stringify(boxes4));
+
+  console.log('[picker] a CR seller derives Grade 1, and a pick clears what the new seller lacks');
+  await page.evaluate(() => { const el = document.getElementById('ldd-name'); el.value = ''; });
+  await page.type('#ldd-name', 'KUMARASAMY', { delay: 30 });
+  await new Promise(r => setTimeout(r, 900));
+  await page.evaluate(() => {
+    document.querySelectorAll('#ldd-name-dd .ldd-row')[0]
+      .dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  });
+  await new Promise(r => setTimeout(r, 300));
+  boxes4 = await page.evaluate(() => ({
+    cr: document.getElementById('ldd-cr').value,
+    grade: document.getElementById('ldd-grade').value,
+  }));
+  check('a CR seller derives Grade 1', boxes4.grade === '1' && boxes4.cr === 'CR.7001', JSON.stringify(boxes4));
+
+  // The seller with nothing on file — the boxes must EMPTY, not keep the
+  // previous seller's phone and CR.
+  await page.evaluate(() => { const el = document.getElementById('ldd-name'); el.value = ''; });
+  await page.type('#ldd-name', 'KUMARAN BARE', { delay: 30 });
+  await new Promise(r => setTimeout(r, 900));
+  await page.evaluate(() => {
+    document.querySelectorAll('#ldd-name-dd .ldd-row')[0]
+      .dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  });
+  await new Promise(r => setTimeout(r, 300));
+  boxes4 = await page.evaluate(() => ({
+    name: document.getElementById('ldd-name').value,
+    tel:  document.getElementById('ldd-tel').value,
+    cr:   document.getElementById('ldd-cr').value,
+    src:  document.getElementById('ldd-source').textContent,
+  }));
+  check('the name is the new seller', boxes4.name === 'KUMARAN BARE', JSON.stringify(boxes4));
+  check('…and the previous seller\'s phone is GONE, not left behind',
+        boxes4.tel === '' && boxes4.cr === '', JSON.stringify(boxes4));
+  check('…and the source line says what was missing', /no phone or CR/i.test(boxes4.src), boxes4.src);
+
+  console.log('[cascade] the name governs the other three');
+  // Start from a full identity, picked from the master.
+  await page.evaluate(() => { const el = document.getElementById('ldd-name'); el.value = ''; });
+  await page.type('#ldd-name', 'KUMAR SPICES', { delay: 30 });
+  await new Promise(r => setTimeout(r, 900));
+  await page.evaluate(() => {
+    document.querySelectorAll('#ldd-name-dd .ldd-row')[0]
+      .dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  });
+  await new Promise(r => setTimeout(r, 300));
+  const all4 = () => page.evaluate(() => ({
+    name: document.getElementById('ldd-name').value,
+    tel:  document.getElementById('ldd-tel').value,
+    cr:   document.getElementById('ldd-cr').value,
+    grade: document.getElementById('ldd-grade').value,
+    x:    getComputedStyle(document.getElementById('ldd-name-clear')).display,
+  }));
+  let st = await all4();
+  check('all four are filled to begin with', st.name && st.tel && st.cr && st.grade, JSON.stringify(st));
+  check('the ✕ is showing', st.x !== 'none', JSON.stringify(st));
+
+  // Empty the name the way a person does — select all, delete.
+  await page.focus('#ldd-name');
+  await page.evaluate(() => document.getElementById('ldd-name').select());
+  await page.keyboard.press('Backspace');
+  await new Promise(r => setTimeout(r, 400));
+  st = await all4();
+  check('emptying the name empties the phone', st.tel === '', JSON.stringify(st));
+  check('…the CR',                             st.cr === '',  JSON.stringify(st));
+  check('…and the grade',                      st.grade === '', JSON.stringify(st));
+  check('the ✕ hides when there is nothing to clear', st.x === 'none', JSON.stringify(st));
+
+  console.log('[cascade] retyping a name does NOT wipe the identity it belongs to');
+  // Select-all-and-retype replaces in one input event, never passing through
+  // empty — so an edit must keep the fields, unlike a delete.
+  await page.evaluate(() => {
+    const el = document.getElementById('ldd-name');
+    el.value = 'KUMARASAMY'; el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await new Promise(r => setTimeout(r, 900));
+  await page.evaluate(() => {
+    document.querySelectorAll('#ldd-name-dd .ldd-row')[0]
+      .dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  });
+  await new Promise(r => setTimeout(r, 300));
+  await page.evaluate(() => {
+    // One event, old value fully replaced — the shape a paste or a
+    // select-all-then-type produces.
+    const el = document.getElementById('ldd-name');
+    el.value = 'RENAMED BY HAND'; el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await new Promise(r => setTimeout(r, 500));
+  st = await all4();
+  check('the retyped name stands', st.name === 'RENAMED BY HAND', JSON.stringify(st));
+  check('…and the phone it was copied with survives', st.tel === '9440000001', JSON.stringify(st));
+
+  console.log('[cascade] the ✕ clears the whole identity');
+  st = await all4();
+  check('the ✕ is showing again', st.x !== 'none', JSON.stringify(st));
+  await page.click('#ldd-name-clear');
+  await new Promise(r => setTimeout(r, 300));
+  st = await all4();
+  check('every box is empty', !st.name && !st.tel && !st.cr && !st.grade, JSON.stringify(st));
+  check('…and the ✕ is gone', st.x === 'none', JSON.stringify(st));
+  check('…and with nothing to send, Apply says so rather than writing a blank',
+        await page.evaluate(async () => {
+          let toasted = '';
+          const orig = window.toast;
+          window.toast = (m) => { toasted = String(m); };
+          await applyLotDummyDetails();
+          window.toast = orig;
+          return /at least one|Clear All/i.test(toasted);
+        }));
+
+  console.log('[picker] a name nobody holds is still accepted');
+  await page.evaluate(() => {
+    const el = document.getElementById('ldd-name');
+    el.value = 'ZZZ INVENTED NAME';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await new Promise(r => setTimeout(r, 800));
+  check('a hand-typed name drops the "copied from" line',
+        (await page.evaluate(() => document.getElementById('ldd-source').style.display)) === 'none');
+  sent = null;
+  await page.evaluate(() => applyLotDummyDetails());
+  await new Promise(r => setTimeout(r, 900));
+  check('…and applies as typed', sent && sent.dummy_name === 'ZZZ INVENTED NAME', JSON.stringify(sent));
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
   cleanup();

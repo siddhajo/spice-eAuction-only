@@ -14,6 +14,8 @@
 //                through the SBL fallback
 //   [form-c]     Form C prints the dummy name and the dummy registration,
 //                and files the row under the section the dummy CR implies
+//   [form-d1]    Form D1 counts the same masked lot's WEIGHT under the same
+//                side of the split — the two returns go to the Board together
 //   [partial]    one dummy field set leaves the other three reading real
 //   [contained]  a report that is NOT one of the two shows the real seller
 //   [control]    with no dummy set, every one of the above reads real
@@ -162,6 +164,22 @@ const COL = { A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10,
   check('the grand total still covers all four lots', Math.round(fc.grand.qtySold) === 400, String(fc.grand.qtySold));
   check('…and their full value',                      Math.round(fc.grand.value) === 800000, String(fc.grand.value));
 
+  // ── Form D1 ────────────────────────────────────────────────────────
+  console.log('[form-d1] the depot-wise split counts the masked lot as its dummy implies');
+  // Form D1 prints no names — only quantities, split TRADERS vs GROWERS on the
+  // same rule Form C buckets with. So the mask shows up as WEIGHT on the other
+  // side: lot 002's seller is a real GSTIN+SBL dealer, masked with a planter CR.
+  const d1On = sb.REPORTS.form_d1.json(db, { auctionId: aid });
+  const tradersPut = d1On.sections[0].rows.reduce((t, r) => t + r.qty, 0);
+  const growersPut = d1On.sections[1].rows.reduce((t, r) => t + r.qty, 0);
+  check('no weight is left on the TRADERS side', Math.round(tradersPut) === 0, String(tradersPut));
+  check('all 400 kg is GROWERS, the masked dealer included',
+        Math.round(growersPut) === 400, String(growersPut));
+  check('…and the sold figure follows the same split',
+        Math.round(d1On.sections[0].totals.qty) === 0 && Math.round(d1On.sections[1].totals.qty) === 400,
+        `${d1On.sections[0].totals.qty} / ${d1On.sections[1].totals.qty}`);
+  check('the grand total still covers every lot', Math.round(d1On.grand.qty) === 400, String(d1On.grand.qty));
+
   // ── Containment ────────────────────────────────────────────────────
   console.log('[contained] every OTHER report still shows the real seller');
   // Buyers Statement and Form D are the two siblings built from the same
@@ -199,6 +217,14 @@ const COL = { A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10,
   // The masked dealer goes back to DEALERS, since its real CR is a GSTIN again.
   check('…and the masked dealer files under DEALERS again',
         fcOff.sections.find(s => s.title === 'DEALERS').rows.some(r => r.lot === '002'));
+  // …and Form D1 moves its 100 kg back across the split with it.
+  const d1Off = sb.REPORTS.form_d1.json(db, { auctionId: aid });
+  check('Form D1 puts the real dealer\'s 100 kg back under TRADERS',
+        Math.round(d1Off.sections[0].rows.reduce((t, r) => t + r.qty, 0)) === 100,
+        String(d1Off.sections[0].rows.reduce((t, r) => t + r.qty, 0)));
+  check('…leaving 300 kg with the GROWERS',
+        Math.round(d1Off.sections[1].rows.reduce((t, r) => t + r.qty, 0)) === 300,
+        String(d1Off.sections[1].rows.reduce((t, r) => t + r.qty, 0)));
   // Stored values survive the round trip — flipping the flag back restores them.
   setFlag('true');
   const backOn = (await sb.REPORTS.eauction_csv.csv(db, { auctionId: aid })).toString('utf8')

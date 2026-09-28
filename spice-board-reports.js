@@ -251,8 +251,8 @@ function getReportContext(db, opts) {
       l.tel             AS seller_tel,
       l.grade           AS grade,
       -- Dummy seller identity (Lots tab → "🎭 Dummy Details"). Read by
-      -- the e-Auction CSV and Form C ONLY, via sellerIdentity() below —
-      -- no other report in this file or elsewhere selects them.
+      -- the e-Auction CSV, Form C and Form D1 ONLY, via sellerIdentity()
+      -- below — no other report in this file or elsewhere selects them.
       l.dummy_name      AS dummy_name,
       l.dummy_tel       AS dummy_tel,
       l.dummy_cr        AS dummy_cr,
@@ -2557,7 +2557,11 @@ async function arrivalsPdf(db, opts) {
 // The split rule is hasValidGstin(), the SAME one Form C buckets its
 // PLANTERS / DEALERS sections with, so the two forms can never disagree
 // about which side a seller falls on. (Not isDealerSeller — that stricter
-// GSTIN+SBL rule belongs to the e-Auction portal surfaces.)
+// GSTIN+SBL rule belongs to the e-Auction portal surfaces.) It reads the CR
+// that Form C would PRINT, so a lot masked with a dummy seller identity is
+// counted on that identity here too — see sellerIdentity(). Otherwise the
+// same masked lot would sit under PLANTERS on Form C and add to the TRADERS
+// column here, on two returns handed to the Board in the same envelope.
 //
 // (a) and (b) are deliberately different measures:
 //   (a) Quantity put for sale — EVERY booked lot. includeUnpriced, so no
@@ -2584,8 +2588,11 @@ function buildFormD1(ctx) {
     const qty  = Number(r.qty) || 0;
     const isWD = String(r.lot_code || '').trim().toUpperCase() === 'WD';
     const sold = (!isWD && (Number(r.amount) || 0) > 0) ? qty : 0;
-    if (hasValidGstin(r.trader_cr || r.seller_cr || '')) { g.traderPut += qty; g.traderSold += sold; }
-    else                                                 { g.growerPut += qty; g.growerSold += sold; }
+    // Same CR resolution as buildFormC: the dummy CR first (when the flag is
+    // on), then the trader master, then the lot's own snapshot.
+    const cr = sellerIdentity(r, ctx.dummyIdentityOn).dummyCr || r.trader_cr || r.seller_cr || '';
+    if (hasValidGstin(cr)) { g.traderPut += qty; g.traderSold += sold; }
+    else                   { g.growerPut += qty; g.growerSold += sold; }
   }
   // Insertion order = first lot seen per depot, and getReportContext returns
   // lots ordered by lot number — so the depots read down the page in the same

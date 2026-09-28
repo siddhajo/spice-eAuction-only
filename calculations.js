@@ -123,6 +123,53 @@ function hasValidGstinSql(crCol = 'cr') {
   return `(${stripped} GLOB '[0-9][0-9][A-Z][A-Z][A-Z][A-Z][A-Z][0-9][0-9][0-9][0-9][A-Z][0-9A-Z]Z[0-9A-Z]')`;
 }
 
+// ── Dummy seller identity in GRADE classification (dashboard only) ───────
+// A lot can carry a stand-in seller — lots.dummy_name / dummy_tel / dummy_cr
+// / dummy_grade, set in bulk from the Lots tab (flag_lot_dummy_details). The
+// values print INSTEAD of the real ones on the Spices Board surfaces, and the
+// e-Auction CSV already decides its Planter/Dealer column from whichever CR
+// actually prints — emitting "2" beside a dummy "CR." number would contradict
+// itself (see eauctionCsv() in spice-board-reports.js).
+//
+// The DASHBOARD grades the same way, for the same reason: its Planter/Trader
+// split and its Grade-2 / 25%-cap band exist to predict what the board will
+// see, so a lot masked as a planter has to count as Grade 1 there even when
+// its real seller is a GSTIN+SBL dealer. Everything that moves money — the
+// purchase invoice, bill of supply, debit note, payments, Tally — keeps
+// reading the real columns; the containment is the feature.
+//
+// So: the dummy CR REPLACES the real one for grading, per field (a blank
+// dummy CR falls through to the real value, exactly as sellerIdentity() does),
+// and a dummy CR that is not a GSTIN is Grade 1 / Planter outright — no
+// GSTIN-shape test is applied to it, so a registration number that happens to
+// parse as a GSTIN still grades as the planter it is presented as. This is the
+// same test the Lots modal shows the operator when they pick a seller to copy
+// (_lddGradeFor in public/index.html).
+function effectiveGradeCrSql(crCol = 'cr', dummyCrCol = 'dummy_cr') {
+  return `COALESCE(NULLIF(TRIM(COALESCE(${dummyCrCol},'')),''), ${crCol})`;
+}
+// "This lot is masked as a planter" — a dummy CR is set and it is not a GSTIN.
+// Grade 1, whatever the real seller holds.
+function dummyPlanterCrSql(dummyCrCol = 'dummy_cr') {
+  const s = `UPPER(TRIM(COALESCE(${dummyCrCol},'')))`;
+  return `(${s} <> '' AND ${s} NOT LIKE 'GSTIN%')`;
+}
+
+// The grade LABEL a dashboard surface should file a lot under: its stored
+// lots.grade ('1' / '2' / 'other'), unless a dummy identity is masking the
+// seller — then it is derived from the dummy CR, with the seller's SBL (never
+// dummied) completing the GSTIN+SBL dealer test, exactly as the e-Auction CSV's
+// Planter/Dealer column is. Returns a SQL expression yielding '1', '2' or
+// 'other'. `dummyOn` is flag_lot_dummy_details; off, the dummy columns are
+// ignored outright and the stored label stands alone.
+function lotGradeLabelSql({ gradeCol = 'grade', dummyCrCol = 'dummy_cr', aadharCol = 'aadhar', dummyOn = false } = {}) {
+  const masked = dummyOn
+    ? `WHEN TRIM(COALESCE(${dummyCrCol},'')) <> '' ` +
+      `THEN CASE WHEN ${dealerSql(dummyCrCol, aadharCol)} THEN '2' ELSE '1' END `
+    : '';
+  return `CASE ${masked}WHEN TRIM(COALESCE(${gradeCol},'')) IN ('1','2') THEN TRIM(${gradeCol}) ELSE 'other' END`;
+}
+
 /**
  * Calculate purchase amounts for a lot (after trade).
  *
@@ -2599,6 +2646,9 @@ module.exports = {
   deriveSaleType,
   isDealerSeller,
   dealerSql,
+  effectiveGradeCrSql,
+  dummyPlanterCrSql,
+  lotGradeLabelSql,
   hasValidGstin,
   hasValidGstinSql,
 };
