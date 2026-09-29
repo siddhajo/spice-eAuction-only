@@ -9,7 +9,7 @@ const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
 const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates,
         SCREEN_FLAGS, SCREEN_FLAG_KEYS, screenFlagDefault } = require('./company-config');
 const grade2Alerts = require('./grade2-alerts');
-const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, debitNoteTotal, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql, effectiveGradeCrSql, dummyPlanterCrSql, lotGradeLabelSql } = require('./calculations');
+const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, debitNoteTotal, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql, effectiveGradeCrSql, dummyPlanterCrSql, hasDummySellerSql, lotGradeLabelSql } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 const { amountToWords } = require('./amount-words');
 const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx, xlsxToCsvBuffer, csvToXlsxBuffer } = require('./exports');
@@ -9106,7 +9106,7 @@ app.post('/api/lots/dummy-details/bulk', requireLotWrite, (req, res) => {
 });
 
 app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
-  const { branch, name, buyer, grade, limit, offset, paginated, summary, search } = req.query;
+  const { branch, name, buyer, grade, dummy, limit, offset, paginated, summary, search } = req.query;
   const db = getDb();
   // Correlated subquery (not LEFT JOIN) to avoid any risk of row duplication
   // if the same buyer code exists multiple times in the buyers table.
@@ -9141,6 +9141,24 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
     q += ` AND TRIM(COALESCE(lots.grade,'')) = ''`;
   } else if (gradeFilter) {
     q += ` AND TRIM(COALESCE(lots.grade,'')) = ?`; p.push(gradeFilter);
+  }
+  // Dummy-details filter (Lots tab #lot-dummy-filter): '1' = only lots
+  // carrying a stand-in seller identity, '0' = only lots without one. The
+  // test is hasDummySellerSql() — ANY of the four columns set — so it selects
+  // exactly the rows wearing the 🎭 DUMMY badge, name-only masks included.
+  //
+  // Ignored when flag_lot_dummy_details is OFF, for the same reason the
+  // reports ignore the columns then: with the feature off those values are
+  // not part of the app, so they must not shape what the Lots table shows
+  // either. The dropdown is hidden client-side in that state anyway.
+  // Contributes no bind params, so it can be appended anywhere in `p`'s order.
+  const dummyFilter = String(dummy || '').trim();
+  let dummySql = '';
+  if ((dummyFilter === '1' || dummyFilter === '0') && dummySellerDetailsOn(db)) {
+    dummySql = dummyFilter === '1'
+      ? ` AND ${hasDummySellerSql('lots')}`
+      : ` AND NOT ${hasDummySellerSql('lots')}`;
+    q += dummySql;
   }
   // Free-text search within the trade — lot no, seller name, buyer
   // code/trade name, invoice no, branch. Wired to the #lot-search
@@ -9192,6 +9210,8 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
       // above so the reused `p` array stays aligned.
       + (gradeFilter === '__none__' ? ` AND TRIM(COALESCE(lots.grade,'')) = ''`
          : gradeFilter ? ` AND TRIM(COALESCE(lots.grade,'')) = ?` : '')
+      // Same for the dummy-details filter (no params of its own).
+      + dummySql
       // Mirror the free-text/lot/phone clause too — the totals row must count
       // the SAME set the list shows. (It also keeps `p` and the placeholder
       // count aligned; without it a summary=1 request that also carried

@@ -155,6 +155,14 @@ function dummyPlanterCrSql(dummyCrCol = 'dummy_cr') {
   return `(${s} <> '' AND ${s} NOT LIKE 'GSTIN%')`;
 }
 
+// "Is this lot masked at all?" — ANY of the four dummy columns non-blank, the
+// same test the 🎭 DUMMY badge on the Lots table uses (a lot can be masked on
+// its name alone). Pass the table name or alias the columns hang off.
+function hasDummySellerSql(t = 'lots') {
+  return '(' + ['dummy_name', 'dummy_tel', 'dummy_cr', 'dummy_grade']
+    .map(c => `TRIM(COALESCE(${t}.${c},'')) <> ''`).join(' OR ') + ')';
+}
+
 // The grade LABEL a dashboard surface should file a lot under: its stored
 // lots.grade ('1' / '2' / 'other'), unless a dummy identity is masking the
 // seller — then it is derived from the dummy CR, with the seller's SBL (never
@@ -2648,6 +2656,7 @@ module.exports = {
   dealerSql,
   effectiveGradeCrSql,
   dummyPlanterCrSql,
+  hasDummySellerSql,
   lotGradeLabelSql,
   hasValidGstin,
   hasValidGstinSql,

@@ -6499,6 +6499,18 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <option value="2">Grade 2</option>
             <option value="__none__">Ungraded</option>
           </select>
+          <!-- Dummy-details filter. Only meaningful while the feature is on,
+               so it carries the same .feat-lot-dummy-details gate as the
+               toolbar button and the 🎭 badge; the server ignores the param
+               with the flag off. "Has dummy" = ANY of the four dummy fields
+               set, matching the badge exactly. -->
+          <select id="lot-dummy-filter" class="feat-lot-dummy-details" onchange="loadLots()"
+                  title="Filter the lots table by whether a dummy seller identity is set (e-Auction CSV / Form C / Form D1 only)"
+                  style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:150px">
+            <option value="">All Lots</option>
+            <option value="1">🎭 Dummy set</option>
+            <option value="0">No dummy</option>
+          </select>
           <!-- Within-trade search across lot no, seller name, buyer code,
                invoice no and branch. Wires to server-side `search` param. -->
           <input type="search" id="lot-search" placeholder="Search lot no (1,5,10-20), seller, phone, buyer…" oninput="searchLotsDebounced(this.value)" style="padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background-color:#fff;font-size:13px;min-width:240px;flex:1;max-width:320px">
@@ -31638,6 +31650,10 @@ async function loadLots(opts){
   // /api/lots as `WHERE TRIM(grade) = ?`.
   const _lotGrade = (document.getElementById('lot-grade-filter')?.value || '').trim();
   const _lotGradeParam = _lotGrade ? `&grade=${encodeURIComponent(_lotGrade)}` : '';
+  // Dummy-details filter (Lots-table only, like grade). '1' = masked lots,
+  // '0' = unmasked, '' = both. The server drops it when the feature is off.
+  const _lotDummy = (document.getElementById('lot-dummy-filter')?.value || '').trim();
+  const _lotDummyParam = _lotDummy ? `&dummy=${encodeURIComponent(_lotDummy)}` : '';
   // Cache-buster ensures the browser actually hits the server (otherwise Refresh
   // may return stale cached JSON and nothing visibly changes).
   // Wrap the fetch so a network/API failure surfaces inside the table
@@ -31645,7 +31661,7 @@ async function loadLots(opts){
   // a stale "Loading…" on screen.
   let d;
   try {
-    d = await j(`/api/lots/${aid}?_=${Date.now()}${_lotSearchParam}${_lotBranchParam}${_lotGradeParam}`);
+    d = await j(`/api/lots/${aid}?_=${Date.now()}${_lotSearchParam}${_lotBranchParam}${_lotGradeParam}${_lotDummyParam}`);
   } catch (e) {
     StatusBlock.show('lots-list', 'error', {
       body: (e && e.message) || 'Failed to load lots',
@@ -31858,7 +31874,14 @@ async function loadLots(opts){
   }
   DataTable.mount('lots-list', pagedSlice, {
     noSearch: true,
-    emptyState: { icon: 'lots', title: "No lots in this auction yet", body: "Add your first lot using the form on the left — enter Lot #, Name, Qty, and Price to get started." },
+    // "Nothing here" and "nothing MATCHES" are different problems: telling an
+    // operator to add their first lot when the trade is full but their filter
+    // excludes everything reads as data loss. Any active filter switches the
+    // message to one that names the way out.
+    emptyState: (_lotSearch || _lotBranch || _lotGrade || _lotDummy)
+      ? { icon: 'lots', title: "No lots match these filters",
+          body: "Clear the search box or the branch / grade / dummy-details filters above to see the rest of the trade." }
+      : { icon: 'lots', title: "No lots in this auction yet", body: "Add your first lot using the form on the left — enter Lot #, Name, Qty, and Price to get started." },
     // Tint locked rows so the user can spot finalized lots at a glance.
     // The `.row-locked` class is defined inline at the top of the Lots
     // tab CSS — pale amber background that doesn't clash with zebra
