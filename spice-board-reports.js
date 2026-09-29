@@ -7,7 +7,8 @@
  *   2. form_d           — Advance Auction Report (single-page summary +
  *      top-5 buyer panel) — Cardamom Marketing Rules, Rule 10(1)(1)
  *   3. form_c           — Auction Report (detailed lot listing split into
- *      PLANTERS / DEALERS sections) — Cardamom Marketing Rules, Rule 5(2)
+ *      PLANTERS / DEALERS sections) — Cardamom Marketing Rules, Rule 5(2).
+ *      Lists every lot PUT FOR AUCTION: sold, withdrawn and not auctioned.
  *
  * Data layer is shared via `getReportContext()` so each report pulls a
  * single normalized lot+buyer+trader+auction shape, with optional Branch
@@ -208,16 +209,26 @@ function getReportContext(db, opts) {
   if (opts.dateFrom) { where.push('a.date >= ?'); params.push(opts.dateFrom); }
   if (opts.dateTo)   { where.push('a.date <= ?'); params.push(opts.dateTo); }
 
-  // Price gate. The post-auction reports (Form C / Form D / Buyers Statement)
-  // only ever want lots that actually sold, so they keep the amount > 0 rule.
+  // Price gate. The post-auction reports (Form D / Buyers Statement) only ever
+  // want lots that actually sold, so they keep the amount > 0 rule.
   // `includeUnpriced` drops it for the PRE-auction e-Auction CSV: that file is
   // uploaded to the Spices Board portal BEFORE bidding, when every lot still
   // has amount = 0 — the gate made it export an empty file for exactly the
   // trade it exists to serve.
+  //
+  // `includeUnsold` is Form C's gate: it lists every lot PUT FOR AUCTION, which
+  // is all three lot states, not just the sold one —
+  //     put = sold + not auctioned + withdrawn
+  // the same reconciliation Form D's arrivals block spells out (see `lots.code`
+  // there). It used to admit sold + 'WD' only, so every not-auctioned lot was
+  // missing and Form C's "Qty put for auction" came out short of the arrivals
+  // figure on the Form D filed beside it. Reserved lots are held lot numbers,
+  // not booked stock — Form D leaves them out of arrivals, so they stay out
+  // here too rather than printing seller-less 0.000 rows on a statutory return.
   const priceGate = opts.includeUnpriced
     ? ''
-    : (opts.includeWithdrawn
-        ? "AND (l.amount > 0 OR UPPER(TRIM(COALESCE(l.code,''))) = 'WD')"
+    : (opts.includeUnsold
+        ? 'AND COALESCE(l.reserved, 0) = 0'
         : 'AND l.amount > 0');
 
   const rows = db.all(`
@@ -1391,10 +1402,21 @@ function buildFormC(ctx) {
     // See sblFromAadhar() for how the SBL is told apart from an Aadhaar number
     // in the shared `aadhar` column. Never the Aadhaar.
     const sblNo = sblFromAadhar(r.trader_aadhar || r.seller_aadhar);
-    // Withdrawn lots (code = 'WD') are put for auction but not sold — they
-    // appear in Form C with their Qty put, but Qty sold / Rate / Value = 0
-    // and no bidder.
-    const isWD = String(r.lot_code || '').trim().toUpperCase() === 'WD';
+    // A lot can reach this form in three states (the same three Form D
+    // reconciles — see `lots.code` there):
+    //   real buyer code → SOLD
+    //   'WD'            → WITHDRAWN, pulled before the sale
+    //   'NA' or blank   → NOT AUCTIONED, booked but never under the hammer
+    // Both no-sale states were put for auction, so they print their Qty put
+    // with Qty sold / Rate / Value / Sample / Commission = 0 and no bidder.
+    // The unpriced test is part of it: a lot with no amount never fetched a
+    // price whatever its code says, and one that did is a sale whatever else
+    // is on the row.
+    const code = String(r.lot_code || '').trim().toUpperCase();
+    const isWD = code === 'WD';
+    const priced = (Number(r.amount) || 0) > 0;
+    const isNA = !isWD && !priced;
+    const noSale = isWD || isNA;
     const qty = Number(r.qty) || 0;
     const item = {
       lot:    r.lot,
@@ -1405,15 +1427,16 @@ function buildFormC(ctx) {
       // number prints on the very row that was masked.
       regId:  ident.dummyCr || sblNo || cr,
       qtyPut: qty,
-      qtySold: isWD ? 0 : qty,
-      rate:   isWD ? 0 : (Number(r.price) || 0),
-      value:  isWD ? 0 : (Number(r.amount) || 0),
-      sample: isWD ? 0 : (Number(r.sample_refund || r.sample_refud) || 0),
-      commission: isWD ? 0 : (Number(r.commission) || 0),
-      buyer:  isWD ? '' : (r.buyer1 || r.buyer_full || ''),
-      sbl:    isWD ? '' : (r.buyer_sbl || ''),
+      qtySold: noSale ? 0 : qty,
+      rate:   noSale ? 0 : (Number(r.price) || 0),
+      value:  noSale ? 0 : (Number(r.amount) || 0),
+      sample: noSale ? 0 : (Number(r.sample_refund || r.sample_refud) || 0),
+      commission: noSale ? 0 : (Number(r.commission) || 0),
+      buyer:  noSale ? '' : (r.buyer1 || r.buyer_full || ''),
+      sbl:    noSale ? '' : (r.buyer_sbl || ''),
       hasGstin: hasValidGstin(cr),
       isWD,
+      isNA,
     };
     // Form C bucketing rule (user spec): rows whose registration parses
     // as a GSTIN go under DEALERS; everything else (CR codes, blank,
@@ -1455,7 +1478,7 @@ function buildFormC(ctx) {
 }
 
 function formCJson(db, opts) {
-  const ctx = getReportContext(db, Object.assign({}, opts, { includeWithdrawn: true }));
+  const ctx = getReportContext(db, Object.assign({}, opts, { includeUnsold: true }));
   const d = buildFormC(ctx);
   const licence = readSetting(db, 'sbl', '');
   const seasonStart = readSetting(db, 'season_start_year', '');
@@ -1491,7 +1514,7 @@ function formCJson(db, opts) {
 
 async function formCXlsx(db, opts) {
   _loadDateFormat(db);
-  const ctx = getReportContext(db, Object.assign({}, opts, { includeWithdrawn: true }));
+  const ctx = getReportContext(db, Object.assign({}, opts, { includeUnsold: true }));
   const d   = buildFormC(ctx);
   const licence = readSetting(db, 'sbl', '');
   const seasonStart = readSetting(db, 'season_start_year', '');
@@ -1565,7 +1588,7 @@ async function formCXlsx(db, opts) {
 
 async function formCPdf(db, opts) {
   _loadDateFormat(db);
-  const ctx = getReportContext(db, Object.assign({}, opts, { includeWithdrawn: true }));
+  const ctx = getReportContext(db, Object.assign({}, opts, { includeUnsold: true }));
   const d   = buildFormC(ctx);
   const licence = readSetting(db, 'sbl', '');
   const seasonStart = readSetting(db, 'season_start_year', '');
