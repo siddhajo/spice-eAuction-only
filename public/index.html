@@ -4225,23 +4225,65 @@ html[data-textsize] #comfort-toggle{background:var(--spice-saffron-lt);color:var
    Colours come from the --spice-* tokens rather than --card/--text,
    because only the spice tokens flip in dark mode. */
 .wl-collapsible{padding:0;overflow:hidden}
+/* The header carries the theme colour, for two reasons: it reads as a header
+   rather than one more row of body text, and it tells these two screens
+   apart — Birthdays and Seller Reminders are the same four-card layout with
+   different words in it, which is easy to mis-read at a glance.
+
+   Built with color-mix over the card's OWN surface token instead of a fixed
+   tint, because the accent is not fixed: the app ships nine themes
+   (body[data-theme]) that each redefine --spice-saffron / --spice-turmeric.
+   A literal #FEF6E7 would be right in exactly one of them. (color-mix is
+   already used this way for --side-active-bg.)
+
+   Mix into --card, NOT --spice-paper, even though dark mode repaints
+   --spice-paper. `--card: var(--spice-paper)` is declared on :root, while
+   the dark override sits on body — one level BELOW — so --card substitutes
+   the light value there and inherits it down: .card still paints #FFFFFF
+   with data-dark="1". Tinting --spice-paper instead gave a dark #1E293B
+   header sitting on that white card. Mixing into --card means the header
+   always tints the surface the card actually paints, in either mode.
+   (That cards stay white in dark mode is an app-wide pre-existing thing,
+   not this screen's to fix — but this must not make it look broken.)
+
+   --wl-accent is set per screen below; it defaults to the primary so a new
+   worklist screen that reuses this pattern still gets a sane header. */
+.wl-collapsible{--wl-accent:var(--spice-saffron)}
 .wl-collapsible-head{
   display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;
   padding:14px 18px;transition:background .12s;flex-wrap:wrap;
+  background:color-mix(in srgb, var(--wl-accent) 10%, var(--card));
+  box-shadow:inset 3px 0 0 var(--wl-accent);
 }
-.wl-collapsible-head:hover{background:var(--spice-cream)}
-.wl-collapsible-title{font-size:15px;font-weight:700;color:var(--spice-text-main)}
+.wl-collapsible-head:hover{background:color-mix(in srgb, var(--wl-accent) 18%, var(--card))}
+.wl-collapsible-title{font-size:15px;font-weight:700;color:var(--text)}
+/* The chevron is the only thing saying "this opens" — give it the accent so
+   it is actually findable. In --spice-text-hint it was nearly invisible. */
 .wl-collapsible-chev{
   display:inline-block;width:16px;text-align:center;font-size:12px;
-  color:var(--spice-text-hint);transition:transform .15s;
+  color:var(--wl-accent);transition:transform .15s;
 }
+/* TOKEN FAMILY MUST MATCH THE SURFACE. Text and borders here use the legacy
+   --text / --text2 / --border aliases, NOT their --spice-* sources. Both
+   families are declared on :root, but only the --spice-* ones are overridden
+   on body for dark mode, so in dark mode --spice-text-main goes near-white
+   while --card stays #FFFFFF: styling this title with --spice-text-main put
+   white text on a white card and the headings vanished. The legacy aliases
+   stay pinned to the same surface the card actually paints, which is why the
+   description paragraphs below have always stayed readable. Accent colours
+   (--wl-accent) are the exception — they are a hue, not a surface, and are
+   meant to follow the theme. */
+/* Birthdays takes the warm accent, Seller Reminders the primary. Both track
+   the active theme; drop these two rules to make the screens match again. */
+#tc-birthdays .wl-collapsible{--wl-accent:var(--spice-turmeric)}
+#tc-reminders .wl-collapsible{--wl-accent:var(--spice-saffron)}
 .wl-collapsible.is-collapsed .wl-collapsible-chev{transform:rotate(-90deg)}
-.wl-collapsible-body{border-top:1px solid var(--spice-line);padding:14px 18px}
+.wl-collapsible-body{border-top:1px solid var(--border);padding:14px 18px}
 .wl-collapsible.is-collapsed .wl-collapsible-body{display:none}
 /* Controls living in the head (Refresh, the date picker, Send selected)
    must not toggle the section, so the wrapper swallows the click. */
 .wl-head-actions{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.wl-head-note{font-size:12px;color:var(--spice-text-mute);font-weight:400}
+.wl-head-note{font-size:12px;color:var(--text2);font-weight:400}
 
 /* Scrolling list bodies. th already carries a --spice-cream background,
    so a sticky header stays opaque over the rows it covers. Horizontal

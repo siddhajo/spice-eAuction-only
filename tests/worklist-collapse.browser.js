@@ -234,6 +234,59 @@ const RM = ['rm-sec-intro', 'rm-sec-due', 'rm-sec-held', 'rm-sec-log'];
   check('80 rows scroll inside the section instead of stretching the page',
     grew.scrollH > grew.clientH, JSON.stringify(grew));
 
+  console.log('\n[F] the headers are coloured — in every theme, and in dark mode');
+  // The colour is color-mix(accent, --card). Two traps this guards:
+  //   - mixing into --spice-paper instead of --card gives a dark header on a
+  //     white card under data-dark (the dark override sits on body, below the
+  //     :root where --card is computed, so --card never flips);
+  //   - colouring the title with --spice-text-main does flip it to near-white
+  //     on that same white header, and the headings disappear.
+  const headOf = (sel) => page.evaluate((s) => {
+    const h = document.querySelector(s);
+    const cs = getComputedStyle(h);
+    const t = h.querySelector('.wl-collapsible-title');
+    return { bg: cs.backgroundColor, title: getComputedStyle(t).color,
+             body: getComputedStyle(h.closest('.wl-collapsible')).backgroundColor };
+  }, sel);
+  const setMode = (theme, dark) => page.evaluate((t, d) => {
+    if (t) document.body.setAttribute('data-theme', t); else document.body.removeAttribute('data-theme');
+    document.body.setAttribute('data-dark', d ? '1' : '0');
+  }, theme, dark);
+
+  await openScreen('birthdays', 'tc-birthdays');
+  const lightBd = await headOf('#bd-sec-today .wl-collapsible-head');
+  check('the header is tinted, not the plain card surface',
+    lightBd.bg !== 'rgba(0, 0, 0, 0)' && lightBd.bg !== lightBd.body, JSON.stringify(lightBd));
+  check('the title is not the same colour as its header', lightBd.title !== lightBd.bg, JSON.stringify(lightBd));
+
+  await setMode(null, true);
+  await new Promise(r => setTimeout(r, 300));
+  const darkBd = await headOf('#bd-sec-today .wl-collapsible-head');
+  check('dark mode: the header still matches the surface the card paints',
+    darkBd.bg === lightBd.bg, JSON.stringify(darkBd));
+  check('dark mode: the title is still readable, not white-on-white',
+    darkBd.title === lightBd.title && darkBd.title !== darkBd.bg, JSON.stringify(darkBd));
+  await setMode(null, false);
+
+  // The accent must follow the active theme, or it is just a hardcoded tint.
+  const tints = {};
+  await openScreen('reminders', 'tc-reminders');
+  for (const t of [null, 'violet', 'coral']) {
+    await setMode(t, false); await new Promise(r => setTimeout(r, 250));
+    tints[t || 'default'] = (await headOf('#rm-sec-due .wl-collapsible-head')).bg;
+  }
+  check('the header tint follows the theme',
+    new Set(Object.values(tints)).size === 3, JSON.stringify(tints));
+  await setMode(null, false);
+
+  // Two near-identical screens must not be the same colour.
+  await openScreen('birthdays', 'tc-birthdays');
+  const bdTint = (await headOf('#bd-sec-today .wl-collapsible-head')).bg;
+  await openScreen('reminders', 'tc-reminders');
+  const rmTint = (await headOf('#rm-sec-due .wl-collapsible-head')).bg;
+  check('Birthdays and Seller Reminders are tinted differently', bdTint !== rmTint,
+    `bd=${bdTint} rm=${rmTint}`);
+
   check('no page errors', errs.length === 0, errs.join(' | '));
   console.log(`\n${pass} passed, ${fail} failed`);
   cleanup();
