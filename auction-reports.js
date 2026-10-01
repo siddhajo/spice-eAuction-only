@@ -13,6 +13,7 @@
 
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
+const { attachPdfkitWatermark, attachPdfkitWatermarkPath } = require('./pdf/watermark');
 const {
   fmtMoney, fmtQty, fmtPrice, formatInvoiceNo,
   getCompanyHeader, drawCompanyHeader,
@@ -141,6 +142,7 @@ async function lotSlipPdf(db, auctionId, _cfg, extra) {
   const rows = getLotSlipPreRows(db, auctionId, extra && extra.state);
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 18 });
+  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
   const buffers = [];
   doc.on('data', b => buffers.push(b));
 
@@ -316,6 +318,9 @@ async function lotSlipPdf(db, auctionId, _cfg, extra) {
 function carbonCopySlipPdf({ auction, rows, columns, totalKeys, companyHeader, baseFont }) {
   baseFont = baseFont || 9;
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 18 });
+  // No db here — the watermark comes resolved on the header, same as the
+  // shared table renderer. See getCompanyHeader() / pdf/watermark.js.
+  attachPdfkitWatermarkPath(doc, (companyHeader || {}).watermarkPath);
   const buffers = [];
   doc.on('data', b => buffers.push(b));
 
@@ -1097,6 +1102,7 @@ async function collectionPdf(db, auctionId) {
   const groups = classifyBySale(rows);
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 24 });
+  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
   const buffers = [];
   doc.on('data', b => buffers.push(b));
 
@@ -1837,6 +1843,7 @@ async function tradeReportPdf(db, auctionId, opts) {
     : 'BUYERS LIST FOR VERIFICATION';
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 18 });
+  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
   const buffers = [];
   doc.on('data', b => buffers.push(b));
 

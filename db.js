@@ -274,6 +274,11 @@ async function initDb() {
     -- prints them alongside the consignee GSTIN.
     csbl TEXT DEFAULT '',
     cpan TEXT DEFAULT '',
+    -- Buyer's date of birth. Optional free text (stored as entered,
+    -- typically yyyy-mm-dd from the date picker), mirroring traders.dob.
+    -- Read by the birthday-greetings engine; captured in create/edit and
+    -- the Buyers Excel import.
+    dob TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
@@ -905,6 +910,68 @@ async function initDb() {
     received_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
+  // ── BIRTHDAY GREETINGS (send-once ledger) ──────────────────
+  // One row per greeting ATTEMPT, for sellers (`traders.id`) and buyers
+  // (`buyers.id`). See birthday-greetings.js.
+  //
+  // The partial unique index below is the whole point of the table: it
+  // makes "greeted at most once per party per calendar year" a database
+  // guarantee rather than a convention, so a server restart, a second
+  // operator, or a manual send racing the automatic sweep cannot
+  // double-greet anyone. Because it is restricted to status='sent', a
+  // FAILED attempt still records itself and leaves the year's slot open
+  // for a retry.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS birthday_greetings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    party_type TEXT NOT NULL,                  -- 'seller' | 'buyer'
+    party_id INTEGER NOT NULL,                 -- traders.id / buyers.id
+    greet_year TEXT NOT NULL,                  -- 'YYYY' the greeting counts against
+    greet_date TEXT DEFAULT '',                -- 'YYYY-MM-DD' the birthday fell on
+    name TEXT DEFAULT '',                      -- snapshot; the master may be renamed
+    phone TEXT DEFAULT '',
+    mode TEXT DEFAULT 'manual',                -- 'auto' (daily sweep) | 'manual'
+    -- Who pressed Send ('' for the unattended sweep). WhatsApp sends are
+    -- deliberately outside the generic activity log (see auditMutations), so
+    -- this ledger is the only place that answers "who greeted this party".
+    sent_by TEXT DEFAULT '',
+    status TEXT DEFAULT 'failed',              -- 'sent' | 'failed'
+    wamid TEXT DEFAULT '',                     -- joins to whatsapp_messages for receipts
+    error TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  )`);
+  wrapped.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_birthday_once
+                  ON birthday_greetings(party_type, party_id, greet_year)
+                  WHERE status = 'sent'`);
+  wrapped.exec(`CREATE INDEX IF NOT EXISTS idx_birthday_date
+                  ON birthday_greetings(greet_date)`);
+
+  // ── SELLER REMINDERS (cooldown ledger) ─────────────────────
+  // One row per "you haven't booked in a while" attempt. See
+  // seller-reminders.js.
+  //
+  // NOTE the difference from birthday_greetings above: a reminder RECURS,
+  // so there is no unique index. The guard is a WINDOW — "when did we last
+  // actually reach this seller?" — which is why only rows with
+  // status='sent' are consulted: a failed attempt must not buy a seller
+  // weeks of silence. The index is on (trader_id, status) because that
+  // MAX(created_at) lookup runs once per candidate seller.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS seller_reminders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trader_id INTEGER NOT NULL,                -- traders.id
+    name TEXT DEFAULT '',                      -- snapshot; the master may be renamed
+    phone TEXT DEFAULT '',
+    last_booked TEXT DEFAULT '',               -- auction date the reminder was based on
+    days_since INTEGER,                        -- NULL for a never-booked seller
+    mode TEXT DEFAULT 'manual',                -- 'auto' (daily sweep) | 'manual'
+    sent_by TEXT DEFAULT '',                   -- operator; '' for the sweep
+    status TEXT DEFAULT 'failed',              -- 'sent' | 'failed'
+    wamid TEXT DEFAULT '',                     -- joins to whatsapp_messages for receipts
+    error TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  )`);
+  wrapped.exec(`CREATE INDEX IF NOT EXISTS idx_seller_reminder_trader
+                  ON seller_reminders(trader_id, status)`);
+
   // ── PAYMENT ADVANCES ───────────────────────────────────────
   // Per-seller, per-auction advance already paid to a seller. Entered on
   // the Payments tab's "Advance" column and deducted from the payable
@@ -1095,6 +1162,11 @@ async function initDb() {
     "ALTER TABLE traders ADD COLUMN email TEXT DEFAULT ''",
     // Seller date of birth — create/edit, Sellers import, Import Old Data.
     "ALTER TABLE traders ADD COLUMN dob TEXT DEFAULT ''",
+    // Buyer date of birth — same shape as traders.dob. Added for birthday
+    // greetings; harmless on an install with the feature off.
+    "ALTER TABLE buyers ADD COLUMN dob TEXT DEFAULT ''",
+    // Operator behind a manual birthday greeting; blank for the daily sweep.
+    "ALTER TABLE birthday_greetings ADD COLUMN sent_by TEXT DEFAULT ''",
     // Distance for e-way bill <DISTANCE> field on ISP sales vouchers.
     // Populated manually per-invoice from the To Tally → 🗺️ E-way Bill
     // Distance UI: user looks up the value on NIC's Pin-to-Pin Distance
@@ -1482,23 +1554,24 @@ function makeWrapper() {
   /**
    * Run a SQL with bound params and return rows as objects.
    * Internal helper used by get/all.
+   *
+   * PERF: builds each row from getColumnNames() + get() rather than
+   * getAsObject(). getAsObject() re-derives the column-name list from the
+   * statement for EVERY row, which dominates query time on wide tables —
+   * measured 13.0ms vs 3.9ms (3.3x) for one `SELECT * FROM lots` page
+   * (396 rows x 75 cols), with 94% of the original time spent marshalling
+   * rather than executing. The column names are fixed for the lifetime of a
+   * statement, so hoisting them out of the loop is free. Verified identical
+   * to getAsObject() across all 36 tables / 23,345 rows, including BLOB
+   * (Uint8Array) and NULL cells.
+   *
+   * `limit` stops stepping early — see get(), which needs only row 0.
    */
   function execStatement(sql, params, limit) {
     const stmt = rawDb.prepare(sql);
     try {
       stmt.bind(params);
       const rows = [];
-      // PERF: build each row from getColumnNames() + get() rather than
-      // getAsObject(). getAsObject() re-derives the column-name list from the
-      // statement for EVERY row, which dominates query time on wide tables —
-      // measured 13.0ms vs 3.9ms (3.3x) for one `SELECT * FROM lots` page
-      // (396 rows x 75 cols), with 94% of the original time spent marshalling
-      // rather than executing. Column names are fixed for the lifetime of a
-      // statement, so hoisting them out of the loop is free. Verified
-      // identical to getAsObject() across all 36 tables / 23,345 rows,
-      // including BLOB (Uint8Array) and NULL cells.
-      //
-      // `limit` stops stepping early — see get(), which needs only row 0.
       const cols = stmt.getColumnNames();
       const n = cols.length;
       const cap = limit == null ? Infinity : limit;

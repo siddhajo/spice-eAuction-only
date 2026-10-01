@@ -25,6 +25,8 @@ const { getInvoiceTemplate } = require('./invoice-templates');
 // Shared NAME / STREET / TOWN-PIN / STATE+CODE / details-two-per-row party box.
 const { partyBlock } = require('../party-block');
 const { htmlToPdf } = require('./htmlToPdf');
+// Faint company-logo layer behind every invoice — see pdf/watermark.js.
+const { withWatermark } = require('./watermark');
 
 // Logos must be embedded as data: URIs — the renderer loads the HTML from a
 // data: URL / setContent, where file:// and external requests are blocked.
@@ -286,7 +288,7 @@ const CONTINUED_FOOTER =
 async function generateSalesInvoiceHtmlPDF(invoiceData, cfg, saleType, invoiceNo, invoiceDate) {
   const view = buildSalesInvoiceView(invoiceData, cfg, saleType, invoiceNo, invoiceDate);
   const tpl = getInvoiceTemplate('sales-invoice', cfg);
-  const plain = await htmlToPdf(tpl.render(view));
+  const plain = await htmlToPdf(withWatermark(tpl.render(view), cfg));
 
   const { pdfPageCount, dropLastPage, mergePdfs } = require('./merge-pdf');
   let pages;
@@ -298,7 +300,7 @@ async function generateSalesInvoiceHtmlPDF(invoiceData, cfg, saleType, invoiceNo
   // real @page margin of the same purpose — which is ALSO what reserves the
   // header/footer space, since CSS page margins override the print call's (the
   // matching marginTop/marginBottom below are sent so the two can't disagree).
-  const pagedHtml = tpl.render({ ...view, paged: true });
+  const pagedHtml = withWatermark(tpl.render({ ...view, paged: true }), cfg);
   const printOpts = {
     header: PAGE_NO_HEADER,
     marginTop: PAGE_MARGIN_TOP_PT,

@@ -3,7 +3,7 @@
  *
  * Why this exists instead of just using the `compression` middleware:
  *
- * public/index.html is a single 2.56 MB file (74% of it inline <script>).
+ * public/index.html is a single 2.59 MB file (74% of it inline <script>).
  * The HTML is deliberately sent `no-store` — see the cache middleware in
  * server.js, which exists because ngrok/proxy caching served operators a
  * stale UI — so there is no browser cache to fall back on and the full
@@ -29,7 +29,7 @@
  * simply fall through to the normal static handler — the cache is an
  * optimization, never a correctness requirement.
  *
- * Measured on index.html (2.56 MB):
+ * Measured on index.html (2.59 MB):
  *   brotli q9  -> 585 KB (4.54x) in 140 ms   <- chosen
  *   brotli q11 -> 537 KB (4.95x) in 4190 ms  <- 30x the cost for 8% less
  *   gzip   l9  -> 724 KB (3.67x) in 110 ms   <- fallback for old clients

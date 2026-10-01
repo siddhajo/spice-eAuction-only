@@ -1,0 +1,46 @@
+;;=============================================================================
+;; SpiceColourTest.tdl  —  TEMPORARY PROBE.  Load, print, unload.
+;;=============================================================================
+;; ONE QUESTION: does `Print BG` put colour on paper on THIS machine at all?
+;;
+;; In SpiceLetterheadInvoice.tdl the green bands never appear. Two very
+;; different reasons are still possible and they need opposite fixes:
+;;
+;;   a) `Print BG` works here, but not inside a from-scratch [Report:] —
+;;      in which case the letterhead has to be rebuilt on Tally's own invoice
+;;      format to get colour (and probably the QR with it)
+;;
+;;   b) `Print BG` produces nothing on this machine regardless — a printer,
+;;      driver or print-mode limitation — in which case NO amount of TDL will
+;;      ever make those bands green, and we stop trying
+;;
+;; This file tints ONE band on Tally's BUILT-IN invoice. That is exactly the
+;; construct the site's own Customized Invoice.txt uses in production:
+;;
+;;     [#Part: EXPINV Column]
+;;         Print BG:Black
+;;
+;; so if colour can print here, it will print here.
+;;
+;;-----------------------------------------------------------------------------
+;; HOW TO USE
+;;   1. F1 > TDL & Add-on > F4 (Manage Local TDLs) — ADD this file.
+;;      Leave SpiceLetterheadInvoice.tdl loaded; they touch different things.
+;;   2. Restart Tally.
+;;   3. Open ANY sales invoice and print it with Tally's OWN format —
+;;      Ctrl+P, the normal print. NOT Alt+L, which is the letterhead layout.
+;;   4. Look at the column-header row (Description / Quantity / Rate / Amount).
+;;
+;;        GREEN band   -> answer (a): colour works, the custom report is the
+;;                        blocker, and the rebuild is worth doing
+;;        still white  -> answer (b): colour cannot print here at all, and the
+;;                        green requirement has to be dropped or the printer
+;;                        changed
+;;
+;;   5. REMOVE this file from Manage Local TDLs afterwards — it recolours the
+;;      standard invoice, which you do not want left on.
+;;-----------------------------------------------------------------------------
+
+[#Part: EXPINV Column]
+
+    Print BG : Light Green

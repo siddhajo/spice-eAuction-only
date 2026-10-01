@@ -17,6 +17,9 @@ const { formatDateForDisplay } = require('./report-formatters');
 // Shared NAME / ADDRESS / PLACE / STATE+CODE / details-two-per-row layout
 // for the party boxes on the Bill of Supply and the Commission Bill.
 const { partyBlock } = require('./party-block');
+// Faint company-logo watermark, shared with the HTML engine so both print the
+// same mark from the same file. See pdf/watermark.js.
+const { attachPdfkitWatermark } = require('./pdf/watermark');
 function _fallbackInvoiceDate(cfg) {
   return formatDateForDisplay(new Date(), (cfg && cfg.date_format) || 'dd/mm/yyyy');
 }
@@ -168,6 +171,11 @@ function generatePurchaseInvoicePDF(invoiceData, cfg, invoiceNo, externalDoc) {
     buffers = [];
     doc.on('data', b => buffers.push(b));
   }
+  // Faint company-logo watermark behind the page(s) this document will draw.
+  // Must happen BEFORE any content: the mark is painted at the top of each
+  // page so the invoice lands on top of it. Idempotent — in batch mode the
+  // same doc passes through here once per invoice. See pdf/watermark.js.
+  attachPdfkitWatermark(doc, cfg);
 
   const PAGE_W = doc.page.width;
   const MX = 20;
@@ -807,6 +815,11 @@ function generateSalesInvoicePDF(invoiceData, cfg, saleType, invoiceNo, invoiceD
     buffers = [];
     doc.on('data', b => buffers.push(b));
   }
+  // Faint company-logo watermark behind the page(s) this document will draw.
+  // Must happen BEFORE any content: the mark is painted at the top of each
+  // page so the invoice lands on top of it. Idempotent — in batch mode the
+  // same doc passes through here once per invoice. See pdf/watermark.js.
+  attachPdfkitWatermark(doc, cfg);
 
   const { buyer, lineItems, summary } = invoiceData;
 
@@ -1972,6 +1985,11 @@ function generateAgriBillPDF(billData, cfg, billNo, externalDoc) {
     buffers = [];
     doc.on('data', b => buffers.push(b));
   }
+  // Faint company-logo watermark behind the page(s) this document will draw.
+  // Must happen BEFORE any content: the mark is painted at the top of each
+  // page so the invoice lands on top of it. Idempotent — in batch mode the
+  // same doc passes through here once per invoice. See pdf/watermark.js.
+  attachPdfkitWatermark(doc, cfg);
 
   const PAGE_W = doc.page.width;
   const MX = 20;
@@ -2406,6 +2424,9 @@ function generateSalesInvoicesBatchPDF(invoices, cfg, variant) {
   const buffers = [];
   doc.on('data', b => buffers.push(b));
   doc._invoiceCount = 0; // tracked so subsequent invoices addPage before drawing
+  // Stamp page 1 up front: the per-document generators call this too, but the
+  // first of them draws content, and the watermark has to be under it.
+  attachPdfkitWatermark(doc, cfg);
 
   // `variant` (e.g. 'purchase') is a uniform display-flip applied to every
   // invoice in the batch — used by the bulk purchase-view endpoint to
@@ -2438,6 +2459,9 @@ function generatePurchaseInvoicesBatchPDF(invoices, cfg) {
   const buffers = [];
   doc.on('data', b => buffers.push(b));
   doc._purchaseCount = 0;
+  // Stamp page 1 up front: the per-document generators call this too, but the
+  // first of them draws content, and the watermark has to be under it.
+  attachPdfkitWatermark(doc, cfg);
 
   for (const inv of invoices) {
     generatePurchaseInvoicePDF(inv.invoiceData, cfg, inv.invoiceNo, doc);
@@ -2459,6 +2483,9 @@ function generateAgriBillsBatchPDF(bills, cfg) {
   const buffers = [];
   doc.on('data', b => buffers.push(b));
   doc._billCount = 0;
+  // Stamp page 1 up front: the per-document generators call this too, but the
+  // first of them draws content, and the watermark has to be under it.
+  attachPdfkitWatermark(doc, cfg);
 
   for (const bill of bills) {
     generateAgriBillPDF(bill.billData, cfg, bill.billNo, doc);
@@ -2528,6 +2555,11 @@ function generateCommissionBoSPDF(billData, cfg, billNo, externalDoc) {
     buffers = [];
     doc.on('data', b => buffers.push(b));
   }
+  // Faint company-logo watermark behind the page(s) this document will draw.
+  // Must happen BEFORE any content: the mark is painted at the top of each
+  // page so the invoice lands on top of it. Idempotent — in batch mode the
+  // same doc passes through here once per invoice. See pdf/watermark.js.
+  attachPdfkitWatermark(doc, cfg);
 
   const PAGE_W = doc.page.width;
   const MX = 20;
@@ -2961,6 +2993,9 @@ function generateCommissionBoSBatchPDF(bills, cfg) {
   const buffers = [];
   doc.on('data', b => buffers.push(b));
   doc._commBoSCount = 0;
+  // Stamp page 1 up front: the per-document generators call this too, but the
+  // first of them draws content, and the watermark has to be under it.
+  attachPdfkitWatermark(doc, cfg);
 
   for (const bill of bills) {
     generateCommissionBoSPDF(bill.billData, cfg, bill.billNo, doc);

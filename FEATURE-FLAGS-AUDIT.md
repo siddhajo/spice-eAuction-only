@@ -39,6 +39,8 @@ The app consumes flags two ways:
 | `tally_purchase_detailed` | Per-lot vs consolidated Tally purchase/URD voucher XML (default ON) | `tally-xml.js:1591,2007` |
 | `flag_bulk_set_buyer_code` | "Set Buyer Code" bulk button + modal on Lots tab | `index.html:6917,3317` |
 | `flag_bos_purchase_bill` | Toggles Bills tab between Purchase-Bill vs Commission-Bill UI (default ON) | `index.html:1132,6925` |
+| `flag_birthday_greetings` | **Full gate**: the Birthdays screen (sidebar entry + `#tc-birthdays`) and all three `/api/birthdays*` routes, which 403 while it is off. Drives the DOB column on the Buyers list. Default OFF, and off is inert — the daily sweep timer returns before reading a party. | `server.js` `requireBirthdaysEnabled()`/`startBirthdaySweeper()`, `birthday-greetings.js`, `index.html` `.feat-birthdays`/`loadBirthdays()` |
+| `flag_seller_reminders` | **Full gate**: the Seller Reminders screen (`#tc-reminders`) and all three `/api/seller-reminders*` routes, which 403 while it is off. Default OFF and inert; shares the birthday campaign's sender and its one sweep timer. | `server.js` `requireRemindersEnabled()`/`startOutreachSweeper()`, `seller-reminders.js`, `index.html` `.feat-reminders`/`loadReminders()` |
 | `flag_price_check` | **Full gate**: Price Check tab + hard 412 block on Calculate/Invoice/Purchase/Bill/DN until verified | `server.js:2947`, guarded at `4808,5008,5198…` |
 | `flag_lot_lock` | **Full gate**: lock/unlock UI + endpoints 404 when off + lock guards on mutations/cascades | `server.js:4213,4299`, `index.html:1145` |
 | `flag_reserved_price` | Reserved Price input in Lot Entry (desktop + mobile) | `index.html:6942`, `app.html:596` |

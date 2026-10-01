@@ -19,6 +19,9 @@
 //   [cascade]  emptying Dummy Name empties the other three with it, and the
 //              ✕ in the box does the same — a phone and a GSTIN left under
 //              no name would still print on the portal CSV
+//   [filter]   the Lots table can be narrowed to masked / unmasked lots, the
+//              dropdown follows the same flag as the button, and the empty
+//              state stops claiming the trade has no lots
 const os = require('os'), path = require('path'), fs = require('fs');
 const { spawn } = require('child_process');
 const pptr = require('puppeteer-core');
@@ -412,6 +415,67 @@ function cleanup() {
   await page.evaluate(() => applyLotDummyDetails());
   await new Promise(r => setTimeout(r, 900));
   check('…and applies as typed', sent && sent.dummy_name === 'ZZZ INVENTED NAME', JSON.stringify(sent));
+
+  console.log('[filter] the table can be narrowed to masked lots');
+  // Known state first: wipe both, then mask exactly ONE, so "shows the masked
+  // lot" and "shows everything" can't pass for the same reason.
+  await api('POST', '/api/lots/dummy-details/bulk', { ids: lotIds, clear: true });
+  await api('POST', '/api/lots/dummy-details/bulk', { ids: [lotIds[0]], dummy_name: 'MASKED ONE' });
+  // The checkbox values are the lot ids, so the rendered set is readable
+  // without parsing cell text.
+  const shownIds = (val) => page.evaluate(async (v) => {
+    const sel = document.getElementById('lot-dummy-filter');
+    if (sel) sel.value = v;
+    await loadLots();
+    return [...document.querySelectorAll('#lots-list .lot-select-cb')].map(cb => Number(cb.value));
+  }, val);
+  check('the dropdown is there with the flag ON',
+        (await page.evaluate(() => {
+          const el = document.getElementById('lot-dummy-filter');
+          return el ? getComputedStyle(el).display !== 'none' : false;
+        })) === true);
+  let shown = await shownIds('1');
+  check('"Dummy set" shows only the masked lot',
+        shown.length === 1 && shown[0] === lotIds[0], JSON.stringify(shown));
+  shown = await shownIds('0');
+  check('"No dummy" shows only the other one',
+        shown.length === 1 && shown[0] === lotIds[1], JSON.stringify(shown));
+  shown = await shownIds('');
+  check('"All Lots" shows both', shown.length === 2, JSON.stringify(shown));
+  // A name-only mask counts: the filter must agree with the 🎭 badge, which
+  // lights on ANY of the four fields.
+  check('the masked lot is the badged one',
+        (await page.evaluate(() => {
+          const row = [...document.querySelectorAll('#lots-list tr')]
+            .find(tr => [...tr.querySelectorAll('span')].some(sp => sp.textContent.includes('DUMMY')));
+          return row ? Number(row.querySelector('.lot-select-cb').value) : 0;
+        })) === lotIds[0]);
+
+  console.log('[filter] an empty result says so instead of "add your first lot"');
+  await api('POST', '/api/lots/dummy-details/bulk', { ids: lotIds, clear: true });
+  shown = await shownIds('1');
+  check('no rows once nothing is masked', shown.length === 0, JSON.stringify(shown));
+  const emptyTitle = await page.evaluate(() =>
+    (document.getElementById('lots-list')?.textContent || '').trim());
+  check('the empty state blames the filter, not the trade',
+        /match these filters/i.test(emptyTitle) && !/first lot/i.test(emptyTitle),
+        emptyTitle.slice(0, 160));
+  await shownIds('');
+
+  console.log('[filter] with the flag OFF the dropdown and the param both go away');
+  await api('PUT', '/api/company-settings', { settings: { flag_lot_dummy_details: 'false' } });
+  // The columns are not part of the app in that state, so a hand-made request
+  // must not filter on them either — same rule the reports follow.
+  await api('POST', '/api/lots/dummy-details/bulk', { ids: [lotIds[0]], dummy_name: 'MASKED ONE' });
+  const raw = await api('GET', `/api/lots/${aid}?dummy=1`);
+  check('the server ignores ?dummy=1 with the feature off',
+        Array.isArray(raw.d) && raw.d.length === 2, JSON.stringify((raw.d || []).map(l => l.lot_no)));
+  await page.reload({ waitUntil: 'networkidle2' });
+  await page.waitForSelector('#lot-dummy-modal', { timeout: 15000 });
+  check('and the dropdown is hidden', (await page.evaluate(() => {
+    const el = document.getElementById('lot-dummy-filter');
+    return el ? getComputedStyle(el).display === 'none' : false;
+  })) === true);
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
   cleanup();

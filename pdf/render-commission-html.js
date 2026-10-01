@@ -12,6 +12,7 @@ const { getInvoiceTemplate } = require('./invoice-templates');
 // Shared NAME / ADDRESS / PLACE / STATE+CODE / details-two-per-row party box.
 const { partyBlock } = require('../party-block');
 const { htmlToPdf } = require('./htmlToPdf');
+const { withWatermark } = require('./watermark');
 
 // Shared, case/extension-tolerant logo resolver (see pdf/logo-data-uri.js).
 const { logoDataUri } = require('./logo-data-uri');
@@ -137,9 +138,12 @@ async function generateCommissionBoSHtmlPDF(payloads, cfg) {
   const tpl = getInvoiceTemplate('commission-bill', cfg);
   const pages = payloads.map((p, i) =>
     tpl.render(buildCommissionView(p.billData, cfg, p.billNo, i === 0)));
+  // One watermark for the WHOLE document, not one per bill: the pages are
+  // fragments concatenated into a single body, and N stacked copies of a
+  // faint layer is not a faint layer.
   const html = '<!doctype html><html><head><meta charset="utf-8"></head><body>' +
     pages.join('') + '</body></html>';
-  return htmlToPdf(html);
+  return htmlToPdf(withWatermark(html, cfg));
 }
 
 module.exports = { generateCommissionBoSHtmlPDF, buildCommissionView };

@@ -6,11 +6,15 @@ const multer = require('multer');
 const ExcelJS = require('exceljs');
 const XLSX = require('xlsx');
 const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
-const { initCompanySettings, CATEGORIES, getSetting, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates,
+const { initCompanySettings, CATEGORIES, getSetting, getSettingBool, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates,
         SCREEN_FLAGS, SCREEN_FLAG_KEYS, screenFlagDefault } = require('./company-config');
 const grade2Alerts = require('./grade2-alerts');
 const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, debitNoteTotal, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql, effectiveGradeCrSql, dummyPlanterCrSql, hasDummySellerSql, lotGradeLabelSql } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
+// Faint company-logo watermark shared by BOTH PDF engines — the debit notes
+// and the Commission Bill (Format 2) draw their own PDFKit layouts here rather
+// than through invoice-pdf.js, so they attach it themselves.
+const { attachPdfkitWatermark } = require('./pdf/watermark');
 const { amountToWords } = require('./amount-words');
 const { EXPORT_TYPES, createExcelBuffer, exportSellersXlsx, exportBuyersXlsx, xlsxToCsvBuffer, csvToXlsxBuffer } = require('./exports');
 const { getCompanyHeader, writeXlsxCompanyHeader, formatDateForDisplay, formatDebitNoteNo, formatInvoiceNo, formatBillOfSupplyNo } = require('./report-formatters');
@@ -66,6 +70,8 @@ if (_tlsMissing.length) {
 }
 // Seller / buyer master details are stored UPPER CASE — see party-case.js.
 const { normalizeTrader, normalizeBuyer, backfillPartyCase } = require('./party-case');
+const birthdays = require('./birthday-greetings');
+const reminders = require('./seller-reminders');
 // Defensive resolution — see _company-identity-fallback.js. Uses the
 // real getCompanyIdentity from report-formatters.js when available,
 // falls through to an inline fallback otherwise. Fixes
@@ -106,23 +112,24 @@ const perf = require('./perf-monitor');
 app.use(perf.middleware);
 
 // ── RESPONSE COMPRESSION ─────────────────────────────────────────────
-// Why: public/index.html is a single 2.56 MB file. Uncompressed that is
-// 2.56 MB on the wire for EVERY page load — the HTML is deliberately sent
-// no-store (see the cache middleware below, which exists because
-// ngrok/proxy caching served operators a stale UI), so there is no browser
-// cache to fall back on.
+// Why: public/index.html is a single 2.66 MB file (74% of it inline
+// <script>). Uncompressed that is 2.66 MB on the wire for EVERY page load —
+// the HTML is deliberately sent no-store (see the cache middleware below, it
+// exists because ngrok/proxy caching served stale UI), so there is no
+// browser cache to fall back on. gzip takes that same file to 723 KB,
+// measured: 3.6x less to transfer on every single load. On a slow depot link
+// that is the difference the operator actually feels, and it costs one
+// middleware.
 //
-// The heavy STATIC assets are served from a pre-compressed in-memory cache
-// instead (see static-precompress.js, mounted below) because compressing a
-// 2.56 MB file per-request costs ~71 ms of CPU on this process's single
-// event loop. This middleware is what handles everything DYNAMIC — the JSON
-// API responses, which are small enough that per-request compression is
-// cheap.
+// Registered AFTER perf.middleware (so compression time is inside the
+// measured request) and BEFORE express.static (so the static HTML/CSS/JS it
+// serves gets compressed too — that is the whole point).
 //
 // The filter skips payloads that are ALREADY compressed internally: PDFs,
 // xlsx (a zip), DBF and octet-stream downloads, and images. Re-deflating
-// those burns CPU on the one thread sql.js and PDF generation already block,
-// and gives back ~nothing.
+// those burns CPU on the single event loop — the one resource this process
+// cannot spare, since sql.js and PDF generation are synchronous — and gives
+// back ~nothing. JSON/HTML/CSS/JS/XML/CSV/SVG still compress.
 const compression = require('compression');
 const NO_COMPRESS = /^(application\/pdf|application\/zip|application\/x-dbase|application\/octet-stream|application\/vnd\.openxmlformats|image\/)/i;
 app.use(compression({
@@ -155,12 +162,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// Serve the heavy static assets (index.html is 2.56 MB) from the
+// Serve the heavy static assets (index.html is 2.59 MB) from the
 // pre-compressed in-memory cache. Mounted AFTER the no-store middleware
 // above so the HTML keeps its cache policy, and BEFORE express.static so a
 // cache hit short-circuits the disk read entirely. A miss — cold cache,
-// edited file, client that won't take br/gzip — falls through to
-// express.static below.
+// edited file, client that won't take br/gzip — just falls through to
+// express.static below. See static-precompress.js for why this is not left
+// to the generic compression middleware.
 const precompress = require('./static-precompress');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 app.use(precompress.middleware(PUBLIC_DIR));
@@ -1043,7 +1051,12 @@ function requireAdmin(req, res, next) {
 
 // Diagnostic snapshot of slow requests + event-loop blocks. Admin-only since
 // it exposes request URLs. Console logs carry the same data for Railway logs.
-app.get('/api/_perf', requireAdmin, (req, res) => res.json(perf.snapshot()));
+app.get('/api/_perf', requireAdmin, (req, res) => res.json({
+  ...perf.snapshot(),
+  // What the static pre-compression cache actually holds, so a slow-page
+  // report can be checked against it instead of guessed at.
+  staticCache: precompress.stats(),
+}));
 
 // ══════════════════════════════════════════════════════════════
 // ROLE-BASED PERMISSIONS
@@ -4490,6 +4503,305 @@ app.get('/api/whatsapp/inbound', requireView, (req, res) => {
   res.json({ inbound: rows });
 });
 
+// ══════════════════════════════════════════════════════════════
+// BIRTHDAY GREETINGS
+//
+// Wishes sellers and buyers a happy birthday over WhatsApp, read from
+// `traders.dob` / `buyers.dob`. All the date handling, the send-once
+// ledger and the daily sweep live in birthday-greetings.js; this file
+// owns the HTTP surface, the Meta credentials and the timer.
+//
+// OFF BY DEFAULT and off means inert: `flag_birthday_greetings` hides the
+// screen, 403s every route here, and makes the sweep return before it
+// reads a single party.
+// ══════════════════════════════════════════════════════════════
+function requireBirthdaysEnabled(req, res, next) {
+  if (!getSettingBool(getDb(), 'flag_birthday_greetings')) {
+    return res.status(403).json({ error: 'Birthday Greetings is disabled — enable "Birthday Greetings (WhatsApp)" in Settings → Flags' });
+  }
+  next();
+}
+
+// The sender both outreach engines (birthday-greetings.js and
+// seller-reminders.js) are handed. Outreach is by definition unsolicited:
+// the contact's 24h service window is shut, so only an APPROVED TEMPLATE
+// will be delivered. Free text is the opt-in escape hatch for an account
+// whose template is not approved yet, and it silently reaches nobody
+// outside the window. Both paths write the shared WhatsApp send log, so an
+// outreach message shows up in Settings → Integrations → Send log with its
+// delivery receipt like every other message.
+//
+// `kind` names the campaign: it picks the msg_type on the log row (so the
+// send log can be read per campaign) and the settings page quoted when no
+// template is configured.
+function _waOutreachSender(kind, settingsPage) {
+  return async function ({ phone, text, template, lang, bodyParams, freeText, ref }) {
+    const db = getDb();
+    const cfg = _waConfig(db);
+    if (!cfg.configured) return { ok: false, error: 'WhatsApp Cloud API not configured' };
+    const to = _waNormalizePhone(phone);
+    if (!to) return { ok: false, error: 'no usable phone number' };
+    if (freeText || !template) {
+      if (!template && !freeText) {
+        return { ok: false, error: `No WhatsApp template configured — set one in Settings → ${settingsPage}` };
+      }
+      return _waSendText(db, to, text, ref);
+    }
+    const msgType = 'template-' + kind;
+    try {
+      const wamid = await _waSendTemplate(cfg, { phone: to, template, lang, bodyParams });
+      _waLog(db, { wamid, phone: to, msg_type: msgType, caption: String(text || '').slice(0, 80),
+        status: 'sent', ref_type: ref && ref.ref_type, ref_id: ref && ref.ref_id });
+      return { ok: true, id: wamid };
+    } catch (e) {
+      _waLog(db, { phone: to, msg_type: msgType, status: 'failed', error: e.message,
+        ref_type: ref && ref.ref_type, ref_id: ref && ref.ref_id });
+      return { ok: false, error: e.message };
+    }
+  };
+}
+const _birthdaySend = _waOutreachSender('birthday', 'Birthday Greetings');
+const _reminderSend = _waOutreachSender('reminder', 'Seller Reminders');
+
+// The worklist. Today's birthdays (each stamped with whether it has already
+// been greeted this year), the next `days` of upcoming ones, and the recent
+// ledger. `?date=` drives it off a chosen day — that is what makes the
+// screen demonstrable on a day nobody has a birthday.
+app.get('/api/birthdays', requireView, requireBirthdaysEnabled, (req, res) => {
+  const db = getDb();
+  const cfg = birthdays.config(db);
+  const types = birthdays.partyTypes(cfg);
+  const dateStr = birthdays.parseYmd(req.query.date) ? String(req.query.date) : birthdays.ymd(new Date());
+  const year = birthdays.parseYmd(dateStr).getFullYear();
+  const days = Math.max(1, Math.min(366, parseInt(req.query.days, 10) || 30));
+  const greeted = birthdays.greetedYears(db, year);
+  const stamp = (r) => {
+    const g = greeted.get(`${r.party_type}:${r.party_id}`);
+    return { ...r, dob: r.dob_raw, greeted: !!g, greeted_on: g ? g.greet_date : '',
+      message: birthdays.composeMessage(db, r) };
+  };
+  const today = birthdays.birthdaysOn(db, dateStr, types).map(stamp);
+  // Upcoming excludes day 0 — today has its own list, and showing a party in
+  // both reads as two birthdays.
+  const soon = birthdays.upcoming(db, dateStr, days, types)
+    .filter((r) => r.days_away > 0).map(stamp);
+  let log = [];
+  try {
+    log = db.all(`SELECT party_type, party_id, greet_year, greet_date, name, phone, mode, sent_by,
+                         status, wamid, error, created_at
+                    FROM birthday_greetings ORDER BY id DESC LIMIT 100`) || [];
+  } catch (_) { log = []; }
+  // The two counts that explain an empty list: parties with no DOB at all,
+  // and parties with a DOB the parser could not read.
+  const counts = { no_dob: 0, bad_dob: 0, no_phone: 0 };
+  try {
+    if (cfg.sellers) {
+      counts.no_dob += (db.get(`SELECT COUNT(*) n FROM traders WHERE dob IS NULL OR TRIM(dob) = ''`) || {}).n || 0;
+    }
+    if (cfg.buyers) {
+      counts.no_dob += (db.get(`SELECT COUNT(*) n FROM buyers WHERE dob IS NULL OR TRIM(dob) = ''`) || {}).n || 0;
+    }
+    let withDob = 0;
+    if (cfg.sellers) withDob += (db.get(`SELECT COUNT(*) n FROM traders WHERE dob IS NOT NULL AND TRIM(dob) <> ''`) || {}).n || 0;
+    if (cfg.buyers)  withDob += (db.get(`SELECT COUNT(*) n FROM buyers  WHERE dob IS NOT NULL AND TRIM(dob) <> ''`) || {}).n || 0;
+    const parsed = birthdays.candidates(db, types);
+    counts.bad_dob = Math.max(0, withDob - parsed.length);
+    counts.no_phone = parsed.filter((c) => !c.phone).length;
+  } catch (_) {}
+  const wa = _waConfig(db);
+  res.json({
+    date: dateStr, days,
+    config: {
+      sellers: cfg.sellers, buyers: cfg.buyers, auto: cfg.auto, hour: cfg.hour,
+      maxPerDay: cfg.maxPerDay, template: cfg.template, lang: cfg.lang, freeText: cfg.freeText,
+    },
+    whatsapp: { configured: wa.configured },
+    today, upcoming: soon, log, counts,
+  });
+});
+
+// Send greetings for the named parties. Body:
+//   { items: [{ party_type, party_id }], date? }
+// The engine re-derives every party from the master rather than trusting the
+// posted name/phone, and refuses anybody who is not actually having a
+// birthday on `date` — so a stale screen cannot greet the wrong person.
+app.post('/api/birthdays/send', requireView, requireBirthdaysEnabled, async (req, res) => {
+  const db = getDb();
+  const cfg = birthdays.config(db);
+  const dateStr = birthdays.parseYmd(req.body.date) ? String(req.body.date) : birthdays.ymd(new Date());
+  const items = Array.isArray(req.body.items) ? req.body.items : [];
+  if (!items.length) return res.status(400).json({ error: 'items required' });
+  const due = birthdays.birthdaysOn(db, dateStr, birthdays.partyTypes(cfg));
+  const byKey = new Map(due.map((r) => [`${r.party_type}:${r.party_id}`, r]));
+  const rows = [], unknown = [];
+  for (const it of items) {
+    const key = `${it.party_type}:${parseInt(it.party_id, 10)}`;
+    if (byKey.has(key)) rows.push(byKey.get(key));
+    else unknown.push(key);
+  }
+  if (!rows.length) {
+    return res.status(400).json({ error: `No birthday on ${dateStr} for the selected ${items.length === 1 ? 'party' : 'parties'} — reload the screen`, unknown });
+  }
+  // A manual send is an operator decision, so it is not held to the daily
+  // cap — that guard exists to stop an UNATTENDED sweep emptying the tier.
+  const out = await birthdays.sendGreetings(db, rows, {
+    cfg, send: _birthdaySend, mode: 'manual', cap: 0,
+    by: (req.user && req.user.username) || '',
+  });
+  res.json({ date: dateStr, ...out, unknown });
+});
+
+// Run the sweep now, exactly as the timer would, for the operator who wants
+// to prove the automatic path works without waiting for tomorrow morning.
+app.post('/api/birthdays/run-sweep', requireSettingsWrite, requireBirthdaysEnabled, async (req, res) => {
+  const out = await birthdays.runDailySweep(getDb(), { send: _birthdaySend });
+  res.json(out);
+});
+
+// ══════════════════════════════════════════════════════════════
+// SELLER REMINDERS
+//
+// "You haven't booked with us in a while." Sibling of the birthday
+// campaign above and sharing its sender and its timer; the arithmetic
+// (who is dormant, who is still cooling off) lives in
+// seller-reminders.js, which also carries the measured numbers behind
+// the default thresholds.
+//
+// OFF BY DEFAULT and off means inert, exactly as for birthdays.
+// ══════════════════════════════════════════════════════════════
+function requireRemindersEnabled(req, res, next) {
+  if (!getSettingBool(getDb(), 'flag_seller_reminders')) {
+    return res.status(403).json({ error: 'Seller Reminders is disabled — enable "Seller Booking Reminders (WhatsApp)" in Settings → Flags' });
+  }
+  next();
+}
+
+// The worklist. `due` is who would be messaged right now; `held` is
+// everyone the rules deliberately kept back, WITH the reason — because
+// "why is this seller not on the list?" is the question this screen is
+// asked most, and a silent omission reads as a bug.
+app.get('/api/seller-reminders', requireView, requireRemindersEnabled, (req, res) => {
+  const db = getDb();
+  const cfg = reminders.config(db);
+  const dateStr = reminders.parseYmd(req.query.date) ? String(req.query.date) : reminders.ymd(new Date());
+  const r = reminders.review(db, { cfg, date: dateStr });
+  const next = reminders.nextAuction(db, dateStr);
+  const ctx = { nextAuction: next };
+  const withMsg = (row) => ({ ...row, message: reminders.composeMessage(db, row, ctx) });
+  // The due list is previewed in full (the operator reads the wording
+  // before sending); `held` is a reference list, so it carries no preview.
+  const limit = Math.max(1, Math.min(1000, parseInt(req.query.limit, 10) || 200));
+  let log = [];
+  try {
+    log = db.all(`SELECT trader_id, name, phone, last_booked, days_since, mode, sent_by,
+                         status, wamid, error, created_at
+                    FROM seller_reminders ORDER BY id DESC LIMIT 100`) || [];
+  } catch (_) { log = []; }
+  const wa = _waConfig(db);
+  res.json({
+    date: r.date,
+    config: {
+      afterDays: cfg.afterDays, untilDays: cfg.untilDays, minAuctions: cfg.minAuctions,
+      cooldownDays: cfg.cooldownDays, includeNever: cfg.includeNever,
+      auto: cfg.auto, hour: cfg.hour, maxPerDay: cfg.maxPerDay,
+      template: cfg.template, lang: cfg.lang, freeText: cfg.freeText,
+    },
+    whatsapp: { configured: wa.configured },
+    nextAuction: next,
+    counts: r.counts,
+    due_total: r.due.length,
+    held_total: r.held.length,
+    due: r.due.slice(0, limit).map(withMsg),
+    held: r.held.slice(0, limit),
+    log,
+  });
+});
+
+// Send reminders to the named sellers. Body: { trader_ids: [...], date? }
+// The engine re-derives the due list rather than trusting the posted rows,
+// so a stale screen cannot message somebody who has since booked, and it
+// re-checks the cooldown per row so two operators cannot double-message.
+app.post('/api/seller-reminders/send', requireView, requireRemindersEnabled, async (req, res) => {
+  const db = getDb();
+  const cfg = reminders.config(db);
+  const dateStr = reminders.parseYmd(req.body.date) ? String(req.body.date) : reminders.ymd(new Date());
+  const ids = Array.isArray(req.body.trader_ids) ? req.body.trader_ids.map((n) => parseInt(n, 10)).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ error: 'trader_ids required' });
+  const { due } = reminders.review(db, { cfg, date: dateStr });
+  const byId = new Map(due.map((r) => [Number(r.trader_id), r]));
+  const rows = [], unknown = [];
+  for (const id of ids) {
+    if (byId.has(id)) rows.push(byId.get(id)); else unknown.push(id);
+  }
+  if (!rows.length) {
+    return res.status(400).json({
+      error: `None of the selected seller${ids.length === 1 ? '' : 's'} are due a reminder on ${dateStr} — reload the screen`,
+      unknown,
+    });
+  }
+  // A manual send is an operator decision; the daily cap guards the
+  // UNATTENDED run, not this one.
+  const out = await reminders.sendReminders(db, rows, {
+    cfg, send: _reminderSend, mode: 'manual', cap: 0, date: dateStr,
+    by: (req.user && req.user.username) || '',
+  });
+  res.json({ date: dateStr, ...out, unknown });
+});
+
+// Run the sweep now, exactly as the timer would — the "prove it works
+// before tomorrow morning" button.
+app.post('/api/seller-reminders/run-sweep', requireSettingsWrite, requireRemindersEnabled, async (req, res) => {
+  const out = await reminders.runDailySweep(getDb(), { send: _reminderSend });
+  res.json(out);
+});
+
+// ── The daily sweep timer ─────────────────────────────────────
+// Deliberately an interval rather than a cron expression: this app also
+// ships as a desktop install that is closed overnight, so "05 09 * * *"
+// would simply never fire. The sweep runs on the first tick at or after the
+// configured hour ON THE DAY ITSELF; the send-once ledger makes every later
+// tick that day a no-op, and a machine that was off all day sends nothing
+// (a greeting a day late is worse than none — the missed row stays on the
+// screen for the operator to judge).
+//
+// ONE timer drives BOTH outreach campaigns. Two intervals would double the
+// idle cost on an install that runs neither, and the two sweeps must not
+// send at once anyway — they draw on the same 24h recipient ceiling.
+const OUTREACH_TICK_MS = 10 * 60 * 1000;
+let _outreachSweepRunning = false;
+async function _outreachTick() {
+  if (_outreachSweepRunning) return;             // a slow Meta call must not overlap itself
+  _outreachSweepRunning = true;
+  try {
+    const bd = await birthdays.runDailySweep(getDb(), { send: _birthdaySend });
+    if (bd.ran && (bd.sent || bd.failed)) {
+      console.log(`[birthdays] ${bd.date}: ${bd.sent} sent, ${bd.failed} failed, ${bd.skipped} skipped`);
+    }
+  } catch (e) {
+    console.warn('[birthdays] sweep failed:', e.message);
+  }
+  try {
+    // Sequential, not parallel: birthdays are time-bound (today or never)
+    // and reminders are not, so a birthday must never lose its slice of
+    // the day's headroom to a reminder backlog.
+    const rm = await reminders.runDailySweep(getDb(), { send: _reminderSend });
+    if (rm.ran && (rm.sent || rm.failed)) {
+      console.log(`[reminders] ${rm.date}: ${rm.sent} sent, ${rm.failed} failed, ${rm.skipped} skipped, ${rm.remaining} still due`);
+    }
+  } catch (e) {
+    console.warn('[reminders] sweep failed:', e.message);
+  }
+  _outreachSweepRunning = false;
+}
+function startOutreachSweeper() {
+  const t = setInterval(_outreachTick, OUTREACH_TICK_MS);
+  if (t.unref) t.unref();                        // never hold the process open
+  // First tick shortly after boot rather than immediately, so a restart at
+  // 09:05 still greets that day without racing the schema migrations.
+  const first = setTimeout(_outreachTick, 60 * 1000);
+  if (first.unref) first.unref();
+}
+
 // NOTE: :id is constrained to digits so this parametric route does NOT shadow
 // the literal `/api/traders/template` route registered later — otherwise a GET
 // for the seller import template was captured here (id="template") and 404'd
@@ -5070,11 +5382,11 @@ app.post('/api/buyers', requireBuyerWrite, (req, res) => {
   }
   db.run(`INSERT INTO buyers (
       buyer, buyer1, code, sbl, add1, add2, pla, pin, state, st_code,
-      gstin, pan, tan, tel, ti, sale, email, tdsq,
+      gstin, pan, tan, tel, ti, sale, email, tdsq, dob,
       cbuyer1, cadd1, cadd2, cpla, cpin, cstate, cst_code, cgstin, csbl, cpan
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [b.buyer, b.buyer1||'', b.code||'', b.sbl||'', b.add1||'', b.add2||'', b.pla||'', b.pin||'', b.state||'', b.st_code||'',
-     b.gstin||'', b.pan||'', b.tan||'', b.tel||'', b.ti||'', b.sale||'L', b.email||'', b.tdsq||'',
+     b.gstin||'', b.pan||'', b.tan||'', b.tel||'', b.ti||'', b.sale||'L', b.email||'', b.tdsq||'', b.dob||'',
      b.cbuyer1||'', b.cadd1||'', b.cadd2||'', b.cpla||'', b.cpin||'', b.cstate||'', b.cst_code||'', b.cgstin||'',
      b.csbl||'', b.cpan||'']);
   res.json({ success: true });
@@ -5106,11 +5418,11 @@ app.put('/api/buyers/:id', requireBuyerWrite, (req, res) => {
   }
   db.run(`UPDATE buyers SET
       buyer=?, buyer1=?, code=?, sbl=?, add1=?, add2=?, pla=?, pin=?, state=?, st_code=?,
-      gstin=?, pan=?, tan=?, tel=?, ti=?, sale=?, email=?, tdsq=?,
+      gstin=?, pan=?, tan=?, tel=?, ti=?, sale=?, email=?, tdsq=?, dob=?,
       cbuyer1=?, cadd1=?, cadd2=?, cpla=?, cpin=?, cstate=?, cst_code=?, cgstin=?, csbl=?, cpan=?
     WHERE id=?`,
     [b.buyer, b.buyer1||'', b.code||'', b.sbl||'', b.add1||'', b.add2||'', b.pla||'', b.pin||'', b.state||'', b.st_code||'',
-     b.gstin||'', b.pan||'', b.tan||'', b.tel||'', b.ti||'', b.sale||'L', b.email||'', b.tdsq||'',
+     b.gstin||'', b.pan||'', b.tan||'', b.tel||'', b.ti||'', b.sale||'L', b.email||'', b.tdsq||'', b.dob||'',
      b.cbuyer1||'', b.cadd1||'', b.cadd2||'', b.cpla||'', b.cpin||'', b.cstate||'', b.cst_code||'', b.cgstin||'',
      b.csbl||'', b.cpan||'',
      req.params.id]);
@@ -5179,9 +5491,9 @@ app.post('/api/buyers/import', requireBuyerWrite, upload.single('file'), async (
 
       db.run(`INSERT INTO buyers (
         buyer, buyer1, code, sbl, add1, add2, pla, pin, state, st_code,
-        gstin, pan, tan, tel, ti, sale, email, tdsq,
+        gstin, pan, tan, tel, ti, sale, email, tdsq, dob,
         cbuyer1, cadd1, cadd2, cpla, cpin, cstate, cst_code, cgstin, csbl, cpan
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [buyerVal,
          mapCol(row, 'BUYER1', 'TRADE_NAME', 'TRADENAME', 'NAME'),
          code,
@@ -5201,6 +5513,9 @@ app.post('/api/buyers/import', requireBuyerWrite, upload.single('file'), async (
          mapCol(row, 'SALE', 'SALE_TYPE') || 'L',
          mapCol(row, 'EMAIL', 'E_MAIL', 'MAIL'),
          mapCol(row, 'TDSQ', 'TDS_Q', 'TDS'),
+         // Date of birth — read by the birthday-greetings engine, which
+         // parses whatever format the sheet held (see parseDob).
+         mapCol(row, 'DOB', 'DATE_OF_BIRTH', 'DATEOFBIRTH', 'BIRTH_DATE', 'BIRTHDATE'),
          // Consignee (ship-to) details
          mapCol(row, 'CBUYER1', 'CONSIGNEE', 'CONSIGNEE_NAME'),
          mapCol(row, 'CADD1', 'CONS_ADD1', 'CONSIGNEE_ADDRESS1'),
@@ -5246,12 +5561,14 @@ app.get('/api/buyers/template', requireExport, async (req, res) => {
     { header: 'TEL',      key: 'tel',      width: 14 },
     { header: 'TI',       key: 'ti',       width: 10 },
     { header: 'SALE',     key: 'sale',     width: 8  },
+    { header: 'DOB',      key: 'dob',      width: 14, align: 'left' },
   ];
   const bizState = (getSetting(db, 'business_state') || 'TAMIL NADU').toUpperCase();
   const stCode = bizState === 'KERALA' ? '32' : '33';
   const sample = [{
     buyer: 'ABC', buyer1: 'ABC TRADERS', add1: '10 MARKET ROAD', add2: '', pla: '',
     pin: '', state: bizState, st_code: stCode, gstin: '', pan: '', tan: '', tel: '', ti: '', sale: 'L',
+    dob: '1980-01-31',
   }];
   const buf = await createExcelBuffer('Buyers', cols, sample, {
     db, title: 'BUYERS TEMPLATE',
@@ -13770,6 +14087,7 @@ app.get('/api/bills/commission-bill-f2/:auctionId', (req, res, next) => {
     res.setHeader('Content-Disposition',
       `inline; filename="CommissionBillF2_${auction.ano}${branchFilter ? '_' + branchFilter : ''}.pdf"`);
     doc.pipe(res);
+    attachPdfkitWatermark(doc, cfg);   // see pdf/watermark.js
 
     const m = 24, w = doc.page.width - m * 2;
     doc.font('Helvetica-Bold').fontSize(14).text('COMMISSION BILL (FORMAT 2)', m, m, { width: w, align: 'center' });
@@ -15007,6 +15325,12 @@ app.put('/api/debit-notes/:id', requireInvoiceWrite, (req, res) => {
 // number picks up the planter prefix/suffix settings instead of the dealer pair.
 function _renderDebitNote(doc, dn, db, cfg, opts) {
     opts = opts || {};
+    // Company-logo watermark, same as every other invoice-family document.
+    // This one function backs all four PDFKit debit-note routes (dealer /
+    // planter × single / bulk), so one call covers them; it is idempotent, and
+    // the bulk loops addPage() before each later note, which the hook catches.
+    // The HTML debit-note layouts get the mark from their own renderer.
+    attachPdfkitWatermark(doc, cfg);
     // The DN layout (per the reference PDF) is BUYER-LETTERHEAD style:
     // the BUYER (the party benefiting from the discount, who issues the
     // credit/debit note in their books) prints on top with their address
@@ -17404,6 +17728,10 @@ app.get('/api/payments/bank/:auctionId', requireView, (req, res) => {
 // on it — without it a statement for "BASKARAN S" listed BOTH sellers' lots
 // and printed whichever of the two phone numbers came first.
 function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds, userId) {
+  // One renderer behind all three payment-statement routes (single, lot-wise,
+  // bulk), so one call watermarks them all. Idempotent, and the bulk loop's
+  // addPage() is caught by the hook. See pdf/watermark.js.
+  attachPdfkitWatermark(doc, cfg);
   const uid = String(userId || '').trim();
   // Applied to `lots` queries; `l` is not aliased in them, hence bare columns.
   const uidLotSql = uid ? ` AND TRIM(COALESCE(user_id,'')) = ?` : '';
@@ -20704,6 +21032,7 @@ app.get('/api/reports/summary-pdf/:auctionId', (req, res, next) => {
   res.setHeader('Content-Disposition',
     `inline; filename="Trade_${auction.ano}_Summary_${auction.date}.pdf"`);
   doc.pipe(res);
+  attachPdfkitWatermark(doc, getDb());   // see pdf/watermark.js
 
   const m = 40, w = 515;
 
@@ -22931,11 +23260,16 @@ const PORT = process.env.PORT || 3001;
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n  Admin Console running at http://localhost:${PORT}\n`);
     perf.startLagMonitor();
+    console.log('  [perf] request timing + event-loop lag monitor active');
     // Build the pre-compressed static cache. The zlib calls inside are
     // async, so this runs on libuv's threadpool and does NOT block the event
     // loop — requests are served (uncompressed) while it warms.
     const _pcN = precompress.warm(PUBLIC_DIR);
     console.log(`  [perf] pre-compressing ${_pcN} static asset(s) in background`);
-    console.log('  [perf] request timing + event-loop lag monitor active');
+    // Birthday greetings + seller reminders. The timer is always armed; each
+    // sweep re-reads its own flag on every tick and returns immediately
+    // while that feature is off, so an install that enables neither pays
+    // two settings reads per 10 minutes.
+    startOutreachSweeper();
   });
 })();

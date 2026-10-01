@@ -4,7 +4,7 @@
 > Read [ARCHITECTURE.md](ARCHITECTURE.md) §7 first if you're new — it explains the
 > single-company model that this whole guide is built on.
 
-**Last reviewed:** 2026-06-10
+**Last reviewed:** 2026-09-01
 
 ---
 
@@ -48,6 +48,43 @@ Pick the target the customer needs:
   variables below.
 - **Windows desktop:** build the installer with `npm run build:win` and install it on
   the customer's PC. Data is stored under `%APPDATA%`.
+
+### Whose Railway account? (cloud only)
+
+Two models, and it's worth deciding **before** you deploy, because switching later
+means a backup/restore migration:
+
+**Model 1 — your Railway account (the original setup).** Every customer is a service
+in the account you own. You pay Railway and bill it on. Simplest to operate, and the
+customer never sees `LICENSE_SECRET` or the source. Nothing extra to do — deploy the
+repo as a new service and carry on to Step 2.
+
+**Model 2 — the customer's own Railway account.** The customer signs up, pays Railway
+directly, and owns the project. Increasingly what customers ask for. You keep one
+GitHub account and one private repo throughout — a published Docker image plus a
+Railway template does the work, so the customer clicks one button and never gets repo
+access.
+
+> **You cannot make a second Railway account from the same GitHub login** — signing in
+> with GitHub means your Railway account *is* that GitHub identity. Model 2 isn't about
+> linking accounts; it's about making the same private repo deployable *into* accounts
+> other people own.
+
+Model 2 has one consequence you must price in: **whoever owns the Railway service can
+read its environment variables and its container**, so the customer can see
+`LICENSE_SECRET` and, since this is a Node app, the source. The renewal gate becomes
+honest-customer protection in practice as well as in theory. Mitigate by using a
+**distinct `LICENSE_SECRET` per customer** (you should anyway) so one leak isn't a
+fleet-wide leak.
+
+**Setup for Model 2, the migration path off Model 1, and the update story are all in
+[RAILWAY-CUSTOMER-ACCOUNTS.md](RAILWAY-CUSTOMER-ACCOUNTS.md).** Come back here at Step
+2 once the instance is up.
+
+Whichever model you use, the deployment needs a **persistent volume mounted at
+`/app/data`** with `SPICE_DATA_DIR` pointing at it. Skipping this is the single most
+common way to break a Spice install: every redeploy wipes the data *and* resets the
+license to a fresh 30-day trial.
 
 ### Environment variables to set (cloud)
 
@@ -201,8 +238,9 @@ Full licensing details (setup, testing, troubleshooting, remote admin) are in
 ```
 Customer: ______________________   Date: ____________   Target: Cloud / Desktop
 
-[ ] Deployed fresh instance (persistent data dir)
-[ ] LICENSE_SECRET set (and recorded)
+[ ] Railway account model decided (yours / customer's)
+[ ] Deployed fresh instance (persistent volume at /app/data, SPICE_DATA_DIR set)
+[ ] LICENSE_SECRET set — unique to this customer — and recorded
 [ ] Noted install_id + trial expiry from first boot
 [ ] Admin user created; staff users + roles set
 [ ] Company settings entered or imported
@@ -233,3 +271,17 @@ token (Step 8) and they're back in.
 
 **Where is all their data?**
 In the single `data/config.db` file. Back it up to back up the whole customer.
+
+**Can I run several customers' deployments from one GitHub account?**
+Yes — that's the normal setup, and it works whether the deployments live in your
+Railway account or in each customer's own. What you *can't* do is create more than one
+Railway account from one GitHub login. See
+[RAILWAY-CUSTOMER-ACCOUNTS.md](RAILWAY-CUSTOMER-ACCOUNTS.md).
+
+**A customer wants to move to their own Railway account. Do they lose data or restart
+their license?**
+Neither, if you migrate properly: back up via `/api/system/backup`, restore into the
+new deployment, and set the **same** `LICENSE_SECRET`. `install_id` and the paid-up
+expiry live inside `config.db`, so they travel with the backup and existing renewal
+tokens keep working. Full procedure in
+[RAILWAY-CUSTOMER-ACCOUNTS.md §7](RAILWAY-CUSTOMER-ACCOUNTS.md#7-moving-an-existing-customer-off-your-railway-account-onto-theirs).

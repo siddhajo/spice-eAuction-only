@@ -76,7 +76,6 @@
     ;; (`tally_round` = "ROUND ON/OFF", uppercase) — the charge filter compares
     ;; this string to $LedgerName, so a case mismatch would let round-off
     ;; through as a line item.
-    SpiceTransportLedger : "TRANSPORT"                                 ;; tally_transport
     SpiceRoundLedger : "ROUND ON/OFF"                                  ;; tally_round
 
     ;; Logo path, read LIVE from Tally's own company master so it always matches
@@ -173,72 +172,16 @@
     SpiceIsCardLot : $StockItemName = @@SpiceItemCard
     SpiceIsGunny   : $StockItemName = @@SpiceItemGunny
 
-    ;; e-Invoice QR payload — a plain VOUCHER FIELD, the sibling of $IRN /
-    ;; $IRNAckNo / $IRNAckDate, all of which print correctly here.
-    ;;
-    ;; THIS DEFINITION MUST STAY INSIDE THE [System: Formula] BLOCK. It once sat
-    ;; below a Collection definition, which made it a stray attribute of that
-    ;; collection rather than a formula, so @@SpiceQrValue was undefined — and an
-    ;; undefined @@ reference kills the whole expression, blanking every field
-    ;; that used it and handing the QR part nothing to draw. Lint rule 10 guards
-    ;; this now; it has already caught a second occurrence.
-    SpiceQrValue   : $IRNQRCode
-
-    ;; Gunny is rendered as a STATIC line (see SpiceLHItems), so its figures are
-    ;; summed from its own collection rather than read off a repeated entry.
-    SpiceGunnyAmt  : $$Abs:$$CollAmtTotal:SpiceGunnyLots:$Amount
-    ;; TOTAL CARDAMOM BAGS, not the gunny entry's own package count. The
-    ;; reference shows 19 on the Gunny row for lots of 5+7+7.
-    SpiceGunnyBags : $$CollNumTotal:SpiceCardLots:$$Number:$BasicNumPackages
-
-    ;; (7) Total quantity, printed on the TRANSPORT row. Reference: 835.700 =
-    ;; 228.000 + 314.800 + 292.900, i.e. the sum of the cardamom lots.
-    SpiceTotalQty  : $$CollNumTotal:SpiceCardLots:$$Number:$BilledQty
-    SpiceIsTransport : $LedgerName = @@SpiceTransportLedger
-
-[Collection: SpiceGunnyLots]
-
-    Type   : InventoryEntries : Voucher
-    Filter : SpiceIsGunny
-
 [Collection: SpiceCardLots]
 
     Type   : InventoryEntries : Voucher
     Filter : SpiceIsCardLot
 
-
-;; ── The optional line that carries the tint ──────────────────────────────
-;; Referenced by `Option : SpiceBandTint : Yes` on each band line above.
-
-;;=============================================================================
-;; CUSTOM BAND COLOUR — #D6F6D6 (214, 246, 214)
-;;=============================================================================
-;; The exact shade the reference invoice uses for its header bands.
-
-[Color: SpiceBandGreen]
-
-    Red   : 214
-    Green : 246
-    Blue  : 214
-
-
-[!Line: SpiceTintA]
-    Local : Field : Default : Print BG : SpiceBandGreen
-
-[!Line: SpiceTintB]
-    Local : Field : Default : Print BG : SpiceBandGreen
-
-[!Line: SpiceTintC]
-    ;; Named fallback, kept so one print still tells us whether palette names
-    ;; work at all if the custom colour does not.
-    Local : Field : Default : Print BG : LightGreen
-
-[!Line: SpiceTintD]
-    Local : Field : Default : Print BG : SpiceBandGreen
-
-[!Line: SpiceTintE]
-    ;; Second named fallback.
-    Local : Field : Default : Print BG : PaleGreen
+    ;; e-Invoice QR payload. Prefers Tally's own formula — the one its built-in
+    ;; e-Invoice format prints — and falls back to the voucher's stored field.
+    ;; Either may be the populated one depending on whether this is a
+    ;; print-after-save; taking both means not having to care which.
+    SpiceQrValue   : if $$IsEmpty:@@eInvoiceQRCValue then $IRNQRCode else @@eInvoiceQRCValue
 
 
 ;;=============================================================================
@@ -398,7 +341,7 @@
 
 [Part: SpiceLHHead]
 
-    Parts    : SpiceLHLogoPart, SpiceLHHeadText, SpiceLHHeadSpacer
+    Parts    : SpiceLHLogoPart, SpiceLHHeadText
     Vertical : No
     Border   : Thin Box
 
@@ -440,24 +383,11 @@
 [Field: SpiceFldLogoEmpty]
     Set as : ""
 
-[Part: SpiceLHHeadSpacer]
-
-    ;; Mirrors SpiceLHLogoPart's 15% on the right so the company block centres
-    ;; on the page rather than on what is left beside the logo.
-    Lines : SpiceLHHeadSpacerLine
-    Width : 15% Page
-
-[Line: SpiceLHHeadSpacerLine]
-    Field : SpiceFldHeadSpacer
-
-[Field: SpiceFldHeadSpacer]
-    Set as : ""
-
 [Part: SpiceLHHeadText]
 
     Lines : SpiceLHLogoCoLine, SpiceLHIdLine, SpiceLHAddrLine, SpiceLHPlaceLine
     Lines : SpiceLHPhoneLine, SpiceLHIdRow1, SpiceLHIdRow2
-    Width : 70% Page
+    Width : 85% Page
 
 [Line: SpiceLHLogoCoLine]
 
@@ -561,37 +491,28 @@
 [Part: SpiceLHEInvoice]
 
     Parts    : SpiceLHEInvText, SpiceLHQrPart
-    ;; Must be at least as tall as the QR sub-part (15% Page) or the symbol is
-    ;; clipped — and a clipped QR scans as corrupt.
-    Height   : 16% Page
+    ;; Explicit height so the QR sub-part has room. Without it the parent can
+    ;; size to the text alone and clip the QR away entirely.
+    Height   : 14% Page
     Vertical : No
     Border   : Thin Box
 
 [Part: SpiceLHEInvText]
 
-    Lines : SpiceLHEInvIrn, SpiceLHEInvAckNo, SpiceLHEInvAckDt, SpiceLHEInvEway
-    ;; 80 + 20 = 100, so the QR finishes flush with the right edge.
-    Width : 80% Page
+    Lines : SpiceLHEInvIrn, SpiceLHEInvAck, SpiceLHEInvEway
+    Width : 78% Page
 
 [Line: SpiceLHEInvIrn]
-    Space Bottom : 0.08 inches
 
-    Fields : SpiceFldLblIrn, SpiceFldEInvIrn
+    Fields : SpiceFldEInvIrn
 
-[Line: SpiceLHEInvAckNo]
-    Space Bottom : 0.08 inches
+[Line: SpiceLHEInvAck]
 
-    Fields : SpiceFldLblAckNo, SpiceFldEInvAckNo
-
-[Line: SpiceLHEInvAckDt]
-    Space Bottom : 0.08 inches
-
-    Fields : SpiceFldLblAckDt, SpiceFldColonAckDt, SpiceFldEInvAckDt
+    Fields : SpiceFldEInvAckNo, SpiceFldEInvAckDt
 
 [Line: SpiceLHEInvEway]
-    Space Bottom : 0.08 inches
 
-    Fields : SpiceFldLblEway, SpiceFldEInvEway
+    Fields : SpiceFldEInvEway
 
 ;; E-WAY BILL NUMBER — placeholder, same contract as IRN and Ack: the label
 ;; always prints, the value only when the voucher carries one.
@@ -606,92 +527,81 @@
 ;; makes trying both free. If it stays blank on a voucher that HAS an e-way
 ;; bill, neither name is right and it needs reading out of the sub-collection
 ;; instead; that is a change here, not in the app.
-;; ── e-Invoice labels fixed width, VALUES BOLD, colons aligned ─────────
-
-[Field: SpiceFldLblIrn]
-    Set as : "IRN No"
+[Field: SpiceFldEInvEway]
+    ;; STATIC LABEL ONLY — deliberately no $ field references.
+    ;; It previously read:
+    ;;   "e-Way Bill No: " + (if $$IsEmpty:$EWayBillNo then $EWayBillNumber else $EWayBillNo)
+    ;; Both names were guesses, neither resolved, and the QR beside it stopped
+    ;; drawing at the same time. Restore a real field name here only once it is
+    ;; confirmed on a voucher that actually carries an e-way bill.
+    Set as : "e-Way Bill No: "
     Style  : SpiceBody
     Align  : Left
-    Width  : 13% Page
+    Width  : 70% Page
 
 [Field: SpiceFldEInvIrn]
-    Set as : ": " + $IRN
-    Style  : SpiceBodyBold
-    Align  : Left
-    Width  : 60% Page
-
-[Field: SpiceFldLblAckNo]
-    Set as : "Ack No"
+    Set as : "IRN No: " + $IRN
     Style  : SpiceBody
     Align  : Left
-    Width  : 13% Page
+    Width  : 70% Page
 
 [Field: SpiceFldEInvAckNo]
-    Set as : ": " + $IRNAckNo
-    Style  : SpiceBodyBold
-    Align  : Left
-    Width  : 60% Page
-
-[Field: SpiceFldLblAckDt]
-    Set as : "Ack Date"
+    Set as : "Ack No: " + $IRNAckNo
     Style  : SpiceBody
     Align  : Left
-    Width  : 13% Page
-
-[Field: SpiceFldColonAckDt]
-    Set as : ":"
-    Style  : SpiceBody
-    Align  : Left
-    Width  : 2% Page
+    Width  : 35% Page
 
 [Field: SpiceFldEInvAckDt]
-    ;; Pure date value so Type : Date applies; hidden outright when the voucher
-    ;; carries no IRN, rather than printing a fabricated acknowledgement date.
-    Set as : $IRNAckDate
-    Type   : Date
-    Format : "DD/MM/YYYY"
-    Invisible : $$IsEmpty:$IRN
-    Style  : SpiceBodyBold
-    Align  : Left
-    Width  : 58% Page
-
-[Field: SpiceFldLblEway]
-    Set as : "e-Way Bill No"
+    ;; ONLY printed when the voucher actually carries an IRN.
+    ;;
+    ;; tally-xml.js emits <IRNACKDATE> as `dateval` — the INVOICE date — on
+    ;; every sales voucher, e-invoiced or not. Printed unconditionally that put
+    ;; "Ack Date: 19-Aug-26" on invoice RNS/I-4, which has no IRN and no Ack No
+    ;; and was never sent to the IRP. A fabricated acknowledgement date on a tax
+    ;; document is worse than a blank one, so the value is gated on $IRN.
+    Set as : "Ack Date: " + (if $$IsEmpty:$IRN then "" else $$String:$IRNAckDate)
     Style  : SpiceBody
     Align  : Left
-    Width  : 13% Page
+    Width  : 35% Page
+    Border : Thin Left
 
-[Field: SpiceFldEInvEway]
-    Set as : ": "
-    Style  : SpiceBodyBold
-    Align  : Left
-    Width  : 60% Page
+;; QR CODE — drawn by the PART, exactly like the logo.
+;;
+;;     QR Code : <payload expression> : <logical>
+;;
+;; taken from the site's own working reference:
+;;
+;;     [Part: LWeInvoice QRC Title2]
+;;         QRCode: @@eInvoiceQRCValue : Yes
+;;         Width: 20% page
+;;         Height: 10% Page
+;;
+;; As with the logo, the Part carries the image and holds one Line with one
+;; empty Field. `Type : QR Code` on a Field — my earlier attempt — is not a
+;; thing.
+;;
+;; PAYLOAD: @@SpiceQrValue prefers Tally's own @@eInvoiceQRCValue (what the
+;; built-in e-Invoice format prints) and falls back to the voucher's
+;; $IRNQRCode. The reference shows why both are worth having: its Ack No line
+;; reads `If ##IseInvPSPrintAfterSave Then ##eInvPSAckNo Else $IRNAckNo` — the
+;; session value during print-after-save, the stored field otherwise. The
+;; fallback covers both without depending on that print-session variable.
 
 [Part: SpiceLHQrPart]
 
-    ;; ⚠ THIS PART IS WORKING. DO NOT ADD ATTRIBUTES TO IT.
-    ;;
-    ;; These four attributes and no others. The QR drew the moment
-    ;; `Horizontal Alignment`, `Vertical` and `Invisible` were removed — it had
-    ;; carried all three for a dozen builds and drew nothing every time. The
-    ;; reference's working part has none of them either.
-    ;;
-    ;; Two things had to be right at once, which is what made this so slow to
-    ;; find: the payload had to resolve (@@SpiceQrValue was defined OUTSIDE the
-    ;; [System: Formula] block for several builds, so it was empty), AND the
-    ;; part had to carry no extra attributes. Fixing either alone showed
-    ;; nothing.
-    QRCode : @@SpiceQrValue : Yes
-    Lines  : SpiceLHQrLine
-    ;; SIZE MATTERS: the payload is a ~1,200-character signed JWT, so the symbol
-    ;; is very dense. Printed too small the modules blur together and the scan
-    ;; fails verification. 20% x 15% of A4 is ~1.65in square, close to what
-    ;; Tally's own e-Invoice format uses.
-    Width  : 20% Page
-    Height : 15% Page
+    QRCode    : @@SpiceQrValue : Yes
+    Lines     : SpiceLHQrLine
+    Width     : 20% Page
+    Height    : 10% Page
+    Horizontal Alignment : Right
+    Vertical  : No
+    Invisible : $$IsEmpty:@@SpiceQrValue
 
 [Line: SpiceLHQrLine]
-    Field : SpiceFldQrEmpty
+    ;; `Info Field` is Tally's built-in — the reference QR line uses it
+    ;; rather than a custom field. Kept SpiceFldQrEmpty defined but unused
+    ;; so nothing dangles.
+    Field : Info Field
 
 [Field: SpiceFldQrEmpty]
     ;; MUST STAY EMPTY. The QR image is drawn by the Part; both QR parts in the
@@ -715,19 +625,18 @@
 [Part: SpiceLHTitle]
 
     Lines  : SpiceLHTitleRow, SpiceLHSubRow
+    ;; Tint applied DIRECTLY ON THE PART, which is the only form the working
+    ;; reference uses for print backgrounds ([#Part: EXPINV Column] Print BG:Black).
+    ;; The Line-level `Local : Field : Default : Print BG` form was tried first and
+    ;; never rendered; the reference only ever uses that inside an Option.
+    Print BG : Light Green
     Border : Thin Box
 
 [Line: SpiceLHTitleRow]
-    Option : SpiceTintA : Yes
 
-    Fields       : SpiceFldTitleSpacer, SpiceFldDocHead
+    Fields       : SpiceFldDocHead
     Right Fields : SpiceFldSlNo
     Border       : Thin Bottom
-
-[Field: SpiceFldTitleSpacer]
-    ;; Balances SpiceFldSlNo's 22% on the right so the title centres on the page.
-    Set as : ""
-    Width  : 22% Page
 
 [Field: SpiceFldDocHead]
     Set as    : "AUCTION SALES INVOICE"
@@ -742,9 +651,8 @@
     Width  : 22% Page
 
 [Line: SpiceLHSubRow]
-    Option : SpiceTintB : Yes
 
-    Fields : SpiceFldAuctionNo, SpiceFldTaxInv, SpiceFldDateLbl, SpiceFldDateVal
+    Fields : SpiceFldAuctionNo, SpiceFldTaxInv, SpiceFldDate
 
 [Field: SpiceFldAuctionNo]
     ;; Auction number arrives from the app as a voucher UDF.
@@ -757,65 +665,54 @@
     Set as : @@SpiceDocTitle
     Style  : SpiceBodyBold
     Align  : Centre
-    Width  : 29% Page
+    Width  : 30% Page
 
-[Field: SpiceFldDateLbl]
-    Set as : "Date:"
+[Field: SpiceFldDate]
+    ;; NOTE: Format : "DD/MM/YYYY" was tried here and had no effect —
+    ;; the printed date format follows Tally's own configuration, not this
+    ;; field. Change it in Tally rather than here.
+    Set as : "Date: " + $$String:$Date
     Style  : SpiceBodyBold
     Align  : Right
-    Width  : 10% Page
+    Width  : 35% Page
 
-[Field: SpiceFldDateVal]
-    ;; Type + Format together — Format alone had no effect here, exactly as on
-    ;; the qty/rate columns.
-    Set as : $Date
-    Type   : Date
-    Format : "DD/MM/YYYY"
-    Style  : SpiceBodyBold
-    Align  : Right
-    Width  : 25% Page
+
+;;=============================================================================
+;; 8. PARTIES — Billed To (left) / Shipped To (right)
+;;=============================================================================
+;; The app mirrors Billed-To into Shipped-To when a row has no separate
+;; consignee. Tally already does the same via ConsigneeMailingName defaulting
+;; to the party, so both columns always render a full block.
 
 [Part: SpiceLHPartyHeadPart]
 
     Lines  : SpiceLHPartyHead
+    ;; Tint applied DIRECTLY ON THE PART, which is the only form the working
+    ;; reference uses for print backgrounds ([#Part: EXPINV Column] Print BG:Black).
+    ;; The Line-level `Local : Field : Default : Print BG` form was tried first and
+    ;; never rendered; the reference only ever uses that inside an Option.
+    Print BG : Light Green
     Border : Thin Box
 
 [Part: SpiceLHItemHeadPart]
 
     Lines  : SpiceLHItemHead
+    ;; Tint applied DIRECTLY ON THE PART, which is the only form the working
+    ;; reference uses for print backgrounds ([#Part: EXPINV Column] Print BG:Black).
+    ;; The Line-level `Local : Field : Default : Print BG` form was tried first and
+    ;; never rendered; the reference only ever uses that inside an Option.
+    Print BG : Light Green
     Border : Thin Box
 
 [Part: SpiceLHParties]
 
-    ;; TWO PARTS SIDE BY SIDE, one per party. The divider is
-    ;; SpiceLHPartyShip's LEFT BORDER, so it is straight by construction.
-    ;;
-    ;; Previously these were full-width lines with the divider drawn as a left
-    ;; border on whichever field began the right half. Those rows are built from
-    ;; different numbers of fields (2 on the name row, 6 on the grid rows), so
-    ;; the 50% mark rounded differently line by line and the divider wandered.
-    ;; A part boundary cannot wander.
-    Parts    : SpiceLHPartyBill, SpiceLHPartyShip
-    Vertical : No
-    Border   : Thin Box
-
-[Part: SpiceLHPartyBill]
-
-    ;; Order follows the reference: name, address, place|PAN, STATE|CODE, GST|SBL.
-    Lines : SpiceLHBillName, SpiceLHBillAddr, SpiceLHBillPan
-    Lines : SpiceLHBillState, SpiceLHBillGst
-    Width : 50% Page
-
-[Part: SpiceLHPartyShip]
-
-    Lines  : SpiceLHShipName, SpiceLHShipAddr, SpiceLHShipPan
-    Lines  : SpiceLHShipState, SpiceLHShipGst
-    Width  : 50% Page
-    ;; The divider between the two parties.
-    Border : Thin Left
+    ;; Order follows the reference: name, address, place|PAN, STATE|CODE,
+    ;; GST|SBL.
+    Lines  : SpiceLHPartyName, SpiceLHPartyAddr
+    Lines  : SpiceLHPartyPan, SpiceLHPartyState, SpiceLHPartyGst
+    Border : Thin Box
 
 [Line: SpiceLHPartyHead]
-    Option : SpiceTintC : Yes
 
     Fields : SpiceFldBillHead, SpiceFldShipHead
     Border : Thin Bottom
@@ -845,171 +742,95 @@
 ;; It also aligns the two columns properly: row N on the left always sits
 ;; beside row N on the right.
 
-[Line: SpiceLHBillName]
-    Field : SpiceFldBillName
+[Line: SpiceLHPartyName]
+    Fields : SpiceFldBillName, SpiceFldShipName
 
-[Line: SpiceLHShipName]
-    Field : SpiceFldShipName
+[Line: SpiceLHPartyAddr]
+    Fields : SpiceFldBillAddr, SpiceFldShipAddr
 
-[Line: SpiceLHBillAddr]
-    Field : SpiceFldBillAddr
+[Line: SpiceLHPartyState]
+    Fields : SpiceFldBillState, SpiceFldBillCode, SpiceFldShipState, SpiceFldShipCode
 
-[Line: SpiceLHShipAddr]
-    Field : SpiceFldShipAddr
+[Line: SpiceLHPartyGst]
+    Fields : SpiceFldBillGst, SpiceFldBillSbl, SpiceFldShipGst, SpiceFldShipSbl
 
-[Line: SpiceLHBillState]
-    Fields : SpiceFldLblBillState, SpiceFldBillState, SpiceFldLblBillCode, SpiceFldBillCode
+[Line: SpiceLHPartyPan]
+    Fields : SpiceFldBillPlace, SpiceFldBillPan, SpiceFldShipPlace, SpiceFldShipPan
 
-[Line: SpiceLHShipState]
-    Fields : SpiceFldLblShipState, SpiceFldShipState, SpiceFldLblShipCode, SpiceFldShipCode
+;; ── Billed To ───────────────────────────────────────────────────────────
 
-[Line: SpiceLHBillGst]
-    Fields : SpiceFldLblBillGst, SpiceFldBillGst, SpiceFldLblBillSbl, SpiceFldBillSbl
-
-[Line: SpiceLHShipGst]
-    Fields : SpiceFldLblShipGst, SpiceFldShipGst, SpiceFldLblShipSbl, SpiceFldShipSbl
-
-[Line: SpiceLHBillPan]
-    Fields : SpiceFldBillPlace, SpiceFldLblBillPan, SpiceFldBillPan
-
-[Line: SpiceLHShipPan]
-    Fields : SpiceFldShipPlace, SpiceFldLblShipPan, SpiceFldShipPan
-
+;; ── Party grid: two 25% columns inside each 50% half ──────────────────
 [Field: SpiceFldBillPlace]
-    ;; Place - pincode, as the reference prints it.
-    Set as : $BillToPlace + (if $$IsEmpty:$PartyPinCode then "" else " - " + $PartyPinCode)
+    Set as : $BillToPlace
+    Style  : SpiceBody
+    Align  : Left
+    Width  : 25% Page
+
+[Field: SpiceFldBillPan]
+    Set as : "PAN   : " + $$StringPart:$PartyGSTIN:2:10
     Style  : SpiceBody
     Align  : Left
     Width  : 25% Page
 
 [Field: SpiceFldShipPlace]
-    ;; Place - pincode, as the reference prints it.
-    Set as : $ShipToPlace + (if $$IsEmpty:$PartyPinCode then "" else " - " + $PartyPinCode)
+    Set as : $ShipToPlace
     Style  : SpiceBody
     Align  : Left
     Width  : 25% Page
 
-;; ── Party cells: fixed-width LABEL + value, so every colon aligns ──────
-
-[Field: SpiceFldLblBillPan]
-    Set as : "PAN"
-    Style  : SpiceBody
-    Align  : Left
-    Width  : 6% Page
-
-[Field: SpiceFldBillPan]
-    Set as : ": " + $$StringPart:$PartyGSTIN:2:10
-    Style  : SpiceBodyBold
-    Align  : Left
-    Width  : 19% Page
-
-[Field: SpiceFldLblShipPan]
-    Set as : "PAN"
-    Style  : SpiceBody
-    Align  : Left
-    Width  : 6% Page
-
 [Field: SpiceFldShipPan]
-    Set as : ": " + $$StringPart:$ConsigneeGSTIN:2:10
-    Style  : SpiceBodyBold
-    Align  : Left
-    Width  : 19% Page
-
-[Field: SpiceFldLblBillState]
-    Set as : "STATE"
+    Set as : "PAN   : " + $$StringPart:$ConsigneeGSTIN:2:10
     Style  : SpiceBody
     Align  : Left
-    Width  : 6% Page
+    Width  : 25% Page
 
 [Field: SpiceFldBillState]
-    Set as : ": " + $StateName
-    Style  : SpiceBodyBold
-    Align  : Left
-    Width  : 19% Page
-
-[Field: SpiceFldLblShipState]
-    Set as : "STATE"
+    Set as : "STATE : " + $StateName
     Style  : SpiceBody
     Align  : Left
-    Width  : 6% Page
-
-[Field: SpiceFldShipState]
-    Set as : ": " + $StateName
-    Style  : SpiceBodyBold
-    Align  : Left
-    Width  : 19% Page
-
-[Field: SpiceFldLblBillCode]
-    Set as : "CODE"
-    Style  : SpiceBody
-    Align  : Left
-    Width  : 6% Page
+    Width  : 25% Page
 
 [Field: SpiceFldBillCode]
-    Set as : ": " + $$StringPart:$PartyGSTIN:0:2
-    Style  : SpiceBodyBold
-    Align  : Left
-    Width  : 19% Page
-
-[Field: SpiceFldLblShipCode]
-    Set as : "CODE"
+    Set as : "CODE  : " + $$StringPart:$PartyGSTIN:0:2
     Style  : SpiceBody
     Align  : Left
-    Width  : 6% Page
+    Width  : 25% Page
+
+[Field: SpiceFldShipState]
+    Set as : "STATE : " + $StateName
+    Style  : SpiceBody
+    Align  : Left
+    Width  : 25% Page
 
 [Field: SpiceFldShipCode]
-    Set as : ": " + $$StringPart:$ConsigneeGSTIN:0:2
-    Style  : SpiceBodyBold
-    Align  : Left
-    Width  : 19% Page
-
-[Field: SpiceFldLblBillGst]
-    Set as : "GST"
+    Set as : "CODE  : " + $$StringPart:$ConsigneeGSTIN:0:2
     Style  : SpiceBody
     Align  : Left
-    Width  : 6% Page
+    Width  : 25% Page
 
 [Field: SpiceFldBillGst]
-    Set as : ": " + $PartyGSTIN
-    Style  : SpiceBodyBold
-    Align  : Left
-    Width  : 19% Page
-
-[Field: SpiceFldLblShipGst]
-    Set as : "GST"
+    Set as : "GST   : " + $PartyGSTIN
     Style  : SpiceBody
     Align  : Left
-    Width  : 6% Page
-
-[Field: SpiceFldShipGst]
-    Set as : ": " + $ConsigneeGSTIN
-    Style  : SpiceBodyBold
-    Align  : Left
-    Width  : 19% Page
-
-[Field: SpiceFldLblBillSbl]
-    Set as : "SBL"
-    Style  : SpiceBody
-    Align  : Left
-    Width  : 6% Page
+    Width  : 25% Page
 
 [Field: SpiceFldBillSbl]
-    Set as : ": " + $SpiceBuyerSBL
-    Style  : SpiceBodyBold
-    Align  : Left
-    Width  : 19% Page
-
-[Field: SpiceFldLblShipSbl]
-    Set as : "SBL"
+    Set as : "SBL   : " + $SpiceBuyerSBL
     Style  : SpiceBody
     Align  : Left
-    Width  : 6% Page
+    Width  : 25% Page
+
+[Field: SpiceFldShipGst]
+    Set as : "GST   : " + $ConsigneeGSTIN
+    Style  : SpiceBody
+    Align  : Left
+    Width  : 25% Page
 
 [Field: SpiceFldShipSbl]
-    Set as : ": " + $SpiceBuyerSBL
-    Style  : SpiceBodyBold
+    Set as : "SBL   : " + $SpiceBuyerSBL
+    Style  : SpiceBody
     Align  : Left
-    Width  : 19% Page
+    Width  : 25% Page
 
 [Field: SpiceFldBillName]
     Set as : "M/s. " + $PartyLedgerName
@@ -1028,12 +849,14 @@
     Lines  : 3
 
 [Field: SpiceFldShipName]
+    Border : Thin Left
     Set as : "M/s. " + $ConsigneeMailingName
     Style  : SpiceBodyBold
     Align  : Left
     Width  : 50% Page
 
 [Field: SpiceFldShipAddr]
+    Border : Thin Left
     Set as : $$FullList:BasicBuyerAddress:$BasicBuyerAddress
     Style  : SpiceBody
     Align  : Left
@@ -1045,10 +868,14 @@
     ;; `Lines`, not `Line` — a Part takes the plural. The singular was silently
     ;; ignored, which is why the commodity band once printed as nothing at all.
     Lines  : SpiceLHCommodityLine
+    ;; Tint applied DIRECTLY ON THE PART, which is the only form the working
+    ;; reference uses for print backgrounds ([#Part: EXPINV Column] Print BG:Black).
+    ;; The Line-level `Local : Field : Default : Print BG` form was tried first and
+    ;; never rendered; the reference only ever uses that inside an Option.
+    Print BG : Light Green
     Border : Thin Box
 
 [Line: SpiceLHCommodityLine]
-    Option : SpiceTintD : Yes
 
     Field : SpiceFldCommodity
 
@@ -1089,10 +916,8 @@
 
     ;; SpiceLHSampleRow is NOT repeated — only SpiceLHItemRow is. It renders
     ;; once, after the goods lines, exactly where the .hbs puts it.
-    ;; Repeat over CARDAMOM ONLY, then Sample, then Gunny — static lines render
-    ;; after the repeat, in the order listed here.
-    Lines  : SpiceLHItemRow, SpiceLHSampleRow, SpiceLHGunnyRow
-    Repeat : SpiceLHItemRow : SpiceCardLots
+    Lines  : SpiceLHItemRow, SpiceLHSampleRow
+    Repeat : SpiceLHItemRow : InventoryEntries
     ;; No `Total :` here — see section 11. It does not carry across parts, so
     ;; totals are collection aggregates instead.
     Border : Thin Box
@@ -1127,8 +952,6 @@
     Set as : @@SpiceSampleQty
     Style  : SpiceBody
     Align  : Right
-    Type   : Number
-    Format : "Decimals: 3"
     Width  : 10% Page
 
 [Field: SpiceFldSmpBags]
@@ -1141,8 +964,6 @@
     Set as : @@SpiceSampleAmt
     Style  : SpiceBody
     Align  : Right
-    Type   : Number
-    Format : "Decimals: 2"
     Width  : 9% Page
 
 [Field: SpiceFldSmpValue]
@@ -1181,93 +1002,7 @@
     Set as : ""
     Width  : 11% Page
 
-;; ── GUNNY (static) ───────────────────────────────────────────────────────
-;; Lot-No cell carries the LOT COUNT, as the .hbs does and the reference shows.
-;; Rate is deliberately blank — the reference leaves it empty rather than
-;; printing the per-bag gunny rate.
-
-[Line: SpiceLHGunnyRow]
-
-    Fields : SpiceFldGnyLot, SpiceFldGnyItem, SpiceFldGnyQty, SpiceFldGnyBags
-    Fields : SpiceFldGnyRate, SpiceFldGnyValue, SpiceFldGnyTaxable
-    Fields : SpiceFldGnyCGST, SpiceFldGnySGST, SpiceFldGnyIGST, SpiceFldGnyTotal
-    Invisible : @@SpiceGunnyAmt = 0
-
-[Field: SpiceFldGnyLot]
-    Set as : $$String:@@SpiceLotCount
-    Style  : SpiceBodyBold
-    Align  : Centre
-    Width  : 6% Page
-
-[Field: SpiceFldGnyItem]
-    Border : Thin Left
-    Set as : "Gunny"
-    Style  : SpiceBody
-    Align  : Left
-    Width  : 12% Page
-
-[Field: SpiceFldGnyQty]
-    Border : Thin Left
-    Set as : ""
-    Width  : 10% Page
-
-[Field: SpiceFldGnyBags]
-    Border : Thin Left
-    Set as : @@SpiceGunnyBags
-    Style  : SpiceBodyBold
-    Align  : Centre
-    Width  : 5% Page
-
-[Field: SpiceFldGnyRate]
-    Border : Thin Left
-    Set as : ""
-    Width  : 9% Page
-
-[Field: SpiceFldGnyValue]
-    Border : Thin Left
-    Set as : @@SpiceGunnyAmt
-    Style  : SpiceBody
-    Align  : Right
-    Width  : 10% Page
-
-[Field: SpiceFldGnyTaxable]
-    Border : Thin Left
-    Set as : @@SpiceGunnyAmt
-    Style  : SpiceBody
-    Align  : Right
-    Width  : 10% Page
-
-[Field: SpiceFldGnyCGST]
-    Border : Thin Left
-    Set as : if @@SpiceTotCGST = 0 then "" else (if @@SpiceIsIntra then (@@SpiceGunnyAmt * @@SpiceGSTHalf / 100) else 0)
-    Style  : SpiceBody
-    Align  : Right
-    Width  : 9% Page
-
-[Field: SpiceFldGnySGST]
-    Border : Thin Left
-    Set as : if @@SpiceTotSGST = 0 then "" else (if @@SpiceIsIntra then (@@SpiceGunnyAmt * @@SpiceGSTHalf / 100) else 0)
-    Style  : SpiceBody
-    Align  : Right
-    Width  : 9% Page
-
-[Field: SpiceFldGnyIGST]
-    Border : Thin Left
-    Set as : if @@SpiceTotIGST = 0 then "" else (if @@SpiceIsIntra then 0 else (@@SpiceGunnyAmt * @@SpiceGSTRate / 100))
-    Style  : SpiceBody
-    Align  : Right
-    Width  : 9% Page
-
-[Field: SpiceFldGnyTotal]
-    Border : Thin Left
-    Set as : @@SpiceGunnyAmt + (@@SpiceGunnyAmt * @@SpiceGSTRate / 100)
-    Style  : SpiceBody
-    Align  : Right
-    Width  : 11% Page
-
-
 [Line: SpiceLHItemHead]
-    Option : SpiceTintE : Yes
 
     Fields : SpiceFldHLot, SpiceFldHItem, SpiceFldHQty, SpiceFldHBags, SpiceFldHRate
     Fields : SpiceFldHValue, SpiceFldHTaxable, SpiceFldHCGST, SpiceFldHSGST
@@ -1385,7 +1120,6 @@
     ;; to the bare figure; Format restores the three decimals the unit-bearing
     ;; form gave for free. The unit now lives in the column header instead.
     Set as : $$Number:$BilledQty
-    Type   : Number
     Format : "Decimals: 3"
     Style  : SpiceBody
     Align  : Right
@@ -1417,7 +1151,6 @@
     ;; once in the column header. Gunny is the only non-Kgs rate and it prints
     ;; blank, so a single unit in the header is never wrong.
     Set as : if @@SpiceIsGunny then "" else $$Number:$Rate
-    Type   : Number
     Format : "Decimals: 2"
     Style  : SpiceBody
     Align  : Right
@@ -1561,15 +1294,7 @@
 
 [Field: SpiceFldCBlankQty]
     Border : Thin Left
-    ;; Blank on every charge row EXCEPT Transport, which carries the total
-    ;; quantity — as the reference does.
-    ;; NOT `Invisible` — that collapses the field and shifts every column after
-    ;; it, which is what made the Insurance row ragged. The cell stays present
-    ;; with an empty value. No `Type : Number` either: a numeric field renders
-    ;; "" as 0.000.
-    Set as : if @@SpiceIsTransport then @@SpiceTotalQty else ""
-    Style  : SpiceBodyBold
-    Align  : Right
+    Set as : ""
     Width  : 10% Page
 
 [Field: SpiceFldCBlankBags]
@@ -1768,13 +1493,13 @@
     Set as : "Grand Total"
     Style  : SpiceGrand
     Align  : Right
-    Width  : 71% Page
+    Width  : 70% Page
 
 [Field: SpiceFldGrandVal]
     Set as : @@SpiceGrand
     Style  : SpiceGrand
     Align  : Right
-    Width  : 29% Page
+    Width  : 30% Page
 
 [Line: SpiceLHWordsRow]
 
@@ -1810,7 +1535,7 @@
     ;; the app has no IRN to fill it with — but section 6B now prints the real
     ;; IRN at the top of the invoice, and repeating a 64-character hash at the
     ;; foot is noise. Kept as the label for template fidelity, without the value.
-    Set as    : "Electronic Reference Number:        [build: 2026-09-09-AA]"
+    Set as    : "Electronic Reference Number:        [build: 2026-08-26-F]"
     Style     : SpiceFine
     Align     : Left
     Full Width: Yes
@@ -1826,7 +1551,7 @@
 ;; lines, no $$NewLine. Each hides itself when no bank is configured.
 [Line: SpiceLHBankRow]
 
-    Fields       : SpiceFldBankSpacer, SpiceFldBankTitle
+    Fields       : SpiceFldBankTitle
     Right Fields : SpiceFldForCo
     Space Top    : 0.05 inches
 
@@ -1839,37 +1564,32 @@
 [Line: SpiceLHBankIfsc]
     Field : SpiceFldBankIfsc
 
-[Field: SpiceFldBankSpacer]
-    ;; Balances SpiceFldForCo's 35% so the bank block centres on the page.
-    Set as : ""
-    Width  : 35% Page
-
 [Field: SpiceFldBankTitle]
     Set as    : "Bank Details"
     Style     : SpiceBodyBold
     Align     : Centre
-    Full Width: Yes
+    Width     : 65% Page
     Invisible : $$IsEmpty:@@SpiceBankName
 
 [Field: SpiceFldBankName]
     Set as    : @@SpiceBankName
     Style     : SpiceBody
     Align     : Centre
-    Full Width: Yes
+    Width     : 65% Page
     Invisible : $$IsEmpty:@@SpiceBankName
 
 [Field: SpiceFldBankAcct]
     Set as    : "A/C# " + @@SpiceBankAcct
     Style     : SpiceBody
     Align     : Centre
-    Full Width: Yes
+    Width     : 65% Page
     Invisible : $$IsEmpty:@@SpiceBankName
 
 [Field: SpiceFldBankIfsc]
     Set as    : "IFSC: " + @@SpiceBankIFSC
     Style     : SpiceBody
     Align     : Centre
-    Full Width: Yes
+    Width     : 65% Page
     Invisible : $$IsEmpty:@@SpiceBankName
 
 [Field: SpiceFldForCo]

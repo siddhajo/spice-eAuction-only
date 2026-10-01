@@ -297,7 +297,13 @@ function getCompanyHeader(db) {
   // The header object exposes `address1` and `address2` for backward
   // compatibility with PDF/XLSX renderers — `address2` carries the
   // office branch (single line in the brand band).
-  return { name, logoPath: logoOnDisk, address1, address2: branch, branch };
+  // `watermarkPath` is the logo to stamp faint behind the page, or '' when the
+  // toggle is off — resolved HERE because the shared PDF renderers are handed
+  // a companyHeader and nothing else (no cfg, no db) to decide from. Same
+  // file the header draws; see pdf/watermark.js.
+  let watermarkPath = '';
+  try { watermarkPath = require('./pdf/watermark').watermarkFile(db); } catch (_) {}
+  return { name, logoPath: logoOnDisk, address1, address2: branch, branch, watermarkPath };
 }
 
 // ─────────────────────────────────────────────────────────────────────────

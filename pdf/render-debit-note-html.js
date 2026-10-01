@@ -17,6 +17,7 @@ const { getInvoiceTemplate } = require('./invoice-templates');
 // Shared NAME / STREET / TOWN-PIN / STATE+CODE / details-two-per-row party box.
 const { partyBlock } = require('../party-block');
 const { htmlToPdf } = require('./htmlToPdf');
+const { withWatermark } = require('./watermark');
 const { logoDataUri } = require('./logo-data-uri');
 const { formatDebitNoteNo } = require('../report-formatters');
 
@@ -167,7 +168,7 @@ function buildDebitNoteView(dn, db, cfg, opts) {
 async function generateDebitNoteHtmlPDF(dn, db, cfg, opts) {
   const view = buildDebitNoteView(dn, db, cfg, opts);
   const tpl = getInvoiceTemplate('debit-note', cfg);
-  return htmlToPdf(tpl.render(view));
+  return htmlToPdf(withWatermark(tpl.render(view), cfg));
 }
 
 // Batch: one merged PDF across many DN rows (mirrors the *-bulk routes).

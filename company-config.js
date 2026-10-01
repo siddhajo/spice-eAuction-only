@@ -263,10 +263,33 @@ const DEFAULTS = [
   // item and this flag decides which one it opens.
   { key: 'flag_lotwise_payments', value: 'false', category: 'flags', label: 'Lot-wise Payments Screen', type: 'boolean' },
   { key: 'flag_invoice_stripe',  value: 'false', category: 'flags', label: 'Alternate Row Stripe in Invoice', type: 'boolean' },
+  // Faint company logo centred behind EVERY PDF this app prints — the invoice
+  // family (sales invoice, purchase invoice, bill of supply, commission bill,
+  // debit note) on both renderers, and every report / register / statement /
+  // slip export. One switch for all of them: the value of the mark is that it
+  // is everywhere, and a per-document matrix of toggles is a support call
+  // waiting to happen. Default ON; turn it off for a customer whose
+  // stationery already carries the mark, or whose logo is too dark to sit
+  // under text. No logo file on disk = no watermark, flag or no flag.
+  // `flag_invoice_watermark` is still honoured as a legacy alias. Thermal lot
+  // receipts and the crop receipt are never stamped. See pdf/watermark.js.
+  { key: 'flag_pdf_watermark', value: 'true', category: 'flags', label: 'Company Logo Watermark on PDFs', type: 'boolean' },
   { key: 'flag_dummy',           value: 'false', category: 'flags', label: 'Allow Dummy Invoices',            type: 'boolean' },
   { key: 'flag_round',           value: 'false', category: 'flags', label: 'Round Invoice Amounts',           type: 'boolean' },
   { key: 'flag_export',          value: 'false', category: 'flags', label: 'Export Invoices',                 type: 'boolean' },
   { key: 'flag_whatsapp',        value: 'false', category: 'flags', label: 'WhatsApp Share Buttons',          type: 'boolean' },
+  // Birthday Greetings — the "Birthdays" screen (under Master Data) plus the
+  // optional automatic morning sweep. OFF by default, and OFF means inert:
+  // the sidebar entry is hidden, every /api/birthdays route 403s, and the
+  // sweep timer returns without reading a single party. The per-greeting
+  // wording, who gets greeted and whether it auto-sends live in
+  // Settings → Birthday Greetings. See birthday-greetings.js.
+  { key: 'flag_birthday_greetings', value: 'false', category: 'flags', label: 'Birthday Greetings (WhatsApp)', type: 'boolean' },
+  // Seller Reminders — the "Seller Reminders" screen (under Master Data)
+  // plus the optional automatic sweep. OFF by default, and OFF means inert
+  // exactly as for birthdays. The thresholds live in
+  // Settings → Seller Reminders. See seller-reminders.js.
+  { key: 'flag_seller_reminders', value: 'false', category: 'flags', label: 'Seller Booking Reminders (WhatsApp)', type: 'boolean' },
   // Price List Mapping — sister tool of the Lots → Price Import button.
   // When ON, a "Price List Mapping" item appears in the sidebar (under
   // Lots) and a quick-access "🗺 Price List Mapping" button shows up on
@@ -632,6 +655,86 @@ const DEFAULTS = [
   { key: 'reassign_alert_tpl',         value: 'lot_reassign_approval', category: 'alerts', label: 'Reassign Requests — WhatsApp template name', type: 'text' },
   { key: 'reassign_alert_tpl_lang',    value: 'en',    category: 'alerts', label: 'Reassign Requests — WhatsApp template language code', type: 'text' },
 
+  // ── BIRTHDAY GREETINGS ─────────────────────────────────────
+  // Sellers carry `traders.dob`, buyers `buyers.dob`; both optional, and a
+  // party without one is never greeted. The master switch is
+  // `flag_birthday_greetings` in Feature Flags — these only shape a feature
+  // that is already on. See birthday-greetings.js.
+  { key: 'birthday_send_sellers', value: 'true',  category: 'birthdays', label: 'Greet Sellers', type: 'boolean' },
+  { key: 'birthday_send_buyers',  value: 'true',  category: 'birthdays', label: 'Greet Buyers',  type: 'boolean' },
+  // OFF = the Birthdays screen is a worklist and nothing leaves the app
+  // until an operator presses Send. ON = the daily sweep sends by itself.
+  { key: 'birthday_auto_send',    value: 'false', category: 'birthdays', label: 'Send automatically (no operator click)', type: 'boolean' },
+  // Local hour the sweep may start at. It fires on the first tick at or
+  // after this hour ON THE DAY ITSELF and never catches up a missed day.
+  { key: 'birthday_send_hour',    value: '9',     category: 'birthdays', label: 'Auto-send from (hour, 0-23 local)', type: 'number' },
+  // Blast guard. A bad DOB import (every row 01-01-1980) would otherwise
+  // spend the whole 250-recipient/24h WhatsApp tier in one sweep and take
+  // that day's invoice sends down with it.
+  { key: 'birthday_max_per_day',  value: '50',    category: 'birthdays', label: 'Maximum greetings per day', type: 'number' },
+  // A birthday greeting is unsolicited, so the contact's 24h service window
+  // is shut and Meta will only deliver an APPROVED template. This one needs
+  // exactly ONE body variable — the party's name. Meta classes greetings as
+  // MARKETING, which is charged at the marketing rate, not the utility rate.
+  { key: 'birthday_tpl',          value: 'birthday_greeting', category: 'birthdays', label: 'WhatsApp template name', type: 'text' },
+  { key: 'birthday_tpl_lang',     value: 'en',    category: 'birthdays', label: 'WhatsApp template language code', type: 'text' },
+  // Escape hatch for an account whose template is not approved yet: send the
+  // wording below as a plain text message instead. It only reaches contacts
+  // who messaged the business within the last 24h — everyone else fails.
+  { key: 'birthday_free_text',    value: 'false', category: 'birthdays', label: 'Send as plain text instead of a template (only reaches contacts who messaged in the last 24h)', type: 'boolean' },
+  // The wording. Tokens: {name} {first_name} {company}. Used verbatim for a
+  // plain-text send; for a template send it is what the screen previews and
+  // what the approved template body should say.
+  { key: 'birthday_message',
+    value: 'Dear {name}, wishing you a very happy birthday! \u{1F382} Warm regards, {company}',
+    category: 'birthdays',
+    label: 'Greeting wording (tokens: {name} {first_name} {company})',
+    type: 'textarea' },
+
+  // ── SELLER REMINDERS ───────────────────────────────────────
+  // "You haven't booked with us in a while." The master switch is
+  // `flag_seller_reminders` in Feature Flags; these shape who qualifies.
+  //
+  // The defaults are set from the live master (2026-09-30): 4,765 sellers,
+  // of whom 1,682 have ever booked and 836 last booked 60+ days ago — but
+  // 632 of those 836 came exactly ONCE. Auctions run about every 10 days,
+  // so 60 days is roughly six missed trades. See seller-reminders.js for
+  // the full breakdown and why each number is a separate knob.
+  { key: 'reminder_after_days',   value: '60',  category: 'reminders', label: 'Remind after this many days without booking', type: 'number' },
+  // Past this they have not lapsed, they have left — a message is cold
+  // outreach rather than a nudge, and it is charged at the same rate.
+  { key: 'reminder_until_days',   value: '180', category: 'reminders', label: 'Stop reminding after this many days (ignore sellers gone longer)', type: 'number' },
+  // The most effective knob by far: 1 = everyone who ever booked (632 of
+  // the 836 dormant sellers came exactly once); 2 = they came back at
+  // least once; 4 = the regulars who really have lapsed (22 sellers).
+  { key: 'reminder_min_auctions', value: '2',   category: 'reminders', label: 'Only sellers who booked at least this many auctions', type: 'number' },
+  // Don't nag. Must comfortably exceed the auction cadence, or a seller
+  // gets a second reminder before they have had a chance to act on the first.
+  { key: 'reminder_cooldown_days', value: '45', category: 'reminders', label: 'Do not remind the same seller again within this many days', type: 'number' },
+  // OFF by design. All 3,085 never-booked sellers on the live master were
+  // created inside the same 60 days by one bulk import, so their
+  // registration date says nothing about them — turning this on messages
+  // the entire master tail on one morning.
+  { key: 'reminder_include_never_booked', value: 'false', category: 'reminders', label: 'Also remind sellers who have NEVER booked (large — read the note above)', type: 'boolean' },
+  { key: 'reminder_auto_send',    value: 'false', category: 'reminders', label: 'Send automatically (no operator click)', type: 'boolean' },
+  { key: 'reminder_send_hour',    value: '10',  category: 'reminders', label: 'Auto-send from (hour, 0-23 local)', type: 'number' },
+  // The blast guard. Unlike birthdays the backlog need not clear in a day —
+  // a dormant seller is still dormant tomorrow — so this deliberately
+  // drains the list a slice at a time.
+  { key: 'reminder_max_per_day',  value: '50',  category: 'reminders', label: 'Maximum reminders per day', type: 'number' },
+  // A reminder is unsolicited, so only an APPROVED template will be
+  // delivered. This one takes THREE body variables, matching the default
+  // wording below token for token: {{1}} seller name, {{2}} when they last
+  // booked, {{3}} the next auction. Meta charges it at the MARKETING rate.
+  { key: 'reminder_tpl',          value: 'seller_booking_reminder', category: 'reminders', label: 'WhatsApp template name. Its body needs THREE variables: {{1}} seller name, {{2}} when they last booked, {{3}} the next auction', type: 'text' },
+  { key: 'reminder_tpl_lang',     value: 'en',  category: 'reminders', label: 'WhatsApp template language code', type: 'text' },
+  { key: 'reminder_free_text',    value: 'false', category: 'reminders', label: 'Send as plain text instead of a template (only reaches sellers who messaged in the last 24h)', type: 'boolean' },
+  { key: 'reminder_message',
+    value: 'Dear {name}, we have not seen your lots since {last_booked}. Do send your produce for {next_auction}. Regards, {company}',
+    category: 'reminders',
+    label: 'Reminder wording. Tokens: {name} {first_name} {company} {last_booked} {days} {next_auction} {next_auction_no}. Keep {next_auction} after "for", not after "on" \u2014 with no auction scheduled it reads "our next auction".',
+    type: 'textarea' },
+
   // ── LOGINS & SESSIONS ──────────────────────────────────────
   // `single_session` blocks a second sign-in while the same username is
   // already active anywhere (desktop or mobile). "Active" is judged by
@@ -910,6 +1013,8 @@ const CATEGORIES = {
   flags:        { order: 11,   title: 'Feature Flags',           icon: '🔧' },
   lot_entry:    { order: 11.5, title: 'Lot Entry Defaults',      icon: '📝' },
   alerts:       { order: 11.7, title: 'Booking Alerts',          icon: '🚨', description: 'Soft alerts when grade-2 bookings dominate an auction. When grade-2 weight exceeds the threshold percentage of the total weight booked so far, the depot manager is notified (in-app + WhatsApp); any further grade-2 booking after that escalates to the immediate superior. Each level fires once per auction.' },
+  birthdays:    { order: 11.75, title: 'Birthday Greetings',       icon: '\u{1F382}', description: 'Wishes sellers and buyers a happy birthday over WhatsApp, read from the Date of Birth on each master record. Anybody without a date of birth, or without a phone number, is simply never greeted. Each party is greeted at most once per calendar year \u2014 a restart or a second operator cannot double-greet. Auto-send is off by default: with it off the Birthdays screen is a worklist the operator sends from. Turn the whole feature on or off with "Birthday Greetings (WhatsApp)" in Feature Flags.' },
+  reminders:    { order: 11.77, title: 'Seller Reminders',        icon: '\u{1F514}', description: 'Nudges sellers who have not booked a lot in a while, over WhatsApp. A seller qualifies when their last booking falls inside the window below AND they have booked at least the minimum number of auctions \u2014 that second test is what separates a lapsed regular from somebody who came once and never returned, and on a typical master three quarters of the "dormant" list is the latter. Sellers already booked into a coming auction are never included. Auto-send is off by default: with it off the Seller Reminders screen is a worklist the operator sends from. Turn the whole feature on or off with "Seller Booking Reminders (WhatsApp)" in Feature Flags.' },
   security:     { order: 11.8, title: 'Logins & Sessions',       icon: '🔐', description: 'Controls concurrent sign-ins. With the block on, a username that is already active anywhere cannot be signed in again — the second person is told who holds the session. A session counts as active only while it has made a request within the idle window, so a browser closed without logging out frees the username by itself. Admins can also clear a stuck session at once from Users → Sign out.' },
   integrations: { order: 12,   title: 'Integrations',            icon: '🔌', description: 'Optional third-party services. A GST lookup key enables auto-fetching trade name and address when you enter a GSTIN — pick the provider (gstincheck.co.in or gstinapi.in) and paste its own key. The status card above the fields shows that provider’s credit balance and links straight to its recharge page, so a spent plan can be topped up without leaving the screen. The WhatsApp Business card lets you send invoices/notices straight from the app via Meta’s Cloud API.' },
   tally:        { order: 13,   title: 'To Tally',                icon: '📤' },

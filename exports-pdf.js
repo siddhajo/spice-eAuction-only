@@ -15,6 +15,8 @@
 
 const PDFDocument = require('pdfkit');
 const auctionReports = require('./auction-reports');
+// Faint company-logo watermark shared by every PDF renderer in the app.
+const { attachPdfkitWatermark, attachPdfkitWatermarkPath } = require('./pdf/watermark');
 // The Disbursement Register's rows and columns are built ONCE, in exports.js,
 // and used by both renderings — see planterDisbursementRows there for why the
 // figures are read off the lot rather than recomputed. Safe as a top-level
@@ -156,6 +158,9 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
   // if a specific report ever needs landscape (e.g. very wide column sets).
   const pageLayout = layout === 'landscape' ? 'landscape' : 'portrait';
   const doc = new PDFDocument({ size: 'A4', layout: pageLayout, margin: 24 });
+  // Faint company-logo watermark, from the header this renderer is already
+  // handed — one call covers every generic table export. See pdf/watermark.js.
+  attachPdfkitWatermarkPath(doc, (companyHeader || {}).watermarkPath);
   const buffers = [];
   doc.on('data', b => buffers.push(b));
 
@@ -1660,6 +1665,7 @@ async function renderTharaiListPdf(db, auctionId, cfg, extra) {
   catch (_) { /* settings unavailable — fall back to the default */ }
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 24 });
+  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
   const buffers = [];
   doc.on('data', b => buffers.push(b));
 
@@ -1939,6 +1945,7 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
   const toDisp   = formatDateForDisplay(opts.to, dateFmt);
 
   const doc = new PDFDocument({ size: 'A4', margin: 48 });
+  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
   const buffers = [];
   doc.on('data', b => buffers.push(b));
 

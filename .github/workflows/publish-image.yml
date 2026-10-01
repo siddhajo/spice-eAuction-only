@@ -1,0 +1,102 @@
+name: Publish Docker image (GHCR)
+
+# Builds the app image from the repo Dockerfile and pushes it to the GitHub
+# Container Registry (GHCR), so a customer can run Spice e-Auction in THEIR OWN
+# Railway account without ever getting access to this repo.
+#
+#   Image:  ghcr.io/<owner>/spice-eauction
+#
+# Run it from the repo's "Actions" tab → "Publish Docker image (GHCR)" →
+# "Run workflow" (pick a tag name), or automatically by pushing a version tag:
+#
+#   git tag v1.1.0 && git push origin v1.1.0
+#
+# Heads-up: the Android APK workflow also triggers on v* tags, so pushing a
+# version tag kicks off both. That's intentional — one tag, one release.
+#
+# Full context, plus how to turn this image into a one-click Railway template,
+# is in RAILWAY-CUSTOMER-ACCOUNTS.md.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to publish (e.g. dev, 1.1.0-rc1)'
+        required: true
+        default: 'dev'
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  packages: write           # needed to push into GHCR
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # GHCR rejects uppercase in image paths; the GitHub owner may have any
+      # case, so normalise it before it reaches the tag list.
+      - name: Compute lowercase image name
+        id: img
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/spice-eauction" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # auto-provided, no secret to create
+
+      # Tag policy:
+      #   push v1.2.3       → 1.2.3, 1.2, latest
+      #   manual dispatch   → whatever you typed in the "tag" input (never latest)
+      - name: Derive tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.img.outputs.name }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+          labels: |
+            org.opencontainers.image.title=Spice e-Auction
+            org.opencontainers.image.description=Spice e-Auction — admin app for invoices, payments and exports
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          # Railway runs amd64. Building arm64 too would emulate the whole
+          # apt-get Chromium layer under QEMU and roughly triple the build.
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Keep a plain single-manifest image — simplest thing for Railway and
+          # for anyone pulling by digest.
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "### Image published"
+            echo
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo
+            echo "First publish only: the package starts **private**. Open"
+            echo "<https://github.com/${{ github.repository_owner }}?tab=packages>"
+            echo "→ spice-eauction → Package settings, and decide public vs private"
+            echo "(see RAILWAY-CUSTOMER-ACCOUNTS.md §4)."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -11,6 +11,7 @@ const { getInvoiceTemplate } = require('./invoice-templates');
 // Shared NAME / STREET / TOWN-PIN / STATE+CODE / details-two-per-row party box.
 const { partyBlock } = require('../party-block');
 const { htmlToPdf } = require('./htmlToPdf');
+const { withWatermark } = require('./watermark');
 
 function readFlag(val, defaultOn) {
   if (val === undefined || val === null || val === '') return defaultOn;
@@ -169,7 +170,7 @@ function buildPurchaseInvoiceView(invoiceData, cfg, invoiceNo) {
 async function generatePurchaseInvoiceHtmlPDF(invoiceData, cfg, invoiceNo) {
   const view = buildPurchaseInvoiceView(invoiceData, cfg, invoiceNo);
   const tpl = getInvoiceTemplate('purchase-invoice', cfg);
-  return htmlToPdf(tpl.render(view));
+  return htmlToPdf(withWatermark(tpl.render(view), cfg));
 }
 
 // Bulk: invoices = [{ invoiceData, invoiceNo }]. Renders each, merges to one PDF.

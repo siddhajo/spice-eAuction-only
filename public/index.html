@@ -1738,6 +1738,29 @@ body:not([data-feat-insights="1"]) .feat-insights{display:none !important}
 /* Per-Auction Breakdown — gated by flag_pertrade_breakdown. Same shape
    again; defaults ON, see company-config.js. */
 body:not([data-feat-pertrade-breakdown="1"]) .feat-pertrade-breakdown{display:none !important}
+/* Birthday Greetings — gated by flag_birthday_greetings (Settings → Flags).
+   Defaults OFF. Same ADD-a-hide shape; safe in this early block because
+   nothing tagged .feat-birthdays also carries a .needs-*-write permission
+   class, which is the case that loses this specificity fight. */
+body:not([data-feat-birthdays="1"]) .feat-birthdays{display:none !important}
+/* Seller Reminders — gated by flag_seller_reminders. Defaults OFF. Same
+   ADD-a-hide shape; safe in this early block because nothing tagged
+   .feat-reminders also carries a .needs-*-write permission class. */
+body:not([data-feat-reminders="1"]) .feat-reminders{display:none !important}
+/* ── OUTREACH WORKLISTS (Birthdays, Seller Reminders) ────────────────
+   Both screens are the same shape: a list of parties to WhatsApp, a
+   coverage strip explaining who is in scope, and a per-row status chip.
+   Flat tables and tinted chips built on the --spice-* tokens, so dark
+   mode follows without a second palette (see the note on derived tokens
+   further down — the generic aliases do NOT flip). */
+.out-strip{display:flex;gap:18px;flex-wrap:wrap;padding:8px 0 12px;font-size:12px;color:var(--spice-text-soft,var(--text2))}
+.out-strip b{color:var(--spice-text-main,var(--text));font-weight:700}
+.out-chip{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;white-space:nowrap}
+.out-chip.ok{background:var(--green-bg);color:var(--green)}
+.out-chip.warn{background:var(--spice-saffron-lt);color:var(--spice-saffron)}
+.out-chip.bad{background:rgba(192,57,43,.12);color:#c0392b}
+.out-chip.idle{background:var(--spice-line,var(--border));color:var(--text2)}
+.out-msg{font-size:11.5px;color:var(--text2);max-width:420px;white-space:pre-wrap}
 
 /* ── The .am-* layout vocabulary ─────────────────────────────────────
    Flat by design — hairline rules and tinted bands, no cards or shadows,
@@ -4854,6 +4877,14 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
           Buyers
         </button>
+        <button class="side-item feat-birthdays" data-tab="birthdays" onclick="go('birthdays')">
+          <svg viewBox="0 0 24 24"><path d="M20 21v-8H4v8zM2 13h20M12 6v3M12 3v0"/><path d="M6 13v-2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2"/></svg>
+          Birthdays
+        </button>
+        <button class="side-item feat-reminders" data-tab="reminders" onclick="go('reminders')">
+          <svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+          Seller Reminders
+        </button>
         <button class="side-item" data-tab="auctions" onclick="go('auctions')">
           <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
           Auctions
@@ -6249,6 +6280,113 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     </div>
 
     <!-- REASSIGN REQUESTS (from mobile operators) -->
+    <!-- BIRTHDAYS — greet sellers and buyers on their birthday over
+         WhatsApp, read from the Date of Birth on each master record.
+         Gated by flag_birthday_greetings; see birthday-greetings.js and
+         loadBirthdays() below. Auto-send is off by default, which makes
+         this screen the whole feature: a worklist the operator sends from. -->
+    <div class="tc feat-birthdays" id="tc-birthdays">
+      <div class="card" style="padding:14px 18px;margin-bottom:14px">
+        <h2 style="margin:0 0 4px;display:flex;align-items:center;gap:10px">Birthdays
+          <input type="date" id="bd-date" onchange="loadBirthdays()" style="margin-left:auto;height:34px;padding:0 8px;font-size:12.5px">
+          <button class="btn btn-o" onclick="bdToday()" title="Back to today">Today</button>
+          <button class="btn btn-o" onclick="loadBirthdays()">🔄 Refresh</button>
+        </h2>
+        <p style="font-size:12.5px;color:var(--text2);margin:0">Wishes sellers and buyers a happy birthday over WhatsApp, read from the Date of Birth on each master record. Each party is greeted at most once a year — sending twice is not possible, so a repeated click is safe.</p>
+        <div id="bd-banner"></div>
+        <div class="out-strip" id="bd-coverage"></div>
+      </div>
+
+      <div class="card" style="padding:14px 18px;margin-bottom:14px">
+        <h2 style="margin:0 0 10px;display:flex;align-items:center;gap:10px;font-size:15px">
+          <span id="bd-today-head">Today</span>
+          <button class="btn btn-g" id="bd-send-sel" style="margin-left:auto;background:#25D366;color:#fff;font-weight:600" onclick="bdSendSelected()">💬 Send selected</button>
+        </h2>
+        <div id="bd-preview-note"></div>
+        <div style="overflow-x:auto"><table>
+          <thead><tr>
+            <th style="width:34px"><input type="checkbox" id="bd-all" onchange="bdToggleAll(this.checked)"></th>
+            <th>Name</th><th>Type</th><th>Phone</th><th>Age</th><th>Greeting</th><th>Status</th><th style="width:110px">Action</th>
+          </tr></thead>
+          <tbody id="bd-today-list"></tbody>
+        </table></div>
+      </div>
+
+      <div class="card" style="padding:14px 18px;margin-bottom:14px">
+        <h2 style="margin:0 0 10px;font-size:15px">Coming up
+          <select id="bd-days" onchange="loadBirthdays()" style="height:30px;font-size:12px;margin-left:8px">
+            <option value="7">next 7 days</option>
+            <option value="30" selected>next 30 days</option>
+            <option value="90">next 90 days</option>
+          </select>
+        </h2>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>Date</th><th>In</th><th>Name</th><th>Type</th><th>Phone</th><th>Age</th></tr></thead>
+          <tbody id="bd-upcoming-list"></tbody>
+        </table></div>
+      </div>
+
+      <div class="card" style="padding:14px 18px">
+        <h2 style="margin:0 0 4px;font-size:15px">Greetings sent</h2>
+        <p style="font-size:12px;color:var(--text2);margin:0 0 10px">"Sent" means WhatsApp accepted the message. Delivered / read arrive later — see the Send log in Settings → Integrations.</p>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>When</th><th>Name</th><th>Type</th><th>Phone</th><th>How</th><th>By</th><th>Status</th></tr></thead>
+          <tbody id="bd-log-list"></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- SELLER REMINDERS — nudge sellers who have not booked a lot in a
+         while. Gated by flag_seller_reminders; see seller-reminders.js
+         (which carries the measured numbers behind the thresholds) and
+         loadReminders() below. Auto-send is off by default, so this screen
+         IS the feature: a worklist the operator sends from. -->
+    <div class="tc feat-reminders" id="tc-reminders">
+      <div class="card" style="padding:14px 18px;margin-bottom:14px">
+        <h2 style="margin:0 0 4px;display:flex;align-items:center;gap:10px">Seller Reminders
+          <button class="btn btn-o" style="margin-left:auto" onclick="loadReminders()">🔄 Refresh</button>
+        </h2>
+        <p style="font-size:12.5px;color:var(--text2);margin:0">Sellers who have not booked a lot in a while. Anyone already booked into a coming auction is never listed, and nobody is messaged twice inside the cooling-off window.</p>
+        <div id="rm-banner"></div>
+        <div class="out-strip" id="rm-coverage"></div>
+        <div id="rm-funnel"></div>
+      </div>
+
+      <div class="card" style="padding:14px 18px;margin-bottom:14px">
+        <h2 style="margin:0 0 10px;display:flex;align-items:center;gap:10px;font-size:15px">
+          <span id="rm-due-head">Due a reminder</span>
+          <button class="btn btn-g" id="rm-send-sel" style="margin-left:auto;background:#25D366;color:#fff;font-weight:600" onclick="rmSendSelected()">💬 Send selected</button>
+        </h2>
+        <div id="rm-preview-note"></div>
+        <div style="overflow-x:auto"><table>
+          <thead><tr>
+            <th style="width:34px"><input type="checkbox" id="rm-all" onchange="rmToggleAll(this.checked)"></th>
+            <th>Seller</th><th>Last booked</th><th>Away</th><th>History</th><th>Phone</th><th>Last reminded</th><th>Message</th><th style="width:110px">Action</th>
+          </tr></thead>
+          <tbody id="rm-due-list"></tbody>
+        </table></div>
+        <div id="rm-due-more" style="font-size:12px;color:var(--text2);padding-top:8px"></div>
+      </div>
+
+      <div class="card" style="padding:14px 18px;margin-bottom:14px">
+        <h2 style="margin:0 0 4px;font-size:15px">Held back <span id="rm-held-n" style="color:var(--text3);font-weight:400"></span></h2>
+        <p style="font-size:12px;color:var(--text2);margin:0 0 10px">Sellers the rules deliberately kept off the list, and why. "Why isn't this seller here?" is the question this screen gets asked most.</p>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>Seller</th><th>Last booked</th><th>Away</th><th>History</th><th>Held because</th></tr></thead>
+          <tbody id="rm-held-list"></tbody>
+        </table></div>
+      </div>
+
+      <div class="card" style="padding:14px 18px">
+        <h2 style="margin:0 0 4px;font-size:15px">Reminders sent</h2>
+        <p style="font-size:12px;color:var(--text2);margin:0 0 10px">"Sent" means WhatsApp accepted the message. Delivered / read arrive later — see the Send log in Settings → Integrations.</p>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>When</th><th>Seller</th><th>Phone</th><th>Was away</th><th>How</th><th>By</th><th>Status</th></tr></thead>
+          <tbody id="rm-log-list"></tbody>
+        </table></div>
+      </div>
+    </div>
+
     <div class="tc" id="tc-reassignreqs">
       <div class="card">
         <h2 style="display:flex;align-items:center;gap:10px">Lot Reassignment Requests
@@ -8776,6 +8914,9 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     <div class="fg"><label>AI (auction identifier)</label><input id="b-ti"></div>
     <div class="fg"><label>SBL</label><input id="b-sbl"></div>
     <div class="fg"><label>Email</label><input id="b-email" type="email"></div>
+    <!-- Optional. Only read by Birthday Greetings (Settings → Flags); a buyer
+         without one is simply never greeted. Mirrors the Sellers form. -->
+    <div class="fg"><label>Date of Birth</label><input id="b-dob" type="date"></div>
     <div class="fg"><label>Sale Type</label>
       <select id="b-sale">
         <option value="L">Local (L)</option>
@@ -11615,6 +11756,12 @@ async function applyFeatureFlags() {
   // Debit Note gated by flag_debit_note (Settings → Flags).
   document.body.setAttribute('data-feat-debit-note', cfg && on(cfg.flag_debit_note) ? '1' : '0');
   document.body.setAttribute('data-feat-merchants', cfg && on(cfg.flag_merchants) ? '1' : '0');
+  // Birthday Greetings — sidebar entry + the whole screen. Default OFF when
+  // settings haven't loaded, so a slow or failed fetch never shows a screen
+  // whose routes will 403.
+  document.body.setAttribute('data-feat-birthdays', cfg && on(cfg.flag_birthday_greetings) ? '1' : '0');
+  // Seller Reminders — same shape, same default-OFF reasoning.
+  document.body.setAttribute('data-feat-reminders', cfg && on(cfg.flag_seller_reminders) ? '1' : '0');
   // Payments screen chooser — OFF (default) = classic seller-wise screen,
   // ON = the lot-wise screen. Only the visible one is ever loaded; see
   // loadPayAuctions(), which routes on this same attribute.
@@ -12401,6 +12548,27 @@ const SCREEN_GUIDE = {
       'Click a tile or use the left menu to jump into Lots, Invoices or Reports.',
     ],
   },
+  birthdays: {
+    icon: '🎂',
+    title: 'Birthdays — greet sellers and buyers',
+    steps: [
+      'Today’s birthdays are listed from the Date of Birth on each seller and buyer. Nobody is greeted until you send.',
+      'Tick the ones to greet and press “Send selected”, or use the Send button on a single row.',
+      'Anyone already greeted this year, or with no phone number, cannot be ticked — greeting twice is not possible.',
+    ],
+    warn: 'A birthday greeting is a marketing message to Meta: it costs several times an invoice send, and a contact who reports it hurts the number that also sends your invoices. Keep it to parties who expect to hear from you.',
+  },
+  reminders: {
+    icon: '🔔',
+    title: 'Seller Reminders — nudge sellers who stopped coming',
+    steps: [
+      'The list is sellers whose last booking falls inside the window set in Settings → Seller Reminders. Nobody is messaged until you send.',
+      'Read the funnel at the top before sending — it shows how many were dropped for only ever booking once, which is usually most of them.',
+      'Tick the sellers to nudge and press “Send selected”. Ten or more asks you to confirm first.',
+      '“Held back” lists everyone the rules kept off, with the reason — check there before assuming a seller is missing.',
+    ],
+    warn: 'This is the expensive one. Reminders are marketing messages: several times the price of an invoice send, and they go to people who did not ask to hear from you. Raise “Only sellers who booked at least this many auctions” before widening the day window.',
+  },
   settings: {
     icon: '⚙️',
     title: 'Company Settings — rates, charges & identity',
@@ -12833,6 +13001,11 @@ const NAV_GROUPS = [
     items:[
       { tab:'traders', label:'Sellers' },
       { tab:'buyers',  label:'Buyers' },
+      // The two WhatsApp outreach screens. Both flag-gated and OFF by
+      // default, in which case their #nav-src entry is display:none and
+      // navVisible() keeps them out of the strip entirely.
+      { tab:'birthdays', label:'Birthdays' },
+      { tab:'reminders', label:'Seller Reminders' },
     ]},
   { id:'creation', label:'Auction Creation',
     icon:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
@@ -13129,6 +13302,10 @@ function go(tab){
   if (tab === 'insights' && document.body.getAttribute('data-feat-insights') === '0') tab = 'dash';
   // Same catch for Per-Auction Breakdown.
   if (tab === 'pertrade' && document.body.getAttribute('data-feat-pertrade-breakdown') === '0') tab = 'dash';
+  // Same catch for Birthdays — its routes 403 while the flag is off, so a
+  // restored tab would paint an error instead of a screen.
+  if (tab === 'birthdays' && document.body.getAttribute('data-feat-birthdays') !== '1') tab = 'dash';
+  if (tab === 'reminders' && document.body.getAttribute('data-feat-reminders') !== '1') tab = 'dash';
   window._currentTab = tab;
   document.querySelectorAll('.side-item').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
   document.querySelectorAll('.tc').forEach(t=>t.classList.remove('active'));
@@ -13159,7 +13336,7 @@ function go(tab){
   if (typeof applyLogoBadge === 'function') {
     try { applyLogoBadge(); } catch(_) {}
   }
-  const loaders={hub:loadHub,dash:loadStats,insights:loadInsights,pertrade:loadPerTradeBreakdown,auctionmgr:loadAuctionManager,amreports:loadAmReports,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>searchTraders(''),buyers:()=>searchBuyers(''),
+  const loaders={hub:loadHub,dash:loadStats,insights:loadInsights,pertrade:loadPerTradeBreakdown,auctionmgr:loadAuctionManager,amreports:loadAmReports,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>searchTraders(''),buyers:()=>searchBuyers(''),birthdays:loadBirthdays,reminders:loadReminders,
     auctions:loadAuctions,reassignreqs:loadReassignRequests,lotalloc:loadLotAllocation,lots:loadLotAuctions,invoices:loadInvAuctions,preinvoice:loadPreInvoice,purchases:loadPurAuctions,
     payments:loadPayAuctions,exports:loadExpAuctions,tds:()=>{},lorry:loadLorryAuctions,
     bills:loadBillAuctions,debit:loadDnAuctions,debitplanter:loadDnpAuctions,journals:loadJournalDefault,registers:loadRegisterDefault,tally:loadTallyAuctions,
@@ -15447,6 +15624,551 @@ async function loadReassignRequests(){
     }).join('');
   }catch(e){if(body)body.innerHTML='<tr><td colspan="8" style="text-align:center;color:#c0392b;padding:16px">'+rrEsc(e.message||'Failed to load')+'</td></tr>'}
 }
+// ══════════════════════════════════════════════════════════════
+// BIRTHDAYS
+//
+// Worklist for flag_birthday_greetings. One fetch fills all three tables:
+// today's birthdays, the next N days, and the ledger of what has been sent.
+//
+// The screen never decides who is having a birthday — the server does, and
+// /api/birthdays/send re-derives the list before sending, so a tab left
+// open overnight cannot greet yesterday's people this morning. All this
+// code sends is (party_type, party_id) pairs: seller and buyer names repeat,
+// so the id is the only safe identity.
+// ══════════════════════════════════════════════════════════════
+var _bd = { date: '', today: [], sel: {} };
+
+// Shared by both outreach screens. With a TEMPLATE send the wording that
+// reaches the customer is the body approved in Meta — this app's wording
+// setting only drives the preview and a plain-text send. Without this note
+// an operator edits the wording, sends, and cannot understand why the
+// message that arrived is the old one.
+function outPreviewNote(el, cfg, settingsPage){
+  var host = document.getElementById(el); if (!host) return;
+  if (!cfg || cfg.freeText || !cfg.template) { host.innerHTML = ''; return; }
+  host.innerHTML = '<div style="font-size:11.5px;color:var(--text2);margin:-4px 0 10px">'
+    + 'Sending through the approved template <code>' + esc(cfg.template) + '</code>. '
+    + 'The wording below is this app\'s preview — what actually arrives is that template\'s body as approved in Meta. '
+    + 'Editing the wording in Settings → ' + settingsPage + ' changes the preview and plain-text sends, not the template.'
+    + '</div>';
+}
+
+function bdToday(){
+  var el = document.getElementById('bd-date');
+  if (el) el.value = '';
+  loadBirthdays();
+}
+function bdKey(r){ return r.party_type + ':' + r.party_id; }
+function bdTypeChip(t){
+  return t === 'buyer'
+    ? '<span class="out-chip idle">Buyer</span>'
+    : '<span class="out-chip idle">Seller</span>';
+}
+function bdToggleAll(on){
+  _bd.sel = {};
+  if (on) _bd.today.forEach(function(r){ if (bdSendable(r)) _bd.sel[bdKey(r)] = true; });
+  bdRenderToday();
+}
+// Sendable = has a phone AND has not been greeted this year. Anybody else
+// stays visible (the operator needs to see whose birthday it is) but their
+// tick box is disabled, so a selection can never contain a row the server
+// would only refuse.
+function bdSendable(r){ return !!r.phone && !r.greeted; }
+
+async function loadBirthdays(){
+  var dateEl = document.getElementById('bd-date');
+  var daysEl = document.getElementById('bd-days');
+  var qs = [];
+  if (dateEl && dateEl.value) qs.push('date=' + encodeURIComponent(dateEl.value));
+  if (daysEl && daysEl.value) qs.push('days=' + encodeURIComponent(daysEl.value));
+  var body = document.getElementById('bd-today-list');
+  if (body) body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:16px">Loading…</td></tr>';
+  try {
+    var d = await j('/api/birthdays' + (qs.length ? '?' + qs.join('&') : ''));
+    _bd.date = d.date; _bd.today = d.today || []; _bd.sel = {};
+    if (dateEl && !dateEl.value) dateEl.value = d.date;
+    bdRenderBanner(d);
+    outPreviewNote('bd-preview-note', d.config, 'Birthday Greetings');
+    bdRenderCoverage(d);
+    bdRenderToday();
+    bdRenderUpcoming(d.upcoming || []);
+    bdRenderLog(d.log || []);
+  } catch (e) {
+    if (body) body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#c0392b;padding:16px">' + esc(e.message || 'Failed to load') + '</td></tr>';
+  }
+}
+
+// One banner, and only when there is something the operator must act on.
+// Order matters: an unconfigured WhatsApp makes every other note moot.
+function bdRenderBanner(d){
+  var el = document.getElementById('bd-banner'); if (!el) return;
+  var c = d.config || {}, wa = d.whatsapp || {};
+  var box = function(tone, html){
+    var bg = tone === 'bad' ? 'rgba(192,57,43,.08)' : 'var(--spice-saffron-lt)';
+    var bc = tone === 'bad' ? '#c0392b' : 'var(--spice-saffron)';
+    return '<div style="margin:10px 0 0;padding:9px 12px;border-left:3px solid ' + bc + ';background:' + bg + ';border-radius:0 6px 6px 0;font-size:12.5px">' + html + '</div>';
+  };
+  if (!wa.configured) {
+    el.innerHTML = box('bad', '<b>WhatsApp is not connected</b> — nothing can be sent yet. Set it up in <a href="#" onclick="go(\'settings\');return false">Settings → Integrations</a>.');
+    return;
+  }
+  if (!c.freeText && !c.template) {
+    el.innerHTML = box('bad', '<b>No WhatsApp template configured.</b> A birthday greeting is unsolicited, so WhatsApp will only deliver an approved template — name it in Settings → Birthday Greetings.');
+    return;
+  }
+  if (c.freeText) {
+    el.innerHTML = box('warn', '<b>Sending as plain text.</b> That only reaches contacts who messaged this business in the last 24 hours; everyone else will fail. Switch to an approved template in Settings → Birthday Greetings.');
+    return;
+  }
+  el.innerHTML = '';
+}
+
+// The two numbers that explain an empty list. Without them "no birthdays
+// today" and "nobody has a date of birth on file" look identical.
+function bdRenderCoverage(d){
+  var el = document.getElementById('bd-coverage'); if (!el) return;
+  var c = d.counts || {}, cf = d.config || {};
+  var who = [cf.sellers ? 'sellers' : null, cf.buyers ? 'buyers' : null].filter(Boolean).join(' + ');
+  var bits = [];
+  // Deliberately FIRST and outside the banner: the banner shows one blocking
+  // problem at a time, so an unconfigured WhatsApp would otherwise swallow
+  // the one line telling the operator the app messages customers by itself.
+  if (cf.auto) {
+    bits.push('<b>Automatic sending is on</b> — from ' + (cf.hour || 0) + ':00, up to ' + cf.maxPerDay + ' a day '
+      + '(<a href="#" onclick="bdRunSweep();return false">run it now</a>)');
+  }
+  // Both settings off is a real state (and a confusing one — the screen goes
+  // empty with no explanation), so name it rather than printing "Greeting".
+  bits.push(who ? ('Greeting <b>' + who + '</b>') : '<b>Greeting nobody</b> — turn sellers or buyers back on in Settings → Birthday Greetings');
+  if (c.no_dob)   bits.push('<b>' + c.no_dob + '</b> with no date of birth');
+  if (c.bad_dob)  bits.push('<b>' + c.bad_dob + '</b> whose date could not be read');
+  if (c.no_phone) bits.push('<b>' + c.no_phone + '</b> with no phone number');
+  el.innerHTML = bits.join('<span style="opacity:.4">·</span> ');
+}
+
+function bdRenderToday(){
+  var body = document.getElementById('bd-today-list'); if (!body) return;
+  var head = document.getElementById('bd-today-head');
+  var rows = _bd.today;
+  var nSel = Object.keys(_bd.sel).length;
+  if (head) {
+    var isToday = _bd.date === bdLocalToday();
+    head.innerHTML = (isToday ? 'Today' : esc(fmtD ? fmtD(_bd.date) : _bd.date))
+      + ' <span style="color:var(--text3);font-weight:400">· ' + rows.length + (rows.length === 1 ? ' birthday' : ' birthdays') + '</span>';
+  }
+  var btn = document.getElementById('bd-send-sel');
+  if (btn) {
+    // Sending for a date OTHER than today is deliberate and supported (it
+    // is how a missed day is caught up, and how the feature is tested),
+    // but it must never look like an ordinary send: browsing to tomorrow
+    // and hitting select-all would otherwise greet everybody a day early
+    // with no hint that anything unusual happened.
+    var otherDay = _bd.date !== bdLocalToday();
+    btn.disabled = nSel === 0;
+    btn.style.opacity = nSel ? '1' : '.5';
+    btn.textContent = nSel
+      ? ('💬 Send ' + nSel + ' greeting' + (nSel === 1 ? '' : 's') + (otherDay ? ' for ' + _bd.date : ''))
+      : '💬 Send selected';
+    btn.style.background = (nSel && otherDay) ? 'var(--spice-saffron)' : '#25D366';
+    btn.title = otherDay
+      ? 'This is NOT today — these greetings would go out dated ' + _bd.date
+      : '';
+  }
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:16px">No birthdays on this date.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(function(r){
+    var k = bdKey(r), can = bdSendable(r);
+    var status = r.greeted
+      ? '<span class="out-chip ok">Greeted' + (r.greeted_on ? ' ' + esc(r.greeted_on.slice(0, 4)) : '') + '</span>'
+      : (!r.phone ? '<span class="out-chip bad">No phone</span>' : '<span class="out-chip warn">Not sent</span>');
+    return '<tr>'
+      + '<td><input type="checkbox" ' + (can ? '' : 'disabled ') + (_bd.sel[k] ? 'checked ' : '')
+        + 'onchange="bdPick(\'' + k + '\',this.checked)"></td>'
+      + '<td><strong>' + esc(r.label || r.name) + '</strong></td>'
+      + '<td>' + bdTypeChip(r.party_type) + '</td>'
+      + '<td style="font-family:monospace;font-size:12px">' + esc(r.phone || '—') + '</td>'
+      + '<td>' + (r.age == null ? '<span style="color:var(--text3)">—</span>' : r.age) + '</td>'
+      + '<td><span class="out-msg">' + esc(r.message || '') + '</span></td>'
+      + '<td>' + status + '</td>'
+      + '<td>' + (can
+          ? '<button class="btn btn-g" style="padding:4px 10px;font-size:12px;background:#25D366;color:#fff" onclick="bdSendOne(\'' + r.party_type + '\',' + r.party_id + ')">Send</button>'
+          : '<span style="color:var(--text3);font-size:12px">—</span>') + '</td>'
+      + '</tr>';
+  }).join('');
+  var all = document.getElementById('bd-all');
+  if (all) {
+    var sendable = rows.filter(bdSendable).length;
+    all.checked = sendable > 0 && nSel === sendable;
+    all.disabled = sendable === 0;
+  }
+}
+function bdPick(key, on){
+  if (on) _bd.sel[key] = true; else delete _bd.sel[key];
+  bdRenderToday();
+}
+// Local yyyy-mm-dd. Never toISOString — east of UTC that returns yesterday
+// for most of the morning, and the header would read the wrong date.
+function bdLocalToday(){
+  var d = new Date(), p = function(n){ return String(n).padStart(2, '0'); };
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+
+function bdRenderUpcoming(rows){
+  var body = document.getElementById('bd-upcoming-list'); if (!body) return;
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:16px">Nothing in this window.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(function(r){
+    return '<tr>'
+      + '<td>' + esc(typeof fmtD === 'function' ? fmtD(r.greet_date) : r.greet_date) + '</td>'
+      + '<td>' + (r.days_away === 1 ? 'tomorrow' : r.days_away + ' days') + '</td>'
+      + '<td><strong>' + esc(r.label || r.name) + '</strong></td>'
+      + '<td>' + bdTypeChip(r.party_type) + '</td>'
+      + '<td style="font-family:monospace;font-size:12px">' + esc(r.phone || '—') + '</td>'
+      + '<td>' + (r.age == null ? '<span style="color:var(--text3)">—</span>' : r.age) + '</td>'
+      + '</tr>';
+  }).join('');
+}
+
+function bdRenderLog(rows){
+  var body = document.getElementById('bd-log-list'); if (!body) return;
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:16px">Nothing sent yet.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(function(r){
+    var chip = r.status === 'sent'
+      ? '<span class="out-chip ok">Sent</span>'
+      : '<span class="out-chip bad">Failed</span>';
+    // Meta's own refusal text is the only useful thing on a failed row —
+    // print it rather than a generic "failed".
+    var why = (r.status !== 'sent' && r.error) ? '<div style="font-size:11px;color:#c0392b;margin-top:2px">' + esc(r.error) + '</div>' : '';
+    return '<tr>'
+      + '<td>' + esc(String(r.created_at || '').replace('T', ' ').slice(0, 16)) + '</td>'
+      + '<td>' + esc(r.name || '—') + '</td>'
+      + '<td>' + bdTypeChip(r.party_type) + '</td>'
+      + '<td style="font-family:monospace;font-size:12px">' + esc(r.phone || '—') + '</td>'
+      + '<td>' + (r.mode === 'auto' ? 'Automatic' : 'By hand') + '</td>'
+      + '<td>' + esc(r.sent_by || '—') + '</td>'
+      + '<td>' + chip + why + '</td>'
+      + '</tr>';
+  }).join('');
+}
+
+// Fire the automatic sweep by hand. Same code path the timer takes, gates
+// and all — so an admin can prove the morning run works instead of finding
+// out tomorrow that the hour was wrong or the template was never approved.
+async function bdRunSweep(){
+  try {
+    var d = await j('/api/birthdays/run-sweep', { method: 'POST', body: JSON.stringify({}) });
+    if (!d.ran) { toast('The automatic run would do nothing right now — ' + (d.reason || 'no reason given')); return; }
+    toast('Automatic run: ' + (d.sent || 0) + ' sent · ' + (d.failed || 0) + ' failed · ' + (d.skipped || 0) + ' skipped');
+  } catch (e) { toast(e.message || 'Could not run the sweep'); }
+  finally { loadBirthdays(); }
+}
+function bdSendOne(type, id){ if (!bdConfirmDate(1)) return; bdSend([{ party_type: type, party_id: id }]); }
+// Guard for the not-today case only. An ordinary same-day send stays a
+// single click — a confirm on every send would just be trained away.
+function bdConfirmDate(n){
+  if (_bd.date === bdLocalToday()) return true;
+  return confirm('The date shown is ' + _bd.date + ', which is not today.\n\n'
+    + 'Send ' + n + ' birthday greeting' + (n === 1 ? '' : 's') + ' for that date now?');
+}
+function bdSendSelected(){
+  var items = Object.keys(_bd.sel).map(function(k){
+    var p = k.split(':'); return { party_type: p[0], party_id: parseInt(p[1], 10) };
+  });
+  if (!items.length) { toast('Tick at least one birthday first'); return; }
+  if (!bdConfirmDate(items.length)) return;
+  bdSend(items);
+}
+async function bdSend(items){
+  var btn = document.getElementById('bd-send-sel');
+  if (btn) btn.disabled = true;
+  try {
+    var d = await j('/api/birthdays/send', { method: 'POST', body: JSON.stringify({ items: items, date: _bd.date }) });
+    // Report the whole verdict, not just the happy count — a run of 8 that
+    // sent 6 and failed 2 must not read as a success.
+    var bits = [];
+    if (d.sent)    bits.push(d.sent + ' sent');
+    if (d.failed)  bits.push(d.failed + ' failed');
+    if (d.skipped) bits.push(d.skipped + ' skipped');
+    toast(bits.length ? bits.join(' · ') : 'Nothing to send');
+    var firstBad = (d.results || []).find(function(r){ return r.status === 'failed'; });
+    if (firstBad && firstBad.error) toast(firstBad.error);
+  } catch (e) {
+    toast(e.message || 'Send failed');
+  } finally {
+    if (btn) btn.disabled = false;
+    loadBirthdays();
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// SELLER REMINDERS
+//
+// Worklist for flag_seller_reminders. Sibling of the Birthdays screen and
+// deliberately the same shape, so an operator who has used one can use the
+// other: one fetch fills due / held / ledger, the client posts only ids,
+// and the server re-derives who is actually due before sending.
+//
+// The one thing this screen does that Birthdays does not is EXPLAIN ITSELF.
+// On a real master, "sellers who haven't booked in 60 days" is 834 people
+// of whom 631 came exactly once — so the funnel below (in window → minus
+// one-time sellers → minus cooling off → due) is not decoration. It is
+// what stops a ₹650 campaign going out to reach 22 people.
+// ══════════════════════════════════════════════════════════════
+var _rm = { due: [], sel: {}, cfg: {} };
+
+function rmSendable(r){ return !!r.phone; }
+function rmToggleAll(on){
+  _rm.sel = {};
+  if (on) _rm.due.forEach(function(r){ if (rmSendable(r)) _rm.sel[r.trader_id] = true; });
+  rmRenderDue();
+}
+function rmPick(id, on){
+  if (on) _rm.sel[id] = true; else delete _rm.sel[id];
+  rmRenderDue();
+}
+function rmDays(n){
+  if (n == null) return '<span class="out-chip idle">never booked</span>';
+  return n + ' days';
+}
+
+async function loadReminders(){
+  var body = document.getElementById('rm-due-list');
+  if (body) body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:16px">Loading…</td></tr>';
+  try {
+    var d = await j('/api/seller-reminders');
+    _rm.due = d.due || []; _rm.sel = {}; _rm.cfg = d.config || {}; _rm.data = d;
+    rmRenderBanner(d);
+    outPreviewNote('rm-preview-note', d.config, 'Seller Reminders');
+    rmRenderCoverage(d);
+    rmRenderFunnel(d);
+    rmRenderDue();
+    rmRenderHeld(d);
+    rmRenderLog(d.log || []);
+  } catch (e) {
+    if (body) body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#c0392b;padding:16px">' + esc(e.message || 'Failed to load') + '</td></tr>';
+  }
+}
+
+// Blocking problems only, worst first — same rule as the Birthdays banner.
+function rmRenderBanner(d){
+  var el = document.getElementById('rm-banner'); if (!el) return;
+  var c = d.config || {}, wa = d.whatsapp || {};
+  var box = function(tone, html){
+    var bg = tone === 'bad' ? 'rgba(192,57,43,.08)' : 'var(--spice-saffron-lt)';
+    var bc = tone === 'bad' ? '#c0392b' : 'var(--spice-saffron)';
+    return '<div style="margin:10px 0 0;padding:9px 12px;border-left:3px solid ' + bc + ';background:' + bg + ';border-radius:0 6px 6px 0;font-size:12.5px">' + html + '</div>';
+  };
+  if (!wa.configured) {
+    el.innerHTML = box('bad', '<b>WhatsApp is not connected</b> — nothing can be sent yet. Set it up in <a href="#" onclick="go(\'settings\');return false">Settings → Integrations</a>.');
+    return;
+  }
+  if (!c.freeText && !c.template) {
+    el.innerHTML = box('bad', '<b>No WhatsApp template configured.</b> A reminder is unsolicited, so WhatsApp will only deliver an approved template — name it in Settings → Seller Reminders.');
+    return;
+  }
+  if (c.freeText) {
+    el.innerHTML = box('warn', '<b>Sending as plain text.</b> That only reaches sellers who messaged this business in the last 24 hours; everyone else will fail. Switch to an approved template in Settings → Seller Reminders.');
+    return;
+  }
+  el.innerHTML = '';
+}
+
+function rmRenderCoverage(d){
+  var el = document.getElementById('rm-coverage'); if (!el) return;
+  var c = d.counts || {}, cf = d.config || {};
+  var bits = [];
+  // Outside the banner for the same reason as Birthdays: the banner shows
+  // one blocking problem at a time and would swallow this exactly when
+  // WhatsApp is unconfigured.
+  if (cf.auto) {
+    bits.push('<b>Automatic sending is on</b> — from ' + (cf.hour || 0) + ':00, up to ' + cf.maxPerDay + ' a day '
+      + '(<a href="#" onclick="rmRunSweep();return false">run it now</a>)');
+  }
+  bits.push('Away <b>' + cf.afterDays + '–' + cf.untilDays + ' days</b>');
+  bits.push('booked <b>' + cf.minAuctions + '+</b> auction' + (cf.minAuctions === 1 ? '' : 's'));
+  bits.push('cooling off <b>' + cf.cooldownDays + ' days</b>');
+  if (cf.includeNever) bits.push('<b>including</b> never-booked sellers');
+  if (d.nextAuction && d.nextAuction.date) {
+    bits.push('next auction <b>' + esc(typeof fmtD === 'function' ? fmtD(d.nextAuction.date) : d.nextAuction.date) + '</b>');
+  } else {
+    bits.push('<b>no auction scheduled</b> — the message will say "our next auction"');
+  }
+  el.innerHTML = bits.join('<span style="opacity:.4">·</span> ');
+}
+
+// The funnel. Every step is a number the operator can act on, and the last
+// line turns the total into days-of-sending, because the 24h WhatsApp
+// ceiling — not the list length — is what actually limits a campaign.
+function rmRenderFunnel(d){
+  var el = document.getElementById('rm-funnel'); if (!el) return;
+  var c = d.counts || {}, cf = d.config || {};
+  var row = function(label, n, note){
+    return '<tr><td style="padding:3px 10px 3px 0;color:var(--text2)">' + label + '</td>'
+      + '<td style="padding:3px 10px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums">' + n.toLocaleString('en-IN') + '</td>'
+      + '<td style="padding:3px 0;color:var(--text3);font-size:11.5px">' + (note || '') + '</td></tr>';
+  };
+  var html = '<table style="font-size:12px;margin-top:4px">';
+  html += row('Sellers on file', c.sellers_total || 0, '');
+  html += row('…have booked at least once', c.ever_booked || 0,
+    (c.never_booked ? ((c.never_booked).toLocaleString('en-IN') + ' never have'
+      + (cf.includeNever ? ' — <b>included</b>' : ' — excluded')) : ''));
+  html += row('…away ' + cf.afterDays + '–' + cf.untilDays + ' days', c.in_window || 0,
+    (c.too_recent ? (c.too_recent.toLocaleString('en-IN') + ' booked more recently') : '')
+    + (c.too_long_ago ? (' · ' + c.too_long_ago.toLocaleString('en-IN') + ' gone longer') : ''));
+  if (c.below_min_auctions) {
+    html += row('…minus one-time sellers', (c.in_window || 0) - c.below_min_auctions,
+      c.below_min_auctions.toLocaleString('en-IN') + ' booked fewer than ' + cf.minAuctions + ' auctions');
+  }
+  if (c.in_cooldown) html += row('…minus still cooling off', (c.due || 0) + (c.no_phone || 0), c.in_cooldown.toLocaleString('en-IN') + ' reminded recently');
+  if (c.no_phone) html += row('…minus no phone number', c.due || 0, c.no_phone.toLocaleString('en-IN') + ' have no number on file');
+  var due = c.due || 0;
+  var perDay = cf.maxPerDay || 50;
+  var days = due > perDay ? Math.ceil(due / perDay) : 0;
+  html += '<tr><td style="padding:6px 10px 0 0;font-weight:700">Due a reminder now</td>'
+    + '<td style="padding:6px 10px 0;text-align:right;font-weight:800;font-variant-numeric:tabular-nums;color:var(--green)">' + due.toLocaleString('en-IN') + '</td>'
+    + '<td style="padding:6px 0 0;color:var(--text3);font-size:11.5px">'
+    + (days ? ('automatic sending would take ~' + days + ' days at ' + perDay + '/day') : '')
+    + '</td></tr>';
+  html += '</table>';
+  el.innerHTML = html;
+}
+
+function rmRenderDue(){
+  var body = document.getElementById('rm-due-list'); if (!body) return;
+  var rows = _rm.due, nSel = Object.keys(_rm.sel).length;
+  var head = document.getElementById('rm-due-head');
+  var total = (_rm.data && _rm.data.due_total) || rows.length;
+  if (head) head.innerHTML = 'Due a reminder <span style="color:var(--text3);font-weight:400">· ' + total.toLocaleString('en-IN') + '</span>';
+  var more = document.getElementById('rm-due-more');
+  if (more) more.innerHTML = total > rows.length
+    ? ('Showing the ' + rows.length + ' longest-away of ' + total.toLocaleString('en-IN') + '. Send these, then refresh for the next batch.')
+    : '';
+  var btn = document.getElementById('rm-send-sel');
+  if (btn) {
+    btn.disabled = nSel === 0;
+    btn.style.opacity = nSel ? '1' : '.5';
+    btn.textContent = nSel ? ('💬 Send ' + nSel + ' reminder' + (nSel === 1 ? '' : 's')) : '💬 Send selected';
+  }
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:16px">Nobody is due a reminder.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(function(r){
+    var can = rmSendable(r);
+    var hist = r.never_booked ? '—'
+      : (r.auctions_booked + ' auction' + (r.auctions_booked === 1 ? '' : 's') + ' · ' + r.lots_booked + ' lot' + (r.lots_booked === 1 ? '' : 's'));
+    return '<tr>'
+      + '<td><input type="checkbox" ' + (can ? '' : 'disabled ') + (_rm.sel[r.trader_id] ? 'checked ' : '')
+        + 'onchange="rmPick(' + r.trader_id + ',this.checked)"></td>'
+      + '<td><strong>' + esc(r.label || r.name) + '</strong></td>'
+      + '<td>' + (r.last_booked ? esc(typeof fmtD === 'function' ? fmtD(r.last_booked) : r.last_booked) : '<span style="color:var(--text3)">never</span>') + '</td>'
+      + '<td>' + rmDays(r.days_since) + '</td>'
+      + '<td style="font-size:12px;color:var(--text2)">' + hist + '</td>'
+      + '<td style="font-family:monospace;font-size:12px">' + esc(r.phone || '—') + '</td>'
+      + '<td>' + (r.last_reminded ? esc(r.last_reminded) + ' <span style="color:var(--text3);font-size:11px">(' + r.reminded_days_ago + 'd)</span>' : '<span style="color:var(--text3)">never</span>') + '</td>'
+      + '<td><span class="out-msg">' + esc(r.message || '') + '</span></td>'
+      + '<td>' + (can
+          ? '<button class="btn btn-g" style="padding:4px 10px;font-size:12px;background:#25D366;color:#fff" onclick="rmSendOne(' + r.trader_id + ')">Send</button>'
+          : '<span style="color:var(--text3);font-size:12px">—</span>') + '</td>'
+      + '</tr>';
+  }).join('');
+  var all = document.getElementById('rm-all');
+  if (all) {
+    var sendable = rows.filter(rmSendable).length;
+    all.checked = sendable > 0 && nSel === sendable;
+    all.disabled = sendable === 0;
+  }
+}
+
+function rmRenderHeld(d){
+  var body = document.getElementById('rm-held-list'); if (!body) return;
+  var rows = d.held || [], total = d.held_total || rows.length;
+  var n = document.getElementById('rm-held-n');
+  if (n) n.textContent = total ? ('· ' + total.toLocaleString('en-IN')) : '';
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:16px">Nobody is being held back.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(function(r){
+    var hist = r.never_booked ? '—'
+      : (r.auctions_booked + ' auction' + (r.auctions_booked === 1 ? '' : 's') + ' · ' + r.lots_booked + ' lot' + (r.lots_booked === 1 ? '' : 's'));
+    return '<tr>'
+      + '<td><strong>' + esc(r.label || r.name) + '</strong></td>'
+      + '<td>' + (r.last_booked ? esc(typeof fmtD === 'function' ? fmtD(r.last_booked) : r.last_booked) : '<span style="color:var(--text3)">never</span>') + '</td>'
+      + '<td>' + rmDays(r.days_since) + '</td>'
+      + '<td style="font-size:12px;color:var(--text2)">' + hist + '</td>'
+      + '<td><span class="out-chip warn">' + esc(r.hold || '') + '</span></td>'
+      + '</tr>';
+  }).join('');
+}
+
+function rmRenderLog(rows){
+  var body = document.getElementById('rm-log-list'); if (!body) return;
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:16px">Nothing sent yet.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(function(r){
+    var chip = r.status === 'sent' ? '<span class="out-chip ok">Sent</span>' : '<span class="out-chip bad">Failed</span>';
+    var why = (r.status !== 'sent' && r.error) ? '<div style="font-size:11px;color:#c0392b;margin-top:2px">' + esc(r.error) + '</div>' : '';
+    return '<tr>'
+      + '<td>' + esc(String(r.created_at || '').replace('T', ' ').slice(0, 16)) + '</td>'
+      + '<td>' + esc(r.name || '—') + '</td>'
+      + '<td style="font-family:monospace;font-size:12px">' + esc(r.phone || '—') + '</td>'
+      + '<td>' + (r.days_since == null ? '—' : r.days_since + ' days') + '</td>'
+      + '<td>' + (r.mode === 'auto' ? 'Automatic' : 'By hand') + '</td>'
+      + '<td>' + esc(r.sent_by || '—') + '</td>'
+      + '<td>' + chip + why + '</td>'
+      + '</tr>';
+  }).join('');
+}
+
+function rmSendOne(id){ rmSend([id]); }
+function rmSendSelected(){
+  var ids = Object.keys(_rm.sel).map(function(k){ return parseInt(k, 10); });
+  if (!ids.length) { toast('Tick at least one seller first'); return; }
+  // A reminder run is bigger and costlier than a birthday one, and it goes
+  // to people who did not ask to hear from us — so the count is confirmed
+  // out loud rather than sent on a single click.
+  if (ids.length >= 10 && !confirm('Send ' + ids.length + ' WhatsApp reminders?\n\nThese are charged at the marketing rate and count against your 24-hour recipient limit.')) return;
+  rmSend(ids);
+}
+async function rmSend(ids){
+  var btn = document.getElementById('rm-send-sel');
+  if (btn) btn.disabled = true;
+  try {
+    var d = await j('/api/seller-reminders/send', { method: 'POST', body: JSON.stringify({ trader_ids: ids, date: (_rm.data || {}).date }) });
+    var bits = [];
+    if (d.sent)    bits.push(d.sent + ' sent');
+    if (d.failed)  bits.push(d.failed + ' failed');
+    if (d.skipped) bits.push(d.skipped + ' skipped');
+    toast(bits.length ? bits.join(' · ') : 'Nothing to send');
+    var firstBad = (d.results || []).find(function(r){ return r.status === 'failed'; });
+    if (firstBad && firstBad.error) toast(firstBad.error);
+  } catch (e) {
+    toast(e.message || 'Send failed');
+  } finally {
+    if (btn) btn.disabled = false;
+    loadReminders();
+  }
+}
+// Same "prove it before tomorrow morning" button as the birthday sweep.
+async function rmRunSweep(){
+  try {
+    var d = await j('/api/seller-reminders/run-sweep', { method: 'POST', body: JSON.stringify({}) });
+    if (!d.ran) { toast('The automatic run would do nothing right now — ' + (d.reason || 'no reason given')); return; }
+    toast('Automatic run: ' + (d.sent || 0) + ' sent · ' + (d.failed || 0) + ' failed · ' + (d.remaining || 0) + ' still due');
+  } catch (e) { toast(e.message || 'Could not run the sweep'); }
+  finally { loadReminders(); }
+}
+
 async function approveReassign(id){
   const note=prompt('Approve this reassignment? Optional note for the operator:','');
   if(note===null)return;
@@ -25579,7 +26301,7 @@ const SET_FIELD_GROUPS = {
   ],
   flags: [
     { title:'Invoice Content & Layout', icon:'📄', hint:'What prints on the invoice itself — address blocks, HSN, bank line, row striping, rounding.',
-      keys:['flag_dispatch','flag_ship','flag_hsn','flag_bank','flag_commission_bank','flag_invoice_stripe','flag_round','flag_dummy'] },
+      keys:['flag_dispatch','flag_ship','flag_hsn','flag_bank','flag_commission_bank','flag_invoice_stripe','flag_pdf_watermark','flag_round','flag_dummy'] },
     { title:'Tax, TDS & Export', icon:'🧾', hint:'TDS deduction on purchase/sales and the export-invoice flow.',
       keys:['flag_tds_purchase','flag_tds_sales','flag_wgst','flag_export'] },
     { title:'Discounts & Debit Notes', icon:'📝', hint:'Whether the discount appears inside the invoice or as a separate debit note, per seller type.',
@@ -25596,8 +26318,8 @@ const SET_FIELD_GROUPS = {
       keys:['checklist_show_dummy','checklist_show_buyer','tharai_dummy_code'] },
     { title:'Tally & Accounts Export', icon:'📤', hint:'How purchase vouchers and journals are written into the Tally XML.',
       keys:['flag_merchants'], match:/^tally_purchase_/ },
-    { title:'Masters & Sharing', icon:'👥', hint:'Extra master fields and the WhatsApp share buttons.',
-      keys:['flag_tan','flag_whatsapp'] },
+    { title:'Masters & Sharing', icon:'👥', hint:'Extra master fields, the WhatsApp share buttons, and the two WhatsApp outreach screens driven off the seller/buyer masters.',
+      keys:['flag_tan','flag_whatsapp','flag_birthday_greetings','flag_seller_reminders'] },
   ],
   lot_entry: [
     { title:'Default Weights & Crop', icon:'⚖', hint:'Values pre-filled on a new lot — sample, gunny and litre weights, crop type.',
@@ -28921,10 +29643,10 @@ async function gstLookup(prefix){
 }
 
 // ── Buyers ────────────────────────────────────────────────
-const B_FIELDS=['buyer','buyer1','code','sbl','add1','add2','pla','pin','state','st_code','gstin','pan','tan','tel','ti','sale','email',
+const B_FIELDS=['buyer','buyer1','code','sbl','add1','add2','pla','pin','state','st_code','gstin','pan','tan','tel','ti','sale','email','dob',
   'cbuyer1','cadd1','cadd2','cpla','cpin','cstate','cst_code','cgstin','csbl','cpan'];
 const B_IDS={buyer:'b-buyer',buyer1:'b-buyer1',code:'b-code',sbl:'b-sbl',add1:'b-add1',add2:'b-add2',pla:'b-pla',pin:'b-pin',
-  state:'b-state',st_code:'b-stcode',gstin:'b-gstin',pan:'b-pan',tan:'b-tan',tel:'b-tel',ti:'b-ti',sale:'b-sale',email:'b-email',
+  state:'b-state',st_code:'b-stcode',gstin:'b-gstin',pan:'b-pan',tan:'b-tan',tel:'b-tel',ti:'b-ti',sale:'b-sale',email:'b-email',dob:'b-dob',
   cbuyer1:'b-cbuyer1',cadd1:'b-cadd1',cadd2:'b-cadd2',cpla:'b-cpla',cpin:'b-cpin',cstate:'b-cstate',cst_code:'b-cstcode',cgstin:'b-cgstin',
   csbl:'b-csbl',cpan:'b-cpan'};
 
@@ -28983,6 +29705,10 @@ async function searchBuyers(q, opts){
       // (data-feat-tan is set by applyFeatureFlags). Sits right after PAN.
       ...(document.body.getAttribute('data-feat-tan')==='1' ? [{ key:'tan', label:'TAN', sort:'text' }] : []),
       { key:'tel', label:'Phone', sort:'text' },
+      // DOB column only while Birthday Greetings is on — it is dead weight
+      // on an install that never greets anybody. Same shape as the TAN gate.
+      ...(document.body.getAttribute('data-feat-birthdays')==='1' ? [{ key:'dob', label:'DOB', sort:'text',
+        render:(b)=> b.dob ? esc(b.dob) : '<span style="color:var(--text3)">—</span>' }] : []),
       { key:'ti', label:'TI', sort:'text' },
       { key:'_place', label:'Place · State', sort:'text',
         value:(b)=>[b.pla,b.state].filter(Boolean).join(' · ') },
@@ -29030,7 +29756,7 @@ function viewBuyerDetails(b){
   let html='';
   html+=section('Identity',[kv('Buyer Code',b.buyer),kv('Code (short alias)',b.code),kv('Trade Name',b.buyer1),kv('PAN',b.pan)]);
   html+=section('Registration',[kv('GSTIN',b.gstin),kv('TI',b.ti),kv('Sale Type',saleMap[b.sale]||b.sale)]);
-  html+=section('Contact',[kv('Phone',b.tel)]);
+  html+=section('Contact',[kv('Phone',b.tel),kv('Email',b.email),kv('Date of Birth',b.dob)]);
   html+=section('Billing Address',[kv('Address',fullAddress),kv('Place',b.pla),kv('PIN',b.pin),kv('State',b.state),kv('State Code',b.st_code)]);
   html+=section('Consignee (Ship-to)',[kv('Name',b.cbuyer1),kv('GSTIN',b.cgstin),kv('PAN',b.cpan),kv('SBL',b.csbl),kv('Address',consigneeAddress),kv('Place',b.cpla),kv('PIN',b.cpin),kv('State',b.cstate),kv('State Code',b.cst_code)]);
   document.getElementById('buyer-view-body').innerHTML=html||'<p style="color:var(--text3);text-align:center;padding:20px">No details available</p>';

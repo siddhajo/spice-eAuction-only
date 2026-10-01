@@ -16,6 +16,7 @@
 
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
+const { attachPdfkitWatermark } = require('./pdf/watermark');
 const {
   fmtMoney, fmtQty, fmtPrice,
   getCompanyHeader, drawCompanyHeader,
@@ -206,6 +207,7 @@ async function lotSlipCodePdf(db, auctionId) {
   const rows    = getLotSlipRows(db, auctionId);
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 18 });
+  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
   const buffers = [];
   doc.on('data', b => buffers.push(b));
 
@@ -437,6 +439,7 @@ async function truckListPdf(db, auctionId) {
   const rows = getTruckListRows(db, auctionId);
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 36 });
+  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
   const buffers = [];
   doc.on('data', b => buffers.push(b));
 
@@ -778,6 +781,7 @@ async function buyerLotLorryPdf(db, auctionId) {
   const { auction, interState, intraState } = getBuyerLotLorryData(db, auctionId);
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 30 });
+  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
   const buffers = [];
   doc.on('data', b => buffers.push(b));
 

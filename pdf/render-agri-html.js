@@ -8,6 +8,7 @@ const { amountToWords } = require('../amount-words');
 const getCompanyIdentity = require('../_company-identity-fallback').resolve();
 const { getInvoiceTemplate } = require('./invoice-templates');
 const { htmlToPdf } = require('./htmlToPdf');
+const { withWatermark } = require('./watermark');
 // Shared NAME / ADDRESS / PLACE / STATE+CODE / details-two-per-row party box.
 const { partyBlock } = require('../party-block');
 
@@ -114,7 +115,7 @@ function buildAgriBillView(billData, cfg, billNo) {
 async function generateAgriBillHtmlPDF(billData, cfg, billNo) {
   const view = buildAgriBillView(billData, cfg, billNo);
   const tpl = getInvoiceTemplate('agri-bill', cfg);
-  return htmlToPdf(tpl.render(view));
+  return htmlToPdf(withWatermark(tpl.render(view), cfg));
 }
 
 // Bulk: bills = [{ billData, billNo }]. Renders each, merges to one PDF.

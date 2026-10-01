@@ -1,2 +1,7 @@
 node_modules/
 data/
+# Company logos are per-deployment and live in the persistent data/ volume
+# (rehydrated into public/ on boot). Keeping them out of the repo/image stops
+# one company's logo leaking into a new service created from the same repo.
+public/logo-ispl.png
+public/logo-asp.png

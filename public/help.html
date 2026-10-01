@@ -533,6 +533,8 @@ const S = [
       ['Bills of Supply','the Bills tab'],
       ['Debit Notes','the Debit Notes tab'],
       ['WhatsApp Share Buttons','the 📱 WhatsApp buttons'],
+      ['Birthday Greetings (WhatsApp)','the Birthdays screen'],
+      ['Seller Booking Reminders (WhatsApp)','the Seller Reminders screen'],
       ['Lots → Set Buyer','the 👤 Set Buyer button on Lots'],
       ['Discount In Payments','the discount column in Payments'],
     ]}} },
@@ -565,7 +567,79 @@ const S = [
     '**WhatsApp** — enter the Meta token and Phone number ID to send bills on WhatsApp.',
     'Click **Save Changes** (each card also has its own Save / Connect).',
   ],
-  warn:'Both are **optional** — leave them blank and the app still works. If WhatsApp stops, its login expired — connect again. GST lookup needs **credits** — use the Recharge link when low.' },
+  warn:'Both are **optional** — leave them blank and the app still works. When either one stops working it is almost always money or a login: see **Recharge GST lookup credits** and **Recharge WhatsApp** below.' },
+
+// The two "it stopped working" posters. Both services are paid for OUTSIDE
+// this app — credits at the GST provider, a card at Meta — so these walk the
+// operator from the card that raised the question to the page that fixes it.
+// Long-form version of the same material: RECHARGE-GSTIN-WHATSAPP.md.
+{ id:'gstrecharge', g:'admin', ic:'🔎', name:'Recharge GST lookup credits', hot:true,
+  purpose:'Credits ran out. Buy more at the provider, then paste the key back here.',
+  mock:{ title:'Settings → Integrations → GST Lookup',
+    toolbar:[chip('↻ Check balance now',{pin:4}),chip('↗ Recharge at gstincheck.co.in',{green:1,pin:2})],
+    body:{form:[
+      ['Provider','gstincheck.co.in',1],
+      ['Credits remaining','0 of 1,000'],
+      ['Plan expires','2026-08-20'],
+      ['GST Lookup API Key (gstincheck.co.in)','••••••••',3],
+    ],note:'Red card = exhausted. Amber = running low. Green = healthy.'} },
+  steps:[
+    'Open **Settings → Integrations**. The **Provider** row names whose credits these are — **gstincheck.co.in** or **gstinapi.in**. That is the only site worth recharging.',
+    'Click **↗ Recharge at …** for the price list, or the **dashboard ↗** link to log in. Buy a pack and pay. gstincheck: min 1,000 @ ₹0.80, credits **expire after 1 year**. gstinapi: ₹199/250 · ₹599/1,200 · ₹2,499/6,250, and they **never expire**.',
+    'Copy the API key from that dashboard and paste it into **that provider\'s own field** — each one has its own box, and a key in the wrong box is ignored. Then **Save Changes**.',
+    'Press **↻ Check balance now**. It spends **one credit** on purpose: neither provider will report a balance without a real lookup. The card turns green with the new count.',
+  ],
+  warn:'**A lookup that "works" but fills nothing in usually means no credits.** gstincheck answers HTTP 200 even when the account is empty — open **Show raw response** on the card to see the real reason. And watch **Plan expires**: gstincheck credits die one year after purchase however many are left.' },
+
+{ id:'warecharge', g:'admin', ic:'💳', name:'Recharge WhatsApp', hot:true,
+  purpose:'Sends blocked or stopping partway? Find which ceiling you hit first.',
+  mock:{ title:'Settings → Integrations → WhatsApp → Usage',
+    toolbar:[chip('Refresh',{pin:1}),chip('Add funds ↗',{green:1,pin:3}),chip('Meta insights ↗')],
+    body:{cards:[['—','Free messages left'],['612','Billable this month'],['0','Recipients left (24h)'],['212','Sent today']],
+      note:'A red banner quotes Meta\'s own refusal text — that one is money. "Recipients left (24h)" is the TIER_250 cap: 250 unique recipients per rolling 24 hours.'} },
+  steps:[
+    'Open **Settings → Integrations → WhatsApp** and pick the **Usage** tab. Press **Refresh** for live figures from Meta.',
+    'Work out which ceiling stopped you. A red **"Sends are blocked"** banner is money. **Recipients left (24h) = 0** is the 24-hour cap — no payment clears that; wait for the window or split the run across days.',
+    'For the money one, press **Add funds ↗**, sign in to the Meta account that owns the WhatsApp Business Account, then in **Payment settings** add or re-verify the card and clear anything overdue. WhatsApp is **post-paid** — there is no wallet to fill up.',
+    'Come back, press **Refresh**, then send **one** real document and watch the **Send log** tab before you start a bulk run.',
+  ],
+  warn:'**"Free messages left" is not "invoices left".** Invoice and payment templates are billable (about ₹0.115 each) unless that contact messaged you within the last 24 hours — a normal month is ~600 billable against 1 free. Separately: a send log where every row says **Sent** and none ever says **Delivered** is a webhook problem, not a billing one.' },
+
+{ id:'birthdays', g:'admin', ic:'🎂', name:'Birthday greetings', purpose:'Wish sellers and buyers on their birthday over WhatsApp.',
+  mock:{ title:'Birthdays',
+    toolbar:[chip('29/09/2026'),chip('Today'),chip('🔄 Refresh'),chip('💬 Send selected',{green:1,pin:3})],
+    body:{table:{head:['Name','Type','Phone','Status',''],rows:[
+      ['CR.1 MURUGAN','Seller','98765 43210','Not sent','Send'],
+      ['AK TRADERS','Buyer','98000 00001','Greeted 2026','—'],
+      ['CR.2 SELVAM','Seller','—','No phone','—'],
+    ]}} },
+  steps:[
+    'Fill in **Date of Birth** on the seller or buyer — **Sellers** / **Buyers**, or the DOB column in the import sheet. No date, no greeting.',
+    'Open **Birthdays** (under Master Data). Today\'s birthdays are listed; nothing is sent until you send it.',
+    'Tick the ones to greet and press **💬 Send selected**, or use **Send** on a single row.',
+    'Anyone already greeted this year, or with no phone number, is shown but can\'t be ticked — you cannot greet the same person twice in a year.',
+    'To have it happen by itself every morning, turn on **Send automatically** in **Settings → Birthday Greetings**.',
+  ],
+  warn:'**This costs more than an invoice send.** WhatsApp treats a greeting as a *marketing* message — several times the price of an invoice — and it needs its own approved template in your Meta account (name it in **Settings → Birthday Greetings**). A customer who reports one of these hurts the same number your invoices go out on, so keep it to parties who expect to hear from you.' },
+
+{ id:'reminders', g:'admin', ic:'🔔', name:'Seller booking reminders', purpose:'Nudge sellers who have stopped bringing lots.',
+  mock:{ title:'Seller Reminders',
+    toolbar:[chip('🔄 Refresh'),chip('💬 Send selected',{green:1,pin:3})],
+    body:{table:{head:['','Count','' ],rows:[
+      ['Sellers on file','4,765',''],
+      ['…have booked at least once','1,682','3,085 never have — excluded'],
+      ['…away 60–180 days','834','846 booked more recently'],
+      ['…minus one-time sellers','203','631 booked fewer than 2 auctions'],
+      ['Due a reminder now','203','~5 days at 50/day'],
+    ]}} },
+  steps:[
+    'Open **Seller Reminders** (under Master Data). The list is sellers whose last booking falls inside the window — nobody is messaged until you send.',
+    '**Read the funnel first.** It is the picture above: most of a "dormant" list is usually people who came once and never returned.',
+    'Too many? Raise **Only sellers who booked at least this many auctions** in **Settings → Seller Reminders**. Going from 1 to 2 took the example from 834 to 203; going to 4 takes it to 22.',
+    'Tick the sellers to nudge and press **💬 Send selected**. Ten or more asks you to confirm the count first.',
+    '**Held back** lists everyone the rules kept off — no phone number, or still inside the cooling-off window — with the reason. Look there before assuming somebody is missing.',
+  ],
+  warn:'**The expensive one.** Reminders are *marketing* messages to WhatsApp — several times the price of an invoice send — and they go to people who did not ask to hear from you. They also share the 250-recipients-per-24-hours limit with your invoices, so a big run can stall the day\'s invoicing. Tighten the minimum-auctions setting before widening the day window.' },
 
 { id:'users', g:'admin', ic:'👥', name:'Users', purpose:'Staff logins and roles.',
   mock:{ title:'Users',
@@ -697,6 +771,7 @@ function openPoster(id){
   document.getElementById('home').style.display='none';
   document.getElementById('poster').style.display='block';
   window.scrollTo(0,0);
+  if((location.hash||'').replace(/^#/,'')!==id) history.replaceState(null,'','#'+id);
   renderTour();
 }
 function renderTour(){
@@ -730,14 +805,30 @@ function collectPins(mock){
   if(b.resolve){ (b.resolve.rows||[]).forEach(r=>{ if(r[5]) set.add(r[5]); }); if(b.resolve.bulk&&b.resolve.bulk.pin) set.add(b.resolve.bulk.pin); }
   return set;
 }
-function showHome(){ _tour=null; document.getElementById('poster').style.display='none'; document.getElementById('home').style.display='block'; window.scrollTo(0,0); }
+function showHome(){
+  _tour=null; document.getElementById('poster').style.display='none'; document.getElementById('home').style.display='block'; window.scrollTo(0,0);
+  // Drop the deep-link fragment so a reload lands on the tile list, not back
+  // on the poster the operator just left. replaceState fires no hashchange.
+  if(location.hash) history.replaceState(null,'',location.pathname+location.search);
+}
 
 document.addEventListener('keydown',function(e){
   if(document.getElementById('poster').style.display!=='block' || !_tour) return;
   if(e.key==='ArrowRight'){ e.preventDefault(); tourNext(); }
   else if(e.key==='ArrowLeft'){ e.preventDefault(); tourPrev(); }
 });
+// Deep link: /help.html#gstrecharge opens that poster straight away, so the
+// app can send an operator here from the very button that raised the question
+// (see openHelpOverlay in index.html). Unknown id falls back to the tiles.
+function openFromHash(){
+  const id=(location.hash||'').replace(/^#/,'');
+  if(_tour && _tour.s.id===id) return;          // already on it — keep the step
+  if(id && S.some(x=>x.id===id)) openPoster(id); else showHome();
+}
+window.addEventListener('hashchange', openFromHash);
+
 renderTiles();
+if((location.hash||'').length>1) openFromHash();
 </script>
 </body>
 </html>

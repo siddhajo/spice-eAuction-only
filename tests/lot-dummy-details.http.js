@@ -15,6 +15,8 @@
 //   [clear]      clear:true wipes all four in one call
 //   [guards]     no ids, and a payload with nothing to set, are both refused
 //   [locked]     a locked lot is skipped, not an error, and reported as such
+//   [filter]     GET /api/lots/:id?dummy=1|0 narrows the Lots table to masked
+//                / unmasked lots — list, summary and paginated counts alike
 const os = require('os'), path = require('path'), fs = require('fs');
 const { spawn } = require('child_process');
 
@@ -153,6 +155,47 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
         (Number(r.d.updated) || 0) + lockedSkipped === 2, JSON.stringify(r.d));
   check('the unlocked lot was written', (await dummyOf(aid, A)).name === 'AFTER LOCK',
         JSON.stringify(await dummyOf(aid, A)));
+
+  console.log('[filter] ?dummy= narrows the list the Lots table reads');
+  // The filter is flag-gated, and the lock would block the reset below.
+  await api('PUT', '/api/company-settings', {
+    settings: { flag_lot_lock: 'false', flag_lot_dummy_details: 'true' },
+  });
+  await api('POST', '/api/lots/dummy-details/bulk', { ids, clear: true });
+  // A PHONE-only mask: "has dummy details" is any of the four fields, not the
+  // name — the same test the 🎭 badge uses.
+  await api('POST', '/api/lots/dummy-details/bulk', { ids: [A], dummy_tel: '9333333333' });
+  const lotsWith = async (qs) => {
+    const r = await api('GET', `/api/lots/${aid}${qs}`);
+    return Array.isArray(r.d) ? r.d : [];
+  };
+  let got = await lotsWith('?dummy=1');
+  check('dummy=1 returns just the masked lot',
+        got.length === 1 && Number(got[0].id) === A, JSON.stringify(got.map(l => l.lot_no)));
+  got = await lotsWith('?dummy=0');
+  check('dummy=0 returns the other two',
+        got.length === 2 && !got.some(l => Number(l.id) === A), JSON.stringify(got.map(l => l.lot_no)));
+  got = await lotsWith('');
+  check('no param returns all three', got.length === 3, JSON.stringify(got.map(l => l.lot_no)));
+  check('a junk value is ignored rather than filtering to nothing',
+        (await lotsWith('?dummy=maybe')).length === 3);
+
+  // The summary and paginated branches build their own SQL — they have to
+  // carry the same clause or the totals row and the pager contradict the list.
+  const sum = await api('GET', `/api/lots/${aid}?dummy=1&summary=1`);
+  check('summary=1 counts the same one lot',
+        Number(sum.d.n) === 1 && Number(sum.d.qty) === 100, JSON.stringify(sum.d));
+  const sum0 = await api('GET', `/api/lots/${aid}?dummy=0&summary=1`);
+  check('…and dummy=0 counts the other two', Number(sum0.d.n) === 2, JSON.stringify(sum0.d));
+  const pag = await api('GET', `/api/lots/${aid}?dummy=1&paginated=1&limit=25`);
+  check('paginated=1 agrees',
+        pag.d && pag.d.total === 1 && (pag.d.rows || []).length === 1, JSON.stringify(pag.d && pag.d.total));
+  // Combined with another filter — the dummy clause carries no bind params, so
+  // this is really asserting it can't knock the others' params out of order.
+  const both = await api('GET', `/api/lots/${aid}?dummy=1&grade=2&summary=1`);
+  check('it composes with the grade filter', Number(both.d.n) === 1, JSON.stringify(both.d));
+  const none = await api('GET', `/api/lots/${aid}?dummy=1&grade=1&summary=1`);
+  check('…and with one that excludes it', Number(none.d.n) === 0, JSON.stringify(none.d));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   done(fail ? 1 : 0);
