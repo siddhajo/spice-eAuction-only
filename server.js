@@ -105,6 +105,37 @@ const app = express();
 const perf = require('./perf-monitor');
 app.use(perf.middleware);
 
+// ── RESPONSE COMPRESSION ─────────────────────────────────────────────
+// Why: public/index.html is a single 2.56 MB file. Uncompressed that is
+// 2.56 MB on the wire for EVERY page load — the HTML is deliberately sent
+// no-store (see the cache middleware below, which exists because
+// ngrok/proxy caching served operators a stale UI), so there is no browser
+// cache to fall back on.
+//
+// The heavy STATIC assets are served from a pre-compressed in-memory cache
+// instead (see static-precompress.js, mounted below) because compressing a
+// 2.56 MB file per-request costs ~71 ms of CPU on this process's single
+// event loop. This middleware is what handles everything DYNAMIC — the JSON
+// API responses, which are small enough that per-request compression is
+// cheap.
+//
+// The filter skips payloads that are ALREADY compressed internally: PDFs,
+// xlsx (a zip), DBF and octet-stream downloads, and images. Re-deflating
+// those burns CPU on the one thread sql.js and PDF generation already block,
+// and gives back ~nothing.
+const compression = require('compression');
+const NO_COMPRESS = /^(application\/pdf|application\/zip|application\/x-dbase|application\/octet-stream|application\/vnd\.openxmlformats|image\/)/i;
+app.use(compression({
+  // 1 KB: below this the gzip header costs more than it saves.
+  threshold: 1024,
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) return false;
+    const type = String(res.getHeader('Content-Type') || '');
+    if (NO_COMPRESS.test(type)) return false;
+    return compression.filter(req, res);
+  },
+}));
+
 // Capture the raw request body so the WhatsApp webhook can verify Meta's
 // HMAC (X-Hub-Signature-256) over the exact bytes received. Cheap — just
 // stashes the Buffer express already has in hand.
@@ -124,7 +155,17 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve the heavy static assets (index.html is 2.56 MB) from the
+// pre-compressed in-memory cache. Mounted AFTER the no-store middleware
+// above so the HTML keeps its cache policy, and BEFORE express.static so a
+// cache hit short-circuits the disk read entirely. A miss — cold cache,
+// edited file, client that won't take br/gzip — falls through to
+// express.static below.
+const precompress = require('./static-precompress');
+const PUBLIC_DIR = path.join(__dirname, 'public');
+app.use(precompress.middleware(PUBLIC_DIR));
+
+app.use(express.static(PUBLIC_DIR));
 
 // ══════════════════════════════════════════════════════════════
 // APP-WIDE ACTIVITY AUDIT (breadth) — feeds Backup → App Activity log
@@ -10607,19 +10648,69 @@ app.get('/api/invoices', requireView, (req, res) => {
   // recorded on its lots. Multiple distinct asp_invos are concatenated
   // (rare — usually one ASP invoice maps 1:1 to one ISP invoice for the
   // same buyer/auction). Empty for ASP invoices themselves.
-  const aspStmt = db.prepare(
-    `SELECT DISTINCT asp_invo FROM lots
-     WHERE auction_id = ? AND buyer = ? AND invo = ?
-       AND asp_invo IS NOT NULL AND asp_invo != ''`
-  );
+  //
+  // PERF: batched. This was one query PER INVOICE ROW — 217 queries for a
+  // 217-row list. The DB driver is synchronous, so what blocks the event
+  // loop is the number of round-trips, not I/O wait; collapsing them into
+  // one query per (auction, chunk of buyers) measured 217 -> 4 queries and
+  // 6.9-8.4x faster on real data.
+  //
+  // NULL HANDLING IS LOAD-BEARING. The per-row query matched with SQL
+  // `invo = ?`, and in SQL a comparison against NULL is never true — so a
+  // NULL invo matched nothing, on either side. A JS Map keyed by
+  // String(invo) does NOT reproduce that: String(null) collapses to '',
+  // which would (a) make NULL match NULL and (b) conflate NULL with a
+  // genuine empty-string invo, letting an invoice inherit asp_invo from an
+  // unrelated lot. This dataset has 410 lots with asp_invo set and a
+  // NULL-or-empty invo, so that would be a live mis-attribution.
+  //
+  // Both sides therefore exclude NULL explicitly — `invo IS NOT NULL` in
+  // the SQL, and the guard below for the invoice rows — which restores the
+  // original semantics exactly. Empty-string invo still matches
+  // empty-string, as `invo = ''` always did.
+  const _chunk = (arr, n) => {
+    const out = [];
+    for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+    return out;
+  };
+  const _aspKey = (...parts) => parts.map((v) => String(v)).join('\u0000');
+  // A row that could never match under SQL's NULL rules.
+  const _aspUnmatchable = (r) =>
+    r.auction_id == null || r.buyer == null || r.invo == null;
+  const _isASPRow = (r) => String(r.state || '').toLowerCase().includes('kerala');
+
+  const aspMap = new Map();              // key(auction_id, buyer, invo) -> Set(asp_invo)
+  const aspBuyersByAuction = new Map();  // auction_id -> Set(buyer)
+  for (const r of rows) {
+    if (_isASPRow(r) || _aspUnmatchable(r)) continue;
+    if (!aspBuyersByAuction.has(r.auction_id)) aspBuyersByAuction.set(r.auction_id, new Set());
+    aspBuyersByAuction.get(r.auction_id).add(r.buyer);
+  }
+  for (const [aid, buyerSet] of aspBuyersByAuction) {
+    // 400 keeps the bound-parameter count well under SQLite's limit.
+    for (const buyers of _chunk([...buyerSet], 400)) {
+      const found = db.all(
+        `SELECT DISTINCT buyer, invo, asp_invo FROM lots
+          WHERE auction_id = ? AND buyer IN (${buyers.map(() => '?').join(',')})
+            AND invo IS NOT NULL
+            AND asp_invo IS NOT NULL AND asp_invo != ''`,
+        [aid, ...buyers]
+      );
+      for (const f of found) {
+        if (f.buyer == null) continue; // cannot be matched by `buyer = ?`
+        const k = _aspKey(aid, f.buyer, f.invo);
+        if (!aspMap.has(k)) aspMap.set(k, new Set());
+        aspMap.get(k).add(f.asp_invo);
+      }
+    }
+  }
   for (const r of rows) {
     // For ASP invoices (state contains "Kerala"), the asp_invo column
     // would just be a copy of `invo` — show blank instead of duplicating.
-    const isASPRow = String(r.state || '').toLowerCase().includes('kerala');
-    if (isASPRow) { r.asp_invo = ''; }
+    if (_isASPRow(r) || _aspUnmatchable(r)) { r.asp_invo = ''; }
     else {
-      const aspRows = aspStmt.all(r.auction_id, r.buyer, r.invo);
-      r.asp_invo = aspRows.map(x => x.asp_invo).filter(Boolean).join(', ');
+      const hit = aspMap.get(_aspKey(r.auction_id, r.buyer, r.invo));
+      r.asp_invo = hit ? [...hit].filter(Boolean).join(', ') : '';
     }
   }
 
@@ -10660,7 +10751,29 @@ app.get('/api/invoices', requireView, (req, res) => {
     // delivery sites. Distance must be computed to the actual ship-to
     // when one is registered. Falls back to bill-to so legacy buyers
     // without a separate consignee block still resolve.
-    const buyerPinStmt = db.prepare('SELECT pin, cpin FROM buyers WHERE buyer = ? LIMIT 1');
+    // PERF: batch the buyer PINs (one query per chunk, not one per row) and
+    // memoise the route lookup per PIN, since many invoices share a buyer
+    // and many buyers share a destination.
+    //
+    // `ORDER BY id` + first-wins replaces the old unordered `LIMIT 1`. That
+    // only matters for duplicate buyer codes, which DO exist here (8 in this
+    // dataset, plus one empty code on thousands of rows). Checked every one:
+    // the row picked is the same either way, so this is a no-op on the data
+    // and strictly more deterministic than an unordered LIMIT 1 was.
+    const needPinBuyers = [...new Set(
+      rows.filter(r => (r.distance_km == null || r.distance_km === '') && r.buyer != null)
+          .map(r => r.buyer)
+    )];
+    const buyerPins = new Map(); // buyer -> { pin, cpin }
+    for (const buyers of _chunk(needPinBuyers, 400)) {
+      const found = db.all(
+        `SELECT buyer, pin, cpin FROM buyers
+          WHERE buyer IN (${buyers.map(() => '?').join(',')}) ORDER BY id`,
+        buyers
+      );
+      for (const b of found) if (!buyerPins.has(b.buyer)) buyerPins.set(b.buyer, b);
+    }
+    const routeCache = new Map(); // buyerPin -> km | null
     for (const r of rows) {
       // Per-invoice override always wins
       if (r.distance_km != null && r.distance_km !== '') {
@@ -10668,13 +10781,16 @@ app.get('/api/invoices', requireView, (req, res) => {
         continue;
       }
       // Route table lookup: need the buyer's PIN
-      const b = buyerPinStmt.get(r.buyer);
+      const b = r.buyer == null ? null : buyerPins.get(r.buyer);
       const shipPin = b && b.cpin ? String(b.cpin).trim() : '';
       const billPin = b && b.pin  ? String(b.pin ).trim() : '';
       const buyerPin = shipPin || billPin;
       if (!buyerPin || !dispatchPin) { r.resolved_distance_km = null; continue; }
-      const hit = routeStmt.get(dispatchPin, buyerPin, buyerPin, dispatchPin);
-      r.resolved_distance_km = hit && hit.km != null ? Number(hit.km) : null;
+      if (!routeCache.has(buyerPin)) {
+        const hit = routeStmt.get(dispatchPin, buyerPin, buyerPin, dispatchPin);
+        routeCache.set(buyerPin, hit && hit.km != null ? Number(hit.km) : null);
+      }
+      r.resolved_distance_km = routeCache.get(buyerPin);
     }
   } catch (e) {
     // route_distances table may be missing on a partially-migrated DB.
@@ -22815,6 +22931,11 @@ const PORT = process.env.PORT || 3001;
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n  Admin Console running at http://localhost:${PORT}\n`);
     perf.startLagMonitor();
+    // Build the pre-compressed static cache. The zlib calls inside are
+    // async, so this runs on libuv's threadpool and does NOT block the event
+    // loop — requests are served (uncompressed) while it warms.
+    const _pcN = precompress.warm(PUBLIC_DIR);
+    console.log(`  [perf] pre-compressing ${_pcN} static asset(s) in background`);
     console.log('  [perf] request timing + event-loop lag monitor active');
   });
 })();

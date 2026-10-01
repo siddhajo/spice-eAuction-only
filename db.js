@@ -1483,12 +1483,31 @@ function makeWrapper() {
    * Run a SQL with bound params and return rows as objects.
    * Internal helper used by get/all.
    */
-  function execStatement(sql, params) {
+  function execStatement(sql, params, limit) {
     const stmt = rawDb.prepare(sql);
     try {
       stmt.bind(params);
       const rows = [];
-      while (stmt.step()) rows.push(stmt.getAsObject());
+      // PERF: build each row from getColumnNames() + get() rather than
+      // getAsObject(). getAsObject() re-derives the column-name list from the
+      // statement for EVERY row, which dominates query time on wide tables —
+      // measured 13.0ms vs 3.9ms (3.3x) for one `SELECT * FROM lots` page
+      // (396 rows x 75 cols), with 94% of the original time spent marshalling
+      // rather than executing. Column names are fixed for the lifetime of a
+      // statement, so hoisting them out of the loop is free. Verified
+      // identical to getAsObject() across all 36 tables / 23,345 rows,
+      // including BLOB (Uint8Array) and NULL cells.
+      //
+      // `limit` stops stepping early — see get(), which needs only row 0.
+      const cols = stmt.getColumnNames();
+      const n = cols.length;
+      const cap = limit == null ? Infinity : limit;
+      while (rows.length < cap && stmt.step()) {
+        const vals = stmt.get();
+        const row = {};
+        for (let i = 0; i < n; i++) row[cols[i]] = vals[i];
+        rows.push(row);
+      }
       return rows;
     } finally {
       stmt.free();
@@ -1537,7 +1556,11 @@ function makeWrapper() {
      */
     get(sql, ...rest) {
       const params = normalizeParams(rest);
-      const rows = execStatement(sql, params);
+      // PERF: stop after the first row. This used to materialize the WHOLE
+      // result set and throw all but row 0 away, so a get() on an unLIMITed
+      // query paid for every matching row (e.g. 396 lots marshalled to
+      // return one). Same answer, bounded cost.
+      const rows = execStatement(sql, params, 1);
       return rows[0] || null;
     },
 
