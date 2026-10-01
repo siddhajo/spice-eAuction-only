@@ -320,7 +320,8 @@ function carbonCopySlipPdf({ auction, rows, columns, totalKeys, companyHeader, b
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 18 });
   // No db here — the watermark comes resolved on the header, same as the
   // shared table renderer. See getCompanyHeader() / pdf/watermark.js.
-  attachPdfkitWatermarkPath(doc, (companyHeader || {}).watermarkPath);
+  attachPdfkitWatermarkPath(doc, (companyHeader || {}).watermarkPath,
+                                 (companyHeader || {}).watermarkOpacity);
   const buffers = [];
   doc.on('data', b => buffers.push(b));
 

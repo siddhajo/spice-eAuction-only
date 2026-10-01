@@ -1425,8 +1425,10 @@ async function initDb() {
     } catch (_) { /* column may not exist on this DB — ignore */ }
   }
 
-  // One-time data fix: debit-note totals stored to the PAISE on an install
-  // that issues documents in whole rupees (`flag_round`).
+  // One-time data fix: DEALER debit-note totals stored to the PAISE on an
+  // install that issues documents in whole rupees (`flag_round`). Planter DNs
+  // are NOT in here — they round UP unconditionally and get their own heal
+  // immediately below.
   //
   // Every DN renderer derives its "Round Off" row as
   // `total − (amount + cgst + sgst + igst)`, so a total stored to the paise
@@ -1444,7 +1446,8 @@ async function initDb() {
     const roundOn = wrapped.get(
       "SELECT value FROM company_settings WHERE key = 'flag_round'");
     if (roundOn && String(roundOn.value) === 'true') {
-      for (const tbl of ['debit_notes', 'debit_notes_planter']) {
+      {
+        const tbl = 'debit_notes';
         const fix = wrapped.run(
           `UPDATE ${tbl}
               SET total = CAST(ROUND(COALESCE(amount,0) + COALESCE(cgst,0)
@@ -1461,6 +1464,39 @@ async function initDb() {
           console.log(`Migration: rounded ${fix.changes} ${tbl} total(s) to whole rupees (flag_round is on) — Round Off now prints`);
         }
       }
+    }
+  } catch (_) { /* table may not exist on a fresh DB — ignore */ }
+
+  // One-time data fix: PLANTER debit-note totals that were issued to the
+  // nearest rupee (or to the paise) before the round-UP rule.
+  //
+  // The planter DN is now always ceil'd to the next whole rupee — see
+  // calculations.js → planterDebitNoteTotal for why that document alone does
+  // not follow `flag_round`. This heals the rows written under the old rule so
+  // the register, the CSV, the Tally export and the printed note all show the
+  // same Grand Total, which every renderer derives as
+  // `total − (amount + cgst + sgst + igst)`.
+  //
+  // Runs regardless of flag_round (ceil is unconditional now), and only on
+  // rows whose stored total is STILL exactly what the old rule produced —
+  // either the paise-exact sum or that sum rounded to nearest. Anything
+  // hand-adjusted away from both is left alone. Idempotent: once a row holds
+  // the ceil, neither test matches it again.
+  try {
+    const SUM = `(COALESCE(amount,0) + COALESCE(cgst,0) + COALESCE(sgst,0) + COALESCE(igst,0))`;
+    const fix = wrapped.run(
+      `UPDATE debit_notes_planter
+          SET total = CAST((CAST(ROUND(${SUM}, 2) AS INTEGER)
+                            + CASE WHEN ROUND(${SUM}, 2) > CAST(ROUND(${SUM}, 2) AS INTEGER)
+                                   THEN 1 ELSE 0 END) AS REAL)
+        WHERE (ABS(COALESCE(total,0) - ROUND(${SUM}, 2)) < 0.005
+               OR ABS(COALESCE(total,0) - ROUND(${SUM})) < 0.005)
+          AND ROUND(${SUM}, 2) > CAST(ROUND(${SUM}, 2) AS INTEGER)
+          AND ABS(COALESCE(total,0)
+                  - (CAST(ROUND(${SUM}, 2) AS INTEGER) + 1)) >= 0.005`
+    );
+    if (fix && fix.changes > 0) {
+      console.log(`Migration: rounded ${fix.changes} planter debit-note total(s) UP to the next rupee`);
     }
   } catch (_) { /* table may not exist on a fresh DB — ignore */ }
 

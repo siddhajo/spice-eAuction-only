@@ -159,8 +159,13 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
   const pageLayout = layout === 'landscape' ? 'landscape' : 'portrait';
   const doc = new PDFDocument({ size: 'A4', layout: pageLayout, margin: 24 });
   // Faint company-logo watermark, from the header this renderer is already
-  // handed — one call covers every generic table export. See pdf/watermark.js.
-  attachPdfkitWatermarkPath(doc, (companyHeader || {}).watermarkPath);
+  // handed — one call covers every generic table export. Stamped OVER the
+  // finished page, which on this renderer is the whole point: the zebra row
+  // fill and the header/subtotal bands are opaque, so a mark drawn underneath
+  // showed up only in the unshaded gaps. The density travels in the header too
+  // (watermarkOpacity) — see pdf/watermark.js.
+  attachPdfkitWatermarkPath(doc, (companyHeader || {}).watermarkPath,
+                                 (companyHeader || {}).watermarkOpacity);
   const buffers = [];
   doc.on('data', b => buffers.push(b));
 

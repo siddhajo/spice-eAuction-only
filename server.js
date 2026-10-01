@@ -9,7 +9,7 @@ const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
 const { initCompanySettings, CATEGORIES, getSetting, getSettingBool, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates,
         SCREEN_FLAGS, SCREEN_FLAG_KEYS, screenFlagDefault } = require('./company-config');
 const grade2Alerts = require('./grade2-alerts');
-const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, debitNoteTotal, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql, effectiveGradeCrSql, dummyPlanterCrSql, hasDummySellerSql, lotGradeLabelSql } = require('./calculations');
+const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, debitNoteTotal, planterDebitNoteTotal, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql, effectiveGradeCrSql, dummyPlanterCrSql, hasDummySellerSql, lotGradeLabelSql } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 // Faint company-logo watermark shared by BOTH PDF engines — the debit notes
 // and the Commission Bill (Format 2) draw their own PDFKit layouts here rather
@@ -8106,7 +8106,8 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
   // the same substitution the e-Auction CSV's Planter/Dealer column makes. See
   // effectiveGradeCrSql() in calculations.js. `aadhar` (the SBL) is never
   // dummied, so it still drives the GSTIN+SBL half of the test.
-  const GRADE_CR = dummySellerDetailsOn(db) ? effectiveGradeCrSql('cr', 'dummy_cr') : 'cr';
+  const DUMMY_ON = dummySellerDetailsOn(db);
+  const GRADE_CR = DUMMY_ON ? effectiveGradeCrSql('cr', 'dummy_cr') : 'cr';
   const DEALER = dealerSql(GRADE_CR, 'aadhar');
   // SOLD = a real hammer transaction. Blank code = no buyer, 'WD' = withdrawn,
   // 'NA' = the Not-Auctioned buyer dad assigns to booked-but-unsold lots — none
@@ -8185,7 +8186,14 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
             -- reading the stored label let them drift whenever a seller's GSTIN
             -- or SBL was filled in after the lot was booked (trader-lot-sync
             -- re-stamps cr/aadhar but never grade).
-            COALESCE(SUM(CASE WHEN ${DEALER} THEN qty ELSE 0 END),0) AS grade2Qty
+            COALESCE(SUM(CASE WHEN ${DEALER} THEN qty ELSE 0 END),0) AS grade2Qty,
+            -- How many of this trade's lots wear a stand-in seller identity.
+            -- The dashboard's Current Auction panel lists it as "Dummy Lots",
+            -- because a mask that nothing on screen admits to is exactly the
+            -- kind of thing that goes to the Spices Board unnoticed. Counted
+            -- with hasDummySellerSql() — ANY of the four columns set — so it
+            -- is the same population the Lots tab badges and filters on.
+            SUM(CASE WHEN ${DUMMY_ON ? hasDummySellerSql('lots') : '0=1'} THEN 1 ELSE 0 END) AS dummyLots
        FROM lots WHERE auction_id = ?`,
     [auctionId]
   ) || {};
@@ -8200,6 +8208,9 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
     planterWeight: Number(st.planterWeight) || 0,
     dealerWeight:  Number(st.dealerWeight)  || 0,
     grade2Qty:     Number(st.grade2Qty)     || 0,
+    // 0 whenever flag_lot_dummy_details is off — with the feature off those
+    // columns are not part of the app, so the panel must not report on them.
+    dummyLots:     Number(st.dummyLots)     || 0,
     minPrice:      Number(st.minPrice) || 0,
     maxPrice:      Number(st.maxPrice) || 0,
     avgPrice:      soldQty > 0 ? (Number(st.soldValue) || 0) / soldQty : 0,
@@ -16050,7 +16061,8 @@ app.post('/api/debit-notes-planter/generate', requireInvoiceWrite, requireDebitN
     const half = Math.round(dnAmount * (dnGstRate / 2) / 100 * 100) / 100;
     cgst = half; sgst = half;
   }
-  const { total } = debitNoteTotal(dnAmount, cgst, sgst, igst, cfg);
+  // Planter DNs round UP to the next rupee, always — see planterDebitNoteTotal.
+  const { total } = planterDebitNoteTotal(dnAmount, cgst, sgst, igst);
 
   // DN date = trade.date (same day as the auction / bill of supply).
   const trade = db.get('SELECT date FROM auctions WHERE ano = ? LIMIT 1', [ano]);
@@ -16166,7 +16178,8 @@ app.post('/api/debit-notes-planter/generate-bulk', requireInvoiceWrite, requireD
         const half = Math.round(dnAmount * (dnGstRateL / 2) / 100 * 100) / 100;
         cgst = half; sgst = half;
       }
-      const { total } = debitNoteTotal(dnAmount, cgst, sgst, igst, cfg);
+      // Planter DNs round UP — see planterDebitNoteTotal.
+      const { total } = planterDebitNoteTotal(dnAmount, cgst, sgst, igst);
       db.run(
         `INSERT INTO debit_notes_planter (ano,date,state,name,note_no,amount,cgst,sgst,igst,total,trader_id,lot_no,lot_id)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -16245,7 +16258,8 @@ app.post('/api/debit-notes-planter/generate-bulk', requireInvoiceWrite, requireD
       const half = Math.round(dnAmount * (dnGstRate / 2) / 100 * 100) / 100;
       cgst = half; sgst = half;
     }
-    const { total } = debitNoteTotal(dnAmount, cgst, sgst, igst, cfg);
+    // Planter DNs round UP — see planterDebitNoteTotal.
+    const { total } = planterDebitNoteTotal(dnAmount, cgst, sgst, igst);
 
     db.run(
       `INSERT INTO debit_notes_planter (ano,date,state,name,note_no,amount,cgst,sgst,igst,total,trader_id)
@@ -20612,6 +20626,13 @@ app.get('/api/insights/lots', requireView, (req, res) => {
             -- drill-down badges "No GSTIN / No PAN / No phone / No bank"
             -- beside the seller name, mirroring the Validate Lots warnings.
             l.cr, l.pan, l.tel, l.aadhar,
+            -- Lot id + the stand-in seller identity: the lot-wise drill-down
+            -- can SET dummy details on the ticked lots, which needs the ids to
+            -- write to and the current values to badge. /api/lots/:auctionId
+            -- (the branch drill's source) returns lots.* and so carries these
+            -- already — this is the grade drill catching up to it.
+            l.id,
+            l.dummy_name, l.dummy_tel, l.dummy_cr, l.dummy_grade,
             (CASE WHEN l.trader_id IN (SELECT trader_id FROM trader_banks)
                   THEN 1 ELSE 0 END) AS has_bank,
             (SELECT a.ano FROM auctions a WHERE a.id = l.auction_id) AS ano

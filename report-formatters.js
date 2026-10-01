@@ -297,13 +297,24 @@ function getCompanyHeader(db) {
   // The header object exposes `address1` and `address2` for backward
   // compatibility with PDF/XLSX renderers — `address2` carries the
   // office branch (single line in the brand band).
-  // `watermarkPath` is the logo to stamp faint behind the page, or '' when the
-  // toggle is off — resolved HERE because the shared PDF renderers are handed
-  // a companyHeader and nothing else (no cfg, no db) to decide from. Same
-  // file the header draws; see pdf/watermark.js.
-  let watermarkPath = '';
-  try { watermarkPath = require('./pdf/watermark').watermarkFile(db); } catch (_) {}
-  return { name, logoPath: logoOnDisk, address1, address2: branch, branch, watermarkPath };
+  // `watermarkPath` is the logo to stamp faint over the page, or '' when the
+  // toggle is off, and `watermarkOpacity` is how strongly — both resolved HERE
+  // because the shared PDF renderers are handed a companyHeader and nothing
+  // else (no cfg, no db) to decide from. Same file the header draws; see
+  // pdf/watermark.js.
+  //
+  // The opacity has to travel with the path: without it those renderers fell
+  // back to the built-in default, so turning `pdf_watermark_density` up did
+  // nothing at all to the table exports — the one place a pale logo most
+  // needs the help.
+  let watermarkPath = '', watermarkOpacity;
+  try {
+    const wm = require('./pdf/watermark');
+    watermarkPath = wm.watermarkFile(db);
+    if (watermarkPath) watermarkOpacity = wm.watermarkOpacityOver(db);
+  } catch (_) {}
+  return { name, logoPath: logoOnDisk, address1, address2: branch, branch,
+           watermarkPath, watermarkOpacity };
 }
 
 // ─────────────────────────────────────────────────────────────────────────

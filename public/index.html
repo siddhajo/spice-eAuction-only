@@ -2505,6 +2505,21 @@ tr.depot-total:hover td{background:var(--spice-cardamom-lt)}
 .dl-issue-err{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5}
 .dl-issue:hover{filter:brightness(.95)}
 .dl-issue-on{box-shadow:0 0 0 2px var(--spice-cardamom-lt,#d1fae5)}
+/* 🎭 DUMMY badge in the lot-wise modal — the same violet mark the Lots tab
+   paints, so one badge means one thing wherever it is seen. Not clickable:
+   the fix is the Dummy Details form, which the tick box leads to. */
+.dl-dummy-badge{display:inline-flex;align-items:center;font-size:9px;font-weight:800;
+  background:#7c3aed;color:#fff;padding:1px 5px;border-radius:8px;vertical-align:middle;
+  letter-spacing:.3px;white-space:nowrap}
+/* Tick column + the selection bar above the table (dummy-details picking). */
+.gm-table th.dl-pick,.gm-table td.dl-pick{width:30px;padding-right:0}
+.gm-table td.dl-pick input,.gm-table th.dl-pick input{cursor:pointer;margin:0}
+.dl-selbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;
+  padding:8px 12px;border:1px solid var(--spice-line);border-radius:8px;
+  background:var(--spice-cardamom-lt,#ecfdf5);font-size:12.5px}
+.dl-dummy-btn{height:30px;padding:0 12px;font-size:12px;font-weight:600;
+  background:#7c3aed;color:#fff;border:0}
+.dl-dummy-btn:hover{background:#6d28d9}
 /* Collapsible KPI band header (Debit Notes / Debit Notes — Planter). Sits
    above the tile grid as a quiet caret + "Summary" label rather than another
    card, so collapsing the band leaves a single line rather than a gap. */
@@ -18416,6 +18431,20 @@ async function loadDepotSummary(auctionId){
       <span style="color:var(--spice-text-mute)">${label}</span>
       <span style="font-weight:700;color:var(--spice-text-main);font-variant-numeric:tabular-nums">${val}</span>
     </div>`;
+  // "Dummy Lots" — how many of this trade's lots will present a stand-in
+  // seller to the Spices Board. Listed here and not only on the Lots tab
+  // because this panel is the auction-day summary: a mask nothing on screen
+  // admits to is exactly the kind of thing that ships unnoticed. The row is
+  // a link into the lot list, filtered to those lots, so "22 of them" and
+  // "which 22" are one click apart. Omitted entirely when the feature is off.
+  const dummyOn   = document.body.getAttribute('data-feat-lot-dummy-details') === '1';
+  const dummyLots = Number(s.dummyLots) || 0;
+  const dummyRow  = dummyOn
+    ? [[`<a href="#" onclick="openTradeDummyLots(${a.id}, '1');return false"
+            title="List the lots carrying a dummy seller identity"
+            style="color:var(--spice-saffron);font-weight:600;text-decoration:none">\u{1F3AD} Dummy Lots</a>`,
+        dummyLots ? intf(dummyLots) : '<span style="color:var(--spice-text-hint);font-weight:400">None</span>']]
+    : [];
   const statsHTML = [
     ['Allocated Lots', intf(s.allocatedLots)],
     ['Booked Lots',    intf(s.bookedLots)],
@@ -18428,6 +18457,7 @@ async function loadDepotSummary(auctionId){
     ['Minimum Price',  inr0(s.minPrice)],
     ['Maximum Price',  inr0(s.maxPrice)],
     ['Average Price',  inr0(s.avgPrice)],
+    ...dummyRow,
   ].map(([l,v]) => statRow(l, v)).join('');
 
   // ── Grade-2 booking vs the Spices Board 25% cap ──
@@ -18489,6 +18519,17 @@ async function loadDepotSummary(auctionId){
              rather than through the chooser the All-Auctions view needs. Sized
              to the small reportBtns() buttons beside it. -->
         <button class="btn btn-a needs-export" onclick="event.stopPropagation();downloadSpicesBoardCsv(${a.id})" title="e-Auction portal upload file for this auction" style="height:28px;padding:0 9px;font-size:11px;font-weight:600">⬇ Spices Board CSV</button>
+        <!-- Set the stand-in seller identity on this trade's lots, right next
+             to the Spices Board CSV button — because that file and Form C are
+             the only two places a dummy is ever read, and this is where the
+             operator is standing when they think about it. Opens the trade's
+             whole lot list with tick boxes; the per-depot drill-down offers
+             the same action scoped to one branch. Both gates must pass (the
+             feature flag and lot-write) or the button isn't drawn at all. -->
+        ${dlDummyOn() ? `<button class="btn dl-dummy-btn" style="height:28px;padding:0 10px;font-size:11px"
+            onclick="event.stopPropagation();openTradeDummyLots(${a.id})"
+            title="Set dummy seller details on this trade's lots — used only by the e-Auction (Spices Board) CSV and Form C"
+          >\u{1F3AD} Dummy Details</button>` : ''}
       </div>
     </div>
     <div class="card" id="ca-body" style="padding:20px;display:${collapsed ? 'none' : 'block'}">
@@ -18518,7 +18559,8 @@ async function loadDepotSummary(auctionId){
 // Fetches the trade's lots, keeps them (+ the current sort/filter) in _dl, and
 // renders a sortable/filterable table. '(unspecified)' covers lots whose branch
 // is blank/null, matching how the depot-summary rollup buckets them server-side.
-let _dl = { rows: [], sort: { col: 'lot_no', dir: 1 }, filt: { lot: '', seller: '', buyer: '', badge: '' } };
+let _dl = { rows: [], sort: { col: 'lot_no', dir: 1 }, filt: { lot: '', seller: '', buyer: '', badge: '' },
+            picked: new Set() };
 
 // ── Seller matching (name OR phone) ─────────────────────────────
 // One rule for every in-browser seller filter, mirroring the server's
@@ -18692,13 +18734,28 @@ function showLotList(titleText, lots, reload){
   // Normalize to the exact fields the table sorts/filters/renders on.
   _dl = {
     // How to re-fetch this exact list — used to repaint the seller names
-    // after one is edited from the modal (an edit re-stamps the lots).
+    // after one is edited from the modal (an edit re-stamps the lots), and
+    // after dummy details are set on the ticked lots.
     reload,
+    // Ticked lots, by lot id. Rebuilt empty on every load: a selection that
+    // outlived the rows it pointed at would write to lots the operator can no
+    // longer see.
+    picked: new Set(),
     rows: (lots || []).map(l => {
       const code = String(l.code || '').trim().toUpperCase();
       const status = code === 'WD' ? 'Withdrawn' : code === 'NA' ? 'Not Auctioned' : code ? 'Sold' : 'Booked';
       const statusCls = code === 'WD' ? 'wd' : code === 'NA' ? 'book' : code ? 'sold' : 'book';
+      // The four stand-in seller fields, as one trimmed tuple. Both sources
+      // carry them: /api/lots/:auctionId selects lots.*, and the insights
+      // drill-down names them explicitly.
+      const dummy = ['dummy_name', 'dummy_tel', 'dummy_cr', 'dummy_grade']
+        .map(k => String(l[k] == null ? '' : l[k]).trim());
       return {
+        // Lot id — what the dummy-details write is addressed to. Rows with no
+        // id (a source that doesn't carry one) simply can't be ticked.
+        id: l.id != null && Number.isFinite(Number(l.id)) ? Number(l.id) : null,
+        dummy,
+        hasDummy: dummy.some(Boolean),
         lot_no: String(l.lot_no || ''),
         seller: String(l.name || ''),
         // Carried so the seller filter can match on phone as well as name.
@@ -18730,9 +18787,121 @@ function showLotList(titleText, lots, reload){
       `<input class="dl-filter" type="text" placeholder="Filter lot…"    oninput="depotLotsFilter('lot', this.value)">`
     + `<input class="dl-filter" type="text" placeholder="Filter seller / phone…" oninput="depotLotsFilter('seller', this.value)">`
     + `<input class="dl-filter" type="text" placeholder="Filter buyer…"  oninput="depotLotsFilter('buyer', this.value)">`
-    + dlBadgeFilterHtml();
+    + dlBadgeFilterHtml()
+    + dlDummyFilterHtml();
   }
   renderDepotLotsTable();
+}
+
+// ── Dummy seller identity, from the lot-wise list ────────────────
+// The Lots tab can already mask a lot's seller in bulk (🎭 Dummy Details).
+// This is the same action reached from where the operator is actually
+// looking on auction day — the dashboard's Current Auction panel, which is
+// the screen that answers "what is in this trade?" — so a mask can be set
+// against the depot or grade it belongs to instead of hunting the lot
+// numbers down on another tab.
+//
+// Two gates, both of which must pass before a single tick box is drawn:
+//   • flag_lot_dummy_details — the feature itself
+//   • lot-write permission   — the same right the Lots tab's button needs
+// Checked in JS rather than with the .feat-*/.needs-* CSS classes because
+// this whole modal is painted from strings; a class that only hides the
+// control would still leave the column and the "N selected" bar in place.
+function dlDummyOn(){
+  return document.body.getAttribute('data-feat-lot-dummy-details') === '1'
+      && document.body.getAttribute('data-perm-lot-write') === '1';
+}
+
+// Show only masked / only unmasked lots. Drawn only once at least one lot in
+// the list carries a mask — with none, the choice is between "all of them"
+// and "none of them", which is not a choice.
+function dlDummyFilterHtml(){
+  if (document.body.getAttribute('data-feat-lot-dummy-details') !== '1') return '';
+  const n = _dl.rows.filter(r => r.hasDummy).length;
+  if (!n) return '';
+  const sel = String(_dl.filt.dummy || '');
+  const opt = (v, lbl) => `<option value="${esc(v)}"${sel === v ? ' selected' : ''}>${esc(lbl)}</option>`;
+  return `<select class="dl-filter" id="dl-dummy-filter"`
+    + ` onchange="depotLotsFilter('dummy', this.value)"`
+    + ` title="Show only the lots carrying a stand-in seller identity">`
+    + opt('', 'All lots')
+    + opt('1', `\u{1F3AD} Dummy set (${n})`)
+    + opt('0', `No dummy (${_dl.rows.length - n})`)
+    + `</select>`;
+}
+
+// The 🎭 badge beside a masked seller's name. Same mark and the same tooltip
+// the Lots tab paints, so one badge means one thing wherever it is seen.
+function dlDummyBadge(r){
+  if (!r.hasDummy || document.body.getAttribute('data-feat-lot-dummy-details') !== '1') return '';
+  const labels = ['Name', 'Phone', 'CR', 'Grade'];
+  const tip = r.dummy.map((v, i) => v ? `${labels[i]}: ${v}` : null).filter(Boolean).join(' · ');
+  return ` <span class="dl-dummy-badge" title="${esc('Dummy details (e-Auction CSV / Form C only) — ' + tip)}">\u{1F3AD} DUMMY</span>`;
+}
+
+// Tick / untick one lot. The id is the key, not the row index: the table
+// re-sorts and re-filters under the selection.
+function dlPick(id, on){
+  const n = Number(id);
+  if (!Number.isFinite(n)) return;
+  if (on) _dl.picked.add(n); else _dl.picked.delete(n);
+  dlSyncSelectionBar();
+}
+
+// Header tick — select or clear every lot CURRENTLY VISIBLE, not every lot
+// loaded. The operator filtered the list to pick a set; obeying the filter is
+// the whole point, and silently masking rows scrolled out of a filter would
+// be the worst kind of surprise on a document that goes to the Spices Board.
+function dlPickAll(on){
+  for (const r of dlVisibleRows()) {
+    if (r.id == null) continue;
+    if (on) _dl.picked.add(r.id); else _dl.picked.delete(r.id);
+  }
+  renderDepotLotsTable();
+}
+
+// Repaint just the count + the header tick's indeterminate state. Called on
+// every single-row tick so a 400-lot table isn't re-rendered per click.
+function dlSyncSelectionBar(){
+  const bar = document.getElementById('dl-selbar');
+  const vis = dlVisibleRows().filter(r => r.id != null);
+  const on  = vis.filter(r => _dl.picked.has(r.id)).length;
+  if (bar) {
+    bar.style.display = _dl.picked.size ? '' : 'none';
+    const cnt = document.getElementById('dl-selcount');
+    if (cnt) cnt.textContent = String(_dl.picked.size);
+  }
+  const all = document.getElementById('dl-pick-all');
+  if (all) {
+    all.checked = vis.length > 0 && on === vis.length;
+    all.indeterminate = on > 0 && on < vis.length;
+  }
+}
+
+// Clear the selection without touching the filters.
+function dlClearPick(){
+  _dl.picked.clear();
+  renderDepotLotsTable();
+}
+
+// Open the shared Dummy Details modal against the ticked lots. Reuses the
+// Lots tab's modal wholesale — one form, one endpoint, one set of rules about
+// what blank means — and hands it this list's own reload so the badges and
+// the filter counts repaint when it saves.
+function dlOpenDummyDetails(){
+  const ids = [..._dl.picked];
+  if (!ids.length) { toast('Tick one or more lots first'); return; }
+  openLotDummyDetailsModal({
+    ids,
+    // Prefill from the rows already in hand — no second fetch, and it works
+    // for the grade drill-down too, which has no Lots-tab trade selector to
+    // read from.
+    rows: _dl.rows.filter(r => _dl.picked.has(r.id)).map(r => ({
+      dummy_name: r.dummy[0], dummy_tel: r.dummy[1],
+      dummy_cr:   r.dummy[2], dummy_grade: r.dummy[3],
+    })),
+    onDone: () => { _dl.picked.clear(); if (typeof _dl.reload === 'function') _dl.reload(); },
+  });
 }
 
 async function openDepotLots(auctionId, depot){
@@ -18757,6 +18926,44 @@ async function openDepotLots(auctionId, depot){
     return;
   }
   showLotList('Lot-wise details — ' + dep, lots, () => openDepotLots(auctionId, depot));
+}
+
+// ── "Dummy Details" from the Current Auction panel ───────────────
+// The whole trade's lots in the lot-wise modal, ready to tick. Same list the
+// depot drill-down shows, minus the branch filter — the mask an operator sets
+// before an e-Auction upload is usually a handful of lots scattered across
+// depots, so making them open each branch in turn would be the wrong shape.
+//
+// `preFilter` seeds the dummy dropdown: '1' from the "Dummy Lots" stat row,
+// which is asking "which ones?", and nothing from the header button, which is
+// asking "let me set some".
+async function openTradeDummyLots(auctionId, preFilter){
+  const body = document.getElementById('depot-lots-body');
+  const titleEl = document.getElementById('depot-lots-title');
+  const metaEl = document.getElementById('depot-lots-meta');
+  const filtEl = document.getElementById('depot-lots-filters');
+  if (!body) return;
+  const title = 'Dummy seller details — every lot in this trade';
+  if (titleEl) titleEl.textContent = title;
+  if (metaEl) metaEl.textContent = '';
+  if (filtEl) filtEl.style.display = 'none';
+  body.innerHTML = '<div class="gm-empty">Loading…</div>';
+  showModal('depot-lots-modal');
+  let rows;
+  try { rows = await j(`/api/lots/${auctionId}?_=${Date.now()}`); }
+  catch (e) { body.innerHTML = '<div class="gm-empty">Failed to load lots.</div>'; return; }
+  if (!rows || !rows.length) {
+    body.innerHTML = '<div class="gm-empty">No lots booked in this trade yet.</div>';
+    return;
+  }
+  showLotList(title, rows, () => openTradeDummyLots(auctionId, preFilter));
+  // Seeded AFTER the list lands: the dropdown's options and counts are built
+  // from the rows, so it does not exist until showLotList has painted.
+  if (preFilter) {
+    depotLotsFilter('dummy', String(preFilter));
+    const sel = document.getElementById('dl-dummy-filter');
+    if (sel) sel.value = String(preFilter);
+  }
 }
 
 // Snapshot grade drill — lot-wise details for one status + grade (+ branch),
@@ -18796,7 +19003,9 @@ function depotLotsFilter(key, val){
   // The badge filter is an exact pick from a fixed list, not a typed
   // substring — keep its value verbatim so labels carrying punctuation
   // ("G2, not a dealer") still match the badge they came from.
-  _dl.filt[key] = key === 'badge' ? String(val || '') : String(val || '').toLowerCase();
+  _dl.filt[key] = (key === 'badge' || key === 'dummy')
+    ? String(val || '')
+    : String(val || '').toLowerCase();
   renderDepotLotsTable();
 }
 
@@ -18807,24 +19016,21 @@ function depotLotsSort(col){
   renderDepotLotsTable();
 }
 
-// Apply the current filter + sort to _dl.rows and paint the table body.
-function renderDepotLotsTable(){
-  const host = document.getElementById('depot-lots-body');
-  const metaEl = document.getElementById('depot-lots-meta');
-  if (!host) return;
-  const money = n => '₹' + (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const qf   = n => (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const intf = n => (Number(n) || 0).toLocaleString('en-IN');
+// The rows the table is CURRENTLY showing — the active filters applied, in the
+// active sort order. Pulled out of the renderer because the header tick and
+// the "N selected" count have to mean the same set the operator can see.
+function dlVisibleRows(){
   const f = _dl.filt;
-  let rows = _dl.rows.filter(r =>
+  const rows = _dl.rows.filter(r =>
     (!f.lot    || r.lot_no.toLowerCase().includes(f.lot)) &&
     sellerMatches(f.seller, r.seller, r.tel) &&
     (!f.buyer  || r.buyer.toLowerCase().includes(f.buyer)) &&
-    lotBadgeMatch(r.issues, f.badge)
+    lotBadgeMatch(r.issues, f.badge) &&
+    (!f.dummy  || (f.dummy === '1' ? r.hasDummy : !r.hasDummy))
   );
   const { col, dir } = _dl.sort;
   const numCols = { bags: 1, qty: 1, price: 1, amount: 1 };
-  rows = rows.slice().sort((a, b) => {
+  return rows.slice().sort((a, b) => {
     if (col === 'lot_no') {
       const an = parseInt(a.lot_no, 10), bn = parseInt(b.lot_no, 10);
       if (Number.isFinite(an) && Number.isFinite(bn) && an !== bn) return (an - bn) * dir;
@@ -18833,6 +19039,20 @@ function renderDepotLotsTable(){
     if (numCols[col]) return ((Number(a[col]) || 0) - (Number(b[col]) || 0)) * dir;
     return String(a[col] || '').localeCompare(String(b[col] || '')) * dir;
   });
+}
+
+// Apply the current filter + sort to _dl.rows and paint the table body.
+function renderDepotLotsTable(){
+  const host = document.getElementById('depot-lots-body');
+  const metaEl = document.getElementById('depot-lots-meta');
+  if (!host) return;
+  // Ticking is drawn only where the operator may actually use it — see
+  // dlDummyOn(). Resolved once per paint so every row and the header agree.
+  const canPick = dlDummyOn();
+  const money = n => '₹' + (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const qf   = n => (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const intf = n => (Number(n) || 0).toLocaleString('en-IN');
+  const rows = dlVisibleRows();
   const caret = c => _dl.sort.col === c ? (_dl.sort.dir > 0 ? ' ▲' : ' ▼') : '';
   const sTh = (c, label) => `<th class="l dl-sortable" onclick="depotLotsSort('${c}')" title="Sort by ${label}">${label}${caret(c)}</th>`;
   let bags = 0, qty = 0, amount = 0;
@@ -18847,8 +19067,17 @@ function renderDepotLotsTable(){
     const sellerCell = (r.seller
       ? `<a href="#" class="dl-seller" data-tid="${esc(r.traderId)}" data-name="${esc(r.seller)}"
            onclick="dlOpenSeller(this);return false" title="View / edit seller details">${esc(r.seller)}</a>`
-      : '<span style="color:var(--spice-text-hint)">—</span>') + issueBadges;
+      : '<span style="color:var(--spice-text-hint)">—</span>') + dlDummyBadge(r) + issueBadges;
+    // A lot with no id can't be written to, so it gets no tick box — the
+    // column stays, or the row would shift out of line with its header.
+    const pickCell = canPick
+      ? `<td class="l dl-pick">${r.id == null ? ''
+          : `<input type="checkbox" ${_dl.picked.has(r.id) ? 'checked' : ''}`
+            + ` onclick="event.stopPropagation();dlPick(${r.id}, this.checked)"`
+            + ` title="Tick to set dummy seller details on this lot">`}</td>`
+      : '';
     return `<tr>
+      ${pickCell}
       <td class="l">${esc(r.lot_no)}</td>
       <td class="l">${sellerCell}</td>
       <td>${intf(r.bags)}</td>
@@ -18865,11 +19094,30 @@ function renderDepotLotsTable(){
   const flagged = rows.filter(r => r.issues && r.issues.length).length;
   if (metaEl) metaEl.textContent = `${rows.length}${rows.length !== total ? ' of ' + total : ''} lot${total === 1 ? '' : 's'} · ${intf(bags)} bags · ${qf(qty)} kg · ${money(amount)}`
     + (flagged ? ` · ⚠ ${flagged} with seller warnings` : '');
-  host.innerHTML = rows.length ? `<table class="gm-table" style="min-width:720px">
-    <thead><tr>${sTh('lot_no', 'Lot')}${sTh('seller', 'Seller')}<th>Bags</th><th>Qty</th><th>Price</th><th>Amount</th>${sTh('buyer', 'Buyer')}<th class="l">Status</th></tr></thead>
+  // "N selected · 🎭 Set Dummy Details · Clear" — sits above the table, so a
+  // selection made at the bottom of a 400-lot list is still actionable
+  // without scrolling back up.
+  const selBar = canPick ? `
+    <div id="dl-selbar" class="dl-selbar" style="display:${_dl.picked.size ? '' : 'none'}">
+      <span><b id="dl-selcount">${_dl.picked.size}</b> lot(s) selected</span>
+      <button class="btn dl-dummy-btn" onclick="dlOpenDummyDetails()"
+              title="Set a dummy seller name / phone / CR / grade on the ticked lots — used only by the e-Auction (Spices Board) CSV and Form C">\u{1F3AD} Dummy Details</button>
+      <button class="btn btn-o" style="height:30px;padding:0 12px;font-size:12px" onclick="dlClearPick()">Clear</button>
+    </div>` : '';
+
+  const pickTh = canPick
+    ? `<th class="l dl-pick"><input type="checkbox" id="dl-pick-all" onclick="dlPickAll(this.checked)"
+         title="Tick every lot currently shown — the filters above decide what that is"></th>`
+    : '';
+  const cols = canPick ? 3 : 2;         // tick + Lot + Seller, under the Total
+  host.innerHTML = rows.length ? selBar + `<table class="gm-table" style="min-width:720px">
+    <thead><tr>${pickTh}${sTh('lot_no', 'Lot')}${sTh('seller', 'Seller')}<th>Bags</th><th>Qty</th><th>Price</th><th>Amount</th>${sTh('buyer', 'Buyer')}<th class="l">Status</th></tr></thead>
     <tbody>${trs}</tbody>
-    <tfoot><tr><td class="l" colspan="2">Total · ${rows.length} lots</td><td>${intf(bags)}</td><td>${qf(qty)}</td><td></td><td>${money(amount)}</td><td colspan="2"></td></tr></tfoot>
-  </table>` : '<div class="gm-empty">No lots match the current filters.</div>';
+    <tfoot><tr><td class="l" colspan="${cols}">Total · ${rows.length} lots</td><td>${intf(bags)}</td><td>${qf(qty)}</td><td></td><td>${money(amount)}</td><td colspan="2"></td></tr></tfoot>
+  </table>` : selBar + '<div class="gm-empty">No lots match the current filters.</div>';
+  // The header tick reflects the VISIBLE rows, which the paint above just
+  // settled — so it is set after the markup lands, not inside it.
+  if (canPick) dlSyncSelectionBar();
 }
 
 // Seller drill-down from the lot-wise modal. Resolves the lot's seller to a
@@ -26446,7 +26694,7 @@ const SET_FIELD_GROUPS = {
   invoice: [
     { title:'Numbering — Prefix & Suffix', icon:'🔢', hint:'Number series for each document type. These feed the PDF and the Tally XML alike.',
       keys:['inv_prefix','separator','proforma_invoice_prefix'], match:/(_prefix|_suffix)$/ },
-    { title:'Print Layouts', icon:'🖨', hint:'Default layout per document. "Classic (Legacy)" is the original PDFKit format; other layouts render from HTML templates. Still overridable per print. Watermark Density is how strongly the company logo prints behind every PDF — turn it up if a pale logo does not read on paper (the watermark itself is switched on and off under Flags).',
+    { title:'Print Layouts', icon:'🖨', hint:'Default layout per document. "Classic (Legacy)" is the original PDFKit format; other layouts render from HTML templates. Still overridable per print. Watermark Density is how strongly the company logo prints over every PDF — 7 is the default, so turn it UP (15–25 reads well on a pale logo) if the mark does not show on paper. The watermark itself is switched on and off under Flags.',
       keys:['pdf_watermark_density'], match:/_template$/ },
     { title:'Dispatch Details', icon:'🚚', hint:'Transport lines printed on the sales invoice.',
       keys:['dispatched_through_isp','dispatch_destination','dispatch_from'] },
@@ -33290,6 +33538,7 @@ const _lddFields = [
   ['ldd-grade', 'dummy_grade'],
 ];
 let _lddLotIds = [];   // lot ids captured at modal open
+let _lddOnDone = null; // what to repaint after a save; null ⇒ the Lots table
 let _lddWired  = false;
 
 // Handlers that must exist for the life of the modal, wired on first open:
@@ -33312,10 +33561,27 @@ function _lddWireOnce(){
   if (nameEl) nameEl.addEventListener('blur', () => setTimeout(lddCloseDropdown, 120));
 }
 
-async function openLotDummyDetailsModal(){
-  _lddLotIds = (typeof BulkActions !== 'undefined' && BulkActions.getTickedIds)
-    ? BulkActions.getTickedIds('lot')
-    : [];
+// Two callers, one form:
+//   • no argument            — the Lots tab's toolbar button, which takes its
+//                              lots from the BulkActions tick state and
+//                              repaints the Lots table when it saves
+//   • { ids, rows, onDone }  — the dashboard's lot-wise drill-down (Current
+//                              Auction → a depot, or the snapshot → a grade),
+//                              which already holds the rows and knows how to
+//                              re-fetch its own list
+// `rows` is optional: hand it the selected lot rows and the prefill comes
+// from them, skipping the fetch the Lots tab needs. `onDone` replaces the
+// loadLots() repaint — without it a save would refresh a table the operator
+// isn't even looking at and leave the one they are stale.
+async function openLotDummyDetailsModal(opts){
+  const o = opts || {};
+  const fromCaller = Array.isArray(o.ids);
+  _lddLotIds = fromCaller
+    ? o.ids.map(x => Number(x)).filter(Number.isFinite)
+    : ((typeof BulkActions !== 'undefined' && BulkActions.getTickedIds)
+        ? BulkActions.getTickedIds('lot')
+        : []);
+  _lddOnDone = typeof o.onDone === 'function' ? o.onDone : null;
   if (!_lddLotIds.length) { toast('Tick one or more lots first'); return; }
   document.getElementById('ldd-count').textContent = _lddLotIds.length;
   lddCloseDropdown();
@@ -33339,15 +33605,22 @@ async function openLotDummyDetailsModal(){
   // what is already set rather than four empty boxes. Only a value shared by
   // EVERY ticked lot is prefilled; a mixed selection leaves the box blank
   // (and blank means "leave unchanged", so the mix survives untouched).
-  const aid = document.getElementById('lot-auction')?.value;
-  if (!aid) return;
+  //
+  // A caller that handed its own rows over is prefilled straight from them —
+  // no fetch, and no dependence on the Lots tab's trade selector, which the
+  // dashboard's drill-downs don't have.
   try {
-    const all = await j(`/api/lots/${aid}?_=${Date.now()}`);
-    const picked = new Set(_lddLotIds);
-    const rows = (Array.isArray(all) ? all : []).filter(l => picked.has(Number(l.id)));
+    let rows = Array.isArray(o.rows) ? o.rows : null;
+    if (!rows) {
+      const aid = document.getElementById('lot-auction')?.value;
+      if (!aid) return;
+      const all = await j(`/api/lots/${aid}?_=${Date.now()}`);
+      const picked = new Set(_lddLotIds);
+      rows = (Array.isArray(all) ? all : []).filter(l => picked.has(Number(l.id)));
+      // Selection may have changed while the fetch was in flight.
+      if (_lddLotIds.length !== picked.size) return;
+    }
     if (!rows.length) return;
-    // Selection may have changed while the fetch was in flight.
-    if (_lddLotIds.length !== picked.size) return;
     for (const [elId, field] of _lddFields) {
       const el = document.getElementById(elId);
       if (!el || el.value) continue;   // don't clobber typing during the fetch
@@ -33372,7 +33645,10 @@ async function _lddSend(body, btn, doneMsg){
     const skipped = Number(r.skippedLocked) || 0;
     toast(`${doneMsg} on ${r.updated || 0} lot(s)` + (skipped ? ` · ${skipped} locked lot(s) skipped` : ''));
     hideModal('lot-dummy-modal');
-    if (typeof loadLots === 'function') loadLots({ keepPage: true });
+    // Repaint the list this was opened FROM. The dashboard drill-downs pass
+    // their own reload; the Lots tab gets the default.
+    if (_lddOnDone) _lddOnDone();
+    else if (typeof loadLots === 'function') loadLots({ keepPage: true });
   } catch (e) { showError(e); }
   finally { if (btn) { btn.disabled = false; btn.textContent = label; } }
 }

@@ -14,8 +14,11 @@
 //              BOTH engines, clamped at both ends
 //   [pdfkit]   each PDFKit generator draws the mark ONCE per page, on top of
 //              its own pages and every page a batch adds
-//   [state]    it leaves the graphics state and the text cursor as it found
-//              them — the invoice draws next and must not shift
+//   [state]    it stamps the page being LEFT (from addPage) and the last one
+//              (from end), never at attach time — "stamp last, not first" is
+//              what puts the mark over the opaque zebra fills instead of
+//              under them — and it leaves the graphics state and the text
+//              cursor as it found them, because the page is still being drawn
 //   [html]     every HTML renderer injects it, exactly once per DOCUMENT —
 //              the commission bill concatenates N bills into one document and
 //              N stacked copies of a 7% layer is not a 7% layer
@@ -175,10 +178,15 @@ const debitNote = { name: dnTrader.name, ano: '12', date: '2026-09-01', no: 5, c
     return (buf.toString('latin1').match(/\/ca ([0-9.]+)/g) || []).join(' ');
   };
   const inv0 = require(path.join(ROOT, 'invoice-pdf'));
-  check('a printed invoice carries the default density', (await caOf('7')).includes('/ca 0.07'),
-        await caOf('7'));
-  check('…and the raised one when it is set', (await caOf('25')).includes('/ca 0.25'),
-        await caOf('25'));
+  // PDFKit stamps ON TOP of the content now, same as the HTML layer, so it
+  // carries the OVER figure — that is what makes the two engines look alike.
+  const caNum = (d) => Math.round(d / 100 * wm.OVER_RATIO * 1e6) / 1e6;
+  check('a printed invoice carries the default density',
+        (await caOf('7')).includes('/ca ' + caNum(7)), await caOf('7'));
+  check('…and the raised one when it is set',
+        (await caOf('25')).includes('/ca ' + caNum(25)), await caOf('25'));
+  check('…which is the same figure the HTML layer uses',
+        Math.abs(caNum(25) - wm.watermarkOpacityOver({ pdf_watermark_density: '25' })) < 1e-6);
 
   // ── PDFKit engine ──────────────────────────────────────────────────
   console.log('[pdfkit] every generator draws it, once per page');
@@ -206,37 +214,62 @@ const debitNote = { name: dnTrader.name, ano: '12', date: '2026-09-01', no: 5, c
   check('each page gains exactly one draw — not two by the second invoice',
         batch.every((n, i) => n === batchOff[i] + 1), `${JSON.stringify(batch)} vs ${JSON.stringify(batchOff)}`);
 
-  console.log('[state] it puts the page back as it found it');
-  // A stub doc: the point is what attach() TOUCHES, which a real PDFDocument
-  // hides inside its own state.
+  console.log('[state] it stamps the page being left, and puts it back as it found it');
+  // A stub doc: the point is WHEN attach() draws and what it touches, which a
+  // real PDFDocument hides inside its own state.
+  //
+  // The contract is "stamp last, not first". Nothing is drawn at attach time;
+  // each page is stamped on the way OUT — from addPage(), which is every
+  // page-break path PDFKit has, and from end() for the final page that no
+  // addPage follows. Drawing first is what made the mark invisible under the
+  // opaque zebra fills on the table exports.
   const calls = [];
-  const handlers = {};
+  let addPageCalls = 0, ended = 0;
   const stub = {
     page: { width: 595.28, height: 841.89 }, x: 111, y: 222,
     save() { calls.push('save'); }, restore() { calls.push('restore'); },
     opacity(v) { calls.push('opacity:' + v); },
     image(f, x, y, o) { calls.push({ image: f, x, y, o }); },
-    on(ev, fn) { handlers[ev] = fn; },
+    addPage() { addPageCalls++; return this; },
+    end() { ended++; return this; },
+    on() {},
   };
+  const drawn = () => calls.filter((c) => c && c.image);
   wm.attachPdfkitWatermark(stub, CFG);
-  const first = calls.filter((c) => c && c.image);
-  check('page 1 is drawn at attach time', first.length === 1, JSON.stringify(calls.length));
+  check('nothing is drawn at attach time — the page has no content yet', drawn().length === 0,
+        JSON.stringify(calls.length));
+
+  // Leaving page 1 stamps page 1.
+  stub.addPage();
+  check('leaving a page stamps it', drawn().length === 1, String(drawn().length));
+  check('…and PDFKit still gets its addPage', addPageCalls === 1, String(addPageCalls));
   check('…saved and restored around the draw',
-        calls[0] === 'save' && calls[calls.length - 1] === 'restore', JSON.stringify(calls.filter(c => typeof c === 'string')));
-  check('…at the faint opacity', calls.includes('opacity:' + wm.OPACITY), JSON.stringify(calls.filter(c => typeof c === 'string')));
+        calls[0] === 'save' && calls[calls.length - 1] === 'restore',
+        JSON.stringify(calls.filter((c) => typeof c === 'string')));
+  check('…at the on-top opacity', calls.includes('opacity:' + wm.OPACITY_OVER),
+        JSON.stringify(calls.filter((c) => typeof c === 'string')));
+  const first = drawn();
   check('…centred on the page',
         Math.abs(first[0].x + first[0].o.fit[0] / 2 - stub.page.width / 2) < 0.01
         && Math.abs(first[0].y + first[0].o.fit[1] / 2 - stub.page.height / 2) < 0.01,
         JSON.stringify({ x: first[0].x, y: first[0].y, fit: first[0].o.fit }));
   check('the text cursor is exactly where it was', stub.x === 111 && stub.y === 222, `${stub.x},${stub.y}`);
-  check('it subscribed to pageAdded', typeof handlers.pageAdded === 'function');
-  handlers.pageAdded(); handlers.pageAdded();
-  check('…and draws once for each new page',
-        calls.filter((c) => c && c.image).length === 3, String(calls.filter((c) => c && c.image).length));
+
+  stub.addPage();
+  check('one stamp per page left behind', drawn().length === 2, String(drawn().length));
+
+  // The last page is nobody's "previous page" — end() is what catches it.
+  stub.end();
+  check('end() stamps the final page', drawn().length === 3, String(drawn().length));
+  check('…and PDFKit still gets its end', ended === 1, String(ended));
+  stub.end();
+  check('a second end() does not stamp it twice', drawn().length === 3, String(drawn().length));
+
   // Batch re-entry: the same doc passes through attach once per document.
   wm.attachPdfkitWatermark(stub, CFG);
-  check('attaching again is a no-op — no second listener, no second draw',
-        calls.filter((c) => c && c.image).length === 3, String(calls.filter((c) => c && c.image).length));
+  stub.addPage();
+  check('attaching again is a no-op — the wrappers are not stacked',
+        drawn().length === 4, String(drawn().length));
 
   // ── HTML engine ────────────────────────────────────────────────────
   // Swap htmlToPdf for a spy BEFORE the renderers are required, so each one

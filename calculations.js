@@ -2212,6 +2212,32 @@ function debitNoteTotal(amount, cgst, sgst, igst, cfg) {
   return { preRound, total, roundOff: Math.round((total - preRound) * 100) / 100 };
 }
 
+/**
+ * Planter debit-note grand total — ALWAYS rounded UP to the next whole rupee.
+ *
+ * The planter DN is the auctioneer's own service charge (commission +
+ * handling + GST) billed back to an unregistered planter, and the house
+ * issues it in whole rupees that never round DOWN: the fee charged must not
+ * come out below the fee earned. So this does not consult `flag_round` the
+ * way debitNoteTotal() does — ceil is the rule for this one document, on
+ * every install, and the switch stays the dealer DN's and the invoices'.
+ *
+ * Same shape and the same contract as debitNoteTotal otherwise: the ISSUED
+ * total is what gets stored, because every DN renderer derives its "Round
+ * Off" row as `total − (amount + cgst + sgst + igst)`. An exact rupee
+ * ceils to itself, so Round Off stays 0.00 where there were no paise.
+ *
+ * Returns { preRound, total, roundOff } — roundOff is always >= 0 here.
+ */
+function planterDebitNoteTotal(amount, cgst, sgst, igst) {
+  const preRound = Math.round(
+    (Number(amount || 0) + Number(cgst || 0) + Number(sgst || 0) + Number(igst || 0)) * 100) / 100;
+  // Ceil the PAISE-ROUNDED sum, not the raw float: 1234.9999999 from binary
+  // drift is 1235.00 to the paise and must stay 1235, not climb to 1236.
+  const total = Math.ceil(preRound);
+  return { preRound, total, roundOff: Math.round((total - preRound) * 100) / 100 };
+}
+
 function buildDebitNote(db, invoiceNo, saleType, discount, cfg) {
   // Resolve by purchno (`purchases.invo`). Most-recent wins if duplicates
   // exist (legacy / re-used numbers across years) — matches /generate-bulk.
@@ -2635,6 +2661,7 @@ module.exports = {
   buildAgriBill,
   buildDebitNote,
   debitNoteTotal,
+  planterDebitNoteTotal,
   listAgriSellers,
   getPaymentSummary,
   getBankPaymentData,
