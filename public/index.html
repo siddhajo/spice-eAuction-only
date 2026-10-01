@@ -4209,6 +4209,47 @@ html[data-textsize] #comfort-toggle{background:var(--spice-saffron-lt);color:var
 .le-collapsible-body{border-top:1px solid var(--border)}
 .le-collapsible.is-collapsed .le-collapsible-body{display:none}
 
+/* ── Worklist sections — Birthdays / Seller Reminders ──────────────
+   Every card on those two screens collapses, and every list scrolls
+   inside its own section with the header pinned. Both screens are
+   worklists an operator works top-to-bottom: without this, "Greetings
+   sent" sits a full page below "Today" and the log grows without bound,
+   so the part being worked on keeps sliding off screen.
+
+   Deliberately NOT reusing .le-collapsible above, despite the identical
+   look: leRestoreCollapsed() queries `.le-collapsible` document-wide and
+   would then drive these cards off the lot-entry storage key, so
+   collapsing a birthday section would be remembered as a lot-entry one.
+   Same appearance, separate state.
+
+   Colours come from the --spice-* tokens rather than --card/--text,
+   because only the spice tokens flip in dark mode. */
+.wl-collapsible{padding:0;overflow:hidden}
+.wl-collapsible-head{
+  display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;
+  padding:14px 18px;transition:background .12s;flex-wrap:wrap;
+}
+.wl-collapsible-head:hover{background:var(--spice-cream)}
+.wl-collapsible-title{font-size:15px;font-weight:700;color:var(--spice-text-main)}
+.wl-collapsible-chev{
+  display:inline-block;width:16px;text-align:center;font-size:12px;
+  color:var(--spice-text-hint);transition:transform .15s;
+}
+.wl-collapsible.is-collapsed .wl-collapsible-chev{transform:rotate(-90deg)}
+.wl-collapsible-body{border-top:1px solid var(--spice-line);padding:14px 18px}
+.wl-collapsible.is-collapsed .wl-collapsible-body{display:none}
+/* Controls living in the head (Refresh, the date picker, Send selected)
+   must not toggle the section, so the wrapper swallows the click. */
+.wl-head-actions{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.wl-head-note{font-size:12px;color:var(--spice-text-mute);font-weight:400}
+
+/* Scrolling list bodies. th already carries a --spice-cream background,
+   so a sticky header stays opaque over the rows it covers. Horizontal
+   scroll is kept too — these tables are wider than a narrow window. */
+.wl-scroll{overflow:auto;max-height:420px}
+.wl-scroll thead th{position:sticky;top:0;z-index:1}
+.wl-scroll-sm{max-height:300px}
+
 /* ── Lot-entry print toolbar (Print Selected / by Seller / Clear) ── */
 .le-toolbar-btn{
   display:inline-flex;align-items:center;gap:6px;
@@ -6286,53 +6327,75 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
          loadBirthdays() below. Auto-send is off by default, which makes
          this screen the whole feature: a worklist the operator sends from. -->
     <div class="tc feat-birthdays" id="tc-birthdays">
-      <div class="card" style="padding:14px 18px;margin-bottom:14px">
-        <h2 style="margin:0 0 4px;display:flex;align-items:center;gap:10px">Birthdays
-          <input type="date" id="bd-date" onchange="loadBirthdays()" style="margin-left:auto;height:34px;padding:0 8px;font-size:12.5px">
-          <button class="btn btn-o" onclick="bdToday()" title="Back to today">Today</button>
-          <button class="btn btn-o" onclick="loadBirthdays()">🔄 Refresh</button>
-        </h2>
-        <p style="font-size:12.5px;color:var(--text2);margin:0">Wishes sellers and buyers a happy birthday over WhatsApp, read from the Date of Birth on each master record. Each party is greeted at most once a year — sending twice is not possible, so a repeated click is safe.</p>
-        <div id="bd-banner"></div>
-        <div class="out-strip" id="bd-coverage"></div>
+      <div class="card wl-collapsible" id="bd-sec-intro" style="margin-bottom:14px">
+        <div class="wl-collapsible-head" onclick="wlToggleSection('bd-sec-intro')">
+          <span class="wl-collapsible-chev">▾</span>
+          <span class="wl-collapsible-title">Birthdays</span>
+          <span class="wl-head-actions" onclick="event.stopPropagation()">
+            <input type="date" id="bd-date" onchange="loadBirthdays()" style="height:34px;padding:0 8px;font-size:12.5px">
+            <button class="btn btn-o" onclick="bdToday()" title="Back to today">Today</button>
+            <button class="btn btn-o" onclick="loadBirthdays()">🔄 Refresh</button>
+          </span>
+        </div>
+        <div class="wl-collapsible-body">
+          <p style="font-size:12.5px;color:var(--text2);margin:0">Wishes sellers and buyers a happy birthday over WhatsApp, read from the Date of Birth on each master record. Each party is greeted at most once a year — sending twice is not possible, so a repeated click is safe.</p>
+          <div id="bd-banner"></div>
+          <div class="out-strip" id="bd-coverage"></div>
+        </div>
       </div>
 
-      <div class="card" style="padding:14px 18px;margin-bottom:14px">
-        <h2 style="margin:0 0 10px;display:flex;align-items:center;gap:10px;font-size:15px">
-          <span id="bd-today-head">Today</span>
-          <button class="btn btn-g" id="bd-send-sel" style="margin-left:auto;background:#25D366;color:#fff;font-weight:600" onclick="bdSendSelected()">💬 Send selected</button>
-        </h2>
-        <div id="bd-preview-note"></div>
-        <div style="overflow-x:auto"><table>
-          <thead><tr>
-            <th style="width:34px"><input type="checkbox" id="bd-all" onchange="bdToggleAll(this.checked)"></th>
-            <th>Name</th><th>Type</th><th>Phone</th><th>Age</th><th>Greeting</th><th>Status</th><th style="width:110px">Action</th>
-          </tr></thead>
-          <tbody id="bd-today-list"></tbody>
-        </table></div>
+      <div class="card wl-collapsible" id="bd-sec-today" style="margin-bottom:14px">
+        <div class="wl-collapsible-head" onclick="wlToggleSection('bd-sec-today')">
+          <span class="wl-collapsible-chev">▾</span>
+          <span class="wl-collapsible-title" id="bd-today-head">Today</span>
+          <span class="wl-head-actions" onclick="event.stopPropagation()">
+            <button class="btn btn-g" id="bd-send-sel" style="background:#25D366;color:#fff;font-weight:600" onclick="bdSendSelected()">💬 Send selected</button>
+          </span>
+        </div>
+        <div class="wl-collapsible-body">
+          <div id="bd-preview-note"></div>
+          <div class="wl-scroll"><table>
+            <thead><tr>
+              <th style="width:34px"><input type="checkbox" id="bd-all" onchange="bdToggleAll(this.checked)"></th>
+              <th>Name</th><th>Type</th><th>Phone</th><th>Age</th><th>Greeting</th><th>Status</th><th style="width:110px">Action</th>
+            </tr></thead>
+            <tbody id="bd-today-list"></tbody>
+          </table></div>
+        </div>
       </div>
 
-      <div class="card" style="padding:14px 18px;margin-bottom:14px">
-        <h2 style="margin:0 0 10px;font-size:15px">Coming up
-          <select id="bd-days" onchange="loadBirthdays()" style="height:30px;font-size:12px;margin-left:8px">
-            <option value="7">next 7 days</option>
-            <option value="30" selected>next 30 days</option>
-            <option value="90">next 90 days</option>
-          </select>
-        </h2>
-        <div style="overflow-x:auto"><table>
-          <thead><tr><th>Date</th><th>In</th><th>Name</th><th>Type</th><th>Phone</th><th>Age</th></tr></thead>
-          <tbody id="bd-upcoming-list"></tbody>
-        </table></div>
+      <div class="card wl-collapsible" id="bd-sec-upcoming" style="margin-bottom:14px">
+        <div class="wl-collapsible-head" onclick="wlToggleSection('bd-sec-upcoming')">
+          <span class="wl-collapsible-chev">▾</span>
+          <span class="wl-collapsible-title">Coming up</span>
+          <span class="wl-head-actions" onclick="event.stopPropagation()">
+            <select id="bd-days" onchange="loadBirthdays()" style="height:30px;font-size:12px">
+              <option value="7">next 7 days</option>
+              <option value="30" selected>next 30 days</option>
+              <option value="90">next 90 days</option>
+            </select>
+          </span>
+        </div>
+        <div class="wl-collapsible-body">
+          <div class="wl-scroll"><table>
+            <thead><tr><th>Date</th><th>In</th><th>Name</th><th>Type</th><th>Phone</th><th>Age</th></tr></thead>
+            <tbody id="bd-upcoming-list"></tbody>
+          </table></div>
+        </div>
       </div>
 
-      <div class="card" style="padding:14px 18px">
-        <h2 style="margin:0 0 4px;font-size:15px">Greetings sent</h2>
-        <p style="font-size:12px;color:var(--text2);margin:0 0 10px">"Sent" means WhatsApp accepted the message. Delivered / read arrive later — see the Send log in Settings → Integrations.</p>
-        <div style="overflow-x:auto"><table>
-          <thead><tr><th>When</th><th>Name</th><th>Type</th><th>Phone</th><th>How</th><th>By</th><th>Status</th></tr></thead>
-          <tbody id="bd-log-list"></tbody>
-        </table></div>
+      <div class="card wl-collapsible" id="bd-sec-log">
+        <div class="wl-collapsible-head" onclick="wlToggleSection('bd-sec-log')">
+          <span class="wl-collapsible-chev">▾</span>
+          <span class="wl-collapsible-title">Greetings sent</span>
+        </div>
+        <div class="wl-collapsible-body">
+          <p style="font-size:12px;color:var(--text2);margin:0 0 10px">"Sent" means WhatsApp accepted the message. Delivered / read arrive later — see the Send log in Settings → Integrations.</p>
+          <div class="wl-scroll"><table>
+            <thead><tr><th>When</th><th>Name</th><th>Type</th><th>Phone</th><th>How</th><th>By</th><th>Status</th></tr></thead>
+            <tbody id="bd-log-list"></tbody>
+          </table></div>
+        </div>
       </div>
     </div>
 
@@ -6342,48 +6405,70 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
          loadReminders() below. Auto-send is off by default, so this screen
          IS the feature: a worklist the operator sends from. -->
     <div class="tc feat-reminders" id="tc-reminders">
-      <div class="card" style="padding:14px 18px;margin-bottom:14px">
-        <h2 style="margin:0 0 4px;display:flex;align-items:center;gap:10px">Seller Reminders
-          <button class="btn btn-o" style="margin-left:auto" onclick="loadReminders()">🔄 Refresh</button>
-        </h2>
-        <p style="font-size:12.5px;color:var(--text2);margin:0">Sellers who have not booked a lot in a while. Anyone already booked into a coming auction is never listed, and nobody is messaged twice inside the cooling-off window.</p>
-        <div id="rm-banner"></div>
-        <div class="out-strip" id="rm-coverage"></div>
-        <div id="rm-funnel"></div>
+      <div class="card wl-collapsible" id="rm-sec-intro" style="margin-bottom:14px">
+        <div class="wl-collapsible-head" onclick="wlToggleSection('rm-sec-intro')">
+          <span class="wl-collapsible-chev">▾</span>
+          <span class="wl-collapsible-title">Seller Reminders</span>
+          <span class="wl-head-actions" onclick="event.stopPropagation()">
+            <button class="btn btn-o" onclick="loadReminders()">🔄 Refresh</button>
+          </span>
+        </div>
+        <div class="wl-collapsible-body">
+          <p style="font-size:12.5px;color:var(--text2);margin:0">Sellers who have not booked a lot in a while. Anyone already booked into a coming auction is never listed, and nobody is messaged twice inside the cooling-off window.</p>
+          <div id="rm-banner"></div>
+          <div class="out-strip" id="rm-coverage"></div>
+          <div id="rm-funnel"></div>
+        </div>
       </div>
 
-      <div class="card" style="padding:14px 18px;margin-bottom:14px">
-        <h2 style="margin:0 0 10px;display:flex;align-items:center;gap:10px;font-size:15px">
-          <span id="rm-due-head">Due a reminder</span>
-          <button class="btn btn-g" id="rm-send-sel" style="margin-left:auto;background:#25D366;color:#fff;font-weight:600" onclick="rmSendSelected()">💬 Send selected</button>
-        </h2>
-        <div id="rm-preview-note"></div>
-        <div style="overflow-x:auto"><table>
-          <thead><tr>
-            <th style="width:34px"><input type="checkbox" id="rm-all" onchange="rmToggleAll(this.checked)"></th>
-            <th>Seller</th><th>Last booked</th><th>Away</th><th>History</th><th>Phone</th><th>Last reminded</th><th>Message</th><th style="width:110px">Action</th>
-          </tr></thead>
-          <tbody id="rm-due-list"></tbody>
-        </table></div>
-        <div id="rm-due-more" style="font-size:12px;color:var(--text2);padding-top:8px"></div>
+      <div class="card wl-collapsible" id="rm-sec-due" style="margin-bottom:14px">
+        <div class="wl-collapsible-head" onclick="wlToggleSection('rm-sec-due')">
+          <span class="wl-collapsible-chev">▾</span>
+          <span class="wl-collapsible-title" id="rm-due-head">Due a reminder</span>
+          <span class="wl-head-actions" onclick="event.stopPropagation()">
+            <button class="btn btn-g" id="rm-send-sel" style="background:#25D366;color:#fff;font-weight:600" onclick="rmSendSelected()">💬 Send selected</button>
+          </span>
+        </div>
+        <div class="wl-collapsible-body">
+          <div id="rm-preview-note"></div>
+          <div class="wl-scroll"><table>
+            <thead><tr>
+              <th style="width:34px"><input type="checkbox" id="rm-all" onchange="rmToggleAll(this.checked)"></th>
+              <th>Seller</th><th>Last booked</th><th>Away</th><th>History</th><th>Phone</th><th>Last reminded</th><th>Message</th><th style="width:110px">Action</th>
+            </tr></thead>
+            <tbody id="rm-due-list"></tbody>
+          </table></div>
+          <div id="rm-due-more" style="font-size:12px;color:var(--text2);padding-top:8px"></div>
+        </div>
       </div>
 
-      <div class="card" style="padding:14px 18px;margin-bottom:14px">
-        <h2 style="margin:0 0 4px;font-size:15px">Held back <span id="rm-held-n" style="color:var(--text3);font-weight:400"></span></h2>
-        <p style="font-size:12px;color:var(--text2);margin:0 0 10px">Sellers the rules deliberately kept off the list, and why. "Why isn't this seller here?" is the question this screen gets asked most.</p>
-        <div style="overflow-x:auto"><table>
-          <thead><tr><th>Seller</th><th>Last booked</th><th>Away</th><th>History</th><th>Held because</th></tr></thead>
-          <tbody id="rm-held-list"></tbody>
-        </table></div>
+      <div class="card wl-collapsible" id="rm-sec-held" style="margin-bottom:14px">
+        <div class="wl-collapsible-head" onclick="wlToggleSection('rm-sec-held')">
+          <span class="wl-collapsible-chev">▾</span>
+          <span class="wl-collapsible-title">Held back</span>
+          <span class="wl-head-note" id="rm-held-n"></span>
+        </div>
+        <div class="wl-collapsible-body">
+          <p style="font-size:12px;color:var(--text2);margin:0 0 10px">Sellers the rules deliberately kept off the list, and why. "Why isn't this seller here?" is the question this screen gets asked most.</p>
+          <div class="wl-scroll"><table>
+            <thead><tr><th>Seller</th><th>Last booked</th><th>Away</th><th>History</th><th>Held because</th></tr></thead>
+            <tbody id="rm-held-list"></tbody>
+          </table></div>
+        </div>
       </div>
 
-      <div class="card" style="padding:14px 18px">
-        <h2 style="margin:0 0 4px;font-size:15px">Reminders sent</h2>
-        <p style="font-size:12px;color:var(--text2);margin:0 0 10px">"Sent" means WhatsApp accepted the message. Delivered / read arrive later — see the Send log in Settings → Integrations.</p>
-        <div style="overflow-x:auto"><table>
-          <thead><tr><th>When</th><th>Seller</th><th>Phone</th><th>Was away</th><th>How</th><th>By</th><th>Status</th></tr></thead>
-          <tbody id="rm-log-list"></tbody>
-        </table></div>
+      <div class="card wl-collapsible" id="rm-sec-log">
+        <div class="wl-collapsible-head" onclick="wlToggleSection('rm-sec-log')">
+          <span class="wl-collapsible-chev">▾</span>
+          <span class="wl-collapsible-title">Reminders sent</span>
+        </div>
+        <div class="wl-collapsible-body">
+          <p style="font-size:12px;color:var(--text2);margin:0 0 10px">"Sent" means WhatsApp accepted the message. Delivered / read arrive later — see the Send log in Settings → Integrations.</p>
+          <div class="wl-scroll"><table>
+            <thead><tr><th>When</th><th>Seller</th><th>Phone</th><th>Was away</th><th>How</th><th>By</th><th>Status</th></tr></thead>
+            <tbody id="rm-log-list"></tbody>
+          </table></div>
+        </div>
       </div>
     </div>
 
@@ -15675,7 +15760,39 @@ function bdToggleAll(on){
 // would only refuse.
 function bdSendable(r){ return !!r.phone && !r.greeted; }
 
+// ── Collapsible worklist sections (Birthdays / Seller Reminders) ──────
+// Sections start EXPANDED and only what the operator actually collapses is
+// remembered. A first visit therefore shows the whole worklist rather than a
+// stack of shut headers — these screens ARE the feature (auto-send is off by
+// default), so hiding the work behind a click by default would bury it.
+//
+// One storage key covers both screens: section ids are unique across them,
+// and the two sets never need to know about each other. Deliberately NOT
+// sharing leToggleSection()'s key — see the .wl-collapsible CSS note.
+function wlToggleSection(id){
+  const card = document.getElementById(id);
+  if (!card) return;
+  card.classList.toggle('is-collapsed');
+  try {
+    const collapsed = Array.from(document.querySelectorAll('.wl-collapsible.is-collapsed'))
+      .map(e => e.id).filter(Boolean);
+    localStorage.setItem('wl_collapsed_sections', JSON.stringify(collapsed));
+  } catch(_) {}
+}
+function wlRestoreCollapsed(){
+  let saved = [];
+  try { saved = JSON.parse(localStorage.getItem('wl_collapsed_sections') || '[]'); } catch(_) {}
+  if (!Array.isArray(saved)) return;
+  for (const id of saved) {
+    const el = document.getElementById(id);
+    // Guard on the class so a stale id from an older build can't collapse
+    // some unrelated card that happens to have reused the id.
+    if (el && el.classList.contains('wl-collapsible')) el.classList.add('is-collapsed');
+  }
+}
+
 async function loadBirthdays(){
+  wlRestoreCollapsed();
   var dateEl = document.getElementById('bd-date');
   var daysEl = document.getElementById('bd-days');
   var qs = [];
@@ -15939,6 +16056,7 @@ function rmDays(n){
 }
 
 async function loadReminders(){
+  wlRestoreCollapsed();
   var body = document.getElementById('rm-due-list');
   if (body) body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:16px">Loading…</td></tr>';
   try {
