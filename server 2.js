@@ -6581,19 +6581,47 @@ app.get('/api/invoices', requireView, (req, res) => {
   // recorded on its lots. Multiple distinct asp_invos are concatenated
   // (rare — usually one ASP invoice maps 1:1 to one ISP invoice for the
   // same buyer/auction). Empty for ASP invoices themselves.
-  const aspStmt = db.prepare(
-    `SELECT DISTINCT asp_invo FROM lots
-     WHERE auction_id = ? AND buyer = ? AND invo = ?
-       AND asp_invo IS NOT NULL AND asp_invo != ''`
-  );
+  //
+  // Batched: one query per (auction, chunk of buyers) instead of one per
+  // invoice row. The DB driver is synchronous, so the cost that blocks the
+  // event loop is the number of round-trips, not I/O wait — collapsing
+  // ~N queries into a handful keeps the list handler short.
+  const _chunk = (arr, n) => {
+    const out = [];
+    for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+    return out;
+  };
+  const _key = (...parts) => parts.map(v => String(v == null ? '' : v)).join('\u0000');
+  const aspMap = new Map(); // key(auction_id, buyer, invo) → Set(asp_invo)
+  const aspBuyersByAuction = new Map();
+  for (const r of rows) {
+    if (String(r.state || '').toLowerCase().includes('kerala')) continue;
+    if (!aspBuyersByAuction.has(r.auction_id)) aspBuyersByAuction.set(r.auction_id, new Set());
+    aspBuyersByAuction.get(r.auction_id).add(r.buyer);
+  }
+  for (const [aid, buyerSet] of aspBuyersByAuction) {
+    for (const buyers of _chunk([...buyerSet], 400)) {
+      const found = db.all(
+        `SELECT DISTINCT buyer, invo, asp_invo FROM lots
+         WHERE auction_id = ? AND buyer IN (${buyers.map(() => '?').join(',')})
+           AND asp_invo IS NOT NULL AND asp_invo != ''`,
+        [aid, ...buyers]
+      );
+      for (const f of found) {
+        const k = _key(aid, f.buyer, f.invo);
+        if (!aspMap.has(k)) aspMap.set(k, new Set());
+        aspMap.get(k).add(f.asp_invo);
+      }
+    }
+  }
   for (const r of rows) {
     // For ASP invoices (state contains "Kerala"), the asp_invo column
     // would just be a copy of `invo` — show blank instead of duplicating.
     const isASPRow = String(r.state || '').toLowerCase().includes('kerala');
     if (isASPRow) { r.asp_invo = ''; }
     else {
-      const aspRows = aspStmt.all(r.auction_id, r.buyer, r.invo);
-      r.asp_invo = aspRows.map(x => x.asp_invo).filter(Boolean).join(', ');
+      const s = aspMap.get(_key(r.auction_id, r.buyer, r.invo));
+      r.asp_invo = s ? [...s].filter(Boolean).join(', ') : '';
     }
   }
 
@@ -6634,7 +6662,21 @@ app.get('/api/invoices', requireView, (req, res) => {
     // delivery sites. Distance must be computed to the actual ship-to
     // when one is registered. Falls back to bill-to so legacy buyers
     // without a separate consignee block still resolve.
-    const buyerPinStmt = db.prepare('SELECT pin, cpin FROM buyers WHERE buyer = ? LIMIT 1');
+    // Batch-load the PINs for every buyer that needs a route lookup (one
+    // query per chunk, not one per row), and memoise route lookups per PIN
+    // since many invoices share a buyer / destination.
+    const needPinBuyers = [...new Set(
+      rows.filter(r => r.distance_km == null || r.distance_km === '').map(r => r.buyer)
+    )];
+    const buyerPins = new Map(); // buyer → { pin, cpin } (first row wins, as LIMIT 1 did)
+    for (const buyers of _chunk(needPinBuyers, 400)) {
+      const found = db.all(
+        `SELECT buyer, pin, cpin FROM buyers WHERE buyer IN (${buyers.map(() => '?').join(',')}) ORDER BY id`,
+        buyers
+      );
+      for (const b of found) if (!buyerPins.has(b.buyer)) buyerPins.set(b.buyer, b);
+    }
+    const routeCache = new Map(); // buyerPin → km | null
     for (const r of rows) {
       // Per-invoice override always wins
       if (r.distance_km != null && r.distance_km !== '') {
@@ -6642,13 +6684,16 @@ app.get('/api/invoices', requireView, (req, res) => {
         continue;
       }
       // Route table lookup: need the buyer's PIN
-      const b = buyerPinStmt.get(r.buyer);
+      const b = buyerPins.get(r.buyer);
       const shipPin = b && b.cpin ? String(b.cpin).trim() : '';
       const billPin = b && b.pin  ? String(b.pin ).trim() : '';
       const buyerPin = shipPin || billPin;
       if (!buyerPin || !dispatchPin) { r.resolved_distance_km = null; continue; }
-      const hit = routeStmt.get(dispatchPin, buyerPin, buyerPin, dispatchPin);
-      r.resolved_distance_km = hit && hit.km != null ? Number(hit.km) : null;
+      if (!routeCache.has(buyerPin)) {
+        const hit = routeStmt.get(dispatchPin, buyerPin, buyerPin, dispatchPin);
+        routeCache.set(buyerPin, hit && hit.km != null ? Number(hit.km) : null);
+      }
+      r.resolved_distance_km = routeCache.get(buyerPin);
     }
   } catch (e) {
     // route_distances table may be missing on a partially-migrated DB.
