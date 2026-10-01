@@ -62,22 +62,28 @@ const cleanup = () => {
   const mk = async (ano) => (await api('POST', '/api/auctions', { ano, date: '2026-08-12', state: 'TAMIL NADU' })).d;
   const a9 = await mk('9'); const aid9 = a9.id || (a9.auction && a9.auction.id);
   await mk('8');
+  // Sellers in the MASTER (not just names on lots) so the register's party
+  // picker has something to offer. Created BEFORE the lots so lot 201 can be
+  // LINKED to one: the drawer's Edit seller button needs a trader_id, and a
+  // lot that merely carries a seller's name is the other case (the filler
+  // lots below cover it).
+  const traderIds = {};
+  for (const [name, tel] of [['RAMU PLANTER', '+91 98765 43210'],
+                             ['SELVI PLANTER', '9000011111'],
+                             ['THOMAS KURIAN', '9000022222']]) {
+    const t = await api('POST', '/api/traders', { name, tel });
+    traderIds[name] = (t.d && (t.d.id || (t.d.trader && t.d.trader.id))) || null;
+  }
   for (const [lot_no, name, qty, price] of [
     ['201', 'RAMU PLANTER',  100, 400],
     ['202', 'SELVI PLANTER', 300, 400],
   ]) {
     const r = await api('POST', '/api/lots', { auction_id: aid9, lot_no, name, qty, grade: '1',
       bags: 8, crop: 'CARDAMOM', branch: lot_no === '201' ? 'BODINAYAKANUR' : 'VANDANMEDU',
+      trader_id: traderIds[name] || undefined,
       tel: lot_no === '201' ? '+91 98765 43210' : '9000011111' });
     const id = r.d && (r.d.id || (r.d.lot && r.d.lot.id));
     await api('PUT', `/api/lots/${id}`, { price, amount: qty * price });
-  }
-  // Sellers in the MASTER (not just names on lots) so the register's party
-  // picker has something to offer.
-  for (const [name, tel] of [['RAMU PLANTER', '+91 98765 43210'],
-                             ['SELVI PLANTER', '9000011111'],
-                             ['THOMAS KURIAN', '9000022222']]) {
-    await api('POST', '/api/traders', { name, tel });
   }
 
   // …plus enough filler to span more than one page at the smallest size.
@@ -185,6 +191,49 @@ const cleanup = () => {
   check('…and the 30 unsold lots are reported as Not Auctioned, apart from it',
         wdSplit.na && wdSplit.na.label === 'Not Auctioned' && wdSplit.na.n === '30',
         JSON.stringify(wdSplit));
+
+  // ── The band folds ───────────────────────────────────────────────
+  // Six tall tiles are two rows of screen before the lot list; the fold has
+  // to stick per browser, and it has to leave the figures readable rather
+  // than merely hiding them.
+  console.log('[kpi-fold] the snapshot band collapses to one line, and stays folded');
+  const foldState = () => page.evaluate(() => {
+    const wrap = document.getElementById('hub-kpi-wrap');
+    const tiles = document.getElementById('hub-kpi');
+    const sum = document.getElementById('hub-kpi-sum');
+    return {
+      collapsed: wrap && wrap.getAttribute('data-collapsed'),
+      tilesShown: !!(tiles && tiles.offsetHeight > 0),
+      sumShown: !!(sum && sum.offsetHeight > 0),
+      sumText: (sum && sum.textContent.trim()) || '',
+      aria: document.getElementById('hub-kpi-bar')?.getAttribute('aria-expanded'),
+      stored: localStorage.getItem('hubKpiCollapsed'),
+    };
+  });
+  let fold = await foldState();
+  check('it starts open', fold.collapsed === '0' && fold.tilesShown && !fold.sumShown,
+        JSON.stringify(fold));
+  await page.click('#hub-kpi-bar');
+  fold = await foldState();
+  check('clicking the bar folds the tiles away', fold.collapsed === '1' && !fold.tilesShown,
+        JSON.stringify(fold));
+  check('…and the one-line summary takes their place', fold.sumShown,
+        JSON.stringify(fold));
+  check('…carrying lots, sold and value', /Lots\s*32/.test(fold.sumText)
+        && /Sold\s*2/.test(fold.sumText) && /Value\s*₹/.test(fold.sumText), fold.sumText);
+  check('…and the control says so', fold.aria === 'false', String(fold.aria));
+  check('the choice is remembered', fold.stored === '1', String(fold.stored));
+  // A repaint must not quietly unfold it — renderHubKpi runs on every lot
+  // and catalog load, and it is the function that writes the band's display.
+  await page.evaluate(() => renderHubKpi(window._hubCat && window._hubCat.kpi));
+  fold = await foldState();
+  check('a repaint leaves it folded', fold.collapsed === '1' && !fold.tilesShown,
+        JSON.stringify(fold));
+  await page.click('#hub-kpi-bar');
+  fold = await foldState();
+  check('clicking again brings the tiles back',
+        fold.collapsed === '0' && fold.tilesShown && !fold.sumShown, JSON.stringify(fold));
+  check('…and clears the stored choice', fold.stored === '0', String(fold.stored));
 
   // Search runs server-side; give the debounce and the round trip time.
   await page.evaluate(() => {
@@ -315,6 +364,59 @@ const cleanup = () => {
   check('closing the modal leaves you on the same lot',
         await page.evaluate(() => document.getElementById('hub-lot-drawer').style.display !== 'none'
           && /Lot 201/.test(document.getElementById('hub-lot-drawer').textContent)));
+  // The seller behind the lot, reachable from the same drawer — the Auction
+  // Manager's drawer has always offered this and the Desk's did not, which
+  // made "which screen am I on?" decide whether a bad phone number could be
+  // fixed from where it was spotted.
+  console.log('[lot-seller] the drawer opens the seller editor too');
+  const sellerBtn = await page.evaluate(() => {
+    const b = [...document.querySelectorAll('#hub-lot-drawer .hub-drawer-foot button')]
+      .find(x => /edit seller/i.test(x.textContent));
+    return b ? { there: true, disabled: b.disabled, cls: b.className } : { there: false };
+  });
+  check('an Edit seller button sits in the lot drawer', sellerBtn.there, JSON.stringify(sellerBtn));
+  check('…enabled for a lot that has a seller record', !sellerBtn.disabled, JSON.stringify(sellerBtn));
+  check('…and gated on trader_write like every other seller edit',
+        /needs-trader-write/.test(sellerBtn.cls || ''), sellerBtn.cls);
+  await page.evaluate(() => [...document.querySelectorAll('#hub-lot-drawer .hub-drawer-foot button')]
+    .find(x => /edit seller/i.test(x.textContent)).click());
+  await new Promise(r => setTimeout(r, 600));
+  const sellerModal = await page.evaluate(() => {
+    const m = document.getElementById('trader-modal');
+    return {
+      open: !!(m && getComputedStyle(m).display !== 'none'),
+      name: document.getElementById('t-name')?.value || '',
+      drawerStillOpen: getComputedStyle(document.getElementById('hub-lot-drawer')).display !== 'none',
+    };
+  });
+  check('clicking it opens the seller editor', sellerModal.open, JSON.stringify(sellerModal));
+  check('…pre-filled with that lot\'s seller', !!sellerModal.name, JSON.stringify(sellerModal));
+  check('…over the drawer, which stays put behind it', sellerModal.drawerStillOpen,
+        JSON.stringify(sellerModal));
+  await page.evaluate(() => { if (typeof hideModal === 'function') hideModal('trader-modal'); });
+  await new Promise(r => setTimeout(r, 300));
+  // A lot that carries a seller's NAME but is linked to no master record
+  // cannot open an editor — and says why, rather than opening a blank one.
+  const unlinked = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('#hub-lot-rows tr[data-lot-id]')]
+      .find(tr => /FILLER/.test(tr.textContent));
+    if (!row) return { skipped: true };
+    row.click();
+    const b = [...document.querySelectorAll('#hub-lot-drawer .hub-drawer-foot button')]
+      .find(x => /edit seller/i.test(x.textContent));
+    return { disabled: !!(b && b.disabled), title: (b && b.title) || '' };
+  });
+  if (unlinked.skipped) { console.log('  --   no unlinked lot on this page — skipped'); }
+  else {
+    check('a lot with no seller record offers it disabled, not missing', unlinked.disabled,
+          JSON.stringify(unlinked));
+    check('…and says what to do about it', /not linked to a seller/i.test(unlinked.title),
+          unlinked.title);
+  }
+  // Put the drawer back on the lot the rest of this block expects.
+  await page.evaluate(() => { hubLotClose(); document.querySelector('#hub-lot-rows tr[data-lot-id]').click(); });
+  await new Promise(r => setTimeout(r, 300));
+
   await page.evaluate(() => hubLotClose());
 
   // The drawer's second editor: Price Entry, filtered to this lot.

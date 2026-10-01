@@ -206,6 +206,13 @@ const DEFAULTS = [
   { key: 'agri_bill_template',        value: 'classic', category: 'invoice', label: 'Bill of Supply Layout',   type: 'select' },
   { key: 'commission_bill_template',  value: 'classic', category: 'invoice', label: 'Commission Bill Layout',  type: 'select' },
   { key: 'debit_note_template',       value: 'letterhead', category: 'invoice', label: 'Debit Note Layout',    type: 'select' },
+  // How strongly the company-logo watermark prints, as a percentage. The
+  // default 7 is what the mark was tuned at; a pale or intricate logo often
+  // needs more before it reads on paper, which is the whole reason this is a
+  // setting and not a constant. Clamped 1–60 in pdf/watermark.js — past that
+  // it stops being a watermark and starts competing with the text. 0 is not
+  // "off": that is what flag_pdf_watermark is for.
+  { key: 'pdf_watermark_density', value: '7', category: 'invoice', label: 'Watermark Density % (1–60)', type: 'number' },
 
   // ── SEASON ─────────────────────────────────────────────────
   { key: 'season',            value: '', category: 'season', label: 'Season Name',           type: 'text' },
@@ -274,6 +281,19 @@ const DEFAULTS = [
   // `flag_invoice_watermark` is still honoured as a legacy alias. Thermal lot
   // receipts and the crop receipt are never stamped. See pdf/watermark.js.
   { key: 'flag_pdf_watermark', value: 'true', category: 'flags', label: 'Company Logo Watermark on PDFs', type: 'boolean' },
+
+  // ── DASHBOARD WIDGETS ──────────────────────────────────────
+  // Two heavy panels on the Dashboard, each switchable per install. OFF
+  // removes the widget outright — not just its contents but the control
+  // that opens it, and the fetch behind it: a disabled widget must not
+  // cost a round trip on every dashboard load. Both default ON, which is
+  // the behaviour every install had before the flags existed.
+  //   • Auction Snapshot — the Booked/Sold/Withdrawn matrix and its
+  //     Grade-2 cap band. The per-browser "Show / Hide" choice still works
+  //     underneath this; the flag decides whether the choice exists.
+  //   • Current Auction — the depot-wise panel under the headline tiles.
+  { key: 'flag_dash_snapshot',       value: 'true', category: 'flags', label: 'Auction Snapshot on Dashboard',       type: 'boolean' },
+  { key: 'flag_dash_current_auction',value: 'true', category: 'flags', label: 'Current Auction Widget on Dashboard', type: 'boolean' },
   { key: 'flag_dummy',           value: 'false', category: 'flags', label: 'Allow Dummy Invoices',            type: 'boolean' },
   { key: 'flag_round',           value: 'false', category: 'flags', label: 'Round Invoice Amounts',           type: 'boolean' },
   { key: 'flag_export',          value: 'false', category: 'flags', label: 'Export Invoices',                 type: 'boolean' },

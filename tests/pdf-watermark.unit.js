@@ -10,6 +10,8 @@
 //
 //   [module]   the toggle (default ON, legacy alias), a missing logo, and the
 //              injection rule
+//   [density]  pdf_watermark_density turns the mark up for a pale logo, in
+//              BOTH engines, clamped at both ends
 //   [pdfkit]   each PDFKit generator draws the mark ONCE per page, on top of
 //              its own pages and every page a batch adds
 //   [state]    it leaves the graphics state and the text cursor as it found
@@ -145,6 +147,38 @@ const debitNote = { name: dnTrader.name, ano: '12', date: '2026-09-01', no: 5, c
         wm.withWatermark('<p>bare</p>', CFG).includes('doc-watermark'));
   check('flag off leaves the html byte-identical',
         wm.withWatermark('<html><body>x</body></html>', OFF) === '<html><body>x</body></html>');
+
+  console.log('[density] the operator can turn the mark up');
+  // The complaint this exists for: a pale logo that does not read on paper.
+  const dens = (v) => wm.watermarkOpacity({ pdf_watermark_density: v });
+  check('unset ⇒ the tuned default', dens(undefined) === wm.OPACITY && dens('') === wm.OPACITY);
+  check('a percentage is taken literally', Math.abs(dens('20') - 0.20) < 1e-9, String(dens('20')));
+  check('junk falls back rather than printing nothing', dens('abc') === wm.OPACITY);
+  check('clamped at the bottom — 0 is not "off", the flag is',
+        Math.abs(dens('0') - wm.DENSITY_MIN / 100) < 1e-9, String(dens('0')));
+  check('…and at the top, before it fights the text',
+        Math.abs(dens('500') - wm.DENSITY_MAX / 100) < 1e-9, String(dens('500')));
+  // Both engines move together, keeping the behind/on-top ratio that makes
+  // them look alike — turning it up must not make the HTML documents heavier
+  // than the PDFKit ones.
+  check('the over-content layer scales with it',
+        Math.abs(wm.watermarkOpacityOver({ pdf_watermark_density: '20' }) - 0.20 * wm.OVER_RATIO) < 1e-9);
+  check('…and stays the lighter of the two',
+        wm.watermarkOpacityOver({ pdf_watermark_density: '20' }) < dens('20'));
+  const denseHtml = wm.withWatermark('<html><body>x</body></html>', { ...CFG, pdf_watermark_density: '25' });
+  check('the injected CSS carries the raised value',
+        /opacity:0\.17\d*/.test(denseHtml), (denseHtml.match(/opacity:[0-9.]+/) || [])[0]);
+  // The real PDF: PDFKit writes the opacity as an ExtGState /ca entry.
+  const caOf = async (density) => {
+    const buf = await inv0.generateSalesInvoicePDF(
+      salesInv, { ...CFG, pdf_watermark_density: density }, 'L', '1', '01/09/2026');
+    return (buf.toString('latin1').match(/\/ca ([0-9.]+)/g) || []).join(' ');
+  };
+  const inv0 = require(path.join(ROOT, 'invoice-pdf'));
+  check('a printed invoice carries the default density', (await caOf('7')).includes('/ca 0.07'),
+        await caOf('7'));
+  check('…and the raised one when it is set', (await caOf('25')).includes('/ca 0.25'),
+        await caOf('25'));
 
   // ── PDFKit engine ──────────────────────────────────────────────────
   console.log('[pdfkit] every generator draws it, once per page');

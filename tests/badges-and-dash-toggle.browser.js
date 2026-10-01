@@ -3,6 +3,8 @@
 //   [D] the dashboard logo rides in the greeting row, horizontally centred
 //   [T] the trade snapshot is hidden until its toggle is used, and the
 //       auction picker stays reachable while it is
+//   [F] both dashboard widgets answer to their install flags — OFF removes
+//       the panel AND the control that opens it, and costs no fetch
 //   [K] the Auction Desk carries a seller-warning filter that narrows the
 //       lot table, its KPI strip and its totals together
 //   [M] the Auction Manager shows the same badges on Lots / Planters /
@@ -205,6 +207,72 @@ const cleanup = () => {
   check('and toggling back hides it again',
         await page.evaluate(() => localStorage.getItem('dashSnapVisible') === '0'));
   await page.screenshot({ path: path.join(SHOT_DIR, 'dash-snap-shut.png'), fullPage: false });
+
+  // ── [F] The install flags ────────────────────────────────────────
+  // Distinct from the per-browser Show/Hide above: that is an operator's
+  // choice, this is whether the widget is on this install's dashboard at
+  // all. OFF has to take the CONTROL with it — a Show button for a widget
+  // the install has switched off is the worst of both.
+  console.log('\n[F] the dashboard widget flags');
+  const dashState = () => page.evaluate(() => ({
+    snapBtn:  !!document.querySelector('.dash-snap-toggle-btn'),
+    snapCard: !!document.getElementById('dash-snap-card'),
+    current:  !!document.getElementById('dash-current-auction'),
+    picker:   !!document.querySelector('.dash-snap-toggle select'),
+    attrSnap: document.body.getAttribute('data-feat-dash-snapshot'),
+    attrCur:  document.body.getAttribute('data-feat-dash-current-auction'),
+  }));
+  // Count depot-summary requests, so "no widget" can be shown to also mean
+  // "no round trip" rather than just "nothing painted".
+  let depotCalls = 0;
+  page.on('request', (r) => { if (/\/depot-summary/.test(r.url())) depotCalls++; });
+
+  const setFlags = async (snap, cur) => {
+    await api('PUT', '/api/company-settings', { settings: {
+      flag_dash_snapshot: String(snap), flag_dash_current_auction: String(cur) } });
+    await page.reload({ waitUntil: 'networkidle2' });
+    await page.waitForFunction(() => document.getElementById('app')?.style.display === 'block', { timeout: 20000 });
+    // A reload lands on whatever screen the session last had; the flags are
+    // read on the dashboard, so go there explicitly rather than hoping.
+    await page.waitForFunction(() => typeof go === 'function' && document.body.hasAttribute('data-feat-dash-snapshot'),
+                               { timeout: 20000 });
+    await page.evaluate(() => go('dash'));
+    await page.waitForFunction(() => !!document.querySelector('#tc-dash .greeting'), { timeout: 20000 });
+    await new Promise((r) => setTimeout(r, 700));
+  };
+
+  await setFlags(true, true);
+  let st = await dashState();
+  check('both ON: the snapshot control and the Current Auction panel are there',
+        st.snapBtn && st.current, JSON.stringify(st));
+  check('…and the body says so', st.attrSnap === '1' && st.attrCur === '1', JSON.stringify(st));
+
+  depotCalls = 0;
+  await setFlags(false, false);
+  st = await dashState();
+  check('snapshot OFF: no card', !st.snapCard, JSON.stringify(st));
+  check('…and no Show control either', !st.snapBtn, JSON.stringify(st));
+  check('…but the trade picker survives — the rest of the dashboard follows it',
+        st.picker, JSON.stringify(st));
+  check('Current Auction OFF: the panel is gone', !st.current, JSON.stringify(st));
+  check('…and it did not fetch its data', depotCalls === 0, String(depotCalls));
+
+  // One at a time, so neither flag is secretly driving the other.
+  await setFlags(true, false);
+  st = await dashState();
+  check('snapshot ON alone: its control is back, the panel is not',
+        st.snapBtn && !st.current, JSON.stringify(st));
+  depotCalls = 0;
+  await setFlags(false, true);
+  st = await dashState();
+  check('Current Auction ON alone: the panel is back, the control is not',
+        st.current && !st.snapBtn, JSON.stringify(st));
+  await page.waitForFunction(() => {
+    const h = document.getElementById('dash-current-auction');
+    return !!(h && h.children.length);
+  }, { timeout: 20000 }).catch(() => {});
+  check('…and it fetched again', depotCalls > 0, String(depotCalls));
+  await setFlags(true, true);
 
   // The header is a three-column grid on a desktop; on a phone it has to
   // stack rather than squeeze the greeting or push the button off-screen.

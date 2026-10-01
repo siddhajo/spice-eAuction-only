@@ -146,14 +146,14 @@ function cleanup() {
     showModal('trader-modal');
     showModal('buyer-modal');
     showModal('lorry-wa-modal');
-    const le = document.getElementById('le-newseller-modal');
-    if (le) le.style.display = 'flex';
   });
 
+  // Lot Entry used to have its own Add Seller dialog with its own phone box;
+  // it opens the Sellers modal now, so "#t-tel" below is that box too — one
+  // field to get right instead of two that could drift apart.
   const FIELDS = [
     ['Sellers modal',      '#t-tel'],
     ['Buyers modal',       '#b-tel'],
-    ['Lot Entry new seller', '#le-ns-tel'],
   ];
 
   console.log('[1] Every seller/buyer phone box is capped and numeric');
