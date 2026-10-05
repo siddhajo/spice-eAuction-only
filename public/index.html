@@ -6977,6 +6977,18 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                 <option value="KERALA">KERALA</option>
               </select>
             </div>
+            <!-- Form-D "Place of auction" for this trade, same field the
+                 Auctions-tab modal carries — a trade created from Lot Entry
+                 must not come out missing it. Spans both columns because the
+                 venue names are long. -->
+            <div style="grid-column:1 / -1">
+              <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Place of Auction <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text3)">(Form-D)</span></div>
+              <select id="le-nt-place" onchange="leOnNewTradePlaceChange()" style="width:100%;height:38px;padding:0 10px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;background:#fff">
+                <option value="">— Use configured branch —</option>
+              </select>
+              <input type="text" id="le-nt-place-new" maxlength="120" placeholder="e.g. e-Auction Spices Park Puttady"
+                     style="display:none;width:100%;height:38px;padding:0 10px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;margin-top:6px">
+            </div>
           </div>
           <div id="le-nt-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:13px;margin-bottom:10px"></div>
           <div style="display:flex;gap:8px;justify-content:flex-end">
@@ -9080,6 +9092,28 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     <div class="fg"><label>Date *</label><input type="date" id="a-date"></div>
     <div class="fg"><label>Crop Type</label><input id="a-crpt"></div>
     <div class="fg"><label>State</label><select id="a-state"><option>TAMIL NADU</option><option>KERALA</option></select></div>
+  </div>
+
+  <!-- Form-D "Place of auction" for THIS trade. The venue is known when the
+       auction is created and nothing else about a trade records it, so it is
+       set here rather than asked for at print time. Options come from the
+       `formd_places` setting (Settings → Spice Board Reports); picking
+       "+ Add a new place…" reveals the box below, and whatever is typed
+       there is appended to that same list on save, so a venue is only ever
+       entered once. Blank = fall back to the configured branch, which is
+       what every trade did before this field existed. -->
+  <div class="fg" style="margin-top:2px">
+    <label>Place of Auction <span style="font-weight:400;color:var(--text3)">(Form-D)</span></label>
+    <select id="a-place" onchange="onAuctionPlaceChange()">
+      <option value="">— Use configured branch —</option>
+    </select>
+    <input id="a-place-new" style="display:none;margin-top:6px" maxlength="120"
+           placeholder="e.g. e-Auction Spices Park Puttady"
+           title="Typed here, this place is saved on the trade AND added to the Form-D place list">
+    <div style="font-size:11px;color:var(--text3);line-height:1.5;margin-top:4px">
+      Form-D for this trade prints this as its <b>Place of auction</b>. Leave it on
+      “Use configured branch” to keep the old behaviour.
+    </div>
   </div>
 
   <!-- Copy from previous auction — create-mode only (hidden on edit).
@@ -21514,6 +21548,9 @@ function leOpenNewTradeModal(){
   // baking 'ASP' / 'TAMIL NADU' literals into the page.
   document.getElementById('le-nt-crop').value = getDefaultCropType();
   document.getElementById('le-nt-state').value = getDefaultBusinessState();
+  // Fire-and-forget, like the Auctions-tab modal: the field is optional, so a
+  // slow settings read must not hold the form shut.
+  leLoadNewTradePlaces();
   document.getElementById('le-nt-err').style.display = 'none';
   document.getElementById('le-newtrade-modal').style.display = 'flex';
   setTimeout(() => document.getElementById('le-nt-ano').focus(), 50);
@@ -21537,11 +21574,15 @@ async function leSaveNewTrade(){
   const btn = document.getElementById('le-nt-save');
   btn.disabled = true;
   try {
+    const place = leNewTradePlaceValue();
     const result = await j('/api/auctions', {
       method: 'POST',
-      body: JSON.stringify({ ano, date, crop_type: crop, state })
+      body: JSON.stringify({ ano, date, crop_type: crop, state, place })
     });
-    toast(`Auction #${ano} created ✓`);
+    // `placeAdded` means a typed venue was appended to the Form-D place list
+    // — a SETTING changed, which is worth saying out loud.
+    toast(`Auction #${ano} created ✓`
+      + (result && result.placeAdded ? ' · place added to the Form-D list' : ''));
     leCloseNewTradeModal();
     // Reload the auction list and auto-select the newly created trade.
     // The server returns { id } from POST /api/auctions, but the GET
@@ -28153,18 +28194,20 @@ const TALLY_GROUPS = [
           'tally_transport','tally_insurance','tally_round',
           'tally_sample_planter','tally_sample_dealer'] },
 
+  // Only the two rates with NO twin on the Rates screen are set here. Gunny,
+  // GST Goods, Insurance and TCS/TDS used to have a second box in this card,
+  // read only by the Tally export — so a site could bill at one rate and book
+  // at another with nothing on screen to say so. They are retired; the export
+  // now reads Settings → Rates. Same for the five HSN/SAC codes, which now
+  // come from Settings → HSN/SAC. See RETIRED_SETTING_KEYS in company-config.js.
   { title:'Rates', icon:'📊',
-    hint:'Percentages and per-unit rates stamped into the XML. These are the Tally-side copies — the invoice itself is priced from Rates & Charges.',
-    keys:['tally_gst_rate','tally_service_rate','tally_tcs_rate','tally_export_rate',
-          'tally_gunny_rate','tally_transport_rate','tally_local_trans_rate',
-          'tally_insurance_rate','tally_local_ins_rate','tally_sample_kgs'] },
+    hint:'The two rates that are Tally-only. Every other rate in the XML — GST Goods, Gunny, Transport, Insurance, TCS/TDS — comes from Settings → Rates & Charges, the same figures the invoice is billed at.',
+    keys:['tally_service_rate','tally_export_rate'] },
 
-  { title:'Stock Items, Units & HSN / SAC', icon:'🏷',
-    hint:'Stock item names must match Tally exactly, and each unit symbol must match the unit defined on that item. Blank units default to Kgs. (cardamom) and Nos. (gunny).',
+  { title:'Stock Items & Units', icon:'🏷',
+    hint:'Stock item names must match Tally exactly, and each unit symbol must match the unit defined on that item. Blank units default to Kgs. (cardamom) and Nos. (gunny). The HSN / SAC codes come from Settings → HSN/SAC.',
     keys:['tally_item_cardamom','tally_item_gunny',
-          'tally_unit_cardamom','tally_unit_gunny',
-          'tally_hsn_cardamom','tally_hsn_gunny',
-          'tally_hsn_service','tally_hsn_transport','tally_hsn_insurance'] },
+          'tally_unit_cardamom','tally_unit_gunny'] },
 
   { title:'E-way Bill Distance', icon:'🛣',
     hint:'Auto-fills <DISTANCE> from the two PIN codes; the multiplier converts straight-line distance to road distance.',
@@ -30409,6 +30452,73 @@ async function loadAuctions(opts){
   if (typeof BulkActions !== 'undefined' && BulkActions._sync) BulkActions._sync('trade');
 }
 
+// ── Form-D "Place of auction" picker (New / Edit Auction modal) ──
+// Options are the `formd_places` setting, one per line. The last option is
+// "+ Add a new place…", which reveals a text box — what is typed there is
+// saved on the trade AND appended to that setting server-side, so a venue
+// the office actually used is in the list next time without a separate trip
+// to Settings.
+//
+// `selected` keeps an EDIT showing the trade's stored place even when it is
+// not in the list any more (someone removed the line from Settings). Dropping
+// it silently would rewrite the venue on the next save of an unrelated field.
+const A_PLACE_NEW = '__new__';
+// The list itself, cached per modal-open. Two creation paths use it (the
+// Auctions tab and Lot Entry's quick-create) and both need the same answer.
+async function fetchFormdPlaces(){
+  try {
+    const cfg = await j('/api/company-settings/flat');
+    return String((cfg && cfg.formd_places) || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  } catch (_) { return []; }   // non-fatal — a new place can still be typed
+}
+// Fill one place <select> + its "type a new one" box. `selIds`/`boxIds` are
+// element ids so the Auctions modal and the Lot Entry modal share this whole
+// behaviour rather than each growing its own copy.
+async function fillPlaceSelect(selId, boxId, selected){
+  const sel = document.getElementById(selId);
+  const box = document.getElementById(boxId);
+  if (!sel) return;
+  const cur = String(selected || '').trim();
+  const places = await fetchFormdPlaces();
+  // An EDIT must keep showing the trade's stored place even when it is no
+  // longer in the list (someone removed the line from Settings) — dropping it
+  // silently would rewrite the venue on the next save of an unrelated field.
+  if (cur && !places.some(p => p.toLowerCase() === cur.toLowerCase())) places.push(cur);
+  sel.innerHTML = '<option value="">— Use configured branch —</option>'
+    + places.map(p => `<option value="${esc(p)}"${p.toLowerCase() === cur.toLowerCase() ? ' selected' : ''}>${esc(p)}</option>`).join('')
+    + `<option value="${A_PLACE_NEW}">+ Add a new place…</option>`;
+  if (!cur) sel.value = '';
+  if (box) { box.value = ''; box.style.display = 'none'; }
+}
+// Reveal / hide the "new place" box for one pair.
+function togglePlaceNew(selId, boxId){
+  const sel = document.getElementById(selId);
+  const box = document.getElementById(boxId);
+  if (!sel || !box) return;
+  const adding = sel.value === A_PLACE_NEW;
+  box.style.display = adding ? '' : 'none';
+  if (adding) setTimeout(() => box.focus(), 30);
+  else box.value = '';
+}
+// What one pair would save: the typed box when "+ Add a new place…" is
+// selected, otherwise the picked option. '' means "use configured branch".
+function placeValueOf(selId, boxId){
+  const sel = document.getElementById(selId);
+  const box = document.getElementById(boxId);
+  if (!sel) return '';
+  if (sel.value === A_PLACE_NEW) return String((box && box.value) || '').trim();
+  return String(sel.value || '').trim();
+}
+
+// Per-modal bindings. The Auctions tab and Lot Entry's quick-create each get
+// their own three; everything they do lives in the shared trio above.
+function loadAuctionPlaces(selected){ return fillPlaceSelect('a-place', 'a-place-new', selected); }
+function onAuctionPlaceChange(){ togglePlaceNew('a-place', 'a-place-new'); }
+function auctionPlaceValue(){ return placeValueOf('a-place', 'a-place-new'); }
+function leLoadNewTradePlaces(){ return fillPlaceSelect('le-nt-place', 'le-nt-place-new', ''); }
+function leOnNewTradePlaceChange(){ togglePlaceNew('le-nt-place', 'le-nt-place-new'); }
+function leNewTradePlaceValue(){ return placeValueOf('le-nt-place', 'le-nt-place-new'); }
+
 function openAuctionAdd(){
   document.getElementById('auction-modal-title').textContent='New Auction';
   document.getElementById('a-id').value='';
@@ -30420,6 +30530,10 @@ function openAuctionAdd(){
   resetCarrySection();
   document.getElementById('a-carry-section').style.display='';
   populateCarrySources();
+  // Fire-and-forget: a slow settings read must not hold the modal shut, and
+  // the field is optional — an operator who saves before it lands gets the
+  // same blank "use configured branch" they would have chosen anyway.
+  loadAuctionPlaces('');
   showModal('auction-modal');
 }
 
@@ -30740,24 +30854,33 @@ function openAuctionEdit(a){
   document.getElementById('a-date').value=a.date||'';
   document.getElementById('a-crpt').value=a.crop_type||getDefaultCropType();
   document.getElementById('a-state').value=a.state||getDefaultBusinessState();
+  loadAuctionPlaces(a.place || '');
   showModal('auction-modal');
 }
 async function saveAuction(){
   const id=document.getElementById('a-id').value;
   const body={ano:document.getElementById('a-ano').value,date:document.getElementById('a-date').value,
-    crop_type:document.getElementById('a-crpt').value,state:document.getElementById('a-state').value};
+    crop_type:document.getElementById('a-crpt').value,state:document.getElementById('a-state').value,
+    // '' is meaningful here — it clears the trade's venue back to the
+    // configured branch — so the key is always sent from this form.
+    place:auctionPlaceValue()};
   if(!body.ano||!body.date){alert('Auction No and Date are required');return}
   try{
     const r=await fetch(B+(id?`/api/auctions/${id}`:'/api/auctions'),{method:id?'PUT':'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},body:JSON.stringify(body)});
     if(!r.ok){const d=await r.json();throw new Error(d.error||'Save failed')}
+    // Read the body ONCE — both branches below want something out of it.
+    const saved=await r.json().catch(()=>({}));
     // On CREATE, run the optional carry-forward (copy allocations / carry
     // unsold lots) before closing so the operator gets one combined toast.
-    if(!id){
-      const created=await r.json().catch(()=>({}));
-      await runCarryForward(created && created.id);
-    }
-    hideModal('auction-modal');toast(id?'Auction updated':'Auction created');loadAuctions();
+    if(!id) await runCarryForward(saved && saved.id);
+    hideModal('auction-modal');
+    // `placeAdded` comes back when a typed venue was appended to the Form-D
+    // place list — worth saying, because that changed a SETTING, not just
+    // this trade, and the operator never opened Settings to do it.
+    toast((id?'Auction updated':'Auction created')
+      + (saved && saved.placeAdded ? ' · place added to the Form-D list' : ''));
+    loadAuctions();
     // Newly created / renamed auction needs to surface in the topbar
     // selector. Fire-and-forget so a slow /api/auctions doesn't block UX.
     try { loadTopbarTradeSelector(); } catch(_) {}
@@ -32460,6 +32583,11 @@ function sbQueryString(extra){
 // dropdown. Newline-separated, with surrounding whitespace and blank
 // lines stripped. Called once per Spice Board tab visit; an admin edit
 // in Settings → Spice Board Reports takes effect on the next visit.
+// The place the SELECTED TRADE will print if this dropdown is left alone —
+// `auctions.place`, set when the auction was created. Kept here (rather than
+// re-fetched) so sbLoadPlaces and onSbAuctionChange can arrive in either
+// order without one clobbering the other's answer.
+let _sbTradePlace = '';
 async function sbLoadPlaces(){
   const sel = document.getElementById('sb-place');
   if (!sel) return;
@@ -32467,11 +32595,31 @@ async function sbLoadPlaces(){
     const cfg = await j('/api/company-settings/flat');
     const raw = String((cfg && cfg.formd_places) || '');
     const places = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-    sel.innerHTML = '<option value="">— Use configured branch —</option>' +
+    sel.innerHTML = sbPlaceDefaultOption() +
       places.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
   } catch (_) {
     // Non-fatal — dropdown stays at its empty default.
   }
+}
+// The blank option's label. Blank has always meant "don't override", but what
+// it falls back TO now depends on the trade: its own place when it has one,
+// the configured branch when it doesn't. Saying which stops the operator
+// overriding a venue that was already correct.
+function sbPlaceDefaultOption(){
+  return _sbTradePlace
+    ? `<option value="">— This trade: ${esc(_sbTradePlace)} —</option>`
+    : '<option value="">— Use configured branch —</option>';
+}
+// Re-label the blank option after the trade changes, keeping whatever the
+// operator had explicitly picked.
+function sbSyncPlaceDefault(){
+  const sel = document.getElementById('sb-place');
+  if (!sel) return;
+  const keep = sel.value;
+  const first = sel.options[0];
+  if (first && first.value === '') first.textContent =
+    _sbTradePlace ? `— This trade: ${_sbTradePlace} —` : '— Use configured branch —';
+  sel.value = keep;
 }
 async function loadSpiceBoard(){
   await fillAucSelect('sb-auction');
@@ -32493,6 +32641,10 @@ async function onSbAuctionChange(){
       (f.sellers||[]).map(s=>`<option value="${s.id}">${esc(s.name||'')}</option>`).join('');
     if (buyerSel)  buyerSel.innerHTML  = '<option value="">— All buyers —</option>' +
       (f.buyers||[]).map(b=>`<option value="${esc(b.code)}">${esc(b.name||b.code)}</option>`).join('');
+    // Switching trades can switch venues, so the "leave it alone" label has
+    // to follow. The operator's own pick (if any) is preserved.
+    _sbTradePlace = String((f && f.place) || '').trim();
+    sbSyncPlaceDefault();
   } catch (e) { /* non-fatal — filters stay at defaults */ }
 }
 function onSbTypeChange(){

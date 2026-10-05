@@ -7475,24 +7475,67 @@ app.get('/api/auctions', requireViewOrLotEntry, (req, res) => {
   }
   res.json(withFmtDate(db.all(sel + ' LIMIT 100', params)));
 });
+// ── Form-D "Place of auction", carried on the trade ──────────────────
+// The venue is known when the auction is created, and it is the one thing
+// Form-D asks for that nothing else about a trade records — so it is set
+// there, from the `formd_places` list, and Form-D reads it per trade instead
+// of asking again at print time. Blank keeps the old behaviour exactly: fall
+// back to the configured branch.
+const FORMD_PLACE_MAX = 120;
+function normalizeAuctionPlace(v) {
+  return String(v == null ? '' : v).trim().replace(/\s+/g, ' ').slice(0, FORMD_PLACE_MAX);
+}
+// A place used by a real trade belongs in the list the pickers offer — so
+// typing a new venue on the New Auction form adds it, rather than making the
+// operator enter it twice (once here, once in Settings). Compared
+// case-insensitively on collapsed whitespace so "Spices Park  Puttady" does
+// not become a second entry beside "Spices Park Puttady"; appended, never
+// reordered, so the existing list keeps the order the operator chose.
+function rememberFormdPlace(db, place, username) {
+  const p = normalizeAuctionPlace(place);
+  if (!p) return false;
+  const raw = String(getSetting(db, 'formd_places') || '');
+  const lines = raw.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  const key = s => s.toLowerCase().replace(/\s+/g, ' ');
+  if (lines.some(l => key(l) === key(p))) return false;
+  lines.push(p);
+  updateSettings(db, { formd_places: lines.join('\n') }, { username: username || '' });
+  return true;
+}
+
 app.post('/api/auctions', requireAuctionWrite, (req, res) => {
   const { ano, date, crop_type, state } = req.body;
   const db = getDb();
   const d = normalizeDate(date);
   const defaultCrop  = getSetting(db, 'default_crop_type') || 'VST';
   const defaultState = getSetting(db, 'business_state')    || 'TAMIL NADU';
-  db.run('INSERT INTO auctions (ano,date,crop_type,state) VALUES (?,?,?,?)', [ano, d, crop_type||defaultCrop, state||defaultState]);
+  const place = normalizeAuctionPlace(req.body.place);
+  db.run('INSERT INTO auctions (ano,date,crop_type,state,place) VALUES (?,?,?,?,?)',
+    [ano, d, crop_type||defaultCrop, state||defaultState, place]);
   const created = db.get('SELECT id FROM auctions WHERE ano = ? AND date = ? ORDER BY id DESC LIMIT 1', [ano, d]);
-  res.json({ success: true, id: created ? created.id : null });
+  const placeAdded = rememberFormdPlace(db, place, req.user && req.user.username);
+  res.json({ success: true, id: created ? created.id : null, place, placeAdded });
 });
 app.put('/api/auctions/:id', requireAuctionWrite, (req, res) => {
   const { ano, date, crop_type, state } = req.body;
   const db = getDb();
   const defaultCrop  = getSetting(db, 'default_crop_type') || 'VST';
   const defaultState = getSetting(db, 'business_state')    || 'TAMIL NADU';
-  db.run('UPDATE auctions SET ano=?, date=?, crop_type=?, state=? WHERE id=?',
-    [ano, normalizeDate(date), crop_type||defaultCrop, state||defaultState, req.params.id]);
-  res.json({ success: true });
+  // `place` absent from the body = leave it alone. Every other field here is
+  // required by the form that sends them, but this one has older callers
+  // (and the Lot Entry quick-create) that know nothing about it — they must
+  // not blank a venue someone set. An explicit '' still clears it.
+  const hasPlace = Object.prototype.hasOwnProperty.call(req.body, 'place');
+  const place = hasPlace ? normalizeAuctionPlace(req.body.place) : null;
+  if (hasPlace) {
+    db.run('UPDATE auctions SET ano=?, date=?, crop_type=?, state=?, place=? WHERE id=?',
+      [ano, normalizeDate(date), crop_type||defaultCrop, state||defaultState, place, req.params.id]);
+  } else {
+    db.run('UPDATE auctions SET ano=?, date=?, crop_type=?, state=? WHERE id=?',
+      [ano, normalizeDate(date), crop_type||defaultCrop, state||defaultState, req.params.id]);
+  }
+  const placeAdded = hasPlace ? rememberFormdPlace(db, place, req.user && req.user.username) : false;
+  res.json({ success: true, place, placeAdded });
 });
 // Designate (or clear) the default trade — the auction the mobile app
 // pre-selects + highlights when an operator starts a session. Stored as

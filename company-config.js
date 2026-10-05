@@ -34,6 +34,45 @@ const HIDDEN_SETTING_KEYS = new Set([
   'wa_billing_url',
 ]);
 
+// ── Settings RETIRED into a single canonical key (2026-10-04) ────────────
+// Every entry here was a second box for a number the app was already
+// configured with somewhere else. The Tally screen carried its own Gunny
+// Rate, GST Goods Rate, Insurance Rate, TCS/TDS Rate and five HSN/SAC codes,
+// read ONLY by tally-xml.js and with no fallback to the Rates / HSN screens
+// the invoices bill from. Nothing reconciled the two, and nothing on screen
+// said which was live — so on the install this was found on, gunny was ₹150
+// on the invoice and ₹200 in the books.
+//
+// Four more were worse than ambiguous: tally_transport_rate,
+// tally_local_trans_rate, tally_local_ins_rate and tally_sample_kgs had NO
+// reader anywhere in the codebase. Typing in them did nothing at all.
+//
+// key → the canonical setting it is now read from (or null = it did nothing):
+const RETIRED_SETTING_KEYS = new Map([
+  ['tally_gunny_rate',       'gunny_rate'],
+  ['tally_gst_rate',         'gst_goods'],
+  ['tally_insurance_rate',   'insurance'],
+  // One box drove BOTH the TCS and the TDS ledger master, at one rate. They
+  // are two different taxes, and the Rates screen already names both.
+  ['tally_tcs_rate',         'tcs_tds'],
+  ['tally_hsn_cardamom',     'hsn_cardamom'],
+  ['tally_hsn_gunny',        'hsn_gunny'],
+  ['tally_hsn_service',      'sac_service'],
+  ['tally_hsn_transport',    'sac_transport'],
+  ['tally_hsn_insurance',    'sac_insurance'],
+  // Dead boxes — no reader, ever. Transport in the Tally XML has always come
+  // from the amount the app computed off the Rates screen's `transport`.
+  ['tally_transport_rate',   null],
+  ['tally_local_trans_rate', null],
+  ['tally_local_ins_rate',   null],
+  ['tally_sample_kgs',       null],
+]);
+// Hidden rather than deleted, exactly like the block above: the rows stay in
+// the table (so a value is still there to read if one of these ever has to be
+// brought back, and a settings re-import cannot resurrect the control), they
+// just stop rendering as editable boxes.
+for (const k of RETIRED_SETTING_KEYS.keys()) HIDDEN_SETTING_KEYS.add(k);
+
 const DEFAULTS = [
   // ── COMPANY (Primary - ISP) ────────────────────────────────
   { key: 'logo',             value: '', category: 'company',     label: 'Logo Code',                type: 'text' },
@@ -113,17 +152,17 @@ const DEFAULTS = [
   // quantity carry a small per-lot sample allowance over the billed quantity.
   // Entered in grams; converted to Kgs internally. Blank/0 = no adjustment.
   { key: 'sb_refund_actual_extra_g', value: '50', category: 'rates', label: 'Sample Refund ACTUALQTY Extra (grams per lot — RD/URD purchase XML)', type: 'number' },
-  { key: 'gst_goods',           value: '0', category: 'rates', label: 'GST Goods Rate %',                             type: 'number' },
+  { key: 'gst_goods',           value: '0', category: 'rates', label: 'GST Goods Rate % — invoice + Tally',           type: 'number' },
   { key: 'gst_service',         value: '0', category: 'rates', label: 'GST Service Rate %',                           type: 'number' },
   { key: 'discount_gst',        value: '0', category: 'rates', label: 'Discount GST %',                               type: 'number' },
-  { key: 'tcs_tds',             value: '0', category: 'rates', label: 'TCS / TDS Rate %',                             type: 'number' },
+  { key: 'tcs_tds',             value: '0', category: 'rates', label: 'TCS Rate % (sales, 206C(1H))',                 type: 'number' },
   { key: 'tds_purchase_rate',   value: '0', category: 'rates', label: 'TDS on Purchase Rate % (Section 194Q)',        type: 'number' },
   { key: 'tds_threshold',       value: '0', category: 'rates', label: 'TDS / TCS Annual Threshold (₹)',               type: 'number' },
-  { key: 'gunny_rate',          value: '0', category: 'rates', label: 'Gunny Rate (₹)',                               type: 'number' },
+  { key: 'gunny_rate',          value: '0', category: 'rates', label: 'Gunny Rate (₹ per bag) — invoice + Tally',     type: 'number' },
   { key: 'transport',           value: '0', category: 'rates', label: 'Transport (₹/kg)',                             type: 'number' },
-  { key: 'insurance',           value: '0', category: 'rates', label: 'Insurance Rate (₹/₹1000)',                     type: 'number' },
+  { key: 'insurance',           value: '0', category: 'rates', label: 'Insurance Rate (₹/₹1000) — invoice + Tally',   type: 'number' },
   { key: 'local_transport',     value: '0', category: 'rates', label: 'Local Transport (₹/kg)',                       type: 'number' },
-  { key: 'local_insurance',     value: '0', category: 'rates', label: 'Local Insurance (₹/kg)',                       type: 'number' },
+  { key: 'local_insurance',     value: '0', category: 'rates', label: 'Local Insurance (₹/₹1000)',                    type: 'number' },
   { key: 'discount_pct',        value: '0', category: 'rates', label: 'Discount %',                                   type: 'number' },
   { key: 'discount_days',       value: '0', category: 'rates', label: 'No. of Days for Discount',                     type: 'number' },
   { key: 'dealer_days',         value: '0', category: 'rates', label: 'No. of Days for Dealer',                       type: 'number' },
@@ -987,17 +1026,17 @@ const DEFAULTS = [
   { key: 'tally_cash_handling',         value: '', category: 'tally', label: 'Cash Handling Charges Ledger',            type: 'text' },
   { key: 'tally_cash_handling_planter', value: '', category: 'tally', label: 'Cash Handling Charges Ledger-Planter',     type: 'text' },
 
-  // Tax / commercial rates
-  { key: 'tally_gst_rate',         value: '0', category: 'tally', label: 'GST Goods Rate %',                type: 'number' },
+  // Tax / commercial rates.
+  //
+  // The rates this export PRINTS are not configured here — they are the same
+  // ones the invoices bill with, on Settings → Rates and → HSN/SAC. Nine keys
+  // that used to sit in this block (GST Goods, TCS/TDS, Gunny, Transport,
+  // Local Transport, Insurance, Local Insurance, Sample Refund Kgs, and the
+  // five tally_hsn_* codes) were RETIRED on 2026-10-04 — see RETIRED_SETTING_KEYS
+  // below for what each one became. Only the two rates that genuinely have no
+  // twin on the Rates screen remain.
   { key: 'tally_service_rate',     value: '0', category: 'tally', label: 'Service Rate % (DN/Discount)',    type: 'number' },
-  { key: 'tally_tcs_rate',         value: '0', category: 'tally', label: 'TCS / TDS Rate %',                type: 'number' },
   { key: 'tally_export_rate',      value: '0', category: 'tally', label: 'Export GST Rate %',               type: 'number' },
-  { key: 'tally_sample_kgs',       value: '0', category: 'tally', label: 'Sample Refund (Kgs)',             type: 'number' },
-  { key: 'tally_gunny_rate',       value: '0', category: 'tally', label: 'Gunny Rate (₹ per bag)',          type: 'number' },
-  { key: 'tally_transport_rate',   value: '0', category: 'tally', label: 'Transport Rate (₹/Kg)',           type: 'number' },
-  { key: 'tally_local_trans_rate', value: '0', category: 'tally', label: 'Local Transport Rate (₹/Kg)',     type: 'number' },
-  { key: 'tally_insurance_rate',   value: '0', category: 'tally', label: 'Insurance Rate (₹/₹1000)',        type: 'number' },
-  { key: 'tally_local_ins_rate',   value: '0', category: 'tally', label: 'Local Insurance Rate (₹/₹1000)',  type: 'number' },
 
   // Stock Item Names + HSN
   { key: 'tally_item_cardamom', value: '', category: 'tally', label: 'Stock Item — Cardamom', type: 'text' },
@@ -1007,11 +1046,9 @@ const DEFAULTS = [
   // (cardamom "Kgs.", gunny "Nos.").
   { key: 'tally_unit_cardamom', value: '', category: 'tally', label: 'Unit — Cardamom (default Kgs.)', type: 'text' },
   { key: 'tally_unit_gunny',    value: '', category: 'tally', label: 'Unit — Gunny (default Nos.)',    type: 'text' },
-  { key: 'tally_hsn_cardamom',  value: '', category: 'tally', label: 'HSN — Cardamom',        type: 'text' },
-  { key: 'tally_hsn_gunny',     value: '', category: 'tally', label: 'HSN — Gunny',           type: 'text' },
-  { key: 'tally_hsn_service',   value: '', category: 'tally', label: 'SAC — Service',         type: 'text' },
-  { key: 'tally_hsn_transport', value: '', category: 'tally', label: 'SAC — Transport',       type: 'text' },
-  { key: 'tally_hsn_insurance', value: '', category: 'tally', label: 'SAC — Insurance',       type: 'text' },
+  // The HSN / SAC codes come from Settings → HSN/SAC (hsn_cardamom, hsn_gunny,
+  // sac_service, sac_transport, sac_insurance) — the same codes the invoice
+  // prints. The five tally_hsn_* twins that used to live here are retired.
 
   // E-way bill DISTANCE estimation
   { key: 'distance_auto_enabled',    value: 'false', category: 'tally', label: 'Auto-fill <DISTANCE> from PIN coordinates', type: 'check'  },
@@ -1182,6 +1219,50 @@ function initCompanySettings(db) {
   }
   autoEnableFlagIfAnyValue('flag_local_ti',     ['local_transport', 'local_insurance']);
   autoEnableFlagIfAnyValue('flag_addl_charges', ['addl_charge_name', 'addl_charge_value']);
+
+  // ── Retired Tally rate/HSN twins → the one canonical key ──────────────
+  // See RETIRED_SETTING_KEYS. Two rules, and the order matters:
+  //
+  //   1. canonical is EMPTY and the retired twin has a value  → carry it over.
+  //      An install that only ever filled in the Tally box would otherwise
+  //      lose that number the moment the box stopped being read.
+  //   2. both have a value and they DISAGREE  → the canonical one wins (it is
+  //      what every invoice was already billed at), and we say so on stdout.
+  //      Silently changing what a site books is not something to do quietly.
+  //
+  // "Empty" for a number setting means blank OR '0': getSettingsFlat turns an
+  // empty number box into 0, so 0 is how an unset rate actually reads.
+  try {
+    const selOne = db.prepare('SELECT value FROM company_settings WHERE key = ?');
+    const setOne = db.prepare('UPDATE company_settings SET value = ? WHERE key = ?');
+    const blank = (v) => {
+      const t = String(v == null ? '' : v).trim();
+      return t === '' || t === '0' || t === '0.0' || t === '0.00';
+    };
+    const carried = [], clashed = [];
+    for (const [oldKey, newKey] of RETIRED_SETTING_KEYS) {
+      if (!newKey) continue;                       // dead box — nothing to carry
+      const o = selOne.get(oldKey), n = selOne.get(newKey);
+      if (!o || !n) continue;                      // one side absent on this DB
+      if (blank(o.value)) continue;                // nothing worth carrying
+      if (blank(n.value)) {
+        setOne.run(String(o.value), newKey);
+        carried.push(`${newKey} = ${o.value} (from ${oldKey})`);
+      } else if (String(o.value).trim() !== String(n.value).trim()
+                 && Number(o.value) !== Number(n.value)) {
+        clashed.push(`${oldKey}=${o.value} -> now using ${newKey}=${n.value}`);
+      }
+    }
+    if (carried.length) {
+      console.log('Migration: carried retired Tally setting(s) onto their canonical key —');
+      for (const c of carried) console.log('  ' + c);
+    }
+    if (clashed.length) {
+      console.log('NOTICE: retired Tally setting(s) disagreed with the rate the invoices use.');
+      console.log('        The invoice rate now applies to the Tally export too:');
+      for (const c of clashed) console.log('  ' + c);
+    }
+  } catch (_) { /* pre-seed DB or missing rows — nothing to reconcile */ }
 
   // The 'rns' layout id was renamed to the generic 'letterhead' (RNS is a
   // specific company name). Rewrite any stored *_template setting still pointing
@@ -1364,5 +1445,5 @@ function screenFlagDefault(cfg, key) {
   return String(raw).toLowerCase() === 'true' || raw === true;
 }
 
-module.exports = { DEFAULTS, CATEGORIES, initCompanySettings, getSetting, getSettingBool, getSettingNum, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates,
+module.exports = { DEFAULTS, CATEGORIES, RETIRED_SETTING_KEYS, initCompanySettings, getSetting, getSettingBool, getSettingNum, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates,
   SCREEN_FLAGS, SCREEN_FLAG_KEYS, screenFlagDefault };

@@ -197,7 +197,9 @@ function getReportContext(db, opts) {
   const auctionId = opts.auctionId ? parseInt(opts.auctionId, 10) : null;
   if (!auctionId) throw new Error('auctionId is required');
 
-  const auction = db.get('SELECT id, ano, date, crop_type, state FROM auctions WHERE id = ?', [auctionId]);
+  // `place` is Form-D's "Place of auction" as set on the trade itself when the
+  // auction was created — see buildFormD's resolution order.
+  const auction = db.get('SELECT id, ano, date, crop_type, state, place FROM auctions WHERE id = ?', [auctionId]);
   if (!auction) throw new Error('Auction not found');
 
   const where = ['l.auction_id = ?'];
@@ -350,7 +352,7 @@ function _inClause(expr, raw, { numeric = false, ci = false } = {}) {
 }
 
 function getReportFilters(db, auctionId) {
-  if (!auctionId) return { branches: [], sellers: [], buyers: [] };
+  if (!auctionId) return { branches: [], sellers: [], buyers: [], place: '' };
   const aid = parseInt(auctionId, 10);
   const branches = db.all(
     `SELECT DISTINCT TRIM(branch) AS branch FROM lots
@@ -379,7 +381,12 @@ function getReportFilters(db, auctionId) {
       GROUP BY COALESCE(b.code, l.code),
                COALESCE(b.buyer1, b.buyer, l.buyer1, l.buyer)
       ORDER BY name`, [aid]);
-  return { branches, sellers, buyers };
+  // The trade's own Form-D place, so the Spice Board screen can show which
+  // venue this trade will print — and let the operator see at a glance that
+  // leaving the dropdown alone is already correct.
+  const auc = db.get('SELECT place FROM auctions WHERE id = ?', [aid]);
+  const place = String((auc && auc.place) || '').trim();
+  return { branches, sellers, buyers, place };
 }
 
 // ════════════════════════════════════════════════════════════
@@ -983,14 +990,25 @@ function buildFormD(ctx, db, opts) {
   // licence field in this build.
   const licence = readSetting(db, 'sbl', '');
 
-  // Place of auction — caller-supplied value (the operator's pick from
-  // the Form-D place dropdown in Spice Board menu) takes top priority.
-  // Falls back to the configured branch (Address → Office Branch) for
-  // the active business state, then to the legacy `business_place` key.
+  // Place of auction, most specific first:
+  //   1. the caller's explicit pick (the Form-D place dropdown in the Spice
+  //      Board menu) — a per-print override, so it always wins;
+  //   2. THE TRADE'S OWN PLACE (`auctions.place`), set when the auction was
+  //      created. This is the normal source: the venue is a fact about the
+  //      auction, known on the day, and recording it there means Form-D
+  //      prints the right place without anyone having to remember at print
+  //      time which of two venues trade #71 was held at;
+  //   3. the configured branch (Address → Office Branch) for the active
+  //      business state, then the legacy `business_place` key — the
+  //      behaviour every trade had before (2) existed, and still the answer
+  //      for trades created before it.
   const placeOverride = String(opts.place || '').trim();
+  const auctionPlace  = String((auction && auction.place) || '').trim();
   let place;
   if (placeOverride) {
     place = placeOverride;
+  } else if (auctionPlace) {
+    place = auctionPlace;
   } else {
     const placeBizState = String(readSetting(db, 'business_state', '')).toUpperCase();
     const placeKL = placeBizState === 'KERALA' || placeBizState === 'KL';

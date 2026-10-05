@@ -289,6 +289,13 @@ async function initDb() {
     date TEXT NOT NULL,
     crop_type TEXT DEFAULT '',
     state TEXT DEFAULT '',
+    -- "Place of auction" as it prints on FORM-D for this trade. Set when the
+    -- auction is created (the venue is known then, and it is the only thing
+    -- about a trade that Form-D asks for and nothing else records), picked
+    -- from the formd_places setting. Blank = fall back to the configured
+    -- branch, exactly as before this column existed. See the resolution
+    -- order in spice-board-reports.js, buildFormD().
+    place TEXT DEFAULT '',
     start_time TEXT,
     end_time TEXT,
     created_at TEXT DEFAULT (datetime('now','localtime')),
@@ -1249,6 +1256,11 @@ async function initDb() {
     // CREATE above). Added via ALTER for existing DBs so the feature works on
     // upgrade without a rebuild.
     "ALTER TABLE auctions ADD COLUMN main_branch TEXT DEFAULT ''",
+    // Form-D "Place of auction", set per trade when the auction is created
+    // (see the auctions CREATE above). Added via ALTER for existing DBs; the
+    // '' default is the pre-existing behaviour, so an untouched install keeps
+    // falling back to the configured branch.
+    "ALTER TABLE auctions ADD COLUMN place TEXT DEFAULT ''",
     // Carry-forward marker: the source auction id an unsold lot was carried
     // from (see POST /api/auctions/:id/carry-forward). Added via ALTER for
     // existing DBs so the feature works on upgrade without a rebuild.

@@ -265,6 +265,43 @@ const cfgNum = (cfg, key, def = 0) => {
   return isFinite(v) ? v : def;
 };
 
+// ── ONE place per number: the rates and HSN/SAC codes this export prints
+// are the SAME settings the app itself bills with ───────────────────────
+//
+// The Tally screen used to carry its own copy of every rate and code —
+// tally_gunny_rate, tally_gst_rate, tally_insurance_rate, tally_tcs_rate and
+// five tally_hsn_* twins — read ONLY here, with no fallback to the Rates /
+// HSN screens the invoices use. Two boxes, one labelled almost the same as
+// the other, and nothing to say which one was live. On the install this was
+// found on they had drifted: gunny was ₹150 on the invoice and ₹200 in the
+// books, so a sales voucher carried an AMOUNT computed at 150 under a RATE
+// line that read 200.
+//
+// So those keys are retired (see HIDDEN_SETTING_KEYS in company-config.js)
+// and everything below reads the canonical setting instead. A rate changes
+// in ONE box now, and the invoice and the voucher cannot disagree.
+//
+// The per-call-site defaults are kept exactly as they were — the cardamom HSN
+// really does default differently on the sales side (09083120) and the
+// purchase side (09083110) — so an install that never filled these in exports
+// precisely what it exported before.
+const HSN_CARDAMOM = (cfg, def) => cfgGet(cfg, 'hsn_cardamom', def);
+const HSN_GUNNY    = (cfg, def) => cfgGet(cfg, 'hsn_gunny', def);
+const SAC_TRANSPORT = (cfg, def) => cfgGet(cfg, 'sac_transport', def);
+const SAC_INSURANCE = (cfg, def) => cfgGet(cfg, 'sac_insurance', def);
+const SAC_SERVICE   = (cfg, def) => cfgGet(cfg, 'sac_service', def);
+
+// Gunny is the one rate whose "unset" is 0, not blank: `gunny_rate` is a
+// number field, so getSettingsFlat turns an empty box into 0. The app bills
+// `bags * (cfg.gunny_rate || 165)` (calculations.js), and this has to be the
+// SAME expression or a site that left the box empty would bill at 165 and
+// book at 0 — which is what the old tally_gunny_rate actually did.
+const gunnyRateOf = (cfg) => Number((cfg || {}).gunny_rate) || 165;
+// GST on goods and the insurance rate carry 0 as a real value, so these stay
+// plain key reads — only a genuinely absent key takes the default.
+const gstGoodsRateOf  = (cfg, def = 5)    => cfgNum(cfg, 'gst_goods', def);
+const insuranceRateOf = (cfg, def = 0.75) => cfgNum(cfg, 'insurance', def);
+
 // ── Voucher-reference series tail ────────────────────────────────────────
 // The token welded onto a voucher number / bill reference after the season —
 // the "URD" in "1748/26-27/URD", the "SE" on a dealer debit note. These were
@@ -393,15 +430,15 @@ function generSalesIspXML(rows, cfg, opts = {}) {
   const Round_LDR    = cfgGet(cfg, 'tally_round', 'Round On/Off');
   const Item_Card    = cfgGet(cfg, 'tally_item_cardamom', 'Cardamom');
   const Item_Gunny   = cfgGet(cfg, 'tally_item_gunny',    'Gunny');
-  const HSN_Card     = cfgGet(cfg, 'tally_hsn_cardamom',  '09083120');
-  const HSN_Gunny    = cfgGet(cfg, 'tally_hsn_gunny',     '63051040');
-  const GunnyRate    = cfgNum(cfg, 'tally_gunny_rate',     165);
+  const HSN_Card     = HSN_CARDAMOM(cfg, '09083120');
+  const HSN_Gunny    = HSN_GUNNY(cfg, '63051040');
+  const GunnyRate    = gunnyRateOf(cfg);
   // Service ledgers (intra-state ISP only — reference uses fully-spelled
   // names with the rate baked in; user can override in Settings)
   const LDR_Transport  = cfgGet(cfg, 'tally_transport', 'Transport Rs.2.50/per Kg');
   const LDR_Insurance  = cfgGet(cfg, 'tally_insurance', 'Insurance Rs.0.75/per Thousand');
-  const SAC_Transport  = cfgGet(cfg, 'tally_hsn_transport', '996791');
-  const SAC_Insurance  = cfgGet(cfg, 'tally_hsn_insurance', '997136');
+  const SAC_Transport  = SAC_TRANSPORT(cfg, '996791');
+  const SAC_Insurance  = SAC_INSURANCE(cfg, '997136');
 
   // Dispatch-from defaults: in the original Spice Config app this used
   // sister-company (ASP / Kerala) address. In this e-Auction-only build,
@@ -472,7 +509,7 @@ function generSalesIspXML(rows, cfg, opts = {}) {
     // gets a populated tag without phantom ASP/* numbers.
     const aspVoucherRef = voucherNum;
 
-    const rates       = rateDetails(cfgNum(cfg, 'tally_gst_rate', 5));
+    const rates       = rateDetails(gstGoodsRateOf(cfg));
 
     // Cardamom ledger + nature
     const cardLedger = isExport ? SalesExport : (isIntra ? SalesIntra : SalesInter);
@@ -960,9 +997,9 @@ function generSalesAspXML(rows, cfg, opts = {}) {
   const Round_LDR    = cfgGet(cfg, 'tally_round', 'Round On/Off');
   const Item_Card    = cfgGet(cfg, 'tally_item_cardamom', 'Cardamom');
   const Item_Gunny   = cfgGet(cfg, 'tally_item_gunny',    'Gunny');
-  const HSN_Card     = cfgGet(cfg, 'tally_hsn_cardamom',  '09083120');
-  const HSN_Gunny    = cfgGet(cfg, 'tally_hsn_gunny',     '63051040');
-  const GunnyRate    = cfgNum(cfg, 'tally_gunny_rate',     165);
+  const HSN_Card     = HSN_CARDAMOM(cfg, '09083120');
+  const HSN_Gunny    = HSN_GUNNY(cfg, '63051040');
+  const GunnyRate    = gunnyRateOf(cfg);
 
   // ASP's own dispatch-from address (own premises in Kerala). Reference
   // shows full address with SBL line. We reuse the home company's KL
@@ -1002,7 +1039,7 @@ function generSalesAspXML(rows, cfg, opts = {}) {
     const taxNm       = `${sale}${separator}${invoNo}`;
     const voucherNum  = `${ainvPrefix}${taxNm}/${season}`;
 
-    const rates       = rateDetails(cfgNum(cfg, 'tally_gst_rate', 5));
+    const rates       = rateDetails(gstGoodsRateOf(cfg));
 
     const cardLedger = isIntra ? SalesIntra : SalesInter;
     const cardNature = isIntra ? 'Local Sales - Taxable' : 'Interstate Sales - Taxable';
@@ -1231,8 +1268,8 @@ function generIspPurchaseXML(rows, cfg, opts = {}) {
   const Round_LDR    = cfgGet(cfg, 'tally_round',               'Round On/Off');
   const Item_Card    = cfgGet(cfg, 'tally_item_cardamom',       'Cardamom');
   const Item_Gunny   = cfgGet(cfg, 'tally_item_gunny',          'Gunny');
-  const HSN_Card     = cfgGet(cfg, 'tally_hsn_cardamom',        '09083120');
-  const HSN_Gunny    = cfgGet(cfg, 'tally_hsn_gunny',           '63051040');
+  const HSN_Card     = HSN_CARDAMOM(cfg, '09083120');
+  const HSN_Gunny    = HSN_GUNNY(cfg, '63051040');
 
   // Sister/ASP party identity — fetched from sister-company cfg if
   // present (legacy ASP installs), else falls back to the central
@@ -1458,7 +1495,7 @@ ${TAGS.DEEMYES}
     if (row.gunnyAmt && row.gunnyBags) {
       const gAmt = r2(row.gunnyAmt);
       const gBags = r0(row.gunnyBags);
-      const gunnyRate = cfgNum(cfg, 'tally_gunny_rate', 165);
+      const gunnyRate = gunnyRateOf(cfg);
       xml += `
 <ALLINVENTORYENTRIES.LIST>
 <STOCKITEMNAME>${xe(Item_Gunny)}</STOCKITEMNAME>
@@ -1553,8 +1590,8 @@ function generSalesXML(rows, cfg, opts = {}) {
   const Round_LDR    = cfgGet(cfg, 'tally_round', 'Round Off');
   const Item_Card    = cfgGet(cfg, 'tally_item_cardamom', 'Cardamom');
   const Item_Gunny   = cfgGet(cfg, 'tally_item_gunny',    'Gunny Bag');
-  const HSN_Card     = cfgGet(cfg, 'tally_hsn_cardamom',  '09083110');
-  const HSN_Gunny    = cfgGet(cfg, 'tally_hsn_gunny',     '63053200');
+  const HSN_Card     = HSN_CARDAMOM(cfg, '09083110');
+  const HSN_Gunny    = HSN_GUNNY(cfg, '63053200');
 
   // Dispatch-from address (sister-company despatch, ASP source)
   const d_company    = cfgGet(cfg, 'tally_dispatch_company', cfgGet(cfg, 's_short_name', ''));
@@ -1807,7 +1844,7 @@ function generRDPurchaseXML(rows, cfg, opts = {}) {
   const TDS_LDR         = cfgGet(cfg, 'tally_tds_ledger', 'TDS on Purchase of Goods');
   const Round_LDR       = cfgGet(cfg, 'tally_round', 'Round On/Off');
   const Item_Card       = cfgGet(cfg, 'tally_item_cardamom', 'Cardamom');
-  const HSN_Card        = cfgGet(cfg, 'tally_hsn_cardamom',  '09083110');
+  const HSN_Card        = HSN_CARDAMOM(cfg, '09083110');
   const TDS_Rate        = cfgNum(cfg, 'tds_purchase_rate', 0.1);  // % rate for 194Q
   const SampleRefund_LDR = cfgGet(cfg, 'tally_sample_dealer', 'Sample Refund to Dealer');
 
@@ -2265,7 +2302,7 @@ function generURDPurchaseXML(rows, cfg, opts = {}) {
   const Auction_LDR    = cfgGet(cfg, 'tally_purchase_auction', 'Auction Purchase Account');
   const Round_LDR      = cfgGet(cfg, 'tally_round', 'Round Off');
   const Item_Card      = cfgGet(cfg, 'tally_item_cardamom', 'Cardamom');
-  const HSN_Card       = cfgGet(cfg, 'tally_hsn_cardamom',  '09083110');
+  const HSN_Card       = HSN_CARDAMOM(cfg, '09083110');
   const SampleRefund_LDR = cfgGet(cfg, 'tally_sample_planter', 'Sample Refund to Planter');
   // Short-form season identifier (e.g. "26-27") for the commission bill ref;
   // falls back to the full season so the ref is never empty.
@@ -2624,7 +2661,7 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
   const Tax_SGST      = cfgGet(cfg, 'tally_dn_sgst', `OUTPUT SGST ${fmtRate(halfRate)}%`);
   const Tax_IGST      = cfgGet(cfg, 'tally_dn_igst', `OUTPUT IGST ${fmtRate(dnGstRate)}%`);
   const Round_LDR     = cfgGet(cfg, 'tally_round', 'Round On/Off');
-  const HSN_Service   = cfgGet(cfg, 'tally_hsn_service', '996111');
+  const HSN_Service   = SAC_SERVICE(cfg, '996111');
 
   // Dispatch-from (consignor) block — mirrors the Sales-invoice logic so
   // debit notes carry the same DISPATCHFROM* consignor identity. The
@@ -3229,8 +3266,8 @@ function buildSalesIspRows(db, auctionId, cfg, opts) {
 // reads, so it always agrees with the Tally export and the printed PDF.
 //
 // Each cardamom lot, the gunny line, and (inter-state only) the transport
-// + insurance service lines become ItemList entries taxed at
-// `tally_gst_rate`. Summed item AssAmt + tax reproduces the invoice's
+// + insurance service lines become ItemList entries taxed at the GST Goods
+// Rate (`gst_goods`). Summed item AssAmt + tax reproduces the invoice's
 // stored CGST/SGST/IGST, and RndOffAmt anchors TotInvVal to the invoice's
 // own rounded total — verified against real vouchers to the paise.
 //
@@ -3246,13 +3283,13 @@ function buildSalesIspRows(db, auctionId, cfg, opts) {
 //
 // Returns a plain JS array; the caller JSON.stringifies it.
 function buildIrpJson(rows, cfg, opts = {}) {
-  const gstRate = cfgNum(cfg, 'tally_gst_rate', 5);
+  const gstRate = gstGoodsRateOf(cfg);
 
   // HSN / SAC codes + item labels — the same config the ISP XML uses.
-  const HSN_Card   = String(cfgGet(cfg, 'tally_hsn_cardamom',  '09083120'));
-  const HSN_Gunny  = String(cfgGet(cfg, 'tally_hsn_gunny',     '63051040'));
-  const SAC_Transp = String(cfgGet(cfg, 'tally_hsn_transport', '996791'));
-  const SAC_Insur  = String(cfgGet(cfg, 'tally_hsn_insurance', '997136'));
+  const HSN_Card   = String(HSN_CARDAMOM(cfg, '09083120'));
+  const HSN_Gunny  = String(HSN_GUNNY(cfg, '63051040'));
+  const SAC_Transp = String(SAC_TRANSPORT(cfg, '996791'));
+  const SAC_Insur  = String(SAC_INSURANCE(cfg, '997136'));
   const Item_Card  = cfgGet(cfg, 'tally_item_cardamom', 'Cardamom');
   const Item_Gunny = cfgGet(cfg, 'tally_item_gunny',    'Gunny');
   // e-Invoice product descriptions for the service lines. Kept SEPARATE from
@@ -3260,7 +3297,7 @@ function buildIrpJson(rows, cfg, opts = {}) {
   // so the IRP PrdDesc stays short, matching the reference SALESINV.json.
   const Desc_Transp = cfgGet(cfg, 'tally_einv_transport_desc', 'Transport');
   const Desc_Insur  = cfgGet(cfg, 'tally_einv_insurance_desc', 'Insurance Received');
-  const insurRate   = cfgNum(cfg, 'tally_insurance_rate', 0.75);
+  const insurRate   = insuranceRateOf(cfg);
 
   // Document-number composition — mirror generSalesIspXML exactly so the
   // e-invoice DocDtls.No is byte-identical to the Tally voucher / printed
@@ -3575,7 +3612,7 @@ function buildDebitNoteIrpJson(rows, cfg, opts = {}) {
   const dnGstRate = cfgNum(cfg, 'tally_dn_gst_rate',
                      cfgNum(cfg, 'discount_gst',
                        cfgNum(cfg, 'gst_service', 18)));
-  const HSN_Service = String(cfgGet(cfg, 'tally_hsn_service', '996111'));
+  const HSN_Service = String(SAC_SERVICE(cfg, '996111'));
   const Item_Comm   = cfgGet(cfg, 'tally_dn_item', 'Commission');
 
   // Document number — mirror generDebitNoteXML: {noteNo}/{season-short}/SE by
@@ -3803,8 +3840,8 @@ function buildSalesAspRows(db, auctionId, cfg) {
   const pinMatch     = String(ispAddr2).match(/-(\d{6})/);
   const ispPin       = cfgGet(cfg, 'tn_pin', pinMatch ? pinMatch[1] : '');
 
-  const gstRate = cfgNum(cfg, 'tally_gst_rate', 5);
-  const gunnyRate = cfgNum(cfg, 'tally_gunny_rate', 165);
+  const gstRate = gstGoodsRateOf(cfg);
+  const gunnyRate = gunnyRateOf(cfg);
   const aspIntraCode = String(cfgGet(cfg, 'tally_state_code', ''));
 
   const out = [];
@@ -5006,22 +5043,22 @@ function buildLedgerRows(db, auctionId, cfg) {
   const todayDate = toTallyDate(new Date());
 
   // ── Master ledgers from cfg (sales / purchase / tax / service) ─
-  const gstRate = cfgNum(cfg, 'tally_gst_rate', 5);
+  const gstRate = gstGoodsRateOf(cfg);
   // Debit Note GST rate default mirrors the goods rate (5%) — the DN
   // service-charge rate matches the underlying goods rate for cardamom
   // exports. Was hardcoded to 18 in earlier builds; the migration in
   // company-config.js auto-corrects existing installs.
   const dnRate  = cfgNum(cfg, 'tally_dn_gst_rate', 5);
-  const hsnCard = cfgGet(cfg, 'tally_hsn_cardamom', '09083120');
-  const hsnService = cfgGet(cfg, 'tally_hsn_service', '996111');
+  const hsnCard = HSN_CARDAMOM(cfg, '09083120');
+  const hsnService = SAC_SERVICE(cfg, '996111');
 
   for (const [k, parent, taxability, hsn] of [
     ['tally_sales_inter',   'Sales Accounts',  'Taxable',   hsnCard],
     ['tally_sales_intra',   'Sales Accounts',  'Taxable',   hsnCard],
     ['tally_sales_export',  'Sales Accounts',  'Exempt',    hsnCard],
-    ['tally_gunny_inter',   'Sales Accounts',  'Taxable',   cfgGet(cfg, 'tally_hsn_gunny', '63051040')],
-    ['tally_gunny_intra',   'Sales Accounts',  'Taxable',   cfgGet(cfg, 'tally_hsn_gunny', '63051040')],
-    ['tally_gunny_export',  'Sales Accounts',  'Exempt',    cfgGet(cfg, 'tally_hsn_gunny', '63051040')],
+    ['tally_gunny_inter',   'Sales Accounts',  'Taxable',   HSN_GUNNY(cfg, '63051040')],
+    ['tally_gunny_intra',   'Sales Accounts',  'Taxable',   HSN_GUNNY(cfg, '63051040')],
+    ['tally_gunny_export',  'Sales Accounts',  'Exempt',    HSN_GUNNY(cfg, '63051040')],
   ]) {
     const name = cfgGet(cfg, k, '');
     if (name) rows.push({ kind: 'sales', name, parent, taxability, hsn, applicableFrom: todayDate });
@@ -5048,8 +5085,11 @@ function buildLedgerRows(db, auctionId, cfg) {
   tax('tally_dn_cgst',     'CGST', dnRate / 2);
   tax('tally_dn_sgst',     'SGST/UTGST', dnRate / 2);
   tax('tally_dn_igst',     'IGST', dnRate);
-  tax('tally_tcs',         'TCS',  cfgNum(cfg, 'tally_tcs_rate', 0.1));
-  tax('tally_tds_ledger',  'TDS',  cfgNum(cfg, 'tally_tcs_rate', 0.1));
+  // TCS and TDS are two different taxes at two different rates, and the Rates
+  // screen already names both. `tally_tcs_rate` drove BOTH ledger masters from
+  // one box, which is why it could never agree with either.
+  tax('tally_tcs',         'TCS',  cfgNum(cfg, 'tcs_tds', 0.1));
+  tax('tally_tds_ledger',  'TDS',  cfgNum(cfg, 'tds_purchase_rate', 0.1));
 
   const services = [
     ['tally_dn_discount',          'Indirect Incomes',   hsnService],
@@ -5057,8 +5097,8 @@ function buildLedgerRows(db, auctionId, cfg) {
     ['tally_commission_interstate','Indirect Incomes',   hsnService],
     ['tally_sample_planter',       'Indirect Expenses',  hsnService],
     ['tally_sample_dealer',        'Indirect Expenses',  hsnService],
-    ['tally_transport',            'Indirect Expenses',  cfgGet(cfg, 'tally_hsn_transport', '996791')],
-    ['tally_insurance',            'Indirect Expenses',  cfgGet(cfg, 'tally_hsn_insurance', '997136')],
+    ['tally_transport',            'Indirect Expenses',  SAC_TRANSPORT(cfg, '996791')],
+    ['tally_insurance',            'Indirect Expenses',  SAC_INSURANCE(cfg, '997136')],
     ['tally_round',                'Indirect Expenses',  ''],
     ['tally_tds_paid_sales',       'Duties & Taxes',     ''],
   ];
