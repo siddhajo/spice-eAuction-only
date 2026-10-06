@@ -2155,9 +2155,17 @@ function effectiveScreens(db, userId) {
   const over = screenOverrides(db, userId);
   const out = {};
   for (const f of SCREEN_FLAGS) {
-    const on = Object.prototype.hasOwnProperty.call(over, f.key)
+    const base = screenFlagDefault(cfg, f.key);
+    let on = Object.prototype.hasOwnProperty.call(over, f.key)
       ? over[f.key] === 'true'
-      : screenFlagDefault(cfg, f.key);
+      : base;
+    // `installGates` entries are one-way: the install value is a CEILING, so
+    // an override can take the feature off a user but never grant it on a
+    // site that has it switched off. See SCREEN_FLAGS in company-config.js —
+    // for Dummy Details the install flag also decides whether a mask prints
+    // on the Board return, and granting the controls without that would let
+    // somebody stage masks nothing will ever use.
+    if (f.installGates && !base) on = false;
     out[f.key] = on ? 'true' : 'false';
   }
   return out;
@@ -2198,10 +2206,16 @@ app.get('/api/users/:id/screens', requireUserManage, (req, res) => {
       installDefault: screenFlagDefault(cfg, f.key),
       override: Object.prototype.hasOwnProperty.call(over, f.key) ? (over[f.key] === 'true') : null,
       effective: eff[f.key] === 'true',
-      // The Auction Desk needs the auction_desk ROLE capability on top of the
-      // screen being on. Saying so here stops an admin switching it on for a
-      // clerk and being puzzled that nothing appears.
-      requiresCapability: f.key === 'flag_auction_desk' ? 'auction_desk' : null,
+      // A screen can need a ROLE capability on top of the flag. Saying so
+      // here stops an admin switching one on for a clerk and being puzzled
+      // that nothing appears — and `capabilityMissing` is resolved against
+      // THIS user's role on the server, so the panel never has to carry its
+      // own copy of the role → capability map.
+      requiresCapability: f.requiresCapability || null,
+      capabilityMissing: f.requiresCapability ? !userHas(user.role, f.requiresCapability) : false,
+      // One-way entry: "On" cannot grant the feature while the site-wide
+      // flag is off. The panel says so instead of offering a dead choice.
+      installGates: !!f.installGates,
     })),
   });
 });
@@ -8179,6 +8193,11 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
   // effectiveGradeCrSql() in calculations.js. `aadhar` (the SBL) is never
   // dummied, so it still drives the GSTIN+SBL half of the test.
   const DUMMY_ON = dummySellerDetailsOn(db);
+  // The GRADE figures above read the INSTALL flag: they exist to predict what
+  // the Board will see, so they must not vary by who is looking. The masked-lot
+  // COUNT below is a control surface — it links to the 🎭 modal — so it reads
+  // this user's own access instead.
+  const DUMMY_UI = dummyDetailsOnFor(db, req.user.id);
   const GRADE_CR = DUMMY_ON ? effectiveGradeCrSql('cr', 'dummy_cr') : 'cr';
   const DEALER = dealerSql(GRADE_CR, 'aadhar');
   // SOLD = a real hammer transaction. Blank code = no buyer, 'WD' = withdrawn,
@@ -8265,7 +8284,7 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
             -- kind of thing that goes to the Spices Board unnoticed. Counted
             -- with hasDummySellerSql() — ANY of the four columns set — so it
             -- is the same population the Lots tab badges and filters on.
-            SUM(CASE WHEN ${DUMMY_ON ? hasDummySellerSql('lots') : '0=1'} THEN 1 ELSE 0 END) AS dummyLots
+            SUM(CASE WHEN ${DUMMY_UI ? hasDummySellerSql('lots') : '0=1'} THEN 1 ELSE 0 END) AS dummyLots
        FROM lots WHERE auction_id = ?`,
     [auctionId]
   ) || {};
@@ -8280,8 +8299,9 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
     planterWeight: Number(st.planterWeight) || 0,
     dealerWeight:  Number(st.dealerWeight)  || 0,
     grade2Qty:     Number(st.grade2Qty)     || 0,
-    // 0 whenever flag_lot_dummy_details is off — with the feature off those
-    // columns are not part of the app, so the panel must not report on them.
+    // 0 whenever this USER doesn't have the dummy controls — the stat row is
+    // a link into the 🎭 modal, so reporting a count somebody cannot act on
+    // (or see the masks behind) would be an invitation to a dead end.
     dummyLots:     Number(st.dummyLots)     || 0,
     minPrice:      Number(st.minPrice) || 0,
     maxPrice:      Number(st.maxPrice) || 0,
@@ -8800,6 +8820,27 @@ function lotwiseDnPlanterOn(db){ return lotwiseOn(db, 'flag_lotwise_dn_planter')
 // will actually see — see effectiveGradeCrSql() in calculations.js. Nothing
 // that moves money looks at these columns.
 function dummySellerDetailsOn(db) { return lotwiseOn(db, 'flag_lot_dummy_details'); }
+
+// ── Who may MASK a seller (per user) vs whether a mask PRINTS (install) ──
+// These are two different questions and they must not share one answer.
+//
+//   dummySellerDetailsOn(db)            — install-wide. What the e-Auction
+//     CSV, Form C and the dashboard GRADE figures do with the stored columns.
+//     Deliberately NOT per-user: the Spices Board gets one return, and a
+//     document whose seller identities depended on who downloaded it would be
+//     a far worse problem than the one this feature solves.
+//
+//   dummyDetailsOnFor(db, userId)       — per user. Who gets the 🎭 controls:
+//     the bulk write, the Lots dummy filter, and the masked-lot count the
+//     dashboard panel links from. flag_lot_dummy_details is an `installGates`
+//     SCREEN_FLAGS entry, so screenOnFor() already refuses to grant this on a
+//     site that has the feature off — the override can only narrow it.
+//
+// Callers: use the first for anything a document or a figure reads, the
+// second for anything a PERSON clicks.
+function dummyDetailsOnFor(db, userId) {
+  return screenOnFor(db, userId, 'flag_lot_dummy_details');
+}
 
 // ── AUCTION MANAGER (flag_auction_manager) ─────────────────────
 // The Auction Manager screen. OFF = the screen does not exist for you: the
@@ -9532,6 +9573,14 @@ app.post('/api/lots/dummy-code/bulk', requireLotWrite, (req, res) => {
 const DUMMY_IDENTITY_FIELDS = ['dummy_name', 'dummy_tel', 'dummy_cr', 'dummy_grade'];
 app.post('/api/lots/dummy-details/bulk', requireLotWrite, (req, res) => {
   const db = getDb();
+  // Per-user gate (and, through it, the install flag too — see
+  // dummyDetailsOnFor). This route had NO feature gate at all before: with
+  // the feature switched off the columns are not part of the app, yet a stale
+  // tab could still write them, and now an admin can also take the controls
+  // away from one user without the write staying open behind their back.
+  if (!dummyDetailsOnFor(db, req.user.id)) {
+    return res.status(403).json({ error: 'Dummy seller details are not enabled for your account.' });
+  }
   const ids = Array.isArray(req.body.ids) ? req.body.ids.map(x => parseInt(x, 10)).filter(Number.isFinite) : [];
   if (!ids.length) return res.status(400).json({ error: 'No lot ids provided' });
   const clearAll = req.body.clear === true || String(req.body.clear) === 'true';
@@ -9599,14 +9648,15 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
   // test is hasDummySellerSql() — ANY of the four columns set — so it selects
   // exactly the rows wearing the 🎭 DUMMY badge, name-only masks included.
   //
-  // Ignored when flag_lot_dummy_details is OFF, for the same reason the
-  // reports ignore the columns then: with the feature off those values are
-  // not part of the app, so they must not shape what the Lots table shows
-  // either. The dropdown is hidden client-side in that state anyway.
+  // Ignored when the feature is off FOR THIS USER, for the same reason the
+  // reports ignore the columns when the install flag is off: those values are
+  // not part of the app in that state, so they must not shape what the Lots
+  // table shows either. The dropdown is hidden client-side as well — this is
+  // the server half, which an admin taking the controls off one user needs.
   // Contributes no bind params, so it can be appended anywhere in `p`'s order.
   const dummyFilter = String(dummy || '').trim();
   let dummySql = '';
-  if ((dummyFilter === '1' || dummyFilter === '0') && dummySellerDetailsOn(db)) {
+  if ((dummyFilter === '1' || dummyFilter === '0') && dummyDetailsOnFor(db, req.user.id)) {
     dummySql = dummyFilter === '1'
       ? ` AND ${hasDummySellerSql('lots')}`
       : ` AND NOT ${hasDummySellerSql('lots')}`;

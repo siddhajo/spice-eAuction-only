@@ -20552,11 +20552,20 @@ async function openUserScreensModal(id, username){
     // Name the default's value in the label, so "Follow default" says what
     // it will actually do rather than making the admin go and look.
     const inheritLabel = `Follow default (${f.installDefault ? 'on' : 'off'})`;
-    // The Auction Desk also needs the auction_desk role capability. Switching
-    // the screen on for a role that lacks it changes nothing, so say so here
-    // rather than leaving the admin to wonder why it didn't appear.
-    const capNote = (f.requiresCapability && !['manager','admin'].includes(String(d.user.role || '').toLowerCase()))
+    // A screen can also need a ROLE capability (Auction Desk → auction_desk,
+    // Dummy Seller Details → lot_write). Switching it on for a role that
+    // lacks it changes nothing, so say so here rather than leaving the admin
+    // to wonder why it didn't appear. `capabilityMissing` is resolved against
+    // this user's role BY THE SERVER — the page used to carry its own
+    // hardcoded manager/admin list, which only ever matched one of them.
+    const capNote = (f.requiresCapability && f.capabilityMissing)
       ? `<div style="font-size:11px;color:var(--spice-chili);margin-top:2px">Also needs the ${esc(f.requiresCapability)} capability — a ${esc(d.user.role || 'viewer')} will not see it whatever is set here.</div>`
+      : '';
+    // A one-way row: the site-wide switch is a ceiling, so "On" here cannot
+    // hand out a feature the install has off. Said plainly, and only when it
+    // is actually biting, so the admin isn't left setting a dead radio.
+    const ceilNote = (f.installGates && !f.installDefault)
+      ? `<div style="font-size:11px;color:var(--spice-chili);margin-top:2px">Off site-wide — <b>On</b> here cannot switch it on for one user. Turn it on in Settings → Flags first, then use <b>Off</b> here to keep it from the users who shouldn't have it.</div>`
       : '';
     // Some rows aren't a plain hide/show — Payments picks BETWEEN two screens
     // — so the server sends a line explaining what Off actually does.
@@ -20565,7 +20574,7 @@ async function openUserScreensModal(id, username){
     return `<div style="padding:9px 0;border-bottom:1px solid var(--border)">
       <div style="font-weight:600;font-size:13px;margin-bottom:4px">${esc(f.label)}</div>
       <div>${radio(f.key, 'inherit', cur === 'inherit', inheritLabel)}${radio(f.key, 'on', cur === 'on', 'On')}${radio(f.key, 'off', cur === 'off', 'Off')}</div>
-      ${note}${capNote}
+      ${note}${ceilNote}${capNote}
     </div>`;
   }).join('') || '<div style="color:var(--spice-text-hint);font-size:13px">No optional screens.</div>';
 }

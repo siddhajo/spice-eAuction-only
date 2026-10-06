@@ -1423,10 +1423,24 @@ function getGSTRates(db) {
 // (flag_lotwise_purchase / _bills / _dn_planter) are not here: they change
 // how a document is built and numbered, not who can see a screen.
 //
+// ── One-way entries (`installGates: true`) ──────────────────────────
+// A flag whose OFF state means "this feature is not part of the app" — the
+// install value is a CEILING, not just a default: a per-user override may
+// take the feature away from somebody, never hand it to them on a site that
+// has it switched off. flag_lot_dummy_details is the case this exists for:
+// the install flag also decides whether a mask PRINTS on the Spices Board
+// return, and that answer has to be the same for everybody (the regulator
+// gets one document, not one per downloader). Granting the controls to a user
+// on an install that has the feature off would let them stage masks that
+// nothing would ever use.
+//
 // `label` is what the per-user panel shows. `note` is an optional line under
 // the radios, for a flag whose OFF state is not simply "hidden".
+// `requiresCapability` names a ROLE capability the screen needs on top of the
+// flag; the panel says so rather than letting an admin switch on a screen
+// that a viewer still cannot reach.
 const SCREEN_FLAGS = [
-  { key: 'flag_auction_desk',       label: 'Auction Desk' },
+  { key: 'flag_auction_desk',       label: 'Auction Desk', requiresCapability: 'auction_desk' },
   { key: 'flag_auction_manager',    label: 'Auction Manager' },
   { key: 'flag_insights',           label: 'Insights' },
   { key: 'flag_pertrade_breakdown', label: 'Per-Auction Breakdown' },
@@ -1436,6 +1450,13 @@ const SCREEN_FLAGS = [
   // is not read as "this user has no Payments screen".
   { key: 'flag_lotwise_payments',   label: 'Payments — lot-wise',
     note: 'On = the lot-wise worklist · Off = the classic seller-wise screen. The Payments tab is always present either way.' },
+  // WHO MAY MASK A SELLER, not whether a mask prints. See installGates above:
+  // the Spices Board surfaces and the dashboard grade figures keep reading the
+  // INSTALL flag, so every user's e-Auction CSV and Form C come out identical
+  // — this only decides who gets the 🎭 controls and the dummy write.
+  { key: 'flag_lot_dummy_details',  label: 'Dummy Seller Details', installGates: true,
+    requiresCapability: 'lot_write',
+    note: 'Who may set a stand-in seller on a lot (the 🎭 button, the Lots dummy filter and the bulk write). Whether a mask actually prints on the e-Auction CSV / Form C stays site-wide — so the Board return reads the same for every user.' },
 ];
 const SCREEN_FLAG_KEYS = new Set(SCREEN_FLAGS.map(f => f.key));
 
