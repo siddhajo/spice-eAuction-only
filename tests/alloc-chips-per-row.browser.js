@@ -124,6 +124,11 @@ const STATS = [
     switchAllocTab('edit');
     _raAllocStats = stats;
     _allocMarked.clear();
+    // Both grids open on the AVAILABLE lots only; this file is about where
+    // chips LAND, so reveal every status first — otherwise the two booked
+    // lots drop out and the row breaks shift by two for a reason that has
+    // nothing to do with the grid. Hiding is covered in alloc-status-filter.
+    allocShowAllStates(true);
     renderAllocEditCards(stats);
   }, STATS);
   let rows = await rowsOf('#alloc-edit-cards > div > div[style*="grid"]');
@@ -163,6 +168,7 @@ const STATS = [
     switchAllocTab('reassign');
     _raAllocStats = stats;
     _raSelected = new Set();
+    allocShowAllStates(true);
     renderReassignTiles();
   }, STATS);
   rows = await rowsOf('#ra-tile-grid > div > div[style*="grid"]');

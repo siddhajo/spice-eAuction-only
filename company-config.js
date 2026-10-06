@@ -710,6 +710,13 @@ const DEFAULTS = [
   // number below (comma-separated, with country code). Tapping a button
   // fires the Meta webhook, which approves/denies the request. Only
   // messages FROM one of these numbers are honoured.
+  // Who actually moves the lots. OFF (default) = the request queue above:
+  // the operator asks, an admin approves. ON = a mobile operator reassigns
+  // straight away, with no request and no approval — the same server-side
+  // safety rails still apply (a booked / reserved / entered / carried lot can
+  // never move). Desk roles (manager, admin) are unaffected either way; this
+  // only decides whether the PHONE can act on its own.
+  { key: 'flag_mobile_reassign_direct', value: 'false', category: 'alerts', label: 'Reassign Requests — Let the mobile operator reassign directly (no admin approval)', type: 'boolean' },
   { key: 'reassign_alert_whatsapp',    value: '',      category: 'alerts', label: 'Reassign Requests — Admin WhatsApp number(s), comma-separated (with country code)', type: 'text' },
   { key: 'reassign_alert_tpl',         value: 'lot_reassign_approval', category: 'alerts', label: 'Reassign Requests — WhatsApp template name', type: 'text' },
   { key: 'reassign_alert_tpl_lang',    value: 'en',    category: 'alerts', label: 'Reassign Requests — WhatsApp template language code', type: 'text' },

@@ -8990,10 +8990,10 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
   <input type="hidden" id="t-id">
   <div class="sgrid">
     <div class="fg"><label>Name *</label><input id="t-name"></div>
-    <div class="fg"><label>CR / GSTIN</label><div style="display:flex;gap:6px"><input id="t-cr" style="flex:1"><button class="btn btn-a" type="button" onclick="gstLookup('t')" style="white-space:nowrap;padding:6px 10px">Fetch from GST</button></div></div>
     <div class="fg"><label>Phone</label><input id="t-tel" type="tel" inputmode="numeric" maxlength="10" oninput="limitPhoneInput(this)" onpaste="pastePhoneInput(this,event)" placeholder="10-digit mobile"></div>
-    <div class="fg"><label>Aadhar / SBL</label><input id="t-aadhar"></div>
+    <div class="fg"><label>CR / GSTIN</label><div style="display:flex;gap:6px"><input id="t-cr" style="flex:1"><button class="btn btn-a" type="button" onclick="gstLookup('t')" style="white-space:nowrap;padding:6px 10px">Fetch from GST</button></div></div>
     <div class="fg"><label>PAN</label><input id="t-pan" onblur="tCheckPanDup()"><div id="t-pan-warn" style="display:none"></div></div>
+    <div class="fg"><label>Aadhar / SBL</label><input id="t-aadhar"></div>
     <div class="fg"><label>Address</label><input id="t-padd"></div>
     <div class="fg"><label>Place</label><input id="t-ppla"></div>
     <div class="fg"><label>PIN</label><input id="t-pin"></div>
@@ -9116,6 +9116,23 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     </div>
   </div>
 
+  <!-- Main / holding depot for THIS trade. Asked for here because it is a
+       decision about how the trade will be RUN — which depot the others
+       close into — and the answer is known on day one. It used to be
+       discoverable only from inside Edit Allocations, so trades reached the
+       end of the day with it unset and Close Depot refused to run. Blank is
+       still valid: the trade simply has no close-into target until one is
+       picked. Options are the configured branches (Settings → Branches). -->
+  <div class="fg" style="margin-top:2px">
+    <label>Main / Holding Depot <span style="font-weight:400;color:var(--text3)">(Close Depot target)</span></label>
+    <select id="a-main-branch"><option value="">— None —</option></select>
+    <div style="font-size:11px;color:var(--text3);line-height:1.5;margin-top:4px">
+      Closing any other depot pushes its remaining <b>free</b> lot numbers here, so
+      they can be re-allocated. Booked lots always stay put. Changeable later in
+      <b>Edit Allocations</b>.
+    </div>
+  </div>
+
   <!-- Copy from previous auction — create-mode only (hidden on edit).
        Lets the operator seed the new trade from an earlier one: clone its
        lot allocations as a starting point (editable afterwards via Edit
@@ -9167,6 +9184,21 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       To add a new range, use <b style="color:var(--green)">+ Add Branch</b>.
     </p>
 
+    <!-- Find box — type lot numbers / ranges to narrow the chips below.
+         A trade of 900 numbers is unreadable as a wall; "45,50-100" is how
+         an operator actually describes the lots they came here about. -->
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <input type="text" id="alloc-find" oninput="allocApplyFind(this.value)"
+             placeholder="Find lots — e.g. 10,11,23,50-100"
+             style="flex:1;min-width:220px;height:32px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace">
+      <button type="button" class="btn btn-o" style="height:32px;padding:0 12px;font-size:11px;font-weight:600"
+              onclick="document.getElementById('alloc-find').value='';allocApplyFind('')">Clear</button>
+      <span id="alloc-find-note" style="font-size:11.5px;color:var(--text3)"></span>
+    </div>
+
+    <!-- Which statuses are on screen. Rendered by renderAllocStatusBars(). -->
+    <div id="alloc-statusbar" style="margin-bottom:10px"></div>
+
     <!-- Per-range cards (rendered by renderAllocEditCards) -->
     <div id="alloc-edit-cards"></div>
 
@@ -9209,8 +9241,24 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
 
   <!-- Reassign panel -->
   <div id="alloc-panel-reassign" style="display:none">
-    <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Move unused lot numbers from one branch to another. <b>Click</b> a tile to toggle it, or <b>drag</b> across tiles to sweep a whole range (e.g. 090–099) — drag again elsewhere to add another range. Non-adjacent picks (e.g. 003, 007, 012) work too. Or type a contiguous range below. Only <b>free</b> lot numbers can move — booked, reserved, entered and carried-forward lots are locked. A lot already moved once (teal ↔) is still free and can be moved again.</p>
+    <p style="font-size:12px;color:var(--text3);margin-bottom:12px"><b>Type the lot numbers</b> in the box below — single numbers, ranges, or both (<code>10,11,23,12,24,45,50-100</code>). Or <b>click</b> a tile to toggle it and <b>drag</b> across tiles to sweep a run; the box and the tiles are two views of the same selection, so either way of picking shows up in the other. Only <b>free</b> lot numbers can move — booked, reserved, entered and carried-forward lots are skipped, and the box says how many. A lot already moved once (teal ↔) is still free and can be moved again.</p>
+
+    <!-- Type-a-selection box. This is the primary way in: mid-auction the
+         operator already knows the numbers (they are reading them off a
+         sheet), and hunting them down in a 900-tile grid to drag across is
+         slower and easier to get wrong than typing them. -->
+    <div style="background:#fff;border:1.5px solid #E67E22;border-radius:10px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px">Lots to move</div>
+      <input type="text" id="ra-lots" oninput="raSyncSelectionFromText()" autocomplete="off"
+             placeholder="e.g. 10,11,23,12,24,45,50-100"
+             style="width:100%;height:38px;padding:0 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;box-sizing:border-box">
+      <div id="ra-lots-note" style="font-size:11.5px;color:var(--text3);margin-top:6px;min-height:15px"></div>
+    </div>
+
     <div id="alloc-reassign-status" style="margin-bottom:14px"></div>
+
+    <!-- Which statuses are on screen. Rendered by renderAllocStatusBars(). -->
+    <div id="ra-statusbar" style="margin-bottom:10px"></div>
 
     <!-- Tile legend -->
     <!-- Populated by raRenderLegend() — only the states present in this
@@ -9227,22 +9275,12 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:end;margin-bottom:10px">
         <div>
           <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">FROM BRANCH</div>
-          <select id="ra-from" onchange="loadReassignPreview()" style="width:100%;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff"></select>
+          <select id="ra-from" onchange="raOnFromBranchChange()" style="width:100%;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff"></select>
         </div>
         <div style="font-size:18px;color:#E67E22;padding-bottom:6px;font-weight:700">→</div>
         <div>
           <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">TO BRANCH</div>
           <select id="ra-to" style="width:100%;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff"></select>
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-        <div>
-          <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">START LOT</div>
-          <input type="text" id="ra-start" placeholder="e.g. 051" oninput="raSyncSelectionFromInputs()" style="width:100%;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px">
-        </div>
-        <div>
-          <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">END LOT</div>
-          <input type="text" id="ra-end" placeholder="e.g. 100" oninput="raSyncSelectionFromInputs()" style="width:100%;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px">
         </div>
       </div>
       <div id="ra-preview" style="font-size:11px;color:var(--text3);margin-bottom:10px;min-height:14px"></div>
@@ -23876,12 +23914,25 @@ function renderAllocMainBar() {
   const btnHost = document.getElementById('alloc-close-buttons');
   if (!bar || !sel || !btnHost) return;
   const branches = Array.from(new Set((_raAllocStats || []).map(s => String(s.branch || '').trim().toUpperCase()).filter(Boolean)));
-  // Close Depot only makes sense with 2+ branches (somewhere to push to).
-  if (branches.length < 2) { bar.style.display = 'none'; return; }
+  // The bar also REPORTS the main depot, which is now chosen when the trade
+  // is created — so it shows as soon as there is anything to show, not only
+  // once a second branch exists. The close buttons below still need two.
+  if (!branches.length && !_allocMainBranch) { bar.style.display = 'none'; return; }
   bar.style.display = 'block';
-  if (_allocMainBranch && !branches.includes(_allocMainBranch)) _allocMainBranch = '';
+  // A main depot picked at auction creation usually has NO allocation yet,
+  // and close-depot doesn't need it to — it appends the freed numbers to
+  // whatever branch is named. So keep it in the list instead of silently
+  // dropping the operator's choice (which the next Save would then persist).
+  const pickable = branches.slice();
+  if (_allocMainBranch && !pickable.includes(_allocMainBranch)) pickable.push(_allocMainBranch);
   sel.innerHTML = '<option value="">— none —</option>' +
-    branches.map(b => `<option value="${esc(b)}"${b === _allocMainBranch ? ' selected' : ''}>${esc(b)}</option>`).join('');
+    pickable.map(b => `<option value="${esc(b)}"${b === _allocMainBranch ? ' selected' : ''}>${esc(b)}${branches.includes(b) ? '' : ' (no range yet)'}</option>`).join('');
+  if (branches.length < 2) {
+    btnHost.innerHTML = '<span style="font-size:11px;color:var(--text3)">'
+      + (_allocMainBranch ? esc(_allocMainBranch) + ' is this trade\u2019s main depot. ' : '')
+      + 'Closing a depot needs a second branch to push into.</span>';
+    return;
+  }
   btnHost.innerHTML = branches.filter(b => b !== _allocMainBranch).map(b => {
     const s = (_raAllocStats || []).find(x => String(x.branch).toUpperCase() === b) || {};
     const free = (s.total || 0) - (s.used || 0);
@@ -23921,6 +23972,210 @@ async function closeDepot(branch) {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════
+// WHAT THE TWO ALLOCATION GRIDS SHOW
+// ══════════════════════════════════════════════════════════════════
+// Both panels now open on the AVAILABLE lots only — the numbers the
+// operator came here to do something with. A trade of 900 numbers that is
+// 80% booked used to render as a wall of dead chips with the handful of
+// spare ones scattered through it, and finding them was the whole job.
+//
+// Nothing is deleted from the data: every other status is one click away on
+// the status bar, and the per-branch counts below each header keep reporting
+// the FULL picture (used/total) so hiding can never make a branch look
+// emptier than it is.
+//
+// 'reassigned' counts as available because it is: the server only tags an
+// otherwise-free lot that way (see RA_LOCKED_STATES).
+const ALLOC_AVAILABLE_STATES = new Set(['free', 'reassigned']);
+// Reveal order on the status bar — stable, so the chips don't dance about
+// as different trades surface different statuses.
+const ALLOC_HIDEABLE_STATES = ['booked', 'reserved', 'allocated', 'carried'];
+// Locked statuses the operator has chosen to see. Shared by both panels:
+// it is one modal and one question ("what am I looking at"), and a filter
+// that silently differed between the tabs would be a trap.
+const _allocShownStates = new Set();
+const allocStateVisible = (st) =>
+  ALLOC_AVAILABLE_STATES.has(String(st || 'free')) || _allocShownStates.has(String(st || 'free'));
+
+// Find-box filter for the Edit panel. null = no filter at all (NOT an empty
+// set, which would mean "match nothing").
+let _allocFindSet = null;
+
+// Is this lot on screen right now, in the Edit panel?
+function allocEditLotVisible(l) {
+  if (!allocStateVisible(l.state)) return false;
+  if (_allocFindSet && !_allocFindSet.has(lotProbeKey(l.lot))) return false;
+  return true;
+}
+
+// ── Typed lot numbers / ranges ────────────────────────────────────
+// "10,11,23,12,24,45,50-100" — the way the numbers arrive verbally and on
+// paper. Separators: comma, space, semicolon, newline. A range is A-B
+// (hyphen, en dash or em dash). Zero-padding is irrelevant on the way in:
+// "10" finds "010", because the probe is matched on (prefix, NUMBER) and
+// not on the printed string.
+function parseLotTokens(text) {
+  const out = [];
+  const bad = [];
+  for (const raw of String(text || '').split(/[\s,;]+/)) {
+    const tok = raw.trim();
+    if (!tok) continue;
+    const m = tok.match(/^([A-Za-z]*)(\d+)\s*[-–—]\s*([A-Za-z]*)(\d+)$/);
+    if (m) {
+      // A range. A prefix on either end wins for both; two DIFFERENT
+      // prefixes is not a range anyone could mean.
+      const p1 = (m[1] || '').toUpperCase(), p2 = (m[3] || '').toUpperCase();
+      if (p1 && p2 && p1 !== p2) { bad.push(tok); continue; }
+      const prefix = p1 || p2;
+      let a = parseInt(m[2], 10), b = parseInt(m[4], 10);
+      if (a > b) { const t = a; a = b; b = t; }   // "100-50" means the same run
+      // A fat-fingered "1-99999" must not hang the browser building a
+      // million probes; nothing real is wider than the allocation set.
+      if (b - a > 20000) { bad.push(tok); continue; }
+      for (let n = a; n <= b; n++) out.push({ prefix, num: n, token: tok });
+      continue;
+    }
+    const one = tok.match(/^([A-Za-z]*)(\d+)$/);
+    if (one) out.push({ prefix: (one[1] || '').toUpperCase(), num: parseInt(one[2], 10), token: tok });
+    else bad.push(tok);
+  }
+  return { probes: out, bad };
+}
+// Canonical key for comparing a typed probe against a real lot number:
+// prefix (uppercased) + the NUMERIC tail, so "10", "010" and "0010" are one
+// and the same lot and only a different prefix separates two lots.
+function lotProbeKey(lot) {
+  const m = String(lot == null ? '' : lot).trim().match(/^([A-Za-z]*)(\d+)$/);
+  return m ? (m[1] || '').toUpperCase() + '|' + parseInt(m[2], 10) : String(lot || '').toUpperCase();
+}
+// Index every lot in the trade by that key, plus a by-number index so a
+// prefix-less "23" still resolves in a trade whose lots are "A023".
+function allocLotIndex(stats) {
+  const byKey = new Map(), byNum = new Map();
+  for (const s of (stats || [])) {
+    for (const r of (s.ranges || [])) {
+      for (const t of (r.lots || [])) {
+        const entry = { lot: t.lot, branch: s.branch, state: t.state || 'free' };
+        byKey.set(lotProbeKey(t.lot), entry);
+        const m = String(t.lot).match(/^[A-Za-z]*(\d+)$/);
+        if (m) {
+          const n = parseInt(m[1], 10);
+          if (!byNum.has(n)) byNum.set(n, []);
+          byNum.get(n).push(entry);
+        }
+      }
+    }
+  }
+  return { byKey, byNum };
+}
+// Resolve typed text against the trade's lots.
+//   found     — entries that exist somewhere in this trade
+//   missing   — typed numbers no branch has allocated
+//   ambiguous — a prefix-less number that matches more than one prefix
+function resolveTypedLots(text, stats) {
+  const { probes, bad } = parseLotTokens(text);
+  const idx = allocLotIndex(stats);
+  const found = [], missing = [], ambiguous = [];
+  const seen = new Set();
+  for (const p of probes) {
+    let entry = null;
+    if (p.prefix) {
+      entry = idx.byKey.get(p.prefix + '|' + p.num) || null;
+    } else {
+      const hits = idx.byNum.get(p.num) || [];
+      if (hits.length === 1) entry = hits[0];
+      else if (hits.length > 1) { ambiguous.push(p.num); continue; }
+    }
+    if (!entry) { missing.push((p.prefix || '') + p.num); continue; }
+    if (seen.has(entry.lot)) continue;
+    seen.add(entry.lot);
+    found.push(entry);
+  }
+  return { found, missing, ambiguous, bad };
+}
+
+// ── The status bar, drawn in both panels ──────────────────────────
+// One chip per status actually present in this trade. The available ones
+// are stated (not clickable — they are the point of the screen); each
+// locked status is a toggle that reveals or re-hides those lots.
+function renderAllocStatusBars() {
+  const present = new Map();   // state -> count, across the whole trade
+  for (const s of (_raAllocStats || [])) {
+    for (const r of (s.ranges || [])) {
+      for (const t of (r.lots || [])) {
+        const st = t.state || 'free';
+        present.set(st, (present.get(st) || 0) + 1);
+      }
+    }
+  }
+  const avail = ALLOC_HIDEABLE_STATES.every(st => !present.has(st) || _allocShownStates.has(st));
+  const chip = (st) => {
+    const sty = RA_TILE_STYLES[st] || RA_TILE_STYLES.free;
+    const on  = _allocShownStates.has(st);
+    const n   = present.get(st) || 0;
+    return `<button type="button" onclick="allocToggleState('${st}')" title="${on ? 'Hide' : 'Show'} the ${esc(sty.label.toLowerCase())} lots"
+      style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:14px;cursor:pointer;font-size:11.5px;font-weight:600;font-family:inherit;
+             background:${on ? sty.bg : '#fff'};color:${on ? sty.fg : 'var(--text3)'};border:1.5px solid ${on ? sty.bd : 'var(--border)'}">
+      <span style="opacity:.8">${on ? '👁' : '＋'}</span>${sty.glyph ? sty.glyph + ' ' : ''}${esc(sty.label)} <b>${n}</b></button>`;
+  };
+  const hideable = ALLOC_HIDEABLE_STATES.filter(st => present.has(st));
+  const availN = (present.get('free') || 0) + (present.get('reassigned') || 0);
+  let html = `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:9px 12px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px">
+    <span style="font-size:11.5px;font-weight:700;color:var(--text2)">Showing</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:14px;font-size:11.5px;font-weight:700;background:#ECFDF5;color:#065F46;border:1.5px solid #059669">✓ Available <b>${availN}</b></span>`;
+  if (hideable.length) {
+    html += `<span style="width:1px;height:18px;background:#CBD5E1"></span>`
+          + hideable.map(chip).join('')
+          + `<button type="button" onclick="allocShowAllStates(${avail ? 'false' : 'true'})"
+               style="margin-left:auto;height:26px;padding:0 12px;border-radius:6px;cursor:pointer;font-size:11.5px;font-weight:600;font-family:inherit;background:none;border:1px solid var(--border);color:var(--text2)">${avail ? 'Available only' : 'Show all'}</button>`;
+  } else {
+    html += `<span style="font-size:11px;color:var(--text3)">every lot in this trade is free</span>`;
+  }
+  html += '</div>';
+  ['ra-statusbar', 'alloc-statusbar'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  });
+}
+// Reveal / re-hide one locked status, in both panels at once.
+function allocToggleState(st) {
+  if (_allocShownStates.has(st)) _allocShownStates.delete(st);
+  else _allocShownStates.add(st);
+  _allocRepaintBothPanels();
+}
+function allocShowAllStates(on) {
+  _allocShownStates.clear();
+  if (on) ALLOC_HIDEABLE_STATES.forEach(st => _allocShownStates.add(st));
+  _allocRepaintBothPanels();
+}
+function _allocRepaintBothPanels() {
+  if (typeof renderReassignTiles === 'function') renderReassignTiles();
+  if (typeof renderAllocEditCards === 'function') renderAllocEditCards(_raAllocStats);
+}
+// Edit panel find box — narrows the chips to the typed numbers / ranges.
+// Purely a view: nothing is marked, nothing is saved.
+function allocApplyFind(text) {
+  const note = document.getElementById('alloc-find-note');
+  const txt = String(text || '').trim();
+  if (!txt) {
+    _allocFindSet = null;
+    if (note) note.textContent = '';
+    renderAllocEditCards(_raAllocStats);
+    return;
+  }
+  const res = resolveTypedLots(txt, _raAllocStats);
+  _allocFindSet = new Set(res.found.map(e => lotProbeKey(e.lot)));
+  if (note) {
+    const bits = [`${res.found.length} found`];
+    if (res.missing.length)   bits.push(`${res.missing.length} not allocated`);
+    if (res.ambiguous.length) bits.push(`${res.ambiguous.length} need a prefix`);
+    if (res.bad.length)       bits.push(`couldn’t read: ${res.bad.slice(0, 3).join(', ')}`);
+    note.textContent = bits.join(' · ');
+  }
+  renderAllocEditCards(_raAllocStats);
+}
+
 // Lot chips per row, on BOTH allocation grids (Edit Allocations cards and the
 // Reassign Lots tiles). A fixed count — not "as many as fit" — is what makes
 // a lot number findable: the same column holds the same last digit on every
@@ -23936,6 +24191,7 @@ function renderAllocEditCards(stats) {
     host.innerHTML = '<div style="padding:18px;text-align:center;font-size:12px;color:var(--text3);background:#fafafa;border:1px dashed var(--border);border-radius:8px">No allocations yet. Click <b>+ Add Branch</b> below to create the first range.</div>';
     _updateAllocMarkedCount();
     renderAllocMainBar();
+    renderAllocStatusBars();
     return;
   }
   // ONE card per branch, with every range's lots flowing together in lot
@@ -23963,16 +24219,21 @@ function renderAllocEditCards(stats) {
     const cardKey = _allocCardKey(branch);
     const hidden = _allocHidden.has(cardKey);
     const rangeTxt = ranges.map(r => `${r.start}–${r.end}`).join(', ');
+    // Counts stay honest about the WHOLE branch even when the grid below is
+    // filtered — "2 used · 36 free" is a fact about the depot, not about what
+    // happens to be on screen. What is off screen is said separately.
     const usedCt = lots.filter(l => l.used).length;
     const free   = lots.filter(l => !l.used);
     const marked = free.filter(l => _allocMarked.has(_allocMarkKey(branch, l.lot))).length;
+    const shown  = lots.filter(allocEditLotVisible);
+    const offScreen = lots.length - shown.length;
     // What survives Save: the used lots (which can never be deleted) plus the
     // free ones nobody marked. This read `lots.length - usedCt - marked`, which
     // is the same arithmetic as the `free` figure printed next to it — so the
     // header showed one number twice under two labels, and "keeping 0" next to
     // 2 locked lots was simply untrue.
     const keeping = lots.length - marked;
-    const chips = lots.map(l => {
+    const chips = shown.map(l => {
       const isUsed = !!l.used;
       const isCarried = !!l.carried;
       const mkKey  = _allocMarkKey(branch, l.lot);
@@ -24012,19 +24273,20 @@ function renderAllocEditCards(stats) {
           ${ranges.length > 1 ? `<span style="font-size:10px;color:var(--text3)">${ranges.length} ranges</span>` : ''}
         </div>
         <div style="display:flex;align-items:center;gap:10px;font-size:11px;color:var(--text3)">
-          <span>${usedCt} used · ${free.length - marked} free${marked ? ` · <b style="color:#16a34a">${marked} marked</b>` : ''} · keeping ${keeping}</span>
+          <span>${usedCt} used · ${free.length - marked} free${marked ? ` · <b style="color:#16a34a">${marked} marked</b>` : ''} · keeping ${keeping}${offScreen ? ` · <span title="Use the status bar, or clear the find box, to show these">${offScreen} not shown</span>` : ''}</span>
           <button type="button" class="btn btn-o" style="height:24px;padding:0 10px;font-size:11px;font-weight:600" onclick="_allocToggleHide('${esc(cardKey)}')">${hidden ? 'Show' : 'Hide'}</button>
         </div>
       </div>
-      ${hidden ? '' : `<div style="${ALLOC_CHIP_GRID};gap:6px;margin-bottom:10px;max-height:230px;overflow:auto">${chips || '<span style="font-size:11px;color:var(--text3)">empty range</span>'}</div>
+      ${hidden ? '' : `<div style="${ALLOC_CHIP_GRID};gap:6px;margin-bottom:10px;max-height:230px;overflow:auto">${chips || `<span style="font-size:11px;color:var(--text3);grid-column:1/-1">${lots.length ? 'Nothing matching here — every lot in this branch is filtered out.' : 'empty range'}</span>`}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button type="button" class="btn btn-o" style="height:26px;padding:0 12px;font-size:11px;font-weight:600" onclick="_allocMarkAllFree('${esc(branch)}')" title="Mark every free lot in ${escAttr(branch)} for delete">Mark all free for delete</button>
+        <button type="button" class="btn btn-o" style="height:26px;padding:0 12px;font-size:11px;font-weight:600" onclick="_allocMarkAllFree('${esc(branch)}')" title="Mark every free lot SHOWN in ${escAttr(branch)} for delete">Mark ${offScreen ? 'shown' : 'all'} free for delete</button>
         <button type="button" class="btn btn-o" style="height:26px;padding:0 12px;font-size:11px;font-weight:600" onclick="_allocClearMarks('${esc(branch)}')" title="Unmark every lot in ${escAttr(branch)}">Clear marks</button>
       </div>`}
     </div>`;
   }).join('');
   _updateAllocMarkedCount();
   renderAllocMainBar();   // keep the Close-Depot bar in sync with the cards
+  renderAllocStatusBars();
 }
 function _updateAllocMarkedCount() {
   const el = document.getElementById('alloc-edit-marked-count');
@@ -24046,17 +24308,24 @@ function _allocToggleHide(cardKey) {
 }
 // Both act on the WHOLE branch now — the card is the branch, so a button on it
 // that only covered one of its ranges would be lying about its scope.
+// Both act on the lots CURRENTLY ON SCREEN. Marking a lot the operator
+// cannot see — because a status is hidden or the find box is narrowing the
+// grid — is precisely the surprise the filter exists to prevent.
 function _allocMarkAllFree(branch) {
   const s = (_raAllocStats || []).find(x => x.branch === branch);
   if (!s) return;
   for (const r of (s.ranges || [])) {
-    for (const l of (r.lots || [])) if (!l.used) _allocMarked.add(_allocMarkKey(branch, l.lot));
+    for (const l of (r.lots || [])) {
+      if (!l.used && allocEditLotVisible(l)) _allocMarked.add(_allocMarkKey(branch, l.lot));
+    }
   }
   renderAllocEditCards(_raAllocStats);
 }
 function _allocClearMarks(branch) {
   const s = (_raAllocStats || []).find(x => x.branch === branch);
   if (!s) return;
+  // Clearing is the safe direction, so it covers the whole branch — a mark
+  // left behind on a hidden chip would still be deleted on save.
   for (const r of (s.ranges || [])) {
     for (const l of (r.lots || [])) _allocMarked.delete(_allocMarkKey(branch, l.lot));
   }
@@ -24194,7 +24463,7 @@ const raTileCss = (st, selected) => {
 // Lots skipped by the last typed start/end sync because they were locked.
 // Surfaced in the selection summary; reset whenever tiles drive the selection.
 let _raInputSkipped = 0;
-// True only while raSyncSelectionFromInputs is re-rendering, so the render
+// True only while raSyncSelectionFromText is re-rendering, so the render
 // doesn't write the (possibly gap-riddled) selection back over the boxes the
 // operator is still typing into.
 let _raSyncingFromInputs = false;
@@ -24205,6 +24474,7 @@ function renderReassignTiles() {
   if (!_raAllocStats || !_raAllocStats.length) {
     grid.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:14px;text-align:center">No allocations yet</div>';
     raRenderLegend(new Set());
+    renderAllocStatusBars();
     return;
   }
   // States actually present in this trade — drives which legend swatches show.
@@ -24232,41 +24502,49 @@ function renderReassignTiles() {
     const movableTxt = movable
       ? `<b style="color:#047857;font-size:12px">${movable} free to move</b>`
       : `<b style="color:#B91C1C;font-size:12px">none free to move</b>`;
+    // Only the statuses the operator asked for reach the grid; the header
+    // still reports the branch's real used/total either way.
+    const visible = (s.ranges || []).flatMap(r => (r.lots || []).filter(t => allocStateVisible(t.state)));
+    const offScreen = (s.ranges || []).reduce((n, r) => n + (r.lots || []).length, 0) - visible.length;
     html += `<div style="margin-bottom:16px">
       <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:7px;display:flex;justify-content:space-between;align-items:center;gap:10px">
         <span>📍 ${esc(branch)}</span>
-        <span style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0">${movableTxt} · ${s.used}/${s.total} used</span>
+        <span style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0">${movableTxt} · ${s.used}/${s.total} used${offScreen ? ` · ${offScreen} not shown` : ''}</span>
       </div>
       <div style="${ALLOC_CHIP_GRID};gap:5px">`;
-    for (const r of (s.ranges || [])) {
-      for (const t of (r.lots || [])) {
-        const selected = _raSelected.has(t.lot);
-        // Every state the server would refuse is dead to the pointer — see
-        // RA_LOCKED_STATES: anything with a row in `lots` (booked, reserved,
-        // allocated, carried). 'reassigned' is free and stays clickable.
-        const dis = raLocked(t.state);
-        const TIPS = {
-          booked:     `Booked: ${t.seller || '—'} — cannot be reassigned`,
-          reserved:   `Reserved (held): ${t.seller || '—'} — cannot be reassigned`,
-          allocated:  `Lot opened${t.seller ? ' for ' + t.seller : ''} (no weight recorded yet) — cannot be reassigned`,
-          carried:    `Carried forward${t.seller ? ' (' + t.seller + ')' : ''} — cannot be reassigned`,
-          reassigned: `FREE — moved here from another branch earlier; can be moved again`,
-        };
-        const tip = TIPS[t.state] || 'FREE — click or drag to move this lot';
-        const handlers = dis ? '' : ` onmousedown="raTileMouseDown(event,this)" ontouchstart="raTileTouchStart(event,this)" onclick="raToggleTile(this)"`;
-        // Glyph marks each locked state independently of its hue, so the tiles
-        // stay tellable apart in poor light and for colour-blind operators.
-        const gl = raTileStyle(t.state).glyph;
-        const glyph = (gl && !selected) ? `<span style="opacity:.7;font-size:10px;margin-right:3px">${gl}</span>` : '';
-        // Bigger, bolder type than the old 11px: this grid gets read at night.
-        html += `<div title="${esc(tip)}" data-lot="${esc(t.lot)}" data-branch="${esc(branch)}" data-state="${esc(t.state)}"${handlers} style="${raTileCss(t.state, selected)};padding:5px 7px;border-radius:5px;font-size:12.5px;font-weight:700;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-width:0;box-sizing:border-box;overflow:hidden;text-align:center;cursor:${dis?'not-allowed':'pointer'};user-select:none;touch-action:none">${glyph}${esc(t.lot)}</div>`;
-      }
+    if (!visible.length) {
+      html += `<span style="grid-column:1/-1;font-size:11px;color:var(--text3)">No free lots here — use the status bar above to see the rest.</span>`;
+    }
+    for (const t of visible) {
+      const selected = _raSelected.has(t.lot);
+      // Every state the server would refuse is dead to the pointer — see
+      // RA_LOCKED_STATES: anything with a row in `lots` (booked, reserved,
+      // allocated, carried). 'reassigned' is free and stays clickable.
+      const dis = raLocked(t.state);
+      const TIPS = {
+        booked:     `Booked: ${t.seller || '—'} — cannot be reassigned`,
+        reserved:   `Reserved (held): ${t.seller || '—'} — cannot be reassigned`,
+        allocated:  `Lot opened${t.seller ? ' for ' + t.seller : ''} (no weight recorded yet) — cannot be reassigned`,
+        carried:    `Carried forward${t.seller ? ' (' + t.seller + ')' : ''} — cannot be reassigned`,
+        reassigned: `FREE — moved here from another branch earlier; can be moved again`,
+      };
+      const tip = TIPS[t.state] || 'FREE — click or drag to move this lot';
+      const handlers = dis ? '' : ` onmousedown="raTileMouseDown(event,this)" ontouchstart="raTileTouchStart(event,this)" onclick="raToggleTile(this)"`;
+      // Glyph marks each locked state independently of its hue, so the tiles
+      // stay tellable apart in poor light and for colour-blind operators.
+      const gl = raTileStyle(t.state).glyph;
+      const glyph = (gl && !selected) ? `<span style="opacity:.7;font-size:10px;margin-right:3px">${gl}</span>` : '';
+      // Bigger, bolder type than the old 11px: this grid gets read at night.
+      html += `<div title="${esc(tip)}" data-lot="${esc(t.lot)}" data-branch="${esc(branch)}" data-state="${esc(t.state)}"${handlers} style="${raTileCss(t.state, selected)};padding:5px 7px;border-radius:5px;font-size:12.5px;font-weight:700;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-width:0;box-sizing:border-box;overflow:hidden;text-align:center;cursor:${dis?'not-allowed':'pointer'};user-select:none;touch-action:none">${glyph}${esc(t.lot)}</div>`;
     }
     html += `</div></div>`;
   }
   grid.innerHTML = html;
-  raRenderLegend(present);
-  updateRangeInputsFromSelection();
+  // The legend describes what is ON SCREEN, so a status the operator has
+  // hidden doesn't get a swatch for tiles they cannot see.
+  raRenderLegend(new Set(Array.from(present).filter(allocStateVisible)));
+  renderAllocStatusBars();
+  updateLotsBoxFromSelection();
   updateSelectionSummary();
 }
 // Collapse a (possibly disjoint) lot list into a readable "001-010, 090"
@@ -24421,65 +24699,93 @@ function _raApplyDragRangePaint(curLot){
     el.style.background = c.bg; el.style.color = c.fg;
     el.style.borderColor = c.bd; el.style.borderWidth = c.bw + 'px';
   });
-  updateRangeInputsFromSelection();
+  updateLotsBoxFromSelection();
   updateSelectionSummary();
 }
-function updateRangeInputsFromSelection() {
-  const startEl = document.getElementById('ra-start');
-  const endEl   = document.getElementById('ra-end');
-  if (!startEl || !endEl) return;
-  // Never write back while the operator is typing into those very boxes:
-  // filtering out locked lots can leave a disjoint selection, and the
-  // disjoint branch below would blank the field mid-keystroke.
+// Mirror the tile selection back into the typed box. raChunkSummary already
+// speaks exactly the syntax the box accepts ("010-014, 023"), so clicking
+// and typing are two views of ONE selection rather than two rival inputs —
+// sweep some tiles, then edit the text, then sweep again.
+function updateLotsBoxFromSelection() {
+  const box = document.getElementById('ra-lots');
+  if (!box) return;
+  // Never write back while the operator is typing into that very box:
+  // locked lots are dropped from the selection, so echoing it would rewrite
+  // the half-finished text under the cursor.
   if (_raSyncingFromInputs) return;
-  const sel = Array.from(_raSelected);
-  if (!sel.length) { startEl.value = ''; endEl.value = ''; return; }
-  // Sort by numeric tail, keep prefix from first.
-  // A disjoint selection can't be expressed as a single start–end range,
-  // so clear the inputs (the tile selection is what gets sent). Only mirror
-  // min→max into the boxes when the picks form one contiguous chunk.
-  if (raChunkSummary(sel).includes(',')) { startEl.value = ''; endEl.value = ''; return; }
-  const parsed = sel.map(l => {
-    const m = l.match(/^(\D*)(\d+)$/);
-    return m ? { lot: l, prefix: m[1] || '', num: parseInt(m[2], 10), padLen: m[2].length } : null;
-  }).filter(Boolean).sort((a, b) => a.num - b.num);
-  if (!parsed.length) return;
-  startEl.value = parsed[0].lot;
-  endEl.value   = parsed[parsed.length - 1].lot;
+  box.value = _raSelected.size ? raChunkSummary(Array.from(_raSelected)) : '';
 }
-function raSyncSelectionFromInputs() {
-  const startEl = document.getElementById('ra-start');
-  const endEl   = document.getElementById('ra-end');
-  const start = (startEl && startEl.value || '').trim();
-  const end   = (endEl   && endEl.value   || '').trim();
-  if (!start || !end) return;
-  const sm = start.match(/^(\D*)(\d+)$/);
-  const em = end.match(/^(\D*)(\d+)$/);
-  if (!sm || !em || sm[1] !== em[1]) return;
-  const pad = sm[2].length;
-  const a = parseInt(sm[2], 10), b = parseInt(em[2], 10);
-  if (a > b) return;
-  // Typing a range used to select every number in it blindly — booked and
-  // allocated lots included — so a span that merely crossed a used lot got
-  // sent whole and the server bounced the entire reassign. Only lots the grid
-  // would let you click may enter the selection.
-  const from = (document.getElementById('ra-from') || {}).value || '';
-  const selectable = new Set();
-  for (const s of (_raAllocStats || [])) {
-    if (from && s.branch !== from) continue;
-    for (const r of (s.ranges || [])) {
-      for (const t of (r.lots || [])) if (!raLocked(t.state)) selectable.add(t.lot);
-    }
+// ── Typing the lots to move ───────────────────────────────────────
+// The box takes "10,11,23,12,24,45,50-100": any mix of single numbers and
+// ranges, in any order, zero-padding optional. Resolution rules:
+//   • a lot that is booked / reserved / entered / carried is SKIPPED, not
+//     an error — mid-auction the operator reads a run off a sheet and some
+//     of it will have sold since. The note says how many were stepped over,
+//     and the rest still moves. (Sending them would have bounced the whole
+//     reassign server-side, which is what used to happen.)
+//   • a number no branch has allocated is reported as "not allocated".
+//   • FROM is inferred when every movable lot lives in one branch. If the
+//     typed lots straddle two branches nothing is selected — the server
+//     moves FROM one branch, and guessing which one the operator meant is
+//     how lots end up in the wrong depot.
+function raSyncSelectionFromText() {
+  const box  = document.getElementById('ra-lots');
+  const note = document.getElementById('ra-lots-note');
+  const setNote = (html, color) => { if (note) { note.innerHTML = html; note.style.color = color || 'var(--text3)'; } };
+  if (!box) return;
+  const txt = box.value.trim();
+  _raInputSkipped = 0;
+  if (!txt) {
+    _raSelected.clear();
+    setNote('');
+    _raSyncingFromInputs = true;
+    try { renderReassignTiles(); } finally { _raSyncingFromInputs = false; }
+    return;
   }
-  _raSelected.clear();
-  let skipped = 0;
-  for (let n = a; n <= b; n++) {
-    const lot = sm[1] + String(n).padStart(pad, '0');
-    if (selectable.has(lot)) _raSelected.add(lot); else skipped++;
+
+  const res = resolveTypedLots(txt, _raAllocStats);
+  const fromSel = document.getElementById('ra-from');
+  const from = (fromSel && fromSel.value) || '';
+
+  // Split what exists into what can actually move and what cannot.
+  let movable = res.found.filter(e => !raLocked(e.state));
+  const locked = res.found.filter(e => raLocked(e.state));
+  const outside = from ? movable.filter(e => e.branch !== from) : [];
+  if (from) movable = movable.filter(e => e.branch === from);
+
+  const branches = Array.from(new Set(movable.map(e => e.branch)));
+  let spanErr = '';
+  if (!from && branches.length > 1) {
+    spanErr = `These lots sit in ${branches.length} branches (${branches.join(', ')}) — pick a FROM branch below and they’ll narrow to it.`;
+    movable = [];
+  } else if (!from && branches.length === 1 && fromSel) {
+    // One branch, so there is nothing to ask: adopt it.
+    fromSel.value = branches[0];
+    loadReassignPreview();
   }
-  _raInputSkipped = skipped;
+
+  _raSelected = new Set(movable.map(e => e.lot));
+  _raInputSkipped = locked.length;
+
+  const bits = [];
+  if (movable.length) bits.push(`<b style="color:#047857">${movable.length} lot${movable.length === 1 ? '' : 's'} ready to move${branches.length === 1 ? ' from ' + esc(branches[0]) : ''}</b>`);
+  if (locked.length)  bits.push(`<span style="color:#9a3412">${locked.length} already used — skipped (${esc(raChunkSummary(locked.map(e => e.lot)).slice(0, 60))})</span>`);
+  if (outside.length) bits.push(`<span style="color:#9a3412">${outside.length} in another branch — skipped</span>`);
+  if (res.missing.length)   bits.push(`<span style="color:#9a3412">${res.missing.length} not allocated to any branch (${esc(res.missing.slice(0, 5).join(', '))}${res.missing.length > 5 ? '…' : ''})</span>`);
+  if (res.ambiguous.length) bits.push(`<span style="color:#9a3412">${res.ambiguous.length} match more than one lot prefix — type the prefix too</span>`);
+  if (res.bad.length)       bits.push(`<span style="color:#991B1B">couldn’t read: ${esc(res.bad.slice(0, 3).join(', '))}</span>`);
+  setNote(spanErr ? `<b style="color:#991B1B">${esc(spanErr)}</b>` : (bits.join(' · ') || 'Nothing matched.'));
+
   _raSyncingFromInputs = true;
   try { renderReassignTiles(); } finally { _raSyncingFromInputs = false; }
+}
+// FROM changed — re-resolve whatever is in the box against the new branch
+// (and refresh the usage preview), so switching branches narrows the typed
+// list instead of leaving a stale cross-branch selection behind.
+function raOnFromBranchChange() {
+  loadReassignPreview();
+  const box = document.getElementById('ra-lots');
+  if (box && box.value.trim()) raSyncSelectionFromText();
 }
 
 function switchAllocTab(tab) {
@@ -24560,9 +24866,17 @@ async function openAllocModal(auctionId, ano) {
   document.getElementById('alloc-modal-ano').textContent = ano;
   const errEl = document.getElementById('alloc-err'); errEl.style.display = 'none'; errEl.textContent = '';
   const raErr = document.getElementById('ra-err');     raErr.style.display = 'none';   raErr.textContent = '';
-  document.getElementById('ra-start').value = '';
-  document.getElementById('ra-end').value = '';
+  document.getElementById('ra-lots').value = '';
+  document.getElementById('ra-lots-note').textContent = '';
   document.getElementById('ra-preview').textContent = '';
+  const findBox = document.getElementById('alloc-find');
+  if (findBox) findBox.value = '';
+  const findNote = document.getElementById('alloc-find-note');
+  if (findNote) findNote.textContent = '';
+  _allocFindSet = null;
+  // Every trade starts on "available only" — a status revealed for the last
+  // trade is not a statement about this one.
+  _allocShownStates.clear();
   switchAllocTab('edit');
 
   try {
@@ -24641,48 +24955,34 @@ async function loadReassignPreview() {
 async function executeReassign() {
   const from  = document.getElementById('ra-from').value;
   const to    = document.getElementById('ra-to').value;
-  const start = document.getElementById('ra-start').value.trim();
-  const end   = document.getElementById('ra-end').value.trim();
   const errEl = document.getElementById('ra-err');
   const showErr = (m) => { errEl.textContent = m; errEl.style.display = 'block'; errEl.style.background = '#FEE2E2'; errEl.style.color = '#991B1B'; };
   errEl.style.display = 'none';
 
-  if (!from)  return showErr('Select FROM branch (or click a tile)');
+  if (!from)  return showErr('Select FROM branch (or type the lots above)');
   if (!to)    return showErr('Select TO branch');
   if (from === to) return showErr('FROM and TO must be different');
 
-  // Prefer the tile selection (supports disjoint/multi-range). Fall back
-  // to the typed start/end inputs when nothing is selected on the tiles.
+  // ONE selection now: the typed box and the tiles both write _raSelected,
+  // so there is no second "typed range" path that could disagree with what
+  // is highlighted on screen.
   const picked = Array.from(_raSelected);
-  let body, summary;
-  if (picked.length) {
-    body = { from_branch: from, to_branch: to, lots: picked };
-    summary = raChunkSummary(picked);
-  } else if (start && end) {
-    body = { from_branch: from, to_branch: to, start_lot: start, end_lot: end };
-    summary = `${start}-${end}`;
-  } else {
-    return showErr('Pick at least one tile or enter a start/end range');
-  }
+  if (!picked.length) return showErr('Type the lot numbers to move, or pick them on the grid');
+  const body = { from_branch: from, to_branch: to, lots: picked };
+  const summary = raChunkSummary(picked);
 
-  // Client-side guard: flag any booked lot in the selection for a quicker,
-  // friendlier error than the server round-trip.
+  // Client-side guard: flag any already-used lot in the selection for a
+  // quicker, friendlier error than the server round-trip.
+  const pickSet = new Set(picked);
   const bookedSeen = [];
-  const pickSet = new Set(picked.length ? picked : []);
   for (const s of (_raAllocStats || [])) {
     if (s.branch !== from) continue;
     for (const r of (s.ranges || [])) {
       for (const t of (r.lots || [])) {
-        const inSel = picked.length ? pickSet.has(t.lot) : (() => {
-          const sm = start.match(/^(\D*)(\d+)$/), em = end.match(/^(\D*)(\d+)$/), tm = t.lot.match(/^(\D*)(\d+)$/);
-          if (!sm || !em || !tm || sm[1] !== em[1] || tm[1] !== sm[1]) return false;
-          const n = parseInt(tm[2], 10);
-          return n >= parseInt(sm[2], 10) && n <= parseInt(em[2], 10);
-        })();
         // Test the same predicate the tiles use, not the bare `booked` flag:
         // the server rejects every lot with a row in `lots`, so a selection
         // holding a reserved / entered / carried lot fails too.
-        if (inSel && raLocked(t.state)) bookedSeen.push(t.lot);
+        if (pickSet.has(t.lot) && raLocked(t.state)) bookedSeen.push(t.lot);
       }
     }
   }
@@ -24719,8 +25019,8 @@ async function executeReassign() {
       renderAllocEditCards(_raAllocStats);
     } catch (_) { /* non-fatal */ }
     loadReassignPreview();
-    document.getElementById('ra-start').value = '';
-    document.getElementById('ra-end').value = '';
+    document.getElementById('ra-lots').value = '';
+    document.getElementById('ra-lots-note').textContent = '';
     if (typeof loadAuctions === 'function') loadAuctions();
     leLoadAllocBar();
     setTimeout(() => { errEl.style.display = 'none'; }, 3000);
@@ -26763,8 +27063,12 @@ const SET_FIELD_GROUPS = {
       match:/^grade2_manager_/ },
     { title:'Level 2 — Immediate Superior', icon:'👔', hint:'Escalation target for any grade-2 booking made after the threshold was crossed.',
       match:/^grade2_superior_/ },
-    { title:'Reassign Requests', icon:'🔄', hint:'Who is notified when a lot reassignment is requested, and which WhatsApp template is used.',
-      match:/^reassign_alert_/ },
+    { title:'Reassign Requests', icon:'🔄', hint:'Who moves lots between branches from the phone — the operator directly, or an admin on request — plus who is notified and which WhatsApp template is used.',
+      // The direct-reassign switch leads: it decides whether the rest of this
+      // card is even in play. Listed by key (it does not share the
+      // reassign_alert_ prefix, because it is a feature switch, not a
+      // notification target) and the regex picks up the alert settings after.
+      keys:['flag_mobile_reassign_direct'], match:/^reassign_alert_/ },
   ],
 };
 
@@ -30534,6 +30838,7 @@ function openAuctionAdd(){
   // the field is optional — an operator who saves before it lands gets the
   // same blank "use configured branch" they would have chosen anyway.
   loadAuctionPlaces('');
+  fillMainBranchSelect('');
   showModal('auction-modal');
 }
 
@@ -30855,7 +31160,31 @@ function openAuctionEdit(a){
   document.getElementById('a-crpt').value=a.crop_type||getDefaultCropType();
   document.getElementById('a-state').value=a.state||getDefaultBusinessState();
   loadAuctionPlaces(a.place || '');
+  fillMainBranchSelect(a.main_branch || '');
   showModal('auction-modal');
+}
+// Fill the New/Edit Auction main-depot picker from the configured branch
+// list, preselecting `current`. Kept separate from populateBranchSelect:
+// that one leads with "All Branches", which would read as "every depot is
+// the main depot" here.
+async function fillMainBranchSelect(current){
+  const sel = document.getElementById('a-main-branch');
+  if (!sel) return;
+  const want = String(current || '').trim().toUpperCase();
+  // Paint the stored value immediately so a slow settings read can never
+  // make a set main depot look like "— None —" and get saved away.
+  sel.innerHTML = '<option value="">— None —</option>'
+    + (want ? `<option value="${esc(want)}" selected>${esc(want)}</option>` : '');
+  try {
+    const branches = await getAllocBranches();
+    sel.innerHTML = '<option value="">— None —</option>'
+      + branches.map(b => `<option value="${esc(b)}"${b === want ? ' selected' : ''}>${esc(b)}</option>`).join('');
+    if (want && !branches.includes(want)) {
+      // Stored branch no longer configured — keep it visible rather than
+      // silently re-saving the trade with no main depot.
+      sel.innerHTML += `<option value="${esc(want)}" selected>${esc(want)} (not in Settings)</option>`;
+    }
+  } catch (_) { /* the immediate paint above stands */ }
 }
 async function saveAuction(){
   const id=document.getElementById('a-id').value;
@@ -30863,7 +31192,11 @@ async function saveAuction(){
     crop_type:document.getElementById('a-crpt').value,state:document.getElementById('a-state').value,
     // '' is meaningful here — it clears the trade's venue back to the
     // configured branch — so the key is always sent from this form.
-    place:auctionPlaceValue()};
+    place:auctionPlaceValue(),
+    // Likewise '' = "no main depot", which is a real choice. Both keys are
+    // only ever sent BY this form; every other caller omits them and the
+    // server leaves the stored values alone.
+    main_branch:(document.getElementById('a-main-branch')||{}).value||''};
   if(!body.ano||!body.date){alert('Auction No and Date are required');return}
   try{
     const r=await fetch(B+(id?`/api/auctions/${id}`:'/api/auctions'),{method:id?'PUT':'POST',

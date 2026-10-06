@@ -7481,6 +7481,21 @@ app.get('/api/auctions', requireViewOrLotEntry, (req, res) => {
 // there, from the `formd_places` list, and Form-D reads it per trade instead
 // of asking again at print time. Blank keeps the old behaviour exactly: fall
 // back to the configured branch.
+// ── Main / holding depot, carried on the trade ───────────────────────
+// Asked for when the auction is CREATED (it is a property of how the trade
+// is being run, not an afterthought), and re-editable in Edit Allocations.
+// Validated against the configured branch list — NOT against this trade's
+// allocations, which usually do not exist yet at create time, and which
+// close-depot does not require either: it appends the freed numbers to the
+// main depot whether or not that depot already holds a range.
+// Anything not naming a configured branch clears the field rather than
+// storing a name no screen could satisfy.
+function normalizeMainBranch(db, v) {
+  const want = String(v == null ? '' : v).trim().toUpperCase();
+  if (!want) return '';
+  return configuredBranches(db).includes(want) ? want : '';
+}
+
 const FORMD_PLACE_MAX = 120;
 function normalizeAuctionPlace(v) {
   return String(v == null ? '' : v).trim().replace(/\s+/g, ' ').slice(0, FORMD_PLACE_MAX);
@@ -7510,11 +7525,12 @@ app.post('/api/auctions', requireAuctionWrite, (req, res) => {
   const defaultCrop  = getSetting(db, 'default_crop_type') || 'VST';
   const defaultState = getSetting(db, 'business_state')    || 'TAMIL NADU';
   const place = normalizeAuctionPlace(req.body.place);
-  db.run('INSERT INTO auctions (ano,date,crop_type,state,place) VALUES (?,?,?,?,?)',
-    [ano, d, crop_type||defaultCrop, state||defaultState, place]);
+  const mainBranch = normalizeMainBranch(db, req.body.main_branch);
+  db.run('INSERT INTO auctions (ano,date,crop_type,state,place,main_branch) VALUES (?,?,?,?,?,?)',
+    [ano, d, crop_type||defaultCrop, state||defaultState, place, mainBranch]);
   const created = db.get('SELECT id FROM auctions WHERE ano = ? AND date = ? ORDER BY id DESC LIMIT 1', [ano, d]);
   const placeAdded = rememberFormdPlace(db, place, req.user && req.user.username);
-  res.json({ success: true, id: created ? created.id : null, place, placeAdded });
+  res.json({ success: true, id: created ? created.id : null, place, placeAdded, main_branch: mainBranch });
 });
 app.put('/api/auctions/:id', requireAuctionWrite, (req, res) => {
   const { ano, date, crop_type, state } = req.body;
@@ -7527,6 +7543,13 @@ app.put('/api/auctions/:id', requireAuctionWrite, (req, res) => {
   // not blank a venue someone set. An explicit '' still clears it.
   const hasPlace = Object.prototype.hasOwnProperty.call(req.body, 'place');
   const place = hasPlace ? normalizeAuctionPlace(req.body.place) : null;
+  // Same "absent means leave it alone" contract as `place` — the Lot Entry
+  // quick-create and every older caller know nothing about a main depot and
+  // must not blank one somebody chose. An explicit '' still clears it.
+  if (Object.prototype.hasOwnProperty.call(req.body, 'main_branch')) {
+    db.run('UPDATE auctions SET main_branch = ? WHERE id = ?',
+      [normalizeMainBranch(db, req.body.main_branch), req.params.id]);
+  }
   if (hasPlace) {
     db.run('UPDATE auctions SET ano=?, date=?, crop_type=?, state=?, place=? WHERE id=?',
       [ano, normalizeDate(date), crop_type||defaultCrop, state||defaultState, place, req.params.id]);
@@ -7739,8 +7762,14 @@ app.post('/api/auctions/:id/allocations', requireAuctionWrite, (req, res) => {
   // (case mismatches would split one depot into two in allocation-stats).
   if (req.body.main_branch !== undefined) {
     const wanted = String(req.body.main_branch || '').trim();
+    // Prefer the allocation set's own spelling when that branch has a range
+    // here, so the close-depot pushback appends onto the SAME branch string.
+    // Falling back to the configured-branch list is what lets a main depot
+    // chosen at auction creation survive the first Save Allocations, which
+    // normally happens before that depot holds a range of its own.
     const match = allocations.find(a => String(a.branch).trim().toUpperCase() === wanted.toUpperCase());
-    db.run('UPDATE auctions SET main_branch = ? WHERE id = ?', [match ? String(match.branch).trim() : '', auctionId]);
+    const resolved = match ? String(match.branch).trim() : normalizeMainBranch(db, wanted);
+    db.run('UPDATE auctions SET main_branch = ? WHERE id = ?', [resolved, auctionId]);
   }
 
   const saved = db.all(
@@ -7771,7 +7800,7 @@ app.post('/api/auctions/:id/close-depot', requireAuctionWrite, (req, res) => {
     const a = db.get('SELECT main_branch FROM auctions WHERE id = ?', [auctionId]) || {};
     const mainStored = String(a.main_branch || '').trim();   // exact casing for re-insert
     const mainU = mainStored.toUpperCase();
-    if (!mainU)           return res.status(400).json({ error: 'No main depot is set for this trade. Pick a main depot in Edit Allocations first.' });
+    if (!mainU)           return res.status(400).json({ error: 'No main depot is set for this trade. Pick one on the trade (New/Edit Auction) or in Edit Allocations first.' });
     if (mainU === branchU) return res.status(400).json({ error: 'This depot is the main depot — it can’t be closed into itself.' });
 
     // Every lot number currently allocated to the closing branch. Keep the
@@ -8465,6 +8494,17 @@ function reassignLotsLabel(reqRow) {
 app.post('/api/auctions/:id/reassign-lots', requireAuctionWrite, (req, res) => {
   const db = getDb();
   const auctionId = parseInt(req.params.id, 10);
+  // Field roles reach this route too (lot_entry carries auction_write so it
+  // can open trades in the hall), so the "who may move lots" decision has to
+  // be made HERE and not only in the phone's UI. OFF (the default) sends the
+  // operator back to the request queue; a desk role (settings_write — manager
+  // or admin) is never gated.
+  if (!userHas(req.user && req.user.role, 'settings_write')
+      && String(getSetting(db, 'flag_mobile_reassign_direct') || '') !== 'true') {
+    return res.status(403).json({
+      error: 'Direct reassignment is turned off — send the move to an admin for approval instead.',
+    });
+  }
   const result = applyLotReassignment(db, auctionId, req.body, req.user || {});
   if (!result.ok) return res.status(400).json({ error: result.error });
   res.json({ success: true, allocations: result.allocations, message: result.message });

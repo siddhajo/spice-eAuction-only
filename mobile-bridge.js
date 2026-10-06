@@ -1126,6 +1126,11 @@ function mountMobile(app, deps) {
       // Per-field visibility for the auto-calculated read-only weight fields.
       showSampleField: getBool('mobile_show_sample_field', true),
       showGrossField:  getBool('mobile_show_gross_field', true),
+      // Lot reassignment from the phone. false (default) = the operator can
+      // only RAISE a request an admin approves; true = the Reassign screen
+      // moves the lots itself. The server enforces this independently — the
+      // flag here is only so the UI can say which of the two it is doing.
+      reassignDirect:  getBool('flag_mobile_reassign_direct', false),
       // "Send via WhatsApp" action on the mobile Saved bar (shares the lot
       // receipt PDF with the seller). Gated by the same master flag the
       // desktop share buttons use.

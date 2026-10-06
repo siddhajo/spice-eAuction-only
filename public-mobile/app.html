@@ -768,23 +768,22 @@ select:focus{border-color:var(--green)}
 <div class="modal-overlay" id="seller-modal"><div class="modal">
   <div class="modal-hdr"><h2>Add New Seller</h2><button class="modal-close" onclick="closeSellerModal()">&#x2715;</button></div>
   <div class="modal-body"><form autocomplete="off" onsubmit="event.preventDefault();saveNewSeller()">
-    <!-- Quick add: NAME (required by the server) + PAN + PHONE only. Everything
-         else lives behind "More details" so the hall operator can register a
-         seller in three taps; the section auto-opens if a field inside it
-         needs attention. -->
+    <!-- Quick add: the same five identity fields the desktop Sellers form
+         opens with, in the same order (NAME, PHONE, CR / GSTIN, PAN,
+         AADHAR / SBL). Everything else lives behind "More details"; the
+         section auto-opens if a field inside it needs attention. -->
     <div class="lb" style="margin-top:0">NAME *</div><input type="text" id="ns-name" autocapitalize="characters" autocomplete="off" name="ns-name">
-    <div class="lb">PAN</div><input type="text" id="ns-pan" autocapitalize="characters" autocomplete="off" name="ns-pan">
     <div class="lb">PHONE</div><input type="tel" id="ns-tel" inputmode="numeric" autocomplete="off" name="ns-tel" maxlength="10" placeholder="10-digit mobile" onpaste="pastePhoneInput(this,event)" oninput="limitPhoneInput(this);if(document.getElementById('ns-wa-same').checked)document.getElementById('ns-whatsapp').value=this.value">
+    <div class="lb">CR / GSTIN</div><input type="text" id="ns-cr" autocomplete="off" name="ns-cr">
+    <div class="lb">PAN</div><input type="text" id="ns-pan" autocapitalize="characters" autocomplete="off" name="ns-pan">
+    <!-- AADHAR / SBL completes the identity set. Without it a seller added
+         from the phone came in missing the Spices Board licence — which drops
+         them out of the board return and out of the Grade-2 25% cap — and
+         somebody had to notice and finish the record from another screen. -->
+    <div class="lb">AADHAR / SBL</div><input type="text" id="ns-aadhar" autocomplete="off" name="ns-aadhar">
     <button type="button" id="ns-more-btn" onclick="toggleSellerMore()" style="width:100%;margin-top:14px;background:var(--bg2);border:1px dashed var(--border2);border-radius:8px;padding:9px 10px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;font-family:inherit;text-align:left">+ More details</button>
     <div id="ns-more" style="display:none">
-      <div class="lb">GSTIN / CR</div><input type="text" id="ns-cr" autocomplete="off" name="ns-cr">
-      <!-- AADHAR / SBL and TAN complete the set the desktop Sellers screen
-           captures. Without them a seller added from the phone came in
-           missing the Spices Board licence — which drops them out of the
-           board return and out of the Grade-2 25% cap — and somebody had to
-           notice and finish the record from another screen. -->
-      <div class="lb">AADHAR / SBL</div><input type="text" id="ns-aadhar" autocomplete="off" name="ns-aadhar">
-      <div class="lb">TAN</div><input type="text" id="ns-tan" autocapitalize="characters" autocomplete="off" name="ns-tan" maxlength="10" placeholder="e.g. BLRA12345C">
+      <div class="lb" style="margin-top:0">TAN</div><input type="text" id="ns-tan" autocapitalize="characters" autocomplete="off" name="ns-tan" maxlength="10" placeholder="e.g. BLRA12345C">
       <div class="lb" style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>WHATSAPP</span><label style="font-size:11px;font-weight:600;color:var(--text2);display:inline-flex;align-items:center;gap:5px;cursor:pointer;text-transform:none;letter-spacing:0;margin:0"><input type="checkbox" id="ns-wa-same" onchange="onWaSameToggle()" style="width:14px;height:14px;cursor:pointer;margin:0"> Same as phone</label></div>
       <input type="tel" id="ns-whatsapp" inputmode="numeric" autocomplete="off" name="ns-whatsapp" maxlength="10" placeholder="10-digit mobile" onpaste="pastePhoneInput(this,event)" oninput="limitPhoneInput(this)">
       <div class="lb">EMAIL</div><input type="email" id="ns-email" inputmode="email" autocapitalize="none" autocomplete="off" name="ns-email" spellcheck="false" oninput="validateEmailField(this)" onblur="validateEmailField(this,true)">
@@ -812,22 +811,30 @@ select:focus{border-color:var(--green)}
 <div class="modal-overlay" id="reassign-modal"><div class="modal">
   <div class="modal-hdr"><h2>Reassign Lots</h2><button class="modal-close" onclick="closeReassign()">&#x2715;</button></div>
   <div class="modal-body">
-    <div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.5">Request the admin to move lots between branches. Tap the free lots you want, or type a contiguous range. The admin approves or denies — you'll be notified here.</div>
+    <!-- Two modes, decided by the install's "mobile operator can reassign
+         directly" switch. The blurb has to say which one is live, because
+         the difference matters to the operator: one moves lots now, the
+         other asks somebody and waits. The server enforces the same switch,
+         so a stale page can't talk its way past it. -->
+    <div id="ra-mode-note" style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.5"></div>
     <div class="fr">
       <div><div class="lb">FROM BRANCH</div><select id="ra-from" onchange="raOnFromChange()" style="width:100%;height:38px;border-radius:8px;border:1.5px solid var(--border2);padding:0 8px;font-size:13px;font-family:inherit;background:var(--input-bg);color:var(--text)"></select></div>
       <div><div class="lb">TO BRANCH</div><select id="ra-to" style="width:100%;height:38px;border-radius:8px;border:1.5px solid var(--border2);padding:0 8px;font-size:13px;font-family:inherit;background:var(--input-bg);color:var(--text)"></select></div>
     </div>
-    <div class="lb" style="margin-top:8px">TAP OR DRAG LOTS TO SELECT</div>
+    <!-- Typing comes FIRST on the phone: the numbers are being read off a
+         sheet, and picking them out of a scrolling tile strip with a thumb
+         is the slowest way to say "45 and 50 to 100". The tiles below stay
+         for the times the operator is browsing rather than transcribing. -->
+    <div class="lb" style="margin-top:8px">LOTS TO MOVE</div>
+    <input type="text" id="ra-lots" placeholder="e.g. 10,11,23,45,50-100" autocomplete="off" inputmode="numeric" oninput="raSyncFromText()">
+    <div id="ra-lots-note" style="font-size:11px;color:var(--text2);margin-top:4px;min-height:12px"></div>
+    <div class="lb" style="margin-top:8px">OR TAP / DRAG THE FREE LOTS</div>
     <div id="ra-tiles" style="max-height:150px;overflow-y:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:8px;padding:6px;background:var(--bg);display:flex;flex-wrap:wrap;gap:4px"></div>
     <div id="ra-selsummary" style="font-size:11px;color:var(--text2);margin-top:4px;min-height:12px"></div>
-    <div class="lb" style="margin-top:8px">OR TYPE A RANGE</div>
-    <div class="fr">
-      <div><div class="lb" style="opacity:.7">START LOT</div><input type="text" id="ra-start" placeholder="e.g. 081" autocomplete="off" oninput="raClearTilePick()"></div>
-      <div><div class="lb" style="opacity:.7">END LOT</div><input type="text" id="ra-end" placeholder="e.g. 100" autocomplete="off" oninput="raClearTilePick()"></div>
-    </div>
-    <div class="lb" style="margin-top:8px">REASON (optional)</div><input type="text" id="ra-reason" placeholder="Why you need these lots" autocomplete="off">
+    <div id="ra-reason-wrap"><div class="lb" style="margin-top:8px">REASON (optional)</div><input type="text" id="ra-reason" placeholder="Why you need these lots" autocomplete="off"></div>
     <div id="ra-err"></div>
     <button class="btn btn-sm" onclick="submitReassign()" id="ra-submit" style="width:100%;margin-top:12px">Send request to admin</button>
+    <div id="ra-requests-wrap">
     <div style="border-top:1px solid var(--border);margin:16px 0 10px"></div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <span style="font-weight:700;font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:.3px">My requests</span>
@@ -838,6 +845,7 @@ select:focus{border-color:var(--green)}
       <button type="button" id="ra-prev" onclick="raPage(-1)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 12px;font-size:12px;color:var(--text2);cursor:pointer;font-family:inherit">‹ Prev</button>
       <span id="ra-pageinfo" style="font-size:11px;color:var(--text3)"></span>
       <button type="button" id="ra-next" onclick="raPage(1)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 12px;font-size:12px;color:var(--text2);cursor:pointer;font-family:inherit">Next ›</button>
+    </div>
     </div>
   </div>
 </div></div>
@@ -946,6 +954,10 @@ async function refreshConfig(){
     if((d.litreOptions||'')!=cfgLitreOptions||(d.moistureOptions||'')!=cfgMoistureOptions){
       cfgLitreOptions=d.litreOptions||'';cfgMoistureOptions=d.moistureOptions||'';applyChoiceFields();changed=true}
     if(d.whatsapp!=cfgWhatsapp){cfgWhatsapp=!!d.whatsapp;applyWhatsappVis();changed=true}
+    // An admin flipping "operator can reassign directly" has to reach the
+    // phone without a reinstall — the Reassign screen reads this every time
+    // it opens, so picking it up on the settings poll is enough.
+    if((!!d.reassignDirect)!=cfgReassignDirect){cfgReassignDirect=!!d.reassignDirect;applyReassignMode();changed=true}
     if((!!d.sellerAtBottom)!=cfgSellerAtBottom){cfgSellerAtBottom=!!d.sellerAtBottom;applySellerPosition();changed=true}
     if((d.showSampleField!==false)!=cfgShowSample||(d.showGrossField!==false)!=cfgShowGross){cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;applyCalcFieldVis();changed=true}
     if(d.editEnabled!==undefined)editEnabled=d.editEnabled!==false;
@@ -989,7 +1001,7 @@ if(r.status===403&&d.error==='account_locked'){er.innerHTML='<div class="eb">'+_
 if(!r.ok){er.innerHTML='<div class="eb">'+_esc(d.error||'Login failed')+'</div>';return}token=d.token;user=d.user.username;userBranch=d.user.branch||'';userRole=d.user.role||'user';localStorage.setItem('sa_token',token);goSession();if(d.notice)toast(d.notice)}catch(e){er.innerHTML='<div class="eb">Could not connect</div>'}finally{document.getElementById('l-btn').disabled=false}}
 function doLogout(){fetch(B+'/api/auth/logout',{method:'POST',headers:ah()}).catch(()=>{});token='';user='';localStorage.removeItem('sa_token');toggleMenu(true);show('s-login')}
 async function tryAutoLogin(){if(!token){loadTitle();return}try{const r=await fetch(B+'/api/auth/me',{headers:ah()});if(r.ok){const d=await r.json();user=d.user.username;userBranch=d.user.branch||'';userRole=d.user.role||'user';goSession()}else{token='';localStorage.removeItem('sa_token');loadTitle()}}catch(e){loadTitle()}}
-var cfgSampleWeight=0,cfgShowMoisture=false,cfgShowReservedPrice=false,cfgDefaultGunny=0,cfgImmediateReserve=false,cfgUserGunny=false,cfgShowCropReceipt=false,cfgCropReceiptStart='',cfgWhatsapp=false,cfgSellerAtBottom=false,cfgShowSample=true,cfgShowGross=true;
+var cfgSampleWeight=0,cfgShowMoisture=false,cfgShowReservedPrice=false,cfgDefaultGunny=0,cfgImmediateReserve=false,cfgUserGunny=false,cfgShowCropReceipt=false,cfgCropReceiptStart='',cfgWhatsapp=false,cfgSellerAtBottom=false,cfgShowSample=true,cfgShowGross=true,cfgReassignDirect=false;
 function applyWhatsappVis(){var b=document.getElementById('le-wa-btn');if(b)b.style.display=cfgWhatsapp?'inline-block':'none';var mb=document.getElementById('ml-wa-btn');if(mb)mb.style.display=cfgWhatsapp?'':'none';}
 // "Delete Selected" follows the same switch as the per-row 🗑 button, so an
 // operator who can't delete one lot can't bulk-delete a dozen either.
@@ -1130,9 +1142,9 @@ function applyLabels(){
   var map={'elb-seller':L.seller||'Seller','elb-grade':L.grade,'elb-bags':L.bags,'elb-litre':L.litre_wt,'elb-net':L.net_wt,'elb-sample':L.sample_wt,'elb-gross':L.gross_wt,'elb-moisture':L.moisture};
   Object.keys(map).forEach(function(id){var el=document.getElementById(id);if(el)el.textContent=map[id]});
 }
-async function loadTitle(){try{const r=await fetch(B+'/api/config');const d=await r.json();setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;deleteEnabled=d.deleteEnabled!==undefined?d.deleteEnabled!==false:editEnabled;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';cfgLitreOptions=d.litreOptions||'';cfgMoistureOptions=d.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw=document.getElementById('le-reserved-price-wrap');if(rpw)rpw.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();loadAppLogo()}catch(e){}}
+async function loadTitle(){try{const r=await fetch(B+'/api/config');const d=await r.json();setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;deleteEnabled=d.deleteEnabled!==undefined?d.deleteEnabled!==false:editEnabled;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgReassignDirect=!!d.reassignDirect;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';cfgLitreOptions=d.litreOptions||'';cfgMoistureOptions=d.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw=document.getElementById('le-reserved-price-wrap');if(rpw)rpw.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();loadAppLogo()}catch(e){}}
 
-async function goSession(){document.getElementById('ss-user').textContent=user;const lb=localStorage.getItem('sa_branch');try{const r=await fetch(B+'/api/config');const d=await r.json();window._allBranches=(d.branches||[]).map(function(b){return b.value});setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;deleteEnabled=d.deleteEnabled!==undefined?d.deleteEnabled!==false:editEnabled;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';cfgLitreOptions=d.litreOptions||'';cfgMoistureOptions=d.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw2=document.getElementById('le-reserved-price-wrap');if(rpw2)rpw2.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();var brSel=document.getElementById('ss-branch');if(userRole!=='admin'&&userBranch){brSel.innerHTML='<option value="'+userBranch+'">'+userBranch+'</option>';brSel.disabled=true}else{brSel.disabled=false;brSel.innerHTML=(d.branches||[]).map(b=>'<option value="'+b.value+'"'+(b.value===(userBranch||lb)?' selected':'')+'>'+b.value+'</option>').join('')}}catch(e){}
+async function goSession(){document.getElementById('ss-user').textContent=user;const lb=localStorage.getItem('sa_branch');try{const r=await fetch(B+'/api/config');const d=await r.json();window._allBranches=(d.branches||[]).map(function(b){return b.value});setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;deleteEnabled=d.deleteEnabled!==undefined?d.deleteEnabled!==false:editEnabled;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgReassignDirect=!!d.reassignDirect;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';cfgLitreOptions=d.litreOptions||'';cfgMoistureOptions=d.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw2=document.getElementById('le-reserved-price-wrap');if(rpw2)rpw2.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();var brSel=document.getElementById('ss-branch');if(userRole!=='admin'&&userBranch){brSel.innerHTML='<option value="'+userBranch+'">'+userBranch+'</option>';brSel.disabled=true}else{brSel.disabled=false;brSel.innerHTML=(d.branches||[]).map(b=>'<option value="'+b.value+'"'+(b.value===(userBranch||lb)?' selected':'')+'>'+b.value+'</option>').join('')}}catch(e){}
 await loadAvailableTrades();
 show('s-session')}
 
@@ -1837,8 +1849,9 @@ function wireSellerUppercase(){
 }
 function openSellerModal(n,p){wireSellerUppercase();document.getElementById('le-res').style.display='none';document.getElementById('ns-name').value=n||'';/* "CR." prefix pre-filled — matches the desktop Add Seller forms */document.getElementById('ns-cr').value='CR.';document.getElementById('ns-pan').value='';document.getElementById('ns-aadhar').value='';document.getElementById('ns-tan').value='';document.getElementById('ns-tel').value=p||'';document.getElementById('ns-whatsapp').value='';document.getElementById('ns-email').value='';document.getElementById('ns-padd').value='';document.getElementById('ns-ppla').value='';document.getElementById('ns-pin').value='';document.getElementById('ns-pstate').value='KERALA';document.getElementById('ns-pst').value='32';document.getElementById('ns-dob').value='';document.getElementById('ns-userid').value='';var wa=document.getElementById('ns-wa-same');wa.checked=false;var waInp=document.getElementById('ns-whatsapp');waInp.readOnly=false;waInp.style.background='';var em=document.getElementById('ns-email');em.classList.remove('invalid');var emErr=document.getElementById('ns-email-err');if(emErr)emErr.style.display='none';document.getElementById('ns-err').innerHTML='';setSellerMore(false);nsRenderBankRows();setSellerBanks(false);document.getElementById('seller-modal').classList.add('show');_seedNextUserId()}
 // "More details" section of the Add Seller form. Collapsed on every open —
-// the quick path is NAME + PAN + PHONE; GSTIN, address, state, DOB and user
-// id are one tap away. Anything that fails validation down there expands the
+// the identity fields (NAME, PHONE, CR / GSTIN, PAN, AADHAR / SBL) are up
+// front; TAN, WhatsApp, email, address, state, DOB and user id are one tap
+// away. Anything that fails validation down there expands the
 // section first, so the operator can actually see the field being flagged.
 function setSellerMore(open){
   var box=document.getElementById('ns-more'),btn=document.getElementById('ns-more-btn');
@@ -3629,8 +3642,18 @@ function raBranchOptions(sel,selected){
   return branches.map(function(b){return '<option value="'+b+'"'+(b===selected?' selected':'')+'>'+b+'</option>'}).join('');
 }
 var _raPick=new Set();var _raFreeLots=[];
-// Called when the FROM branch changes: a new branch invalidates picks.
-function raOnFromChange(){_raPick.clear();renderRaTiles()}
+// Called when the FROM branch changes. If the operator typed the lots, the
+// same text is re-resolved against the new branch (so switching branches
+// narrows the list instead of silently keeping picks from the old one);
+// otherwise the tile picks simply drop.
+function raOnFromChange(){
+  var box=document.getElementById('ra-lots');
+  // Rebuild the tiles for the NEW branch first — raSyncFromText paints the
+  // tiles that are on screen, so resolving before the rebuild would paint
+  // the branch the operator just left.
+  if(box&&box.value.trim()){_raPick.clear();renderRaTiles();raSyncFromText();return}
+  _raPick.clear();renderRaTiles();
+}
 // Render the FROM branch's FREE (unbooked) lots as tappable chips, painted
 // to reflect the current _raPick selection. Tap to toggle, or drag across
 // tiles to sweep a range (e.g. 090-099). Pulls from the loaded allocStats.
@@ -3660,12 +3683,12 @@ function raPaintPickTiles(){
     el.style.borderColor=sel?'var(--green)':'var(--border2)';
     el.style.fontWeight=sel?'700':'400';
   });
+  raBoxFromPick();
   raSelSummary();
 }
 // ── Drag-to-select across mobile tiles (mouse + touch) ──
 var _raPickDrag=null,_raPickTouchMoved=false;
 function raPickBegin(lot){
-  document.getElementById('ra-start').value='';document.getElementById('ra-end').value='';
   _raPickDrag={anchor:lot,base:new Set(_raPick),moved:false};
 }
 function raPickApply(curLot){
@@ -3684,7 +3707,6 @@ function raPickClick(el){
   if(_raPickDrag&&_raPickDrag.moved)return;   // tail click after a mouse drag
   if(_raPickTouchMoved)return;                // synthetic click after a touch drag
   var lot=el.getAttribute('data-lot');if(!lot)return;
-  document.getElementById('ra-start').value='';document.getElementById('ra-end').value='';
   if(_raPick.has(lot))_raPick.delete(lot);else _raPick.add(lot);
   raPaintPickTiles();
 }
@@ -3725,16 +3747,77 @@ function raSelSummary(){
   var n=_raPick.size;
   el.innerHTML=n?('<strong>'+n+' lot'+(n===1?'':'s')+' selected:</strong> '+raPickSummary(Array.from(_raPick))):'';
 }
-// Typing in the range inputs clears the tile picks (modes are exclusive).
-function raClearTilePick(){
-  if(_raPick.size){_raPick.clear();raPaintPickTiles()}
+// ── Typing the lots to move ───────────────────────────────────────
+// Accepts "10,11,23,45,50-100": single numbers, ranges, any order,
+// zero-padding optional ("10" finds "010" — probes match on the numeric
+// tail, not the printed string). Only FREE lots are picked up; anything
+// already booked is stepped over and counted in the note rather than
+// failing the whole move, because mid-auction part of a run read off a
+// sheet will have sold since it was written down.
+function raParseLotText(text){
+  var nums=[],bad=[];
+  String(text||'').split(/[\s,;]+/).forEach(function(raw){
+    var tok=raw.trim(); if(!tok)return;
+    var m=tok.match(/^(\d+)\s*[-–—]\s*(\d+)$/);
+    if(m){
+      var a=parseInt(m[1],10),b=parseInt(m[2],10);
+      if(a>b){var t=a;a=b;b=t}
+      // A fat-fingered "1-99999" must not hang the phone building probes.
+      if(b-a>20000){bad.push(tok);return}
+      for(var n=a;n<=b;n++)nums.push(n);
+      return;
+    }
+    if(/^\d+$/.test(tok))nums.push(parseInt(tok,10)); else bad.push(tok);
+  });
+  return {nums:nums,bad:bad};
 }
+// Numeric tail of a lot number, for matching a typed probe to a real lot.
+function raLotNum(lot){var m=String(lot==null?'':lot).match(/(\d+)$/);return m?parseInt(m[1],10):null}
+// Resolve the box against the FROM branch's lots and repaint the tiles.
+function raSyncFromText(){
+  var box=document.getElementById('ra-lots'),note=document.getElementById('ra-lots-note');
+  if(!box)return;
+  var txt=box.value.trim();
+  if(!txt){_raPick.clear();if(note)note.textContent='';raPaintPickTiles();return}
+  var from=document.getElementById('ra-from').value;
+  var stat=(typeof allocStats!=='undefined'&&allocStats)?allocStats.find(function(s){return s.branch===from}):null;
+  var freeByNum={},usedByNum={};
+  if(stat&&stat.ranges)stat.ranges.forEach(function(rng){(rng.lots||[]).forEach(function(l){
+    var n=raLotNum(l.lot); if(n==null)return;
+    if(l.used)usedByNum[n]=l.lot; else freeByNum[n]=l.lot;
+  })});
+  var p=raParseLotText(txt),seen={},picked=[],used=0,missing=0;
+  p.nums.forEach(function(n){
+    if(seen[n])return; seen[n]=1;
+    if(freeByNum[n]!=null)picked.push(freeByNum[n]);
+    else if(usedByNum[n]!=null)used++;
+    else missing++;
+  });
+  _raPick=new Set(picked);
+  if(note){
+    var bits=[];
+    if(picked.length)bits.push(picked.length+' ready to move');
+    if(used)bits.push(used+' already used — skipped');
+    if(missing)bits.push(missing+' not in '+(from||'this branch'));
+    if(p.bad.length)bits.push('couldn’t read: '+p.bad.slice(0,3).join(', '));
+    note.textContent=bits.join(' · ')||'Nothing matched.';
+  }
+  _raSyncingBox=true;
+  try{raPaintPickTiles()}finally{_raSyncingBox=false}
+}
+// Tapping tiles writes the selection back into the box, so the two are one
+// selection seen two ways rather than rival inputs.
+function raBoxFromPick(){
+  var box=document.getElementById('ra-lots');
+  if(box&&!_raSyncingBox)box.value=_raPick.size?raPickSummary(Array.from(_raPick)):'';
+}
+var _raSyncingBox=false;
 // ── Close Depot (mobile) ──────────────────────────────────────────
 // End-of-day action for the operator running a depot: push this depot's
 // remaining FREE (un-entered) lot numbers to the trade's main/holding depot
 // so they can be re-allocated elsewhere. Booked lots stay put. The main
-// depot is configured by an admin on the desktop (Edit Allocations); if it
-// isn't set the server returns a clear message. lot_entry role carries
+// depot is set by an admin on the desktop — on the trade itself (New / Edit
+// Auction) or in Edit Allocations; if it isn't set the server says so. lot_entry role carries
 // auction_write, so field operators are allowed to run this on their own
 // (branch-locked) session depot.
 async function closeDepotMobile(){
@@ -3762,37 +3845,72 @@ function openReassign(){
   if(!aid){toast('Start a session first',true);return}
   document.getElementById('ra-from').innerHTML=raBranchOptions('ra-from','');
   document.getElementById('ra-to').innerHTML=raBranchOptions('ra-to',br);
-  document.getElementById('ra-start').value='';
-  document.getElementById('ra-end').value='';
+  document.getElementById('ra-lots').value='';
+  document.getElementById('ra-lots-note').textContent='';
   document.getElementById('ra-reason').value='';
   document.getElementById('ra-err').innerHTML='';
   _raPick.clear();
+  applyReassignMode();
   renderRaTiles();
   _raPage=0;
   document.getElementById('reassign-modal').classList.add('show');
-  loadMyReassignRequests();
+  if(!cfgReassignDirect)loadMyReassignRequests();
 }
 function closeReassign(){document.getElementById('reassign-modal').classList.remove('show')}
+// ── Who moves the lots ────────────────────────────────────────────
+// cfgReassignDirect OFF (the default): the operator raises a request and an
+// admin approves it — the reason box and the "My requests" list belong to
+// that flow. ON: the phone moves the lots itself and neither makes sense,
+// so both go away and the button stops promising an admin will look at it.
+// This is presentation only; the server decides for real.
+function applyReassignMode(){
+  var note=document.getElementById('ra-mode-note');
+  var btn=document.getElementById('ra-submit');
+  var reason=document.getElementById('ra-reason-wrap');
+  var reqs=document.getElementById('ra-requests-wrap');
+  if(note)note.innerHTML=cfgReassignDirect
+    ? 'Move free lots between branches. Type the numbers or tap them below — the move happens straight away. Booked lots can never move.'
+    : 'Request the admin to move lots between branches. Type the numbers or tap them below. The admin approves or denies — you’ll be notified here.';
+  if(btn)btn.textContent=cfgReassignDirect?'Move lots now':'Send request to admin';
+  if(reason)reason.style.display=cfgReassignDirect?'none':'';
+  if(reqs)reqs.style.display=cfgReassignDirect?'none':'';
+}
 async function submitReassign(){
   var er=document.getElementById('ra-err');er.innerHTML='';
   var from=document.getElementById('ra-from').value,to=document.getElementById('ra-to').value;
-  var start=document.getElementById('ra-start').value.trim(),end=document.getElementById('ra-end').value.trim();
   var reason=document.getElementById('ra-reason').value.trim();
   if(!from||!to){er.innerHTML='<div class="eb">Select both branches</div>';return}
   if(from===to){er.innerHTML='<div class="eb">FROM and TO branch must be different</div>';return}
-  // Prefer the tapped tiles (disjoint); fall back to the typed range.
+  // One selection: the box and the tiles both write _raPick.
   var picked=Array.from(_raPick);
-  var payload={auction_id:aid,from_branch:from,to_branch:to,reason:reason};
-  if(picked.length){payload.lots=picked}
-  else if(start&&end){payload.start_lot=start;payload.end_lot=end}
-  else{er.innerHTML='<div class="eb">Tap lots to select, or enter a start/end range</div>';return}
+  if(!picked.length){er.innerHTML='<div class="eb">Type the lot numbers to move, or tap them above</div>';return}
   var btn=document.getElementById('ra-submit');btn.disabled=true;
   try{
-    var r=await fetch(B+'/api/mobile/reassign-requests',{method:'POST',headers:ah(),body:JSON.stringify(payload)});
+    if(cfgReassignDirect){
+      var r2=await fetch(B+'/api/auctions/'+aid+'/reassign-lots',{method:'POST',headers:ah(),
+        body:JSON.stringify({from_branch:from,to_branch:to,lots:picked})});
+      var d2=await r2.json();
+      if(!r2.ok){er.innerHTML='<div class="eb">'+(d2.error||'Failed')+'</div>';return}
+      if(navigator.vibrate)navigator.vibrate(50);
+      toast(d2.message||('Moved '+picked.length+' lot(s)'),false,true);
+      document.getElementById('ra-lots').value='';
+      document.getElementById('ra-lots-note').textContent='';
+      _raPick.clear();
+      // The grid and the allocation bars are now wrong — reload them before
+      // the operator goes back to entering lots against a stale range.
+      if(typeof reloadAllocations==='function')await reloadAllocations();
+      renderRaTiles();
+      closeReassign();
+      return;
+    }
+    var r=await fetch(B+'/api/mobile/reassign-requests',{method:'POST',headers:ah(),
+      body:JSON.stringify({auction_id:aid,from_branch:from,to_branch:to,reason:reason,lots:picked})});
     var d=await r.json();
     if(!r.ok){er.innerHTML='<div class="eb">'+(d.error||'Failed')+'</div>';return}
     toast('Request sent to admin',false);
-    document.getElementById('ra-start').value='';document.getElementById('ra-end').value='';document.getElementById('ra-reason').value='';
+    document.getElementById('ra-lots').value='';
+    document.getElementById('ra-lots-note').textContent='';
+    document.getElementById('ra-reason').value='';
     _raPick.clear();
     closeReassign();
   }catch(e){er.innerHTML='<div class="eb">Could not connect</div>'}finally{btn.disabled=false}
