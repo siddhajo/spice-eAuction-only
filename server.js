@@ -8587,7 +8587,17 @@ function reassignLotsLabel(reqRow) {
 // (possibly disjoint) `lots[]` selection or a contiguous start/end range.
 // Splits the source allocations around the moved lots; the dest branch
 // gains new range(s) covering them. Refuses to move any lot already saved.
-app.post('/api/auctions/:id/reassign-lots', requireAuctionWrite, (req, res) => {
+// The gate is lot_write, NOT auction_write. auction_write means "create and
+// edit TRADES", which is a different job: moving a free lot NUMBER between two
+// branch allocations is lot-floor work, and the `operator` role — the main
+// non-admin role on the phone — has lot_write but no auction_write, so it was
+// refused outright however the feature flag was set. Nothing is widened by
+// this that lot_write did not already cover: an operator can create and edit
+// the lots themselves, which is strictly more power over the same data, and
+// the rails below still refuse every booked / reserved / entered / carried
+// number. Roles affected: operator gains it; lot_entry, manager and admin are
+// unchanged (they carry both); viewer still has neither.
+app.post('/api/auctions/:id/reassign-lots', requireLotWrite, (req, res) => {
   const db = getDb();
   const auctionId = parseInt(req.params.id, 10);
   // Field roles reach this route too (lot_entry carries auction_write so it
