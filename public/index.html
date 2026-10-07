@@ -4675,6 +4675,32 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
   box-shadow:0 12px 40px rgba(0,0,0,.2)
 }
 .modal h2{font-size:19px;font-weight:700;margin-bottom:18px;color:var(--text)}
+/* ── Sticky action footer, Lot Allocations modal ──────────────────────
+   Both panels are tall — Reassign stacks FROM/TO, the typed box, the usage
+   bars, the status bar, the legend and a 340px tile grid before it gets to
+   the one button that commits the work, so every move ended in a scroll
+   hunt for it. `.modal` is itself the scrollport (max-height + overflow-y),
+   so the footer can simply stick to the bottom of it.
+
+   The box-shadow is a SKIRT, not decoration: the modal's own bottom padding
+   (28px, 22px on mobile, 20-30px across the density presets) lies below the
+   sticky edge, so content would scroll visibly through that strip. A solid
+   offset shadow paints over it without taking part in layout, and is clipped
+   by the modal's own overflow so it can never spill outside the dialog.
+
+   Colours pin to the generic aliases on purpose: this sits on a .modal,
+   which does NOT flip in dark mode. See the dark-mode note — the rule is
+   "style for the surface you are on", and that surface is always light. */
+.alloc-foot{
+  position:sticky;bottom:0;z-index:3;
+  margin-top:14px;padding:11px 0 7px;
+  background:var(--card);border-top:1px solid var(--border);
+  box-shadow:0 40px 0 0 var(--card)
+}
+/* The selection line and the commit button read as one statement, so they
+   share a row and the button keeps a fixed width rather than stretching. */
+.alloc-foot-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.alloc-foot-row .alloc-foot-act{margin-left:auto;flex:0 0 auto}
 .modal .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:22px;flex-wrap:wrap}
 
 /* ── Mobile ──────────────────────────────────────────────── */
@@ -9231,17 +9257,48 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       <b>📋 Auto-fill from existing lots</b> — Use this when a trade was created via import (or otherwise has lots without matching allocations). One click adds a wide range (e.g. <code>001–999</code>) per branch + lot-prefix combination found in the lots table, so every existing lot has a branch home. Safe to re-run: anything already covered is skipped.
     </div>
 
-    <div id="alloc-edit-summary" style="font-size:11px;color:var(--text3);margin-bottom:10px"></div>
-    <div id="alloc-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:12px;margin-bottom:10px"></div>
-    <div class="actions">
-      <button class="btn btn-o" onclick="hideModal('alloc-modal')">Cancel</button>
-      <button class="btn btn-g" onclick="saveAllocations()">Save Allocations</button>
+    <!-- Same pinning as the Reassign panel: a trade with a dozen branch
+         cards put Save Allocations several screens down from the chips the
+         operator had just marked. -->
+    <div class="alloc-foot">
+      <div class="alloc-foot-row">
+        <div id="alloc-edit-summary" style="flex:1;min-width:200px;font-size:11px;color:var(--text3)"></div>
+        <div class="alloc-foot-act" style="display:flex;gap:8px">
+          <button class="btn btn-o" onclick="hideModal('alloc-modal')">Cancel</button>
+          <button class="btn btn-g" onclick="saveAllocations()">Save Allocations</button>
+        </div>
+      </div>
+      <div id="alloc-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:12px;margin-top:8px"></div>
     </div>
   </div>
 
   <!-- Reassign panel -->
   <div id="alloc-panel-reassign" style="display:none">
-    <p style="font-size:12px;color:var(--text3);margin-bottom:12px"><b>Type the lot numbers</b> in the box below — single numbers, ranges, or both (<code>10,11,23,12,24,45,50-100</code>). Or <b>click</b> a tile to toggle it and <b>drag</b> across tiles to sweep a run; the box and the tiles are two views of the same selection, so either way of picking shows up in the other. Only <b>free</b> lot numbers can move — booked, reserved, entered and carried-forward lots are skipped, and the box says how many. A lot already moved once (teal ↔) is still free and can be moved again.</p>
+    <p style="font-size:12px;color:var(--text3);margin-bottom:12px"><b>Type the lot numbers</b> in the box below — single numbers, ranges, or both (<code>10,11,23,12,24,45,50-100</code>). Or <b>click</b> a tile to toggle it and <b>drag</b> across tiles to sweep a run; the box and the tiles are two views of the same selection, so either way of picking shows up in the other. Only <b>free</b> lot numbers can move — booked, reserved, entered and carried-forward lots are skipped, and the box says how many. The lots need not be in the same branch: each one leaves the depot it is in now. A lot already moved once (teal ↔) is still free and can be moved again.</p>
+
+    <!-- WHERE TO, first. This used to sit below the tile grid, which put the
+         one required decision at the bottom of a long scroll — and the lots
+         box above it reads against the destination ("…ready to move to
+         BODI"), so the destination has to be chosen before the box can say
+         anything useful. -->
+    <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+      <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:end">
+        <div>
+          <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">FROM BRANCH</div>
+          <select id="ra-from" onchange="raOnFromBranchChange()" style="width:100%;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff"></select>
+        </div>
+        <div style="font-size:18px;color:#E67E22;padding-bottom:6px;font-weight:700">→</div>
+        <div>
+          <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">TO BRANCH *</div>
+          <select id="ra-to" onchange="raSyncSelectionFromText()" style="width:100%;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff"></select>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:7px;line-height:1.5">
+        Leave <b>FROM</b> on <b>Any branch</b> and the lots move out of whichever depot
+        each one currently sits in — a typed list doesn’t have to come from one
+        branch. Pick a branch there only to restrict the move to it.
+      </div>
+    </div>
 
     <!-- Type-a-selection box. This is the primary way in: mid-auction the
          operator already knows the numbers (they are reading them off a
@@ -9269,27 +9326,22 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     <!-- Tinted surface on purpose: FREE tiles are white, so they only read as
          "empty slots" against a background that is not also white. -->
     <div id="ra-tile-grid" style="max-height:340px;overflow:auto;border:1px solid #CBD5E1;border-radius:8px;padding:10px;background:#F1F5F9;margin-bottom:8px"></div>
-    <div id="ra-selsummary" style="font-size:11.5px;color:var(--text2);margin-bottom:12px;min-height:14px"></div>
-
-    <div style="background:#fff8f0;border:1px solid #f0d8c0;border-radius:10px;padding:14px">
-      <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:end;margin-bottom:10px">
-        <div>
-          <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">FROM BRANCH</div>
-          <select id="ra-from" onchange="raOnFromBranchChange()" style="width:100%;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff"></select>
+    <!-- What is selected and the button that moves it, pinned to the foot of
+         the modal. These two belong together: the count IS the thing being
+         confirmed, and both used to sit below a tile grid tall enough to
+         push them off screen. -->
+    <div class="alloc-foot">
+      <div class="alloc-foot-row">
+        <div style="flex:1;min-width:200px">
+          <div id="ra-selsummary" style="font-size:11.5px;color:var(--text2);min-height:14px"></div>
+          <div id="ra-preview" style="font-size:11px;color:var(--text3);min-height:0"></div>
         </div>
-        <div style="font-size:18px;color:#E67E22;padding-bottom:6px;font-weight:700">→</div>
-        <div>
-          <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">TO BRANCH</div>
-          <select id="ra-to" style="width:100%;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff"></select>
+        <div class="alloc-foot-act" style="display:flex;gap:8px">
+          <button type="button" class="btn btn-o" style="height:38px;padding:0 16px;font-size:12.5px;font-weight:600" onclick="hideModal('alloc-modal')">Close</button>
+          <button type="button" style="background:#E67E22;color:#fff;border:none;border-radius:8px;padding:0 22px;height:38px;font-size:13px;font-weight:600;cursor:pointer" onclick="executeReassign()">↔ Reassign Selected</button>
         </div>
       </div>
-      <div id="ra-preview" style="font-size:11px;color:var(--text3);margin-bottom:10px;min-height:14px"></div>
-      <button type="button" style="background:#E67E22;color:#fff;border:none;border-radius:8px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;width:100%" onclick="executeReassign()">↔ Reassign Selected</button>
       <div id="ra-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:12px;margin-top:8px"></div>
-    </div>
-
-    <div class="actions" style="margin-top:14px">
-      <button class="btn btn-o" style="width:100%" onclick="hideModal('alloc-modal')">Close</button>
     </div>
   </div>
 </div></div>
@@ -24583,7 +24635,7 @@ function updateSelectionSummary() {
     ? ` <span style="color:#9a3412">· ${_raInputSkipped} skipped (already used)</span>` : '';
   el.innerHTML = n
     ? `<b>${n} lot${n === 1 ? '' : 's'} selected:</b> <span style="font-family:monospace">${esc(raChunkSummary(Array.from(_raSelected)))}</span>${skip}`
-    : `<span style="color:var(--text3)">No tiles selected — click or drag tiles above, or type a start/end range below.</span>${skip}`;
+    : `<span style="color:var(--text3)">Nothing selected — type the lot numbers above, or click and drag the tiles.</span>${skip}`;
 }
 
 // ── Drag-to-select on the Reassign tile grid ───────────────────────
@@ -24599,9 +24651,11 @@ function raTileMouseDown(e, el){
   const branch = el.getAttribute('data-branch');
   const lot    = el.getAttribute('data-lot');
   if (!lot) return;
+  // A sweep still runs within ONE branch (the tiles are grouped by branch,
+  // so a drag across the boundary has no meaning), but it ADDS to whatever
+  // is already picked — including picks in another depot.
   const fromSel = document.getElementById('ra-from');
-  if (fromSel.value && fromSel.value !== branch) _raSelected.clear();
-  if (fromSel.value !== branch) { fromSel.value = branch; loadReassignPreview(); }
+  if (fromSel.value && fromSel.value !== branch) return;
   _raDrag = { branch, anchor: lot, base: new Set(_raSelected), moved: false };
   e.preventDefault();   // stop the browser starting a text selection
 }
@@ -24633,9 +24687,16 @@ function raToggleTile(el){
   const branch = el.getAttribute('data-branch');
   if (!lot) return;
   _raInputSkipped = 0;
+  // Crossing a branch no longer wipes the selection, and no longer forces
+  // the FROM picker to this tile's branch: a move may legitimately drain
+  // several depots into one. FROM is a FILTER now — if the operator has set
+  // it, a tile outside it can't be picked, which is clearer than silently
+  // retargeting the control they chose.
   const fromSel = document.getElementById('ra-from');
-  if (fromSel.value && fromSel.value !== branch) _raSelected.clear();
-  if (fromSel.value !== branch) { fromSel.value = branch; loadReassignPreview(); }
+  if (fromSel.value && fromSel.value !== branch) {
+    toast(`${branch} ${lot} is outside ${fromSel.value} — set FROM to “Any branch” to mix depots.`);
+    return;
+  }
   if (_raSelected.has(lot)) _raSelected.delete(lot);
   else _raSelected.add(lot);
   renderReassignTiles();
@@ -24733,10 +24794,12 @@ function updateLotsBoxFromSelection() {
 //     and the rest still moves. (Sending them would have bounced the whole
 //     reassign server-side, which is what used to happen.)
 //   • a number no branch has allocated is reported as "not allocated".
-//   • FROM is inferred when every movable lot lives in one branch. If the
-//     typed lots straddle two branches nothing is selected — the server
-//     moves FROM one branch, and guessing which one the operator meant is
-//     how lots end up in the wrong depot.
+//   • the lots DO NOT have to share a branch. Each one leaves the depot it
+//     is in now; the server takes a blank from_branch to mean exactly that
+//     and splits every affected branch's ranges. A FROM branch picked
+//     explicitly narrows the typed list to that depot instead.
+//   • a lot already sitting in the TO branch is dropped from the selection
+//     (it has nowhere to go), and counted.
 function raSyncSelectionFromText() {
   const box  = document.getElementById('ra-lots');
   const note = document.getElementById('ra-lots-note');
@@ -24753,37 +24816,42 @@ function raSyncSelectionFromText() {
   }
 
   const res = resolveTypedLots(txt, _raAllocStats);
-  const fromSel = document.getElementById('ra-from');
-  const from = (fromSel && fromSel.value) || '';
+  const from = (document.getElementById('ra-from') || {}).value || '';
+  const to   = (document.getElementById('ra-to')   || {}).value || '';
 
   // Split what exists into what can actually move and what cannot.
   let movable = res.found.filter(e => !raLocked(e.state));
   const locked = res.found.filter(e => raLocked(e.state));
+  // An explicit FROM narrows the list to that depot; "Any" takes them all.
   const outside = from ? movable.filter(e => e.branch !== from) : [];
   if (from) movable = movable.filter(e => e.branch === from);
-
-  const branches = Array.from(new Set(movable.map(e => e.branch)));
-  let spanErr = '';
-  if (!from && branches.length > 1) {
-    spanErr = `These lots sit in ${branches.length} branches (${branches.join(', ')}) — pick a FROM branch below and they’ll narrow to it.`;
-    movable = [];
-  } else if (!from && branches.length === 1 && fromSel) {
-    // One branch, so there is nothing to ask: adopt it.
-    fromSel.value = branches[0];
-    loadReassignPreview();
-  }
+  // A lot already in the destination has nowhere to go. Dropped rather than
+  // sent, because the server would otherwise have to decide what "move 014
+  // from BODI to BODI" means, and the honest answer is "nothing".
+  const alreadyThere = to ? movable.filter(e => e.branch === to) : [];
+  if (to) movable = movable.filter(e => e.branch !== to);
 
   _raSelected = new Set(movable.map(e => e.lot));
   _raInputSkipped = locked.length;
 
+  // Per-source counts: with FROM on "Any" the operator's own check is
+  // "did it take the right number out of each depot", so say it.
+  const bySource = new Map();
+  for (const e of movable) bySource.set(e.branch, (bySource.get(e.branch) || 0) + 1);
+  const srcTxt = bySource.size === 0 ? ''
+    : bySource.size === 1 ? ' from ' + esc(Array.from(bySource.keys())[0])
+    : ' from ' + Array.from(bySource.entries()).map(([b, n]) => `${esc(b)} (${n})`).join(', ');
+
   const bits = [];
-  if (movable.length) bits.push(`<b style="color:#047857">${movable.length} lot${movable.length === 1 ? '' : 's'} ready to move${branches.length === 1 ? ' from ' + esc(branches[0]) : ''}</b>`);
+  if (movable.length) bits.push(`<b style="color:#047857">${movable.length} lot${movable.length === 1 ? '' : 's'} ready to move${srcTxt}${to ? ' → ' + esc(to) : ''}</b>`);
   if (locked.length)  bits.push(`<span style="color:#9a3412">${locked.length} already used — skipped (${esc(raChunkSummary(locked.map(e => e.lot)).slice(0, 60))})</span>`);
-  if (outside.length) bits.push(`<span style="color:#9a3412">${outside.length} in another branch — skipped</span>`);
+  if (outside.length) bits.push(`<span style="color:#9a3412">${outside.length} outside ${esc(from)} — skipped</span>`);
+  if (alreadyThere.length) bits.push(`<span style="color:var(--text3)">${alreadyThere.length} already in ${esc(to)}</span>`);
   if (res.missing.length)   bits.push(`<span style="color:#9a3412">${res.missing.length} not allocated to any branch (${esc(res.missing.slice(0, 5).join(', '))}${res.missing.length > 5 ? '…' : ''})</span>`);
   if (res.ambiguous.length) bits.push(`<span style="color:#9a3412">${res.ambiguous.length} match more than one lot prefix — type the prefix too</span>`);
   if (res.bad.length)       bits.push(`<span style="color:#991B1B">couldn’t read: ${esc(res.bad.slice(0, 3).join(', '))}</span>`);
-  setNote(spanErr ? `<b style="color:#991B1B">${esc(spanErr)}</b>` : (bits.join(' · ') || 'Nothing matched.'));
+  if (movable.length && !to) bits.push(`<b style="color:#991B1B">pick a TO branch above</b>`);
+  setNote(bits.join(' · ') || 'Nothing matched.');
 
   _raSyncingFromInputs = true;
   try { renderReassignTiles(); } finally { _raSyncingFromInputs = false; }
@@ -24905,7 +24973,10 @@ async function openAllocModal(auctionId, ano) {
     const branches = await getAllocBranches();
     const fromSel = document.getElementById('ra-from');
     const toSel   = document.getElementById('ra-to');
-    fromSel.innerHTML = '<option value="">Select…</option>';
+    // "Any branch" is the DEFAULT and is a real answer, not a prompt: the
+    // common case is a typed list of numbers whose depots the operator isn't
+    // tracking. TO still has to be chosen, so it keeps a prompt.
+    fromSel.innerHTML = '<option value="">— Any branch —</option>';
     toSel.innerHTML   = '<option value="">Select…</option>';
     branches.forEach(b => {
       fromSel.innerHTML += `<option value="${esc(b)}">${esc(b)}</option>`;
@@ -24968,16 +25039,20 @@ async function executeReassign() {
   const showErr = (m) => { errEl.textContent = m; errEl.style.display = 'block'; errEl.style.background = '#FEE2E2'; errEl.style.color = '#991B1B'; };
   errEl.style.display = 'none';
 
-  if (!from)  return showErr('Select FROM branch (or type the lots above)');
-  if (!to)    return showErr('Select TO branch');
-  if (from === to) return showErr('FROM and TO must be different');
+  if (!to)    return showErr('Select the TO branch');
+  if (from && from === to) return showErr('FROM and TO must be different');
 
   // ONE selection now: the typed box and the tiles both write _raSelected,
   // so there is no second "typed range" path that could disagree with what
   // is highlighted on screen.
   const picked = Array.from(_raSelected);
   if (!picked.length) return showErr('Type the lot numbers to move, or pick them on the grid');
-  const body = { from_branch: from, to_branch: to, lots: picked };
+  // from_branch is OMITTED on "Any branch": the server then takes each lot
+  // out of the depot that holds it. Sending '' would be the same thing, but
+  // leaving the key out says so to any reader of the request.
+  const body = from
+    ? { from_branch: from, to_branch: to, lots: picked }
+    : { to_branch: to, lots: picked };
   const summary = raChunkSummary(picked);
 
   // Client-side guard: flag any already-used lot in the selection for a
@@ -24985,7 +25060,9 @@ async function executeReassign() {
   const pickSet = new Set(picked);
   const bookedSeen = [];
   for (const s of (_raAllocStats || [])) {
-    if (s.branch !== from) continue;
+    // Every branch, not just FROM: the selection can span depots now, so
+    // narrowing this scan to one of them would let a booked lot from another
+    // depot through to the server round-trip it exists to save.
     for (const r of (s.ranges || [])) {
       for (const t of (r.lots || [])) {
         // Test the same predicate the tiles use, not the bare `booked` flag:
@@ -25000,8 +25077,21 @@ async function executeReassign() {
       bookedSeen.slice(0, 5).join(', ') + (bookedSeen.length > 5 ? '…' : ''));
   }
 
-  const countTxt = picked.length ? `${picked.length} lot${picked.length === 1 ? '' : 's'} ` : '';
-  if (!confirm(`Reassign ${countTxt}(${summary}) from ${from} to ${to}?`)) return;
+  // Name every source depot in the confirm. On a cross-branch move "from 3
+  // branches" is the one thing the operator cannot see at a glance from the
+  // tiles, and it is exactly what they would want to catch before pressing OK.
+  const srcCount = new Map();
+  const pickSet2 = new Set(picked);
+  for (const s of (_raAllocStats || [])) {
+    for (const r of (s.ranges || [])) {
+      for (const t of (r.lots || [])) if (pickSet2.has(t.lot)) srcCount.set(s.branch, (srcCount.get(s.branch) || 0) + 1);
+    }
+  }
+  const srcTxt = srcCount.size <= 1
+    ? (from || Array.from(srcCount.keys())[0] || '—')
+    : Array.from(srcCount.entries()).map(([b, n]) => `${b} (${n})`).join(', ');
+  const countTxt = `${picked.length} lot${picked.length === 1 ? '' : 's'} `;
+  if (!confirm(`Reassign ${countTxt}(${summary})\n\nfrom ${srcTxt}\nto ${to}?`)) return;
 
   try {
     const d = await j(`/api/auctions/${_allocEditAuctionId}/reassign-lots`, {

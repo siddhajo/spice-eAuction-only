@@ -8367,8 +8367,15 @@ function applyLotReassignment(db, auctionId, fields, actor) {
   let to_branch   = String(fields.to_branch || '').trim();
   actor = actor || {};
 
-  if (!from_branch || !to_branch) return { ok: false, error: 'from_branch and to_branch required' };
-  if (from_branch.toUpperCase() === to_branch.toUpperCase()) return { ok: false, error: 'FROM and TO branch must be different' };
+  // from_branch is OPTIONAL. Blank means "take each lot from wherever it
+  // currently lives" — the operator types a list of numbers off a sheet and
+  // those numbers do not care which depot they were allocated to. Given
+  // explicitly it acts as a FILTER: every moving lot must belong to it, which
+  // is the old behaviour and still what the tile-driven flow sends.
+  if (!to_branch) return { ok: false, error: 'to_branch required' };
+  if (from_branch && from_branch.toUpperCase() === to_branch.toUpperCase()) {
+    return { ok: false, error: 'FROM and TO branch must be different' };
+  }
 
   // Branch names can differ in case between where they were stored (admin
   // types them in Settings, e.g. "Erode") and where they came from (the
@@ -8433,57 +8440,126 @@ function applyLotReassignment(db, auctionId, fields, actor) {
   // Match the branch case/whitespace-insensitively so ranges stored with a
   // slightly different spelling (" Erode " vs "ERODE") are still found — the
   // exact-match query here was the direct cause of the false "not allocated".
-  const fromRanges = db.all('SELECT id, start_lot, end_lot FROM lot_allocations WHERE auction_id = ? AND UPPER(TRIM(branch)) = UPPER(TRIM(?))', [auctionId, from_branch]);
-  const fromLotSet = new Set();
+  // Every range in the trade, so each moving lot can be traced to the branch
+  // that actually holds it. One pass: a `from_branch` filter is applied on
+  // top rather than driving the query, because a typed list of lot numbers
+  // can legitimately straddle several depots and the operator moving them is
+  // not thinking in depots at all.
+  const allRanges = db.all(
+    'SELECT id, branch, start_lot, end_lot FROM lot_allocations WHERE auction_id = ?', [auctionId]);
   const lotsByRangeId = new Map();
-  for (const r of fromRanges) {
+  const ownerOf = new Map();        // lotKey → { branch, rangeId }
+  for (const r of allRanges) {
     let lots = [];
     try { lots = enumerateRange(r.start_lot, r.end_lot); } catch (_) {}
     lotsByRangeId.set(r.id, lots);
-    lots.forEach(l => fromLotSet.add(lotKey(l)));
-  }
-  const notCovered = moving.filter(l => !fromLotSet.has(lotKey(l)));
-  if (notCovered.length) {
-    return { ok: false, error: `${notCovered.length} lot(s) not allocated to ${from_branch}: ${notCovered.slice(0, 6).join(', ')}${notCovered.length > 6 ? ', …' : ''}` };
+    for (const l of lots) ownerOf.set(lotKey(l), { branch: r.branch, rangeId: r.id });
   }
 
-  // Split each affected FROM range around the removed lots: delete it and
-  // re-insert the surviving contiguous chunks. Untouched ranges are left be.
-  for (const r of fromRanges) {
+  // Lots nobody has allocated can't be moved — there is nothing to move them
+  // OUT of, and inventing a range for them would hand the destination lot
+  // numbers the trade never had.
+  const notCovered = moving.filter(l => !ownerOf.has(lotKey(l)));
+  if (notCovered.length) {
+    const where = from_branch ? ` to ${from_branch}` : ' to any branch';
+    return { ok: false, error: `${notCovered.length} lot(s) not allocated${where}: ${notCovered.slice(0, 6).join(', ')}${notCovered.length > 6 ? ', …' : ''}` };
+  }
+
+  // An explicit FROM is a filter and is enforced strictly: a caller that
+  // names a source branch is asserting the lots are in it, and quietly moving
+  // ones that are not would be a different operation from the one requested.
+  if (from_branch) {
+    const normBr = (x) => String(x || '').trim().toUpperCase();
+    const wrong = moving.filter(l => normBr(ownerOf.get(lotKey(l)).branch) !== normBr(from_branch));
+    if (wrong.length) {
+      return { ok: false, error: `${wrong.length} lot(s) not allocated to ${from_branch}: ${wrong.slice(0, 6).join(', ')}${wrong.length > 6 ? ', …' : ''}` };
+    }
+  }
+
+  // A lot already sitting in the destination is a no-op, not an error —
+  // a typed run can easily include numbers that are already where they are
+  // being sent. They are dropped from the move and counted in the message.
+  const normTo = String(to_branch).trim().toUpperCase();
+  const alreadyThere = moving.filter(l => String(ownerOf.get(lotKey(l)).branch || '').trim().toUpperCase() === normTo);
+  if (alreadyThere.length) {
+    const stay = new Set(alreadyThere.map(lotKey));
+    moving = moving.filter(l => !stay.has(lotKey(l)));
+    for (const k of stay) movingKeys.delete(k);
+  }
+  if (!moving.length) {
+    return { ok: false, error: `Every lot selected is already allocated to ${to_branch}.` };
+  }
+
+  // Split each affected range around the removed lots: delete it and
+  // re-insert the surviving contiguous chunks, under ITS OWN branch (which
+  // is why this walks every range and not just one branch's). Untouched
+  // ranges are left be.
+  for (const r of allRanges) {
     const lots = lotsByRangeId.get(r.id) || [];
     if (!lots.some(l => movingKeys.has(lotKey(l)))) continue;
     db.run('DELETE FROM lot_allocations WHERE id = ?', [r.id]);
     const keep = lots.filter(l => !movingKeys.has(lotKey(l)));
     for (const ch of chunkLots(keep)) {
       db.run('INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?, ?, ?, ?)',
-        [auctionId, from_branch, ch.start, ch.end]);
+        [auctionId, r.branch, ch.start, ch.end]);
     }
   }
 
-  // Dest branch gains the moved lots, collapsed into contiguous chunks.
-  // One reassign_log row per chunk keeps the "reassigned" tile overlay
-  // and the mobile alloc_rev marker accurate for the exact lots moved.
+  // Dest branch gains the moved lots, collapsed into contiguous chunks over
+  // the WHOLE moving set — chunking per source would leave the destination
+  // holding two ranges that touch (010-015 from A, 016-020 from B) where one
+  // says the same thing.
   const destChunks = chunkLots(moving);
   for (const ch of destChunks) {
     db.run('INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?, ?, ?, ?)',
       [auctionId, to_branch, ch.start, ch.end]);
-    try {
-      db.run(
-        `INSERT INTO reassign_log
-           (auction_id, from_branch, to_branch, start_lot, end_lot, user_id, username)
-         VALUES (?,?,?,?,?,?,?)`,
-        [auctionId, from_branch, to_branch, ch.start, ch.end, actor.id || null, actor.username || '']
-      );
-    } catch (_) { /* best-effort */ }
+  }
+
+  // The audit log is written per SOURCE branch, because that is the question
+  // it answers ("where did this lot come from?") — a dest chunk that merged
+  // two sources could not say. Chunked within each source so the
+  // "reassigned" tile overlay and the mobile alloc_rev marker still cover
+  // exactly the lots that moved.
+  const bySource = new Map();
+  for (const l of moving) {
+    const br = ownerOf.get(lotKey(l)).branch;
+    if (!bySource.has(br)) bySource.set(br, []);
+    bySource.get(br).push(l);
+  }
+  for (const [srcBranch, lots] of bySource) {
+    for (const ch of chunkLots(lots)) {
+      try {
+        db.run(
+          `INSERT INTO reassign_log
+             (auction_id, from_branch, to_branch, start_lot, end_lot, user_id, username)
+           VALUES (?,?,?,?,?,?,?)`,
+          [auctionId, srcBranch, to_branch, ch.start, ch.end, actor.id || null, actor.username || '']
+        );
+      } catch (_) { /* best-effort */ }
+    }
   }
 
   const allocs = db.all('SELECT * FROM lot_allocations WHERE auction_id = ? ORDER BY branch, start_lot', [auctionId]);
-  // Friendly message: a single contiguous chunk reads as a range, a
-  // disjoint pick reads as a count.
-  const message = (destChunks.length === 1 && rangeSize(destChunks[0].start, destChunks[0].end) === moving.length)
-    ? `Lots ${destChunks[0].start}-${destChunks[0].end} reassigned from ${from_branch} to ${to_branch}`
-    : `Moved ${moving.length} lot(s) from ${from_branch} to ${to_branch}`;
-  return { ok: true, allocations: allocs, message, moved: moving.length };
+  // Friendly message. A single contiguous chunk reads as a range, a disjoint
+  // pick reads as a count, and a move that drained several depots names them
+  // with their counts — "from ANAVILASAM (12), BODI (8)" is the fact the
+  // operator needs to check their own arithmetic against.
+  const srcLabel = bySource.size === 1
+    ? Array.from(bySource.keys())[0]
+    : Array.from(bySource.entries()).map(([b, l]) => `${b} (${l.length})`).join(', ');
+  const tail = alreadyThere.length
+    ? ` · ${alreadyThere.length} already in ${to_branch}, left alone`
+    : '';
+  const message = (destChunks.length === 1 && rangeSize(destChunks[0].start, destChunks[0].end) === moving.length && bySource.size === 1)
+    ? `Lots ${destChunks[0].start}-${destChunks[0].end} reassigned from ${srcLabel} to ${to_branch}${tail}`
+    : `Moved ${moving.length} lot(s) from ${srcLabel} to ${to_branch}${tail}`;
+  return {
+    ok: true, allocations: allocs, message, moved: moving.length,
+    // Per-source counts, so a caller that wants to report the split doesn't
+    // have to parse the sentence back apart.
+    sources: Array.from(bySource.entries()).map(([branch, lots]) => ({ branch, lots: lots.length })),
+    skippedSameBranch: alreadyThere.length,
+  };
 }
 
 // Build applyLotReassignment() fields from a stored request row: prefer the
@@ -8527,7 +8603,13 @@ app.post('/api/auctions/:id/reassign-lots', requireAuctionWrite, (req, res) => {
   }
   const result = applyLotReassignment(db, auctionId, req.body, req.user || {});
   if (!result.ok) return res.status(400).json({ error: result.error });
-  res.json({ success: true, allocations: result.allocations, message: result.message });
+  res.json({
+    success: true, allocations: result.allocations, message: result.message,
+    // A move with no from_branch can drain several depots, so the caller is
+    // told which and how many rather than having to parse the sentence.
+    sources: result.sources || [],
+    skippedSameBranch: result.skippedSameBranch || 0,
+  });
 });
 
 // ── LOT-REASSIGN REQUESTS — admin side ────────────────────────────
