@@ -263,7 +263,21 @@ async function renderOnce(pptr, html, print) {
   if (!browser) return null;
   const page = await browser.newPage();
   try {
-    await page.setContent(html, { waitUntil: 'networkidle0', timeout: RENDER_TIMEOUT_MS });
+    // 'load', NOT 'networkidle0'. Every document rendered here is entirely
+    // self-contained — inline <style>, images as data: URIs, no scripts and no
+    // remote references — so there is no network for networkidle0 to wait on;
+    // it only ever waited out its 500 ms quiet period. But that idle detection
+    // can simply never fire when the browser is busy, and then setContent sits
+    // until RENDER_TIMEOUT_MS and takes the whole batch down with it. That is
+    // what made a whole-trade print fail when two other prints were running
+    // beside it: the heavy render hung while the lighter ones finished
+    // normally, so it never looked like CPU or memory. 'load' fires once the
+    // document and its subresources (data: images, CSS and what it pulls in)
+    // are in, which is exactly the condition these renders actually need.
+    await page.setContent(html, { waitUntil: 'load', timeout: RENDER_TIMEOUT_MS });
+    // 'load' is about resources arriving, not glyphs being ready — wait for
+    // webfonts too, or a font-swapped first page can be rasterised mid-swap.
+    try { await page.evaluate(() => document.fonts && document.fonts.ready); } catch (_) {}
     return await page.pdf({ ...puppeteerOpts(print), timeout: RENDER_TIMEOUT_MS });
   } finally {
     try { await page.close(); } catch (_) { /* browser already gone */ }

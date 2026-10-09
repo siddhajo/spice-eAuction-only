@@ -24,28 +24,58 @@
 // half-page crop receipt. Those are till-roll slips, not documents anyone
 // files, and a centred mark on a 58mm receipt is just wasted ink.
 //
-// WHERE IT SITS, per engine, and why they differ:
-//   • PDFKit — drawn at the TOP of each page, before any content, so it is
-//     BEHIND the text. That is the only cheap option: PDFKit streams pages,
-//     so there is no "after everything" moment to draw over.
-//   • HTML   — a `position: fixed` layer ON TOP (Chromium repeats fixed
-//     elements on every printed page). Behind is not available: the templates
-//     paint their own white page background, which would hide it completely.
-// At this opacity the difference is not visible — the text reads through
-// either way — but a reader of this file should not have to wonder.
+// WHERE IT SITS: ON TOP of the content, in BOTH engines.
+//   • HTML   — a `position: fixed` layer (Chromium repeats fixed elements on
+//     every printed page). Behind is not available: the templates paint their
+//     own white page background, which would hide it completely.
+//   • PDFKit — stamped at the END of each page's content. PDFKit streams, so
+//     there is no natural "after everything" moment; we make one by stamping
+//     the page that is being LEFT, from a wrapper on addPage(), plus the last
+//     page from a wrapper on end(). Every page-break path goes through
+//     addPage() — including PDFKit's own text-overflow break, via
+//     continueOnNewPage() — so no page is missed.
+//
+// It used to be drawn FIRST on each PDFKit page, i.e. underneath. That read
+// fine on an invoice over white, but it is invisible on the striped table
+// exports: the zebra row fill, the header band and the subtotal band are
+// OPAQUE rectangles, so every shaded row painted the mark out and the logo
+// survived only in the gaps. Stamping last is what fixes that — the mark is
+// now over the stripes, not under them, and the density setting it is drawn
+// at is the one the operator chose (see below).
 
 const fs = require('fs');
 const { resolveLogoFile } = require('./logo-data-uri');
 
-// Faint enough that a tax invoice stays legible and photocopies clean, strong
-// enough to survive a print. Two values for ONE look: a mark drawn UNDER the
-// content (PDFKit) reads lighter than the same mark drawn OVER it (HTML —
-// see the note above for why each engine stacks the way it does), so the
-// upper one is dialled back to land at the same visual weight. Checked
-// side by side at A4 against a full-colour logo; keep them in that ratio if
-// you retune.
-const OPACITY = 0.07;        // PDFKit — behind the content
-const OPACITY_OVER = 0.05;   // HTML    — on top of it
+// How strongly the mark prints. Faint enough that a tax invoice stays legible
+// and photocopies clean, strong enough to survive a print.
+//
+// Two values for ONE look: OPACITY is the density as configured, and
+// OPACITY_OVER is what a mark drawn OVER the content has to be set to to LOOK
+// like that density — ink sitting on top of text reads heavier than the same
+// ink underneath it. Checked side by side at A4 against a full-colour logo.
+// Both engines stamp on top (see the note above), so both use the OVER value;
+// the plain one is what the setting means and what the ratio is applied to.
+// The ratio is what matters, not the numbers: when the operator turns the
+// density up, BOTH engines move together.
+const OPACITY = 0.07;                            // the configured density
+const OVER_RATIO = 0.05 / 0.07;                  // a mark ON TOP reads ~30% heavier
+const OPACITY_OVER = OPACITY * OVER_RATIO;
+// `pdf_watermark_density` is that 0.07 as a percentage, so an operator whose
+// logo is too pale to read can simply turn it up. Clamped: under 1% nothing
+// prints at all (and "off" is flag_pdf_watermark's job), over 60% it stops
+// being a watermark and starts competing with the text it sits behind.
+const DENSITY_MIN = 1, DENSITY_MAX = 60;
+function watermarkOpacity(source) {
+  const raw = _cfg(source).pdf_watermark_density;
+  const n = raw === undefined || raw === null || String(raw).trim() === ''
+    ? NaN : Number(raw);
+  if (!Number.isFinite(n)) return OPACITY;        // unset or junk ⇒ the default
+  return Math.min(DENSITY_MAX, Math.max(DENSITY_MIN, n)) / 100;
+}
+// The same figure for the layer that sits ON TOP of the content.
+function watermarkOpacityOver(source) {
+  return watermarkOpacity(source) * OVER_RATIO;
+}
 // Fraction of the SHORTER page edge the logo is fitted into. Centred, so the
 // mark reads as a background rather than as content.
 const SIZE_PCT = 0.55;
@@ -111,10 +141,11 @@ function watermarkHtml(source) {
   if (!file) return '';
   const uri = _dataUri(file);
   if (!uri) return '';
+  const opacity = Math.round(watermarkOpacityOver(source) * 10000) / 10000;
   return (
     '<style>' +
     '.doc-watermark{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);' +
-    `z-index:2147483000;opacity:${OPACITY_OVER};pointer-events:none;` +
+    `z-index:2147483000;opacity:${opacity};pointer-events:none;` +
     'display:flex;align-items:center;justify-content:center;' +
     `width:${Math.round(SIZE_PCT * 100)}%;max-width:${Math.round(SIZE_PCT * 100)}vw;` +
     '-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
@@ -143,14 +174,14 @@ function withWatermark(html, source) {
 // cursor is put back by hand because PDFKit does not include doc.x / doc.y in
 // the graphics stack — leaving it moved would shift the first thing the
 // invoice draws afterwards.
-function drawPdfkitWatermark(doc, file) {
+function drawPdfkitWatermark(doc, file, opacity) {
   if (!doc || !doc.page || !file) return;
   const cx = doc.x, cy = doc.y;
   try {
     const w = doc.page.width, h = doc.page.height;
     const size = Math.min(w, h) * SIZE_PCT;
     doc.save();
-    doc.opacity(OPACITY);
+    doc.opacity(opacity == null ? OPACITY : opacity);
     doc.image(file, (w - size) / 2, (h - size) / 2, {
       fit: [size, size], align: 'center', valign: 'center',
     });
@@ -162,29 +193,53 @@ function drawPdfkitWatermark(doc, file) {
   }
 }
 
-// Stamp this document and every page it grows later. Call it immediately after
-// the PDFDocument is created and BEFORE anything is drawn, so page 1 gets the
-// mark underneath its content like every other page. `source` is a flat cfg
-// or a db handle — whichever the caller already has.
+// Stamp this document and every page it grows later. Call it any time after
+// the PDFDocument is created — nothing is drawn at attach time, so unlike the
+// old behind-the-content version it does not have to run before the first
+// line of content. `source` is a flat cfg or a db handle — whichever the
+// caller already has.
 //
 // Idempotent per document: the batch generators hand the same doc to each
 // invoice's generator in turn, and each of those calls this — the guard is
-// what stops the second invoice adding a second 'pageAdded' listener (which
-// would double the opacity on every page after it).
+// what stops the second invoice wrapping addPage()/end() a second time (which
+// would double the opacity on every page from then on).
 function attachPdfkitWatermark(doc, source) {
-  return attachPdfkitWatermarkPath(doc, watermarkFile(source));
+  return attachPdfkitWatermarkPath(doc, watermarkFile(source), watermarkOpacityOver(source));
 }
 
 // Same thing for a renderer that holds an ALREADY-RESOLVED file and no cfg or
 // db — the shared table/slip renderers are handed a `companyHeader`, nothing
-// more, and getCompanyHeader() resolves `watermarkPath` for exactly this
-// (blank when the toggle is off, so the decision still lives in one place).
-function attachPdfkitWatermarkPath(doc, file) {
+// more, and getCompanyHeader() resolves `watermarkPath` AND `watermarkOpacity`
+// for exactly this (both blank/undefined when the toggle is off, so the
+// decision still lives in one place). An absent `opacity` falls back to the
+// built-in over-draw density rather than to the raw one, because this draws
+// on top like everything else here.
+function attachPdfkitWatermarkPath(doc, file, opacity) {
   if (!doc || doc._watermarkAttached) return doc;
   doc._watermarkAttached = true;     // set even with no file: nothing to retry
   if (!file) return doc;
-  drawPdfkitWatermark(doc, file);                        // page 1, already open
-  doc.on('pageAdded', () => drawPdfkitWatermark(doc, file));
+  const op = opacity == null ? OPACITY_OVER : opacity;
+
+  // Stamp the page we are LEAVING, so the mark lands over content already
+  // drawn on it. Patched on the INSTANCE, so nothing else in the process is
+  // affected, and `apply` keeps PDFKit's own `return this` chaining intact.
+  const addPage = doc.addPage;
+  doc.addPage = function (...args) {
+    drawPdfkitWatermark(this, file, op);
+    return addPage.apply(this, args);
+  };
+
+  // …and the final page, which no addPage() ever follows. doc.end() is called
+  // exactly once by every renderer here, but the guard makes a second call
+  // harmless rather than a second stamp.
+  const end = doc.end;
+  doc.end = function (...args) {
+    if (!this._watermarkFinalPage) {
+      this._watermarkFinalPage = true;
+      drawPdfkitWatermark(this, file, op);
+    }
+    return end.apply(this, args);
+  };
   return doc;
 }
 
@@ -194,5 +249,6 @@ function clearCache() { _uriCache.clear(); }
 module.exports = {
   watermarkOn, watermarkFile, watermarkHtml, withWatermark,
   attachPdfkitWatermark, attachPdfkitWatermarkPath, drawPdfkitWatermark, clearCache,
-  OPACITY, OPACITY_OVER, SIZE_PCT,
+  watermarkOpacity, watermarkOpacityOver,
+  OPACITY, OPACITY_OVER, OVER_RATIO, DENSITY_MIN, DENSITY_MAX, SIZE_PCT,
 };

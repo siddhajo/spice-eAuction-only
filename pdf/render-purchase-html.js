@@ -167,19 +167,58 @@ function buildPurchaseInvoiceView(invoiceData, cfg, invoiceNo) {
   };
 }
 
-async function generatePurchaseInvoiceHtmlPDF(invoiceData, cfg, invoiceNo) {
-  const view = buildPurchaseInvoiceView(invoiceData, cfg, invoiceNo);
-  const tpl = getInvoiceTemplate('purchase-invoice', cfg);
-  return htmlToPdf(withWatermark(tpl.render(view), cfg));
+// How many invoices share ONE render. The templates are fragments, so a slice
+// of them concatenates into a single document that Chromium lays out once.
+// Same figure and same reasoning as the commission bill and the debit note:
+// big enough to pay off, small enough that the HTML stays a sane size to ship
+// over CDP. Overridable for a box with more headroom.
+const INVOICES_PER_RENDER = (() => {
+  const n = Number(process.env.PURCHASE_INVOICES_PER_RENDER);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 25;
+})();
+
+// One self-contained document from a slice of invoices. `first` is per
+// DOCUMENT, not per batch — the template emits its <style> only for the first
+// fragment, so each slice needs its own copy. The watermark goes on ONCE for
+// the whole document: these are fragments in a single body, and N stacked
+// copies of a faint layer is not a faint layer. That is also where the size
+// saving comes from — the mark's 114 KB logo used to land in every invoice.
+function renderChunk(tpl, chunk, cfg) {
+  const pages = chunk.map((inv, i) => {
+    const view = buildPurchaseInvoiceView(inv.invoiceData, cfg, inv.invoiceNo);
+    view.first = i === 0;
+    return tpl.render(view);
+  });
+  const html = '<!doctype html><html><head><meta charset="utf-8"></head><body>'
+    + pages.join('') + '</body></html>';
+  return htmlToPdf(withWatermark(html, cfg));
 }
 
-// Bulk: invoices = [{ invoiceData, invoiceNo }]. Renders each, merges to one PDF.
-// A few renders run at once (see render-pool.js); the merge order is the list
-// order, so the invoice numbers still run in sequence through the batch.
+async function generatePurchaseInvoiceHtmlPDF(invoiceData, cfg, invoiceNo) {
+  const tpl = getInvoiceTemplate('purchase-invoice', cfg);
+  return renderChunk(tpl, [{ invoiceData, invoiceNo }], cfg);
+}
+
+// Bulk: invoices = [{ invoiceData, invoiceNo }]. Merged in list order, so the
+// invoice numbers still run in sequence through the batch.
+//
+// This used to render one PDF per invoice and merge them, which cost a render
+// each and put a separate copy of the watermark logo in every one — 9.1 MB for
+// a 58-invoice trade. Slicing gives one render and one set of embedded assets
+// per 25. Unlike the sales invoice, a purchase invoice has no per-document
+// page numbering or "continued" footer, so concatenating them changes nothing
+// about how any one of them reads.
 async function generatePurchaseInvoicesHtmlBatchPDF(invoices, cfg) {
+  const tpl = getInvoiceTemplate('purchase-invoice', cfg);
+  const list = invoices || [];
+  if (list.length <= INVOICES_PER_RENDER) return renderChunk(tpl, list, cfg);
+  // Serial across slices: parallel renders in one Chromium only compete for
+  // the memory this is trying to stay inside of.
   const { mergePdfs } = require('./merge-pdf');
-  const { mapRenders } = require('./render-pool');
-  const parts = await mapRenders(invoices, (inv) => generatePurchaseInvoiceHtmlPDF(inv.invoiceData, cfg, inv.invoiceNo));
+  const parts = [];
+  for (let i = 0; i < list.length; i += INVOICES_PER_RENDER) {
+    parts.push(await renderChunk(tpl, list.slice(i, i + INVOICES_PER_RENDER), cfg));
+  }
   return mergePdfs(parts);
 }
 
