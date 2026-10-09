@@ -134,9 +134,27 @@ function buildCommissionView(billData, cfg, billNo, first) {
   };
 }
 
-async function generateCommissionBoSHtmlPDF(payloads, cfg) {
-  const tpl = getInvoiceTemplate('commission-bill', cfg);
-  const pages = payloads.map((p, i) =>
+// How many bill pages go into ONE Chromium render. A whole trade's commission
+// bills is not a handful of pages — a 450-lot auction prints 300+ — and every
+// page carries its own inline logo data: URI (~150 KB of base64). Concatenated,
+// that is a tens-of-megabytes HTML document to ship over CDP, parse and lay
+// out, which blew past the print timeout ("Navigation timeout of 30000 ms
+// exceeded") and, on the container, risked an out-of-memory kill of Chromium
+// instead. So the batch is rendered in slices and the slices merged — the same
+// shape every other bulk HTML route already uses (render-agri-html.js et al),
+// just at page granularity rather than one render per document. Each slice is
+// a complete standalone document, so the page CSS and the watermark come out
+// identical to the single-render output.
+const PAGES_PER_RENDER = (() => {
+  const n = Number(process.env.COMMISSION_PAGES_PER_RENDER);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 25;
+})();
+
+// One self-contained HTML document from a slice of payloads. `first` is per
+// DOCUMENT, not per batch: the template emits its <style> block only on the
+// first page it renders, so every slice needs its own copy of it.
+function renderChunk(tpl, chunk, cfg) {
+  const pages = chunk.map((p, i) =>
     tpl.render(buildCommissionView(p.billData, cfg, p.billNo, i === 0)));
   // One watermark for the WHOLE document, not one per bill: the pages are
   // fragments concatenated into a single body, and N stacked copies of a
@@ -144,6 +162,20 @@ async function generateCommissionBoSHtmlPDF(payloads, cfg) {
   const html = '<!doctype html><html><head><meta charset="utf-8"></head><body>' +
     pages.join('') + '</body></html>';
   return htmlToPdf(withWatermark(html, cfg));
+}
+
+async function generateCommissionBoSHtmlPDF(payloads, cfg) {
+  const tpl = getInvoiceTemplate('commission-bill', cfg);
+  const list = payloads || [];
+  if (list.length <= PAGES_PER_RENDER) return renderChunk(tpl, list, cfg);
+  // Sliced: render serially (parallel renders in one Chromium only compete for
+  // the same memory this is trying to stay inside of), then merge in order.
+  const { mergePdfs } = require('./merge-pdf');
+  const parts = [];
+  for (let i = 0; i < list.length; i += PAGES_PER_RENDER) {
+    parts.push(await renderChunk(tpl, list.slice(i, i + PAGES_PER_RENDER), cfg));
+  }
+  return mergePdfs(parts);
 }
 
 module.exports = { generateCommissionBoSHtmlPDF, buildCommissionView };

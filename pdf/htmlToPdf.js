@@ -35,6 +35,19 @@ try { _electron = require('electron'); } catch (_) { /* not in Electron */ }
 const PT_PER_INCH = 72;
 const PX_PER_PT = 96 / 72;   // CSS px per pt — Puppeteer margins are px/in/cm
 
+// How long ONE render may take. Puppeteer's default for setContent/pdf is the
+// 30s *navigation* timeout — a figure sized for loading a web page, not for
+// laying out a document. A big batch (hundreds of A4 pages in one HTML doc,
+// each with its own inline logo) legitimately needs longer, and when it
+// didn't get it the operator saw a bare "Navigation timeout of 30000 ms
+// exceeded" with no hint that the print was simply large. Callers that batch
+// should still CHUNK their work (see render-commission-html.js) — this is the
+// ceiling, not the plan. Overridable for a slow box via PDF_RENDER_TIMEOUT_MS.
+const RENDER_TIMEOUT_MS = (() => {
+  const n = Number(process.env.PDF_RENDER_TIMEOUT_MS);
+  return Number.isFinite(n) && n >= 0 ? n : 180000;   // 0 = no limit
+})();
+
 // Normalize the caller's print options ONCE, so both backends are driven from
 // the same values and can't drift apart. Returns null when there's nothing to
 // apply (the common case), which keeps the default render byte-identical.
@@ -232,8 +245,8 @@ async function renderOnce(pptr, html, print) {
   if (!browser) return null;
   const page = await browser.newPage();
   try {
-    await page.setContent(html, { waitUntil: 'networkidle0' });
-    return await page.pdf(puppeteerOpts(print));
+    await page.setContent(html, { waitUntil: 'networkidle0', timeout: RENDER_TIMEOUT_MS });
+    return await page.pdf({ ...puppeteerOpts(print), timeout: RENDER_TIMEOUT_MS });
   } finally {
     try { await page.close(); } catch (_) { /* browser already gone */ }
   }
