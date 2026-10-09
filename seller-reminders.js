@@ -45,6 +45,7 @@
 // preserve if this query is ever rewritten.
 
 const { getSetting, getSettingBool, getSettingNum } = require('./company-config');
+const waErrors = require('./wa-errors');
 
 // Local yyyy-mm-dd. Never toISOString — east of UTC that returns
 // yesterday for most of the morning, which would shift every threshold.
@@ -323,6 +324,9 @@ async function sendReminders(db, rows, opts = {}) {
   const cap = opts.cap == null ? cfg.maxPerDay : opts.cap;
   const results = [];
   let sent = 0;
+  // Set when Meta stops the whole account mid-run (see the break below), so
+  // the caller can say "stopped" instead of reporting a wall of failures.
+  let stopped = null;
 
   for (const row of rows) {
     const base = { trader_id: row.trader_id, name: row.label || row.name, phone: row.phone,
@@ -361,9 +365,22 @@ async function sendReminders(db, rows, opts = {}) {
     } else {
       _log(db, { ...base, mode, sent_by: by, status: 'failed', error: out.error || 'send failed' });
       results.push({ ...base, status: 'failed', error: out.error || 'send failed' });
+      // Same reason as the birthday sweep: an account-level stop refuses every
+      // remaining row too, and each refusal is another spam signal against the
+      // number. A reminder is never worth that — the backlog keeps.
+      const block = waErrors.blockKind(out.error);
+      if (block) {
+        stopped = block;
+        for (const rest of rows.slice(rows.indexOf(row) + 1)) {
+          results.push({ trader_id: rest.trader_id, name: rest.label || rest.name, phone: rest.phone,
+            last_booked: rest.last_booked, days_since: rest.days_since,
+            status: 'skipped', reason: 'not attempted — ' + block.short });
+        }
+        break;
+      }
     }
   }
-  return { results, sent,
+  return { results, sent, stopped,
     failed:  results.filter((r) => r.status === 'failed').length,
     skipped: results.filter((r) => r.status === 'skipped').length };
 }

@@ -101,12 +101,34 @@ function findChrome() {
   check('the Payments row explains that Off is the classic screen',
         !!payNote && /seller-wise/i.test(payNote), String(payNote));
 
+  // Dummy Seller Details is ONE-WAY: the install flag is a ceiling, because
+  // the same flag decides whether a mask prints on the Spices Board return
+  // and that answer must be the same for every user. While it is off
+  // site-wide (the shipped default), the row has to say that "On" here will
+  // not grant it — otherwise an admin sets a dead radio and walks away.
+  const rowText = (re) => page.evaluate((src) => {
+    const rows = Array.from(document.querySelectorAll('#user-screens-rows > div'));
+    const row = rows.find(r => new RegExp(src, 'i').test(r.textContent || ''));
+    return row ? row.textContent.replace(/\s+/g, ' ').trim() : null;
+  }, re);
+  const dumNote = await rowText('Dummy Seller Details');
+  check('the Dummy Seller Details row is offered', !!dumNote, String(dumNote));
+  check('…and says a mask printing stays site-wide',
+        !!dumNote && /site-wide/i.test(dumNote), String(dumNote));
+  check('…and that "On" cannot grant it while the install flag is off',
+        !!dumNote && /cannot switch it on for one user/i.test(dumNote), String(dumNote));
+
   // Give mgr_a the Auction Manager and the lot-wise Payments screen, take
   // away the Desk, and save.
+  // Dummy Details goes ON site-wide first, so taking it off mgr_a below is a
+  // genuine per-user restriction rather than the ceiling doing the work.
+  await api('PUT', '/api/company-settings',
+    { settings: { flag_lot_dummy_details: 'true' } }, ADMIN);
   await page.evaluate(() => {
     document.querySelector('#user-screens-rows input[name="scr-flag_auction_manager"][value="on"]').checked = true;
     document.querySelector('#user-screens-rows input[name="scr-flag_auction_desk"][value="off"]').checked = true;
     document.querySelector('#user-screens-rows input[name="scr-flag_lotwise_payments"][value="on"]').checked = true;
+    document.querySelector('#user-screens-rows input[name="scr-flag_lot_dummy_details"][value="off"]').checked = true;
   });
   await page.evaluate(() => doSaveUserScreens());
   await page.waitForFunction(() => document.getElementById('user-screens-modal')?.style.display === 'none'
@@ -148,6 +170,7 @@ function findChrome() {
                                 return b ? getComputedStyle(b).display !== 'none' : null; })(),
     classicPayVisible: (() => { const b = document.querySelector('.feat-pay-classic');
                                 return b ? getComputedStyle(b).display !== 'none' : null; })(),
+    dummy: document.body.getAttribute('data-feat-lot-dummy-details'),
   }));
   check('mgr_a gets the Auction Manager the install has OFF', aNav.mgr === '1', JSON.stringify(aNav));
   check('…and loses the Auction Desk the install has ON', aNav.desk === '0', JSON.stringify(aNav));
@@ -156,6 +179,16 @@ function findChrome() {
   check('mgr_a gets the lot-wise Payments screen the install has OFF',
         aNav.pay === '1' && aNav.lotwisePayVisible === true, JSON.stringify(aNav));
   check('…and not the classic seller-wise one', aNav.classicPayVisible === false, JSON.stringify(aNav));
+  // The whole point of the dummy override: mgr_a loses the 🎭 controls on an
+  // install that HAS the feature on. Every client-side dummy gate reads this
+  // one attribute, so this is the whole chain in one assertion.
+  check('mgr_a loses the Dummy Details controls the install has ON',
+        aNav.dummy === '0', JSON.stringify(aNav));
+  const adminDummy = await page.evaluate(async () => {
+    await applyFeatureFlags();
+    return document.body.getAttribute('data-feat-lot-dummy-details');
+  });
+  check('…while the admin, with no override, keeps them', adminDummy === '1', String(adminDummy));
 
   const SHOT = process.env.SCREENS_SHOT || path.join(os.tmpdir(), 'user-screens.png');
   await page.evaluate((id) => openUserScreensModal(id, 'mgr_a'), aId);

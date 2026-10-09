@@ -25,6 +25,7 @@
 // state — so it survives restarts and works across processes.
 
 const { getSetting, getSettingBool, getSettingNum } = require('./company-config');
+const waErrors = require('./wa-errors');
 
 const MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun',
                      'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
@@ -296,6 +297,9 @@ async function sendGreetings(db, rows, opts = {}) {
   const by = String(opts.by || '');
   const results = [];
   let sent = 0;
+  // Set when Meta stops the whole account mid-run (see the break below), so
+  // the caller can say "stopped" instead of reporting 180 individual failures.
+  let stopped = null;
   const cap = opts.cap == null ? cfg.maxPerDay : opts.cap;
 
   for (const row of rows) {
@@ -336,9 +340,24 @@ async function sendGreetings(db, rows, opts = {}) {
     } else {
       _log(db, { ...base, greet_year: year, mode, sent_by: by, status: 'failed', error: out.error || 'send failed' });
       results.push({ ...base, status: 'failed', error: out.error || 'send failed' });
+      // An account-level refusal is not this row's problem, it is the run's.
+      // Nobody watches an unattended sweep, so walking the rest of the list
+      // into a wall that refuses all of it quietly hands Meta hundreds more
+      // refusals to rate the number on — which is what keeps a number pinned
+      // at its current tier. Stop, and say where it stopped.
+      const block = waErrors.blockKind(out.error);
+      if (block) {
+        stopped = block;
+        for (const rest of rows.slice(rows.indexOf(row) + 1)) {
+          results.push({ party_type: rest.party_type, party_id: rest.party_id,
+            name: rest.label || rest.name, phone: rest.phone, greet_date: rest.greet_date,
+            status: 'skipped', reason: 'not attempted — ' + block.short });
+        }
+        break;
+      }
     }
   }
-  return { results, sent,
+  return { results, sent, stopped,
     failed:  results.filter((r) => r.status === 'failed').length,
     skipped: results.filter((r) => r.status === 'skipped').length };
 }

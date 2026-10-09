@@ -14,6 +14,13 @@
 //     a typed run will already have sold, so the booked ones are stepped over
 //     and counted rather than failing the whole move (sending them bounced
 //     the entire reassign server-side, which is what used to happen).
+//
+//     And the typed lots DO NOT have to share a branch (2026-10-07). FROM is
+//     a filter defaulting to "Any branch": each lot leaves the depot that
+//     holds it, the note breaks the count down per source depot, and a lot
+//     already in the destination is dropped rather than sent nowhere. The
+//     earlier "pick a FROM branch first" refusal made the operator do the
+//     server's bookkeeping by hand.
 const os = require('os'), path = require('path'), fs = require('fs');
 const { spawn } = require('child_process');
 const pptr = require('puppeteer-core');
@@ -121,8 +128,12 @@ const STATS = [
     _allocShownStates.clear();
     const box = document.getElementById('ra-lots'); if (box) box.value = '';
     const find = document.getElementById('alloc-find'); if (find) find.value = '';
-    document.getElementById('ra-from').innerHTML =
-      '<option value="">Select…</option><option>ANAVILASAM</option><option>BODINAYAKANUR</option>';
+    // CUMBUM is a destination with no allocation of its own — the normal
+    // shape when a depot is being filled for the first time.
+    const opts = '<option value="">— Any branch —</option><option>ANAVILASAM</option>'
+               + '<option>BODINAYAKANUR</option><option>CUMBUM</option>';
+    document.getElementById('ra-from').innerHTML = opts;
+    document.getElementById('ra-to').innerHTML = opts;
     switchAllocTab('edit');
     renderAllocEditCards(stats);
     switchAllocTab('reassign');
@@ -171,7 +182,8 @@ const STATS = [
   console.log('\n[4] Typing the lots to move');
   const typed = await page.evaluate(() => {
     switchAllocTab('reassign');
-    document.getElementById('ra-from').value = '';
+    document.getElementById('ra-from').value = '';          // "Any branch"
+    document.getElementById('ra-to').value = 'BODINAYAKANUR';
     const box = document.getElementById('ra-lots');
     box.value = '1,2,3,12,15-18';
     raSyncSelectionFromText();
@@ -187,7 +199,12 @@ const STATS = [
         typed.selected.includes('003'));
   check('a range expands', ['015', '016', '017', '018'].every(l => typed.selected.includes(l)));
   check('the note says how many were skipped', /2 already used/.test(typed.note), typed.note);
-  check('and the FROM branch is inferred from the lots', typed.from === 'ANAVILASAM', typed.from);
+  // FROM stays on "Any branch" — the box no longer retargets a control the
+  // operator set, and it doesn't need to: the server takes each lot out of
+  // whichever depot holds it.
+  check('FROM is left alone — it is a filter, not an inference', typed.from === '', typed.from);
+  check('the note names the depot they are coming out of',
+        /from ANAVILASAM/.test(typed.note) && /BODINAYAKANUR/.test(typed.note), typed.note);
 
   console.log('\n[5] Numbers that are not allocated anywhere are called out');
   const missing = await page.evaluate(() => {
@@ -200,28 +217,55 @@ const STATS = [
   check('only the real one is selected', missing.n === 1, String(missing.n));
   check('the other two are named as unallocated', /2 not allocated/.test(missing.note), missing.note);
 
-  console.log('\n[6] Lots straddling two branches refuse to guess');
+  console.log('\n[6] Lots from several branches move together');
+  // Reversed on 2026-10-07 at the user's ask. This used to refuse and tell
+  // the operator to pick a FROM branch — but a list of numbers read off a
+  // sheet does not come from one depot, and splitting the move by hand was
+  // the operator doing the server's bookkeeping. from_branch is optional
+  // now: each lot leaves the depot that holds it.
   const span = await page.evaluate(() => {
     document.getElementById('ra-from').value = '';
+    document.getElementById('ra-to').value = 'CUMBUM';
     const box = document.getElementById('ra-lots');
     box.value = '3,4,101,102';
     raSyncSelectionFromText();
-    return { n: _raSelected.size, note: (document.getElementById('ra-lots-note').textContent || '').replace(/\s+/g, ' ') };
+    return { picked: Array.from(_raSelected).sort(),
+             note: (document.getElementById('ra-lots-note').textContent || '').replace(/\s+/g, ' ') };
   });
-  check('nothing is selected', span.n === 0, String(span.n));
-  check('and it says which branches they are in',
-        /ANAVILASAM/.test(span.note) && /BODINAYAKANUR/.test(span.note), span.note);
+  check('all four are selected, across both branches',
+        span.picked.join(',') === '003,004,101,102', JSON.stringify(span.picked));
+  check('and the note breaks the count down by source depot',
+        /ANAVILASAM \(2\)/.test(span.note) && /BODINAYAKANUR \(2\)/.test(span.note), span.note);
+
   const narrowed = await page.evaluate(() => {
     document.getElementById('ra-from').value = 'BODINAYAKANUR';
     raOnFromBranchChange();
-    return Array.from(_raSelected).sort();
+    return { picked: Array.from(_raSelected).sort(),
+             note: (document.getElementById('ra-lots-note').textContent || '').replace(/\s+/g, ' ') };
   });
-  check('picking a FROM branch narrows the same text to it',
-        narrowed.join(',') === '101,102', JSON.stringify(narrowed));
+  check('picking a FROM branch still narrows the same text to it',
+        narrowed.picked.join(',') === '101,102', JSON.stringify(narrowed.picked));
+  check('…and says what it dropped', /2 outside BODINAYAKANUR/.test(narrowed.note), narrowed.note);
+
+  console.log('\n[6b] A lot already in the destination has nowhere to go');
+  const sameBr = await page.evaluate(() => {
+    document.getElementById('ra-from').value = '';
+    document.getElementById('ra-to').value = 'BODINAYAKANUR';
+    const box = document.getElementById('ra-lots');
+    box.value = '3,101,102';
+    raSyncSelectionFromText();
+    return { picked: Array.from(_raSelected).sort(),
+             note: (document.getElementById('ra-lots-note').textContent || '').replace(/\s+/g, ' ') };
+  });
+  check('the two already in BODINAYAKANUR are dropped',
+        sameBr.picked.join(',') === '003', JSON.stringify(sameBr.picked));
+  check('and counted rather than silently vanishing',
+        /2 already in BODINAYAKANUR/.test(sameBr.note), sameBr.note);
 
   console.log('\n[7] The box and the tiles are one selection, seen two ways');
   const mirrored = await page.evaluate(() => {
     document.getElementById('ra-from').value = '';
+    document.getElementById('ra-to').value = 'CUMBUM';
     document.getElementById('ra-lots').value = '';
     raSyncSelectionFromText();
     const tile = (lot) => document.querySelector(`#ra-tile-grid [data-lot="${lot}"]`);
@@ -260,6 +304,44 @@ const STATS = [
     return Array.from(document.querySelectorAll('#alloc-edit-cards [data-lot]')).length;
   });
   check('clearing the box brings the grid back', cleared === 22, String(cleared));
+
+  console.log('\n[10] The commit button is reachable without scrolling');
+  // A trade of 300 numbers makes both panels taller than the modal. The
+  // button that actually does the work used to be at the bottom of all of
+  // it, so every move ended with a scroll hunt for it; both panels now pin
+  // their actions to the foot of the modal's own scrollport.
+  const TALL = [{ branch: 'ANAVILASAM', used: 0, total: 300, ranges: [{ start: '001', end: '300',
+    lots: Array.from({ length: 300 }, (_, i) => LOT(i + 1, 'free')) }] }];
+  await page.setViewport({ width: 1280, height: 720 });
+  const reach = await page.evaluate((stats) => {
+    _raAllocStats = stats; _raSelected = new Set(); _allocShownStates.clear(); _allocFindSet = null;
+    switchAllocTab('edit'); renderAllocEditCards(stats);
+    switchAllocTab('reassign'); renderReassignTiles();
+    const modal = document.querySelector('#alloc-modal .modal');
+    modal.scrollTop = 0;                       // the state the modal OPENS in
+    const seen = (sel, re) => {
+      const btn = Array.from(document.querySelectorAll(sel + ' button')).find(b => re.test(b.textContent || ''));
+      if (!btn) return { found: false };
+      const m = modal.getBoundingClientRect(), b = btn.getBoundingClientRect();
+      return { found: true, inView: b.bottom <= m.bottom + 1 && b.top >= m.top };
+    };
+    const ra = seen('#alloc-panel-reassign', /Reassign Selected/);
+    switchAllocTab('edit');
+    modal.scrollTop = 0;
+    const ed = seen('#alloc-panel-edit', /Save Allocations/);
+    return {
+      scrollable: modal.scrollHeight > modal.clientHeight + 2,
+      sticky: getComputedStyle(document.querySelector('#alloc-panel-reassign .alloc-foot')).position,
+      ra, ed,
+    };
+  }, TALL);
+  check('the panel really is taller than the modal', reach.scrollable === true, JSON.stringify(reach));
+  check('the footer is pinned, not just placed last', reach.sticky === 'sticky', reach.sticky);
+  check('Reassign Selected is on screen at scrollTop 0',
+        reach.ra.found && reach.ra.inView === true, JSON.stringify(reach.ra));
+  check('…and so is Save Allocations on the Edit tab',
+        reach.ed.found && reach.ed.inView === true, JSON.stringify(reach.ed));
+  await page.setViewport({ width: 1440, height: 1000 });
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
   cleanup();

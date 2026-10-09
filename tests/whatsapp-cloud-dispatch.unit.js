@@ -14,6 +14,12 @@
 //   6. The bulk LEDGER accounts for every ticked row: a row whose PDF can't
 //      be built stays in the list as a Failed line with its reason, instead
 //      of being dropped so the counts silently disagree with the selection.
+//   7. An ACCOUNT-level refusal (spam rate limit, billing block, dead token)
+//      stops the whole run at the row it hit. Firing the rest of the
+//      selection at a wall that refuses all of them is 200 more spam signals
+//      against the number, which is what pins it to its current tier.
+//   8. The 24h recipient ceiling is checked BEFORE the first send, and the
+//      operator's answer at that gate is honoured.
 //
 // The functions are lifted verbatim out of index.html so the test tracks the
 // shipped source rather than a copy.
@@ -43,6 +49,7 @@ const NAMES = [
   '_waQueueSummary', '_waSummaryLine', '_runWaQueue', '_waQueueAct', '_waQueueRender',
   '_waEsc', '_waRowSent', '_waQueueButtons', '_waQueueRetryable', '_waQueueCopy',
   '_waPollables', '_waPollDelivery', '_ensureWaQueueModal',
+  '_waBlockKind', '_waFriendlyError', '_waRecipientsNeeded', '_waPreflight',
 ];
 
 // The negative-probe TTL is a module-level const, not part of any function —
@@ -82,6 +89,10 @@ const state = {
   trackIds: false,
   pollCount: 0,
   pollStatus: null,   // (wamid, nth poll) => {status, error} | null
+  sends: [],          // every phone the send route was actually called with
+  usage: null,        // /api/whatsapp/usage body, or null for "Meta is quiet"
+  gateAnswer: 'go',   // what the operator picks at the pre-flight prompt
+  gateAsked: 0,
 };
 
 const sandbox = {
@@ -124,7 +135,12 @@ const sandbox = {
         json: async () => state.status,
       };
     }
+    if (String(url).includes('/api/whatsapp/usage')) {
+      if (!state.usage) return { ok: false, status: 500, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => state.usage };
+    }
     if (String(url).includes('/api/whatsapp/send-template')) {
+      state.sends.push(opts && opts.body ? String(opts.body).slice(0, 200) : '');
       const r = state.sendResult;
       const body = (state.trackIds && r.body && r.body.ok)
         ? Object.assign({}, r.body, { id: 'wamid-' + (++state.sendSeq) })
@@ -154,6 +170,9 @@ sandbox._waQueueRender = (i, status) => {
 // The summary panel blocks on a click. _waQueueButtons('summary') is the last
 // thing that runs before that await, so answer from there.
 sandbox.__nextSummaryAction = () => state.summaryActions.shift() || 'close';
+// Keep the shipped button logic reachable — one case asserts on which
+// buttons the operator is actually offered, which the stub below erases.
+vm.runInContext('__shippedButtons = _waQueueButtons;', sandbox);
 vm.runInContext(`
   _waQueueButtons = function(mode){
     if (mode === 'summary') setTimeout(() => _waQueueAct(__nextSummaryAction()), 0);
@@ -162,6 +181,11 @@ vm.runInContext(`
 
 // Replace the manual pass's click-await with the scripted answer queue,
 // mirroring the row bookkeeping the shipped version does.
+// The pre-flight prompt is a real modal; the decision logic around it is
+// what this suite pins, so the prompt itself answers from the script.
+sandbox.__gateAnswer = () => { state.gateAsked++; return state.gateAnswer; };
+vm.runInContext('_waGateResolve = null; _waPreflightAsk = async function(){ return __gateAnswer(); };', sandbox);
+
 sandbox.__nextManualAction = () => state.manualActions.shift() || 'stop';
 vm.runInContext(`
   _waManualPass = async function(list, note){
@@ -187,6 +211,7 @@ function reset(over = {}) {
   state.statusLines = []; state.lastRows = [];
   state.manualActions = []; state.summaryActions = [];
   state.sendSeq = 0; state.trackIds = false; state.pollCount = 0; state.pollStatus = null;
+  state.sends = []; state.usage = null; state.gateAnswer = 'go'; state.gateAsked = 0;
   Object.assign(state, over);
   // Clear the availability cache between cases.
   vm.runInContext('_waApiCheck = null; _waApiCheckAt = 0;', sandbox);
@@ -427,6 +452,130 @@ async function test(name, fn) {
     await sandbox._runWaQueue([{ name: 'A', phone: '9000000001', message: 'm1', params: [] }]);
     assert.strictEqual(state.pollCount, 0, 'nothing to poll → no requests');
     assert.ok(Date.now() - t0 < 1000, 'the summary must not wait out the poll window');
+  });
+
+
+  // ── Account-level stops ────────────────────────────────────────
+  await test('_waBlockKind tells an account stop from a per-message failure', async () => {
+    const b = sandbox._waBlockKind('Spam Rate limit hit');
+    assert.ok(b, '"Spam Rate limit hit" is Meta 131048 — an account-level stop');
+    assert.strictEqual(b.code, '131048');
+    // Order matters: 131048 must not be read as the generic throughput error.
+    assert.notStrictEqual(sandbox._waBlockKind('Rate limit hit').code, '131048');
+    assert.ok(sandbox._waBlockKind('Business eligibility payment issue'), 'a billing block stops everything');
+    assert.ok(sandbox._waBlockKind('Error validating access token: Session has expired'), 'a dead token stops everything');
+    assert.strictEqual(sandbox._waBlockKind('Message undeliverable'), null, 'a bad number is THIS row only');
+    assert.strictEqual(sandbox._waBlockKind('Recipient not on WhatsApp'), null);
+  });
+
+  await test('_waFriendlyError explains the error without hiding Meta’s words', async () => {
+    const out = sandbox._waFriendlyError('Spam Rate limit hit');
+    assert.ok(/24-hour/.test(out), 'the operator needs the plain-English reading: ' + out);
+    assert.ok(/Spam Rate limit hit/.test(out), 'the raw text must survive for support threads: ' + out);
+    assert.strictEqual(sandbox._waFriendlyError('Message undeliverable'), 'Message undeliverable');
+  });
+
+  await test('bulk: a spam-rate-limit stops the run — untried rows are not fired at the wall', async () => {
+    let n = 0;
+    const items = ['A','B','C','D','E'].map((name, i) => ({ name, phone: '900000000' + i, message: 'm', params: [] }));
+    // Row 1 goes out, row 2 comes back with the account-level refusal.
+    const origFetch = sandbox.fetch;
+    sandbox.fetch = async (url, opts) => {
+      if (String(url).includes('/api/whatsapp/send-template')) {
+        state.sends.push(url);
+        if (++n >= 2) return { ok: false, status: 502, json: async () => ({ error: 'Spam Rate limit hit' }) };
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return origFetch(url, opts);
+    };
+    await sandbox._runWaQueue(items);
+    sandbox.fetch = origFetch;
+    assert.strictEqual(state.sends.length, 2,
+      'the run must stop at the refusal, not spend 3 more sends on a wall: ' + state.sends.length);
+    assert.strictEqual(rowsBy('sent').length, 1);
+    assert.strictEqual(rowsBy('failed').length, 1);
+    assert.strictEqual(rowsBy('skipped').length, 3, 'untried rows must say so: ' + JSON.stringify(state.lastRows));
+    assert.ok(/Not attempted/.test(rowsBy('skipped')[0].reason), rowsBy('skipped')[0].reason);
+    assert.ok(/Stopped by WhatsApp/.test(state.statusLines.join('|')),
+      'the summary must lead with the stop, not a tally: ' + state.statusLines.join('|'));
+    assert.deepStrictEqual(state.opened, [], 'stopping must not silently open WhatsApp Web either');
+  });
+
+  await test('bulk: Retry is withheld once Meta has stopped the run', async () => {
+    // Retrying an account-level stop fails by definition and spends another
+    // refusal on the number. WhatsApp Web, which the limit does not touch,
+    // must stay on offer.
+    const shown = {};
+    const realGet = sandbox.document.getElementById;
+    sandbox.document.getElementById = (id) => ({ style: { set display(v) { shown[id] = v !== 'none'; } } });
+    vm.runInContext('_waQ = { rows: [{ status: "failed" }, { status: "skipped" }] };', sandbox);
+    vm.runInContext('__shippedButtons("summary");', sandbox);
+    assert.strictEqual(shown['wa-q-retry'], true, 'an ordinary failed run still offers Retry');
+    vm.runInContext('_waQ.blocked = { short: "WhatsApp is refusing sends from this number" };', sandbox);
+    vm.runInContext('__shippedButtons("summary");', sandbox);
+    sandbox.document.getElementById = realGet;
+    vm.runInContext('_waQ = null;', sandbox);
+    assert.strictEqual(shown['wa-q-retry'], false, 'a blocked run must not offer Retry');
+    assert.strictEqual(shown['wa-q-manual'], true, 'WhatsApp Web is the way out and must remain');
+  });
+
+  await test('bulk: an ordinary per-message rejection does NOT stop the run', async () => {
+    state.sendResult = { status: 502, body: { error: 'Message undeliverable' } };
+    const items = ['A','B','C'].map((name, i) => ({ name, phone: '900000000' + i, message: 'm', params: [] }));
+    await sandbox._runWaQueue(items);
+    assert.strictEqual(state.sends.length, 3, 'every row deserves its own attempt: ' + state.sends.length);
+    assert.strictEqual(rowsBy('failed').length, 3);
+    assert.strictEqual(rowsBy('skipped').length, 0, 'nothing should be written off as untried');
+  });
+
+  // ── The pre-flight ceiling ─────────────────────────────────────
+  await test('pre-flight: a run that fits is never questioned', async () => {
+    state.usage = { limit: { cap: 250, used: 10, remaining: 240, tier: 'TIER_250' } };
+    await sandbox._runWaQueue([{ name: 'A', phone: '9000000001', message: 'm', params: [] }]);
+    assert.strictEqual(state.gateAsked, 0, 'no prompt when there is headroom');
+    assert.strictEqual(rowsBy('sent').length, 1);
+  });
+
+  await test('pre-flight: no headroom → the operator is asked BEFORE the first send', async () => {
+    state.usage = { limit: { cap: 250, used: 251, remaining: 0, tier: 'TIER_250' } };
+    state.gateAnswer = 'cancel';
+    await sandbox._runWaQueue([{ name: 'A', phone: '9000000001', message: 'm', params: [] }]);
+    assert.strictEqual(state.gateAsked, 1, 'the ceiling is knowable up front — ask');
+    assert.strictEqual(state.sends.length, 0, 'Cancel must send nothing at all');
+  });
+
+  await test('pre-flight: choosing WhatsApp Web routes the run away from the API', async () => {
+    state.usage = { limit: { cap: 250, used: 251, remaining: 0, tier: 'TIER_250' } };
+    state.gateAnswer = 'web';
+    state.manualActions = ['send'];
+    await sandbox._runWaQueue([{ name: 'A', phone: '9000000001', message: 'm', params: [] }]);
+    assert.strictEqual(state.sends.length, 0, 'not one send may go to the spent API');
+    assert.strictEqual(state.opened.length, 1, 'the WhatsApp Web route is the whole point of the choice');
+  });
+
+  await test('pre-flight: "Send anyway" is honoured — the gate warns, it does not forbid', async () => {
+    state.usage = { limit: { cap: 250, used: 251, remaining: 0, tier: 'TIER_250' } };
+    state.gateAnswer = 'go';
+    await sandbox._runWaQueue([{ name: 'A', phone: '9000000001', message: 'm', params: [] }]);
+    assert.strictEqual(state.sends.length, 1, 'the operator may know something the counter does not');
+  });
+
+  await test('pre-flight: an unreadable usage call never blocks the day’s work', async () => {
+    state.usage = null;                      // /api/whatsapp/usage answers 500
+    await sandbox._runWaQueue([{ name: 'A', phone: '9000000001', message: 'm', params: [] }]);
+    assert.strictEqual(state.gateAsked, 0);
+    assert.strictEqual(rowsBy('sent').length, 1, 'unknown headroom must fail OPEN');
+  });
+
+  await test('pre-flight: rows that look their number up count as new recipients', async () => {
+    const need = sandbox._waRecipientsNeeded([
+      { name: 'A', phone: '9000000001' },
+      { name: 'B', phone: '+91 90000 00001' },   // same number, written differently
+      { name: 'C', prepare: async () => ({}) },  // unknown until the run
+    ]);
+    assert.strictEqual(need.known, 1, 'one unique number, however it was typed');
+    assert.strictEqual(need.unknown, 1);
+    assert.strictEqual(need.max, 2, 'the estimate is an upper bound');
   });
 
   await test('availability probe: a positive answer is cached', async () => {

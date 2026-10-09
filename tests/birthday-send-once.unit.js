@@ -118,6 +118,30 @@ function sender(outcome) {
   check('the rest are skipped, not failed', out.skipped === 5 && out.failed === 0);
   check('the skip explains itself', out.results.filter(r => /daily cap of 3/.test(r.reason || '')).length === 5);
 
+  console.log('\nAn account-level refusal stops the whole sweep');
+  // Same guard, other campaign: the cap stops us sending too much, this stops
+  // us sending into a wall. Every row after an account-level refusal would be
+  // refused too, and each refusal counts against the number.
+  for (let i = 0; i < 4; i++) {
+    db.run(`INSERT INTO traders (name, cr, dob, tel) VALUES (?,?,?,?)`,
+      [`WALL${i}`, `CR.W${i}`, '1980-09-29', '90000002' + String(i).padStart(2, '0')]);
+  }
+  // 29 Sep already carries fixture parties from the cases above, so the wall
+  // run is narrowed to its own four — the point is where the loop STOPS.
+  const wall = b.birthdaysOn(db, '2026-09-29').filter((r) => /WALL/.test(r.name || ''));
+  check('the wall fixture is four parties', wall.length === 4, `got ${wall.length}`);
+  let wallN = 0;
+  send = sender(() => (++wallN === 1 ? { ok: true, id: 'wamid.W1' } : { ok: false, error: 'Spam Rate limit hit' }));
+  out = await b.sendGreetings(db, wall, { send, mode: 'auto', cap: 0 });
+  check('the sweep stops at the refusal instead of spending the rest of the list',
+    send.calls.length === 2, `attempted ${send.calls.length} of 4`);
+  check('the stop is named', out.stopped && out.stopped.code === '131048', JSON.stringify(out.stopped));
+  check('the untried parties say they were never attempted',
+    out.results.filter((r) => /not attempted/.test(r.reason || '')).length === 2, JSON.stringify(out.results));
+  check('an untried party is NOT burned — nothing was written to the send-once ledger',
+    !db.get(`SELECT 1 AS x FROM birthday_greetings WHERE party_id = ? AND party_type = 'seller'`,
+      [wall[3].party_id]));
+
   console.log('\nThe message that actually goes out');
   updateSettings(db, {
     birthday_message: 'Dear {name}, happy birthday from {company}!',

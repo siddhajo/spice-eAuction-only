@@ -14,6 +14,13 @@
 //   (flag_mobile_reassign_direct), enforced here and not only in the phone's
 //   UI. Desk roles (manager / admin) are never gated. The lot-level rails
 //   are unchanged either way: a booked lot can never move.
+//
+// [cross-branch] `from_branch` is OPTIONAL (2026-10-07). A list of lot numbers
+//   read off a sheet does not come from one depot, so blank means "take each
+//   lot out of whichever depot holds it" and the split is reported per source.
+//   Given explicitly it is a strict FILTER — a caller naming a source branch
+//   is asserting the lots are in it. A lot already in the destination is a
+//   no-op rather than an error; an unallocated number still cannot move.
 const os = require('os'), path = require('path'), fs = require('fs');
 const { spawn } = require('child_process');
 
@@ -141,6 +148,133 @@ const mainBranchOf = async (id) => {
   r = await move(FIELD, ['005']);
   check('a booked lot is still refused, flag or no flag', r.status === 400, JSON.stringify(r.d));
   check('and the refusal names it', /already used/i.test((r.d && r.d.error) || ''), (r.d || {}).error);
+
+  // ── Who may reassign at all (2026-10-07) ────────────────────────────
+  // The route used to require auction_write — "create and edit TRADES" —
+  // which the `operator` role does not carry. That is the main non-admin
+  // role on the phone, so reassigning appeared to work for admins only,
+  // whatever the feature flag said. The gate is lot_write now: moving a free
+  // lot NUMBER between branch allocations is lot-floor work, and an operator
+  // can already create and edit the lots themselves.
+  console.log('\n[roles] the operator role can reassign, not just auction_write roles');
+  await api('POST', '/api/users', { username: 'op01', password: 'op012345', role: 'operator' });
+  const ol = await api('POST', '/api/login', { username: 'op01', password: 'op012345' }, null);
+  const OP = ol.d && (ol.d.token || ol.d.accessToken);
+  check('an operator can log in', !!OP, JSON.stringify(ol.d));
+
+  // flag_mobile_reassign_direct is still ON from the block above.
+  let op = await move(OP, ['017']);
+  check('with the switch ON, an operator moves the lots', op.status === 200,
+        `${op.status} ${JSON.stringify(op.d && op.d.error)}`);
+  const afterOp = await api('GET', `/api/auctions/${id1}/allocation-stats`);
+  const bodi2 = (afterOp.d.stats || []).find(s2 => s2.branch === 'BODINAYAKANUR') || {};
+  check('…and the lot really landed', bodi2.total === 14, String(bodi2.total));
+
+  await api('PUT', '/api/company-settings', { settings: { flag_mobile_reassign_direct: 'false' } });
+  op = await move(OP, ['016']);
+  check('with it OFF they are turned away by the SWITCH…', op.status === 403, `${op.status} ${JSON.stringify(op.d)}`);
+  check('…not by their role — the message points at the request queue',
+        /approval/i.test((op.d && op.d.error) || '') && !/auction_write/.test(JSON.stringify(op.d || {})),
+        JSON.stringify(op.d));
+
+  // Raising a REQUEST was never role-blocked and still is not: that is the
+  // path an operator takes while the switch is off.
+  const opReq = await api('POST', '/api/mobile/reassign-requests',
+    { auction_id: id1, from_branch: 'ANAVILASAM', to_branch: 'BODINAYAKANUR', lots: ['016'], reason: 'ran out' }, OP);
+  check('an operator can still raise a request with the switch off',
+        opReq.status === 200, `${opReq.status} ${JSON.stringify(opReq.d)}`);
+
+  // Widening to lot_write must not reach a role that has no write at all.
+  await api('POST', '/api/users', { username: 'view01', password: 'view1234', role: 'viewer' });
+  const vl = await api('POST', '/api/login', { username: 'view01', password: 'view1234' }, null);
+  const VIEW = vl.d && (vl.d.token || vl.d.accessToken);
+  await api('PUT', '/api/company-settings', { settings: { flag_mobile_reassign_direct: 'true' } });
+  const vr = await move(VIEW, ['016']);
+  check('a viewer is still refused, switch or no switch', vr.status === 403, `${vr.status} ${JSON.stringify(vr.d)}`);
+  check('…and refused on the ROLE, which is the honest reason',
+        /lot_write/.test(JSON.stringify(vr.d || {})), JSON.stringify(vr.d));
+
+  // ── Cross-branch moves (2026-10-07) ─────────────────────────────────
+  // from_branch is OPTIONAL. A list of lot numbers read off a sheet does not
+  // come from one depot, and splitting such a move by branch was the operator
+  // doing the server's bookkeeping by hand. Blank = take each lot out of
+  // whichever depot holds it; given = a filter, enforced strictly.
+  console.log('\n[cross-branch] one move can drain several depots');
+  const a9 = await api('POST', '/api/auctions', { ano: 79, date: '2026-10-07', state: 'TAMIL NADU' });
+  const id9 = a9.d && a9.d.id;
+  await api('POST', `/api/auctions/${id9}/allocations`, {
+    allocations: [
+      { branch: 'ANAVILASAM',    start_lot: '001', end_lot: '010' },
+      { branch: 'BODINAYAKANUR', start_lot: '101', end_lot: '110' },
+    ],
+  });
+  const lotsIn = async (branch) => {
+    const st = await api('GET', `/api/auctions/${id9}/allocation-stats`);
+    const s9 = (st.d.stats || []).find(x => x.branch === branch);
+    return s9 ? (s9.ranges || []).flatMap(r => (r.lots || []).map(l => l.lot)) : [];
+  };
+
+  let x = await api('POST', `/api/auctions/${id9}/reassign-lots`,
+    { to_branch: 'CUMBUM', lots: ['003', '004', '101', '102'] });
+  check('a move with NO from_branch is accepted', x.status === 200, JSON.stringify(x.d && x.d.error));
+  check('…and reports the per-source split',
+        JSON.stringify((x.d && x.d.sources) || []) ===
+          JSON.stringify([{ branch: 'ANAVILASAM', lots: 2 }, { branch: 'BODINAYAKANUR', lots: 2 }]),
+        JSON.stringify(x.d && x.d.sources));
+  check('…naming both depots in the message',
+        /ANAVILASAM \(2\)/.test((x.d && x.d.message) || '') && /BODINAYAKANUR \(2\)/.test((x.d && x.d.message) || ''),
+        (x.d || {}).message);
+  check('all four landed in CUMBUM',
+        (await lotsIn('CUMBUM')).join(',') === '003,004,101,102', JSON.stringify(await lotsIn('CUMBUM')));
+  check('ANAVILASAM lost exactly its two, keeping the rest',
+        (await lotsIn('ANAVILASAM')).join(',') === '001,002,005,006,007,008,009,010',
+        JSON.stringify(await lotsIn('ANAVILASAM')));
+  check('…and BODINAYAKANUR the same',
+        (await lotsIn('BODINAYAKANUR')).join(',') === '103,104,105,106,107,108,109,110',
+        JSON.stringify(await lotsIn('BODINAYAKANUR')));
+
+  // Provenance: the audit log is written per SOURCE, which is what makes the
+  // 'reassigned' tile overlay cover exactly the lots that moved.
+  const st9 = await api('GET', `/api/auctions/${id9}/allocation-stats`);
+  const cum = (st9.d.stats || []).find(x2 => x2.branch === 'CUMBUM') || {};
+  const cumStates = (cum.ranges || []).flatMap(r => (r.lots || []).map(l => `${l.lot}:${l.state}`));
+  check('every moved lot is tagged reassigned, whichever depot it came from',
+        cumStates.every(v => v.endsWith(':reassigned')) && cumStates.length === 4,
+        JSON.stringify(cumStates));
+
+  console.log('\n[cross-branch] an explicit FROM is still a strict filter');
+  x = await api('POST', `/api/auctions/${id9}/reassign-lots`,
+    { from_branch: 'ANAVILASAM', to_branch: 'CUMBUM', lots: ['005', '103'] });
+  check('a lot outside the named FROM is refused, not quietly moved',
+        x.status === 400 && /not allocated to ANAVILASAM/.test((x.d && x.d.error) || ''),
+        `${x.status} ${JSON.stringify(x.d)}`);
+  check('and nothing moved — 005 is still in ANAVILASAM',
+        (await lotsIn('ANAVILASAM')).includes('005'), JSON.stringify(await lotsIn('ANAVILASAM')));
+
+  console.log('\n[cross-branch] a lot already in the destination is a no-op');
+  x = await api('POST', `/api/auctions/${id9}/reassign-lots`,
+    { to_branch: 'CUMBUM', lots: ['005', '003'] });   // 003 is already in CUMBUM
+  check('the move succeeds on the one that can move', x.status === 200, JSON.stringify(x.d && x.d.error));
+  check('…counts the one that was already there', x.d && x.d.skippedSameBranch === 1, JSON.stringify(x.d));
+  check('…says so in the message', /already in CUMBUM/.test((x.d && x.d.message) || ''), (x.d || {}).message);
+  check('…and CUMBUM holds five now, not six',
+        (await lotsIn('CUMBUM')).length === 5, JSON.stringify(await lotsIn('CUMBUM')));
+  x = await api('POST', `/api/auctions/${id9}/reassign-lots`,
+    { to_branch: 'CUMBUM', lots: ['003'] });
+  check('a move with NOTHING left to move is refused, not reported as done',
+        x.status === 400 && /already allocated to CUMBUM/.test((x.d && x.d.error) || ''),
+        `${x.status} ${JSON.stringify(x.d)}`);
+
+  console.log('\n[cross-branch] an unallocated number still cannot be moved');
+  x = await api('POST', `/api/auctions/${id9}/reassign-lots`,
+    { to_branch: 'CUMBUM', lots: ['900'] });
+  check('it is refused, naming the problem',
+        x.status === 400 && /not allocated to any branch/.test((x.d && x.d.error) || ''),
+        `${x.status} ${JSON.stringify(x.d)}`);
+  x = await api('POST', `/api/auctions/${id9}/reassign-lots`, { lots: ['006'] });
+  check('and a move with no destination at all is refused',
+        x.status === 400 && /to_branch required/.test((x.d && x.d.error) || ''),
+        `${x.status} ${JSON.stringify(x.d)}`);
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
   cleanup();

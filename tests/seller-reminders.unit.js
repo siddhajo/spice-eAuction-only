@@ -196,6 +196,32 @@ function sender(outcome) {
   check('the retry goes through', out.sent === 1);
   check('and the retry does start the cooldown', only().length === 0);
 
+  console.log('\nAn account-level refusal stops the whole run');
+  // The cap above guards against sending too much. This guards against
+  // sending into a wall: once Meta refuses the ACCOUNT, every remaining row
+  // is refused too, and each refusal is another spam signal on the number.
+  // Nobody is watching the 7am sweep, so the loop has to stop itself.
+  const WALL = [1, 2, 3, 4].map((i) => ({
+    trader_id: seller('WALL ' + i, { cr: 'CR.W' + i }),
+    label: 'WALL ' + i, phone: '98000001' + String(i).padStart(2, '0'),
+  }));
+  let wallN = 0;
+  send = sender(() => (++wallN === 1 ? { ok: true, id: 'wamid.W1' } : { ok: false, error: 'Spam Rate limit hit' }));
+  out = await r.sendReminders(db, WALL, { send, mode: 'auto', date: TODAY, cap: 0 });
+  check('the run stops at the refusal instead of spending the rest of the list',
+    send.calls.length === 2, `attempted ${send.calls.length} of 4`);
+  check('the stop is named, not buried in four identical failures',
+    out.stopped && out.stopped.code === '131048', JSON.stringify(out.stopped));
+  check('the untried sellers say they were never attempted',
+    out.results.filter((x) => /not attempted/.test(x.reason || '')).length === 2, JSON.stringify(out.results));
+  check('an untried seller is NOT burned — no cooldown, no ledger row',
+    !db.get(`SELECT 1 AS x FROM seller_reminders WHERE trader_id = ?`, [WALL[3].trader_id]));
+  // The two the wall never reached carry no cooldown, so they can stand in
+  // for an ordinary bad-number run — which must NOT stop at the first refusal.
+  check('an ordinary per-row rejection still lets the run continue',
+    (await r.sendReminders(db, WALL.slice(2),
+      { send: sender({ ok: false, error: 'Message undeliverable' }), date: TODAY, cap: 0 })).failed === 2);
+
   console.log('\nThe daily cap');
   for (let i = 0; i < 8; i++) {
     const t = seller('BULK ' + i, { cr: 'CR.B' + i });

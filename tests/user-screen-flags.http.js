@@ -117,6 +117,23 @@ const cleanup = () => {
   check('…and an explicit one as an override', mgr.override === true, JSON.stringify(mgr));
   const keys = detail.flags.map(f => f.key);
   check('every per-user screen is offered', detail.flags.length >= 6, keys.join(', '));
+  // Dummy Seller Details is the one ONE-WAY entry: the install flag is a
+  // ceiling (an override may take the controls off a user, never grant them
+  // on a site that has the feature off), because the same flag decides
+  // whether a mask prints on the Spices Board return — and that answer has to
+  // be the same for everybody. Behaviour is pinned in lot-dummy-details.http.
+  const dummyRow = detail.flags.find(f => f.key === 'flag_lot_dummy_details') || {};
+  check('Dummy Seller Details is offered per-user', !!dummyRow.key, keys.join(', '));
+  check('…flagged one-way, so the panel can say "On" cannot grant it',
+        dummyRow.installGates === true, JSON.stringify(dummyRow));
+  check('…and names the capability it also needs',
+        dummyRow.requiresCapability === 'lot_write', JSON.stringify(dummyRow));
+  // capabilityMissing is resolved against THIS user's role on the server, so
+  // the panel no longer carries its own role → capability map.
+  const deskRow = detail.flags.find(f => f.key === 'flag_auction_desk') || {};
+  check('the Auction Desk still names auction_desk, and a manager HAS it',
+        deskRow.requiresCapability === 'auction_desk' && deskRow.capabilityMissing === false,
+        JSON.stringify(deskRow));
   // The Payments row picks BETWEEN two screens rather than hiding one, so it
   // carries a note saying what Off does.
   const pay = detail.flags.find(f => f.key === 'flag_lotwise_payments');

@@ -17,6 +17,12 @@
 //   [locked]     a locked lot is skipped, not an error, and reported as such
 //   [filter]     GET /api/lots/:id?dummy=1|0 narrows the Lots table to masked
 //                / unmasked lots — list, summary and paginated counts alike
+//   [access]     WHO may mask is per-user (2026-10-06): an override takes the
+//                write + the filter off one user, the install flag is a
+//                ceiling an override cannot lift, and through all of it the
+//                Board document reads IDENTICALLY for every user — masks
+//                print for people who cannot see the controls, because the
+//                regulator gets one return, not one per downloader
 const os = require('os'), path = require('path'), fs = require('fs');
 const { spawn } = require('child_process');
 
@@ -93,6 +99,12 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   }
   check('three lots created', ids.every(Boolean), JSON.stringify(ids));
   const A = ids[0], C = ids[2];
+
+  // The bulk write is feature-gated now (it never used to be), so the flag
+  // has to be on before the first mask is set — with it off the columns are
+  // not part of the app and the endpoint 403s. See the [access] block at the
+  // end for the per-user half of that gate.
+  await api('PUT', '/api/company-settings', { settings: { flag_lot_dummy_details: 'true' } });
 
   console.log('[set] a full write lands all four fields');
   let r = await api('POST', '/api/lots/dummy-details/bulk', {
@@ -196,6 +208,77 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   check('it composes with the grade filter', Number(both.d.n) === 1, JSON.stringify(both.d));
   const none = await api('GET', `/api/lots/${aid}?dummy=1&grade=1&summary=1`);
   check('…and with one that excludes it', Number(none.d.n) === 0, JSON.stringify(none.d));
+
+  // ── Per-user access (2026-10-06) ─────────────────────────────────────
+  // WHO may mask a seller is now a per-user override (SCREEN_FLAGS →
+  // flag_lot_dummy_details), while WHETHER a mask prints stays install-wide.
+  // The split is the point: the Spices Board gets one return, so the CSV must
+  // not depend on who downloaded it — only the controls do.
+  console.log('\n[access] who may mask a seller is per user');
+  await api('POST', '/api/users', { username: 'clerk01', password: 'clerk1234', role: 'operator' });
+  const cu = (await api('GET', '/api/users')).d;
+  const clerkId = ((Array.isArray(cu) ? cu : (cu && cu.users) || []).find(u => u.username === 'clerk01') || {}).id;
+  const cl = await fetch(B + '/api/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: 'clerk01', password: 'clerk1234' }),
+  }).then(r => r.json());
+  const CLERK = cl && (cl.token || cl.accessToken);
+  check('an operator is created and signed in', !!(clerkId && CLERK), JSON.stringify({ clerkId, tok: !!CLERK }));
+
+  const asClerk = async (method, url, body) => {
+    const r = await fetch(B + url, {
+      method, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + CLERK },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    let d = null; try { d = await r.json(); } catch (_) {}
+    return { status: r.status, d };
+  };
+
+  // With no override they follow the install flag, which is on.
+  let w = await asClerk('POST', '/api/lots/dummy-details/bulk', { ids: [C], dummy_name: 'BY CLERK' });
+  check('with no override they inherit the install flag and can write',
+        w.status === 200, `${w.status} ${JSON.stringify(w.d)}`);
+
+  await api('PUT', `/api/users/${clerkId}/screens`, { overrides: { flag_lot_dummy_details: false } });
+  w = await asClerk('POST', '/api/lots/dummy-details/bulk', { ids: [C], dummy_name: 'SHOULD NOT LAND' });
+  check('switched off for them, the write is refused', w.status === 403, `${w.status} ${JSON.stringify(w.d)}`);
+  check('…and the mask they tried to overwrite is intact',
+        (await dummyOf(aid, C)).name === 'BY CLERK', JSON.stringify(await dummyOf(aid, C)));
+  const cf = await asClerk('GET', `/api/lots/${aid}?dummy=1`);
+  check('…and their dummy filter is ignored, not honoured',
+        (Array.isArray(cf.d) ? cf.d : []).length === 3, JSON.stringify((cf.d || []).length));
+  const ca = await api('GET', `/api/lots/${aid}?dummy=1`);
+  check('the admin, who still has it, keeps the filter',
+        (Array.isArray(ca.d) ? ca.d : []).length === 2, JSON.stringify((ca.d || []).length));
+
+  // The MASKS themselves are untouched by any of this — same document for
+  // everyone, which is the whole reason the print side stayed install-wide.
+  const csvFor = async (tok) => {
+    const r = await fetch(B + `/api/spice-board-reports/form_c/data?auctionId=${aid}`,
+      { headers: { Authorization: 'Bearer ' + tok } });
+    return r.ok ? JSON.stringify(await r.json()) : '';
+  };
+  const asAdminDoc = await csvFor(TOKEN), asClerkDoc = await csvFor(CLERK);
+  check('the Board document reads identically for both users',
+        asAdminDoc.length > 0 && asAdminDoc === asClerkDoc,
+        JSON.stringify({ admin: asAdminDoc.length, clerk: asClerkDoc.length }));
+  check('…and it carries the mask even for the user who cannot see the controls',
+        asClerkDoc.includes('BY CLERK'), asClerkDoc.slice(0, 200));
+
+  // One-way: the install flag is a ceiling, so "on" for one user cannot
+  // resurrect a feature the site has switched off.
+  await api('PUT', `/api/users/${clerkId}/screens`, { overrides: { flag_lot_dummy_details: true } });
+  await api('PUT', '/api/company-settings', { settings: { flag_lot_dummy_details: 'false' } });
+  const myScreens = await asClerk('GET', '/api/me/screens');
+  check('with the site-wide flag off, an "on" override reads back as off',
+        myScreens.d && myScreens.d.flag_lot_dummy_details === 'false', JSON.stringify(myScreens.d));
+  w = await asClerk('POST', '/api/lots/dummy-details/bulk', { ids: [C], dummy_name: 'STILL NO' });
+  check('…and the write is still refused', w.status === 403, `${w.status} ${JSON.stringify(w.d)}`);
+  const adminOff = await api('POST', '/api/lots/dummy-details/bulk', { ids: [C], dummy_name: 'NOR ADMIN' });
+  check('nobody can write with the feature off site-wide, admin included',
+        adminOff.status === 403, `${adminOff.status} ${JSON.stringify(adminOff.d)}`);
+  check('and the stored mask survives the feature being switched off',
+        (await dummyOf(aid, C)).name === 'BY CLERK', JSON.stringify(await dummyOf(aid, C)));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   done(fail ? 1 : 0);

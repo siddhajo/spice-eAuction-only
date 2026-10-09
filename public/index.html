@@ -37483,6 +37483,154 @@ async function _waCloudSendDocument(phone, params, blob, filename) {
     return { ok:false, fallback:true, error:(e && e.message) || String(e) };
   }
 }
+// ── Is this ONE message's problem, or the whole account's? ────
+// Meta reports a bad number, a template mismatch, a spent 24h ceiling, a
+// quality throttle, a billing block and a dead token through the same
+// `error.message` string. The difference is the only thing that matters to a
+// bulk run: a per-message failure means "try the next row", an account-level
+// stop means EVERY remaining row will be refused too — and each refused
+// attempt is one more spam signal against the number, which is exactly what
+// keeps it pinned at its current tier.
+//
+// Returns { code, short, detail } for an account-level stop, null for a
+// per-message failure. Order matters: "Spam Rate limit hit" must be tested
+// before the generic rate-limit pattern, or 131048 reads as a throughput hiccup.
+function _waBlockKind(msg) {
+  const m = String(msg || '');
+  const TABLE = [
+    { re: /spam rate limit/i, code: '131048', short: 'WhatsApp is refusing sends from this number',
+      detail: 'Meta error 131048. The 24-hour recipient ceiling for this number is used up, or its quality rating has dropped. Every further send will be refused until the rolling window clears — and each refusal counts against the number.' },
+    { re: /messaging limit|business messaging limit/i, code: '131047', short: "This number's 24-hour recipient limit is used up",
+      detail: 'The messaging tier allows a fixed number of UNIQUE recipients per rolling 24 hours. Headroom returns gradually as the oldest sends age past 24h, not all at once at midnight.' },
+    { re: /\brate limit\b|too many messages|throughput/i, code: '130429', short: 'Sending faster than Meta allows',
+      detail: 'Meta error 130429 — the account is over its message throughput. Leave it a few minutes and send the rest in smaller batches.' },
+    { re: /payment|billing|eligib|insufficient|fund|credit/i, code: '131042', short: 'Meta has paused sending — billing',
+      detail: 'A payment method or billing problem on the Meta account blocks every template send. Settings → Integrations → Recharge opens the Meta billing hub; nothing in this app can clear it.' },
+    { re: /access token|session has expired|oauthexception|invalid.*token|token.*expire/i, code: '190', short: 'The WhatsApp access token is no longer valid',
+      detail: 'The token in Settings → Integrations has expired or been revoked, so no send can succeed until it is replaced.' },
+    { re: /account.*(restricted|disabled|banned|suspend)|restricted.*(account|number)/i, code: '', short: 'Meta has restricted this WhatsApp account',
+      detail: 'Sending is blocked at the account level. Check the account status in WhatsApp Manager — nothing can go out through the Cloud API until it is lifted.' },
+  ];
+  for (const t of TABLE) if (t.re.test(m)) return { code: t.code, short: t.short, detail: t.detail, raw: m };
+  return null;
+}
+// Meta's own wording, kept, with the plain-English reading in front of it.
+// The raw text stays because it is what a support thread needs — the operator
+// should never have to choose between understanding the error and reporting it.
+function _waFriendlyError(msg) {
+  const b = _waBlockKind(msg);
+  return b ? `${b.short} — ${b.detail} (Meta: ${msg})` : String(msg || 'Send failed');
+}
+
+// ── The 24h ceiling, checked BEFORE the first send ───────────────
+// The messaging tier is knowable up front: /api/whatsapp/usage already counts
+// unique recipients in the rolling window and knows what Meta rates this
+// number. Starting a 200-row run into a spent ceiling cannot deliver anything
+// — it can only hand Meta 200 more refusals to rate the number on.
+//
+// Returns 'go' (send through the API), 'web' (operator chose WhatsApp Web) or
+// 'cancel'. Anything unknown answers 'go': this gate exists to warn, and must
+// never become a way for a flaky usage call to stop the day's work.
+function _waRecipientsNeeded(items) {
+  const known = new Set();
+  let unknown = 0;
+  for (const it of (items || [])) {
+    const p = it && it.phone ? _normalizePhoneForWa(it.phone) : '';
+    if (p) known.add(p); else unknown++;
+  }
+  // Rows that look their number up inside prepare() can't be counted yet, so
+  // each one is assumed to be a NEW recipient — the figure is an upper bound
+  // and the prompt says "up to" rather than pretending to a precise count.
+  return { known: known.size, unknown, max: known.size + unknown };
+}
+async function _waPreflight(items) {
+  let L = null;
+  try {
+    const r = await fetch(B + '/api/whatsapp/usage', { headers: { 'Authorization': 'Bearer ' + T } });
+    if (r.ok) L = ((await r.json().catch(() => ({}))) || {}).limit || null;
+  } catch (_) { return 'go'; }
+  // No cap means Meta didn't answer, or the number is unlimited — either way
+  // there is nothing to warn about.
+  if (!L || !L.cap) return 'go';
+  const remaining = Math.max(0, Number(L.remaining != null ? L.remaining : (L.cap - L.used)) || 0);
+  const need = _waRecipientsNeeded(items);
+  if (need.max <= remaining) return 'go';
+  // A DOM failure here must not take the run down with it — no prompt shown
+  // means no answer to honour, so the operator keeps control.
+  try { return await _waPreflightAsk(need, remaining, L); } catch (_) { return 'go'; }
+}
+let _waGateResolve = null;
+function _waGateAnswer(a) {
+  hideModal('wa-gate-modal');
+  const r = _waGateResolve; _waGateResolve = null;
+  if (r) r(a || 'cancel');
+}
+function _ensureWaGateModal() {
+  let m = document.getElementById('wa-gate-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'wa-gate-modal';
+  m.className = 'modal-bg';
+  m.innerHTML = `
+    <div class="modal has-x" style="max-width:560px">
+      <div style="display:flex;align-items:flex-start;gap:12px;background:#FEF3C7;border-left:4px solid #F59E0B;border-radius:8px;padding:12px 14px;margin-bottom:14px">
+        <span style="font-size:20px;line-height:1.1">⚠</span>
+        <div>
+          <div style="font-weight:800;font-size:15px;color:#7C2D12" id="wa-gate-title"></div>
+          <div style="font-size:12.5px;color:#7C2D12;margin-top:3px" id="wa-gate-body"></div>
+        </div>
+      </div>
+      <div id="wa-gate-nums" style="display:flex;gap:10px;margin-bottom:14px"></div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:12px">WhatsApp Web sends from your own phone's account and is not subject to this limit — it just needs one click per message.</div>
+      <div class="actions">
+        <button class="btn" onclick="_waGateAnswer('cancel')" style="background:#eee">Cancel</button>
+        <button class="btn" onclick="_waGateAnswer('go')" style="background:var(--spice-turmeric);color:#fff">Send anyway</button>
+        <button class="btn" onclick="_waGateAnswer('web')" style="background:#25D366;color:#fff">Use WhatsApp Web</button>
+      </div>
+    </div>`;
+  // Same reason as the queue modal: built after installModalCloseButtons()
+  // has swept the page, and this prompt is AWAITED — closing it has to answer
+  // (Cancel: the reply that sends nothing).
+  const card = m.querySelector('.modal');
+  const x = document.createElement('button');
+  x.type = 'button'; x.className = 'modal-x'; x.title = 'Close';
+  x.setAttribute('aria-label', 'Close');
+  x.innerHTML = '&times;';
+  x.addEventListener('click', (e) => { e.stopPropagation(); _waGateAnswer('cancel'); });
+  card.insertBefore(x, card.firstChild);
+  document.body.appendChild(m);
+  return m;
+}
+function _waPreflightAsk(need, remaining, L) {
+  _ensureWaGateModal();
+  const n = (v) => Number(v || 0).toLocaleString('en-IN');
+  const tier = String(L.tier || '').trim();
+  const over = Math.max(0, need.max - remaining);
+  const upto = need.unknown ? 'up to ' : '';
+  const title = document.getElementById('wa-gate-title');
+  const body = document.getElementById('wa-gate-body');
+  const nums = document.getElementById('wa-gate-nums');
+  if (title) title.textContent = remaining === 0
+    ? 'This number has no sending headroom left today'
+    : "This run is bigger than what's left today";
+  if (body) {
+    body.textContent = remaining === 0
+      ? `Meta rates this number ${tier || 'at its current tier'}: ${n(L.cap)} unique recipients per rolling 24 hours, and ${n(L.used)} have been used. Sending now will come back "Spam Rate limit hit" on every row, and each refusal counts against the number's standing.`
+      : `This run needs ${upto}${n(need.max)} recipients and only ${n(remaining)} of ${n(L.cap)} are left in the current 24-hour window${tier ? ` (${tier})` : ''}. About the last ${n(over)} will be refused by Meta.`;
+  }
+  if (nums) {
+    const tile = (k, v, tint) =>
+      `<div style="flex:1;border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+         <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">${_waEsc(k)}</div>
+         <div style="font-size:20px;font-weight:800;${tint ? `color:${tint}` : ''}">${_waEsc(v)}</div>
+       </div>`;
+    nums.innerHTML = tile('This run needs', `${upto}${n(need.max)}`)
+      + tile('Recipients left', n(remaining), remaining === 0 ? '#dc2626' : '#d97706');
+  }
+  showModal('wa-gate-modal');
+  return new Promise(resolve => { _waGateResolve = resolve; });
+}
+
 // Document dispatcher: Cloud API template send (true automation — the PDF is
 // uploaded to Meta and delivered on one click). WhatsApp Web is opened ONLY
 // when the API genuinely cannot be used: no number on file, not configured,
@@ -37493,7 +37641,7 @@ async function _waSendDocument({ blob, filename, phone, params, message }) {
     const norm = _normalizePhoneForWa(phone);
     const res = await _waCloudSendDocument(norm, params, blob, filename);
     if (res.ok) { if (typeof toast === 'function') toast(`WhatsApp sent (+${norm})`); return true; }
-    if (!res.fallback) { showError(new Error(`WhatsApp (+${norm}): ${res.error}`)); return false; }
+    if (!res.fallback) { showError(new Error(`WhatsApp (+${norm}): ${_waFriendlyError(res.error)}`)); return false; }
   }
   if (!phone) toast('No WhatsApp number on file — opening WhatsApp to pick a contact');
   await _waOpenDocument({ blob, filename, phone, message });
@@ -37507,7 +37655,7 @@ async function _waSendText({ phone, params, message }) {
     const norm = _normalizePhoneForWa(phone);
     const res = await _waCloudSendText(norm, params);
     if (res.ok) { if (typeof toast === 'function') toast(`WhatsApp sent (+${norm})`); return true; }
-    if (!res.fallback) { showError(new Error(`WhatsApp (+${norm}): ${res.error}`)); return false; }
+    if (!res.fallback) { showError(new Error(`WhatsApp (+${norm}): ${_waFriendlyError(res.error)}`)); return false; }
   }
   if (!phone) toast('No WhatsApp number on file — opening WhatsApp to pick a contact');
   _waOpenText(phone, message);
@@ -37580,6 +37728,13 @@ function _ensureWaQueueModal() {
     <div class="modal" style="max-width:560px">
       <h2>Send WhatsApp <span id="wa-q-count" style="font-weight:400;color:var(--text3);font-size:14px"></span></h2>
       <div id="wa-q-status" style="font-size:12px;color:var(--text3);margin-bottom:8px"></div>
+      <!-- Only ever shown when Meta stopped the whole run (see _waQ.blocked).
+           A per-row failure belongs on its row; an account-level stop is a
+           fact about the next 24 hours and has to outrank the ledger. -->
+      <div id="wa-q-banner" style="display:none;background:#FEF3C7;border-left:4px solid #F59E0B;border-radius:8px;padding:10px 12px;margin-bottom:10px">
+        <div style="font-weight:800;font-size:13.5px;color:#7C2D12" id="wa-q-banner-t"></div>
+        <div style="font-size:12px;color:#7C2D12;margin-top:3px" id="wa-q-banner-d"></div>
+      </div>
       <div id="wa-q-rows" style="border:1px solid var(--spice-line);border-radius:8px;max-height:38vh;overflow-y:auto;margin-bottom:10px;background:#fff"></div>
       <div id="wa-q-detail" style="background:var(--spice-cream);border:1px solid var(--spice-line);border-radius:8px;padding:12px;margin-bottom:12px">
         <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">To</div>
@@ -37664,6 +37819,17 @@ function _waQueueRender(activeIdx, status) {
   const failed = rows.filter(r => r.status === 'failed').length;
   const cnt = document.getElementById('wa-q-count');
   if (cnt) cnt.textContent = `(${done} of ${rows.length}${failed ? ` · ${failed} failed` : ''})`;
+  const ban = document.getElementById('wa-q-banner');
+  if (ban) {
+    const b = _waQ.blocked;
+    ban.style.display = b ? '' : 'none';
+    if (b) {
+      const t = document.getElementById('wa-q-banner-t');
+      const d = document.getElementById('wa-q-banner-d');
+      if (t) t.textContent = b.short;
+      if (d) d.textContent = `${b.detail} Retrying now will not get through — use "Open in WhatsApp Web" for the rest, or come back once the window has cleared.`;
+    }
+  }
   if (status != null) {
     const st = document.getElementById('wa-q-status');
     if (st) st.textContent = status;
@@ -37723,7 +37889,10 @@ function _waQueueButtons(mode) {
   show('wa-q-send',   mode === 'manual');
   show('wa-q-copy',   mode === 'summary');
   show('wa-q-manual', mode === 'summary' && !!_waQueueRetryable().length);
-  show('wa-q-retry',  mode === 'summary' && !!_waQueueRetryable().length);
+  // No Retry against an account-level stop: the rows would fail again by
+  // definition, and every attempt is another refusal on the number's record.
+  // WhatsApp Web stays, because that route is not subject to the limit.
+  show('wa-q-retry',  mode === 'summary' && !!_waQueueRetryable().length && !(_waQ && _waQ.blocked));
   show('wa-q-close',  mode === 'summary');
 }
 // Rows the operator can act on again: failures and anything Stop cut short.
@@ -37844,9 +38013,24 @@ async function _waAutoPass() {
         ? await _waCloudSendDocument(_normalizePhoneForWa(row.phone), params, it.blob, it.filename)
         : await _waCloudSendText(_normalizePhoneForWa(row.phone), params);
     } catch (e) { res = { ok: false, fallback: true, error: (e && e.message) || String(e) }; }
-    if (res.ok) { row.status = 'sent'; row.reason = ''; row.wamid = res.id || ''; }
-    else { row.status = 'failed'; row.reason = res.error || 'Send failed'; }
+    if (res.ok) { row.status = 'sent'; row.reason = ''; row.wamid = res.id || ''; _waQueueRender(i); continue; }
+    // An account-level refusal is not this row's problem, it is the run's.
+    // Marking it Failed and walking on would fire the whole remaining
+    // selection at a wall that refuses every one of them — and each refusal
+    // is another spam signal against the number, which is what keeps it from
+    // ever being rated for a higher tier. So the pass ENDS here, and the
+    // rows it never tried say exactly that instead of claiming to have failed.
+    const block = res.fallback ? null : _waBlockKind(res.error);
+    row.status = 'failed';
+    row.reason = block ? block.short : (res.error || 'Send failed');
     _waQueueRender(i);
+    if (!block) continue;
+    _waQ.blocked = block;
+    rows.slice(i + 1).forEach(r => {
+      if (r.status === 'waiting') { r.status = 'skipped'; r.reason = 'Not attempted — ' + block.short; }
+    });
+    _waQueueRender(null, `Stopped at row ${i + 1} of ${rows.length} — ${block.short}`);
+    break;
   }
 }
 
@@ -37883,7 +38067,11 @@ function _waSummaryLine() {
   if (n('opened'))  parts.push(`${n('opened')} opened in WhatsApp Web`);
   if (n('failed'))  parts.push(`${n('failed')} failed`);
   if (n('skipped')) parts.push(`${n('skipped')} skipped`);
-  let line = `Finished — ${parts.join(', ')} of ${rows.length}.`;
+  // A run Meta cut short did not "finish". Leading with the tally would bury
+  // the one fact that decides what the operator does next.
+  let line = _waQ.blocked
+    ? `Stopped by WhatsApp — ${_waQ.blocked.short}. ${parts.join(', ')} of ${rows.length} before it stopped.`
+    : `Finished — ${parts.join(', ')} of ${rows.length}.`;
   // Delivery is its own clause, not another comma in the tally: a delivered
   // message is one of the sent ones, and reading "3 sent, 3 delivered" as
   // six messages is exactly the confusion this panel exists to end.
@@ -37942,21 +38130,33 @@ async function _waQueueSummary() {
 // ledger opens immediately and per-row failures stay visible.
 async function _runWaQueue(items, opts) {
   if (!items || !items.length) return;
-  const useApi = await _waCloudApiAvailable();
+  let useApi = await _waCloudApiAvailable();
+  // Ask the ceiling BEFORE the first send, not after the last refusal. The
+  // gate only ever appears when the run genuinely does not fit; everything
+  // unknown waves it through.
+  let gateWhy = '';
+  if (useApi) {
+    const decision = await _waPreflight(items);
+    if (decision === 'cancel') return;
+    if (decision === 'web') { useApi = false; gateWhy = "The Cloud API's 24-hour recipient limit is used up"; }
+  }
   _ensureWaQueueModal();
   _waQ = { rows: items.map(it => ({ item: it, name: it.name || '—', phone: it.phone || '', status: 'waiting', reason: '' })) };
   _waQueueStopped = false;
   _waQueueState = null;
   showModal('wa-queue-modal');
+  // Two reasons land in the manual pass — not configured, or the operator
+  // chose WhatsApp Web at the gate — and the note has to say which.
+  const manualWhy = gateWhy || 'WhatsApp Cloud API is not set up';
   _waQueueRender(null, useApi
     ? `Preparing ${items.length} message${items.length === 1 ? '' : 's'}…`
-    : 'WhatsApp Cloud API is not set up — these open in WhatsApp Web one at a time');
+    : `${manualWhy} — these open in WhatsApp Web one at a time`);
 
   if (useApi) await _waAutoPass();
   // The API is not usable at all — clicking through WhatsApp Web is the only
   // way to send, so run the manual pass directly.
   else await _waManualPass(_waQ.rows,
-    'WhatsApp Cloud API is not set up — opens WhatsApp Web; press send inside WhatsApp, then come back and hit "Send & Next"');
+    `${manualWhy} — opens WhatsApp Web; press send inside WhatsApp, then come back and hit "Send & Next"`);
 
   await _waQueueSummary();
 }
