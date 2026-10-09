@@ -119,10 +119,13 @@ async function generateAgriBillHtmlPDF(billData, cfg, billNo) {
 }
 
 // Bulk: bills = [{ billData, billNo }]. Renders each, merges to one PDF.
+// A few renders run at once (see render-pool.js) — a whole trade's bills is
+// hundreds of documents, and serially that is minutes of the operator waiting
+// on a browser that is idle between pages. Merged in LIST order regardless.
 async function generateAgriBillsHtmlBatchPDF(bills, cfg) {
   const { mergePdfs } = require('./merge-pdf');
-  const parts = [];
-  for (const b of bills) parts.push(await generateAgriBillHtmlPDF(b.billData, cfg, b.billNo));
+  const { mapRenders } = require('./render-pool');
+  const parts = await mapRenders(bills, (b) => generateAgriBillHtmlPDF(b.billData, cfg, b.billNo));
   return mergePdfs(parts);
 }
 

@@ -206,21 +206,38 @@ function forgetBrowser(p) {
   if (_pptrBrowserPromise === p || p === undefined) _pptrBrowserPromise = null;
 }
 
+// ONE browser, however many callers arrive at once. The cache slot has to be
+// claimed SYNCHRONOUSLY — before the first await — or concurrent callers all
+// see it empty, all launch, and every launch but the last is orphaned: a live
+// Chromium nobody holds a handle to, so nothing ever closes it. Two operators
+// printing at the same moment was enough to leak one; now that the bulk routes
+// render several documents at once (pdf/render-pool.js) a single click would
+// have leaked three. Hence the IIFE: `_pptrBrowserPromise` is assigned in the
+// same tick it is tested in, and the binary lookup happens INSIDE the cached
+// promise rather than in front of it.
 async function getBrowser(pptr) {
-  if (_pptrBrowserPromise) {
+  const cached = _pptrBrowserPromise;
+  if (cached) {
     try {
-      const b = await _pptrBrowserPromise;
+      const b = await cached;
       if (b && b.connected) return b;
     } catch (_) { /* previous launch failed — fall through and relaunch */ }
+    // Dead or failed. Clear it only if it is still OURS: another caller may
+    // have relaunched while we were awaiting, and that one is perfectly good.
+    if (_pptrBrowserPromise !== cached) return getBrowser(pptr);
     _pptrBrowserPromise = null;
   }
-  const chrome = await resolveChromium();
-  if (!chrome) return null; // no browser binary anywhere — let caller throw
-  const p = pptr.launch({
-    executablePath: chrome.executablePath,
-    args: chrome.args,
-    headless: chrome.headless,
-  });
+  // Lost the race to a caller that claimed the slot while we awaited above.
+  if (_pptrBrowserPromise) return getBrowser(pptr);
+  const p = (async () => {
+    const chrome = await resolveChromium();
+    if (!chrome) return null;   // no browser binary anywhere — caller throws
+    return pptr.launch({
+      executablePath: chrome.executablePath,
+      args: chrome.args,
+      headless: chrome.headless,
+    });
+  })();
   _pptrBrowserPromise = p;
   let browser;
   try {
@@ -229,6 +246,7 @@ async function getBrowser(pptr) {
     forgetBrowser(p);         // never keep a rejected launch in the cache
     throw e;
   }
+  if (!browser) { forgetBrowser(p); return null; }  // nor a "no binary" result
   browser.once('disconnected', () => forgetBrowser(p));
   return browser;
 }

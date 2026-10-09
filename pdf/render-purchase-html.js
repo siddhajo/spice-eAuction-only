@@ -174,10 +174,12 @@ async function generatePurchaseInvoiceHtmlPDF(invoiceData, cfg, invoiceNo) {
 }
 
 // Bulk: invoices = [{ invoiceData, invoiceNo }]. Renders each, merges to one PDF.
+// A few renders run at once (see render-pool.js); the merge order is the list
+// order, so the invoice numbers still run in sequence through the batch.
 async function generatePurchaseInvoicesHtmlBatchPDF(invoices, cfg) {
   const { mergePdfs } = require('./merge-pdf');
-  const parts = [];
-  for (const inv of invoices) parts.push(await generatePurchaseInvoiceHtmlPDF(inv.invoiceData, cfg, inv.invoiceNo));
+  const { mapRenders } = require('./render-pool');
+  const parts = await mapRenders(invoices, (inv) => generatePurchaseInvoiceHtmlPDF(inv.invoiceData, cfg, inv.invoiceNo));
   return mergePdfs(parts);
 }
 

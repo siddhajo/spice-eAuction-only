@@ -319,12 +319,14 @@ async function generateSalesInvoiceHtmlPDF(invoiceData, cfg, saleType, invoiceNo
 
 // Bulk: invoices = [{ invoiceData, saleType, invoiceNo, invoiceDate }].
 // Renders each independently, merges the PDFs into one multi-page document.
+// A few invoices render at once (see render-pool.js) — and this is the batch
+// that gains most, because a spilled invoice costs THREE renders, not one.
+// Merged in list order, so invoice numbers run in sequence.
 async function generateSalesInvoicesHtmlBatchPDF(invoices, cfg) {
   const { mergePdfs } = require('./merge-pdf');
-  const parts = [];
-  for (const inv of invoices) {
-    parts.push(await generateSalesInvoiceHtmlPDF(inv.invoiceData, cfg, inv.saleType, inv.invoiceNo, inv.invoiceDate));
-  }
+  const { mapRenders } = require('./render-pool');
+  const parts = await mapRenders(invoices, (inv) =>
+    generateSalesInvoiceHtmlPDF(inv.invoiceData, cfg, inv.saleType, inv.invoiceNo, inv.invoiceDate));
   return mergePdfs(parts);
 }
 

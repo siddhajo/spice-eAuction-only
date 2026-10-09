@@ -1,14 +1,17 @@
-<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>{{title}} {{noteNo}}</title>
-<style>
+{{! A FRAGMENT, not a whole document: the batch renderer concatenates many of
+    these into one HTML page so a trade's notes cost one Chromium render per 25
+    pages instead of one per note. `first` is per rendered DOCUMENT — the
+    <style> below is emitted only by the first fragment in each one. The page
+    padding lives on .dn-page (not body) so that EVERY note gets it, and the
+    sibling rule below is what starts each later note on a fresh sheet. }}
+{{#if first}}<style>
   @page { size: A4; margin: 0; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body { font-family: Helvetica, Arial, sans-serif; font-size: 8pt; color: #000; line-height: 1.25;
-    padding: 18pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .dn-page { padding: 18pt; }
+  .dn-page + .dn-page { page-break-before: always; }
   .top-tag { text-align: right; font-size: 7.5pt; padding: 0 2pt 2pt; }
   .doc { border: 0.7pt solid #000; }
   table { border-collapse: collapse; width: 100%; }
@@ -52,9 +55,8 @@
   .items td { font-size: 8pt; }
   .sumlbl { text-align: right; font-weight: bold; }
   .grand td { font-size: 11pt; font-weight: bold; }
-</style>
-</head>
-<body>
+</style>{{/if}}
+<div class="dn-page">
 <div class="top-tag">ORIGINAL/DUPLICATE/TRIPLICATE</div>
 <div class="doc">
   <!-- Letterhead -->
@@ -134,5 +136,4 @@
     <tr><td class="r b" style="padding-top:34pt">Authorised Signatory</td></tr>
   </table>
 </div>
-</body>
-</html>
+</div>

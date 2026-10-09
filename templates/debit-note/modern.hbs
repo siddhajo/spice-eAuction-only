@@ -1,15 +1,15 @@
-<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>{{title}} {{noteNo}}</title>
-<style>
+{{! A FRAGMENT, not a whole document — see the note in letterhead.hbs. The
+    page padding lives on .dn-page so every concatenated note keeps it, and
+    .dn-page + .dn-page starts each later note on a fresh sheet. }}
+{{#if first}}<style>
   @page { size: A4; margin: 0; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   :root { --accent: #4e8a3a; --accent-soft: #e8f1e0; --line: #d7e0d1; }
   body { font-family: Helvetica, Arial, sans-serif; font-size: 8.5pt; color: #222; line-height: 1.35;
-    padding: 24pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .dn-page { padding: 24pt; }
+  .dn-page + .dn-page { page-break-before: always; }
   .band { background: var(--accent); color: #fff; padding: 14pt 16pt; border-radius: 6pt 6pt 0 0;
     display: flex; align-items: center; gap: 12pt; }
   .band img { width: 46pt; height: 46pt; object-fit: contain; background: #fff; border-radius: 4pt; padding: 2pt; }
@@ -53,9 +53,8 @@
   .foot .sig { text-align: right; }
   .foot .sig .co { font-weight: bold; color: #222; }
   .foot .sig .line { margin-top: 34pt; border-top: 0.75pt solid #999; padding-top: 3pt; }
-</style>
-</head>
-<body>
+</style>{{/if}}
+<div class="dn-page">
   <div class="band">
     {{#if co.logoDataUri}}<img src="{{co.logoDataUri}}">{{/if}}
     <div class="who">
@@ -122,5 +121,4 @@
       <div class="line">Authorised Signatory</div>
     </div>
   </div>
-</body>
-</html>
+</div>

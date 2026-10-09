@@ -165,18 +165,68 @@ function buildDebitNoteView(dn, db, cfg, opts) {
   };
 }
 
+// How many notes share ONE Chromium render. The templates are fragments, so a
+// slice of them concatenates into a single HTML document that Chromium lays
+// out and encodes once — which is where the saving comes from, because almost
+// all of the per-note cost was the render itself plus a fresh copy of the
+// logo and font subsets in every resulting PDF.
+//
+// Why slices and not "all of them in one go": that is a tens-of-megabytes HTML
+// document to ship over CDP, which blows past the print timeout and risks an
+// OOM kill of Chromium on a container. 25 matches the commission bill, which
+// has run at this size for a while. Overridable for a box with more headroom.
+const PAGES_PER_RENDER = (() => {
+  const n = Number(process.env.DEBIT_NOTE_PAGES_PER_RENDER);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 25;
+})();
+
+// One self-contained HTML document from a slice of notes. `first` is per
+// DOCUMENT, not per batch: the template emits its <style> only for the first
+// fragment, so every slice needs its own copy.
+//
+// The watermark goes on ONCE for the whole document rather than once per note
+// — the pages are fragments in a single body, and N stacked copies of a faint
+// layer is not a faint layer.
+function renderChunk(tpl, chunk, db, cfg, opts) {
+  const pages = chunk.map((dn, i) => {
+    const view = buildDebitNoteView(dn, db, cfg, opts);
+    view.first = i === 0;
+    return tpl.render(view);
+  });
+  const html = '<!doctype html><html><head><meta charset="utf-8"></head><body>'
+    + pages.join('') + '</body></html>';
+  return htmlToPdf(withWatermark(html, cfg));
+}
+
 async function generateDebitNoteHtmlPDF(dn, db, cfg, opts) {
-  const view = buildDebitNoteView(dn, db, cfg, opts);
   const tpl = getInvoiceTemplate('debit-note', cfg);
-  return htmlToPdf(withWatermark(tpl.render(view), cfg));
+  return renderChunk(tpl, [dn], db, cfg, opts);
 }
 
 // Batch: one merged PDF across many DN rows (mirrors the *-bulk routes).
+//
+// This used to render one Chromium PDF per note and merge them, which is what
+// made a whole trade's planter notes unusable at volume: a 1000-lot trade
+// raises ~721 of them, and that shape took 207 s to produce a 129 MB file
+// (every note carrying its own copy of the 114 KB logo) with a ~1.5 GB peak.
+// Slicing instead means one render per 25 notes and one set of embedded
+// assets per slice. Safe alongside the DB reads buildDebitNoteView does:
+// sql.js is synchronous and each slice's views are all built before its
+// first await, so no two reads interleave.
 async function generateDebitNotesHtmlBatchPDF(dns, db, cfg, opts) {
+  const tpl = getInvoiceTemplate('debit-note', cfg);
+  const list = dns || [];
+  if (list.length <= PAGES_PER_RENDER) return renderChunk(tpl, list, db, cfg, opts);
+  // Serial across slices: parallel renders in one Chromium only compete for
+  // the memory this is trying to stay inside of. Merged in list order,
+  // because note numbers run in sequence and an operator flipping through
+  // the batch expects them to.
   const { mergePdfs } = require('./merge-pdf');
-  const buffers = [];
-  for (const dn of dns) buffers.push(await generateDebitNoteHtmlPDF(dn, db, cfg, opts));
-  return buffers.length === 1 ? buffers[0] : mergePdfs(buffers);
+  const parts = [];
+  for (let i = 0; i < list.length; i += PAGES_PER_RENDER) {
+    parts.push(await renderChunk(tpl, list.slice(i, i + PAGES_PER_RENDER), db, cfg, opts));
+  }
+  return mergePdfs(parts);
 }
 
 module.exports = { buildDebitNoteView, generateDebitNoteHtmlPDF, generateDebitNotesHtmlBatchPDF };

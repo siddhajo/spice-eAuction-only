@@ -15793,6 +15793,35 @@ async function hubPdfOpen(id, print){
   });
 }
 
+// Every id of one document family in a trade, across however many pages it
+// takes. The five list routes (/api/invoices, /api/purchases, /api/bills,
+// /api/debit-notes, /api/debit-notes-planter) answer an UNPAGED request from a
+// legacy branch that caps at `LIMIT 500`, so asking once and taking what comes
+// back quietly loses every document past the 500th. That is not a hypothetical
+// at this customer's volume: with flag_lotwise_bills on, a 1000-lot trade
+// raises 721 commission bills, and the merged PDF came out holding 500 of them
+// with the overlay cheerfully reporting "500 documents". Both bulk-print
+// callers (the Auction Downloads tiles and the Document Hub) now page.
+//
+// `url` must already carry its own query string — both callers build one — so
+// the paging params append with `&`. Same 500-per-page / 40-page shape as
+// hubLoadParties(), i.e. a 20,000-document ceiling.
+async function fetchAllDocRows(url){
+  const SIZE = 500;
+  const out = [];
+  for (let page = 1; page <= 40; page++) {
+    const d = await j(`${url}&page=${page}&pageSize=${SIZE}`);
+    const rows = Array.isArray(d) ? d : (d && d.rows ? d.rows : []);
+    out.push(...rows);
+    // A bare array means the route ignored the paging params and has already
+    // given us all it intends to; stop rather than re-ask for the same rows.
+    if (Array.isArray(d)) break;
+    const total = Number(d && d.total);
+    if (rows.length < SIZE || (Number.isFinite(total) && out.length >= total)) break;
+  }
+  return out;
+}
+
 // Merge every generated document of one family into a single PDF. The ids
 // come from the family's own list route, which the catalog supplies —
 // including the fact that planter debit notes list by `ano` while the rest
@@ -15801,20 +15830,12 @@ async function hubBulkPdf(id){
   const it = _hubItem(id);
   if (!it || !it.bulkRoute || !it.listUrl) return;
   let rows;
-  try { rows = await j(it.listUrl); }
+  // Paged: the cap this used to apologise for is gone, so the merge now
+  // covers the whole family instead of its first 500 rows.
+  try { rows = await fetchAllDocRows(it.listUrl); }
   catch (e) { showError(e); return; }
-  rows = Array.isArray(rows) ? rows : (rows.rows || []);
   const ids = rows.map(r => Number(r.id)).filter(Boolean);
   if (!ids.length) { toast(`No ${it.label.toLowerCase()} to print yet`); return; }
-  // The list routes cap at 500 rows. Rather than hand over a silently
-  // partial PDF, say what is missing and point at the screen that can
-  // page through the rest.
-  const total = it.status && it.status.generated;
-  if (total && ids.length < total) {
-    if (!confirm(`This auction has ${total} ${it.label.toLowerCase()}, but only the first `
-               + `${ids.length} can be merged in one go.\n\nPrint those ${ids.length}? `
-               + `(Open the ${it.label} screen to select the rest.)`)) return;
-  }
   await fetchPdfWithOverlay(
     `Building merged PDF for ${ids.length} ${it.label.toLowerCase()}…`,
     it.bulkRoute, `${id}_${ids.length}.pdf`, { ids });
@@ -18016,9 +18037,9 @@ async function amrGet(si, ii){
 // role-gated catalog — see the note on AMR_SECTIONS.
 async function amrBulkPdf(it, auctionId){
   let rows;
-  try { rows = await j(`${it.bulk.list}?${it.bulk.param}=${encodeURIComponent(auctionId)}`); }
+  try { rows = await fetchAllDocRows(
+    `${it.bulk.list}?${it.bulk.param}=${encodeURIComponent(auctionId)}`); }
   catch (e) { showError(e); return; }
-  rows = Array.isArray(rows) ? rows : (rows.rows || []);
   const ids = rows.map(r => Number(r.id)).filter(Boolean);
   if (!ids.length) { toast(`No ${it.label.toLowerCase()} generated for this trade yet`); return; }
   await fetchPdfWithOverlay(
