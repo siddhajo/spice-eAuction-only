@@ -3811,6 +3811,11 @@ async function _waSendTemplate(cfg, { phone, template, lang, bodyParams = [], do
 const WA_UNSENT_STATUSES = ['not_attempted', 'not_sent'];
 const WA_UNSENT_SQL = `('${WA_UNSENT_STATUSES.join("','")}')`;
 
+// Shared with the client's twin in public/index.html. `phoneProblem` stops a
+// number Meta could never deliver to before a send is spent on it — see the
+// module for why the test is deliberately narrow.
+const { phoneProblem: _waPhoneProblem } = require('./wa-errors');
+
 // Append a row to the send log. Best-effort — never throws into a handler.
 function _waLog(db, f) {
   try {
@@ -3832,6 +3837,8 @@ async function _waSendText(db, rawPhone, message, ref = {}) {
   if (!cfg.configured) return { ok: false, error: 'WhatsApp Cloud API not configured' };
   const phone = _waNormalizePhone(rawPhone);
   const body = String(message || '');
+  const badPhone = _waPhoneProblem(rawPhone);
+  if (badPhone) return { ok: false, error: badPhone };
   if (!phone || !body) return { ok: false, error: 'phone and message required' };
   try {
     const out = await _waGraphPost(cfg, '/messages', {
@@ -4336,6 +4343,8 @@ app.post('/api/whatsapp/send-template-text', requireView, async (req, res) => {
   if (!cfg.configured) return res.status(501).json({ error: 'WhatsApp Cloud API not configured', fallback: true });
   if (!cfg.tplText) return res.status(400).json({ error: 'No text template configured', fallback: true });
   const phone = _waNormalizePhone(req.body.phone);
+  const badPhone = _waPhoneProblem(req.body.phone);
+  if (badPhone) return res.status(400).json({ error: badPhone });
   if (!phone) return res.status(400).json({ error: 'phone required' });
   const bodyParams = _waParseParams(req.body.params);
   try {
@@ -4363,6 +4372,8 @@ app.post('/api/whatsapp/send-template-document', requireView, upload.single('fil
   const phone = _waNormalizePhone(req.body.phone);
   const filename = String(req.body.filename || req.file.originalname || 'document.pdf');
   const bodyParams = _waParseParams(req.body.params);
+  const badPhone = _waPhoneProblem(req.body.phone);
+  if (badPhone) { cleanup(); return res.status(400).json({ error: badPhone }); }
   if (!phone) { cleanup(); return res.status(400).json({ error: 'phone required' }); }
   try {
     const buffer = fs.readFileSync(req.file.path);

@@ -7516,7 +7516,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <button class="btn" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="printSelectedInvoices()" title="Print all ticked invoices">🖨 Print Invoice Selected</button>
             <button class="btn feat-whatsapp" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedInvoices()" title="Send ticked sales invoices via WhatsApp">📱 WhatsApp Selected</button>
-            <button class="btn feat-whatsapp" style="height:38px;padding:0 14px;background:var(--spice-paper);color:var(--spice-text-main);border:1px solid #25D366;font-weight:600" onclick="_waSelectUnsent('inv')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
+            <button class="btn feat-whatsapp" style="height:38px;padding:0 14px;background:#0d7a3e;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(13,122,62,.28)" onclick="_waSelectUnsent('inv')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
             <button class="btn" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 14px;background:var(--spice-cardamom);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(22,101,52,.22)" onclick="exportSelectedInvoices('xlsx')" title="Export ticked invoices to Excel (Sale type, Inv no, Trade name, GSTIN, Bags, Qty, Bill amount)">📊 Export Excel - Lorry</button>
             <button class="btn" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="exportSelectedInvoices('pdf')" title="Export ticked invoices to PDF (Sale type, Inv no, Trade name, GSTIN, Bags, Qty, Bill amount)">📄 Export PDF - Lorry</button>
             <button id="inv-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedInvoices()" title="Delete all ticked invoices">🗑 Delete Selected <span id="inv-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
@@ -7655,7 +7655,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                  numbered — see POST /api/purchases/commission-bulk. -->
             <button class="btn btn-o" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 16px;font-weight:600" onclick="printSelectedPurchaseVouchers()" title="Print Payment Voucher (Memorandum) for all ticked purchase invoices — ONE A4 page PER LOT, even for seller-wise invoices">🧾 Payment Voucher (Lot-wise)</button>
             <button class="btn feat-whatsapp" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedPurchases()" title="Send merged PDF of ticked purchase invoices via WhatsApp">📱 WhatsApp Selected</button>
-            <button class="btn feat-whatsapp" style="height:38px;padding:0 14px;background:var(--spice-paper);color:var(--spice-text-main);border:1px solid #25D366;font-weight:600" onclick="_waSelectUnsent('pur')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
+            <button class="btn feat-whatsapp" style="height:38px;padding:0 14px;background:#0d7a3e;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(13,122,62,.28)" onclick="_waSelectUnsent('pur')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
             <button id="pur-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedPurchases()" title="Delete all ticked purchase invoices">🗑 Delete Selected <span id="pur-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           </div>
 
@@ -7776,7 +7776,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <button class="btn" data-sel-toolbar="pay" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedPayments()" title="Print payment statements for ticked sellers">🖨 Print Selected</button>
             <button class="btn feat-whatsapp" data-sel-toolbar="pay" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600" onclick="whatsappSelectedPayments()" title="Send merged payment statements via WhatsApp">📱 WhatsApp Selected</button>
-            <button class="btn feat-whatsapp" style="height:38px;padding:0 14px;background:var(--spice-paper);color:var(--spice-text-main);border:1px solid #25D366;font-weight:600" onclick="_waSelectUnsent('pay')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
+            <button class="btn feat-whatsapp" style="height:38px;padding:0 14px;background:#0d7a3e;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(13,122,62,.28)" onclick="_waSelectUnsent('pay')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
           </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
@@ -8248,7 +8248,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <button class="btn feat-bos-purchase-bill" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="printSelectedBills()" title="Print all ticked bills">🖨 Print Selected</button>
             <button class="btn feat-whatsapp" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedBills()" title="Send ticked bills of supply via WhatsApp">📱 WhatsApp Selected</button>
-            <button class="btn feat-whatsapp" style="height:38px;padding:0 14px;background:var(--spice-paper);color:var(--spice-text-main);border:1px solid #25D366;font-weight:600" onclick="_waSelectUnsent('bill')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
+            <button class="btn feat-whatsapp" style="height:38px;padding:0 14px;background:#0d7a3e;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(13,122,62,.28)" onclick="_waSelectUnsent('bill')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
             <button class="btn btn-o feat-bos-commission" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;font-weight:600" onclick="printSelectedCommissionBoS()" title="Print Commission Bill (Memorandum) for all ticked bills — one A4 page per bill, matches IMCPC reference format">🧾 Commission Bill Selected</button>
             <button id="bill-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedBills()" title="Delete all ticked bills">🗑 Delete Selected <span id="bill-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           </div>
@@ -8292,7 +8292,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                is selected; the count badge updates live as boxes toggle. -->
           <button id="dn-bulk-print" class="btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedDebitNotes()" title="Print all ticked debit notes as one combined PDF">🖨 Print Selected <span id="dn-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           <button id="dn-bulk-wa" class="btn feat-whatsapp" style="display:none;height:38px;padding:0 14px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedDebitNotes()" title="Send ticked debit notes via WhatsApp">📱 WhatsApp Selected</button>
-            <button class="btn feat-whatsapp" style="height:38px;padding:0 12px;background:var(--spice-paper);color:var(--spice-text-main);border:1px solid #25D366;font-weight:600" onclick="_waSelectUnsent('dn')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
+            <button class="btn feat-whatsapp" style="height:38px;padding:0 12px;background:#0d7a3e;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(13,122,62,.28)" onclick="_waSelectUnsent('dn')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
           <button id="dn-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotes()" title="Delete all ticked debit notes">🗑 Delete Selected</button>
           <!-- Print-layout override for this screen (populated by renderLayoutSelector) -->
           <span id="dn-layout-host" style="display:inline-flex;align-items:center;margin-left:8px"></span></div>
@@ -8355,7 +8355,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <button class="needs-invoice-write btn btn-a needs-price-check" id="btn-gen-dnp-all" onclick="openGenDebitPlanterAllModal()">⚡ Generate All</button>
           <button id="dnp-bulk-print" class="btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedDebitNotesPlanter()" title="Print all ticked debit notes as one combined PDF">🖨 Print Selected <span id="dnp-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           <button id="dnp-bulk-wa" class="btn feat-whatsapp" style="display:none;height:38px;padding:0 14px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedDebitNotesPlanter()" title="Send ticked planter debit notes via WhatsApp">📱 WhatsApp Selected</button>
-            <button class="btn feat-whatsapp" style="height:38px;padding:0 12px;background:var(--spice-paper);color:var(--spice-text-main);border:1px solid #25D366;font-weight:600" onclick="_waSelectUnsent('dnp')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
+            <button class="btn feat-whatsapp" style="height:38px;padding:0 12px;background:#0d7a3e;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(13,122,62,.28)" onclick="_waSelectUnsent('dnp')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
           <button id="dnp-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotesPlanter()" title="Delete all ticked debit notes">🗑 Delete Selected</button>
           <!-- Print-layout override for this screen (populated by renderLayoutSelector) -->
           <span id="dnp-layout-host" style="display:inline-flex;align-items:center;margin-left:8px"></span></div>
@@ -37589,12 +37589,50 @@ function _waBlockKind(msg) {
   for (const t of TABLE) if (t.re.test(m)) return { code: t.code, short: t.short, detail: t.detail, raw: m };
   return null;
 }
+// Twin of wa-errors.js `phoneProblem` — same no-module-loader reason as
+// _waBlockKind above, and the same obligation to keep the two in step.
+// Rejects only what can never be delivered to: nothing, fewer than 10 digits,
+// 11 digits beginning 6-9 (an Indian mobile with a digit too many — a US
+// number is also 11 digits but begins with 1), or past E.164's 15. Any other
+// country code is passed through and left to Meta.
+function _waPhoneProblem(tel) {
+  const d = String(tel == null ? '' : tel).replace(/\D/g, '');
+  if (!d) return 'No WhatsApp number on file';
+  if (d.length < 10) return `The number on file is only ${d.length} digit${d.length === 1 ? '' : 's'} long — it cannot be dialled`;
+  if (d.length === 11 && /^[6-9]/.test(d)) return 'The number on file has 11 digits; an Indian mobile has 10, so one digit is wrong or extra';
+  if (d.length > 15) return 'The number on file has more than 15 digits — it cannot be dialled';
+  return '';
+}
+
+// ── Per-message refusals, in plain English ───────────────────
+// _waBlockKind answers "should the run stop?". This answers the other half:
+// the row failed, so what does the operator DO about it? Meta's own wording
+// is kept — a support thread needs it — but on its own "Message
+// undeliverable" tells nobody what to go and fix.
+const _WA_ROW_HINTS = [
+  { re: /undeliverable/i,
+    hint: "that number cannot receive WhatsApp — it may be wrong in the master, a landline, or simply not a WhatsApp account" },
+  { re: /not a? ?whatsapp user|recipient.*not.*valid|invalid.*recipient/i,
+    hint: 'there is no WhatsApp account on that number' },
+  { re: /re-?engagement|24 hour|outside.*window/i,
+    hint: "the 24-hour window is closed, so only an approved template can be sent to this contact" },
+  { re: /parameter|translated text too long|template.*not exist/i,
+    hint: 'the approved template and what this app sent do not line up — check Settings → Integrations' },
+];
+function _waRowHint(msg) {
+  const m = String(msg || '');
+  for (const t of _WA_ROW_HINTS) if (t.re.test(m)) return t.hint;
+  return '';
+}
+
 // Meta's own wording, kept, with the plain-English reading in front of it.
 // The raw text stays because it is what a support thread needs — the operator
 // should never have to choose between understanding the error and reporting it.
 function _waFriendlyError(msg) {
   const b = _waBlockKind(msg);
-  return b ? `${b.short} — ${b.detail} (Meta: ${msg})` : String(msg || 'Send failed');
+  if (b) return `${b.short} — ${b.detail} (Meta: ${msg})`;
+  const hint = _waRowHint(msg);
+  return hint ? `${msg} — ${hint}` : String(msg || 'Send failed');
 }
 
 // ── The 24h ceiling, checked BEFORE the first send ───────────────
@@ -37712,7 +37750,12 @@ function _waPreflightAsk(need, remaining, L) {
 // or no approved template. A Meta rejection reports the reason instead of
 // opening a tab the operator did not ask for.
 async function _waSendDocument({ blob, filename, phone, params, message, ref }) {
-  if (phone && await _waCloudApiAvailable()) {
+  // Same guard as the bulk queue: an unusable number goes to WhatsApp Web,
+  // where the operator can pick the right contact by hand, instead of being
+  // spent on a refusal.
+  const bad = phone ? _waPhoneProblem(phone) : '';
+  if (bad) toast(bad + ' — opening WhatsApp so you can pick the contact');
+  if (phone && !bad && await _waCloudApiAvailable()) {
     const norm = _normalizePhoneForWa(phone);
     const res = await _waCloudSendDocument(norm, params, blob, filename, ref);
     if (res.ok) { if (typeof toast === 'function') toast(`WhatsApp sent (+${norm})`); return true; }
@@ -37726,7 +37769,9 @@ async function _waSendDocument({ blob, filename, phone, params, message, ref }) 
 // one-click-then-report contract. Payments (and any other PDF-less message)
 // go through here rather than hand-rolling the API/manual choice.
 async function _waSendText({ phone, params, message, ref }) {
-  if (phone && await _waCloudApiAvailable()) {
+  const bad = phone ? _waPhoneProblem(phone) : '';
+  if (bad) toast(bad + ' — opening WhatsApp so you can pick the contact');
+  if (phone && !bad && await _waCloudApiAvailable()) {
     const norm = _normalizePhoneForWa(phone);
     const res = await _waCloudSendText(norm, params, ref);
     if (res.ok) { if (typeof toast === 'function') toast(`WhatsApp sent (+${norm})`); return true; }
@@ -38076,8 +38121,12 @@ async function _waAutoPass() {
     }
     _waQueueRender(i, `Sending automatically via WhatsApp Cloud API — row ${i + 1} of ${rows.length}`);
     if (!await _waPrepareRow(row, i)) continue;
-    // No number on file → the Cloud API has nowhere to send it.
-    if (!row.phone) { row.status = 'failed'; row.reason = 'No WhatsApp number on file'; _waQueueRender(i); continue; }
+    // A number Meta can never deliver to is caught HERE, not by spending a
+    // send on it. Meta charges the attempt and counts the refusal against the
+    // number's standing, and "Message undeliverable" tells the operator
+    // nothing about which master to go and correct.
+    const bad = _waPhoneProblem(row.phone);
+    if (bad) { row.status = 'failed'; row.reason = bad; _waQueueRender(i); continue; }
     row.status = 'sending';
     _waQueueRender(i);
     const it = row.item;
@@ -38102,7 +38151,9 @@ async function _waAutoPass() {
     // rows it never tried say exactly that instead of claiming to have failed.
     const block = res.fallback ? null : _waBlockKind(res.error);
     row.status = 'failed';
-    row.reason = block ? block.short : (res.error || 'Send failed');
+    row.reason = block ? block.short
+      : res.error ? ((h) => h ? `${res.error} — ${h}` : res.error)(_waRowHint(res.error))
+      : 'Send failed';
     _waQueueRender(i);
     if (!block) continue;
     _waQ.blocked = block;
@@ -38347,12 +38398,12 @@ const _waMarkCache = {};             // refType → { at, byId }
 // checkbox value is not the ref id — Payments has no row id of its own and
 // rebuilds the same composite key the sender used.
 const WA_LISTS = {
-  inv:  { key: 'inv', refType: 'invoice',            listId: 'invoices-list',  cbClass: 'inv-select-cb',  sync: 'syncInvoiceMaster',      noun: 'invoice' },
-  pur:  { key: 'pur', refType: 'purchase',           listId: 'purchases-list', cbClass: 'pur-select-cb',  sync: 'syncPurchaseMaster',     noun: 'purchase invoice' },
-  bill: { key: 'bill', refType: 'bill',               listId: 'bills-list',     cbClass: 'bill-select-cb', sync: 'syncBillMaster',         noun: 'bill' },
-  dn:   { key: 'dn', refType: 'debit_note',         listId: 'debit-list',     cbClass: 'dn-select-cb',   sync: 'updateDnBulkButtons',    noun: 'debit note' },
-  dnp:  { key: 'dnp', refType: 'debit_note_planter', listId: 'debitp-list',    cbClass: 'dnp-select-cb',  sync: 'updateDnpBulkButtons',   noun: 'debit note' },
-  pay:  { key: 'pay', refType: 'payment',            listId: 'payments-list',  cbClass: 'pay-select-cb',  sync: 'updatePaymentBulkButtons', noun: 'statement',
+  inv:  { key: 'inv', refType: 'invoice',            listId: 'invoices-list',  cbClass: 'inv-select-cb',  sync: 'syncInvoiceMaster',      noun: 'invoice', send: 'whatsappSelectedInvoices' },
+  pur:  { key: 'pur', refType: 'purchase',           listId: 'purchases-list', cbClass: 'pur-select-cb',  sync: 'syncPurchaseMaster',     noun: 'purchase invoice', send: 'whatsappSelectedPurchases' },
+  bill: { key: 'bill', refType: 'bill',               listId: 'bills-list',     cbClass: 'bill-select-cb', sync: 'syncBillMaster',         noun: 'bill', send: 'whatsappSelectedBills' },
+  dn:   { key: 'dn', refType: 'debit_note',         listId: 'debit-list',     cbClass: 'dn-select-cb',   sync: 'updateDnBulkButtons',    noun: 'debit note', send: 'whatsappSelectedDebitNotes' },
+  dnp:  { key: 'dnp', refType: 'debit_note_planter', listId: 'debitp-list',    cbClass: 'dnp-select-cb',  sync: 'updateDnpBulkButtons',   noun: 'debit note', send: 'whatsappSelectedDebitNotesPlanter' },
+  pay:  { key: 'pay', refType: 'payment',            listId: 'payments-list',  cbClass: 'pay-select-cb',  sync: 'updatePaymentBulkButtons', noun: 'statement', send: 'whatsappSelectedPayments',
           keyOf: (cb) => _waPartyRef('payment', (document.getElementById('pay-auction') || {}).value, {
             traderId: cb.getAttribute('data-trader-id'),
             userId: cb.getAttribute('data-user-id'),
@@ -38511,6 +38562,11 @@ async function _waIndexLoad(d, force) {
 //         is mostly documents raised before per-document tracking existed. So
 //         it is never ticked silently; the operator is shown the number and
 //         decides, because only they know whether that batch was sent by hand.
+//
+// The outcome lands in a panel that STAYS UP, carrying the button that
+// actually sends. It used to be a three-second toast, which disappeared before
+// it could be read and left "so what do I do now?" unanswered — the ticks were
+// the only evidence anything had happened, three screens down the page.
 async function _waSelectUnsent(key) {
   const d = WA_LISTS[key];
   if (!d) return;
@@ -38538,85 +38594,129 @@ async function _waSelectUnsent(key) {
       if (row && row.style.display === 'none') return;
       cb.checked = want.has(cb);
     });
-    if (typeof window[d.sync] === 'function') window[d.sync]();
+    const sync = globalThis[d.sync];
+    if (typeof sync === 'function') sync();
     _waPaintMarks(key);
-    const n = want.size;
-    if (!n) { toast(`Nothing ticked — every ${d.noun} on screen has gone out.`); return; }
     const bits = [];
-    if (why.failed) bits.push(`${why.failed} failed`);
+    if (why.failed) bits.push(`${why.failed} WhatsApp refused`);
     const never = (why.not_attempted || 0) + (why.not_sent || 0);
     if (never) bits.push(`${never} never tried`);
     if (alsoNone && none.length) bits.push(`${none.length} with no record`);
-    toast(`${n} ticked — ${bits.join(', ')}. Press 📱 WhatsApp Selected to send.`);
+    _waUnsentResult(d, { n: want.size, bits, went });
   };
 
-  // Nothing ambiguous to decide — just tick and get out of the way.
-  if (!none.length) { apply(false); return; }
-  _waUnsentAsk(d, { bad: bad.length, none: none.length, went, why, apply });
+  _waUnsentOpen(d, { bad: bad.length, none: none.length, went, apply });
 }
 
-// The one decision only the operator can make, so it is asked plainly rather
-// than guessed at. Same amber-prompt shape as the pre-flight gate.
+// One modal, two views: the question (only when something is ambiguous) and
+// the outcome (always). Built once, reused.
 let _waUnsentApply = null;
-function _waUnsentAsk(d, info) {
-  _waUnsentApply = info.apply;
+function _waEnsureUnsentModal() {
   let m = document.getElementById('wa-unsent-modal');
-  if (!m) {
-    m = document.createElement('div');
-    m.id = 'wa-unsent-modal';
-    m.className = 'modal-bg';
-    m.innerHTML = `
-      <div class="modal has-x" style="max-width:560px">
-        <div style="font-weight:800;font-size:16px;margin-bottom:4px">Which rows should be ticked?</div>
-        <div style="font-size:12.5px;color:var(--text3);margin-bottom:14px" id="wa-unsent-sub"></div>
-        <div id="wa-unsent-nums" style="display:flex;gap:10px;margin-bottom:14px"></div>
-        <div style="display:flex;align-items:flex-start;gap:12px;background:#FEF3C7;border-left:4px solid #F59E0B;border-radius:8px;padding:12px 14px;margin-bottom:14px">
-          <span style="font-size:18px;line-height:1.1">⚠</span>
-          <div style="font-size:12.5px;color:#7C2D12" id="wa-unsent-warn"></div>
-        </div>
-        <div class="actions">
-          <button class="btn" onclick="_waUnsentAnswer(null)" style="background:#eee">Cancel</button>
-          <button class="btn" id="wa-unsent-known" onclick="_waUnsentAnswer(false)" style="background:var(--spice-turmeric);color:#fff"></button>
-          <button class="btn" id="wa-unsent-all" onclick="_waUnsentAnswer(true)" style="background:#25D366;color:#fff"></button>
-        </div>
-      </div>`;
-    const card = m.querySelector('.modal');
-    const x = document.createElement('button');
-    x.type = 'button'; x.className = 'modal-x'; x.title = 'Close';
-    x.setAttribute('aria-label', 'Close');
-    x.innerHTML = '&times;';
-    x.addEventListener('click', (e) => { e.stopPropagation(); _waUnsentAnswer(null); });
-    card.insertBefore(x, card.firstChild);
-    document.body.appendChild(m);
-  }
-  const n = (v) => Number(v || 0).toLocaleString('en-IN');
-  const tile = (k, v, tint) =>
-    `<div style="flex:1;border:1px solid var(--border);border-radius:8px;padding:10px 12px">
-       <div style="font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--text3)">${k}</div>
-       <div style="font-size:20px;font-weight:800;color:${tint}">${n(v)}</div>
-     </div>`;
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'wa-unsent-modal';
+  m.className = 'modal-bg';
+  m.innerHTML = `
+    <div class="modal has-x" style="max-width:560px">
+      <div style="font-weight:800;font-size:16px;margin-bottom:4px" id="wa-unsent-title"></div>
+      <div style="font-size:12.5px;color:var(--text3);margin-bottom:14px" id="wa-unsent-sub"></div>
+      <div id="wa-unsent-nums" style="display:flex;gap:10px;margin-bottom:14px"></div>
+      <div id="wa-unsent-warnwrap" style="display:flex;align-items:flex-start;gap:12px;background:#FEF3C7;border-left:4px solid #F59E0B;border-radius:8px;padding:12px 14px;margin-bottom:14px">
+        <span style="font-size:18px;line-height:1.1">⚠</span>
+        <div style="font-size:12.5px;color:#7C2D12" id="wa-unsent-warn"></div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="wa-unsent-cancel" onclick="_waUnsentAnswer(null)" style="background:#eee">Cancel</button>
+        <button class="btn" id="wa-unsent-known" onclick="_waUnsentAnswer(false)" style="background:var(--spice-turmeric);color:#fff"></button>
+        <button class="btn" id="wa-unsent-all" onclick="_waUnsentAnswer(true)" style="background:#25D366;color:#fff"></button>
+        <button class="btn" id="wa-unsent-send" onclick="_waUnsentSend()" style="background:#25D366;color:#fff;display:none"></button>
+      </div>
+    </div>`;
+  const card = m.querySelector('.modal');
+  const x = document.createElement('button');
+  x.type = 'button'; x.className = 'modal-x'; x.title = 'Close';
+  x.setAttribute('aria-label', 'Close');
+  x.addEventListener('click', (e) => { e.stopPropagation(); _waUnsentAnswer(null); });
+  x.innerHTML = '&times;';
+  card.insertBefore(x, card.firstChild);
+  document.body.appendChild(m);
+  return m;
+}
+const _waNum = (v) => Number(v || 0).toLocaleString('en-IN');
+function _waTile(k, v, tint) {
+  return `<div style="flex:1;border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+    <div style="font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--text3)">${k}</div>
+    <div style="font-size:20px;font-weight:800;color:${tint}">${_waNum(v)}</div>
+  </div>`;
+}
+function _waUnsentShow(ids) {
+  ['wa-unsent-cancel', 'wa-unsent-known', 'wa-unsent-all', 'wa-unsent-send', 'wa-unsent-warnwrap']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ids.includes(id) ? '' : 'none'; });
+}
+// View 1 — the question. Skipped entirely when nothing is ambiguous, so the
+// common case is one press and straight to the outcome.
+function _waUnsentOpen(d, info) {
+  _waEnsureUnsentModal();
+  _waUnsentApply = info.apply;
+  if (!info.none) { _waUnsentAnswer(false); return; }
+  document.getElementById('wa-unsent-title').textContent = 'Which rows should be ticked?';
   document.getElementById('wa-unsent-sub').textContent =
-    `Checked ${n(info.bad + info.none + info.went)} ${d.noun}${info.bad + info.none + info.went === 1 ? '' : 's'} on screen against this app's WhatsApp send log.`;
+    `Checked ${_waNum(info.bad + info.none + info.went)} ${d.noun}${info.bad + info.none + info.went === 1 ? '' : 's'} on screen against this app's WhatsApp send log.`;
   document.getElementById('wa-unsent-nums').innerHTML =
-    tile('Did not go out', info.bad, '#b02525')
-    + tile('No record', info.none, '#92400e')
-    + tile('Already sent', info.went, '#0d7a3e');
+    _waTile('Did not go out', info.bad, '#b02525')
+    + _waTile('No record', info.none, '#92400e')
+    + _waTile('Already sent', info.went, '#0d7a3e');
   document.getElementById('wa-unsent-warn').innerHTML =
     `<strong>“No record” does not mean “not sent.”</strong> Per-document tracking started on 10 Oct 2026, and
      this app can only recognise an older send when the message named the document. If that batch went out
      before then — or by hand from a phone — ticking it here sends everyone a second copy.`;
   const known = document.getElementById('wa-unsent-known');
-  known.textContent = info.bad ? `Tick the ${n(info.bad)} that failed` : 'Tick nothing';
+  known.textContent = info.bad ? `Tick the ${_waNum(info.bad)} that failed` : 'Tick nothing';
   known.disabled = !info.bad;
   known.style.opacity = info.bad ? '' : '.5';
-  document.getElementById('wa-unsent-all').textContent = `Tick all ${n(info.bad + info.none)}`;
+  document.getElementById('wa-unsent-all').textContent = `Tick all ${_waNum(info.bad + info.none)}`;
+  _waUnsentShow(['wa-unsent-cancel', 'wa-unsent-known', 'wa-unsent-all', 'wa-unsent-warnwrap']);
   showModal('wa-unsent-modal');
 }
 function _waUnsentAnswer(alsoNone) {
-  hideModal('wa-unsent-modal');
   const fn = _waUnsentApply;
+  if (alsoNone === null) { _waUnsentApply = null; hideModal('wa-unsent-modal'); return; }
+  if (typeof fn === 'function') fn(alsoNone);     // which paints view 2
+}
+// View 2 — the outcome, and the way out of it. This stays on screen until the
+// operator acts: the whole point of the panel is that "what do I do now?" has
+// a button on it rather than an answer that faded three seconds ago.
+let _waUnsentSendFn = '';
+function _waUnsentResult(d, r) {
+  _waEnsureUnsentModal();
   _waUnsentApply = null;
-  if (alsoNone !== null && typeof fn === 'function') fn(alsoNone);
+  _waUnsentSendFn = r.n ? d.send : '';
+  const plural = r.n === 1 ? '' : 's';
+  document.getElementById('wa-unsent-title').textContent = r.n
+    ? `${_waNum(r.n)} ${d.noun}${plural} ticked and ready to send`
+    : `Nothing to resend`;
+  document.getElementById('wa-unsent-sub').textContent = r.n
+    ? `${r.bits.join(' · ')}. They are ticked in the list behind this box — press the green button to send them, or close this to look through them first.`
+    : `Every ${d.noun} on screen has already gone out, so nothing has been ticked.`;
+  document.getElementById('wa-unsent-nums').innerHTML = r.n
+    ? _waTile('Ticked to send', r.n, '#0d7a3e') + _waTile('Left alone (already sent)', r.went, 'var(--text3)')
+    : '';
+  const send = document.getElementById('wa-unsent-send');
+  send.textContent = `📱 Send ${_waNum(r.n)} on WhatsApp`;
+  const cancel = document.getElementById('wa-unsent-cancel');
+  cancel.textContent = r.n ? 'Not now' : 'Close';
+  _waUnsentShow(r.n ? ['wa-unsent-cancel', 'wa-unsent-send'] : ['wa-unsent-cancel']);
+  showModal('wa-unsent-modal');
+}
+function _waUnsentSend() {
+  const fn = _waUnsentSendFn;
+  _waUnsentSendFn = '';
+  hideModal('wa-unsent-modal');
+  // Hand straight off to the screen's own bulk sender — the same one the
+  // green toolbar button calls, so there is exactly one send path.
+  const send = fn && globalThis[fn];
+  if (typeof send === 'function') send();
 }
 
 // ── Per-record actions ───────────────────────────────────────

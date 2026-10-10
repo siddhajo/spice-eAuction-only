@@ -47,4 +47,42 @@ function blockKind(msg) {
   return null;
 }
 
-module.exports = { blockKind, WA_BLOCKS };
+// ── Numbers that can never be delivered to ─────────────────────
+//
+// "Message undeliverable" (131026) is the most common failure this account
+// sees by a wide margin, and some of it is simply bad data in the master — a
+// number with eleven digits, or one digit, can never reach anyone. Meta is a
+// slow and expensive way to discover that: the send is spent, and the refusal
+// is one more mark against the number's standing, which is what keeps it
+// pinned at its current tier.
+//
+// So obviously-unusable numbers are stopped here instead. The test is
+// deliberately narrow — it rejects only what cannot be a working number, and
+// never a legitimate foreign one:
+//   • nothing at all
+//   • fewer than 10 digits          — short of any national number
+//   • 11 digits beginning 6-9       — an Indian mobile with a digit too many
+//                                     (a US number with its country code is
+//                                     also 11 digits but begins with 1)
+//   • more than 15 digits           — past the E.164 ceiling
+// Everything else is passed through and left to Meta, including numbers
+// carrying a country code this business has never used before.
+//
+// Twinned in public/index.html as _waPhoneProblem for the same no-module-
+// loader reason as blockKind above. Keep the two in step.
+//
+// → a sentence naming the problem, or '' when there is nothing wrong with it.
+function phoneProblem(tel) {
+  const d = String(tel == null ? '' : tel).replace(/\D/g, '');
+  if (!d) return 'No WhatsApp number on file';
+  if (d.length < 10) {
+    return `The number on file is only ${d.length} digit${d.length === 1 ? '' : 's'} long — it cannot be dialled`;
+  }
+  if (d.length === 11 && /^[6-9]/.test(d)) {
+    return 'The number on file has 11 digits; an Indian mobile has 10, so one digit is wrong or extra';
+  }
+  if (d.length > 15) return 'The number on file has more than 15 digits — it cannot be dialled';
+  return '';
+}
+
+module.exports = { blockKind, phoneProblem, WA_BLOCKS };
