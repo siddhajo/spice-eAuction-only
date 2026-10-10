@@ -8,6 +8,8 @@
 //                                 (filters: status, direction, q, limit)
 //   POST /api/whatsapp/statuses   the bulk-send queue polling the run it just
 //                                 finished, by wamid
+//   POST /api/whatsapp/log-unsent  the queue reporting the rows that never
+//                                 reached Meta at all
 //
 // SCOPE: this proves the routes exist, are gated, and that every filter
 // combination is valid SQL against the real schema. It does NOT prove the
@@ -72,6 +74,7 @@ const done = c => {
   //     an operator picks that dropdown.
   const filters = [
     '?status=sent', '?status=delivered', '?status=read', '?status=failed',
+    '?status=unsent', '?ref_type=invoice', '?status=unsent&ref_type=bill',
     '?direction=out', '?direction=in',
     '?q=98765', '?q=BILL%20OF%20SUPPLY', "?q=o'brien",
     '?limit=1', '?limit=250', '?limit=500',
@@ -111,6 +114,60 @@ const done = c => {
   const over = await api('POST', '/api/whatsapp/statuses', { ids: Array.from({ length: 900 }, (_, i) => 'wamid.' + i) });
   check('POST /statuses caps an oversized id list', over.status === 200 && Array.isArray(over.d),
     `${over.status} ${JSON.stringify(over.d).slice(0, 200)}`);
+
+  // [F] The rows that never left the building. Before this route the log only
+  //     knew about messages that reached Meta, so a run the account-level
+  //     breaker stopped was invisible from the row it stopped at onward —
+  //     exactly the run an operator needs to reconstruct.
+  const anonLog = await api('POST', '/api/whatsapp/log-unsent', { rows: [] }, true);
+  check('POST /log-unsent requires auth', anonLog.status === 401, 'got ' + anonLog.status);
+
+  const logged = await api('POST', '/api/whatsapp/log-unsent', {
+    rows: [
+      { phone: '9876500001', caption: 'your SALES INVOICE 412 is attached.', ref_type: 'invoice', ref_id: '412',
+        status: 'not_attempted', reason: 'Not attempted — WhatsApp is refusing sends from this number' },
+      { phone: '9876500002', caption: 'K RAJU', ref_type: 'bill', ref_id: '8',
+        status: 'not_sent', reason: 'No WhatsApp number on file' },
+    ],
+  });
+  check('POST /log-unsent writes both kinds', logged.status === 200 && logged.d && logged.d.written === 2,
+    `${logged.status} ${JSON.stringify(logged.d)}`);
+
+  const unsent = await api('GET', '/api/whatsapp/messages?status=unsent');
+  check('?status=unsent spans both never-sent statuses', unsent.status === 200 && unsent.d.length === 2,
+    `${unsent.status} ${JSON.stringify(unsent.d).slice(0, 300)}`);
+  const byRef = await api('GET', '/api/whatsapp/messages?ref_type=invoice');
+  check('?ref_type finds a module’s own rows',
+    byRef.status === 200 && byRef.d.length === 1 && byRef.d[0].ref_id === '412',
+    `${byRef.status} ${JSON.stringify(byRef.d).slice(0, 300)}`);
+  check('the reason survives for the operator to read',
+    byRef.d[0] && /refusing sends/.test(byRef.d[0].error || ''),
+    JSON.stringify(byRef.d[0]));
+
+  // A client may not write itself a Meta verdict: only the two never-sent
+  // statuses are accepted, and anything else is coerced rather than stored.
+  const faked = await api('POST', '/api/whatsapp/log-unsent', {
+    rows: [{ phone: '9876500003', ref_type: 'invoice', ref_id: '999', status: 'read' }],
+  });
+  const after = await api('GET', '/api/whatsapp/messages?ref_type=invoice');
+  const fakeRow = (after.d || []).find(r => r.ref_id === '999');
+  check('a client cannot write itself a "read" receipt',
+    faked.status === 200 && fakeRow && fakeRow.status === 'not_attempted',
+    JSON.stringify(fakeRow));
+
+  // These rows are not sends: they must not spend 24h recipient headroom and
+  // must not inflate "sent today", or a stopped run would read as a busy one.
+  const usage = await api('GET', '/api/whatsapp/usage');
+  check('never-sent rows spend no 24h recipient headroom',
+    usage.status === 200 && usage.d.limit.used === 0,
+    `used=${usage.status === 200 ? usage.d.limit.used : usage.status}`);
+  check('never-sent rows are not counted as sent',
+    usage.status === 200 && usage.d.sent.today.total === 0 && usage.d.sent.today.blocked === 3,
+    `${JSON.stringify(usage.status === 200 ? usage.d.sent.today : usage.status)}`);
+
+  const empty = await api('POST', '/api/whatsapp/log-unsent', {});
+  check('POST /log-unsent with no rows is a no-op', empty.status === 200 && empty.d.written === 0,
+    `${empty.status} ${JSON.stringify(empty.d)}`);
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
   done(fail ? 1 : 0);

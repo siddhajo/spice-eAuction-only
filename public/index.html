@@ -7516,6 +7516,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <button class="btn" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="printSelectedInvoices()" title="Print all ticked invoices">🖨 Print Invoice Selected</button>
             <button class="btn feat-whatsapp" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedInvoices()" title="Send ticked sales invoices via WhatsApp">📱 WhatsApp Selected</button>
+            <button class="btn feat-whatsapp" style="height:38px;padding:0 14px;background:var(--spice-paper);color:var(--spice-text-main);border:1px solid #25D366;font-weight:600" onclick="_waSelectUnsent('inv')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
             <button class="btn" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 14px;background:var(--spice-cardamom);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(22,101,52,.22)" onclick="exportSelectedInvoices('xlsx')" title="Export ticked invoices to Excel (Sale type, Inv no, Trade name, GSTIN, Bags, Qty, Bill amount)">📊 Export Excel - Lorry</button>
             <button class="btn" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="exportSelectedInvoices('pdf')" title="Export ticked invoices to PDF (Sale type, Inv no, Trade name, GSTIN, Bags, Qty, Bill amount)">📄 Export PDF - Lorry</button>
             <button id="inv-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedInvoices()" title="Delete all ticked invoices">🗑 Delete Selected <span id="inv-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
@@ -7654,6 +7655,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                  numbered — see POST /api/purchases/commission-bulk. -->
             <button class="btn btn-o" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 16px;font-weight:600" onclick="printSelectedPurchaseVouchers()" title="Print Payment Voucher (Memorandum) for all ticked purchase invoices — ONE A4 page PER LOT, even for seller-wise invoices">🧾 Payment Voucher (Lot-wise)</button>
             <button class="btn feat-whatsapp" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedPurchases()" title="Send merged PDF of ticked purchase invoices via WhatsApp">📱 WhatsApp Selected</button>
+            <button class="btn feat-whatsapp" style="height:38px;padding:0 14px;background:var(--spice-paper);color:var(--spice-text-main);border:1px solid #25D366;font-weight:600" onclick="_waSelectUnsent('pur')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
             <button id="pur-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedPurchases()" title="Delete all ticked purchase invoices">🗑 Delete Selected <span id="pur-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           </div>
 
@@ -7774,6 +7776,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <button class="btn" data-sel-toolbar="pay" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedPayments()" title="Print payment statements for ticked sellers">🖨 Print Selected</button>
             <button class="btn feat-whatsapp" data-sel-toolbar="pay" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600" onclick="whatsappSelectedPayments()" title="Send merged payment statements via WhatsApp">📱 WhatsApp Selected</button>
+            <button class="btn feat-whatsapp" style="height:38px;padding:0 14px;background:var(--spice-paper);color:var(--spice-text-main);border:1px solid #25D366;font-weight:600" onclick="_waSelectUnsent('pay')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
           </div>
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
@@ -8245,6 +8248,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <button class="btn feat-bos-purchase-bill" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="printSelectedBills()" title="Print all ticked bills">🖨 Print Selected</button>
             <button class="btn feat-whatsapp" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedBills()" title="Send ticked bills of supply via WhatsApp">📱 WhatsApp Selected</button>
+            <button class="btn feat-whatsapp" style="height:38px;padding:0 14px;background:var(--spice-paper);color:var(--spice-text-main);border:1px solid #25D366;font-weight:600" onclick="_waSelectUnsent('bill')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
             <button class="btn btn-o feat-bos-commission" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;font-weight:600" onclick="printSelectedCommissionBoS()" title="Print Commission Bill (Memorandum) for all ticked bills — one A4 page per bill, matches IMCPC reference format">🧾 Commission Bill Selected</button>
             <button id="bill-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedBills()" title="Delete all ticked bills">🗑 Delete Selected <span id="bill-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           </div>
@@ -8288,6 +8292,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                is selected; the count badge updates live as boxes toggle. -->
           <button id="dn-bulk-print" class="btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedDebitNotes()" title="Print all ticked debit notes as one combined PDF">🖨 Print Selected <span id="dn-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           <button id="dn-bulk-wa" class="btn feat-whatsapp" style="display:none;height:38px;padding:0 14px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedDebitNotes()" title="Send ticked debit notes via WhatsApp">📱 WhatsApp Selected</button>
+            <button class="btn feat-whatsapp" style="height:38px;padding:0 12px;background:var(--spice-paper);color:var(--spice-text-main);border:1px solid #25D366;font-weight:600" onclick="_waSelectUnsent('dn')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
           <button id="dn-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotes()" title="Delete all ticked debit notes">🗑 Delete Selected</button>
           <!-- Print-layout override for this screen (populated by renderLayoutSelector) -->
           <span id="dn-layout-host" style="display:inline-flex;align-items:center;margin-left:8px"></span></div>
@@ -8350,6 +8355,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <button class="needs-invoice-write btn btn-a needs-price-check" id="btn-gen-dnp-all" onclick="openGenDebitPlanterAllModal()">⚡ Generate All</button>
           <button id="dnp-bulk-print" class="btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedDebitNotesPlanter()" title="Print all ticked debit notes as one combined PDF">🖨 Print Selected <span id="dnp-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
           <button id="dnp-bulk-wa" class="btn feat-whatsapp" style="display:none;height:38px;padding:0 14px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedDebitNotesPlanter()" title="Send ticked planter debit notes via WhatsApp">📱 WhatsApp Selected</button>
+            <button class="btn feat-whatsapp" style="height:38px;padding:0 12px;background:var(--spice-paper);color:var(--spice-text-main);border:1px solid #25D366;font-weight:600" onclick="_waSelectUnsent('dnp')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
           <button id="dnp-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotesPlanter()" title="Delete all ticked debit notes">🗑 Delete Selected</button>
           <!-- Print-layout override for this screen (populated by renderLayoutSelector) -->
           <span id="dnp-layout-host" style="display:inline-flex;align-items:center;margin-left:8px"></span></div>
@@ -28047,7 +28053,11 @@ async function _renderWhatsappUsage(fresh){
   // 4) + 5) Local send log — always exact, no API needed.
   const st = (u.sent && u.sent.today) || {};
   const sm = (u.sent && u.sent.month) || {};
-  const detail = (o) => [o.delivered ? `${n(o.delivered)} delivered` : '', o.failed ? `${n(o.failed)} failed` : '']
+  // "never tried" is deliberately alongside the receipts: a run Meta stopped
+  // leaves a shortfall that no delivery figure will ever account for, and the
+  // operator has to see it on the same line to go looking for it.
+  const detail = (o) => [o.delivered ? `${n(o.delivered)} delivered` : '', o.failed ? `${n(o.failed)} failed` : '',
+                         o.blocked ? `${n(o.blocked)} never tried` : '']
     .filter(Boolean).join(' · ') || 'no receipts yet';
   const todayTile = tile('Sent today', n(st.total), detail(st));
   const monthTile = tile('Sent this month', n(sm.total), detail(sm));
@@ -28176,6 +28186,11 @@ const _WA_LOG_TONE = {
   delivered: { label: 'Delivered', bg: '#c7f0d6', fg: '#0a6633' },
   read:      { label: 'Read',      bg: '#25D366', fg: '#fff' },
   failed:    { label: 'Failed',    bg: '#fde2e2', fg: '#b02525' },
+  // Neither of these is a Meta verdict — the message never left the building.
+  // Amber, not red: nothing is wrong with the account or the number, the run
+  // simply did not get this far.
+  not_attempted: { label: 'Not tried', bg: '#fef3c7', fg: '#92400e' },
+  not_sent:      { label: 'Not sent',  bg: '#fef3c7', fg: '#92400e' },
 };
 async function _renderWhatsappLog(){
   const host = document.getElementById('whatsapp-log-host');
@@ -28201,8 +28216,10 @@ async function _renderWhatsappLog(){
   // Counts across what is loaded — a quick read on whether the account is
   // healthy without scanning every row.
   const tally = rows.reduce((m, r) => { m[r.status] = (m[r.status] || 0) + 1; return m; }, {});
-  const tallyBits = ['sent','delivered','read','failed','queued']
+  const tallyBits = ['sent','delivered','read','failed','not_attempted','not_sent','queued']
     .filter(k => tally[k]).map(k => `${tally[k]} ${_WA_LOG_TONE[k].label.toLowerCase()}`).join(' · ');
+  // Rows that never reached Meta prove nothing about the webhook, so they
+  // must not quiet the "no receipts" banner below.
   const anyReceipts = !!(tally.delivered || tally.read || tally.failed);
 
   const body = loadErr
@@ -28226,7 +28243,7 @@ async function _renderWhatsappLog(){
   host.innerHTML = `
     <div class="wa-row">
       <select id="wa-log-status" class="wa-in" style="width:auto" onchange="_waLogSet('status', this.value)">
-        ${opt('', 'All statuses')}${opt('sent', 'Sent (no receipt yet)')}${opt('delivered', 'Delivered')}${opt('read', 'Read')}${opt('failed', 'Failed')}
+        ${opt('', 'All statuses')}${opt('sent', 'Sent (no receipt yet)')}${opt('delivered', 'Delivered')}${opt('read', 'Read')}${opt('failed', 'Failed')}${opt('unsent', "Didn't go out")}
       </select>
       <input id="wa-log-q" class="wa-in" style="flex:1;min-width:170px;width:auto" type="search" value="${esc(_waLogFilter.q)}" placeholder="Search number or message…"
         onkeydown="if(event.key==='Enter')_waLogSet('q', this.value)" onsearch="_waLogSet('q', this.value)">
@@ -36381,6 +36398,7 @@ async function loadInvoices(opts){
     ]
   });
   if (typeof syncInvoiceMaster === 'function') syncInvoiceMaster();
+  _waPaintMarks('inv');
 }
 
 // The ⬆ Raise-Original control, rendered inline beside the buyer name on
@@ -37300,12 +37318,13 @@ async function loadPurchases(opts){
           // p.trader_id is the UNIQUE seller key the WhatsApp phone lookup
           // needs — seller names repeat, and a name-only lookup returns no
           // number at all for a shared name (see _lookupSellerPhone).
-          + iconBtn('whatsapp','Send via WhatsApp',`whatsappPurchase(${p.auction_id},'${encodeURIComponent(p.name)}','${encodeURIComponent(p.invo)}',${Number(p.total)||0},'${esc(p.ano||'')}',${p.trader_id != null ? Number(p.trader_id) : 'null'})`)
+          + iconBtn('whatsapp','Send via WhatsApp',`whatsappPurchase(${p.auction_id},'${encodeURIComponent(p.name)}','${encodeURIComponent(p.invo)}',${Number(p.total)||0},'${esc(p.ano||'')}',${p.trader_id != null ? Number(p.trader_id) : 'null'},${Number(p.id)||0})`)
           + iconBtn('edit','Edit purchase',`openPurchaseEdit(${JSON.stringify(p).replace(/"/g,'&quot;')})`)
           + iconBtn('del','Delete purchase',`delPurchase(${p.id})`) }
     ]
   });
   if (typeof syncPurchaseMaster === 'function') syncPurchaseMaster();
+  _waPaintMarks('pur');
 }
 
 function openPurchaseEdit(p){
@@ -37465,11 +37484,43 @@ function _invalidateWaCaches() { _CCFG = null; _AUCTIONS = null; }
 //   _waCloudSendText(phone, params)                      → text template
 //   _waCloudSendDocument(phone, params, blob, filename)  → document-header template
 // params is the positional template body: [name, summary, company].
-async function _waCloudSendText(phone, params) {
+// ── Which record is this message about? ──────────────────────
+// `ref` is {type, id} naming the RECORD, not the recipient. The server stores
+// it on the log row, so the log can answer "did invoice 412 ever go out?"
+// instead of only "some document went to this number" — and a screen can ask
+// for its own module's rows and mark each one sent, failed, or never tried.
+//
+// The id MUST be the same string from the single-row send and the bulk run,
+// or the two describe the same document as two different things:
+//   invoice            invoices.id
+//   purchase           purchases.id
+//   bill               bills.id
+//   debit_note         debit_notes.id
+//   debit_note_planter debit_notes_planter.id
+//   payment            "<auction id>:<trader id>"  — Payments is a derived
+//                      view with no row id of its own, and seller NAMES
+//                      repeat, so the trader id is what makes it unique
+//                      (see [[namesake-parties-need-trader-id]]).
+//   lot_receipt        "<auction id>:<trader id>"  — one receipt per seller
+//                      per trade, same reasoning.
+// A send with no ref still works; it just lands in the log anonymous.
+function _waRefFields(ref) {
+  return { ref_type: (ref && ref.type) || '', ref_id: ref && ref.id != null ? String(ref.id) : '' };
+}
+// The two modules with no row id of their own. Both the single-row action and
+// the bulk queue build their key through here so they cannot drift apart; the
+// name is a last resort for a seller with no trader id on the row.
+function _waPartyRef(type, auctionId, { traderId, userId, name }) {
+  const who = (traderId != null && traderId !== '') ? `t${traderId}`
+            : (userId != null && userId !== '')     ? `u${userId}`
+            : `n${String(name || '').trim().toUpperCase()}`;
+  return { type, id: `${auctionId || ''}:${who}` };
+}
+async function _waCloudSendText(phone, params, ref) {
   try {
     const r = await fetch(B + '/api/whatsapp/send-template-text', {
       method: 'POST', headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, params: params || [] }),
+      body: JSON.stringify(Object.assign({ phone, params: params || [] }, _waRefFields(ref))),
     });
     if (r.status === 501) return { ok:false, fallback:true, error:'WhatsApp Cloud API not configured' };
     const d = await r.json().catch(()=>({}));
@@ -37484,13 +37535,16 @@ async function _waCloudSendText(phone, params) {
     return { ok:false, fallback:true, error:(e && e.message) || String(e) };
   }
 }
-async function _waCloudSendDocument(phone, params, blob, filename) {
+async function _waCloudSendDocument(phone, params, blob, filename, ref) {
   try {
     const fd = new FormData();
     fd.append('file', blob, filename || 'document.pdf');
     fd.append('phone', phone || '');
     fd.append('params', JSON.stringify(params || []));
     fd.append('filename', filename || 'document.pdf');
+    const rf = _waRefFields(ref);
+    fd.append('ref_type', rf.ref_type);
+    fd.append('ref_id', rf.ref_id);
     // Don't set Content-Type — the browser adds the multipart boundary.
     const r = await fetch(B + '/api/whatsapp/send-template-document', {
       method: 'POST', headers: { 'Authorization': 'Bearer ' + T }, body: fd,
@@ -37657,10 +37711,10 @@ function _waPreflightAsk(need, remaining, L) {
 // when the API genuinely cannot be used: no number on file, not configured,
 // or no approved template. A Meta rejection reports the reason instead of
 // opening a tab the operator did not ask for.
-async function _waSendDocument({ blob, filename, phone, params, message }) {
+async function _waSendDocument({ blob, filename, phone, params, message, ref }) {
   if (phone && await _waCloudApiAvailable()) {
     const norm = _normalizePhoneForWa(phone);
-    const res = await _waCloudSendDocument(norm, params, blob, filename);
+    const res = await _waCloudSendDocument(norm, params, blob, filename, ref);
     if (res.ok) { if (typeof toast === 'function') toast(`WhatsApp sent (+${norm})`); return true; }
     if (!res.fallback) { showError(new Error(`WhatsApp (+${norm}): ${_waFriendlyError(res.error)}`)); return false; }
   }
@@ -37671,10 +37725,10 @@ async function _waSendDocument({ blob, filename, phone, params, message }) {
 // Text dispatcher — the TEXT-template twin of _waSendDocument, with the same
 // one-click-then-report contract. Payments (and any other PDF-less message)
 // go through here rather than hand-rolling the API/manual choice.
-async function _waSendText({ phone, params, message }) {
+async function _waSendText({ phone, params, message, ref }) {
   if (phone && await _waCloudApiAvailable()) {
     const norm = _normalizePhoneForWa(phone);
-    const res = await _waCloudSendText(norm, params);
+    const res = await _waCloudSendText(norm, params, ref);
     if (res.ok) { if (typeof toast === 'function') toast(`WhatsApp sent (+${norm})`); return true; }
     if (!res.fallback) { showError(new Error(`WhatsApp (+${norm}): ${_waFriendlyError(res.error)}`)); return false; }
   }
@@ -38028,11 +38082,16 @@ async function _waAutoPass() {
     _waQueueRender(i);
     const it = row.item;
     const params = it.params || [it.name || '', it.message || '', ''];
+    // Past this point the server owns the log row for this send, whatever
+    // comes back — including a thrown fetch, where the request may well have
+    // arrived and been logged. _waLogUnsent() skips attempted rows for
+    // exactly that reason: a guess here would overwrite a real verdict.
+    row.attempted = true;
     let res;
     try {
       res = it.blob
-        ? await _waCloudSendDocument(_normalizePhoneForWa(row.phone), params, it.blob, it.filename)
-        : await _waCloudSendText(_normalizePhoneForWa(row.phone), params);
+        ? await _waCloudSendDocument(_normalizePhoneForWa(row.phone), params, it.blob, it.filename, it.ref)
+        : await _waCloudSendText(_normalizePhoneForWa(row.phone), params, it.ref);
     } catch (e) { res = { ok: false, fallback: true, error: (e && e.message) || String(e) }; }
     if (res.ok) { row.status = 'sent'; row.reason = ''; row.wamid = res.id || ''; _waQueueRender(i); continue; }
     // An account-level refusal is not this row's problem, it is the run's.
@@ -38051,7 +38110,70 @@ async function _waAutoPass() {
       if (r.status === 'waiting') { r.status = 'skipped'; r.reason = 'Not attempted — ' + block.short; }
     });
     _waQueueRender(null, `Stopped at row ${i + 1} of ${rows.length} — ${block.short}`);
+    // Write the shortfall to the send log NOW, not when the modal closes. A
+    // run Meta has just stopped is precisely the one the operator walks away
+    // from, and until this call the rows it never tried existed only in this
+    // page's memory — which is how a stopped run used to become unknowable.
+    await _waLogUnsent();
     break;
+  }
+}
+
+// ── Tell the server what never went out ───────────────────────
+// The send routes log every message that reaches Meta, so the log has always
+// described the part of a run that got through and nothing about the part
+// that didn't. These rows close that gap: the breaker's untried remainder,
+// the operator's Stop, a row with no number, a PDF that would not build.
+//
+// Only rows that NEVER reached the wire are reported. A row whose send threw
+// has `attempted` set and is left alone — the server may already hold its
+// verdict, and a locally-invented row would be newer and would win.
+async function _waLogUnsent() {
+  if (!_waQ) return;
+  const out = [];
+  const marked = [];
+  for (const r of _waQ.rows) {
+    if (r._unsentLogged || r.attempted) continue;
+    const status = r.status === 'skipped' ? 'not_attempted'
+                 : r.status === 'failed'  ? 'not_sent'
+                 : '';
+    if (!status) continue;                     // still in flight — not our business
+    const it = r.item || {};
+    out.push({
+      phone: r.phone || '',
+      // What the send routes would have stored: the human sentence from the
+      // template, falling back to the party name so a row is never nameless.
+      caption: (it.params && it.params[1]) || it.message || r.name || '',
+      msg_type: it._waPrepared ? (it.blob ? 'template-document' : 'template-text') : '',
+      ref_type: (it.ref && it.ref.type) || '',
+      ref_id: it.ref && it.ref.id != null ? String(it.ref.id) : '',
+      status,
+      reason: r.reason || '',
+    });
+    r._unsentLogged = true;
+    marked.push(r);
+  }
+  if (!out.length) return;
+  // Chunked because the route caps a single request, and a thousand-lot trade
+  // generating a document per lot can put more rows than that into one run —
+  // a silently truncated tail here is the same invisible shortfall this whole
+  // mechanism exists to end. Each chunk stands alone: one that fails un-flags
+  // only its own rows, so the close-time pass retries exactly those.
+  const CHUNK = 500;
+  for (let i = 0; i < out.length; i += CHUNK) {
+    const slice = out.slice(i, i + CHUNK);
+    try {
+      const res = await fetch(B + '/api/whatsapp/log-unsent', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: slice }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    } catch (e) {
+      // The ledger on screen is still correct and the run is unaffected.
+      marked.slice(i, i + CHUNK).forEach(r => { r._unsentLogged = false; });
+      console.warn('[wa] could not record unsent rows:', e);
+    }
   }
 }
 
@@ -38135,6 +38257,11 @@ async function _waQueueSummary() {
     }
   }
   _waQ.pollStop = true;
+  // Second and final sweep: whatever is STILL unsent as the modal closes —
+  // rows the operator stopped or skipped, rows with no number, documents that
+  // would not build. The breaker already wrote its own shortfall mid-run;
+  // rows it covered carry a flag and are not written twice.
+  await _waLogUnsent();
   const n = (st) => _waQ.rows.filter(r => r.status === st).length;
   const sent = _waQ.rows.filter(_waRowSent).length;
   const arrived = n('delivered') + n('read');
@@ -38200,6 +38327,298 @@ async function _waCloudApiAvailable() {
   return _waApiCheck;
 }
 
+// ── "Did this one actually go out?" ──────────────────────────
+// Every send now names its record (see _waRefFields), so the send log can be
+// read back per module and lined up against the rows on screen. Two things
+// come of that: a mark on each row, and a button that ticks exactly the rows
+// WhatsApp did not deliver — so a run the breaker stopped halfway can be
+// finished without sending a second copy to everyone who already has theirs.
+//
+// A row with NO log entry is UNKNOWN, not unsent, and is never ticked.
+// Refs only started being written on 2026-10-10; every document raised before
+// that has no record, and ticking those would blast duplicates at buyers who
+// were served months ago. The button says how many rows it could tell nothing
+// about rather than guessing at them.
+const WA_MARK_LOOKBACK = 500;        // newest N log rows per module
+const WA_MARK_TTL_MS = 30000;
+const _waMarkCache = {};             // refType → { at, byId }
+
+// Which list each button and mark belongs to. `keyOf` is only needed where the
+// checkbox value is not the ref id — Payments has no row id of its own and
+// rebuilds the same composite key the sender used.
+const WA_LISTS = {
+  inv:  { key: 'inv', refType: 'invoice',            listId: 'invoices-list',  cbClass: 'inv-select-cb',  sync: 'syncInvoiceMaster',      noun: 'invoice' },
+  pur:  { key: 'pur', refType: 'purchase',           listId: 'purchases-list', cbClass: 'pur-select-cb',  sync: 'syncPurchaseMaster',     noun: 'purchase invoice' },
+  bill: { key: 'bill', refType: 'bill',               listId: 'bills-list',     cbClass: 'bill-select-cb', sync: 'syncBillMaster',         noun: 'bill' },
+  dn:   { key: 'dn', refType: 'debit_note',         listId: 'debit-list',     cbClass: 'dn-select-cb',   sync: 'updateDnBulkButtons',    noun: 'debit note' },
+  dnp:  { key: 'dnp', refType: 'debit_note_planter', listId: 'debitp-list',    cbClass: 'dnp-select-cb',  sync: 'updateDnpBulkButtons',   noun: 'debit note' },
+  pay:  { key: 'pay', refType: 'payment',            listId: 'payments-list',  cbClass: 'pay-select-cb',  sync: 'updatePaymentBulkButtons', noun: 'statement',
+          keyOf: (cb) => _waPartyRef('payment', (document.getElementById('pay-auction') || {}).value, {
+            traderId: cb.getAttribute('data-trader-id'),
+            userId: cb.getAttribute('data-user-id'),
+            name: cb.value,
+          }).id },
+};
+function _waRowKey(d, cb) { return d.keyOf ? d.keyOf(cb) : String(cb.value || ''); }
+
+// Newest row wins. A record can legitimately be not_attempted at 10:00 and
+// sent at 10:40, and only the last word counts — the route answers
+// newest-first, so the first row seen for an id is the current one.
+// Returns null, NOT an empty map, when the log cannot be read: "I don't know"
+// and "nothing went out" must never collapse into the same answer.
+async function _waMarkLoad(refType, force) {
+  const hit = _waMarkCache[refType];
+  if (!force && hit && (Date.now() - hit.at) < WA_MARK_TTL_MS) return hit.byId;
+  const byId = new Map();
+  try {
+    const rows = await j(`/api/whatsapp/messages?direction=out&ref_type=${encodeURIComponent(refType)}&limit=${WA_MARK_LOOKBACK}`) || [];
+    for (const r of rows) {
+      const id = String(r.ref_id || '');
+      if (id && !byId.has(id)) byId.set(id, r);
+    }
+  } catch (e) { console.warn('[wa] could not read the send log:', e); return null; }
+  _waMarkCache[refType] = { at: Date.now(), byId };
+  return byId;
+}
+// Green = it left and (where receipts are wired) arrived. Amber = it never
+// left. Red = Meta refused it. Anything else gets no mark at all.
+const _WA_MARK_DOT = {
+  read:          { c: '#16a34a', t: 'Read' },
+  delivered:     { c: '#16a34a', t: 'Delivered' },
+  sent:          { c: '#86c99f', t: 'Sent — Meta accepted it; no delivery receipt yet' },
+  queued:        { c: '#86c99f', t: 'Queued' },
+  failed:        { c: '#dc2626', t: 'Failed — WhatsApp refused it' },
+  not_attempted: { c: '#d97706', t: 'Never tried — the run stopped before this row' },
+  not_sent:      { c: '#d97706', t: 'Not sent' },
+};
+function _waMarkKind(status) {
+  if (['read', 'delivered', 'sent', 'queued'].includes(status)) return 'ok';
+  if (['failed', 'not_attempted', 'not_sent'].includes(status)) return 'bad';
+  return null;
+}
+// Paint one dot per row, in the checkbox cell — the one cell every one of
+// these six lists has in the same place, so this stays a single function
+// instead of six table-column edits. Rows with no record get nothing, which
+// keeps a list of pre-2026-10-10 documents completely unmarked.
+async function _waPaintMarks(key, force) {
+  const d = WA_LISTS[key];
+  if (!d) return;
+  const body = document.getElementById(d.listId);
+  if (!body || !body.querySelector('.' + d.cbClass)) return;
+  const idx = await _waIndexLoad(d, force);
+  if (!idx) return;
+  body.querySelectorAll('.' + d.cbClass).forEach(cb => {
+    const cell = cb.parentNode;
+    if (!cell || !cell.querySelector) return;
+    const old = cell.querySelector('.wa-mark');
+    if (old) old.remove();
+    const st = _waRowState(d, _waRowKey(d, cb), cb, idx);
+    const rec = st.rec;
+    const dot = rec && _WA_MARK_DOT[rec.status];
+    if (!dot) return;
+    const when = String(rec.updated_at || rec.created_at || '').slice(0, 16).replace('T', ' ');
+    // The checkbox column is sized to the checkbox, so the dot wraps onto a
+    // second line and reads like a stray mark. Let the cell grow by the few
+    // pixels it needs instead.
+    cell.style.whiteSpace = 'nowrap';
+    const span = document.createElement('span');
+    span.className = 'wa-mark';
+    span.textContent = '●';
+    span.style.cssText = `color:${dot.c};margin-left:5px;font-size:11px;line-height:1;vertical-align:middle;cursor:help`;
+    span.title = `WhatsApp: ${dot.t}${when ? ' · ' + when : ''}${rec.error ? ' · ' + rec.error : ''}`
+      + (st.via === 'caption' ? ' · matched by message text (sent before per-document tracking)' : '');
+    cell.appendChild(span);
+  });
+}
+// ── Reading the history that has no ref ──────────────────────
+// Refs only started being written on 2026-10-10. Everything sent before that
+// is in the log with an empty ref_id — which would leave a whole trade's
+// documents looking like they had never been sent, and ticking those would
+// mean resending to everyone.
+//
+// The captions save us: every document message names its document, in a shape
+// its sender builds ("your SALES INVOICE L-67 for ₹15,18,713 is attached."),
+// so the number can be read straight back out.
+//
+// Only modules whose caption names the document UNAMBIGUOUSLY are listed.
+// Both debit-note screens write the identical "your DEBIT NOTE 55 for …" and
+// run separate number series, so a dealer note would vouch for a planter note
+// of the same number — and the cost of a wrong "already sent" is a seller who
+// never gets their note. Payments name no document at all. Those three are
+// left out on purpose: they fall back to "no record", which is honest.
+const _WA_CAPTION_RE = {
+  invoice:  { q: 'SALES INVOICE',    re: /SALES INVOICE\s+(\S+)\s+for\b/i },
+  purchase: { q: 'PURCHASE INVOICE', re: /PURCHASE INVOICE\s+(\S+)\s+for\b/i },
+  bill:     { q: 'BILL',             re: /(?:BILL OF SUPPLY|COMMISSION BILL)\s+(\S+)\s+for\b/i },
+};
+// How each screen spells the number that appears in its captions. Sales
+// invoices carry the sale-type prefix in the message, so the label has to be
+// rebuilt the same way the sender composed it.
+const _WA_LABEL_OF = {
+  inv:  (cb) => { const sale = cb.getAttribute('data-sale') || ''; const no = cb.getAttribute('data-invo') || '';
+                  return no ? (sale ? `${sale}-${no}` : no) : ''; },
+  pur:  (cb) => cb.getAttribute('data-invo') || '',
+  bill: (cb) => cb.getAttribute('data-bil') || '',
+};
+async function _waCaptionLoad(refType, force) {
+  const cfg = _WA_CAPTION_RE[refType];
+  if (!cfg) return new Map();
+  // Cached beside the ref index and on the same terms — a list re-render must
+  // not cost a second sweep of the whole log.
+  const ck = 'caption:' + refType;
+  const hit = _waMarkCache[ck];
+  if (!force && hit && (Date.now() - hit.at) < WA_MARK_TTL_MS) return hit.byId;
+  const byLabel = new Map();
+  try {
+    const rows = await j(`/api/whatsapp/messages?direction=out&q=${encodeURIComponent(cfg.q)}&limit=${WA_MARK_LOOKBACK}`) || [];
+    for (const r of rows) {                    // newest first, first word wins
+      const m = cfg.re.exec(String(r.caption || ''));
+      const label = m && m[1];
+      if (label && !byLabel.has(label)) byLabel.set(label, r);
+    }
+  } catch (e) { console.warn('[wa] could not read the caption history:', e); return byLabel; }
+  _waMarkCache[ck] = { at: Date.now(), byId: byLabel };
+  return byLabel;
+}
+// One verdict per row: 'ok' it went out · 'bad' it did not · 'none' no record.
+// A ref is believed over a caption — it is exact, and it is the newer system.
+function _waRowState(d, key, cb, idx) {
+  const rec = idx.byId.get(key);
+  if (rec) return { kind: _waMarkKind(rec.status) || 'none', rec, via: 'ref' };
+  const label = _WA_LABEL_OF[d.key] && _WA_LABEL_OF[d.key](cb);
+  const old = label && idx.byLabel.get(label);
+  if (old) return { kind: _waMarkKind(old.status) || 'none', rec: old, via: 'caption' };
+  return { kind: 'none', rec: null, via: '' };
+}
+// Both indexes, fetched together.
+async function _waIndexLoad(d, force) {
+  const [byId, byLabel] = await Promise.all([
+    _waMarkLoad(d.refType, force),
+    _WA_CAPTION_RE[d.refType] ? _waCaptionLoad(d.refType, force) : Promise.resolve(new Map()),
+  ]);
+  return byId ? { byId, byLabel } : null;
+}
+
+// The button. Surveys the visible rows against the log, then ticks. It CLEARS
+// every row it does not tick — a leftover tick from an earlier selection would
+// put a second copy of a document someone already has into the run.
+//
+// Rows fall into three buckets and the difference between the last two is the
+// whole design:
+//   bad   WhatsApp refused it, or a stopped run never reached it. Always ticked.
+//   ok    it went out. Never ticked.
+//   none  this app has no record either way. NOT the same as "not sent" — it
+//         is mostly documents raised before per-document tracking existed. So
+//         it is never ticked silently; the operator is shown the number and
+//         decides, because only they know whether that batch was sent by hand.
+async function _waSelectUnsent(key) {
+  const d = WA_LISTS[key];
+  if (!d) return;
+  const body = document.getElementById(d.listId);
+  if (!body || !body.querySelector('.' + d.cbClass)) { toast('No rows to check yet'); return; }
+  const idx = await _waIndexLoad(d, true);
+  if (!idx) { toast('Could not read the WhatsApp send log — nothing has been ticked'); return; }
+
+  const bad = [], none = [];
+  let went = 0;
+  const why = {};
+  body.querySelectorAll('.' + d.cbClass).forEach(cb => {
+    const row = cb.closest('tr');
+    if (row && row.style.display === 'none') return;   // respect the active search/filter
+    const st = _waRowState(d, _waRowKey(d, cb), cb, idx);
+    if (st.kind === 'bad') { bad.push(cb); why[st.rec.status] = (why[st.rec.status] || 0) + 1; }
+    else if (st.kind === 'ok') went++;
+    else none.push(cb);
+  });
+
+  const apply = (alsoNone) => {
+    const want = new Set(alsoNone ? bad.concat(none) : bad);
+    body.querySelectorAll('.' + d.cbClass).forEach(cb => {
+      const row = cb.closest('tr');
+      if (row && row.style.display === 'none') return;
+      cb.checked = want.has(cb);
+    });
+    if (typeof window[d.sync] === 'function') window[d.sync]();
+    _waPaintMarks(key);
+    const n = want.size;
+    if (!n) { toast(`Nothing ticked — every ${d.noun} on screen has gone out.`); return; }
+    const bits = [];
+    if (why.failed) bits.push(`${why.failed} failed`);
+    const never = (why.not_attempted || 0) + (why.not_sent || 0);
+    if (never) bits.push(`${never} never tried`);
+    if (alsoNone && none.length) bits.push(`${none.length} with no record`);
+    toast(`${n} ticked — ${bits.join(', ')}. Press 📱 WhatsApp Selected to send.`);
+  };
+
+  // Nothing ambiguous to decide — just tick and get out of the way.
+  if (!none.length) { apply(false); return; }
+  _waUnsentAsk(d, { bad: bad.length, none: none.length, went, why, apply });
+}
+
+// The one decision only the operator can make, so it is asked plainly rather
+// than guessed at. Same amber-prompt shape as the pre-flight gate.
+let _waUnsentApply = null;
+function _waUnsentAsk(d, info) {
+  _waUnsentApply = info.apply;
+  let m = document.getElementById('wa-unsent-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'wa-unsent-modal';
+    m.className = 'modal-bg';
+    m.innerHTML = `
+      <div class="modal has-x" style="max-width:560px">
+        <div style="font-weight:800;font-size:16px;margin-bottom:4px">Which rows should be ticked?</div>
+        <div style="font-size:12.5px;color:var(--text3);margin-bottom:14px" id="wa-unsent-sub"></div>
+        <div id="wa-unsent-nums" style="display:flex;gap:10px;margin-bottom:14px"></div>
+        <div style="display:flex;align-items:flex-start;gap:12px;background:#FEF3C7;border-left:4px solid #F59E0B;border-radius:8px;padding:12px 14px;margin-bottom:14px">
+          <span style="font-size:18px;line-height:1.1">⚠</span>
+          <div style="font-size:12.5px;color:#7C2D12" id="wa-unsent-warn"></div>
+        </div>
+        <div class="actions">
+          <button class="btn" onclick="_waUnsentAnswer(null)" style="background:#eee">Cancel</button>
+          <button class="btn" id="wa-unsent-known" onclick="_waUnsentAnswer(false)" style="background:var(--spice-turmeric);color:#fff"></button>
+          <button class="btn" id="wa-unsent-all" onclick="_waUnsentAnswer(true)" style="background:#25D366;color:#fff"></button>
+        </div>
+      </div>`;
+    const card = m.querySelector('.modal');
+    const x = document.createElement('button');
+    x.type = 'button'; x.className = 'modal-x'; x.title = 'Close';
+    x.setAttribute('aria-label', 'Close');
+    x.innerHTML = '&times;';
+    x.addEventListener('click', (e) => { e.stopPropagation(); _waUnsentAnswer(null); });
+    card.insertBefore(x, card.firstChild);
+    document.body.appendChild(m);
+  }
+  const n = (v) => Number(v || 0).toLocaleString('en-IN');
+  const tile = (k, v, tint) =>
+    `<div style="flex:1;border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+       <div style="font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--text3)">${k}</div>
+       <div style="font-size:20px;font-weight:800;color:${tint}">${n(v)}</div>
+     </div>`;
+  document.getElementById('wa-unsent-sub').textContent =
+    `Checked ${n(info.bad + info.none + info.went)} ${d.noun}${info.bad + info.none + info.went === 1 ? '' : 's'} on screen against this app's WhatsApp send log.`;
+  document.getElementById('wa-unsent-nums').innerHTML =
+    tile('Did not go out', info.bad, '#b02525')
+    + tile('No record', info.none, '#92400e')
+    + tile('Already sent', info.went, '#0d7a3e');
+  document.getElementById('wa-unsent-warn').innerHTML =
+    `<strong>“No record” does not mean “not sent.”</strong> Per-document tracking started on 10 Oct 2026, and
+     this app can only recognise an older send when the message named the document. If that batch went out
+     before then — or by hand from a phone — ticking it here sends everyone a second copy.`;
+  const known = document.getElementById('wa-unsent-known');
+  known.textContent = info.bad ? `Tick the ${n(info.bad)} that failed` : 'Tick nothing';
+  known.disabled = !info.bad;
+  known.style.opacity = info.bad ? '' : '.5';
+  document.getElementById('wa-unsent-all').textContent = `Tick all ${n(info.bad + info.none)}`;
+  showModal('wa-unsent-modal');
+}
+function _waUnsentAnswer(alsoNone) {
+  hideModal('wa-unsent-modal');
+  const fn = _waUnsentApply;
+  _waUnsentApply = null;
+  if (alsoNone !== null && typeof fn === 'function') fn(alsoNone);
+}
+
 // ── Per-record actions ───────────────────────────────────────
 // Single Purchase row — PDF + manual share/cloud
 // ── Debit Note: WhatsApp ──────────────────────────────────────
@@ -38228,6 +38647,7 @@ async function whatsappDebitNote(id, dealerName, noteNo, totalAmt, ano, traderId
       phone,
       params: [decoded, summary, company],
       message: msg,
+      ref: { type: 'debit_note', id },
     });
   } catch (e) { showError(e); }
 }
@@ -38253,6 +38673,7 @@ async function whatsappDebitNotePlanter(id, planterName, noteNo, totalAmt, ano, 
       phone,
       params: [decoded, summary, company],
       message: msg,
+      ref: { type: 'debit_note_planter', id },
     });
   } catch (e) { showError(e); }
 }
@@ -38264,7 +38685,7 @@ async function whatsappDebitNotePlanter(id, planterName, noteNo, totalAmt, ano, 
 // (.dnp-select-cb) — they differ only in the list id, checkbox class
 // and PDF route; the recipient is a trader either way, so the phone
 // resolves through _lookupSellerPhone for both.
-async function _whatsappSelectedDebitNotes({ listId, cbClass, pdfPath }) {
+async function _whatsappSelectedDebitNotes({ listId, cbClass, pdfPath, refType }) {
   const body = document.getElementById(listId);
   if (!body) { alert('No debit notes list'); return; }
   const checked = Array.from(body.querySelectorAll(`.${cbClass}:checked`));
@@ -38283,6 +38704,9 @@ async function _whatsappSelectedDebitNotes({ listId, cbClass, pdfPath }) {
   // as a Failed line instead of vanishing.
   const items = rows.map(r => ({
     name: r.name,
+    // On the item, not in prepare(): a row the breaker never reaches is never
+    // prepared, and the send log still has to be able to name it.
+    ref: { type: refType, id: r.id },
     prepare: async () => {
       const blob = await _fetchPdfBlob(`${pdfPath}/${r.id}/pdf`);
       const phone = await _lookupSellerPhone({ traderId: r.traderId, name: r.name });
@@ -38299,16 +38723,18 @@ async function _whatsappSelectedDebitNotes({ listId, cbClass, pdfPath }) {
 }
 function whatsappSelectedDebitNotes() {
   return _whatsappSelectedDebitNotes({
-    listId: 'debit-list', cbClass: 'dn-select-cb', pdfPath: '/api/debit-notes',
+    listId: 'debit-list', cbClass: 'dn-select-cb', pdfPath: '/api/debit-notes', refType: 'debit_note',
   });
 }
 function whatsappSelectedDebitNotesPlanter() {
   return _whatsappSelectedDebitNotes({
-    listId: 'debitp-list', cbClass: 'dnp-select-cb', pdfPath: '/api/debit-notes-planter',
+    listId: 'debitp-list', cbClass: 'dnp-select-cb', pdfPath: '/api/debit-notes-planter', refType: 'debit_note_planter',
   });
 }
 
-async function whatsappPurchase(auctionId, sellerName, invNo, totalAmt, ano, traderId) {
+// `purchaseId` is carried only so the send log can name the row; everything
+// the PDF needs still comes from the auction + seller + invoice number.
+async function whatsappPurchase(auctionId, sellerName, invNo, totalAmt, ano, traderId, purchaseId) {
   try {
     const decoded = decodeURIComponent(sellerName);
     const decInv = decodeURIComponent(invNo);
@@ -38322,7 +38748,8 @@ async function whatsappPurchase(auctionId, sellerName, invNo, totalAmt, ano, tra
     const amt = `₹${Number(totalAmt||0).toLocaleString('en-IN')}`;
     const msg = `${anoVal} ${decoded} ${company} PURCHASE INVOICE ${decInv} ${amt}`;
     const summary = `your PURCHASE INVOICE ${decInv} for ${amt} (Auction ${anoVal}) is attached.`;
-    await _waSendDocument({ blob, filename: `PurchaseInvoice_${decoded}_${decInv}.pdf`, phone, params: [decoded, summary, company], message: msg });
+    await _waSendDocument({ blob, filename: `PurchaseInvoice_${decoded}_${decInv}.pdf`, phone, params: [decoded, summary, company], message: msg,
+      ref: { type: 'purchase', id: purchaseId } });
   } catch (e) { showError(e); }
 }
 
@@ -38345,7 +38772,8 @@ async function whatsappInvoice(id, buyerName, invNo, saleType, totalAmt, ano, bu
     const amt = `₹${Number(totalAmt||0).toLocaleString('en-IN')}`;
     const msg = `${ano || ''} ${decoded} ${company} SALES INVOICE ${invLabel} ${amt}`.trim();
     const summary = `your SALES INVOICE ${invLabel} for ${amt} is attached.`;
-    await _waSendDocument({ blob, filename: `SalesInvoice_${decoded}_${invLabel}.pdf`, phone, params: [decoded, summary, company], message: msg });
+    await _waSendDocument({ blob, filename: `SalesInvoice_${decoded}_${invLabel}.pdf`, phone, params: [decoded, summary, company], message: msg,
+      ref: { type: 'invoice', id } });
   } catch (e) { showError(e); }
 }
 // Bulk Purchases — queue, one PDF per seller
@@ -38367,6 +38795,7 @@ async function whatsappSelectedPurchases() {
   const company = await _getCompanyName();
   const items = rows.map(r => ({
     name: r.name,
+    ref: { type: 'purchase', id: r.id },
     prepare: async () => {
       const blob = await _fetchPdfBlob(`/api/purchases/pdf/${r.auction_id}/${encodeURIComponent(r.name)}?invoiceNo=${encodeURIComponent(r.invo)}`);
       const phone = await _lookupSellerPhone({ traderId: r.traderId, name: r.name });
@@ -38409,7 +38838,8 @@ async function whatsappPayment(auctionId, sellerName, payable, userId, traderId)
     const amt = Number(payable||0).toLocaleString('en-IN');
     const msg = `${ano} ${sellerName} ${company} PAYMENT ${amt} CREDITED`;
     const summary = `your PAYMENT STATEMENT of ₹${amt} (Auction ${ano}) is attached.`;
-    await _waSendDocument({ blob, filename: `Payment_${sellerName}_${auctionId}.pdf`, phone, params: [sellerName, summary, company], message: msg });
+    await _waSendDocument({ blob, filename: `Payment_${sellerName}_${auctionId}.pdf`, phone, params: [sellerName, summary, company], message: msg,
+      ref: _waPartyRef('payment', auctionId, { traderId, userId, name: sellerName }) });
   } catch (e) { showError(e); }
 }
 function _collectSelectedPaymentNames() {
@@ -38467,6 +38897,7 @@ async function whatsappSelectedPayments() {
   const [company, ano] = await Promise.all([_getCompanyName(), _getAuctionAno(aid)]);
   const items = names.map(sel => ({
     name: sel.name,
+    ref: _waPartyRef('payment', aid, { traderId: sel.trader_id, userId: sel.user_id, name: sel.name }),
     prepare: async () => {
       const nm = sel.name;
       // trader_id first — it's already collected on the checkbox and is the only
@@ -38552,7 +38983,8 @@ async function whatsappBillOfSupply(auctionId, sellerName, billNo, totalAmt, tra
     const msg = `${ano || ''} ${decoded} ${company} ${label} ${decBill} ${amt}`.trim();
     const summary = `your ${label} ${decBill} for ${amt} is attached.`;
     const filename = `${commission ? 'CommissionBoS' : 'BillOfSupply'}_${decoded}_${decBill}.pdf`;
-    await _waSendDocument({ blob, filename, phone, params: [decoded, summary, company], message: msg });
+    await _waSendDocument({ blob, filename, phone, params: [decoded, summary, company], message: msg,
+      ref: { type: 'bill', id: billId } });
   } catch (e) { showError(e); }
 }
 // Bulk Bills of Supply — queue, one PDF per bill. Same document choice as the
@@ -38575,6 +39007,7 @@ async function whatsappSelectedBills() {
   const company = await _getCompanyName();
   const items = rows.map(r => ({
     name: r.name,
+    ref: { type: 'bill', id: r.id },
     prepare: async () => {
       const ano = await _getAuctionAno(r.auction_id);
       const blob = commission
@@ -38611,6 +39044,7 @@ async function whatsappSelectedInvoices() {
   const company = await _getCompanyName();
   const items = rows.map(r => ({
     name: r.name,
+    ref: { type: 'invoice', id: r.id },
     prepare: async () => {
       const invLabel = r.sale ? `${r.sale}-${r.invo}` : r.invo;
       const blob = await _fetchPdfBlob(`/api/invoices/pdf/${r.id}`);
@@ -38692,6 +39126,9 @@ async function leWhatsappReceipt() {
   // itself row by row like every other bulk WhatsApp action.
   const queue = items.map(grp => ({
     name: grp.traderName || 'Seller',
+    // `aid`, not `auction.id` — the /api/auctions lookup above is allowed to
+    // fail and leave `auction` null, and a throw here would cost the send.
+    ref: _waPartyRef('lot_receipt', aid, { traderId: grp.traderId, name: grp.traderName }),
     prepare: async () => {
       const phone = await _lookupSellerPhone({ traderId: grp.traderId, name: grp.traderName });
       const msg = leBuildReceiptText(grp.traderName, grp.lots, { cfg, auction });
@@ -41650,6 +42087,7 @@ async function loadPayments(){
 
     // Reset the bulk action UI after re-render — fresh checkbox state.
     updatePaymentBulkButtons();
+    _waPaintMarks('pay');
     // Sync the toolbar "Undo Last Export" button with this trade's batches.
     if (typeof _payRefreshUndoButton === 'function') _payRefreshUndoButton();
 
@@ -42174,6 +42612,7 @@ async function loadBills(opts){
     ]
   });
   if (typeof syncBillMaster === 'function') syncBillMaster();
+  _waPaintMarks('bill');
 }
 
 function openBillEdit(b){
@@ -42398,6 +42837,7 @@ async function loadDebitNotes(opts){
     ]
   });
   if (typeof updateDnBulkButtons === 'function') updateDnBulkButtons();
+  _waPaintMarks('dn');
 }
 
 function openDebitEdit(n){
@@ -42969,6 +43409,7 @@ async function loadDebitNotesPlanter(opts){
     ]
   });
   if (typeof updateDnpBulkButtons === 'function') updateDnpBulkButtons();
+  _waPaintMarks('dnp');
 }
 
 function openDebitPlanterEdit(n){

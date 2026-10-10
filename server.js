@@ -3797,6 +3797,20 @@ async function _waSendTemplate(cfg, { phone, template, lang, bodyParams = [], do
   });
   return out.messages && out.messages[0] && out.messages[0].id;
 }
+// ── Rows that never left the building ────────────────────────
+// Two statuses record a message that was never handed to Meta at all, so the
+// send log describes a WHOLE run rather than only the part that reached the
+// API:
+//   not_attempted — the run was cut short before this row's turn (the
+//                   account-level breaker tripped, or the operator hit Stop)
+//   not_sent      — the row could not be built or had no number on file
+// Neither is a Meta verdict, so neither may count as a send: they spend no
+// 24h recipient headroom, add nothing to "sent today", and are invisible to
+// the billing-block scan (which reads Meta's own `failed` reasons). `failed`
+// stays what it has always been — Meta refused this message.
+const WA_UNSENT_STATUSES = ['not_attempted', 'not_sent'];
+const WA_UNSENT_SQL = `('${WA_UNSENT_STATUSES.join("','")}')`;
+
 // Append a row to the send log. Best-effort — never throws into a handler.
 function _waLog(db, f) {
   try {
@@ -4145,8 +4159,12 @@ app.get('/api/whatsapp/usage', requireView, async (req, res) => {
     try { return (args ? db.get(sql, args) : db.get(sql)) || {}; }
     catch (e) { console.warn('[wa-usage] counter query failed:', e.message); return {}; }
   };
-  const COUNTS = `COUNT(*) AS total,
+  // `total` is messages ACTUALLY HANDED TO META — a row the breaker never
+  // tried is counted on its own (`blocked`) and never folded in, or "sent
+  // today" would climb every time a run was stopped.
+  const COUNTS = `SUM(CASE WHEN status NOT IN ${WA_UNSENT_SQL} THEN 1 ELSE 0 END) AS total,
     SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+    SUM(CASE WHEN status IN ${WA_UNSENT_SQL} THEN 1 ELSE 0 END) AS blocked,
     SUM(CASE WHEN status IN ('delivered','read') THEN 1 ELSE 0 END) AS delivered,
     SUM(CASE WHEN status = 'read' THEN 1 ELSE 0 END) AS seen`;
   const today = one(`SELECT ${COUNTS} FROM whatsapp_messages
@@ -4156,8 +4174,12 @@ app.get('/api/whatsapp/usage', requireView, async (req, res) => {
   const all = one(`SELECT ${COUNTS} FROM whatsapp_messages WHERE direction = 'out'`);
   // The messaging limit counts UNIQUE RECIPIENTS in a moving 24h window, not
   // messages — ten invoices to one buyer spend one of the 250.
+  // A refused send spends no headroom, and neither does one that was never
+  // attempted — counting either would make the pre-flight gate refuse a run
+  // the account can actually take.
   const win = one(`SELECT COUNT(DISTINCT phone) AS n FROM whatsapp_messages
-     WHERE direction = 'out' AND phone <> '' AND status <> 'failed'
+     WHERE direction = 'out' AND phone <> ''
+       AND status <> 'failed' AND status NOT IN ${WA_UNSENT_SQL}
        AND created_at >= datetime('now','localtime','-24 hours')`);
   // A billing block shows up here first: Meta refuses the send and the reason
   // lands in the log. Surfacing it turns "why is nothing going out?" into a
@@ -4189,8 +4211,8 @@ app.get('/api/whatsapp/usage', requireView, async (req, res) => {
     asOf: new Date().toISOString(),
     monthLabel: `${monthStart.toLocaleString('en-US', { month: 'long' })} ${monthStart.getFullYear()}`,
     sent: {
-      today: { total: num(today.total), delivered: num(today.delivered), read: num(today.seen), failed: num(today.failed) },
-      month: { total: num(month.total), delivered: num(month.delivered), read: num(month.seen), failed: num(month.failed) },
+      today: { total: num(today.total), delivered: num(today.delivered), read: num(today.seen), failed: num(today.failed), blocked: num(today.blocked) },
+      month: { total: num(month.total), delivered: num(month.delivered), read: num(month.seen), failed: num(month.failed), blocked: num(month.blocked) },
       total: num(all.total),
     },
     limit: { tier: '', cap: 0, used: num(win.n), remaining: null, source: 'unavailable', error: '' },
@@ -4368,13 +4390,20 @@ app.post('/api/whatsapp/send-template-document', requireView, upload.single('fil
 // say no more than "Meta accepted it".
 //
 // Filters: ?limit (default 100, max 500), ?status=sent|delivered|read|failed,
-// ?q= substring of the phone or the caption, ?direction=out|in.
+// ?q= substring of the phone or the caption, ?direction=out|in,
+// ?ref_type= the source module ('invoice', 'bill', …).
+// ?status=unsent is the one alias: it spans both "never left the building"
+// statuses, because an operator asking "what didn't go out?" does not care
+// whether the run was cut short or the PDF failed to build.
 app.get('/api/whatsapp/messages', requireView, (req, res) => {
   const db = getDb();
   const where = [];
   const args = [];
   const status = String(req.query.status || '').trim();
-  if (status) { where.push('status = ?'); args.push(status); }
+  if (status === 'unsent') where.push(`status IN ${WA_UNSENT_SQL}`);
+  else if (status) { where.push('status = ?'); args.push(status); }
+  const refType = String(req.query.ref_type || '').trim();
+  if (refType) { where.push('ref_type = ?'); args.push(refType); }
   const dir = String(req.query.direction || '').trim();
   if (dir) { where.push('direction = ?'); args.push(dir); }
   const q = String(req.query.q || '').trim();
@@ -4388,6 +4417,42 @@ app.get('/api/whatsapp/messages', requireView, (req, res) => {
      ORDER BY id DESC LIMIT ${limit}`, args
   );
   res.json(rows);
+});
+
+// ── Record what did NOT go out ─────────────────────────────────
+// Every other row in this log is written by a send route, which means the log
+// only ever knew about messages that reached Meta. When the account-level
+// breaker trips mid-run, the rows after it are never POSTed anywhere — so the
+// one run the operator most needs to reconstruct was the one the log knew
+// least about. The queue now reports those rows here instead.
+//
+// Body: { rows: [{ phone, caption, msg_type, ref_type, ref_id, status, reason }] }
+// `status` may only be one of WA_UNSENT_STATUSES; anything else is coerced to
+// 'not_attempted' rather than letting a client write a fake Meta verdict.
+//
+// Rows are APPENDED, never deduplicated: a record can legitimately be
+// not_attempted at 10:00 and sent at 10:40, and readers answer "where does
+// this document stand?" by taking the newest row for a (ref_type, ref_id).
+app.post('/api/whatsapp/log-unsent', requireView, (req, res) => {
+  const db = getDb();
+  const rows = Array.isArray(req.body && req.body.rows) ? req.body.rows.slice(0, 1000) : [];
+  let written = 0;
+  for (const r of rows) {
+    const status = WA_UNSENT_STATUSES.includes(String(r && r.status || '')) ? r.status : 'not_attempted';
+    _waLog(db, {
+      phone: _waNormalizePhone(r && r.phone) || '',
+      // A row the breaker never reached was never prepared either, so what it
+      // would have carried is genuinely unknown — better blank than a guess.
+      msg_type: String((r && r.msg_type) || ''),
+      caption: String((r && r.caption) || '').slice(0, 200),
+      status,
+      error: String((r && r.reason) || '').slice(0, 300),
+      ref_type: String((r && r.ref_type) || ''),
+      ref_id: String((r && r.ref_id) || ''),
+    });
+    written++;
+  }
+  res.json({ ok: true, written });
 });
 
 // Delivery status for a KNOWN set of message ids. The bulk-send queue keeps
