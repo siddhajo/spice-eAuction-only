@@ -917,6 +917,7 @@ function getCollectionCoverage(db, auctionId, rows, opts) {
          FROM lots l
         WHERE l.auction_id = ? AND l.amount > 0
           AND (l.reserved IS NULL OR l.reserved = 0)
+          AND COALESCE(l.godown,0) = 0
           AND UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')`,
       [auctionId]);
   } catch (_) { return null; }   // old DB without one of these columns

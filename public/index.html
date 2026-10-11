@@ -2058,6 +2058,27 @@ body:not([data-feat-reserved-price="1"]) .feat-reserved-price{display:none !impo
    flag_immediate_reserve. When OFF both checkboxes + the reserve hint
    collapse via .feat-immediate-reserve. */
 body:not([data-feat-immediate-reserve="1"]) .feat-immediate-reserve{display:none !important}
+/* Godown Utility (Lot Entry) — gated by flag_godown. When OFF the Entry Type
+   chooser collapses via .feat-godown and every entry is an auction booking.
+   Declared with the same single-class specificity as its neighbours; it sits
+   on plain wrappers (not on a .needs-*-write button), so no permission rule
+   competes with it. */
+body:not([data-feat-godown="1"]) .feat-godown{display:none !important}
+/* Entry Type chooser — two segments, the picked one filled. Teal for the
+   godown side so it never reads as the green "booked" state anywhere. */
+.le-mode{display:flex;gap:0;border:1.5px solid var(--border);border-radius:9px;overflow:hidden}
+.le-mode button{
+  flex:1;appearance:none;border:none;background:var(--card);font-family:inherit;
+  padding:9px 12px;font-size:13px;font-weight:600;color:var(--text2);cursor:pointer;
+  display:flex;flex-direction:column;gap:1px;align-items:flex-start;transition:background .12s,color .12s
+}
+.le-mode button + button{border-left:1.5px solid var(--border)}
+.le-mode button:hover{background:var(--bg)}
+.le-mode button .sub{font-size:10.5px;font-weight:500;color:var(--text3);letter-spacing:0}
+.le-mode button[aria-pressed="true"]{background:var(--green-bg);color:var(--green)}
+.le-mode button[aria-pressed="true"] .sub{color:var(--green)}
+.le-mode button[data-mode="godown"][aria-pressed="true"]{background:#ccfbf1;color:#0f766e}
+.le-mode button[data-mode="godown"][aria-pressed="true"] .sub{color:#0f766e}
 /* TAN field on Sellers + Buyers — gated by flag_tan. When OFF the TAN input
    + its label collapse cleanly. */
 body:not([data-feat-tan="1"]) .feat-tan{display:none !important}
@@ -2086,6 +2107,10 @@ tr.row-locked:hover > td{background:#fef3c7 !important}
    clearly from booked (white) and locked (amber) rows in the lots list. */
 tr.row-reserved > td{background:#fed7aa !important;border-top:1px solid #f97316}
 tr.row-reserved:hover > td{background:#fdba74 !important}
+/* Godown-only entries — goods in store, never auctioned. Teal, so they read
+   as a different KIND of row from reserved (orange) and locked (amber). */
+tr.row-godown > td{background:#ccfbf1 !important;border-top:1px solid #14b8a6}
+tr.row-godown:hover > td{background:#99f6e4 !important}
 /* Seller GSTIN == Buyer GSTIN — self-deal alert (non-blocking). */
 tr.row-gstin-clash > td{background:#fee2e2 !important;border-top:1px solid #ef4444}
 tr.row-gstin-clash:hover > td{background:#fecaca !important}
@@ -6853,6 +6878,19 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                toolbar button and the 🎭 badge; the server ignores the param
                with the flag off. "Has dummy" = ANY of the four dummy fields
                set, matching the badge exactly. -->
+          <!-- Godown filter. The table defaults to AUCTION LOTS: a godown row
+               cannot be priced, coded or invoiced, and counting its weight
+               into the totals strip would overstate what was auctioned. The
+               stored stock is one dropdown away, and has its own register.
+               Only sent while the feature is on — with it off, nothing is
+               hidden from an install that may still hold godown rows. -->
+          <select id="lot-godown-filter" class="feat-godown" onchange="loadLots()"
+                  title="Auction bookings, godown (stored) stock, or both"
+                  style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:150px">
+            <option value="0">Auction lots</option>
+            <option value="1">🏚 Godown stock</option>
+            <option value="">Both</option>
+          </select>
           <select id="lot-dummy-filter" class="feat-lot-dummy-details" onchange="loadLots()"
                   title="Filter the lots table by whether a dummy seller identity is set (e-Auction CSV / Form C / Form D1 only)"
                   style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:150px">
@@ -7079,6 +7117,31 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <button class="btn btn-o" onclick="leExitEditMode()" style="padding:2px 10px;font-size:12px;height:28px">Cancel edit</button>
         </div>
 
+        <!-- ── Entry Type (godown utility) ────────────────────────────
+             Two things an operator can be doing at the scale: booking the
+             lot into the auction, or taking the goods in for STORAGE only.
+             The choice is first because it changes what the rest of the form
+             means — a godown entry numbers itself out of its own G-series
+             (so the box below goes read-only), and it never reaches pricing,
+             invoices or the Spices Board returns. Gated by flag_godown; when
+             OFF the whole block collapses and every entry is a booking. -->
+        <div class="feat-godown" style="margin-bottom:16px">
+          <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">Entry Type</div>
+          <div class="le-mode" id="le-mode">
+            <button type="button" data-mode="auction" aria-pressed="true" onclick="leSetEntryMode('auction')">
+              <span>📦 Book for auction</span>
+              <span class="sub">Goes up for sale in this trade</span>
+            </button>
+            <button type="button" data-mode="godown" aria-pressed="false" onclick="leSetEntryMode('godown')">
+              <span>🏚 Godown storage only</span>
+              <span class="sub">Goods taken in — not auctioned</span>
+            </button>
+          </div>
+          <div id="le-godown-hint" style="display:none;font-size:12px;color:#0f766e;background:#ccfbf1;border:1px solid #5eead4;border-radius:8px;padding:8px 12px;margin-top:8px;line-height:1.45">
+            Godown entry — this lot is <b>not</b> put up for sale. Bags and weight are still recorded, the number comes from the godown series (<b id="le-godown-next">G001</b>) instead of the trade's allocation, and the entry stays out of pricing, invoices and the Spices Board returns. It is listed in <b>Reports → Registers → Godown Register</b>.
+          </div>
+        </div>
+
         <!-- Seller picker / search -->
         <div id="le-seller-row" style="margin-bottom:16px">
           <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">Seller</div>
@@ -7240,8 +7303,16 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           if(atBottom){
             var reserve=parent.querySelector(':scope > .feat-immediate-reserve');
             if(reserve) parent.insertBefore(seller, reserve.nextSibling);
-          } else if(parent.firstElementChild && parent.firstElementChild!==seller){
-            parent.insertBefore(seller, parent.firstElementChild);
+          } else {
+            // "Top" means top of the FIELDS — the Entry Type chooser (godown
+            // utility) stays above the seller in both layouts, because which
+            // kind of entry this is decides what the rest of the form means.
+            var mode=parent.querySelector(':scope > .feat-godown');
+            if(mode){
+              if(mode.nextElementSibling!==seller) parent.insertBefore(seller, mode.nextSibling);
+            } else if(parent.firstElementChild && parent.firstElementChild!==seller){
+              parent.insertBefore(seller, parent.firstElementChild);
+            }
           }
         }
       </script>
@@ -8783,7 +8854,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
 
     <div class="tc" id="tc-registers">
       <div class="card">
-        <h2>Registers <span style="font-weight:400;font-size:12px;color:var(--text3)">Lot-wise Purchase &amp; invoice-wise Sales — by auction or date range</span></h2>
+        <h2>Registers <span style="font-weight:400;font-size:12px;color:var(--text3)">Purchase, Sales, per-party and godown stock — by auction or date range</span></h2>
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:end">
           <div class="fg" style="margin:0"><label>Register Type</label>
             <select id="reg-type" onchange="onRegTypeChange()">
@@ -8792,6 +8863,10 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
               <option value="pooler">Pooler Register (per pooler)</option>
               <option value="seller">Sellers Individual (per seller)</option>
               <option value="merchant">Merchants Individual (per merchant)</option>
+              <!-- Godown utility (flag_godown). The option itself carries the
+                   feature class so it disappears with the feature; onRegTypeChange
+                   also pins a stale selection back to Purchase. -->
+              <option class="feat-godown" value="godown">Godown Register (stored stock)</option>
             </select>
           </div>
           <div class="fg" style="margin:0;min-width:220px" id="reg-auction-wrap"><label>Auction</label>
@@ -8818,6 +8893,12 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
               <div id="reg-party-list" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:60;max-height:260px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:12.5px"></div>
             </div>
             <input type="hidden" id="reg-party">
+          </div>
+          <!-- Depot filter — Godown Register only (the stock sheet is read
+               depot by depot). Options are filled from the branch settings
+               the first time the register is opened. -->
+          <div class="fg" style="margin:0;display:none" id="reg-branch-wrap"><label>Depot</label>
+            <select id="reg-branch"><option value="">— All depots —</option></select>
           </div>
           <div class="fg" style="margin:0;display:none" id="reg-sale-wrap"><label>Sale Type</label>
             <select id="reg-sale"><option value="">All</option><option value="L">Local (L)</option><option value="I">Inter-state (I)</option><option value="E">Export (E)</option><option value="W">Withdrawn (W)</option><option value="N">N/A (N)</option></select>
@@ -12139,6 +12220,38 @@ async function applyFeatureFlags() {
   // Immediate Payment + Reserve this Lot checkboxes (Lot Entry). When OFF both
   // controls hide via .feat-immediate-reserve; the DB columns always exist.
   document.body.setAttribute('data-feat-immediate-reserve', cfg && on(cfg.flag_immediate_reserve) ? '1' : '0');
+  // Godown utility (Lot Entry Entry-Type chooser + the Godown Register option
+  // on the Registers screen). When OFF the chooser collapses via .feat-godown
+  // and every entry is a booking; the lots.godown column always exists, so
+  // entries recorded while it was on keep their identity (and stay out of the
+  // auction) afterwards. The mirror global is for the JS paths a CSS rule
+  // can't reach — the register's dropdown option and the mode reset.
+  const godownOn = !!(cfg && on(cfg.flag_godown));
+  window._FEAT_GODOWN = godownOn;
+  document.body.setAttribute('data-feat-godown', godownOn ? '1' : '0');
+  // Flag turned off mid-session: pin the form back to a booking so a stale
+  // godown selection can't survive inside a now-hidden chooser.
+  if (!godownOn && typeof leSetEntryMode === 'function' && typeof _le === 'object'
+      && _le && _le.entryMode === 'godown') {
+    try { leSetEntryMode('auction', { suggest: false }); } catch (_) {}
+  }
+  // Same for the Registers screen: a hidden Godown option must not keep
+  // filtering the register.
+  if (!godownOn) {
+    const _rt = document.getElementById('reg-type');
+    if (_rt && _rt.value === 'godown') { _rt.value = 'purchase'; try { onRegTypeChange(); } catch (_) {} }
+  }
+  // Registers normally unlocks at stage 4 (documents raised) — fine for the
+  // Purchase/Sales registers, wrong for the Godown one: stored stock is
+  // something the operator wants to see the moment it is entered, which is
+  // stage 2. So with the feature ON the screen unlocks with Lots; the other
+  // registers there simply have nothing to show yet. Reverts cleanly when
+  // the flag goes off.
+  const _regItem = document.querySelector('#nav-src .side-item[data-tab="registers"]');
+  if (_regItem) {
+    _regItem.dataset.minStage = godownOn ? '2' : '4';
+    if (typeof applyTradeStageLocks === 'function') { try { applyTradeStageLocks(); } catch (_) {} }
+  }
   // TAN field on Sellers + Buyers. When ON the TAN input shows in both
   // add/edit forms; the traders.tan / buyers.tan columns always exist.
   document.body.setAttribute('data-feat-tan', cfg && on(cfg.flag_tan) ? '1' : '0');
@@ -14025,6 +14138,13 @@ async function hubLoadLots(){
     // The un-paginated path returns the whole auction in ASCENDING lot
     // order, which is how the office reads a lot list. The paginated one
     // sorts descending, so we page in the browser instead.
+    // Auction lots only. This panel's KPI strip mirrors computeTradeKpi, and
+    // that excludes godown rows — stored stock is not an arrival for this
+    // sale. Unconditional (not flag-gated) for the same reason the server-side
+    // filters are: a row recorded while the feature was on must not drift back
+    // into the auction's numbers when it is switched off. The Lots screen is
+    // where every row, godown included, can still be listed.
+    qs.set('godown', '0');
     const rows = await j(`/api/lots/${encodeURIComponent(aid)}?${qs.toString()}`);
     window._hubLots = Array.isArray(rows) ? rows : [];
     _hubLotPager.page = 1;
@@ -17134,7 +17254,9 @@ async function amReload(){
     // Header band and rows in parallel — neither depends on the other.
     const [meta, lots] = await Promise.all([
       j(`/api/auction-manager/${aid}?_=${Date.now()}`),
-      j(`/api/lots/${aid}`),
+      // godown=0: the stat band and the three tables below describe the
+      // AUCTION. Stored stock has its own register (Reports → Registers).
+      j(`/api/lots/${aid}?godown=0`),
     ]);
     _amAuction = meta.auction || null;
     _amSummary = meta.summary || null;
@@ -19068,7 +19190,9 @@ async function openDepotLots(auctionId, depot){
   body.innerHTML = '<div class="gm-empty">Loading…</div>';
   showModal('depot-lots-modal');
   let rows;
-  try { rows = await j(`/api/lots/${auctionId}`); }
+  // Auction lots only — this opens off a depot's booked-lot figures, which
+  // already exclude stored stock.
+  try { rows = await j(`/api/lots/${auctionId}?godown=0`); }
   catch (e) { body.innerHTML = '<div class="gm-empty">Failed to load lots.</div>'; return; }
   const norm = b => (String(b || '').trim() || '(unspecified)');
   const lots = (rows || []).filter(l => norm(l.branch) === dep);
@@ -19101,7 +19225,7 @@ async function openTradeDummyLots(auctionId, preFilter){
   body.innerHTML = '<div class="gm-empty">Loading…</div>';
   showModal('depot-lots-modal');
   let rows;
-  try { rows = await j(`/api/lots/${auctionId}?_=${Date.now()}`); }
+  try { rows = await j(`/api/lots/${auctionId}?godown=0&_=${Date.now()}`); }
   catch (e) { body.innerHTML = '<div class="gm-empty">Failed to load lots.</div>'; return; }
   if (!rows || !rows.length) {
     body.innerHTML = '<div class="gm-empty">No lots booked in this trade yet.</div>';
@@ -21652,6 +21776,10 @@ const _le = {
   // cleared after a print run completes successfully.
   selectedForPrint: new Set(),
   receiptFormat: 'detailed', // from settings (lot_receipt_format) — user can override per-print
+  // Entry Type (godown utility, flag_godown). 'auction' = the lot is booked
+  // into the trade; 'godown' = goods taken in for storage only. Per-entry
+  // decision, reset to 'auction' after every save and on Clear.
+  entryMode: 'auction',
 };
 
 // ── New Trade modal ────────────────────────────────────────
@@ -22479,6 +22607,9 @@ async function leClearActivity(){
 async function leAutoSuggestLotNo(){
   const branch = (document.getElementById('le-branch').value || '').trim().toUpperCase();
   if (!branch) return; // can't suggest without a branch
+  // Godown entries are numbered from their own series — suggesting an auction
+  // number here would overwrite the previewed G-number.
+  if (typeof leGodownMode === 'function' && leGodownMode()) return;
 
   // Server-driven suggestion (allocation-aware). When the server
   // returns a value, that wins — it knows about ranges the local
@@ -22497,6 +22628,11 @@ async function leAutoSuggestLotNo(){
   let allowSuggest = true;
   for (const l of lots) {
     if (!l || (l.branch || '').toUpperCase() !== branch) continue;
+    // Godown rows live in a lettered series of their own ("G001"). Reading
+    // them here poisoned the suggestion: the first one set the prefix to G,
+    // the next numeric lot then disagreed with it and the fallback gave up,
+    // so Lot No stopped auto-filling for the whole branch.
+    if (Number(l.godown)) continue;
     const lotStr = String(l.lot_no || '').trim();
     // Match optional alpha prefix + digits
     const m = lotStr.match(/^([A-Za-z]*)(\d+)$/);
@@ -22513,6 +22649,7 @@ async function leAutoSuggestLotNo(){
   let padded = String(next);
   for (const l of lots) {
     if (!l || (l.branch || '').toUpperCase() !== branch) continue;
+    if (Number(l.godown)) continue;   // godown series, not this branch's padding
     const lotStr = String(l.lot_no || '').trim();
     const m = lotStr.match(/^([A-Za-z]*)(\d+)$/);
     if (m) {
@@ -22716,6 +22853,67 @@ function leShowError(msg){
   setTimeout(() => { el.style.display = 'none'; }, 4000);
 }
 
+// ── Entry Type: auction booking vs godown storage (flag_godown) ──
+// Switching mode rewires three things, and all three live here so the form
+// can never be half-switched:
+//   • the Lot No box — a godown entry is numbered from its own G-series by
+//     the server, so the box becomes a read-only preview of that number;
+//   • the lot-number grid — it shows the trade's ALLOCATED numbers, which a
+//     godown entry deliberately does not take, so it is hidden;
+//   • the auction-only controls (Reserved Price, Immediate Payment, Reserve)
+//     — meaningless for goods that were never put up for sale.
+// `opts.suggest === false` switches the mode WITHOUT touching the Lot No box
+// — what Clear wants: it has just emptied the form and an auto-filled number
+// would undo that.
+function leSetEntryMode(mode, opts){
+  const godown = (mode === 'godown');
+  _le.entryMode = godown ? 'godown' : 'auction';
+  document.querySelectorAll('#le-mode button').forEach(b => {
+    b.setAttribute('aria-pressed', (b.dataset.mode === _le.entryMode) ? 'true' : 'false');
+  });
+  const hint = document.getElementById('le-godown-hint');
+  if (hint) hint.style.display = godown ? 'block' : 'none';
+  // Reserve is an auction-only idea; a held godown entry is a contradiction.
+  const resEl = document.getElementById('le-reserved');
+  if (godown && resEl && resEl.checked) { resEl.checked = false; leOnReserveToggle(); }
+  const auctionOnly = document.querySelector('#le-form-card .feat-immediate-reserve');
+  if (auctionOnly) auctionOnly.style.display = godown ? 'none' : '';
+  const rp = document.querySelector('#le-form-card .feat-reserved-price');
+  if (rp) rp.style.visibility = godown ? 'hidden' : '';
+  const grid = document.getElementById('le-lot-grid-section');
+  if (grid) grid.dataset.godownHidden = godown ? '1' : '0';
+  if (grid) {
+    if (godown) grid.style.display = 'none';
+    // Coming BACK to a booking has to repaint, not just un-flag: the grid is
+    // how a lot number is picked, and converting a stored lot into a booking
+    // (the edit-mode case) is impossible without it — the Lot No box is
+    // read-only while editing, so a free chip is the only way to name one.
+    else if (typeof leLoadAllocBar === 'function') { try { leLoadAllocBar(); } catch (_) {} }
+  }
+  leApplyLotNoLock();
+  if (opts && opts.suggest === false) return;
+  if (godown) leSuggestGodownLotNo();
+  else if (!_le.editingLotId) leAutoSuggestLotNo();
+}
+function leGodownMode(){ return _le.entryMode === 'godown'; }
+// Ask the server for this trade's next godown number and show it. The server
+// assigns the real number on save (two operators can be entering at once), so
+// this is a preview — never the value that is trusted.
+async function leSuggestGodownLotNo(){
+  const aid = document.getElementById('le-auction').value;
+  const box = document.getElementById('le-lotno');
+  const lbl = document.getElementById('le-godown-next');
+  if (!aid) { if (box && !_le.editingLotId) box.value = ''; return; }
+  try {
+    const d = await j(`/api/auctions/${aid}/next-godown-lot`);
+    const next = d && d.next_lot;
+    if (!next) return;
+    if (lbl) lbl.textContent = next;
+    // Never overwrite the number of the lot being edited.
+    if (box && !_le.editingLotId && leGodownMode()) box.value = next;
+  } catch (_) { /* preview only — save still works */ }
+}
+
 // Show/hide the batch-reserve hint when the Reserve checkbox flips.
 function leOnReserveToggle(){
   const on = document.getElementById('le-reserved')?.checked;
@@ -22803,7 +23001,10 @@ async function leSaveLot(){
   // branch. Block save and prompt the user to pick one.
   if (branch === 'ALL') { leShowError('Pick a specific branch to save a lot — ALL is a view-only filter'); return; }
   const lotNo = (document.getElementById('le-lotno').value || '').trim();
-  if (!lotNo) { leShowError('Enter the lot number'); return; }
+  // A godown entry takes its number from the godown series, which the server
+  // assigns — the box is only a preview, so an empty one is fine here.
+  const isGodown = leGodownMode() ? 1 : 0;
+  if (!lotNo && !isGodown) { leShowError('Enter the lot number'); return; }
   const grade = document.getElementById('le-grade').value || '1';
   const bags  = parseInt(document.getElementById('le-bags').value, 10);
   const litre = parseInt(document.getElementById('le-litre').value, 10);
@@ -22811,7 +23012,7 @@ async function leSaveLot(){
   // Reserve (hold) checkbox. A reserved lot only holds its lot number for the
   // seller — bags / litre / net-weight are optional until it's booked. Read
   // it before validation so a held lot can be saved with blank quantities.
-  const isReserved = document.getElementById('le-reserved')?.checked ? 1 : 0;
+  const isReserved = (!isGodown && document.getElementById('le-reserved')?.checked) ? 1 : 0;
   // Batch reserve — when Reserve is on and the Lot No field holds a range
   // (001-010) or list (001,003,007), hold every listed number for this
   // seller in one go. Skipped while editing an existing lot.
@@ -22861,7 +23062,11 @@ async function leSaveLot(){
     // user supplied; e-Auction fills the rest from the trader record.
     const payload = {
       auction_id: parseInt(aid, 10),
-      lot_no: lotNo,
+      // Creating a godown entry sends NO number: the box held a preview, and
+      // two operators previewing the same next number would collide on save.
+      // The server assigns from the godown series. On an EDIT the number is
+      // the row's identity, so it travels as-is.
+      lot_no: (isGodown && !_le.editingLotId) ? '' : lotNo,
       trader_id: _le.selectedSeller.id,
       branch: branch,
       grade: grade,
@@ -22882,6 +23087,11 @@ async function leSaveLot(){
       // Reservation flag (0/1) — held lot: distinct colour, out of
       // booked/invoice totals, blocks the lot number for other sellers.
       reserved: isReserved,
+      // Godown-only entry (0/1) — goods taken in for storage, never put up
+      // for sale. The server numbers it from the godown series and every
+      // money/statutory reader skips it. Always sent, so an EDIT can also
+      // convert an entry between the two kinds.
+      godown: isGodown,
       // NOTE: `state` (the TRADE's state) is deliberately NOT sent. It used to
       // be filled from the seller's pstate, which meant every EDIT re-stamped
       // the lot with the seller's state — a Kerala seller at a Tamil Nadu
@@ -22904,10 +23114,13 @@ async function leSaveLot(){
       // operator picked (not just the seller's current default).
       bank_id: _le.selectedBankId || null,
     };
-    await j(_le.editingLotId
+    const saved = await j(_le.editingLotId
       ? `/api/lots/${_le.editingLotId}`
       : '/api/lots',
       { method: _le.editingLotId ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+    // For a godown create the server picked the number, so report THAT rather
+    // than the preview the box was showing.
+    const savedLotNo = (saved && saved.lot && saved.lot.lot_no) ? saved.lot.lot_no : lotNo;
     // Sync the chosen bank as the seller's default ONLY if the user
     // picked a different bank than the seller's current default. Avoids
     // unnecessary writes for the common case where the picker just
@@ -22925,7 +23138,9 @@ async function leSaveLot(){
         }
       }
     }
-    toast(_le.editingLotId ? `Lot ${lotNo} updated ✓` : `Lot ${lotNo} saved ✓`);
+    toast(_le.editingLotId
+      ? `Lot ${savedLotNo} updated ✓`
+      : (isGodown ? `Godown entry ${savedLotNo} saved ✓` : `Lot ${savedLotNo} saved ✓`));
     // First lot crosses the stage-2 boundary — reveal the price tools /
     // Payments in the guided sidebar without needing a navigation.
     if (typeof refreshTradeStage === 'function') { try { refreshTradeStage(true); } catch (_) {} }
@@ -22964,6 +23179,11 @@ async function leSaveLot(){
     // Reserve — reset so holding a lot is a deliberate per-lot choice.
     const resEl = document.getElementById('le-reserved');
     if (resEl && !wasEditing) { resEl.checked = false; const _rh = document.getElementById('le-reserve-hint'); if (_rh) _rh.style.display = 'none'; }
+    // Entry Type — a run of godown receipts is normal (one seller unloads
+    // several bags at a time), so the mode is KEPT after a create and the
+    // next number in the series is previewed. An edit leaves it alone; the
+    // mode there belongs to the row that was being edited.
+    if (!wasEditing && leGodownMode()) leSuggestGodownLotNo();
     setTimeout(() => document.getElementById('le-lotno').focus(), 50);
     // A freshly-created lot has the highest lot_no → it lands on page 1
     // (lot_no DESC). Jump there so the user sees the entry they just made.
@@ -22971,7 +23191,8 @@ async function leSaveLot(){
     await loadLeRecent();
     // After a successful create (not edit), auto-suggest the next lot
     // number for this branch so the user can hit Save again immediately.
-    if (!wasEditing) leAutoSuggestLotNo();
+    // Godown mode has its own series (previewed just above).
+    if (!wasEditing && !leGodownMode()) leAutoSuggestLotNo();
     leUpdateStats();
     leLoadAllocBar();
     leLoadActivity();
@@ -23032,6 +23253,10 @@ function leResetForm(){
   document.getElementById('le-err').style.display = 'none';
   // Drop edit mode if active
   _le.editingLotId = null;
+  // Clear is a full reset, so the Entry Type goes back to a booking — the
+  // common case, and the one the rest of the cleared form is shaped for.
+  // suggest:false because the box was just emptied on purpose.
+  leSetEntryMode('auction', { suggest: false });
   const editLotEl2 = document.getElementById('le-edit-lotno');
   if (editLotEl2) editLotEl2.dataset.origLot = '';
   leApplyLotNoLock();          // back to a typeable box for the next new lot
@@ -23098,6 +23323,11 @@ async function leEditLot(lotId){
   if (immEl3) immEl3.checked = !!Number(lot.immediate_payment);
   const resEl3 = document.getElementById('le-reserved');
   if (resEl3) resEl3.checked = !!Number(lot.reserved);
+  // Entry Type of the row being edited. Switching it here converts the entry:
+  // booking → godown releases the auction number and takes the next godown
+  // one; godown → booking asks for a real lot number (the server refuses a
+  // G-series number on a booking).
+  leSetEntryMode(Number(lot.godown) ? 'godown' : 'auction');
   // In gunny mode, reconstruct the entry-time fields from the stored net
   // weight: gunny = bags × default, weight w/ gunny = net + gunny. The
   // stored value remains the net weight (qty); these are display helpers.
@@ -23649,13 +23879,18 @@ function renderLeRecent(){
         // Reserved (held) lots get a bright-orange row + hover tooltip so they
         // stand out from normal bookings in the recent-entries list.
         const isRes = !!Number(l.reserved);
-        const baseBg = isRes ? '#fed7aa' : '';
-        const hovBg  = isRes ? '#fdba74' : 'var(--bg)';
-        const rowTitle = isRes ? 'Reserved (held — not booked). Click to edit / convert to a booking.' : 'Click to edit';
+        // Godown-only entries (goods in store, never auctioned) get a teal
+        // row of their own, so the list reads as three distinct kinds of
+        // record rather than "booked and some odd ones".
+        const isGod = !!Number(l.godown);
+        const baseBg = isGod ? '#ccfbf1' : (isRes ? '#fed7aa' : '');
+        const hovBg  = isGod ? '#99f6e4' : (isRes ? '#fdba74' : 'var(--bg)');
+        const rowTitle = isGod ? 'Godown storage only — not auctioned. Click to edit.'
+          : (isRes ? 'Reserved (held — not booked). Click to edit / convert to a booking.' : 'Click to edit');
         return `
-        <div class="le-recent-row${isRes?' reserved':''}" data-lot-id="${l.id}" style="display:grid;${COLS};gap:0;padding:8px 12px;border-bottom:1px solid var(--border);font-size:13px;cursor:pointer;transition:background .1s;background:${baseBg}" onmouseenter="this.style.background='${hovBg}'" onmouseleave="this.style.background='${baseBg}'" onclick="leEditLot(${l.id})" title="${esc(rowTitle)}">
+        <div class="le-recent-row${isGod?' godown':(isRes?' reserved':'')}" data-lot-id="${l.id}" style="display:grid;${COLS};gap:0;padding:8px 12px;border-bottom:1px solid var(--border);font-size:13px;cursor:pointer;transition:background .1s;background:${baseBg}" onmouseenter="this.style.background='${hovBg}'" onmouseleave="this.style.background='${baseBg}'" onclick="leEditLot(${l.id})" title="${esc(rowTitle)}">
           <div style="text-align:center" onclick="event.stopPropagation()"><input type="checkbox" class="le-recent-cb" data-lot-id="${l.id}" ${checked} onchange="leToggleLotSelected(${l.id}, this.checked)" style="cursor:pointer"></div>
-          <div style="font-family:monospace;font-weight:700;color:${isRes?'#c2410c':'var(--green)'}">${esc(l.lot_no || '')}${isRes?' <span style="font-family:inherit;font-size:9px;font-weight:800;background:#f97316;color:#fff;padding:1px 5px;border-radius:8px;vertical-align:middle;letter-spacing:.3px">RESERVED</span>':''}</div>
+          <div style="font-family:monospace;font-weight:700;color:${isGod?'#0f766e':(isRes?'#c2410c':'var(--green)')}">${esc(l.lot_no || '')}${isGod?' <span style="font-family:inherit;font-size:9px;font-weight:800;background:#14b8a6;color:#fff;padding:1px 5px;border-radius:8px;vertical-align:middle;letter-spacing:.3px">GODOWN</span>':(isRes?' <span style="font-family:inherit;font-size:9px;font-weight:800;background:#f97316;color:#fff;padding:1px 5px;border-radius:8px;vertical-align:middle;letter-spacing:.3px">RESERVED</span>':'')}</div>
           <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(l.name||'')}">${esc(l.name || '—')}</div>
           <div style="font-family:monospace;font-size:11px;color:var(--text2)">${esc(l.branch || '')}</div>
           <div style="text-align:right">${esc(String(l.bags ?? ''))}</div>
@@ -25422,7 +25657,9 @@ async function leLoadAllocBar() {
   // Always visible whenever allocations exist. When the user's
   // branch is missing or has no allocation, render an inline hint
   // *inside* the grid section so the user sees what to do next.
-  gridSection.style.display = 'block';
+  // Exception: a godown entry is numbered outside these ranges on purpose
+  // (see leSetEntryMode), so the grid has nothing to offer it and stays shut.
+  gridSection.style.display = (gridSection.dataset.godownHidden === '1') ? 'none' : 'block';
   if (!myBr) {
     gridLabel.textContent = '—';
     _leSetGridHelp('select your branch above to see available lots');
@@ -25581,13 +25818,19 @@ function leApplyLotNoLock(){
   const input = document.getElementById('le-lotno');
   if (!input) return;
   const editing = !!_le.editingLotId;
-  input.readOnly = editing;
-  input.style.background = editing ? 'var(--bg)' : '';
-  input.style.cursor = editing ? 'not-allowed' : '';
-  input.title = editing
-    ? 'Pick a free lot from the grid above to move this lot to another number'
-    : '';
-  input.placeholder = editing ? '' : 'auto';
+  // A godown entry's number comes from the godown series, which the server
+  // owns — so the box is a read-out there too, in create mode as well as edit.
+  const godown = (typeof leGodownMode === 'function') && leGodownMode();
+  const locked = editing || godown;
+  input.readOnly = locked;
+  input.style.background = locked ? 'var(--bg)' : '';
+  input.style.cursor = locked ? 'not-allowed' : '';
+  input.title = godown && !editing
+    ? 'Godown entries are numbered automatically from the godown series'
+    : (editing
+      ? 'Pick a free lot from the grid above to move this lot to another number'
+      : '');
+  input.placeholder = locked ? '' : 'auto';
   const help = document.getElementById('le-lot-grid-help');
   if (help && help.dataset.lockManaged !== '0') {
     help.textContent = editing
@@ -27136,7 +27379,7 @@ const SET_FIELD_GROUPS = {
     { title:'Document Mode', icon:'🗂', hint:'One document per lot or one per seller, and whether sales invoices start life as a proforma draft.',
       keys:['flag_lotwise_purchase','flag_lotwise_bills','flag_lotwise_dn_planter','flag_bos_purchase_bill','flag_proforma_invoice'] },
     { title:'Lots, Trade & Screens', icon:'📦', hint:'Controls on the lot/trade screens — locks, validation, price checks, and optional screens or buttons.',
-      keys:['flag_price_check','flag_lot_lock','flag_reserved_price','flag_immediate_reserve','flag_lot_validation',
+      keys:['flag_price_check','flag_lot_lock','flag_reserved_price','flag_immediate_reserve','flag_godown','flag_lot_validation',
             'flag_bulk_set_buyer_code','flag_lot_dummy_details','flag_generate_all_docs','flag_price_list_mapping','flag_print_selected_purchase','flag_lotwise_payments',
             'flag_auction_desk','flag_auction_manager','flag_insights','flag_pertrade_breakdown',
             'flag_dash_snapshot','flag_dash_current_auction'] },
@@ -27151,7 +27394,7 @@ const SET_FIELD_GROUPS = {
     { title:'Default Weights & Crop', icon:'⚖', hint:'Values pre-filled on a new lot — sample, gunny and litre weights, crop type.',
       keys:['sample_weight','sample_collection','free_sample','default_gunny_weight','user_gunny_weight','default_litre','default_crop_type'] },
     { title:'Lot Entry Screen', icon:'📝', hint:'Which fields and columns the Lot Entry screen shows, on desktop and mobile.',
-      keys:['show_moisture','litre_options','moisture_options','show_crop_receipt','crop_receipt_start_no','lot_entry_seller_at_bottom',
+      keys:['show_moisture','litre_options','moisture_options','show_crop_receipt','crop_receipt_start_no','lot_entry_seller_at_bottom','godown_lot_prefix',
             'mobile_show_sample_field','mobile_show_gross_field','default_auction_id'] },
     { title:'Lot Receipt Print', icon:'🧾', hint:'Columns, paper width and totals layout for the printed lot receipt.',
       match:/^lot_receipt_/ },
@@ -33443,6 +33686,13 @@ async function loadLots(opts){
   // '0' = unmasked, '' = both. The server drops it when the feature is off.
   const _lotDummy = (document.getElementById('lot-dummy-filter')?.value || '').trim();
   const _lotDummyParam = _lotDummy ? `&dummy=${encodeURIComponent(_lotDummy)}` : '';
+  // Godown filter ('0' bookings / '1' stored stock / '' both). Only applied
+  // while the feature is on, so an install with it off sees the table it has
+  // always seen — godown rows included, if it happens to hold any.
+  const _lotGodown = window._FEAT_GODOWN
+    ? (document.getElementById('lot-godown-filter')?.value ?? '0')
+    : '';
+  const _lotGodownParam = (_lotGodown === '0' || _lotGodown === '1') ? `&godown=${_lotGodown}` : '';
   // Cache-buster ensures the browser actually hits the server (otherwise Refresh
   // may return stale cached JSON and nothing visibly changes).
   // Wrap the fetch so a network/API failure surfaces inside the table
@@ -33450,7 +33700,7 @@ async function loadLots(opts){
   // a stale "Loading…" on screen.
   let d;
   try {
-    d = await j(`/api/lots/${aid}?_=${Date.now()}${_lotSearchParam}${_lotBranchParam}${_lotGradeParam}${_lotDummyParam}`);
+    d = await j(`/api/lots/${aid}?_=${Date.now()}${_lotSearchParam}${_lotBranchParam}${_lotGradeParam}${_lotDummyParam}${_lotGodownParam}`);
   } catch (e) {
     StatusBlock.show('lots-list', 'error', {
       body: (e && e.message) || 'Failed to load lots',
@@ -33516,8 +33766,12 @@ async function loadLots(opts){
     { key:'lot_no', label:'Lot', sort:'text', totalKind:'count',
       totalLabel: (n)=> String(n),
       // Held lots get an orange RESERVED badge next to the number (the row is
-      // also tinted orange via the row-reserved class).
-      render:(l)=> esc(l.lot_no||'') + (Number(l.reserved)
+      // also tinted orange via the row-reserved class); godown-only entries
+      // get a teal GODOWN one (row-godown). Both say why the row carries no
+      // price — without the badge an operator reads it as an unpriced lot.
+      render:(l)=> esc(l.lot_no||'') + (Number(l.godown)
+        ? ' <span style="font-size:9px;font-weight:800;background:#14b8a6;color:#fff;padding:1px 5px;border-radius:8px;vertical-align:middle;letter-spacing:.3px" title="Godown storage only — not auctioned">GODOWN</span>'
+        : Number(l.reserved)
         ? ' <span style="font-size:9px;font-weight:800;background:#f97316;color:#fff;padding:1px 5px;border-radius:8px;vertical-align:middle;letter-spacing:.3px" title="Reserved (held — not booked)">RESERVED</span>'
         : '') },
     // Crop Receipt No (lots.crpt) — the receipt-book number captured at lot
@@ -33678,7 +33932,7 @@ async function loadLots(opts){
     // mode never paints a stray amber row.
     // Locked rows tint amber; reserved (held) lots tint pale-blue. Locked
     // wins when a lot is somehow both, since the lock is the stronger state.
-    rowClass: (row) => row && row.locked_at ? 'row-locked' : (row && Number(row.reserved) ? 'row-reserved' : (row && sameGstin(row.cr, row.buyer_gstin) ? 'row-gstin-clash' : '')),
+    rowClass: (row) => row && row.locked_at ? 'row-locked' : (row && Number(row.godown) ? 'row-godown' : (row && Number(row.reserved) ? 'row-reserved' : (row && sameGstin(row.cr, row.buyer_gstin) ? 'row-gstin-clash' : ''))),
     columns });
   // Restore ticks from the persistent set onto the freshly-mounted
   // checkboxes (DataTable.mount creates new DOM nodes that all start
@@ -34931,11 +35185,15 @@ async function loadPriceEntryGrid(){
   let lots;
   try { lots = await j(`/api/lots/${aid}`); }
   catch (e) { grid.innerHTML = '<div style="padding:24px;color:#b91c1c">Failed to load lots.</div>'; return; }
-  // Reserved (held) lots aren't in the auction yet, so stay hidden. Withdrawn
-  // (WD) lots ARE shown — they're part of the trade record and appear in the
-  // registers — but render as read-only zero-price rows below (withdrawal
-  // forces price/amount to 0, so there's nothing to enter).
-  _pe.lots = (Array.isArray(lots) ? lots : []).filter(l => !Number(l.reserved));
+  // Reserved (held) lots aren't in the auction yet, so stay hidden. Godown
+  // entries are hidden for a stronger reason: the goods were taken in for
+  // STORAGE and never offered, so there is no price to enter and nothing
+  // downstream would accept one. Not flag-gated — a price typed against
+  // stored stock is meaningless whether the feature is currently on or not.
+  // Withdrawn (WD) lots ARE shown — they're part of the trade record and
+  // appear in the registers — but render as read-only zero-price rows below
+  // (withdrawal forces price/amount to 0, so there's nothing to enter).
+  _pe.lots = (Array.isArray(lots) ? lots : []).filter(l => !Number(l.reserved) && !Number(l.godown));
   _pe.byId = new Map(_pe.lots.map(l => [l.id, l]));
   _pePopulateFilterUI(tradeChanged);
   renderPriceEntryGrid();
@@ -45223,7 +45481,27 @@ function onRegTypeChange(){
   if (partyWrap) partyWrap.style.display = indiv ? '' : 'none';
   const certBtn = document.getElementById('reg-certificate-btn');
   if (certBtn) certBtn.style.display = (type === 'pooler') ? '' : 'none';
+  // Godown Register — a stock sheet, read per depot.
+  const brWrap = document.getElementById('reg-branch-wrap');
+  if (brWrap) brWrap.style.display = (type === 'godown') ? '' : 'none';
+  if (type === 'godown') populateRegBranches();
   if (indiv) populateRegParties();
+}
+// Fill the Godown Register's depot picker from the configured branches
+// (br1..br9 in settings — the same source Lot Entry reads). Done once; the
+// selection is preserved across re-opens.
+async function populateRegBranches(){
+  const sel = document.getElementById('reg-branch');
+  if (!sel || sel.dataset.filled === '1') return;
+  let list = [];
+  try { list = (typeof getAllocBranches === 'function') ? await getAllocBranches() : []; }
+  catch (_) { list = []; }
+  if (!Array.isArray(list) || !list.length) return;
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">— All depots —</option>' +
+    list.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
+  sel.value = keep;
+  sel.dataset.filled = '1';
 }
 // ── Party picker (searchable combobox) ────────────────────────────
 // One control instead of the old filter-box + dropdown pair. `_regParties`
@@ -45420,6 +45698,10 @@ function regParams(){
   if (aid) p.set('auctionId', aid);
   else if (from && to) { p.set('from', from); p.set('to', to); }
   if (type === 'sales' && saleType) p.set('saleType', saleType);
+  if (type === 'godown') {
+    const br = document.getElementById('reg-branch') ? document.getElementById('reg-branch').value : '';
+    if (br) p.set('branch', br);
+  }
   return p;
 }
 // Indian-format number renderer for register columns (the Journal's
@@ -45442,6 +45724,25 @@ function poolerSummaryRows(rows){
   ];
 }
 function regColumns(type){
+  // Godown Register — stored stock. No price/buyer/tax: a godown entry was
+  // never put up for sale, so the sheet counts bags and weights only.
+  if (type === 'godown') return [
+    { key:'tno', label:'TNO', sort:'text', totalKind:'count', totalLabel:'Total' },
+    { key:'date', label:'Date', sort:'text' },
+    { key:'received', label:'Received', sort:'text' },
+    { key:'lot', label:'Lot', sort:'text' },
+    { key:'branch', label:'Depot', sort:'text' },
+    { key:'name', label:'Seller', sort:'text' },
+    { key:'place', label:'Place', sort:'text' },
+    // Masked per Settings → Business Mode → Privacy & Masking, like every
+    // other human-facing register.
+    { key:'phone', label:'Phone', sort:'text',
+      render:(r)=> r.phone ? esc(maskPhone(r.phone)) : '<span style="color:var(--text3)">—</span>' },
+    { key:'grade', label:'Grade', sort:'text' },
+    { key:'bag', label:'Bags', sort:'number', numeric:true, fmt:regFmtNum(0) },
+    { key:'qty', label:'Net Wt', sort:'number', numeric:true, fmt:regFmtNum(3) },
+    { key:'gross_wt', label:'Gross Wt', sort:'number', numeric:true, fmt:regFmtNum(3) },
+  ];
   if (type === 'pooler') return [
     { key:'party', label:'Pooler', sort:'text', totalKind:'count', totalLabel:'Total' },
     // Phone comes from the party group (lots.tel), not the lot row — see
@@ -45566,7 +45867,7 @@ async function loadRegister(){
     });
     return;
   }
-  const ep = (type === 'sales') ? 'sales' : 'purchase';
+  const ep = (type === 'sales') ? 'sales' : (type === 'godown') ? 'godown' : 'purchase';
   const url = `/api/registers/${ep}?` + regParams().toString();
   let d = [];
   try { d = await j(url); }
@@ -45585,9 +45886,11 @@ async function exportRegister(format){
     p = indivRegParams();
     base = { pooler:'PoolerRegister', seller:'SellerRegister', merchant:'MerchantRegister' }[type];
   } else {
-    ep = (type === 'sales') ? 'sales-register' : 'purchase-register';
+    ep = (type === 'sales') ? 'sales-register'
+       : (type === 'godown') ? 'godown-register' : 'purchase-register';
     p = regParams();
-    base = (type === 'sales') ? 'SalesRegister' : 'PurchaseRegister';
+    base = (type === 'sales') ? 'SalesRegister'
+         : (type === 'godown') ? 'GodownRegister' : 'PurchaseRegister';
   }
   if (format) p.set('format', format);
   const name = base + '.' + (format === 'pdf' ? 'pdf' : 'xlsx');

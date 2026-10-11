@@ -437,6 +437,7 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg, opts) {
   const lots = db.all(
     `SELECT * FROM lots WHERE auction_id = ? AND buyer = ? AND amount > 0
      AND (reserved IS NULL OR reserved = 0)
+     AND COALESCE(godown,0) = 0
      AND (sale IS NULL OR sale = '' OR sale = ?)${lotFilter}${invoFilter} ORDER BY lot_no`,
     params
   );
@@ -650,6 +651,7 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg, opts) {
     `SELECT * FROM lots
      WHERE auction_id = ? AND name = ? AND amount > 0${sellerSql}${lotSql}
        AND (reserved IS NULL OR reserved = 0)
+     AND COALESCE(godown,0) = 0
        AND ${hasValidGstinSql('cr')}
      ORDER BY lot_no`,
     [auctionId, sellerName, ...sellerArgs, ...lotArgs]
@@ -666,6 +668,7 @@ function buildPurchaseInvoice(db, auctionId, sellerName, cfg, opts) {
        WHERE auction_id = ? AND name = ? AND amount > 0${sellerSql}
          AND TRIM(lot_no) = ?
          AND (reserved IS NULL OR reserved = 0)
+     AND COALESCE(godown,0) = 0
          AND ${hasValidGstinSql('cr')}
        ORDER BY lot_no`,
       [auctionId, sellerName, ...sellerArgs, lotNo]
@@ -2393,6 +2396,56 @@ function getPurchaseRegister(db, opts = {}) {
 }
 
 /**
+ * Godown Register (stored stock)
+ * ───────────────────────────────────────────────────────────────
+ * The one reader that looks FOR godown rows (lots.godown = 1) instead of
+ * excluding them. A godown entry is goods taken in for STORAGE, never put up
+ * for sale, so it has no price, no buyer and no invoice — the register is a
+ * stock sheet, not a money report: who brought what, how much of it, into
+ * which depot, and when.
+ *
+ * One row per godown entry: TNO, DATE, LOT, BRANCH, SELLER, PLACE, PHONE,
+ * GRADE, BAGS, NET WT, GROSS WT. Totals are bags + both weights.
+ *
+ * Scope mirrors the other two lot registers: a specific auction (auctionId)
+ * OR a date range across auctions, plus an optional single seller — by
+ * trader_id, never by name, because planter names repeat.
+ *
+ * `receivedAt` is the row's own created_at date, which for a godown entry is
+ * the day the goods actually came in; a.date is the trade it was recorded
+ * against and can be days earlier.
+ */
+function getGodownRegister(db, opts = {}) {
+  let q = `SELECT a.ano AS tno, a.date AS date, l.created_at AS received,
+      l.lot_no AS lot, l.branch AS branch, l.name AS name, l.ppla AS place,
+      l.tel AS phone, l.grade AS grade, l.bags AS bag, l.qty AS qty,
+      l.gross_wt AS gross_wt, l.trader_id AS trader_id
+    FROM lots l JOIN auctions a ON a.id = l.auction_id
+    WHERE COALESCE(l.godown,0) = 1`;
+  const params = [];
+  if (opts.auctionId) { q += ' AND l.auction_id = ?'; params.push(opts.auctionId); }
+  else if (opts.from && opts.to) { q += ' AND a.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
+  // Namesake planters: the identity wins when the picker committed one. An
+  // EMPTY traderId is a real pick — the rows carrying no seller master.
+  if (opts.traderId !== undefined && opts.traderId !== null) {
+    if (String(opts.traderId) === '') q += ' AND l.trader_id IS NULL';
+    else { q += ' AND l.trader_id = ?'; params.push(parseInt(opts.traderId, 10)); }
+  } else if (opts.party) {
+    q += ' AND UPPER(TRIM(COALESCE(l.name,\'\'))) = UPPER(TRIM(?))'; params.push(opts.party);
+  }
+  if (opts.branch) { q += ' AND UPPER(TRIM(COALESCE(l.branch,\'\'))) = UPPER(TRIM(?))'; params.push(opts.branch); }
+  q += ' ORDER BY a.ano, l.branch, l.lot_no';
+  const rows = db.all(q, params);
+  return rows.map(r => ({
+    ...r,
+    date: _ddmmyyyy(r.date),
+    // created_at is a local datetime string ("2026-10-11 09:14:02") — the
+    // register shows the date half only.
+    received: _ddmmyyyy(String(r.received || '').split(' ')[0]),
+  }));
+}
+
+/**
  * Sales Register (invoice-wise)
  * One row PER INVOICE: STATE, TNO, DATE, SALE, INVO, TRADERNAME, BIDDER,
  * BAG, QTY, AMOUNT, LORRY, GUNNY, IGST, CGST, SGST, INS, INVAMT.
@@ -2673,6 +2726,7 @@ module.exports = {
   getPurchaseJournal,
   getPurchaseRegister,
   getSalesRegister,
+  getGodownRegister,
   getPoolerRegister,
   getSellerRegister,
   getMerchantRegister,

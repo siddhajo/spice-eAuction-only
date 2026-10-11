@@ -411,6 +411,16 @@ async function initDb() {
     -- the lot is a held/reserved entry: shown in a distinct colour, kept out
     -- of booked/invoice totals, and blocking that lot_no for other sellers.
     reserved INTEGER DEFAULT 0,
+    -- GODOWN-ONLY entry flag (also added via ALTER for older DBs in the
+    -- migrations block below). When 1 the row is not an auction booking at
+    -- all: the seller handed the goods over for STORAGE under the godown
+    -- utility. Such a row carries real bags/weight and a seller, numbers
+    -- itself out of its own G-series (godown_lot_prefix) rather than the
+    -- trade's allocation, and is excluded from every money and statutory
+    -- reader exactly the way the reserved flag is — pricing, invoices,
+    -- commission bills, payments, the Spices Board exports. The Godown
+    -- Register (Reports -> Registers) is the one place it is counted.
+    godown INTEGER DEFAULT 0,
     -- Record-lock columns (also added via ALTER for older DBs in the
     -- migrations block below). See POST /api/lots/lock in server.js for
     -- semantics. Defined here so fresh DBs get the columns + the
@@ -1134,6 +1144,10 @@ async function initDb() {
     // booked/invoice totals, and — because lot_no is unique per auction —
     // unavailable to other sellers. Cleared (→0) when converted to a booking.
     'ALTER TABLE lots ADD COLUMN reserved INTEGER DEFAULT 0',
+    // Godown-only entry (storage, not an auction booking). See the lots
+    // schema above for semantics. Added for older DBs so toggling
+    // flag_godown on later finds the column already there.
+    'ALTER TABLE lots ADD COLUMN godown INTEGER DEFAULT 0',
     // ASP invoice traceability — when a lot is first invoiced as an ASP
     // sale (state=Kerala), `lots.invo` gets the ASP invoice number AND a
     // copy is preserved here. Then when the same lot is invoiced as an

@@ -52,7 +52,9 @@ const NAMES = [
   '_waBlockKind', '_waFriendlyError', '_waRecipientsNeeded', '_waPreflight',
   '_waRefFields', '_waPartyRef', '_waLogUnsent',
   '_waRowKey', '_waMarkLoad', '_waMarkKind', '_waPaintMarks', '_waSelectUnsent',
-  '_waCaptionLoad', '_waRowState', '_waIndexLoad', '_waUnsentAsk', '_waUnsentAnswer',
+  '_waCaptionLoad', '_waRowState', '_waIndexLoad', '_waUnsentOpen', '_waUnsentAnswer',
+  '_waUnsentResult', '_waUnsentSend', '_waEnsureUnsentModal', '_waUnsentShow', '_waTile',
+  '_waPhoneProblem', '_waRowHint', '_waDeadNumbers', '_waDeadReason',
 ];
 
 // The negative-probe TTL is a module-level const, not part of any function —
@@ -65,14 +67,16 @@ function extractConst(name) {
   assert.ok(m, `could not find const/let ${name} in public/index.html`);
   return m[0].replace(/^const /, 'let ');
 }
-// Multi-line `const NAME = {` … `};` block (the status-chip table).
+// Multi-line `const NAME = {` … `};` block (the status-chip table), or the
+// `[` … `];` array form (the per-message hint table).
 function extractObject(name) {
-  const re = new RegExp(`^const ${name} = \\{`, 'm');
+  const re = new RegExp(`^const ${name} = ([\\{\\[])`, 'm');
   const m = re.exec(HTML);
   assert.ok(m, `could not find const ${name} in public/index.html`);
-  const end = HTML.indexOf('\n};\n', m.index);
+  const close = m[1] === '{' ? '\n};\n' : '\n];\n';
+  const end = HTML.indexOf(close, m.index);
   assert.ok(end > m.index, `could not find the end of ${name}`);
-  return HTML.slice(m.index, end + 4);
+  return HTML.slice(m.index, end + close.length);
 }
 
 // Test-controlled state the extracted code reads.
@@ -97,6 +101,7 @@ const state = {
   gateAnswer: 'go',   // what the operator picks at the pre-flight prompt
   gateAsked: 0,
   sendBodies: [],     // the raw request body of every send, for ref assertions
+  deadRows: [],       // what GET /problem-numbers answers; null = unreadable
   logRows: [],        // what GET /messages answers; null = the log is unreadable
   unsent: [],         // every row reported to /api/whatsapp/log-unsent
   unsentHttpOk: true,
@@ -126,6 +131,10 @@ const sandbox = {
   },
   // The page's JSON helper, which the send-log reader uses.
   j: async (url) => {
+    if (String(url).includes('/api/whatsapp/problem-numbers')) {
+      if (state.deadRows === null) throw new Error('history unreadable');
+      return { days: 120, minFails: 2, rows: state.deadRows };
+    }
     if (!String(url).includes('/api/whatsapp/messages')) throw new Error('unexpected j() ' + url);
     if (state.logRows === null) throw new Error('log unreadable');
     const q = /[?&]q=([^&]*)/.exec(String(url));
@@ -186,7 +195,12 @@ vm.runInContext(
   extractObject('WA_LISTS') + '\n' +
   extractObject('_WA_CAPTION_RE') + '\n' +
   extractObject('_WA_LABEL_OF') + '\n' +
+  extractObject('_WA_ROW_HINTS') + '\n' +
   extractConst('_waUnsentApply') + '\n' +
+  extractConst('_waUnsentSendFn') + '\n' +
+  extractConst('_waNum') + '\n' +
+  extractConst('WA_DEAD_MIN_FAILS') + '\n' +
+  extractConst('WA_DEAD_DAYS') + '\n' +
   extractObject('_WA_MARK_DOT') + '\n' +
   extractConst('WA_MARK_LOOKBACK') + '\n' +
   extractConst('WA_MARK_TTL_MS') + '\n' +
@@ -247,7 +261,7 @@ function reset(over = {}) {
   state.sendSeq = 0; state.trackIds = false; state.pollCount = 0; state.pollStatus = null;
   state.sends = []; state.usage = null; state.gateAnswer = 'go'; state.gateAsked = 0;
   state.unsent = []; state.unsentHttpOk = true; state.sendBodies = [];
-  state.logRows = [];
+  state.logRows = []; state.deadRows = [];
   vm.runInContext('for (const k in _waMarkCache) delete _waMarkCache[k];', sandbox);
   Object.assign(state, over);
   // Clear the availability cache between cases.
@@ -509,7 +523,15 @@ async function test(name, fn) {
     const out = sandbox._waFriendlyError('Spam Rate limit hit');
     assert.ok(/24-hour/.test(out), 'the operator needs the plain-English reading: ' + out);
     assert.ok(/Spam Rate limit hit/.test(out), 'the raw text must survive for support threads: ' + out);
-    assert.strictEqual(sandbox._waFriendlyError('Message undeliverable'), 'Message undeliverable');
+    // A per-message failure is not dressed up as a run-ending stop — but it
+    // does now carry a reading of its own (see the undeliverable cases below).
+    const row = sandbox._waFriendlyError('Message undeliverable');
+    assert.ok(row.startsWith('Message undeliverable'), 'Meta still speaks first: ' + row);
+    assert.ok(!/24-hour ceiling/.test(row), 'and it must not read as the account being stopped: ' + row);
+    // Anything this app has no reading for is passed through untouched rather
+    // than padded with a guess.
+    assert.strictEqual(sandbox._waFriendlyError('Something Meta has not said before'),
+      'Something Meta has not said before');
   });
 
   await test('bulk: a spam-rate-limit stops the run — untried rows are not fired at the wall', async () => {
@@ -874,6 +896,8 @@ async function test(name, fn) {
   // The button asks before touching rows it has no record for. `answer` is
   // what the operator picks: false = only the known failures, true = those
   // plus the no-record rows, null = cancel.
+  // The question is only put when some row has no record; the result panel is
+  // always shown. `asked()` tests the first, `shown` captures both.
   const asked = () => vm.runInContext('typeof _waUnsentApply === "function"', sandbox);
   async function pick(answer) {
     if (!asked()) return false;                 // it did not need to ask
@@ -886,16 +910,17 @@ async function test(name, fn) {
     const f = fakeList([{ id: 1 }, { id: 2 }, { id: 3 }]);   // 3 predates refs entirely
     await sandbox._waSelectUnsent('inv');
     assert.ok(asked(), 'a row it knows nothing about must be ASKED about, never ticked silently');
-    await pick(false);                                       // "only the ones that failed"
-    assert.strictEqual(f.cbs[0].checked, false, 'a delivered invoice must not be resent');
-    assert.strictEqual(f.cbs[1].checked, true,  'the failed one is the point of the button');
-    assert.strictEqual(f.cbs[2].checked, false, 'NO RECORD IS NOT A RECORD OF FAILURE');
-    // The one row it cannot speak for is put in front of the operator as a
-    // number with a caveat, not folded silently into either answer.
+    // Read the QUESTION before answering it — the answer repaints the same
+    // panel with the outcome. The one row it cannot speak for is put in front
+    // of the operator as a number with a caveat, not folded into either answer.
     assert.ok(/No record/.test(f.shown['wa-unsent-nums'] || ''), f.shown['wa-unsent-nums']);
     assert.ok(/does not mean/i.test(f.shown['wa-unsent-warn'] || ''), f.shown['wa-unsent-warn']);
     assert.ok(/Tick all 2/.test(f.shown['wa-unsent-all'] || ''),
       'the other way out has to say how many it would tick: ' + f.shown['wa-unsent-all']);
+    await pick(false);                                       // "only the ones that failed"
+    assert.strictEqual(f.cbs[0].checked, false, 'a delivered invoice must not be resent');
+    assert.strictEqual(f.cbs[1].checked, true,  'the failed one is the point of the button');
+    assert.strictEqual(f.cbs[2].checked, false, 'NO RECORD IS NOT A RECORD OF FAILURE');
     f.restore();
   });
 
@@ -908,10 +933,14 @@ async function test(name, fn) {
     f.restore();
     assert.deepStrictEqual(f.cbs.map(c => c.checked), [true, true, true, false, false, false],
       JSON.stringify(f.cbs.map(c => c.checked)));
-    const t = state.toasts.join('|');
-    assert.ok(/3 ticked/.test(t), t);
-    assert.ok(/1 failed/.test(t) && /2 never tried/.test(t),
-      'failed and never-tried are different problems and are counted apart: ' + t);
+    // The outcome is a panel that stays up, not a toast that fades — and it
+    // keeps the two kinds of problem apart.
+    assert.ok(/3 invoices ticked/.test(f.shown['wa-unsent-title'] || ''), f.shown['wa-unsent-title']);
+    const sub = f.shown['wa-unsent-sub'] || '';
+    assert.ok(/1 WhatsApp refused/.test(sub) && /2 never tried/.test(sub),
+      'failed and never-tried are different problems and are counted apart: ' + sub);
+    assert.ok(/Send 3 on WhatsApp/.test(f.shown['wa-unsent-send'] || ''),
+      'and the way to act on it is right there: ' + f.shown['wa-unsent-send']);
   });
 
   await test('marks: newest row wins — a retry that worked clears the row', async () => {
@@ -963,8 +992,9 @@ async function test(name, fn) {
     const f = fakeList([{ id: 1 }, { id: 2 }]);
     await sandbox._waSelectUnsent('inv');
     assert.ok(!asked(), 'nothing is unknown here, so there is nothing to ask');
+    assert.ok(/Nothing to resend/.test(f.shown['wa-unsent-title'] || ''), f.shown['wa-unsent-title']);
+    assert.ok(/already gone out/.test(f.shown['wa-unsent-sub'] || ''), f.shown['wa-unsent-sub']);
     f.restore();
-    assert.ok(/Nothing ticked/.test(state.toasts.join('|')), state.toasts.join('|'));
   });
 
   await test('marks: the status reader groups every status it can meet', async () => {
@@ -990,6 +1020,50 @@ async function test(name, fn) {
     sandbox.document.getElementById = realGet;
     assert.strictEqual(key, sandbox._waPartyRef('payment', 7, { traderId: 91, name: 'K RAJU' }).id,
       'the screen and the sender must agree: ' + key);
+  });
+
+  await test('result: the outcome STAYS up and carries the way to act on it', async () => {
+    // It used to be a three-second toast. By the time an operator had looked
+    // down at the list it was gone, and the only evidence anything had
+    // happened was some ticks several screens away.
+    state.logRows = [logRow(1, 'failed'), logRow(2, 'not_attempted')];
+    const f = fakeList([{ id: 1 }, { id: 2 }]);
+    await sandbox._waSelectUnsent('inv');
+    assert.ok(!asked(), 'nothing ambiguous — it must not ask, just report');
+    assert.ok(/2 invoices ticked and ready to send/.test(f.shown['wa-unsent-title'] || ''),
+      f.shown['wa-unsent-title']);
+    assert.ok(/press the green button/i.test(f.shown['wa-unsent-sub'] || ''),
+      'it has to say what happens next: ' + f.shown['wa-unsent-sub']);
+    assert.ok(/📱 Send 2 on WhatsApp/.test(f.shown['wa-unsent-send'] || ''), f.shown['wa-unsent-send']);
+    assert.strictEqual(f.shown['wa-unsent-cancel'], 'Not now',
+      'and closing it is a deferral, not a cancel — the ticks are kept');
+    f.restore();
+  });
+
+  await test('result: the send button hands off to the screen’s own sender', async () => {
+    // One send path, not two: the panel presses the same function the green
+    // toolbar button does.
+    state.logRows = [logRow(1, 'failed')];
+    const f = fakeList([{ id: 1 }]);
+    let called = 0;
+    sandbox.whatsappSelectedInvoices = () => { called++; };
+    await sandbox._waSelectUnsent('inv');
+    await sandbox._waUnsentSend();
+    delete sandbox.whatsappSelectedInvoices;
+    f.restore();
+    assert.strictEqual(called, 1, 'the panel must not grow a second way to send');
+  });
+
+  await test('result: there is nothing to press when nothing was ticked', async () => {
+    state.logRows = [logRow(1, 'read')];
+    const f = fakeList([{ id: 1 }]);
+    let called = 0;
+    sandbox.whatsappSelectedInvoices = () => { called++; };
+    await sandbox._waSelectUnsent('inv');
+    await sandbox._waUnsentSend();
+    delete sandbox.whatsappSelectedInvoices;
+    f.restore();
+    assert.strictEqual(called, 0, 'an empty selection must never reach the sender');
   });
 
   // ── Reading the history that has no ref ─────────────────────
@@ -1062,7 +1136,8 @@ async function test(name, fn) {
     f.restore();
     assert.strictEqual(f.cbs[0].checked, false, 'what is known to have gone out is still never ticked');
     assert.strictEqual(f.cbs[1].checked, true);
-    assert.ok(/1 with no record/.test(state.toasts.join('|')), state.toasts.join('|'));
+    assert.ok(/1 with no record/.test(f.shown['wa-unsent-sub'] || ''),
+      'the result owns up to the guess it was told to make: ' + f.shown['wa-unsent-sub']);
   });
 
   await test('history: cancelling the prompt changes nothing', async () => {
@@ -1074,6 +1149,169 @@ async function test(name, fn) {
     f.restore();
     assert.deepStrictEqual(f.cbs.map(c => c.checked), [false, true],
       'Cancel must leave the selection exactly as the operator had it');
+  });
+
+
+  // ── Numbers already known not to be on WhatsApp ─────────────
+  // Meta offers no way to ASK whether a number is on WhatsApp — the
+  // on-premises /contacts check was removed and the Cloud API never replaced
+  // it. The only early warning available is this account's own history.
+
+  const deadRow = (phone, over = {}) => Object.assign(
+    { phone, fails: 3, lastAt: '2026-10-05 10:00', lastError: 'Message undeliverable', owners: [] }, over);
+
+  await test('known-bad: a number that has never worked is not sent to again', async () => {
+    state.deadRows = [deadRow('919000000111')];
+    await sandbox._runWaQueue([
+      { name: 'LIVE', phone: '9000000222', message: 'm', params: [] },
+      { name: 'DEAD', phone: '9000000111', message: 'm', params: [] },
+    ]);
+    assert.strictEqual(state.sends.length, 1,
+      'the known-bad row must not spend a send: ' + state.sends.length);
+    const dead = state.lastRows.find(r => r.name === 'DEAD');
+    assert.strictEqual(dead.status, 'failed');
+    assert.ok(/never worked on WhatsApp/.test(dead.reason), dead.reason);
+    assert.ok(/3 refusals/.test(dead.reason) && /2026-10-05/.test(dead.reason),
+      'the row has to carry the evidence, not just the verdict: ' + dead.reason);
+    assert.ok(/WhatsApp Web/.test(dead.reason),
+      'and a way through for the operator who knows better: ' + dead.reason);
+  });
+
+  await test('known-bad: the master is matched however the number is written', async () => {
+    // The history holds 91 + 10; a row may carry the bare 10, or spaces.
+    state.deadRows = [deadRow('919000000111')];
+    await sandbox._runWaQueue([
+      { name: 'A', phone: '+91 90000 00111', message: 'm', params: [] },
+      { name: 'B', phone: '9000000111',      message: 'm', params: [] },
+    ]);
+    assert.strictEqual(state.sends.length, 0, 'both spellings are the same dead number');
+  });
+
+  await test('known-bad: it is said UP FRONT, before the first send', async () => {
+    state.deadRows = [deadRow('919000000111')];
+    await sandbox._runWaQueue([
+      { name: 'DEAD', phone: '9000000111', message: 'm', params: [] },
+      { name: 'LIVE', phone: '9000000222', message: 'm', params: [] },
+    ]);
+    assert.ok(/1 of these 2 numbers have never worked/.test(state.statusLines.join('|')),
+      'the operator should not have to watch for it row by row: ' + state.statusLines.join('|'));
+  });
+
+  await test('known-bad: counted apart from a refusal that happened today', async () => {
+    // "2 failed" would bury the difference between Meta refusing a message
+    // now and this app declining to try a number it already knows about.
+    state.deadRows = [deadRow('919000000111')];
+    state.sendResult = { status: 502, body: { error: 'Message undeliverable' } };
+    await sandbox._runWaQueue([
+      { name: 'DEAD', phone: '9000000111', message: 'm', params: [] },
+      { name: 'LIVE', phone: '9000000222', message: 'm', params: [] },
+    ]);
+    const line = state.statusLines.join('|');
+    assert.ok(/1 not on WhatsApp/.test(line), line);
+    assert.ok(/1 failed/.test(line), line);
+  });
+
+  await test('known-bad: one refusal is not enough to condemn a number', async () => {
+    // The threshold lives in the REQUEST, so the rule is visible at the call
+    // site rather than buried in a server default.
+    let asked = '';
+    const origJ = sandbox.j;
+    sandbox.j = async (url) => { if (/problem-numbers/.test(String(url))) asked = String(url); return origJ(url); };
+    await sandbox._waDeadNumbers();
+    sandbox.j = origJ;
+    assert.ok(/minFails=2/.test(asked), 'a single bad moment must not cut a seller off: ' + asked);
+    assert.ok(/days=120/.test(asked),
+      'and a number that goes quiet for months gets another chance: ' + asked);
+  });
+
+  await test('known-bad: unreadable history never stops the run', async () => {
+    // No history is not a clean bill of health — but it is not a reason to
+    // refuse to send either. Send, and let Meta answer as it always did.
+    state.deadRows = null;
+    await sandbox._runWaQueue([{ name: 'A', phone: '9000000111', message: 'm', params: [] }]);
+    assert.strictEqual(state.sends.length, 1, 'the run goes ahead on no information');
+  });
+
+  // ── Numbers that can never be delivered to ──────────────────
+  // "Message undeliverable" (131026) is this account's most common failure by
+  // a wide margin, and some of it is just bad data: a number with eleven
+  // digits, or one digit, cannot reach anyone. Meta is a slow and expensive
+  // way to find that out — the send is spent and the refusal is one more mark
+  // against the number's standing.
+
+  await test('bad numbers: the shapes that cannot be dialled are named', async () => {
+    const p = sandbox._waPhoneProblem;
+    assert.ok(/no whatsapp number/i.test(p('')), p(''));
+    assert.ok(/1 digit\b/.test(p('0')), p('0'));
+    assert.ok(/9 digits/.test(p('944680492')), p('944680492'));
+    // The three real ones out of the master.
+    ['88834855333', '99446804929', '85471276804'].forEach(n =>
+      assert.ok(/11 digits/.test(p(n)), n + ' → ' + p(n)));
+    assert.ok(/more than 15/.test(p('9'.repeat(16))), p('9'.repeat(16)));
+  });
+
+  await test('bad numbers: a good number is never refused', async () => {
+    const p = sandbox._waPhoneProblem;
+    ['9074485570', '919442850878', '+91 94468 04929', '094468-04929'.replace('0', '')]
+      .forEach(n => assert.strictEqual(p(n), '', n + ' → ' + p(n)));
+    // Narrow on purpose: a country code this business has not used before is
+    // Meta's call, not ours. A US number is also 11 digits — and begins with 1.
+    assert.strictEqual(p('14155551234'), '', 'US, 11 digits, must pass');
+    assert.strictEqual(p('447911123456'), '', 'UK must pass');
+  });
+
+  await test('bad numbers: the queue spends no send on one', async () => {
+    await sandbox._runWaQueue([
+      { name: 'GOOD', phone: '9074485570',  message: 'm', params: [], ref: { type: 'bill', id: 1 } },
+      { name: 'BAD',  phone: '99446804929', message: 'm', params: [], ref: { type: 'bill', id: 2 } },
+    ]);
+    assert.strictEqual(state.sends.length, 1,
+      'the 11-digit row must never reach Meta: ' + state.sends.length);
+    const failed = state.lastRows.filter(r => r.status === 'failed');
+    assert.strictEqual(failed.length, 1);
+    assert.ok(/11 digits/.test(failed[0].reason),
+      'and the row must say which master to go and fix: ' + failed[0].reason);
+  });
+
+  await test('bad numbers: it is recorded as not_sent, so the resend flow finds it', async () => {
+    await sandbox._runWaQueue([
+      { name: 'BAD', phone: '0', message: 'm', params: [], ref: { type: 'bill', id: 9 } },
+    ]);
+    assert.strictEqual(state.unsent.length, 1, JSON.stringify(state.unsent));
+    assert.strictEqual(state.unsent[0].status, 'not_sent');
+    assert.strictEqual(state.unsent[0].ref_id, '9');
+    assert.ok(/cannot be dialled/.test(state.unsent[0].reason), state.unsent[0].reason);
+  });
+
+  await test('bad numbers: a bad number is NOT an account-level stop', async () => {
+    // Three rows, the middle one unusable. Skipping it must not end the run
+    // the way a spam-rate refusal does.
+    await sandbox._runWaQueue([
+      { name: 'A', phone: '9074485570',  message: 'm', params: [] },
+      { name: 'B', phone: '99446804929', message: 'm', params: [] },
+      { name: 'C', phone: '9074485571',  message: 'm', params: [] },
+    ]);
+    assert.strictEqual(state.sends.length, 2, 'the rows either side must still go');
+    assert.strictEqual(state.lastRows.filter(r => r.status === 'skipped').length, 0,
+      'nothing may be marked "not attempted" — the run was never stopped');
+  });
+
+  await test("undeliverable: Meta's words are kept, and told what they mean", async () => {
+    const out = sandbox._waFriendlyError('Message undeliverable');
+    assert.ok(/Message undeliverable/.test(out), 'the raw text survives for support: ' + out);
+    assert.ok(/not a WhatsApp account|cannot receive/i.test(out),
+      'and it says what to go and check: ' + out);
+    // It is a per-message failure, so it must NOT read as a run-ending stop.
+    assert.strictEqual(sandbox._waBlockKind('Message undeliverable'), null);
+  });
+
+  await test('undeliverable: the failed ROW carries the explanation too', async () => {
+    state.sendResult = { status: 502, body: { error: 'Message undeliverable' } };
+    await sandbox._runWaQueue([{ name: 'A', phone: '9074485570', message: 'm', params: [] }]);
+    const failed = state.lastRows.filter(r => r.status === 'failed');
+    assert.strictEqual(failed.length, 1);
+    assert.ok(/Message undeliverable/.test(failed[0].reason) && /WhatsApp account|cannot receive/i.test(failed[0].reason),
+      'the ledger is where the operator actually reads it: ' + failed[0].reason);
   });
 
   console.log(failures ? `\n${failures} failing` : '\nall passing');

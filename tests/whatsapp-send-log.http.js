@@ -169,6 +169,115 @@ const done = c => {
   check('POST /log-unsent with no rows is a no-op', empty.status === 200 && empty.d.written === 0,
     `${empty.status} ${JSON.stringify(empty.d)}`);
 
+  // [G] Numbers that can never be delivered to are refused BEFORE the send.
+  //     "Message undeliverable" is this account's commonest failure, and part
+  //     of it is simply bad data in the master — Meta is a slow and expensive
+  //     way to discover an 11-digit number, since the attempt is spent and the
+  //     refusal counts against the number's standing.
+  // Bogus creds so the route gets PAST the "not configured" short-circuit and
+  // actually reaches the number check. A template name is needed for the same
+  // reason — both guards sit in front of it.
+  await api('PUT', '/api/whatsapp/config',
+    { token: 'bogus-token-for-test', phoneId: '000000000000000', tplText: 'probe_tpl', tplTextLang: 'en' });
+  const badNums = [
+    ['99446804929', '11 digits'],      // a real one out of the trader master
+    ['0',           '1 digit'],
+    ['944680492',   '9 digits'],
+  ];
+  for (const [num, why] of badNums) {
+    const r = await api('POST', '/api/whatsapp/send-template-text', { phone: num, params: ['a', 'b', 'c'] });
+    // 400 (refused here) rather than 502 (Meta refused it) — and never a 501,
+    // which would send the client off to WhatsApp Web instead.
+    check(`send-template-text refuses a ${why} number`,
+      r.status === 400 && /digit/i.test((r.d && r.d.error) || ''),
+      `${r.status} ${JSON.stringify(r.d)}`);
+  }
+  const okShape = await api('POST', '/api/whatsapp/send-template-text', { phone: '9074485570', params: ['a', 'b', 'c'] });
+  check('a well-formed number gets past the check and on to Meta',
+    okShape.status !== 400, `${okShape.status} ${JSON.stringify(okShape.d)}`);
+  // Narrow on purpose: an unfamiliar country code is Meta's call, not ours.
+  const foreign = await api('POST', '/api/whatsapp/send-template-text', { phone: '14155551234', params: ['a', 'b', 'c'] });
+  check('a foreign number is not second-guessed',
+    foreign.status !== 400, `${foreign.status} ${JSON.stringify(foreign.d)}`);
+  // A refused number must not land in the log as a Meta verdict — nothing was
+  // sent, so nothing was refused by anyone but us.
+  const afterBad = await api('GET', '/api/whatsapp/messages?status=failed');
+  check('refusing a number writes no "failed" row',
+    afterBad.status === 200 && !(afterBad.d || []).some(r => String(r.phone || '').includes('9944680492')),
+    JSON.stringify((afterBad.d || []).map(r => r.phone)));
+
+  // [H] "Which of my sellers do I need a better number for?"
+  //     Undeliverable on a well-formed number is not fixable in code — there
+  //     is no WhatsApp account on it. The only useful answer is a NAME, and
+  //     only for numbers that have never once worked: a single failure among
+  //     successes is a blip, not a dead number.
+  const seller = await api('POST', '/api/traders', { name: 'DEAD NUMBER SELLER', tel: '9000000111' });
+  check('fixture seller created', seller.status < 300, `${seller.status} ${JSON.stringify(seller.d)}`);
+  await api('POST', '/api/whatsapp/log-unsent', { rows: [] });   // no-op, keeps the log honest
+
+  // Three refusals on one number, never a success → a dead number. Bogus
+  // creds make the send route log a real `failed` row with Meta's reason.
+  for (let i = 0; i < 3; i++) {
+    await api('POST', '/api/whatsapp/send-template-text', { phone: '9000000111', params: ['a', 'b', 'c'] });
+  }
+  const bad = await api('GET', '/api/whatsapp/problem-numbers');
+  const dead = ((bad.d && bad.d.rows) || []).find(r => String(r.phone).endsWith('9000000111'));
+  check('GET /problem-numbers lists a number that has never worked',
+    bad.status === 200 && !!dead, `${bad.status} ${JSON.stringify(bad.d).slice(0, 300)}`);
+  check('…counting every attempt', dead && dead.fails === 3, JSON.stringify(dead));
+  check('…carrying Meta’s own reason', dead && !!dead.lastError, JSON.stringify(dead));
+  check('…and naming the SELLER, not just the digits',
+    dead && dead.owners.some(o => o.name === 'DEAD NUMBER SELLER' && o.kind === 'seller'),
+    JSON.stringify(dead && dead.owners));
+
+  // The masters hold 10 digits, the log holds 91 + 10 — the join has to meet
+  // in the middle or every row comes back nameless.
+  check('the 10-digit master and the 12-digit log row are matched',
+    dead && String(dead.phone).length === 12, JSON.stringify(dead && dead.phone));
+
+  // A number this app refused ITSELF (eleven digits) belongs here too: same
+  // problem from the operator's chair, same fix. It is logged as not_sent
+  // rather than failed, so the query has to span both.
+  await api('POST', '/api/whatsapp/log-unsent', { rows: [
+    { phone: '9000000222', status: 'not_sent', reason: 'The number on file has 11 digits', ref_type: 'bill', ref_id: '77' },
+  ] });
+  const withOurs = await api('GET', '/api/whatsapp/problem-numbers');
+  const ours = ((withOurs.d && withOurs.d.rows) || []).find(r => String(r.phone).endsWith('9000000222'));
+  check('a number THIS APP refused is listed too, not just Meta’s refusals',
+    !!ours && /11 digits/.test(ours.lastError || ''), JSON.stringify(ours));
+  // A run the breaker stopped says nothing about the number it never reached.
+  await api('POST', '/api/whatsapp/log-unsent', { rows: [
+    { phone: '9000000333', status: 'not_attempted', reason: 'Not attempted — Spam Rate limit hit', ref_type: 'bill', ref_id: '78' },
+  ] });
+  const afterStop = await api('GET', '/api/whatsapp/problem-numbers');
+  check('a row a stopped run never reached is NOT called a bad number',
+    !((afterStop.d && afterStop.d.rows) || []).some(r => String(r.phone).endsWith('9000000333')),
+    JSON.stringify((afterStop.d && afterStop.d.rows || []).map(r => r.phone)));
+
+  // The SEND path asks for a stricter threshold than the panel does: it
+  // skips sending, so a single bad moment must not cut a seller off.
+  const strict = await api('GET', '/api/whatsapp/problem-numbers?minFails=2');
+  check('?minFails raises the bar', strict.status === 200 && strict.d.minFails === 2,
+    JSON.stringify(strict.d && strict.d.minFails));
+  check('…and the one-refusal number drops out of the strict list',
+    !((strict.d && strict.d.rows) || []).some(r => String(r.phone).endsWith('9000000222')),
+    JSON.stringify((strict.d && strict.d.rows || []).map(r => [r.phone, r.fails])));
+  check('…while the one refused three times stays',
+    ((strict.d && strict.d.rows) || []).some(r => String(r.phone).endsWith('9000000111')),
+    JSON.stringify((strict.d && strict.d.rows || []).map(r => [r.phone, r.fails])));
+  const loose = await api('GET', '/api/whatsapp/problem-numbers?minFails=0');
+  check('a junk minFails falls back to 1', loose.status === 200 && loose.d.minFails === 1,
+    JSON.stringify(loose.d && loose.d.minFails));
+
+  const windowed = await api('GET', '/api/whatsapp/problem-numbers?days=0');
+  check('a junk ?days falls back to the default', windowed.status === 200 && windowed.d.days === 90,
+    JSON.stringify(windowed.d && windowed.d.days));
+  const capped = await api('GET', '/api/whatsapp/problem-numbers?days=99999');
+  check('?days is capped, not trusted', capped.status === 200 && capped.d.days === 730,
+    JSON.stringify(capped.d && capped.d.days));
+  const anonBad = await api('GET', '/api/whatsapp/problem-numbers', null, true);
+  check('GET /problem-numbers requires auth', anonBad.status === 401, 'got ' + anonBad.status);
+
   console.log(`\n${pass} passed, ${fail} failed\n`);
   done(fail ? 1 : 0);
 })().catch(e => { console.error(e); console.error(srvLog.slice(-2000)); done(1); });

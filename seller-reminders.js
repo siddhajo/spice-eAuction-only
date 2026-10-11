@@ -115,7 +115,7 @@ function bookingHistory(db) {
               COUNT(l.id)                   AS lots_booked,
               COALESCE(SUM(l.qty), 0)       AS kg_booked
          FROM traders t
-         JOIN lots l     ON l.trader_id = t.id AND COALESCE(l.reserved, 0) = 0
+         JOIN lots l     ON l.trader_id = t.id AND COALESCE(l.reserved, 0) = 0 AND COALESCE(l.godown, 0) = 0
          JOIN auctions a ON a.id = l.auction_id
         WHERE a.date IS NOT NULL AND TRIM(a.date) <> ''
         GROUP BY t.id`) || [];
@@ -129,7 +129,7 @@ function neverBooked(db) {
       `SELECT t.id AS trader_id, t.name, t.cr, t.tel, t.whatsapp, t.created_at
          FROM traders t
         WHERE NOT EXISTS (SELECT 1 FROM lots l
-                           WHERE l.trader_id = t.id AND COALESCE(l.reserved, 0) = 0)`) || [];
+                           WHERE l.trader_id = t.id AND COALESCE(l.reserved, 0) = 0 AND COALESCE(l.godown, 0) = 0)`) || [];
   } catch (_) { return []; }
 }
 

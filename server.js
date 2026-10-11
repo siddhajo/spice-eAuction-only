@@ -6124,10 +6124,14 @@ const hasValidGstin = (cr) => !!gstinStateCode(cr);
 //   errors   — block import (duplicate lot numbers, lots with no seller)
 //   warnings — acknowledge to proceed (missing GSTIN / bank / PAN / phone)
 function validateAuctionLots(db, auctionId) {
+  // Godown rows are not validated: this gate exists to clear a trade for
+  // PRICE IMPORT, and stored stock is never priced. Validating it would
+  // report hygiene warnings (no bank, no GSTIN) about a row that is never
+  // going to be paid or invoiced, and would hold up the auction for them.
   const lots = db.all(
     `SELECT id, lot_no, trader_id, bank_id, name, cr, aadhar, pan, tel, branch,
             grade, litre, COALESCE(bags,0) AS bags, COALESCE(qty,0) AS qty
-       FROM lots WHERE auction_id = ?`,
+       FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 0`,
     [auctionId]
   );
   // Trader IDs that actually have a bank account on file — one query,
@@ -6371,7 +6375,7 @@ function _remainingPartiesSql(db, docType, auctionId) {
              WHERE l.auction_id = ?
                AND l.buyer IS NOT NULL AND l.buyer != ''
                AND l.amount > 0
-               AND (l.reserved IS NULL OR l.reserved = 0)
+               AND (l.reserved IS NULL OR l.reserved = 0) AND COALESCE(l.godown,0) = 0
                AND ${notWD}
                AND ${uninvoicedExpr}`,
       params: [auctionId],
@@ -6399,7 +6403,7 @@ function _remainingPartiesSql(db, docType, auctionId) {
                WHERE l.auction_id = ?
                  AND l.amount > 0
                  AND l.name IS NOT NULL AND l.name != ''
-                 AND (l.reserved IS NULL OR l.reserved = 0)
+                 AND (l.reserved IS NULL OR l.reserved = 0) AND COALESCE(l.godown,0) = 0
                  AND ${notWD}
                  AND ${hasValidGstinSql('l.cr')}
                  AND p.id IS NULL`,
@@ -6441,7 +6445,7 @@ function _remainingPartiesSql(db, docType, auctionId) {
                WHERE l.auction_id = ?
                  AND l.amount > 0
                  AND l.name IS NOT NULL AND l.name != ''
-                 AND (l.reserved IS NULL OR l.reserved = 0)
+                 AND (l.reserved IS NULL OR l.reserved = 0) AND COALESCE(l.godown,0) = 0
                  AND ${notWD}
                  AND NOT ${hasValidGstinSql('l.cr')}
                  AND b.id IS NULL`,
@@ -6743,7 +6747,7 @@ app.get('/api/auctions/:id/transaction-plan', requireView, (req, res) => {
           WHERE l.auction_id = ?
             AND l.buyer IS NOT NULL AND l.buyer != ''
             AND l.amount > 0
-            AND (l.reserved IS NULL OR l.reserved = 0)`,
+            AND (l.reserved IS NULL OR l.reserved = 0) AND COALESCE(l.godown,0) = 0`,
         [aid]
       ).map(r => r.sale).filter(Boolean);
       const sales = Array.from(new Set([...salesPresent, ...plan.items.map(i => i.sale)])).sort();
@@ -7075,7 +7079,10 @@ function computeTradeStage(db, aid) {
   const auction = db.get('SELECT id, ano FROM auctions WHERE id = ?', [aid]);
   if (!auction) return null;
 
-  const lotCount = db.get('SELECT COUNT(*) AS c FROM lots WHERE auction_id = ?', [aid]).c;
+  // Godown rows don't advance the trade: they are never priced or invoiced,
+  // so a trade holding only stored stock must not unlock the price tools.
+  const lotCount = db.get(
+    'SELECT COUNT(*) AS c FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 0', [aid]).c;
   const priceCheckedEver = pcGateEverChecked(db, aid);
   // Lots screen (Price Import lives there) is gated behind Validate Lots:
   // it reveals only once the lot-validation gate is clean. When the
@@ -7167,7 +7174,10 @@ function computeTradeKpi(db, aid) {
             -- NULLIF keeps un-set buyers out of the count; without it every
             -- unsold trade reports one buyer (the empty string).
             COUNT(DISTINCT CASE WHEN NOT ${SQL_IS_WD} AND amount > 0 THEN NULLIF(buyer, '') END) AS buyers
-       FROM lots WHERE auction_id = ?`, [aid]
+       -- Godown rows are not part of the auction: counting their weight into
+       -- the trade's arrivals would make this header disagree with Form C /
+       -- Form D, which already exclude them.
+       FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 0`, [aid]
   ) || {};
   const soldWeight = Number(r.sold_weight) || 0;
   const totalValue = Number(r.total_value) || 0;
@@ -7647,7 +7657,12 @@ app.get('/api/auctions', requireViewOrLotEntry, (req, res) => {
     where = 'WHERE CAST(ano AS TEXT) LIKE ? OR crop_type LIKE ? OR state LIKE ?';
     params = [like, like, like];
   }
-  const sel = `SELECT *, (SELECT COUNT(*) FROM lots WHERE auction_id=auctions.id) as lot_count
+  // lot_count is the trade's AUCTION lots — the number the trade selector and
+  // the Auctions screen show. Godown rows are goods in store, not lots in the
+  // sale, and counting them here would disagree with every other count on the
+  // Lots screen, Form C and Form D.
+  const sel = `SELECT *, (SELECT COUNT(*) FROM lots
+                            WHERE auction_id=auctions.id AND COALESCE(godown,0) = 0) as lot_count
                  FROM auctions ${where}
                 ORDER BY date DESC, ano DESC`;
 
@@ -7914,7 +7929,13 @@ app.post('/api/auctions/:id/allocations', requireAuctionWrite, (req, res) => {
   // rebuilds ranges from allocation-stats and does NOT echo the row ids, so
   // an id-based "was this row kept?" test wrongly saw every allocation as
   // removed and rejected any save on a trade that already had lots.
-  const savedLots = db.all('SELECT lot_no, branch FROM lots WHERE auction_id = ?', [auctionId]);
+  // Godown rows are EXCLUDED from the orphan test on purpose. Their numbers
+  // come from the godown series and are deliberately outside every
+  // allocation, so including them here would make this check refuse any
+  // allocation change on a trade that has ever taken goods into store.
+  const savedLots = db.all(
+    'SELECT lot_no, branch FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 0',
+    [auctionId]);
   const orphaned = [];
   for (const sl of savedLots) {
     const slBranch = String(sl.branch || '').trim().toUpperCase();
@@ -8102,7 +8123,7 @@ app.get('/api/auctions/:id/carry-forward-preview', requireViewOrLotEntry, (req, 
   const allocations = db.get('SELECT COUNT(*) AS c FROM lot_allocations WHERE auction_id = ?', [srcId]).c;
   const unsold = db.get(
     `SELECT COUNT(*) AS c FROM lots
-      WHERE auction_id = ? AND UPPER(COALESCE(TRIM(code),'')) IN ('', 'NA') AND COALESCE(reserved,0) = 0`,
+      WHERE auction_id = ? AND UPPER(COALESCE(TRIM(code),'')) IN ('', 'NA') AND COALESCE(reserved,0) = 0 AND COALESCE(godown,0) = 0`,
     [srcId]
   ).c;
   res.json({ source: { id: src.id, ano: src.ano, date: src.date }, allocations, unsold });
@@ -8188,7 +8209,7 @@ app.post('/api/auctions/:id/carry-forward', requireAuctionWrite, (req, res) => {
       : '';
     const unsold = db.all(
       `SELECT * FROM lots
-        WHERE auction_id = ? AND UPPER(COALESCE(TRIM(code),'')) IN ('', 'NA') AND COALESCE(reserved,0) = 0${idClause}
+        WHERE auction_id = ? AND UPPER(COALESCE(TRIM(code),'')) IN ('', 'NA') AND COALESCE(reserved,0) = 0 AND COALESCE(godown,0) = 0${idClause}
         ORDER BY lot_no`,
       lotIds ? [srcId, ...lotIds] : [srcId]
     );
@@ -8243,8 +8264,12 @@ app.get('/api/auctions/:id/allocation-stats', requireViewOrLotEntry, (req, res) 
     'SELECT * FROM lot_allocations WHERE auction_id = ? ORDER BY branch, start_lot',
     [auctionId]
   );
+  // Godown rows are left out: their numbers are outside every allocation by
+  // construction (isLotInRange rejects a different prefix anyway), and the
+  // grid this feeds is a map of the trade's ALLOCATED numbers.
   const lots = db.all(
-    'SELECT lot_no, branch, name, qty, reserved, carried_from_auction_id FROM lots WHERE auction_id = ?',
+    `SELECT lot_no, branch, name, qty, reserved, carried_from_auction_id
+       FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 0`,
     [auctionId]
   );
   // lot_no → { branch, seller, booked, reserved, carried }
@@ -8376,13 +8401,17 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
   const WD   = `(UPPER(COALESCE(code,'')) = 'WD')`;
 
   // Per-depot booked-lot rollup (branch '' → '(unspecified)').
+  // Godown rows are excluded here and in the trade-stat query below: they are
+  // goods in STORE, not arrivals for this auction, and counting their weight
+  // into Crop Weight / Planter WT / Trader WT would make this band disagree
+  // with Form C / Form D, which already leave them out.
   const perDepot = db.all(
     `SELECT COALESCE(NULLIF(TRIM(branch),''), '(unspecified)') AS depot,
             COUNT(*)                                            AS lots,
             COALESCE(SUM(bags),0)                               AS bags,
             COALESCE(SUM(CASE WHEN ${DEALER} THEN 0 ELSE qty END),0) AS planterWt,
             COALESCE(SUM(CASE WHEN ${DEALER} THEN qty ELSE 0 END),0) AS traderWt
-       FROM lots WHERE auction_id = ?
+       FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 0
       GROUP BY COALESCE(NULLIF(TRIM(branch),''), '(unspecified)')`,
     [auctionId]
   );
@@ -8454,7 +8483,7 @@ app.get('/api/auctions/:id(\\d+)/depot-summary', requireViewOrLotEntry, (req, re
             -- with hasDummySellerSql() — ANY of the four columns set — so it
             -- is the same population the Lots tab badges and filters on.
             SUM(CASE WHEN ${DUMMY_UI ? hasDummySellerSql('lots') : '0=1'} THEN 1 ELSE 0 END) AS dummyLots
-       FROM lots WHERE auction_id = ?`,
+       FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 0`,
     [auctionId]
   ) || {};
   const soldQty = Number(st.soldQty) || 0;
@@ -9868,7 +9897,7 @@ app.post('/api/lots/dummy-details/bulk', requireLotWrite, (req, res) => {
 });
 
 app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
-  const { branch, name, buyer, grade, dummy, limit, offset, paginated, summary, search } = req.query;
+  const { branch, name, buyer, grade, dummy, godown, limit, offset, paginated, summary, search } = req.query;
   const db = getDb();
   // Correlated subquery (not LEFT JOIN) to avoid any risk of row duplication
   // if the same buyer code exists multiple times in the buyers table.
@@ -9903,6 +9932,23 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
     q += ` AND TRIM(COALESCE(lots.grade,'')) = ''`;
   } else if (gradeFilter) {
     q += ` AND TRIM(COALESCE(lots.grade,'')) = ?`; p.push(gradeFilter);
+  }
+  // Godown filter (Lots tab #lot-godown-filter): '0' = auction bookings only,
+  // '1' = stored stock only, absent = both. Absent is the DEFAULT on purpose —
+  // every existing caller (Lot Entry's recent panel, the Auction Desk panel,
+  // exports) keeps seeing exactly what it saw before. The Lots table and Price
+  // Entry are the two that ask for '0': a godown row cannot be priced, coded
+  // or invoiced, and counting its weight into the trade's totals would
+  // overstate what was actually auctioned.
+  //
+  // Contributes no bind params, so it can be appended anywhere in `p`'s order.
+  const godownFilter = String(godown || '').trim();
+  let godownSql = '';
+  if (godownFilter === '1' || godownFilter === '0') {
+    godownSql = godownFilter === '1'
+      ? ' AND COALESCE(lots.godown,0) = 1'
+      : ' AND COALESCE(lots.godown,0) = 0';
+    q += godownSql;
   }
   // Dummy-details filter (Lots tab #lot-dummy-filter): '1' = only lots
   // carrying a stand-in seller identity, '0' = only lots without one. The
@@ -9973,7 +10019,9 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
       // above so the reused `p` array stays aligned.
       + (gradeFilter === '__none__' ? ` AND TRIM(COALESCE(lots.grade,'')) = ''`
          : gradeFilter ? ` AND TRIM(COALESCE(lots.grade,'')) = ?` : '')
-      // Same for the dummy-details filter (no params of its own).
+      // Same for the godown + dummy-details filters (neither has params of
+      // its own). The totals row must count the SAME set the list shows.
+      + godownSql
       + dummySql
       // Mirror the free-text/lot/phone clause too — the totals row must count
       // the SAME set the list shows. (It also keeps `p` and the placeholder
@@ -10330,6 +10378,83 @@ function runGrade2Alerts(db, req, auctionId) {
   }
 }
 
+// ══════════════════════════════════════════════════════════════
+// GODOWN UTILITY (flag_godown)
+// ──────────────────────────────────────────────────────────────
+// Some houses rent godown space to the same planters they auction for. A
+// godown entry is a RECEIPT OF GOODS, not a booking: the seller, bags and
+// weight are real, but nothing was put up for sale. Two consequences, and
+// both live here:
+//
+//   1. NUMBERING. A godown row takes its lot_no from its own per-trade
+//      series — <godown_lot_prefix><n>, "G001", "G002" … — deliberately
+//      outside the trade's allocated ranges, so storing goods never burns a
+//      lot number a bidder could have bought. The allocation-range check is
+//      skipped for these rows for the same reason.
+//   2. EXCLUSION. Every money and statutory reader skips godown rows exactly
+//      the way it skips a reserved (held) lot — `COALESCE(godown,0) = 0`
+//      beside the existing reserved filter. Those filters are deliberately
+//      NOT flag-gated: rows recorded while the feature was on must stay out
+//      of pricing, invoices and the Spices Board returns after it goes off.
+//
+// The Godown Register (GET /api/registers/godown) is the one reader that
+// looks FOR them.
+// NOTE: there is deliberately no flag check in this block. flag_godown
+// governs the UI — whether an operator is OFFERED the choice — while the
+// numbering and the exclusion filters work off the stored column alone, so
+// rows recorded while the feature was on keep their identity (and stay out
+// of the auction) after it is switched off.
+//
+// Configured prefix for the godown lot series, upper-cased. Blank/missing
+// falls back to 'G'. A digit-only prefix would collide with the auction's own
+// numbering, so it is rejected back to the default.
+function godownPrefix(cfg) {
+  const raw = String((cfg && cfg.godown_lot_prefix) || '').trim().toUpperCase();
+  if (!raw || /^\d+$/.test(raw)) return 'G';
+  return raw;
+}
+// True when a lot number already belongs to the godown series.
+function isGodownLotNo(lotNo, cfg) {
+  const pfx = godownPrefix(cfg);
+  return new RegExp('^' + pfx.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\d+$')
+    .test(String(lotNo || '').trim().toUpperCase());
+}
+// Next free number in this trade's godown series, zero-padded to 3 (G001 …
+// G999, then G1000). Scans the trade's existing godown numbers rather than
+// counting rows, so a deleted entry's number is not handed out twice while
+// its neighbours still exist.
+function nextGodownLotNo(db, auctionId, cfg) {
+  const pfx = godownPrefix(cfg);
+  const rows = db.all(
+    `SELECT lot_no FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 1`,
+    [auctionId]) || [];
+  // Any lot number in the trade is taken, godown or not — the uniqueness
+  // constraint is per auction, so the candidate has to clear all of them.
+  const taken = new Set(
+    (db.all('SELECT lot_no FROM lots WHERE auction_id = ?', [auctionId]) || [])
+      .map(r => String(r.lot_no || '').trim().toUpperCase()));
+  let max = 0;
+  for (const r of rows) {
+    const m = String(r.lot_no || '').trim().toUpperCase()
+      .match(new RegExp('^' + pfx.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\d+)$'));
+    if (m) { const n = parseInt(m[1], 10); if (Number.isFinite(n) && n > max) max = n; }
+  }
+  for (let n = max + 1; n <= max + 1000; n++) {
+    const cand = pfx + String(n).padStart(3, '0');
+    if (!taken.has(cand)) return cand;
+  }
+  return pfx + String(max + 1);
+}
+
+// Next godown lot number for a trade — what the Lot Entry form shows in its
+// read-only Lot No box once "Godown storage only" is picked.
+app.get('/api/auctions/:id/next-godown-lot', requireViewOrLotEntry, (req, res) => {
+  const db = getDb();
+  const auctionId = parseInt(req.params.id, 10);
+  if (!auctionId) return res.status(400).json({ error: 'auction id is required' });
+  res.json({ next_lot: nextGodownLotNo(db, auctionId, getSettingsFlat(db)) });
+});
+
 app.post('/api/lots', requireLotWrite, (req, res) => {
   const l = req.body;
   // Field-name aliasing for the mobile PWA, which uses gross_weight /
@@ -10340,8 +10465,15 @@ app.post('/api/lots', requireLotWrite, (req, res) => {
   if (l.sample_weight != null && l.sample_wt == null) l.sample_wt = l.sample_weight;
   const db = getDb();
   const auctionId = parseInt(l.auction_id, 10);
-  const lotNoStr  = String(l.lot_no || '').trim();
+  let   lotNoStr  = String(l.lot_no || '').trim();
   const branch    = String(l.branch || '').trim();
+  // Godown-only entry (storage, not a booking) — see the GODOWN UTILITY block
+  // above. Such a row numbers itself out of the godown series, so an empty
+  // lot_no is normal here and is filled in rather than refused.
+  const isGodown = Number(l.godown) ? 1 : 0;
+  if (isGodown && auctionId && !lotNoStr) {
+    lotNoStr = nextGodownLotNo(db, auctionId, getSettingsFlat(db));
+  }
 
   if (!auctionId || !lotNoStr) {
     return res.status(400).json({ error: 'auction_id and lot_no are required' });
@@ -10361,7 +10493,9 @@ app.post('/api/lots', requireLotWrite, (req, res) => {
   // allocations for this branch. Trades created before allocations were
   // configured (or branches without one) skip the check, preserving
   // backward compatibility with existing data.
-  if (branch) {
+  // Godown entries are exempt: they are numbered OUTSIDE the trade's ranges
+  // on purpose, so an allocation check would refuse every one of them.
+  if (branch && !isGodown) {
     const allocs = db.all(
       'SELECT * FROM lot_allocations WHERE auction_id = ? AND branch = ?',
       [auctionId, branch]
@@ -10404,11 +10538,11 @@ app.post('/api/lots', requireLotWrite, (req, res) => {
   }
 
   const info = db.run(
-    `INSERT INTO lots (auction_id,lot_no,crop,grade,crpt,branch,state,trader_id,name,padd,ppla,ppin,pstate,pst_code,cr,pan,tel,aadhar,bags,litre,qty,gross_wt,sample_wt,moisture,reserved_price,user_id,bank_id,immediate_payment,reserved,gunny)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO lots (auction_id,lot_no,crop,grade,crpt,branch,state,trader_id,name,padd,ppla,ppin,pstate,pst_code,cr,pan,tel,aadhar,bags,litre,qty,gross_wt,sample_wt,moisture,reserved_price,user_id,bank_id,immediate_payment,reserved,gunny,godown)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     // `state` is derived from the trade, NOT taken from the request — see
     // lotStateForAuction(). Whatever a client sends is ignored.
-    [auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,lotStateForAuction(db, auctionId),l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',Number(l.reserved_price)||0,l.user_id||'',l.bank_id||null,Number(l.immediate_payment)?1:0,Number(l.reserved)?1:0,Number(l.gunny)||0]);
+    [auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,lotStateForAuction(db, auctionId),l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',Number(l.reserved_price)||0,l.user_id||'',l.bank_id||null,Number(l.immediate_payment)?1:0,Number(l.reserved)?1:0,Number(l.gunny)||0,isGodown]);
   pcClearGate(db, auctionId);
   lvClearGate(db, auctionId);   // new lot → trade must be re-validated before price import
   logLotActivity(db, req, 'create', { id: info.lastInsertRowid, auction_id: auctionId, lot_no: lotNoStr, branch, name: l.name, qty: l.qty });
@@ -10439,6 +10573,8 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
   // Same 0/1 coercion for the reservation flag — the dynamic UPDATE binds it
   // verbatim and better-sqlite3 rejects booleans.
   if (l.reserved != null) l.reserved = Number(l.reserved) ? 1 : 0;
+  // Same 0/1 coercion for the godown-entry flag.
+  if (l.godown != null) l.godown = Number(l.godown) ? 1 : 0;
   const db = getDb();
   const lotId = parseInt(req.params.id, 10);
   // The trade state is never client-supplied — see lotStateForAuction(). A
@@ -10460,9 +10596,37 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
   if (current && current.locked_at && lockFeatureOn(db) && !isAdmin(req)) {
     return res.status(423).json({ error: 'This lot is locked — only an admin can edit it.' });
   }
+  // ── Switching a row between a booking and a godown entry ────────
+  // The two live in different number spaces, so a mode flip is also a
+  // renumbering:
+  //   booking -> godown : the auction number is RELEASED and the row takes
+  //                       the next number in the godown series, unless the
+  //                       caller supplied a godown number itself.
+  //   godown -> booking : the row needs a real auction lot number. There is
+  //                       nothing sensible to guess (the free number depends
+  //                       on the branch allocation), so it is asked for.
+  if (current && l.godown != null && l.godown !== (Number(current.godown) ? 1 : 0)) {
+    const _gcfg = getSettingsFlat(db);
+    const sentLotNo = (l.lot_no != null) ? String(l.lot_no).trim() : '';
+    if (l.godown === 1) {
+      if (!sentLotNo || !isGodownLotNo(sentLotNo, _gcfg)) {
+        l.lot_no = nextGodownLotNo(db, current.auction_id, _gcfg);
+      }
+    } else {
+      const keeping = sentLotNo || current.lot_no;
+      if (isGodownLotNo(keeping, _gcfg)) {
+        return res.status(400).json({
+          error: 'Enter an auction lot number to turn this godown entry into a booking — ' +
+                 `"${keeping}" belongs to the godown series.` });
+      }
+    }
+  }
   if (current) {
     const newLotNo = (l.lot_no != null) ? String(l.lot_no).trim() : current.lot_no;
     const newBranch = (l.branch != null) ? String(l.branch).trim() : current.branch;
+    // A godown row is numbered outside the trade's ranges by design — the
+    // allocation check below would refuse every edit to one.
+    const stayingGodown = (l.godown != null) ? l.godown === 1 : !!Number(current.godown);
     if (newLotNo !== current.lot_no) {
       const dup = db.get(
         'SELECT id FROM lots WHERE auction_id = ? AND lot_no = ? AND id != ?',
@@ -10470,7 +10634,7 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
       );
       if (dup) return res.status(409).json({ error: `Lot #${newLotNo} already exists in this auction` });
     }
-    if (newBranch && (newLotNo !== current.lot_no || newBranch !== current.branch)) {
+    if (newBranch && !stayingGodown && (newLotNo !== current.lot_no || newBranch !== current.branch)) {
       const allocs = db.all(
         'SELECT * FROM lot_allocations WHERE auction_id = ? AND branch = ?',
         [current.auction_id, newBranch]
@@ -11269,8 +11433,12 @@ app.post('/api/lots/calculate-all', requireLotWrite, (req, res) => {
 
 // ── Data validation (PRICHECK.PRG) ───────────────────────────
 app.get('/api/lots/validate/:auctionId', requireViewOrLotEntry, (req, res) => {
+  // Godown rows are skipped: "no price, no buyer, no code" is their normal
+  // state, not a data problem, and listing them here would report every
+  // stored lot as an issue to be fixed.
   const rows = getDb().all(
-    `SELECT * FROM lots WHERE auction_id = ? AND (price = 0 OR amount = 0 OR buyer = '' OR code = '' OR ROUND(qty*price,2) <> ROUND(amount,2))`,
+    `SELECT * FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 0
+       AND (price = 0 OR amount = 0 OR buyer = '' OR code = '' OR ROUND(qty*price,2) <> ROUND(amount,2))`,
     [req.params.auctionId]);
   res.json(rows);
 });
@@ -11854,7 +12022,7 @@ app.get('/api/invoices/eligible-buyers/:auctionId', requireView, (req, res) => {
       WHERE l.auction_id = ?
         AND l.buyer IS NOT NULL AND l.buyer != ''
         AND l.amount > 0
-        AND (l.reserved IS NULL OR l.reserved = 0)
+        AND (l.reserved IS NULL OR l.reserved = 0) AND COALESCE(l.godown,0) = 0
         AND ${eligibleExpr}
       ORDER BY l.buyer, g, l.lot_no`,
     [req.params.auctionId]
@@ -12025,7 +12193,7 @@ function invoiceGenerationPlan(db, cfg, auctionId, opts) {
               COALESCE(l.proforma_invo,'') AS pf
          FROM lots l
         WHERE l.auction_id = ? AND l.buyer = ? AND l.amount > 0
-          AND (l.reserved IS NULL OR l.reserved = 0)
+          AND (l.reserved IS NULL OR l.reserved = 0) AND COALESCE(l.godown,0) = 0
           AND (l.sale IS NULL OR l.sale = '' OR l.sale = ?)
           AND ${uninvoicedExpr}
         ORDER BY l.lot_no`,
@@ -13286,7 +13454,7 @@ app.get('/api/purchases/eligible-lots/:auctionId', requireView, (req, res) => {
        FROM lots l
       WHERE l.auction_id = ? AND l.name IS NOT NULL AND l.name != ''
         AND l.amount > 0
-        AND (l.reserved IS NULL OR l.reserved = 0)
+        AND (l.reserved IS NULL OR l.reserved = 0) AND COALESCE(l.godown,0) = 0
         -- Withdrawn / N-A lots are not purchaseable. The generation GATE
         -- already excludes them, so this list must too — otherwise the
         -- gate reports "done" while the picker still offers the lot.
@@ -13334,7 +13502,7 @@ function purchaseGenerationTargets(db, auctionId) {
           WHERE l.auction_id = ?
             AND l.amount > 0
             AND l.name IS NOT NULL AND l.name != ''
-            AND (l.reserved IS NULL OR l.reserved = 0)
+            AND (l.reserved IS NULL OR l.reserved = 0) AND COALESCE(l.godown,0) = 0
             -- Same WD/NA exclusion as /eligible-lots and the gate, so the
             -- preview count, the batch run and the gate all agree.
             AND UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')
@@ -13389,7 +13557,7 @@ function billGenerationTargets(db, auctionId, ano) {
           WHERE l.auction_id = ?
             AND l.amount > 0
             AND l.name IS NOT NULL AND l.name != ''
-            AND (l.reserved IS NULL OR l.reserved = 0)
+            AND (l.reserved IS NULL OR l.reserved = 0) AND COALESCE(l.godown,0) = 0
             AND UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')
             AND NOT ${hasValidGstinSql('l.cr')}
           ORDER BY CAST(l.lot_no AS INTEGER), l.lot_no`,
@@ -13803,7 +13971,7 @@ app.post('/api/purchases/commission-bulk', requireView, async (req, res) => {
           'auction_id = ?',
           'UPPER(TRIM(name)) = UPPER(TRIM(?))',
           '(amount > 0 OR puramt > 0)',
-          '(reserved IS NULL OR reserved = 0)',
+          '(reserved IS NULL OR reserved = 0) AND COALESCE(godown,0) = 0',
           hasValidGstinSql('cr'),
         ];
         const args = [aid, p.name];
@@ -14133,7 +14301,7 @@ app.get('/api/bills/eligible-lots/:auctionId', requireView, (req, res) => {
        FROM lots l
       WHERE l.auction_id = ? AND l.name IS NOT NULL AND l.name != ''
         AND l.amount > 0
-        AND (l.reserved IS NULL OR l.reserved = 0)
+        AND (l.reserved IS NULL OR l.reserved = 0) AND COALESCE(l.godown,0) = 0
         AND UPPER(TRIM(COALESCE(l.code,''))) NOT IN ('WD','NA')
         AND NOT ${hasValidGstinSql('l.cr')}
       -- Lot-wise bills are numbered in LOT order, not seller order, so the
@@ -16887,6 +17055,52 @@ app.get('/api/registers/sales', requireView, (req, res) => {
   res.json(getSalesRegister(getDb(), registerOpts(req, {})));
 });
 
+// ── Godown Register (stored stock) ───────────────────────────────
+// The storage side of the godown utility (flag_godown): every lots row with
+// godown = 1, i.e. goods taken in but never auctioned. Same scoping as the
+// other two lot registers — one trade OR a date range — plus an optional
+// seller (by trader_id, because planter names repeat) and depot.
+function godownRegisterOpts(req) {
+  return {
+    auctionId: req.query.auctionId || null,
+    from: req.query.from || null,
+    to: req.query.to || null,
+    party: req.query.party || null,
+    // '' is a real pick (rows with no seller master); undefined = match on
+    // name if a party was named at all.
+    traderId: (req.query.traderId === undefined ? undefined : req.query.traderId),
+    branch: req.query.branch || null,
+  };
+}
+
+app.get('/api/registers/godown', requireView, (req, res) => {
+  const { getGodownRegister } = require('./calculations');
+  res.json(getGodownRegister(getDb(), godownRegisterOpts(req)));
+});
+
+app.get('/api/exports/godown-register', requireExport, async (req, res) => {
+  try {
+    const db = getDb();
+    const cfg = getSettingsFlat(db);
+    const opts = godownRegisterOpts(req);
+    const format = String(req.query.format || 'xlsx').toLowerCase();
+    if (format === 'pdf') {
+      const buffer = await exportAnyPdf(db, 'godown_register', opts.auctionId, cfg, {
+        from: opts.from, to: opts.to, party: opts.party,
+        traderId: opts.traderId, branch: opts.branch,
+      });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'attachment; filename="GodownRegister.pdf"');
+      return res.send(buffer);
+    }
+    const { exportGodownRegister } = require('./exports');
+    const buffer = await exportGodownRegister(db, opts);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="GodownRegister.xlsx"');
+    res.send(Buffer.from(buffer));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/exports/purchase-register', requireExport, async (req, res) => {
   try {
     const db = getDb();
@@ -17298,7 +17512,7 @@ app.get('/api/invoices/preview-all/:auctionId', requireView, (req, res) => {
     const buyerCodes = db.all(
       `SELECT DISTINCT l.buyer FROM lots l
         WHERE l.auction_id = ? AND l.buyer IS NOT NULL AND l.buyer != ''
-          AND l.amount > 0 AND (l.reserved IS NULL OR l.reserved = 0)
+          AND l.amount > 0 AND (l.reserved IS NULL OR l.reserved = 0) AND COALESCE(l.godown,0) = 0
         ORDER BY l.buyer`, [aid]).map(r => r.buyer);
 
     const buyers = [];
@@ -17336,7 +17550,7 @@ app.get('/api/invoices/preview-all/:auctionId', requireView, (req, res) => {
           `SELECT COALESCE(invoice_group,0) AS g, lot_no
              FROM lots
             WHERE auction_id = ? AND buyer = ? AND amount > 0
-              AND (reserved IS NULL OR reserved = 0)
+              AND (reserved IS NULL OR reserved = 0) AND COALESCE(godown,0) = 0
               AND (sale IS NULL OR sale = '' OR sale = ?)
             ORDER BY CAST(lot_no AS INTEGER), lot_no`,
           [aid, b.code, b.saleType]
@@ -21188,6 +21402,10 @@ app.get('/api/reports/trade-summary/:auctionId', requireViewOrLotEntry, (req, re
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [auctionId]);
   if (!auction) return res.status(404).json({ error: 'Trade not found' });
 
+  // Every aggregate below reads `COALESCE(godown,0) = 0`: a godown row is a
+  // storage receipt, not part of the auction, so it must not land in this
+  // trade's lot counts or weights. The Godown Register reports those.
+  //
   // Optional branch filter — when set, every aggregate restricts to lots
   // from that branch. Drives the "Branch" dropdown on Lots Summary cards.
   const branchFilter = String(req.query.branch || '').trim();
@@ -21214,7 +21432,7 @@ app.get('/api/reports/trade-summary/:auctionId', requireViewOrLotEntry, (req, re
                  THEN SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) * 1.0
                       / SUM(CASE WHEN amount > 0 THEN qty ELSE 0 END)
                  ELSE 0 END AS avg_price
-       FROM lots WHERE auction_id = ?
+       FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 0
       GROUP BY branch ORDER BY total_qty DESC`,
     [auctionId]
   );
@@ -21224,18 +21442,18 @@ app.get('/api/reports/trade-summary/:auctionId', requireViewOrLotEntry, (req, re
   const aggSold = db.get(
     `SELECT COUNT(*) AS lots, COALESCE(SUM(qty),0) AS qty,
             COALESCE(SUM(bags),0) AS bags, COALESCE(SUM(amount),0) AS cost
-       FROM lots WHERE auction_id = ? AND amount > 0` + bWhere,
+       FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 0 AND amount > 0` + bWhere,
     [auctionId, ...bParams]
   ) || { lots:0, qty:0, bags:0, cost:0 };
   const aggWithdrawn = db.get(
     `SELECT COUNT(*) AS lots, COALESCE(SUM(qty),0) AS qty,
             COALESCE(SUM(bags),0) AS bags, COALESCE(SUM(amount),0) AS cost
-       FROM lots WHERE auction_id = ? AND COALESCE(amount,0) <= 0` + bWhere,
+       FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 0 AND COALESCE(amount,0) <= 0` + bWhere,
     [auctionId, ...bParams]
   ) || { lots:0, qty:0, bags:0, cost:0 };
   const aggPrice = db.get(
     `SELECT MIN(price) AS min_price, MAX(price) AS max_price
-       FROM lots WHERE auction_id = ? AND amount > 0` + bWhere,
+       FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 0 AND amount > 0` + bWhere,
     [auctionId, ...bParams]
   ) || { min_price: 0, max_price: 0 };
   const avgPrice = aggSold.qty > 0 ? (Number(aggSold.cost) / Number(aggSold.qty)) : 0;
@@ -21259,7 +21477,7 @@ app.get('/api/reports/trade-summary/:auctionId', requireViewOrLotEntry, (req, re
             SUM(l.qty)      AS total_qty
        FROM lots l
        LEFT JOIN traders t ON t.id = l.trader_id
-      WHERE l.auction_id = ?
+      WHERE l.auction_id = ? AND COALESCE(l.godown,0) = 0
       GROUP BY COALESCE(l.trader_id, l.name)
       ORDER BY total_qty DESC`,
     [auctionId]
@@ -21273,7 +21491,7 @@ app.get('/api/reports/trade-summary/:auctionId', requireViewOrLotEntry, (req, re
             COUNT(*)    AS lot_count,
             SUM(bags)   AS total_bags,
             SUM(qty)    AS total_qty
-       FROM lots WHERE auction_id = ? AND user_id != ''
+       FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 0 AND user_id != ''
       GROUP BY user_id ORDER BY lot_count DESC`,
     [auctionId]
   );
@@ -21284,7 +21502,7 @@ app.get('/api/reports/trade-summary/:auctionId', requireViewOrLotEntry, (req, re
     `SELECT substr(created_at, 12, 2) AS hour,
             COUNT(*)  AS lot_count,
             SUM(qty)  AS total_qty
-       FROM lots WHERE auction_id = ?
+       FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 0
       GROUP BY hour ORDER BY hour ASC`,
     [auctionId]
   );
@@ -21296,7 +21514,7 @@ app.get('/api/reports/trade-summary/:auctionId', requireViewOrLotEntry, (req, re
             SUM(bags)   AS total_bags,
             SUM(qty)    AS total_qty,
             COUNT(DISTINCT trader_id) AS seller_count
-       FROM lots WHERE auction_id = ?
+       FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 0
       GROUP BY grade ORDER BY grade ASC`,
     [auctionId]
   );
@@ -21307,7 +21525,7 @@ app.get('/api/reports/trade-summary/:auctionId', requireViewOrLotEntry, (req, re
             SUM(qty)               AS total_qty,
             COUNT(DISTINCT trader_id) AS seller_count,
             COUNT(DISTINCT branch) AS branch_count
-       FROM lots WHERE auction_id = ?`,
+       FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 0`,
     [auctionId]
   ) || { lot_count: 0, total_bags: 0, total_qty: 0, seller_count: 0, branch_count: 0 };
 

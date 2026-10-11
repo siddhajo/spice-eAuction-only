@@ -261,6 +261,19 @@ select:focus{border-color:var(--green)}
    from normal booked lots in My Lots. !important beats the nth-child stripe. */
 .lot-card.reserved,.lot-card.reserved:nth-child(even){background:#fff7ed !important;border-color:#fdba74;border-left:4px solid #f97316}
 .res-badge{display:inline-block;background:#f97316;color:#fff;font-size:9px;font-weight:800;letter-spacing:.4px;padding:1px 6px;border-radius:10px;margin-left:6px;vertical-align:middle}
+/* Godown-only entries — goods in store, never auctioned. Teal so they read as
+   a different KIND of card from reserved (orange). */
+.god-badge{display:inline-block;background:#14b8a6;color:#fff;font-size:9px;font-weight:800;letter-spacing:.4px;padding:1px 6px;border-radius:10px;margin-left:6px;vertical-align:middle}
+/* Entry Type chooser (flag_godown) — two full-width segments, thumb-sized. */
+#le-mode-wrap{padding:8px 12px 0}
+.le-mode{display:flex;border:1.5px solid var(--border2);border-radius:9px;overflow:hidden}
+.le-mode button{flex:1;appearance:none;border:none;background:var(--input-bg);font-family:inherit;padding:8px 6px;font-size:11.5px;font-weight:700;color:var(--text2);cursor:pointer;line-height:1.25}
+.le-mode button + button{border-left:1.5px solid var(--border2)}
+.le-mode button[aria-pressed="true"]{background:var(--green);color:#fff}
+.le-mode button[data-mode="godown"][aria-pressed="true"]{background:#0f766e;color:#fff}
+#le-godown-banner{padding:8px 12px}
+#le-godown-banner .box{display:flex;align-items:center;gap:8px;background:#ccfbf1;border:1.5px solid #5eead4;border-radius:10px;padding:8px 12px}
+.lot-card.godown,.lot-card.godown:nth-child(even){background:#f0fdfa !important;border-color:#5eead4;border-left:4px solid #14b8a6}
 .lot-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
 .lot-num{font-size:14px;font-weight:800;color:var(--green)}
 .lot-name{font-size:12px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -366,8 +379,33 @@ select:focus{border-color:var(--green)}
     <!-- Scrollable content: lot grid + form + recent -->
     <div style="flex:1;overflow-y:auto;padding:0" id="le-scroll">
 
+      <!-- ── Entry Type (godown utility, flag_godown) ──────────────
+           First control on the screen because it decides what the rest of it
+           means: a booking is picked off the lot grid below, while a godown
+           receipt is numbered from the godown series and never goes up for
+           sale. Hidden entirely when the feature is off. -->
+      <div id="le-mode-wrap" style="display:none">
+        <div class="le-mode" id="le-mode">
+          <button type="button" data-mode="auction" aria-pressed="true" onclick="setEntryMode('auction')">📦 Book for auction</button>
+          <button type="button" data-mode="godown" aria-pressed="false" onclick="setEntryMode('godown')">🏚 Godown storage</button>
+        </div>
+      </div>
+
+      <!-- Godown mode: the lot grid is replaced by the auto-assigned number.
+           It is a PREVIEW — the server hands out the real number on save, so
+           two phones entering at once can't collide. -->
+      <div id="le-godown-banner" style="display:none">
+        <div class="box">
+          <div style="flex:1">
+            <div style="font-size:9px;font-weight:700;color:#0f766e;letter-spacing:.5px;margin-bottom:2px">GODOWN ENTRY</div>
+            <div style="font-size:18px;font-weight:800;color:#0f766e" id="le-godown-next">#G001</div>
+          </div>
+          <div style="font-size:10px;color:#0f766e;text-align:right;max-width:52%;line-height:1.35">Not auctioned. Number assigned automatically — bags &amp; weight still required.</div>
+        </div>
+      </div>
+
       <!-- Lot Picker -->
-      <div style="padding:8px 12px;background:var(--bg)">
+      <div id="le-lot-picker" style="padding:8px 12px;background:var(--bg)">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
           <span style="font-size:10px;font-weight:700;color:var(--text2);letter-spacing:.5px">SELECT LOT</span>
           <button type="button" id="le-toggle-booked" onclick="toggleBookedLots()" style="display:none;background:transparent;border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:10px;font-weight:600;color:var(--text2);cursor:pointer;font-family:inherit">Show booked</button>
@@ -760,6 +798,14 @@ select:focus{border-color:var(--green)}
       <span style="font-size:12px;font-weight:600;color:var(--text)">Reserved (held — not booked)</span>
     </label>
     </div><!-- /#ed-immediate-reserve-wrap -->
+    <!-- Godown entry notice. Read-only on the phone deliberately: converting
+         a godown receipt into a booking needs a free AUCTION lot number, and
+         this sheet has no lot grid to pick one from (the server refuses a
+         G-series number on a booking). The conversion lives on the desktop
+         Lot Entry form, which does have the grid. -->
+    <div id="ed-godown-note" style="display:none;margin-top:10px;padding:8px 10px;border:1.5px solid #5eead4;border-radius:8px;background:#ccfbf1;font-size:11.5px;color:#0f766e;line-height:1.4">
+      <b>Godown storage only</b> — not auctioned. Bags and weight can be corrected here; to turn this into an auction booking, use Lot Entry on the desktop app.
+    </div>
     <div id="ed-err"></div>
   </div>
   <div class="modal-foot"><button class="btn btn-sm btn-outline" onclick="closeEdit()" style="flex:1">Cancel</button><button class="btn btn-sm" onclick="saveEdit()" id="ed-save" style="flex:2">Save</button></div>
@@ -947,6 +993,12 @@ async function refreshConfig(){
     if(d.showMoisture!=cfgShowMoisture){cfgShowMoisture=d.showMoisture||false;changed=true}
     if(d.showReservedPrice!=cfgShowReservedPrice){cfgShowReservedPrice=d.showReservedPrice||false;changed=true}
     if(d.immediateReserve!=cfgImmediateReserve){cfgImmediateReserve=d.immediateReserve||false;changed=true}
+    // An admin switching the godown utility on/off has to reach the phone
+    // without a reinstall. Turning it OFF also drops the form back to a
+    // booking, so a hidden chooser can't leave the operator entering godown
+    // receipts they can no longer see they are entering.
+    if((!!d.godown)!=cfgGodown){cfgGodown=!!d.godown;if(!cfgGodown)setEntryMode('auction');applyGodownVis();changed=true}
+    if((d.godownPrefix||'G')!=cfgGodownPrefix){cfgGodownPrefix=d.godownPrefix||'G';changed=true}
     if(d.defaultGunny!=cfgDefaultGunny){cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;changed=true}
     if(d.defaultLitre!=cfgDefaultLitre){cfgDefaultLitre=d.defaultLitre||'';changed=true}
     // Pick lists edited in Settings reach the phone on the next tab
@@ -1001,7 +1053,15 @@ if(r.status===403&&d.error==='account_locked'){er.innerHTML='<div class="eb">'+_
 if(!r.ok){er.innerHTML='<div class="eb">'+_esc(d.error||'Login failed')+'</div>';return}token=d.token;user=d.user.username;userBranch=d.user.branch||'';userRole=d.user.role||'user';localStorage.setItem('sa_token',token);goSession();if(d.notice)toast(d.notice)}catch(e){er.innerHTML='<div class="eb">Could not connect</div>'}finally{document.getElementById('l-btn').disabled=false}}
 function doLogout(){fetch(B+'/api/auth/logout',{method:'POST',headers:ah()}).catch(()=>{});token='';user='';localStorage.removeItem('sa_token');toggleMenu(true);show('s-login')}
 async function tryAutoLogin(){if(!token){loadTitle();return}try{const r=await fetch(B+'/api/auth/me',{headers:ah()});if(r.ok){const d=await r.json();user=d.user.username;userBranch=d.user.branch||'';userRole=d.user.role||'user';goSession()}else{token='';localStorage.removeItem('sa_token');loadTitle()}}catch(e){loadTitle()}}
-var cfgSampleWeight=0,cfgShowMoisture=false,cfgShowReservedPrice=false,cfgDefaultGunny=0,cfgImmediateReserve=false,cfgUserGunny=false,cfgShowCropReceipt=false,cfgCropReceiptStart='',cfgWhatsapp=false,cfgSellerAtBottom=false,cfgShowSample=true,cfgShowGross=true,cfgReassignDirect=false;
+var cfgSampleWeight=0,cfgShowMoisture=false,cfgShowReservedPrice=false,cfgDefaultGunny=0,cfgImmediateReserve=false,cfgUserGunny=false,cfgShowCropReceipt=false,cfgCropReceiptStart='',cfgWhatsapp=false,cfgSellerAtBottom=false,cfgShowSample=true,cfgShowGross=true,cfgReassignDirect=false
+// Godown utility (flag_godown). cfgGodown shows/hides the Entry Type chooser;
+// cfgGodownPrefix is only used to PREVIEW the next number — the server assigns
+// the real one on save, so the two can never disagree.
+var cfgGodown=false,cfgGodownPrefix='G';
+// Which kind of entry the form is on: 'auction' (book it) or 'godown' (goods
+// taken in for storage). Per-entry; kept after a save so a run of godown
+// receipts doesn't need re-picking.
+var entryMode='auction';
 function applyWhatsappVis(){var b=document.getElementById('le-wa-btn');if(b)b.style.display=cfgWhatsapp?'inline-block':'none';var mb=document.getElementById('ml-wa-btn');if(mb)mb.style.display=cfgWhatsapp?'':'none';}
 // "Delete Selected" follows the same switch as the per-row 🗑 button, so an
 // operator who can't delete one lot can't bulk-delete a dozen either.
@@ -1142,9 +1202,9 @@ function applyLabels(){
   var map={'elb-seller':L.seller||'Seller','elb-grade':L.grade,'elb-bags':L.bags,'elb-litre':L.litre_wt,'elb-net':L.net_wt,'elb-sample':L.sample_wt,'elb-gross':L.gross_wt,'elb-moisture':L.moisture};
   Object.keys(map).forEach(function(id){var el=document.getElementById(id);if(el)el.textContent=map[id]});
 }
-async function loadTitle(){try{const r=await fetch(B+'/api/config');const d=await r.json();setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;deleteEnabled=d.deleteEnabled!==undefined?d.deleteEnabled!==false:editEnabled;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgReassignDirect=!!d.reassignDirect;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';cfgLitreOptions=d.litreOptions||'';cfgMoistureOptions=d.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw=document.getElementById('le-reserved-price-wrap');if(rpw)rpw.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();loadAppLogo()}catch(e){}}
+async function loadTitle(){try{const r=await fetch(B+'/api/config');const d=await r.json();setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;deleteEnabled=d.deleteEnabled!==undefined?d.deleteEnabled!==false:editEnabled;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgGodown=!!d.godown;cfgGodownPrefix=d.godownPrefix||'G';cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgReassignDirect=!!d.reassignDirect;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';cfgLitreOptions=d.litreOptions||'';cfgMoistureOptions=d.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw=document.getElementById('le-reserved-price-wrap');if(rpw)rpw.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGodownVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();loadAppLogo()}catch(e){}}
 
-async function goSession(){document.getElementById('ss-user').textContent=user;const lb=localStorage.getItem('sa_branch');try{const r=await fetch(B+'/api/config');const d=await r.json();window._allBranches=(d.branches||[]).map(function(b){return b.value});setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;deleteEnabled=d.deleteEnabled!==undefined?d.deleteEnabled!==false:editEnabled;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgReassignDirect=!!d.reassignDirect;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';cfgLitreOptions=d.litreOptions||'';cfgMoistureOptions=d.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw2=document.getElementById('le-reserved-price-wrap');if(rpw2)rpw2.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();var brSel=document.getElementById('ss-branch');if(userRole!=='admin'&&userBranch){brSel.innerHTML='<option value="'+userBranch+'">'+userBranch+'</option>';brSel.disabled=true}else{brSel.disabled=false;brSel.innerHTML=(d.branches||[]).map(b=>'<option value="'+b.value+'"'+(b.value===(userBranch||lb)?' selected':'')+'>'+b.value+'</option>').join('')}}catch(e){}
+async function goSession(){document.getElementById('ss-user').textContent=user;const lb=localStorage.getItem('sa_branch');try{const r=await fetch(B+'/api/config');const d=await r.json();window._allBranches=(d.branches||[]).map(function(b){return b.value});setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;deleteEnabled=d.deleteEnabled!==undefined?d.deleteEnabled!==false:editEnabled;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgGodown=!!d.godown;cfgGodownPrefix=d.godownPrefix||'G';cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgReassignDirect=!!d.reassignDirect;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';cfgLitreOptions=d.litreOptions||'';cfgMoistureOptions=d.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw2=document.getElementById('le-reserved-price-wrap');if(rpw2)rpw2.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGodownVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();var brSel=document.getElementById('ss-branch');if(userRole!=='admin'&&userBranch){brSel.innerHTML='<option value="'+userBranch+'">'+userBranch+'</option>';brSel.disabled=true}else{brSel.disabled=false;brSel.innerHTML=(d.branches||[]).map(b=>'<option value="'+b.value+'"'+(b.value===(userBranch||lb)?' selected':'')+'>'+b.value+'</option>').join('')}}catch(e){}
 await loadAvailableTrades();
 show('s-session')}
 
@@ -1190,7 +1250,7 @@ async function loadAvailableTrades(){
 
 async function startSession(){var sel=document.getElementById('ss-trade');var opt=sel.options[sel.selectedIndex];br=document.getElementById('ss-branch').value;var er=document.getElementById('ss-err');er.innerHTML='';if(!sel.value||!opt||!opt.value){er.innerHTML='<div class="eb">Select a trade</div>';return}if(!br){er.innerHTML='<div class="eb">Select branch</div>';return}aid=parseInt(sel.value);tno=parseInt(opt.getAttribute('data-ano'));sessionEnd=opt.getAttribute('data-end')||null;localStorage.setItem('sa_branch',br);
 // Reload config for sample weight + moisture
-try{var cr=await fetch(B+'/api/config');var cd=await cr.json();cfgSampleWeight=cd.sampleWeight||0;cfgShowMoisture=cd.showMoisture||false;cfgShowReservedPrice=cd.showReservedPrice||false;cfgImmediateReserve=cd.immediateReserve||false;cfgShowCropReceipt=cd.showCropReceipt||false;cfgCropReceiptStart=cd.cropReceiptStart||'';cfgDefaultGunny=cd.defaultGunny||0;cfgUserGunny=!!cd.userGunny;cfgWhatsapp=!!cd.whatsapp;cfgSellerAtBottom=!!cd.sellerAtBottom;cfgShowSample=cd.showSampleField!==false;cfgShowGross=cd.showGrossField!==false;cfgLitreOptions=cd.litreOptions||'';cfgMoistureOptions=cd.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw3=document.getElementById('le-reserved-price-wrap');if(rpw3)rpw3.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis()}catch(e){}
+try{var cr=await fetch(B+'/api/config');var cd=await cr.json();cfgSampleWeight=cd.sampleWeight||0;cfgShowMoisture=cd.showMoisture||false;cfgShowReservedPrice=cd.showReservedPrice||false;cfgImmediateReserve=cd.immediateReserve||false;cfgGodown=!!cd.godown;cfgGodownPrefix=cd.godownPrefix||'G';cfgShowCropReceipt=cd.showCropReceipt||false;cfgCropReceiptStart=cd.cropReceiptStart||'';cfgDefaultGunny=cd.defaultGunny||0;cfgUserGunny=!!cd.userGunny;cfgWhatsapp=!!cd.whatsapp;cfgSellerAtBottom=!!cd.sellerAtBottom;cfgShowSample=cd.showSampleField!==false;cfgShowGross=cd.showGrossField!==false;cfgLitreOptions=cd.litreOptions||'';cfgMoistureOptions=cd.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw3=document.getElementById('le-reserved-price-wrap');if(rpw3)rpw3.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGodownVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis()}catch(e){}
 await loadStats();goLots()}
 
 var allocStats=null;
@@ -1266,6 +1326,63 @@ function toggleBookedLots(){
 
 function hasFormData(){
   return !!(selT || document.getElementById('le-name').value.trim() || document.getElementById('le-bags').value || document.getElementById('le-qty').value);
+}
+
+// ── Entry Type: book for auction vs godown storage (flag_godown) ──
+// Godown mode swaps the lot PICKER for an auto-assigned number (the godown
+// series is deliberately outside the trade's allocation, so there is nothing
+// to pick), and hides the auction-only controls — Reserved Price, Immediate
+// Payment and Reserve all describe a lot that is going up for sale.
+function setEntryMode(mode){
+  entryMode=(mode==='godown')?'godown':'auction';
+  var godown=(entryMode==='godown');
+  // Reserve is an auction-only idea — a "held" godown receipt is a contradiction.
+  var res=document.getElementById('le-reserved');
+  if(godown&&res&&res.checked){res.checked=false;onReserveToggle();}
+  applyEntryModeVis();
+  if(godown)previewGodownLotNo();
+  else{renderLotGrid();updateLotSelection();}
+}
+// Pure visibility for the current mode — no fetches, so the settings poll can
+// re-assert it as often as it likes. It is the single place that decides which
+// of the two forms the operator is looking at, which is why the per-flag
+// visibility of the auction-only fields is re-applied here too (the config
+// load sets those from their own flags and would otherwise un-hide them
+// mid-godown-entry).
+function applyEntryModeVis(){
+  var godown=(entryMode==='godown');
+  document.querySelectorAll('#le-mode button').forEach(function(b){
+    b.setAttribute('aria-pressed',b.dataset.mode===entryMode?'true':'false');
+  });
+  var picker=document.getElementById('le-lot-picker');
+  if(picker)picker.style.display=godown?'none':'';
+  var banner=document.getElementById('le-lot-banner');
+  if(banner&&godown)banner.style.display='none';
+  var gb=document.getElementById('le-godown-banner');
+  if(gb)gb.style.display=godown?'block':'none';
+  var ir=document.getElementById('le-immediate-reserve-wrap');
+  if(ir)ir.style.display=(godown||!cfgImmediateReserve)?'none':'block';
+  var rpw=document.getElementById('le-reserved-price-wrap');
+  if(rpw)rpw.style.display=(godown||!cfgShowReservedPrice)?'none':'block';
+}
+// Show/hide the whole chooser per the config flag. OFF also pins the form
+// back to a booking, so the mode can never be stuck somewhere invisible.
+function applyGodownVis(){
+  var w=document.getElementById('le-mode-wrap');
+  if(w)w.style.display=cfgGodown?'block':'none';
+  if(!cfgGodown&&entryMode==='godown'){setEntryMode('auction');return}
+  applyEntryModeVis();
+}
+// Preview the next godown number for this trade. Advisory only — the server
+// assigns the number that is actually stored.
+function previewGodownLotNo(){
+  var el=document.getElementById('le-godown-next');
+  if(el)el.textContent='#'+(cfgGodownPrefix||'G')+'…';
+  if(!aid)return;
+  fetch(B+'/api/auctions/'+aid+'/next-godown-lot',{headers:ah()})
+    .then(function(r){return r.ok?r.json():null})
+    .then(function(d){if(d&&d.next_lot&&el)el.textContent='#'+d.next_lot})
+    .catch(function(){});
 }
 
 // Reserve checkbox toggled — flip the grid between single- and multi-select.
@@ -2228,11 +2345,15 @@ function onBagsInput(){if(gunnyActive())calcNetFromGunny();}
 
 async function saveLot(){
   if(!selT){toast('Select seller',true);return}
-  if(!selectedLots.length){toast('Tap a lot number to select',true);return}
+  // Godown receipt: there is no lot to tap — the server assigns the number
+  // from the godown series. Everything else (bags, litre, weight) is entered
+  // and validated exactly as for a booking, because the goods are real.
+  var isGodownLE=(entryMode==='godown')?1:0;
+  if(!isGodownLE&&!selectedLots.length){toast('Tap a lot number to select',true);return}
   // Multi-reserve: hold every selected lot for this seller in one go.
   var resChk0=document.getElementById('le-reserved');
-  if(resChk0&&resChk0.checked&&selectedLots.length>1){return saveReservedBatch();}
-  var lotNo=selectedLots[0];
+  if(!isGodownLE&&resChk0&&resChk0.checked&&selectedLots.length>1){return saveReservedBatch();}
+  var lotNo=isGodownLE?'':selectedLots[0];
   var grade=document.getElementById('le-grade').value.trim()||'1';
   var bags=parseInt(document.getElementById('le-bags').value);
   var litre=parseInt(document.getElementById('le-litre').value);
@@ -2241,7 +2362,7 @@ async function saveLot(){
   // number for the seller, so bags/litre/net-weight are optional. Only guard
   // against negatives and normalise blanks to 0 for the payload.
   var resElChk=document.getElementById('le-reserved');
-  var isReservedLE=(resElChk&&resElChk.checked)?1:0;
+  var isReservedLE=(!isGodownLE&&resElChk&&resElChk.checked)?1:0;
   if(isReservedLE){
     if(!isNaN(bags)&&bags<0){toast('Bags cannot be negative',true);return}
     if(!isNaN(litre)&&litre<0){toast('Litre cannot be negative',true);return}
@@ -2276,18 +2397,23 @@ async function saveLot(){
   var immPay=document.getElementById('le-immediate-payment');
   var immediatePayment=(immPay&&immPay.checked)?1:0;
   var resEl=document.getElementById('le-reserved');
-  var reserved=(resEl&&resEl.checked)?1:0;
-  var lotData={auction_id:aid,trader_id:selT.id,branch:br,grade:grade,bags:bags,litre:litre,qty:qty,lot_no:lotNo,state:'TAMIL NADU',bank_id:selBankId?parseInt(selBankId):null,gross_weight:grossWt,sample_weight:sampleWt,moisture:moisture,crpt:crpt,reserved_price:reservedPrice,immediate_payment:immediatePayment,reserved:reserved,gunny:gunnyActive()?entryPerBag():0};
+  var reserved=(!isGodownLE&&resEl&&resEl.checked)?1:0;
+  // lot_no is sent EMPTY for a godown entry so the server numbers it; sending
+  // the previewed number would race another phone entering at the same moment.
+  var lotData={auction_id:aid,trader_id:selT.id,branch:br,grade:grade,bags:bags,litre:litre,qty:qty,lot_no:lotNo,state:'TAMIL NADU',bank_id:selBankId?parseInt(selBankId):null,gross_weight:grossWt,sample_weight:sampleWt,moisture:moisture,crpt:crpt,reserved_price:reservedPrice,immediate_payment:immediatePayment,reserved:reserved,godown:isGodownLE,gunny:gunnyActive()?entryPerBag():0};
   try{
     var r=await fetch(B+'/api/lots',{method:'POST',headers:ah(),body:JSON.stringify(lotData)});
     var d=await r.json();
     if(!r.ok){toast(d.error||'Failed',true);document.getElementById('le-save').disabled=false;return}
     lastId=d.lot?.id;
-    lastSavedLot={id:d.lot?.id,lot_no:lotNo,trader_name:selT.name,trader_id:selT.id,qty:qty};
+    // The server owns the godown number, so read the saved number back off
+    // the response rather than echoing what was sent (which was blank).
+    var savedLotNo=(d.lot&&d.lot.lot_no)?d.lot.lot_no:lotNo;
+    lastSavedLot={id:d.lot?.id,lot_no:savedLotNo,trader_name:selT.name,trader_id:selT.id,qty:qty};
     if(navigator.vibrate)navigator.vibrate(50);
-    toast('Lot #'+lotNo+' saved ✓',false,true);
+    toast((isGodownLE?'Godown entry #':'Lot #')+savedLotNo+' saved ✓',false,true);
     // Show inline print buttons — stays until user starts next entry
-    document.getElementById('le-saved-label').textContent='✓ Saved #'+lotNo;
+    document.getElementById('le-saved-label').textContent='✓ Saved #'+savedLotNo;
     document.getElementById('le-btn-save').style.display='none';
     document.getElementById('le-btn-saved').style.display='block';
     applyWhatsappVis();
@@ -2513,6 +2639,10 @@ function resetFormKeepSeller(){
   if(resK)resK.checked=false;
   reserveMulti=false;
   var rhK=document.getElementById('le-reserve-hint');if(rhK)rhK.style.display='none';
+  // A run of godown receipts is the normal case (one seller unloads several
+  // lots), so the mode is KEPT and the next number previewed. The lot grid /
+  // next-lot selection below belong to the booking flow only.
+  if(entryMode==='godown'){previewGodownLotNo();return}
   renderLotGrid();
   selectNextAvailableLot();
 }
@@ -2529,13 +2659,13 @@ function _incrementCrptStr(prev){
   var padded=next.length>=num.length?next:next.padStart(num.length,'0');
   return prefix+padded;
 }
-function resetForm(){selT=null;selectedLots=[];lastSavedLot=null;document.getElementById('le-recent').innerHTML='';document.getElementById('le-name').value='';document.getElementById('le-grade').value='1';delete document.getElementById('le-grade').dataset.ruleGrade;document.getElementById('le-bags').value='';document.getElementById('le-litre').value=cfgDefaultLitre||'';document.getElementById('le-qty').value='';document.getElementById('le-gross').value='';var wgR=document.getElementById('le-weight-gunny');if(wgR)wgR.value='';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';if(document.getElementById('le-moisture'))document.getElementById('le-moisture').value='';var crptEl3=document.getElementById('le-crpt');if(crptEl3)crptEl3.value='';seedCropReceipt();var rpEl3=document.getElementById('le-reserved-price');if(rpEl3)rpEl3.value='';var immR=document.getElementById('le-immediate-payment');if(immR)immR.checked=false;var resR=document.getElementById('le-reserved');if(resR)resR.checked=false;reserveMulti=false;var rhR=document.getElementById('le-reserve-hint');if(rhR)rhR.style.display='none';document.getElementById('le-lot-err').style.display='none';document.getElementById('le-res').style.display='none';document.getElementById('le-tc').style.display='none';document.getElementById('le-bank').style.display='none';document.getElementById('le-bank-form').style.display='none';document.getElementById('le-sw').style.display='block';hideSellerBookings();showLotGrid();renderLotGrid();selectNextAvailableLot();document.getElementById('le-scroll').scrollTop=0}
+function resetForm(){selT=null;selectedLots=[];lastSavedLot=null;document.getElementById('le-recent').innerHTML='';document.getElementById('le-name').value='';document.getElementById('le-grade').value='1';delete document.getElementById('le-grade').dataset.ruleGrade;document.getElementById('le-bags').value='';document.getElementById('le-litre').value=cfgDefaultLitre||'';document.getElementById('le-qty').value='';document.getElementById('le-gross').value='';var wgR=document.getElementById('le-weight-gunny');if(wgR)wgR.value='';document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';if(document.getElementById('le-moisture'))document.getElementById('le-moisture').value='';var crptEl3=document.getElementById('le-crpt');if(crptEl3)crptEl3.value='';seedCropReceipt();var rpEl3=document.getElementById('le-reserved-price');if(rpEl3)rpEl3.value='';var immR=document.getElementById('le-immediate-payment');if(immR)immR.checked=false;var resR=document.getElementById('le-reserved');if(resR)resR.checked=false;reserveMulti=false;var rhR=document.getElementById('le-reserve-hint');if(rhR)rhR.style.display='none';document.getElementById('le-lot-err').style.display='none';document.getElementById('le-res').style.display='none';document.getElementById('le-tc').style.display='none';document.getElementById('le-bank').style.display='none';document.getElementById('le-bank-form').style.display='none';document.getElementById('le-sw').style.display='block';hideSellerBookings();setEntryMode('auction');showLotGrid();renderLotGrid();selectNextAvailableLot();document.getElementById('le-scroll').scrollTop=0}
 
 // ── MY LOTS (by branch) ──
 async function loadMyLots(){if(!aid)return;try{const r=await fetch(B+'/api/lots?auction_id='+aid+'&branch='+encodeURIComponent(br),{headers:ah()});const d=await r.json();allMyLots=d.lots||[];const stats=d.stats||{};document.getElementById('ml-cnt').textContent=stats.lotCount||0;document.getElementById('ml-bags').textContent=stats.totalBags||0;document.getElementById('ml-qty').textContent=(stats.totalQty||0).toFixed(3);document.getElementById('ml-search').value='';renderMyLots(allMyLots)}catch(e){}}
 function filterMyLots(q){if(!q||q.length<2){renderMyLots(allMyLots);return}const f=q.toUpperCase();renderMyLots(allMyLots.filter(l=>(l.trader_name||'').toUpperCase().includes(f)))}
 function renderMyLots(lots){const list=document.getElementById('ml-list');if(!lots.length){list.innerHTML='<div class="lot-empty">No lots found</div>';return}
-list.innerHTML=lots.map(l=>{const g=String(l.grade||''),q=Number(l.qty).toFixed(3);const isRes=Number(l.reserved);const tn=(l.trader_name||'Unknown').replace(/'/g,"\\'");const edBtn=editEnabled?` <button class="ico-btn ed" title="Edit lot" onclick="openEditFromList(${l.id})">${ICO_EDIT}</button>`:'';const dlBtn=deleteEnabled?` <button class="ico-btn dl" title="Delete lot" onclick="deleteLot(${l.id},'${String(l.lot_no).replace(/'/g,"\\'")}')">${ICO_DEL}</button>`:'';const editBtns=edBtn+dlBtn;const waBtn=cfgWhatsapp?` <button class="ico-btn" style="color:#25D366" onclick="whatsappLotById(${l.id})" title="Send receipt on WhatsApp">📲</button>`:'';return`<div class="lot-card${isRes?' reserved':''}"><div class="lot-hdr"><label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="ml-cb" value="${l.id}" onchange="updateMySelCount()" style="width:16px;height:16px"><span class="lot-num">#${l.lot_no}</span>${isRes?'<span class="res-badge">RESERVED</span>':''}</label><span style="font-size:10px;color:var(--text3)">${l.user_id} · ${l.created_at?l.created_at.split(' ')[1]||'':''}</span></div><div class="lot-row"><div class="lot-name"><span style="color:var(--green);text-decoration:underline;cursor:pointer" onclick="showBankPop(event,'${tn}','${(l.acctnum||'').replace(/'/g,"\\'")}','${(l.ifsc||'').replace(/'/g,"\\'")}','${(l.tel||'').replace(/'/g,"\\'")}','${(l.cr||'').replace(/'/g,"\\'")}')">${l.trader_name}</span></div><div class="lot-actions"><button class="ico-btn pr" onclick="printLot(${l.id})" title="Print receipt">${ICO_PRINT}</button>${waBtn}${editBtns}</div></div><div class="lot-meta">${g} | ${l.bags} bags | ${l.litre} L | <strong>${q} kg</strong> · ${l.ppla||''}</div></div>`}).join('');updateMySelCount()}
+list.innerHTML=lots.map(l=>{const g=String(l.grade||''),q=Number(l.qty).toFixed(3);const isRes=Number(l.reserved);const isGod=Number(l.godown);const tn=(l.trader_name||'Unknown').replace(/'/g,"\\'");const edBtn=editEnabled?` <button class="ico-btn ed" title="Edit lot" onclick="openEditFromList(${l.id})">${ICO_EDIT}</button>`:'';const dlBtn=deleteEnabled?` <button class="ico-btn dl" title="Delete lot" onclick="deleteLot(${l.id},'${String(l.lot_no).replace(/'/g,"\\'")}')">${ICO_DEL}</button>`:'';const editBtns=edBtn+dlBtn;const waBtn=cfgWhatsapp?` <button class="ico-btn" style="color:#25D366" onclick="whatsappLotById(${l.id})" title="Send receipt on WhatsApp">📲</button>`:'';return`<div class="lot-card${isGod?' godown':(isRes?' reserved':'')}"><div class="lot-hdr"><label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="ml-cb" value="${l.id}" onchange="updateMySelCount()" style="width:16px;height:16px"><span class="lot-num">#${l.lot_no}</span>${isGod?'<span class="god-badge">GODOWN</span>':(isRes?'<span class="res-badge">RESERVED</span>':'')}</label><span style="font-size:10px;color:var(--text3)">${l.user_id} · ${l.created_at?l.created_at.split(' ')[1]||'':''}</span></div><div class="lot-row"><div class="lot-name"><span style="color:var(--green);text-decoration:underline;cursor:pointer" onclick="showBankPop(event,'${tn}','${(l.acctnum||'').replace(/'/g,"\\'")}','${(l.ifsc||'').replace(/'/g,"\\'")}','${(l.tel||'').replace(/'/g,"\\'")}','${(l.cr||'').replace(/'/g,"\\'")}')">${l.trader_name}</span></div><div class="lot-actions"><button class="ico-btn pr" onclick="printLot(${l.id})" title="Print receipt">${ICO_PRINT}</button>${waBtn}${editBtns}</div></div><div class="lot-meta">${g} | ${l.bags} bags | ${l.litre} L | <strong>${q} kg</strong> · ${l.ppla||''}</div></div>`}).join('');updateMySelCount()}
 
 function updateMySelCount(){applyDeleteVis();const boxes=document.querySelectorAll('.ml-cb');const checked=document.querySelectorAll('.ml-cb:checked').length;const bar=document.getElementById('ml-actions');const cnt=document.getElementById('ml-sel-count');const hasLots=allMyLots&&allMyLots.length>0;bar.style.display=hasLots?'flex':'none';cnt.textContent=checked>0?checked+' selected':'';const sa=document.getElementById('ml-selall');if(sa){sa.checked=boxes.length>0&&checked===boxes.length;sa.indeterminate=checked>0&&checked<boxes.length}}
 // Tick / untick every lot currently shown in My Lots (respects the active
@@ -2625,7 +2755,13 @@ function openEdit(id,lotNo,s,g,bags,litre,qty,traderId,bankId){editId=id;editTra
    the /detail fetch returns. Visibility of the Reserved Price wrap
    mirrors the live cfgShowReservedPrice flag so toggling the feature
    in Settings reflects on the next modal open without a reload. */
-var edCrptOpen=document.getElementById('ed-crpt');if(edCrptOpen)edCrptOpen.value='';var edRpOpen=document.getElementById('ed-reserved-price');if(edRpOpen)edRpOpen.value='';var edImmOpen=document.getElementById('ed-immediate-payment');if(edImmOpen)edImmOpen.checked=false;var edRpWrap=document.getElementById('ed-reserved-price-wrap');if(edRpWrap)edRpWrap.style.display=cfgShowReservedPrice?'block':'none';var edMstWrap=document.getElementById('ed-moisture-wrap');if(edMstWrap)edMstWrap.style.display=cfgShowMoisture?'block':'none';var edMstOpen=document.getElementById('ed-moisture');if(edMstOpen)edMstOpen.value='';document.getElementById('ed-err').innerHTML='';document.getElementById('ed-bank-form').style.display='none';document.getElementById('edit-modal').classList.add('show');applyEditGunnyMode();if(traderId)loadEditBanks(traderId);fetch(B+'/api/lots/'+id+'/detail',{headers:ah()}).then(r=>r.json()).then(d=>{if(d.lot){var sw=d.lot.sample_weight!=null&&d.lot.sample_weight>0?d.lot.sample_weight:cfgSampleWeight||0;document.getElementById('ed-sample').value=Number(sw).toFixed(3);document.getElementById('ed-gross').value=d.lot.gross_weight?Number(d.lot.gross_weight).toFixed(3):'0';if(edCrptOpen)edCrptOpen.value=d.lot.crpt||'';if(edRpOpen)edRpOpen.value=(d.lot.reserved_price!=null&&Number(d.lot.reserved_price)!==0)?d.lot.reserved_price:'';if(edMstOpen)edMstOpen.value=(d.lot.moisture!=null&&d.lot.moisture!=='')?d.lot.moisture:'';if(edImmOpen)edImmOpen.checked=!!Number(d.lot.immediate_payment);var edResOpen=document.getElementById('ed-reserved');if(edResOpen)edResOpen.checked=!!Number(d.lot.reserved);if(editGunnyActive())editSeedGunny(d.lot.gunny);calcEditGross()}}).catch(()=>{calcEditGross()})}
+var edCrptOpen=document.getElementById('ed-crpt');if(edCrptOpen)edCrptOpen.value='';var edRpOpen=document.getElementById('ed-reserved-price');if(edRpOpen)edRpOpen.value='';var edImmOpen=document.getElementById('ed-immediate-payment');if(edImmOpen)edImmOpen.checked=false;var edRpWrap=document.getElementById('ed-reserved-price-wrap');if(edRpWrap)edRpWrap.style.display=cfgShowReservedPrice?'block':'none';var edMstWrap=document.getElementById('ed-moisture-wrap');if(edMstWrap)edMstWrap.style.display=cfgShowMoisture?'block':'none';var edMstOpen=document.getElementById('ed-moisture');if(edMstOpen)edMstOpen.value='';document.getElementById('ed-err').innerHTML='';document.getElementById('ed-bank-form').style.display='none';document.getElementById('edit-modal').classList.add('show');applyEditGunnyMode();if(traderId)loadEditBanks(traderId);fetch(B+'/api/lots/'+id+'/detail',{headers:ah()}).then(r=>r.json()).then(d=>{if(d.lot){var sw=d.lot.sample_weight!=null&&d.lot.sample_weight>0?d.lot.sample_weight:cfgSampleWeight||0;document.getElementById('ed-sample').value=Number(sw).toFixed(3);document.getElementById('ed-gross').value=d.lot.gross_weight?Number(d.lot.gross_weight).toFixed(3):'0';if(edCrptOpen)edCrptOpen.value=d.lot.crpt||'';if(edRpOpen)edRpOpen.value=(d.lot.reserved_price!=null&&Number(d.lot.reserved_price)!==0)?d.lot.reserved_price:'';if(edMstOpen)edMstOpen.value=(d.lot.moisture!=null&&d.lot.moisture!=='')?d.lot.moisture:'';if(edImmOpen)edImmOpen.checked=!!Number(d.lot.immediate_payment);var edResOpen=document.getElementById('ed-reserved');if(edResOpen)edResOpen.checked=!!Number(d.lot.reserved);
+  // Godown row: say so, and hide the controls that only make sense for a lot
+  // that is going up for sale.
+  var edIsGod=!!Number(d.lot.godown);
+  var edGodNote=document.getElementById('ed-godown-note');if(edGodNote)edGodNote.style.display=edIsGod?'block':'none';
+  var edIrWrap=document.getElementById('ed-immediate-reserve-wrap');if(edIrWrap)edIrWrap.style.display=(edIsGod||!cfgImmediateReserve)?'none':'block';
+  var edRpWrap2=document.getElementById('ed-reserved-price-wrap');if(edRpWrap2&&edIsGod)edRpWrap2.style.display='none';if(editGunnyActive())editSeedGunny(d.lot.gunny);calcEditGross()}}).catch(()=>{calcEditGross()})}
 function closeEdit(){document.getElementById('edit-modal').classList.remove('show');editId=null;editTraderId=null}
 function editSellerMode(){document.getElementById('ed-seller-card').style.display='none';document.getElementById('ed-seller-search').style.display='block';document.getElementById('ed-seller-input').value='';document.getElementById('ed-seller-input').focus()}
 let edStm;

@@ -231,7 +231,7 @@ function getReportContext(db, opts) {
   const priceGate = opts.includeUnpriced
     ? ''
     : (opts.includeUnsold
-        ? 'AND COALESCE(l.reserved, 0) = 0'
+        ? 'AND COALESCE(l.reserved, 0) = 0 AND COALESCE(l.godown, 0) = 0'
         : 'AND l.amount > 0');
 
   const rows = db.all(`
@@ -911,7 +911,7 @@ function buildFormD(ctx, db, opts) {
       COALESCE(SUM(CASE WHEN UPPER(TRIM(COALESCE(l.code,''))) IN ('', 'NA') THEN l.qty ELSE 0 END), 0) AS notAuctioned
       FROM lots l
      WHERE ${qWhere.join(' AND ')}
-       AND COALESCE(l.reserved, 0) = 0`, qParams) : null;
+       AND COALESCE(l.reserved, 0) = 0 AND COALESCE(l.godown, 0) = 0`, qParams) : null;
   // Without a db handle there is nothing to derive from, so fall back to the
   // old behaviour (arrivals = sold) rather than reporting zero arrivals.
   const totalPut     = qAgg ? Number(qAgg.put) || 0 : totalKilos;

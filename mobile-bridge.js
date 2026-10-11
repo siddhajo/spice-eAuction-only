@@ -270,6 +270,13 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
 
   addReceiptHeader(doc, cfg.appTitle, headerBranch, dateFmt, lot.ano, pageW, cfg.companyPhone, cfg.companyGstin);
 
+  const godownLine = receiptGodownLine(sellerLots);
+  if (godownLine) {
+    doc.font('Helvetica-Bold').fontSize(fs(BODY + 0.5))
+       .text(godownLine, m, doc.y, { width: w, align: 'center' });
+    doc.moveDown(0.3);
+  }
+
   const lw = 70 * sc;
   const { maskAcct, maskIfsc } = makeMaskers({ mask_acct: cfg.acctMask, mask_ifsc: cfg.ifscMask });
   const maskedAcct = lot.acctnum ? maskAcct(lot.acctnum) : '';
@@ -639,6 +646,17 @@ function buildGroupedEscpos(lots, cfg, opts) {
 }
 
 // ── RENDERER (compact, thermal-printer / ~2.5"×3.5") ─────────────
+// A receipt whose every lot is a godown entry is a STORAGE acknowledgement,
+// not an auction booking — and the seller is holding that slip as proof of
+// what was handed over. Both renderers stamp a line saying so; a mixed slip
+// (some lots booked, some stored) says nothing, because the per-row numbers
+// are then the only honest summary.
+function receiptGodownLine(sellerLots) {
+  const rows = Array.isArray(sellerLots) ? sellerLots : [];
+  if (!rows.length) return '';
+  return rows.every(l => Number(l && l.godown)) ? 'GODOWN STORAGE — NOT AUCTIONED' : '';
+}
+
 function renderSellerReceiptCompact(doc, sellerLots, cfg) {
   // Content width + column scale follow the configured paper width (same
   // receiptPageW the document page was sized to). sc === 1 at the default
@@ -662,6 +680,13 @@ function renderSellerReceiptCompact(doc, sellerLots, cfg) {
   const headerBranch = cfg.branch || lot.branch;
 
   addReceiptHeaderCompact(doc, cfg.appTitle, headerBranch, dateFmt, lot.ano, pageW);
+
+  const godownLineC = receiptGodownLine(sellerLots);
+  if (godownLineC) {
+    doc.font('Helvetica-Bold').fontSize(fs(BODY))
+       .text(godownLineC, m, doc.y, { width: w, align: 'center' });
+    doc.moveDown(0.2);
+  }
 
   // Lean stub — seller NAME only. Bank (A/C, IFSC), place and GSTIN are
   // intentionally dropped; those live on the detailed receipt.
@@ -773,6 +798,9 @@ const LOT_SELECT_SQL = `
     l.gross_wt  AS gross_weight,
     l.sample_wt AS sample_weight,
     l.moisture, l.user_id, l.trader_id,
+    -- Godown-only entry: the slip must not read as an auction booking, so
+    -- both receipt renderers stamp a GODOWN line when every lot on it is one.
+    COALESCE(l.godown,0) AS godown,
     COALESCE(t.name, l.name, 'Unknown') AS trader_name,
     COALESCE(t.cr,   l.cr,   '') AS cr,
     COALESCE(t.ppla, l.ppla, '') AS ppla,
@@ -1120,6 +1148,13 @@ function mountMobile(app, deps) {
       // Immediate Payment + Reserve-this-Lot checkboxes on the mobile Lot
       // Entry + Edit forms. OFF hides both controls; the lot columns persist.
       immediateReserve: getBool('flag_immediate_reserve', false),
+      // GODOWN UTILITY — the Entry Type choice at the top of the mobile Lot
+      // Entry form ("Book for auction" vs "Godown storage only"). OFF hides
+      // the choice entirely and every entry is a booking. `godownPrefix` is
+      // only shown to the operator (the server assigns the real number), so
+      // the two can never disagree about what the next number is.
+      godown:          getBool('flag_godown', false),
+      godownPrefix:    (get('godown_lot_prefix', 'G') || 'G').trim().toUpperCase() || 'G',
       // Seller field placement on the Lot Entry form. true = below the
       // Reserve section; false (default) = at the top.
       sellerAtBottom:  getBool('lot_entry_seller_at_bottom', false),

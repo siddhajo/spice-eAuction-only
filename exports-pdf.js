@@ -960,6 +960,22 @@ const COLS = {
     { header: 'IGST',   key: 'igst',   width: 10 },
     { header: 'BILLAMOUNT', key: 'billamount', width: 13 },
   ],
+  // Godown Register — stored stock (landscape). Bags + weights only: a
+  // godown entry has no price, buyer or tax, so there is no money column.
+  godown_register: [
+    { header: 'TNO',      key: 'tno',      width: 5  },
+    { header: 'DATE',     key: 'date',     width: 11 },
+    { header: 'RECEIVED', key: 'received', width: 11 },
+    { header: 'LOT',      key: 'lot',      width: 8  },
+    { header: 'BRANCH',   key: 'branch',   width: 11 },
+    { header: 'SELLER',   key: 'name',     width: 24 },
+    { header: 'PLACE',    key: 'place',    width: 14 },
+    { header: 'PHONE',    key: 'phone',    width: 12 },
+    { header: 'GRADE',    key: 'grade',    width: 7  },
+    { header: 'BAGS',     key: 'bag',      width: 6  },
+    { header: 'NET WT',   key: 'qty',      width: 11 },
+    { header: 'GROSS WT', key: 'gross_wt', width: 11 },
+  ],
   // Sales Register — invoice-wise (landscape).
   sales_register: [
     { header: 'STATE',  key: 'state',  width: 12 },
@@ -1019,6 +1035,7 @@ const TOTAL_KEYS = {
   tds_return:      ['assess_value', 'tds'],
   purchase_register: ['bag', 'qty', 'amount', 'refund', 'commission', 'cgst', 'sgst', 'igst', 'billamount'],
   sales_register:    ['bag', 'qty', 'amount', 'gunny', 'lorry', 'ins', 'cgst', 'sgst', 'igst', 'invamt'],
+  godown_register:   ['bag', 'qty', 'gross_wt'],
 };
 
 // Where the totals strip's "TOTAL" label goes, when the default — the first
@@ -1096,6 +1113,7 @@ const TITLES = {
   merchant_individual: 'Merchants Individual',
   purchase_register: 'Purchase Register',
   sales_register:  'Sales Register',
+  godown_register: 'Godown Register',
 };
 
 // Per-type page orientation override. Portrait is the default (set in
@@ -1139,6 +1157,8 @@ const PDF_LAYOUT = {
   // 18 / 17 wide registers — portrait can't fit them.
   purchase_register: 'landscape',
   sales_register: 'landscape',
+  // 12 columns, four of them free text (seller, place, phone, branch).
+  godown_register: 'landscape',
   // Pooler register has 9 columns (Qty/Rate/Value + P_Qty/P_Rate/PurAmt);
   // portrait squeezes the money columns until values truncate. Go landscape.
   pooler_individual: 'landscape',
@@ -1393,7 +1413,7 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
                       THEN LTRIM(SUBSTR(TRIM(cr),6), '. :-')
                     ELSE TRIM(cr) END)) AS gstin
              FROM lots
-            WHERE auction_id = ? AND COALESCE(reserved,0) = 0
+            WHERE auction_id = ? AND COALESCE(reserved,0) = 0 AND COALESCE(godown,0) = 0
               AND ${hasValidGstinSql('cr')}
          )
          SELECT state, name, gstin, COALESCE(branch,'—') AS branch,
@@ -1565,6 +1585,16 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
       return getPurchaseRegister(db, {
         auctionId: auctionId || (extra && extra.auctionId) || null,
         from: extra && extra.from, to: extra && extra.to, mode,
+      });
+    }
+
+    case 'godown_register': {
+      const { getGodownRegister } = require('./calculations');
+      return getGodownRegister(db, {
+        auctionId: auctionId || (extra && extra.auctionId) || null,
+        from: extra && extra.from, to: extra && extra.to,
+        party: extra && extra.party, traderId: extra && extra.traderId,
+        branch: extra && extra.branch,
       });
     }
 
@@ -1883,7 +1913,7 @@ async function exportPdf(db, type, auctionId, cfg, extra = {}) {
   let subtitle = '';
   if (type === 'tds_return') {
     subtitle = `Period: ${extra.from || ''} to ${extra.to || ''}`;
-  } else if ((type === 'purchase_register' || type === 'sales_register') && !auctionId) {
+  } else if ((type === 'purchase_register' || type === 'sales_register' || type === 'godown_register') && !auctionId) {
     subtitle = (extra.from && extra.to) ? `Period: ${extra.from} to ${extra.to}` : 'All auctions';
   } else if (auctionId) {
     const auction = db.get('SELECT ano, date, crop_type FROM auctions WHERE id = ?', [auctionId]);

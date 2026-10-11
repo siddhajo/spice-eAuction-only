@@ -252,19 +252,44 @@ const LOG = [
   check('the successfully retried row is left alone', !t.includes('5'), JSON.stringify(t));
   check('and the unknown row is NOT ticked by this answer', !t.includes('6'), JSON.stringify(t));
 
-  console.log('[4] It hands off to the normal send flow');
-  const toast = await page.evaluate(() => (document.getElementById('toast') || {}).textContent || '');
-  check('the toast counts the two problems separately',
-    /2 ticked/.test(toast) && /1 failed/.test(toast) && /1 never tried/.test(toast), JSON.stringify(toast));
-  check('…and points at the button that actually sends',
-    /WhatsApp Selected/.test(toast), JSON.stringify(toast));
+  console.log('[4] The outcome STAYS on screen and carries the way to act on it');
+  // It used to be a three-second toast. By the time the operator looked down
+  // at the list it was gone, and nothing on screen said what to do next.
+  const result = await page.evaluate(() => {
+    const m = document.getElementById('wa-unsent-modal');
+    const vis = (id) => { const e = document.getElementById(id); const r = e && e.getBoundingClientRect();
+                          return !!(e && e.style.display !== 'none' && r.width > 0); };
+    return {
+      up: !!m && m.style.display !== 'none',
+      title: (document.getElementById('wa-unsent-title') || {}).textContent || '',
+      sub: (document.getElementById('wa-unsent-sub') || {}).textContent || '',
+      send: (document.getElementById('wa-unsent-send') || {}).textContent || '',
+      sendShown: vis('wa-unsent-send'),
+      cancel: (document.getElementById('wa-unsent-cancel') || {}).textContent || '',
+      questionGone: !vis('wa-unsent-all') && !vis('wa-unsent-known'),
+    };
+  });
+  check('the panel is still up after the choice', result.up, JSON.stringify(result));
+  check('it says how many are ticked, in the title',
+    /2 invoices ticked and ready to send/.test(result.title), JSON.stringify(result.title));
+  check('…and keeps the two kinds of problem apart',
+    /1 WhatsApp refused/.test(result.sub) && /1 never tried/.test(result.sub), JSON.stringify(result.sub));
+  check('…and says what happens next',
+    /press the green button/i.test(result.sub), JSON.stringify(result.sub));
+  check('the send button is right there, counting what it will send',
+    result.sendShown && /Send 2 on WhatsApp/.test(result.send), JSON.stringify(result.send));
+  check('closing is offered as a deferral, not a cancel', result.cancel === 'Not now', result.cancel);
+  check('the question’s buttons are gone — one view at a time', result.questionGone, JSON.stringify(result));
+
+  await page.evaluate(() => _waUnsentAnswer(null));
+  await new Promise(r => setTimeout(r, 300));
   const sendBtn = await page.evaluate(() => {
     const b = [...document.querySelectorAll('#tc-invoices button')]
       .find(x => /WhatsApp Selected/.test(x.textContent || ''));
     const r = b && b.getBoundingClientRect();
     return b ? { visible: r.width > 0 && r.height > 0 } : null;
   });
-  check('the green "WhatsApp Selected" button is now showing',
+  check('and the ticks survive closing, so the toolbar button works too',
     sendBtn && sendBtn.visible, JSON.stringify(sendBtn));
 
   console.log('[4b] "Tick all" — for a batch the operator knows was never sent');
@@ -276,9 +301,10 @@ const LOG = [
     JSON.stringify(t) === JSON.stringify(['2', '3', '6']), JSON.stringify(t));
   check('but rows known to have gone out STILL are not ticked',
     !t.includes('1') && !t.includes('4') && !t.includes('5'), JSON.stringify(t));
-  const toast2 = await page.evaluate(() => (document.getElementById('toast') || {}).textContent || '');
-  check('and the toast owns up to the guess it was told to make',
-    /1 with no record/.test(toast2), JSON.stringify(toast2));
+  const sub2 = await page.evaluate(() => (document.getElementById('wa-unsent-sub') || {}).textContent || '');
+  check('and the result owns up to the guess it was told to make',
+    /1 with no record/.test(sub2), JSON.stringify(sub2));
+  await page.evaluate(() => _waUnsentAnswer(null));
 
   console.log('[4c] Cancel leaves the selection exactly as it was');
   await press();
@@ -352,6 +378,10 @@ const LOG = [
           .find(x => /Select unsent/.test(x.textContent || '')).click();
       });
       await new Promise(r => setTimeout(r, 900));
+      if (process.env.WA_SHOT_PROMPT === 'result') {
+        await page.evaluate(() => _waUnsentAnswer(false));
+        await new Promise(r => setTimeout(r, 500));
+      }
     }
     const shot = path.join(os.tmpdir(), 'wa-resend-unsent.png');
     await page.screenshot({ path: shot });

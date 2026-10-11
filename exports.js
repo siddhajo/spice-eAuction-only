@@ -1341,7 +1341,7 @@ async function exportPoolerRegister(db, auctionId) {
   // per-lot pooler ledger.
   const rows = db.all(
     `SELECT state, lot_no as lot, name as poolername, branch as br, qty, price, amount
-     FROM lots WHERE auction_id = ? AND COALESCE(reserved,0) = 0
+     FROM lots WHERE auction_id = ? AND COALESCE(reserved,0) = 0 AND COALESCE(godown,0) = 0
      ORDER BY name`, [auctionId]
   );
   // Gross Qty = net qty + the SB Sample Refund (cfg.sb_refund) added back per
@@ -1421,7 +1421,7 @@ async function exportDealerList(db, auctionId) {
                 END
               )) AS gstin
          FROM lots
-        WHERE auction_id = ? AND COALESCE(reserved,0) = 0
+        WHERE auction_id = ? AND COALESCE(reserved,0) = 0 AND COALESCE(godown,0) = 0
           AND ${hasValidGstinSql('cr')}
      )
      SELECT state, name, gstin, COALESCE(branch,'—') AS branch,
@@ -1529,7 +1529,7 @@ async function exportDealerListPartyWise(db, auctionId) {
                 END
               )) AS gstin
          FROM lots
-        WHERE auction_id = ? AND COALESCE(reserved,0) = 0
+        WHERE auction_id = ? AND COALESCE(reserved,0) = 0 AND COALESCE(godown,0) = 0
           -- Previous rule: registered dealer = cr holds a valid GSTIN (SBL ignored).
           AND ${hasValidGstinSql('cr')}
      )
@@ -1578,7 +1578,7 @@ async function exportPoolerListConsolidated(db, auctionId) {
             COUNT(lot_no) as lots, SUM(bags) as bags, SUM(qty) as qty,
             SUM(amount) as value, SUM(bilamt) as billamount
        FROM lots
-      WHERE auction_id = ? AND COALESCE(reserved,0) = 0
+      WHERE auction_id = ? AND COALESCE(reserved,0) = 0 AND COALESCE(godown,0) = 0
       GROUP BY name
       ORDER BY name`, [auctionId]
   );
@@ -2021,6 +2021,35 @@ async function exportPurchaseRegister(db, opts = {}) {
   }};
   return createExcelBuffer('PurchaseRegister', cols, rows, {
     db, title: 'Purchase Register', metaLines: registerMeta(db, opts), grandTotal,
+  });
+}
+
+// ── Export: Godown Register (stored stock) ─────────────────
+// The storage side of the house, not a money report: no price, no buyer, no
+// tax columns — bags and weights only. Totals are BAG + QTY + GROSS.
+async function exportGodownRegister(db, opts = {}) {
+  const { getGodownRegister } = require('./calculations');
+  const rows = getGodownRegister(db, opts);
+  const cols = [
+    { header: 'TNO',      key: 'tno',      width: 6  },
+    { header: 'DATE',     key: 'date',     width: 12 },
+    { header: 'RECEIVED', key: 'received', width: 12 },
+    { header: 'LOT',      key: 'lot',      width: 9  },
+    { header: 'BRANCH',   key: 'branch',   width: 12 },
+    { header: 'SELLER',   key: 'name',     width: 30 },
+    { header: 'PLACE',    key: 'place',    width: 16 },
+    { header: 'PHONE',    key: 'phone',    width: 14 },
+    { header: 'GRADE',    key: 'grade',    width: 8  },
+    { header: 'BAGS',     key: 'bag',      width: 7,  numFmt: '#,##0'     },
+    { header: 'NET WT',   key: 'qty',      width: 12, numFmt: '#,##0.000' },
+    { header: 'GROSS WT', key: 'gross_wt', width: 12, numFmt: '#,##0.000' },
+  ];
+  const sum = (k) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+  const grandTotal = { label: 'TOTAL', values: {
+    bag: sum('bag'), qty: sum('qty'), gross_wt: sum('gross_wt'),
+  }};
+  return createExcelBuffer('GodownRegister', cols, rows, {
+    db, title: 'Godown Register', metaLines: registerMeta(db, opts), grandTotal,
   });
 }
 
@@ -2673,7 +2702,7 @@ function planterDisbursementRows(db, auctionId, cfg) {
   const lots = db.all(
     `SELECT lot_no, name, price, amount, com, sertax, cgst, sgst, igst, balance
        FROM lots
-      WHERE auction_id = ? AND amount > 0 AND COALESCE(reserved,0) = 0
+      WHERE auction_id = ? AND amount > 0 AND COALESCE(reserved,0) = 0 AND COALESCE(godown,0) = 0
         AND NOT ${hasValidGstinSql('cr')}
       ORDER BY CAST(lot_no AS INTEGER), lot_no`, [auctionId]) || [];
 
@@ -2803,7 +2832,7 @@ function dealerDisbursementRows(db, auctionId, cfg) {
   const lots = db.all(
     `SELECT lot_no, name, trader_id, price, amount, com, sertax, cgst, sgst, igst, balance
        FROM lots
-      WHERE auction_id = ? AND amount > 0 AND COALESCE(reserved,0) = 0
+      WHERE auction_id = ? AND amount > 0 AND COALESCE(reserved,0) = 0 AND COALESCE(godown,0) = 0
         AND ${hasValidGstinSql('cr')}
       ORDER BY CAST(lot_no AS INTEGER), lot_no`, [auctionId]) || [];
 
@@ -3004,7 +3033,7 @@ module.exports = {
   exportSalesJournal, exportPurchaseJournal,
   // Shared with the PDF twin — one column spec, two renderings.
   SALES_JOURNAL_COLS, SALES_JOURNAL_TOTAL_KEYS,
-  exportPurchaseRegister, exportSalesRegister, exportIndividualRegister,
+  exportPurchaseRegister, exportSalesRegister, exportGodownRegister, exportIndividualRegister,
   exportSellersXlsx, exportBuyersXlsx,
   exportDealerInvoiceCsv,
   // Shared with the PDF twin (exports-pdf.js) so the two renderings cannot

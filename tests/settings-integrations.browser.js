@@ -56,6 +56,18 @@ const cleanup = () => {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + TOKEN },
     body: JSON.stringify({ username: 'uiadmin', password: 'pw1234', role: 'admin' }),
   });
+  // Seed the Send log tab's "numbers that have never worked" panel: a seller
+  // whose number the app itself refused. Without a row there the panel renders
+  // nothing at all (by design), and the screenshot would prove nothing.
+  const post = (u, b) => fetch(B + u, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + TOKEN },
+    body: JSON.stringify(b),
+  });
+  await post('/api/traders', { name: 'K RAJU', tel: '9000000111' });
+  await post('/api/whatsapp/log-unsent', { rows: [
+    { phone: '9000000111', status: 'not_sent', ref_type: 'bill', ref_id: '1',
+      reason: 'The number on file has 11 digits; an Indian mobile has 10, so one digit is wrong or extra' },
+  ] });
 
   let chrome = null;
   for (const p of [
@@ -170,6 +182,18 @@ ${pass} passed, ${fail} failed
   check('only the chosen pane is showing',
     tabs.visible.length === 1 && tabs.visible[0] === 'log' && tabs.on.join() === 'log', JSON.stringify(tabs));
 
+  // The bad-number panel is the Send log tab's answer to "Message
+  // undeliverable": it names the seller rather than printing digits.
+  const badPanel = await page.evaluate(() => {
+    const h = document.getElementById('whatsapp-bad-host');
+    return { html: h ? h.textContent : null, rows: h ? h.querySelectorAll('tbody tr').length : 0 };
+  });
+  check('the Send log tab lists numbers that have never worked',
+    badPanel.rows === 1, JSON.stringify(badPanel));
+  check('…by NAME, not just digits', /K RAJU/.test(badPanel.html || ''), JSON.stringify(badPanel.html));
+  check('…saying plainly that this is not something the app can fix',
+    /no WhatsApp account on the number/i.test(badPanel.html || ''), JSON.stringify(badPanel.html));
+
   // Screenshots of each tab — the panel is judged by eye, so leave one behind.
   const shots = [];
   for (const t of ['overview', 'setup', 'log']) {
@@ -179,6 +203,18 @@ ${pass} passed, ${fail} failed
     await page.screenshot({ path: f, fullPage: true });
     shots.push(f);
   }
+  // …plus the bad-number panel on its own, which is small and easy to lose
+  // inside a full-page shot of the Settings screen.
+  try {
+    await page.evaluate(() => _waSetTab('log'));
+    await new Promise(r => setTimeout(r, 400));
+    const el = await page.$('#whatsapp-bad-host');
+    if (el) {
+      const f = path.join(os.tmpdir(), 'integrations-bad-numbers.png');
+      await el.screenshot({ path: f });
+      shots.push(f);
+    }
+  } catch (_) {}
   console.log('  screenshots:\n    ' + shots.join('\n    '));
 
   console.log('\npage errors: ' + (errs.length ? errs.join(' | ') : 'none'));

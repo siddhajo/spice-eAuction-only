@@ -507,6 +507,20 @@ const DEFAULTS = [
   // on later doesn't lose data, and existing reserved lots still render.
   { key: 'flag_immediate_reserve', value: 'false', category: 'flags', label: 'Immediate Payment & Reserve Lot (Lot Entry)', type: 'boolean' },
 
+  // GODOWN UTILITY — storage service offered alongside the auction. When ON,
+  // Lot Entry (desktop + mobile) grows a two-way Entry Type choice: "Book for
+  // auction" (the normal path) or "Godown storage only". A godown entry is a
+  // real receipt of goods — seller, bags, weight, branch — but it was never
+  // put up for sale, so it numbers itself out of its own G-series
+  // (godown_lot_prefix) instead of the trade's lot allocation, and every
+  // money/statutory reader skips it the way it skips a reserved lot. The
+  // Godown Register (Reports -> Registers) is where those rows are counted.
+  // When OFF the choice is hidden everywhere and every entry is a booking;
+  // the lots.godown column always exists, so rows recorded while it was on
+  // keep their identity (and stay out of the auction) after it is switched
+  // off. Default OFF so existing installs are unaffected on upgrade.
+  { key: 'flag_godown',          value: 'false', category: 'flags', label: 'Godown Utility (Lot Entry)',      type: 'boolean' },
+
   // TAN (Tax Deduction & Collection Account No) on sellers + buyers. When ON,
   // a TAN input shows in the Seller and Buyer add/edit forms and the value is
   // saved to traders.tan / buyers.tan. When OFF the input is hidden; the DB
@@ -627,6 +641,11 @@ const DEFAULTS = [
   // seller search sits at the TOP of the form (default); ON = it drops below
   // the "Reserve this lot" section.
   { key: 'lot_entry_seller_at_bottom', value: 'false', category: 'lot_entry', label: 'Seller field at bottom of Lot Entry', type: 'boolean' },
+  // Lot-number prefix for godown-only entries (flag_godown). Godown rows are
+  // numbered <prefix><n> per trade — G001, G002 … — deliberately outside the
+  // auction's allocated ranges, so storing goods never consumes a lot number
+  // that a bidder could have bought. Blank falls back to 'G'.
+  { key: 'godown_lot_prefix',    value: 'G',     category: 'lot_entry', label: 'Godown Entry Lot Prefix (e.g. G -> G001)', type: 'text' },
   // Per-field visibility for the auto-calculated (read-only) weight fields on
   // the mobile Lot Entry form. Both default ON.
   { key: 'mobile_show_sample_field', value: 'true', category: 'lot_entry', label: 'Mobile Lot Entry: show Sample field', type: 'boolean' },
