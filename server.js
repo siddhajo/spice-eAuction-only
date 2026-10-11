@@ -4430,6 +4430,99 @@ app.get('/api/whatsapp/messages', requireView, (req, res) => {
   res.json(rows);
 });
 
+// ── Numbers that have NEVER worked ─────────────────────────────
+// "Message undeliverable" (131026) on a well-formed number is not a bug and
+// not something code can fix: there is no WhatsApp account on it. The useful
+// question is not "why did this fail" but "WHICH of my sellers do I need to
+// get a better number for" — and until now the only way to answer it was to
+// read a log of raw phone numbers.
+//
+// The list is deliberately numbers that have NEVER succeeded. One failure
+// among successes is a blip (a moment offline, a bounced send); a number with
+// nothing but failures behind it is a number nobody is ever going to answer
+// on, and every run spends another attempt — and another mark against the
+// account's standing — rediscovering that.
+//
+// Both kinds of refusal count: `failed` is Meta's ("no WhatsApp account on
+// that number") and `not_sent` is ours (phoneProblem stopped it — eleven
+// digits, or one). They are the same problem from the operator's chair and
+// carry the same fix: correct the number on the seller or buyer.
+// `not_attempted` is excluded — that is a run being stopped, and says nothing
+// about the number.
+//
+// ?days= how far back to look (default 90, max 730).
+// ?minFails= how many refusals before a number counts as dead (default 1).
+//   The SEND path asks for 2: one refusal might be a bad moment, and
+//   condemning a number on a single failure would quietly cut someone off.
+app.get('/api/whatsapp/problem-numbers', requireView, (req, res) => {
+  const db = getDb();
+  let days = parseInt(req.query.days, 10);
+  if (!Number.isFinite(days) || days <= 0) days = 90;
+  days = Math.min(days, 730);
+  let minFails = parseInt(req.query.minFails, 10);
+  if (!Number.isFinite(minFails) || minFails < 1) minFails = 1;
+  let rows = [];
+  try {
+    rows = db.all(
+      `SELECT m.phone AS phone,
+              COUNT(*) AS fails,
+              MAX(m.created_at) AS last_at,
+              (SELECT e.error FROM whatsapp_messages e
+                WHERE e.phone = m.phone AND e.status IN ('failed','not_sent')
+                ORDER BY e.id DESC LIMIT 1) AS last_error,
+              (SELECT COUNT(*) FROM whatsapp_messages s
+                WHERE s.phone = m.phone AND s.direction = 'out'
+                  AND s.status IN ('sent','delivered','read')) AS ok_count
+         FROM whatsapp_messages m
+        WHERE m.direction = 'out' AND m.status IN ('failed','not_sent') AND m.phone <> ''
+          AND m.created_at >= datetime('now','localtime', ?)
+        GROUP BY m.phone
+       HAVING ok_count = 0 AND fails >= ?
+        ORDER BY fails DESC, last_at DESC
+        LIMIT 500`, [`-${days} days`, minFails]);
+  } catch (e) {
+    console.warn('[wa-problem-numbers] query failed:', e.message);
+    return res.json({ days, rows: [] });
+  }
+  // Put a NAME to each one. The log stores 91 + 10 digits; the masters mostly
+  // hold the bare 10, so both sides are compared on their last ten — the only
+  // part that is the same in every spelling of the number.
+  const last10 = (v) => String(v || '').replace(/\D/g, '').slice(-10);
+  const wanted = rows.map(r => last10(r.phone)).filter(Boolean);
+  const owners = new Map();
+  if (wanted.length) {
+    const CLEAN = (col) => `substr(replace(replace(replace(replace(replace(IFNULL(${col},''),' ',''),'-',''),'+',''),'(',''),')',''), -10)`;
+    const marks = wanted.map(() => '?').join(',');
+    const add = (list, kind) => {
+      for (const o of list || []) {
+        const k = last10(o.tel);
+        if (!k) continue;
+        if (!owners.has(k)) owners.set(k, []);
+        // Namesakes are real and so are shared numbers — keep every owner
+        // rather than letting one silently stand for the others.
+        owners.get(k).push({ kind, id: o.id, name: String(o.nm || '').trim() });
+      }
+    };
+    try {
+      add(db.all(`SELECT id, name AS nm, tel FROM traders WHERE ${CLEAN('tel')} IN (${marks})`, wanted), 'seller');
+    } catch (e) { console.warn('[wa-problem-numbers] traders lookup failed:', e.message); }
+    try {
+      add(db.all(`SELECT id, COALESCE(NULLIF(buyer1,''), buyer) AS nm, tel FROM buyers WHERE ${CLEAN('tel')} IN (${marks})`, wanted), 'buyer');
+    } catch (e) { console.warn('[wa-problem-numbers] buyers lookup failed:', e.message); }
+  }
+  res.json({
+    days,
+    minFails,
+    rows: rows.map(r => ({
+      phone: r.phone,
+      fails: Number(r.fails) || 0,
+      lastAt: r.last_at || '',
+      lastError: r.last_error || '',
+      owners: owners.get(last10(r.phone)) || [],
+    })),
+  });
+});
+
 // ── Record what did NOT go out ─────────────────────────────────
 // Every other row in this log is written by a send route, which means the log
 // only ever knew about messages that reached Meta. When the account-level

@@ -27402,7 +27402,7 @@ function _waPanesHtml(){
   return `<div class="wa-tabs">${tab('overview', 'Overview')}${tab('setup', 'Setup')}${tab('log', 'Send log')}</div>`
     + pane('overview', '<div id="whatsapp-usage-host"></div>')
     + pane('setup', '<div id="whatsapp-config-host"></div>')
-    + pane('log', '<div id="whatsapp-log-host"></div>');
+    + pane('log', '<div id="whatsapp-bad-host"></div><div id="whatsapp-log-host"></div>');
 }
 function _waSetTab(id){
   _waTab = id;
@@ -27410,7 +27410,11 @@ function _waSetTab(id){
   document.querySelectorAll('#settings-root [data-wapane]').forEach(p => { p.hidden = p.dataset.wapane !== id; });
   // The log is the one pane worth deferring — it is a fetch of up to 500 rows
   // that most visits never look at. Load it the first time it is opened.
-  if (id === 'log' && !_waLogHydrated) { _waLogHydrated = true; try { _renderWhatsappLog(); } catch(_){} }
+  if (id === 'log' && !_waLogHydrated) {
+    _waLogHydrated = true;
+    try { _renderWhatsappLog(); } catch(_){}
+    try { _renderWhatsappBadNumbers(); } catch(_){}
+  }
 }
 
 function renderSettingsPanel(){
@@ -27615,7 +27619,10 @@ function renderSettingsPanel(){
     // Panel repaint drops the log's markup with it, so re-fetch only when the
     // log is the visible tab; otherwise _waSetTab() loads it on first open.
     _waLogHydrated = (_waTab === 'log');
-    if (_waLogHydrated) { try { _renderWhatsappLog(); } catch(_){} }
+    if (_waLogHydrated) {
+      try { _renderWhatsappLog(); } catch(_){}
+      try { _renderWhatsappBadNumbers(); } catch(_){}
+    }
   }
   // Reset dirty flag on panel render so stale dirty state doesn't trigger
   // a false "unsaved changes" warning when switching presets.
@@ -28192,6 +28199,58 @@ const _WA_LOG_TONE = {
   not_attempted: { label: 'Not tried', bg: '#fef3c7', fg: '#92400e' },
   not_sent:      { label: 'Not sent',  bg: '#fef3c7', fg: '#92400e' },
 };
+// ── "Which of my sellers do I need a better number for?" ─────
+// "Message undeliverable" on a well-formed number is not a fault anything in
+// this app can clear: there is no WhatsApp account on it. So the panel does
+// not try to explain the error again — it answers the only question that has
+// an action behind it, and answers it with NAMES rather than digits.
+//
+// Shown only for numbers that have NEVER succeeded. One failure among
+// successes is a blip; nothing but failures is a number nobody will ever
+// answer on, and every run spends another attempt rediscovering that.
+let _waBadDays = 90;
+async function _renderWhatsappBadNumbers(){
+  const host = document.getElementById('whatsapp-bad-host');
+  if (!host) return;
+  let d = null;
+  try { d = await j(`/api/whatsapp/problem-numbers?days=${_waBadDays}`); } catch (_) { d = null; }
+  const rows = (d && d.rows) || [];
+  if (!rows.length) { host.innerHTML = ''; return; }   // nothing to act on, no panel
+  const esc = (v) => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+  const when = (t) => String(t || '').slice(0, 10);
+  const who = (r) => r.owners.length
+    ? r.owners.map(o => `<span title="${esc(o.kind)} #${esc(o.id)}">${esc(o.name)}</span>`).join(', ')
+    : '<span style="color:var(--text3)">not in the Sellers or Buyers list</span>';
+  const attempts = rows.reduce((n, r) => n + r.fails, 0);
+  host.innerHTML = `
+    <div class="wa-sub">Numbers that have never worked</div>
+    <div class="wa-cap">
+      These ${rows.length} number${rows.length === 1 ? ' has' : 's have'} been tried
+      ${attempts} time${attempts === 1 ? '' : 's'} in the last ${_waBadDays} days and
+      <strong>never once succeeded</strong>. Nothing in this app can fix that —
+      “Message undeliverable” means there is no WhatsApp account on the number.
+      Correct it on the seller or buyer, or accept that this one has to be reached another way.
+    </div>
+    <div style="overflow-x:auto;border:1px solid var(--spice-line);border-radius:10px;margin-bottom:6px">
+      <table class="wa-tbl">
+        <thead><tr><th>Who</th><th>Number on file</th><th style="text-align:right">Tried</th><th>Last tried</th><th>Why it failed</th></tr></thead>
+        <tbody>${rows.map(r => `
+          <tr>
+            <td style="max-width:220px">${who(r)}</td>
+            <td style="white-space:nowrap;font-variant-numeric:tabular-nums">${esc(maskPhone(r.phone) || r.phone)}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">${r.fails}</td>
+            <td style="white-space:nowrap;color:var(--spice-text-mute)">${esc(when(r.lastAt))}</td>
+            <td style="max-width:260px;color:#b02525;font-size:11.5px">${esc(r.lastError)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="wa-row" style="margin-bottom:16px">
+      <span class="wa-note" style="flex:1">Showing the last ${_waBadDays} days.</span>
+      ${[30, 90, 365].map(n => `<button type="button" class="wa-btn sm"${n === _waBadDays ? ' style="font-weight:700"' : ''}
+        onclick="_waBadDays=${n};_renderWhatsappBadNumbers()">${n} days</button>`).join('')}
+    </div>`;
+}
 async function _renderWhatsappLog(){
   const host = document.getElementById('whatsapp-log-host');
   if (!host) return;
@@ -38127,6 +38186,12 @@ async function _waAutoPass() {
     // nothing about which master to go and correct.
     const bad = _waPhoneProblem(row.phone);
     if (bad) { row.status = 'failed'; row.reason = bad; _waQueueRender(i); continue; }
+    // Known from this account's own history to have never worked. Spending
+    // another send on it buys nothing but one more refusal on the record —
+    // and the row says so AS IT HAPPENS, in the ledger the operator is
+    // already watching, rather than after the run in a log.
+    const dead = _waQ.dead && _waQ.dead.get(_normalizePhoneForWa(row.phone));
+    if (dead) { row.status = 'failed'; row.dead = true; row.reason = _waDeadReason(dead); _waQueueRender(i); continue; }
     row.status = 'sending';
     _waQueueRender(i);
     const it = row.item;
@@ -38168,6 +38233,41 @@ async function _waAutoPass() {
     await _waLogUnsent();
     break;
   }
+}
+
+// ── Numbers already known not to be on WhatsApp ──────────────
+// Meta offers NO way to ask "is this number on WhatsApp?" before sending.
+// The on-premises API's /contacts check was removed and the Cloud API never
+// replaced it, so the only early warning available is this account's own
+// history — and after a few runs that history is a good answer.
+//
+// A number qualifies only when it has NEVER once succeeded AND has been
+// refused at least twice. One refusal can be a bad moment; condemning a
+// number on a single failure would quietly cut a seller off for good.
+// Nothing older than the window counts either, so a number that goes quiet
+// for months is tried again rather than written off forever.
+const WA_DEAD_MIN_FAILS = 2;
+const WA_DEAD_DAYS = 120;
+async function _waDeadNumbers() {
+  const by = new Map();
+  try {
+    const d = await j(`/api/whatsapp/problem-numbers?days=${WA_DEAD_DAYS}&minFails=${WA_DEAD_MIN_FAILS}`);
+    for (const r of (d && d.rows) || []) {
+      const p = String(r.phone || '').replace(/\D/g, '');
+      if (p) by.set(p, r);
+    }
+  } catch (e) {
+    // No history is not the same as a clean bill of health — but it must
+    // never stop a run either. Send, and let Meta answer as it always did.
+    console.warn('[wa] could not read the known-bad numbers:', e);
+  }
+  return by;
+}
+// Phrased for someone who has to decide what to do about it, not for a log.
+function _waDeadReason(rec) {
+  const when = String((rec && rec.lastAt) || '').slice(0, 10);
+  return `This number has never worked on WhatsApp — ${rec.fails} refusals, last tried ${when}. `
+       + 'Correct it on the seller or buyer, or send this one through WhatsApp Web.';
 }
 
 // ── Tell the server what never went out ───────────────────────
@@ -38257,9 +38357,11 @@ async function _waManualPass(list, note) {
 function _waSummaryLine() {
   const rows = _waQ.rows;
   const n = (st) => rows.filter(r => r.status === st).length;
+  const deadN = rows.filter(r => r.dead).length;
   const parts = [`${n('sent') + n('delivered') + n('read')} sent`];
   if (n('opened'))  parts.push(`${n('opened')} opened in WhatsApp Web`);
-  if (n('failed'))  parts.push(`${n('failed')} failed`);
+  if (n('failed') - deadN > 0) parts.push(`${n('failed') - deadN} failed`);
+  if (deadN) parts.push(`${deadN} not on WhatsApp`);
   if (n('skipped')) parts.push(`${n('skipped')} skipped`);
   // A run Meta cut short did not "finish". Leading with the tally would bury
   // the one fact that decides what the operator does next.
@@ -38351,6 +38453,19 @@ async function _runWaQueue(items, opts) {
     ? `Preparing ${items.length} message${items.length === 1 ? '' : 's'}…`
     : `${manualWhy} — these open in WhatsApp Web one at a time`);
 
+  // Read the dead-number history ONCE for the whole run, not per row.
+  if (useApi) {
+    _waQ.dead = await _waDeadNumbers();
+    // Say it up front for every row whose number is already known. Rows that
+    // look their number up inside prepare() cannot be counted yet and will
+    // announce themselves in the ledger as the run reaches them.
+    const doomed = _waQ.rows.filter(r => r.phone && _waQ.dead.get(_normalizePhoneForWa(r.phone))).length;
+    if (doomed) {
+      _waQueueRender(null, `${doomed} of these ${_waQ.rows.length} numbers have never worked on WhatsApp `
+        + '— those are skipped rather than spending another refusal on them.');
+      await new Promise(r => setTimeout(r, 1400));
+    }
+  }
   if (useApi) await _waAutoPass();
   // The API is not usable at all — clicking through WhatsApp Web is the only
   // way to send, so run the manual pass directly.
