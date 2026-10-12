@@ -2416,10 +2416,16 @@ function getPurchaseRegister(db, opts = {}) {
  * against and can be days earlier.
  */
 function getGodownRegister(db, opts = {}) {
+  // `bag`/`qty` on the row are the BALANCE — a godown lot row is decremented
+  // as stock is released into auctions (see godown_movements in db.js). The
+  // received figure is the balance plus everything that has left, so a sheet
+  // that reads Received − Moved = Balance reconciles on every line.
   let q = `SELECT a.ano AS tno, a.date AS date, l.created_at AS received,
       l.lot_no AS lot, l.branch AS branch, l.name AS name, l.ppla AS place,
       l.tel AS phone, l.grade AS grade, l.bags AS bag, l.qty AS qty,
-      l.gross_wt AS gross_wt, l.trader_id AS trader_id
+      l.gross_wt AS gross_wt, l.trader_id AS trader_id,
+      (SELECT COALESCE(SUM(m.bags),0) FROM godown_movements m WHERE m.src_lot_id = l.id) AS moved_bag,
+      (SELECT COALESCE(SUM(m.qty), 0) FROM godown_movements m WHERE m.src_lot_id = l.id) AS moved_qty
     FROM lots l JOIN auctions a ON a.id = l.auction_id
     WHERE COALESCE(l.godown,0) = 1`;
   const params = [];
@@ -2434,15 +2440,25 @@ function getGodownRegister(db, opts = {}) {
     q += ' AND UPPER(TRIM(COALESCE(l.name,\'\'))) = UPPER(TRIM(?))'; params.push(opts.party);
   }
   if (opts.branch) { q += ' AND UPPER(TRIM(COALESCE(l.branch,\'\'))) = UPPER(TRIM(?))'; params.push(opts.branch); }
+  // Default is EVERY entry, so the sheet reconciles over the period. `openOnly`
+  // narrows it to what is still physically in store.
+  if (opts.openOnly) q += ' AND (COALESCE(l.qty,0) > 0 OR COALESCE(l.bags,0) > 0)';
   q += ' ORDER BY a.ano, l.branch, l.lot_no';
   const rows = db.all(q, params);
-  return rows.map(r => ({
-    ...r,
-    date: _ddmmyyyy(r.date),
-    // created_at is a local datetime string ("2026-10-11 09:14:02") — the
-    // register shows the date half only.
-    received: _ddmmyyyy(String(r.received || '').split(' ')[0]),
-  }));
+  return rows.map(r => {
+    const bag = Number(r.bag) || 0, qty = Number(r.qty) || 0;
+    const movedBag = Number(r.moved_bag) || 0, movedQty = Number(r.moved_qty) || 0;
+    return {
+      ...r,
+      bag, qty, moved_bag: movedBag, moved_qty: movedQty,
+      recd_bag: bag + movedBag,
+      recd_qty: Math.round((qty + movedQty) * 1000) / 1000,
+      date: _ddmmyyyy(r.date),
+      // created_at is a local datetime string ("2026-10-11 09:14:02") — the
+      // register shows the date half only.
+      received: _ddmmyyyy(String(r.received || '').split(' ')[0]),
+    };
+  });
 }
 
 /**

@@ -1031,6 +1031,37 @@ async function initDb() {
     updated_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
 
+  // ── GODOWN MOVEMENTS ───────────────────────────────────────
+  // One row per release of stored stock into an auction (flag_godown). A
+  // godown lot row holds what is IN STORE NOW — every move decrements its
+  // bags/qty — so this table is both the history and the only place the
+  // ORIGINAL received quantity can be recovered from (received = balance +
+  // SUM(moved)). That split is deliberate: the lot row means "what is in the
+  // godown", which is what every existing reader of a lot row would assume,
+  // and nothing had to be taught a new rule to stay correct.
+  //
+  // src_lot_id   the godown entry stock left (stays, possibly at zero).
+  // dest_lot_id  the auction lot created by the move. Kept so the register
+  //              can name where stock went, and so a move can be undone.
+  // advance_recovered  how much of the godown entry's outstanding advance
+  //              rode along onto the new lot (lot_advances), recovered from
+  //              that sale's payment. The operator chooses it per move — the
+  //              proportional share is only the proposal.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS godown_movements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    src_lot_id INTEGER NOT NULL,
+    dest_lot_id INTEGER,
+    dest_auction_id INTEGER NOT NULL,
+    dest_lot_no TEXT DEFAULT '',
+    bags INTEGER DEFAULT 0,
+    qty REAL DEFAULT 0,
+    advance_recovered REAL DEFAULT 0,
+    user_id TEXT DEFAULT '',
+    moved_at TEXT DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (src_lot_id) REFERENCES lots(id),
+    FOREIGN KEY (dest_auction_id) REFERENCES auctions(id)
+  )`);
+
   // ── INDEXES ────────────────────────────────────────────────
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_traders_name ON traders(name)',
@@ -1048,6 +1079,11 @@ async function initDb() {
     'CREATE INDEX IF NOT EXISTS idx_buyers_buyer ON buyers(buyer)',
     'CREATE INDEX IF NOT EXISTS idx_buyers_buyer1 ON buyers(buyer1)',
     'CREATE INDEX IF NOT EXISTS idx_lot_alloc_auction ON lot_allocations(auction_id)',
+    // Both directions are read per row on the Godown screens: by source (the
+    // entry's own history + its moved total) and by destination (what a lot
+    // was released from).
+    'CREATE INDEX IF NOT EXISTS idx_godown_mv_src ON godown_movements(src_lot_id)',
+    'CREATE INDEX IF NOT EXISTS idx_godown_mv_dest ON godown_movements(dest_lot_id)',
     'CREATE INDEX IF NOT EXISTS idx_login_history_user ON login_history(user_id)',
     'CREATE INDEX IF NOT EXISTS idx_login_history_created ON login_history(created_at DESC)',
     // The session-alert poll runs every 15s per signed-in admin and only

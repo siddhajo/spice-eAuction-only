@@ -2040,13 +2040,19 @@ async function exportGodownRegister(db, opts = {}) {
     { header: 'PLACE',    key: 'place',    width: 16 },
     { header: 'PHONE',    key: 'phone',    width: 14 },
     { header: 'GRADE',    key: 'grade',    width: 8  },
-    { header: 'BAGS',     key: 'bag',      width: 7,  numFmt: '#,##0'     },
-    { header: 'NET WT',   key: 'qty',      width: 12, numFmt: '#,##0.000' },
-    { header: 'GROSS WT', key: 'gross_wt', width: 12, numFmt: '#,##0.000' },
+    // Received − Moved = Balance, so a line reconciles on its own.
+    { header: 'RECD BAGS', key: 'recd_bag',  width: 9,  numFmt: '#,##0'     },
+    { header: 'RECD WT',   key: 'recd_qty',  width: 12, numFmt: '#,##0.000' },
+    { header: 'MOVED BAGS',key: 'moved_bag', width: 10, numFmt: '#,##0'     },
+    { header: 'MOVED WT',  key: 'moved_qty', width: 12, numFmt: '#,##0.000' },
+    { header: 'BAL BAGS',  key: 'bag',       width: 9,  numFmt: '#,##0'     },
+    { header: 'BAL WT',    key: 'qty',       width: 12, numFmt: '#,##0.000' },
   ];
   const sum = (k) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0);
   const grandTotal = { label: 'TOTAL', values: {
-    bag: sum('bag'), qty: sum('qty'), gross_wt: sum('gross_wt'),
+    recd_bag: sum('recd_bag'), recd_qty: sum('recd_qty'),
+    moved_bag: sum('moved_bag'), moved_qty: sum('moved_qty'),
+    bag: sum('bag'), qty: sum('qty'),
   }};
   return createExcelBuffer('GodownRegister', cols, rows, {
     db, title: 'Godown Register', metaLines: registerMeta(db, opts), grandTotal,

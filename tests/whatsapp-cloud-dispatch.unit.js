@@ -55,6 +55,10 @@ const NAMES = [
   '_waCaptionLoad', '_waRowState', '_waIndexLoad', '_waUnsentOpen', '_waUnsentAnswer',
   '_waUnsentResult', '_waUnsentSend', '_waEnsureUnsentModal', '_waUnsentShow', '_waTile',
   '_waPhoneProblem', '_waRowHint', '_waDeadNumbers', '_waDeadReason',
+  // _waPaintMarks renders its stamp through the shared IST formatter, which
+  // reaches fmtD() for the operator's date_format. Lifted too, so the test
+  // keeps exercising the real formatting rather than a stand-in.
+  '_istParts', '_istSplit', 'fmtIst', '_fmtDParseYMD', 'fmtD',
 ];
 
 // The negative-probe TTL is a module-level const, not part of any function —
@@ -205,6 +209,10 @@ vm.runInContext(
   extractConst('WA_MARK_LOOKBACK') + '\n' +
   extractConst('WA_MARK_TTL_MS') + '\n' +
   extractConst('_waMarkCache') + '\n' +
+  extractConst('_IST_TZ') + '\n' +
+  extractConst('_IST_NAIVE') + '\n' +
+  extractConst('_IST_ZONED') + '\n' +
+  extractConst('_MONTH_ABBR') + '\n' +
   NAMES.map(extract).join('\n'), sandbox);
 
 sandbox._ensureWaQueueModal = () => ({});

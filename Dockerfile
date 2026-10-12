@@ -12,8 +12,16 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
       libnspr4 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
       libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 \
       libasound2 libpango-1.0-0 libcairo2 libatspi2.0-0 libxext6 libxrender1 \
-      libxi6 libxtst6 fonts-liberation \
+      libxi6 libxtst6 fonts-liberation tzdata \
   && rm -rf /var/lib/apt/lists/*
+
+# Every timestamp in this app is Indian Standard Time. ist.js pins the Node
+# process TZ (which is what sql.js's datetime('now','localtime') reads), and
+# this sets the container clock to match so the optional native
+# better-sqlite3 build — which reads the OS zone, not process.env.TZ — agrees
+# with it. tzdata above provides /usr/share/zoneinfo/Asia/Kolkata.
+ENV TZ=Asia/Kolkata
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 WORKDIR /app
 

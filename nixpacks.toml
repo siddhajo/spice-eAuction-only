@@ -8,12 +8,21 @@
 
 [phases.setup]
 nixPkgs = ["nodejs_20", "python3", "gcc", "gnumake"]
+#   tzdata: provides /usr/share/zoneinfo/Asia/Kolkata so the IST clock below
+#   resolves. Node's own formatting uses bundled ICU, but the optional native
+#   better-sqlite3 build reads the OS zone.
 aptPkgs = [
   "libnss3", "libatk1.0-0", "libatk-bridge2.0-0", "libcups2", "libdrm2",
   "libxkbcommon0", "libxcomposite1", "libxdamage1", "libxfixes3", "libxrandr2",
   "libgbm1", "libasound2", "libpango-1.0-0", "libcairo2", "libatspi2.0-0",
-  "fonts-liberation",
+  "fonts-liberation", "tzdata",
 ]
+
+# Every timestamp in this app is Indian Standard Time. ist.js pins the Node
+# process TZ regardless, but setting it here keeps the container clock, the
+# build logs, and any native sqlite build on the same zone.
+[variables]
+TZ = "Asia/Kolkata"
 
 [phases.install]
 cmds = ["npm ci --omit=dev || npm install --omit=dev"]

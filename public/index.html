@@ -5123,6 +5123,14 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
              be generated (bill-to, ship-to, amounts) + exact-PDF preview.
              Nothing is generated or numbered from here. Placed above Sales
              Invoices as the natural "preview before you generate" step. -->
+        <!-- Godown — stock in store, the advances paid against it, and the
+             release of that stock into a trade. Flag-gated like its Lot Entry
+             counterpart; min-stage 1 because stored stock exists before any
+             lot is entered (the goods arrive first). -->
+        <button class="side-item feat-godown" data-tab="godown" data-min-stage="1" onclick="go('godown')">
+          <svg viewBox="0 0 24 24"><path d="M3 10l9-6 9 6v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M7 21v-7h10v7"/></svg>
+          Godown
+        </button>
         <button class="side-item" data-tab="preinvoice" data-min-stage="3" onclick="go('preinvoice')">
           <svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
           Pre-Invoice
@@ -8913,6 +8921,113 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       </div>
     </div>
 
+    <!-- ══ GODOWN — stock in store, advances, and releasing into a trade ══
+         One screen because they are one job: the operator looking at what a
+         planter has in store is the same person paying them an advance on it
+         and booking part of it into Friday's auction. Every row is a godown
+         entry; the figures are the BALANCE (received less what has already
+         been released), which is what "in the godown" means. -->
+    <div class="tc" id="tc-godown">
+      <div class="card">
+        <h2 style="display:flex;align-items:center;gap:10px">
+          <span style="width:32px;height:32px;border-radius:10px;background:#ccfbf1;display:inline-flex;align-items:center;justify-content:center">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#0f766e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l9-6 9 6v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M7 21v-7h10v7"/></svg>
+          </span>
+          Godown
+          <span style="font-weight:400;font-size:12px;color:var(--text3)">stock in store, advances paid against it, and releases into a trade</span>
+        </h2>
+
+        <!-- Stat band — what is actually in store right now, across trades. -->
+        <div class="kpi-grid kpi-grid-rich" id="gd-kpis" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin:12px 0 16px"></div>
+
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:end">
+          <div class="fg" style="margin:0;min-width:180px"><label>Depot</label>
+            <select id="gd-branch" onchange="loadGodown()"><option value="">— All depots —</option></select>
+          </div>
+          <div class="fg" style="margin:0;min-width:240px"><label>Seller</label>
+            <input type="search" id="gd-search" placeholder="🔍 Name, phone or lot no…" oninput="gdRenderDebounced()" style="width:100%;padding:6px">
+          </div>
+          <label for="gd-show-closed" style="display:flex;align-items:center;gap:6px;height:38px;font-size:13px;cursor:pointer;user-select:none">
+            <input type="checkbox" id="gd-show-closed" onchange="loadGodown()" style="width:16px;height:16px;cursor:pointer">
+            Show emptied entries
+          </label>
+          <button class="btn btn-o" onclick="loadGodown()">Refresh</button>
+          <span style="flex:1"></span>
+          <button class="btn btn-a" onclick="go('registers');setTimeout(()=>{const t=document.getElementById('reg-type');if(t){t.value='godown';onRegTypeChange();}},300)">Godown Register ↗</button>
+        </div>
+
+        <div id="gd-list"></div>
+      </div>
+    </div>
+
+    <!-- Pay Advance (godown stock) -->
+    <div class="modal-bg" id="gd-adv-modal"><div class="modal has-x" style="max-width:520px">
+      <button class="modal-x" onclick="hideModal('gd-adv-modal')" title="Close" aria-label="Close">&times;</button>
+      <h2>Pay Advance</h2>
+      <div>
+          <div id="gd-adv-who" style="font-size:13px;color:var(--text2);margin-bottom:12px"></div>
+          <div class="sgrid">
+            <div class="fg"><label>Advance Amount (₹)</label>
+              <input type="number" id="gd-adv-amount" step="0.01" min="0" placeholder="0.00">
+            </div>
+            <div class="fg"><label>Pay Into</label>
+              <select id="gd-adv-bank"></select>
+            </div>
+          </div>
+          <div style="font-size:11.5px;color:var(--text3);margin-top:8px;line-height:1.5">
+            Recorded against this godown entry. It is recovered later, out of the sale of whatever
+            stock is released into a trade — you choose how much rides along on each release.
+            Setting it to <b>0</b> clears the advance.
+          </div>
+          <div id="gd-adv-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:13px;margin-top:10px"></div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-o" onclick="hideModal('gd-adv-modal')">Cancel</button>
+        <button class="btn btn-g needs-lot-write" id="gd-adv-save" onclick="gdSaveAdvance()">Save Advance</button>
+      </div>
+    </div></div>
+
+    <!-- Move stock into a trade -->
+    <div class="modal-bg" id="gd-move-modal"><div class="modal has-x" style="max-width:660px">
+      <button class="modal-x" onclick="hideModal('gd-move-modal')" title="Close" aria-label="Close">&times;</button>
+      <h2>Move to Auction</h2>
+      <div>
+          <div id="gd-move-who" style="font-size:13px;color:var(--text2);margin-bottom:12px"></div>
+          <div class="sgrid">
+            <div class="fg"><label>Into Trade</label>
+              <select id="gd-move-auction" onchange="gdMoveSuggestLot()"></select>
+            </div>
+            <div class="fg"><label>Depot</label>
+              <select id="gd-move-branch" onchange="gdMoveSuggestLot()"></select>
+            </div>
+            <div class="fg"><label>Lot No</label>
+              <input type="text" id="gd-move-lotno" placeholder="e.g. 007" style="font-family:monospace;font-weight:600">
+            </div>
+          </div>
+          <div class="sgrid" style="margin-top:4px">
+            <div class="fg"><label>Bags Moving</label>
+              <input type="number" id="gd-move-bags" min="0" step="1" oninput="gdMoveOnQtyInput()">
+            </div>
+            <div class="fg"><label>Weight Moving (kg)</label>
+              <input type="number" id="gd-move-qty" min="0" step="0.001" oninput="gdMoveOnQtyInput()">
+            </div>
+            <div class="fg"><label>Recover Advance Now (₹)</label>
+              <input type="number" id="gd-move-recover" min="0" step="0.01">
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <button class="btn btn-o" onclick="gdMoveAll()" style="font-size:12px;padding:4px 12px;height:32px">Move everything</button>
+            <span id="gd-move-left" style="font-size:12px;color:var(--text3);align-self:center"></span>
+          </div>
+          <div id="gd-move-advnote" style="display:none;font-size:11.5px;color:#0f766e;background:#ccfbf1;border:1px solid #5eead4;border-radius:8px;padding:8px 12px;margin-top:10px;line-height:1.45"></div>
+          <div id="gd-move-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:13px;margin-top:10px"></div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-o" onclick="hideModal('gd-move-modal')">Cancel</button>
+        <button class="btn btn-g needs-lot-write" id="gd-move-save" onclick="gdDoMove()">Move to Auction</button>
+      </div>
+    </div></div>
+
     <!-- SPICES BOARD — statutory reports (Buyers Statement / FORM-D / FORM-C) -->
     <div class="tc" id="tc-spicesboard">
       <div class="card">
@@ -10529,7 +10644,7 @@ function updateSyncIndicator(){
     const secs = Math.round((Date.now() - lastOkAt) / 1000);
     el.innerHTML = secs < 5 ? '✓ Synced' : `✓ Synced ${secs}s ago`;
     el.className = 'sync-pill sync-ok';
-    el.title = `Last successful sync: ${new Date(lastOkAt).toLocaleTimeString()}`;
+    el.title = `Last successful sync: ${fmtIstTime(lastOkAt, { seconds: true, label: true })}`;
   }
 }
 // Refresh the indicator's "Xs ago" text every 10s
@@ -11169,6 +11284,101 @@ function fmtD(v){
     case 'dd/mm/yyyy':
     default:             return `${d}/${m}/${y}`;
   }
+}
+
+// ── IST timestamps ────────────────────────────────────────
+// Mirror of ist.js on the server. Every timestamp this app shows is Indian
+// Standard Time, regardless of the zone the viewing device is set to — an
+// operator on a laptop still in UTC (or a phone roaming abroad) must read
+// the same clock as the register.
+//
+// Two shapes of timestamp reach the UI and they are NOT interchangeable:
+//
+//   naive    "2026-10-12 14:05:00" / "...T14:05:00" — what SQLite's
+//            datetime('now','localtime') stores on the IST-pinned server.
+//            Already IST wall-clock with no zone attached, so it is
+//            RE-FORMATTED, never re-parsed: `new Date(s)` reads a naive
+//            string in the *device's* zone, and converting that to IST
+//            would shift an already-correct stamp a second time.
+//
+//   instant  an ISO string carrying Z or ±hh:mm, or epoch milliseconds —
+//            a real point in time, which gets CONVERTED into IST.
+//
+// fmtIst() tells them apart. The date half goes through fmtD() so the
+// operator's date_format setting still applies.
+const _IST_TZ = 'Asia/Kolkata';
+const _IST_NAIVE = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/;
+const _IST_ZONED = /(?:Z|[+-]\d{2}:?\d{2})$/i;
+
+// Calendar parts of a real instant, as seen in IST.
+function _istParts(v){
+  const d = v instanceof Date ? v : new Date(v);
+  if(isNaN(d.getTime())) return null;
+  const out={};
+  try{
+    for(const p of new Intl.DateTimeFormat('en-GB',{timeZone:_IST_TZ,
+        year:'numeric',month:'2-digit',day:'2-digit',
+        hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).formatToParts(d)){
+      if(p.type!=='literal') out[p.type]=p.value;
+    }
+  }catch(e){ return null; }           // ICU without tz data — caller falls back
+  if(out.hour==='24') out.hour='00';  // some ICU builds render midnight as 24
+  return out;
+}
+
+// Split any timestamp into { y, m, d, hh, mm, ss } in IST, or null.
+function _istSplit(v){
+  if(v===null||v===undefined||v==='') return null;
+  const str = typeof v==='string' ? v.trim() : null;
+  const naive = str && !_IST_ZONED.test(str) ? str.match(_IST_NAIVE) : null;
+  if(naive){
+    return { y:naive[1], m:naive[2], d:naive[3],
+             hh:naive[4]||'00', mm:naive[5]||'00', ss:naive[6]||'00' };
+  }
+  const p=_istParts(v);
+  if(!p) return null;
+  return { y:p.year, m:p.month, d:p.day, hh:p.hour, mm:p.minute, ss:p.second };
+}
+
+// "12/10/2026 14:05" — opts: {seconds, dateOnly, label} (label appends " IST").
+function fmtIst(v, opts){
+  const o=opts||{};
+  if(v===null||v===undefined||v==='') return '';
+  const t=_istSplit(v);
+  if(!t) return String(v);
+  let out=fmtD(`${t.y}-${t.m}-${t.d}`);
+  if(!o.dateOnly) out+=' '+t.hh+':'+t.mm+(o.seconds?':'+t.ss:'');
+  return o.label?out+' IST':out;
+}
+// Date half only, in IST — use instead of fmtD() when the value is a
+// *timestamp* rather than a plain business date, so a late-evening UTC
+// instant doesn't show yesterday's date.
+function fmtIstDate(v){ return fmtIst(v,{dateOnly:true}); }
+// Epoch milliseconds for any timestamp, reading a naive stamp as IST rather
+// than as device-local. Use this for arithmetic on stored stamps (ages,
+// elapsed windows) — `new Date("2026-10-12 14:05:00")` resolves in the
+// viewer's own zone, so on a device that is not IST the result is off by
+// that zone's offset from IST. IST is a fixed +05:30 with no DST ever, so
+// the shift is a constant.
+const _IST_OFFSET_MS = 330 * 60 * 1000;
+function istEpoch(v){
+  if(v===null||v===undefined||v==='') return NaN;
+  const str = typeof v==='string' ? v.trim() : null;
+  const naive = str && !_IST_ZONED.test(str) ? str.match(_IST_NAIVE) : null;
+  if(naive){
+    return Date.UTC(+naive[1], +naive[2]-1, +naive[3],
+                    +(naive[4]||0), +(naive[5]||0), +(naive[6]||0)) - _IST_OFFSET_MS;
+  }
+  const d = v instanceof Date ? v : new Date(v);
+  return d.getTime();
+}
+// Time half only, in IST.
+function fmtIstTime(v, opts){
+  const o=opts||{};
+  const t=_istSplit(v);
+  if(!t) return '';
+  const s=t.hh+':'+t.mm+(o.seconds?':'+t.ss:'');
+  return o.label?s+' IST':s;
 }
 
 // ── Icon helpers ──────────────────────────────────────────
@@ -12947,6 +13157,17 @@ const SCREEN_GUIDE = {
     ],
     warn: 'This is the expensive one. Reminders are marketing messages: several times the price of an invoice send, and they go to people who did not ask to hear from you. Raise “Only sellers who booked at least this many auctions” before widening the day window.',
   },
+  godown: {
+    icon: '🏚',
+    title: 'Godown — stock in store, advances and releases',
+    steps: [
+      'Every row is one godown entry and shows what is STILL IN STORE: received, less whatever has already been released into a trade.',
+      '“Advance” pays money against stored stock. It is recorded against that entry and recovered later, from the sale of whatever stock is released.',
+      '“Move to auction” books part (or all) of an entry into a trade: pick the trade, the depot and a free lot number, then the bags and weight going in. The balance here drops by exactly that much.',
+      'When you move stock, say how much of the outstanding advance should ride along with it — the proportional share is only a suggestion, and the rest stays against the stock still in store.',
+    ],
+    warn: 'Released stock becomes an ordinary auction lot the moment it moves — it is priced, invoiced and paid like any other. What stays here is outside the auction entirely: no price, no invoice, no Spices Board return.',
+  },
   settings: {
     icon: '⚙️',
     title: 'Company Settings — rates, charges & identity',
@@ -13398,6 +13619,9 @@ const NAV_GROUPS = [
       { tab:'lotentry',   label:'Lot Entry' },
       { tab:'priceentry', label:'Price Entry' },
       { tab:'lots',       label:'Lots' },
+      // Flag-gated; #nav-src hides it when the godown utility is off, and
+      // navVisible() then keeps it out of the strip entirely.
+      { tab:'godown',     label:'Godown' },
       { tab:'preinvoice', label:'Pre-Invoice' },
       // Both flag-gated; they belong to this stage of the trade.
       { tab:'pricecheck', label:'Price Check' },
@@ -13684,6 +13908,9 @@ function go(tab){
   // restored tab would paint an error instead of a screen.
   if (tab === 'birthdays' && document.body.getAttribute('data-feat-birthdays') !== '1') tab = 'dash';
   if (tab === 'reminders' && document.body.getAttribute('data-feat-reminders') !== '1') tab = 'dash';
+  // Same catch for the Godown screen — with the utility off there is no stock
+  // concept at all, so a restored tab would open a screen the nav has hidden.
+  if (tab === 'godown' && document.body.getAttribute('data-feat-godown') !== '1') tab = 'dash';
   window._currentTab = tab;
   document.querySelectorAll('.side-item').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
   document.querySelectorAll('.tc').forEach(t=>t.classList.remove('active'));
@@ -13714,7 +13941,7 @@ function go(tab){
   if (typeof applyLogoBadge === 'function') {
     try { applyLogoBadge(); } catch(_) {}
   }
-  const loaders={hub:loadHub,dash:loadStats,insights:loadInsights,pertrade:loadPerTradeBreakdown,auctionmgr:loadAuctionManager,amreports:loadAmReports,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>searchTraders(''),buyers:()=>searchBuyers(''),birthdays:loadBirthdays,reminders:loadReminders,
+  const loaders={hub:loadHub,dash:loadStats,insights:loadInsights,pertrade:loadPerTradeBreakdown,auctionmgr:loadAuctionManager,amreports:loadAmReports,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>searchTraders(''),buyers:()=>searchBuyers(''),birthdays:loadBirthdays,reminders:loadReminders,godown:loadGodown,
     auctions:loadAuctions,reassignreqs:loadReassignRequests,lotalloc:loadLotAllocation,lots:loadLotAuctions,invoices:loadInvAuctions,preinvoice:loadPreInvoice,purchases:loadPurAuctions,
     payments:loadPayAuctions,exports:loadExpAuctions,tds:()=>{},lorry:loadLorryAuctions,
     bills:loadBillAuctions,debit:loadDnAuctions,debitplanter:loadDnpAuctions,journals:loadJournalDefault,registers:loadRegisterDefault,tally:loadTallyAuctions,
@@ -16053,14 +16280,14 @@ async function loadReassignRequests(){
     if(!body)return;
     if(!rows.length){body.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:16px">No '+(_rrFilter==='pending'?'pending ':'')+'requests.</td></tr>';return}
     body.innerHTML=rows.map(function(r){
-      const when=rrEsc((r.created_at||'').replace('T',' ').slice(0,16));
+      const when=rrEsc(fmtIst(r.created_at));
       const auc=r.auction_no?('#'+rrEsc(r.auction_no)):('id '+r.auction_id);
       const decided=r.decided_at?('<div style="font-size:11px;color:var(--text3);margin-top:2px">by '+rrEsc(r.decided_by_username||'—')+(r.decision_note?(' · '+rrEsc(r.decision_note)):'')+'</div>'):'';
       let action;
       if(r.status==='pending'){
         action='<button class="btn btn-g" style="padding:4px 10px;font-size:12px" onclick="approveReassign('+r.id+')">Approve</button> '
               +'<button class="btn" style="padding:4px 10px;font-size:12px;background:#c0392b;color:#fff" onclick="denyReassign('+r.id+')">Deny</button>';
-      }else{action='<span style="color:var(--text3);font-size:12px">'+(r.decided_at?rrEsc(r.decided_at.replace('T',' ').slice(0,16)):'—')+'</span>';}
+      }else{action='<span style="color:var(--text3);font-size:12px">'+(r.decided_at?rrEsc(fmtIst(r.decided_at)):'—')+'</span>';}
       return '<tr><td>'+when+'</td><td>'+rrEsc(r.requester_username||'—')+'</td><td>'+auc+'</td>'
         +'<td><strong>'+rrEsc(r.from_branch)+'</strong> → <strong>'+rrEsc(r.to_branch)+'</strong></td>'
         +'<td style="font-family:monospace;font-size:12px">'+rrEsc(rrLotsLabel(r))+'</td>'
@@ -16325,7 +16552,7 @@ function bdRenderLog(rows){
     // print it rather than a generic "failed".
     var why = (r.status !== 'sent' && r.error) ? '<div style="font-size:11px;color:#c0392b;margin-top:2px">' + esc(r.error) + '</div>' : '';
     return '<tr>'
-      + '<td>' + esc(String(r.created_at || '').replace('T', ' ').slice(0, 16)) + '</td>'
+      + '<td>' + esc(fmtIst(r.created_at)) + '</td>'
       + '<td>' + esc(r.name || '—') + '</td>'
       + '<td>' + bdTypeChip(r.party_type) + '</td>'
       + '<td style="font-family:monospace;font-size:12px">' + esc(r.phone || '—') + '</td>'
@@ -16598,7 +16825,7 @@ function rmRenderLog(rows){
     var chip = r.status === 'sent' ? '<span class="out-chip ok">Sent</span>' : '<span class="out-chip bad">Failed</span>';
     var why = (r.status !== 'sent' && r.error) ? '<div style="font-size:11px;color:#c0392b;margin-top:2px">' + esc(r.error) + '</div>' : '';
     return '<tr>'
-      + '<td>' + esc(String(r.created_at || '').replace('T', ' ').slice(0, 16)) + '</td>'
+      + '<td>' + esc(fmtIst(r.created_at)) + '</td>'
       + '<td>' + esc(r.name || '—') + '</td>'
       + '<td style="font-family:monospace;font-size:12px">' + esc(r.phone || '—') + '</td>'
       + '<td>' + (r.days_since == null ? '—' : r.days_since + ' days') + '</td>'
@@ -18354,7 +18581,7 @@ async function loadStats(auctionId){
   const now = new Date();
   const hour = now.getHours();
   const greet = hour<12 ? 'Good morning' : hour<17 ? 'Good afternoon' : 'Good evening';
-  const today = now.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const today = now.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric',timeZone:'Asia/Kolkata'});
 
   // KPI deltas
   const revDelta = K.lastMonthRevenue > 0
@@ -20494,14 +20721,14 @@ async function loadUsers(){
             // actually going on with it.
             if (u.locked_at) {
               const by = u.locked_by ? ` by ${u.locked_by}` : '';
-              return `<span class="pill" style="background:var(--spice-chili-lt);color:var(--spice-chili-dk)" title="Locked${esc(by)} on ${esc(String(u.locked_at).substring(0,16))} — cannot sign in on desktop or mobile">🔒 locked</span>`;
+              return `<span class="pill" style="background:var(--spice-chili-lt);color:var(--spice-chili-dk)" title="Locked${esc(by)} on ${esc(fmtIst(u.locked_at, { label: true }))} — cannot sign in on desktop or mobile">🔒 locked</span>`;
             }
             return u.active_sessions>0
               ? `<span class="pill pill-local"><span class="pill-dot"></span>${u.active_sessions} online</span>`
               : `<span class="pill" style="background:var(--tab-bg);color:var(--spice-text-mute)"><span class="pill-dot"></span>signed out</span>`;
           } },
         { key:'last_active', label:'Last Active', sort:'date', render:(u)=>u.last_active?fmtD(u.last_active.substring(0,10)):'—' },
-        { key:'created_at',  label:'Created', sort:'date', render:(u)=>u.created_at?fmtD(u.created_at.substring(0,10)):'—' },
+        { key:'created_at',  label:'Created', sort:'date', render:(u)=>u.created_at?fmtIstDate(u.created_at):'—' },
         { key:'_actions', label:'Actions', sortable:false, searchable:false, render:(u)=>{
             const isMe = u.username === uname;
             const isAdmin = String(u.role||'').toLowerCase()==='admin';
@@ -20544,8 +20771,8 @@ async function loadUsers(){
       const device = s.device_label || detectDevice(navigator.userAgent);
       return `<tr${s.is_current?' style="background:var(--spice-cardamom-lt)"':''}>
         <td>${s.is_current?'📱 <strong>This device</strong>':'💻 '+esc(device||'Unknown device')}</td>
-        <td style="color:var(--spice-text-mute);font-size:12px">${s.created_at?fmtD(s.created_at.substring(0,10))+' '+s.created_at.substring(11,16):'—'}</td>
-        <td style="color:var(--spice-text-mute);font-size:12px">${s.last_used_at?fmtD(s.last_used_at.substring(0,10))+' '+s.last_used_at.substring(11,16):'—'}</td>
+        <td style="color:var(--spice-text-mute);font-size:12px">${s.created_at?fmtIst(s.created_at):'—'}</td>
+        <td style="color:var(--spice-text-mute);font-size:12px">${s.last_used_at?fmtIst(s.last_used_at):'—'}</td>
         <td style="font-family:monospace;font-size:11px;color:var(--spice-text-hint)">${esc(s.token)}</td>
         <td>${s.is_current
           ? '<span style="color:var(--spice-text-hint);font-size:12px">— current —</span>'
@@ -20911,7 +21138,7 @@ async function loadLoginHistory(){
       if(/iphone|android.*mobile|mobile/i.test(ua)) device='Phone';
       else if(/ipad|tablet/i.test(ua)) device='Tablet';
       const uname=esc(r.current_username||r.username||'');
-      return `<tr><td style="font-family:monospace;font-size:12px;white-space:nowrap">${esc(r.created_at||'')}</td><td><strong>${uname}</strong></td><td><span style="font-size:11px;padding:2px 7px;background:var(--bg2);border-radius:4px">${device}</span></td><td style="font-family:monospace;font-size:11px;color:var(--spice-text-mute)">${esc(r.ip||'')}</td></tr>`;
+      return `<tr><td style="font-family:monospace;font-size:12px;white-space:nowrap">${esc(fmtIst(r.created_at, { seconds: true }))}</td><td><strong>${uname}</strong></td><td><span style="font-size:11px;padding:2px 7px;background:var(--bg2);border-radius:4px">${device}</span></td><td style="font-family:monospace;font-size:11px;color:var(--spice-text-mute)">${esc(r.ip||'')}</td></tr>`;
     }).join('');
   }catch(e){
     body.innerHTML=`<tr><td colspan="4" style="text-align:center;padding:14px;color:#b91c1c">${esc(e.message||'Failed to load')}</td></tr>`;
@@ -20954,7 +21181,7 @@ async function loadAuditLog(){
                 .map(k=>`${k}=${parsed[k]}`).join(' · ');
         }catch(_){}
         const eid=r.entity_id!=null?'#'+r.entity_id:'';
-        return `<tr><td style="font-family:monospace;font-size:12px;white-space:nowrap">${esc(r.created_at||'')}</td><td><strong>${esc(r.user_id||'')}</strong></td><td><span style="font-size:11px;padding:2px 7px;background:var(--bg2);border-radius:4px">${esc(r.action||'')}</span></td><td>${esc(r.entity||'')} <span style="color:var(--spice-text-mute);font-size:11px">${eid}</span></td><td style="font-size:11px;color:var(--spice-text-mute);max-width:340px">${esc(dt).slice(0,200)}</td></tr>`;
+        return `<tr><td style="font-family:monospace;font-size:12px;white-space:nowrap">${esc(fmtIst(r.created_at, { seconds: true }))}</td><td><strong>${esc(r.user_id||'')}</strong></td><td><span style="font-size:11px;padding:2px 7px;background:var(--bg2);border-radius:4px">${esc(r.action||'')}</span></td><td>${esc(r.entity||'')} <span style="color:var(--spice-text-mute);font-size:11px">${eid}</span></td><td style="font-size:11px;color:var(--spice-text-mute);max-width:340px">${esc(dt).slice(0,200)}</td></tr>`;
       }).join('');
     }
     const pager=document.getElementById('audit-log-pager');
@@ -22456,9 +22683,7 @@ function actDiffChips(changes){
 }
 // Full timestamp dd/mm/yyyy hh:mm from a "YYYY-MM-DD HH:MM:SS" string.
 function actFmtTime(s){
-  if (!s) return '';
-  const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
-  return m ? `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}` : String(s);
+  return fmtIst(s);
 }
 // Sortable-header arrow updater shared by both tables.
 function actUpdateSortArrows(tableId, sortKey, dir){
@@ -23280,11 +23505,10 @@ async function leEditLot(lotId){
       return;
     }
     if (_le.editTimeoutSec > 0 && lot.created_at) {
-      // created_at is stored as a SQLite localtime string — parse via
-      // Date which handles 'YYYY-MM-DD HH:MM:SS' reliably enough for
-      // this purpose.
-      const created = new Date(lot.created_at.replace(' ', 'T'));
-      const ageSec = (Date.now() - created.getTime()) / 1000;
+      // created_at is a naive SQLite stamp written in IST. istEpoch()
+      // reads it as IST instead of as device-local, so the edit window is
+      // the same length on a laptop that is not set to Indian time.
+      const ageSec = (Date.now() - istEpoch(lot.created_at)) / 1000;
       if (Number.isFinite(ageSec) && ageSec > _le.editTimeoutSec) {
         toast(`Edit window expired (${_le.editTimeoutSec}s). Ask admin to update this lot.`);
         return;
@@ -26433,7 +26657,7 @@ function leBuildReceiptHtml(format, lots, ctx) {
   const cfg = ctx.cfg || {};
   const traderInfo = ctx.traderInfo || {};
   const today = new Date();
-  const printedAt = today.toLocaleDateString('en-GB');
+  const printedAt = fmtIstDate(today);
 
   // Pick state-specific company info (TN vs KL). The lot's state field
   // may differ from business_state when both are in play, so prefer
@@ -27921,7 +28145,7 @@ async function showRateHistory(key, label){
     for(const r of rows){
       const ov = (r.old_value === null || r.old_value === undefined) ? '—' : r.old_value;
       h += '<tr style="border-top:1px solid #e2e8f0">'
-         + `<td style="padding:4px 8px;white-space:nowrap">${esc(r.created_at||'')}</td>`
+         + `<td style="padding:4px 8px;white-space:nowrap">${esc(fmtIst(r.created_at, { seconds: true }))}</td>`
          + `<td style="padding:4px 8px">${esc(ov)}</td>`
          + `<td style="padding:4px 8px;font-weight:600">${esc(r.new_value==null?'':r.new_value)}</td>`
          + `<td style="padding:4px 8px">${esc(r.username||'—')}</td>`
@@ -28026,8 +28250,7 @@ async function _renderGstApiStatus(){
     rows.push(['Plan expires', `<code style="font-family:ui-monospace,Menlo,Consolas,monospace">${esc(s.plan_expires_at)}</code>`]);
   }
   if (s.last_checked_at) {
-    const t = new Date(s.last_checked_at);
-    const when = isNaN(t.getTime()) ? esc(s.last_checked_at) : t.toLocaleString();
+    const when = fmtIst(s.last_checked_at, { seconds: true, label: true }) || esc(s.last_checked_at);
     rows.push(['Last refreshed', `<span style="color:var(--text3)">${esc(when)}</span>`]);
   }
   rows.push(['Warn at', `<code>≤ ${s.warn_below}</code> credits · critical at <code>≤ ${s.critical_below}</code>`]);
@@ -28338,7 +28561,7 @@ async function _renderWhatsappUsage(fresh){
     </div>` : ''}
     ${blocked ? `<div class="wa-banner bad">
       <strong>Sends are being refused for a billing reason.</strong> Meta said:
-      “${esc(u.billing.blockError)}”${u.billing.blockAt ? ` (${esc(String(u.billing.blockAt).slice(0,16))})` : ''}.
+      “${esc(u.billing.blockError)}”${u.billing.blockAt ? ` (${esc(fmtIst(u.billing.blockAt, { label: true }))})` : ''}.
       Top up below, then retry — nothing will go out until the account is funded.
     </div>` : ''}
     <!-- Band 1 — the ceilings, from Meta: what CAN still go out.
@@ -28509,7 +28732,7 @@ async function _renderWhatsappLog(){
   } catch (e) { loadErr = (e && e.message) || String(e); }
 
   const esc = (v) => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
-  const when = (t) => String(t || '').slice(0, 16).replace('T', ' ');
+  const when = (t) => fmtIst(t);
   const chip = (st) => {
     const t = _WA_LOG_TONE[st] || { label: st || '—', bg: '#eee', fg: '#666' };
     return `<span class="wa-chip" style="background:${t.bg};color:${t.fg}">${esc(t.label)}</span>`;
@@ -29243,7 +29466,7 @@ async function loadBackupFiles(){
   }
   host.innerHTML = files.map(f => {
     const kind = _bkFileKind(f.name);
-    const when = f.mtime ? new Date(f.mtime).toLocaleString() : '';
+    const when = f.mtime ? fmtIst(f.mtime, { label: true }) : '';
     return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:12.5px">
       <span style="display:inline-block;padding:1px 8px;border-radius:999px;font-size:10px;font-weight:800;background:${kind.bg};color:${kind.fg};white-space:nowrap">${esc(kind.label)}</span>
       <span style="flex:1;min-width:0;font-family:monospace;font-size:11.5px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escAttr(f.name)}">${esc(f.name)}</span>
@@ -29284,9 +29507,9 @@ function autoBackupRenderStatus(){
   if (!el) return;
   const cfg = JSON.parse(localStorage.getItem('autobackup') || '{}');
   if (!cfg.enabled) { el.textContent = 'Not scheduled'; return; }
-  const last = cfg.lastRun ? new Date(cfg.lastRun) : null;
+  const last = cfg.lastRun ? fmtIst(cfg.lastRun, { label: true }) : '';
   const parts = ['Scheduled'];
-  if (last && !isNaN(last)) parts.push('· last run ' + last.toLocaleString());
+  if (last) parts.push('· last run ' + last);
   else parts.push('· never run yet');
   el.textContent = parts.join(' ');
 }
@@ -30534,7 +30757,7 @@ async function loadDeleteLog(){
       const bp = rw.backup_path || '';
       const bpName = bp ? bp.split('/').pop() : '—';
       html += '<tr>' +
-        '<td style="padding:5px 10px;border-bottom:1px solid #FEE2E2;white-space:nowrap">' + escAttr(rw.created_at || '') + '</td>' +
+        '<td style="padding:5px 10px;border-bottom:1px solid #FEE2E2;white-space:nowrap">' + escAttr(fmtIst(rw.created_at, { seconds: true })) + '</td>' +
         '<td style="padding:5px 10px;border-bottom:1px solid #FEE2E2">' + escAttr(rw.username || '—') + '</td>' +
         '<td style="padding:5px 10px;border-bottom:1px solid #FEE2E2"><code>' + escAttr(rw.resource || '') + '</code></td>' +
         '<td style="padding:5px 10px;border-bottom:1px solid #FEE2E2;text-align:right;font-family:monospace;font-weight:700">' + (rw.deleted_count || 0) + '</td>' +
@@ -33847,7 +34070,7 @@ async function loadLots(opts){
         const locked = !!l.locked_at;
         const isAdminUI = (window._userRole === 'admin');
         const lockedBadge = locked
-          ? `<span class="lot-lock-badge feat-lot-lock" title="Locked${l.locked_by ? ' by ' + esc(l.locked_by) : ''}${l.locked_at ? ' on ' + esc(l.locked_at) : ''} — only an admin can edit." style="display:inline-flex;align-items:center;gap:3px;background:#fef3c7;color:#92400e;border:1px solid #fde68a;padding:2px 7px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">🔒 Locked</span>`
+          ? `<span class="lot-lock-badge feat-lot-lock" title="Locked${l.locked_by ? ' by ' + esc(l.locked_by) : ''}${l.locked_at ? ' on ' + esc(fmtIst(l.locked_at, { label: true })) : ''} — only an admin can edit." style="display:inline-flex;align-items:center;gap:3px;background:#fef3c7;color:#92400e;border:1px solid #fde68a;padding:2px 7px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">🔒 Locked</span>`
           : '';
         let actions = '';
         if (locked) {
@@ -35005,6 +35228,331 @@ async function validateLots(){
   const d=await j(`/api/lots/validate/${aid}`);
   alert(d.length?`${d.length} lots have issues:\n`+d.map(l=>l.lot_no+': price='+l.price+' amt='+l.amount+' buyer='+l.buyer).join('\n'):'All lots OK');
 }
+
+// ══════════════════════════════════════════════════════════════════
+// GODOWN — stock in store, advances against it, releases into a trade
+// ──────────────────────────────────────────────────────────────────
+// Every row is one godown entry, and its figures are the BALANCE: what the
+// seller handed in, less whatever has already been released into an auction.
+// The screen is cross-trade on purpose — stored stock belongs to the seller,
+// not to the trade it happened to be booked against, and "who are we into,
+// and for how much" is a question about the planter.
+//
+// The two actions are the whole feature:
+//   Advance  → writes lot_advances against the godown entry, through the SAME
+//              endpoint the lot-wise Payments screen uses, so the money path
+//              is the one already in production.
+//   Move     → POST /api/godown/move: creates an ordinary auction lot for the
+//              quantity released and decrements this entry by it, carrying
+//              whatever share of the advance the operator chooses.
+const _gd = { rows: [], totals: null, banks: {}, auctions: [], branches: [],
+              advRow: null, moveRow: null, searchTimer: null };
+
+async function loadGodown(){
+  const host = document.getElementById('gd-list');
+  if (!host) return;
+  host.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3)">Loading…</div>';
+  // Depot list comes from settings, like every other branch picker.
+  try { await populateBranchSelect('gd-branch', { allLabel: '— All depots —' }); } catch (_) {}
+  const branch = (document.getElementById('gd-branch')?.value || '').trim();
+  const showClosed = !!document.getElementById('gd-show-closed')?.checked;
+  const p = new URLSearchParams();
+  if (branch) p.set('branch', branch);
+  // `open=1` keeps an emptied entry visible while an advance is still
+  // outstanding on it — money owed must not vanish with the stock.
+  if (!showClosed) p.set('open', '1');
+  let d;
+  try { d = await j('/api/godown/stock?' + p.toString()); }
+  catch (e) {
+    StatusBlock.show('gd-list', 'error', { body: (e && e.message) || 'Failed to load godown stock',
+                                           action: { label:'Retry', onclick:'loadGodown()' } });
+    return;
+  }
+  _gd.rows = Array.isArray(d.rows) ? d.rows : [];
+  _gd.totals = d.totals || null;
+  // Trades + seller banks are needed by the two modals; fetch once per load.
+  try { _gd.auctions = await j('/api/auctions?limit=50'); } catch (_) { _gd.auctions = []; }
+  if (!Array.isArray(_gd.auctions)) _gd.auctions = (_gd.auctions && _gd.auctions.rows) || [];
+  gdRenderKpis();
+  gdRender();
+}
+
+function gdRenderKpis(){
+  const host = document.getElementById('gd-kpis');
+  if (!host) return;
+  const t = _gd.totals || { entries: 0, bags: 0, qty: 0, advance: 0 };
+  // Entries still holding stock, as against rows kept on screen only because
+  // money is outstanding on them.
+  const inStore = _gd.rows.filter(r => !r.closed).length;
+  const sellers = new Set(_gd.rows.filter(r => !r.closed).map(r => r.trader_id || r.name)).size;
+  const kpi = (label, value, sub, cls) => `
+    <div class="kpi${cls ? ' ' + cls : ''}">
+      <div class="kpi-label">${label}</div>
+      <div class="kpi-value" style="font-size:24px">${value}</div>
+      ${sub ? `<div class="kpi-meta" style="display:block">${sub}</div>` : ''}
+    </div>`;
+  host.innerHTML =
+    kpi('Entries in Store', fmtI(inStore, 0), `${fmtI(sellers,0)} seller${sellers===1?'':'s'}`) +
+    kpi('Bags', fmtI(t.bags, 0), '') +
+    kpi('Weight', fmtI(t.qty, 3) + '<span class="kpi-unit"> kg</span>', '') +
+    kpi('Advance Outstanding', '<span class="kpi-unit" style="margin-right:4px">₹</span>' + fmtI(t.advance, 2),
+        'recovered when the stock is sold', 'turmeric');
+}
+
+function gdRenderDebounced(){
+  clearTimeout(_gd.searchTimer);
+  _gd.searchTimer = setTimeout(gdRender, 180);
+}
+
+// Client-side search over the loaded rows — seller, phone and lot number, the
+// three things an operator has in hand when a planter walks in.
+function gdVisibleRows(){
+  const q = (document.getElementById('gd-search')?.value || '').trim().toLowerCase();
+  if (!q) return _gd.rows;
+  return _gd.rows.filter(r =>
+    String(r.name || '').toLowerCase().includes(q) ||
+    String(r.tel || '').toLowerCase().includes(q) ||
+    String(r.lot_no || '').toLowerCase().includes(q));
+}
+
+function gdRender(){
+  const host = document.getElementById('gd-list');
+  if (!host) return;
+  const rows = gdVisibleRows();
+  if (!rows.length) {
+    StatusBlock.show('gd-list', 'empty', {
+      icon: '🏚', title: 'Nothing in the godown',
+      body: 'Stock appears here once a lot is entered as “Godown storage only” on the Lot Entry screen.',
+    });
+    return;
+  }
+  const money = (n) => fmtI(Number(n) || 0, 2);
+  const COLS = 'grid-template-columns:1.5fr 70px 86px 62px repeat(3,minmax(76px,1fr)) 140px 172px';
+  const head = `
+    <div style="display:grid;${COLS};gap:0;padding:9px 12px;font-size:10.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--text2);border-bottom:2px solid var(--border);background:var(--bg)">
+      <div>Seller</div><div>Lot</div><div>Depot</div><div>Trade</div>
+      <div style="text-align:right">Recd Wt</div><div style="text-align:right">Moved Wt</div>
+      <div style="text-align:right">Balance</div>
+      <div style="text-align:right">Advance</div><div style="text-align:right">Actions</div>
+    </div>`;
+  const body = rows.map(r => {
+    const closed = !!r.closed;
+    const bg = closed ? 'var(--bg)' : '';
+    const moveBtn = closed
+      ? ''
+      : `<button class="btn btn-o needs-lot-write" onclick="gdOpenMove(${r.id})" style="height:28px;padding:0 10px;font-size:11.5px">➡ Move</button>`;
+    return `
+    <div style="display:grid;${COLS};gap:0;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px;align-items:center;background:${bg}">
+      <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.name || '')}">
+        ${esc(r.name || '—')}
+        ${closed ? '<span style="font-size:9px;font-weight:800;background:var(--text3);color:#fff;padding:1px 5px;border-radius:8px;margin-left:6px;letter-spacing:.3px">EMPTIED</span>' : ''}
+        <div style="font-size:11px;color:var(--text3)">${esc(maskPhone(r.tel || '') || '—')} · ${esc(r.ppla || '')}</div>
+      </div>
+      <div style="font-family:monospace;font-weight:700;color:#0f766e">${esc(r.lot_no || '')}</div>
+      <div style="font-family:monospace;font-size:11.5px;color:var(--text2)">${esc(r.branch || '')}</div>
+      <div style="font-size:11.5px;color:var(--text2)">#${esc(String(r.ano || ''))}</div>
+      <div style="text-align:right;color:var(--text2)">${fmtI(r.received_qty, 3)}<div style="font-size:10.5px;color:var(--text3)">${fmtI(r.received_bags,0)} bags</div></div>
+      <div style="text-align:right;color:var(--text2)">${r.moved_qty ? fmtI(r.moved_qty, 3) : '—'}${r.moved_qty ? `<div style="font-size:10.5px;color:var(--text3)">${fmtI(r.moved_bags,0)} bags · ${fmtI(r.move_count,0)} move${Number(r.move_count)===1?'':'s'}</div>` : ''}</div>
+      <div style="text-align:right;font-weight:700;color:${closed ? 'var(--text3)' : 'var(--green)'}">${fmtI(r.qty, 3)}<div style="font-size:10.5px;font-weight:500;color:var(--text3)">${fmtI(r.bags,0)} bags</div></div>
+      <div style="text-align:right;font-weight:${r.advance ? '700' : '400'};color:${r.advance ? 'var(--spice-saffron)' : 'var(--text3)'}">${r.advance ? '₹' + money(r.advance) : '—'}</div>
+      <div style="text-align:right;display:flex;gap:4px;justify-content:flex-end">
+        <button class="btn btn-o needs-lot-write" onclick="gdOpenAdvance(${r.id})" style="height:28px;padding:0 10px;font-size:11.5px">₹ Advance</button>
+        ${moveBtn}
+      </div>
+    </div>`;
+  }).join('');
+  const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+  const totals = `
+    <div style="display:grid;${COLS};gap:0;padding:10px 12px;font-size:12.5px;font-weight:800;color:var(--green-dk);border-top:2px solid var(--green-border);background:var(--green-bg)">
+      <div>${fmtI(rows.length,0)} entr${rows.length===1?'y':'ies'}</div><div></div><div></div><div></div>
+      <div style="text-align:right">${fmtI(sum('received_qty'),3)}</div>
+      <div style="text-align:right">${fmtI(sum('moved_qty'),3)}</div>
+      <div style="text-align:right">${fmtI(sum('qty'),3)}</div>
+      <div style="text-align:right">₹${money(sum('advance'))}</div><div></div>
+    </div>`;
+  host.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">${head}${body}${totals}</div>`;
+}
+
+// ── Pay Advance ───────────────────────────────────────────────────
+async function gdOpenAdvance(lotId){
+  const r = _gd.rows.find(x => x.id === lotId);
+  if (!r) return;
+  _gd.advRow = r;
+  document.getElementById('gd-adv-who').innerHTML =
+    `<b>${esc(r.name || '')}</b> · ${esc(r.lot_no)} · ${fmtI(r.qty,3)} kg in store`
+    + (r.advance ? ` · currently advanced <b>₹${fmtI(r.advance,2)}</b>` : '');
+  document.getElementById('gd-adv-amount').value = r.advance ? r.advance : '';
+  document.getElementById('gd-adv-err').style.display = 'none';
+  // The account the money actually goes to. Same ownership rule the server
+  // enforces: only this seller's own accounts are offered.
+  const sel = document.getElementById('gd-adv-bank');
+  sel.innerHTML = '<option value="">— Seller’s default account —</option>';
+  try {
+    // The seller row carries its accounts — there is no GET on
+    // /traders/:id/banks (that path is the POST that ADDS one).
+    const t = await j(`/api/traders/${r.trader_id}`);
+    const list = (t && Array.isArray(t.banks)) ? t.banks : [];
+    for (const b of list) {
+      const label = `${b.bank_name || 'Bank'} · ${maskAcctUI(b.acctnum || '')}${b.is_default ? ' (default)' : ''}`;
+      sel.innerHTML += `<option value="${b.id}">${esc(label)}</option>`;
+    }
+    if (r.advance_bank_id) sel.value = String(r.advance_bank_id);
+  } catch (_) { /* no accounts on file — the default option still saves */ }
+  showModal('gd-adv-modal');
+}
+// Mask helper that degrades gracefully if the masking config hasn't loaded.
+function maskAcctUI(v){ try { return maskAcct(v); } catch (_) { return v; } }
+
+async function gdSaveAdvance(){
+  const r = _gd.advRow;
+  if (!r) return;
+  const err = document.getElementById('gd-adv-err');
+  const amt = Number(document.getElementById('gd-adv-amount').value);
+  if (!Number.isFinite(amt) || amt < 0) {
+    err.textContent = 'Enter the advance amount (0 clears it)'; err.style.display = 'block'; return;
+  }
+  const bankRaw = document.getElementById('gd-adv-bank').value;
+  const btn = document.getElementById('gd-adv-save');
+  btn.disabled = true;
+  try {
+    // The godown entry belongs to the trade it was booked against, which is
+    // what this per-trade endpoint keys on — so the same validated write path
+    // the lot-wise Payments screen uses handles stored stock too.
+    await j(`/api/payments/lots/${r.auction_id}/advance`, {
+      method: 'POST',
+      body: JSON.stringify({ items: [{ lotId: r.id, advance: amt, bankId: bankRaw ? parseInt(bankRaw, 10) : null }] }),
+    });
+    hideModal('gd-adv-modal');
+    toast(amt > 0 ? `Advance ₹${fmtI(amt,2)} recorded for ${r.name}` : `Advance cleared for ${r.name}`);
+    await loadGodown();
+  } catch (e) {
+    err.textContent = (e && e.message) || 'Could not save the advance';
+    err.style.display = 'block';
+  } finally { btn.disabled = false; }
+}
+
+// ── Move stock into a trade ───────────────────────────────────────
+async function gdOpenMove(lotId){
+  const r = _gd.rows.find(x => x.id === lotId);
+  if (!r) return;
+  _gd.moveRow = r;
+  document.getElementById('gd-move-who').innerHTML =
+    `<b>${esc(r.name || '')}</b> · godown ${esc(r.lot_no)} · in store: <b>${fmtI(r.qty,3)} kg</b> / ${fmtI(r.bags,0)} bags`
+    + (r.advance ? ` · advance outstanding <b>₹${fmtI(r.advance,2)}</b>` : '');
+  // Trades: the destination is any trade, not just the one the stock was
+  // entered against — stock stored in October is routinely sold in November.
+  const aSel = document.getElementById('gd-move-auction');
+  aSel.innerHTML = (_gd.auctions || []).map(a =>
+    `<option value="${a.id}">#${esc(String(a.ano))} · ${esc(a.date_fmt || a.date || '')}</option>`).join('');
+  const bSel = document.getElementById('gd-move-branch');
+  // The destination depot decides which lot numbers are legal, so there is no
+  // "all" here — it is seeded from the stock's own depot below.
+  try { await populateBranchSelect('gd-move-branch', { allLabel: '— Pick a depot —' }); } catch (_) {}
+  if (bSel && r.branch) bSel.value = r.branch;
+  document.getElementById('gd-move-bags').value = r.bags || '';
+  document.getElementById('gd-move-qty').value = r.qty || '';
+  document.getElementById('gd-move-recover').value = r.advance ? r.advance : '';
+  document.getElementById('gd-move-err').style.display = 'none';
+  gdMoveOnQtyInput();
+  gdMoveSuggestLot();
+  showModal('gd-move-modal');
+}
+
+// Suggest the next free lot number in the destination trade + depot, the same
+// way Lot Entry does — the operator can still type any free number over it.
+async function gdMoveSuggestLot(){
+  const aid = document.getElementById('gd-move-auction')?.value;
+  const br  = (document.getElementById('gd-move-branch')?.value || '').trim();
+  const box = document.getElementById('gd-move-lotno');
+  if (!aid || !br || !box) return;
+  try {
+    const d = await j(`/api/auctions/${aid}/next-lot/${encodeURIComponent(br)}`);
+    box.value = (d && d.next_lot) || '';
+    box.placeholder = (d && d.next_lot) ? '' : 'no free lot in this depot';
+  } catch (_) { box.value = ''; }
+}
+
+// Proportional advance share — the PROPOSAL, not the rule. Moving 10 of 18
+// bags proposes 10/18 of what is outstanding; the operator overwrites it.
+function gdMoveOnQtyInput(){
+  const r = _gd.moveRow;
+  if (!r) return;
+  const qty  = Number(document.getElementById('gd-move-qty').value) || 0;
+  const bags = Number(document.getElementById('gd-move-bags').value) || 0;
+  const leftQty  = Math.round((Number(r.qty) - qty) * 1000) / 1000;
+  const leftBags = (Number(r.bags) || 0) - bags;
+  const left = document.getElementById('gd-move-left');
+  if (left) {
+    left.textContent = (qty > Number(r.qty) || bags > Number(r.bags))
+      ? `More than is in store (${fmtI(r.qty,3)} kg / ${fmtI(r.bags,0)} bags)`
+      : `Left in godown after this move: ${fmtI(Math.max(0,leftQty),3)} kg · ${fmtI(Math.max(0,leftBags),0)} bags`;
+    left.style.color = (qty > Number(r.qty) || bags > Number(r.bags)) ? 'var(--spice-chili)' : 'var(--text3)';
+  }
+  const note = document.getElementById('gd-move-advnote');
+  const rec  = document.getElementById('gd-move-recover');
+  if (!r.advance) { if (note) note.style.display = 'none'; return; }
+  const share = (Number(r.qty) > 0)
+    ? Math.round((Number(r.advance) * Math.min(qty, Number(r.qty)) / Number(r.qty)) * 100) / 100
+    : 0;
+  // Only re-propose while the operator has not typed their own figure.
+  if (rec && rec.dataset.touched !== '1') rec.value = share;
+  if (note) {
+    note.style.display = 'block';
+    note.innerHTML = `Advance outstanding on this entry: <b>₹${fmtI(r.advance,2)}</b>. `
+      + `Proportional share for this move: <b>₹${fmtI(share,2)}</b> — change it to recover more or less now. `
+      + `Whatever rides along is recovered from this lot’s sale; the rest stays against the stock still in store.`;
+  }
+}
+
+async function gdDoMove(){
+  const r = _gd.moveRow;
+  if (!r) return;
+  const err = document.getElementById('gd-move-err');
+  const aid = document.getElementById('gd-move-auction').value;
+  const branch = (document.getElementById('gd-move-branch').value || '').trim();
+  const lotNo = (document.getElementById('gd-move-lotno').value || '').trim();
+  const bags = parseInt(document.getElementById('gd-move-bags').value, 10) || 0;
+  const qty  = Number(document.getElementById('gd-move-qty').value);
+  const recover = Number(document.getElementById('gd-move-recover').value) || 0;
+  const fail = (m) => { err.textContent = m; err.style.display = 'block'; };
+  if (!aid)   return fail('Pick the trade this stock is going into');
+  if (!lotNo) return fail('Pick the lot number it is booked as');
+  if (!(qty > 0)) return fail('Enter the weight being moved');
+  const btn = document.getElementById('gd-move-save');
+  btn.disabled = true;
+  try {
+    const d = await j('/api/godown/move', { method: 'POST', body: JSON.stringify({
+      lot_id: r.id, auction_id: parseInt(aid, 10), lot_no: lotNo, branch,
+      bags, qty, recover_advance: recover,
+    })});
+    hideModal('gd-move-modal');
+    const leftQty = d && d.godown ? Number(d.godown.qty) : 0;
+    toast(`Lot ${lotNo} booked from godown — ${fmtI(qty,3)} kg moved`
+      + (leftQty > 0 ? ` · ${fmtI(leftQty,3)} kg still in store` : ' · entry emptied'));
+    if (typeof refreshTradeStage === 'function') { try { refreshTradeStage(true); } catch (_) {} }
+    await loadGodown();
+  } catch (e) {
+    fail((e && e.message) || 'Move failed');
+  } finally { btn.disabled = false; }
+}
+
+// "Move everything" — the common case when a planter books the whole lot.
+function gdMoveAll(){
+  const r = _gd.moveRow;
+  if (!r) return;
+  document.getElementById('gd-move-bags').value = r.bags || 0;
+  document.getElementById('gd-move-qty').value  = r.qty || 0;
+  const rec = document.getElementById('gd-move-recover');
+  if (rec) rec.dataset.touched = '';     // let the share re-propose at 100%
+  gdMoveOnQtyInput();
+}
+
+// Typing in the recovery box pins it — the proportional proposal stops
+// overwriting what the operator decided.
+document.addEventListener('DOMContentLoaded', () => {
+  const rec = document.getElementById('gd-move-recover');
+  if (rec) rec.addEventListener('input', () => { rec.dataset.touched = '1'; });
+});
 
 // ── PRICE ENTRY — fast, price-only editable grid ──────────────────
 // A focused alternative to opening the Edit modal per lot: every lot listed
@@ -38840,7 +39388,7 @@ async function _waPaintMarks(key, force) {
     const rec = st.rec;
     const dot = rec && _WA_MARK_DOT[rec.status];
     if (!dot) return;
-    const when = String(rec.updated_at || rec.created_at || '').slice(0, 16).replace('T', ' ');
+    const when = fmtIst(rec.updated_at || rec.created_at);
     // The checkbox column is sized to the checkbox, so the dot wraps onto a
     // second line and reads like a stray mark. Let the cell grow by the few
     // pixels it needs instead.
@@ -41051,6 +41599,12 @@ function _payLwRender() {
     const undoAdvBtn = (advance > 0 && !isPaid)
       ? ` <button class="btn btn-o needs-lot-write" style="padding:1px 7px;font-size:10.5px;font-weight:600;margin-left:4px;color:#B45309;border-color:#FDE68A" onclick="payLwUndoAdvance(${l.id}, ${esc(JSON.stringify(String(l.name || '')))})" title="Remove this lot's advance. Its Payable goes back up by ₹${esc(fmtI(advance, 2))}.">↩ Undo advance</button>`
       : '';
+    // Stored stock, not a lot awaiting a price. Without the badge an operator
+    // reads "awaiting price" on goods that were never put up for sale and goes
+    // looking for the missing price. The Godown screen is where it is managed.
+    const godownBadge = Number(l.godown)
+      ? ' <span style="font-size:9px;font-weight:800;background:#14b8a6;color:#fff;padding:1px 5px;border-radius:8px;vertical-align:middle;letter-spacing:.3px" title="Godown storage — not auctioned. Manage it on the Godown screen.">GODOWN</span>'
+      : '';
     const ticked = (!isPaid && _payLwState.selected.has(l.id)) ? ' checked' : '';
     // A paid row's box means something different from an unpaid one's: it picks
     // the lot for "↩ Undo selected", not for the export. It feeds its own set
@@ -41081,8 +41635,8 @@ function _payLwRender() {
         : fmtI(Number(l.payable) || 0, 2);
     return `<tr${rowCls}${rowStyle}>
       <td style="text-align:center">${cb}</td>
-      <td>${esc(l.name || '')}${paidBadge}${unpricedBadge}${advBadge}${overBadge}${undoBtn}${undoAdvBtn}</td>
-      <td style="font-family:monospace;font-weight:600">${esc(String(l.lot_no || ''))}</td>
+      <td>${esc(l.name || '')}${godownBadge}${paidBadge}${unpricedBadge}${advBadge}${overBadge}${undoBtn}${undoAdvBtn}</td>
+      <td style="font-family:monospace;font-weight:600;${Number(l.godown) ? 'color:#0f766e' : ''}">${esc(String(l.lot_no || ''))}</td>
       <td style="text-align:right">${fmtI(Number(l.qty) || 0, 3)}</td>
       <td>${esc(l.branch || '')}</td>
       <td><div style="display:flex;gap:6px;align-items:center">${isPaid ? '<span style="color:var(--text3);font-size:11.5px">—</span>' : (bankCell + addBtn)}</div></td>
@@ -45739,9 +46293,14 @@ function regColumns(type){
     { key:'phone', label:'Phone', sort:'text',
       render:(r)=> r.phone ? esc(maskPhone(r.phone)) : '<span style="color:var(--text3)">—</span>' },
     { key:'grade', label:'Grade', sort:'text' },
-    { key:'bag', label:'Bags', sort:'number', numeric:true, fmt:regFmtNum(0) },
-    { key:'qty', label:'Net Wt', sort:'number', numeric:true, fmt:regFmtNum(3) },
-    { key:'gross_wt', label:'Gross Wt', sort:'number', numeric:true, fmt:regFmtNum(3) },
+    // Received − Moved = Balance. The row is the balance (a godown lot row is
+    // decremented as stock is released), so the three read across to zero.
+    { key:'recd_bag', label:'Recd Bags', sort:'number', numeric:true, fmt:regFmtNum(0) },
+    { key:'recd_qty', label:'Recd Wt', sort:'number', numeric:true, fmt:regFmtNum(3) },
+    { key:'moved_bag', label:'Moved Bags', sort:'number', numeric:true, fmt:regFmtNum(0) },
+    { key:'moved_qty', label:'Moved Wt', sort:'number', numeric:true, fmt:regFmtNum(3) },
+    { key:'bag', label:'Bal Bags', sort:'number', numeric:true, fmt:regFmtNum(0) },
+    { key:'qty', label:'Bal Wt', sort:'number', numeric:true, fmt:regFmtNum(3) },
   ];
   if (type === 'pooler') return [
     { key:'party', label:'Pooler', sort:'text', totalKind:'count', totalLabel:'Total' },
@@ -47443,7 +48002,7 @@ async function impLoadHistory(){
       cache: 'no-store',
     });
     const rows = await r.json();
-    const stamp = new Date().toLocaleTimeString();
+    const stamp = fmtIstTime(new Date(), { seconds: true, label: true });
     if (!Array.isArray(rows) || !rows.length) {
       box.innerHTML = '<i>No imports yet.</i> <span style="color:#999;font-size:11px">(loaded at '+stamp+')</span>';
       return;
@@ -47473,7 +48032,7 @@ async function impLoadHistory(){
       //   • zero rows inserted               → "—"
       let action;
       if (r.undone_at) {
-        action = '<span style="color:#888;font-style:italic" title="Rolled back at '+escAttr(r.undone_at)+'">↶ Undone</span>';
+        action = '<span style="color:#888;font-style:italic" title="Rolled back at '+escAttr(fmtIst(r.undone_at, { seconds: true, label: true }))+'">↶ Undone</span>';
       } else if (r.undoable) {
         action = '<button class="btn" style="height:24px;padding:0 10px;font-size:11px;font-weight:600;background:#7F1D1D;color:#fff;border-color:#7F1D1D" '+
           'onclick="impUndo('+r.id+', '+JSON.stringify(r.filename||'').replace(/"/g,'&quot;')+', '+JSON.stringify(r.module||'').replace(/"/g,'&quot;')+', '+(r.inserted_count||0)+')" '+
@@ -47486,7 +48045,7 @@ async function impLoadHistory(){
         action = '<span style="color:#bbb" title="No rows were inserted by this run">—</span>';
       }
       h += '<tr'+(r.undone_at?' style="opacity:.55"':'')+'>'+
-        '<td style="padding:3px 6px;border:1px solid #eee;white-space:nowrap">'+escAttr(r.created_at||'')+'</td>'+
+        '<td style="padding:3px 6px;border:1px solid #eee;white-space:nowrap">'+escAttr(fmtIst(r.created_at, { seconds: true }))+'</td>'+
         '<td style="padding:3px 6px;border:1px solid #eee">'+escAttr(r.username||'')+'</td>'+
         '<td style="padding:3px 6px;border:1px solid #eee">'+escAttr(r.module||'')+'</td>'+
         '<td style="padding:3px 6px;border:1px solid #eee">'+escAttr(r.filename||'')+'</td>'+

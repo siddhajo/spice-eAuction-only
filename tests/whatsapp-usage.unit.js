@@ -34,6 +34,12 @@ function extract(name) {
   assert.ok(end > start, `could not find the end of ${name}()`);
   return HTML.slice(start, end + 3);
 }
+// Single-line `const NAME = ...` declarations (the IST regexes, month names).
+function extractConst(name) {
+  const m = new RegExp(`^const ${name} = .*$`, 'm').exec(HTML);
+  assert.ok(m, `could not find const ${name} in public/index.html`);
+  return m[0];
+}
 
 let pass = 0, fail = 0;
 const check = (n, c, d) => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; console.log('  FAIL ' + n + (d ? '\n         ' + d : '')); } };
@@ -42,7 +48,7 @@ const check = (n, c, d) => { if (c) { pass++; console.log('  ok   ' + n); } else
 const host = { innerHTML: '' };
 const state = { usage: null, usageErr: null, lastUrl: '' };
 const sandbox = {
-  console, Date,
+  console, Date, Intl,
   B: '', T: 'test-token',
   document: { getElementById: (id) => (id === 'whatsapp-usage-host' ? host : null) },
   esc: (v) => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])),
@@ -50,7 +56,18 @@ const sandbox = {
 };
 sandbox.window = sandbox;
 vm.createContext(sandbox);
-vm.runInContext(extract('_renderWhatsappUsage'), sandbox);
+// The card stamps the billing-block time through the shared IST formatter,
+// which reaches fmtD() for the operator's date_format. Lifted from the same
+// source as the card so the test keeps checking the real formatting.
+vm.runInContext([
+  extractConst('_IST_TZ'),
+  extractConst('_IST_NAIVE'),
+  extractConst('_IST_ZONED'),
+  extractConst('_MONTH_ABBR'),
+  extract('_istParts'), extract('_istSplit'), extract('fmtIst'),
+  extract('_fmtDParseYMD'), extract('fmtD'),
+  extract('_renderWhatsappUsage'),
+].join('\n'), sandbox);
 
 const USAGE = {
   configured: true, monthLabel: 'September 2026', displayPhone: '+91 95260 09651', qualityRating: 'GREEN',

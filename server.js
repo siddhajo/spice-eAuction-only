@@ -1,3 +1,10 @@
+// Pin the process clock to IST *before* anything else loads. db.js brings up
+// sql.js, and ~66 queries across the app stamp rows with
+// datetime('now','localtime') — that modifier (and every bare `new Date()`)
+// reads the process timezone, which is UTC in the container. Requiring this
+// first is what makes "localtime" actually mean Indian Standard Time.
+const { fmtIst, fmtIstDate, fmtIstTime, istStamp, istToday, istYmd, istFileStamp } = require('./ist');
+
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
@@ -891,14 +898,14 @@ function normalizeDate(v) {
   if (v === null || v === undefined || v === '') return '';
   // Date object
   if (v instanceof Date && !isNaN(v)) {
-    return v.toISOString().slice(0, 10);
+    return istYmd(v);
   }
   // Number = Excel serial (days since 1900-01-01, with the famous 1900 leap-year bug)
   if (typeof v === 'number' && v > 0 && v < 80000) {
     // Excel epoch: 1899-12-30 (accounts for the 1900 leap-year bug)
     const ms = (v - 25569) * 86400 * 1000;
     const d = new Date(ms);
-    if (!isNaN(d)) return d.toISOString().slice(0, 10);
+    if (!isNaN(d)) return istYmd(d);
   }
   const s = String(v).trim();
   // ISO yyyy-mm-dd (or yyyy-mm-dd HH:MM:SS)
@@ -912,22 +919,21 @@ function normalizeDate(v) {
     if (n > 0 && n < 80000) {
       const ms = (n - 25569) * 86400 * 1000;
       const d = new Date(ms);
-      if (!isNaN(d)) return d.toISOString().slice(0, 10);
+      if (!isNaN(d)) return istYmd(d);
     }
   }
   // Last resort: try Date parsing
   const d = new Date(s);
-  if (!isNaN(d)) return d.toISOString().slice(0, 10);
+  if (!isNaN(d)) return istYmd(d);
   return s;
 }
 
-// Today's LOCAL date as canonical YYYY-MM-DD. Uses local getters (not
-// toISOString, which is UTC) so an invoice raised late in the evening doesn't
-// jump to tomorrow. Matches the storage format of auctions.date.
+// Today's date in IST as canonical YYYY-MM-DD. The process clock is pinned
+// to Asia/Kolkata (see ist.js), so the local getters below ARE IST getters —
+// never toISOString(), which is UTC and would hand back yesterday for any
+// invoice raised before 05:30. Matches the storage format of auctions.date.
 function todayLocalYMD() {
-  const d = new Date();
-  const p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  return istToday();
 }
 
 // Resolve the date to stamp on a generated invoice. dateSource 'auction' uses
@@ -2687,7 +2693,7 @@ const DELETE_ALL_RESOURCES = {
 function _snapshotBackupBeforeDelete(resource) {
   const backupDir = path.join(process.env.SPICE_DATA_DIR || path.join(__dirname, 'data'), 'backups');
   try { fs.mkdirSync(backupDir, { recursive: true }); } catch (_) {}
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const stamp = istFileStamp();
   const filename = `before-delete-${resource}-${stamp}.db`;
   const target = path.join(backupDir, filename);
   // Persist any pending in-memory state first so the snapshot is consistent.
@@ -7780,6 +7786,16 @@ app.delete('/api/auctions/:id', requireDelete, (req, res) => {
   // Per-lot advances are keyed by lot id — drop them with the lots they
   // belong to, or they linger as rows pointing at nothing.
   db.run('DELETE FROM lot_advances WHERE auction_id = ?', [req.params.id]);
+  // Godown release history pointing at this trade's lots — from EITHER side:
+  // stock stored against it, and stock released into it. Left behind, these
+  // rows would keep reporting movements for lots that no longer exist.
+  try {
+    db.run(`DELETE FROM godown_movements
+             WHERE dest_auction_id = ?
+                OR src_lot_id  IN (SELECT id FROM lots WHERE auction_id = ?)
+                OR dest_lot_id IN (SELECT id FROM lots WHERE auction_id = ?)`,
+      [req.params.id, req.params.id, req.params.id]);
+  } catch (_) { /* old DB without the table */ }
   db.run('DELETE FROM lots WHERE auction_id = ?', [req.params.id]);
   db.run('DELETE FROM auctions WHERE id = ?', [req.params.id]);
   // If the deleted trade was the default, clear the pointer so the mobile
@@ -9367,7 +9383,7 @@ app.post('/api/auctions/import', requireAuctionWrite, upload.single('file'), req
       let auc = db.get('SELECT * FROM auctions WHERE ano = ? AND date = ?', [ano, dateStr]);
       if (!auc) {
         db.run('INSERT INTO auctions (ano, date, crop_type, state) VALUES (?,?,?,?)',
-          [ano, dateStr || new Date().toISOString().slice(0, 10), cropType, state]);
+          [ano, dateStr || istToday(), cropType, state]);
         auc = db.get('SELECT * FROM auctions WHERE ano = ? AND date = ? ORDER BY id DESC LIMIT 1', [ano, dateStr]);
       }
       auctionCache.set(key, auc);
@@ -10446,6 +10462,278 @@ function nextGodownLotNo(db, auctionId, cfg) {
   return pfx + String(max + 1);
 }
 
+// ── GODOWN STOCK: the balance, the advance, and releasing it ──────
+// A godown lot row holds WHAT IS IN STORE NOW. Every release decrements its
+// bags/qty, so `lots.qty` on a godown row is the balance and needs no reader
+// taught a new rule; the original received figure is recovered by adding back
+// SUM(godown_movements.qty). See the godown_movements comment in db.js.
+//
+// The advance sits in lot_advances keyed on the godown row — the same store
+// the lot-wise Payments screen writes, so nothing new nets it off. When stock
+// is released, the operator says how much of that advance rides along onto the
+// new auction lot; that share is moved to the new lot's lot_advances row and
+// the existing payable readers recover it from the sale.
+const GODOWN_STOCK_SQL = `
+  SELECT l.id, l.auction_id, l.lot_no, l.branch, l.grade, l.litre, l.crpt,
+         l.trader_id, l.name, l.tel, l.cr, l.ppla, l.bank_id,
+         l.bags, l.qty, l.gross_wt, l.sample_wt, l.created_at, l.user_id,
+         a.ano, a.date AS auction_date,
+         COALESCE(la.advance, 0) AS advance,
+         la.bank_id  AS advance_bank_id,
+         la.paid_at  AS advance_paid_at,
+         (SELECT COALESCE(SUM(m.bags), 0) FROM godown_movements m WHERE m.src_lot_id = l.id) AS moved_bags,
+         (SELECT COALESCE(SUM(m.qty),  0) FROM godown_movements m WHERE m.src_lot_id = l.id) AS moved_qty,
+         (SELECT COUNT(*)                 FROM godown_movements m WHERE m.src_lot_id = l.id) AS move_count
+    FROM lots l
+    JOIN auctions a ON a.id = l.auction_id
+    LEFT JOIN lot_advances la ON la.lot_id = l.id
+   WHERE COALESCE(l.godown, 0) = 1`;
+
+// Shape one stock row for the client: balance is the row itself, received is
+// the row plus everything that has left it.
+function godownStockRow(r) {
+  const bags = Number(r.bags) || 0;
+  const qty  = Number(r.qty)  || 0;
+  const movedBags = Number(r.moved_bags) || 0;
+  const movedQty  = Number(r.moved_qty)  || 0;
+  const advance   = Number(r.advance) || 0;
+  return Object.assign({}, r, {
+    bags, qty,
+    moved_bags: movedBags, moved_qty: movedQty,
+    received_bags: bags + movedBags,
+    received_qty:  Math.round((qty + movedQty) * 1000) / 1000,
+    advance,
+    // An entry is CLOSED once nothing is left in store. It keeps its row (the
+    // history and any unrecovered advance hang off it) but drops out of the
+    // "in store" lists unless they ask for closed ones too.
+    closed: !(qty > 0 || bags > 0),
+  });
+}
+
+// GET /api/godown/stock — every godown entry, across trades.
+//   ?open=1      only entries with stock left OR an advance still outstanding
+//   ?traderId=   one seller   ?branch=   one depot   ?auctionId=  one trade
+app.get('/api/godown/stock', requireView, (req, res) => {
+  const db = getDb();
+  let q = GODOWN_STOCK_SQL;
+  const p = [];
+  if (req.query.auctionId) { q += ' AND l.auction_id = ?'; p.push(parseInt(req.query.auctionId, 10)); }
+  if (req.query.traderId)  { q += ' AND l.trader_id = ?';  p.push(parseInt(req.query.traderId, 10)); }
+  if (req.query.branch)    { q += " AND UPPER(TRIM(COALESCE(l.branch,''))) = UPPER(TRIM(?))"; p.push(req.query.branch); }
+  q += ' ORDER BY l.name, l.lot_no';
+  let rows = (db.all(q, p) || []).map(godownStockRow);
+  // "Open" keeps an emptied entry visible while money is still outstanding on
+  // it — otherwise an advance nobody recovered would silently leave the screen.
+  if (String(req.query.open || '') === '1') {
+    rows = rows.filter(r => !r.closed || r.advance > 0);
+  }
+  const totals = rows.reduce((t, r) => ({
+    entries: t.entries + 1,
+    bags: t.bags + r.bags,
+    qty: Math.round((t.qty + r.qty) * 1000) / 1000,
+    advance: Math.round((t.advance + r.advance) * 100) / 100,
+  }), { entries: 0, bags: 0, qty: 0, advance: 0 });
+  res.json({ rows, totals });
+});
+
+// GET /api/godown/movements — release history. ?lotId= one entry, else all.
+app.get('/api/godown/movements', requireView, (req, res) => {
+  const db = getDb();
+  let q = `SELECT m.*, a.ano AS dest_ano, a.date AS dest_date,
+                  s.name AS seller, s.lot_no AS src_lot_no, s.branch AS src_branch
+             FROM godown_movements m
+             LEFT JOIN auctions a ON a.id = m.dest_auction_id
+             LEFT JOIN lots s     ON s.id = m.src_lot_id`;
+  const p = [];
+  if (req.query.lotId) { q += ' WHERE m.src_lot_id = ?'; p.push(parseInt(req.query.lotId, 10)); }
+  q += ' ORDER BY m.id DESC';
+  res.json(db.all(q, p) || []);
+});
+
+// POST /api/godown/move — release part (or all) of a godown entry into a trade.
+// Body: { lot_id, auction_id, lot_no, branch?, bags, qty, recover_advance? }
+//
+// Creates a NORMAL auction lot — from that moment it is an ordinary booking
+// and every auction reader sees it — and decrements the godown entry by the
+// same quantity. Both halves, plus the advance transfer, are one transaction:
+// a half-applied move would either duplicate stock or lose it.
+app.post('/api/godown/move', requireLotWrite, (req, res) => {
+  const db = getDb();
+  const b = req.body || {};
+  const srcId = parseInt(b.lot_id, 10);
+  const destAuctionId = parseInt(b.auction_id, 10);
+  const lotNo = String(b.lot_no || '').trim();
+  if (!srcId || !destAuctionId) return res.status(400).json({ error: 'lot_id and auction_id are required' });
+  if (!lotNo) return res.status(400).json({ error: 'Pick the lot number this stock is booked as' });
+
+  const src = db.get('SELECT * FROM lots WHERE id = ?', [srcId]);
+  if (!src) return res.status(404).json({ error: 'Godown entry not found' });
+  if (!Number(src.godown)) return res.status(400).json({ error: `Lot ${src.lot_no} is not a godown entry` });
+  if (src.locked_at && lockFeatureOn(db) && !isAdmin(req)) {
+    return res.status(423).json({ error: 'This godown entry is locked — only an admin can release it.' });
+  }
+  const dest = db.get('SELECT id, ano FROM auctions WHERE id = ?', [destAuctionId]);
+  if (!dest) return res.status(404).json({ error: 'Destination trade not found' });
+
+  // Quantities. Both are capped at what is actually left — releasing more
+  // than is in store would invent stock, and the balance would go negative.
+  const haveBags = Number(src.bags) || 0;
+  const haveQty  = Math.round((Number(src.qty) || 0) * 1000) / 1000;
+  const bags = Math.max(0, parseInt(b.bags, 10) || 0);
+  const qty  = Math.round((Number(b.qty) || 0) * 1000) / 1000;
+  if (!(qty > 0)) return res.status(400).json({ error: 'Enter the weight being released (kg)' });
+  if (qty > haveQty) {
+    return res.status(400).json({ error: `Only ${haveQty.toFixed(3)} kg is left in the godown on ${src.lot_no}` });
+  }
+  if (bags > haveBags) {
+    return res.status(400).json({ error: `Only ${haveBags} bag(s) are left in the godown on ${src.lot_no}` });
+  }
+
+  const branch = String(b.branch || src.branch || '').trim();
+  if (!branch) return res.status(400).json({ error: 'A branch is required for the auction lot' });
+
+  // Same two rails lot entry applies: the number must be free in the
+  // destination trade, and inside that branch's allocation when it has one.
+  const clash = db.get('SELECT id FROM lots WHERE auction_id = ? AND lot_no = ?', [destAuctionId, lotNo]);
+  if (clash) return res.status(409).json({ error: `Lot #${lotNo} already exists in trade ${dest.ano}` });
+  const allocs = db.all('SELECT * FROM lot_allocations WHERE auction_id = ? AND branch = ?', [destAuctionId, branch]) || [];
+  if (allocs.length && !allocs.some(a => isLotInRange(lotNo, a.start_lot, a.end_lot))) {
+    const ranges = allocs.map(a => a.start_lot + '-' + a.end_lot).join(', ');
+    return res.status(400).json({ error: `Lot #${lotNo} is outside ${branch} allocation (${ranges})` });
+  }
+
+  // Advance recovery — the operator's call, capped at what is outstanding on
+  // this entry. The proposal (a proportional share) is computed client-side;
+  // what arrives here is simply a number to move.
+  const adv = db.get('SELECT advance, bank_id FROM lot_advances WHERE lot_id = ?', [srcId]);
+  const outstanding = Math.round((Number(adv && adv.advance) || 0) * 100) / 100;
+  const recover = Math.round((Number(b.recover_advance) || 0) * 100) / 100;
+  if (recover < 0) return res.status(400).json({ error: 'Advance to recover cannot be negative' });
+  if (recover > outstanding) {
+    return res.status(400).json({ error: `Only ${outstanding.toFixed(2)} is outstanding as advance on ${src.lot_no}` });
+  }
+
+  // Sample weight follows the install default, exactly as lot entry does, so
+  // a released lot is indistinguishable from a hand-entered one.
+  const cfg = getSettingsFlat(db);
+  const sampleWt = Number(cfg.sample_weight) || 0;
+  const grossWt = Math.round((qty + sampleWt) * 1000) / 1000;
+
+  let destLotId = null;
+  try {
+    db.transaction(() => {
+      const info = db.run(
+        `INSERT INTO lots (auction_id,lot_no,crop,grade,crpt,branch,state,trader_id,name,padd,ppla,ppin,pstate,pst_code,cr,pan,tel,aadhar,bags,litre,qty,gross_wt,sample_wt,moisture,user_id,bank_id,godown)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
+        [destAuctionId, lotNo, src.crop || '', src.grade || '', src.crpt || '', branch,
+         lotStateForAuction(db, destAuctionId), src.trader_id || null, src.name || '',
+         src.padd || '', src.ppla || '', src.ppin || '', src.pstate || '', src.pst_code || '',
+         src.cr || '', src.pan || '', src.tel || '', src.aadhar || '',
+         bags, src.litre || '', qty, grossWt, sampleWt, src.moisture || '',
+         (req.user && req.user.username) || src.user_id || '', src.bank_id || null]);
+      destLotId = info.lastInsertRowid;
+
+      // Decrement the godown entry. gross is re-derived from what is left, so
+      // the stored row stays internally consistent at every balance.
+      const leftQty  = Math.round((haveQty - qty) * 1000) / 1000;
+      const leftBags = haveBags - bags;
+      const leftGross = Math.round(Math.max(0, leftQty + (Number(src.sample_wt) || 0)) * 1000) / 1000;
+      db.run('UPDATE lots SET bags = ?, qty = ?, gross_wt = ? WHERE id = ?',
+        [leftBags, leftQty, leftGross, srcId]);
+
+      db.run(
+        `INSERT INTO godown_movements (src_lot_id, dest_lot_id, dest_auction_id, dest_lot_no, bags, qty, advance_recovered, user_id)
+         VALUES (?,?,?,?,?,?,?,?)`,
+        [srcId, destLotId, destAuctionId, lotNo, bags, qty, recover,
+         (req.user && req.user.username) || '']);
+
+      // Advance transfer. The share that rides along becomes the new lot's own
+      // advance, where the existing payable readers net it off the sale; the
+      // rest stays against the stock still in store.
+      if (recover > 0) {
+        const paidAt = db.get(`SELECT datetime('now','localtime') AS d`).d;
+        db.run(
+          `INSERT INTO lot_advances (lot_id, auction_id, advance, bank_id, paid_at, updated_at)
+           VALUES (?,?,?,?,?,?)
+           ON CONFLICT(lot_id) DO UPDATE SET auction_id = excluded.auction_id,
+             advance = excluded.advance, bank_id = excluded.bank_id, updated_at = excluded.updated_at`,
+          [destLotId, destAuctionId, recover, (adv && adv.bank_id) || null, paidAt, paidAt]);
+        const left = Math.round((outstanding - recover) * 100) / 100;
+        if (left > 0) db.run('UPDATE lot_advances SET advance = ?, updated_at = ? WHERE lot_id = ?', [left, paidAt, srcId]);
+        else db.run('DELETE FROM lot_advances WHERE lot_id = ?', [srcId]);
+      }
+    })();
+  } catch (e) {
+    console.error('godown move failed:', e && e.message);
+    return res.status(500).json({ error: 'Move failed: ' + ((e && e.message) || e) });
+  }
+
+  // The destination trade has a new lot: same follow-ups as a lot entry.
+  pcClearGate(db, destAuctionId);
+  lvClearGate(db, destAuctionId);
+  logLotActivity(db, req, 'create', {
+    id: destLotId, auction_id: destAuctionId, lot_no: lotNo, branch,
+    name: src.name, qty,
+  });
+  const grade2Alert = runGrade2Alerts(db, req, destAuctionId);
+
+  const after = db.get(GODOWN_STOCK_SQL + ' AND l.id = ?', [srcId]);
+  res.json({
+    success: true,
+    lot: db.get('SELECT * FROM lots WHERE id = ?', [destLotId]),
+    godown: after ? godownStockRow(after) : null,
+    advance_recovered: recover,
+    grade2Alert: grade2Alert || null,
+  });
+});
+
+// Deleting a lot that CAME FROM the godown puts the stock back.
+//
+// Without this, deleting a released lot would evaporate the goods: they left
+// the godown balance when they moved, and the row that held them is being
+// removed. So a delete is the move's undo — the quantity goes back onto the
+// source entry, the advance that rode along goes back with it, and the
+// movement row is dropped so the register stops claiming the stock left.
+//
+// Called from BOTH delete paths (single + bulk) before the row disappears.
+// Safe to call for any lot id: a lot that never came from the godown has no
+// movement row and this is a no-op.
+function godownRestoreOnDelete(db, lotId) {
+  let mv = null;
+  try { mv = db.get('SELECT * FROM godown_movements WHERE dest_lot_id = ?', [lotId]); }
+  catch (_) { return null; }        // table missing on an old DB — nothing to undo
+  if (!mv) return null;
+  const src = db.get('SELECT * FROM lots WHERE id = ?', [mv.src_lot_id]);
+  if (src) {
+    const qty  = Math.round(((Number(src.qty) || 0) + (Number(mv.qty) || 0)) * 1000) / 1000;
+    const bags = (Number(src.bags) || 0) + (Number(mv.bags) || 0);
+    const gross = Math.round((qty + (Number(src.sample_wt) || 0)) * 1000) / 1000;
+    db.run('UPDATE lots SET bags = ?, qty = ?, gross_wt = ? WHERE id = ?', [bags, qty, gross, mv.src_lot_id]);
+    // The recovered share returns to the godown entry's own advance, so the
+    // money is still owed by the seller rather than quietly written off.
+    const back = Math.round((Number(mv.advance_recovered) || 0) * 100) / 100;
+    if (back > 0) {
+      const existing = db.get('SELECT advance FROM lot_advances WHERE lot_id = ?', [mv.src_lot_id]);
+      const paidAt = db.get(`SELECT datetime('now','localtime') AS d`).d;
+      const total = Math.round(((Number(existing && existing.advance) || 0) + back) * 100) / 100;
+      db.run(
+        `INSERT INTO lot_advances (lot_id, auction_id, advance, bank_id, paid_at, updated_at)
+         VALUES (?,?,?,?,?,?)
+         ON CONFLICT(lot_id) DO UPDATE SET advance = excluded.advance, updated_at = excluded.updated_at`,
+        [mv.src_lot_id, src.auction_id, total, src.bank_id || null, paidAt, paidAt]);
+    }
+  }
+  db.run('DELETE FROM godown_movements WHERE id = ?', [mv.id]);
+  return mv;
+}
+
+// Deleting the godown ENTRY itself: its release history goes with it. The
+// lots it released stay — they are ordinary auction lots now, and deleting
+// the store record must not delete goods somebody has bought.
+function godownForgetHistory(db, lotId) {
+  try { db.run('DELETE FROM godown_movements WHERE src_lot_id = ?', [lotId]); } catch (_) {}
+}
+
 // Next godown lot number for a trade — what the Lot Entry form shows in its
 // read-only Lot No box once "Godown storage only" is picked.
 app.get('/api/auctions/:id/next-godown-lot', requireViewOrLotEntry, (req, res) => {
@@ -10742,8 +11030,13 @@ app.delete('/api/lots/:id', requireDelete, (req, res) => {
   if (cur && cur.locked_at && lockFeatureOn(db) && !isAdmin(req)) {
     return res.status(423).json({ error: 'This lot is locked — only an admin can delete it.' });
   }
+  // A lot released from the godown gives its stock back before it goes; a
+  // godown entry being deleted takes its release history with it.
+  const restored = godownRestoreOnDelete(db, parseInt(req.params.id, 10));
+  godownForgetHistory(db, parseInt(req.params.id, 10));
   // Any advance recorded against this lot goes with it — see the auction
-  // delete above.
+  // delete above. (The share that came from the godown has already been put
+  // back onto the source entry by the restore above.)
   db.run('DELETE FROM lot_advances WHERE lot_id = ?', [req.params.id]);
   db.run('DELETE FROM lots WHERE id = ?', [req.params.id]);
   if (cur && cur.auction_id) { pcClearGate(db, cur.auction_id); lvClearGate(db, cur.auction_id); }
@@ -10752,7 +11045,7 @@ app.delete('/api/lots/:id', requireDelete, (req, res) => {
     auction_id: cur && cur.auction_id,
     lot_no: cur && cur.lot_no, branch: cur && cur.branch, name: cur && cur.name, qty: cur && cur.qty,
   });
-  res.json({ success: true });
+  res.json({ success: true, godown_restored: restored ? { lot_id: restored.src_lot_id, qty: restored.qty, bags: restored.bags } : null });
 });
 
 // ── GRADE-2 BOOKING ALERTS ─────────────────────────────────────
@@ -10797,8 +11090,15 @@ app.post('/api/lots/bulk-delete', requireDelete, (req, res) => {
     // here — bulk delete is a batch action, not a force-override; admin
     // can still hit DELETE /api/lots/:id directly).
     const { allowed, skipped } = filterLockedLotIds(db, req.body.ids);
+    // Same undo as the single delete: anything released from the godown puts
+    // its stock (and the advance that rode along) back first.
+    let restored = 0;
+    for (const id of allowed) {
+      if (godownRestoreOnDelete(db, parseInt(id, 10))) restored++;
+      godownForgetHistory(db, parseInt(id, 10));
+    }
     const deleted = bulkDeleteByIds(db, 'lots', allowed);
-    res.json({ success: true, deleted, skipped_locked: skipped.length });
+    res.json({ success: true, deleted, skipped_locked: skipped.length, godown_restored: restored });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -11763,7 +12063,7 @@ app.get('/api/invoices/preview.html', (req, res) => {
           isInterState: false,
         },
       };
-      invoiceDate = new Date().toISOString().slice(0, 10);
+      invoiceDate = istToday();
     }
 
     // ?template=modern (or classic) lets you eyeball any variant instantly
@@ -15490,7 +15790,7 @@ app.post('/api/debit-notes/generate', requireInvoiceWrite, requireDebitNoteEnabl
   const trade = db.get('SELECT date FROM auctions WHERE ano = ? LIMIT 1', [ano]);
   const dnDate = trade && trade.date
     ? normalizeDate(trade.date)
-    : new Date().toISOString().slice(0, 10);
+    : istToday();
 
   // Note number: client-supplied `startNoteNo` (preferred) or legacy
   // `noteNo` (back-compat). When neither is provided, fall back to
@@ -15657,7 +15957,7 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNote
   const trade = db.get('SELECT date FROM auctions WHERE ano = ? LIMIT 1', [ano]);
   const dnDate = trade && trade.date
     ? normalizeDate(trade.date)
-    : new Date().toISOString().slice(0, 10);
+    : istToday();
 
   // DN (discount) math — read once, applied per-purchase below:
   //   Base     = sum(commission + handling) on the dealer's GRADE-2 lots.
@@ -16628,7 +16928,7 @@ app.post('/api/debit-notes-planter/generate', requireInvoiceWrite, requireDebitN
 
   // DN date = trade.date (same day as the auction / bill of supply).
   const trade = db.get('SELECT date FROM auctions WHERE ano = ? LIMIT 1', [ano]);
-  const dnDate = trade && trade.date ? normalizeDate(trade.date) : new Date().toISOString().slice(0, 10);
+  const dnDate = trade && trade.date ? normalizeDate(trade.date) : istToday();
 
   const rawStart = req.body.startNoteNo != null ? req.body.startNoteNo : req.body.noteNo;
   let noteNo;
@@ -16708,7 +17008,7 @@ app.post('/api/debit-notes-planter/generate-bulk', requireInvoiceWrite, requireD
         .map(r => String(r.lot_no || '').trim())
     );
     const tradeL = db.get('SELECT date FROM auctions WHERE ano = ? LIMIT 1', [ano]);
-    const dnDateL = tradeL && tradeL.date ? normalizeDate(tradeL.date) : new Date().toISOString().slice(0, 10);
+    const dnDateL = tradeL && tradeL.date ? normalizeDate(tradeL.date) : istToday();
     const dnGstRateL = Number(cfg.discount_gst) || Number(cfg.gst_service) || 0;
     const pendingCount = lots.filter(l => !doneLots.has(String(l.lot_no || '').trim())).length;
 
@@ -16775,7 +17075,7 @@ app.post('/api/debit-notes-planter/generate-bulk', requireInvoiceWrite, requireD
   );
   // DN date = trade.date (same day as the auction / bill of supply).
   const trade = db.get('SELECT date FROM auctions WHERE ano = ? LIMIT 1', [ano]);
-  const dnDate = trade && trade.date ? normalizeDate(trade.date) : new Date().toISOString().slice(0, 10);
+  const dnDate = trade && trade.date ? normalizeDate(trade.date) : istToday();
 
   const dnGstRate = Number(cfg.discount_gst) || Number(cfg.gst_service) || 0;
 
@@ -17417,7 +17717,7 @@ app.post('/api/invoices/preview-pdf/:auctionId', requireView, async (req, res) =
     const invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, saleType, cfg, { noTI: effNoTI, lotNos: (pdfLotNos && pdfLotNos.length) ? pdfLotNos : undefined });
     if (!invoice) return res.status(404).json({ error: `No lots found for buyer "${buyerCode}" in this auction.` });
     const auction = db.get('SELECT * FROM auctions WHERE id = ?', [req.params.auctionId]);
-    const invoiceDate = (auction && auction.date) || new Date().toISOString().slice(0, 10);
+    const invoiceDate = (auction && auction.date) || istToday();
 
     // Placeholder invoice number — nothing is reserved or stored.
     // Honour the layout selected in Settings (letterhead/modern → HTML engine,
@@ -17836,6 +18136,12 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
       `SELECT l.id, l.lot_no, l.name, l.trader_id, l.branch, l.qty,
               l.balance AS payable, l.amount, l.bank_id, l.immediate_payment,
               l.locked_at,
+              -- Godown rows are listed here deliberately: an advance against
+              -- stored stock is paid through this very screen, and the payable
+              -- export can never pick one up (it needs amount > 0). The flag
+              -- travels so the row can SAY what it is — "awaiting price" on
+              -- goods that were never for sale reads as an error otherwise.
+              COALESCE(l.godown,0) AS godown,
               -- Paid-out marker (lot-wise Payments export). Non-NULL rows stay
               -- in the list but are badged "Paid on …", tinted, and locked out
               -- of selection / re-export on the client.
@@ -20542,7 +20848,7 @@ app.get('/api/stats/revenue-trend', requireView, (req, res) => {
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
-    const iso = d.toISOString().slice(0, 10);
+    const iso = istYmd(d);
     const hit = byDay.get(iso);
     series.push({
       date: iso,
@@ -20650,7 +20956,7 @@ app.post('/api/system/backup-now', requireAdmin, (req, res) => {
     if (!fs.existsSync(bkDir)) fs.mkdirSync(bkDir, { recursive: true });
     try { require('./db').flushSave(); } catch (_) {}
     const auto = String((req.body && req.body.kind) || '').toLowerCase() === 'auto';
-    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const stamp = istFileStamp();
     const out = path.join(bkDir, `${auto ? 'auto' : 'manual'}-${stamp}.db`);
     fs.copyFileSync(DB_PATH, out);
     const st = fs.statSync(out);
@@ -21817,7 +22123,7 @@ app.get('/api/system/backup', requireAdmin, (req, res) => {
     if (!fs.existsSync(DB_PATH)) {
       return res.status(500).json({ error: 'Database file not found at ' + DB_PATH });
     }
-    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const stamp = istFileStamp();
     const filename = `spice-eauction-backup-${stamp}.db`;
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -21870,7 +22176,7 @@ function _devSnapshot(tag) {
   const bkDir = path.join(path.dirname(DB_PATH), 'backups');
   if (!fs.existsSync(bkDir)) fs.mkdirSync(bkDir, { recursive: true });
   require('./db').flushSave();
-  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  const stamp = istFileStamp();
   const out = path.join(bkDir, `predev-${tag}-${stamp}.db`);
   fs.copyFileSync(DB_PATH, out);
   return path.basename(out);
@@ -22612,7 +22918,7 @@ function handleAuctionVerify(db, req, res, def, moduleKey) {
   try {
     const { rows, mapping } = _auctionParseAndMap(req, def);
     const total = rows.length;
-    const todayIso = new Date().toISOString().slice(0, 10);
+    const todayIso = istToday();
     // Read-only auction lookup keyed exactly like the run handler's create
     // (ano + stored date, today when the date cell is blank). A row whose
     // auction doesn't exist yet is guaranteed NEW — no lot can predate its
@@ -22743,7 +23049,7 @@ function handleAuctionRun(db, req, res, def, moduleKey, dryRun) {
     const { rows, mapping } = _auctionParseAndMap(req, def);
     total = rows.length;
     if (!total) throw new Error('File is empty');
-    const todayIso = new Date().toISOString().slice(0, 10);
+    const todayIso = istToday();
     const defaultCrop = getSetting(db, 'default_crop_type') || 'VST';
     // Resolve-or-create the parent auction, keyed by (ano, stored date).
     // Cached so a multi-row trade only touches the DB once. On dryRun we

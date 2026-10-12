@@ -972,9 +972,12 @@ const COLS = {
     { header: 'PLACE',    key: 'place',    width: 14 },
     { header: 'PHONE',    key: 'phone',    width: 12 },
     { header: 'GRADE',    key: 'grade',    width: 7  },
-    { header: 'BAGS',     key: 'bag',      width: 6  },
-    { header: 'NET WT',   key: 'qty',      width: 11 },
-    { header: 'GROSS WT', key: 'gross_wt', width: 11 },
+    { header: 'RECD BAGS', key: 'recd_bag',  width: 8  },
+    { header: 'RECD WT',   key: 'recd_qty',  width: 11 },
+    { header: 'MOVED BAGS',key: 'moved_bag', width: 9  },
+    { header: 'MOVED WT',  key: 'moved_qty', width: 11 },
+    { header: 'BAL BAGS',  key: 'bag',       width: 8  },
+    { header: 'BAL WT',    key: 'qty',       width: 11 },
   ],
   // Sales Register — invoice-wise (landscape).
   sales_register: [
@@ -1035,7 +1038,7 @@ const TOTAL_KEYS = {
   tds_return:      ['assess_value', 'tds'],
   purchase_register: ['bag', 'qty', 'amount', 'refund', 'commission', 'cgst', 'sgst', 'igst', 'billamount'],
   sales_register:    ['bag', 'qty', 'amount', 'gunny', 'lorry', 'ins', 'cgst', 'sgst', 'igst', 'invamt'],
-  godown_register:   ['bag', 'qty', 'gross_wt'],
+  godown_register:   ['recd_bag', 'recd_qty', 'moved_bag', 'moved_qty', 'bag', 'qty'],
 };
 
 // Where the totals strip's "TOTAL" label goes, when the default — the first

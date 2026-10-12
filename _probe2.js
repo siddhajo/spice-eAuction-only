@@ -1,0 +1,35 @@
+const os=require('os'),path=require('path'),fs=require('fs');
+const {spawn}=require('child_process');
+const ROOT=__dirname;const TMP=fs.mkdtempSync(path.join(os.tmpdir(),'mv-'));
+const PORT=47400,B=`http://127.0.0.1:${PORT}`;
+const srv=spawn('node',[path.join(ROOT,'server.js')],{cwd:ROOT,env:{...process.env,SPICE_DATA_DIR:TMP,PORT:String(PORT),NODE_ENV:'test'},stdio:['ignore','pipe','pipe']});
+let log='';srv.stdout.on('data',b=>log+=b);srv.stderr.on('data',b=>log+=b);
+let T='';const api=async(m,u,b)=>{const r=await fetch(B+u,{method:m,headers:{'Content-Type':'application/json',...(T?{Authorization:'Bearer '+T}:{})},body:b?JSON.stringify(b):undefined});
+ const ct=r.headers.get('content-type')||'';return{status:r.status,d:ct.includes('json')?await r.json().catch(()=>null):(await r.arrayBuffer()).byteLength};};
+(async()=>{
+ for(let i=0;i<160;i++){try{const r=await fetch(B+'/api/health');if(r.status<500)break}catch(e){}await new Promise(r=>setTimeout(r,250))}
+ T=(await api('POST','/api/login',{username:'admin',password:'admin123'})).d.token;
+ await api('PUT','/api/company-settings',{settings:{br1:'BODI',flag_godown:'true',flag_lotwise_payments:'true',sample_weight:'0.5'}});
+ await api('POST','/api/auctions',{ano:'1',date:'2026-10-12',crop_type:'ISP'});
+ await api('POST','/api/auctions/1/allocations',{allocations:[{branch:'BODI',start_lot:'001',end_lot:'020'}]});
+ await api('POST','/api/auctions',{ano:'2',date:'2026-10-19',crop_type:'ISP'});
+ await api('POST','/api/auctions/2/allocations',{allocations:[{branch:'BODI',start_lot:'001',end_lot:'020'}]});
+ const t=(await api('POST','/api/traders',{name:'RAVI PLANTER',tel:'9790744444',ppla:'BODI'})).d.trader;
+ await api('POST','/api/traders/'+t.id+'/banks',{bank_name:'SBI',acctnum:'123456789012',ifsc:'SBIN0001234',holder_name:'RAVI PLANTER',is_default:1});
+ const g=(await api('POST','/api/lots',{auction_id:1,trader_id:t.id,branch:'BODI',grade:'1',bags:18,litre:'300',qty:180.5,gross_wt:180.5,godown:1})).d.lot;
+ const banks=(await api('GET','/api/traders/'+t.id+'/banks')).d;
+ const bankId=(Array.isArray(banks)?banks:(banks.banks||[]))[0]?.id;
+ let r=await api('POST','/api/payments/lots/1/advance',{items:[{lotId:g.id,advance:50000,bankId}]});
+ console.log('advance:',r.status);
+ r=await api('GET','/api/godown/stock?open=1');
+ console.log('stock:',JSON.stringify(r.d.rows.map(x=>({lot:x.lot_no,bags:x.bags,qty:x.qty,recvQty:x.received_qty,adv:x.advance,closed:x.closed}))),'totals',JSON.stringify(r.d.totals));
+ r=await api('POST','/api/godown/move',{lot_id:g.id,auction_id:2,lot_no:'007',bags:10,qty:100,recover_advance:27778});
+ console.log('move:',r.status,JSON.stringify(r.d&&(r.d.error||{lot:r.d.lot&&r.d.lot.lot_no,qty:r.d.lot&&r.d.lot.qty,gross:r.d.lot&&r.d.lot.gross_wt,bal:r.d.godown&&{bags:r.d.godown.bags,qty:r.d.godown.qty,recv:r.d.godown.received_qty,adv:r.d.godown.advance}})));
+ r=await api('GET','/api/godown/movements?lotId='+g.id);
+ console.log('history:',JSON.stringify((r.d||[]).map(m=>({to:m.dest_lot_no,bags:m.bags,qty:m.qty,adv:m.advance_recovered}))));
+ r=await api('GET','/api/payments/lots/2?search=');
+ console.log('dest trade payments:',JSON.stringify(((r.d&&r.d.lots)||[]).map(x=>({lot:x.lot_no,adv:x.advance}))));
+ r=await api('POST','/api/godown/move',{lot_id:g.id,auction_id:2,lot_no:'008',bags:20,qty:200,recover_advance:0});
+ console.log('over-move refused:',r.status,r.d&&r.d.error);
+ srv.kill('SIGKILL');fs.rmSync(TMP,{recursive:true,force:true});
+})().catch(e=>{console.error('ERR',e.message);console.log(log.slice(-1500));srv.kill('SIGKILL')});

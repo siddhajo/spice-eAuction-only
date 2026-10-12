@@ -964,8 +964,63 @@ function show(id){document.querySelectorAll('.screen').forEach(s=>s.classList.re
 document.addEventListener('click',function(){var el=document.getElementById('le-recent');if(el){el.querySelectorAll('[style*="position:absolute"]').forEach(function(p){p.style.display='none'})}});
 function ah(){return{'Authorization':'Bearer '+token,'Content-Type':'application/json'}}
 function fmtDate(d){if(!d)return'';var p=d.split('-');return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:d}
+// ── IST timestamps ────────────────────────────────────────────────────
+// Mirror of ist.js / index.html. Every timestamp shown here is Indian
+// Standard Time whatever zone the phone is set to — a handset roaming
+// abroad must read the same clock as the auction floor.
+// Stored stamps come from SQLite's datetime('now','localtime') on an
+// IST-pinned server: naive "YYYY-MM-DD HH:MM:SS", already IST wall-clock.
+// Those are RE-FORMATTED, never fed to new Date() — that parses a naive
+// string in the device's own zone and would shift a correct stamp again.
+// Values carrying Z/±hh:mm, and epoch millis, are real instants and do get
+// converted. IST is a fixed +05:30, no DST, so the shift is a constant.
+const _IST_NAIVE=/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/;
+const _IST_ZONED=/(?:Z|[+-]\d{2}:?\d{2})$/i;
+const _IST_OFFSET_MS=330*60*1000;
+function _istSplit(v){
+  if(v===null||v===undefined||v==='')return null;
+  var str=typeof v==='string'?v.trim():null;
+  var m=str&&!_IST_ZONED.test(str)?str.match(_IST_NAIVE):null;
+  if(m)return{y:m[1],m:m[2],d:m[3],hh:m[4]||'00',mm:m[5]||'00',ss:m[6]||'00'};
+  var d=v instanceof Date?v:new Date(v);
+  if(isNaN(d.getTime()))return null;
+  var o={};
+  try{
+    new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',
+      day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})
+      .formatToParts(d).forEach(function(p){if(p.type!=='literal')o[p.type]=p.value});
+  }catch(e){return null}
+  if(o.hour==='24')o.hour='00';
+  return{y:o.year,m:o.month,d:o.day,hh:o.hour,mm:o.minute,ss:o.second};
+}
+// "12/10/2026 14:05" — opts {seconds, dateOnly, label}
+function fmtIst(v,opts){
+  var o=opts||{};if(v===null||v===undefined||v==='')return'';
+  var t=_istSplit(v);if(!t)return String(v);
+  var out=t.d+'/'+t.m+'/'+t.y;
+  if(!o.dateOnly)out+=' '+t.hh+':'+t.mm+(o.seconds?':'+t.ss:'');
+  return o.label?out+' IST':out;
+}
+function fmtIstDate(v){return fmtIst(v,{dateOnly:true})}
+// "14:05" in IST.
+function fmtIstTime(v,opts){
+  var o=opts||{},t=_istSplit(v);if(!t)return'';
+  var s=t.hh+':'+t.mm+(o.seconds?':'+t.ss:'');
+  return o.label?s+' IST':s;
+}
+// Epoch ms, reading a naive stamp as IST rather than as device-local. Use
+// for arithmetic on stored stamps (edit windows, ages).
+function istEpoch(v){
+  if(v===null||v===undefined||v==='')return NaN;
+  var str=typeof v==='string'?v.trim():null;
+  var m=str&&!_IST_ZONED.test(str)?str.match(_IST_NAIVE):null;
+  if(m)return Date.UTC(+m[1],+m[2]-1,+m[3],+(m[4]||0),+(m[5]||0),+(m[6]||0))-_IST_OFFSET_MS;
+  var d=v instanceof Date?v:new Date(v);
+  return d.getTime();
+}
+
 function setTitle(t){appTitle=t;document.getElementById('login-logo').textContent=t;var ssImg=document.querySelector('#ss-title .appbar-logo');document.getElementById('ss-title').innerHTML=(ssImg?ssImg.outerHTML:'')+t;document.title=t}
-function isEditLocked(c){if(!editTimeoutMinutes||editTimeoutMinutes<=0||!c)return false;return(new Date()-new Date(c.replace(' ','T')))/(1000*60)>editTimeoutMinutes}
+function isEditLocked(c){if(!editTimeoutMinutes||editTimeoutMinutes<=0||!c)return false;return(Date.now()-istEpoch(c))/(1000*60)>editTimeoutMinutes}
 
 let _hl=false;const _of=window.fetch;window.fetch=async function(...a){const r=await _of.apply(this,a);const u=typeof a[0]==='string'?a[0]:'';if(u.includes('/api/')&&!u.includes('/api/auth/login')&&!u.includes('/api/config')&&!u.includes('/api/status')&&r.status===401&&!_hl){_hl=true;token='';localStorage.removeItem('sa_token');show('s-login');_hl=false}return r};
 
@@ -1936,7 +1991,7 @@ async function loadSellerBookings(traderId){
     var totBags=s.total_bags||0;
     hdr.innerHTML='<span>📒 EXISTING BOOKINGS</span><span style="margin-left:auto;color:var(--green);font-weight:700">'+lots.length+' lot'+(lots.length>1?'s':'')+' • '+totBags+' bags • '+totQty+' kg</span>';
     var rows=lots.map(function(l){
-      var when=(l.created_at||'').slice(11,16);
+      var when=fmtIstTime(l.created_at);
       return '<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--border);font-size:11px">'
         +'<span style="font-weight:700;color:var(--green);min-width:46px">#'+l.lot_no+'</span>'
         +'<span style="color:var(--text2);min-width:90px;font-weight:600">'+(l.branch||'')+'</span>'
@@ -2665,7 +2720,7 @@ function resetForm(){selT=null;selectedLots=[];lastSavedLot=null;document.getEle
 async function loadMyLots(){if(!aid)return;try{const r=await fetch(B+'/api/lots?auction_id='+aid+'&branch='+encodeURIComponent(br),{headers:ah()});const d=await r.json();allMyLots=d.lots||[];const stats=d.stats||{};document.getElementById('ml-cnt').textContent=stats.lotCount||0;document.getElementById('ml-bags').textContent=stats.totalBags||0;document.getElementById('ml-qty').textContent=(stats.totalQty||0).toFixed(3);document.getElementById('ml-search').value='';renderMyLots(allMyLots)}catch(e){}}
 function filterMyLots(q){if(!q||q.length<2){renderMyLots(allMyLots);return}const f=q.toUpperCase();renderMyLots(allMyLots.filter(l=>(l.trader_name||'').toUpperCase().includes(f)))}
 function renderMyLots(lots){const list=document.getElementById('ml-list');if(!lots.length){list.innerHTML='<div class="lot-empty">No lots found</div>';return}
-list.innerHTML=lots.map(l=>{const g=String(l.grade||''),q=Number(l.qty).toFixed(3);const isRes=Number(l.reserved);const isGod=Number(l.godown);const tn=(l.trader_name||'Unknown').replace(/'/g,"\\'");const edBtn=editEnabled?` <button class="ico-btn ed" title="Edit lot" onclick="openEditFromList(${l.id})">${ICO_EDIT}</button>`:'';const dlBtn=deleteEnabled?` <button class="ico-btn dl" title="Delete lot" onclick="deleteLot(${l.id},'${String(l.lot_no).replace(/'/g,"\\'")}')">${ICO_DEL}</button>`:'';const editBtns=edBtn+dlBtn;const waBtn=cfgWhatsapp?` <button class="ico-btn" style="color:#25D366" onclick="whatsappLotById(${l.id})" title="Send receipt on WhatsApp">📲</button>`:'';return`<div class="lot-card${isGod?' godown':(isRes?' reserved':'')}"><div class="lot-hdr"><label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="ml-cb" value="${l.id}" onchange="updateMySelCount()" style="width:16px;height:16px"><span class="lot-num">#${l.lot_no}</span>${isGod?'<span class="god-badge">GODOWN</span>':(isRes?'<span class="res-badge">RESERVED</span>':'')}</label><span style="font-size:10px;color:var(--text3)">${l.user_id} · ${l.created_at?l.created_at.split(' ')[1]||'':''}</span></div><div class="lot-row"><div class="lot-name"><span style="color:var(--green);text-decoration:underline;cursor:pointer" onclick="showBankPop(event,'${tn}','${(l.acctnum||'').replace(/'/g,"\\'")}','${(l.ifsc||'').replace(/'/g,"\\'")}','${(l.tel||'').replace(/'/g,"\\'")}','${(l.cr||'').replace(/'/g,"\\'")}')">${l.trader_name}</span></div><div class="lot-actions"><button class="ico-btn pr" onclick="printLot(${l.id})" title="Print receipt">${ICO_PRINT}</button>${waBtn}${editBtns}</div></div><div class="lot-meta">${g} | ${l.bags} bags | ${l.litre} L | <strong>${q} kg</strong> · ${l.ppla||''}</div></div>`}).join('');updateMySelCount()}
+list.innerHTML=lots.map(l=>{const g=String(l.grade||''),q=Number(l.qty).toFixed(3);const isRes=Number(l.reserved);const isGod=Number(l.godown);const tn=(l.trader_name||'Unknown').replace(/'/g,"\\'");const edBtn=editEnabled?` <button class="ico-btn ed" title="Edit lot" onclick="openEditFromList(${l.id})">${ICO_EDIT}</button>`:'';const dlBtn=deleteEnabled?` <button class="ico-btn dl" title="Delete lot" onclick="deleteLot(${l.id},'${String(l.lot_no).replace(/'/g,"\\'")}')">${ICO_DEL}</button>`:'';const editBtns=edBtn+dlBtn;const waBtn=cfgWhatsapp?` <button class="ico-btn" style="color:#25D366" onclick="whatsappLotById(${l.id})" title="Send receipt on WhatsApp">📲</button>`:'';return`<div class="lot-card${isGod?' godown':(isRes?' reserved':'')}"><div class="lot-hdr"><label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="ml-cb" value="${l.id}" onchange="updateMySelCount()" style="width:16px;height:16px"><span class="lot-num">#${l.lot_no}</span>${isGod?'<span class="god-badge">GODOWN</span>':(isRes?'<span class="res-badge">RESERVED</span>':'')}</label><span style="font-size:10px;color:var(--text3)">${l.user_id} · ${fmtIstTime(l.created_at)}</span></div><div class="lot-row"><div class="lot-name"><span style="color:var(--green);text-decoration:underline;cursor:pointer" onclick="showBankPop(event,'${tn}','${(l.acctnum||'').replace(/'/g,"\\'")}','${(l.ifsc||'').replace(/'/g,"\\'")}','${(l.tel||'').replace(/'/g,"\\'")}','${(l.cr||'').replace(/'/g,"\\'")}')">${l.trader_name}</span></div><div class="lot-actions"><button class="ico-btn pr" onclick="printLot(${l.id})" title="Print receipt">${ICO_PRINT}</button>${waBtn}${editBtns}</div></div><div class="lot-meta">${g} | ${l.bags} bags | ${l.litre} L | <strong>${q} kg</strong> · ${l.ppla||''}</div></div>`}).join('');updateMySelCount()}
 
 function updateMySelCount(){applyDeleteVis();const boxes=document.querySelectorAll('.ml-cb');const checked=document.querySelectorAll('.ml-cb:checked').length;const bar=document.getElementById('ml-actions');const cnt=document.getElementById('ml-sel-count');const hasLots=allMyLots&&allMyLots.length>0;bar.style.display=hasLots?'flex':'none';cnt.textContent=checked>0?checked+' selected':'';const sa=document.getElementById('ml-selall');if(sa){sa.checked=boxes.length>0&&checked===boxes.length;sa.indeterminate=checked>0&&checked<boxes.length}}
 // Tick / untick every lot currently shown in My Lots (respects the active
@@ -3438,7 +3493,7 @@ deleteLot = async function(id, lotNo) {
       var r = await fetch(B + '/api/lots?auction_id=' + aid + '&branch=' + encodeURIComponent(br), { headers: ah() });
       var d = await r.json();
       var lot = (d.lots || []).find(function(l) { return l.id === id; });
-      if (lot) { undoHistory.push({ lot: lot, deletedAt: new Date().toLocaleString('en-IN'), deletedBy: user }); saveUndoHistory(); }
+      if (lot) { undoHistory.push({ lot: lot, deletedAt: fmtIst(new Date(), { seconds: true, label: true }), deletedBy: user }); saveUndoHistory(); }
     } catch (e) {}
   }
   try {

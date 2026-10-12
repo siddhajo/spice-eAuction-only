@@ -298,8 +298,11 @@ function cleanup() {
   check('the register type is listed', reg.offered === true);
   check('and asks for a depot', reg.depotShown === true);
   check('its columns are a stock sheet, not a money report',
-        reg.cols.includes('bag') && reg.cols.includes('qty') && reg.cols.includes('gross_wt')
-        && !reg.cols.includes('amount'), JSON.stringify(reg.cols));
+        reg.cols.includes('bag') && reg.cols.includes('qty') && !reg.cols.includes('amount'),
+        JSON.stringify(reg.cols));
+  check('…and it reconciles received − moved = balance',
+        ['recd_bag','recd_qty','moved_bag','moved_qty'].every(k => reg.cols.includes(k)),
+        JSON.stringify(reg.cols));
 
   console.log('\n[10] Flag OFF — the whole choice is not there');
   await api('PUT', '/api/company-settings', { settings: { flag_godown: 'false' } });
