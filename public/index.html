@@ -1106,6 +1106,41 @@ body[data-login-layout="showcase"] .login-hero{order:2;max-width:none;align-self
 .wa-tbl th{padding:7px 10px;font-size:10.5px;color:var(--spice-text-hint);text-transform:uppercase;letter-spacing:.3px;text-align:left;background:var(--spice-cream);white-space:nowrap}
 .wa-tbl td{padding:7px 10px;border-top:1px solid var(--spice-line);color:var(--spice-text-main)}
 .wa-chip{font-size:11px;padding:2px 8px;border-radius:10px;white-space:nowrap;display:inline-block}
+/* ── Collapsible band, with its own scroll (Send log pane) ─────
+   Both bands in the Send log hold a table that can run to hundreds of
+   rows. Stacked and unbounded, reaching the second one meant scrolling
+   the whole settings panel past the first. Each band now folds away and
+   scrolls inside its own box, so one long list can never bury the other,
+   and the header tone says which band is which at a glance: chili for
+   numbers that have never worked, cardamom for the log itself. */
+.wa-fold{border:1px solid var(--spice-line);border-radius:10px;overflow:hidden;
+  margin:0 0 14px;background:var(--spice-paper)}
+.wa-fold-hd{display:flex;align-items:center;gap:10px;width:100%;appearance:none;border:0;
+  border-bottom:1px solid var(--spice-line);padding:10px 13px;cursor:pointer;
+  text-align:left;font:inherit}
+/* Collapsed, the band is just its header — the rule below it would read as a
+   stray line under a floating bar. */
+.wa-fold.collapsed .wa-fold-hd{border-bottom-color:transparent}
+.wa-fold-hd .t{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px}
+.wa-fold-hd .n{font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px;
+  background:rgba(255,255,255,.6);font-variant-numeric:tabular-nums}
+.wa-fold-hd .chev{margin-left:auto;font-size:16px;line-height:1;opacity:.75;
+  transition:transform .15s;flex:0 0 auto}
+.wa-fold-hd:hover{filter:brightness(.97)}
+.wa-fold-hd:hover .chev{opacity:1}
+.wa-fold-hd:focus-visible{outline:2px solid var(--spice-saffron);outline-offset:-2px}
+.wa-fold.collapsed .wa-fold-hd .chev{transform:rotate(-90deg)}
+.wa-fold-bd{padding:11px 13px}
+.wa-fold.collapsed .wa-fold-bd{display:none}
+.wa-fold-hd.bad{background:var(--spice-chili-lt);color:var(--spice-chili-dk)}
+.wa-fold-hd.log{background:var(--spice-cardamom-lt);color:var(--spice-cardamom-dk)}
+/* The independent scroll. overflow stays on BOTH axes — the columns are wide
+   and the rows are many — and max-height is what keeps the two bands from
+   competing for the page. Sticky headers so the column labels survive the
+   scroll, which is the whole point of giving each band its own. */
+.wa-fold-scroll{overflow:auto;max-height:40vh;
+  border:1px solid var(--spice-line);border-radius:10px}
+.wa-fold-scroll .wa-tbl th{position:sticky;top:0;z-index:1}
 body[data-dark="1"] .wa-tile,
 body[data-dark="1"] .wa-box,
 body[data-dark="1"] .wa-tbl th,
@@ -1117,6 +1152,13 @@ body[data-dark="1"] .wa-gate .wa-tile.lead .k{color:var(--spice-saffron-md)}
 body[data-dark="1"] .wa-sub,
 body[data-dark="1"] .wa-adv>summary,
 body[data-dark="1"] .wa-tab.on{color:var(--spice-saffron-md)}
+/* Both fold tints are <token>-lt — pale mixes with WHITE — so on the dark
+   ground they glare. The bands keep their identity through the text colour
+   instead, over the panel's own line tone. */
+body[data-dark="1"] .wa-fold{background:var(--spice-paper)}
+body[data-dark="1"] .wa-fold-hd.log{background:var(--spice-line);color:var(--spice-saffron-md)}
+body[data-dark="1"] .wa-fold-hd.bad{background:var(--spice-line);color:#FCA5A5}
+body[data-dark="1"] .wa-fold-hd .n{background:rgba(0,0,0,.28)}
 /* Dark mode: cards take the panel's paper tone rather than glaring
    white, and the tints that read as "cardamom, very pale" on the light
    ground become slate — the cardamom-lt token is a saffron/white mix and
@@ -28674,6 +28716,41 @@ const _WA_LOG_TONE = {
 // Shown only for numbers that have NEVER succeeded. One failure among
 // successes is a blip; nothing but failures is a number nobody will ever
 // answer on, and every run spends another attempt rediscovering that.
+// ── The Send log's two collapsible bands ─────────────────────
+// Both bands paint a table that can run to hundreds of rows. Each gets its
+// own fold and its own scroll box so one long list can never bury the other.
+// The open/closed choice is remembered — an operator who only ever wants the
+// log open should not have to collapse the bad-numbers band on every visit.
+// Default is open: a band that hid its own contents by default would just
+// look empty.
+const _WA_FOLD_KEY = { bad: 'waFoldBad', log: 'waFoldLog' };
+function _waFoldOpen(key){
+  try { return localStorage.getItem(_WA_FOLD_KEY[key]) !== '0'; } catch (_) { return true; }
+}
+function _waFoldToggle(key){
+  const el = document.querySelector(`[data-wafold="${key}"]`);
+  if (!el) return;
+  const collapse = !el.classList.contains('collapsed');
+  el.classList.toggle('collapsed', collapse);
+  const hd = el.querySelector('.wa-fold-hd');
+  if (hd) hd.setAttribute('aria-expanded', collapse ? 'false' : 'true');
+  try { localStorage.setItem(_WA_FOLD_KEY[key], collapse ? '0' : '1'); } catch (_) {}
+}
+// One band: a coloured header that toggles it, and a body that scrolls alone.
+// `tone` is the header colour ('bad' = chili, 'log' = cardamom); `count` is
+// the badge beside the title, omitted when null.
+function _waFold(key, tone, title, count, inner){
+  const open = _waFoldOpen(key);
+  return `<section class="wa-fold${open ? '' : ' collapsed'}" data-wafold="${key}">
+      <button type="button" class="wa-fold-hd ${tone}" aria-expanded="${open ? 'true' : 'false'}"
+        onclick="_waFoldToggle('${key}')" title="Click to collapse or expand">
+        <span class="t">${title}</span>
+        ${count == null ? '' : `<span class="n">${count}</span>`}
+        <span class="chev" aria-hidden="true">▾</span>
+      </button>
+      <div class="wa-fold-bd">${inner}</div>
+    </section>`;
+}
 let _waBadDays = 90;
 async function _renderWhatsappBadNumbers(){
   const host = document.getElementById('whatsapp-bad-host');
@@ -28688,16 +28765,18 @@ async function _renderWhatsappBadNumbers(){
     ? r.owners.map(o => `<span title="${esc(o.kind)} #${esc(o.id)}">${esc(o.name)}</span>`).join(', ')
     : '<span style="color:var(--text3)">not in the Sellers or Buyers list</span>';
   const attempts = rows.reduce((n, r) => n + r.fails, 0);
-  host.innerHTML = `
-    <div class="wa-sub">Numbers that have never worked</div>
-    <div class="wa-cap">
+  // The caption and the day-range buttons sit OUTSIDE the scroll box: they
+  // explain and re-scope the list, so scrolling the rows must not carry them
+  // off. Only the table itself scrolls.
+  host.innerHTML = _waFold('bad', 'bad', 'Numbers that have never worked', rows.length, `
+    <div class="wa-cap" style="margin-top:0">
       These ${rows.length} number${rows.length === 1 ? ' has' : 's have'} been tried
       ${attempts} time${attempts === 1 ? '' : 's'} in the last ${_waBadDays} days and
       <strong>never once succeeded</strong>. Nothing in this app can fix that —
       “Message undeliverable” means there is no WhatsApp account on the number.
       Correct it on the seller or buyer, or accept that this one has to be reached another way.
     </div>
-    <div style="overflow-x:auto;border:1px solid var(--spice-line);border-radius:10px;margin-bottom:6px">
+    <div class="wa-fold-scroll" style="margin-bottom:6px">
       <table class="wa-tbl">
         <thead><tr><th>Who</th><th>Number on file</th><th style="text-align:right">Tried</th><th>Last tried</th><th>Why it failed</th></tr></thead>
         <tbody>${rows.map(r => `
@@ -28711,11 +28790,11 @@ async function _renderWhatsappBadNumbers(){
         </tbody>
       </table>
     </div>
-    <div class="wa-row" style="margin-bottom:16px">
+    <div class="wa-row">
       <span class="wa-note" style="flex:1">Showing the last ${_waBadDays} days.</span>
       ${[30, 90, 365].map(n => `<button type="button" class="wa-btn sm"${n === _waBadDays ? ' style="font-weight:700"' : ''}
         onclick="_waBadDays=${n};_renderWhatsappBadNumbers()">${n} days</button>`).join('')}
-    </div>`;
+    </div>`);
 }
 async function _renderWhatsappLog(){
   const host = document.getElementById('whatsapp-log-host');
@@ -28751,7 +28830,7 @@ async function _renderWhatsappLog(){
     ? `<div class="wa-banner bad">Could not load the send log: ${esc(loadErr)}</div>`
     : !rows.length
       ? `<div class="wa-note">No messages${_waLogFilter.status || _waLogFilter.q ? ' match this filter' : ' sent yet'}.</div>`
-      : `<div style="overflow-x:auto;border:1px solid var(--spice-line);border-radius:10px">
+      : `<div class="wa-fold-scroll">
           <table class="wa-tbl">
             <thead><tr><th>When</th><th>To</th><th>Message</th><th>Status</th></tr></thead>
             <tbody>${rows.map(r => `
@@ -28765,8 +28844,11 @@ async function _renderWhatsappLog(){
           </table>
         </div>`;
 
-  host.innerHTML = `
-    <div class="wa-row">
+  // Filters above the scroll box and the webhook banner below it both stay
+  // put while the rows scroll — the filters are how you change what is in
+  // the list, and the banner is about the list as a whole.
+  host.innerHTML = _waFold('log', 'log', 'Send log', rows.length || null, `
+    <div class="wa-row" style="margin-top:0">
       <select id="wa-log-status" class="wa-in" style="width:auto" onchange="_waLogSet('status', this.value)">
         ${opt('', 'All statuses')}${opt('sent', 'Sent (no receipt yet)')}${opt('delivered', 'Delivered')}${opt('read', 'Read')}${opt('failed', 'Failed')}${opt('unsent', "Didn't go out")}
       </select>
@@ -28783,7 +28865,7 @@ async function _renderWhatsappLog(){
       Every row is stuck on <strong>Sent</strong> — that is Meta accepting the message, not the recipient receiving it.
       Delivered / Read only appear once the webhook on the <strong>Setup</strong> tab is verified and the
       <strong>messages</strong> field is subscribed in Meta.
-    </div>` : ''}`;
+    </div>` : ''}`);
 }
 function _waLogSet(key, value){
   _waLogFilter[key] = value;
