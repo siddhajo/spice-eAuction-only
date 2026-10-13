@@ -247,6 +247,22 @@ function review(db, opts = {}) {
 // ── MESSAGE ────────────────────────────────────────────────────────
 // Tokens: {name} {first_name} {company} {last_booked} {days}
 //         {next_auction} {next_auction_no}
+// ── Whose name goes IN the message ─────────────────────────────
+// `label` is "CR.15185/78 MK KORAH" — the registration number glued to the
+// name. That is the operator's handle: it is how a seller is picked out of a
+// list of namesakes on screen, and it stays there.
+//
+// It must never reach the seller. They know who they are; "Dear CR.15185/78
+// MK KORAH" reads like a bill from a utility company, not a note from the
+// people they sell to. The message gets the bare name.
+//
+// `label` survives only as a last resort, for the broken record with no name
+// at all — Meta rejects a blank template variable outright, so something has
+// to be there.
+function sellerFacingName(row) {
+  return String((row && row.name) || (row && row.label) || '').trim();
+}
+
 function composeMessage(db, row, ctx = {}) {
   // NOTE the shape of the default: {next_auction} sits after "for", never
   // after "on". Between seasons there is often no auction on the calendar
@@ -256,7 +272,7 @@ function composeMessage(db, row, ctx = {}) {
   // rejects a blank template variable outright.
   const tpl = getSetting(db, 'reminder_message')
     || 'Dear {name}, we have not seen your lots since {last_booked}. Do send your produce for {next_auction}. Regards, {company}';
-  const name = String(row.label || row.name || '').trim();
+  const name = sellerFacingName(row);
   const company = String(getSetting(db, 'trade_name') || getSetting(db, 'short_name') || '').trim();
   const na = ctx.nextAuction || null;
   const fmt = (ymdStr) => {
@@ -304,7 +320,7 @@ function templateParams(row, ctx = {}) {
     return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`;
   };
   return [
-    String(row.label || row.name || '').trim(),
+    sellerFacingName(row),
     row.last_booked ? fmt(row.last_booked) : 'your last visit',
     na && na.date ? fmt(na.date) : 'our next auction',
   ];

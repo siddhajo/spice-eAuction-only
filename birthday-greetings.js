@@ -250,7 +250,7 @@ function _log(db, f) {
 function composeMessage(db, row) {
   const tpl = getSetting(db, 'birthday_message')
     || 'Dear {name}, wishing you a very happy birthday! 🎂 Warm regards, {company}';
-  const name = String(row.name || row.label || '').trim();
+  const name = String(row.name || row.label || '').trim();   // bare name — see the template path below
   // Same precedence the invoice headers use: the trade name is the business
   // as its customers know it; `short_name` is the fallback for an install
   // that only filled the short form in.
@@ -326,7 +326,12 @@ async function sendGreetings(db, rows, opts = {}) {
         text: message,
         template: cfg.template,
         lang: cfg.lang,
-        bodyParams: [row.label || row.name || ''],
+        // The bare name, NOT `label` — that carries the CR for the
+        // operator's list and has no business in a birthday wish. The free
+        // text path above already did this; the template path did not, so an
+        // install sending templates was wishing "CR.15185/78 MK KORAH" many
+        // happy returns.
+        bodyParams: [String(row.name || row.label || '').trim()],
         freeText: cfg.freeText,
         ref: { ref_type: 'birthday', ref_id: `${row.party_type}:${row.party_id}` },
       });
