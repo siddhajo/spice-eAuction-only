@@ -357,6 +357,21 @@ select:focus{border-color:var(--green)}
   <div id="l-err"></div><button class="btn" id="l-btn" onclick="doLogin()">Login</button>
 </div></div>
 
+<!-- Idle sign-out warning. A phone left on the bench at the auction hall is
+     the exposure this closes; the countdown is here so nobody loses a
+     half-entered lot to a silent logout. -->
+<div id="idle-warn" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:24px">
+  <div style="background:var(--card,#fff);border-radius:14px;max-width:320px;width:100%;padding:22px;text-align:center;box-shadow:0 18px 50px rgba(0,0,0,.3)">
+    <div style="font-size:32px;line-height:1;margin-bottom:8px">⏳</div>
+    <div style="font-size:16px;font-weight:800;color:var(--text);margin-bottom:4px">Still there?</div>
+    <div style="font-size:12.5px;color:var(--text2);line-height:1.5">No activity for a while — signing out shortly.</div>
+    <div style="font-size:28px;font-weight:800;color:var(--red,#dc2626);margin:12px 0 2px" id="idle-countdown">60</div>
+    <div style="font-size:10.5px;color:var(--text3);margin-bottom:16px">seconds left</div>
+    <button class="btn" onclick="idleStaySignedIn()" style="width:100%;margin-top:0">I'm still here</button>
+    <button onclick="idleLogoutNow()" style="width:100%;margin-top:8px;height:40px;border-radius:10px;border:1.5px solid var(--border2);background:var(--input-bg);color:var(--text2);font-size:13px;font-weight:600;font-family:inherit;cursor:pointer">Sign out now</button>
+  </div>
+</div>
+
 <div class="screen" id="s-session">
   <div class="appbar"><h1 id="ss-title"><img class="appbar-logo" src="" style="display:none">Spice Auction</h1><span class="badge" id="ss-user"></span><button class="btn-icon" onclick="doLogout()" title="Logout">&#x2715;</button></div>
   <div class="scroll">
@@ -1106,13 +1121,77 @@ async function doLogin(){const u=document.getElementById('l-user').value.trim(),
 // server's message naming who to ask.
 if(r.status===403&&d.error==='account_locked'){er.innerHTML='<div class="eb">'+_esc(d.message||'This account is locked. Contact your administrator.')+'</div>';return}
 if(!r.ok){er.innerHTML='<div class="eb">'+_esc(d.error||'Login failed')+'</div>';return}token=d.token;user=d.user.username;userBranch=d.user.branch||'';userRole=d.user.role||'user';localStorage.setItem('sa_token',token);goSession();if(d.notice)toast(d.notice)}catch(e){er.innerHTML='<div class="eb">Could not connect</div>'}finally{document.getElementById('l-btn').disabled=false}}
-function doLogout(){fetch(B+'/api/auth/logout',{method:'POST',headers:ah()}).catch(()=>{});token='';user='';localStorage.removeItem('sa_token');toggleMenu(true);show('s-login')}
+function doLogout(){fetch(B+'/api/auth/logout',{method:'POST',headers:ah()}).catch(()=>{});token='';user='';localStorage.removeItem('sa_token');idleClearTimers();idleHideWarning();toggleMenu(true);show('s-login')}
+
+// ── AUTO SIGN-OUT ON INACTIVITY (auto_logout_minutes) ─────────────
+// "Inactive" means NO INTERACTION, not "no requests": the app polls in the
+// background, so request traffic says nothing about whether the operator is
+// still holding the phone. The server applies the same window to the session
+// (fed by the heartbeat below) — this timer is the courtesy warning, not the
+// control. 0 minutes switches it off, which is the default.
+var _idle={minutes:0,warnSec:60,timer:null,tick:null,lastBeat:0,armed:false,warning:false};
+function idleInit(){
+  _idle.minutes=(cfgAutoLogout>0)?Math.min(cfgAutoLogout,1440):0;
+  // The warning eats into the window rather than extending it.
+  _idle.warnSec=Math.max(10,Math.min(60,Math.round(_idle.minutes*60*0.25)));
+  if(!_idle.armed){
+    ['touchstart','mousedown','keydown','scroll','wheel'].forEach(function(ev){
+      document.addEventListener(ev,function(){idleBump()},{capture:true,passive:true});
+    });
+    // Picking the phone back up is activity.
+    document.addEventListener('visibilitychange',function(){if(!document.hidden)idleBump()});
+    _idle.armed=true;
+  }
+  idleBump(true);
+}
+function idleClearTimers(){if(_idle.timer){clearTimeout(_idle.timer);_idle.timer=null}if(_idle.tick){clearInterval(_idle.tick);_idle.tick=null}}
+function idleHideWarning(){_idle.warning=false;var el=document.getElementById('idle-warn');if(el)el.style.display='none'}
+// `force` re-arms even while the warning is up (that is the "I'm still here"
+// button). Ordinary taps during the warning do NOT dismiss it — a pocket
+// touch must not silently cancel a sign-out nobody saw.
+function idleBump(force){
+  if(!_idle.minutes){idleClearTimers();return}
+  if(_idle.warning&&!force)return;
+  idleClearTimers();
+  if(force)idleHideWarning();
+  var waitMs=Math.max(5000,(_idle.minutes*60-_idle.warnSec)*1000);
+  _idle.timer=setTimeout(idleShowWarning,waitMs);
+  var now=Date.now();
+  if(token&&(now-_idle.lastBeat)>60000){
+    _idle.lastBeat=now;
+    fetch(B+'/api/session/activity',{method:'POST',headers:ah()}).catch(function(){});
+  }
+}
+function idleShowWarning(){
+  if(!_idle.minutes||!token)return;
+  _idle.warning=true;
+  var el=document.getElementById('idle-warn'),num=document.getElementById('idle-countdown');
+  if(el)el.style.display='flex';
+  var left=_idle.warnSec;
+  if(num)num.textContent=String(left);
+  idleClearTimers();
+  _idle.tick=setInterval(function(){
+    left-=1;
+    if(num)num.textContent=String(Math.max(0,left));
+    if(left<=0){idleClearTimers();idleLogoutNow()}
+  },1000);
+}
+function idleStaySignedIn(){_idle.lastBeat=0;idleBump(true)}
+function idleLogoutNow(){
+  idleClearTimers();idleHideWarning();
+  if(!token)return;
+  var mins=_idle.minutes;
+  doLogout();
+  toast('Signed out after '+mins+' minute'+(mins===1?'':'s')+' of inactivity',true);
+}
 async function tryAutoLogin(){if(!token){loadTitle();return}try{const r=await fetch(B+'/api/auth/me',{headers:ah()});if(r.ok){const d=await r.json();user=d.user.username;userBranch=d.user.branch||'';userRole=d.user.role||'user';goSession()}else{token='';localStorage.removeItem('sa_token');loadTitle()}}catch(e){loadTitle()}}
 var cfgSampleWeight=0,cfgShowMoisture=false,cfgShowReservedPrice=false,cfgDefaultGunny=0,cfgImmediateReserve=false,cfgUserGunny=false,cfgShowCropReceipt=false,cfgCropReceiptStart='',cfgWhatsapp=false,cfgSellerAtBottom=false,cfgShowSample=true,cfgShowGross=true,cfgReassignDirect=false
 // Godown utility (flag_godown). cfgGodown shows/hides the Entry Type chooser;
 // cfgGodownPrefix is only used to PREVIEW the next number — the server assigns
 // the real one on save, so the two can never disagree.
 var cfgGodown=false,cfgGodownPrefix='G';
+// Inactivity sign-out, in minutes (0 = never). Same setting the desktop reads.
+var cfgAutoLogout=0;
 // Which kind of entry the form is on: 'auction' (book it) or 'godown' (goods
 // taken in for storage). Per-entry; kept after a save so a run of godown
 // receipts doesn't need re-picking.
@@ -1257,9 +1336,9 @@ function applyLabels(){
   var map={'elb-seller':L.seller||'Seller','elb-grade':L.grade,'elb-bags':L.bags,'elb-litre':L.litre_wt,'elb-net':L.net_wt,'elb-sample':L.sample_wt,'elb-gross':L.gross_wt,'elb-moisture':L.moisture};
   Object.keys(map).forEach(function(id){var el=document.getElementById(id);if(el)el.textContent=map[id]});
 }
-async function loadTitle(){try{const r=await fetch(B+'/api/config');const d=await r.json();setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;deleteEnabled=d.deleteEnabled!==undefined?d.deleteEnabled!==false:editEnabled;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgGodown=!!d.godown;cfgGodownPrefix=d.godownPrefix||'G';cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgReassignDirect=!!d.reassignDirect;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';cfgLitreOptions=d.litreOptions||'';cfgMoistureOptions=d.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw=document.getElementById('le-reserved-price-wrap');if(rpw)rpw.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGodownVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();loadAppLogo()}catch(e){}}
+async function loadTitle(){try{const r=await fetch(B+'/api/config');const d=await r.json();setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;deleteEnabled=d.deleteEnabled!==undefined?d.deleteEnabled!==false:editEnabled;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgGodown=!!d.godown;cfgGodownPrefix=d.godownPrefix||'G';cfgAutoLogout=parseFloat(d.autoLogoutMinutes)||0;idleInit();cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgReassignDirect=!!d.reassignDirect;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';cfgLitreOptions=d.litreOptions||'';cfgMoistureOptions=d.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw=document.getElementById('le-reserved-price-wrap');if(rpw)rpw.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGodownVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();loadAppLogo()}catch(e){}}
 
-async function goSession(){document.getElementById('ss-user').textContent=user;const lb=localStorage.getItem('sa_branch');try{const r=await fetch(B+'/api/config');const d=await r.json();window._allBranches=(d.branches||[]).map(function(b){return b.value});setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;deleteEnabled=d.deleteEnabled!==undefined?d.deleteEnabled!==false:editEnabled;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgGodown=!!d.godown;cfgGodownPrefix=d.godownPrefix||'G';cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgReassignDirect=!!d.reassignDirect;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';cfgLitreOptions=d.litreOptions||'';cfgMoistureOptions=d.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw2=document.getElementById('le-reserved-price-wrap');if(rpw2)rpw2.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGodownVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();var brSel=document.getElementById('ss-branch');if(userRole!=='admin'&&userBranch){brSel.innerHTML='<option value="'+userBranch+'">'+userBranch+'</option>';brSel.disabled=true}else{brSel.disabled=false;brSel.innerHTML=(d.branches||[]).map(b=>'<option value="'+b.value+'"'+(b.value===(userBranch||lb)?' selected':'')+'>'+b.value+'</option>').join('')}}catch(e){}
+async function goSession(){document.getElementById('ss-user').textContent=user;const lb=localStorage.getItem('sa_branch');try{const r=await fetch(B+'/api/config');const d=await r.json();window._allBranches=(d.branches||[]).map(function(b){return b.value});setTitle(d.title||'Spice Auction');editTimeoutMinutes=d.editTimeout||0;editEnabled=d.editEnabled!==false;deleteEnabled=d.deleteEnabled!==undefined?d.deleteEnabled!==false:editEnabled;cfgSampleWeight=d.sampleWeight||0;cfgShowMoisture=d.showMoisture||false;cfgShowReservedPrice=d.showReservedPrice||false;cfgImmediateReserve=d.immediateReserve||false;cfgGodown=!!d.godown;cfgGodownPrefix=d.godownPrefix||'G';cfgAutoLogout=parseFloat(d.autoLogoutMinutes)||0;idleInit();cfgShowCropReceipt=d.showCropReceipt||false;cfgCropReceiptStart=d.cropReceiptStart||'';cfgDefaultGunny=d.defaultGunny||0;cfgUserGunny=!!d.userGunny;cfgWhatsapp=!!d.whatsapp;cfgReassignDirect=!!d.reassignDirect;cfgSellerAtBottom=!!d.sellerAtBottom;cfgShowSample=d.showSampleField!==false;cfgShowGross=d.showGrossField!==false;cfgDefaultLitre=d.defaultLitre||'';cfgLitreOptions=d.litreOptions||'';cfgMoistureOptions=d.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw2=document.getElementById('le-reserved-price-wrap');if(rpw2)rpw2.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGodownVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis();if(d.labels)cfgLabels=Object.assign({lot_no:'Lot No',seller:'Seller',grade:'Grade',bags:'Bags',litre_wt:'Litre Wt',net_wt:'Net Wt (KG)',sample_wt:'Sample Wt',gross_wt:'Gross Wt',moisture:'Moisture %'},d.labels);applyLabels();var brSel=document.getElementById('ss-branch');if(userRole!=='admin'&&userBranch){brSel.innerHTML='<option value="'+userBranch+'">'+userBranch+'</option>';brSel.disabled=true}else{brSel.disabled=false;brSel.innerHTML=(d.branches||[]).map(b=>'<option value="'+b.value+'"'+(b.value===(userBranch||lb)?' selected':'')+'>'+b.value+'</option>').join('')}}catch(e){}
 await loadAvailableTrades();
 show('s-session')}
 
@@ -1305,7 +1384,7 @@ async function loadAvailableTrades(){
 
 async function startSession(){var sel=document.getElementById('ss-trade');var opt=sel.options[sel.selectedIndex];br=document.getElementById('ss-branch').value;var er=document.getElementById('ss-err');er.innerHTML='';if(!sel.value||!opt||!opt.value){er.innerHTML='<div class="eb">Select a trade</div>';return}if(!br){er.innerHTML='<div class="eb">Select branch</div>';return}aid=parseInt(sel.value);tno=parseInt(opt.getAttribute('data-ano'));sessionEnd=opt.getAttribute('data-end')||null;localStorage.setItem('sa_branch',br);
 // Reload config for sample weight + moisture
-try{var cr=await fetch(B+'/api/config');var cd=await cr.json();cfgSampleWeight=cd.sampleWeight||0;cfgShowMoisture=cd.showMoisture||false;cfgShowReservedPrice=cd.showReservedPrice||false;cfgImmediateReserve=cd.immediateReserve||false;cfgGodown=!!cd.godown;cfgGodownPrefix=cd.godownPrefix||'G';cfgShowCropReceipt=cd.showCropReceipt||false;cfgCropReceiptStart=cd.cropReceiptStart||'';cfgDefaultGunny=cd.defaultGunny||0;cfgUserGunny=!!cd.userGunny;cfgWhatsapp=!!cd.whatsapp;cfgSellerAtBottom=!!cd.sellerAtBottom;cfgShowSample=cd.showSampleField!==false;cfgShowGross=cd.showGrossField!==false;cfgLitreOptions=cd.litreOptions||'';cfgMoistureOptions=cd.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw3=document.getElementById('le-reserved-price-wrap');if(rpw3)rpw3.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGodownVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis()}catch(e){}
+try{var cr=await fetch(B+'/api/config');var cd=await cr.json();cfgSampleWeight=cd.sampleWeight||0;cfgShowMoisture=cd.showMoisture||false;cfgShowReservedPrice=cd.showReservedPrice||false;cfgImmediateReserve=cd.immediateReserve||false;cfgGodown=!!cd.godown;cfgGodownPrefix=cd.godownPrefix||'G';cfgAutoLogout=parseFloat(cd.autoLogoutMinutes)||0;idleInit();cfgShowCropReceipt=cd.showCropReceipt||false;cfgCropReceiptStart=cd.cropReceiptStart||'';cfgDefaultGunny=cd.defaultGunny||0;cfgUserGunny=!!cd.userGunny;cfgWhatsapp=!!cd.whatsapp;cfgSellerAtBottom=!!cd.sellerAtBottom;cfgShowSample=cd.showSampleField!==false;cfgShowGross=cd.showGrossField!==false;cfgLitreOptions=cd.litreOptions||'';cfgMoistureOptions=cd.moistureOptions||'';applyChoiceFields();document.getElementById('le-sample').value=cfgSampleWeight?Number(cfgSampleWeight).toFixed(3):'0.000';document.getElementById('le-moisture-wrap').style.display=cfgShowMoisture?'block':'none';var rpw3=document.getElementById('le-reserved-price-wrap');if(rpw3)rpw3.style.display=cfgShowReservedPrice?'block':'none';applyImmediateReserveVis();applyGodownVis();applyGunnyMode();applyCropReceiptVis();applyWhatsappVis();applySellerPosition();applyCalcFieldVis()}catch(e){}
 await loadStats();goLots()}
 
 var allocStats=null;

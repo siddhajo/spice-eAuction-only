@@ -1022,12 +1022,62 @@ function lockedAccountError(user) {
 // Auth middleware: verify a valid session, attach req.user/req.session.
 // DOES NOT check role — use this for endpoints that any logged-in user
 // (admin OR regular user) should be able to hit (GET list endpoints mostly).
+// ── AUTO SIGN-OUT (auto_logout_minutes) ───────────────────────────
+// Minutes of NO INTERACTION after which a session is destroyed. 0 / blank /
+// garbage = off, which is the default: nothing changes for an install that
+// never asked for this.
+// Read as a NUMBER, not an integer: a shared kiosk may legitimately want a
+// sub-minute window, and truncating "0.5" to 0 would silently mean "never" —
+// the opposite of what was typed. Clamped to [0.05 min, 24 h].
+function autoLogoutMinutes(db) {
+  const n = parseFloat(getSetting(db, 'auto_logout_minutes'));
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(Math.max(n, 0.05), 1440);
+}
+// Has this session been idle past the window?
+//
+// Measured against last_active_at — what the CLIENT reports as real user
+// interaction — because last_used_at is touched by every background poll and
+// an abandoned-but-open screen keeps it fresh all day. A session that has
+// never reported activity (an older client, or the first seconds after login)
+// falls back to last_used_at, so an un-upgraded client is never ejected
+// mid-work by a window it cannot see.
+// "15 minutes" / "30 seconds" — a sub-minute window must not report itself as
+// "0.5 minutes" in the message the operator reads.
+function _idleLabel(min) {
+  if (min < 1) return `${Math.round(min * 60)} seconds`;
+  return `${min} minute${min === 1 ? '' : 's'}`;
+}
+function sessionIdleExpired(db, session, minutes) {
+  if (!minutes || !session) return false;
+  const stamp = session.last_active_at || session.last_used_at || session.created_at;
+  if (!stamp) return false;
+  const row = db.get(
+    `SELECT CAST((julianday('now','localtime') - julianday(?)) * 1440 AS REAL) AS mins`, [stamp]);
+  const mins = row && Number(row.mins);
+  return Number.isFinite(mins) && mins > minutes;
+}
+
 function requireAuth(req, res, next) {
   const token = (req.headers.authorization || '').replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'No token' });
   const db = getDb();
   const session = db.get('SELECT * FROM sessions WHERE token = ?', [token]);
   if (!session) return res.status(403).json({ error: 'Session expired — please sign in again' });
+  // Idle sign-out. The row is destroyed rather than just refused, so the
+  // username stops blocking a fresh login at the same moment the person is
+  // signed out — one event, not two.
+  const autoMin = autoLogoutMinutes(db);
+  if (sessionIdleExpired(db, session, autoMin)) {
+    db.run('DELETE FROM sessions WHERE token = ?', [token]);
+    // 401, not a bespoke code: both clients already treat 401 as "the token is
+    // gone — show the login screen", so an un-upgraded client still ends up in
+    // the right place. `code` is what lets an upgraded one SAY why.
+    return res.status(401).json({
+      error: `Signed out after ${_idleLabel(autoMin)} of inactivity.`,
+      code: 'idle_logout', idle_minutes: autoMin,
+    });
+  }
   const user = db.get('SELECT * FROM users WHERE id = ?', [session.user_id]);
   if (!user) return res.status(403).json({ error: 'Unauthorized' });
   // Locking revokes sessions, so this normally never fires — it is the
@@ -2048,7 +2098,8 @@ app.post('/api/login', (req, res) => {
   // this lets the same user stay logged in on multiple devices when the
   // single_session setting is off. When it's on, checkDuplicateLogin
   // above has already refused the second sign-in.
-  db.run('INSERT INTO sessions (token, user_id, device_label) VALUES (?, ?, ?)',
+  db.run(`INSERT INTO sessions (token, user_id, device_label, last_active_at)
+          VALUES (?, ?, ?, datetime('now','localtime'))`,
     [token, user.id, device_label || (req.headers['user-agent'] || '').slice(0, 80)]);
   // Clean up very old sessions (> 30 days) so the table doesn't grow forever
   db.run(`DELETE FROM sessions WHERE last_used_at < datetime('now','-30 days')`);
@@ -2072,6 +2123,19 @@ app.post('/api/login', (req, res) => {
     notice,
   });
 });
+// POST /api/session/activity — the client reporting that a human just did
+// something (mouse, key, touch, tab focus). Sent at most once a minute, and
+// ONLY for real interaction: if the background polls could set this, the
+// window would never expire. requireAuth has already applied the window to
+// this very request, so a heartbeat arriving after it has lapsed signs the
+// session out rather than reviving it.
+app.post('/api/session/activity', requireAuth, (req, res) => {
+  const db = getDb();
+  db.run(`UPDATE sessions SET last_active_at = datetime('now','localtime') WHERE token = ?`,
+    [(req.headers.authorization || '').replace('Bearer ', '')]);
+  res.json({ success: true, auto_logout_minutes: autoLogoutMinutes(db) });
+});
+
 app.post('/api/logout', (req, res) => {
   const t = (req.headers.authorization||'').replace('Bearer ','');
   if (t) getDb().run('DELETE FROM sessions WHERE token = ?', [t]);

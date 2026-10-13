@@ -5304,6 +5304,27 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       <div class="tabrow tabrow-items" id="tabrow-items"></div>
     </div>
     <div class="toast" id="toast"></div>
+
+    <!-- ── Idle sign-out warning ──────────────────────────────────────
+         Shown for the last stretch of the inactivity window so nobody loses
+         half-typed work to a silent logout. Deliberately NOT a .modal-bg:
+         this has to appear over whatever is on screen, including an open
+         modal, and it must not be dismissible by the generic close helpers. -->
+    <div id="idle-warn" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:20px">
+      <div style="background:var(--card);border:1.5px solid var(--border);border-radius:14px;max-width:430px;width:100%;padding:24px;box-shadow:0 18px 50px rgba(0,0,0,.25);text-align:center">
+        <div style="font-size:34px;line-height:1;margin-bottom:10px">⏳</div>
+        <div style="font-size:17px;font-weight:700;color:var(--text);margin-bottom:6px">Still there?</div>
+        <div style="font-size:13.5px;color:var(--text2);line-height:1.55">
+          You have been inactive, so this session is about to be signed out.
+        </div>
+        <div style="font-size:30px;font-weight:800;color:var(--spice-chili);margin:14px 0 4px" id="idle-countdown">60</div>
+        <div style="font-size:11.5px;color:var(--text3);margin-bottom:18px">seconds left</div>
+        <div style="display:flex;gap:10px;justify-content:center">
+          <button class="btn btn-g" onclick="idleStaySignedIn()" style="min-width:150px">I'm still here</button>
+          <button class="btn btn-o" onclick="idleLogoutNow()">Sign out now</button>
+        </div>
+      </div>
+    </div>
     <!-- Reassign-request notification banner (new operator requests) —
          slides in top-right with a sound; click to jump to the queue. -->
     <div id="rr-notif" onclick="rrNotifClick()" style="display:none;position:fixed;top:16px;right:16px;z-index:4000;max-width:340px;background:linear-gradient(135deg,#E67E22,#c0392b);color:#fff;padding:14px 16px;border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.28);cursor:pointer;font-size:13.5px;font-weight:600;line-height:1.4;transform:translateX(120%);transition:transform .35s cubic-bezier(.2,.8,.2,1);display:flex;gap:10px;align-items:flex-start">
@@ -8994,6 +9015,10 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             Show emptied entries
           </label>
           <button class="btn btn-o" onclick="loadGodown()">Refresh</button>
+          <!-- Destructive, so it is role-gated the same way every other delete
+               in the app is, and it stays disabled until something is ticked. -->
+          <button class="btn btn-r needs-delete" id="gd-del-btn" onclick="gdDeleteSelected()" disabled
+                  style="opacity:.5">🗑 Delete selected</button>
           <span style="flex:1"></span>
           <button class="btn btn-a" onclick="go('registers');setTimeout(()=>{const t=document.getElementById('reg-type');if(t){t.value='godown';onRegTypeChange();}},300)">Godown Register ↗</button>
         </div>
@@ -12223,6 +12248,8 @@ async function login(){
   // navigates to Settings.
   try { await loadSettings(); } catch(_) {}
   try { await applyFeatureFlags(); } catch(_) {}
+  // Arm the inactivity sign-out for this session (no-op when the window is 0).
+  try { idleInit(); } catch(_) {}
   // Topbar trade selector — fire-and-forget so login completion isn't
   // gated on /api/auctions. Failures just hide the widget.
   try { loadTopbarTradeSelector(); } catch(_) {}
@@ -12280,6 +12307,8 @@ async function login(){
     }
     if(e){e.textContent='Invalid credentials';e.style.display='block';e.classList.add('active');}}}
 function logout(){h('/api/logout',{method:'POST'});T='';localStorage.removeItem('t');
+  // Disarm the inactivity watch with the session it belonged to.
+  try { idleClearTimers(); idleHideWarning(); } catch(_) {}
   window._userRole=null;window._userPerms=new Set();
   // Drop the branch lock with the rest of the identity — the next user on
   // this browser must not inherit the previous one's depot.
@@ -12299,6 +12328,124 @@ function logout(){h('/api/logout',{method:'POST'});T='';localStorage.removeItem(
     if (attr.name.startsWith('data-perm-')) document.body.removeAttribute(attr.name);
   }
   document.getElementById('app').style.display='none';document.getElementById('login').style.display='flex'}
+// ══════════════════════════════════════════════════════════════════
+// AUTO SIGN-OUT ON INACTIVITY (auto_logout_minutes)
+// ──────────────────────────────────────────────────────────────────
+// A trade-floor console left signed in is the risk this closes. "Inactive"
+// means NO INTERACTION — not "no requests": the app polls in the background
+// every few seconds, so request traffic says nothing about whether anyone is
+// still at the desk.
+//
+// Two halves, and both are needed:
+//   • HERE, a timer armed by real input events. It warns first (a countdown
+//     nobody can miss) so half-typed work is never lost to a silent logout.
+//   • ON THE SERVER, the same window applied to the session row, fed by the
+//     heartbeat below. A timer in a browser tab is a convenience, not a
+//     control — the server is what actually ends the session.
+//
+// 0 minutes (the default) switches the whole thing off.
+const _idle = {
+  minutes: 0,          // window, from settings
+  warnSec: 60,         // how long the warning counts down before signing out
+  timer: null,         // the "warn now" timeout
+  tick: null,          // the countdown interval while warning
+  lastBeat: 0,         // last activity reported to the server (ms)
+  armed: false,        // listeners attached?
+  warning: false,      // is the overlay up?
+};
+
+// Pull the window from settings and (re)start. Called after login and
+// whenever settings are saved, so changing the number takes effect at once.
+async function idleInit(){
+  let mins = 0;
+  try {
+    const cfg = window._CCFG || await j('/api/company-settings/flat');
+    // parseFloat, not parseInt: the server reads the same setting as a number,
+    // and truncating a sub-minute window to 0 would mean "never" — the exact
+    // opposite of what was typed.
+    mins = parseFloat(cfg && cfg.auto_logout_minutes);
+  } catch (_) { mins = 0; }
+  _idle.minutes = (Number.isFinite(mins) && mins > 0) ? Math.min(mins, 1440) : 0;
+  // The warning eats into the window rather than extending it: a 1-minute
+  // setting must not mean two. Never leave less than 10s of warning.
+  _idle.warnSec = Math.max(10, Math.min(60, Math.round(_idle.minutes * 60 * 0.25)));
+  if (!_idle.armed) {
+    // `capture` so a click a modal swallows still counts as activity,
+    // and passive so scroll/touch listeners never block painting.
+    for (const ev of ['mousedown', 'keydown', 'wheel', 'touchstart', 'scroll']) {
+      document.addEventListener(ev, idleBump, { capture: true, passive: true });
+    }
+    // Coming back to the tab is activity too — the operator is looking at it.
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) idleBump(); });
+    _idle.armed = true;
+  }
+  idleBump(true);
+}
+
+// Reset the clock. `force` re-arms even while the warning is up (that is what
+// "I'm still here" does); ordinary input during the warning does NOT dismiss
+// it — a stray mouse nudge should not silently cancel a sign-out the operator
+// never saw.
+function idleBump(force){
+  if (!_idle.minutes) { idleClearTimers(); return; }
+  if (_idle.warning && !force) return;
+  idleClearTimers();
+  if (force) idleHideWarning();
+  const waitMs = Math.max(5000, (_idle.minutes * 60 - _idle.warnSec) * 1000);
+  _idle.timer = setTimeout(idleShowWarning, waitMs);
+  // Tell the server a human did something — at most once a minute, so this
+  // costs one tiny request per active minute and nothing at all when idle.
+  const now = Date.now();
+  if (T && (now - _idle.lastBeat) > 60000) {
+    _idle.lastBeat = now;
+    // Fire-and-forget: a failed heartbeat must never interrupt the operator.
+    // h() (not j()) so a 401 here follows the normal stale-token path.
+    try { h('/api/session/activity', { method: 'POST' }).catch(() => {}); } catch (_) {}
+  }
+}
+function idleClearTimers(){
+  if (_idle.timer) { clearTimeout(_idle.timer); _idle.timer = null; }
+  if (_idle.tick)  { clearInterval(_idle.tick); _idle.tick = null; }
+}
+function idleHideWarning(){
+  _idle.warning = false;
+  const el = document.getElementById('idle-warn');
+  if (el) el.style.display = 'none';
+}
+function idleShowWarning(){
+  if (!_idle.minutes || !T) return;
+  _idle.warning = true;
+  const el = document.getElementById('idle-warn');
+  const num = document.getElementById('idle-countdown');
+  if (el) el.style.display = 'flex';
+  let left = _idle.warnSec;
+  if (num) num.textContent = String(left);
+  idleClearTimers();
+  _idle.tick = setInterval(() => {
+    left -= 1;
+    if (num) num.textContent = String(Math.max(0, left));
+    if (left <= 0) { idleClearTimers(); idleLogoutNow(); }
+  }, 1000);
+}
+function idleStaySignedIn(){
+  _idle.lastBeat = 0;       // report the activity immediately, not in a minute
+  idleBump(true);
+}
+// Sign out for real: the session row goes too (logout() posts /api/logout),
+// so the username stops blocking a fresh sign-in at the same moment.
+function idleLogoutNow(){
+  idleClearTimers();
+  idleHideWarning();
+  if (!T) return;
+  const mins = _idle.minutes;
+  try { logout(); } catch (_) {}
+  const err = document.getElementById('login-err');
+  if (err) {
+    err.textContent = `Signed out after ${mins} minute${mins === 1 ? '' : 's'} of inactivity.`;
+    err.style.display = 'block';
+  }
+}
+
 // Reads feature flags from the public branding endpoint extension and
 // flips body[data-feat-*] attributes so CSS can show/hide whole feature
 // surfaces declaratively (no per-call-site `if (flag)` plumbing).
@@ -12611,6 +12758,9 @@ applyBranding();
   // ensures the topbar badge shows the correct Logo Code on tab open.
   try { await loadSettings(); } catch(_) {}
   try { await applyFeatureFlags(); } catch(_) {}
+  // A restored session is still a session: arm the inactivity window for it
+  // too, or reloading the tab would be a way to never be signed out.
+  try { idleInit(); } catch(_) {}
   try { loadTopbarTradeSelector(); } catch(_) {}
   go(_landingTab());}catch(e){T='';localStorage.removeItem('t')}})();
 
@@ -27622,8 +27772,8 @@ const SET_FIELD_GROUPS = {
       keys:['season_start','season_end'] },
   ],
   security: [
-    { title:'Concurrent Sign-ins', icon:'🔐', hint:'Whether one username may be signed in twice, and how long a quiet session keeps holding the name.',
-      keys:['single_session','session_idle_minutes'] },
+    { title:'Concurrent Sign-ins', icon:'🔐', hint:'Whether one username may be signed in twice, and how long a quiet session keeps holding the name. The last field is a different question: how long an UNATTENDED screen stays signed in — leave it 0 and nobody is ever signed out automatically. Idle there means no mouse, key or touch; the app’s background polling does not count, and a countdown warns before it happens.',
+      keys:['single_session','session_idle_minutes','auto_logout_minutes'] },
     { title:'Admin Notifications', icon:'🔔', hint:'Tell admins when another admin signs in.',
       keys:['admin_login_alert'] },
   ],
@@ -29379,6 +29529,9 @@ async function saveSettings(){
   // Feature flags (WhatsApp, etc.) — re-evaluate so toggles take effect
   // immediately without a page reload.
   try { await applyFeatureFlags(); } catch(_) {}
+  // The admin may have just changed the inactivity window — re-read it so the
+  // new number is in force without a reload.
+  try { await idleInit(); } catch(_) {}
   // If the user is currently on the Dashboard tab, refresh stats so the
   // branch tiles + KPIs reflect any changes made in Settings (notably
   // Settings → Branches & Contacts which drives the tile layout).
@@ -35328,7 +35481,11 @@ async function validateLots(){
 //              quantity released and decrements this entry by it, carrying
 //              whatever share of the advance the operator chooses.
 const _gd = { rows: [], totals: null, banks: {}, auctions: [], branches: [],
-              advRow: null, moveRow: null, searchTimer: null };
+              advRow: null, moveRow: null, searchTimer: null,
+              // Ticked entry ids. Kept across a re-render (search, refresh) but
+              // pruned to what is actually on screen, so the count can never
+              // name rows the operator cannot see.
+              selected: new Set() };
 
 async function loadGodown(){
   const host = document.getElementById('gd-list');
@@ -35406,12 +35563,18 @@ function gdRender(){
       icon: '🏚', title: 'Nothing in the godown',
       body: 'Stock appears here once a lot is entered as “Godown storage only” on the Lot Entry screen.',
     });
+    // Still prune: a search that hides every row must disarm the delete, or
+    // the button keeps a count for rows nobody can see — and deleting would
+    // act on them.
+    gdSyncSelection();
     return;
   }
   const money = (n) => fmtI(Number(n) || 0, 2);
-  const COLS = 'grid-template-columns:1.5fr 70px 86px 62px repeat(3,minmax(76px,1fr)) 140px 172px';
+  const COLS = 'grid-template-columns:30px 1.5fr 70px 86px 62px repeat(3,minmax(76px,1fr)) 140px 172px';
+  const allTicked = rows.length > 0 && rows.every(r => _gd.selected.has(r.id));
   const head = `
     <div style="display:grid;${COLS};gap:0;padding:9px 12px;font-size:10.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--text2);border-bottom:2px solid var(--border);background:var(--bg)">
+      <div style="text-align:center"><input type="checkbox" id="gd-tick-all" ${allTicked ? 'checked' : ''} onchange="gdToggleAll(this.checked)" title="Select every entry listed" style="cursor:pointer"></div>
       <div>Seller</div><div>Lot</div><div>Depot</div><div>Trade</div>
       <div style="text-align:right">Recd Wt</div><div style="text-align:right">Moved Wt</div>
       <div style="text-align:right">Balance</div>
@@ -35425,6 +35588,7 @@ function gdRender(){
       : `<button class="btn btn-o needs-lot-write" onclick="gdOpenMove(${r.id})" style="height:28px;padding:0 10px;font-size:11.5px">➡ Move</button>`;
     return `
     <div style="display:grid;${COLS};gap:0;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px;align-items:center;background:${bg}">
+      <div style="text-align:center"><input type="checkbox" class="gd-cb" data-id="${r.id}" ${_gd.selected.has(r.id) ? 'checked' : ''} onchange="gdToggle(${r.id}, this.checked)" style="cursor:pointer"></div>
       <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.name || '')}">
         ${esc(r.name || '—')}
         ${closed ? '<span style="font-size:9px;font-weight:800;background:var(--text3);color:#fff;padding:1px 5px;border-radius:8px;margin-left:6px;letter-spacing:.3px">EMPTIED</span>' : ''}
@@ -35446,6 +35610,7 @@ function gdRender(){
   const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
   const totals = `
     <div style="display:grid;${COLS};gap:0;padding:10px 12px;font-size:12.5px;font-weight:800;color:var(--green-dk);border-top:2px solid var(--green-border);background:var(--green-bg)">
+      <div></div>
       <div>${fmtI(rows.length,0)} entr${rows.length===1?'y':'ies'}</div><div></div><div></div><div></div>
       <div style="text-align:right">${fmtI(sum('received_qty'),3)}</div>
       <div style="text-align:right">${fmtI(sum('moved_qty'),3)}</div>
@@ -35453,6 +35618,74 @@ function gdRender(){
       <div style="text-align:right">₹${money(sum('advance'))}</div><div></div>
     </div>`;
   host.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">${head}${body}${totals}</div>`;
+  gdSyncSelection();
+}
+
+// ── Deleting entries ──────────────────────────────────────────────
+// A selection can only ever name rows that are on screen: a search that
+// hides a ticked row must not leave it armed for deletion.
+function gdSyncSelection(){
+  const visible = new Set(gdVisibleRows().map(r => r.id));
+  for (const id of [..._gd.selected]) if (!visible.has(id)) _gd.selected.delete(id);
+  const n = _gd.selected.size;
+  const btn = document.getElementById('gd-del-btn');
+  if (btn) {
+    btn.disabled = n === 0;
+    btn.style.opacity = n === 0 ? '.5' : '1';
+    btn.textContent = n === 0 ? '🗑 Delete selected' : `🗑 Delete selected (${n})`;
+  }
+  const all = document.getElementById('gd-tick-all');
+  if (all) {
+    const vis = gdVisibleRows();
+    const ticked = vis.filter(r => _gd.selected.has(r.id)).length;
+    all.checked = ticked > 0 && ticked === vis.length;
+    all.indeterminate = ticked > 0 && ticked < vis.length;
+  }
+}
+function gdToggle(id, on){
+  if (on) _gd.selected.add(id); else _gd.selected.delete(id);
+  gdSyncSelection();
+}
+function gdToggleAll(on){
+  for (const r of gdVisibleRows()) { if (on) _gd.selected.add(r.id); else _gd.selected.delete(r.id); }
+  document.querySelectorAll('#gd-list .gd-cb').forEach(cb => { cb.checked = !!on; });
+  gdSyncSelection();
+}
+
+// Delete the ticked entries. The confirmation names the two consequences an
+// operator cannot see from the row itself:
+//   • an outstanding advance is WRITTEN OFF — the row carrying the debt is
+//     the row being deleted, so the money stops being owed;
+//   • lots already released from an entry are ordinary auction lots and are
+//     NOT deleted — only the store record and its release history go.
+async function gdDeleteSelected(){
+  const rows = _gd.rows.filter(r => _gd.selected.has(r.id));
+  if (!rows.length) return;
+  const qty     = rows.reduce((a, r) => a + (Number(r.qty) || 0), 0);
+  const advance = rows.reduce((a, r) => a + (Number(r.advance) || 0), 0);
+  const moves   = rows.reduce((a, r) => a + (Number(r.move_count) || 0), 0);
+  const lines = [
+    `Delete ${rows.length} godown entr${rows.length === 1 ? 'y' : 'ies'}?`,
+    '',
+    `Stock in store: ${fmtI(qty, 3)} kg`,
+  ];
+  if (advance > 0) lines.push(`Advance outstanding: ₹${fmtI(advance, 2)} — this will be WRITTEN OFF.`);
+  if (moves > 0) lines.push(`${moves} release${moves === 1 ? '' : 's'} already made: those auction lots are KEPT, only the godown record goes.`);
+  lines.push('', 'This cannot be undone.');
+  if (!confirm(lines.join('\n'))) return;
+  const btn = document.getElementById('gd-del-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const d = await j('/api/lots/bulk-delete', { method: 'POST', body: JSON.stringify({ ids: rows.map(r => r.id) }) });
+    const skipped = Number(d && d.skipped_locked) || 0;
+    toast(`Deleted ${Number(d && d.deleted) || 0} godown entr${(Number(d && d.deleted) || 0) === 1 ? 'y' : 'ies'}`
+      + (skipped ? ` · ${skipped} locked and left alone` : ''));
+    _gd.selected.clear();
+    await loadGodown();
+  } catch (e) {
+    toast('Delete failed: ' + ((e && e.message) || e));
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ── Pay Advance ───────────────────────────────────────────────────

@@ -829,6 +829,22 @@ const DEFAULTS = [
   // session immediately from Users → Sign out.
   { key: 'single_session',        value: 'true', category: 'security', label: 'Block a second login with the same username', type: 'boolean' },
   { key: 'session_idle_minutes',  value: '15',   category: 'security', label: 'Treat a session as inactive after (minutes)', type: 'number'  },
+  // AUTO SIGN-OUT. Deliberately NOT the same knob as session_idle_minutes
+  // above: that one decides when a stale session stops BLOCKING a re-login,
+  // and it is a question about the username. This one signs a person out of
+  // the screen in front of them, which is a question about an unattended
+  // machine — a trade floor where anyone can walk up to a logged-in console.
+  //
+  // Idle means NO INTERACTION: the app polls in the background all day, so
+  // "last request" would never go stale. The client reports real activity
+  // (mouse, key, touch, tab focus) at most once a minute, the server stores
+  // it on the session, and a session idle past this window is destroyed on
+  // its next request. A warning counts down before it fires, so nobody loses
+  // typing to it.
+  //
+  // 0 = never sign out, and that is the default: an install that never asked
+  // for this must not start ejecting its operators on upgrade.
+  { key: 'auto_logout_minutes',   value: '0',    category: 'security', label: 'Sign out after inactivity (minutes; 0 = never)', type: 'number'  },
   // Cross-notify concurrent admins: when an admin signs in while another
   // admin is already online, both are told. The one signing in sees it on
   // the login screen; the one already online gets a banner from the

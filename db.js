@@ -131,6 +131,13 @@ async function initDb() {
     user_id INTEGER NOT NULL,
     created_at TEXT DEFAULT (datetime('now','localtime')),
     last_used_at TEXT DEFAULT (datetime('now','localtime')),
+    -- Last REAL user interaction (mouse/key/touch/tab focus), reported by the
+    -- client at most once a minute. Distinct from last_used_at, which every
+    -- background poll touches — an open-but-abandoned screen keeps that fresh
+    -- all day, so it can never answer "has this person walked away?". Drives
+    -- the auto sign-out window (auto_logout_minutes). Also added via ALTER
+    -- for older DBs in the migrations block below.
+    last_active_at TEXT,
     device_label TEXT DEFAULT '',
     FOREIGN KEY(user_id) REFERENCES users(id)
   )`);
@@ -1184,6 +1191,11 @@ async function initDb() {
     // schema above for semantics. Added for older DBs so toggling
     // flag_godown on later finds the column already there.
     'ALTER TABLE lots ADD COLUMN godown INTEGER DEFAULT 0',
+    // Last real user interaction on a session — see the sessions schema above.
+    // NULL on existing rows, which the auto sign-out treats as "never reported"
+    // and falls back to last_used_at for, so an older client keeps behaving
+    // exactly as it does today.
+    'ALTER TABLE sessions ADD COLUMN last_active_at TEXT',
     // ASP invoice traceability — when a lot is first invoiced as an ASP
     // sale (state=Kerala), `lots.invo` gets the ASP invoice number AND a
     // copy is preserved here. Then when the same lot is invoiced as an

@@ -989,7 +989,8 @@ function mountMobile(app, deps) {
     // (only possible when single_session is off; otherwise the gate above
     // has already refused this login).
     db.run(
-      'INSERT INTO sessions (token, user_id, device_label) VALUES (?, ?, ?)',
+      `INSERT INTO sessions (token, user_id, device_label, last_active_at)
+       VALUES (?, ?, ?, datetime('now','localtime'))`,
       [token, user.id, (req.headers['user-agent'] || '').slice(0, 80)]
     );
     db.run(
@@ -1153,6 +1154,9 @@ function mountMobile(app, deps) {
       // the choice entirely and every entry is a booking. `godownPrefix` is
       // only shown to the operator (the server assigns the real number), so
       // the two can never disagree about what the next number is.
+      // Inactivity sign-out, in minutes (0 = never). A phone left on a bench
+      // at the auction hall is the same exposure as an unattended console.
+      autoLogoutMinutes: getNum('auto_logout_minutes', 0),
       godown:          getBool('flag_godown', false),
       godownPrefix:    (get('godown_lot_prefix', 'G') || 'G').trim().toUpperCase() || 'G',
       // Seller field placement on the Lot Entry form. true = below the

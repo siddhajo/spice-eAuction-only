@@ -241,7 +241,58 @@ function cleanup() {
   check('…badged as emptied, at zero', closedView.qty === 0 && closedView.closed === true && /EMPTIED/.test(closedView.text),
         JSON.stringify({ qty: closedView.qty, closed: closedView.closed }));
 
-  console.log('\n[7] Flag OFF takes the screen away');
+  console.log('\n[7] Deleting selected entries');
+  // Back to a populated screen: two entries, one of them already emptied.
+  await api('POST', '/api/lots', { auction_id: 1, trader_id: 1, branch: 'BODI', grade: '1',
+    bags: 5, litre: '300', qty: 50, sample_wt: 0, gross_wt: 50, godown: 1 });
+  await page.evaluate(async () => { document.getElementById('gd-show-closed').checked = true; await loadGodown(); });
+  await page.waitForFunction(() => _gd.rows.length === 2, { timeout: 10000 });
+  const selState0 = await page.evaluate(() => ({
+    btn: document.getElementById('gd-del-btn').textContent.trim(),
+    disabled: document.getElementById('gd-del-btn').disabled,
+    boxes: document.querySelectorAll('#gd-list .gd-cb').length,
+  }));
+  check('every row offers a checkbox', selState0.boxes === 2, JSON.stringify(selState0));
+  check('and Delete is dead until something is ticked', selState0.disabled === true, JSON.stringify(selState0));
+
+  const selState1 = await page.evaluate(() => {
+    gdToggle(_gd.rows[0].id, true);
+    return { btn: document.getElementById('gd-del-btn').textContent.trim(),
+             disabled: document.getElementById('gd-del-btn').disabled };
+  });
+  check('ticking one arms it and counts it', /\(1\)/.test(selState1.btn) && selState1.disabled === false,
+        JSON.stringify(selState1));
+  const selAll = await page.evaluate(() => {
+    gdToggleAll(true);
+    return { btn: document.getElementById('gd-del-btn').textContent.trim(),
+             master: document.getElementById('gd-tick-all').checked };
+  });
+  check('select-all takes every listed row', /\(2\)/.test(selAll.btn) && selAll.master === true, JSON.stringify(selAll));
+
+  // A search that hides a ticked row must not leave it armed — the count would
+  // then name rows the operator cannot see.
+  const pruned = await page.evaluate(() => {
+    document.getElementById('gd-search').value = 'ZZZ-no-such-seller';
+    gdRender();
+    return { btn: document.getElementById('gd-del-btn').textContent.trim(), sel: _gd.selected.size };
+  });
+  check('hiding rows with the search disarms them', pruned.sel === 0 && !/\(/.test(pruned.btn),
+        JSON.stringify(pruned));
+  await page.evaluate(() => { document.getElementById('gd-search').value = ''; gdRender(); });
+
+  // The confirm is the gate; accept it and check what actually happened.
+  page.on('dialog', d => d.accept().catch(() => {}));
+  const afterDel = await page.evaluate(async () => {
+    const victim = _gd.rows.find(r => !r.closed) || _gd.rows[0];
+    const id = victim.id, lot = victim.lot_no;
+    _gd.selected = new Set([id]);
+    await gdDeleteSelected();
+    return { gone: !_gd.rows.some(r => r.id === id), left: _gd.rows.length, lot };
+  });
+  check('the ticked entry is deleted', afterDel.gone === true, JSON.stringify(afterDel));
+  check('…and the others are left alone', afterDel.left === 1, JSON.stringify(afterDel));
+
+  console.log('\n[8] Flag OFF takes the screen away');
   await api('PUT', '/api/company-settings', { settings: { flag_godown: 'false' } });
   const off = await page.evaluate(async () => {
     await applyFeatureFlags();

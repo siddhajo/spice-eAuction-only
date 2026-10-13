@@ -179,12 +179,36 @@ const stockOf = async (lotNo) => {
   check('…and the release is gone from the history',
         (r.d || []).length === 1 && r.d[0].dest_lot_no === '007', (r.d || []).map(m => m.dest_lot_no));
 
-  console.log('\n[8] Stored stock still never reaches the auction\'s own numbers');
+  console.log('\n[8] Deleting the godown ENTRY itself');
+  // The opposite direction from [7]: the store record goes, the goods that
+  // already left it do not. Deleting the entry must not delete lots somebody
+  // has since bought.
+  r = await api('POST', '/api/lots', { auction_id: 1, trader_id: 1, branch: 'BODI',
+    grade: '1', bags: 4, litre: '300', qty: 40, sample_wt: 0, gross_wt: 40, godown: 1 });
+  const g2 = r.d.lot;
+  r = await api('POST', '/api/godown/move', { lot_id: g2.id, auction_id: 2, lot_no: '011',
+    branch: 'BODI', bags: 1, qty: 10 });
+  check('a second entry releases part of itself', r.status === 200, r.d);
+  r = await api('POST', '/api/lots/bulk-delete', { ids: [g2.id] });
+  check('the entry deletes', r.status === 200 && r.d.deleted === 1, r.d);
+  r = await api('GET', '/api/godown/stock');
+  check('…and is gone from the stock list',
+        !((r.d && r.d.rows) || []).some(x => x.id === g2.id), (r.d && r.d.rows || []).map(x => x.lot_no));
+  r = await api('GET', '/api/lots/2?godown=0');
+  check('…while the lot it already released is KEPT',
+        (r.d || []).some(l => l.lot_no === '011'), (r.d || []).map(l => l.lot_no));
+  r = await api('GET', '/api/godown/movements');
+  check('…and its release history goes with it',
+        !(r.d || []).some(m => Number(m.src_lot_id) === Number(g2.id)), (r.d || []).map(m => m.src_lot_id));
+
+  console.log('\n[9] Stored stock still never reaches the auction\'s own numbers');
   r = await api('GET', '/api/auctions?limit=5');
   const a1 = (Array.isArray(r.d) ? r.d : (r.d && r.d.rows) || []).find(a => Number(a.id) === 1);
   check('the storing trade counts no lots of its own', a1 && Number(a1.lot_count) === 0, a1 && { lot_count: a1.lot_count });
+  // Two by now: lot 007 from [2], and lot 011 whose source entry was deleted
+  // in [8] — a released lot stands on its own once it has left the godown.
   const a2 = (Array.isArray(r.d) ? r.d : (r.d && r.d.rows) || []).find(a => Number(a.id) === 2);
-  check('the receiving trade counts the released lot', a2 && Number(a2.lot_count) === 1, a2 && { lot_count: a2.lot_count });
+  check('the receiving trade counts the released lots', a2 && Number(a2.lot_count) === 2, a2 && { lot_count: a2.lot_count });
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
   if (fail) console.log('--- server log tail ---\n' + srvLog.split('\n').slice(-25).join('\n'));
