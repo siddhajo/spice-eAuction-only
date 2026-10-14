@@ -19130,20 +19130,6 @@ async function loadDepotSummary(auctionId){
       <span style="color:var(--spice-text-mute)">${label}</span>
       <span style="font-weight:700;color:var(--spice-text-main);font-variant-numeric:tabular-nums">${val}</span>
     </div>`;
-  // "Dummy Lots" — how many of this trade's lots will present a stand-in
-  // seller to the Spices Board. Listed here and not only on the Lots tab
-  // because this panel is the auction-day summary: a mask nothing on screen
-  // admits to is exactly the kind of thing that ships unnoticed. The row is
-  // a link into the lot list, filtered to those lots, so "22 of them" and
-  // "which 22" are one click apart. Omitted entirely when the feature is off.
-  const dummyOn   = document.body.getAttribute('data-feat-lot-dummy-details') === '1';
-  const dummyLots = Number(s.dummyLots) || 0;
-  const dummyRow  = dummyOn
-    ? [[`<a href="#" onclick="openTradeDummyLots(${a.id}, '1');return false"
-            title="List the lots carrying an alternate seller"
-            style="color:var(--spice-saffron);font-weight:600;text-decoration:none">\u{1F3AD} Alternate-seller Lots</a>`,
-        dummyLots ? intf(dummyLots) : '<span style="color:var(--spice-text-hint);font-weight:400">None</span>']]
-    : [];
   const statsHTML = [
     ['Allocated Lots', intf(s.allocatedLots)],
     ['Booked Lots',    intf(s.bookedLots)],
@@ -19156,7 +19142,6 @@ async function loadDepotSummary(auctionId){
     ['Minimum Price',  inr0(s.minPrice)],
     ['Maximum Price',  inr0(s.maxPrice)],
     ['Average Price',  inr0(s.avgPrice)],
-    ...dummyRow,
   ].map(([l,v]) => statRow(l, v)).join('');
 
   // ── Grade-2 booking vs the Spices Board 25% cap ──
