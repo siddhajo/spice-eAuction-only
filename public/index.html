@@ -6776,7 +6776,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           </div>
         </div>
         <div style="font-size:12.5px;color:var(--text2);margin-top:8px;line-height:1.5">
-          Type a price and press <b>Enter</b> (or Tab) to save it and jump to the next lot. Only <b>Price</b>, <b>Dummy Code</b> and <b>Split</b> are editable — every other field is read-only, so there's no risk of changing the wrong thing. <b>Dummy Code</b> is a free-text tag saved as soon as you leave the box; use the <b>Dummy code</b> filter above to pull up every lot carrying it. When you're done, click <b>Save &amp; Calculate All</b> to compute commission, tax and payable for the whole trade.
+          Type a price and press <b>Enter</b> (or Tab) to save it and jump to the next lot. Only <b>Price</b>, <b>Alternate Code</b> and <b>Split</b> are editable — every other field is read-only, so there's no risk of changing the wrong thing. <b>Alternate Code</b> is a free-text tag saved as soon as you leave the box; use the <b>Alternate code</b> filter above to pull up every lot carrying it. When you're done, click <b>Save &amp; Calculate All</b> to compute commission, tax and payable for the whole trade.
           <span id="pe-pc-note" style="display:none;color:#a16207"> Price Check is ON for this install — you'll need to re-verify prices before generating invoices.</span>
         </div>
         <div id="pe-summary" style="font-size:12px;color:var(--text3);margin-top:6px"></div>
@@ -6809,7 +6809,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <button type="button" id="pe-filter-lot-clear" onclick="peClearFilterField('lot')" title="Clear" aria-label="Clear" style="display:none;position:absolute;right:5px;top:50%;transform:translateY(-50%);width:18px;height:18px;border:none;background:var(--bg);border-radius:50%;cursor:pointer;font-size:10px;color:var(--text3);align-items:center;justify-content:center;padding:0;line-height:1">✕</button>
           </span>
           <span style="position:relative;display:inline-flex;align-items:center">
-            <input id="pe-filter-dummy" placeholder="Dummy code" title="Filter by the dummy code typed in the grid — leave blank to show all" oninput="peSetFilter('dummy',this.value)" style="width:130px;padding:6px 26px 6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box">
+            <input id="pe-filter-dummy" placeholder="Alternate code" title="Filter by the alternate code typed in the grid — leave blank to show all" oninput="peSetFilter('dummy',this.value)" style="width:130px;padding:6px 26px 6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box">
             <button type="button" id="pe-filter-dummy-clear" onclick="peClearFilterField('dummy')" title="Clear" aria-label="Clear" style="display:none;position:absolute;right:5px;top:50%;transform:translateY(-50%);width:18px;height:18px;border:none;background:var(--bg);border-radius:50%;cursor:pointer;font-size:10px;color:var(--text3);align-items:center;justify-content:center;padding:0;line-height:1">✕</button>
           </span>
           <select id="pe-filter-branch" onchange="peSetFilter('branch',this.value)" style="min-width:130px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px"><option value="">All branches</option></select>
@@ -6963,11 +6963,11 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <option value="">Both</option>
           </select>
           <select id="lot-dummy-filter" class="feat-lot-dummy-details" onchange="loadLots()"
-                  title="Filter the lots table by whether a dummy seller identity is set (e-Auction CSV / Form C / Form D1 only)"
+                  title="Filter the lots table by whether an alternate seller is set (e-Auction CSV / Form C / Form D1 only)"
                   style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:150px">
             <option value="">All Lots</option>
-            <option value="1">🎭 Dummy set</option>
-            <option value="0">No dummy</option>
+            <option value="1">🎭 Alternate set</option>
+            <option value="0">No alternate</option>
           </select>
           <!-- Within-trade search across lot no, seller name, buyer code,
                invoice no and branch. Wires to server-side `search` param. -->
@@ -7010,7 +7010,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                  and nowhere else — every invoice, bill, payment and other
                  report keeps using the real seller. Gated by
                  flag_lot_dummy_details (.feat-lot-dummy-details). -->
-            <button id="lot-bulk-dummy" data-bulk-action="lot" class="needs-lot-write feat-lot-dummy-details btn" style="display:none;height:38px;padding:0 14px;background:#7c3aed;color:#fff;font-weight:600" onclick="openLotDummyDetailsModal()" title="Set a dummy seller name / phone / CR / grade on the ticked lots — used only by the e-Auction (Spices Board) CSV and Form C">🎭 Dummy Details <span data-bulk-count="lot" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
+            <button id="lot-bulk-dummy" data-bulk-action="lot" class="needs-lot-write feat-lot-dummy-details btn" style="display:none;height:38px;padding:0 14px;background:#7c3aed;color:#fff;font-weight:600" onclick="openLotDummyDetailsModal()" title="Set an alternate seller name / phone / CR / grade on the ticked lots — used only by the e-Auction (Spices Board) CSV and Form C">🎭 Alternate Seller <span data-bulk-count="lot" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <button id="lot-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="BulkActions.deleteSelected('lot')">🗑 Delete Selected <span id="lot-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
             <!-- Untick All: clears the current lot selection in one click.
                  Appears (via data-bulk-action) only while at least one lot is
@@ -9779,7 +9779,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
        pricing; it never reaches an invoice, voucher or statutory export, so
        it is applied by its own endpoint that cannot touch price or qty. -->
   <div id="bsb-dummy-row" class="fg" style="display:none;margin-top:12px">
-    <label>Dummy Code
+    <label>Alternate Code
       <span style="margin-left:6px;font-weight:400;font-size:11px;color:var(--text3)">optional — blank = leave unchanged · tag only, never printed</span>
     </label>
     <input id="bsb-dummy" maxlength="40" autocomplete="off" placeholder="e.g. AX7" style="width:180px">
@@ -9790,7 +9790,14 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
   </div>
 </div></div>
 
-<!-- Dummy Seller Details (Lots tab). Writes dummy_name / dummy_tel /
+<!-- ALTERNATE SELLER (Lots tab). The operator-facing name is "Alternate
+     Seller"; everything STORED is still `dummy_*` — the four lots columns,
+     `flag_lot_dummy_details`, /api/lots/dummy-details/bulk and the JS names
+     below. That split is deliberate: renaming the schema would need a
+     migration and a settings rewrite on every install, and buys nothing the
+     label does not already. Read "dummy" in this file as "alternate".
+
+     Writes dummy_name / dummy_tel /
      dummy_cr / dummy_grade onto the ticked lots. These substitute for the
      real seller name, phone, CR/GSTIN and grade on the e-Auction (Spices
      Board) CSV and on Form C, and on NOTHING else — invoices, bills,
@@ -9801,12 +9808,12 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
      sent, so filling in just the phone can't wipe a name set in an earlier
      pass. "Clear All" is the explicit way to drop the dummy identity. -->
 <div class="modal-bg feat-lot-dummy-details" id="lot-dummy-modal"><div class="modal" style="max-width:620px">
-  <h2>Dummy Details on <span id="ldd-count">0</span> lot(s)</h2>
+  <h2>Alternate seller on <span id="ldd-count">0</span> lot(s)</h2>
   <p style="font-size:12px;color:var(--text2);margin:0 0 14px;line-height:1.5">
     These stand-in values print <b>instead of</b> the lot's real seller name, phone, CR/GSTIN and grade on the
     <b>e-Auction (Spices Board) CSV</b> and <b>Form C</b> only. Invoices, bills, payments and every other report
     keep using the real seller.<br>
-    Leave a field <b>blank to leave it unchanged</b>. Use <b>Clear All</b> to remove the dummy identity entirely.
+    Leave a field <b>blank to leave it unchanged</b>. Use <b>Clear All</b> to remove the alternate seller entirely.
   </p>
   <!-- Dummy Name leads, on a row of its own: it doubles as a seller picker,
        and choosing a hit fills the three boxes BELOW it. Laying it out that
@@ -9820,7 +9827,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
        who doesn't exist, going to the Spices Board as fact. Still free text —
        an invented name nobody holds is a legitimate choice. -->
   <div class="fg" style="margin:0 0 12px;position:relative">
-    <label>Dummy Name
+    <label>Alternate Name
       <span style="margin-left:6px;font-weight:400;font-size:11px;color:var(--text3);text-transform:none;letter-spacing:0">search a seller, or type freely</span>
     </label>
     <!-- The input gets its own relative wrapper so the ✕ and the dropdown
@@ -9835,8 +9842,8 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
            emptying the name by hand. Shown only when there is something to
            clear, so it never reads as a live control over an empty field. -->
       <button type="button" id="ldd-name-clear" onclick="lddClearName()" tabindex="-1"
-              title="Clear the dummy name, phone, CR and grade"
-              aria-label="Clear the dummy identity"
+              title="Clear the alternate name, phone, CR and grade"
+              aria-label="Clear the alternate seller"
               style="display:none;position:absolute;right:10px;top:50%;transform:translateY(-50%);width:22px;height:22px;padding:0;border:none;border-radius:50%;background:var(--spice-line);color:var(--text2);font-size:14px;line-height:1;cursor:pointer;align-items:center;justify-content:center">✕</button>
       <div id="ldd-name-dd" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:60;max-height:216px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:12.5px"></div>
     </div>
@@ -9846,15 +9853,15 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
        what was actually stored. Grade never needs more than two. -->
   <div style="display:grid;grid-template-columns:1fr 1.5fr 0.6fr;gap:12px">
     <div class="fg" style="margin:0">
-      <label>Dummy Phone</label>
+      <label>Alternate Phone</label>
       <input id="ldd-tel" maxlength="100" autocomplete="off" placeholder="9876543210">
     </div>
     <div class="fg" style="margin:0">
-      <label>Dummy CR / GSTIN</label>
+      <label>Alternate CR / GSTIN</label>
       <input id="ldd-cr" maxlength="100" autocomplete="off" placeholder="CR.1234">
     </div>
     <div class="fg" style="margin:0">
-      <label>Dummy Grade</label>
+      <label>Alternate Grade</label>
       <input id="ldd-grade" maxlength="100" autocomplete="off" placeholder="1" list="ldd-grade-options">
       <datalist id="ldd-grade-options">
         <option value="1"></option><option value="1A"></option>
@@ -18381,7 +18388,7 @@ const AMR_SECTIONS = [
     // whichever way the flag is set.
     { label: 'Tharai List CSV',          href: id => `/api/exports/tharai_list/${id}?format=xlsx&by=code`,
                                          note: 'xlsx' },
-    { label: 'Tharai List (Dummy) CSV',  href: id => `/api/exports/tharai_list/${id}?format=xlsx&by=dummy`,
+    { label: 'Tharai List (Alt Code) CSV',  href: id => `/api/exports/tharai_list/${id}?format=xlsx&by=dummy`,
                                          note: 'xlsx' },
   ]},
   { title: 'PDF Downloads', items: [
@@ -18461,7 +18468,7 @@ const AMR_SECTIONS = [
     // reconciliation the sheet is checked by. Printed on either basis — see
     // the spreadsheet pair in the CSV section above for why both are here.
     { label: 'Tharai List',              href: id => `/api/exports/tharai_list/${id}?format=pdf&by=code` },
-    { label: 'Tharai List (Dummy)',      href: id => `/api/exports/tharai_list/${id}?format=pdf&by=dummy` },
+    { label: 'Tharai List (Alt Code)',      href: id => `/api/exports/tharai_list/${id}?format=pdf&by=dummy` },
     // The two verification sheets had spreadsheet tiles but no printable twin.
     // Both PDFs keep their sheet's layout rather than flattening it — the
     // two-up block pair here, the per-buyer-code blocks below — because that
@@ -19133,8 +19140,8 @@ async function loadDepotSummary(auctionId){
   const dummyLots = Number(s.dummyLots) || 0;
   const dummyRow  = dummyOn
     ? [[`<a href="#" onclick="openTradeDummyLots(${a.id}, '1');return false"
-            title="List the lots carrying a dummy seller identity"
-            style="color:var(--spice-saffron);font-weight:600;text-decoration:none">\u{1F3AD} Dummy Lots</a>`,
+            title="List the lots carrying an alternate seller"
+            style="color:var(--spice-saffron);font-weight:600;text-decoration:none">\u{1F3AD} Alternate-seller Lots</a>`,
         dummyLots ? intf(dummyLots) : '<span style="color:var(--spice-text-hint);font-weight:400">None</span>']]
     : [];
   const statsHTML = [
@@ -19220,8 +19227,8 @@ async function loadDepotSummary(auctionId){
              feature flag and lot-write) or the button isn't drawn at all. -->
         ${dlDummyOn() ? `<button class="btn dl-dummy-btn" style="height:28px;padding:0 10px;font-size:11px"
             onclick="event.stopPropagation();openTradeDummyLots(${a.id})"
-            title="Set dummy seller details on this trade's lots — used only by the e-Auction (Spices Board) CSV and Form C"
-          >\u{1F3AD} Dummy Details</button>` : ''}
+            title="Set an alternate seller on this trade's lots — used only by the e-Auction (Spices Board) CSV and Form C"
+          >\u{1F3AD} Alternate Seller</button>` : ''}
       </div>
     </div>
     <div class="card" id="ca-body" style="padding:20px;display:${collapsed ? 'none' : 'block'}">
@@ -19517,8 +19524,8 @@ function dlDummyFilterHtml(){
     + ` onchange="depotLotsFilter('dummy', this.value)"`
     + ` title="Show only the lots carrying a stand-in seller identity">`
     + opt('', 'All lots')
-    + opt('1', `\u{1F3AD} Dummy set (${n})`)
-    + opt('0', `No dummy (${_dl.rows.length - n})`)
+    + opt('1', `\u{1F3AD} Alternate set (${n})`)
+    + opt('0', `No alternate (${_dl.rows.length - n})`)
     + `</select>`;
 }
 
@@ -19528,7 +19535,7 @@ function dlDummyBadge(r){
   if (!r.hasDummy || document.body.getAttribute('data-feat-lot-dummy-details') !== '1') return '';
   const labels = ['Name', 'Phone', 'CR', 'Grade'];
   const tip = r.dummy.map((v, i) => v ? `${labels[i]}: ${v}` : null).filter(Boolean).join(' · ');
-  return ` <span class="dl-dummy-badge" title="${esc('Dummy details (e-Auction CSV / Form C only) — ' + tip)}">\u{1F3AD} DUMMY</span>`;
+  return ` <span class="dl-dummy-badge" title="${esc('Alternate seller (e-Auction CSV / Form C only) — ' + tip)}">\u{1F3AD} ALT</span>`;
 }
 
 // Tick / untick one lot. The id is the key, not the row index: the table
@@ -19637,7 +19644,7 @@ async function openTradeDummyLots(auctionId, preFilter){
   const metaEl = document.getElementById('depot-lots-meta');
   const filtEl = document.getElementById('depot-lots-filters');
   if (!body) return;
-  const title = 'Dummy seller details — every lot in this trade';
+  const title = 'Alternate seller — every lot in this trade';
   if (titleEl) titleEl.textContent = title;
   if (metaEl) metaEl.textContent = '';
   if (filtEl) filtEl.style.display = 'none';
@@ -19768,7 +19775,7 @@ function renderDepotLotsTable(){
       ? `<td class="l dl-pick">${r.id == null ? ''
           : `<input type="checkbox" ${_dl.picked.has(r.id) ? 'checked' : ''}`
             + ` onclick="event.stopPropagation();dlPick(${r.id}, this.checked)"`
-            + ` title="Tick to set dummy seller details on this lot">`}</td>`
+            + ` title="Tick to set an alternate seller on this lot">`}</td>`
       : '';
     return `<tr>
       ${pickCell}
@@ -19795,7 +19802,7 @@ function renderDepotLotsTable(){
     <div id="dl-selbar" class="dl-selbar" style="display:${_dl.picked.size ? '' : 'none'}">
       <span><b id="dl-selcount">${_dl.picked.size}</b> lot(s) selected</span>
       <button class="btn dl-dummy-btn" onclick="dlOpenDummyDetails()"
-              title="Set a dummy seller name / phone / CR / grade on the ticked lots — used only by the e-Auction (Spices Board) CSV and Form C">\u{1F3AD} Dummy Details</button>
+              title="Set an alternate seller name / phone / CR / grade on the ticked lots — used only by the e-Auction (Spices Board) CSV and Form C">\u{1F3AD} Alternate Seller</button>
       <button class="btn btn-o" style="height:30px;padding:0 12px;font-size:12px" onclick="dlClearPick()">Clear</button>
     </div>` : '';
 
@@ -29250,7 +29257,7 @@ const FIELD_HELP = {
   discount_gst:    'GST rate applied on the discount-on-purchase amount (DN).',
   discount_pct:    'Auction credit discount percentage per 1000 rupees per day.',
   discount_days:   'Number of days the trade credit is extended.',
-  tharai_dummy_code: 'Groups the Tharai List\'s INTER and LOCAL sides by the Price Entry DUMMY CODE instead of the buyer code. Off = buyer code (the default). Both the spreadsheet and the PDF follow this, and the bag reconciliation holds either way — only the name on each row changes.',
+  tharai_dummy_code: 'Groups the Tharai List\'s INTER and LOCAL sides by the Price Entry ALTERNATE CODE instead of the buyer code. Off = buyer code (the default). Both the spreadsheet and the PDF follow this, and the bag reconciliation holds either way — only the name on each row changes.',
   business_mode:   'This build is e-Auction only.',
   business_state:  'Tamil Nadu uses TN office details, GSTIN, and bank. Kerala uses KL details. Invoices and exports adapt to the selected state.',
   mask_acct:       'Hides the seller bank account no. on lot receipts and on-screen panels. The bank payment file, DBF, Tally XML and the company\'s own account on invoices always print in full.',
@@ -34249,7 +34256,7 @@ async function loadLots(opts){
         if (!d.some(Boolean)) return real;
         const labels = ['Name', 'Phone', 'CR', 'Grade'];
         const tip = d.map((v, i) => v ? `${labels[i]}: ${v}` : null).filter(Boolean).join(' · ');
-        return real + ` <span style="font-size:9px;font-weight:800;background:#7c3aed;color:#fff;padding:1px 5px;border-radius:8px;vertical-align:middle;letter-spacing:.3px" title="${esc('Dummy details (e-Auction CSV / Form C only) — ' + tip)}">\u{1F3AD} DUMMY</span>`;
+        return real + ` <span style="font-size:9px;font-weight:800;background:#7c3aed;color:#fff;padding:1px 5px;border-radius:8px;vertical-align:middle;letter-spacing:.3px" title="${esc('Alternate seller (e-Auction CSV / Form C only) — ' + tip)}">\u{1F3AD} ALT</span>`;
       } },
     { key:'buyer', label:'Buyer', sort:'text',
       render:(l)=> sameGstin(l.cr, l.buyer_gstin)
@@ -35054,7 +35061,7 @@ async function applyLotDummyDetails(){
     if (v) body[field] = v;        // blank → key omitted → field untouched
   }
   if (Object.keys(body).length === 1) {
-    toast('Type at least one dummy value, or use Clear All');
+    toast('Type at least one alternate value, or use Clear All');
     return;
   }
   await _lddSend(body, document.getElementById('ldd-apply'), 'Dummy details set');
@@ -36184,7 +36191,7 @@ function renderPriceEntryGrid(){
     return `<tr data-lotid="${l.id}"${rowStyle ? ` style="${rowStyle}"` : ''}${gstClash ? ' title="⚠ Seller and Buyer have the same GSTIN"' : ''}>
       <td style="padding:6px 4px;width:28px;text-align:center"><input type="checkbox" class="pe-cb" data-pesel="${l.id}" ${locked ? 'disabled' : ''} ${ticked ? 'checked' : ''} onchange="peToggleSel(${l.id}, this.checked)" style="width:15px;height:15px;cursor:pointer"></td>
       <td style="padding:6px 8px;white-space:nowrap;font-weight:600">${esc(l.lot_no)}</td>
-      <td style="padding:6px 8px"><input type="text" maxlength="40" data-pedummy="${l.id}" value="${esc(l.dummy_code||'')}" placeholder="—" ${locked ? 'disabled title="Locked lot — edit via the Lots tab"' : ''} title="Dummy code — free-text tag for this lot; filter by it above" onchange="peDummySave(${l.id}, this.value)" style="width:96px;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px${locked ? ';background:#f3f4f6;color:var(--text3)' : ''}"></td>
+      <td style="padding:6px 8px"><input type="text" maxlength="40" data-pedummy="${l.id}" value="${esc(l.dummy_code||'')}" placeholder="—" ${locked ? 'disabled title="Locked lot — edit via the Lots tab"' : ''} title="Alternate code — free-text tag for this lot; filter by it above" onchange="peDummySave(${l.id}, this.value)" style="width:96px;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px${locked ? ';background:#f3f4f6;color:var(--text3)' : ''}"></td>
       <td style="padding:6px 8px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis">${esc(l.name||'')}</td>
       <td style="padding:6px 8px;text-align:right">${esc(l.branch||'')}</td>
       <td style="padding:6px 8px;text-align:right">${_peBags(l.bags)}</td>
@@ -36232,7 +36239,7 @@ function renderPriceEntryGrid(){
     <thead><tr>
       <th style="border-top-left-radius:6px;width:28px;text-align:center"><input type="checkbox" id="pe-selall" onchange="peToggleSelectAll(this.checked)" title="Select all priceable lots" style="width:15px;height:15px;cursor:pointer"></th>
       <th style="${thStyle}" onclick="peSort('lot_no')" title="Sort by lot number">Lot ${_peSortArrow('lot_no')}</th>
-      <th style="${thStyle}" onclick="peSort('dummy_code')" title="Dummy code — free-text tag typed per lot. Click to sort; filter by it in the bar above.">Dummy Code ${_peSortArrow('dummy_code')}</th>
+      <th style="${thStyle}" onclick="peSort('dummy_code')" title="Alternate code — free-text tag typed per lot. Click to sort; filter by it in the bar above.">Alternate Code ${_peSortArrow('dummy_code')}</th>
       <th style="${thStyle}" onclick="peSort('name')" title="Sort by seller">Seller ${_peSortArrow('name')}</th>
       <th style="text-align:right;${thStyle}" onclick="peSort('branch')" title="Sort by branch">Branch ${_peSortArrow('branch')}</th>
       <th style="text-align:right">Bags</th><th style="text-align:right">Qty</th>

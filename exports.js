@@ -610,14 +610,14 @@ async function exportLotBuyer(db, auctionId) {
 // Every lot is listed, withdrawn ones included — a checklist that silently
 // dropped rows would defeat its purpose.
 //
-// DUMMY and BUYER are each optional per install (Settings → Feature Flags →
-// "Checklist: Dummy column" / "Checklist: Buyer column"). Some desks read the
+// ALT CODE and BUYER are each optional per install (Settings → Feature Flags →
+// "Checklist: Alternate Code column" / "Checklist: Buyer column"). Some desks read the
 // sheet against their own pricing notes and need the tag; others only want to
 // see who took the lot. See checklistColumns below — the PDF renderer applies
 // the SAME rule, so the two formats can't drift apart.
 const CHECKLIST_COLS = [
   { header: 'LOT',   key: 'lot',   width: 8  },
-  { header: 'DUMMY', key: 'dummy', width: 12 },
+  { header: 'ALT CODE', key: 'dummy', width: 12 },
   { header: 'BUYER', key: 'buyer', width: 12 },
   { header: 'BAGS',  key: 'bag',   width: 7  },
   { header: 'QTY',   key: 'qty',   width: 12, numFmt: '#,##0.000', align: 'right' },
@@ -743,7 +743,7 @@ function tharaiListData(db, auctionId, opts) {
     inter: order(sides.I), local: order(sides.L), tally,
     // What the code column is, so both renderers label it the same way and
     // nobody has to guess which basis a printed sheet was built on.
-    byDummy, codeLabel: byDummy ? 'Dummy' : 'Buyer',
+    byDummy, codeLabel: byDummy ? 'Alt' : 'Buyer',
     totalBags: t.I.bags + t.L.bags + t.W.bags + t.other.bags,
     totalQty:  t.I.qty  + t.L.qty  + t.W.qty  + t.other.qty,
   };
@@ -810,8 +810,9 @@ async function exportTharaiList(db, auctionId, cfg, state, extra) {
   }
 
   // The two code columns are headed by whichever basis this run used, so a
-  // sheet printed by dummy code can never be mistaken for one by buyer code.
-  const CODE = d.byDummy ? 'DUMMY' : 'BUYER';
+  // sheet printed by alternate code can never be mistaken for one by buyer
+  // code. Abbreviated: "INTER ALTERNATE" is wider than the column it heads.
+  const CODE = d.byDummy ? 'ALT' : 'BUYER';
   const cols = [
     { header: `INTER ${CODE}`, key: 'i_buyer', width: 14 },
     { header: 'QTY',           key: 'i_qty',   width: 13, numFmt: '#,##0.000', align: 'right' },

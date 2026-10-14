@@ -396,7 +396,7 @@ const DEFAULTS = [
   // It sets a stand-in name / phone / CR / grade on the selection, which
   // then prints INSTEAD of the real values on the e-Auction (Spices Board)
   // CSV and Form C — and on nothing else. Default OFF.
-  { key: 'flag_lot_dummy_details', value: 'false', category: 'flags', label: 'Dummy Seller Details (Lots tab → e-Auction CSV / Form C)', type: 'boolean' },
+  { key: 'flag_lot_dummy_details', value: 'false', category: 'flags', label: 'Alternate Seller (Lots tab → e-Auction CSV / Form C)', type: 'boolean' },
   // Price Entry's "⚡ Generate All Documents" — the one-click run that raises
   // sales invoices, purchases, bills of supply and debit notes for a whole
   // trade in a single pass. Default ON, unlike the other button flags here:
@@ -563,7 +563,7 @@ const DEFAULTS = [
   // install upgrades to exactly the Checklist it prints today. Turning both off
   // still leaves LOT | BAGS | QTY | SALE — the lot and its figures are the
   // point of the sheet and are never dropped.
-  { key: 'checklist_show_dummy', value: 'true', category: 'flags', label: 'Checklist: Dummy column', type: 'boolean' },
+  { key: 'checklist_show_dummy', value: 'true', category: 'flags', label: 'Checklist: Alternate Code column', type: 'boolean' },
   { key: 'checklist_show_buyer', value: 'true', category: 'flags', label: 'Checklist: Buyer column', type: 'boolean' },
 
   // ── THARAI LIST: WHICH CODE THE BUYER COLUMN CARRIES ───────
@@ -582,7 +582,7 @@ const DEFAULTS = [
   // XLSX and the PDF can never disagree about which basis they used, and the
   // bag reconciliation (INTER + LOCAL + WD == the trade's bags) holds either
   // way — the grouping key changes, the lots counted do not.
-  { key: 'tharai_dummy_code', value: 'false', category: 'flags', label: 'Tharai List: group by Dummy Code (not Buyer Code)', type: 'boolean' },
+  { key: 'tharai_dummy_code', value: 'false', category: 'flags', label: 'Tharai List: group by Alternate Code (not Buyer Code)', type: 'boolean' },
 
   // ── BACKUPS ────────────────────────────────────────────────
   // Per-install database backup settings. The scheduler is driven by
@@ -1489,7 +1489,7 @@ const SCREEN_FLAGS = [
   // the Spices Board surfaces and the dashboard grade figures keep reading the
   // INSTALL flag, so every user's e-Auction CSV and Form C come out identical
   // — this only decides who gets the 🎭 controls and the dummy write.
-  { key: 'flag_lot_dummy_details',  label: 'Dummy Seller Details', installGates: true,
+  { key: 'flag_lot_dummy_details',  label: 'Alternate Seller', installGates: true,
     requiresCapability: 'lot_write',
     note: 'Who may set a stand-in seller on a lot (the 🎭 button, the Lots dummy filter and the bulk write). Whether a mask actually prints on the e-Auction CSV / Form C stays site-wide — so the Board return reads the same for every user.' },
 ];

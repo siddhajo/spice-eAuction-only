@@ -628,7 +628,7 @@ const COLS = {
   // (L / I / WD) hold.
   checklist: [
     { header: 'LOT',   key: 'lot',   width: 8  },
-    { header: 'DUMMY', key: 'dummy', width: 12 },
+    { header: 'ALT CODE', key: 'dummy', width: 12 },
     { header: 'BUYER', key: 'buyer', width: 12 },
     { header: 'BAGS',  key: 'bag',   width: 7  },
     { header: 'QTY',   key: 'qty',   width: 12 },
@@ -1881,7 +1881,7 @@ async function exportPdf(db, type, auctionId, cfg, extra = {}) {
 
   let columns = COLS[type];
   if (!columns) throw new Error(`No PDF column def for type: ${type}`);
-  // The Checklist's DUMMY / BUYER columns are per-install switches. Narrow OUR
+  // The Checklist's ALT CODE / BUYER columns are per-install switches. Narrow OUR
   // spec through exports.js's shared rule — the same call the XLSX makes — so a
   // site that hides a column hides it in both formats while each keeps its own
   // widths. COLS.checklist stays the full six-column spec; this never mutates it.
