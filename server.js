@@ -5097,32 +5097,10 @@ function bankBelongsToTrader(db, bankId, traderId) {
 // of this file. It was duplicated here and in mobile-bridge.js, and the two
 // copies had already drifted into losing each other's columns.
 
-// Find an existing seller that duplicates `t`, applying the same priority
-// as the mobile bridge + lot-entry quick-add: GSTIN (cr) > PAN >
-// (name + phone). Comparison is UPPER(TRIM(...)) on both sides so legacy
-// rows with stray whitespace (common from XLSX imports) still match.
-// Returns { field, row } or null. `excludeId` skips the row being edited.
-function _findTraderDuplicate(db, t, excludeId) {
-  const cr  = String(t.cr  || '').trim();
-  const pan = String(t.pan || '').trim();
-  const tel = String(t.tel || '').trim();
-  const nm  = String(t.name|| '').trim();
-  const ex  = excludeId ? ' AND id <> ?' : '';
-  const tail = excludeId ? [excludeId] : [];
-  if (cr) {
-    const row = db.get(`SELECT id, name, cr, pan, tel FROM traders WHERE UPPER(TRIM(cr)) = UPPER(?)${ex} LIMIT 1`, [cr, ...tail]);
-    if (row) return { field: 'GSTIN', row };
-  }
-  if (pan) {
-    const row = db.get(`SELECT id, name, cr, pan, tel FROM traders WHERE UPPER(TRIM(pan)) = UPPER(?)${ex} LIMIT 1`, [pan, ...tail]);
-    if (row) return { field: 'PAN', row };
-  }
-  if (nm && tel) {
-    const row = db.get(`SELECT id, name, cr, pan, tel FROM traders WHERE UPPER(TRIM(name)) = UPPER(?) AND TRIM(tel) = ?${ex} LIMIT 1`, [nm, tel, ...tail]);
-    if (row) return { field: 'name + phone', row };
-  }
-  return null;
-}
+// (_findTraderDuplicate lived here until 2026-10-15. Its only callers were
+//  the two shadowed /api/traders handlers removed below; the GSTIN/PAN/
+//  name+phone rule it implemented was never reachable. The bridge's own
+//  name+phone fold is the live one.)
 
 // USER ID is the only seller field that must be globally unique — it's the
 // operator-facing key the auction floor types in, and two sellers answering
@@ -5146,104 +5124,15 @@ function _duplicateConfirmed(t) {
   const v = t && (t.confirm_duplicate != null ? t.confirm_duplicate : t.force);
   return v === true || v === 1 || v === '1' || v === 'true';
 }
-app.post('/api/traders', requireTraderWrite, (req, res) => {
-  const t = normalizeTrader(req.body);
-  const db = getDb();
-  // USER ID is the one hard-unique field — a repeat is an operator slip, not
-  // "the same person", so there is no confirm path out of it.
-  const _uidDup = _findUserIdDuplicate(db, t.user_id);
-  if (_uidDup) {
-    return res.status(409).json({
-      duplicate: true, field: 'User ID', existing: _uidDup,
-      error: `User ID "${String(t.user_id).trim()}" is already used by seller "${_uidDup.name || '(unnamed)'}".`,
-    });
-  }
-  // GSTIN / PAN / (name + phone) matches are only a WARNING: sellers
-  // legitimately share them (the shared "CR." placeholder, a pooler split
-  // across several seller rows, family members on one PAN). Blocked on the
-  // first attempt so the operator sees who they collide with, then allowed
-  // once the client re-sends with confirm_duplicate — see saveTrader().
-  const _dup = !_duplicateConfirmed(t) && _findTraderDuplicate(db, t);
-  if (_dup) {
-    return res.status(409).json({
-      duplicate: true, confirmable: true, field: _dup.field, existing: _dup.row,
-      error: `Another seller already has this ${_dup.field}: "${_dup.row.name || '(unnamed)'}".`,
-    });
-  }
-  const info = db.run(`INSERT INTO traders (name,cr,pan,tan,tel,aadhar,padd,ppla,pin,pstate,pst_code,ifsc,acctnum,holder_name,dob,user_id)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [t.name,t.cr||'',t.pan||'',t.tan||'',t.tel||'',t.aadhar||'',t.padd||'',t.ppla||'',t.pin||'',t.pstate||'',t.pst_code||'',t.ifsc||'',t.acctnum||'',t.holder_name||'',t.dob||'',String(t.user_id||'').trim()]);
-  // If the client sent a banks array (new multi-bank UI), persist them.
-  // Otherwise honor the legacy single-bank fields already inserted above.
-  if (Array.isArray(t.banks)) {
-    syncTraderBanks(db, info.lastInsertRowid, t.banks);
-  }
-  res.json({ success: true, id: info.lastInsertRowid });
-});
-app.put('/api/traders/:id', requireTraderWrite, (req, res) => {
-  const t = normalizeTrader(req.body);
-  const db = getDb();
-  const _selfId = parseInt(req.params.id, 10);
-  // Same rules as POST, excluding this row's own id so re-saving an unchanged
-  // seller still works: User ID is hard-unique, everything else is a
-  // confirmable warning. Blocking edits outright on a shared PAN left
-  // operators unable to fix a phone number on either of the two rows.
-  const _uidDup = _findUserIdDuplicate(db, t.user_id, _selfId);
-  if (_uidDup) {
-    return res.status(409).json({
-      duplicate: true, field: 'User ID', existing: _uidDup,
-      error: `User ID "${String(t.user_id).trim()}" is already used by seller "${_uidDup.name || '(unnamed)'}".`,
-    });
-  }
-  const _dup = !_duplicateConfirmed(t) && _findTraderDuplicate(db, t, _selfId);
-  if (_dup) {
-    return res.status(409).json({
-      duplicate: true, confirmable: true, field: _dup.field, existing: _dup.row,
-      error: `Another seller already has this ${_dup.field}: "${_dup.row.name || '(unnamed)'}".`,
-    });
-  }
-  // Unified seller schema — preserve whatsapp + email alongside the core
-  // fields. Either app can edit either field; the other app sees the
-  // change on the next fetch. (The mobile bridge also serves PUT on
-  // this path and runs FIRST when mounted; this native handler is the
-  // fallback for direct desktop callers that bypass the bridge.)
-  db.run(
-    `UPDATE traders
-       SET name=?, cr=?, pan=?, tan=?, tel=?, aadhar=?, padd=?, ppla=?, pin=?,
-           pstate=?, pst_code=?, ifsc=?, acctnum=?, holder_name=?, dob=?,
-           whatsapp=COALESCE(?, whatsapp),
-           email=COALESCE(?, email),
-           user_id=COALESCE(?, user_id)
-     WHERE id=?`,
-    [
-      t.name, t.cr||'', t.pan||'', t.tan||'', t.tel||'', t.aadhar||'',
-      t.padd||'', t.ppla||'', t.pin||'', t.pstate||'', t.pst_code||'',
-      t.ifsc||'', t.acctnum||'', t.holder_name||'', t.dob||'',
-      t.whatsapp != null ? String(t.whatsapp).trim() : null,
-      t.email    != null ? String(t.email).trim()    : null,
-      t.user_id  != null ? String(t.user_id).trim()  : null,
-      req.params.id,
-    ]
-  );
-  // Same stance as the bridge's copy (which normally serves this path): the
-  // seller row is already committed, so a bank-sync failure is reported as a
-  // warning on a successful save, never as a 500 on an edit that landed.
-  let bankWarning = null;
-  if (Array.isArray(t.banks)) {
-    try {
-      syncTraderBanks(db, parseInt(req.params.id), t.banks);
-    } catch (e) {
-      console.error('syncTraderBanks failed for trader', req.params.id, e);
-      const why = (e && e.message) || String(e && e.stack || e || '').split('\n')[0]
-               || 'unknown error';
-      bankWarning = `Seller saved, but the bank accounts could not be updated: ${why}`;
-    }
-  }
-  // Keep the seller's lots in step with the master record — see the matching
-  // call in mobile-bridge.js (which normally serves this path).
-  const lotSync = syncLotsFromTrader(db, parseInt(req.params.id, 10));
-  res.json({ success: true, lots: lotSync, warning: bankWarning || undefined });
-});
+// NOTE — there is deliberately NO app.post('/api/traders') or
+// app.put('/api/traders/:id') here. BOTH live in mobile-bridge.js, which
+// mountMobile() registers near the top of this file; Express matches in
+// registration order, so a copy here would never run. Two ~45-line handlers
+// DID sit at this spot until 2026-10-15, unreachable, describing a
+// duplicate-warning flow the app does not have (confirmable 409s on GSTIN /
+// PAN / name+phone). Reading them gave a wrong account of the app's real
+// behaviour, which is: name+phone folds into the existing seller, User ID is
+// a hard 409, GSTIN and PAN are not checked at all. Edit the bridge.
 app.delete('/api/traders/:id', requireDelete, (req, res) => {
   const db = getDb();
   // Clear child rows first (trader_banks FK) before deleting the parent

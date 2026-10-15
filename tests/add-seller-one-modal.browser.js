@@ -226,6 +226,36 @@ const MOBILE_IDS = {
   check('mobile posts the SBL', sends.aadhar, JSON.stringify(sends));
   check('…and the TAN', sends.tan, JSON.stringify(sends));
 
+  // ── A create that folds into an existing seller must SAY so ──
+  // The server answers a name+phone match by handing back the seller already
+  // on file. The desktop form used to toast "Seller added" over that, which
+  // is untrue and hides that the operator is now working against somebody
+  // else's record — one that may carry a different bank account.
+  console.log('\n[dedup] the message tells the truth when nothing was created');
+  const dedupMsg = await page.evaluate(async () => {
+    const seen = [];
+    const realToast = window.toast;
+    window.toast = (m) => { seen.push(String(m)); };
+    const realFetch = window.fetch;
+    // Answer the save exactly as mobile-bridge.js does for a name+phone fold.
+    window.fetch = (url, opts) => (/\/api\/traders$/.test(String(url)) && opts && opts.method === 'POST')
+      ? Promise.resolve(new Response(JSON.stringify({
+          trader: { id: 7, name: 'RAMESH K', tel: '9447027069' }, deduped: true, reason: 'name+phone match',
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      : realFetch(url, opts);
+    try {
+      openTraderAdd();
+      document.getElementById('t-name').value = 'RAMESH K';
+      document.getElementById('t-tel').value = '9447027069';
+      await saveTrader();
+    } finally { window.fetch = realFetch; window.toast = realToast; }
+    return seen.join(' | ');
+  });
+  check('it does not claim a seller was added', !/Seller added/.test(dedupMsg), JSON.stringify(dedupMsg));
+  check('…it says the seller was already on file', /already on file/i.test(dedupMsg), JSON.stringify(dedupMsg));
+  check('…and names which one, so the operator can check it',
+    /RAMESH K/.test(dedupMsg) && /9447027069/.test(dedupMsg), JSON.stringify(dedupMsg));
+
   console.log(`\n${pass} passed, ${fail} failed\n`);
   cleanup();
   process.exit(fail ? 1 : 0);

@@ -30549,17 +30549,13 @@ async function saveTrader(){
   const body={};
   T_FIELDS.forEach(f=>{const el=document.getElementById(T_IDS[f]);body[f]=el?el.value:''});
   if(!body.name){alert('Name is required');return}
-  // User ID is the only seller field that must be unique — two sellers on one
-  // id means lots (and their payments) can land on the wrong master. No
-  // confirm path out of this one; the server rejects it too.
-  const _uid = (body.user_id || '').trim();
-  if (_uid) {
-    const _uidDups = await findExactDuplicates('/api/traders', 'user_id', _uid, id);
-    if (_uidDups.length) {
-      alert(`Cannot save: User ID ${_uid} is already used by ${_uidDups.map(t => t.name).join(', ')}.\n\nUser ID must be unique — give this seller a different one.`);
-      return;
-    }
-  }
+  // User ID uniqueness is NOT checked here. The server does it, and it does it
+  // atomically — the duplicate SELECT and the INSERT share one turn of its
+  // event loop, so two operators saving the same id at the same moment cannot
+  // both pass. A check from the browser is a read-then-write across the
+  // network: both tabs would look, both see nothing, and both submit. It
+  // bought an earlier message at the cost of being the one genuinely racy
+  // check in the flow, and the server's 409 reads perfectly well on its own.
   // A shared PAN is legitimate — family members on one PAN, a pooler split
   // across several seller rows. Only the User ID has to be unique (enforced
   // server-side). So this is a confirmation, not a block: name who the PAN
@@ -30599,13 +30595,12 @@ async function saveTrader(){
         headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},body:JSON.stringify(payload)});
       return {r, d: await r.json().catch(()=>({}))};
     };
-    let {r,d}=await post(confirmedDup);
-    if(r.status===409&&d&&d.duplicate&&d.confirmable){
-      const _ex=d.existing||{};
-      const _ok=confirm(`Another seller already has this ${d.field}: "${_ex.name||'(unnamed)'}".\n\nOnly the User ID has to be unique — sellers may share a ${d.field}.\n\nSave anyway?`);
-      if(!_ok) return;
-      ({r,d}=await post(true));
-    }
+    // No `confirmable` branch: the handler that sent that shape
+    // (server.js's own POST /api/traders) was shadowed by the bridge and has
+    // been removed. The bridge answers a User ID clash with a plain 409 whose
+    // message already names the seller it collides with, which showError puts
+    // in front of the operator.
+    const {r,d}=await post(confirmedDup);
     if(!r.ok){throw new Error(d.error||'Save failed')}
     hideModal('trader-modal');
     // An edit re-stamps the seller's lots server-side (lots carry their own
@@ -30613,6 +30608,16 @@ async function saveTrader(){
     // the invoiced/locked ones that were deliberately left as they were.
     const ls=d.lots||{};
     let msg=id?'Seller updated':'Seller added';
+    // A create that matched an existing name+phone did NOT create anything —
+    // the server folded it into the seller already on file and handed that
+    // row back. Saying "Seller added" there is simply untrue, and the record
+    // the operator is now working against is somebody else's: it may carry a
+    // different bank account from the one they were about to set up.
+    if(!id && d && d.deduped){
+      const _ex=d.trader||{};
+      msg='Already on file — using the existing seller: '
+        + (_ex.name||'(unnamed)') + (_ex.tel?' · '+_ex.tel:'');
+    }
     if(ls.updated) msg+=' — '+ls.updated+' lot'+(ls.updated>1?'s':'')+' updated';
     if(ls.skipped) msg+=(ls.updated?' · ':' — ')+ls.skipped+' invoiced/locked lot'+(ls.skipped>1?'s':'')+' left unchanged';
     // The save succeeded but the bank accounts didn't follow. Say so loudly —
