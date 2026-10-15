@@ -94,7 +94,7 @@ const cleanup = () => {
     });
     check('header row found', !!hdr, JSON.stringify(hdr));
     check('columns are LOT | DUMMY | BUYER | BAGS | QTY | SALE',
-          JSON.stringify(hdr) === JSON.stringify(['LOT', 'DUMMY', 'BUYER', 'BAGS', 'QTY', 'SALE']),
+          JSON.stringify(hdr) === JSON.stringify(['LOT', 'ALT CODE', 'BUYER', 'BAGS', 'QTY', 'SALE']),
           JSON.stringify(hdr));
     const dataRows = [];
     ws.eachRow((row, n) => { if (n > hdrRow) dataRows.push(row.values.slice(1).map(v => String(v == null ? '' : (v.text || v)).trim())); });
@@ -122,11 +122,11 @@ const cleanup = () => {
   const { COLS } = require(path.join(ROOT, 'exports-pdf.js'));
   check('PDF column spec matches the XLSX column set',
         JSON.stringify(COLS.checklist.map(c => c.header)) ===
-        JSON.stringify(['LOT', 'DUMMY', 'BUYER', 'BAGS', 'QTY', 'SALE']),
+        JSON.stringify(['LOT', 'ALT CODE', 'BUYER', 'BAGS', 'QTY', 'SALE']),
         JSON.stringify(COLS.checklist.map(c => c.header)));
   check('PDF DUMMY column reads the `dummy` key the query supplies',
-        COLS.checklist.find(c => c.header === 'DUMMY')?.key === 'dummy',
-        JSON.stringify(COLS.checklist.find(c => c.header === 'DUMMY')));
+        COLS.checklist.find(c => c.header === 'ALT CODE')?.key === 'dummy',
+        JSON.stringify(COLS.checklist.find(c => c.header === 'ALT CODE')));
 
   // ── [1b] Bulk dummy code ─────────────────────────────────────
   // Price Entry's "Set Buyer Code & Split" modal tags a whole selection at

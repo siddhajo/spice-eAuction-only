@@ -96,7 +96,9 @@ const setCols = (dummy, buyer) => api('PUT', '/api/company-settings', {
   await api('PUT', `/api/lots/${id1}`, { price: 100, amount: 5550, code: 'TS', buyer: 'TS' });
   await api('POST', `/api/lots/${id1}/dummy-code`, { value: 'AX7' });
 
-  const FULL = ['LOT', 'DUMMY', 'BUYER', 'BAGS', 'QTY', 'SALE'];
+  // The Alternate Code column was headed 'DUMMY' until the 2026-10-14
+// rename; the key is still `dummy` and the flag still checklist_show_dummy.
+const FULL = ['LOT', 'ALT CODE', 'BUYER', 'BAGS', 'QTY', 'SALE'];
 
   // ══ [default] a fresh install, and an install that never opened Settings ══
   console.log('\n[default] both optional columns print until told otherwise');
@@ -138,7 +140,7 @@ const setCols = (dummy, buyer) => api('PUT', '/api/company-settings', {
   await setCols(true, false);
   const noBuyer = await checklistSheet(aid);
   check('BUYER off → LOT | DUMMY | BAGS | QTY | SALE',
-        JSON.stringify(noBuyer.hdr) === JSON.stringify(['LOT', 'DUMMY', 'BAGS', 'QTY', 'SALE']),
+        JSON.stringify(noBuyer.hdr) === JSON.stringify(['LOT', 'ALT CODE', 'BAGS', 'QTY', 'SALE']),
         JSON.stringify(noBuyer.hdr));
   const nb1 = noBuyer.rows.find(r => String(r[0]).replace(/^0+/, '') === '1');
   check('…and DUMMY keeps its place beside LOT', nb1 && nb1[1] === 'AX7', JSON.stringify(nb1));

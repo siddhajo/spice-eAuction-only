@@ -6471,7 +6471,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       <div class="card">
         <h2>Sellers / Poolers <button class="needs-trader-write btn btn-g" onclick="openTraderAdd()">+ Add Seller</button></h2>
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:end">
-          <div class="fg" style="margin:0;flex:1;min-width:180px"><input type="search" placeholder="Search across all sellers — name, phone, GSTIN, PAN, place, Aadhar / SBL…" oninput="searchTradersDebounced(this.value)"></div>
+          <div class="fg" style="margin:0;flex:1;min-width:180px"><input type="search" id="traders-search" placeholder="Search across all sellers — name, phone, GSTIN, PAN, place, Aadhar / SBL…" oninput="searchTradersDebounced(this.value)"></div>
           <div class="fg" style="margin:0;min-width:190px"><select id="trader-missing" onchange="setMissingFilter('seller', this.value)" title="Show only sellers whose master record is incomplete">
             <option value="">All sellers</option>
             <option value="any">⚠ Incomplete (any)</option>
@@ -6503,7 +6503,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       <div class="card">
         <h2>Buyers / Dealers <button class="needs-buyer-write btn btn-g" onclick="openBuyerAdd()">+ Add Buyer</button></h2>
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:end">
-          <div class="fg" style="margin:0;flex:1;min-width:180px"><input type="search" placeholder="Search across all buyers — buyer, code, GSTIN, PAN, TI, place…" oninput="searchBuyersDebounced(this.value)"></div>
+          <div class="fg" style="margin:0;flex:1;min-width:180px"><input type="search" id="buyers-search" placeholder="Search across all buyers — buyer, code, GSTIN, PAN, TI, place…" oninput="searchBuyersDebounced(this.value)"></div>
           <div class="fg" style="margin:0;min-width:190px"><select id="buyer-missing" onchange="setMissingFilter('buyer', this.value)" title="Show only buyers whose master record is incomplete">
             <option value="">All buyers</option>
             <option value="any">⚠ Incomplete (any)</option>
@@ -14140,7 +14140,7 @@ function go(tab){
   if (typeof applyLogoBadge === 'function') {
     try { applyLogoBadge(); } catch(_) {}
   }
-  const loaders={hub:loadHub,dash:loadStats,insights:loadInsights,pertrade:loadPerTradeBreakdown,auctionmgr:loadAuctionManager,amreports:loadAmReports,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>searchTraders(''),buyers:()=>searchBuyers(''),birthdays:loadBirthdays,reminders:loadReminders,godown:loadGodown,
+  const loaders={hub:loadHub,dash:loadStats,insights:loadInsights,pertrade:loadPerTradeBreakdown,auctionmgr:loadAuctionManager,amreports:loadAmReports,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>{_clearMasterSearch('traders-search');return searchTraders('')},buyers:()=>{_clearMasterSearch('buyers-search');return searchBuyers('')},birthdays:loadBirthdays,reminders:loadReminders,godown:loadGodown,
     auctions:loadAuctions,reassignreqs:loadReassignRequests,lotalloc:loadLotAllocation,lots:loadLotAuctions,invoices:loadInvAuctions,preinvoice:loadPreInvoice,purchases:loadPurAuctions,
     payments:loadPayAuctions,exports:loadExpAuctions,tds:()=>{},lorry:loadLorryAuctions,
     bills:loadBillAuctions,debit:loadDnAuctions,debitplanter:loadDnpAuctions,journals:loadJournalDefault,registers:loadRegisterDefault,tally:loadTallyAuctions,
@@ -29935,6 +29935,19 @@ function gotoTradersPage(page){
 // LIKE-COUNT + LIKE-page round trip against a 7k-row table. 200ms is
 // short enough to feel live and long enough to coalesce typing.
 let _tradersSearchTimer = null;
+// Opening Sellers or Buyers always reloads the FULL list (the tab loaders
+// call searchTraders('') / searchBuyers('')), so a query left in the box from
+// the last visit would sit there contradicting every row beneath it — the box
+// says KUMAR, the table shows all 4,766 sellers. Clear the box in the same
+// breath as the list, rather than leaving the two to disagree.
+//
+// Deliberately NOT the Incomplete-masters dropdown beside it: that one keeps
+// its value AND its filtering across a visit, so control and list already
+// agree. Only the free-text box drifts.
+function _clearMasterSearch(id){
+  const el = document.getElementById(id);
+  if (el) el.value = '';
+}
 function searchTradersDebounced(q){
   clearTimeout(_tradersSearchTimer);
   _tradersSearchTimer = setTimeout(() => searchTraders(q, { page: 1 }), 200);

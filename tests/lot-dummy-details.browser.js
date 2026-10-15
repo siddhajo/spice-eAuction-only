@@ -209,8 +209,10 @@ function cleanup() {
   await page.evaluate(() => loadLots());
   await new Promise(r => setTimeout(r, 500));
   const badges = await page.evaluate(() =>
-    [...document.querySelectorAll('#lots-list span')].filter(s => s.textContent.includes('DUMMY')).length);
-  check('both rows show a DUMMY badge', badges === 2, String(badges));
+    [...document.querySelectorAll('#lots-list span')].filter(s => s.textContent.includes('ALT')).length);
+  // The badge reads "ALT" since the feature was renamed Alternate Seller; the
+  // stored columns are still dummy_* (see the note above the modal markup).
+  check('both rows show an ALT badge', badges === 2, String(badges));
 
   console.log('[prefill] re-opening shows what is already set');
   await openLotsAndTick(lotIds);
@@ -435,7 +437,7 @@ function cleanup() {
           return el ? getComputedStyle(el).display !== 'none' : false;
         })) === true);
   let shown = await shownIds('1');
-  check('"Dummy set" shows only the masked lot',
+  check('"Alternate set" shows only the masked lot',
         shown.length === 1 && shown[0] === lotIds[0], JSON.stringify(shown));
   shown = await shownIds('0');
   check('"No dummy" shows only the other one',
@@ -447,7 +449,7 @@ function cleanup() {
   check('the masked lot is the badged one',
         (await page.evaluate(() => {
           const row = [...document.querySelectorAll('#lots-list tr')]
-            .find(tr => [...tr.querySelectorAll('span')].some(sp => sp.textContent.includes('DUMMY')));
+            .find(tr => [...tr.querySelectorAll('span')].some(sp => sp.textContent.includes('ALT')));
           return row ? Number(row.querySelector('.lot-select-cb').value) : 0;
         })) === lotIds[0]);
 

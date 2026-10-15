@@ -144,7 +144,14 @@ function sender(outcome) {
   const params = r.templateParams(row, ctx);
   check('the template gets exactly three body variables', params.length === 3, JSON.stringify(params));
   check('...in the order name, last-booked, next-auction',
-    params[0] === row.label && params[1] === '03/06/2026' && params[2] === '08/10/2026', JSON.stringify(params));
+    params[0] === row.name && params[1] === '03/06/2026' && params[2] === '08/10/2026', JSON.stringify(params));
+  // The seller reads this. `label` is "CR.15185/78 MK KORAH" — the
+  // registration number is how the OPERATOR picks a seller out of a list of
+  // namesakes on screen, and sending it back to them reads like a utility
+  // bill rather than a note from the people they sell to.
+  check('...and the CR number never reaches the seller',
+    !/CR\./.test(params[0]) && !/CR\./.test(msg),
+    JSON.stringify({ param: params[0], label: row.label, msg }));
   // The preview cannot promise a fact the template has no variable for.
   check('...so every date the preview shows is also a template variable',
     params.slice(1).every(p => msg.includes(p)), JSON.stringify({ params, msg }));
@@ -152,8 +159,13 @@ function sender(outcome) {
     r.templateParams(row, { nextAuction: null }).every(p => String(p).trim().length > 0),
     JSON.stringify(r.templateParams(row, { nextAuction: null })));
   check('...including for a never-booked seller',
-    r.templateParams({ label: 'X', last_booked: '' }, {}).every(p => String(p).trim().length > 0),
-    JSON.stringify(r.templateParams({ label: 'X', last_booked: '' }, {})));
+    r.templateParams({ name: 'X', last_booked: '' }, {}).every(p => String(p).trim().length > 0),
+    JSON.stringify(r.templateParams({ name: 'X', last_booked: '' }, {})));
+  // A record with no name at all still has to send SOMETHING — Meta rejects a
+  // blank variable outright — so the label stands in as a last resort.
+  check('...and a nameless record falls back rather than sending a blank',
+    r.templateParams({ label: 'CR.9/9', name: '', last_booked: '' }, {})[0] === 'CR.9/9',
+    JSON.stringify(r.templateParams({ label: 'CR.9/9', name: '', last_booked: '' }, {})));
 
   console.log('\nSending, and the cooldown');
   let send = sender({ ok: true, id: 'wamid.R1' });

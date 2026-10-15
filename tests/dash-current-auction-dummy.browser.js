@@ -5,10 +5,11 @@
 // it is the panel that sits next to the "⬇ Spices Board CSV" button the mask
 // exists to feed. So the same action is reachable from here:
 //
-//   • a "🎭 Dummy Lots" row in the stats panel, which says how many lots in
-//     this trade will present a stand-in seller, and links to exactly those
-//   • a "🎭 Dummy Details" button in the panel header, opening the trade's
+//   • a "🎭 Alternate Seller" button in the panel header, opening the trade's
 //     whole lot list with tick boxes
+//   (a "Dummy Lots" stat row sat here too until 2026-10-14, when the user had
+//    it removed — the panel is an auction-day summary and that was a twelfth
+//    line most desks never acted on. The Lots tab keeps the count and filter.)
 //   • the per-depot drill-down, which gets the same ticking scoped to a branch
 //
 // The server side of the write is lot-dummy-details.http.js's business; what
@@ -16,10 +17,10 @@
 // actually hold together.
 //
 //   [gate]    neither surface appears with flag_lot_dummy_details OFF
-//   [stat]    the Dummy Lots row counts the masked lots and links to them
+//   [stat]    the header button is the only alternate-seller surface here
 //   [tick]    the lot list ticks, the header tick obeys the FILTER, and the
 //             selection bar counts what is ticked
-//   [apply]   setting a dummy from here writes it and repaints the list, so
+//   [apply]   setting an alternate from here writes it and repaints the list, so
 //             the 🎭 badge appears without a manual refresh
 //   [depot]   the per-branch drill-down carries the same ticking
 //   [filter]  the dummy dropdown narrows the list to masked / unmasked lots
@@ -153,14 +154,13 @@ function cleanup() {
     const host = document.getElementById('dash-current-auction');
     return {
       exists: !!host,
-      headerBtn: !!(host && [...host.querySelectorAll('button')].find(b => /Dummy Details/.test(b.textContent))),
-      statRow: !!(host && /Dummy Lots/.test(host.textContent)),
-      statCount: (() => {
-        if (!host) return null;
-        const a = [...host.querySelectorAll('a')].find(x => /Dummy Lots/.test(x.textContent));
-        const row = a && a.closest('div');
-        return row ? row.parentElement.textContent.replace(/\s+/g, ' ').trim() : null;
-      })(),
+      // The operator-facing name is "Alternate Seller" since the rename; the
+      // stored columns and the flag are still dummy_* on purpose.
+      headerBtn: !!(host && [...host.querySelectorAll('button')].find(b => /Alternate Seller/.test(b.textContent))),
+      // The stat row was REMOVED from this panel on 2026-10-14 at the user's
+      // ask. The header button is the only way in from here now; the count
+      // itself still lives on the Lots tab's filter.
+      statRow: !!(host && /Alternate-seller Lots/.test(host.textContent)),
     };
   });
 
@@ -169,17 +169,19 @@ function cleanup() {
   {
     const p = await panel();
     check('the Current Auction panel is drawn', p.exists);
-    check('no header Dummy Details button', !p.headerBtn);
-    check('no Dummy Lots stat row', !p.statRow);
+    check('no header Alternate Seller button', !p.headerBtn);
+    check('and no stat row either', !p.statRow);
   }
 
-  console.log('[stat] flag ON surfaces both, and the count starts at none');
+  console.log('[stat] flag ON surfaces the header button, and nothing else');
   await setFlag(true);
   {
     const p = await panel();
     check('the header button appears', p.headerBtn);
-    check('the Dummy Lots stat row appears', p.statRow);
-    check('…reading None while nothing is masked', /None/.test(p.statCount || ''), p.statCount);
+    // Removed 2026-10-14: the panel is an auction-day summary and the row was
+    // one line of eleven that most desks never acted on. Reaching the masked
+    // lots is the header button's job, and the Lots tab keeps the count.
+    check('no stat row is added back alongside it', !p.statRow);
   }
 
   // Open the trade-wide list from the header button.
@@ -286,7 +288,7 @@ function cleanup() {
   await new Promise(r => setTimeout(r, 200));
   {
     const st = await listState();
-    check('"Dummy set" shows just the masked lot', st.rows === 1 && st.lotNos[0] === '003', JSON.stringify(st.lotNos));
+    check('"Alternate set" shows just the masked lot', st.rows === 1 && st.lotNos[0] === '003', JSON.stringify(st.lotNos));
   }
   await page.evaluate(() => depotLotsFilter('dummy', '0'));
   await new Promise(r => setTimeout(r, 200));
@@ -295,25 +297,15 @@ function cleanup() {
     check('"No dummy" shows the other three', st.rows === 3, JSON.stringify(st.lotNos));
   }
 
-  console.log('[stat] the panel now reports the masked lot, and links to it');
+  console.log('[stat] the panel stays clean once a lot is masked');
   await page.evaluate(() => hideModal('depot-lots-modal'));
   await page.evaluate(async (aid) => { go('dash'); await loadStats(aid); await loadDepotSummary(aid); }, aid);
   await page.waitForFunction(
     () => !!document.querySelector('#dash-current-auction .card'), { timeout: 15000 });
   {
     const p = await panel();
-    check('the Dummy Lots row counts it', /\b1\b/.test(p.statCount || '') && !/None/.test(p.statCount || ''), p.statCount);
-  }
-  await page.evaluate(() => {
-    const host = document.getElementById('dash-current-auction');
-    [...host.querySelectorAll('a')].find(x => /Dummy Lots/.test(x.textContent)).click();
-  });
-  await new Promise(r => setTimeout(r, 700));
-  {
-    const st = await listState();
-    const sel = await page.evaluate(() => (document.getElementById('dl-dummy-filter') || {}).value);
-    check('clicking it opens the list pre-filtered to the masked lots',
-      st.rows === 1 && st.lotNos[0] === '003' && sel === '1', JSON.stringify({ ...st, sel }));
+    check('a masked lot adds no row to the panel', !p.statRow);
+    check('…and the header button is still the way in', p.headerBtn);
   }
 
   console.log('[depot] the per-branch drill-down carries the same ticking');

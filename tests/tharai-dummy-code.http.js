@@ -85,7 +85,9 @@ async function readSheet(aid, query) {
   const buf = Buffer.from(await r.arrayBuffer());
   const wb = XLSX.read(buf, { type: 'buffer' });
   const grid = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true });
-  const hi = grid.findIndex(row => (row || []).some(c => /^INTER (BUYER|DUMMY)$/.test(String(c || '').trim())));
+  // 'ALT' since the 2026-10-14 rename; the ?by= value and the flag key are
+  // still `dummy`, so only the printed heading moved.
+  const hi = grid.findIndex(row => (row || []).some(c => /^INTER (BUYER|ALT)$/.test(String(c || '').trim())));
   if (hi < 0) return { status: 200, header: null, grid };
   const header = (grid[hi] || []).map(c => String(c == null ? '' : c).trim());
   // Laid out like the PDF: two side-by-side blocks, each closed by its own
@@ -161,8 +163,8 @@ const codes = rows => rows.map(r => `${r.code}/${r.bags}`).join(' ');
   console.log('\n[B] ?by=dummy groups the same lots by DUMMY code');
   const byDummy = await readSheet(aid, '&by=dummy');
   check('XLSX returns 200', byDummy.status === 200, String(byDummy.status));
-  check('headers say DUMMY',
-        byDummy.header && byDummy.header[0] === 'INTER DUMMY' && byDummy.header[4] === 'LOCAL DUMMY',
+  check('headers say ALT',
+        byDummy.header && byDummy.header[0] === 'INTER ALT' && byDummy.header[4] === 'LOCAL ALT',
         JSON.stringify(byDummy.header));
   // AA(5) + BB(4) share tag D1 → one row of 9, which now outranks D2 and '—'.
   check('AA and BB collapse into one D1 row of 9 bags, ahead of D2',
@@ -186,7 +188,7 @@ const codes = rows => rows.map(r => `${r.code}/${r.bags}`).join(' ');
   await setFlag(true);
   const flagOn = await readSheet(aid);
   check('flag ON → the plain download is by dummy code',
-        flagOn.header && flagOn.header[0] === 'INTER DUMMY', JSON.stringify(flagOn.header));
+        flagOn.header && flagOn.header[0] === 'INTER ALT', JSON.stringify(flagOn.header));
   const forcedCode = await readSheet(aid, '&by=code');
   check('…and ?by=code still gets the buyer-code sheet',
         forcedCode.header && forcedCode.header[0] === 'INTER BUYER'
@@ -195,7 +197,7 @@ const codes = rows => rows.map(r => `${r.code}/${r.bags}`).join(' ');
   await setFlag(false);
   const flagOff = await readSheet(aid, '&by=dummy');
   check('flag OFF + ?by=dummy → still the dummy sheet',
-        flagOff.header && flagOff.header[0] === 'INTER DUMMY', JSON.stringify(flagOff.header));
+        flagOff.header && flagOff.header[0] === 'INTER ALT', JSON.stringify(flagOff.header));
 
   // ══ [E] the PDF follows the same basis ════════════════════════
   console.log('\n[E] the PDF renders under both bases');
