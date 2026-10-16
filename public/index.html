@@ -19932,7 +19932,7 @@ async function downloadArrivals(auctionId){
     const blob = await r.blob();
     const el = document.createElement('a');
     el.href = URL.createObjectURL(blob);
-    el.download = 'Arrivals_Auction.xlsx';
+    el.download = filenameFromResponse(r, 'Arrivals_Auction.xlsx');
     document.body.appendChild(el); el.click(); el.remove();
     setTimeout(()=>URL.revokeObjectURL(el.href), 5000);
   } catch (e) {
@@ -33743,7 +33743,7 @@ async function downloadLorry(type,format){
     }
     const blob=await r.blob();
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);
-    a.download=`${type}_${aid}.${format}`;a.click();
+    a.download=filenameFromResponse(r, `${type}_${anoForAid(aid)||aid}.${format}`);a.click();
     URL.revokeObjectURL(a.href);
   });
 }
@@ -33954,6 +33954,19 @@ async function sbLoadPreview(){
 // the company-short-name suffix on the e-Auction CSV is decided, so the saved
 // file matches what the server intended. Falls back to the caller's name when
 // the header is absent (or hidden by a cross-origin fetch).
+function anoForAid(aid){
+  if(aid===undefined||aid===null||aid==='') return '';
+  try{
+    for (const sel of document.querySelectorAll('select[id$="-auction"]')){
+      for (const o of (sel.options||[])){
+        if(String(o.value)!==String(aid)) continue;
+        const ano=String(o.textContent||'').split('\u2014')[0].trim();
+        if(ano) return ano;
+      }
+    }
+  }catch(_){}
+  return '';
+}
 function filenameFromResponse(r, fallback){
   try{
     const cd = r.headers.get('Content-Disposition') || '';
@@ -43649,7 +43662,7 @@ async function exportType(type,format,aidOverride){format=format||'xlsx';
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       // Server names this one (it carries the "_<company short name>" suffix).
-      a.download = filenameFromResponse(r, `EAuction_${aid}.csv`);
+      a.download = filenameFromResponse(r, `EAuction_${anoForAid(aid)||aid}.csv`);
       a.click();
     });
     return;
@@ -43683,7 +43696,8 @@ async function exportType(type,format,aidOverride){format=format||'xlsx';
       return false;
     }
     const blob=await r.blob();
-    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`${type}_${aid}.${format}`;a.click();
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+    a.download=filenameFromResponse(r, `${type}_${anoForAid(aid)||aid}.${format}`);a.click();
     return true;
   });
 }
@@ -45266,7 +45280,7 @@ async function tallyDownload(type,format){
     }
     const blob=await r.blob();
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);
-    a.download=`${namePrefix}_${label.replace(/\s/g,'')}${saleSuffix}_${aid}.${ext}`;a.click();
+    a.download=filenameFromResponse(r, `${namePrefix}_${label.replace(/\s/g,'')}${saleSuffix}_${anoForAid(aid)||aid}.${ext}`);a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),5000);
     toast(`Downloaded ${label}${saleLabel} ${kind}`);
   });
@@ -45367,7 +45381,7 @@ async function tallyDownloadParty(kind,partyName){
     const blob=await r.blob();
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);
     const safeName=partyName.replace(/[^a-zA-Z0-9]/g,'_').slice(0,40);
-    a.download=`Tally_PartyLedger_${kind}_${safeName}_${aid}.xml`;a.click();
+    a.download=filenameFromResponse(r, `Tally_PartyLedger_${kind}_${safeName}_${anoForAid(aid)||aid}.xml`);a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),5000);
     toast(`Downloaded ledger for ${partyName}`);
   });
@@ -45890,7 +45904,7 @@ async function tallyExportVouchers(type,ids,format,label){
     const stem=label
       ? String(label).replace(/[^a-zA-Z0-9]/g,'_').slice(0,40)
       : `Selected_${ids.length}`;
-    a.download=`${namePrefix}_${(kind.file||type)}_${stem}_${aid}.${ext}`;a.click();
+    a.download=filenameFromResponse(r, `${namePrefix}_${(kind.file||type)}_${stem}_${anoForAid(aid)||aid}.${ext}`);a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),5000);
     toast(`Downloaded ${subject} ${what}`);
   });
