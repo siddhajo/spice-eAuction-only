@@ -792,6 +792,8 @@ function receiptPageHeight(n, compact) {
 // booked. We also pick the bank from trader_banks (per-lot bank_id pin
 // > seller's default), falling back to lots.acctnum/ifsc for legacy data.
 // Output columns are aliased to the names PWA's renderer expects.
+const { exportFileName, anoLabelForRows } = require('./export-filename');
+
 const LOT_SELECT_SQL = `
   SELECT
     l.id, l.lot_no, l.branch, l.grade, l.crpt, l.bags, l.litre, l.qty,
@@ -2031,7 +2033,7 @@ function mountMobile(app, deps) {
 
     const doc = new PDFDocument({ size: r.pageSize, margin: r.compact ? 10 : 20 });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="Lot_${lot.lot_no}_Receipt.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('Lot', lot.ano, lot.lot_no, 'Receipt')}.pdf"`);
     doc.pipe(res);
     r.render(doc, [lot], cfg);
     doc.end();
@@ -2051,7 +2053,7 @@ function mountMobile(app, deps) {
     const charWidth = parseInt(req.query.width, 10) || 32;
     const buf = buildEscposReceipt([lot], cfg, { charWidth });
     res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('Content-Disposition', `inline; filename="Lot_${lot.lot_no}_Receipt.bin"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('Lot', lot.ano, lot.lot_no, 'Receipt')}.bin"`);
     res.send(buf);
   });
 
@@ -2072,7 +2074,7 @@ function mountMobile(app, deps) {
     const charWidth = parseInt(req.query.width, 10) || 32;
     const buf = buildEscposReceipt(lots, cfg, { charWidth });
     res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('Content-Disposition', `inline; filename="Seller_${(lots[0].trader_name || 'Receipt').replace(/[^A-Za-z0-9]+/g, '_')}.bin"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('Seller', anoLabelForRows(lots), (lots[0].trader_name || 'Receipt').replace(/[^A-Za-z0-9]+/g, '_'))}.bin"`);
     res.send(buf);
   });
 
@@ -2091,7 +2093,7 @@ function mountMobile(app, deps) {
     const charWidth = parseInt(req.query.width, 10) || 32;
     const buf = buildGroupedEscpos(lots, cfg, { charWidth });
     res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('Content-Disposition', `inline; filename="Lots_${lots.length}.bin"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('Lots', anoLabelForRows(lots), lots.length)}.bin"`);
     res.send(buf);
   });
 
@@ -2116,7 +2118,8 @@ function mountMobile(app, deps) {
     const charWidth = parseInt(req.query.width, 10) || 32;
     const buf = buildGroupedEscpos(lots, cfg, { charWidth });
     res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('Content-Disposition', 'inline; filename="AllSellers.bin"');
+    res.setHeader('Content-Disposition',
+      `inline; filename="${exportFileName('AllSellers', anoLabelForRows(lots))}.bin"`);
     res.send(buf);
   });
 
@@ -2160,7 +2163,8 @@ function mountMobile(app, deps) {
     }
     const cfg = getReceiptConfig(db);
     if (branch) cfg.branch = branch;
-    streamGroupedReceipts(lots, req, res, cfg, `Lots_Receipt_${lots.length}.pdf`);
+    streamGroupedReceipts(lots, req, res, cfg,
+      `${exportFileName('Lots_Receipt', anoLabelForRows(lots), lots.length)}.pdf`);
   }
   app.post('/api/lots/print-batch', requireAuthFlex, (req, res) =>
     handlePrintBatch(req.body && req.body.ids, req, res));
@@ -2197,7 +2201,7 @@ function mountMobile(app, deps) {
     const doc = new PDFDocument({ size: pageSize, margin: r.compact ? 10 : 20 });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition',
-      `inline; filename="Seller_${(lots[0].trader_name || 'Receipt').replace(/[^A-Za-z0-9]+/g,'_')}.pdf"`);
+      `inline; filename="${exportFileName('Seller', anoLabelForRows(lots), (lots[0].trader_name || 'Receipt').replace(/[^A-Za-z0-9]+/g,'_'))}.pdf"`);
     doc.pipe(res);
     r.render(doc, lots, cfg);
     doc.end();
@@ -2225,7 +2229,8 @@ function mountMobile(app, deps) {
     if (!lots.length) return res.status(404).json({ error: 'No lots found' });
     const cfg = getReceiptConfig(db);
     if (branch) cfg.branch = branch;
-    streamGroupedReceipts(lots, req, res, cfg, 'All_Sellers_Receipt.pdf');
+    streamGroupedReceipts(lots, req, res, cfg,
+      `${exportFileName('All_Sellers_Receipt', anoLabelForRows(lots))}.pdf`);
   });
 
   console.log('[mobile-bridge] mounted /mobile + PWA-compat routes (Pass 1 + Pass 2 receipts)');

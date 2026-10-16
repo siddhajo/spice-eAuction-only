@@ -187,8 +187,10 @@ function cleanup() {
 
   // ── Commission Bill (Bill of Supply) — the same lot scoping ──
   // /api/bills/commission-bos-bulk emits one A4 page per lot and names the
-  // download CommissionBoS_Batch_<pages>.pdf, so the page count is readable
-  // straight off the Content-Disposition. It used to pull every lot of the
+  // download CommissionBoS_Batch_<trade>_<pages>.pdf, so the page count is
+  // readable straight off the Content-Disposition — it is the LAST number in
+  // the name, because every export now leads with the auction number (a batch
+  // spanning trades says "Multi" there). It used to pull every lot of the
   // seller regardless of the row's lot_no: RAMU's two one-lot bills each came
   // back as 2 pages (his other lot printed on both), and the whole-trade
   // "Commission Bill Selected" squared to 5 pages instead of 3.
@@ -200,7 +202,7 @@ function cleanup() {
       body: JSON.stringify({ ids }),
     });
     if (!r.ok) return 'HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200);
-    const m = /Batch_(\d+)\.pdf/.exec(r.headers.get('content-disposition') || '');
+    const m = /_(\d+)\.pdf/.exec(r.headers.get('content-disposition') || '');
     return m ? Number(m[1]) : 'no page count in ' + r.headers.get('content-disposition');
   };
   for (const row of rows) {

@@ -36,6 +36,10 @@ const { REPORTS: LORRY_REPORTS } = require('./lorry-reports');
 const { REPORTS: SPICE_BOARD_REPORTS, getReportFilters: getSpiceBoardFilters } = require('./spice-board-reports');
 const { DOCUMENTS: DOC_CATALOG, GROUPS: DOC_GROUPS } = require('./document-catalog');
 const docNo = require('./doc-numbering');
+// Every Content-Disposition filename in this file goes through these —
+// see export-filename.js for the convention and why it had to be one place.
+const { safeFilePart, exportFileName, anoForFilename,
+        anoLabelForRows, anoLabelForIds, scopeParts } = require('./export-filename');
 const { PIPELINE } = require('./transaction-pipeline');
 const { mountMobile } = require('./mobile-bridge');
 let { syncLotsFromTrader, syncTraderBanks } = require('./trader-lot-sync');
@@ -13178,7 +13182,7 @@ app.get('/api/invoices/pdf/:id', requireView, async (req, res) => {
       pdf = await generateSalesInvoicePDF(invoice, cfg, stored.sale, stored.invo, stored.date);
     }
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="Invoice_${stored.sale}_${stored.invo}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('Invoice', stored.ano, stored.sale, stored.invo)}.pdf"`);
     res.send(pdf);
   } catch (e) {
     console.error('Sales invoice PDF error:', e);
@@ -13264,7 +13268,7 @@ app.get('/api/invoices/purchase-pdf/:id', requireView, async (req, res) => {
     // variant='purchase' flips the display: ISPL at top, ASP as seller, TN bank
     const pdf = await generateSalesInvoicePDF(invoice, cfg, stored.sale, stored.invo, stored.date, undefined, 'purchase');
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="PurchaseView_${stored.sale}_${stored.invo}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('PurchaseView', stored.ano, stored.sale, stored.invo)}.pdf"`);
     res.send(pdf);
   } catch (e) {
     console.error('Purchase-view PDF error:', e);
@@ -13370,7 +13374,7 @@ app.post('/api/invoices/pdf-bulk', requireView, async (req, res) => {
       pdf = await generateSalesInvoicesBatchPDF(payloads, cfg);
     }
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="Invoices_Batch_${payloads.length}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('Invoices_Batch', anoLabelForIds(db, 'invoices', ids), payloads.length)}.pdf"`);
     res.send(pdf);
   } catch (e) {
     console.error('Bulk sales invoice PDF error:', e);
@@ -13459,7 +13463,7 @@ app.post('/api/invoices/purchase-pdf-bulk', requireView, async (req, res) => {
     // 'purchase' variant: ISPL at top, ASP as seller, TN bank — applied to every page
     const pdf = await generateSalesInvoicesBatchPDF(payloads, cfg, 'purchase');
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="PurchaseView_Batch_${payloads.length}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('PurchaseView_Batch', anoLabelForIds(db, 'invoices', ids), payloads.length)}.pdf"`);
     res.send(pdf);
   } catch (e) {
     console.error('Bulk purchase-view PDF error:', e);
@@ -14041,7 +14045,7 @@ app.get('/api/purchases/pdf/:auctionId/:sellerName', requireView, async (req, re
       pdf = await generatePurchaseInvoicePDF(enriched, cfg, invoiceNo);
     }
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="PurchaseInvoice_${sellerName.replace(/[^\w]/g, '_')}_${invoiceNo}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('PurchaseInvoice', anoForFilename(db, auctionId), sellerName.replace(/[^\w]/g, '_'), invoiceNo)}.pdf"`);
     res.send(pdf);
   } catch (e) {
     console.error('PDF generation error:', e);
@@ -14169,7 +14173,7 @@ app.post('/api/purchases/pdf-bulk', requireView, async (req, res) => {
       pdf = await generatePurchaseInvoicesBatchPDF(payloads, cfg);
     }
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="PurchaseInvoices_Batch_${payloads.length}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('PurchaseInvoices_Batch', anoLabelForRows(rows), payloads.length)}.pdf"`);
     res.send(pdf);
   } catch (e) {
     console.error('Bulk purchase PDF error:', e);
@@ -14352,7 +14356,7 @@ app.post('/api/purchases/commission-bulk', requireView, async (req, res) => {
       pdf = await generateCommissionBoSBatchPDF(payloads, cfg);
     }
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="PaymentVouchers_${payloads.length}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('PaymentVouchers', anoLabelForRows(ordered), payloads.length)}.pdf"`);
     res.send(pdf);
   } catch (e) {
     console.error('Purchase payment voucher PDF error:', e);
@@ -14774,7 +14778,7 @@ app.get('/api/bills/pdf/:auctionId/:sellerName', requireView, async (req, res) =
       pdf = await generateAgriBillPDF(bill, cfg, printedBillNo);
     }
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="BillOfSupply_${sellerName.replace(/[^\w]/g,'_')}_${billNo}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('BillOfSupply', (storedRow && storedRow.ano) || anoForFilename(db, req.params.auctionId), sellerName.replace(/[^\w]/g,'_'), billNo)}.pdf"`);
     res.send(pdf);
   } catch(e) {
     console.error('Agri Bill PDF error:', e);
@@ -15037,7 +15041,7 @@ app.post('/api/bills/pdf-bulk', requireView, async (req, res) => {
       pdf = await generateAgriBillsBatchPDF(payloads, cfg);
     }
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="BillsOfSupply_Batch_${payloads.length}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('BillsOfSupply_Batch', anoLabelForRows(rows), payloads.length)}.pdf"`);
     res.send(pdf);
   } catch (e) {
     console.error('Bulk bill PDF error:', e);
@@ -15386,7 +15390,7 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
       pdf = await generateCommissionBoSBatchPDF(payloads, cfg);
     }
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="CommissionBoS_Batch_${payloads.length}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('CommissionBoS_Batch', anoLabelForRows(ordered), payloads.length)}.pdf"`);
     res.send(pdf);
   } catch (e) {
     console.error('Commission BoS bulk PDF error:', e);
@@ -16499,7 +16503,7 @@ app.get('/api/debit-notes/:id/pdf', requireView, async (req, res) => {
     const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
       engineKey: 'debit_note_engine', templateKey: 'debit_note_template', tplChoice });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="DebitNote_${dn.note_no || dn.id}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('DebitNote', dn.ano, dn.note_no || dn.id)}.pdf"`);
     if (useHtml) {
       const cfg2 = tplChoice ? { ...cfg, debit_note_template: tplChoice } : cfg;
       const pdf = await require('./pdf/render-debit-note-html').generateDebitNoteHtmlPDF(dn, db, cfg2);
@@ -16548,14 +16552,14 @@ app.post('/api/debit-notes/pdf-bulk', requireView, async (req, res) => {
       const cfg2 = tplChoice ? { ...cfg, debit_note_template: tplChoice } : cfg;
       const pdf = await require('./pdf/render-debit-note-html').generateDebitNotesHtmlBatchPDF(dns, db, cfg2);
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `inline; filename="DebitNotes_Batch_${dns.length}.pdf"`);
+      res.setHeader('Content-Disposition', `inline; filename="${exportFileName('DebitNotes_Batch', anoLabelForRows(dns), dns.length)}.pdf"`);
       return res.send(pdf);
     }
 
     const PDFDocument = require('pdfkit');
     doc = new PDFDocument({ size: 'A4', margin: 30 });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="DebitNotes_Batch_${dns.length}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('DebitNotes_Batch', anoLabelForRows(dns), dns.length)}.pdf"`);
     doc.pipe(res); piped = true;
     res.on('close', () => { try { doc.destroy(); } catch (_) {} });
 
@@ -17126,7 +17130,7 @@ app.get('/api/debit-notes-planter/:id/pdf', requireView, async (req, res) => {
     const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
       engineKey: 'debit_note_engine', templateKey: 'debit_note_template', tplChoice });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="DebitNotePlanter_${dn.note_no || dn.id}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('DebitNotePlanter', dn.ano, dn.note_no || dn.id)}.pdf"`);
     if (useHtml) {
       const cfg2 = tplChoice ? { ...cfg, debit_note_template: tplChoice } : cfg;
       const pdf = await require('./pdf/render-debit-note-html').generateDebitNoteHtmlPDF(dn, db, cfg2, { planter: true });
@@ -17162,13 +17166,13 @@ app.post('/api/debit-notes-planter/pdf-bulk', requireView, async (req, res) => {
       const cfg2 = tplChoice ? { ...cfg, debit_note_template: tplChoice } : cfg;
       const pdf = await require('./pdf/render-debit-note-html').generateDebitNotesHtmlBatchPDF(dns, db, cfg2, { planter: true });
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `inline; filename="DebitNotesPlanter_Batch_${dns.length}.pdf"`);
+      res.setHeader('Content-Disposition', `inline; filename="${exportFileName('DebitNotesPlanter_Batch', anoLabelForRows(dns), dns.length)}.pdf"`);
       return res.send(pdf);
     }
     const PDFDocument = require('pdfkit');
     doc = new PDFDocument({ size: 'A4', margin: 30 });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="DebitNotesPlanter_Batch_${dns.length}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('DebitNotesPlanter_Batch', anoLabelForRows(dns), dns.length)}.pdf"`);
     doc.pipe(res); piped = true;
     res.on('close', () => { try { doc.destroy(); } catch (_) {} });
     dns.forEach((dn, i) => {
@@ -17224,7 +17228,8 @@ app.get('/api/exports/sales-journal', requireExport, async (req, res) => {
     const db = getDb();
     const pdf = await exportAnyPdf(db, 'sales_journal', auctionId, getSettingsFlat(db), { saleType });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'attachment; filename="SalesJournal.pdf"');
+    res.setHeader('Content-Disposition',
+      `attachment; filename="${exportFileName('SalesJournal', anoForFilename(db, auctionId))}.pdf"`);
     res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
     return res.send(pdf);
   }
@@ -17234,12 +17239,14 @@ app.get('/api/exports/sales-journal', requireExport, async (req, res) => {
   if (String(req.query.format || '').toLowerCase() === 'csv') {
     const csv = await xlsxToCsvBuffer(Buffer.from(buffer));
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="SalesJournal.csv"');
+    res.setHeader('Content-Disposition',
+      `attachment; filename="${exportFileName('SalesJournal', anoForFilename(getDb(), auctionId))}.csv"`);
     res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
     return res.send(Buffer.from(csv));
   }
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', 'attachment; filename="SalesJournal.xlsx"');
+  res.setHeader('Content-Disposition',
+    `attachment; filename="${exportFileName('SalesJournal', anoForFilename(getDb(), auctionId))}.xlsx"`);
   res.send(Buffer.from(buffer));
 });
 
@@ -17343,13 +17350,15 @@ app.get('/api/exports/godown-register', requireExport, async (req, res) => {
         traderId: opts.traderId, branch: opts.branch,
       });
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', 'attachment; filename="GodownRegister.pdf"');
+      res.setHeader('Content-Disposition',
+        `attachment; filename="${exportFileName('GodownRegister', ...scopeParts(db, opts))}.pdf"`);
       return res.send(buffer);
     }
     const { exportGodownRegister } = require('./exports');
     const buffer = await exportGodownRegister(db, opts);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename="GodownRegister.xlsx"');
+    res.setHeader('Content-Disposition',
+      `attachment; filename="${exportFileName('GodownRegister', ...scopeParts(db, opts))}.xlsx"`);
     res.send(Buffer.from(buffer));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -17363,13 +17372,15 @@ app.get('/api/exports/purchase-register', requireExport, async (req, res) => {
     if (format === 'pdf') {
       const buffer = await exportAnyPdf(db, 'purchase_register', opts.auctionId, cfg, { from: opts.from, to: opts.to });
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', 'attachment; filename="PurchaseRegister.pdf"');
+      res.setHeader('Content-Disposition',
+        `attachment; filename="${exportFileName('PurchaseRegister', ...scopeParts(db, opts))}.pdf"`);
       return res.send(buffer);
     }
     const { exportPurchaseRegister } = require('./exports');
     const buffer = await exportPurchaseRegister(db, opts);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename="PurchaseRegister.xlsx"');
+    res.setHeader('Content-Disposition',
+      `attachment; filename="${exportFileName('PurchaseRegister', ...scopeParts(db, opts))}.xlsx"`);
     res.send(Buffer.from(buffer));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -17383,13 +17394,15 @@ app.get('/api/exports/sales-register', requireExport, async (req, res) => {
     if (format === 'pdf') {
       const buffer = await exportAnyPdf(db, 'sales_register', opts.auctionId, cfg, { from: opts.from, to: opts.to, saleType: opts.saleType });
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', 'attachment; filename="SalesRegister.pdf"');
+      res.setHeader('Content-Disposition',
+        `attachment; filename="${exportFileName('SalesRegister', ...scopeParts(db, opts))}.pdf"`);
       return res.send(buffer);
     }
     const { exportSalesRegister } = require('./exports');
     const buffer = await exportSalesRegister(db, opts);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename="SalesRegister.xlsx"');
+    res.setHeader('Content-Disposition',
+      `attachment; filename="${exportFileName('SalesRegister', ...scopeParts(db, opts))}.xlsx"`);
     res.send(Buffer.from(buffer));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -17452,13 +17465,15 @@ app.get('/api/exports/individual-register', requireExport, async (req, res) => {
       const pdfType = { pooler: 'pooler_individual', seller: 'seller_individual', merchant: 'merchant_individual' }[kind];
       const buffer = await exportAnyPdf(db, pdfType, null, cfg, opts);
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${fileBase}.pdf"`);
+      res.setHeader('Content-Disposition',
+        `attachment; filename="${exportFileName(fileBase, opts.party, ...scopeParts(null, opts))}.pdf"`);
       return res.send(buffer);
     }
     const { exportIndividualRegister } = require('./exports');
     const buffer = await exportIndividualRegister(db, kind, opts);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileBase}.xlsx"`);
+    res.setHeader('Content-Disposition',
+      `attachment; filename="${exportFileName(fileBase, opts.party, ...scopeParts(null, opts))}.xlsx"`);
     res.send(Buffer.from(buffer));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -17481,7 +17496,8 @@ app.get('/api/exports/pooler-certificate', requireExport, async (req, res) => {
     };
     const buffer = await renderPoolerCertificatePdf(db, cfg, opts);
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'attachment; filename="PoolerCertificate.pdf"');
+    res.setHeader('Content-Disposition',
+      `attachment; filename="${exportFileName('PoolerCertificate', opts.party, ...scopeParts(null, opts))}.pdf"`);
     res.send(buffer);
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
@@ -17499,7 +17515,7 @@ app.post('/api/invoices/export-selected', requireExport, async (req, res) => {
 
     const placeholders = ids.map(() => '?').join(',');
     const rows = db.all(
-      `SELECT sale, invo, buyer1, gstin, bag, qty, tot, lorry_no
+      `SELECT ano, sale, invo, buyer1, gstin, bag, qty, tot, lorry_no
          FROM invoices WHERE id IN (${placeholders})
         ORDER BY sale, invo`, ids);
     if (!rows.length) return res.status(404).json({ error: 'No matching invoices found' });
@@ -17550,7 +17566,8 @@ app.post('/api/invoices/export-selected', requireExport, async (req, res) => {
         companyHeader: getCompanyHeader(db),
       });
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', 'attachment; filename="SalesInvoices.pdf"');
+      res.setHeader('Content-Disposition',
+        `attachment; filename="${exportFileName('SalesInvoices', anoLabelForRows(rows), rows.length)}.pdf"`);
       return res.send(buffer);
     }
 
@@ -17571,7 +17588,8 @@ app.post('/api/invoices/export-selected', requireExport, async (req, res) => {
       grandTotal: { label: 'TOTAL', values: { bag: sum('bag'), qty: sum('qty'), tot: sum('tot') } },
     });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename="SalesInvoices.xlsx"');
+    res.setHeader('Content-Disposition',
+      `attachment; filename="${exportFileName('SalesInvoices', anoLabelForRows(rows), rows.length)}.xlsx"`);
     res.send(Buffer.from(buffer));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -17689,7 +17707,7 @@ app.post('/api/invoices/preview-pdf/:auctionId', requireView, async (req, res) =
       pdf = await generateSalesInvoicePDF(invoice, cfg, saleType, 'PREVIEW', invoiceDate);
     }
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="PreInvoice_${saleType}_${String(buyerCode).replace(/[^A-Za-z0-9]/g,'')}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('PreInvoice', anoForFilename(db, req.params.auctionId), saleType, String(buyerCode).replace(/[^A-Za-z0-9]/g,''))}.pdf"`);
     res.send(pdf);
   } catch (e) {
     console.error('Pre-invoice PDF error:', e);
@@ -18839,7 +18857,7 @@ app.get('/api/payments/pdf/:auctionId/:sellerName', requireView, (req, res) => {
     const PDFDocument = require('pdfkit');
     doc = new PDFDocument({ size: 'A4', margin: 30 });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="Payment_${req.params.sellerName}_${auctionId}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('Payment', req.params.sellerName, anoForFilename(db, auctionId))}.pdf"`);
     doc.pipe(res); piped = true;
     res.on('close', () => { try { doc.destroy(); } catch(_){} });
     _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, null, req.query.userId);
@@ -18871,7 +18889,7 @@ app.post('/api/payments/pdf-lots', requireView, (req, res) => {
     doc = new PDFDocument({ size: 'A4', margin: 30 });
     res.setHeader('Content-Type', 'application/pdf');
     const safeName = sellerName.replace(/[^\w]/g, '_').slice(0, 80) || 'seller';
-    res.setHeader('Content-Disposition', `inline; filename="Payment_${safeName}_${auctionId}_partial.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('Payment', safeName, anoForFilename(db, auctionId), 'partial')}.pdf"`);
     doc.pipe(res); piped = true;
     res.on('close', () => { try { doc.destroy(); } catch(_){} });
     _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds, req.body.user_id);
@@ -18900,7 +18918,7 @@ app.post('/api/payments/pdf-bulk', requireView, (req, res) => {
     const PDFDocument = require('pdfkit');
     doc = new PDFDocument({ size: 'A4', margin: 30 });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="Payments_Batch_${names.length}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('Payments_Batch', anoForFilename(db, auctionId), names.length)}.pdf"`);
     doc.pipe(res); piped = true;
     res.on('close', () => { try { doc.destroy(); } catch(_){} });
     names.forEach((entry, i) => {
@@ -18929,21 +18947,6 @@ app.get('/api/tds-return', requireView, (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // EXPORTS (EXP.PRG — all 11 types + TDS + Tally)
 // ══════════════════════════════════════════════════════════════
-
-// Resolve the business-facing auction number (`ano`) for use in download
-// filenames. Export *contents* already resolve `ano` internally; this keeps
-// the downloaded file NAME consistent with what users recognise (e.g.
-// "LotSlip_42.xlsx" instead of "LotSlip_7.xlsx" where 7 is the internal id).
-// Falls back to the raw id when the auction can't be found. The result is
-// sanitised so values like "42/A" stay filesystem-safe.
-function anoForFilename(db, auctionId) {
-  let val = auctionId;
-  try {
-    const a = db.get('SELECT ano FROM auctions WHERE id = ?', [auctionId]);
-    if (a && a.ano != null && String(a.ano).trim()) val = String(a.ano).trim();
-  } catch (_) {}
-  return String(val).replace(/[\/\\:*?"<>|]+/g, '-');
-}
 
 app.get('/api/exports/:type/:auctionId', requireExport, async (req, res) => {
   const { type, auctionId } = req.params;
@@ -19100,13 +19103,15 @@ app.get('/api/exports/tds-return', requireExport, async (req, res) => {
   if (format === 'pdf') {
     const buffer = await exportAnyPdf(getDb(), 'tds_return', null, null, { from, to });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'attachment; filename="TDSReturn.pdf"');
+    res.setHeader('Content-Disposition',
+      `attachment; filename="${exportFileName('TDSReturn', ...scopeParts(null, { from, to }))}.pdf"`);
     return res.send(buffer);
   }
   const { exportTDSReturn } = require('./exports');
   const buffer = await exportTDSReturn(getDb(), from, to);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', 'attachment; filename="TDSReturn.xlsx"');
+  res.setHeader('Content-Disposition',
+    `attachment; filename="${exportFileName('TDSReturn', ...scopeParts(null, { from, to }))}.xlsx"`);
   res.send(Buffer.from(buffer));
 });
 
@@ -19127,12 +19132,12 @@ app.get('/api/lorry-reports/:type/:auctionId', requireExport, async (req, res) =
       // else keeps the download-as-attachment behaviour.
       const inline = req.query.inline === '1' || req.query.inline === 'true';
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${def.name}_${auctionId}.pdf"`);
+      res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${exportFileName(def.name, anoForFilename(db, auctionId))}.pdf"`);
       return res.send(buf);
     }
     const buf = await def.xlsx(db, auctionId);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="${def.name}_${auctionId}.xlsx"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${exportFileName(def.name, anoForFilename(db, auctionId))}.xlsx"`);
     return res.send(Buffer.from(buf));
   } catch (e) {
     console.error('lorry-reports error:', e);
@@ -19297,7 +19302,7 @@ app.get('/api/spice-board-reports/:type/export', requireExport, async (req, res)
       if (!def.pdf) return res.status(400).json({ error: 'PDF not supported for this report' });
       const buf = await def.pdf(db, opts);
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `${req.query.inline === '1' ? 'inline' : 'attachment'}; filename="${def.name}_${opts.auctionId}.pdf"`);
+      res.setHeader('Content-Disposition', `${req.query.inline === '1' ? 'inline' : 'attachment'}; filename="${exportFileName(def.name, ...scopeParts(db, opts))}.pdf"`);
       return res.send(buf);
     }
     if (format === 'csv') {
@@ -19313,7 +19318,7 @@ app.get('/api/spice-board-reports/:type/export', requireExport, async (req, res)
       // concerns upload from the same machine and the portal files were
       // otherwise indistinguishable in the downloads folder.
       const tag = companyFilenameTag(db);
-      const fname = `${def.name}_${opts.auctionId}${tag ? '_' + tag : ''}.csv`;
+      const fname = `${exportFileName(def.name, ...scopeParts(db, opts), tag)}.csv`;
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
       // The PWA can run off a different origin (window.SPICE_API_BASE); without
@@ -19325,7 +19330,7 @@ app.get('/api/spice-board-reports/:type/export', requireExport, async (req, res)
     if (!def.xlsx) return res.status(400).json({ error: 'XLSX not supported for this report' });
     const buf = await def.xlsx(db, opts);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="${def.name}_${opts.auctionId}.xlsx"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${exportFileName(def.name, ...scopeParts(db, opts))}.xlsx"`);
     return res.send(Buffer.from(buf));
   } catch (e) {
     console.error('spice-board-reports error:', e);
@@ -19970,7 +19975,7 @@ app.get('/api/tally/party-ledger/:kind/:auctionId', requireExport, (req, res) =>
     }
     const xml = generLedgerXML(rows, cfg, { companyName: resolveTallyCompanyName(cfg, partyDef.company) });
     const safeName = String(partyName).replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40);
-    const filename = `Tally_PartyLedger_${kind}_${safeName}_${auctionId}.xml`;
+    const filename = `${exportFileName('Tally_PartyLedger', kind, safeName, anoForFilename(db, auctionId))}.xml`;
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(xml);
@@ -20042,7 +20047,7 @@ app.get('/api/tally/party-voucher/:type/:auctionId', requireExport, (req, res) =
     }
     const xml = def.generator(rows, cfg, { companyName: resolveTallyCompanyName(cfg, def.company) });
     const safeName = String(partyName).replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40);
-    const filename = `${def.name}_${safeName}_${auctionId}.xml`;
+    const filename = `${exportFileName(def.name, safeName, anoForFilename(db, auctionId))}.xml`;
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(xml);
@@ -20126,7 +20131,7 @@ app.get('/api/tally/invoice-voucher/:auctionId', requireExport, (req, res) => {
     // ?format=irp → this single invoice as GST e-Invoice (IRP / NIC) JSON.
     if (fmt === 'irp') {
       const irp = buildIrpJson(rows, cfg, { companyName: ispCompany });
-      const filename = `EInvoice_${safeName}_${auctionId}.json`;
+      const filename = `${exportFileName('EInvoice', safeName, anoForFilename(db, auctionId))}.json`;
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       return res.send(JSON.stringify(irp, null, 2));
@@ -20134,13 +20139,13 @@ app.get('/api/tally/invoice-voucher/:auctionId', requireExport, (req, res) => {
     // ?format=json → the single invoice's voucher row as JSON.
     if (fmt === 'json') {
       const json = tallyJson(rows, auctionId, ispCompany, { type: 'invoice_voucher', label: `Sales Invoice ${label}` });
-      const filename = `Tally_InvoiceVoucher_${safeName}_${auctionId}.json`;
+      const filename = `${exportFileName('Tally_InvoiceVoucher', safeName, anoForFilename(db, auctionId))}.json`;
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       return res.send(json);
     }
     const xml = generSalesIspXML(rows, cfg, { companyName: ispCompany });
-    const filename = `Tally_InvoiceVoucher_${safeName}_${auctionId}.xml`;
+    const filename = `${exportFileName('Tally_InvoiceVoucher', safeName, anoForFilename(db, auctionId))}.xml`;
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(xml);
@@ -20422,7 +20427,7 @@ app.get('/api/receipt/:lotId', requireView, async (req, res) => {
   if (!lot) return res.status(404).json({ error: 'Lot not found' });
   const pdf = await generateCropReceiptPDF(lot, cfg);
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="Receipt_${lot.lot_no}.pdf"`);
+  res.setHeader('Content-Disposition', `inline; filename="${exportFileName('Receipt', lot.ano, lot.lot_no)}.pdf"`);
   res.send(pdf);
 });
 

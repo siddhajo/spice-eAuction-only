@@ -402,5 +402,28 @@ check('buildSalesIspRows maps it onto row.sbl', /sbl:\s*r\.buyer_sbl/.test(build
     /QRCode\s*:\s*@@SpiceQrValue\s*:\s*Yes/.test(body));
 }
 
+// RULE 12 — the e-way-bill candidate chain must stay wired.
+// The number's Tally field name is unknown, so every candidate SpiceEwayC<n>
+// is tried in turn and the first non-empty one wins. A candidate that is
+// DEFINED but left out of the chain is never evaluated — it silently proves
+// nothing, which is the whole failure mode this construct exists to avoid.
+// Pinned here because the chain is exactly the kind of thing a later edit
+// extends by adding C6 and forgetting the matching pick line.
+{
+  const cands = [...tdl.matchAll(/^\s{2,}(SpiceEwayC\d+)\s*:/gm)].map(m => m[1]);
+  check('e-way candidate names were found', cands.length >= 2, 'found ' + cands.length);
+
+  const chain = tdl.match(/^\s{2,}SpiceEway(?:P\d+|No)\s*:.*$/gm) || [];
+  const chained = new Set();
+  for (const ln of chain) for (const m of ln.matchAll(/@@(SpiceEwayC\d+)/g)) chained.add(m[1]);
+  const unchained = cands.filter(c => !chained.has(c));
+  check('every e-way candidate is referenced by the pick chain',
+    unchained.length === 0, unchained.join(', '));
+
+  // The last link must be SpiceEwayNo — that is what the printed cell reads.
+  check('the printed e-Way Bill No cell reads the resolved value',
+    /\[Field: SpiceFldEInvEway\][\s\S]{0,400}?Set as\s*:\s*": "\s*\+\s*@@SpiceEwayNo/.test(tdl));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
