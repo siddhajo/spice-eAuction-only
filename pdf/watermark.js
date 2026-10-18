@@ -13,12 +13,27 @@
 // odd extensions and casings. No logo on disk ⇒ no watermark, silently: a
 // missing brand file must never fail a print.
 //
-// ── The toggle ───────────────────────────────────────────────────────────
-// `flag_pdf_watermark` (default ON) governs ALL of it — one switch, because
-// the value of the mark is that it is everywhere. `flag_invoice_watermark`
-// is still read as a legacy alias for installs that set it before the scope
-// widened past invoices. The flag is read per render, so flipping it takes
-// effect on the next download with no restart.
+// ── The toggles ──────────────────────────────────────────────────────────
+// TWO levels, and the order matters:
+//
+//   1. `flag_pdf_watermark` (default ON) is the MASTER. Off ⇒ nothing is
+//      stamped anywhere, whatever the per-document switches say.
+//      `flag_invoice_watermark` is still read as a legacy alias for installs
+//      that set it before the scope widened past invoices.
+//   2. `pdf_watermark_<kind>` (each default ON) decides PER DOCUMENT KIND —
+//      sales invoice, purchase invoice, bill of supply, commission bill,
+//      either debit note, or `reports` for every report/register/statement.
+//      Added 2026-10-18 because an operator wanted the mark on the documents
+//      that leave the building and not on the ones that stay in it.
+//
+// Both are read per render, so flipping either takes effect on the next
+// download with no restart. A caller that passes NO kind gets the master
+// answer alone — which is what every call site did before kinds existed, so
+// an un-updated one keeps its old behaviour rather than losing its mark.
+//
+// The per-kind default is ON for the same reason the master is: a mark that
+// appears on some documents and not others is only useful when somebody
+// CHOSE that, and an upgrade must not make that choice for them.
 //
 // Deliberately NOT stamped: the thermal lot receipts (mobile-bridge) and the
 // half-page crop receipt. Those are till-roll slips, not documents anyone
@@ -92,25 +107,52 @@ function _cfg(source) {
   return source;
 }
 
-function watermarkOn(source) {
+// Document kinds that can be switched independently, and the setting key for
+// each. `reports` is deliberately ONE entry covering every report, register,
+// statement, journal and bank file: those are internal paper, and an operator
+// who wants them unmarked wants all of them unmarked.
+const WATERMARK_KINDS = {
+  sales_invoice:      'pdf_watermark_sales_invoice',
+  purchase_invoice:   'pdf_watermark_purchase_invoice',
+  bill_of_supply:     'pdf_watermark_bill_of_supply',
+  commission_bill:    'pdf_watermark_commission_bill',
+  debit_note:         'pdf_watermark_debit_note',
+  debit_note_planter: 'pdf_watermark_debit_note_planter',
+  reports:            'pdf_watermark_reports',
+};
+
+// Read one boolean setting, treating blank/absent as `fallback` — settings
+// arrive as real booleans from getSettingsFlat and as strings from a raw row.
+function _bool(cfg, key, fallback) {
+  const v = cfg[key];
+  if (v === undefined || v === null || v === '') return fallback;
+  if (typeof v === 'boolean') return v;
+  return String(v).toLowerCase() === 'true';
+}
+
+function watermarkOn(source, kind) {
   const cfg = _cfg(source);
-  // The canonical key first, then the pre-widening name, then the default.
+  // Master first — off means off, and no per-document switch can override it.
+  let master = true;
   for (const key of ['flag_pdf_watermark', 'flag_invoice_watermark']) {
     const v = cfg[key];
     if (v === undefined || v === null || v === '') continue;
-    if (typeof v === 'boolean') return v;
-    return String(v).toLowerCase() === 'true';
+    master = (typeof v === 'boolean') ? v : String(v).toLowerCase() === 'true';
+    break;
   }
-  return true;                        // default ON
+  if (!master) return false;
+  // No kind (or one nothing knows about) ⇒ the master answer alone.
+  const key = WATERMARK_KINDS[kind];
+  return key ? _bool(cfg, key, true) : true;
 }
 
 // Absolute path of the logo to stamp, or '' when the feature is off or no
 // logo file exists. Blank logo code falls back to 'ispl', matching
 // logoDataUri() — the two must pick the SAME file or the header and the
 // watermark would show different brands.
-function watermarkFile(source) {
+function watermarkFile(source, kind) {
   const cfg = _cfg(source);
-  if (!watermarkOn(cfg)) return '';
+  if (!watermarkOn(cfg, kind)) return '';
   const code = String(cfg.logo || '').trim() || 'ispl';
   try { return resolveLogoFile(code) || ''; } catch (_) { return ''; }
 }
@@ -136,8 +178,8 @@ function _dataUri(file) {
 // and the print-colour-adjust hint keep it out of the way of everything else.
 // The image is embedded as a data: URI because the renderer loads the page
 // from setContent / a data: URL, where file:// requests are blocked.
-function watermarkHtml(source) {
-  const file = watermarkFile(source);
+function watermarkHtml(source, kind) {
+  const file = watermarkFile(source, kind);
   if (!file) return '';
   const uri = _dataUri(file);
   if (!uri) return '';
@@ -159,8 +201,8 @@ function watermarkHtml(source) {
 // possible. Called on the FINAL html of a document — never per template render
 // — because the commission bill concatenates N rendered pages into one
 // document and N stacked copies of a 7% layer is a 40% one.
-function withWatermark(html, source) {
-  const block = watermarkHtml(source);
+function withWatermark(html, source, kind) {
+  const block = watermarkHtml(source, kind);
   if (!block) return html;
   const s = String(html == null ? '' : html);
   if (s.includes('class="doc-watermark"')) return s;   // already stamped
@@ -203,8 +245,8 @@ function drawPdfkitWatermark(doc, file, opacity) {
 // invoice's generator in turn, and each of those calls this — the guard is
 // what stops the second invoice wrapping addPage()/end() a second time (which
 // would double the opacity on every page from then on).
-function attachPdfkitWatermark(doc, source) {
-  return attachPdfkitWatermarkPath(doc, watermarkFile(source), watermarkOpacityOver(source));
+function attachPdfkitWatermark(doc, source, kind) {
+  return attachPdfkitWatermarkPath(doc, watermarkFile(source, kind), watermarkOpacityOver(source));
 }
 
 // Same thing for a renderer that holds an ALREADY-RESOLVED file and no cfg or
@@ -247,6 +289,7 @@ function attachPdfkitWatermarkPath(doc, file, opacity) {
 function clearCache() { _uriCache.clear(); }
 
 module.exports = {
+  WATERMARK_KINDS,
   watermarkOn, watermarkFile, watermarkHtml, withWatermark,
   attachPdfkitWatermark, attachPdfkitWatermarkPath, drawPdfkitWatermark, clearCache,
   watermarkOpacity, watermarkOpacityOver,

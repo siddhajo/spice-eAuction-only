@@ -115,7 +115,7 @@ function buildAgriBillView(billData, cfg, billNo) {
 async function generateAgriBillHtmlPDF(billData, cfg, billNo) {
   const view = buildAgriBillView(billData, cfg, billNo);
   const tpl = getInvoiceTemplate('agri-bill', cfg);
-  return htmlToPdf(withWatermark(tpl.render(view), cfg));
+  return htmlToPdf(withWatermark(tpl.render(view), cfg, 'bill_of_supply'));
 }
 
 // Bulk: bills = [{ billData, billNo }]. Renders each, merges to one PDF.

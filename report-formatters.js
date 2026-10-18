@@ -310,7 +310,10 @@ function getCompanyHeader(db) {
   let watermarkPath = '', watermarkOpacity;
   try {
     const wm = require('./pdf/watermark');
-    watermarkPath = wm.watermarkFile(db);
+    // 'reports' kind: this resolver serves ONLY the shared report / register /
+    // export renderers, so the one per-document switch that can apply here is
+    // the reports one.
+    watermarkPath = wm.watermarkFile(db, 'reports');
     if (watermarkPath) watermarkOpacity = wm.watermarkOpacityOver(db);
   } catch (_) {}
   return { name, logoPath: logoOnDisk, address1, address2: branch, branch,

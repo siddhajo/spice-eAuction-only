@@ -191,7 +191,7 @@ function renderChunk(tpl, chunk, cfg) {
   });
   const html = '<!doctype html><html><head><meta charset="utf-8"></head><body>'
     + pages.join('') + '</body></html>';
-  return htmlToPdf(withWatermark(html, cfg));
+  return htmlToPdf(withWatermark(html, cfg, 'purchase_invoice'));
 }
 
 async function generatePurchaseInvoiceHtmlPDF(invoiceData, cfg, invoiceNo) {

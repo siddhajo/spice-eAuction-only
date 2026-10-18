@@ -161,7 +161,7 @@ function renderChunk(tpl, chunk, cfg) {
   // faint layer is not a faint layer.
   const html = '<!doctype html><html><head><meta charset="utf-8"></head><body>' +
     pages.join('') + '</body></html>';
-  return htmlToPdf(withWatermark(html, cfg));
+  return htmlToPdf(withWatermark(html, cfg, 'commission_bill'));
 }
 
 async function generateCommissionBoSHtmlPDF(payloads, cfg) {

@@ -1703,7 +1703,7 @@ async function renderTharaiListPdf(db, auctionId, cfg, extra) {
   catch (_) { /* settings unavailable — fall back to the default */ }
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 24 });
-  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
+  attachPdfkitWatermark(doc, db, 'reports');   // faint company logo — see pdf/watermark.js
   const buffers = [];
   doc.on('data', b => buffers.push(b));
 
@@ -1983,7 +1983,7 @@ async function renderPoolerCertificatePdf(db, cfg, opts = {}) {
   const toDisp   = formatDateForDisplay(opts.to, dateFmt);
 
   const doc = new PDFDocument({ size: 'A4', margin: 48 });
-  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
+  attachPdfkitWatermark(doc, db, 'reports');   // faint company logo — see pdf/watermark.js
   const buffers = [];
   doc.on('data', b => buffers.push(b));
 

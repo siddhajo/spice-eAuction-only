@@ -195,7 +195,11 @@ function renderChunk(tpl, chunk, db, cfg, opts) {
   });
   const html = '<!doctype html><html><head><meta charset="utf-8"></head><body>'
     + pages.join('') + '</body></html>';
-  return htmlToPdf(withWatermark(html, cfg));
+  // The two debit notes are separate documents to the operator — a service
+  // note goes to a buyer, a planter note to a seller — so they carry separate
+  // watermark switches. `opts.planter` is the same flag the view builder uses
+  // to tell them apart.
+  return htmlToPdf(withWatermark(html, cfg, (opts && opts.planter) ? 'debit_note_planter' : 'debit_note'));
 }
 
 async function generateDebitNoteHtmlPDF(dn, db, cfg, opts) {

@@ -644,7 +644,7 @@ async function buyersStatementPdf(db, opts) {
                       readSetting(db, 'business_place', ''))));
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 24 });
-  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
+  attachPdfkitWatermark(doc, db, 'reports');   // faint company logo — see pdf/watermark.js
   const buffers = []; doc.on('data', b => buffers.push(b));
   const m = 24;
   const usableW = doc.page.width - m * 2;
@@ -1155,7 +1155,7 @@ async function formDPdf(db, opts) {
   const ctx = getReportContext(db, opts);
   const d   = buildFormD(ctx, db, opts);
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 40 });
-  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
+  attachPdfkitWatermark(doc, db, 'reports');   // faint company logo — see pdf/watermark.js
   const buffers = []; doc.on('data', b => buffers.push(b));
   const m = 40, usableW = doc.page.width - m * 2;
 
@@ -1637,7 +1637,7 @@ async function formCPdf(db, opts) {
   // Same remedy, same reason, as bank_payment / tally_purchase / sales_taxes
   // in exports-pdf's PDF_LAYOUT.
   const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 18 });
-  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
+  attachPdfkitWatermark(doc, db, 'reports');   // faint company logo — see pdf/watermark.js
   const buffers = []; doc.on('data', b => buffers.push(b));
   const m = 18, usableW = doc.page.width - m * 2;
 
@@ -2300,7 +2300,7 @@ async function litreWeightPdf(db, opts) {
   const header = getCompanyHeader(db);
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 24 });
-  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
+  attachPdfkitWatermark(doc, db, 'reports');   // faint company logo — see pdf/watermark.js
   const buffers = []; doc.on('data', b => buffers.push(b));
   const m = 24;
   const pageW = doc.page.width, pageH = doc.page.height;
@@ -2500,7 +2500,7 @@ async function arrivalsPdf(db, opts) {
   const header = getCompanyHeader(db);
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 24 });
-  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
+  attachPdfkitWatermark(doc, db, 'reports');   // faint company logo — see pdf/watermark.js
   const buffers = []; doc.on('data', b => buffers.push(b));
   const m = 24;
   const pageW = doc.page.width, pageH = doc.page.height;
@@ -2742,7 +2742,7 @@ async function formD1Pdf(db, opts) {
   const header = getCompanyHeader(db);
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 36 });
-  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
+  attachPdfkitWatermark(doc, db, 'reports');   // faint company logo — see pdf/watermark.js
   const buffers = []; doc.on('data', b => buffers.push(b));
   const m = 36;
   const pageH = doc.page.height;

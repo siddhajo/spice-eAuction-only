@@ -2398,6 +2398,9 @@ tr:hover td{background:var(--spice-cream)}
 /* No snapshot in the row — Quick Actions takes the full width rather than
    leaving a column-sized hole beside it. */
 .dash-snap-row.snap-hidden{grid-template-columns:1fr}
+/* No Quick Actions card — the snapshot takes the full width rather than
+   leaving the 320px column it used to sit in. Mirror of .snap-hidden above. */
+.dash-snap-row.qa-hidden{grid-template-columns:1fr}
 .dash-snap-row.snap-hidden .qa-grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));grid-auto-rows:auto}
 .dash-snap-row .dash-snap{margin-bottom:0}
 .dash-snap-row > .card{margin-bottom:0}
@@ -7657,6 +7660,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <!-- Print group -->
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <button class="btn" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="printSelectedInvoices()" title="Print all ticked invoices">🖨 Print Invoice Selected</button>
+            <button class="btn btn-o" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 14px;font-weight:600" onclick="saveSeparateInvoices()" title="Save one PDF per buyer, named after them, as a .zip — for sending each party their own copy">📁 Separate PDFs</button>
             <button class="btn feat-whatsapp" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedInvoices()" title="Send ticked sales invoices via WhatsApp">📱 WhatsApp Selected</button>
             <button class="btn feat-whatsapp" style="height:38px;padding:0 14px;background:#0d7a3e;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(13,122,62,.28)" onclick="_waSelectUnsent('inv')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
             <button class="btn" data-sel-toolbar="inv" style="display:none;height:38px;padding:0 14px;background:var(--spice-cardamom);color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(22,101,52,.22)" onclick="exportSelectedInvoices('xlsx')" title="Export ticked invoices to Excel (Sale type, Inv no, Trade name, GSTIN, Bags, Qty, Bill amount)">📊 Export Excel - Lorry</button>
@@ -7792,6 +7796,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <button class="btn" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="printSelectedPurchases()" title="Print all ticked purchase invoices">🖨 Print Selected</button>
+            <button class="btn btn-o" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 14px;font-weight:600" onclick="saveSeparatePurchases()" title="Save one PDF per seller, named after them, as a .zip — for sending each party their own copy">📁 Separate PDFs</button>
             <!-- Lot-wise print of seller-wise purchases: one Payment Voucher
                  (commission memorandum) page per lot. Nothing is generated or
                  numbered — see POST /api/purchases/commission-bulk. -->
@@ -8389,6 +8394,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
 
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <button class="btn feat-bos-purchase-bill" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="printSelectedBills()" title="Print all ticked bills">🖨 Print Selected</button>
+            <button class="btn btn-o" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 14px;font-weight:600" onclick="saveSeparateBills()" title="Save one PDF per seller, named after them, as a .zip — for sending each party their own copy">📁 Separate PDFs</button>
             <button class="btn feat-whatsapp" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedBills()" title="Send ticked bills of supply via WhatsApp">📱 WhatsApp Selected</button>
             <button class="btn feat-whatsapp" style="height:38px;padding:0 14px;background:#0d7a3e;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(13,122,62,.28)" onclick="_waSelectUnsent('bill')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
             <button class="btn btn-o feat-bos-commission" data-sel-toolbar="bill" style="display:none;height:38px;padding:0 16px;font-weight:600" onclick="printSelectedCommissionBoS()" title="Print Commission Bill (Memorandum) for all ticked bills — one A4 page per bill, matches IMCPC reference format">🧾 Commission Bill Selected</button>
@@ -8433,6 +8439,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <!-- Bulk actions on ticked rows. Hidden until at least one row
                is selected; the count badge updates live as boxes toggle. -->
           <button id="dn-bulk-print" class="btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedDebitNotes()" title="Print all ticked debit notes as one combined PDF">🖨 Print Selected <span id="dn-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
+          <button class="btn btn-o" id="dn-bulk-sep" style="display:none;height:38px;padding:0 14px;font-weight:600" onclick="saveSeparateDebitNotes()" title="Save one PDF per buyer, named after them, as a .zip — for sending each party their own copy">📁 Separate PDFs</button>
           <button id="dn-bulk-wa" class="btn feat-whatsapp" style="display:none;height:38px;padding:0 14px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedDebitNotes()" title="Send ticked debit notes via WhatsApp">📱 WhatsApp Selected</button>
             <button class="btn feat-whatsapp" style="height:38px;padding:0 12px;background:#0d7a3e;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(13,122,62,.28)" onclick="_waSelectUnsent('dn')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
           <button id="dn-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotes()" title="Delete all ticked debit notes">🗑 Delete Selected</button>
@@ -8496,6 +8503,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <button class="needs-invoice-write btn btn-g needs-price-check" id="btn-gen-dnp-one" onclick="openGenDebitPlanterSingleModal()">+ Generate Debit Note</button>
           <button class="needs-invoice-write btn btn-a needs-price-check" id="btn-gen-dnp-all" onclick="openGenDebitPlanterAllModal()">⚡ Generate All</button>
           <button id="dnp-bulk-print" class="btn" style="display:none;height:38px;padding:0 14px;background:var(--spice-saffron);color:#fff;font-weight:600" onclick="printSelectedDebitNotesPlanter()" title="Print all ticked debit notes as one combined PDF">🖨 Print Selected <span id="dnp-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
+          <button class="btn btn-o" id="dnp-bulk-sep" style="display:none;height:38px;padding:0 14px;font-weight:600" onclick="saveSeparateDebitNotesPlanter()" title="Save one PDF per seller, named after them, as a .zip — for sending each party their own copy">📁 Separate PDFs</button>
           <button id="dnp-bulk-wa" class="btn feat-whatsapp" style="display:none;height:38px;padding:0 14px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedDebitNotesPlanter()" title="Send ticked planter debit notes via WhatsApp">📱 WhatsApp Selected</button>
             <button class="btn feat-whatsapp" style="height:38px;padding:0 12px;background:#0d7a3e;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(13,122,62,.28)" onclick="_waSelectUnsent('dnp')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
           <button id="dnp-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedDebitNotesPlanter()" title="Delete all ticked debit notes">🗑 Delete Selected</button>
@@ -12635,6 +12643,12 @@ async function applyFeatureFlags() {
   const godownOn = !!(cfg && on(cfg.flag_godown));
   window._FEAT_GODOWN = godownOn;
   document.body.setAttribute('data-feat-godown', godownOn ? '1' : '0');
+  // Quick Actions card + the Dashboard's own auction picker. Default ON (the
+  // attribute is only '0' when the setting is explicitly false), matching the
+  // other two dashboard widget flags. Read by loadStats() when it builds the
+  // dashboard, so a change takes effect on the next paint.
+  document.body.setAttribute('data-feat-dash-quick-actions',
+    (cfg && cfg.flag_dash_quick_actions !== undefined && !on(cfg.flag_dash_quick_actions)) ? '0' : '1');
   // Flag turned off mid-session: pin the form back to a booking so a stale
   // godown selection can't survive inside a now-hidden chooser.
   if (!godownOn && typeof leSetEntryMode === 'function' && typeof _le === 'object'
@@ -18839,6 +18853,11 @@ async function loadStats(auctionId){
   // still applies when the flag is ON; the flag decides whether the choice
   // exists, the choice decides whether the card is open.
   const snapFeatOn = document.body.getAttribute('data-feat-dash-snapshot') !== '0';
+  // Quick Actions + the dashboard's own trade picker, as one choice: the
+  // picker only exists to serve this top row, and the topbar carries a trade
+  // selector of its own, so leaving a lone dropdown behind would be a second
+  // control for a job already done elsewhere.
+  const qaFeatOn   = document.body.getAttribute('data-feat-dash-quick-actions') !== '0';
   const curFeatOn  = document.body.getAttribute('data-feat-dash-current-auction') !== '0';
   const snapCollapsed = localStorage.getItem('dashSnapCollapsed') === '1';
   // The whole card is off until asked for: '1' is the only value that shows
@@ -18995,15 +19014,21 @@ async function loadStats(auctionId){
       </button>` : ''}
       <!-- The picker rides this bar whenever the card is not holding it —
            including when the snapshot feature is off entirely, since the
-           Current Auction panel below follows the same trade. -->
-      ${snapHidden ? picker : ''}
+           Current Auction panel below follows the same trade. Dropped with
+           Quick Actions: the topbar already carries a trade selector, and the
+           request that added this switch was to be rid of the second one. -->
+      ${(snapHidden && qaFeatOn) ? picker : ''}
     </div>
 
     <!-- Top row: trade snapshot (left) + Quick Actions (right). Collapses to
          a single column under 1100px, and whenever the snapshot is hidden. -->
-    <div class="dash-snap-row${snapCollapsed?' snap-collapsed':''}${snapHidden?' snap-hidden':''}">
+    <!-- The qa-hidden class is the mirror of snap-hidden: with no Quick
+         Actions card the snapshot takes the whole width instead of leaving a
+         320px hole. (No backticks in this comment — it lives inside a
+         template literal, and one would end the string.) -->
+    <div class="dash-snap-row${snapCollapsed?' snap-collapsed':''}${snapHidden?' snap-hidden':''}${qaFeatOn?'':' qa-hidden'}"${(snapHidden && !qaFeatOn) ? ' style="display:none"' : ''}>
       ${snapHidden ? '' : (snapHTML || '<div></div>')}
-      <div class="card" style="padding:0">
+      ${!qaFeatOn ? '' : `<div class="card" style="padding:0">
         <div style="padding:18px 22px 12px;border-bottom:1px solid var(--spice-line);display:flex;justify-content:space-between;align-items:center">
           <h2 style="font-size:17px;font-weight:700;margin:0;color:var(--spice-text-main)">Quick Actions</h2>
         </div>
@@ -19051,7 +19076,7 @@ async function loadStats(auctionId){
             </button>
           </div>
         </div>
-      </div>
+      </div>`}
     </div>
 
     <!-- "Current Auction" depot summary — depot-wise arrivals table + headline
@@ -27790,7 +27815,7 @@ const SET_FIELD_GROUPS = {
       keys:['flag_price_check','flag_lot_lock','flag_reserved_price','flag_immediate_reserve','flag_godown','flag_lot_validation',
             'flag_bulk_set_buyer_code','flag_lot_dummy_details','flag_generate_all_docs','flag_price_list_mapping','flag_print_selected_purchase','flag_lotwise_payments',
             'flag_auction_desk','flag_auction_manager','flag_insights','flag_pertrade_breakdown',
-            'flag_dash_snapshot','flag_dash_current_auction'] },
+            'flag_dash_snapshot','flag_dash_current_auction','flag_dash_quick_actions'] },
     { title:'Auction Sheets', icon:'📋', hint:'Optional columns and grouping on the post-auction verification sheets — which columns the Checklist prints, and which code the Tharai List totals its buyers by.',
       keys:['checklist_show_dummy','checklist_show_buyer','tharai_dummy_code'] },
     { title:'Tally & Accounts Export', icon:'📤', hint:'How purchase vouchers and journals are written into the Tally XML.',
@@ -27814,6 +27839,10 @@ const SET_FIELD_GROUPS = {
       keys:['inv_prefix','separator','proforma_invoice_prefix'], match:/(_prefix|_suffix)$/ },
     { title:'Print Layouts', icon:'🖨', hint:'Default layout per document. "Classic (Legacy)" is the original PDFKit format; other layouts render from HTML templates. Still overridable per print. Watermark Density is how strongly the company logo prints over every PDF — 7 is the default, so turn it UP (15–25 reads well on a pale logo) if the mark does not show on paper. The watermark itself is switched on and off under Flags.',
       keys:['pdf_watermark_density'], match:/_template$/ },
+    { title:'Watermark — Which Documents', icon:'💧', hint:'Which PDFs carry the faint company logo. The master switch is “Company logo watermark on PDFs” under Flags — with that off nothing is marked, whatever is ticked here. Reports, Registers & Statements is one switch for all your internal paper; the rest are the documents that leave the building. How STRONGLY it prints is Watermark Density, under Print Layouts above.',
+      keys:['pdf_watermark_sales_invoice','pdf_watermark_purchase_invoice','pdf_watermark_bill_of_supply',
+            'pdf_watermark_commission_bill','pdf_watermark_debit_note','pdf_watermark_debit_note_planter',
+            'pdf_watermark_reports'] },
     { title:'Dispatch Details', icon:'🚚', hint:'Transport lines printed on the sales invoice.',
       keys:['dispatched_through_isp','dispatch_destination','dispatch_from'] },
     { title:'Invoice Text', icon:'✍', hint:'Fixed wording stamped on the document.',
@@ -37739,6 +37768,41 @@ async function fetchPdfWithOverlay(overlayMsg, endpoint, fallbackName, postBody)
   if (blob) await triggerBrowserPrint(blob, fallbackName);
 }
 
+// ── Separate PDFs: one file per party, downloaded as a .zip ──────────
+// The twin of fetchPdfWithOverlay for the "Save as Separate PDFs" buttons.
+// Costs one render per document on the server (separate files cannot share a
+// layout pass), so the overlay says how many are coming — a 50-document run
+// is a visible wait and silence would read as a hang.
+async function downloadSeparatePdfs(kind, ids, template, labelPlural){
+  if (!ids || !ids.length) return;
+  let blob = null, name = `${labelPlural || 'Documents'}.zip`;
+  try {
+    await withOverlay(`Building ${ids.length} separate PDF${ids.length === 1 ? '' : 's'}…`, async () => {
+      const r = await fetch(B + '/api/documents/pdf-zip', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
+        body: JSON.stringify(template ? { kind, ids, template } : { kind, ids }),
+      });
+      if (!r.ok) {
+        let m = 'Could not build the separate PDFs';
+        try { const e = await r.json(); if (e.error) m = e.error; } catch (_) {}
+        throw new Error(m);
+      }
+      // The server names the archive (trade number + count); fall back to a
+      // plain name only if the header did not survive.
+      const cd = r.headers.get('content-disposition') || '';
+      const m2 = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+      if (m2 && m2[1]) name = decodeURIComponent(m2[1].trim());
+      blob = await r.blob();
+    });
+  } catch (e) { showError(e); return; }
+  if (!blob) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast(`${ids.length} PDF${ids.length === 1 ? '' : 's'} saved to ${name}`);
+}
+
 async function fetchAndPrint(endpoint, fallbackName, postBody) {
   try {
     const opts = { headers: { 'Authorization': 'Bearer ' + T } };
@@ -38132,6 +38196,56 @@ async function printSelectedPurchases(){
     `Purchases_Batch_${ids.length}.pdf`,
     template ? { ids, template } : { ids }
   );
+}
+
+// ── "Save as Separate PDFs" — one file per party, per screen ─────────
+// Each reads the same ticked rows its Print Selected sibling reads, asks the
+// same layout question, and differs only in what comes back: a .zip of one
+// PDF per party instead of one merged document.
+async function saveSeparatePurchases(){
+  const body=document.getElementById('purchases-list');
+  if(!body){alert('No purchases list found');return}
+  const ids=Array.from(body.querySelectorAll('.pur-select-cb:checked')).map(cb=>Number(cb.value)).filter(Boolean);
+  if(!ids.length){alert('Tick one or more purchase invoices first');return}
+  const template=await pickTemplate('purchase-invoice','Choose purchase invoice format');
+  if(template===null)return;
+  await downloadSeparatePdfs('purchases', ids, template, 'PurchaseInvoices');
+}
+async function saveSeparateInvoices(){
+  const body=document.getElementById('invoices-list');
+  if(!body){alert('No invoices list found');return}
+  const ids=Array.from(body.querySelectorAll('.inv-select-cb:checked')).map(cb=>Number(cb.value)).filter(Boolean);
+  if(!ids.length){alert('Tick one or more invoices first');return}
+  const template=await pickTemplate('sales-invoice','Choose sales invoice format');
+  if(template===null)return;
+  await downloadSeparatePdfs('invoices', ids, template, 'SalesInvoices');
+}
+async function saveSeparateBills(){
+  const body=document.getElementById('bills-list');
+  if(!body){alert('No bills list found');return}
+  const ids=Array.from(body.querySelectorAll('.bill-select-cb:checked')).map(cb=>Number(cb.value)).filter(Boolean);
+  if(!ids.length){alert('Tick one or more bills first');return}
+  const template=await pickTemplate('agri-bill','Choose bill of supply format');
+  if(template===null)return;
+  await downloadSeparatePdfs('bills', ids, template, 'BillsOfSupply');
+}
+async function saveSeparateDebitNotes(){
+  const body=document.getElementById('debit-list');
+  if(!body){alert('No debit notes list found');return}
+  const ids=Array.from(body.querySelectorAll('.dn-select-cb:checked')).map(cb=>Number(cb.value)).filter(Boolean);
+  if(!ids.length){alert('Tick one or more debit notes first');return}
+  const template=await pickTemplate('debit-note','Choose debit note format');
+  if(template===null)return;
+  await downloadSeparatePdfs('debit_notes', ids, template, 'DebitNotes');
+}
+async function saveSeparateDebitNotesPlanter(){
+  const body=document.getElementById('debitp-list');
+  if(!body){alert('No planter debit notes list found');return}
+  const ids=Array.from(body.querySelectorAll('.dnp-select-cb:checked')).map(cb=>Number(cb.value)).filter(Boolean);
+  if(!ids.length){alert('Tick one or more planter debit notes first');return}
+  const template=await pickTemplate('debit-note','Choose debit note format');
+  if(template===null)return;
+  await downloadSeparatePdfs('debit_notes_planter', ids, template, 'PlanterDebitNotes');
 }
 
 // ── Master-checkbox + Print-Selected helpers for Bills of Supply ────────
@@ -44461,10 +44575,14 @@ function updateDnBulkButtons(){
   }
   // Show/hide the bulk action buttons + count badge
   const printBtn = document.getElementById('dn-bulk-print');
+  // Separate PDFs rides with Print Selected — same selection, different shape
+  // of output, so it must appear and disappear with it.
+  const sepBtn   = document.getElementById('dn-bulk-sep');
   const delBtn   = document.getElementById('dn-bulk-del');
   const waBtn    = document.getElementById('dn-bulk-wa');
   const counter  = document.getElementById('dn-sel-count');
   if (printBtn) (tickedCount > 0 ? _showBulkBtn : _hideBulkBtn)(printBtn);
+  if (sepBtn)   (tickedCount > 0 ? _showBulkBtn : _hideBulkBtn)(sepBtn);
   if (delBtn)   (tickedCount > 0 ? _showBulkBtn : _hideBulkBtn)(delBtn);
   // WhatsApp Selected — same show/hide rule; the .feat-whatsapp class
   // still gates it off entirely when flag_whatsapp is OFF.
@@ -45058,11 +45176,13 @@ function updateDnpBulkButtons(){
     master.checked       = visible.length>0 && tickedCount===visible.length;
   }
   const printBtn = document.getElementById('dnp-bulk-print');
+  const sepBtn   = document.getElementById('dnp-bulk-sep');   // rides with Print Selected
   const delBtn   = document.getElementById('dnp-bulk-del');
   const waBtn    = document.getElementById('dnp-bulk-wa');
   const counter  = document.getElementById('dnp-sel-count');
   if (waBtn) (tickedCount > 0 ? _showBulkBtn : _hideBulkBtn)(waBtn);
   if (printBtn) (tickedCount > 0 ? _showBulkBtn : _hideBulkBtn)(printBtn);
+  if (sepBtn)   (tickedCount > 0 ? _showBulkBtn : _hideBulkBtn)(sepBtn);
   if (delBtn)   (tickedCount > 0 ? _showBulkBtn : _hideBulkBtn)(delBtn);
   if (counter)  counter.textContent = tickedCount > 0 ? `(${tickedCount})` : '';
 }

@@ -6773,12 +6773,13 @@ app.get('/api/auctions/:id/transaction-plan', requireView, (req, res) => {
     } else if (step.id === 'debit_notes') {
       const c = countDebitNoteTargets(db, aid, ano);
       out.pending = c.count; out.basis = c.basis;
-      out.suggestedStart = docNo.nextSafe(db, 'debit_notes', { ano });
+      // Running series across trades — see `continuous` in doc-numbering.js.
+      out.suggestedStart = docNo.nextSuggested(db, 'debit_notes', { ano });
     } else if (step.id === 'debit_notes_planter') {
       const c = countPlanterDebitNoteTargets(db, aid, ano);
       out.pending = c.count; out.basis = c.basis;
       out.mode = lotwiseDnPlanterOn(db) ? 'lot' : 'seller';
-      out.suggestedStart = docNo.nextSafe(db, 'debit_notes_planter', { ano });
+      out.suggestedStart = docNo.nextSuggested(db, 'debit_notes_planter', { ano });
     }
     return out;
   });
@@ -14181,6 +14182,123 @@ app.post('/api/purchases/pdf-bulk', requireView, async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════
+// SEPARATE PDFs — one file per party, zipped
+// ──────────────────────────────────────────────────────────────
+// "Print Selected" hands back ONE merged PDF, which is what the office wants
+// for a print run. It is the wrong shape for sending each party their own
+// copy: somebody then has to split a 58-page file by hand. This returns the
+// same documents as a .zip of one PDF each, named for the party and its
+// document number.
+//
+// HOW: by asking this server's own bulk route for ONE id at a time, over
+// loopback — the same trick the Auction Desk bundler uses. The alternative,
+// re-implementing each document's build + render here, would be a second code
+// path that could drift from what the merged download produces; a party's own
+// copy differing from the office copy is exactly the bug worth paying a local
+// round trip to avoid.
+//
+// COST: one render per document, where the merged route lays out 25 per
+// render. That is inherent — separate files cannot share a layout pass — so
+// the calls run a few at a time through the shared render pool rather than
+// strictly serially.
+const PDF_ZIP_KINDS = {
+  invoices:            { url: '/api/invoices/pdf-bulk',            table: 'invoices',             noCol: 'invo',    nameCol: 'buyer1', label: 'Invoice' },
+  purchases:           { url: '/api/purchases/pdf-bulk',           table: 'purchases',            noCol: 'invo',    nameCol: 'name',   label: 'PurchaseInvoice' },
+  bills:               { url: '/api/bills/pdf-bulk',               table: 'bills',                noCol: 'bil',     nameCol: 'name',   label: 'BillOfSupply' },
+  debit_notes:         { url: '/api/debit-notes/pdf-bulk',         table: 'debit_notes',          noCol: 'note_no', nameCol: 'name',   label: 'DebitNote' },
+  debit_notes_planter: { url: '/api/debit-notes-planter/pdf-bulk', table: 'debit_notes_planter',  noCol: 'note_no', nameCol: 'name',   label: 'DebitNotePlanter' },
+};
+
+// A file name a human can find in a folder: "<no>_<PARTY>.pdf". Anything that
+// is not a letter, digit, dash or underscore becomes "_" — a party name
+// carries dots, slashes and ampersands, and a slash in particular would make
+// the archive hold a directory nobody asked for.
+function pdfZipFileName(docNo, party, fallback) {
+  const clean = (v) => String(v == null ? '' : v).trim().replace(/[^\w\-]+/g, '_').replace(/^_+|_+$/g, '');
+  const no = clean(docNo), nm = clean(party).slice(0, 60);
+  const base = [no, nm].filter(Boolean).join('_') || clean(fallback) || 'document';
+  return base + '.pdf';
+}
+
+app.post('/api/documents/pdf-zip', requireView, async (req, res) => {
+  const kindKey = String((req.body && req.body.kind) || '').trim();
+  const kind = PDF_ZIP_KINDS[kindKey];
+  if (!kind) return res.status(400).json({ error: 'Unknown document kind' });
+  const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(Number).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ error: 'No document ids provided' });
+  // A cap, because every id costs a render: 300 documents is already minutes
+  // of Chromium, and an accidental "select all" on a huge trade should say so
+  // rather than hold the connection open until something times out.
+  if (ids.length > 300) {
+    return res.status(400).json({ error: `Too many documents for separate files (${ids.length}). Print them in batches of 300 or fewer.` });
+  }
+
+  const db = getDb();
+  const ph = ids.map(() => '?').join(',');
+  const rows = db.all(
+    `SELECT id, ${kind.noCol} AS doc_no, ${kind.nameCol} AS party FROM ${kind.table} WHERE id IN (${ph})`, ids) || [];
+  const byId = new Map(rows.map(r => [Number(r.id), r]));
+  if (!byId.size) return res.status(404).json({ error: 'No matching documents found' });
+
+  const template = (req.body && req.body.template) || '';
+  const auth = req.headers.authorization || '';
+  const baseUrl = `http://127.0.0.1:${PORT}`;
+  const { mapRenders } = require('./pdf/render-pool');
+
+  // Ordered by the caller's list so the archive reads in the same order the
+  // operator ticked — mapRenders writes results back by index, never by
+  // completion.
+  const wanted = ids.filter(id => byId.has(id));
+  let built;
+  try {
+    built = await mapRenders(wanted, async (id) => {
+      const r = await fetch(baseUrl + kind.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: auth },
+        body: JSON.stringify(template ? { ids: [id], template } : { ids: [id] }),
+      });
+      if (!r.ok) {
+        let msg = `HTTP ${r.status}`;
+        try { const e = await r.json(); if (e && e.error) msg = e.error; } catch (_) {}
+        return { id, error: msg };
+      }
+      return { id, buf: Buffer.from(await r.arrayBuffer()) };
+    });
+  } catch (e) {
+    return res.status(500).json({ error: 'Separate PDFs failed: ' + (e.message || e) });
+  }
+
+  const archiver = require('archiver');
+  const zip = archiver('zip', { zlib: { level: 9 } });
+  const anoLabel = anoLabelForRows(db.all(`SELECT ano FROM ${kind.table} WHERE id IN (${ph})`, ids) || []);
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition',
+    `attachment; filename="${exportFileName(kind.label + 's', anoLabel, built.length)}.zip"`);
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+  zip.on('error', (e) => { try { res.destroy(e); } catch (_) {} });
+  zip.pipe(res);
+
+  const used = new Set();
+  const failed = [];
+  for (const out of built) {
+    const row = byId.get(out.id) || {};
+    if (out.error) { failed.push(`${row.doc_no || out.id} ${row.party || ''} — ${out.error}`); continue; }
+    let name = pdfZipFileName(row.doc_no, row.party, out.id);
+    // Two parties can share a name and a number can repeat across trades —
+    // keep both files rather than letting the archive silently hold one.
+    if (used.has(name)) name = name.replace(/\.pdf$/, '') + `_${out.id}.pdf`;
+    used.add(name);
+    zip.append(out.buf, { name });
+  }
+  // One document failing must not sink the archive; it is reported inside it.
+  if (failed.length) {
+    zip.append('These documents could not be rendered:\n\n'
+      + failed.map(f => '  · ' + f).join('\n') + '\n', { name: '_failed.txt' });
+  }
+  zip.finalize();
+});
+
 // ── PAYMENT VOUCHER (Commission Memorandum) for purchase invoices ────────
 // "PAYMENT VOUCHER — MEMORANDUM OF CARDAMOM SOLD THROUGH <company>": the
 // dealer-side twin of /api/bills/commission-bos-bulk. One A4 page PER LOT,
@@ -14917,7 +15035,7 @@ app.get('/api/bills/commission-bill-f2/:auctionId', (req, res, next) => {
     res.setHeader('Content-Disposition',
       `inline; filename="CommissionBillF2_${auction.ano}${branchFilter ? '_' + branchFilter : ''}.pdf"`);
     doc.pipe(res);
-    attachPdfkitWatermark(doc, cfg);   // see pdf/watermark.js
+    attachPdfkitWatermark(doc, cfg, 'commission_bill');   // see pdf/watermark.js
 
     const m = 24, w = doc.page.width - m * 2;
     doc.font('Helvetica-Bold').fontSize(14).text('COMMISSION BILL (FORMAT 2)', m, m, { width: w, align: 'center' });
@@ -15960,9 +16078,10 @@ app.post('/api/debit-notes/generate-bulk', requireInvoiceWrite, requireDebitNote
     if (!claim) return;
     nextNoteNo = claim.from;
   } else {
-    // No explicit start → bump THIS TRADE's MAX. Each trade has its
-    // own independent sequence.
-    nextNoteNo = docNo.nextSafe(db, 'debit_notes', { ano });
+    // No explicit start → continue the running series (see `continuous` in
+    // doc-numbering.js). It used to bump THIS TRADE's max, which restarted
+    // every trade at 1; the series is per-trade for COLLISION purposes only.
+    nextNoteNo = docNo.nextSuggested(db, 'debit_notes', { ano });
   }
 
   const generated = [];
@@ -16091,12 +16210,13 @@ app.get('/api/debit-notes/next-note-no', requireView, (req, res) => {
   if (!ano) {
     return res.status(400).json({ error: 'ano (trade number) is required for trade-wise numbering' });
   }
-  const row = db.get(
-    'SELECT MAX(CAST(note_no AS INTEGER)) AS mx FROM debit_notes WHERE ano = ?',
-    [ano]
-  );
-  const mx = parseInt(row && row.mx, 10);
-  const next = Number.isFinite(mx) && mx > 0 ? mx + 1 : 1;
+  // ONE RUNNING SERIES across trades. The note numbers themselves stay scoped
+  // per trade for collision purposes (trade #1's #5 and trade #2's #5 are
+  // different documents, and old data holds both), but what the operator is
+  // OFFERED continues from the highest note anywhere — a new trade starting
+  // back at 1 was the complaint this answers. docNo owns both rules so the
+  // tab, the Generate All sheet and the refusal message cannot drift apart.
+  const next = docNo.nextSuggested(db, 'debit_notes', { ano });
   res.json({ next, ano });
 });
 
@@ -16160,7 +16280,9 @@ function _renderDebitNote(doc, dn, db, cfg, opts) {
     // planter × single / bulk), so one call covers them; it is idempotent, and
     // the bulk loops addPage() before each later note, which the hook catches.
     // The HTML debit-note layouts get the mark from their own renderer.
-    attachPdfkitWatermark(doc, cfg);
+    // The two notes carry separate watermark switches — `opts.planter` is the
+    // same flag that picks the planter wording below.
+    attachPdfkitWatermark(doc, cfg, opts.planter ? 'debit_note_planter' : 'debit_note');
     // The DN layout (per the reference PDF) is BUYER-LETTERHEAD style:
     // the BUYER (the party benefiting from the discount, who issues the
     // credit/debit note in their books) prints on top with their address
@@ -16752,9 +16874,8 @@ app.get('/api/debit-notes-planter/next-note-no', requireView, (req, res) => {
   const db = getDb();
   const ano = String(req.query.ano || '').trim();
   if (!ano) return res.status(400).json({ error: 'ano (trade number) is required for trade-wise numbering' });
-  const row = db.get('SELECT MAX(CAST(note_no AS INTEGER)) AS mx FROM debit_notes_planter WHERE ano = ?', [ano]);
-  const mx = parseInt(row && row.mx, 10);
-  res.json({ next: Number.isFinite(mx) && mx > 0 ? mx + 1 : 1, ano });
+  // Running series across trades — same rule as the service debit note above.
+  res.json({ next: docNo.nextSuggested(db, 'debit_notes_planter', { ano }), ano });
 });
 
 // Generate a SINGLE planter debit note. Inputs: bill number (`bilno`) +
@@ -16977,7 +17098,7 @@ app.post('/api/debit-notes-planter/generate-bulk', requireInvoiceWrite, requireD
       if (!claim) return;
       nextNoteNo = claim.from;
     } else {
-      nextNoteNo = docNo.nextSafe(db, 'debit_notes_planter', { ano });
+      nextNoteNo = docNo.nextSuggested(db, 'debit_notes_planter', { ano });
     }
 
     const generatedL = [];
@@ -17051,7 +17172,7 @@ app.post('/api/debit-notes-planter/generate-bulk', requireInvoiceWrite, requireD
     if (!claim) return;
     nextNoteNo = claim.from;
   } else {
-    nextNoteNo = docNo.nextSafe(db, 'debit_notes_planter', { ano });
+    nextNoteNo = docNo.nextSuggested(db, 'debit_notes_planter', { ano });
   }
 
   const generated = [];
@@ -18630,7 +18751,7 @@ function _renderPaymentStatement(doc, db, auctionId, sellerName, cfg, lotIds, us
   // One renderer behind all three payment-statement routes (single, lot-wise,
   // bulk), so one call watermarks them all. Idempotent, and the bulk loop's
   // addPage() is caught by the hook. See pdf/watermark.js.
-  attachPdfkitWatermark(doc, cfg);
+  attachPdfkitWatermark(doc, cfg, 'reports');
   const uid = String(userId || '').trim();
   // Applied to `lots` queries; `l` is not aliased in them, hence bare columns.
   const uidLotSql = uid ? ` AND TRIM(COALESCE(user_id,'')) = ?` : '';
@@ -21929,7 +22050,7 @@ app.get('/api/reports/summary-pdf/:auctionId', (req, res, next) => {
   res.setHeader('Content-Disposition',
     `inline; filename="Trade_${auction.ano}_Summary_${auction.date}.pdf"`);
   doc.pipe(res);
-  attachPdfkitWatermark(doc, getDb());   // see pdf/watermark.js
+  attachPdfkitWatermark(doc, getDb(), 'reports');   // see pdf/watermark.js
 
   const m = 40, w = 515;
 

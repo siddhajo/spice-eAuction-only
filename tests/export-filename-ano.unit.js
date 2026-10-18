@@ -110,7 +110,7 @@ for (const [label, src] of [['server.js', SERVER], ['mobile-bridge.js', MOBILE]]
   const bad = [];
   CLIENT.split(/\r?\n/).forEach((ln, i) => {
     if (!/\.download\s*=/.test(ln)) return;
-    const stripped = ln.replace(/anoFromSelect\([^)]*\)/g, 'ANO');
+    const stripped = ln.replace(/anoForAid\([^)]*\)/g, 'ANO');
     // `||aid` is the last-resort fallback behind anoFromSelect; flag a bare
     // `${aid}` that no ano lookup stands in front of.
     if (/\$\{\s*aid\s*\}/.test(stripped) && !/ANO\s*\|\|/.test(ln)) {
@@ -125,7 +125,10 @@ for (const [label, src] of [['server.js', SERVER], ['mobile-bridge.js', MOBILE]]
 // A hand-rolled `a.download = ...` throws away the Content-Disposition the
 // server went to the trouble of setting. Every download that targets an
 // export endpoint has to read the header first (filenameFromResponse), using
-// its own string only as a fallback.
+// its own string only as a fallback. The fallback resolves the ano by the
+// auction ID BEING EXPORTED (anoForAid), not by whichever picker happens to be
+// on screen — exportType() takes an aidOverride, and the Price Import banner
+// exports with the Lots-tab auction.
 {
   const lines = CLIENT.split(/\r?\n/);
   const bad = [];
@@ -137,7 +140,7 @@ for (const [label, src] of [['server.js', SERVER], ['mobile-bridge.js', MOBILE]]
     // downloads; a literal like 'settings.json' or a local `name`/`filename`
     // variable is something the client itself produced.
     if (!/\$\{/.test(rhs)) return;
-    if (!/\baid\b|anoFromSelect|sbAuctionId/.test(rhs)) return;
+    if (!/\baid\b|anoForAid|sbAuctionId/.test(rhs)) return;
     if (!/filenameFromResponse/.test(rhs)) bad.push((i + 1) + ': ' + ln.trim());
   });
   check('index.html: auction-scoped downloads honour the server filename',

@@ -92,12 +92,20 @@ const SERIES = {
     col: 'note_no',
     where(ctx) { return { sql: ' AND t.ano = ?', params: [String(ctx && ctx.ano || '')] }; },
     scope(ctx) { return 'trade #' + String(ctx && ctx.ano || ''); },
+    // The SCOPE above stays per-trade — trade #1's note #5 genuinely does not
+    // clash with trade #2's #5, and existing data relies on that. `continuous`
+    // changes only what is SUGGESTED: one running number across trades, so
+    // #21 carries on from where #20 stopped instead of restarting at 1.
+    // A suggestion higher than anything anywhere can never collide, which is
+    // why the two can differ safely.
+    continuous: true,
   },
 
   debit_notes_planter: {
     label: 'planter debit note',
     table: 'debit_notes_planter',
     col: 'note_no',
+    continuous: true,            // see debit_notes above
     where(ctx) { return { sql: ' AND t.ano = ?', params: [String(ctx && ctx.ano || '')] }; },
     scope(ctx) { return 'trade #' + String(ctx && ctx.ano || ''); },
   },
@@ -126,6 +134,31 @@ function maxNo(db, id, ctx) {
 // The next start that is guaranteed free: one past the series' highest.
 function nextSafe(db, id, ctx) {
   return maxNo(db, id, ctx) + 1;
+}
+
+// Highest number anywhere in the table, ignoring scope (0 when empty).
+function maxNoGlobal(db, id) {
+  const s = seriesFor(id);
+  const row = db.get(
+    `SELECT MAX(CAST(t.${s.col} AS INTEGER)) AS mx
+       FROM ${s.table} t
+      WHERE t.${s.col} GLOB '[0-9]*'`);
+  const mx = parseInt(row && row.mx, 10);
+  return Number.isFinite(mx) && mx > 0 ? mx : 0;
+}
+
+// What a START NUMBER field should open on.
+//
+// For a scoped-but-continuous series (the two debit notes) that is one past
+// the highest number in the WHOLE table, so numbering runs on from trade to
+// trade; for every other series it is the next free number in its own scope.
+// Always >= nextSafe for the same scope, so a suggestion can never be a
+// number the claim would then refuse.
+function nextSuggested(db, id, ctx) {
+  const s = seriesFor(id);
+  const scoped = nextSafe(db, id, ctx);
+  if (!s.continuous) return scoped;
+  return Math.max(scoped, maxNoGlobal(db, id) + 1);
 }
 
 // Numbers already taken inside [from, to] of this series, ascending.
@@ -171,7 +204,7 @@ function claimRange(db, id, ctx, start, count) {
   const collisions = findCollisions(db, id, ctx, n, to);
   if (!collisions.length) return { ok: true, from: n, to, count: want };
 
-  const safe = nextSafe(db, id, ctx);
+  const safe = nextSuggested(db, id, ctx);
   const shown = collisions.slice(0, 5).map(c => '#' + c).join(', ');
   const more = collisions.length > 5 ? `, +${collisions.length - 5} more` : '';
   return {
@@ -207,7 +240,7 @@ function claimNumbers(db, id, ctx, numbers, opts) {
   const taken = findCollisions(db, id, ctx, lo, hi).filter(n => want.has(n));
   if (!taken.length) return { ok: true, numbers: nos, count: nos.length };
 
-  const safe = nextSafe(db, id, ctx);
+  const safe = nextSuggested(db, id, ctx);
   const shown = taken.slice(0, 5).map(c => '#' + c).join(', ');
   const more = taken.length > 5 ? `, +${taken.length - 5} more` : '';
   const start = opts.start != null ? opts.start : lo;
@@ -241,6 +274,6 @@ function sendRefusal(res, c) {
 }
 
 module.exports = {
-  SERIES, maxNo, nextSafe, findCollisions,
+  SERIES, maxNo, maxNoGlobal, nextSafe, nextSuggested, findCollisions,
   claimRange, claimNumbers, claimOrRefuse, sendRefusal,
 };

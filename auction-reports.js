@@ -142,7 +142,7 @@ async function lotSlipPdf(db, auctionId, _cfg, extra) {
   const rows = getLotSlipPreRows(db, auctionId, extra && extra.state);
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 18 });
-  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
+  attachPdfkitWatermark(doc, db, 'reports');   // faint company logo — see pdf/watermark.js
   const buffers = [];
   doc.on('data', b => buffers.push(b));
 
@@ -1104,7 +1104,7 @@ async function collectionPdf(db, auctionId) {
   const groups = classifyBySale(rows);
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 24 });
-  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
+  attachPdfkitWatermark(doc, db, 'reports');   // faint company logo — see pdf/watermark.js
   const buffers = [];
   doc.on('data', b => buffers.push(b));
 
@@ -1845,7 +1845,7 @@ async function tradeReportPdf(db, auctionId, opts) {
     : 'BUYERS LIST FOR VERIFICATION';
 
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 18 });
-  attachPdfkitWatermark(doc, db);   // faint company logo — see pdf/watermark.js
+  attachPdfkitWatermark(doc, db, 'reports');   // faint company logo — see pdf/watermark.js
   const buffers = [];
   doc.on('data', b => buffers.push(b));
 

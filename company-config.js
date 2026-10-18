@@ -333,6 +333,29 @@ const DEFAULTS = [
   //   • Current Auction — the depot-wise panel under the headline tiles.
   { key: 'flag_dash_snapshot',       value: 'true', category: 'flags', label: 'Auction Snapshot on Dashboard',       type: 'boolean' },
   { key: 'flag_dash_current_auction',value: 'true', category: 'flags', label: 'Current Auction Widget on Dashboard', type: 'boolean' },
+  // Quick Actions card on the Dashboard — eight shortcut tiles to screens the
+  // sidebar already lists. OFF also hides the dashboard's OWN auction picker,
+  // which is a second trade selector next to the one in the topbar; with the
+  // card gone there is nothing left on that bar for it to ride on. Default ON
+  // so no install loses the card on upgrade — a site that does not want it
+  // switches this off once. Companion to the two widget flags above.
+  { key: 'flag_dash_quick_actions',  value: 'true', category: 'flags', label: 'Quick Actions on Dashboard',          type: 'boolean' },
+
+  // ── WATERMARK, PER DOCUMENT ────────────────────────────────
+  // `flag_pdf_watermark` above is the master switch; these say WHICH
+  // documents carry the mark when it is on. All default ON, so an upgrade
+  // changes nothing — an install that wants the logo on the documents that
+  // leave the building but not on its internal paper unticks the rest.
+  // `pdf_watermark_reports` is one switch for every report, register,
+  // statement, journal and bank file: an operator who wants those unmarked
+  // wants all of them unmarked. See pdf/watermark.js (WATERMARK_KINDS).
+  { key: 'pdf_watermark_sales_invoice',      value: 'true', category: 'invoice', label: 'Watermark: Sales Invoice',        type: 'boolean' },
+  { key: 'pdf_watermark_purchase_invoice',   value: 'true', category: 'invoice', label: 'Watermark: Purchase Invoice',     type: 'boolean' },
+  { key: 'pdf_watermark_bill_of_supply',     value: 'true', category: 'invoice', label: 'Watermark: Bill of Supply',       type: 'boolean' },
+  { key: 'pdf_watermark_commission_bill',    value: 'true', category: 'invoice', label: 'Watermark: Commission Bill',      type: 'boolean' },
+  { key: 'pdf_watermark_debit_note',         value: 'true', category: 'invoice', label: 'Watermark: Debit Note (Service)', type: 'boolean' },
+  { key: 'pdf_watermark_debit_note_planter', value: 'true', category: 'invoice', label: 'Watermark: Debit Note — Planter', type: 'boolean' },
+  { key: 'pdf_watermark_reports',            value: 'true', category: 'invoice', label: 'Watermark: Reports, Registers & Statements', type: 'boolean' },
   { key: 'flag_dummy',           value: 'false', category: 'flags', label: 'Allow Dummy Invoices',            type: 'boolean' },
   { key: 'flag_round',           value: 'false', category: 'flags', label: 'Round Invoice Amounts',           type: 'boolean' },
   { key: 'flag_export',          value: 'false', category: 'flags', label: 'Export Invoices',                 type: 'boolean' },
